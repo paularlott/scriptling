@@ -310,11 +310,25 @@ func evalIfStatement(ie *ast.IfStatement, env *object.Environment) object.Object
 
 	if isTruthy(condition) {
 		return Eval(ie.Consequence, env)
-	} else if ie.Alternative != nil {
-		return Eval(ie.Alternative, env)
-	} else {
-		return NULL
 	}
+
+	// Check elif clauses
+	for _, elifClause := range ie.ElifClauses {
+		condition := Eval(elifClause.Condition, env)
+		if isError(condition) {
+			return condition
+		}
+		if isTruthy(condition) {
+			return Eval(elifClause.Consequence, env)
+		}
+	}
+
+	// Check else clause
+	if ie.Alternative != nil {
+		return Eval(ie.Alternative, env)
+	}
+
+	return NULL
 }
 
 func evalWhileStatement(ws *ast.WhileStatement, env *object.Environment) object.Object {

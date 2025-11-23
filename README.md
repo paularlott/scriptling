@@ -61,9 +61,11 @@ person = {"name": "Bob"}        # Dictionary
 
 ### Control Flow
 ```python
-# If/else
+# If/elif/else
 if x > 10:
     print("large")
+elif x > 5:
+    print("medium")
 else:
     print("small")
 
@@ -213,6 +215,7 @@ go run main.go
 
 - **README.md** (this file) - Quick start and overview
 - **LANGUAGE_GUIDE.md** - Complete language reference
+- **GO_INTEGRATION.md** - Go integration and embedding guide
 - **LIBRARIES.md** - Library system and custom libraries
 - **BUILD_PLAN.md** - Architecture and build progress
 

@@ -359,6 +359,24 @@ func (p *Parser) parseIfStatement() *ast.IfStatement {
 
 	stmt.Consequence = p.parseBlockStatement()
 
+	// Parse elif clauses
+	stmt.ElifClauses = []*ast.ElifClause{}
+	for p.peekTokenIs(token.ELIF) {
+		p.nextToken() // consume elif
+		elifClause := &ast.ElifClause{Token: p.curToken}
+		
+		p.nextToken()
+		elifClause.Condition = p.parseExpression(LOWEST)
+		
+		if !p.expectPeek(token.COLON) {
+			return nil
+		}
+		
+		elifClause.Consequence = p.parseBlockStatement()
+		stmt.ElifClauses = append(stmt.ElifClauses, elifClause)
+	}
+
+	// Parse else clause
 	if p.peekTokenIs(token.ELSE) {
 		p.nextToken()
 		if !p.expectPeek(token.COLON) {

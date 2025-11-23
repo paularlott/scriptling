@@ -111,10 +111,17 @@ type BlockStatement struct {
 func (bs *BlockStatement) statementNode()       {}
 func (bs *BlockStatement) TokenLiteral() string { return bs.Token.Literal }
 
+type ElifClause struct {
+	Token       token.Token
+	Condition   Expression
+	Consequence *BlockStatement
+}
+
 type IfStatement struct {
 	Token       token.Token
 	Condition   Expression
 	Consequence *BlockStatement
+	ElifClauses []*ElifClause
 	Alternative *BlockStatement
 }
 

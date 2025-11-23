@@ -138,25 +138,36 @@ Variables are created on first assignment.
 
 ## Control Flow
 
-### If Statement
+### If/Elif/Else Statement
 ```python
 if condition:
     # code block
 elif other_condition:
     # code block
+elif another_condition:
+    # code block
 else:
     # code block
 ```
 
-Note: `elif` is NOT supported - use nested `if`/`else`:
+### Examples
 ```python
+# Simple if/else
 if x > 10:
     print("large")
 else:
-    if x > 5:
-        print("medium")
-    else:
-        print("small")
+    print("small")
+
+# Multiple conditions with elif
+score = 85
+if score >= 90:
+    print("Grade: A")
+elif score >= 80:
+    print("Grade: B")
+elif score >= 70:
+    print("Grade: C")
+else:
+    print("Grade: F")
 ```
 
 ### While Loop
@@ -451,7 +462,6 @@ last = word[4]     # "o"
 ## Limitations & Differences from Python
 
 ### Not Supported
-- `elif` keyword (use nested if/else)
 - List comprehensions
 - Lambda functions
 - Classes and objects
@@ -477,55 +487,7 @@ last = word[4]     # "o"
 - No implicit type coercion in most operations
 - `append()` returns new list (doesn't modify in place)
 
-## Go Integration
 
-### From Go Code
-
-```go
-package main
-
-import (
-    "fmt"
-    "github.com/paularlott/scriptling"
-    "github.com/paularlott/scriptling/object"
-)
-
-func main() {
-    // Create interpreter
-    p := scriptling.New()
-    
-    // Set variables from Go
-    p.SetVar("api_key", "secret123")
-    p.SetVar("timeout", 30)
-    
-    // Execute Scriptling script
-    result, err := p.Eval(`
-response = http_get("https://api.example.com/data", timeout)
-data = json_parse(response["body"])
-result = data["count"]
-`)
-    
-    if err != nil {
-        fmt.Println("Error:", err)
-        return
-    }
-    
-    // Get variables from Scriptling
-    count, ok := p.GetVar("result")
-    if ok {
-        fmt.Println("Count:", count)
-    }
-    
-    // Register custom Go function
-    p.RegisterFunc("custom_func", func(args ...object.Object) object.Object {
-        // Your Go code here
-        return &object.String{Value: "result"}
-    })
-    
-    // Call custom function from Scriptling
-    p.Eval(`output = custom_func()`)
-}
-```
 
 ## Best Practices
 
@@ -602,7 +564,7 @@ When generating Scriptling code:
 2. Use `True`/`False` for booleans (capitalized)
 3. HTTP functions return `{"status": int, "body": string, "headers": dict}`
 4. Always use `json_parse()` and `json_stringify()` for JSON
-5. No `elif` - use nested `if`/`else`
+5. Use `elif` for multiple conditions
 6. `append()` returns new list
 7. Strings use `+` for concatenation
 8. Use `.py` file extension
@@ -616,10 +578,12 @@ When generating Scriptling code:
 x = 10
 
 # Control flow
-if x > 5:
-    print("yes")
+if x > 10:
+    print("large")
+elif x > 5:
+    print("medium")
 else:
-    print("no")
+    print("small")
 
 while x > 0:
     x = x - 1
