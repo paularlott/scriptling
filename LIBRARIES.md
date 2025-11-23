@@ -1,0 +1,247 @@
+# Scriptling Library System
+
+## Overview
+
+Scriptling uses an optional library system for JSON and HTTP functionality. This keeps the core interpreter lightweight and fast.
+
+## Design
+
+- **Core builtins**: Essential functions always available (`print`, `len`, `str`, `int`, `float`, string operations)
+- **Optional libraries**: JSON and HTTP loaded on demand
+- **Custom libraries**: Easy to create and register your own
+
+## Loading Libraries
+
+### From Go
+
+```go
+// Option 1: Load at creation
+p := scriptling.New("json", "http")
+
+// Option 2: No libraries (lightweight)
+p := scriptling.New()
+
+// Option 3: Load specific library
+p := scriptling.New("json")
+```
+
+### From Scriptling Scripts
+
+```python
+# Import libraries dynamically
+import("json")
+import("http")
+
+# Now use them
+data = json.parse('{"name":"Alice"}')
+response = http.get("https://api.example.com/data", 10)
+```
+
+## Available Libraries
+
+### json
+
+**Functions:**
+- `json.parse(string)` - Parse JSON string to Scriptling objects
+- `json.stringify(object)` - Convert Scriptling objects to JSON string
+
+**Example:**
+```python
+import("json")
+
+# Parse
+data = json.parse('{"users":[{"name":"Alice"},{"name":"Bob"}]}')
+first_user = data["users"][0]["name"]  # "Alice"
+
+# Stringify
+obj = {"status": "success", "count": "42"}
+json_str = json.stringify(obj)  # '{"count":"42","status":"success"}'
+```
+
+### http
+
+**Functions:**
+All return `{"status": int, "body": string, "headers": dict}`
+
+- `http.get(url, timeout?)` - GET request
+- `http.post(url, body, timeout?)` - POST request
+- `http.put(url, body, timeout?)` - PUT request
+- `http.delete(url, timeout?)` - DELETE request
+- `http.patch(url, body, timeout?)` - PATCH request
+
+Default timeout: 30 seconds
+
+**Example:**
+```python
+import("json")
+import("http")
+
+# GET request
+response = http.get("https://api.example.com/users/1", 10)
+if response["status"] == 200:
+    user = json.parse(response["body"])
+    print(user["name"])
+
+# POST request
+new_user = {"name": "Alice", "email": "alice@example.com"}
+body = json.stringify(new_user)
+response = http.post("https://api.example.com/users", body, 15)
+
+if response["status"] == 201:
+    print("Created successfully")
+else:
+    print("Error: " + str(response["status"]))
+
+# Other methods
+response = http.put(url, body, 10)
+response = http.delete(url, 10)
+response = http.patch(url, body, 10)
+```
+
+## Core Builtins
+
+Always available without importing:
+
+### I/O
+- `print(value)` - Output to console
+
+### Type Conversions
+- `str(value)` - Convert to string
+- `int(value)` - Convert to integer
+- `float(value)` - Convert to float
+
+### String Functions
+- `len(string)` - Get length
+- `upper(string)` - Uppercase
+- `lower(string)` - Lowercase
+- `split(string, sep)` - Split to list
+- `join(list, sep)` - Join from list
+- `replace(str, old, new)` - Replace substring
+
+### List Functions
+- `len(list)` - Get length
+- `append(list, item)` - Append item (returns new list)
+
+### System
+- `import(library_name)` - Load library dynamically
+
+## Creating Custom Libraries
+
+### Define Library in Go
+
+```go
+package mylib
+
+import "github.com/paularlott/scriptling/object"
+
+func MyLibrary() map[string]*object.Builtin {
+    return map[string]*object.Builtin{
+        "hello": {
+            Fn: func(args ...object.Object) object.Object {
+                return &object.String{Value: "Hello from custom lib!"}
+            },
+        },
+        "add": {
+            Fn: func(args ...object.Object) object.Object {
+                if len(args) != 2 {
+                    return &object.Error{Message: "need 2 arguments"}
+                }
+                a := args[0].(*object.Integer).Value
+                b := args[1].(*object.Integer).Value
+                return &object.Integer{Value: a + b}
+            },
+        },
+    }
+}
+```
+
+### Register and Use
+
+```go
+p := scriptling.New()
+p.RegisterLibrary("mylib", mylib.MyLibrary())
+
+p.Eval(`
+result = mylib.add(5, 3)
+print(mylib.hello())
+`)
+```
+
+## Performance Benefits
+
+### Without Libraries
+```go
+p := scriptling.New()  // Lightweight, no HTTP/JSON overhead
+p.Eval("x = 5 + 3")  // Fast execution
+```
+
+### With Libraries
+```go
+p := scriptling.New("json", "http")  // Loads JSON + HTTP
+p.Eval(`
+    response = http.get("https://api.example.com/data", 10)
+    data = json.parse(response["body"])
+`)
+```
+
+## Library Syntax
+
+Libraries support both dot notation and bracket notation:
+```python
+# Dot notation (recommended, Python-like)
+library_name.function_name(arguments)
+
+# Bracket notation (also works)
+library_name["function_name"](arguments)
+```
+
+This is similar to Python's module system:
+- Python: `json.loads(string)`
+- Scriptling: `json.parse(string)` or `json["parse"](string)`
+
+## Adding Libraries to Scriptling
+
+To add a new standard library:
+
+1. Create `stdlib/mylib.go`:
+```go
+package stdlib
+
+func MyLibrary() map[string]*object.Builtin {
+    return map[string]*object.Builtin{
+        "func1": { Fn: ... },
+        "func2": { Fn: ... },
+    }
+}
+```
+
+2. Register in `scriptling.go`:
+```go
+var availableLibraries = map[string]func() map[string]*object.Builtin{
+    "json": stdlib.JSONLibrary,
+    "http": stdlib.HTTPLibrary,
+    "mylib": stdlib.MyLibrary,  // Add here
+}
+```
+
+3. Use it:
+```python
+import("mylib")
+mylib.func1()
+```
+
+## Best Practices
+
+1. **Load only what you need**: `scriptling.New()` for core, `scriptling.New("json")` when needed
+2. **Use import() in scripts**: Dynamic loading based on script needs
+3. **Check HTTP status codes**: Always check `response["status"]` before processing
+4. **Set timeouts**: Always specify timeouts for HTTP calls
+5. **Handle errors**: Check for errors in Go and validate data in Scriptling
+
+## Summary
+
+- **Core**: Minimal, always available
+- **Libraries**: Optional, loaded on demand
+- **Custom**: Easy to create and register
+- **Performance**: Only pay for what you use
+- **Pythonic**: Familiar syntax and patterns
