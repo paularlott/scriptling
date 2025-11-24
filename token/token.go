@@ -57,11 +57,14 @@ const (
 	WHILE  = "WHILE"
 	FOR    = "FOR"
 	IN     = "IN"
-	DEF    = "DEF"
-	RETURN = "RETURN"
-	AND    = "AND"
-	OR     = "OR"
-	NOT    = "NOT"
+	DEF      = "DEF"
+	RETURN   = "RETURN"
+	BREAK    = "BREAK"
+	CONTINUE = "CONTINUE"
+	PASS     = "PASS"
+	AND      = "AND"
+	OR       = "OR"
+	NOT      = "NOT"
 )
 
 var keywords = map[string]TokenType{
@@ -73,9 +76,12 @@ var keywords = map[string]TokenType{
 	"while":  WHILE,
 	"for":    FOR,
 	"in":     IN,
-	"def":    DEF,
-	"return": RETURN,
-	"and":    AND,
+	"def":      DEF,
+	"return":   RETURN,
+	"break":    BREAK,
+	"continue": CONTINUE,
+	"pass":     PASS,
+	"and":      AND,
 	"or":     OR,
 	"not":    NOT,
 }

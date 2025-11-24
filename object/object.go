@@ -14,6 +14,8 @@ const (
 	STRING_OBJ    = "STRING"
 	NULL_OBJ      = "NULL"
 	RETURN_OBJ    = "RETURN"
+	BREAK_OBJ     = "BREAK"
+	CONTINUE_OBJ  = "CONTINUE"
 	FUNCTION_OBJ  = "FUNCTION"
 	BUILTIN_OBJ   = "BUILTIN"
 	LIST_OBJ      = "LIST"
@@ -66,6 +68,16 @@ type ReturnValue struct {
 
 func (rv *ReturnValue) Type() ObjectType { return RETURN_OBJ }
 func (rv *ReturnValue) Inspect() string  { return rv.Value.Inspect() }
+
+type Break struct{}
+
+func (b *Break) Type() ObjectType { return BREAK_OBJ }
+func (b *Break) Inspect() string  { return "break" }
+
+type Continue struct{}
+
+func (c *Continue) Type() ObjectType { return CONTINUE_OBJ }
+func (c *Continue) Inspect() string  { return "continue" }
 
 type Function struct {
 	Parameters []*ast.Identifier

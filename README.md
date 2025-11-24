@@ -6,7 +6,8 @@ A minimal, sandboxed interpreter for LLM agents to execute code and interact wit
 
 - **Python-like syntax** with indentation-based blocks
 - **Core types**: integers, floats, strings, booleans, lists, dictionaries
-- **Control flow**: if/else, while, for loops
+- **Control flow**: if/elif/else, while, for loops, break, continue, pass
+- **Advanced features**: range(), slice notation, dict methods (keys/values/items)
 - **Functions** with recursion support
 - **Optional libraries**: JSON and HTTP (load on demand)
 - **Go integration**: Register functions, exchange variables
@@ -80,6 +81,14 @@ while x > 0:
 # For loop
 for item in [1, 2, 3]:
     print(item)
+
+# Loop control
+for i in [1, 2, 3, 4, 5]:
+    if i == 3:
+        continue  # Skip 3
+    if i == 5:
+        break     # Stop at 5
+    print(i)
 ```
 
 ### Functions

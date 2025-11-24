@@ -172,6 +172,96 @@ var builtins = map[string]*object.Builtin{
 			return &object.String{Value: strings.ReplaceAll(str, old, new)}
 		},
 	},
+	"range": {
+		Fn: func(args ...object.Object) object.Object {
+			if len(args) < 1 || len(args) > 3 {
+				return newError("wrong number of arguments. got=%d, want=1-3", len(args))
+			}
+			var start, stop, step int64 = 0, 0, 1
+			if len(args) == 1 {
+				if args[0].Type() != object.INTEGER_OBJ {
+					return newError("range arguments must be INTEGER")
+				}
+				stop = args[0].(*object.Integer).Value
+			} else if len(args) == 2 {
+				if args[0].Type() != object.INTEGER_OBJ || args[1].Type() != object.INTEGER_OBJ {
+					return newError("range arguments must be INTEGER")
+				}
+				start = args[0].(*object.Integer).Value
+				stop = args[1].(*object.Integer).Value
+			} else {
+				if args[0].Type() != object.INTEGER_OBJ || args[1].Type() != object.INTEGER_OBJ || args[2].Type() != object.INTEGER_OBJ {
+					return newError("range arguments must be INTEGER")
+				}
+				start = args[0].(*object.Integer).Value
+				stop = args[1].(*object.Integer).Value
+				step = args[2].(*object.Integer).Value
+				if step == 0 {
+					return newError("range step cannot be zero")
+				}
+			}
+			elements := []object.Object{}
+			if step > 0 {
+				for i := start; i < stop; i += step {
+					elements = append(elements, &object.Integer{Value: i})
+				}
+			} else {
+				for i := start; i > stop; i += step {
+					elements = append(elements, &object.Integer{Value: i})
+				}
+			}
+			return &object.List{Elements: elements}
+		},
+	},
+	"keys": {
+		Fn: func(args ...object.Object) object.Object {
+			if len(args) != 1 {
+				return newError("wrong number of arguments. got=%d, want=1", len(args))
+			}
+			if args[0].Type() != object.DICT_OBJ {
+				return newError("argument to keys must be DICT")
+			}
+			dict := args[0].(*object.Dict)
+			elements := make([]object.Object, 0, len(dict.Pairs))
+			for _, pair := range dict.Pairs {
+				elements = append(elements, pair.Key)
+			}
+			return &object.List{Elements: elements}
+		},
+	},
+	"values": {
+		Fn: func(args ...object.Object) object.Object {
+			if len(args) != 1 {
+				return newError("wrong number of arguments. got=%d, want=1", len(args))
+			}
+			if args[0].Type() != object.DICT_OBJ {
+				return newError("argument to values must be DICT")
+			}
+			dict := args[0].(*object.Dict)
+			elements := make([]object.Object, 0, len(dict.Pairs))
+			for _, pair := range dict.Pairs {
+				elements = append(elements, pair.Value)
+			}
+			return &object.List{Elements: elements}
+		},
+	},
+	"items": {
+		Fn: func(args ...object.Object) object.Object {
+			if len(args) != 1 {
+				return newError("wrong number of arguments. got=%d, want=1", len(args))
+			}
+			if args[0].Type() != object.DICT_OBJ {
+				return newError("argument to items must be DICT")
+			}
+			dict := args[0].(*object.Dict)
+			elements := make([]object.Object, 0, len(dict.Pairs))
+			for _, pair := range dict.Pairs {
+				tupleElements := []object.Object{pair.Key, pair.Value}
+				elements = append(elements, &object.List{Elements: tupleElements})
+			}
+			return &object.List{Elements: elements}
+		},
+	},
 }
 
 var importCallback func(string) error

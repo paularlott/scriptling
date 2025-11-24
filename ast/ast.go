@@ -182,6 +182,27 @@ type ReturnStatement struct {
 func (rs *ReturnStatement) statementNode()       {}
 func (rs *ReturnStatement) TokenLiteral() string { return rs.Token.Literal }
 
+type BreakStatement struct {
+	Token token.Token
+}
+
+func (bs *BreakStatement) statementNode()       {}
+func (bs *BreakStatement) TokenLiteral() string { return bs.Token.Literal }
+
+type ContinueStatement struct {
+	Token token.Token
+}
+
+func (cs *ContinueStatement) statementNode()       {}
+func (cs *ContinueStatement) TokenLiteral() string { return cs.Token.Literal }
+
+type PassStatement struct {
+	Token token.Token
+}
+
+func (ps *PassStatement) statementNode()       {}
+func (ps *PassStatement) TokenLiteral() string { return ps.Token.Literal }
+
 type ForStatement struct {
 	Token    token.Token
 	Variable *Identifier
@@ -216,3 +237,13 @@ type IndexExpression struct {
 
 func (ie *IndexExpression) expressionNode()      {}
 func (ie *IndexExpression) TokenLiteral() string { return ie.Token.Literal }
+
+type SliceExpression struct {
+	Token token.Token
+	Left  Expression
+	Start Expression
+	End   Expression
+}
+
+func (se *SliceExpression) expressionNode()      {}
+func (se *SliceExpression) TokenLiteral() string { return se.Token.Literal }

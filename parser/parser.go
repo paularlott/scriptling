@@ -184,6 +184,12 @@ func (p *Parser) parseStatement() ast.Statement {
 		return p.parseForStatement()
 	case token.RETURN:
 		return p.parseReturnStatement()
+	case token.BREAK:
+		return &ast.BreakStatement{Token: p.curToken}
+	case token.CONTINUE:
+		return &ast.ContinueStatement{Token: p.curToken}
+	case token.PASS:
+		return &ast.PassStatement{Token: p.curToken}
 	case token.IDENT:
 		if p.peekTokenIs(token.ASSIGN) {
 			return p.parseAssignStatement()
@@ -569,22 +575,54 @@ func (p *Parser) parseDictLiteral() ast.Expression {
 }
 
 func (p *Parser) parseIndexExpression(left ast.Expression) ast.Expression {
-	exp := &ast.IndexExpression{Token: p.curToken, Left: left}
-
 	if p.curTokenIs(token.DOT) {
 		// Member access: obj.member
+		exp := &ast.IndexExpression{Token: p.curToken, Left: left}
 		if !p.expectPeek(token.IDENT) {
 			return nil
 		}
 		exp.Index = &ast.StringLiteral{Token: p.curToken, Value: p.curToken.Literal}
-	} else {
-		// Bracket access: obj[index]
-		p.nextToken()
-		exp.Index = p.parseExpression(LOWEST)
+		return exp
+	}
+
+	// Bracket access: obj[index] or obj[start:end]
+	tok := p.curToken
+	p.nextToken()
+
+	// Check for slice notation
+	if p.curTokenIs(token.COLON) {
+		// Slice with no start: [:end]
+		slice := &ast.SliceExpression{Token: tok, Left: left, Start: nil}
+		if !p.peekTokenIs(token.RBRACKET) {
+			p.nextToken()
+			slice.End = p.parseExpression(LOWEST)
+		}
 		if !p.expectPeek(token.RBRACKET) {
 			return nil
 		}
+		return slice
 	}
 
+	start := p.parseExpression(LOWEST)
+
+	if p.peekTokenIs(token.COLON) {
+		// Slice notation: [start:end]
+		p.nextToken() // consume colon
+		slice := &ast.SliceExpression{Token: tok, Left: left, Start: start}
+		if !p.peekTokenIs(token.RBRACKET) {
+			p.nextToken()
+			slice.End = p.parseExpression(LOWEST)
+		}
+		if !p.expectPeek(token.RBRACKET) {
+			return nil
+		}
+		return slice
+	}
+
+	// Regular index: [index]
+	exp := &ast.IndexExpression{Token: tok, Left: left, Index: start}
+	if !p.expectPeek(token.RBRACKET) {
+		return nil
+	}
 	return exp
 }

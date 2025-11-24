@@ -203,6 +203,28 @@ for num in numbers:
     print(num)
 ```
 
+### Loop Control
+```python
+# break - exit loop immediately
+for i in [1, 2, 3, 4, 5]:
+    if i == 3:
+        break
+    print(i)  # Prints 1, 2
+
+# continue - skip to next iteration
+for i in [1, 2, 3, 4, 5]:
+    if i == 3:
+        continue
+    print(i)  # Prints 1, 2, 4, 5
+
+# pass - do nothing (placeholder)
+for i in [1, 2, 3]:
+    if i == 2:
+        pass  # Placeholder for future code
+    else:
+        print(i)
+```
+
 ## Functions
 
 ### Definition
@@ -300,7 +322,15 @@ len(person)  # Get number of keys: 3
 ```
 
 ### Iteration
-Not directly supported. Access keys individually.
+```python
+# Iterate over keys
+for key in keys(person):
+    print(key, person[key])
+
+# Iterate over key-value pairs
+for item in items(person):
+    print(item[0], item[1])
+```
 
 ### Notes
 - Keys must be strings
@@ -338,6 +368,44 @@ replace("hello world", "world", "python")  # "hello python"
 ```python
 len([1, 2, 3])                     # 3
 append([1, 2], 3)                  # [1, 2, 3] (returns new list)
+```
+
+### Range Function
+```python
+range(5)                           # [0, 1, 2, 3, 4]
+range(2, 7)                        # [2, 3, 4, 5, 6]
+range(0, 10, 2)                    # [0, 2, 4, 6, 8]
+range(10, 0, -2)                   # [10, 8, 6, 4, 2]
+
+# Use in for loops
+for i in range(5):
+    print(i)
+```
+
+### Dictionary Methods
+```python
+person = {"name": "Alice", "age": "30"}
+
+keys(person)                       # ["name", "age"]
+values(person)                     # ["Alice", "30"]
+items(person)                      # [["name", "Alice"], ["age", "30"]]
+
+# Iterate over dictionary
+for item in items(person):
+    key = item[0]
+    value = item[1]
+    print(key, value)
+```
+
+### Library Import
+```python
+# Import libraries dynamically
+import("json")    # Load JSON library
+import("http")    # Load HTTP library
+
+# Use imported libraries
+data = json.parse('{"key":"value"}')
+response = http.get("https://api.example.com", 10)
 ```
 
 ### JSON Functions
@@ -474,12 +542,31 @@ if create_resp["status"] == 201:
         print("Deleted successfully")
 ```
 
-## String Indexing
+## Indexing and Slicing
 
+### Single Index
 ```python
 word = "hello"
 first = word[0]    # "h"
 last = word[4]     # "o"
+
+numbers = [1, 2, 3, 4, 5]
+first_num = numbers[0]    # 1
+```
+
+### Slice Notation
+```python
+# Lists
+numbers = [0, 1, 2, 3, 4, 5]
+numbers[1:4]       # [1, 2, 3]
+numbers[:3]        # [0, 1, 2]
+numbers[3:]        # [3, 4, 5]
+
+# Strings
+text = "Hello World"
+text[0:5]          # "Hello"
+text[6:]           # "World"
+text[:5]           # "Hello"
 ```
 
 ## Limitations & Differences from Python
@@ -488,18 +575,12 @@ last = word[4]     # "o"
 - List comprehensions
 - Lambda functions
 - Classes and objects
-- Modules/imports
 - Exception handling (try/except)
 - Multiple assignment: `a, b = 1, 2`
-- Slice notation: `list[1:3]`
-- `range()` function
-- Dictionary methods: `keys()`, `values()`, `items()`
-- `break` and `continue` in loops
 - Global/nonlocal keywords
 - Decorators
 - Generators
 - `with` statement
-- `pass` statement
 
 ### Key Differences
 - No `None` literal (use functions that return None)
@@ -581,16 +662,22 @@ See the `examples/` directory:
 When generating Scriptling code:
 1. Use 4-space indentation for blocks
 2. Use `True`/`False` for booleans (capitalized)
-3. HTTP functions return `{"status": int, "body": string, "headers": dict}`
-4. HTTP functions accept optional headers dictionary
-5. Always use `json_parse()` and `json_stringify()` for JSON
-6. Use `elif` for multiple conditions
-7. Use augmented assignment: `x += 1`, `x *= 2`, etc.
-8. `append()` returns new list
-9. Strings use `+` for concatenation
-10. Use `.py` file extension
-11. Always specify timeouts for HTTP calls
-12. Check `response["status"]` before processing
+3. Use `range(n)`, `range(start, stop)`, or `range(start, stop, step)` for numeric loops
+4. Use slice notation: `list[1:3]`, `list[:3]`, `list[3:]`, `string[0:5]`
+5. Use `keys(dict)`, `values(dict)`, `items(dict)` for dictionary iteration
+6. HTTP functions return `{"status": int, "body": string, "headers": dict}`
+7. HTTP functions accept optional headers dictionary
+8. Use `import("json")` and `import("http")` to load libraries
+9. Always use `json_parse()` and `json_stringify()` for JSON
+10. Use `elif` for multiple conditions
+11. Use augmented assignment: `x += 1`, `x *= 2`, etc.
+12. Use `break` to exit loops, `continue` to skip iterations
+13. Use `pass` as a placeholder in empty blocks
+14. `append()` returns new list
+15. Strings use `+` for concatenation
+16. Use `.py` file extension
+17. Always specify timeouts for HTTP calls
+18. Check `response["status"]` before processing
 
 ## Quick Syntax Reference
 
@@ -618,6 +705,14 @@ while x > 0:
     x -= 1
 
 for item in [1, 2, 3]:
+    if item == 2:
+        continue  # Skip 2
+    print(item)
+
+# break exits loop
+for item in [1, 2, 3, 4, 5]:
+    if item == 4:
+        break  # Stop at 4
     print(item)
 
 # Functions
@@ -629,6 +724,17 @@ nums = [1, 2, 3]
 data = {"key": "value"}
 first = nums[0]
 val = data["key"]
+
+# Range and slicing
+for i in range(5):
+    print(i)
+
+sublist = nums[1:3]  # [2, 3]
+text = "hello"[1:4]  # "ell"
+
+# Dictionary methods
+for item in items(data):
+    print(item[0], item[1])
 
 # HTTP with headers and status check
 headers = {"Authorization": "Bearer token"}

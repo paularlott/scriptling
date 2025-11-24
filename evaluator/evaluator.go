@@ -57,6 +57,12 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 			}
 		}
 		return &object.ReturnValue{Value: val}
+	case *ast.BreakStatement:
+		return &object.Break{}
+	case *ast.ContinueStatement:
+		return &object.Continue{}
+	case *ast.PassStatement:
+		return NULL
 	case *ast.AssignStatement:
 		val := Eval(node.Value, env)
 		if isError(val) {
@@ -104,6 +110,8 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 			return index
 		}
 		return evalIndexExpression(left, index)
+	case *ast.SliceExpression:
+		return evalSliceExpression(node, env)
 	case *ast.ForStatement:
 		return evalForStatement(node, env)
 	}
@@ -135,7 +143,7 @@ func evalBlockStatement(block *ast.BlockStatement, env *object.Environment) obje
 
 		if result != nil {
 			rt := result.Type()
-			if rt == object.RETURN_OBJ || rt == "ERROR" {
+			if rt == object.RETURN_OBJ || rt == object.BREAK_OBJ || rt == object.CONTINUE_OBJ || rt == "ERROR" {
 				return result
 			}
 		}
@@ -353,6 +361,12 @@ func evalWhileStatement(ws *ast.WhileStatement, env *object.Environment) object.
 		if result.Type() == object.RETURN_OBJ {
 			return result
 		}
+		if result.Type() == object.BREAK_OBJ {
+			return NULL
+		}
+		if result.Type() == object.CONTINUE_OBJ {
+			continue
+		}
 	}
 
 	return result
@@ -552,6 +566,81 @@ func evalAugmentedAssignStatement(node *ast.AugmentedAssignStatement, env *objec
 	return result
 }
 
+func evalSliceExpression(node *ast.SliceExpression, env *object.Environment) object.Object {
+	left := Eval(node.Left, env)
+	if isError(left) {
+		return left
+	}
+
+	var start, end int64
+	var hasStart, hasEnd bool
+
+	if node.Start != nil {
+		startObj := Eval(node.Start, env)
+		if isError(startObj) {
+			return startObj
+		}
+		if startObj.Type() != object.INTEGER_OBJ {
+			return newError("slice start must be INTEGER")
+		}
+		start = startObj.(*object.Integer).Value
+		hasStart = true
+	}
+
+	if node.End != nil {
+		endObj := Eval(node.End, env)
+		if isError(endObj) {
+			return endObj
+		}
+		if endObj.Type() != object.INTEGER_OBJ {
+			return newError("slice end must be INTEGER")
+		}
+		end = endObj.(*object.Integer).Value
+		hasEnd = true
+	}
+
+	switch obj := left.(type) {
+	case *object.List:
+		length := int64(len(obj.Elements))
+		if !hasStart {
+			start = 0
+		}
+		if !hasEnd {
+			end = length
+		}
+		if start < 0 {
+			start = 0
+		}
+		if end > length {
+			end = length
+		}
+		if start > end {
+			start = end
+		}
+		return &object.List{Elements: obj.Elements[start:end]}
+	case *object.String:
+		length := int64(len(obj.Value))
+		if !hasStart {
+			start = 0
+		}
+		if !hasEnd {
+			end = length
+		}
+		if start < 0 {
+			start = 0
+		}
+		if end > length {
+			end = length
+		}
+		if start > end {
+			start = end
+		}
+		return &object.String{Value: obj.Value[start:end]}
+	default:
+		return newError("slice operator not supported: %s", left.Type())
+	}
+}
+
 func evalForStatement(fs *ast.ForStatement, env *object.Environment) object.Object {
 	iterable := Eval(fs.Iterable, env)
 	if isError(iterable) {
@@ -571,6 +660,12 @@ func evalForStatement(fs *ast.ForStatement, env *object.Environment) object.Obje
 			if result.Type() == object.RETURN_OBJ {
 				return result
 			}
+			if result.Type() == object.BREAK_OBJ {
+				return NULL
+			}
+			if result.Type() == object.CONTINUE_OBJ {
+				continue
+			}
 		}
 	case *object.String:
 		for _, char := range iter.Value {
@@ -581,6 +676,12 @@ func evalForStatement(fs *ast.ForStatement, env *object.Environment) object.Obje
 			}
 			if result.Type() == object.RETURN_OBJ {
 				return result
+			}
+			if result.Type() == object.BREAK_OBJ {
+				return NULL
+			}
+			if result.Type() == object.CONTINUE_OBJ {
+				continue
 			}
 		}
 	default:
