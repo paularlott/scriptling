@@ -310,6 +310,8 @@ go test ./evaluator -v
 - **Lightweight**: Core interpreter has minimal overhead
 - **On-demand loading**: Only load JSON/HTTP when needed
 - **Fast execution**: Optimized for embedded use
+- **Global cache**: Compiled scripts cached globally with LRU eviction
+- **Thread-safe**: Safe for concurrent use across multiple instances
 
 ## License
 

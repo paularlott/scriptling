@@ -1,0 +1,107 @@
+package scriptling
+
+import (
+	"container/list"
+	"crypto/sha256"
+	"encoding/hex"
+	"sync"
+	"time"
+	"github.com/paularlott/scriptling/ast"
+)
+
+type cacheEntry struct {
+	key      string
+	program  *ast.Program
+	lastUsed time.Time
+}
+
+type programCache struct {
+	mu      sync.RWMutex
+	entries map[string]*list.Element
+	lru     *list.List
+	maxSize int
+}
+
+var globalCache = &programCache{
+	entries: make(map[string]*list.Element),
+	lru:     list.New(),
+	maxSize: 1000, // Max 1000 cached programs
+}
+
+func (c *programCache) get(script string) (*ast.Program, bool) {
+	key := hashScript(script)
+	
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	
+	elem, ok := c.entries[key]
+	if !ok {
+		return nil, false
+	}
+	
+	// Move to front (most recently used)
+	c.lru.MoveToFront(elem)
+	entry := elem.Value.(*cacheEntry)
+	entry.lastUsed = time.Now()
+	
+	return entry.program, true
+}
+
+func (c *programCache) set(script string, program *ast.Program) {
+	key := hashScript(script)
+	
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	
+	// Check if already exists
+	if elem, ok := c.entries[key]; ok {
+		c.lru.MoveToFront(elem)
+		entry := elem.Value.(*cacheEntry)
+		entry.program = program
+		entry.lastUsed = time.Now()
+		return
+	}
+	
+	// Evict old entries if cache is full
+	for len(c.entries) >= c.maxSize {
+		if !c.evictOldest() {
+			break
+		}
+	}
+	
+	// Add new entry at front
+	entry := &cacheEntry{
+		key:      key,
+		program:  program,
+		lastUsed: time.Now(),
+	}
+	elem := c.lru.PushFront(entry)
+	c.entries[key] = elem
+}
+
+func hashScript(script string) string {
+	hash := sha256.Sum256([]byte(script))
+	return hex.EncodeToString(hash[:])
+}
+
+func (c *programCache) evictOldest() bool {
+	// Get oldest entry (at back of list)
+	elem := c.lru.Back()
+	if elem == nil {
+		return false
+	}
+	
+	entry := elem.Value.(*cacheEntry)
+	
+	// Check if entry is recent (used within last 3 seconds)
+	if time.Since(entry.lastUsed) < 3*time.Second {
+		return false // Don't evict recent entries
+	}
+	
+	// Remove oldest entry
+	c.lru.Remove(elem)
+	delete(c.entries, entry.key)
+	return true
+}
+
+

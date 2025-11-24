@@ -2,7 +2,6 @@ package scriptling
 
 import (
 	"fmt"
-	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/evaluator"
 	"github.com/paularlott/scriptling/lexer"
 	"github.com/paularlott/scriptling/object"
@@ -11,8 +10,7 @@ import (
 )
 
 type Scriptling struct {
-	env         *object.Environment
-	programCache map[string]*ast.Program
+	env *object.Environment
 }
 
 var availableLibraries = map[string]func() map[string]*object.Builtin{
@@ -23,8 +21,7 @@ var availableLibraries = map[string]func() map[string]*object.Builtin{
 
 func New(libraries ...string) *Scriptling {
 	p := &Scriptling{
-		env:          object.NewEnvironment(),
-		programCache: make(map[string]*ast.Program),
+		env: object.NewEnvironment(),
 	}
 	
 	// Register import builtin
@@ -49,7 +46,8 @@ func (p *Scriptling) loadLibrary(name string) error {
 }
 
 func (p *Scriptling) Eval(input string) (object.Object, error) {
-	program, ok := p.programCache[input]
+	// Try global cache first
+	program, ok := globalCache.get(input)
 	if !ok {
 		l := lexer.New(input)
 		par := parser.New(l)
@@ -57,7 +55,8 @@ func (p *Scriptling) Eval(input string) (object.Object, error) {
 		if len(par.Errors()) != 0 {
 			return nil, fmt.Errorf("parser errors: %v", par.Errors())
 		}
-		p.programCache[input] = program
+		// Store in global cache
+		globalCache.set(input, program)
 	}
 
 	result := evaluator.Eval(program, p.env)

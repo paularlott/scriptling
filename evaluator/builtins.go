@@ -126,11 +126,19 @@ var builtins = map[string]*object.Builtin{
 			}
 			list := args[0].(*object.List)
 			sep := args[1].(*object.String).Value
-			parts := make([]string, len(list.Elements))
-			for i, el := range list.Elements {
-				parts[i] = el.Inspect()
+			if len(list.Elements) == 0 {
+				return &object.String{Value: ""}
 			}
-			return &object.String{Value: strings.Join(parts, sep)}
+			if len(list.Elements) == 1 {
+				return &object.String{Value: list.Elements[0].Inspect()}
+			}
+			var buf strings.Builder
+			buf.WriteString(list.Elements[0].Inspect())
+			for i := 1; i < len(list.Elements); i++ {
+				buf.WriteString(sep)
+				buf.WriteString(list.Elements[i].Inspect())
+			}
+			return &object.String{Value: buf.String()}
 		},
 	},
 	"upper": {

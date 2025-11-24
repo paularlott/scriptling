@@ -2,7 +2,6 @@ package lexer
 
 import (
 	"github.com/paularlott/scriptling/token"
-	"unicode"
 )
 
 type Lexer struct {
@@ -238,11 +237,11 @@ func (l *Lexer) countIndent() int {
 }
 
 func (l *Lexer) readIdentifier() string {
-	position := l.position
-	for isLetter(l.ch) || isDigit(l.ch) {
+	start := l.position
+	for l.ch == '_' || (l.ch >= 'a' && l.ch <= 'z') || (l.ch >= 'A' && l.ch <= 'Z') || (l.ch >= '0' && l.ch <= '9') {
 		l.readChar()
 	}
-	return l.input[position:l.position]
+	return l.input[start:l.position]
 }
 
 func (l *Lexer) readNumber() (string, bool) {
@@ -273,9 +272,9 @@ func (l *Lexer) readString(quote byte) string {
 }
 
 func isLetter(ch byte) bool {
-	return unicode.IsLetter(rune(ch)) || ch == '_'
+	return ch == '_' || (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
 }
 
 func isDigit(ch byte) bool {
-	return '0' <= ch && ch <= '9'
+	return ch >= '0' && ch <= '9'
 }

@@ -307,6 +307,12 @@ func evalFloatInfixExpression(operator string, left, right object.Object) object
 func evalStringInfixExpression(operator string, leftVal, rightVal string) object.Object {
 	switch operator {
 	case "+":
+		if len(leftVal) == 0 {
+			return &object.String{Value: rightVal}
+		}
+		if len(rightVal) == 0 {
+			return &object.String{Value: leftVal}
+		}
 		return &object.String{Value: leftVal + rightVal}
 	case "==":
 		return nativeBoolToBooleanObject(leftVal == rightVal)
@@ -388,14 +394,17 @@ func evalIdentifier(node *ast.Identifier, env *object.Environment) object.Object
 }
 
 func evalExpressions(exps []ast.Expression, env *object.Environment) []object.Object {
-	result := make([]object.Object, 0, len(exps))
+	if len(exps) == 0 {
+		return nil
+	}
+	result := make([]object.Object, len(exps))
 
-	for _, e := range exps {
+	for i, e := range exps {
 		evaluated := Eval(e, env)
 		if isError(evaluated) {
 			return []object.Object{evaluated}
 		}
-		result = append(result, evaluated)
+		result[i] = evaluated
 	}
 
 	return result
@@ -458,6 +467,9 @@ func isError(obj object.Object) bool {
 }
 
 func evalDictLiteral(node *ast.DictLiteral, env *object.Environment) object.Object {
+	if len(node.Pairs) == 0 {
+		return &object.Dict{Pairs: make(map[string]object.DictPair)}
+	}
 	pairs := make(map[string]object.DictPair, len(node.Pairs))
 
 	for keyNode, valueNode := range node.Pairs {
@@ -471,8 +483,7 @@ func evalDictLiteral(node *ast.DictLiteral, env *object.Environment) object.Obje
 			return value
 		}
 
-		hashKey := key.Inspect()
-		pairs[hashKey] = object.DictPair{Key: key, Value: value}
+		pairs[key.Inspect()] = object.DictPair{Key: key, Value: value}
 	}
 
 	return &object.Dict{Pairs: pairs}
