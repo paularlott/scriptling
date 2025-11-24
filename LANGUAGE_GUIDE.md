@@ -603,7 +603,7 @@ text[:5]           # "Hello"
 ### Error Handling
 ```python
 # Check HTTP status codes
-response = http_get("https://api.example.com/data")
+response = http.get("https://api.example.com/data")
 if response["status"] != 200:
     print("Error: " + str(response["status"]))
     return
@@ -617,28 +617,28 @@ if data["count"] > 0:
 ### Timeouts
 ```python
 # Always specify timeouts for external calls
-response = http_get("https://slow-api.com/data", 5)  # 5 second timeout
+response = http.get("https://slow-api.com/data", 5)  # 5 second timeout
 ```
 
 ### JSON Handling
 ```python
 # Always parse JSON responses
-response = http_get("https://api.example.com/users")
+response = http.get("https://api.example.com/users")
 users = json_parse(response["body"])
 
 # Always stringify before sending
 payload = {"name": "Alice"}
 body = json_stringify(payload)
-http_post("https://api.example.com/users", body)
+http.post("https://api.example.com/users", body)
 ```
 
 ### Variable Naming
 ```python
 # Use descriptive names
 user_count = 10
-api_response = http_get(url)
+api_response = http.get(url)
 
-# Not: x = 10, r = http_get(url)
+# Not: x = 10, r = http.get(url)
 ```
 
 ## File Extension

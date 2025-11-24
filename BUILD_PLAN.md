@@ -45,8 +45,8 @@ A minimal Python-like scripting language interpreter written in Go, designed as 
 - Functions: `def name(args): ...`
 - Built-ins: `print()`, `len()`, `str()`, `int()`, `float()`
 - String functions: `split()`, `join()`, `upper()`, `lower()`
-- JSON: `json_parse()`, `json_stringify()`
-- HTTP: `http_get()`, `http_post()`
+- JSON: `json.parse()`, `json.stringify()`
+- HTTP: `http.get()`, `http.post()`
 - Comments: `# comment`
 
 ## File Structure
@@ -159,8 +159,8 @@ Last Updated: Phase 2 complete with 42 passing tests
 - [x] Enhanced `len()` for lists and dicts
 
 ### REST/HTTP Support
-- [x] JSON parsing: `json_parse()`, `json_stringify()`
-- [x] HTTP client: `http_get()`, `http_post()`, `http_put()`, `http_delete()`, `http_patch()`
+- [x] JSON parsing: `json.parse()`, `json.stringify()`
+- [x] HTTP client: `http.get()`, `http.post()`, `http.put()`, `http.delete()`, `http.patch()`
 - [x] Response objects with status codes and headers
 - [x] Configurable timeouts (default 30s)
 - [x] Timeout error handling
@@ -172,7 +172,7 @@ Last Updated: Phase 2 complete with 42 passing tests
 - **42 test cases** across all components
 - **100% pass rate**
 - Lexer: 7 tests
-- Parser: 7 tests  
+- Parser: 7 tests
 - Evaluator: 12 tests
 - Integration: 10 tests
 - Main package: 6 tests
