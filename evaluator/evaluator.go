@@ -233,7 +233,8 @@ func evalIntegerInfixExpression(operator string, leftVal, rightVal int64) object
 		if rightVal == 0 {
 			return newError("division by zero")
 		}
-		return &object.Integer{Value: leftVal / rightVal}
+		// True division: always return float
+		return &object.Float{Value: float64(leftVal) / float64(rightVal)}
 	case "%":
 		return &object.Integer{Value: leftVal % rightVal}
 	case "<":

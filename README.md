@@ -59,6 +59,10 @@ flag = True                     # Boolean
 numbers = [1, 2, 3]            # List
 person = {"name": "Bob"}        # Dictionary
 
+# Arithmetic (division always returns float)
+result = 5 / 2                  # 2.5 (true division like Python 3)
+remainder = 5 % 2               # 1 (modulo)
+
 # Augmented assignment
 x += 10                         # x = x + 10
 pi *= 2                         # pi = pi * 2

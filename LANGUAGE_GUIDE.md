@@ -596,7 +596,6 @@ text[:5]           # "Hello"
 ### Key Differences
 - No `None` literal (use functions that return None)
 - String concatenation: `+` only (no f-strings or %)
-- Integer division: `/` performs integer division for integers
 - No implicit type coercion in most operations
 
 ## Best Practices

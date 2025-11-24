@@ -226,8 +226,8 @@ numbers[3:]             # [4, 5]
 x + y    # Addition
 x - y    # Subtraction
 x * y    # Multiplication
-x / y    # Division (integer division for integers)
-x % y    # Modulo
+x / y    # Division (always returns float, e.g., 5 / 2 = 2.5)
+x % y    # Modulo (remainder, e.g., 5 % 2 = 1)
 
 # Augmented assignment
 x += 5   # x = x + 5

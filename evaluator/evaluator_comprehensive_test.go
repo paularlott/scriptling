@@ -161,18 +161,23 @@ x
 func TestAugmentedAssignment(t *testing.T) {
 	tests := []struct {
 		input    string
-		expected int64
+		expected interface{}
 	}{
-		{"x = 10\nx += 5\nx", 15},
-		{"x = 10\nx -= 3\nx", 7},
-		{"x = 10\nx *= 2\nx", 20},
-		{"x = 10\nx /= 2\nx", 5},
-		{"x = 10\nx %= 3\nx", 1},
+		{"x = 10\nx += 5\nx", int64(15)},
+		{"x = 10\nx -= 3\nx", int64(7)},
+		{"x = 10\nx *= 2\nx", int64(20)},
+		{"x = 10\nx /= 2\nx", float64(5.0)},
+		{"x = 10\nx %= 3\nx", int64(1)},
 	}
 
 	for _, tt := range tests {
 		evaluated := testEval(tt.input)
-		testIntegerObject(t, evaluated, tt.expected)
+		switch expected := tt.expected.(type) {
+		case int64:
+			testIntegerObject(t, evaluated, expected)
+		case float64:
+			testFloatObject(t, evaluated, expected)
+		}
 	}
 }
 
