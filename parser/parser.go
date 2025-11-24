@@ -175,6 +175,8 @@ func (p *Parser) ParseProgram() *ast.Program {
 
 func (p *Parser) parseStatement() ast.Statement {
 	switch p.curToken.Type {
+	case token.IMPORT:
+		return p.parseImportStatement()
 	case token.DEF:
 		return p.parseFunctionStatement()
 	case token.IF:
@@ -232,6 +234,17 @@ func (p *Parser) parseAugmentedAssignStatement() *ast.AugmentedAssignStatement {
 	p.nextToken()
 	stmt.Value = p.parseExpression(LOWEST)
 
+	return stmt
+}
+
+func (p *Parser) parseImportStatement() *ast.ImportStatement {
+	stmt := &ast.ImportStatement{Token: p.curToken}
+	
+	if !p.expectPeek(token.IDENT) {
+		return nil
+	}
+	
+	stmt.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
 	return stmt
 }
 

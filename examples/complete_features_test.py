@@ -1,5 +1,5 @@
-import("json")
-import("http")
+import json
+import http
 
 print("=== Complete Scriptling Feature Test ===\n")
 

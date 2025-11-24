@@ -65,6 +65,8 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		return &object.Continue{}
 	case *ast.PassStatement:
 		return NULL
+	case *ast.ImportStatement:
+		return evalImportStatement(node, env)
 	case *ast.AssignStatement:
 		val := Eval(node.Value, env)
 		if isError(val) {
@@ -642,6 +644,17 @@ func evalSliceExpression(node *ast.SliceExpression, env *object.Environment) obj
 	default:
 		return newError("slice operator not supported: %s", left.Type())
 	}
+}
+
+func evalImportStatement(is *ast.ImportStatement, env *object.Environment) object.Object {
+	if importCallback == nil {
+		return newError("import not available")
+	}
+	err := importCallback(is.Name.Value)
+	if err != nil {
+		return newError("import error: %s", err.Error())
+	}
+	return NULL
 }
 
 func evalForStatement(fs *ast.ForStatement, env *object.Environment) object.Object {

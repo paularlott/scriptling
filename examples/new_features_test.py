@@ -1,5 +1,5 @@
-import("json")
-import("http")
+import json
+import http
 
 # Test Python-style booleans
 active = True

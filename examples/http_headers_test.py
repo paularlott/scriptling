@@ -1,5 +1,5 @@
-import("http")
-import("json")
+import http
+import json
 
 # Test HTTP with headers
 print("Testing HTTP with headers...")

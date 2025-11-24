@@ -29,8 +29,8 @@ p := scriptling.New("json")
 
 ```python
 # Import libraries dynamically
-import("json")
-import("http")
+import json
+import http
 
 # Now use them
 data = json.parse('{"name":"Alice"}')
@@ -47,7 +47,7 @@ response = http.get("https://api.example.com/data", 10)
 
 **Example:**
 ```python
-import("json")
+import json
 
 # Parse
 data = json.parse('{"users":[{"name":"Alice"},{"name":"Bob"}]}')
@@ -56,6 +56,63 @@ first_user = data["users"][0]["name"]  # "Alice"
 # Stringify
 obj = {"status": "success", "count": "42"}
 json_str = json.stringify(obj)  # '{"count":"42","status":"success"}'
+```
+
+### regex
+
+**Functions:**
+- `re.match(pattern, text)` - Returns True if pattern matches text
+- `re.find(pattern, text)` - Returns first match or None
+- `re.findall(pattern, text)` - Returns list of all matches
+- `re.replace(pattern, text, replacement)` - Replace all matches
+- `re.split(pattern, text)` - Split text by pattern
+
+**Example:**
+```python
+import re
+
+# Match
+if re.match("[0-9]+", "abc123"):
+    print("Contains digits")
+
+# Find
+email = re.find("[a-z]+@[a-z]+\.[a-z]+", "Contact: user@example.com")
+print(email)  # "user@example.com"
+
+# Find all
+phones = re.findall("[0-9]{3}-[0-9]{4}", "Call 555-1234 or 555-5678")
+print(phones)  # ["555-1234", "555-5678"]
+
+# Replace
+text = re.replace("[0-9]+", "Price: 100", "REDACTED")
+print(text)  # "Price: REDACTED"
+
+# Split
+parts = re.split("[,;]", "one,two;three")
+print(parts)  # ["one", "two", "three"]
+```
+
+### regex
+
+**Functions:**
+- `re.match(pattern, text)` - Check if pattern matches (returns boolean)
+- `re.find(pattern, text)` - Find first match (returns string or None)
+- `re.findall(pattern, text)` - Find all matches (returns list)
+- `re.replace(pattern, text, replacement)` - Replace matches (returns string)
+- `re.split(pattern, text)` - Split by pattern (returns list)
+
+**Example:**
+```python
+import re
+
+# Extract email
+email = re.find("[a-z]+@[a-z]+\.[a-z]+", "Contact: user@example.com")
+
+# Find all numbers
+numbers = re.findall("[0-9]+", "abc123def456")
+
+# Replace digits
+text = re.replace("[0-9]+", "Price: 100", "XXX")
 ```
 
 ### http
@@ -77,8 +134,8 @@ Default timeout: 5 seconds
 
 **Example:**
 ```python
-import("json")
-import("http")
+import json
+import http
 
 # Simple GET request (5 second timeout)
 response = http.get("https://api.example.com/users/1")
@@ -135,7 +192,7 @@ Always available without importing:
 - `append(list, item)` - Append item (returns new list)
 
 ### System
-- `import(library_name)` - Load library dynamically
+- `import library_name` - Load library dynamically
 
 ## Creating Custom Libraries
 
@@ -238,14 +295,14 @@ var availableLibraries = map[string]func() map[string]*object.Builtin{
 
 3. Use it:
 ```python
-import("mylib")
+import mylib
 mylib.func1()
 ```
 
 ## Best Practices
 
 1. **Load only what you need**: `scriptling.New()` for core, `scriptling.New("json")` when needed
-2. **Use import() in scripts**: Dynamic loading based on script needs
+2. **Use import in scripts**: Dynamic loading based on script needs
 3. **Check HTTP status codes**: Always check `response["status"]` before processing
 4. **Set timeouts**: Always specify timeouts for HTTP calls
 5. **Handle errors**: Check for errors in Go and validate data in Scriptling

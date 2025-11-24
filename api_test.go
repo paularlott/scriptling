@@ -51,7 +51,7 @@ func TestRegisterLibrary(t *testing.T) {
 func TestImportBuiltin(t *testing.T) {
 	p := New()
 	_, err := p.Eval(`
-import("json")
+import json
 data = json.parse('{"key":"value"}')
 result = data["key"]
 `)

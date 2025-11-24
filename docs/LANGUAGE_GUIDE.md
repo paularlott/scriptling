@@ -404,15 +404,17 @@ for item in items(person):
 
 ### Library Import
 ```python
-# Import libraries dynamically. The import() function loads the library
+# Import libraries dynamically. The import statement loads the library
 # and makes its functions available as a global object.
-import("json")    # Load JSON library, creates a global 'json' object
-import("http")    # Load HTTP library, creates a global 'http' object
+import json    # Load JSON library, creates a global 'json' object
+import http    # Load HTTP library, creates a global 'http' object
+import re   # Load regex library, creates a global 'regex' object
 
 # Use imported libraries directly via their global object
 data = json.parse('{"key":"value"}')
 options = {"timeout": 10}
 response = http.get("https://api.example.com", options)
+matches = re.findall("[0-9]+", "abc123def456")
 ```
 
 ### JSON Functions
@@ -677,18 +679,19 @@ When generating Scriptling code:
 5. Use `keys(dict)`, `values(dict)`, `items(dict)` for dictionary iteration
 6. HTTP functions return `{"status": int, "body": string, "headers": dict}`
 7. HTTP functions accept optional options dictionary with `timeout` and `headers` keys
-8. Use `import("json")` and `import("http")` to load libraries
+8. Use `import json`, `import http`, `import re` to load libraries
 9. Always use `json.parse()` and `json.stringify()` for JSON (dot notation)
 10. Always use `http.get()`, `http.post()`, etc. for HTTP (dot notation)
-11. Default HTTP timeout is 5 seconds if not specified
-12. Use `elif` for multiple conditions
-13. Use augmented assignment: `x += 1`, `x *= 2`, etc.
-14. Use `break` to exit loops, `continue` to skip iterations
-15. Use `pass` as a placeholder in empty blocks
-16. `append(list, item)` modifies list in-place (like Python)
-17. Strings use `+` for concatenation
-18. Use `.py` file extension
-19. Check `response["status"]` before processing
+11. Use `re.match()`, `re.find()`, `re.findall()`, `re.replace()`, `re.split()` for regex
+12. Default HTTP timeout is 5 seconds if not specified
+13. Use `elif` for multiple conditions
+14. Use augmented assignment: `x += 1`, `x *= 2`, etc.
+15. Use `break` to exit loops, `continue` to skip iterations
+16. Use `pass` as a placeholder in empty blocks
+17. `append(list, item)` modifies list in-place (like Python)
+18. Strings use `+` for concatenation
+19. Use `.py` file extension
+20. Check `response["status"]` before processing
 
 ## Quick Syntax Reference
 

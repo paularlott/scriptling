@@ -210,6 +210,14 @@ type PassStatement struct {
 func (ps *PassStatement) statementNode()       {}
 func (ps *PassStatement) TokenLiteral() string { return ps.Token.Literal }
 
+type ImportStatement struct {
+	Token token.Token
+	Name  *Identifier
+}
+
+func (is *ImportStatement) statementNode()       {}
+func (is *ImportStatement) TokenLiteral() string { return is.Token.Literal }
+
 type ForStatement struct {
 	Token    token.Token
 	Variable *Identifier

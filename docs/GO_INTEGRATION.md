@@ -23,11 +23,11 @@ import (
 func main() {
     // Create interpreter without libraries (lightweight)
     p := scriptling.New()
-    
+
     // Create interpreter with specific libraries
     p := scriptling.New("json")
     p := scriptling.New("json", "http")
-    
+
     // Execute Scriptling code
     result, err := p.Eval(`x = 5 + 3`)
     if err != nil {
@@ -137,7 +137,7 @@ p.RegisterFunc("process_data", func(args ...object.Object) object.Object {
     if len(args) != 2 {
         return &object.String{Value: "Error: requires 2 arguments"}
     }
-    
+
     // Get string argument
     var text string
     if strObj, ok := args[0].(*object.String); ok {
@@ -145,7 +145,7 @@ p.RegisterFunc("process_data", func(args ...object.Object) object.Object {
     } else {
         return &object.String{Value: "Error: first argument must be string"}
     }
-    
+
     // Get integer argument
     var count int64
     if intObj, ok := args[1].(*object.Integer); ok {
@@ -153,10 +153,10 @@ p.RegisterFunc("process_data", func(args ...object.Object) object.Object {
     } else {
         return &object.String{Value: "Error: second argument must be integer"}
     }
-    
+
     // Process in Go
     result := strings.Repeat(text, int(count))
-    
+
     return &object.String{Value: result}
 })
 ```
@@ -180,13 +180,13 @@ p.RegisterFunc("get_system_info", func(args ...object.Object) object.Object {
             Value: &object.Integer{Value: int64(runtime.NumCPU())},
         },
     }
-    
+
     hash := &object.Hash{Pairs: make(map[object.HashKey]object.HashPair)}
     for _, pair := range pairs {
         key := pair.Key.(object.Hashable).HashKey()
         hash.Pairs[key] = pair
     }
-    
+
     return hash
 })
 
@@ -215,7 +215,7 @@ myLib := map[string]*object.Builtin{
             if len(args) != 2 {
                 return &object.Integer{Value: 0}
             }
-            
+
             var a, b int64
             if intObj, ok := args[0].(*object.Integer); ok {
                 a = intObj.Value
@@ -223,7 +223,7 @@ myLib := map[string]*object.Builtin{
             if intObj, ok := args[1].(*object.Integer); ok {
                 b = intObj.Value
             }
-            
+
             return &object.Integer{Value: a + b}
         },
     },
@@ -234,7 +234,7 @@ p.RegisterLibrary("mylib", myLib)
 
 // Use from Scriptling
 p.Eval(`
-import("mylib")
+import mylib
 message = mylib.hello()
 result = mylib.add(5, 3)
 print(message)  # Hello from custom library!
@@ -290,7 +290,7 @@ counter := &Counter{value: 0}
 p.RegisterLibrary("counter", counter.CreateLibrary())
 
 p.Eval(`
-import("counter")
+import counter
 counter.set(10)
 print(counter.increment())  # 11
 print(counter.increment())  # 12
@@ -307,7 +307,7 @@ import (
     "fmt"
     "log"
     "os"
-    
+
     "github.com/paularlott/scriptling"
     "github.com/paularlott/scriptling/object"
 )
@@ -315,12 +315,12 @@ import (
 func main() {
     // Create interpreter with libraries
     p := scriptling.New("json", "http")
-    
+
     // Set configuration from Go
     p.SetVar("api_base", "https://api.example.com")
     p.SetVar("api_key", os.Getenv("API_KEY"))
     p.SetVar("timeout", 30)
-    
+
     // Register custom logging function
     p.RegisterFunc("log_info", func(args ...object.Object) object.Object {
         if len(args) > 0 {
@@ -330,7 +330,7 @@ func main() {
         }
         return &object.String{Value: "logged"}
     })
-    
+
     // Execute automation script
     script := `
 log_info("Starting API automation")
@@ -343,29 +343,29 @@ response = http.get(url, options)
 if response["status"] == 200:
     users = json.parse(response["body"])
     log_info("Found " + str(len(users)) + " users")
-    
+
     # Process each user
     for user in users:
         if user["active"]:
             log_info("Processing user: " + user["name"])
             # Additional processing...
-    
+
     success = True
 else:
     log_info("API call failed: " + str(response["status"]))
     success = False
 `
-    
+
     result, err := p.Eval(script)
     if err != nil {
         log.Fatalf("Script error: %v", err)
     }
-    
+
     // Get results
     if success, ok := p.GetVar("success"); ok {
         fmt.Printf("Automation completed successfully: %v\n", success)
     }
-    
+
     fmt.Printf("Script result: %v\n", result.Inspect())
 }
 ```
@@ -453,15 +453,15 @@ for _, script := range scripts {
 ```go
 func TestScriptlingIntegration(t *testing.T) {
     p := scriptling.New()
-    
+
     // Test variable setting
     p.SetVar("test_var", 42)
-    
+
     result, err := p.Eval(`result = test_var * 2`)
     if err != nil {
         t.Fatalf("Eval error: %v", err)
     }
-    
+
     // Test variable getting
     if value, ok := p.GetVar("result"); ok {
         if intObj, ok := value.(*object.Integer); ok {
@@ -501,7 +501,7 @@ if env == "production":
     db_host = "prod.db.example.com"
     cache_size = 1000
 else:
-    db_host = "dev.db.example.com" 
+    db_host = "dev.db.example.com"
     cache_size = 100
 `
 

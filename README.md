@@ -32,7 +32,7 @@ import (
 func main() {
     // Create interpreter with libraries
     p := scriptling.New("json", "http")
-    
+
     // Execute Scriptling code
     _, err := p.Eval(`
 # Make API call
@@ -41,7 +41,7 @@ if response["status"] == 200:
     data = json.parse(response["body"])
     print(data["name"])
 `)
-    
+
     if err != nil {
         fmt.Println("Error:", err)
     }
@@ -106,10 +106,11 @@ result = add(5, 3)
 
 ### Libraries
 ```python
-# Import libraries dynamically. The import() function loads the library
+# Import libraries dynamically. The import statement loads the library
 # and makes its functions available as a global object.
-import("json")    # Creates global 'json' object
-import("http")    # Creates global 'http' object
+import json    # Creates global 'json' object
+import http    # Creates global 'http' object
+import re   # Creates global 'regex' object
 
 # Use JSON (dot notation)
 data = json.parse('{"name":"Alice"}')
@@ -119,6 +120,9 @@ json_str = json.stringify({"key": "value"})
 options = {"timeout": 10}
 response = http.get("https://api.example.com/data", options)
 response = http.post(url, body, options)
+
+# Use Regex (dot notation)
+matches = re.findall("[0-9]+", "abc123def456")
 
 # Bracket notation also works
 data = json["parse"]('...')
@@ -184,13 +188,14 @@ Always available without loading libraries:
 - **Type conversions**: `str()`, `int()`, `float()`
 - **String operations**: `len()`, `upper()`, `lower()`, `split()`, `join()`, `replace()`
 - **List operations**: `len()`, `append()`
-- **Import**: `import("library_name")`
+- **Dictionary operations**: `keys()`, `values()`, `items()`
+- **Import**: `import library_name` - Load json, http, or regex libraries
 
 ## Libraries
 
 ### JSON Library
 ```python
-import("json")
+import json
 
 # Parse JSON
 data = json.parse('{"name":"Alice","age":30}')
@@ -199,9 +204,30 @@ data = json.parse('{"name":"Alice","age":30}')
 json_str = json.stringify({"key": "value"})
 ```
 
+### Regex Library
+```python
+import re
+
+# Match pattern
+if re.match("[0-9]+", "abc123"):
+    print("Contains digits")
+
+# Find first match
+email = re.find("[a-z]+@[a-z]+\.[a-z]+", "user@example.com")
+
+# Find all matches
+phones = re.findall("[0-9]{3}-[0-9]{4}", "555-1234 or 555-5678")
+
+# Replace
+text = re.replace("[0-9]+", "Price: 100", "XXX")
+
+# Split
+parts = re.split("[,;]", "one,two;three")
+```
+
 ### HTTP Library
 ```python
-import("http")
+import http
 
 # All methods return {"status": int, "body": string, "headers": dict}
 # All methods support optional options dictionary

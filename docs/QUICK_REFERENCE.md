@@ -3,7 +3,7 @@
 ## JSON Library
 
 ```python
-import("json")
+import json
 
 # Parse JSON string to objects
 data = json.parse('{"name":"Alice","age":30}')
@@ -14,6 +14,28 @@ obj = {"status": "success", "count": 42}
 json_str = json.stringify(obj)
 ```
 
+## Regex Library
+
+```python
+import re
+
+# Match - returns boolean
+if re.match("[0-9]+", "abc123"):
+    print("Has digits")
+
+# Find - returns first match or None
+email = re.find("[a-z]+@[a-z]+\.[a-z]+", "user@example.com")
+
+# Find all - returns list
+phones = re.findall("[0-9]{3}-[0-9]{4}", "555-1234 or 555-5678")
+
+# Replace - returns modified string
+text = re.replace("[0-9]+", "Price: 100", "XXX")
+
+# Split - returns list
+parts = re.split("[,;]", "one,two;three")
+```
+
 ## HTTP Library
 
 All methods return: `{"status": int, "body": string, "headers": dict}`
@@ -21,7 +43,7 @@ All methods return: `{"status": int, "body": string, "headers": dict}`
 ### Simple Requests (5 second default timeout)
 
 ```python
-import("http")
+import http
 
 # GET
 response = http.get("https://api.example.com/users")
@@ -68,8 +90,8 @@ response = http.post(url, body, options)
 ### Complete Example
 
 ```python
-import("json")
-import("http")
+import json
+import http
 
 # Configure options
 options = {

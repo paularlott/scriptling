@@ -17,7 +17,7 @@ print("10 / 4 =", 10 / 4)
 print("5 % 2 =", 5 % 2)
 
 print("\n=== Modern Library API ===")
-import("json")
+import json
 
 # JSON with dot notation
 data = json.parse('{"name":"Alice","age":30}')
@@ -28,7 +28,7 @@ json_str = json.stringify({"status": "success", "count": 42})
 print("Stringified:", json_str)
 
 print("\n=== HTTP with Options Dictionary ===")
-import("http")
+import http
 
 # Simple request (5 second default timeout)
 print("Making HTTP request...")
