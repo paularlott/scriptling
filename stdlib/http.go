@@ -2,12 +2,35 @@ package stdlib
 
 import (
 	"context"
+	"crypto/tls"
 	"io"
 	"net/http"
 	"strings"
 	"time"
+	"golang.org/x/net/http2"
 	"github.com/paularlott/scriptling/object"
 )
+
+var httpClient *http.Client
+
+func init() {
+	// Create HTTP/2 transport with connection pooling and self-signed cert support
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: true, // Accept self-signed certificates
+		},
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     90 * time.Second,
+	}
+	
+	// Enable HTTP/2
+	http2.ConfigureTransport(transport)
+	
+	httpClient = &http.Client{
+		Transport: transport,
+	}
+}
 
 func HTTPLibrary() map[string]*object.Builtin {
 	return map[string]*object.Builtin{
@@ -209,8 +232,7 @@ func httpRequest(method, url, body string, timeoutSecs int, headers map[string]s
 		req.Header.Set(key, value)
 	}
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			return newError("http timeout after %d seconds", timeoutSecs)

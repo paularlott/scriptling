@@ -126,7 +126,11 @@ All return `{"status": int, "body": string, "headers": dict}`
 - `http.delete(url, options?)` - DELETE request
 - `http.patch(url, body, options?)` - PATCH request
 
-Default timeout: 5 seconds
+**Features:**
+- HTTP/2 support with automatic fallback to HTTP/1.1
+- Connection pooling (100 connections per host)
+- Accepts self-signed certificates
+- Default timeout: 5 seconds
 
 **Options dictionary:**
 - `timeout` (integer): Request timeout in seconds (default: 5)

@@ -230,7 +230,7 @@ parts = re.split("[,;]", "one,two;three")
 import http
 
 # All methods return {"status": int, "body": string, "headers": dict}
-# All methods support optional options dictionary
+# Features: HTTP/2, connection pooling, self-signed cert support
 # Default timeout: 5 seconds
 
 # Simple requests (5 second timeout)
