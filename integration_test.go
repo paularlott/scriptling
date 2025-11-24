@@ -145,8 +145,8 @@ func TestAppend(t *testing.T) {
 	p := New()
 	_, err := p.Eval(`
 numbers = [1, 2, 3]
-numbers = append(numbers, 4)
-numbers = append(numbers, 5)
+append(numbers, 4)
+append(numbers, 5)
 length = len(numbers)
 `)
 	if err != nil {

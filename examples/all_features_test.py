@@ -49,7 +49,7 @@ print("\nFibonacci(7):", fibonacci(7))
 
 # 7. Lists and dicts
 numbers = [1, 2, 3]
-numbers = append(numbers, 4)
+append(numbers, 4)
 person = {"name": "Alice", "age": "30"}
 print("List:", numbers)
 print("Dict:", person["name"])

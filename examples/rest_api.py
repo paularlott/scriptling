@@ -41,8 +41,8 @@ print(join(words, " - "))
 # Example 6: Working with lists
 print("\n=== Lists ===")
 numbers = [1, 2, 3]
-numbers = append(numbers, 4)
-numbers = append(numbers, 5)
+append(numbers, 4)
+append(numbers, 5)
 print(numbers)
 print(len(numbers))
 

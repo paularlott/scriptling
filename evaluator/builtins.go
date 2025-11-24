@@ -93,10 +93,9 @@ var builtins = map[string]*object.Builtin{
 				return newError("argument to append must be LIST, got %s", args[0].Type())
 			}
 			list := args[0].(*object.List)
-			newElements := make([]object.Object, len(list.Elements)+1)
-			copy(newElements, list.Elements)
-			newElements[len(list.Elements)] = args[1]
-			return &object.List{Elements: newElements}
+			// Modify list in-place (Python behavior)
+			list.Elements = append(list.Elements, args[1])
+			return &object.Null{}
 		},
 	},
 	"split": {

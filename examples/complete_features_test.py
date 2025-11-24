@@ -72,7 +72,7 @@ print("9. Factorial(5):", factorial(5))
 
 # 10. Lists and operations
 nums = [1, 2, 3]
-nums = append(nums, 4)
+append(nums, 4)
 print("10. List operations:", nums)
 print("    List slice:", nums[1:3])
 

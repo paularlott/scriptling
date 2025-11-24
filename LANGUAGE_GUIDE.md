@@ -287,7 +287,8 @@ last = numbers[4]     # 5
 ### Operations
 ```python
 len(numbers)              # Get length: 5
-append(numbers, 6)        # Returns new list: [1, 2, 3, 4, 5, 6]
+append(numbers, 6)        # Modifies numbers in-place
+print(numbers)            # [1, 2, 3, 4, 5, 6]
 ```
 
 ### Iteration
@@ -367,7 +368,11 @@ replace("hello world", "world", "python")  # "hello python"
 ### List Functions
 ```python
 len([1, 2, 3])                     # 3
-append([1, 2], 3)                  # [1, 2, 3] (returns new list)
+
+# append modifies list in-place (like Python)
+my_list = [1, 2]
+append(my_list, 3)                 # my_list is now [1, 2, 3]
+print(my_list)                     # [1, 2, 3]
 ```
 
 ### Range Function
@@ -587,7 +592,6 @@ text[:5]           # "Hello"
 - String concatenation: `+` only (no f-strings or %)
 - Integer division: `/` performs integer division for integers
 - No implicit type coercion in most operations
-- `append()` returns new list (doesn't modify in place)
 
 ## Best Practices
 
@@ -673,7 +677,7 @@ When generating Scriptling code:
 11. Use augmented assignment: `x += 1`, `x *= 2`, etc.
 12. Use `break` to exit loops, `continue` to skip iterations
 13. Use `pass` as a placeholder in empty blocks
-14. `append()` returns new list
+14. `append(list, item)` modifies list in-place (like Python)
 15. Strings use `+` for concatenation
 16. Use `.py` file extension
 17. Always specify timeouts for HTTP calls

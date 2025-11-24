@@ -7,7 +7,7 @@ print("\nFor loop with range-like behavior:")
 numbers = []
 i = 0
 while i < 5:
-    numbers = append(numbers, i)
+    append(numbers, i)
     i = i + 1
 
 for num in numbers:
