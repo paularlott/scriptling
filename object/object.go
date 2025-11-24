@@ -17,8 +17,10 @@ const (
 	BREAK_OBJ     = "BREAK"
 	CONTINUE_OBJ  = "CONTINUE"
 	FUNCTION_OBJ  = "FUNCTION"
+	LAMBDA_OBJ    = "LAMBDA"
 	BUILTIN_OBJ   = "BUILTIN"
 	LIST_OBJ      = "LIST"
+	TUPLE_OBJ     = "TUPLE"
 	DICT_OBJ      = "DICT"
 	HTTP_RESP_OBJ = "HTTP_RESPONSE"
 	ERROR_OBJ     = "ERROR"
@@ -81,13 +83,24 @@ func (c *Continue) Type() ObjectType { return CONTINUE_OBJ }
 func (c *Continue) Inspect() string  { return "continue" }
 
 type Function struct {
-	Parameters []*ast.Identifier
-	Body       *ast.BlockStatement
-	Env        *Environment
+	Parameters    []*ast.Identifier
+	DefaultValues map[string]ast.Expression
+	Body          *ast.BlockStatement
+	Env           *Environment
 }
 
 func (f *Function) Type() ObjectType { return FUNCTION_OBJ }
 func (f *Function) Inspect() string  { return "<function>" }
+
+type LambdaFunction struct {
+	Parameters    []*ast.Identifier
+	DefaultValues map[string]ast.Expression
+	Body          ast.Expression
+	Env           *Environment
+}
+
+func (lf *LambdaFunction) Type() ObjectType { return LAMBDA_OBJ }
+func (lf *LambdaFunction) Inspect() string  { return "<lambda>" }
 
 type BuiltinFunction func(args ...Object) Object
 
@@ -209,6 +222,27 @@ func (l *List) Inspect() string {
 		out += el.Inspect()
 	}
 	out += "]"
+	return out
+}
+
+type Tuple struct {
+	Elements []Object
+}
+
+func (t *Tuple) Type() ObjectType { return TUPLE_OBJ }
+func (t *Tuple) Inspect() string {
+	var out string
+	out += "("
+	for i, el := range t.Elements {
+		if i > 0 {
+			out += ", "
+		}
+		out += el.Inspect()
+	}
+	if len(t.Elements) == 1 {
+		out += "," // Single element tuple needs trailing comma
+	}
+	out += ")"
 	return out
 }
 

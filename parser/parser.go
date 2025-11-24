@@ -74,6 +74,7 @@ func New(l *lexer.Lexer) *Parser {
 	p.registerPrefix(token.LPAREN, p.parseGroupedExpression)
 	p.registerPrefix(token.LBRACKET, p.parseListLiteral)
 	p.registerPrefix(token.LBRACE, p.parseDictLiteral)
+	p.registerPrefix(token.LAMBDA, p.parseLambda)
 
 	p.infixParseFns = make(map[token.TokenType]infixParseFn)
 	p.registerInfix(token.PLUS, p.parseInfixExpression)
@@ -397,11 +398,40 @@ func (p *Parser) parseInfixExpression(left ast.Expression) ast.Expression {
 
 func (p *Parser) parseGroupedExpression() ast.Expression {
 	p.nextToken()
-	exp := p.parseExpression(LOWEST)
+	
+	// Check for empty tuple
+	if p.curTokenIs(token.RPAREN) {
+		return &ast.TupleLiteral{Token: p.curToken, Elements: []ast.Expression{}}
+	}
+	
+	firstExp := p.parseExpression(LOWEST)
+	
+	// Check if this is a tuple (has comma)
+	if p.peekTokenIs(token.COMMA) {
+		elements := []ast.Expression{firstExp}
+		
+		for p.peekTokenIs(token.COMMA) {
+			p.nextToken() // consume comma
+			if p.peekTokenIs(token.RPAREN) {
+				// Trailing comma case
+				break
+			}
+			p.nextToken()
+			elements = append(elements, p.parseExpression(LOWEST))
+		}
+		
+		if !p.expectPeek(token.RPAREN) {
+			return nil
+		}
+		
+		return &ast.TupleLiteral{Token: p.curToken, Elements: elements}
+	}
+	
+	// Regular grouped expression
 	if !p.expectPeek(token.RPAREN) {
 		return nil
 	}
-	return exp
+	return firstExp
 }
 
 func (p *Parser) parseCallExpression(function ast.Expression) ast.Expression {
@@ -529,7 +559,7 @@ func (p *Parser) parseFunctionStatement() *ast.FunctionStatement {
 	}
 
 	stmt.Function = &ast.FunctionLiteral{Token: stmt.Token}
-	stmt.Function.Parameters = p.parseFunctionParameters()
+	stmt.Function.Parameters, stmt.Function.DefaultValues = p.parseFunctionParameters()
 
 	if !p.expectPeek(token.COLON) {
 		return nil
@@ -540,31 +570,46 @@ func (p *Parser) parseFunctionStatement() *ast.FunctionStatement {
 	return stmt
 }
 
-func (p *Parser) parseFunctionParameters() []*ast.Identifier {
+func (p *Parser) parseFunctionParameters() ([]*ast.Identifier, map[string]ast.Expression) {
 	identifiers := []*ast.Identifier{}
+	defaults := make(map[string]ast.Expression)
 
 	if p.peekTokenIs(token.RPAREN) {
 		p.nextToken()
-		return identifiers
+		return identifiers, defaults
 	}
 
 	p.nextToken()
 
 	ident := &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
 	identifiers = append(identifiers, ident)
+	
+	// Check for default value
+	if p.peekTokenIs(token.ASSIGN) {
+		p.nextToken() // consume =
+		p.nextToken()
+		defaults[ident.Value] = p.parseExpression(LOWEST)
+	}
 
 	for p.peekTokenIs(token.COMMA) {
 		p.nextToken()
 		p.nextToken()
 		ident := &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
 		identifiers = append(identifiers, ident)
+		
+		// Check for default value
+		if p.peekTokenIs(token.ASSIGN) {
+			p.nextToken() // consume =
+			p.nextToken()
+			defaults[ident.Value] = p.parseExpression(LOWEST)
+		}
 	}
 
 	if !p.expectPeek(token.RPAREN) {
-		return nil
+		return nil, nil
 	}
 
-	return identifiers
+	return identifiers, defaults
 }
 
 func (p *Parser) parseForStatement() *ast.ForStatement {
@@ -661,6 +706,64 @@ func (p *Parser) parseListComprehension(expr ast.Expression) ast.Expression {
 	}
 	
 	return comp
+}
+
+func (p *Parser) parseLambda() ast.Expression {
+	lambda := &ast.Lambda{Token: p.curToken}
+	
+	// Parse parameters (optional)
+	if !p.peekTokenIs(token.COLON) {
+		lambda.Parameters, lambda.DefaultValues = p.parseLambdaParameters()
+	} else {
+		lambda.Parameters = []*ast.Identifier{}
+		lambda.DefaultValues = make(map[string]ast.Expression)
+	}
+	
+	if !p.expectPeek(token.COLON) {
+		return nil
+	}
+	
+	p.nextToken()
+	lambda.Body = p.parseExpression(LOWEST)
+	
+	return lambda
+}
+
+func (p *Parser) parseLambdaParameters() ([]*ast.Identifier, map[string]ast.Expression) {
+	identifiers := []*ast.Identifier{}
+	defaults := make(map[string]ast.Expression)
+	
+	p.nextToken()
+	
+	if p.curTokenIs(token.COLON) {
+		return identifiers, defaults
+	}
+	
+	ident := &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+	identifiers = append(identifiers, ident)
+	
+	// Check for default value
+	if p.peekTokenIs(token.ASSIGN) {
+		p.nextToken() // consume =
+		p.nextToken()
+		defaults[ident.Value] = p.parseExpression(LOWEST)
+	}
+	
+	for p.peekTokenIs(token.COMMA) {
+		p.nextToken()
+		p.nextToken()
+		ident := &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+		identifiers = append(identifiers, ident)
+		
+		// Check for default value
+		if p.peekTokenIs(token.ASSIGN) {
+			p.nextToken() // consume =
+			p.nextToken()
+			defaults[ident.Value] = p.parseExpression(LOWEST)
+		}
+	}
+	
+	return identifiers, defaults
 }
 
 func (p *Parser) skipWhitespace() {

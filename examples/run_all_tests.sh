@@ -54,6 +54,9 @@ tests=(
     # Advanced features
     "test_string_methods.py"
     "test_list_comprehensions.py"
+    "test_default_params.py"
+    "test_lambda.py"
+    "test_tuples.py"
     
     # Examples (keep as-is)
     "variables.py"

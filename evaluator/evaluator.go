@@ -82,9 +82,10 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		return evalIdentifier(node, env)
 	case *ast.FunctionStatement:
 		fn := &object.Function{
-			Parameters: node.Function.Parameters,
-			Body:       node.Function.Body,
-			Env:        env,
+			Parameters:    node.Function.Parameters,
+			DefaultValues: node.Function.DefaultValues,
+			Body:          node.Function.Body,
+			Env:           env,
 		}
 		env.Set(node.Name.Value, fn)
 		return fn
@@ -132,6 +133,14 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		return evalMethodCallExpression(node, env)
 	case *ast.ListComprehension:
 		return evalListComprehension(node, env)
+	case *ast.Lambda:
+		return evalLambda(node, env)
+	case *ast.TupleLiteral:
+		elements := evalExpressions(node.Elements, env)
+		if len(elements) == 1 && isError(elements[0]) {
+			return elements[0]
+		}
+		return &object.Tuple{Elements: elements}
 	}
 	return NULL
 }
@@ -439,9 +448,31 @@ func evalExpressions(exps []ast.Expression, env *object.Environment) []object.Ob
 func applyFunction(fn object.Object, args []object.Object) object.Object {
 	switch fn := fn.(type) {
 	case *object.Function:
+		// Validate argument count with defaults
+		minArgs := len(fn.Parameters)
+		if fn.DefaultValues != nil {
+			minArgs -= len(fn.DefaultValues)
+		}
+		if len(args) < minArgs || len(args) > len(fn.Parameters) {
+			return newError("wrong number of arguments: got=%d, want=%d-%d", len(args), minArgs, len(fn.Parameters))
+		}
+		
 		extendedEnv := extendFunctionEnv(fn, args)
 		evaluated := Eval(fn.Body, extendedEnv)
 		return unwrapReturnValue(evaluated)
+	case *object.LambdaFunction:
+		// Validate argument count with defaults
+		minArgs := len(fn.Parameters)
+		if fn.DefaultValues != nil {
+			minArgs -= len(fn.DefaultValues)
+		}
+		if len(args) < minArgs || len(args) > len(fn.Parameters) {
+			return newError("wrong number of arguments: got=%d, want=%d-%d", len(args), minArgs, len(fn.Parameters))
+		}
+		
+		extendedEnv := extendLambdaEnv(fn, args)
+		evaluated := Eval(fn.Body, extendedEnv)
+		return evaluated // No unwrapping needed for lambda expressions
 	case *object.Builtin:
 		return fn.Fn(args...)
 	default:
@@ -452,8 +483,40 @@ func applyFunction(fn object.Object, args []object.Object) object.Object {
 func extendFunctionEnv(fn *object.Function, args []object.Object) *object.Environment {
 	env := object.NewEnclosedEnvironment(fn.Env)
 
+	// Set provided arguments
 	for paramIdx, param := range fn.Parameters {
-		env.Set(param.Value, args[paramIdx])
+		if paramIdx < len(args) {
+			env.Set(param.Value, args[paramIdx])
+		} else {
+			// Use default value if available
+			if defaultExpr, ok := fn.DefaultValues[param.Value]; ok {
+				defaultVal := Eval(defaultExpr, fn.Env)
+				env.Set(param.Value, defaultVal)
+			} else {
+				return env // Will cause error in function call validation
+			}
+		}
+	}
+
+	return env
+}
+
+func extendLambdaEnv(fn *object.LambdaFunction, args []object.Object) *object.Environment {
+	env := object.NewEnclosedEnvironment(fn.Env)
+
+	// Set provided arguments
+	for paramIdx, param := range fn.Parameters {
+		if paramIdx < len(args) {
+			env.Set(param.Value, args[paramIdx])
+		} else {
+			// Use default value if available
+			if defaultExpr, ok := fn.DefaultValues[param.Value]; ok {
+				defaultVal := Eval(defaultExpr, fn.Env)
+				env.Set(param.Value, defaultVal)
+			} else {
+				return env // Will cause error in function call validation
+			}
+		}
 	}
 
 	return env
@@ -519,6 +582,8 @@ func evalIndexExpression(left, index object.Object) object.Object {
 	switch {
 	case left.Type() == object.LIST_OBJ && index.Type() == object.INTEGER_OBJ:
 		return evalListIndexExpression(left, index)
+	case left.Type() == object.TUPLE_OBJ && index.Type() == object.INTEGER_OBJ:
+		return evalTupleIndexExpression(left, index)
 	case left.Type() == object.DICT_OBJ:
 		return evalDictIndexExpression(left, index)
 	case left.Type() == object.STRING_OBJ && index.Type() == object.INTEGER_OBJ:
@@ -546,6 +611,18 @@ func evalListIndexExpression(list, index object.Object) object.Object {
 	}
 
 	return listObject.Elements[idx]
+}
+
+func evalTupleIndexExpression(tuple, index object.Object) object.Object {
+	tupleObject := tuple.(*object.Tuple)
+	idx := index.(*object.Integer).Value
+	max := int64(len(tupleObject.Elements) - 1)
+
+	if idx < 0 || idx > max {
+		return NULL
+	}
+
+	return tupleObject.Elements[idx]
 }
 
 func evalDictIndexExpression(dict, index object.Object) object.Object {
@@ -728,23 +805,29 @@ func evalMultipleAssignStatement(node *ast.MultipleAssignStatement, env *object.
 		return val
 	}
 	
-	// Value must be a list
-	list, ok := val.(*object.List)
-	if !ok {
-		return newError("multiple assignment requires list, got %s", val.Type())
+	var elements []object.Object
+	
+	// Value can be a list or tuple
+	switch v := val.(type) {
+	case *object.List:
+		elements = v.Elements
+	case *object.Tuple:
+		elements = v.Elements
+	default:
+		return newError("multiple assignment requires list or tuple, got %s", val.Type())
 	}
 	
 	// Check length matches
-	if len(list.Elements) != len(node.Names) {
-		return newError("cannot unpack %d values to %d variables", len(list.Elements), len(node.Names))
+	if len(elements) != len(node.Names) {
+		return newError("cannot unpack %d values to %d variables", len(elements), len(node.Names))
 	}
 	
 	// Assign each value
 	for i, name := range node.Names {
-		env.Set(name.Value, list.Elements[i])
+		env.Set(name.Value, elements[i])
 	}
 	
-	return list
+	return val
 }
 
 func evalTryStatement(ts *ast.TryStatement, env *object.Environment) object.Object {
@@ -803,6 +886,23 @@ func evalForStatement(fs *ast.ForStatement, env *object.Environment) object.Obje
 
 	switch iter := iterable.(type) {
 	case *object.List:
+		for _, element := range iter.Elements {
+			env.Set(fs.Variable.Value, element)
+			result = Eval(fs.Body, env)
+			if isError(result) {
+				return result
+			}
+			if result.Type() == object.RETURN_OBJ {
+				return result
+			}
+			if result.Type() == object.BREAK_OBJ {
+				return NULL
+			}
+			if result.Type() == object.CONTINUE_OBJ {
+				continue
+			}
+		}
+	case *object.Tuple:
 		for _, element := range iter.Elements {
 			env.Set(fs.Variable.Value, element)
 			result = Eval(fs.Body, env)
@@ -971,4 +1071,13 @@ func evalListComprehension(lc *ast.ListComprehension, env *object.Environment) o
 	}
 
 	return &object.List{Elements: result}
+}
+
+func evalLambda(lambda *ast.Lambda, env *object.Environment) object.Object {
+	return &object.LambdaFunction{
+		Parameters:    lambda.Parameters,
+		DefaultValues: lambda.DefaultValues,
+		Body:          lambda.Body,
+		Env:           env,
+	}
 }

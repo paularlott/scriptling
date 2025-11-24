@@ -164,9 +164,10 @@ func (ws *WhileStatement) statementNode()       {}
 func (ws *WhileStatement) TokenLiteral() string { return ws.Token.Literal }
 
 type FunctionLiteral struct {
-	Token      token.Token
-	Parameters []*Identifier
-	Body       *BlockStatement
+	Token         token.Token
+	Parameters    []*Identifier
+	DefaultValues map[string]Expression // parameter name -> default value
+	Body          *BlockStatement
 }
 
 func (fl *FunctionLiteral) expressionNode()      {}
@@ -326,3 +327,23 @@ type ListComprehension struct {
 
 func (lc *ListComprehension) expressionNode()      {}
 func (lc *ListComprehension) TokenLiteral() string { return lc.Token.Literal }
+
+type Lambda struct {
+	Token         token.Token
+	Parameters    []*Identifier
+	DefaultValues map[string]Expression
+	Body          Expression // single expression, not block
+}
+
+func (l *Lambda) expressionNode()      {}
+func (l *Lambda) TokenLiteral() string { return l.Token.Literal }
+
+type TupleLiteral struct {
+	Token    token.Token
+	Elements []Expression
+}
+
+func (tl *TupleLiteral) expressionNode()      {}
+func (tl *TupleLiteral) TokenLiteral() string { return tl.Token.Literal }
+
+

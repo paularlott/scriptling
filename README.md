@@ -10,6 +10,9 @@ A minimal, sandboxed interpreter for LLM agents to execute code and interact wit
 - **Advanced features**: range(), slice notation, dict methods (keys/values/items), multiple assignment
 - **List comprehensions**: `[x * x for x in range(10) if x > 5]`
 - **Method call syntax**: `text.upper()`, `json.parse()`, `math.sqrt(16)`
+- **Lambda functions**: `square = lambda x: x * x`
+- **Default parameters**: `def greet(name, greeting="Hello"):`
+- **Tuple literals**: `point = (1, 2)` with unpacking support
 - **Functions** with recursion support
 - **Error handling**: try/except/finally, raise statement
 - **Optional libraries**: json, http, re, math, time (load on demand)
@@ -180,6 +183,31 @@ result = text.upper().replace("WORLD", "SCRIPTLING")
 import json
 data = json.parse('{"name": "Alice"}')
 name = data["name"].upper()
+```
+
+### Lambda Functions & Default Parameters
+```python
+# Lambda functions
+square = lambda x: x * x
+add = lambda a, b: a + b
+
+# Default parameters
+def greet(name, greeting="Hello"):
+    return greeting + " " + name
+
+print(greet("Alice"))        # "Hello Alice"
+print(greet("Bob", "Hi"))    # "Hi Bob"
+```
+
+### Tuple Literals
+```python
+# Tuple creation and unpacking
+point = (1, 2)
+x, y = point
+
+# Mixed types
+user = ("Alice", 30, True)
+name, age, active = user
 ```
 
 ### Libraries

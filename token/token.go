@@ -74,6 +74,7 @@ const (
 	RAISE    = "RAISE"
 	GLOBAL   = "GLOBAL"
 	NONLOCAL = "NONLOCAL"
+	LAMBDA   = "LAMBDA"
 )
 
 var keywords = map[string]TokenType{
@@ -101,6 +102,7 @@ var keywords = map[string]TokenType{
 	"raise":   RAISE,
 	"global":   GLOBAL,
 	"nonlocal": NONLOCAL,
+	"lambda":   LAMBDA,
 }
 
 func LookupIdent(ident string) TokenType {
