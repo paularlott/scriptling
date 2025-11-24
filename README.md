@@ -7,9 +7,10 @@ A minimal, sandboxed interpreter for LLM agents to execute code and interact wit
 - **Python-like syntax** with indentation-based blocks
 - **Core types**: integers, floats, strings, booleans, lists, dictionaries
 - **Control flow**: if/elif/else, while, for loops, break, continue, pass
-- **Advanced features**: range(), slice notation, dict methods (keys/values/items)
+- **Advanced features**: range(), slice notation, dict methods (keys/values/items), multiple assignment
 - **Functions** with recursion support
-- **Optional libraries**: JSON and HTTP (load on demand)
+- **Error handling**: try/except/finally, raise statement
+- **Optional libraries**: json, http, re, math, time (load on demand)
 - **Go integration**: Register functions, exchange variables
 - **Fast**: Lightweight interpreter, only loads what you need
 
@@ -69,6 +70,23 @@ x += 10                         # x = x + 10
 pi *= 2                         # pi = pi * 2
 ```
 
+### Membership Operators
+```python
+# in operator
+if 5 in [1, 2, 3, 4, 5]:
+    print("Found in list")
+
+if "name" in {"name": "Alice", "age": 30}:
+    print("Key exists")
+
+if "hello" in "hello world":
+    print("Substring found")
+
+# not in operator
+if 10 not in [1, 2, 3]:
+    print("Not in list")
+```
+
 ### Control Flow
 ```python
 # If/elif/else
@@ -102,6 +120,33 @@ def add(a, b):
     return a + b
 
 result = add(5, 3)
+```
+
+### Error Handling
+```python
+try:
+    response = http.get("https://api.example.com/data", {"timeout": 5})
+    if response["status"] != 200:
+        raise "HTTP error: " + str(response["status"])
+    data = json.parse(response["body"])
+except:
+    print("Request failed")
+    data = None
+finally:
+    print("Cleanup complete")
+```
+
+### Multiple Assignment
+```python
+# Unpack lists
+a, b = [1, 2]
+x, y, z = [10, 20, 30]
+
+# Swap variables
+x, y = [y, x]
+
+# From function or expression
+first, second = [1 + 1, 2 * 2]
 ```
 
 ### Libraries
@@ -187,99 +232,39 @@ Always available without loading libraries:
 - **I/O**: `print(value)`
 - **Type conversions**: `str()`, `int()`, `float()`
 - **String operations**: `len()`, `upper()`, `lower()`, `split()`, `join()`, `replace()`
-- **List operations**: `len()`, `append()`
+- **List operations**: `len()`, `append()`, `range()`
 - **Dictionary operations**: `keys()`, `values()`, `items()`
-- **Import**: `import library_name` - Load json, http, or regex libraries
+
+**See [docs/LANGUAGE_GUIDE.md](docs/LANGUAGE_GUIDE.md) for complete language reference.**
 
 ## Libraries
 
-### JSON Library
+Scriptling includes optional libraries for common tasks:
+
+- **json** - Parse and stringify JSON
+- **http** - Make HTTP requests (GET, POST, PUT, DELETE, PATCH)
+- **re** - Regular expressions (match, find, findall, replace, split)
+- **math** - Mathematical functions (sqrt, pow, abs, floor, ceil, round, min, max, pi, e)
+- **time** - Time operations (time, perf_counter, sleep, strftime, strptime)
+
+**Quick Example:**
 ```python
 import json
-
-# Parse JSON
-data = json.parse('{"name":"Alice","age":30}')
-
-# Stringify
-json_str = json.stringify({"key": "value"})
-```
-
-### Regex Library
-```python
-import re
-
-# Match pattern
-if re.match("[0-9]+", "abc123"):
-    print("Contains digits")
-
-# Find first match
-email = re.find("[a-z]+@[a-z]+\.[a-z]+", "user@example.com")
-
-# Find all matches
-phones = re.findall("[0-9]{3}-[0-9]{4}", "555-1234 or 555-5678")
-
-# Replace
-text = re.replace("[0-9]+", "Price: 100", "XXX")
-
-# Split
-parts = re.split("[,;]", "one,two;three")
-```
-
-### Time Library
-```python
-import time
-
-# Benchmark code (use perf_counter for precision)
-start = time.perf_counter()
-for i in range(1000):
-    x = i * 2
-end = time.perf_counter()
-print("Time: " + str(end - start) + " seconds")
-
-# Get current timestamp
-now = time.time()  # Unix timestamp
-
-# Format time
-formatted = time.strftime("%Y-%m-%d %H:%M:%S", now)
-print(formatted)  # "2024-11-24 17:43:42"
-
-# Parse time string
-timestamp = time.strptime("2024-01-15 10:30:45", "%Y-%m-%d %H:%M:%S")
-
-# Sleep
-time.sleep(1)  # Sleep 1 second
-```
-
-### HTTP Library
-```python
 import http
+import math
 
-# All methods return {"status": int, "body": string, "headers": dict}
-# Features: HTTP/2, connection pooling, self-signed cert support
-# Default timeout: 5 seconds
-
-# Simple requests (5 second timeout)
-response = http.get(url)
-response = http.post(url, body)
-response = http.put(url, body)
-response = http.delete(url)
-response = http.patch(url, body)
-
-# With options (timeout and/or headers)
-options = {
-    "timeout": 10,
-    "headers": {"Authorization": "Bearer token123"}
-}
-response = http.get(url, options)
-response = http.post(url, body, options)
-response = http.put(url, body, options)
-response = http.delete(url, options)
-response = http.patch(url, body, options)
-
-# Check status
+# Make API call
+response = http.get("https://api.example.com/data", {"timeout": 10})
 if response["status"] == 200:
-    print(response["body"])
+    data = json.parse(response["body"])
+    
+    # Calculate something
+    radius = data["radius"]
+    area = math.pi() * math.pow(radius, 2)
+    print("Area: " + str(area))
 ```
+
+**See [docs/LIBRARIES.md](docs/LIBRARIES.md) for complete library documentation.**
 
 ## Examples
 
@@ -288,6 +273,9 @@ See `examples/` directory:
 - `basic.py` - Basic language features
 - `functions.py` - Functions and recursion
 - `collections.py` - Lists, dicts, for loops
+- `error_handling_test.py` - Error handling basics
+- `error_handling_comprehensive.py` - Comprehensive error handling examples
+- `error_handling_http.py` - Error handling with HTTP and JSON
 - `rest_api.py` - REST API calls
 - `rest_api_lib.py` - REST API with library syntax
 - `benchmark.py` - Performance benchmark script
@@ -295,7 +283,14 @@ See `examples/` directory:
 Run example:
 ```bash
 cd examples
-go run main.go
+go run main.go basic.py
+go run main.go error_handling_comprehensive.py
+```
+
+Run all tests:
+```bash
+cd examples
+./run_all_tests.sh
 ```
 
 Run benchmark:

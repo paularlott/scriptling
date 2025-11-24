@@ -76,6 +76,8 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		return val
 	case *ast.AugmentedAssignStatement:
 		return evalAugmentedAssignStatement(node, env)
+	case *ast.MultipleAssignStatement:
+		return evalMultipleAssignStatement(node, env)
 	case *ast.Identifier:
 		return evalIdentifier(node, env)
 	case *ast.FunctionStatement:
@@ -118,6 +120,14 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		return evalSliceExpression(node, env)
 	case *ast.ForStatement:
 		return evalForStatement(node, env)
+	case *ast.TryStatement:
+		return evalTryStatement(node, env)
+	case *ast.RaiseStatement:
+		return evalRaiseStatement(node, env)
+	case *ast.GlobalStatement:
+		return evalGlobalStatement(node, env)
+	case *ast.NonlocalStatement:
+		return evalNonlocalStatement(node, env)
 	}
 	return NULL
 }
@@ -147,7 +157,7 @@ func evalBlockStatement(block *ast.BlockStatement, env *object.Environment) obje
 
 		if result != nil {
 			rt := result.Type()
-			if rt == object.RETURN_OBJ || rt == object.BREAK_OBJ || rt == object.CONTINUE_OBJ || rt == "ERROR" {
+			if rt == object.RETURN_OBJ || rt == object.BREAK_OBJ || rt == object.CONTINUE_OBJ || rt == "ERROR" || rt == object.EXCEPTION_OBJ {
 				return result
 			}
 		}
@@ -193,6 +203,18 @@ func evalMinusPrefixOperatorExpression(right object.Object) object.Object {
 }
 
 func evalInfixExpression(operator string, left, right object.Object) object.Object {
+	// Handle membership operators first
+	switch operator {
+	case "in":
+		return evalInOperator(left, right)
+	case "not in":
+		result := evalInOperator(left, right)
+		if result == TRUE {
+			return FALSE
+		}
+		return TRUE
+	}
+
 	// Type switch is faster than Type() method calls
 	switch l := left.(type) {
 	case *object.Integer:
@@ -666,6 +688,105 @@ func evalImportStatement(is *ast.ImportStatement, env *object.Environment) objec
 		return newError("import error: %s", err.Error())
 	}
 	return NULL
+}
+
+func evalInOperator(left, right object.Object) object.Object {
+	switch container := right.(type) {
+	case *object.List:
+		for _, elem := range container.Elements {
+			if left == elem || (left.Inspect() == elem.Inspect()) {
+				return TRUE
+			}
+		}
+		return FALSE
+	case *object.Dict:
+		key := left.Inspect()
+		_, ok := container.Pairs[key]
+		return nativeBoolToBooleanObject(ok)
+	case *object.String:
+		if needle, ok := left.(*object.String); ok {
+			for i := 0; i <= len(container.Value)-len(needle.Value); i++ {
+				if container.Value[i:i+len(needle.Value)] == needle.Value {
+					return TRUE
+				}
+			}
+			return FALSE
+		}
+		return newError("'in' requires string on left for string container")
+	default:
+		return newError("'in' operator not supported for %s", right.Type())
+	}
+}
+
+func evalMultipleAssignStatement(node *ast.MultipleAssignStatement, env *object.Environment) object.Object {
+	val := Eval(node.Value, env)
+	if isError(val) {
+		return val
+	}
+	
+	// Value must be a list
+	list, ok := val.(*object.List)
+	if !ok {
+		return newError("multiple assignment requires list, got %s", val.Type())
+	}
+	
+	// Check length matches
+	if len(list.Elements) != len(node.Names) {
+		return newError("cannot unpack %d values to %d variables", len(list.Elements), len(node.Names))
+	}
+	
+	// Assign each value
+	for i, name := range node.Names {
+		env.Set(name.Value, list.Elements[i])
+	}
+	
+	return list
+}
+
+func evalTryStatement(ts *ast.TryStatement, env *object.Environment) object.Object {
+	// Execute try block
+	result := Eval(ts.Body, env)
+	
+	// Check if exception occurred
+	if isException(result) {
+		// Execute except block if present
+		if ts.Except != nil {
+			result = Eval(ts.Except, env)
+		}
+	}
+	
+	// Always execute finally block if present
+	if ts.Finally != nil {
+		Eval(ts.Finally, env)
+	}
+	
+	// Clear exception if it was handled
+	if isException(result) && ts.Except != nil {
+		return NULL
+	}
+	
+	return result
+}
+
+func evalRaiseStatement(rs *ast.RaiseStatement, env *object.Environment) object.Object {
+	var message string
+	if rs.Message != nil {
+		msg := Eval(rs.Message, env)
+		if isError(msg) {
+			return msg
+		}
+		message = msg.Inspect()
+	} else {
+		message = "Exception raised"
+	}
+	return &object.Exception{Message: message}
+}
+
+func isException(obj object.Object) bool {
+	if obj == nil {
+		return false
+	}
+	return obj.Type() == object.EXCEPTION_OBJ || obj.Type() == "ERROR"
 }
 
 func evalForStatement(fs *ast.ForStatement, env *object.Environment) object.Object {

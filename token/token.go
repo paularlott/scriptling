@@ -67,6 +67,13 @@ const (
 	AND      = "AND"
 	OR       = "OR"
 	NOT      = "NOT"
+	NOT_IN   = "NOT_IN"
+	TRY      = "TRY"
+	EXCEPT   = "EXCEPT"
+	FINALLY  = "FINALLY"
+	RAISE    = "RAISE"
+	GLOBAL   = "GLOBAL"
+	NONLOCAL = "NONLOCAL"
 )
 
 var keywords = map[string]TokenType{
@@ -85,9 +92,15 @@ var keywords = map[string]TokenType{
 	"break":    BREAK,
 	"continue": CONTINUE,
 	"pass":     PASS,
-	"and":      AND,
-	"or":     OR,
-	"not":    NOT,
+	"and":     AND,
+	"or":      OR,
+	"not":     NOT,
+	"try":     TRY,
+	"except":  EXCEPT,
+	"finally": FINALLY,
+	"raise":   RAISE,
+	"global":   GLOBAL,
+	"nonlocal": NONLOCAL,
 }
 
 func LookupIdent(ident string) TokenType {

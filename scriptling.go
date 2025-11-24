@@ -14,10 +14,15 @@ type Scriptling struct {
 }
 
 var availableLibraries = map[string]func() map[string]*object.Builtin{
-	"json": stdlib.JSONLibrary,
-	"http": stdlib.HTTPLibrary,
-	"re":   stdlib.ReLibrary,
-	"time": stdlib.GetTimeLibrary,
+	"json":    stdlib.JSONLibrary,
+	"http":    stdlib.HTTPLibrary,
+	"re":      stdlib.ReLibrary,
+	"time":    stdlib.GetTimeLibrary,
+	"math":    stdlib.GetMathLibrary,
+	"base64":  stdlib.GetBase64Library,
+	"hashlib": stdlib.GetHashlibLibrary,
+	"random":  stdlib.GetRandomLibrary,
+	"url":     stdlib.GetURLLibrary,
 }
 
 func New(libraries ...string) *Scriptling {

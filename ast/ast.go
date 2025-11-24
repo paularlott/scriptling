@@ -112,6 +112,15 @@ type AugmentedAssignStatement struct {
 func (aas *AugmentedAssignStatement) statementNode()       {}
 func (aas *AugmentedAssignStatement) TokenLiteral() string { return aas.Token.Literal }
 
+type MultipleAssignStatement struct {
+	Token token.Token
+	Names []*Identifier
+	Value Expression
+}
+
+func (mas *MultipleAssignStatement) statementNode()       {}
+func (mas *MultipleAssignStatement) TokenLiteral() string { return mas.Token.Literal }
+
 type ExpressionStatement struct {
 	Token      token.Token
 	Expression Expression
@@ -262,3 +271,37 @@ type SliceExpression struct {
 
 func (se *SliceExpression) expressionNode()      {}
 func (se *SliceExpression) TokenLiteral() string { return se.Token.Literal }
+
+type TryStatement struct {
+	Token       token.Token
+	Body        *BlockStatement
+	Except      *BlockStatement
+	Finally     *BlockStatement
+}
+
+func (ts *TryStatement) statementNode()       {}
+func (ts *TryStatement) TokenLiteral() string { return ts.Token.Literal }
+
+type RaiseStatement struct {
+	Token   token.Token
+	Message Expression
+}
+
+func (rs *RaiseStatement) statementNode()       {}
+func (rs *RaiseStatement) TokenLiteral() string { return rs.Token.Literal }
+
+type GlobalStatement struct {
+	Token token.Token
+	Names []*Identifier
+}
+
+func (gs *GlobalStatement) statementNode()       {}
+func (gs *GlobalStatement) TokenLiteral() string { return gs.Token.Literal }
+
+type NonlocalStatement struct {
+	Token token.Token
+	Names []*Identifier
+}
+
+func (ns *NonlocalStatement) statementNode()       {}
+func (ns *NonlocalStatement) TokenLiteral() string { return ns.Token.Literal }

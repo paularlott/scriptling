@@ -22,6 +22,7 @@ const (
 	DICT_OBJ      = "DICT"
 	HTTP_RESP_OBJ = "HTTP_RESPONSE"
 	ERROR_OBJ     = "ERROR"
+	EXCEPTION_OBJ = "EXCEPTION"
 )
 
 type Object interface {
@@ -98,12 +99,18 @@ func (b *Builtin) Type() ObjectType { return BUILTIN_OBJ }
 func (b *Builtin) Inspect() string  { return "<builtin function>" }
 
 type Environment struct {
-	store map[string]Object
-	outer *Environment
+	store     map[string]Object
+	outer     *Environment
+	globals   map[string]bool
+	nonlocals map[string]bool
 }
 
 func NewEnvironment() *Environment {
-	return &Environment{store: make(map[string]Object, 16)}
+	return &Environment{
+		store:     make(map[string]Object, 16),
+		globals:   make(map[string]bool),
+		nonlocals: make(map[string]bool),
+	}
 }
 
 func NewEnclosedEnvironment(outer *Environment) *Environment {
@@ -121,8 +128,70 @@ func (e *Environment) Get(name string) (Object, bool) {
 }
 
 func (e *Environment) Set(name string, val Object) Object {
+	// Check if this variable is marked as global
+	if e.globals[name] {
+		return e.SetGlobal(name, val)
+	}
+	// Check if this variable is marked as nonlocal
+	if e.nonlocals[name] {
+		if e.SetInParent(name, val) {
+			return val
+		}
+	}
 	e.store[name] = val
 	return val
+}
+
+// SetGlobal sets a variable in the global (outermost) environment
+func (e *Environment) SetGlobal(name string, val Object) Object {
+	if e.outer == nil {
+		e.store[name] = val
+		return val
+	}
+	return e.outer.SetGlobal(name, val)
+}
+
+// GetGlobal gets the global (outermost) environment
+func (e *Environment) GetGlobal() *Environment {
+	if e.outer == nil {
+		return e
+	}
+	return e.outer.GetGlobal()
+}
+
+// SetInParent sets a variable in the parent environment (for nonlocal)
+func (e *Environment) SetInParent(name string, val Object) bool {
+	if e.outer == nil {
+		return false
+	}
+	if _, ok := e.outer.store[name]; ok {
+		e.outer.store[name] = val
+		return true
+	}
+	if e.outer.outer != nil {
+		return e.outer.SetInParent(name, val)
+	}
+	return false
+}
+
+// MarkGlobal marks a variable name as global in this scope
+func (e *Environment) MarkGlobal(name string) {
+	e.globals[name] = true
+}
+
+// MarkNonlocal marks a variable name as nonlocal in this scope
+func (e *Environment) MarkNonlocal(name string) {
+	e.nonlocals[name] = true
+}
+
+// IsGlobal checks if a variable is marked as global
+func (e *Environment) IsGlobal(name string) bool {
+	return e.globals[name]
+}
+
+// IsNonlocal checks if a variable is marked as nonlocal
+func (e *Environment) IsNonlocal(name string) bool {
+	return e.nonlocals[name]
 }
 
 type List struct {
@@ -183,3 +252,10 @@ type Error struct {
 
 func (e *Error) Type() ObjectType { return ERROR_OBJ }
 func (e *Error) Inspect() string  { return "ERROR: " + e.Message }
+
+type Exception struct {
+	Message string
+}
+
+func (ex *Exception) Type() ObjectType { return EXCEPTION_OBJ }
+func (ex *Exception) Inspect() string  { return "EXCEPTION: " + ex.Message }

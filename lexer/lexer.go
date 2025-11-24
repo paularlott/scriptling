@@ -190,6 +190,32 @@ func (l *Lexer) NextToken() token.Token {
 		if isLetter(l.ch) {
 			tok.Literal = l.readIdentifier()
 			tok.Type = token.LookupIdent(tok.Literal)
+			// Check for 'not in' special case
+			if tok.Type == token.NOT && l.ch == ' ' {
+				// Peek ahead to see if next word is 'in'
+				savedPos := l.position
+				savedReadPos := l.readPosition
+				savedCh := l.ch
+				
+				// Skip whitespace
+				for l.ch == ' ' || l.ch == '\t' {
+					l.readChar()
+				}
+				
+				// Check if next identifier is 'in'
+				if isLetter(l.ch) {
+					nextIdent := l.readIdentifier()
+					if nextIdent == "in" {
+						// Return NOT_IN token
+						return token.Token{Type: token.NOT_IN, Literal: "not in", Line: l.line}
+					}
+				}
+				
+				// Restore position if not 'not in'
+				l.position = savedPos
+				l.readPosition = savedReadPos
+				l.ch = savedCh
+			}
 			return tok
 		} else if isDigit(l.ch) {
 			num, isFloat := l.readNumber()

@@ -26,6 +26,8 @@ var precedences = map[token.TokenType]int{
 	token.AND:      AND,
 	token.EQ:       EQUALS,
 	token.NOT_EQ:   EQUALS,
+	token.IN:       EQUALS,
+	token.NOT_IN:   EQUALS,
 	token.LT:       LESSGREATER,
 	token.GT:       LESSGREATER,
 	token.LTE:      LESSGREATER,
@@ -87,6 +89,8 @@ func New(l *lexer.Lexer) *Parser {
 	p.registerInfix(token.GTE, p.parseInfixExpression)
 	p.registerInfix(token.AND, p.parseInfixExpression)
 	p.registerInfix(token.OR, p.parseInfixExpression)
+	p.registerInfix(token.IN, p.parseInfixExpression)
+	p.registerInfix(token.NOT_IN, p.parseInfixExpression)
 	p.registerInfix(token.LPAREN, p.parseCallExpression)
 	p.registerInfix(token.LBRACKET, p.parseIndexExpression)
 	p.registerInfix(token.DOT, p.parseIndexExpression)
@@ -193,9 +197,19 @@ func (p *Parser) parseStatement() ast.Statement {
 		return &ast.ContinueStatement{Token: p.curToken}
 	case token.PASS:
 		return &ast.PassStatement{Token: p.curToken}
+	case token.TRY:
+		return p.parseTryStatement()
+	case token.RAISE:
+		return p.parseRaiseStatement()
+	case token.GLOBAL:
+		return p.parseGlobalStatement()
+	case token.NONLOCAL:
+		return p.parseNonlocalStatement()
 	case token.IDENT:
 		if p.peekTokenIs(token.ASSIGN) {
 			return p.parseAssignStatement()
+		} else if p.peekTokenIs(token.COMMA) {
+			return p.parseMultipleAssignStatement()
 		} else if p.isAugmentedAssign() {
 			return p.parseAugmentedAssignStatement()
 		}
@@ -222,6 +236,33 @@ func (p *Parser) parseAssignStatement() *ast.AssignStatement {
 	stmt.Value = p.parseExpression(LOWEST)
 
 	return stmt
+}
+
+func (p *Parser) parseMultipleAssignStatement() ast.Statement {
+	names := []*ast.Identifier{}
+	names = append(names, &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal})
+	
+	// Parse remaining identifiers
+	for p.peekTokenIs(token.COMMA) {
+		p.nextToken() // consume comma
+		if !p.expectPeek(token.IDENT) {
+			return nil
+		}
+		names = append(names, &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal})
+	}
+	
+	if !p.expectPeek(token.ASSIGN) {
+		return nil
+	}
+	
+	p.nextToken()
+	value := p.parseExpression(LOWEST)
+	
+	return &ast.MultipleAssignStatement{
+		Token: names[0].Token,
+		Names: names,
+		Value: value,
+	}
 }
 
 func (p *Parser) parseAugmentedAssignStatement() *ast.AugmentedAssignStatement {
@@ -351,6 +392,8 @@ func (p *Parser) parseInfixExpression(left ast.Expression) ast.Expression {
 	expression.Right = p.parseExpression(precedence)
 	return expression
 }
+
+
 
 func (p *Parser) parseGroupedExpression() ast.Expression {
 	p.nextToken()
@@ -555,10 +598,17 @@ func (p *Parser) parseListLiteral() ast.Expression {
 	return list
 }
 
+func (p *Parser) skipWhitespace() {
+	for p.peekTokenIs(token.NEWLINE) || p.peekTokenIs(token.INDENT) || p.peekTokenIs(token.DEDENT) {
+		p.peekToken = p.l.NextToken()
+	}
+}
+
 func (p *Parser) parseDictLiteral() ast.Expression {
 	dict := &ast.DictLiteral{Token: p.curToken}
 	dict.Pairs = make(map[ast.Expression]ast.Expression)
 
+	p.skipWhitespace()
 	if p.peekTokenIs(token.RBRACE) {
 		p.nextToken()
 		return dict
@@ -567,29 +617,130 @@ func (p *Parser) parseDictLiteral() ast.Expression {
 	p.nextToken()
 
 	for {
+		// Skip whitespace before key
+		for p.curTokenIs(token.NEWLINE) || p.curTokenIs(token.INDENT) || p.curTokenIs(token.DEDENT) {
+			p.nextToken()
+		}
+		
+		if p.curTokenIs(token.RBRACE) {
+			return dict
+		}
+
 		key := p.parseExpression(LOWEST)
 
+		p.skipWhitespace()
 		if !p.expectPeek(token.COLON) {
 			return nil
 		}
 
 		p.nextToken()
+		// Skip whitespace after colon
+		for p.curTokenIs(token.NEWLINE) || p.curTokenIs(token.INDENT) || p.curTokenIs(token.DEDENT) {
+			p.nextToken()
+		}
+		
 		value := p.parseExpression(LOWEST)
 
 		dict.Pairs[key] = value
 
+		p.skipWhitespace()
 		if !p.peekTokenIs(token.COMMA) {
 			break
 		}
 		p.nextToken()
+		p.skipWhitespace()
 		p.nextToken()
 	}
 
+	p.skipWhitespace()
 	if !p.expectPeek(token.RBRACE) {
 		return nil
 	}
 
 	return dict
+}
+
+func (p *Parser) parseTryStatement() *ast.TryStatement {
+	stmt := &ast.TryStatement{Token: p.curToken}
+	
+	if !p.expectPeek(token.COLON) {
+		return nil
+	}
+	
+	stmt.Body = p.parseBlockStatement()
+	
+	// Parse except clause (optional)
+	if p.peekTokenIs(token.EXCEPT) {
+		p.nextToken()
+		if !p.expectPeek(token.COLON) {
+			return nil
+		}
+		stmt.Except = p.parseBlockStatement()
+	}
+	
+	// Parse finally clause (optional)
+	if p.peekTokenIs(token.FINALLY) {
+		p.nextToken()
+		if !p.expectPeek(token.COLON) {
+			return nil
+		}
+		stmt.Finally = p.parseBlockStatement()
+	}
+	
+	return stmt
+}
+
+func (p *Parser) parseRaiseStatement() *ast.RaiseStatement {
+	stmt := &ast.RaiseStatement{Token: p.curToken}
+	p.nextToken()
+	
+	if !p.curTokenIs(token.NEWLINE) && !p.curTokenIs(token.EOF) {
+		stmt.Message = p.parseExpression(LOWEST)
+	}
+	
+	return stmt
+}
+
+func (p *Parser) parseGlobalStatement() *ast.GlobalStatement {
+	stmt := &ast.GlobalStatement{Token: p.curToken}
+	stmt.Names = []*ast.Identifier{}
+	
+	if !p.expectPeek(token.IDENT) {
+		return nil
+	}
+	
+	stmt.Names = append(stmt.Names, &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal})
+	
+	for p.peekTokenIs(token.COMMA) {
+		p.nextToken() // consume comma
+		if !p.expectPeek(token.IDENT) {
+			return nil
+		}
+		stmt.Names = append(stmt.Names, &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal})
+	}
+	
+	return stmt
+}
+
+func (p *Parser) parseNonlocalStatement() *ast.NonlocalStatement {
+	stmt := &ast.NonlocalStatement{Token: p.curToken}
+	stmt.Names = []*ast.Identifier{}
+	
+	if !p.expectPeek(token.IDENT) {
+		return nil
+	}
+	
+	stmt.Names = append(stmt.Names, &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal})
+	
+	for p.peekTokenIs(token.COMMA) {
+		p.nextToken() // consume comma
+		if !p.expectPeek(token.IDENT) {
+			return nil
+		}
+		stmt.Names = append(stmt.Names, &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal})
+	}
+	
+	return stmt
 }
 
 func (p *Parser) parseIndexExpression(left ast.Expression) ast.Expression {

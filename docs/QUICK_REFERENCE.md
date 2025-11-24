@@ -203,6 +203,46 @@ def fibonacci(n):
         return fibonacci(n - 1) + fibonacci(n - 2)
 ```
 
+## Error Handling
+
+```python
+# Try/except
+try:
+    result = 10 / 0
+except:
+    result = 0
+
+# Try/finally
+try:
+    data = process()
+finally:
+    cleanup()
+
+# Try/except/finally
+try:
+    response = http.get(url, options)
+    data = json.parse(response["body"])
+except:
+    data = None
+finally:
+    print("Done")
+
+# Raise errors
+def validate(x):
+    if x < 0:
+        raise "Value must be positive"
+    return x
+
+try:
+    validate(-5)
+except:
+    print("Validation failed")
+
+# Multiple assignment (tuple unpacking)
+a, b = [1, 2]
+x, y = [y, x]  # Swap variables
+```
+
 ## Data Types
 
 ```python

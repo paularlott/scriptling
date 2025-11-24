@@ -39,6 +39,48 @@ response = http.get("https://api.example.com/data", 10)
 
 ## Available Libraries
 
+### math
+
+**Functions:**
+- `math.sqrt(x)` - Square root
+- `math.pow(base, exp)` - Power (base^exp)
+- `math.abs(x)` - Absolute value
+- `math.floor(x)` - Floor (round down to integer)
+- `math.ceil(x)` - Ceiling (round up to integer)
+- `math.round(x)` - Round to nearest integer
+- `math.min(a, b, ...)` - Minimum value (variable arguments)
+- `math.max(a, b, ...)` - Maximum value (variable arguments)
+- `math.pi()` - Pi constant (3.14159...)
+- `math.e()` - Euler's number (2.71828...)
+
+**Example:**
+```python
+import math
+
+# Basic operations
+result = math.sqrt(16)  # 4.0
+power = math.pow(2, 8)  # 256.0
+absolute = math.abs(-5) # 5
+
+# Rounding
+floor_val = math.floor(3.7)  # 3
+ceil_val = math.ceil(3.2)    # 4
+round_val = math.round(3.5)  # 4
+
+# Min/Max
+minimum = math.min(3, 1, 4, 1, 5)  # 1
+maximum = math.max(3, 1, 4, 1, 5)  # 5
+
+# Constants
+pi = math.pi()  # 3.141592653589793
+e = math.e()    # 2.718281828459045
+
+# Calculate circle area
+radius = 5
+area = math.pi() * math.pow(radius, 2)
+print("Area: " + str(area))  # Area: 78.53981633974483
+```
+
 ### time
 
 **Functions:**

@@ -270,6 +270,89 @@ return          # Return None
 # No return statement also returns None
 ```
 
+## Error Handling
+
+### Try/Except
+Catch and handle errors that occur during execution:
+```python
+try:
+    result = 10 / 0
+    print("This won't print")
+except:
+    print("Error caught")
+    result = 0
+```
+
+### Try/Finally
+Execute cleanup code regardless of whether an error occurs:
+```python
+try:
+    data = process_data()
+    print("Success")
+finally:
+    print("Cleanup always runs")
+```
+
+### Try/Except/Finally
+Combine error handling with cleanup:
+```python
+try:
+    response = http.get(url, options)
+    data = json.parse(response["body"])
+except:
+    print("Request failed")
+    data = None
+finally:
+    print("Request complete")
+```
+
+### Raise Statement
+Raise custom errors:
+```python
+def check_positive(n):
+    if n < 0:
+        raise "Value must be positive"
+    return n * 2
+
+try:
+    result = check_positive(-5)
+except:
+    print("Caught error")
+```
+
+### Nested Try/Except
+```python
+try:
+    try:
+        risky_operation()
+    except:
+        print("Inner error")
+        raise "Re-raising"
+except:
+    print("Outer error")
+```
+
+### Error Handling with HTTP
+```python
+import json
+import http
+
+try:
+    options = {"timeout": 5}
+    response = http.get("https://api.example.com/data", options)
+    
+    if response["status"] != 200:
+        raise "HTTP error: " + str(response["status"])
+    
+    data = json.parse(response["body"])
+    print("Success: " + str(len(data)))
+except:
+    print("Request failed")
+    data = []
+finally:
+    print("Cleanup")
+```
+
 ## Lists
 
 ### Creation
@@ -590,8 +673,6 @@ text[:5]           # "Hello"
 - List comprehensions
 - Lambda functions
 - Classes and objects
-- Exception handling (try/except)
-- Multiple assignment: `a, b = 1, 2`
 - Global/nonlocal keywords
 - Decorators
 - Generators
@@ -692,6 +773,9 @@ When generating Scriptling code:
 18. Strings use `+` for concatenation
 19. Use `.py` file extension
 20. Check `response["status"]` before processing
+21. Use `try`/`except`/`finally` for error handling
+22. Use `raise "message"` to raise custom errors
+23. Multiple assignment: `a, b = [1, 2]` for unpacking lists
 
 ## Quick Syntax Reference
 
@@ -733,6 +817,22 @@ for item in [1, 2, 3, 4, 5]:
 # Functions
 def add(a, b):
     return a + b
+
+# Error handling
+try:
+    result = risky_operation()
+except:
+    result = None
+finally:
+    cleanup()
+
+# Raise errors
+if x < 0:
+    raise "Invalid value"
+
+# Multiple assignment
+a, b = [1, 2]
+x, y = [y, x]  # Swap
 
 # Lists & Dicts
 nums = [1, 2, 3]
