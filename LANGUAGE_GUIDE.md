@@ -416,13 +416,13 @@ response = http.get("https://api.example.com", 10)
 ### JSON Functions
 ```python
 # Parse JSON string to Scriptling objects
-data = json_parse('{"name":"Alice","age":30}')
+data = json.parse('{"name":"Alice","age":30}')
 name = data["name"]                # "Alice"
 age = data["age"]                  # 30
 
 # Convert Scriptling objects to JSON string
 obj = {"name": "Bob", "age": "25"}
-json_str = json_stringify(obj)    # '{"age":"25","name":"Bob"}'
+json_str = json.stringify(obj)    # '{"age":"25","name":"Bob"}'
 ```
 
 ### HTTP Functions
@@ -434,39 +434,41 @@ All HTTP functions return a dictionary with:
 
 #### GET Request
 ```python
-# Basic GET
-response = http_get("https://api.example.com/users")
+# Basic GET (default 5 second timeout)
+response = http.get("https://api.example.com/users")
 status = response["status"]        # 200
 body = response["body"]            # Response body string
-data = json_parse(body)            # Parse JSON response
+data = json.parse(body)            # Parse JSON response
 
-# GET with timeout (seconds)
-response = http_get("https://api.example.com/users", 10)
+# GET with options
+options = {"timeout": 10}
+response = http.get("https://api.example.com/users", options)
 
-# GET with headers
-headers = {"Authorization": "Bearer token123", "Accept": "application/json"}
-response = http_get("https://api.example.com/users", headers, 10)
-
-# GET with headers and timeout (order flexible)
-response = http_get("https://api.example.com/users", 10, headers)
+# GET with headers and timeout
+options = {
+    "timeout": 10,
+    "headers": {"Authorization": "Bearer token123", "Accept": "application/json"}
+}
+response = http.get("https://api.example.com/users", options)
 ```
 
 #### POST Request
 ```python
-# POST with JSON body
+# POST with JSON body (default 5 second timeout)
 payload = {"name": "Alice", "email": "alice@example.com"}
-body = json_stringify(payload)
-response = http_post("https://api.example.com/users", body)
+body = json.stringify(payload)
+response = http.post("https://api.example.com/users", body)
 
-# POST with timeout
-response = http_post("https://api.example.com/users", body, 15)
+# POST with options
+options = {"timeout": 15}
+response = http.post("https://api.example.com/users", body, options)
 
-# POST with headers
-headers = {"Authorization": "Bearer token123", "Content-Type": "application/json"}
-response = http_post("https://api.example.com/users", body, headers)
-
-# POST with headers and timeout (order flexible)
-response = http_post("https://api.example.com/users", body, headers, 10)
+# POST with headers and timeout
+options = {
+    "timeout": 10,
+    "headers": {"Authorization": "Bearer token123", "Content-Type": "application/json"}
+}
+response = http.post("https://api.example.com/users", body, options)
 
 # Check status
 if response["status"] == 201:
@@ -475,54 +477,58 @@ if response["status"] == 201:
 
 #### PUT Request
 ```python
-# Update resource
+# Update resource (default 5 second timeout)
 payload = {"name": "Alice Updated"}
-body = json_stringify(payload)
-response = http_put("https://api.example.com/users/1", body)
+body = json.stringify(payload)
+response = http.put("https://api.example.com/users/1", body)
 
-# With timeout
-response = http_put("https://api.example.com/users/1", body, 10)
+# With options
+options = {"timeout": 10}
+response = http.put("https://api.example.com/users/1", body, options)
 ```
 
 #### DELETE Request
 ```python
-# Delete resource
-response = http_delete("https://api.example.com/users/1")
+# Delete resource (default 5 second timeout)
+response = http.delete("https://api.example.com/users/1")
 
-# With timeout
-response = http_delete("https://api.example.com/users/1", 10)
+# With options
+options = {"timeout": 10}
+response = http.delete("https://api.example.com/users/1", options)
 ```
 
 #### PATCH Request
 ```python
-# Partial update
+# Partial update (default 5 second timeout)
 payload = {"email": "newemail@example.com"}
-body = json_stringify(payload)
-response = http_patch("https://api.example.com/users/1", body)
+body = json.stringify(payload)
+response = http.patch("https://api.example.com/users/1", body)
 
-# With timeout
-response = http_patch("https://api.example.com/users/1", body, 10)
+# With options
+options = {"timeout": 10}
+response = http.patch("https://api.example.com/users/1", body, options)
 ```
 
 #### Timeout Behavior
-- Default timeout: 30 seconds
+- Default timeout: 5 seconds
 - On timeout: Returns error
-- Timeout parameter: Integer (seconds)
+- Timeout parameter: Integer (seconds) in options dictionary
 
 ## Complete REST API Example
 
 ```python
 # Fetch user
-response = http_get("https://api.example.com/users/1", 10)
+options = {"timeout": 10}
+response = http.get("https://api.example.com/users/1", options)
 
 if response["status"] == 200:
-    user = json_parse(response["body"])
+    user = json.parse(response["body"])
     print("User: " + user["name"])
 
     # Update user
     user["email"] = "updated@example.com"
-    body = json_stringify(user)
-    update_resp = http_put("https://api.example.com/users/1", body, 10)
+    body = json.stringify(user)
+    update_resp = http.put("https://api.example.com/users/1", body, options)
 
     if update_resp["status"] == 200:
         print("Updated successfully")
@@ -533,16 +539,16 @@ else:
 
 # Create new user
 new_user = {"name": "Bob", "email": "bob@example.com"}
-body = json_stringify(new_user)
-create_resp = http_post("https://api.example.com/users", body, 10)
+body = json.stringify(new_user)
+create_resp = http.post("https://api.example.com/users", body, options)
 
 if create_resp["status"] == 201:
-    created = json_parse(create_resp["body"])
+    created = json.parse(create_resp["body"])
     user_id = created["id"]
     print("Created user with ID: " + user_id)
 
     # Delete user
-    delete_resp = http_delete("https://api.example.com/users/" + user_id, 10)
+    delete_resp = http.delete("https://api.example.com/users/" + user_id, options)
     if delete_resp["status"] == 204:
         print("Deleted successfully")
 ```
@@ -670,18 +676,19 @@ When generating Scriptling code:
 4. Use slice notation: `list[1:3]`, `list[:3]`, `list[3:]`, `string[0:5]`
 5. Use `keys(dict)`, `values(dict)`, `items(dict)` for dictionary iteration
 6. HTTP functions return `{"status": int, "body": string, "headers": dict}`
-7. HTTP functions accept optional headers dictionary
+7. HTTP functions accept optional options dictionary with `timeout` and `headers` keys
 8. Use `import("json")` and `import("http")` to load libraries
-9. Always use `json_parse()` and `json_stringify()` for JSON
-10. Use `elif` for multiple conditions
-11. Use augmented assignment: `x += 1`, `x *= 2`, etc.
-12. Use `break` to exit loops, `continue` to skip iterations
-13. Use `pass` as a placeholder in empty blocks
-14. `append(list, item)` modifies list in-place (like Python)
-15. Strings use `+` for concatenation
-16. Use `.py` file extension
-17. Always specify timeouts for HTTP calls
-18. Check `response["status"]` before processing
+9. Always use `json.parse()` and `json.stringify()` for JSON (dot notation)
+10. Always use `http.get()`, `http.post()`, etc. for HTTP (dot notation)
+11. Default HTTP timeout is 5 seconds if not specified
+12. Use `elif` for multiple conditions
+13. Use augmented assignment: `x += 1`, `x *= 2`, etc.
+14. Use `break` to exit loops, `continue` to skip iterations
+15. Use `pass` as a placeholder in empty blocks
+16. `append(list, item)` modifies list in-place (like Python)
+17. Strings use `+` for concatenation
+18. Use `.py` file extension
+19. Check `response["status"]` before processing
 
 ## Quick Syntax Reference
 
@@ -741,8 +748,11 @@ for item in items(data):
     print(item[0], item[1])
 
 # HTTP with headers and status check
-headers = {"Authorization": "Bearer token"}
-resp = http_get("https://api.example.com/data", headers, 10)
+options = {
+    "timeout": 10,
+    "headers": {"Authorization": "Bearer token"}
+}
+resp = http.get("https://api.example.com/data", options)
 if resp["status"] == 200:
-    data = json_parse(resp["body"])
+    data = json.parse(resp["body"])
 ```

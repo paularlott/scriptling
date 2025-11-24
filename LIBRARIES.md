@@ -63,29 +63,41 @@ json_str = json.stringify(obj)  # '{"count":"42","status":"success"}'
 **Functions:**
 All return `{"status": int, "body": string, "headers": dict}`
 
-- `http.get(url, timeout?)` - GET request
-- `http.post(url, body, timeout?)` - POST request
-- `http.put(url, body, timeout?)` - PUT request
-- `http.delete(url, timeout?)` - DELETE request
-- `http.patch(url, body, timeout?)` - PATCH request
+- `http.get(url, options?)` - GET request
+- `http.post(url, body, options?)` - POST request
+- `http.put(url, body, options?)` - PUT request
+- `http.delete(url, options?)` - DELETE request
+- `http.patch(url, body, options?)` - PATCH request
 
-Default timeout: 30 seconds
+Default timeout: 5 seconds
+
+**Options dictionary:**
+- `timeout` (integer): Request timeout in seconds (default: 5)
+- `headers` (dictionary): HTTP headers to send
 
 **Example:**
 ```python
 import("json")
 import("http")
 
-# GET request
-response = http.get("https://api.example.com/users/1", 10)
+# Simple GET request (5 second timeout)
+response = http.get("https://api.example.com/users/1")
 if response["status"] == 200:
     user = json.parse(response["body"])
     print(user["name"])
 
+# GET with options
+options = {
+    "timeout": 10,
+    "headers": {"Authorization": "Bearer token123"}
+}
+response = http.get("https://api.example.com/users/1", options)
+
 # POST request
 new_user = {"name": "Alice", "email": "alice@example.com"}
 body = json.stringify(new_user)
-response = http.post("https://api.example.com/users", body, 15)
+options = {"timeout": 15}
+response = http.post("https://api.example.com/users", body, options)
 
 if response["status"] == 201:
     print("Created successfully")
@@ -93,9 +105,9 @@ else:
     print("Error: " + str(response["status"]))
 
 # Other methods
-response = http.put(url, body, 10)
-response = http.delete(url, 10)
-response = http.patch(url, body, 10)
+response = http.put(url, body, options)
+response = http.delete(url, options)
+response = http.patch(url, body, options)
 ```
 
 ## Core Builtins

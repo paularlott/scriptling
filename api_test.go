@@ -139,7 +139,8 @@ result = data["name"]
 func TestHTTPLibrary(t *testing.T) {
 	p := New("http")
 	_, err := p.Eval(`
-response = http.get("https://httpbin.org/status/200", 10)
+options = {"timeout": 10}
+response = http.get("https://httpbin.org/status/200", options)
 status = response["status"]
 `)
 	if err != nil {

@@ -68,7 +68,8 @@ p.SetVar("rate", 3.14)
 
 // Use in Scriptling
 p.Eval(`
-response = http_get("https://api.example.com/data", timeout)
+options = {"timeout": timeout}
+response = http.get("https://api.example.com/data", options)
 if enabled:
     print("API key: " + api_key)
 `)
@@ -336,10 +337,11 @@ log_info("Starting API automation")
 
 # Fetch data
 url = api_base + "/users"
-response = http_get(url, timeout)
+options = {"timeout": timeout}
+response = http.get(url, options)
 
 if response["status"] == 200:
-    users = json_parse(response["body"])
+    users = json.parse(response["body"])
     log_info("Found " + str(len(users)) + " users")
     
     # Process each user
@@ -515,14 +517,14 @@ p := scriptling.New("json")
 p.SetVar("raw_data", jsonString)
 
 pipeline := `
-data = json_parse(raw_data)
+data = json.parse(raw_data)
 processed = []
 
 for item in data:
     if item["active"]:
         processed = append(processed, item["name"])
 
-result = json_stringify(processed)
+result = json.stringify(processed)
 `
 
 p.Eval(pipeline)

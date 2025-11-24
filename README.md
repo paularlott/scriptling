@@ -197,14 +197,26 @@ json_str = json.stringify({"key": "value"})
 import("http")
 
 # All methods return {"status": int, "body": string, "headers": dict}
-# All methods support optional headers dictionary
-headers = {"Authorization": "Bearer token123"}
+# All methods support optional options dictionary
+# Default timeout: 5 seconds
 
-response = http.get(url, headers, timeout_seconds)
-response = http.post(url, body, headers, timeout_seconds)
-response = http.put(url, body, headers, timeout_seconds)
-response = http.delete(url, headers, timeout_seconds)
-response = http.patch(url, body, headers, timeout_seconds)
+# Simple requests (5 second timeout)
+response = http.get(url)
+response = http.post(url, body)
+response = http.put(url, body)
+response = http.delete(url)
+response = http.patch(url, body)
+
+# With options (timeout and/or headers)
+options = {
+    "timeout": 10,
+    "headers": {"Authorization": "Bearer token123"}
+}
+response = http.get(url, options)
+response = http.post(url, body, options)
+response = http.put(url, body, options)
+response = http.delete(url, options)
+response = http.patch(url, body, options)
 
 # Check status
 if response["status"] == 200:

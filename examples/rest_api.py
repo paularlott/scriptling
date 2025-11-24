@@ -2,27 +2,28 @@
 
 # Example 1: Simple GET request with status check
 print("=== GET Request ===")
-response = http_get("https://jsonplaceholder.typicode.com/todos/1", 10)
+options = {"timeout": 10}
+response = http.get("https://jsonplaceholder.typicode.com/todos/1", options)
 print("Status: " + str(response["status"]))
 print("Body: " + response["body"])
 
 # Example 2: Parse JSON response
 print("\n=== Parse JSON ===")
 if response["status"] == 200:
-    data = json_parse(response["body"])
+    data = json.parse(response["body"])
     print(data)
     print("Title: " + data["title"])
 
 # Example 3: Create JSON and POST
 print("\n=== POST Request ===")
 new_todo = {"title": "Learn Scriptling", "completed": "false", "userId": "1"}
-json_body = json_stringify(new_todo)
+json_body = json.stringify(new_todo)
 print("Sending: " + json_body)
 
-post_response = http_post("https://jsonplaceholder.typicode.com/todos", json_body, 10)
+post_response = http.post("https://jsonplaceholder.typicode.com/todos", json_body, options)
 print("Status: " + str(post_response["status"]))
 if post_response["status"] == 201:
-    created = json_parse(post_response["body"])
+    created = json.parse(post_response["body"])
     print("Created ID: " + str(created["id"]))
 
 # Example 4: String manipulation

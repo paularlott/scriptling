@@ -1,8 +1,9 @@
-# REST API Example with Library Syntax
+# REST API Example with Library Syntax (Bracket Notation)
 
 # Example 1: Simple GET request with status check
 print("=== GET Request ===")
-response = http["get"]("https://jsonplaceholder.typicode.com/todos/1", 10)
+options = {"timeout": 10}
+response = http["get"]("https://jsonplaceholder.typicode.com/todos/1", options)
 print("Status: " + str(response["status"]))
 print("Body: " + response["body"])
 
@@ -19,7 +20,7 @@ new_todo = {"title": "Learn Scriptling", "completed": "false", "userId": "1"}
 json_body = json["stringify"](new_todo)
 print("Sending: " + json_body)
 
-post_response = http["post"]("https://jsonplaceholder.typicode.com/todos", json_body, 10)
+post_response = http["post"]("https://jsonplaceholder.typicode.com/todos", json_body, options)
 print("Status: " + str(post_response["status"]))
 if post_response["status"] == 201:
     created = json["parse"](post_response["body"])

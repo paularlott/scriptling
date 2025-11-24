@@ -13,24 +13,30 @@ func HTTPLibrary() map[string]*object.Builtin {
 	return map[string]*object.Builtin{
 		"get": {
 			Fn: func(args ...object.Object) object.Object {
-				if len(args) < 1 || len(args) > 3 {
-					return newError("wrong number of arguments. got=%d, want=1-3", len(args))
+				if len(args) < 1 || len(args) > 2 {
+					return newError("wrong number of arguments. got=%d, want=1-2", len(args))
 				}
 				if args[0].Type() != object.STRING_OBJ {
 					return newError("url must be STRING")
 				}
 				url := args[0].(*object.String).Value
-				timeout := 30
+				timeout := 5 // Default 5 seconds
 				headers := make(map[string]string)
 				
-				for i := 1; i < len(args); i++ {
-					switch args[i].Type() {
-					case object.INTEGER_OBJ:
-						timeout = int(args[i].(*object.Integer).Value)
-					case object.DICT_OBJ:
-						headers = extractHeaders(args[i].(*object.Dict))
-					default:
-						return newError("invalid argument type: %s", args[i].Type())
+				if len(args) == 2 {
+					if args[1].Type() != object.DICT_OBJ {
+						return newError("options must be DICT")
+					}
+					options := args[1].(*object.Dict)
+					if timeoutPair, ok := options.Pairs["timeout"]; ok {
+						if timeoutInt, ok := timeoutPair.Value.(*object.Integer); ok {
+							timeout = int(timeoutInt.Value)
+						}
+					}
+					if headersPair, ok := options.Pairs["headers"]; ok {
+						if headersDict, ok := headersPair.Value.(*object.Dict); ok {
+							headers = extractHeaders(headersDict)
+						}
 					}
 				}
 				return httpRequest("GET", url, "", timeout, headers)
@@ -38,25 +44,31 @@ func HTTPLibrary() map[string]*object.Builtin {
 		},
 		"post": {
 			Fn: func(args ...object.Object) object.Object {
-				if len(args) < 2 || len(args) > 4 {
-					return newError("wrong number of arguments. got=%d, want=2-4", len(args))
+				if len(args) < 2 || len(args) > 3 {
+					return newError("wrong number of arguments. got=%d, want=2-3", len(args))
 				}
 				if args[0].Type() != object.STRING_OBJ || args[1].Type() != object.STRING_OBJ {
 					return newError("url and body must be STRING")
 				}
 				url := args[0].(*object.String).Value
 				body := args[1].(*object.String).Value
-				timeout := 30
+				timeout := 5
 				headers := make(map[string]string)
 				
-				for i := 2; i < len(args); i++ {
-					switch args[i].Type() {
-					case object.INTEGER_OBJ:
-						timeout = int(args[i].(*object.Integer).Value)
-					case object.DICT_OBJ:
-						headers = extractHeaders(args[i].(*object.Dict))
-					default:
-						return newError("invalid argument type: %s", args[i].Type())
+				if len(args) == 3 {
+					if args[2].Type() != object.DICT_OBJ {
+						return newError("options must be DICT")
+					}
+					options := args[2].(*object.Dict)
+					if timeoutPair, ok := options.Pairs["timeout"]; ok {
+						if timeoutInt, ok := timeoutPair.Value.(*object.Integer); ok {
+							timeout = int(timeoutInt.Value)
+						}
+					}
+					if headersPair, ok := options.Pairs["headers"]; ok {
+						if headersDict, ok := headersPair.Value.(*object.Dict); ok {
+							headers = extractHeaders(headersDict)
+						}
 					}
 				}
 				return httpRequest("POST", url, body, timeout, headers)
@@ -64,25 +76,31 @@ func HTTPLibrary() map[string]*object.Builtin {
 		},
 		"put": {
 			Fn: func(args ...object.Object) object.Object {
-				if len(args) < 2 || len(args) > 4 {
-					return newError("wrong number of arguments. got=%d, want=2-4", len(args))
+				if len(args) < 2 || len(args) > 3 {
+					return newError("wrong number of arguments. got=%d, want=2-3", len(args))
 				}
 				if args[0].Type() != object.STRING_OBJ || args[1].Type() != object.STRING_OBJ {
 					return newError("url and body must be STRING")
 				}
 				url := args[0].(*object.String).Value
 				body := args[1].(*object.String).Value
-				timeout := 30
+				timeout := 5
 				headers := make(map[string]string)
 				
-				for i := 2; i < len(args); i++ {
-					switch args[i].Type() {
-					case object.INTEGER_OBJ:
-						timeout = int(args[i].(*object.Integer).Value)
-					case object.DICT_OBJ:
-						headers = extractHeaders(args[i].(*object.Dict))
-					default:
-						return newError("invalid argument type: %s", args[i].Type())
+				if len(args) == 3 {
+					if args[2].Type() != object.DICT_OBJ {
+						return newError("options must be DICT")
+					}
+					options := args[2].(*object.Dict)
+					if timeoutPair, ok := options.Pairs["timeout"]; ok {
+						if timeoutInt, ok := timeoutPair.Value.(*object.Integer); ok {
+							timeout = int(timeoutInt.Value)
+						}
+					}
+					if headersPair, ok := options.Pairs["headers"]; ok {
+						if headersDict, ok := headersPair.Value.(*object.Dict); ok {
+							headers = extractHeaders(headersDict)
+						}
 					}
 				}
 				return httpRequest("PUT", url, body, timeout, headers)
@@ -90,24 +108,30 @@ func HTTPLibrary() map[string]*object.Builtin {
 		},
 		"delete": {
 			Fn: func(args ...object.Object) object.Object {
-				if len(args) < 1 || len(args) > 3 {
-					return newError("wrong number of arguments. got=%d, want=1-3", len(args))
+				if len(args) < 1 || len(args) > 2 {
+					return newError("wrong number of arguments. got=%d, want=1-2", len(args))
 				}
 				if args[0].Type() != object.STRING_OBJ {
 					return newError("url must be STRING")
 				}
 				url := args[0].(*object.String).Value
-				timeout := 30
+				timeout := 5
 				headers := make(map[string]string)
 				
-				for i := 1; i < len(args); i++ {
-					switch args[i].Type() {
-					case object.INTEGER_OBJ:
-						timeout = int(args[i].(*object.Integer).Value)
-					case object.DICT_OBJ:
-						headers = extractHeaders(args[i].(*object.Dict))
-					default:
-						return newError("invalid argument type: %s", args[i].Type())
+				if len(args) == 2 {
+					if args[1].Type() != object.DICT_OBJ {
+						return newError("options must be DICT")
+					}
+					options := args[1].(*object.Dict)
+					if timeoutPair, ok := options.Pairs["timeout"]; ok {
+						if timeoutInt, ok := timeoutPair.Value.(*object.Integer); ok {
+							timeout = int(timeoutInt.Value)
+						}
+					}
+					if headersPair, ok := options.Pairs["headers"]; ok {
+						if headersDict, ok := headersPair.Value.(*object.Dict); ok {
+							headers = extractHeaders(headersDict)
+						}
 					}
 				}
 				return httpRequest("DELETE", url, "", timeout, headers)
@@ -115,25 +139,31 @@ func HTTPLibrary() map[string]*object.Builtin {
 		},
 		"patch": {
 			Fn: func(args ...object.Object) object.Object {
-				if len(args) < 2 || len(args) > 4 {
-					return newError("wrong number of arguments. got=%d, want=2-4", len(args))
+				if len(args) < 2 || len(args) > 3 {
+					return newError("wrong number of arguments. got=%d, want=2-3", len(args))
 				}
 				if args[0].Type() != object.STRING_OBJ || args[1].Type() != object.STRING_OBJ {
 					return newError("url and body must be STRING")
 				}
 				url := args[0].(*object.String).Value
 				body := args[1].(*object.String).Value
-				timeout := 30
+				timeout := 5
 				headers := make(map[string]string)
 				
-				for i := 2; i < len(args); i++ {
-					switch args[i].Type() {
-					case object.INTEGER_OBJ:
-						timeout = int(args[i].(*object.Integer).Value)
-					case object.DICT_OBJ:
-						headers = extractHeaders(args[i].(*object.Dict))
-					default:
-						return newError("invalid argument type: %s", args[i].Type())
+				if len(args) == 3 {
+					if args[2].Type() != object.DICT_OBJ {
+						return newError("options must be DICT")
+					}
+					options := args[2].(*object.Dict)
+					if timeoutPair, ok := options.Pairs["timeout"]; ok {
+						if timeoutInt, ok := timeoutPair.Value.(*object.Integer); ok {
+							timeout = int(timeoutInt.Value)
+						}
+					}
+					if headersPair, ok := options.Pairs["headers"]; ok {
+						if headersDict, ok := headersPair.Value.(*object.Dict); ok {
+							headers = extractHeaders(headersDict)
+						}
 					}
 				}
 				return httpRequest("PATCH", url, body, timeout, headers)
