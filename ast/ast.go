@@ -67,6 +67,13 @@ type Boolean struct {
 func (b *Boolean) expressionNode()      {}
 func (b *Boolean) TokenLiteral() string { return b.Token.Literal }
 
+type None struct {
+	Token token.Token
+}
+
+func (n *None) expressionNode()      {}
+func (n *None) TokenLiteral() string { return n.Token.Literal }
+
 type PrefixExpression struct {
 	Token    token.Token
 	Operator string

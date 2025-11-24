@@ -56,6 +56,7 @@ x = 42                          # Integer
 pi = 3.14                       # Float
 name = "Alice"                  # String
 flag = True                     # Boolean
+result = None                   # None (null value)
 numbers = [1, 2, 3]            # List
 person = {"name": "Bob"}        # Dictionary
 
@@ -105,17 +106,19 @@ result = add(5, 3)
 
 ### Libraries
 ```python
-# Import libraries dynamically
-import("json")
-import("http")
+# Import libraries dynamically. The import() function loads the library
+# and makes its functions available as a global object.
+import("json")    # Creates global 'json' object
+import("http")    # Creates global 'http' object
 
 # Use JSON (dot notation)
 data = json.parse('{"name":"Alice"}')
 json_str = json.stringify({"key": "value"})
 
 # Use HTTP (dot notation)
-response = http.get("https://api.example.com/data", 10)
-response = http.post(url, body, 10)
+options = {"timeout": 10}
+response = http.get("https://api.example.com/data", options)
+response = http.post(url, body, options)
 
 # Bracket notation also works
 data = json["parse"]('...')
@@ -246,9 +249,10 @@ go run main.go
 ## Documentation
 
 - **README.md** (this file) - Quick start and overview
-- **LANGUAGE_GUIDE.md** - Complete language reference
-- **GO_INTEGRATION.md** - Go integration and embedding guide
-- **LIBRARIES.md** - Library system and custom libraries
+- **docs/LANGUAGE_GUIDE.md** - Complete language reference
+- **docs/GO_INTEGRATION.md** - Go integration and embedding guide
+- **docs/LIBRARIES.md** - Library system and custom libraries
+- **docs/QUICK_REFERENCE.md** - Quick reference guide
 - **BUILD_PLAN.md** - Architecture and build progress
 
 ## File Extension

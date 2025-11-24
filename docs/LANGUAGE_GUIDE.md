@@ -404,13 +404,15 @@ for item in items(person):
 
 ### Library Import
 ```python
-# Import libraries dynamically
-import("json")    # Load JSON library
-import("http")    # Load HTTP library
+# Import libraries dynamically. The import() function loads the library
+# and makes its functions available as a global object.
+import("json")    # Load JSON library, creates a global 'json' object
+import("http")    # Load HTTP library, creates a global 'http' object
 
-# Use imported libraries
+# Use imported libraries directly via their global object
 data = json.parse('{"key":"value"}')
-response = http.get("https://api.example.com", 10)
+options = {"timeout": 10}
+response = http.get("https://api.example.com", options)
 ```
 
 ### JSON Functions
@@ -594,7 +596,6 @@ text[:5]           # "Hello"
 - `with` statement
 
 ### Key Differences
-- No `None` literal (use functions that return None)
 - String concatenation: `+` only (no f-strings or %)
 - No implicit type coercion in most operations
 
@@ -670,7 +671,7 @@ See the `examples/` directory:
 
 When generating Scriptling code:
 1. Use 4-space indentation for blocks
-2. Use `True`/`False` for booleans (capitalized)
+2. Use `True`/`False` for booleans, `None` for null (all capitalized)
 3. Use `range(n)`, `range(start, stop)`, or `range(start, stop, step)` for numeric loops
 4. Use slice notation: `list[1:3]`, `list[:3]`, `list[3:]`, `string[0:5]`
 5. Use `keys(dict)`, `values(dict)`, `items(dict)` for dictionary iteration
@@ -699,9 +700,10 @@ x = 10
 x += 5
 x *= 2
 
-# Booleans
+# Booleans and None
 flag = True
 done = False
+result = None
 
 # Control flow
 if x > 10:
