@@ -38,7 +38,7 @@ import (
 func main() {
     // Create interpreter
     p := scriptling.New()
-    
+
     // Optional: Register HTTP library if needed
     p.RegisterLibrary("http", stdlib.HTTPLibrary())
 
@@ -386,7 +386,6 @@ go test -v -run=TestBenchmarkScript
 - **docs/GO_INTEGRATION.md** - Go integration and embedding guide
 - **docs/LIBRARIES.md** - Library system and custom libraries
 - **docs/QUICK_REFERENCE.md** - Quick reference guide
-- **BUILD_PLAN.md** - Architecture and build progress
 
 ## File Extension
 
