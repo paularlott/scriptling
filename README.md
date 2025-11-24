@@ -225,6 +225,31 @@ text = re.replace("[0-9]+", "Price: 100", "XXX")
 parts = re.split("[,;]", "one,two;three")
 ```
 
+### Time Library
+```python
+import time
+
+# Benchmark code (use perf_counter for precision)
+start = time.perf_counter()
+for i in range(1000):
+    x = i * 2
+end = time.perf_counter()
+print("Time: " + str(end - start) + " seconds")
+
+# Get current timestamp
+now = time.time()  # Unix timestamp
+
+# Format time
+formatted = time.strftime("%Y-%m-%d %H:%M:%S", now)
+print(formatted)  # "2024-11-24 17:43:42"
+
+# Parse time string
+timestamp = time.strptime("2024-01-15 10:30:45", "%Y-%m-%d %H:%M:%S")
+
+# Sleep
+time.sleep(1)  # Sleep 1 second
+```
+
 ### HTTP Library
 ```python
 import http
@@ -265,11 +290,17 @@ See `examples/` directory:
 - `collections.py` - Lists, dicts, for loops
 - `rest_api.py` - REST API calls
 - `rest_api_lib.py` - REST API with library syntax
+- `benchmark.py` - Performance benchmark script
 
 Run example:
 ```bash
 cd examples
 go run main.go
+```
+
+Run benchmark:
+```bash
+go test -v -run=TestBenchmarkScript
 ```
 
 ## Documentation

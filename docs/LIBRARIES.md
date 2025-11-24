@@ -39,6 +39,55 @@ response = http.get("https://api.example.com/data", 10)
 
 ## Available Libraries
 
+### time
+
+**Functions:**
+- `time.perf_counter()` - High-resolution timer for benchmarking (monotonic)
+- `time.time()` - Get current Unix timestamp (seconds since epoch as float)
+- `time.sleep(seconds)` - Sleep for specified seconds (accepts int or float)
+- `time.strftime(format, timestamp)` - Format timestamp to string
+- `time.strptime(string, format)` - Parse time string to timestamp
+
+**Format codes:**
+- `%Y` - Year (4 digits)
+- `%m` - Month (01-12)
+- `%d` - Day (01-31)
+- `%H` - Hour (00-23)
+- `%M` - Minute (00-59)
+- `%S` - Second (00-59)
+
+**Example:**
+```python
+import time
+
+# Benchmark code (use perf_counter for precision)
+start = time.perf_counter()
+for i in range(1000):
+    x = i * 2
+end = time.perf_counter()
+elapsed = end - start
+print("Elapsed: " + str(elapsed) + " seconds")
+print("Ops/sec: " + str(1000 / elapsed))
+
+# Get current timestamp
+now = time.time()  # 1732435200.123456
+print("Timestamp: " + str(now))
+
+# Format time
+formatted = time.strftime("%Y-%m-%d %H:%M:%S", now)
+print("Formatted: " + formatted)  # "2024-11-24 17:43:42"
+
+# Parse time string
+timestamp = time.strptime("2024-01-15 10:30:45", "%Y-%m-%d %H:%M:%S")
+print("Parsed: " + str(timestamp))  # 1705314645.0
+
+# Sleep
+print("Waiting...")
+time.sleep(1)      # Sleep 1 second
+time.sleep(0.5)    # Sleep 0.5 seconds
+print("Done!")
+```
+
 ### json
 
 **Functions:**
@@ -293,7 +342,8 @@ func MyLibrary() map[string]*object.Builtin {
 var availableLibraries = map[string]func() map[string]*object.Builtin{
     "json": stdlib.JSONLibrary,
     "http": stdlib.HTTPLibrary,
-    "mylib": stdlib.MyLibrary,  // Add here
+    "time": stdlib.GetTimeLibrary,  // Add here
+    "mylib": stdlib.MyLibrary,
 }
 ```
 

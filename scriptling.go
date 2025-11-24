@@ -17,6 +17,7 @@ var availableLibraries = map[string]func() map[string]*object.Builtin{
 	"json": stdlib.JSONLibrary,
 	"http": stdlib.HTTPLibrary,
 	"re":   stdlib.ReLibrary,
+	"time": stdlib.GetTimeLibrary,
 }
 
 func New(libraries ...string) *Scriptling {
