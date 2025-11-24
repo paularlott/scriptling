@@ -187,11 +187,18 @@ func (p *Parser) parseStatement() ast.Statement {
 	case token.IDENT:
 		if p.peekTokenIs(token.ASSIGN) {
 			return p.parseAssignStatement()
+		} else if p.isAugmentedAssign() {
+			return p.parseAugmentedAssignStatement()
 		}
 		return p.parseExpressionStatement()
 	default:
 		return p.parseExpressionStatement()
 	}
+}
+
+func (p *Parser) isAugmentedAssign() bool {
+	return p.peekTokenIs(token.PLUS_EQ) || p.peekTokenIs(token.MINUS_EQ) ||
+		p.peekTokenIs(token.MUL_EQ) || p.peekTokenIs(token.DIV_EQ) || p.peekTokenIs(token.MOD_EQ)
 }
 
 func (p *Parser) parseAssignStatement() *ast.AssignStatement {
@@ -201,6 +208,19 @@ func (p *Parser) parseAssignStatement() *ast.AssignStatement {
 	if !p.expectPeek(token.ASSIGN) {
 		return nil
 	}
+
+	p.nextToken()
+	stmt.Value = p.parseExpression(LOWEST)
+
+	return stmt
+}
+
+func (p *Parser) parseAugmentedAssignStatement() *ast.AugmentedAssignStatement {
+	stmt := &ast.AugmentedAssignStatement{Token: p.curToken}
+	stmt.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+
+	p.nextToken()
+	stmt.Operator = p.curToken.Literal
 
 	p.nextToken()
 	stmt.Value = p.parseExpression(LOWEST)

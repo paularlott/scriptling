@@ -95,6 +95,16 @@ type AssignStatement struct {
 func (as *AssignStatement) statementNode()       {}
 func (as *AssignStatement) TokenLiteral() string { return as.Token.Literal }
 
+type AugmentedAssignStatement struct {
+	Token    token.Token
+	Name     *Identifier
+	Operator string
+	Value    Expression
+}
+
+func (aas *AugmentedAssignStatement) statementNode()       {}
+func (aas *AugmentedAssignStatement) TokenLiteral() string { return aas.Token.Literal }
+
 type ExpressionStatement struct {
 	Token      token.Token
 	Expression Expression

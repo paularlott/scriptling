@@ -13,106 +13,146 @@ func HTTPLibrary() map[string]*object.Builtin {
 	return map[string]*object.Builtin{
 		"get": {
 			Fn: func(args ...object.Object) object.Object {
-				if len(args) < 1 || len(args) > 2 {
-					return newError("wrong number of arguments. got=%d, want=1 or 2", len(args))
+				if len(args) < 1 || len(args) > 3 {
+					return newError("wrong number of arguments. got=%d, want=1-3", len(args))
 				}
 				if args[0].Type() != object.STRING_OBJ {
-					return newError("argument must be STRING")
+					return newError("url must be STRING")
 				}
 				url := args[0].(*object.String).Value
 				timeout := 30
-				if len(args) == 2 {
-					if args[1].Type() != object.INTEGER_OBJ {
-						return newError("timeout must be INTEGER")
+				headers := make(map[string]string)
+				
+				for i := 1; i < len(args); i++ {
+					switch args[i].Type() {
+					case object.INTEGER_OBJ:
+						timeout = int(args[i].(*object.Integer).Value)
+					case object.DICT_OBJ:
+						headers = extractHeaders(args[i].(*object.Dict))
+					default:
+						return newError("invalid argument type: %s", args[i].Type())
 					}
-					timeout = int(args[1].(*object.Integer).Value)
 				}
-				return httpRequest("GET", url, "", timeout)
+				return httpRequest("GET", url, "", timeout, headers)
 			},
 		},
 		"post": {
 			Fn: func(args ...object.Object) object.Object {
-				if len(args) < 2 || len(args) > 3 {
-					return newError("wrong number of arguments. got=%d, want=2 or 3", len(args))
+				if len(args) < 2 || len(args) > 4 {
+					return newError("wrong number of arguments. got=%d, want=2-4", len(args))
 				}
 				if args[0].Type() != object.STRING_OBJ || args[1].Type() != object.STRING_OBJ {
-					return newError("arguments must be STRING")
+					return newError("url and body must be STRING")
 				}
 				url := args[0].(*object.String).Value
 				body := args[1].(*object.String).Value
 				timeout := 30
-				if len(args) == 3 {
-					if args[2].Type() != object.INTEGER_OBJ {
-						return newError("timeout must be INTEGER")
+				headers := make(map[string]string)
+				
+				for i := 2; i < len(args); i++ {
+					switch args[i].Type() {
+					case object.INTEGER_OBJ:
+						timeout = int(args[i].(*object.Integer).Value)
+					case object.DICT_OBJ:
+						headers = extractHeaders(args[i].(*object.Dict))
+					default:
+						return newError("invalid argument type: %s", args[i].Type())
 					}
-					timeout = int(args[2].(*object.Integer).Value)
 				}
-				return httpRequest("POST", url, body, timeout)
+				return httpRequest("POST", url, body, timeout, headers)
 			},
 		},
 		"put": {
 			Fn: func(args ...object.Object) object.Object {
-				if len(args) < 2 || len(args) > 3 {
-					return newError("wrong number of arguments. got=%d, want=2 or 3", len(args))
+				if len(args) < 2 || len(args) > 4 {
+					return newError("wrong number of arguments. got=%d, want=2-4", len(args))
 				}
 				if args[0].Type() != object.STRING_OBJ || args[1].Type() != object.STRING_OBJ {
-					return newError("arguments must be STRING")
+					return newError("url and body must be STRING")
 				}
 				url := args[0].(*object.String).Value
 				body := args[1].(*object.String).Value
 				timeout := 30
-				if len(args) == 3 {
-					if args[2].Type() != object.INTEGER_OBJ {
-						return newError("timeout must be INTEGER")
+				headers := make(map[string]string)
+				
+				for i := 2; i < len(args); i++ {
+					switch args[i].Type() {
+					case object.INTEGER_OBJ:
+						timeout = int(args[i].(*object.Integer).Value)
+					case object.DICT_OBJ:
+						headers = extractHeaders(args[i].(*object.Dict))
+					default:
+						return newError("invalid argument type: %s", args[i].Type())
 					}
-					timeout = int(args[2].(*object.Integer).Value)
 				}
-				return httpRequest("PUT", url, body, timeout)
+				return httpRequest("PUT", url, body, timeout, headers)
 			},
 		},
 		"delete": {
 			Fn: func(args ...object.Object) object.Object {
-				if len(args) < 1 || len(args) > 2 {
-					return newError("wrong number of arguments. got=%d, want=1 or 2", len(args))
+				if len(args) < 1 || len(args) > 3 {
+					return newError("wrong number of arguments. got=%d, want=1-3", len(args))
 				}
 				if args[0].Type() != object.STRING_OBJ {
-					return newError("argument must be STRING")
+					return newError("url must be STRING")
 				}
 				url := args[0].(*object.String).Value
 				timeout := 30
-				if len(args) == 2 {
-					if args[1].Type() != object.INTEGER_OBJ {
-						return newError("timeout must be INTEGER")
+				headers := make(map[string]string)
+				
+				for i := 1; i < len(args); i++ {
+					switch args[i].Type() {
+					case object.INTEGER_OBJ:
+						timeout = int(args[i].(*object.Integer).Value)
+					case object.DICT_OBJ:
+						headers = extractHeaders(args[i].(*object.Dict))
+					default:
+						return newError("invalid argument type: %s", args[i].Type())
 					}
-					timeout = int(args[1].(*object.Integer).Value)
 				}
-				return httpRequest("DELETE", url, "", timeout)
+				return httpRequest("DELETE", url, "", timeout, headers)
 			},
 		},
 		"patch": {
 			Fn: func(args ...object.Object) object.Object {
-				if len(args) < 2 || len(args) > 3 {
-					return newError("wrong number of arguments. got=%d, want=2 or 3", len(args))
+				if len(args) < 2 || len(args) > 4 {
+					return newError("wrong number of arguments. got=%d, want=2-4", len(args))
 				}
 				if args[0].Type() != object.STRING_OBJ || args[1].Type() != object.STRING_OBJ {
-					return newError("arguments must be STRING")
+					return newError("url and body must be STRING")
 				}
 				url := args[0].(*object.String).Value
 				body := args[1].(*object.String).Value
 				timeout := 30
-				if len(args) == 3 {
-					if args[2].Type() != object.INTEGER_OBJ {
-						return newError("timeout must be INTEGER")
+				headers := make(map[string]string)
+				
+				for i := 2; i < len(args); i++ {
+					switch args[i].Type() {
+					case object.INTEGER_OBJ:
+						timeout = int(args[i].(*object.Integer).Value)
+					case object.DICT_OBJ:
+						headers = extractHeaders(args[i].(*object.Dict))
+					default:
+						return newError("invalid argument type: %s", args[i].Type())
 					}
-					timeout = int(args[2].(*object.Integer).Value)
 				}
-				return httpRequest("PATCH", url, body, timeout)
+				return httpRequest("PATCH", url, body, timeout, headers)
 			},
 		},
 	}
 }
 
-func httpRequest(method, url, body string, timeoutSecs int) object.Object {
+func extractHeaders(dict *object.Dict) map[string]string {
+	headers := make(map[string]string)
+	for _, pair := range dict.Pairs {
+		if strVal, ok := pair.Value.(*object.String); ok {
+			headers[pair.Key.Inspect()] = strVal.Value
+		}
+	}
+	return headers
+}
+
+func httpRequest(method, url, body string, timeoutSecs int, headers map[string]string) object.Object {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSecs)*time.Second)
 	defer cancel()
 
@@ -124,12 +164,19 @@ func httpRequest(method, url, body string, timeoutSecs int) object.Object {
 		if err != nil {
 			return newError("http request error: %s", err.Error())
 		}
-		req.Header.Set("Content-Type", "application/json")
+		if _, hasContentType := headers["Content-Type"]; !hasContentType {
+			req.Header.Set("Content-Type", "application/json")
+		}
 	} else {
 		req, err = http.NewRequestWithContext(ctx, method, url, nil)
 		if err != nil {
 			return newError("http request error: %s", err.Error())
 		}
+	}
+
+	// Set custom headers
+	for key, value := range headers {
+		req.Header.Set(key, value)
 	}
 
 	client := &http.Client{}
@@ -147,10 +194,10 @@ func httpRequest(method, url, body string, timeoutSecs int) object.Object {
 		return newError("http read error: %s", err.Error())
 	}
 
-	headers := make(map[string]string)
+	respHeaders := make(map[string]string)
 	for key, values := range resp.Header {
 		if len(values) > 0 {
-			headers[key] = values[0]
+			respHeaders[key] = values[0]
 		}
 	}
 
@@ -165,7 +212,7 @@ func httpRequest(method, url, body string, timeoutSecs int) object.Object {
 	}
 
 	headerPairs := make(map[string]object.DictPair)
-	for k, v := range headers {
+	for k, v := range respHeaders {
 		headerPairs[k] = object.DictPair{
 			Key:   &object.String{Value: k},
 			Value: &object.String{Value: v},

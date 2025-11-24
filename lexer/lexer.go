@@ -79,19 +79,44 @@ func (l *Lexer) NextToken() token.Token {
 		}
 		l.readChar()
 	case '+':
-		tok = token.Token{Type: token.PLUS, Literal: string(l.ch), Line: l.line}
+		if l.peekChar() == '=' {
+			l.readChar()
+			tok = token.Token{Type: token.PLUS_EQ, Literal: "+=", Line: l.line}
+		} else {
+			tok = token.Token{Type: token.PLUS, Literal: string(l.ch), Line: l.line}
+		}
 		l.readChar()
 	case '-':
-		tok = token.Token{Type: token.MINUS, Literal: string(l.ch), Line: l.line}
+		if l.peekChar() == '=' {
+			l.readChar()
+			tok = token.Token{Type: token.MINUS_EQ, Literal: "-=", Line: l.line}
+		} else {
+			tok = token.Token{Type: token.MINUS, Literal: string(l.ch), Line: l.line}
+		}
 		l.readChar()
 	case '*':
-		tok = token.Token{Type: token.ASTERISK, Literal: string(l.ch), Line: l.line}
+		if l.peekChar() == '=' {
+			l.readChar()
+			tok = token.Token{Type: token.MUL_EQ, Literal: "*=", Line: l.line}
+		} else {
+			tok = token.Token{Type: token.ASTERISK, Literal: string(l.ch), Line: l.line}
+		}
 		l.readChar()
 	case '/':
-		tok = token.Token{Type: token.SLASH, Literal: string(l.ch), Line: l.line}
+		if l.peekChar() == '=' {
+			l.readChar()
+			tok = token.Token{Type: token.DIV_EQ, Literal: "/=", Line: l.line}
+		} else {
+			tok = token.Token{Type: token.SLASH, Literal: string(l.ch), Line: l.line}
+		}
 		l.readChar()
 	case '%':
-		tok = token.Token{Type: token.PERCENT, Literal: string(l.ch), Line: l.line}
+		if l.peekChar() == '=' {
+			l.readChar()
+			tok = token.Token{Type: token.MOD_EQ, Literal: "%=", Line: l.line}
+		} else {
+			tok = token.Token{Type: token.PERCENT, Literal: string(l.ch), Line: l.line}
+		}
 		l.readChar()
 	case '!':
 		if l.peekChar() == '=' {

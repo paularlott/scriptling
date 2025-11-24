@@ -64,6 +64,8 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		}
 		env.Set(node.Name.Value, val)
 		return val
+	case *ast.AugmentedAssignStatement:
+		return evalAugmentedAssignStatement(node, env)
 	case *ast.Identifier:
 		return evalIdentifier(node, env)
 	case *ast.FunctionStatement:
@@ -512,6 +514,42 @@ func evalStringIndexExpression(str, index object.Object) object.Object {
 	}
 
 	return &object.String{Value: string(strObject.Value[idx])}
+}
+
+func evalAugmentedAssignStatement(node *ast.AugmentedAssignStatement, env *object.Environment) object.Object {
+	currentVal, ok := env.Get(node.Name.Value)
+	if !ok {
+		return newError("identifier not found: %s", node.Name.Value)
+	}
+
+	newVal := Eval(node.Value, env)
+	if isError(newVal) {
+		return newVal
+	}
+
+	var operator string
+	switch node.Operator {
+	case "+=":
+		operator = "+"
+	case "-=":
+		operator = "-"
+	case "*=":
+		operator = "*"
+	case "/=":
+		operator = "/"
+	case "%=":
+		operator = "%"
+	default:
+		return newError("unknown augmented assignment operator: %s", node.Operator)
+	}
+
+	result := evalInfixExpression(operator, currentVal, newVal)
+	if isError(result) {
+		return result
+	}
+
+	env.Set(node.Name.Value, result)
+	return result
 }
 
 func evalForStatement(fs *ast.ForStatement, env *object.Environment) object.Object {

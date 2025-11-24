@@ -91,6 +91,15 @@ x / y    # Division (integer division for ints)
 x % y    # Modulo
 ```
 
+### Augmented Assignment
+```python
+x += y   # x = x + y
+x -= y   # x = x - y
+x *= y   # x = x * y
+x /= y   # x = x / y
+x %= y   # x = x % y
+```
+
 ### Comparison
 ```python
 x == y   # Equal
@@ -360,6 +369,13 @@ data = json_parse(body)            # Parse JSON response
 
 # GET with timeout (seconds)
 response = http_get("https://api.example.com/users", 10)
+
+# GET with headers
+headers = {"Authorization": "Bearer token123", "Accept": "application/json"}
+response = http_get("https://api.example.com/users", headers, 10)
+
+# GET with headers and timeout (order flexible)
+response = http_get("https://api.example.com/users", 10, headers)
 ```
 
 #### POST Request
@@ -371,6 +387,13 @@ response = http_post("https://api.example.com/users", body)
 
 # POST with timeout
 response = http_post("https://api.example.com/users", body, 15)
+
+# POST with headers
+headers = {"Authorization": "Bearer token123", "Content-Type": "application/json"}
+response = http_post("https://api.example.com/users", body, headers)
+
+# POST with headers and timeout (order flexible)
+response = http_post("https://api.example.com/users", body, headers, 10)
 
 # Check status
 if response["status"] == 201:
@@ -422,12 +445,12 @@ response = http_get("https://api.example.com/users/1", 10)
 if response["status"] == 200:
     user = json_parse(response["body"])
     print("User: " + user["name"])
-    
+
     # Update user
     user["email"] = "updated@example.com"
     body = json_stringify(user)
     update_resp = http_put("https://api.example.com/users/1", body, 10)
-    
+
     if update_resp["status"] == 200:
         print("Updated successfully")
     else:
@@ -444,7 +467,7 @@ if create_resp["status"] == 201:
     created = json_parse(create_resp["body"])
     user_id = created["id"]
     print("Created user with ID: " + user_id)
-    
+
     # Delete user
     delete_resp = http_delete("https://api.example.com/users/" + user_id, 10)
     if delete_resp["status"] == 204:
@@ -468,7 +491,6 @@ last = word[4]     # "o"
 - Modules/imports
 - Exception handling (try/except)
 - Multiple assignment: `a, b = 1, 2`
-- Augmented assignment: `+=`, `-=`, etc.
 - Slice notation: `list[1:3]`
 - `range()` function
 - Dictionary methods: `keys()`, `values()`, `items()`
@@ -480,14 +502,11 @@ last = word[4]     # "o"
 - `pass` statement
 
 ### Key Differences
-- Booleans: `True`/`False` (not `true`/`false`)
 - No `None` literal (use functions that return None)
 - String concatenation: `+` only (no f-strings or %)
 - Integer division: `/` performs integer division for integers
 - No implicit type coercion in most operations
 - `append()` returns new list (doesn't modify in place)
-
-
 
 ## Best Practices
 
@@ -563,19 +582,29 @@ When generating Scriptling code:
 1. Use 4-space indentation for blocks
 2. Use `True`/`False` for booleans (capitalized)
 3. HTTP functions return `{"status": int, "body": string, "headers": dict}`
-4. Always use `json_parse()` and `json_stringify()` for JSON
-5. Use `elif` for multiple conditions
-6. `append()` returns new list
-7. Strings use `+` for concatenation
-8. Use `.py` file extension
-9. Always specify timeouts for HTTP calls
-10. Check `response["status"]` before processing
+4. HTTP functions accept optional headers dictionary
+5. Always use `json_parse()` and `json_stringify()` for JSON
+6. Use `elif` for multiple conditions
+7. Use augmented assignment: `x += 1`, `x *= 2`, etc.
+8. `append()` returns new list
+9. Strings use `+` for concatenation
+10. Use `.py` file extension
+11. Always specify timeouts for HTTP calls
+12. Check `response["status"]` before processing
 
 ## Quick Syntax Reference
 
 ```python
 # Variables
 x = 10
+
+# Augmented assignment
+x += 5
+x *= 2
+
+# Booleans
+flag = True
+done = False
 
 # Control flow
 if x > 10:
@@ -586,7 +615,7 @@ else:
     print("small")
 
 while x > 0:
-    x = x - 1
+    x -= 1
 
 for item in [1, 2, 3]:
     print(item)
@@ -601,8 +630,9 @@ data = {"key": "value"}
 first = nums[0]
 val = data["key"]
 
-# HTTP with status check
-resp = http_get("https://api.example.com/data", 10)
+# HTTP with headers and status check
+headers = {"Authorization": "Bearer token"}
+resp = http_get("https://api.example.com/data", headers, 10)
 if resp["status"] == 200:
     data = json_parse(resp["body"])
 ```

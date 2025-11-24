@@ -57,6 +57,10 @@ name = "Alice"                  # String
 flag = True                     # Boolean
 numbers = [1, 2, 3]            # List
 person = {"name": "Bob"}        # Dictionary
+
+# Augmented assignment
+x += 10                         # x = x + 10
+pi *= 2                         # pi = pi * 2
 ```
 
 ### Control Flow
@@ -184,11 +188,14 @@ json_str = json.stringify({"key": "value"})
 import("http")
 
 # All methods return {"status": int, "body": string, "headers": dict}
-response = http.get(url, timeout_seconds)
-response = http.post(url, body, timeout_seconds)
-response = http.put(url, body, timeout_seconds)
-response = http.delete(url, timeout_seconds)
-response = http.patch(url, body, timeout_seconds)
+# All methods support optional headers dictionary
+headers = {"Authorization": "Bearer token123"}
+
+response = http.get(url, headers, timeout_seconds)
+response = http.post(url, body, headers, timeout_seconds)
+response = http.put(url, body, headers, timeout_seconds)
+response = http.delete(url, headers, timeout_seconds)
+response = http.patch(url, body, headers, timeout_seconds)
 
 # Check status
 if response["status"] == 200:
