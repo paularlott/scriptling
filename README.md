@@ -8,6 +8,8 @@ A minimal, sandboxed interpreter for LLM agents to execute code and interact wit
 - **Core types**: integers, floats, strings, booleans, lists, dictionaries
 - **Control flow**: if/elif/else, while, for loops, break, continue, pass
 - **Advanced features**: range(), slice notation, dict methods (keys/values/items), multiple assignment
+- **List comprehensions**: `[x * x for x in range(10) if x > 5]`
+- **Method call syntax**: `text.upper()`, `json.parse()`, `math.sqrt(16)`
 - **Functions** with recursion support
 - **Error handling**: try/except/finally, raise statement
 - **Optional libraries**: json, http, re, math, time (load on demand)
@@ -154,6 +156,30 @@ x, y = [y, x]
 
 # From function or expression
 first, second = [1 + 1, 2 * 2]
+```
+
+### List Comprehensions
+```python
+# Basic comprehension
+squares = [x * x for x in range(5)]
+
+# With condition
+evens = [x for x in range(10) if x % 2 == 0]
+
+# String processing
+chars = [c.upper() for c in "hello"]
+```
+
+### Method Call Syntax
+```python
+# String methods
+text = "hello world"
+result = text.upper().replace("WORLD", "SCRIPTLING")
+
+# Library methods
+import json
+data = json.parse('{"name": "Alice"}')
+name = data["name"].upper()
 ```
 
 ### Libraries

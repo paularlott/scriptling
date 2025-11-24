@@ -51,6 +51,10 @@ tests=(
     # Comprehensive
     "test_all_features.py"
     
+    # Advanced features
+    "test_string_methods.py"
+    "test_list_comprehensions.py"
+    
     # Examples (keep as-is)
     "variables.py"
     "fibonacci.py"

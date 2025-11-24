@@ -305,3 +305,24 @@ type NonlocalStatement struct {
 
 func (ns *NonlocalStatement) statementNode()       {}
 func (ns *NonlocalStatement) TokenLiteral() string { return ns.Token.Literal }
+
+type MethodCallExpression struct {
+	Token     token.Token
+	Object    Expression
+	Method    *Identifier
+	Arguments []Expression
+}
+
+func (mce *MethodCallExpression) expressionNode()      {}
+func (mce *MethodCallExpression) TokenLiteral() string { return mce.Token.Literal }
+
+type ListComprehension struct {
+	Token      token.Token
+	Expression Expression
+	Variable   *Identifier
+	Iterable   Expression
+	Condition  Expression // optional
+}
+
+func (lc *ListComprehension) expressionNode()      {}
+func (lc *ListComprehension) TokenLiteral() string { return lc.Token.Literal }

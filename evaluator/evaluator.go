@@ -128,6 +128,10 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		return evalGlobalStatement(node, env)
 	case *ast.NonlocalStatement:
 		return evalNonlocalStatement(node, env)
+	case *ast.MethodCallExpression:
+		return evalMethodCallExpression(node, env)
+	case *ast.ListComprehension:
+		return evalListComprehension(node, env)
 	}
 	return NULL
 }
@@ -837,4 +841,134 @@ func evalForStatement(fs *ast.ForStatement, env *object.Environment) object.Obje
 	}
 
 	return result
+}
+
+func evalMethodCallExpression(mce *ast.MethodCallExpression, env *object.Environment) object.Object {
+	obj := Eval(mce.Object, env)
+	if isError(obj) {
+		return obj
+	}
+
+	args := evalExpressions(mce.Arguments, env)
+	if len(args) == 1 && isError(args[0]) {
+		return args[0]
+	}
+
+	return callStringMethod(obj, mce.Method.Value, args)
+}
+
+func callStringMethod(obj object.Object, method string, args []object.Object) object.Object {
+	// Handle library method calls (dictionaries)
+	if obj.Type() == object.DICT_OBJ {
+		dict := obj.(*object.Dict)
+		if pair, ok := dict.Pairs[method]; ok {
+			if builtin, ok := pair.Value.(*object.Builtin); ok {
+				return builtin.Fn(args...)
+			}
+		}
+		return newError("method %s not found in library", method)
+	}
+	
+	if obj.Type() != object.STRING_OBJ {
+		return newError("method %s not supported on %s", method, obj.Type())
+	}
+
+	str := obj.(*object.String)
+
+	switch method {
+	case "upper":
+		if len(args) != 0 {
+			return newError("wrong number of arguments. got=%d, want=0", len(args))
+		}
+		if builtin, ok := builtins["upper"]; ok {
+			return builtin.Fn(str)
+		}
+	case "lower":
+		if len(args) != 0 {
+			return newError("wrong number of arguments. got=%d, want=0", len(args))
+		}
+		if builtin, ok := builtins["lower"]; ok {
+			return builtin.Fn(str)
+		}
+	case "split":
+		if len(args) != 1 {
+			return newError("wrong number of arguments. got=%d, want=1", len(args))
+		}
+		if builtin, ok := builtins["split"]; ok {
+			return builtin.Fn(str, args[0])
+		}
+	case "replace":
+		if len(args) != 2 {
+			return newError("wrong number of arguments. got=%d, want=2", len(args))
+		}
+		if builtin, ok := builtins["replace"]; ok {
+			return builtin.Fn(str, args[0], args[1])
+		}
+	default:
+		return newError("unknown method: %s", method)
+	}
+	return newError("method %s not found", method)
+}
+
+func evalListComprehension(lc *ast.ListComprehension, env *object.Environment) object.Object {
+	iterable := Eval(lc.Iterable, env)
+	if isError(iterable) {
+		return iterable
+	}
+
+	result := []object.Object{}
+	
+	// Create new scope for comprehension variable
+	compEnv := object.NewEnclosedEnvironment(env)
+
+	switch iter := iterable.(type) {
+	case *object.List:
+		for _, element := range iter.Elements {
+			compEnv.Set(lc.Variable.Value, element)
+			
+			// Check condition if present
+			if lc.Condition != nil {
+				condition := Eval(lc.Condition, compEnv)
+				if isError(condition) {
+					return condition
+				}
+				if !isTruthy(condition) {
+					continue
+				}
+			}
+			
+			// Evaluate expression
+			exprResult := Eval(lc.Expression, compEnv)
+			if isError(exprResult) {
+				return exprResult
+			}
+			result = append(result, exprResult)
+		}
+	case *object.String:
+		for _, char := range iter.Value {
+			compEnv.Set(lc.Variable.Value, &object.String{Value: string(char)})
+			
+			// Check condition if present
+			if lc.Condition != nil {
+				condition := Eval(lc.Condition, compEnv)
+				if isError(condition) {
+					return condition
+				}
+				if !isTruthy(condition) {
+					continue
+				}
+			}
+			
+			// Evaluate expression
+			exprResult := Eval(lc.Expression, compEnv)
+			if isError(exprResult) {
+				return exprResult
+			}
+			result = append(result, exprResult)
+		}
+	default:
+		return newError("list comprehension requires iterable, got %s", iterable.Type())
+	}
+
+	return &object.List{Elements: result}
 }

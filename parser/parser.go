@@ -594,8 +594,73 @@ func (p *Parser) parseForStatement() *ast.ForStatement {
 
 func (p *Parser) parseListLiteral() ast.Expression {
 	list := &ast.ListLiteral{Token: p.curToken}
-	list.Elements = p.parseExpressionList(token.RBRACKET)
+	
+	// Check for empty list
+	if p.peekTokenIs(token.RBRACKET) {
+		p.nextToken()
+		return list
+	}
+	
+	p.nextToken()
+	firstExpr := p.parseExpression(LOWEST)
+	
+	// Check if this is a list comprehension
+	if p.peekTokenIs(token.FOR) {
+		return p.parseListComprehension(firstExpr)
+	}
+	
+	// Regular list literal
+	elements := []ast.Expression{firstExpr}
+	
+	for p.peekTokenIs(token.COMMA) {
+		p.nextToken()
+		p.nextToken()
+		elements = append(elements, p.parseExpression(LOWEST))
+	}
+	
+	if !p.expectPeek(token.RBRACKET) {
+		return nil
+	}
+	
+	list.Elements = elements
 	return list
+}
+
+func (p *Parser) parseListComprehension(expr ast.Expression) ast.Expression {
+	comp := &ast.ListComprehension{
+		Token:      p.curToken,
+		Expression: expr,
+	}
+	
+	if !p.expectPeek(token.FOR) {
+		return nil
+	}
+	
+	if !p.expectPeek(token.IDENT) {
+		return nil
+	}
+	
+	comp.Variable = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+	
+	if !p.expectPeek(token.IN) {
+		return nil
+	}
+	
+	p.nextToken()
+	comp.Iterable = p.parseExpression(LOWEST)
+	
+	// Check for optional if condition
+	if p.peekTokenIs(token.IF) {
+		p.nextToken()
+		p.nextToken()
+		comp.Condition = p.parseExpression(LOWEST)
+	}
+	
+	if !p.expectPeek(token.RBRACKET) {
+		return nil
+	}
+	
+	return comp
 }
 
 func (p *Parser) skipWhitespace() {
@@ -745,11 +810,26 @@ func (p *Parser) parseNonlocalStatement() *ast.NonlocalStatement {
 
 func (p *Parser) parseIndexExpression(left ast.Expression) ast.Expression {
 	if p.curTokenIs(token.DOT) {
-		// Member access: obj.member
-		exp := &ast.IndexExpression{Token: p.curToken, Left: left}
+		// Method call or member access: obj.method() or obj.member
 		if !p.expectPeek(token.IDENT) {
 			return nil
 		}
+		methodName := &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+		
+		// Check if this is a method call (followed by parentheses)
+		if p.peekTokenIs(token.LPAREN) {
+			p.nextToken() // consume LPAREN
+			methodCall := &ast.MethodCallExpression{
+				Token:  p.curToken,
+				Object: left,
+				Method: methodName,
+			}
+			methodCall.Arguments = p.parseExpressionList(token.RPAREN)
+			return methodCall
+		}
+		
+		// Regular member access: obj.member
+		exp := &ast.IndexExpression{Token: p.curToken, Left: left}
 		exp.Index = &ast.StringLiteral{Token: p.curToken, Value: p.curToken.Literal}
 		return exp
 	}
