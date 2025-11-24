@@ -11,7 +11,7 @@ func TestBenchmarkScript(t *testing.T) {
 		t.Fatalf("Failed to read benchmark.py: %v", err)
 	}
 
-	p := New("json", "time")
+	p := New()
 	_, err = p.Eval(string(script))
 	if err != nil {
 		t.Fatalf("Benchmark script failed: %v", err)

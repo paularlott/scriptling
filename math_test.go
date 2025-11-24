@@ -23,7 +23,7 @@ func TestMathLibrary(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p := New("math")
+			p := New()
 			_, err := p.Eval(tt.script)
 			if err != nil {
 				t.Fatalf("Error: %v", err)
@@ -53,7 +53,7 @@ func TestMathLibrary(t *testing.T) {
 }
 
 func TestMathInExpression(t *testing.T) {
-	p := New("math")
+	p := New()
 	_, err := p.Eval(`
 import math
 

@@ -31,11 +31,18 @@ import (
 )
 
 func main() {
-    // Create interpreter with libraries
-    p := scriptling.New("json", "http")
+    // Create interpreter
+    p := scriptling.New()
+    
+    // Optional: Register HTTP library if needed
+    p.RegisterLibrary("http", stdlib.HTTPLibrary())
 
     // Execute Scriptling code
     _, err := p.Eval(`
+# Import libraries as needed
+import json
+import http
+
 # Make API call
 response = http.get("https://api.example.com/data", 10)
 if response["status"] == 200:
@@ -178,12 +185,11 @@ response = http["get"](...)
 
 ### Create Interpreter
 ```go
-// No libraries (lightweight)
+// Create interpreter (libraries loaded via import)
 p := scriptling.New()
 
-// With specific libraries
-p := scriptling.New("json")
-p := scriptling.New("json", "http")
+// Optional: Register HTTP library if needed
+p.RegisterLibrary("http", stdlib.HTTPLibrary())
 ```
 
 ### Execute Code
@@ -242,26 +248,45 @@ Always available without loading libraries:
 Scriptling includes optional libraries for common tasks:
 
 - **json** - Parse and stringify JSON
-- **http** - Make HTTP requests (GET, POST, PUT, DELETE, PATCH)
 - **re** - Regular expressions (match, find, findall, replace, split)
 - **math** - Mathematical functions (sqrt, pow, abs, floor, ceil, round, min, max, pi, e)
 - **time** - Time operations (time, perf_counter, sleep, strftime, strptime)
+- **base64** - Base64 encoding/decoding
+- **hashlib** - Hashing functions (md5, sha1, sha256)
+- **random** - Random number generation
+- **url** - URL parsing and manipulation
+
+**Optional Libraries** (require manual registration):
+- **http** - Make HTTP requests (GET, POST, PUT, DELETE, PATCH)
+  ```go
+  import "github.com/paularlott/scriptling/extlibs"
+  p.RegisterLibrary("http", extlibs.HTTPLibrary())
+  ```
 
 **Quick Example:**
 ```python
 import json
-import http
 import math
+
+# Parse JSON data
+data = json.parse('{"radius": 5}')
+
+# Calculate something
+radius = data["radius"]
+area = math.pi() * math.pow(radius, 2)
+print("Area: " + str(area))
+```
+
+**HTTP Example** (requires `p.RegisterLibrary("http", extlibs.HTTPLibrary())`):
+```python
+import json
+import http
 
 # Make API call
 response = http.get("https://api.example.com/data", {"timeout": 10})
 if response["status"] == 200:
     data = json.parse(response["body"])
-    
-    # Calculate something
-    radius = data["radius"]
-    area = math.pi() * math.pow(radius, 2)
-    print("Area: " + str(area))
+    print(data["name"])
 ```
 
 **See [docs/LIBRARIES.md](docs/LIBRARIES.md) for complete library documentation.**
@@ -293,6 +318,8 @@ cd examples
 ./run_all_tests.sh
 ```
 
+**Note**: HTTP tests will fail unless HTTP library is registered in main.go (this is intentional - HTTP is an optional extra).
+
 Run benchmark:
 ```bash
 go test -v -run=TestBenchmarkScript
@@ -321,7 +348,7 @@ go test ./...
 go test ./evaluator -v
 ```
 
-42 tests, 100% passing.
+40+ tests, 29/31 passing (HTTP tests require manual registration).
 
 ## Use Cases
 

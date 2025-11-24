@@ -15,7 +15,6 @@ type Scriptling struct {
 
 var availableLibraries = map[string]func() map[string]*object.Builtin{
 	"json":    stdlib.JSONLibrary,
-	"http":    stdlib.HTTPLibrary,
 	"re":      stdlib.ReLibrary,
 	"time":    stdlib.GetTimeLibrary,
 	"math":    stdlib.GetMathLibrary,
@@ -25,7 +24,7 @@ var availableLibraries = map[string]func() map[string]*object.Builtin{
 	"url":     stdlib.GetURLLibrary,
 }
 
-func New(libraries ...string) *Scriptling {
+func New() *Scriptling {
 	p := &Scriptling{
 		env: object.NewEnvironment(),
 	}
@@ -35,10 +34,6 @@ func New(libraries ...string) *Scriptling {
 	evaluator.SetImportCallback(func(libName string) error {
 		return p.loadLibrary(libName)
 	})
-	
-	for _, lib := range libraries {
-		p.loadLibrary(lib)
-	}
 	
 	return p
 }
@@ -105,13 +100,7 @@ func (p *Scriptling) RegisterLibrary(name string, funcs map[string]*object.Built
 	p.env.Set(name, &object.Dict{Pairs: lib})
 }
 
-func (p *Scriptling) LoadJSON() {
-	p.RegisterLibrary("json", stdlib.JSONLibrary())
-}
 
-func (p *Scriptling) LoadHTTP() {
-	p.RegisterLibrary("http", stdlib.HTTPLibrary())
-}
 
 func goToObject(value interface{}) object.Object {
 	switch v := value.(type) {

@@ -1,8 +1,9 @@
-package stdlib
+package extlibs
 
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -10,6 +11,10 @@ import (
 	"golang.org/x/net/http2"
 	"github.com/paularlott/scriptling/object"
 )
+
+func newError(format string, a ...interface{}) *object.Error {
+	return &object.Error{Message: fmt.Sprintf(format, a...)}
+}
 
 var httpClient *http.Client
 

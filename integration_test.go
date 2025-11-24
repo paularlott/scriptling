@@ -160,9 +160,10 @@ length = len(numbers)
 }
 
 func TestJSON(t *testing.T) {
-	p := New("json")
+	p := New()
 	p.SetVar("json_str", `{"name":"Alice","age":30}`)
 	result, err := p.Eval(`
+import json
 data = json["parse"](json_str)
 data["name"]
 `)

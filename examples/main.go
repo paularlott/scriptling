@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/paularlott/scriptling"
+	"github.com/paularlott/scriptling/extlibs"
 )
 
 func main() {
@@ -26,7 +27,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	p := scriptling.New("json", "http")
+	p := scriptling.New()
+	
+	// Register HTTP library for scripts that need it
+	p.RegisterLibrary("http", extlibs.HTTPLibrary())
+	
 	_, err = p.Eval(string(content))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)

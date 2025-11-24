@@ -3,6 +3,7 @@ package scriptling
 import (
 	"testing"
 	"github.com/paularlott/scriptling/object"
+	"github.com/paularlott/scriptling/extlibs"
 )
 
 func TestRegisterFunc(t *testing.T) {
@@ -121,8 +122,9 @@ gte = 10 >= 5
 }
 
 func TestDotNotation(t *testing.T) {
-	p := New("json")
+	p := New()
 	_, err := p.Eval(`
+import json
 data = json.parse('{"name":"Alice"}')
 result = data["name"]
 `)
@@ -137,7 +139,8 @@ result = data["name"]
 }
 
 func TestHTTPLibrary(t *testing.T) {
-	p := New("http")
+	p := New()
+	p.RegisterLibrary("http", extlibs.HTTPLibrary())
 	_, err := p.Eval(`
 options = {"timeout": 10}
 response = http.get("https://httpbin.org/status/200", options)

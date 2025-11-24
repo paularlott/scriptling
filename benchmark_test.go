@@ -232,7 +232,7 @@ func BenchmarkRuntime_TypeConversion(b *testing.B) {
 
 // === LIBRARIES ===
 func BenchmarkRuntime_JSONParse(b *testing.B) {
-	p := New("json")
+	p := New()
 	p.Eval("import json")
 	for i := 0; i < b.N; i++ {
 		p.Eval(`data = json.parse('{"name":"Alice","age":30}')`)
@@ -240,7 +240,7 @@ func BenchmarkRuntime_JSONParse(b *testing.B) {
 }
 
 func BenchmarkRuntime_JSONStringify(b *testing.B) {
-	p := New("json")
+	p := New()
 	p.Eval("import json")
 	p.Eval(`data = {"name": "Alice", "age": 30}`)
 	for i := 0; i < b.N; i++ {
@@ -249,7 +249,7 @@ func BenchmarkRuntime_JSONStringify(b *testing.B) {
 }
 
 func BenchmarkRuntime_RegexMatch(b *testing.B) {
-	p := New("re")
+	p := New()
 	p.Eval("import re")
 	for i := 0; i < b.N; i++ {
 		p.Eval(`result = re.match("[0-9]+", "abc123")`)
@@ -257,7 +257,7 @@ func BenchmarkRuntime_RegexMatch(b *testing.B) {
 }
 
 func BenchmarkRuntime_RegexFindAll(b *testing.B) {
-	p := New("re")
+	p := New()
 	p.Eval("import re")
 	for i := 0; i < b.N; i++ {
 		p.Eval(`result = re.findall("[0-9]+", "abc123def456ghi789")`)
@@ -284,7 +284,7 @@ func BenchmarkCache_Miss(b *testing.B) {
 
 // === SCENARIOS ===
 func BenchmarkScenario_DataProcessing(b *testing.B) {
-	p := New("json")
+	p := New()
 	p.Eval("import json")
 	for i := 0; i < b.N; i++ {
 		p.Eval(`data = json.parse('{"items":[1,2,3,4,5]}')\ntotal = 0\nfor item in data["items"]:\n    total = total + item\nresult = total`)
