@@ -278,6 +278,7 @@ type SliceExpression struct {
 	Left  Expression
 	Start Expression
 	End   Expression
+	Step  Expression
 }
 
 func (se *SliceExpression) expressionNode()      {}
