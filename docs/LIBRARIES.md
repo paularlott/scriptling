@@ -30,11 +30,11 @@ p := scriptling.New("json")
 ```python
 # Import libraries dynamically
 import json
-import http
+import requests
 
 # Now use them
 data = json.parse('{"name":"Alice"}')
-response = http.get("https://api.example.com/data", 10)
+response = requests.get("https://api.example.com/data", 10)
 ```
 
 ## Available Libraries
@@ -209,19 +209,33 @@ text = re.replace("[0-9]+", "Price: 100", "XXX")
 ### http
 
 **Functions:**
-All return `{"status": int, "body": string, "headers": dict}`
+All return a response object with Python requests-compatible interface:
 
-- `http.get(url, options?)` - GET request
-- `http.post(url, body, options?)` - POST request
-- `http.put(url, body, options?)` - PUT request
-- `http.delete(url, options?)` - DELETE request
-- `http.patch(url, body, options?)` - PATCH request
+- `requests.get(url, options?)` - GET request
+- `requests.post(url, body, options?)` - POST request
+- `requests.put(url, body, options?)` - PUT request
+- `requests.delete(url, options?)` - DELETE request
+- `requests.patch(url, body, options?)` - PATCH request
+
+**Response Object:**
+Python requests-compatible response object with both dictionary and attribute access:
+
+Attributes/Keys:
+- `response.status_code` or `response["status_code"]` - HTTP status code (integer)
+- `response.text` or `response["text"]` - Response body (string)
+- `response["headers"]` - Response headers (dictionary)
+
+Response methods:
+- `response.json()` - Parse response body as JSON and return Scriptling object
+- `response.raise_for_status()` - Raise error if status code >= 400 (4xx or 5xx)
 
 **Features:**
 - HTTP/2 support with automatic fallback to HTTP/1.1
 - Connection pooling (100 connections per host)
 - Accepts self-signed certificates
 - Default timeout: 5 seconds
+- Python requests-compatible API for LLM code generation
+- Full method support: `json()`, `raise_for_status()`
 
 **Options dictionary:**
 - `timeout` (integer): Request timeout in seconds (default: 5)
@@ -229,38 +243,84 @@ All return `{"status": int, "body": string, "headers": dict}`
 
 **Example:**
 ```python
-import json
-import http
+import requests
 
 # Simple GET request (5 second timeout)
-response = http.get("https://api.example.com/users/1")
-if response["status"] == 200:
-    user = json.parse(response["body"])
+response = requests.get("https://api.example.com/users/1")
+if response.status_code == 200:
+    # Use json() method to parse response
+    user = response.json()
     print(user["name"])
+
+# Using raise_for_status() for error handling
+try:
+    response = requests.get("https://api.example.com/data")
+    response.raise_for_status()  # Raises error if 4xx or 5xx
+    data = response.json()
+    print(data)
+except Exception as e:
+    print("Request failed:", e)
+
+# Using requests-compatible attributes
+response = requests.get("https://api.example.com/data")
+if response.status_code == 200:
+    content = response.text[:500]  # First 500 chars
+    print(content)
 
 # GET with options
 options = {
     "timeout": 10,
     "headers": {"Authorization": "Bearer token123"}
 }
-response = http.get("https://api.example.com/users/1", options)
+response = requests.get("https://api.example.com/users/1", options)
 
-# POST request
-new_user = {"name": "Alice", "email": "alice@example.com"}
-body = json.stringify(new_user)
-options = {"timeout": 15}
-response = http.post("https://api.example.com/users", body, options)
+# POST request with error handling
+try:
+    new_user = {"name": "Alice", "email": "alice@example.com"}
+    # Note: For now, stringify the body manually
+    import json
+    body = json.stringify(new_user)
 
-if response["status"] == 201:
-    print("Created successfully")
-else:
-    print("Error: " + str(response["status"]))
+    options = {"timeout": 15}
+    response = requests.post("https://api.example.com/users", body, options)
+    response.raise_for_status()
+
+    created = response.json()
+    print("Created user:", created["id"])
+except Exception as e:
+    print("Error:", e)
 
 # Other methods
-response = http.put(url, body, options)
-response = http.delete(url, options)
-response = http.patch(url, body, options)
+response = requests.put(url, body, options)
+response = requests.delete(url, options)
+response = requests.patch(url, body, options)
 ```
+
+**Exception Handling:**
+The parser supports Python requests-style exception handling with dotted names:
+
+```python
+import requests
+
+# LLM-compatible exception handling
+try:
+    response = requests.get('https://api.example.com/data')
+    response.raise_for_status()
+    data = response.json()
+except requests.exceptions.RequestException as e:
+    print(f"Request error: {e}")
+
+# Also supports direct exception names
+try:
+    response = requests.get('https://api.example.com/data')
+    response.raise_for_status()
+except requests.HTTPError as e:
+    print(f"HTTP error: {e}")
+except requests.RequestException as e:
+    print(f"Request error: {e}")
+```
+
+Note: Currently, all exceptions are caught regardless of the specific exception type specified. Full exception type matching will be implemented in a future version.
 
 ## Core Builtins
 
@@ -343,7 +403,7 @@ p.Eval("x = 5 + 3")  // Fast execution
 ```go
 p := scriptling.New("json", "http")  // Loads JSON + HTTP
 p.Eval(`
-    response = http.get("https://api.example.com/data", 10)
+    response = requests.get("https://api.example.com/data", 10)
     data = json.parse(response["body"])
 `)
 ```
@@ -397,7 +457,7 @@ mylib.func1()
 
 ## Best Practices
 
-1. **Load only what you need**: `scriptling.New()` for core, `scriptling.New("json")` when needed
+1. **Load only what you need**: `scriptling.New()` makes only the core libraries available
 2. **Use import in scripts**: Dynamic loading based on script needs
 3. **Check HTTP status codes**: Always check `response["status"]` before processing
 4. **Set timeouts**: Always specify timeouts for HTTP calls

@@ -1,8 +1,8 @@
 package scriptling
 
 import (
-	"testing"
 	"os"
+	"testing"
 )
 
 func TestTryExcept(t *testing.T) {
@@ -61,7 +61,7 @@ finally:
 
 	result, _ := p.GetVar("result")
 	cleanup, _ := p.GetVar("cleanup")
-	
+
 	if result != int64(1) {
 		t.Errorf("result = %v, want 1", result)
 	}

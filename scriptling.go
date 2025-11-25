@@ -1,8 +1,12 @@
 package scriptling
 
 import (
+	"context"
 	"fmt"
+	"time"
+
 	"github.com/paularlott/scriptling/evaluator"
+	"github.com/paularlott/scriptling/internal/cache"
 	"github.com/paularlott/scriptling/lexer"
 	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/scriptling/parser"
@@ -10,45 +14,80 @@ import (
 )
 
 type Scriptling struct {
-	env *object.Environment
+	env                 *object.Environment
+	registeredLibraries map[string]*object.Library
 }
 
-var availableLibraries = map[string]func() map[string]*object.Builtin{
-	"json":    stdlib.JSONLibrary,
-	"re":      stdlib.ReLibrary,
-	"time":    stdlib.GetTimeLibrary,
-	"math":    stdlib.GetMathLibrary,
-	"base64":  stdlib.GetBase64Library,
-	"hashlib": stdlib.GetHashlibLibrary,
-	"random":  stdlib.GetRandomLibrary,
-	"url":     stdlib.GetURLLibrary,
+var availableLibraries = map[string]*object.Library{
+	"json":    stdlib.JSONLibrary(),
+	"re":      stdlib.ReLibrary(),
+	"time":    stdlib.GetTimeLibrary(),
+	"math":    stdlib.GetMathLibrary(),
+	"base64":  stdlib.GetBase64Library(),
+	"hashlib": stdlib.GetHashlibLibrary(),
+	"random":  stdlib.GetRandomLibrary(),
+	"url":     stdlib.GetURLLibrary(),
 }
 
 func New() *Scriptling {
 	p := &Scriptling{
-		env: object.NewEnvironment(),
+		env:                 object.NewEnvironment(),
+		registeredLibraries: make(map[string]*object.Library),
 	}
-	
+
 	// Register import builtin
 	p.env.Set("import", evaluator.GetImportBuiltin())
 	evaluator.SetImportCallback(func(libName string) error {
 		return p.loadLibrary(libName)
 	})
-	
+
 	return p
 }
 
 func (p *Scriptling) loadLibrary(name string) error {
-	if libFunc, ok := availableLibraries[name]; ok {
-		p.RegisterLibrary(name, libFunc())
+	// Try from registered libraries
+	if lib, ok := p.registeredLibraries[name]; ok {
+		p.registerLibrary(name, lib.Functions())
 		return nil
 	}
+
+	// Try standard libraries
+	if lib, ok := availableLibraries[name]; ok {
+		p.registerLibrary(name, lib.Functions())
+		return nil
+	}
+
 	return fmt.Errorf("unknown library: %s", name)
 }
 
+// Register library adds a new library to the script environment
+func (p *Scriptling) registerLibrary(name string, funcs map[string]*object.Builtin) {
+	lib := make(map[string]object.DictPair, len(funcs))
+	for fname, fn := range funcs {
+		lib[fname] = object.DictPair{
+			Key:   &object.String{Value: fname},
+			Value: fn,
+		}
+	}
+	p.env.Set(name, &object.Dict{Pairs: lib})
+}
+
+// Eval executes script without timeout (backwards compatible)
 func (p *Scriptling) Eval(input string) (object.Object, error) {
+	return p.EvalWithContext(context.Background(), input)
+}
+
+// EvalWithTimeout executes script with timeout
+func (p *Scriptling) EvalWithTimeout(timeout time.Duration, input string) (object.Object, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return p.EvalWithContext(ctx, input)
+}
+
+// EvalWithContext executes script with context for timeout/cancellation
+func (p *Scriptling) EvalWithContext(ctx context.Context, input string) (object.Object, error) {
 	// Try global cache first
-	program, ok := globalCache.get(input)
+	program, ok := cache.Get(input)
 	if !ok {
 		l := lexer.New(input)
 		par := parser.New(l)
@@ -57,10 +96,10 @@ func (p *Scriptling) Eval(input string) (object.Object, error) {
 			return nil, fmt.Errorf("parser errors: %v", par.Errors())
 		}
 		// Store in global cache
-		globalCache.set(input, program)
+		cache.Set(input, program)
 	}
 
-	result := evaluator.Eval(program, p.env)
+	result := evaluator.EvalWithContext(ctx, program, p.env)
 	if err, ok := result.(*object.Error); ok {
 		return nil, fmt.Errorf("%s", err.Message)
 	}
@@ -85,22 +124,24 @@ func (p *Scriptling) GetVar(name string) (interface{}, bool) {
 	return objectToGo(obj), true
 }
 
-func (p *Scriptling) RegisterFunc(name string, fn func(args ...object.Object) object.Object) {
+func (p *Scriptling) RegisterFunc(name string, fn func(ctx context.Context, args ...object.Object) object.Object) {
 	p.env.Set(name, &object.Builtin{Fn: fn})
 }
 
-func (p *Scriptling) RegisterLibrary(name string, funcs map[string]*object.Builtin) {
-	lib := make(map[string]object.DictPair, len(funcs))
-	for fname, fn := range funcs {
-		lib[fname] = object.DictPair{
-			Key:   &object.String{Value: fname},
-			Value: fn,
-		}
-	}
-	p.env.Set(name, &object.Dict{Pairs: lib})
+// RegisterLibrary registers a new library that can be imported by scripts
+func (p *Scriptling) RegisterLibrary(name string, lib *object.Library) {
+	p.registeredLibraries[name] = lib
 }
 
+// EnableOutputCapture enables capturing print output instead of sending to stdout
+func (p *Scriptling) EnableOutputCapture() {
+	p.env.EnableOutputCapture()
+}
 
+// GetOutput returns captured output and clears the buffer
+func (p *Scriptling) GetOutput() string {
+	return p.env.GetOutput()
+}
 
 func goToObject(value interface{}) object.Object {
 	switch v := value.(type) {

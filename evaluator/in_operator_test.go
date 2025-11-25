@@ -2,8 +2,20 @@ package evaluator
 
 import (
 	"testing"
+
+	"github.com/paularlott/scriptling/lexer"
 	"github.com/paularlott/scriptling/object"
+	"github.com/paularlott/scriptling/parser"
 )
+
+func testEvalWithEnv(input string) (object.Object, *object.Environment) {
+	l := lexer.New(input)
+	p := parser.New(l)
+	program := p.ParseProgram()
+	env := object.NewEnvironment()
+	result := Eval(program, env)
+	return result, env
+}
 
 func TestInOperator(t *testing.T) {
 	tests := []struct {
@@ -15,16 +27,16 @@ func TestInOperator(t *testing.T) {
 		{`result = 6 in [1, 2, 3, 4, 5]`, false},
 		{`result = "hello" in ["hello", "world"]`, true},
 		{`result = "foo" in ["hello", "world"]`, false},
-		
+
 		// Dict membership (keys)
 		{`result = "name" in {"name": "Alice", "age": 30}`, true},
 		{`result = "email" in {"name": "Alice", "age": 30}`, false},
-		
+
 		// String substring
 		{`result = "hello" in "hello world"`, true},
 		{`result = "foo" in "hello world"`, false},
 		{`result = "world" in "hello world"`, true},
-		
+
 		// not in operator
 		{`result = 6 not in [1, 2, 3, 4, 5]`, true},
 		{`result = 5 not in [1, 2, 3, 4, 5]`, false},
@@ -37,8 +49,13 @@ func TestInOperator(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		evaluated := testEval(tt.input)
-		testBooleanObject(t, evaluated, tt.expected)
+		_, env := testEvalWithEnv(tt.input)
+		result, ok := env.Get("result")
+		if !ok {
+			t.Errorf("variable result not found in environment")
+			continue
+		}
+		testBooleanObject(t, result, tt.expected)
 	}
 }
 
@@ -48,8 +65,13 @@ items = [1, 2, 3, 4, 5]
 x = 3
 result = x in items
 `
-	evaluated := testEval(input)
-	testBooleanObject(t, evaluated, true)
+	_, env := testEvalWithEnv(input)
+	result, ok := env.Get("result")
+	if !ok {
+		t.Errorf("variable result not found in environment")
+		return
+	}
+	testBooleanObject(t, result, true)
 }
 
 func TestNotInOperatorWithVariables(t *testing.T) {
@@ -58,8 +80,13 @@ items = [1, 2, 3, 4, 5]
 x = 10
 result = x not in items
 `
-	evaluated := testEval(input)
-	testBooleanObject(t, evaluated, true)
+	_, env := testEvalWithEnv(input)
+	result, ok := env.Get("result")
+	if !ok {
+		t.Errorf("variable result not found in environment")
+		return
+	}
+	testBooleanObject(t, result, true)
 }
 
 func TestInOperatorInIfStatement(t *testing.T) {

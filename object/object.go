@@ -1,7 +1,12 @@
 package object
 
 import (
+	"context"
 	"fmt"
+	"io"
+	"os"
+	"strings"
+
 	"github.com/paularlott/scriptling/ast"
 )
 
@@ -102,7 +107,7 @@ type LambdaFunction struct {
 func (lf *LambdaFunction) Type() ObjectType { return LAMBDA_OBJ }
 func (lf *LambdaFunction) Inspect() string  { return "<lambda>" }
 
-type BuiltinFunction func(args ...Object) Object
+type BuiltinFunction func(ctx context.Context, args ...Object) Object
 
 type Builtin struct {
 	Fn BuiltinFunction
@@ -111,11 +116,31 @@ type Builtin struct {
 func (b *Builtin) Type() ObjectType { return BUILTIN_OBJ }
 func (b *Builtin) Inspect() string  { return "<builtin function>" }
 
+// Library represents a pre-built collection of builtin functions
+// This eliminates the need for function wrappers and provides direct access
+type Library struct {
+	functions map[string]*Builtin
+}
+
+// NewLibrary creates a new library with pre-built functions
+// The function map is stored directly for zero-overhead access
+func NewLibrary(functions map[string]*Builtin) *Library {
+	return &Library{
+		functions: functions,
+	}
+}
+
+// Functions returns the library's function map
+func (l *Library) Functions() map[string]*Builtin {
+	return l.functions
+}
+
 type Environment struct {
 	store     map[string]Object
 	outer     *Environment
 	globals   map[string]bool
 	nonlocals map[string]bool
+	output    *strings.Builder
 }
 
 func NewEnvironment() *Environment {
@@ -205,6 +230,29 @@ func (e *Environment) IsGlobal(name string) bool {
 // IsNonlocal checks if a variable is marked as nonlocal
 func (e *Environment) IsNonlocal(name string) bool {
 	return e.nonlocals[name]
+}
+
+// EnableOutputCapture enables output capture for this environment
+func (e *Environment) EnableOutputCapture() {
+	e.output = &strings.Builder{}
+}
+
+// GetOutput returns captured output and clears the buffer
+func (e *Environment) GetOutput() string {
+	if e.output == nil {
+		return ""
+	}
+	result := e.output.String()
+	e.output.Reset()
+	return result
+}
+
+// GetWriter returns the appropriate writer for output
+func (e *Environment) GetWriter() io.Writer {
+	if e.output != nil {
+		return e.output
+	}
+	return os.Stdout
 }
 
 type List struct {

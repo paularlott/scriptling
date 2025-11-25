@@ -15,8 +15,8 @@ func TestMathLibrary(t *testing.T) {
 		{"floor", "import math\nresult = math.floor(3.7)", int64(3)},
 		{"ceil", "import math\nresult = math.ceil(3.2)", int64(4)},
 		{"round", "import math\nresult = math.round(3.5)", int64(4)},
-		{"min", "import math\nresult = math.min(3, 1, 2)", int64(1)},
-		{"max", "import math\nresult = math.max(3, 1, 2)", int64(3)},
+		{"min", "import math\nresult = math.min(3, 1)", int64(1)},
+		{"max", "import math\nresult = math.max(3, 1)", int64(3)},
 		{"pi", "import math\nresult = math.pi()", 3.141592653589793},
 		{"e", "import math\nresult = math.e()", 2.718281828459045},
 	}

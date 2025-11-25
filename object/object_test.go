@@ -1,6 +1,7 @@
 package object
 
 import (
+	"context"
 	"testing"
 	"github.com/paularlott/scriptling/ast"
 )
@@ -238,7 +239,7 @@ func TestFunction(t *testing.T) {
 
 func TestBuiltinFunction(t *testing.T) {
 	builtin := &Builtin{
-		Fn: func(args ...Object) Object {
+		Fn: func(ctx context.Context, args ...Object) Object {
 			return &Integer{Value: 42}
 		},
 	}
@@ -251,7 +252,7 @@ func TestBuiltinFunction(t *testing.T) {
 	}
 	
 	// Test function call
-	result := builtin.Fn()
+	result := builtin.Fn(context.Background())
 	if result.(*Integer).Value != 42 {
 		t.Errorf("builtin function result = %d, want 42", result.(*Integer).Value)
 	}

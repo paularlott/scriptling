@@ -1,14 +1,16 @@
 package scriptling
 
 import (
+	"context"
 	"testing"
-	"github.com/paularlott/scriptling/object"
+
 	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/object"
 )
 
 func TestRegisterFunc(t *testing.T) {
 	p := New()
-	p.RegisterFunc("double", func(args ...object.Object) object.Object {
+	p.RegisterFunc("double", func(ctx context.Context, args ...object.Object) object.Object {
 		if len(args) != 1 {
 			return &object.Error{Message: "need 1 argument"}
 		}
@@ -29,16 +31,19 @@ func TestRegisterFunc(t *testing.T) {
 
 func TestRegisterLibrary(t *testing.T) {
 	p := New()
-	myLib := map[string]*object.Builtin{
+	myLib := object.NewLibrary(map[string]*object.Builtin{
 		"greet": {
-			Fn: func(args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, args ...object.Object) object.Object {
 				return &object.String{Value: "Hello!"}
 			},
 		},
-	}
+	})
 	p.RegisterLibrary("mylib", myLib)
 
-	_, err := p.Eval("msg = mylib.greet()")
+	_, err := p.Eval(`
+import mylib
+msg = mylib.greet()
+`)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -140,11 +145,12 @@ result = data["name"]
 
 func TestHTTPLibrary(t *testing.T) {
 	p := New()
-	p.RegisterLibrary("http", extlibs.HTTPLibrary())
+	p.RegisterLibrary("requests", extlibs.RequestsLibrary())
 	_, err := p.Eval(`
+import requests
 options = {"timeout": 10}
-response = http.get("https://httpbin.org/status/200", options)
-status = response["status"]
+response = requests.get("https://httpbin.org/status/200", options)
+status = response.status_code
 `)
 	if err != nil {
 		t.Fatalf("error: %v", err)

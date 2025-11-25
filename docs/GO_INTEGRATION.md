@@ -69,7 +69,7 @@ p.SetVar("rate", 3.14)
 // Use in Scriptling
 p.Eval(`
 options = {"timeout": timeout}
-response = http.get("https://api.example.com/data", options)
+response = requests.get("https://api.example.com/data", options)
 if enabled:
     print("API key: " + api_key)
 `)
@@ -105,7 +105,7 @@ if value, ok := p.GetVar("result"); ok {
 
 ```go
 // Register a simple function
-p.RegisterFunc("multiply", func(args ...object.Object) object.Object {
+p.RegisterFunc("multiply", func(ctx context.Context, args ...object.Object) object.Object {
     if len(args) != 2 {
         return &object.String{Value: "multiply requires 2 arguments"}
     }
@@ -133,7 +133,7 @@ print(result)  # 42
 ```go
 import "github.com/paularlott/scriptling/object"
 
-p.RegisterFunc("process_data", func(args ...object.Object) object.Object {
+p.RegisterFunc("process_data", func(ctx context.Context, args ...object.Object) object.Object {
     if len(args) != 2 {
         return &object.String{Value: "Error: requires 2 arguments"}
     }
@@ -165,7 +165,7 @@ p.RegisterFunc("process_data", func(args ...object.Object) object.Object {
 
 ```go
 // Function that returns a dictionary
-p.RegisterFunc("get_system_info", func(args ...object.Object) object.Object {
+p.RegisterFunc("get_system_info", func(ctx context.Context, args ...object.Object) object.Object {
     pairs := []object.HashPair{
         {
             Key:   &object.String{Value: "os"},
@@ -206,12 +206,12 @@ print("CPUs: " + str(info["cpus"]))
 // Create library functions
 myLib := map[string]*object.Builtin{
     "hello": {
-        Fn: func(args ...object.Object) object.Object {
+        Fn: func(ctx context.Context, args ...object.Object) object.Object {
             return &object.String{Value: "Hello from custom library!"}
         },
     },
     "add": {
-        Fn: func(args ...object.Object) object.Object {
+        Fn: func(ctx context.Context, args ...object.Object) object.Object {
             if len(args) != 2 {
                 return &object.Integer{Value: 0}
             }
@@ -256,24 +256,24 @@ type Counter struct {
 func (c *Counter) CreateLibrary() map[string]*object.Builtin {
     return map[string]*object.Builtin{
         "increment": {
-            Fn: func(args ...object.Object) object.Object {
+            Fn: func(ctx context.Context, args ...object.Object) object.Object {
                 c.value++
                 return &object.Integer{Value: c.value}
             },
         },
         "decrement": {
-            Fn: func(args ...object.Object) object.Object {
+            Fn: func(ctx context.Context, args ...object.Object) object.Object {
                 c.value--
                 return &object.Integer{Value: c.value}
             },
         },
         "get": {
-            Fn: func(args ...object.Object) object.Object {
+            Fn: func(ctx context.Context, args ...object.Object) object.Object {
                 return &object.Integer{Value: c.value}
             },
         },
         "set": {
-            Fn: func(args ...object.Object) object.Object {
+            Fn: func(ctx context.Context, args ...object.Object) object.Object {
                 if len(args) == 1 {
                     if intObj, ok := args[0].(*object.Integer); ok {
                         c.value = intObj.Value
@@ -322,7 +322,7 @@ func main() {
     p.SetVar("timeout", 30)
 
     // Register custom logging function
-    p.RegisterFunc("log_info", func(args ...object.Object) object.Object {
+    p.RegisterFunc("log_info", func(ctx context.Context, args ...object.Object) object.Object {
         if len(args) > 0 {
             if strObj, ok := args[0].(*object.String); ok {
                 log.Printf("INFO: %s", strObj.Value)
@@ -338,7 +338,7 @@ log_info("Starting API automation")
 # Fetch data
 url = api_base + "/users"
 options = {"timeout": timeout}
-response = http.get(url, options)
+response = requests.get(url, options)
 
 if response["status"] == 200:
     users = json.parse(response["body"])
@@ -404,6 +404,103 @@ floatObj := &object.Float{Value: 3.14}
 if float, ok := obj.(*object.Float); ok {
     value := float.Value  // 3.14
 }
+```
+
+## Output Capture
+
+By default, the `print()` function outputs to stdout. You can capture this output programmatically:
+
+### Default Behavior (stdout)
+```go
+p := scriptling.New()
+p.Eval(`print("Hello World")`)  // Prints to stdout
+```
+
+### Capture Output
+```go
+p := scriptling.New()
+p.EnableOutputCapture()  // Enable output capture
+
+p.Eval(`
+print("Line 1")
+print("Line 2")
+print("Result:", 42)
+`)
+
+// Get captured output
+output := p.GetOutput()  // Returns "Line 1\nLine 2\nResult: 42\n"
+fmt.Print(output)
+
+// Buffer is cleared after GetOutput()
+output2 := p.GetOutput()  // Returns ""
+```
+
+### Mixed Usage
+```go
+p := scriptling.New()
+
+// Normal stdout output
+p.Eval(`print("This goes to stdout")`)
+
+// Enable capture for specific operations
+p.EnableOutputCapture()
+p.Eval(`print("This is captured")`)
+captured := p.GetOutput()
+
+// Disable capture (output goes back to stdout)
+// Note: Currently no disable method - create new instance if needed
+```
+
+### Use Cases
+- **Testing**: Capture output for assertions
+- **Logging**: Redirect script output to custom loggers
+- **Processing**: Capture output for further processing
+- **UI Integration**: Display script output in applications
+
+```go
+// Testing example
+func TestScriptOutput(t *testing.T) {
+    p := scriptling.New()
+    p.EnableOutputCapture()
+    
+    p.Eval(`print("test result:", 42)`)
+    output := p.GetOutput()
+    
+    expected := "test result: 42\n"
+    if output != expected {
+        t.Errorf("Expected %q, got %q", expected, output)
+    }
+}
+```
+
+### Output Capture in Custom Functions
+
+Custom Go functions can also use the output capture system:
+
+```go
+import (
+    "context"
+    "fmt"
+    "github.com/paularlott/scriptling/evaluator"
+)
+
+p.RegisterFunc("log_debug", func(ctx context.Context, args ...object.Object) object.Object {
+    // Get environment from context
+    env := evaluator.GetEnvFromContext(ctx)
+    writer := env.GetWriter()
+    
+    // Write to current output (stdout or capture buffer)
+    for _, arg := range args {
+        fmt.Fprintf(writer, "[DEBUG] %s\n", arg.Inspect())
+    }
+    
+    return &object.String{Value: "logged"}
+})
+
+// Usage with output capture
+p.EnableOutputCapture()
+p.Eval(`log_debug("Starting process", 42)`)
+output := p.GetOutput() // Contains "[DEBUG] Starting process\n[DEBUG] 42\n"
 ```
 
 ## Error Handling

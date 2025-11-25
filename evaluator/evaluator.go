@@ -1,8 +1,11 @@
 package evaluator
 
 import (
-	"fmt"
+	"context"
+	"strings"
+
 	"github.com/paularlott/scriptling/ast"
+	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -12,48 +15,103 @@ var (
 	FALSE = &object.Boolean{Value: false}
 )
 
+// envContextKey is used to store environment in context
+var envContextKey = struct{}{}
+
+// SetEnvInContext stores environment in context for builtin functions
+func SetEnvInContext(ctx context.Context, env *object.Environment) context.Context {
+	return context.WithValue(ctx, envContextKey, env)
+}
+
+// GetEnvFromContext retrieves environment from context for external functions
+func GetEnvFromContext(ctx context.Context) *object.Environment {
+	if env, ok := ctx.Value(envContextKey).(*object.Environment); ok {
+		return env
+	}
+	return object.NewEnvironment() // fallback
+}
+
+// Eval executes without context (backwards compatible)
 func Eval(node ast.Node, env *object.Environment) object.Object {
+	return EvalWithContext(context.Background(), node, env)
+}
+
+// EvalWithContext executes with context for timeout/cancellation
+func EvalWithContext(ctx context.Context, node ast.Node, env *object.Environment) object.Object {
+	// Check for cancellation at start of each evaluation
+	select {
+	case <-ctx.Done():
+		if ctx.Err() == context.DeadlineExceeded {
+			return errors.NewTimeoutError()
+		}
+		return errors.NewCancelledError()
+	default:
+	}
+
+	return evalWithContext(ctx, node, env)
+}
+
+// checkContext checks for cancellation and returns error if cancelled
+func checkContext(ctx context.Context) object.Object {
+	select {
+	case <-ctx.Done():
+		if ctx.Err() == context.DeadlineExceeded {
+			return errors.NewTimeoutError()
+		}
+		return errors.NewCancelledError()
+	default:
+		return nil
+	}
+}
+
+func evalWithContext(ctx context.Context, node ast.Node, env *object.Environment) object.Object {
+	// Check for cancellation
+	if err := checkContext(ctx); err != nil {
+		return err
+	}
 	switch node := node.(type) {
 	case *ast.Program:
-		return evalProgram(node, env)
+		return evalProgram(ctx, node, env)
 	case *ast.ExpressionStatement:
-		return Eval(node.Expression, env)
+		return evalWithContext(ctx, node.Expression, env)
 	case *ast.IntegerLiteral:
 		return &object.Integer{Value: node.Value}
 	case *ast.FloatLiteral:
 		return &object.Float{Value: node.Value}
 	case *ast.StringLiteral:
 		return &object.String{Value: node.Value}
+	case *ast.FStringLiteral:
+		return evalFStringLiteral(ctx, node, env)
 	case *ast.Boolean:
 		return nativeBoolToBooleanObject(node.Value)
 	case *ast.None:
 		return NULL
 	case *ast.PrefixExpression:
-		right := Eval(node.Right, env)
+		right := evalWithContext(ctx, node.Right, env)
 		if isError(right) {
 			return right
 		}
 		return evalPrefixExpression(node.Operator, right)
 	case *ast.InfixExpression:
-		left := Eval(node.Left, env)
+		left := evalWithContext(ctx, node.Left, env)
 		if isError(left) {
 			return left
 		}
-		right := Eval(node.Right, env)
+		right := evalWithContext(ctx, node.Right, env)
 		if isError(right) {
 			return right
 		}
 		return evalInfixExpression(node.Operator, left, right)
 	case *ast.BlockStatement:
-		return evalBlockStatement(node, env)
+		return evalBlockStatementWithContext(ctx, node, env)
 	case *ast.IfStatement:
-		return evalIfStatement(node, env)
+		return evalIfStatementWithContext(ctx, node, env)
 	case *ast.WhileStatement:
-		return evalWhileStatement(node, env)
+		return evalWhileStatementWithContext(ctx, node, env)
 	case *ast.ReturnStatement:
 		val := object.Object(NULL)
 		if node.ReturnValue != nil {
-			val = Eval(node.ReturnValue, env)
+			val = evalWithContext(ctx, node.ReturnValue, env)
 			if isError(val) {
 				return val
 			}
@@ -68,16 +126,16 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 	case *ast.ImportStatement:
 		return evalImportStatement(node, env)
 	case *ast.AssignStatement:
-		val := Eval(node.Value, env)
-		if isError(val) {
+		val := evalWithContext(ctx, node.Value, env)
+		if isError(val) || isException(val) {
 			return val
 		}
 		env.Set(node.Name.Value, val)
-		return val
+		return NULL
 	case *ast.AugmentedAssignStatement:
-		return evalAugmentedAssignStatement(node, env)
+		return evalAugmentedAssignStatementWithContext(ctx, node, env)
 	case *ast.MultipleAssignStatement:
-		return evalMultipleAssignStatement(node, env)
+		return evalMultipleAssignStatementWithContext(ctx, node, env)
 	case *ast.Identifier:
 		return evalIdentifier(node, env)
 	case *ast.FunctionStatement:
@@ -90,53 +148,53 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		env.Set(node.Name.Value, fn)
 		return fn
 	case *ast.CallExpression:
-		function := Eval(node.Function, env)
+		function := evalWithContext(ctx, node.Function, env)
 		if isError(function) {
 			return function
 		}
-		args := evalExpressions(node.Arguments, env)
+		args := evalExpressionsWithContext(ctx, node.Arguments, env)
 		if len(args) == 1 && isError(args[0]) {
 			return args[0]
 		}
-		return applyFunction(function, args)
+		return applyFunctionWithContext(ctx, function, args, env)
 	case *ast.ListLiteral:
-		elements := evalExpressions(node.Elements, env)
+		elements := evalExpressionsWithContext(ctx, node.Elements, env)
 		if len(elements) == 1 && isError(elements[0]) {
 			return elements[0]
 		}
 		return &object.List{Elements: elements}
 	case *ast.DictLiteral:
-		return evalDictLiteral(node, env)
+		return evalDictLiteralWithContext(ctx, node, env)
 	case *ast.IndexExpression:
-		left := Eval(node.Left, env)
+		left := evalWithContext(ctx, node.Left, env)
 		if isError(left) {
 			return left
 		}
-		index := Eval(node.Index, env)
+		index := evalWithContext(ctx, node.Index, env)
 		if isError(index) {
 			return index
 		}
 		return evalIndexExpression(left, index)
 	case *ast.SliceExpression:
-		return evalSliceExpression(node, env)
+		return evalSliceExpressionWithContext(ctx, node, env)
 	case *ast.ForStatement:
-		return evalForStatement(node, env)
+		return evalForStatementWithContext(ctx, node, env)
 	case *ast.TryStatement:
-		return evalTryStatement(node, env)
+		return evalTryStatementWithContext(ctx, node, env)
 	case *ast.RaiseStatement:
-		return evalRaiseStatement(node, env)
+		return evalRaiseStatementWithContext(ctx, node, env)
 	case *ast.GlobalStatement:
 		return evalGlobalStatement(node, env)
 	case *ast.NonlocalStatement:
 		return evalNonlocalStatement(node, env)
 	case *ast.MethodCallExpression:
-		return evalMethodCallExpression(node, env)
+		return evalMethodCallExpression(ctx, node, env)
 	case *ast.ListComprehension:
-		return evalListComprehension(node, env)
+		return evalListComprehension(ctx, node, env)
 	case *ast.Lambda:
 		return evalLambda(node, env)
 	case *ast.TupleLiteral:
-		elements := evalExpressions(node.Elements, env)
+		elements := evalExpressionsWithContext(ctx, node.Elements, env)
 		if len(elements) == 1 && isError(elements[0]) {
 			return elements[0]
 		}
@@ -145,16 +203,21 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 	return NULL
 }
 
-func evalProgram(program *ast.Program, env *object.Environment) object.Object {
+func evalProgram(ctx context.Context, program *ast.Program, env *object.Environment) object.Object {
 	var result object.Object = NULL
 
 	for _, statement := range program.Statements {
-		result = Eval(statement, env)
+		// Check for cancellation in loops
+		if err := checkContext(ctx); err != nil {
+			return err
+		}
+
+		result = evalWithContext(ctx, statement, env)
 
 		switch result := result.(type) {
 		case *object.ReturnValue:
 			return result.Value
-		case *Error:
+		case *object.Error:
 			return result
 		}
 	}
@@ -162,21 +225,35 @@ func evalProgram(program *ast.Program, env *object.Environment) object.Object {
 	return result
 }
 
-func evalBlockStatement(block *ast.BlockStatement, env *object.Environment) object.Object {
+func evalBlockStatementWithContext(ctx context.Context, block *ast.BlockStatement, env *object.Environment) object.Object {
 	var result object.Object = NULL
 
 	for _, statement := range block.Statements {
-		result = Eval(statement, env)
+		// Check for cancellation in loops
+		if err := checkContext(ctx); err != nil {
+			return err
+		}
+
+		result = evalWithContext(ctx, statement, env)
 
 		if result != nil {
 			rt := result.Type()
-			if rt == object.RETURN_OBJ || rt == object.BREAK_OBJ || rt == object.CONTINUE_OBJ || rt == "ERROR" || rt == object.EXCEPTION_OBJ {
+			if rt == object.RETURN_OBJ || rt == object.BREAK_OBJ || rt == object.CONTINUE_OBJ {
+				return result
+			}
+			// Don't return errors immediately - let try/catch handle them
+			if rt == "ERROR" || rt == object.EXCEPTION_OBJ {
 				return result
 			}
 		}
 	}
 
 	return result
+}
+
+// Backwards compatible wrapper
+func evalBlockStatement(block *ast.BlockStatement, env *object.Environment) object.Object {
+	return evalBlockStatementWithContext(context.Background(), block, env)
 }
 
 func nativeBoolToBooleanObject(input bool) *object.Boolean {
@@ -193,7 +270,7 @@ func evalPrefixExpression(operator string, right object.Object) object.Object {
 	case "-":
 		return evalMinusPrefixOperatorExpression(right)
 	default:
-		return newError("unknown operator: %s%s", operator, right.Type())
+		return errors.NewError("%s: %s%s", errors.ErrUnknownOperator, operator, right.Type())
 	}
 }
 
@@ -211,7 +288,7 @@ func evalMinusPrefixOperatorExpression(right object.Object) object.Object {
 	case *object.Float:
 		return &object.Float{Value: -right.Value}
 	default:
-		return newError("unknown operator: -%s", right.Type())
+		return errors.NewError("%s: -%s", errors.ErrUnknownOperator, right.Type())
 	}
 }
 
@@ -256,7 +333,7 @@ func evalInfixExpression(operator string, left, right object.Object) object.Obje
 		}
 		return nativeBoolToBooleanObject(isTruthy(right))
 	default:
-		return newError("type mismatch or unknown operator")
+		return errors.NewError("%s: type mismatch", errors.ErrTypeError)
 	}
 }
 
@@ -270,7 +347,7 @@ func evalIntegerInfixExpression(operator string, leftVal, rightVal int64) object
 		return &object.Integer{Value: leftVal * rightVal}
 	case "/":
 		if rightVal == 0 {
-			return newError("division by zero")
+			return errors.NewError(errors.ErrDivisionByZero)
 		}
 		// True division: always return float
 		return &object.Float{Value: float64(leftVal) / float64(rightVal)}
@@ -289,7 +366,7 @@ func evalIntegerInfixExpression(operator string, leftVal, rightVal int64) object
 	case "!=":
 		return nativeBoolToBooleanObject(leftVal != rightVal)
 	default:
-		return newError("unknown operator: INTEGER %s INTEGER", operator)
+		return errors.NewError("unknown operator: INTEGER %s INTEGER", operator)
 	}
 }
 
@@ -319,7 +396,7 @@ func evalFloatInfixExpression(operator string, left, right object.Object) object
 		return &object.Float{Value: leftVal * rightVal}
 	case "/":
 		if rightVal == 0 {
-			return newError("division by zero")
+			return errors.NewError(errors.ErrDivisionByZero)
 		}
 		return &object.Float{Value: leftVal / rightVal}
 	case "<":
@@ -335,7 +412,7 @@ func evalFloatInfixExpression(operator string, left, right object.Object) object
 	case "!=":
 		return nativeBoolToBooleanObject(leftVal != rightVal)
 	default:
-		return newError("unknown operator: FLOAT %s FLOAT", operator)
+		return errors.NewError("unknown operator: FLOAT %s FLOAT", operator)
 	}
 }
 
@@ -354,44 +431,54 @@ func evalStringInfixExpression(operator string, leftVal, rightVal string) object
 	case "!=":
 		return nativeBoolToBooleanObject(leftVal != rightVal)
 	default:
-		return newError("unknown operator: STRING %s STRING", operator)
+		return errors.NewError("%s: STRING %s STRING", errors.ErrUnknownOperator, operator)
 	}
 }
 
-func evalIfStatement(ie *ast.IfStatement, env *object.Environment) object.Object {
-	condition := Eval(ie.Condition, env)
+func evalIfStatementWithContext(ctx context.Context, ie *ast.IfStatement, env *object.Environment) object.Object {
+	condition := evalWithContext(ctx, ie.Condition, env)
 	if isError(condition) {
 		return condition
 	}
 
 	if isTruthy(condition) {
-		return Eval(ie.Consequence, env)
+		return evalWithContext(ctx, ie.Consequence, env)
 	}
 
 	// Check elif clauses
 	for _, elifClause := range ie.ElifClauses {
-		condition := Eval(elifClause.Condition, env)
+		condition := evalWithContext(ctx, elifClause.Condition, env)
 		if isError(condition) {
 			return condition
 		}
 		if isTruthy(condition) {
-			return Eval(elifClause.Consequence, env)
+			return evalWithContext(ctx, elifClause.Consequence, env)
 		}
 	}
 
 	// Check else clause
 	if ie.Alternative != nil {
-		return Eval(ie.Alternative, env)
+		return evalWithContext(ctx, ie.Alternative, env)
 	}
 
 	return NULL
 }
 
-func evalWhileStatement(ws *ast.WhileStatement, env *object.Environment) object.Object {
+// Backwards compatible wrapper
+func evalIfStatement(ie *ast.IfStatement, env *object.Environment) object.Object {
+	return evalIfStatementWithContext(context.Background(), ie, env)
+}
+
+func evalWhileStatementWithContext(ctx context.Context, ws *ast.WhileStatement, env *object.Environment) object.Object {
 	var result object.Object = NULL
 
 	for {
-		condition := Eval(ws.Condition, env)
+		// Check for cancellation in loops
+		if err := checkContext(ctx); err != nil {
+			return err
+		}
+
+		condition := evalWithContext(ctx, ws.Condition, env)
 		if isError(condition) {
 			return condition
 		}
@@ -400,7 +487,7 @@ func evalWhileStatement(ws *ast.WhileStatement, env *object.Environment) object.
 			break
 		}
 
-		result = Eval(ws.Body, env)
+		result = evalWithContext(ctx, ws.Body, env)
 		if isError(result) {
 			return result
 		}
@@ -418,6 +505,11 @@ func evalWhileStatement(ws *ast.WhileStatement, env *object.Environment) object.
 	return result
 }
 
+// Backwards compatible wrapper
+func evalWhileStatement(ws *ast.WhileStatement, env *object.Environment) object.Object {
+	return evalWhileStatementWithContext(context.Background(), ws, env)
+}
+
 func evalIdentifier(node *ast.Identifier, env *object.Environment) object.Object {
 	if val, ok := env.Get(node.Value); ok {
 		return val
@@ -425,17 +517,17 @@ func evalIdentifier(node *ast.Identifier, env *object.Environment) object.Object
 	if builtin, ok := builtins[node.Value]; ok {
 		return builtin
 	}
-	return newError("identifier not found: %s", node.Value)
+	return errors.NewIdentifierError(node.Value)
 }
 
-func evalExpressions(exps []ast.Expression, env *object.Environment) []object.Object {
+func evalExpressionsWithContext(ctx context.Context, exps []ast.Expression, env *object.Environment) []object.Object {
 	if len(exps) == 0 {
 		return nil
 	}
 	result := make([]object.Object, len(exps))
 
 	for i, e := range exps {
-		evaluated := Eval(e, env)
+		evaluated := evalWithContext(ctx, e, env)
 		if isError(evaluated) {
 			return []object.Object{evaluated}
 		}
@@ -445,7 +537,12 @@ func evalExpressions(exps []ast.Expression, env *object.Environment) []object.Ob
 	return result
 }
 
-func applyFunction(fn object.Object, args []object.Object) object.Object {
+// Backwards compatible wrapper
+func evalExpressions(exps []ast.Expression, env *object.Environment) []object.Object {
+	return evalExpressionsWithContext(context.Background(), exps, env)
+}
+
+func applyFunctionWithContext(ctx context.Context, fn object.Object, args []object.Object, env *object.Environment) object.Object {
 	switch fn := fn.(type) {
 	case *object.Function:
 		// Validate argument count with defaults
@@ -454,11 +551,11 @@ func applyFunction(fn object.Object, args []object.Object) object.Object {
 			minArgs -= len(fn.DefaultValues)
 		}
 		if len(args) < minArgs || len(args) > len(fn.Parameters) {
-			return newError("wrong number of arguments: got=%d, want=%d-%d", len(args), minArgs, len(fn.Parameters))
+			return errors.NewArgumentError(len(args), minArgs)
 		}
-		
+
 		extendedEnv := extendFunctionEnv(fn, args)
-		evaluated := Eval(fn.Body, extendedEnv)
+		evaluated := evalWithContext(ctx, fn.Body, extendedEnv)
 		return unwrapReturnValue(evaluated)
 	case *object.LambdaFunction:
 		// Validate argument count with defaults
@@ -467,17 +564,23 @@ func applyFunction(fn object.Object, args []object.Object) object.Object {
 			minArgs -= len(fn.DefaultValues)
 		}
 		if len(args) < minArgs || len(args) > len(fn.Parameters) {
-			return newError("wrong number of arguments: got=%d, want=%d-%d", len(args), minArgs, len(fn.Parameters))
+			return errors.NewArgumentError(len(args), minArgs)
 		}
-		
+
 		extendedEnv := extendLambdaEnv(fn, args)
-		evaluated := Eval(fn.Body, extendedEnv)
+		evaluated := evalWithContext(ctx, fn.Body, extendedEnv)
 		return evaluated // No unwrapping needed for lambda expressions
 	case *object.Builtin:
-		return fn.Fn(args...)
+		ctxWithEnv := SetEnvInContext(ctx, env)
+		return fn.Fn(ctxWithEnv, args...)
 	default:
-		return newError("not a function: %s", fn.Type())
+		return errors.NewTypeError("function", string(fn.Type()))
 	}
+}
+
+// Backwards compatible wrapper
+func applyFunction(fn object.Object, args []object.Object) object.Object {
+	return applyFunctionWithContext(context.Background(), fn, args, object.NewEnvironment())
 }
 
 func extendFunctionEnv(fn *object.Function, args []object.Object) *object.Environment {
@@ -542,12 +645,6 @@ func isTruthy(obj object.Object) bool {
 	}
 }
 
-type Error = object.Error
-
-func newError(format string, a ...interface{}) *Error {
-	return &Error{Message: fmt.Sprintf(format, a...)}
-}
-
 func isError(obj object.Object) bool {
 	if obj != nil {
 		return obj.Type() == "ERROR"
@@ -555,19 +652,19 @@ func isError(obj object.Object) bool {
 	return false
 }
 
-func evalDictLiteral(node *ast.DictLiteral, env *object.Environment) object.Object {
+func evalDictLiteralWithContext(ctx context.Context, node *ast.DictLiteral, env *object.Environment) object.Object {
 	if len(node.Pairs) == 0 {
 		return &object.Dict{Pairs: make(map[string]object.DictPair)}
 	}
 	pairs := make(map[string]object.DictPair, len(node.Pairs))
 
 	for keyNode, valueNode := range node.Pairs {
-		key := Eval(keyNode, env)
+		key := evalWithContext(ctx, keyNode, env)
 		if isError(key) {
 			return key
 		}
 
-		value := Eval(valueNode, env)
+		value := evalWithContext(ctx, valueNode, env)
 		if isError(value) {
 			return value
 		}
@@ -589,7 +686,7 @@ func evalIndexExpression(left, index object.Object) object.Object {
 	case left.Type() == object.STRING_OBJ && index.Type() == object.INTEGER_OBJ:
 		return evalStringIndexExpression(left, index)
 	default:
-		return newError("index operator not supported: %s", left.Type())
+		return errors.NewError("index operator not supported: %s", left.Type())
 	}
 }
 
@@ -649,13 +746,13 @@ func evalStringIndexExpression(str, index object.Object) object.Object {
 	return &object.String{Value: string(strObject.Value[idx])}
 }
 
-func evalAugmentedAssignStatement(node *ast.AugmentedAssignStatement, env *object.Environment) object.Object {
+func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.AugmentedAssignStatement, env *object.Environment) object.Object {
 	currentVal, ok := env.Get(node.Name.Value)
 	if !ok {
-		return newError("identifier not found: %s", node.Name.Value)
+		return errors.NewIdentifierError(node.Name.Value)
 	}
 
-	newVal := Eval(node.Value, env)
+	newVal := evalWithContext(ctx, node.Value, env)
 	if isError(newVal) {
 		return newVal
 	}
@@ -673,7 +770,7 @@ func evalAugmentedAssignStatement(node *ast.AugmentedAssignStatement, env *objec
 	case "%=":
 		operator = "%"
 	default:
-		return newError("unknown augmented assignment operator: %s", node.Operator)
+		return errors.NewError("unknown augmented assignment operator: %s", node.Operator)
 	}
 
 	result := evalInfixExpression(operator, currentVal, newVal)
@@ -682,11 +779,16 @@ func evalAugmentedAssignStatement(node *ast.AugmentedAssignStatement, env *objec
 	}
 
 	env.Set(node.Name.Value, result)
-	return result
+	return NULL
 }
 
-func evalSliceExpression(node *ast.SliceExpression, env *object.Environment) object.Object {
-	left := Eval(node.Left, env)
+// Backwards compatible wrapper
+func evalAugmentedAssignStatement(node *ast.AugmentedAssignStatement, env *object.Environment) object.Object {
+	return evalAugmentedAssignStatementWithContext(context.Background(), node, env)
+}
+
+func evalSliceExpressionWithContext(ctx context.Context, node *ast.SliceExpression, env *object.Environment) object.Object {
+	left := evalWithContext(ctx, node.Left, env)
 	if isError(left) {
 		return left
 	}
@@ -695,24 +797,24 @@ func evalSliceExpression(node *ast.SliceExpression, env *object.Environment) obj
 	var hasStart, hasEnd bool
 
 	if node.Start != nil {
-		startObj := Eval(node.Start, env)
+		startObj := evalWithContext(ctx, node.Start, env)
 		if isError(startObj) {
 			return startObj
 		}
 		if startObj.Type() != object.INTEGER_OBJ {
-			return newError("slice start must be INTEGER")
+			return errors.NewTypeError("INTEGER", string(startObj.Type()))
 		}
 		start = startObj.(*object.Integer).Value
 		hasStart = true
 	}
 
 	if node.End != nil {
-		endObj := Eval(node.End, env)
+		endObj := evalWithContext(ctx, node.End, env)
 		if isError(endObj) {
 			return endObj
 		}
 		if endObj.Type() != object.INTEGER_OBJ {
-			return newError("slice end must be INTEGER")
+			return errors.NewTypeError("INTEGER", string(endObj.Type()))
 		}
 		end = endObj.(*object.Integer).Value
 		hasEnd = true
@@ -756,17 +858,22 @@ func evalSliceExpression(node *ast.SliceExpression, env *object.Environment) obj
 		}
 		return &object.String{Value: obj.Value[start:end]}
 	default:
-		return newError("slice operator not supported: %s", left.Type())
+		return errors.NewError("slice operator not supported: %s", left.Type())
 	}
+}
+
+// Backwards compatible wrapper
+func evalSliceExpression(node *ast.SliceExpression, env *object.Environment) object.Object {
+	return evalSliceExpressionWithContext(context.Background(), node, env)
 }
 
 func evalImportStatement(is *ast.ImportStatement, env *object.Environment) object.Object {
 	if importCallback == nil {
-		return newError("import not available")
+		return errors.NewError(errors.ErrImportError)
 	}
 	err := importCallback(is.Name.Value)
 	if err != nil {
-		return newError("import error: %s", err.Error())
+		return errors.NewError("%s: %s", errors.ErrImportError, err.Error())
 	}
 	return NULL
 }
@@ -793,20 +900,20 @@ func evalInOperator(left, right object.Object) object.Object {
 			}
 			return FALSE
 		}
-		return newError("'in' requires string on left for string container")
+		return errors.NewTypeError("STRING", "non-string type")
 	default:
-		return newError("'in' operator not supported for %s", right.Type())
+		return errors.NewTypeError("iterable", string(right.Type()))
 	}
 }
 
-func evalMultipleAssignStatement(node *ast.MultipleAssignStatement, env *object.Environment) object.Object {
-	val := Eval(node.Value, env)
+func evalMultipleAssignStatementWithContext(ctx context.Context, node *ast.MultipleAssignStatement, env *object.Environment) object.Object {
+	val := evalWithContext(ctx, node.Value, env)
 	if isError(val) {
 		return val
 	}
-	
+
 	var elements []object.Object
-	
+
 	// Value can be a list or tuple
 	switch v := val.(type) {
 	case *object.List:
@@ -814,51 +921,67 @@ func evalMultipleAssignStatement(node *ast.MultipleAssignStatement, env *object.
 	case *object.Tuple:
 		elements = v.Elements
 	default:
-		return newError("multiple assignment requires list or tuple, got %s", val.Type())
+		return errors.NewTypeError("list or tuple", string(val.Type()))
 	}
-	
+
 	// Check length matches
 	if len(elements) != len(node.Names) {
-		return newError("cannot unpack %d values to %d variables", len(elements), len(node.Names))
+		return errors.NewError("cannot unpack %d values to %d variables", len(elements), len(node.Names))
 	}
-	
+
 	// Assign each value
 	for i, name := range node.Names {
 		env.Set(name.Value, elements[i])
 	}
-	
-	return val
+
+	return NULL
 }
 
-func evalTryStatement(ts *ast.TryStatement, env *object.Environment) object.Object {
+// Backwards compatible wrapper
+func evalMultipleAssignStatement(node *ast.MultipleAssignStatement, env *object.Environment) object.Object {
+	return evalMultipleAssignStatementWithContext(context.Background(), node, env)
+}
+
+func evalTryStatementWithContext(ctx context.Context, ts *ast.TryStatement, env *object.Environment) object.Object {
 	// Execute try block
-	result := Eval(ts.Body, env)
-	
-	// Check if exception occurred
-	if isException(result) {
+	result := evalWithContext(ctx, ts.Body, env)
+
+	// Check if exception or error occurred
+	if isException(result) || isError(result) {
 		// Execute except block if present
 		if ts.Except != nil {
-			result = Eval(ts.Except, env)
+			// Bind exception to variable if specified
+			if ts.ExceptVar != nil {
+				env.Set(ts.ExceptVar.Value, result)
+			}
+
+			// Execute except block in the same environment so variables are accessible
+			result = evalWithContext(ctx, ts.Except, env)
 		}
 	}
-	
+
 	// Always execute finally block if present
 	if ts.Finally != nil {
-		Eval(ts.Finally, env)
+		evalWithContext(ctx, ts.Finally, env)
 	}
-	
+
 	// Clear exception if it was handled
-	if isException(result) && ts.Except != nil {
+	if (isException(result) || isError(result)) && ts.Except != nil {
 		return NULL
 	}
-	
+
 	return result
 }
 
-func evalRaiseStatement(rs *ast.RaiseStatement, env *object.Environment) object.Object {
+// Backwards compatible wrapper
+func evalTryStatement(ts *ast.TryStatement, env *object.Environment) object.Object {
+	return evalTryStatementWithContext(context.Background(), ts, env)
+}
+
+func evalRaiseStatementWithContext(ctx context.Context, rs *ast.RaiseStatement, env *object.Environment) object.Object {
 	var message string
 	if rs.Message != nil {
-		msg := Eval(rs.Message, env)
+		msg := evalWithContext(ctx, rs.Message, env)
 		if isError(msg) {
 			return msg
 		}
@@ -869,15 +992,20 @@ func evalRaiseStatement(rs *ast.RaiseStatement, env *object.Environment) object.
 	return &object.Exception{Message: message}
 }
 
+// Backwards compatible wrapper
+func evalRaiseStatement(rs *ast.RaiseStatement, env *object.Environment) object.Object {
+	return evalRaiseStatementWithContext(context.Background(), rs, env)
+}
+
 func isException(obj object.Object) bool {
 	if obj == nil {
 		return false
 	}
-	return obj.Type() == object.EXCEPTION_OBJ || obj.Type() == "ERROR"
+	return obj.Type() == object.EXCEPTION_OBJ
 }
 
-func evalForStatement(fs *ast.ForStatement, env *object.Environment) object.Object {
-	iterable := Eval(fs.Iterable, env)
+func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env *object.Environment) object.Object {
+	iterable := evalWithContext(ctx, fs.Iterable, env)
 	if isError(iterable) {
 		return iterable
 	}
@@ -887,8 +1015,13 @@ func evalForStatement(fs *ast.ForStatement, env *object.Environment) object.Obje
 	switch iter := iterable.(type) {
 	case *object.List:
 		for _, element := range iter.Elements {
+			// Check for cancellation in loops
+			if err := checkContext(ctx); err != nil {
+				return err
+			}
+
 			env.Set(fs.Variable.Value, element)
-			result = Eval(fs.Body, env)
+			result = evalWithContext(ctx, fs.Body, env)
 			if isError(result) {
 				return result
 			}
@@ -904,8 +1037,13 @@ func evalForStatement(fs *ast.ForStatement, env *object.Environment) object.Obje
 		}
 	case *object.Tuple:
 		for _, element := range iter.Elements {
+			// Check for cancellation in loops
+			if err := checkContext(ctx); err != nil {
+				return err
+			}
+
 			env.Set(fs.Variable.Value, element)
-			result = Eval(fs.Body, env)
+			result = evalWithContext(ctx, fs.Body, env)
 			if isError(result) {
 				return result
 			}
@@ -921,8 +1059,13 @@ func evalForStatement(fs *ast.ForStatement, env *object.Environment) object.Obje
 		}
 	case *object.String:
 		for _, char := range iter.Value {
+			// Check for cancellation in loops
+			if err := checkContext(ctx); err != nil {
+				return err
+			}
+
 			env.Set(fs.Variable.Value, &object.String{Value: string(char)})
-			result = Eval(fs.Body, env)
+			result = evalWithContext(ctx, fs.Body, env)
 			if isError(result) {
 				return result
 			}
@@ -937,40 +1080,101 @@ func evalForStatement(fs *ast.ForStatement, env *object.Environment) object.Obje
 			}
 		}
 	default:
-		return newError("for loop requires iterable, got %s", iterable.Type())
+		return errors.NewTypeError("iterable", string(iterable.Type()))
 	}
 
 	return result
 }
 
-func evalMethodCallExpression(mce *ast.MethodCallExpression, env *object.Environment) object.Object {
-	obj := Eval(mce.Object, env)
+// Backwards compatible wrapper
+func evalForStatement(fs *ast.ForStatement, env *object.Environment) object.Object {
+	return evalForStatementWithContext(context.Background(), fs, env)
+}
+
+func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression, env *object.Environment) object.Object {
+	obj := evalWithContext(ctx, mce.Object, env)
 	if isError(obj) {
 		return obj
 	}
 
-	args := evalExpressions(mce.Arguments, env)
+	args := evalExpressionsWithContext(ctx, mce.Arguments, env)
 	if len(args) == 1 && isError(args[0]) {
 		return args[0]
 	}
 
-	return callStringMethod(obj, mce.Method.Value, args)
+	return callStringMethod(ctx, obj, mce.Method.Value, args, env)
 }
 
-func callStringMethod(obj object.Object, method string, args []object.Object) object.Object {
+func callStringMethod(ctx context.Context, obj object.Object, method string, args []object.Object, env *object.Environment) object.Object {
 	// Handle library method calls (dictionaries)
 	if obj.Type() == object.DICT_OBJ {
 		dict := obj.(*object.Dict)
-		if pair, ok := dict.Pairs[method]; ok {
-			if builtin, ok := pair.Value.(*object.Builtin); ok {
-				return builtin.Fn(args...)
+
+		// Check for dict instance methods first
+		switch method {
+		case "keys":
+			if len(args) != 0 {
+				return errors.NewArgumentError(len(args), 0)
+			}
+			if builtin, ok := builtins["keys"]; ok {
+				ctxWithEnv := SetEnvInContext(ctx, env)
+				return builtin.Fn(ctxWithEnv, dict)
+			}
+		case "values":
+			if len(args) != 0 {
+				return errors.NewArgumentError(len(args), 0)
+			}
+			if builtin, ok := builtins["values"]; ok {
+				ctxWithEnv := SetEnvInContext(ctx, env)
+				return builtin.Fn(ctxWithEnv, dict)
+			}
+		case "items":
+			if len(args) != 0 {
+				return errors.NewArgumentError(len(args), 0)
+			}
+			if builtin, ok := builtins["items"]; ok {
+				ctxWithEnv := SetEnvInContext(ctx, env)
+				return builtin.Fn(ctxWithEnv, dict)
 			}
 		}
-		return newError("method %s not found in library", method)
+
+		// Then check for library methods
+		if pair, ok := dict.Pairs[method]; ok {
+			if builtin, ok := pair.Value.(*object.Builtin); ok {
+				ctxWithEnv := SetEnvInContext(ctx, env)
+				return builtin.Fn(ctxWithEnv, args...)
+			}
+		}
+		return errors.NewError("%s: method %s not found in library", errors.ErrIdentifierNotFound, method)
 	}
-	
+
+	// Handle list methods
+	if obj.Type() == object.LIST_OBJ {
+		list := obj.(*object.List)
+		switch method {
+		case "append":
+			if len(args) != 1 {
+				return errors.NewArgumentError(len(args), 1)
+			}
+			if builtin, ok := builtins["append"]; ok {
+				ctxWithEnv := SetEnvInContext(ctx, env)
+				return builtin.Fn(ctxWithEnv, list, args[0])
+			}
+		case "extend":
+			if len(args) != 1 {
+				return errors.NewArgumentError(len(args), 1)
+			}
+			if builtin, ok := builtins["extend"]; ok {
+				ctxWithEnv := SetEnvInContext(ctx, env)
+				return builtin.Fn(ctxWithEnv, list, args[0])
+			}
+		default:
+			return errors.NewError("%s: list method %s not found", errors.ErrIdentifierNotFound, method)
+		}
+	}
+
 	if obj.Type() != object.STRING_OBJ {
-		return newError("method %s not supported on %s", method, obj.Type())
+		return errors.NewTypeError("STRING", string(obj.Type()))
 	}
 
 	str := obj.(*object.String)
@@ -978,46 +1182,125 @@ func callStringMethod(obj object.Object, method string, args []object.Object) ob
 	switch method {
 	case "upper":
 		if len(args) != 0 {
-			return newError("wrong number of arguments. got=%d, want=0", len(args))
+			return errors.NewArgumentError(len(args), 0)
 		}
 		if builtin, ok := builtins["upper"]; ok {
-			return builtin.Fn(str)
+			ctxWithEnv := SetEnvInContext(ctx, env)
+			return builtin.Fn(ctxWithEnv, str)
 		}
 	case "lower":
 		if len(args) != 0 {
-			return newError("wrong number of arguments. got=%d, want=0", len(args))
+			return errors.NewArgumentError(len(args), 0)
 		}
 		if builtin, ok := builtins["lower"]; ok {
-			return builtin.Fn(str)
+			ctxWithEnv := SetEnvInContext(ctx, env)
+			return builtin.Fn(ctxWithEnv, str)
 		}
 	case "split":
-		if len(args) != 1 {
-			return newError("wrong number of arguments. got=%d, want=1", len(args))
+		if len(args) > 1 {
+			return errors.NewArgumentError(len(args), 1)
 		}
+		// If no argument, split on whitespace
+		if len(args) == 0 {
+			parts := strings.Fields(str.Value)
+			elements := make([]object.Object, len(parts))
+			for i, part := range parts {
+				elements[i] = &object.String{Value: part}
+			}
+			return &object.List{Elements: elements}
+		}
+		// With separator argument
 		if builtin, ok := builtins["split"]; ok {
-			return builtin.Fn(str, args[0])
+			ctxWithEnv := SetEnvInContext(ctx, env)
+			return builtin.Fn(ctxWithEnv, str, args[0])
 		}
 	case "replace":
 		if len(args) != 2 {
-			return newError("wrong number of arguments. got=%d, want=2", len(args))
+			return errors.NewArgumentError(len(args), 2)
 		}
 		if builtin, ok := builtins["replace"]; ok {
-			return builtin.Fn(str, args[0], args[1])
+			ctxWithEnv := SetEnvInContext(ctx, env)
+			return builtin.Fn(ctxWithEnv, str, args[0], args[1])
+		}
+	case "join":
+		if len(args) != 1 {
+			return errors.NewArgumentError(len(args), 1)
+		}
+		if builtin, ok := builtins["join"]; ok {
+			ctxWithEnv := SetEnvInContext(ctx, env)
+			// join builtin expects (list, separator), but method is separator.join(list)
+			return builtin.Fn(ctxWithEnv, args[0], str)
+		}
+	case "capitalize":
+		if len(args) != 0 {
+			return errors.NewArgumentError(len(args), 0)
+		}
+		if builtin, ok := builtins["capitalize"]; ok {
+			ctxWithEnv := SetEnvInContext(ctx, env)
+			return builtin.Fn(ctxWithEnv, str)
+		}
+	case "title":
+		if len(args) != 0 {
+			return errors.NewArgumentError(len(args), 0)
+		}
+		if builtin, ok := builtins["title"]; ok {
+			ctxWithEnv := SetEnvInContext(ctx, env)
+			return builtin.Fn(ctxWithEnv, str)
+		}
+	case "strip":
+		if len(args) != 0 {
+			return errors.NewArgumentError(len(args), 0)
+		}
+		if builtin, ok := builtins["strip"]; ok {
+			ctxWithEnv := SetEnvInContext(ctx, env)
+			return builtin.Fn(ctxWithEnv, str)
+		}
+	case "lstrip":
+		if len(args) != 0 {
+			return errors.NewArgumentError(len(args), 0)
+		}
+		if builtin, ok := builtins["lstrip"]; ok {
+			ctxWithEnv := SetEnvInContext(ctx, env)
+			return builtin.Fn(ctxWithEnv, str)
+		}
+	case "rstrip":
+		if len(args) != 0 {
+			return errors.NewArgumentError(len(args), 0)
+		}
+		if builtin, ok := builtins["rstrip"]; ok {
+			ctxWithEnv := SetEnvInContext(ctx, env)
+			return builtin.Fn(ctxWithEnv, str)
+		}
+	case "startswith":
+		if len(args) != 1 {
+			return errors.NewArgumentError(len(args), 1)
+		}
+		if builtin, ok := builtins["startswith"]; ok {
+			ctxWithEnv := SetEnvInContext(ctx, env)
+			return builtin.Fn(ctxWithEnv, str, args[0])
+		}
+	case "endswith":
+		if len(args) != 1 {
+			return errors.NewArgumentError(len(args), 1)
+		}
+		if builtin, ok := builtins["endswith"]; ok {
+			ctxWithEnv := SetEnvInContext(ctx, env)
+			return builtin.Fn(ctxWithEnv, str, args[0])
 		}
 	default:
-		return newError("unknown method: %s", method)
+		return errors.NewError("%s: %s", errors.ErrIdentifierNotFound, method)
 	}
-	return newError("method %s not found", method)
+	return errors.NewError("%s: %s", errors.ErrIdentifierNotFound, method)
 }
 
-func evalListComprehension(lc *ast.ListComprehension, env *object.Environment) object.Object {
-	iterable := Eval(lc.Iterable, env)
+func evalListComprehension(ctx context.Context, lc *ast.ListComprehension, env *object.Environment) object.Object {
+	iterable := evalWithContext(ctx, lc.Iterable, env)
 	if isError(iterable) {
 		return iterable
 	}
 
 	result := []object.Object{}
-	
+
 	// Create new scope for comprehension variable
 	compEnv := object.NewEnclosedEnvironment(env)
 
@@ -1025,10 +1308,10 @@ func evalListComprehension(lc *ast.ListComprehension, env *object.Environment) o
 	case *object.List:
 		for _, element := range iter.Elements {
 			compEnv.Set(lc.Variable.Value, element)
-			
+
 			// Check condition if present
 			if lc.Condition != nil {
-				condition := Eval(lc.Condition, compEnv)
+				condition := evalWithContext(ctx, lc.Condition, compEnv)
 				if isError(condition) {
 					return condition
 				}
@@ -1036,9 +1319,9 @@ func evalListComprehension(lc *ast.ListComprehension, env *object.Environment) o
 					continue
 				}
 			}
-			
+
 			// Evaluate expression
-			exprResult := Eval(lc.Expression, compEnv)
+			exprResult := evalWithContext(ctx, lc.Expression, compEnv)
 			if isError(exprResult) {
 				return exprResult
 			}
@@ -1047,10 +1330,10 @@ func evalListComprehension(lc *ast.ListComprehension, env *object.Environment) o
 	case *object.String:
 		for _, char := range iter.Value {
 			compEnv.Set(lc.Variable.Value, &object.String{Value: string(char)})
-			
+
 			// Check condition if present
 			if lc.Condition != nil {
-				condition := Eval(lc.Condition, compEnv)
+				condition := evalWithContext(ctx, lc.Condition, compEnv)
 				if isError(condition) {
 					return condition
 				}
@@ -1058,16 +1341,16 @@ func evalListComprehension(lc *ast.ListComprehension, env *object.Environment) o
 					continue
 				}
 			}
-			
+
 			// Evaluate expression
-			exprResult := Eval(lc.Expression, compEnv)
+			exprResult := evalWithContext(ctx, lc.Expression, compEnv)
 			if isError(exprResult) {
 				return exprResult
 			}
 			result = append(result, exprResult)
 		}
 	default:
-		return newError("list comprehension requires iterable, got %s", iterable.Type())
+		return errors.NewTypeError("iterable", string(iterable.Type()))
 	}
 
 	return &object.List{Elements: result}
@@ -1080,4 +1363,21 @@ func evalLambda(lambda *ast.Lambda, env *object.Environment) object.Object {
 		Body:          lambda.Body,
 		Env:           env,
 	}
+}
+
+func evalFStringLiteral(ctx context.Context, fstr *ast.FStringLiteral, env *object.Environment) object.Object {
+	result := ""
+
+	for i, part := range fstr.Parts {
+		result += part
+		if i < len(fstr.Expressions) {
+			exprResult := evalWithContext(ctx, fstr.Expressions[i], env)
+			if isError(exprResult) {
+				return exprResult
+			}
+			result += exprResult.Inspect()
+		}
+	}
+
+	return &object.String{Value: result}
 }

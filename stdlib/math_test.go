@@ -1,16 +1,18 @@
 package stdlib
 
 import (
-	"testing"
-	"github.com/paularlott/scriptling/object"
+	"context"
 	"math"
+	"testing"
+
+	"github.com/paularlott/scriptling/object"
 )
 
 func TestMathSqrt(t *testing.T) {
 	lib := GetMathLibrary()
-	sqrt := lib["sqrt"]
-	
-	result := sqrt.Fn(&object.Integer{Value: 16})
+	sqrt := lib.Functions()["sqrt"]
+
+	result := sqrt.Fn(context.Background(), &object.Integer{Value: 16})
 	if f, ok := result.(*object.Float); ok {
 		if f.Value != 4.0 {
 			t.Errorf("sqrt(16) = %v, want 4.0", f.Value)
@@ -22,9 +24,9 @@ func TestMathSqrt(t *testing.T) {
 
 func TestMathPow(t *testing.T) {
 	lib := GetMathLibrary()
-	pow := lib["pow"]
-	
-	result := pow.Fn(&object.Integer{Value: 2}, &object.Integer{Value: 8})
+	pow := lib.Functions()["pow"]
+
+	result := pow.Fn(context.Background(), &object.Integer{Value: 2}, &object.Integer{Value: 8})
 	if f, ok := result.(*object.Float); ok {
 		if f.Value != 256.0 {
 			t.Errorf("pow(2, 8) = %v, want 256.0", f.Value)
@@ -36,9 +38,9 @@ func TestMathPow(t *testing.T) {
 
 func TestMathAbs(t *testing.T) {
 	lib := GetMathLibrary()
-	abs := lib["abs"]
-	
-	result := abs.Fn(&object.Integer{Value: -5})
+	abs := lib.Functions()["abs"]
+
+	result := abs.Fn(context.Background(), &object.Integer{Value: -5})
 	if i, ok := result.(*object.Integer); ok {
 		if i.Value != 5 {
 			t.Errorf("abs(-5) = %v, want 5", i.Value)
@@ -50,9 +52,9 @@ func TestMathAbs(t *testing.T) {
 
 func TestMathFloor(t *testing.T) {
 	lib := GetMathLibrary()
-	floor := lib["floor"]
-	
-	result := floor.Fn(&object.Float{Value: 3.7})
+	floor := lib.Functions()["floor"]
+
+	result := floor.Fn(context.Background(), &object.Float{Value: 3.7})
 	if i, ok := result.(*object.Integer); ok {
 		if i.Value != 3 {
 			t.Errorf("floor(3.7) = %v, want 3", i.Value)
@@ -64,9 +66,9 @@ func TestMathFloor(t *testing.T) {
 
 func TestMathCeil(t *testing.T) {
 	lib := GetMathLibrary()
-	ceil := lib["ceil"]
-	
-	result := ceil.Fn(&object.Float{Value: 3.2})
+	ceil := lib.Functions()["ceil"]
+
+	result := ceil.Fn(context.Background(), &object.Float{Value: 3.2})
 	if i, ok := result.(*object.Integer); ok {
 		if i.Value != 4 {
 			t.Errorf("ceil(3.2) = %v, want 4", i.Value)
@@ -78,9 +80,9 @@ func TestMathCeil(t *testing.T) {
 
 func TestMathRound(t *testing.T) {
 	lib := GetMathLibrary()
-	round := lib["round"]
-	
-	result := round.Fn(&object.Float{Value: 3.5})
+	round := lib.Functions()["round"]
+
+	result := round.Fn(context.Background(), &object.Float{Value: 3.5})
 	if i, ok := result.(*object.Integer); ok {
 		if i.Value != 4 {
 			t.Errorf("round(3.5) = %v, want 4", i.Value)
@@ -92,9 +94,9 @@ func TestMathRound(t *testing.T) {
 
 func TestMathMin(t *testing.T) {
 	lib := GetMathLibrary()
-	min := lib["min"]
-	
-	result := min.Fn(&object.Integer{Value: 3}, &object.Integer{Value: 1}, &object.Integer{Value: 2})
+	min := lib.Functions()["min"]
+
+	result := min.Fn(context.Background(), &object.Integer{Value: 3}, &object.Integer{Value: 1})
 	if i, ok := result.(*object.Integer); ok {
 		if i.Value != 1 {
 			t.Errorf("min(3, 1, 2) = %v, want 1", i.Value)
@@ -106,9 +108,9 @@ func TestMathMin(t *testing.T) {
 
 func TestMathMax(t *testing.T) {
 	lib := GetMathLibrary()
-	max := lib["max"]
-	
-	result := max.Fn(&object.Integer{Value: 3}, &object.Integer{Value: 1}, &object.Integer{Value: 2})
+	max := lib.Functions()["max"]
+
+	result := max.Fn(context.Background(), &object.Integer{Value: 3}, &object.Integer{Value: 1})
 	if i, ok := result.(*object.Integer); ok {
 		if i.Value != 3 {
 			t.Errorf("max(3, 1, 2) = %v, want 3", i.Value)
@@ -120,8 +122,8 @@ func TestMathMax(t *testing.T) {
 
 func TestMathConstants(t *testing.T) {
 	lib := GetMathLibrary()
-	
-	pi := lib["pi"].Fn()
+
+	pi := lib.Functions()["pi"].Fn(context.Background())
 	if f, ok := pi.(*object.Float); ok {
 		if f.Value != math.Pi {
 			t.Errorf("math.pi = %v, want %v", f.Value, math.Pi)
@@ -129,8 +131,8 @@ func TestMathConstants(t *testing.T) {
 	} else {
 		t.Errorf("math.pi is %T, want Float", pi)
 	}
-	
-	e := lib["e"].Fn()
+
+	e := lib.Functions()["e"].Fn(context.Background())
 	if f, ok := e.(*object.Float); ok {
 		if f.Value != math.E {
 			t.Errorf("math.e = %v, want %v", f.Value, math.E)

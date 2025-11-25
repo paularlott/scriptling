@@ -59,6 +59,16 @@ type StringLiteral struct {
 func (sl *StringLiteral) expressionNode()      {}
 func (sl *StringLiteral) TokenLiteral() string { return sl.Token.Literal }
 
+type FStringLiteral struct {
+	Token token.Token
+	Value string
+	Expressions []Expression // expressions inside {}
+	Parts []string // string parts between expressions
+}
+
+func (fsl *FStringLiteral) expressionNode()      {}
+func (fsl *FStringLiteral) TokenLiteral() string { return fsl.Token.Literal }
+
 type Boolean struct {
 	Token token.Token
 	Value bool
@@ -277,6 +287,7 @@ type TryStatement struct {
 	Token       token.Token
 	Body        *BlockStatement
 	Except      *BlockStatement
+	ExceptVar   *Identifier // for 'except Exception as e:'
 	Finally     *BlockStatement
 }
 
