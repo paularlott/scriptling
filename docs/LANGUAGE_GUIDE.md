@@ -443,9 +443,16 @@ float(42)                 # 42.0
 len("hello")                        # 5
 upper("hello")                      # "HELLO"
 lower("HELLO")                      # "hello"
+capitalize("hello world")           # "Hello world"
+title("hello world")                # "Hello World"
 split("a,b,c", ",")                # ["a", "b", "c"]
 join(["a", "b", "c"], "-")         # "a-b-c"
 replace("hello world", "world", "python")  # "hello python"
+strip("  hello  ")                 # "hello"
+lstrip("  hello  ")                # "hello  "
+rstrip("  hello  ")                # "  hello"
+startswith("hello", "he")          # True
+endswith("hello", "lo")            # True
 ```
 
 ### List Functions
@@ -456,6 +463,11 @@ len([1, 2, 3])                     # 3
 my_list = [1, 2]
 append(my_list, 3)                 # my_list is now [1, 2, 3]
 print(my_list)                     # [1, 2, 3]
+
+# extend modifies list in-place by appending elements from another list
+list_a = [1, 2]
+list_b = [3, 4]
+extend(list_a, list_b)             # list_a is now [1, 2, 3, 4]
 ```
 
 ### Range Function
