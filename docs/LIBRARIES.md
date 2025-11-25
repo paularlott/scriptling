@@ -338,13 +338,21 @@ Always available without importing:
 - `len(string)` - Get length
 - `upper(string)` - Uppercase
 - `lower(string)` - Lowercase
+- `capitalize(string)` - Capitalize first letter
+- `title(string)` - Title case
 - `split(string, sep)` - Split to list
 - `join(list, sep)` - Join from list
 - `replace(str, old, new)` - Replace substring
+- `strip(string)` - Trim whitespace from both ends
+- `lstrip(string)` - Trim whitespace from left
+- `rstrip(string)` - Trim whitespace from right
+- `startswith(string, prefix)` - Check if string starts with prefix
+- `endswith(string, suffix)` - Check if string ends with suffix
 
 ### List Functions
 - `len(list)` - Get length
-- `append(list, item)` - Append item (returns new list)
+- `append(list, item)` - Append item (modifies list in-place)
+- `extend(list, other_list)` - Append elements from another list (modifies list in-place)
 
 ### System
 - `import library_name` - Load library dynamically
