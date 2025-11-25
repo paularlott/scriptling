@@ -1,8 +1,9 @@
 package lexer
 
 import (
-	"github.com/paularlott/scriptling/token"
 	"testing"
+
+	"github.com/paularlott/scriptling/token"
 )
 
 func TestNextToken(t *testing.T) {
