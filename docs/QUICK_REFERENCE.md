@@ -159,6 +159,12 @@ split("a,b,c", ",")                # ["a", "b", "c"]
 join(["a", "b"], "-")              # "a-b"
 replace("hello", "l", "L")         # "heLLo"
 
+# Triple-quoted and raw strings
+multi = '''Line1
+Line2
+'''
+raw = r"C:\\path\\to\\file"
+
 # List operations
 numbers = [1, 2, 3]
 len(numbers)                        # 3

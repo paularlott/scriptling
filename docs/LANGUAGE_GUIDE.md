@@ -30,6 +30,9 @@ if x > 5:
 x = 5  # Inline comments supported
 ```
 
+### Triple-Quoted and Raw Strings
+Scriptling supports single- and double-quoted strings, triple-quoted strings for multi-line text, and raw-string prefixes `r`/`R` which are useful for regular expressions.
+
 ### Case Sensitivity
 - Keywords: lowercase (`if`, `while`, `def`, `return`)
 - Booleans: `True`, `False` (capitalized)

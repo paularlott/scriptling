@@ -175,3 +175,32 @@ y = 10`
 		}
 	}
 }
+
+func TestRawAndTripleStrings(t *testing.T) {
+	input := `"""a
+b
+c""" r"a\b\c" r'href=["\'](.*?)[\'"]'`
+
+	tests := []struct {
+		expectedType    token.TokenType
+		expectedLiteral string
+	}{
+		{token.STRING, "a\nb\nc"},
+		{token.STRING, "a\\b\\c"},
+		{token.STRING, "href=[\"\\'](.*?)[\\'\"]"},
+		{token.EOF, ""},
+	}
+
+	l := New(input)
+	for i, tt := range tests {
+		tok := l.NextToken()
+		if tok.Type != tt.expectedType {
+			t.Fatalf("tests[%d] - tokentype wrong. expected=%q, got=%q",
+				i, tt.expectedType, tok.Type)
+		}
+		if tok.Literal != tt.expectedLiteral {
+			t.Fatalf("tests[%d] - literal wrong. expected=%q, got=%q",
+				i, tt.expectedLiteral, tok.Literal)
+		}
+	}
+}
