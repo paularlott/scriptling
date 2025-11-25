@@ -793,8 +793,9 @@ func evalSliceExpressionWithContext(ctx context.Context, node *ast.SliceExpressi
 		return left
 	}
 
-	var start, end int64
-	var hasStart, hasEnd bool
+	var start, end, step int64
+	var hasStart, hasEnd, hasStep bool
+	step = 1 // default step
 
 	if node.Start != nil {
 		startObj := evalWithContext(ctx, node.Start, env)
@@ -820,46 +821,186 @@ func evalSliceExpressionWithContext(ctx context.Context, node *ast.SliceExpressi
 		hasEnd = true
 	}
 
+	if node.Step != nil {
+		stepObj := evalWithContext(ctx, node.Step, env)
+		if isError(stepObj) {
+			return stepObj
+		}
+		if stepObj.Type() != object.INTEGER_OBJ {
+			return errors.NewTypeError("INTEGER", string(stepObj.Type()))
+		}
+		step = stepObj.(*object.Integer).Value
+		hasStep = true
+		if step == 0 {
+			return errors.NewError("slice step cannot be zero")
+		}
+	}
+
 	switch obj := left.(type) {
 	case *object.List:
-		length := int64(len(obj.Elements))
-		if !hasStart {
-			start = 0
-		}
-		if !hasEnd {
-			end = length
-		}
-		if start < 0 {
-			start = 0
-		}
-		if end > length {
-			end = length
-		}
-		if start > end {
-			start = end
-		}
-		return &object.List{Elements: obj.Elements[start:end]}
+		return sliceList(obj.Elements, start, end, step, hasStart, hasEnd, hasStep)
 	case *object.String:
-		length := int64(len(obj.Value))
-		if !hasStart {
-			start = 0
-		}
-		if !hasEnd {
-			end = length
-		}
-		if start < 0 {
-			start = 0
-		}
-		if end > length {
-			end = length
-		}
-		if start > end {
-			start = end
-		}
-		return &object.String{Value: obj.Value[start:end]}
+		elements := sliceString(obj.Value, start, end, step, hasStart, hasEnd, hasStep)
+		return &object.String{Value: elements}
 	default:
 		return errors.NewError("slice operator not supported: %s", left.Type())
 	}
+}
+
+func sliceList(elements []object.Object, start, end, step int64, hasStart, hasEnd, hasStep bool) object.Object {
+	length := int64(len(elements))
+
+	// Handle negative step (reverse iteration)
+	if step < 0 {
+		if !hasStart {
+			start = length - 1
+		} else if start < 0 {
+			start = length + start
+		}
+		if !hasEnd {
+			end = -1
+		} else if end < 0 {
+			end = length + end
+		}
+
+		// Bounds checking
+		if start >= length {
+			start = length - 1
+		}
+		if start < 0 {
+			start = -1
+		}
+		if end >= length {
+			end = length - 1
+		}
+
+		result := []object.Object{}
+		for i := start; i > end; i += step {
+			if i >= 0 && i < length {
+				result = append(result, elements[i])
+			}
+		}
+		return &object.List{Elements: result}
+	}
+
+	// Positive step (forward iteration)
+	if !hasStart {
+		start = 0
+	} else if start < 0 {
+		start = length + start
+		if start < 0 {
+			start = 0
+		}
+	}
+	if !hasEnd {
+		end = length
+	} else if end < 0 {
+		end = length + end
+		if end < 0 {
+			end = 0
+		}
+	}
+
+	// Bounds checking
+	if start < 0 {
+		start = 0
+	}
+	if end > length {
+		end = length
+	}
+	if start > end {
+		start = end
+	}
+
+	// If step is 1, use simple slicing
+	if step == 1 {
+		return &object.List{Elements: elements[start:end]}
+	}
+
+	// Step > 1
+	result := []object.Object{}
+	for i := start; i < end; i += step {
+		result = append(result, elements[i])
+	}
+	return &object.List{Elements: result}
+}
+
+func sliceString(str string, start, end, step int64, hasStart, hasEnd, hasStep bool) string {
+	length := int64(len(str))
+
+	// Handle negative step (reverse iteration)
+	if step < 0 {
+		if !hasStart {
+			start = length - 1
+		} else if start < 0 {
+			start = length + start
+		}
+		if !hasEnd {
+			end = -1
+		} else if end < 0 {
+			end = length + end
+		}
+
+		// Bounds checking
+		if start >= length {
+			start = length - 1
+		}
+		if start < 0 {
+			start = -1
+		}
+		if end >= length {
+			end = length - 1
+		}
+
+		result := ""
+		for i := start; i > end; i += step {
+			if i >= 0 && i < length {
+				result += string(str[i])
+			}
+		}
+		return result
+	}
+
+	// Positive step (forward iteration)
+	if !hasStart {
+		start = 0
+	} else if start < 0 {
+		start = length + start
+		if start < 0 {
+			start = 0
+		}
+	}
+	if !hasEnd {
+		end = length
+	} else if end < 0 {
+		end = length + end
+		if end < 0 {
+			end = 0
+		}
+	}
+
+	// Bounds checking
+	if start < 0 {
+		start = 0
+	}
+	if end > length {
+		end = length
+	}
+	if start > end {
+		start = end
+	}
+
+	// If step is 1, use simple slicing
+	if step == 1 {
+		return str[start:end]
+	}
+
+	// Step > 1
+	result := ""
+	for i := start; i < end; i += step {
+		result += string(str[i])
+	}
+	return result
 }
 
 // Backwards compatible wrapper

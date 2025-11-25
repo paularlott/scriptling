@@ -666,17 +666,32 @@ first_num = numbers[0]    # 1
 
 ### Slice Notation
 ```python
-# Lists
+# Lists - basic slicing
 numbers = [0, 1, 2, 3, 4, 5]
 numbers[1:4]       # [1, 2, 3]
 numbers[:3]        # [0, 1, 2]
 numbers[3:]        # [3, 4, 5]
 
-# Strings
+# Lists - with step
+numbers[::2]       # [0, 2, 4] - every second element
+numbers[1::2]      # [1, 3, 5] - every second element starting from index 1
+numbers[1:8:2]     # [1, 3, 5, 7] - every second element from 1 to 8
+
+# Lists - reverse with negative step
+numbers[::-1]      # [5, 4, 3, 2, 1, 0] - reverse the list
+numbers[::-2]      # [5, 3, 1] - every second element in reverse
+numbers[4:1:-1]    # [4, 3, 2] - reverse from index 4 to 1
+
+# Strings - basic slicing
 text = "Hello World"
 text[0:5]          # "Hello"
 text[6:]           # "World"
 text[:5]           # "Hello"
+
+# Strings - with step
+text[::2]          # "HloWrd" - every second character
+text[::-1]         # "dlroW olleH" - reverse the string
+text[1:8:2]        # "el o" - every second character from 1 to 8
 ```
 
 ## Limitations & Differences from Python
@@ -767,7 +782,7 @@ When generating Scriptling code:
 1. Use 4-space indentation for blocks
 2. Use `True`/`False` for booleans, `None` for null (all capitalized)
 3. Use `range(n)`, `range(start, stop)`, or `range(start, stop, step)` for numeric loops
-4. Use slice notation: `list[1:3]`, `list[:3]`, `list[3:]`, `string[0:5]`
+4. Use slice notation: `list[1:3]`, `list[:3]`, `list[3:]`, `list[::2]`, `list[::-1]` (step supported)
 5. Use `keys(dict)`, `values(dict)`, `items(dict)` for dictionary iteration
 6. HTTP functions return `{"status": int, "body": string, "headers": dict}`
 7. HTTP functions accept optional options dictionary with `timeout` and `headers` keys

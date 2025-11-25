@@ -1138,11 +1138,19 @@ func (p *Parser) parseIndexExpression(left ast.Expression) ast.Expression {
 
 	// Check for slice notation
 	if p.curTokenIs(token.COLON) {
-		// Slice with no start: [:end]
+		// Slice with no start: [:end] or [:end:step]
 		slice := &ast.SliceExpression{Token: tok, Left: left, Start: nil}
-		if !p.peekTokenIs(token.RBRACKET) {
+		if !p.peekTokenIs(token.RBRACKET) && !p.peekTokenIs(token.COLON) {
 			p.nextToken()
 			slice.End = p.parseExpression(LOWEST)
+		}
+		// Check for step parameter
+		if p.peekTokenIs(token.COLON) {
+			p.nextToken() // consume second colon
+			if !p.peekTokenIs(token.RBRACKET) {
+				p.nextToken()
+				slice.Step = p.parseExpression(LOWEST)
+			}
 		}
 		if !p.expectPeek(token.RBRACKET) {
 			return nil
@@ -1153,12 +1161,20 @@ func (p *Parser) parseIndexExpression(left ast.Expression) ast.Expression {
 	start := p.parseExpression(LOWEST)
 
 	if p.peekTokenIs(token.COLON) {
-		// Slice notation: [start:end]
+		// Slice notation: [start:end] or [start:end:step]
 		p.nextToken() // consume colon
 		slice := &ast.SliceExpression{Token: tok, Left: left, Start: start}
-		if !p.peekTokenIs(token.RBRACKET) {
+		if !p.peekTokenIs(token.RBRACKET) && !p.peekTokenIs(token.COLON) {
 			p.nextToken()
 			slice.End = p.parseExpression(LOWEST)
+		}
+		// Check for step parameter
+		if p.peekTokenIs(token.COLON) {
+			p.nextToken() // consume second colon
+			if !p.peekTokenIs(token.RBRACKET) {
+				p.nextToken()
+				slice.Step = p.parseExpression(LOWEST)
+			}
 		}
 		if !p.expectPeek(token.RBRACKET) {
 			return nil
