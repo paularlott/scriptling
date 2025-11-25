@@ -1115,6 +1115,14 @@ func evalImportStatement(is *ast.ImportStatement, env *object.Environment) objec
 	if err != nil {
 		return errors.NewError("%s: %s", errors.ErrImportError, err.Error())
 	}
+
+	// Import additional libraries if any
+	for _, name := range is.AdditionalNames {
+		if err := importCallback(name.Value); err != nil {
+			return errors.NewError("%s: %s", errors.ErrImportError, err.Error())
+		}
+	}
+
 	return NULL
 }
 

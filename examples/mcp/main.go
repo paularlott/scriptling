@@ -10,6 +10,7 @@ import (
 	"github.com/paularlott/mcp"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/object"
 )
 
 func main() {
@@ -45,7 +46,7 @@ func main() {
 
 			if err != nil {
 				response.WriteString(fmt.Sprintf("Error: %s\n", err.Error()))
-			} else if result != nil {
+			} else if result != nil && result.Type() != object.NULL_OBJ {
 				response.WriteString(fmt.Sprintf("Result: %s\n", result.Inspect()))
 			}
 
