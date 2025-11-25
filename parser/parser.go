@@ -315,6 +315,20 @@ func (p *Parser) parseImportStatement() *ast.ImportStatement {
 	}
 
 	stmt.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+
+	// Check for additional imports separated by commas
+	stmt.AdditionalNames = []*ast.Identifier{}
+	for p.peekTokenIs(token.COMMA) {
+		p.nextToken() // consume comma
+		if !p.expectPeek(token.IDENT) {
+			return nil
+		}
+		stmt.AdditionalNames = append(stmt.AdditionalNames, &ast.Identifier{
+			Token: p.curToken,
+			Value: p.curToken.Literal,
+		})
+	}
+
 	return stmt
 }
 

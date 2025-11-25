@@ -232,8 +232,9 @@ func (ps *PassStatement) statementNode()       {}
 func (ps *PassStatement) TokenLiteral() string { return ps.Token.Literal }
 
 type ImportStatement struct {
-	Token token.Token
-	Name  *Identifier
+	Token           token.Token
+	Name            *Identifier
+	AdditionalNames []*Identifier // For import lib1, lib2, lib3
 }
 
 func (is *ImportStatement) statementNode()       {}
