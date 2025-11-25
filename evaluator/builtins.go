@@ -295,15 +295,152 @@ var builtins = map[string]*object.Builtin{
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
 			}
-			if args[0].Type() != object.STRING_OBJ || args[1].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("STRING", "mixed types")
+			if args[0].Type() != object.STRING_OBJ {
+				return errors.NewTypeError("STRING", string(args[0].Type()))
 			}
-			str := args[0].(*object.String).Value
+			if args[1].Type() != object.STRING_OBJ {
+				return errors.NewTypeError("STRING", string(args[1].Type()))
+			}
+			s := args[0].(*object.String).Value
 			suffix := args[1].(*object.String).Value
-			if strings.HasSuffix(str, suffix) {
-				return TRUE
+			return nativeBoolToBooleanObject(strings.HasSuffix(s, suffix))
+		},
+	},
+	"sum": {
+		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+			if len(args) != 1 {
+				return errors.NewArgumentError(len(args), 1)
 			}
-			return FALSE
+
+			var elements []object.Object
+			switch arg := args[0].(type) {
+			case *object.List:
+				elements = arg.Elements
+			case *object.Tuple:
+				elements = arg.Elements
+			default:
+				return errors.NewTypeError("LIST or TUPLE", string(args[0].Type()))
+			}
+
+			// Start with integer 0
+			var intSum int64 = 0
+			var floatSum float64 = 0
+			hasFloat := false
+
+			for _, elem := range elements {
+				switch v := elem.(type) {
+				case *object.Integer:
+					if hasFloat {
+						floatSum += float64(v.Value)
+					} else {
+						intSum += v.Value
+					}
+				case *object.Float:
+					if !hasFloat {
+						// Convert accumulated int sum to float
+						floatSum = float64(intSum)
+						hasFloat = true
+					}
+					floatSum += v.Value
+				default:
+					return errors.NewError("unsupported operand type for sum(): %s", elem.Type())
+				}
+			}
+
+			if hasFloat {
+				return &object.Float{Value: floatSum}
+			}
+			return &object.Integer{Value: intSum}
+		},
+	},
+	"sorted": {
+		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+			if len(args) < 1 || len(args) > 2 {
+				return errors.NewArgumentError(len(args), 1)
+			}
+
+			var elements []object.Object
+			switch arg := args[0].(type) {
+			case *object.List:
+				// Make a copy
+				elements = make([]object.Object, len(arg.Elements))
+				copy(elements, arg.Elements)
+			case *object.Tuple:
+				elements = make([]object.Object, len(arg.Elements))
+				copy(elements, arg.Elements)
+			default:
+				return errors.NewTypeError("LIST or TUPLE", string(args[0].Type()))
+			}
+
+			// Check for key function
+			var keyFunc *object.Builtin
+			if len(args) == 2 {
+				var ok bool
+				keyFunc, ok = args[1].(*object.Builtin)
+				if !ok {
+					return errors.NewError("sorted() key parameter must be a builtin function")
+				}
+			}
+
+			// Simple bubble sort (good enough for now)
+			n := len(elements)
+			for i := 0; i < n-1; i++ {
+				for j := 0; j < n-i-1; j++ {
+					var cmp bool
+
+					// Get comparison values
+					left := elements[j]
+					right := elements[j+1]
+
+					// Apply key function if provided
+					if keyFunc != nil {
+						leftKey := keyFunc.Fn(ctx, left)
+						if isError(leftKey) || isException(leftKey) {
+							return leftKey
+						}
+						rightKey := keyFunc.Fn(ctx, right)
+						if isError(rightKey) || isException(rightKey) {
+							return rightKey
+						}
+						left = leftKey
+						right = rightKey
+					}
+
+					// Compare based on type
+					switch l := left.(type) {
+					case *object.Integer:
+						if r, ok := right.(*object.Integer); ok {
+							cmp = l.Value > r.Value
+						} else if r, ok := right.(*object.Float); ok {
+							cmp = float64(l.Value) > r.Value
+						} else {
+							return errors.NewError("cannot compare %s with %s", left.Type(), right.Type())
+						}
+					case *object.Float:
+						if r, ok := right.(*object.Float); ok {
+							cmp = l.Value > r.Value
+						} else if r, ok := right.(*object.Integer); ok {
+							cmp = l.Value > float64(r.Value)
+						} else {
+							return errors.NewError("cannot compare %s with %s", left.Type(), right.Type())
+						}
+					case *object.String:
+						if r, ok := right.(*object.String); ok {
+							cmp = l.Value > r.Value
+						} else {
+							return errors.NewError("cannot compare %s with %s", left.Type(), right.Type())
+						}
+					default:
+						return errors.NewError("unsupported type for sorting: %s", left.Type())
+					}
+
+					if cmp {
+						elements[j], elements[j+1] = elements[j+1], elements[j]
+					}
+				}
+			}
+
+			return &object.List{Elements: elements}
 		},
 	},
 	"range": {

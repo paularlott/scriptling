@@ -163,6 +163,9 @@ replace("hello", "l", "L")         # "heLLo"
 numbers = [1, 2, 3]
 len(numbers)                        # 3
 append(numbers, 4)                  # numbers is now [1, 2, 3, 4]
+sum([1, 2, 3, 4])                   # 10
+sorted([3, 1, 2])                   # [1, 2, 3]
+sorted(["banana", "apple"], len)    # Sort with key function
 
 # Range
 range(5)                            # [0, 1, 2, 3, 4]
@@ -312,6 +315,7 @@ numbers[3:]             # [4, 5]
 x + y    # Addition
 x - y    # Subtraction
 x * y    # Multiplication
+x ** y   # Exponentiation (power, e.g., 2**3 = 8)
 x / y    # Division (always returns float, e.g., 5 / 2 = 2.5)
 x % y    # Modulo (remainder, e.g., 5 % 2 = 1)
 

@@ -87,7 +87,8 @@ Represented as `None` (not directly creatable, returned by functions with no ret
 x + y    # Addition
 x - y    # Subtraction
 x * y    # Multiplication
-x / y    # Division (integer division for ints)
+x ** y   # Exponentiation (power)
+x / y    # Division (always returns float)
 x % y    # Modulo
 ```
 
@@ -490,6 +491,16 @@ print(my_list)                     # [1, 2, 3]
 list_a = [1, 2]
 list_b = [3, 4]
 extend(list_a, list_b)             # list_a is now [1, 2, 3, 4]
+
+# sum returns the sum of all numeric elements
+sum([1, 2, 3, 4, 5])              # 15
+sum([1.5, 2.5, 3.0])              # 7.0
+sum((1, 2, 3))                    # 10 (works with tuples too)
+
+# sorted returns a new sorted list (doesn't modify original)
+sorted([3, 1, 4, 1, 5])           # [1, 1, 3, 4, 5]
+sorted(["banana", "apple"])       # ["apple", "banana"]
+sorted([3, 1.5, 2], len)          # Sort with key function
 ```
 
 ### Range Function

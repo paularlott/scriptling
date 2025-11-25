@@ -5,12 +5,12 @@ import (
 )
 
 type Lexer struct {
-	input        string
-	position     int
-	readPosition int
-	ch           byte
-	line         int
-	indentStack  []int
+	input          string
+	position       int
+	readPosition   int
+	ch             byte
+	line           int
+	indentStack    []int
 	pendingDedents int
 }
 
@@ -94,13 +94,18 @@ func (l *Lexer) NextToken() token.Token {
 		}
 		l.readChar()
 	case '*':
-		if l.peekChar() == '=' {
+		if l.peekChar() == '*' {
+			l.readChar()
+			tok = token.Token{Type: token.POW, Literal: "**", Line: l.line}
+			l.readChar()
+		} else if l.peekChar() == '=' {
 			l.readChar()
 			tok = token.Token{Type: token.MUL_EQ, Literal: "*=", Line: l.line}
+			l.readChar()
 		} else {
 			tok = token.Token{Type: token.ASTERISK, Literal: string(l.ch), Line: l.line}
+			l.readChar()
 		}
-		l.readChar()
 	case '/':
 		if l.peekChar() == '=' {
 			l.readChar()
@@ -206,12 +211,12 @@ func (l *Lexer) NextToken() token.Token {
 				savedPos := l.position
 				savedReadPos := l.readPosition
 				savedCh := l.ch
-				
+
 				// Skip whitespace
 				for l.ch == ' ' || l.ch == '\t' {
 					l.readChar()
 				}
-				
+
 				// Check if next identifier is 'in'
 				if isLetter(l.ch) {
 					nextIdent := l.readIdentifier()
@@ -220,7 +225,7 @@ func (l *Lexer) NextToken() token.Token {
 						return token.Token{Type: token.NOT_IN, Literal: "not in", Line: l.line}
 					}
 				}
-				
+
 				// Restore position if not 'not in'
 				l.position = savedPos
 				l.readPosition = savedReadPos
