@@ -7,7 +7,7 @@ A minimal, sandboxed interpreter for LLM agents to execute code and interact wit
 - **Python-like syntax** with indentation-based blocks
 - **Core types**: integers, floats, strings, booleans, lists, dictionaries
 - **Control flow**: if/elif/else, while, for loops, break, continue, pass
-- **Advanced features**: range(), slice notation, dict methods (keys/values/items), multiple assignment
+- **Advanced features**: range(), slice notation, dict methods (keys/values/items), multiple assignment, keyword arguments
 - **List comprehensions**: `[x * x for x in range(10) if x > 5]`
 - **Method call syntax**: `text.upper()`, `json.parse()`, `math.sqrt(16)`
 - **Lambda functions**: `square = lambda x: x * x`

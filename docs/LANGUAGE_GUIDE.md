@@ -257,6 +257,36 @@ def function_name(param1, param2):
     return result
 ```
 
+### Keyword Arguments
+
+Functions can be called with keyword arguments, which can be mixed with positional arguments:
+
+```python
+def greet(name, greeting="Hello", punctuation="!"):
+    print(greeting + ", " + name + punctuation)
+
+# Positional arguments
+greet("World")  # Hello, World!
+
+# Keyword arguments
+greet(name="Alice")  # Hello, Alice!
+greet(greeting="Hi", name="Bob")  # Hi, Bob!
+
+# Mixed positional and keyword
+greet("Charlie", greeting="Hey")  # Hey, Charlie!
+greet("Diana", punctuation=".")  # Hello, Diana.
+
+# All keyword arguments (order doesn't matter)
+greet(punctuation="?", name="Eve", greeting="Howdy")  # Howdy, Eve?
+```
+
+#### Rules:
+
+- Positional arguments must come before keyword arguments
+- Each parameter can only be specified once
+- Keyword arguments work with default parameter values
+- Keyword arguments work with lambda functions
+
 ### Examples
 ```python
 # Simple function

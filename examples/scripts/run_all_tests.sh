@@ -59,6 +59,7 @@ tests=(
     "test_default_params.py"
     "test_lambda.py"
     "test_tuples.py"
+		"test_kwargs.py"
 
     # Examples (keep as-is)
     "variables.py"
