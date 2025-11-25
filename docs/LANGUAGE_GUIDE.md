@@ -297,7 +297,7 @@ finally:
 Combine error handling with cleanup:
 ```python
 try:
-    response = http.get(url, options)
+    response = requests.get(url, options)
     data = json.parse(response["body"])
 except:
     print("Request failed")
@@ -335,15 +335,15 @@ except:
 ### Error Handling with HTTP
 ```python
 import json
-import http
+import requests
 
 try:
     options = {"timeout": 5}
-    response = http.get("https://api.example.com/data", options)
-    
+    response = requests.get("https://api.example.com/data", options)
+
     if response["status"] != 200:
         raise "HTTP error: " + str(response["status"])
-    
+
     data = json.parse(response["body"])
     print("Success: " + str(len(data)))
 except:
@@ -490,13 +490,13 @@ for item in items(person):
 # Import libraries dynamically. The import statement loads the library
 # and makes its functions available as a global object.
 import json    # Load JSON library, creates a global 'json' object
-import http    # Load HTTP library, creates a global 'http' object
+import requests    # Load Requests library, creates a global 'requests' object
 import re   # Load regex library, creates a global 'regex' object
 
 # Use imported libraries directly via their global object
 data = json.parse('{"key":"value"}')
 options = {"timeout": 10}
-response = http.get("https://api.example.com", options)
+response = requests.get("https://api.example.com", options)
 matches = re.findall("[0-9]+", "abc123def456")
 ```
 
@@ -522,21 +522,21 @@ All HTTP functions return a dictionary with:
 #### GET Request
 ```python
 # Basic GET (default 5 second timeout)
-response = http.get("https://api.example.com/users")
+response = requests.get("https://api.example.com/users")
 status = response["status"]        # 200
 body = response["body"]            # Response body string
 data = json.parse(body)            # Parse JSON response
 
 # GET with options
 options = {"timeout": 10}
-response = http.get("https://api.example.com/users", options)
+response = requests.get("https://api.example.com/users", options)
 
 # GET with headers and timeout
 options = {
     "timeout": 10,
     "headers": {"Authorization": "Bearer token123", "Accept": "application/json"}
 }
-response = http.get("https://api.example.com/users", options)
+response = requests.get("https://api.example.com/users", options)
 ```
 
 #### POST Request
@@ -544,18 +544,18 @@ response = http.get("https://api.example.com/users", options)
 # POST with JSON body (default 5 second timeout)
 payload = {"name": "Alice", "email": "alice@example.com"}
 body = json.stringify(payload)
-response = http.post("https://api.example.com/users", body)
+response = requests.post("https://api.example.com/users", body)
 
 # POST with options
 options = {"timeout": 15}
-response = http.post("https://api.example.com/users", body, options)
+response = requests.post("https://api.example.com/users", body, options)
 
 # POST with headers and timeout
 options = {
     "timeout": 10,
     "headers": {"Authorization": "Bearer token123", "Content-Type": "application/json"}
 }
-response = http.post("https://api.example.com/users", body, options)
+response = requests.post("https://api.example.com/users", body, options)
 
 # Check status
 if response["status"] == 201:
@@ -567,21 +567,21 @@ if response["status"] == 201:
 # Update resource (default 5 second timeout)
 payload = {"name": "Alice Updated"}
 body = json.stringify(payload)
-response = http.put("https://api.example.com/users/1", body)
+response = requests.put("https://api.example.com/users/1", body)
 
 # With options
 options = {"timeout": 10}
-response = http.put("https://api.example.com/users/1", body, options)
+response = requests.put("https://api.example.com/users/1", body, options)
 ```
 
 #### DELETE Request
 ```python
 # Delete resource (default 5 second timeout)
-response = http.delete("https://api.example.com/users/1")
+response = requests.delete("https://api.example.com/users/1")
 
 # With options
 options = {"timeout": 10}
-response = http.delete("https://api.example.com/users/1", options)
+response = requests.delete("https://api.example.com/users/1", options)
 ```
 
 #### PATCH Request
@@ -589,11 +589,11 @@ response = http.delete("https://api.example.com/users/1", options)
 # Partial update (default 5 second timeout)
 payload = {"email": "newemail@example.com"}
 body = json.stringify(payload)
-response = http.patch("https://api.example.com/users/1", body)
+response = requests.patch("https://api.example.com/users/1", body)
 
 # With options
 options = {"timeout": 10}
-response = http.patch("https://api.example.com/users/1", body, options)
+response = requests.patch("https://api.example.com/users/1", body, options)
 ```
 
 #### Timeout Behavior
@@ -606,7 +606,7 @@ response = http.patch("https://api.example.com/users/1", body, options)
 ```python
 # Fetch user
 options = {"timeout": 10}
-response = http.get("https://api.example.com/users/1", options)
+response = requests.get("https://api.example.com/users/1", options)
 
 if response["status"] == 200:
     user = json.parse(response["body"])
@@ -615,7 +615,7 @@ if response["status"] == 200:
     # Update user
     user["email"] = "updated@example.com"
     body = json.stringify(user)
-    update_resp = http.put("https://api.example.com/users/1", body, options)
+    update_resp = requests.put("https://api.example.com/users/1", body, options)
 
     if update_resp["status"] == 200:
         print("Updated successfully")
@@ -627,7 +627,7 @@ else:
 # Create new user
 new_user = {"name": "Bob", "email": "bob@example.com"}
 body = json.stringify(new_user)
-create_resp = http.post("https://api.example.com/users", body, options)
+create_resp = requests.post("https://api.example.com/users", body, options)
 
 if create_resp["status"] == 201:
     created = json.parse(create_resp["body"])
@@ -635,7 +635,7 @@ if create_resp["status"] == 201:
     print("Created user with ID: " + user_id)
 
     # Delete user
-    delete_resp = http.delete("https://api.example.com/users/" + user_id, options)
+    delete_resp = requests.delete("https://api.example.com/users/" + user_id, options)
     if delete_resp["status"] == 204:
         print("Deleted successfully")
 ```
@@ -679,7 +679,6 @@ text[:5]           # "Hello"
 - `with` statement
 
 ### Key Differences
-- String concatenation: `+` only (no f-strings or %)
 - No implicit type coercion in most operations
 
 ## Best Practices
@@ -687,7 +686,7 @@ text[:5]           # "Hello"
 ### Error Handling
 ```python
 # Check HTTP status codes
-response = http.get("https://api.example.com/data")
+response = requests.get("https://api.example.com/data")
 if response["status"] != 200:
     print("Error: " + str(response["status"]))
     return
@@ -701,28 +700,28 @@ if data["count"] > 0:
 ### Timeouts
 ```python
 # Always specify timeouts for external calls
-response = http.get("https://slow-api.com/data", 5)  # 5 second timeout
+response = requests.get("https://slow-api.com/data", 5)  # 5 second timeout
 ```
 
 ### JSON Handling
 ```python
 # Always parse JSON responses
-response = http.get("https://api.example.com/users")
+response = requests.get("https://api.example.com/users")
 users = json_parse(response["body"])
 
 # Always stringify before sending
 payload = {"name": "Alice"}
 body = json_stringify(payload)
-http.post("https://api.example.com/users", body)
+requests.post("https://api.example.com/users", body)
 ```
 
 ### Variable Naming
 ```python
 # Use descriptive names
 user_count = 10
-api_response = http.get(url)
+api_response = requests.get(url)
 
-# Not: x = 10, r = http.get(url)
+# Not: x = 10, r = requests.get(url)
 ```
 
 ## File Extension
@@ -760,9 +759,9 @@ When generating Scriptling code:
 5. Use `keys(dict)`, `values(dict)`, `items(dict)` for dictionary iteration
 6. HTTP functions return `{"status": int, "body": string, "headers": dict}`
 7. HTTP functions accept optional options dictionary with `timeout` and `headers` keys
-8. Use `import json`, `import http`, `import re` to load libraries
+8. Use `import json`, `import requests`, `import re` to load libraries
 9. Always use `json.parse()` and `json.stringify()` for JSON (dot notation)
-10. Always use `http.get()`, `http.post()`, etc. for HTTP (dot notation)
+10. Always use `requests.get()`, `requests.post()`, etc. for HTTP (dot notation)
 11. Use `re.match()`, `re.find()`, `re.findall()`, `re.replace()`, `re.split()` for regex
 12. Default HTTP timeout is 5 seconds if not specified
 13. Use `elif` for multiple conditions
@@ -856,7 +855,7 @@ options = {
     "timeout": 10,
     "headers": {"Authorization": "Bearer token"}
 }
-resp = http.get("https://api.example.com/data", options)
+resp = requests.get("https://api.example.com/data", options)
 if resp["status"] == 200:
     data = json.parse(resp["body"])
 ```

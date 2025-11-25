@@ -1,85 +1,102 @@
 package stdlib
 
 import (
-	"github.com/paularlott/scriptling/object"
+	"context"
 	"time"
+
+	"github.com/paularlott/scriptling/errors"
+	"github.com/paularlott/scriptling/object"
 )
 
 var startTime = time.Now()
 
-func GetTimeLibrary() map[string]*object.Builtin {
-	return map[string]*object.Builtin{
-		"time": {
-			Fn: func(args ...object.Object) object.Object {
-				return &object.Float{Value: float64(time.Now().UnixNano()) / 1e9}
-			},
+var timeLibrary = object.NewLibrary(map[string]*object.Builtin{
+	"time": {
+		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+			return &object.Float{Value: float64(time.Now().UnixNano()) / 1e9}
 		},
-		"perf_counter": {
-			Fn: func(args ...object.Object) object.Object {
-				return &object.Float{Value: time.Since(startTime).Seconds()}
-			},
+	},
+	"perf_counter": {
+		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+			return &object.Float{Value: time.Since(startTime).Seconds()}
 		},
-		"sleep": {
-			Fn: func(args ...object.Object) object.Object {
-				if len(args) != 1 {
-					return &object.Error{Message: "sleep() takes 1 argument"}
+	},
+	"sleep": {
+		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+			if len(args) != 1 {
+				return errors.NewArgumentError(len(args), 1)
+			}
+			var seconds float64
+			switch arg := args[0].(type) {
+			case *object.Integer:
+				seconds = float64(arg.Value)
+			case *object.Float:
+				seconds = arg.Value
+			default:
+				return errors.NewTypeError("INTEGER or FLOAT", string(arg.Type()))
+			}
+
+			// Create a timer that respects context cancellation
+			timer := time.NewTimer(time.Duration(seconds * float64(time.Second)))
+			defer timer.Stop()
+
+			select {
+			case <-ctx.Done():
+				if ctx.Err() == context.DeadlineExceeded {
+					return errors.NewTimeoutError()
 				}
-				var seconds float64
-				switch arg := args[0].(type) {
-				case *object.Integer:
-					seconds = float64(arg.Value)
-				case *object.Float:
-					seconds = arg.Value
-				default:
-					return &object.Error{Message: "sleep() argument must be number"}
-				}
-				time.Sleep(time.Duration(seconds * float64(time.Second)))
+				return errors.NewCancelledError()
+			case <-timer.C:
 				return &object.Null{}
-			},
+			}
 		},
-		"strftime": {
-			Fn: func(args ...object.Object) object.Object {
-				if len(args) != 2 {
-					return &object.Error{Message: "strftime() takes 2 arguments"}
-				}
-				format, ok := args[0].(*object.String)
-				if !ok {
-					return &object.Error{Message: "strftime() format must be string"}
-				}
-				var timestamp float64
-				switch t := args[1].(type) {
-				case *object.Integer:
-					timestamp = float64(t.Value)
-				case *object.Float:
-					timestamp = t.Value
-				default:
-					return &object.Error{Message: "strftime() time must be number"}
-				}
-				t := time.Unix(int64(timestamp), 0)
-				return &object.String{Value: t.Format(pythonToGoFormat(format.Value))}
-			},
+	},
+	"strftime": {
+		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+			if len(args) != 2 {
+				return errors.NewArgumentError(len(args), 2)
+			}
+			format, ok := args[0].(*object.String)
+			if !ok {
+				return errors.NewTypeError("STRING", string(args[0].Type()))
+			}
+			var timestamp float64
+			switch t := args[1].(type) {
+			case *object.Integer:
+				timestamp = float64(t.Value)
+			case *object.Float:
+				timestamp = t.Value
+			default:
+				return errors.NewTypeError("INTEGER or FLOAT", string(args[1].Type()))
+			}
+			t := time.Unix(int64(timestamp), 0)
+			return &object.String{Value: t.Format(pythonToGoFormat(format.Value))}
 		},
-		"strptime": {
-			Fn: func(args ...object.Object) object.Object {
-				if len(args) != 2 {
-					return &object.Error{Message: "strptime() takes 2 arguments"}
-				}
-				str, ok := args[0].(*object.String)
-				if !ok {
-					return &object.Error{Message: "strptime() string must be string"}
-				}
-				format, ok := args[1].(*object.String)
-				if !ok {
-					return &object.Error{Message: "strptime() format must be string"}
-				}
-				t, err := time.Parse(pythonToGoFormat(format.Value), str.Value)
-				if err != nil {
-					return &object.Error{Message: "strptime() parse error: " + err.Error()}
-				}
-				return &object.Float{Value: float64(t.Unix())}
-			},
+	},
+	"strptime": {
+		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+			if len(args) != 2 {
+				return errors.NewArgumentError(len(args), 2)
+			}
+			str, ok := args[0].(*object.String)
+			if !ok {
+				return errors.NewTypeError("STRING", string(args[0].Type()))
+			}
+			format, ok := args[1].(*object.String)
+			if !ok {
+				return errors.NewTypeError("STRING", string(args[1].Type()))
+			}
+			t, err := time.Parse(pythonToGoFormat(format.Value), str.Value)
+			if err != nil {
+				return errors.NewError("strptime() parse error: %s", err.Error())
+			}
+			return &object.Float{Value: float64(t.Unix())}
 		},
-	}
+	},
+})
+
+func GetTimeLibrary() *object.Library {
+	return timeLibrary
 }
 
 func pythonToGoFormat(pyFormat string) string {

@@ -16,6 +16,7 @@ const (
 	INT    = "INT"
 	FLOAT  = "FLOAT"
 	STRING = "STRING"
+	F_STRING = "F_STRING"
 	
 	ASSIGN     = "="
 	PLUS_EQ    = "+="
@@ -75,6 +76,7 @@ const (
 	GLOBAL   = "GLOBAL"
 	NONLOCAL = "NONLOCAL"
 	LAMBDA   = "LAMBDA"
+	AS       = "AS"
 )
 
 var keywords = map[string]TokenType{
@@ -103,6 +105,7 @@ var keywords = map[string]TokenType{
 	"global":   GLOBAL,
 	"nonlocal": NONLOCAL,
 	"lambda":   LAMBDA,
+	"as":       AS,
 }
 
 func LookupIdent(ident string) TokenType {

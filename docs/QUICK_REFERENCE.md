@@ -36,30 +36,51 @@ text = re.replace("[0-9]+", "Price: 100", "XXX")
 parts = re.split("[,;]", "one,two;three")
 ```
 
-## HTTP Library
+## Requests Library
 
-All methods return: `{"status": int, "body": string, "headers": dict}`
+Response: `status_code`, `text`, `headers`, `json()`, `raise_for_status()`
+Supports both dict (`response["status_code"]`) and attribute access (`response.status_code`)
 
 ### Simple Requests (5 second default timeout)
 
 ```python
-import http
+import requests
 
-# GET
-response = http.get("https://api.example.com/users")
+# GET with json() method
+response = requests.get("https://api.example.com/users")
+data = response.json()
+print(data)
+
+# GET with raise_for_status()
+try:
+    response = requests.get("https://api.example.com/data")
+    response.raise_for_status()  # Raises error if 4xx/5xx
+    data = response.json()
+except Exception as e:
+    print("Error:", e)
+
+# Attribute access
+if response.status_code == 200:
+    content = response.text[:500]
+    print(content)
 
 # POST
+import json
 body = json.stringify({"name": "Alice"})
-response = http.post("https://api.example.com/users", body)
+response = requests.post("https://api.example.com/users", body)
 
-# PUT
-response = http.put("https://api.example.com/users/1", body)
+# Other methods
+response = requests.put(url, body)
+response = requests.delete(url)
+response = requests.patch(url, body)
 
-# DELETE
-response = http.delete("https://api.example.com/users/1")
-
-# PATCH
-response = http.patch("https://api.example.com/users/1", body)
+# LLM-compatible exception handling (dotted names supported)
+try:
+    response = requests.get(url)
+    response.raise_for_status()
+    content = response.text[:500]
+except requests.exceptions.RequestException as e:
+    print(f"Error: {e}")
 ```
 
 ### With Options (timeout and/or headers)
@@ -67,7 +88,7 @@ response = http.patch("https://api.example.com/users/1", body)
 ```python
 # Just timeout
 options = {"timeout": 10}
-response = http.get(url, options)
+response = requests.get(url, options)
 
 # Just headers
 options = {
@@ -76,22 +97,22 @@ options = {
         "Accept": "application/json"
     }
 }
-response = http.get(url, options)
+response = requests.get(url, options)
 
 # Both timeout and headers
 options = {
     "timeout": 10,
     "headers": {"Authorization": "Bearer token123"}
 }
-response = http.get(url, options)
-response = http.post(url, body, options)
+response = requests.get(url, options)
+response = requests.post(url, body, options)
 ```
 
 ### Complete Example
 
 ```python
 import json
-import http
+import requests
 
 # Configure options
 options = {
@@ -100,17 +121,17 @@ options = {
 }
 
 # GET request
-response = http.get("https://api.example.com/users/1", options)
+response = requests.get("https://api.example.com/users/1", options)
 
 if response["status"] == 200:
     user = json.parse(response["body"])
     print("User: " + user["name"])
-    
+
     # Update user
     user["email"] = "new@example.com"
     body = json.stringify(user)
-    
-    update = http.put("https://api.example.com/users/1", body, options)
+
+    update = requests.put("https://api.example.com/users/1", body, options)
     if update["status"] == 200:
         print("Updated!")
 else:
@@ -220,7 +241,7 @@ finally:
 
 # Try/except/finally
 try:
-    response = http.get(url, options)
+    response = requests.get(url, options)
     data = json.parse(response["body"])
 except:
     data = None
@@ -330,7 +351,7 @@ not x    # Logical NOT
 2. **Use options dictionary for clarity**
    ```python
    options = {"timeout": 10}
-   response = http.get(url, options)
+   response = requests.get(url, options)
    ```
 
 3. **Parse JSON responses**

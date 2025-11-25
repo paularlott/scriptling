@@ -1,177 +1,207 @@
 package stdlib
 
 import (
-	"github.com/paularlott/scriptling/object"
+	"context"
 	"math"
+
+	"github.com/paularlott/scriptling/errors"
+	"github.com/paularlott/scriptling/object"
 )
 
-func GetMathLibrary() map[string]*object.Builtin {
-	return map[string]*object.Builtin{
-		"sqrt": {
-			Fn: func(args ...object.Object) object.Object {
-				if len(args) != 1 {
-					return &object.Error{Message: "sqrt() takes 1 argument"}
+var mathLibrary = object.NewLibrary(map[string]*object.Builtin{
+	"sqrt": {
+		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+			if len(args) != 1 {
+				return errors.NewArgumentError(len(args), 1)
+			}
+			switch arg := args[0].(type) {
+			case *object.Integer:
+				return &object.Float{Value: math.Sqrt(float64(arg.Value))}
+			case *object.Float:
+				return &object.Float{Value: math.Sqrt(arg.Value)}
+			default:
+				return errors.NewTypeError("INTEGER or FLOAT", string(arg.Type()))
+			}
+		},
+	},
+	"pow": {
+		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+			if len(args) != 2 {
+				return errors.NewArgumentError(len(args), 2)
+			}
+			var base, exp float64
+			switch arg := args[0].(type) {
+			case *object.Integer:
+				base = float64(arg.Value)
+			case *object.Float:
+				base = arg.Value
+			default:
+				return errors.NewTypeError("INTEGER or FLOAT", string(arg.Type()))
+			}
+			switch arg := args[1].(type) {
+			case *object.Integer:
+				exp = float64(arg.Value)
+			case *object.Float:
+				exp = arg.Value
+			default:
+				return errors.NewTypeError("INTEGER or FLOAT", string(arg.Type()))
+			}
+			return &object.Float{Value: math.Pow(base, exp)}
+		},
+	},
+	"abs": {
+		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+			if len(args) != 1 {
+				return errors.NewArgumentError(len(args), 1)
+			}
+			switch arg := args[0].(type) {
+			case *object.Integer:
+				if arg.Value < 0 {
+					return &object.Integer{Value: -arg.Value}
 				}
+				return arg
+			case *object.Float:
+				return &object.Float{Value: math.Abs(arg.Value)}
+			default:
+				return errors.NewTypeError("INTEGER or FLOAT", string(arg.Type()))
+			}
+		},
+	},
+	"floor": {
+		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+			if len(args) != 1 {
+				return errors.NewArgumentError(len(args), 1)
+			}
+			switch arg := args[0].(type) {
+			case *object.Integer:
+				return arg
+			case *object.Float:
+				return &object.Integer{Value: int64(math.Floor(arg.Value))}
+			default:
+				return errors.NewTypeError("INTEGER or FLOAT", string(arg.Type()))
+			}
+		},
+	},
+	"ceil": {
+		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+			if len(args) != 1 {
+				return errors.NewArgumentError(len(args), 1)
+			}
+			switch arg := args[0].(type) {
+			case *object.Integer:
+				return arg
+			case *object.Float:
+				return &object.Integer{Value: int64(math.Ceil(arg.Value))}
+			default:
+				return errors.NewTypeError("INTEGER or FLOAT", string(arg.Type()))
+			}
+		},
+	},
+	"round": {
+		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+			if len(args) != 1 {
+				return errors.NewArgumentError(len(args), 1)
+			}
+			switch arg := args[0].(type) {
+			case *object.Integer:
+				return arg
+			case *object.Float:
+				return &object.Integer{Value: int64(math.Round(arg.Value))}
+			default:
+				return errors.NewTypeError("INTEGER or FLOAT", string(arg.Type()))
+			}
+		},
+	},
+	"min": {
+		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+			if len(args) < 2 {
+				return errors.NewArgumentError(len(args), 2)
+			}
+			// Track if all inputs are integers
+			allIntegers := true
+			// Get first value
+			var result float64
+			switch arg := args[0].(type) {
+			case *object.Integer:
+				result = float64(arg.Value)
+			case *object.Float:
+				result = arg.Value
+				allIntegers = false
+			default:
+				return errors.NewTypeError("INTEGER or FLOAT", string(arg.Type()))
+			}
+			// Compare with remaining values
+			for i := 1; i < len(args); i++ {
 				var val float64
-				switch arg := args[0].(type) {
+				switch arg := args[i].(type) {
 				case *object.Integer:
 					val = float64(arg.Value)
 				case *object.Float:
 					val = arg.Value
+					allIntegers = false
 				default:
-					return &object.Error{Message: "sqrt() argument must be number"}
+					return errors.NewTypeError("INTEGER or FLOAT", string(arg.Type()))
 				}
-				return &object.Float{Value: math.Sqrt(val)}
-			},
+				result = math.Min(result, val)
+			}
+			// Return integer if all inputs were integers
+			if allIntegers {
+				return &object.Integer{Value: int64(result)}
+			}
+			return &object.Float{Value: result}
 		},
-		"pow": {
-			Fn: func(args ...object.Object) object.Object {
-				if len(args) != 2 {
-					return &object.Error{Message: "pow() takes 2 arguments"}
-				}
-				var base, exp float64
-				switch arg := args[0].(type) {
-				case *object.Integer:
-					base = float64(arg.Value)
-				case *object.Float:
-					base = arg.Value
-				default:
-					return &object.Error{Message: "pow() arguments must be numbers"}
-				}
-				switch arg := args[1].(type) {
-				case *object.Integer:
-					exp = float64(arg.Value)
-				case *object.Float:
-					exp = arg.Value
-				default:
-					return &object.Error{Message: "pow() arguments must be numbers"}
-				}
-				return &object.Float{Value: math.Pow(base, exp)}
-			},
-		},
-		"abs": {
-			Fn: func(args ...object.Object) object.Object {
-				if len(args) != 1 {
-					return &object.Error{Message: "abs() takes 1 argument"}
-				}
-				switch arg := args[0].(type) {
-				case *object.Integer:
-					if arg.Value < 0 {
-						return &object.Integer{Value: -arg.Value}
-					}
-					return arg
-				case *object.Float:
-					return &object.Float{Value: math.Abs(arg.Value)}
-				default:
-					return &object.Error{Message: "abs() argument must be number"}
-				}
-			},
-		},
-		"floor": {
-			Fn: func(args ...object.Object) object.Object {
-				if len(args) != 1 {
-					return &object.Error{Message: "floor() takes 1 argument"}
-				}
+	},
+	"max": {
+		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+			if len(args) < 2 {
+				return errors.NewArgumentError(len(args), 2)
+			}
+			// Track if all inputs are integers
+			allIntegers := true
+			// Get first value
+			var result float64
+			switch arg := args[0].(type) {
+			case *object.Integer:
+				result = float64(arg.Value)
+			case *object.Float:
+				result = arg.Value
+				allIntegers = false
+			default:
+				return errors.NewTypeError("INTEGER or FLOAT", string(arg.Type()))
+			}
+			// Compare with remaining values
+			for i := 1; i < len(args); i++ {
 				var val float64
-				switch arg := args[0].(type) {
+				switch arg := args[i].(type) {
 				case *object.Integer:
-					return arg
+					val = float64(arg.Value)
 				case *object.Float:
 					val = arg.Value
+					allIntegers = false
 				default:
-					return &object.Error{Message: "floor() argument must be number"}
+					return errors.NewTypeError("INTEGER or FLOAT", string(arg.Type()))
 				}
-				return &object.Integer{Value: int64(math.Floor(val))}
-			},
+				result = math.Max(result, val)
+			}
+			// Return integer if all inputs were integers
+			if allIntegers {
+				return &object.Integer{Value: int64(result)}
+			}
+			return &object.Float{Value: result}
 		},
-		"ceil": {
-			Fn: func(args ...object.Object) object.Object {
-				if len(args) != 1 {
-					return &object.Error{Message: "ceil() takes 1 argument"}
-				}
-				var val float64
-				switch arg := args[0].(type) {
-				case *object.Integer:
-					return arg
-				case *object.Float:
-					val = arg.Value
-				default:
-					return &object.Error{Message: "ceil() argument must be number"}
-				}
-				return &object.Integer{Value: int64(math.Ceil(val))}
-			},
+	},
+	"pi": {
+		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+			return &object.Float{Value: math.Pi}
 		},
-		"round": {
-			Fn: func(args ...object.Object) object.Object {
-				if len(args) != 1 {
-					return &object.Error{Message: "round() takes 1 argument"}
-				}
-				var val float64
-				switch arg := args[0].(type) {
-				case *object.Integer:
-					return arg
-				case *object.Float:
-					val = arg.Value
-				default:
-					return &object.Error{Message: "round() argument must be number"}
-				}
-				return &object.Integer{Value: int64(math.Round(val))}
-			},
+	},
+	"e": {
+		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+			return &object.Float{Value: math.E}
 		},
-		"min": {
-			Fn: func(args ...object.Object) object.Object {
-				if len(args) == 0 {
-					return &object.Error{Message: "min() requires at least 1 argument"}
-				}
-				min := args[0]
-				minVal := toFloat(min)
-				for i := 1; i < len(args); i++ {
-					val := toFloat(args[i])
-					if val < minVal {
-						minVal = val
-						min = args[i]
-					}
-				}
-				return min
-			},
-		},
-		"max": {
-			Fn: func(args ...object.Object) object.Object {
-				if len(args) == 0 {
-					return &object.Error{Message: "max() requires at least 1 argument"}
-				}
-				max := args[0]
-				maxVal := toFloat(max)
-				for i := 1; i < len(args); i++ {
-					val := toFloat(args[i])
-					if val > maxVal {
-						maxVal = val
-						max = args[i]
-					}
-				}
-				return max
-			},
-		},
-		"pi": {
-			Fn: func(args ...object.Object) object.Object {
-				return &object.Float{Value: math.Pi}
-			},
-		},
-		"e": {
-			Fn: func(args ...object.Object) object.Object {
-				return &object.Float{Value: math.E}
-			},
-		},
-	}
-}
+	},
+})
 
-func toFloat(obj object.Object) float64 {
-	switch v := obj.(type) {
-	case *object.Integer:
-		return float64(v.Value)
-	case *object.Float:
-		return v.Value
-	default:
-		return 0
-	}
+func GetMathLibrary() *object.Library {
+	return mathLibrary
 }

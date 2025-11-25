@@ -39,14 +39,14 @@ func main() {
     // Create interpreter
     p := scriptling.New()
 
-    // Optional: Register HTTP library if needed
+    // Optional: Register Requests library if needed
     p.RegisterLibrary("http", stdlib.HTTPLibrary())
 
     // Execute Scriptling code
     _, err := p.Eval(`
 # Import libraries as needed
 import json
-import http
+import requests
 
 # Make API call
 response = http.get("https://api.example.com/data", 10)
@@ -215,7 +215,7 @@ name, age, active = user
 # Import libraries dynamically. The import statement loads the library
 # and makes its functions available as a global object.
 import json    # Creates global 'json' object
-import http    # Creates global 'http' object
+import requests    # Creates global 'requests' object
 import re   # Creates global 'regex' object
 
 # Use JSON (dot notation)
@@ -242,7 +242,7 @@ response = http["get"](...)
 // Create interpreter (libraries loaded via import)
 p := scriptling.New()
 
-// Optional: Register HTTP library if needed
+// Optional: Register Requests library if needed
 p.RegisterLibrary("http", stdlib.HTTPLibrary())
 ```
 
@@ -263,7 +263,7 @@ value, ok := p.GetVar("result")
 
 ### Register Go Functions
 ```go
-p.RegisterFunc("custom", func(args ...object.Object) object.Object {
+p.RegisterFunc("custom", func(ctx context.Context, args ...object.Object) object.Object {
     // Your Go code here
     return &object.String{Value: "result"}
 })
@@ -275,7 +275,7 @@ p.Eval(`output = custom()`)
 ```go
 myLib := map[string]*object.Builtin{
     "hello": {
-        Fn: func(args ...object.Object) object.Object {
+        Fn: func(ctx context.Context, args ...object.Object) object.Object {
             return &object.String{Value: "Hello!"}
         },
     },
@@ -334,7 +334,7 @@ print("Area: " + str(area))
 **HTTP Example** (requires `p.RegisterLibrary("http", extlibs.HTTPLibrary())`):
 ```python
 import json
-import http
+import requests
 
 # Make API call
 response = http.get("https://api.example.com/data", {"timeout": 10})
@@ -348,42 +348,51 @@ if response["status"] == 200:
 ## Examples
 
 See `examples/` directory:
-- `main.go` - Complete Go integration example
-- `basic.py` - Basic language features
-- `functions.py` - Functions and recursion
-- `collections.py` - Lists, dicts, for loops
-- `error_handling_test.py` - Error handling basics
-- `error_handling_comprehensive.py` - Comprehensive error handling examples
-- `error_handling_http.py` - Error handling with HTTP and JSON
-- `rest_api.py` - REST API calls
-- `rest_api_lib.py` - REST API with library syntax
-- `benchmark.py` - Performance benchmark script
+- **scripts/** - Script examples and Go integration
+  - `main.go` - Complete Go integration example
+  - `test_*.py` - Comprehensive test scripts
+  - `benchmark.py` - Performance benchmark script
+- **mcp/** - MCP server for LLM testing
+  - `main.go` - MCP server implementation
+  - `README.md` - Usage instructions
 
-Run example:
+Run script examples:
 ```bash
-cd examples
-go run main.go basic.py
-go run main.go error_handling_comprehensive.py
-```
-
-Run all tests:
-```bash
-cd examples
+cd examples/scripts
+go run main.go test_basics.py
+go run main.go test_error_comprehensive.py
 ./run_all_tests.sh
 ```
 
-**Note**: HTTP tests will fail unless HTTP library is registered in main.go (this is intentional - HTTP is an optional extra).
+Run MCP server for LLM testing:
+```bash
+cd examples/mcp
+go mod tidy
+go run main.go
+```
+
+**Note**: HTTP tests will fail unless Requests library is registered in main.go (this is intentional - HTTP is an optional extra).
 
 Run benchmark:
 ```bash
 go test -v -run=TestBenchmarkScript
 ```
 
+## MCP Server for LLM Testing
+
+The `examples/mcp/` directory contains an MCP (Model Context Protocol) server that allows LLMs to:
+- Execute Scriptling code and see results
+- Learn about differences between Scriptling and Python
+- Discover available libraries and their usage
+
+This enables LLMs to test and understand Scriptling interactively.
+
 ## Documentation
 
 - **README.md** (this file) - Quick start and overview
 - **docs/LANGUAGE_GUIDE.md** - Complete language reference
 - **docs/GO_INTEGRATION.md** - Go integration and embedding guide
+- **docs/EXTENDING_SCRIPTLING.md** - Creating custom functions and libraries
 - **docs/LIBRARIES.md** - Library system and custom libraries
 - **docs/QUICK_REFERENCE.md** - Quick reference guide
 

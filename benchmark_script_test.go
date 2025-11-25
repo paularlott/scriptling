@@ -6,7 +6,7 @@ import (
 )
 
 func TestBenchmarkScript(t *testing.T) {
-	script, err := os.ReadFile("examples/benchmark.py")
+	script, err := os.ReadFile("examples/scripts/benchmark.py")
 	if err != nil {
 		t.Fatalf("Failed to read benchmark.py: %v", err)
 	}

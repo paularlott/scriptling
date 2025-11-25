@@ -1,44 +1,48 @@
 package stdlib
 
 import (
+	"context"
 	"encoding/json"
-	"fmt"
+
+	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
 )
 
-func JSONLibrary() map[string]*object.Builtin {
-	return map[string]*object.Builtin{
-		"parse": {
-			Fn: func(args ...object.Object) object.Object {
-				if len(args) != 1 {
-					return newError("wrong number of arguments. got=%d, want=1", len(args))
-				}
-				if args[0].Type() != object.STRING_OBJ {
-					return newError("argument to parse must be STRING")
-				}
-				str := args[0].(*object.String).Value
-				var data interface{}
-				err := json.Unmarshal([]byte(str), &data)
-				if err != nil {
-					return newError("json parse error: %s", err.Error())
-				}
-				return jsonToObject(data)
-			},
+var jsonLibrary = object.NewLibrary(map[string]*object.Builtin{
+	"parse": {
+		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+			if len(args) != 1 {
+				return errors.NewError("wrong number of arguments. got=%d, want=1", len(args))
+			}
+			if args[0].Type() != object.STRING_OBJ {
+				return errors.NewError("argument to parse must be STRING")
+			}
+			str := args[0].(*object.String).Value
+			var data interface{}
+			err := json.Unmarshal([]byte(str), &data)
+			if err != nil {
+				return errors.NewError("json parse error: %s", err.Error())
+			}
+			return jsonToObject(data)
 		},
-		"stringify": {
-			Fn: func(args ...object.Object) object.Object {
-				if len(args) != 1 {
-					return newError("wrong number of arguments. got=%d, want=1", len(args))
-				}
-				data := objectToJSON(args[0])
-				bytes, err := json.Marshal(data)
-				if err != nil {
-					return newError("json stringify error: %s", err.Error())
-				}
-				return &object.String{Value: string(bytes)}
-			},
+	},
+	"stringify": {
+		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+			if len(args) != 1 {
+				return errors.NewError("wrong number of arguments. got=%d, want=1", len(args))
+			}
+			data := objectToJSON(args[0])
+			bytes, err := json.Marshal(data)
+			if err != nil {
+				return errors.NewError("json stringify error: %s", err.Error())
+			}
+			return &object.String{Value: string(bytes)}
 		},
-	}
+	},
+})
+
+func JSONLibrary() *object.Library {
+	return jsonLibrary
 }
 
 func jsonToObject(data interface{}) object.Object {
@@ -100,8 +104,4 @@ func objectToJSON(obj object.Object) interface{} {
 	default:
 		return obj.Inspect()
 	}
-}
-
-func newError(format string, a ...interface{}) *object.Error {
-	return &object.Error{Message: fmt.Sprintf(format, a...)}
 }
