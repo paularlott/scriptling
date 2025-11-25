@@ -5,7 +5,7 @@ import requests
 print("=== Testing Requests API ===")
 
 # Test response.text attribute
-response = requests.get("https://httpbin.org/get")
+response = requests.get("https://httpbin.org/get", {"timeout": 10})
 text_len = len(response.text)
 print(f"response.text length: {text_len}")
 

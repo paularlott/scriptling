@@ -4,14 +4,14 @@ import requests
 
 print("=== Testing HTTP Library ===")
 
-# GET request
-response = requests.get("https://httpbin.org/get")
+# GET request (increase timeout to avoid flaky failures in CI/network)
+response = requests.get("https://httpbin.org/get", {"timeout": 10})
 print(f"GET status: {response.status_code}")
 
 # POST request
 import json
 body = json.stringify({"test": "data"})
-response = requests.post("https://httpbin.org/post", body)
+response = requests.post("https://httpbin.org/post", body, {"timeout": 10})
 print(f"POST status: {response.status_code}")
 
 # Test response attributes
