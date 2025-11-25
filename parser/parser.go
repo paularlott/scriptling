@@ -568,8 +568,71 @@ func (p *Parser) parseGroupedExpression() ast.Expression {
 
 func (p *Parser) parseCallExpression(function ast.Expression) ast.Expression {
 	exp := &ast.CallExpression{Token: p.curToken, Function: function}
-	exp.Arguments = p.parseExpressionList(token.RPAREN)
+	exp.Arguments, exp.Keywords = p.parseCallArguments()
 	return exp
+}
+
+func (p *Parser) parseCallArguments() ([]ast.Expression, map[string]ast.Expression) {
+	args := []ast.Expression{}
+	keywords := make(map[string]ast.Expression)
+
+	if p.peekTokenIs(token.RPAREN) {
+		p.nextToken()
+		return args, keywords
+	}
+
+	p.nextToken()
+
+	for {
+		// Check for keyword argument: name=value
+		if p.curTokenIs(token.IDENT) && p.peekTokenIs(token.ASSIGN) {
+			key := p.curToken.Literal
+			if _, exists := keywords[key]; exists {
+				msg := fmt.Sprintf("line %d: keyword argument repeated: %s", p.curToken.Line, key)
+				p.errors = append(p.errors, msg)
+				return nil, nil
+			}
+			p.nextToken() // consume name
+			p.nextToken() // consume =
+			value := p.parseExpression(LOWEST)
+			keywords[key] = value
+		} else {
+			// Positional argument
+			if len(keywords) > 0 {
+				msg := fmt.Sprintf("line %d: positional argument follows keyword argument", p.curToken.Line)
+				p.errors = append(p.errors, msg)
+				return nil, nil
+			}
+
+			expr := p.parseExpression(LOWEST)
+
+			// Check for generator expression (for function arguments without parens)
+			if p.peekTokenIs(token.FOR) {
+				// This is a generator expression like: func(x for x in list)
+				// parseGeneratorExpressionInCall expects to consume the end token (RPAREN)
+				genExpr := p.parseGeneratorExpressionInCall(expr, token.RPAREN)
+				if genExpr != nil {
+					args = append(args, genExpr)
+					return args, keywords
+				}
+			}
+
+			args = append(args, expr)
+		}
+
+		if p.peekTokenIs(token.COMMA) {
+			p.nextToken()
+			p.nextToken()
+			continue
+		}
+		break
+	}
+
+	if !p.expectPeek(token.RPAREN) {
+		return nil, nil
+	}
+
+	return args, keywords
 }
 
 func (p *Parser) parseExpressionList(end token.TokenType) []ast.Expression {
@@ -1170,7 +1233,7 @@ func (p *Parser) parseIndexExpression(left ast.Expression) ast.Expression {
 				Object: left,
 				Method: methodName,
 			}
-			methodCall.Arguments = p.parseExpressionList(token.RPAREN)
+			methodCall.Arguments, methodCall.Keywords = p.parseCallArguments()
 			return methodCall
 		}
 

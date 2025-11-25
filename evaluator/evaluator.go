@@ -157,7 +157,17 @@ func evalWithContext(ctx context.Context, node ast.Node, env *object.Environment
 		if len(args) == 1 && isError(args[0]) {
 			return args[0]
 		}
-		return applyFunctionWithContext(ctx, function, args, env)
+
+		keywords := make(map[string]object.Object)
+		for k, v := range node.Keywords {
+			val := evalWithContext(ctx, v, env)
+			if isError(val) {
+				return val
+			}
+			keywords[k] = val
+		}
+
+		return applyFunctionWithContext(ctx, function, args, keywords, env)
 	case *ast.ListLiteral:
 		elements := evalExpressionsWithContext(ctx, node.Elements, env)
 		if len(elements) == 1 && isError(elements[0]) {
@@ -250,11 +260,6 @@ func evalBlockStatementWithContext(ctx context.Context, block *ast.BlockStatemen
 	}
 
 	return result
-}
-
-// Backwards compatible wrapper
-func evalBlockStatement(block *ast.BlockStatement, env *object.Environment) object.Object {
-	return evalBlockStatementWithContext(context.Background(), block, env)
 }
 
 func nativeBoolToBooleanObject(input bool) *object.Boolean {
@@ -493,11 +498,6 @@ func evalIfStatementWithContext(ctx context.Context, ie *ast.IfStatement, env *o
 	return NULL
 }
 
-// Backwards compatible wrapper
-func evalIfStatement(ie *ast.IfStatement, env *object.Environment) object.Object {
-	return evalIfStatementWithContext(context.Background(), ie, env)
-}
-
 func evalWhileStatementWithContext(ctx context.Context, ws *ast.WhileStatement, env *object.Environment) object.Object {
 	var result object.Object = NULL
 
@@ -534,11 +534,6 @@ func evalWhileStatementWithContext(ctx context.Context, ws *ast.WhileStatement, 
 	return result
 }
 
-// Backwards compatible wrapper
-func evalWhileStatement(ws *ast.WhileStatement, env *object.Environment) object.Object {
-	return evalWhileStatementWithContext(context.Background(), ws, env)
-}
-
 func evalIdentifier(node *ast.Identifier, env *object.Environment) object.Object {
 	if val, ok := env.Get(node.Value); ok {
 		return val
@@ -566,40 +561,26 @@ func evalExpressionsWithContext(ctx context.Context, exps []ast.Expression, env 
 	return result
 }
 
-// Backwards compatible wrapper
-func evalExpressions(exps []ast.Expression, env *object.Environment) []object.Object {
-	return evalExpressionsWithContext(context.Background(), exps, env)
-}
-
-func applyFunctionWithContext(ctx context.Context, fn object.Object, args []object.Object, env *object.Environment) object.Object {
+func applyFunctionWithContext(ctx context.Context, fn object.Object, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
 	switch fn := fn.(type) {
 	case *object.Function:
-		// Validate argument count with defaults
-		minArgs := len(fn.Parameters)
-		if fn.DefaultValues != nil {
-			minArgs -= len(fn.DefaultValues)
+		extendedEnv, err := extendFunctionEnv(fn, args, keywords)
+		if err != nil {
+			return err
 		}
-		if len(args) < minArgs || len(args) > len(fn.Parameters) {
-			return errors.NewArgumentError(len(args), minArgs)
-		}
-
-		extendedEnv := extendFunctionEnv(fn, args)
 		evaluated := evalWithContext(ctx, fn.Body, extendedEnv)
 		return unwrapReturnValue(evaluated)
 	case *object.LambdaFunction:
-		// Validate argument count with defaults
-		minArgs := len(fn.Parameters)
-		if fn.DefaultValues != nil {
-			minArgs -= len(fn.DefaultValues)
+		extendedEnv, err := extendLambdaEnv(fn, args, keywords)
+		if err != nil {
+			return err
 		}
-		if len(args) < minArgs || len(args) > len(fn.Parameters) {
-			return errors.NewArgumentError(len(args), minArgs)
-		}
-
-		extendedEnv := extendLambdaEnv(fn, args)
 		evaluated := evalWithContext(ctx, fn.Body, extendedEnv)
 		return evaluated // No unwrapping needed for lambda expressions
 	case *object.Builtin:
+		if len(keywords) > 0 {
+			return errors.NewError("keyword arguments not supported for built-in functions")
+		}
 		ctxWithEnv := SetEnvInContext(ctx, env)
 		return fn.Fn(ctxWithEnv, args...)
 	default:
@@ -607,51 +588,136 @@ func applyFunctionWithContext(ctx context.Context, fn object.Object, args []obje
 	}
 }
 
-// Backwards compatible wrapper
-func applyFunction(fn object.Object, args []object.Object) object.Object {
-	return applyFunctionWithContext(context.Background(), fn, args, object.NewEnvironment())
-}
-
-func extendFunctionEnv(fn *object.Function, args []object.Object) *object.Environment {
+func extendFunctionEnv(fn *object.Function, args []object.Object, keywords map[string]object.Object) (*object.Environment, object.Object) {
 	env := object.NewEnclosedEnvironment(fn.Env)
+	setParams := make(map[string]bool)
 
-	// Set provided arguments
+	// Set provided positional arguments
 	for paramIdx, param := range fn.Parameters {
 		if paramIdx < len(args) {
 			env.Set(param.Value, args[paramIdx])
-		} else {
+			setParams[param.Value] = true
+		}
+	}
+
+	// Check for extra positional arguments
+	if len(args) > len(fn.Parameters) {
+		// Calculate min args for error message
+		minArgs := len(fn.Parameters)
+		if fn.DefaultValues != nil {
+			minArgs -= len(fn.DefaultValues)
+		}
+		return nil, errors.NewArgumentError(len(args), minArgs)
+	}
+
+	// Set keyword arguments
+	for key, value := range keywords {
+		// Check if parameter exists
+		paramExists := false
+		for _, param := range fn.Parameters {
+			if param.Value == key {
+				paramExists = true
+				break
+			}
+		}
+
+		if !paramExists {
+			return nil, errors.NewError("got an unexpected keyword argument '%s'", key)
+		}
+
+		if setParams[key] {
+			return nil, errors.NewError("multiple values for argument '%s'", key)
+		}
+
+		env.Set(key, value)
+		setParams[key] = true
+	}
+
+	// Check for missing arguments and apply defaults
+	for _, param := range fn.Parameters {
+		if !setParams[param.Value] {
 			// Use default value if available
 			if defaultExpr, ok := fn.DefaultValues[param.Value]; ok {
 				defaultVal := Eval(defaultExpr, fn.Env)
 				env.Set(param.Value, defaultVal)
 			} else {
-				return env // Will cause error in function call validation
+				// Calculate min args for error message
+				minArgs := len(fn.Parameters)
+				if fn.DefaultValues != nil {
+					minArgs -= len(fn.DefaultValues)
+				}
+				return nil, errors.NewArgumentError(len(args), minArgs)
 			}
 		}
 	}
 
-	return env
+	return env, nil
 }
 
-func extendLambdaEnv(fn *object.LambdaFunction, args []object.Object) *object.Environment {
+func extendLambdaEnv(fn *object.LambdaFunction, args []object.Object, keywords map[string]object.Object) (*object.Environment, object.Object) {
 	env := object.NewEnclosedEnvironment(fn.Env)
+	setParams := make(map[string]bool)
 
-	// Set provided arguments
+	// Set provided positional arguments
 	for paramIdx, param := range fn.Parameters {
 		if paramIdx < len(args) {
 			env.Set(param.Value, args[paramIdx])
-		} else {
+			setParams[param.Value] = true
+		}
+	}
+
+	// Check for extra positional arguments
+	if len(args) > len(fn.Parameters) {
+		// Calculate min args for error message
+		minArgs := len(fn.Parameters)
+		if fn.DefaultValues != nil {
+			minArgs -= len(fn.DefaultValues)
+		}
+		return nil, errors.NewArgumentError(len(args), minArgs)
+	}
+
+	// Set keyword arguments
+	for key, value := range keywords {
+		// Check if parameter exists
+		paramExists := false
+		for _, param := range fn.Parameters {
+			if param.Value == key {
+				paramExists = true
+				break
+			}
+		}
+
+		if !paramExists {
+			return nil, errors.NewError("got an unexpected keyword argument '%s'", key)
+		}
+
+		if setParams[key] {
+			return nil, errors.NewError("multiple values for argument '%s'", key)
+		}
+
+		env.Set(key, value)
+		setParams[key] = true
+	}
+
+	// Check for missing arguments and apply defaults
+	for _, param := range fn.Parameters {
+		if !setParams[param.Value] {
 			// Use default value if available
 			if defaultExpr, ok := fn.DefaultValues[param.Value]; ok {
 				defaultVal := Eval(defaultExpr, fn.Env)
 				env.Set(param.Value, defaultVal)
 			} else {
-				return env // Will cause error in function call validation
+				// Calculate min args for error message
+				minArgs := len(fn.Parameters)
+				if fn.DefaultValues != nil {
+					minArgs -= len(fn.DefaultValues)
+				}
+				return nil, errors.NewArgumentError(len(args), minArgs)
 			}
 		}
 	}
 
-	return env
+	return env, nil
 }
 
 func unwrapReturnValue(obj object.Object) object.Object {
@@ -823,11 +889,6 @@ func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.Augm
 
 	env.Set(node.Name.Value, result)
 	return NULL
-}
-
-// Backwards compatible wrapper
-func evalAugmentedAssignStatement(node *ast.AugmentedAssignStatement, env *object.Environment) object.Object {
-	return evalAugmentedAssignStatementWithContext(context.Background(), node, env)
 }
 
 func evalSliceExpressionWithContext(ctx context.Context, node *ast.SliceExpression, env *object.Environment) object.Object {
@@ -1046,11 +1107,6 @@ func sliceString(str string, start, end, step int64, hasStart, hasEnd, hasStep b
 	return result
 }
 
-// Backwards compatible wrapper
-func evalSliceExpression(node *ast.SliceExpression, env *object.Environment) object.Object {
-	return evalSliceExpressionWithContext(context.Background(), node, env)
-}
-
 func evalImportStatement(is *ast.ImportStatement, env *object.Environment) object.Object {
 	if importCallback == nil {
 		return errors.NewError(errors.ErrImportError)
@@ -1121,11 +1177,6 @@ func evalMultipleAssignStatementWithContext(ctx context.Context, node *ast.Multi
 	return NULL
 }
 
-// Backwards compatible wrapper
-func evalMultipleAssignStatement(node *ast.MultipleAssignStatement, env *object.Environment) object.Object {
-	return evalMultipleAssignStatementWithContext(context.Background(), node, env)
-}
-
 func evalTryStatementWithContext(ctx context.Context, ts *ast.TryStatement, env *object.Environment) object.Object {
 	// Execute try block
 	result := evalWithContext(ctx, ts.Body, env)
@@ -1157,11 +1208,6 @@ func evalTryStatementWithContext(ctx context.Context, ts *ast.TryStatement, env 
 	return result
 }
 
-// Backwards compatible wrapper
-func evalTryStatement(ts *ast.TryStatement, env *object.Environment) object.Object {
-	return evalTryStatementWithContext(context.Background(), ts, env)
-}
-
 func evalRaiseStatementWithContext(ctx context.Context, rs *ast.RaiseStatement, env *object.Environment) object.Object {
 	var message string
 	if rs.Message != nil {
@@ -1174,11 +1220,6 @@ func evalRaiseStatementWithContext(ctx context.Context, rs *ast.RaiseStatement, 
 		message = "Exception raised"
 	}
 	return &object.Exception{Message: message}
-}
-
-// Backwards compatible wrapper
-func evalRaiseStatement(rs *ast.RaiseStatement, env *object.Environment) object.Object {
-	return evalRaiseStatementWithContext(context.Background(), rs, env)
 }
 
 func isException(obj object.Object) bool {
@@ -1270,15 +1311,14 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 	return result
 }
 
-// Backwards compatible wrapper
-func evalForStatement(fs *ast.ForStatement, env *object.Environment) object.Object {
-	return evalForStatementWithContext(context.Background(), fs, env)
-}
-
 func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression, env *object.Environment) object.Object {
 	obj := evalWithContext(ctx, mce.Object, env)
 	if isError(obj) {
 		return obj
+	}
+
+	if len(mce.Keywords) > 0 {
+		return errors.NewError("keyword arguments not supported for method calls")
 	}
 
 	args := evalExpressionsWithContext(ctx, mce.Arguments, env)

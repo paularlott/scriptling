@@ -60,10 +60,10 @@ func (sl *StringLiteral) expressionNode()      {}
 func (sl *StringLiteral) TokenLiteral() string { return sl.Token.Literal }
 
 type FStringLiteral struct {
-	Token token.Token
-	Value string
+	Token       token.Token
+	Value       string
 	Expressions []Expression // expressions inside {}
-	Parts []string // string parts between expressions
+	Parts       []string     // string parts between expressions
 }
 
 func (fsl *FStringLiteral) expressionNode()      {}
@@ -196,6 +196,7 @@ type CallExpression struct {
 	Token     token.Token
 	Function  Expression
 	Arguments []Expression
+	Keywords  map[string]Expression
 }
 
 func (ce *CallExpression) expressionNode()      {}
@@ -285,11 +286,11 @@ func (se *SliceExpression) expressionNode()      {}
 func (se *SliceExpression) TokenLiteral() string { return se.Token.Literal }
 
 type TryStatement struct {
-	Token       token.Token
-	Body        *BlockStatement
-	Except      *BlockStatement
-	ExceptVar   *Identifier // for 'except Exception as e:'
-	Finally     *BlockStatement
+	Token     token.Token
+	Body      *BlockStatement
+	Except    *BlockStatement
+	ExceptVar *Identifier // for 'except Exception as e:'
+	Finally   *BlockStatement
 }
 
 func (ts *TryStatement) statementNode()       {}
@@ -324,6 +325,7 @@ type MethodCallExpression struct {
 	Object    Expression
 	Method    *Identifier
 	Arguments []Expression
+	Keywords  map[string]Expression
 }
 
 func (mce *MethodCallExpression) expressionNode()      {}
@@ -357,5 +359,3 @@ type TupleLiteral struct {
 
 func (tl *TupleLiteral) expressionNode()      {}
 func (tl *TupleLiteral) TokenLiteral() string { return tl.Token.Literal }
-
-
