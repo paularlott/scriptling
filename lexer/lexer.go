@@ -37,6 +37,15 @@ func (l *Lexer) peekChar() byte {
 	return l.input[l.readPosition]
 }
 
+// peekN returns the character n positions ahead of current readPosition (1-based).
+func (l *Lexer) peekN(n int) byte {
+	idx := l.readPosition + n - 1
+	if idx >= len(l.input) {
+		return 0
+	}
+	return l.input[idx]
+}
+
 func (l *Lexer) NextToken() token.Token {
 	if l.pendingDedents > 0 {
 		l.pendingDedents--
@@ -175,13 +184,39 @@ func (l *Lexer) NextToken() token.Token {
 		tok = token.Token{Type: token.RBRACE, Literal: string(l.ch), Line: l.line}
 		l.readChar()
 	case '"', '\'':
-		tok.Type = token.STRING
-		tok.Literal = l.readString(l.ch)
+		quote := l.ch
+		// Triple-quote?
+		if l.peekChar() == quote && l.peekN(2) == quote {
+			tok.Type = token.STRING
+			tok.Literal = l.readTripleString(quote)
+		} else {
+			tok.Type = token.STRING
+			tok.Literal = l.readString(quote)
+		}
 	case 'f', 'F':
 		if l.peekChar() == '"' || l.peekChar() == '\'' {
 			l.readChar() // consume 'f'
 			tok.Type = token.F_STRING
 			tok.Literal = l.readFString(l.ch)
+		} else {
+			tok.Literal = l.readIdentifier()
+			tok.Type = token.LookupIdent(tok.Literal)
+			return tok
+		}
+	case 'r', 'R':
+		// Raw string prefix: r"..." or r'...'
+		if l.peekChar() == '"' || l.peekChar() == '\'' {
+			quote := l.peekChar()
+			// Triple-quoted raw string?
+			if l.peekN(2) == quote {
+				l.readChar() // consume 'r' so l.ch == quote
+				tok.Type = token.STRING
+				tok.Literal = l.readRawTripleString(quote)
+			} else {
+				l.readChar() // consume 'r'
+				tok.Type = token.STRING
+				tok.Literal = l.readRawString(quote)
+			}
 		} else {
 			tok.Literal = l.readIdentifier()
 			tok.Type = token.LookupIdent(tok.Literal)
@@ -302,13 +337,114 @@ func (l *Lexer) readNumber() (string, bool) {
 }
 
 func (l *Lexer) readString(quote byte) string {
-	l.readChar()
+	// l.ch is opening quote
+	l.readChar() // move to first content char
 	position := l.position
 	for l.ch != quote && l.ch != 0 {
 		l.readChar()
 	}
 	str := l.input[position:l.position]
+	l.readChar() // consume closing quote
+	return str
+}
+
+// readRawString reads a raw string but allows quoted characters preceded by a backslash
+// to remain inside the string (so regex patterns like r'href=["\'](.*?)["\']' work).
+func (l *Lexer) readRawString(quote byte) string {
+	// Use index-based scanning to find closing quote that is not escaped.
+	// l.ch is opening quote and l.position points to that quote index.
+	opening := l.position
+	start := opening + 1
+	i := start
+	inputLen := len(l.input)
+	for i < inputLen {
+		if l.input[i] == quote {
+			// Count preceding backslashes
+			j := i - 1
+			bs := 0
+			for j >= start && l.input[j] == '\\' {
+				bs++
+				j--
+			}
+			if bs%2 == 0 {
+				// closing quote found
+				str := l.input[start:i]
+				// Advance lexer state to character after the closing quote
+				nextIdx := i + 1
+				if nextIdx >= inputLen {
+					l.position = inputLen
+					l.readPosition = inputLen
+					l.ch = 0
+				} else {
+					l.position = nextIdx
+					l.readPosition = nextIdx + 1
+					l.ch = l.input[nextIdx]
+				}
+				return str
+			}
+		}
+		i++
+	}
+	// Unterminated: return rest
+	str := l.input[start:]
+	l.position = inputLen
+	l.readPosition = inputLen
+	l.ch = 0
+	return str
+}
+
+// readTripleString reads a triple-quoted string (”'...”' or """...""").
+// Entry: current l.ch is the opening quote (either ' or ").
+func (l *Lexer) readTripleString(quote byte) string {
+	// Consume the three opening quotes
 	l.readChar()
+	l.readChar()
+	l.readChar()
+	position := l.position
+	for l.ch != 0 {
+		if l.ch == quote && l.peekChar() == quote && l.peekN(2) == quote {
+			break
+		}
+		l.readChar()
+	}
+	str := l.input[position:l.position]
+	// Consume the three closing quotes if present
+	if l.ch == quote {
+		l.readChar()
+		if l.ch == quote {
+			l.readChar()
+			if l.ch == quote {
+				l.readChar()
+			}
+		}
+	}
+	return str
+}
+
+// readRawTripleString reads a raw triple-quoted string; backslashes are treated literally.
+func (l *Lexer) readRawTripleString(quote byte) string {
+	// Consume the three opening quotes
+	l.readChar()
+	l.readChar()
+	l.readChar()
+	position := l.position
+	for l.ch != 0 {
+		if l.ch == quote && l.peekChar() == quote && l.peekN(2) == quote {
+			break
+		}
+		l.readChar()
+	}
+	str := l.input[position:l.position]
+	// Consume the three closing quotes if present
+	if l.ch == quote {
+		l.readChar()
+		if l.ch == quote {
+			l.readChar()
+			if l.ch == quote {
+				l.readChar()
+			}
+		}
+	}
 	return str
 }
 

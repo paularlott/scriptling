@@ -12,6 +12,7 @@ tests=(
     "test_collections.py"
     "test_loops.py"
     "test_control_flow.py"
+		"test_raw_triple.py"
 
     # Operators
     "test_operators_membership.py"
