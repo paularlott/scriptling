@@ -112,9 +112,31 @@ x >= y   # Greater than or equal
 
 ### Boolean/Logical
 ```python
-x and y  # Logical AND
-x or y   # Logical OR
+x and y  # Logical AND - returns first falsy value or last value
+x or y   # Logical OR - returns first truthy value or last value
 not x    # Logical NOT
+
+# Short-circuit assignment (Python-style)
+config = user_config or default_config  # Use default if user_config is falsy
+value = x and y  # Returns x if x is falsy, otherwise y
+
+# Falsy values: 0, 0.0, "", [], {}, None, False
+# All other values are truthy
+```
+
+### Chained Comparisons
+```python
+# Chained comparisons work like mathematical notation
+1 < x < 10        # Equivalent to: 1 < x and x < 10
+x <= y <= z       # Equivalent to: x <= y and y <= z
+a == b == c       # Equivalent to: a == b and b == c
+
+# Practical examples
+if 18 <= age <= 65:
+    print("Working age")
+
+if 0 < score < 100:
+    print("Valid score")
 ```
 
 ### Precedence (highest to lowest)

@@ -470,9 +470,54 @@ func (p *Parser) parseInfixExpression(left ast.Expression) ast.Expression {
 		Left:     left,
 	}
 	precedence := p.curPrecedence()
+	currentOp := p.curToken.Literal
 	p.nextToken()
 	expression.Right = p.parseExpression(precedence)
+
+	// Check for chained comparisons: a < b < c becomes a < b and b < c
+	if isComparisonOp(currentOp) && (p.peekTokenIs(token.LT) || p.peekTokenIs(token.GT) ||
+		p.peekTokenIs(token.LTE) || p.peekTokenIs(token.GTE) ||
+		p.peekTokenIs(token.EQ) || p.peekTokenIs(token.NOT_EQ)) {
+		// Build chained comparison
+		comparisons := []*ast.InfixExpression{expression}
+
+		for isComparisonOp(currentOp) && (p.peekTokenIs(token.LT) || p.peekTokenIs(token.GT) ||
+			p.peekTokenIs(token.LTE) || p.peekTokenIs(token.GTE) ||
+			p.peekTokenIs(token.EQ) || p.peekTokenIs(token.NOT_EQ)) {
+			p.nextToken() // consume comparison operator
+			nextOp := p.curToken.Literal
+			nextComp := &ast.InfixExpression{
+				Token:    p.curToken,
+				Operator: nextOp,
+				Left:     expression.Right, // Use previous right as new left
+			}
+			p.nextToken()
+			nextComp.Right = p.parseExpression(precedence)
+			comparisons = append(comparisons, nextComp)
+			expression = nextComp
+			currentOp = nextOp
+		}
+
+		// Build the and chain: comp1 and comp2 and comp3...
+		if len(comparisons) > 1 {
+			result := ast.Expression(comparisons[0])
+			for i := 1; i < len(comparisons); i++ {
+				result = &ast.InfixExpression{
+					Token:    comparisons[0].Token, // Use first comparison token
+					Operator: "and",
+					Left:     result,
+					Right:    comparisons[i],
+				}
+			}
+			return result
+		}
+	}
+
 	return expression
+}
+
+func isComparisonOp(op string) bool {
+	return op == "<" || op == ">" || op == "<=" || op == ">=" || op == "==" || op == "!="
 }
 
 func (p *Parser) parseGroupedExpression() ast.Expression {

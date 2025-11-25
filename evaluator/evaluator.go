@@ -293,7 +293,23 @@ func evalMinusPrefixOperatorExpression(right object.Object) object.Object {
 }
 
 func evalInfixExpression(operator string, left, right object.Object) object.Object {
-	// Handle membership operators first
+	// Handle boolean operators first (they work with any type)
+	switch operator {
+	case "and":
+		// Short-circuit: return first falsy value or last value
+		if !isTruthy(left) {
+			return left
+		}
+		return right
+	case "or":
+		// Short-circuit: return first truthy value or last value
+		if isTruthy(left) {
+			return left
+		}
+		return right
+	}
+
+	// Handle membership operators
 	switch operator {
 	case "in":
 		return evalInOperator(left, right)
@@ -325,13 +341,6 @@ func evalInfixExpression(operator string, left, right object.Object) object.Obje
 		return nativeBoolToBooleanObject(left == right)
 	case "!=":
 		return nativeBoolToBooleanObject(left != right)
-	case "and":
-		return nativeBoolToBooleanObject(isTruthy(left) && isTruthy(right))
-	case "or":
-		if isTruthy(left) {
-			return TRUE
-		}
-		return nativeBoolToBooleanObject(isTruthy(right))
 	default:
 		return errors.NewError("%s: type mismatch", errors.ErrTypeError)
 	}
@@ -641,7 +650,21 @@ func isTruthy(obj object.Object) bool {
 	case FALSE:
 		return false
 	default:
-		return true
+		// Check for Python-style falsy values
+		switch v := obj.(type) {
+		case *object.Integer:
+			return v.Value != 0
+		case *object.Float:
+			return v.Value != 0.0
+		case *object.String:
+			return v.Value != ""
+		case *object.List:
+			return len(v.Elements) > 0
+		case *object.Dict:
+			return len(v.Pairs) > 0
+		default:
+			return true
+		}
 	}
 }
 
