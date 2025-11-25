@@ -18,6 +18,7 @@ const (
 	LESSGREATER
 	SUM
 	PRODUCT
+	POWER
 	PREFIX
 	CALL
 )
@@ -38,6 +39,7 @@ var precedences = map[token.TokenType]int{
 	token.SLASH:    PRODUCT,
 	token.ASTERISK: PRODUCT,
 	token.PERCENT:  PRODUCT,
+	token.POW:      POWER,
 	token.LPAREN:   CALL,
 	token.LBRACKET: CALL,
 	token.DOT:      CALL,
@@ -83,6 +85,7 @@ func New(l *lexer.Lexer) *Parser {
 	p.registerInfix(token.MINUS, p.parseInfixExpression)
 	p.registerInfix(token.SLASH, p.parseInfixExpression)
 	p.registerInfix(token.ASTERISK, p.parseInfixExpression)
+	p.registerInfix(token.POW, p.parseInfixExpression)
 	p.registerInfix(token.PERCENT, p.parseInfixExpression)
 	p.registerInfix(token.EQ, p.parseInfixExpression)
 	p.registerInfix(token.NOT_EQ, p.parseInfixExpression)

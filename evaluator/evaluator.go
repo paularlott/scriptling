@@ -2,6 +2,7 @@ package evaluator
 
 import (
 	"context"
+	"math"
 	"strings"
 
 	"github.com/paularlott/scriptling/ast"
@@ -360,6 +361,23 @@ func evalIntegerInfixExpression(operator string, leftVal, rightVal int64) object
 		}
 		// True division: always return float
 		return &object.Float{Value: float64(leftVal) / float64(rightVal)}
+	case "**":
+		// Power operator - use float for negative exponents
+		if rightVal < 0 {
+			return evalFloatInfixExpression("**", &object.Integer{Value: leftVal}, &object.Integer{Value: rightVal})
+		}
+		// Integer exponentiation
+		result := int64(1)
+		base := leftVal
+		exp := rightVal
+		for exp > 0 {
+			if exp%2 == 1 {
+				result *= base
+			}
+			base *= base
+			exp /= 2
+		}
+		return &object.Integer{Value: result}
 	case "%":
 		return &object.Integer{Value: leftVal % rightVal}
 	case "<":
@@ -408,6 +426,8 @@ func evalFloatInfixExpression(operator string, left, right object.Object) object
 			return errors.NewError(errors.ErrDivisionByZero)
 		}
 		return &object.Float{Value: leftVal / rightVal}
+	case "**":
+		return &object.Float{Value: math.Pow(leftVal, rightVal)}
 	case "<":
 		return nativeBoolToBooleanObject(leftVal < rightVal)
 	case ">":
