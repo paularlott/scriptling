@@ -60,19 +60,13 @@ result, err := p.Eval(script)
 ### Set Variables from Go
 
 ```go
-// Set different types
-p.SetVar("api_key", "secret123")
-p.SetVar("timeout", 30)
-p.SetVar("enabled", true)
-p.SetVar("rate", 3.14)
-
-// Use in Scriptling
-p.Eval(`
-options = {"timeout": timeout}
-response = requests.get("https://api.example.com/data", options)
-if enabled:
-    print("API key: " + api_key)
-`)
+    p.Eval(configScript)
+    if dbHost, ok := p.GetVarAsString("db_host"); ok {
+        fmt.Printf("Database host: %s\n", dbHost)
+    }
+    if cacheSize, ok := p.GetVarAsInt("cache_size"); ok {
+        fmt.Printf("Cache size: %d\n", cacheSize)
+    }
 ```
 
 ### Get Variables from Scriptling
@@ -85,17 +79,161 @@ name = "Alice"
 result = {"status": "success", "count": 10}
 `)
 
-// Get variables in Go
-if value, ok := p.GetVar("x"); ok {
-    fmt.Printf("x = %v\n", value)  // x = 42
+// Get variables using convenience methods (recommended)
+if value, ok := p.GetVarAsInt("x"); ok {
+    fmt.Printf("x = %d\n", value)  // x = 42
 }
 
-if value, ok := p.GetVar("name"); ok {
-    fmt.Printf("name = %v\n", value)  // name = Alice
+if name, ok := p.GetVarAsString("name"); ok {
+    fmt.Printf("name = %s\n", name)  // name = Alice
 }
 
+if count, ok := p.GetVarAsBool("flag"); ok {
+    fmt.Printf("flag = %t\n", count)  // flag = true
+}
+
+// Get variables using generic GetVar (advanced use cases)
 if value, ok := p.GetVar("result"); ok {
     fmt.Printf("result = %v\n", value)  // result = {status: success, count: 10}
+}
+
+// Get complex types
+if numbers, ok := p.GetVarAsList("numbers"); ok {
+    fmt.Printf("First number: %s\n", numbers[0].Inspect())  // Access list elements
+}
+
+if config, ok := p.GetVarAsDict("config"); ok {
+    if host, ok := config["host"]; ok {
+        fmt.Printf("Host: %s\n", host.Inspect())  // Access dict values
+    }
+}
+```
+
+## Script Return Values
+
+Scripts can return values to Go using the last expression evaluated. Use the `Eval()` return value to access these results.
+
+### Basic Return Values
+
+```go
+// Script returns a simple value
+result, err := p.Eval(`
+x = 42
+y = 24
+x + y  # Last expression becomes return value
+`)
+
+if err != nil {
+    fmt.Println("Error:", err)
+    return
+}
+
+// Access the return value
+if intResult, ok := result.AsInt(); ok {
+    fmt.Printf("Result: %d\n", intResult)  // Result: 66
+}
+```
+
+### Complex Return Values
+
+```go
+// Script returns a dictionary
+result, err := p.Eval(`
+data = {"name": "Alice", "age": 30, "active": True}
+numbers = [1, 2, 3, 4, 5]
+
+# Return computed result
+{
+    "user": data,
+    "count": len(numbers),
+    "sum": sum(numbers),
+    "status": "success"
+}
+`)
+
+if err != nil {
+    fmt.Println("Error:", err)
+    return
+}
+
+// Access dictionary return value
+if dict, ok := result.AsDict(); ok {
+    if status, ok := dict["status"]; ok {
+        fmt.Printf("Status: %s\n", status.Inspect())  // Status: success
+    }
+    if count, ok := dict["count"]; ok {
+        if countVal, ok := count.AsInt(); ok {
+            fmt.Printf("Count: %d\n", countVal)  // Count: 5
+        }
+    }
+}
+```
+
+### Return Value Types
+
+```go
+// Different return value types
+scripts := []string{
+    `42`,                    // Integer
+    `"hello"`,              // String
+    `3.14`,                 // Float
+    `True`,                 // Boolean
+    `[1, 2, 3]`,           // List
+    `{"key": "value"}`,     // Dictionary
+}
+
+for _, script := range scripts {
+    result, _ := p.Eval(script)
+    fmt.Printf("Script: %s -> Type: %s, Value: %s\n",
+        script, result.Type(), result.Inspect())
+}
+```
+
+### Processing Return Values
+
+```go
+// Script processes data and returns result
+result, err := p.Eval(`
+# Process input data
+input = [10, 20, 30, 40, 50]
+filtered = [x for x in input if x > 25]
+total = sum(filtered)
+
+# Return processed result
+{
+    "original_count": len(input),
+    "filtered": filtered,
+    "total": total,
+    "average": total / len(filtered)
+}
+`)
+
+if err != nil {
+    fmt.Println("Error:", err)
+    return
+}
+
+// Process the returned dictionary
+if resultDict, ok := result.AsDict(); ok {
+    fmt.Println("Processing Results:")
+
+    if count, ok := resultDict["original_count"]; ok {
+        if countVal, ok := count.AsInt(); ok {
+            fmt.Printf("  Original items: %d\n", countVal)
+        }
+    }
+
+    if total, ok := resultDict["total"]; ok {
+        if totalVal, ok := total.AsInt(); ok {
+            fmt.Printf("  Filtered total: %d\n", totalVal)
+        }
+    }
+
+    if filtered, ok := resultDict["filtered"]; ok {
+        if filteredList, ok := filtered.AsList(); ok {
+            fmt.Printf("  Filtered items: %d\n", len(filteredList))
+        }
+    }
 }
 ```
 
@@ -345,15 +483,26 @@ if response["status"] == 200:
     log_info("Found " + str(len(users)) + " users")
 
     # Process each user
+    processed_count = 0
     for user in users:
         if user["active"]:
             log_info("Processing user: " + user["name"])
+            processed_count = processed_count + 1
             # Additional processing...
 
     success = True
 else:
     log_info("API call failed: " + str(response["status"]))
+    processed_count = 0
     success = False
+
+# Return summary
+{
+    "success": success,
+    "total_users": len(users) if "users" in locals() else 0,
+    "processed_count": processed_count,
+    "api_status": response["status"]
+}
 `
 
     result, err := p.Eval(script)
@@ -361,12 +510,21 @@ else:
         log.Fatalf("Script error: %v", err)
     }
 
-    // Get results
-    if success, ok := p.GetVar("success"); ok {
-        fmt.Printf("Automation completed successfully: %v\n", success)
+    // Get results using convenience methods
+    if success, ok := p.GetVarAsBool("success"); ok {
+        fmt.Printf("Automation completed successfully: %t\n", success)
     }
 
-    fmt.Printf("Script result: %v\n", result.Inspect())
+    // Access return value from script
+    if resultDict, ok := result.AsDict(); ok {
+        if processed, ok := resultDict["processed_count"]; ok {
+            if count, ok := processed.AsInt(); ok {
+                fmt.Printf("Processed %d items\n", count)
+            }
+        }
+    }
+
+    fmt.Printf("Script result: %s\n", result.Inspect())
 }
 ```
 
@@ -462,10 +620,10 @@ captured := p.GetOutput()
 func TestScriptOutput(t *testing.T) {
     p := scriptling.New()
     p.EnableOutputCapture()
-    
+
     p.Eval(`print("test result:", 42)`)
     output := p.GetOutput()
-    
+
     expected := "test result: 42\n"
     if output != expected {
         t.Errorf("Expected %q, got %q", expected, output)
@@ -488,12 +646,12 @@ p.RegisterFunc("log_debug", func(ctx context.Context, args ...object.Object) obj
     // Get environment from context
     env := evaluator.GetEnvFromContext(ctx)
     writer := env.GetWriter()
-    
+
     // Write to current output (stdout or capture buffer)
     for _, arg := range args {
         fmt.Fprintf(writer, "[DEBUG] %s\n", arg.Inspect())
     }
-    
+
     return &object.String{Value: "logged"}
 })
 
@@ -559,14 +717,10 @@ func TestScriptlingIntegration(t *testing.T) {
         t.Fatalf("Eval error: %v", err)
     }
 
-    // Test variable getting
-    if value, ok := p.GetVar("result"); ok {
-        if intObj, ok := value.(*object.Integer); ok {
-            if intObj.Value != 84 {
-                t.Errorf("Expected 84, got %d", intObj.Value)
-            }
-        } else {
-            t.Error("Expected integer result")
+    // Test variable getting with convenience methods
+    if result, ok := p.GetVarAsInt("result"); ok {
+        if result != 84 {
+            t.Errorf("Expected 84, got %d", result)
         }
     } else {
         t.Error("Variable 'result' not found")
@@ -603,8 +757,12 @@ else:
 `
 
 p.Eval(configScript)
-dbHost, _ := p.GetVar("db_host")
-cacheSize, _ := p.GetVar("cache_size")
+if dbHost, ok := p.GetVarAsString("db_host"); ok {
+    fmt.Printf("Database host: %s\n", dbHost)
+}
+if cacheSize, ok := p.GetVarAsInt("cache_size"); ok {
+    fmt.Printf("Cache size: %d\n", cacheSize)
+}
 ```
 
 ### Data Processing Pipeline
