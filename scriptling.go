@@ -125,6 +125,55 @@ func (p *Scriptling) GetVar(name string) (interface{}, bool) {
 	return objectToGo(obj), true
 }
 
+// Convenience methods for type-safe variable access
+func (p *Scriptling) GetVarAsString(name string) (string, bool) {
+	obj, ok := p.env.Get(name)
+	if !ok {
+		return "", false
+	}
+	return obj.AsString()
+}
+
+func (p *Scriptling) GetVarAsInt(name string) (int64, bool) {
+	obj, ok := p.env.Get(name)
+	if !ok {
+		return 0, false
+	}
+	return obj.AsInt()
+}
+
+func (p *Scriptling) GetVarAsFloat(name string) (float64, bool) {
+	obj, ok := p.env.Get(name)
+	if !ok {
+		return 0, false
+	}
+	return obj.AsFloat()
+}
+
+func (p *Scriptling) GetVarAsBool(name string) (bool, bool) {
+	obj, ok := p.env.Get(name)
+	if !ok {
+		return false, false
+	}
+	return obj.AsBool()
+}
+
+func (p *Scriptling) GetVarAsList(name string) ([]object.Object, bool) {
+	obj, ok := p.env.Get(name)
+	if !ok {
+		return nil, false
+	}
+	return obj.AsList()
+}
+
+func (p *Scriptling) GetVarAsDict(name string) (map[string]object.Object, bool) {
+	obj, ok := p.env.Get(name)
+	if !ok {
+		return nil, false
+	}
+	return obj.AsDict()
+}
+
 func (p *Scriptling) RegisterFunc(name string, fn func(ctx context.Context, args ...object.Object) object.Object) {
 	p.env.Set(name, &object.Builtin{Fn: fn})
 }
