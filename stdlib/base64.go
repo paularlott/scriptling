@@ -16,7 +16,7 @@ var base64Library = object.NewLibrary(map[string]*object.Builtin{
 			}
 			str, ok := args[0].(*object.String)
 			if !ok {
-				return errors.NewTypeError("STRING", string(args[0].Type()))
+				return errors.NewTypeError("STRING", args[0].Type().String())
 			}
 			encoded := base64.StdEncoding.EncodeToString([]byte(str.Value))
 			return &object.String{Value: encoded}
@@ -29,7 +29,7 @@ var base64Library = object.NewLibrary(map[string]*object.Builtin{
 			}
 			str, ok := args[0].(*object.String)
 			if !ok {
-				return errors.NewTypeError("STRING", string(args[0].Type()))
+				return errors.NewTypeError("STRING", args[0].Type().String())
 			}
 			decoded, err := base64.StdEncoding.DecodeString(str.Value)
 			if err != nil {

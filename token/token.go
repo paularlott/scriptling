@@ -31,6 +31,19 @@ const (
 	SLASH    = "/"
 	PERCENT  = "%"
 
+	// Bitwise operators
+	TILDE     = "~"
+	AMPERSAND = "&"
+	PIPE      = "|"
+	CARET     = "^"
+	LSHIFT    = "<<"
+	RSHIFT    = ">>"
+	AND_EQ    = "&="
+	OR_EQ     = "|="
+	XOR_EQ    = "^="
+	LSHIFT_EQ = "<<="
+	RSHIFT_EQ = ">>="
+
 	EQ     = "=="
 	NOT_EQ = "!="
 	LT     = "<"

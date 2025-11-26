@@ -26,13 +26,13 @@ var randomLibrary = object.NewLibrary(map[string]*object.Builtin{
 			case *object.Integer:
 				min = arg.Value
 			default:
-				return errors.NewTypeError("INTEGER", string(args[0].Type()))
+				return errors.NewTypeError("INTEGER", args[0].Type().String())
 			}
 			switch arg := args[1].(type) {
 			case *object.Integer:
 				max = arg.Value
 			default:
-				return errors.NewTypeError("INTEGER", string(args[1].Type()))
+				return errors.NewTypeError("INTEGER", args[1].Type().String())
 			}
 			if min > max {
 				return errors.NewError("randint() min must be <= max")
@@ -54,15 +54,15 @@ var randomLibrary = object.NewLibrary(map[string]*object.Builtin{
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			list, ok := args[0].(*object.List)
+			list, ok := args[0].AsList()
 			if !ok {
-				return errors.NewTypeError("LIST", string(args[0].Type()))
+				return errors.NewTypeError("LIST", args[0].Type().String())
 			}
-			if len(list.Elements) == 0 {
+			if len(list) == 0 {
 				return errors.NewError("choice() list cannot be empty")
 			}
-			idx := rng.Intn(len(list.Elements))
-			return list.Elements[idx]
+			idx := rng.Intn(len(list))
+			return list[idx]
 		},
 	},
 	"shuffle": {
@@ -70,14 +70,14 @@ var randomLibrary = object.NewLibrary(map[string]*object.Builtin{
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			list, ok := args[0].(*object.List)
+			list, ok := args[0].AsList()
 			if !ok {
-				return errors.NewTypeError("LIST", string(args[0].Type()))
+				return errors.NewTypeError("LIST", args[0].Type().String())
 			}
-			n := len(list.Elements)
+			n := len(list)
 			for i := n - 1; i > 0; i-- {
 				j := rng.Intn(i + 1)
-				list.Elements[i], list.Elements[j] = list.Elements[j], list.Elements[i]
+				list[i], list[j] = list[j], list[i]
 			}
 			return &object.Null{}
 		},

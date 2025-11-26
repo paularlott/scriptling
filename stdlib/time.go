@@ -33,7 +33,7 @@ var timeLibrary = object.NewLibrary(map[string]*object.Builtin{
 			case *object.Float:
 				seconds = arg.Value
 			default:
-				return errors.NewTypeError("INTEGER or FLOAT", string(arg.Type()))
+				return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
 			}
 
 			// Create a timer that respects context cancellation
@@ -51,26 +51,114 @@ var timeLibrary = object.NewLibrary(map[string]*object.Builtin{
 			}
 		},
 	},
+	"localtime": {
+		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+			var t time.Time
+			if len(args) == 0 {
+				t = time.Now()
+			} else if len(args) == 1 {
+				var timestamp float64
+				switch ts := args[0].(type) {
+				case *object.Integer:
+					timestamp = float64(ts.Value)
+				case *object.Float:
+					timestamp = ts.Value
+				default:
+					return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
+				}
+				t = time.Unix(int64(timestamp), 0)
+			} else {
+				return errors.NewArgumentError(len(args), 0)
+			}
+
+			return timeToTuple(t, false)
+		},
+	},
+	"gmtime": {
+		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+			var t time.Time
+			if len(args) == 0 {
+				t = time.Now()
+			} else if len(args) == 1 {
+				var timestamp float64
+				switch ts := args[0].(type) {
+				case *object.Integer:
+					timestamp = float64(ts.Value)
+				case *object.Float:
+					timestamp = ts.Value
+				default:
+					return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
+				}
+				t = time.Unix(int64(timestamp), 0)
+			} else {
+				return errors.NewArgumentError(len(args), 0)
+			}
+
+			return timeToTuple(t, true)
+		},
+	},
+	"mktime": {
+		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+			if len(args) != 1 {
+				return errors.NewArgumentError(len(args), 1)
+			}
+
+			tuple, ok := args[0].AsList()
+			if !ok {
+				return errors.NewTypeError("LIST", args[0].Type().String())
+			}
+
+			if len(tuple) != 9 {
+				return errors.NewError("time tuple must have exactly 9 elements")
+			}
+
+			// Extract values from tuple
+			year, _ := tuple[0].AsInt()
+			month, _ := tuple[1].AsInt()
+			day, _ := tuple[2].AsInt()
+			hour, _ := tuple[3].AsInt()
+			minute, _ := tuple[4].AsInt()
+			second, _ := tuple[5].AsInt()
+
+			t := time.Date(int(year), time.Month(month), int(day), int(hour), int(minute), int(second), 0, time.Local)
+			return &object.Float{Value: float64(t.Unix())}
+		},
+	},
 	"strftime": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
+			if len(args) < 1 || len(args) > 2 {
+				return errors.NewArgumentError(len(args), 1)
 			}
-			format, ok := args[0].(*object.String)
+
+			format, ok := args[0].AsString()
 			if !ok {
-				return errors.NewTypeError("STRING", string(args[0].Type()))
+				return errors.NewTypeError("STRING", args[0].Type().String())
 			}
-			var timestamp float64
-			switch t := args[1].(type) {
-			case *object.Integer:
-				timestamp = float64(t.Value)
-			case *object.Float:
-				timestamp = t.Value
-			default:
-				return errors.NewTypeError("INTEGER or FLOAT", string(args[1].Type()))
+
+			var t time.Time
+			if len(args) == 1 {
+				t = time.Now()
+			} else {
+				tuple, ok := args[1].AsList()
+				if !ok {
+					return errors.NewTypeError("LIST", args[1].Type().String())
+				}
+				if len(tuple) != 9 {
+					return errors.NewError("time tuple must have exactly 9 elements")
+				}
+
+				// Extract values from tuple
+				year, _ := tuple[0].AsInt()
+				month, _ := tuple[1].AsInt()
+				day, _ := tuple[2].AsInt()
+				hour, _ := tuple[3].AsInt()
+				minute, _ := tuple[4].AsInt()
+				second, _ := tuple[5].AsInt()
+
+				t = time.Date(int(year), time.Month(month), int(day), int(hour), int(minute), int(second), 0, time.Local)
 			}
-			t := time.Unix(int64(timestamp), 0)
-			return &object.String{Value: t.Format(pythonToGoFormat(format.Value))}
+
+			return &object.String{Value: t.Format(pythonToGoFormat(format))}
 		},
 	},
 	"strptime": {
@@ -78,25 +166,110 @@ var timeLibrary = object.NewLibrary(map[string]*object.Builtin{
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
 			}
-			str, ok := args[0].(*object.String)
+
+			str, ok := args[0].AsString()
 			if !ok {
-				return errors.NewTypeError("STRING", string(args[0].Type()))
+				return errors.NewTypeError("STRING", args[0].Type().String())
 			}
-			format, ok := args[1].(*object.String)
+
+			format, ok := args[1].AsString()
 			if !ok {
-				return errors.NewTypeError("STRING", string(args[1].Type()))
+				return errors.NewTypeError("STRING", args[1].Type().String())
 			}
-			t, err := time.Parse(pythonToGoFormat(format.Value), str.Value)
+
+			t, err := time.Parse(pythonToGoFormat(format), str)
 			if err != nil {
 				return errors.NewError("strptime() parse error: %s", err.Error())
 			}
-			return &object.Float{Value: float64(t.Unix())}
+
+			return timeToTuple(t, false)
+		},
+	},
+	"asctime": {
+		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+			var t time.Time
+			if len(args) == 0 {
+				t = time.Now()
+			} else if len(args) == 1 {
+				tuple, ok := args[0].AsList()
+				if !ok {
+					return errors.NewTypeError("LIST", args[0].Type().String())
+				}
+				if len(tuple) != 9 {
+					return errors.NewError("time tuple must have exactly 9 elements")
+				}
+
+				// Extract values from tuple
+				year, _ := tuple[0].AsInt()
+				month, _ := tuple[1].AsInt()
+				day, _ := tuple[2].AsInt()
+				hour, _ := tuple[3].AsInt()
+				minute, _ := tuple[4].AsInt()
+				second, _ := tuple[5].AsInt()
+
+				t = time.Date(int(year), time.Month(month), int(day), int(hour), int(minute), int(second), 0, time.Local)
+			} else {
+				return errors.NewArgumentError(len(args), 0)
+			}
+
+			return &object.String{Value: t.Format("Mon Jan 2 15:04:05 2006")}
+		},
+	},
+	"ctime": {
+		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+			var t time.Time
+			if len(args) == 0 {
+				t = time.Now()
+			} else if len(args) == 1 {
+				var timestamp float64
+				switch ts := args[0].(type) {
+				case *object.Integer:
+					timestamp = float64(ts.Value)
+				case *object.Float:
+					timestamp = ts.Value
+				default:
+					return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
+				}
+				t = time.Unix(int64(timestamp), 0)
+			} else {
+				return errors.NewArgumentError(len(args), 0)
+			}
+
+			return &object.String{Value: t.Format("Mon Jan 2 15:04:05 2006")}
 		},
 	},
 })
 
 func GetTimeLibrary() *object.Library {
 	return timeLibrary
+}
+
+// Convert Go time.Time to Scriptling time tuple (list)
+func timeToTuple(t time.Time, utc bool) *object.List {
+	var elements []object.Object
+
+	// Get components
+	year, month, day := t.Date()
+	hour, minute, second := t.Clock()
+	weekday := int(t.Weekday())
+	yearday := t.YearDay()
+
+	// DST flag (simplified - Go doesn't provide this directly)
+	dst := 0
+
+	elements = []object.Object{
+		&object.Integer{Value: int64(year)},
+		&object.Integer{Value: int64(month)},
+		&object.Integer{Value: int64(day)},
+		&object.Integer{Value: int64(hour)},
+		&object.Integer{Value: int64(minute)},
+		&object.Integer{Value: int64(second)},
+		&object.Integer{Value: int64(weekday)},
+		&object.Integer{Value: int64(yearday)},
+		&object.Integer{Value: int64(dst)},
+	}
+
+	return &object.List{Elements: elements}
 }
 
 func pythonToGoFormat(pyFormat string) string {
@@ -107,6 +280,11 @@ func pythonToGoFormat(pyFormat string) string {
 	goFormat = replaceAll(goFormat, "%H", "15")
 	goFormat = replaceAll(goFormat, "%M", "04")
 	goFormat = replaceAll(goFormat, "%S", "05")
+	goFormat = replaceAll(goFormat, "%A", "Monday")
+	goFormat = replaceAll(goFormat, "%a", "Mon")
+	goFormat = replaceAll(goFormat, "%B", "January")
+	goFormat = replaceAll(goFormat, "%b", "Jan")
+	goFormat = replaceAll(goFormat, "%p", "PM")
 	return goFormat
 }
 

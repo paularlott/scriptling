@@ -6,12 +6,12 @@
 import json
 
 # Parse JSON string to objects
-data = json.parse('{"name":"Alice","age":30}')
+data = json.loads('{"name":"Alice","age":30}')
 name = data["name"]  # "Alice"
 
 # Convert objects to JSON string
 obj = {"status": "success", "count": 42}
-json_str = json.stringify(obj)
+json_str = json.dumps(obj)
 ```
 
 ## Regex Library
@@ -150,6 +150,8 @@ print("Hello")
 str(42)           # "42"
 int("42")         # 42
 float("3.14")     # 3.14
+type(42)          # "INTEGER"
+type("hello")     # "STRING"
 
 # String operations
 len("hello")                        # 5
@@ -231,6 +233,15 @@ def fibonacci(n):
         return n
     else:
         return fibonacci(n - 1) + fibonacci(n - 2)
+
+# Variadic arguments (*args)
+def sum_all(*args):
+    total = 0
+    for n in args:
+        total += n
+    return total
+
+sum_all(1, 2, 3)  # 6
 ```
 
 ## Error Handling
@@ -330,6 +341,19 @@ x += 5   # x = x + 5
 x -= 3   # x = x - 3
 x *= 2   # x = x * 2
 x /= 4   # x = x / 4
+x &= 3   # x = x & 3 (bitwise AND)
+x |= 3   # x = x | 3 (bitwise OR)
+x ^= 3   # x = x ^ 3 (bitwise XOR)
+x <<= 2  # x = x << 2 (left shift)
+x >>= 2  # x = x >> 2 (right shift)
+
+# Bitwise (integers only)
+~x       # Bitwise NOT (e.g., ~5 = -6)
+x & y    # Bitwise AND (e.g., 12 & 10 = 8)
+x | y    # Bitwise OR (e.g., 12 | 10 = 14)
+x ^ y    # Bitwise XOR (e.g., 12 ^ 10 = 6)
+x << y   # Left shift (e.g., 5 << 2 = 20)
+x >> y   # Right shift (e.g., 20 >> 2 = 5)
 
 # Comparison
 x == y   # Equal

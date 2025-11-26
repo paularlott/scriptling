@@ -10,31 +10,81 @@ import (
 	"github.com/paularlott/scriptling/ast"
 )
 
-type ObjectType string
+type ObjectType int
 
 const (
-	INTEGER_OBJ   = "INTEGER"
-	FLOAT_OBJ     = "FLOAT"
-	BOOLEAN_OBJ   = "BOOLEAN"
-	STRING_OBJ    = "STRING"
-	NULL_OBJ      = "NULL"
-	RETURN_OBJ    = "RETURN"
-	BREAK_OBJ     = "BREAK"
-	CONTINUE_OBJ  = "CONTINUE"
-	FUNCTION_OBJ  = "FUNCTION"
-	LAMBDA_OBJ    = "LAMBDA"
-	BUILTIN_OBJ   = "BUILTIN"
-	LIST_OBJ      = "LIST"
-	TUPLE_OBJ     = "TUPLE"
-	DICT_OBJ      = "DICT"
-	HTTP_RESP_OBJ = "HTTP_RESPONSE"
-	ERROR_OBJ     = "ERROR"
-	EXCEPTION_OBJ = "EXCEPTION"
+	INTEGER_OBJ ObjectType = iota
+	FLOAT_OBJ
+	BOOLEAN_OBJ
+	STRING_OBJ
+	NULL_OBJ
+	RETURN_OBJ
+	BREAK_OBJ
+	CONTINUE_OBJ
+	FUNCTION_OBJ
+	LAMBDA_OBJ
+	BUILTIN_OBJ
+	LIST_OBJ
+	TUPLE_OBJ
+	DICT_OBJ
+	HTTP_RESP_OBJ
+	ERROR_OBJ
+	EXCEPTION_OBJ
 )
+
+// String returns the string representation of the ObjectType
+func (ot ObjectType) String() string {
+	switch ot {
+	case INTEGER_OBJ:
+		return "INTEGER"
+	case FLOAT_OBJ:
+		return "FLOAT"
+	case BOOLEAN_OBJ:
+		return "BOOLEAN"
+	case STRING_OBJ:
+		return "STRING"
+	case NULL_OBJ:
+		return "NULL"
+	case RETURN_OBJ:
+		return "RETURN"
+	case BREAK_OBJ:
+		return "BREAK"
+	case CONTINUE_OBJ:
+		return "CONTINUE"
+	case FUNCTION_OBJ:
+		return "FUNCTION"
+	case LAMBDA_OBJ:
+		return "LAMBDA"
+	case BUILTIN_OBJ:
+		return "BUILTIN"
+	case LIST_OBJ:
+		return "LIST"
+	case TUPLE_OBJ:
+		return "TUPLE"
+	case DICT_OBJ:
+		return "DICT"
+	case HTTP_RESP_OBJ:
+		return "HTTP_RESPONSE"
+	case ERROR_OBJ:
+		return "ERROR"
+	case EXCEPTION_OBJ:
+		return "EXCEPTION"
+	default:
+		return "UNKNOWN"
+	}
+}
 
 type Object interface {
 	Type() ObjectType
 	Inspect() string
+
+	// Type-safe accessor methods
+	AsString() (string, bool)
+	AsInt() (int64, bool)
+	AsFloat() (float64, bool)
+	AsBool() (bool, bool)
+	AsList() ([]Object, bool)
+	AsDict() (map[string]Object, bool)
 }
 
 type Integer struct {
@@ -44,12 +94,26 @@ type Integer struct {
 func (i *Integer) Type() ObjectType { return INTEGER_OBJ }
 func (i *Integer) Inspect() string  { return fmt.Sprintf("%d", i.Value) }
 
+func (i *Integer) AsString() (string, bool)          { return "", false }
+func (i *Integer) AsInt() (int64, bool)              { return i.Value, true }
+func (i *Integer) AsFloat() (float64, bool)          { return float64(i.Value), true }
+func (i *Integer) AsBool() (bool, bool)              { return i.Value != 0, true }
+func (i *Integer) AsList() ([]Object, bool)          { return nil, false }
+func (i *Integer) AsDict() (map[string]Object, bool) { return nil, false }
+
 type Float struct {
 	Value float64
 }
 
 func (f *Float) Type() ObjectType { return FLOAT_OBJ }
 func (f *Float) Inspect() string  { return fmt.Sprintf("%g", f.Value) }
+
+func (f *Float) AsString() (string, bool)          { return "", false }
+func (f *Float) AsInt() (int64, bool)              { return 0, false }
+func (f *Float) AsFloat() (float64, bool)          { return f.Value, true }
+func (f *Float) AsBool() (bool, bool)              { return f.Value != 0, true }
+func (f *Float) AsList() ([]Object, bool)          { return nil, false }
+func (f *Float) AsDict() (map[string]Object, bool) { return nil, false }
 
 type Boolean struct {
 	Value bool
@@ -58,6 +122,13 @@ type Boolean struct {
 func (b *Boolean) Type() ObjectType { return BOOLEAN_OBJ }
 func (b *Boolean) Inspect() string  { return fmt.Sprintf("%t", b.Value) }
 
+func (b *Boolean) AsString() (string, bool)          { return "", false }
+func (b *Boolean) AsInt() (int64, bool)              { return 0, false }
+func (b *Boolean) AsFloat() (float64, bool)          { return 0, false }
+func (b *Boolean) AsBool() (bool, bool)              { return b.Value, true }
+func (b *Boolean) AsList() ([]Object, bool)          { return nil, false }
+func (b *Boolean) AsDict() (map[string]Object, bool) { return nil, false }
+
 type String struct {
 	Value string
 }
@@ -65,10 +136,24 @@ type String struct {
 func (s *String) Type() ObjectType { return STRING_OBJ }
 func (s *String) Inspect() string  { return s.Value }
 
+func (s *String) AsString() (string, bool)          { return s.Value, true }
+func (s *String) AsInt() (int64, bool)              { return 0, false }
+func (s *String) AsFloat() (float64, bool)          { return 0, false }
+func (s *String) AsBool() (bool, bool)              { return s.Value != "", true }
+func (s *String) AsList() ([]Object, bool)          { return nil, false }
+func (s *String) AsDict() (map[string]Object, bool) { return nil, false }
+
 type Null struct{}
 
 func (n *Null) Type() ObjectType { return NULL_OBJ }
 func (n *Null) Inspect() string  { return "None" }
+
+func (n *Null) AsString() (string, bool)          { return "", false }
+func (n *Null) AsInt() (int64, bool)              { return 0, false }
+func (n *Null) AsFloat() (float64, bool)          { return 0, false }
+func (n *Null) AsBool() (bool, bool)              { return false, true }
+func (n *Null) AsList() ([]Object, bool)          { return nil, false }
+func (n *Null) AsDict() (map[string]Object, bool) { return nil, false }
 
 type ReturnValue struct {
 	Value Object
@@ -77,19 +162,41 @@ type ReturnValue struct {
 func (rv *ReturnValue) Type() ObjectType { return RETURN_OBJ }
 func (rv *ReturnValue) Inspect() string  { return rv.Value.Inspect() }
 
+func (rv *ReturnValue) AsString() (string, bool)          { return "", false }
+func (rv *ReturnValue) AsInt() (int64, bool)              { return 0, false }
+func (rv *ReturnValue) AsFloat() (float64, bool)          { return 0, false }
+func (rv *ReturnValue) AsBool() (bool, bool)              { return false, false }
+func (rv *ReturnValue) AsList() ([]Object, bool)          { return nil, false }
+func (rv *ReturnValue) AsDict() (map[string]Object, bool) { return nil, false }
+
 type Break struct{}
 
 func (b *Break) Type() ObjectType { return BREAK_OBJ }
 func (b *Break) Inspect() string  { return "break" }
+
+func (b *Break) AsString() (string, bool)          { return "", false }
+func (b *Break) AsInt() (int64, bool)              { return 0, false }
+func (b *Break) AsFloat() (float64, bool)          { return 0, false }
+func (b *Break) AsBool() (bool, bool)              { return false, false }
+func (b *Break) AsList() ([]Object, bool)          { return nil, false }
+func (b *Break) AsDict() (map[string]Object, bool) { return nil, false }
 
 type Continue struct{}
 
 func (c *Continue) Type() ObjectType { return CONTINUE_OBJ }
 func (c *Continue) Inspect() string  { return "continue" }
 
+func (c *Continue) AsString() (string, bool)          { return "", false }
+func (c *Continue) AsInt() (int64, bool)              { return 0, false }
+func (c *Continue) AsFloat() (float64, bool)          { return 0, false }
+func (c *Continue) AsBool() (bool, bool)              { return false, false }
+func (c *Continue) AsList() ([]Object, bool)          { return nil, false }
+func (c *Continue) AsDict() (map[string]Object, bool) { return nil, false }
+
 type Function struct {
 	Parameters    []*ast.Identifier
 	DefaultValues map[string]ast.Expression
+	Variadic      *ast.Identifier // *args parameter
 	Body          *ast.BlockStatement
 	Env           *Environment
 }
@@ -97,15 +204,30 @@ type Function struct {
 func (f *Function) Type() ObjectType { return FUNCTION_OBJ }
 func (f *Function) Inspect() string  { return "<function>" }
 
+func (f *Function) AsString() (string, bool)          { return "", false }
+func (f *Function) AsInt() (int64, bool)              { return 0, false }
+func (f *Function) AsFloat() (float64, bool)          { return 0, false }
+func (f *Function) AsBool() (bool, bool)              { return false, false }
+func (f *Function) AsList() ([]Object, bool)          { return nil, false }
+func (f *Function) AsDict() (map[string]Object, bool) { return nil, false }
+
 type LambdaFunction struct {
 	Parameters    []*ast.Identifier
 	DefaultValues map[string]ast.Expression
+	Variadic      *ast.Identifier // *args parameter
 	Body          ast.Expression
 	Env           *Environment
 }
 
 func (lf *LambdaFunction) Type() ObjectType { return LAMBDA_OBJ }
 func (lf *LambdaFunction) Inspect() string  { return "<lambda>" }
+
+func (lf *LambdaFunction) AsString() (string, bool)          { return "", false }
+func (lf *LambdaFunction) AsInt() (int64, bool)              { return 0, false }
+func (lf *LambdaFunction) AsFloat() (float64, bool)          { return 0, false }
+func (lf *LambdaFunction) AsBool() (bool, bool)              { return false, false }
+func (lf *LambdaFunction) AsList() ([]Object, bool)          { return nil, false }
+func (lf *LambdaFunction) AsDict() (map[string]Object, bool) { return nil, false }
 
 type BuiltinFunction func(ctx context.Context, args ...Object) Object
 
@@ -115,6 +237,13 @@ type Builtin struct {
 
 func (b *Builtin) Type() ObjectType { return BUILTIN_OBJ }
 func (b *Builtin) Inspect() string  { return "<builtin function>" }
+
+func (b *Builtin) AsString() (string, bool)          { return "", false }
+func (b *Builtin) AsInt() (int64, bool)              { return 0, false }
+func (b *Builtin) AsFloat() (float64, bool)          { return 0, false }
+func (b *Builtin) AsBool() (bool, bool)              { return false, false }
+func (b *Builtin) AsList() ([]Object, bool)          { return nil, false }
+func (b *Builtin) AsDict() (map[string]Object, bool) { return nil, false }
 
 // Library represents a pre-built collection of builtin functions
 // This eliminates the need for function wrappers and provides direct access
@@ -134,6 +263,16 @@ func NewLibrary(functions map[string]*Builtin) *Library {
 func (l *Library) Functions() map[string]*Builtin {
 	return l.functions
 }
+
+func (l *Library) Type() ObjectType { return BUILTIN_OBJ } // Libraries are like builtin objects
+func (l *Library) Inspect() string  { return "<library>" }
+
+func (l *Library) AsString() (string, bool)          { return "", false }
+func (l *Library) AsInt() (int64, bool)              { return 0, false }
+func (l *Library) AsFloat() (float64, bool)          { return 0, false }
+func (l *Library) AsBool() (bool, bool)              { return false, false }
+func (l *Library) AsList() ([]Object, bool)          { return nil, false }
+func (l *Library) AsDict() (map[string]Object, bool) { return nil, false }
 
 type Environment struct {
 	store     map[string]Object
@@ -261,17 +400,24 @@ type List struct {
 
 func (l *List) Type() ObjectType { return LIST_OBJ }
 func (l *List) Inspect() string {
-	var out string
-	out += "["
+	var out strings.Builder
+	out.WriteString("[")
 	for i, el := range l.Elements {
 		if i > 0 {
-			out += ", "
+			out.WriteString(", ")
 		}
-		out += el.Inspect()
+		out.WriteString(el.Inspect())
 	}
-	out += "]"
-	return out
+	out.WriteString("]")
+	return out.String()
 }
+
+func (l *List) AsString() (string, bool)          { return "", false }
+func (l *List) AsInt() (int64, bool)              { return 0, false }
+func (l *List) AsFloat() (float64, bool)          { return 0, false }
+func (l *List) AsBool() (bool, bool)              { return len(l.Elements) > 0, true }
+func (l *List) AsList() ([]Object, bool)          { return l.Elements, true }
+func (l *List) AsDict() (map[string]Object, bool) { return nil, false }
 
 type Tuple struct {
 	Elements []Object
@@ -279,20 +425,27 @@ type Tuple struct {
 
 func (t *Tuple) Type() ObjectType { return TUPLE_OBJ }
 func (t *Tuple) Inspect() string {
-	var out string
-	out += "("
+	var out strings.Builder
+	out.WriteString("(")
 	for i, el := range t.Elements {
 		if i > 0 {
-			out += ", "
+			out.WriteString(", ")
 		}
-		out += el.Inspect()
+		out.WriteString(el.Inspect())
 	}
 	if len(t.Elements) == 1 {
-		out += "," // Single element tuple needs trailing comma
+		out.WriteString(",") // Single element tuple needs trailing comma
 	}
-	out += ")"
-	return out
+	out.WriteString(")")
+	return out.String()
 }
+
+func (t *Tuple) AsString() (string, bool)          { return "", false }
+func (t *Tuple) AsInt() (int64, bool)              { return 0, false }
+func (t *Tuple) AsFloat() (float64, bool)          { return 0, false }
+func (t *Tuple) AsBool() (bool, bool)              { return len(t.Elements) > 0, true }
+func (t *Tuple) AsList() ([]Object, bool)          { return t.Elements, true }
+func (t *Tuple) AsDict() (map[string]Object, bool) { return nil, false }
 
 type Dict struct {
 	Pairs map[string]DictPair
@@ -305,18 +458,33 @@ type DictPair struct {
 
 func (d *Dict) Type() ObjectType { return DICT_OBJ }
 func (d *Dict) Inspect() string {
-	var out string
-	out += "{"
+	var out strings.Builder
+	out.WriteString("{")
 	i := 0
 	for _, pair := range d.Pairs {
 		if i > 0 {
-			out += ", "
+			out.WriteString(", ")
 		}
-		out += pair.Key.Inspect() + ": " + pair.Value.Inspect()
+		out.WriteString(pair.Key.Inspect())
+		out.WriteString(": ")
+		out.WriteString(pair.Value.Inspect())
 		i++
 	}
-	out += "}"
-	return out
+	out.WriteString("}")
+	return out.String()
+}
+
+func (d *Dict) AsString() (string, bool) { return "", false }
+func (d *Dict) AsInt() (int64, bool)     { return 0, false }
+func (d *Dict) AsFloat() (float64, bool) { return 0, false }
+func (d *Dict) AsBool() (bool, bool)     { return len(d.Pairs) > 0, true }
+func (d *Dict) AsList() ([]Object, bool) { return nil, false }
+func (d *Dict) AsDict() (map[string]Object, bool) {
+	result := make(map[string]Object)
+	for key, pair := range d.Pairs {
+		result[key] = pair.Value
+	}
+	return result, true
 }
 
 type HttpResponse struct {
@@ -328,6 +496,13 @@ type HttpResponse struct {
 func (h *HttpResponse) Type() ObjectType { return HTTP_RESP_OBJ }
 func (h *HttpResponse) Inspect() string  { return h.Body }
 
+func (h *HttpResponse) AsString() (string, bool)          { return h.Body, true }
+func (h *HttpResponse) AsInt() (int64, bool)              { return int64(h.StatusCode), true }
+func (h *HttpResponse) AsFloat() (float64, bool)          { return 0, false }
+func (h *HttpResponse) AsBool() (bool, bool)              { return h.StatusCode >= 200 && h.StatusCode < 300, true }
+func (h *HttpResponse) AsList() ([]Object, bool)          { return nil, false }
+func (h *HttpResponse) AsDict() (map[string]Object, bool) { return nil, false }
+
 type Error struct {
 	Message string
 }
@@ -335,9 +510,23 @@ type Error struct {
 func (e *Error) Type() ObjectType { return ERROR_OBJ }
 func (e *Error) Inspect() string  { return "ERROR: " + e.Message }
 
+func (e *Error) AsString() (string, bool)          { return e.Message, true }
+func (e *Error) AsInt() (int64, bool)              { return 0, false }
+func (e *Error) AsFloat() (float64, bool)          { return 0, false }
+func (e *Error) AsBool() (bool, bool)              { return false, true }
+func (e *Error) AsList() ([]Object, bool)          { return nil, false }
+func (e *Error) AsDict() (map[string]Object, bool) { return nil, false }
+
 type Exception struct {
 	Message string
 }
 
 func (ex *Exception) Type() ObjectType { return EXCEPTION_OBJ }
 func (ex *Exception) Inspect() string  { return "EXCEPTION: " + ex.Message }
+
+func (ex *Exception) AsString() (string, bool)          { return ex.Message, true }
+func (ex *Exception) AsInt() (int64, bool)              { return 0, false }
+func (ex *Exception) AsFloat() (float64, bool)          { return 0, false }
+func (ex *Exception) AsBool() (bool, bool)              { return false, true }
+func (ex *Exception) AsList() ([]Object, bool)          { return nil, false }
+func (ex *Exception) AsDict() (map[string]Object, bool) { return nil, false }

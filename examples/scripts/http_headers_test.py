@@ -11,7 +11,7 @@ options = {
 }
 response = requests.get("https://httpbin.org/headers", options)
 if response["status"] == 200:
-    data = json.parse(response["body"])
+    data = json.loads(response["body"])
     print("Request headers were sent successfully")
 else:
     print("GET request failed:", response["status"])
@@ -23,7 +23,7 @@ post_options = {
 }
 
 payload = {"name": "test", "value": 42}
-body = json.stringify(payload)
+body = json.dumps(payload)
 
 response = requests.post("https://httpbin.org/post", body, post_options)
 if response["status"] == 200:

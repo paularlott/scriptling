@@ -164,7 +164,7 @@ func TestJSON(t *testing.T) {
 	p.SetVar("json_str", `{"name":"Alice","age":30}`)
 	result, err := p.Eval(`
 import json
-data = json["parse"](json_str)
+data = json["loads"](json_str)
 data["name"]
 `)
 	if err != nil {
@@ -177,7 +177,7 @@ data["name"]
 
 	result, err = p.Eval(`
 obj = {"key": "value"}
-json["stringify"](obj)
+json["dumps"](obj)
 `)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

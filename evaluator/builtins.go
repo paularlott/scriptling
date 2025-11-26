@@ -35,8 +35,16 @@ var builtins = map[string]*object.Builtin{
 			case *object.Tuple:
 				return &object.Integer{Value: int64(len(arg.Elements))}
 			default:
-				return errors.NewTypeError("STRING, LIST, DICT, or TUPLE", string(args[0].Type()))
+				return errors.NewTypeError("STRING, LIST, DICT, or TUPLE", args[0].Type().String())
 			}
+		},
+	},
+	"type": {
+		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+			if len(args) != 1 {
+				return errors.NewArgumentError(len(args), 1)
+			}
+			return &object.String{Value: args[0].Type().String()}
 		},
 	},
 	"str": {
@@ -65,7 +73,7 @@ var builtins = map[string]*object.Builtin{
 				}
 				return &object.Integer{Value: val}
 			default:
-				return errors.NewTypeError("INTEGER, FLOAT, or STRING", string(arg.Type()))
+				return errors.NewTypeError("INTEGER, FLOAT, or STRING", arg.Type().String())
 			}
 		},
 	},
@@ -87,7 +95,7 @@ var builtins = map[string]*object.Builtin{
 				}
 				return &object.Float{Value: val}
 			default:
-				return errors.NewTypeError("INTEGER, FLOAT, or STRING", string(arg.Type()))
+				return errors.NewTypeError("INTEGER, FLOAT, or STRING", arg.Type().String())
 			}
 		},
 	},
@@ -97,7 +105,7 @@ var builtins = map[string]*object.Builtin{
 				return errors.NewArgumentError(len(args), 2)
 			}
 			if args[0].Type() != object.LIST_OBJ {
-				return errors.NewTypeError("LIST", string(args[0].Type()))
+				return errors.NewTypeError("LIST", args[0].Type().String())
 			}
 			list := args[0].(*object.List)
 			// Modify list in-place (Python behavior)
@@ -111,10 +119,10 @@ var builtins = map[string]*object.Builtin{
 				return errors.NewArgumentError(len(args), 2)
 			}
 			if args[0].Type() != object.LIST_OBJ {
-				return errors.NewTypeError("LIST", string(args[0].Type()))
+				return errors.NewTypeError("LIST", args[0].Type().String())
 			}
 			if args[1].Type() != object.LIST_OBJ {
-				return errors.NewTypeError("LIST", string(args[1].Type()))
+				return errors.NewTypeError("LIST", args[1].Type().String())
 			}
 			list := args[0].(*object.List)
 			other := args[1].(*object.List)
@@ -172,7 +180,7 @@ var builtins = map[string]*object.Builtin{
 				return errors.NewArgumentError(len(args), 1)
 			}
 			if args[0].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("STRING", string(args[0].Type()))
+				return errors.NewTypeError("STRING", args[0].Type().String())
 			}
 			str := args[0].(*object.String).Value
 			return &object.String{Value: strings.ToUpper(str)}
@@ -184,7 +192,7 @@ var builtins = map[string]*object.Builtin{
 				return errors.NewArgumentError(len(args), 1)
 			}
 			if args[0].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("STRING", string(args[0].Type()))
+				return errors.NewTypeError("STRING", args[0].Type().String())
 			}
 			str := args[0].(*object.String).Value
 			return &object.String{Value: strings.ToLower(str)}
@@ -211,7 +219,7 @@ var builtins = map[string]*object.Builtin{
 				return errors.NewArgumentError(len(args), 1)
 			}
 			if args[0].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("STRING", string(args[0].Type()))
+				return errors.NewTypeError("STRING", args[0].Type().String())
 			}
 			str := args[0].(*object.String).Value
 			if len(str) == 0 {
@@ -228,7 +236,7 @@ var builtins = map[string]*object.Builtin{
 				return errors.NewArgumentError(len(args), 1)
 			}
 			if args[0].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("STRING", string(args[0].Type()))
+				return errors.NewTypeError("STRING", args[0].Type().String())
 			}
 			str := args[0].(*object.String).Value
 			result := strings.Title(strings.ToLower(str))
@@ -241,7 +249,7 @@ var builtins = map[string]*object.Builtin{
 				return errors.NewArgumentError(len(args), 1)
 			}
 			if args[0].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("STRING", string(args[0].Type()))
+				return errors.NewTypeError("STRING", args[0].Type().String())
 			}
 			str := args[0].(*object.String).Value
 			result := strings.TrimSpace(str)
@@ -254,7 +262,7 @@ var builtins = map[string]*object.Builtin{
 				return errors.NewArgumentError(len(args), 1)
 			}
 			if args[0].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("STRING", string(args[0].Type()))
+				return errors.NewTypeError("STRING", args[0].Type().String())
 			}
 			str := args[0].(*object.String).Value
 			result := strings.TrimLeft(str, " \t\n\r")
@@ -267,7 +275,7 @@ var builtins = map[string]*object.Builtin{
 				return errors.NewArgumentError(len(args), 1)
 			}
 			if args[0].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("STRING", string(args[0].Type()))
+				return errors.NewTypeError("STRING", args[0].Type().String())
 			}
 			str := args[0].(*object.String).Value
 			result := strings.TrimRight(str, " \t\n\r")
@@ -296,10 +304,10 @@ var builtins = map[string]*object.Builtin{
 				return errors.NewArgumentError(len(args), 2)
 			}
 			if args[0].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("STRING", string(args[0].Type()))
+				return errors.NewTypeError("STRING", args[0].Type().String())
 			}
 			if args[1].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("STRING", string(args[1].Type()))
+				return errors.NewTypeError("STRING", args[1].Type().String())
 			}
 			s := args[0].(*object.String).Value
 			suffix := args[1].(*object.String).Value
@@ -319,7 +327,7 @@ var builtins = map[string]*object.Builtin{
 			case *object.Tuple:
 				elements = arg.Elements
 			default:
-				return errors.NewTypeError("LIST or TUPLE", string(args[0].Type()))
+				return errors.NewTypeError("LIST or TUPLE", args[0].Type().String())
 			}
 
 			// Start with integer 0
@@ -369,7 +377,7 @@ var builtins = map[string]*object.Builtin{
 				elements = make([]object.Object, len(arg.Elements))
 				copy(elements, arg.Elements)
 			default:
-				return errors.NewTypeError("LIST or TUPLE", string(args[0].Type()))
+				return errors.NewTypeError("LIST or TUPLE", args[0].Type().String())
 			}
 
 			// Check for key function
@@ -451,7 +459,7 @@ var builtins = map[string]*object.Builtin{
 			var start, stop, step int64 = 0, 0, 1
 			if len(args) == 1 {
 				if args[0].Type() != object.INTEGER_OBJ {
-					return errors.NewTypeError("INTEGER", string(args[0].Type()))
+					return errors.NewTypeError("INTEGER", args[0].Type().String())
 				}
 				stop = args[0].(*object.Integer).Value
 			} else if len(args) == 2 {
@@ -490,7 +498,7 @@ var builtins = map[string]*object.Builtin{
 				return errors.NewArgumentError(len(args), 1)
 			}
 			if args[0].Type() != object.DICT_OBJ {
-				return errors.NewTypeError("DICT", string(args[0].Type()))
+				return errors.NewTypeError("DICT", args[0].Type().String())
 			}
 			dict := args[0].(*object.Dict)
 			elements := make([]object.Object, 0, len(dict.Pairs))
@@ -506,7 +514,7 @@ var builtins = map[string]*object.Builtin{
 				return errors.NewArgumentError(len(args), 1)
 			}
 			if args[0].Type() != object.DICT_OBJ {
-				return errors.NewTypeError("DICT", string(args[0].Type()))
+				return errors.NewTypeError("DICT", args[0].Type().String())
 			}
 			dict := args[0].(*object.Dict)
 			elements := make([]object.Object, 0, len(dict.Pairs))
@@ -522,7 +530,7 @@ var builtins = map[string]*object.Builtin{
 				return errors.NewArgumentError(len(args), 1)
 			}
 			if args[0].Type() != object.DICT_OBJ {
-				return errors.NewTypeError("DICT", string(args[0].Type()))
+				return errors.NewTypeError("DICT", args[0].Type().String())
 			}
 			dict := args[0].(*object.Dict)
 			elements := make([]object.Object, 0, len(dict.Pairs))
@@ -556,7 +564,7 @@ func GetImportBuiltin() *object.Builtin {
 				return errors.NewArgumentError(len(args), 1)
 			}
 			if args[0].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("STRING", string(args[0].Type()))
+				return errors.NewTypeError("STRING", args[0].Type().String())
 			}
 			if importCallback == nil {
 				return errors.NewError(errors.ErrImportError)

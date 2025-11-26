@@ -17,11 +17,11 @@ var hashlibLibrary = object.NewLibrary(map[string]*object.Builtin{
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			str, ok := args[0].(*object.String)
+			str, ok := args[0].AsString()
 			if !ok {
-				return errors.NewTypeError("STRING", string(args[0].Type()))
+				return errors.NewTypeError("STRING", args[0].Type().String())
 			}
-			hash := sha256.Sum256([]byte(str.Value))
+			hash := sha256.Sum256([]byte(str))
 			return &object.String{Value: hex.EncodeToString(hash[:])}
 		},
 	},
@@ -30,11 +30,11 @@ var hashlibLibrary = object.NewLibrary(map[string]*object.Builtin{
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			str, ok := args[0].(*object.String)
+			str, ok := args[0].AsString()
 			if !ok {
-				return errors.NewTypeError("STRING", string(args[0].Type()))
+				return errors.NewTypeError("STRING", args[0].Type().String())
 			}
-			hash := sha1.Sum([]byte(str.Value))
+			hash := sha1.Sum([]byte(str))
 			return &object.String{Value: hex.EncodeToString(hash[:])}
 		},
 	},
@@ -43,11 +43,11 @@ var hashlibLibrary = object.NewLibrary(map[string]*object.Builtin{
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			str, ok := args[0].(*object.String)
+			str, ok := args[0].AsString()
 			if !ok {
-				return errors.NewTypeError("STRING", string(args[0].Type()))
+				return errors.NewTypeError("STRING", args[0].Type().String())
 			}
-			hash := md5.Sum([]byte(str.Value))
+			hash := md5.Sum([]byte(str))
 			return &object.String{Value: hex.EncodeToString(hash[:])}
 		},
 	},

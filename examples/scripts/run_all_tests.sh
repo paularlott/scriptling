@@ -17,6 +17,7 @@ tests=(
     # Operators
     "test_operators_membership.py"
     "test_operators_augmented.py"
+    "test_bitwise_operators.py"
 
     # Scope
     "test_scope_global.py"
@@ -43,6 +44,8 @@ tests=(
     "test_lib_import.py"
     "test_requests_api.py"
     "test_requests_methods.py"
+		"test_datetime.py"
+		"test_time.py"
 
     # Small features
     "test_booleans.py"
@@ -61,6 +64,7 @@ tests=(
     "test_lambda.py"
     "test_tuples.py"
 		"test_kwargs.py"
+    "test_variadic_args.py"
 
     # Examples (keep as-is)
     "variables.py"

@@ -4,7 +4,7 @@ print("=== Testing Import ===")
 
 # Import single library
 import json
-data = json.parse('{"test":"value"}')
+data = json.loads('{"test":"value"}')
 print(f"json import works: {data['test']}")
 
 # Import multiple libraries

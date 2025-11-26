@@ -36,6 +36,40 @@ print(f"min(3, 1, 4, 1, 5) = {result}")
 result = math.max(3, 1, 4, 1, 5)
 print(f"max(3, 1, 4, 1, 5) = {result}")
 
+# Trigonometric functions
+result = math.sin(0)
+print(f"sin(0) = {result}")
+
+result = math.cos(0)
+print(f"cos(0) = {result}")
+
+result = math.tan(0)
+print(f"tan(0) = {result}")
+
+# Logarithmic and exponential
+result = math.log(1)
+print(f"log(1) = {result}")
+
+result = math.exp(0)
+print(f"exp(0) = {result}")
+
+# Angle conversion
+result = math.degrees(math.pi())
+print(f"degrees(π) = {result}")
+
+result = math.radians(180)
+print(f"radians(180) = {result}")
+
+# Modular arithmetic
+result = math.fmod(5.5, 2.0)
+print(f"fmod(5.5, 2.0) = {result}")
+
+result = math.gcd(48, 18)
+print(f"gcd(48, 18) = {result}")
+
+result = math.factorial(5)
+print(f"factorial(5) = {result}")
+
 # Constants
 pi = math.pi()
 print(f"pi = {pi}")
@@ -47,5 +81,7 @@ print(f"e = {e}")
 radius = 5
 area = math.pi() * math.pow(radius, 2)
 print(f"Circle area (r=5): {area}")
+
+print("✓ All math library tests passed")
 
 print("✓ All math library tests passed")

@@ -1,6 +1,10 @@
 package scriptling
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/paularlott/scriptling/object"
+)
 
 // === COMPILE TIME (Lexer + Parser) ===
 func BenchmarkCompile_Simple(b *testing.B) {
@@ -235,7 +239,7 @@ func BenchmarkRuntime_JSONParse(b *testing.B) {
 	p := New()
 	p.Eval("import json")
 	for i := 0; i < b.N; i++ {
-		p.Eval(`data = json.parse('{"name":"Alice","age":30}')`)
+		p.Eval(`data = json.loads('{"name":"Alice","age":30}')`)
 	}
 }
 
@@ -244,7 +248,7 @@ func BenchmarkRuntime_JSONStringify(b *testing.B) {
 	p.Eval("import json")
 	p.Eval(`data = {"name": "Alice", "age": 30}`)
 	for i := 0; i < b.N; i++ {
-		p.Eval("result = json.stringify(data)")
+		p.Eval("result = json.dumps(data)")
 	}
 }
 
@@ -287,7 +291,7 @@ func BenchmarkScenario_DataProcessing(b *testing.B) {
 	p := New()
 	p.Eval("import json")
 	for i := 0; i < b.N; i++ {
-		p.Eval(`data = json.parse('{"items":[1,2,3,4,5]}')\ntotal = 0\nfor item in data["items"]:\n    total = total + item\nresult = total`)
+		p.Eval(`data = json.loads('{"items":[1,2,3,4,5]}')\ntotal = 0\nfor item in data["items"]:\n    total = total + item\nresult = total`)
 	}
 }
 
@@ -296,4 +300,26 @@ func BenchmarkScenario_ConfigLogic(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		p.Eval(`config = {"env": "prod", "timeout": 30}\nif config["env"] == "prod":\n    timeout = config["timeout"] * 2\nelse:\n    timeout = config["timeout"]`)
 	}
+}
+
+func BenchmarkAccessorOverhead(b *testing.B) {
+	// Create test objects
+	str := &object.String{Value: "test"}
+	intObj := &object.Integer{Value: 42}
+
+	b.Run("DirectAccess", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = str.Value
+			_ = intObj.Value
+		}
+	})
+
+	b.Run("AccessorMethods", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			s, _ := str.AsString()
+			n, _ := intObj.AsInt()
+			_ = s
+			_ = n
+		}
+	})
 }

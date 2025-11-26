@@ -9,24 +9,24 @@ import (
 )
 
 var jsonLibrary = object.NewLibrary(map[string]*object.Builtin{
-	"parse": {
+	"loads": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewError("wrong number of arguments. got=%d, want=1", len(args))
 			}
 			if args[0].Type() != object.STRING_OBJ {
-				return errors.NewError("argument to parse must be STRING")
+				return errors.NewError("argument to loads must be STRING")
 			}
-			str := args[0].(*object.String).Value
+			str, _ := args[0].AsString()
 			var data interface{}
 			err := json.Unmarshal([]byte(str), &data)
 			if err != nil {
-				return errors.NewError("json parse error: %s", err.Error())
+				return errors.NewError("json loads error: %s", err.Error())
 			}
 			return jsonToObject(data)
 		},
 	},
-	"stringify": {
+	"dumps": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewError("wrong number of arguments. got=%d, want=1", len(args))
@@ -34,7 +34,7 @@ var jsonLibrary = object.NewLibrary(map[string]*object.Builtin{
 			data := objectToJSON(args[0])
 			bytes, err := json.Marshal(data)
 			if err != nil {
-				return errors.NewError("json stringify error: %s", err.Error())
+				return errors.NewError("json dumps error: %s", err.Error())
 			}
 			return &object.String{Value: string(bytes)}
 		},
