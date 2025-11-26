@@ -1,3 +1,10 @@
+<div align="center">
+<img src="docs/images/mascot_small.png" alt="Scriptling" />
+
+![GitHub License](https://img.shields.io/github/license/paularlott/scriptling)
+
+</div>
+
 # Scriptling - Python-like Scripting Language for Go
 
 A minimal, sandboxed interpreter for LLM agents to execute code and interact with REST APIs. Python-inspired syntax designed for embedding in Go applications.
