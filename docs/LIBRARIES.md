@@ -1,203 +1,217 @@
-# Scriptling Library System
+# Scriptling Libraries
 
-## Overview
+Scriptling provides both core functions (always available) and optional libraries (loaded on demand).
 
-Scriptling uses an optional library system for JSON and HTTP functionality. This keeps the core interpreter lightweight and fast.
+## Core Functions
 
-## Design
+Always available without importing:
 
-- **Core builtins**: Essential functions always available (`print`, `len`, `str`, `int`, `float`, string operations)
-- **Optional libraries**: JSON and HTTP loaded on demand
-- **Custom libraries**: Easy to create and register your own
+### I/O
+- `print(value)` - Output to console
 
-## Loading Libraries
+### Type Conversions
+- `str(value)` - Convert to string
+- `int(value)` - Convert to integer
+- `float(value)` - Convert to float
 
-### From Go
+### String Functions
+- `len(string)` - Get length
+- `upper(string)` - Uppercase
+- `lower(string)` - Lowercase
+- `capitalize(string)` - Capitalize first letter
+- `title(string)` - Title case
+- `split(string, sep)` - Split to list
+- `join(list, sep)` - Join from list
+- `replace(str, old, new)` - Replace substring
+- `strip(string)` - Trim whitespace from both ends
+- `lstrip(string)` - Trim whitespace from left
+- `rstrip(string)` - Trim whitespace from right
+- `startswith(string, prefix)` - Check if string starts with prefix
+- `endswith(string, suffix)` - Check if string ends with suffix
 
-```go
-// Option 1: Load at creation
-p := scriptling.New("json", "http")
+### List Functions
+- `len(list)` - Get length
+- `append(list, item)` - Append item (modifies list in-place)
+- `extend(list, other_list)` - Append elements from another list (modifies list in-place)
 
-// Option 2: No libraries (lightweight)
-p := scriptling.New()
+### System
+- `import library_name` - Load library dynamically
 
-// Option 3: Load specific library
-p := scriptling.New("json")
-```
+## Optional Libraries
 
-### From Scriptling Scripts
+These libraries must be imported before use:
+
+### Datetime Library
+Datetime functions for formatting and parsing dates and times.
 
 ```python
-# Import libraries dynamically
-import json
-import requests
+import datetime
 
-# Now use them
-data = json.parse('{"name":"Alice"}')
-response = requests.get("https://api.example.com/data", 10)
+now = datetime.now()              # "2025-11-26 11:34:15"
+utc = datetime.utcnow()           # "2025-11-26 03:34:15"
+today = datetime.today()          # "2025-11-26"
+iso = datetime.isoformat()        # "2025-11-26T11:34:15Z"
+future = datetime.add_days(now_timestamp, 7)  # Add 7 days
+formatted = datetime.now("%Y-%m-%d %H:%M:%S")  # Custom format
 ```
 
-## Available Libraries
+[See datetime.md](libraries/datetime.md) for complete documentation.
 
-### math
+### Math Library
+Mathematical functions and constants.
 
-**Functions:**
-- `math.sqrt(x)` - Square root
-- `math.pow(base, exp)` - Power (base^exp)
-- `math.abs(x)` - Absolute value
-- `math.floor(x)` - Floor (round down to integer)
-- `math.ceil(x)` - Ceiling (round up to integer)
-- `math.round(x)` - Round to nearest integer
-- `math.min(a, b, ...)` - Minimum value (variable arguments)
-- `math.max(a, b, ...)` - Maximum value (variable arguments)
-- `math.pi()` - Pi constant (3.14159...)
-- `math.e()` - Euler's number (2.71828...)
-
-**Example:**
 ```python
 import math
 
-# Basic operations
-result = math.sqrt(16)  # 4.0
-power = math.pow(2, 8)  # 256.0
-absolute = math.abs(-5) # 5
-
-# Rounding
-floor_val = math.floor(3.7)  # 3
-ceil_val = math.ceil(3.2)    # 4
-round_val = math.round(3.5)  # 4
-
-# Min/Max
-minimum = math.min(3, 1, 4, 1, 5)  # 1
-maximum = math.max(3, 1, 4, 1, 5)  # 5
-
-# Constants
-pi = math.pi()  # 3.141592653589793
-e = math.e()    # 2.718281828459045
-
-# Calculate circle area
-radius = 5
-area = math.pi() * math.pow(radius, 2)
-print("Area: " + str(area))  # Area: 78.53981633974483
+result = math.sqrt(16)      # 4.0
+power = math.pow(2, 8)      # 256.0
+pi = math.pi()              # 3.14159...
 ```
 
-### time
+[See math.md](libraries/math.md) for complete documentation.
 
-**Functions:**
-- `time.perf_counter()` - High-resolution timer for benchmarking (monotonic)
-- `time.time()` - Get current Unix timestamp (seconds since epoch as float)
-- `time.sleep(seconds)` - Sleep for specified seconds (accepts int or float)
-- `time.strftime(format, timestamp)` - Format timestamp to string
-- `time.strptime(string, format)` - Parse time string to timestamp
+### Time Library
+Time-related functions for timestamps and formatting.
 
-**Format codes:**
-- `%Y` - Year (4 digits)
-- `%m` - Month (01-12)
-- `%d` - Day (01-31)
-- `%H` - Hour (00-23)
-- `%M` - Minute (00-59)
-- `%S` - Second (00-59)
-
-**Example:**
 ```python
 import time
 
-# Benchmark code (use perf_counter for precision)
-start = time.perf_counter()
-for i in range(1000):
-    x = i * 2
-end = time.perf_counter()
-elapsed = end - start
-print("Elapsed: " + str(elapsed) + " seconds")
-print("Ops/sec: " + str(1000 / elapsed))
-
-# Get current timestamp
-now = time.time()  # 1732435200.123456
-print("Timestamp: " + str(now))
-
-# Format time
+now = time.time()           # Current timestamp
 formatted = time.strftime("%Y-%m-%d %H:%M:%S", now)
-print("Formatted: " + formatted)  # "2024-11-24 17:43:42"
-
-# Parse time string
-timestamp = time.strptime("2024-01-15 10:30:45", "%Y-%m-%d %H:%M:%S")
-print("Parsed: " + str(timestamp))  # 1705314645.0
-
-# Sleep
-print("Waiting...")
-time.sleep(1)      # Sleep 1 second
-time.sleep(0.5)    # Sleep 0.5 seconds
-print("Done!")
+time.sleep(1)               # Sleep 1 second
 ```
 
-### json
+[See time.md](libraries/time.md) for complete documentation.
 
-**Functions:**
-- `json.parse(string)` - Parse JSON string to Scriptling objects
-- `json.stringify(object)` - Convert Scriptling objects to JSON string
+### JSON Library
+Parse and generate JSON data.
 
-**Example:**
 ```python
 import json
 
-# Parse
-data = json.parse('{"users":[{"name":"Alice"},{"name":"Bob"}]}')
-first_user = data["users"][0]["name"]  # "Alice"
-
-# Stringify
-obj = {"status": "success", "count": "42"}
-json_str = json.stringify(obj)  # '{"count":"42","status":"success"}'
+data = json.loads('{"name":"Alice"}')
+json_str = json.dumps({"key": "value"})
 ```
 
-### regex
+[See json.md](libraries/json.md) for complete documentation.
 
-**Functions:**
-- `re.match(pattern, text)` - Returns True if pattern matches text
-- `re.find(pattern, text)` - Returns first match or None
-- `re.findall(pattern, text)` - Returns list of all matches
-- `re.replace(pattern, text, replacement)` - Replace all matches
-- `re.split(pattern, text)` - Split text by pattern
+### Regex Library
+Regular expression pattern matching and text processing.
 
-**Example:**
 ```python
 import re
 
-# Match
-if re.match("[0-9]+", "abc123"):
-    print("Contains digits")
-
-# Find
-email = re.find("[a-z]+@[a-z]+\.[a-z]+", "Contact: user@example.com")
-print(email)  # "user@example.com"
-
-# Find all
-phones = re.findall("[0-9]{3}-[0-9]{4}", "Call 555-1234 or 555-5678")
-print(phones)  # ["555-1234", "555-5678"]
-
-# Replace
-text = re.replace("[0-9]+", "Price: 100", "REDACTED")
-print(text)  # "Price: REDACTED"
-
-# Split
-parts = re.split("[,;]", "one,two;three")
-print(parts)  # ["one", "two", "three"]
+matches = re.findall("[0-9]+", "abc123def456")
+result = re.replace("[0-9]+", "XXX", "Price: 100")
+escaped = re.escape("a.b+c")
+full_match = re.fullmatch("[0-9]+", "123")
 ```
 
-### regex
+[See regex.md](libraries/regex.md) for complete documentation.
 
-**Functions:**
-- `re.match(pattern, text)` - Check if pattern matches (returns boolean)
-- `re.find(pattern, text)` - Find first match (returns string or None)
-- `re.findall(pattern, text)` - Find all matches (returns list)
-- `re.replace(pattern, text, replacement)` - Replace matches (returns string)
-- `re.split(pattern, text)` - Split by pattern (returns list)
+### HTTP Library
+Make HTTP requests (requires manual registration).
 
-**Example:**
+```go
+// In Go code
+p.RegisterLibrary("http", extlibs.HTTPLibrary())
+```
+
 ```python
-import re
+import http
 
-# Extract email
-email = re.find("[a-z]+@[a-z]+\.[a-z]+", "Contact: user@example.com")
+response = http.get("https://api.example.com/data")
+if response.status_code == 200:
+    data = response.json()
+```
+
+[See http.md](libraries/http.md) for complete documentation.
+
+### Base64 Library
+Base64 encoding and decoding.
+
+```python
+import base64
+
+encoded = base64.encode("hello")
+decoded = base64.decode(encoded)
+```
+
+[See base64.md](libraries/base64.md) for complete documentation.
+
+### Hashlib Library
+Cryptographic hash functions.
+
+```python
+import hashlib
+
+md5 = hashlib.md5("data")
+sha256 = hashlib.sha256("data")
+```
+
+[See hashlib.md](libraries/hashlib.md) for complete documentation.
+
+### Random Library
+Random number generation.
+
+```python
+import random
+
+num = random.randint(1, 100)
+choice = random.choice(["a", "b", "c"])
+```
+
+[See random.md](libraries/random.md) for complete documentation.
+
+### URL Library
+URL parsing, encoding, and manipulation.
+
+```python
+import lib
+
+parsed = lib.urlparse("https://example.com/path?query=value")
+encoded = lib.quote("hello world")
+parts = lib.urlsplit("https://example.com/path?query=value#fragment")
+query_dict = lib.parse_qs("key=value1&key=value2")
+query_str = lib.urlencode({"key": "value", "list": ["a", "b"]})
+```
+
+[See url.md](libraries/url.md) for complete documentation.
+
+## Loading Libraries
+
+### Automatic Loading
+
+```python
+# Import loads the library automatically
+import json
+import math
+
+# Now use them
+data = json.parse('{"key": "value"}')
+result = math.sqrt(16)
+```
+
+### Manual Registration (HTTP)
+
+Some libraries require manual registration in Go:
+
+```go
+import "github.com/paularlott/scriptling/extlibs"
+
+p := scriptling.New()
+p.RegisterLibrary("http", extlibs.HTTPLibrary())
+```
+
+## Creating Custom Libraries
+
+To create custom libraries, see [EXTENDING_SCRIPTLING.md](EXTENDING_SCRIPTLING.md).
+
+## Performance Notes
+
+- Core functions: Zero overhead, always available
+- Optional libraries: Loaded on first import, cached thereafter
+- HTTP library: Requires explicit registration for security
 
 # Find all numbers
 numbers = re.findall("[0-9]+", "abc123def456")

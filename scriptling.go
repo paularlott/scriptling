@@ -19,14 +19,15 @@ type Scriptling struct {
 }
 
 var availableLibraries = map[string]*object.Library{
-	"json":    stdlib.JSONLibrary(),
-	"re":      stdlib.ReLibrary(),
-	"time":    stdlib.GetTimeLibrary(),
-	"math":    stdlib.GetMathLibrary(),
-	"base64":  stdlib.GetBase64Library(),
-	"hashlib": stdlib.GetHashlibLibrary(),
-	"random":  stdlib.GetRandomLibrary(),
-	"url":     stdlib.GetURLLibrary(),
+	"json":     stdlib.JSONLibrary(),
+	"re":       stdlib.ReLibrary(),
+	"time":     stdlib.GetTimeLibrary(),
+	"datetime": stdlib.GetDatetimeLibrary(),
+	"math":     stdlib.GetMathLibrary(),
+	"base64":   stdlib.GetBase64Library(),
+	"hashlib":  stdlib.GetHashlibLibrary(),
+	"random":   stdlib.GetRandomLibrary(),
+	"lib":      stdlib.GetURLLibrary(),
 }
 
 func New() *Scriptling {

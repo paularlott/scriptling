@@ -10,7 +10,7 @@ print(f"GET status: {response.status_code}")
 
 # POST request
 import json
-body = json.stringify({"test": "data"})
+body = json.dumps({"test": "data"})
 response = requests.post("https://httpbin.org/post", body, {"timeout": 10})
 print(f"POST status: {response.status_code}")
 

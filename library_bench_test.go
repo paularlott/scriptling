@@ -33,8 +33,8 @@ func BenchmarkJSONOperations(b *testing.B) {
 	p := New()
 	script := `
 import json
-data = json.parse('{"key":"value","num":42}')
-result = json.stringify(data)
+data = json.loads('{"key":"value","num":42}')
+result = json.dumps(data)
 `
 
 	b.ResetTimer()
@@ -52,7 +52,7 @@ import time
 import base64
 
 x = math.sqrt(25)
-data = json.parse('{"test":123}')
+data = json.loads('{"test":123}')
 encoded = base64.encode("hello")
 `
 

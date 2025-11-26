@@ -58,7 +58,7 @@ func TestImportBuiltin(t *testing.T) {
 	p := New()
 	_, err := p.Eval(`
 import json
-data = json.parse('{"key":"value"}')
+data = json.loads('{"key":"value"}')
 result = data["key"]
 `)
 	if err != nil {
@@ -130,7 +130,7 @@ func TestDotNotation(t *testing.T) {
 	p := New()
 	_, err := p.Eval(`
 import json
-data = json.parse('{"name":"Alice"}')
+data = json.loads('{"name":"Alice"}')
 result = data["name"]
 `)
 	if err != nil {

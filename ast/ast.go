@@ -177,6 +177,7 @@ type FunctionLiteral struct {
 	Token         token.Token
 	Parameters    []*Identifier
 	DefaultValues map[string]Expression // parameter name -> default value
+	Variadic      *Identifier           // *args parameter (optional)
 	Body          *BlockStatement
 }
 
@@ -347,7 +348,8 @@ type Lambda struct {
 	Token         token.Token
 	Parameters    []*Identifier
 	DefaultValues map[string]Expression
-	Body          Expression // single expression, not block
+	Variadic      *Identifier // *args parameter (optional)
+	Body          Expression  // single expression, not block
 }
 
 func (l *Lambda) expressionNode()      {}

@@ -12,37 +12,46 @@ import (
 const (
 	_ int = iota
 	LOWEST
-	OR
-	AND
-	EQUALS
-	LESSGREATER
-	SUM
-	PRODUCT
-	POWER
-	PREFIX
-	CALL
+	OR          // Logical OR
+	BIT_OR      // Bitwise OR |
+	BIT_XOR     // Bitwise XOR ^
+	BIT_AND     // Bitwise AND &
+	AND         // Logical AND
+	EQUALS      // ==, !=
+	LESSGREATER // <, >, <=, >=
+	BIT_SHIFT   // <<, >>
+	SUM         // +, -
+	PRODUCT     // *, /, %
+	POWER       // **
+	PREFIX      // -, not, ~
+	CALL        // function calls, indexing
 )
 
 var precedences = map[token.TokenType]int{
-	token.OR:       OR,
-	token.AND:      AND,
-	token.EQ:       EQUALS,
-	token.NOT_EQ:   EQUALS,
-	token.IN:       EQUALS,
-	token.NOT_IN:   EQUALS,
-	token.LT:       LESSGREATER,
-	token.GT:       LESSGREATER,
-	token.LTE:      LESSGREATER,
-	token.GTE:      LESSGREATER,
-	token.PLUS:     SUM,
-	token.MINUS:    SUM,
-	token.SLASH:    PRODUCT,
-	token.ASTERISK: PRODUCT,
-	token.PERCENT:  PRODUCT,
-	token.POW:      POWER,
-	token.LPAREN:   CALL,
-	token.LBRACKET: CALL,
-	token.DOT:      CALL,
+	token.OR:        OR,
+	token.PIPE:      BIT_OR,
+	token.CARET:     BIT_XOR,
+	token.AMPERSAND: BIT_AND,
+	token.AND:       AND,
+	token.EQ:        EQUALS,
+	token.NOT_EQ:    EQUALS,
+	token.IN:        EQUALS,
+	token.NOT_IN:    EQUALS,
+	token.LT:        LESSGREATER,
+	token.GT:        LESSGREATER,
+	token.LTE:       LESSGREATER,
+	token.GTE:       LESSGREATER,
+	token.LSHIFT:    BIT_SHIFT,
+	token.RSHIFT:    BIT_SHIFT,
+	token.PLUS:      SUM,
+	token.MINUS:     SUM,
+	token.SLASH:     PRODUCT,
+	token.ASTERISK:  PRODUCT,
+	token.PERCENT:   PRODUCT,
+	token.POW:       POWER,
+	token.LPAREN:    CALL,
+	token.LBRACKET:  CALL,
+	token.DOT:       CALL,
 }
 
 type Parser struct {
@@ -75,6 +84,7 @@ func New(l *lexer.Lexer) *Parser {
 	p.registerPrefix(token.NONE, p.parseNone)
 	p.registerPrefix(token.MINUS, p.parsePrefixExpression)
 	p.registerPrefix(token.NOT, p.parsePrefixExpression)
+	p.registerPrefix(token.TILDE, p.parsePrefixExpression)
 	p.registerPrefix(token.LPAREN, p.parseGroupedExpression)
 	p.registerPrefix(token.LBRACKET, p.parseListLiteral)
 	p.registerPrefix(token.LBRACE, p.parseDictLiteral)
@@ -97,6 +107,11 @@ func New(l *lexer.Lexer) *Parser {
 	p.registerInfix(token.OR, p.parseInfixExpression)
 	p.registerInfix(token.IN, p.parseInfixExpression)
 	p.registerInfix(token.NOT_IN, p.parseInfixExpression)
+	p.registerInfix(token.AMPERSAND, p.parseInfixExpression)
+	p.registerInfix(token.PIPE, p.parseInfixExpression)
+	p.registerInfix(token.CARET, p.parseInfixExpression)
+	p.registerInfix(token.LSHIFT, p.parseInfixExpression)
+	p.registerInfix(token.RSHIFT, p.parseInfixExpression)
 	p.registerInfix(token.LPAREN, p.parseCallExpression)
 	p.registerInfix(token.LBRACKET, p.parseIndexExpression)
 	p.registerInfix(token.DOT, p.parseIndexExpression)
@@ -227,7 +242,9 @@ func (p *Parser) parseStatement() ast.Statement {
 
 func (p *Parser) isAugmentedAssign() bool {
 	return p.peekTokenIs(token.PLUS_EQ) || p.peekTokenIs(token.MINUS_EQ) ||
-		p.peekTokenIs(token.MUL_EQ) || p.peekTokenIs(token.DIV_EQ) || p.peekTokenIs(token.MOD_EQ)
+		p.peekTokenIs(token.MUL_EQ) || p.peekTokenIs(token.DIV_EQ) || p.peekTokenIs(token.MOD_EQ) ||
+		p.peekTokenIs(token.AND_EQ) || p.peekTokenIs(token.OR_EQ) || p.peekTokenIs(token.XOR_EQ) ||
+		p.peekTokenIs(token.LSHIFT_EQ) || p.peekTokenIs(token.RSHIFT_EQ)
 }
 
 func (p *Parser) parseAssignStatement() *ast.AssignStatement {
@@ -780,7 +797,7 @@ func (p *Parser) parseFunctionStatement() *ast.FunctionStatement {
 	}
 
 	stmt.Function = &ast.FunctionLiteral{Token: stmt.Token}
-	stmt.Function.Parameters, stmt.Function.DefaultValues = p.parseFunctionParameters()
+	stmt.Function.Parameters, stmt.Function.DefaultValues, stmt.Function.Variadic = p.parseFunctionParameters()
 
 	if !p.expectPeek(token.COLON) {
 		return nil
@@ -791,16 +808,29 @@ func (p *Parser) parseFunctionStatement() *ast.FunctionStatement {
 	return stmt
 }
 
-func (p *Parser) parseFunctionParameters() ([]*ast.Identifier, map[string]ast.Expression) {
+func (p *Parser) parseFunctionParameters() ([]*ast.Identifier, map[string]ast.Expression, *ast.Identifier) {
 	identifiers := []*ast.Identifier{}
 	defaults := make(map[string]ast.Expression)
+	var variadic *ast.Identifier
 
 	if p.peekTokenIs(token.RPAREN) {
 		p.nextToken()
-		return identifiers, defaults
+		return identifiers, defaults, nil
 	}
 
 	p.nextToken()
+
+	// Check for *args
+	if p.curTokenIs(token.ASTERISK) {
+		if !p.expectPeek(token.IDENT) {
+			return nil, nil, nil
+		}
+		variadic = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+		if !p.expectPeek(token.RPAREN) {
+			return nil, nil, nil
+		}
+		return identifiers, defaults, variadic
+	}
 
 	ident := &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
 	identifiers = append(identifiers, ident)
@@ -815,6 +845,19 @@ func (p *Parser) parseFunctionParameters() ([]*ast.Identifier, map[string]ast.Ex
 	for p.peekTokenIs(token.COMMA) {
 		p.nextToken()
 		p.nextToken()
+
+		// Check for *args
+		if p.curTokenIs(token.ASTERISK) {
+			if !p.expectPeek(token.IDENT) {
+				return nil, nil, nil
+			}
+			variadic = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+			if !p.expectPeek(token.RPAREN) {
+				return nil, nil, nil
+			}
+			return identifiers, defaults, variadic
+		}
+
 		ident := &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
 		identifiers = append(identifiers, ident)
 
@@ -827,10 +870,10 @@ func (p *Parser) parseFunctionParameters() ([]*ast.Identifier, map[string]ast.Ex
 	}
 
 	if !p.expectPeek(token.RPAREN) {
-		return nil, nil
+		return nil, nil, nil
 	}
 
-	return identifiers, defaults
+	return identifiers, defaults, variadic
 }
 
 func (p *Parser) parseForStatement() *ast.ForStatement {
@@ -1012,7 +1055,7 @@ func (p *Parser) parseLambda() ast.Expression {
 
 	// Parse parameters (optional)
 	if !p.peekTokenIs(token.COLON) {
-		lambda.Parameters, lambda.DefaultValues = p.parseLambdaParameters()
+		lambda.Parameters, lambda.DefaultValues, lambda.Variadic = p.parseLambdaParameters()
 	} else {
 		lambda.Parameters = []*ast.Identifier{}
 		lambda.DefaultValues = make(map[string]ast.Expression)
@@ -1028,14 +1071,22 @@ func (p *Parser) parseLambda() ast.Expression {
 	return lambda
 }
 
-func (p *Parser) parseLambdaParameters() ([]*ast.Identifier, map[string]ast.Expression) {
+func (p *Parser) parseLambdaParameters() ([]*ast.Identifier, map[string]ast.Expression, *ast.Identifier) {
 	identifiers := []*ast.Identifier{}
 	defaults := make(map[string]ast.Expression)
+	var variadic *ast.Identifier
 
 	p.nextToken()
 
 	if p.curTokenIs(token.COLON) {
-		return identifiers, defaults
+		return identifiers, defaults, nil
+	}
+
+	// Check for *args
+	if p.curTokenIs(token.ASTERISK) {
+		p.nextToken()
+		variadic = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+		return identifiers, defaults, variadic
 	}
 
 	ident := &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
@@ -1051,6 +1102,14 @@ func (p *Parser) parseLambdaParameters() ([]*ast.Identifier, map[string]ast.Expr
 	for p.peekTokenIs(token.COMMA) {
 		p.nextToken()
 		p.nextToken()
+
+		// Check for *args
+		if p.curTokenIs(token.ASTERISK) {
+			p.nextToken()
+			variadic = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+			return identifiers, defaults, variadic
+		}
+
 		ident := &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
 		identifiers = append(identifiers, ident)
 
@@ -1062,7 +1121,7 @@ func (p *Parser) parseLambdaParameters() ([]*ast.Identifier, map[string]ast.Expr
 		}
 	}
 
-	return identifiers, defaults
+	return identifiers, defaults, variadic
 }
 
 func (p *Parser) skipWhitespace() {

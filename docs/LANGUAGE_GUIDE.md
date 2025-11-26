@@ -102,7 +102,60 @@ x -= y   # x = x - y
 x *= y   # x = x * y
 x /= y   # x = x / y
 x %= y   # x = x % y
+x &= y   # x = x & y (bitwise AND)
+x |= y   # x = x | y (bitwise OR)
+x ^= y   # x = x ^ y (bitwise XOR)
+x <<= y  # x = x << y (left shift)
+x >>= y  # x = x >> y (right shift)
 ```
+
+### Bitwise Operators
+Bitwise operators work on integers at the binary level, following Python's behavior:
+
+```python
+~x       # Bitwise NOT (one's complement)
+x & y    # Bitwise AND
+x | y    # Bitwise OR
+x ^ y    # Bitwise XOR (exclusive or)
+x << y   # Left shift (multiply by 2^y)
+x >> y   # Right shift (divide by 2^y, floor division)
+
+# Examples
+print(~5)        # -6 (bitwise NOT using two's complement)
+print(12 & 10)   # 8  (1100 & 1010 = 1000)
+print(12 | 10)   # 14 (1100 | 1010 = 1110)
+print(12 ^ 10)   # 6  (1100 ^ 1010 = 0110)
+print(5 << 2)    # 20 (5 * 2^2 = 5 * 4)
+print(20 >> 2)   # 5  (20 / 2^2 = 20 / 4)
+
+# Augmented assignment
+x = 12
+x &= 10  # x is now 8
+x |= 6   # x is now 14
+x ^= 3   # x is now 13
+x <<= 1  # x is now 26
+x >>= 2  # x is now 6
+
+# Practical use cases
+# Extract lower 4 bits
+value = 170  # 0b10101010
+lower_bits = value & 15  # 10 (0b1010)
+
+# Set specific bits
+flags = 0
+flags |= 4   # Set bit 2
+flags |= 8   # Set bit 3
+
+# Toggle bits
+state = 15   # 0b1111
+state ^= 5   # Toggle bits 0 and 2, result: 10 (0b1010)
+
+# Fast multiplication/division by powers of 2
+fast_mult = 7 << 3   # 7 * 8 = 56
+fast_div = 56 >> 3   # 56 / 8 = 7
+```
+
+**Note**: Bitwise operators only work with integers. Negative numbers use two's complement representation, matching Python's behavior.
 
 ### Comparison
 ```python
@@ -146,13 +199,18 @@ if 0 < score < 100:
 ### Precedence (highest to lowest)
 1. Parentheses `()`
 2. Function calls, indexing `func()`, `list[0]`
-3. Unary `-`, `not`
-4. `*`, `/`, `%`
-5. `+`, `-`
-6. `<`, `>`, `<=`, `>=`
-7. `==`, `!=`
-8. `and`
-9. `or`
+3. Exponentiation `**`
+4. Unary `-`, `not`, `~`
+5. `*`, `/`, `%`
+6. `+`, `-`
+7. `<<`, `>>` (bitwise shift)
+8. `&` (bitwise AND)
+9. `^` (bitwise XOR)
+10. `|` (bitwise OR)
+11. `<`, `>`, `<=`, `>=`
+12. `==`, `!=`
+13. `and` (logical AND)
+14. `or` (logical OR)
 
 ## Variables
 
@@ -289,6 +347,37 @@ greet(punctuation="?", name="Eve", greeting="Howdy")  # Howdy, Eve?
 - Each parameter can only be specified once
 - Keyword arguments work with default parameter values
 - Keyword arguments work with lambda functions
+
+### Variadic Arguments (*args)
+
+Functions can accept a variable number of positional arguments using the `*args` syntax. The extra arguments are collected into a list.
+
+```python
+def sum_all(*args):
+    total = 0
+    for num in args:
+        total += num
+    return total
+
+print(sum_all(1, 2, 3))      # 6
+print(sum_all(1, 2, 3, 4))   # 10
+```
+
+You can mix regular parameters with `*args`:
+
+```python
+def log(level, *messages):
+    prefix = "[" + level + "] "
+    for msg in messages:
+        print(prefix + str(msg))
+
+log("INFO", "System started", "Ready")
+# Output:
+# [INFO] System started
+# [INFO] Ready
+```
+
+**Note**: `*args` must come after regular parameters and default parameters. It captures all remaining positional arguments.
 
 ### Examples
 ```python
@@ -492,6 +581,25 @@ int("42")                 # 42
 int(3.14)                 # 3
 float("3.14")             # 3.14
 float(42)                 # 42.0
+type(42)                  # "INTEGER"
+type(3.14)                # "FLOAT"
+type("hello")             # "STRING"
+type([1, 2])              # "LIST"
+type({"a": "b"})          # "DICT"
+type(True)                # "BOOLEAN"
+```
+
+### Type Method
+All objects support the `.type()` method which returns the type name as a string:
+```python
+x = 42
+x.type()                  # "INTEGER"
+
+y = "hello"
+y.type()                  # "STRING"
+
+z = [1, 2, 3]
+z.type()                  # "LIST"
 ```
 
 ### String Functions

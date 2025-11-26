@@ -77,24 +77,24 @@ var requestsLibrary = object.NewLibrary(map[string]*object.Builtin{
 				return errors.NewArgumentError(len(args), 1)
 			}
 			if args[0].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("STRING", string(args[0].Type()))
+				return errors.NewTypeError("STRING", args[0].Type().String())
 			}
-			url := args[0].(*object.String).Value
+			url, _ := args[0].AsString()
 			timeout := 5 // Default 5 seconds
 			headers := make(map[string]string)
 
 			if len(args) == 2 {
 				if args[1].Type() != object.DICT_OBJ {
-					return errors.NewTypeError("DICT", string(args[1].Type()))
+					return errors.NewTypeError("DICT", args[1].Type().String())
 				}
-				options := args[1].(*object.Dict)
-				if timeoutPair, ok := options.Pairs["timeout"]; ok {
-					if timeoutInt, ok := timeoutPair.Value.(*object.Integer); ok {
-						timeout = int(timeoutInt.Value)
+				options, _ := args[1].AsDict()
+				if timeoutPair, ok := options["timeout"]; ok {
+					if timeoutInt, ok := timeoutPair.AsInt(); ok {
+						timeout = int(timeoutInt)
 					}
 				}
-				if headersPair, ok := options.Pairs["headers"]; ok {
-					if headersDict, ok := headersPair.Value.(*object.Dict); ok {
+				if headersPair, ok := options["headers"]; ok {
+					if headersDict, ok := headersPair.AsDict(); ok {
 						headers = extractHeaders(headersDict)
 					}
 				}
@@ -110,23 +110,23 @@ var requestsLibrary = object.NewLibrary(map[string]*object.Builtin{
 			if args[0].Type() != object.STRING_OBJ || args[1].Type() != object.STRING_OBJ {
 				return errors.NewTypeError("STRING", "mixed types")
 			}
-			url := args[0].(*object.String).Value
-			body := args[1].(*object.String).Value
+			url, _ := args[0].AsString()
+			body, _ := args[1].AsString()
 			timeout := 5
 			headers := make(map[string]string)
 
 			if len(args) == 3 {
 				if args[2].Type() != object.DICT_OBJ {
-					return errors.NewTypeError("DICT", string(args[2].Type()))
+					return errors.NewTypeError("DICT", args[2].Type().String())
 				}
-				options := args[2].(*object.Dict)
-				if timeoutPair, ok := options.Pairs["timeout"]; ok {
-					if timeoutInt, ok := timeoutPair.Value.(*object.Integer); ok {
-						timeout = int(timeoutInt.Value)
+				options, _ := args[2].AsDict()
+				if timeoutPair, ok := options["timeout"]; ok {
+					if timeoutInt, ok := timeoutPair.AsInt(); ok {
+						timeout = int(timeoutInt)
 					}
 				}
-				if headersPair, ok := options.Pairs["headers"]; ok {
-					if headersDict, ok := headersPair.Value.(*object.Dict); ok {
+				if headersPair, ok := options["headers"]; ok {
+					if headersDict, ok := headersPair.AsDict(); ok {
 						headers = extractHeaders(headersDict)
 					}
 				}
@@ -142,23 +142,23 @@ var requestsLibrary = object.NewLibrary(map[string]*object.Builtin{
 			if args[0].Type() != object.STRING_OBJ || args[1].Type() != object.STRING_OBJ {
 				return errors.NewTypeError("STRING", "mixed types")
 			}
-			url := args[0].(*object.String).Value
-			body := args[1].(*object.String).Value
+			url, _ := args[0].AsString()
+			body, _ := args[1].AsString()
 			timeout := 5
 			headers := make(map[string]string)
 
 			if len(args) == 3 {
 				if args[2].Type() != object.DICT_OBJ {
-					return errors.NewTypeError("DICT", string(args[2].Type()))
+					return errors.NewTypeError("DICT", args[2].Type().String())
 				}
-				options := args[2].(*object.Dict)
-				if timeoutPair, ok := options.Pairs["timeout"]; ok {
-					if timeoutInt, ok := timeoutPair.Value.(*object.Integer); ok {
-						timeout = int(timeoutInt.Value)
+				options, _ := args[2].AsDict()
+				if timeoutPair, ok := options["timeout"]; ok {
+					if timeoutInt, ok := timeoutPair.AsInt(); ok {
+						timeout = int(timeoutInt)
 					}
 				}
-				if headersPair, ok := options.Pairs["headers"]; ok {
-					if headersDict, ok := headersPair.Value.(*object.Dict); ok {
+				if headersPair, ok := options["headers"]; ok {
+					if headersDict, ok := headersPair.AsDict(); ok {
 						headers = extractHeaders(headersDict)
 					}
 				}
@@ -172,24 +172,24 @@ var requestsLibrary = object.NewLibrary(map[string]*object.Builtin{
 				return errors.NewArgumentError(len(args), 1)
 			}
 			if args[0].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("STRING", string(args[0].Type()))
+				return errors.NewTypeError("STRING", args[0].Type().String())
 			}
-			url := args[0].(*object.String).Value
+			url, _ := args[0].AsString()
 			timeout := 5
 			headers := make(map[string]string)
 
 			if len(args) == 2 {
 				if args[1].Type() != object.DICT_OBJ {
-					return errors.NewTypeError("DICT", string(args[1].Type()))
+					return errors.NewTypeError("DICT", args[1].Type().String())
 				}
-				options := args[1].(*object.Dict)
-				if timeoutPair, ok := options.Pairs["timeout"]; ok {
-					if timeoutInt, ok := timeoutPair.Value.(*object.Integer); ok {
-						timeout = int(timeoutInt.Value)
+				options, _ := args[1].AsDict()
+				if timeoutPair, ok := options["timeout"]; ok {
+					if timeoutInt, ok := timeoutPair.AsInt(); ok {
+						timeout = int(timeoutInt)
 					}
 				}
-				if headersPair, ok := options.Pairs["headers"]; ok {
-					if headersDict, ok := headersPair.Value.(*object.Dict); ok {
+				if headersPair, ok := options["headers"]; ok {
+					if headersDict, ok := headersPair.AsDict(); ok {
 						headers = extractHeaders(headersDict)
 					}
 				}
@@ -205,23 +205,23 @@ var requestsLibrary = object.NewLibrary(map[string]*object.Builtin{
 			if args[0].Type() != object.STRING_OBJ || args[1].Type() != object.STRING_OBJ {
 				return errors.NewTypeError("STRING", "mixed types")
 			}
-			url := args[0].(*object.String).Value
-			body := args[1].(*object.String).Value
+			url, _ := args[0].AsString()
+			body, _ := args[1].AsString()
 			timeout := 5
 			headers := make(map[string]string)
 
 			if len(args) == 3 {
 				if args[2].Type() != object.DICT_OBJ {
-					return errors.NewTypeError("DICT", string(args[2].Type()))
+					return errors.NewTypeError("DICT", args[2].Type().String())
 				}
-				options := args[2].(*object.Dict)
-				if timeoutPair, ok := options.Pairs["timeout"]; ok {
-					if timeoutInt, ok := timeoutPair.Value.(*object.Integer); ok {
-						timeout = int(timeoutInt.Value)
+				options, _ := args[2].AsDict()
+				if timeoutPair, ok := options["timeout"]; ok {
+					if timeoutInt, ok := timeoutPair.AsInt(); ok {
+						timeout = int(timeoutInt)
 					}
 				}
-				if headersPair, ok := options.Pairs["headers"]; ok {
-					if headersDict, ok := headersPair.Value.(*object.Dict); ok {
+				if headersPair, ok := options["headers"]; ok {
+					if headersDict, ok := headersPair.AsDict(); ok {
 						headers = extractHeaders(headersDict)
 					}
 				}
@@ -240,11 +240,11 @@ func HTTPLibrary() *object.Library {
 	return requestsLibrary
 }
 
-func extractHeaders(dict *object.Dict) map[string]string {
+func extractHeaders(dict map[string]object.Object) map[string]string {
 	headers := make(map[string]string)
-	for _, pair := range dict.Pairs {
-		if strVal, ok := pair.Value.(*object.String); ok {
-			headers[pair.Key.Inspect()] = strVal.Value
+	for key, value := range dict {
+		if strVal, ok := value.AsString(); ok {
+			headers[key] = strVal
 		}
 	}
 	return headers

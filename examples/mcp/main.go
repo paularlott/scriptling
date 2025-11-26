@@ -99,14 +99,15 @@ func main() {
 				response.WriteString("## Available Libraries\n\n")
 				response.WriteString("### Built-in Libraries (import to use):\n")
 				libs := []string{
-					"json - Parse and stringify JSON",
-					"re - Regular expressions",
-					"math - Mathematical functions",
-					"time - Time operations",
+					"json - Parse and stringify JSON (loads/dumps)",
+					"re - Regular expressions (Python re module)",
+					"math - Mathematical functions (Python math module)",
+					"time - Time operations (Python time module)",
+					"datetime - Date/time operations (Python datetime module)",
 					"base64 - Base64 encoding/decoding",
-					"hashlib - Hashing functions",
+					"hashlib - Hashing functions (md5, sha1, sha256)",
 					"random - Random number generation",
-					"url - URL parsing",
+					"lib - URL parsing and manipulation (Python urllib.parse compatible)",
 				}
 				for _, lib := range libs {
 					response.WriteString(fmt.Sprintf("- %s\n", lib))
@@ -117,10 +118,18 @@ func main() {
 
 				response.WriteString("\n### Usage Example:\n")
 				response.WriteString("```python\n")
+				response.WriteString("# JSON parsing (Python equivalent)\n")
 				response.WriteString("import json\n")
-				response.WriteString("data = json.parse('{\"key\": \"value\"}')\n")
-				response.WriteString("result = json.stringify(data)\n")
-				response.WriteString("print(f\"Result: {result}\")\n")
+				response.WriteString("data = json.loads('{\"key\": \"value\"}')\n")
+				response.WriteString("result = json.dumps(data)\n")
+				response.WriteString("\n# URL manipulation (Python urllib.parse equivalent)\n")
+				response.WriteString("import lib\n")
+				response.WriteString("encoded = lib.quote('hello world')\n")
+				response.WriteString("parts = lib.urlsplit('https://example.com/path')\n")
+				response.WriteString("query = lib.urlencode({'key': 'value'})\n")
+				response.WriteString("\n# Regular expressions (Python re equivalent)\n")
+				response.WriteString("import re\n")
+				response.WriteString("matches = re.findall(r'\\d+', 'abc123def456')  # findall()\n")
 				response.WriteString("\n# Exception handling\n")
 				response.WriteString("try:\n")
 				response.WriteString("    x = 1 / 0\n")

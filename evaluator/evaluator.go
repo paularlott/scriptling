@@ -143,6 +143,7 @@ func evalWithContext(ctx context.Context, node ast.Node, env *object.Environment
 		fn := &object.Function{
 			Parameters:    node.Function.Parameters,
 			DefaultValues: node.Function.DefaultValues,
+			Variadic:      node.Function.Variadic,
 			Body:          node.Function.Body,
 			Env:           env,
 		}
@@ -253,7 +254,7 @@ func evalBlockStatementWithContext(ctx context.Context, block *ast.BlockStatemen
 				return result
 			}
 			// Don't return errors immediately - let try/catch handle them
-			if rt == "ERROR" || rt == object.EXCEPTION_OBJ {
+			if rt == object.ERROR_OBJ || rt == object.EXCEPTION_OBJ {
 				return result
 			}
 		}
@@ -275,6 +276,8 @@ func evalPrefixExpression(operator string, right object.Object) object.Object {
 		return evalNotOperatorExpression(right)
 	case "-":
 		return evalMinusPrefixOperatorExpression(right)
+	case "~":
+		return evalBitwiseNotOperatorExpression(right)
 	default:
 		return errors.NewError("%s: %s%s", errors.ErrUnknownOperator, operator, right.Type())
 	}
@@ -295,6 +298,15 @@ func evalMinusPrefixOperatorExpression(right object.Object) object.Object {
 		return &object.Float{Value: -right.Value}
 	default:
 		return errors.NewError("%s: -%s", errors.ErrUnknownOperator, right.Type())
+	}
+}
+
+func evalBitwiseNotOperatorExpression(right object.Object) object.Object {
+	switch right := right.(type) {
+	case *object.Integer:
+		return &object.Integer{Value: ^right.Value}
+	default:
+		return errors.NewError("%s: ~%s", errors.ErrUnknownOperator, right.Type())
 	}
 }
 
@@ -385,6 +397,22 @@ func evalIntegerInfixExpression(operator string, leftVal, rightVal int64) object
 		return &object.Integer{Value: result}
 	case "%":
 		return &object.Integer{Value: leftVal % rightVal}
+	case "&":
+		return &object.Integer{Value: leftVal & rightVal}
+	case "|":
+		return &object.Integer{Value: leftVal | rightVal}
+	case "^":
+		return &object.Integer{Value: leftVal ^ rightVal}
+	case "<<":
+		if rightVal < 0 {
+			return errors.NewError("negative shift count")
+		}
+		return &object.Integer{Value: leftVal << uint64(rightVal)}
+	case ">>":
+		if rightVal < 0 {
+			return errors.NewError("negative shift count")
+		}
+		return &object.Integer{Value: leftVal >> uint64(rightVal)}
 	case "<":
 		return nativeBoolToBooleanObject(leftVal < rightVal)
 	case ">":
@@ -584,7 +612,7 @@ func applyFunctionWithContext(ctx context.Context, fn object.Object, args []obje
 		ctxWithEnv := SetEnvInContext(ctx, env)
 		return fn.Fn(ctxWithEnv, args...)
 	default:
-		return errors.NewTypeError("function", string(fn.Type()))
+		return errors.NewTypeError("function", fn.Type().String())
 	}
 }
 
@@ -602,12 +630,22 @@ func extendFunctionEnv(fn *object.Function, args []object.Object, keywords map[s
 
 	// Check for extra positional arguments
 	if len(args) > len(fn.Parameters) {
-		// Calculate min args for error message
-		minArgs := len(fn.Parameters)
-		if fn.DefaultValues != nil {
-			minArgs -= len(fn.DefaultValues)
+		if fn.Variadic != nil {
+			// Collect extra arguments into a list
+			variadicArgs := args[len(fn.Parameters):]
+			list := &object.List{Elements: variadicArgs}
+			env.Set(fn.Variadic.Value, list)
+		} else {
+			// Calculate min args for error message
+			minArgs := len(fn.Parameters)
+			if fn.DefaultValues != nil {
+				minArgs -= len(fn.DefaultValues)
+			}
+			return nil, errors.NewArgumentError(len(args), minArgs)
 		}
-		return nil, errors.NewArgumentError(len(args), minArgs)
+	} else if fn.Variadic != nil {
+		// No extra arguments, set variadic to empty list
+		env.Set(fn.Variadic.Value, &object.List{Elements: []object.Object{}})
 	}
 
 	// Set keyword arguments
@@ -668,12 +706,22 @@ func extendLambdaEnv(fn *object.LambdaFunction, args []object.Object, keywords m
 
 	// Check for extra positional arguments
 	if len(args) > len(fn.Parameters) {
-		// Calculate min args for error message
-		minArgs := len(fn.Parameters)
-		if fn.DefaultValues != nil {
-			minArgs -= len(fn.DefaultValues)
+		if fn.Variadic != nil {
+			// Collect extra arguments into a list
+			variadicArgs := args[len(fn.Parameters):]
+			list := &object.List{Elements: variadicArgs}
+			env.Set(fn.Variadic.Value, list)
+		} else {
+			// Calculate min args for error message
+			minArgs := len(fn.Parameters)
+			if fn.DefaultValues != nil {
+				minArgs -= len(fn.DefaultValues)
+			}
+			return nil, errors.NewArgumentError(len(args), minArgs)
 		}
-		return nil, errors.NewArgumentError(len(args), minArgs)
+	} else if fn.Variadic != nil {
+		// No extra arguments, set variadic to empty list
+		env.Set(fn.Variadic.Value, &object.List{Elements: []object.Object{}})
 	}
 
 	// Set keyword arguments
@@ -756,7 +804,7 @@ func isTruthy(obj object.Object) bool {
 
 func isError(obj object.Object) bool {
 	if obj != nil {
-		return obj.Type() == "ERROR"
+		return obj.Type() == object.ERROR_OBJ
 	}
 	return false
 }
@@ -878,6 +926,16 @@ func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.Augm
 		operator = "/"
 	case "%=":
 		operator = "%"
+	case "&=":
+		operator = "&"
+	case "|=":
+		operator = "|"
+	case "^=":
+		operator = "^"
+	case "<<=":
+		operator = "<<"
+	case ">>=":
+		operator = ">>"
 	default:
 		return errors.NewError("unknown augmented assignment operator: %s", node.Operator)
 	}
@@ -907,7 +965,7 @@ func evalSliceExpressionWithContext(ctx context.Context, node *ast.SliceExpressi
 			return startObj
 		}
 		if startObj.Type() != object.INTEGER_OBJ {
-			return errors.NewTypeError("INTEGER", string(startObj.Type()))
+			return errors.NewTypeError("INTEGER", startObj.Type().String())
 		}
 		start = startObj.(*object.Integer).Value
 		hasStart = true
@@ -919,7 +977,7 @@ func evalSliceExpressionWithContext(ctx context.Context, node *ast.SliceExpressi
 			return endObj
 		}
 		if endObj.Type() != object.INTEGER_OBJ {
-			return errors.NewTypeError("INTEGER", string(endObj.Type()))
+			return errors.NewTypeError("INTEGER", endObj.Type().String())
 		}
 		end = endObj.(*object.Integer).Value
 		hasEnd = true
@@ -931,7 +989,7 @@ func evalSliceExpressionWithContext(ctx context.Context, node *ast.SliceExpressi
 			return stepObj
 		}
 		if stepObj.Type() != object.INTEGER_OBJ {
-			return errors.NewTypeError("INTEGER", string(stepObj.Type()))
+			return errors.NewTypeError("INTEGER", stepObj.Type().String())
 		}
 		step = stepObj.(*object.Integer).Value
 		hasStep = true
@@ -1150,7 +1208,7 @@ func evalInOperator(left, right object.Object) object.Object {
 		}
 		return errors.NewTypeError("STRING", "non-string type")
 	default:
-		return errors.NewTypeError("iterable", string(right.Type()))
+		return errors.NewTypeError("iterable", right.Type().String())
 	}
 }
 
@@ -1169,7 +1227,7 @@ func evalMultipleAssignStatementWithContext(ctx context.Context, node *ast.Multi
 	case *object.Tuple:
 		elements = v.Elements
 	default:
-		return errors.NewTypeError("list or tuple", string(val.Type()))
+		return errors.NewTypeError("list or tuple", val.Type().String())
 	}
 
 	// Check length matches
@@ -1313,7 +1371,7 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 			}
 		}
 	default:
-		return errors.NewTypeError("iterable", string(iterable.Type()))
+		return errors.NewTypeError("iterable", iterable.Type().String())
 	}
 
 	return result
@@ -1338,6 +1396,15 @@ func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression
 }
 
 func callStringMethod(ctx context.Context, obj object.Object, method string, args []object.Object, env *object.Environment) object.Object {
+	// Handle universal methods
+	switch method {
+	case "type":
+		if len(args) != 0 {
+			return errors.NewArgumentError(len(args), 0)
+		}
+		return &object.String{Value: obj.Type().String()}
+	}
+
 	// Handle library method calls (dictionaries)
 	if obj.Type() == object.DICT_OBJ {
 		dict := obj.(*object.Dict)
@@ -1406,7 +1473,7 @@ func callStringMethod(ctx context.Context, obj object.Object, method string, arg
 	}
 
 	if obj.Type() != object.STRING_OBJ {
-		return errors.NewTypeError("STRING", string(obj.Type()))
+		return errors.NewTypeError("STRING", obj.Type().String())
 	}
 
 	str := obj.(*object.String)
@@ -1582,7 +1649,7 @@ func evalListComprehension(ctx context.Context, lc *ast.ListComprehension, env *
 			result = append(result, exprResult)
 		}
 	default:
-		return errors.NewTypeError("iterable", string(iterable.Type()))
+		return errors.NewTypeError("iterable", iterable.Type().String())
 	}
 
 	return &object.List{Elements: result}
@@ -1592,6 +1659,7 @@ func evalLambda(lambda *ast.Lambda, env *object.Environment) object.Object {
 	return &object.LambdaFunction{
 		Parameters:    lambda.Parameters,
 		DefaultValues: lambda.DefaultValues,
+		Variadic:      lambda.Variadic,
 		Body:          lambda.Body,
 		Env:           env,
 	}

@@ -68,12 +68,12 @@ This directory contains comprehensive tests for all Scriptling language features
 
 ### Standard Libraries
 - json: parse, stringify (test_lib_json.py)
-- math: sqrt, pow, abs, floor, ceil, round, min, max, pi, e (test_lib_math.py)
+- math: sqrt, pow, abs, floor, ceil, round, min, max, sin, cos, tan, log, exp, degrees, radians, fmod, gcd, factorial, pi, e (test_lib_math.py)
 - base64: encode, decode (test_lib_base64.py)
 - hashlib: md5, sha1, sha256 (test_lib_hashlib.py)
 - random: random, randint, choice (test_lib_random.py)
-- url: encode, decode (test_lib_url.py)
-- re (regex): match, find, findall, replace, split (test_lib_regex.py)
+- url: encode, decode, parse, build, join, query_parse, urlsplit, urlunsplit, parse_qs, urlencode, path_join (test_lib_url.py)
+- re (regex): match, find, search, findall, replace, split, compile, escape, fullmatch (test_lib_regex.py)
 - import mechanism (test_lib_import.py)
 
 ### HTTP/Requests Library

@@ -1,8 +1,9 @@
 package evaluator
 
 import (
-	"github.com/paularlott/scriptling/object"
 	"testing"
+
+	"github.com/paularlott/scriptling/object"
 )
 
 func TestRangeFunction(t *testing.T) {
@@ -77,8 +78,8 @@ func TestSliceNotation(t *testing.T) {
 
 func TestDictionaryMethods(t *testing.T) {
 	tests := []struct {
-		input    string
-		checkFn  func(object.Object) bool
+		input   string
+		checkFn func(object.Object) bool
 	}{
 		{
 			`keys({"a": "1", "b": "2"})`,
@@ -117,6 +118,32 @@ func TestDictionaryMethods(t *testing.T) {
 		evaluated := testEval(tt.input)
 		if !tt.checkFn(evaluated) {
 			t.Errorf("test failed for input: %s, got=%T (%+v)", tt.input, evaluated, evaluated)
+		}
+	}
+}
+
+func TestMethodCalls(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{`5.type()`, "INTEGER"},
+		{`3.14.type()`, "FLOAT"},
+		{`"hello".type()`, "STRING"},
+		{`True.type()`, "BOOLEAN"},
+		{`[1, 2].type()`, "LIST"},
+		{`{"a": "b"}.type()`, "DICT"},
+	}
+
+	for _, tt := range tests {
+		evaluated := testEval(tt.input)
+		str, ok := evaluated.(*object.String)
+		if !ok {
+			t.Errorf("object is not String. got=%T (%+v)", evaluated, evaluated)
+			continue
+		}
+		if str.Value != tt.expected {
+			t.Errorf("wrong value for %s. got=%q, want=%q", tt.input, str.Value, tt.expected)
 		}
 	}
 }

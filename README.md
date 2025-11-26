@@ -9,7 +9,7 @@ A minimal, sandboxed interpreter for LLM agents to execute code and interact wit
 - **Control flow**: if/elif/else, while, for loops, break, continue, pass
 - **Advanced features**: range(), slice notation, dict methods (keys/values/items), multiple assignment, keyword arguments
 - **List comprehensions**: `[x * x for x in range(10) if x > 5]`
-- **Method call syntax**: `text.upper()`, `json.parse()`, `math.sqrt(16)`
+- **Method call syntax**: `text.upper()`, `json.loads()`, `math.sqrt(16)`
 - **Lambda functions**: `square = lambda x: x * x`
 - **Default parameters**: `def greet(name, greeting="Hello"):`
 - **Tuple literals**: `point = (1, 2)` with unpacking support
@@ -308,7 +308,7 @@ Scriptling includes optional libraries for common tasks:
 - **base64** - Base64 encoding/decoding
 - **hashlib** - Hashing functions (md5, sha1, sha256)
 - **random** - Random number generation
-- **url** - URL parsing and manipulation
+- **lib** - URL parsing and manipulation (Python urllib.parse compatible)
 
 **Optional Libraries** (require manual registration):
 - **http** - Make HTTP requests (GET, POST, PUT, DELETE, PATCH)
@@ -321,14 +321,18 @@ Scriptling includes optional libraries for common tasks:
 ```python
 import json
 import math
+import lib
 
 # Parse JSON data
-data = json.parse('{"radius": 5}')
+data = json.loads('{"radius": 5}')  # Python-compatible API
 
 # Calculate something
 radius = data["radius"]
-area = math.pi() * math.pow(radius, 2)
-print("Area: " + str(area))
+area = math.pi * math.pow(radius, 2)
+
+# URL manipulation
+encoded = lib.quote("hello world")  # Python urllib.parse.quote()
+print("Area: " + str(area) + ", Encoded: " + encoded)
 ```
 
 **HTTP Example** (requires `p.RegisterLibrary("http", extlibs.HTTPLibrary())`):
@@ -426,7 +430,30 @@ go test ./evaluator -v
 - **On-demand loading**: Only load JSON/HTTP when needed
 - **Fast execution**: Optimized for embedded use
 - **Global cache**: Compiled scripts cached globally with LRU eviction
-- **Thread-safe**: Safe for concurrent use across multiple instances
+- **Regex caching**: Compiled regex patterns cached with LRU eviction
+- **Thread safety**: Each Scriptling environment is single-threaded. Create separate environments for concurrent use.
+
+## Thread Safety
+
+**Important**: Scriptling environments are **not thread-safe**. Each environment instance must be used by only one Go thread at a time. For concurrent execution:
+
+- Create separate `Scriptling` instances for each thread
+- Each instance maintains its own environment and variables
+- Global caches (scripts, regex patterns) are thread-safe and shared across instances
+- Do not share a single environment across multiple goroutines
+
+```go
+// Correct: Separate instances for concurrent use
+go func() {
+    p1 := scriptling.New()
+    p1.Eval("x = 1")
+}()
+
+go func() {
+    p2 := scriptling.New()  // Separate instance
+    p2.Eval("y = 2")
+}()
+```
 
 ## License
 

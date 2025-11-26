@@ -141,7 +141,15 @@ func (l *Lexer) NextToken() token.Token {
 			l.readChar()
 		}
 	case '<':
-		if l.peekChar() == '=' {
+		if l.peekChar() == '<' {
+			l.readChar()
+			if l.peekChar() == '=' {
+				l.readChar()
+				tok = token.Token{Type: token.LSHIFT_EQ, Literal: "<<=", Line: l.line}
+			} else {
+				tok = token.Token{Type: token.LSHIFT, Literal: "<<", Line: l.line}
+			}
+		} else if l.peekChar() == '=' {
 			l.readChar()
 			tok = token.Token{Type: token.LTE, Literal: "<=", Line: l.line}
 		} else {
@@ -149,7 +157,15 @@ func (l *Lexer) NextToken() token.Token {
 		}
 		l.readChar()
 	case '>':
-		if l.peekChar() == '=' {
+		if l.peekChar() == '>' {
+			l.readChar()
+			if l.peekChar() == '=' {
+				l.readChar()
+				tok = token.Token{Type: token.RSHIFT_EQ, Literal: ">>=", Line: l.line}
+			} else {
+				tok = token.Token{Type: token.RSHIFT, Literal: ">>", Line: l.line}
+			}
+		} else if l.peekChar() == '=' {
 			l.readChar()
 			tok = token.Token{Type: token.GTE, Literal: ">=", Line: l.line}
 		} else {
@@ -182,6 +198,33 @@ func (l *Lexer) NextToken() token.Token {
 		l.readChar()
 	case '}':
 		tok = token.Token{Type: token.RBRACE, Literal: string(l.ch), Line: l.line}
+		l.readChar()
+	case '~':
+		tok = token.Token{Type: token.TILDE, Literal: string(l.ch), Line: l.line}
+		l.readChar()
+	case '&':
+		if l.peekChar() == '=' {
+			l.readChar()
+			tok = token.Token{Type: token.AND_EQ, Literal: "&=", Line: l.line}
+		} else {
+			tok = token.Token{Type: token.AMPERSAND, Literal: string(l.ch), Line: l.line}
+		}
+		l.readChar()
+	case '|':
+		if l.peekChar() == '=' {
+			l.readChar()
+			tok = token.Token{Type: token.OR_EQ, Literal: "|=", Line: l.line}
+		} else {
+			tok = token.Token{Type: token.PIPE, Literal: string(l.ch), Line: l.line}
+		}
+		l.readChar()
+	case '^':
+		if l.peekChar() == '=' {
+			l.readChar()
+			tok = token.Token{Type: token.XOR_EQ, Literal: "^=", Line: l.line}
+		} else {
+			tok = token.Token{Type: token.CARET, Literal: string(l.ch), Line: l.line}
+		}
 		l.readChar()
 	case '"', '\'':
 		quote := l.ch
