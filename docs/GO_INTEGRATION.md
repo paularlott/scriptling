@@ -337,12 +337,13 @@ print("CPUs: " + str(info["cpus"]))
 ### Register Custom Library
 
 ```go
-// Create library functions
-myLib := map[string]*object.Builtin{
+// Create library with functions
+myLib := object.NewLibrary(map[string]*object.Builtin{
     "hello": {
         Fn: func(ctx context.Context, args ...object.Object) object.Object {
             return &object.String{Value: "Hello from custom library!"}
         },
+        HelpText: "hello() - Returns a greeting message",
     },
     "add": {
         Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -360,8 +361,9 @@ myLib := map[string]*object.Builtin{
 
             return &object.Integer{Value: a + b}
         },
+        HelpText: "add(a, b) - Add two integers",
     },
-}
+})
 
 // Register the library
 p.RegisterLibrary("mylib", myLib)
@@ -379,6 +381,47 @@ result2 = mylib["add"](10, 20)
 `)
 ```
 
+### Library with Constants
+
+```go
+// Create library with both functions and constants
+mathLib := object.NewLibraryWithConstants(
+    map[string]*object.Builtin{
+        "sqrt": {
+            Fn: func(ctx context.Context, args ...object.Object) object.Object {
+                if len(args) != 1 {
+                    return &object.Error{Message: "sqrt requires 1 argument"}
+                }
+                if num, ok := args[0].(*object.Float); ok {
+                    return &object.Float{Value: math.Sqrt(num.Value)}
+                }
+                return &object.Error{Message: "argument must be float"}
+            },
+            HelpText: "sqrt(x) - Return the square root of x",
+        },
+    },
+    map[string]object.Object{
+        "pi": &object.Float{Value: 3.141592653589793},
+        "e":  &object.Float{Value: 2.718281828459045},
+    },
+)
+
+// For a library with functions, constants, and description:
+fullLib := object.NewLibraryFull(
+    map[string]*object.Builtin{...},  // functions
+    map[string]object.Object{...},    // constants
+    "Description of the library",
+)
+
+p.RegisterLibrary("mymath", mathLib)
+
+// Use constants directly (not as function calls)
+p.Eval(`
+import mymath
+area = mymath.pi * mymath.sqrt(radius)  # pi is a constant, not a function
+`)
+```
+
 ### Library with State
 
 ```go
@@ -387,8 +430,8 @@ type Counter struct {
     value int64
 }
 
-func (c *Counter) CreateLibrary() map[string]*object.Builtin {
-    return map[string]*object.Builtin{
+func (c *Counter) CreateLibrary() *object.Library {
+    return object.NewLibrary(map[string]*object.Builtin{
         "increment": {
             Fn: func(ctx context.Context, args ...object.Object) object.Object {
                 c.value++
@@ -416,7 +459,7 @@ func (c *Counter) CreateLibrary() map[string]*object.Builtin {
                 return &object.Integer{Value: c.value}
             },
         },
-    }
+    })
 }
 
 // Usage

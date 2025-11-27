@@ -17,8 +17,8 @@ func TestMathLibrary(t *testing.T) {
 		{"round", "import math\nresult = math.round(3.5)", int64(4)},
 		{"min", "import math\nresult = math.min(3, 1)", int64(1)},
 		{"max", "import math\nresult = math.max(3, 1)", int64(3)},
-		{"pi", "import math\nresult = math.pi()", 3.141592653589793},
-		{"e", "import math\nresult = math.e()", 2.718281828459045},
+		{"pi", "import math\nresult = math.pi", 3.141592653589793},
+		{"e", "import math\nresult = math.e", 2.718281828459045},
 	}
 
 	for _, tt := range tests {
@@ -59,7 +59,7 @@ import math
 
 # Calculate circle area
 radius = 5
-area = math.pi() * math.pow(radius, 2)
+area = math.pi * math.pow(radius, 2)
 `)
 	if err != nil {
 		t.Fatalf("Error: %v", err)

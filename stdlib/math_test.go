@@ -123,7 +123,7 @@ func TestMathMax(t *testing.T) {
 func TestMathConstants(t *testing.T) {
 	lib := GetMathLibrary()
 
-	pi := lib.Functions()["pi"].Fn(context.Background())
+	pi := lib.Constants()["pi"]
 	if f, ok := pi.(*object.Float); ok {
 		if f.Value != math.Pi {
 			t.Errorf("math.pi = %v, want %v", f.Value, math.Pi)
@@ -132,7 +132,7 @@ func TestMathConstants(t *testing.T) {
 		t.Errorf("math.pi is %T, want Float", pi)
 	}
 
-	e := lib.Functions()["e"].Fn(context.Background())
+	e := lib.Constants()["e"]
 	if f, ok := e.(*object.Float); ok {
 		if f.Value != math.E {
 			t.Errorf("math.e = %v, want %v", f.Value, math.E)

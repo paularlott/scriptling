@@ -66,7 +66,8 @@ import math
 
 result = math.sqrt(16)      # 4.0
 power = math.pow(2, 8)      # 256.0
-pi = math.pi()              # 3.14159...
+pi = math.pi                # 3.14159...
+e = math.e                  # 2.71828...
 ```
 
 [See math.md](libraries/math.md) for complete documentation.

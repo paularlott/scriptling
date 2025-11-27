@@ -457,26 +457,14 @@ Returns an integer.`,
 n must be a non-negative integer <= 20.
 Returns an integer.`,
 	},
-	"pi": {
-		Fn: func(ctx context.Context, args ...object.Object) object.Object {
-			return &object.Float{Value: math.Pi}
-		},
-		HelpText: `pi - Return the mathematical constant π
-
-Takes no arguments.
-Returns a float.`,
-	},
-	"e": {
-		Fn: func(ctx context.Context, args ...object.Object) object.Object {
-			return &object.Float{Value: math.E}
-		},
-		HelpText: `e - Return the mathematical constant e
-
-Takes no arguments.
-Returns a float.`,
-	},
 })
 
+// mathConstants defines the constant values available in the math library
+var mathConstants = map[string]object.Object{
+	"pi": &object.Float{Value: math.Pi},
+	"e":  &object.Float{Value: math.E},
+}
+
 func GetMathLibrary() *object.Library {
-	return object.NewLibraryWithDescription(mathLibrary.Functions(), "Mathematical functions library")
+	return object.NewLibraryFull(mathLibrary.Functions(), mathConstants, "Mathematical functions library")
 }
