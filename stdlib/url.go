@@ -8,7 +8,7 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
-var urlLibrary = object.NewLibrary(map[string]*object.Builtin{
+var URLLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"quote": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
 			if len(args) != 1 {
@@ -308,8 +308,4 @@ Parses a URL query string and returns a dictionary of key-value pairs.`,
 
 Encodes a dictionary of key-value pairs into a URL query string.`,
 	},
-})
-
-func GetURLLibrary() *object.Library {
-	return object.NewLibraryWithDescription(urlLibrary.Functions(), "URL parsing and manipulation library")
-}
+}, nil, "URL parsing and manipulation library")

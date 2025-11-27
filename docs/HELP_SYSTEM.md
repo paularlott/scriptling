@@ -188,17 +188,15 @@ import (
     "github.com/paularlott/scriptling/object"
 )
 
-func MyLibrary() *object.Library {
-    return object.NewLibraryWithDescription(map[string]*object.Builtin{
-        "process": {
-            Fn: func(ctx context.Context, args ...object.Object) object.Object {
-                // Implementation
-                return &object.String{Value: "processed"}
-            },
-            HelpText: `process(data) - Process the input data`,
+var MyLibrary = object.NewLibrary(map[string]*object.Builtin{
+    "process": {
+        Fn: func(ctx context.Context, args ...object.Object) object.Object {
+            // Implementation
+            return &object.String{Value: "processed"}
         },
-    }, "My custom data processing library")
-}
+        HelpText: `process(data) - Process the input data`,
+    },
+}, nil, "My custom data processing library")
 ```
 
 The description will be shown when users call `help("mylib")`.
@@ -215,14 +213,13 @@ import (
     "github.com/paularlott/scriptling/object"
 )
 
-func MyLibrary() *object.Library {
-    return object.NewLibrary(map[string]*object.Builtin{
-        "process": {
-            Fn: func(ctx context.Context, args ...object.Object) object.Object {
-                // Implementation
-                return &object.String{Value: "processed"}
-            },
-            HelpText: `process(data) - Process the input data
+var MyLibrary = object.NewLibrary(map[string]*object.Builtin{
+    "process": {
+        Fn: func(ctx context.Context, args ...object.Object) object.Object {
+            // Implementation
+            return &object.String{Value: "processed"}
+        },
+        HelpText: `process(data) - Process the input data
 
   Takes input data and processes it according to the library's rules.
 
@@ -235,13 +232,13 @@ func MyLibrary() *object.Library {
   Examples:
     mylib.process("hello")
     mylib.process([1, 2, 3])`,
+    },
+    "validate": {
+        Fn: func(ctx context.Context, args ...object.Object) object.Object {
+            // Implementation
+            return &object.Boolean{Value: true}
         },
-        "validate": {
-            Fn: func(ctx context.Context, args ...object.Object) object.Object {
-                // Implementation
-                return &object.Boolean{Value: true}
-            },
-            HelpText: `validate(input) - Validate input data
+        HelpText: `validate(input) - Validate input data
 
   Checks if the input meets the required criteria.
 
@@ -253,9 +250,9 @@ func MyLibrary() *object.Library {
 
   Examples:
     mylib.validate("test@example.com")`,
-        },
-    })
-}
+    },
+}, nil, "My custom data processing library")
+```
 ```
 
 ## Help Text Best Practices

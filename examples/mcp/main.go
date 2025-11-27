@@ -30,7 +30,7 @@ func main() {
 			p := scriptling.New()
 
 			// Register HTTP library for scripts that need it
-			p.RegisterLibrary("requests", extlibs.RequestsLibrary())
+			p.RegisterLibrary("requests", extlibs.RequestsLibrary)
 
 			// Enable output capture
 			p.EnableOutputCapture()

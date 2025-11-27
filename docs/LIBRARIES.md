@@ -412,21 +412,20 @@ To add a new standard library:
 ```go
 package stdlib
 
-func MyLibrary() map[string]*object.Builtin {
-    return map[string]*object.Builtin{
-        "func1": { Fn: ... },
-        "func2": { Fn: ... },
-    }
-}
+import "github.com/paularlott/scriptling/object"
+
+var MyLibrary = object.NewLibrary(map[string]*object.Builtin{
+    "func1": { Fn: ... },
+    "func2": { Fn: ... },
+}, nil, "My library description")
 ```
 
 2. Register in `scriptling.go`:
 ```go
-var availableLibraries = map[string]func() map[string]*object.Builtin{
-    "json": stdlib.JSONLibrary,
-    "http": stdlib.HTTPLibrary,
-    "time": stdlib.GetTimeLibrary,  // Add here
-    "mylib": stdlib.MyLibrary,
+var availableLibraries = map[string]*object.Library{
+    "json":  stdlib.JSONLibrary,
+    "math":  stdlib.MathLibrary,
+    "mylib": stdlib.MyLibrary,  // Add here
 }
 ```
 

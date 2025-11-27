@@ -31,7 +31,7 @@ func main() {
 	p := scriptling.New()
 
 	// Register requests library for scripts that need it
-	p.RegisterLibrary("requests", extlibs.RequestsLibrary())
+	p.RegisterLibrary("requests", extlibs.RequestsLibrary)
 
 	// Register a test Scriptling library with documentation
 	err = p.RegisterScriptLibrary("testlib", `

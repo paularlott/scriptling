@@ -53,7 +53,7 @@ var exceptionsNamespace = &object.Dict{
 	},
 }
 
-var requestsLibrary = object.NewLibrary(map[string]*object.Builtin{
+var RequestsLibrary = object.NewLibrary(map[string]*object.Builtin{
 	// Exception classes (as strings for except clause matching)
 	"RequestException": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -229,16 +229,7 @@ var requestsLibrary = object.NewLibrary(map[string]*object.Builtin{
 			return httpRequestWithContext(ctx, "PATCH", url, body, timeout, headers)
 		},
 	},
-})
-
-func RequestsLibrary() *object.Library {
-	return requestsLibrary
-}
-
-// HTTPLibrary is deprecated, use RequestsLibrary instead
-func HTTPLibrary() *object.Library {
-	return requestsLibrary
-}
+}, nil, "HTTP requests library")
 
 func extractHeaders(dict map[string]object.Object) map[string]string {
 	headers := make(map[string]string)

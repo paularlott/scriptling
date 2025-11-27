@@ -285,32 +285,9 @@ type Library struct {
 	description string
 }
 
-// NewLibrary creates a new library with pre-built functions
-// The function map is stored directly for zero-overhead access
-func NewLibrary(functions map[string]*Builtin) *Library {
-	return &Library{
-		functions: functions,
-	}
-}
-
-// NewLibraryWithConstants creates a new library with functions and constants
-func NewLibraryWithConstants(functions map[string]*Builtin, constants map[string]Object) *Library {
-	return &Library{
-		functions: functions,
-		constants: constants,
-	}
-}
-
-// NewLibraryWithDescription creates a new library with functions and description
-func NewLibraryWithDescription(functions map[string]*Builtin, description string) *Library {
-	return &Library{
-		functions:   functions,
-		description: description,
-	}
-}
-
-// NewLibraryFull creates a new library with functions, constants, and description
-func NewLibraryFull(functions map[string]*Builtin, constants map[string]Object, description string) *Library {
+// NewLibrary creates a new library with functions, optional constants, and optional description
+// Pass nil for constants if there are none, and "" for description if not needed
+func NewLibrary(functions map[string]*Builtin, constants map[string]Object, description string) *Library {
 	return &Library{
 		functions:   functions,
 		constants:   constants,

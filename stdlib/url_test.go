@@ -9,7 +9,7 @@ import (
 )
 
 func TestURLLibrary(t *testing.T) {
-	lib := GetURLLibrary()
+	lib := URLLibrary
 
 	t.Run("quote basic", func(t *testing.T) {
 		quote := lib.Functions()["quote"]
