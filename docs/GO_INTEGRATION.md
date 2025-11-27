@@ -436,6 +436,42 @@ print(counter.get())        # 12
 `)
 ```
 
+### On-Demand Library Loading
+
+For dynamic library loading from disk or other sources, use the on-demand callback:
+
+```go
+// Set callback for loading libraries on-demand
+p.SetOnDemandLibraryCallback(func(p *Scriptling, libName string) bool {
+    // Check if we can provide this library
+    if libName == "mylib" {
+        // Load from disk
+        script, err := loadLibraryFromFile(libName + ".py")
+        if err != nil {
+            return false
+        }
+
+        // Register the loaded library
+        return p.RegisterScriptLibrary(libName, script) == nil
+    }
+
+    // Try loading from a plugin system
+    if pluginLib := loadFromPluginSystem(libName); pluginLib != nil {
+        return p.RegisterLibrary(libName, pluginLib) == nil
+    }
+
+    return false // Could not load library
+})
+
+// Now scripts can import libraries that don't exist yet
+p.Eval(`
+import mylib  # Loaded on-demand from disk
+result = mylib.do_something()
+`)
+```
+
+The callback receives the Scriptling instance and library name, and should return `true` if it successfully registered the library.
+
 ## Complete Integration Example
 
 ```go
