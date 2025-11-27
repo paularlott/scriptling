@@ -138,7 +138,7 @@ Returns the sine of x (in radians).
 ```python
 import math
 result = math.sin(0)  # 0.0
-result = math.sin(math.pi() / 2)  # 1.0
+result = math.sin(math.pi / 2)  # 1.0
 ```
 
 ### math.cos(x)
@@ -154,7 +154,7 @@ Returns the cosine of x (in radians).
 ```python
 import math
 result = math.cos(0)  # 1.0
-result = math.cos(math.pi())  # -1.0
+result = math.cos(math.pi)  # -1.0
 ```
 
 ### math.tan(x)
@@ -170,7 +170,7 @@ Returns the tangent of x (in radians).
 ```python
 import math
 result = math.tan(0)  # 0.0
-result = math.tan(math.pi() / 4)  # 1.0
+result = math.tan(math.pi / 4)  # 1.0
 ```
 
 ### math.log(x)
@@ -186,7 +186,7 @@ Returns the natural logarithm (base e) of x.
 ```python
 import math
 result = math.log(1)  # 0.0
-result = math.log(math.e())  # 1.0
+result = math.log(math.e)  # 1.0
 ```
 
 ### math.exp(x)
@@ -217,8 +217,8 @@ Converts angle x from radians to degrees.
 **Example:**
 ```python
 import math
-result = math.degrees(math.pi())  # 180.0
-result = math.degrees(math.pi() / 2)  # 90.0
+result = math.degrees(math.pi)  # 180.0
+result = math.degrees(math.pi / 2)  # 90.0
 ```
 
 ### math.radians(x)
@@ -289,28 +289,28 @@ result = math.factorial(0)  # 1
 
 ## Constants
 
-### math.pi()
+### math.pi
 
-Returns the mathematical constant π (pi).
+The mathematical constant π (pi).
 
-**Returns:** Float (3.141592653589793)
+**Value:** Float (3.141592653589793)
 
 **Example:**
 ```python
 import math
-pi = math.pi()  # 3.141592653589793
+pi = math.pi  # 3.141592653589793
 ```
 
-### math.e()
+### math.e
 
-Returns the mathematical constant e (Euler's number).
+The mathematical constant e (Euler's number).
 
-**Returns:** Float (2.718281828459045)
+**Value:** Float (2.718281828459045)
 
 **Example:**
 ```python
 import math
-e = math.e()  # 2.718281828459045
+e = math.e  # 2.718281828459045
 ```
 
 ## Usage Example
@@ -342,7 +342,7 @@ log_val = math.log(1)       # 0.0
 exp_val = math.exp(1)       # 2.718281828459045
 
 # Angle conversion
-degrees_val = math.degrees(math.pi())  # 180.0
+degrees_val = math.degrees(math.pi)  # 180.0
 radians_val = math.radians(180)        # 3.141592653589793
 
 # Modular arithmetic
@@ -351,12 +351,12 @@ gcd_val = math.gcd(48, 18)     # 6
 fact_val = math.factorial(5)   # 120
 
 # Constants
-pi = math.pi()  # 3.141592653589793
-e = math.e()    # 2.718281828459045
+pi = math.pi  # 3.141592653589793
+e = math.e    # 2.718281828459045
 
 # Calculate circle area
 radius = 5
-area = math.pi() * math.pow(radius, 2)
+area = math.pi * math.pow(radius, 2)
 print("Area: " + str(area))  # Area: 78.53981633974483
 
 # Calculate hypotenuse using Pythagoras

@@ -156,11 +156,20 @@ func (p *Scriptling) loadLibrary(name string) error {
 // Register library adds a new library to the script environment
 func (p *Scriptling) registerLibrary(name string, lib *object.Library) {
 	funcs := lib.Functions()
-	dict := make(map[string]object.DictPair, len(funcs))
+	consts := lib.Constants()
+	dict := make(map[string]object.DictPair, len(funcs)+len(consts))
 	for fname, fn := range funcs {
 		dict[fname] = object.DictPair{
 			Key:   &object.String{Value: fname},
 			Value: fn,
+		}
+	}
+
+	// Add constants
+	for cname, val := range consts {
+		dict[cname] = object.DictPair{
+			Key:   &object.String{Value: cname},
+			Value: val,
 		}
 	}
 
@@ -380,6 +389,12 @@ func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[stri
 					Value: fn,
 				}
 			}
+			for cname, val := range lib.Constants() {
+				goLibDict[cname] = object.DictPair{
+					Key:   &object.String{Value: cname},
+					Value: val,
+				}
+			}
 			libEnv.Set(libName, &object.Dict{Pairs: goLibDict})
 			return nil
 		}
@@ -391,6 +406,12 @@ func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[stri
 				stdLibDict[fname] = object.DictPair{
 					Key:   &object.String{Value: fname},
 					Value: fn,
+				}
+			}
+			for cname, val := range lib.Constants() {
+				stdLibDict[cname] = object.DictPair{
+					Key:   &object.String{Value: cname},
+					Value: val,
 				}
 			}
 			libEnv.Set(libName, &object.Dict{Pairs: stdLibDict})

@@ -54,7 +54,7 @@ result = math.exp(0)
 print(f"exp(0) = {result}")
 
 # Angle conversion
-result = math.degrees(math.pi())
+result = math.degrees(math.pi)
 print(f"degrees(π) = {result}")
 
 result = math.radians(180)
@@ -71,15 +71,15 @@ result = math.factorial(5)
 print(f"factorial(5) = {result}")
 
 # Constants
-pi = math.pi()
+pi = math.pi
 print(f"pi = {pi}")
 
-e = math.e()
+e = math.e
 print(f"e = {e}")
 
 # Calculate circle area
 radius = 5
-area = math.pi() * math.pow(radius, 2)
+area = math.pi * math.pow(radius, 2)
 print(f"Circle area (r=5): {area}")
 
 print("✓ All math library tests passed")

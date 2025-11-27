@@ -277,10 +277,11 @@ func (b *Builtin) AsBool() (bool, bool)              { return false, false }
 func (b *Builtin) AsList() ([]Object, bool)          { return nil, false }
 func (b *Builtin) AsDict() (map[string]Object, bool) { return nil, false }
 
-// Library represents a pre-built collection of builtin functions
+// Library represents a pre-built collection of builtin functions and constants
 // This eliminates the need for function wrappers and provides direct access
 type Library struct {
 	functions   map[string]*Builtin
+	constants   map[string]Object
 	description string
 }
 
@@ -292,6 +293,14 @@ func NewLibrary(functions map[string]*Builtin) *Library {
 	}
 }
 
+// NewLibraryWithConstants creates a new library with functions and constants
+func NewLibraryWithConstants(functions map[string]*Builtin, constants map[string]Object) *Library {
+	return &Library{
+		functions: functions,
+		constants: constants,
+	}
+}
+
 // NewLibraryWithDescription creates a new library with functions and description
 func NewLibraryWithDescription(functions map[string]*Builtin, description string) *Library {
 	return &Library{
@@ -300,9 +309,23 @@ func NewLibraryWithDescription(functions map[string]*Builtin, description string
 	}
 }
 
+// NewLibraryFull creates a new library with functions, constants, and description
+func NewLibraryFull(functions map[string]*Builtin, constants map[string]Object, description string) *Library {
+	return &Library{
+		functions:   functions,
+		constants:   constants,
+		description: description,
+	}
+}
+
 // Functions returns the library's function map
 func (l *Library) Functions() map[string]*Builtin {
 	return l.functions
+}
+
+// Constants returns the library's constants map
+func (l *Library) Constants() map[string]Object {
+	return l.constants
 }
 
 // Description returns the library's description
