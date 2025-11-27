@@ -92,6 +92,19 @@ def add(a, b):
     return a + b
 PI = 3.14159
 `)
+
+// Set on-demand library callback for dynamic loading
+p.SetOnDemandLibraryCallback(func(p *Scriptling, libName string) bool {
+    if libName == "disklib" {
+        // Load library from disk and register it
+        script, err := loadLibraryFromDisk(libName)
+        if err != nil {
+            return false
+        }
+        return p.RegisterScriptLibrary(libName, script) == nil
+    }
+    return false
+})
 ```
 
 ### Libraries
@@ -108,6 +121,9 @@ import http
 response = http.get("https://api.example.com/data")
 data = json.parse(response["body"])
 `)
+
+// Libraries can also be loaded on-demand using SetOnDemandLibraryCallback
+// This allows loading libraries from disk or other sources when first imported
 ```
 
 ## Examples

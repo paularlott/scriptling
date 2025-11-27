@@ -21,9 +21,10 @@ type scriptLibrary struct {
 }
 
 type Scriptling struct {
-	env                 *object.Environment
-	registeredLibraries map[string]*object.Library
-	scriptLibraries     map[string]*scriptLibrary // Script-based libraries
+	env                     *object.Environment
+	registeredLibraries     map[string]*object.Library
+	scriptLibraries         map[string]*scriptLibrary // Script-based libraries
+	onDemandLibraryCallback func(*Scriptling, string) bool
 }
 
 var availableLibraries = map[string]*object.Library{
@@ -40,9 +41,10 @@ var availableLibraries = map[string]*object.Library{
 
 func New() *Scriptling {
 	p := &Scriptling{
-		env:                 object.NewEnvironment(),
-		registeredLibraries: make(map[string]*object.Library),
-		scriptLibraries:     make(map[string]*scriptLibrary),
+		env:                     object.NewEnvironment(),
+		registeredLibraries:     make(map[string]*object.Library),
+		scriptLibraries:         make(map[string]*scriptLibrary),
+		onDemandLibraryCallback: nil,
 	}
 
 	// Register import builtin
@@ -55,29 +57,41 @@ func New() *Scriptling {
 }
 
 func (p *Scriptling) loadLibrary(name string) error {
-	// Try from script libraries first
-	if lib, ok := p.scriptLibraries[name]; ok {
-		if lib.store == nil {
-			store, err := p.evaluateScriptLibrary(name, lib.source)
-			if err != nil {
-				return err
+	for attempts := 0; attempts < 2; attempts++ {
+		// Try from script libraries first
+		if lib, ok := p.scriptLibraries[name]; ok {
+			if lib.store == nil {
+				store, err := p.evaluateScriptLibrary(name, lib.source)
+				if err != nil {
+					return err
+				}
+				lib.store = store
 			}
-			lib.store = store
+			p.registerScriptLibrary(name, lib.store)
+			return nil
 		}
-		p.registerScriptLibrary(name, lib.store)
-		return nil
-	}
 
-	// Try from registered libraries
-	if lib, ok := p.registeredLibraries[name]; ok {
-		p.registerLibrary(name, lib.Functions())
-		return nil
-	}
+		// Try from registered libraries
+		if lib, ok := p.registeredLibraries[name]; ok {
+			p.registerLibrary(name, lib.Functions())
+			return nil
+		}
 
-	// Try standard libraries
-	if lib, ok := availableLibraries[name]; ok {
-		p.registerLibrary(name, lib.Functions())
-		return nil
+		// Try standard libraries
+		if lib, ok := availableLibraries[name]; ok {
+			p.registerLibrary(name, lib.Functions())
+			return nil
+		}
+
+		// If first attempt and callback exists, call it
+		if attempts == 0 && p.onDemandLibraryCallback != nil {
+			if !p.onDemandLibraryCallback(p, name) {
+				break // callback didn't register, stop
+			}
+			// else continue to second attempt
+		} else {
+			break
+		}
 	}
 
 	return fmt.Errorf("unknown library: %s", name)
@@ -234,6 +248,13 @@ func (p *Scriptling) RegisterScriptLibrary(name string, script string) error {
 		source: script,
 	}
 	return nil
+}
+
+// SetOnDemandLibraryCallback sets a callback that is called when a library import fails
+// The callback receives the Scriptling instance and the library name, and should return true
+// if it successfully registered the library using RegisterLibrary or RegisterScriptLibrary
+func (p *Scriptling) SetOnDemandLibraryCallback(callback func(*Scriptling, string) bool) {
+	p.onDemandLibraryCallback = callback
 }
 
 func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[string]object.Object, error) {

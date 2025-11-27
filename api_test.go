@@ -71,6 +71,39 @@ result = data["key"]
 	}
 }
 
+func TestOnDemandLibraryCallback(t *testing.T) {
+	p := New()
+
+	// Set callback that registers a custom library on demand
+	p.SetOnDemandLibraryCallback(func(s *Scriptling, name string) bool {
+		if name == "customlib" {
+			// Register a simple library
+			return s.RegisterScriptLibrary("customlib", "PI = 3.14\ndef add(a, b):\n    return a + b") == nil
+		}
+		return false
+	})
+
+	// Try to import the library that doesn't exist yet
+	_, err := p.Eval(`
+import customlib
+result = customlib.add(2, 3)
+pi_value = customlib.PI
+`)
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+
+	result, ok := p.GetVar("result")
+	if !ok || result != int64(5) {
+		t.Errorf("expected 5, got %v", result)
+	}
+
+	pi_value, ok := p.GetVar("pi_value")
+	if !ok || pi_value != 3.14 {
+		t.Errorf("expected 3.14, got %v", pi_value)
+	}
+}
+
 func TestModuloOperator(t *testing.T) {
 	p := New()
 	_, err := p.Eval("result = 10 % 3")
