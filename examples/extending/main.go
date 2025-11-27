@@ -144,7 +144,11 @@ func toInteger(obj object.Object) (*object.Integer, bool) {
 	}
 }
 
-func main() {
+func runGoExtensionExample() {
+	fmt.Println("==========================================")
+	fmt.Println("   Extending Scriptling with Go Code")
+	fmt.Println("==========================================")
+
 	p := scriptling.New()
 
 	// Register a simple custom function
@@ -235,10 +239,175 @@ print("Type: " + str(person_type))
 # Test missing key
 missing = mathutils.get_map_value(person, "salary")
 print("Missing key result: " + str(missing))
-
-print("\n=== All Examples Completed ===")
 `)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 	}
+	fmt.Println()
+}
+
+func runScriptExtensionExample() {
+	fmt.Println("==========================================")
+	fmt.Println("   Extending Scriptling with Scripts")
+	fmt.Println("==========================================")
+
+	p := scriptling.New()
+
+	fmt.Println("=== Registering Scriptling Functions ===")
+
+	// Register a simple Scriptling function
+	err := p.RegisterScriptFunc("calculate_area", `
+def calculate_area(width, height):
+    return width * height
+calculate_area
+`)
+	if err != nil {
+		fmt.Printf("Error registering function: %v\n", err)
+		return
+	}
+
+	// Test the registered function
+	_, err = p.Eval(`
+area = calculate_area(10, 20)
+print("Area of rectangle: " + str(area))
+`)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+
+	// Register a function with default parameters
+	err = p.RegisterScriptFunc("format_name", `
+def format_name(first, last, title="Mr."):
+    return title + " " + first + " " + last
+format_name
+`)
+	if err != nil {
+		fmt.Printf("Error registering function: %v\n", err)
+		return
+	}
+
+	_, err = p.Eval(`
+name1 = format_name("John", "Doe")
+name2 = format_name("Jane", "Smith", "Dr.")
+print("Name 1: " + name1)
+print("Name 2: " + name2)
+`)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+
+	fmt.Println("\n=== Registering Scriptling Libraries ===")
+
+	// Register a simple math utilities library
+	err = p.RegisterScriptLibrary("mathutils", `
+def square(x):
+    return x * x
+
+def cube(x):
+    return x * x * x
+
+def sum_of_squares(a, b):
+    return square(a) + square(b)
+
+PI = 3.14159
+E = 2.71828
+`)
+	if err != nil {
+		fmt.Printf("Error registering library: %v\n", err)
+		return
+	}
+
+	_, err = p.Eval(`
+import mathutils
+
+print("Square of 5: " + str(mathutils.square(5)))
+print("Cube of 3: " + str(mathutils.cube(3)))
+print("Sum of squares of 3 and 4: " + str(mathutils.sum_of_squares(3, 4)))
+print("PI constant: " + str(mathutils.PI))
+`)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+
+	fmt.Println("\n=== Nested Library Imports ===")
+
+	// Register a base library
+	err = p.RegisterScriptLibrary("geometry_base", `
+def distance(x1, y1, x2, y2):
+    dx = x2 - x1
+    dy = y2 - y1
+    return (dx * dx + dy * dy) ** 0.5
+`)
+	if err != nil {
+		fmt.Printf("Error registering base library: %v\n", err)
+		return
+	}
+
+	// Register a library that uses the base library
+	err = p.RegisterScriptLibrary("geometry_advanced", `
+import geometry_base
+
+def circle_circumference(radius):
+    return 2 * 3.14159 * radius
+
+def distance_from_origin(x, y):
+    return geometry_base.distance(0, 0, x, y)
+`)
+	if err != nil {
+		fmt.Printf("Error registering advanced library: %v\n", err)
+		return
+	}
+
+	_, err = p.Eval(`
+import geometry_advanced
+
+print("Circumference of circle with radius 5: " + str(geometry_advanced.circle_circumference(5)))
+print("Distance from origin to (3, 4): " + str(geometry_advanced.distance_from_origin(3, 4)))
+`)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+
+	fmt.Println("\n=== Library Using Standard Library ===")
+
+	// Register a library that uses a standard library
+	err = p.RegisterScriptLibrary("data_processor", `
+import json
+
+def parse_user(json_str):
+    user = json.loads(json_str)
+    return user["name"] + " (" + str(user["age"]) + ")"
+
+def create_user_json(name, age):
+    data = {"name": name, "age": age}
+    return json.dumps(data)
+`)
+	if err != nil {
+		fmt.Printf("Error registering data processor library: %v\n", err)
+		return
+	}
+
+	_, err = p.Eval(`
+import data_processor
+
+user_json = data_processor.create_user_json("Alice", 30)
+print("Created JSON: " + user_json)
+
+parsed = data_processor.parse_user(user_json)
+print("Parsed user: " + parsed)
+`)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+	fmt.Println()
+}
+
+func main() {
+	runGoExtensionExample()
+	runScriptExtensionExample()
 }

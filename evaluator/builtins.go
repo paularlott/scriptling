@@ -549,6 +549,10 @@ func SetImportCallback(fn func(string) error) {
 	importCallback = fn
 }
 
+func GetImportCallback() func(string) error {
+	return importCallback
+}
+
 // getEnvFromContext retrieves environment from context
 func getEnvFromContext(ctx context.Context) *object.Environment {
 	if env, ok := ctx.Value(envContextKey).(*object.Environment); ok {

@@ -1439,12 +1439,24 @@ func callStringMethod(ctx context.Context, obj object.Object, method string, arg
 
 		// Then check for library methods
 		if pair, ok := dict.Pairs[method]; ok {
-			if builtin, ok := pair.Value.(*object.Builtin); ok {
+			switch fn := pair.Value.(type) {
+			case *object.Builtin:
 				ctxWithEnv := SetEnvInContext(ctx, env)
-				return builtin.Fn(ctxWithEnv, args...)
+				return fn.Fn(ctxWithEnv, args...)
+			case *object.Function:
+				return applyFunctionWithContext(ctx, fn, args, nil, env)
+			case *object.LambdaFunction:
+				return applyFunctionWithContext(ctx, fn, args, nil, env)
+			default:
+				// If it's not a callable, just return the value
+				if len(args) == 0 {
+					return pair.Value
+				}
+				return errors.NewError("%s: %s is not callable", errors.ErrIdentifierNotFound, method)
 			}
 		}
 		return errors.NewError("%s: method %s not found in library", errors.ErrIdentifierNotFound, method)
+
 	}
 
 	// Handle list methods

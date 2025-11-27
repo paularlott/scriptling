@@ -3,8 +3,10 @@ package scriptling
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/evaluator"
 	"github.com/paularlott/scriptling/internal/cache"
 	"github.com/paularlott/scriptling/lexer"
@@ -13,9 +15,15 @@ import (
 	"github.com/paularlott/scriptling/stdlib"
 )
 
+type scriptLibrary struct {
+	source string
+	store  map[string]object.Object
+}
+
 type Scriptling struct {
 	env                 *object.Environment
 	registeredLibraries map[string]*object.Library
+	scriptLibraries     map[string]*scriptLibrary // Script-based libraries
 }
 
 var availableLibraries = map[string]*object.Library{
@@ -34,6 +42,7 @@ func New() *Scriptling {
 	p := &Scriptling{
 		env:                 object.NewEnvironment(),
 		registeredLibraries: make(map[string]*object.Library),
+		scriptLibraries:     make(map[string]*scriptLibrary),
 	}
 
 	// Register import builtin
@@ -46,6 +55,19 @@ func New() *Scriptling {
 }
 
 func (p *Scriptling) loadLibrary(name string) error {
+	// Try from script libraries first
+	if lib, ok := p.scriptLibraries[name]; ok {
+		if lib.store == nil {
+			store, err := p.evaluateScriptLibrary(name, lib.source)
+			if err != nil {
+				return err
+			}
+			lib.store = store
+		}
+		p.registerScriptLibrary(name, lib.store)
+		return nil
+	}
+
 	// Try from registered libraries
 	if lib, ok := p.registeredLibraries[name]; ok {
 		p.registerLibrary(name, lib.Functions())
@@ -181,6 +203,156 @@ func (p *Scriptling) RegisterFunc(name string, fn func(ctx context.Context, args
 // RegisterLibrary registers a new library that can be imported by scripts
 func (p *Scriptling) RegisterLibrary(name string, lib *object.Library) {
 	p.registeredLibraries[name] = lib
+}
+
+// RegisterScriptFunc registers a function written in Scriptling
+// The script should define a function and this method will extract it and register it by name
+func (p *Scriptling) RegisterScriptFunc(name string, script string) error {
+	// Evaluate the script to get the function
+	result, err := p.Eval(script)
+	if err != nil {
+		return fmt.Errorf("failed to evaluate script: %w", err)
+	}
+
+	// Check if result is a function
+	switch fn := result.(type) {
+	case *object.Function:
+		p.env.Set(name, fn)
+	case *object.LambdaFunction:
+		p.env.Set(name, fn)
+	default:
+		return fmt.Errorf("script must evaluate to a function, got %s", result.Type())
+	}
+
+	return nil
+}
+
+// RegisterScriptLibrary registers a library written in Scriptling
+// The script should define functions/values that will be available when the library is imported
+func (p *Scriptling) RegisterScriptLibrary(name string, script string) error {
+	p.scriptLibraries[name] = &scriptLibrary{
+		source: script,
+	}
+	return nil
+}
+
+func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[string]object.Object, error) {
+	// Create a new environment for the library
+	libEnv := object.NewEnvironment()
+
+	// Inherit writer from main environment (for output capture)
+	if w := p.env.GetWriter(); w != nil {
+		if buf, ok := w.(*strings.Builder); ok {
+			libEnv.SetOutput(buf)
+		}
+	}
+
+	// Set up import builtin for nested imports
+	libEnv.Set("import", evaluator.GetImportBuiltin())
+
+	// Temporarily set up import callback to load into library environment
+	oldCallback := evaluator.GetImportCallback()
+	evaluator.SetImportCallback(func(libName string) error {
+		// Try from script libraries first
+		if lib, ok := p.scriptLibraries[libName]; ok {
+			// Check if we need to evaluate it first (recursive lazy loading)
+			if lib.store == nil {
+				store, err := p.evaluateScriptLibrary(libName, lib.source)
+				if err != nil {
+					return err
+				}
+				lib.store = store
+			}
+
+			// Load script library into library environment
+			libDict := make(map[string]object.DictPair, len(lib.store))
+			for fname, obj := range lib.store {
+				libDict[fname] = object.DictPair{
+					Key:   &object.String{Value: fname},
+					Value: obj,
+				}
+			}
+			libEnv.Set(libName, &object.Dict{Pairs: libDict})
+			return nil
+		}
+
+		// Try from registered libraries
+		if lib, ok := p.registeredLibraries[libName]; ok {
+			// Load Go library into library environment
+			goLibDict := make(map[string]object.DictPair)
+			for fname, fn := range lib.Functions() {
+				goLibDict[fname] = object.DictPair{
+					Key:   &object.String{Value: fname},
+					Value: fn,
+				}
+			}
+			libEnv.Set(libName, &object.Dict{Pairs: goLibDict})
+			return nil
+		}
+
+		// Try standard libraries
+		if lib, ok := availableLibraries[libName]; ok {
+			stdLibDict := make(map[string]object.DictPair)
+			for fname, fn := range lib.Functions() {
+				stdLibDict[fname] = object.DictPair{
+					Key:   &object.String{Value: fname},
+					Value: fn,
+				}
+			}
+			libEnv.Set(libName, &object.Dict{Pairs: stdLibDict})
+			return nil
+		}
+
+		return fmt.Errorf("unknown library: %s", libName)
+	})
+	defer evaluator.SetImportCallback(oldCallback)
+
+	// Parse and evaluate the script in the library environment
+	var program *ast.Program
+	if cached, ok := cache.Get(script); ok {
+		program = cached
+	} else {
+		l := lexer.New(script)
+		par := parser.New(l)
+		program = par.ParseProgram()
+		if len(par.Errors()) != 0 {
+			return nil, fmt.Errorf("parser errors: %v", par.Errors())
+		}
+		cache.Set(script, program)
+	}
+
+	result := evaluator.Eval(program, libEnv)
+	if err, ok := result.(*object.Error); ok {
+		return nil, fmt.Errorf("%s", err.Message)
+	}
+
+	// Extract all defined names from the library environment
+	store := libEnv.GetStore()
+
+	// Filter out the import builtin and any imported libraries
+	libStore := make(map[string]object.Object)
+	for k, v := range store {
+		// Skip import builtin and imported libraries (which are Dicts)
+		if k == "import" {
+			continue
+		}
+		// Include everything else (functions, constants, etc.)
+		libStore[k] = v
+	}
+
+	return libStore, nil
+}
+
+// registerScriptLibrary loads a script library into the current environment as a dict
+func (p *Scriptling) registerScriptLibrary(name string, store map[string]object.Object) {
+	lib := make(map[string]object.DictPair, len(store))
+	for fname, obj := range store {
+		lib[fname] = object.DictPair{
+			Key:   &object.String{Value: fname},
+			Value: obj,
+		}
+	}
+	p.env.Set(name, &object.Dict{Pairs: lib})
 }
 
 // EnableOutputCapture enables capturing print output instead of sending to stdout
