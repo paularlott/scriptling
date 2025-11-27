@@ -8,7 +8,7 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
-var base64Library = object.NewLibrary(map[string]*object.Builtin{
+var Base64Library = object.NewLibrary(map[string]*object.Builtin{
 	"encode": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
 			if len(args) != 1 {
@@ -44,8 +44,4 @@ Returns the base64 encoded version of the input string.`,
 
 Returns the decoded string from a base64 encoded input.`,
 	},
-})
-
-func GetBase64Library() *object.Library {
-	return object.NewLibraryWithDescription(base64Library.Functions(), "Base64 encoding and decoding library")
-}
+}, nil, "Base64 encoding and decoding library")

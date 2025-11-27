@@ -8,7 +8,7 @@ import (
 )
 
 func TestRegexMatch(t *testing.T) {
-	lib := ReLibrary()
+	lib := ReLibrary
 	match := lib.Functions()["match"]
 
 	result := match.Fn(context.Background(), &object.String{Value: "[0-9]+"}, &object.String{Value: "123abc"})
@@ -31,7 +31,7 @@ func TestRegexMatch(t *testing.T) {
 }
 
 func TestRegexFind(t *testing.T) {
-	lib := ReLibrary()
+	lib := ReLibrary
 	find := lib.Functions()["find"]
 
 	result := find.Fn(context.Background(), &object.String{Value: "[0-9]+"}, &object.String{Value: "abc123def"})
@@ -45,7 +45,7 @@ func TestRegexFind(t *testing.T) {
 }
 
 func TestRegexSearch(t *testing.T) {
-	lib := ReLibrary()
+	lib := ReLibrary
 	search := lib.Functions()["search"]
 
 	result := search.Fn(context.Background(), &object.String{Value: "[0-9]+"}, &object.String{Value: "abc123def"})
@@ -59,7 +59,7 @@ func TestRegexSearch(t *testing.T) {
 }
 
 func TestRegexFindall(t *testing.T) {
-	lib := ReLibrary()
+	lib := ReLibrary
 	findall := lib.Functions()["findall"]
 
 	result := findall.Fn(context.Background(), &object.String{Value: "[0-9]+"}, &object.String{Value: "abc123def456ghi"})
@@ -83,7 +83,7 @@ func TestRegexFindall(t *testing.T) {
 }
 
 func TestRegexReplace(t *testing.T) {
-	lib := ReLibrary()
+	lib := ReLibrary
 	replace := lib.Functions()["replace"]
 
 	result := replace.Fn(context.Background(), &object.String{Value: "[0-9]+"}, &object.String{Value: "abc123def"}, &object.String{Value: "XXX"})
@@ -97,7 +97,7 @@ func TestRegexReplace(t *testing.T) {
 }
 
 func TestRegexSplit(t *testing.T) {
-	lib := ReLibrary()
+	lib := ReLibrary
 	split := lib.Functions()["split"]
 
 	result := split.Fn(context.Background(), &object.String{Value: "[,;]"}, &object.String{Value: "one,two;three"})
@@ -119,7 +119,7 @@ func TestRegexSplit(t *testing.T) {
 }
 
 func TestRegexCompile(t *testing.T) {
-	lib := ReLibrary()
+	lib := ReLibrary
 	compile := lib.Functions()["compile"]
 
 	result := compile.Fn(context.Background(), &object.String{Value: "[0-9]+"})
@@ -139,7 +139,7 @@ func TestRegexCompile(t *testing.T) {
 }
 
 func TestRegexEscape(t *testing.T) {
-	lib := ReLibrary()
+	lib := ReLibrary
 	escape := lib.Functions()["escape"]
 
 	result := escape.Fn(context.Background(), &object.String{Value: "a.b+c"})
@@ -153,7 +153,7 @@ func TestRegexEscape(t *testing.T) {
 }
 
 func TestRegexFullmatch(t *testing.T) {
-	lib := ReLibrary()
+	lib := ReLibrary
 	fullmatch := lib.Functions()["fullmatch"]
 
 	// Test full match

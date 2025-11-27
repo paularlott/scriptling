@@ -15,7 +15,7 @@ func init() {
 	rng = rand.New(rand.NewSource(time.Now().UnixNano()))
 }
 
-var randomLibrary = object.NewLibrary(map[string]*object.Builtin{
+var RandomLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"randint": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
 			if len(args) != 2 {
@@ -94,8 +94,4 @@ Returns a randomly selected element from the given list.`,
 
 Randomly shuffles the elements of the list in place.`,
 	},
-})
-
-func GetRandomLibrary() *object.Library {
-	return object.NewLibraryWithDescription(randomLibrary.Functions(), "Random number generation library")
-}
+}, nil, "Random number generation library")

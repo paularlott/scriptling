@@ -8,7 +8,7 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
-var jsonLibrary = object.NewLibrary(map[string]*object.Builtin{
+var JSONLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"loads": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
 			if len(args) != 1 {
@@ -45,11 +45,7 @@ Parses a JSON string and returns the corresponding Scriptling object.`,
 
 Converts a Scriptling object to its JSON string representation.`,
 	},
-})
-
-func JSONLibrary() *object.Library {
-	return object.NewLibraryWithDescription(jsonLibrary.Functions(), "JSON encoding and decoding library")
-}
+}, nil, "JSON encoding and decoding library")
 
 func jsonToObject(data interface{}) object.Object {
 	switch v := data.(type) {

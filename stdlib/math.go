@@ -19,7 +19,7 @@ func gcd(a, b int64) int64 {
 	return a
 }
 
-var mathLibrary = object.NewLibrary(map[string]*object.Builtin{
+var MathLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"sqrt": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
 			if len(args) != 1 {
@@ -457,14 +457,7 @@ Returns an integer.`,
 n must be a non-negative integer <= 20.
 Returns an integer.`,
 	},
-})
-
-// mathConstants defines the constant values available in the math library
-var mathConstants = map[string]object.Object{
+}, map[string]object.Object{
 	"pi": &object.Float{Value: math.Pi},
 	"e":  &object.Float{Value: math.E},
-}
-
-func GetMathLibrary() *object.Library {
-	return object.NewLibraryFull(mathLibrary.Functions(), mathConstants, "Mathematical functions library")
-}
+}, "Mathematical functions library")

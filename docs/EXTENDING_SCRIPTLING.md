@@ -999,7 +999,7 @@ func main() {
     p := scriptling.New()
 
     // Register a Go library with description
-    p.RegisterLibrary("gomath", object.NewLibraryWithDescription(map[string]*object.Builtin{
+    p.RegisterLibrary("gomath", object.NewLibrary(map[string]*object.Builtin{
         "sqrt": {
             Fn: func(ctx context.Context, args ...object.Object) object.Object {
                 if len(args) != 1 {
@@ -1011,7 +1011,7 @@ func main() {
                 return &object.Error{Message: "argument must be float"}
             },
         },
-    }, "Custom mathematical functions library"))
+    }, nil, "Custom mathematical functions library"))
 
     // Register a Scriptling library that uses the Go library
     err := p.RegisterScriptLibrary("advanced_math", `

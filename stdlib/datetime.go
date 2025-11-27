@@ -8,7 +8,7 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
-var datetimeLibrary = object.NewLibrary(map[string]*object.Builtin{
+var DatetimeLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"now": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
 			if len(args) > 1 {
@@ -333,11 +333,7 @@ Returns a new timestamp with the specified number of minutes added.`,
 
 Returns a new timestamp with the specified number of seconds added.`,
 	},
-})
-
-func GetDatetimeLibrary() *object.Library {
-	return object.NewLibraryWithDescription(datetimeLibrary.Functions(), "Advanced datetime operations library")
-}
+}, nil, "Date and time manipulation library")
 
 // Helper function to convert Python datetime format codes to Go format
 func pythonToGoDateFormat(pyFormat string) string {

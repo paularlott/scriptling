@@ -117,7 +117,7 @@ func CreateMathUtilsLibrary() *object.Library {
 				return &object.Dict{Pairs: pairs}
 			},
 		},
-	})
+	}, nil, "")
 }
 
 // Helper function for type casting to float64

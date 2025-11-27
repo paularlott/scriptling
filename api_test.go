@@ -37,7 +37,7 @@ func TestRegisterLibrary(t *testing.T) {
 				return &object.String{Value: "Hello!"}
 			},
 		},
-	})
+	}, nil, "")
 	p.RegisterLibrary("mylib", myLib)
 
 	_, err := p.Eval(`
@@ -178,7 +178,7 @@ result = data["name"]
 
 func TestHTTPLibrary(t *testing.T) {
 	p := New()
-	p.RegisterLibrary("requests", extlibs.RequestsLibrary())
+	p.RegisterLibrary("requests", extlibs.RequestsLibrary)
 	_, err := p.Eval(`
 import requests
 options = {"timeout": 10}

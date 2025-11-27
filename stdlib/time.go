@@ -10,7 +10,7 @@ import (
 
 var startTime = time.Now()
 
-var timeLibrary = object.NewLibrary(map[string]*object.Builtin{
+var TimeLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"time": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
 			return &object.Float{Value: float64(time.Now().UnixNano()) / 1e9}
@@ -268,11 +268,7 @@ Converts a time tuple to a string in the format 'Mon Jan 2 15:04:05 2006'. If tu
 
 Converts a Unix timestamp to a string in the format 'Mon Jan 2 15:04:05 2006'. If timestamp is omitted, uses current time.`,
 	},
-})
-
-func GetTimeLibrary() *object.Library {
-	return object.NewLibraryWithDescription(timeLibrary.Functions(), "Time and date operations library")
-}
+}, nil, "Time-related functions library")
 
 // Convert Go time.Time to Scriptling time tuple (list)
 func timeToTuple(t time.Time, utc bool) *object.List {

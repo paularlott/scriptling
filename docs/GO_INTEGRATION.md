@@ -337,7 +337,12 @@ print("CPUs: " + str(info["cpus"]))
 ### Register Custom Library
 
 ```go
-// Create library with functions
+// Create library with functions, optional constants, and optional description
+// NewLibrary(functions, constants, description)
+// - functions: map of builtin functions (required)
+// - constants: map of constant values (use nil if none)
+// - description: library description (use "" if none)
+
 myLib := object.NewLibrary(map[string]*object.Builtin{
     "hello": {
         Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -363,7 +368,7 @@ myLib := object.NewLibrary(map[string]*object.Builtin{
         },
         HelpText: "add(a, b) - Add two integers",
     },
-})
+}, nil, "My custom library")  // nil for no constants, description string
 
 // Register the library
 p.RegisterLibrary("mylib", myLib)
@@ -385,7 +390,7 @@ result2 = mylib["add"](10, 20)
 
 ```go
 // Create library with both functions and constants
-mathLib := object.NewLibraryWithConstants(
+mathLib := object.NewLibrary(
     map[string]*object.Builtin{
         "sqrt": {
             Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -404,13 +409,7 @@ mathLib := object.NewLibraryWithConstants(
         "pi": &object.Float{Value: 3.141592653589793},
         "e":  &object.Float{Value: 2.718281828459045},
     },
-)
-
-// For a library with functions, constants, and description:
-fullLib := object.NewLibraryFull(
-    map[string]*object.Builtin{...},  // functions
-    map[string]object.Object{...},    // constants
-    "Description of the library",
+    "Mathematical utilities library",
 )
 
 p.RegisterLibrary("mymath", mathLib)
@@ -459,7 +458,7 @@ func (c *Counter) CreateLibrary() *object.Library {
                 return &object.Integer{Value: c.value}
             },
         },
-    })
+    }, nil, "Counter library")
 }
 
 // Usage

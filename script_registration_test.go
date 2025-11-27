@@ -294,7 +294,7 @@ func TestRegisterScriptLibraryWithGoLibrary(t *testing.T) {
 				return &object.Integer{Value: i.Value * 2}
 			},
 		},
-	}))
+	}, nil, ""))
 
 	// Register a Scriptling library that uses the Go library
 	err := p.RegisterScriptLibrary("scriptlib", `

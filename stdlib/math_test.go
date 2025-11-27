@@ -9,7 +9,7 @@ import (
 )
 
 func TestMathSqrt(t *testing.T) {
-	lib := GetMathLibrary()
+	lib := MathLibrary
 	sqrt := lib.Functions()["sqrt"]
 
 	result := sqrt.Fn(context.Background(), &object.Integer{Value: 16})
@@ -23,7 +23,7 @@ func TestMathSqrt(t *testing.T) {
 }
 
 func TestMathPow(t *testing.T) {
-	lib := GetMathLibrary()
+	lib := MathLibrary
 	pow := lib.Functions()["pow"]
 
 	result := pow.Fn(context.Background(), &object.Integer{Value: 2}, &object.Integer{Value: 8})
@@ -37,7 +37,7 @@ func TestMathPow(t *testing.T) {
 }
 
 func TestMathAbs(t *testing.T) {
-	lib := GetMathLibrary()
+	lib := MathLibrary
 	abs := lib.Functions()["abs"]
 
 	result := abs.Fn(context.Background(), &object.Integer{Value: -5})
@@ -51,7 +51,7 @@ func TestMathAbs(t *testing.T) {
 }
 
 func TestMathFloor(t *testing.T) {
-	lib := GetMathLibrary()
+	lib := MathLibrary
 	floor := lib.Functions()["floor"]
 
 	result := floor.Fn(context.Background(), &object.Float{Value: 3.7})
@@ -65,7 +65,7 @@ func TestMathFloor(t *testing.T) {
 }
 
 func TestMathCeil(t *testing.T) {
-	lib := GetMathLibrary()
+	lib := MathLibrary
 	ceil := lib.Functions()["ceil"]
 
 	result := ceil.Fn(context.Background(), &object.Float{Value: 3.2})
@@ -79,7 +79,7 @@ func TestMathCeil(t *testing.T) {
 }
 
 func TestMathRound(t *testing.T) {
-	lib := GetMathLibrary()
+	lib := MathLibrary
 	round := lib.Functions()["round"]
 
 	result := round.Fn(context.Background(), &object.Float{Value: 3.5})
@@ -93,7 +93,7 @@ func TestMathRound(t *testing.T) {
 }
 
 func TestMathMin(t *testing.T) {
-	lib := GetMathLibrary()
+	lib := MathLibrary
 	min := lib.Functions()["min"]
 
 	result := min.Fn(context.Background(), &object.Integer{Value: 3}, &object.Integer{Value: 1})
@@ -107,7 +107,7 @@ func TestMathMin(t *testing.T) {
 }
 
 func TestMathMax(t *testing.T) {
-	lib := GetMathLibrary()
+	lib := MathLibrary
 	max := lib.Functions()["max"]
 
 	result := max.Fn(context.Background(), &object.Integer{Value: 3}, &object.Integer{Value: 1})
@@ -121,7 +121,7 @@ func TestMathMax(t *testing.T) {
 }
 
 func TestMathConstants(t *testing.T) {
-	lib := GetMathLibrary()
+	lib := MathLibrary
 
 	pi := lib.Constants()["pi"]
 	if f, ok := pi.(*object.Float); ok {
@@ -143,7 +143,7 @@ func TestMathConstants(t *testing.T) {
 }
 
 func TestMathSin(t *testing.T) {
-	lib := GetMathLibrary()
+	lib := MathLibrary
 	sin := lib.Functions()["sin"]
 
 	result := sin.Fn(context.Background(), &object.Integer{Value: 0})
@@ -157,7 +157,7 @@ func TestMathSin(t *testing.T) {
 }
 
 func TestMathCos(t *testing.T) {
-	lib := GetMathLibrary()
+	lib := MathLibrary
 	cos := lib.Functions()["cos"]
 
 	result := cos.Fn(context.Background(), &object.Integer{Value: 0})
@@ -171,7 +171,7 @@ func TestMathCos(t *testing.T) {
 }
 
 func TestMathTan(t *testing.T) {
-	lib := GetMathLibrary()
+	lib := MathLibrary
 	tan := lib.Functions()["tan"]
 
 	result := tan.Fn(context.Background(), &object.Integer{Value: 0})
@@ -185,7 +185,7 @@ func TestMathTan(t *testing.T) {
 }
 
 func TestMathLog(t *testing.T) {
-	lib := GetMathLibrary()
+	lib := MathLibrary
 	log := lib.Functions()["log"]
 
 	result := log.Fn(context.Background(), &object.Integer{Value: 1})
@@ -205,7 +205,7 @@ func TestMathLog(t *testing.T) {
 }
 
 func TestMathExp(t *testing.T) {
-	lib := GetMathLibrary()
+	lib := MathLibrary
 	exp := lib.Functions()["exp"]
 
 	result := exp.Fn(context.Background(), &object.Integer{Value: 0})
@@ -219,7 +219,7 @@ func TestMathExp(t *testing.T) {
 }
 
 func TestMathDegrees(t *testing.T) {
-	lib := GetMathLibrary()
+	lib := MathLibrary
 	degrees := lib.Functions()["degrees"]
 
 	result := degrees.Fn(context.Background(), &object.Float{Value: math.Pi})
@@ -233,7 +233,7 @@ func TestMathDegrees(t *testing.T) {
 }
 
 func TestMathRadians(t *testing.T) {
-	lib := GetMathLibrary()
+	lib := MathLibrary
 	radians := lib.Functions()["radians"]
 
 	result := radians.Fn(context.Background(), &object.Integer{Value: 180})
@@ -247,7 +247,7 @@ func TestMathRadians(t *testing.T) {
 }
 
 func TestMathFmod(t *testing.T) {
-	lib := GetMathLibrary()
+	lib := MathLibrary
 	fmod := lib.Functions()["fmod"]
 
 	result := fmod.Fn(context.Background(), &object.Float{Value: 5.5}, &object.Float{Value: 2.0})
@@ -267,7 +267,7 @@ func TestMathFmod(t *testing.T) {
 }
 
 func TestMathGcd(t *testing.T) {
-	lib := GetMathLibrary()
+	lib := MathLibrary
 	gcd := lib.Functions()["gcd"]
 
 	result := gcd.Fn(context.Background(), &object.Integer{Value: 48}, &object.Integer{Value: 18})
@@ -281,7 +281,7 @@ func TestMathGcd(t *testing.T) {
 }
 
 func TestMathFactorial(t *testing.T) {
-	lib := GetMathLibrary()
+	lib := MathLibrary
 	factorial := lib.Functions()["factorial"]
 
 	result := factorial.Fn(context.Background(), &object.Integer{Value: 5})

@@ -29,15 +29,15 @@ type Scriptling struct {
 }
 
 var availableLibraries = map[string]*object.Library{
-	"json":     stdlib.JSONLibrary(),
-	"re":       stdlib.ReLibrary(),
-	"time":     stdlib.GetTimeLibrary(),
-	"datetime": stdlib.GetDatetimeLibrary(),
-	"math":     stdlib.GetMathLibrary(),
-	"base64":   stdlib.GetBase64Library(),
-	"hashlib":  stdlib.GetHashlibLibrary(),
-	"random":   stdlib.GetRandomLibrary(),
-	"url":      stdlib.GetURLLibrary(),
+	"json":     stdlib.JSONLibrary,
+	"re":       stdlib.ReLibrary,
+	"time":     stdlib.TimeLibrary,
+	"datetime": stdlib.DatetimeLibrary,
+	"math":     stdlib.MathLibrary,
+	"base64":   stdlib.Base64Library,
+	"hashlib":  stdlib.HashlibLibrary,
+	"random":   stdlib.RandomLibrary,
+	"url":      stdlib.URLLibrary,
 }
 
 func New() *Scriptling {
@@ -113,6 +113,11 @@ func New() *Scriptling {
 }
 
 func (p *Scriptling) loadLibrary(name string) error {
+	// Check if library is already imported
+	if _, ok := p.env.Get(name); ok {
+		return nil // Already imported, skip
+	}
+
 	for attempts := 0; attempts < 2; attempts++ {
 		// Try from script libraries first
 		if lib, ok := p.scriptLibraries[name]; ok {

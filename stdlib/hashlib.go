@@ -11,7 +11,7 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
-var hashlibLibrary = object.NewLibrary(map[string]*object.Builtin{
+var HashlibLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"sha256": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
 			if len(args) != 1 {
@@ -58,10 +58,6 @@ Returns the SHA-1 hash of the input string as a hexadecimal string.`,
 		},
 		HelpText: `md5(string) - Compute MD5 hash
 
-Returns the MD5 hash of the input string as a hexadecimal string.`,
+Returns a hexadecimal string.`,
 	},
-})
-
-func GetHashlibLibrary() *object.Library {
-	return object.NewLibraryWithDescription(hashlibLibrary.Functions(), "Cryptographic hash functions library")
-}
+}, nil, "Cryptographic hash functions library")

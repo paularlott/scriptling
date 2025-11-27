@@ -84,7 +84,7 @@ func (c *regexCache) evictOldest() {
 	delete(c.entries, entry.pattern)
 }
 
-var reLibrary = object.NewLibrary(map[string]*object.Builtin{
+var ReLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"match": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
 			if len(args) != 2 {
@@ -309,8 +309,4 @@ Returns a string with all special regex characters escaped.`,
 
 Returns true if the regex pattern matches the entire string.`,
 	},
-})
-
-func ReLibrary() *object.Library {
-	return object.NewLibraryWithDescription(reLibrary.Functions(), "Regular expression operations library")
-}
+}, nil, "Regular expression library")
