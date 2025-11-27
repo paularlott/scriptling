@@ -141,6 +141,7 @@ func evalWithContext(ctx context.Context, node ast.Node, env *object.Environment
 		return evalIdentifier(node, env)
 	case *ast.FunctionStatement:
 		fn := &object.Function{
+			Name:          node.Name.Value,
 			Parameters:    node.Function.Parameters,
 			DefaultValues: node.Function.DefaultValues,
 			Variadic:      node.Function.Variadic,
@@ -345,12 +346,20 @@ func evalInfixExpression(operator string, left, right object.Object) object.Obje
 		if r, ok := right.(*object.Integer); ok {
 			return evalIntegerInfixExpression(operator, l.Value, r.Value)
 		}
+		// Handle int * string
+		if r, ok := right.(*object.String); ok && operator == "*" {
+			return evalStringMultiplication(r.Value, l.Value)
+		}
 		return evalFloatInfixExpression(operator, left, right)
 	case *object.Float:
 		return evalFloatInfixExpression(operator, left, right)
 	case *object.String:
 		if r, ok := right.(*object.String); ok {
 			return evalStringInfixExpression(operator, l.Value, r.Value)
+		}
+		// Handle string * int
+		if r, ok := right.(*object.Integer); ok && operator == "*" {
+			return evalStringMultiplication(l.Value, r.Value)
 		}
 	}
 
@@ -495,6 +504,13 @@ func evalStringInfixExpression(operator string, leftVal, rightVal string) object
 	default:
 		return errors.NewError("%s: STRING %s STRING", errors.ErrUnknownOperator, operator)
 	}
+}
+
+func evalStringMultiplication(str string, multiplier int64) object.Object {
+	if multiplier < 0 {
+		return &object.String{Value: ""}
+	}
+	return &object.String{Value: strings.Repeat(str, int(multiplier))}
 }
 
 func evalIfStatementWithContext(ctx context.Context, ie *ast.IfStatement, env *object.Environment) object.Object {

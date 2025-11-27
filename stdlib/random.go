@@ -40,6 +40,9 @@ var randomLibrary = object.NewLibrary(map[string]*object.Builtin{
 			val := min + rng.Int63n(max-min+1)
 			return &object.Integer{Value: val}
 		},
+		HelpText: `randint(min, max) - Return random integer
+
+Returns a random integer N such that min <= N <= max.`,
 	},
 	"random": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -48,6 +51,9 @@ var randomLibrary = object.NewLibrary(map[string]*object.Builtin{
 			}
 			return &object.Float{Value: rng.Float64()}
 		},
+		HelpText: `random() - Return random float
+
+Returns a random float in the range [0.0, 1.0).`,
 	},
 	"choice": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -64,6 +70,9 @@ var randomLibrary = object.NewLibrary(map[string]*object.Builtin{
 			idx := rng.Intn(len(list))
 			return list[idx]
 		},
+		HelpText: `choice(list) - Return random element
+
+Returns a randomly selected element from the given list.`,
 	},
 	"shuffle": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -81,9 +90,12 @@ var randomLibrary = object.NewLibrary(map[string]*object.Builtin{
 			}
 			return &object.Null{}
 		},
+		HelpText: `shuffle(list) - Shuffle list in place
+
+Randomly shuffles the elements of the list in place.`,
 	},
 })
 
 func GetRandomLibrary() *object.Library {
-	return randomLibrary
+	return object.NewLibraryWithDescription(randomLibrary.Functions(), "Random number generation library")
 }

@@ -15,11 +15,17 @@ var timeLibrary = object.NewLibrary(map[string]*object.Builtin{
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
 			return &object.Float{Value: float64(time.Now().UnixNano()) / 1e9}
 		},
+		HelpText: `time() - Return current time in seconds
+
+Returns the current time as a floating point number of seconds since the Unix epoch.`,
 	},
 	"perf_counter": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
 			return &object.Float{Value: time.Since(startTime).Seconds()}
 		},
+		HelpText: `perf_counter() - Return performance counter
+
+Returns the value of a performance counter in fractional seconds.`,
 	},
 	"sleep": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -50,6 +56,9 @@ var timeLibrary = object.NewLibrary(map[string]*object.Builtin{
 				return &object.Null{}
 			}
 		},
+		HelpText: `sleep(seconds) - Sleep for specified seconds
+
+Suspends execution for the given number of seconds.`,
 	},
 	"localtime": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -73,6 +82,9 @@ var timeLibrary = object.NewLibrary(map[string]*object.Builtin{
 
 			return timeToTuple(t, false)
 		},
+		HelpText: `localtime([timestamp]) - Convert to local time tuple
+
+Returns a time tuple in local time. If timestamp is omitted, uses current time.`,
 	},
 	"gmtime": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -96,6 +108,9 @@ var timeLibrary = object.NewLibrary(map[string]*object.Builtin{
 
 			return timeToTuple(t, true)
 		},
+		HelpText: `gmtime([timestamp]) - Convert to UTC time tuple
+
+Returns a time tuple in UTC. If timestamp is omitted, uses current time.`,
 	},
 	"mktime": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -123,6 +138,9 @@ var timeLibrary = object.NewLibrary(map[string]*object.Builtin{
 			t := time.Date(int(year), time.Month(month), int(day), int(hour), int(minute), int(second), 0, time.Local)
 			return &object.Float{Value: float64(t.Unix())}
 		},
+		HelpText: `mktime(tuple) - Convert time tuple to timestamp
+
+Converts a time tuple (9 elements) to a Unix timestamp.`,
 	},
 	"strftime": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -160,6 +178,9 @@ var timeLibrary = object.NewLibrary(map[string]*object.Builtin{
 
 			return &object.String{Value: t.Format(pythonToGoFormat(format))}
 		},
+		HelpText: `strftime(format[, tuple]) - Format time as string
+
+Formats a time according to the given format string. If tuple is omitted, uses current time.`,
 	},
 	"strptime": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -184,6 +205,9 @@ var timeLibrary = object.NewLibrary(map[string]*object.Builtin{
 
 			return timeToTuple(t, false)
 		},
+		HelpText: `strptime(string, format) - Parse time from string
+
+Parses a time string according to the given format and returns a time tuple.`,
 	},
 	"asctime": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -214,6 +238,9 @@ var timeLibrary = object.NewLibrary(map[string]*object.Builtin{
 
 			return &object.String{Value: t.Format("Mon Jan 2 15:04:05 2006")}
 		},
+		HelpText: `asctime([tuple]) - Convert time tuple to string
+
+Converts a time tuple to a string in the format 'Mon Jan 2 15:04:05 2006'. If tuple is omitted, uses current time.`,
 	},
 	"ctime": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -237,11 +264,14 @@ var timeLibrary = object.NewLibrary(map[string]*object.Builtin{
 
 			return &object.String{Value: t.Format("Mon Jan 2 15:04:05 2006")}
 		},
+		HelpText: `ctime([timestamp]) - Convert timestamp to string
+
+Converts a Unix timestamp to a string in the format 'Mon Jan 2 15:04:05 2006'. If timestamp is omitted, uses current time.`,
 	},
 })
 
 func GetTimeLibrary() *object.Library {
-	return timeLibrary
+	return object.NewLibraryWithDescription(timeLibrary.Functions(), "Time and date operations library")
 }
 
 // Convert Go time.Time to Scriptling time tuple (list)

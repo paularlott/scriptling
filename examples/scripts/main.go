@@ -33,6 +33,43 @@ func main() {
 	// Register requests library for scripts that need it
 	p.RegisterLibrary("requests", extlibs.RequestsLibrary())
 
+	// Register a test Scriptling library with documentation
+	err = p.RegisterScriptLibrary("testlib", `
+"""Test Library
+
+This is a test library to demonstrate documentation features.
+It provides basic utility functions.
+"""
+
+def greet(name):
+    """Return a greeting for the given name.
+
+    Args:
+        name: The name to greet
+
+    Returns:
+        A greeting string
+    """
+    return "Hello, " + name + "!"
+
+def add(a, b):
+    """Add two numbers.
+
+    Args:
+        a: First number
+        b: Second number
+
+    Returns:
+        The sum of a and b
+    """
+    return a + b
+
+VERSION = "1.0.0"
+`)
+	if err != nil {
+		fmt.Printf("Error registering test library: %v\n", err)
+	}
+
 	start := time.Now()
 	_, err = p.EvalWithTimeout(30*time.Second, string(content))
 	elapsed := time.Since(start)

@@ -3,6 +3,7 @@ package scriptling
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -53,6 +54,61 @@ func New() *Scriptling {
 		return p.loadLibrary(libName)
 	})
 
+	// Register available libraries callback
+	evaluator.SetAvailableLibrariesCallback(func() []evaluator.LibraryInfo {
+		var libs []evaluator.LibraryInfo
+		seen := make(map[string]bool)
+
+		// Helper to check if imported
+		isImported := func(name string) bool {
+			_, ok := p.env.Get(name)
+			return ok
+		}
+
+		// Standard libraries
+		for name := range availableLibraries {
+			if !seen[name] {
+				libs = append(libs, evaluator.LibraryInfo{
+					Name:       name,
+					IsStandard: true,
+					IsImported: isImported(name),
+				})
+				seen[name] = true
+			}
+		}
+
+		// Registered libraries
+		for name := range p.registeredLibraries {
+			if !seen[name] {
+				libs = append(libs, evaluator.LibraryInfo{
+					Name:       name,
+					IsStandard: false,
+					IsImported: isImported(name),
+				})
+				seen[name] = true
+			}
+		}
+
+		// Script libraries
+		for name := range p.scriptLibraries {
+			if !seen[name] {
+				libs = append(libs, evaluator.LibraryInfo{
+					Name:       name,
+					IsStandard: false,
+					IsImported: isImported(name),
+				})
+				seen[name] = true
+			}
+		}
+
+		// Sort by name
+		sort.Slice(libs, func(i, j int) bool {
+			return libs[i].Name < libs[j].Name
+		})
+
+		return libs
+	})
+
 	return p
 }
 
@@ -73,13 +129,13 @@ func (p *Scriptling) loadLibrary(name string) error {
 
 		// Try from registered libraries
 		if lib, ok := p.registeredLibraries[name]; ok {
-			p.registerLibrary(name, lib.Functions())
+			p.registerLibrary(name, lib)
 			return nil
 		}
 
 		// Try standard libraries
 		if lib, ok := availableLibraries[name]; ok {
-			p.registerLibrary(name, lib.Functions())
+			p.registerLibrary(name, lib)
 			return nil
 		}
 
@@ -98,15 +154,25 @@ func (p *Scriptling) loadLibrary(name string) error {
 }
 
 // Register library adds a new library to the script environment
-func (p *Scriptling) registerLibrary(name string, funcs map[string]*object.Builtin) {
-	lib := make(map[string]object.DictPair, len(funcs))
+func (p *Scriptling) registerLibrary(name string, lib *object.Library) {
+	funcs := lib.Functions()
+	dict := make(map[string]object.DictPair, len(funcs))
 	for fname, fn := range funcs {
-		lib[fname] = object.DictPair{
+		dict[fname] = object.DictPair{
 			Key:   &object.String{Value: fname},
 			Value: fn,
 		}
 	}
-	p.env.Set(name, &object.Dict{Pairs: lib})
+
+	// Add description if available
+	if desc := lib.Description(); desc != "" {
+		dict["__doc__"] = object.DictPair{
+			Key:   &object.String{Value: "__doc__"},
+			Value: &object.String{Value: desc},
+		}
+	}
+
+	p.env.Set(name, &object.Dict{Pairs: dict})
 }
 
 // Eval executes script without timeout (backwards compatible)
@@ -210,8 +276,15 @@ func (p *Scriptling) GetVarAsDict(name string) (map[string]object.Object, bool) 
 	return obj.AsDict()
 }
 
-func (p *Scriptling) RegisterFunc(name string, fn func(ctx context.Context, args ...object.Object) object.Object) {
-	p.env.Set(name, &object.Builtin{Fn: fn})
+func (p *Scriptling) RegisterFunc(name string, fn func(ctx context.Context, args ...object.Object) object.Object, helpText ...string) {
+	builtin := &object.Builtin{Fn: fn}
+	if len(helpText) > 0 && helpText[0] != "" {
+		builtin.HelpText = helpText[0]
+	} else {
+		// Auto-generate basic help
+		builtin.HelpText = fmt.Sprintf("%s(...) - User-defined function", name)
+	}
+	p.env.Set(name, builtin)
 }
 
 // RegisterLibrary registers a new library that can be imported by scripts
@@ -342,6 +415,16 @@ func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[stri
 		cache.Set(script, program)
 	}
 
+	// Check for module docstring (first statement is a string literal)
+	var moduleDocstring *object.String
+	if program != nil && len(program.Statements) > 0 {
+		if exprStmt, ok := program.Statements[0].(*ast.ExpressionStatement); ok {
+			if strLit, ok := exprStmt.Expression.(*ast.StringLiteral); ok {
+				moduleDocstring = &object.String{Value: strLit.Value}
+			}
+		}
+	}
+
 	result := evaluator.Eval(program, libEnv)
 	if err, ok := result.(*object.Error); ok {
 		return nil, fmt.Errorf("%s", err.Message)
@@ -359,6 +442,11 @@ func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[stri
 		}
 		// Include everything else (functions, constants, etc.)
 		libStore[k] = v
+	}
+
+	// Add module docstring if found
+	if moduleDocstring != nil {
+		libStore["__doc__"] = moduleDocstring
 	}
 
 	return libStore, nil

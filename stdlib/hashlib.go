@@ -24,6 +24,9 @@ var hashlibLibrary = object.NewLibrary(map[string]*object.Builtin{
 			hash := sha256.Sum256([]byte(str))
 			return &object.String{Value: hex.EncodeToString(hash[:])}
 		},
+		HelpText: `sha256(string) - Compute SHA-256 hash
+
+Returns the SHA-256 hash of the input string as a hexadecimal string.`,
 	},
 	"sha1": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -37,6 +40,9 @@ var hashlibLibrary = object.NewLibrary(map[string]*object.Builtin{
 			hash := sha1.Sum([]byte(str))
 			return &object.String{Value: hex.EncodeToString(hash[:])}
 		},
+		HelpText: `sha1(string) - Compute SHA-1 hash
+
+Returns the SHA-1 hash of the input string as a hexadecimal string.`,
 	},
 	"md5": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -50,9 +56,12 @@ var hashlibLibrary = object.NewLibrary(map[string]*object.Builtin{
 			hash := md5.Sum([]byte(str))
 			return &object.String{Value: hex.EncodeToString(hash[:])}
 		},
+		HelpText: `md5(string) - Compute MD5 hash
+
+Returns the MD5 hash of the input string as a hexadecimal string.`,
 	},
 })
 
 func GetHashlibLibrary() *object.Library {
-	return hashlibLibrary
+	return object.NewLibraryWithDescription(hashlibLibrary.Functions(), "Cryptographic hash functions library")
 }

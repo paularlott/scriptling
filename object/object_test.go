@@ -3,6 +3,7 @@ package object
 import (
 	"context"
 	"testing"
+
 	"github.com/paularlott/scriptling/ast"
 )
 
@@ -91,11 +92,11 @@ func TestDictInspect(t *testing.T) {
 
 func TestEnvironment(t *testing.T) {
 	env := NewEnvironment()
-	
+
 	// Test Set and Get
 	val := &Integer{Value: 42}
 	env.Set("x", val)
-	
+
 	result, ok := env.Get("x")
 	if !ok {
 		t.Fatal("expected to find variable x")
@@ -108,10 +109,10 @@ func TestEnvironment(t *testing.T) {
 func TestEnclosedEnvironment(t *testing.T) {
 	outer := NewEnvironment()
 	outer.Set("x", &Integer{Value: 10})
-	
+
 	inner := NewEnclosedEnvironment(outer)
 	inner.Set("y", &Integer{Value: 20})
-	
+
 	// Inner should see outer variables
 	x, ok := inner.Get("x")
 	if !ok {
@@ -120,7 +121,7 @@ func TestEnclosedEnvironment(t *testing.T) {
 	if x.(*Integer).Value != 10 {
 		t.Errorf("x = %d, want 10", x.(*Integer).Value)
 	}
-	
+
 	// Inner should see its own variables
 	y, ok := inner.Get("y")
 	if !ok {
@@ -129,7 +130,7 @@ func TestEnclosedEnvironment(t *testing.T) {
 	if y.(*Integer).Value != 20 {
 		t.Errorf("y = %d, want 20", y.(*Integer).Value)
 	}
-	
+
 	// Outer should not see inner variables
 	_, ok = outer.Get("y")
 	if ok {
@@ -140,13 +141,13 @@ func TestEnclosedEnvironment(t *testing.T) {
 func TestGlobalVariables(t *testing.T) {
 	outer := NewEnvironment()
 	inner := NewEnclosedEnvironment(outer)
-	
+
 	// Mark variable as global in inner scope
 	inner.MarkGlobal("global_var")
-	
+
 	// Set global variable from inner scope
 	inner.Set("global_var", &Integer{Value: 42})
-	
+
 	// Should be set in outer (global) scope
 	result, ok := outer.Get("global_var")
 	if !ok {
@@ -155,7 +156,7 @@ func TestGlobalVariables(t *testing.T) {
 	if result.(*Integer).Value != 42 {
 		t.Errorf("global_var = %d, want 42", result.(*Integer).Value)
 	}
-	
+
 	// Check IsGlobal
 	if !inner.IsGlobal("global_var") {
 		t.Error("expected global_var to be marked as global")
@@ -165,13 +166,13 @@ func TestGlobalVariables(t *testing.T) {
 func TestNonlocalVariables(t *testing.T) {
 	outer := NewEnvironment()
 	outer.Set("nonlocal_var", &Integer{Value: 10})
-	
+
 	inner := NewEnclosedEnvironment(outer)
 	inner.MarkNonlocal("nonlocal_var")
-	
+
 	// Modify nonlocal variable from inner scope
 	inner.Set("nonlocal_var", &Integer{Value: 20})
-	
+
 	// Should be modified in outer scope
 	result, ok := outer.Get("nonlocal_var")
 	if !ok {
@@ -180,7 +181,7 @@ func TestNonlocalVariables(t *testing.T) {
 	if result.(*Integer).Value != 20 {
 		t.Errorf("nonlocal_var = %d, want 20", result.(*Integer).Value)
 	}
-	
+
 	// Check IsNonlocal
 	if !inner.IsNonlocal("nonlocal_var") {
 		t.Error("expected nonlocal_var to be marked as nonlocal")
@@ -190,7 +191,7 @@ func TestNonlocalVariables(t *testing.T) {
 func TestReturnValue(t *testing.T) {
 	val := &Integer{Value: 42}
 	ret := &ReturnValue{Value: val}
-	
+
 	if ret.Type() != RETURN_OBJ {
 		t.Errorf("ret.Type() = %q, want %q", ret.Type(), RETURN_OBJ)
 	}
@@ -205,7 +206,7 @@ func TestHttpResponse(t *testing.T) {
 		Body:       "OK",
 		Headers:    map[string]string{"Content-Type": "text/plain"},
 	}
-	
+
 	if resp.Type() != HTTP_RESP_OBJ {
 		t.Errorf("resp.Type() = %q, want %q", resp.Type(), HTTP_RESP_OBJ)
 	}
@@ -222,13 +223,14 @@ func TestFunction(t *testing.T) {
 	}
 	body := &ast.BlockStatement{}
 	env := NewEnvironment()
-	
+
 	fn := &Function{
+		Name:       "test_function",
 		Parameters: params,
 		Body:       body,
 		Env:        env,
 	}
-	
+
 	if fn.Type() != FUNCTION_OBJ {
 		t.Errorf("fn.Type() = %q, want %q", fn.Type(), FUNCTION_OBJ)
 	}
@@ -243,14 +245,14 @@ func TestBuiltinFunction(t *testing.T) {
 			return &Integer{Value: 42}
 		},
 	}
-	
+
 	if builtin.Type() != BUILTIN_OBJ {
 		t.Errorf("builtin.Type() = %q, want %q", builtin.Type(), BUILTIN_OBJ)
 	}
 	if builtin.Inspect() != "<builtin function>" {
 		t.Errorf("builtin.Inspect() = %q, want %q", builtin.Inspect(), "<builtin function>")
 	}
-	
+
 	// Test function call
 	result := builtin.Fn(context.Background())
 	if result.(*Integer).Value != 42 {

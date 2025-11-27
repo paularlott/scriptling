@@ -21,6 +21,9 @@ var base64Library = object.NewLibrary(map[string]*object.Builtin{
 			encoded := base64.StdEncoding.EncodeToString([]byte(str.Value))
 			return &object.String{Value: encoded}
 		},
+		HelpText: `encode(string) - Encode string to base64
+
+Returns the base64 encoded version of the input string.`,
 	},
 	"decode": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -37,9 +40,12 @@ var base64Library = object.NewLibrary(map[string]*object.Builtin{
 			}
 			return &object.String{Value: string(decoded)}
 		},
+		HelpText: `decode(base64_string) - Decode base64 string
+
+Returns the decoded string from a base64 encoded input.`,
 	},
 })
 
 func GetBase64Library() *object.Library {
-	return base64Library
+	return object.NewLibraryWithDescription(base64Library.Functions(), "Base64 encoding and decoding library")
 }

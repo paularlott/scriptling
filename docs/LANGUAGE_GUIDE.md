@@ -89,7 +89,7 @@ Represented as `None` (not directly creatable, returned by functions with no ret
 ```python
 x + y    # Addition
 x - y    # Subtraction
-x * y    # Multiplication
+x * y    # Multiplication (numbers) or repetition (string * int)
 x ** y   # Exponentiation (power)
 x / y    # Division (always returns float)
 x % y    # Modulo
@@ -617,6 +617,8 @@ lstrip("  hello  ")                # "hello  "
 rstrip("  hello  ")                # "  hello"
 startswith("hello", "he")          # True
 endswith("hello", "lo")            # True
+"a" * 3                            # "aaa" (repetition)
+3 * "a"                            # "aaa" (repetition)
 ```
 
 ### List Functions
