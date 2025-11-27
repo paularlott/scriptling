@@ -108,6 +108,9 @@ var reLibrary = object.NewLibrary(map[string]*object.Builtin{
 			}
 			return &object.Boolean{Value: true}
 		},
+		HelpText: `match(pattern, string) - Match pattern at start of string
+
+Returns true if the regex pattern matches at the beginning of the string.`,
 	},
 	"find": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -131,6 +134,9 @@ var reLibrary = object.NewLibrary(map[string]*object.Builtin{
 			}
 			return &object.String{Value: result}
 		},
+		HelpText: `find(pattern, string) - Find first match
+
+Returns the first substring that matches the regex pattern, or null if no match.`,
 	},
 	"findall": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -155,6 +161,9 @@ var reLibrary = object.NewLibrary(map[string]*object.Builtin{
 			}
 			return &object.List{Elements: elements}
 		},
+		HelpText: `findall(pattern, string) - Find all matches
+
+Returns a list of all substrings that match the regex pattern.`,
 	},
 	"replace": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -176,6 +185,9 @@ var reLibrary = object.NewLibrary(map[string]*object.Builtin{
 			result := re.ReplaceAllString(text, replacement)
 			return &object.String{Value: result}
 		},
+		HelpText: `replace(pattern, string, replacement) - Replace matches
+
+Replaces all occurrences of the regex pattern in the string with the replacement.`,
 	},
 	"split": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -200,6 +212,9 @@ var reLibrary = object.NewLibrary(map[string]*object.Builtin{
 			}
 			return &object.List{Elements: elements}
 		},
+		HelpText: `split(pattern, string) - Split string by pattern
+
+Splits the string by occurrences of the regex pattern and returns a list of substrings.`,
 	},
 	"search": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -223,6 +238,9 @@ var reLibrary = object.NewLibrary(map[string]*object.Builtin{
 			}
 			return &object.String{Value: result}
 		},
+		HelpText: `search(pattern, string) - Search for pattern
+
+Returns the first substring that matches the regex pattern anywhere in the string, or null if no match.`,
 	},
 	"compile": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -243,6 +261,9 @@ var reLibrary = object.NewLibrary(map[string]*object.Builtin{
 			// Return the pattern string as a compiled "object"
 			return &object.String{Value: pattern}
 		},
+		HelpText: `compile(pattern) - Compile regex pattern
+
+Validates and caches a regex pattern for later use. Returns the pattern if valid.`,
 	},
 	"escape": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -257,6 +278,9 @@ var reLibrary = object.NewLibrary(map[string]*object.Builtin{
 			escaped := regexp.QuoteMeta(text)
 			return &object.String{Value: escaped}
 		},
+		HelpText: `escape(string) - Escape special regex characters
+
+Returns a string with all special regex characters escaped.`,
 	},
 	"fullmatch": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -281,9 +305,12 @@ var reLibrary = object.NewLibrary(map[string]*object.Builtin{
 			}
 			return &object.Boolean{Value: true}
 		},
+		HelpText: `fullmatch(pattern, string) - Match entire string
+
+Returns true if the regex pattern matches the entire string.`,
 	},
 })
 
 func ReLibrary() *object.Library {
-	return reLibrary
+	return object.NewLibraryWithDescription(reLibrary.Functions(), "Regular expression operations library")
 }

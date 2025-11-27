@@ -25,6 +25,9 @@ var jsonLibrary = object.NewLibrary(map[string]*object.Builtin{
 			}
 			return jsonToObject(data)
 		},
+		HelpText: `loads(json_string) - Parse JSON string
+
+Parses a JSON string and returns the corresponding Scriptling object.`,
 	},
 	"dumps": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -38,11 +41,14 @@ var jsonLibrary = object.NewLibrary(map[string]*object.Builtin{
 			}
 			return &object.String{Value: string(bytes)}
 		},
+		HelpText: `dumps(obj) - Serialize object to JSON string
+
+Converts a Scriptling object to its JSON string representation.`,
 	},
 })
 
 func JSONLibrary() *object.Library {
-	return jsonLibrary
+	return object.NewLibraryWithDescription(jsonLibrary.Functions(), "JSON encoding and decoding library")
 }
 
 func jsonToObject(data interface{}) object.Object {

@@ -34,6 +34,10 @@ var mathLibrary = object.NewLibrary(map[string]*object.Builtin{
 				return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
 			}
 		},
+		HelpText: `sqrt(x) - Return the square root of x
+
+x must be a non-negative number (integer or float).
+Returns a float.`,
 	},
 	"pow": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -59,6 +63,10 @@ var mathLibrary = object.NewLibrary(map[string]*object.Builtin{
 			}
 			return &object.Float{Value: math.Pow(base, exp)}
 		},
+		HelpText: `pow(base, exp) - Return base raised to the power exp
+
+base and exp can be integers or floats.
+Returns a float.`,
 	},
 	"abs": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -77,6 +85,10 @@ var mathLibrary = object.NewLibrary(map[string]*object.Builtin{
 				return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
 			}
 		},
+		HelpText: `abs(x) - Return the absolute value of x
+
+x can be an integer or float.
+Returns the same type as input.`,
 	},
 	"floor": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -92,6 +104,10 @@ var mathLibrary = object.NewLibrary(map[string]*object.Builtin{
 				return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
 			}
 		},
+		HelpText: `floor(x) - Return the floor of x
+
+x can be an integer or float.
+Returns the largest integer less than or equal to x.`,
 	},
 	"ceil": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -107,6 +123,10 @@ var mathLibrary = object.NewLibrary(map[string]*object.Builtin{
 				return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
 			}
 		},
+		HelpText: `ceil(x) - Return the ceiling of x
+
+x can be an integer or float.
+Returns the smallest integer greater than or equal to x.`,
 	},
 	"round": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -122,6 +142,10 @@ var mathLibrary = object.NewLibrary(map[string]*object.Builtin{
 				return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
 			}
 		},
+		HelpText: `round(x) - Return the nearest integer to x
+
+x can be an integer or float.
+Rounds to the nearest integer, with ties rounding away from zero.`,
 	},
 	"min": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -161,6 +185,10 @@ var mathLibrary = object.NewLibrary(map[string]*object.Builtin{
 			}
 			return &object.Float{Value: result}
 		},
+		HelpText: `min(*args) - Return the minimum value
+
+Takes two or more numbers (integers or floats).
+Returns the smallest value, preserving type if all integers.`,
 	},
 	"max": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -200,6 +228,10 @@ var mathLibrary = object.NewLibrary(map[string]*object.Builtin{
 			}
 			return &object.Float{Value: result}
 		},
+		HelpText: `max(*args) - Return the maximum value
+
+Takes two or more numbers (integers or floats).
+Returns the largest value, preserving type if all integers.`,
 	},
 	"sin": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -215,6 +247,10 @@ var mathLibrary = object.NewLibrary(map[string]*object.Builtin{
 				return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
 			}
 		},
+		HelpText: `sin(x) - Return the sine of x (radians)
+
+x can be an integer or float in radians.
+Returns a float.`,
 	},
 	"cos": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -230,6 +266,10 @@ var mathLibrary = object.NewLibrary(map[string]*object.Builtin{
 				return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
 			}
 		},
+		HelpText: `cos(x) - Return the cosine of x (radians)
+
+x can be an integer or float in radians.
+Returns a float.`,
 	},
 	"tan": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -245,6 +285,10 @@ var mathLibrary = object.NewLibrary(map[string]*object.Builtin{
 				return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
 			}
 		},
+		HelpText: `tan(x) - Return the tangent of x (radians)
+
+x can be an integer or float in radians.
+Returns a float.`,
 	},
 	"log": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -266,6 +310,10 @@ var mathLibrary = object.NewLibrary(map[string]*object.Builtin{
 				return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
 			}
 		},
+		HelpText: `log(x) - Return the natural logarithm of x
+
+x must be positive (integer or float).
+Returns a float.`,
 	},
 	"exp": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -281,6 +329,10 @@ var mathLibrary = object.NewLibrary(map[string]*object.Builtin{
 				return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
 			}
 		},
+		HelpText: `exp(x) - Return e raised to the power x
+
+x can be an integer or float.
+Returns a float.`,
 	},
 	"degrees": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -296,6 +348,10 @@ var mathLibrary = object.NewLibrary(map[string]*object.Builtin{
 				return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
 			}
 		},
+		HelpText: `degrees(x) - Convert radians to degrees
+
+x can be an integer or float in radians.
+Returns a float in degrees.`,
 	},
 	"radians": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -311,6 +367,10 @@ var mathLibrary = object.NewLibrary(map[string]*object.Builtin{
 				return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
 			}
 		},
+		HelpText: `radians(x) - Convert degrees to radians
+
+x can be an integer or float in degrees.
+Returns a float in radians.`,
 	},
 	"fmod": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -339,6 +399,10 @@ var mathLibrary = object.NewLibrary(map[string]*object.Builtin{
 			}
 			return &object.Float{Value: math.Mod(x, y)}
 		},
+		HelpText: `fmod(x, y) - Return the floating-point remainder of x/y
+
+x and y can be integers or floats.
+y must not be zero. Returns a float.`,
 	},
 	"gcd": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -360,6 +424,10 @@ var mathLibrary = object.NewLibrary(map[string]*object.Builtin{
 			}
 			return &object.Integer{Value: gcd(a, b)}
 		},
+		HelpText: `gcd(a, b) - Return the greatest common divisor of a and b
+
+a and b must be integers.
+Returns an integer.`,
 	},
 	"factorial": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -384,19 +452,31 @@ var mathLibrary = object.NewLibrary(map[string]*object.Builtin{
 				return errors.NewTypeError("INTEGER", arg.Type().String())
 			}
 		},
+		HelpText: `factorial(n) - Return n!
+
+n must be a non-negative integer <= 20.
+Returns an integer.`,
 	},
 	"pi": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
 			return &object.Float{Value: math.Pi}
 		},
+		HelpText: `pi - Return the mathematical constant π
+
+Takes no arguments.
+Returns a float.`,
 	},
 	"e": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
 			return &object.Float{Value: math.E}
 		},
+		HelpText: `e - Return the mathematical constant e
+
+Takes no arguments.
+Returns a float.`,
 	},
 })
 
 func GetMathLibrary() *object.Library {
-	return mathLibrary
+	return object.NewLibraryWithDescription(mathLibrary.Functions(), "Mathematical functions library")
 }

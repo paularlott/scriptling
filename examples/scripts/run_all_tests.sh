@@ -69,6 +69,9 @@ tests=(
     # Examples (keep as-is)
     "variables.py"
     "fibonacci.py"
+
+		# Help
+		"demo_help.py"
 )
 
 passed=0

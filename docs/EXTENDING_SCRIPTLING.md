@@ -149,6 +149,18 @@ p.RegisterFunc("http_get", func(ctx context.Context, args ...object.Object) obje
 })
 ```
 
+**Note**: You can provide documentation for your function by passing help text as an optional parameter to `RegisterFunc`, which will be displayed by the `help()` function:
+
+```go
+p.RegisterFunc("my_func", myFunc, "my_func() - Description...")
+```
+
+If you omit the help text or pass an empty string, basic help will be auto-generated:
+
+```go
+p.RegisterFunc("my_func", myFunc)  // Auto-generates: "my_func(...) - User-defined function"
+```
+
 ## Creating Custom Libraries
 
 ### Basic Library Structure
@@ -812,6 +824,68 @@ print("PI: " + str(mathutils.PI))
 }
 ```
 
+### Documenting Scriptling Libraries
+
+Scriptling libraries support documentation through docstrings, similar to Python:
+
+#### Module Documentation
+
+Add a module docstring at the top of the library script (first statement must be a string literal):
+
+```go
+err := p.RegisterScriptLibrary("mathutils", `
+"""Math Utilities Library
+
+This library provides basic mathematical operations and constants.
+It includes functions for arithmetic and common mathematical constants.
+"""
+
+def square(x):
+    """Return the square of x."""
+    return x * x
+
+def cube(x):
+    """Return the cube of x."""
+    return x * x * x
+
+PI = 3.14159
+E = 2.71828
+`)
+```
+
+The module docstring will be displayed when using `help("library_name")`.
+
+#### Function Documentation
+
+Document individual functions using docstrings (first statement in function body):
+
+```go
+def add(a, b):
+    """Add two numbers together.
+
+    Args:
+        a: First number
+        b: Second number
+
+    Returns:
+        The sum of a and b
+    """
+    return a + b
+```
+
+Function docstrings are displayed when using `help("library.function_name")`.
+
+#### Help System Integration
+
+Once documented, users can access help:
+
+```python
+import mathutils
+
+help(mathutils)        # Shows module docstring and available functions
+help(mathutils.add)    # Shows function docstring
+```
+
 The library script can define:
 - Functions (using `def`)
 - Lambda functions
@@ -924,8 +998,8 @@ import (
 func main() {
     p := scriptling.New()
 
-    // Register a Go library
-    p.RegisterLibrary("gomath", object.NewLibrary(map[string]*object.Builtin{
+    // Register a Go library with description
+    p.RegisterLibrary("gomath", object.NewLibraryWithDescription(map[string]*object.Builtin{
         "sqrt": {
             Fn: func(ctx context.Context, args ...object.Object) object.Object {
                 if len(args) != 1 {
@@ -937,7 +1011,7 @@ func main() {
                 return &object.Error{Message: "argument must be float"}
             },
         },
-    }))
+    }, "Custom mathematical functions library"))
 
     // Register a Scriptling library that uses the Go library
     err := p.RegisterScriptLibrary("advanced_math", `

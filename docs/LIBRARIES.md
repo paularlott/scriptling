@@ -36,6 +36,7 @@ Always available without importing:
 
 ### System
 - `import library_name` - Load library dynamically
+- `help([object])` - Display help information for functions, libraries, and objects
 
 ## Optional Libraries
 

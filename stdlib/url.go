@@ -23,6 +23,9 @@ var urlLibrary = object.NewLibrary(map[string]*object.Builtin{
 			encoded := url.PathEscape(str)
 			return &object.String{Value: encoded}
 		},
+		HelpText: `quote(string) - URL encode string
+
+Returns a URL-encoded version of the string.`,
 	},
 	"unquote": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -41,6 +44,9 @@ var urlLibrary = object.NewLibrary(map[string]*object.Builtin{
 			}
 			return &object.String{Value: decoded}
 		},
+		HelpText: `unquote(string) - URL decode string
+
+Returns a URL-decoded version of the string.`,
 	},
 	"urlparse": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -83,6 +89,9 @@ var urlLibrary = object.NewLibrary(map[string]*object.Builtin{
 
 			return &object.Dict{Pairs: pairs}
 		},
+		HelpText: `urlparse(url_string) - Parse URL into components
+
+Returns a dictionary with URL components: scheme, host, path, query, fragment.`,
 	},
 	"urlunparse": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -125,6 +134,9 @@ var urlLibrary = object.NewLibrary(map[string]*object.Builtin{
 
 			return &object.String{Value: u.String()}
 		},
+		HelpText: `urlunparse(dict) - Construct URL from components
+
+Constructs a URL string from a dictionary of URL components.`,
 	},
 	"urljoin": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -155,6 +167,9 @@ var urlLibrary = object.NewLibrary(map[string]*object.Builtin{
 			joined := baseURL.ResolveReference(refURL)
 			return &object.String{Value: joined.String()}
 		},
+		HelpText: `urljoin(base, ref) - Join base URL with reference
+
+Joins a base URL with a reference URL, resolving relative references.`,
 	},
 	"urlsplit": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -183,6 +198,9 @@ var urlLibrary = object.NewLibrary(map[string]*object.Builtin{
 
 			return &object.List{Elements: elements}
 		},
+		HelpText: `urlsplit(url_string) - Split URL into components
+
+Returns a list with URL components: [scheme, host, path, query, fragment].`,
 	},
 	"urlunsplit": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -218,6 +236,9 @@ var urlLibrary = object.NewLibrary(map[string]*object.Builtin{
 
 			return &object.String{Value: u.String()}
 		},
+		HelpText: `urlunsplit(list) - Construct URL from component list
+
+Constructs a URL string from a list of 5 URL components.`,
 	},
 	"parse_qs": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -250,6 +271,9 @@ var urlLibrary = object.NewLibrary(map[string]*object.Builtin{
 
 			return &object.Dict{Pairs: pairs}
 		},
+		HelpText: `parse_qs(query_string) - Parse query string
+
+Parses a URL query string and returns a dictionary of key-value pairs.`,
 	},
 	"urlencode": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -280,9 +304,12 @@ var urlLibrary = object.NewLibrary(map[string]*object.Builtin{
 
 			return &object.String{Value: values.Encode()}
 		},
+		HelpText: `urlencode(dict) - Encode dictionary as query string
+
+Encodes a dictionary of key-value pairs into a URL query string.`,
 	},
 })
 
 func GetURLLibrary() *object.Library {
-	return urlLibrary
+	return object.NewLibraryWithDescription(urlLibrary.Functions(), "URL parsing and manipulation library")
 }

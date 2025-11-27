@@ -224,6 +224,7 @@ func (c *Continue) AsList() ([]Object, bool)          { return nil, false }
 func (c *Continue) AsDict() (map[string]Object, bool) { return nil, false }
 
 type Function struct {
+	Name          string
 	Parameters    []*ast.Identifier
 	DefaultValues map[string]ast.Expression
 	Variadic      *ast.Identifier // *args parameter
@@ -262,7 +263,8 @@ func (lf *LambdaFunction) AsDict() (map[string]Object, bool) { return nil, false
 type BuiltinFunction func(ctx context.Context, args ...Object) Object
 
 type Builtin struct {
-	Fn BuiltinFunction
+	Fn       BuiltinFunction
+	HelpText string // Optional help documentation for this builtin
 }
 
 func (b *Builtin) Type() ObjectType { return BUILTIN_OBJ }
@@ -278,7 +280,8 @@ func (b *Builtin) AsDict() (map[string]Object, bool) { return nil, false }
 // Library represents a pre-built collection of builtin functions
 // This eliminates the need for function wrappers and provides direct access
 type Library struct {
-	functions map[string]*Builtin
+	functions   map[string]*Builtin
+	description string
 }
 
 // NewLibrary creates a new library with pre-built functions
@@ -289,9 +292,22 @@ func NewLibrary(functions map[string]*Builtin) *Library {
 	}
 }
 
+// NewLibraryWithDescription creates a new library with functions and description
+func NewLibraryWithDescription(functions map[string]*Builtin, description string) *Library {
+	return &Library{
+		functions:   functions,
+		description: description,
+	}
+}
+
 // Functions returns the library's function map
 func (l *Library) Functions() map[string]*Builtin {
 	return l.functions
+}
+
+// Description returns the library's description
+func (l *Library) Description() string {
+	return l.description
 }
 
 func (l *Library) Type() ObjectType { return BUILTIN_OBJ } // Libraries are like builtin objects
