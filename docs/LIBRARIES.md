@@ -167,13 +167,13 @@ choice = random.choice(["a", "b", "c"])
 URL parsing, encoding, and manipulation.
 
 ```python
-import lib
+import url
 
-parsed = lib.urlparse("https://example.com/path?query=value")
-encoded = lib.quote("hello world")
-parts = lib.urlsplit("https://example.com/path?query=value#fragment")
-query_dict = lib.parse_qs("key=value1&key=value2")
-query_str = lib.urlencode({"key": "value", "list": ["a", "b"]})
+parsed = url.urlparse("https://example.com/path?query=value")
+encoded = url.quote("hello world")
+parts = url.urlsplit("https://example.com/path?query=value#fragment")
+query_dict = url.parse_qs("key=value1&key=value2")
+query_str = url.urlencode({"key": "value", "list": ["a", "b"]})
 ```
 
 [See url.md](libraries/url.md) for complete documentation.
@@ -202,174 +202,6 @@ import "github.com/paularlott/scriptling/extlibs"
 p := scriptling.New()
 p.RegisterLibrary("http", extlibs.HTTPLibrary())
 ```
-
-## Creating Custom Libraries
-
-To create custom libraries, see [EXTENDING_SCRIPTLING.md](EXTENDING_SCRIPTLING.md).
-
-## Performance Notes
-
-- Core functions: Zero overhead, always available
-- Optional libraries: Loaded on first import, cached thereafter
-- HTTP library: Requires explicit registration for security
-
-# Find all numbers
-numbers = re.findall("[0-9]+", "abc123def456")
-
-# Replace digits
-text = re.replace("[0-9]+", "Price: 100", "XXX")
-```
-
-### http
-
-**Functions:**
-All return a response object with Python requests-compatible interface:
-
-- `requests.get(url, options?)` - GET request
-- `requests.post(url, body, options?)` - POST request
-- `requests.put(url, body, options?)` - PUT request
-- `requests.delete(url, options?)` - DELETE request
-- `requests.patch(url, body, options?)` - PATCH request
-
-**Response Object:**
-Python requests-compatible response object with both dictionary and attribute access:
-
-Attributes/Keys:
-- `response.status_code` or `response["status_code"]` - HTTP status code (integer)
-- `response.text` or `response["text"]` - Response body (string)
-- `response["headers"]` - Response headers (dictionary)
-
-Response methods:
-- `response.json()` - Parse response body as JSON and return Scriptling object
-- `response.raise_for_status()` - Raise error if status code >= 400 (4xx or 5xx)
-
-**Features:**
-- HTTP/2 support with automatic fallback to HTTP/1.1
-- Connection pooling (100 connections per host)
-- Accepts self-signed certificates
-- Default timeout: 5 seconds
-- Python requests-compatible API for LLM code generation
-- Full method support: `json()`, `raise_for_status()`
-
-**Options dictionary:**
-- `timeout` (integer): Request timeout in seconds (default: 5)
-- `headers` (dictionary): HTTP headers to send
-
-**Example:**
-```python
-import requests
-
-# Simple GET request (5 second timeout)
-response = requests.get("https://api.example.com/users/1")
-if response.status_code == 200:
-    # Use json() method to parse response
-    user = response.json()
-    print(user["name"])
-
-# Using raise_for_status() for error handling
-try:
-    response = requests.get("https://api.example.com/data")
-    response.raise_for_status()  # Raises error if 4xx or 5xx
-    data = response.json()
-    print(data)
-except Exception as e:
-    print("Request failed:", e)
-
-# Using requests-compatible attributes
-response = requests.get("https://api.example.com/data")
-if response.status_code == 200:
-    content = response.text[:500]  # First 500 chars
-    print(content)
-
-# GET with options
-options = {
-    "timeout": 10,
-    "headers": {"Authorization": "Bearer token123"}
-}
-response = requests.get("https://api.example.com/users/1", options)
-
-# POST request with error handling
-try:
-    new_user = {"name": "Alice", "email": "alice@example.com"}
-    # Note: For now, stringify the body manually
-    import json
-    body = json.stringify(new_user)
-
-    options = {"timeout": 15}
-    response = requests.post("https://api.example.com/users", body, options)
-    response.raise_for_status()
-
-    created = response.json()
-    print("Created user:", created["id"])
-except Exception as e:
-    print("Error:", e)
-
-# Other methods
-response = requests.put(url, body, options)
-response = requests.delete(url, options)
-response = requests.patch(url, body, options)
-```
-
-**Exception Handling:**
-The parser supports Python requests-style exception handling with dotted names:
-
-```python
-import requests
-
-# LLM-compatible exception handling
-try:
-    response = requests.get('https://api.example.com/data')
-    response.raise_for_status()
-    data = response.json()
-except requests.exceptions.RequestException as e:
-    print(f"Request error: {e}")
-
-# Also supports direct exception names
-try:
-    response = requests.get('https://api.example.com/data')
-    response.raise_for_status()
-except requests.HTTPError as e:
-    print(f"HTTP error: {e}")
-except requests.RequestException as e:
-    print(f"Request error: {e}")
-```
-
-Note: Currently, all exceptions are caught regardless of the specific exception type specified. Full exception type matching will be implemented in a future version.
-
-## Core Builtins
-
-Always available without importing:
-
-### I/O
-- `print(value)` - Output to console
-
-### Type Conversions
-- `str(value)` - Convert to string
-- `int(value)` - Convert to integer
-- `float(value)` - Convert to float
-
-### String Functions
-- `len(string)` - Get length
-- `upper(string)` - Uppercase
-- `lower(string)` - Lowercase
-- `capitalize(string)` - Capitalize first letter
-- `title(string)` - Title case
-- `split(string, sep)` - Split to list
-- `join(list, sep)` - Join from list
-- `replace(str, old, new)` - Replace substring
-- `strip(string)` - Trim whitespace from both ends
-- `lstrip(string)` - Trim whitespace from left
-- `rstrip(string)` - Trim whitespace from right
-- `startswith(string, prefix)` - Check if string starts with prefix
-- `endswith(string, suffix)` - Check if string ends with suffix
-
-### List Functions
-- `len(list)` - Get length
-- `append(list, item)` - Append item (modifies list in-place)
-- `extend(list, other_list)` - Append elements from another list (modifies list in-place)
-
-### System
-- `import library_name` - Load library dynamically
 
 ## Creating Custom Libraries
 
@@ -413,18 +245,143 @@ print(mylib.hello())
 `)
 ```
 
+## Creating Custom Libraries with Scriptling
+
+You can also create libraries using Scriptling code itself, without writing any Go code.
+
+### Register Single Functions
+
+```go
+p := scriptling.New()
+
+// Register a function written in Scriptling
+err := p.RegisterScriptFunc("greet", `
+def greet(name):
+    return "Hello, " + name + "!"
+`)
+if err != nil {
+    fmt.Println("Error:", err)
+    return
+}
+
+// Use the registered function
+p.Eval(`print(greet("World"))`)  // "Hello, World!"
+```
+
+### Register Script Libraries
+
+```go
+p := scriptling.New()
+
+// Register a library written in Scriptling
+err := p.RegisterScriptLibrary("utils", `
+def add(a, b):
+    return a + b
+
+def multiply(x, y):
+    return x * y
+
+PI = 3.14159
+
+def circle_area(radius):
+    return PI * radius * radius
+`)
+if err != nil {
+    fmt.Println("Error:", err)
+    return
+}
+
+// Use the registered library
+p.Eval(`
+import utils
+
+result1 = utils.add(5, 3)
+result2 = utils.multiply(4, 7)
+area = utils.circle_area(5)
+
+print("5 + 3 =", result1)
+print("4 * 7 =", result2)
+print("Area of circle with radius 5:", area)
+`)
+```
+
+### Advanced Script Libraries
+
+Script libraries can import other libraries and define complex functionality:
+
+```go
+p := scriptling.New()
+
+// Register a data processing library
+p.RegisterScriptLibrary("data_processor", `
+import json
+import math
+
+def process_user_data(json_str):
+    # Parse JSON data
+    data = json.parse(json_str)
+
+    # Calculate statistics
+    if "scores" in data:
+        scores = data["scores"]
+        total = sum(scores)
+        avg = total / len(scores)
+        std_dev = math.sqrt(sum([(x - avg) ** 2 for x in scores]) / len(scores))
+
+        return {
+            "count": len(scores),
+            "total": total,
+            "average": avg,
+            "std_dev": std_dev
+        }
+    else:
+        return {"error": "No scores found"}
+
+def validate_email(email):
+    # Simple email validation
+    return "@" in email and "." in email
+`)
+
+p.Eval(`
+import data_processor
+
+# Test the library
+user_data = '{"name": "Alice", "scores": [85, 92, 78, 96, 88]}'
+stats = data_processor.process_user_data(user_data)
+
+print("User statistics:")
+print("Count:", stats["count"])
+print("Average:", stats["average"])
+print("Std Dev:", stats["std_dev"])
+
+# Test email validation
+print("Valid email:", data_processor.validate_email("alice@example.com"))
+print("Invalid email:", data_processor.validate_email("notanemail"))
+`)
+```
+
+### Script Library Features
+
+- **Multiple Functions**: Define as many functions as needed
+- **Constants**: Define constants and variables
+- **Nested Imports**: Script libraries can import other libraries
+- **Complex Logic**: Full Scriptling syntax support
+- **Error Handling**: Use try/except in library functions
+- **Recursion**: Recursive functions work normally
+
 ## Performance Benefits
 
 ### Without Libraries
 ```go
-p := scriptling.New()  // Lightweight, no HTTP/JSON overhead
-p.Eval("x = 5 + 3")  // Fast execution
+p := scriptling.New()
+p.Eval("x = 5 + 3")
 ```
 
 ### With Libraries
 ```go
-p := scriptling.New("json", "http")  // Loads JSON + HTTP
+p := scriptling.New()
 p.Eval(`
+    import requests, json
     response = requests.get("https://api.example.com/data", 10)
     data = json.parse(response["body"])
 `)
@@ -443,7 +400,7 @@ library_name["function_name"](arguments)
 
 This is similar to Python's module system:
 - Python: `json.loads(string)`
-- Scriptling: `json.parse(string)` or `json["parse"](string)`
+- Scriptling: `json.loads(string)` or `json["loads"](string)`
 
 ## Adding Libraries to Scriptling
 

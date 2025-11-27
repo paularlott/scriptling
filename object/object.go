@@ -10,6 +10,36 @@ import (
 	"github.com/paularlott/scriptling/ast"
 )
 
+// Small integer cache for common values (-5 to 256)
+// This follows Python's approach and eliminates allocations for loop counters
+const (
+	smallIntMin = -5
+	smallIntMax = 256
+)
+
+var smallIntegers [smallIntMax - smallIntMin + 1]*Integer
+
+// Break and Continue singletons (like NULL, TRUE, FALSE)
+var (
+	BREAK    = &Break{}
+	CONTINUE = &Continue{}
+)
+
+func init() {
+	// Initialize small integer cache
+	for i := smallIntMin; i <= smallIntMax; i++ {
+		smallIntegers[i-smallIntMin] = &Integer{Value: int64(i)}
+	}
+}
+
+// NewInteger returns a cached integer for small values, or a new Integer for larger values
+func NewInteger(val int64) *Integer {
+	if val >= smallIntMin && val <= smallIntMax {
+		return smallIntegers[val-smallIntMin]
+	}
+	return &Integer{Value: val}
+}
+
 type ObjectType int
 
 const (
