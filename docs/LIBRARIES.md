@@ -104,7 +104,7 @@ Regular expression pattern matching and text processing.
 import re
 
 matches = re.findall("[0-9]+", "abc123def456")
-result = re.replace("[0-9]+", "XXX", "Price: 100")
+result = re.sub("[0-9]+", "XXX", "Price: 100")  # Python-compatible
 escaped = re.escape("a.b+c")
 full_match = re.fullmatch("[0-9]+", "123")
 ```

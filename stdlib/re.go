@@ -3,11 +3,19 @@ package stdlib
 import (
 	"container/list"
 	"context"
+	"fmt"
 	"regexp"
 	"sync"
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
+)
+
+// Flag constants matching Python's re module
+const (
+	RE_IGNORECASE = 2  // re.I or re.IGNORECASE
+	RE_MULTILINE  = 8  // re.M or re.MULTILINE
+	RE_DOTALL     = 16 // re.S or re.DOTALL
 )
 
 type regexEntry struct {
@@ -27,6 +35,24 @@ var globalRegexCache = &regexCache{
 	entries: make(map[string]*regexEntry),
 	lru:     list.New(),
 	maxSize: 100, // Max 100 cached regex patterns
+}
+
+// applyFlags converts Python-style flags to Go regex inline flags
+func applyFlags(pattern string, flags int64) string {
+	prefix := ""
+	if flags&RE_IGNORECASE != 0 {
+		prefix += "i"
+	}
+	if flags&RE_MULTILINE != 0 {
+		prefix += "m"
+	}
+	if flags&RE_DOTALL != 0 {
+		prefix += "s"
+	}
+	if prefix != "" {
+		return fmt.Sprintf("(?%s)%s", prefix, pattern)
+	}
+	return pattern
 }
 
 // getCompiledRegex retrieves a compiled regex from cache or compiles and caches it
@@ -84,17 +110,35 @@ func (c *regexCache) evictOldest() {
 	delete(c.entries, entry.pattern)
 }
 
+// Helper to extract optional flags argument
+func getFlags(args []object.Object, flagsIndex int) (int64, error) {
+	if len(args) <= flagsIndex {
+		return 0, nil
+	}
+	if args[flagsIndex].Type() != object.INTEGER_OBJ {
+		return 0, fmt.Errorf("flags must be an integer")
+	}
+	val, _ := args[flagsIndex].AsInt()
+	return val, nil
+}
+
 var ReLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"match": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
+			if len(args) < 2 || len(args) > 3 {
+				return errors.NewError("match() takes 2 or 3 arguments (%d given)", len(args))
 			}
 			if args[0].Type() != object.STRING_OBJ || args[1].Type() != object.STRING_OBJ {
 				return errors.NewTypeError("STRING", "mixed types")
 			}
 			pattern, _ := args[0].AsString()
 			text, _ := args[1].AsString()
+
+			flags, err := getFlags(args, 2)
+			if err != nil {
+				return errors.NewError("%s", err.Error())
+			}
+			pattern = applyFlags(pattern, flags)
 
 			re, err := getCompiledRegex(pattern)
 			if err != nil {
@@ -108,20 +152,31 @@ var ReLibrary = object.NewLibrary(map[string]*object.Builtin{
 			}
 			return &object.Boolean{Value: true}
 		},
-		HelpText: `match(pattern, string) - Match pattern at start of string
+		HelpText: `match(pattern, string, flags=0) - Match pattern at start of string
 
-Returns true if the regex pattern matches at the beginning of the string.`,
+Returns true if the regex pattern matches at the beginning of the string.
+
+Flags:
+  re.IGNORECASE or re.I - Case-insensitive matching
+  re.MULTILINE or re.M  - ^ and $ match at line boundaries
+  re.DOTALL or re.S     - . matches newlines`,
 	},
-	"find": {
+	"search": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
+			if len(args) < 2 || len(args) > 3 {
+				return errors.NewError("search() takes 2 or 3 arguments (%d given)", len(args))
 			}
 			if args[0].Type() != object.STRING_OBJ || args[1].Type() != object.STRING_OBJ {
 				return errors.NewTypeError("STRING", "mixed types")
 			}
 			pattern, _ := args[0].AsString()
 			text, _ := args[1].AsString()
+
+			flags, err := getFlags(args, 2)
+			if err != nil {
+				return errors.NewError("%s", err.Error())
+			}
+			pattern = applyFlags(pattern, flags)
 
 			re, err := getCompiledRegex(pattern)
 			if err != nil {
@@ -134,20 +189,31 @@ Returns true if the regex pattern matches at the beginning of the string.`,
 			}
 			return &object.String{Value: result}
 		},
-		HelpText: `find(pattern, string) - Find first match
+		HelpText: `search(pattern, string, flags=0) - Search for pattern
 
-Returns the first substring that matches the regex pattern, or null if no match.`,
+Returns the first substring that matches the regex pattern anywhere in the string, or null if no match.
+
+Flags:
+  re.IGNORECASE or re.I - Case-insensitive matching
+  re.MULTILINE or re.M  - ^ and $ match at line boundaries
+  re.DOTALL or re.S     - . matches newlines`,
 	},
 	"findall": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
+			if len(args) < 2 || len(args) > 3 {
+				return errors.NewError("findall() takes 2 or 3 arguments (%d given)", len(args))
 			}
 			if args[0].Type() != object.STRING_OBJ || args[1].Type() != object.STRING_OBJ {
 				return errors.NewTypeError("STRING", "mixed types")
 			}
 			pattern, _ := args[0].AsString()
 			text, _ := args[1].AsString()
+
+			flags, err := getFlags(args, 2)
+			if err != nil {
+				return errors.NewError("%s", err.Error())
+			}
+			pattern = applyFlags(pattern, flags)
 
 			re, err := getCompiledRegex(pattern)
 			if err != nil {
@@ -161,38 +227,82 @@ Returns the first substring that matches the regex pattern, or null if no match.
 			}
 			return &object.List{Elements: elements}
 		},
-		HelpText: `findall(pattern, string) - Find all matches
+		HelpText: `findall(pattern, string, flags=0) - Find all matches
 
-Returns a list of all substrings that match the regex pattern.`,
+Returns a list of all substrings that match the regex pattern.
+
+Flags:
+  re.IGNORECASE or re.I - Case-insensitive matching
+  re.MULTILINE or re.M  - ^ and $ match at line boundaries
+  re.DOTALL or re.S     - . matches newlines`,
 	},
-	"replace": {
+	"sub": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
-			if len(args) != 3 {
-				return errors.NewArgumentError(len(args), 3)
+			if len(args) < 3 || len(args) > 5 {
+				return errors.NewError("sub() takes 3 to 5 arguments (%d given)", len(args))
 			}
 			if args[0].Type() != object.STRING_OBJ || args[1].Type() != object.STRING_OBJ || args[2].Type() != object.STRING_OBJ {
 				return errors.NewTypeError("STRING", "mixed types")
 			}
 			pattern, _ := args[0].AsString()
-			text, _ := args[1].AsString()
-			replacement, _ := args[2].AsString()
+			replacement, _ := args[1].AsString()
+			text, _ := args[2].AsString()
+
+			// count parameter (optional, position 3)
+			count := -1 // -1 means replace all
+			if len(args) > 3 {
+				if args[3].Type() != object.INTEGER_OBJ {
+					return errors.NewError("count must be an integer")
+				}
+				val, _ := args[3].AsInt()
+				count = int(val)
+			}
+
+			// flags parameter (optional, position 4)
+			flags, err := getFlags(args, 4)
+			if err != nil {
+				return errors.NewError("%s", err.Error())
+			}
+			pattern = applyFlags(pattern, flags)
 
 			re, err := getCompiledRegex(pattern)
 			if err != nil {
 				return errors.NewError("regex compile error: %s", err.Error())
 			}
 
-			result := re.ReplaceAllString(text, replacement)
+			var result string
+			if count == 0 {
+				result = text
+			} else if count < 0 {
+				result = re.ReplaceAllString(text, replacement)
+			} else {
+				// Replace only 'count' occurrences
+				replaced := 0
+				result = re.ReplaceAllStringFunc(text, func(match string) string {
+					if replaced < count {
+						replaced++
+						return re.ReplaceAllString(match, replacement)
+					}
+					return match
+				})
+			}
 			return &object.String{Value: result}
 		},
-		HelpText: `replace(pattern, string, replacement) - Replace matches
+		HelpText: `sub(pattern, repl, string, count=0, flags=0) - Replace matches
 
-Replaces all occurrences of the regex pattern in the string with the replacement.`,
+Replaces occurrences of the regex pattern in the string with the replacement.
+If count is 0 (default), all occurrences are replaced.
+If count > 0, only the first count occurrences are replaced.
+
+Flags:
+  re.IGNORECASE or re.I - Case-insensitive matching
+  re.MULTILINE or re.M  - ^ and $ match at line boundaries
+  re.DOTALL or re.S     - . matches newlines`,
 	},
 	"split": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
+			if len(args) < 2 || len(args) > 4 {
+				return errors.NewError("split() takes 2 to 4 arguments (%d given)", len(args))
 			}
 			if args[0].Type() != object.STRING_OBJ || args[1].Type() != object.STRING_OBJ {
 				return errors.NewTypeError("STRING", "mixed types")
@@ -200,60 +310,67 @@ Replaces all occurrences of the regex pattern in the string with the replacement
 			pattern, _ := args[0].AsString()
 			text, _ := args[1].AsString()
 
+			// maxsplit parameter (optional, position 2)
+			maxsplit := -1 // -1 means no limit
+			if len(args) > 2 {
+				if args[2].Type() != object.INTEGER_OBJ {
+					return errors.NewError("maxsplit must be an integer")
+				}
+				val, _ := args[2].AsInt()
+				maxsplit = int(val)
+				if maxsplit == 0 {
+					maxsplit = -1 // 0 means no limit in Python
+				}
+			}
+
+			// flags parameter (optional, position 3)
+			flags, err := getFlags(args, 3)
+			if err != nil {
+				return errors.NewError("%s", err.Error())
+			}
+			pattern = applyFlags(pattern, flags)
+
 			re, err := getCompiledRegex(pattern)
 			if err != nil {
 				return errors.NewError("regex compile error: %s", err.Error())
 			}
 
-			parts := re.Split(text, -1)
+			parts := re.Split(text, maxsplit)
 			elements := make([]object.Object, len(parts))
 			for i, part := range parts {
 				elements[i] = &object.String{Value: part}
 			}
 			return &object.List{Elements: elements}
 		},
-		HelpText: `split(pattern, string) - Split string by pattern
+		HelpText: `split(pattern, string, maxsplit=0, flags=0) - Split string by pattern
 
-Splits the string by occurrences of the regex pattern and returns a list of substrings.`,
-	},
-	"search": {
-		Fn: func(ctx context.Context, args ...object.Object) object.Object {
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
-			}
-			if args[0].Type() != object.STRING_OBJ || args[1].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("STRING", "mixed types")
-			}
-			pattern, _ := args[0].AsString()
-			text, _ := args[1].AsString()
+Splits the string by occurrences of the regex pattern and returns a list of substrings.
+If maxsplit is 0 (default), all occurrences are split.
+If maxsplit > 0, at most maxsplit splits are done.
 
-			re, err := getCompiledRegex(pattern)
-			if err != nil {
-				return errors.NewError("regex compile error: %s", err.Error())
-			}
-
-			result := re.FindString(text)
-			if result == "" {
-				return &object.Null{}
-			}
-			return &object.String{Value: result}
-		},
-		HelpText: `search(pattern, string) - Search for pattern
-
-Returns the first substring that matches the regex pattern anywhere in the string, or null if no match.`,
+Flags:
+  re.IGNORECASE or re.I - Case-insensitive matching
+  re.MULTILINE or re.M  - ^ and $ match at line boundaries
+  re.DOTALL or re.S     - . matches newlines`,
 	},
 	"compile": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if len(args) < 1 || len(args) > 2 {
+				return errors.NewError("compile() takes 1 or 2 arguments (%d given)", len(args))
 			}
 			if args[0].Type() != object.STRING_OBJ {
 				return errors.NewTypeError("STRING", args[0].Type().String())
 			}
 			pattern, _ := args[0].AsString()
 
+			flags, err := getFlags(args, 1)
+			if err != nil {
+				return errors.NewError("%s", err.Error())
+			}
+			pattern = applyFlags(pattern, flags)
+
 			// Try to compile to validate the pattern
-			_, err := getCompiledRegex(pattern)
+			_, err = getCompiledRegex(pattern)
 			if err != nil {
 				return errors.NewError("regex compile error: %s", err.Error())
 			}
@@ -261,9 +378,14 @@ Returns the first substring that matches the regex pattern anywhere in the strin
 			// Return the pattern string as a compiled "object"
 			return &object.String{Value: pattern}
 		},
-		HelpText: `compile(pattern) - Compile regex pattern
+		HelpText: `compile(pattern, flags=0) - Compile regex pattern
 
-Validates and caches a regex pattern for later use. Returns the pattern if valid.`,
+Validates and caches a regex pattern for later use. Returns the pattern if valid.
+
+Flags:
+  re.IGNORECASE or re.I - Case-insensitive matching
+  re.MULTILINE or re.M  - ^ and $ match at line boundaries
+  re.DOTALL or re.S     - . matches newlines`,
 	},
 	"escape": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
@@ -278,20 +400,26 @@ Validates and caches a regex pattern for later use. Returns the pattern if valid
 			escaped := regexp.QuoteMeta(text)
 			return &object.String{Value: escaped}
 		},
-		HelpText: `escape(string) - Escape special regex characters
+		HelpText: `escape(pattern) - Escape special regex characters
 
 Returns a string with all special regex characters escaped.`,
 	},
 	"fullmatch": {
 		Fn: func(ctx context.Context, args ...object.Object) object.Object {
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
+			if len(args) < 2 || len(args) > 3 {
+				return errors.NewError("fullmatch() takes 2 or 3 arguments (%d given)", len(args))
 			}
 			if args[0].Type() != object.STRING_OBJ || args[1].Type() != object.STRING_OBJ {
 				return errors.NewTypeError("STRING", "mixed types")
 			}
 			pattern, _ := args[0].AsString()
 			text, _ := args[1].AsString()
+
+			flags, err := getFlags(args, 2)
+			if err != nil {
+				return errors.NewError("%s", err.Error())
+			}
+			pattern = applyFlags(pattern, flags)
 
 			re, err := getCompiledRegex(pattern)
 			if err != nil {
@@ -305,8 +433,21 @@ Returns a string with all special regex characters escaped.`,
 			}
 			return &object.Boolean{Value: true}
 		},
-		HelpText: `fullmatch(pattern, string) - Match entire string
+		HelpText: `fullmatch(pattern, string, flags=0) - Match entire string
 
-Returns true if the regex pattern matches the entire string.`,
+Returns true if the regex pattern matches the entire string.
+
+Flags:
+  re.IGNORECASE or re.I - Case-insensitive matching
+  re.MULTILINE or re.M  - ^ and $ match at line boundaries
+  re.DOTALL or re.S     - . matches newlines`,
 	},
-}, nil, "Regular expression library")
+}, map[string]object.Object{
+	// Flag constants - matching Python's re module values
+	"IGNORECASE": &object.Integer{Value: RE_IGNORECASE},
+	"I":          &object.Integer{Value: RE_IGNORECASE},
+	"MULTILINE":  &object.Integer{Value: RE_MULTILINE},
+	"M":          &object.Integer{Value: RE_MULTILINE},
+	"DOTALL":     &object.Integer{Value: RE_DOTALL},
+	"S":          &object.Integer{Value: RE_DOTALL},
+}, "Regular expression library")
