@@ -78,6 +78,20 @@ value, ok := p.GetVarAsString("name")
 p.RegisterFunc("custom", func(ctx context.Context, args ...object.Object) object.Object {
     return &object.String{Value: "result"}
 })
+
+// Register Scriptling functions
+p.RegisterScriptFunc("my_func", `
+def my_func(x):
+    return x * 2
+my_func
+`)
+
+// Register Scriptling libraries
+p.RegisterScriptLibrary("mylib", `
+def add(a, b):
+    return a + b
+PI = 3.14159
+`)
 ```
 
 ### Libraries

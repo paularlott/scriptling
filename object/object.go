@@ -376,6 +376,11 @@ func (e *Environment) EnableOutputCapture() {
 	e.output = &strings.Builder{}
 }
 
+// SetOutput sets the output buffer for this environment
+func (e *Environment) SetOutput(output *strings.Builder) {
+	e.output = output
+}
+
 // GetOutput returns captured output and clears the buffer
 func (e *Environment) GetOutput() string {
 	if e.output == nil {
@@ -392,6 +397,15 @@ func (e *Environment) GetWriter() io.Writer {
 		return e.output
 	}
 	return os.Stdout
+}
+
+// GetStore returns a copy of the environment's store (only local scope, not outer)
+func (e *Environment) GetStore() map[string]Object {
+	store := make(map[string]Object, len(e.store))
+	for k, v := range e.store {
+		store[k] = v
+	}
+	return store
 }
 
 type List struct {
