@@ -854,6 +854,8 @@ func isTruthy(obj object.Object) bool {
 	default:
 		// Check for Python-style falsy values
 		switch v := obj.(type) {
+		case *object.Boolean:
+			return v.Value
 		case *object.Integer:
 			return v.Value != 0
 		case *object.Float:

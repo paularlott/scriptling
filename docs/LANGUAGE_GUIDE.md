@@ -965,7 +965,7 @@ When generating Scriptling code:
 8. Use `import json`, `import requests`, `import re` to load libraries
 9. Always use `json.parse()` and `json.stringify()` for JSON (dot notation)
 10. Always use `requests.get()`, `requests.post()`, etc. for HTTP (dot notation)
-11. Use `re.match()`, `re.find()`, `re.findall()`, `re.replace()`, `re.split()` for regex
+11. Use `re.match()`, `re.search()`, `re.findall()`, `re.sub()`, `re.split()` for regex (Python-compatible)
 12. Default HTTP timeout is 5 seconds if not specified
 13. Use `elif` for multiple conditions
 14. Use augmented assignment: `x += 1`, `x *= 2`, etc.

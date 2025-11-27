@@ -19,21 +19,26 @@ json_str = json.dumps(obj)
 ```python
 import re
 
-# Match - returns boolean
-if re.match("[0-9]+", "abc123"):
-    print("Has digits")
+# Match - returns boolean (matches at start of string only)
+if re.match("[0-9]+", "123abc"):
+    print("Starts with digits")
 
-# Find - returns first match or None
-email = re.find("[a-z]+@[a-z]+\.[a-z]+", "user@example.com")
+# Search - returns first match anywhere or None
+email = re.search("[a-z]+@[a-z]+\.[a-z]+", "Contact: user@example.com")
 
 # Find all - returns list
 phones = re.findall("[0-9]{3}-[0-9]{4}", "555-1234 or 555-5678")
 
-# Replace - returns modified string
-text = re.replace("[0-9]+", "Price: 100", "XXX")
+# Sub - replacement (pattern, repl, string, count=0, flags=0)
+text = re.sub("[0-9]+", "XXX", "Price: 100")
+text = re.sub("[0-9]+", "X", "a1b2c3", 2)  # Replace only first 2
 
-# Split - returns list
+# Split - returns list (pattern, string, maxsplit=0, flags=0)
 parts = re.split("[,;]", "one,two;three")
+
+# Flags: re.I (IGNORECASE), re.M (MULTILINE), re.S (DOTALL)
+if re.match("hello", "HELLO world", re.I):
+    print("Case-insensitive match")
 ```
 
 ## Requests Library
