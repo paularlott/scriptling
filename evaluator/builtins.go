@@ -27,13 +27,13 @@ var builtins = map[string]*object.Builtin{
 			}
 			switch arg := args[0].(type) {
 			case *object.String:
-				return &object.Integer{Value: int64(len(arg.Value))}
+				return object.NewInteger(int64(len(arg.Value)))
 			case *object.List:
-				return &object.Integer{Value: int64(len(arg.Elements))}
+				return object.NewInteger(int64(len(arg.Elements)))
 			case *object.Dict:
-				return &object.Integer{Value: int64(len(arg.Pairs))}
+				return object.NewInteger(int64(len(arg.Pairs)))
 			case *object.Tuple:
-				return &object.Integer{Value: int64(len(arg.Elements))}
+				return object.NewInteger(int64(len(arg.Elements)))
 			default:
 				return errors.NewTypeError("STRING, LIST, DICT, or TUPLE", args[0].Type().String())
 			}
@@ -64,14 +64,14 @@ var builtins = map[string]*object.Builtin{
 			case *object.Integer:
 				return arg
 			case *object.Float:
-				return &object.Integer{Value: int64(arg.Value)}
+				return object.NewInteger(int64(arg.Value))
 			case *object.String:
 				var val int64
 				_, err := fmt.Sscanf(arg.Value, "%d", &val)
 				if err != nil {
 					return errors.NewError("cannot convert %s to int", arg.Value)
 				}
-				return &object.Integer{Value: val}
+				return object.NewInteger(val)
 			default:
 				return errors.NewTypeError("INTEGER, FLOAT, or STRING", arg.Type().String())
 			}
@@ -358,7 +358,7 @@ var builtins = map[string]*object.Builtin{
 			if hasFloat {
 				return &object.Float{Value: floatSum}
 			}
-			return &object.Integer{Value: intSum}
+			return object.NewInteger(intSum)
 		},
 	},
 	"sorted": {
@@ -482,11 +482,11 @@ var builtins = map[string]*object.Builtin{
 			elements := []object.Object{}
 			if step > 0 {
 				for i := start; i < stop; i += step {
-					elements = append(elements, &object.Integer{Value: i})
+					elements = append(elements, object.NewInteger(i))
 				}
 			} else {
 				for i := start; i > stop; i += step {
-					elements = append(elements, &object.Integer{Value: i})
+					elements = append(elements, object.NewInteger(i))
 				}
 			}
 			return &object.List{Elements: elements}

@@ -36,7 +36,7 @@ var availableLibraries = map[string]*object.Library{
 	"base64":   stdlib.GetBase64Library(),
 	"hashlib":  stdlib.GetHashlibLibrary(),
 	"random":   stdlib.GetRandomLibrary(),
-	"lib":      stdlib.GetURLLibrary(),
+	"url":      stdlib.GetURLLibrary(),
 }
 
 func New() *Scriptling {

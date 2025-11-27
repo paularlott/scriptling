@@ -21,12 +21,8 @@ import (
 )
 
 func main() {
-    // Create interpreter without libraries (lightweight)
+    // Create interpreter without standard libraries
     p := scriptling.New()
-
-    // Create interpreter with specific libraries
-    p := scriptling.New("json")
-    p := scriptling.New("json", "http")
 
     // Execute Scriptling code
     result, err := p.Eval(`x = 5 + 3`)
@@ -487,8 +483,8 @@ import (
 )
 
 func main() {
-    // Create interpreter with libraries
-    p := scriptling.New("json", "http")
+    // Create interpreter
+    p := scriptling.New()
 
     // Set configuration from Go
     p.SetVar("api_base", "https://api.example.com")
@@ -507,6 +503,8 @@ func main() {
 
     // Execute automation script
     script := `
+import json, request
+
 log_info("Starting API automation")
 
 # Fetch data
@@ -727,14 +725,14 @@ if value, ok := p.GetVar("result"); ok {
 
 ```go
 // Good: Reuse interpreter
-p := scriptling.New("json")
+p := scriptling.New()
 for _, script := range scripts {
     p.Eval(script)
 }
 
 // Bad: Create new interpreter each time
 for _, script := range scripts {
-    p := scriptling.New("json")
+    p := scriptling.New()
     p.Eval(script)
 }
 ```
@@ -804,10 +802,12 @@ if cacheSize, ok := p.GetVarAsInt("cache_size"); ok {
 ### Data Processing Pipeline
 ```go
 // Process data with Scriptling
-p := scriptling.New("json")
+p := scriptling.New()
 p.SetVar("raw_data", jsonString)
 
 pipeline := `
+include json
+
 data = json.parse(raw_data)
 processed = []
 
