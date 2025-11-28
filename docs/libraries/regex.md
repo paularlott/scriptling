@@ -2,6 +2,35 @@
 
 Regular expression functions for pattern matching and text processing. The function signatures follow Python's `re` module conventions.
 
+## Match Objects
+
+The `re.match()` and `re.search()` functions return a Match object on success, or `None` if no match is found. Match objects provide the following methods:
+
+| Method | Description |
+|--------|-------------|
+| `group(n=0)` | Returns the nth matched group (0 = full match) |
+| `groups()` | Returns a tuple of all capturing groups (excluding group 0) |
+| `start(n=0)` | Returns the start position of the match |
+| `end(n=0)` | Returns the end position of the match |
+| `span(n=0)` | Returns a (start, end) tuple for the match |
+
+**Example:**
+```python
+import re
+
+# Search with capturing groups
+m = re.search(r'(\w+)@(\w+)\.(\w+)', 'Email: user@example.com')
+if m:
+    print(m.group(0))   # 'user@example.com' (full match)
+    print(m.group(1))   # 'user' (first group)
+    print(m.group(2))   # 'example' (second group)
+    print(m.group(3))   # 'com' (third group)
+    print(m.groups())   # ('user', 'example', 'com')
+    print(m.start())    # 7 (position where match starts)
+    print(m.end())      # 23 (position where match ends)
+    print(m.span())     # (7, 23)
+```
+
 ## Constants (Flags)
 
 The regex library provides the following flags that can be passed to functions:
@@ -18,7 +47,9 @@ Flags can be combined using the bitwise OR operator (`|`):
 import re
 
 # Combine IGNORECASE and MULTILINE
-re.match("hello", "HELLO\nWORLD", re.I | re.M)
+m = re.match("hello", "HELLO\nWORLD", re.I | re.M)
+if m:
+    print(m.group(0))  # "HELLO"
 ```
 
 ## Functions
@@ -32,21 +63,24 @@ Checks if the pattern matches at the beginning of the string.
 - `string`: String to search
 - `flags`: Optional flags (default: 0)
 
-**Returns:** Boolean (True if matches at start, False otherwise)
+**Returns:** Match object if pattern matches at start, or `None` if no match
 
 **Example:**
 ```python
 import re
 
-if re.match("[0-9]+", "123abc"):
-    print("String starts with digits")  # This prints
+m = re.match("[0-9]+", "123abc")
+if m:
+    print("String starts with digits:", m.group(0))  # "123"
 
-if re.match("[0-9]+", "abc123"):
-    print("This won't print - pattern must match at start")
+m = re.match("[0-9]+", "abc123")
+if m == None:
+    print("Pattern must match at start")
 
 # Case-insensitive matching
-if re.match("hello", "HELLO world", re.I):
-    print("Case-insensitive match")  # This prints
+m = re.match("hello", "HELLO world", re.I)
+if m:
+    print("Case-insensitive match:", m.group(0))  # "HELLO"
 ```
 
 ### re.search(pattern, string, flags=0)
@@ -58,21 +92,31 @@ Searches for the first occurrence of the pattern anywhere in the string.
 - `string`: String to search
 - `flags`: Optional flags (default: 0)
 
-**Returns:** String (matched text) or None if not found
+**Returns:** Match object for the first match, or `None` if no match found
 
 **Example:**
 ```python
 import re
 
-email = re.search("\\w+@\\w+\\.\\w+", "Contact: user@example.com")
-print(email)  # "user@example.com"
+m = re.search(r'\w+@\w+\.\w+', "Contact: user@example.com")
+if m:
+    print(m.group(0))  # "user@example.com"
 
 result = re.search("[0-9]+", "no numbers")
 print(result)  # None
 
 # Case-insensitive search
-result = re.search("world", "HELLO WORLD", re.I)
-print(result)  # "WORLD"
+m = re.search("world", "HELLO WORLD", re.I)
+if m:
+    print(m.group(0))  # "WORLD"
+
+# Using capturing groups
+m = re.search(r'(\d+)-(\d+)', "Phone: 555-1234")
+if m:
+    print(m.group(0))  # "555-1234"
+    print(m.group(1))  # "555"
+    print(m.group(2))  # "1234"
+    print(m.groups())  # ("555", "1234")
 ```
 
 ### re.findall(pattern, string, flags=0)
@@ -270,12 +314,22 @@ You can also use inline flag modifiers in your patterns:
 import re
 
 # Basic matching at start of string
-if re.match("[0-9]+", "123abc"):
-    print("String starts with digits")
+m = re.match("[0-9]+", "123abc")
+if m:
+    print("String starts with:", m.group(0))  # "123"
 
 # Search anywhere in string
-email = re.search("\\w+@\\w+\\.\\w+", "Contact: user@example.com")
-# "user@example.com"
+m = re.search(r'\w+@\w+\.\w+', "Contact: user@example.com")
+if m:
+    print("Email:", m.group(0))  # "user@example.com"
+
+# Search with groups
+m = re.search(r'(\w+)@(\w+)\.(\w+)', "Contact: user@example.com")
+if m:
+    print("User:", m.group(1))    # "user"
+    print("Domain:", m.group(2))  # "example"
+    print("TLD:", m.group(3))     # "com"
+    print("Groups:", m.groups())  # ("user", "example", "com")
 
 # Find all matches
 numbers = re.findall("[0-9]+", "abc123def456")
@@ -306,12 +360,14 @@ if re.fullmatch("[0-9]+", "123"):
     print("String contains only digits")
 
 # Case-insensitive matching with flag
-if re.match("hello", "HELLO world", re.I):
-    print("Case-insensitive match")
+m = re.match("hello", "HELLO world", re.I)
+if m:
+    print("Case-insensitive match:", m.group(0))
 
 # Case-insensitive matching with inline flag
-if re.match("(?i)hello", "HELLO world"):
-    print("Case-insensitive match")
+m = re.match("(?i)hello", "HELLO world")
+if m:
+    print("Inline flag match:", m.group(0))
 
 # Multiline matching
 text = "line1\nline2\nline3"
@@ -319,13 +375,15 @@ matches = re.findall("^line", text, re.M)
 # ["line", "line", "line"]
 
 # Dotall - dot matches newlines
-result = re.search("a.*b", "a\nb", re.S)
-# "a\nb"
+m = re.search("a.*b", "a\nb", re.S)
+if m:
+    print("Dotall match:", m.group(0))  # "a\nb"
 ```
 
 ## Notes
 
 - Patterns use Go's regexp engine (RE2)
+- `re.match()` and `re.search()` return Match objects (not strings) like Python
 - All functions are case-sensitive by default
 - Use `re.I` or `re.IGNORECASE` flag for case-insensitive matching
 - Alternatively, use `(?i)` at the start of pattern for case-insensitive matching

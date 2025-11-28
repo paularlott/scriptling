@@ -3,17 +3,18 @@ import re
 # Comprehensive regex tests - multiple tests counting failures
 fails = 0
 
-# Test 1: re.match at start of string
-if not re.match("[0-9]+", "123abc"):
+# Test 1: re.match at start of string - returns Match object
+m = re.match("[0-9]+", "123abc")
+if m == None or m.group(0) != "123":
     fails = fails + 1
 
-# Test 2: re.match returns false when pattern doesn't match at start
-if re.match("[0-9]+", "abc123"):
+# Test 2: re.match returns None when pattern doesn't match at start
+if re.match("[0-9]+", "abc123") != None:
     fails = fails + 1
 
-# Test 3: re.search finds pattern anywhere
+# Test 3: re.search finds pattern anywhere - returns Match object
 result = re.search("[0-9]+", "abc123def")
-if result != "123":
+if result == None or result.group(0) != "123":
     fails = fails + 1
 
 # Test 4: re.findall finds all matches
@@ -67,7 +68,7 @@ if len(words) != 2:
 
 # Test 14: Case insensitive with (?i) inline flag
 result = re.match("(?i)hello", "HELLO world")
-if not result:
+if result == None or result.group(0) != "HELLO":
     fails = fails + 1
 
 # Test 15: re.search returns None on no match
@@ -76,16 +77,18 @@ if result != None:
     fails = fails + 1
 
 # Test 16: re.match with IGNORECASE flag
-if not re.match("hello", "HELLO world", re.IGNORECASE):
+result = re.match("hello", "HELLO world", re.IGNORECASE)
+if result == None or result.group(0) != "HELLO":
     fails = fails + 1
 
 # Test 17: re.match with I shorthand flag
-if not re.match("hello", "HELLO world", re.I):
+result = re.match("hello", "HELLO world", re.I)
+if result == None or result.group(0) != "HELLO":
     fails = fails + 1
 
 # Test 18: re.search with IGNORECASE flag
 result = re.search("world", "HELLO WORLD", re.I)
-if result != "WORLD":
+if result == None or result.group(0) != "WORLD":
     fails = fails + 1
 
 # Test 19: re.findall with IGNORECASE flag
@@ -106,14 +109,15 @@ if type(pattern) != "REGEX":
     fails = fails + 1
 
 # Test 22: MULTILINE flag for ^ and $ matching
-if not re.match("^line", "line1\nline2", re.M):
+result = re.match("^line", "line1\nline2", re.M)
+if result == None or result.group(0) != "line":
     fails = fails + 1
 
 # Test 23: DOTALL flag - dot matches newline
 # Without DOTALL, .* won't match across newlines
 # With DOTALL ((?s)), . matches everything including newlines
 result = re.search("(?s)a.*b", "a\nb")
-if result != "a\nb":
+if result == None or result.group(0) != "a\nb":
     fails = fails + 1
 
 fails == 0

@@ -146,15 +146,38 @@ var ReLibrary = object.NewLibrary(map[string]*object.Builtin{
 			}
 
 			// Check if pattern matches at the beginning of text
-			loc := re.FindStringIndex(text)
-			if loc == nil || loc[0] != 0 {
-				return &object.Boolean{Value: false}
+			match := re.FindStringSubmatchIndex(text)
+			if match == nil || match[0] != 0 {
+				return &object.Null{}
 			}
-			return &object.Boolean{Value: true}
+
+			// Build groups from submatch indices
+			groups := make([]string, 0)
+			for i := 0; i < len(match); i += 2 {
+				if match[i] >= 0 && match[i+1] >= 0 {
+					groups = append(groups, text[match[i]:match[i+1]])
+				} else {
+					groups = append(groups, "")
+				}
+			}
+
+			return &object.Match{
+				Groups: groups,
+				Start:  match[0],
+				End:    match[1],
+			}
 		},
 		HelpText: `match(pattern, string, flags=0) - Match pattern at start of string
 
-Returns true if the regex pattern matches at the beginning of the string.
+Returns a Match object if the pattern matches at the beginning, or None if no match.
+Use match.group(0) for the full match, match.group(1) for the first group, etc.
+
+Methods on Match object:
+  group(n=0)  - Return the nth matched group (0 = full match)
+  groups()    - Return tuple of all matched groups (excluding group 0)
+  start(n=0)  - Return start position of nth group
+  end(n=0)    - Return end position of nth group
+  span(n=0)   - Return (start, end) tuple for nth group
 
 Flags:
   re.IGNORECASE or re.I - Case-insensitive matching
@@ -183,15 +206,38 @@ Flags:
 				return errors.NewError("regex compile error: %s", err.Error())
 			}
 
-			result := re.FindString(text)
-			if result == "" {
+			match := re.FindStringSubmatchIndex(text)
+			if match == nil {
 				return &object.Null{}
 			}
-			return &object.String{Value: result}
-		},
-		HelpText: `search(pattern, string, flags=0) - Search for pattern
 
-Returns the first substring that matches the regex pattern anywhere in the string, or null if no match.
+			// Build groups from submatch indices
+			groups := make([]string, 0)
+			for i := 0; i < len(match); i += 2 {
+				if match[i] >= 0 && match[i+1] >= 0 {
+					groups = append(groups, text[match[i]:match[i+1]])
+				} else {
+					groups = append(groups, "")
+				}
+			}
+
+			return &object.Match{
+				Groups: groups,
+				Start:  match[0],
+				End:    match[1],
+			}
+		},
+		HelpText: `search(pattern, string, flags=0) - Search for pattern anywhere in string
+
+Returns a Match object for the first match, or None if no match found.
+Use match.group(0) for the full match, match.group(1) for the first group, etc.
+
+Methods on Match object:
+  group(n=0)  - Return the nth matched group (0 = full match)
+  groups()    - Return tuple of all matched groups (excluding group 0)
+  start(n=0)  - Return start position of nth group
+  end(n=0)    - Return end position of nth group
+  span(n=0)   - Return (start, end) tuple for nth group
 
 Flags:
   re.IGNORECASE or re.I - Case-insensitive matching
