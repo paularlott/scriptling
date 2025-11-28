@@ -1,9 +1,10 @@
 package parser
 
 import (
+	"testing"
+
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/lexer"
-	"testing"
 )
 
 func TestAssignStatements(t *testing.T) {
@@ -253,8 +254,14 @@ func testAssignStatement(t *testing.T, s ast.Statement, name string) bool {
 		return false
 	}
 
-	if assignStmt.Name.Value != name {
-		t.Errorf("assignStmt.Name.Value not '%s'. got=%s", name, assignStmt.Name.Value)
+	ident, ok := assignStmt.Left.(*ast.Identifier)
+	if !ok {
+		t.Errorf("assignStmt.Left not *ast.Identifier. got=%T", assignStmt.Left)
+		return false
+	}
+
+	if ident.Value != name {
+		t.Errorf("assignStmt.Left.Value not '%s'. got=%s", name, ident.Value)
 		return false
 	}
 

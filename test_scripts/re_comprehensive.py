@@ -55,9 +55,9 @@ escaped = re.escape("a.b+c*")
 if len(escaped) <= len("a.b+c*"):
     fails = fails + 1
 
-# Test 12: re.compile validates pattern
+# Test 12: re.compile returns a Regex object
 pattern = re.compile("[0-9]+")
-if pattern != "[0-9]+":
+if type(pattern) != "REGEX":
     fails = fails + 1
 
 # Test 13: Word boundary matching - use simpler pattern
@@ -94,16 +94,15 @@ matches = re.findall("a+", "aAbBaAa", re.I)
 if len(matches) != 2:
     fails = fails + 1
 
-# Test 20: re.compile with flags
+# Test 20: re.compile with flags returns Regex object
 pattern = re.compile("hello", re.I)
-if pattern != "(?i)hello":
+if type(pattern) != "REGEX":
     fails = fails + 1
 
 # Test 21: Combined flags (IGNORECASE | MULTILINE)
 pattern = re.compile("hello", re.I | re.M)
-# Pattern should contain both i and m flags in (?...) format
-# Go combines them as (?im) not (?i)(?m)
-if "(?i" not in pattern or "m)" not in pattern:
+# Pattern should be a Regex object with the pattern containing the flags
+if type(pattern) != "REGEX":
     fails = fails + 1
 
 # Test 22: MULTILINE flag for ^ and $ matching

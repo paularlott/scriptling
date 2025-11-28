@@ -60,6 +60,7 @@ const (
 	HTTP_RESP_OBJ
 	ERROR_OBJ
 	EXCEPTION_OBJ
+	REGEX_OBJ
 )
 
 // String returns the string representation of the ObjectType
@@ -99,6 +100,8 @@ func (ot ObjectType) String() string {
 		return "ERROR"
 	case EXCEPTION_OBJ:
 		return "EXCEPTION"
+	case REGEX_OBJ:
+		return "REGEX"
 	default:
 		return "UNKNOWN"
 	}
@@ -172,6 +175,21 @@ func (s *String) AsFloat() (float64, bool)          { return 0, false }
 func (s *String) AsBool() (bool, bool)              { return s.Value != "", true }
 func (s *String) AsList() ([]Object, bool)          { return nil, false }
 func (s *String) AsDict() (map[string]Object, bool) { return nil, false }
+
+type Regex struct {
+	Pattern string
+	Flags   int64
+}
+
+func (r *Regex) Type() ObjectType { return REGEX_OBJ }
+func (r *Regex) Inspect() string  { return fmt.Sprintf("Regex(%s)", r.Pattern) }
+
+func (r *Regex) AsString() (string, bool)          { return r.Pattern, true }
+func (r *Regex) AsInt() (int64, bool)              { return 0, false }
+func (r *Regex) AsFloat() (float64, bool)          { return 0, false }
+func (r *Regex) AsBool() (bool, bool)              { return true, true }
+func (r *Regex) AsList() ([]Object, bool)          { return nil, false }
+func (r *Regex) AsDict() (map[string]Object, bool) { return nil, false }
 
 type Null struct{}
 
