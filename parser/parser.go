@@ -977,84 +977,23 @@ func (p *Parser) parseListLiteral() ast.Expression {
 }
 
 func (p *Parser) parseListComprehension(expr ast.Expression) ast.Expression {
-	comp := &ast.ListComprehension{
-		Token:      p.curToken,
-		Expression: expr,
-	}
-
-	if !p.expectPeek(token.FOR) {
-		return nil
-	}
-
-	if !p.expectPeek(token.IDENT) {
-		return nil
-	}
-
-	comp.Variable = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
-
-	if !p.expectPeek(token.IN) {
-		return nil
-	}
-
-	p.nextToken()
-	comp.Iterable = p.parseExpression(LOWEST)
-
-	// Check for optional if condition
-	if p.peekTokenIs(token.IF) {
-		p.nextToken()
-		p.nextToken()
-		comp.Condition = p.parseExpression(LOWEST)
-	}
-
-	if !p.expectPeek(token.RBRACKET) {
-		return nil
-	}
-
-	return comp
+	return p.parseComprehensionCore(expr, token.RBRACKET)
 }
 
 // parseGeneratorExpression parses generator expressions like (x for x in list)
 // We treat them as list comprehensions for simplicity (eager evaluation)
 func (p *Parser) parseGeneratorExpression(expr ast.Expression) ast.Expression {
-	comp := &ast.ListComprehension{
-		Token:      p.curToken,
-		Expression: expr,
-	}
-
-	if !p.expectPeek(token.FOR) {
-		return nil
-	}
-
-	if !p.expectPeek(token.IDENT) {
-		return nil
-	}
-
-	comp.Variable = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
-
-	if !p.expectPeek(token.IN) {
-		return nil
-	}
-
-	p.nextToken()
-	comp.Iterable = p.parseExpression(LOWEST)
-
-	// Check for optional if condition
-	if p.peekTokenIs(token.IF) {
-		p.nextToken()
-		p.nextToken()
-		comp.Condition = p.parseExpression(LOWEST)
-	}
-
-	if !p.expectPeek(token.RPAREN) {
-		return nil
-	}
-
-	return comp
+	return p.parseComprehensionCore(expr, token.RPAREN)
 }
 
 // parseGeneratorExpressionInCall parses generator expressions in function calls
 // like: func(x for x in list) - without surrounding parens
 func (p *Parser) parseGeneratorExpressionInCall(expr ast.Expression, end token.TokenType) ast.Expression {
+	return p.parseComprehensionCore(expr, end)
+}
+
+// parseComprehensionCore is the unified implementation for list comprehensions and generator expressions
+func (p *Parser) parseComprehensionCore(expr ast.Expression, endToken token.TokenType) ast.Expression {
 	comp := &ast.ListComprehension{
 		Token:      p.curToken,
 		Expression: expr,
@@ -1084,7 +1023,7 @@ func (p *Parser) parseGeneratorExpressionInCall(expr ast.Expression, end token.T
 		comp.Condition = p.parseExpression(LOWEST)
 	}
 
-	if !p.expectPeek(end) {
+	if !p.expectPeek(endToken) {
 		return nil
 	}
 
