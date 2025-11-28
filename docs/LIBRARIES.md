@@ -101,6 +101,35 @@ json_str = json.dumps({"key": "value"})
 
 [See json.md](libraries/json.md) for complete documentation.
 
+### Pathlib Library
+Object-oriented filesystem paths (enabled by default in CLI).
+
+```python
+import pathlib
+
+# Create path objects
+p = pathlib.Path("/home/user/file.txt")
+
+# Access properties
+print(p.name)        # "file.txt"
+print(p.stem)        # "file"
+print(p.suffix)      # ".txt"
+print(p.parent)      # "/home/user"
+
+# Path operations
+p2 = p.joinpath("subdir", "newfile.py")
+exists = p.exists()
+is_file = p.is_file()
+is_dir = p.is_dir()
+
+# File operations
+p.write_text("Hello, World!")
+content = p.read_text()
+p.unlink()  # Delete file
+```
+
+[See pathlib.md](libraries/pathlib.md) for complete documentation.
+
 ### Regex Library
 Regular expression pattern matching and text processing.
 

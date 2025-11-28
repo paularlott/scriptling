@@ -26,6 +26,8 @@ func TestIntegrationScripts(t *testing.T) {
 	p := New()
 	// Register os library with no restrictions for testing
 	extlibs.RegisterOSLibrary(p, nil)
+	// Register pathlib library with no restrictions for testing
+	extlibs.RegisterPathlibLibrary(p, nil)
 
 	for _, file := range files {
 		t.Run(filepath.Base(file), func(t *testing.T) {
