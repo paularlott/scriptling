@@ -38,7 +38,7 @@ This will execute a comprehensive Scriptling script that demonstrates all the ex
 ### Function Signature
 All Scriptling functions must follow this signature:
 ```go
-func(ctx context.Context, args ...object.Object) object.Object
+func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object
 ```
 
 ### Type System

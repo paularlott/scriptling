@@ -1,0 +1,78 @@
+# Taskfile.yml for building Scriptling CLI
+version: '3'
+
+vars:
+  BIN_DIR: bin
+  CLI_DIR: scriptling-cli
+  LDFLAGS: -ldflags="-s -w"
+
+tasks:
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - rm -rf {{.BIN_DIR}}
+
+  build:
+    desc: Build for current platform
+    dir: scriptling-cli
+    cmds:
+      - go build {{.LDFLAGS}} -o ../{{.BIN_DIR}}/scriptling .
+
+  build-all:
+    desc: Build for all platforms
+    deps: [clean]
+    cmds:
+      - mkdir -p {{.BIN_DIR}}
+      - task: build-linux-amd64
+      - task: build-linux-arm64
+      - task: build-darwin-amd64
+      - task: build-darwin-arm64
+      - task: build-windows-amd64
+      - task: build-windows-arm64
+
+  build-linux-amd64:
+    desc: Build for Linux AMD64
+    dir: scriptling-cli
+    cmds:
+      - GOOS=linux GOARCH=amd64 go build {{.LDFLAGS}} -o ../{{.BIN_DIR}}/scriptling-linux-amd64 .
+
+  build-linux-arm64:
+    desc: Build for Linux ARM64
+    dir: scriptling-cli
+    cmds:
+      - GOOS=linux GOARCH=arm64 go build {{.LDFLAGS}} -o ../{{.BIN_DIR}}/scriptling-linux-arm64 .
+
+  build-darwin-amd64:
+    desc: Build for macOS AMD64
+    dir: scriptling-cli
+    cmds:
+      - GOOS=darwin GOARCH=amd64 go build {{.LDFLAGS}} -o ../{{.BIN_DIR}}/scriptling-darwin-amd64 .
+
+  build-darwin-arm64:
+    desc: Build for macOS ARM64
+    dir: scriptling-cli
+    cmds:
+      - GOOS=darwin GOARCH=arm64 go build {{.LDFLAGS}} -o ../{{.BIN_DIR}}/scriptling-darwin-arm64 .
+
+  build-windows-amd64:
+    desc: Build for Windows AMD64
+    dir: scriptling-cli
+    cmds:
+      - GOOS=windows GOARCH=amd64 go build {{.LDFLAGS}} -o ../{{.BIN_DIR}}/scriptling-windows-amd64.exe .
+
+  build-windows-arm64:
+    desc: Build for Windows ARM64
+    dir: scriptling-cli
+    cmds:
+      - GOOS=windows GOARCH=arm64 go build {{.LDFLAGS}} -o ../{{.BIN_DIR}}/scriptling-windows-arm64.exe .
+
+  test:
+    desc: Run tests
+    cmds:
+      - go test ./...
+
+  install:
+    desc: Install CLI tool locally
+    deps: [build]
+    cmds:
+      - cp {{.BIN_DIR}}/scriptling /usr/local/bin/scriptling

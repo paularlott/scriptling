@@ -54,25 +54,14 @@ var exceptionsNamespace = &object.Dict{
 }
 
 var RequestsLibrary = object.NewLibrary(map[string]*object.Builtin{
-	// Exception classes (as strings for except clause matching)
-	"RequestException": {
-		Fn: func(ctx context.Context, args ...object.Object) object.Object {
-			return requestExceptionType
-		},
-	},
-	"HTTPError": {
-		Fn: func(ctx context.Context, args ...object.Object) object.Object {
-			return httpErrorType
-		},
-	},
 	// Exceptions namespace - returns dict with exception types
 	"exceptions": {
-		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 			return exceptionsNamespace
 		},
 	},
 	"get": {
-		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 			if len(args) < 1 || len(args) > 2 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -103,7 +92,7 @@ var RequestsLibrary = object.NewLibrary(map[string]*object.Builtin{
 		},
 	},
 	"post": {
-		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 			if len(args) < 2 || len(args) > 3 {
 				return errors.NewArgumentError(len(args), 2)
 			}
@@ -135,7 +124,7 @@ var RequestsLibrary = object.NewLibrary(map[string]*object.Builtin{
 		},
 	},
 	"put": {
-		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 			if len(args) < 2 || len(args) > 3 {
 				return errors.NewArgumentError(len(args), 2)
 			}
@@ -167,7 +156,7 @@ var RequestsLibrary = object.NewLibrary(map[string]*object.Builtin{
 		},
 	},
 	"delete": {
-		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 			if len(args) < 1 || len(args) > 2 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -198,7 +187,7 @@ var RequestsLibrary = object.NewLibrary(map[string]*object.Builtin{
 		},
 	},
 	"patch": {
-		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 			if len(args) < 2 || len(args) > 3 {
 				return errors.NewArgumentError(len(args), 2)
 			}
@@ -229,7 +218,11 @@ var RequestsLibrary = object.NewLibrary(map[string]*object.Builtin{
 			return httpRequestWithContext(ctx, "PATCH", url, body, timeout, headers)
 		},
 	},
-}, nil, "HTTP requests library")
+}, map[string]object.Object{
+	// Exception types as constants (for except clause matching)
+	"RequestException": requestExceptionType,
+	"HTTPError":        httpErrorType,
+}, "HTTP requests library")
 
 func extractHeaders(dict map[string]object.Object) map[string]string {
 	headers := make(map[string]string)
@@ -320,7 +313,7 @@ func httpRequestWithContext(parentCtx context.Context, method, url, body string,
 	pairs["json"] = object.DictPair{
 		Key: &object.String{Value: "json"},
 		Value: &object.Builtin{
-			Fn: func(ctx context.Context, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 				if len(args) != 0 {
 					return errors.NewArgumentError(len(args), 0)
 				}
@@ -341,7 +334,7 @@ func httpRequestWithContext(parentCtx context.Context, method, url, body string,
 	pairs["raise_for_status"] = object.DictPair{
 		Key: &object.String{Value: "raise_for_status"},
 		Value: &object.Builtin{
-			Fn: func(ctx context.Context, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 				if len(args) != 0 {
 					return errors.NewArgumentError(len(args), 0)
 				}

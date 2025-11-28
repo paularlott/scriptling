@@ -1,6 +1,8 @@
 package lexer
 
 import (
+	"strings"
+
 	"github.com/paularlott/scriptling/token"
 )
 
@@ -116,7 +118,15 @@ func (l *Lexer) NextToken() token.Token {
 			l.readChar()
 		}
 	case '/':
-		if l.peekChar() == '=' {
+		if l.peekChar() == '/' {
+			l.readChar()
+			if l.peekChar() == '=' {
+				l.readChar()
+				tok = token.Token{Type: token.FLOORDIV_EQ, Literal: "//=", Line: l.line}
+			} else {
+				tok = token.Token{Type: token.FLOORDIV, Literal: "//", Line: l.line}
+			}
+		} else if l.peekChar() == '=' {
 			l.readChar()
 			tok = token.Token{Type: token.DIV_EQ, Literal: "/=", Line: l.line}
 		} else {
@@ -309,6 +319,32 @@ func (l *Lexer) NextToken() token.Token {
 				l.readPosition = savedReadPos
 				l.ch = savedCh
 			}
+			// Check for 'is not' special case
+			if tok.Type == token.IS && l.ch == ' ' {
+				// Peek ahead to see if next word is 'not'
+				savedPos := l.position
+				savedReadPos := l.readPosition
+				savedCh := l.ch
+
+				// Skip whitespace
+				for l.ch == ' ' || l.ch == '\t' {
+					l.readChar()
+				}
+
+				// Check if next identifier is 'not'
+				if isLetter(l.ch) {
+					nextIdent := l.readIdentifier()
+					if nextIdent == "not" {
+						// Return IS_NOT token
+						return token.Token{Type: token.IS_NOT, Literal: "is not", Line: l.line}
+					}
+				}
+
+				// Restore position if not 'is not'
+				l.position = savedPos
+				l.readPosition = savedReadPos
+				l.ch = savedCh
+			}
 			return tok
 		} else if isDigit(l.ch) {
 			num, isFloat := l.readNumber()
@@ -382,13 +418,37 @@ func (l *Lexer) readNumber() (string, bool) {
 func (l *Lexer) readString(quote byte) string {
 	// l.ch is opening quote
 	l.readChar() // move to first content char
-	position := l.position
+	var result strings.Builder
 	for l.ch != quote && l.ch != 0 {
+		if l.ch == '\\' {
+			l.readChar() // consume backslash
+			switch l.ch {
+			case 'n':
+				result.WriteByte('\n')
+			case 't':
+				result.WriteByte('\t')
+			case 'r':
+				result.WriteByte('\r')
+			case '\\':
+				result.WriteByte('\\')
+			case '\'':
+				result.WriteByte('\'')
+			case '"':
+				result.WriteByte('"')
+			case '0':
+				result.WriteByte(0)
+			default:
+				// Keep backslash and the character as-is
+				result.WriteByte('\\')
+				result.WriteByte(l.ch)
+			}
+		} else {
+			result.WriteByte(l.ch)
+		}
 		l.readChar()
 	}
-	str := l.input[position:l.position]
 	l.readChar() // consume closing quote
-	return str
+	return result.String()
 }
 
 // readRawString reads a raw string but allows quoted characters preceded by a backslash

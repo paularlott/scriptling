@@ -124,7 +124,7 @@ func getFlags(args []object.Object, flagsIndex int) (int64, error) {
 
 var ReLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"match": {
-		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 			if len(args) < 2 || len(args) > 3 {
 				return errors.NewError("match() takes 2 or 3 arguments (%d given)", len(args))
 			}
@@ -162,7 +162,7 @@ Flags:
   re.DOTALL or re.S     - . matches newlines`,
 	},
 	"search": {
-		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 			if len(args) < 2 || len(args) > 3 {
 				return errors.NewError("search() takes 2 or 3 arguments (%d given)", len(args))
 			}
@@ -199,7 +199,7 @@ Flags:
   re.DOTALL or re.S     - . matches newlines`,
 	},
 	"findall": {
-		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 			if len(args) < 2 || len(args) > 3 {
 				return errors.NewError("findall() takes 2 or 3 arguments (%d given)", len(args))
 			}
@@ -237,7 +237,7 @@ Flags:
   re.DOTALL or re.S     - . matches newlines`,
 	},
 	"sub": {
-		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 			if len(args) < 3 || len(args) > 5 {
 				return errors.NewError("sub() takes 3 to 5 arguments (%d given)", len(args))
 			}
@@ -300,7 +300,7 @@ Flags:
   re.DOTALL or re.S     - . matches newlines`,
 	},
 	"split": {
-		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 			if len(args) < 2 || len(args) > 4 {
 				return errors.NewError("split() takes 2 to 4 arguments (%d given)", len(args))
 			}
@@ -354,7 +354,7 @@ Flags:
   re.DOTALL or re.S     - . matches newlines`,
 	},
 	"compile": {
-		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 			if len(args) < 1 || len(args) > 2 {
 				return errors.NewError("compile() takes 1 or 2 arguments (%d given)", len(args))
 			}
@@ -388,7 +388,7 @@ Flags:
   re.DOTALL or re.S     - . matches newlines`,
 	},
 	"escape": {
-		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -405,7 +405,7 @@ Flags:
 Returns a string with all special regex characters escaped.`,
 	},
 	"fullmatch": {
-		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 			if len(args) < 2 || len(args) > 3 {
 				return errors.NewError("fullmatch() takes 2 or 3 arguments (%d given)", len(args))
 			}

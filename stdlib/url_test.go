@@ -9,11 +9,11 @@ import (
 )
 
 func TestURLLibrary(t *testing.T) {
-	lib := URLLibrary
+	lib := URLParseLibrary
 
 	t.Run("quote basic", func(t *testing.T) {
 		quote := lib.Functions()["quote"]
-		result := quote.Fn(context.Background(), &object.String{Value: "hello world"})
+		result := quote.Fn(context.Background(), nil, &object.String{Value: "hello world"})
 
 		if str, ok := result.(*object.String); ok {
 			expected := "hello%20world"
@@ -27,7 +27,7 @@ func TestURLLibrary(t *testing.T) {
 
 	t.Run("unquote basic", func(t *testing.T) {
 		unquote := lib.Functions()["unquote"]
-		result := unquote.Fn(context.Background(), &object.String{Value: "hello%20world"})
+		result := unquote.Fn(context.Background(), nil, &object.String{Value: "hello%20world"})
 
 		if str, ok := result.(*object.String); ok {
 			expected := "hello world"
@@ -41,12 +41,12 @@ func TestURLLibrary(t *testing.T) {
 
 	t.Run("urlparse basic", func(t *testing.T) {
 		urlparse := lib.Functions()["urlparse"]
-		result := urlparse.Fn(context.Background(), &object.String{Value: "https://user:pass@example.com:8080/path?query=value#fragment"})
+		result := urlparse.Fn(context.Background(), nil, &object.String{Value: "https://user:pass@example.com:8080/path?query=value#fragment"})
 
 		if dict, ok := result.(*object.Dict); ok {
 			expected := map[string]string{
 				"scheme":   "https",
-				"host":     "example.com:8080",
+				"netloc":   "user:pass@example.com:8080",
 				"path":     "/path",
 				"query":    "query=value",
 				"fragment": "fragment",
@@ -77,8 +77,8 @@ func TestURLLibrary(t *testing.T) {
 					Key:   &object.String{Value: "scheme"},
 					Value: &object.String{Value: "https"},
 				},
-				"host": {
-					Key:   &object.String{Value: "host"},
+				"netloc": {
+					Key:   &object.String{Value: "netloc"},
 					Value: &object.String{Value: "api.example.com"},
 				},
 				"path": {
@@ -95,7 +95,7 @@ func TestURLLibrary(t *testing.T) {
 				},
 			},
 		}
-		result := urlunparse.Fn(context.Background(), components)
+		result := urlunparse.Fn(context.Background(), nil, components)
 
 		if str, ok := result.(*object.String); ok {
 			expected := "https://api.example.com/v1/users?limit=10&offset=0#section1"
@@ -109,7 +109,7 @@ func TestURLLibrary(t *testing.T) {
 
 	t.Run("urljoin basic", func(t *testing.T) {
 		urljoin := lib.Functions()["urljoin"]
-		result := urljoin.Fn(context.Background(),
+		result := urljoin.Fn(context.Background(), nil,
 			&object.String{Value: "https://api.example.com/v1"},
 			&object.String{Value: "/users/123"})
 
@@ -125,7 +125,7 @@ func TestURLLibrary(t *testing.T) {
 
 	t.Run("urlsplit basic", func(t *testing.T) {
 		urlsplit := lib.Functions()["urlsplit"]
-		result := urlsplit.Fn(context.Background(), &object.String{Value: "https://example.com/path?query=value#fragment"})
+		result := urlsplit.Fn(context.Background(), nil, &object.String{Value: "https://example.com/path?query=value#fragment"})
 
 		if list, ok := result.(*object.List); ok {
 			expected := []string{"https", "example.com", "/path", "query=value", "fragment"}
@@ -157,7 +157,7 @@ func TestURLLibrary(t *testing.T) {
 				&object.String{Value: "fragment"},
 			},
 		}
-		result := urlunsplit.Fn(context.Background(), components)
+		result := urlunsplit.Fn(context.Background(), nil, components)
 
 		if str, ok := result.(*object.String); ok {
 			expected := "https://example.com/path?query=value#fragment"
@@ -171,7 +171,7 @@ func TestURLLibrary(t *testing.T) {
 
 	t.Run("parse_qs single value", func(t *testing.T) {
 		parseQs := lib.Functions()["parse_qs"]
-		result := parseQs.Fn(context.Background(), &object.String{Value: "key=value"})
+		result := parseQs.Fn(context.Background(), nil, &object.String{Value: "key=value"})
 
 		if dict, ok := result.(*object.Dict); ok {
 			if pair, exists := dict.Pairs["key"]; exists {
@@ -200,7 +200,7 @@ func TestURLLibrary(t *testing.T) {
 
 	t.Run("parse_qs multiple values", func(t *testing.T) {
 		parseQs := lib.Functions()["parse_qs"]
-		result := parseQs.Fn(context.Background(), &object.String{Value: "key=value1&key=value2"})
+		result := parseQs.Fn(context.Background(), nil, &object.String{Value: "key=value1&key=value2"})
 
 		if dict, ok := result.(*object.Dict); ok {
 			if pair, exists := dict.Pairs["key"]; exists {
@@ -243,7 +243,7 @@ func TestURLLibrary(t *testing.T) {
 				},
 			},
 		}
-		result := urlencode.Fn(context.Background(), dict)
+		result := urlencode.Fn(context.Background(), nil, dict)
 
 		if str, ok := result.(*object.String); ok {
 			// Check that it contains the expected key-value pairs
@@ -270,7 +270,7 @@ func TestURLLibrary(t *testing.T) {
 				},
 			},
 		}
-		result := urlencode.Fn(context.Background(), dict)
+		result := urlencode.Fn(context.Background(), nil, dict)
 
 		if str, ok := result.(*object.String); ok {
 			// Should contain key=value1&key=value2

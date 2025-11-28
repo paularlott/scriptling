@@ -1,6 +1,6 @@
 # Datetime Library
 
-Datetime functions for formatting and parsing dates and times. Requires import.
+Datetime functions for formatting and parsing dates and times. Python-compatible.
 
 ```python
 import datetime
@@ -147,96 +147,59 @@ iso = datetime.isoformat(1705314645.0)
 # Returns: "2024-01-15T18:30:45Z"
 ```
 
-### datetime.add_days(timestamp, days)
+### datetime.timestamp()
 
-Adds or subtracts days from a Unix timestamp.
+Returns the current Unix timestamp.
 
-**Parameters:**
-- `timestamp`: Unix timestamp (integer or float)
-- `days`: Number of days to add (positive) or subtract (negative) (integer or float)
+**Parameters:** None
 
-**Returns:** Float (new Unix timestamp)
+**Returns:** Float (Unix timestamp)
 
 **Example:**
 ```python
 import datetime
 
-original = 1705314645.0  # 2024-01-15 10:30:45 UTC
-future = datetime.add_days(original, 7)      # +7 days
-past = datetime.add_days(original, -3)       # -3 days
-
-print(datetime.fromtimestamp(original))  # "2024-01-15 18:30:45"
-print(datetime.fromtimestamp(future))    # "2024-01-22 18:30:45"
-print(datetime.fromtimestamp(past))      # "2024-01-12 18:30:45"
+ts = datetime.timestamp()
+# Returns: 1732622130.0 (current time as Unix timestamp)
 ```
 
-### datetime.add_hours(timestamp, hours)
+### datetime.timedelta(days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0, hours=0, weeks=0)
 
-Adds or subtracts hours from a Unix timestamp.
+Creates a timedelta representing a duration and returns the total seconds.
 
-**Parameters:**
-- `timestamp`: Unix timestamp (integer or float)
-- `hours`: Number of hours to add (positive) or subtract (negative) (integer or float)
+**Parameters (all optional, keyword-only):**
+- `days`: Number of days
+- `seconds`: Number of seconds
+- `microseconds`: Number of microseconds
+- `milliseconds`: Number of milliseconds
+- `minutes`: Number of minutes
+- `hours`: Number of hours
+- `weeks`: Number of weeks
 
-**Returns:** Float (new Unix timestamp)
+**Returns:** Float (total duration in seconds)
 
 **Example:**
 ```python
 import datetime
 
-original = 1705314645.0  # 2024-01-15 10:30:45 UTC
-later = datetime.add_hours(original, 5)     # +5 hours
-earlier = datetime.add_hours(original, -2)  # -2 hours
+# One day in seconds
+one_day = datetime.timedelta(days=1)
+# Returns: 86400.0
 
-print(datetime.fromtimestamp(original))  # "2024-01-15 18:30:45"
-print(datetime.fromtimestamp(later))     # "2024-01-15 23:30:45"
-print(datetime.fromtimestamp(earlier))   # "2024-01-15 16:30:45"
+# Two hours
+two_hours = datetime.timedelta(hours=2)
+# Returns: 7200.0
+
+# Combined duration
+duration = datetime.timedelta(days=1, hours=2, minutes=30)
+# Returns: 95400.0
+
+# Use with timestamps
+now = datetime.timestamp()
+tomorrow = now + datetime.timedelta(days=1)
+next_week = now + datetime.timedelta(weeks=1)
 ```
-
-### datetime.add_minutes(timestamp, minutes)
-
-Adds or subtracts minutes from a Unix timestamp.
-
-**Parameters:**
-- `timestamp`: Unix timestamp (integer or float)
-- `minutes`: Number of minutes to add (positive) or subtract (negative) (integer or float)
-
-**Returns:** Float (new Unix timestamp)
-
-**Example:**
-```python
-import datetime
-
-original = 1705314645.0  # 2024-01-15 10:30:45 UTC
-later = datetime.add_minutes(original, 30)    # +30 minutes
-earlier = datetime.add_minutes(original, -15) # -15 minutes
-
-print(datetime.fromtimestamp(original))  # "2024-01-15 18:30:45"
-print(datetime.fromtimestamp(later))     # "2024-01-15 19:00:45"
-print(datetime.fromtimestamp(earlier))   # "2024-01-15 18:15:45"
-```
-
-### datetime.add_seconds(timestamp, seconds)
-
-Adds or subtracts seconds from a Unix timestamp.
-
-**Parameters:**
-- `timestamp`: Unix timestamp (integer or float)
-- `seconds`: Number of seconds to add (positive) or subtract (negative) (integer or float)
-
-**Returns:** Float (new Unix timestamp)
-
-**Example:**
-```python
-import datetime
-
-original = 1705314645.0  # 2024-01-15 10:30:45 UTC
-later = datetime.add_seconds(original, 45)    # +45 seconds
-earlier = datetime.add_seconds(original, -30) # -30 seconds
-
-print(datetime.fromtimestamp(original))  # "2024-01-15 18:30:45"
-print(datetime.fromtimestamp(later))     # "2024-01-15 18:31:30"
-print(datetime.fromtimestamp(earlier))   # "2024-01-15 18:30:15"
+next_week = now + datetime.timedelta({"weeks": 1})
 ```
 
 ## Format Codes
@@ -255,10 +218,12 @@ print(datetime.fromtimestamp(earlier))   # "2024-01-15 18:30:15"
 | `%B` | Full month | January |
 | `%b` | Abbreviated month | Jan |
 | `%p` | AM/PM | PM |
+| `%Z` | Timezone name | MST |
+| `%z` | Timezone offset | -0700 |
 
 ## Notes
 
-- All functions return strings, not datetime objects
+- All functions return strings except `timestamp()` and `strptime()` which return floats
 - Timestamps are Unix timestamps (seconds since 1970-01-01 00:00:00 UTC)
 - Format codes follow Python's strftime/strptime conventions
-- These functions are always available - no import required
+- Date arithmetic should use standard arithmetic on Unix timestamps (e.g., `ts + 86400` for one day)

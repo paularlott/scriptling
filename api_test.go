@@ -10,7 +10,7 @@ import (
 
 func TestRegisterFunc(t *testing.T) {
 	p := New()
-	p.RegisterFunc("double", func(ctx context.Context, args ...object.Object) object.Object {
+	p.RegisterFunc("double", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 		if len(args) != 1 {
 			return &object.Error{Message: "need 1 argument"}
 		}
@@ -33,7 +33,7 @@ func TestRegisterLibrary(t *testing.T) {
 	p := New()
 	myLib := object.NewLibrary(map[string]*object.Builtin{
 		"greet": {
-			Fn: func(ctx context.Context, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 				return &object.String{Value: "Hello!"}
 			},
 		},
@@ -183,13 +183,14 @@ func TestHTTPLibrary(t *testing.T) {
 import requests
 options = {"timeout": 10}
 response = requests.get("https://httpbin.org/status/200", options)
+print("Response:", response)
 status = response.status_code
 `)
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
 
-	status, ok := p.GetVar("status")
+	status, ok := p.GetVarAsInt("status")
 	if !ok || status != int64(200) {
 		t.Errorf("expected 200, got %v", status)
 	}

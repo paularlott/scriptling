@@ -60,7 +60,7 @@ func TestGoFunctionRegistration(t *testing.T) {
 	p := New()
 
 	// Register a custom Go function
-	p.RegisterFunc("multiply", func(ctx context.Context, args ...object.Object) object.Object {
+	p.RegisterFunc("multiply", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 		if len(args) != 2 {
 			return &object.Error{Message: "multiply requires 2 arguments"}
 		}

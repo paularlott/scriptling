@@ -10,7 +10,7 @@ import (
 
 var JSONLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"loads": {
-		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewError("wrong number of arguments. got=%d, want=1", len(args))
 			}
@@ -30,7 +30,7 @@ var JSONLibrary = object.NewLibrary(map[string]*object.Builtin{
 Parses a JSON string and returns the corresponding Scriptling object.`,
 	},
 	"dumps": {
-		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewError("wrong number of arguments. got=%d, want=1", len(args))
 			}

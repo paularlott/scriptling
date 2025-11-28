@@ -18,18 +18,20 @@ const (
 	STRING   = "STRING"
 	F_STRING = "F_STRING"
 
-	ASSIGN   = "="
-	PLUS_EQ  = "+="
-	MINUS_EQ = "-="
-	MUL_EQ   = "*="
-	DIV_EQ   = "/="
-	MOD_EQ   = "%="
-	PLUS     = "+"
-	MINUS    = "-"
-	ASTERISK = "*"
-	POW      = "**"
-	SLASH    = "/"
-	PERCENT  = "%"
+	ASSIGN      = "="
+	PLUS_EQ     = "+="
+	MINUS_EQ    = "-="
+	MUL_EQ      = "*="
+	DIV_EQ      = "/="
+	FLOORDIV_EQ = "//="
+	MOD_EQ      = "%="
+	PLUS        = "+"
+	MINUS       = "-"
+	ASTERISK    = "*"
+	POW         = "**"
+	SLASH       = "/"
+	FLOORDIV    = "//"
+	PERCENT     = "%"
 
 	// Bitwise operators
 	TILDE     = "~"
@@ -83,6 +85,8 @@ const (
 	OR       = "OR"
 	NOT      = "NOT"
 	NOT_IN   = "NOT_IN"
+	IS       = "IS"
+	IS_NOT   = "IS_NOT"
 	TRY      = "TRY"
 	EXCEPT   = "EXCEPT"
 	FINALLY  = "FINALLY"
@@ -91,6 +95,7 @@ const (
 	NONLOCAL = "NONLOCAL"
 	LAMBDA   = "LAMBDA"
 	AS       = "AS"
+	ASSERT   = "ASSERT"
 )
 
 var keywords = map[string]TokenType{
@@ -112,6 +117,7 @@ var keywords = map[string]TokenType{
 	"and":      AND,
 	"or":       OR,
 	"not":      NOT,
+	"is":       IS,
 	"try":      TRY,
 	"except":   EXCEPT,
 	"finally":  FINALLY,
@@ -120,6 +126,7 @@ var keywords = map[string]TokenType{
 	"nonlocal": NONLOCAL,
 	"lambda":   LAMBDA,
 	"as":       AS,
+	"assert":   ASSERT,
 }
 
 func LookupIdent(ident string) TokenType {

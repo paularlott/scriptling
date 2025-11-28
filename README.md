@@ -55,9 +55,36 @@ print(greet(name))
 print("Sum:", x + len(numbers))
 `)
 
+    `)
     if err != nil {
         fmt.Println("Error:", err)
     }
+}
+```
+
+## CLI Tool
+
+Scriptling includes a command-line interface for running scripts directly:
+
+```bash
+# Install Task (build tool)
+brew install go-task/tap/go-task
+
+# Build CLI for current platform
+task build
+
+# Run scripts
+./bin/scriptling script.py
+echo 'print("Hello")' | ./bin/scriptling
+./bin/scriptling --interactive
+
+# Build for all platforms
+task build-all
+```
+
+See [scriptling-cli/README.md](scriptling-cli/README.md) for details.
+
+## Go API
 }
 ```
 
@@ -75,7 +102,7 @@ p.SetVar("name", "Alice")
 value, ok := p.GetVarAsString("name")
 
 // Register Go functions
-p.RegisterFunc("custom", func(ctx context.Context, args ...object.Object) object.Object {
+p.RegisterFunc("custom", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
     return &object.String{Value: "result"}
 })
 

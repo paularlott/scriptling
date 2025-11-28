@@ -19,7 +19,7 @@ func TestBuiltinLen(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		result := builtins["len"].Fn(context.Background(), tt.input)
+		result := builtins["len"].Fn(context.Background(), nil, tt.input)
 		integer, ok := result.(*object.Integer)
 		if !ok {
 			t.Errorf("object is not Integer. got=%T (%+v)", result, result)
@@ -32,7 +32,7 @@ func TestBuiltinLen(t *testing.T) {
 }
 
 func TestBuiltinLenError(t *testing.T) {
-	result := builtins["len"].Fn(context.Background(), &object.Integer{Value: 1})
+	result := builtins["len"].Fn(context.Background(), nil, &object.Integer{Value: 1})
 	if result.Type() != object.ERROR_OBJ {
 		t.Errorf("expected error for len(1), got %T", result)
 	}
@@ -50,7 +50,7 @@ func TestBuiltinStr(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		result := builtins["str"].Fn(context.Background(), tt.input)
+		result := builtins["str"].Fn(context.Background(), nil, tt.input)
 		str, ok := result.(*object.String)
 		if !ok {
 			t.Errorf("object is not String. got=%T (%+v)", result, result)
@@ -73,7 +73,7 @@ func TestBuiltinInt(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		result := builtins["int"].Fn(context.Background(), tt.input)
+		result := builtins["int"].Fn(context.Background(), nil, tt.input)
 		integer, ok := result.(*object.Integer)
 		if !ok {
 			t.Errorf("object is not Integer. got=%T (%+v)", result, result)
@@ -96,7 +96,7 @@ func TestBuiltinFloat(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		result := builtins["float"].Fn(context.Background(), tt.input)
+		result := builtins["float"].Fn(context.Background(), nil, tt.input)
 		float, ok := result.(*object.Float)
 		if !ok {
 			t.Errorf("object is not Float. got=%T (%+v)", result, result)
@@ -112,7 +112,7 @@ func TestBuiltinAppend(t *testing.T) {
 	list := &object.List{Elements: []object.Object{&object.Integer{Value: 1}}}
 	newElement := &object.Integer{Value: 2}
 
-	result := builtins["append"].Fn(context.Background(), list, newElement)
+	result := builtins["append"].Fn(context.Background(), nil, list, newElement)
 
 	if result.Type() != object.NULL_OBJ {
 		t.Errorf("append should return NULL, got %T", result)
@@ -141,7 +141,7 @@ func TestBuiltinType(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		result := builtins["type"].Fn(context.Background(), tt.input)
+		result := builtins["type"].Fn(context.Background(), nil, tt.input)
 		str, ok := result.(*object.String)
 		if !ok {
 			t.Errorf("object is not String. got=%T (%+v)", result, result)

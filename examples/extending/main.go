@@ -14,7 +14,7 @@ import (
 func CreateMathUtilsLibrary() *object.Library {
 	return object.NewLibrary(map[string]*object.Builtin{
 		"power": {
-			Fn: func(ctx context.Context, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 				if len(args) != 2 {
 					return &object.String{Value: "Error: power requires 2 arguments"}
 				}
@@ -35,7 +35,7 @@ func CreateMathUtilsLibrary() *object.Library {
 			},
 		},
 		"sum_array": {
-			Fn: func(ctx context.Context, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 				if len(args) != 1 {
 					return &object.String{Value: "Error: sum_array requires 1 argument"}
 				}
@@ -59,7 +59,7 @@ func CreateMathUtilsLibrary() *object.Library {
 			},
 		},
 		"get_map_value": {
-			Fn: func(ctx context.Context, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 				if len(args) != 2 {
 					return &object.String{Value: "Error: get_map_value requires 2 arguments"}
 				}
@@ -84,7 +84,7 @@ func CreateMathUtilsLibrary() *object.Library {
 			},
 		},
 		"create_person": {
-			Fn: func(ctx context.Context, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 				if len(args) != 2 {
 					return &object.String{Value: "Error: create_person requires 2 arguments"}
 				}
@@ -152,7 +152,7 @@ func runGoExtensionExample() {
 	p := scriptling.New()
 
 	// Register a simple custom function
-	p.RegisterFunc("greet", func(ctx context.Context, args ...object.Object) object.Object {
+	p.RegisterFunc("greet", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 		if len(args) != 1 {
 			return &object.String{Value: "Error: greet requires 1 argument"}
 		}
@@ -166,7 +166,7 @@ func runGoExtensionExample() {
 	})
 
 	// Register a function that processes arrays
-	p.RegisterFunc("process_numbers", func(ctx context.Context, args ...object.Object) object.Object {
+	p.RegisterFunc("process_numbers", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 		if len(args) != 1 {
 			return &object.String{Value: "Error: process_numbers requires 1 argument"}
 		}

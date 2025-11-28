@@ -92,6 +92,7 @@ x - y    # Subtraction
 x * y    # Multiplication (numbers) or repetition (string * int)
 x ** y   # Exponentiation (power)
 x / y    # Division (always returns float)
+x // y   # Floor division (integer division, e.g., 7 // 2 = 3)
 x % y    # Modulo
 ```
 
@@ -101,6 +102,7 @@ x += y   # x = x + y
 x -= y   # x = x - y
 x *= y   # x = x * y
 x /= y   # x = x / y
+x //= y  # x = x // y (floor division)
 x %= y   # x = x % y
 x &= y   # x = x & y (bitwise AND)
 x |= y   # x = x | y (bitwise OR)
@@ -477,6 +479,26 @@ except:
     print("Outer error")
 ```
 
+### Assert Statement
+Test conditions and raise errors when they fail:
+```python
+# Basic assert - raises AssertionError if condition is False
+assert x > 0
+
+# Assert with optional error message
+assert x > 0, "x must be positive"
+
+# Common use cases
+assert len(data) > 0, "Data cannot be empty"
+assert user is not None, "User not found"
+assert response.status_code == 200, "Request failed"
+
+# Use in functions for validation
+def divide(a, b):
+    assert b != 0, "Cannot divide by zero"
+    return a / b
+```
+
 ### Error Handling with HTTP
 ```python
 import json
@@ -572,6 +594,7 @@ for item in items(person):
 ```python
 print(value)              # Print to stdout
 print("Hello", name)      # Multiple arguments
+input("Prompt: ")         # Read user input (returns string)
 ```
 
 ### Type Conversions
@@ -581,12 +604,76 @@ int("42")                 # 42
 int(3.14)                 # 3
 float("3.14")             # 3.14
 float(42)                 # 42.0
+bool(0)                   # False
+bool(1)                   # True
+bool("")                  # False
+bool("hello")             # True
 type(42)                  # "INTEGER"
 type(3.14)                # "FLOAT"
 type("hello")             # "STRING"
 type([1, 2])              # "LIST"
 type({"a": "b"})          # "DICT"
 type(True)                # "BOOLEAN"
+list("abc")               # ["a", "b", "c"]
+dict()                    # {}
+tuple([1, 2, 3])          # (1, 2, 3)
+set([1, 2, 2, 3])         # [1, 2, 3] (unique elements, returns list)
+```
+
+### Math Functions (built-in)
+```python
+abs(-5)                   # 5
+min(3, 1, 2)              # 1
+max(3, 1, 2)              # 3
+round(3.7)                # 4
+round(3.14159, 2)         # 3.14
+pow(2, 10)                # 1024
+pow(2, 10, 1000)          # 24 (modular: 2^10 % 1000)
+divmod(17, 5)             # (3, 2) - returns (quotient, remainder)
+```
+
+### Number Formatting
+```python
+hex(255)                  # "0xff"
+hex(-255)                 # "-0xff"
+bin(10)                   # "0b1010"
+bin(-10)                  # "-0b1010"
+oct(8)                    # "0o10"
+oct(-8)                   # "-0o10"
+```
+
+### Type Checking
+```python
+callable(len)             # True (is a function)
+callable(42)              # False
+callable(lambda x: x)     # True
+
+isinstance(42, "int")     # True
+isinstance(3.14, "float") # True
+isinstance("hi", "str")   # True
+isinstance([1, 2], "list")# True
+isinstance({"a": 1}, "dict") # True
+isinstance(True, "bool")  # True
+isinstance(None, "NoneType") # True
+isinstance((1, 2), "tuple") # True
+```
+
+### Character Conversion
+```python
+chr(65)                   # "A"
+ord("A")                  # 65
+```
+
+### Iteration Utilities
+```python
+enumerate(["a", "b"])            # [[0, "a"], [1, "b"]]
+zip([1, 2], ["a", "b"])          # [[1, "a"], [2, "b"]]
+reversed([1, 2, 3])              # [3, 2, 1]
+map(lambda x: x*2, [1, 2, 3])    # [2, 4, 6]
+filter(lambda x: x > 1, [1, 2, 3]) # [2, 3]
+any([False, True, False])        # True
+all([True, True, True])          # True
+all([True, False, True])         # False
 ```
 
 ### Type Method
@@ -621,6 +708,49 @@ endswith("hello", "lo")            # True
 3 * "a"                            # "aaa" (repetition)
 ```
 
+### String Methods (called on string objects)
+```python
+s = "hello world"
+s.find("world")                    # 6 (index of substring, -1 if not found)
+s.index("world")                   # 6 (like find, raises error if not found)
+s.count("o")                       # 2 (count occurrences)
+
+# String formatting
+"Hello, {}!".format("World")       # "Hello, World!"
+"{} + {} = {}".format(1, 2, 3)    # "1 + 2 = 3"
+
+# Character type checks
+"123".isdigit()                    # True
+"abc".isalpha()                    # True
+"abc123".isalnum()                 # True
+"   ".isspace()                    # True
+"HELLO".isupper()                  # True
+"hello".islower()                  # True
+
+# Case conversion
+"Hello World".swapcase()           # "hELLO wORLD"
+
+# Splitting and partitioning
+"hello\nworld".splitlines()        # ["hello", "world"]
+"hello-world".partition("-")       # ("hello", "-", "world")
+"a-b-c".rpartition("-")            # ("a-b", "-", "c")
+
+# Prefix/suffix removal
+"TestCase".removeprefix("Test")    # "Case"
+"file.py".removesuffix(".py")      # "file"
+
+# Encoding
+"ABC".encode()                     # [65, 66, 67] (byte values)
+
+# Padding and alignment
+"42".zfill(5)                      # "00042"
+"-42".zfill(5)                     # "-0042"
+"hi".center(6)                     # "  hi  "
+"hi".center(7, "*")                # "**hi***"
+"hi".ljust(5)                      # "hi   "
+"hi".rjust(5)                      # "   hi"
+```
+
 ### List Functions
 ```python
 len([1, 2, 3])                     # 3
@@ -644,6 +774,33 @@ sum((1, 2, 3))                    # 10 (works with tuples too)
 sorted([3, 1, 4, 1, 5])           # [1, 1, 3, 4, 5]
 sorted(["banana", "apple"])       # ["apple", "banana"]
 sorted([3, 1.5, 2], len)          # Sort with key function
+sorted([3, 1, 2], reverse=True)   # [3, 2, 1]
+```
+
+### List Methods (called on list objects)
+```python
+lst = [10, 20, 30, 20, 40]
+lst.index(20)                      # 1 (first index of value)
+lst.count(20)                      # 2 (count occurrences)
+
+lst = [1, 2, 3, 4, 5]
+lst.pop()                          # 5 (removes and returns last element)
+lst.pop(0)                         # 1 (removes and returns element at index)
+
+lst = [1, 2, 4, 5]
+lst.insert(2, 3)                   # lst is now [1, 2, 3, 4, 5]
+
+lst = [1, 2, 3, 2, 4]
+lst.remove(2)                      # lst is now [1, 3, 2, 4] (removes first occurrence)
+
+lst = [1, 2, 3]
+lst.clear()                        # lst is now []
+
+original = [1, 2, 3]
+copied = original.copy()           # shallow copy
+
+lst = [1, 2, 3, 4, 5]
+lst.reverse()                      # lst is now [5, 4, 3, 2, 1]
 ```
 
 ### Range Function
@@ -671,6 +828,32 @@ for item in items(person):
     key = item[0]
     value = item[1]
     print(key, value)
+```
+
+### Dict Methods (called on dict objects)
+```python
+d = {"a": 1, "b": 2, "c": 3}
+d.get("a")                         # 1
+d.get("x")                         # None
+d.get("x", "default")              # "default"
+
+d = {"a": 1, "b": 2, "c": 3}
+d.pop("b")                         # 2 (removes and returns value)
+d.pop("x", "not found")            # "not found" (with default)
+
+d1 = {"a": 1, "b": 2}
+d2 = {"b": 20, "c": 3}
+d1.update(d2)                      # d1 is now {"a": 1, "b": 20, "c": 3}
+
+d = {"a": 1, "b": 2}
+d.clear()                          # d is now {}
+
+original = {"a": 1, "b": 2}
+copied = original.copy()           # shallow copy
+
+d = {"a": 1}
+d.setdefault("a", 100)             # 1 (returns existing value)
+d.setdefault("b", 200)             # 200 (sets and returns new value)
 ```
 
 ### Library Import

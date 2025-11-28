@@ -7,6 +7,8 @@ print("=== Testing HTTP Library ===")
 # GET request (increase timeout to avoid flaky failures in CI/network)
 response = requests.get("https://httpbin.org/get", {"timeout": 10})
 print(f"GET status: {response.status_code}")
+print(f"Content: {response.text}")
+print("\n")
 
 # POST request
 import json

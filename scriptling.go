@@ -9,6 +9,7 @@ import (
 
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/evaluator"
+	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/internal/cache"
 	"github.com/paularlott/scriptling/lexer"
 	"github.com/paularlott/scriptling/object"
@@ -29,15 +30,27 @@ type Scriptling struct {
 }
 
 var availableLibraries = map[string]*object.Library{
-	"json":     stdlib.JSONLibrary,
-	"re":       stdlib.ReLibrary,
-	"time":     stdlib.TimeLibrary,
-	"datetime": stdlib.DatetimeLibrary,
-	"math":     stdlib.MathLibrary,
-	"base64":   stdlib.Base64Library,
-	"hashlib":  stdlib.HashlibLibrary,
-	"random":   stdlib.RandomLibrary,
-	"url":      stdlib.URLLibrary,
+	"json":         stdlib.JSONLibrary,
+	"re":           stdlib.ReLibrary,
+	"time":         stdlib.TimeLibrary,
+	"datetime":     stdlib.DatetimeLibrary,
+	"math":         stdlib.MathLibrary,
+	"base64":       stdlib.Base64Library,
+	"hashlib":      stdlib.HashlibLibrary,
+	"random":       stdlib.RandomLibrary,
+	"urllib":       stdlib.URLLibLibrary,   // Parent module with sub-libraries
+	"urllib.parse": stdlib.URLParseLibrary, // Direct access to urllib.parse (Python-compatible)
+	"requests":     extlibs.RequestsLibrary,
+	"string":       stdlib.StringLibrary,
+	"uuid":         stdlib.UUIDLibrary,
+	"html":         stdlib.HTMLLibrary,
+	"statistics":   stdlib.StatisticsLibrary,
+	"functools":    stdlib.FunctoolsLibrary,
+	"textwrap":     stdlib.TextwrapLibrary,
+	"platform":     stdlib.PlatformLibrary,
+	"itertools":    stdlib.ItertoolsLibrary,
+	"collections":  stdlib.CollectionsLibrary,
+	"copy":         stdlib.CopyLibrary,
 }
 
 func New() *Scriptling {
@@ -118,6 +131,37 @@ func (p *Scriptling) loadLibrary(name string) error {
 		return nil // Already imported, skip
 	}
 
+	// For dotted names like urllib.parse, also check if parent exists with the sub-library
+	parts := strings.Split(name, ".")
+	if len(parts) > 1 {
+		// Check if parent is already imported with this sub-library
+		if parentObj, ok := p.env.Get(parts[0]); ok {
+			if parentDict, ok := parentObj.(*object.Dict); ok {
+				// Navigate through the parts to see if it exists
+				current := parentDict
+				allExist := true
+				for i := 1; i < len(parts); i++ {
+					if pair, ok := current.Pairs[parts[i]]; ok {
+						if subDict, ok := pair.Value.(*object.Dict); ok {
+							current = subDict
+						} else {
+							allExist = false
+							break
+						}
+					} else {
+						allExist = false
+						break
+					}
+				}
+				if allExist {
+					// Create an alias for the full path
+					p.env.Set(name, current)
+					return nil
+				}
+			}
+		}
+	}
+
 	for attempts := 0; attempts < 2; attempts++ {
 		// Try from script libraries first
 		if lib, ok := p.scriptLibraries[name]; ok {
@@ -158,11 +202,84 @@ func (p *Scriptling) loadLibrary(name string) error {
 	return fmt.Errorf("unknown library: %s", name)
 }
 
-// Register library adds a new library to the script environment
+// registerLibrary adds a library to the script environment
+// Supports nested paths like "urllib.parse" - will create parent dicts as needed
 func (p *Scriptling) registerLibrary(name string, lib *object.Library) {
+	// Convert library to dict
+	libDict := p.libraryToDict(lib)
+
+	// Check if this is a dotted path
+	parts := strings.Split(name, ".")
+	if len(parts) == 1 {
+		// Simple case - just set directly
+		p.env.Set(name, libDict)
+		return
+	}
+
+	// Nested case - need to create/update parent dicts
+	// First, get or create the root dict
+	rootName := parts[0]
+	var rootDict *object.Dict
+	if existing, ok := p.env.Get(rootName); ok {
+		if d, ok := existing.(*object.Dict); ok {
+			rootDict = d
+		} else {
+			// Exists but not a dict - create new
+			rootDict = &object.Dict{Pairs: make(map[string]object.DictPair)}
+		}
+	} else {
+		rootDict = &object.Dict{Pairs: make(map[string]object.DictPair)}
+	}
+
+	// Navigate/create the path
+	current := rootDict
+	for i := 1; i < len(parts)-1; i++ {
+		partName := parts[i]
+		if pair, ok := current.Pairs[partName]; ok {
+			if d, ok := pair.Value.(*object.Dict); ok {
+				current = d
+			} else {
+				// Exists but not a dict - create new
+				newDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
+				current.Pairs[partName] = object.DictPair{
+					Key:   &object.String{Value: partName},
+					Value: newDict,
+				}
+				current = newDict
+			}
+		} else {
+			// Doesn't exist - create
+			newDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
+			current.Pairs[partName] = object.DictPair{
+				Key:   &object.String{Value: partName},
+				Value: newDict,
+			}
+			current = newDict
+		}
+	}
+
+	// Set the final part
+	finalName := parts[len(parts)-1]
+	current.Pairs[finalName] = object.DictPair{
+		Key:   &object.String{Value: finalName},
+		Value: libDict,
+	}
+
+	// Set the root dict
+	p.env.Set(rootName, rootDict)
+
+	// Also set the full path as an alias for convenience
+	p.env.Set(name, libDict)
+}
+
+// libraryToDict converts a Library to a Dict object
+func (p *Scriptling) libraryToDict(lib *object.Library) *object.Dict {
 	funcs := lib.Functions()
 	consts := lib.Constants()
-	dict := make(map[string]object.DictPair, len(funcs)+len(consts))
+	subs := lib.SubLibraries()
+
+	dict := make(map[string]object.DictPair, len(funcs)+len(consts)+len(subs))
+
 	for fname, fn := range funcs {
 		dict[fname] = object.DictPair{
 			Key:   &object.String{Value: fname},
@@ -178,6 +295,14 @@ func (p *Scriptling) registerLibrary(name string, lib *object.Library) {
 		}
 	}
 
+	// Add sub-libraries (recursive)
+	for subName, subLib := range subs {
+		dict[subName] = object.DictPair{
+			Key:   &object.String{Value: subName},
+			Value: p.libraryToDict(subLib),
+		}
+	}
+
 	// Add description if available
 	if desc := lib.Description(); desc != "" {
 		dict["__doc__"] = object.DictPair{
@@ -186,7 +311,7 @@ func (p *Scriptling) registerLibrary(name string, lib *object.Library) {
 		}
 	}
 
-	p.env.Set(name, &object.Dict{Pairs: dict})
+	return &object.Dict{Pairs: dict}
 }
 
 // Eval executes script without timeout (backwards compatible)
@@ -290,7 +415,7 @@ func (p *Scriptling) GetVarAsDict(name string) (map[string]object.Object, bool) 
 	return obj.AsDict()
 }
 
-func (p *Scriptling) RegisterFunc(name string, fn func(ctx context.Context, args ...object.Object) object.Object, helpText ...string) {
+func (p *Scriptling) RegisterFunc(name string, fn func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object, helpText ...string) {
 	builtin := &object.Builtin{Fn: fn}
 	if len(helpText) > 0 && helpText[0] != "" {
 		builtin.HelpText = helpText[0]
