@@ -63,13 +63,15 @@ func New() *Scriptling {
 
 	// Register import builtin
 	p.env.Set("import", evaluator.GetImportBuiltin())
-	evaluator.SetImportCallback(func(libName string) error {
+
+	// Set import callback on environment
+	p.env.SetImportCallback(func(libName string) error {
 		return p.loadLibrary(libName)
 	})
 
-	// Register available libraries callback
-	evaluator.SetAvailableLibrariesCallback(func() []evaluator.LibraryInfo {
-		var libs []evaluator.LibraryInfo
+	// Set available libraries callback on environment
+	p.env.SetAvailableLibrariesCallback(func() []object.LibraryInfo {
+		var libs []object.LibraryInfo
 		seen := make(map[string]bool)
 
 		// Helper to check if imported
@@ -81,7 +83,7 @@ func New() *Scriptling {
 		// Standard libraries
 		for name := range availableLibraries {
 			if !seen[name] {
-				libs = append(libs, evaluator.LibraryInfo{
+				libs = append(libs, object.LibraryInfo{
 					Name:       name,
 					IsStandard: true,
 					IsImported: isImported(name),
@@ -93,7 +95,7 @@ func New() *Scriptling {
 		// Registered libraries
 		for name := range p.registeredLibraries {
 			if !seen[name] {
-				libs = append(libs, evaluator.LibraryInfo{
+				libs = append(libs, object.LibraryInfo{
 					Name:       name,
 					IsStandard: false,
 					IsImported: isImported(name),
@@ -105,7 +107,7 @@ func New() *Scriptling {
 		// Script libraries
 		for name := range p.scriptLibraries {
 			if !seen[name] {
-				libs = append(libs, evaluator.LibraryInfo{
+				libs = append(libs, object.LibraryInfo{
 					Name:       name,
 					IsStandard: false,
 					IsImported: isImported(name),
@@ -483,9 +485,14 @@ func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[stri
 	// Set up import builtin for nested imports
 	libEnv.Set("import", evaluator.GetImportBuiltin())
 
-	// Temporarily set up import callback to load into library environment
-	oldCallback := evaluator.GetImportCallback()
-	evaluator.SetImportCallback(func(libName string) error {
+	// Create a custom import callback for this library environment
+	// that loads libraries into libEnv instead of p.env
+	libEnv.SetImportCallback(func(libName string) error {
+		// Check if library is already imported in this environment
+		if _, ok := libEnv.Get(libName); ok {
+			return nil // Already imported, skip
+		}
+
 		// Try from script libraries first
 		if lib, ok := p.scriptLibraries[libName]; ok {
 			// Check if we need to evaluate it first (recursive lazy loading)
@@ -511,46 +518,25 @@ func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[stri
 
 		// Try from registered libraries
 		if lib, ok := p.registeredLibraries[libName]; ok {
-			// Load Go library into library environment
-			goLibDict := make(map[string]object.DictPair)
-			for fname, fn := range lib.Functions() {
-				goLibDict[fname] = object.DictPair{
-					Key:   &object.String{Value: fname},
-					Value: fn,
-				}
-			}
-			for cname, val := range lib.Constants() {
-				goLibDict[cname] = object.DictPair{
-					Key:   &object.String{Value: cname},
-					Value: val,
-				}
-			}
-			libEnv.Set(libName, &object.Dict{Pairs: goLibDict})
+			// Convert library to dict and load into library environment
+			libDict := p.libraryToDict(lib)
+			libEnv.Set(libName, libDict)
 			return nil
 		}
 
 		// Try standard libraries
 		if lib, ok := availableLibraries[libName]; ok {
-			stdLibDict := make(map[string]object.DictPair)
-			for fname, fn := range lib.Functions() {
-				stdLibDict[fname] = object.DictPair{
-					Key:   &object.String{Value: fname},
-					Value: fn,
-				}
-			}
-			for cname, val := range lib.Constants() {
-				stdLibDict[cname] = object.DictPair{
-					Key:   &object.String{Value: cname},
-					Value: val,
-				}
-			}
-			libEnv.Set(libName, &object.Dict{Pairs: stdLibDict})
+			// Convert library to dict and load into library environment
+			libDict := p.libraryToDict(lib)
+			libEnv.Set(libName, libDict)
 			return nil
 		}
 
 		return fmt.Errorf("unknown library: %s", libName)
 	})
-	defer evaluator.SetImportCallback(oldCallback)
+
+	// Copy available libraries callback from parent environment
+	libEnv.SetAvailableLibrariesCallback(p.env.GetAvailableLibrariesCallback())
 
 	// Parse and evaluate the script in the library environment
 	var program *ast.Program
