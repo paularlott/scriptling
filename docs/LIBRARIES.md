@@ -131,10 +131,17 @@ p.unlink()  # Delete file
 [See pathlib.md](libraries/pathlib.md) for complete documentation.
 
 ### Regex Library
-Regular expression pattern matching and text processing.
+Regular expression pattern matching and text processing. Returns Match objects like Python.
 
 ```python
 import re
+
+# re.search returns a Match object with group() method
+m = re.search(r'(\w+)@(\w+)', "Email: user@example.com")
+if m:
+    print(m.group(0))  # "user@example"
+    print(m.group(1))  # "user"
+    print(m.group(2))  # "example"
 
 matches = re.findall("[0-9]+", "abc123def456")
 result = re.sub("[0-9]+", "XXX", "Price: 100")  # Python-compatible

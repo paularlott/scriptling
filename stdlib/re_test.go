@@ -11,22 +11,23 @@ func TestRegexMatch(t *testing.T) {
 	lib := ReLibrary
 	match := lib.Functions()["match"]
 
+	// Test matching at start - should return Match object
 	result := match.Fn(context.Background(), nil, &object.String{Value: "[0-9]+"}, &object.String{Value: "123abc"})
-	if b, ok := result.(*object.Boolean); ok {
-		if !b.Value {
-			t.Errorf("match('[0-9]+', '123abc') should return true")
+	if m, ok := result.(*object.Match); ok {
+		if len(m.Groups) == 0 || m.Groups[0] != "123" {
+			t.Errorf("match('[0-9]+', '123abc').group(0) = %v, want '123'", m.Groups)
+		}
+		if m.Start != 0 || m.End != 3 {
+			t.Errorf("match span = (%d, %d), want (0, 3)", m.Start, m.End)
 		}
 	} else {
-		t.Errorf("match() returned %T, want Boolean", result)
+		t.Errorf("match() returned %T, want Match", result)
 	}
 
+	// Test non-matching at start - should return Null
 	result = match.Fn(context.Background(), nil, &object.String{Value: "[0-9]+"}, &object.String{Value: "abc123"})
-	if b, ok := result.(*object.Boolean); ok {
-		if b.Value {
-			t.Errorf("match('[0-9]+', 'abc123') should return false")
-		}
-	} else {
-		t.Errorf("match() returned %T, want Boolean", result)
+	if _, ok := result.(*object.Null); !ok {
+		t.Errorf("match('[0-9]+', 'abc123') returned %T, want Null", result)
 	}
 }
 
@@ -36,22 +37,18 @@ func TestRegexMatchWithFlags(t *testing.T) {
 
 	// Test case-insensitive matching with flag
 	result := match.Fn(context.Background(), nil, &object.String{Value: "hello"}, &object.String{Value: "HELLO world"}, &object.Integer{Value: RE_IGNORECASE})
-	if b, ok := result.(*object.Boolean); ok {
-		if !b.Value {
-			t.Errorf("match('hello', 'HELLO world', re.I) should return true")
+	if m, ok := result.(*object.Match); ok {
+		if m.Groups[0] != "HELLO" {
+			t.Errorf("match('hello', 'HELLO world', re.I).group(0) = %v, want 'HELLO'", m.Groups[0])
 		}
 	} else {
-		t.Errorf("match() returned %T, want Boolean", result)
+		t.Errorf("match() returned %T, want Match", result)
 	}
 
 	// Without flag, should not match
 	result = match.Fn(context.Background(), nil, &object.String{Value: "hello"}, &object.String{Value: "HELLO world"})
-	if b, ok := result.(*object.Boolean); ok {
-		if b.Value {
-			t.Errorf("match('hello', 'HELLO world') without flag should return false")
-		}
-	} else {
-		t.Errorf("match() returned %T, want Boolean", result)
+	if _, ok := result.(*object.Null); !ok {
+		t.Errorf("match('hello', 'HELLO world') without flag returned %T, want Null", result)
 	}
 }
 
@@ -60,12 +57,21 @@ func TestRegexSearch(t *testing.T) {
 	search := lib.Functions()["search"]
 
 	result := search.Fn(context.Background(), nil, &object.String{Value: "[0-9]+"}, &object.String{Value: "abc123def"})
-	if s, ok := result.(*object.String); ok {
-		if s.Value != "123" {
-			t.Errorf("search('[0-9]+', 'abc123def') = %v, want '123'", s.Value)
+	if m, ok := result.(*object.Match); ok {
+		if m.Groups[0] != "123" {
+			t.Errorf("search('[0-9]+', 'abc123def').group(0) = %v, want '123'", m.Groups[0])
+		}
+		if m.Start != 3 || m.End != 6 {
+			t.Errorf("search span = (%d, %d), want (3, 6)", m.Start, m.End)
 		}
 	} else {
-		t.Errorf("search() returned %T, want String", result)
+		t.Errorf("search() returned %T, want Match", result)
+	}
+
+	// Test no match
+	result = search.Fn(context.Background(), nil, &object.String{Value: "[0-9]+"}, &object.String{Value: "abcdef"})
+	if _, ok := result.(*object.Null); !ok {
+		t.Errorf("search('[0-9]+', 'abcdef') returned %T, want Null", result)
 	}
 }
 
@@ -75,12 +81,39 @@ func TestRegexSearchWithFlags(t *testing.T) {
 
 	// Test case-insensitive search
 	result := search.Fn(context.Background(), nil, &object.String{Value: "world"}, &object.String{Value: "Hello WORLD"}, &object.Integer{Value: RE_IGNORECASE})
-	if s, ok := result.(*object.String); ok {
-		if s.Value != "WORLD" {
-			t.Errorf("search('world', 'Hello WORLD', re.I) = %v, want 'WORLD'", s.Value)
+	if m, ok := result.(*object.Match); ok {
+		if m.Groups[0] != "WORLD" {
+			t.Errorf("search('world', 'Hello WORLD', re.I).group(0) = %v, want 'WORLD'", m.Groups[0])
 		}
 	} else {
-		t.Errorf("search() returned %T, want String", result)
+		t.Errorf("search() returned %T, want Match", result)
+	}
+}
+
+func TestRegexSearchWithGroups(t *testing.T) {
+	lib := ReLibrary
+	search := lib.Functions()["search"]
+
+	// Test capturing groups
+	result := search.Fn(context.Background(), nil, &object.String{Value: `(\w+)@(\w+)\.(\w+)`}, &object.String{Value: "Email: user@example.com"})
+	if m, ok := result.(*object.Match); ok {
+		if m.Groups[0] != "user@example.com" {
+			t.Errorf("search().group(0) = %v, want 'user@example.com'", m.Groups[0])
+		}
+		if len(m.Groups) != 4 {
+			t.Errorf("search() returned %d groups, want 4", len(m.Groups))
+		}
+		if m.Groups[1] != "user" {
+			t.Errorf("search().group(1) = %v, want 'user'", m.Groups[1])
+		}
+		if m.Groups[2] != "example" {
+			t.Errorf("search().group(2) = %v, want 'example'", m.Groups[2])
+		}
+		if m.Groups[3] != "com" {
+			t.Errorf("search().group(3) = %v, want 'com'", m.Groups[3])
+		}
+	} else {
+		t.Errorf("search() returned %T, want Match", result)
 	}
 }
 

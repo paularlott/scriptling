@@ -61,6 +61,7 @@ const (
 	ERROR_OBJ
 	EXCEPTION_OBJ
 	REGEX_OBJ
+	MATCH_OBJ
 )
 
 // String returns the string representation of the ObjectType
@@ -102,6 +103,8 @@ func (ot ObjectType) String() string {
 		return "EXCEPTION"
 	case REGEX_OBJ:
 		return "REGEX"
+	case MATCH_OBJ:
+		return "MATCH"
 	default:
 		return "UNKNOWN"
 	}
@@ -190,6 +193,33 @@ func (r *Regex) AsFloat() (float64, bool)          { return 0, false }
 func (r *Regex) AsBool() (bool, bool)              { return true, true }
 func (r *Regex) AsList() ([]Object, bool)          { return nil, false }
 func (r *Regex) AsDict() (map[string]Object, bool) { return nil, false }
+
+// Match represents a regex match result (like Python's re.Match)
+type Match struct {
+	Groups []string // Group 0 is the full match, Groups[1:] are capturing groups
+	Start  int      // Start position of the match in the original string
+	End    int      // End position of the match in the original string
+}
+
+func (m *Match) Type() ObjectType { return MATCH_OBJ }
+func (m *Match) Inspect() string {
+	if len(m.Groups) > 0 {
+		return fmt.Sprintf("<re.Match object; span=(%d, %d), match='%s'>", m.Start, m.End, m.Groups[0])
+	}
+	return "<re.Match object>"
+}
+
+func (m *Match) AsString() (string, bool) {
+	if len(m.Groups) > 0 {
+		return m.Groups[0], true
+	}
+	return "", false
+}
+func (m *Match) AsInt() (int64, bool)              { return 0, false }
+func (m *Match) AsFloat() (float64, bool)          { return 0, false }
+func (m *Match) AsBool() (bool, bool)              { return true, true }
+func (m *Match) AsList() ([]Object, bool)          { return nil, false }
+func (m *Match) AsDict() (map[string]Object, bool) { return nil, false }
 
 type Null struct{}
 
