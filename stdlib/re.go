@@ -55,8 +55,8 @@ func applyFlags(pattern string, flags int64) string {
 	return pattern
 }
 
-// getCompiledRegex retrieves a compiled regex from cache or compiles and caches it
-func getCompiledRegex(pattern string) (*regexp.Regexp, error) {
+// GetCompiledRegex retrieves a compiled regex from cache or compiles and caches it
+func GetCompiledRegex(pattern string) (*regexp.Regexp, error) {
 	globalRegexCache.mu.RLock()
 	if entry, ok := globalRegexCache.entries[pattern]; ok {
 		// Move to front (most recently used)
@@ -140,7 +140,7 @@ var ReLibrary = object.NewLibrary(map[string]*object.Builtin{
 			}
 			pattern = applyFlags(pattern, flags)
 
-			re, err := getCompiledRegex(pattern)
+			re, err := GetCompiledRegex(pattern)
 			if err != nil {
 				return errors.NewError("regex compile error: %s", err.Error())
 			}
@@ -178,7 +178,7 @@ Flags:
 			}
 			pattern = applyFlags(pattern, flags)
 
-			re, err := getCompiledRegex(pattern)
+			re, err := GetCompiledRegex(pattern)
 			if err != nil {
 				return errors.NewError("regex compile error: %s", err.Error())
 			}
@@ -215,21 +215,35 @@ Flags:
 			}
 			pattern = applyFlags(pattern, flags)
 
-			re, err := getCompiledRegex(pattern)
+			re, err := GetCompiledRegex(pattern)
 			if err != nil {
 				return errors.NewError("regex compile error: %s", err.Error())
 			}
 
-			matches := re.FindAllString(text, -1)
+			matches := re.FindAllStringSubmatch(text, -1)
 			elements := make([]object.Object, len(matches))
+			numGroups := re.NumSubexp()
 			for i, match := range matches {
-				elements[i] = &object.String{Value: match}
+				if numGroups == 0 {
+					elements[i] = &object.String{Value: match[0]}
+				} else if numGroups == 1 {
+					elements[i] = &object.String{Value: match[1]}
+				} else {
+					groupElements := make([]object.Object, numGroups)
+					for j := 1; j <= numGroups; j++ {
+						groupElements[j-1] = &object.String{Value: match[j]}
+					}
+					elements[i] = &object.Tuple{Elements: groupElements}
+				}
 			}
 			return &object.List{Elements: elements}
 		},
 		HelpText: `findall(pattern, string, flags=0) - Find all matches
 
 Returns a list of all substrings that match the regex pattern.
+If the pattern contains capturing groups, returns a list of tuples containing the groups.
+If there is one capturing group, returns a list of strings for that group.
+If there are no capturing groups, returns a list of strings for the full matches.
 
 Flags:
   re.IGNORECASE or re.I - Case-insensitive matching
@@ -265,7 +279,7 @@ Flags:
 			}
 			pattern = applyFlags(pattern, flags)
 
-			re, err := getCompiledRegex(pattern)
+			re, err := GetCompiledRegex(pattern)
 			if err != nil {
 				return errors.NewError("regex compile error: %s", err.Error())
 			}
@@ -330,7 +344,7 @@ Flags:
 			}
 			pattern = applyFlags(pattern, flags)
 
-			re, err := getCompiledRegex(pattern)
+			re, err := GetCompiledRegex(pattern)
 			if err != nil {
 				return errors.NewError("regex compile error: %s", err.Error())
 			}
@@ -370,13 +384,13 @@ Flags:
 			pattern = applyFlags(pattern, flags)
 
 			// Try to compile to validate the pattern
-			_, err = getCompiledRegex(pattern)
+			_, err = GetCompiledRegex(pattern)
 			if err != nil {
 				return errors.NewError("regex compile error: %s", err.Error())
 			}
 
-			// Return the pattern string as a compiled "object"
-			return &object.String{Value: pattern}
+			// Return the compiled regex object
+			return &object.Regex{Pattern: pattern, Flags: flags}
 		},
 		HelpText: `compile(pattern, flags=0) - Compile regex pattern
 
@@ -421,7 +435,7 @@ Returns a string with all special regex characters escaped.`,
 			}
 			pattern = applyFlags(pattern, flags)
 
-			re, err := getCompiledRegex(pattern)
+			re, err := GetCompiledRegex(pattern)
 			if err != nil {
 				return errors.NewError("regex compile error: %s", err.Error())
 			}

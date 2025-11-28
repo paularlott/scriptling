@@ -225,12 +225,12 @@ func TestRegexCompile(t *testing.T) {
 	compile := lib.Functions()["compile"]
 
 	result := compile.Fn(context.Background(), nil, &object.String{Value: "[0-9]+"})
-	if s, ok := result.(*object.String); ok {
-		if s.Value != "[0-9]+" {
-			t.Errorf("compile() = %v, want '[0-9]+'", s.Value)
+	if r, ok := result.(*object.Regex); ok {
+		if r.Pattern != "[0-9]+" {
+			t.Errorf("compile() = %v, want '[0-9]+'", r.Pattern)
 		}
 	} else {
-		t.Errorf("compile() returned %T, want String", result)
+		t.Errorf("compile() returned %T, want Regex", result)
 	}
 
 	// Test invalid pattern
@@ -246,12 +246,12 @@ func TestRegexCompileWithFlags(t *testing.T) {
 
 	// Compile with IGNORECASE flag
 	result := compile.Fn(context.Background(), nil, &object.String{Value: "hello"}, &object.Integer{Value: RE_IGNORECASE})
-	if s, ok := result.(*object.String); ok {
-		if s.Value != "(?i)hello" {
-			t.Errorf("compile() with flag = %v, want '(?i)hello'", s.Value)
+	if r, ok := result.(*object.Regex); ok {
+		if r.Pattern != "(?i)hello" {
+			t.Errorf("compile() with flag = %v, want '(?i)hello'", r.Pattern)
 		}
 	} else {
-		t.Errorf("compile() returned %T, want String", result)
+		t.Errorf("compile() returned %T, want Regex", result)
 	}
 }
 

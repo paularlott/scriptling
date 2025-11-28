@@ -143,7 +143,9 @@ func evalWithContext(ctx context.Context, node ast.Node, env *object.Environment
 		if isError(val) || isException(val) {
 			return val
 		}
-		env.Set(node.Name.Value, val)
+		if err := assignToExpression(node.Left, val, env); err != nil {
+			return errors.NewError("%s", err.Error())
+		}
 		return NULL
 	case *ast.AugmentedAssignStatement:
 		return evalAugmentedAssignStatementWithContext(ctx, node, env)
@@ -1019,6 +1021,8 @@ func evalIndexExpression(left, index object.Object) object.Object {
 		return evalTupleIndexExpression(left, index)
 	case left.Type() == object.DICT_OBJ:
 		return evalDictIndexExpression(left, index)
+	case left.Type() == object.REGEX_OBJ:
+		return evalRegexIndexExpression(left, index)
 	case left.Type() == object.STRING_OBJ && index.Type() == object.INTEGER_OBJ:
 		return evalStringIndexExpression(left, index)
 	default:
@@ -1095,6 +1099,18 @@ func evalStringIndexExpression(str, index object.Object) object.Object {
 	}
 
 	return &object.String{Value: string(strObject.Value[idx])}
+}
+
+func evalRegexIndexExpression(regex, index object.Object) object.Object {
+	if index.Type() != object.STRING_OBJ {
+		return errors.NewError("regex index must be string")
+	}
+	method := index.(*object.String).Value
+	builtin, ok := regexBuiltins[method]
+	if !ok {
+		return errors.NewError("regex has no method %s", method)
+	}
+	return builtin
 }
 
 func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.AugmentedAssignStatement, env *object.Environment) object.Object {
@@ -1561,6 +1577,84 @@ func isException(obj object.Object) bool {
 	return obj.Type() == object.EXCEPTION_OBJ
 }
 
+func assignToExpression(expr ast.Expression, value object.Object, env *object.Environment) error {
+	switch left := expr.(type) {
+	case *ast.Identifier:
+		env.Set(left.Value, value)
+		return nil
+	case *ast.IndexExpression:
+		obj := evalWithContext(context.Background(), left.Left, env)
+		if isError(obj) {
+			return fmt.Errorf("assignment error")
+		}
+		index := evalWithContext(context.Background(), left.Index, env)
+		if isError(index) {
+			return fmt.Errorf("assignment error")
+		}
+		switch o := obj.(type) {
+		case *object.List:
+			if idx, ok := index.(*object.Integer); ok {
+				i := idx.Value
+				length := int64(len(o.Elements))
+				// Handle negative indices
+				if i < 0 {
+					i += length
+				}
+				if i < 0 || i >= length {
+					return fmt.Errorf("index out of range")
+				}
+				o.Elements[i] = value
+				return nil
+			}
+		case *object.Dict:
+			key := index.Inspect()
+			o.Pairs[key] = object.DictPair{Key: index, Value: value}
+			return nil
+		}
+		return fmt.Errorf("cannot assign to index")
+	default:
+		return fmt.Errorf("cannot assign to expression")
+	}
+}
+
+func setForVariables(variables []ast.Expression, value object.Object, env *object.Environment) error {
+	if len(variables) == 1 {
+		if ident, ok := variables[0].(*ast.Identifier); ok {
+			env.Set(ident.Value, value)
+			return nil
+		}
+		return fmt.Errorf("for loop variable must be an identifier")
+	} else {
+		// Unpacking
+		if tup, ok := value.(*object.Tuple); ok {
+			if len(tup.Elements) != len(variables) {
+				return fmt.Errorf("cannot unpack %d values into %d variables", len(tup.Elements), len(variables))
+			}
+			for i, varExpr := range variables {
+				if ident, ok := varExpr.(*ast.Identifier); ok {
+					env.Set(ident.Value, tup.Elements[i])
+				} else {
+					return fmt.Errorf("for loop variables must be identifiers")
+				}
+			}
+			return nil
+		} else if lst, ok := value.(*object.List); ok {
+			if len(lst.Elements) != len(variables) {
+				return fmt.Errorf("cannot unpack %d values into %d variables", len(lst.Elements), len(variables))
+			}
+			for i, varExpr := range variables {
+				if ident, ok := varExpr.(*ast.Identifier); ok {
+					env.Set(ident.Value, lst.Elements[i])
+				} else {
+					return fmt.Errorf("for loop variables must be identifiers")
+				}
+			}
+			return nil
+		}
+		return fmt.Errorf("cannot unpack non-tuple/list value")
+	}
+}
+
 func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env *object.Environment) object.Object {
 	iterable := evalWithContext(ctx, fs.Iterable, env)
 	if isError(iterable) {
@@ -1568,7 +1662,6 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 	}
 
 	var result object.Object = NULL
-	varName := fs.Variable.Value // Cache variable name outside loop
 
 	switch iter := iterable.(type) {
 	case *object.List:
@@ -1578,7 +1671,10 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 				return err
 			}
 
-			env.Set(varName, element)
+			if err := setForVariables(fs.Variables, element, env); err != nil {
+				return errors.NewError("%s", err.Error())
+			}
+
 			result = evalWithContext(ctx, fs.Body, env)
 			if result != nil {
 				switch result.Type() {
@@ -1600,7 +1696,10 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 				return err
 			}
 
-			env.Set(varName, element)
+			if err := setForVariables(fs.Variables, element, env); err != nil {
+				return errors.NewError("%s", err.Error())
+			}
+
 			result = evalWithContext(ctx, fs.Body, env)
 			if result != nil {
 				switch result.Type() {
@@ -1622,7 +1721,11 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 				return err
 			}
 
-			env.Set(varName, &object.String{Value: string(char)})
+			charObj := &object.String{Value: string(char)}
+			if err := setForVariables(fs.Variables, charObj, env); err != nil {
+				return errors.NewError("%s", err.Error())
+			}
+
 			result = evalWithContext(ctx, fs.Body, env)
 			if result != nil {
 				switch result.Type() {
@@ -2099,6 +2202,20 @@ func callStringMethodWithKeywords(ctx context.Context, obj object.Object, method
 		default:
 			return errors.NewError("%s: list method %s not found", errors.ErrIdentifierNotFound, method)
 		}
+	}
+
+	// Handle Regex method calls
+	if obj.Type() == object.REGEX_OBJ {
+		regex := obj.(*object.Regex)
+		if builtin, ok := regexBuiltins[method]; ok {
+			ctxWithEnv := SetEnvInContext(ctx, env)
+			// Prepend the regex object to args
+			allArgs := make([]object.Object, len(args)+1)
+			allArgs[0] = regex
+			copy(allArgs[1:], args)
+			return builtin.Fn(ctxWithEnv, keywords, allArgs...)
+		}
+		return errors.NewError("regex has no method %s", method)
 	}
 
 	if obj.Type() != object.STRING_OBJ {

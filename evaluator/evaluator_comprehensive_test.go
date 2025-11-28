@@ -281,3 +281,20 @@ result
 	evaluated := testEval(input)
 	testIntegerObject(t, evaluated, 5) // (0,0), (0,2), (1,0), (1,2), (2,0)
 }
+
+func TestForLoopUnpacking(t *testing.T) {
+	input := `
+result = []
+for x, y in [(1, 2), (3, 4), (5, 6)]:
+    result.append(x + y)
+result
+`
+	evaluated := testEval(input)
+	list := evaluated.(*object.List)
+	if len(list.Elements) != 3 {
+		t.Errorf("list has wrong number of elements. got=%d", len(list.Elements))
+	}
+	testIntegerObject(t, list.Elements[0], 3)  // 1+2
+	testIntegerObject(t, list.Elements[1], 7)  // 3+4
+	testIntegerObject(t, list.Elements[2], 11) // 5+6
+}

@@ -258,7 +258,7 @@ func (p *Parser) isAugmentedAssign() bool {
 
 func (p *Parser) parseAssignStatement() *ast.AssignStatement {
 	stmt := &ast.AssignStatement{Token: p.curToken}
-	stmt.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+	stmt.Left = p.parseExpression(LOWEST)
 
 	if !p.expectPeek(token.ASSIGN) {
 		return nil
@@ -388,10 +388,17 @@ func (p *Parser) parseReturnStatement() *ast.ReturnStatement {
 	return stmt
 }
 
-func (p *Parser) parseExpressionStatement() *ast.ExpressionStatement {
-	stmt := &ast.ExpressionStatement{Token: p.curToken}
-	stmt.Expression = p.parseExpression(LOWEST)
-	return stmt
+func (p *Parser) parseExpressionStatement() ast.Statement {
+	expr := p.parseExpression(LOWEST)
+	if p.peekTokenIs(token.ASSIGN) {
+		// It's an assignment
+		stmt := &ast.AssignStatement{Token: p.curToken, Left: expr}
+		p.nextToken() // consume =
+		p.nextToken() // move to value
+		stmt.Value = p.parseExpression(LOWEST)
+		return stmt
+	}
+	return &ast.ExpressionStatement{Token: p.curToken, Expression: expr}
 }
 
 func (p *Parser) parseExpression(precedence int) ast.Expression {
@@ -907,11 +914,17 @@ func (p *Parser) parseFunctionParameters() ([]*ast.Identifier, map[string]ast.Ex
 func (p *Parser) parseForStatement() *ast.ForStatement {
 	stmt := &ast.ForStatement{Token: p.curToken}
 
-	if !p.expectPeek(token.IDENT) {
-		return nil
-	}
+	p.nextToken() // move to first variable
 
-	stmt.Variable = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+	// Parse the variable list (can be single or multiple separated by commas)
+	stmt.Variables = []ast.Expression{}
+	stmt.Variables = append(stmt.Variables, p.parseExpression(EQUALS))
+
+	for p.peekTokenIs(token.COMMA) {
+		p.nextToken() // consume comma
+		p.nextToken() // move to next expression
+		stmt.Variables = append(stmt.Variables, p.parseExpression(EQUALS))
+	}
 
 	if !p.expectPeek(token.IN) {
 		return nil

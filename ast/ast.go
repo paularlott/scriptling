@@ -105,7 +105,7 @@ func (ie *InfixExpression) TokenLiteral() string { return ie.Token.Literal }
 
 type AssignStatement struct {
 	Token token.Token
-	Name  *Identifier
+	Left  Expression
 	Value Expression
 }
 
@@ -247,10 +247,10 @@ func (is *ImportStatement) FullName() string {
 }
 
 type ForStatement struct {
-	Token    token.Token
-	Variable *Identifier
-	Iterable Expression
-	Body     *BlockStatement
+	Token     token.Token
+	Variables []Expression
+	Iterable  Expression
+	Body      *BlockStatement
 }
 
 func (fs *ForStatement) statementNode()       {}
