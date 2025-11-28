@@ -1037,9 +1037,14 @@ func evalDictMemberAccess(dict *object.Dict, member string) object.Object {
 func evalListIndexExpression(list, index object.Object) object.Object {
 	listObject := list.(*object.List)
 	idx := index.(*object.Integer).Value
-	max := int64(len(listObject.Elements) - 1)
+	length := int64(len(listObject.Elements))
 
-	if idx < 0 || idx > max {
+	// Handle negative indices
+	if idx < 0 {
+		idx += length
+	}
+
+	if idx < 0 || idx >= length {
 		return NULL
 	}
 
@@ -1049,9 +1054,14 @@ func evalListIndexExpression(list, index object.Object) object.Object {
 func evalTupleIndexExpression(tuple, index object.Object) object.Object {
 	tupleObject := tuple.(*object.Tuple)
 	idx := index.(*object.Integer).Value
-	max := int64(len(tupleObject.Elements) - 1)
+	length := int64(len(tupleObject.Elements))
 
-	if idx < 0 || idx > max {
+	// Handle negative indices
+	if idx < 0 {
+		idx += length
+	}
+
+	if idx < 0 || idx >= length {
 		return NULL
 	}
 
@@ -1073,9 +1083,14 @@ func evalDictIndexExpression(dict, index object.Object) object.Object {
 func evalStringIndexExpression(str, index object.Object) object.Object {
 	strObject := str.(*object.String)
 	idx := index.(*object.Integer).Value
-	max := int64(len(strObject.Value) - 1)
+	length := int64(len(strObject.Value))
 
-	if idx < 0 || idx > max {
+	// Handle negative indices
+	if idx < 0 {
+		idx += length
+	}
+
+	if idx < 0 || idx >= length {
 		return NULL
 	}
 
