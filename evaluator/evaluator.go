@@ -1347,6 +1347,7 @@ func sliceString(str string, start, end, step int64, hasStart, hasEnd, hasStep b
 }
 
 func evalImportStatement(is *ast.ImportStatement, env *object.Environment) object.Object {
+	importCallback := env.GetImportCallback()
 	if importCallback == nil {
 		return errors.NewError(errors.ErrImportError)
 	}

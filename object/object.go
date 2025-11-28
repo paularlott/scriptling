@@ -343,11 +343,20 @@ func (l *Library) AsList() ([]Object, bool)          { return nil, false }
 func (l *Library) AsDict() (map[string]Object, bool) { return nil, false }
 
 type Environment struct {
-	store     map[string]Object
-	outer     *Environment
-	globals   map[string]bool
-	nonlocals map[string]bool
-	output    *strings.Builder
+	store                      map[string]Object
+	outer                      *Environment
+	globals                    map[string]bool
+	nonlocals                  map[string]bool
+	output                     *strings.Builder
+	importCallback             func(string) error
+	availableLibrariesCallback func() []LibraryInfo
+}
+
+// LibraryInfo contains information about available libraries
+type LibraryInfo struct {
+	Name       string
+	IsStandard bool
+	IsImported bool
 }
 
 func NewEnvironment() *Environment {
@@ -474,6 +483,46 @@ func (e *Environment) GetStore() map[string]Object {
 		store[k] = v
 	}
 	return store
+}
+
+// SetImportCallback sets the import callback for this environment
+func (e *Environment) SetImportCallback(fn func(string) error) {
+	e.importCallback = fn
+	// Propagate to outer environments
+	if e.outer != nil {
+		e.outer.SetImportCallback(fn)
+	}
+}
+
+// GetImportCallback gets the import callback from this environment or outer
+func (e *Environment) GetImportCallback() func(string) error {
+	if e.importCallback != nil {
+		return e.importCallback
+	}
+	if e.outer != nil {
+		return e.outer.GetImportCallback()
+	}
+	return nil
+}
+
+// SetAvailableLibrariesCallback sets the available libraries callback for this environment
+func (e *Environment) SetAvailableLibrariesCallback(fn func() []LibraryInfo) {
+	e.availableLibrariesCallback = fn
+	// Propagate to outer environments
+	if e.outer != nil {
+		e.outer.SetAvailableLibrariesCallback(fn)
+	}
+}
+
+// GetAvailableLibrariesCallback gets the available libraries callback from this environment or outer
+func (e *Environment) GetAvailableLibrariesCallback() func() []LibraryInfo {
+	if e.availableLibrariesCallback != nil {
+		return e.availableLibrariesCallback
+	}
+	if e.outer != nil {
+		return e.outer.GetAvailableLibrariesCallback()
+	}
+	return nil
 }
 
 type List struct {

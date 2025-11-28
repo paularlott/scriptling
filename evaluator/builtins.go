@@ -1849,6 +1849,7 @@ func helpFunction(ctx context.Context, kwargs map[string]object.Object, args ...
 			fmt.Fprintln(writer, "")
 
 			// Use callback if available to get all libraries
+			availableLibrariesCallback := env.GetAvailableLibrariesCallback()
 			if availableLibrariesCallback != nil {
 				libs := availableLibrariesCallback()
 
@@ -2147,33 +2148,6 @@ func printFunctionHelp(writer io.Writer, name string, fn *object.Function) {
 	fmt.Fprintf(writer, " - User-defined function\n")
 }
 
-var importCallback func(string) error
-
-func SetImportCallback(fn func(string) error) {
-	importCallback = fn
-}
-
-func GetImportCallback() func(string) error {
-	return importCallback
-}
-
-// LibraryInfo contains information about available libraries
-type LibraryInfo struct {
-	Name       string
-	IsStandard bool
-	IsImported bool
-}
-
-var availableLibrariesCallback func() []LibraryInfo
-
-func SetAvailableLibrariesCallback(fn func() []LibraryInfo) {
-	availableLibrariesCallback = fn
-}
-
-func GetAvailableLibrariesCallback() func() []LibraryInfo {
-	return availableLibrariesCallback
-}
-
 // getEnvFromContext retrieves environment from context
 func getEnvFromContext(ctx context.Context) *object.Environment {
 	if env, ok := ctx.Value(envContextKey).(*object.Environment); ok {
@@ -2191,6 +2165,9 @@ func GetImportBuiltin() *object.Builtin {
 			if args[0].Type() != object.STRING_OBJ {
 				return errors.NewTypeError("STRING", args[0].Type().String())
 			}
+
+			env := getEnvFromContext(ctx)
+			importCallback := env.GetImportCallback()
 			if importCallback == nil {
 				return errors.NewError(errors.ErrImportError)
 			}
