@@ -9,39 +9,39 @@ import (
 )
 
 var Base64Library = object.NewLibrary(map[string]*object.Builtin{
-	"encode": {
-		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+	"b64encode": {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			str, ok := args[0].(*object.String)
+			str, ok := args[0].AsString()
 			if !ok {
 				return errors.NewTypeError("STRING", args[0].Type().String())
 			}
-			encoded := base64.StdEncoding.EncodeToString([]byte(str.Value))
+			encoded := base64.StdEncoding.EncodeToString([]byte(str))
 			return &object.String{Value: encoded}
 		},
-		HelpText: `encode(string) - Encode string to base64
+		HelpText: `b64encode(s) - Encode bytes-like object to Base64
 
-Returns the base64 encoded version of the input string.`,
+Returns a Base64-encoded version of the input string.`,
 	},
-	"decode": {
-		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+	"b64decode": {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			str, ok := args[0].(*object.String)
+			str, ok := args[0].AsString()
 			if !ok {
 				return errors.NewTypeError("STRING", args[0].Type().String())
 			}
-			decoded, err := base64.StdEncoding.DecodeString(str.Value)
+			decoded, err := base64.StdEncoding.DecodeString(str)
 			if err != nil {
-				return errors.NewError("decode() invalid base64 string")
+				return errors.NewError("base64 decode error: %s", err.Error())
 			}
 			return &object.String{Value: string(decoded)}
 		},
-		HelpText: `decode(base64_string) - Decode base64 string
+		HelpText: `b64decode(s) - Decode a Base64 encoded string
 
-Returns the decoded string from a base64 encoded input.`,
+Returns the decoded string from a Base64-encoded input.`,
 	},
 }, nil, "Base64 encoding and decoding library")

@@ -37,6 +37,8 @@ var precedences = map[token.TokenType]int{
 	token.NOT_EQ:    EQUALS,
 	token.IN:        EQUALS,
 	token.NOT_IN:    EQUALS,
+	token.IS:        EQUALS,
+	token.IS_NOT:    EQUALS,
 	token.LT:        LESSGREATER,
 	token.GT:        LESSGREATER,
 	token.LTE:       LESSGREATER,
@@ -46,6 +48,7 @@ var precedences = map[token.TokenType]int{
 	token.PLUS:      SUM,
 	token.MINUS:     SUM,
 	token.SLASH:     PRODUCT,
+	token.FLOORDIV:  PRODUCT,
 	token.ASTERISK:  PRODUCT,
 	token.PERCENT:   PRODUCT,
 	token.POW:       POWER,
@@ -94,6 +97,7 @@ func New(l *lexer.Lexer) *Parser {
 	p.registerInfix(token.PLUS, p.parseInfixExpression)
 	p.registerInfix(token.MINUS, p.parseInfixExpression)
 	p.registerInfix(token.SLASH, p.parseInfixExpression)
+	p.registerInfix(token.FLOORDIV, p.parseInfixExpression)
 	p.registerInfix(token.ASTERISK, p.parseInfixExpression)
 	p.registerInfix(token.POW, p.parseInfixExpression)
 	p.registerInfix(token.PERCENT, p.parseInfixExpression)
@@ -107,6 +111,8 @@ func New(l *lexer.Lexer) *Parser {
 	p.registerInfix(token.OR, p.parseInfixExpression)
 	p.registerInfix(token.IN, p.parseInfixExpression)
 	p.registerInfix(token.NOT_IN, p.parseInfixExpression)
+	p.registerInfix(token.IS, p.parseInfixExpression)
+	p.registerInfix(token.IS_NOT, p.parseInfixExpression)
 	p.registerInfix(token.AMPERSAND, p.parseInfixExpression)
 	p.registerInfix(token.PIPE, p.parseInfixExpression)
 	p.registerInfix(token.CARET, p.parseInfixExpression)
@@ -226,6 +232,8 @@ func (p *Parser) parseStatement() ast.Statement {
 		return p.parseGlobalStatement()
 	case token.NONLOCAL:
 		return p.parseNonlocalStatement()
+	case token.ASSERT:
+		return p.parseAssertStatement()
 	case token.IDENT:
 		if p.peekTokenIs(token.ASSIGN) {
 			return p.parseAssignStatement()
@@ -242,7 +250,8 @@ func (p *Parser) parseStatement() ast.Statement {
 
 func (p *Parser) isAugmentedAssign() bool {
 	return p.peekTokenIs(token.PLUS_EQ) || p.peekTokenIs(token.MINUS_EQ) ||
-		p.peekTokenIs(token.MUL_EQ) || p.peekTokenIs(token.DIV_EQ) || p.peekTokenIs(token.MOD_EQ) ||
+		p.peekTokenIs(token.MUL_EQ) || p.peekTokenIs(token.DIV_EQ) || p.peekTokenIs(token.FLOORDIV_EQ) ||
+		p.peekTokenIs(token.MOD_EQ) ||
 		p.peekTokenIs(token.AND_EQ) || p.peekTokenIs(token.OR_EQ) || p.peekTokenIs(token.XOR_EQ) ||
 		p.peekTokenIs(token.LSHIFT_EQ) || p.peekTokenIs(token.RSHIFT_EQ)
 }
@@ -331,7 +340,17 @@ func (p *Parser) parseImportStatement() *ast.ImportStatement {
 		return nil
 	}
 
-	stmt.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+	// Build up the dotted name (e.g., urllib.parse)
+	name := p.curToken.Literal
+	for p.peekTokenIs(token.DOT) {
+		p.nextToken() // consume dot
+		if !p.expectPeek(token.IDENT) {
+			return nil
+		}
+		name = name + "." + p.curToken.Literal
+	}
+
+	stmt.Name = &ast.Identifier{Token: p.curToken, Value: name}
 
 	// Check for additional imports separated by commas
 	stmt.AdditionalNames = []*ast.Identifier{}
@@ -340,9 +359,18 @@ func (p *Parser) parseImportStatement() *ast.ImportStatement {
 		if !p.expectPeek(token.IDENT) {
 			return nil
 		}
+		// Build up the dotted name for additional imports too
+		addName := p.curToken.Literal
+		for p.peekTokenIs(token.DOT) {
+			p.nextToken() // consume dot
+			if !p.expectPeek(token.IDENT) {
+				return nil
+			}
+			addName = addName + "." + p.curToken.Literal
+		}
 		stmt.AdditionalNames = append(stmt.AdditionalNames, &ast.Identifier{
 			Token: p.curToken,
-			Value: p.curToken.Literal,
+			Value: addName,
 		})
 	}
 
@@ -1285,6 +1313,23 @@ func (p *Parser) parseNonlocalStatement() *ast.NonlocalStatement {
 			return nil
 		}
 		stmt.Names = append(stmt.Names, &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal})
+	}
+
+	return stmt
+}
+
+func (p *Parser) parseAssertStatement() *ast.AssertStatement {
+	stmt := &ast.AssertStatement{Token: p.curToken}
+	p.nextToken()
+
+	// Parse the condition expression
+	stmt.Condition = p.parseExpression(LOWEST)
+
+	// Check for optional message after comma
+	if p.peekTokenIs(token.COMMA) {
+		p.nextToken() // consume comma
+		p.nextToken() // move to the message expression
+		stmt.Message = p.parseExpression(LOWEST)
 	}
 
 	return stmt

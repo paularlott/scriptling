@@ -1,22 +1,25 @@
 # Extending Scriptling - Libraries and Functions Guide
 
-This guide covers how to create custom libraries and functions for Scriptling in Go, including advanced features like output capture.
+This guide covers how to create custom libraries and functions for Scriptling in Go, including advanced features like output capture and keyword arguments.
 
 ## Function Signature
 
-All Scriptling functions in Go must follow this signature:
+All Scriptling functions in Go use a unified signature that supports both positional and keyword arguments:
 
 ```go
-func(ctx context.Context, args ...object.Object) object.Object
+func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object
 ```
 
 - `ctx`: Context containing environment and other runtime information
-- `args`: Variable number of Scriptling objects passed from the script
+- `kwargs`: Map of keyword arguments (may be `nil` if no kwargs passed)
+- `args`: Variable number of positional Scriptling objects passed from the script
 - Returns: A Scriptling object result
 
 ## Basic Function Creation
 
-### Simple Function
+### Simple Function (Positional Arguments Only)
+
+For functions that only use positional arguments, you can simply ignore the `kwargs` parameter:
 
 ```go
 package main
@@ -30,8 +33,8 @@ import (
 func main() {
     p := scriptling.New()
 
-    // Register a simple function
-    p.RegisterFunc("double", func(ctx context.Context, args ...object.Object) object.Object {
+    // Register a simple function - kwargs ignored
+    p.RegisterFunc("double", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
         if len(args) != 1 {
             return &object.String{Value: "Error: double requires 1 argument"}
         }
@@ -51,6 +54,101 @@ print(result)  # 42
 }
 ```
 
+### Function with Keyword Arguments
+
+Functions can accept keyword arguments using the `kwargs` map:
+
+```go
+// timedelta-style function with keyword arguments only
+p.RegisterFunc("make_duration", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+    // Reject positional arguments
+    if len(args) > 0 {
+        return &object.String{Value: "Error: make_duration takes no positional arguments"}
+    }
+
+    var hours, minutes, seconds float64
+
+    // Process keyword arguments
+    for key, val := range kwargs {
+        var num float64
+        switch v := val.(type) {
+        case *object.Integer:
+            num = float64(v.Value)
+        case *object.Float:
+            num = v.Value
+        default:
+            return &object.String{Value: "Error: argument must be numeric"}
+        }
+
+        switch key {
+        case "hours":
+            hours = num
+        case "minutes":
+            minutes = num
+        case "seconds":
+            seconds = num
+        default:
+            return &object.String{Value: "Error: unexpected keyword argument: " + key}
+        }
+    }
+
+    totalSeconds := hours*3600 + minutes*60 + seconds
+    return &object.Float{Value: totalSeconds}
+})
+
+// Use from Scriptling
+p.Eval(`
+duration = make_duration(hours=2, minutes=30)
+print(duration)  # 9000.0
+`)
+```
+
+### Function with Mixed Positional and Keyword Arguments
+
+Functions can accept both positional and keyword arguments:
+
+```go
+// Function with required positional arg and optional kwargs
+p.RegisterFunc("format_greeting", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+    if len(args) != 1 {
+        return &object.String{Value: "Error: format_greeting requires name argument"}
+    }
+
+    name, ok := args[0].(*object.String)
+    if !ok {
+        return &object.String{Value: "Error: name must be string"}
+    }
+
+    // Default values
+    prefix := "Hello"
+    suffix := "!"
+
+    // Override with kwargs if provided
+    if kwargs != nil {
+        if val, exists := kwargs["prefix"]; exists {
+            if s, ok := val.(*object.String); ok {
+                prefix = s.Value
+            }
+        }
+        if val, exists := kwargs["suffix"]; exists {
+            if s, ok := val.(*object.String); ok {
+                suffix = s.Value
+            }
+        }
+    }
+
+    return &object.String{Value: prefix + ", " + name.Value + suffix}
+})
+
+// Use from Scriptling
+p.Eval(`
+print(format_greeting("World"))                    # Hello, World!
+print(format_greeting("World", prefix="Hi"))       # Hi, World!
+print(format_greeting("World", suffix="..."))      # Hello, World...
+print(format_greeting("World", prefix="Hey", suffix="?"))  # Hey, World?
+`)
+```
+
 ### Function with Output Capture
 
 ```go
@@ -60,7 +158,7 @@ import (
     "github.com/paularlott/scriptling/evaluator"
 )
 
-p.RegisterFunc("debug_print", func(ctx context.Context, args ...object.Object) object.Object {
+p.RegisterFunc("debug_print", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
     // Get environment from context to access output capture
     env := evaluator.GetEnvFromContext(ctx)
     writer := env.GetWriter()
@@ -80,7 +178,7 @@ p.RegisterFunc("debug_print", func(ctx context.Context, args ...object.Object) o
 ### File Operations with Output Capture
 
 ```go
-p.RegisterFunc("read_file", func(ctx context.Context, args ...object.Object) object.Object {
+p.RegisterFunc("read_file", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
     if len(args) != 1 {
         return &object.String{Value: "Error: read_file requires 1 argument"}
     }
@@ -114,7 +212,7 @@ import (
     "time"
 )
 
-p.RegisterFunc("http_get", func(ctx context.Context, args ...object.Object) object.Object {
+p.RegisterFunc("http_get", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
     if len(args) != 1 {
         return &object.String{Value: "Error: http_get requires 1 argument"}
     }
@@ -177,7 +275,7 @@ import (
 func CreateMathLibrary() map[string]*object.Builtin {
     return map[string]*object.Builtin{
         "add": {
-            Fn: func(ctx context.Context, args ...object.Object) object.Object {
+            Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
                 if len(args) != 2 {
                     return &object.String{Value: "Error: add requires 2 arguments"}
                 }
@@ -207,7 +305,7 @@ func CreateMathLibrary() map[string]*object.Builtin {
             },
         },
         "multiply": {
-            Fn: func(ctx context.Context, args ...object.Object) object.Object {
+            Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
                 if len(args) != 2 {
                     return &object.String{Value: "Error: multiply requires 2 arguments"}
                 }
@@ -270,7 +368,7 @@ func NewLogger() *Logger {
 func (l *Logger) CreateLibrary() map[string]*object.Builtin {
     return map[string]*object.Builtin{
         "set_level": {
-            Fn: func(ctx context.Context, args ...object.Object) object.Object {
+            Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
                 if len(args) != 1 {
                     return &object.String{Value: "Error: set_level requires 1 argument"}
                 }
@@ -285,7 +383,7 @@ func (l *Logger) CreateLibrary() map[string]*object.Builtin {
             },
         },
         "log": {
-            Fn: func(ctx context.Context, args ...object.Object) object.Object {
+            Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
                 if len(args) != 1 {
                     return &object.String{Value: "Error: log requires 1 argument"}
                 }
@@ -310,7 +408,7 @@ func (l *Logger) CreateLibrary() map[string]*object.Builtin {
             },
         },
         "get_messages": {
-            Fn: func(ctx context.Context, args ...object.Object) object.Object {
+            Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
                 elements := make([]object.Object, len(l.messages))
                 for i, msg := range l.messages {
                     elements[i] = &object.String{Value: msg}
@@ -319,7 +417,7 @@ func (l *Logger) CreateLibrary() map[string]*object.Builtin {
             },
         },
         "clear": {
-            Fn: func(ctx context.Context, args ...object.Object) object.Object {
+            Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
                 l.messages = l.messages[:0] // Clear slice
                 return &object.String{Value: "Messages cleared"}
             },
@@ -382,7 +480,7 @@ func NewDatabase(connectionString string) (*Database, error) {
 func (d *Database) CreateLibrary() map[string]*object.Builtin {
     return map[string]*object.Builtin{
         "query": {
-            Fn: func(ctx context.Context, args ...object.Object) object.Object {
+            Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
                 if len(args) != 1 {
                     return &object.String{Value: "Error: query requires 1 argument"}
                 }
@@ -451,7 +549,7 @@ func (d *Database) CreateLibrary() map[string]*object.Builtin {
             },
         },
         "execute": {
-            Fn: func(ctx context.Context, args ...object.Object) object.Object {
+            Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
                 if len(args) != 1 {
                     return &object.String{Value: "Error: execute requires 1 argument"}
                 }
@@ -487,7 +585,7 @@ func (d *Database) CreateLibrary() map[string]*object.Builtin {
 ### 1. Error Handling
 
 ```go
-p.RegisterFunc("safe_divide", func(ctx context.Context, args ...object.Object) object.Object {
+p.RegisterFunc("safe_divide", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
     if len(args) != 2 {
         return &object.String{Value: "Error: divide requires 2 arguments"}
     }
@@ -543,7 +641,7 @@ func toString(obj object.Object) (string, bool) {
 }
 
 // Usage
-p.RegisterFunc("power", func(ctx context.Context, args ...object.Object) object.Object {
+p.RegisterFunc("power", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
     if len(args) != 2 {
         return &object.String{Value: "Error: power requires 2 arguments"}
     }
@@ -566,7 +664,7 @@ p.RegisterFunc("power", func(ctx context.Context, args ...object.Object) object.
 ### 3. Context Usage
 
 ```go
-p.RegisterFunc("long_operation", func(ctx context.Context, args ...object.Object) object.Object {
+p.RegisterFunc("long_operation", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
     env := evaluator.GetEnvFromContext(ctx)
     writer := env.GetWriter()
 
@@ -606,7 +704,7 @@ func TestCustomFunction(t *testing.T) {
     p.EnableOutputCapture() // Enable to test output
 
     // Register test function
-    p.RegisterFunc("test_func", func(ctx context.Context, args ...object.Object) object.Object {
+    p.RegisterFunc("test_func", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
         env := evaluator.GetEnvFromContext(ctx)
         writer := env.GetWriter()
         fmt.Fprintln(writer, "Test function called")
@@ -653,7 +751,7 @@ type APIService struct {
 func (s *APIService) CreateLibrary() map[string]*object.Builtin {
     return map[string]*object.Builtin{
         "get_user": {
-            Fn: func(ctx context.Context, args ...object.Object) object.Object {
+            Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
                 // Implementation with output capture for logging
                 env := evaluator.GetEnvFromContext(ctx)
                 writer := env.GetWriter()
@@ -673,7 +771,7 @@ func (s *APIService) CreateLibrary() map[string]*object.Builtin {
 func CreateConfigurableLibrary(config map[string]interface{}) map[string]*object.Builtin {
     return map[string]*object.Builtin{
         "process": {
-            Fn: func(ctx context.Context, args ...object.Object) object.Object {
+            Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
                 env := evaluator.GetEnvFromContext(ctx)
                 writer := env.GetWriter()
 
@@ -1001,7 +1099,7 @@ func main() {
     // Register a Go library with description
     p.RegisterLibrary("gomath", object.NewLibrary(map[string]*object.Builtin{
         "sqrt": {
-            Fn: func(ctx context.Context, args ...object.Object) object.Object {
+            Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
                 if len(args) != 1 {
                     return &object.Error{Message: "sqrt requires 1 argument"}
                 }

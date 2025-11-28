@@ -1,0 +1,150 @@
+package main
+
+import (
+	"bufio"
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+
+	"github.com/paularlott/cli"
+	"github.com/paularlott/scriptling"
+	"github.com/paularlott/scriptling/extlibs"
+)
+
+func main() {
+	cmd := &cli.Command{
+		Name:        "scriptling",
+		Version:     "1.0.0",
+		Usage:       "Scriptling interpreter",
+		Description: "Run Scriptling scripts from files, stdin, or interactively",
+		Flags: []cli.Flag{
+			&cli.BoolFlag{
+				Name:    "interactive",
+				Usage:   "Start interactive mode",
+				Aliases: []string{"i"},
+			},
+		},
+		Arguments: []cli.Argument{
+			&cli.StringArg{
+				Name:     "file",
+				Usage:    "Script file to execute",
+				Required: false,
+			},
+		},
+		Run: runScriptling,
+	}
+
+	err := cmd.Execute(context.Background())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func runScriptling(ctx context.Context, cmd *cli.Command) error {
+	// Create Scriptling interpreter
+	p := scriptling.New()
+
+	// Register external/extended libraries
+	p.RegisterLibrary("requests", extlibs.RequestsLibrary)
+	p.RegisterLibrary("sys", extlibs.SysLibrary)
+	p.RegisterLibrary("secrets", extlibs.SecretsLibrary)
+	extlibs.RegisterOSLibrary(p, []string{})
+
+	file := cmd.GetStringArg("file")
+	interactive := cmd.GetBool("interactive")
+
+	// Set up sys.argv
+	if file != "" {
+		// When running a file, argv[0] is the script name
+		// Additional args would come after the file
+		extlibs.SetupSysLibrary([]string{file})
+	} else {
+		extlibs.SetupSysLibrary([]string{""})
+	}
+
+	// Set up sys.exit callback
+	extlibs.SysExitCallback = func(code int) {
+		os.Exit(code)
+	}
+
+	// Determine execution mode
+	if interactive {
+		return runInteractive(p)
+	} else if file != "" {
+		return runFile(p, file)
+	} else if !isStdinEmpty() {
+		return runStdin(p)
+	} else {
+		// No input provided, show help
+		cmd.ShowHelp()
+		return nil
+	}
+}
+
+func runFile(p *scriptling.Scriptling, filename string) error {
+	content, err := os.ReadFile(filename)
+	if err != nil {
+		return fmt.Errorf("failed to read file %s: %w", filename, err)
+	}
+
+	_, err = p.Eval(string(content))
+	return err
+}
+
+func runStdin(p *scriptling.Scriptling) error {
+	content, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return fmt.Errorf("failed to read from stdin: %w", err)
+	}
+
+	_, err = p.Eval(string(content))
+	return err
+}
+
+func runInteractive(p *scriptling.Scriptling) error {
+	fmt.Println("Scriptling Interactive Mode")
+	fmt.Println("Type 'exit' or 'quit' to exit")
+	fmt.Println()
+
+	scanner := bufio.NewScanner(os.Stdin)
+	for {
+		fmt.Print(">>> ")
+		if !scanner.Scan() {
+			break
+		}
+
+		line := strings.TrimSpace(scanner.Text())
+		if line == "exit" || line == "quit" {
+			break
+		}
+
+		if line == "" {
+			continue
+		}
+
+		// Try to evaluate the line
+		result, err := p.Eval(line)
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+		} else if result != nil {
+			fmt.Printf("%v\n", result.Inspect())
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("reading input: %w", err)
+	}
+
+	return nil
+}
+
+func isStdinEmpty() bool {
+	stat, err := os.Stdin.Stat()
+	if err != nil {
+		return true
+	}
+	return (stat.Mode() & os.ModeCharDevice) != 0
+}

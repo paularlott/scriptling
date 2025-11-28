@@ -260,7 +260,11 @@ func (lf *LambdaFunction) AsBool() (bool, bool)              { return false, fal
 func (lf *LambdaFunction) AsList() ([]Object, bool)          { return nil, false }
 func (lf *LambdaFunction) AsDict() (map[string]Object, bool) { return nil, false }
 
-type BuiltinFunction func(ctx context.Context, args ...Object) Object
+// BuiltinFunction is the signature for all builtin functions
+// - ctx: Context with environment and runtime information
+// - kwargs: Keyword arguments passed to the function (may be nil or empty)
+// - args: Positional arguments passed to the function
+type BuiltinFunction func(ctx context.Context, kwargs map[string]Object, args ...Object) Object
 
 type Builtin struct {
 	Fn       BuiltinFunction
@@ -279,19 +283,32 @@ func (b *Builtin) AsDict() (map[string]Object, bool) { return nil, false }
 
 // Library represents a pre-built collection of builtin functions and constants
 // This eliminates the need for function wrappers and provides direct access
+// Libraries can contain sub-libraries for nested module support (e.g., urllib.parse)
 type Library struct {
-	functions   map[string]*Builtin
-	constants   map[string]Object
-	description string
+	functions    map[string]*Builtin
+	constants    map[string]Object
+	subLibraries map[string]*Library
+	description  string
 }
 
 // NewLibrary creates a new library with functions, optional constants, and optional description
 // Pass nil for constants if there are none, and "" for description if not needed
 func NewLibrary(functions map[string]*Builtin, constants map[string]Object, description string) *Library {
 	return &Library{
-		functions:   functions,
-		constants:   constants,
-		description: description,
+		functions:    functions,
+		constants:    constants,
+		subLibraries: nil,
+		description:  description,
+	}
+}
+
+// NewLibraryWithSubs creates a new library with functions, constants, sub-libraries, and description
+func NewLibraryWithSubs(functions map[string]*Builtin, constants map[string]Object, subLibraries map[string]*Library, description string) *Library {
+	return &Library{
+		functions:    functions,
+		constants:    constants,
+		subLibraries: subLibraries,
+		description:  description,
 	}
 }
 
@@ -303,6 +320,11 @@ func (l *Library) Functions() map[string]*Builtin {
 // Constants returns the library's constants map
 func (l *Library) Constants() map[string]Object {
 	return l.constants
+}
+
+// SubLibraries returns the library's sub-libraries map
+func (l *Library) SubLibraries() map[string]*Library {
+	return l.subLibraries
 }
 
 // Description returns the library's description
@@ -590,3 +612,9 @@ func (ex *Exception) AsFloat() (float64, bool)          { return 0, false }
 func (ex *Exception) AsBool() (bool, bool)              { return false, true }
 func (ex *Exception) AsList() ([]Object, bool)          { return nil, false }
 func (ex *Exception) AsDict() (map[string]Object, bool) { return nil, false }
+
+// LibraryRegistrar is an interface for registering libraries.
+// This allows external libraries to register themselves without circular imports.
+type LibraryRegistrar interface {
+	RegisterLibrary(name string, lib *Library)
+}

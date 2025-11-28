@@ -1,5 +1,5 @@
-import url
+import urllib.parse
 
 text = "hello world"
-encoded = url.quote(text)
+encoded = urllib.parse.quote(text)
 encoded == "hello%20world"

@@ -234,12 +234,17 @@ func (ps *PassStatement) TokenLiteral() string { return ps.Token.Literal }
 
 type ImportStatement struct {
 	Token           token.Token
-	Name            *Identifier
+	Name            *Identifier   // The full dotted name stored as single identifier (e.g., "urllib.parse")
 	AdditionalNames []*Identifier // For import lib1, lib2, lib3
 }
 
 func (is *ImportStatement) statementNode()       {}
 func (is *ImportStatement) TokenLiteral() string { return is.Token.Literal }
+
+// FullName returns the complete import name (handles dotted imports like urllib.parse)
+func (is *ImportStatement) FullName() string {
+	return is.Name.Value
+}
 
 type ForStatement struct {
 	Token    token.Token
@@ -321,6 +326,15 @@ type NonlocalStatement struct {
 
 func (ns *NonlocalStatement) statementNode()       {}
 func (ns *NonlocalStatement) TokenLiteral() string { return ns.Token.Literal }
+
+type AssertStatement struct {
+	Token     token.Token
+	Condition Expression
+	Message   Expression // Optional
+}
+
+func (as *AssertStatement) statementNode()       {}
+func (as *AssertStatement) TokenLiteral() string { return as.Token.Literal }
 
 type MethodCallExpression struct {
 	Token     token.Token

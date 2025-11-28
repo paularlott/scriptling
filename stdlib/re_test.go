@@ -11,7 +11,7 @@ func TestRegexMatch(t *testing.T) {
 	lib := ReLibrary
 	match := lib.Functions()["match"]
 
-	result := match.Fn(context.Background(), &object.String{Value: "[0-9]+"}, &object.String{Value: "123abc"})
+	result := match.Fn(context.Background(), nil, &object.String{Value: "[0-9]+"}, &object.String{Value: "123abc"})
 	if b, ok := result.(*object.Boolean); ok {
 		if !b.Value {
 			t.Errorf("match('[0-9]+', '123abc') should return true")
@@ -20,7 +20,7 @@ func TestRegexMatch(t *testing.T) {
 		t.Errorf("match() returned %T, want Boolean", result)
 	}
 
-	result = match.Fn(context.Background(), &object.String{Value: "[0-9]+"}, &object.String{Value: "abc123"})
+	result = match.Fn(context.Background(), nil, &object.String{Value: "[0-9]+"}, &object.String{Value: "abc123"})
 	if b, ok := result.(*object.Boolean); ok {
 		if b.Value {
 			t.Errorf("match('[0-9]+', 'abc123') should return false")
@@ -35,7 +35,7 @@ func TestRegexMatchWithFlags(t *testing.T) {
 	match := lib.Functions()["match"]
 
 	// Test case-insensitive matching with flag
-	result := match.Fn(context.Background(), &object.String{Value: "hello"}, &object.String{Value: "HELLO world"}, &object.Integer{Value: RE_IGNORECASE})
+	result := match.Fn(context.Background(), nil, &object.String{Value: "hello"}, &object.String{Value: "HELLO world"}, &object.Integer{Value: RE_IGNORECASE})
 	if b, ok := result.(*object.Boolean); ok {
 		if !b.Value {
 			t.Errorf("match('hello', 'HELLO world', re.I) should return true")
@@ -45,7 +45,7 @@ func TestRegexMatchWithFlags(t *testing.T) {
 	}
 
 	// Without flag, should not match
-	result = match.Fn(context.Background(), &object.String{Value: "hello"}, &object.String{Value: "HELLO world"})
+	result = match.Fn(context.Background(), nil, &object.String{Value: "hello"}, &object.String{Value: "HELLO world"})
 	if b, ok := result.(*object.Boolean); ok {
 		if b.Value {
 			t.Errorf("match('hello', 'HELLO world') without flag should return false")
@@ -59,7 +59,7 @@ func TestRegexSearch(t *testing.T) {
 	lib := ReLibrary
 	search := lib.Functions()["search"]
 
-	result := search.Fn(context.Background(), &object.String{Value: "[0-9]+"}, &object.String{Value: "abc123def"})
+	result := search.Fn(context.Background(), nil, &object.String{Value: "[0-9]+"}, &object.String{Value: "abc123def"})
 	if s, ok := result.(*object.String); ok {
 		if s.Value != "123" {
 			t.Errorf("search('[0-9]+', 'abc123def') = %v, want '123'", s.Value)
@@ -74,7 +74,7 @@ func TestRegexSearchWithFlags(t *testing.T) {
 	search := lib.Functions()["search"]
 
 	// Test case-insensitive search
-	result := search.Fn(context.Background(), &object.String{Value: "world"}, &object.String{Value: "Hello WORLD"}, &object.Integer{Value: RE_IGNORECASE})
+	result := search.Fn(context.Background(), nil, &object.String{Value: "world"}, &object.String{Value: "Hello WORLD"}, &object.Integer{Value: RE_IGNORECASE})
 	if s, ok := result.(*object.String); ok {
 		if s.Value != "WORLD" {
 			t.Errorf("search('world', 'Hello WORLD', re.I) = %v, want 'WORLD'", s.Value)
@@ -88,7 +88,7 @@ func TestRegexFindall(t *testing.T) {
 	lib := ReLibrary
 	findall := lib.Functions()["findall"]
 
-	result := findall.Fn(context.Background(), &object.String{Value: "[0-9]+"}, &object.String{Value: "abc123def456ghi"})
+	result := findall.Fn(context.Background(), nil, &object.String{Value: "[0-9]+"}, &object.String{Value: "abc123def456ghi"})
 	if l, ok := result.(*object.List); ok {
 		if len(l.Elements) != 2 {
 			t.Errorf("findall() returned %d matches, want 2", len(l.Elements))
@@ -113,7 +113,7 @@ func TestRegexFindallWithFlags(t *testing.T) {
 	findall := lib.Functions()["findall"]
 
 	// Test case-insensitive findall
-	result := findall.Fn(context.Background(), &object.String{Value: "a+"}, &object.String{Value: "aAaAbBAAA"}, &object.Integer{Value: RE_IGNORECASE})
+	result := findall.Fn(context.Background(), nil, &object.String{Value: "a+"}, &object.String{Value: "aAaAbBAAA"}, &object.Integer{Value: RE_IGNORECASE})
 	if l, ok := result.(*object.List); ok {
 		if len(l.Elements) != 2 {
 			t.Errorf("findall() returned %d matches, want 2", len(l.Elements))
@@ -128,7 +128,7 @@ func TestRegexSub(t *testing.T) {
 	sub := lib.Functions()["sub"]
 
 	// Test Python-compatible signature: sub(pattern, repl, string)
-	result := sub.Fn(context.Background(), &object.String{Value: "[0-9]+"}, &object.String{Value: "XXX"}, &object.String{Value: "abc123def"})
+	result := sub.Fn(context.Background(), nil, &object.String{Value: "[0-9]+"}, &object.String{Value: "XXX"}, &object.String{Value: "abc123def"})
 	if s, ok := result.(*object.String); ok {
 		if s.Value != "abcXXXdef" {
 			t.Errorf("sub() = %v, want 'abcXXXdef'", s.Value)
@@ -138,7 +138,7 @@ func TestRegexSub(t *testing.T) {
 	}
 
 	// Test multiple replacements
-	result = sub.Fn(context.Background(), &object.String{Value: "[0-9]+"}, &object.String{Value: "#"}, &object.String{Value: "a1b2c3"})
+	result = sub.Fn(context.Background(), nil, &object.String{Value: "[0-9]+"}, &object.String{Value: "#"}, &object.String{Value: "a1b2c3"})
 	if s, ok := result.(*object.String); ok {
 		if s.Value != "a#b#c#" {
 			t.Errorf("sub() = %v, want 'a#b#c#'", s.Value)
@@ -148,7 +148,7 @@ func TestRegexSub(t *testing.T) {
 	}
 
 	// Test no match
-	result = sub.Fn(context.Background(), &object.String{Value: "[0-9]+"}, &object.String{Value: "XXX"}, &object.String{Value: "abc"})
+	result = sub.Fn(context.Background(), nil, &object.String{Value: "[0-9]+"}, &object.String{Value: "XXX"}, &object.String{Value: "abc"})
 	if s, ok := result.(*object.String); ok {
 		if s.Value != "abc" {
 			t.Errorf("sub() = %v, want 'abc'", s.Value)
@@ -163,7 +163,7 @@ func TestRegexSubWithCount(t *testing.T) {
 	sub := lib.Functions()["sub"]
 
 	// Test count parameter - replace only first occurrence
-	result := sub.Fn(context.Background(), &object.String{Value: "[0-9]+"}, &object.String{Value: "X"}, &object.String{Value: "a1b2c3"}, &object.Integer{Value: 1})
+	result := sub.Fn(context.Background(), nil, &object.String{Value: "[0-9]+"}, &object.String{Value: "X"}, &object.String{Value: "a1b2c3"}, &object.Integer{Value: 1})
 	if s, ok := result.(*object.String); ok {
 		if s.Value != "aXb2c3" {
 			t.Errorf("sub() with count=1 = %v, want 'aXb2c3'", s.Value)
@@ -173,7 +173,7 @@ func TestRegexSubWithCount(t *testing.T) {
 	}
 
 	// Test count=2
-	result = sub.Fn(context.Background(), &object.String{Value: "[0-9]+"}, &object.String{Value: "X"}, &object.String{Value: "a1b2c3"}, &object.Integer{Value: 2})
+	result = sub.Fn(context.Background(), nil, &object.String{Value: "[0-9]+"}, &object.String{Value: "X"}, &object.String{Value: "a1b2c3"}, &object.Integer{Value: 2})
 	if s, ok := result.(*object.String); ok {
 		if s.Value != "aXbXc3" {
 			t.Errorf("sub() with count=2 = %v, want 'aXbXc3'", s.Value)
@@ -187,7 +187,7 @@ func TestRegexSplit(t *testing.T) {
 	lib := ReLibrary
 	split := lib.Functions()["split"]
 
-	result := split.Fn(context.Background(), &object.String{Value: "[,;]"}, &object.String{Value: "one,two;three"})
+	result := split.Fn(context.Background(), nil, &object.String{Value: "[,;]"}, &object.String{Value: "one,two;three"})
 	if l, ok := result.(*object.List); ok {
 		if len(l.Elements) != 3 {
 			t.Errorf("split() returned %d parts, want 3", len(l.Elements))
@@ -210,7 +210,7 @@ func TestRegexSplitWithMaxsplit(t *testing.T) {
 	split := lib.Functions()["split"]
 
 	// Test maxsplit parameter
-	result := split.Fn(context.Background(), &object.String{Value: "[,;]"}, &object.String{Value: "one,two;three;four"}, &object.Integer{Value: 2})
+	result := split.Fn(context.Background(), nil, &object.String{Value: "[,;]"}, &object.String{Value: "one,two;three;four"}, &object.Integer{Value: 2})
 	if l, ok := result.(*object.List); ok {
 		if len(l.Elements) != 2 {
 			t.Errorf("split() with maxsplit=2 returned %d parts, want 2", len(l.Elements))
@@ -224,7 +224,7 @@ func TestRegexCompile(t *testing.T) {
 	lib := ReLibrary
 	compile := lib.Functions()["compile"]
 
-	result := compile.Fn(context.Background(), &object.String{Value: "[0-9]+"})
+	result := compile.Fn(context.Background(), nil, &object.String{Value: "[0-9]+"})
 	if s, ok := result.(*object.String); ok {
 		if s.Value != "[0-9]+" {
 			t.Errorf("compile() = %v, want '[0-9]+'", s.Value)
@@ -234,7 +234,7 @@ func TestRegexCompile(t *testing.T) {
 	}
 
 	// Test invalid pattern
-	result = compile.Fn(context.Background(), &object.String{Value: "[0-9"})
+	result = compile.Fn(context.Background(), nil, &object.String{Value: "[0-9"})
 	if _, ok := result.(*object.Error); !ok {
 		t.Errorf("compile() with invalid pattern should return error, got %T", result)
 	}
@@ -245,7 +245,7 @@ func TestRegexCompileWithFlags(t *testing.T) {
 	compile := lib.Functions()["compile"]
 
 	// Compile with IGNORECASE flag
-	result := compile.Fn(context.Background(), &object.String{Value: "hello"}, &object.Integer{Value: RE_IGNORECASE})
+	result := compile.Fn(context.Background(), nil, &object.String{Value: "hello"}, &object.Integer{Value: RE_IGNORECASE})
 	if s, ok := result.(*object.String); ok {
 		if s.Value != "(?i)hello" {
 			t.Errorf("compile() with flag = %v, want '(?i)hello'", s.Value)
@@ -259,7 +259,7 @@ func TestRegexEscape(t *testing.T) {
 	lib := ReLibrary
 	escape := lib.Functions()["escape"]
 
-	result := escape.Fn(context.Background(), &object.String{Value: "a.b+c"})
+	result := escape.Fn(context.Background(), nil, &object.String{Value: "a.b+c"})
 	if s, ok := result.(*object.String); ok {
 		if s.Value != `a\.b\+c` {
 			t.Errorf("escape() = %v, want 'a\\.b\\+c'", s.Value)
@@ -274,7 +274,7 @@ func TestRegexFullmatch(t *testing.T) {
 	fullmatch := lib.Functions()["fullmatch"]
 
 	// Test full match
-	result := fullmatch.Fn(context.Background(), &object.String{Value: "[0-9]+"}, &object.String{Value: "123"})
+	result := fullmatch.Fn(context.Background(), nil, &object.String{Value: "[0-9]+"}, &object.String{Value: "123"})
 	if b, ok := result.(*object.Boolean); ok {
 		if !b.Value {
 			t.Errorf("fullmatch('[0-9]+', '123') should return true")
@@ -284,7 +284,7 @@ func TestRegexFullmatch(t *testing.T) {
 	}
 
 	// Test partial match
-	result = fullmatch.Fn(context.Background(), &object.String{Value: "[0-9]+"}, &object.String{Value: "123abc"})
+	result = fullmatch.Fn(context.Background(), nil, &object.String{Value: "[0-9]+"}, &object.String{Value: "123abc"})
 	if b, ok := result.(*object.Boolean); ok {
 		if b.Value {
 			t.Errorf("fullmatch('[0-9]+', '123abc') should return false")
@@ -294,7 +294,7 @@ func TestRegexFullmatch(t *testing.T) {
 	}
 
 	// Test no match
-	result = fullmatch.Fn(context.Background(), &object.String{Value: "[0-9]+"}, &object.String{Value: "abc"})
+	result = fullmatch.Fn(context.Background(), nil, &object.String{Value: "[0-9]+"}, &object.String{Value: "abc"})
 	if b, ok := result.(*object.Boolean); ok {
 		if b.Value {
 			t.Errorf("fullmatch('[0-9]+', 'abc') should return false")

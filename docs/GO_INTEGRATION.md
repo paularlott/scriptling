@@ -239,7 +239,7 @@ if resultDict, ok := result.AsDict(); ok {
 
 ```go
 // Register a simple function
-p.RegisterFunc("multiply", func(ctx context.Context, args ...object.Object) object.Object {
+p.RegisterFunc("multiply", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
     if len(args) != 2 {
         return &object.String{Value: "multiply requires 2 arguments"}
     }
@@ -267,7 +267,7 @@ print(result)  # 42
 ```go
 import "github.com/paularlott/scriptling/object"
 
-p.RegisterFunc("process_data", func(ctx context.Context, args ...object.Object) object.Object {
+p.RegisterFunc("process_data", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
     if len(args) != 2 {
         return &object.String{Value: "Error: requires 2 arguments"}
     }
@@ -299,7 +299,7 @@ p.RegisterFunc("process_data", func(ctx context.Context, args ...object.Object) 
 
 ```go
 // Function that returns a dictionary
-p.RegisterFunc("get_system_info", func(ctx context.Context, args ...object.Object) object.Object {
+p.RegisterFunc("get_system_info", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
     pairs := []object.HashPair{
         {
             Key:   &object.String{Value: "os"},
@@ -345,13 +345,13 @@ print("CPUs: " + str(info["cpus"]))
 
 myLib := object.NewLibrary(map[string]*object.Builtin{
     "hello": {
-        Fn: func(ctx context.Context, args ...object.Object) object.Object {
+        Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
             return &object.String{Value: "Hello from custom library!"}
         },
         HelpText: "hello() - Returns a greeting message",
     },
     "add": {
-        Fn: func(ctx context.Context, args ...object.Object) object.Object {
+        Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
             if len(args) != 2 {
                 return &object.Integer{Value: 0}
             }
@@ -393,7 +393,7 @@ result2 = mylib["add"](10, 20)
 mathLib := object.NewLibrary(
     map[string]*object.Builtin{
         "sqrt": {
-            Fn: func(ctx context.Context, args ...object.Object) object.Object {
+            Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
                 if len(args) != 1 {
                     return &object.Error{Message: "sqrt requires 1 argument"}
                 }
@@ -432,24 +432,24 @@ type Counter struct {
 func (c *Counter) CreateLibrary() *object.Library {
     return object.NewLibrary(map[string]*object.Builtin{
         "increment": {
-            Fn: func(ctx context.Context, args ...object.Object) object.Object {
+            Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
                 c.value++
                 return &object.Integer{Value: c.value}
             },
         },
         "decrement": {
-            Fn: func(ctx context.Context, args ...object.Object) object.Object {
+            Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
                 c.value--
                 return &object.Integer{Value: c.value}
             },
         },
         "get": {
-            Fn: func(ctx context.Context, args ...object.Object) object.Object {
+            Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
                 return &object.Integer{Value: c.value}
             },
         },
         "set": {
-            Fn: func(ctx context.Context, args ...object.Object) object.Object {
+            Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
                 if len(args) == 1 {
                     if intObj, ok := args[0].(*object.Integer); ok {
                         c.value = intObj.Value
@@ -534,7 +534,7 @@ func main() {
     p.SetVar("timeout", 30)
 
     // Register custom logging function
-    p.RegisterFunc("log_info", func(ctx context.Context, args ...object.Object) object.Object {
+    p.RegisterFunc("log_info", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
         if len(args) > 0 {
             if strObj, ok := args[0].(*object.String); ok {
                 log.Printf("INFO: %s", strObj.Value)
@@ -718,7 +718,7 @@ import (
     "github.com/paularlott/scriptling/evaluator"
 )
 
-p.RegisterFunc("log_debug", func(ctx context.Context, args ...object.Object) object.Object {
+p.RegisterFunc("log_debug", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
     // Get environment from context
     env := evaluator.GetEnvFromContext(ctx)
     writer := env.GetWriter()

@@ -143,6 +143,89 @@ else:
     print("Error: " + str(response["status"]))
 ```
 
+## Itertools Library
+
+```python
+import itertools
+
+# Combining iterables
+itertools.chain([1, 2], [3, 4])           # [1, 2, 3, 4]
+itertools.zip_longest([1, 2], [3], fillvalue=0)  # [[1, 3], [2, 0]]
+
+# Infinite iterators (use with count limit)
+itertools.count(10)                        # [10, 11, 12, ...]
+itertools.cycle([1, 2])                    # [1, 2, 1, 2, ...]
+itertools.repeat("x", 3)                   # ["x", "x", "x"]
+
+# Filtering
+itertools.takewhile(lambda x: x < 3, [1, 2, 3, 2, 1])  # [1, 2]
+itertools.dropwhile(lambda x: x < 3, [1, 2, 3, 2, 1])  # [3, 2, 1]
+itertools.filterfalse(lambda x: x % 2, [1, 2, 3, 4])   # [2, 4]
+itertools.compress([1, 2, 3, 4], [1, 0, 1, 0])         # [1, 3]
+
+# Slicing and batching
+itertools.islice([0, 1, 2, 3, 4], 1, 4)    # [1, 2, 3]
+itertools.batched([1, 2, 3, 4, 5], 2)      # [[1, 2], [3, 4], [5]]
+itertools.pairwise([1, 2, 3, 4])           # [[1, 2], [2, 3], [3, 4]]
+
+# Combinatorics
+itertools.permutations([1, 2, 3])          # All orderings
+itertools.combinations([1, 2, 3], 2)       # All pairs
+itertools.product([1, 2], ["a", "b"])      # Cartesian product
+
+# Accumulate
+itertools.accumulate([1, 2, 3, 4])         # [1, 3, 6, 10]
+```
+
+## Collections Library
+
+```python
+import collections
+
+# Counter - count element occurrences
+counter = collections.Counter([1, 1, 2, 3, 3, 3])  # {1: 2, 2: 1, 3: 3}
+collections.most_common(counter, 2)                 # [(3, 3), (1, 2)]
+
+# deque - double-ended queue
+d = collections.deque([1, 2, 3])
+collections.deque_appendleft(d, 0)          # [0, 1, 2, 3]
+collections.deque_popleft(d)                # Returns 0, d is [1, 2, 3]
+collections.deque_rotate(d, 1)              # Rotate right
+
+# namedtuple - factory for dict with named fields
+Point = collections.namedtuple("Point", ["x", "y"])
+p = Point(10, 20)
+p["x"]                                      # 10
+
+# ChainMap - merge multiple dicts
+defaults = {"a": 1, "b": 2}
+overrides = {"b": 20, "c": 3}
+cm = collections.ChainMap(overrides, defaults)
+cm["a"]                                     # 1 (from defaults)
+cm["b"]                                     # 20 (from overrides)
+
+# defaultdict - dict with default factory
+d = collections.defaultdict("list")
+collections.get_default(d, "key")           # Returns [] and sets d["key"] = []
+```
+
+## Copy Library
+
+```python
+import copy
+
+# Shallow copy - new container, shared nested objects
+original = [[1, 2], [3, 4]]
+shallow = copy.copy(original)
+
+# Deep copy - completely independent copy
+deep = copy.deepcopy(original)
+
+# For flat structures, both work the same
+simple = [1, 2, 3]
+copied = copy.copy(simple)
+```
+
 ## Core Built-in Functions
 
 Always available without importing:
@@ -150,13 +233,54 @@ Always available without importing:
 ```python
 # I/O
 print("Hello")
+input("Enter name: ")         # Read user input (returns string)
 
 # Type conversions
 str(42)           # "42"
 int("42")         # 42
 float("3.14")     # 3.14
+bool(0)           # False (bool conversion)
 type(42)          # "INTEGER"
 type("hello")     # "STRING"
+list("abc")       # ["a", "b", "c"]
+dict()            # {}
+tuple([1, 2, 3])  # (1, 2, 3)
+set([1, 2, 2, 3]) # [1, 2, 3] (unique elements)
+
+# Type checking
+callable(len)                 # True (is function)
+callable(42)                  # False
+isinstance(42, "int")         # True
+isinstance("hi", "str")       # True
+isinstance(None, "NoneType")  # True
+
+# Math operations
+abs(-5)           # 5
+min(3, 1, 2)      # 1
+max(3, 1, 2)      # 3
+round(3.7)        # 4
+round(3.14159, 2) # 3.14
+pow(2, 10)        # 1024
+pow(2, 10, 1000)  # 24 (modular: 2^10 % 1000)
+divmod(17, 5)     # (3, 2) - quotient and remainder
+
+# Number formatting
+hex(255)          # "0xff"
+bin(10)           # "0b1010"
+oct(8)            # "0o10"
+
+# Character conversion
+chr(65)           # "A"
+ord("A")          # 65
+
+# Iteration utilities
+enumerate(["a", "b"])         # [[0, "a"], [1, "b"]]
+zip([1, 2], ["a", "b"])       # [[1, "a"], [2, "b"]]
+reversed([1, 2, 3])           # [3, 2, 1]
+map(lambda x: x*2, [1,2,3])   # [2, 4, 6]
+filter(lambda x: x>1, [1,2,3])# [2, 3]
+any([False, True, False])     # True
+all([True, True, True])       # True
 
 # String operations
 len("hello")                        # 5
@@ -178,6 +302,7 @@ len(numbers)                        # 3
 append(numbers, 4)                  # numbers is now [1, 2, 3, 4]
 sum([1, 2, 3, 4])                   # 10
 sorted([3, 1, 2])                   # [1, 2, 3]
+sorted([3, 1, 2], reverse=True)     # [3, 2, 1]
 sorted(["banana", "apple"], len)    # Sort with key function
 
 # Range
@@ -222,6 +347,62 @@ for i in range(10):
     if i == 7:
         break     # Stop at 7
     print(i)
+```
+
+## Assert Statement
+
+```python
+# Assert condition (raises AssertionError if false)
+assert x > 0
+assert len(data) > 0
+
+# Assert with message
+assert x > 0, "x must be positive"
+assert user is not None, "User not found"
+```
+
+## String Methods
+
+```python
+# Case conversion
+"hello".upper()              # "HELLO"
+"HELLO".lower()              # "hello"
+"hello".capitalize()         # "Hello"
+"hello world".title()        # "Hello World"
+"Hello World".swapcase()     # "hELLO wORLD"
+
+# Finding and checking
+"hello".startswith("he")     # True
+"hello".endswith("lo")       # True
+"hello".find("l")            # 2 (first index or -1)
+"hello".count("l")           # 2
+"hello".isalpha()            # True
+"12345".isdigit()            # True
+"abc123".isalnum()           # True
+
+# Splitting and joining
+"a,b,c".split(",")           # ["a", "b", "c"]
+", ".join(["a", "b"])        # "a, b"
+"hello\nworld".splitlines()  # ["hello", "world"]
+"hello-world".partition("-") # ("hello", "-", "world")
+"a-b-c".rpartition("-")      # ("a-b", "-", "c")
+
+# Trimming and padding
+"  hello  ".strip()          # "hello"
+"  hello  ".lstrip()         # "hello  "
+"  hello  ".rstrip()         # "  hello"
+"hello".center(11)           # "   hello   "
+"hello".ljust(10)            # "hello     "
+"hello".rjust(10)            # "     hello"
+"5".zfill(3)                 # "005"
+
+# Replacing and removing
+"hello".replace("l", "L")    # "heLLo"
+"TestCase".removeprefix("Test")    # "Case"
+"file.py".removesuffix(".py")      # "file"
+
+# Encoding
+"ABC".encode()               # [65, 66, 67] (byte values)
 ```
 
 ## Functions
@@ -339,6 +520,7 @@ x - y    # Subtraction
 x * y    # Multiplication
 x ** y   # Exponentiation (power, e.g., 2**3 = 8)
 x / y    # Division (always returns float, e.g., 5 / 2 = 2.5)
+x // y   # Floor division (integer division, e.g., 7 // 2 = 3)
 x % y    # Modulo (remainder, e.g., 5 % 2 = 1)
 
 # Augmented assignment
@@ -346,6 +528,7 @@ x += 5   # x = x + 5
 x -= 3   # x = x - 3
 x *= 2   # x = x * 2
 x /= 4   # x = x / 4
+x //= 3  # x = x // 3 (floor division)
 x &= 3   # x = x & 3 (bitwise AND)
 x |= 3   # x = x | 3 (bitwise OR)
 x ^= 3   # x = x ^ 3 (bitwise XOR)

@@ -52,8 +52,12 @@ now = datetime.now()              # "2025-11-26 11:34:15"
 utc = datetime.utcnow()           # "2025-11-26 03:34:15"
 today = datetime.today()          # "2025-11-26"
 iso = datetime.isoformat()        # "2025-11-26T11:34:15Z"
-future = datetime.add_days(now_timestamp, 7)  # Add 7 days
+ts = datetime.timestamp()         # Current Unix timestamp
 formatted = datetime.now("%Y-%m-%d %H:%M:%S")  # Custom format
+
+# Date arithmetic with timedelta
+one_day = datetime.timedelta(days=1)        # 86400.0 seconds
+tomorrow = ts + datetime.timedelta(days=1)
 ```
 
 [See datetime.md](libraries/datetime.md) for complete documentation.
@@ -111,6 +115,10 @@ full_match = re.fullmatch("[0-9]+", "123")
 
 [See regex.md](libraries/regex.md) for complete documentation.
 
+## Extended Libraries
+
+Extended libraries require manual registration in Go or are enabled by default in the CLI.
+
 ### HTTP Library
 Make HTTP requests (requires manual registration).
 
@@ -129,14 +137,51 @@ if response.status_code == 200:
 
 [See http.md](libraries/http.md) for complete documentation.
 
+### Requests Library
+Python-compatible HTTP client (enabled by default in CLI).
+
+```python
+import requests
+
+response = requests.get("https://api.example.com/data")
+response = requests.post(url, json={"key": "value"})
+```
+
+### Sys Library
+System-specific parameters and functions (CLI only by default).
+
+```python
+import sys
+
+print(sys.platform)     # "darwin", "linux", or "win32"
+print(sys.argv)         # Command-line arguments
+sys.exit(1)             # Exit with code
+```
+
+[See sys.md](libraries/sys.md) for complete documentation.
+
+### Secrets Library
+Cryptographically strong random numbers (CLI only by default).
+
+```python
+import secrets
+
+token = secrets.token_hex(32)
+secure_choice = secrets.choice(["a", "b", "c"])
+```
+
+[See secrets.md](libraries/secrets.md) for complete documentation.
+
+## Standard Libraries
+
 ### Base64 Library
 Base64 encoding and decoding.
 
 ```python
 import base64
 
-encoded = base64.encode("hello")
-decoded = base64.decode(encoded)
+encoded = base64.b64encode("hello")
+decoded = base64.b64decode(encoded)
 ```
 
 [See base64.md](libraries/base64.md) for complete documentation.
@@ -159,26 +204,149 @@ Random number generation.
 ```python
 import random
 
+random.seed(42)               # Reproducible results
 num = random.randint(1, 100)
+flt = random.uniform(0.0, 1.0)
 choice = random.choice(["a", "b", "c"])
+sample = random.sample([1,2,3,4,5], 3)
 ```
 
 [See random.md](libraries/random.md) for complete documentation.
 
-### URL Library
-URL parsing, encoding, and manipulation.
+### String Library
+String constants for character classification.
 
 ```python
-import url
+import string
 
-parsed = url.urlparse("https://example.com/path?query=value")
-encoded = url.quote("hello world")
-parts = url.urlsplit("https://example.com/path?query=value#fragment")
-query_dict = url.parse_qs("key=value1&key=value2")
-query_str = url.urlencode({"key": "value", "list": ["a", "b"]})
+letters = string.ascii_letters      # a-zA-Z
+digits = string.digits              # 0-9
+punct = string.punctuation          # !"#$%&'()*+,-./:;<=>?@[\]^_`{|}~
 ```
 
-[See url.md](libraries/url.md) for complete documentation.
+[See string.md](libraries/string.md) for complete documentation.
+
+### UUID Library
+UUID generation.
+
+```python
+import uuid
+
+id1 = uuid.uuid1()    # Time-based UUID
+id4 = uuid.uuid4()    # Random UUID
+id7 = uuid.uuid7()    # Time-ordered random UUID
+```
+
+[See uuid.md](libraries/uuid.md) for complete documentation.
+
+### HTML Library
+HTML escaping and unescaping.
+
+```python
+import html
+
+safe = html.escape("<script>alert('xss')</script>")
+original = html.unescape("&lt;script&gt;")
+```
+
+[See html.md](libraries/html.md) for complete documentation.
+
+### Statistics Library
+Statistical functions for numeric data.
+
+```python
+import statistics
+
+avg = statistics.mean([1, 2, 3, 4, 5])
+med = statistics.median([1, 2, 3])
+std = statistics.stdev([2, 4, 4, 4, 5, 5, 7, 9])
+```
+
+[See statistics.md](libraries/statistics.md) for complete documentation.
+
+### Functools Library
+Higher-order functions.
+
+```python
+import functools
+
+def add(x, y):
+    return x + y
+
+result = functools.reduce(add, [1, 2, 3, 4, 5])  # 15
+```
+
+[See functools.md](libraries/functools.md) for complete documentation.
+
+### Itertools Library
+Iterator building blocks for efficient looping.
+
+```python
+import itertools
+
+chained = itertools.chain([1, 2], [3, 4])            # [1, 2, 3, 4]
+perms = itertools.permutations([1, 2, 3])            # All orderings
+combs = itertools.combinations([1, 2, 3], 2)         # All pairs
+prod = itertools.product([1, 2], ["a", "b"])         # Cartesian product
+batches = itertools.batched([1, 2, 3, 4, 5], 2)      # [[1, 2], [3, 4], [5]]
+```
+
+[See itertools.md](libraries/itertools.md) for complete documentation.
+
+### Collections Library
+Specialized container datatypes.
+
+```python
+import collections
+
+counter = collections.Counter([1, 1, 2, 3, 3, 3])   # {1: 2, 2: 1, 3: 3}
+d = collections.deque([1, 2, 3])                     # Double-ended queue
+Point = collections.namedtuple("Point", ["x", "y"]) # Named tuple factory
+cm = collections.ChainMap(dict1, dict2)             # Merged dict view
+```
+
+[See collections.md](libraries/collections.md) for complete documentation.
+
+### Copy Library
+Shallow and deep copy operations.
+
+```python
+import copy
+
+shallow = copy.copy([1, [2, 3]])     # Shallow copy
+deep = copy.deepcopy([1, [2, 3]])    # Deep copy (recursive)
+```
+
+[See copy.md](libraries/copy.md) for complete documentation.
+
+### Textwrap Library
+Text wrapping and filling utilities.
+
+```python
+import textwrap
+
+lines = textwrap.wrap("Long text here...", 40)
+indented = textwrap.indent("Hello\nWorld", "  ")
+```
+
+[See textwrap.md](libraries/textwrap.md) for complete documentation.
+
+### URL Library (urllib.parse)
+URL parsing, encoding, and manipulation. Python-compatible with the `urllib.parse` module.
+
+```python
+import urllib.parse
+
+# Python-compatible API
+parsed = urllib.parse.urlparse("https://example.com/path?query=value")
+encoded = urllib.parse.quote("hello world")
+encoded_plus = urllib.parse.quote_plus("hello world")  # spaces as +
+parts = urllib.parse.urlsplit("https://example.com/path?query=value#fragment")
+query_dict = urllib.parse.parse_qs("key=value1&key=value2")
+query_str = urllib.parse.urlencode({"key": "value", "list": ["a", "b"]})
+```
+
+[See urllib.md](libraries/urllib.md) for complete documentation.
 
 ## Loading Libraries
 

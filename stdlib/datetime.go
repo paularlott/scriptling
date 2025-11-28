@@ -10,7 +10,7 @@ import (
 
 var DatetimeLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"now": {
-		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 			if len(args) > 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -31,7 +31,7 @@ var DatetimeLibrary = object.NewLibrary(map[string]*object.Builtin{
 Returns current date and time in local timezone. Optional format string uses Python datetime format codes.`,
 	},
 	"utcnow": {
-		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 			if len(args) > 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -52,7 +52,7 @@ Returns current date and time in local timezone. Optional format string uses Pyt
 Returns current date and time in UTC. Optional format string uses Python datetime format codes.`,
 	},
 	"today": {
-		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 			if len(args) > 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -74,7 +74,7 @@ Returns current date and time in UTC. Optional format string uses Python datetim
 Returns today's date at midnight. Optional format string uses Python datetime format codes.`,
 	},
 	"strptime": {
-		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
 			}
@@ -104,7 +104,7 @@ Returns today's date at midnight. Optional format string uses Python datetime fo
 Parses a date string according to the given format and returns a Unix timestamp.`,
 	},
 	"strftime": {
-		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
 			}
@@ -135,7 +135,7 @@ Parses a date string according to the given format and returns a Unix timestamp.
 Formats a Unix timestamp according to the given format string.`,
 	},
 	"fromtimestamp": {
-		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 			if len(args) < 1 || len(args) > 2 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -167,7 +167,7 @@ Formats a Unix timestamp according to the given format string.`,
 Converts a Unix timestamp to a formatted date string. Optional format uses Python datetime format codes.`,
 	},
 	"isoformat": {
-		Fn: func(ctx context.Context, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 			if len(args) > 1 {
 				return errors.NewArgumentError(len(args), 0)
 			}
@@ -194,144 +194,99 @@ Converts a Unix timestamp to a formatted date string. Optional format uses Pytho
 
 Returns datetime in ISO 8601 format. If timestamp is omitted, uses current time.`,
 	},
-	"add_days": {
-		Fn: func(ctx context.Context, args ...object.Object) object.Object {
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
+	"timestamp": {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			if len(args) != 0 {
+				return errors.NewArgumentError(len(args), 0)
 			}
-
-			var timestamp float64
-			switch t := args[0].(type) {
-			case *object.Integer:
-				timestamp = float64(t.Value)
-			case *object.Float:
-				timestamp = t.Value
-			default:
-				return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
-			}
-
-			var days float64
-			switch d := args[1].(type) {
-			case *object.Integer:
-				days = float64(d.Value)
-			case *object.Float:
-				days = d.Value
-			default:
-				return errors.NewTypeError("INTEGER or FLOAT", args[1].Type().String())
-			}
-
-			t := time.Unix(int64(timestamp), 0)
-			newTime := t.AddDate(0, 0, int(days))
-			return &object.Float{Value: float64(newTime.Unix())}
+			return &object.Float{Value: float64(time.Now().Unix())}
 		},
-		HelpText: `add_days(timestamp, days) - Add days to timestamp
+		HelpText: `timestamp() - Return current Unix timestamp
 
-Returns a new timestamp with the specified number of days added.`,
+Returns the current time as a Unix timestamp (seconds since epoch).`,
 	},
-	"add_hours": {
-		Fn: func(ctx context.Context, args ...object.Object) object.Object {
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
+	"timedelta": {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			// timedelta accepts keyword arguments only, no positional args
+			if len(args) > 0 {
+				return errors.NewError("timedelta() takes no positional arguments")
 			}
 
-			var timestamp float64
-			switch t := args[0].(type) {
-			case *object.Integer:
-				timestamp = float64(t.Value)
-			case *object.Float:
-				timestamp = t.Value
-			default:
-				return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
+			var days, seconds, microseconds, milliseconds, minutes, hours, weeks float64
+
+			// Helper to extract numeric value from object
+			extractNum := func(key string, obj object.Object) (float64, object.Object) {
+				switch v := obj.(type) {
+				case *object.Integer:
+					return float64(v.Value), nil
+				case *object.Float:
+					return v.Value, nil
+				default:
+					return 0, errors.NewTypeError("INTEGER or FLOAT", obj.Type().String())
+				}
 			}
 
-			var hours float64
-			switch h := args[1].(type) {
-			case *object.Integer:
-				hours = float64(h.Value)
-			case *object.Float:
-				hours = h.Value
-			default:
-				return errors.NewTypeError("INTEGER or FLOAT", args[1].Type().String())
+			// Process keyword arguments
+			for key, val := range kwargs {
+				num, err := extractNum(key, val)
+				if err != nil {
+					return err
+				}
+
+				switch key {
+				case "days":
+					days = num
+				case "seconds":
+					seconds = num
+				case "microseconds":
+					microseconds = num
+				case "milliseconds":
+					milliseconds = num
+				case "minutes":
+					minutes = num
+				case "hours":
+					hours = num
+				case "weeks":
+					weeks = num
+				default:
+					return errors.NewError("timedelta() unexpected keyword argument: %s", key)
+				}
 			}
 
-			t := time.Unix(int64(timestamp), 0)
-			duration := time.Duration(hours * float64(time.Hour))
-			newTime := t.Add(duration)
-			return &object.Float{Value: float64(newTime.Unix())}
+			// Calculate total seconds (matching Python's timedelta.total_seconds())
+			totalSeconds := weeks*7*24*3600 +
+				days*24*3600 +
+				hours*3600 +
+				minutes*60 +
+				seconds +
+				milliseconds/1000 +
+				microseconds/1000000
+
+			return &object.Float{Value: totalSeconds}
 		},
-		HelpText: `add_hours(timestamp, hours) - Add hours to timestamp
+		HelpText: `timedelta(days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0, hours=0, weeks=0)
 
-Returns a new timestamp with the specified number of hours added.`,
-	},
-	"add_minutes": {
-		Fn: func(ctx context.Context, args ...object.Object) object.Object {
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
-			}
+Creates a timedelta representing a duration. Returns the total duration in seconds.
 
-			var timestamp float64
-			switch t := args[0].(type) {
-			case *object.Integer:
-				timestamp = float64(t.Value)
-			case *object.Float:
-				timestamp = t.Value
-			default:
-				return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
-			}
+Parameters (all optional, keyword-only):
+  days         - Number of days
+  seconds      - Number of seconds
+  microseconds - Number of microseconds
+  milliseconds - Number of milliseconds
+  minutes      - Number of minutes
+  hours        - Number of hours
+  weeks        - Number of weeks
 
-			var minutes float64
-			switch m := args[1].(type) {
-			case *object.Integer:
-				minutes = float64(m.Value)
-			case *object.Float:
-				minutes = m.Value
-			default:
-				return errors.NewTypeError("INTEGER or FLOAT", args[1].Type().String())
-			}
+Returns: Float (total duration in seconds)
 
-			t := time.Unix(int64(timestamp), 0)
-			duration := time.Duration(minutes * float64(time.Minute))
-			newTime := t.Add(duration)
-			return &object.Float{Value: float64(newTime.Unix())}
-		},
-		HelpText: `add_minutes(timestamp, minutes) - Add minutes to timestamp
+Examples:
+  datetime.timedelta(days=1)                 # 86400.0 seconds
+  datetime.timedelta(hours=2, minutes=30)    # 9000.0 seconds
+  datetime.timedelta(weeks=1)                # 604800.0 seconds
 
-Returns a new timestamp with the specified number of minutes added.`,
-	},
-	"add_seconds": {
-		Fn: func(ctx context.Context, args ...object.Object) object.Object {
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
-			}
-
-			var timestamp float64
-			switch t := args[0].(type) {
-			case *object.Integer:
-				timestamp = float64(t.Value)
-			case *object.Float:
-				timestamp = t.Value
-			default:
-				return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
-			}
-
-			var seconds float64
-			switch s := args[1].(type) {
-			case *object.Integer:
-				seconds = float64(s.Value)
-			case *object.Float:
-				seconds = s.Value
-			default:
-				return errors.NewTypeError("INTEGER or FLOAT", args[1].Type().String())
-			}
-
-			t := time.Unix(int64(timestamp), 0)
-			duration := time.Duration(seconds * float64(time.Second))
-			newTime := t.Add(duration)
-			return &object.Float{Value: float64(newTime.Unix())}
-		},
-		HelpText: `add_seconds(timestamp, seconds) - Add seconds to timestamp
-
-Returns a new timestamp with the specified number of seconds added.`,
+Use with timestamps:
+  now = datetime.timestamp()
+  tomorrow = now + datetime.timedelta(days=1)`,
 	},
 }, nil, "Date and time manipulation library")
 

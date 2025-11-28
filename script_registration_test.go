@@ -242,7 +242,7 @@ func TestRegisterScriptFuncWithGoFunc(t *testing.T) {
 	p := New()
 
 	// Register a Go function
-	p.RegisterFunc("go_multiply", func(ctx context.Context, args ...object.Object) object.Object {
+	p.RegisterFunc("go_multiply", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 		if len(args) != 2 {
 			return &object.Error{Message: "go_multiply requires 2 arguments"}
 		}
@@ -283,7 +283,7 @@ func TestRegisterScriptLibraryWithGoLibrary(t *testing.T) {
 	// Register a Go library
 	p.RegisterLibrary("golib", object.NewLibrary(map[string]*object.Builtin{
 		"double": {
-			Fn: func(ctx context.Context, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 				if len(args) != 1 {
 					return &object.Error{Message: "double requires 1 argument"}
 				}

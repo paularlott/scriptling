@@ -1,15 +1,15 @@
 # Base64 Library
 
-Functions for Base64 encoding and decoding.
+Functions for Base64 encoding and decoding. Python-compatible function names.
 
 ## Functions
 
-### base64.encode(string)
+### base64.b64encode(s)
 
 Encodes a string to Base64.
 
 **Parameters:**
-- `string`: String to encode
+- `s`: String to encode
 
 **Returns:** String (Base64 encoded)
 
@@ -17,16 +17,16 @@ Encodes a string to Base64.
 ```python
 import base64
 
-encoded = base64.encode("hello world")
+encoded = base64.b64encode("hello world")
 print(encoded)  # "aGVsbG8gd29ybGQ="
 ```
 
-### base64.decode(string)
+### base64.b64decode(s)
 
 Decodes a Base64 string.
 
 **Parameters:**
-- `string`: Base64 string to decode
+- `s`: Base64 string to decode
 
 **Returns:** String (decoded)
 
@@ -34,7 +34,7 @@ Decodes a Base64 string.
 ```python
 import base64
 
-decoded = base64.decode("aGVsbG8gd29ybGQ=")
+decoded = base64.b64decode("aGVsbG8gd29ybGQ=")
 print(decoded)  # "hello world"
 ```
 
@@ -45,11 +45,11 @@ import base64
 
 # Encode
 original = "Hello, World!"
-encoded = base64.encode(original)
+encoded = base64.b64encode(original)
 print("Encoded:", encoded)
 
 # Decode
-decoded = base64.decode(encoded)
+decoded = base64.b64decode(encoded)
 print("Decoded:", decoded)
 
 # Verify

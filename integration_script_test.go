@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/paularlott/scriptling/extlibs"
 )
 
 func TestIntegrationScripts(t *testing.T) {
@@ -22,6 +24,8 @@ func TestIntegrationScripts(t *testing.T) {
 	}
 
 	p := New()
+	// Register os library with no restrictions for testing
+	extlibs.RegisterOSLibrary(p, nil)
 
 	for _, file := range files {
 		t.Run(filepath.Base(file), func(t *testing.T) {
