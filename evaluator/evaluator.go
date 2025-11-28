@@ -743,35 +743,39 @@ func applyFunctionWithContext(ctx context.Context, fn object.Object, args []obje
 	}
 }
 
-func extendFunctionEnv(fn *object.Function, args []object.Object, keywords map[string]object.Object) (*object.Environment, object.Object) {
-	env := object.NewEnclosedEnvironment(fn.Env)
+// funcParams abstracts the common parts of Function and LambdaFunction for parameter handling
+type funcParams struct {
+	parameters    []*ast.Identifier
+	defaultValues map[string]ast.Expression
+	variadic      *ast.Identifier
+	parentEnv     *object.Environment
+}
 
-	// Set provided positional arguments
-	numParams := len(fn.Parameters)
+// extendEnvWithParams handles the common logic for extending environments with function arguments
+func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[string]object.Object) (*object.Environment, object.Object) {
+	env := object.NewEnclosedEnvironment(fp.parentEnv)
+
+	numParams := len(fp.parameters)
 	numArgs := len(args)
 
+	// Set provided positional arguments
 	for paramIdx := 0; paramIdx < numParams && paramIdx < numArgs; paramIdx++ {
-		env.Set(fn.Parameters[paramIdx].Value, args[paramIdx])
+		env.Set(fp.parameters[paramIdx].Value, args[paramIdx])
 	}
 
 	// Check for extra positional arguments
 	if numArgs > numParams {
-		if fn.Variadic != nil {
+		if fp.variadic != nil {
 			// Collect extra arguments into a list
-			variadicArgs := args[numParams:]
-			list := &object.List{Elements: variadicArgs}
-			env.Set(fn.Variadic.Value, list)
+			list := &object.List{Elements: args[numParams:]}
+			env.Set(fp.variadic.Value, list)
 		} else {
-			// Calculate min args for error message
-			minArgs := numParams
-			if fn.DefaultValues != nil {
-				minArgs -= len(fn.DefaultValues)
-			}
+			minArgs := numParams - len(fp.defaultValues)
 			return nil, errors.NewArgumentError(numArgs, minArgs)
 		}
-	} else if fn.Variadic != nil {
+	} else if fp.variadic != nil {
 		// No extra arguments, set variadic to empty list
-		env.Set(fn.Variadic.Value, &object.List{Elements: []object.Object{}})
+		env.Set(fp.variadic.Value, &object.List{Elements: []object.Object{}})
 	}
 
 	// Handle keyword arguments if present
@@ -779,13 +783,13 @@ func extendFunctionEnv(fn *object.Function, args []object.Object, keywords map[s
 		setParams := make(map[string]bool, numParams)
 		// Mark positional args as set
 		for i := 0; i < numParams && i < numArgs; i++ {
-			setParams[fn.Parameters[i].Value] = true
+			setParams[fp.parameters[i].Value] = true
 		}
 
 		for key, value := range keywords {
 			// Check if parameter exists
 			paramExists := false
-			for _, param := range fn.Parameters {
+			for _, param := range fp.parameters {
 				if param.Value == key {
 					paramExists = true
 					break
@@ -804,40 +808,28 @@ func extendFunctionEnv(fn *object.Function, args []object.Object, keywords map[s
 			setParams[key] = true
 		}
 
-		// Check for missing arguments and apply defaults (when keywords are used)
-		for _, param := range fn.Parameters {
+		// Check for missing arguments and apply defaults
+		for _, param := range fp.parameters {
 			if !setParams[param.Value] {
-				// Use default value if available
-				if defaultExpr, ok := fn.DefaultValues[param.Value]; ok {
-					defaultVal := Eval(defaultExpr, fn.Env)
+				if defaultExpr, ok := fp.defaultValues[param.Value]; ok {
+					defaultVal := Eval(defaultExpr, fp.parentEnv)
 					env.Set(param.Value, defaultVal)
 				} else {
-					// Calculate min args for error message
-					minArgs := numParams
-					if fn.DefaultValues != nil {
-						minArgs -= len(fn.DefaultValues)
-					}
+					minArgs := numParams - len(fp.defaultValues)
 					return nil, errors.NewArgumentError(numArgs, minArgs)
 				}
 			}
 		}
-	} else {
-		// No keywords - just check for missing required arguments
-		if numArgs < numParams {
-			for i := numArgs; i < numParams; i++ {
-				param := fn.Parameters[i]
-				// Use default value if available
-				if defaultExpr, ok := fn.DefaultValues[param.Value]; ok {
-					defaultVal := Eval(defaultExpr, fn.Env)
-					env.Set(param.Value, defaultVal)
-				} else {
-					// Calculate min args for error message
-					minArgs := numParams
-					if fn.DefaultValues != nil {
-						minArgs -= len(fn.DefaultValues)
-					}
-					return nil, errors.NewArgumentError(numArgs, minArgs)
-				}
+	} else if numArgs < numParams {
+		// No keywords - check for missing required arguments
+		for i := numArgs; i < numParams; i++ {
+			param := fp.parameters[i]
+			if defaultExpr, ok := fp.defaultValues[param.Value]; ok {
+				defaultVal := Eval(defaultExpr, fp.parentEnv)
+				env.Set(param.Value, defaultVal)
+			} else {
+				minArgs := numParams - len(fp.defaultValues)
+				return nil, errors.NewArgumentError(numArgs, minArgs)
 			}
 		}
 	}
@@ -845,106 +837,22 @@ func extendFunctionEnv(fn *object.Function, args []object.Object, keywords map[s
 	return env, nil
 }
 
+func extendFunctionEnv(fn *object.Function, args []object.Object, keywords map[string]object.Object) (*object.Environment, object.Object) {
+	return extendEnvWithParams(funcParams{
+		parameters:    fn.Parameters,
+		defaultValues: fn.DefaultValues,
+		variadic:      fn.Variadic,
+		parentEnv:     fn.Env,
+	}, args, keywords)
+}
+
 func extendLambdaEnv(fn *object.LambdaFunction, args []object.Object, keywords map[string]object.Object) (*object.Environment, object.Object) {
-	env := object.NewEnclosedEnvironment(fn.Env)
-
-	// Set provided positional arguments
-	numParams := len(fn.Parameters)
-	numArgs := len(args)
-
-	for paramIdx := 0; paramIdx < numParams && paramIdx < numArgs; paramIdx++ {
-		env.Set(fn.Parameters[paramIdx].Value, args[paramIdx])
-	}
-
-	// Check for extra positional arguments
-	if numArgs > numParams {
-		if fn.Variadic != nil {
-			// Collect extra arguments into a list
-			variadicArgs := args[numParams:]
-			list := &object.List{Elements: variadicArgs}
-			env.Set(fn.Variadic.Value, list)
-		} else {
-			// Calculate min args for error message
-			minArgs := numParams
-			if fn.DefaultValues != nil {
-				minArgs -= len(fn.DefaultValues)
-			}
-			return nil, errors.NewArgumentError(numArgs, minArgs)
-		}
-	} else if fn.Variadic != nil {
-		// No extra arguments, set variadic to empty list
-		env.Set(fn.Variadic.Value, &object.List{Elements: []object.Object{}})
-	}
-
-	// Handle keyword arguments if present
-	if len(keywords) > 0 {
-		setParams := make(map[string]bool, numParams)
-		// Mark positional args as set
-		for i := 0; i < numParams && i < numArgs; i++ {
-			setParams[fn.Parameters[i].Value] = true
-		}
-
-		for key, value := range keywords {
-			// Check if parameter exists
-			paramExists := false
-			for _, param := range fn.Parameters {
-				if param.Value == key {
-					paramExists = true
-					break
-				}
-			}
-
-			if !paramExists {
-				return nil, errors.NewError("got an unexpected keyword argument '%s'", key)
-			}
-
-			if setParams[key] {
-				return nil, errors.NewError("multiple values for argument '%s'", key)
-			}
-
-			env.Set(key, value)
-			setParams[key] = true
-		}
-
-		// Check for missing arguments and apply defaults (when keywords are used)
-		for _, param := range fn.Parameters {
-			if !setParams[param.Value] {
-				// Use default value if available
-				if defaultExpr, ok := fn.DefaultValues[param.Value]; ok {
-					defaultVal := Eval(defaultExpr, fn.Env)
-					env.Set(param.Value, defaultVal)
-				} else {
-					// Calculate min args for error message
-					minArgs := numParams
-					if fn.DefaultValues != nil {
-						minArgs -= len(fn.DefaultValues)
-					}
-					return nil, errors.NewArgumentError(numArgs, minArgs)
-				}
-			}
-		}
-	} else {
-		// No keywords - just check for missing required arguments
-		if numArgs < numParams {
-			for i := numArgs; i < numParams; i++ {
-				param := fn.Parameters[i]
-				// Use default value if available
-				if defaultExpr, ok := fn.DefaultValues[param.Value]; ok {
-					defaultVal := Eval(defaultExpr, fn.Env)
-					env.Set(param.Value, defaultVal)
-				} else {
-					// Calculate min args for error message
-					minArgs := numParams
-					if fn.DefaultValues != nil {
-						minArgs -= len(fn.DefaultValues)
-					}
-					return nil, errors.NewArgumentError(numArgs, minArgs)
-				}
-			}
-		}
-	}
-
-	return env, nil
+	return extendEnvWithParams(funcParams{
+		parameters:    fn.Parameters,
+		defaultValues: fn.DefaultValues,
+		variadic:      fn.Variadic,
+		parentEnv:     fn.Env,
+	}, args, keywords)
 }
 
 func unwrapReturnValue(obj object.Object) object.Object {
@@ -1624,35 +1532,31 @@ func setForVariables(variables []ast.Expression, value object.Object, env *objec
 			return nil
 		}
 		return fmt.Errorf("for loop variable must be an identifier")
-	} else {
-		// Unpacking
-		if tup, ok := value.(*object.Tuple); ok {
-			if len(tup.Elements) != len(variables) {
-				return fmt.Errorf("cannot unpack %d values into %d variables", len(tup.Elements), len(variables))
-			}
-			for i, varExpr := range variables {
-				if ident, ok := varExpr.(*ast.Identifier); ok {
-					env.Set(ident.Value, tup.Elements[i])
-				} else {
-					return fmt.Errorf("for loop variables must be identifiers")
-				}
-			}
-			return nil
-		} else if lst, ok := value.(*object.List); ok {
-			if len(lst.Elements) != len(variables) {
-				return fmt.Errorf("cannot unpack %d values into %d variables", len(lst.Elements), len(variables))
-			}
-			for i, varExpr := range variables {
-				if ident, ok := varExpr.(*ast.Identifier); ok {
-					env.Set(ident.Value, lst.Elements[i])
-				} else {
-					return fmt.Errorf("for loop variables must be identifiers")
-				}
-			}
-			return nil
-		}
+	}
+
+	// Unpacking - get elements from tuple or list
+	var elements []object.Object
+	switch v := value.(type) {
+	case *object.Tuple:
+		elements = v.Elements
+	case *object.List:
+		elements = v.Elements
+	default:
 		return fmt.Errorf("cannot unpack non-tuple/list value")
 	}
+
+	if len(elements) != len(variables) {
+		return fmt.Errorf("cannot unpack %d values into %d variables", len(elements), len(variables))
+	}
+
+	for i, varExpr := range variables {
+		if ident, ok := varExpr.(*ast.Identifier); ok {
+			env.Set(ident.Value, elements[i])
+		} else {
+			return fmt.Errorf("for loop variables must be identifiers")
+		}
+	}
+	return nil
 }
 
 func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env *object.Environment) object.Object {
@@ -1663,85 +1567,44 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 
 	var result object.Object = NULL
 
+	// Get elements to iterate over based on type
+	var elements []object.Object
 	switch iter := iterable.(type) {
 	case *object.List:
-		for _, element := range iter.Elements {
-			// Check for cancellation in loops
-			if err := checkContext(ctx); err != nil {
-				return err
-			}
-
-			if err := setForVariables(fs.Variables, element, env); err != nil {
-				return errors.NewError("%s", err.Error())
-			}
-
-			result = evalWithContext(ctx, fs.Body, env)
-			if result != nil {
-				switch result.Type() {
-				case object.ERROR_OBJ:
-					return result
-				case object.RETURN_OBJ:
-					return result
-				case object.BREAK_OBJ:
-					return NULL
-				case object.CONTINUE_OBJ:
-					continue
-				}
-			}
-		}
+		elements = iter.Elements
 	case *object.Tuple:
-		for _, element := range iter.Elements {
-			// Check for cancellation in loops
-			if err := checkContext(ctx); err != nil {
-				return err
-			}
-
-			if err := setForVariables(fs.Variables, element, env); err != nil {
-				return errors.NewError("%s", err.Error())
-			}
-
-			result = evalWithContext(ctx, fs.Body, env)
-			if result != nil {
-				switch result.Type() {
-				case object.ERROR_OBJ:
-					return result
-				case object.RETURN_OBJ:
-					return result
-				case object.BREAK_OBJ:
-					return NULL
-				case object.CONTINUE_OBJ:
-					continue
-				}
-			}
-		}
+		elements = iter.Elements
 	case *object.String:
-		for _, char := range iter.Value {
-			// Check for cancellation in loops
-			if err := checkContext(ctx); err != nil {
-				return err
-			}
-
-			charObj := &object.String{Value: string(char)}
-			if err := setForVariables(fs.Variables, charObj, env); err != nil {
-				return errors.NewError("%s", err.Error())
-			}
-
-			result = evalWithContext(ctx, fs.Body, env)
-			if result != nil {
-				switch result.Type() {
-				case object.ERROR_OBJ:
-					return result
-				case object.RETURN_OBJ:
-					return result
-				case object.BREAK_OBJ:
-					return NULL
-				case object.CONTINUE_OBJ:
-					continue
-				}
-			}
+		// Convert string chars to objects
+		elements = make([]object.Object, len(iter.Value))
+		for i, char := range iter.Value {
+			elements[i] = &object.String{Value: string(char)}
 		}
 	default:
 		return errors.NewTypeError("iterable", iterable.Type().String())
+	}
+
+	// Single loop for all iterable types
+	for _, element := range elements {
+		if err := checkContext(ctx); err != nil {
+			return err
+		}
+
+		if err := setForVariables(fs.Variables, element, env); err != nil {
+			return errors.NewError("%s", err.Error())
+		}
+
+		result = evalWithContext(ctx, fs.Body, env)
+		if result != nil {
+			switch result.Type() {
+			case object.ERROR_OBJ, object.RETURN_OBJ:
+				return result
+			case object.BREAK_OBJ:
+				return NULL
+			case object.CONTINUE_OBJ:
+				continue
+			}
+		}
 	}
 
 	return result
