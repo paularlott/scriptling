@@ -31,6 +31,10 @@ func main() {
 
 			// Register HTTP library for scripts that need it
 			p.RegisterLibrary("requests", extlibs.RequestsLibrary)
+			p.RegisterLibrary("sys", extlibs.SysLibrary)
+			p.RegisterLibrary("secrets", extlibs.SecretsLibrary)
+			extlibs.RegisterOSLibrary(p, []string{})
+			extlibs.RegisterPathlibLibrary(p, []string{})
 
 			// Enable output capture
 			p.EnableOutputCapture()

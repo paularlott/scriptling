@@ -7,4 +7,9 @@ require (
 	golang.org/x/net v0.47.0
 )
 
-require golang.org/x/text v0.31.0 // indirect
+require (
+	github.com/fsnotify/fsnotify v1.9.0 // indirect
+	github.com/paularlott/cli v0.5.0 // indirect
+	golang.org/x/sys v0.38.0 // indirect
+	golang.org/x/text v0.31.0 // indirect
+)

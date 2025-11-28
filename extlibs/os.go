@@ -10,95 +10,18 @@ import (
 	"strings"
 
 	"github.com/paularlott/scriptling/errors"
+	"github.com/paularlott/scriptling/extlibs/fssecurity"
 	"github.com/paularlott/scriptling/object"
 )
 
-// OSLibraryConfig holds the configuration for the OS library
-type OSLibraryConfig struct {
-	// AllowedPaths is a list of absolute directory paths that file operations are restricted to.
-	// If empty, all paths are allowed (no restrictions).
-	// All paths must be absolute and will be cleaned/normalized.
-	AllowedPaths []string
-}
-
 // osLibraryInstance holds the configured OS library instance
 type osLibraryInstance struct {
-	config OSLibraryConfig
-}
-
-// isPathAllowed checks if the given path is within the allowed paths.
-// Returns true if the path is allowed, false otherwise.
-//
-// SECURITY CRITICAL: This function prevents path traversal attacks.
-// It handles:
-// - Relative paths (./foo, ../foo)
-// - Path traversal (../../etc/passwd)
-// - Symlink attacks (by evaluating the real path)
-// - Prefix attacks (/allowed vs /allowed-other)
-func (o *osLibraryInstance) isPathAllowed(path string) bool {
-	// If no restrictions, allow all
-	if len(o.config.AllowedPaths) == 0 {
-		return true
-	}
-
-	// Get absolute path to prevent relative path attacks
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return false
-	}
-
-	// Clean the path to resolve any .. or . components
-	absPath = filepath.Clean(absPath)
-
-	// SECURITY: Evaluate symlinks to get the real path
-	// This prevents symlink attacks where a symlink inside allowed dirs
-	// points to a location outside allowed dirs.
-	// Note: EvalSymlinks also cleans the path and makes it absolute
-	realPath, err := filepath.EvalSymlinks(absPath)
-	if err != nil {
-		// If the path doesn't exist yet (for write operations), we can't eval symlinks.
-		// In this case, we check the parent directory exists and is allowed,
-		// and that the final path (after cleaning) is still within allowed dirs.
-		parentDir := filepath.Dir(absPath)
-		realParent, parentErr := filepath.EvalSymlinks(parentDir)
-		if parentErr != nil {
-			// Parent doesn't exist either - check if path is within allowed dirs
-			// using the cleaned absolute path
-			realPath = absPath
-		} else {
-			// Parent exists, reconstruct the full path with real parent
-			realPath = filepath.Join(realParent, filepath.Base(absPath))
-		}
-	}
-
-	// Check if the real path starts with any of the allowed paths
-	for _, allowedPath := range o.config.AllowedPaths {
-		// Get real path of allowed directory too (in case it's a symlink)
-		realAllowed, err := filepath.EvalSymlinks(allowedPath)
-		if err != nil {
-			// If allowed path doesn't exist, use it as-is (cleaned)
-			realAllowed = filepath.Clean(allowedPath)
-		}
-
-		// Ensure allowed path ends with separator for proper prefix matching
-		// This prevents /allowed matching /allowed-other
-		allowedPrefix := realAllowed
-		if !strings.HasSuffix(allowedPrefix, string(os.PathSeparator)) {
-			allowedPrefix += string(os.PathSeparator)
-		}
-
-		// Check if path is exactly the allowed path or is under it
-		if realPath == realAllowed || strings.HasPrefix(realPath+string(os.PathSeparator), allowedPrefix) {
-			return true
-		}
-	}
-
-	return false
+	config fssecurity.Config
 }
 
 // checkPathSecurity validates a path and returns an error if access is denied
 func (o *osLibraryInstance) checkPathSecurity(path string) object.Object {
-	if !o.isPathAllowed(path) {
+	if !o.config.IsPathAllowed(path) {
 		return errors.NewError("access denied: path '%s' is outside allowed directories", path)
 	}
 	return nil
@@ -122,7 +45,7 @@ func (o *osLibraryInstance) checkPathSecurity(path string) object.Object {
 //	// Restricted to specific directories (SECURE)
 //	extlibs.RegisterOSLibrary(s, []string{"/tmp/sandbox", "/home/user/data"})
 func RegisterOSLibrary(registrar object.LibraryRegistrar, allowedPaths []string) {
-	config := OSLibraryConfig{
+	config := fssecurity.Config{
 		AllowedPaths: allowedPaths,
 	}
 	osLib, osPathLib := NewOSLibrary(config)
@@ -133,7 +56,7 @@ func RegisterOSLibrary(registrar object.LibraryRegistrar, allowedPaths []string)
 // NewOSLibrary creates a new OS library with the given configuration.
 // The returned libraries are for "os" and "os.path".
 // Prefer using RegisterOSLibrary which handles registration automatically.
-func NewOSLibrary(config OSLibraryConfig) (*object.Library, *object.Library) {
+func NewOSLibrary(config fssecurity.Config) (*object.Library, *object.Library) {
 	// Normalize and validate allowed paths
 	normalizedPaths := make([]string, 0, len(config.AllowedPaths))
 	for _, p := range config.AllowedPaths {
