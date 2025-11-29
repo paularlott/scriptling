@@ -453,6 +453,326 @@ logger.log("Application finished")
 }
 ```
 
+## Creating Custom Classes and Instances
+
+Scriptling supports object-oriented programming through custom classes and instances. Classes define the structure and behavior of objects, while instances are concrete objects created from classes.
+
+### Basic Class Creation
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "github.com/paularlott/scriptling"
+    "github.com/paularlott/scriptling/object"
+)
+
+func main() {
+    p := scriptling.New()
+
+    // Create a Person class
+    personClass := &object.Class{
+        Name: "Person",
+        Methods: map[string]*object.Builtin{
+            "greet": {
+                Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+                    // 'this' is the instance (first argument)
+                    if len(args) < 1 {
+                        return &object.Error{Message: "greet requires instance"}
+                    }
+                    instance := args[0].(*object.Instance)
+
+                    name, _ := instance.Fields["name"].(*object.String)
+                    return &object.String{Value: "Hello, my name is " + name.Value}
+                },
+                HelpText: "Return a greeting message from this person",
+            },
+            "set_age": {
+                Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+                    if len(args) < 2 {
+                        return &object.Error{Message: "set_age requires instance and age"}
+                    }
+                    instance := args[0].(*object.Instance)
+                    age := args[1]
+
+                    instance.Fields["age"] = age
+                    return &object.Null{}
+                },
+                HelpText: "Set the age of this person",
+            },
+        },
+    }
+
+    // Register the class as a library constant
+    p.RegisterLibrary("person", object.NewLibrary(map[string]*object.Builtin{
+        "create": {
+            Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+                if len(args) < 1 {
+                    return &object.Error{Message: "create requires name"}
+                }
+                name := args[0].(*object.String)
+
+                // Create instance with initial fields
+                instance := &object.Instance{
+                    Class: personClass,
+                    Fields: map[string]object.Object{
+                        "name": name,
+                        "age": &object.Integer{Value: 0},
+                    },
+                }
+                return instance
+            },
+            HelpText: "Create a new Person instance with the given name",
+        },
+        "Person": personClass, // Expose the class itself for help() and isinstance()
+    }, nil, "Person class and factory functions"))
+
+    // Use the class in Scriptling
+    p.Eval(`
+import person
+
+# Create a person
+john = person.create("John")
+print(john.greet())  # Hello, my name is John
+
+# Set age and access fields
+john.set_age(30)
+print("Age: " + str(john.age))  # Age: 30
+
+# Help works on classes and instances
+help(person.Person)  # Shows class info with methods
+help(john)           # Shows instance info with fields and methods
+`)
+}
+```
+
+### Class with Constructor
+
+```go
+func createPersonClass() *object.Class {
+    return &object.Class{
+        Name: "Person",
+        Methods: map[string]*object.Builtin{
+            "__init__": {
+                Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+                    if len(args) < 2 {
+                        return &object.Error{Message: "__init__ requires instance, name, and age"}
+                    }
+                    instance := args[0].(*object.Instance)
+                    name := args[1].(*object.String)
+                    age := args[2].(*object.Integer)
+
+                    instance.Fields["name"] = name
+                    instance.Fields["age"] = age
+                    return &object.Null{}
+                },
+            },
+            "introduce": {
+                Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+                    instance := args[0].(*object.Instance)
+                    name, _ := instance.Fields["name"].(*object.String)
+                    age, _ := instance.Fields["age"].(*object.Integer)
+                    return &object.String{Value: fmt.Sprintf("Hi, I'm %s and I'm %d years old", name.Value, age.Value)}
+                },
+                HelpText: "Return an introduction string",
+            },
+        },
+    }
+}
+
+func main() {
+    p := scriptling.New()
+
+    personClass := createPersonClass()
+
+    p.RegisterLibrary("person", object.NewLibrary(map[string]*object.Builtin{
+        "Person": personClass,
+        "new": {
+            Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+                if len(args) < 2 {
+                    return &object.Error{Message: "new requires name and age"}
+                }
+
+                // Create instance
+                instance := &object.Instance{
+                    Class: personClass,
+                    Fields: make(map[string]object.Object),
+                }
+
+                // Call constructor
+                initMethod := personClass.Methods["__init__"]
+                initMethod.Fn(ctx, nil, instance, args[0], args[1])
+
+                return instance
+            },
+            HelpText: "Create a new Person with name and age",
+        },
+    }, nil, "Person class with constructor"))
+
+    p.Eval(`
+import person
+
+alice = person.new("Alice", 25)
+print(alice.introduce())  # Hi, I'm Alice and I'm 25 years old
+`)
+}
+```
+
+### Class Inheritance (Composition)
+
+```go
+func createEmployeeClass(personClass *object.Class) *object.Class {
+    return &object.Class{
+        Name: "Employee",
+        Methods: map[string]*object.Builtin{
+            "__init__": {
+                Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+                    if len(args) < 4 {
+                        return &object.Error{Message: "__init__ requires instance, name, age, department, salary"}
+                    }
+                    instance := args[0].(*object.Instance)
+                    name := args[1].(*object.String)
+                    age := args[2].(*object.Integer)
+                    department := args[3].(*object.String)
+                    salary := args[4].(*object.Float)
+
+                    // Initialize as person
+                    personInit := personClass.Methods["__init__"]
+                    personInit.Fn(ctx, nil, instance, name, age)
+
+                    // Add employee-specific fields
+                    instance.Fields["department"] = department
+                    instance.Fields["salary"] = salary
+                    return &object.Null{}
+                },
+            },
+            "get_salary_info": {
+                Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+                    instance := args[0].(*object.Instance)
+                    dept, _ := instance.Fields["department"].(*object.String)
+                    salary, _ := instance.Fields["salary"].(*object.Float)
+                    return &object.String{Value: fmt.Sprintf("Works in %s, earns $%.2f", dept.Value, salary.Value)}
+                },
+                HelpText: "Return salary and department information",
+            },
+            // Inherit greet method from person
+            "greet": personClass.Methods["greet"],
+            "introduce": {
+                Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+                    instance := args[0].(*object.Instance)
+
+                    // Call parent introduce
+                    parentIntro := personClass.Methods["introduce"]
+                    baseIntro := parentIntro.Fn(ctx, nil, instance)
+
+                    // Add employee info
+                    salaryInfo := instance.Class.Methods["get_salary_info"].Fn(ctx, nil, instance)
+
+                    return &object.String{Value: baseIntro.(*object.String).Value + ". " + salaryInfo.(*object.String).Value}
+                },
+                HelpText: "Return a complete introduction including employee info",
+            },
+        },
+    }
+}
+```
+
+### Instance Field Access and Modification
+
+```go
+func main() {
+    p := scriptling.New()
+
+    counterClass := &object.Class{
+        Name: "Counter",
+        Methods: map[string]*object.Builtin{
+            "__init__": {
+                Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+                    instance := args[0].(*object.Instance)
+                    instance.Fields["count"] = &object.Integer{Value: 0}
+                    return &object.Null{}
+                },
+            },
+            "increment": {
+                Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+                    instance := args[0].(*object.Instance)
+                    count := instance.Fields["count"].(*object.Integer)
+                    count.Value++
+                    return count
+                },
+                HelpText: "Increment the counter and return new value",
+            },
+            "get_count": {
+                Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+                    instance := args[0].(*object.Instance)
+                    return instance.Fields["count"]
+                },
+                HelpText: "Get the current count value",
+            },
+        },
+    }
+
+    p.RegisterLibrary("counter", object.NewLibrary(map[string]*object.Builtin{
+        "Counter": counterClass,
+        "new": {
+            Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+                instance := &object.Instance{
+                    Class: counterClass,
+                    Fields: make(map[string]object.Object),
+                }
+                counterClass.Methods["__init__"].Fn(ctx, nil, instance)
+                return instance
+            },
+            HelpText: "Create a new Counter instance",
+        },
+    }, nil, "Counter class for counting operations"))
+
+    p.Eval(`
+import counter
+
+c = counter.new()
+print("Initial: " + str(c.get_count()))  # Initial: 0
+
+c.increment()
+c.increment()
+print("After increments: " + str(c.get_count()))  # After increments: 2
+
+# Direct field access
+c.count = 10
+print("After direct assignment: " + str(c.count))  # After direct assignment: 10
+`)
+}
+```
+
+### Best Practices for Classes
+
+1. **Use Constructors**: Always provide an `__init__` method for proper initialization
+2. **Document Methods**: Add `HelpText` to all public methods for the help system
+3. **Expose Classes**: Register classes as library constants so `help()` and `isinstance()` work
+4. **Field Access**: Allow both method-based and direct field access
+5. **Error Handling**: Validate arguments and return meaningful error messages
+6. **Composition over Inheritance**: Use composition by including other class methods rather than complex inheritance
+7. **Type Safety**: Check types when accessing fields and method arguments
+
+### Integration with Help System
+
+When you expose classes in libraries, the help system automatically provides information about:
+
+- Class methods and their documentation
+- Instance fields and their current values
+- Method signatures and help text
+
+```go
+// This enables:
+help(my_library.MyClass)    // Shows class info and methods
+help(instance)              // Shows instance fields and available methods
+isinstance(obj, MyClass)    // Type checking
+```
+
+Classes and instances integrate seamlessly with Scriptling's object system and can be used anywhere regular objects are expected.
+
 ## Database Library Example
 
 ```go
