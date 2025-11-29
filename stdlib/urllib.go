@@ -9,6 +9,58 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
+// ParseResult class for URL parsing results
+var ParseResultClass = &object.Class{
+	Name: "ParseResult",
+	Methods: map[string]object.Object{
+		"geturl": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				if len(args) != 1 {
+					return errors.NewArgumentError(len(args), 0)
+				}
+				result := args[0].(*object.Instance)
+
+				// Reconstruct URL from components
+				scheme, _ := result.Fields["scheme"].(*object.String)
+				netloc, _ := result.Fields["netloc"].(*object.String)
+				path, _ := result.Fields["path"].(*object.String)
+				query, _ := result.Fields["query"].(*object.String)
+				fragment, _ := result.Fields["fragment"].(*object.String)
+
+				url := scheme.Value + "://"
+				if netloc.Value != "" {
+					url += netloc.Value
+				}
+				url += path.Value
+				if query.Value != "" {
+					url += "?" + query.Value
+				}
+				if fragment.Value != "" {
+					url += "#" + fragment.Value
+				}
+
+				return &object.String{Value: url}
+			},
+			HelpText: `geturl() - Reconstruct URL from parsed components`,
+		},
+	},
+}
+
+// createParseResultInstance creates a new ParseResult instance
+func createParseResultInstance(scheme, netloc, path, params, query, fragment string) *object.Instance {
+	return &object.Instance{
+		Class: ParseResultClass,
+		Fields: map[string]object.Object{
+			"scheme":   &object.String{Value: scheme},
+			"netloc":   &object.String{Value: netloc},
+			"path":     &object.String{Value: path},
+			"params":   &object.String{Value: params},
+			"query":    &object.String{Value: query},
+			"fragment": &object.String{Value: fragment},
+		},
+	}
+}
+
 // URLParseLibrary implements Python's urllib.parse module
 var URLParseLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"quote": {
@@ -137,38 +189,13 @@ Like unquote(), but also replaces plus signs with spaces.`,
 				}
 			}
 
-			// Return dict with URL components matching Python's ParseResult
-			pairs := make(map[string]object.DictPair)
-			pairs["scheme"] = object.DictPair{
-				Key:   &object.String{Value: "scheme"},
-				Value: &object.String{Value: u.Scheme},
-			}
-			pairs["netloc"] = object.DictPair{
-				Key:   &object.String{Value: "netloc"},
-				Value: &object.String{Value: netloc},
-			}
-			pairs["path"] = object.DictPair{
-				Key:   &object.String{Value: "path"},
-				Value: &object.String{Value: u.Path},
-			}
-			pairs["params"] = object.DictPair{
-				Key:   &object.String{Value: "params"},
-				Value: &object.String{Value: ""},
-			}
-			pairs["query"] = object.DictPair{
-				Key:   &object.String{Value: "query"},
-				Value: &object.String{Value: u.RawQuery},
-			}
-			pairs["fragment"] = object.DictPair{
-				Key:   &object.String{Value: "fragment"},
-				Value: &object.String{Value: u.Fragment},
-			}
-
-			return &object.Dict{Pairs: pairs}
+			// Return ParseResult instance with URL components
+			return createParseResultInstance(u.Scheme, netloc, u.Path, "", u.RawQuery, u.Fragment)
 		},
 		HelpText: `urlparse(urlstring) - Parse URL into components
 
-Returns a dictionary with URL components: scheme, netloc, path, params, query, fragment.`,
+Returns a ParseResult object with URL components: scheme, netloc, path, params, query, fragment.
+Access components as attributes: result.scheme, result.netloc, etc. Use result.geturl() to reconstruct URL.`,
 	},
 	"urlunparse": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
@@ -176,8 +203,41 @@ Returns a dictionary with URL components: scheme, netloc, path, params, query, f
 				return errors.NewArgumentError(len(args), 1)
 			}
 
-			// Accept either dict or list/tuple
+			// Accept either dict, list/tuple, or ParseResult instance
 			switch arg := args[0].(type) {
+			case *object.Instance:
+				// Handle ParseResult instance
+				if arg.Class == ParseResultClass {
+					u := &url.URL{}
+					if value, ok := arg.Fields["scheme"]; ok {
+						if str, ok := value.AsString(); ok {
+							u.Scheme = str
+						}
+					}
+					if value, ok := arg.Fields["netloc"]; ok {
+						if str, ok := value.AsString(); ok {
+							u.Host = str
+						}
+					}
+					if value, ok := arg.Fields["path"]; ok {
+						if str, ok := value.AsString(); ok {
+							u.Path = str
+						}
+					}
+					if value, ok := arg.Fields["query"]; ok {
+						if str, ok := value.AsString(); ok {
+							u.RawQuery = str
+						}
+					}
+					if value, ok := arg.Fields["fragment"]; ok {
+						if str, ok := value.AsString(); ok {
+							u.Fragment = str
+						}
+					}
+					return &object.String{Value: u.String()}
+				}
+				return errors.NewTypeError("DICT, LIST, TUPLE, or ParseResult", args[0].Type().String())
+
 			case *object.Dict:
 				u := &url.URL{}
 				if value, ok := arg.Pairs["scheme"]; ok {
@@ -250,7 +310,7 @@ Returns a dictionary with URL components: scheme, netloc, path, params, query, f
 				return &object.String{Value: u.String()}
 
 			default:
-				return errors.NewTypeError("DICT, LIST, or TUPLE", args[0].Type().String())
+				return errors.NewTypeError("DICT, LIST, TUPLE, or ParseResult", args[0].Type().String())
 			}
 		},
 		HelpText: `urlunparse(components) - Construct URL from components
