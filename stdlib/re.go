@@ -18,6 +18,272 @@ const (
 	RE_DOTALL     = 16 // re.S or re.DOTALL
 )
 
+// Regex class definition
+var RegexClass = &object.Class{
+	Name: "Regex",
+	Methods: map[string]object.Object{
+		"match": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				if len(args) != 2 {
+					return errors.NewArgumentError(len(args), 2)
+				}
+				if args[1].Type() != object.STRING_OBJ {
+					return errors.NewTypeError("STRING", args[1].Type().String())
+				}
+				regex := args[0].(*object.Instance)
+				pattern := regex.Fields["pattern"].(*object.String).Value
+				text, _ := args[1].AsString()
+
+				re, err := GetCompiledRegex(pattern)
+				if err != nil {
+					return errors.NewError("regex compile error: %s", err.Error())
+				}
+
+				// Check if pattern matches at the beginning of text
+				match := re.FindStringSubmatchIndex(text)
+				if match == nil || match[0] != 0 {
+					return &object.Null{}
+				}
+
+				// Build groups from submatch indices
+				groups := make([]string, 0)
+				for i := 0; i < len(match); i += 2 {
+					if match[i] >= 0 && match[i+1] >= 0 {
+						groups = append(groups, text[match[i]:match[i+1]])
+					} else {
+						groups = append(groups, "")
+					}
+				}
+
+				return createMatchInstance(groups, match[0], match[1])
+			},
+			HelpText: `match(string) - Match pattern at start of string
+
+Returns a Match object if the pattern matches at the beginning, or None if no match.`,
+		},
+		"search": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				if len(args) != 2 {
+					return errors.NewArgumentError(len(args), 2)
+				}
+				if args[1].Type() != object.STRING_OBJ {
+					return errors.NewTypeError("STRING", args[1].Type().String())
+				}
+				regex := args[0].(*object.Instance)
+				pattern := regex.Fields["pattern"].(*object.String).Value
+				text, _ := args[1].AsString()
+
+				re, err := GetCompiledRegex(pattern)
+				if err != nil {
+					return errors.NewError("regex compile error: %s", err.Error())
+				}
+
+				match := re.FindStringSubmatchIndex(text)
+				if match == nil {
+					return &object.Null{}
+				}
+
+				// Build groups from submatch indices
+				groups := make([]string, 0)
+				for i := 0; i < len(match); i += 2 {
+					if match[i] >= 0 && match[i+1] >= 0 {
+						groups = append(groups, text[match[i]:match[i+1]])
+					} else {
+						groups = append(groups, "")
+					}
+				}
+
+				return createMatchInstance(groups, match[0], match[1])
+			},
+			HelpText: `search(string) - Search for pattern anywhere in string
+
+Returns a Match object for the first match, or None if no match found.`,
+		},
+		"findall": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				if len(args) != 2 {
+					return errors.NewArgumentError(len(args), 2)
+				}
+				if args[1].Type() != object.STRING_OBJ {
+					return errors.NewTypeError("STRING", args[1].Type().String())
+				}
+				regex := args[0].(*object.Instance)
+				pattern := regex.Fields["pattern"].(*object.String).Value
+				text, _ := args[1].AsString()
+
+				re, err := GetCompiledRegex(pattern)
+				if err != nil {
+					return errors.NewError("regex compile error: %s", err.Error())
+				}
+
+				matches := re.FindAllStringSubmatch(text, -1)
+				elements := make([]object.Object, len(matches))
+				numGroups := re.NumSubexp()
+				for i, match := range matches {
+					if numGroups == 0 {
+						elements[i] = &object.String{Value: match[0]}
+					} else if numGroups == 1 {
+						elements[i] = &object.String{Value: match[1]}
+					} else {
+						groupElements := make([]object.Object, numGroups)
+						for j := 1; j <= numGroups; j++ {
+							groupElements[j-1] = &object.String{Value: match[j]}
+						}
+						elements[i] = &object.Tuple{Elements: groupElements}
+					}
+				}
+				return &object.List{Elements: elements}
+			},
+			HelpText: `findall(string) - Find all matches
+
+Returns a list of all substrings that match the regex pattern.
+If the pattern contains capturing groups, returns a list of tuples containing the groups.
+If there is one capturing group, returns a list of strings for that group.
+If there are no capturing groups, returns a list of strings for the full matches.`,
+		},
+	},
+}
+
+// Match class definition
+var MatchClass = &object.Class{
+	Name: "Match",
+	Methods: map[string]object.Object{
+		"group": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				if len(args) > 2 {
+					return errors.NewError("group() takes at most 1 argument (%d given)", len(args))
+				}
+				match := args[0].(*object.Instance)
+				groups := match.Fields["groups"].(*object.List).Elements
+				groupNum := 0
+				if len(args) == 2 {
+					if args[1].Type() != object.INTEGER_OBJ {
+						return errors.NewTypeError("INTEGER", args[1].Type().String())
+					}
+					val, _ := args[1].AsInt()
+					groupNum = int(val)
+				}
+				if groupNum < 0 || groupNum >= len(groups) {
+					return errors.NewError("no such group: %d", groupNum)
+				}
+				return groups[groupNum]
+			},
+			HelpText: `group(n=0) - Return the nth matched group (0 = full match)`,
+		},
+		"groups": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				if len(args) != 1 {
+					return errors.NewArgumentError(len(args), 1)
+				}
+				match := args[0].(*object.Instance)
+				groups := match.Fields["groups"].(*object.List).Elements
+				if len(groups) <= 1 {
+					return &object.Tuple{Elements: []object.Object{}}
+				}
+				elements := make([]object.Object, len(groups)-1)
+				for i := 1; i < len(groups); i++ {
+					elements[i-1] = groups[i]
+				}
+				return &object.Tuple{Elements: elements}
+			},
+			HelpText: `groups() - Return tuple of all matched groups (excluding group 0)`,
+		},
+		"start": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				if len(args) > 2 {
+					return errors.NewError("start() takes at most 1 argument (%d given)", len(args))
+				}
+				match := args[0].(*object.Instance)
+				groupNum := 0
+				if len(args) == 2 {
+					if args[1].Type() != object.INTEGER_OBJ {
+						return errors.NewTypeError("INTEGER", args[1].Type().String())
+					}
+					val, _ := args[1].AsInt()
+					groupNum = int(val)
+				}
+				if groupNum != 0 {
+					return errors.NewError("start() only supports group 0")
+				}
+				return match.Fields["start"]
+			},
+			HelpText: `start(n=0) - Return start position of nth group`,
+		},
+		"end": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				if len(args) > 2 {
+					return errors.NewError("end() takes at most 1 argument (%d given)", len(args))
+				}
+				match := args[0].(*object.Instance)
+				groupNum := 0
+				if len(args) == 2 {
+					if args[1].Type() != object.INTEGER_OBJ {
+						return errors.NewTypeError("INTEGER", args[1].Type().String())
+					}
+					val, _ := args[1].AsInt()
+					groupNum = int(val)
+				}
+				if groupNum != 0 {
+					return errors.NewError("end() only supports group 0")
+				}
+				return match.Fields["end"]
+			},
+			HelpText: `end(n=0) - Return end position of nth group`,
+		},
+		"span": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				if len(args) > 2 {
+					return errors.NewError("span() takes at most 1 argument (%d given)", len(args))
+				}
+				match := args[0].(*object.Instance)
+				groupNum := 0
+				if len(args) == 2 {
+					if args[1].Type() != object.INTEGER_OBJ {
+						return errors.NewTypeError("INTEGER", args[1].Type().String())
+					}
+					val, _ := args[1].AsInt()
+					groupNum = int(val)
+				}
+				if groupNum != 0 {
+					return errors.NewError("span() only supports group 0")
+				}
+				return &object.Tuple{Elements: []object.Object{
+					match.Fields["start"],
+					match.Fields["end"],
+				}}
+			},
+			HelpText: `span(n=0) - Return (start, end) tuple for nth group`,
+		},
+	},
+}
+
+// Helper function to create a Regex instance
+func createRegexInstance(pattern string, flags int64) *object.Instance {
+	return &object.Instance{
+		Class: RegexClass,
+		Fields: map[string]object.Object{
+			"pattern": &object.String{Value: pattern},
+			"flags":   &object.Integer{Value: flags},
+		},
+	}
+}
+
+// Helper function to create a Match instance
+func createMatchInstance(groups []string, start, end int) *object.Instance {
+	groupObjects := make([]object.Object, len(groups))
+	for i, group := range groups {
+		groupObjects[i] = &object.String{Value: group}
+	}
+	return &object.Instance{
+		Class: MatchClass,
+		Fields: map[string]object.Object{
+			"groups": &object.List{Elements: groupObjects},
+			"start":  &object.Integer{Value: int64(start)},
+			"end":    &object.Integer{Value: int64(end)},
+		},
+	}
+}
+
 type regexEntry struct {
 	pattern string
 	regex   *regexp.Regexp
@@ -161,11 +427,7 @@ var ReLibrary = object.NewLibrary(map[string]*object.Builtin{
 				}
 			}
 
-			return &object.Match{
-				Groups: groups,
-				Start:  match[0],
-				End:    match[1],
-			}
+			return createMatchInstance(groups, match[0], match[1])
 		},
 		HelpText: `match(pattern, string, flags=0) - Match pattern at start of string
 
@@ -221,11 +483,7 @@ Flags:
 				}
 			}
 
-			return &object.Match{
-				Groups: groups,
-				Start:  match[0],
-				End:    match[1],
-			}
+			return createMatchInstance(groups, match[0], match[1])
 		},
 		HelpText: `search(pattern, string, flags=0) - Search for pattern anywhere in string
 
@@ -436,7 +694,7 @@ Flags:
 			}
 
 			// Return the compiled regex object
-			return &object.Regex{Pattern: pattern, Flags: flags}
+			return createRegexInstance(pattern, flags)
 		},
 		HelpText: `compile(pattern, flags=0) - Compile regex pattern
 

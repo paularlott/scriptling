@@ -268,6 +268,36 @@ func BenchmarkRuntime_RegexFindAll(b *testing.B) {
 	}
 }
 
+func BenchmarkRuntime_RegexCompileAndMethods(b *testing.B) {
+	p := New()
+	p.Eval("import re")
+	for i := 0; i < b.N; i++ {
+		p.Eval(`
+pattern = re.compile(r"(\w+) (\w+)")
+match = pattern.match("hello world")
+if match:
+    groups = match.groups()
+    first = match.group(1)
+    span = match.span()
+`)
+	}
+}
+
+func BenchmarkRuntime_RegexComplexOperations(b *testing.B) {
+	p := New()
+	p.Eval("import re")
+	for i := 0; i < b.N; i++ {
+		p.Eval(`
+# Complex regex operations
+text = "The quick brown fox jumps over the lazy dog 123 456"
+numbers = re.findall(r"\d+", text)
+words = re.findall(r"\w+", text)
+pattern = re.compile(r"(\w{4,})")
+matches = pattern.findall(text)
+`)
+	}
+}
+
 // === CACHE ===
 func BenchmarkCache_Hit(b *testing.B) {
 	script := "x = 5 + 3"

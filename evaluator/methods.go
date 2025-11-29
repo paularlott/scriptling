@@ -59,16 +59,6 @@ func callStringMethodWithKeywords(ctx context.Context, obj object.Object, method
 		return callListMethod(ctx, obj.(*object.List), method, args, keywords, env)
 	}
 
-	// Handle Regex method calls
-	if obj.Type() == object.REGEX_OBJ {
-		return callRegexMethod(ctx, obj.(*object.Regex), method, args, keywords, env)
-	}
-
-	// Handle Match method calls
-	if obj.Type() == object.MATCH_OBJ {
-		return callMatchMethod(ctx, obj.(*object.Match), method, args, keywords, env)
-	}
-
 	// Handle Instance method calls
 	if obj.Type() == object.INSTANCE_OBJ {
 		return callInstanceMethod(ctx, obj.(*object.Instance), method, args, keywords, env)
@@ -508,118 +498,6 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 		return errors.NewError("%s: list method %s not found", errors.ErrIdentifierNotFound, method)
 	}
 	return NULL
-}
-
-func callRegexMethod(ctx context.Context, regex *object.Regex, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
-	if builtin, ok := regexBuiltins[method]; ok {
-		ctxWithEnv := SetEnvInContext(ctx, env)
-		// Prepend the regex object to args
-		allArgs := make([]object.Object, len(args)+1)
-		allArgs[0] = regex
-		copy(allArgs[1:], args)
-		return builtin.Fn(ctxWithEnv, keywords, allArgs...)
-	}
-	return errors.NewError("regex has no method %s", method)
-}
-
-func callMatchMethod(ctx context.Context, m *object.Match, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
-	if len(keywords) > 0 {
-		return errors.NewError("%s() does not accept keyword arguments", method)
-	}
-
-	switch method {
-	case "group":
-		// group(n=0) - return the nth matched group
-		groupNum := 0
-		if len(args) > 1 {
-			return errors.NewError("group() takes at most 1 argument (%d given)", len(args))
-		}
-		if len(args) == 1 {
-			if args[0].Type() != object.INTEGER_OBJ {
-				return errors.NewTypeError("INTEGER", args[0].Type().String())
-			}
-			val, _ := args[0].AsInt()
-			groupNum = int(val)
-		}
-		if groupNum < 0 || groupNum >= len(m.Groups) {
-			return errors.NewError("no such group: %d", groupNum)
-		}
-		return &object.String{Value: m.Groups[groupNum]}
-
-	case "groups":
-		// groups() - return tuple of all matched groups (excluding group 0)
-		if len(args) != 0 {
-			return errors.NewArgumentError(len(args), 0)
-		}
-		if len(m.Groups) <= 1 {
-			return &object.Tuple{Elements: []object.Object{}}
-		}
-		elements := make([]object.Object, len(m.Groups)-1)
-		for i := 1; i < len(m.Groups); i++ {
-			elements[i-1] = &object.String{Value: m.Groups[i]}
-		}
-		return &object.Tuple{Elements: elements}
-
-	case "start":
-		// start(n=0) - return start position of nth group
-		// Note: We only track start/end for the full match (group 0)
-		if len(args) > 1 {
-			return errors.NewError("start() takes at most 1 argument (%d given)", len(args))
-		}
-		groupNum := 0
-		if len(args) == 1 {
-			if args[0].Type() != object.INTEGER_OBJ {
-				return errors.NewTypeError("INTEGER", args[0].Type().String())
-			}
-			val, _ := args[0].AsInt()
-			groupNum = int(val)
-		}
-		if groupNum != 0 {
-			return errors.NewError("start() only supports group 0")
-		}
-		return &object.Integer{Value: int64(m.Start)}
-
-	case "end":
-		// end(n=0) - return end position of nth group
-		if len(args) > 1 {
-			return errors.NewError("end() takes at most 1 argument (%d given)", len(args))
-		}
-		groupNum := 0
-		if len(args) == 1 {
-			if args[0].Type() != object.INTEGER_OBJ {
-				return errors.NewTypeError("INTEGER", args[0].Type().String())
-			}
-			val, _ := args[0].AsInt()
-			groupNum = int(val)
-		}
-		if groupNum != 0 {
-			return errors.NewError("end() only supports group 0")
-		}
-		return &object.Integer{Value: int64(m.End)}
-
-	case "span":
-		// span(n=0) - return (start, end) tuple for nth group
-		if len(args) > 1 {
-			return errors.NewError("span() takes at most 1 argument (%d given)", len(args))
-		}
-		groupNum := 0
-		if len(args) == 1 {
-			if args[0].Type() != object.INTEGER_OBJ {
-				return errors.NewTypeError("INTEGER", args[0].Type().String())
-			}
-			val, _ := args[0].AsInt()
-			groupNum = int(val)
-		}
-		if groupNum != 0 {
-			return errors.NewError("span() only supports group 0")
-		}
-		return &object.Tuple{Elements: []object.Object{
-			&object.Integer{Value: int64(m.Start)},
-			&object.Integer{Value: int64(m.End)},
-		}}
-	}
-
-	return errors.NewError("match object has no method %s", method)
 }
 
 func callStringMethod(ctx context.Context, str *object.String, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {

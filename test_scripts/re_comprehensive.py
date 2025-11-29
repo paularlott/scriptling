@@ -57,8 +57,9 @@ if len(escaped) <= len("a.b+c*"):
     fails = fails + 1
 
 # Test 12: re.compile returns a Regex object
-pattern = re.compile("[0-9]+")
-if type(pattern) != "REGEX":
+# Test 12: re.compile returns a Regex object
+pattern = re.compile("hello")
+if type(pattern) != "Regex":
     fails = fails + 1
 
 # Test 13: Word boundary matching - use simpler pattern
@@ -99,13 +100,13 @@ if len(matches) != 2:
 
 # Test 20: re.compile with flags returns Regex object
 pattern = re.compile("hello", re.I)
-if type(pattern) != "REGEX":
+if type(pattern) != "Regex":
     fails = fails + 1
 
 # Test 21: Combined flags (IGNORECASE | MULTILINE)
 pattern = re.compile("hello", re.I | re.M)
 # Pattern should be a Regex object with the pattern containing the flags
-if type(pattern) != "REGEX":
+if type(pattern) != "Regex":
     fails = fails + 1
 
 # Test 22: MULTILINE flag for ^ and $ matching
