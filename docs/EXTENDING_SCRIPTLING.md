@@ -756,6 +756,57 @@ print("After direct assignment: " + str(c.count))  # After direct assignment: 10
 6. **Composition over Inheritance**: Use composition by including other class methods rather than complex inheritance
 7. **Type Safety**: Check types when accessing fields and method arguments
 
+### Special Methods for Custom Behavior
+
+Scriptling supports special methods that enable custom syntax and behavior for your classes:
+
+#### `__getitem__(key)` - Custom Indexing
+Implement `__getitem__` to enable `obj[key]` syntax for custom indexing:
+
+```go
+counterClass := &object.Class{
+    Name: "Counter",
+    Methods: map[string]*object.Builtin{
+        "__init__": {
+            Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+                instance := args[0].(*object.Instance)
+                instance.Fields = make(map[string]object.Object)
+                return &object.Null{}
+            },
+        },
+        "__getitem__": {
+            Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+                if len(args) != 2 {
+                    return &object.Error{Message: "__getitem__ requires instance and key"}
+                }
+                instance := args[0].(*object.Instance)
+                key := args[1].Inspect() // Convert key to string for storage
+
+                if count, ok := instance.Fields[key]; ok {
+                    return count
+                }
+                // Return 0 for missing keys (like Python Counter)
+                return &object.Integer{Value: 0}
+            },
+            HelpText: `__getitem__(key) - Get count for key (supports c[key] syntax)`,
+        },
+        // ... other methods
+    },
+}
+```
+
+This enables:
+```python
+c = Counter([1, 1, 2])
+print(c[1])  # 2
+print(c[3])  # 0 (not KeyError)
+```
+
+#### Other Special Methods
+- `__init__`: Constructor called when creating instances
+- `__str__`: Custom string representation (for `str()` function)
+- `__len__`: Custom length (for `len()` function)
+
 ### Integration with Help System
 
 When you expose classes in libraries, the help system automatically provides information about:

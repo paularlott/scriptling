@@ -1,4 +1,6 @@
 import math
 
 result = math.sqrt(16)
-result == 4
+assert result == 4.0
+
+True
