@@ -14,8 +14,8 @@ func BenchmarkRegexFind(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		result := ReLibrary.Functions()["find"].Fn(context.Background(), nil, pattern, text)
-		if result.Type() != object.STRING_OBJ && result.Type() != object.NULL_OBJ {
+		result := ReLibrary.Functions()["search"].Fn(context.Background(), nil, pattern, text)
+		if result.Type() != object.INSTANCE_OBJ && result.Type() != object.NULL_OBJ {
 			b.Errorf("Unexpected result type: %v", result.Type())
 		}
 	}

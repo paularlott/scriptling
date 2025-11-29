@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"sync"
+	"time"
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
@@ -285,9 +286,10 @@ func createMatchInstance(groups []string, start, end int) *object.Instance {
 }
 
 type regexEntry struct {
-	pattern string
-	regex   *regexp.Regexp
-	element *list.Element
+	pattern  string
+	regex    *regexp.Regexp
+	element  *list.Element
+	lastUsed time.Time
 }
 
 type regexCache struct {
@@ -329,6 +331,7 @@ func GetCompiledRegex(pattern string) (*regexp.Regexp, error) {
 		globalRegexCache.mu.RUnlock()
 		globalRegexCache.mu.Lock()
 		globalRegexCache.lru.MoveToFront(entry.element)
+		entry.lastUsed = time.Now()
 		globalRegexCache.mu.Unlock()
 		return entry.regex, nil
 	}
@@ -349,14 +352,18 @@ func GetCompiledRegex(pattern string) (*regexp.Regexp, error) {
 	}
 
 	// Evict old entries if cache is full
+	// Evict old entries if cache is full
 	for len(globalRegexCache.entries) >= globalRegexCache.maxSize {
-		globalRegexCache.evictOldest()
+		if !globalRegexCache.evictOldest() {
+			break
+		}
 	}
 
 	// Add new entry at front
 	entry := &regexEntry{
-		pattern: pattern,
-		regex:   re,
+		pattern:  pattern,
+		regex:    re,
+		lastUsed: time.Now(),
 	}
 	elem := globalRegexCache.lru.PushFront(entry)
 	entry.element = elem
@@ -365,15 +372,22 @@ func GetCompiledRegex(pattern string) (*regexp.Regexp, error) {
 	return re, nil
 }
 
-func (c *regexCache) evictOldest() {
+func (c *regexCache) evictOldest() bool {
 	elem := c.lru.Back()
 	if elem == nil {
-		return
+		return false
 	}
 
 	entry := elem.Value.(*regexEntry)
+
+	// Check if entry is recent (used within last 3 seconds)
+	if time.Since(entry.lastUsed) < 3*time.Second {
+		return false // Don't evict recent entries
+	}
+
 	c.lru.Remove(elem)
 	delete(c.entries, entry.pattern)
+	return true
 }
 
 // Helper to extract optional flags argument
