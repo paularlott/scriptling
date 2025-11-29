@@ -35,6 +35,77 @@ func init() {
 	}
 }
 
+// Response class for HTTP responses
+
+// ResponseClass defines the Response class with its methods
+var ResponseClass = &object.Class{
+	Name: "Response",
+	Methods: map[string]object.Object{
+		"json": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				if len(args) != 1 {
+					return errors.NewArgumentError(len(args), 1)
+				}
+				if instance, ok := args[0].(*object.Instance); ok {
+					if body, ok := instance.Fields["body"].(*object.String); ok {
+						var result interface{}
+						if err := json.Unmarshal([]byte(body.Value), &result); err != nil {
+							return errors.NewError("JSONDecodeError: %s", err.Error())
+						}
+						return convertJSONToObject(result)
+					}
+				}
+				return errors.NewError("json() called on non-Response object")
+			},
+			HelpText: `json() - Parses the response body as JSON and returns the parsed object`,
+		},
+		"raise_for_status": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				if len(args) != 1 {
+					return errors.NewArgumentError(len(args), 1)
+				}
+				if instance, ok := args[0].(*object.Instance); ok {
+					if statusCode, ok := instance.Fields["status_code"].(*object.Integer); ok {
+						if statusCode.Value >= 400 {
+							if statusCode.Value >= 500 {
+								return errors.NewError("HTTPError: %d Server Error", statusCode.Value)
+							} else {
+								return errors.NewError("HTTPError: %d Client Error", statusCode.Value)
+							}
+						}
+						return &object.Null{}
+					}
+				}
+				return errors.NewError("raise_for_status() called on non-Response object")
+			},
+			HelpText: `raise_for_status() - Raises an exception if the status code indicates an error`,
+		},
+	},
+}
+
+// createResponseInstance creates a new Response instance
+func createResponseInstance(statusCode int, headers map[string]string, body []byte, url string) *object.Instance {
+	// Convert headers to object.Dict
+	headerPairs := make(map[string]object.DictPair)
+	for k, v := range headers {
+		headerPairs[k] = object.DictPair{
+			Key:   &object.String{Value: k},
+			Value: &object.String{Value: v},
+		}
+	}
+
+	return &object.Instance{
+		Class: ResponseClass,
+		Fields: map[string]object.Object{
+			"status_code": &object.Integer{Value: int64(statusCode)},
+			"text":        &object.String{Value: string(body)},
+			"headers":     &object.Dict{Pairs: headerPairs},
+			"body":        &object.String{Value: string(body)},
+			"url":         &object.String{Value: url},
+		},
+	}
+}
+
 // Exception types for requests library
 var requestExceptionType = &object.String{Value: "RequestException"}
 var httpErrorType = &object.String{Value: "HTTPError"}
@@ -283,76 +354,7 @@ func httpRequestWithContext(parentCtx context.Context, method, url, body string,
 		}
 	}
 
-	pairs := make(map[string]object.DictPair)
-	statusCode := &object.Integer{Value: int64(resp.StatusCode)}
-	bodyText := &object.String{Value: string(respBody)}
-
-	// Requests-compatible keys
-	pairs["status_code"] = object.DictPair{
-		Key:   &object.String{Value: "status_code"},
-		Value: statusCode,
-	}
-	pairs["text"] = object.DictPair{
-		Key:   &object.String{Value: "text"},
-		Value: bodyText,
-	}
-
-	headerPairs := make(map[string]object.DictPair)
-	for k, v := range respHeaders {
-		headerPairs[k] = object.DictPair{
-			Key:   &object.String{Value: k},
-			Value: &object.String{Value: v},
-		}
-	}
-	pairs["headers"] = object.DictPair{
-		Key:   &object.String{Value: "headers"},
-		Value: &object.Dict{Pairs: headerPairs},
-	}
-
-	// Add json() method - parses response body as JSON
-	pairs["json"] = object.DictPair{
-		Key: &object.String{Value: "json"},
-		Value: &object.Builtin{
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-				if len(args) != 0 {
-					return errors.NewArgumentError(len(args), 0)
-				}
-
-				// Parse the JSON body
-				var result interface{}
-				if err := json.Unmarshal(respBody, &result); err != nil {
-					return errors.NewError("JSONDecodeError: %s", err.Error())
-				}
-
-				// Convert to Scriptling object
-				return convertJSONToObject(result)
-			},
-		},
-	}
-
-	// Add raise_for_status() method - raises error if status >= 400
-	pairs["raise_for_status"] = object.DictPair{
-		Key: &object.String{Value: "raise_for_status"},
-		Value: &object.Builtin{
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-				if len(args) != 0 {
-					return errors.NewArgumentError(len(args), 0)
-				}
-
-				if resp.StatusCode >= 400 {
-					if resp.StatusCode >= 500 {
-						return errors.NewError("HTTPError: %d Server Error", resp.StatusCode)
-					} else {
-						return errors.NewError("HTTPError: %d Client Error", resp.StatusCode)
-					}
-				}
-
-				return &object.Null{}
-			},
-		},
-	}
-
-	return &object.Dict{Pairs: pairs}
+	return createResponseInstance(resp.StatusCode, respHeaders, respBody, url)
 }
 
 // convertJSONToObject converts Go's JSON interface{} to Scriptling objects
