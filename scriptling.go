@@ -433,6 +433,11 @@ func (p *Scriptling) RegisterLibrary(name string, lib *object.Library) {
 	p.registeredLibraries[name] = lib
 }
 
+// Import imports a library into the current environment, making it available for use without needing an import statement in scripts
+func (p *Scriptling) Import(name string) error {
+	return p.loadLibrary(name)
+}
+
 // RegisterScriptFunc registers a function written in Scriptling
 // The script should define a function and this method will extract it and register it by name
 func (p *Scriptling) RegisterScriptFunc(name string, script string) error {

@@ -140,13 +140,15 @@ p.SetOnDemandLibraryCallback(func(p *Scriptling, libName string) bool {
 import "github.com/paularlott/scriptling/extlibs"
 p.RegisterLibrary("http", extlibs.HTTPLibrary())
 
+// Import libraries programmatically (no need for import statements in scripts)
+p.Import("json")
+
 // Use in scripts
 p.Eval(`
-import json
 import http
 
 response = http.get("https://api.example.com/data")
-data = json.parse(response["body"])
+data = json.parse(response["body"])  # json already imported via p.Import()
 `)
 
 // Libraries can also be loaded on-demand using SetOnDemandLibraryCallback
