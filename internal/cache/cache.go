@@ -2,8 +2,7 @@ package cache
 
 import (
 	"container/list"
-	"crypto/sha256"
-	"encoding/hex"
+	"hash/maphash"
 	"sync"
 	"time"
 
@@ -11,20 +10,20 @@ import (
 )
 
 type cacheEntry struct {
-	key      string
+	key      uint64
 	program  *ast.Program
 	lastUsed time.Time
 }
 
 type programCache struct {
 	mu      sync.RWMutex
-	entries map[string]*list.Element
+	entries map[uint64]*list.Element
 	lru     *list.List
 	maxSize int
 }
 
 var globalCache = &programCache{
-	entries: make(map[string]*list.Element),
+	entries: make(map[uint64]*list.Element),
 	lru:     list.New(),
 	maxSize: 1000, // Max 1000 cached programs
 }
@@ -90,9 +89,13 @@ func (c *programCache) set(script string, program *ast.Program) {
 	c.entries[key] = elem
 }
 
-func hashScript(script string) string {
-	hash := sha256.Sum256([]byte(script))
-	return hex.EncodeToString(hash[:])
+var hashSeed = maphash.MakeSeed()
+
+func hashScript(script string) uint64 {
+	var h maphash.Hash
+	h.SetSeed(hashSeed)
+	h.WriteString(script)
+	return h.Sum64()
 }
 
 func (c *programCache) evictOldest() bool {
