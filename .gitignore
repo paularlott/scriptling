@@ -2,3 +2,5 @@
 /bin/
 !/bin/.gitignore
 /scriptling
+/scriptling-cli/scriptling-cli
+/examples/mcp/scriptling-mcp-server

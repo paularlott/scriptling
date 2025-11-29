@@ -8,6 +8,7 @@ import (
 
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/errors"
+	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/scriptling/stdlib"
 )
@@ -38,6 +39,13 @@ func init() {
 	stdlib.SetFunctionCaller(func(ctx context.Context, fn *object.Function, args []object.Object) object.Object {
 		return applyFunctionWithContext(ctx, fn, args, nil, fn.Env)
 	})
+
+	// Set up the method caller for html.parser (and other extlibs that need to call user methods)
+	extlibs.ApplyMethodFunc = func(ctx context.Context, instance *object.Instance, method *object.Function, args []object.Object) object.Object {
+		// Prepend instance (self) to args
+		allArgs := append([]object.Object{instance}, args...)
+		return applyFunctionWithContext(ctx, method, allArgs, nil, method.Env)
+	}
 }
 
 // Eval executes without context (backwards compatible)

@@ -31,6 +31,7 @@ func TestIntegrationScripts(t *testing.T) {
 	extlibs.RegisterPathlibLibrary(p, nil)
 	// Register subprocess library for testing
 	p.RegisterLibrary("subprocess", extlibs.SubprocessLibrary)
+	p.RegisterLibrary("html.parser", extlibs.HTMLParserLibrary)
 
 	// Set up on-demand library loading for local .py files in test_scripts
 	p.SetOnDemandLibraryCallback(func(p *Scriptling, libName string) bool {
