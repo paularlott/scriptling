@@ -863,3 +863,123 @@ result = json.stringify(processed)
 p.Eval(pipeline)
 result, _ := p.GetVar("result")
 ```
+## Defining Classes in Go
+
+You can define Scriptling classes entirely in Go, allowing you to create custom types with high-performance methods implemented in Go.
+
+### Creating a Go-Defined Class
+
+To create a class in Go, you construct an `object.Class` and register it in the interpreter. Methods can be implemented as `object.Builtin` functions.
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "github.com/paularlott/scriptling"
+    "github.com/paularlott/scriptling/object"
+)
+
+func main() {
+    p := scriptling.New()
+
+    // Define a 'Person' class
+    personClass := &object.Class{
+        Name: "Person",
+        Methods: map[string]object.Object{
+            // __init__ constructor
+            "__init__": &object.Builtin{
+                Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+                    // args[0] is 'self'
+                    if len(args) != 3 {
+                        return &object.Error{Message: "__init__ requires 2 arguments (name, age)"}
+                    }
+
+                    self := args[0].(*object.Instance)
+                    name := args[1]
+                    age := args[2]
+
+                    // Set fields on the instance
+                    self.Fields["name"] = name
+                    self.Fields["age"] = age
+
+                    return object.NULL
+                },
+            },
+            // Custom method
+            "greet": &object.Builtin{
+                Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+                    self := args[0].(*object.Instance)
+                    name := self.Fields["name"].(*object.String).Value
+
+                    return &object.String{Value: fmt.Sprintf("Hello, my name is %s!", name)}
+                },
+            },
+        },
+    }
+
+    // Register the class in the global environment
+    p.RegisterVar("Person", personClass)
+
+    // Use the class in Scriptling
+    p.Eval(`
+    p = Person("Alice", 30)
+    print(p.greet())  # Output: Hello, my name is Alice!
+    print(p.name)     # Output: Alice
+    `)
+}
+```
+
+### Key Concepts
+
+1.  **`object.Class`**: The struct representing a class.
+2.  **`Methods` Map**: A map where keys are method names and values are `object.Object` (usually `*object.Builtin`).
+3.  **`self` Argument**: The first argument to any method (including `__init__`) is always the instance itself (`*object.Instance`).
+4.  **`Fields`**: You can access and modify instance fields via `self.Fields` map.
+
+### Defining Classes in Libraries
+
+You can also include classes in custom libraries.
+
+```go
+func CreateMyLibrary() map[string]*object.Builtin {
+    // Define a class
+    myClass := &object.Class{
+        Name: "MyClass",
+        Methods: map[string]object.Object{
+            "__init__": &object.Builtin{
+                Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+                    // Constructor logic
+                    return object.NULL
+                },
+            },
+            "do_something": &object.Builtin{
+                Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+                    return &object.String{Value: "Done"}
+                },
+            },
+        },
+    }
+
+    // Return library with class as a "function" (it's callable)
+    // Note: Currently, libraries expect *object.Builtin values.
+    // To export a class from a library, you might need to wrap it or register it separately.
+    // Alternatively, you can return a constructor function that returns an instance.
+
+    return map[string]*object.Builtin{
+        "create_instance": {
+            Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+                // Manually create and return an instance
+                instance := &object.Instance{
+                    Class: myClass,
+                    Fields: make(map[string]object.Object),
+                }
+                return instance
+            },
+        },
+    }
+}
+```
+
+**Note**: Direct export of `object.Class` types in `object.Library` (which uses `map[string]*object.Builtin`) is not directly supported by the `NewLibrary` helper. You can register classes directly in the environment using `p.RegisterVar("ClassName", classObj)`.

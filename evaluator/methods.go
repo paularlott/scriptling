@@ -69,11 +69,28 @@ func callStringMethodWithKeywords(ctx context.Context, obj object.Object, method
 		return callMatchMethod(ctx, obj.(*object.Match), method, args, keywords, env)
 	}
 
-	if obj.Type() != object.STRING_OBJ {
-		return errors.NewTypeError("STRING", obj.Type().String())
+	// Handle Instance method calls
+	if obj.Type() == object.INSTANCE_OBJ {
+		return callInstanceMethod(ctx, obj.(*object.Instance), method, args, keywords, env)
 	}
 
-	return callStringMethod(ctx, obj.(*object.String), method, args, keywords, env)
+	// Default to string methods if object is a string
+	if obj.Type() == object.STRING_OBJ {
+		return callStringMethod(ctx, obj.(*object.String), method, args, keywords, env)
+	}
+
+	return errors.NewError("object %s has no method %s", obj.Type(), method)
+}
+
+func callInstanceMethod(ctx context.Context, instance *object.Instance, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+	// Check class methods
+	if fn, ok := instance.Class.Methods[method]; ok {
+		// Bind 'self'
+		newArgs := append([]object.Object{instance}, args...)
+		return applyFunctionWithContext(ctx, fn, newArgs, keywords, env)
+	}
+
+	return errors.NewError("instance has no method %s", method)
 }
 
 func callDictMethod(ctx context.Context, dict *object.Dict, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
@@ -87,6 +104,8 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		case *object.Function:
 			return applyFunctionWithContext(ctx, fn, args, keywords, env)
 		case *object.LambdaFunction:
+			return applyFunctionWithContext(ctx, fn, args, keywords, env)
+		case *object.Class:
 			return applyFunctionWithContext(ctx, fn, args, keywords, env)
 		}
 		// If it's not a callable, fall through to dict instance methods

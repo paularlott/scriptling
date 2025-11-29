@@ -43,6 +43,8 @@ func evalIndexExpression(left, index object.Object) object.Object {
 		return evalRegexIndexExpression(left, index)
 	case left.Type() == object.STRING_OBJ && index.Type() == object.INTEGER_OBJ:
 		return evalStringIndexExpression(left, index)
+	case left.Type() == object.INSTANCE_OBJ:
+		return evalInstanceIndexExpression(left, index)
 	default:
 		return errors.NewError("index operator not supported: %s", left.Type())
 	}
@@ -129,6 +131,22 @@ func evalRegexIndexExpression(regex, index object.Object) object.Object {
 		return errors.NewError("regex has no method %s", method)
 	}
 	return builtin
+}
+
+func evalInstanceIndexExpression(instance, index object.Object) object.Object {
+	if index.Type() != object.STRING_OBJ {
+		return errors.NewError("instance index must be string")
+	}
+	field := index.(*object.String).Value
+	inst := instance.(*object.Instance)
+	if val, ok := inst.Fields[field]; ok {
+		return val
+	}
+	// Check class methods
+	if fn, ok := inst.Class.Methods[field]; ok {
+		return fn
+	}
+	return NULL
 }
 
 func evalSliceExpressionWithContext(ctx context.Context, node *ast.SliceExpression, env *object.Environment) object.Object {
