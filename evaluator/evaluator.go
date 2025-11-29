@@ -111,6 +111,8 @@ func evalWithContext(ctx context.Context, node ast.Node, env *object.Environment
 			return right
 		}
 		return evalInfixExpression(node.Operator, left, right)
+	case *ast.ConditionalExpression:
+		return evalConditionalExpression(ctx, node, env)
 	case *ast.BlockStatement:
 		return evalBlockStatementWithContext(ctx, node, env)
 	case *ast.IfStatement:
@@ -444,6 +446,19 @@ func evalInfixExpression(operator string, left, right object.Object) object.Obje
 		return nativeBoolToBooleanObject(!objectsDeepEqual(left, right))
 	default:
 		return errors.NewError("%s: type mismatch", errors.ErrTypeError)
+	}
+}
+
+func evalConditionalExpression(ctx context.Context, node *ast.ConditionalExpression, env *object.Environment) object.Object {
+	condition := evalWithContext(ctx, node.Condition, env)
+	if isError(condition) {
+		return condition
+	}
+
+	if isTruthy(condition) {
+		return evalWithContext(ctx, node.TrueExpr, env)
+	} else {
+		return evalWithContext(ctx, node.FalseExpr, env)
 	}
 }
 

@@ -10,24 +10,26 @@ import (
 )
 
 const (
-	_ int = iota
-	LOWEST
-	OR          // Logical OR
-	BIT_OR      // Bitwise OR |
-	BIT_XOR     // Bitwise XOR ^
-	BIT_AND     // Bitwise AND &
-	AND         // Logical AND
-	EQUALS      // ==, !=
-	LESSGREATER // <, >, <=, >=
-	BIT_SHIFT   // <<, >>
-	SUM         // +, -
-	PRODUCT     // *, /, %
-	POWER       // **
-	PREFIX      // -, not, ~
-	CALL        // function calls, indexing
+	LOWEST_PRECEDENCE = 0
+	LOWEST            = 1
+	CONDITIONAL       = 2 // for conditional expressions (x if cond else y)
+	OR                = 3
+	BIT_OR            = 4
+	BIT_XOR           = 5
+	BIT_AND           = 6
+	AND               = 7
+	EQUALS            = 8
+	LESSGREATER       = 9
+	BIT_SHIFT         = 10
+	SUM               = 11
+	PRODUCT           = 12
+	POWER             = 13
+	PREFIX            = 14
+	CALL              = 15
 )
 
 var precedences = map[token.TokenType]int{
+	token.IF:        CONDITIONAL,
 	token.OR:        OR,
 	token.PIPE:      BIT_OR,
 	token.CARET:     BIT_XOR,
@@ -61,8 +63,9 @@ type Parser struct {
 	l      *lexer.Lexer
 	errors []string
 
-	curToken  token.Token
-	peekToken token.Token
+	curToken       token.Token
+	peekToken      token.Token
+	skippedNewline bool // true if a NEWLINE was skipped between curToken and peekToken
 
 	prefixParseFns map[token.TokenType]prefixParseFn
 	infixParseFns  map[token.TokenType]infixParseFn
@@ -121,6 +124,7 @@ func New(l *lexer.Lexer) *Parser {
 	p.registerInfix(token.LPAREN, p.parseCallExpression)
 	p.registerInfix(token.LBRACKET, p.parseIndexExpression)
 	p.registerInfix(token.DOT, p.parseIndexExpression)
+	p.registerInfix(token.IF, p.parseConditionalExpression)
 
 	p.nextToken()
 	p.nextToken()
@@ -141,7 +145,9 @@ func (p *Parser) peekError(t token.TokenType) {
 func (p *Parser) nextToken() {
 	p.curToken = p.peekToken
 	p.peekToken = p.l.NextToken()
+	p.skippedNewline = false
 	for p.peekToken.Type == token.NEWLINE {
+		p.skippedNewline = true
 		p.peekToken = p.l.NextToken()
 	}
 }
@@ -267,7 +273,7 @@ func (p *Parser) parseAssignStatement() *ast.AssignStatement {
 	}
 
 	p.nextToken()
-	stmt.Value = p.parseExpression(LOWEST)
+	stmt.Value = p.parseExpressionWithConditional()
 
 	return stmt
 }
@@ -384,20 +390,20 @@ func (p *Parser) parseReturnStatement() *ast.ReturnStatement {
 	p.nextToken()
 
 	if !p.curTokenIs(token.NEWLINE) && !p.curTokenIs(token.EOF) {
-		stmt.ReturnValue = p.parseExpression(LOWEST)
+		stmt.ReturnValue = p.parseExpressionWithConditional()
 	}
 
 	return stmt
 }
 
 func (p *Parser) parseExpressionStatement() ast.Statement {
-	expr := p.parseExpression(LOWEST)
+	expr := p.parseExpressionWithConditional()
 	if p.peekTokenIs(token.ASSIGN) {
 		// It's an assignment
 		stmt := &ast.AssignStatement{Token: p.curToken, Left: expr}
 		p.nextToken() // consume =
 		p.nextToken() // move to value
-		stmt.Value = p.parseExpression(LOWEST)
+		stmt.Value = p.parseExpressionWithConditional()
 		return stmt
 	}
 	return &ast.ExpressionStatement{Token: p.curToken, Expression: expr}
@@ -411,7 +417,12 @@ func (p *Parser) parseExpression(precedence int) ast.Expression {
 	}
 	leftExp := prefix()
 
-	for !p.peekTokenIs(token.NEWLINE) && !p.peekTokenIs(token.EOF) && precedence < p.peekPrecedence() {
+	for !p.peekTokenIs(token.NEWLINE) && !p.peekTokenIs(token.EOF) && !p.peekTokenIs(token.COLON) && precedence < p.peekPrecedence() {
+		// Special handling for IF token: only treat as conditional expression
+		// if it appears on the same line (no newline was skipped)
+		if p.peekTokenIs(token.IF) && p.skippedNewline {
+			return leftExp
+		}
 		infix := p.infixParseFns[p.peekToken.Type]
 		if infix == nil {
 			return leftExp
@@ -421,6 +432,34 @@ func (p *Parser) parseExpression(precedence int) ast.Expression {
 	}
 
 	return leftExp
+}
+
+// parseConditionalExpression parses conditional expressions (x if cond else y)
+// Called as an infix parser when IF is seen after an expression
+func (p *Parser) parseConditionalExpression(trueExpr ast.Expression) ast.Expression {
+	ifToken := p.curToken
+	p.nextToken() // move to condition
+	condition := p.parseExpression(LOWEST)
+
+	if !p.expectPeek(token.ELSE) {
+		return nil
+	}
+	p.nextToken() // move to false expression
+	// Parse false expression with CONDITIONAL precedence to handle nested conditionals
+	falseExpr := p.parseExpression(CONDITIONAL)
+	return &ast.ConditionalExpression{
+		Token:     ifToken,
+		TrueExpr:  trueExpr,
+		Condition: condition,
+		FalseExpr: falseExpr,
+	}
+}
+
+// parseExpressionWithConditional parses expressions including conditional expressions (x if cond else y)
+// This is now just a wrapper that calls parseExpression with LOWEST precedence
+// The actual conditional expression handling is done via the registered infix parser
+func (p *Parser) parseExpressionWithConditional() ast.Expression {
+	return p.parseExpression(LOWEST)
 }
 
 func (p *Parser) noPrefixParseFnError(t token.TokenType) {
@@ -599,7 +638,7 @@ func (p *Parser) parseGroupedExpression() ast.Expression {
 		return &ast.TupleLiteral{Token: p.curToken, Elements: []ast.Expression{}}
 	}
 
-	firstExp := p.parseExpression(LOWEST)
+	firstExp := p.parseExpression(LOWEST_PRECEDENCE)
 
 	// Check if this is a generator expression (similar to list comprehension)
 	if p.peekTokenIs(token.FOR) {
@@ -617,7 +656,7 @@ func (p *Parser) parseGroupedExpression() ast.Expression {
 				break
 			}
 			p.nextToken()
-			elements = append(elements, p.parseExpression(LOWEST))
+			elements = append(elements, p.parseExpression(LOWEST_PRECEDENCE))
 		}
 
 		if !p.expectPeek(token.RPAREN) {
@@ -707,7 +746,7 @@ func (p *Parser) parseIfStatement() *ast.IfStatement {
 	stmt := &ast.IfStatement{Token: p.curToken}
 
 	p.nextToken()
-	stmt.Condition = p.parseExpression(LOWEST)
+	stmt.Condition = p.parseExpression(LOWEST_PRECEDENCE)
 
 	if !p.expectPeek(token.COLON) {
 		return nil
@@ -722,7 +761,7 @@ func (p *Parser) parseIfStatement() *ast.IfStatement {
 		elifClause := &ast.ElifClause{Token: p.curToken}
 
 		p.nextToken()
-		elifClause.Condition = p.parseExpression(LOWEST)
+		elifClause.Condition = p.parseExpression(LOWEST_PRECEDENCE)
 
 		if !p.expectPeek(token.COLON) {
 			return nil
@@ -748,7 +787,7 @@ func (p *Parser) parseWhileStatement() *ast.WhileStatement {
 	stmt := &ast.WhileStatement{Token: p.curToken}
 
 	p.nextToken()
-	stmt.Condition = p.parseExpression(LOWEST)
+	stmt.Condition = p.parseExpression(LOWEST_PRECEDENCE)
 
 	if !p.expectPeek(token.COLON) {
 		return nil
@@ -998,13 +1037,16 @@ func (p *Parser) parseComprehensionCore(expr ast.Expression, endToken token.Toke
 	}
 
 	p.nextToken()
-	comp.Iterable = p.parseExpression(LOWEST)
+	// Use CONDITIONAL precedence to prevent 'if' from being consumed as conditional expression
+	// In list comprehensions, 'if' is the filter keyword, not conditional expression
+	comp.Iterable = p.parseExpression(CONDITIONAL)
 
 	// Check for optional if condition
 	if p.peekTokenIs(token.IF) {
 		p.nextToken()
 		p.nextToken()
-		comp.Condition = p.parseExpression(LOWEST)
+		// The condition also shouldn't consume 'if' as conditional (though unlikely)
+		comp.Condition = p.parseExpression(CONDITIONAL)
 	}
 
 	if !p.expectPeek(endToken) {
