@@ -124,11 +124,20 @@ func evalStringIndexExpression(str, index object.Object) object.Object {
 }
 
 func evalInstanceIndexExpression(instance, index object.Object) object.Object {
+	inst := instance.(*object.Instance)
+
+	// First check for __getitem__ method
+	if getitem, ok := inst.Class.Methods["__getitem__"]; ok {
+		// Call __getitem__ with the index
+		args := []object.Object{instance, index}
+		return applyFunctionWithContext(context.Background(), getitem, args, nil, nil)
+	}
+
+	// Fallback to string-based field access
 	if index.Type() != object.STRING_OBJ {
 		return errors.NewError("instance index must be string")
 	}
 	field := index.(*object.String).Value
-	inst := instance.(*object.Instance)
 	if val, ok := inst.Fields[field]; ok {
 		return val
 	}
