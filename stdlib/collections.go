@@ -177,6 +177,103 @@ Returns an iterator over elements, repeating each element by its count.`,
 	},
 }
 
+// DefaultDict class for dicts with default factory behavior
+var DefaultDictClass = &object.Class{
+	Name: "DefaultDict",
+	Methods: map[string]object.Object{
+		"__init__": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				// __init__(self, default_factory) - Initialize defaultdict
+				if len(args) != 2 {
+					return errors.NewArgumentError(len(args), 2)
+				}
+				dd := args[0].(*object.Instance)
+				factory := args[1]
+
+				// Store factory
+				dd.Fields["__default_factory__"] = factory
+				return &object.Null{}
+			},
+		},
+		"__getitem__": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				// __getitem__(self, key) - Get value with default creation
+				if len(args) != 2 {
+					return errors.NewArgumentError(len(args), 2)
+				}
+				dd := args[0].(*object.Instance)
+				key := args[1].Inspect()
+
+				// Check if key exists
+				if value, exists := dd.Fields[key]; exists {
+					return value
+				}
+
+				// Get factory
+				factory, hasFactory := dd.Fields["__default_factory__"]
+				if !hasFactory {
+					return &object.Null{}
+				}
+
+				// Create default value based on factory
+				var defaultValue object.Object
+				switch f := factory.(type) {
+				case *object.Builtin:
+					// Call builtin with appropriate default arg
+					// For int(), float(), str(), list(), dict() we call with no args or default values
+					// Try calling with no args first (for list, dict constructors)
+					defaultValue = f.Fn(ctx, nil)
+					if isError(defaultValue) {
+						// If that fails, try with a default value (for int, float, str)
+						defaultValue = f.Fn(ctx, nil, object.NewInteger(0))
+						if isError(defaultValue) {
+							return defaultValue
+						}
+					}
+				case *object.String:
+					// Type name as string (for backward compatibility)
+					switch f.Value {
+					case "int":
+						defaultValue = object.NewInteger(0)
+					case "float":
+						defaultValue = &object.Float{Value: 0}
+					case "str":
+						defaultValue = &object.String{Value: ""}
+					case "list":
+						defaultValue = &object.List{Elements: []object.Object{}}
+					case "dict":
+						defaultValue = &object.Dict{Pairs: make(map[string]object.DictPair)}
+					default:
+						return errors.NewError("unknown default factory type: %s", f.Value)
+					}
+				default:
+					return errors.NewError("default_factory must be a builtin function or type name")
+				}
+
+				// Store and return
+				dd.Fields[key] = defaultValue
+				return defaultValue
+			},
+			HelpText: `__getitem__(key) - Get value with default creation (supports d[key] syntax)`,
+		},
+		"__setitem__": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				// __setitem__(self, key, value) - Set value
+				if len(args) != 3 {
+					return errors.NewArgumentError(len(args), 3)
+				}
+				dd := args[0].(*object.Instance)
+				key := args[1].Inspect()
+				value := args[2]
+
+				dd.Fields[key] = value
+				return &object.Null{}
+			},
+			HelpText: `__setitem__(key, value) - Set value (supports d[key] = value syntax)`,
+		},
+	},
+}
+
 // createCounterInstance creates a new Counter instance
 func createCounterInstance() *object.Instance {
 	return &object.Instance{
@@ -324,103 +421,7 @@ Example:
   c = collections.Counter([1, 1, 2, 3, 3, 3])
   collections.most_common(c, 2) -> [(3, 3), (1, 2)]`,
 	},
-	"defaultdict": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			// defaultdict(default_factory) - Dict with default values
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
-			}
 
-			// Store the default factory in a special wrapper
-			factory := args[0]
-			defaultDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
-
-			// Store factory as metadata (using a special key)
-			defaultDict.Pairs["__default_factory__"] = object.DictPair{
-				Key:   &object.String{Value: "__default_factory__"},
-				Value: factory,
-			}
-
-			return defaultDict
-		},
-		HelpText: `defaultdict(default_factory) - Dict with default values
-
-Creates a dict that returns a default value for missing keys.
-The default_factory should be a type like int, list, str, or a function.
-
-Note: In Scriptling, defaultdict returns a regular dict with a stored factory.
-Use collections.get_default() to get values with auto-creation.
-
-Example:
-  d = collections.defaultdict(list)
-  collections.get_default(d, "key")  # Returns []`,
-	},
-	"get_default": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			// get_default(defaultdict, key) - Get value with default creation
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
-			}
-			dd, ok := args[0].(*object.Dict)
-			if !ok {
-				return errors.NewTypeError("DICT", args[0].Type().String())
-			}
-			key := args[1].Inspect()
-
-			// Check if key exists
-			if pair, exists := dd.Pairs[key]; exists && key != "__default_factory__" {
-				return pair.Value
-			}
-
-			// Get factory
-			factoryPair, hasFactory := dd.Pairs["__default_factory__"]
-			if !hasFactory {
-				return &object.Null{}
-			}
-
-			// Create default value based on factory
-			var defaultValue object.Object
-			switch f := factoryPair.Value.(type) {
-			case *object.Builtin:
-				defaultValue = f.Fn(ctx, nil)
-				if isError(defaultValue) {
-					return defaultValue
-				}
-			case *object.String:
-				// Type name as string
-				switch f.Value {
-				case "int":
-					defaultValue = object.NewInteger(0)
-				case "float":
-					defaultValue = &object.Float{Value: 0}
-				case "str":
-					defaultValue = &object.String{Value: ""}
-				case "list":
-					defaultValue = &object.List{Elements: []object.Object{}}
-				case "dict":
-					defaultValue = &object.Dict{Pairs: make(map[string]object.DictPair)}
-				default:
-					return errors.NewError("unknown default factory type: %s", f.Value)
-				}
-			default:
-				return errors.NewError("default_factory must be a builtin function or type name")
-			}
-
-			// Store and return
-			dd.Pairs[key] = object.DictPair{
-				Key:   args[1],
-				Value: defaultValue,
-			}
-			return defaultValue
-		},
-		HelpText: `get_default(defaultdict, key) - Get value with default creation
-
-Gets a value from a defaultdict, creating it if it doesn't exist.
-
-Example:
-  d = collections.defaultdict("list")
-  collections.get_default(d, "items")  # Returns [] and stores it`,
-	},
 	"OrderedDict": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 			// OrderedDict([items]) - Dict that remembers insertion order
@@ -691,37 +692,68 @@ Example:
 				return errors.NewTypeError("list, tuple, or string", args[1].Type().String())
 			}
 
-			// Return a factory function
-			return &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-					if len(args) != len(fieldNames) {
-						return errors.NewArgumentError(len(args), len(fieldNames))
-					}
-					// Create a dict with field names as keys
-					nt := &object.Dict{Pairs: make(map[string]object.DictPair)}
-					nt.Pairs["__typename__"] = object.DictPair{
-						Key:   &object.String{Value: "__typename__"},
-						Value: typename,
-					}
-					for i, name := range fieldNames {
-						nt.Pairs[name] = object.DictPair{
-							Key:   &object.String{Value: name},
-							Value: args[i],
-						}
-					}
-					return nt
-				},
-				HelpText: typename.Value + "(" + strings.Join(fieldNames, ", ") + ") - Create named tuple instance",
-			}
-		},
-		HelpText: `namedtuple(typename, field_names) - Create a named tuple factory
+			// Create a NamedTuple class
+			methods := make(map[string]object.Object)
 
-Creates a factory function for creating named tuple-like dicts.
+			// __init__ method - stores fields as instance attributes
+			methods["__init__"] = &object.Builtin{
+				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+					if len(args) != len(fieldNames)+1 {
+						return errors.NewArgumentError(len(args), len(fieldNames)+1)
+					}
+					nt := args[0].(*object.Instance)
+					// Store field values directly as instance fields
+					for i, name := range fieldNames {
+						nt.Fields[name] = args[i+1]
+					}
+					nt.Fields["__typename__"] = typename
+					// Store field names for reference
+					fieldNameObjs := make([]object.Object, len(fieldNames))
+					for i, name := range fieldNames {
+						fieldNameObjs[i] = &object.String{Value: name}
+					}
+					nt.Fields["__fields__"] = &object.Tuple{Elements: fieldNameObjs}
+					return &object.Null{}
+				},
+			}
+
+			// __getitem__ for dict-like access
+			methods["__getitem__"] = &object.Builtin{
+				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+					if len(args) != 2 {
+						return errors.NewArgumentError(len(args), 2)
+					}
+					nt := args[0].(*object.Instance)
+					key := args[1].Inspect()
+					// Don't expose internal fields
+					if key == "__typename__" || key == "__fields__" {
+						return &object.Null{}
+					}
+					if value, exists := nt.Fields[key]; exists {
+						return value
+					}
+					return &object.Null{}
+				},
+				HelpText: `__getitem__(key) - Get field value (supports nt[key] syntax)`,
+			}
+
+			ntClass := &object.Class{
+				Name:    typename.Value,
+				Methods: methods,
+			}
+
+			return ntClass
+		},
+		HelpText: `namedtuple(typename, field_names) - Create a named tuple class
+
+Creates a class for creating named tuple instances with direct attribute access.
 
 Example:
   Point = collections.namedtuple("Point", ["x", "y"])
   p = Point(1, 2)
-  p["x"]  # 1`,
+  p.x      # 1 (direct attribute access)
+  p["y"]   # 2 (dict-style access)
+  p.x()    # Also works for backward compatibility`,
 	},
 	"ChainMap": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
@@ -760,5 +792,7 @@ Example:
   cm["b"]  # 2 (from d2)`,
 	},
 }, map[string]object.Object{
-	"Counter": CounterClass,
+	"Counter":     CounterClass,
+	"DefaultDict": DefaultDictClass,
+	"defaultdict": DefaultDictClass,
 }, "Python-compatible collections library for specialized container datatypes")
