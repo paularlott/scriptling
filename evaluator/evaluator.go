@@ -144,6 +144,8 @@ func evalWithContext(ctx context.Context, node ast.Node, env *object.Environment
 		return NULL
 	case *ast.ImportStatement:
 		return evalImportStatement(node, env)
+	case *ast.FromImportStatement:
+		return evalFromImportStatement(node, env)
 	case *ast.AssignStatement:
 		val := evalWithContext(ctx, node.Value, env)
 		if isError(val) || isException(val) {
@@ -1077,6 +1079,119 @@ func evalImportStatement(is *ast.ImportStatement, env *object.Environment) objec
 		if err := importCallback(name.Value); err != nil {
 			return errors.NewError("%s: %s", errors.ErrImportError, err.Error())
 		}
+	}
+
+	return NULL
+}
+
+func evalFromImportStatement(fis *ast.FromImportStatement, env *object.Environment) object.Object {
+	importCallback := env.GetImportCallback()
+	if importCallback == nil {
+		return errors.NewError(errors.ErrImportError)
+	}
+
+	// First, import the module
+	moduleName := fis.Module.Value
+	err := importCallback(moduleName)
+	if err != nil {
+		return errors.NewError("%s: %s", errors.ErrImportError, err.Error())
+	}
+
+	// Get the imported module from the environment
+	moduleObj, ok := env.Get(moduleName)
+	if !ok {
+		// Try getting just the first part for dotted imports
+		parts := strings.Split(moduleName, ".")
+		moduleObj, ok = env.Get(parts[0])
+		if !ok {
+			return errors.NewError("%s: module '%s' not found after import", errors.ErrImportError, moduleName)
+		}
+		// Navigate to the sub-module
+		for i := 1; i < len(parts); i++ {
+			switch m := moduleObj.(type) {
+			case *object.Dict:
+				if pair, exists := m.Pairs[parts[i]]; exists {
+					moduleObj = pair.Value
+				} else {
+					return errors.NewError("%s: cannot find '%s' in module '%s'", errors.ErrImportError, parts[i], strings.Join(parts[:i], "."))
+				}
+			case *object.Library:
+				if sub := m.SubLibraries(); sub != nil {
+					if subLib, exists := sub[parts[i]]; exists {
+						moduleObj = subLib
+					} else {
+						return errors.NewError("%s: cannot find '%s' in module '%s'", errors.ErrImportError, parts[i], strings.Join(parts[:i], "."))
+					}
+				} else if funcs := m.Functions(); funcs != nil {
+					if fn, exists := funcs[parts[i]]; exists {
+						moduleObj = fn
+					} else {
+						return errors.NewError("%s: cannot find '%s' in module '%s'", errors.ErrImportError, parts[i], strings.Join(parts[:i], "."))
+					}
+				} else {
+					return errors.NewError("%s: cannot find '%s' in module '%s'", errors.ErrImportError, parts[i], strings.Join(parts[:i], "."))
+				}
+			default:
+				return errors.NewError("%s: '%s' is not a module", errors.ErrImportError, strings.Join(parts[:i], "."))
+			}
+		}
+	}
+
+	// Now extract the requested names from the module and bind them
+	for i, name := range fis.Names {
+		var value object.Object
+		var found bool
+
+		switch m := moduleObj.(type) {
+		case *object.Dict:
+			if pair, exists := m.Pairs[name.Value]; exists {
+				value = pair.Value
+				found = true
+			}
+		case *object.Library:
+			// Check functions first
+			if funcs := m.Functions(); funcs != nil {
+				if fn, exists := funcs[name.Value]; exists {
+					value = fn
+					found = true
+				}
+			}
+			// Check constants
+			if !found {
+				if consts := m.Constants(); consts != nil {
+					if c, exists := consts[name.Value]; exists {
+						value = c
+						found = true
+					}
+				}
+			}
+			// Check sub-libraries (for classes like BeautifulSoup)
+			if !found {
+				if subs := m.SubLibraries(); subs != nil {
+					if sub, exists := subs[name.Value]; exists {
+						value = sub
+						found = true
+					}
+				}
+			}
+		case *object.Instance:
+			if field, exists := m.Fields[name.Value]; exists {
+				value = field
+				found = true
+			}
+		}
+
+		if !found {
+			return errors.NewError("%s: cannot import name '%s' from '%s'", errors.ErrImportError, name.Value, moduleName)
+		}
+
+		// Use alias if provided, otherwise use the original name
+		bindName := name.Value
+		if fis.Aliases[i] != nil {
+			bindName = fis.Aliases[i].Value
+		}
+
+		env.Set(bindName, value)
 	}
 
 	return NULL

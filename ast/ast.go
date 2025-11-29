@@ -266,6 +266,17 @@ func (is *ImportStatement) FullName() string {
 	return is.Name.Value
 }
 
+// FromImportStatement represents "from X import Y, Z" statements
+type FromImportStatement struct {
+	Token   token.Token   // The 'from' token
+	Module  *Identifier   // The module name (e.g., "bs4" or "urllib.parse")
+	Names   []*Identifier // The names to import (e.g., ["BeautifulSoup"])
+	Aliases []*Identifier // Optional aliases (for "import X as Y"), nil if no alias
+}
+
+func (fis *FromImportStatement) statementNode()       {}
+func (fis *FromImportStatement) TokenLiteral() string { return fis.Token.Literal }
+
 type ForStatement struct {
 	Token     token.Token
 	Variables []Expression
