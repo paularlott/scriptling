@@ -11,9 +11,22 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
+// PathClass is defined per library instance to avoid initialization cycle
+
+// getPathlibInstance retrieves the PathlibLibraryInstance from context
+// This is a helper to access the config for security checks
+func getPathlibInstance(ctx context.Context) *PathlibLibraryInstance {
+	// For now, we'll need to find another way to pass the config
+	// Since we can't store it in context easily, we'll need to modify the approach
+	// For the conversion, let's assume we have access to the instance
+	// This is a temporary solution - we'll need to refactor this
+	return nil // This will need to be fixed
+}
+
 // PathlibLibraryInstance holds the configured Pathlib library instance
 type PathlibLibraryInstance struct {
-	config fssecurity.Config
+	config    fssecurity.Config
+	PathClass *object.Class
 }
 
 // RegisterPathlibLibrary registers the pathlib library with a Scriptling instance.
@@ -43,6 +56,223 @@ func NewPathlibLibrary(config fssecurity.Config) *object.Library {
 }
 
 func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
+	// Define PathClass with methods that capture the library instance
+	p.PathClass = &object.Class{
+		Name: "Path",
+		Methods: map[string]object.Object{
+			"joinpath": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+					if len(args) < 1 {
+						return errors.NewArgumentError(len(args), 1)
+					}
+					pathInstance := args[0].(*object.Instance)
+					cleanPath := pathInstance.Fields["__path__"].(*object.String).Value
+
+					parts := make([]string, 0, len(args))
+					parts = append(parts, cleanPath)
+					for _, arg := range args[1:] {
+						s, ok := arg.AsString()
+						if !ok {
+							return errors.NewTypeError("STRING", arg.Type().String())
+						}
+						parts = append(parts, s)
+					}
+					newPath := parts[0]
+					for _, part := range parts[1:] {
+						if filepath.IsAbs(part) {
+							newPath = part
+						} else {
+							newPath = filepath.Join(newPath, part)
+						}
+					}
+					return p.createPathObject(newPath)
+				},
+				HelpText: "joinpath(*other) - Combine this path with other path segments",
+			},
+			"exists": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+					if len(args) != 1 {
+						return errors.NewArgumentError(len(args), 1)
+					}
+					pathInstance := args[0].(*object.Instance)
+					cleanPath := pathInstance.Fields["__path__"].(*object.String).Value
+
+					if err := p.checkPathSecurity(cleanPath); err != nil {
+						return err
+					}
+					_, err := os.Stat(cleanPath)
+					return &object.Boolean{Value: err == nil}
+				},
+				HelpText: "exists() - Check if the path exists",
+			},
+			"is_file": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+					if len(args) != 1 {
+						return errors.NewArgumentError(len(args), 1)
+					}
+					pathInstance := args[0].(*object.Instance)
+					cleanPath := pathInstance.Fields["__path__"].(*object.String).Value
+
+					if err := p.checkPathSecurity(cleanPath); err != nil {
+						return &object.Boolean{Value: false}
+					}
+					info, err := os.Stat(cleanPath)
+					if err != nil {
+						return &object.Boolean{Value: false}
+					}
+					return &object.Boolean{Value: !info.IsDir()}
+				},
+				HelpText: "is_file() - Check if the path is a regular file",
+			},
+			"is_dir": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+					if len(args) != 1 {
+						return errors.NewArgumentError(len(args), 1)
+					}
+					pathInstance := args[0].(*object.Instance)
+					cleanPath := pathInstance.Fields["__path__"].(*object.String).Value
+
+					if err := p.checkPathSecurity(cleanPath); err != nil {
+						return &object.Boolean{Value: false}
+					}
+					info, err := os.Stat(cleanPath)
+					if err != nil {
+						return &object.Boolean{Value: false}
+					}
+					return &object.Boolean{Value: info.IsDir()}
+				},
+				HelpText: "is_dir() - Check if the path is a directory",
+			},
+			"mkdir": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+					if len(args) != 1 {
+						return errors.NewArgumentError(len(args), 1)
+					}
+					pathInstance := args[0].(*object.Instance)
+					cleanPath := pathInstance.Fields["__path__"].(*object.String).Value
+
+					if err := p.checkPathSecurity(cleanPath); err != nil {
+						return err
+					}
+
+					parents := false
+					if val, ok := kwargs["parents"]; ok {
+						if b, ok := val.AsBool(); ok {
+							parents = b
+						}
+					}
+
+					var err error
+					if parents {
+						err = os.MkdirAll(cleanPath, 0755)
+					} else {
+						err = os.Mkdir(cleanPath, 0755)
+					}
+
+					if err != nil {
+						return errors.NewError("cannot create directory: %s", err.Error())
+					}
+					return &object.Null{}
+				},
+				HelpText: "mkdir(parents=False) - Create a new directory at this given path",
+			},
+			"rmdir": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+					if len(args) != 1 {
+						return errors.NewArgumentError(len(args), 1)
+					}
+					pathInstance := args[0].(*object.Instance)
+					cleanPath := pathInstance.Fields["__path__"].(*object.String).Value
+
+					if err := p.checkPathSecurity(cleanPath); err != nil {
+						return err
+					}
+
+					err := os.Remove(cleanPath)
+					if err != nil {
+						return errors.NewError("cannot remove directory: %s", err.Error())
+					}
+					return &object.Null{}
+				},
+				HelpText: "rmdir() - Remove the empty directory",
+			},
+			"unlink": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+					if len(args) != 1 {
+						return errors.NewArgumentError(len(args), 1)
+					}
+					pathInstance := args[0].(*object.Instance)
+					cleanPath := pathInstance.Fields["__path__"].(*object.String).Value
+
+					missingOk := false
+					if val, ok := kwargs["missing_ok"]; ok {
+						if b, ok := val.AsBool(); ok {
+							missingOk = b
+						}
+					}
+
+					if err := p.checkPathSecurity(cleanPath); err != nil {
+						return err
+					}
+
+					err := os.Remove(cleanPath)
+					if err != nil {
+						if missingOk && os.IsNotExist(err) {
+							return &object.Null{}
+						}
+						return errors.NewError("cannot remove file: %s", err.Error())
+					}
+					return &object.Null{}
+				},
+				HelpText: "unlink(missing_ok=False) - Remove this file or symbolic link",
+			},
+			"read_text": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+					if len(args) != 1 {
+						return errors.NewArgumentError(len(args), 1)
+					}
+					pathInstance := args[0].(*object.Instance)
+					cleanPath := pathInstance.Fields["__path__"].(*object.String).Value
+
+					if err := p.checkPathSecurity(cleanPath); err != nil {
+						return err
+					}
+
+					content, err := os.ReadFile(cleanPath)
+					if err != nil {
+						return errors.NewError("cannot read file: %s", err.Error())
+					}
+					return &object.String{Value: string(content)}
+				},
+				HelpText: "read_text() - Read the contents of the file as a string",
+			},
+			"write_text": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+					if len(args) != 2 {
+						return errors.NewArgumentError(len(args), 2)
+					}
+					pathInstance := args[0].(*object.Instance)
+					cleanPath := pathInstance.Fields["__path__"].(*object.String).Value
+					content, ok := args[1].AsString()
+					if !ok {
+						return errors.NewTypeError("STRING", args[1].Type().String())
+					}
+
+					if err := p.checkPathSecurity(cleanPath); err != nil {
+						return err
+					}
+
+					err := os.WriteFile(cleanPath, []byte(content), 0644)
+					if err != nil {
+						return errors.NewError("cannot write file: %s", err.Error())
+					}
+					return &object.Null{}
+				},
+				HelpText: "write_text(data) - Write the string data to the file",
+			},
+		},
+	}
+
 	return object.NewLibrary(map[string]*object.Builtin{
 		"Path": {
 			Fn: p.pathConstructor,
@@ -65,33 +295,25 @@ func (p *PathlibLibraryInstance) pathConstructor(ctx context.Context, kwargs map
 	return p.createPathObject(pathStr)
 }
 
-func (p *PathlibLibraryInstance) createPathObject(pathStr string) *object.Dict {
+func (p *PathlibLibraryInstance) createPathObject(pathStr string) object.Object {
 	// Clean the path
 	cleanPath := filepath.Clean(pathStr)
 
-	// Create the dictionary that will represent the Path object
-	pathDict := &object.Dict{
-		Pairs: make(map[string]object.DictPair),
+	// Create the Path instance
+	pathInstance := &object.Instance{
+		Class:  p.PathClass,
+		Fields: make(map[string]object.Object),
 	}
 
-	// Helper to add methods to the dict
-	addMethod := func(name string, fn object.BuiltinFunction, help string) {
-		pathDict.Pairs[name] = object.DictPair{
-			Key: &object.String{Value: name},
-			Value: &object.Builtin{
-				Fn:       fn,
-				HelpText: help,
-			},
-		}
-	}
+	// Store the internal path
+	pathInstance.Fields["__path__"] = &object.String{Value: cleanPath}
 
-	// Helper to add properties (as values)
-	addProperty := func(name string, val object.Object) {
-		pathDict.Pairs[name] = object.DictPair{
-			Key:   &object.String{Value: name},
-			Value: val,
-		}
+	// Store allowed paths for security checks
+	allowedPaths := make([]object.Object, len(p.config.AllowedPaths))
+	for i, path := range p.config.AllowedPaths {
+		allowedPaths[i] = &object.String{Value: path}
 	}
+	pathInstance.Fields["__allowed_paths__"] = &object.List{Elements: allowedPaths}
 
 	// Properties
 	base := filepath.Base(cleanPath)
@@ -100,10 +322,10 @@ func (p *PathlibLibraryInstance) createPathObject(pathStr string) *object.Dict {
 	if base == "/" {
 		stem = ""
 	}
-	addProperty("name", &object.String{Value: base})
-	addProperty("stem", &object.String{Value: stem})
-	addProperty("suffix", &object.String{Value: ext})
-	addProperty("parent", &object.String{Value: filepath.Dir(cleanPath)}) // Returning string for parent to avoid infinite recursion/complexity for now
+	pathInstance.Fields["name"] = &object.String{Value: base}
+	pathInstance.Fields["stem"] = &object.String{Value: stem}
+	pathInstance.Fields["suffix"] = &object.String{Value: ext}
+	pathInstance.Fields["parent"] = &object.String{Value: filepath.Dir(cleanPath)}
 
 	parts := strings.Split(cleanPath, string(os.PathSeparator))
 	if len(parts) > 1 && parts[0] == "" && parts[1] == "" {
@@ -115,166 +337,11 @@ func (p *PathlibLibraryInstance) createPathObject(pathStr string) *object.Dict {
 	for i, part := range parts {
 		partObjs[i] = &object.String{Value: part}
 	}
-	addProperty("parts", &object.Tuple{Elements: partObjs})
+	pathInstance.Fields["parts"] = &object.Tuple{Elements: partObjs}
 
-	// __str__ equivalent (for printing) - though Scriptling doesn't auto-call it yet
-	addProperty("__str__", &object.String{Value: cleanPath})
+	pathInstance.Fields["__str__"] = &object.String{Value: cleanPath}
 
-	// Methods
-
-	// joinpath(*args)
-	addMethod("joinpath", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-		parts := make([]string, 0, len(args)+1)
-		parts = append(parts, cleanPath)
-		for _, arg := range args {
-			s, ok := arg.AsString()
-			if !ok {
-				return errors.NewTypeError("STRING", arg.Type().String())
-			}
-			parts = append(parts, s)
-		}
-		newPath := parts[0]
-		for _, part := range parts[1:] {
-			if filepath.IsAbs(part) {
-				newPath = part
-			} else {
-				newPath = filepath.Join(newPath, part)
-			}
-		}
-		return p.createPathObject(newPath)
-	}, "joinpath(*other) - Combine this path with other path segments")
-
-	// exists()
-	addMethod("exists", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-		if err := p.checkPathSecurity(cleanPath); err != nil {
-			return err
-		}
-		_, err := os.Stat(cleanPath)
-		return &object.Boolean{Value: err == nil}
-	}, "exists() - Check if the path exists")
-
-	// is_file()
-	addMethod("is_file", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-		if err := p.checkPathSecurity(cleanPath); err != nil {
-			return err
-		}
-		info, err := os.Stat(cleanPath)
-		if err != nil {
-			return &object.Boolean{Value: false}
-		}
-		return &object.Boolean{Value: !info.IsDir()}
-	}, "is_file() - Check if the path is a regular file")
-
-	// is_dir()
-	addMethod("is_dir", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-		if err := p.checkPathSecurity(cleanPath); err != nil {
-			return err
-		}
-		info, err := os.Stat(cleanPath)
-		if err != nil {
-			return &object.Boolean{Value: false}
-		}
-		return &object.Boolean{Value: info.IsDir()}
-	}, "is_dir() - Check if the path is a directory")
-
-	// mkdir(mode=0o777, parents=False, exist_ok=False)
-	addMethod("mkdir", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-		if err := p.checkPathSecurity(cleanPath); err != nil {
-			return err
-		}
-
-		parents := false
-		if val, ok := kwargs["parents"]; ok {
-			if b, ok := val.AsBool(); ok {
-				parents = b
-			}
-		}
-
-		// We ignore exist_ok and mode for simplicity in this minimal version,
-		// but could implement them if needed.
-
-		var err error
-		if parents {
-			err = os.MkdirAll(cleanPath, 0755)
-		} else {
-			err = os.Mkdir(cleanPath, 0755)
-		}
-
-		if err != nil {
-			return errors.NewError("cannot create directory: %s", err.Error())
-		}
-		return &object.Null{}
-	}, "mkdir(parents=False) - Create a new directory at this given path")
-
-	// rmdir()
-	addMethod("rmdir", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-		if err := p.checkPathSecurity(cleanPath); err != nil {
-			return err
-		}
-		err := os.Remove(cleanPath)
-		if err != nil {
-			return errors.NewError("cannot remove directory: %s", err.Error())
-		}
-		return &object.Null{}
-	}, "rmdir() - Remove the empty directory")
-
-	// unlink(missing_ok=False)
-	addMethod("unlink", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-		if err := p.checkPathSecurity(cleanPath); err != nil {
-			return err
-		}
-
-		missingOk := false
-		if val, ok := kwargs["missing_ok"]; ok {
-			if b, ok := val.AsBool(); ok {
-				missingOk = b
-			}
-		}
-
-		err := os.Remove(cleanPath)
-		if err != nil {
-			if missingOk && os.IsNotExist(err) {
-				return &object.Null{}
-			}
-			return errors.NewError("cannot remove file: %s", err.Error())
-		}
-		return &object.Null{}
-	}, "unlink(missing_ok=False) - Remove this file or symbolic link")
-
-	// read_text()
-	addMethod("read_text", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-		if err := p.checkPathSecurity(cleanPath); err != nil {
-			return err
-		}
-		content, err := os.ReadFile(cleanPath)
-		if err != nil {
-			return errors.NewError("cannot read file: %s", err.Error())
-		}
-		return &object.String{Value: string(content)}
-	}, "read_text() - Read the contents of the file as a string")
-
-	// write_text(data)
-	addMethod("write_text", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-		if len(args) != 1 {
-			return errors.NewArgumentError(len(args), 1)
-		}
-		content, ok := args[0].AsString()
-		if !ok {
-			return errors.NewTypeError("STRING", args[0].Type().String())
-		}
-
-		if err := p.checkPathSecurity(cleanPath); err != nil {
-			return err
-		}
-
-		err := os.WriteFile(cleanPath, []byte(content), 0644)
-		if err != nil {
-			return errors.NewError("cannot write file: %s", err.Error())
-		}
-		return &object.Null{}
-	}, "write_text(data) - Write the string data to the file")
-
-	return pathDict
+	return pathInstance
 }
 
 func (p *PathlibLibraryInstance) checkPathSecurity(path string) object.Object {
