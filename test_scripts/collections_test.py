@@ -72,6 +72,24 @@ Point = collections.namedtuple("Point", ["x", "y"])
 p = Point(1, 2)
 assert p["x"] == 1
 assert p["y"] == 2
+# Test direct attribute access
+assert p.x == 1
+assert p.y == 2
+
+# Test DefaultDict (using defaultdict alias which is now the standard)
+dd = collections.defaultdict(list)
+dd["key"].append(1)
+assert dd["key"] == [1]
+assert len(dd["key"]) == 1
+
+dd2 = collections.defaultdict(int)
+dd2["count"] = dd2["count"] + 1
+assert dd2["count"] == 1
+
+# Test DefaultDict alias
+dd3 = collections.DefaultDict(list)
+dd3["key"].append(1)
+assert dd3["key"] == [1]
 
 # Test ChainMap
 d1 = {"a": 1}

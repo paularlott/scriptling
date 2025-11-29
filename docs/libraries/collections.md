@@ -110,7 +110,7 @@ collections.deque_rotate(d, -1)
 ### namedtuple
 
 #### `namedtuple(typename, field_names)`
-Create a factory function for named tuple-like dicts.
+Create a class for named tuple instances.
 
 ```python
 # Create a Point type
@@ -118,6 +118,12 @@ Point = collections.namedtuple("Point", ["x", "y"])
 
 # Create instances
 p = Point(1, 2)
+
+# Access fields by name (direct attribute access)
+p.x  # 1
+p.y  # 2
+
+# Access fields by name (dict-style)
 p["x"]  # 1
 p["y"]  # 2
 
@@ -131,22 +137,13 @@ Person = collections.namedtuple("Person", "name age")
 Create a dict with default values for missing keys.
 
 ```python
-# Create with type name
-d = collections.defaultdict("list")
-d = collections.defaultdict("int")
-d = collections.defaultdict("str")
+# Create with factory function or type
+d = collections.defaultdict(list)
+d = collections.defaultdict(int)
 
-# Use get_default to access with auto-creation
-collections.get_default(d, "key")
-```
-
-#### `get_default(defaultdict, key)`
-Get a value from a defaultdict, creating it if missing.
-
-```python
-d = collections.defaultdict("list")
-lst = collections.get_default(d, "items")
-# lst is [], and d["items"] is now []
+# Accessing missing key creates default value automatically
+d["items"].append(1)  # Creates empty list, then appends
+d["count"] = d["count"] + 1  # Creates 0, then increments
 ```
 
 ### ChainMap
@@ -225,7 +222,8 @@ Employee = collections.namedtuple("Employee", ["name", "department", "salary"])
 emp1 = Employee("Alice", "Engineering", 75000)
 emp2 = Employee("Bob", "Marketing", 65000)
 
-print(emp1["name"], "works in", emp1["department"])
+# Access fields
+print(emp1.name, "works in", emp1.department)
 ```
 
 ### Merging configurations with ChainMap
