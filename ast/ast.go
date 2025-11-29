@@ -193,6 +193,15 @@ type FunctionStatement struct {
 func (fs *FunctionStatement) statementNode()       {}
 func (fs *FunctionStatement) TokenLiteral() string { return fs.Token.Literal }
 
+type ClassStatement struct {
+	Token token.Token
+	Name  *Identifier
+	Body  *BlockStatement
+}
+
+func (cs *ClassStatement) statementNode()       {}
+func (cs *ClassStatement) TokenLiteral() string { return cs.Token.Literal }
+
 type CallExpression struct {
 	Token     token.Token
 	Function  Expression

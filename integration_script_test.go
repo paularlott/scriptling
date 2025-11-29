@@ -3,6 +3,7 @@ package scriptling
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,7 +30,23 @@ func TestIntegrationScripts(t *testing.T) {
 	// Register pathlib library with no restrictions for testing
 	extlibs.RegisterPathlibLibrary(p, nil)
 
+	// Set up on-demand library loading for local .py files in test_scripts
+	p.SetOnDemandLibraryCallback(func(p *Scriptling, libName string) bool {
+		// Try to load from test_scripts directory
+		filename := filepath.Join(testDir, libName+".py")
+		content, err := os.ReadFile(filename)
+		if err == nil {
+			return p.RegisterScriptLibrary(libName, string(content)) == nil
+		}
+		return false
+	})
+
 	for _, file := range files {
+		// Skip library files
+		if strings.HasPrefix(filepath.Base(file), "lib_") {
+			continue
+		}
+
 		t.Run(filepath.Base(file), func(t *testing.T) {
 			content, err := os.ReadFile(file)
 			if err != nil {

@@ -54,6 +54,17 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	extlibs.RegisterOSLibrary(p, []string{})
 	extlibs.RegisterPathlibLibrary(p, []string{})
 
+	// Set up on-demand library loading for local .py files
+	p.SetOnDemandLibraryCallback(func(p *scriptling.Scriptling, libName string) bool {
+		// Try to load from current directory
+		filename := libName + ".py"
+		content, err := os.ReadFile(filename)
+		if err == nil {
+			return p.RegisterScriptLibrary(libName, string(content)) == nil
+		}
+		return false
+	})
+
 	file := cmd.GetStringArg("file")
 	interactive := cmd.GetBool("interactive")
 

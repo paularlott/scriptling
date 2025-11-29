@@ -152,36 +152,11 @@ func evalWithContext(ctx context.Context, node ast.Node, env *object.Environment
 	case *ast.Identifier:
 		return evalIdentifier(node, env)
 	case *ast.FunctionStatement:
-		fn := &object.Function{
-			Name:          node.Name.Value,
-			Parameters:    node.Function.Parameters,
-			DefaultValues: node.Function.DefaultValues,
-			Variadic:      node.Function.Variadic,
-			Body:          node.Function.Body,
-			Env:           env,
-		}
-		env.Set(node.Name.Value, fn)
-		return fn
+		return evalFunctionStatement(ctx, node, env)
+	case *ast.ClassStatement:
+		return evalClassStatement(ctx, node, env)
 	case *ast.CallExpression:
-		function := evalWithContext(ctx, node.Function, env)
-		if isError(function) {
-			return function
-		}
-		args := evalExpressionsWithContext(ctx, node.Arguments, env)
-		if len(args) == 1 && isError(args[0]) {
-			return args[0]
-		}
-
-		keywords := make(map[string]object.Object)
-		for k, v := range node.Keywords {
-			val := evalWithContext(ctx, v, env)
-			if isError(val) {
-				return val
-			}
-			keywords[k] = val
-		}
-
-		return applyFunctionWithContext(ctx, function, args, keywords, env)
+		return evalCallExpression(ctx, node, env)
 	case *ast.ListLiteral:
 		elements := evalExpressionsWithContext(ctx, node.Elements, env)
 		if len(elements) == 1 && isError(elements[0]) {
@@ -700,6 +675,86 @@ func evalIdentifier(node *ast.Identifier, env *object.Environment) object.Object
 	return errors.NewIdentifierError(node.Value)
 }
 
+func evalFunctionStatement(ctx context.Context, stmt *ast.FunctionStatement, env *object.Environment) object.Object {
+	fn := &object.Function{
+		Name:          stmt.Name.Value,
+		Parameters:    stmt.Function.Parameters,
+		DefaultValues: stmt.Function.DefaultValues,
+		Variadic:      stmt.Function.Variadic,
+		Body:          stmt.Function.Body,
+		Env:           env,
+	}
+	env.Set(stmt.Name.Value, fn)
+	return fn
+}
+
+func evalClassStatement(ctx context.Context, stmt *ast.ClassStatement, env *object.Environment) object.Object {
+	class := &object.Class{
+		Name:    stmt.Name.Value,
+		Methods: make(map[string]object.Object),
+		Env:     env,
+	}
+
+	// Create a new environment for the class body
+	classEnv := object.NewEnclosedEnvironment(env)
+
+	// Evaluate the class body to find methods
+	for _, s := range stmt.Body.Statements {
+		if fnStmt, ok := s.(*ast.FunctionStatement); ok {
+			obj := evalFunctionStatement(ctx, fnStmt, classEnv)
+			if fn, ok := obj.(*object.Function); ok {
+				class.Methods[fn.Name] = fn
+			}
+		}
+	}
+
+	env.Set(stmt.Name.Value, class)
+	return class
+}
+
+func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *object.Environment) object.Object {
+	function := evalWithContext(ctx, node.Function, env)
+	if isError(function) {
+		return function
+	}
+	args := evalExpressionsWithContext(ctx, node.Arguments, env)
+	if len(args) == 1 && isError(args[0]) {
+		return args[0]
+	}
+
+	keywords := make(map[string]object.Object)
+	for k, v := range node.Keywords {
+		val := evalWithContext(ctx, v, env)
+		if isError(val) {
+			return val
+		}
+		keywords[k] = val
+	}
+
+	return applyFunctionWithContext(ctx, function, args, keywords, env)
+}
+
+func createInstance(ctx context.Context, class *object.Class, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+	instance := &object.Instance{
+		Class:  class,
+		Fields: make(map[string]object.Object),
+	}
+
+	// Call __init__ if it exists
+	if initMethod, ok := class.Methods["__init__"]; ok {
+		// Bind 'self' to the instance
+		// We need to call the method, but applyFunction expects a Function object.
+		// We can reuse applyFunctionWithContext but we need to prepend 'self' to args.
+		newArgs := append([]object.Object{instance}, args...)
+		result := applyFunctionWithContext(ctx, initMethod, newArgs, keywords, env)
+		if isError(result) {
+			return result
+		}
+	}
+
+	return instance
+}
+
 func evalExpressionsWithContext(ctx context.Context, exps []ast.Expression, env *object.Environment) []object.Object {
 	if len(exps) == 0 {
 		return nil
@@ -717,28 +772,38 @@ func evalExpressionsWithContext(ctx context.Context, exps []ast.Expression, env 
 	return result
 }
 
+func applyUserFunction(ctx context.Context, fn *object.Function, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+	extendedEnv, err := extendFunctionEnv(fn, args, keywords)
+	if err != nil {
+		return err
+	}
+	evaluated := evalWithContext(ctx, fn.Body, extendedEnv)
+	return unwrapReturnValue(evaluated)
+}
+
 func applyFunctionWithContext(ctx context.Context, fn object.Object, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
 	switch fn := fn.(type) {
 	case *object.Function:
-		extendedEnv, err := extendFunctionEnv(fn, args, keywords)
-		if err != nil {
-			return err
-		}
-		evaluated := evalWithContext(ctx, fn.Body, extendedEnv)
-		return unwrapReturnValue(evaluated)
+		return applyUserFunction(ctx, fn, args, keywords, env)
 	case *object.LambdaFunction:
-		extendedEnv, err := extendLambdaEnv(fn, args, keywords)
-		if err != nil {
-			return err
-		}
-		evaluated := evalWithContext(ctx, fn.Body, extendedEnv)
-		return evaluated // No unwrapping needed for lambda expressions
+		return applyLambdaFunctionWithContext(ctx, fn, args, keywords, env)
 	case *object.Builtin:
 		ctxWithEnv := SetEnvInContext(ctx, env)
 		return fn.Fn(ctxWithEnv, keywords, args...)
+	case *object.Class:
+		return createInstance(ctx, fn, args, keywords, env)
 	default:
-		return errors.NewTypeError("function", fn.Type().String())
+		return errors.NewError("not a function or class: %s", fn.Type())
 	}
+}
+
+func applyLambdaFunctionWithContext(ctx context.Context, fn *object.LambdaFunction, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+	extendedEnv, err := extendLambdaEnv(fn, args, keywords)
+	if err != nil {
+		return err
+	}
+	evaluated := evalWithContext(ctx, fn.Body, extendedEnv)
+	return evaluated // No unwrapping needed for lambda expressions
 }
 
 // funcParams abstracts the common parts of Function and LambdaFunction for parameter handling
@@ -1190,6 +1255,12 @@ func assignToExpression(expr ast.Expression, value object.Object, env *object.En
 			key := index.Inspect()
 			o.Pairs[key] = object.DictPair{Key: index, Value: value}
 			return nil
+		case *object.Instance:
+			if key, ok := index.(*object.String); ok {
+				o.Fields[key.Value] = value
+				return nil
+			}
+			return fmt.Errorf("instance attribute must be string")
 		}
 		return fmt.Errorf("cannot assign to index")
 	default:
