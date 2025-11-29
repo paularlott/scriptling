@@ -904,7 +904,7 @@ func main() {
                     self.Fields["name"] = name
                     self.Fields["age"] = age
 
-                    return object.NULL
+                    return &object.Null{}
                 },
             },
             // Custom method
@@ -940,46 +940,131 @@ func main() {
 
 ### Defining Classes in Libraries
 
-You can also include classes in custom libraries.
+There are two ways to include classes in libraries:
+
+#### Method 1: Script-Based Libraries (Recommended)
+
+The simplest way to define classes in libraries is using `RegisterScriptLibrary`. Classes defined in the script are automatically exported:
 
 ```go
-func CreateMyLibrary() map[string]*object.Builtin {
-    // Define a class
-    myClass := &object.Class{
-        Name: "MyClass",
+p := scriptling.New()
+
+// Register a script library containing a class
+err := p.RegisterScriptLibrary("mylib", `
+class Greeter:
+    def __init__(self, name):
+        self.name = name
+
+    def say_hello(self):
+        return "Hello, " + self.name
+
+# Functions and constants are also exported
+def helper():
+    return "I'm a helper function"
+
+VERSION = "1.0.0"
+`)
+
+// Use from Scriptling
+p.Eval(`
+import mylib
+g = mylib.Greeter("World")
+print(g.say_hello())  # Hello, World
+`)
+```
+
+#### Method 2: Go-Based Libraries with Classes
+
+To include a Go-defined class in a library, add it to the `constants` map when creating the library. The `constants` map accepts any `object.Object`, including `*object.Class`:
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "github.com/paularlott/scriptling"
+    "github.com/paularlott/scriptling/object"
+)
+
+func main() {
+    p := scriptling.New()
+
+    // Define a class in Go
+    counterClass := &object.Class{
+        Name: "Counter",
         Methods: map[string]object.Object{
             "__init__": &object.Builtin{
                 Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-                    // Constructor logic
-                    return object.NULL
+                    self := args[0].(*object.Instance)
+                    // Default start value is 0
+                    start := int64(0)
+                    if len(args) > 1 {
+                        if intObj, ok := args[1].(*object.Integer); ok {
+                            start = intObj.Value
+                        }
+                    }
+                    self.Fields["value"] = &object.Integer{Value: start}
+                    return &object.Null{}
                 },
             },
-            "do_something": &object.Builtin{
+            "increment": &object.Builtin{
                 Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-                    return &object.String{Value: "Done"}
+                    self := args[0].(*object.Instance)
+                    if val, ok := self.Fields["value"].(*object.Integer); ok {
+                        newVal := val.Value + 1
+                        self.Fields["value"] = &object.Integer{Value: newVal}
+                        return &object.Integer{Value: newVal}
+                    }
+                    return &object.Null{}
+                },
+            },
+            "get": &object.Builtin{
+                Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+                    self := args[0].(*object.Instance)
+                    if val, ok := self.Fields["value"].(*object.Integer); ok {
+                        return &object.Integer{Value: val.Value}
+                    }
+                    return &object.Null{}
                 },
             },
         },
     }
 
-    // Return library with class as a "function" (it's callable)
-    // Note: Currently, libraries expect *object.Builtin values.
-    // To export a class from a library, you might need to wrap it or register it separately.
-    // Alternatively, you can return a constructor function that returns an instance.
-
-    return map[string]*object.Builtin{
-        "create_instance": {
-            Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-                // Manually create and return an instance
-                instance := &object.Instance{
-                    Class: myClass,
-                    Fields: make(map[string]object.Object),
-                }
-                return instance
+    // Create library with the class in the constants map
+    myLib := object.NewLibrary(
+        map[string]*object.Builtin{
+            // Regular functions go here
+            "create_counter": {
+                Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+                    return &object.String{Value: "Use Counter() class directly"}
+                },
             },
         },
-    }
+        map[string]object.Object{
+            // Classes and constants go here
+            "Counter": counterClass,
+            "VERSION": &object.String{Value: "1.0.0"},
+        },
+        "Counter utilities library",
+    )
+
+    p.RegisterLibrary("counters", myLib)
+
+    // Use from Scriptling
+    p.Eval(`
+import counters
+c = counters.Counter(10)
+print(c.get())        # 10
+print(c.increment())  # 11
+print(c.increment())  # 12
+`)
 }
 ```
 
-**Note**: Direct export of `object.Class` types in `object.Library` (which uses `map[string]*object.Builtin`) is not directly supported by the `NewLibrary` helper. You can register classes directly in the environment using `p.RegisterVar("ClassName", classObj)`.
+#### Key Points
+
+- **Script libraries**: Classes are automatically exported when defined at the top level of the script.
+- **Go libraries**: Add classes to the `constants` map (not the `functions` map) when calling `NewLibrary`.
+- The `constants` map accepts any `object.Object` type, making it suitable for classes, constants, and other non-function values.
+- Both library types convert to `Dict` objects when imported, allowing `mylib.ClassName()` syntax to work seamlessly.
