@@ -5,28 +5,16 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"regexp"
 	"sort"
 	"strings"
+
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
 )
-
-var regexCache = make(map[string]*regexp.Regexp)
-
-func getCompiledRegex(pattern string) (*regexp.Regexp, error) {
-	if re, ok := regexCache[pattern]; ok {
-		return re, nil
-	}
-	re, err := regexp.Compile(pattern)
-	if err != nil {
-		return nil, err
-	}
-	regexCache[pattern] = re
-	return re, nil
-}
 
 var builtins = map[string]*object.Builtin{
 	"print": {
@@ -340,7 +328,7 @@ Returns a new string with the first character capitalized and the rest lowercase
 				return errors.NewTypeError("STRING", args[0].Type().String())
 			}
 			str := args[0].(*object.String).Value
-			result := strings.Title(strings.ToLower(str))
+			result := cases.Title(language.Und).String(strings.ToLower(str))
 			return &object.String{Value: result}
 		},
 		HelpText: `title(str) - Convert to title case
@@ -637,18 +625,20 @@ Set reverse=True to sort in descending order.`,
 			if len(args) < 1 || len(args) > 3 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			var start, stop, step int64 = 0, 0, 1
+			var start, stop, step int64
 			if len(args) == 1 {
 				if args[0].Type() != object.INTEGER_OBJ {
 					return errors.NewTypeError("INTEGER", args[0].Type().String())
 				}
 				stop = args[0].(*object.Integer).Value
+				step = 1
 			} else if len(args) == 2 {
 				if args[0].Type() != object.INTEGER_OBJ || args[1].Type() != object.INTEGER_OBJ {
 					return errors.NewTypeError("INTEGER", "mixed types")
 				}
 				start = args[0].(*object.Integer).Value
 				stop = args[1].(*object.Integer).Value
+				step = 1
 			} else {
 				if args[0].Type() != object.INTEGER_OBJ || args[1].Type() != object.INTEGER_OBJ || args[2].Type() != object.INTEGER_OBJ {
 					return errors.NewTypeError("INTEGER", "mixed types")

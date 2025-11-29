@@ -3,6 +3,7 @@ package fssecurity
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -86,7 +87,9 @@ func TestConfig_IsPathAllowed_PathTraversal(t *testing.T) {
 
 	for _, path := range traversalPaths {
 		cleanPath := filepath.Clean(path)
-		if !filepath.HasPrefix(cleanPath, tempDir) {
+		rel, err := filepath.Rel(tempDir, cleanPath)
+		isInside := err == nil && !strings.HasPrefix(rel, "..")
+		if !isInside {
 			// Path is outside, should be denied
 			if config.IsPathAllowed(path) {
 				t.Errorf("Path traversal %s should be denied", path)

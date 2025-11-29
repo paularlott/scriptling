@@ -16,6 +16,33 @@ func init() {
 	rng = rand.New(rand.NewSource(time.Now().UnixNano()))
 }
 
+// gaussianRandom returns a random number from Gaussian distribution
+func gaussianRandom(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+	if len(args) != 2 {
+		return errors.NewArgumentError(len(args), 2)
+	}
+	var mu, sigma float64
+	switch arg := args[0].(type) {
+	case *object.Integer:
+		mu = float64(arg.Value)
+	case *object.Float:
+		mu = arg.Value
+	default:
+		return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
+	}
+	switch arg := args[1].(type) {
+	case *object.Integer:
+		sigma = float64(arg.Value)
+	case *object.Float:
+		sigma = arg.Value
+	default:
+		return errors.NewTypeError("INTEGER or FLOAT", args[1].Type().String())
+	}
+	// Box-Muller transform
+	val := rng.NormFloat64()*sigma + mu
+	return &object.Float{Value: val}
+}
+
 var RandomLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"seed": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
@@ -256,61 +283,13 @@ Returns a randomly selected element from range(start, stop, step).
 Like randint, but doesn't include the endpoint.`,
 	},
 	"gauss": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
-			}
-			var mu, sigma float64
-			switch arg := args[0].(type) {
-			case *object.Integer:
-				mu = float64(arg.Value)
-			case *object.Float:
-				mu = arg.Value
-			default:
-				return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
-			}
-			switch arg := args[1].(type) {
-			case *object.Integer:
-				sigma = float64(arg.Value)
-			case *object.Float:
-				sigma = arg.Value
-			default:
-				return errors.NewTypeError("INTEGER or FLOAT", args[1].Type().String())
-			}
-			// Box-Muller transform
-			val := rng.NormFloat64()*sigma + mu
-			return &object.Float{Value: val}
-		},
+		Fn: gaussianRandom,
 		HelpText: `gauss(mu, sigma) - Return random number from Gaussian distribution
 
 mu is the mean, sigma is the standard deviation.`,
 	},
 	"normalvariate": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
-			}
-			var mu, sigma float64
-			switch arg := args[0].(type) {
-			case *object.Integer:
-				mu = float64(arg.Value)
-			case *object.Float:
-				mu = arg.Value
-			default:
-				return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
-			}
-			switch arg := args[1].(type) {
-			case *object.Integer:
-				sigma = float64(arg.Value)
-			case *object.Float:
-				sigma = arg.Value
-			default:
-				return errors.NewTypeError("INTEGER or FLOAT", args[1].Type().String())
-			}
-			// Normal distribution using Go's NormFloat64
-			val := rng.NormFloat64()*sigma + mu
-			return &object.Float{Value: val}
-		},
+		Fn: gaussianRandom,
 		HelpText: `normalvariate(mu, sigma) - Return random number from normal distribution
 
 mu is the mean, sigma is the standard deviation.

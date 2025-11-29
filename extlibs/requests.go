@@ -124,6 +124,23 @@ var exceptionsNamespace = &object.Dict{
 	},
 }
 
+// parseRequestOptions parses the options dict and returns timeout and headers
+func parseRequestOptions(options map[string]object.Object) (int, map[string]string) {
+	timeout := 5
+	headers := make(map[string]string)
+	if timeoutPair, ok := options["timeout"]; ok {
+		if timeoutInt, ok := timeoutPair.AsInt(); ok {
+			timeout = int(timeoutInt)
+		}
+	}
+	if headersPair, ok := options["headers"]; ok {
+		if headersDict, ok := headersPair.AsDict(); ok {
+			headers = extractHeaders(headersDict)
+		}
+	}
+	return timeout, headers
+}
+
 var RequestsLibrary = object.NewLibrary(map[string]*object.Builtin{
 	// Exceptions namespace - returns dict with exception types
 	"exceptions": {
@@ -148,16 +165,7 @@ var RequestsLibrary = object.NewLibrary(map[string]*object.Builtin{
 					return errors.NewTypeError("DICT", args[1].Type().String())
 				}
 				options, _ := args[1].AsDict()
-				if timeoutPair, ok := options["timeout"]; ok {
-					if timeoutInt, ok := timeoutPair.AsInt(); ok {
-						timeout = int(timeoutInt)
-					}
-				}
-				if headersPair, ok := options["headers"]; ok {
-					if headersDict, ok := headersPair.AsDict(); ok {
-						headers = extractHeaders(headersDict)
-					}
-				}
+				timeout, headers = parseRequestOptions(options)
 			}
 			return httpRequestWithContext(ctx, "GET", url, "", timeout, headers)
 		},
@@ -192,16 +200,7 @@ Returns:
 					return errors.NewTypeError("DICT", args[2].Type().String())
 				}
 				options, _ := args[2].AsDict()
-				if timeoutPair, ok := options["timeout"]; ok {
-					if timeoutInt, ok := timeoutPair.AsInt(); ok {
-						timeout = int(timeoutInt)
-					}
-				}
-				if headersPair, ok := options["headers"]; ok {
-					if headersDict, ok := headersPair.AsDict(); ok {
-						headers = extractHeaders(headersDict)
-					}
-				}
+				timeout, headers = parseRequestOptions(options)
 			}
 			return httpRequestWithContext(ctx, "POST", url, body, timeout, headers)
 		},
@@ -237,16 +236,7 @@ Returns:
 					return errors.NewTypeError("DICT", args[2].Type().String())
 				}
 				options, _ := args[2].AsDict()
-				if timeoutPair, ok := options["timeout"]; ok {
-					if timeoutInt, ok := timeoutPair.AsInt(); ok {
-						timeout = int(timeoutInt)
-					}
-				}
-				if headersPair, ok := options["headers"]; ok {
-					if headersDict, ok := headersPair.AsDict(); ok {
-						headers = extractHeaders(headersDict)
-					}
-				}
+				timeout, headers = parseRequestOptions(options)
 			}
 			return httpRequestWithContext(ctx, "PUT", url, body, timeout, headers)
 		},
@@ -281,16 +271,7 @@ Returns:
 					return errors.NewTypeError("DICT", args[1].Type().String())
 				}
 				options, _ := args[1].AsDict()
-				if timeoutPair, ok := options["timeout"]; ok {
-					if timeoutInt, ok := timeoutPair.AsInt(); ok {
-						timeout = int(timeoutInt)
-					}
-				}
-				if headersPair, ok := options["headers"]; ok {
-					if headersDict, ok := headersPair.AsDict(); ok {
-						headers = extractHeaders(headersDict)
-					}
-				}
+				timeout, headers = parseRequestOptions(options)
 			}
 			return httpRequestWithContext(ctx, "DELETE", url, "", timeout, headers)
 		},
@@ -325,16 +306,7 @@ Returns:
 					return errors.NewTypeError("DICT", args[2].Type().String())
 				}
 				options, _ := args[2].AsDict()
-				if timeoutPair, ok := options["timeout"]; ok {
-					if timeoutInt, ok := timeoutPair.AsInt(); ok {
-						timeout = int(timeoutInt)
-					}
-				}
-				if headersPair, ok := options["headers"]; ok {
-					if headersDict, ok := headersPair.AsDict(); ok {
-						headers = extractHeaders(headersDict)
-					}
-				}
+				timeout, headers = parseRequestOptions(options)
 			}
 			return httpRequestWithContext(ctx, "PATCH", url, body, timeout, headers)
 		},

@@ -19,6 +19,78 @@ func gcd(a, b int64) int64 {
 	return a
 }
 
+// minMaxFunction returns min or max of arguments
+func minMaxFunction(isMin bool) func(context.Context, map[string]object.Object, ...object.Object) object.Object {
+	return func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		if len(args) < 2 {
+			return errors.NewArgumentError(len(args), 2)
+		}
+		// Track if all inputs are integers
+		allIntegers := true
+		// Get first value
+		var result float64
+		switch arg := args[0].(type) {
+		case *object.Integer:
+			result = float64(arg.Value)
+		case *object.Float:
+			result = arg.Value
+			allIntegers = false
+		default:
+			return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
+		}
+		// Compare with remaining values
+		for i := 1; i < len(args); i++ {
+			var val float64
+			switch arg := args[i].(type) {
+			case *object.Integer:
+				val = float64(arg.Value)
+			case *object.Float:
+				val = arg.Value
+				allIntegers = false
+			default:
+				return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
+			}
+			if isMin {
+				result = math.Min(result, val)
+			} else {
+				result = math.Max(result, val)
+			}
+		}
+		// Return integer if all inputs were integers
+		if allIntegers {
+			return &object.Integer{Value: int64(result)}
+		}
+		return &object.Float{Value: result}
+	}
+}
+
+// twoFloatFunc creates a function that takes two floats and applies f
+func twoFloatFunc(f func(float64, float64) float64) func(context.Context, map[string]object.Object, ...object.Object) object.Object {
+	return func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		if len(args) != 2 {
+			return errors.NewArgumentError(len(args), 2)
+		}
+		var x, y float64
+		switch arg := args[0].(type) {
+		case *object.Integer:
+			x = float64(arg.Value)
+		case *object.Float:
+			x = arg.Value
+		default:
+			return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
+		}
+		switch arg := args[1].(type) {
+		case *object.Integer:
+			y = float64(arg.Value)
+		case *object.Float:
+			y = arg.Value
+		default:
+			return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
+		}
+		return &object.Float{Value: f(x, y)}
+	}
+}
+
 var MathLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"sqrt": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
@@ -40,29 +112,7 @@ x must be a non-negative number (integer or float).
 Returns a float.`,
 	},
 	"pow": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
-			}
-			var base, exp float64
-			switch arg := args[0].(type) {
-			case *object.Integer:
-				base = float64(arg.Value)
-			case *object.Float:
-				base = arg.Value
-			default:
-				return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
-			}
-			switch arg := args[1].(type) {
-			case *object.Integer:
-				exp = float64(arg.Value)
-			case *object.Float:
-				exp = arg.Value
-			default:
-				return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
-			}
-			return &object.Float{Value: math.Pow(base, exp)}
-		},
+		Fn: twoFloatFunc(math.Pow),
 		HelpText: `pow(base, exp) - Return base raised to the power exp
 
 base and exp can be integers or floats.
@@ -148,86 +198,14 @@ x can be an integer or float.
 Rounds to the nearest integer, with ties rounding away from zero.`,
 	},
 	"min": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			if len(args) < 2 {
-				return errors.NewArgumentError(len(args), 2)
-			}
-			// Track if all inputs are integers
-			allIntegers := true
-			// Get first value
-			var result float64
-			switch arg := args[0].(type) {
-			case *object.Integer:
-				result = float64(arg.Value)
-			case *object.Float:
-				result = arg.Value
-				allIntegers = false
-			default:
-				return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
-			}
-			// Compare with remaining values
-			for i := 1; i < len(args); i++ {
-				var val float64
-				switch arg := args[i].(type) {
-				case *object.Integer:
-					val = float64(arg.Value)
-				case *object.Float:
-					val = arg.Value
-					allIntegers = false
-				default:
-					return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
-				}
-				result = math.Min(result, val)
-			}
-			// Return integer if all inputs were integers
-			if allIntegers {
-				return &object.Integer{Value: int64(result)}
-			}
-			return &object.Float{Value: result}
-		},
+		Fn: minMaxFunction(true),
 		HelpText: `min(*args) - Return the minimum value
 
 Takes two or more numbers (integers or floats).
 Returns the smallest value, preserving type if all integers.`,
 	},
 	"max": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			if len(args) < 2 {
-				return errors.NewArgumentError(len(args), 2)
-			}
-			// Track if all inputs are integers
-			allIntegers := true
-			// Get first value
-			var result float64
-			switch arg := args[0].(type) {
-			case *object.Integer:
-				result = float64(arg.Value)
-			case *object.Float:
-				result = arg.Value
-				allIntegers = false
-			default:
-				return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
-			}
-			// Compare with remaining values
-			for i := 1; i < len(args); i++ {
-				var val float64
-				switch arg := args[i].(type) {
-				case *object.Integer:
-					val = float64(arg.Value)
-				case *object.Float:
-					val = arg.Value
-					allIntegers = false
-				default:
-					return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
-				}
-				result = math.Max(result, val)
-			}
-			// Return integer if all inputs were integers
-			if allIntegers {
-				return &object.Integer{Value: int64(result)}
-			}
-			return &object.Float{Value: result}
-		},
+		Fn: minMaxFunction(false),
 		HelpText: `max(*args) - Return the maximum value
 
 Takes two or more numbers (integers or floats).
@@ -512,29 +490,7 @@ Returns True if x is positive or negative infinity.`,
 Returns True if x is neither NaN nor infinite.`,
 	},
 	"copysign": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
-			}
-			var x, y float64
-			switch arg := args[0].(type) {
-			case *object.Integer:
-				x = float64(arg.Value)
-			case *object.Float:
-				x = arg.Value
-			default:
-				return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
-			}
-			switch arg := args[1].(type) {
-			case *object.Integer:
-				y = float64(arg.Value)
-			case *object.Float:
-				y = arg.Value
-			default:
-				return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
-			}
-			return &object.Float{Value: math.Copysign(x, y)}
-		},
+		Fn: twoFloatFunc(math.Copysign),
 		HelpText: `copysign(x, y) - Return x with the sign of y
 
 Returns a float with magnitude of x and sign of y.`,
@@ -598,29 +554,7 @@ x must be positive. Returns a float.`,
 x must be positive. Returns a float.`,
 	},
 	"hypot": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
-			}
-			var x, y float64
-			switch arg := args[0].(type) {
-			case *object.Integer:
-				x = float64(arg.Value)
-			case *object.Float:
-				x = arg.Value
-			default:
-				return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
-			}
-			switch arg := args[1].(type) {
-			case *object.Integer:
-				y = float64(arg.Value)
-			case *object.Float:
-				y = arg.Value
-			default:
-				return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
-			}
-			return &object.Float{Value: math.Hypot(x, y)}
-		},
+		Fn: twoFloatFunc(math.Hypot),
 		HelpText: `hypot(x, y) - Return the Euclidean distance sqrt(x*x + y*y)
 
 Returns a float.`,

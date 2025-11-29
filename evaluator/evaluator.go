@@ -19,7 +19,10 @@ var (
 )
 
 // envContextKey is used to store environment in context
-var envContextKey = struct{}{}
+type envContextKeyType struct{}
+
+// envContextKey is used to store environment in context
+var envContextKey = envContextKeyType{}
 
 // SetEnvInContext stores environment in context for builtin functions
 func SetEnvInContext(ctx context.Context, env *object.Environment) context.Context {

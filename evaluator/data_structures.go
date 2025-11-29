@@ -52,14 +52,6 @@ func evalIndexExpression(left, index object.Object) object.Object {
 	}
 }
 
-func evalDictMemberAccess(dict *object.Dict, member string) object.Object {
-	pair, ok := dict.Pairs[member]
-	if !ok {
-		return NULL
-	}
-	return pair.Value
-}
-
 func evalListIndexExpression(list, index object.Object) object.Object {
 	listObject := list.(*object.List)
 	idx := index.(*object.Integer).Value
