@@ -29,6 +29,11 @@ email = re.search("[a-z]+@[a-z]+\.[a-z]+", "Contact: user@example.com")
 # Find all - returns list
 phones = re.findall("[0-9]{3}-[0-9]{4}", "555-1234 or 555-5678")
 
+# Find all as Match objects - returns list of Match objects
+matches = re.finditer("[0-9]{3}-[0-9]{4}", "555-1234 or 555-5678")
+for match in matches:
+    print(match.group(0))  # "555-1234", "555-5678"
+
 # Sub - replacement (pattern, repl, string, count=0, flags=0)
 text = re.sub("[0-9]+", "XXX", "Price: 100")
 text = re.sub("[0-9]+", "X", "a1b2c3", 2)  # Replace only first 2

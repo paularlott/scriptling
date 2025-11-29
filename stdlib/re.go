@@ -142,6 +142,43 @@ If the pattern contains capturing groups, returns a list of tuples containing th
 If there is one capturing group, returns a list of strings for that group.
 If there are no capturing groups, returns a list of strings for the full matches.`,
 		},
+		"finditer": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				if len(args) != 2 {
+					return errors.NewArgumentError(len(args), 2)
+				}
+				if args[1].Type() != object.STRING_OBJ {
+					return errors.NewTypeError("STRING", args[1].Type().String())
+				}
+				regex := args[0].(*object.Instance)
+				pattern := regex.Fields["pattern"].(*object.String).Value
+				text, _ := args[1].AsString()
+
+				re, err := GetCompiledRegex(pattern)
+				if err != nil {
+					return errors.NewError("regex compile error: %s", err.Error())
+				}
+
+				allMatches := re.FindAllStringSubmatchIndex(text, -1)
+				elements := make([]object.Object, len(allMatches))
+				for i, match := range allMatches {
+					// Build groups from submatch indices
+					groups := make([]string, 0)
+					for j := 0; j < len(match); j += 2 {
+						if match[j] >= 0 && match[j+1] >= 0 {
+							groups = append(groups, text[match[j]:match[j+1]])
+						} else {
+							groups = append(groups, "")
+						}
+					}
+					elements[i] = createMatchInstance(groups, match[0], match[1])
+				}
+				return &object.List{Elements: elements}
+			},
+			HelpText: `finditer(string) - Find all matches as Match objects
+
+Returns a list of Match objects for all matches of the regex pattern in the string.`,
+		},
 	},
 }
 
@@ -562,6 +599,53 @@ Returns a list of all substrings that match the regex pattern.
 If the pattern contains capturing groups, returns a list of tuples containing the groups.
 If there is one capturing group, returns a list of strings for that group.
 If there are no capturing groups, returns a list of strings for the full matches.
+
+Flags:
+  re.IGNORECASE or re.I - Case-insensitive matching
+  re.MULTILINE or re.M  - ^ and $ match at line boundaries
+  re.DOTALL or re.S     - . matches newlines`,
+	},
+	"finditer": {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			if len(args) < 2 || len(args) > 3 {
+				return errors.NewError("finditer() takes 2 or 3 arguments (%d given)", len(args))
+			}
+			if args[0].Type() != object.STRING_OBJ || args[1].Type() != object.STRING_OBJ {
+				return errors.NewTypeError("STRING", "mixed types")
+			}
+			pattern, _ := args[0].AsString()
+			text, _ := args[1].AsString()
+
+			flags, err := getFlags(args, 2)
+			if err != nil {
+				return errors.NewError("%s", err.Error())
+			}
+			pattern = applyFlags(pattern, flags)
+
+			re, err := GetCompiledRegex(pattern)
+			if err != nil {
+				return errors.NewError("regex compile error: %s", err.Error())
+			}
+
+			allMatches := re.FindAllStringSubmatchIndex(text, -1)
+			elements := make([]object.Object, len(allMatches))
+			for i, match := range allMatches {
+				// Build groups from submatch indices
+				groups := make([]string, 0)
+				for j := 0; j < len(match); j += 2 {
+					if match[j] >= 0 && match[j+1] >= 0 {
+						groups = append(groups, text[match[j]:match[j+1]])
+					} else {
+						groups = append(groups, "")
+					}
+				}
+				elements[i] = createMatchInstance(groups, match[0], match[1])
+			}
+			return &object.List{Elements: elements}
+		},
+		HelpText: `finditer(pattern, string, flags=0) - Find all matches as Match objects
+
+Returns a list of Match objects for all matches of the regex pattern in the string.
 
 Flags:
   re.IGNORECASE or re.I - Case-insensitive matching
