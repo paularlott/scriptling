@@ -53,12 +53,51 @@ var availableLibraries = map[string]*object.Library{
 	"copy":         stdlib.CopyLibrary,
 }
 
-func New() *Scriptling {
+func New(libs ...interface{}) *Scriptling {
 	p := &Scriptling{
 		env:                     object.NewEnvironment(),
 		registeredLibraries:     make(map[string]*object.Library),
 		scriptLibraries:         make(map[string]*scriptLibrary),
 		onDemandLibraryCallback: nil,
+	}
+
+	var libList []string
+	if len(libs) == 0 {
+		// No libs specified, register all
+		libList = nil
+	} else if len(libs) == 1 {
+		switch v := libs[0].(type) {
+		case []string:
+			libList = v
+		case string:
+			libList = []string{v}
+		default:
+			// Invalid, register all
+			libList = nil
+		}
+	} else {
+		// Multiple args, assume all strings
+		libList = make([]string, len(libs))
+		for i, lib := range libs {
+			if s, ok := lib.(string); ok {
+				libList[i] = s
+			}
+		}
+	}
+
+	// Register selected standard libraries
+	if len(libList) == 0 {
+		// Register all if none specified
+		for name, lib := range availableLibraries {
+			p.registeredLibraries[name] = lib
+		}
+	} else {
+		// Register only specified libs
+		for _, name := range libList {
+			if lib, ok := availableLibraries[name]; ok {
+				p.registeredLibraries[name] = lib
+			}
+		}
 	}
 
 	// Register import builtin
@@ -80,24 +119,11 @@ func New() *Scriptling {
 			return ok
 		}
 
-		// Standard libraries
-		for name := range availableLibraries {
-			if !seen[name] {
-				libs = append(libs, object.LibraryInfo{
-					Name:       name,
-					IsStandard: true,
-					IsImported: isImported(name),
-				})
-				seen[name] = true
-			}
-		}
-
-		// Registered libraries
+		// Registered libraries (includes selected standard libraries)
 		for name := range p.registeredLibraries {
 			if !seen[name] {
 				libs = append(libs, object.LibraryInfo{
 					Name:       name,
-					IsStandard: false,
 					IsImported: isImported(name),
 				})
 				seen[name] = true
@@ -109,7 +135,6 @@ func New() *Scriptling {
 			if !seen[name] {
 				libs = append(libs, object.LibraryInfo{
 					Name:       name,
-					IsStandard: false,
 					IsImported: isImported(name),
 				})
 				seen[name] = true
@@ -180,12 +205,6 @@ func (p *Scriptling) loadLibrary(name string) error {
 
 		// Try from registered libraries
 		if lib, ok := p.registeredLibraries[name]; ok {
-			p.registerLibrary(name, lib)
-			return nil
-		}
-
-		// Try standard libraries
-		if lib, ok := availableLibraries[name]; ok {
 			p.registerLibrary(name, lib)
 			return nil
 		}
@@ -523,14 +542,6 @@ func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[stri
 
 		// Try from registered libraries
 		if lib, ok := p.registeredLibraries[libName]; ok {
-			// Convert library to dict and load into library environment
-			libDict := p.libraryToDict(lib)
-			libEnv.Set(libName, libDict)
-			return nil
-		}
-
-		// Try standard libraries
-		if lib, ok := availableLibraries[libName]; ok {
 			// Convert library to dict and load into library environment
 			libDict := p.libraryToDict(lib)
 			libEnv.Set(libName, libDict)
