@@ -10,8 +10,49 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
-// CreateMathUtilsLibrary creates a custom math utilities library
-func CreateMathUtilsLibrary() *object.Library {
+// CreateExampleLibrary creates a demo library with math utilities and classes
+func CreateExampleLibrary() *object.Library {
+	// Define Person class
+	personClass := &object.Class{
+		Name: "Person",
+		Methods: map[string]object.Object{
+			"__init__": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+					if len(args) != 3 {
+						return &object.String{Value: "Error: __init__ requires 3 arguments (self, name, age)"}
+					}
+					person := args[0].(*object.Instance)
+					nameObj, ok := args[1].(*object.String)
+					if !ok {
+						return &object.String{Value: "Error: name must be string"}
+					}
+					ageObj, ok := toInteger(args[2])
+					if !ok {
+						return &object.String{Value: "Error: age must be integer"}
+					}
+
+					// Set instance fields
+					person.Fields["name"] = nameObj
+					person.Fields["age"] = ageObj
+					person.Fields["type"] = &object.String{Value: "person"}
+
+					return &object.Null{}
+				},
+			},
+			"__str__": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+					if len(args) != 1 {
+						return &object.String{Value: "Error: __str__ requires 1 argument (self)"}
+					}
+					person := args[0].(*object.Instance)
+					name := person.Fields["name"].(*object.String).Value
+					age := person.Fields["age"].(*object.Integer).Value
+					return &object.String{Value: fmt.Sprintf("Person(name='%s', age=%d)", name, age)}
+				},
+			},
+		},
+	}
+
 	return object.NewLibrary(map[string]*object.Builtin{
 		"power": {
 			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
@@ -99,25 +140,22 @@ func CreateMathUtilsLibrary() *object.Library {
 					return &object.String{Value: "Error: age must be integer"}
 				}
 
-				// Create and return a map/dictionary
-				pairs := make(map[string]object.DictPair)
-				pairs["name"] = object.DictPair{
-					Key:   &object.String{Value: "name"},
-					Value: nameObj,
-				}
-				pairs["age"] = object.DictPair{
-					Key:   &object.String{Value: "age"},
-					Value: ageObj,
-				}
-				pairs["type"] = object.DictPair{
-					Key:   &object.String{Value: "type"},
-					Value: &object.String{Value: "person"},
+				// Create and return a Person instance
+				personInstance := &object.Instance{
+					Class:  personClass,
+					Fields: make(map[string]object.Object),
 				}
 
-				return &object.Dict{Pairs: pairs}
+				// Initialize the person
+				initMethod := personClass.Methods["__init__"]
+				initMethod.(*object.Builtin).Fn(ctx, nil, personInstance, nameObj, ageObj)
+
+				return personInstance
 			},
 		},
-	}, nil, "")
+	}, map[string]object.Object{
+		"Person": personClass,
+	}, "")
 }
 
 // Helper function for type casting to float64
@@ -189,8 +227,8 @@ func runGoExtensionExample() {
 		return &object.List{Elements: results}
 	})
 
-	// Register the custom math utilities library
-	p.RegisterLibrary("mathutils", CreateMathUtilsLibrary())
+	// Register the custom example library
+	p.RegisterLibrary("mathutils", CreateExampleLibrary())
 
 	// Run a comprehensive Scriptling script that demonstrates all features
 	_, err := p.Eval(`
@@ -222,23 +260,26 @@ values = [1.5, 2.5, 3.0, 4.5]
 total = mathutils.sum_array(values)
 print("Sum of " + str(values) + " = " + str(total))
 
-print("\n=== Map/Dictionary Operations ===")
+print("\n=== Class/Object Operations ===")
 
 # Create a person using library function
 person = mathutils.create_person("Alice", 30)
-print("Person: " + str(person))
+print("Person: " + str(person))  # Shows default object representation
 
-# Get values from the person map
-name = mathutils.get_map_value(person, "name")
-age = mathutils.get_map_value(person, "age")
-person_type = mathutils.get_map_value(person, "type")
+# Access person attributes using dot notation
+name = person.name
+age = person.age
+person_type = person.type
 print("Name: " + str(name))
 print("Age: " + str(age))
 print("Type: " + str(person_type))
 
-# Test missing key
-missing = mathutils.get_map_value(person, "salary")
-print("Missing key result: " + str(missing))
+# Test accessing non-existent attribute (returns None)
+try:
+    missing = person.salary
+    print("Salary: " + str(missing))
+except:
+    print("Salary not found (expected)")
 `)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
