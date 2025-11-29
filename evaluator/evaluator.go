@@ -19,10 +19,7 @@ var (
 )
 
 // envContextKey is used to store environment in context
-type envContextKeyType struct{}
-
-// envContextKey is used to store environment in context
-var envContextKey = envContextKeyType{}
+const envContextKey = "scriptling-env"
 
 // SetEnvInContext stores environment in context for builtin functions
 func SetEnvInContext(ctx context.Context, env *object.Environment) context.Context {
@@ -36,8 +33,6 @@ func GetEnvFromContext(ctx context.Context) *object.Environment {
 	}
 	return object.NewEnvironment() // fallback
 }
-
-// init sets up callbacks for stdlib functions that need to call user functions
 func init() {
 	// Set up the function caller for functools.reduce
 	stdlib.SetFunctionCaller(func(ctx context.Context, fn *object.Function, args []object.Object) object.Object {

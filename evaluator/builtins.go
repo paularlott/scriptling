@@ -2189,14 +2189,6 @@ func printFunctionHelp(writer io.Writer, name string, fn *object.Function) {
 	fmt.Fprintf(writer, " - User-defined function\n")
 }
 
-// getEnvFromContext retrieves environment from context
-func getEnvFromContext(ctx context.Context) *object.Environment {
-	if env, ok := ctx.Value(envContextKey).(*object.Environment); ok {
-		return env
-	}
-	return object.NewEnvironment() // fallback
-}
-
 func GetImportBuiltin() *object.Builtin {
 	return &object.Builtin{
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
@@ -2220,4 +2212,12 @@ func GetImportBuiltin() *object.Builtin {
 			return &object.Null{}
 		},
 	}
+}
+
+// getEnvFromContext retrieves environment from context
+func getEnvFromContext(ctx context.Context) *object.Environment {
+	if env, ok := ctx.Value(envContextKey).(*object.Environment); ok {
+		return env
+	}
+	return object.NewEnvironment() // fallback
 }
