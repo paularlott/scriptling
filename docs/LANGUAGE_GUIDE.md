@@ -14,6 +14,16 @@ Scriptling is a dynamically-typed, interpreted language with Python-inspired syn
 - HTTP/REST API calls
 - Go interoperability
 
+## Differences from Python
+
+While Scriptling is inspired by Python, it has some key differences:
+
+- **No Inheritance**: Classes do not support inheritance.
+- **No Nested Classes**: Classes cannot be defined within other classes.
+- **Simplified Scope**: `nonlocal` and `global` keywords work slightly differently.
+- **Go Integration**: Designed primarily for embedding in Go, with direct type mapping.
+- **Sandboxed**: No direct access to filesystem or network unless explicitly enabled via libraries.
+
 ## Syntax Rules
 
 ### Indentation

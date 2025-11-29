@@ -14,10 +14,21 @@ A minimal, sandboxed interpreter for LLM agents to execute code and interact wit
 - **Python-like syntax** with indentation-based blocks
 - **Core types**: integers, floats, strings, booleans, lists, dictionaries
 - **Control flow**: if/elif/else, while, for loops, break, continue
+- **Object-oriented**: Classes with methods and constructors
 - **Advanced features**: functions, lambda, list comprehensions, error handling
 - **Libraries**: json, regex, math, time, http (load on demand)
 - **Go integration**: Register functions, exchange variables
 - **Fast**: Lightweight interpreter, only loads what you need
+
+## Differences from Python
+
+While Scriptling is inspired by Python, it has some key differences:
+
+- **No Inheritance**: Classes do not support inheritance.
+- **No Nested Classes**: Classes cannot be defined within other classes.
+- **Simplified Scope**: `nonlocal` and `global` keywords work slightly differently.
+- **Go Integration**: Designed primarily for embedding in Go, with direct type mapping.
+- **Sandboxed**: No direct access to filesystem or network unless explicitly enabled via libraries.
 
 ## Installation
 
@@ -39,13 +50,6 @@ func main() {
     // Create interpreter with all standard libraries (default)
     p := scriptling.New()
 
-    // Or create with only specific libraries using variadic args
-    p := scriptling.New("json", "math", "time")
-
-    // Or using an array of strings
-    libs := []string{"json", "math"}
-    p := scriptling.New(libs)
-
     // Execute Scriptling code
     result, err := p.Eval(`
 # Variables and types
@@ -61,8 +65,6 @@ def greet(n):
 print(greet(name))
 print("Sum:", x + len(numbers))
 `)
-
-    `)
     if err != nil {
         fmt.Println("Error:", err)
     }
@@ -90,10 +92,6 @@ task build-all
 ```
 
 See [scriptling-cli/README.md](scriptling-cli/README.md) for details.
-
-## Go API
-}
-```
 
 ## Go API
 
@@ -143,12 +141,8 @@ p.SetOnDemandLibraryCallback(func(p *Scriptling, libName string) bool {
 
 ### Libraries
 ```go
-// Create with specific standard libraries using variadic args
-p := scriptling.New("json", "math", "time")
-
-// Or using an array of strings
-libs := []string{"json", "math"}
-p := scriptling.New(libs)
+// Create interpreter with all standard libraries
+p := scriptling.New()
 
 // Register additional custom libraries
 import "github.com/paularlott/scriptling/extlibs"
@@ -164,9 +158,6 @@ import http
 response = http.get("https://api.example.com/data")
 data = json.parse(response["body"])  # json already imported via p.Import()
 `)
-
-// Libraries can also be loaded on-demand using SetOnDemandLibraryCallback
-// This allows loading libraries from disk or other sources when first imported
 ```
 
 ## Examples
