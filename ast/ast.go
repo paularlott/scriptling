@@ -103,6 +103,16 @@ type InfixExpression struct {
 func (ie *InfixExpression) expressionNode()      {}
 func (ie *InfixExpression) TokenLiteral() string { return ie.Token.Literal }
 
+type ConditionalExpression struct {
+	Token     token.Token
+	TrueExpr  Expression
+	Condition Expression
+	FalseExpr Expression
+}
+
+func (ce *ConditionalExpression) expressionNode()      {}
+func (ce *ConditionalExpression) TokenLiteral() string { return ce.Token.Literal }
+
 type AssignStatement struct {
 	Token token.Token
 	Left  Expression
