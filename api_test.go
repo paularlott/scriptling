@@ -54,6 +54,102 @@ msg = mylib.greet()
 	}
 }
 
+func TestRegisterLibraryWithClass(t *testing.T) {
+	p := New()
+
+	// Define a class in Go
+	counterClass := &object.Class{
+		Name: "Counter",
+		Methods: map[string]object.Object{
+			"__init__": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+					self := args[0].(*object.Instance)
+					start := int64(0)
+					if len(args) > 1 {
+						if intObj, ok := args[1].(*object.Integer); ok {
+							start = intObj.Value
+						}
+					}
+					self.Fields["value"] = &object.Integer{Value: start}
+					return &object.Null{}
+				},
+			},
+			"increment": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+					self := args[0].(*object.Instance)
+					if val, ok := self.Fields["value"].(*object.Integer); ok {
+						newVal := val.Value + 1
+						self.Fields["value"] = &object.Integer{Value: newVal}
+						return &object.Integer{Value: newVal}
+					}
+					return &object.Null{}
+				},
+			},
+			"get": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+					self := args[0].(*object.Instance)
+					// Return a copy to avoid mutation issues
+					if val, ok := self.Fields["value"].(*object.Integer); ok {
+						return &object.Integer{Value: val.Value}
+					}
+					return self.Fields["value"]
+				},
+			},
+		},
+	}
+
+	// Create library with the class in the constants map
+	myLib := object.NewLibrary(
+		map[string]*object.Builtin{
+			"helper": {
+				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+					return &object.String{Value: "helper called"}
+				},
+			},
+		},
+		map[string]object.Object{
+			"Counter": counterClass,
+			"VERSION": &object.String{Value: "1.0.0"},
+		},
+		"Counter utilities library",
+	)
+
+	p.RegisterLibrary("counters", myLib)
+
+	// Test using the class from the library
+	_, err := p.Eval(`
+import counters
+c = counters.Counter(10)
+initial = c.get()
+after_inc = c.increment()
+version = counters.VERSION
+helper_result = counters.helper()
+`)
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+
+	initial, ok := p.GetVar("initial")
+	if !ok || initial != int64(10) {
+		t.Errorf("expected initial=10, got %v", initial)
+	}
+
+	afterInc, ok := p.GetVar("after_inc")
+	if !ok || afterInc != int64(11) {
+		t.Errorf("expected after_inc=11, got %v", afterInc)
+	}
+
+	version, ok := p.GetVar("version")
+	if !ok || version != "1.0.0" {
+		t.Errorf("expected version=1.0.0, got %v", version)
+	}
+
+	helperResult, ok := p.GetVar("helper_result")
+	if !ok || helperResult != "helper called" {
+		t.Errorf("expected helper_result='helper called', got %v", helperResult)
+	}
+}
+
 func TestImportBuiltin(t *testing.T) {
 	p := New()
 	_, err := p.Eval(`
