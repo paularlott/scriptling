@@ -59,8 +59,6 @@ const (
 	DICT_OBJ
 	ERROR_OBJ
 	EXCEPTION_OBJ
-	REGEX_OBJ
-	MATCH_OBJ
 	CLASS_OBJ
 	INSTANCE_OBJ
 )
@@ -100,10 +98,6 @@ func (ot ObjectType) String() string {
 		return "ERROR"
 	case EXCEPTION_OBJ:
 		return "EXCEPTION"
-	case REGEX_OBJ:
-		return "REGEX"
-	case MATCH_OBJ:
-		return "MATCH"
 	case CLASS_OBJ:
 		return "CLASS"
 	case INSTANCE_OBJ:
@@ -181,48 +175,6 @@ func (s *String) AsFloat() (float64, bool)          { return 0, false }
 func (s *String) AsBool() (bool, bool)              { return s.Value != "", true }
 func (s *String) AsList() ([]Object, bool)          { return nil, false }
 func (s *String) AsDict() (map[string]Object, bool) { return nil, false }
-
-type Regex struct {
-	Pattern string
-	Flags   int64
-}
-
-func (r *Regex) Type() ObjectType { return REGEX_OBJ }
-func (r *Regex) Inspect() string  { return fmt.Sprintf("Regex(%s)", r.Pattern) }
-
-func (r *Regex) AsString() (string, bool)          { return r.Pattern, true }
-func (r *Regex) AsInt() (int64, bool)              { return 0, false }
-func (r *Regex) AsFloat() (float64, bool)          { return 0, false }
-func (r *Regex) AsBool() (bool, bool)              { return true, true }
-func (r *Regex) AsList() ([]Object, bool)          { return nil, false }
-func (r *Regex) AsDict() (map[string]Object, bool) { return nil, false }
-
-// Match represents a regex match result (like Python's re.Match)
-type Match struct {
-	Groups []string // Group 0 is the full match, Groups[1:] are capturing groups
-	Start  int      // Start position of the match in the original string
-	End    int      // End position of the match in the original string
-}
-
-func (m *Match) Type() ObjectType { return MATCH_OBJ }
-func (m *Match) Inspect() string {
-	if len(m.Groups) > 0 {
-		return fmt.Sprintf("<re.Match object; span=(%d, %d), match='%s'>", m.Start, m.End, m.Groups[0])
-	}
-	return "<re.Match object>"
-}
-
-func (m *Match) AsString() (string, bool) {
-	if len(m.Groups) > 0 {
-		return m.Groups[0], true
-	}
-	return "", false
-}
-func (m *Match) AsInt() (int64, bool)              { return 0, false }
-func (m *Match) AsFloat() (float64, bool)          { return 0, false }
-func (m *Match) AsBool() (bool, bool)              { return true, true }
-func (m *Match) AsList() ([]Object, bool)          { return nil, false }
-func (m *Match) AsDict() (map[string]Object, bool) { return nil, false }
 
 type Null struct{}
 

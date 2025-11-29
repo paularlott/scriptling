@@ -5,7 +5,7 @@ fails = 0
 
 # Test 1: Basic re.compile returns Regex object
 pattern = re.compile(r"[0-9]+")
-if type(pattern) != "REGEX":
+if type(pattern) != "Regex":
     fails = fails + 1
 
 # Test 2: pattern.findall with no groups
@@ -32,17 +32,17 @@ for m in matches:
 
 # Test 5: re.compile with IGNORECASE flag
 pattern = re.compile(r"hello", re.I)
-if type(pattern) != "REGEX":
+if type(pattern) != "Regex":
     fails = fails + 1
 
 # Test 6: re.compile with DOTALL flag
 pattern = re.compile(r"a.*b", re.S)
-if type(pattern) != "REGEX":
+if type(pattern) != "Regex":
     fails = fails + 1
 
 # Test 7: Combined flags
 pattern = re.compile(r"hello", re.I | re.M)
-if type(pattern) != "REGEX":
+if type(pattern) != "Regex":
     fails = fails + 1
 
 # Test 8: Using compiled pattern in findall
