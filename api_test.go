@@ -54,6 +54,56 @@ msg = mylib.greet()
 	}
 }
 
+func TestImport(t *testing.T) {
+	p := New()
+	myLib := object.NewLibrary(map[string]*object.Builtin{
+		"greet": {
+			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				return &object.String{Value: "Hello!"}
+			},
+		},
+	}, nil, "")
+	p.RegisterLibrary("mylib", myLib)
+
+	// Import the library programmatically
+	err := p.Import("mylib")
+	if err != nil {
+		t.Fatalf("error importing library: %v", err)
+	}
+
+	// Now use it in script without import statement
+	_, err = p.Eval("msg = mylib.greet()")
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+
+	msg, ok := p.GetVar("msg")
+	if !ok || msg != "Hello!" {
+		t.Errorf("expected Hello!, got %v", msg)
+	}
+}
+
+func TestImportStandardLibrary(t *testing.T) {
+	p := New()
+
+	// Import the json library programmatically
+	err := p.Import("json")
+	if err != nil {
+		t.Fatalf("error importing json library: %v", err)
+	}
+
+	// Now use it in script without import statement
+	_, err = p.Eval("data = json.dumps({'key': 'value'})")
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+
+	data, ok := p.GetVar("data")
+	if !ok || data != `{"key":"value"}` {
+		t.Errorf("expected {\"key\":\"value\"}, got %v", data)
+	}
+}
+
 func TestRegisterLibraryWithClass(t *testing.T) {
 	p := New()
 
