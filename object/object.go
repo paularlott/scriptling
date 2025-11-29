@@ -57,7 +57,6 @@ const (
 	LIST_OBJ
 	TUPLE_OBJ
 	DICT_OBJ
-	HTTP_RESP_OBJ
 	ERROR_OBJ
 	EXCEPTION_OBJ
 	REGEX_OBJ
@@ -97,8 +96,6 @@ func (ot ObjectType) String() string {
 		return "TUPLE"
 	case DICT_OBJ:
 		return "DICT"
-	case HTTP_RESP_OBJ:
-		return "HTTP_RESPONSE"
 	case ERROR_OBJ:
 		return "ERROR"
 	case EXCEPTION_OBJ:
@@ -671,22 +668,6 @@ func (d *Dict) AsDict() (map[string]Object, bool) {
 	}
 	return result, true
 }
-
-type HttpResponse struct {
-	StatusCode int
-	Body       string
-	Headers    map[string]string
-}
-
-func (h *HttpResponse) Type() ObjectType { return HTTP_RESP_OBJ }
-func (h *HttpResponse) Inspect() string  { return h.Body }
-
-func (h *HttpResponse) AsString() (string, bool)          { return h.Body, true }
-func (h *HttpResponse) AsInt() (int64, bool)              { return int64(h.StatusCode), true }
-func (h *HttpResponse) AsFloat() (float64, bool)          { return 0, false }
-func (h *HttpResponse) AsBool() (bool, bool)              { return h.StatusCode >= 200 && h.StatusCode < 300, true }
-func (h *HttpResponse) AsList() ([]Object, bool)          { return nil, false }
-func (h *HttpResponse) AsDict() (map[string]Object, bool) { return nil, false }
 
 type Error struct {
 	Message string
