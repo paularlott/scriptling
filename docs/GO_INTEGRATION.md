@@ -510,6 +510,24 @@ result = mylib.do_something()
 
 The callback receives the Scriptling instance and library name, and should return `true` if it successfully registered the library.
 
+### Programmatic Library Import
+
+Instead of using `import` statements in scripts, you can import libraries programmatically from Go:
+
+```go
+// Import libraries before executing scripts
+p.Import("json")
+p.Import("math")
+
+// Now use libraries in scripts without import statements
+p.Eval(`
+data = json.dumps({"numbers": [1, 2, 3]})
+result = math.sqrt(16)  # 4.0
+`)
+```
+
+This is useful when you want to pre-load commonly used libraries or control which libraries are available.
+
 ## Complete Integration Example
 
 ```go
