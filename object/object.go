@@ -359,7 +359,6 @@ type Environment struct {
 // LibraryInfo contains information about available libraries
 type LibraryInfo struct {
 	Name       string
-	IsStandard bool
 	IsImported bool
 }
 
