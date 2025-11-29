@@ -294,3 +294,199 @@ status = response.status_code
 		t.Errorf("expected 200 or success status, got %v", status)
 	}
 }
+
+func TestHelpSystem(t *testing.T) {
+	p := New()
+
+	// Register a Go function with help text
+	p.RegisterFunc("custom_func", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		return &object.String{Value: "custom result"}
+	})
+
+	// Register a library with functions that have help text
+	myLib := object.NewLibrary(map[string]*object.Builtin{
+		"lib_func": {
+			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				return &object.String{Value: "lib result"}
+			},
+			HelpText: `lib_func() - A library function
+
+This is a test library function with help text.`,
+		},
+	}, map[string]object.Object{
+		"LIB_CONSTANT": &object.String{Value: "1.0.0"},
+	}, "Test library for help system")
+
+	p.RegisterLibrary("testlib", myLib)
+
+	// Register a Scriptling function with docstring
+	err := p.RegisterScriptFunc("script_func", `
+def script_func(x, y=10):
+    """
+    script_func(x, y=10) - A Scriptling function
+
+    This function takes two parameters and returns their sum.
+    The second parameter has a default value of 10.
+
+    Parameters:
+        x: First number
+        y: Second number (default: 10)
+
+    Returns:
+        The sum of x and y
+    """
+    return x + y
+script_func
+`)
+	if err != nil {
+		t.Fatalf("failed to register script function: %v", err)
+	}
+
+	// Register a Scriptling library with docstring
+	err = p.RegisterScriptLibrary("scriptlib", `
+"""
+scriptlib - A Scriptling library
+
+This library contains utility functions for testing.
+"""
+
+def lib_add(a, b):
+    """Add two numbers together."""
+    return a + b
+
+def lib_multiply(a, b):
+    """Multiply two numbers."""
+    return a * b
+`)
+	if err != nil {
+		t.Fatalf("failed to register script library: %v", err)
+	}
+
+	// Test help for builtin functions
+	t.Run("builtin_help", func(t *testing.T) {
+		_, err := p.Eval(`help("len")`)
+		if err != nil {
+			t.Errorf("help for builtin 'len' failed: %v", err)
+		}
+	})
+
+	// Test help for registered Go functions
+	t.Run("go_function_help", func(t *testing.T) {
+		_, err := p.Eval(`help("custom_func")`)
+		if err != nil {
+			t.Errorf("help for Go function failed: %v", err)
+		}
+	})
+
+	// Test help for library functions
+	t.Run("library_function_help", func(t *testing.T) {
+		_, err := p.Eval(`
+import testlib
+help("testlib.lib_func")
+`)
+		if err != nil {
+			t.Errorf("help for library function failed: %v", err)
+		}
+	})
+
+	// Test help for library overview
+	t.Run("library_help", func(t *testing.T) {
+		_, err := p.Eval(`
+import testlib
+help("testlib")
+`)
+		if err != nil {
+			t.Errorf("help for library failed: %v", err)
+		}
+	})
+
+	// Test help for Scriptling functions with docstrings
+	t.Run("script_function_help", func(t *testing.T) {
+		_, err := p.Eval(`help("script_func")`)
+		if err != nil {
+			t.Errorf("help for Scriptling function failed: %v", err)
+		}
+	})
+
+	// Test help for Scriptling library
+	t.Run("script_library_help", func(t *testing.T) {
+		_, err := p.Eval(`
+import scriptlib
+help("scriptlib")
+`)
+		if err != nil {
+			t.Errorf("help for Scriptling library failed: %v", err)
+		}
+	})
+
+	// Test help for function objects
+	t.Run("function_object_help", func(t *testing.T) {
+		_, err := p.Eval(`help(len)`)
+		if err != nil {
+			t.Errorf("help for function object failed: %v", err)
+		}
+	})
+
+	// Test help for classes
+	t.Run("class_help", func(t *testing.T) {
+		// Create a simple class for testing
+		testClass := &object.Class{
+			Name: "TestClass",
+			Methods: map[string]object.Object{
+				"method1": &object.Builtin{
+					Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+						return &object.String{Value: "method1"}
+					},
+					HelpText: "method1() - First test method",
+				},
+				"method2": &object.Builtin{
+					Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+						return &object.String{Value: "method2"}
+					},
+				},
+			},
+		}
+
+		p.RegisterLibrary("classtest", object.NewLibrary(nil, map[string]object.Object{
+			"TestClass": testClass,
+		}, "Class testing library"))
+
+		_, err := p.Eval(`
+import classtest
+help(classtest.TestClass)
+`)
+		if err != nil {
+			t.Errorf("help for class failed: %v", err)
+		}
+	})
+
+	// Test help for instances
+	t.Run("instance_help", func(t *testing.T) {
+		_, err := p.Eval(`
+import testlib
+func_obj = testlib.lib_func
+help(func_obj)
+`)
+		if err != nil {
+			t.Errorf("help for function object failed: %v", err)
+		}
+	})
+
+	// Test general help commands
+	t.Run("general_help", func(t *testing.T) {
+		_, err := p.Eval(`help()`)
+		if err != nil {
+			t.Errorf("general help failed: %v", err)
+		}
+
+		_, err = p.Eval(`help("builtins")`)
+		if err != nil {
+			t.Errorf("builtins help failed: %v", err)
+		}
+
+		_, err = p.Eval(`help("modules")`)
+		if err != nil {
+			t.Errorf("modules help failed: %v", err)
+		}
+	})
+}
