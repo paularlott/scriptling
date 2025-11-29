@@ -210,6 +210,8 @@ func (p *Parser) parseStatement() ast.Statement {
 		return p.parseImportStatement()
 	case token.DEF:
 		return p.parseFunctionStatement()
+	case token.CLASS:
+		return p.parseClassStatement()
 	case token.IF:
 		return p.parseIfStatement()
 	case token.WHILE:
@@ -839,6 +841,24 @@ func (p *Parser) parseFunctionStatement() *ast.FunctionStatement {
 	}
 
 	stmt.Function.Body = p.parseBlockStatement()
+
+	return stmt
+}
+
+func (p *Parser) parseClassStatement() *ast.ClassStatement {
+	stmt := &ast.ClassStatement{Token: p.curToken}
+
+	if !p.expectPeek(token.IDENT) {
+		return nil
+	}
+
+	stmt.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+
+	if !p.expectPeek(token.COLON) {
+		return nil
+	}
+
+	stmt.Body = p.parseBlockStatement()
 
 	return stmt
 }

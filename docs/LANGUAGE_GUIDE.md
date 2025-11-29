@@ -1245,3 +1245,50 @@ resp = requests.get("https://api.example.com/data", options)
 if resp["status"] == 200:
     data = json.parse(resp["body"])
 ```
+
+## Classes
+
+Scriptling supports defining classes with methods and instance fields.
+
+### Class Definition
+
+```python
+class Person:
+    def __init__(self, name, age):
+        self.name = name
+        self.age = age
+
+    def greet(self):
+        return "Hello, my name is " + self.name
+
+    def is_adult(self):
+        return self.age >= 18
+```
+
+### Instantiation and Usage
+
+```python
+# Create an instance
+p = Person("Alice", 30)
+
+# Access fields
+print(p.name)  # "Alice"
+
+# Call methods
+print(p.greet())  # "Hello, my name is Alice"
+
+# Modify fields
+p.age = 31
+```
+
+### Key Concepts
+
+1.  **`class` Keyword**: Used to define a new class.
+2.  **`__init__` Method**: The constructor method, called when a new instance is created.
+3.  **`self` Parameter**: The first parameter of every method is a reference to the current instance (similar to `this` in other languages, but explicit like in Python).
+4.  **Fields**: Instance variables are accessed and assigned using `self.field_name`.
+
+### Limitations
+
+- **Inheritance**: Scriptling currently does **not** support class inheritance. All classes implicitly inherit from the base `Object` type.
+- **Nested Classes**: Defining classes inside other classes or functions is **not** supported. Classes must be defined at the top level of a module.
