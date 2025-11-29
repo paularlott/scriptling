@@ -99,7 +99,11 @@ Returns the number of items in a string, list, dict, or tuple.`,
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			return &object.String{Value: args[0].Type().String()}
+			obj := args[0]
+			if instance, ok := obj.(*object.Instance); ok {
+				return &object.String{Value: instance.Class.Name}
+			}
+			return &object.String{Value: obj.Type().String()}
 		},
 		HelpText: `type(obj) - Return the type of an object
 
@@ -2194,50 +2198,4 @@ func GetImportBuiltin() *object.Builtin {
 			return &object.Null{}
 		},
 	}
-}
-
-var regexBuiltins = map[string]*object.Builtin{
-	"findall": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
-			}
-			if args[0].Type() != object.REGEX_OBJ {
-				return errors.NewTypeError("REGEX", args[0].Type().String())
-			}
-			if args[1].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("STRING", args[1].Type().String())
-			}
-			regex := args[0].(*object.Regex)
-			str := args[1].(*object.String).Value
-
-			re, err := getCompiledRegex(regex.Pattern)
-			if err != nil {
-				return errors.NewError("regex compile error: %s", err.Error())
-			}
-
-			numGroups := re.NumSubexp()
-			matches := re.FindAllStringSubmatch(str, -1)
-			if len(matches) == 0 {
-				return &object.List{Elements: []object.Object{}}
-			}
-
-			elements := make([]object.Object, len(matches))
-			for i, match := range matches {
-				if numGroups == 0 {
-					elements[i] = &object.String{Value: match[0]}
-				} else {
-					groupElements := make([]object.Object, numGroups)
-					for j := 0; j < numGroups; j++ {
-						groupElements[j] = &object.String{Value: match[j+1]}
-					}
-					elements[i] = &object.Tuple{Elements: groupElements}
-				}
-			}
-			return &object.List{Elements: elements}
-		},
-		HelpText: `findall(string) - Find all matches of the regex pattern
-
-Returns a list of matches. For patterns with groups, returns tuples of groups.`,
-	},
 }

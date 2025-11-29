@@ -39,8 +39,6 @@ func evalIndexExpression(left, index object.Object) object.Object {
 		return evalTupleIndexExpression(left, index)
 	case left.Type() == object.DICT_OBJ:
 		return evalDictIndexExpression(left, index)
-	case left.Type() == object.REGEX_OBJ:
-		return evalRegexIndexExpression(left, index)
 	case left.Type() == object.STRING_OBJ && index.Type() == object.INTEGER_OBJ:
 		return evalStringIndexExpression(left, index)
 	case left.Type() == object.INSTANCE_OBJ:
@@ -119,18 +117,6 @@ func evalStringIndexExpression(str, index object.Object) object.Object {
 	}
 
 	return &object.String{Value: string(strObject.Value[idx])}
-}
-
-func evalRegexIndexExpression(regex, index object.Object) object.Object {
-	if index.Type() != object.STRING_OBJ {
-		return errors.NewError("regex index must be string")
-	}
-	method := index.(*object.String).Value
-	builtin, ok := regexBuiltins[method]
-	if !ok {
-		return errors.NewError("regex has no method %s", method)
-	}
-	return builtin
 }
 
 func evalInstanceIndexExpression(instance, index object.Object) object.Object {
