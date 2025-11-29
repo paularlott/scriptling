@@ -13,16 +13,6 @@ import (
 
 // PathClass is defined per library instance to avoid initialization cycle
 
-// getPathlibInstance retrieves the PathlibLibraryInstance from context
-// This is a helper to access the config for security checks
-func getPathlibInstance(ctx context.Context) *PathlibLibraryInstance {
-	// For now, we'll need to find another way to pass the config
-	// Since we can't store it in context easily, we'll need to modify the approach
-	// For the conversion, let's assume we have access to the instance
-	// This is a temporary solution - we'll need to refactor this
-	return nil // This will need to be fixed
-}
-
 // PathlibLibraryInstance holds the configured Pathlib library instance
 type PathlibLibraryInstance struct {
 	config    fssecurity.Config
@@ -275,12 +265,36 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 
 	return object.NewLibrary(map[string]*object.Builtin{
 		"Path": {
-			Fn: p.pathConstructor,
+			Fn:         p.pathConstructor,
+			Attributes: p.PathClass.Methods,
 			HelpText: `Path(path) - Create a new Path object
+
+Path(path) creates a new Path instance representing the filesystem path.
+
+Path instances have the following methods:
+  - joinpath(*other) - Combine this path with other path segments
+  - exists() - Check if the path exists
+  - is_file() - Check if the path is a regular file
+  - is_dir() - Check if the path is a directory
+  - mkdir(parents=False) - Create a new directory at this given path
+  - rmdir() - Remove the empty directory
+  - unlink(missing_ok=False) - Remove this file or symbolic link
+  - read_text() - Read the contents of the file as a string
+  - write_text(data) - Write the string data to the file
+
+Path instances have the following properties (accessible via indexing):
+  - name - The final path component
+  - stem - The final path component without its suffix
+  - suffix - The final component's last suffix
+  - parent - The logical parent of the path
+  - parts - A tuple giving access to the path's various components
+  - __str__ - String representation of the path
 
 Returns a Path object representing the filesystem path.`,
 		},
-	}, nil, "Object-oriented filesystem paths")
+	}, map[string]object.Object{
+		"PathClass": p.PathClass,
+	}, "Object-oriented filesystem paths")
 }
 
 func (p *PathlibLibraryInstance) pathConstructor(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {

@@ -43,6 +43,10 @@ func evalIndexExpression(left, index object.Object) object.Object {
 		return evalStringIndexExpression(left, index)
 	case left.Type() == object.INSTANCE_OBJ:
 		return evalInstanceIndexExpression(left, index)
+	case left.Type() == object.CLASS_OBJ:
+		return evalClassIndexExpression(left, index)
+	case left.Type() == object.BUILTIN_OBJ:
+		return evalBuiltinIndexExpression(left, index)
 	default:
 		return errors.NewError("index operator not supported: %s", left.Type())
 	}
@@ -131,6 +135,32 @@ func evalInstanceIndexExpression(instance, index object.Object) object.Object {
 	// Check class methods
 	if fn, ok := inst.Class.Methods[field]; ok {
 		return fn
+	}
+	return NULL
+}
+
+func evalClassIndexExpression(class, index object.Object) object.Object {
+	if index.Type() != object.STRING_OBJ {
+		return errors.NewError("class index must be string")
+	}
+	field := index.(*object.String).Value
+	cl := class.(*object.Class)
+	if fn, ok := cl.Methods[field]; ok {
+		return fn
+	}
+	return NULL
+}
+
+func evalBuiltinIndexExpression(builtin, index object.Object) object.Object {
+	if index.Type() != object.STRING_OBJ {
+		return errors.NewError("builtin index must be string")
+	}
+	field := index.(*object.String).Value
+	b := builtin.(*object.Builtin)
+	if b.Attributes != nil {
+		if val, ok := b.Attributes[field]; ok {
+			return val
+		}
 	}
 	return NULL
 }
