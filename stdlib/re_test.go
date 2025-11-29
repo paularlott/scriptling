@@ -13,15 +13,18 @@ func TestRegexMatch(t *testing.T) {
 
 	// Test matching at start - should return Match object
 	result := match.Fn(context.Background(), nil, &object.String{Value: "[0-9]+"}, &object.String{Value: "123abc"})
-	if m, ok := result.(*object.Match); ok {
-		if len(m.Groups) == 0 || m.Groups[0] != "123" {
-			t.Errorf("match('[0-9]+', '123abc').group(0) = %v, want '123'", m.Groups)
+	if m, ok := result.(*object.Instance); ok && m.Class == MatchClass {
+		groups := m.Fields["groups"].(*object.List).Elements
+		if len(groups) == 0 || groups[0].(*object.String).Value != "123" {
+			t.Errorf("match('[0-9]+', '123abc').group(0) = %v, want '123'", groups[0])
 		}
-		if m.Start != 0 || m.End != 3 {
-			t.Errorf("match span = (%d, %d), want (0, 3)", m.Start, m.End)
+		start := m.Fields["start"].(*object.Integer).Value
+		end := m.Fields["end"].(*object.Integer).Value
+		if start != 0 || end != 3 {
+			t.Errorf("match span = (%d, %d), want (0, 3)", start, end)
 		}
 	} else {
-		t.Errorf("match() returned %T, want Match", result)
+		t.Errorf("match() returned %T, want Match instance", result)
 	}
 
 	// Test non-matching at start - should return Null
@@ -37,12 +40,13 @@ func TestRegexMatchWithFlags(t *testing.T) {
 
 	// Test case-insensitive matching with flag
 	result := match.Fn(context.Background(), nil, &object.String{Value: "hello"}, &object.String{Value: "HELLO world"}, &object.Integer{Value: RE_IGNORECASE})
-	if m, ok := result.(*object.Match); ok {
-		if m.Groups[0] != "HELLO" {
-			t.Errorf("match('hello', 'HELLO world', re.I).group(0) = %v, want 'HELLO'", m.Groups[0])
+	if m, ok := result.(*object.Instance); ok && m.Class == MatchClass {
+		groups := m.Fields["groups"].(*object.List).Elements
+		if groups[0].(*object.String).Value != "HELLO" {
+			t.Errorf("match('hello', 'HELLO world', re.I).group(0) = %v, want 'HELLO'", groups[0])
 		}
 	} else {
-		t.Errorf("match() returned %T, want Match", result)
+		t.Errorf("match() returned %T, want Match instance", result)
 	}
 
 	// Without flag, should not match
@@ -57,15 +61,18 @@ func TestRegexSearch(t *testing.T) {
 	search := lib.Functions()["search"]
 
 	result := search.Fn(context.Background(), nil, &object.String{Value: "[0-9]+"}, &object.String{Value: "abc123def"})
-	if m, ok := result.(*object.Match); ok {
-		if m.Groups[0] != "123" {
-			t.Errorf("search('[0-9]+', 'abc123def').group(0) = %v, want '123'", m.Groups[0])
+	if m, ok := result.(*object.Instance); ok && m.Class == MatchClass {
+		groups := m.Fields["groups"].(*object.List).Elements
+		if groups[0].(*object.String).Value != "123" {
+			t.Errorf("search('[0-9]+', 'abc123def').group(0) = %v, want '123'", groups[0])
 		}
-		if m.Start != 3 || m.End != 6 {
-			t.Errorf("search span = (%d, %d), want (3, 6)", m.Start, m.End)
+		start := m.Fields["start"].(*object.Integer).Value
+		end := m.Fields["end"].(*object.Integer).Value
+		if start != 3 || end != 6 {
+			t.Errorf("search span = (%d, %d), want (3, 6)", start, end)
 		}
 	} else {
-		t.Errorf("search() returned %T, want Match", result)
+		t.Errorf("search() returned %T, want Match instance", result)
 	}
 
 	// Test no match
@@ -81,12 +88,13 @@ func TestRegexSearchWithFlags(t *testing.T) {
 
 	// Test case-insensitive search
 	result := search.Fn(context.Background(), nil, &object.String{Value: "world"}, &object.String{Value: "Hello WORLD"}, &object.Integer{Value: RE_IGNORECASE})
-	if m, ok := result.(*object.Match); ok {
-		if m.Groups[0] != "WORLD" {
-			t.Errorf("search('world', 'Hello WORLD', re.I).group(0) = %v, want 'WORLD'", m.Groups[0])
+	if m, ok := result.(*object.Instance); ok && m.Class == MatchClass {
+		groups := m.Fields["groups"].(*object.List).Elements
+		if groups[0].(*object.String).Value != "WORLD" {
+			t.Errorf("search('world', 'Hello WORLD', re.I).group(0) = %v, want 'WORLD'", groups[0])
 		}
 	} else {
-		t.Errorf("search() returned %T, want Match", result)
+		t.Errorf("search() returned %T, want Match instance", result)
 	}
 }
 
@@ -96,24 +104,25 @@ func TestRegexSearchWithGroups(t *testing.T) {
 
 	// Test capturing groups
 	result := search.Fn(context.Background(), nil, &object.String{Value: `(\w+)@(\w+)\.(\w+)`}, &object.String{Value: "Email: user@example.com"})
-	if m, ok := result.(*object.Match); ok {
-		if m.Groups[0] != "user@example.com" {
-			t.Errorf("search().group(0) = %v, want 'user@example.com'", m.Groups[0])
+	if m, ok := result.(*object.Instance); ok && m.Class == MatchClass {
+		groups := m.Fields["groups"].(*object.List).Elements
+		if groups[0].(*object.String).Value != "user@example.com" {
+			t.Errorf("search().group(0) = %v, want 'user@example.com'", groups[0])
 		}
-		if len(m.Groups) != 4 {
-			t.Errorf("search() returned %d groups, want 4", len(m.Groups))
+		if len(groups) != 4 {
+			t.Errorf("search() returned %d groups, want 4", len(groups))
 		}
-		if m.Groups[1] != "user" {
-			t.Errorf("search().group(1) = %v, want 'user'", m.Groups[1])
+		if groups[1].(*object.String).Value != "user" {
+			t.Errorf("search().group(1) = %v, want 'user'", groups[1])
 		}
-		if m.Groups[2] != "example" {
-			t.Errorf("search().group(2) = %v, want 'example'", m.Groups[2])
+		if groups[2].(*object.String).Value != "example" {
+			t.Errorf("search().group(2) = %v, want 'example'", groups[2])
 		}
-		if m.Groups[3] != "com" {
-			t.Errorf("search().group(3) = %v, want 'com'", m.Groups[3])
+		if groups[3].(*object.String).Value != "com" {
+			t.Errorf("search().group(3) = %v, want 'com'", groups[3])
 		}
 	} else {
-		t.Errorf("search() returned %T, want Match", result)
+		t.Errorf("search() returned %T, want Match instance", result)
 	}
 }
 
@@ -258,12 +267,13 @@ func TestRegexCompile(t *testing.T) {
 	compile := lib.Functions()["compile"]
 
 	result := compile.Fn(context.Background(), nil, &object.String{Value: "[0-9]+"})
-	if r, ok := result.(*object.Regex); ok {
-		if r.Pattern != "[0-9]+" {
-			t.Errorf("compile() = %v, want '[0-9]+'", r.Pattern)
+	if r, ok := result.(*object.Instance); ok && r.Class == RegexClass {
+		pattern := r.Fields["pattern"].(*object.String).Value
+		if pattern != "[0-9]+" {
+			t.Errorf("compile() = %v, want '[0-9]+'", pattern)
 		}
 	} else {
-		t.Errorf("compile() returned %T, want Regex", result)
+		t.Errorf("compile() returned %T, want Regex instance", result)
 	}
 
 	// Test invalid pattern
@@ -279,12 +289,13 @@ func TestRegexCompileWithFlags(t *testing.T) {
 
 	// Compile with IGNORECASE flag
 	result := compile.Fn(context.Background(), nil, &object.String{Value: "hello"}, &object.Integer{Value: RE_IGNORECASE})
-	if r, ok := result.(*object.Regex); ok {
-		if r.Pattern != "(?i)hello" {
-			t.Errorf("compile() with flag = %v, want '(?i)hello'", r.Pattern)
+	if r, ok := result.(*object.Instance); ok && r.Class == RegexClass {
+		pattern := r.Fields["pattern"].(*object.String).Value
+		if pattern != "(?i)hello" {
+			t.Errorf("compile() with flag = %v, want '(?i)hello'", pattern)
 		}
 	} else {
-		t.Errorf("compile() returned %T, want Regex", result)
+		t.Errorf("compile() returned %T, want Regex instance", result)
 	}
 }
 
