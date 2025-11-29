@@ -214,6 +214,8 @@ func (p *Parser) parseStatement() ast.Statement {
 	switch p.curToken.Type {
 	case token.IMPORT:
 		return p.parseImportStatement()
+	case token.FROM:
+		return p.parseFromImportStatement()
 	case token.DEF:
 		return p.parseFunctionStatement()
 	case token.CLASS:
@@ -380,6 +382,75 @@ func (p *Parser) parseImportStatement() *ast.ImportStatement {
 			Token: p.curToken,
 			Value: addName,
 		})
+	}
+
+	return stmt
+}
+
+// parseFromImportStatement parses "from X import Y, Z" or "from X import Y as A"
+func (p *Parser) parseFromImportStatement() *ast.FromImportStatement {
+	stmt := &ast.FromImportStatement{Token: p.curToken}
+
+	if !p.expectPeek(token.IDENT) {
+		return nil
+	}
+
+	// Build up the dotted module name (e.g., urllib.parse)
+	moduleName := p.curToken.Literal
+	for p.peekTokenIs(token.DOT) {
+		p.nextToken() // consume dot
+		if !p.expectPeek(token.IDENT) {
+			return nil
+		}
+		moduleName = moduleName + "." + p.curToken.Literal
+	}
+
+	stmt.Module = &ast.Identifier{Token: p.curToken, Value: moduleName}
+
+	// Expect 'import' keyword
+	if !p.expectPeek(token.IMPORT) {
+		return nil
+	}
+
+	// Parse the names to import
+	if !p.expectPeek(token.IDENT) {
+		return nil
+	}
+
+	// First name
+	name := &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+	stmt.Names = append(stmt.Names, name)
+
+	// Check for alias (as)
+	if p.peekTokenIs(token.AS) {
+		p.nextToken() // consume 'as'
+		if !p.expectPeek(token.IDENT) {
+			return nil
+		}
+		stmt.Aliases = append(stmt.Aliases, &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal})
+	} else {
+		stmt.Aliases = append(stmt.Aliases, nil)
+	}
+
+	// Parse additional names separated by commas
+	for p.peekTokenIs(token.COMMA) {
+		p.nextToken() // consume comma
+		if !p.expectPeek(token.IDENT) {
+			return nil
+		}
+		name := &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+		stmt.Names = append(stmt.Names, name)
+
+		// Check for alias
+		if p.peekTokenIs(token.AS) {
+			p.nextToken() // consume 'as'
+			if !p.expectPeek(token.IDENT) {
+				return nil
+			}
+			stmt.Aliases = append(stmt.Aliases, &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal})
+		} else {
+			stmt.Aliases = append(stmt.Aliases, nil)
+		}
 	}
 
 	return stmt
