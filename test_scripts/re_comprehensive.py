@@ -121,4 +121,11 @@ result = re.search("(?s)a.*b", "a\nb")
 if result == None or result.group(0) != "a\nb":
     fails = fails + 1
 
+# Test 24: re.finditer returns list of Match objects
+matches = re.finditer("[0-9]+", "a1b2c3")
+if len(matches) != 3:
+    fails = fails + 1
+if type(matches[0]) != "Match" or matches[0].group(0) != "1":
+    fails = fails + 1
+
 fails == 0

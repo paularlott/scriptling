@@ -142,6 +142,36 @@ words = re.findall("a+", "aAbBaAa", re.I)
 print(words)  # ["aA", "aAa"]
 ```
 
+### re.finditer(pattern, string, flags=0)
+
+Finds all occurrences of the pattern in the string and returns Match objects.
+
+**Parameters:**
+- `pattern`: Regular expression pattern
+- `string`: String to search
+- `flags`: Optional flags (default: 0)
+
+**Returns:** List of Match objects (all matches)
+
+**Example:**
+```python
+import re
+
+matches = re.finditer("[0-9]{3}-[0-9]{4}", "Call 555-1234 or 555-5678")
+for match in matches:
+    print(match.group(0))  # "555-1234", "555-5678"
+    print(match.start())   # 5, 18
+    print(match.end())     # 13, 26
+
+# With capturing groups
+matches = re.finditer(r'(\d+)-(\d+)', "555-1234, 888-9999")
+for match in matches:
+    print(match.group(0))  # "555-1234", "888-9999"
+    print(match.group(1))  # "555", "888"
+    print(match.group(2))  # "1234", "9999"
+    print(match.groups())  # ("555", "1234"), ("888", "9999")
+```
+
 ### re.sub(pattern, repl, string, count=0, flags=0)
 
 Replaces occurrences of the pattern in the string with the replacement. This follows Python's `re.sub()` function signature.
@@ -207,22 +237,50 @@ Compiles a regular expression pattern for validation and caching.
 - `pattern`: Regular expression pattern
 - `flags`: Optional flags (default: 0)
 
-**Returns:** String (the compiled pattern with flags applied) or error if invalid
+**Returns:** Regex object (compiled pattern) or error if invalid
 
 **Example:**
 ```python
 import re
 
 pattern = re.compile("[0-9]+")  # Validates and caches the pattern
-print(pattern)  # "[0-9]+"
+print(type(pattern))  # "Regex"
 
 # Compile with flags
 pattern = re.compile("hello", re.I)
-print(pattern)  # "(?i)hello"
+print(type(pattern))  # "Regex"
 
 # Compile with multiple flags
 pattern = re.compile("hello", re.I | re.M)
-print(pattern)  # "(?im)hello"
+print(type(pattern))  # "Regex"
+```
+
+#### Compiled Pattern Methods
+
+The Regex object returned by `re.compile()` provides the following methods:
+
+- `pattern.match(string)` - Match at start of string
+- `pattern.search(string)` - Search anywhere in string
+- `pattern.findall(string)` - Find all matches as strings
+- `pattern.finditer(string)` - Find all matches as Match objects
+
+**Example:**
+```python
+import re
+
+pattern = re.compile(r'\d+')
+m = pattern.match("123abc")  # Match at start
+if m:
+    print(m.group(0))  # "123"
+
+matches = pattern.findall("a1b2c3")  # ["1", "2", "3"]
+
+match_objects = pattern.finditer("a1b2c3")
+for match in match_objects:
+    print(match.group(0), match.start(), match.end())
+    # "1" 1 2
+    # "2" 3 4
+    # "3" 5 6
 ```
 
 ### re.escape(string)
@@ -335,6 +393,13 @@ if m:
 numbers = re.findall("[0-9]+", "abc123def456")
 # ["123", "456"]
 
+# Find all matches as Match objects
+matches = re.finditer("[0-9]+", "abc123def456")
+for match in matches:
+    print(match.group(0), match.start(), match.end())
+    # "123" 3 6
+    # "456" 9 12
+
 # Replace text
 text = re.sub("[0-9]+", "XXX", "Price: 100")
 # "Price: XXX"
@@ -349,7 +414,12 @@ parts = re.split("[,;]", "one,two;three")
 
 # Compile pattern (validates and caches)
 pattern = re.compile("[0-9]+")
-# "[0-9]+"
+# Regex object
+
+# Use compiled pattern
+matches = pattern.finditer("abc123def456")
+for match in matches:
+    print(match.group(0))  # "123", "456"
 
 # Escape special characters
 escaped = re.escape("a.b+c*d?")
