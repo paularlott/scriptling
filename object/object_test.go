@@ -24,7 +24,6 @@ func TestObjectTypes(t *testing.T) {
 		{&Builtin{}, BUILTIN_OBJ},
 		{&List{}, LIST_OBJ},
 		{&Dict{}, DICT_OBJ},
-		{&HttpResponse{}, HTTP_RESP_OBJ},
 		{&Error{Message: "test"}, ERROR_OBJ},
 		{&Exception{Message: "test"}, EXCEPTION_OBJ},
 	}
@@ -197,21 +196,6 @@ func TestReturnValue(t *testing.T) {
 	}
 	if ret.Inspect() != "42" {
 		t.Errorf("ret.Inspect() = %q, want %q", ret.Inspect(), "42")
-	}
-}
-
-func TestHttpResponse(t *testing.T) {
-	resp := &HttpResponse{
-		StatusCode: 200,
-		Body:       "OK",
-		Headers:    map[string]string{"Content-Type": "text/plain"},
-	}
-
-	if resp.Type() != HTTP_RESP_OBJ {
-		t.Errorf("resp.Type() = %q, want %q", resp.Type(), HTTP_RESP_OBJ)
-	}
-	if resp.Inspect() != "OK" {
-		t.Errorf("resp.Inspect() = %q, want %q", resp.Inspect(), "OK")
 	}
 }
 
