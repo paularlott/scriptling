@@ -194,6 +194,8 @@ collections.deque_rotate(d, 1)              # Rotate right
 
 # namedtuple - factory for dict with named fields
 Point = collections.namedtuple("Point", ["x", "y"])
+p = Point(1, 2)
+print(p.x, p.y)                                 # 1 2
 p = Point(10, 20)
 p["x"]                                      # 10
 
@@ -205,8 +207,8 @@ cm["a"]                                     # 1 (from defaults)
 cm["b"]                                     # 20 (from overrides)
 
 # defaultdict - dict with default factory
-d = collections.defaultdict("list")
-collections.get_default(d, "key")           # Returns [] and sets d["key"] = []
+d = collections.defaultdict(list)
+d["key"].append(1)                              # Creates [] and appends 1
 ```
 
 ## Copy Library
