@@ -69,3 +69,4 @@ task install
 The CLI includes all standard libraries plus external libraries:
 - `datetime`, `json`, `math`, `random`, `re`, `time`, `base64`, `hashlib`, `urllib`
 - `requests` - HTTP client library
+- `subprocess` - Process execution library

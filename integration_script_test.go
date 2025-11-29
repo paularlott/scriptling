@@ -29,6 +29,8 @@ func TestIntegrationScripts(t *testing.T) {
 	extlibs.RegisterOSLibrary(p, nil)
 	// Register pathlib library with no restrictions for testing
 	extlibs.RegisterPathlibLibrary(p, nil)
+	// Register subprocess library for testing
+	p.RegisterLibrary("subprocess", extlibs.SubprocessLibrary)
 
 	// Set up on-demand library loading for local .py files in test_scripts
 	p.SetOnDemandLibraryCallback(func(p *Scriptling, libName string) bool {

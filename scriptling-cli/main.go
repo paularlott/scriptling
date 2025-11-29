@@ -51,6 +51,7 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	p.RegisterLibrary("requests", extlibs.RequestsLibrary)
 	p.RegisterLibrary("sys", extlibs.SysLibrary)
 	p.RegisterLibrary("secrets", extlibs.SecretsLibrary)
+	p.RegisterLibrary("subprocess", extlibs.SubprocessLibrary)
 	extlibs.RegisterOSLibrary(p, []string{})
 	extlibs.RegisterPathlibLibrary(p, []string{})
 

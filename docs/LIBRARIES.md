@@ -106,6 +106,7 @@ These libraries are not loaded by default and must be explicitly registered by t
 - **`os`**: Operating system interfaces (filesystem access). Requires security configuration.
 - **`pathlib`**: Object-oriented filesystem paths.
 - **`secrets`**: Cryptographically strong random numbers.
+- **`subprocess`**: Spawn and manage subprocesses.
 - **`sys`**: System-specific parameters and functions (`argv`, `exit`, `version`).
 
 ## External / System Libraries

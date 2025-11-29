@@ -16,7 +16,7 @@ A minimal, sandboxed interpreter for LLM agents to execute code and interact wit
 - **Control flow**: if/elif/else, while, for loops, break, continue
 - **Object-oriented**: Classes with methods and constructors
 - **Advanced features**: functions, lambda, list comprehensions, error handling
-- **Libraries**: json, regex, math, time, http (load on demand)
+- **Libraries**: including json, regex, math, time, requests, subprocess (load on demand)
 - **Go integration**: Register functions, exchange variables
 - **Fast**: Lightweight interpreter, only loads what you need
 
