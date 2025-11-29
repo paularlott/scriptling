@@ -62,6 +62,8 @@ const (
 	EXCEPTION_OBJ
 	REGEX_OBJ
 	MATCH_OBJ
+	CLASS_OBJ
+	INSTANCE_OBJ
 )
 
 // String returns the string representation of the ObjectType
@@ -105,6 +107,10 @@ func (ot ObjectType) String() string {
 		return "REGEX"
 	case MATCH_OBJ:
 		return "MATCH"
+	case CLASS_OBJ:
+		return "CLASS"
+	case INSTANCE_OBJ:
+		return "INSTANCE"
 	default:
 		return "UNKNOWN"
 	}
@@ -709,6 +715,39 @@ func (ex *Exception) AsFloat() (float64, bool)          { return 0, false }
 func (ex *Exception) AsBool() (bool, bool)              { return false, true }
 func (ex *Exception) AsList() ([]Object, bool)          { return nil, false }
 func (ex *Exception) AsDict() (map[string]Object, bool) { return nil, false }
+
+type Class struct {
+	Name    string
+	Methods map[string]Object
+	Env     *Environment
+}
+
+func (c *Class) Type() ObjectType { return CLASS_OBJ }
+func (c *Class) Inspect() string  { return fmt.Sprintf("<class '%s'>", c.Name) }
+
+func (c *Class) AsString() (string, bool)          { return c.Name, true }
+func (c *Class) AsInt() (int64, bool)              { return 0, false }
+func (c *Class) AsFloat() (float64, bool)          { return 0, false }
+func (c *Class) AsBool() (bool, bool)              { return true, true }
+func (c *Class) AsList() ([]Object, bool)          { return nil, false }
+func (c *Class) AsDict() (map[string]Object, bool) { return nil, false }
+
+type Instance struct {
+	Class  *Class
+	Fields map[string]Object
+}
+
+func (i *Instance) Type() ObjectType { return INSTANCE_OBJ }
+func (i *Instance) Inspect() string {
+	return fmt.Sprintf("<%s object at %p>", i.Class.Name, i)
+}
+
+func (i *Instance) AsString() (string, bool)          { return i.Inspect(), true }
+func (i *Instance) AsInt() (int64, bool)              { return 0, false }
+func (i *Instance) AsFloat() (float64, bool)          { return 0, false }
+func (i *Instance) AsBool() (bool, bool)              { return true, true }
+func (i *Instance) AsList() ([]Object, bool)          { return nil, false }
+func (i *Instance) AsDict() (map[string]Object, bool) { return i.Fields, true }
 
 // LibraryRegistrar is an interface for registering libraries.
 // This allows external libraries to register themselves without circular imports.

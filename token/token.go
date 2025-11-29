@@ -77,6 +77,7 @@ const (
 	FOR      = "FOR"
 	IN       = "IN"
 	DEF      = "DEF"
+	CLASS    = "CLASS"
 	RETURN   = "RETURN"
 	BREAK    = "BREAK"
 	CONTINUE = "CONTINUE"
@@ -110,6 +111,7 @@ var keywords = map[string]TokenType{
 	"for":      FOR,
 	"in":       IN,
 	"def":      DEF,
+	"class":    CLASS,
 	"return":   RETURN,
 	"break":    BREAK,
 	"continue": CONTINUE,
