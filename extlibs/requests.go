@@ -161,6 +161,18 @@ var RequestsLibrary = object.NewLibrary(map[string]*object.Builtin{
 			}
 			return httpRequestWithContext(ctx, "GET", url, "", timeout, headers)
 		},
+		HelpText: `get(url, options={}) - Send a GET request
+
+Sends an HTTP GET request to the specified URL.
+
+Parameters:
+  url (string): The URL to send the request to
+  options (dict, optional): Request options
+    - timeout (int): Request timeout in seconds (default: 5)
+    - headers (dict): HTTP headers as key-value pairs
+
+Returns:
+  Response object with status_code, text, headers, body, url, and json() method`,
 	},
 	"post": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
@@ -193,6 +205,19 @@ var RequestsLibrary = object.NewLibrary(map[string]*object.Builtin{
 			}
 			return httpRequestWithContext(ctx, "POST", url, body, timeout, headers)
 		},
+		HelpText: `post(url, data, options={}) - Send a POST request
+
+Sends an HTTP POST request to the specified URL with the given data.
+
+Parameters:
+  url (string): The URL to send the request to
+  data (string): The request body data
+  options (dict, optional): Request options
+    - timeout (int): Request timeout in seconds (default: 5)
+    - headers (dict): HTTP headers as key-value pairs
+
+Returns:
+  Response object with status_code, text, headers, body, url, and json() method`,
 	},
 	"put": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
@@ -225,6 +250,19 @@ var RequestsLibrary = object.NewLibrary(map[string]*object.Builtin{
 			}
 			return httpRequestWithContext(ctx, "PUT", url, body, timeout, headers)
 		},
+		HelpText: `put(url, data, options={}) - Send a PUT request
+
+Sends an HTTP PUT request to the specified URL with the given data.
+
+Parameters:
+  url (string): The URL to send the request to
+  data (string): The request body data
+  options (dict, optional): Request options
+    - timeout (int): Request timeout in seconds (default: 5)
+    - headers (dict): HTTP headers as key-value pairs
+
+Returns:
+  Response object with status_code, text, headers, body, url, and json() method`,
 	},
 	"delete": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
@@ -256,6 +294,18 @@ var RequestsLibrary = object.NewLibrary(map[string]*object.Builtin{
 			}
 			return httpRequestWithContext(ctx, "DELETE", url, "", timeout, headers)
 		},
+		HelpText: `delete(url, options={}) - Send a DELETE request
+
+Sends an HTTP DELETE request to the specified URL.
+
+Parameters:
+  url (string): The URL to send the request to
+  options (dict, optional): Request options
+    - timeout (int): Request timeout in seconds (default: 5)
+    - headers (dict): HTTP headers as key-value pairs
+
+Returns:
+  Response object with status_code, text, headers, body, url, and json() method`,
 	},
 	"patch": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
@@ -288,11 +338,25 @@ var RequestsLibrary = object.NewLibrary(map[string]*object.Builtin{
 			}
 			return httpRequestWithContext(ctx, "PATCH", url, body, timeout, headers)
 		},
+		HelpText: `patch(url, data, options={}) - Send a PATCH request
+
+Sends an HTTP PATCH request to the specified URL with the given data.
+
+Parameters:
+  url (string): The URL to send the request to
+  data (string): The request body data
+  options (dict, optional): Request options
+    - timeout (int): Request timeout in seconds (default: 5)
+    - headers (dict): HTTP headers as key-value pairs
+
+Returns:
+  Response object with status_code, text, headers, body, url, and json() method`,
 	},
 }, map[string]object.Object{
 	// Exception types as constants (for except clause matching)
 	"RequestException": requestExceptionType,
 	"HTTPError":        httpErrorType,
+	"Response":         ResponseClass,
 }, "HTTP requests library")
 
 func extractHeaders(dict map[string]object.Object) map[string]string {
