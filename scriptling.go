@@ -500,10 +500,8 @@ func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[stri
 	libEnv := object.NewEnvironment()
 
 	// Inherit writer from main environment (for output capture)
-	if w := p.env.GetWriter(); w != nil {
-		if buf, ok := w.(*strings.Builder); ok {
-			libEnv.SetOutput(buf)
-		}
+	if buf, ok := p.env.GetWriter().(*strings.Builder); ok {
+		libEnv.SetOutput(buf)
 	}
 
 	// Set up import builtin for nested imports

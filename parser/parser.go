@@ -703,42 +703,6 @@ func (p *Parser) parseCallArguments() ([]ast.Expression, map[string]ast.Expressi
 	return args, keywords
 }
 
-func (p *Parser) parseExpressionList(end token.TokenType) []ast.Expression {
-	list := []ast.Expression{}
-
-	if p.peekTokenIs(end) {
-		p.nextToken()
-		return list
-	}
-
-	p.nextToken()
-	firstExpr := p.parseExpression(LOWEST)
-
-	// Check if this is a generator expression (for function arguments without parens)
-	if p.peekTokenIs(token.FOR) && end == token.RPAREN {
-		// This is a generator expression like: func(x for x in list)
-		genExpr := p.parseGeneratorExpressionInCall(firstExpr, end)
-		if genExpr != nil {
-			list = append(list, genExpr)
-			return list
-		}
-	}
-
-	list = append(list, firstExpr)
-
-	for p.peekTokenIs(token.COMMA) {
-		p.nextToken()
-		p.nextToken()
-		list = append(list, p.parseExpression(LOWEST))
-	}
-
-	if !p.expectPeek(end) {
-		return nil
-	}
-
-	return list
-}
-
 func (p *Parser) parseIfStatement() *ast.IfStatement {
 	stmt := &ast.IfStatement{Token: p.curToken}
 
