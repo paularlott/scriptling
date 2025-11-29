@@ -1,4 +1,6 @@
 import datetime
 
 now = datetime.now()
-len(now) > 0
+assert len(now) > 0
+
+True

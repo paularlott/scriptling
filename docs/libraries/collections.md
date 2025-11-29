@@ -24,10 +24,18 @@ c = collections.Counter([1, 1, 2, 3, 3, 3])
 c = collections.Counter("hello")
 # {"h": 1, "e": 1, "l": 2, "o": 1}
 
-# Access counts
+# Access counts (returns 0 for missing keys)
 c["l"]  # 2
-c["x"]  # KeyError (use .get() for default)
+c["x"]  # 0 (not KeyError like regular dict)
 ```
+
+#### Counter Methods
+
+Counter objects support the following methods:
+
+- `c[key]` - Get count for key (returns 0 if key not present)
+- `c.most_common([n])` - Return n most common elements as (element, count) tuples
+- `c.elements()` - Return iterator over elements (repeating each by its count)
 
 #### `most_common(counter[, n])`
 Return the n most common elements and their counts.

@@ -23,6 +23,15 @@ assert mc[0][1] == 3
 assert mc[1][0] == 1
 assert mc[1][1] == 2
 
+# Test most_common with different input
+c2 = collections.Counter([1, 1, 2])
+mc2 = c2.most_common()
+assert len(mc2) == 2
+assert mc2[0][0] == 1
+assert mc2[0][1] == 2
+assert mc2[1][0] == 2
+assert mc2[1][1] == 1
+
 # Test OrderedDict
 od = collections.OrderedDict([("a", 1), ("b", 2)])
 assert od["a"] == 1

@@ -43,7 +43,7 @@ func TestURLLibrary(t *testing.T) {
 		urlparse := lib.Functions()["urlparse"]
 		result := urlparse.Fn(context.Background(), nil, &object.String{Value: "https://user:pass@example.com:8080/path?query=value#fragment"})
 
-		if dict, ok := result.(*object.Dict); ok {
+		if instance, ok := result.(*object.Instance); ok {
 			expected := map[string]string{
 				"scheme":   "https",
 				"netloc":   "user:pass@example.com:8080",
@@ -52,20 +52,20 @@ func TestURLLibrary(t *testing.T) {
 				"fragment": "fragment",
 			}
 			for key, expectedVal := range expected {
-				if pair, exists := dict.Pairs[key]; exists {
-					if str, ok := pair.Value.(*object.String); ok {
+				if value, exists := instance.Fields[key]; exists {
+					if str, ok := value.(*object.String); ok {
 						if str.Value != expectedVal {
 							t.Errorf("Expected %s=%q, got %q", key, expectedVal, str.Value)
 						}
 					} else {
-						t.Errorf("Expected string for %s, got %T", key, pair.Value)
+						t.Errorf("Expected string for %s, got %T", key, value)
 					}
 				} else {
 					t.Errorf("Expected key %s not found", key)
 				}
 			}
 		} else {
-			t.Errorf("Expected dict, got %T", result)
+			t.Errorf("Expected ParseResult instance, got %T", result)
 		}
 	})
 
@@ -96,6 +96,22 @@ func TestURLLibrary(t *testing.T) {
 			},
 		}
 		result := urlunparse.Fn(context.Background(), nil, components)
+
+		if str, ok := result.(*object.String); ok {
+			expected := "https://api.example.com/v1/users?limit=10&offset=0#section1"
+			if str.Value != expected {
+				t.Errorf("Expected %q, got %q", expected, str.Value)
+			}
+		} else {
+			t.Errorf("Expected string, got %T", result)
+		}
+	})
+
+	t.Run("urlunparse ParseResult instance", func(t *testing.T) {
+		urlunparse := lib.Functions()["urlunparse"]
+		// Create a ParseResult instance (simulating what urlparse would return)
+		parseResult := createParseResultInstance("https", "api.example.com", "/v1/users", "", "limit=10&offset=0", "section1")
+		result := urlunparse.Fn(context.Background(), nil, parseResult)
 
 		if str, ok := result.(*object.String); ok {
 			expected := "https://api.example.com/v1/users?limit=10&offset=0#section1"
