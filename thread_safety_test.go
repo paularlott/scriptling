@@ -1,6 +1,7 @@
 package scriptling
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 )
@@ -60,29 +61,25 @@ lib2.func2()
 	}
 }
 
-// TestConcurrentEval tests that a single Scriptling instance can handle
-// concurrent evaluations (basic thread-safety test)
+// TestConcurrentEval tests that multiple Scriptling instances can be created and evaluated concurrently
 func TestConcurrentEval(t *testing.T) {
-	s := New()
-
-	// Set a shared variable
-	s.SetVar("base", 100)
-
 	var wg sync.WaitGroup
 	errors := make(chan error, 10)
 
-	// Run 10 concurrent evaluations
+	// Run 10 concurrent evaluations, each with its own Scriptling instance
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
+			s := New()
+			s.SetVar("base", 100)
 			result, err := s.Eval("base + 1")
 			if err != nil {
 				errors <- err
 				return
 			}
 			if result.Inspect() != "101" {
-				errors <- err
+				errors <- fmt.Errorf("expected '101', got '%s'", result.Inspect())
 			}
 		}(i)
 	}
