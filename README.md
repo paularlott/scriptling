@@ -36,8 +36,15 @@ import (
 )
 
 func main() {
-    // Create interpreter
+    // Create interpreter with all standard libraries (default)
     p := scriptling.New()
+
+    // Or create with only specific libraries using variadic args
+    p := scriptling.New("json", "math", "time")
+
+    // Or using an array of strings
+    libs := []string{"json", "math"}
+    p := scriptling.New(libs)
 
     // Execute Scriptling code
     result, err := p.Eval(`
@@ -136,7 +143,14 @@ p.SetOnDemandLibraryCallback(func(p *Scriptling, libName string) bool {
 
 ### Libraries
 ```go
-// Register optional libraries
+// Create with specific standard libraries using variadic args
+p := scriptling.New("json", "math", "time")
+
+// Or using an array of strings
+libs := []string{"json", "math"}
+p := scriptling.New(libs)
+
+// Register additional custom libraries
 import "github.com/paularlott/scriptling/extlibs"
 p.RegisterLibrary("http", extlibs.HTTPLibrary())
 
