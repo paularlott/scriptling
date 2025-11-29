@@ -337,7 +337,9 @@ import collections
 
 counter = collections.Counter([1, 1, 2, 3, 3, 3])   # {1: 2, 2: 1, 3: 3}
 d = collections.deque([1, 2, 3])                     # Double-ended queue
-Point = collections.namedtuple("Point", ["x", "y"]) # Named tuple factory
+Point = collections.namedtuple("Point", ["x", "y"]) # Named tuple class
+p = Point(1, 2); print(p.x)                         # Direct attribute access
+dd = collections.defaultdict(list)                  # Dict with default values
 cm = collections.ChainMap(dict1, dict2)             # Merged dict view
 ```
 
