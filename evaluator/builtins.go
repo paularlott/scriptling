@@ -2109,6 +2109,38 @@ func helpFunction(ctx context.Context, kwargs map[string]object.Object, args ...
 			fmt.Fprintf(writer, "  - %s\n", name)
 		}
 		return NULL
+	case *object.Class:
+		fmt.Fprintf(writer, "Help for class '%s':\n", obj.Name)
+		fmt.Fprintln(writer, "")
+		fmt.Fprintln(writer, "Available methods:")
+		for name := range obj.Methods {
+			fmt.Fprintf(writer, "  - %s\n", name)
+		}
+
+		// Show typical fields for known classes
+		if obj.Name == "Response" {
+			fmt.Fprintln(writer, "")
+			fmt.Fprintln(writer, "Instance fields:")
+			fmt.Fprintln(writer, "  - status_code (integer) - HTTP status code")
+			fmt.Fprintln(writer, "  - text (string) - Response body as string")
+			fmt.Fprintln(writer, "  - headers (dict) - HTTP headers")
+			fmt.Fprintln(writer, "  - body (string) - Raw response body")
+			fmt.Fprintln(writer, "  - url (string) - Request URL")
+		}
+		return NULL
+	case *object.Instance:
+		fmt.Fprintf(writer, "Help for %s instance:\n", obj.Class.Name)
+		fmt.Fprintln(writer, "")
+		fmt.Fprintln(writer, "Available methods:")
+		for name := range obj.Class.Methods {
+			fmt.Fprintf(writer, "  - %s\n", name)
+		}
+		fmt.Fprintln(writer, "")
+		fmt.Fprintln(writer, "Available fields:")
+		for name := range obj.Fields {
+			fmt.Fprintf(writer, "  - %s\n", name)
+		}
+		return NULL
 	default:
 		fmt.Fprintf(writer, "Help for %s:\n", obj.Type())
 		fmt.Fprintf(writer, "  Type: %s\n", obj.Type())

@@ -270,8 +270,9 @@ func (lf *LambdaFunction) AsDict() (map[string]Object, bool) { return nil, false
 type BuiltinFunction func(ctx context.Context, kwargs map[string]Object, args ...Object) Object
 
 type Builtin struct {
-	Fn       BuiltinFunction
-	HelpText string // Optional help documentation for this builtin
+	Fn         BuiltinFunction
+	HelpText   string            // Optional help documentation for this builtin
+	Attributes map[string]Object // Optional attributes for this builtin
 }
 
 func (b *Builtin) Type() ObjectType { return BUILTIN_OBJ }
@@ -282,7 +283,7 @@ func (b *Builtin) AsInt() (int64, bool)              { return 0, false }
 func (b *Builtin) AsFloat() (float64, bool)          { return 0, false }
 func (b *Builtin) AsBool() (bool, bool)              { return false, false }
 func (b *Builtin) AsList() ([]Object, bool)          { return nil, false }
-func (b *Builtin) AsDict() (map[string]Object, bool) { return nil, false }
+func (b *Builtin) AsDict() (map[string]Object, bool) { return b.Attributes, b.Attributes != nil }
 
 // Library represents a pre-built collection of builtin functions and constants
 // This eliminates the need for function wrappers and provides direct access
@@ -663,7 +664,7 @@ func (c *Class) AsInt() (int64, bool)              { return 0, false }
 func (c *Class) AsFloat() (float64, bool)          { return 0, false }
 func (c *Class) AsBool() (bool, bool)              { return true, true }
 func (c *Class) AsList() ([]Object, bool)          { return nil, false }
-func (c *Class) AsDict() (map[string]Object, bool) { return nil, false }
+func (c *Class) AsDict() (map[string]Object, bool) { return c.Methods, true }
 
 type Instance struct {
 	Class  *Class
