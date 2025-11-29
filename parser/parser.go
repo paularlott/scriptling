@@ -146,7 +146,7 @@ func (p *Parser) nextToken() {
 	p.curToken = p.peekToken
 	p.peekToken = p.l.NextToken()
 	p.skippedNewline = false
-	for p.peekToken.Type == token.NEWLINE {
+	for p.peekToken.Type == token.NEWLINE || p.peekToken.Type == token.SEMICOLON {
 		p.skippedNewline = true
 		p.peekToken = p.l.NextToken()
 	}
@@ -196,7 +196,7 @@ func (p *Parser) ParseProgram() *ast.Program {
 	program.Statements = []ast.Statement{}
 
 	for !p.curTokenIs(token.EOF) {
-		if p.curTokenIs(token.NEWLINE) {
+		if p.curTokenIs(token.NEWLINE) || p.curTokenIs(token.SEMICOLON) {
 			p.nextToken()
 			continue
 		}
@@ -389,7 +389,7 @@ func (p *Parser) parseReturnStatement() *ast.ReturnStatement {
 	stmt := &ast.ReturnStatement{Token: p.curToken}
 	p.nextToken()
 
-	if !p.curTokenIs(token.NEWLINE) && !p.curTokenIs(token.EOF) {
+	if !p.curTokenIs(token.NEWLINE) && !p.curTokenIs(token.SEMICOLON) && !p.curTokenIs(token.EOF) {
 		stmt.ReturnValue = p.parseExpressionWithConditional()
 	}
 
@@ -417,7 +417,7 @@ func (p *Parser) parseExpression(precedence int) ast.Expression {
 	}
 	leftExp := prefix()
 
-	for !p.peekTokenIs(token.NEWLINE) && !p.peekTokenIs(token.EOF) && !p.peekTokenIs(token.COLON) && precedence < p.peekPrecedence() {
+	for !p.peekTokenIs(token.NEWLINE) && !p.peekTokenIs(token.SEMICOLON) && !p.peekTokenIs(token.EOF) && !p.peekTokenIs(token.COLON) && precedence < p.peekPrecedence() {
 		// Special handling for IF token: only treat as conditional expression
 		// if it appears on the same line (no newline was skipped)
 		if p.peekTokenIs(token.IF) && p.skippedNewline {
@@ -809,7 +809,7 @@ func (p *Parser) parseBlockStatement() *ast.BlockStatement {
 	p.nextToken()
 
 	for !p.curTokenIs(token.DEDENT) && !p.curTokenIs(token.EOF) {
-		if p.curTokenIs(token.NEWLINE) {
+		if p.curTokenIs(token.NEWLINE) || p.curTokenIs(token.SEMICOLON) {
 			p.nextToken()
 			continue
 		}
@@ -856,6 +856,17 @@ func (p *Parser) parseClassStatement() *ast.ClassStatement {
 	}
 
 	stmt.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+
+	// Check for optional base class: class Name(BaseClass):
+	// BaseClass can be a dotted name like html.parser.HTMLParser
+	if p.peekTokenIs(token.LPAREN) {
+		p.nextToken() // consume (
+		p.nextToken() // move to base class expression
+		stmt.BaseClass = p.parseExpression(LOWEST)
+		if !p.expectPeek(token.RPAREN) {
+			return nil
+		}
+	}
 
 	if !p.expectPeek(token.COLON) {
 		return nil
@@ -1026,11 +1037,16 @@ func (p *Parser) parseComprehensionCore(expr ast.Expression, endToken token.Toke
 		return nil
 	}
 
-	if !p.expectPeek(token.IDENT) {
-		return nil
-	}
+	// Parse variable(s) - supports tuple unpacking like: for h, t in ...
+	p.nextToken() // move to first variable
+	comp.Variables = []ast.Expression{}
+	comp.Variables = append(comp.Variables, p.parseExpression(EQUALS))
 
-	comp.Variable = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+	for p.peekTokenIs(token.COMMA) {
+		p.nextToken() // consume comma
+		p.nextToken() // move to next expression
+		comp.Variables = append(comp.Variables, p.parseExpression(EQUALS))
+	}
 
 	if !p.expectPeek(token.IN) {
 		return nil
@@ -1247,7 +1263,7 @@ func (p *Parser) parseRaiseStatement() *ast.RaiseStatement {
 	stmt := &ast.RaiseStatement{Token: p.curToken}
 	p.nextToken()
 
-	if !p.curTokenIs(token.NEWLINE) && !p.curTokenIs(token.EOF) {
+	if !p.curTokenIs(token.NEWLINE) && !p.curTokenIs(token.SEMICOLON) && !p.curTokenIs(token.EOF) {
 		stmt.Message = p.parseExpression(LOWEST)
 	}
 

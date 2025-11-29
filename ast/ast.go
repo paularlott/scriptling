@@ -204,9 +204,10 @@ func (fs *FunctionStatement) statementNode()       {}
 func (fs *FunctionStatement) TokenLiteral() string { return fs.Token.Literal }
 
 type ClassStatement struct {
-	Token token.Token
-	Name  *Identifier
-	Body  *BlockStatement
+	Token     token.Token
+	Name      *Identifier
+	BaseClass Expression // optional base class for inheritance (can be dotted like html.parser.HTMLParser)
+	Body      *BlockStatement
 }
 
 func (cs *ClassStatement) statementNode()       {}
@@ -369,7 +370,7 @@ func (mce *MethodCallExpression) TokenLiteral() string { return mce.Token.Litera
 type ListComprehension struct {
 	Token      token.Token
 	Expression Expression
-	Variable   *Identifier
+	Variables  []Expression // supports tuple unpacking like: for h, t in ...
 	Iterable   Expression
 	Condition  Expression // optional
 }

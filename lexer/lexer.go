@@ -194,6 +194,9 @@ func (l *Lexer) NextToken() token.Token {
 	case ',':
 		tok = token.Token{Type: token.COMMA, Literal: string(l.ch), Line: l.line}
 		l.readChar()
+	case ';':
+		tok = token.Token{Type: token.SEMICOLON, Literal: string(l.ch), Line: l.line}
+		l.readChar()
 	case '.':
 		tok = token.Token{Type: token.DOT, Literal: string(l.ch), Line: l.line}
 		l.readChar()

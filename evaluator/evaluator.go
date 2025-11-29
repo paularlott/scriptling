@@ -708,10 +708,29 @@ func evalClassStatement(ctx context.Context, stmt *ast.ClassStatement, env *obje
 		Env:     env,
 	}
 
+	// Handle base class inheritance
+	if stmt.BaseClass != nil {
+		// Evaluate the base class expression (can be dotted like html.parser.HTMLParser)
+		baseClassObj := evalWithContext(ctx, stmt.BaseClass, env)
+		if isError(baseClassObj) {
+			return baseClassObj
+		}
+		baseClass, ok := baseClassObj.(*object.Class)
+		if !ok {
+			return errors.NewError("base class is not a class type, got %s", baseClassObj.Type())
+		}
+		class.BaseClass = baseClass
+
+		// Copy methods from base class
+		for name, method := range baseClass.Methods {
+			class.Methods[name] = method
+		}
+	}
+
 	// Create a new environment for the class body
 	classEnv := object.NewEnclosedEnvironment(env)
 
-	// Evaluate the class body to find methods
+	// Evaluate the class body to find methods (will override inherited methods)
 	for _, s := range stmt.Body.Statements {
 		if fnStmt, ok := s.(*ast.FunctionStatement); ok {
 			obj := evalFunctionStatement(ctx, fnStmt, classEnv)
@@ -1377,56 +1396,48 @@ func evalListComprehension(ctx context.Context, lc *ast.ListComprehension, env *
 
 	result := []object.Object{}
 
-	// Create new scope for comprehension variable
+	// Create new scope for comprehension variable(s)
 	compEnv := object.NewEnclosedEnvironment(env)
 
+	// Get elements based on iterable type
+	var elements []object.Object
 	switch iter := iterable.(type) {
 	case *object.List:
-		for _, element := range iter.Elements {
-			compEnv.Set(lc.Variable.Value, element)
-
-			// Check condition if present
-			if lc.Condition != nil {
-				condition := evalWithContext(ctx, lc.Condition, compEnv)
-				if isError(condition) {
-					return condition
-				}
-				if !isTruthy(condition) {
-					continue
-				}
-			}
-
-			// Evaluate expression
-			exprResult := evalWithContext(ctx, lc.Expression, compEnv)
-			if isError(exprResult) {
-				return exprResult
-			}
-			result = append(result, exprResult)
-		}
+		elements = iter.Elements
+	case *object.Tuple:
+		elements = iter.Elements
 	case *object.String:
-		for _, char := range iter.Value {
-			compEnv.Set(lc.Variable.Value, &object.String{Value: string(char)})
-
-			// Check condition if present
-			if lc.Condition != nil {
-				condition := evalWithContext(ctx, lc.Condition, compEnv)
-				if isError(condition) {
-					return condition
-				}
-				if !isTruthy(condition) {
-					continue
-				}
-			}
-
-			// Evaluate expression
-			exprResult := evalWithContext(ctx, lc.Expression, compEnv)
-			if isError(exprResult) {
-				return exprResult
-			}
-			result = append(result, exprResult)
+		elements = make([]object.Object, len(iter.Value))
+		for i, char := range iter.Value {
+			elements[i] = &object.String{Value: string(char)}
 		}
 	default:
 		return errors.NewTypeError("iterable", iterable.Type().String())
+	}
+
+	for _, element := range elements {
+		// Set variable(s) - supports tuple unpacking
+		if err := setForVariables(lc.Variables, element, compEnv); err != nil {
+			return errors.NewError("%s", err.Error())
+		}
+
+		// Check condition if present
+		if lc.Condition != nil {
+			condition := evalWithContext(ctx, lc.Condition, compEnv)
+			if isError(condition) {
+				return condition
+			}
+			if !isTruthy(condition) {
+				continue
+			}
+		}
+
+		// Evaluate expression
+		exprResult := evalWithContext(ctx, lc.Expression, compEnv)
+		if isError(exprResult) {
+			return exprResult
+		}
+		result = append(result, exprResult)
 	}
 
 	return &object.List{Elements: result}

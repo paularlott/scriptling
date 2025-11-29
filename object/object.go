@@ -650,9 +650,10 @@ func (ex *Exception) AsList() ([]Object, bool)          { return nil, false }
 func (ex *Exception) AsDict() (map[string]Object, bool) { return nil, false }
 
 type Class struct {
-	Name    string
-	Methods map[string]Object
-	Env     *Environment
+	Name      string
+	BaseClass *Class // optional parent class for inheritance
+	Methods   map[string]Object
+	Env       *Environment
 }
 
 func (c *Class) Type() ObjectType { return CLASS_OBJ }
