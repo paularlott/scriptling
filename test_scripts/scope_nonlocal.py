@@ -8,4 +8,4 @@ def outer():
     inner()
     return x
 
-outer() == 20
+assert outer() == 20

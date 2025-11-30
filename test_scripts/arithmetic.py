@@ -5,4 +5,8 @@ diff = x - y
 prod = x * y
 quot = x / y
 mod = x % y
-sum_val == 15 and diff == 5 and prod == 50 and quot == 2 and mod == 0
+assert sum_val == 15
+assert diff == 5
+assert prod == 50
+assert quot == 2
+assert mod == 0

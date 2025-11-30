@@ -3,4 +3,4 @@ def test_local():
     return x
 
 result = test_local()
-result == 10
+assert result == 10

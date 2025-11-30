@@ -1,13 +1,10 @@
-failures = 0
-
 # If-else
 result = 0
 if 10 > 5:
     result = 1
 else:
     result = 0
-if result != 1:
-    failures += 1
+assert result == 1
 
 # If-elif-else
 grade = ""
@@ -20,8 +17,7 @@ elif score >= 70:
     grade = "C"
 else:
     grade = "F"
-if grade != "C":
-    failures += 1
+assert grade == "C"
 
 # Nested if
 msg = ""
@@ -34,7 +30,4 @@ if a > 5:
         msg = "first"
 else:
     msg = "none"
-if msg != "both":
-    failures += 1
-
-failures == 0
+assert msg == "both"

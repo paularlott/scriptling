@@ -10,4 +10,4 @@ def get_counter():
 
 increment()
 increment()
-get_counter() == 2
+assert get_counter() == 2

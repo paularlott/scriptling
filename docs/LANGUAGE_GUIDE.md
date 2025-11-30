@@ -47,6 +47,34 @@ Scriptling supports single- and double-quoted strings, triple-quoted strings for
 - Booleans: `True`, `False` (capitalized)
 - Variables: case-sensitive (`myVar` ≠ `myvar`)
 
+### Multiline Syntax
+Scriptling supports multiline definitions for lists, dictionaries, function calls, and function definitions. Indentation is ignored inside parentheses, brackets, and braces.
+
+```python
+# Multiline list
+numbers = [
+    1,
+    2,
+    3,
+]
+
+# Multiline dictionary
+person = {
+    "name": "Alice",
+    "age": 30,
+}
+
+# Multiline function call
+result = my_function(
+    arg1,
+    arg2,
+    key="value"
+)
+```
+
+### Trailing Commas
+Trailing commas are allowed in lists, dictionaries, function calls, and function definitions. This makes it easier to add or remove items in multiline structures.
+
 ## Data Types
 
 ### Integer
