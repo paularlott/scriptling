@@ -54,6 +54,11 @@ func callStringMethodWithKeywords(ctx context.Context, obj object.Object, method
 		return callDictMethod(ctx, obj.(*object.Dict), method, args, keywords, env)
 	}
 
+	// Handle datetime methods
+	if obj.Type() == object.DATETIME_OBJ {
+		return callDatetimeMethod(ctx, obj.(*object.Datetime), method, args, keywords, env)
+	}
+
 	// Handle list methods
 	if obj.Type() == object.LIST_OBJ {
 		return callListMethod(ctx, obj.(*object.List), method, args, keywords, env)
@@ -316,6 +321,21 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		return errors.NewError("%s: %s is not callable", errors.ErrIdentifierNotFound, method)
 	}
 	return errors.NewError("%s: method %s not found in library", errors.ErrIdentifierNotFound, method)
+}
+
+func callDatetimeMethod(ctx context.Context, dt *object.Datetime, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+	switch method {
+	case "timestamp":
+		if len(args) != 0 {
+			return errors.NewArgumentError(len(args), 0)
+		}
+		if len(keywords) > 0 {
+			return errors.NewError("timestamp() does not accept keyword arguments")
+		}
+		return &object.Float{Value: float64(dt.Value.Unix())}
+	default:
+		return errors.NewError("datetime object has no method %s", method)
+	}
 }
 
 func callListMethod(ctx context.Context, list *object.List, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {

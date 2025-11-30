@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/paularlott/scriptling/ast"
@@ -1587,9 +1588,56 @@ func evalFStringLiteral(ctx context.Context, fstr *ast.FStringLiteral, env *obje
 			if isError(exprResult) {
 				return exprResult
 			}
-			result += exprResult.Inspect()
+			formatted := formatWithSpec(exprResult, fstr.FormatSpecs[i])
+			result += formatted
 		}
 	}
 
 	return &object.String{Value: result}
+}
+
+func formatWithSpec(obj object.Object, spec string) string {
+	if spec == "" {
+		// Check for integers first (before float conversion)
+		if intVal, ok := obj.AsInt(); ok {
+			return fmt.Sprintf("%d", intVal)
+		}
+		// For floats, provide a more Python-like representation
+		if floatVal, ok := obj.AsFloat(); ok {
+			// Check if it's a whole number
+			if floatVal == float64(int64(floatVal)) {
+				return fmt.Sprintf("%.1f", floatVal)
+			}
+			return fmt.Sprintf("%g", floatVal)
+		}
+		return obj.Inspect()
+	}
+
+	// Handle integer formatting like :2d, :02d
+	if strings.HasSuffix(spec, "d") {
+		widthStr := strings.TrimSuffix(spec, "d")
+		if widthStr == "" {
+			if intVal, ok := obj.AsInt(); ok {
+				return fmt.Sprintf("%d", intVal)
+			}
+		} else if widthStr[0] == '0' {
+			// Zero-padded
+			widthStr = widthStr[1:]
+			if width, err := strconv.Atoi(widthStr); err == nil {
+				if intVal, ok := obj.AsInt(); ok {
+					return fmt.Sprintf("%0*d", width, intVal)
+				}
+			}
+		} else {
+			// Space-padded
+			if width, err := strconv.Atoi(widthStr); err == nil {
+				if intVal, ok := obj.AsInt(); ok {
+					return fmt.Sprintf("%*d", width, intVal)
+				}
+			}
+		}
+	}
+
+	// Fallback to inspect
+	return obj.Inspect()
 }

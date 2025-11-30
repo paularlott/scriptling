@@ -97,7 +97,7 @@ Returns today's date at midnight. Optional format string uses Python datetime fo
 				return errors.NewError("datetime.strptime() parse error: %s", err.Error())
 			}
 
-			return &object.Float{Value: float64(t.Unix())}
+			return &object.Datetime{Value: t}
 		},
 		HelpText: `strptime(date_string, format) - Parse datetime from string
 
@@ -114,25 +114,26 @@ Parses a date string according to the given format and returns a Unix timestamp.
 				return errors.NewTypeError("STRING", args[0].Type().String())
 			}
 
-			var timestamp float64
-			switch t := args[1].(type) {
+			var t time.Time
+			switch dt := args[1].(type) {
 			case *object.Integer:
-				timestamp = float64(t.Value)
+				t = time.Unix(int64(dt.Value), 0)
 			case *object.Float:
-				timestamp = t.Value
+				t = time.Unix(int64(dt.Value), 0)
+			case *object.Datetime:
+				t = dt.Value
 			default:
-				return errors.NewTypeError("INTEGER or FLOAT", args[1].Type().String())
+				return errors.NewTypeError("INTEGER, FLOAT, or DATETIME", args[1].Type().String())
 			}
 
 			// Convert Python format codes to Go format
 			goFormat := pythonToGoDateFormat(format)
 
-			t := time.Unix(int64(timestamp), 0)
 			return &object.String{Value: t.Format(goFormat)}
 		},
-		HelpText: `strftime(format, timestamp) - Format timestamp as string
+		HelpText: `strftime(format, timestamp_or_datetime) - Format timestamp or datetime as string
 
-Formats a Unix timestamp according to the given format string.`,
+Formats a Unix timestamp or datetime object according to the given format string.`,
 	},
 	"fromtimestamp": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
