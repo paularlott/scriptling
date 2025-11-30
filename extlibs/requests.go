@@ -124,10 +124,12 @@ var exceptionsNamespace = &object.Dict{
 	},
 }
 
-// parseRequestOptions parses the options dict and returns timeout and headers
-func parseRequestOptions(options map[string]object.Object) (int, map[string]string) {
+// parseRequestOptions parses the options dict and returns timeout, headers, user, pass
+func parseRequestOptions(options map[string]object.Object) (int, map[string]string, string, string) {
 	timeout := 5
 	headers := make(map[string]string)
+	user := ""
+	pass := ""
 	if timeoutPair, ok := options["timeout"]; ok {
 		if timeoutInt, ok := timeoutPair.AsInt(); ok {
 			timeout = int(timeoutInt)
@@ -138,7 +140,23 @@ func parseRequestOptions(options map[string]object.Object) (int, map[string]stri
 			headers = extractHeaders(headersDict)
 		}
 	}
-	return timeout, headers
+	if authPair, ok := options["auth"]; ok {
+		var authList []object.Object
+		if tuple, ok := authPair.(*object.Tuple); ok {
+			authList = tuple.Elements
+		} else if list, ok := authPair.(*object.List); ok {
+			authList = list.Elements
+		}
+		if len(authList) == 2 {
+			if u, ok := authList[0].AsString(); ok {
+				user = u
+			}
+			if p, ok := authList[1].AsString(); ok {
+				pass = p
+			}
+		}
+	}
+	return timeout, headers, user, pass
 }
 
 var RequestsLibrary = object.NewLibrary(map[string]*object.Builtin{
@@ -165,9 +183,10 @@ var RequestsLibrary = object.NewLibrary(map[string]*object.Builtin{
 					return errors.NewTypeError("DICT", args[1].Type().String())
 				}
 				options, _ := args[1].AsDict()
-				timeout, headers = parseRequestOptions(options)
+				timeout, headers, user, pass := parseRequestOptions(options)
+				return httpRequestWithContext(ctx, "GET", url, "", timeout, headers, user, pass)
 			}
-			return httpRequestWithContext(ctx, "GET", url, "", timeout, headers)
+			return httpRequestWithContext(ctx, "GET", url, "", timeout, headers, "", "")
 		},
 		HelpText: `get(url, options={}) - Send a GET request
 
@@ -178,6 +197,7 @@ Parameters:
   options (dict, optional): Request options
     - timeout (int): Request timeout in seconds (default: 5)
     - headers (dict): HTTP headers as key-value pairs
+    - auth (list): Basic authentication as [username, password]
 
 Returns:
   Response object with status_code, text, headers, body, url, and json() method`,
@@ -194,15 +214,17 @@ Returns:
 			body, _ := args[1].AsString()
 			timeout := 5
 			headers := make(map[string]string)
+			user := ""
+			pass := ""
 
 			if len(args) == 3 {
 				if args[2].Type() != object.DICT_OBJ {
 					return errors.NewTypeError("DICT", args[2].Type().String())
 				}
 				options, _ := args[2].AsDict()
-				timeout, headers = parseRequestOptions(options)
+				timeout, headers, user, pass = parseRequestOptions(options)
 			}
-			return httpRequestWithContext(ctx, "POST", url, body, timeout, headers)
+			return httpRequestWithContext(ctx, "POST", url, body, timeout, headers, user, pass)
 		},
 		HelpText: `post(url, data, options={}) - Send a POST request
 
@@ -214,6 +236,7 @@ Parameters:
   options (dict, optional): Request options
     - timeout (int): Request timeout in seconds (default: 5)
     - headers (dict): HTTP headers as key-value pairs
+    - auth (list): Basic authentication as [username, password]
 
 Returns:
   Response object with status_code, text, headers, body, url, and json() method`,
@@ -230,15 +253,17 @@ Returns:
 			body, _ := args[1].AsString()
 			timeout := 5
 			headers := make(map[string]string)
+			user := ""
+			pass := ""
 
 			if len(args) == 3 {
 				if args[2].Type() != object.DICT_OBJ {
 					return errors.NewTypeError("DICT", args[2].Type().String())
 				}
 				options, _ := args[2].AsDict()
-				timeout, headers = parseRequestOptions(options)
+				timeout, headers, user, pass = parseRequestOptions(options)
 			}
-			return httpRequestWithContext(ctx, "PUT", url, body, timeout, headers)
+			return httpRequestWithContext(ctx, "PUT", url, body, timeout, headers, user, pass)
 		},
 		HelpText: `put(url, data, options={}) - Send a PUT request
 
@@ -250,6 +275,7 @@ Parameters:
   options (dict, optional): Request options
     - timeout (int): Request timeout in seconds (default: 5)
     - headers (dict): HTTP headers as key-value pairs
+    - auth (list): Basic authentication as [username, password]
 
 Returns:
   Response object with status_code, text, headers, body, url, and json() method`,
@@ -265,15 +291,17 @@ Returns:
 			url, _ := args[0].AsString()
 			timeout := 5
 			headers := make(map[string]string)
+			user := ""
+			pass := ""
 
 			if len(args) == 2 {
 				if args[1].Type() != object.DICT_OBJ {
 					return errors.NewTypeError("DICT", args[1].Type().String())
 				}
 				options, _ := args[1].AsDict()
-				timeout, headers = parseRequestOptions(options)
+				timeout, headers, user, pass = parseRequestOptions(options)
 			}
-			return httpRequestWithContext(ctx, "DELETE", url, "", timeout, headers)
+			return httpRequestWithContext(ctx, "DELETE", url, "", timeout, headers, user, pass)
 		},
 		HelpText: `delete(url, options={}) - Send a DELETE request
 
@@ -284,6 +312,7 @@ Parameters:
   options (dict, optional): Request options
     - timeout (int): Request timeout in seconds (default: 5)
     - headers (dict): HTTP headers as key-value pairs
+    - auth (list): Basic authentication as [username, password]
 
 Returns:
   Response object with status_code, text, headers, body, url, and json() method`,
@@ -300,15 +329,17 @@ Returns:
 			body, _ := args[1].AsString()
 			timeout := 5
 			headers := make(map[string]string)
+			user := ""
+			pass := ""
 
 			if len(args) == 3 {
 				if args[2].Type() != object.DICT_OBJ {
 					return errors.NewTypeError("DICT", args[2].Type().String())
 				}
 				options, _ := args[2].AsDict()
-				timeout, headers = parseRequestOptions(options)
+				timeout, headers, user, pass = parseRequestOptions(options)
 			}
-			return httpRequestWithContext(ctx, "PATCH", url, body, timeout, headers)
+			return httpRequestWithContext(ctx, "PATCH", url, body, timeout, headers, user, pass)
 		},
 		HelpText: `patch(url, data, options={}) - Send a PATCH request
 
@@ -320,6 +351,7 @@ Parameters:
   options (dict, optional): Request options
     - timeout (int): Request timeout in seconds (default: 5)
     - headers (dict): HTTP headers as key-value pairs
+    - auth (list): Basic authentication as [username, password]
 
 Returns:
   Response object with status_code, text, headers, body, url, and json() method`,
@@ -341,7 +373,7 @@ func extractHeaders(dict map[string]object.Object) map[string]string {
 	return headers
 }
 
-func httpRequestWithContext(parentCtx context.Context, method, url, body string, timeoutSecs int, headers map[string]string) object.Object {
+func httpRequestWithContext(parentCtx context.Context, method, url, body string, timeoutSecs int, headers map[string]string, user, pass string) object.Object {
 	// Combine parent context with timeout
 	ctx, cancel := context.WithTimeout(parentCtx, time.Duration(timeoutSecs)*time.Second)
 	defer cancel()
@@ -367,6 +399,11 @@ func httpRequestWithContext(parentCtx context.Context, method, url, body string,
 	// Set custom headers
 	for key, value := range headers {
 		req.Header.Set(key, value)
+	}
+
+	// Set basic auth if provided
+	if user != "" {
+		req.SetBasicAuth(user, pass)
 	}
 
 	resp, err := httpClient.Do(req)
