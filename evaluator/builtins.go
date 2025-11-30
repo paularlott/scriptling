@@ -74,8 +74,14 @@ Examples:
 				return object.NewInteger(int64(len(arg.Pairs)))
 			case *object.Tuple:
 				return object.NewInteger(int64(len(arg.Elements)))
+			case *object.DictKeys:
+				return object.NewInteger(int64(len(arg.Dict.Pairs)))
+			case *object.DictValues:
+				return object.NewInteger(int64(len(arg.Dict.Pairs)))
+			case *object.DictItems:
+				return object.NewInteger(int64(len(arg.Dict.Pairs)))
 			default:
-				return errors.NewTypeError("STRING, LIST, DICT, or TUPLE", args[0].Type().String())
+				return errors.NewTypeError("STRING, LIST, DICT, TUPLE, or VIEW", args[0].Type().String())
 			}
 		},
 		HelpText: `len(obj) - Return the length of an object
@@ -667,15 +673,11 @@ Use list(range(...)) to get a list.`,
 				return errors.NewTypeError("DICT", args[0].Type().String())
 			}
 			dict := args[0].(*object.Dict)
-			elements := make([]object.Object, 0, len(dict.Pairs))
-			for _, pair := range dict.Pairs {
-				elements = append(elements, pair.Key)
-			}
-			return &object.List{Elements: elements}
+			return &object.DictKeys{Dict: dict}
 		},
 		HelpText: `keys(dict) - Return dictionary keys
 
-Returns a list of all keys in the dictionary.`,
+Returns a view object of all keys in the dictionary.`,
 	},
 	"values": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
@@ -686,15 +688,11 @@ Returns a list of all keys in the dictionary.`,
 				return errors.NewTypeError("DICT", args[0].Type().String())
 			}
 			dict := args[0].(*object.Dict)
-			elements := make([]object.Object, 0, len(dict.Pairs))
-			for _, pair := range dict.Pairs {
-				elements = append(elements, pair.Value)
-			}
-			return &object.List{Elements: elements}
+			return &object.DictValues{Dict: dict}
 		},
 		HelpText: `values(dict) - Return dictionary values
 
-Returns a list of all values in the dictionary.`,
+Returns a view object of all values in the dictionary.`,
 	},
 	"items": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
@@ -705,16 +703,11 @@ Returns a list of all values in the dictionary.`,
 				return errors.NewTypeError("DICT", args[0].Type().String())
 			}
 			dict := args[0].(*object.Dict)
-			elements := make([]object.Object, 0, len(dict.Pairs))
-			for _, pair := range dict.Pairs {
-				tupleElements := []object.Object{pair.Key, pair.Value}
-				elements = append(elements, &object.List{Elements: tupleElements})
-			}
-			return &object.List{Elements: elements}
+			return &object.DictItems{Dict: dict}
 		},
 		HelpText: `items(dict) - Return dictionary key-value pairs
 
-Returns a list of [key, value] pairs for all items in the dictionary.`,
+Returns a view object of (key, value) pairs for all items in the dictionary.`,
 	},
 	"enumerate": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
@@ -1322,8 +1315,41 @@ Use list(reversed(...)) to get a list.`,
 					elements = append(elements, val)
 				}
 				return &object.List{Elements: elements}
+			case *object.DictKeys:
+				iterator := iter.CreateIterator()
+				elements := make([]object.Object, 0)
+				for {
+					val, hasNext := iterator.Next()
+					if !hasNext {
+						break
+					}
+					elements = append(elements, val)
+				}
+				return &object.List{Elements: elements}
+			case *object.DictValues:
+				iterator := iter.CreateIterator()
+				elements := make([]object.Object, 0)
+				for {
+					val, hasNext := iterator.Next()
+					if !hasNext {
+						break
+					}
+					elements = append(elements, val)
+				}
+				return &object.List{Elements: elements}
+			case *object.DictItems:
+				iterator := iter.CreateIterator()
+				elements := make([]object.Object, 0)
+				for {
+					val, hasNext := iterator.Next()
+					if !hasNext {
+						break
+					}
+					elements = append(elements, val)
+				}
+				return &object.List{Elements: elements}
 			default:
-				return errors.NewTypeError("iterable (LIST, TUPLE, STRING, DICT, ITERATOR)", args[0].Type().String())
+				return errors.NewTypeError("iterable", args[0].Type().String())
 			}
 		},
 		HelpText: `list([iterable]) - Create a list from an iterable
@@ -1402,8 +1428,51 @@ Keyword arguments are added to the dict.`,
 					elements = append(elements, &object.String{Value: string(ch)})
 				}
 				return &object.Tuple{Elements: elements}
+			case *object.Iterator:
+				elements := make([]object.Object, 0)
+				for {
+					val, hasNext := iter.Next()
+					if !hasNext {
+						break
+					}
+					elements = append(elements, val)
+				}
+				return &object.Tuple{Elements: elements}
+			case *object.DictKeys:
+				iterator := iter.CreateIterator()
+				elements := make([]object.Object, 0)
+				for {
+					val, hasNext := iterator.Next()
+					if !hasNext {
+						break
+					}
+					elements = append(elements, val)
+				}
+				return &object.Tuple{Elements: elements}
+			case *object.DictValues:
+				iterator := iter.CreateIterator()
+				elements := make([]object.Object, 0)
+				for {
+					val, hasNext := iterator.Next()
+					if !hasNext {
+						break
+					}
+					elements = append(elements, val)
+				}
+				return &object.Tuple{Elements: elements}
+			case *object.DictItems:
+				iterator := iter.CreateIterator()
+				elements := make([]object.Object, 0)
+				for {
+					val, hasNext := iterator.Next()
+					if !hasNext {
+						break
+					}
+					elements = append(elements, val)
+				}
+				return &object.Tuple{Elements: elements}
 			default:
-				return errors.NewTypeError("iterable (LIST, TUPLE, STRING)", args[0].Type().String())
+				return errors.NewTypeError("iterable", args[0].Type().String())
 			}
 		},
 		HelpText: `tuple([iterable]) - Create a tuple from an iterable
@@ -1431,8 +1500,43 @@ Otherwise, returns a tuple containing the items of the iterable.`,
 				for _, ch := range iter.Value {
 					elements = append(elements, &object.String{Value: string(ch)})
 				}
+			case *object.Iterator:
+				for {
+					val, hasNext := iter.Next()
+					if !hasNext {
+						break
+					}
+					elements = append(elements, val)
+				}
+			case *object.DictKeys:
+				iterator := iter.CreateIterator()
+				for {
+					val, hasNext := iterator.Next()
+					if !hasNext {
+						break
+					}
+					elements = append(elements, val)
+				}
+			case *object.DictValues:
+				iterator := iter.CreateIterator()
+				for {
+					val, hasNext := iterator.Next()
+					if !hasNext {
+						break
+					}
+					elements = append(elements, val)
+				}
+			case *object.DictItems:
+				iterator := iter.CreateIterator()
+				for {
+					val, hasNext := iterator.Next()
+					if !hasNext {
+						break
+					}
+					elements = append(elements, val)
+				}
 			default:
-				return errors.NewTypeError("iterable (LIST, TUPLE, STRING)", args[0].Type().String())
+				return errors.NewTypeError("iterable", args[0].Type().String())
 			}
 
 			// Remove duplicates (using string representation as key)
