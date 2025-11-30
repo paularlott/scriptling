@@ -65,6 +65,9 @@ const (
 	INSTANCE_OBJ
 	SUPER_OBJ
 	ITERATOR_OBJ
+	DICT_KEYS_OBJ
+	DICT_VALUES_OBJ
+	DICT_ITEMS_OBJ
 )
 
 // String returns the string representation of the ObjectType
@@ -112,6 +115,12 @@ func (ot ObjectType) String() string {
 		return "SUPER"
 	case ITERATOR_OBJ:
 		return "ITERATOR"
+	case DICT_KEYS_OBJ:
+		return "DICT_KEYS"
+	case DICT_VALUES_OBJ:
+		return "DICT_VALUES"
+	case DICT_ITEMS_OBJ:
+		return "DICT_ITEMS"
 	default:
 		return "UNKNOWN"
 	}

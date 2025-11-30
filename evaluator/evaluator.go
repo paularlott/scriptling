@@ -1222,6 +1222,43 @@ func evalInOperator(left, right object.Object) object.Object {
 			return FALSE
 		}
 		return errors.NewTypeError("STRING", "non-string type")
+	case *object.DictKeys:
+		key := left.Inspect()
+		_, ok := container.Dict.Pairs[key]
+		return nativeBoolToBooleanObject(ok)
+	case *object.DictValues:
+		for _, pair := range container.Dict.Pairs {
+			if left == pair.Value || (left.Inspect() == pair.Value.Inspect()) {
+				return TRUE
+			}
+		}
+		return FALSE
+	case *object.DictItems:
+		// Expect left to be a tuple/list of [key, value]
+		// Actually, Python allows (key, value) tuple.
+		// Let's check if left is a tuple/list of 2 elements.
+		var key, val object.Object
+		switch l := left.(type) {
+		case *object.Tuple:
+			if len(l.Elements) == 2 {
+				key, val = l.Elements[0], l.Elements[1]
+			}
+		case *object.List:
+			if len(l.Elements) == 2 {
+				key, val = l.Elements[0], l.Elements[1]
+			}
+		}
+
+		if key != nil {
+			// Check if key exists and value matches
+			keyStr := key.Inspect()
+			if pair, ok := container.Dict.Pairs[keyStr]; ok {
+				if val == pair.Value || (val.Inspect() == pair.Value.Inspect()) {
+					return TRUE
+				}
+			}
+		}
+		return FALSE
 	default:
 		return errors.NewTypeError("iterable", right.Type().String())
 	}
@@ -1467,8 +1504,20 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 
 	var result object.Object = NULL
 
-	// Handle Iterator objects (from range, zip, enumerate, etc.)
-	if iter, ok := iterable.(*object.Iterator); ok {
+	// Handle Iterator objects and Views
+	var iter *object.Iterator
+	switch o := iterable.(type) {
+	case *object.Iterator:
+		iter = o
+	case *object.DictKeys:
+		iter = o.CreateIterator()
+	case *object.DictValues:
+		iter = o.CreateIterator()
+	case *object.DictItems:
+		iter = o.CreateIterator()
+	}
+
+	if iter != nil {
 		for {
 			if err := checkContext(ctx); err != nil {
 				return err
@@ -1555,8 +1604,20 @@ func evalListComprehension(ctx context.Context, lc *ast.ListComprehension, env *
 	// Create new scope for comprehension variable(s)
 	compEnv := object.NewEnclosedEnvironment(env)
 
-	// Handle Iterator objects (from range, zip, enumerate, etc.)
-	if iter, ok := iterable.(*object.Iterator); ok {
+	// Handle Iterator objects and Views
+	var iter *object.Iterator
+	switch o := iterable.(type) {
+	case *object.Iterator:
+		iter = o
+	case *object.DictKeys:
+		iter = o.CreateIterator()
+	case *object.DictValues:
+		iter = o.CreateIterator()
+	case *object.DictItems:
+		iter = o.CreateIterator()
+	}
+
+	if iter != nil {
 		for {
 			element, hasNext := iter.Next()
 			if !hasNext {
