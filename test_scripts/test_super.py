@@ -22,13 +22,13 @@ class GoldenRetriever(Dog):
         return "Golden says: " + super(GoldenRetriever, self).speak()
 
 d = Dog("Buddy", "Pug")
-print("Dog name:", d.name)
-print("Dog breed:", d.breed)
-print("Dog speak:", d.speak())
+assert d.name == "Buddy", "Dog name should be Buddy"
+assert d.breed == "Pug", "Dog breed should be Pug"
+assert d.speak() == "Generic animal sound and Woof!", "Dog speak should include parent sound and Woof"
 
 g = GoldenRetriever("Goldie")
-print("Golden name:", g.name)
-print("Golden breed:", g.breed)
-print("Golden speak:", g.speak())
+assert g.name == "Goldie", "Golden name should be Goldie"
+assert g.breed == "Golden Retriever", "Golden breed should be Golden Retriever"
+assert g.speak() == "Golden says: Generic animal sound and Woof!", "Golden speak should include prefix and parent speak"
 
-True
+print("✓ All super() tests passed")

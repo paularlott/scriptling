@@ -23,18 +23,18 @@ class GrandChild(Child):
 
 # Test parameterless super()
 c = Child("Alice", 10)
-print("Child name:", c.name)
-print("Child age:", c.age)
-print("Child greet:", c.greet())
+assert c.name == "Alice", "Child name should be Alice"
+assert c.age == 10, "Child age should be 10"
+assert c.greet() == "Hello from Parent, Alice (Age: 10)", "Child greet should include parent greeting and age"
 
 gc = GrandChild("Bob", 5, "Lego")
-print("GrandChild name:", gc.name)
-print("GrandChild age:", gc.age)
-print("GrandChild toy:", gc.toy)
-print("GrandChild greet:", gc.greet())
+assert gc.name == "Bob", "GrandChild name should be Bob"
+assert gc.age == 5, "GrandChild age should be 5"
+assert gc.toy == "Lego", "GrandChild toy should be Lego"
+assert gc.greet() == "Hello from Parent, Bob (Age: 5) playing with Lego", "GrandChild greet should include full chain"
 
 # Test explicit super() still works
 c2 = Child("Charlie", 12)
-print("Explicit super call:", super(Child, c2).greet())
+assert super(Child, c2).greet() == "Hello from Parent, Charlie", "Explicit super call should work"
 
-True
+print("✓ All super() no-args tests passed")

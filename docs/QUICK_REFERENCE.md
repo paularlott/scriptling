@@ -74,15 +74,15 @@ if response.status_code == 200:
     content = response.text[:500]
     print(content)
 
-# POST
+# POST with data
 import json
 body = json.stringify({"name": "Alice"})
-response = requests.post("https://api.example.com/users", body)
+response = requests.post("https://api.example.com/users", data=body)
 
 # Other methods
-response = requests.put(url, body)
+response = requests.put(url, data=body)
 response = requests.delete(url)
-response = requests.patch(url, body)
+response = requests.patch(url, data=body)
 
 # LLM-compatible exception handling (dotted names supported)
 try:
@@ -93,29 +93,28 @@ except requests.exceptions.RequestException as e:
     print(f"Error: {e}")
 ```
 
-### With Options (timeout and/or headers)
+### With Options (timeout, headers, auth)
 
 ```python
-# Just timeout
-options = {"timeout": 10}
-response = requests.get(url, options)
+# Using keyword arguments (Python-style)
+response = requests.get(url, timeout=10)
 
-# Just headers
-options = {
-    "headers": {
-        "Authorization": "Bearer token123",
-        "Accept": "application/json"
-    }
-}
-response = requests.get(url, options)
+response = requests.get(url, headers={
+    "Authorization": "Bearer token123",
+    "Accept": "application/json"
+})
 
-# Both timeout and headers
+response = requests.post(url, data=body, timeout=10, headers={"Content-Type": "application/json"})
+
+# Basic Authentication
+response = requests.get(url, auth=("user", "pass"))
+
+# Legacy options dictionary (still supported)
 options = {
     "timeout": 10,
     "headers": {"Authorization": "Bearer token123"}
 }
 response = requests.get(url, options)
-response = requests.post(url, body, options)
 ```
 
 ### Complete Example
