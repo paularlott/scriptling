@@ -155,7 +155,23 @@ Returns the system version (Scriptling version for compatibility).`,
 			}
 			// Return uname info similar to Python's platform.uname()
 			pairs := make(map[string]object.DictPair)
-			pairs["system"] = object.DictPair{Key: &object.String{Value: "system"}, Value: &object.String{Value: runtime.GOOS}}
+
+			// Get system name (capitalized, matching system() function)
+			var systemName string
+			switch runtime.GOOS {
+			case "darwin":
+				systemName = "Darwin"
+			case "linux":
+				systemName = "Linux"
+			case "windows":
+				systemName = "Windows"
+			case "freebsd":
+				systemName = "FreeBSD"
+			default:
+				systemName = runtime.GOOS
+			}
+
+			pairs["system"] = object.DictPair{Key: &object.String{Value: "system"}, Value: &object.String{Value: systemName}}
 			pairs["machine"] = object.DictPair{Key: &object.String{Value: "machine"}, Value: &object.String{Value: runtime.GOARCH}}
 			pairs["processor"] = object.DictPair{Key: &object.String{Value: "processor"}, Value: &object.String{Value: runtime.GOARCH}}
 
