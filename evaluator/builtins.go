@@ -804,8 +804,77 @@ Default start is 0.`,
 		},
 		HelpText: `zip(*iterables) - Aggregate elements from each iterable
 
-Returns a list of tuples where the i-th tuple contains the i-th element
-from each of the argument iterables. Stops at the shortest iterable.`,
+
+		Returns an iterator of tuples, where the i-th tuple contains the i-th element from each of the argument sequences or iterables.
+		The iterator stops when the shortest input iterable is exhausted.`,
+	},
+	"super": {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			var classObj *object.Class
+			var instanceObj *object.Instance
+
+			if len(args) == 0 {
+				// Parameterless super() - infer from context
+				env := getEnvFromContext(ctx)
+
+				// Find __class__ (should be in closure)
+				obj, ok := env.Get("__class__")
+				if !ok {
+					return errors.NewError("super(): __class__ cell not found - are you calling super() from within a class method?")
+				}
+				var isClass bool
+				classObj, isClass = obj.(*object.Class)
+				if !isClass {
+					return errors.NewError("super(): __class__ is not a class")
+				}
+
+				// Find instance (conventionally 'self')
+				// Note: This relies on the first argument being named 'self'
+				obj, ok = env.Get("self")
+				if !ok {
+					return errors.NewError("super(): 'self' not found - parameterless super() requires 'self' argument")
+				}
+				var isInstance bool
+				instanceObj, isInstance = obj.(*object.Instance)
+				if !isInstance {
+					return errors.NewError("super(): 'self' is not an instance")
+				}
+			} else if len(args) == 2 {
+				var ok bool
+				classObj, ok = args[0].(*object.Class)
+				if !ok {
+					return errors.NewTypeError("CLASS", args[0].Type().String())
+				}
+
+				instanceObj, ok = args[1].(*object.Instance)
+				if !ok {
+					return errors.NewTypeError("INSTANCE", args[1].Type().String())
+				}
+			} else {
+				return errors.NewArgumentError(len(args), 2)
+			}
+
+			// Verify instance is an instance of class (or subclass)
+			isInstance := false
+			current := instanceObj.Class
+			for current != nil {
+				if current == classObj {
+					isInstance = true
+					break
+				}
+				current = current.BaseClass
+			}
+
+			if !isInstance {
+				return errors.NewError("super(): obj must be an instance or subtype of type")
+			}
+
+			return &object.Super{Class: classObj, Instance: instanceObj}
+		},
+		HelpText: `super([type, obj]) - Return a proxy object that delegates method calls to a parent or sibling class.
+
+		With no arguments, returns a proxy for the parent of the class containing the method code, bound to 'self'.
+		With arguments, returns a proxy for the parent of 'type', bound to 'obj'.`,
 	},
 	"any": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
