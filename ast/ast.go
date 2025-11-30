@@ -64,6 +64,7 @@ type FStringLiteral struct {
 	Value       string
 	Expressions []Expression // expressions inside {}
 	Parts       []string     // string parts between expressions
+	FormatSpecs []string     // format specifiers for each expression (e.g., "2d" from {day:2d})
 }
 
 func (fsl *FStringLiteral) expressionNode()      {}

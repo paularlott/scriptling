@@ -14,6 +14,7 @@ type Lexer struct {
 	line           int
 	indentStack    []int
 	pendingDedents int
+	bracketDepth   int // Track depth of (), [], {}
 }
 
 func New(input string) *Lexer {
@@ -64,20 +65,26 @@ func (l *Lexer) NextToken() token.Token {
 		tok = token.Token{Type: token.NEWLINE, Literal: "\\n", Line: l.line}
 		l.line++
 		l.readChar()
-		indent := l.countIndent()
-		current := l.indentStack[len(l.indentStack)-1]
-		if indent > current {
-			l.indentStack = append(l.indentStack, indent)
-			return token.Token{Type: token.INDENT, Literal: "", Line: l.line}
-		} else if indent < current {
-			for len(l.indentStack) > 1 && l.indentStack[len(l.indentStack)-1] > indent {
-				l.indentStack = l.indentStack[:len(l.indentStack)-1]
-				l.pendingDedents++
+		// Only process indentation when not inside brackets
+		if l.bracketDepth == 0 {
+			indent := l.countIndent()
+			current := l.indentStack[len(l.indentStack)-1]
+			if indent > current {
+				l.indentStack = append(l.indentStack, indent)
+				return token.Token{Type: token.INDENT, Literal: "", Line: l.line}
+			} else if indent < current {
+				for len(l.indentStack) > 1 && l.indentStack[len(l.indentStack)-1] > indent {
+					l.indentStack = l.indentStack[:len(l.indentStack)-1]
+					l.pendingDedents++
+				}
+				if l.pendingDedents > 0 {
+					l.pendingDedents--
+					return token.Token{Type: token.DEDENT, Literal: "", Line: l.line}
+				}
 			}
-			if l.pendingDedents > 0 {
-				l.pendingDedents--
-				return token.Token{Type: token.DEDENT, Literal: "", Line: l.line}
-			}
+		} else {
+			// Inside brackets, just skip whitespace to get to next token
+			l.skipWhitespaceExceptNewline()
 		}
 		return tok
 	case '=':
@@ -184,9 +191,13 @@ func (l *Lexer) NextToken() token.Token {
 		l.readChar()
 	case '(':
 		tok = token.Token{Type: token.LPAREN, Literal: string(l.ch), Line: l.line}
+		l.bracketDepth++
 		l.readChar()
 	case ')':
 		tok = token.Token{Type: token.RPAREN, Literal: string(l.ch), Line: l.line}
+		if l.bracketDepth > 0 {
+			l.bracketDepth--
+		}
 		l.readChar()
 	case ':':
 		tok = token.Token{Type: token.COLON, Literal: string(l.ch), Line: l.line}
@@ -202,15 +213,23 @@ func (l *Lexer) NextToken() token.Token {
 		l.readChar()
 	case '[':
 		tok = token.Token{Type: token.LBRACKET, Literal: string(l.ch), Line: l.line}
+		l.bracketDepth++
 		l.readChar()
 	case ']':
 		tok = token.Token{Type: token.RBRACKET, Literal: string(l.ch), Line: l.line}
+		if l.bracketDepth > 0 {
+			l.bracketDepth--
+		}
 		l.readChar()
 	case '{':
 		tok = token.Token{Type: token.LBRACE, Literal: string(l.ch), Line: l.line}
+		l.bracketDepth++
 		l.readChar()
 	case '}':
 		tok = token.Token{Type: token.RBRACE, Literal: string(l.ch), Line: l.line}
+		if l.bracketDepth > 0 {
+			l.bracketDepth--
+		}
 		l.readChar()
 	case '~':
 		tok = token.Token{Type: token.TILDE, Literal: string(l.ch), Line: l.line}

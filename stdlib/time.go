@@ -66,25 +66,25 @@ Suspends execution for the given number of seconds.`,
 			if len(args) == 0 {
 				t = time.Now()
 			} else if len(args) == 1 {
-				var timestamp float64
 				switch ts := args[0].(type) {
 				case *object.Integer:
-					timestamp = float64(ts.Value)
+					t = time.Unix(int64(ts.Value), 0)
 				case *object.Float:
-					timestamp = ts.Value
+					t = time.Unix(int64(ts.Value), 0)
+				case *object.Datetime:
+					t = ts.Value
 				default:
-					return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
+					return errors.NewTypeError("INTEGER, FLOAT, or DATETIME", args[0].Type().String())
 				}
-				t = time.Unix(int64(timestamp), 0)
 			} else {
 				return errors.NewArgumentError(len(args), 0)
 			}
 
 			return timeToTuple(t, false)
 		},
-		HelpText: `localtime([timestamp]) - Convert to local time tuple
+		HelpText: `localtime([timestamp_or_datetime]) - Convert to local time tuple
 
-Returns a time tuple in local time. If timestamp is omitted, uses current time.`,
+Returns a time tuple in local time. If timestamp/datetime is omitted, uses current time.`,
 	},
 	"gmtime": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
@@ -92,25 +92,25 @@ Returns a time tuple in local time. If timestamp is omitted, uses current time.`
 			if len(args) == 0 {
 				t = time.Now()
 			} else if len(args) == 1 {
-				var timestamp float64
 				switch ts := args[0].(type) {
 				case *object.Integer:
-					timestamp = float64(ts.Value)
+					t = time.Unix(int64(ts.Value), 0)
 				case *object.Float:
-					timestamp = ts.Value
+					t = time.Unix(int64(ts.Value), 0)
+				case *object.Datetime:
+					t = ts.Value
 				default:
-					return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
+					return errors.NewTypeError("INTEGER, FLOAT, or DATETIME", args[0].Type().String())
 				}
-				t = time.Unix(int64(timestamp), 0)
 			} else {
 				return errors.NewArgumentError(len(args), 0)
 			}
 
 			return timeToTuple(t, true)
 		},
-		HelpText: `gmtime([timestamp]) - Convert to UTC time tuple
+		HelpText: `gmtime([timestamp_or_datetime]) - Convert to UTC time tuple
 
-Returns a time tuple in UTC. If timestamp is omitted, uses current time.`,
+Returns a time tuple in UTC. If timestamp/datetime is omitted, uses current time.`,
 	},
 	"mktime": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {

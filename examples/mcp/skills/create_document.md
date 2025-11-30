@@ -4,7 +4,7 @@ description: "Create a document with title, abstract, and body using basic authe
 
 # Create a Document to Echo Service
 
-This skill demonstrates how to use Scriptling to post a JSON document to the echo service at `https://echo.free.beeceptor.com`.
+This skill demonstrates how to use Scriptling to post a JSON document to the echo service at `https://httpbin.org/post`.
 
 ## Requirements
 

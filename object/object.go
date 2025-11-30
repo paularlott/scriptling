@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/paularlott/scriptling/ast"
 )
@@ -57,6 +58,7 @@ const (
 	LIST_OBJ
 	TUPLE_OBJ
 	DICT_OBJ
+	DATETIME_OBJ
 	ERROR_OBJ
 	EXCEPTION_OBJ
 	CLASS_OBJ
@@ -95,6 +97,8 @@ func (ot ObjectType) String() string {
 		return "TUPLE"
 	case DICT_OBJ:
 		return "DICT"
+	case DATETIME_OBJ:
+		return "DATETIME"
 	case ERROR_OBJ:
 		return "ERROR"
 	case EXCEPTION_OBJ:
@@ -150,6 +154,20 @@ func (f *Float) AsFloat() (float64, bool)          { return f.Value, true }
 func (f *Float) AsBool() (bool, bool)              { return f.Value != 0, true }
 func (f *Float) AsList() ([]Object, bool)          { return nil, false }
 func (f *Float) AsDict() (map[string]Object, bool) { return nil, false }
+
+type Datetime struct {
+	Value time.Time
+}
+
+func (d *Datetime) Type() ObjectType { return DATETIME_OBJ }
+func (d *Datetime) Inspect() string  { return d.Value.Format("2006-01-02 15:04:05") }
+
+func (d *Datetime) AsString() (string, bool)          { return d.Inspect(), true }
+func (d *Datetime) AsInt() (int64, bool)              { return 0, false }
+func (d *Datetime) AsFloat() (float64, bool)          { return 0, false }
+func (d *Datetime) AsBool() (bool, bool)              { return true, true }
+func (d *Datetime) AsList() ([]Object, bool)          { return nil, false }
+func (d *Datetime) AsDict() (map[string]Object, bool) { return nil, false }
 
 type Boolean struct {
 	Value bool

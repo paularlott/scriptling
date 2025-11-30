@@ -152,10 +152,12 @@ func (p *Parser) nextToken() {
 	if p.curToken.Type == token.LPAREN || p.curToken.Type == token.LBRACKET || p.curToken.Type == token.LBRACE {
 		p.parenDepth++
 	} else if p.curToken.Type == token.RPAREN || p.curToken.Type == token.RBRACKET || p.curToken.Type == token.RBRACE {
-		p.parenDepth--
+		if p.parenDepth > 0 {
+			p.parenDepth--
+		}
 	}
 
-	// Skip NEWLINE and SEMICOLON tokens
+	// Skip NEWLINE and SEMICOLON tokens (always skip these at top level too)
 	for p.peekToken.Type == token.NEWLINE || p.peekToken.Type == token.SEMICOLON {
 		p.skippedNewline = true
 		p.peekToken = p.l.NextToken()
@@ -163,6 +165,8 @@ func (p *Parser) nextToken() {
 
 	// When inside parentheses, also skip INDENT and DEDENT tokens
 	// This allows multiline function calls, list literals, dict literals, etc.
+	// Note: We need to check this after updating parenDepth so that when we just
+	// entered a bracket, we immediately skip any INDENT/DEDENT in peekToken
 	if p.parenDepth > 0 {
 		for p.peekToken.Type == token.INDENT || p.peekToken.Type == token.DEDENT || p.peekToken.Type == token.NEWLINE || p.peekToken.Type == token.SEMICOLON {
 			if p.peekToken.Type == token.NEWLINE || p.peekToken.Type == token.SEMICOLON {
@@ -593,13 +597,14 @@ func (p *Parser) parseStringLiteral() ast.Expression {
 
 func (p *Parser) parseFStringLiteral() ast.Expression {
 	fstr := &ast.FStringLiteral{Token: p.curToken}
-	fstr.Parts, fstr.Expressions = p.parseFStringContent(p.curToken.Literal)
+	fstr.Parts, fstr.Expressions, fstr.FormatSpecs = p.parseFStringContent(p.curToken.Literal)
 	return fstr
 }
 
-func (p *Parser) parseFStringContent(content string) ([]string, []ast.Expression) {
+func (p *Parser) parseFStringContent(content string) ([]string, []ast.Expression, []string) {
 	parts := []string{}
 	expressions := []ast.Expression{}
+	formatSpecs := []string{}
 	current := ""
 	i := 0
 
@@ -610,12 +615,24 @@ func (p *Parser) parseFStringContent(content string) ([]string, []ast.Expression
 			current = ""
 			i++ // skip {
 
-			// Extract expression until }
+			// Extract expression until : or }
 			exprStr := ""
-			for i < len(content) && content[i] != '}' {
+			formatSpec := ""
+			for i < len(content) && content[i] != '}' && content[i] != ':' {
 				exprStr += string(content[i])
 				i++
 			}
+
+			// Check for format specifier
+			if i < len(content) && content[i] == ':' {
+				i++ // skip :
+				// Extract format spec until }
+				for i < len(content) && content[i] != '}' {
+					formatSpec += string(content[i])
+					i++
+				}
+			}
+
 			if i < len(content) {
 				i++ // skip }
 			}
@@ -627,6 +644,7 @@ func (p *Parser) parseFStringContent(content string) ([]string, []ast.Expression
 				expr := parser.parseExpression(LOWEST)
 				if expr != nil {
 					expressions = append(expressions, expr)
+					formatSpecs = append(formatSpecs, formatSpec)
 				}
 			}
 		} else if content[i] == '{' && i+1 < len(content) && content[i+1] == '{' {
@@ -644,7 +662,7 @@ func (p *Parser) parseFStringContent(content string) ([]string, []ast.Expression
 	}
 
 	parts = append(parts, current)
-	return parts, expressions
+	return parts, expressions, formatSpecs
 }
 
 func (p *Parser) parseBoolean() ast.Expression {
