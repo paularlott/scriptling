@@ -1259,6 +1259,8 @@ func evalInOperator(left, right object.Object) object.Object {
 			}
 		}
 		return FALSE
+	case *object.Set:
+		return nativeBoolToBooleanObject(container.Contains(left))
 	default:
 		return errors.NewTypeError("iterable", right.Type().String())
 	}
@@ -1515,6 +1517,8 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 		iter = o.CreateIterator()
 	case *object.DictItems:
 		iter = o.CreateIterator()
+	case *object.Set:
+		iter = o.CreateIterator()
 	}
 
 	if iter != nil {
@@ -1614,6 +1618,8 @@ func evalListComprehension(ctx context.Context, lc *ast.ListComprehension, env *
 	case *object.DictValues:
 		iter = o.CreateIterator()
 	case *object.DictItems:
+		iter = o.CreateIterator()
+	case *object.Set:
 		iter = o.CreateIterator()
 	}
 

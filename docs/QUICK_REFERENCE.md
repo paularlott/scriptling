@@ -251,7 +251,8 @@ type("hello")     # "STRING"
 list("abc")       # ["a", "b", "c"]
 dict()            # {}
 tuple([1, 2, 3])  # (1, 2, 3)
-set([1, 2, 2, 3]) # [1, 2, 3] (unique elements)
+tuple([1, 2, 3])  # (1, 2, 3)
+set([1, 2, 2, 3]) # {1, 2, 3} (unique elements)
 
 # Type checking
 callable(len)                 # True (is function)
@@ -305,7 +306,7 @@ raw = r"C:\\path\\to\\file"
 # List operations
 numbers = [1, 2, 3]
 len(numbers)                        # 3
-append(numbers, 4)                  # numbers is now [1, 2, 3, 4]
+numbers.append(4)                   # numbers is now [1, 2, 3, 4]
 sum([1, 2, 3, 4])                   # 10
 sorted([3, 1, 2])                   # [1, 2, 3]
 sorted([3, 1, 2], reverse=True)     # [3, 2, 1]
@@ -505,6 +506,9 @@ person = {
     "age": 30,
     "active": True
 }
+
+# Set
+unique = set([1, 2, 2, 3])  # {1, 2, 3}
 
 # Indexing
 first = numbers[0]      # 1

@@ -68,6 +68,7 @@ const (
 	DICT_KEYS_OBJ
 	DICT_VALUES_OBJ
 	DICT_ITEMS_OBJ
+	SET_OBJ
 )
 
 // String returns the string representation of the ObjectType
@@ -121,6 +122,8 @@ func (ot ObjectType) String() string {
 		return "DICT_VALUES"
 	case DICT_ITEMS_OBJ:
 		return "DICT_ITEMS"
+	case SET_OBJ:
+		return "SET"
 	default:
 		return "UNKNOWN"
 	}

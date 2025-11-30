@@ -117,6 +117,13 @@ config = {"host": "localhost", "port": "8080"}
 empty = {}
 ```
 
+### Set
+```python
+numbers = set([1, 2, 3])
+unique = set([1, 2, 2, 3])  # {1, 2, 3}
+empty = set()
+```
+
 ### None/Null
 Represented as `None` (not directly creatable, returned by functions with no return value)
 
@@ -654,7 +661,7 @@ type(True)                # "BOOLEAN"
 list("abc")               # ["a", "b", "c"]
 dict()                    # {}
 tuple([1, 2, 3])          # (1, 2, 3)
-set([1, 2, 2, 3])         # [1, 2, 3] (unique elements, returns list)
+set([1, 2, 2, 3])         # {1, 2, 3} (unique elements, returns set)
 ```
 
 ### Math Functions (built-in)
@@ -788,19 +795,42 @@ s.count("o")                       # 2 (count occurrences)
 "hi".rjust(5)                      # "   hi"
 ```
 
+### Set Methods
+```python
+s = set([1, 2])
+s.add(3)            # s is now {1, 2, 3}
+s.remove(2)         # s is now {1, 3}
+s.discard(99)       # No error if element not found
+s.pop()             # Removes and returns arbitrary element
+s.clear()           # Removes all elements
+s.copy()            # Returns a shallow copy
+
+# Set operations
+s1 = set([1, 2])
+s2 = set([2, 3])
+s1.union(s2)                # {1, 2, 3}
+s1.intersection(s2)         # {2}
+s1.difference(s2)           # {1}
+s1.symmetric_difference(s2) # {1, 3}
+s1.issubset(s2)             # False
+s1.issuperset(s2)           # False
+```
+
 ### List Functions
 ```python
 len([1, 2, 3])                     # 3
 
 # append modifies list in-place (like Python)
 my_list = [1, 2]
-append(my_list, 3)                 # my_list is now [1, 2, 3]
+my_list.append(3)                  # my_list is now [1, 2, 3]
 print(my_list)                     # [1, 2, 3]
+# Note: Global append(list, item) is deprecated. Use list.append(item).
 
 # extend modifies list in-place by appending elements from another list
 list_a = [1, 2]
 list_b = [3, 4]
-extend(list_a, list_b)             # list_a is now [1, 2, 3, 4]
+list_a.extend(list_b)              # list_a is now [1, 2, 3, 4]
+# Note: Global extend(list, other) is deprecated. Use list.extend(other).
 
 # sum returns the sum of all numeric elements
 sum([1, 2, 3, 4, 5])              # 15
