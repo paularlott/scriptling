@@ -12,4 +12,4 @@ for href,text in links:
 print(len(unique))
 for href,text in unique.items():
     print(href,'|',text)
-True
+assert True

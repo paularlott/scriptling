@@ -45,5 +45,3 @@ deep = copy.deepcopy(original_list)
 original_list.append(4)
 assert len(shallow) == 3  # Shallow copy not affected by append
 assert len(deep) == 3     # Deep copy not affected by append
-
-True

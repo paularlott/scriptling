@@ -78,3 +78,5 @@ month = 2
 calendar = generate_calendar(year, month)
 print(calendar)
 print("\nCalendar generated successfully!")
+
+assert True

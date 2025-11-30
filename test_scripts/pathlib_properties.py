@@ -35,5 +35,4 @@ assert p4["stem"] == "file"
 assert p4["suffix"] == ".py"
 assert p4["parent"] == "relative/path"
 
-passed = True
-passed
+assert True

@@ -32,5 +32,3 @@ except:
 result = subprocess.run("echo 'shell test'", {"shell": True, "capture_output": True})
 assert result.returncode == 0
 assert result.stdout.strip() == "shell test"
-
-True
