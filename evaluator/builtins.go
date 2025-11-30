@@ -650,22 +650,13 @@ Set reverse=True to sort in descending order.`,
 					return errors.NewError("range step cannot be zero")
 				}
 			}
-			elements := []object.Object{}
-			if step > 0 {
-				for i := start; i < stop; i += step {
-					elements = append(elements, object.NewInteger(i))
-				}
-			} else {
-				for i := start; i > stop; i += step {
-					elements = append(elements, object.NewInteger(i))
-				}
-			}
-			return &object.List{Elements: elements}
+			return object.NewRangeIterator(start, stop, step)
 		},
 		HelpText: `range([start,] stop[, step]) - Generate sequence of numbers
 
-Returns a list of integers from start (inclusive) to stop (exclusive).
-If start is omitted, defaults to 0. If step is omitted, defaults to 1.`,
+Returns an iterator of integers from start (inclusive) to stop (exclusive).
+If start is omitted, defaults to 0. If step is omitted, defaults to 1.
+Use list(range(...)) to get a list.`,
 	},
 	"keys": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
@@ -738,75 +729,42 @@ Returns a list of [key, value] pairs for all items in the dictionary.`,
 					return errors.NewTypeError("INTEGER", args[1].Type().String())
 				}
 			}
-			var iterable []object.Object
-			switch iter := args[0].(type) {
-			case *object.List:
-				iterable = iter.Elements
-			case *object.Tuple:
-				iterable = iter.Elements
-			case *object.String:
-				for _, ch := range iter.Value {
-					iterable = append(iterable, &object.String{Value: string(ch)})
-				}
+			// Validate iterable type
+			switch args[0].(type) {
+			case *object.List, *object.Tuple, *object.String, *object.Iterator:
+				// Valid iterable types
 			default:
-				return errors.NewTypeError("iterable (LIST, TUPLE, STRING)", args[0].Type().String())
+				return errors.NewTypeError("iterable (LIST, TUPLE, STRING, ITERATOR)", args[0].Type().String())
 			}
-			result := make([]object.Object, len(iterable))
-			for i, elem := range iterable {
-				result[i] = &object.Tuple{Elements: []object.Object{
-					object.NewInteger(start + int64(i)),
-					elem,
-				}}
-			}
-			return &object.List{Elements: result}
+			return object.NewEnumerateIterator(args[0], start)
 		},
 		HelpText: `enumerate(iterable[, start=0]) - Return (index, value) pairs
 
-Returns a list of tuples containing the index and value for each item.
-Default start is 0.`,
+Returns an iterator of tuples containing the index and value for each item.
+Default start is 0. Use list(enumerate(...)) to get a list.`,
 	},
 	"zip": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 			if len(args) == 0 {
-				return &object.List{Elements: []object.Object{}}
+				// Return empty iterator for no arguments
+				return object.NewZipIterator([]object.Object{})
 			}
-			// Get all iterables as slices
-			iterables := make([][]object.Object, len(args))
-			minLen := -1
-			for i, arg := range args {
-				switch iter := arg.(type) {
-				case *object.List:
-					iterables[i] = iter.Elements
-				case *object.Tuple:
-					iterables[i] = iter.Elements
-				case *object.String:
-					strElements := make([]object.Object, len(iter.Value))
-					for j, ch := range iter.Value {
-						strElements[j] = &object.String{Value: string(ch)}
-					}
-					iterables[i] = strElements
+			// Validate all arguments are iterable
+			for _, arg := range args {
+				switch arg.(type) {
+				case *object.List, *object.Tuple, *object.String, *object.Iterator:
+					// Valid iterable types
 				default:
-					return errors.NewTypeError("iterable (LIST, TUPLE, STRING)", arg.Type().String())
-				}
-				if minLen == -1 || len(iterables[i]) < minLen {
-					minLen = len(iterables[i])
+					return errors.NewTypeError("iterable (LIST, TUPLE, STRING, ITERATOR)", arg.Type().String())
 				}
 			}
-			result := make([]object.Object, minLen)
-			for i := 0; i < minLen; i++ {
-				tuple := make([]object.Object, len(iterables))
-				for j := range iterables {
-					tuple[j] = iterables[j][i]
-				}
-				result[i] = &object.Tuple{Elements: tuple}
-			}
-			return &object.List{Elements: result}
+			return object.NewZipIterator(args)
 		},
 		HelpText: `zip(*iterables) - Aggregate elements from each iterable
 
-
-		Returns an iterator of tuples, where the i-th tuple contains the i-th element from each of the argument sequences or iterables.
-		The iterator stops when the shortest input iterable is exhausted.`,
+Returns an iterator of tuples, where the i-th tuple contains the i-th element from each of the argument sequences or iterables.
+The iterator stops when the shortest input iterable is exhausted.
+Use list(zip(...)) to get a list.`,
 	},
 	"super": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
@@ -1311,32 +1269,17 @@ The argument must be a string of exactly one character.`,
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			switch iter := args[0].(type) {
-			case *object.List:
-				result := make([]object.Object, len(iter.Elements))
-				for i, elem := range iter.Elements {
-					result[len(iter.Elements)-1-i] = elem
-				}
-				return &object.List{Elements: result}
-			case *object.Tuple:
-				result := make([]object.Object, len(iter.Elements))
-				for i, elem := range iter.Elements {
-					result[len(iter.Elements)-1-i] = elem
-				}
-				return &object.Tuple{Elements: result}
-			case *object.String:
-				runes := []rune(iter.Value)
-				for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
-					runes[i], runes[j] = runes[j], runes[i]
-				}
-				return &object.String{Value: string(runes)}
+			switch args[0].(type) {
+			case *object.List, *object.Tuple, *object.String, *object.Iterator:
+				return object.NewReversedIterator(args[0])
 			default:
-				return errors.NewTypeError("sequence (LIST, TUPLE, STRING)", args[0].Type().String())
+				return errors.NewTypeError("sequence (LIST, TUPLE, STRING, ITERATOR)", args[0].Type().String())
 			}
 		},
-		HelpText: `reversed(seq) - Return a reversed version of the sequence
+		HelpText: `reversed(seq) - Return a reversed iterator over the sequence
 
-Works with lists, tuples, and strings.`,
+Works with lists, tuples, strings, and iterators.
+Use list(reversed(...)) to get a list.`,
 	},
 	"list": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
@@ -1368,8 +1311,19 @@ Works with lists, tuples, and strings.`,
 					elements = append(elements, pair.Key)
 				}
 				return &object.List{Elements: elements}
+			case *object.Iterator:
+				// Consume iterator into a list
+				elements := make([]object.Object, 0)
+				for {
+					val, hasNext := iter.Next()
+					if !hasNext {
+						break
+					}
+					elements = append(elements, val)
+				}
+				return &object.List{Elements: elements}
 			default:
-				return errors.NewTypeError("iterable (LIST, TUPLE, STRING, DICT)", args[0].Type().String())
+				return errors.NewTypeError("iterable (LIST, TUPLE, STRING, DICT, ITERATOR)", args[0].Type().String())
 			}
 		},
 		HelpText: `list([iterable]) - Create a list from an iterable
@@ -1808,15 +1762,17 @@ func init() {
 		Fn: mapFunction,
 		HelpText: `map(function, iterable, ...) - Apply function to every item
 
-Returns a list of results from applying function to each item.
-With multiple iterables, function must take that many arguments.`,
+Returns an iterator of results from applying function to each item.
+With multiple iterables, function must take that many arguments.
+Use list(map(...)) to get a list.`,
 	}
 	builtins["filter"] = &object.Builtin{
 		Fn: filterFunction,
 		HelpText: `filter(function, iterable) - Filter elements by function
 
-Returns a list of elements for which function returns true.
-If function is None, removes falsy elements.`,
+Returns an iterator of elements for which function returns true.
+If function is None, removes falsy elements.
+Use list(filter(...)) to get a list.`,
 	}
 }
 
@@ -1825,7 +1781,7 @@ func mapFunction(ctx context.Context, kwargs map[string]object.Object, args ...o
 		return errors.NewError("map() requires at least 2 arguments")
 	}
 	fn := args[0]
-	// Get all iterables
+	// Get all iterables as slices
 	iterables := make([][]object.Object, len(args)-1)
 	minLen := -1
 	for i, arg := range args[1:] {
@@ -1834,14 +1790,27 @@ func mapFunction(ctx context.Context, kwargs map[string]object.Object, args ...o
 			iterables[i] = iter.Elements
 		case *object.Tuple:
 			iterables[i] = iter.Elements
+		case *object.Iterator:
+			// Consume iterator into slice
+			elements := []object.Object{}
+			for {
+				val, hasNext := iter.Next()
+				if !hasNext {
+					break
+				}
+				elements = append(elements, val)
+			}
+			iterables[i] = elements
 		default:
-			return errors.NewTypeError("iterable (LIST, TUPLE)", arg.Type().String())
+			return errors.NewTypeError("iterable (LIST, TUPLE, ITERATOR)", arg.Type().String())
 		}
 		if minLen == -1 || len(iterables[i]) < minLen {
 			minLen = len(iterables[i])
 		}
 	}
-	result := make([]object.Object, minLen)
+
+	// Eagerly evaluate all results
+	results := make([]object.Object, minLen)
 	env := getEnvFromContext(ctx)
 	for i := 0; i < minLen; i++ {
 		callArgs := make([]object.Object, len(iterables))
@@ -1852,9 +1821,19 @@ func mapFunction(ctx context.Context, kwargs map[string]object.Object, args ...o
 		if isError(res) {
 			return res
 		}
-		result[i] = res
+		results[i] = res
 	}
-	return &object.List{Elements: result}
+
+	// Return as iterator
+	index := 0
+	return object.NewIterator(func() (object.Object, bool) {
+		if index >= len(results) {
+			return nil, false
+		}
+		val := results[index]
+		index++
+		return val, true
+	})
 }
 
 func filterFunction(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
@@ -1868,16 +1847,27 @@ func filterFunction(ctx context.Context, kwargs map[string]object.Object, args .
 		iterable = iter.Elements
 	case *object.Tuple:
 		iterable = iter.Elements
+	case *object.Iterator:
+		// Consume iterator into slice
+		for {
+			val, hasNext := iter.Next()
+			if !hasNext {
+				break
+			}
+			iterable = append(iterable, val)
+		}
 	default:
-		return errors.NewTypeError("iterable (LIST, TUPLE)", args[1].Type().String())
+		return errors.NewTypeError("iterable (LIST, TUPLE, ITERATOR)", args[1].Type().String())
 	}
-	result := []object.Object{}
+
+	// Eagerly evaluate and filter
+	results := []object.Object{}
 	env := getEnvFromContext(ctx)
 	for _, elem := range iterable {
 		// If function is None, use truthiness
 		if fn.Type() == object.NULL_OBJ {
 			if isTruthy(elem) {
-				result = append(result, elem)
+				results = append(results, elem)
 			}
 		} else {
 			res := applyFunctionWithContext(ctx, fn, []object.Object{elem}, nil, env)
@@ -1885,11 +1875,21 @@ func filterFunction(ctx context.Context, kwargs map[string]object.Object, args .
 				return res
 			}
 			if isTruthy(res) {
-				result = append(result, elem)
+				results = append(results, elem)
 			}
 		}
 	}
-	return &object.List{Elements: result}
+
+	// Return as iterator
+	index := 0
+	return object.NewIterator(func() (object.Object, bool) {
+		if index >= len(results) {
+			return nil, false
+		}
+		val := results[index]
+		index++
+		return val, true
+	})
 }
 
 func helpFunction(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {

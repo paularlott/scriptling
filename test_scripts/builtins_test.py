@@ -21,7 +21,7 @@ assert oct(255) == "0o377"
 
 # Test enumerate
 items = ["a", "b", "c"]
-enum_result = enumerate(items)
+enum_result = list(enumerate(items))
 assert len(enum_result) == 3
 assert enum_result[0][0] == 0
 assert enum_result[0][1] == "a"
@@ -29,7 +29,7 @@ assert enum_result[0][1] == "a"
 # Test zip
 a = [1, 2, 3]
 b = ["x", "y", "z"]
-zipped = zip(a, b)
+zipped = list(zip(a, b))
 assert len(zipped) == 3
 assert zipped[0][0] == 1
 assert zipped[0][1] == "x"
@@ -61,17 +61,17 @@ assert chr(65) == "A"
 assert ord("A") == 65
 
 # Test reversed
-rev = reversed([1, 2, 3])
+rev = list(reversed([1, 2, 3]))
 assert rev[0] == 3
 assert rev[2] == 1
 
 # Test map
-doubled = map(lambda x: x * 2, [1, 2, 3])
+doubled = list(map(lambda x: x * 2, [1, 2, 3]))
 assert doubled[0] == 2
 assert doubled[1] == 4
 
 # Test filter
-evens = filter(lambda x: x % 2 == 0, [1, 2, 3, 4, 5])
+evens = list(filter(lambda x: x % 2 == 0, [1, 2, 3, 4, 5]))
 assert len(evens) == 2
 assert evens[0] == 2
 
