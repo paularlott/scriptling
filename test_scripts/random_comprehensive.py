@@ -27,7 +27,18 @@ c in items
 s = random.sample([1, 2, 3, 4, 5], 3)
 len(s) == 3
 
-# Test shuffle
-lst = [1, 2, 3, 4, 5]
-random.shuffle(lst)
-len(lst) == 5
+# Test choice with string
+text = "hello"
+c_str = random.choice(text)
+c_str in text
+
+# Test shuffle functionality
+original = [1, 2, 3, 4, 5]
+shuffled = [1, 2, 3, 4, 5]
+random.shuffle(shuffled)
+len(shuffled) == 5
+# Check that all elements are still there
+shuffled.sort()
+result = shuffled == original
+print("All random tests passed!")
+result

@@ -113,39 +113,44 @@ Returns a random float in the range [0.0, 1.0).`,
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			list, ok := args[0].AsList()
-			if !ok {
-				return errors.NewTypeError("LIST", args[0].Type().String())
+			if str, ok := args[0].(*object.String); ok {
+				if len(str.Value) == 0 {
+					return errors.NewError("choice() string cannot be empty")
+				}
+				idx := rng.Intn(len(str.Value))
+				return &object.String{Value: string(str.Value[idx])}
 			}
-			if len(list) == 0 {
-				return errors.NewError("choice() list cannot be empty")
+			if list, ok := args[0].(*object.List); ok {
+				if len(list.Elements) == 0 {
+					return errors.NewError("choice() list cannot be empty")
+				}
+				idx := rng.Intn(len(list.Elements))
+				return list.Elements[idx]
 			}
-			idx := rng.Intn(len(list))
-			return list[idx]
+			return errors.NewTypeError("LIST or STRING", args[0].Type().String())
 		},
-		HelpText: `choice(list) - Return random element
+		HelpText: `choice(seq) - Return random element from sequence
 
-Returns a randomly selected element from the given list.`,
+Returns a randomly selected element from the given list or string.`,
 	},
 	"shuffle": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			list, ok := args[0].AsList()
-			if !ok {
-				return errors.NewTypeError("LIST", args[0].Type().String())
+			if list, ok := args[0].(*object.List); ok {
+				n := len(list.Elements)
+				for i := n - 1; i > 0; i-- {
+					j := rng.Intn(i + 1)
+					list.Elements[i], list.Elements[j] = list.Elements[j], list.Elements[i]
+				}
+				return &object.Null{}
 			}
-			n := len(list)
-			for i := n - 1; i > 0; i-- {
-				j := rng.Intn(i + 1)
-				list[i], list[j] = list[j], list[i]
-			}
-			return &object.Null{}
+			return errors.NewTypeError("LIST", args[0].Type().String())
 		},
-		HelpText: `shuffle(x) - Shuffle list x in place
+		HelpText: `shuffle(list) - Shuffle list in place
 
-Randomly shuffles the elements of the list in place. Returns None.`,
+Randomly shuffles the elements of the list in place using the Fisher-Yates algorithm. Returns None.`,
 	},
 	"uniform": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
