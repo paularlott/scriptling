@@ -8,5 +8,3 @@ assert encoded == "SGVsbG8sIFdvcmxkIQ=="
 # Test base64 decoding
 decoded = base64.b64decode(encoded)
 assert decoded == "Hello, World!"
-
-True

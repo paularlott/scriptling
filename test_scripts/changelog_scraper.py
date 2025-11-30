@@ -34,4 +34,4 @@ for section in sections[1:]:  # Skip first empty section before first h2
 
     if items:
         print()
-True
+assert True

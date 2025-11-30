@@ -37,8 +37,8 @@ func GetEnvFromContext(ctx context.Context) *object.Environment {
 }
 func init() {
 	// Set up the function caller for functools.reduce
-	stdlib.SetFunctionCaller(func(ctx context.Context, fn *object.Function, args []object.Object) object.Object {
-		return applyFunctionWithContext(ctx, fn, args, nil, fn.Env)
+	stdlib.SetFunctionCaller(func(ctx context.Context, fn *object.Function, args []object.Object, keywords map[string]object.Object) object.Object {
+		return applyFunctionWithContext(ctx, fn, args, keywords, fn.Env)
 	})
 
 	// Set up the method caller for html.parser (and other extlibs that need to call user methods)

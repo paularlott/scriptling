@@ -60,7 +60,7 @@ var FunctoolsLibrary = object.NewLibrary(map[string]*object.Builtin{
 				// Evaluate function body - we need the evaluator from context
 				// Since we can't directly call the evaluator here, we'll store
 				// a callable reference
-				result := callFunction(ctx, fn, []object.Object{accumulator, list.Elements[i]})
+				result := callFunction(ctx, fn, []object.Object{accumulator, list.Elements[i]}, nil)
 				if result == nil {
 					return errors.NewError("reduce function returned nil")
 				}
@@ -89,6 +89,70 @@ Example:
 
   functools.reduce(add, [1, 2, 3, 4])  # 10
   functools.reduce(add, [1, 2, 3], 10)  # 16`,
+	},
+	"partial": {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			if len(args) < 1 {
+				return errors.NewError("partial() requires at least 1 argument")
+			}
+
+			// First arg must be a function or builtin
+			var fn *object.Function
+			var builtin *object.Builtin
+			if f, ok := args[0].(*object.Function); ok {
+				fn = f
+			} else if b, ok := args[0].(*object.Builtin); ok {
+				builtin = b
+			} else {
+				return errors.NewTypeError("FUNCTION", args[0].Type().String())
+			}
+
+			// Remaining args are pre-filled arguments
+			partialArgs := args[1:]
+			partialKwargs := make(map[string]object.Object)
+			for k, v := range kwargs {
+				partialKwargs[k] = v
+			}
+
+			// Create a new builtin that calls the original with pre-filled args
+			return &object.Builtin{
+				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+					// Combine partial args with new args
+					allArgs := append(partialArgs, args...)
+					allKwargs := make(map[string]object.Object)
+					for k, v := range partialKwargs {
+						allKwargs[k] = v
+					}
+					for k, v := range kwargs {
+						allKwargs[k] = v
+					}
+
+					if fn != nil {
+						return callFunction(ctx, fn, allArgs, allKwargs)
+					} else {
+						return builtin.Fn(ctx, allKwargs, allArgs...)
+					}
+				},
+				HelpText: "Partial function application",
+			}
+		},
+		HelpText: `partial(func, *args, **kwargs) - Create a partial function application
+
+Parameters:
+  func - Function to partially apply
+  *args - Arguments to pre-fill
+  **kwargs - Keyword arguments to pre-fill
+
+Returns: New function with pre-filled arguments
+
+Example:
+  import functools
+
+  def add(x, y):
+      return x + y
+
+  add_five = functools.partial(add, 5)
+  add_five(3)  # 8`,
 	},
 }, nil, "Higher-order functions and operations on callable objects")
 
@@ -130,16 +194,16 @@ func reduceWithBuiltin(ctx context.Context, builtin *object.Builtin, args []obje
 
 // callFunction is a helper that will be linked to the evaluator
 // For now, we use a callback approach
-var callFunction func(ctx context.Context, fn *object.Function, args []object.Object) object.Object
+var callFunction func(ctx context.Context, fn *object.Function, args []object.Object, keywords map[string]object.Object) object.Object
 
 func init() {
 	// Default implementation - will be overridden by evaluator
-	callFunction = func(ctx context.Context, fn *object.Function, args []object.Object) object.Object {
+	callFunction = func(ctx context.Context, fn *object.Function, args []object.Object, keywords map[string]object.Object) object.Object {
 		return errors.NewError("function calling not initialized")
 	}
 }
 
 // SetFunctionCaller allows the evaluator to register its function caller
-func SetFunctionCaller(caller func(ctx context.Context, fn *object.Function, args []object.Object) object.Object) {
+func SetFunctionCaller(caller func(ctx context.Context, fn *object.Function, args []object.Object, keywords map[string]object.Object) object.Object) {
 	callFunction = caller
 }

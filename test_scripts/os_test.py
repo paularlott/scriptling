@@ -43,4 +43,4 @@ passed = passed and len(machine) > 0
 version = platform.scriptling_version()
 passed = passed and len(version) > 0
 
-passed
+assert passed

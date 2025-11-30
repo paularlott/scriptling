@@ -19,5 +19,4 @@ assert p.exists() == False
 # Test unlink missing_ok
 p.unlink(missing_ok=True)  # Should not error
 
-passed = True
-passed
+assert True

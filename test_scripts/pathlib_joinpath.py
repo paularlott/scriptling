@@ -14,5 +14,4 @@ assert p3["__str__"] == "a/b/c"
 p4 = pathlib.Path("/home").joinpath("/etc", "passwd")
 assert p4["__str__"] == "/etc/passwd"  # joinpath replaces with absolute
 
-passed = True
-passed
+assert True

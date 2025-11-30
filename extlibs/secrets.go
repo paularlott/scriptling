@@ -158,6 +158,41 @@ Example:
   dice = secrets.randbelow(6) + 1  # 1-6`,
 	},
 
+	"randbits": {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			if len(args) != 1 {
+				return errors.NewError("randbits() requires exactly 1 argument")
+			}
+
+			k, ok := args[0].(*object.Integer)
+			if !ok {
+				return errors.NewTypeError("INTEGER", args[0].Type().String())
+			}
+
+			if k.Value < 1 {
+				return errors.NewError("randbits requires a positive number of bits")
+			}
+
+			// Generate a random big integer with exactly k bits
+			result, err := rand.Int(rand.Reader, big.NewInt(0).Lsh(big.NewInt(1), uint(k.Value)))
+			if err != nil {
+				return errors.NewError("failed to generate random bits: %s", err.Error())
+			}
+
+			return object.NewInteger(result.Int64())
+		},
+		HelpText: `randbits(k) - Generate a random integer with k random bits
+
+Parameters:
+  k - Number of random bits (must be positive)
+
+Returns: Random integer with k bits
+
+Example:
+  import secrets
+  random_int = secrets.randbits(8)  # 0-255`,
+	},
+
 	"choice": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 			if len(args) != 1 {

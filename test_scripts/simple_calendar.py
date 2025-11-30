@@ -14,3 +14,5 @@ def test():
     return "\n".join(lines)
 
 print(test())
+
+assert True
