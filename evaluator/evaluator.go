@@ -1467,6 +1467,37 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 
 	var result object.Object = NULL
 
+	// Handle Iterator objects (from range, zip, enumerate, etc.)
+	if iter, ok := iterable.(*object.Iterator); ok {
+		for {
+			if err := checkContext(ctx); err != nil {
+				return err
+			}
+
+			element, hasNext := iter.Next()
+			if !hasNext {
+				break
+			}
+
+			if err := setForVariables(fs.Variables, element, env); err != nil {
+				return errors.NewError("%s", err.Error())
+			}
+
+			result = evalWithContext(ctx, fs.Body, env)
+			if result != nil {
+				switch result.Type() {
+				case object.ERROR_OBJ, object.RETURN_OBJ:
+					return result
+				case object.BREAK_OBJ:
+					return NULL
+				case object.CONTINUE_OBJ:
+					continue
+				}
+			}
+		}
+		return result
+	}
+
 	// Get elements to iterate over based on type
 	var elements []object.Object
 	switch iter := iterable.(type) {
@@ -1523,6 +1554,40 @@ func evalListComprehension(ctx context.Context, lc *ast.ListComprehension, env *
 
 	// Create new scope for comprehension variable(s)
 	compEnv := object.NewEnclosedEnvironment(env)
+
+	// Handle Iterator objects (from range, zip, enumerate, etc.)
+	if iter, ok := iterable.(*object.Iterator); ok {
+		for {
+			element, hasNext := iter.Next()
+			if !hasNext {
+				break
+			}
+
+			// Set variable(s) - supports tuple unpacking
+			if err := setForVariables(lc.Variables, element, compEnv); err != nil {
+				return errors.NewError("%s", err.Error())
+			}
+
+			// Check condition if present
+			if lc.Condition != nil {
+				condition := evalWithContext(ctx, lc.Condition, compEnv)
+				if isError(condition) {
+					return condition
+				}
+				if !isTruthy(condition) {
+					continue
+				}
+			}
+
+			// Evaluate expression
+			exprResult := evalWithContext(ctx, lc.Expression, compEnv)
+			if isError(exprResult) {
+				return exprResult
+			}
+			result = append(result, exprResult)
+		}
+		return &object.List{Elements: result}
+	}
 
 	// Get elements based on iterable type
 	var elements []object.Object

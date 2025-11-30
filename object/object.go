@@ -64,6 +64,7 @@ const (
 	CLASS_OBJ
 	INSTANCE_OBJ
 	SUPER_OBJ
+	ITERATOR_OBJ
 )
 
 // String returns the string representation of the ObjectType
@@ -109,6 +110,8 @@ func (ot ObjectType) String() string {
 		return "INSTANCE"
 	case SUPER_OBJ:
 		return "SUPER"
+	case ITERATOR_OBJ:
+		return "ITERATOR"
 	default:
 		return "UNKNOWN"
 	}
