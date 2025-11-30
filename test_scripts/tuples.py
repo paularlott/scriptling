@@ -1,2 +1,3 @@
 coords = (10, 20, 30)
-coords[0] == 10 and coords[1] == 20
+assert coords[0] == 10
+assert coords[1] == 20

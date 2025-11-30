@@ -14,5 +14,4 @@ assert x < 100
 assert [1, 2, 3]
 assert {"key": "value"}
 
-# All assertions passed
-True
+print("✓ All assertions passed")

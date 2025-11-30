@@ -839,6 +839,9 @@ func (p *Parser) parseCallArguments() ([]ast.Expression, map[string]ast.Expressi
 
 		if p.peekTokenIs(token.COMMA) {
 			p.nextToken()
+			if p.peekTokenIs(token.RPAREN) {
+				break
+			}
 			p.nextToken()
 			continue
 		}
@@ -1023,6 +1026,9 @@ func (p *Parser) parseFunctionParameters() ([]*ast.Identifier, map[string]ast.Ex
 
 	for p.peekTokenIs(token.COMMA) {
 		p.nextToken()
+		if p.peekTokenIs(token.RPAREN) {
+			break
+		}
 		p.nextToken()
 
 		// Check for *args
@@ -1108,6 +1114,9 @@ func (p *Parser) parseListLiteral() ast.Expression {
 
 	for p.peekTokenIs(token.COMMA) {
 		p.nextToken()
+		if p.peekTokenIs(token.RBRACKET) {
+			break
+		}
 		p.nextToken()
 		elements = append(elements, p.parseExpression(LOWEST))
 	}
@@ -1307,6 +1316,9 @@ func (p *Parser) parseDictLiteral() ast.Expression {
 		}
 		p.nextToken()
 		p.skipWhitespace()
+		if p.peekTokenIs(token.RBRACE) {
+			break
+		}
 		p.nextToken()
 	}
 

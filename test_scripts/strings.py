@@ -1,3 +1,3 @@
 name = "Scriptling"
 greeting = "Hello, " + name + "!"
-greeting == "Hello, Scriptling!"
+assert greeting == "Hello, Scriptling!"
