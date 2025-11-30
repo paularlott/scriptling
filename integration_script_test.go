@@ -33,6 +33,8 @@ func TestIntegrationScripts(t *testing.T) {
 	p.RegisterLibrary("subprocess", extlibs.SubprocessLibrary)
 	p.RegisterLibrary("html.parser", extlibs.HTMLParserLibrary)
 	p.RegisterLibrary("secrets", extlibs.SecretsLibrary)
+	p.RegisterLibrary("requests", extlibs.RequestsLibrary)
+	p.RegisterLibrary("sys", extlibs.SysLibrary)
 
 	// Set up on-demand library loading for local .py files in test_scripts
 	p.SetOnDemandLibraryCallback(func(p *Scriptling, libName string) bool {

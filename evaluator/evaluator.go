@@ -1069,11 +1069,11 @@ func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.Augm
 func evalImportStatement(is *ast.ImportStatement, env *object.Environment) object.Object {
 	importCallback := env.GetImportCallback()
 	if importCallback == nil {
-		return errors.NewError(errors.ErrImportError)
+		return errors.NewError("%s at line %d", errors.ErrImportError, is.Token.Line)
 	}
 	err := importCallback(is.Name.Value)
 	if err != nil {
-		return errors.NewError("%s: %s", errors.ErrImportError, err.Error())
+		return errors.NewError("%s at line %d: %s", errors.ErrImportError, is.Token.Line, err.Error())
 	}
 
 	// Import additional libraries if any
@@ -1366,7 +1366,7 @@ func evalAssertStatementWithContext(ctx context.Context, as *ast.AssertStatement
 		} else {
 			message = "AssertionError"
 		}
-		return &object.Error{Message: "AssertionError: " + message}
+		return &object.Error{Message: fmt.Sprintf("AssertionError at line %d: %s", as.Token.Line, message)}
 	}
 
 	return NULL
