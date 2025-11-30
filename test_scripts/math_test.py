@@ -96,7 +96,7 @@ assert dm1[0] == 3 and dm1[1] == 2
 dm2 = divmod(10, 3)
 assert dm2[0] == 3 and dm2[1] == 1
 dm3 = divmod(20, 4)
-assert dm3[0] == 3 and dm3[1] == 0
+assert dm3[0] == 5 and dm3[1] == 0
 
 # Test floor division operator //
 result = 7 // 2
