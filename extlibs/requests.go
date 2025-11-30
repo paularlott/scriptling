@@ -168,190 +168,362 @@ var RequestsLibrary = object.NewLibrary(map[string]*object.Builtin{
 	},
 	"get": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			if len(args) < 1 || len(args) > 2 {
-				return errors.NewArgumentError(len(args), 1)
-			}
-			if args[0].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("STRING", args[0].Type().String())
-			}
-			url, _ := args[0].AsString()
-			timeout := 5 // Default 5 seconds
-			headers := make(map[string]string)
+			var url string
+			options := make(map[string]object.Object)
 
-			if len(args) == 2 {
-				if args[1].Type() != object.DICT_OBJ {
-					return errors.NewTypeError("DICT", args[1].Type().String())
+			// 1. Handle kwargs
+			for k, v := range kwargs {
+				if k == "url" {
+					if s, ok := v.AsString(); ok {
+						url = s
+					} else {
+						return errors.NewTypeError("STRING", v.Type().String())
+					}
+				} else {
+					options[k] = v
 				}
-				options, _ := args[1].AsDict()
-				timeout, headers, user, pass := parseRequestOptions(options)
-				return httpRequestWithContext(ctx, "GET", url, "", timeout, headers, user, pass)
 			}
-			return httpRequestWithContext(ctx, "GET", url, "", timeout, headers, "", "")
+
+			// 2. Handle positional args
+			if len(args) > 0 {
+				if url == "" {
+					if s, ok := args[0].AsString(); ok {
+						url = s
+					} else {
+						return errors.NewTypeError("STRING", args[0].Type().String())
+					}
+				}
+				// Check for legacy options dict
+				if len(args) > 1 {
+					if d, ok := args[1].AsDict(); ok {
+						for k, v := range d {
+							options[k] = v
+						}
+					}
+				}
+			}
+
+			if url == "" {
+				return errors.NewArgumentError(0, 1)
+			}
+
+			timeout, headers, user, pass := parseRequestOptions(options)
+			return httpRequestWithContext(ctx, "GET", url, "", timeout, headers, user, pass)
 		},
-		HelpText: `get(url, options={}) - Send a GET request
+		HelpText: `get(url, **kwargs) - Send a GET request
 
 Sends an HTTP GET request to the specified URL.
 
 Parameters:
   url (string): The URL to send the request to
-  options (dict, optional): Request options
+  **kwargs: Optional arguments
     - timeout (int): Request timeout in seconds (default: 5)
     - headers (dict): HTTP headers as key-value pairs
-    - auth (list): Basic authentication as [username, password]
+    - auth (tuple/list): Basic authentication as (username, password)
 
 Returns:
   Response object with status_code, text, headers, body, url, and json() method`,
 	},
 	"post": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			if len(args) < 2 || len(args) > 3 {
-				return errors.NewArgumentError(len(args), 2)
-			}
-			if args[0].Type() != object.STRING_OBJ || args[1].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("STRING", "mixed types")
-			}
-			url, _ := args[0].AsString()
-			body, _ := args[1].AsString()
-			timeout := 5
-			headers := make(map[string]string)
-			user := ""
-			pass := ""
+			var url string
+			var data string
+			options := make(map[string]object.Object)
 
-			if len(args) == 3 {
-				if args[2].Type() != object.DICT_OBJ {
-					return errors.NewTypeError("DICT", args[2].Type().String())
+			// 1. Handle kwargs
+			for k, v := range kwargs {
+				if k == "url" {
+					if s, ok := v.AsString(); ok {
+						url = s
+					} else {
+						return errors.NewTypeError("STRING", v.Type().String())
+					}
+				} else if k == "data" {
+					if s, ok := v.AsString(); ok {
+						data = s
+					} else {
+						return errors.NewTypeError("STRING", v.Type().String())
+					}
+				} else {
+					options[k] = v
 				}
-				options, _ := args[2].AsDict()
-				timeout, headers, user, pass = parseRequestOptions(options)
 			}
-			return httpRequestWithContext(ctx, "POST", url, body, timeout, headers, user, pass)
+
+			// 2. Handle positional args
+			argIdx := 0
+			if url == "" && len(args) > argIdx {
+				if s, ok := args[argIdx].AsString(); ok {
+					url = s
+					argIdx++
+				} else {
+					return errors.NewTypeError("STRING", args[argIdx].Type().String())
+				}
+			}
+
+			if data == "" && len(args) > argIdx {
+				if s, ok := args[argIdx].AsString(); ok {
+					data = s
+					argIdx++
+				} else {
+					// If the second arg is a dict, it might be the legacy options dict and data is skipped?
+					// But original code required data. Let's assume if it's a string it's data.
+					// If it's a dict, and we haven't found data yet, maybe it's options?
+					// But for safety/compatibility with "post(url, data, options)", we expect data.
+					// However, if user does post(url, headers={...}), data is empty.
+					// Let's check type.
+					if args[argIdx].Type() == object.DICT_OBJ {
+						// Probably options, skip data
+					} else {
+						return errors.NewTypeError("STRING", args[argIdx].Type().String())
+					}
+				}
+			}
+
+			// Check for legacy options dict
+			if len(args) > argIdx {
+				if d, ok := args[argIdx].AsDict(); ok {
+					for k, v := range d {
+						options[k] = v
+					}
+				}
+			}
+
+			if url == "" {
+				return errors.NewArgumentError(0, 1)
+			}
+
+			timeout, headers, user, pass := parseRequestOptions(options)
+			return httpRequestWithContext(ctx, "POST", url, data, timeout, headers, user, pass)
 		},
-		HelpText: `post(url, data, options={}) - Send a POST request
+		HelpText: `post(url, data=None, **kwargs) - Send a POST request
 
 Sends an HTTP POST request to the specified URL with the given data.
 
 Parameters:
   url (string): The URL to send the request to
-  data (string): The request body data
-  options (dict, optional): Request options
+  data (string, optional): The request body data
+  **kwargs: Optional arguments
     - timeout (int): Request timeout in seconds (default: 5)
     - headers (dict): HTTP headers as key-value pairs
-    - auth (list): Basic authentication as [username, password]
+    - auth (tuple/list): Basic authentication as (username, password)
 
 Returns:
   Response object with status_code, text, headers, body, url, and json() method`,
 	},
 	"put": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			if len(args) < 2 || len(args) > 3 {
-				return errors.NewArgumentError(len(args), 2)
-			}
-			if args[0].Type() != object.STRING_OBJ || args[1].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("STRING", "mixed types")
-			}
-			url, _ := args[0].AsString()
-			body, _ := args[1].AsString()
-			timeout := 5
-			headers := make(map[string]string)
-			user := ""
-			pass := ""
+			var url string
+			var data string
+			options := make(map[string]object.Object)
 
-			if len(args) == 3 {
-				if args[2].Type() != object.DICT_OBJ {
-					return errors.NewTypeError("DICT", args[2].Type().String())
+			// 1. Handle kwargs
+			for k, v := range kwargs {
+				if k == "url" {
+					if s, ok := v.AsString(); ok {
+						url = s
+					} else {
+						return errors.NewTypeError("STRING", v.Type().String())
+					}
+				} else if k == "data" {
+					if s, ok := v.AsString(); ok {
+						data = s
+					} else {
+						return errors.NewTypeError("STRING", v.Type().String())
+					}
+				} else {
+					options[k] = v
 				}
-				options, _ := args[2].AsDict()
-				timeout, headers, user, pass = parseRequestOptions(options)
 			}
-			return httpRequestWithContext(ctx, "PUT", url, body, timeout, headers, user, pass)
+
+			// 2. Handle positional args
+			argIdx := 0
+			if url == "" && len(args) > argIdx {
+				if s, ok := args[argIdx].AsString(); ok {
+					url = s
+					argIdx++
+				} else {
+					return errors.NewTypeError("STRING", args[argIdx].Type().String())
+				}
+			}
+
+			if data == "" && len(args) > argIdx {
+				if s, ok := args[argIdx].AsString(); ok {
+					data = s
+					argIdx++
+				} else {
+					if args[argIdx].Type() == object.DICT_OBJ {
+						// Probably options, skip data
+					} else {
+						return errors.NewTypeError("STRING", args[argIdx].Type().String())
+					}
+				}
+			}
+
+			// Check for legacy options dict
+			if len(args) > argIdx {
+				if d, ok := args[argIdx].AsDict(); ok {
+					for k, v := range d {
+						options[k] = v
+					}
+				}
+			}
+
+			if url == "" {
+				return errors.NewArgumentError(0, 1)
+			}
+
+			timeout, headers, user, pass := parseRequestOptions(options)
+			return httpRequestWithContext(ctx, "PUT", url, data, timeout, headers, user, pass)
 		},
-		HelpText: `put(url, data, options={}) - Send a PUT request
+		HelpText: `put(url, data=None, **kwargs) - Send a PUT request
 
 Sends an HTTP PUT request to the specified URL with the given data.
 
 Parameters:
   url (string): The URL to send the request to
-  data (string): The request body data
-  options (dict, optional): Request options
+  data (string, optional): The request body data
+  **kwargs: Optional arguments
     - timeout (int): Request timeout in seconds (default: 5)
     - headers (dict): HTTP headers as key-value pairs
-    - auth (list): Basic authentication as [username, password]
+    - auth (tuple/list): Basic authentication as (username, password)
 
 Returns:
   Response object with status_code, text, headers, body, url, and json() method`,
 	},
 	"delete": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			if len(args) < 1 || len(args) > 2 {
-				return errors.NewArgumentError(len(args), 1)
-			}
-			if args[0].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("STRING", args[0].Type().String())
-			}
-			url, _ := args[0].AsString()
-			timeout := 5
-			headers := make(map[string]string)
-			user := ""
-			pass := ""
+			var url string
+			options := make(map[string]object.Object)
 
-			if len(args) == 2 {
-				if args[1].Type() != object.DICT_OBJ {
-					return errors.NewTypeError("DICT", args[1].Type().String())
+			// 1. Handle kwargs
+			for k, v := range kwargs {
+				if k == "url" {
+					if s, ok := v.AsString(); ok {
+						url = s
+					} else {
+						return errors.NewTypeError("STRING", v.Type().String())
+					}
+				} else {
+					options[k] = v
 				}
-				options, _ := args[1].AsDict()
-				timeout, headers, user, pass = parseRequestOptions(options)
 			}
+
+			// 2. Handle positional args
+			if len(args) > 0 {
+				if url == "" {
+					if s, ok := args[0].AsString(); ok {
+						url = s
+					} else {
+						return errors.NewTypeError("STRING", args[0].Type().String())
+					}
+				}
+				// Check for legacy options dict
+				if len(args) > 1 {
+					if d, ok := args[1].AsDict(); ok {
+						for k, v := range d {
+							options[k] = v
+						}
+					}
+				}
+			}
+
+			if url == "" {
+				return errors.NewArgumentError(0, 1)
+			}
+
+			timeout, headers, user, pass := parseRequestOptions(options)
 			return httpRequestWithContext(ctx, "DELETE", url, "", timeout, headers, user, pass)
 		},
-		HelpText: `delete(url, options={}) - Send a DELETE request
+		HelpText: `delete(url, **kwargs) - Send a DELETE request
 
 Sends an HTTP DELETE request to the specified URL.
 
 Parameters:
   url (string): The URL to send the request to
-  options (dict, optional): Request options
+  **kwargs: Optional arguments
     - timeout (int): Request timeout in seconds (default: 5)
     - headers (dict): HTTP headers as key-value pairs
-    - auth (list): Basic authentication as [username, password]
+    - auth (tuple/list): Basic authentication as (username, password)
 
 Returns:
   Response object with status_code, text, headers, body, url, and json() method`,
 	},
 	"patch": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			if len(args) < 2 || len(args) > 3 {
-				return errors.NewArgumentError(len(args), 2)
-			}
-			if args[0].Type() != object.STRING_OBJ || args[1].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("STRING", "mixed types")
-			}
-			url, _ := args[0].AsString()
-			body, _ := args[1].AsString()
-			timeout := 5
-			headers := make(map[string]string)
-			user := ""
-			pass := ""
+			var url string
+			var data string
+			options := make(map[string]object.Object)
 
-			if len(args) == 3 {
-				if args[2].Type() != object.DICT_OBJ {
-					return errors.NewTypeError("DICT", args[2].Type().String())
+			// 1. Handle kwargs
+			for k, v := range kwargs {
+				if k == "url" {
+					if s, ok := v.AsString(); ok {
+						url = s
+					} else {
+						return errors.NewTypeError("STRING", v.Type().String())
+					}
+				} else if k == "data" {
+					if s, ok := v.AsString(); ok {
+						data = s
+					} else {
+						return errors.NewTypeError("STRING", v.Type().String())
+					}
+				} else {
+					options[k] = v
 				}
-				options, _ := args[2].AsDict()
-				timeout, headers, user, pass = parseRequestOptions(options)
 			}
-			return httpRequestWithContext(ctx, "PATCH", url, body, timeout, headers, user, pass)
+
+			// 2. Handle positional args
+			argIdx := 0
+			if url == "" && len(args) > argIdx {
+				if s, ok := args[argIdx].AsString(); ok {
+					url = s
+					argIdx++
+				} else {
+					return errors.NewTypeError("STRING", args[argIdx].Type().String())
+				}
+			}
+
+			if data == "" && len(args) > argIdx {
+				if s, ok := args[argIdx].AsString(); ok {
+					data = s
+					argIdx++
+				} else {
+					if args[argIdx].Type() == object.DICT_OBJ {
+						// Probably options, skip data
+					} else {
+						return errors.NewTypeError("STRING", args[argIdx].Type().String())
+					}
+				}
+			}
+
+			// Check for legacy options dict
+			if len(args) > argIdx {
+				if d, ok := args[argIdx].AsDict(); ok {
+					for k, v := range d {
+						options[k] = v
+					}
+				}
+			}
+
+			if url == "" {
+				return errors.NewArgumentError(0, 1)
+			}
+
+			timeout, headers, user, pass := parseRequestOptions(options)
+			return httpRequestWithContext(ctx, "PATCH", url, data, timeout, headers, user, pass)
 		},
-		HelpText: `patch(url, data, options={}) - Send a PATCH request
+		HelpText: `patch(url, data=None, **kwargs) - Send a PATCH request
 
 Sends an HTTP PATCH request to the specified URL with the given data.
 
 Parameters:
   url (string): The URL to send the request to
-  data (string): The request body data
-  options (dict, optional): Request options
+  data (string, optional): The request body data
+  **kwargs: Optional arguments
     - timeout (int): Request timeout in seconds (default: 5)
     - headers (dict): HTTP headers as key-value pairs
-    - auth (list): Basic authentication as [username, password]
+    - auth (tuple/list): Basic authentication as (username, password)
 
 Returns:
   Response object with status_code, text, headers, body, url, and json() method`,

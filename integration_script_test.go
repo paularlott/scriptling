@@ -62,8 +62,10 @@ func TestIntegrationScripts(t *testing.T) {
 				return
 			}
 
-			if result.Inspect() != "true" {
-				t.Errorf("Script %s failed: expected true, got %s", file, result.Inspect())
+			// Accept both assert-based tests (which may return None) and legacy True-returning tests
+			resultStr := result.Inspect()
+			if resultStr != "true" && resultStr != "None" {
+				t.Errorf("Script %s failed: expected true or None, got %s", file, resultStr)
 			} else {
 				t.Logf("Script %s passed", file)
 			}

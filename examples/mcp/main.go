@@ -5,13 +5,45 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/paularlott/mcp"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/object"
+	"gopkg.in/yaml.v2"
 )
+
+type FrontMatter struct {
+	Description string `yaml:"description"`
+}
+
+func parseFrontMatter(content string) (FrontMatter, string, error) {
+	lines := strings.Split(content, "\n")
+	if len(lines) < 3 || lines[0] != "---" {
+		return FrontMatter{}, content, nil // no front matter
+	}
+	end := -1
+	for i := 1; i < len(lines); i++ {
+		if lines[i] == "---" {
+			end = i
+			break
+		}
+	}
+	if end == -1 {
+		return FrontMatter{}, content, nil
+	}
+	yamlStr := strings.Join(lines[1:end], "\n")
+	var fm FrontMatter
+	err := yaml.Unmarshal([]byte(yamlStr), &fm)
+	if err != nil {
+		return FrontMatter{}, content, err
+	}
+	body := strings.Join(lines[end+1:], "\n")
+	return fm, body, nil
+}
 
 func main() {
 	server := mcp.NewServer("scriptling-server", "1.0.0")
@@ -59,6 +91,66 @@ func main() {
 			}
 
 			return mcp.NewToolResponseText(response.String()), nil
+		},
+	)
+
+	// Tool 2: Skills - Renamed and improved
+	server.RegisterTool(
+		mcp.NewTool(
+			"list_and_get_skills",
+			"ALWAYS START HERE: List all available pre-built skills with descriptions, then retrieve the full content of a specific skill. Skills are tested, working solutions for common tasks. Using existing skills is faster and more reliable than writing code from scratch. Call without parameters first to see what's available.",
+			mcp.String("name", "Optional: The exact name of a skill to retrieve its full content. Omit this parameter to list all available skills with their descriptions first."),
+		),
+		func(ctx context.Context, req *mcp.ToolRequest) (*mcp.ToolResponse, error) {
+			name, err := req.String("name")
+			skillsDir := "skills"
+
+			if err != nil || name == "" {
+				// List all skills with enhanced formatting
+				files, err := filepath.Glob(filepath.Join(skillsDir, "*.md"))
+				if err != nil {
+					return mcp.NewToolResponseText(fmt.Sprintf("Error listing skills: %s", err.Error())), nil
+				}
+
+				var response strings.Builder
+				response.WriteString("Available Skills (call this tool again with 'name' parameter to get full skill content):\n\n")
+
+				var skills []map[string]string
+				for _, file := range files {
+					contentBytes, err := os.ReadFile(file)
+					if err != nil {
+						continue
+					}
+					content := string(contentBytes)
+					fm, _, err := parseFrontMatter(content)
+					if err != nil {
+						continue
+					}
+					skillName := strings.TrimSuffix(filepath.Base(file), ".md")
+					skills = append(skills, map[string]string{
+						"name":        skillName,
+						"description": fm.Description,
+					})
+					response.WriteString(fmt.Sprintf("- %s: %s\n", skillName, fm.Description))
+				}
+
+				response.WriteString("\nTo use a skill, call this tool again with the skill name to get its full implementation.")
+
+				return mcp.NewToolResponseText(response.String()), nil
+			} else {
+				// Get specific skill
+				file := filepath.Join(skillsDir, name+".md")
+				contentBytes, err := os.ReadFile(file)
+				if err != nil {
+					return mcp.NewToolResponseText(fmt.Sprintf("Skill '%s' not found. Call without 'name' parameter to see available skills.", name)), nil
+				}
+				content := string(contentBytes)
+				_, body, err := parseFrontMatter(content)
+				if err != nil {
+					return mcp.NewToolResponseText(fmt.Sprintf("Error parsing skill: %s", err.Error())), nil
+				}
+				return mcp.NewToolResponseText(fmt.Sprintf("Skill: %s\n\n%s", name, body)), nil
+			}
 		},
 	)
 
