@@ -80,8 +80,10 @@ Examples:
 				return object.NewInteger(int64(len(arg.Dict.Pairs)))
 			case *object.DictItems:
 				return object.NewInteger(int64(len(arg.Dict.Pairs)))
+			case *object.Set:
+				return object.NewInteger(int64(len(arg.Elements)))
 			default:
-				return errors.NewTypeError("STRING, LIST, DICT, TUPLE, or VIEW", args[0].Type().String())
+				return errors.NewTypeError("STRING, LIST, DICT, TUPLE, SET, or VIEW", args[0].Type().String())
 			}
 		},
 		HelpText: `len(obj) - Return the length of an object
@@ -165,46 +167,7 @@ Floats are truncated (not rounded).`,
 
 Converts an integer, string, or float to a float.`,
 	},
-	"append": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
-			}
-			if args[0].Type() != object.LIST_OBJ {
-				return errors.NewTypeError("LIST", args[0].Type().String())
-			}
-			list := args[0].(*object.List)
-			// Modify list in-place (Python behavior)
-			list.Elements = append(list.Elements, args[1])
-			return &object.Null{}
-		},
-		HelpText: `append(list, item) - Append item to list
 
-Modifies the list in place by adding item to the end.
-Returns null.`,
-	},
-	"extend": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
-			}
-			if args[0].Type() != object.LIST_OBJ {
-				return errors.NewTypeError("LIST", args[0].Type().String())
-			}
-			if args[1].Type() != object.LIST_OBJ {
-				return errors.NewTypeError("LIST", args[1].Type().String())
-			}
-			list := args[0].(*object.List)
-			other := args[1].(*object.List)
-			// Modify list in-place by appending all elements from other list
-			list.Elements = append(list.Elements, other.Elements...)
-			return &object.Null{}
-		},
-		HelpText: `extend(list, other_list) - Extend list with elements from other_list
-
-Modifies the first list in place by appending all elements from the second list.
-Returns null.`,
-	},
 	"split": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 			if len(args) != 2 {
@@ -1348,6 +1311,9 @@ Use list(reversed(...)) to get a list.`,
 					elements = append(elements, val)
 				}
 				return &object.List{Elements: elements}
+			case *object.Set:
+				elements, _ := iter.AsList()
+				return &object.List{Elements: elements}
 			default:
 				return errors.NewTypeError("iterable", args[0].Type().String())
 			}
@@ -1471,6 +1437,9 @@ Keyword arguments are added to the dict.`,
 					elements = append(elements, val)
 				}
 				return &object.Tuple{Elements: elements}
+			case *object.Set:
+				elements, _ := iter.AsList()
+				return &object.Tuple{Elements: elements}
 			default:
 				return errors.NewTypeError("iterable", args[0].Type().String())
 			}
@@ -1483,7 +1452,7 @@ Otherwise, returns a tuple containing the items of the iterable.`,
 	"set": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 			if len(args) == 0 {
-				return &object.List{Elements: []object.Object{}}
+				return object.NewSet()
 			}
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
@@ -1535,27 +1504,19 @@ Otherwise, returns a tuple containing the items of the iterable.`,
 					}
 					elements = append(elements, val)
 				}
+			case *object.Set:
+				// Copy set
+				return iter.Copy()
 			default:
 				return errors.NewTypeError("iterable", args[0].Type().String())
 			}
 
-			// Remove duplicates (using string representation as key)
-			seen := make(map[string]bool)
-			unique := []object.Object{}
-			for _, elem := range elements {
-				key := elem.Inspect()
-				if !seen[key] {
-					seen[key] = true
-					unique = append(unique, elem)
-				}
-			}
-			return &object.List{Elements: unique}
+			return object.NewSetFromElements(elements)
 		},
-		HelpText: `set([iterable]) - Create a list of unique elements from an iterable
+		HelpText: `set([iterable]) - Create a set from an iterable
 
-With no argument, returns an empty list.
-Otherwise, returns a list containing unique items from the iterable.
-Note: In Scriptling, set() returns a List since there is no Set type.`,
+With no argument, returns an empty set.
+Otherwise, returns a set containing unique items from the iterable.`,
 	},
 	"input": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
