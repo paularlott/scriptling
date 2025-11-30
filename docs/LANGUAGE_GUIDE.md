@@ -1297,7 +1297,47 @@ p.age = 31
 3.  **`self` Parameter**: The first parameter of every method is a reference to the current instance (similar to `this` in other languages, but explicit like in Python).
 4.  **Fields**: Instance variables are accessed and assigned using `self.field_name`.
 
+### Inheritance
+
+Scriptling supports single inheritance. A class can inherit from another class by specifying the parent class in parentheses after the class name.
+
+```python
+class Animal:
+    def __init__(self, name):
+        self.name = name
+
+    def speak(self):
+        return "Generic sound"
+
+class Dog(Animal):
+    def __init__(self, name, breed):
+        # Call parent constructor
+        super(Dog, self).__init__(name)
+        self.breed = breed
+
+    def speak(self):
+        # Call parent method
+        return super(Dog, self).speak() + " and Woof!"
+
+d = Dog("Buddy", "Pug")
+print(d.speak())  # "Generic sound and Woof!"
+```
+
+### The `super()` Function
+
+The `super()` function returns a proxy object that delegates method calls to a parent or sibling class. This is useful for accessing inherited methods that have been overridden in a class.
+
+- **Syntax**:
+    - `super()`: Parameterless version (Python 3 style). Automatically infers the class and instance from the context. Requires the first argument of the method to be named `self`.
+    - `super(CurrentClass, self)`: Explicit version.
+
+- **Arguments**:
+    - `CurrentClass`: The class object where the method is defined.
+    - `self`: The instance object.
+
+**Note**: The parameterless `super()` only works inside class methods where the first argument is named `self`.
+
 ### Limitations
 
-- **Inheritance**: Scriptling currently does **not** support class inheritance. All classes implicitly inherit from the base `Object` type.
 - **Nested Classes**: Defining classes inside other classes or functions is **not** supported. Classes must be defined at the top level of a module.
+- **Multiple Inheritance**: Only single inheritance is supported.

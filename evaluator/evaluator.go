@@ -739,6 +739,7 @@ func evalClassStatement(ctx context.Context, stmt *ast.ClassStatement, env *obje
 
 	// Create a new environment for the class body
 	classEnv := object.NewEnclosedEnvironment(env)
+	classEnv.Set("__class__", class)
 
 	// Evaluate the class body to find methods (will override inherited methods)
 	for _, s := range stmt.Body.Statements {

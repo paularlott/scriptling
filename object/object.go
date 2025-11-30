@@ -61,6 +61,7 @@ const (
 	EXCEPTION_OBJ
 	CLASS_OBJ
 	INSTANCE_OBJ
+	SUPER_OBJ
 )
 
 // String returns the string representation of the ObjectType
@@ -102,6 +103,8 @@ func (ot ObjectType) String() string {
 		return "CLASS"
 	case INSTANCE_OBJ:
 		return "INSTANCE"
+	case SUPER_OBJ:
+		return "SUPER"
 	default:
 		return "UNKNOWN"
 	}
@@ -682,6 +685,23 @@ func (i *Instance) AsFloat() (float64, bool)          { return 0, false }
 func (i *Instance) AsBool() (bool, bool)              { return true, true }
 func (i *Instance) AsList() ([]Object, bool)          { return nil, false }
 func (i *Instance) AsDict() (map[string]Object, bool) { return i.Fields, true }
+
+type Super struct {
+	Class    *Class
+	Instance *Instance
+}
+
+func (s *Super) Type() ObjectType { return SUPER_OBJ }
+func (s *Super) Inspect() string {
+	return fmt.Sprintf("<super: <class '%s'>, <%s object>>", s.Class.Name, s.Instance.Class.Name)
+}
+
+func (s *Super) AsString() (string, bool)          { return s.Inspect(), true }
+func (s *Super) AsInt() (int64, bool)              { return 0, false }
+func (s *Super) AsFloat() (float64, bool)          { return 0, false }
+func (s *Super) AsBool() (bool, bool)              { return true, true }
+func (s *Super) AsList() ([]Object, bool)          { return nil, false }
+func (s *Super) AsDict() (map[string]Object, bool) { return nil, false }
 
 // LibraryRegistrar is an interface for registering libraries.
 // This allows external libraries to register themselves without circular imports.

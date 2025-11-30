@@ -64,12 +64,43 @@ func callStringMethodWithKeywords(ctx context.Context, obj object.Object, method
 		return callInstanceMethod(ctx, obj.(*object.Instance), method, args, keywords, env)
 	}
 
+	// Handle Super method calls
+	if obj.Type() == object.SUPER_OBJ {
+		return callSuperMethod(ctx, obj.(*object.Super), method, args, keywords, env)
+	}
+
 	// Default to string methods if object is a string
 	if obj.Type() == object.STRING_OBJ {
 		return callStringMethod(ctx, obj.(*object.String), method, args, keywords, env)
 	}
 
 	return errors.NewError("object %s has no method %s", obj.Type(), method)
+}
+
+func callSuperMethod(ctx context.Context, super *object.Super, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+	// Start searching from the base class of the class specified in super
+	currentClass := super.Class.BaseClass
+
+	for currentClass != nil {
+		if fn, ok := currentClass.Methods[method]; ok {
+			// If it's a function, bind 'self' to the instance
+			if f, ok := fn.(*object.Function); ok {
+				newArgs := append([]object.Object{super.Instance}, args...)
+				return applyFunctionWithContext(ctx, f, newArgs, keywords, env)
+			}
+			// If it's a builtin, call it (builtins in classes are usually static-like or expect explicit self if they are methods)
+			// But for now, let's assume if it's in a class, it might be a method.
+			// However, our builtins don't support 'self' binding automatically unless wrapped.
+			// If it's just a value (like a class variable), we can't "call" it here because this is evalMethodCallExpression.
+			// But evalMethodCallExpression expects the result to be the result of the call.
+			// If fn is not callable, we should probably error or try to call it if it has a __call__?
+			// For now, let's just try to apply it.
+			return applyFunctionWithContext(ctx, fn, args, keywords, env)
+		}
+		currentClass = currentClass.BaseClass
+	}
+
+	return errors.NewError("super object has no method %s", method)
 }
 
 func callInstanceMethod(ctx context.Context, instance *object.Instance, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {

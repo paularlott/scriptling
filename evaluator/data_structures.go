@@ -47,9 +47,28 @@ func evalIndexExpression(left, index object.Object) object.Object {
 		return evalClassIndexExpression(left, index)
 	case left.Type() == object.BUILTIN_OBJ:
 		return evalBuiltinIndexExpression(left, index)
+	case left.Type() == object.SUPER_OBJ:
+		return evalSuperIndexExpression(left, index)
 	default:
 		return errors.NewError("index operator not supported: %s", left.Type())
 	}
+}
+
+func evalSuperIndexExpression(superObj, index object.Object) object.Object {
+	if index.Type() != object.STRING_OBJ {
+		return errors.NewError("super index must be string")
+	}
+	field := index.(*object.String).Value
+	super := superObj.(*object.Super)
+
+	currentClass := super.Class.BaseClass
+	for currentClass != nil {
+		if fn, ok := currentClass.Methods[field]; ok {
+			return fn
+		}
+		currentClass = currentClass.BaseClass
+	}
+	return NULL
 }
 
 func evalListIndexExpression(list, index object.Object) object.Object {
