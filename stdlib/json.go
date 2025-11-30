@@ -8,40 +8,56 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
+func jsonLoads(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+	if len(args) != 1 {
+		return errors.NewError("wrong number of arguments. got=%d, want=1", len(args))
+	}
+	if args[0].Type() != object.STRING_OBJ {
+		return errors.NewError("argument to loads/parse must be STRING")
+	}
+	str, _ := args[0].AsString()
+	var data interface{}
+	err := json.Unmarshal([]byte(str), &data)
+	if err != nil {
+		return errors.NewError("json parse error: %s", err.Error())
+	}
+	return jsonToObject(data)
+}
+
+func jsonDumps(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+	if len(args) != 1 {
+		return errors.NewError("wrong number of arguments. got=%d, want=1", len(args))
+	}
+	data := objectToJSON(args[0])
+	bytes, err := json.Marshal(data)
+	if err != nil {
+		return errors.NewError("json serialize error: %s", err.Error())
+	}
+	return &object.String{Value: string(bytes)}
+}
+
 var JSONLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"loads": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewError("wrong number of arguments. got=%d, want=1", len(args))
-			}
-			if args[0].Type() != object.STRING_OBJ {
-				return errors.NewError("argument to loads must be STRING")
-			}
-			str, _ := args[0].AsString()
-			var data interface{}
-			err := json.Unmarshal([]byte(str), &data)
-			if err != nil {
-				return errors.NewError("json loads error: %s", err.Error())
-			}
-			return jsonToObject(data)
-		},
+		Fn: jsonLoads,
 		HelpText: `loads(json_string) - Parse JSON string
 
 Parses a JSON string and returns the corresponding Scriptling object.`,
 	},
 	"dumps": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewError("wrong number of arguments. got=%d, want=1", len(args))
-			}
-			data := objectToJSON(args[0])
-			bytes, err := json.Marshal(data)
-			if err != nil {
-				return errors.NewError("json dumps error: %s", err.Error())
-			}
-			return &object.String{Value: string(bytes)}
-		},
+		Fn: jsonDumps,
 		HelpText: `dumps(obj) - Serialize object to JSON string
+
+Converts a Scriptling object to its JSON string representation.`,
+	},
+	"parse": {
+		Fn: jsonLoads,
+		HelpText: `parse(json_string) - Parse JSON string (alias for loads)
+
+Parses a JSON string and returns the corresponding Scriptling object.`,
+	},
+	"stringify": {
+		Fn: jsonDumps,
+		HelpText: `stringify(obj) - Serialize object to JSON string (alias for dumps)
 
 Converts a Scriptling object to its JSON string representation.`,
 	},

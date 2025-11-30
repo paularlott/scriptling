@@ -66,6 +66,7 @@ type Parser struct {
 	curToken       token.Token
 	peekToken      token.Token
 	skippedNewline bool // true if a NEWLINE was skipped between curToken and peekToken
+	parenDepth     int  // track parenthesis depth for multiline support
 
 	prefixParseFns map[token.TokenType]prefixParseFn
 	infixParseFns  map[token.TokenType]infixParseFn
@@ -146,9 +147,29 @@ func (p *Parser) nextToken() {
 	p.curToken = p.peekToken
 	p.peekToken = p.l.NextToken()
 	p.skippedNewline = false
+
+	// Track parenthesis depth based on the token we just consumed (curToken)
+	if p.curToken.Type == token.LPAREN || p.curToken.Type == token.LBRACKET || p.curToken.Type == token.LBRACE {
+		p.parenDepth++
+	} else if p.curToken.Type == token.RPAREN || p.curToken.Type == token.RBRACKET || p.curToken.Type == token.RBRACE {
+		p.parenDepth--
+	}
+
+	// Skip NEWLINE and SEMICOLON tokens
 	for p.peekToken.Type == token.NEWLINE || p.peekToken.Type == token.SEMICOLON {
 		p.skippedNewline = true
 		p.peekToken = p.l.NextToken()
+	}
+
+	// When inside parentheses, also skip INDENT and DEDENT tokens
+	// This allows multiline function calls, list literals, dict literals, etc.
+	if p.parenDepth > 0 {
+		for p.peekToken.Type == token.INDENT || p.peekToken.Type == token.DEDENT || p.peekToken.Type == token.NEWLINE || p.peekToken.Type == token.SEMICOLON {
+			if p.peekToken.Type == token.NEWLINE || p.peekToken.Type == token.SEMICOLON {
+				p.skippedNewline = true
+			}
+			p.peekToken = p.l.NextToken()
+		}
 	}
 }
 
