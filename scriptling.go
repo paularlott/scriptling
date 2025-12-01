@@ -453,8 +453,34 @@ func (p *Scriptling) RegisterLibrary(name string, lib *object.Library) {
 }
 
 // Import imports a library into the current environment, making it available for use without needing an import statement in scripts
-func (p *Scriptling) Import(name string) error {
-	return p.loadLibrary(name)
+func (p *Scriptling) Import(names interface{}) error {
+	switch v := names.(type) {
+	case string:
+		// Single library name
+		return p.loadLibrary(v)
+	case []string:
+		// Go slice of strings
+		for _, name := range v {
+			if err := p.loadLibrary(name); err != nil {
+				return err
+			}
+		}
+		return nil
+	case *object.List:
+		// Scriptling list of strings
+		for _, elem := range v.Elements {
+			if str, ok := elem.(*object.String); ok {
+				if err := p.loadLibrary(str.Value); err != nil {
+					return err
+				}
+			} else {
+				return fmt.Errorf("Import: all elements must be strings, got %T", elem)
+			}
+		}
+		return nil
+	default:
+		return fmt.Errorf("Import: expected string, []string, or list of strings, got %T", names)
+	}
 }
 
 // RegisterScriptFunc registers a function written in Scriptling

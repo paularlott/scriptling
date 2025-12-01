@@ -424,6 +424,17 @@ func (l *Lexer) readIdentifier() string {
 func (l *Lexer) readNumber() (string, bool) {
 	position := l.position
 	isFloat := false
+
+	// Check for hex literal (0x or 0X)
+	if l.ch == '0' && (l.peekChar() == 'x' || l.peekChar() == 'X') {
+		l.readChar() // consume '0'
+		l.readChar() // consume 'x' or 'X'
+		for isHexDigit(l.ch) {
+			l.readChar()
+		}
+		return l.input[position:l.position], false
+	}
+
 	for isDigit(l.ch) {
 		l.readChar()
 	}
@@ -590,4 +601,8 @@ func isLetter(ch byte) bool {
 
 func isDigit(ch byte) bool {
 	return ch >= '0' && ch <= '9'
+}
+
+func isHexDigit(ch byte) bool {
+	return isDigit(ch) || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')
 }
