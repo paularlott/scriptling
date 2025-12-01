@@ -83,6 +83,16 @@ func checkContext(ctx context.Context) object.Object {
 }
 
 func evalWithContext(ctx context.Context, node ast.Node, env *object.Environment) object.Object {
+	obj := evalNode(ctx, node, env)
+	if err, ok := obj.(*object.Error); ok {
+		if err.Line == 0 {
+			err.Line = node.Line()
+		}
+	}
+	return obj
+}
+
+func evalNode(ctx context.Context, node ast.Node, env *object.Environment) object.Object {
 	// Check for cancellation
 	if err := checkContext(ctx); err != nil {
 		return err
@@ -560,6 +570,8 @@ func evalFloatInfixExpression(operator string, left, right object.Object) object
 		rightVal = right.Value
 	case *object.Integer:
 		rightVal = float64(right.Value)
+	default:
+		return errors.NewTypeError("NUMBER", right.Type().String())
 	}
 
 	switch operator {
@@ -822,6 +834,11 @@ func applyUserFunction(ctx context.Context, fn *object.Function, args []object.O
 		return err
 	}
 	evaluated := evalWithContext(ctx, fn.Body, extendedEnv)
+	if err, ok := evaluated.(*object.Error); ok {
+		if err.Function == "" {
+			err.Function = fn.Name
+		}
+	}
 	return unwrapReturnValue(evaluated)
 }
 
