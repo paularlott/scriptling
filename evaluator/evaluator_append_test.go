@@ -1,14 +1,15 @@
 package evaluator
 
 import (
-	"github.com/paularlott/scriptling/object"
 	"testing"
+
+	"github.com/paularlott/scriptling/object"
 )
 
 func TestAppendInPlace(t *testing.T) {
 	input := `
 my_list = [1, 2]
-append(my_list, 3)
+my_list.append(3)
 my_list
 `
 	evaluated := testEval(input)
@@ -27,7 +28,7 @@ my_list
 func TestAppendReturnsNone(t *testing.T) {
 	input := `
 my_list = [1, 2]
-result = append(my_list, 3)
+result = my_list.append(3)
 result
 `
 	evaluated := testEval(input)
@@ -39,9 +40,9 @@ result
 func TestAppendMultipleTimes(t *testing.T) {
 	input := `
 my_list = []
-append(my_list, 1)
-append(my_list, 2)
-append(my_list, 3)
+my_list.append(1)
+my_list.append(2)
+my_list.append(3)
 len(my_list)
 `
 	evaluated := testEval(input)

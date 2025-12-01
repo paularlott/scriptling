@@ -1222,6 +1222,45 @@ func evalInOperator(left, right object.Object) object.Object {
 			return FALSE
 		}
 		return errors.NewTypeError("STRING", "non-string type")
+	case *object.DictKeys:
+		key := left.Inspect()
+		_, ok := container.Dict.Pairs[key]
+		return nativeBoolToBooleanObject(ok)
+	case *object.DictValues:
+		for _, pair := range container.Dict.Pairs {
+			if left == pair.Value || (left.Inspect() == pair.Value.Inspect()) {
+				return TRUE
+			}
+		}
+		return FALSE
+	case *object.DictItems:
+		// Expect left to be a tuple/list of [key, value]
+		// Actually, Python allows (key, value) tuple.
+		// Let's check if left is a tuple/list of 2 elements.
+		var key, val object.Object
+		switch l := left.(type) {
+		case *object.Tuple:
+			if len(l.Elements) == 2 {
+				key, val = l.Elements[0], l.Elements[1]
+			}
+		case *object.List:
+			if len(l.Elements) == 2 {
+				key, val = l.Elements[0], l.Elements[1]
+			}
+		}
+
+		if key != nil {
+			// Check if key exists and value matches
+			keyStr := key.Inspect()
+			if pair, ok := container.Dict.Pairs[keyStr]; ok {
+				if val == pair.Value || (val.Inspect() == pair.Value.Inspect()) {
+					return TRUE
+				}
+			}
+		}
+		return FALSE
+	case *object.Set:
+		return nativeBoolToBooleanObject(container.Contains(left))
 	default:
 		return errors.NewTypeError("iterable", right.Type().String())
 	}
@@ -1467,6 +1506,51 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 
 	var result object.Object = NULL
 
+	// Handle Iterator objects and Views
+	var iter *object.Iterator
+	switch o := iterable.(type) {
+	case *object.Iterator:
+		iter = o
+	case *object.DictKeys:
+		iter = o.CreateIterator()
+	case *object.DictValues:
+		iter = o.CreateIterator()
+	case *object.DictItems:
+		iter = o.CreateIterator()
+	case *object.Set:
+		iter = o.CreateIterator()
+	}
+
+	if iter != nil {
+		for {
+			if err := checkContext(ctx); err != nil {
+				return err
+			}
+
+			element, hasNext := iter.Next()
+			if !hasNext {
+				break
+			}
+
+			if err := setForVariables(fs.Variables, element, env); err != nil {
+				return errors.NewError("%s", err.Error())
+			}
+
+			result = evalWithContext(ctx, fs.Body, env)
+			if result != nil {
+				switch result.Type() {
+				case object.ERROR_OBJ, object.RETURN_OBJ:
+					return result
+				case object.BREAK_OBJ:
+					return NULL
+				case object.CONTINUE_OBJ:
+					continue
+				}
+			}
+		}
+		return result
+	}
+
 	// Get elements to iterate over based on type
 	var elements []object.Object
 	switch iter := iterable.(type) {
@@ -1523,6 +1607,54 @@ func evalListComprehension(ctx context.Context, lc *ast.ListComprehension, env *
 
 	// Create new scope for comprehension variable(s)
 	compEnv := object.NewEnclosedEnvironment(env)
+
+	// Handle Iterator objects and Views
+	var iter *object.Iterator
+	switch o := iterable.(type) {
+	case *object.Iterator:
+		iter = o
+	case *object.DictKeys:
+		iter = o.CreateIterator()
+	case *object.DictValues:
+		iter = o.CreateIterator()
+	case *object.DictItems:
+		iter = o.CreateIterator()
+	case *object.Set:
+		iter = o.CreateIterator()
+	}
+
+	if iter != nil {
+		for {
+			element, hasNext := iter.Next()
+			if !hasNext {
+				break
+			}
+
+			// Set variable(s) - supports tuple unpacking
+			if err := setForVariables(lc.Variables, element, compEnv); err != nil {
+				return errors.NewError("%s", err.Error())
+			}
+
+			// Check condition if present
+			if lc.Condition != nil {
+				condition := evalWithContext(ctx, lc.Condition, compEnv)
+				if isError(condition) {
+					return condition
+				}
+				if !isTruthy(condition) {
+					continue
+				}
+			}
+
+			// Evaluate expression
+			exprResult := evalWithContext(ctx, lc.Expression, compEnv)
+			if isError(exprResult) {
+				return exprResult
+			}
+			result = append(result, exprResult)
+		}
+		return &object.List{Elements: result}
+	}
 
 	// Get elements based on iterable type
 	var elements []object.Object

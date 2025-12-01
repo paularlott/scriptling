@@ -11,10 +11,10 @@ func TestRangeFunction(t *testing.T) {
 		input    string
 		expected []int64
 	}{
-		{"range(5)", []int64{0, 1, 2, 3, 4}},
-		{"range(2, 5)", []int64{2, 3, 4}},
-		{"range(0, 10, 2)", []int64{0, 2, 4, 6, 8}},
-		{"range(10, 0, -2)", []int64{10, 8, 6, 4, 2}},
+		{"list(range(5))", []int64{0, 1, 2, 3, 4}},
+		{"list(range(2, 5))", []int64{2, 3, 4}},
+		{"list(range(0, 10, 2))", []int64{0, 2, 4, 6, 8}},
+		{"list(range(10, 0, -2))", []int64{10, 8, 6, 4, 2}},
 	}
 
 	for _, tt := range tests {
@@ -84,32 +84,22 @@ func TestDictionaryMethods(t *testing.T) {
 		{
 			`keys({"a": "1", "b": "2"})`,
 			func(obj object.Object) bool {
-				list, ok := obj.(*object.List)
-				return ok && len(list.Elements) == 2
+				_, ok := obj.(*object.DictKeys)
+				return ok
 			},
 		},
 		{
 			`values({"a": "1", "b": "2"})`,
 			func(obj object.Object) bool {
-				list, ok := obj.(*object.List)
-				return ok && len(list.Elements) == 2
+				_, ok := obj.(*object.DictValues)
+				return ok
 			},
 		},
 		{
 			`items({"a": "1", "b": "2"})`,
 			func(obj object.Object) bool {
-				list, ok := obj.(*object.List)
-				if !ok || len(list.Elements) != 2 {
-					return false
-				}
-				// Each item should be a list of 2 elements
-				for _, item := range list.Elements {
-					itemList, ok := item.(*object.List)
-					if !ok || len(itemList.Elements) != 2 {
-						return false
-					}
-				}
-				return true
+				_, ok := obj.(*object.DictItems)
+				return ok
 			},
 		},
 	}

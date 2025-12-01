@@ -108,25 +108,6 @@ func TestBuiltinFloat(t *testing.T) {
 	}
 }
 
-func TestBuiltinAppend(t *testing.T) {
-	list := &object.List{Elements: []object.Object{&object.Integer{Value: 1}}}
-	newElement := &object.Integer{Value: 2}
-
-	result := builtins["append"].Fn(context.Background(), nil, list, newElement)
-
-	if result.Type() != object.NULL_OBJ {
-		t.Errorf("append should return NULL, got %T", result)
-	}
-
-	if len(list.Elements) != 2 {
-		t.Errorf("list should have 2 elements, got %d", len(list.Elements))
-	}
-
-	if list.Elements[1].(*object.Integer).Value != 2 {
-		t.Errorf("second element should be 2, got %d", list.Elements[1].(*object.Integer).Value)
-	}
-}
-
 func TestBuiltinType(t *testing.T) {
 	tests := []struct {
 		input    object.Object

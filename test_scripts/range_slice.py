@@ -8,10 +8,10 @@ if count != 5:
     failures += 1
 
 # Range start stop
-sum = 0
+total = 0
 for i in range(2, 7):
-    sum += i
-if sum != 20:
+    total += i
+if total != 20:
     failures += 1
 
 # List slicing

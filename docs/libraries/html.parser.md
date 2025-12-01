@@ -279,4 +279,4 @@ parser.feed("<div>Hello</div>")
 ## See Also
 
 - [html](./html.md) - HTML escaping and unescaping utilities
-- [re](./re.md) - Regular expressions for text processing
+- [re](./regex.md) - Regular expressions for text processing

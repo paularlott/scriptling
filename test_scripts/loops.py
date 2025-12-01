@@ -1,8 +1,8 @@
 # For loop with range
-sum = 0
+total = 0
 for i in range(5):
-    sum += i
-assert sum == 10
+    total += i
+assert total == 10
 
 # For loop with list
 count = 0
@@ -12,14 +12,14 @@ assert count == 3
 
 # While loop
 count = 0
-total = 0
+sum_total = 0
 while count < 3:
-    total += count
+    sum_total += count
     count += 1
-assert total == 3
+assert sum_total == 3
 
 # Range with start stop
-sum = 0
+range_sum = 0
 for i in range(2, 5):
-    sum += i
-assert sum == 9
+    range_sum += i
+assert range_sum == 9
