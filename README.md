@@ -176,7 +176,8 @@ go run main.go test_basics.py
 
 - **[Language Guide](docs/LANGUAGE_GUIDE.md)** - Complete syntax reference
 - **[Libraries](docs/LIBRARIES.md)** - Available libraries and APIs
-- **[Extending Scriptling](docs/EXTENDING_SCRIPTLING.md)**
+- **[Extending with Go](docs/EXTENDING_WITH_GO.md)** - Adding Go functions and libraries
+- **[Extending with Scripts](docs/EXTENDING_WITH_SCRIPTS.md)** - Creating script libraries
 - **[Help System](docs/HELP_SYSTEM.md)**
 - **[Go Integration](docs/GO_INTEGRATION.md)** - Embedding and extending
 - **[Quick Reference](docs/QUICK_REFERENCE.md)** - Cheat sheet
