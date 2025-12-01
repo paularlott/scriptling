@@ -831,13 +831,11 @@ len([1, 2, 3])                     # 3
 my_list = [1, 2]
 my_list.append(3)                  # my_list is now [1, 2, 3]
 print(my_list)                     # [1, 2, 3]
-# Note: Global append(list, item) is deprecated. Use list.append(item).
 
 # extend modifies list in-place by appending elements from another list
 list_a = [1, 2]
 list_b = [3, 4]
 list_a.extend(list_b)              # list_a is now [1, 2, 3, 4]
-# Note: Global extend(list, other) is deprecated. Use list.extend(other).
 
 # sum returns the sum of all numeric elements
 sum([1, 2, 3, 4, 5])              # 15
