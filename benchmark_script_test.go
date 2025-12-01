@@ -3,6 +3,8 @@ package scriptling
 import (
 	"os"
 	"testing"
+
+	"github.com/paularlott/scriptling/stdlib"
 )
 
 func TestBenchmarkScript(t *testing.T) {
@@ -12,6 +14,7 @@ func TestBenchmarkScript(t *testing.T) {
 	}
 
 	p := New()
+	stdlib.RegisterAll(p)
 	_, err = p.Eval(string(script))
 	if err != nil {
 		t.Fatalf("Benchmark script failed: %v", err)

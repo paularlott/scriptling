@@ -6,6 +6,7 @@ import (
 
 	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/object"
+	"github.com/paularlott/scriptling/stdlib"
 )
 
 func TestRegisterFunc(t *testing.T) {
@@ -85,6 +86,7 @@ func TestImport(t *testing.T) {
 
 func TestImportStandardLibrary(t *testing.T) {
 	p := New()
+	p.RegisterLibrary(stdlib.JSONLibraryName, stdlib.JSONLibrary)
 
 	// Import the json library programmatically
 	err := p.Import("json")
@@ -202,6 +204,7 @@ helper_result = counters.helper()
 
 func TestImportBuiltin(t *testing.T) {
 	p := New()
+	p.RegisterLibrary(stdlib.JSONLibraryName, stdlib.JSONLibrary)
 	_, err := p.Eval(`
 import json
 data = json.loads('{"key":"value"}')
@@ -307,6 +310,7 @@ gte = 10 >= 5
 
 func TestDotNotation(t *testing.T) {
 	p := New()
+	p.RegisterLibrary(stdlib.JSONLibraryName, stdlib.JSONLibrary)
 	_, err := p.Eval(`
 import json
 data = json.loads('{"name":"Alice"}')
@@ -326,7 +330,7 @@ func TestHTTPLibrary(t *testing.T) {
 	t.Skip("Skipping HTTP test due to unreliable external service")
 
 	p := New()
-	p.RegisterLibrary("requests", extlibs.RequestsLibrary)
+	p.RegisterLibrary(extlibs.RequestsLibraryName, extlibs.RequestsLibrary)
 	_, err := p.Eval(`
 import requests
 options = {"timeout": 10}

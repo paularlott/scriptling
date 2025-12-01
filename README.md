@@ -44,11 +44,15 @@ package main
 import (
     "fmt"
     "github.com/paularlott/scriptling"
+    "github.com/paularlott/scriptling/stdlib"
 )
 
 func main() {
-    // Create interpreter with all standard libraries (default)
+    // Create interpreter
     p := scriptling.New()
+
+    // Register all standard libraries
+    stdlib.RegisterAll(p)
 
     // Execute Scriptling code
     result, err := p.Eval(`
@@ -97,7 +101,18 @@ See [scriptling-cli/README.md](scriptling-cli/README.md) for details.
 
 ### Basic Usage
 ```go
+import (
+    "github.com/paularlott/scriptling"
+    "github.com/paularlott/scriptling/stdlib"
+)
+
 p := scriptling.New()
+
+// Register libraries as needed
+stdlib.RegisterAll(p)  // Register all standard libraries
+// Or register individual libraries:
+// p.RegisterLibrary(stdlib.JSONLibraryName, stdlib.JSONLibrary)
+// p.RegisterLibrary(stdlib.MathLibraryName, stdlib.MathLibrary)
 
 // Execute code
 result, err := p.Eval("x = 5 + 3")
@@ -141,22 +156,40 @@ p.SetOnDemandLibraryCallback(func(p *Scriptling, libName string) bool {
 
 ### Libraries
 ```go
-// Create interpreter with all standard libraries
+import (
+    "github.com/paularlott/scriptling"
+    "github.com/paularlott/scriptling/stdlib"
+    "github.com/paularlott/scriptling/extlibs"
+)
+
+// Create interpreter
 p := scriptling.New()
 
+// Register all standard libraries
+stdlib.RegisterAll(p)
+
+// Or register individual standard libraries
+p.RegisterLibrary(stdlib.JSONLibraryName, stdlib.JSONLibrary)
+p.RegisterLibrary(stdlib.MathLibraryName, stdlib.MathLibrary)
+
 // Register additional custom libraries
-import "github.com/paularlott/scriptling/extlibs"
-p.RegisterLibrary("http", extlibs.HTTPLibrary())
+p.RegisterLibrary(extlibs.RequestsLibraryName, extlibs.RequestsLibrary)
+
+// Register os and pathlib with security restrictions
+extlibs.RegisterOSLibrary(p, []string{"/tmp", "/home/user/data"})
+extlibs.RegisterPathlibLibrary(p, []string{"/tmp", "/home/user/data"})
 
 // Import libraries programmatically (no need for import statements in scripts)
 p.Import("json")
 
 // Use in scripts
 p.Eval(`
-import http
+import requests
+import os
 
-response = http.get("https://api.example.com/data")
+response = requests.get("https://api.example.com/data")
 data = json.parse(response["body"])  # json already imported via p.Import()
+files = os.listdir("/tmp")
 `)
 ```
 

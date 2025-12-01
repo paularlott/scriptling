@@ -28,10 +28,12 @@ import (
     "context"
     "github.com/paularlott/scriptling"
     "github.com/paularlott/scriptling/object"
+    "github.com/paularlott/scriptling/stdlib"
 )
 
 func main() {
     p := scriptling.New()
+    stdlib.RegisterAll(p)  // Register standard libraries if needed
 
     // Register a simple function - kwargs ignored
     p.RegisterFunc("double", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
@@ -1173,6 +1175,7 @@ import (
 
 func main() {
     p := scriptling.New()
+    stdlib.RegisterAll(p)  // Register standard libraries if needed
 
     // Create a library
     myLib := object.NewLibrary(map[string]*object.Builtin{
@@ -1219,6 +1222,7 @@ import (
 
 func main() {
     p := scriptling.New()
+    stdlib.RegisterAll(p)  // Register standard libraries if needed
 
     // Define a class
     counterClass := &object.Class{

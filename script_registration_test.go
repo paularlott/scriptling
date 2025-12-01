@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/paularlott/scriptling/object"
+	"github.com/paularlott/scriptling/stdlib"
 )
 
 func TestRegisterScriptFunc(t *testing.T) {
@@ -211,6 +212,7 @@ result
 
 func TestScriptLibraryWithStandardLibrary(t *testing.T) {
 	p := New()
+	p.RegisterLibrary(stdlib.JSONLibraryName, stdlib.JSONLibrary)
 
 	// Register a library that uses a standard library
 	err := p.RegisterScriptLibrary("jsonutils", `

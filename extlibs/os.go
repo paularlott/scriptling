@@ -39,18 +39,18 @@ func (o *osLibraryInstance) checkPathSecurity(path string) object.Object {
 //
 // Example:
 //
-//	// No restrictions - full filesystem access (DANGEROUS for untrusted code)
+//	No restrictions - full filesystem access (DANGEROUS for untrusted code)
 //	extlibs.RegisterOSLibrary(s, nil)
 //
-//	// Restricted to specific directories (SECURE)
+//	Restricted to specific directories (SECURE)
 //	extlibs.RegisterOSLibrary(s, []string{"/tmp/sandbox", "/home/user/data"})
 func RegisterOSLibrary(registrar object.LibraryRegistrar, allowedPaths []string) {
 	config := fssecurity.Config{
 		AllowedPaths: allowedPaths,
 	}
 	osLib, osPathLib := NewOSLibrary(config)
-	registrar.RegisterLibrary("os", osLib)
-	registrar.RegisterLibrary("os.path", osPathLib)
+	registrar.RegisterLibrary(OSLibraryName, osLib)
+	registrar.RegisterLibrary(OSPathLibraryName, osPathLib)
 }
 
 // NewOSLibrary creates a new OS library with the given configuration.
