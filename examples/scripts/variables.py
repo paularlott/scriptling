@@ -15,5 +15,5 @@ print("Dict:", person)
 
 # Operations
 print("Math:", x * 2 + 8)
-print("String ops:", upper(name))
+print("String ops:", name.upper())
 print("List length:", len(numbers))

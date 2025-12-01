@@ -34,6 +34,8 @@ func main() {
 	p.RegisterLibrary("requests", extlibs.RequestsLibrary)
 	p.RegisterLibrary("sys", extlibs.SysLibrary)
 	p.RegisterLibrary("secrets", extlibs.SecretsLibrary)
+	p.RegisterLibrary("subprocess", extlibs.SubprocessLibrary)
+	p.RegisterLibrary("html.parser", extlibs.HTMLParserLibrary)
 	extlibs.RegisterOSLibrary(p, []string{})
 	extlibs.RegisterPathlibLibrary(p, []string{})
 
