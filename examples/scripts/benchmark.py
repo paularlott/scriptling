@@ -55,7 +55,7 @@ start = time.perf_counter()
 parts = []
 for i in range(100):
     parts.append(str(i))
-result = join(parts, ",")
+result = ",".join(parts)
 end = time.perf_counter()
 print("   Time: " + str(end - start) + " seconds")
 print("")
