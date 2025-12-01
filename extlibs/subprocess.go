@@ -65,9 +65,23 @@ var SubprocessLibrary = object.NewLibrary(map[string]*object.Builtin{
 
 			// Parse args - can be string or list
 			var cmdArgs []string
+			var cmdStr string
 			if args[0].Type() == object.STRING_OBJ {
-				cmdStr, _ := args[0].AsString()
-				cmdArgs = strings.Fields(cmdStr)
+				cmdStr, _ = args[0].AsString()
+				// Check if shell mode is enabled
+				shell := false
+				if sh, exists := kwargs["shell"]; exists {
+					if b, ok := sh.(*object.Boolean); ok {
+						shell = b.Value
+					}
+				}
+				if shell {
+					// In shell mode, pass string as-is to shell
+					cmdArgs = []string{cmdStr}
+				} else {
+					// In non-shell mode, split string into arguments
+					cmdArgs = strings.Fields(cmdStr)
+				}
 			} else if args[0].Type() == object.LIST_OBJ {
 				list, _ := args[0].AsList()
 				cmdArgs = make([]string, len(list))
@@ -82,48 +96,81 @@ var SubprocessLibrary = object.NewLibrary(map[string]*object.Builtin{
 				return errors.NewTypeError("STRING or LIST", args[0].Type().String())
 			}
 
-			// Default options
+			// Default options (matching Python's defaults)
 			captureOutput := false
 			shell := false
 			cwd := ""
-			timeout := 0
+			timeout := 0.0
 			check := false
+			text := false
+			encoding := "utf-8"
+			inputData := ""
+			env := make(map[string]string)
 
-			// Parse kwargs
-			if len(args) > 1 {
-				if options, ok := args[1].(*object.Dict); ok {
-					if capture, exists := options.Pairs["capture_output"]; exists {
-						if b, ok := capture.Value.AsBool(); ok {
-							captureOutput = b
-						}
-					}
-					if sh, exists := options.Pairs["shell"]; exists {
-						if b, ok := sh.Value.AsBool(); ok {
-							shell = b
-						}
-					}
-					if wd, exists := options.Pairs["cwd"]; exists {
-						if s, ok := wd.Value.AsString(); ok {
-							cwd = s
-						}
-					}
-					if to, exists := options.Pairs["timeout"]; exists {
-						if i, ok := to.Value.AsInt(); ok {
-							timeout = int(i)
-						}
-					}
-					if ch, exists := options.Pairs["check"]; exists {
-						if b, ok := ch.Value.AsBool(); ok {
-							check = b
+			// Parse kwargs (Python-style keyword arguments)
+			if capture, exists := kwargs["capture_output"]; exists {
+				if b, ok := capture.(*object.Boolean); ok {
+					captureOutput = b.Value
+				}
+			}
+			if sh, exists := kwargs["shell"]; exists {
+				if b, ok := sh.(*object.Boolean); ok {
+					shell = b.Value
+				}
+			}
+			if wd, exists := kwargs["cwd"]; exists {
+				if s, ok := wd.(*object.String); ok {
+					cwd = s.Value
+				}
+			}
+			if to, exists := kwargs["timeout"]; exists {
+				if f, ok := to.(*object.Float); ok {
+					timeout = f.Value
+				} else if i, ok := to.(*object.Integer); ok {
+					timeout = float64(i.Value)
+				}
+			}
+			if ch, exists := kwargs["check"]; exists {
+				if b, ok := ch.(*object.Boolean); ok {
+					check = b.Value
+				}
+			}
+			if txt, exists := kwargs["text"]; exists {
+				if b, ok := txt.(*object.Boolean); ok {
+					text = b.Value
+				}
+			}
+			if enc, exists := kwargs["encoding"]; exists {
+				if s, ok := enc.(*object.String); ok {
+					encoding = s.Value
+				}
+			}
+			if inp, exists := kwargs["input"]; exists {
+				if s, ok := inp.(*object.String); ok {
+					inputData = s.Value
+				}
+			}
+			if envDict, exists := kwargs["env"]; exists {
+				if d, ok := envDict.(*object.Dict); ok {
+					for _, pair := range d.Pairs {
+						if keyStr, ok := pair.Key.(*object.String); ok {
+							if valStr, ok := pair.Value.(*object.String); ok {
+								env[keyStr.Value] = valStr.Value
+							}
 						}
 					}
 				}
 			}
 
+			// Handle string args with shell=True
+			if shell && args[0].Type() == object.STRING_OBJ {
+				cmdArgs = []string{"sh", "-c", cmdStr}
+			}
+
 			// Execute command
 			var cmd *exec.Cmd
-			if shell {
-				cmd = exec.Command("sh", "-c", strings.Join(cmdArgs, " "))
+			if shell && args[0].Type() == object.STRING_OBJ {
+				cmd = exec.Command(cmdArgs[0], cmdArgs[1:]...)
 			} else {
 				cmd = exec.Command(cmdArgs[0], cmdArgs[1:]...)
 			}
@@ -132,11 +179,33 @@ var SubprocessLibrary = object.NewLibrary(map[string]*object.Builtin{
 				cmd.Dir = cwd
 			}
 
+			// Set environment if provided
+			if len(env) > 0 {
+				cmd.Env = make([]string, 0, len(env))
+				for k, v := range env {
+					cmd.Env = append(cmd.Env, k+"="+v)
+				}
+			}
+
+			// Set input if provided
+			if inputData != "" {
+				cmd.Stdin = strings.NewReader(inputData)
+			}
+
 			if timeout > 0 {
-				ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+				ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout*float64(time.Second)))
 				defer cancel()
 				cmd = exec.CommandContext(ctx, cmd.Path, cmd.Args[1:]...)
 				cmd.Dir = cwd
+				if len(env) > 0 {
+					cmd.Env = make([]string, 0, len(env))
+					for k, v := range env {
+						cmd.Env = append(cmd.Env, k+"="+v)
+					}
+				}
+				if inputData != "" {
+					cmd.Stdin = strings.NewReader(inputData)
+				}
 			}
 
 			var stdout, stderr []byte
@@ -160,18 +229,27 @@ var SubprocessLibrary = object.NewLibrary(map[string]*object.Builtin{
 				}
 			}
 
-			// Create CompletedProcess instance
+			// Convert output based on text/encoding settings
+			var stdoutStr, stderrStr string
+			if text {
+				// Decode using specified encoding (for now assume UTF-8, encoding param not yet implemented)
+				_ = encoding
+				stdoutStr = string(stdout)
+				stderrStr = string(stderr)
+			} else {
+				// Return raw bytes as strings for compatibility
+				stdoutStr = string(stdout)
+				stderrStr = string(stderr)
+			} // Create CompletedProcess instance
 			instance := &object.Instance{
 				Class: CompletedProcessClass,
 				Fields: map[string]object.Object{
 					"args":       &object.List{Elements: make([]object.Object, len(cmdArgs))},
 					"returncode": &object.Integer{Value: int64(returncode)},
-					"stdout":     &object.String{Value: string(stdout)},
-					"stderr":     &object.String{Value: string(stderr)},
+					"stdout":     &object.String{Value: stdoutStr},
+					"stderr":     &object.String{Value: stderrStr},
 				},
-			}
-
-			// Fill args list
+			} // Fill args list
 			for i, arg := range cmdArgs {
 				instance.Fields["args"].(*object.List).Elements[i] = &object.String{Value: arg}
 			}

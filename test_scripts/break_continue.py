@@ -1,21 +1,21 @@
 failures = 0
 
 # Break in for
-sum = 0
+total = 0
 for i in range(10):
     if i == 5:
         break
-    sum += i
-if sum != 10:
+    total += i
+if total != 10:
     failures += 1
 
 # Continue in for
-sum = 0
+total = 0
 for i in range(10):
     if i % 2 == 0:
         continue
-    sum += i
-if sum != 25:
+    total += i
+if total != 25:
     failures += 1
 
 # Break in while

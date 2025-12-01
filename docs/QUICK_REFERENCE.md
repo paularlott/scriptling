@@ -251,7 +251,8 @@ type("hello")     # "STRING"
 list("abc")       # ["a", "b", "c"]
 dict()            # {}
 tuple([1, 2, 3])  # (1, 2, 3)
-set([1, 2, 2, 3]) # [1, 2, 3] (unique elements)
+tuple([1, 2, 3])  # (1, 2, 3)
+set([1, 2, 2, 3]) # {1, 2, 3} (unique elements)
 
 # Type checking
 callable(len)                 # True (is function)
@@ -279,12 +280,12 @@ oct(8)            # "0o10"
 chr(65)           # "A"
 ord("A")          # 65
 
-# Iteration utilities
-enumerate(["a", "b"])         # [[0, "a"], [1, "b"]]
-zip([1, 2], ["a", "b"])       # [[1, "a"], [2, "b"]]
-reversed([1, 2, 3])           # [3, 2, 1]
-map(lambda x: x*2, [1,2,3])   # [2, 4, 6]
-filter(lambda x: x>1, [1,2,3])# [2, 3]
+# Iteration utilities (return iterators)
+list(enumerate(["a", "b"]))    # [(0, "a"), (1, "b")]
+list(zip([1, 2], ["a", "b"]))  # [(1, "a"), (2, "b")]
+list(reversed([1, 2, 3]))      # [3, 2, 1]
+list(map(lambda x: x*2, [1,2,3]))   # [2, 4, 6]
+list(filter(lambda x: x>1, [1,2,3]))# [2, 3]
 any([False, True, False])     # True
 all([True, True, True])       # True
 
@@ -305,22 +306,22 @@ raw = r"C:\\path\\to\\file"
 # List operations
 numbers = [1, 2, 3]
 len(numbers)                        # 3
-append(numbers, 4)                  # numbers is now [1, 2, 3, 4]
+numbers.append(4)                   # numbers is now [1, 2, 3, 4]
 sum([1, 2, 3, 4])                   # 10
 sorted([3, 1, 2])                   # [1, 2, 3]
 sorted([3, 1, 2], reverse=True)     # [3, 2, 1]
 sorted(["banana", "apple"], len)    # Sort with key function
 
-# Range
-range(5)                            # [0, 1, 2, 3, 4]
-range(2, 5)                         # [2, 3, 4]
-range(0, 10, 2)                     # [0, 2, 4, 6, 8]
+# Range (returns iterator)
+list(range(5))                      # [0, 1, 2, 3, 4]
+list(range(2, 5))                   # [2, 3, 4]
+list(range(0, 10, 2))               # [0, 2, 4, 6, 8]
 
-# Dictionary methods
+# Dictionary methods (return views)
 person = {"name": "Alice", "age": 30}
-keys(person)                        # ["name", "age"]
-values(person)                      # ["Alice", 30]
-items(person)                       # [["name", "Alice"], ["age", 30]]
+list(person.keys())                 # ["name", "age"]
+list(person.values())               # ["Alice", 30]
+list(person.items())                # [("name", "Alice"), ("age", 30)]
 ```
 
 ## Control Flow
@@ -505,6 +506,9 @@ person = {
     "age": 30,
     "active": True
 }
+
+# Set
+unique = set([1, 2, 2, 3])  # {1, 2, 3}
 
 # Indexing
 first = numbers[0]      # 1

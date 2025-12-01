@@ -31,7 +31,7 @@ print("3. List Operations (100 iterations)")
 start = time.perf_counter()
 items = []
 for i in range(100):
-    append(items, i)
+    items.append(i)
 total = 0
 for item in items:
     total = total + item
@@ -54,7 +54,7 @@ print("5. String Operations (100 iterations)")
 start = time.perf_counter()
 parts = []
 for i in range(100):
-    append(parts, str(i))
+    parts.append(str(i))
 result = join(parts, ",")
 end = time.perf_counter()
 print("   Time: " + str(end - start) + " seconds")

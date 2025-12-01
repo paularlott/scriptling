@@ -36,23 +36,25 @@ Always available without importing:
 
 ### List Functions
 - `len(list)` - Get length
-- `append(list, item)` - Append item (modifies list in-place)
-- `extend(list, other_list)` - Append elements from another list (modifies list in-place)
-- `pop(list, index)` - Remove and return item at index
-- `insert(list, index, item)` - Insert item at index
-- `remove(list, item)` - Remove first occurrence of item
-- `index(list, item)` - Return index of item
-- `count(list, item)` - Count occurrences of item
-- `sort(list)` - Sort list in-place
-- `reverse(list)` - Reverse list in-place
+- `list.append(item)` - Append item (modifies list in-place)
+- `list.extend(other_list)` - Append elements from another list (modifies list in-place)
+- `list.pop(index)` - Remove and return item at index
+- `list.insert(index, item)` - Insert item at index
+- `list.remove(item)` - Remove first occurrence of item
+- `list.index(item)` - Return index of item
+- `list.count(item)` - Count occurrences of item
+- `list.sort()` - Sort list in-place
+- `list.reverse()` - Reverse list in-place
 
 ### Dictionary Functions
-- `keys(dict)` - Get list of keys
-- `values(dict)` - Get list of values
-- `items(dict)` - Get list of (key, value) tuples
-- `get(dict, key, default)` - Get value with default
-- `pop(dict, key, default)` - Remove and return value
-- `update(dict, other)` - Update with other dictionary
+- `dict.keys()` - Get view of keys (iterable, reflects dict changes)
+- `dict.values()` - Get view of values (iterable, reflects dict changes)
+- `dict.items()` - Get view of (key, value) tuples (iterable, reflects dict changes)
+- `dict.get(key, default)` - Get value with default
+- `dict.pop(key, default)` - Remove and return value
+- `dict.update(other)` - Update with other dictionary
+
+**Note:** `keys()`, `values()`, and `items()` now return view objects instead of lists. Use `list(dict.keys())` if you need a list.
 
 ### System
 - `import library_name` - Load library dynamically
@@ -109,15 +111,7 @@ These libraries are not loaded by default and must be explicitly registered by t
 - **`subprocess`**: Spawn and manage subprocesses.
 - **`sys`**: System-specific parameters and functions (`argv`, `exit`, `version`).
 
-## External / System Libraries
 
-These libraries provide access to system resources and may be restricted in sandboxed environments.
-
-- **`os`**: Operating system interfaces (file system access).
-- **`pathlib`**: Object-oriented filesystem paths.
-- **`sys`**: System-specific parameters and functions.
-- **`requests`**: HTTP library for human beings.
-- **`secrets`**: Generate secure random numbers for managing secrets.
 
 ## Usage Example
 

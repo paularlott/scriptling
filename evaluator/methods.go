@@ -64,6 +64,11 @@ func callStringMethodWithKeywords(ctx context.Context, obj object.Object, method
 		return callListMethod(ctx, obj.(*object.List), method, args, keywords, env)
 	}
 
+	// Handle set methods
+	if obj.Type() == object.SET_OBJ {
+		return callSetMethod(ctx, obj.(*object.Set), method, args, keywords, env)
+	}
+
 	// Handle Instance method calls
 	if obj.Type() == object.INSTANCE_OBJ {
 		return callInstanceMethod(ctx, obj.(*object.Instance), method, args, keywords, env)
@@ -344,18 +349,17 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 		if len(args) != 1 {
 			return errors.NewArgumentError(len(args), 1)
 		}
-		if builtin, ok := builtins["append"]; ok {
-			ctxWithEnv := SetEnvInContext(ctx, env)
-			return builtin.Fn(ctxWithEnv, nil, list, args[0])
-		}
+		list.Elements = append(list.Elements, args[0])
+		return NULL
 	case "extend":
 		if len(args) != 1 {
 			return errors.NewArgumentError(len(args), 1)
 		}
-		if builtin, ok := builtins["extend"]; ok {
-			ctxWithEnv := SetEnvInContext(ctx, env)
-			return builtin.Fn(ctxWithEnv, nil, list, args[0])
+		if other, ok := args[0].(*object.List); ok {
+			list.Elements = append(list.Elements, other.Elements...)
+			return NULL
 		}
+		return errors.NewTypeError("LIST", args[0].Type().String())
 	case "index":
 		if len(args) < 1 || len(args) > 3 {
 			return errors.NewError("index() takes 1-3 arguments (%d given)", len(args))
@@ -548,7 +552,6 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 	default:
 		return errors.NewError("%s: list method %s not found", errors.ErrIdentifierNotFound, method)
 	}
-	return NULL
 }
 
 func callStringMethod(ctx context.Context, str *object.String, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
@@ -1419,4 +1422,102 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		return errors.NewError("%s: %s", errors.ErrIdentifierNotFound, method)
 	}
 	return errors.NewError("%s: %s", errors.ErrIdentifierNotFound, method)
+}
+func callSetMethod(ctx context.Context, set *object.Set, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+	switch method {
+	case "add":
+		if len(args) != 1 {
+			return errors.NewArgumentError(len(args), 1)
+		}
+		set.Add(args[0])
+		return NULL
+	case "remove":
+		if len(args) != 1 {
+			return errors.NewArgumentError(len(args), 1)
+		}
+		if !set.Remove(args[0]) {
+			return errors.NewError("KeyError: %s", args[0].Inspect())
+		}
+		return NULL
+	case "discard":
+		if len(args) != 1 {
+			return errors.NewArgumentError(len(args), 1)
+		}
+		set.Remove(args[0])
+		return NULL
+	case "pop":
+		if len(args) != 0 {
+			return errors.NewArgumentError(len(args), 0)
+		}
+		if len(set.Elements) == 0 {
+			return errors.NewError("pop from an empty set")
+		}
+		// Go map iteration order is random, which matches Python's arbitrary pop
+		for _, elem := range set.Elements {
+			set.Remove(elem)
+			return elem
+		}
+	case "clear":
+		if len(args) != 0 {
+			return errors.NewArgumentError(len(args), 0)
+		}
+		set.Elements = make(map[string]object.Object)
+		return NULL
+	case "copy":
+		if len(args) != 0 {
+			return errors.NewArgumentError(len(args), 0)
+		}
+		return set.Copy()
+	case "union":
+		if len(args) != 1 {
+			return errors.NewArgumentError(len(args), 1)
+		}
+		if other, ok := args[0].(*object.Set); ok {
+			return set.Union(other)
+		}
+		return errors.NewTypeError("SET", args[0].Type().String())
+	case "intersection":
+		if len(args) != 1 {
+			return errors.NewArgumentError(len(args), 1)
+		}
+		if other, ok := args[0].(*object.Set); ok {
+			return set.Intersection(other)
+		}
+		return errors.NewTypeError("SET", args[0].Type().String())
+	case "difference":
+		if len(args) != 1 {
+			return errors.NewArgumentError(len(args), 1)
+		}
+		if other, ok := args[0].(*object.Set); ok {
+			return set.Difference(other)
+		}
+		return errors.NewTypeError("SET", args[0].Type().String())
+	case "symmetric_difference":
+		if len(args) != 1 {
+			return errors.NewArgumentError(len(args), 1)
+		}
+		if other, ok := args[0].(*object.Set); ok {
+			return set.SymmetricDifference(other)
+		}
+		return errors.NewTypeError("SET", args[0].Type().String())
+	case "issubset":
+		if len(args) != 1 {
+			return errors.NewArgumentError(len(args), 1)
+		}
+		if other, ok := args[0].(*object.Set); ok {
+			return nativeBoolToBooleanObject(set.IsSubset(other))
+		}
+		return errors.NewTypeError("SET", args[0].Type().String())
+	case "issuperset":
+		if len(args) != 1 {
+			return errors.NewArgumentError(len(args), 1)
+		}
+		if other, ok := args[0].(*object.Set); ok {
+			return nativeBoolToBooleanObject(set.IsSuperset(other))
+		}
+		return errors.NewTypeError("SET", args[0].Type().String())
+	default:
+		return errors.NewError("%s: set method %s not found", errors.ErrIdentifierNotFound, method)
+	}
+	return NULL
 }
