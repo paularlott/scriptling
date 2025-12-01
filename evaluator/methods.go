@@ -560,18 +560,12 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if len(args) != 0 {
 			return errors.NewArgumentError(len(args), 0)
 		}
-		if builtin, ok := builtins["upper"]; ok {
-			ctxWithEnv := SetEnvInContext(ctx, env)
-			return builtin.Fn(ctxWithEnv, nil, str)
-		}
+		return &object.String{Value: strings.ToUpper(str.Value)}
 	case "lower":
 		if len(args) != 0 {
 			return errors.NewArgumentError(len(args), 0)
 		}
-		if builtin, ok := builtins["lower"]; ok {
-			ctxWithEnv := SetEnvInContext(ctx, env)
-			return builtin.Fn(ctxWithEnv, nil, str)
-		}
+		return &object.String{Value: strings.ToLower(str.Value)}
 	case "split":
 		if len(args) > 1 {
 			return errors.NewArgumentError(len(args), 1)
@@ -586,83 +580,93 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return &object.List{Elements: elements}
 		}
 		// With separator argument
-		if builtin, ok := builtins["split"]; ok {
-			ctxWithEnv := SetEnvInContext(ctx, env)
-			return builtin.Fn(ctxWithEnv, nil, str, args[0])
+		if sep, ok := args[0].(*object.String); ok {
+			parts := strings.Split(str.Value, sep.Value)
+			elements := make([]object.Object, len(parts))
+			for i, part := range parts {
+				elements[i] = &object.String{Value: part}
+			}
+			return &object.List{Elements: elements}
 		}
+		return errors.NewTypeError("STRING", args[0].Type().String())
 	case "replace":
 		if len(args) != 2 {
 			return errors.NewArgumentError(len(args), 2)
 		}
-		if builtin, ok := builtins["replace"]; ok {
-			ctxWithEnv := SetEnvInContext(ctx, env)
-			return builtin.Fn(ctxWithEnv, nil, str, args[0], args[1])
+		old, okOld := args[0].(*object.String)
+		new, okNew := args[1].(*object.String)
+		if !okOld || !okNew {
+			return errors.NewError("replace() arguments must be strings")
 		}
+		return &object.String{Value: strings.ReplaceAll(str.Value, old.Value, new.Value)}
 	case "join":
 		if len(args) != 1 {
 			return errors.NewArgumentError(len(args), 1)
 		}
-		if builtin, ok := builtins["join"]; ok {
-			ctxWithEnv := SetEnvInContext(ctx, env)
-			// join builtin expects (list, separator), but method is separator.join(list)
-			return builtin.Fn(ctxWithEnv, nil, args[0], str)
+		var elements []object.Object
+		switch iter := args[0].(type) {
+		case *object.List:
+			elements = iter.Elements
+		case *object.Tuple:
+			elements = iter.Elements
+		default:
+			return errors.NewTypeError("LIST or TUPLE", args[0].Type().String())
 		}
+		parts := make([]string, len(elements))
+		for i, elem := range elements {
+			if s, ok := elem.(*object.String); ok {
+				parts[i] = s.Value
+			} else {
+				parts[i] = elem.Inspect()
+			}
+		}
+		return &object.String{Value: strings.Join(parts, str.Value)}
 	case "capitalize":
 		if len(args) != 0 {
 			return errors.NewArgumentError(len(args), 0)
 		}
-		if builtin, ok := builtins["capitalize"]; ok {
-			ctxWithEnv := SetEnvInContext(ctx, env)
-			return builtin.Fn(ctxWithEnv, nil, str)
+		if len(str.Value) == 0 {
+			return str
 		}
+		runes := []rune(str.Value)
+		result := strings.ToUpper(string(runes[0])) + strings.ToLower(string(runes[1:]))
+		return &object.String{Value: result}
 	case "title":
 		if len(args) != 0 {
 			return errors.NewArgumentError(len(args), 0)
 		}
-		if builtin, ok := builtins["title"]; ok {
-			ctxWithEnv := SetEnvInContext(ctx, env)
-			return builtin.Fn(ctxWithEnv, nil, str)
-		}
+		return &object.String{Value: strings.Title(str.Value)}
 	case "strip":
 		if len(args) != 0 {
 			return errors.NewArgumentError(len(args), 0)
 		}
-		if builtin, ok := builtins["strip"]; ok {
-			ctxWithEnv := SetEnvInContext(ctx, env)
-			return builtin.Fn(ctxWithEnv, nil, str)
-		}
+		return &object.String{Value: strings.TrimSpace(str.Value)}
 	case "lstrip":
 		if len(args) != 0 {
 			return errors.NewArgumentError(len(args), 0)
 		}
-		if builtin, ok := builtins["lstrip"]; ok {
-			ctxWithEnv := SetEnvInContext(ctx, env)
-			return builtin.Fn(ctxWithEnv, nil, str)
-		}
+		return &object.String{Value: strings.TrimLeft(str.Value, " \t\n\r\v\f")}
 	case "rstrip":
 		if len(args) != 0 {
 			return errors.NewArgumentError(len(args), 0)
 		}
-		if builtin, ok := builtins["rstrip"]; ok {
-			ctxWithEnv := SetEnvInContext(ctx, env)
-			return builtin.Fn(ctxWithEnv, nil, str)
-		}
+		return &object.String{Value: strings.TrimRight(str.Value, " \t\n\r\v\f")}
 	case "startswith":
 		if len(args) != 1 {
 			return errors.NewArgumentError(len(args), 1)
 		}
-		if builtin, ok := builtins["startswith"]; ok {
-			ctxWithEnv := SetEnvInContext(ctx, env)
-			return builtin.Fn(ctxWithEnv, nil, str, args[0])
+		if prefix, ok := args[0].(*object.String); ok {
+			return nativeBoolToBooleanObject(strings.HasPrefix(str.Value, prefix.Value))
 		}
+		return errors.NewTypeError("STRING", args[0].Type().String())
 	case "endswith":
 		if len(args) != 1 {
 			return errors.NewArgumentError(len(args), 1)
 		}
-		if builtin, ok := builtins["endswith"]; ok {
-			ctxWithEnv := SetEnvInContext(ctx, env)
-			return builtin.Fn(ctxWithEnv, nil, str, args[0])
+		if suffix, ok := args[0].(*object.String); ok {
+			return nativeBoolToBooleanObject(strings.HasSuffix(str.Value, suffix.Value))
 		}
+		return errors.NewTypeError("STRING", args[0].Type().String())
 	case "find":
 		if len(args) < 1 || len(args) > 3 {
 			return errors.NewError("find() takes 1-3 arguments (%d given)", len(args))
