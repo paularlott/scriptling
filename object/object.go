@@ -658,11 +658,26 @@ func (d *Dict) AsDict() (map[string]Object, bool) {
 }
 
 type Error struct {
-	Message string
+	Message  string
+	Line     int
+	File     string
+	Function string
 }
 
 func (e *Error) Type() ObjectType { return ERROR_OBJ }
-func (e *Error) Inspect() string  { return "ERROR: " + e.Message }
+func (e *Error) Inspect() string {
+	msg := "ERROR: " + e.Message
+	if e.Function != "" {
+		msg += fmt.Sprintf(" in function '%s'", e.Function)
+	}
+	if e.File != "" {
+		msg += fmt.Sprintf(" in %s", e.File)
+	}
+	if e.Line > 0 {
+		msg += fmt.Sprintf(" at line %d", e.Line)
+	}
+	return msg
+}
 
 func (e *Error) AsString() (string, bool)          { return e.Message, true }
 func (e *Error) AsInt() (int64, bool)              { return 0, false }

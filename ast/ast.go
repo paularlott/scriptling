@@ -4,6 +4,7 @@ import "github.com/paularlott/scriptling/token"
 
 type Node interface {
 	TokenLiteral() string
+	Line() int
 }
 
 type Statement interface {
@@ -27,6 +28,13 @@ func (p *Program) TokenLiteral() string {
 	return ""
 }
 
+func (p *Program) Line() int {
+	if len(p.Statements) > 0 {
+		return p.Statements[0].Line()
+	}
+	return 0
+}
+
 type Identifier struct {
 	Token token.Token
 	Value string
@@ -34,6 +42,7 @@ type Identifier struct {
 
 func (i *Identifier) expressionNode()      {}
 func (i *Identifier) TokenLiteral() string { return i.Token.Literal }
+func (i *Identifier) Line() int            { return i.Token.Line }
 
 type IntegerLiteral struct {
 	Token token.Token
@@ -42,6 +51,7 @@ type IntegerLiteral struct {
 
 func (il *IntegerLiteral) expressionNode()      {}
 func (il *IntegerLiteral) TokenLiteral() string { return il.Token.Literal }
+func (il *IntegerLiteral) Line() int            { return il.Token.Line }
 
 type FloatLiteral struct {
 	Token token.Token
@@ -50,6 +60,7 @@ type FloatLiteral struct {
 
 func (fl *FloatLiteral) expressionNode()      {}
 func (fl *FloatLiteral) TokenLiteral() string { return fl.Token.Literal }
+func (fl *FloatLiteral) Line() int            { return fl.Token.Line }
 
 type StringLiteral struct {
 	Token token.Token
@@ -58,6 +69,7 @@ type StringLiteral struct {
 
 func (sl *StringLiteral) expressionNode()      {}
 func (sl *StringLiteral) TokenLiteral() string { return sl.Token.Literal }
+func (sl *StringLiteral) Line() int            { return sl.Token.Line }
 
 type FStringLiteral struct {
 	Token       token.Token
@@ -69,6 +81,7 @@ type FStringLiteral struct {
 
 func (fsl *FStringLiteral) expressionNode()      {}
 func (fsl *FStringLiteral) TokenLiteral() string { return fsl.Token.Literal }
+func (fsl *FStringLiteral) Line() int            { return fsl.Token.Line }
 
 type Boolean struct {
 	Token token.Token
@@ -77,6 +90,7 @@ type Boolean struct {
 
 func (b *Boolean) expressionNode()      {}
 func (b *Boolean) TokenLiteral() string { return b.Token.Literal }
+func (b *Boolean) Line() int            { return b.Token.Line }
 
 type None struct {
 	Token token.Token
@@ -84,6 +98,7 @@ type None struct {
 
 func (n *None) expressionNode()      {}
 func (n *None) TokenLiteral() string { return n.Token.Literal }
+func (n *None) Line() int            { return n.Token.Line }
 
 type PrefixExpression struct {
 	Token    token.Token
@@ -93,6 +108,7 @@ type PrefixExpression struct {
 
 func (pe *PrefixExpression) expressionNode()      {}
 func (pe *PrefixExpression) TokenLiteral() string { return pe.Token.Literal }
+func (pe *PrefixExpression) Line() int            { return pe.Token.Line }
 
 type InfixExpression struct {
 	Token    token.Token
@@ -103,6 +119,7 @@ type InfixExpression struct {
 
 func (ie *InfixExpression) expressionNode()      {}
 func (ie *InfixExpression) TokenLiteral() string { return ie.Token.Literal }
+func (ie *InfixExpression) Line() int            { return ie.Token.Line }
 
 type ConditionalExpression struct {
 	Token     token.Token
@@ -113,6 +130,7 @@ type ConditionalExpression struct {
 
 func (ce *ConditionalExpression) expressionNode()      {}
 func (ce *ConditionalExpression) TokenLiteral() string { return ce.Token.Literal }
+func (ce *ConditionalExpression) Line() int            { return ce.Token.Line }
 
 type AssignStatement struct {
 	Token token.Token
@@ -122,6 +140,7 @@ type AssignStatement struct {
 
 func (as *AssignStatement) statementNode()       {}
 func (as *AssignStatement) TokenLiteral() string { return as.Token.Literal }
+func (as *AssignStatement) Line() int            { return as.Token.Line }
 
 type AugmentedAssignStatement struct {
 	Token    token.Token
@@ -132,6 +151,7 @@ type AugmentedAssignStatement struct {
 
 func (aas *AugmentedAssignStatement) statementNode()       {}
 func (aas *AugmentedAssignStatement) TokenLiteral() string { return aas.Token.Literal }
+func (aas *AugmentedAssignStatement) Line() int            { return aas.Token.Line }
 
 type MultipleAssignStatement struct {
 	Token token.Token
@@ -141,6 +161,7 @@ type MultipleAssignStatement struct {
 
 func (mas *MultipleAssignStatement) statementNode()       {}
 func (mas *MultipleAssignStatement) TokenLiteral() string { return mas.Token.Literal }
+func (mas *MultipleAssignStatement) Line() int            { return mas.Token.Line }
 
 type ExpressionStatement struct {
 	Token      token.Token
@@ -149,6 +170,7 @@ type ExpressionStatement struct {
 
 func (es *ExpressionStatement) statementNode()       {}
 func (es *ExpressionStatement) TokenLiteral() string { return es.Token.Literal }
+func (es *ExpressionStatement) Line() int            { return es.Token.Line }
 
 type BlockStatement struct {
 	Token      token.Token
@@ -157,6 +179,7 @@ type BlockStatement struct {
 
 func (bs *BlockStatement) statementNode()       {}
 func (bs *BlockStatement) TokenLiteral() string { return bs.Token.Literal }
+func (bs *BlockStatement) Line() int            { return bs.Token.Line }
 
 type ElifClause struct {
 	Token       token.Token
@@ -174,6 +197,7 @@ type IfStatement struct {
 
 func (is *IfStatement) statementNode()       {}
 func (is *IfStatement) TokenLiteral() string { return is.Token.Literal }
+func (is *IfStatement) Line() int            { return is.Token.Line }
 
 type WhileStatement struct {
 	Token     token.Token
@@ -183,6 +207,7 @@ type WhileStatement struct {
 
 func (ws *WhileStatement) statementNode()       {}
 func (ws *WhileStatement) TokenLiteral() string { return ws.Token.Literal }
+func (ws *WhileStatement) Line() int            { return ws.Token.Line }
 
 type FunctionLiteral struct {
 	Token         token.Token
@@ -194,6 +219,7 @@ type FunctionLiteral struct {
 
 func (fl *FunctionLiteral) expressionNode()      {}
 func (fl *FunctionLiteral) TokenLiteral() string { return fl.Token.Literal }
+func (fl *FunctionLiteral) Line() int            { return fl.Token.Line }
 
 type FunctionStatement struct {
 	Token    token.Token
@@ -203,6 +229,7 @@ type FunctionStatement struct {
 
 func (fs *FunctionStatement) statementNode()       {}
 func (fs *FunctionStatement) TokenLiteral() string { return fs.Token.Literal }
+func (fs *FunctionStatement) Line() int            { return fs.Token.Line }
 
 type ClassStatement struct {
 	Token     token.Token
@@ -213,6 +240,7 @@ type ClassStatement struct {
 
 func (cs *ClassStatement) statementNode()       {}
 func (cs *ClassStatement) TokenLiteral() string { return cs.Token.Literal }
+func (cs *ClassStatement) Line() int            { return cs.Token.Line }
 
 type CallExpression struct {
 	Token     token.Token
@@ -223,6 +251,7 @@ type CallExpression struct {
 
 func (ce *CallExpression) expressionNode()      {}
 func (ce *CallExpression) TokenLiteral() string { return ce.Token.Literal }
+func (ce *CallExpression) Line() int            { return ce.Token.Line }
 
 type ReturnStatement struct {
 	Token       token.Token
@@ -231,6 +260,7 @@ type ReturnStatement struct {
 
 func (rs *ReturnStatement) statementNode()       {}
 func (rs *ReturnStatement) TokenLiteral() string { return rs.Token.Literal }
+func (rs *ReturnStatement) Line() int            { return rs.Token.Line }
 
 type BreakStatement struct {
 	Token token.Token
@@ -238,6 +268,7 @@ type BreakStatement struct {
 
 func (bs *BreakStatement) statementNode()       {}
 func (bs *BreakStatement) TokenLiteral() string { return bs.Token.Literal }
+func (bs *BreakStatement) Line() int            { return bs.Token.Line }
 
 type ContinueStatement struct {
 	Token token.Token
@@ -245,6 +276,7 @@ type ContinueStatement struct {
 
 func (cs *ContinueStatement) statementNode()       {}
 func (cs *ContinueStatement) TokenLiteral() string { return cs.Token.Literal }
+func (cs *ContinueStatement) Line() int            { return cs.Token.Line }
 
 type PassStatement struct {
 	Token token.Token
@@ -252,6 +284,7 @@ type PassStatement struct {
 
 func (ps *PassStatement) statementNode()       {}
 func (ps *PassStatement) TokenLiteral() string { return ps.Token.Literal }
+func (ps *PassStatement) Line() int            { return ps.Token.Line }
 
 type ImportStatement struct {
 	Token           token.Token
@@ -261,6 +294,7 @@ type ImportStatement struct {
 
 func (is *ImportStatement) statementNode()       {}
 func (is *ImportStatement) TokenLiteral() string { return is.Token.Literal }
+func (is *ImportStatement) Line() int            { return is.Token.Line }
 
 // FullName returns the complete import name (handles dotted imports like urllib.parse)
 func (is *ImportStatement) FullName() string {
@@ -277,6 +311,7 @@ type FromImportStatement struct {
 
 func (fis *FromImportStatement) statementNode()       {}
 func (fis *FromImportStatement) TokenLiteral() string { return fis.Token.Literal }
+func (fis *FromImportStatement) Line() int            { return fis.Token.Line }
 
 type ForStatement struct {
 	Token     token.Token
@@ -287,6 +322,7 @@ type ForStatement struct {
 
 func (fs *ForStatement) statementNode()       {}
 func (fs *ForStatement) TokenLiteral() string { return fs.Token.Literal }
+func (fs *ForStatement) Line() int            { return fs.Token.Line }
 
 type ListLiteral struct {
 	Token    token.Token
@@ -295,6 +331,7 @@ type ListLiteral struct {
 
 func (ll *ListLiteral) expressionNode()      {}
 func (ll *ListLiteral) TokenLiteral() string { return ll.Token.Literal }
+func (ll *ListLiteral) Line() int            { return ll.Token.Line }
 
 type DictLiteral struct {
 	Token token.Token
@@ -303,6 +340,7 @@ type DictLiteral struct {
 
 func (dl *DictLiteral) expressionNode()      {}
 func (dl *DictLiteral) TokenLiteral() string { return dl.Token.Literal }
+func (dl *DictLiteral) Line() int            { return dl.Token.Line }
 
 type IndexExpression struct {
 	Token token.Token
@@ -312,6 +350,7 @@ type IndexExpression struct {
 
 func (ie *IndexExpression) expressionNode()      {}
 func (ie *IndexExpression) TokenLiteral() string { return ie.Token.Literal }
+func (ie *IndexExpression) Line() int            { return ie.Token.Line }
 
 type SliceExpression struct {
 	Token token.Token
@@ -323,6 +362,7 @@ type SliceExpression struct {
 
 func (se *SliceExpression) expressionNode()      {}
 func (se *SliceExpression) TokenLiteral() string { return se.Token.Literal }
+func (se *SliceExpression) Line() int            { return se.Token.Line }
 
 type TryStatement struct {
 	Token     token.Token
@@ -334,6 +374,7 @@ type TryStatement struct {
 
 func (ts *TryStatement) statementNode()       {}
 func (ts *TryStatement) TokenLiteral() string { return ts.Token.Literal }
+func (ts *TryStatement) Line() int            { return ts.Token.Line }
 
 type RaiseStatement struct {
 	Token   token.Token
@@ -342,6 +383,7 @@ type RaiseStatement struct {
 
 func (rs *RaiseStatement) statementNode()       {}
 func (rs *RaiseStatement) TokenLiteral() string { return rs.Token.Literal }
+func (rs *RaiseStatement) Line() int            { return rs.Token.Line }
 
 type GlobalStatement struct {
 	Token token.Token
@@ -350,6 +392,7 @@ type GlobalStatement struct {
 
 func (gs *GlobalStatement) statementNode()       {}
 func (gs *GlobalStatement) TokenLiteral() string { return gs.Token.Literal }
+func (gs *GlobalStatement) Line() int            { return gs.Token.Line }
 
 type NonlocalStatement struct {
 	Token token.Token
@@ -358,6 +401,7 @@ type NonlocalStatement struct {
 
 func (ns *NonlocalStatement) statementNode()       {}
 func (ns *NonlocalStatement) TokenLiteral() string { return ns.Token.Literal }
+func (ns *NonlocalStatement) Line() int            { return ns.Token.Line }
 
 type AssertStatement struct {
 	Token     token.Token
@@ -367,6 +411,7 @@ type AssertStatement struct {
 
 func (as *AssertStatement) statementNode()       {}
 func (as *AssertStatement) TokenLiteral() string { return as.Token.Literal }
+func (as *AssertStatement) Line() int            { return as.Token.Line }
 
 type MethodCallExpression struct {
 	Token     token.Token
@@ -378,6 +423,7 @@ type MethodCallExpression struct {
 
 func (mce *MethodCallExpression) expressionNode()      {}
 func (mce *MethodCallExpression) TokenLiteral() string { return mce.Token.Literal }
+func (mce *MethodCallExpression) Line() int            { return mce.Token.Line }
 
 type ListComprehension struct {
 	Token      token.Token
@@ -389,6 +435,7 @@ type ListComprehension struct {
 
 func (lc *ListComprehension) expressionNode()      {}
 func (lc *ListComprehension) TokenLiteral() string { return lc.Token.Literal }
+func (lc *ListComprehension) Line() int            { return lc.Token.Line }
 
 type Lambda struct {
 	Token         token.Token
@@ -400,6 +447,7 @@ type Lambda struct {
 
 func (l *Lambda) expressionNode()      {}
 func (l *Lambda) TokenLiteral() string { return l.Token.Literal }
+func (l *Lambda) Line() int            { return l.Token.Line }
 
 type TupleLiteral struct {
 	Token    token.Token
@@ -408,3 +456,4 @@ type TupleLiteral struct {
 
 func (tl *TupleLiteral) expressionNode()      {}
 func (tl *TupleLiteral) TokenLiteral() string { return tl.Token.Literal }
+func (tl *TupleLiteral) Line() int            { return tl.Token.Line }
