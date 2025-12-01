@@ -710,11 +710,18 @@ ord("A")                  # 65
 
 ### Iteration Utilities
 ```python
-enumerate(["a", "b"])            # [[0, "a"], [1, "b"]]
-zip([1, 2], ["a", "b"])          # [[1, "a"], [2, "b"]]
-reversed([1, 2, 3])              # [3, 2, 1]
-map(lambda x: x*2, [1, 2, 3])    # [2, 4, 6]
-filter(lambda x: x > 1, [1, 2, 3]) # [2, 3]
+# These return iterators (lazy evaluation)
+enumerate(["a", "b"])            # Iterator: (0, "a"), (1, "b")
+zip([1, 2], ["a", "b"])          # Iterator: (1, "a"), (2, "b")
+reversed([1, 2, 3])              # Iterator: 3, 2, 1
+map(lambda x: x*2, [1, 2, 3])    # Iterator: 2, 4, 6
+filter(lambda x: x > 1, [1, 2, 3]) # Iterator: 2, 3
+
+# Convert to list if needed
+list(enumerate(["a", "b"]))     # [(0, "a"), (1, "b")]
+list(zip([1, 2], ["a", "b"]))   # [(1, "a"), (2, "b")]
+
+# Boolean tests (work with any iterable)
 any([False, True, False])        # True
 all([True, True, True])          # True
 all([True, False, True])         # False
@@ -872,12 +879,16 @@ lst.reverse()                      # lst is now [5, 4, 3, 2, 1]
 
 ### Range Function
 ```python
-range(5)                           # [0, 1, 2, 3, 4]
-range(2, 7)                        # [2, 3, 4, 5, 6]
-range(0, 10, 2)                    # [0, 2, 4, 6, 8]
-range(10, 0, -2)                   # [10, 8, 6, 4, 2]
+# range() returns an iterator (lazy evaluation)
+range(5)                           # Iterator: 0, 1, 2, 3, 4
+range(2, 7)                        # Iterator: 2, 3, 4, 5, 6
+range(0, 10, 2)                    # Iterator: 0, 2, 4, 6, 8
+range(10, 0, -2)                   # Iterator: 10, 8, 6, 4, 2
 
-# Use in for loops
+# Convert to list if needed
+list(range(5))                     # [0, 1, 2, 3, 4]
+
+# Use in for loops (iterators work directly)
 for i in range(5):
     print(i)
 ```
