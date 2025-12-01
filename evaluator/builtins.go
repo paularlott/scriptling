@@ -1380,17 +1380,22 @@ For other objects, returns the same as str().`,
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			// Simple hash based on string representation
+			// FNV-1a hash algorithm - fast and good distribution
 			str := args[0].Inspect()
-			var h int64 = 0
-			for _, c := range str {
-				h = h*31 + int64(c)
+			const (
+				offset64 = 14695981039346656037
+				prime64  = 1099511628211
+			)
+			h := uint64(offset64)
+			for i := 0; i < len(str); i++ {
+				h ^= uint64(str[i])
+				h *= prime64
 			}
-			return object.NewInteger(h)
+			return object.NewInteger(int64(h))
 		},
 		HelpText: `hash(object) - Return the hash value of an object
 
-Returns an integer hash value for the object.`,
+Returns an integer hash value for the object using FNV-1a algorithm.`,
 	},
 	"id": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
