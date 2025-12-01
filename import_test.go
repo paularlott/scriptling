@@ -1,6 +1,10 @@
 package scriptling
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/paularlott/scriptling/stdlib"
+)
 
 func TestLibraryNotAvailableWithoutImport(t *testing.T) {
 	p := New()
@@ -20,6 +24,7 @@ func TestLibraryNotAvailableWithoutImport(t *testing.T) {
 
 func TestLibraryAvailableAfterImport(t *testing.T) {
 	p := New()
+	p.RegisterLibrary(stdlib.JSONLibraryName, stdlib.JSONLibrary)
 
 	// Import and use json
 	_, err := p.Eval(`
@@ -49,6 +54,7 @@ result = json.loads('{"test": "value"}')
 
 func TestMultipleLibraryImports(t *testing.T) {
 	p := New()
+	stdlib.RegisterAll(p)
 
 	_, err := p.Eval(`
 import json

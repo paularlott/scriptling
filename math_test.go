@@ -1,6 +1,10 @@
 package scriptling
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/paularlott/scriptling/stdlib"
+)
 
 func TestMathLibrary(t *testing.T) {
 	tests := []struct {
@@ -24,6 +28,7 @@ func TestMathLibrary(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := New()
+			p.RegisterLibrary(stdlib.MathLibraryName, stdlib.MathLibrary)
 			_, err := p.Eval(tt.script)
 			if err != nil {
 				t.Fatalf("Error: %v", err)
@@ -54,6 +59,7 @@ func TestMathLibrary(t *testing.T) {
 
 func TestMathInExpression(t *testing.T) {
 	p := New()
+	p.RegisterLibrary(stdlib.MathLibraryName, stdlib.MathLibrary)
 	_, err := p.Eval(`
 import math
 

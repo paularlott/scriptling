@@ -9,12 +9,10 @@ import (
 
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/evaluator"
-	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/internal/cache"
 	"github.com/paularlott/scriptling/lexer"
 	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/scriptling/parser"
-	"github.com/paularlott/scriptling/stdlib"
 )
 
 type scriptLibrary struct {
@@ -29,75 +27,12 @@ type Scriptling struct {
 	onDemandLibraryCallback func(*Scriptling, string) bool
 }
 
-var availableLibraries = map[string]*object.Library{
-	"json":         stdlib.JSONLibrary,
-	"re":           stdlib.ReLibrary,
-	"time":         stdlib.TimeLibrary,
-	"datetime":     stdlib.DatetimeLibrary,
-	"math":         stdlib.MathLibrary,
-	"base64":       stdlib.Base64Library,
-	"hashlib":      stdlib.HashlibLibrary,
-	"random":       stdlib.RandomLibrary,
-	"urllib":       stdlib.URLLibLibrary,   // Parent module with sub-libraries
-	"urllib.parse": stdlib.URLParseLibrary, // Direct access to urllib.parse (Python-compatible)
-	"requests":     extlibs.RequestsLibrary,
-	"string":       stdlib.StringLibrary,
-	"uuid":         stdlib.UUIDLibrary,
-	"html":         stdlib.HTMLLibrary,
-	"statistics":   stdlib.StatisticsLibrary,
-	"functools":    stdlib.FunctoolsLibrary,
-	"textwrap":     stdlib.TextwrapLibrary,
-	"platform":     stdlib.PlatformLibrary,
-	"itertools":    stdlib.ItertoolsLibrary,
-	"collections":  stdlib.CollectionsLibrary,
-	"copy":         stdlib.CopyLibrary,
-}
-
-func New(libs ...interface{}) *Scriptling {
+func New() *Scriptling {
 	p := &Scriptling{
 		env:                     object.NewEnvironment(),
 		registeredLibraries:     make(map[string]*object.Library),
 		scriptLibraries:         make(map[string]*scriptLibrary),
 		onDemandLibraryCallback: nil,
-	}
-
-	var libList []string
-	if len(libs) == 0 {
-		// No libs specified, register all
-		libList = nil
-	} else if len(libs) == 1 {
-		switch v := libs[0].(type) {
-		case []string:
-			libList = v
-		case string:
-			libList = []string{v}
-		default:
-			// Invalid, register all
-			libList = nil
-		}
-	} else {
-		// Multiple args, assume all strings
-		libList = make([]string, len(libs))
-		for i, lib := range libs {
-			if s, ok := lib.(string); ok {
-				libList[i] = s
-			}
-		}
-	}
-
-	// Register selected standard libraries
-	if len(libList) == 0 {
-		// Register all if none specified
-		for name, lib := range availableLibraries {
-			p.registeredLibraries[name] = lib
-		}
-	} else {
-		// Register only specified libs
-		for _, name := range libList {
-			if lib, ok := availableLibraries[name]; ok {
-				p.registeredLibraries[name] = lib
-			}
-		}
 	}
 
 	// Register import builtin

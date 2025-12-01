@@ -8,6 +8,7 @@ import (
 
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/stdlib"
 )
 
 func main() {
@@ -30,12 +31,15 @@ func main() {
 
 	p := scriptling.New()
 
+	// Register all standard libraries
+	stdlib.RegisterAll(p)
+
 	// Register ext libraries
-	p.RegisterLibrary("requests", extlibs.RequestsLibrary)
-	p.RegisterLibrary("sys", extlibs.SysLibrary)
-	p.RegisterLibrary("secrets", extlibs.SecretsLibrary)
-	p.RegisterLibrary("subprocess", extlibs.SubprocessLibrary)
-	p.RegisterLibrary("html.parser", extlibs.HTMLParserLibrary)
+	p.RegisterLibrary(extlibs.RequestsLibraryName, extlibs.RequestsLibrary)
+	p.RegisterLibrary(extlibs.SysLibraryName, extlibs.SysLibrary)
+	p.RegisterLibrary(extlibs.SecretsLibraryName, extlibs.SecretsLibrary)
+	p.RegisterLibrary(extlibs.SubprocessLibraryName, extlibs.SubprocessLibrary)
+	p.RegisterLibrary(extlibs.HTMLParserLibraryName, extlibs.HTMLParserLibrary)
 	extlibs.RegisterOSLibrary(p, []string{})
 	extlibs.RegisterPathlibLibrary(p, []string{})
 

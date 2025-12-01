@@ -18,11 +18,17 @@ package main
 import (
     "fmt"
     "github.com/paularlott/scriptling"
+    "github.com/paularlott/scriptling/stdlib"
 )
 
 func main() {
-    // Create interpreter without standard libraries
+    // Create interpreter
     p := scriptling.New()
+
+    // Register standard libraries as needed
+    stdlib.RegisterAll(p)  // Register all standard libraries
+    // Or register individual libraries:
+    // p.RegisterLibrary(stdlib.JSONLibraryName, stdlib.JSONLibrary)
 
     // Execute Scriptling code
     result, err := p.Eval(`x = 5 + 3`)
@@ -540,11 +546,19 @@ import (
 
     "github.com/paularlott/scriptling"
     "github.com/paularlott/scriptling/object"
+    "github.com/paularlott/scriptling/stdlib"
+    "github.com/paularlott/scriptling/extlibs"
 )
 
 func main() {
     // Create interpreter
     p := scriptling.New()
+
+    // Register libraries
+    stdlib.RegisterAll(p)
+    p.RegisterLibrary(extlibs.RequestsLibraryName, extlibs.RequestsLibrary)
+    extlibs.RegisterOSLibrary(p, []string{"/tmp"})
+    extlibs.RegisterPathlibLibrary(p, []string{"/tmp"})
 
     // Set configuration from Go
     p.SetVar("api_base", "https://api.example.com")
@@ -837,8 +851,14 @@ func TestScriptlingIntegration(t *testing.T) {
 
 ### Configuration Scripts
 ```go
+import (
+    "github.com/paularlott/scriptling"
+    "github.com/paularlott/scriptling/stdlib"
+)
+
 // Load configuration via Scriptling
 p := scriptling.New()
+stdlib.RegisterAll(p)  // Or register only needed libraries
 p.SetVar("env", "production")
 
 configScript := `
@@ -861,8 +881,14 @@ if cacheSize, ok := p.GetVarAsInt("cache_size"); ok {
 
 ### Data Processing Pipeline
 ```go
+import (
+    "github.com/paularlott/scriptling"
+    "github.com/paularlott/scriptling/stdlib"
+)
+
 // Process data with Scriptling
 p := scriptling.New()
+p.RegisterLibrary(stdlib.JSONLibraryName, stdlib.JSONLibrary)
 p.SetVar("raw_data", jsonString)
 
 pipeline := `

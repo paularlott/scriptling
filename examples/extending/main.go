@@ -8,6 +8,7 @@ import (
 
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/object"
+	"github.com/paularlott/scriptling/stdlib"
 )
 
 // CreateExampleLibrary creates a demo library with math utilities and classes
@@ -189,6 +190,9 @@ func runGoExtensionExample() {
 
 	p := scriptling.New()
 
+	// Register all standard libraries
+	stdlib.RegisterAll(p)
+
 	// Register a simple custom function
 	p.RegisterFunc("greet", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 		if len(args) != 1 {
@@ -293,6 +297,9 @@ func runScriptExtensionExample() {
 	fmt.Println("==========================================")
 
 	p := scriptling.New()
+
+	// Register all standard libraries
+	stdlib.RegisterAll(p)
 
 	fmt.Println("=== Registering Scriptling Functions ===")
 

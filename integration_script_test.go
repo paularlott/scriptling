@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/stdlib"
 )
 
 func TestIntegrationScripts(t *testing.T) {
@@ -25,16 +26,18 @@ func TestIntegrationScripts(t *testing.T) {
 	}
 
 	p := New()
+	// Register all standard libraries
+	stdlib.RegisterAll(p)
 	// Register os library with no restrictions for testing
 	extlibs.RegisterOSLibrary(p, nil)
 	// Register pathlib library with no restrictions for testing
 	extlibs.RegisterPathlibLibrary(p, nil)
 	// Register subprocess library for testing
-	p.RegisterLibrary("subprocess", extlibs.SubprocessLibrary)
-	p.RegisterLibrary("html.parser", extlibs.HTMLParserLibrary)
-	p.RegisterLibrary("secrets", extlibs.SecretsLibrary)
-	p.RegisterLibrary("requests", extlibs.RequestsLibrary)
-	p.RegisterLibrary("sys", extlibs.SysLibrary)
+	p.RegisterLibrary(extlibs.SubprocessLibraryName, extlibs.SubprocessLibrary)
+	p.RegisterLibrary(extlibs.HTMLParserLibraryName, extlibs.HTMLParserLibrary)
+	p.RegisterLibrary(extlibs.SecretsLibraryName, extlibs.SecretsLibrary)
+	p.RegisterLibrary(extlibs.RequestsLibraryName, extlibs.RequestsLibrary)
+	p.RegisterLibrary(extlibs.SysLibraryName, extlibs.SysLibrary)
 
 	// Set up on-demand library loading for local .py files in test_scripts
 	p.SetOnDemandLibraryCallback(func(p *Scriptling, libName string) bool {
