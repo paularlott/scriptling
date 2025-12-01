@@ -1131,14 +1131,97 @@ text[1:8:2]        # "el o" - every second character from 1 to 8
 
 ## Limitations & Differences from Python
 
-### Not Supported
-- List comprehensions
-- Lambda functions
-- Classes and objects
-- Global/nonlocal keywords
-- Decorators
-- Generators
-- `with` statement
+### Python 3 Features Not Supported
+
+Scriptling intentionally does not support the following Python 3 features:
+
+#### Language Features
+- **`async`/`await`**: Asynchronous programming is not supported. Scriptling is designed for synchronous embedded scripting.
+- **Type annotations**: Type hints (e.g., `def func(x: int) -> str:`) are not parsed or enforced.
+- **Walrus operator** (`:=`): Assignment expressions are not supported.
+- **Match/case statements** (Python 3.10+): Pattern matching is not implemented.
+- **Positional-only parameters** (`/`): Function parameter syntax like `def func(a, /, b)` is not supported.
+- **Keyword-only parameters** (`*`): Syntax like `def func(a, *, b)` is not supported (though kwargs work via `**kwargs` pattern).
+- **Decorators**: Function and class decorators (e.g., `@decorator`) are not supported.
+- **Context managers** (`with` statement): The `with` statement and context manager protocol are not implemented.
+- **Multiple inheritance**: Only single inheritance is supported for classes.
+- **Nested classes**: Classes cannot be defined inside other classes or functions.
+- **Metaclasses**: Custom metaclasses and `__metaclass__` are not supported.
+- **Descriptors**: The descriptor protocol (`__get__`, `__set__`, `__delete__`) is not implemented.
+- **Property decorators**: `@property`, `@staticmethod`, `@classmethod` are not supported.
+- **Operator overloading**: Magic methods like `__add__`, `__eq__`, etc. are not supported (except `__init__`).
+
+#### Built-in Functions Not Supported
+- **`input()`**: Reading from stdin is not available in embedded environments (documented, returns error).
+- **`open()`**: Use `os.read_file()` and `os.write_file()` instead for file operations.
+- **`compile()`, `eval()`, `exec()`**: Dynamic code execution beyond the main script is not supported.
+- **`globals()`, `locals()`**: Introspection of scope dictionaries is not available.
+- **`vars()`**: Variable introspection is not supported.
+- **`dir()`**: Object introspection beyond `type()` is limited.
+- **`__import__()`**: Use the `import` statement instead.
+- **`memoryview()`, `bytearray()`, `bytes()`**: Advanced byte manipulation is not supported.
+- **`complex()`**: Complex numbers are not implemented.
+- **`frozenset()`**: Immutable sets are not available (use regular `set()`).
+- **`slice()`**: Slice objects are not exposed (but slice syntax `[start:stop:step]` works).
+
+#### Standard Library Modules Not Included
+- **`asyncio`**: Asynchronous I/O framework
+- **`threading`**, **`multiprocessing`**: Concurrent execution (Scriptling is single-threaded by design)
+- **`socket`**: Low-level networking (use `requests` library for HTTP)
+- **`pickle`**, **`marshal`**: Object serialization (use `json` instead)
+- **`struct`**: Binary data structures
+- **`array`**: Typed arrays
+- **`ctypes`**, **`cffi`**: Foreign function interfaces
+- **`sqlite3`**: Database access
+- **`xml`**: XML processing (use `html.parser` for HTML)
+- **`email`**, **`smtplib`**: Email handling
+- **`logging`**: Structured logging (use `print()` for output)
+- **`argparse`**, **`optparse`**: Command-line parsing
+- **`unittest`**, **`doctest`**: Testing frameworks (use `assert` statements)
+- **`pdb`**: Debugger
+- **`profile`**, **`cProfile`**: Profiling tools
+
+#### Exception Handling Differences
+- **Exception hierarchy**: Scriptling has a simplified error model without Python's exception hierarchy.
+- **Exception groups** (Python 3.11+): Not supported.
+- **`except*` syntax**: Not supported.
+- **Custom exception classes**: You can raise string messages, but not custom exception types.
+
+#### Other Differences
+- **`__name__ == "__main__"`**: This pattern is not supported. Scripts always execute from top to bottom.
+- **`if __name__`**: Not applicable in embedded scripting context.
+- **Module `__all__`**: Export lists are not used.
+- **`__future__` imports**: Not applicable.
+- **`nonlocal` and `global`**: Supported but with simplified semantics compared to Python.
+
+### Supported Python 3 Features
+
+For clarity, Scriptling **does support**:
+- ✅ Classes with single inheritance and `super()`
+- ✅ Lambda functions and closures
+- ✅ List comprehensions and dictionary comprehensions
+- ✅ Generators with `yield`
+- ✅ Iterators (`range`, `map`, `filter`, `enumerate`, `zip`)
+- ✅ Dictionary views (`keys()`, `values()`, `items()`)
+- ✅ F-strings and `.format()`
+- ✅ True division (`/` always returns float)
+- ✅ Set literals and set operations
+- ✅ Try/except/finally error handling
+- ✅ Multiple assignment and tuple unpacking
+- ✅ Variadic arguments (`*args`)
+- ✅ Keyword arguments (`**kwargs` pattern via dict)
+- ✅ Default parameter values
+- ✅ Conditional expressions (ternary operator)
+- ✅ Augmented assignment (`+=`, `-=`, etc.)
+- ✅ Slice notation with step (`[start:stop:step]`)
+- ✅ `is` and `is not` operators
+- ✅ `in` and `not in` operators
+- ✅ Bitwise operators (`&`, `|`, `^`, `~`, `<<`, `>>`)
+- ✅ Boolean operators with short-circuit evaluation
+- ✅ String methods (most Python string methods)
+- ✅ List, dict, set methods (most Python methods)
+
+
 
 ### Key Differences
 - No implicit type coercion in most operations
