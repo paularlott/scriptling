@@ -8,9 +8,6 @@ import (
 	"sort"
 	"strings"
 
-	"golang.org/x/text/cases"
-	"golang.org/x/text/language"
-
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
@@ -168,228 +165,6 @@ Floats are truncated (not rounded).`,
 Converts an integer, string, or float to a float.`,
 	},
 
-	"split": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
-			}
-			if args[0].Type() != object.STRING_OBJ || args[1].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("STRING", "mixed types")
-			}
-			str := args[0].(*object.String).Value
-			sep := args[1].(*object.String).Value
-			parts := strings.Split(str, sep)
-			elements := make([]object.Object, len(parts))
-			for i, part := range parts {
-				elements[i] = &object.String{Value: part}
-			}
-			return &object.List{Elements: elements}
-		},
-		HelpText: `split(str, sep) - Split string by separator
-
-Splits the string into a list of substrings using sep as the delimiter.
-Returns a list of strings.`,
-	},
-	"join": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
-			}
-			if args[0].Type() != object.LIST_OBJ || args[1].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("LIST and STRING", "mixed types")
-			}
-			list := args[0].(*object.List)
-			sep := args[1].(*object.String).Value
-			if len(list.Elements) == 0 {
-				return &object.String{Value: ""}
-			}
-			if len(list.Elements) == 1 {
-				return &object.String{Value: list.Elements[0].Inspect()}
-			}
-			var buf strings.Builder
-			buf.WriteString(list.Elements[0].Inspect())
-			for i := 1; i < len(list.Elements); i++ {
-				buf.WriteString(sep)
-				buf.WriteString(list.Elements[i].Inspect())
-			}
-			return &object.String{Value: buf.String()}
-		},
-		HelpText: `join(list, sep) - Join list elements with separator
-
-Joins the string representations of list elements using sep as separator.
-Returns a string.`,
-	},
-	"upper": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
-			}
-			if args[0].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("STRING", args[0].Type().String())
-			}
-			str := args[0].(*object.String).Value
-			return &object.String{Value: strings.ToUpper(str)}
-		},
-		HelpText: `upper(str) - Convert string to uppercase
-
-Returns a new string with all characters converted to uppercase.`,
-	},
-	"lower": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
-			}
-			if args[0].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("STRING", args[0].Type().String())
-			}
-			str := args[0].(*object.String).Value
-			return &object.String{Value: strings.ToLower(str)}
-		},
-		HelpText: `lower(str) - Convert string to lowercase
-
-Returns a new string with all characters converted to lowercase.`,
-	},
-	"replace": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			if len(args) != 3 {
-				return errors.NewArgumentError(len(args), 3)
-			}
-			if args[0].Type() != object.STRING_OBJ || args[1].Type() != object.STRING_OBJ || args[2].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("STRING", "mixed types")
-			}
-			str := args[0].(*object.String).Value
-			old := args[1].(*object.String).Value
-			new := args[2].(*object.String).Value
-			result := strings.Replace(str, old, new, -1)
-			return &object.String{Value: result}
-		},
-		HelpText: `replace(str, old, new) - Replace occurrences in string
-
-Replaces all occurrences of old substring with new substring in str.
-Returns a new string.`,
-	},
-	"capitalize": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
-			}
-			if args[0].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("STRING", args[0].Type().String())
-			}
-			str := args[0].(*object.String).Value
-			if len(str) == 0 {
-				return &object.String{Value: str}
-			}
-			// Capitalize first letter, lowercase the rest
-			result := strings.ToUpper(string(str[0])) + strings.ToLower(str[1:])
-			return &object.String{Value: result}
-		},
-		HelpText: `capitalize(str) - Capitalize first character
-
-Returns a new string with the first character capitalized and the rest lowercase.`,
-	},
-	"title": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
-			}
-			if args[0].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("STRING", args[0].Type().String())
-			}
-			str := args[0].(*object.String).Value
-			result := cases.Title(language.Und).String(strings.ToLower(str))
-			return &object.String{Value: result}
-		},
-		HelpText: `title(str) - Convert to title case
-
-Returns a new string with the first letter of each word capitalized.`,
-	},
-	"strip": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
-			}
-			if args[0].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("STRING", args[0].Type().String())
-			}
-			str := args[0].(*object.String).Value
-			result := strings.TrimSpace(str)
-			return &object.String{Value: result}
-		},
-		HelpText: `strip(str) - Remove leading and trailing whitespace
-
-Returns a new string with leading and trailing whitespace removed.`,
-	},
-	"lstrip": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
-			}
-			if args[0].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("STRING", args[0].Type().String())
-			}
-			str := args[0].(*object.String).Value
-			result := strings.TrimLeft(str, " \t\n\r")
-			return &object.String{Value: result}
-		},
-		HelpText: `lstrip(str) - Remove leading whitespace
-
-Returns a new string with leading whitespace removed.`,
-	},
-	"rstrip": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
-			}
-			if args[0].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("STRING", args[0].Type().String())
-			}
-			str := args[0].(*object.String).Value
-			result := strings.TrimRight(str, " \t\n\r")
-			return &object.String{Value: result}
-		},
-		HelpText: `rstrip(str) - Remove trailing whitespace
-
-Returns a new string with trailing whitespace removed.`,
-	},
-	"startswith": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
-			}
-			if args[0].Type() != object.STRING_OBJ || args[1].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("STRING", "mixed types")
-			}
-			str := args[0].(*object.String).Value
-			prefix := args[1].(*object.String).Value
-			if strings.HasPrefix(str, prefix) {
-				return TRUE
-			}
-			return FALSE
-		},
-		HelpText: `startswith(str, prefix) - Check if string starts with prefix
-
-Returns true if str starts with prefix, false otherwise.`,
-	},
-	"endswith": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
-			}
-			if args[0].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("STRING", args[0].Type().String())
-			}
-			if args[1].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("STRING", args[1].Type().String())
-			}
-			s := args[0].(*object.String).Value
-			suffix := args[1].(*object.String).Value
-			return nativeBoolToBooleanObject(strings.HasSuffix(s, suffix))
-		},
-		HelpText: `endswith(str, suffix) - Check if string ends with suffix
-
-Returns true if str ends with suffix, false otherwise.`,
-	},
 	"sum": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 			if len(args) != 1 {
@@ -721,6 +496,59 @@ Default start is 0. Use list(enumerate(...)) to get a list.`,
 Returns an iterator of tuples, where the i-th tuple contains the i-th element from each of the argument sequences or iterables.
 The iterator stops when the shortest input iterable is exhausted.
 Use list(zip(...)) to get a list.`,
+	},
+	"map": {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			if len(args) < 2 {
+				return errors.NewError("map() requires at least 2 arguments")
+			}
+
+			// First arg must be callable or None
+			fn := args[0]
+			switch fn.(type) {
+			case *object.Function, *object.Builtin, *object.LambdaFunction, *object.Null:
+				// Valid
+			default:
+				return errors.NewTypeError("callable or None", args[0].Type().String())
+			}
+
+			// For single iterable
+			if len(args) == 2 {
+				return object.NewMapIterator(ctx, fn, args[1])
+			}
+
+			// Multiple iterables - zip them first
+			zipped := object.NewZipIterator(args[1:])
+			return object.NewMapIterator(ctx, fn, zipped)
+		},
+		HelpText: `map(function, iterable, ...) - Apply function to every item
+
+Returns an iterator that applies function to every item of iterable.
+If additional iterable arguments are passed, function must take that many arguments.
+Use list(map(...)) to get a list.`,
+	},
+	"filter": {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			if len(args) != 2 {
+				return errors.NewArgumentError(len(args), 2)
+			}
+
+			// First arg can be None or callable
+			fn := args[0]
+			switch fn.(type) {
+			case *object.Function, *object.Builtin, *object.LambdaFunction, *object.Null:
+				// Valid
+			default:
+				return errors.NewTypeError("callable or None", args[0].Type().String())
+			}
+
+			return object.NewFilterIterator(ctx, fn, args[1])
+		},
+		HelpText: `filter(function, iterable) - Filter items by function
+
+Returns an iterator yielding items for which function(item) is true.
+If function is None, return items that are truthy.
+Use list(filter(...)) to get a list.`,
 	},
 	"super": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
@@ -1690,11 +1518,18 @@ Supports width, alignment, and type specifiers.`,
 			}
 			// Check if object has the attribute/method
 			switch obj := args[0].(type) {
+			case *object.Instance:
+				if _, ok := obj.Fields[name.Value]; ok {
+					return TRUE
+				}
+				if _, ok := obj.Class.Methods[name.Value]; ok {
+					return TRUE
+				}
+				return FALSE
 			case *object.Dict:
 				_, exists := obj.Pairs[name.Value]
 				return nativeBoolToBooleanObject(exists)
 			default:
-				// For other objects, check if it's a known method
 				return FALSE
 			}
 		},
@@ -1713,6 +1548,13 @@ Returns True if the object has the named attribute.`,
 			}
 			// Get attribute from object
 			switch obj := args[0].(type) {
+			case *object.Instance:
+				if val, ok := obj.Fields[name.Value]; ok {
+					return val
+				}
+				if method, ok := obj.Class.Methods[name.Value]; ok {
+					return method
+				}
 			case *object.Dict:
 				if pair, exists := obj.Pairs[name.Value]; exists {
 					return pair.Value
@@ -1740,6 +1582,9 @@ If default is provided, returns it when attribute doesn't exist.`,
 			}
 			// Set attribute on object
 			switch obj := args[0].(type) {
+			case *object.Instance:
+				obj.Fields[name.Value] = args[2]
+				return NULL
 			case *object.Dict:
 				obj.Pairs[name.Value] = object.DictPair{
 					Key:   name,
@@ -1754,6 +1599,37 @@ If default is provided, returns it when attribute doesn't exist.`,
 
 Sets the named attribute to the given value.
 Only works on dict-like objects.`,
+	},
+	"delattr": {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			if len(args) != 2 {
+				return errors.NewArgumentError(len(args), 2)
+			}
+			name, ok := args[1].(*object.String)
+			if !ok {
+				return errors.NewTypeError("STRING", args[1].Type().String())
+			}
+			// Delete attribute from object
+			switch obj := args[0].(type) {
+			case *object.Instance:
+				if _, ok := obj.Fields[name.Value]; ok {
+					delete(obj.Fields, name.Value)
+					return NULL
+				}
+				return errors.NewError("'%s' object has no attribute '%s'", obj.Class.Name, name.Value)
+			case *object.Dict:
+				if _, ok := obj.Pairs[name.Value]; ok {
+					delete(obj.Pairs, name.Value)
+					return NULL
+				}
+				return errors.NewError("dictionary has no key '%s'", name.Value)
+			default:
+				return errors.NewError("'%s' object does not support attribute deletion", args[0].Type().String())
+			}
+		},
+		HelpText: `delattr(object, name) - Delete named attribute
+
+Deletes the named attribute from the given object.`,
 	},
 }
 
