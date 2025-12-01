@@ -12,9 +12,9 @@ def double(x):
 doubled = list(map(double, numbers))
 assert doubled == [2, 4, 6, 8, 10]
 
-# Map with builtin function
+# Map with lambda calling method
 strings = ["hello", "world"]
-upper_strings = list(map(str.upper, strings))
+upper_strings = list(map(lambda s: s.upper(), strings))
 assert upper_strings == ["HELLO", "WORLD"]
 
 # Map with multiple iterables

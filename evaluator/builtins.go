@@ -1736,6 +1736,13 @@ func mapFunction(ctx context.Context, kwargs map[string]object.Object, args ...o
 			iterables[i] = iter.Elements
 		case *object.Tuple:
 			iterables[i] = iter.Elements
+		case *object.String:
+			// Convert string to list of single-character strings
+			elements := make([]object.Object, len(iter.Value))
+			for j, ch := range iter.Value {
+				elements[j] = &object.String{Value: string(ch)}
+			}
+			iterables[i] = elements
 		case *object.Iterator:
 			// Consume iterator into slice
 			elements := []object.Object{}
@@ -1748,7 +1755,7 @@ func mapFunction(ctx context.Context, kwargs map[string]object.Object, args ...o
 			}
 			iterables[i] = elements
 		default:
-			return errors.NewTypeError("iterable (LIST, TUPLE, ITERATOR)", arg.Type().String())
+			return errors.NewTypeError("iterable (LIST, TUPLE, STRING, ITERATOR)", arg.Type().String())
 		}
 		if minLen == -1 || len(iterables[i]) < minLen {
 			minLen = len(iterables[i])
@@ -1793,6 +1800,11 @@ func filterFunction(ctx context.Context, kwargs map[string]object.Object, args .
 		iterable = iter.Elements
 	case *object.Tuple:
 		iterable = iter.Elements
+	case *object.String:
+		// Convert string to list of single-character strings
+		for _, ch := range iter.Value {
+			iterable = append(iterable, &object.String{Value: string(ch)})
+		}
 	case *object.Iterator:
 		// Consume iterator into slice
 		for {
@@ -1803,7 +1815,7 @@ func filterFunction(ctx context.Context, kwargs map[string]object.Object, args .
 			iterable = append(iterable, val)
 		}
 	default:
-		return errors.NewTypeError("iterable (LIST, TUPLE, ITERATOR)", args[1].Type().String())
+		return errors.NewTypeError("iterable (LIST, TUPLE, STRING, ITERATOR)", args[1].Type().String())
 	}
 
 	// Eagerly evaluate and filter
