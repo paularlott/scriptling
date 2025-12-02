@@ -10,6 +10,10 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
+func RegisterSysLibrary(registrar interface{ RegisterLibrary(string, *object.Library) }) {
+	registrar.RegisterLibrary(SysLibraryName, SysLibrary)
+}
+
 // SysExitCode is used to communicate exit codes from sys.exit()
 type SysExitCode struct {
 	Code int

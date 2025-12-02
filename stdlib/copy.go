@@ -34,7 +34,7 @@ Example:
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			return deepCopy(args[0])
+			return object.DeepCopy(args[0])
 		},
 		HelpText: `deepcopy(obj) - Create a deep copy
 
@@ -87,58 +87,6 @@ func shallowCopy(obj object.Object) object.Object {
 
 	default:
 		// For other types, return the same object (immutable or unsupported)
-		return obj
-	}
-}
-
-// deepCopy creates a deep copy of an object
-// Note: Circular references are not handled and will cause infinite recursion
-func deepCopy(obj object.Object) object.Object {
-	switch v := obj.(type) {
-	case *object.List:
-		newElements := make([]object.Object, len(v.Elements))
-		for i, elem := range v.Elements {
-			newElements[i] = deepCopy(elem)
-		}
-		return &object.List{Elements: newElements}
-
-	case *object.Dict:
-		newPairs := make(map[string]object.DictPair, len(v.Pairs))
-		for k, pair := range v.Pairs {
-			newPairs[k] = object.DictPair{
-				Key:   deepCopy(pair.Key),
-				Value: deepCopy(pair.Value),
-			}
-		}
-		return &object.Dict{Pairs: newPairs}
-
-	case *object.Tuple:
-		newElements := make([]object.Object, len(v.Elements))
-		for i, elem := range v.Elements {
-			newElements[i] = deepCopy(elem)
-		}
-		return &object.Tuple{Elements: newElements}
-
-	case *object.Integer:
-		return object.NewInteger(v.Value)
-
-	case *object.Float:
-		return &object.Float{Value: v.Value}
-
-	case *object.String:
-		return &object.String{Value: v.Value}
-
-	case *object.Boolean:
-		if v.Value {
-			return &object.Boolean{Value: true}
-		}
-		return &object.Boolean{Value: false}
-
-	case *object.Null:
-		return &object.Null{}
-
-	default:
-		// For other types, return the same object
 		return obj
 	}
 }

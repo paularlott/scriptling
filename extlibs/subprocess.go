@@ -11,6 +11,10 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
+func RegisterSubprocessLibrary(registrar interface{ RegisterLibrary(string, *object.Library) }) {
+	registrar.RegisterLibrary(SubprocessLibraryName, SubprocessLibrary)
+}
+
 // CompletedProcess represents the result of a subprocess.run call
 type CompletedProcess struct {
 	Args       []string
