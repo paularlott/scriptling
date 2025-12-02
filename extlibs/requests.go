@@ -159,6 +159,70 @@ func parseRequestOptions(options map[string]object.Object) (int, map[string]stri
 	return timeout, headers, user, pass
 }
 
+// extractRequestArgs extracts URL, optional data, and remaining options from kwargs and args.
+// hasData should be true for POST/PUT/PATCH methods, false for GET/DELETE.
+// Returns (url, data, options, errorOrNil).
+func extractRequestArgs(kwargs map[string]object.Object, args []object.Object, hasData bool) (string, string, map[string]object.Object, object.Object) {
+	var url, data string
+	options := make(map[string]object.Object)
+
+	// 1. Handle kwargs
+	for k, v := range kwargs {
+		if k == "url" {
+			if s, ok := v.AsString(); ok {
+				url = s
+			} else {
+				return "", "", nil, errors.NewTypeError("STRING", v.Type().String())
+			}
+		} else if hasData && k == "data" {
+			if s, ok := v.AsString(); ok {
+				data = s
+			} else {
+				return "", "", nil, errors.NewTypeError("STRING", v.Type().String())
+			}
+		} else {
+			options[k] = v
+		}
+	}
+
+	// 2. Handle positional args
+	argIdx := 0
+	if url == "" && len(args) > argIdx {
+		if s, ok := args[argIdx].AsString(); ok {
+			url = s
+			argIdx++
+		} else {
+			return "", "", nil, errors.NewTypeError("STRING", args[argIdx].Type().String())
+		}
+	}
+
+	if hasData && data == "" && len(args) > argIdx {
+		if s, ok := args[argIdx].AsString(); ok {
+			data = s
+			argIdx++
+		} else if args[argIdx].Type() != object.DICT_OBJ {
+			// Not a string and not a dict (options), error
+			return "", "", nil, errors.NewTypeError("STRING", args[argIdx].Type().String())
+		}
+		// If it's a dict, we'll process it as options below
+	}
+
+	// Check for legacy options dict
+	if len(args) > argIdx {
+		if d, ok := args[argIdx].AsDict(); ok {
+			for k, v := range d {
+				options[k] = v
+			}
+		}
+	}
+
+	if url == "" {
+		return "", "", nil, errors.NewArgumentError(0, 1)
+	}
+
+	return url, data, options, nil
+}
+
 var RequestsLibrary = object.NewLibrary(map[string]*object.Builtin{
 	// Exceptions namespace - returns dict with exception types
 	"exceptions": {
@@ -168,45 +232,10 @@ var RequestsLibrary = object.NewLibrary(map[string]*object.Builtin{
 	},
 	"get": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			var url string
-			options := make(map[string]object.Object)
-
-			// 1. Handle kwargs
-			for k, v := range kwargs {
-				if k == "url" {
-					if s, ok := v.AsString(); ok {
-						url = s
-					} else {
-						return errors.NewTypeError("STRING", v.Type().String())
-					}
-				} else {
-					options[k] = v
-				}
+			url, _, options, err := extractRequestArgs(kwargs, args, false)
+			if err != nil {
+				return err
 			}
-
-			// 2. Handle positional args
-			if len(args) > 0 {
-				if url == "" {
-					if s, ok := args[0].AsString(); ok {
-						url = s
-					} else {
-						return errors.NewTypeError("STRING", args[0].Type().String())
-					}
-				}
-				// Check for legacy options dict
-				if len(args) > 1 {
-					if d, ok := args[1].AsDict(); ok {
-						for k, v := range d {
-							options[k] = v
-						}
-					}
-				}
-			}
-
-			if url == "" {
-				return errors.NewArgumentError(0, 1)
-			}
-
 			timeout, headers, user, pass := parseRequestOptions(options)
 			return httpRequestWithContext(ctx, "GET", url, "", timeout, headers, user, pass)
 		},
@@ -226,72 +255,10 @@ Returns:
 	},
 	"post": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			var url string
-			var data string
-			options := make(map[string]object.Object)
-
-			// 1. Handle kwargs
-			for k, v := range kwargs {
-				if k == "url" {
-					if s, ok := v.AsString(); ok {
-						url = s
-					} else {
-						return errors.NewTypeError("STRING", v.Type().String())
-					}
-				} else if k == "data" {
-					if s, ok := v.AsString(); ok {
-						data = s
-					} else {
-						return errors.NewTypeError("STRING", v.Type().String())
-					}
-				} else {
-					options[k] = v
-				}
+			url, data, options, err := extractRequestArgs(kwargs, args, true)
+			if err != nil {
+				return err
 			}
-
-			// 2. Handle positional args
-			argIdx := 0
-			if url == "" && len(args) > argIdx {
-				if s, ok := args[argIdx].AsString(); ok {
-					url = s
-					argIdx++
-				} else {
-					return errors.NewTypeError("STRING", args[argIdx].Type().String())
-				}
-			}
-
-			if data == "" && len(args) > argIdx {
-				if s, ok := args[argIdx].AsString(); ok {
-					data = s
-					argIdx++
-				} else {
-					// If the second arg is a dict, it might be the legacy options dict and data is skipped?
-					// But original code required data. Let's assume if it's a string it's data.
-					// If it's a dict, and we haven't found data yet, maybe it's options?
-					// But for safety/compatibility with "post(url, data, options)", we expect data.
-					// However, if user does post(url, headers={...}), data is empty.
-					// Let's check type.
-					if args[argIdx].Type() == object.DICT_OBJ {
-						// Probably options, skip data
-					} else {
-						return errors.NewTypeError("STRING", args[argIdx].Type().String())
-					}
-				}
-			}
-
-			// Check for legacy options dict
-			if len(args) > argIdx {
-				if d, ok := args[argIdx].AsDict(); ok {
-					for k, v := range d {
-						options[k] = v
-					}
-				}
-			}
-
-			if url == "" {
-				return errors.NewArgumentError(0, 1)
-			}
-
 			timeout, headers, user, pass := parseRequestOptions(options)
 			return httpRequestWithContext(ctx, "POST", url, data, timeout, headers, user, pass)
 		},
@@ -312,66 +279,10 @@ Returns:
 	},
 	"put": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			var url string
-			var data string
-			options := make(map[string]object.Object)
-
-			// 1. Handle kwargs
-			for k, v := range kwargs {
-				if k == "url" {
-					if s, ok := v.AsString(); ok {
-						url = s
-					} else {
-						return errors.NewTypeError("STRING", v.Type().String())
-					}
-				} else if k == "data" {
-					if s, ok := v.AsString(); ok {
-						data = s
-					} else {
-						return errors.NewTypeError("STRING", v.Type().String())
-					}
-				} else {
-					options[k] = v
-				}
+			url, data, options, err := extractRequestArgs(kwargs, args, true)
+			if err != nil {
+				return err
 			}
-
-			// 2. Handle positional args
-			argIdx := 0
-			if url == "" && len(args) > argIdx {
-				if s, ok := args[argIdx].AsString(); ok {
-					url = s
-					argIdx++
-				} else {
-					return errors.NewTypeError("STRING", args[argIdx].Type().String())
-				}
-			}
-
-			if data == "" && len(args) > argIdx {
-				if s, ok := args[argIdx].AsString(); ok {
-					data = s
-					argIdx++
-				} else {
-					if args[argIdx].Type() == object.DICT_OBJ {
-						// Probably options, skip data
-					} else {
-						return errors.NewTypeError("STRING", args[argIdx].Type().String())
-					}
-				}
-			}
-
-			// Check for legacy options dict
-			if len(args) > argIdx {
-				if d, ok := args[argIdx].AsDict(); ok {
-					for k, v := range d {
-						options[k] = v
-					}
-				}
-			}
-
-			if url == "" {
-				return errors.NewArgumentError(0, 1)
-			}
-
 			timeout, headers, user, pass := parseRequestOptions(options)
 			return httpRequestWithContext(ctx, "PUT", url, data, timeout, headers, user, pass)
 		},
@@ -392,45 +303,10 @@ Returns:
 	},
 	"delete": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			var url string
-			options := make(map[string]object.Object)
-
-			// 1. Handle kwargs
-			for k, v := range kwargs {
-				if k == "url" {
-					if s, ok := v.AsString(); ok {
-						url = s
-					} else {
-						return errors.NewTypeError("STRING", v.Type().String())
-					}
-				} else {
-					options[k] = v
-				}
+			url, _, options, err := extractRequestArgs(kwargs, args, false)
+			if err != nil {
+				return err
 			}
-
-			// 2. Handle positional args
-			if len(args) > 0 {
-				if url == "" {
-					if s, ok := args[0].AsString(); ok {
-						url = s
-					} else {
-						return errors.NewTypeError("STRING", args[0].Type().String())
-					}
-				}
-				// Check for legacy options dict
-				if len(args) > 1 {
-					if d, ok := args[1].AsDict(); ok {
-						for k, v := range d {
-							options[k] = v
-						}
-					}
-				}
-			}
-
-			if url == "" {
-				return errors.NewArgumentError(0, 1)
-			}
-
 			timeout, headers, user, pass := parseRequestOptions(options)
 			return httpRequestWithContext(ctx, "DELETE", url, "", timeout, headers, user, pass)
 		},
@@ -450,66 +326,10 @@ Returns:
 	},
 	"patch": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			var url string
-			var data string
-			options := make(map[string]object.Object)
-
-			// 1. Handle kwargs
-			for k, v := range kwargs {
-				if k == "url" {
-					if s, ok := v.AsString(); ok {
-						url = s
-					} else {
-						return errors.NewTypeError("STRING", v.Type().String())
-					}
-				} else if k == "data" {
-					if s, ok := v.AsString(); ok {
-						data = s
-					} else {
-						return errors.NewTypeError("STRING", v.Type().String())
-					}
-				} else {
-					options[k] = v
-				}
+			url, data, options, err := extractRequestArgs(kwargs, args, true)
+			if err != nil {
+				return err
 			}
-
-			// 2. Handle positional args
-			argIdx := 0
-			if url == "" && len(args) > argIdx {
-				if s, ok := args[argIdx].AsString(); ok {
-					url = s
-					argIdx++
-				} else {
-					return errors.NewTypeError("STRING", args[argIdx].Type().String())
-				}
-			}
-
-			if data == "" && len(args) > argIdx {
-				if s, ok := args[argIdx].AsString(); ok {
-					data = s
-					argIdx++
-				} else {
-					if args[argIdx].Type() == object.DICT_OBJ {
-						// Probably options, skip data
-					} else {
-						return errors.NewTypeError("STRING", args[argIdx].Type().String())
-					}
-				}
-			}
-
-			// Check for legacy options dict
-			if len(args) > argIdx {
-				if d, ok := args[argIdx].AsDict(); ok {
-					for k, v := range d {
-						options[k] = v
-					}
-				}
-			}
-
-			if url == "" {
-				return errors.NewArgumentError(0, 1)
-			}
-
 			timeout, headers, user, pass := parseRequestOptions(options)
 			return httpRequestWithContext(ctx, "PATCH", url, data, timeout, headers, user, pass)
 		},

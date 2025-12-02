@@ -1,43 +1,46 @@
-# REST API Example with Library Syntax (Bracket Notation)
+# REST API Example with Library Syntax
+
+import requests
+import json
 
 # Example 1: Simple GET request with status check
 print("=== GET Request ===")
 options = {"timeout": 10}
-response = http["get"]("https://jsonplaceholder.typicode.com/todos/1", options)
-print("Status: " + str(response["status"]))
-print("Body: " + response["body"])
+response = requests.get("https://jsonplaceholder.typicode.com/todos/1", options)
+print("Status: " + str(response.status_code))
+print("Body: " + response.body)
 
 # Example 2: Parse JSON response
 print("\n=== Parse JSON ===")
-if response["status"] == 200:
-    data = json["parse"](response["body"])
+if response.status_code == 200:
+    data = json.loads(response.body)
     print(data)
     print("Title: " + data["title"])
 
 # Example 3: Create JSON and POST
 print("\n=== POST Request ===")
 new_todo = {"title": "Learn Scriptling", "completed": "false", "userId": "1"}
-json_body = json["stringify"](new_todo)
+json_body = json.dumps(new_todo)
 print("Sending: " + json_body)
 
-post_response = http["post"]("https://jsonplaceholder.typicode.com/todos", json_body, options)
-print("Status: " + str(post_response["status"]))
-if post_response["status"] == 201:
-    created = json["parse"](post_response["body"])
+post_response = requests.post("https://jsonplaceholder.typicode.com/todos", json_body, options)
+print("Status: " + str(post_response.status_code))
+if post_response.status_code == 201:
+    created = json.loads(post_response.body)
     print("Created ID: " + str(created["id"]))
 
 # Example 4: String functions
 print("\n=== String Functions ===")
 text = "hello world"
-print(upper(text))
-print(lower("HELLO WORLD"))
-print(replace(text, "world", "scriptling"))
+print(text.upper())
+print("HELLO WORLD".lower())
+print(text.replace("world", "scriptling"))
 
 # Example 5: Split and Join
 print("\n=== Split and Join ===")
-words = split("one,two,three", ",")
+words = "one,two,three".split(",")
 print(words)
-print(join(words, " - "))
+print(" - ".join(words))
 
 # Example 6: Type conversions
 print("\n=== Type Conversions ===")

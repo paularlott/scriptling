@@ -445,7 +445,8 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 		if idx, ok := args[0].(*object.Integer); ok {
 			i := int(idx.Value)
 			if i < 0 {
-				i = len(list.Elements) + i + 1
+				// Python behavior: negative index inserts at len + i (e.g., -1 inserts before last element)
+				i = len(list.Elements) + i
 				if i < 0 {
 					i = 0
 				}
@@ -453,7 +454,10 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 			if i > len(list.Elements) {
 				i = len(list.Elements)
 			}
-			list.Elements = append(list.Elements[:i], append([]object.Object{args[1]}, list.Elements[i:]...)...)
+			// Optimized insert: avoid intermediate slice allocation
+			list.Elements = append(list.Elements, nil)
+			copy(list.Elements[i+1:], list.Elements[i:])
+			list.Elements[i] = args[1]
 			return NULL
 		}
 		return errors.NewTypeError("INTEGER", args[0].Type().String())
@@ -1425,7 +1429,6 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 	default:
 		return errors.NewError("%s: %s", errors.ErrIdentifierNotFound, method)
 	}
-	return errors.NewError("%s: %s", errors.ErrIdentifierNotFound, method)
 }
 func callSetMethod(ctx context.Context, set *object.Set, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
 	switch method {

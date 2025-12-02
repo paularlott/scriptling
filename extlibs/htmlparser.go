@@ -12,6 +12,9 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
+// attrRegex is compiled once at package init for parsing HTML tag attributes
+var attrRegex = regexp.MustCompile(`(\w+)(?:=(?:"([^"]*)"|'([^']*)'|([^\s>]*)))?`)
+
 // HTMLParserLibrary provides Python-compatible html.parser functionality
 var HTMLParserLibrary = object.NewLibrary(nil, map[string]object.Object{
 	"HTMLParser": &object.Class{
@@ -420,8 +423,7 @@ func parseTag(content string) (string, [][2]string) {
 	tagName := parts[0]
 	attrs := [][2]string{}
 
-	// Parse attributes
-	attrRegex := regexp.MustCompile(`(\w+)(?:=(?:"([^"]*)"|'([^']*)'|([^\s>]*)))?`)
+	// Parse attributes using pre-compiled regex
 	attrPart := content[len(tagName):]
 	matches := attrRegex.FindAllStringSubmatch(attrPart, -1)
 

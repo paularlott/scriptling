@@ -1,9 +1,22 @@
 import math
 
+# Test math.fabs (Python compatible - always returns float)
+assert math.fabs(-42) == 42.0
+assert math.fabs(42) == 42.0
+assert math.fabs(-3.14) == 3.14
+assert math.fabs(3.14) == 3.14
+
+# Test builtins (abs, min, max, round)
+assert abs(-42) == 42
+assert abs(42) == 42
+assert abs(-3.14) == 3.14
+assert min(1, 2, 3) == 1
+assert max(1, 2, 3) == 3
+assert round(3.5) == 4
+assert round(3.2) == 3
+
 # From math_basic
-assert math.abs(-42) == 42
 assert math.pow(2, 8) == 256.0
-assert math.round(3.5) == 4
 assert math.sqrt(16) == 4.0
 
 # From math_advanced
@@ -47,14 +60,8 @@ assert math.exp(1) > 2.71 and math.exp(1) < 2.72
 assert math.sin(0) == 0.0
 assert math.cos(0) == 1.0
 assert math.tan(0) == 0.0
-assert math.min(1, 2, 3) == 1
-assert math.max(1, 2, 3) == 3
-assert math.abs(-5) == 5
-assert math.abs(5) == 5
 assert math.pow(2, 3) == 8.0
 assert math.sqrt(16) == 4.0
-assert math.round(3.7) == 4
-assert math.round(3.2) == 3
 assert math.degrees(math.pi) > 179 and math.degrees(math.pi) < 181
 assert math.radians(180) > 3.14 and math.radians(180) < 3.15
 assert math.gcd(12, 8) == 4
