@@ -9,7 +9,7 @@ options = {
     "timeout": 10,
     "headers": {"Authorization": "Bearer token123", "User-Agent": "Scriptling/1.0", "Accept": "application/json"}
 }
-response = requests.get("https://httpbin.org/headers", options)
+response = requests.get("http://127.0.0.1:9000/headers", options)
 if response.status_code == 200:
     data = json.loads(response.body)
     print("Request headers were sent successfully")
@@ -25,7 +25,7 @@ post_options = {
 payload = {"name": "test", "value": 42}
 body = json.dumps(payload)
 
-response = requests.post("https://httpbin.org/post", body, post_options)
+response = requests.post("http://127.0.0.1:9000/post", body, post_options)
 if response.status_code == 200:
     print("POST with headers successful")
 else:

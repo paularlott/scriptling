@@ -327,14 +327,12 @@ result = data["name"]
 }
 
 func TestHTTPLibrary(t *testing.T) {
-	t.Skip("Skipping HTTP test due to unreliable external service")
-
 	p := New()
 	p.RegisterLibrary(extlibs.RequestsLibraryName, extlibs.RequestsLibrary)
 	_, err := p.Eval(`
 import requests
 options = {"timeout": 10}
-response = requests.get("https://httpbin.org/status/200", options)
+response = requests.get("http://127.0.0.1:9000/status/200", options)
 print("Response:", response)
 status = response.status_code
 `)
