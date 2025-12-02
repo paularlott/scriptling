@@ -1093,6 +1093,14 @@ func evalImportStatement(is *ast.ImportStatement, env *object.Environment) objec
 		return errors.NewError("%s at line %d: %s", errors.ErrImportError, is.Token.Line, err.Error())
 	}
 
+	// Handle alias if present
+	if is.Alias != nil {
+		moduleObj, ok := env.Get(is.Name.Value)
+		if ok {
+			env.Set(is.Alias.Value, moduleObj)
+		}
+	}
+
 	// Import additional libraries if any
 	for _, name := range is.AdditionalNames {
 		if err := importCallback(name.Value); err != nil {

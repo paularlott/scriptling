@@ -289,6 +289,7 @@ func (ps *PassStatement) Line() int            { return ps.Token.Line }
 type ImportStatement struct {
 	Token           token.Token
 	Name            *Identifier   // The full dotted name stored as single identifier (e.g., "urllib.parse")
+	Alias           *Identifier   // Optional alias for 'import X as Y'
 	AdditionalNames []*Identifier // For import lib1, lib2, lib3
 }
 
