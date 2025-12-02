@@ -105,6 +105,7 @@ These libraries are built-in and can be imported.
 
 These libraries are not loaded by default and must be explicitly registered by the host application (e.g., the CLI tool).
 
+- **`threads`**: Asynchronous execution with isolated environments. See [async documentation](libraries/threads.md).
 - **`os`**: Operating system interfaces (filesystem access). Requires security configuration.
 - **`pathlib`**: Object-oriented filesystem paths.
 - **`secrets`**: Cryptographically strong random numbers.

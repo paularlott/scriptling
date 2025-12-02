@@ -52,12 +52,13 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	// Register all standard libraries
 	stdlib.RegisterAll(p)
 
-	// Register external/extended libraries
-	p.RegisterLibrary(extlibs.RequestsLibraryName, extlibs.RequestsLibrary)
-	p.RegisterLibrary(extlibs.SysLibraryName, extlibs.SysLibrary)
-	p.RegisterLibrary(extlibs.SecretsLibraryName, extlibs.SecretsLibrary)
-	p.RegisterLibrary(extlibs.SubprocessLibraryName, extlibs.SubprocessLibrary)
-	p.RegisterLibrary(extlibs.HTMLParserLibraryName, extlibs.HTMLParserLibrary)
+	// Register extended libraries
+	extlibs.RegisterRequestsLibrary(p)
+	extlibs.RegisterSysLibrary(p)
+	extlibs.RegisterSecretsLibrary(p)
+	extlibs.RegisterSubprocessLibrary(p)
+	extlibs.RegisterHTMLParserLibrary(p)
+	extlibs.RegisterThreadsLibrary(p)
 	extlibs.RegisterOSLibrary(p, []string{})
 	extlibs.RegisterPathlibLibrary(p, []string{})
 

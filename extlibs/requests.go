@@ -14,6 +14,10 @@ import (
 	"golang.org/x/net/http2"
 )
 
+func RegisterRequestsLibrary(registrar interface{ RegisterLibrary(string, *object.Library) }) {
+	registrar.RegisterLibrary(RequestsLibraryName, RequestsLibrary)
+}
+
 var httpClient *http.Client
 
 func init() {

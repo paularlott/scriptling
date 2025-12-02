@@ -79,6 +79,15 @@ func callStringMethodWithKeywords(ctx context.Context, obj object.Object, method
 		return callSuperMethod(ctx, obj.(*object.Super), method, args, keywords, env)
 	}
 
+	// Handle Builtin with Attributes (like Promise objects from async library)
+	if obj.Type() == object.BUILTIN_OBJ {
+		if builtin, ok := obj.(*object.Builtin); ok && builtin.Attributes != nil {
+			if attr, exists := builtin.Attributes[method]; exists {
+				return applyFunctionWithContext(ctx, attr, args, keywords, env)
+			}
+		}
+	}
+
 	// Default to string methods if object is a string
 	if obj.Type() == object.STRING_OBJ {
 		return callStringMethod(ctx, obj.(*object.String), method, args, keywords, env)

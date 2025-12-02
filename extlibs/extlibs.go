@@ -10,4 +10,5 @@ const (
 	OSLibraryName         = "os"
 	OSPathLibraryName     = "os.path"
 	PathlibLibraryName    = "pathlib"
+	ThreadsLibraryName    = "threads"
 )

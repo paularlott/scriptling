@@ -47,6 +47,11 @@ func init() {
 		allArgs := append([]object.Object{instance}, args...)
 		return applyFunctionWithContext(ctx, method, allArgs, nil, method.Env)
 	}
+
+	// Set up the function caller for async library
+	extlibs.ApplyFunctionFunc = func(ctx context.Context, fn object.Object, args []object.Object, kwargs map[string]object.Object, env *object.Environment) object.Object {
+		return applyFunctionWithContext(ctx, fn, args, kwargs, env)
+	}
 }
 
 // Eval executes without context (backwards compatible)

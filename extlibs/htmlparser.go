@@ -12,6 +12,10 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
+func RegisterHTMLParserLibrary(registrar interface{ RegisterLibrary(string, *object.Library) }) {
+	registrar.RegisterLibrary(HTMLParserLibraryName, HTMLParserLibrary)
+}
+
 // attrRegex is compiled once at package init for parsing HTML tag attributes
 var attrRegex = regexp.MustCompile(`(\w+)(?:=(?:"([^"]*)"|'([^']*)'|([^\s>]*)))?`)
 

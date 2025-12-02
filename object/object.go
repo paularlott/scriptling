@@ -564,6 +564,44 @@ func (e *Environment) GetAvailableLibrariesCallback() func() []LibraryInfo {
 	return nil
 }
 
+// Clone creates a deep copy of the environment for thread safety
+func (e *Environment) Clone() *Environment {
+	cloned := &Environment{
+		store:     make(map[string]Object, len(e.store)),
+		globals:   make(map[string]bool, len(e.globals)),
+		nonlocals: make(map[string]bool, len(e.nonlocals)),
+	}
+
+	// Deep copy store, but avoid circular references with functions
+	for k, v := range e.store {
+		// Don't deep copy functions - they reference environments which would cause infinite recursion
+		// Functions are safe to share across goroutines
+		switch v.(type) {
+		case *Function, *LambdaFunction, *Builtin, *Class, *Library:
+			cloned.store[k] = v // Share these types
+		default:
+			cloned.store[k] = DeepCopy(v) // Deep copy data
+		}
+	}
+
+	// Copy globals and nonlocals maps
+	for k, v := range e.globals {
+		cloned.globals[k] = v
+	}
+	for k, v := range e.nonlocals {
+		cloned.nonlocals[k] = v
+	}
+
+	// Copy callbacks
+	cloned.importCallback = e.importCallback
+	cloned.availableLibrariesCallback = e.availableLibrariesCallback
+
+	// Don't copy outer - this is a new root environment
+	// Don't copy output - each thread gets its own
+
+	return cloned
+}
+
 type List struct {
 	Elements []Object
 }
