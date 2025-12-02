@@ -34,7 +34,7 @@ Example:
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			return deepCopy(args[0], make(map[uintptr]object.Object))
+			return deepCopy(args[0])
 		},
 		HelpText: `deepcopy(obj) - Create a deep copy
 
@@ -92,13 +92,13 @@ func shallowCopy(obj object.Object) object.Object {
 }
 
 // deepCopy creates a deep copy of an object
-// The memo map is used to handle circular references
-func deepCopy(obj object.Object, memo map[uintptr]object.Object) object.Object {
+// Note: Circular references are not handled and will cause infinite recursion
+func deepCopy(obj object.Object) object.Object {
 	switch v := obj.(type) {
 	case *object.List:
 		newElements := make([]object.Object, len(v.Elements))
 		for i, elem := range v.Elements {
-			newElements[i] = deepCopy(elem, memo)
+			newElements[i] = deepCopy(elem)
 		}
 		return &object.List{Elements: newElements}
 
@@ -106,8 +106,8 @@ func deepCopy(obj object.Object, memo map[uintptr]object.Object) object.Object {
 		newPairs := make(map[string]object.DictPair, len(v.Pairs))
 		for k, pair := range v.Pairs {
 			newPairs[k] = object.DictPair{
-				Key:   deepCopy(pair.Key, memo),
-				Value: deepCopy(pair.Value, memo),
+				Key:   deepCopy(pair.Key),
+				Value: deepCopy(pair.Value),
 			}
 		}
 		return &object.Dict{Pairs: newPairs}
@@ -115,7 +115,7 @@ func deepCopy(obj object.Object, memo map[uintptr]object.Object) object.Object {
 	case *object.Tuple:
 		newElements := make([]object.Object, len(v.Elements))
 		for i, elem := range v.Elements {
-			newElements[i] = deepCopy(elem, memo)
+			newElements[i] = deepCopy(elem)
 		}
 		return &object.Tuple{Elements: newElements}
 

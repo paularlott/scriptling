@@ -4,3 +4,4 @@
 /scriptling
 /scriptling-cli/scriptling-cli
 /examples/mcp/scriptling-mcp-server
+__pycache__/

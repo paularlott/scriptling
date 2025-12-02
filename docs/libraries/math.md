@@ -35,20 +35,23 @@ import math
 result = math.pow(2, 8)  # 256.0
 ```
 
-### math.abs(x)
+### math.fabs(x)
 
-Returns the absolute value of x.
+Returns the absolute value of x as a float.
 
 **Parameters:**
-- `x`: Number
+- `x`: Number (integer or float)
 
-**Returns:** Number (same type as input)
+**Returns:** Float (always returns floating-point)
 
 **Example:**
 ```python
 import math
-result = math.abs(-5)  # 5
+result = math.fabs(-5)    # 5.0
+result = math.fabs(-3.14) # 3.14
 ```
+
+> **Note:** For absolute value that preserves integer type, use the builtin `abs()` function instead.
 
 ### math.floor(x)
 
@@ -80,50 +83,8 @@ import math
 result = math.ceil(3.2)  # 4
 ```
 
-### math.round(x)
-
-Rounds x to the nearest integer.
-
-**Parameters:**
-- `x`: Number
-
-**Returns:** Integer
-
-**Example:**
-```python
-import math
-result = math.round(3.5)  # 4
-```
-
-### math.min(a, b, ...)
-
-Returns the minimum value from the arguments.
-
-**Parameters:**
-- `a, b, ...`: Numbers (variable arguments)
-
-**Returns:** Number
-
-**Example:**
-```python
-import math
-result = math.min(3, 1, 4, 1, 5)  # 1
-```
-
-### math.max(a, b, ...)
-
-Returns the maximum value from the arguments.
-
-**Parameters:**
-- `a, b, ...`: Numbers (variable arguments)
-
-**Returns:** Number
-
-**Example:**
-```python
-import math
-result = math.max(3, 1, 4, 1, 5)  # 5
-```
+> **Note:** For rounding to nearest integer, use the builtin `round()` function.
+> For min/max values, use the builtin `min()` and `max()` functions.
 
 ### math.sin(x)
 
@@ -321,16 +282,19 @@ import math
 # Basic operations
 result = math.sqrt(16)      # 4.0
 power = math.pow(2, 8)      # 256.0
-absolute = math.abs(-5)     # 5
+absolute = math.fabs(-5)    # 5.0 (float)
+
+# For integer-preserving abs, use builtin:
+int_abs = abs(-5)           # 5
 
 # Rounding
 floor_val = math.floor(3.7) # 3
 ceil_val = math.ceil(3.2)   # 4
-round_val = math.round(3.5) # 4
+round_val = round(3.5)      # 4 (use builtin round)
 
-# Min/Max
-minimum = math.min(3, 1, 4, 1, 5)  # 1
-maximum = math.max(3, 1, 4, 1, 5)  # 5
+# Min/Max (use builtins)
+minimum = min(3, 1, 4, 1, 5)  # 1
+maximum = max(3, 1, 4, 1, 5)  # 5
 
 # Trigonometric functions
 sin_val = math.sin(0)       # 0.0

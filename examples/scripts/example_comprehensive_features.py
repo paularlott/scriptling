@@ -14,7 +14,7 @@ print("Expected: [4, 16, 36, 64, 100]\n")
 # Test 2: Dictionary operations with sum()
 print("Test 2: Dictionary operations with sum()")
 student_grades = {"Alice": 85, "Bob": 92, "Charlie": 78}
-grade_values = values(student_grades)
+grade_values = list(student_grades.values())
 average = sum(grade_values) / len(student_grades)
 print("Grades:", grade_values)
 print("Average:", average)
@@ -23,7 +23,7 @@ print("Expected: 85.0\n")
 # Test 3: sorted() with key function
 print("Test 3: sorted() with key function")
 words = ["banana", "pie", "Washington", "car"]
-sorted_words = sorted(words, len)
+sorted_words = sorted(words, key=len)
 print("Words sorted by length:", sorted_words)
 print("Expected: ['pie', 'car', 'banana', 'Washington']\n")
 

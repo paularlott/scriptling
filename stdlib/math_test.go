@@ -36,17 +36,26 @@ func TestMathPow(t *testing.T) {
 	}
 }
 
-func TestMathAbs(t *testing.T) {
+func TestMathFabs(t *testing.T) {
 	lib := MathLibrary
-	abs := lib.Functions()["abs"]
+	fabs := lib.Functions()["fabs"]
 
-	result := abs.Fn(context.Background(), nil, &object.Integer{Value: -5})
-	if i, ok := result.(*object.Integer); ok {
-		if i.Value != 5 {
-			t.Errorf("abs(-5) = %v, want 5", i.Value)
+	result := fabs.Fn(context.Background(), nil, &object.Integer{Value: -5})
+	if f, ok := result.(*object.Float); ok {
+		if f.Value != 5.0 {
+			t.Errorf("fabs(-5) = %v, want 5.0", f.Value)
 		}
 	} else {
-		t.Errorf("abs() returned %T, want Integer", result)
+		t.Errorf("fabs() returned %T, want Float", result)
+	}
+
+	result = fabs.Fn(context.Background(), nil, &object.Float{Value: -3.14})
+	if f, ok := result.(*object.Float); ok {
+		if f.Value != 3.14 {
+			t.Errorf("fabs(-3.14) = %v, want 3.14", f.Value)
+		}
+	} else {
+		t.Errorf("fabs() returned %T, want Float", result)
 	}
 }
 
@@ -75,48 +84,6 @@ func TestMathCeil(t *testing.T) {
 		}
 	} else {
 		t.Errorf("ceil() returned %T, want Integer", result)
-	}
-}
-
-func TestMathRound(t *testing.T) {
-	lib := MathLibrary
-	round := lib.Functions()["round"]
-
-	result := round.Fn(context.Background(), nil, &object.Float{Value: 3.5})
-	if i, ok := result.(*object.Integer); ok {
-		if i.Value != 4 {
-			t.Errorf("round(3.5) = %v, want 4", i.Value)
-		}
-	} else {
-		t.Errorf("round() returned %T, want Integer", result)
-	}
-}
-
-func TestMathMin(t *testing.T) {
-	lib := MathLibrary
-	min := lib.Functions()["min"]
-
-	result := min.Fn(context.Background(), nil, &object.Integer{Value: 3}, &object.Integer{Value: 1})
-	if i, ok := result.(*object.Integer); ok {
-		if i.Value != 1 {
-			t.Errorf("min(3, 1, 2) = %v, want 1", i.Value)
-		}
-	} else {
-		t.Errorf("min() returned %T, want Integer", result)
-	}
-}
-
-func TestMathMax(t *testing.T) {
-	lib := MathLibrary
-	max := lib.Functions()["max"]
-
-	result := max.Fn(context.Background(), nil, &object.Integer{Value: 3}, &object.Integer{Value: 1})
-	if i, ok := result.(*object.Integer); ok {
-		if i.Value != 3 {
-			t.Errorf("max(3, 1, 2) = %v, want 3", i.Value)
-		}
-	} else {
-		t.Errorf("max() returned %T, want Integer", result)
 	}
 }
 

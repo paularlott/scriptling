@@ -31,7 +31,7 @@ result = sorted([5, 2, 8, 1, 9, 3], reverse=True)
 assert result == [9, 8, 5, 3, 2, 1]
 
 # Test sorted with key
-result = sorted(["banana", "pie", "apple"], len)
+result = sorted(["banana", "pie", "apple"], key=len)
 assert result == ["pie", "apple", "banana"]
 
 # Test string sort

@@ -13,7 +13,50 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
+// Forward declarations for complex builtins
+// These are defined after the builtins map for better organization
+var (
+	mapFunction    func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object
+	filterFunction func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object
+	helpFunction   func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object
+)
+
 var builtins = map[string]*object.Builtin{
+	"help": {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			return helpFunction(ctx, kwargs, args...)
+		},
+		HelpText: `help([object]) - Display help information
+
+  With no arguments: Show general help
+  help("modules"): List all available libraries
+  help("builtins"): List all builtin functions
+  help("operators"): List all operators
+  help(function): Show help for a function object
+  help("function_name"): Show help for a builtin function
+  help("library.function"): Show help for a library function
+  help("library_name"): List functions in a library`,
+	},
+	"map": {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			return mapFunction(ctx, kwargs, args...)
+		},
+		HelpText: `map(function, iterable, ...) - Apply function to every item
+
+Returns an iterator of results from applying function to each item.
+With multiple iterables, function must take that many arguments.
+Use list(map(...)) to get a list.`,
+	},
+	"filter": {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			return filterFunction(ctx, kwargs, args...)
+		},
+		HelpText: `filter(function, iterable) - Filter elements by function
+
+Returns an iterator of elements for which function returns true.
+If function is None, removes falsy elements.
+Use list(filter(...)) to get a list.`,
+	},
 	"print": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 			env := getEnvFromContext(ctx)
@@ -64,7 +107,7 @@ Examples:
 			}
 			switch arg := args[0].(type) {
 			case *object.String:
-				return object.NewInteger(int64(len(arg.Value)))
+				return object.NewInteger(int64(len([]rune(arg.Value))))
 			case *object.List:
 				return object.NewInteger(int64(len(arg.Elements)))
 			case *object.Dict:
@@ -235,13 +278,20 @@ Supports integers and floats, returns appropriate type.`,
 				return errors.NewTypeError("LIST or TUPLE", args[0].Type().String())
 			}
 
-			// Check for key function
+			// Check for key function - support both positional and keyword argument
 			var keyFunc *object.Builtin
 			if len(args) == 2 {
 				var ok bool
 				keyFunc, ok = args[1].(*object.Builtin)
 				if !ok {
 					return errors.NewError("sorted() key parameter must be a builtin function")
+				}
+			} else if kwargs != nil {
+				if keyArg, ok := kwargs["key"]; ok {
+					keyFunc, ok = keyArg.(*object.Builtin)
+					if !ok {
+						return errors.NewError("sorted() key parameter must be a builtin function")
+					}
 				}
 			}
 
@@ -496,59 +546,6 @@ Default start is 0. Use list(enumerate(...)) to get a list.`,
 Returns an iterator of tuples, where the i-th tuple contains the i-th element from each of the argument sequences or iterables.
 The iterator stops when the shortest input iterable is exhausted.
 Use list(zip(...)) to get a list.`,
-	},
-	"map": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			if len(args) < 2 {
-				return errors.NewError("map() requires at least 2 arguments")
-			}
-
-			// First arg must be callable or None
-			fn := args[0]
-			switch fn.(type) {
-			case *object.Function, *object.Builtin, *object.LambdaFunction, *object.Null:
-				// Valid
-			default:
-				return errors.NewTypeError("callable or None", args[0].Type().String())
-			}
-
-			// For single iterable
-			if len(args) == 2 {
-				return object.NewMapIterator(ctx, fn, args[1])
-			}
-
-			// Multiple iterables - zip them first
-			zipped := object.NewZipIterator(args[1:])
-			return object.NewMapIterator(ctx, fn, zipped)
-		},
-		HelpText: `map(function, iterable, ...) - Apply function to every item
-
-Returns an iterator that applies function to every item of iterable.
-If additional iterable arguments are passed, function must take that many arguments.
-Use list(map(...)) to get a list.`,
-	},
-	"filter": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
-			}
-
-			// First arg can be None or callable
-			fn := args[0]
-			switch fn.(type) {
-			case *object.Function, *object.Builtin, *object.LambdaFunction, *object.Null:
-				// Valid
-			default:
-				return errors.NewTypeError("callable or None", args[0].Type().String())
-			}
-
-			return object.NewFilterIterator(ctx, fn, args[1])
-		},
-		HelpText: `filter(function, iterable) - Filter items by function
-
-Returns an iterator yielding items for which function(item) is true.
-If function is None, return items that are truthy.
-Use list(filter(...)) to get a list.`,
 	},
 	"super": {
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
@@ -1073,78 +1070,14 @@ Use list(reversed(...)) to get a list.`,
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			switch iter := args[0].(type) {
-			case *object.List:
-				// Return a copy
-				elements := make([]object.Object, len(iter.Elements))
-				copy(elements, iter.Elements)
-				return &object.List{Elements: elements}
-			case *object.Tuple:
-				elements := make([]object.Object, len(iter.Elements))
-				copy(elements, iter.Elements)
-				return &object.List{Elements: elements}
-			case *object.String:
-				elements := make([]object.Object, 0, len(iter.Value))
-				for _, ch := range iter.Value {
-					elements = append(elements, &object.String{Value: string(ch)})
-				}
-				return &object.List{Elements: elements}
-			case *object.Dict:
-				elements := make([]object.Object, 0, len(iter.Pairs))
-				for _, pair := range iter.Pairs {
-					elements = append(elements, pair.Key)
-				}
-				return &object.List{Elements: elements}
-			case *object.Iterator:
-				// Consume iterator into a list
-				elements := make([]object.Object, 0)
-				for {
-					val, hasNext := iter.Next()
-					if !hasNext {
-						break
-					}
-					elements = append(elements, val)
-				}
-				return &object.List{Elements: elements}
-			case *object.DictKeys:
-				iterator := iter.CreateIterator()
-				elements := make([]object.Object, 0)
-				for {
-					val, hasNext := iterator.Next()
-					if !hasNext {
-						break
-					}
-					elements = append(elements, val)
-				}
-				return &object.List{Elements: elements}
-			case *object.DictValues:
-				iterator := iter.CreateIterator()
-				elements := make([]object.Object, 0)
-				for {
-					val, hasNext := iterator.Next()
-					if !hasNext {
-						break
-					}
-					elements = append(elements, val)
-				}
-				return &object.List{Elements: elements}
-			case *object.DictItems:
-				iterator := iter.CreateIterator()
-				elements := make([]object.Object, 0)
-				for {
-					val, hasNext := iterator.Next()
-					if !hasNext {
-						break
-					}
-					elements = append(elements, val)
-				}
-				return &object.List{Elements: elements}
-			case *object.Set:
-				elements, _ := iter.AsList()
-				return &object.List{Elements: elements}
-			default:
+			elements, ok := object.IterableToSlice(args[0])
+			if !ok {
 				return errors.NewTypeError("iterable", args[0].Type().String())
 			}
+			// Make a copy to avoid modifying the original
+			result := make([]object.Object, len(elements))
+			copy(result, elements)
+			return &object.List{Elements: result}
 		},
 		HelpText: `list([iterable]) - Create a list from an iterable
 
@@ -1209,68 +1142,18 @@ Keyword arguments are added to the dict.`,
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			switch iter := args[0].(type) {
-			case *object.Tuple:
-				return iter
-			case *object.List:
-				elements := make([]object.Object, len(iter.Elements))
-				copy(elements, iter.Elements)
-				return &object.Tuple{Elements: elements}
-			case *object.String:
-				elements := make([]object.Object, 0, len(iter.Value))
-				for _, ch := range iter.Value {
-					elements = append(elements, &object.String{Value: string(ch)})
-				}
-				return &object.Tuple{Elements: elements}
-			case *object.Iterator:
-				elements := make([]object.Object, 0)
-				for {
-					val, hasNext := iter.Next()
-					if !hasNext {
-						break
-					}
-					elements = append(elements, val)
-				}
-				return &object.Tuple{Elements: elements}
-			case *object.DictKeys:
-				iterator := iter.CreateIterator()
-				elements := make([]object.Object, 0)
-				for {
-					val, hasNext := iterator.Next()
-					if !hasNext {
-						break
-					}
-					elements = append(elements, val)
-				}
-				return &object.Tuple{Elements: elements}
-			case *object.DictValues:
-				iterator := iter.CreateIterator()
-				elements := make([]object.Object, 0)
-				for {
-					val, hasNext := iterator.Next()
-					if !hasNext {
-						break
-					}
-					elements = append(elements, val)
-				}
-				return &object.Tuple{Elements: elements}
-			case *object.DictItems:
-				iterator := iter.CreateIterator()
-				elements := make([]object.Object, 0)
-				for {
-					val, hasNext := iterator.Next()
-					if !hasNext {
-						break
-					}
-					elements = append(elements, val)
-				}
-				return &object.Tuple{Elements: elements}
-			case *object.Set:
-				elements, _ := iter.AsList()
-				return &object.Tuple{Elements: elements}
-			default:
+			// Special case: tuple returns itself (no copy needed for immutable)
+			if t, ok := args[0].(*object.Tuple); ok {
+				return t
+			}
+			elements, ok := object.IterableToSlice(args[0])
+			if !ok {
 				return errors.NewTypeError("iterable", args[0].Type().String())
 			}
+			// Make a copy for the tuple
+			result := make([]object.Object, len(elements))
+			copy(result, elements)
+			return &object.Tuple{Elements: result}
 		},
 		HelpText: `tuple([iterable]) - Create a tuple from an iterable
 
@@ -1286,56 +1169,14 @@ Otherwise, returns a tuple containing the items of the iterable.`,
 				return errors.NewArgumentError(len(args), 1)
 			}
 
+			// Special case: set returns a copy
+			if s, ok := args[0].(*object.Set); ok {
+				return s.Copy()
+			}
+
 			// Get elements from iterable
-			var elements []object.Object
-			switch iter := args[0].(type) {
-			case *object.List:
-				elements = iter.Elements
-			case *object.Tuple:
-				elements = iter.Elements
-			case *object.String:
-				for _, ch := range iter.Value {
-					elements = append(elements, &object.String{Value: string(ch)})
-				}
-			case *object.Iterator:
-				for {
-					val, hasNext := iter.Next()
-					if !hasNext {
-						break
-					}
-					elements = append(elements, val)
-				}
-			case *object.DictKeys:
-				iterator := iter.CreateIterator()
-				for {
-					val, hasNext := iterator.Next()
-					if !hasNext {
-						break
-					}
-					elements = append(elements, val)
-				}
-			case *object.DictValues:
-				iterator := iter.CreateIterator()
-				for {
-					val, hasNext := iterator.Next()
-					if !hasNext {
-						break
-					}
-					elements = append(elements, val)
-				}
-			case *object.DictItems:
-				iterator := iter.CreateIterator()
-				for {
-					val, hasNext := iterator.Next()
-					if !hasNext {
-						break
-					}
-					elements = append(elements, val)
-				}
-			case *object.Set:
-				// Copy set
-				return iter.Copy()
-			default:
+			elements, ok := object.IterableToSlice(args[0])
+			if !ok {
 				return errors.NewTypeError("iterable", args[0].Type().String())
 			}
 
@@ -1690,39 +1531,15 @@ func compareObjects(a, b object.Object) int {
 	return 0
 }
 
+// Initialize the complex builtin functions
+// These are defined as variable assignments to allow forward declaration in the builtins map
 func init() {
-	builtins["help"] = &object.Builtin{
-		Fn: helpFunction,
-		HelpText: `help([object]) - Display help information
-
-  With no arguments: Show general help
-  help("modules"): List all available libraries
-  help("builtins"): List all builtin functions
-  help("operators"): List all operators
-  help(function): Show help for a function object
-  help("function_name"): Show help for a builtin function
-  help("library.function"): Show help for a library function
-  help("library_name"): List functions in a library`,
-	}
-	builtins["map"] = &object.Builtin{
-		Fn: mapFunction,
-		HelpText: `map(function, iterable, ...) - Apply function to every item
-
-Returns an iterator of results from applying function to each item.
-With multiple iterables, function must take that many arguments.
-Use list(map(...)) to get a list.`,
-	}
-	builtins["filter"] = &object.Builtin{
-		Fn: filterFunction,
-		HelpText: `filter(function, iterable) - Filter elements by function
-
-Returns an iterator of elements for which function returns true.
-If function is None, removes falsy elements.
-Use list(filter(...)) to get a list.`,
-	}
+	mapFunction = mapFunctionImpl
+	filterFunction = filterFunctionImpl
+	helpFunction = helpFunctionImpl
 }
 
-func mapFunction(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+func mapFunctionImpl(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 	if len(args) < 2 {
 		return errors.NewError("map() requires at least 2 arguments")
 	}
@@ -1731,32 +1548,11 @@ func mapFunction(ctx context.Context, kwargs map[string]object.Object, args ...o
 	iterables := make([][]object.Object, len(args)-1)
 	minLen := -1
 	for i, arg := range args[1:] {
-		switch iter := arg.(type) {
-		case *object.List:
-			iterables[i] = iter.Elements
-		case *object.Tuple:
-			iterables[i] = iter.Elements
-		case *object.String:
-			// Convert string to list of single-character strings
-			elements := make([]object.Object, len(iter.Value))
-			for j, ch := range iter.Value {
-				elements[j] = &object.String{Value: string(ch)}
-			}
-			iterables[i] = elements
-		case *object.Iterator:
-			// Consume iterator into slice
-			elements := []object.Object{}
-			for {
-				val, hasNext := iter.Next()
-				if !hasNext {
-					break
-				}
-				elements = append(elements, val)
-			}
-			iterables[i] = elements
-		default:
+		elements, ok := object.IterableToSlice(arg)
+		if !ok {
 			return errors.NewTypeError("iterable (LIST, TUPLE, STRING, ITERATOR)", arg.Type().String())
 		}
+		iterables[i] = elements
 		if minLen == -1 || len(iterables[i]) < minLen {
 			minLen = len(iterables[i])
 		}
@@ -1789,32 +1585,13 @@ func mapFunction(ctx context.Context, kwargs map[string]object.Object, args ...o
 	})
 }
 
-func filterFunction(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+func filterFunctionImpl(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 	if len(args) != 2 {
 		return errors.NewArgumentError(len(args), 2)
 	}
 	fn := args[0]
-	var iterable []object.Object
-	switch iter := args[1].(type) {
-	case *object.List:
-		iterable = iter.Elements
-	case *object.Tuple:
-		iterable = iter.Elements
-	case *object.String:
-		// Convert string to list of single-character strings
-		for _, ch := range iter.Value {
-			iterable = append(iterable, &object.String{Value: string(ch)})
-		}
-	case *object.Iterator:
-		// Consume iterator into slice
-		for {
-			val, hasNext := iter.Next()
-			if !hasNext {
-				break
-			}
-			iterable = append(iterable, val)
-		}
-	default:
+	iterable, ok := object.IterableToSlice(args[1])
+	if !ok {
 		return errors.NewTypeError("iterable (LIST, TUPLE, STRING, ITERATOR)", args[1].Type().String())
 	}
 
@@ -1850,7 +1627,7 @@ func filterFunction(ctx context.Context, kwargs map[string]object.Object, args .
 	})
 }
 
-func helpFunction(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+func helpFunctionImpl(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 	env := getEnvFromContext(ctx)
 	writer := env.GetWriter()
 

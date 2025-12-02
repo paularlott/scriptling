@@ -843,15 +843,26 @@ Returns a string with all special regex characters escaped.`,
 			}
 
 			// Check if the entire string matches
-			loc := re.FindStringIndex(text)
-			if loc == nil || loc[0] != 0 || loc[1] != len(text) {
-				return &object.Boolean{Value: false}
+			match := re.FindStringSubmatchIndex(text)
+			if match == nil || match[0] != 0 || match[1] != len(text) {
+				return &object.Null{}
 			}
-			return &object.Boolean{Value: true}
+
+			// Build groups from submatch indices (same as match/search)
+			groups := make([]string, 0)
+			for i := 0; i < len(match); i += 2 {
+				if match[i] >= 0 && match[i+1] >= 0 {
+					groups = append(groups, text[match[i]:match[i+1]])
+				} else {
+					groups = append(groups, "")
+				}
+			}
+
+			return createMatchInstance(groups, match[0], match[1])
 		},
 		HelpText: `fullmatch(pattern, string, flags=0) - Match entire string
 
-Returns true if the regex pattern matches the entire string.
+Returns a Match object if the regex pattern matches the entire string, or None if no match.
 
 Flags:
   re.IGNORECASE or re.I - Case-insensitive matching

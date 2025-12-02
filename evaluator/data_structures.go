@@ -2,6 +2,7 @@ package evaluator
 
 import (
 	"context"
+	"strings"
 
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/errors"
@@ -119,8 +120,9 @@ func evalDictIndexExpression(dict, index object.Object) object.Object {
 
 func evalStringIndexExpression(str, index object.Object) object.Object {
 	strObject := str.(*object.String)
+	runes := []rune(strObject.Value)
 	idx := index.(*object.Integer).Value
-	length := int64(len(strObject.Value))
+	length := int64(len(runes))
 
 	// Handle negative indices
 	if idx < 0 {
@@ -131,7 +133,7 @@ func evalStringIndexExpression(str, index object.Object) object.Object {
 		return NULL
 	}
 
-	return &object.String{Value: string(strObject.Value[idx])}
+	return &object.String{Value: string(runes[idx])}
 }
 
 func evalInstanceIndexExpression(instance, index object.Object) object.Object {
@@ -324,7 +326,8 @@ func sliceList(elements []object.Object, start, end, step int64, hasStart, hasEn
 }
 
 func sliceString(str string, start, end, step int64, hasStart, hasEnd, hasStep bool) string {
-	length := int64(len(str))
+	runes := []rune(str)
+	length := int64(len(runes))
 
 	// Handle negative step (reverse iteration)
 	if step < 0 {
@@ -350,13 +353,13 @@ func sliceString(str string, start, end, step int64, hasStart, hasEnd, hasStep b
 			end = length - 1
 		}
 
-		result := ""
+		var builder strings.Builder
 		for i := start; i > end; i += step {
 			if i >= 0 && i < length {
-				result += string(str[i])
+				builder.WriteRune(runes[i])
 			}
 		}
-		return result
+		return builder.String()
 	}
 
 	// Positive step (forward iteration)
@@ -390,13 +393,13 @@ func sliceString(str string, start, end, step int64, hasStart, hasEnd, hasStep b
 
 	// If step is 1, use simple slicing
 	if step == 1 {
-		return str[start:end]
+		return string(runes[start:end])
 	}
 
 	// Step > 1
-	result := ""
+	var builder strings.Builder
 	for i := start; i < end; i += step {
-		result += string(str[i])
+		builder.WriteRune(runes[i])
 	}
-	return result
+	return builder.String()
 }
