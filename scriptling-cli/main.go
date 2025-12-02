@@ -27,6 +27,7 @@ func main() {
 				Aliases: []string{"i"},
 			},
 		},
+		MaxArgs: cli.UnlimitedArgs,
 		Arguments: []cli.Argument{
 			&cli.StringArg{
 				Name:     "file",
