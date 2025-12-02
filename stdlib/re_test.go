@@ -317,34 +317,33 @@ func TestRegexFullmatch(t *testing.T) {
 	lib := ReLibrary
 	fullmatch := lib.Functions()["fullmatch"]
 
-	// Test full match
+	// Test full match - should return Match object
 	result := fullmatch.Fn(context.Background(), nil, &object.String{Value: "[0-9]+"}, &object.String{Value: "123"})
-	if b, ok := result.(*object.Boolean); ok {
-		if !b.Value {
-			t.Errorf("fullmatch('[0-9]+', '123') should return true")
-		}
-	} else {
-		t.Errorf("fullmatch() returned %T, want Boolean", result)
+	if _, ok := result.(*object.Instance); !ok {
+		t.Errorf("fullmatch('[0-9]+', '123') should return Match object, got %T", result)
 	}
 
-	// Test partial match
+	// Test partial match - should return Null
 	result = fullmatch.Fn(context.Background(), nil, &object.String{Value: "[0-9]+"}, &object.String{Value: "123abc"})
-	if b, ok := result.(*object.Boolean); ok {
-		if b.Value {
-			t.Errorf("fullmatch('[0-9]+', '123abc') should return false")
-		}
-	} else {
-		t.Errorf("fullmatch() returned %T, want Boolean", result)
+	if _, ok := result.(*object.Null); !ok {
+		t.Errorf("fullmatch('[0-9]+', '123abc') should return Null, got %T", result)
 	}
 
-	// Test no match
+	// Test no match - should return Null
 	result = fullmatch.Fn(context.Background(), nil, &object.String{Value: "[0-9]+"}, &object.String{Value: "abc"})
-	if b, ok := result.(*object.Boolean); ok {
-		if b.Value {
-			t.Errorf("fullmatch('[0-9]+', 'abc') should return false")
+	if _, ok := result.(*object.Null); !ok {
+		t.Errorf("fullmatch('[0-9]+', 'abc') should return Null, got %T", result)
+	}
+
+	// Test with groups - should return Match with groups
+	result = fullmatch.Fn(context.Background(), nil, &object.String{Value: "(\\d+)-(\\d+)"}, &object.String{Value: "123-456"})
+	if match, ok := result.(*object.Instance); ok {
+		groups := match.Fields["groups"].(*object.List)
+		if len(groups.Elements) != 3 {
+			t.Errorf("fullmatch groups should have 3 elements (full match + 2 groups), got %d", len(groups.Elements))
 		}
 	} else {
-		t.Errorf("fullmatch() returned %T, want Boolean", result)
+		t.Errorf("fullmatch('(\\\\d+)-(\\\\d+)', '123-456') should return Match, got %T", result)
 	}
 }
 

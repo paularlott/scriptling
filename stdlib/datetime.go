@@ -2,6 +2,7 @@ package stdlib
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/paularlott/scriptling/errors"
@@ -291,22 +292,25 @@ Use with timestamps:
 	},
 }, nil, "Date and time manipulation library")
 
-// Helper function to convert Python datetime format codes to Go format
+// pythonToGoReplacer converts Python datetime format codes to Go format in a single pass
+var pythonToGoReplacer = strings.NewReplacer(
+	"%Y", "2006",
+	"%m", "01",
+	"%d", "02",
+	"%H", "15",
+	"%I", "03", // 12-hour format
+	"%M", "04",
+	"%S", "05",
+	"%A", "Monday",
+	"%a", "Mon",
+	"%B", "January",
+	"%b", "Jan",
+	"%p", "PM",
+	"%Z", "MST",
+	"%z", "-0700",
+)
+
+// pythonToGoDateFormat converts Python datetime format codes to Go format
 func pythonToGoDateFormat(pyFormat string) string {
-	goFormat := pyFormat
-	goFormat = replaceAll(goFormat, "%Y", "2006")
-	goFormat = replaceAll(goFormat, "%m", "01")
-	goFormat = replaceAll(goFormat, "%d", "02")
-	goFormat = replaceAll(goFormat, "%H", "15")
-	goFormat = replaceAll(goFormat, "%I", "03") // 12-hour format
-	goFormat = replaceAll(goFormat, "%M", "04")
-	goFormat = replaceAll(goFormat, "%S", "05")
-	goFormat = replaceAll(goFormat, "%A", "Monday")
-	goFormat = replaceAll(goFormat, "%a", "Mon")
-	goFormat = replaceAll(goFormat, "%B", "January")
-	goFormat = replaceAll(goFormat, "%b", "Jan")
-	goFormat = replaceAll(goFormat, "%p", "PM")
-	goFormat = replaceAll(goFormat, "%Z", "MST")
-	goFormat = replaceAll(goFormat, "%z", "-0700")
-	return goFormat
+	return pythonToGoReplacer.Replace(pyFormat)
 }

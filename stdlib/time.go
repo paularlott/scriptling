@@ -2,6 +2,7 @@ package stdlib
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/paularlott/scriptling/errors"
@@ -300,30 +301,16 @@ func timeToTuple(t time.Time, utc bool) *object.List {
 
 func pythonToGoFormat(pyFormat string) string {
 	goFormat := pyFormat
-	goFormat = replaceAll(goFormat, "%Y", "2006")
-	goFormat = replaceAll(goFormat, "%m", "01")
-	goFormat = replaceAll(goFormat, "%d", "02")
-	goFormat = replaceAll(goFormat, "%H", "15")
-	goFormat = replaceAll(goFormat, "%M", "04")
-	goFormat = replaceAll(goFormat, "%S", "05")
-	goFormat = replaceAll(goFormat, "%A", "Monday")
-	goFormat = replaceAll(goFormat, "%a", "Mon")
-	goFormat = replaceAll(goFormat, "%B", "January")
-	goFormat = replaceAll(goFormat, "%b", "Jan")
-	goFormat = replaceAll(goFormat, "%p", "PM")
+	goFormat = strings.ReplaceAll(goFormat, "%Y", "2006")
+	goFormat = strings.ReplaceAll(goFormat, "%m", "01")
+	goFormat = strings.ReplaceAll(goFormat, "%d", "02")
+	goFormat = strings.ReplaceAll(goFormat, "%H", "15")
+	goFormat = strings.ReplaceAll(goFormat, "%M", "04")
+	goFormat = strings.ReplaceAll(goFormat, "%S", "05")
+	goFormat = strings.ReplaceAll(goFormat, "%A", "Monday")
+	goFormat = strings.ReplaceAll(goFormat, "%a", "Mon")
+	goFormat = strings.ReplaceAll(goFormat, "%B", "January")
+	goFormat = strings.ReplaceAll(goFormat, "%b", "Jan")
+	goFormat = strings.ReplaceAll(goFormat, "%p", "PM")
 	return goFormat
-}
-
-func replaceAll(s, old, new string) string {
-	result := ""
-	for i := 0; i < len(s); {
-		if i+len(old) <= len(s) && s[i:i+len(old)] == old {
-			result += new
-			i += len(old)
-		} else {
-			result += string(s[i])
-			i++
-		}
-	}
-	return result
 }

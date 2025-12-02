@@ -8,11 +8,11 @@ import string
 
 passed = True
 
-# Test 1: Basic Unicode strings (Note: Scriptling treats strings as byte sequences, not character sequences)
+# Test 1: Basic Unicode strings (Scriptling now properly counts Unicode characters, not bytes)
 print("Testing basic Unicode strings...")
 unicode_str = "Hello 世界 🌍"
-# Length is in bytes, not characters due to UTF-8 encoding
-assert len(unicode_str) == 17  # UTF-8 encoded bytes
+# Length is in Unicode characters (codepoints)
+assert len(unicode_str) == 10  # H-e-l-l-o-space-世-界-space-🌍 = 10 characters
 # Test that the string contains the expected substrings
 assert "Hello" in unicode_str
 assert "世界" in unicode_str
