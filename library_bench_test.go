@@ -20,7 +20,7 @@ func BenchmarkMathOperations(b *testing.B) {
 import math
 x = math.sqrt(16)
 y = math.pow(2, 8)
-z = math.abs(-5)
+z = math.fabs(-5.5)
 `
 
 	b.ResetTimer()

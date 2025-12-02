@@ -10,6 +10,69 @@ type Iterator struct {
 	consumed bool                  // Track if iterator has been exhausted
 }
 
+// IterableToSlice converts any iterable object (List, Tuple, String, Iterator, Set) to a slice of Objects.
+// Returns (elements, ok) where ok is true if the conversion succeeded.
+// For strings, each character becomes a String object.
+// For iterators, this consumes the iterator.
+// For dicts, returns the keys (like Python's list(dict)).
+func IterableToSlice(obj Object) ([]Object, bool) {
+	switch iter := obj.(type) {
+	case *List:
+		return iter.Elements, true
+	case *Tuple:
+		return iter.Elements, true
+	case *String:
+		elements := make([]Object, 0, len(iter.Value))
+		for _, ch := range iter.Value {
+			elements = append(elements, &String{Value: string(ch)})
+		}
+		return elements, true
+	case *Iterator:
+		elements := make([]Object, 0)
+		for {
+			val, hasNext := iter.Next()
+			if !hasNext {
+				break
+			}
+			elements = append(elements, val)
+		}
+		return elements, true
+	case *Set:
+		elements := make([]Object, 0, len(iter.Elements))
+		for _, v := range iter.Elements {
+			elements = append(elements, v)
+		}
+		return elements, true
+	case *Dict:
+		// For dicts, return keys (like Python's list(dict))
+		elements := make([]Object, 0, len(iter.Pairs))
+		for _, p := range iter.Pairs {
+			elements = append(elements, p.Key)
+		}
+		return elements, true
+	case *DictKeys:
+		elements := make([]Object, 0, len(iter.Dict.Pairs))
+		for k := range iter.Dict.Pairs {
+			elements = append(elements, &String{Value: k})
+		}
+		return elements, true
+	case *DictValues:
+		elements := make([]Object, 0, len(iter.Dict.Pairs))
+		for _, p := range iter.Dict.Pairs {
+			elements = append(elements, p.Value)
+		}
+		return elements, true
+	case *DictItems:
+		elements := make([]Object, 0, len(iter.Dict.Pairs))
+		for k, p := range iter.Dict.Pairs {
+			elements = append(elements, &Tuple{Elements: []Object{&String{Value: k}, p.Value}})
+		}
+		return elements, true
+	default:
+		return nil, false
+	}
+}
+
 func (it *Iterator) Type() ObjectType { return ITERATOR_OBJ }
 func (it *Iterator) Inspect() string  { return "<iterator>" }
 
@@ -70,29 +133,8 @@ func NewZipIterator(iterables []Object) *Iterator {
 	minLen := -1
 
 	for i, iterable := range iterables {
-		switch iter := iterable.(type) {
-		case *List:
-			slices[i] = iter.Elements
-		case *Tuple:
-			slices[i] = iter.Elements
-		case *String:
-			elements := make([]Object, 0, len(iter.Value))
-			for _, ch := range iter.Value {
-				elements = append(elements, &String{Value: string(ch)})
-			}
-			slices[i] = elements
-		case *Iterator:
-			// Consume iterator into a slice
-			elements := make([]Object, 0)
-			for {
-				val, hasNext := iter.Next()
-				if !hasNext {
-					break
-				}
-				elements = append(elements, val)
-			}
-			slices[i] = elements
-		default:
+		elements, ok := IterableToSlice(iterable)
+		if !ok {
 			// Return empty iterator for invalid types
 			return &Iterator{
 				next: func() (Object, bool) {
@@ -101,6 +143,7 @@ func NewZipIterator(iterables []Object) *Iterator {
 				consumed: true,
 			}
 		}
+		slices[i] = elements
 
 		if minLen == -1 || len(slices[i]) < minLen {
 			minLen = len(slices[i])
@@ -129,29 +172,8 @@ func NewZipIterator(iterables []Object) *Iterator {
 // MapIterator creates an iterator that applies a function to each element
 func NewMapIterator(ctx context.Context, fn Object, iterable Object) *Iterator {
 	// Convert iterable to slice
-	var elements []Object
-
-	switch iter := iterable.(type) {
-	case *List:
-		elements = iter.Elements
-	case *Tuple:
-		elements = iter.Elements
-	case *String:
-		elements = make([]Object, 0, len(iter.Value))
-		for _, ch := range iter.Value {
-			elements = append(elements, &String{Value: string(ch)})
-		}
-	case *Iterator:
-		// Consume iterator into a slice
-		elements = make([]Object, 0)
-		for {
-			val, hasNext := iter.Next()
-			if !hasNext {
-				break
-			}
-			elements = append(elements, val)
-		}
-	default:
+	elements, ok := IterableToSlice(iterable)
+	if !ok {
 		// Return empty iterator for invalid types
 		return &Iterator{
 			next: func() (Object, bool) {
@@ -197,29 +219,8 @@ func NewMapIterator(ctx context.Context, fn Object, iterable Object) *Iterator {
 // FilterIterator creates an iterator that filters elements based on a predicate
 func NewFilterIterator(ctx context.Context, fn Object, iterable Object) *Iterator {
 	// Convert iterable to slice
-	var elements []Object
-
-	switch iter := iterable.(type) {
-	case *List:
-		elements = iter.Elements
-	case *Tuple:
-		elements = iter.Elements
-	case *String:
-		elements = make([]Object, 0, len(iter.Value))
-		for _, ch := range iter.Value {
-			elements = append(elements, &String{Value: string(ch)})
-		}
-	case *Iterator:
-		// Consume iterator into a slice
-		elements = make([]Object, 0)
-		for {
-			val, hasNext := iter.Next()
-			if !hasNext {
-				break
-			}
-			elements = append(elements, val)
-		}
-	default:
+	elements, ok := IterableToSlice(iterable)
+	if !ok {
 		// Return empty iterator for invalid types
 		return &Iterator{
 			next: func() (Object, bool) {
@@ -293,29 +294,8 @@ func isTruthy(obj Object) bool {
 // EnumerateIterator creates an iterator that returns (index, value) tuples
 func NewEnumerateIterator(iterable Object, start int64) *Iterator {
 	// Convert iterable to slice
-	var elements []Object
-
-	switch iter := iterable.(type) {
-	case *List:
-		elements = iter.Elements
-	case *Tuple:
-		elements = iter.Elements
-	case *String:
-		elements = make([]Object, 0, len(iter.Value))
-		for _, ch := range iter.Value {
-			elements = append(elements, &String{Value: string(ch)})
-		}
-	case *Iterator:
-		// Consume iterator into a slice
-		elements = make([]Object, 0)
-		for {
-			val, hasNext := iter.Next()
-			if !hasNext {
-				break
-			}
-			elements = append(elements, val)
-		}
-	default:
+	elements, ok := IterableToSlice(iterable)
+	if !ok {
 		// Return empty iterator for invalid types
 		return &Iterator{
 			next: func() (Object, bool) {
@@ -346,33 +326,9 @@ func NewEnumerateIterator(iterable Object, start int64) *Iterator {
 
 // ReversedIterator creates an iterator that returns elements in reverse order
 func NewReversedIterator(iterable Object) *Iterator {
-	// Convert iterable to slice
-	var elements []Object
-
-	switch iter := iterable.(type) {
-	case *List:
-		elements = make([]Object, len(iter.Elements))
-		copy(elements, iter.Elements)
-	case *Tuple:
-		elements = make([]Object, len(iter.Elements))
-		copy(elements, iter.Elements)
-	case *String:
-		runes := []rune(iter.Value)
-		elements = make([]Object, len(runes))
-		for i, r := range runes {
-			elements[i] = &String{Value: string(r)}
-		}
-	case *Iterator:
-		// Consume iterator into a slice
-		elements = make([]Object, 0)
-		for {
-			val, hasNext := iter.Next()
-			if !hasNext {
-				break
-			}
-			elements = append(elements, val)
-		}
-	default:
+	// Convert iterable to slice - need to copy to avoid modifying original
+	srcElements, ok := IterableToSlice(iterable)
+	if !ok {
 		// Return empty iterator for invalid types
 		return &Iterator{
 			next: func() (Object, bool) {
@@ -381,6 +337,10 @@ func NewReversedIterator(iterable Object) *Iterator {
 			consumed: true,
 		}
 	}
+
+	// Make a copy so we don't affect the original
+	elements := make([]Object, len(srcElements))
+	copy(elements, srcElements)
 
 	index := len(elements) - 1
 

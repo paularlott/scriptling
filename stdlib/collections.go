@@ -29,40 +29,30 @@ var CounterClass = &object.Class{
 					return errors.NewArgumentError(len(args)-1, 1)
 				}
 
+				// Helper to increment counter for a key
+				countKey := func(key string) {
+					if countObj, exists := counter.Fields[key]; exists {
+						if count, ok := countObj.(*object.Integer); ok {
+							counter.Fields[key] = object.NewInteger(count.Value + 1)
+						}
+					} else {
+						counter.Fields[key] = object.NewInteger(1)
+					}
+				}
+
 				// Process the iterable argument
 				switch arg := args[1].(type) {
 				case *object.List:
 					for _, elem := range arg.Elements {
-						key := elem.Inspect()
-						if countObj, exists := counter.Fields[key]; exists {
-							if count, ok := countObj.(*object.Integer); ok {
-								counter.Fields[key] = object.NewInteger(count.Value + 1)
-							}
-						} else {
-							counter.Fields[key] = object.NewInteger(1)
-						}
+						countKey(elem.Inspect())
 					}
 				case *object.Tuple:
 					for _, elem := range arg.Elements {
-						key := elem.Inspect()
-						if countObj, exists := counter.Fields[key]; exists {
-							if count, ok := countObj.(*object.Integer); ok {
-								counter.Fields[key] = object.NewInteger(count.Value + 1)
-							}
-						} else {
-							counter.Fields[key] = object.NewInteger(1)
-						}
+						countKey(elem.Inspect())
 					}
 				case *object.String:
 					for _, ch := range arg.Value {
-						key := string(ch)
-						if countObj, exists := counter.Fields[key]; exists {
-							if count, ok := countObj.(*object.Integer); ok {
-								counter.Fields[key] = object.NewInteger(count.Value + 1)
-							}
-						} else {
-							counter.Fields[key] = object.NewInteger(1)
-						}
+						countKey(string(ch))
 					}
 				case *object.Dict:
 					// Copy existing dict - convert to counter fields

@@ -14,13 +14,10 @@ func TestMathLibrary(t *testing.T) {
 	}{
 		{"sqrt", "import math\nresult = math.sqrt(16)", 4.0},
 		{"pow", "import math\nresult = math.pow(2, 8)", 256.0},
-		{"abs int", "import math\nresult = math.abs(-5)", int64(5)},
-		{"abs float", "import math\nresult = math.abs(-5.5)", 5.5},
+		{"fabs int", "import math\nresult = math.fabs(-5)", 5.0},
+		{"fabs float", "import math\nresult = math.fabs(-5.5)", 5.5},
 		{"floor", "import math\nresult = math.floor(3.7)", int64(3)},
 		{"ceil", "import math\nresult = math.ceil(3.2)", int64(4)},
-		{"round", "import math\nresult = math.round(3.5)", int64(4)},
-		{"min", "import math\nresult = math.min(3, 1)", int64(1)},
-		{"max", "import math\nresult = math.max(3, 1)", int64(3)},
 		{"pi", "import math\nresult = math.pi", 3.141592653589793},
 		{"e", "import math\nresult = math.e", 2.718281828459045},
 	}

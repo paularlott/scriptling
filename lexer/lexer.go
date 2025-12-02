@@ -435,6 +435,26 @@ func (l *Lexer) readNumber() (string, bool) {
 		return l.input[position:l.position], false
 	}
 
+	// Check for binary literal (0b or 0B)
+	if l.ch == '0' && (l.peekChar() == 'b' || l.peekChar() == 'B') {
+		l.readChar() // consume '0'
+		l.readChar() // consume 'b' or 'B'
+		for l.ch == '0' || l.ch == '1' {
+			l.readChar()
+		}
+		return l.input[position:l.position], false
+	}
+
+	// Check for octal literal (0o or 0O)
+	if l.ch == '0' && (l.peekChar() == 'o' || l.peekChar() == 'O') {
+		l.readChar() // consume '0'
+		l.readChar() // consume 'o' or 'O'
+		for l.ch >= '0' && l.ch <= '7' {
+			l.readChar()
+		}
+		return l.input[position:l.position], false
+	}
+
 	for isDigit(l.ch) {
 		l.readChar()
 	}
@@ -445,6 +465,19 @@ func (l *Lexer) readNumber() (string, bool) {
 			l.readChar()
 		}
 	}
+
+	// Check for scientific notation (e.g., 1e10, 2.5e-3, 1E+5)
+	if l.ch == 'e' || l.ch == 'E' {
+		isFloat = true
+		l.readChar() // consume 'e' or 'E'
+		if l.ch == '+' || l.ch == '-' {
+			l.readChar() // consume sign
+		}
+		for isDigit(l.ch) {
+			l.readChar()
+		}
+	}
+
 	return l.input[position:l.position], isFloat
 }
 
