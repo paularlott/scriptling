@@ -75,14 +75,15 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	file := cmd.GetStringArg("file")
 	interactive := cmd.GetBool("interactive")
 
-	// Set up sys.argv
+	// Set up sys.argv with all arguments
+	var argv []string
 	if file != "" {
-		// When running a file, argv[0] is the script name
-		// Additional args would come after the file
-		extlibs.SetupSysLibrary([]string{file})
+		// When running a file, argv[0] is the script name, followed by remaining args
+		argv = append([]string{file}, cmd.GetArgs()...)
 	} else {
-		extlibs.SetupSysLibrary([]string{""})
+		argv = []string{""}
 	}
+	extlibs.SetupSysLibrary(argv)
 
 	// Set up sys.exit callback
 	extlibs.SysExitCallback = func(code int) {
