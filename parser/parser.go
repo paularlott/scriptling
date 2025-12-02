@@ -387,6 +387,15 @@ func (p *Parser) parseImportStatement() *ast.ImportStatement {
 
 	stmt.Name = &ast.Identifier{Token: p.curToken, Value: name}
 
+	// Check for alias (as)
+	if p.peekTokenIs(token.AS) {
+		p.nextToken() // consume 'as'
+		if !p.expectPeek(token.IDENT) {
+			return nil
+		}
+		stmt.Alias = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+	}
+
 	// Check for additional imports separated by commas
 	stmt.AdditionalNames = []*ast.Identifier{}
 	for p.peekTokenIs(token.COMMA) {
