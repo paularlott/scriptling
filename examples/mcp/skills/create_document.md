@@ -4,7 +4,7 @@ description: "Create a document with title, abstract, and body using basic authe
 
 # Create a Document to Echo Service
 
-This skill demonstrates how to use Scriptling to post a JSON document to the echo service at `https://httpbin.org/post`.
+This skill demonstrates how to use Scriptling to post a JSON document to the echo service at `http://127.0.0.1:9000/post`.
 
 ## Requirements
 
@@ -35,7 +35,7 @@ json_data = json.dumps(data)
 
 # Post to echo service with basic auth
 response = requests.post(
-    "https://httpbin.org/post",
+    "http://127.0.0.1:9000/post",
     json_data,
     {
         "auth": ("testing", "testingpwd"),
