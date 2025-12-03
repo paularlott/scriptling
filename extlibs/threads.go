@@ -250,10 +250,14 @@ func (p *Pool) close() {
 }
 
 // cloneEnvironment creates a deep copy of an environment using object.DeepCopy
+// Note: Builtin objects (Atomic, Queue, WaitGroup, Shared, etc.) are NOT deep copied,
+// which means the underlying Go data structures are shared between parent and threads.
+// This is the desired behavior for thread-safe primitives.
 func cloneEnvironment(env *object.Environment) *object.Environment {
 	cloned := object.NewEnvironment()
 
 	// Get the store and deep copy each value
+	// Builtin objects are returned as-is by DeepCopy, ensuring shared state
 	store := env.GetStore()
 	for k, v := range store {
 		cloned.Set(k, object.DeepCopy(v))
