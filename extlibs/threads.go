@@ -326,14 +326,24 @@ var ThreadsLibrary = object.NewLibrary(map[string]*object.Builtin{
 						},
 						HelpText: "get() - Wait for and return the result",
 					},
+					"wait": &object.Builtin{
+						Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+							_, err := promise.get()
+							if err != nil {
+								return errors.NewError("async error: %v", err)
+							}
+							return &object.Null{}
+						},
+						HelpText: "wait() - Wait for completion and discard the result",
+					},
 				},
-				HelpText: "Promise object - call .get() to retrieve result",
+				HelpText: "Promise object - call .get() to retrieve result or .wait() to wait without result",
 			}
 		},
 		HelpText: `run(func, *args, **kwargs) - Run function asynchronously
 
 Executes function in a separate goroutine with isolated environment.
-Returns a Promise object. Call .get() to retrieve the result.
+Returns a Promise object. Call .get() to retrieve the result or .wait() to wait without result.
 Supports both positional and keyword arguments.
 
 Example:
@@ -341,7 +351,9 @@ Example:
         return x + y
 
     promise = async.run(worker, 5, y=3)
-    result = promise.get()  # Returns 8`,
+    result = promise.get()  # Returns 8
+    # Or just wait for completion:
+    promise.wait()  # Waits but discards result`,
 	},
 
 	"Atomic": {
