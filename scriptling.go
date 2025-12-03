@@ -89,7 +89,47 @@ func New() *Scriptling {
 
 func (p *Scriptling) loadLibrary(name string) error {
 	// Check if library is already imported
-	if _, ok := p.env.Get(name); ok {
+	if existingObj, ok := p.env.Get(name); ok {
+		// For simple library names, check if it's a proper library dict
+		// If it exists but is incomplete (e.g., only has sub-libraries from a dotted import),
+		// we need to merge in the parent library
+		parts := strings.Split(name, ".")
+		if len(parts) == 1 {
+			// Check if this is a registered library that should be loaded
+			if _, isRegistered := p.registeredLibraries[name]; isRegistered {
+				// Check if existing object is a dict
+				if existingDict, ok := existingObj.(*object.Dict); ok {
+					// Check if it has any functions from the library (not just sub-libraries)
+					// If it only has sub-libraries, we need to merge the parent library
+					hasLibraryFunctions := false
+					for key := range existingDict.Pairs {
+						// Check if any keys don't look like sub-library names (no dots in registered sub-libs)
+						if key != "__doc__" && !strings.Contains(key, ".") {
+							// Could be a function or a sub-library, check the registered library
+							lib := p.registeredLibraries[name]
+							if funcs := lib.Functions(); funcs != nil {
+								if _, exists := funcs[key]; exists {
+									hasLibraryFunctions = true
+									break
+								}
+							}
+						}
+					}
+					if !hasLibraryFunctions {
+						// Existing dict only has sub-libraries, merge in the parent library
+						lib := p.registeredLibraries[name]
+						libDict := p.libraryToDict(lib)
+						// Merge: add all entries from libDict to existingDict
+						for k, v := range libDict.Pairs {
+							if _, exists := existingDict.Pairs[k]; !exists {
+								existingDict.Pairs[k] = v
+							}
+						}
+						return nil
+					}
+				}
+			}
+		}
 		return nil // Already imported, skip
 	}
 

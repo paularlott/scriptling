@@ -26,10 +26,7 @@ func TestIntegrationScripts(t *testing.T) {
 	}
 
 	p := New()
-	// Register all standard libraries
 	stdlib.RegisterAll(p)
-
-	// Register extended libraries
 	extlibs.RegisterRequestsLibrary(p)
 	extlibs.RegisterSysLibrary(p)
 	extlibs.RegisterSecretsLibrary(p)
@@ -38,10 +35,7 @@ func TestIntegrationScripts(t *testing.T) {
 	extlibs.RegisterThreadsLibrary(p)
 	extlibs.RegisterOSLibrary(p, []string{})
 	extlibs.RegisterPathlibLibrary(p, []string{})
-
-	// Set up on-demand library loading for local .py files in test_scripts
 	p.SetOnDemandLibraryCallback(func(p *Scriptling, libName string) bool {
-		// Try to load from test_scripts directory
 		filename := filepath.Join(testDir, libName+".py")
 		content, err := os.ReadFile(filename)
 		if err == nil {
@@ -51,12 +45,12 @@ func TestIntegrationScripts(t *testing.T) {
 	})
 
 	for _, file := range files {
-		// Skip library files
 		if strings.HasPrefix(filepath.Base(file), "lib_") {
 			continue
 		}
 
 		t.Run(filepath.Base(file), func(t *testing.T) {
+
 			content, err := os.ReadFile(file)
 			if err != nil {
 				t.Fatalf("Failed to read script %s: %v", file, err)
