@@ -15,7 +15,7 @@ Go-inspired async library for safe concurrent execution through isolated environ
 
 Run function asynchronously in a separate goroutine with isolated environment.
 
-**Returns:** Promise object with `.get()` method
+**Returns:** Promise object with `.get()` and `.wait()` methods
 
 ```python
 import threads
@@ -34,6 +34,24 @@ result2 = promise2.get()  # Returns 10
 # Multiple async operations
 promises = [threads.run(worker, i, y=i+1) for i in range(10)]
 results = [p.get() for p in promises]
+```
+
+### Promise.wait()
+
+Wait for async operation to complete and discard the result.
+
+**Returns:** null (when operation completes)
+
+```python
+import threads
+
+def worker(x, y=10):
+    print(f"Processing {x} + {y} = {x + y}")
+
+# Run async and wait for completion (fire-and-forget style)
+promise = threads.run(worker, 5, y=3)
+promise.wait()  # Waits for completion, discards result
+# Function completes before promise.wait() returns
 ```
 
 ### threads.Atomic(initial=0)
@@ -197,11 +215,13 @@ result, err := p.EvalWithTimeout(30*time.Second, script)
 
 ## Best Practices
 
-1. **Use Atomic for counters** - Lock-free and fast
-2. **Use Shared for complex types** - When you need mutex protection
-3. **Use WaitGroup for synchronization** - Wait for multiple operations
-4. **Use Queue for producer-consumer** - Thread-safe communication
-5. **Use Pool for batch processing** - Efficient worker management
+1. **Use promise.wait() for fire-and-forget operations** - When you don't need the result
+2. **Use promise.get() when you need the result** - Wait and return the computed value
+3. **Use Atomic for counters** - Lock-free and fast
+4. **Use Shared for complex types** - When you need mutex protection
+5. **Use WaitGroup for synchronization** - Wait for multiple operations
+6. **Use Queue for producer-consumer** - Thread-safe communication
+7. **Use Pool for batch processing** - Efficient worker management
 
 ## Performance Notes
 

@@ -118,4 +118,30 @@ pool.close()
 print(f"Pool processed {len(processed)} items")
 assert len(processed) == 5, "Pool failed"
 
+print("\n=== Testing promise.wait ===")
+
+wait_results = []
+
+def worker_wait(x):
+    wait_results.append(x * 2)
+
+# Test promise.wait - should complete before returning
+promise1 = threads.run(worker_wait, 5)
+promise1.wait()  # Wait for completion, discard result
+promise2 = threads.run(worker_wait, 10)
+promise2.wait()  # Wait for completion, discard result
+print(f"promise.wait results: {wait_results}")
+assert wait_results == [10, 20], "promise.wait failed"
+
+# Test promise.wait with keyword args
+wait_kwargs_results = []
+
+def worker_wait_kwargs(x, multiplier=1):
+    wait_kwargs_results.append(x * multiplier)
+
+promise3 = threads.run(worker_wait_kwargs, 3, multiplier=4)
+promise3.wait()  # Wait for completion, discard result
+print(f"promise.wait with kwargs results: {wait_kwargs_results}")
+assert wait_kwargs_results == [12], "promise.wait with kwargs failed"
+
 print("\n=== All async tests passed! ===")

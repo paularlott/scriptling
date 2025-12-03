@@ -69,6 +69,7 @@ tests=(
     # Examples (keep as-is)
     "variables.py"
     "fibonacci.py"
+		"changelog_scraper.py"
 
 		# Help
 		"demo_help.py"
