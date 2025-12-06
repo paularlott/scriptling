@@ -36,12 +36,18 @@ func evalIndexExpression(left, index object.Object) object.Object {
 	switch {
 	case left.Type() == object.LIST_OBJ && index.Type() == object.INTEGER_OBJ:
 		return evalListIndexExpression(left, index)
+	case left.Type() == object.LIST_OBJ && index.Type() == object.SLICE_OBJ:
+		return evalListSliceExpression(left, index)
 	case left.Type() == object.TUPLE_OBJ && index.Type() == object.INTEGER_OBJ:
 		return evalTupleIndexExpression(left, index)
+	case left.Type() == object.TUPLE_OBJ && index.Type() == object.SLICE_OBJ:
+		return evalTupleSliceExpression(left, index)
 	case left.Type() == object.DICT_OBJ:
 		return evalDictIndexExpression(left, index)
 	case left.Type() == object.STRING_OBJ && index.Type() == object.INTEGER_OBJ:
 		return evalStringIndexExpression(left, index)
+	case left.Type() == object.STRING_OBJ && index.Type() == object.SLICE_OBJ:
+		return evalStringSliceExpression(left, index)
 	case left.Type() == object.INSTANCE_OBJ:
 		return evalInstanceIndexExpression(left, index)
 	case left.Type() == object.CLASS_OBJ:
@@ -402,4 +408,103 @@ func sliceString(str string, start, end, step int64, hasStart, hasEnd, hasStep b
 		builder.WriteRune(runes[i])
 	}
 	return builder.String()
+}
+
+// evalListSliceExpression handles slice objects applied to lists
+func evalListSliceExpression(list, index object.Object) object.Object {
+	listObj := list.(*object.List)
+	sliceObj := index.(*object.Slice)
+
+	// Extract slice parameters
+	var start, end, step int64
+	var hasStart, hasEnd, hasStep bool
+
+	// Default values
+	step = 1
+	hasStart = sliceObj.Start != nil
+	hasEnd = sliceObj.End != nil
+	hasStep = sliceObj.Step != nil
+
+	if hasStart {
+		start = sliceObj.Start.Value
+	}
+	if hasEnd {
+		end = sliceObj.End.Value
+	}
+	if hasStep {
+		step = sliceObj.Step.Value
+		if step == 0 {
+			return errors.NewError("slice step cannot be zero")
+		}
+	}
+
+	return sliceList(listObj.Elements, start, end, step, hasStart, hasEnd, hasStep)
+}
+
+// evalTupleSliceExpression handles slice objects applied to tuples
+func evalTupleSliceExpression(tuple, index object.Object) object.Object {
+	tupleObj := tuple.(*object.Tuple)
+	sliceObj := index.(*object.Slice)
+
+	// Extract slice parameters
+	var start, end, step int64
+	var hasStart, hasEnd, hasStep bool
+
+	// Default values
+	step = 1
+	hasStart = sliceObj.Start != nil
+	hasEnd = sliceObj.End != nil
+	hasStep = sliceObj.Step != nil
+
+	if hasStart {
+		start = sliceObj.Start.Value
+	}
+	if hasEnd {
+		end = sliceObj.End.Value
+	}
+	if hasStep {
+		step = sliceObj.Step.Value
+		if step == 0 {
+			return errors.NewError("slice step cannot be zero")
+		}
+	}
+
+	// Use sliceList and convert result to tuple
+	sliced := sliceList(tupleObj.Elements, start, end, step, hasStart, hasEnd, hasStep)
+	if slicedList, ok := sliced.(*object.List); ok {
+		return &object.Tuple{Elements: slicedList.Elements}
+	}
+	return sliced
+}
+
+// evalStringSliceExpression handles slice objects applied to strings
+func evalStringSliceExpression(str, index object.Object) object.Object {
+	strObj := str.(*object.String)
+	sliceObj := index.(*object.Slice)
+
+	// Extract slice parameters
+	var start, end, step int64
+	var hasStart, hasEnd, hasStep bool
+
+	// Default values
+	step = 1
+	hasStart = sliceObj.Start != nil
+	hasEnd = sliceObj.End != nil
+	hasStep = sliceObj.Step != nil
+
+	if hasStart {
+		start = sliceObj.Start.Value
+	}
+	if hasEnd {
+		end = sliceObj.End.Value
+	}
+	if hasStep {
+		step = sliceObj.Step.Value
+		if step == 0 {
+			return errors.NewError("slice step cannot be zero")
+		}
+	}
+
+	slicedStr := sliceString(strObj.Value, start, end, step, hasStart, hasEnd, hasStep)
+	return &object.String{Value: slicedStr}
 }

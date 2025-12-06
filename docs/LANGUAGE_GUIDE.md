@@ -1129,6 +1129,41 @@ text[::-1]         # "dlroW olleH" - reverse the string
 text[1:8:2]        # "el o" - every second character from 1 to 8
 ```
 
+### slice() Builtin
+
+In addition to slice notation, Scriptling supports the `slice()` builtin for creating slice objects programmatically:
+
+```python
+# Creating slice objects
+s = slice(1, 5)           # Equivalent to [1:5]
+s = slice(1, 5, 2)        # Equivalent to [1:5:2]
+s = slice(None, None, -1) # Equivalent to [::-1]
+s = slice(-3, None)       # Equivalent to [-3:]
+
+# Using slice objects
+lst = [0, 1, 2, 3, 4, 5]
+s = slice(1, 4)
+result = lst[s]           # [1, 2, 3]
+
+s = slice(None, None, -1)
+result = lst[s]           # [5, 4, 3, 2, 1, 0]
+
+# Works with strings and tuples too
+text = "hello world"
+s = slice(0, 5)
+result = text[s]          # "hello"
+
+tup = (0, 1, 2, 3, 4)
+s = slice(1, 4)
+result = tup[s]           # (1, 2, 3)
+```
+
+The `slice()` builtin accepts:
+- `slice(stop)` - Equivalent to `slice(0, stop, 1)`
+- `slice(start, stop)` - Equivalent to `slice(start, stop, 1)`
+- `slice(start, stop, step)` - Full control
+- Use `None` for any parameter to use its default value
+
 ## Limitations & Differences from Python
 
 ### Python 3 Features Not Supported
@@ -1162,7 +1197,6 @@ Scriptling intentionally does not support the following Python 3 features:
 - **`memoryview()`, `bytearray()`, `bytes()`**: Advanced byte manipulation is not supported.
 - **`complex()`**: Complex numbers are not implemented.
 - **`frozenset()`**: Immutable sets are not available (use regular `set()`).
-- **`slice()`**: Slice objects are not exposed (but slice syntax `[start:stop:step]` works).
 
 #### Standard Library Modules Not Included
 - **`asyncio`**: Asynchronous I/O framework

@@ -164,3 +164,71 @@ assert result == "default"
 
 setattr(d, "city", "NYC")
 assert d["city"] == "NYC"
+
+# Test slice() builtin
+lst = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+# Test slice(stop) - equivalent to slice(0, stop, 1)
+s = slice(5)
+result = lst[s]
+assert result == [0, 1, 2, 3, 4]
+
+# Test slice(start, stop)
+s = slice(2, 7)
+result = lst[s]
+assert result == [2, 3, 4, 5, 6]
+
+# Test slice(start, stop, step)
+s = slice(1, 9, 2)
+result = lst[s]
+assert result == [1, 3, 5, 7]
+
+# Test slice with negative step
+s = slice(None, None, -1)
+result = lst[s]
+assert result == [9, 8, 7, 6, 5, 4, 3, 2, 1, 0]
+
+# Test slice with negative indices
+s = slice(-5, None)
+result = lst[s]
+assert result == [5, 6, 7, 8, 9]
+
+s = slice(None, -3)
+result = lst[s]
+assert result == [0, 1, 2, 3, 4, 5, 6]
+
+# Test slice with None values
+s = slice(2, None, None)
+result = lst[s]
+assert result == [2, 3, 4, 5, 6, 7, 8, 9]
+
+s = slice(None, 5, None)
+result = lst[s]
+assert result == [0, 1, 2, 3, 4]
+
+# Test slice on strings
+text = "hello world"
+s = slice(0, 5)
+result = text[s]
+assert result == "hello"
+
+s = slice(-5, None)
+result = text[s]
+assert result == "world"
+
+# Test slice on tuples
+tup = (0, 1, 2, 3, 4, 5)
+s = slice(1, 4)
+result = tup[s]
+assert result == (1, 2, 3)
+
+# Test equality of slice objects
+s1 = slice(1, 5, 2)
+s2 = slice(1, 5, 2)
+s3 = slice(1, 4, 2)
+
+# We can't test equality directly, but we can test they produce same results
+lst = [0, 1, 2, 3, 4, 5]
+result1 = lst[s1]
+result2 = lst[s2]
+assert result1 == result2

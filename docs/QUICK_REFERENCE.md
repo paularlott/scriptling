@@ -317,6 +317,20 @@ list(range(5))                      # [0, 1, 2, 3, 4]
 list(range(2, 5))                   # [2, 3, 4]
 list(range(0, 10, 2))               # [0, 2, 4, 6, 8]
 
+# Slice operations
+lst = [0, 1, 2, 3, 4, 5]
+lst[1:4]                    # [1, 2, 3]
+lst[::2]                    # [0, 2, 4]
+lst[::-1]                   # [5, 4, 3, 2, 1, 0]
+
+# Using slice() builtin
+s = slice(1, 4)
+lst[s]                       # [1, 2, 3]
+s = slice(None, None, -1)
+lst[s]                       # [5, 4, 3, 2, 1, 0]
+s = slice(-3, None)
+lst[s]                       # [3, 4, 5]
+
 # Dictionary methods (return views)
 person = {"name": "Alice", "age": 30}
 list(person.keys())                 # ["name", "age"]

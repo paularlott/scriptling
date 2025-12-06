@@ -69,6 +69,7 @@ const (
 	DICT_VALUES_OBJ
 	DICT_ITEMS_OBJ
 	SET_OBJ
+	SLICE_OBJ
 )
 
 // String returns the string representation of the ObjectType
@@ -124,6 +125,8 @@ func (ot ObjectType) String() string {
 		return "DICT_ITEMS"
 	case SET_OBJ:
 		return "SET"
+	case SLICE_OBJ:
+		return "SLICE"
 	default:
 		return "UNKNOWN"
 	}
@@ -211,6 +214,41 @@ func (s *String) AsFloat() (float64, bool)          { return 0, false }
 func (s *String) AsBool() (bool, bool)              { return s.Value != "", true }
 func (s *String) AsList() ([]Object, bool)          { return nil, false }
 func (s *String) AsDict() (map[string]Object, bool) { return nil, false }
+
+type Slice struct {
+	Start  *Integer  // nil means None (default start)
+	End    *Integer  // nil means None (default end)
+	Step   *Integer  // nil means None (default step = 1)
+}
+
+func (s *Slice) Type() ObjectType { return SLICE_OBJ }
+func (s *Slice) Inspect() string {
+	parts := []string{}
+	if s.Start != nil {
+		parts = append(parts, s.Start.Inspect())
+	} else {
+		parts = append(parts, "")
+	}
+
+	if s.End != nil {
+		parts = append(parts, s.End.Inspect())
+	} else {
+		parts = append(parts, "")
+	}
+
+	if s.Step != nil && s.Step.Value != 1 {
+		parts = append(parts, s.Step.Inspect())
+	}
+
+	return fmt.Sprintf("slice(%s)", strings.Join(parts, ":"))
+}
+
+func (s *Slice) AsString() (string, bool)          { return "", false }
+func (s *Slice) AsInt() (int64, bool)              { return 0, false }
+func (s *Slice) AsFloat() (float64, bool)          { return 0, false }
+func (s *Slice) AsBool() (bool, bool)              { return false, false }
+func (s *Slice) AsList() ([]Object, bool)          { return nil, false }
+func (s *Slice) AsDict() (map[string]Object, bool) { return nil, false }
 
 type Null struct{}
 

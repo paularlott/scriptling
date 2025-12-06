@@ -1477,6 +1477,102 @@ Only works on dict-like objects.`,
 
 Deletes the named attribute from the given object.`,
 	},
+	"slice": {
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			if len(args) > 3 {
+				return errors.NewArgumentError(len(args), 3)
+			}
+
+			// Default values: slice(stop) where start=0, step=1
+			// slice(start, stop) where step=1
+			// slice(start, stop, step)
+
+			var start, end, step *object.Integer
+
+			// Handle arguments
+			if len(args) == 1 {
+				// slice(stop) - treat as slice(0, stop, 1)
+				if args[0].Type() == object.NULL_OBJ {
+					end = nil
+				} else if i, ok := args[0].(*object.Integer); ok {
+					end = i
+				} else {
+					return errors.NewTypeError("INTEGER or None", args[0].Type().String())
+				}
+				step = object.NewInteger(1)
+			} else if len(args) == 2 {
+				// slice(start, stop)
+				if args[0].Type() == object.NULL_OBJ {
+					start = nil
+				} else if i, ok := args[0].(*object.Integer); ok {
+					start = i
+				} else {
+					return errors.NewTypeError("INTEGER or None", args[0].Type().String())
+				}
+
+				if args[1].Type() == object.NULL_OBJ {
+					end = nil
+				} else if i, ok := args[1].(*object.Integer); ok {
+					end = i
+				} else {
+					return errors.NewTypeError("INTEGER or None", args[1].Type().String())
+				}
+				step = object.NewInteger(1)
+			} else if len(args) == 3 {
+				// slice(start, stop, step)
+				if args[0].Type() == object.NULL_OBJ {
+					start = nil
+				} else if i, ok := args[0].(*object.Integer); ok {
+					start = i
+				} else {
+					return errors.NewTypeError("INTEGER or None", args[0].Type().String())
+				}
+
+				if args[1].Type() == object.NULL_OBJ {
+					end = nil
+				} else if i, ok := args[1].(*object.Integer); ok {
+					end = i
+				} else {
+					return errors.NewTypeError("INTEGER or None", args[1].Type().String())
+				}
+
+				if args[2].Type() == object.NULL_OBJ {
+					step = nil
+				} else if i, ok := args[2].(*object.Integer); ok {
+					step = i
+				} else {
+					return errors.NewTypeError("INTEGER or None", args[2].Type().String())
+				}
+
+				// Check for zero step
+				if step != nil && step.Value == 0 {
+					return errors.NewError("slice step cannot be zero")
+				}
+			}
+
+			return &object.Slice{
+				Start: start,
+				End:   end,
+				Step:  step,
+			}
+		},
+		HelpText: `slice([start,] stop[, step]) - Create a slice object
+
+Used for extended slicing. Returns a slice object that can be used
+with sequence objects to select a range of elements.
+
+Examples:
+  seq[1:3]      # equivalent to seq[slice(1, 3)]
+  seq[::2]      # equivalent to seq[slice(None, None, 2)]
+  seq[::-1]     # equivalent to seq[slice(None, None, -1)]
+
+Parameters:
+  start - start index (default: 0)
+  stop - end index (default: end of sequence)
+  step - step value (default: 1)
+
+Use None for any parameter to use its default value.`,
+	},
 }
 
 func compareObjects(a, b object.Object) int {
