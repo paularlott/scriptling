@@ -624,7 +624,12 @@ func evalStringInfixExpression(operator string, leftVal, rightVal string) object
 		if len(rightVal) == 0 {
 			return &object.String{Value: leftVal}
 		}
-		return &object.String{Value: leftVal + rightVal}
+		// Use strings.Builder for efficient concatenation
+		var builder strings.Builder
+		builder.Grow(len(leftVal) + len(rightVal)) // Pre-allocate to avoid reallocations
+		builder.WriteString(leftVal)
+		builder.WriteString(rightVal)
+		return &object.String{Value: builder.String()}
 	case "==":
 		return nativeBoolToBooleanObject(leftVal == rightVal)
 	case "!=":
