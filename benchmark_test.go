@@ -353,3 +353,56 @@ func BenchmarkAccessorOverhead(b *testing.B) {
 		}
 	})
 }
+
+// === STRING PERFORMANCE ===
+func BenchmarkStringConcatenation(b *testing.B) {
+	p := New()
+	p.Eval("import json")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		p.Eval(`
+result = ""
+for i in range(100):
+    result = result + str(i)
+`)
+	}
+}
+
+func BenchmarkStringConcatenationSmall(b *testing.B) {
+	p := New()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		p.Eval(`
+result = "hello" + " " + "world"
+`)
+	}
+}
+
+func BenchmarkStringConcatenationLarge(b *testing.B) {
+	p := New()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		p.Eval(`
+result = ""
+for i in range(1000):
+    result = result + "test string " + str(i) + " "
+`)
+	}
+}
+
+func BenchmarkStringBuilderPoolTest(b *testing.B) {
+	p := New()
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		p.Eval(`
+# Simulate many small string operations
+parts = []
+for i in range(100):
+    parts.append("part" + str(i))
+result = ""
+for part in parts:
+    result = result + part
+`)
+	}
+}

@@ -10,6 +10,8 @@ import (
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression, env *object.Environment) object.Object {
@@ -642,13 +644,19 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return str
 		}
 		runes := []rune(str.Value)
-		result := strings.ToUpper(string(runes[0])) + strings.ToLower(string(runes[1:]))
-		return &object.String{Value: result}
+		// Use strings.Builder for efficient string building
+		var builder strings.Builder
+		builder.Grow(len(runes))
+		builder.WriteRune(unicode.ToUpper(runes[0]))
+		for _, r := range runes[1:] {
+			builder.WriteRune(unicode.ToLower(r))
+		}
+		return &object.String{Value: builder.String()}
 	case "title":
 		if len(args) != 0 {
 			return errors.NewArgumentError(len(args), 0)
 		}
-		return &object.String{Value: strings.Title(str.Value)}
+		return &object.String{Value: cases.Title(language.Und).String(str.Value)}
 	case "strip":
 		if len(args) != 0 {
 			return errors.NewArgumentError(len(args), 0)
@@ -1018,9 +1026,19 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			}
 			// Handle negative sign
 			if len(str.Value) > 0 && (str.Value[0] == '-' || str.Value[0] == '+') {
-				return &object.String{Value: string(str.Value[0]) + strings.Repeat("0", w-len(str.Value)) + str.Value[1:]}
+				var builder strings.Builder
+				builder.Grow(w)
+				builder.WriteByte(str.Value[0])
+				builder.WriteString(strings.Repeat("0", w-len(str.Value)))
+				builder.WriteString(str.Value[1:])
+				return &object.String{Value: builder.String()}
 			}
-			return &object.String{Value: strings.Repeat("0", w-len(str.Value)) + str.Value}
+			// Simple case - just pad with zeros
+			var builder strings.Builder
+			builder.Grow(w)
+			builder.WriteString(strings.Repeat("0", w-len(str.Value)))
+			builder.WriteString(str.Value)
+			return &object.String{Value: builder.String()}
 		}
 		return errors.NewTypeError("INTEGER", args[0].Type().String())
 	case "center":
@@ -1046,7 +1064,13 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			padding := w - len(str.Value)
 			leftPad := padding / 2
 			rightPad := padding - leftPad
-			return &object.String{Value: strings.Repeat(fillChar, leftPad) + str.Value + strings.Repeat(fillChar, rightPad)}
+			// Use strings.Builder for efficient concatenation
+			var builder strings.Builder
+			builder.Grow(w)
+			builder.WriteString(strings.Repeat(fillChar, leftPad))
+			builder.WriteString(str.Value)
+			builder.WriteString(strings.Repeat(fillChar, rightPad))
+			return &object.String{Value: builder.String()}
 		}
 		return errors.NewTypeError("INTEGER", args[0].Type().String())
 	case "ljust":
@@ -1069,7 +1093,12 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 					return errors.NewTypeError("STRING", args[1].Type().String())
 				}
 			}
-			return &object.String{Value: str.Value + strings.Repeat(fillChar, w-len(str.Value))}
+			// Use strings.Builder for efficient concatenation
+			var builder strings.Builder
+			builder.Grow(w)
+			builder.WriteString(str.Value)
+			builder.WriteString(strings.Repeat(fillChar, w-len(str.Value)))
+			return &object.String{Value: builder.String()}
 		}
 		return errors.NewTypeError("INTEGER", args[0].Type().String())
 	case "rjust":
@@ -1092,7 +1121,12 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 					return errors.NewTypeError("STRING", args[1].Type().String())
 				}
 			}
-			return &object.String{Value: strings.Repeat(fillChar, w-len(str.Value)) + str.Value}
+			// Use strings.Builder for efficient concatenation
+			var builder strings.Builder
+			builder.Grow(w)
+			builder.WriteString(strings.Repeat(fillChar, w-len(str.Value)))
+			builder.WriteString(str.Value)
+			return &object.String{Value: builder.String()}
 		}
 		return errors.NewTypeError("INTEGER", args[0].Type().String())
 	case "splitlines":
