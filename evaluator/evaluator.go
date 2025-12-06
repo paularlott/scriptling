@@ -87,6 +87,40 @@ func checkContext(ctx context.Context) object.Object {
 	}
 }
 
+// contextChecker helps batch context checks to reduce overhead
+type contextChecker struct {
+	ctx       context.Context
+	counter   int
+	batchSize int
+}
+
+func newContextChecker(ctx context.Context) *contextChecker {
+	return &contextChecker{
+		ctx:       ctx,
+		batchSize: 100, // Check context every 100 operations by default
+	}
+}
+
+func (cc *contextChecker) check() object.Object {
+	cc.counter++
+	if cc.counter >= cc.batchSize {
+		cc.counter = 0
+		return checkContext(cc.ctx)
+	}
+	return nil
+}
+
+// Always check context (used in loops where responsiveness is critical)
+func (cc *contextChecker) checkAlways() object.Object {
+	// Even in loops, we can batch checks, but with a smaller batch size
+	cc.counter++
+	if cc.counter >= 10 { // Check every 10 iterations in loops
+		cc.counter = 0
+		return checkContext(cc.ctx)
+	}
+	return nil
+}
+
 func evalWithContext(ctx context.Context, node ast.Node, env *object.Environment) object.Object {
 	obj := evalNode(ctx, node, env)
 	if err, ok := obj.(*object.Error); ok {
@@ -233,10 +267,11 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 
 func evalProgram(ctx context.Context, program *ast.Program, env *object.Environment) object.Object {
 	var result object.Object = NULL
+	cc := newContextChecker(ctx)
 
 	for _, statement := range program.Statements {
-		// Check for cancellation in loops
-		if err := checkContext(ctx); err != nil {
+		// Check for cancellation less frequently
+		if err := cc.check(); err != nil {
 			return err
 		}
 
@@ -255,10 +290,11 @@ func evalProgram(ctx context.Context, program *ast.Program, env *object.Environm
 
 func evalBlockStatementWithContext(ctx context.Context, block *ast.BlockStatement, env *object.Environment) object.Object {
 	var result object.Object = NULL
+	cc := newContextChecker(ctx)
 
 	for _, statement := range block.Statements {
-		// Check for cancellation in loops
-		if err := checkContext(ctx); err != nil {
+		// Check for cancellation less frequently
+		if err := cc.check(); err != nil {
 			return err
 		}
 
@@ -677,10 +713,11 @@ func evalIfStatementWithContext(ctx context.Context, ie *ast.IfStatement, env *o
 
 func evalWhileStatementWithContext(ctx context.Context, ws *ast.WhileStatement, env *object.Environment) object.Object {
 	var result object.Object = NULL
+	cc := newContextChecker(ctx)
 
 	for {
-		// Check for cancellation in loops
-		if err := checkContext(ctx); err != nil {
+		// Always check in loops for responsiveness, but batch the checks
+		if err := cc.checkAlways(); err != nil {
 			return err
 		}
 
@@ -1557,8 +1594,10 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 	}
 
 	if iter != nil {
+		cc := newContextChecker(ctx)
 		for {
-			if err := checkContext(ctx); err != nil {
+			// Check context frequently in loops for responsiveness
+			if err := cc.checkAlways(); err != nil {
 				return err
 			}
 

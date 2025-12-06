@@ -354,6 +354,75 @@ func BenchmarkAccessorOverhead(b *testing.B) {
 	})
 }
 
+// === CONTEXT CHECKING PERFORMANCE ===
+func BenchmarkContextCheckingHotPath(b *testing.B) {
+	p := New()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		p.Eval(`
+# Many small operations to exercise evalNode context checking
+x = 0
+x = x + 1
+x = x + 2
+x = x + 3
+x = x + 4
+x = x + 5
+x = x + 6
+x = x + 7
+x = x + 8
+x = x + 9
+`)
+	}
+}
+
+func BenchmarkContextCheckingLoops(b *testing.B) {
+	p := New()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		p.Eval(`
+# Test context checking in loops
+result = 0
+for i in range(1000):
+    result = result + i
+`)
+	}
+}
+
+func BenchmarkContextCheckingNested(b *testing.B) {
+	p := New()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		p.Eval(`
+# Test context checking with nested blocks
+def nested_function():
+    x = 1
+    y = 2
+    z = 3
+    return x + y + z
+
+result = 0
+for i in range(100):
+    result = result + nested_function()
+`)
+	}
+}
+
+func BenchmarkContextCheckingComplexExpressions(b *testing.B) {
+	p := New()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		p.Eval(`
+# Complex expressions that create many AST nodes
+def calculate(a, b, c, d, e):
+    return (a + b) * (c - d) / e
+
+result = 0
+for i in range(500):
+    result = result + calculate(i, i+1, i+2, i+3, i+4)
+`)
+	}
+}
+
 // === STRING PERFORMANCE ===
 func BenchmarkStringConcatenation(b *testing.B) {
 	p := New()
