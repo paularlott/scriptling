@@ -6,7 +6,6 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/errors"
@@ -169,7 +168,7 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		if isError(right) {
 			return right
 		}
-		return evalInfixExpression(node.Operator, left, right)
+		return evalInfixExpression(ctx, node.Operator, left, right, env)
 	case *ast.ConditionalExpression:
 		return evalConditionalExpression(ctx, node, env)
 	case *ast.BlockStatement:
@@ -442,7 +441,7 @@ func evalBitwiseNotOperatorExpression(right object.Object) object.Object {
 	}
 }
 
-func evalInfixExpression(operator string, left, right object.Object) object.Object {
+func evalInfixExpression(ctx context.Context, operator string, left, right object.Object, env *object.Environment) object.Object {
 	// Handle boolean operators first (they work with any type)
 	switch operator {
 	case "and":
@@ -500,13 +499,10 @@ func evalInfixExpression(operator string, left, right object.Object) object.Obje
 		if r, ok := right.(*object.Integer); ok && operator == "*" {
 			return evalStringMultiplication(l.Value, r.Value)
 		}
-	case *object.Datetime:
-		if r, ok := right.(*object.Datetime); ok {
-			return evalDatetimeInfixExpression(operator, l, r)
-		}
-		// Handle datetime + seconds (float from timedelta)
-		if r, ok := right.(*object.Float); ok && operator == "+" {
-			return &object.Datetime{Value: l.Value.Add(time.Duration(r.Value * float64(time.Second)))}
+	case *object.Instance:
+		// Handle instance operators via dunder methods (__lt__, __gt__, __eq__, __sub__, __add__, etc.)
+		if result := evalInstanceInfixExpression(ctx, operator, l, right, env); result != nil {
+			return result
 		}
 	}
 
@@ -691,27 +687,39 @@ func evalStringMultiplication(str string, multiplier int64) object.Object {
 	return &object.String{Value: strings.Repeat(str, int(multiplier))}
 }
 
-func evalDatetimeInfixExpression(operator string, left, right *object.Datetime) object.Object {
-	switch operator {
-	case "<":
-		return nativeBoolToBooleanObject(left.Value.Before(right.Value))
-	case ">":
-		return nativeBoolToBooleanObject(left.Value.After(right.Value))
-	case "<=":
-		return nativeBoolToBooleanObject(!left.Value.After(right.Value))
-	case ">=":
-		return nativeBoolToBooleanObject(!left.Value.Before(right.Value))
-	case "==":
-		return nativeBoolToBooleanObject(left.Value.Equal(right.Value))
-	case "!=":
-		return nativeBoolToBooleanObject(!left.Value.Equal(right.Value))
-	case "-":
-		// Subtracting datetimes returns difference in seconds
-		diff := left.Value.Sub(right.Value)
-		return &object.Float{Value: diff.Seconds()}
-	default:
-		return errors.NewError("%s: DATETIME %s DATETIME", errors.ErrUnknownOperator, operator)
+// operatorToDunderMethod maps operators to their corresponding dunder method names
+var operatorToDunderMethod = map[string]string{
+	"<":  "__lt__",
+	">":  "__gt__",
+	"<=": "__le__",
+	">=": "__ge__",
+	"==": "__eq__",
+	"!=": "__ne__",
+	"+":  "__add__",
+	"-":  "__sub__",
+	"*":  "__mul__",
+	"/":  "__truediv__",
+	"//": "__floordiv__",
+	"%":  "__mod__",
+}
+
+// evalInstanceInfixExpression handles operators on instances by calling dunder methods
+// Returns nil if no dunder method is found (falls through to default handling)
+func evalInstanceInfixExpression(ctx context.Context, operator string, left *object.Instance, right object.Object, env *object.Environment) object.Object {
+	methodName, ok := operatorToDunderMethod[operator]
+	if !ok {
+		return nil // No dunder method for this operator
 	}
+
+	// Look up the dunder method in the instance's class
+	method, ok := left.Class.Methods[methodName]
+	if !ok {
+		return nil // No dunder method defined
+	}
+
+	// Call the dunder method with self and the right operand
+	args := []object.Object{left, right}
+	return applyFunctionWithContext(ctx, method, args, nil, env)
 }
 
 func evalIfStatementWithContext(ctx context.Context, ie *ast.IfStatement, env *object.Environment) object.Object {
@@ -1149,7 +1157,7 @@ func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.Augm
 		return errors.NewError("unknown augmented assignment operator: %s", node.Operator)
 	}
 
-	result := evalInfixExpression(operator, currentVal, newVal)
+	result := evalInfixExpression(ctx, operator, currentVal, newVal, env)
 	if isError(result) {
 		return result
 	}
