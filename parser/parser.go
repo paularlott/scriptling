@@ -924,6 +924,17 @@ func (p *Parser) parseBlockStatement() *ast.BlockStatement {
 	block := &ast.BlockStatement{Token: p.curToken}
 	block.Statements = []ast.Statement{}
 
+	// Check for single-line block (statement on same line after colon)
+	// e.g., "if True: x = 1" or "if True: return x"
+	if !p.peekTokenIs(token.NEWLINE) && !p.peekTokenIs(token.INDENT) && !p.peekTokenIs(token.EOF) {
+		p.nextToken()
+		stmt := p.parseStatement()
+		if stmt != nil {
+			block.Statements = append(block.Statements, stmt)
+		}
+		return block
+	}
+
 	if !p.expectPeek(token.INDENT) {
 		return nil
 	}

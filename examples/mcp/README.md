@@ -1,69 +1,44 @@
 # Scriptling MCP Server
 
-An MCP (Model Context Protocol) server that allows LLMs to test and interact with the Scriptling language.
+An MCP (Model Context Protocol) server that executes Scriptling/Python code with tool discovery.
 
 ## Tools
 
-### execute_scriptling
-Execute Scriptling code and get the output.
+### Visible Tools
 
-**Parameters:**
-- `code` (string): The Scriptling code to execute
+- **execute_script** - Execute custom Scriptling/Python code
 
-**Returns:**
-- `output` (string): Captured print output
-- `result` (string, optional): Final expression result
-- `error` (string, optional): Error message if execution failed
+### Discovery Tools
 
-### scriptling_info
-Get information about Scriptling language differences from Python and available libraries.
+- **tool_search** - Search for pre-built tools by keywords
+- **execute_tool** - Execute a discovered tool by name
 
-**Parameters:**
-- `info_type` (string): Type of information - "differences", "libraries", or "all"
+### Pre-built Tools (via discovery)
 
-**Returns:**
-- `differences` (object, optional): Syntax and type differences from Python
-- `libraries` (object, optional): Available built-in and optional libraries
+- **generate_calendar** - Generate ASCII calendars for any month/year
+- **generate_password** - Generate secure random passwords
+- **http_post_json** - Send JSON POST requests
 
 ## Usage
 
 ```bash
-# Build and run the server
 cd examples/mcp
-go mod tidy
-go run main.go
+go build
+./scriptling-mcp-server
 ```
 
-The server will start on port 8080 and accept MCP requests at `/mcp` endpoint.
+Server runs on port 8080 at `/mcp`.
 
-## Example Interactions
+## Example
 
-### Execute Code
 ```bash
+# Search for tools
 curl -X POST http://localhost:8080/mcp \
   -H "Content-Type: application/json" \
-  -d '{
-    "method": "tools/call",
-    "params": {
-      "name": "execute_scriptling",
-      "arguments": {
-        "code": "print(\"Hello from Scriptling!\")\nx = 5 + 3\nprint(x)"
-      }
-    }
-  }'
-```
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"tool_search","arguments":{"query":"calendar"}}}'
 
-### Get Language Info
-```bash
+# Execute a tool
 curl -X POST http://localhost:8080/mcp \
   -H "Content-Type: application/json" \
-  -d '{
-    "method": "tools/call",
-    "params": {
-      "name": "scriptling_info",
-      "arguments": {
-        "info_type": "all"
-      }
-    }
-  }'
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"execute_tool","arguments":{"name":"generate_calendar","arguments":{"year":2025,"month":12}}}}'
 ```

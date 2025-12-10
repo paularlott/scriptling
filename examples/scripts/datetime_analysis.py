@@ -1,23 +1,25 @@
 import datetime
+import time
 
-# Current capabilities
-print("=== Current datetime library capabilities ===")
+# Current capabilities (Python-compatible)
+print("=== Python-compatible datetime library capabilities ===")
 
-# Basic formatting
-print("1. Current time:", datetime.now())
-print("2. UTC time:", datetime.utcnow())
-print("3. Today:", datetime.today())
-print("4. Custom format:", datetime.now("%A, %B %d, %Y at %I:%M %p"))
+# Basic formatting using datetime.datetime class
+print("1. Current time:", datetime.datetime.now())
+print("2. UTC time:", datetime.datetime.utcnow())
+
+# For custom formatting, use strftime with a timestamp
+now_ts = time.time()
+print("3. Custom format:", datetime.datetime.strftime("%A, %B %d, %Y at %I:%M %p", now_ts))
 
 # Parsing and formatting
-dt = datetime.strptime("2024-01-15 10:30:45", "%Y-%m-%d %H:%M:%S")
-print("5. Parsed datetime:", dt)
-print("6. Formatted back:", datetime.strftime("%Y-%m-%d %H:%M:%S", dt))
+dt = datetime.datetime.strptime("2024-01-15 10:30:45", "%Y-%m-%d %H:%M:%S")
+print("4. Parsed datetime:", dt)
+print("5. Formatted back:", datetime.datetime.strftime("%Y-%m-%d %H:%M:%S", dt.timestamp()))
 
 # Using a numeric timestamp
 ts = 1705285845.0
-print("7. From timestamp:", datetime.fromtimestamp(ts))
+print("6. From timestamp:", datetime.datetime.fromtimestamp(ts))
 
 print("\n=== Additional features ===")
-print("8. ISO format:", datetime.isoformat())
-print("9. Date arithmetic with timedelta:", ts + datetime.timedelta(days=1))
+print("7. Date arithmetic with timedelta:", ts + datetime.timedelta(days=1))

@@ -10,6 +10,7 @@ import (
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
+	"github.com/paularlott/scriptling/stdlib"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 )
@@ -349,6 +350,45 @@ func callDatetimeMethod(ctx context.Context, dt *object.Datetime, method string,
 			return errors.NewError("timestamp() does not accept keyword arguments")
 		}
 		return &object.Float{Value: float64(dt.Value.Unix())}
+	case "strftime":
+		if len(args) != 1 {
+			return errors.NewArgumentError(len(args), 1)
+		}
+		format, ok := args[0].AsString()
+		if !ok {
+			return errors.NewTypeError("STRING", args[0].Type().String())
+		}
+		// Convert Python format codes to Go format
+		goFormat := stdlib.PythonToGoDateFormat(format)
+		return &object.String{Value: dt.Value.Format(goFormat)}
+	case "year":
+		return object.NewInteger(int64(dt.Value.Year()))
+	case "month":
+		return object.NewInteger(int64(dt.Value.Month()))
+	case "day":
+		return object.NewInteger(int64(dt.Value.Day()))
+	case "hour":
+		return object.NewInteger(int64(dt.Value.Hour()))
+	case "minute":
+		return object.NewInteger(int64(dt.Value.Minute()))
+	case "second":
+		return object.NewInteger(int64(dt.Value.Second()))
+	case "weekday":
+		// Python weekday: Monday=0, Sunday=6
+		w := int(dt.Value.Weekday())
+		if w == 0 {
+			w = 6
+		} else {
+			w = w - 1
+		}
+		return object.NewInteger(int64(w))
+	case "isoweekday":
+		// ISO weekday: Monday=1, Sunday=7
+		w := int(dt.Value.Weekday())
+		if w == 0 {
+			w = 7
+		}
+		return object.NewInteger(int64(w))
 	default:
 		return errors.NewError("datetime object has no method %s", method)
 	}

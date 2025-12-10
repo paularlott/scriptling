@@ -6,6 +6,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/errors"
@@ -499,6 +500,14 @@ func evalInfixExpression(operator string, left, right object.Object) object.Obje
 		if r, ok := right.(*object.Integer); ok && operator == "*" {
 			return evalStringMultiplication(l.Value, r.Value)
 		}
+	case *object.Datetime:
+		if r, ok := right.(*object.Datetime); ok {
+			return evalDatetimeInfixExpression(operator, l, r)
+		}
+		// Handle datetime + seconds (float from timedelta)
+		if r, ok := right.(*object.Float); ok && operator == "+" {
+			return &object.Datetime{Value: l.Value.Add(time.Duration(r.Value * float64(time.Second)))}
+		}
 	}
 
 	switch operator {
@@ -680,6 +689,29 @@ func evalStringMultiplication(str string, multiplier int64) object.Object {
 		return &object.String{Value: ""}
 	}
 	return &object.String{Value: strings.Repeat(str, int(multiplier))}
+}
+
+func evalDatetimeInfixExpression(operator string, left, right *object.Datetime) object.Object {
+	switch operator {
+	case "<":
+		return nativeBoolToBooleanObject(left.Value.Before(right.Value))
+	case ">":
+		return nativeBoolToBooleanObject(left.Value.After(right.Value))
+	case "<=":
+		return nativeBoolToBooleanObject(!left.Value.After(right.Value))
+	case ">=":
+		return nativeBoolToBooleanObject(!left.Value.Before(right.Value))
+	case "==":
+		return nativeBoolToBooleanObject(left.Value.Equal(right.Value))
+	case "!=":
+		return nativeBoolToBooleanObject(!left.Value.Equal(right.Value))
+	case "-":
+		// Subtracting datetimes returns difference in seconds
+		diff := left.Value.Sub(right.Value)
+		return &object.Float{Value: diff.Seconds()}
+	default:
+		return errors.NewError("%s: DATETIME %s DATETIME", errors.ErrUnknownOperator, operator)
+	}
 }
 
 func evalIfStatementWithContext(ctx context.Context, ie *ast.IfStatement, env *object.Environment) object.Object {

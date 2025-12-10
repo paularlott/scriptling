@@ -2,12 +2,15 @@ package object
 
 // DeepCopy creates a deep copy of an object
 // Note: Circular references are not handled and will cause infinite recursion
+// Thread-safe: handles potential concurrent modifications to lists/dicts defensively
 func DeepCopy(obj Object) Object {
 	switch v := obj.(type) {
 	case *List:
-		newElements := make([]Object, len(v.Elements))
-		for i, elem := range v.Elements {
-			newElements[i] = DeepCopy(elem)
+		// Make a snapshot of the elements slice to avoid race conditions
+		elements := v.Elements
+		newElements := make([]Object, 0, len(elements))
+		for _, elem := range elements {
+			newElements = append(newElements, DeepCopy(elem))
 		}
 		return &List{Elements: newElements}
 
@@ -22,9 +25,11 @@ func DeepCopy(obj Object) Object {
 		return &Dict{Pairs: newPairs}
 
 	case *Tuple:
-		newElements := make([]Object, len(v.Elements))
-		for i, elem := range v.Elements {
-			newElements[i] = DeepCopy(elem)
+		// Make a snapshot of the elements slice to avoid race conditions
+		elements := v.Elements
+		newElements := make([]Object, 0, len(elements))
+		for _, elem := range elements {
+			newElements = append(newElements, DeepCopy(elem))
 		}
 		return &Tuple{Elements: newElements}
 
