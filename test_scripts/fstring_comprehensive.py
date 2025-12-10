@@ -38,7 +38,7 @@ date_str = f"{year}-{month:02d}-{day:02d}"
 assert date_str == "2023-02-05"
 
 # Test f-string with datetime objects
-dt = datetime.strptime("2023-01-01", "%Y-%m-%d")
+dt = datetime.datetime.strptime("2023-01-01", "%Y-%m-%d")
 datetime_fstring = f"Date: {dt}"
 assert "2023-01-01" in datetime_fstring
 

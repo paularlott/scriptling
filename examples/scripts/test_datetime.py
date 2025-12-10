@@ -1,69 +1,60 @@
-# Example: Datetime library
-# Tests the datetime library functions
+# Example: Datetime library (Python-compatible)
+# Tests the datetime library functions using datetime.datetime.* syntax
 
-print("Datetime Library ===\n")
+print("Datetime Library (Python-compatible) ===\n")
 
 # Import the datetime library
 import datetime
+import time
 
-# Test datetime.now()
-print("1. datetime.now() - Current local datetime")
-now = datetime.now()
-print(f"datetime.now(): {now}")
+# Test datetime.datetime.now()
+print("1. datetime.datetime.now() - Current local datetime")
+now = datetime.datetime.now()
+print(f"datetime.datetime.now(): {now}")
 print(f"Type: {type(now)}")
 print()
 
-# Test datetime.now() with custom format
-print("2. datetime.now() with custom format")
-now_custom = datetime.now("%Y-%m-%d %H:%M:%S")
-print(f"datetime.now('%Y-%m-%d %H:%M:%S'): {now_custom}")
+# Test datetime.datetime.utcnow()
+print("2. datetime.datetime.utcnow() - Current UTC datetime")
+utc_now = datetime.datetime.utcnow()
+print(f"datetime.datetime.utcnow(): {utc_now}")
 print()
 
-# Test datetime.utcnow()
-print("3. datetime.utcnow() - Current UTC datetime")
-utc_now = datetime.utcnow()
-print(f"datetime.utcnow(): {utc_now}")
-print()
-
-# Test datetime.today()
-print("4. datetime.today() - Today's date")
-today = datetime.today()
-print(f"datetime.today(): {today}")
-print()
-
-# Test datetime.today() with custom format
-print("5. datetime.today() with custom format")
-today_custom = datetime.today("%A, %B %d, %Y")
-print(f"datetime.today('%A, %B %d, %Y'): {today_custom}")
-print()
-
-# Test datetime.strptime() and datetime.strftime()
-print("6. datetime.strptime() and datetime.strftime()")
+# Test datetime.datetime.strptime() and datetime.datetime.strftime()
+print("3. datetime.datetime.strptime() and datetime.datetime.strftime()")
 date_str = "2024-01-15 10:30:45"
-timestamp = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
-print(f"datetime.strptime('{date_str}', '%Y-%m-%d %H:%M:%S'): {timestamp}")
+parsed = datetime.datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
+print(f"datetime.datetime.strptime('{date_str}', '%Y-%m-%d %H:%M:%S'): {parsed}")
 
-formatted_back = datetime.strftime("%Y-%m-%d %H:%M:%S", timestamp)
-print(f"datetime.strftime('%Y-%m-%d %H:%M:%S', {timestamp}): {formatted_back}")
+formatted_back = datetime.datetime.strftime("%Y-%m-%d %H:%M:%S", parsed.timestamp())
+print(f"datetime.datetime.strftime('%Y-%m-%d %H:%M:%S', timestamp): {formatted_back}")
 print()
 
-# Test datetime.fromtimestamp()
-print("7. datetime.fromtimestamp()")
+# Test datetime.datetime.fromtimestamp()
+print("4. datetime.datetime.fromtimestamp()")
 timestamp_val = 1705314645.0  # 2024-01-15 10:30:45 UTC
-from_ts = datetime.fromtimestamp(timestamp_val)
-print(f"datetime.fromtimestamp({timestamp_val}): {from_ts}")
-
-from_ts_custom = datetime.fromtimestamp(timestamp_val, "%A, %B %d, %Y at %I:%M %p")
-print(f"datetime.fromtimestamp({timestamp_val}, '%A, %B %d, %Y at %I:%M %p'): {from_ts_custom}")
+from_ts = datetime.datetime.fromtimestamp(timestamp_val)
+print(f"datetime.datetime.fromtimestamp({timestamp_val}): {from_ts}")
 print()
 
-# Test datetime.isoformat()
-print("8. datetime.isoformat() - ISO 8601 format")
-iso_now = datetime.isoformat()
-print(f"datetime.isoformat(): {iso_now}")
+# Test datetime.timedelta() (module level, Python-compatible)
+print("5. datetime.timedelta() - Duration calculations")
+one_day = datetime.timedelta(days=1)
+print(f"datetime.timedelta(days=1): {one_day} seconds")
 
-iso_specific = datetime.isoformat(timestamp_val)
-print(f"datetime.isoformat({timestamp_val}): {iso_specific}")
+two_hours = datetime.timedelta(hours=2)
+print(f"datetime.timedelta(hours=2): {two_hours} seconds")
+
+combined = datetime.timedelta(days=1, hours=2, minutes=30)
+print(f"datetime.timedelta(days=1, hours=2, minutes=30): {combined} seconds")
+print()
+
+# Date arithmetic
+print("6. Date arithmetic with timedelta")
+now_ts = time.time()
+tomorrow_ts = now_ts + datetime.timedelta(days=1)
+print(f"Current timestamp: {now_ts}")
+print(f"Tomorrow timestamp: {tomorrow_ts}")
 print()
 
 print("Datetime library examples completed!")

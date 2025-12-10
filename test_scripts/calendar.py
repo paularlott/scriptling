@@ -32,7 +32,7 @@ def generate_calendar(year, month):
     else:
         month_str = str(month)
     first_of_month = str(year) + "-" + month_str + "-01"
-    first_timestamp = datetime.strptime(first_of_month, "%Y-%m-%d")
+    first_timestamp = datetime.datetime.strptime(first_of_month, "%Y-%m-%d")
     first_time_tuple = time.localtime(first_timestamp)
     start_weekday = (first_time_tuple[6] + 6) % 7
 

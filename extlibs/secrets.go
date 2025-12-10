@@ -203,9 +203,22 @@ Example:
 				return errors.NewError("choice() requires exactly 1 argument")
 			}
 
+			// Handle string sequences (like Python)
+			if str, ok := args[0].(*object.String); ok {
+				if len(str.Value) == 0 {
+					return errors.NewError("cannot choose from empty sequence")
+				}
+				idx, err := rand.Int(rand.Reader, big.NewInt(int64(len(str.Value))))
+				if err != nil {
+					return errors.NewError("failed to generate random index: %s", err.Error())
+				}
+				return &object.String{Value: string(str.Value[idx.Int64()])}
+			}
+
+			// Handle list sequences
 			list, ok := args[0].(*object.List)
 			if !ok {
-				return errors.NewTypeError("LIST", args[0].Type().String())
+				return errors.NewTypeError("LIST or STRING", args[0].Type().String())
 			}
 
 			if len(list.Elements) == 0 {
@@ -222,13 +235,14 @@ Example:
 		HelpText: `choice(sequence) - Return a random element from sequence
 
 Parameters:
-  sequence - Non-empty list to choose from
+  sequence - Non-empty list or string to choose from
 
 Returns: Random element from the sequence
 
 Example:
   import secrets
-  item = secrets.choice(["apple", "banana", "cherry"])`,
+  item = secrets.choice(["apple", "banana", "cherry"])
+  char = secrets.choice("abcdef")`,
 	},
 
 	"compare_digest": {

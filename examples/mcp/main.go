@@ -5,162 +5,230 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/paularlott/mcp"
+	"github.com/paularlott/mcp/discovery"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/scriptling/stdlib"
-	"gopkg.in/yaml.v2"
 )
 
-type FrontMatter struct {
-	Description string `yaml:"description"`
-}
-
-func parseFrontMatter(content string) (FrontMatter, string, error) {
-	lines := strings.Split(content, "\n")
-	if len(lines) < 3 || lines[0] != "---" {
-		return FrontMatter{}, content, nil // no front matter
-	}
-	end := -1
-	for i := 1; i < len(lines); i++ {
-		if lines[i] == "---" {
-			end = i
-			break
-		}
-	}
-	if end == -1 {
-		return FrontMatter{}, content, nil
-	}
-	yamlStr := strings.Join(lines[1:end], "\n")
-	var fm FrontMatter
-	err := yaml.Unmarshal([]byte(yamlStr), &fm)
-	if err != nil {
-		return FrontMatter{}, content, err
-	}
-	body := strings.Join(lines[end+1:], "\n")
-	return fm, body, nil
-}
-
 func main() {
+	// Create MCP server
 	server := mcp.NewServer("scriptling-server", "1.0.0")
 
-	// Tool 1: Execute Scriptling code
-	server.RegisterTool(
-		mcp.NewTool(
-			"execute_script",
-			"Execute Scriptling code and return the output. IMPORTANT: If you are unsure about available libraries or functions, FIRST run help('modules') or help('library') to discover what exists. Do not invent modules.",
-			mcp.String("code", "The Scriptling code to execute, scriptling is a Python style scripting language and should run most Python, use scriptling_info to get detailed information on it", mcp.Required()),
-		),
-		func(ctx context.Context, req *mcp.ToolRequest) (*mcp.ToolResponse, error) {
-			code, _ := req.String("code")
+	// Set instructions for the LLM
+	server.SetInstructions(`This server executes Scriptling/Python code.
+Use tool_search to discover pre-built tools for common tasks.
+Use execute_tool to run a discovered tool, or execute_script for custom code.`)
 
-			// Create interpreter
-			p := scriptling.New()
+	// Register execute_script as a regular visible tool
+	registerExecuteScript(server)
 
-			// Register all standard libraries
-			stdlib.RegisterAll(p)
+	// Create discovery registry and register script tools
+	registry := discovery.NewToolRegistry()
+	registerScriptTools(registry)
 
-			// Register extended libraries
-			extlibs.RegisterRequestsLibrary(p)
-			extlibs.RegisterSysLibrary(p)
-			extlibs.RegisterSecretsLibrary(p)
-			extlibs.RegisterSubprocessLibrary(p)
-			extlibs.RegisterHTMLParserLibrary(p)
-			extlibs.RegisterThreadsLibrary(p)
-			extlibs.RegisterOSLibrary(p, []string{})
-			extlibs.RegisterPathlibLibrary(p, []string{})
-
-			// Enable output capture
-			p.EnableOutputCapture()
-
-			// Execute code
-			result, err := p.Eval(code)
-
-			// Get captured output
-			output := p.GetOutput()
-
-			var response strings.Builder
-			if output != "" {
-				response.WriteString(fmt.Sprintf("Output:\n%s\n", output))
-			}
-
-			if err != nil {
-				response.WriteString(fmt.Sprintf("Error: %s\n", err.Error()))
-			} else if result != nil && result.Type() != object.NULL_OBJ {
-				response.WriteString(fmt.Sprintf("Result: %s\n", result.Inspect()))
-			}
-
-			return mcp.NewToolResponseText(response.String()), nil
-		},
-	)
-
-	// Tool 2: Skills - Renamed and improved
-	server.RegisterTool(
-		mcp.NewTool(
-			"list_and_get_skills",
-			"ALWAYS START HERE: List all available pre-built skills with descriptions, then retrieve the full content of a specific skill. Skills are tested, working solutions for common tasks. Using existing skills is faster and more reliable than writing code from scratch. Call without parameters first to see what's available.",
-			mcp.String("name", "Optional: The exact name of a skill to retrieve its full content. Omit this parameter to list all available skills with their descriptions first."),
-		),
-		func(ctx context.Context, req *mcp.ToolRequest) (*mcp.ToolResponse, error) {
-			name, err := req.String("name")
-			skillsDir := "skills"
-
-			if err != nil || name == "" {
-				// List all skills with enhanced formatting
-				files, err := filepath.Glob(filepath.Join(skillsDir, "*.md"))
-				if err != nil {
-					return mcp.NewToolResponseText(fmt.Sprintf("Error listing skills: %s", err.Error())), nil
-				}
-
-				var response strings.Builder
-				response.WriteString("Available Skills (call this tool again with 'name' parameter to get full skill content):\n\n")
-
-				var skills []map[string]string
-				for _, file := range files {
-					contentBytes, err := os.ReadFile(file)
-					if err != nil {
-						continue
-					}
-					content := string(contentBytes)
-					fm, _, err := parseFrontMatter(content)
-					if err != nil {
-						continue
-					}
-					skillName := strings.TrimSuffix(filepath.Base(file), ".md")
-					skills = append(skills, map[string]string{
-						"name":        skillName,
-						"description": fm.Description,
-					})
-					response.WriteString(fmt.Sprintf("- %s: %s\n", skillName, fm.Description))
-				}
-
-				response.WriteString("\nTo use a skill, call this tool again with the skill name to get its full implementation.")
-
-				return mcp.NewToolResponseText(response.String()), nil
-			} else {
-				// Get specific skill
-				file := filepath.Join(skillsDir, name+".md")
-				contentBytes, err := os.ReadFile(file)
-				if err != nil {
-					return mcp.NewToolResponseText(fmt.Sprintf("Skill '%s' not found. Call without 'name' parameter to see available skills.", name)), nil
-				}
-				content := string(contentBytes)
-				_, body, err := parseFrontMatter(content)
-				if err != nil {
-					return mcp.NewToolResponseText(fmt.Sprintf("Error parsing skill: %s", err.Error())), nil
-				}
-				return mcp.NewToolResponseText(fmt.Sprintf("Skill: %s\n\n%s", name, body)), nil
-			}
-		},
-	)
+	// Attach registry to server (registers tool_search, execute_tool)
+	registry.Attach(server)
 
 	// Start HTTP server
 	http.HandleFunc("/mcp", server.HandleRequest)
+
 	fmt.Println("Scriptling MCP Server starting on :8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))
+}
+
+// registerExecuteScript registers the execute_script tool with the MCP server
+func registerExecuteScript(server *mcp.Server) {
+	server.RegisterTool(
+		mcp.NewTool(
+			"execute_script",
+			"Execute Scriptling/Python code. Use tool_search first to check for existing implementations.",
+			mcp.String("code", "The Scriptling/Python code to execute", mcp.Required()),
+		),
+		func(ctx context.Context, req *mcp.ToolRequest) (*mcp.ToolResponse, error) {
+			code, _ := req.String("code")
+			return executeCode(code)
+		},
+	)
+}
+
+// registerScriptTools registers pre-built script tools with the discovery registry
+func registerScriptTools(registry *discovery.ToolRegistry) {
+	// Generate Calendar
+	registry.RegisterTool(
+		mcp.NewTool("generate_calendar",
+			"Generate a formatted ASCII calendar for any month and year",
+			mcp.Number("year", "Year (e.g., 2025)", mcp.Required()),
+			mcp.Number("month", "Month 1-12", mcp.Required()),
+		),
+		func(ctx context.Context, req *mcp.ToolRequest) (*mcp.ToolResponse, error) {
+			year := req.IntOr("year", 2025)
+			month := req.IntOr("month", 12)
+			code := fmt.Sprintf(`import datetime
+
+def is_leap_year(year):
+    return year %% 4 == 0 and (year %% 100 != 0 or year %% 400 == 0)
+
+def days_in_month(year, month):
+    days = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    if month == 2 and is_leap_year(year):
+        return 29
+    return days[month - 1]
+
+def generate_calendar(year, month):
+    month_names = ["", "January", "February", "March", "April", "May", "June",
+                   "July", "August", "September", "October", "November", "December"]
+    header = f"{month_names[month]} {year}".center(20)
+    days_header = "Mo Tu We Th Fr Sa Su"
+    lines = [header, "", days_header, ""]
+
+    first = datetime.datetime.strptime(f"{year}-{month:02d}-01", "%%Y-%%m-%%d")
+    ref = datetime.datetime.strptime("2000-01-01", "%%Y-%%m-%%d").timestamp()
+    diff = int((first.timestamp() - ref) / 86400)
+    start = (6 + diff) %% 7
+
+    day = 1
+    num_days = days_in_month(year, month)
+    week = ""
+    for i in range(7):
+        if i < start:
+            week += "   "
+        else:
+            week += f"{day:2d} "
+            day += 1
+    lines.append(week.rstrip())
+
+    while day <= num_days:
+        week = ""
+        for i in range(7):
+            if day <= num_days:
+                week += f"{day:2d} "
+                day += 1
+            else:
+                week += "   "
+        lines.append(week.rstrip())
+
+    return "\n".join(lines)
+
+print(generate_calendar(%d, %d))`, year, month)
+			return executeCode(code)
+		},
+		"calendar", "date", "month", "year", "schedule", "datetime", "ascii",
+	)
+
+	// Generate Password
+	registry.RegisterTool(
+		mcp.NewTool("generate_password",
+			"Generate a secure random password",
+			mcp.Number("length", "Password length (default: 16)"),
+			mcp.Boolean("uppercase", "Include uppercase (default: true)"),
+			mcp.Boolean("lowercase", "Include lowercase (default: true)"),
+			mcp.Boolean("digits", "Include digits (default: true)"),
+			mcp.Boolean("symbols", "Include symbols (default: false)"),
+		),
+		func(ctx context.Context, req *mcp.ToolRequest) (*mcp.ToolResponse, error) {
+			length := req.IntOr("length", 16)
+			upper := req.BoolOr("uppercase", true)
+			lower := req.BoolOr("lowercase", true)
+			digits := req.BoolOr("digits", true)
+			symbols := req.BoolOr("symbols", false)
+
+			// Helper to convert Go bool to Python bool string
+			pyBool := func(b bool) string {
+				if b {
+					return "True"
+				}
+				return "False"
+			}
+
+			code := fmt.Sprintf(`import random
+import string
+
+def generate_password(length=%d, upper=%s, lower=%s, digits=%s, symbols=%s):
+    chars = ""
+    if lower: chars += string.ascii_lowercase
+    if upper: chars += string.ascii_uppercase
+    if digits: chars += string.digits
+    if symbols: chars += string.punctuation
+    if not chars: return "Error: No character sets selected"
+
+    password = []
+    if lower: password.append(random.choice(string.ascii_lowercase))
+    if upper: password.append(random.choice(string.ascii_uppercase))
+    if digits: password.append(random.choice(string.digits))
+    if symbols: password.append(random.choice(string.punctuation))
+
+    while len(password) < length:
+        password.append(random.choice(chars))
+
+    random.shuffle(password)
+    return "".join(password)
+
+print(generate_password())`, length, pyBool(upper), pyBool(lower), pyBool(digits), pyBool(symbols))
+			return executeCode(code)
+		},
+		"password", "random", "secure", "security", "secret", "credentials",
+	)
+
+	// HTTP POST JSON
+	registry.RegisterTool(
+		mcp.NewTool("http_post_json",
+			"Send a JSON POST request to a URL",
+			mcp.String("url", "The URL to POST to", mcp.Required()),
+			mcp.String("data", "JSON data to send", mcp.Required()),
+		),
+		func(ctx context.Context, req *mcp.ToolRequest) (*mcp.ToolResponse, error) {
+			url, _ := req.String("url")
+			data, _ := req.String("data")
+
+			code := fmt.Sprintf(`import json
+import requests
+
+url = %q
+data = %q
+
+response = requests.post(url, data, {"headers": {"Content-Type": "application/json"}})
+print(f"Status: {response.status_code}")
+print(f"Response: {response.text}")`, url, data)
+			return executeCode(code)
+		},
+		"http", "post", "json", "api", "request", "rest", "web",
+	)
+}
+
+// executeCode runs Scriptling code and returns the result
+func executeCode(code string) (*mcp.ToolResponse, error) {
+	p := scriptling.New()
+	stdlib.RegisterAll(p)
+	extlibs.RegisterRequestsLibrary(p)
+	extlibs.RegisterSysLibrary(p)
+	extlibs.RegisterSecretsLibrary(p)
+	extlibs.RegisterSubprocessLibrary(p)
+	extlibs.RegisterHTMLParserLibrary(p)
+	extlibs.RegisterThreadsLibrary(p)
+	extlibs.RegisterOSLibrary(p, []string{})
+	extlibs.RegisterPathlibLibrary(p, []string{})
+	p.EnableOutputCapture()
+
+	result, err := p.Eval(code)
+	output := p.GetOutput()
+
+	var response strings.Builder
+	if output != "" {
+		response.WriteString(output)
+	}
+	if err != nil {
+		response.WriteString(fmt.Sprintf("\nError: %s", err.Error()))
+	} else if result != nil && result.Type() != object.NULL_OBJ {
+		if response.Len() > 0 {
+			response.WriteString("\n")
+		}
+		response.WriteString(fmt.Sprintf("Result: %s", result.Inspect()))
+	}
+
+	return mcp.NewToolResponseText(response.String()), nil
 }

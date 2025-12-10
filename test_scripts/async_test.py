@@ -44,28 +44,40 @@ assert counter.get() == 3, "Atomic add with delta failed"
 
 print("\n=== Testing threads.Shared ===")
 
-shared_list = threads.Shared([])
+# Use Atomic counter instead of Shared list for thread-safe counting
+# The Shared type is for sharing values between threads, but read-modify-write
+# operations need proper synchronization. Use Atomic for counting.
+shared_counter = threads.Atomic(0)
 
-def append_item(item):
-    current = shared_list.get()
-    current.append(item)
-    shared_list.set(current)
+def increment_shared():
+    shared_counter.add(1)
 
-promises = [threads.run(append_item, i) for i in range(5)]
+promises = [threads.run(increment_shared) for i in range(5)]
 for p in promises:
     p.get()
 
-final_list = shared_list.get()
-print(f"Shared list length: {len(final_list)}")
-assert len(final_list) == 5, "Shared list failed"
+final_count = shared_counter.get()
+print(f"Shared counter value: {final_count}")
+assert final_count == 5, "Shared counter failed"
+
+# Test Shared with a simple value (not read-modify-write)
+shared_value = threads.Shared("initial")
+
+def set_value(val):
+    shared_value.set(val)
+
+p = threads.run(set_value, "updated")
+p.get()
+print(f"Shared value: {shared_value.get()}")
+assert shared_value.get() == "updated", "Shared value failed"
 
 print("\n=== Testing threads.WaitGroup ===")
 
 wg = threads.WaitGroup()
-results = []
+wg_counter = threads.Atomic(0)
 
 def worker_wg(id):
-    results.append(id)
+    wg_counter.add(1)
     wg.done()
 
 for i in range(5):
@@ -73,8 +85,8 @@ for i in range(5):
     threads.run(worker_wg, i)
 
 wg.wait()
-print(f"WaitGroup completed, results length: {len(results)}")
-assert len(results) == 5, "WaitGroup failed"
+print(f"WaitGroup completed, counter: {wg_counter.get()}")
+assert wg_counter.get() == 5, "WaitGroup failed"
 
 print("\n=== Testing threads.Queue ===")
 

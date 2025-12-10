@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/paularlott/scriptling/ast"
@@ -216,9 +217,9 @@ func (s *String) AsList() ([]Object, bool)          { return nil, false }
 func (s *String) AsDict() (map[string]Object, bool) { return nil, false }
 
 type Slice struct {
-	Start  *Integer  // nil means None (default start)
-	End    *Integer  // nil means None (default end)
-	Step   *Integer  // nil means None (default step = 1)
+	Start *Integer // nil means None (default start)
+	End   *Integer // nil means None (default end)
+	Step  *Integer // nil means None (default step = 1)
 }
 
 func (s *Slice) Type() ObjectType { return SLICE_OBJ }
@@ -421,6 +422,7 @@ func (l *Library) AsList() ([]Object, bool)          { return nil, false }
 func (l *Library) AsDict() (map[string]Object, bool) { return nil, false }
 
 type Environment struct {
+	mu                         sync.RWMutex
 	store                      map[string]Object
 	outer                      *Environment
 	globals                    map[string]bool
@@ -451,7 +453,9 @@ func NewEnclosedEnvironment(outer *Environment) *Environment {
 }
 
 func (e *Environment) Get(name string) (Object, bool) {
+	e.mu.RLock()
 	obj, ok := e.store[name]
+	e.mu.RUnlock()
 	if !ok && e.outer != nil {
 		obj, ok = e.outer.Get(name)
 	}
@@ -469,14 +473,18 @@ func (e *Environment) Set(name string, val Object) Object {
 			return val
 		}
 	}
+	e.mu.Lock()
 	e.store[name] = val
+	e.mu.Unlock()
 	return val
 }
 
 // SetGlobal sets a variable in the global (outermost) environment
 func (e *Environment) SetGlobal(name string, val Object) Object {
 	if e.outer == nil {
+		e.mu.Lock()
 		e.store[name] = val
+		e.mu.Unlock()
 		return val
 	}
 	return e.outer.SetGlobal(name, val)
@@ -495,8 +503,13 @@ func (e *Environment) SetInParent(name string, val Object) bool {
 	if e.outer == nil {
 		return false
 	}
-	if _, ok := e.outer.store[name]; ok {
+	e.outer.mu.RLock()
+	_, ok := e.outer.store[name]
+	e.outer.mu.RUnlock()
+	if ok {
+		e.outer.mu.Lock()
 		e.outer.store[name] = val
+		e.outer.mu.Unlock()
 		return true
 	}
 	if e.outer.outer != nil {
@@ -554,7 +567,10 @@ func (e *Environment) GetWriter() io.Writer {
 }
 
 // GetStore returns a copy of the environment's store (only local scope, not outer)
+// Thread-safe: acquires read lock during copy
 func (e *Environment) GetStore() map[string]Object {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 	store := make(map[string]Object, len(e.store))
 	for k, v := range e.store {
 		store[k] = v
@@ -603,7 +619,11 @@ func (e *Environment) GetAvailableLibrariesCallback() func() []LibraryInfo {
 }
 
 // Clone creates a deep copy of the environment for thread safety
+// Thread-safe: acquires read lock during copy
 func (e *Environment) Clone() *Environment {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
 	cloned := &Environment{
 		store:     make(map[string]Object, len(e.store)),
 		globals:   make(map[string]bool, len(e.globals)),
