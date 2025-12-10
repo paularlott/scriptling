@@ -485,15 +485,14 @@ func (e *Environment) SetInParent(name string, val Object) bool {
 	if e.outer == nil {
 		return false
 	}
-	e.outer.mu.RLock()
+	e.outer.mu.Lock()
 	_, ok := e.outer.store[name]
-	e.outer.mu.RUnlock()
 	if ok {
-		e.outer.mu.Lock()
 		e.outer.store[name] = val
 		e.outer.mu.Unlock()
 		return true
 	}
+	e.outer.mu.Unlock()
 	if e.outer.outer != nil {
 		return e.outer.SetInParent(name, val)
 	}
