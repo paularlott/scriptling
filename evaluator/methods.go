@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/paularlott/scriptling/ast"
@@ -389,6 +390,47 @@ func callDatetimeMethod(ctx context.Context, dt *object.Datetime, method string,
 			w = 7
 		}
 		return object.NewInteger(int64(w))
+	case "replace":
+		// replace(year=..., month=..., day=..., hour=..., minute=..., second=...)
+		newTime := dt.Value
+		for key, val := range keywords {
+			intVal, ok := val.(*object.Integer)
+			if !ok {
+				return errors.NewTypeError("INTEGER", val.Type().String())
+			}
+			switch key {
+			case "year":
+				newTime = time.Date(int(intVal.Value), newTime.Month(), newTime.Day(),
+					newTime.Hour(), newTime.Minute(), newTime.Second(), newTime.Nanosecond(), newTime.Location())
+			case "month":
+				newTime = time.Date(newTime.Year(), time.Month(intVal.Value), newTime.Day(),
+					newTime.Hour(), newTime.Minute(), newTime.Second(), newTime.Nanosecond(), newTime.Location())
+			case "day":
+				newTime = time.Date(newTime.Year(), newTime.Month(), int(intVal.Value),
+					newTime.Hour(), newTime.Minute(), newTime.Second(), newTime.Nanosecond(), newTime.Location())
+			case "hour":
+				newTime = time.Date(newTime.Year(), newTime.Month(), newTime.Day(),
+					int(intVal.Value), newTime.Minute(), newTime.Second(), newTime.Nanosecond(), newTime.Location())
+			case "minute":
+				newTime = time.Date(newTime.Year(), newTime.Month(), newTime.Day(),
+					newTime.Hour(), int(intVal.Value), newTime.Second(), newTime.Nanosecond(), newTime.Location())
+			case "second":
+				newTime = time.Date(newTime.Year(), newTime.Month(), newTime.Day(),
+					newTime.Hour(), newTime.Minute(), int(intVal.Value), newTime.Nanosecond(), newTime.Location())
+			case "microsecond":
+				newTime = time.Date(newTime.Year(), newTime.Month(), newTime.Day(),
+					newTime.Hour(), newTime.Minute(), newTime.Second(), int(intVal.Value)*1000, newTime.Location())
+			default:
+				return errors.NewError("replace() unexpected keyword argument: %s", key)
+			}
+		}
+		return &object.Datetime{Value: newTime}
+	case "isoformat":
+		return &object.String{Value: dt.Value.Format("2006-01-02T15:04:05")}
+	case "date":
+		// Return a new datetime with time set to midnight (date portion only)
+		t := time.Date(dt.Value.Year(), dt.Value.Month(), dt.Value.Day(), 0, 0, 0, 0, dt.Value.Location())
+		return &object.Datetime{Value: t}
 	default:
 		return errors.NewError("datetime object has no method %s", method)
 	}
