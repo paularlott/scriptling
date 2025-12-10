@@ -6,7 +6,7 @@ An MCP (Model Context Protocol) server that executes Scriptling/Python code with
 
 ### Visible Tools
 
-- **execute_script** - Execute custom Scriptling/Python code
+- **execute_code** - Execute custom Scriptling/Python code
 
 ### Discovery Tools
 

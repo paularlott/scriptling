@@ -22,10 +22,10 @@ func main() {
 	// Set instructions for the LLM
 	server.SetInstructions(`This server executes Scriptling/Python code.
 Use tool_search to discover pre-built tools for common tasks.
-Use execute_tool to run a discovered tool, or execute_script for custom code.`)
+Use execute_tool to run a discovered tool, or execute_code for custom code.`)
 
-	// Register execute_script as a regular visible tool
-	registerExecuteScript(server)
+	// Register execute_code as a regular visible tool
+	registerExecuteCode(server)
 
 	// Create discovery registry and register script tools
 	registry := discovery.NewToolRegistry()
@@ -41,11 +41,11 @@ Use execute_tool to run a discovered tool, or execute_script for custom code.`)
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
 
-// registerExecuteScript registers the execute_script tool with the MCP server
-func registerExecuteScript(server *mcp.Server) {
+// registerExecuteCode registers the execute_code tool with the MCP server
+func registerExecuteCode(server *mcp.Server) {
 	server.RegisterTool(
 		mcp.NewTool(
-			"execute_script",
+			"execute_code",
 			"Execute Scriptling/Python code. Use tool_search first to check for existing implementations.",
 			mcp.String("code", "The Scriptling/Python code to execute", mcp.Required()),
 		),
