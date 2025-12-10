@@ -72,10 +72,15 @@ Suspends execution for the given number of seconds.`,
 					t = time.Unix(int64(ts.Value), 0)
 				case *object.Float:
 					t = time.Unix(int64(ts.Value), 0)
-				case *object.Datetime:
-					t = ts.Value
+				case *object.Instance:
+					// Handle datetime/date instances
+					if dt, ok := GetTimeFromObject(ts); ok {
+						t = dt
+					} else {
+						return errors.NewTypeError("INTEGER, FLOAT, or datetime instance", args[0].Type().String())
+					}
 				default:
-					return errors.NewTypeError("INTEGER, FLOAT, or DATETIME", args[0].Type().String())
+					return errors.NewTypeError("INTEGER, FLOAT, or datetime instance", args[0].Type().String())
 				}
 			} else {
 				return errors.NewArgumentError(len(args), 0)
@@ -98,10 +103,15 @@ Returns a time tuple in local time. If timestamp/datetime is omitted, uses curre
 					t = time.Unix(int64(ts.Value), 0)
 				case *object.Float:
 					t = time.Unix(int64(ts.Value), 0)
-				case *object.Datetime:
-					t = ts.Value
+				case *object.Instance:
+					// Handle datetime/date instances
+					if dt, ok := GetTimeFromObject(ts); ok {
+						t = dt
+					} else {
+						return errors.NewTypeError("INTEGER, FLOAT, or datetime instance", args[0].Type().String())
+					}
 				default:
-					return errors.NewTypeError("INTEGER, FLOAT, or DATETIME", args[0].Type().String())
+					return errors.NewTypeError("INTEGER, FLOAT, or datetime instance", args[0].Type().String())
 				}
 			} else {
 				return errors.NewArgumentError(len(args), 0)

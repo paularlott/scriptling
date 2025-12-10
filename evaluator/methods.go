@@ -5,13 +5,11 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 	"unicode"
 
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
-	"github.com/paularlott/scriptling/stdlib"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 )
@@ -56,11 +54,6 @@ func callStringMethodWithKeywords(ctx context.Context, obj object.Object, method
 	// Handle library method calls (dictionaries)
 	if obj.Type() == object.DICT_OBJ {
 		return callDictMethod(ctx, obj.(*object.Dict), method, args, keywords, env)
-	}
-
-	// Handle datetime methods
-	if obj.Type() == object.DATETIME_OBJ {
-		return callDatetimeMethod(ctx, obj.(*object.Datetime), method, args, keywords, env)
 	}
 
 	// Handle list methods
@@ -339,101 +332,6 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		return errors.NewError("%s: %s is not callable", errors.ErrIdentifierNotFound, method)
 	}
 	return errors.NewError("%s: method %s not found in library", errors.ErrIdentifierNotFound, method)
-}
-
-func callDatetimeMethod(ctx context.Context, dt *object.Datetime, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
-	switch method {
-	case "timestamp":
-		if len(args) != 0 {
-			return errors.NewArgumentError(len(args), 0)
-		}
-		if len(keywords) > 0 {
-			return errors.NewError("timestamp() does not accept keyword arguments")
-		}
-		return &object.Float{Value: float64(dt.Value.Unix())}
-	case "strftime":
-		if len(args) != 1 {
-			return errors.NewArgumentError(len(args), 1)
-		}
-		format, ok := args[0].AsString()
-		if !ok {
-			return errors.NewTypeError("STRING", args[0].Type().String())
-		}
-		// Convert Python format codes to Go format
-		goFormat := stdlib.PythonToGoDateFormat(format)
-		return &object.String{Value: dt.Value.Format(goFormat)}
-	case "year":
-		return object.NewInteger(int64(dt.Value.Year()))
-	case "month":
-		return object.NewInteger(int64(dt.Value.Month()))
-	case "day":
-		return object.NewInteger(int64(dt.Value.Day()))
-	case "hour":
-		return object.NewInteger(int64(dt.Value.Hour()))
-	case "minute":
-		return object.NewInteger(int64(dt.Value.Minute()))
-	case "second":
-		return object.NewInteger(int64(dt.Value.Second()))
-	case "weekday":
-		// Python weekday: Monday=0, Sunday=6
-		w := int(dt.Value.Weekday())
-		if w == 0 {
-			w = 6
-		} else {
-			w = w - 1
-		}
-		return object.NewInteger(int64(w))
-	case "isoweekday":
-		// ISO weekday: Monday=1, Sunday=7
-		w := int(dt.Value.Weekday())
-		if w == 0 {
-			w = 7
-		}
-		return object.NewInteger(int64(w))
-	case "replace":
-		// replace(year=..., month=..., day=..., hour=..., minute=..., second=...)
-		newTime := dt.Value
-		for key, val := range keywords {
-			intVal, ok := val.(*object.Integer)
-			if !ok {
-				return errors.NewTypeError("INTEGER", val.Type().String())
-			}
-			switch key {
-			case "year":
-				newTime = time.Date(int(intVal.Value), newTime.Month(), newTime.Day(),
-					newTime.Hour(), newTime.Minute(), newTime.Second(), newTime.Nanosecond(), newTime.Location())
-			case "month":
-				newTime = time.Date(newTime.Year(), time.Month(intVal.Value), newTime.Day(),
-					newTime.Hour(), newTime.Minute(), newTime.Second(), newTime.Nanosecond(), newTime.Location())
-			case "day":
-				newTime = time.Date(newTime.Year(), newTime.Month(), int(intVal.Value),
-					newTime.Hour(), newTime.Minute(), newTime.Second(), newTime.Nanosecond(), newTime.Location())
-			case "hour":
-				newTime = time.Date(newTime.Year(), newTime.Month(), newTime.Day(),
-					int(intVal.Value), newTime.Minute(), newTime.Second(), newTime.Nanosecond(), newTime.Location())
-			case "minute":
-				newTime = time.Date(newTime.Year(), newTime.Month(), newTime.Day(),
-					newTime.Hour(), int(intVal.Value), newTime.Second(), newTime.Nanosecond(), newTime.Location())
-			case "second":
-				newTime = time.Date(newTime.Year(), newTime.Month(), newTime.Day(),
-					newTime.Hour(), newTime.Minute(), int(intVal.Value), newTime.Nanosecond(), newTime.Location())
-			case "microsecond":
-				newTime = time.Date(newTime.Year(), newTime.Month(), newTime.Day(),
-					newTime.Hour(), newTime.Minute(), newTime.Second(), int(intVal.Value)*1000, newTime.Location())
-			default:
-				return errors.NewError("replace() unexpected keyword argument: %s", key)
-			}
-		}
-		return &object.Datetime{Value: newTime}
-	case "isoformat":
-		return &object.String{Value: dt.Value.Format("2006-01-02T15:04:05")}
-	case "date":
-		// Return a new datetime with time set to midnight (date portion only)
-		t := time.Date(dt.Value.Year(), dt.Value.Month(), dt.Value.Day(), 0, 0, 0, 0, dt.Value.Location())
-		return &object.Datetime{Value: t}
-	default:
-		return errors.NewError("datetime object has no method %s", method)
-	}
 }
 
 func callListMethod(ctx context.Context, list *object.List, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
