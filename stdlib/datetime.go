@@ -254,6 +254,64 @@ Example:
 	},
 }
 
+// dateConstructor is the callable datetime.date class
+// It can be called as date(year, month, day) to create a date object
+var dateConstructor = &object.Builtin{
+	Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		// date(year, month, day)
+		if len(args) != 3 {
+			return errors.NewError("date() requires exactly 3 arguments: year, month, day")
+		}
+
+		yearObj, ok := args[0].(*object.Integer)
+		if !ok {
+			return errors.NewTypeError("INTEGER", args[0].Type().String())
+		}
+		monthObj, ok := args[1].(*object.Integer)
+		if !ok {
+			return errors.NewTypeError("INTEGER", args[1].Type().String())
+		}
+		dayObj, ok := args[2].(*object.Integer)
+		if !ok {
+			return errors.NewTypeError("INTEGER", args[2].Type().String())
+		}
+
+		year := int(yearObj.Value)
+		month := time.Month(monthObj.Value)
+		day := int(dayObj.Value)
+
+		// Create date (time set to midnight)
+		t := time.Date(year, month, day, 0, 0, 0, 0, time.Local)
+		return &object.Datetime{Value: t}
+	},
+	HelpText: `date(year, month, day)
+
+Creates a date object for the specified date.
+
+Parameters:
+  year  - Year (required)
+  month - Month 1-12 (required)
+  day   - Day of month (required)
+
+Class methods (via attributes):
+  date.today() - Current local date
+
+Example:
+  from datetime import date
+  d = date(2025, 12, 25)
+  today = date.today()`,
+	Attributes: map[string]object.Object{
+		"today": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				now := time.Now()
+				t := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
+				return &object.Datetime{Value: t}
+			},
+			HelpText: `today() - Return current local date`,
+		},
+	},
+}
+
 // timedeltaBuiltin provides Python-compatible datetime.timedelta function
 var timedeltaBuiltin = &object.Builtin{
 	Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
@@ -335,14 +393,16 @@ Examples:
   datetime.timedelta(weeks=1)                # 604800.0 seconds`,
 }
 
-// DatetimeLibrary is the main datetime module with Python-compatible datetime.datetime class
+// DatetimeLibrary is the main datetime module with Python-compatible datetime.datetime and datetime.date classes
 var DatetimeLibrary = object.NewLibrary(
 	map[string]*object.Builtin{
 		// Python-compatible: timedelta at module level
 		"timedelta": timedeltaBuiltin,
 		// datetime.datetime is a callable class with attributes for class methods
 		"datetime": datetimeConstructor,
+		// datetime.date is a callable class for date-only operations
+		"date": dateConstructor,
 	},
 	nil, // no constants
-	"Date and time manipulation library. Use datetime.datetime(), datetime.datetime.now(), etc.",
+	"Date and time manipulation library. Use datetime.datetime(), datetime.date(), datetime.datetime.now(), etc.",
 )
