@@ -11,4 +11,5 @@ const (
 	OSPathLibraryName     = "os.path"
 	PathlibLibraryName    = "pathlib"
 	ThreadsLibraryName    = "threads"
+	LoggingLibraryName    = "logging"
 )
