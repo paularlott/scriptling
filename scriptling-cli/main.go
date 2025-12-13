@@ -54,7 +54,6 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 
 	// Register extended libraries
 	extlibs.RegisterRequestsLibrary(p)
-	extlibs.RegisterSysLibrary(p)
 	extlibs.RegisterSecretsLibrary(p)
 	extlibs.RegisterSubprocessLibrary(p)
 	extlibs.RegisterHTMLParserLibrary(p)
@@ -84,7 +83,7 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	} else {
 		argv = []string{""}
 	}
-	extlibs.SetupSysLibrary(argv)
+	extlibs.RegisterSysLibrary(p, argv)
 
 	// Set up sys.exit callback
 	extlibs.SysExitCallback = func(code int) {

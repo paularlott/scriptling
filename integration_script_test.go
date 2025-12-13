@@ -28,7 +28,7 @@ func TestIntegrationScripts(t *testing.T) {
 	p := New()
 	stdlib.RegisterAll(p)
 	extlibs.RegisterRequestsLibrary(p)
-	extlibs.RegisterSysLibrary(p)
+	extlibs.RegisterSysLibrary(p, []string{})
 	extlibs.RegisterSecretsLibrary(p)
 	extlibs.RegisterSubprocessLibrary(p)
 	extlibs.RegisterHTMLParserLibrary(p)

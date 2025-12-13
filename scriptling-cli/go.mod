@@ -1,6 +1,6 @@
 module github.com/paularlott/scriptling-cli
 
-go 1.25.4
+go 1.25.5
 
 replace github.com/paularlott/scriptling => ../
 
@@ -12,6 +12,7 @@ require (
 require (
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/paularlott/logger v0.3.0 // indirect
 	golang.org/x/net v0.47.0 // indirect
 	golang.org/x/sys v0.38.0 // indirect
 	golang.org/x/text v0.31.0 // indirect
