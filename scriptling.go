@@ -501,7 +501,9 @@ func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[stri
 	libEnv := object.NewEnvironment()
 
 	// Inherit writer from main environment (for output capture)
-	if buf, ok := p.env.GetWriter().(*strings.Builder); ok {
+	// GetWriter returns io.Writer, but if output capture is enabled, it's a *strings.Builder
+	writer := p.env.GetWriter()
+	if buf, ok := writer.(*strings.Builder); ok {
 		libEnv.SetOutput(buf)
 	}
 

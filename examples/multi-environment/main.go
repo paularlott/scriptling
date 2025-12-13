@@ -12,7 +12,7 @@ import (
 
 func main() {
 	fmt.Println("=== Multi-Environment Logging Example ===")
-	fmt.Println("Demonstrating environment isolation with different loggers...\n")
+	fmt.Print("Demonstrating environment isolation with different loggers...\n")
 
 	// Create two different output buffers to capture logs
 	var buf1, buf2 bytes.Buffer

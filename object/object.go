@@ -431,6 +431,10 @@ func NewEnvironment() *Environment {
 func NewEnclosedEnvironment(outer *Environment) *Environment {
 	env := NewEnvironment()
 	env.outer = outer
+	// Inherit output buffer from outer environment
+	if outer.output != nil {
+		env.output = outer.output
+	}
 	return env
 }
 

@@ -10,8 +10,8 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
-func RegisterSysLibrary(registrar interface{ RegisterLibrary(string, *object.Library) }) {
-	registrar.RegisterLibrary(SysLibraryName, SysLibrary)
+func RegisterSysLibrary(registrar interface{ RegisterLibrary(string, *object.Library) }, argv []string) {
+	registrar.RegisterLibrary(SysLibraryName, NewSysLibrary(argv))
 }
 
 // SysExitCode is used to communicate exit codes from sys.exit()
@@ -26,56 +26,60 @@ func (s *SysExitCode) Error() string {
 // SysExitCallback can be set to customize sys.exit() behavior
 var SysExitCallback func(code int)
 
-// SysArgv contains command-line arguments (set by the CLI)
-var SysArgv []string
+// NewSysLibrary creates a new sys library with the given argv
+func NewSysLibrary(argv []string) *object.Library {
+	// Create argv list
+	argvElements := make([]object.Object, len(argv))
+	for i, arg := range argv {
+		argvElements[i] = &object.String{Value: arg}
+	}
 
-// sysConstants holds the mutable constants map
-var sysConstants = map[string]object.Object{
-	// Platform identifier
-	"platform": &object.String{Value: getPlatform()},
+	// Constants map
+	constants := map[string]object.Object{
+		// Platform identifier
+		"platform": &object.String{Value: getPlatform()},
 
-	// Version info
-	"version": &object.String{Value: "Scriptling " + build.Version},
+		// Version info
+		"version": &object.String{Value: "Scriptling " + build.Version},
 
-	// Maximum integer value
-	"maxsize": object.NewInteger(9223372036854775807), // max int64
+		// Maximum integer value
+		"maxsize": object.NewInteger(9223372036854775807), // max int64
 
-	// Path separator
-	"path_sep": &object.String{Value: string(os.PathSeparator)},
+		// Path separator
+		"path_sep": &object.String{Value: string(os.PathSeparator)},
 
-	// argv - will be populated by CLI
-	"argv": &object.List{Elements: []object.Object{}},
-}
+		// argv
+		"argv": &object.List{Elements: argvElements},
+	}
 
-// SysLibrary provides system-specific parameters and functions
-// NOTE: This is an extended library and not enabled by default
-var SysLibrary = object.NewLibrary(map[string]*object.Builtin{
-	"exit": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			code := 0
-			if len(args) > 0 {
-				switch arg := args[0].(type) {
-				case *object.Integer:
-					code = int(arg.Value)
-				case *object.String:
-					// Print the message to stderr and exit with code 1
-					if SysExitCallback != nil {
-						SysExitCallback(1)
+	// SysLibrary provides system-specific parameters and functions
+	return object.NewLibrary(map[string]*object.Builtin{
+		"exit": {
+			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				code := 0
+				if len(args) > 0 {
+					switch arg := args[0].(type) {
+					case *object.Integer:
+						code = int(arg.Value)
+					case *object.String:
+						// Print the message to stderr and exit with code 1
+						if SysExitCallback != nil {
+							SysExitCallback(1)
+						}
+						return errors.NewError("%s", arg.Value)
+					default:
+						code = 1
 					}
-					return errors.NewError("%s", arg.Value)
-				default:
-					code = 1
 				}
-			}
 
-			if SysExitCallback != nil {
-				SysExitCallback(code)
-			}
+				if SysExitCallback != nil {
+					SysExitCallback(code)
+				}
 
-			// Return a special error that can be caught by the runtime
-			return errors.NewError("SystemExit: %d", code)
-		},
-		HelpText: `exit([code]) - Exit the interpreter with optional status code
+				// Return a special error that can be caught by the runtime
+				return errors.NewError("SystemExit: %d", code)
+			},
+			HelpText: `exit([code]) - Exit the interpreter with optional status code
 
 Parameters:
   code - Exit status (default 0). If string, prints message and exits with 1.
@@ -85,23 +89,8 @@ Example:
   sys.exit()      # Exit with code 0
   sys.exit(1)     # Exit with code 1
   sys.exit("Error message")  # Print error and exit with 1`,
-	},
-}, sysConstants, "System-specific parameters and functions (extended library)")
-
-// GetSysArgv returns the argv list as an Object
-func GetSysArgv() *object.List {
-	elements := make([]object.Object, len(SysArgv))
-	for i, arg := range SysArgv {
-		elements[i] = &object.String{Value: arg}
-	}
-	return &object.List{Elements: elements}
-}
-
-// SetupSysLibrary configures the sys library with argv
-func SetupSysLibrary(argv []string) {
-	SysArgv = argv
-	// Update the argv constant
-	sysConstants["argv"] = GetSysArgv()
+		},
+	}, constants, "System-specific parameters and functions (extended library)")
 }
 
 func getPlatform() string {

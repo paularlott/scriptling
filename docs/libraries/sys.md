@@ -88,11 +88,8 @@ import (
 func main() {
     p := scriptling.New()
 
-    // Register the sys library
-    p.RegisterLibrary("sys", extlibs.SysLibrary)
-
-    // Set up argv
-    extlibs.SetupSysLibrary([]string{"script.py", "arg1", "arg2"})
+    // Register the sys library with argv
+    p.RegisterLibrary("sys", extlibs.NewSysLibrary([]string{"script.py", "arg1", "arg2"}))
 
     // Optionally set up exit callback
     extlibs.SysExitCallback = func(code int) {
