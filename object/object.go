@@ -485,6 +485,7 @@ func (e *Environment) GetGlobal() *Environment {
 }
 
 // SetInParent sets a variable in the parent environment (for nonlocal)
+// Thread-safe: acquires lock during check and set operations
 func (e *Environment) SetInParent(name string, val Object) bool {
 	if e.outer == nil {
 		return false
@@ -496,6 +497,8 @@ func (e *Environment) SetInParent(name string, val Object) bool {
 		e.outer.mu.Unlock()
 		return true
 	}
+	// Not found in immediate parent, need to check further up
+	// Unlock before recursive call to avoid deadlock
 	e.outer.mu.Unlock()
 	if e.outer.outer != nil {
 		return e.outer.SetInParent(name, val)

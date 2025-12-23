@@ -1825,21 +1825,31 @@ func evalLambda(lambda *ast.Lambda, env *object.Environment) object.Object {
 }
 
 func evalFStringLiteral(ctx context.Context, fstr *ast.FStringLiteral, env *object.Environment) object.Object {
-	result := ""
+	var builder strings.Builder
+
+	// Pre-allocate capacity to reduce reallocations
+	// Estimate base size from static parts plus some buffer for expressions
+	estimatedSize := 0
+	for _, part := range fstr.Parts {
+		estimatedSize += len(part)
+	}
+	// Add buffer for formatted expressions (rough estimate)
+	estimatedSize += len(fstr.Expressions) * 16
+	builder.Grow(estimatedSize)
 
 	for i, part := range fstr.Parts {
-		result += part
+		builder.WriteString(part)
 		if i < len(fstr.Expressions) {
 			exprResult := evalWithContext(ctx, fstr.Expressions[i], env)
 			if isError(exprResult) {
 				return exprResult
 			}
 			formatted := formatWithSpec(exprResult, fstr.FormatSpecs[i])
-			result += formatted
+			builder.WriteString(formatted)
 		}
 	}
 
-	return &object.String{Value: result}
+	return &object.String{Value: builder.String()}
 }
 
 func formatWithSpec(obj object.Object, spec string) string {

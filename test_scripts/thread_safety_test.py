@@ -29,23 +29,20 @@ assert shared_counter.get() == 10, f"Expected 10, got {shared_counter.get()}"
 assert len(results) == 10, f"Expected 10 results, got {len(results)}"
 
 # Test that local variables don't interfere between threads
-local_values = []
-
 def worker_with_local(value):
     local = value * 2
-    local_values.append(local)
     # This should NOT interfere with other threads
-    shared_var = "thread_local"
     return local
 
 local_promises = []
 for i in range(5):
     local_promises.append(threads.run(worker_with_local, i))
 
+# Collect results from promises instead of using shared list
 expected = []
 for i in range(5):
     result = local_promises[i].get()
-    expected.append(i * 2)
+    expected.append(result)
 
 print(f"Local thread results: {expected}")
 assert expected == [0, 2, 4, 6, 8], f"Unexpected local results: {expected}"

@@ -14,7 +14,7 @@ A minimal, sandboxed interpreter for LLM agents to execute code and interact wit
 - **Python-like syntax** with indentation-based blocks
 - **Core types**: integers, floats, strings, booleans, lists, dictionaries
 - **Control flow**: if/elif/else, while, for loops, break, continue
-- **Object-oriented**: Classes with methods and constructors
+- **Object-oriented**: Classes with single inheritance, methods, and constructors
 - **Advanced features**: functions, lambda, list comprehensions, error handling
 - **Libraries**: including json, regex, math, time, requests, subprocess (load on demand)
 - **Go integration**: Register functions, exchange variables
@@ -24,7 +24,7 @@ A minimal, sandboxed interpreter for LLM agents to execute code and interact wit
 
 While Scriptling is inspired by Python, it has some key differences:
 
-- **No Inheritance**: Classes do not support inheritance.
+- **Single Inheritance Only**: Classes support single inheritance (e.g., `class Dog(Animal):`), but not multiple inheritance.
 - **No Nested Classes**: Classes cannot be defined within other classes.
 - **Simplified Scope**: `nonlocal` and `global` keywords work slightly differently.
 - **Go Integration**: Designed primarily for embedding in Go, with direct type mapping.
