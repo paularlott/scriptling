@@ -215,23 +215,6 @@ d = collections.defaultdict(list)
 d["key"].append(1)                              # Creates [] and appends 1
 ```
 
-## Copy Library
-
-```python
-import copy
-
-# Shallow copy - new container, shared nested objects
-original = [[1, 2], [3, 4]]
-shallow = copy.copy(original)
-
-# Deep copy - completely independent copy
-deep = copy.deepcopy(original)
-
-# For flat structures, both work the same
-simple = [1, 2, 3]
-copied = copy.copy(simple)
-```
-
 ## Core Built-in Functions
 
 Always available without importing:
