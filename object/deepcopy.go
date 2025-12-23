@@ -1,8 +1,16 @@
 package object
 
-// DeepCopy creates a deep copy of an object
-// Note: Circular references are not handled and will cause infinite recursion
-// Thread-safe: handles potential concurrent modifications to lists/dicts defensively
+// DeepCopy creates a deep copy of an object.
+//
+// Important limitations:
+// - Circular references are NOT handled and will cause infinite recursion
+// - NOT safe for concurrent modification: The caller must ensure the object
+//   is not being modified during DeepCopy. This function captures slice
+//   references but does not acquire locks on the source objects.
+//
+// This function is primarily used for cloning environments when spawning
+// goroutines (e.g., async.run), where the source environment is not being
+// concurrently modified by design.
 func DeepCopy(obj Object) Object {
 	switch v := obj.(type) {
 	case *List:
