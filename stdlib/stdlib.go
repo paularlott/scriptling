@@ -23,7 +23,6 @@ const (
 	PlatformLibraryName    = "platform"
 	ItertoolsLibraryName   = "itertools"
 	CollectionsLibraryName = "collections"
-	CopyLibraryName        = "copy"
 )
 
 // RegisterAll registers all standard libraries
@@ -47,5 +46,4 @@ func RegisterAll(p interface{ RegisterLibrary(string, *object.Library) }) {
 	p.RegisterLibrary(PlatformLibraryName, PlatformLibrary)
 	p.RegisterLibrary(ItertoolsLibraryName, ItertoolsLibrary)
 	p.RegisterLibrary(CollectionsLibraryName, CollectionsLibrary)
-	p.RegisterLibrary(CopyLibraryName, CopyLibrary)
 }

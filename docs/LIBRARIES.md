@@ -92,7 +92,6 @@ These libraries are built-in and can be imported.
 
 ### Collections & Algorithms
 - **`collections`**: Container datatypes (`deque`, `Counter`, `defaultdict`).
-- **`copy`**: Shallow and deep copy operations.
 - **`hashlib`**: Secure hash and message digest algorithms (`md5`, `sha256`).
 
 ### System & Network
