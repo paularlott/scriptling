@@ -14,41 +14,40 @@ func TestCloneEnvironment(t *testing.T) {
 	env.Set("test_var", &object.Integer{Value: 42})
 	env.Set("test_str", &object.String{Value: "hello"})
 
-	// Add an atomic (builtin) object
-	atomic := newAtomicInt64(10)
-	atomicObj := &object.Builtin{
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			if len(args) == 0 {
-				return &object.Integer{Value: atomic.get()}
-			}
-			if len(args) == 1 {
-				if val, ok := args[0].(*object.Integer); ok {
-					atomic.set(val.Value)
-					return &object.Null{}
-				}
-			}
-			return &object.Error{Message: "invalid arguments"}
+	// Add a library to verify it gets copied
+	testLib := object.NewLibrary(
+		map[string]*object.Builtin{
+			"test_func": {
+				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+					return &object.String{Value: "test"}
+				},
+			},
 		},
-	}
-	env.Set("atomic_var", atomicObj)
+		map[string]object.Object{},
+		"Test library",
+	)
+	env.Set("test_lib", testLib)
 
 	// Clone the environment
 	cloned := cloneEnvironment(env)
 
-	// Test that regular variables are deep copied
-	originalVal, _ := env.Get("test_var")
-	clonedVal, _ := cloned.Get("test_var")
-
-	if clonedVal.Inspect() != originalVal.Inspect() {
-		t.Errorf("Expected cloned value %s, got %s", originalVal.Inspect(), clonedVal.Inspect())
+	// User variables should NOT be copied (new behavior)
+	_, ok := cloned.Get("test_var")
+	if ok {
+		t.Error("User variables should NOT be copied to thread environment")
 	}
 
-	// Modify cloned value
-	cloned.Set("test_var", &object.Integer{Value: 100})
+	_, ok = cloned.Get("test_str")
+	if ok {
+		t.Error("User variables should NOT be copied to thread environment")
+	}
 
-	// Original should be unchanged
-	if val, _ := env.Get("test_var"); val.Inspect() != "42" {
-		t.Errorf("Original value should be 42, got %s", val.Inspect())
+	// Libraries SHOULD be copied
+	lib, ok := cloned.Get("test_lib")
+	if !ok {
+		t.Error("Libraries should be copied to thread environment")
+	} else if _, isLib := lib.(*object.Library); !isLib {
+		t.Error("Library should remain a Library type")
 	}
 }
 
@@ -156,4 +155,95 @@ func TestPoolContextCancellation(t *testing.T) {
 
 	// Close pool - should not block
 	pool.close()
+}
+
+func TestPromiseResultPositionalAndKwargs(t *testing.T) {
+	// Save original function
+	origApply := ApplyFunctionFunc
+	defer func() {
+		ApplyFunctionFunc = origApply
+	}()
+
+	// Create a worker function that returns positional + kwargs
+	worker := &object.Builtin{
+		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			result := int64(0)
+			for _, arg := range args {
+				if i, ok := arg.(*object.Integer); ok {
+					result += i.Value
+				}
+			}
+			for _, arg := range kwargs {
+				if i, ok := arg.(*object.Integer); ok {
+					result += i.Value
+				}
+			}
+			return &object.Integer{Value: result}
+		},
+	}
+
+	// Mock ApplyFunctionFunc
+	ApplyFunctionFunc = func(ctx context.Context, fn object.Object, fnArgs []object.Object, fnKwargs map[string]object.Object, env *object.Environment) object.Object {
+		if builtin, ok := fn.(*object.Builtin); ok {
+			return builtin.Fn(ctx, fnKwargs, fnArgs...)
+		}
+		return &object.Error{Message: "not a builtin"}
+	}
+
+	env := object.NewEnvironment()
+
+	// Test with positional arguments
+	promise1 := newPromise()
+	go func() {
+		result := ApplyFunctionFunc(context.Background(), worker, []object.Object{
+			&object.Integer{Value: 10},
+			&object.Integer{Value: 20},
+		}, nil, env)
+		promise1.set(result, nil)
+	}()
+
+	result1, err1 := promise1.get()
+	if err1 != nil {
+		t.Fatalf("Promise get failed: %v", err1)
+	}
+	if i, ok := result1.(*object.Integer); !ok || i.Value != 30 {
+		t.Errorf("Expected 30 from positional args, got %v", result1)
+	}
+
+	// Test with keyword arguments
+	promise2 := newPromise()
+	go func() {
+		result := ApplyFunctionFunc(context.Background(), worker, nil, map[string]object.Object{
+			"a": &object.Integer{Value: 5},
+			"b": &object.Integer{Value: 15},
+		}, env)
+		promise2.set(result, nil)
+	}()
+
+	result2, err2 := promise2.get()
+	if err2 != nil {
+		t.Fatalf("Promise get failed: %v", err2)
+	}
+	if i, ok := result2.(*object.Integer); !ok || i.Value != 20 {
+		t.Errorf("Expected 20 from kwargs, got %v", result2)
+	}
+
+	// Test with both positional and keyword arguments
+	promise3 := newPromise()
+	go func() {
+		result := ApplyFunctionFunc(context.Background(), worker, []object.Object{
+			&object.Integer{Value: 100},
+		}, map[string]object.Object{
+			"x": &object.Integer{Value: 10},
+		}, env)
+		promise3.set(result, nil)
+	}()
+
+	result3, err3 := promise3.get()
+	if err3 != nil {
+		t.Fatalf("Promise get failed: %v", err3)
+	}
+	if i, ok := result3.(*object.Integer); !ok || i.Value != 110 {
+		t.Errorf("Expected 110 from both args, got %v", result3)
+	}
 }

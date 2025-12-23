@@ -249,21 +249,26 @@ func (p *Pool) close() {
 	})
 }
 
-// cloneEnvironment creates a deep copy of an environment using object.DeepCopy
-// Note: Builtin objects (Atomic, Queue, WaitGroup, Shared, etc.) are NOT deep copied,
-// which means the underlying Go data structures are shared between parent and threads.
-// This is the desired behavior for thread-safe primitives.
+// cloneEnvironment creates a lightweight environment for threading.
+//
+// Only copies libraries (not user variables) to achieve O(1) cloning.
+// Thread functions must receive all data through explicit parameters.
+// Thread-safe primitives (Atomic, Shared, Queue) can be passed as parameters.
 func cloneEnvironment(env *object.Environment) *object.Environment {
 	cloned := object.NewEnvironment()
 
-	// Get the store and deep copy each value
-	// Builtin objects are returned as-is by DeepCopy, ensuring shared state
+	// Copy ONLY libraries - they're immutable and needed for function calls
+	// Skip user variables to avoid expensive deep copy
 	store := env.GetStore()
 	for k, v := range store {
-		cloned.Set(k, object.DeepCopy(v))
+		if _, isLib := v.(*object.Library); isLib {
+			cloned.Set(k, v) // Share libraries (they're immutable)
+		}
+		// Skip all other types: user variables, functions, data, etc.
+		// These must be passed explicitly as parameters
 	}
 
-	// Copy callbacks
+	// Copy callbacks so import works within threads
 	cloned.SetImportCallback(env.GetImportCallback())
 	cloned.SetAvailableLibrariesCallback(env.GetAvailableLibrariesCallback())
 
