@@ -4,10 +4,18 @@ Go-inspired async library for safe concurrent execution through isolated environ
 
 ## Design Principles
 
-- **Isolated Environments** - Each goroutine gets a cloned environment (safe by default)
+- **Isolated Environments** - Each goroutine gets an empty environment with only libraries
+- **Explicit Data Passing** - All data must be passed as parameters (no implicit sharing)
 - **Context-Based Cleanup** - Goroutines cancelled when script context is cancelled
 - **Promise-Based** - Returns Promise objects (familiar from JavaScript)
-- **Go-Inspired Primitives** - WaitGroup, Queue, Pool, Atomic operations
+- **Go-Inspired Primitives** - WaitGroup, Queue, Pool, Atomic, Shared operations
+
+## Important: Thread Safety
+
+Thread functions **do not** have access to variables from the parent scope.
+All data must be passed explicitly as parameters.
+
+For shared mutable data, use thread-safe primitives: `Atomic()`, `Shared()`, `Queue()`.
 
 ## Functions
 
@@ -15,7 +23,14 @@ Go-inspired async library for safe concurrent execution through isolated environ
 
 Run function asynchronously in a separate goroutine with isolated environment.
 
+**Parameters:**
+- `func` - Function to execute
+- `*args` - Positional arguments to pass to the function
+- `**kwargs` - Keyword arguments to pass to the function
+
 **Returns:** Promise object with `.get()` and `.wait()` methods
+
+**Note:** The spawned thread has access to libraries but NOT to parent scope variables.
 
 ```python
 import threads
@@ -34,6 +49,40 @@ result2 = promise2.get()  # Returns 10
 # Multiple async operations
 promises = [threads.run(worker, i, y=i+1) for i in range(10)]
 results = [p.get() for p in promises]
+```
+
+#### Thread Safety with Shared Data
+
+Use `Atomic()` for counters and `Shared()` for complex values:
+
+```python
+import threads
+
+counter = threads.Atomic(0)
+
+def increment(counter):
+    counter.add(1)  # Thread-safe
+
+promises = [threads.run(increment, counter) for _ in range(10)]
+for p in promises:
+    p.get()
+
+print(counter.get())  # 10
+```
+
+#### Passing Data
+
+All data must be passed explicitly:
+
+```python
+import threads
+
+def process_data(data):
+    return [x * 2 for x in data]
+
+my_data = [1, 2, 3, 4, 5]
+promise = threads.run(process_data, my_data)
+result = promise.get()  # [2, 4, 6, 8, 10]
 ```
 
 ### Promise.wait()
@@ -68,10 +117,10 @@ import threads
 
 counter = threads.Atomic(0)
 
-def increment():
+def increment(counter):
     counter.add(1)
 
-promises = [threads.run(increment) for _ in range(1000)]
+promises = [threads.run(increment, counter) for _ in range(1000)]
 for p in promises:
     p.get()
 
@@ -91,12 +140,12 @@ import threads
 
 shared_list = threads.Shared([])
 
-def append_item(item):
+def append_item(shared_list, item):
     current = shared_list.get()
     current.append(item)
     shared_list.set(current)
 
-promises = [threads.run(append_item, i) for i in range(100)]
+promises = [threads.run(append_item, shared_list, i) for i in range(100)]
 for p in promises:
     p.get()
 
@@ -117,7 +166,7 @@ import threads
 
 wg = threads.WaitGroup()
 
-def worker(id):
+def worker(wg, id):
     print(f"Worker {id} starting")
     # ... do work ...
     print(f"Worker {id} done")
@@ -125,7 +174,7 @@ def worker(id):
 
 for i in range(10):
     wg.add(1)
-    threads.run(worker, i)
+    threads.run(worker, wg, i)
 
 wg.wait()
 print("All workers complete")
@@ -149,20 +198,20 @@ import threads
 
 queue = threads.Queue(maxsize=100)
 
-def producer():
+def producer(queue):
     for i in range(10):
         queue.put(i)
     queue.put(None)  # Sentinel
 
-def consumer():
+def consumer(queue):
     while True:
         item = queue.get()
         if item is None:
             break
         print(f"Processing {item}")
 
-threads.run(producer)
-threads.run(consumer)
+threads.run(producer, queue)
+threads.run(consumer, queue)
 ```
 
 ### threads.Pool(worker_func, workers=4, queue_depth=workers*2)
@@ -194,12 +243,23 @@ for item in range(100):
 pool.close()  # Wait for all work to complete
 ```
 
-## Thread Safety
+## Thread Safety Model
 
-All async operations use isolated environments created via deep copy:
-- Each goroutine gets its own copy of variables
-- Changes in one goroutine don't affect others
-- Use `Shared()` or `Atomic()` for intentional sharing
+**Isolation by default:**
+- Each goroutine gets an empty environment with only libraries
+- No access to parent scope variables
+- All data must be passed explicitly as parameters
+
+**Sharing through primitives:**
+- `Atomic()` - Lock-free atomic integers
+- `Shared()` - Mutex-protected shared values
+- `Queue()` - Thread-safe communication channel
+- `WaitGroup()` - Synchronization primitive
+
+**No implicit sharing prevents:**
+- Data races from accidental shared state
+- Memory overhead from deep copying
+- Performance degradation from expensive clones
 
 ## Context Cancellation
 
@@ -215,17 +275,19 @@ result, err := p.EvalWithTimeout(30*time.Second, script)
 
 ## Best Practices
 
-1. **Use promise.wait() for fire-and-forget operations** - When you don't need the result
-2. **Use promise.get() when you need the result** - Wait and return the computed value
-3. **Use Atomic for counters** - Lock-free and fast
-4. **Use Shared for complex types** - When you need mutex protection
-5. **Use WaitGroup for synchronization** - Wait for multiple operations
-6. **Use Queue for producer-consumer** - Thread-safe communication
-7. **Use Pool for batch processing** - Efficient worker management
+1. **Pass data explicitly** - All data must be passed as function parameters
+2. **Use Atomic for counters** - Lock-free and fast
+3. **Use Shared for complex types** - When you need mutex protection
+4. **Use WaitGroup for synchronization** - Wait for multiple operations
+5. **Use Queue for producer-consumer** - Thread-safe communication
+6. **Use Pool for batch processing** - Efficient worker management
+7. **Use promise.wait() for fire-and-forget** - When you don't need the result
+8. **Use promise.get() when needed** - Wait and return the computed value
 
 ## Performance Notes
 
-- Environment cloning has overhead - use for I/O-bound tasks
-- Atomic operations are lock-free and very fast
-- Pool reuses goroutines for efficiency
-- Queue uses condition variables for blocking
+- **O(1) environment creation** - No deep copy overhead
+- **Atomic operations are lock-free** and very fast
+- **Pool reuses goroutines** for efficiency
+- **Queue uses condition variables** for blocking
+- **Explicit data passing** is faster than cloning large environments
