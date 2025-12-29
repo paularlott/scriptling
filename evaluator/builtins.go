@@ -1920,11 +1920,15 @@ func helpFunctionImpl(ctx context.Context, kwargs map[string]object.Object, args
 				}
 
 				fmt.Fprintln(writer, "Available functions:")
+				// Collect and sort function names
+				var names []string
 				for name := range dict.Pairs {
-					// Skip __doc__
-					if name == "__doc__" {
-						continue
+					if name != "__doc__" {
+						names = append(names, name)
 					}
+				}
+				sort.Strings(names)
+				for _, name := range names {
 					fmt.Fprintf(writer, "  - %s\n", name)
 				}
 				fmt.Fprintln(writer, "")
@@ -1995,7 +1999,13 @@ func helpFunctionImpl(ctx context.Context, kwargs map[string]object.Object, args
 		fmt.Fprintln(writer, "Help for dictionary/library:")
 		fmt.Fprintln(writer, "")
 		fmt.Fprintln(writer, "Available keys:")
+		// Collect and sort keys
+		var names []string
 		for name := range obj.Pairs {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
 			fmt.Fprintf(writer, "  - %s\n", name)
 		}
 		return NULL
