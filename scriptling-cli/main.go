@@ -60,6 +60,7 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	extlibs.RegisterThreadsLibrary(p)
 	extlibs.RegisterOSLibrary(p, []string{})
 	extlibs.RegisterPathlibLibrary(p, []string{})
+	extlibs.RegisterWaitForLibrary(p)
 
 	// Set up on-demand library loading for local .py files
 	p.SetOnDemandLibraryCallback(func(p *scriptling.Scriptling, libName string) bool {
