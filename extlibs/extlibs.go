@@ -12,4 +12,5 @@ const (
 	PathlibLibraryName    = "pathlib"
 	ThreadsLibraryName    = "threads"
 	LoggingLibraryName    = "logging"
+	WaitForLibraryName    = "wait_for"
 )

@@ -110,6 +110,7 @@ These libraries are not loaded by default and must be explicitly registered by t
 - **`secrets`**: Cryptographically strong random numbers.
 - **`subprocess`**: Spawn and manage subprocesses.
 - **`sys`**: System-specific parameters and functions (`argv`, `exit`, `version`).
+- **`wait_for`**: Wait for resources to become available (files, ports, HTTP endpoints, processes).
 
 
 
