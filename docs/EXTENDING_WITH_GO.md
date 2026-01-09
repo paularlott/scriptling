@@ -175,6 +175,185 @@ p.RegisterFunc("debug_print", func(ctx context.Context, kwargs map[string]object
 })
 ```
 
+## Type-Safe Accessor Methods
+
+All Scriptling objects implement type-safe accessor methods that simplify type checking and value extraction. These methods return `(value, ok)` tuples similar to Go's map access pattern.
+
+### Available Accessor Methods
+
+Every `object.Object` implements these methods:
+
+```go
+AsString() (string, bool)            // Extract string value
+AsInt() (int64, bool)                // Extract integer value
+AsFloat() (float64, bool)            // Extract float value (auto-converts integers)
+AsBool() (bool, bool)                // Extract boolean value
+AsList() ([]Object, bool)            // Extract list/tuple elements
+AsDict() (map[string]Object, bool)   // Extract dict as map (keys are strings)
+```
+
+### Benefits Over Type Assertions
+
+**Before (using type assertions):**
+
+```go
+p.RegisterFunc("add_tax", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+    if len(args) != 2 {
+        return errors.NewArgumentError(len(args), 2)
+    }
+
+    // Manual type assertion and value extraction - tedious!
+    priceObj, ok := args[0].(*object.Float)
+    if !ok {
+        // Need to handle Integer separately
+        intObj, ok := args[0].(*object.Integer)
+        if !ok {
+            return errors.NewTypeError("NUMBER", args[0].Type().String())
+        }
+        priceObj = &object.Float{Value: float64(intObj.Value)}
+    }
+
+    rateObj, ok := args[1].(*object.Float)
+    if !ok {
+        intObj, ok := args[1].(*object.Integer)
+        if !ok {
+            return errors.NewTypeError("NUMBER", args[1].Type().String())
+        }
+        rateObj = &object.Float{Value: float64(intObj.Value)}
+    }
+
+    result := priceObj.Value * (1 + rateObj.Value)
+    return &object.Float{Value: result}
+})
+```
+
+**After (using type-safe accessors):**
+
+```go
+p.RegisterFunc("add_tax", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+    if len(args) != 2 {
+        return errors.NewArgumentError(len(args), 2)
+    }
+
+    // Automatic type coercion - Integer.AsFloat() returns the float value!
+    price, ok := args[0].AsFloat()
+    if !ok {
+        return errors.NewTypeError("NUMBER", args[0].Type().String())
+    }
+
+    rate, ok := args[1].AsFloat()
+    if !ok {
+        return errors.NewTypeError("NUMBER", args[1].Type().String())
+    }
+
+    result := price * (1 + rate)
+    return &object.Float{Value: result}
+})
+```
+
+### Key Advantages
+
+1. **Automatic Type Coercion**: `Integer.AsFloat()` returns `(float64(value), true)` automatically
+2. **Cleaner Code**: No need to access `.Value` field after type assertion
+3. **Consistent Pattern**: Same `(value, ok)` pattern throughout
+4. **Dictionary Simplification**: `AsDict()` returns `map[string]Object` instead of `map[string]DictPair`
+
+### Working with Strings
+
+```go
+p.RegisterFunc("greet", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+    if len(args) != 1 {
+        return errors.NewArgumentError(len(args), 1)
+    }
+
+    // Clean string extraction - one line!
+    name, ok := args[0].AsString()
+    if !ok {
+        return errors.NewTypeError("STRING", args[0].Type().String())
+    }
+
+    return &object.String{Value: "Hello, " + name + "!"}
+})
+```
+
+### Working with Lists
+
+```go
+p.RegisterFunc("sum_list", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+    if len(args) != 1 {
+        return errors.NewArgumentError(len(args), 1)
+    }
+
+    // Extract list elements directly - no .Elements needed
+    elements, ok := args[0].AsList()
+    if !ok {
+        return errors.NewTypeError("LIST", args[0].Type().String())
+    }
+
+    var sum float64
+    for _, elem := range elements {
+        // AsFloat() works on both Integer and Float
+        val, ok := elem.AsFloat()
+        if !ok {
+            return errors.NewError("all elements must be numeric")
+        }
+        sum += val
+    }
+
+    return &object.Float{Value: sum}
+})
+```
+
+### Working with Dictionaries
+
+```go
+p.RegisterFunc("process_config", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+    if len(args) != 1 {
+        return errors.NewArgumentError(len(args), 1)
+    }
+
+    // Get dict as simple map[string]Object - no .Pairs!
+    config, ok := args[0].AsDict()
+    if !ok {
+        return errors.NewTypeError("DICT", args[0].Type().String())
+    }
+
+    // Access values directly - clean and simple
+    if hostVal, exists := config["host"]; exists {
+        if host, ok := hostVal.AsString(); ok {
+            fmt.Printf("Host: %s\n", host)
+        }
+    }
+
+    if portVal, exists := config["port"]; exists {
+        if port, ok := portVal.AsInt(); ok {
+            fmt.Printf("Port: %d\n", port)
+        }
+    }
+
+    return &object.String{Value: "processed"}
+})
+```
+
+### Type Coercion Reference
+
+| Object Type | AsString() | AsInt() | AsFloat()     | AsBool() | AsList() | AsDict() |
+| ----------- | ---------- | ------- | ------------- | -------- | -------- | -------- |
+| String      | ✓ value    | ✗       | ✗             | ✓ len>0  | ✗        | ✗        |
+| Integer     | ✗          | ✓ value | **✓ float64** | ✓ val≠0  | ✗        | ✗        |
+| Float       | ✗          | ✗       | ✓ value       | ✓ val≠0  | ✗        | ✗        |
+| Boolean     | ✗          | ✗       | ✗             | ✓ value  | ✗        | ✗        |
+| List        | ✗          | ✗       | ✗             | ✓ len>0  | ✓ elems  | ✗        |
+| Tuple       | ✗          | ✗       | ✗             | ✓ len>0  | ✓ elems  | ✗        |
+| Dict        | ✗          | ✗       | ✗             | ✓ len>0  | ✗        | ✓ map    |
+| Null        | ✗          | ✗       | ✗             | ✓ false  | ✗        | ✗        |
+
+**Note**: Bold entries indicate automatic type coercion (e.g., Integer → float64).
+
+**Recommendation**: Always use type-safe accessors (`AsString()`, `AsInt()`, etc.) instead of direct type assertions when implementing custom functions.
+
+````
+
 ## Advanced Function Examples
 
 ### File Operations with Output Capture
@@ -203,7 +382,7 @@ p.RegisterFunc("read_file", func(ctx context.Context, kwargs map[string]object.O
     fmt.Fprintf(writer, "Successfully read %d bytes from %s\n", len(content), pathObj.Value)
     return &object.String{Value: string(content)}
 })
-```
+````
 
 ### HTTP Client with Logging
 
@@ -763,6 +942,7 @@ print("After direct assignment: " + str(c.count))  # After direct assignment: 10
 Scriptling supports special methods that enable custom syntax and behavior for your classes:
 
 #### `__getitem__(key)` - Custom Indexing
+
 Implement `__getitem__` to enable `obj[key]` syntax for custom indexing:
 
 ```go
@@ -798,6 +978,7 @@ counterClass := &object.Class{
 ```
 
 This enables:
+
 ```python
 c = Counter([1, 1, 2])
 print(c[1])  # 2
@@ -805,6 +986,7 @@ print(c[3])  # 0 (not KeyError)
 ```
 
 #### Other Special Methods
+
 - `__init__`: Constructor called when creating instances
 - `__str__`: Custom string representation (for `str()` function)
 - `__len__`: Custom length (for `len()` function)
@@ -991,48 +1173,41 @@ p.RegisterFunc("safe_divide", func(ctx context.Context, kwargs map[string]object
 })
 ```
 
-### 2. Type Conversion Helpers
+### 2. Use Type-Safe Accessor Methods
+
+**Always use the built-in type-safe accessor methods** instead of creating manual helper functions:
 
 ```go
-// Helper function for type conversion
-func toFloat(obj object.Object) (float64, bool) {
-    switch o := obj.(type) {
-    case *object.Float:
-        return o.Value, true
-    case *object.Integer:
-        return float64(o.Value), true
-    default:
-        return 0, false
-    }
-}
-
-func toString(obj object.Object) (string, bool) {
-    if strObj, ok := obj.(*object.String); ok {
-        return strObj.Value, true
-    }
-    return "", false
-}
-
-// Usage
+// ✓ RECOMMENDED: Use built-in accessors
 p.RegisterFunc("power", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
     if len(args) != 2 {
-        return &object.String{Value: "Error: power requires 2 arguments"}
+        return errors.NewArgumentError(len(args), 2)
     }
 
-    base, ok := toFloat(args[0])
+    // AsFloat() automatically handles both Integer and Float types
+    base, ok := args[0].AsFloat()
     if !ok {
-        return &object.String{Value: "Error: base must be number"}
+        return errors.NewTypeError("NUMBER", args[0].Type().String())
     }
 
-    exp, ok := toFloat(args[1])
+    exponent, ok := args[1].AsFloat()
     if !ok {
-        return &object.String{Value: "Error: exponent must be number"}
+        return errors.NewTypeError("NUMBER", args[1].Type().String())
     }
 
-    result := math.Pow(base, exp)
+    result := math.Pow(base, exponent)
     return &object.Float{Value: result}
 })
 ```
+
+**Why use accessors?**
+
+- `Integer.AsFloat()` automatically converts to `float64` - no manual conversion needed
+- `AsDict()` returns `map[string]Object` instead of `map[string]DictPair` - cleaner access
+- Consistent `(value, ok)` pattern across all types
+- Less code, fewer bugs
+
+See the **Type-Safe Accessor Methods** section for complete details and examples.
 
 ### 3. Context Usage
 
@@ -1267,5 +1442,3 @@ print(c.increment())
 `)
 }
 ```
-
-
