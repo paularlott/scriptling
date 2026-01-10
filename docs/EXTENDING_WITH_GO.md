@@ -465,6 +465,419 @@ The helpers use the type-safe accessor methods internally, so you get all the be
 - `GetList()` works with both List and Tuple
 - Clean, idiomatic Go error handling
 
+## Fluent Library API
+
+The Fluent Library API provides a clean, type-safe way to create Scriptling libraries using regular Go functions with typed parameters. The API automatically handles conversion between Go types and Scriptling objects, eliminating boilerplate code.
+
+### Overview
+
+**Without Fluent API (verbose):**
+
+```go
+myLib := object.NewLibrary(map[string]*object.Builtin{
+    "connect": {
+        Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+            if len(args) < 2 {
+                return errors.NewArgumentError(len(args), 2)
+            }
+            host, ok := args[0].AsString()
+            if !ok {
+                return errors.NewTypeError("STRING", args[0].Type().String())
+            }
+            port, ok := args[1].AsInt()
+            if !ok {
+                return errors.NewTypeError("INTEGER", args[1].Type().String())
+            }
+            // ... rest of function
+            return &object.Null{}
+        },
+    },
+    "disconnect": {
+        Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+            // ... implementation
+            return &object.Null{}
+        },
+    },
+})
+```
+
+**With Fluent API (clean):**
+
+```go
+lib := object.NewLibraryBuilder("mylib", "My custom library")
+lib.Function("connect", func(host string, port int) error {
+    // Connect to host:port
+    return nil
+})
+lib.Function("disconnect", func() error {
+    // Disconnect
+    return nil
+})
+myLib := lib.Build()
+```
+
+### Creating a Library
+
+Use `object.NewLibraryBuilder()` to create a new builder, then register functions and constants:
+
+```go
+import "github.com/paularlott/scriptling/object"
+
+// Create builder
+builder := object.NewLibraryBuilder("mymath", "Mathematical operations library")
+
+// Register typed functions
+builder.Function("add", func(a, b int) int {
+    return a + b
+})
+
+builder.Function("multiply", func(a, b float64) float64 {
+    return a * b
+})
+
+// Register constants
+builder.Constant("PI", 3.14159)
+builder.Constant("MAX_VALUE", 1000)
+
+// Build the library
+myLib := builder.Build()
+
+// Register with Scriptling
+p.RegisterLibrary("mymath", myLib)
+```
+
+### Supported Types
+
+The Fluent API automatically converts between Go types and Scriptling objects:
+
+| Go Type              | Scriptling Type | Notes                              |
+| -------------------- | --------------- | ----------------------------------- |
+| `string`             | `STRING`        | Direct conversion                  |
+| `int`, `int32`, `int64` | `INTEGER`    | Accepts both Integer and Float     |
+| `float32`, `float64` | `FLOAT`         | Accepts both Integer and Float     |
+| `bool`               | `BOOLEAN`       | Direct conversion                  |
+| `[]any`              | `LIST`          | Converts to/from Scriptling lists  |
+| `map[string]any`     | `DICT`          | Converts to/from Scriptling dicts  |
+| `nil`                | `None`          | Null value                         |
+
+### Function Signatures
+
+Functions can have various signatures:
+
+**Single return value:**
+```go
+builder.Function("sqrt", func(x float64) float64 {
+    return math.Sqrt(x)
+})
+```
+
+**Return value + error:**
+```go
+builder.Function("divide", func(a, b float64) (float64, error) {
+    if b == 0 {
+        return 0, fmt.Errorf("division by zero")
+    }
+    return a / b, nil
+})
+```
+
+**No return value:**
+```go
+builder.Function("print", func(msg string) {
+    fmt.Println(msg)
+})
+```
+
+**Multiple parameters:**
+```go
+builder.Function("format", func(name string, age int, score float64) string {
+    return fmt.Sprintf("%s (age %d) scored %.2f", name, age, score)
+})
+```
+
+**Complex types:**
+```go
+builder.Function("sum_list", func(items []any) float64 {
+    sum := 0.0
+    for _, item := range items {
+        if v, ok := item.(float64); ok {
+            sum += v
+        }
+    }
+    return sum
+})
+
+builder.Function("process_config", func(config map[string]any) string {
+    if host, ok := config["host"].(string); ok {
+        return "Connected to " + host
+    }
+    return "No host"
+})
+```
+
+### Adding Help Text
+
+Provide documentation for your functions using `FunctionWithHelp`:
+
+```go
+builder.FunctionWithHelp("sqrt", func(x float64) float64 {
+    return math.Sqrt(x)
+}, "sqrt(x) - Return the square root of x")
+
+builder.FunctionWithHelp("connect", func(host string, port int) error {
+    // implementation
+    return nil
+}, "connect(host, port) - Connect to the specified host and port")
+```
+
+### Constants
+
+Register constants that are available in the library:
+
+```go
+builder.Constant("VERSION", "1.0.0")
+builder.Constant("MAX_CONNECTIONS", 100)
+builder.Constant("DEBUG_MODE", true)
+builder.Constant("DEFAULT_TIMEOUT", 30.5)
+```
+
+### Raw Functions (Advanced)
+
+For advanced use cases where you need direct access to the low-level API, use `RawFunction`:
+
+```go
+builder.RawFunction("custom", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+    // Direct access to context, kwargs, and raw objects
+    env := evaluator.GetEnvFromContext(ctx)
+    // ... implementation
+    return &object.String{Value: "result"}
+})
+```
+
+### Sub-Libraries
+
+Organize related functions into sub-libraries:
+
+```go
+// Create URL parsing sub-library
+parseBuilder := object.NewLibraryBuilder("parse", "URL parsing utilities")
+parseBuilder.Function("quote", func(s string) string {
+    return url.QueryEscape(s)
+})
+parseBuilder.Function("unquote", func(s string) string {
+    val, _ := url.QueryUnescape(s)
+    return val
+})
+parseLib := parseBuilder.Build()
+
+// Create main URL library and add sub-library
+urlBuilder := object.NewLibraryBuilder("url", "URL utilities")
+urlBuilder.Function("join", func(base, path string) string {
+    return strings.TrimSuffix(base, "/") + "/" + strings.TrimPrefix(path, "/")
+})
+urlBuilder.SubLibrary("parse", parseLib)
+urlLib := urlBuilder.Build()
+```
+
+### Variadic Functions
+
+Register functions that accept variable arguments:
+
+```go
+builder.FunctionFromVariadic("print_all", func(args ...any) {
+    for _, arg := range args {
+        fmt.Println(arg)
+    }
+})
+
+builder.FunctionFromVariadic("sum", func(numbers ...int) int {
+    total := 0
+    for _, n := range numbers {
+        total += n
+    }
+    return total
+})
+```
+
+### Function Aliases
+
+Create aliases for existing functions:
+
+```go
+builder.Function("add", func(a, b int) int {
+    return a + b
+})
+builder.Alias("sum", "add")  // "sum" is now an alias for "add"
+```
+
+### Builder Methods Reference
+
+| Method                     | Description                                              |
+| -------------------------- | -------------------------------------------------------- |
+| `Function(name, fn)`       | Register a typed Go function                             |
+| `FunctionWithHelp(...)`    | Register a function with help text                        |
+| `Constant(name, value)`    | Register a constant value                                |
+| `RawFunction(name, fn)`    | Register a low-level builtin function                     |
+| `SubLibrary(name, lib)`    | Add a sub-library                                        |
+| `FunctionFromVariadic(...)`| Register a variadic function                             |
+| `Alias(alias, original)`   | Create an alias for an existing function                 |
+| `Build()`                  | Create and return the Library                            |
+| `Clear()`                  | Remove all registered functions and constants            |
+| `Merge(other)`             | Merge another builder's functions and constants           |
+| `FunctionCount()`          | Get number of registered functions                       |
+| `ConstantCount()`          | Get number of registered constants                       |
+| `HasFunction(name)`        | Check if a function is registered                        |
+| `HasConstant(name)`        | Check if a constant is registered                        |
+| `GetFunctionNames()`       | Get sorted list of function names                        |
+| `GetConstantNames()`       | Get sorted list of constant names                        |
+
+### Complete Example
+
+```go
+package main
+
+import (
+    "fmt"
+    "math"
+
+    "github.com/paularlott/scriptling"
+    "github.com/paularlott/scriptling/object"
+)
+
+func main() {
+    p := scriptling.New()
+
+    // Create a math library using the Fluent API
+    mathBuilder := object.NewLibraryBuilder("mymath", "Advanced math operations")
+
+    // Basic operations
+    mathBuilder.Function("add", func(a, b int) int {
+        return a + b
+    })
+
+    mathBuilder.FunctionWithHelp("multiply", func(a, b float64) float64 {
+        return a * b
+    }, "multiply(a, b) - Multiply two numbers")
+
+    // Advanced operations with error handling
+    mathBuilder.FunctionWithHelp("divide", func(a, b float64) (float64, error) {
+        if b == 0 {
+            return 0, fmt.Errorf("division by zero")
+        }
+        return a / b, nil
+    }, "divide(a, b) - Divide two numbers (returns error if b is zero)")
+
+    mathBuilder.Function("sqrt", func(x float64) float64 {
+        return math.Sqrt(x)
+    })
+
+    mathBuilder.Function("power", func(base, exp float64) float64 {
+        return math.Pow(base, exp)
+    })
+
+    // Constants
+    mathBuilder.Constant("PI", math.Pi)
+    mathBuilder.Constant("E", math.E)
+    mathBuilder.Constant("GoldenRatio", 1.618)
+
+    // Complex operations
+    mathBuilder.Function("sum_list", func(numbers []any) float64 {
+        sum := 0.0
+        for _, num := range numbers {
+            if v, ok := num.(float64); ok {
+                sum += v
+            } else if v, ok := num.(int64); ok {
+                sum += float64(v)
+            }
+        }
+        return sum
+    })
+
+    mathBuilder.Function("stats", func(data []any) map[string]any {
+        if len(data) == 0 {
+            return map[string]any{"count": 0, "mean": 0.0, "sum": 0.0}
+        }
+
+        sum := 0.0
+        count := 0
+        for _, v := range data {
+            if num, ok := v.(float64); ok {
+                sum += num
+                count++
+            }
+        }
+
+        return map[string]any{
+            "count": count,
+            "mean":  sum / float64(count),
+            "sum":   sum,
+        }
+    })
+
+    // Build and register the library
+    myMath := mathBuilder.Build()
+    p.RegisterLibrary("mymath", myMath)
+
+    // Use the library
+    p.Eval(`
+import mymath
+
+# Basic operations
+print("2 + 3 =", mymath.add(2, 3))
+print("4 * 5 =", mymath.multiply(4.0, 5.0))
+print("10 / 2 =", mymath.divide(10.0, 2.0))
+print("sqrt(16) =", mymath.sqrt(16.0))
+print("2^8 =", mymath.power(2.0, 8.0))
+
+# Constants
+print("PI =", mymath.PI)
+print("E =", mymath.E)
+
+# Complex operations
+numbers = [1.0, 2.0, 3.0, 4.0, 5.0]
+print("Sum of", numbers, "=", mymath.sum_list(numbers))
+
+stats = mymath.stats(numbers)
+print("Stats:", stats)
+`)
+}
+```
+
+### Error Handling
+
+The Fluent API automatically handles errors returned from functions:
+
+```go
+// Function returning (result, error)
+builder.Function("safe_divide", func(a, b float64) (float64, error) {
+    if b == 0 {
+        return 0, fmt.Errorf("cannot divide by zero")
+    }
+    return a / b, nil
+})
+
+// Usage in Scriptling:
+// result = mymath.safe_divide(10, 0)  # Returns Error object
+```
+
+### Type Conversion
+
+The API automatically handles type conversions:
+
+```go
+// Integer works for float64 parameter
+builder.Function("halve", func(x float64) float64 {
+    return x / 2
+})
+// mymath.halve(5) works - converts to 2.5
+
+// Float works for int64 parameter
+builder.Function("double", func(x int) int {
+    return x * 2
+})
+// mymath.double(3.14) works - converts to 6 (truncates)
+```
+
 ## Advanced Function Examples
 
 ### File Operations with Output Capture
