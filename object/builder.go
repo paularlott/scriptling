@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -14,10 +15,10 @@ var (
 	contextType = reflect.TypeOf((*context.Context)(nil)).Elem()
 	kwargsType  = reflect.TypeOf(Kwargs{})
 	errorType   = reflect.TypeOf((*error)(nil)).Elem()
-	
+
 	// Pre-allocated common reflect.Values
 	nullValue = reflect.ValueOf(&Null{})
-	
+
 	// Function signature cache
 	signatureCache = sync.Map{} // map[reflect.Type]*FunctionSignature
 )
@@ -661,16 +662,7 @@ func (b *LibraryBuilder) GetFunctionNames() []string {
 	for name := range b.functions {
 		names = append(names, name)
 	}
-	// Use Go's built-in sort for better performance
-	for i := 1; i < len(names); i++ {
-		key := names[i]
-		j := i - 1
-		for j >= 0 && names[j] > key {
-			names[j+1] = names[j]
-			j--
-		}
-		names[j+1] = key
-	}
+	sort.Strings(names)
 	return names
 }
 
@@ -680,16 +672,7 @@ func (b *LibraryBuilder) GetConstantNames() []string {
 	for name := range b.constants {
 		names = append(names, name)
 	}
-	// Use insertion sort for better performance on small arrays
-	for i := 1; i < len(names); i++ {
-		key := names[i]
-		j := i - 1
-		for j >= 0 && names[j] > key {
-			names[j+1] = names[j]
-			j--
-		}
-		names[j+1] = key
-	}
+	sort.Strings(names)
 	return names
 }
 
