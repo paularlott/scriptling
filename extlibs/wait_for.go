@@ -55,8 +55,6 @@ func parseWaitOptionsKwargsOnly(defaultTimeout int, defaultPollRate float64, kwa
 		case "poll_rate":
 			if f, ok := v.AsFloat(); ok {
 				pollRate = f
-			} else if i, ok := v.AsInt(); ok {
-				pollRate = float64(i)
 			} else {
 				return 0, 0, errors.NewTypeError("FLOAT", v.Type().String())
 			}

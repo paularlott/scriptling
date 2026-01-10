@@ -164,7 +164,7 @@ func (f *Float) Type() ObjectType { return FLOAT_OBJ }
 func (f *Float) Inspect() string  { return fmt.Sprintf("%g", f.Value) }
 
 func (f *Float) AsString() (string, bool)          { return "", false }
-func (f *Float) AsInt() (int64, bool)              { return 0, false }
+func (f *Float) AsInt() (int64, bool)              { return int64(f.Value), true }
 func (f *Float) AsFloat() (float64, bool)          { return f.Value, true }
 func (f *Float) AsBool() (bool, bool)              { return f.Value != 0, true }
 func (f *Float) AsList() ([]Object, bool)          { return nil, false }

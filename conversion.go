@@ -148,6 +148,7 @@ func GetString(args []object.Object, index int, name string) (string, object.Obj
 
 // GetInt extracts an integer argument at the given index.
 // Returns the value and nil on success, or 0 and an error on failure.
+// Accepts both Integer and Float (truncates Float to int64).
 func GetInt(args []object.Object, index int, name string) (int64, object.Object) {
 	if index >= len(args) {
 		return 0, errors.NewError("%s: missing argument", name)
@@ -160,16 +161,13 @@ func GetInt(args []object.Object, index int, name string) (int64, object.Object)
 
 // GetFloat extracts a float argument at the given index.
 // Returns the value and nil on success, or 0 and an error on failure.
+// Accepts both Integer and Float (converts Integer to float64).
 func GetFloat(args []object.Object, index int, name string) (float64, object.Object) {
 	if index >= len(args) {
 		return 0, errors.NewError("%s: missing argument", name)
 	}
 	if f, ok := args[index].AsFloat(); ok {
 		return f, nil
-	}
-	// Also accept integers and convert to float
-	if i, ok := args[index].AsInt(); ok {
-		return float64(i), nil
 	}
 	return 0, errors.NewError("%s: must be a number", name)
 }
@@ -232,4 +230,74 @@ func GetIntOptional(args []object.Object, index int, name string, defaultValue i
 		return i, true, nil
 	}
 	return defaultValue, false, errors.NewError("%s: must be an integer", name)
+}
+
+// Helper functions for extracting keyword arguments with default values.
+// These make working with optional named parameters much cleaner.
+// They return the default value if the kwarg is not provided, but return an error
+// if the kwarg is provided but has an incompatible type.
+
+// GetStringFromKwargs extracts a string keyword argument with a default value.
+// Returns the string value from kwargs if present, otherwise returns defaultValue.
+// Returns an error if the kwarg is provided but is not a string.
+func GetStringFromKwargs(kwargs map[string]object.Object, name string, defaultValue string) (string, object.Object) {
+	if obj, ok := kwargs[name]; ok {
+		if s, ok := obj.AsString(); ok {
+			return s, nil
+		}
+		return defaultValue, errors.NewError("%s: must be a string", name)
+	}
+	return defaultValue, nil
+}
+
+// GetIntFromKwargs extracts an integer keyword argument with a default value.
+// Returns the int64 value from kwargs if present (accepts both Integer and Float), otherwise returns defaultValue.
+// Returns an error if the kwarg is provided but is not a number.
+func GetIntFromKwargs(kwargs map[string]object.Object, name string, defaultValue int64) (int64, object.Object) {
+	if obj, ok := kwargs[name]; ok {
+		if i, ok := obj.AsInt(); ok {
+			return i, nil
+		}
+		return defaultValue, errors.NewError("%s: must be a number", name)
+	}
+	return defaultValue, nil
+}
+
+// GetFloatFromKwargs extracts a float keyword argument with a default value.
+// Returns the float64 value from kwargs if present (accepts both Integer and Float), otherwise returns defaultValue.
+// Returns an error if the kwarg is provided but is not a number.
+func GetFloatFromKwargs(kwargs map[string]object.Object, name string, defaultValue float64) (float64, object.Object) {
+	if obj, ok := kwargs[name]; ok {
+		if f, ok := obj.AsFloat(); ok {
+			return f, nil
+		}
+		return defaultValue, errors.NewError("%s: must be a number", name)
+	}
+	return defaultValue, nil
+}
+
+// GetBoolFromKwargs extracts a boolean keyword argument with a default value.
+// Returns the bool value from kwargs if present, otherwise returns defaultValue.
+// Returns an error if the kwarg is provided but is not a boolean.
+func GetBoolFromKwargs(kwargs map[string]object.Object, name string, defaultValue bool) (bool, object.Object) {
+	if obj, ok := kwargs[name]; ok {
+		if b, ok := obj.AsBool(); ok {
+			return b, nil
+		}
+		return defaultValue, errors.NewError("%s: must be a boolean", name)
+	}
+	return defaultValue, nil
+}
+
+// GetListFromKwargs extracts a list keyword argument with a default value.
+// Returns the list value from kwargs if present, otherwise returns defaultValue.
+// Returns an error if the kwarg is provided but is not a list or tuple.
+func GetListFromKwargs(kwargs map[string]object.Object, name string, defaultValue []object.Object) ([]object.Object, object.Object) {
+	if obj, ok := kwargs[name]; ok {
+		if l, ok := obj.AsList(); ok {
+			return l, nil
+		}
+		return defaultValue, errors.NewError("%s: must be a list", name)
+	}
+	return defaultValue, nil
 }

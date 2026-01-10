@@ -126,7 +126,7 @@ func newArgumentError(got, want int) *Error {
 }
 
 // callTypedFunction calls a typed Go function with converted arguments.
-func (b *LibraryBuilder) callTypedFunction(fnValue reflect.Value, fnType reflect.Type, _ map[string]Object, args ...Object) Object {
+func (b *LibraryBuilder) callTypedFunction(fnValue reflect.Value, fnType reflect.Type, kwargs map[string]Object, args ...Object) Object {
 	numIn := fnType.NumIn()
 	numOut := fnType.NumOut()
 
@@ -137,12 +137,29 @@ func (b *LibraryBuilder) callTypedFunction(fnValue reflect.Value, fnType reflect
 		variadicIndex = numIn - 1
 	}
 
+	// Check if last parameter is Kwargs from scriptling package
+	hasKwargsParam := false
+	var kwargsType reflect.Type
+	if numIn > 0 && !isVariadic {
+		lastParam := fnType.In(numIn - 1)
+		// Check if it's from scriptling package and named Kwargs
+		if lastParam.PkgPath() == "github.com/paularlott/scriptling" && lastParam.Name() == "Kwargs" {
+			hasKwargsParam = true
+			kwargsType = lastParam
+		}
+	}
+
 	// Build argument list
 	var argValues []reflect.Value
 
 	// Positional arguments
 	argIndex := 0
-	for i := 0; i < numIn; i++ {
+	maxPosArgs := numIn
+	if hasKwargsParam {
+		maxPosArgs-- // Last parameter is kwargs, not positional
+	}
+
+	for i := 0; i < maxPosArgs; i++ {
 		if isVariadic && i == variadicIndex {
 			// Variadic parameters - collect remaining args
 			var varArgs []reflect.Value
@@ -158,7 +175,7 @@ func (b *LibraryBuilder) callTypedFunction(fnValue reflect.Value, fnType reflect
 		}
 
 		if argIndex >= len(args) {
-			return newArgumentError(len(args), numIn)
+			return newArgumentError(len(args), maxPosArgs)
 		}
 
 		val, convErr := convertObjectToValue(args[argIndex], fnType.In(i))
@@ -171,7 +188,25 @@ func (b *LibraryBuilder) callTypedFunction(fnValue reflect.Value, fnType reflect
 
 	// Check if we have extra positional arguments
 	if argIndex < len(args) && !isVariadic {
-		return newArgumentError(len(args), numIn)
+		return newArgumentError(len(args), maxPosArgs)
+	}
+
+	// Add Kwargs parameter if present
+	if hasKwargsParam {
+		// Create scriptling.Kwargs with the kwargs map
+		// The Kwargs struct has an exported field "Kwargs" (capital K)
+		kwargsStruct := reflect.New(kwargsType).Elem()
+		kwargsStructField := kwargsStruct.Field(0)
+		// Use the field's actual type to create the map
+		if kwargsStructField.CanSet() {
+			mapType := kwargsStructField.Type()
+			convertedMap := reflect.MakeMap(mapType)
+			for k, v := range kwargs {
+				convertedMap.SetMapIndex(reflect.ValueOf(k), reflect.ValueOf(v))
+			}
+			kwargsStructField.Set(convertedMap)
+		}
+		argValues = append(argValues, kwargsStruct)
 	}
 
 	// Call the function
@@ -213,21 +248,14 @@ func convertObjectToValue(obj Object, targetType reflect.Type) (reflect.Value, O
 		return reflect.Value{}, newTypeError("STRING", obj.Type().String())
 
 	case reflect.Int, reflect.Int32, reflect.Int64:
-		// Try Integer first, then Float
 		if i, ok := obj.AsInt(); ok {
 			return reflect.ValueOf(i).Convert(targetType), nil
-		}
-		if f, ok := obj.AsFloat(); ok {
-			return reflect.ValueOf(int64(f)).Convert(targetType), nil
 		}
 		return reflect.Value{}, newTypeError("INTEGER", obj.Type().String())
 
 	case reflect.Float32, reflect.Float64:
 		if f, ok := obj.AsFloat(); ok {
 			return reflect.ValueOf(f).Convert(targetType), nil
-		}
-		if i, ok := obj.AsInt(); ok {
-			return reflect.ValueOf(float64(i)).Convert(targetType), nil
 		}
 		return reflect.Value{}, newTypeError("FLOAT", obj.Type().String())
 
@@ -311,8 +339,16 @@ func convertObjectToValue(obj Object, targetType reflect.Type) (reflect.Value, O
 
 // convertReturnValue converts a Go return value to a scriptling Object.
 func convertReturnValue(v reflect.Value) Object {
-	if !v.IsValid() || v.IsNil() {
+	if !v.IsValid() {
 		return &Null{}
+	}
+
+	// Only check IsNil for types that can be nil
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		if v.IsNil() {
+			return &Null{}
+		}
 	}
 
 	switch v.Kind() {
