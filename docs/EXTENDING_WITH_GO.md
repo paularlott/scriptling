@@ -194,7 +194,7 @@ AsDict() (map[string]Object, bool)   // Extract dict as map (keys are strings)
 
 ### Benefits Over Type Assertions
 
-**Before (using type assertions):**
+**Using type assertions:**
 
 ```go
 p.RegisterFunc("add_tax", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
@@ -227,7 +227,7 @@ p.RegisterFunc("add_tax", func(ctx context.Context, kwargs map[string]object.Obj
 })
 ```
 
-**After (using type-safe accessors):**
+**Using type-safe accessors:**
 
 ```go
 p.RegisterFunc("add_tax", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
@@ -352,7 +352,118 @@ p.RegisterFunc("process_config", func(ctx context.Context, kwargs map[string]obj
 
 **Recommendation**: Always use type-safe accessors (`AsString()`, `AsInt()`, etc.) instead of direct type assertions when implementing custom functions.
 
-````
+## Argument Extraction Helpers
+
+The `scriptling` package provides helper functions in `conversion.go` that simplify argument extraction with automatic error generation. These helpers combine type checking and value extraction in a single call.
+
+### Available Helper Functions
+
+```go
+import "github.com/paularlott/scriptling"
+
+// Required argument extractors
+GetString(args, index, name) (string, object.Object)
+GetInt(args, index, name) (int64, object.Object)
+GetFloat(args, index, name) (float64, object.Object)
+GetBool(args, index, name) (bool, object.Object)
+GetList(args, index, name) ([]object.Object, object.Object)
+GetDict(args, index, name) (map[string]object.Object, object.Object)
+
+// Optional argument extractors
+GetStringOptional(args, index, name, defaultValue) (string, bool, object.Object)
+GetIntOptional(args, index, name, defaultValue) (int64, bool, object.Object)
+```
+
+### Usage Example
+
+**Without helpers (verbose):**
+```go
+p.RegisterFunc("connect", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+    if len(args) < 2 {
+        return errors.NewError("connect() requires at least 2 arguments")
+    }
+
+    var host string
+    if s, ok := args[0].AsString(); ok {
+        host = s
+    } else {
+        return errors.NewError("host: must be a string")
+    }
+
+    var port int64
+    if i, ok := args[1].AsInt(); ok {
+        port = i
+    } else {
+        return errors.NewError("port: must be an integer")
+    }
+
+    // ... rest of function
+})
+```
+
+**With helpers (concise):**
+```go
+p.RegisterFunc("connect", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+    host, err := scriptling.GetString(args, 0, "host")
+    if err != nil {
+        return err
+    }
+
+    port, err := scriptling.GetInt(args, 1, "port")
+    if err != nil {
+        return err
+    }
+
+    // Optional timeout parameter
+    timeout, hasTimeout, err := scriptling.GetIntOptional(args, 2, "timeout", 30)
+    if err != nil {
+        return err
+    }
+    if !hasTimeout {
+        // Use default timeout
+    }
+
+    // ... rest of function
+})
+```
+
+### Helper Function Behavior
+
+All helper functions:
+1. **Check bounds**: Return an error if `index >= len(args)`
+2. **Type check**: Return an error if the argument is the wrong type
+3. **Return value**: Return the extracted value on success
+4. **Auto-generate errors**: Error messages include the argument name for clarity
+
+### Error Message Format
+
+```go
+// Missing argument
+GetString(args, 5, "filename")
+// → Error: "filename: missing argument"
+
+// Wrong type
+GetInt(args, 0, "count")
+// → Error: "count: must be an integer"
+
+// Success
+GetString(args, 0, "path")
+// → ("some/path", nil)
+```
+
+### Benefits
+
+1. **Less boilerplate**: Combine bounds check, type check, and extraction
+2. **Consistent errors**: Automatic, descriptive error messages
+3. **Easier refactoring**: Argument name is specified once
+4. **Optional support**: Built-in handling for optional parameters
+
+### Integration with Type-Safe Accessors
+
+The helpers use the type-safe accessor methods internally, so you get all the benefits:
+- `GetFloat()` accepts both Integer and Float (auto-converts)
+- `GetList()` works with both List and Tuple
+- Clean, idiomatic Go error handling
 
 ## Advanced Function Examples
 

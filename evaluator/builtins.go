@@ -65,8 +65,8 @@ Use list(filter(...)) to get a list.`,
 			// Get sep kwarg (default: " ")
 			sep := " "
 			if sepObj, ok := kwargs["sep"]; ok {
-				if sepStr, ok := sepObj.(*object.String); ok {
-					sep = sepStr.Value
+				if sepStr, ok := sepObj.AsString(); ok {
+					sep = sepStr
 				} else if _, ok := sepObj.(*object.Null); !ok {
 					return errors.NewError("sep must be None or a string, not %s", sepObj.Type())
 				}
@@ -75,8 +75,8 @@ Use list(filter(...)) to get a list.`,
 			// Get end kwarg (default: "\n")
 			end := "\n"
 			if endObj, ok := kwargs["end"]; ok {
-				if endStr, ok := endObj.(*object.String); ok {
-					end = endStr.Value
+				if endStr, ok := endObj.AsString(); ok {
+					end = endStr
 				} else if _, ok := endObj.(*object.Null); !ok {
 					return errors.NewError("end must be None or a string, not %s", endObj.Type())
 				}
@@ -299,8 +299,8 @@ Supports integers and floats, returns appropriate type.`,
 			reverse := false
 			if kwargs != nil {
 				if rev, ok := kwargs["reverse"]; ok {
-					if b, ok := rev.(*object.Boolean); ok {
-						reverse = b.Value
+					if b, ok := rev.AsBool(); ok {
+						reverse = b
 					}
 				}
 			}
@@ -504,8 +504,8 @@ Returns a view object of (key, value) pairs for all items in the dictionary.`,
 			}
 			start := int64(0)
 			if len(args) == 2 {
-				if startObj, ok := args[1].(*object.Integer); ok {
-					start = startObj.Value
+				if startObj, ok := args[1].AsInt(); ok {
+					start = startObj
 				} else {
 					return errors.NewTypeError("INTEGER", args[1].Type().String())
 				}
@@ -783,8 +783,8 @@ With multiple arguments, returns the largest argument.`,
 			}
 			ndigits := 0
 			if len(args) == 2 {
-				if nd, ok := args[1].(*object.Integer); ok {
-					ndigits = int(nd.Value)
+				if nd, ok := args[1].AsInt(); ok {
+					ndigits = int(nd)
 				} else {
 					return errors.NewTypeError("INTEGER", args[1].Type().String())
 				}
@@ -821,11 +821,11 @@ Returns an integer if ndigits is omitted or 0.`,
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			if num, ok := args[0].(*object.Integer); ok {
-				if num.Value >= 0 {
-					return &object.String{Value: fmt.Sprintf("0x%x", num.Value)}
+			if num, ok := args[0].AsInt(); ok {
+				if num >= 0 {
+					return &object.String{Value: fmt.Sprintf("0x%x", num)}
 				}
-				return &object.String{Value: fmt.Sprintf("-0x%x", -num.Value)}
+				return &object.String{Value: fmt.Sprintf("-0x%x", -num)}
 			}
 			return errors.NewTypeError("INTEGER", args[0].Type().String())
 		},
@@ -836,11 +836,11 @@ Returns an integer if ndigits is omitted or 0.`,
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			if num, ok := args[0].(*object.Integer); ok {
-				if num.Value >= 0 {
-					return &object.String{Value: fmt.Sprintf("0b%b", num.Value)}
+			if num, ok := args[0].AsInt(); ok {
+				if num >= 0 {
+					return &object.String{Value: fmt.Sprintf("0b%b", num)}
 				}
-				return &object.String{Value: fmt.Sprintf("-0b%b", -num.Value)}
+				return &object.String{Value: fmt.Sprintf("-0b%b", -num)}
 			}
 			return errors.NewTypeError("INTEGER", args[0].Type().String())
 		},
@@ -851,11 +851,11 @@ Returns an integer if ndigits is omitted or 0.`,
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			if num, ok := args[0].(*object.Integer); ok {
-				if num.Value >= 0 {
-					return &object.String{Value: fmt.Sprintf("0o%o", num.Value)}
+			if num, ok := args[0].AsInt(); ok {
+				if num >= 0 {
+					return &object.String{Value: fmt.Sprintf("0o%o", num)}
 				}
-				return &object.String{Value: fmt.Sprintf("-0o%o", -num.Value)}
+				return &object.String{Value: fmt.Sprintf("-0o%o", -num)}
 			}
 			return errors.NewTypeError("INTEGER", args[0].Type().String())
 		},
@@ -974,13 +974,13 @@ Equivalent to (a // b, a % b) for integers.`,
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
 			}
-			typeName, ok := args[1].(*object.String)
+			typeName, ok := args[1].AsString()
 			if !ok {
 				return errors.NewTypeError("STRING", args[1].Type().String())
 			}
 			objType := args[0].Type().String()
 			// Support common Python type names
-			checkType := strings.ToUpper(typeName.Value)
+			checkType := strings.ToUpper(typeName)
 			switch checkType {
 			case "INT", "INTEGER":
 				checkType = "INTEGER"
@@ -1015,11 +1015,11 @@ Type names: "int", "str", "float", "bool", "list", "dict", "tuple", "function", 
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			if num, ok := args[0].(*object.Integer); ok {
-				if num.Value < 0 || num.Value > 0x10FFFF {
+			if num, ok := args[0].AsInt(); ok {
+				if num < 0 || num > 0x10FFFF {
 					return errors.NewError("chr() arg not in range(0x110000)")
 				}
-				return &object.String{Value: string(rune(num.Value))}
+				return &object.String{Value: string(rune(num))}
 			}
 			return errors.NewTypeError("INTEGER", args[0].Type().String())
 		},
@@ -1032,8 +1032,8 @@ The argument must be in the range 0-1114111 (0x10FFFF).`,
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			if str, ok := args[0].(*object.String); ok {
-				runes := []rune(str.Value)
+			if str, ok := args[0].AsString(); ok {
+				runes := []rune(str)
 				if len(runes) != 1 {
 					return errors.NewError("ord() expected a character, but string of length %d found", len(runes))
 				}
@@ -1263,8 +1263,8 @@ Returns a unique integer identifier for the object.`,
 			value := args[0]
 			formatSpec := ""
 			if len(args) == 2 {
-				if spec, ok := args[1].(*object.String); ok {
-					formatSpec = spec.Value
+				if spec, ok := args[1].AsString(); ok {
+					formatSpec = spec
 				} else {
 					return errors.NewTypeError("STRING", args[1].Type().String())
 				}
@@ -1358,22 +1358,22 @@ Supports width, alignment, and type specifiers.`,
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
 			}
-			name, ok := args[1].(*object.String)
+			name, ok := args[1].AsString()
 			if !ok {
 				return errors.NewTypeError("STRING", args[1].Type().String())
 			}
 			// Check if object has the attribute/method
 			switch obj := args[0].(type) {
 			case *object.Instance:
-				if _, ok := obj.Fields[name.Value]; ok {
+				if _, ok := obj.Fields[name]; ok {
 					return TRUE
 				}
-				if _, ok := obj.Class.Methods[name.Value]; ok {
+				if _, ok := obj.Class.Methods[name]; ok {
 					return TRUE
 				}
 				return FALSE
 			case *object.Dict:
-				_, exists := obj.Pairs[name.Value]
+				_, exists := obj.Pairs[name]
 				return nativeBoolToBooleanObject(exists)
 			default:
 				return FALSE
@@ -1388,21 +1388,21 @@ Returns True if the object has the named attribute.`,
 			if len(args) < 2 || len(args) > 3 {
 				return errors.NewError("getattr() takes 2 or 3 arguments (%d given)", len(args))
 			}
-			name, ok := args[1].(*object.String)
+			name, ok := args[1].AsString()
 			if !ok {
 				return errors.NewTypeError("STRING", args[1].Type().String())
 			}
 			// Get attribute from object
 			switch obj := args[0].(type) {
 			case *object.Instance:
-				if val, ok := obj.Fields[name.Value]; ok {
+				if val, ok := obj.Fields[name]; ok {
 					return val
 				}
-				if method, ok := obj.Class.Methods[name.Value]; ok {
+				if method, ok := obj.Class.Methods[name]; ok {
 					return method
 				}
 			case *object.Dict:
-				if pair, exists := obj.Pairs[name.Value]; exists {
+				if pair, exists := obj.Pairs[name]; exists {
 					return pair.Value
 				}
 			}
@@ -1410,7 +1410,7 @@ Returns True if the object has the named attribute.`,
 			if len(args) == 3 {
 				return args[2]
 			}
-			return errors.NewError("'%s' object has no attribute '%s'", args[0].Type().String(), name.Value)
+			return errors.NewError("'%s' object has no attribute '%s'", args[0].Type().String(), name)
 		},
 		HelpText: `getattr(object, name[, default]) - Get an attribute from an object
 
@@ -1422,18 +1422,18 @@ If default is provided, returns it when attribute doesn't exist.`,
 			if len(args) != 3 {
 				return errors.NewArgumentError(len(args), 3)
 			}
-			name, ok := args[1].(*object.String)
+			name, ok := args[1].AsString()
 			if !ok {
 				return errors.NewTypeError("STRING", args[1].Type().String())
 			}
 			// Set attribute on object
 			switch obj := args[0].(type) {
 			case *object.Instance:
-				obj.Fields[name.Value] = args[2]
+				obj.Fields[name] = args[2]
 				return NULL
 			case *object.Dict:
-				obj.Pairs[name.Value] = object.DictPair{
-					Key:   name,
+				obj.Pairs[name] = object.DictPair{
+					Key:   &object.String{Value: name},
 					Value: args[2],
 				}
 				return NULL
@@ -1451,24 +1451,24 @@ Only works on dict-like objects.`,
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
 			}
-			name, ok := args[1].(*object.String)
+			name, ok := args[1].AsString()
 			if !ok {
 				return errors.NewTypeError("STRING", args[1].Type().String())
 			}
 			// Delete attribute from object
 			switch obj := args[0].(type) {
 			case *object.Instance:
-				if _, ok := obj.Fields[name.Value]; ok {
-					delete(obj.Fields, name.Value)
+				if _, ok := obj.Fields[name]; ok {
+					delete(obj.Fields, name)
 					return NULL
 				}
-				return errors.NewError("'%s' object has no attribute '%s'", obj.Class.Name, name.Value)
+				return errors.NewError("'%s' object has no attribute '%s'", obj.Class.Name, name)
 			case *object.Dict:
-				if _, ok := obj.Pairs[name.Value]; ok {
-					delete(obj.Pairs, name.Value)
+				if _, ok := obj.Pairs[name]; ok {
+					delete(obj.Pairs, name)
 					return NULL
 				}
-				return errors.NewError("dictionary has no key '%s'", name.Value)
+				return errors.NewError("dictionary has no key '%s'", name)
 			default:
 				return errors.NewError("'%s' object does not support attribute deletion", args[0].Type().String())
 			}

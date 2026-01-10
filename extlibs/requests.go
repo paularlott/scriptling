@@ -51,9 +51,9 @@ var ResponseClass = &object.Class{
 					return errors.NewArgumentError(len(args), 1)
 				}
 				if instance, ok := args[0].(*object.Instance); ok {
-					if body, ok := instance.Fields["body"].(*object.String); ok {
+					if body, ok := instance.Fields["body"].AsString(); ok {
 						var result interface{}
-						if err := json.Unmarshal([]byte(body.Value), &result); err != nil {
+						if err := json.Unmarshal([]byte(body), &result); err != nil {
 							return errors.NewError("JSONDecodeError: %s", err.Error())
 						}
 						return convertJSONToObject(result)
@@ -69,12 +69,12 @@ var ResponseClass = &object.Class{
 					return errors.NewArgumentError(len(args), 1)
 				}
 				if instance, ok := args[0].(*object.Instance); ok {
-					if statusCode, ok := instance.Fields["status_code"].(*object.Integer); ok {
-						if statusCode.Value >= 400 {
-							if statusCode.Value >= 500 {
-								return errors.NewError("HTTPError: %d Server Error", statusCode.Value)
+					if statusCode, ok := instance.Fields["status_code"].AsInt(); ok {
+						if statusCode >= 400 {
+							if statusCode >= 500 {
+								return errors.NewError("HTTPError: %d Server Error", statusCode)
 							} else {
-								return errors.NewError("HTTPError: %d Client Error", statusCode.Value)
+								return errors.NewError("HTTPError: %d Client Error", statusCode)
 							}
 						}
 						return &object.Null{}
@@ -145,18 +145,14 @@ func parseRequestOptions(options map[string]object.Object) (int, map[string]stri
 		}
 	}
 	if authPair, ok := options["auth"]; ok {
-		var authList []object.Object
-		if tuple, ok := authPair.(*object.Tuple); ok {
-			authList = tuple.Elements
-		} else if list, ok := authPair.(*object.List); ok {
-			authList = list.Elements
-		}
-		if len(authList) == 2 {
-			if u, ok := authList[0].AsString(); ok {
-				user = u
-			}
-			if p, ok := authList[1].AsString(); ok {
-				pass = p
+		if authList, ok := authPair.AsList(); ok {
+			if len(authList) == 2 {
+				if u, ok := authList[0].AsString(); ok {
+					user = u
+				}
+				if p, ok := authList[1].AsString(); ok {
+					pass = p
+				}
 			}
 		}
 	}

@@ -33,14 +33,9 @@ Returns the value of a performance counter in fractional seconds.`,
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			var seconds float64
-			switch arg := args[0].(type) {
-			case *object.Integer:
-				seconds = float64(arg.Value)
-			case *object.Float:
-				seconds = arg.Value
-			default:
-				return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
+			seconds, ok := args[0].AsFloat()
+			if !ok {
+				return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
 			}
 
 			// Create a timer that respects context cancellation
@@ -67,19 +62,17 @@ Suspends execution for the given number of seconds.`,
 			if len(args) == 0 {
 				t = time.Now()
 			} else if len(args) == 1 {
-				switch ts := args[0].(type) {
-				case *object.Integer:
-					t = time.Unix(int64(ts.Value), 0)
-				case *object.Float:
-					t = time.Unix(int64(ts.Value), 0)
-				case *object.Instance:
+				// Try AsFloat first (handles both Integer and Float)
+				if ts, ok := args[0].AsFloat(); ok {
+					t = time.Unix(int64(ts), 0)
+				} else if instance, ok := args[0].(*object.Instance); ok {
 					// Handle datetime/date instances
-					if dt, ok := GetTimeFromObject(ts); ok {
+					if dt, ok := GetTimeFromObject(instance); ok {
 						t = dt
 					} else {
 						return errors.NewTypeError("INTEGER, FLOAT, or datetime instance", args[0].Type().String())
 					}
-				default:
+				} else {
 					return errors.NewTypeError("INTEGER, FLOAT, or datetime instance", args[0].Type().String())
 				}
 			} else {
@@ -98,19 +91,17 @@ Returns a time tuple in local time. If timestamp/datetime is omitted, uses curre
 			if len(args) == 0 {
 				t = time.Now()
 			} else if len(args) == 1 {
-				switch ts := args[0].(type) {
-				case *object.Integer:
-					t = time.Unix(int64(ts.Value), 0)
-				case *object.Float:
-					t = time.Unix(int64(ts.Value), 0)
-				case *object.Instance:
+				// Try AsFloat first (handles both Integer and Float)
+				if ts, ok := args[0].AsFloat(); ok {
+					t = time.Unix(int64(ts), 0)
+				} else if instance, ok := args[0].(*object.Instance); ok {
 					// Handle datetime/date instances
-					if dt, ok := GetTimeFromObject(ts); ok {
+					if dt, ok := GetTimeFromObject(instance); ok {
 						t = dt
 					} else {
 						return errors.NewTypeError("INTEGER, FLOAT, or datetime instance", args[0].Type().String())
 					}
-				default:
+				} else {
 					return errors.NewTypeError("INTEGER, FLOAT, or datetime instance", args[0].Type().String())
 				}
 			} else {
@@ -259,13 +250,8 @@ Converts a time tuple to a string in the format 'Mon Jan 2 15:04:05 2006'. If tu
 			if len(args) == 0 {
 				t = time.Now()
 			} else if len(args) == 1 {
-				var timestamp float64
-				switch ts := args[0].(type) {
-				case *object.Integer:
-					timestamp = float64(ts.Value)
-				case *object.Float:
-					timestamp = ts.Value
-				default:
+				timestamp, ok := args[0].AsFloat()
+				if !ok {
 					return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
 				}
 				t = time.Unix(int64(timestamp), 0)
