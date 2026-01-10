@@ -6,7 +6,34 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 )
+
+// Global type cache for maximum performance
+var (
+	contextType = reflect.TypeOf((*context.Context)(nil)).Elem()
+	kwargsType  = reflect.TypeOf(Kwargs{})
+	errorType   = reflect.TypeOf((*error)(nil)).Elem()
+	
+	// Pre-allocated common reflect.Values
+	nullValue = reflect.ValueOf(&Null{})
+	
+	// Function signature cache
+	signatureCache = sync.Map{} // map[reflect.Type]*FunctionSignature
+)
+
+// FunctionSignature holds pre-computed function analysis
+type FunctionSignature struct {
+	numIn, numOut     int
+	isVariadic        bool
+	variadicIndex     int
+	hasContext        bool
+	hasKwargs         bool
+	paramOffset       int
+	maxPosArgs        int
+	paramTypes        []reflect.Type // Cache parameter types
+	returnIsError     bool           // Cache if second return is error
+}
 
 // LibraryBuilder provides a fluent API for creating scriptling libraries.
 // It allows registering typed Go functions that are automatically wrapped
@@ -30,6 +57,60 @@ type LibraryBuilder struct {
 	description string
 	functions   map[string]*Builtin
 	constants   map[string]Object
+}
+
+// analyzeFunctionSignature performs one-time analysis of function signature
+func analyzeFunctionSignature(fnType reflect.Type) *FunctionSignature {
+	// Check cache first
+	if cached, ok := signatureCache.Load(fnType); ok {
+		return cached.(*FunctionSignature)
+	}
+	
+	numIn := fnType.NumIn()
+	numOut := fnType.NumOut()
+	isVariadic := fnType.IsVariadic()
+	variadicIndex := -1
+	if isVariadic {
+		variadicIndex = numIn - 1
+	}
+
+	// Detect context and kwargs
+	hasContext := numIn > 0 && fnType.In(0) == contextType
+	paramOffset := 0
+	if hasContext {
+		paramOffset++
+	}
+	hasKwargs := numIn > paramOffset && fnType.In(paramOffset) == kwargsType
+	if hasKwargs {
+		paramOffset++
+	}
+	maxPosArgs := numIn - paramOffset
+
+	// Pre-cache parameter types
+	paramTypes := make([]reflect.Type, numIn)
+	for i := 0; i < numIn; i++ {
+		paramTypes[i] = fnType.In(i)
+	}
+	
+	// Check if second return is error
+	returnIsError := numOut == 2 && fnType.Out(1).Implements(errorType)
+
+	sig := &FunctionSignature{
+		numIn:         numIn,
+		numOut:        numOut,
+		isVariadic:    isVariadic,
+		variadicIndex: variadicIndex,
+		hasContext:    hasContext,
+		hasKwargs:     hasKwargs,
+		paramOffset:   paramOffset,
+		maxPosArgs:    maxPosArgs,
+		paramTypes:    paramTypes,
+		returnIsError: returnIsError,
+	}
+	
+	// Cache for future use
+	signatureCache.Store(fnType, sig)
+	return sig
 }
 
 // NewLibraryBuilder creates a new LibraryBuilder with the given name and description.
@@ -102,34 +183,12 @@ func (b *LibraryBuilder) createWrapper(fnValue reflect.Value, helpText string) *
 		panic(fmt.Sprintf("LibraryBuilder: must be a function, got %T", fnValue.Interface()))
 	}
 
-	// Pre-compute function signature analysis (performance optimization)
-	numIn := fnType.NumIn()
-	numOut := fnType.NumOut()
-	isVariadic := fnType.IsVariadic()
-	variadicIndex := -1
-	if isVariadic {
-		variadicIndex = numIn - 1
-	}
-
-	// Pre-compute context and kwargs detection
-	contextType := reflect.TypeOf((*context.Context)(nil)).Elem()
-	kwargsType := reflect.TypeOf(Kwargs{})
-
-	hasContext := numIn > 0 && fnType.In(0) == contextType
-	paramOffset := 0
-	if hasContext {
-		paramOffset++
-	}
-	hasKwargs := numIn > paramOffset && fnType.In(paramOffset) == kwargsType
-	if hasKwargs {
-		paramOffset++
-	}
-	maxPosArgs := numIn - paramOffset
+	// Analyze function signature once (cached)
+	sig := analyzeFunctionSignature(fnType)
 
 	return &Builtin{
 		Fn: func(ctx context.Context, kwargs Kwargs, args ...Object) Object {
-			return b.callTypedFunctionOptimized(fnValue, fnType, ctx, kwargs, args,
-				numIn, numOut, isVariadic, variadicIndex, hasContext, hasKwargs, paramOffset, maxPosArgs)
+			return b.callTypedFunctionUltraFast(fnValue, sig, ctx, kwargs, args)
 		},
 		HelpText: helpText,
 	}
@@ -150,34 +209,32 @@ func newArgumentError(got, want int) *Error {
 	return &Error{Message: fmt.Sprintf("argument error: got %d arguments, want %d", got, want)}
 }
 
-// callTypedFunctionOptimized calls a typed Go function with pre-computed signature info.
-func (b *LibraryBuilder) callTypedFunctionOptimized(fnValue reflect.Value, fnType reflect.Type, ctx context.Context, kwargs Kwargs, args []Object,
-	numIn, numOut int, isVariadic bool, variadicIndex int, hasContext, hasKwargs bool, paramOffset, maxPosArgs int) Object {
-
-	// Pre-allocate argValues with known capacity
-	argValues := make([]reflect.Value, 0, numIn)
+// callTypedFunctionUltraFast calls a typed Go function with cached signature info.
+func (b *LibraryBuilder) callTypedFunctionUltraFast(fnValue reflect.Value, sig *FunctionSignature, ctx context.Context, kwargs Kwargs, args []Object) Object {
+	// Pre-allocate argValues with exact capacity
+	argValues := make([]reflect.Value, 0, sig.numIn)
 
 	// Add context parameter if present
-	if hasContext {
+	if sig.hasContext {
 		argValues = append(argValues, reflect.ValueOf(ctx))
 	}
 
 	// Add kwargs parameter if present
-	if hasKwargs {
+	if sig.hasKwargs {
 		argValues = append(argValues, reflect.ValueOf(kwargs))
 	}
 
-	// Positional arguments
+	// Positional arguments with cached types
 	argIndex := 0
+	for i := 0; i < sig.maxPosArgs; i++ {
+		fnParamIndex := i + sig.paramOffset
 
-	for i := 0; i < maxPosArgs; i++ {
-		fnParamIndex := i + paramOffset // Adjust for context/kwargs offset
-
-		if isVariadic && fnParamIndex == variadicIndex {
+		if sig.isVariadic && fnParamIndex == sig.variadicIndex {
 			// Variadic parameters - collect remaining args
 			varArgs := make([]reflect.Value, 0, len(args)-argIndex)
+			elemType := sig.paramTypes[fnParamIndex].Elem()
 			for j := argIndex; j < len(args); j++ {
-				val, convErr := convertObjectToValue(args[j], fnType.In(fnParamIndex).Elem())
+				val, convErr := convertObjectToValue(args[j], elemType)
 				if convErr != nil {
 					return convErr
 				}
@@ -188,10 +245,11 @@ func (b *LibraryBuilder) callTypedFunctionOptimized(fnValue reflect.Value, fnTyp
 		}
 
 		if argIndex >= len(args) {
-			return newArgumentError(len(args), maxPosArgs)
+			return newArgumentError(len(args), sig.maxPosArgs)
 		}
 
-		val, convErr := convertObjectToValue(args[argIndex], fnType.In(fnParamIndex))
+		// Use cached parameter type
+		val, convErr := convertObjectToValue(args[argIndex], sig.paramTypes[fnParamIndex])
 		if convErr != nil {
 			return convErr
 		}
@@ -200,22 +258,22 @@ func (b *LibraryBuilder) callTypedFunctionOptimized(fnValue reflect.Value, fnTyp
 	}
 
 	// Check if we have extra positional arguments
-	if argIndex < len(args) && !isVariadic {
-		return newArgumentError(len(args), maxPosArgs)
+	if argIndex < len(args) && !sig.isVariadic {
+		return newArgumentError(len(args), sig.maxPosArgs)
 	}
 
 	// Call the function
 	results := fnValue.Call(argValues)
 
-	// Handle return values with pre-computed numOut
-	switch numOut {
+	// Handle return values with cached info
+	switch sig.numOut {
 	case 0:
 		return &Null{}
 	case 1:
 		return convertReturnValue(results[0])
 	case 2:
-		// Two return values - second must be error
-		if !results[1].IsNil() {
+		// Use cached error check
+		if sig.returnIsError && !results[1].IsNil() {
 			err, _ := results[1].Interface().(error)
 			return newError("%s", err.Error())
 		}
