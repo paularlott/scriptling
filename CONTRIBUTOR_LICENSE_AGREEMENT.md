@@ -34,7 +34,7 @@ Where permitted by law, the Contributor waives or agrees not to assert any moral
 
 ## 6. No Trademark License
 
-This CLA does not grant any rights to use the Project Owner’s trademarks, service marks, or trade names, such as the name "Scriptling," without the prior written consent of the Project Owner.
+This CLA does not grant any rights to use the Project Owner’s trademarks, service marks, or trade names, such as the name "Scriptling" without the prior written consent of the Project Owner.
 
 ## 7. Representations and Warranties
 
