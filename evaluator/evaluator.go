@@ -929,7 +929,9 @@ func applyUserFunction(ctx context.Context, fn *object.Function, args []object.O
 	return unwrapReturnValue(evaluated)
 }
 
-func applyFunctionWithContext(ctx context.Context, fn object.Object, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+// ApplyFunction calls a function object with arguments and keyword arguments.
+// This is exported for use by other packages that need to call script functions directly.
+func ApplyFunction(ctx context.Context, fn object.Object, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
 	switch fn := fn.(type) {
 	case *object.Function:
 		return applyUserFunction(ctx, fn, args, keywords, env)
@@ -943,6 +945,10 @@ func applyFunctionWithContext(ctx context.Context, fn object.Object, args []obje
 	default:
 		return errors.NewError("not a function or class: %s", fn.Type())
 	}
+}
+
+func applyFunctionWithContext(ctx context.Context, fn object.Object, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+	return ApplyFunction(ctx, fn, args, keywords, env)
 }
 
 func applyLambdaFunctionWithContext(ctx context.Context, fn *object.LambdaFunction, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {

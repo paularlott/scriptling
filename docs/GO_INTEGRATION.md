@@ -338,6 +338,183 @@ print("CPUs: " + str(info["cpus"]))
 `)
 ```
 
+## Call Functions Directly from Go
+
+Instead of writing script strings to call functions, you can call registered and script-defined functions directly with Go arguments using `CallFunction()`:
+
+### Calling Registered Functions
+
+```go
+p.RegisterFunc("multiply", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+    a, _ := args[0].AsInt()
+    b, _ := args[1].AsInt()
+    return &object.Integer{Value: a * b}
+})
+
+// Call with Go arguments - no script string needed!
+result, err := p.CallFunction("multiply", 6, 7)
+if err != nil {
+    log.Fatal(err)
+}
+
+product, _ := result.AsInt()
+fmt.Printf("Product: %d\n", product)  // Product: 42
+```
+
+### Calling Script-Defined Functions
+
+```go
+// Define a function in script
+p.Eval(`
+def greet(name):
+    return 'Hello, ' + name
+`)
+
+// Call it directly from Go
+result, err := p.CallFunction("greet", "World")
+if err != nil {
+    log.Fatal(err)
+}
+
+message, _ := result.AsString()
+fmt.Printf("Message: %s\n", message)  // Message: Hello, World
+```
+
+### Type Conversions
+
+`CallFunction` automatically converts Go types to Scriptling objects:
+
+| Go Type | Scriptling Type |
+|---------|-----------------|
+| `int`, `int64` | Integer |
+| `float64` | Float |
+| `string` | String |
+| `bool` | Boolean |
+| `[]T` | List |
+| `map[string]T` | Dict |
+
+### Return Values
+
+`CallFunction` returns an `object.Object` - use type assertion methods to extract values:
+
+```go
+result, err := p.CallFunction("some_function", arg1, arg2)
+
+// Extract the value based on expected type
+if i, ok := result.AsInt(); ok {
+    fmt.Printf("Integer: %d\n", i)
+} else if s, ok := result.AsString(); ok {
+    fmt.Printf("String: %s\n", s)
+} else if f, ok := result.AsFloat(); ok {
+    fmt.Printf("Float: %f\n", f)
+}
+```
+
+### Error Handling
+
+```go
+result, err := p.CallFunction("my_function", arg1, arg2)
+if err != nil {
+    // Function not found or execution error
+    fmt.Printf("Error: %v\n", err)
+    return
+}
+
+// Check if result is an error object
+if errObj, ok := result.(*object.Error); ok {
+    fmt.Printf("Function returned error: %s\n", errObj.Message)
+    return
+}
+```
+
+### Using Context
+
+For timeout or cancellation control, use `CallFunctionWithContext`:
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()
+
+result, err := p.CallFunctionWithContext(ctx, "slow_operation", data)
+if err != nil {
+    log.Fatal(err)
+}
+```
+
+### Using Keyword Arguments
+
+Pass keyword arguments as the last parameter using `map[string]interface{}`:
+
+```go
+// Register a function with keyword arguments
+p.RegisterFunc("format", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+    text, _ := args[0].AsString()
+    prefix := kwargs.MustGetString("prefix", "")
+    suffix := kwargs.MustGetString("suffix", "")
+    return &object.String{Value: prefix + text + suffix}
+})
+
+// Call with keyword arguments
+result, err := p.CallFunction("format", "hello",
+    map[string]interface{}{
+        "prefix": ">> ",
+        "suffix": " <<",
+    })
+if err != nil {
+    log.Fatal(err)
+}
+
+message, _ := result.AsString()
+fmt.Println(message)  // >> hello <<
+```
+
+#### Keyword Argument Types
+
+```go
+// Register function with multiple kwarg types
+p.RegisterFunc("configure", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+    enabled := kwargs.MustGetBool("enabled", false)
+    count := kwargs.MustGetInt("count", 0)
+    rate := kwargs.MustGetFloat("rate", 1.0)
+    name := kwargs.MustGetString("name", "default")
+    // ... use the values
+    return &object.Null{}
+})
+
+// Call with mixed type kwargs
+result, err := p.CallFunction("configure", nil,
+    map[string]interface{}{
+        "enabled": true,
+        "count":   42,
+        "rate":    3.14,
+        "name":    "example",
+    })
+```
+
+#### Script Functions with Kwargs
+
+```go
+// Define a script function with default keyword arguments
+p.Eval(`
+def greet(name, greeting="Hello", punctuation="!"):
+    return greeting + ", " + name + punctuation
+`)
+
+// Call with positional args only
+result, _ := p.CallFunction("greet", "World")
+text, _ := result.AsString()
+fmt.Println(text)  // Hello, World!
+
+// Call with keyword arguments
+result, _ = p.CallFunction("greet", "Alice",
+    map[string]interface{}{
+        "greeting": "Hi",
+        "punctuation": "?",
+    })
+text, _ = result.AsString()
+fmt.Println(text)  // Hi, Alice?
+```
+
 ## Custom Libraries
 
 ### Register Custom Library
