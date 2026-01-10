@@ -346,10 +346,7 @@ func (p *Scriptling) EvalWithContext(ctx context.Context, input string) (object.
 }
 
 func (p *Scriptling) SetVar(name string, value interface{}) error {
-	obj := goToObject(value)
-	if obj == nil {
-		return fmt.Errorf("unsupported type: %T", value)
-	}
+	obj := FromGo(value)
 	p.env.Set(name, obj)
 	return nil
 }
@@ -359,7 +356,7 @@ func (p *Scriptling) GetVar(name string) (interface{}, bool) {
 	if !ok {
 		return nil, false
 	}
-	return objectToGo(obj), true
+	return ToGo(obj), true
 }
 
 // Convenience methods for type-safe variable access
@@ -628,43 +625,4 @@ func (p *Scriptling) GetOutput() string {
 	return p.env.GetOutput()
 }
 
-func goToObject(value interface{}) object.Object {
-	switch v := value.(type) {
-	case int:
-		return &object.Integer{Value: int64(v)}
-	case int64:
-		return &object.Integer{Value: v}
-	case float64:
-		return &object.Float{Value: v}
-	case float32:
-		return &object.Float{Value: float64(v)}
-	case string:
-		return &object.String{Value: v}
-	case bool:
-		if v {
-			return &object.Boolean{Value: true}
-		}
-		return &object.Boolean{Value: false}
-	case nil:
-		return &object.Null{}
-	default:
-		return nil
-	}
-}
 
-func objectToGo(obj object.Object) interface{} {
-	switch obj := obj.(type) {
-	case *object.Integer:
-		return obj.Value
-	case *object.Float:
-		return obj.Value
-	case *object.String:
-		return obj.Value
-	case *object.Boolean:
-		return obj.Value
-	case *object.Null:
-		return nil
-	default:
-		return obj.Inspect()
-	}
-}
