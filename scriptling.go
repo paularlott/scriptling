@@ -419,6 +419,89 @@ func (p *Scriptling) RegisterFunc(name string, fn func(ctx context.Context, kwar
 	p.env.Set(name, builtin)
 }
 
+// CallFunction calls a registered function by name with Go arguments.
+// Args are Go types (int, string, etc.) that will be converted to Object.
+// Returns object.Object - use .AsInt(), .AsString(), etc. to extract value.
+//
+// Works with both Go-registered functions (via RegisterFunc) and script-defined functions.
+//
+// Keyword arguments can be passed as the last argument using map[string]interface{}.
+//
+// Example:
+//
+//	p.RegisterFunc("add", addFunc)
+//	result, err := p.CallFunction("add", 10, 32)
+//	sum, _ := result.AsInt()
+//
+//	// With keyword arguments
+//	result, err := p.CallFunction("format", "value", map[string]interface{}{"prefix": ">>"})
+func (p *Scriptling) CallFunction(name string, args ...interface{}) (object.Object, error) {
+	return p.CallFunctionWithContext(context.Background(), name, args...)
+}
+
+// CallFunctionWithContext calls a registered function by name with Go arguments and a context.
+// The context can be used for cancellation or timeouts.
+// Args are Go types (int, string, etc.) that will be converted to Object.
+// Returns object.Object - use .AsInt(), .AsString(), etc. to extract value.
+//
+// Works with both Go-registered functions (via RegisterFunc) and script-defined functions.
+//
+// Keyword arguments can be passed as the last argument using map[string]interface{}.
+//
+// Example:
+//
+//	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+//	defer cancel()
+//	result, err := p.CallFunctionWithContext(ctx, "add", 10, 32)
+//	sum, _ := result.AsInt()
+//
+//	// With keyword arguments
+//	result, err := p.CallFunctionWithContext(ctx, "format", "value", map[string]interface{}{"prefix": ">>"})
+func (p *Scriptling) CallFunctionWithContext(ctx context.Context, name string, args ...interface{}) (object.Object, error) {
+	// 1. Look up function in environment
+	fn, ok := p.env.Get(name)
+	if !ok {
+		return nil, fmt.Errorf("function '%s' not found", name)
+	}
+
+	// 2. Separate args and kwargs (kwargs is optional last parameter as map[string]interface{})
+	var objArgs []object.Object
+	var objKwargs map[string]object.Object
+
+	if len(args) > 0 {
+		// Check if last argument is a kwargs map
+		lastIdx := len(args) - 1
+		if kwargsMap, ok := args[lastIdx].(map[string]interface{}); ok {
+			// Last arg is kwargs, convert it
+			objKwargs = make(map[string]object.Object, len(kwargsMap))
+			for key, val := range kwargsMap {
+				objKwargs[key] = FromGo(val)
+			}
+			// Convert remaining args (excluding kwargs)
+			objArgs = make([]object.Object, lastIdx)
+			for i, arg := range args[:lastIdx] {
+				objArgs[i] = FromGo(arg)
+			}
+		} else {
+			// No kwargs, convert all args
+			objArgs = make([]object.Object, len(args))
+			for i, arg := range args {
+				objArgs[i] = FromGo(arg)
+			}
+		}
+	}
+
+	// 3. Call the function using evaluator
+	result := evaluator.ApplyFunction(ctx, fn, objArgs, objKwargs, p.env)
+
+	// 4. Handle errors
+	if err, ok := result.(*object.Error); ok && err != nil {
+		return nil, fmt.Errorf("function error: %s", err.Message)
+	}
+
+	return result, nil
+}
+
 // RegisterLibrary registers a new library that can be imported by scripts
 func (p *Scriptling) RegisterLibrary(name string, lib *object.Library) {
 	p.registeredLibraries[name] = lib
@@ -624,5 +707,3 @@ func (p *Scriptling) EnableOutputCapture() {
 func (p *Scriptling) GetOutput() string {
 	return p.env.GetOutput()
 }
-
-

@@ -2,7 +2,9 @@ package scriptling
 
 import (
 	"context"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/object"
@@ -539,6 +541,582 @@ help(func_obj)
 		_, err = p.Eval(`help("modules")`)
 		if err != nil {
 			t.Errorf("modules help failed: %v", err)
+		}
+	})
+}
+
+func TestCallFunction(t *testing.T) {
+	t.Run("registered_function", func(t *testing.T) {
+		p := New()
+
+		// Register a Go function
+		p.RegisterFunc("add", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			a, _ := args[0].AsInt()
+			b, _ := args[1].AsInt()
+			return object.NewInteger(a + b)
+		})
+
+		// Call it with Go arguments
+		result, err := p.CallFunction("add", 10, 32)
+		if err != nil {
+			t.Fatalf("CallFunction failed: %v", err)
+		}
+
+		sum, ok := result.AsInt()
+		if !ok {
+			t.Fatal("result is not an integer")
+		}
+		if sum != 42 {
+			t.Errorf("expected 42, got %d", sum)
+		}
+	})
+
+	t.Run("function_not_found", func(t *testing.T) {
+		p := New()
+
+		_, err := p.CallFunction("nonexistent", 1, 2)
+		if err == nil {
+			t.Error("expected error for nonexistent function")
+		}
+	})
+
+	t.Run("script_defined_function", func(t *testing.T) {
+		p := New()
+
+		// Define a script function
+		_, err := p.Eval("def greet(name): return 'Hello, ' + name")
+		if err != nil {
+			t.Fatalf("failed to define function: %v", err)
+		}
+
+		// Call with Go string
+		result, err := p.CallFunction("greet", "World")
+		if err != nil {
+			t.Fatalf("CallFunction failed: %v", err)
+		}
+
+		text, ok := result.AsString()
+		if !ok {
+			t.Fatal("result is not a string")
+		}
+		if text != "Hello, World" {
+			t.Errorf("expected 'Hello, World', got %s", text)
+		}
+	})
+
+	t.Run("function_with_multiple_types", func(t *testing.T) {
+		p := New()
+		stdlib.RegisterAll(p)
+
+		// Define a function that uses multiple types
+		_, err := p.Eval("def calculate(items, multiplier): return sum(items) * multiplier")
+		if err != nil {
+			t.Fatalf("failed to define function: %v", err)
+		}
+
+		// Call with Go list and int
+		result, err := p.CallFunction("calculate", []int64{10, 20, 30}, 2)
+		if err != nil {
+			t.Fatalf("CallFunction failed: %v", err)
+		}
+
+		product, ok := result.AsInt()
+		if !ok {
+			t.Fatal("result is not an integer")
+		}
+		if product != 120 { // (10+20+30) * 2
+			t.Errorf("expected 120, got %d", product)
+		}
+	})
+
+	t.Run("function_returning_string", func(t *testing.T) {
+		p := New()
+
+		p.RegisterFunc("concat", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			a, _ := args[0].AsString()
+			b, _ := args[1].AsString()
+			return &object.String{Value: a + b}
+		})
+
+		result, err := p.CallFunction("concat", "Hello, ", "World")
+		if err != nil {
+			t.Fatalf("CallFunction failed: %v", err)
+		}
+
+		text, ok := result.AsString()
+		if !ok {
+			t.Fatal("result is not a string")
+		}
+		if text != "Hello, World" {
+			t.Errorf("expected 'Hello, World', got %s", text)
+		}
+	})
+
+	t.Run("function_returning_float", func(t *testing.T) {
+		p := New()
+
+		p.RegisterFunc("divide", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			a, _ := args[0].AsFloat()
+			b, _ := args[1].AsFloat()
+			return &object.Float{Value: a / b}
+		})
+
+		result, err := p.CallFunction("divide", 10.0, 4.0)
+		if err != nil {
+			t.Fatalf("CallFunction failed: %v", err)
+		}
+
+		quotient, ok := result.AsFloat()
+		if !ok {
+			t.Fatal("result is not a float")
+		}
+		if quotient != 2.5 {
+			t.Errorf("expected 2.5, got %f", quotient)
+		}
+	})
+
+	t.Run("function_returning_bool", func(t *testing.T) {
+		p := New()
+
+		p.RegisterFunc("is_greater", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			a, _ := args[0].AsInt()
+			b, _ := args[1].AsInt()
+			return &object.Boolean{Value: a > b}
+		})
+
+		result, err := p.CallFunction("is_greater", 10, 5)
+		if err != nil {
+			t.Fatalf("CallFunction failed: %v", err)
+		}
+
+		flag, ok := result.AsBool()
+		if !ok {
+			t.Fatal("result is not a boolean")
+		}
+		if !flag {
+			t.Errorf("expected true, got false")
+		}
+	})
+
+	t.Run("with_context", func(t *testing.T) {
+		p := New()
+
+		// Register a function that checks for context
+		p.RegisterFunc("check_ctx", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if ctx != nil {
+				return &object.Boolean{Value: true}
+			}
+			return &object.Boolean{Value: false}
+		})
+
+		result, err := p.CallFunctionWithContext(context.Background(), "check_ctx")
+		if err != nil {
+			t.Fatalf("CallFunctionWithContext failed: %v", err)
+		}
+
+		flag, ok := result.AsBool()
+		if !ok {
+			t.Fatal("result is not a boolean")
+		}
+		if !flag {
+			t.Errorf("expected true (context should be passed)")
+		}
+	})
+
+	t.Run("with_timeout", func(t *testing.T) {
+		p := New()
+
+		// Register a function that can timeout
+		p.RegisterFunc("slow_func", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			select {
+			case <-ctx.Done():
+				return &object.Error{Message: "timeout"}
+			default:
+				return &object.String{Value: "completed"}
+			}
+		})
+
+		// Test with a very short timeout that should succeed
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+
+		result, err := p.CallFunctionWithContext(ctx, "slow_func")
+		if err != nil {
+			t.Fatalf("CallFunctionWithContext failed: %v", err)
+		}
+
+		text, ok := result.AsString()
+		if !ok {
+			t.Fatal("result is not a string")
+		}
+		if text != "completed" {
+			t.Errorf("expected 'completed', got %s", text)
+		}
+	})
+
+	t.Run("with_kwargs_empty", func(t *testing.T) {
+		p := New()
+
+		// Register a function that accepts kwargs
+		p.RegisterFunc("format", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			text, _ := args[0].AsString()
+			return &object.String{Value: text}
+		})
+
+		// Call with empty kwargs map
+		result, err := p.CallFunction("format", "hello", map[string]interface{}{})
+		if err != nil {
+			t.Fatalf("CallFunction with kwargs failed: %v", err)
+		}
+
+		text, ok := result.AsString()
+		if !ok {
+			t.Fatal("result is not a string")
+		}
+		if text != "hello" {
+			t.Errorf("expected 'hello', got %s", text)
+		}
+	})
+
+	t.Run("with_kwargs_values", func(t *testing.T) {
+		p := New()
+
+		// Register a function that uses kwargs
+		p.RegisterFunc("format", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			text, _ := args[0].AsString()
+			prefix := kwargs.MustGetString("prefix", "")
+			suffix := kwargs.MustGetString("suffix", "")
+			return &object.String{Value: prefix + text + suffix}
+		})
+
+		// Call with kwargs
+		result, err := p.CallFunction("format", "world",
+			map[string]interface{}{
+				"prefix": ">> ",
+				"suffix": " <<",
+			})
+		if err != nil {
+			t.Fatalf("CallFunction with kwargs failed: %v", err)
+		}
+
+		text, ok := result.AsString()
+		if !ok {
+			t.Fatal("result is not a string")
+		}
+		if text != ">> world <<" {
+			t.Errorf("expected '>> world <<', got %s", text)
+		}
+	})
+
+	t.Run("with_kwargs_partial", func(t *testing.T) {
+		p := New()
+
+		// Register a function with default kwargs
+		p.RegisterFunc("greet", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			name, _ := args[0].AsString()
+			prefix := kwargs.MustGetString("prefix", "Hello")
+			return &object.String{Value: prefix + ", " + name}
+		})
+
+		// Call with only prefix kwarg
+		result, err := p.CallFunction("greet", "Alice",
+			map[string]interface{}{
+				"prefix": "Hi",
+			})
+		if err != nil {
+			t.Fatalf("CallFunction with kwargs failed: %v", err)
+		}
+
+		text, ok := result.AsString()
+		if !ok {
+			t.Fatal("result is not a string")
+		}
+		if text != "Hi, Alice" {
+			t.Errorf("expected 'Hi, Alice', got %s", text)
+		}
+	})
+
+	t.Run("with_kwargs_types", func(t *testing.T) {
+		p := New()
+
+		// Register a function that uses different kwarg types
+		p.RegisterFunc("configure", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			enabled := kwargs.MustGetBool("enabled", false)
+			count := kwargs.MustGetInt("count", 0)
+			rate := kwargs.MustGetFloat("rate", 1.0)
+			return &object.Dict{Pairs: map[string]object.DictPair{
+				"enabled": {Key: &object.String{Value: "enabled"}, Value: &object.Boolean{Value: enabled}},
+				"count":   {Key: &object.String{Value: "count"}, Value: object.NewInteger(count)},
+				"rate":    {Key: &object.String{Value: "rate"}, Value: &object.Float{Value: rate}},
+			}}
+		})
+
+		// Call with mixed type kwargs
+		result, err := p.CallFunction("configure", nil,
+			map[string]interface{}{
+				"enabled": true,
+				"count":   42,
+				"rate":    3.14,
+			})
+		if err != nil {
+			t.Fatalf("CallFunction with kwargs failed: %v", err)
+		}
+
+		dict, ok := result.AsDict()
+		if !ok {
+			t.Fatal("result is not a dict")
+		}
+
+		enabledVal := dict["enabled"]
+		enabled, ok := enabledVal.AsBool()
+		if !ok || !enabled {
+			t.Errorf("expected enabled=true, got %v", enabledVal)
+		}
+
+		countVal := dict["count"]
+		count, ok := countVal.AsInt()
+		if !ok || count != 42 {
+			t.Errorf("expected count=42, got %v", countVal)
+		}
+
+		rateVal := dict["rate"]
+		rate, ok := rateVal.AsFloat()
+		if !ok || rate != 3.14 {
+			t.Errorf("expected rate=3.14, got %v", rateVal)
+		}
+	})
+
+	t.Run("script_function_with_kwargs", func(t *testing.T) {
+		p := New()
+		stdlib.RegisterAll(p)
+
+		// Define a script function with kwargs
+		_, err := p.Eval("def format_msg(text, prefix='>>', suffix='<<'): return prefix + ' ' + text + ' ' + suffix")
+		if err != nil {
+			t.Fatalf("failed to define function: %v", err)
+		}
+
+		// Call with kwargs from Go
+		result, err := p.CallFunction("format_msg", "hello",
+			map[string]interface{}{
+				"prefix": "##",
+				"suffix": "##",
+			})
+		if err != nil {
+			t.Fatalf("CallFunction with kwargs failed: %v", err)
+		}
+
+		text, ok := result.AsString()
+		if !ok {
+			t.Fatal("result is not a string")
+		}
+		if text != "## hello ##" {
+			t.Errorf("expected '## hello ##', got %s", text)
+		}
+	})
+
+	t.Run("script_function_with_default_kwargs", func(t *testing.T) {
+		p := New()
+		stdlib.RegisterAll(p)
+
+		// Define a script function with default kwargs
+		_, err := p.Eval("def echo(value, repeat=1): return value * repeat")
+		if err != nil {
+			t.Fatalf("failed to define function: %v", err)
+		}
+
+		// Call without kwargs (use default)
+		result, err := p.CallFunction("echo", "hi")
+		if err != nil {
+			t.Fatalf("CallFunction failed: %v", err)
+		}
+
+		text, ok := result.AsString()
+		if !ok {
+			t.Fatal("result is not a string")
+		}
+		if text != "hi" {
+			t.Errorf("expected 'hi', got %s", text)
+		}
+
+		// Call with kwargs
+		result, err = p.CallFunction("echo", "hi",
+			map[string]interface{}{
+				"repeat": 3,
+			})
+		if err != nil {
+			t.Fatalf("CallFunction with kwargs failed: %v", err)
+		}
+
+		text, ok = result.AsString()
+		if !ok {
+			t.Fatal("result is not a string")
+		}
+		if text != "hihihi" {
+			t.Errorf("expected 'hihihi', got %s", text)
+		}
+	})
+
+	t.Run("positional_only_args", func(t *testing.T) {
+		p := New()
+
+		// Register a function with positional args only
+		p.RegisterFunc("add", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			a, _ := args[0].AsInt()
+			b, _ := args[1].AsInt()
+			return object.NewInteger(a + b)
+		})
+
+		// Call with positional args only - no kwargs map
+		result, err := p.CallFunction("add", 10, 32)
+		if err != nil {
+			t.Fatalf("CallFunction failed: %v", err)
+		}
+
+		sum, ok := result.AsInt()
+		if !ok {
+			t.Fatal("result is not an integer")
+		}
+		if sum != 42 {
+			t.Errorf("expected 42, got %d", sum)
+		}
+	})
+
+	t.Run("kwargs_only_no_positional", func(t *testing.T) {
+		p := New()
+
+		// Register a function that only uses kwargs
+		p.RegisterFunc("config", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			enabled := kwargs.MustGetBool("enabled", false)
+			name := kwargs.MustGetString("name", "default")
+			return &object.String{Value: fmt.Sprintf("enabled=%v,name=%s", enabled, name)}
+		})
+
+		// Call with ONLY kwargs - no positional args (pass nil as positional placeholder)
+		result, err := p.CallFunction("config", nil,
+			map[string]interface{}{
+				"enabled": true,
+				"name":    "test",
+			})
+		if err != nil {
+			t.Fatalf("CallFunction with kwargs only failed: %v", err)
+		}
+
+		text, ok := result.AsString()
+		if !ok {
+			t.Fatal("result is not a string")
+		}
+		if text != "enabled=true,name=test" {
+			t.Errorf("expected 'enabled=true,name=test', got %s", text)
+		}
+	})
+
+	t.Run("mixed_positional_and_kwargs", func(t *testing.T) {
+		p := New()
+
+		// Register a function with both positional and keyword args
+		p.RegisterFunc("format", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			// Positional args
+			text, _ := args[0].AsString()
+			count, _ := args[1].AsInt()
+			// Keyword args
+			prefix := kwargs.MustGetString("prefix", "")
+			suffix := kwargs.MustGetString("suffix", "")
+			return &object.String{Value: prefix + text + ":" + fmt.Sprint(count) + suffix}
+		})
+
+		// Call with 2 positional args + kwargs
+		result, err := p.CallFunction("format", "item", 42,
+			map[string]interface{}{
+				"prefix": "[",
+				"suffix": "]",
+			})
+		if err != nil {
+			t.Fatalf("CallFunction with mixed args failed: %v", err)
+		}
+
+		text, ok := result.AsString()
+		if !ok {
+			t.Fatal("result is not a string")
+		}
+		if text != "[item:42]" {
+			t.Errorf("expected '[item:42]', got %s", text)
+		}
+	})
+
+	t.Run("script_function_positional_only", func(t *testing.T) {
+		p := New()
+		stdlib.RegisterAll(p)
+
+		// Define a script function with positional args only
+		_, err := p.Eval("def add(a, b): return a + b")
+		if err != nil {
+			t.Fatalf("failed to define function: %v", err)
+		}
+
+		// Call with positional args only
+		result, err := p.CallFunction("add", 15, 27)
+		if err != nil {
+			t.Fatalf("CallFunction failed: %v", err)
+		}
+
+		sum, ok := result.AsInt()
+		if !ok {
+			t.Fatal("result is not an integer")
+		}
+		if sum != 42 {
+			t.Errorf("expected 42, got %d", sum)
+		}
+	})
+
+	t.Run("script_function_mixed_args", func(t *testing.T) {
+		p := New()
+		stdlib.RegisterAll(p)
+
+		// Define a script function with positional and default args
+		_, err := p.Eval("def greet(title, name, greeting='Hello'): return greeting + ', ' + title + ' ' + name")
+		if err != nil {
+			t.Fatalf("failed to define function: %v", err)
+		}
+
+		// Call with 2 positional args + 1 kwarg
+		result, err := p.CallFunction("greet", "Dr", "Smith",
+			map[string]interface{}{
+				"greeting": "Greetings",
+			})
+		if err != nil {
+			t.Fatalf("CallFunction with mixed args failed: %v", err)
+		}
+
+		text, ok := result.AsString()
+		if !ok {
+			t.Fatal("result is not a string")
+		}
+		if text != "Greetings, Dr Smith" {
+			t.Errorf("expected 'Greetings, Dr Smith', got %s", text)
+		}
+	})
+
+	t.Run("no_args_at_all", func(t *testing.T) {
+		p := New()
+
+		// Register a function with no args
+		p.RegisterFunc("get_value", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			return object.NewInteger(42)
+		})
+
+		// Call with no args at all
+		result, err := p.CallFunction("get_value")
+		if err != nil {
+			t.Fatalf("CallFunction failed: %v", err)
+		}
+
+		value, ok := result.AsInt()
+		if !ok {
+			t.Fatal("result is not an integer")
+		}
+		if value != 42 {
+			t.Errorf("expected 42, got %d", value)
 		}
 	})
 }
