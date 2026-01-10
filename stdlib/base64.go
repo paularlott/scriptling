@@ -10,7 +10,7 @@ import (
 
 var Base64Library = object.NewLibrary(map[string]*object.Builtin{
 	"b64encode": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -26,7 +26,7 @@ var Base64Library = object.NewLibrary(map[string]*object.Builtin{
 Returns a Base64-encoded version of the input string.`,
 	},
 	"b64decode": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}

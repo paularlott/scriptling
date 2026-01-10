@@ -18,14 +18,14 @@ func BenchmarkThreadsRun(b *testing.B) {
 
 	// Simple worker function
 	worker := &object.Builtin{
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			return &object.Integer{Value: 42}
 		},
 	}
 
 	ApplyFunctionFunc = func(ctx context.Context, fn object.Object, fnArgs []object.Object, fnKwargs map[string]object.Object, env *object.Environment) object.Object {
 		if builtin, ok := fn.(*object.Builtin); ok {
-			return builtin.Fn(ctx, fnKwargs, fnArgs...)
+			return builtin.Fn(ctx, object.NewKwargs(fnKwargs), fnArgs...)
 		}
 		return &object.Error{Message: "not a builtin"}
 	}
@@ -60,14 +60,14 @@ func BenchmarkThreadsRunWithLargeEnvironment(b *testing.B) {
 
 	// Simple worker function
 	worker := &object.Builtin{
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			return &object.Integer{Value: 42}
 		},
 	}
 
 	ApplyFunctionFunc = func(ctx context.Context, fn object.Object, fnArgs []object.Object, fnKwargs map[string]object.Object, env *object.Environment) object.Object {
 		if builtin, ok := fn.(*object.Builtin); ok {
-			return builtin.Fn(ctx, fnKwargs, fnArgs...)
+			return builtin.Fn(ctx, object.NewKwargs(fnKwargs), fnArgs...)
 		}
 		return &object.Error{Message: "not a builtin"}
 	}

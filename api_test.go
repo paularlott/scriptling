@@ -11,7 +11,7 @@ import (
 
 func TestRegisterFunc(t *testing.T) {
 	p := New()
-	p.RegisterFunc("double", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+	p.RegisterFunc("double", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 		if len(args) != 1 {
 			return &object.Error{Message: "need 1 argument"}
 		}
@@ -34,7 +34,7 @@ func TestRegisterLibrary(t *testing.T) {
 	p := New()
 	myLib := object.NewLibrary(map[string]*object.Builtin{
 		"greet": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				return &object.String{Value: "Hello!"}
 			},
 		},
@@ -59,7 +59,7 @@ func TestImport(t *testing.T) {
 	p := New()
 	myLib := object.NewLibrary(map[string]*object.Builtin{
 		"greet": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				return &object.String{Value: "Hello!"}
 			},
 		},
@@ -114,7 +114,7 @@ func TestRegisterLibraryWithClass(t *testing.T) {
 		Name: "Counter",
 		Methods: map[string]object.Object{
 			"__init__": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					self := args[0].(*object.Instance)
 					start := int64(0)
 					if len(args) > 1 {
@@ -127,7 +127,7 @@ func TestRegisterLibraryWithClass(t *testing.T) {
 				},
 			},
 			"increment": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					self := args[0].(*object.Instance)
 					if val, ok := self.Fields["value"].(*object.Integer); ok {
 						newVal := val.Value + 1
@@ -138,7 +138,7 @@ func TestRegisterLibraryWithClass(t *testing.T) {
 				},
 			},
 			"get": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					self := args[0].(*object.Instance)
 					// Return a copy to avoid mutation issues
 					if val, ok := self.Fields["value"].(*object.Integer); ok {
@@ -154,7 +154,7 @@ func TestRegisterLibraryWithClass(t *testing.T) {
 	myLib := object.NewLibrary(
 		map[string]*object.Builtin{
 			"helper": {
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					return &object.String{Value: "helper called"}
 				},
 			},
@@ -351,14 +351,14 @@ func TestHelpSystem(t *testing.T) {
 	p := New()
 
 	// Register a Go function with help text
-	p.RegisterFunc("custom_func", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+	p.RegisterFunc("custom_func", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 		return &object.String{Value: "custom result"}
 	})
 
 	// Register a library with functions that have help text
 	myLib := object.NewLibrary(map[string]*object.Builtin{
 		"lib_func": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				return &object.String{Value: "lib result"}
 			},
 			HelpText: `lib_func() - A library function
@@ -486,13 +486,13 @@ help("scriptlib")
 			Name: "TestClass",
 			Methods: map[string]object.Object{
 				"method1": &object.Builtin{
-					Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 						return &object.String{Value: "method1"}
 					},
 					HelpText: "method1() - First test method",
 				},
 				"method2": &object.Builtin{
-					Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 						return &object.String{Value: "method2"}
 					},
 				},

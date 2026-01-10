@@ -11,7 +11,7 @@ import (
 
 var StatisticsLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"mean": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -40,7 +40,7 @@ Example:
   statistics.mean([1, 2, 3, 4, 5])  # 3.0`,
 	},
 	"fmean": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -69,7 +69,7 @@ Example:
   statistics.fmean([1.0, 2.0, 3.0])  # 2.0`,
 	},
 	"geometric_mean": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -102,7 +102,7 @@ Example:
   statistics.geometric_mean([1, 2, 4])  # 2.0`,
 	},
 	"harmonic_mean": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -134,7 +134,7 @@ Example:
   statistics.harmonic_mean([1, 2, 4])  # ~1.714`,
 	},
 	"median": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -167,7 +167,7 @@ Example:
   statistics.median([1, 3, 5, 7])  # 4.0`,
 	},
 	"mode": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -210,7 +210,7 @@ Example:
   statistics.mode(["a", "b", "a"])  # "a"`,
 	},
 	"stdev": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -236,7 +236,7 @@ Example:
   statistics.stdev([1, 2, 3, 4, 5])  # ~1.58`,
 	},
 	"pstdev": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -262,7 +262,7 @@ Example:
   statistics.pstdev([1, 2, 3, 4, 5])  # ~1.41`,
 	},
 	"variance": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -287,7 +287,7 @@ Example:
   statistics.variance([1, 2, 3, 4, 5])  # 2.5`,
 	},
 	"pvariance": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}

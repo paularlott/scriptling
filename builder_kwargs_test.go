@@ -27,7 +27,7 @@ func TestBuilderPositionalArgs(t *testing.T) {
 		t.Fatal("add function not found")
 	}
 
-	result := fn.Fn(context.Background(), map[string]object.Object{},
+	result := fn.Fn(context.Background(), object.NewKwargs(map[string]object.Object{}),
 		object.NewInteger(3), object.NewInteger(5))
 
 	if intResult, ok := result.(*object.Integer); !ok {
@@ -42,7 +42,7 @@ func TestBuilderKwargsOnly(t *testing.T) {
 	builder := object.NewLibraryBuilder("test", "Test library")
 
 	// Function with only kwargs (no positional args except Kwargs)
-	builder.Function("connect", func(kwargs Kwargs) (string, error) {
+	builder.Function("connect", func(kwargs object.Kwargs) (string, error) {
 		host, err := kwargs.GetString("host", "localhost")
 		if err != nil {
 			return "", err
@@ -99,7 +99,7 @@ func TestBuilderKwargsOnly(t *testing.T) {
 				t.Fatal("connect function not found")
 			}
 
-			result := fn.Fn(context.Background(), tt.kwargs)
+			result := fn.Fn(context.Background(), object.NewKwargs(tt.kwargs))
 
 			if strResult, ok := result.(*object.String); !ok {
 				t.Fatalf("expected String, got %T", result)
@@ -117,9 +117,9 @@ func TestBuilderKwargsOnly(t *testing.T) {
 			t.Fatal("connect function not found")
 		}
 
-		result := fn.Fn(context.Background(), map[string]object.Object{
+		result := fn.Fn(context.Background(), object.NewKwargs(map[string]object.Object{
 			"port": &object.String{Value: "not a number"},
-		})
+		}))
 
 		if errResult, ok := result.(*object.Error); !ok {
 			t.Fatalf("expected Error, got %T", result)
@@ -134,7 +134,7 @@ func TestBuilderMixedPositionalKwargs(t *testing.T) {
 	builder := object.NewLibraryBuilder("test", "Test library")
 
 	// Function with positional args and kwargs
-	builder.Function("format", func(name string, count int, kwargs Kwargs) (string, error) {
+	builder.Function("format", func(name string, count int, kwargs object.Kwargs) (string, error) {
 		prefix, err := kwargs.GetString("prefix", ">")
 		if err != nil {
 			return "", err
@@ -196,7 +196,7 @@ func TestBuilderMixedPositionalKwargs(t *testing.T) {
 				t.Fatal("format function not found")
 			}
 
-			result := fn.Fn(context.Background(), tt.kwargs, tt.args...)
+			result := fn.Fn(context.Background(), object.NewKwargs(tt.kwargs), tt.args...)
 
 			if strResult, ok := result.(*object.String); !ok {
 				t.Fatalf("expected String, got %T", result)
@@ -211,7 +211,7 @@ func TestBuilderMixedPositionalKwargs(t *testing.T) {
 func TestBuilderKwargsWithAllTypes(t *testing.T) {
 	builder := object.NewLibraryBuilder("test", "Test library")
 
-	builder.Function("all_types", func(kwargs Kwargs) (string, error) {
+	builder.Function("all_types", func(kwargs object.Kwargs) (string, error) {
 		s, err := kwargs.GetString("str", "default")
 		if err != nil {
 			return "", err
@@ -240,12 +240,12 @@ func TestBuilderKwargsWithAllTypes(t *testing.T) {
 		t.Fatal("all_types function not found")
 	}
 
-	result := fn.Fn(context.Background(), map[string]object.Object{
+	result := fn.Fn(context.Background(), object.NewKwargs(map[string]object.Object{
 		"str":  &object.String{Value: "hello"},
 		"int":  object.NewInteger(100),
 		"float": &object.Float{Value: 2.718},
 		"bool": &object.Boolean{Value: false},
-	})
+	}))
 
 	if strResult, ok := result.(*object.String); !ok {
 		t.Fatalf("expected String, got %T", result)
@@ -258,7 +258,7 @@ func TestBuilderKwargsWithAllTypes(t *testing.T) {
 func TestBuilderKwargsMustHelpers(t *testing.T) {
 	builder := object.NewLibraryBuilder("test", "Test library")
 
-	builder.Function("must_test", func(kwargs Kwargs) string {
+	builder.Function("must_test", func(kwargs object.Kwargs) string {
 		// Must helpers should return defaults without error checking
 		s := kwargs.MustGetString("str", "default")
 		i := kwargs.MustGetInt("int", 42)
@@ -274,9 +274,9 @@ func TestBuilderKwargsMustHelpers(t *testing.T) {
 		t.Fatal("must_test function not found")
 	}
 
-	result := fn.Fn(context.Background(), map[string]object.Object{
+	result := fn.Fn(context.Background(), object.NewKwargs(map[string]object.Object{
 		"str": &object.String{Value: "hello"},
-	})
+	}))
 
 	if strResult, ok := result.(*object.String); !ok {
 		t.Fatalf("expected String, got %T", result)
@@ -289,7 +289,7 @@ func TestBuilderKwargsMustHelpers(t *testing.T) {
 func TestBuilderKwargsHasLenKeys(t *testing.T) {
 	builder := object.NewLibraryBuilder("test", "Test library")
 
-	builder.Function("helpers", func(kwargs Kwargs) string {
+	builder.Function("helpers", func(kwargs object.Kwargs) string {
 		result := fmt.Sprintf("len=%d", kwargs.Len())
 		if kwargs.Has("a") {
 			result += " has_a=true"
@@ -310,10 +310,10 @@ func TestBuilderKwargsHasLenKeys(t *testing.T) {
 		t.Fatal("helpers function not found")
 	}
 
-	result := fn.Fn(context.Background(), map[string]object.Object{
+	result := fn.Fn(context.Background(), object.NewKwargs(map[string]object.Object{
 		"a": object.NewInteger(1),
 		"c": &object.String{Value: "test"},
-	})
+	}))
 
 	if strResult, ok := result.(*object.String); !ok {
 		t.Fatalf("expected String, got %T", result)

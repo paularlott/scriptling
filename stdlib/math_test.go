@@ -12,7 +12,7 @@ func TestMathSqrt(t *testing.T) {
 	lib := MathLibrary
 	sqrt := lib.Functions()["sqrt"]
 
-	result := sqrt.Fn(context.Background(), nil, &object.Integer{Value: 16})
+	result := sqrt.Fn(context.Background(), object.NewKwargs(nil), &object.Integer{Value: 16})
 	if f, ok := result.(*object.Float); ok {
 		if f.Value != 4.0 {
 			t.Errorf("sqrt(16) = %v, want 4.0", f.Value)
@@ -26,7 +26,7 @@ func TestMathPow(t *testing.T) {
 	lib := MathLibrary
 	pow := lib.Functions()["pow"]
 
-	result := pow.Fn(context.Background(), nil, &object.Integer{Value: 2}, &object.Integer{Value: 8})
+	result := pow.Fn(context.Background(), object.NewKwargs(nil), &object.Integer{Value: 2}, &object.Integer{Value: 8})
 	if f, ok := result.(*object.Float); ok {
 		if f.Value != 256.0 {
 			t.Errorf("pow(2, 8) = %v, want 256.0", f.Value)
@@ -40,7 +40,7 @@ func TestMathFabs(t *testing.T) {
 	lib := MathLibrary
 	fabs := lib.Functions()["fabs"]
 
-	result := fabs.Fn(context.Background(), nil, &object.Integer{Value: -5})
+	result := fabs.Fn(context.Background(), object.NewKwargs(nil), &object.Integer{Value: -5})
 	if f, ok := result.(*object.Float); ok {
 		if f.Value != 5.0 {
 			t.Errorf("fabs(-5) = %v, want 5.0", f.Value)
@@ -49,7 +49,7 @@ func TestMathFabs(t *testing.T) {
 		t.Errorf("fabs() returned %T, want Float", result)
 	}
 
-	result = fabs.Fn(context.Background(), nil, &object.Float{Value: -3.14})
+	result = fabs.Fn(context.Background(), object.NewKwargs(nil), &object.Float{Value: -3.14})
 	if f, ok := result.(*object.Float); ok {
 		if f.Value != 3.14 {
 			t.Errorf("fabs(-3.14) = %v, want 3.14", f.Value)
@@ -63,7 +63,7 @@ func TestMathFloor(t *testing.T) {
 	lib := MathLibrary
 	floor := lib.Functions()["floor"]
 
-	result := floor.Fn(context.Background(), nil, &object.Float{Value: 3.7})
+	result := floor.Fn(context.Background(), object.NewKwargs(nil), &object.Float{Value: 3.7})
 	if i, ok := result.(*object.Integer); ok {
 		if i.Value != 3 {
 			t.Errorf("floor(3.7) = %v, want 3", i.Value)
@@ -77,7 +77,7 @@ func TestMathCeil(t *testing.T) {
 	lib := MathLibrary
 	ceil := lib.Functions()["ceil"]
 
-	result := ceil.Fn(context.Background(), nil, &object.Float{Value: 3.2})
+	result := ceil.Fn(context.Background(), object.NewKwargs(nil), &object.Float{Value: 3.2})
 	if i, ok := result.(*object.Integer); ok {
 		if i.Value != 4 {
 			t.Errorf("ceil(3.2) = %v, want 4", i.Value)
@@ -113,7 +113,7 @@ func TestMathSin(t *testing.T) {
 	lib := MathLibrary
 	sin := lib.Functions()["sin"]
 
-	result := sin.Fn(context.Background(), nil, &object.Integer{Value: 0})
+	result := sin.Fn(context.Background(), object.NewKwargs(nil), &object.Integer{Value: 0})
 	if f, ok := result.(*object.Float); ok {
 		if f.Value != 0.0 {
 			t.Errorf("sin(0) = %v, want 0.0", f.Value)
@@ -127,7 +127,7 @@ func TestMathCos(t *testing.T) {
 	lib := MathLibrary
 	cos := lib.Functions()["cos"]
 
-	result := cos.Fn(context.Background(), nil, &object.Integer{Value: 0})
+	result := cos.Fn(context.Background(), object.NewKwargs(nil), &object.Integer{Value: 0})
 	if f, ok := result.(*object.Float); ok {
 		if f.Value != 1.0 {
 			t.Errorf("cos(0) = %v, want 1.0", f.Value)
@@ -141,7 +141,7 @@ func TestMathTan(t *testing.T) {
 	lib := MathLibrary
 	tan := lib.Functions()["tan"]
 
-	result := tan.Fn(context.Background(), nil, &object.Integer{Value: 0})
+	result := tan.Fn(context.Background(), object.NewKwargs(nil), &object.Integer{Value: 0})
 	if f, ok := result.(*object.Float); ok {
 		if f.Value != 0.0 {
 			t.Errorf("tan(0) = %v, want 0.0", f.Value)
@@ -155,7 +155,7 @@ func TestMathLog(t *testing.T) {
 	lib := MathLibrary
 	log := lib.Functions()["log"]
 
-	result := log.Fn(context.Background(), nil, &object.Integer{Value: 1})
+	result := log.Fn(context.Background(), object.NewKwargs(nil), &object.Integer{Value: 1})
 	if f, ok := result.(*object.Float); ok {
 		if f.Value != 0.0 {
 			t.Errorf("log(1) = %v, want 0.0", f.Value)
@@ -165,7 +165,7 @@ func TestMathLog(t *testing.T) {
 	}
 
 	// Test error case
-	result = log.Fn(context.Background(), nil, &object.Integer{Value: 0})
+	result = log.Fn(context.Background(), object.NewKwargs(nil), &object.Integer{Value: 0})
 	if _, ok := result.(*object.Error); !ok {
 		t.Errorf("log(0) should return error, got %T", result)
 	}
@@ -175,7 +175,7 @@ func TestMathExp(t *testing.T) {
 	lib := MathLibrary
 	exp := lib.Functions()["exp"]
 
-	result := exp.Fn(context.Background(), nil, &object.Integer{Value: 0})
+	result := exp.Fn(context.Background(), object.NewKwargs(nil), &object.Integer{Value: 0})
 	if f, ok := result.(*object.Float); ok {
 		if f.Value != 1.0 {
 			t.Errorf("exp(0) = %v, want 1.0", f.Value)
@@ -189,7 +189,7 @@ func TestMathDegrees(t *testing.T) {
 	lib := MathLibrary
 	degrees := lib.Functions()["degrees"]
 
-	result := degrees.Fn(context.Background(), nil, &object.Float{Value: math.Pi})
+	result := degrees.Fn(context.Background(), object.NewKwargs(nil), &object.Float{Value: math.Pi})
 	if f, ok := result.(*object.Float); ok {
 		if f.Value != 180.0 {
 			t.Errorf("degrees(π) = %v, want 180.0", f.Value)
@@ -203,7 +203,7 @@ func TestMathRadians(t *testing.T) {
 	lib := MathLibrary
 	radians := lib.Functions()["radians"]
 
-	result := radians.Fn(context.Background(), nil, &object.Integer{Value: 180})
+	result := radians.Fn(context.Background(), object.NewKwargs(nil), &object.Integer{Value: 180})
 	if f, ok := result.(*object.Float); ok {
 		if f.Value != math.Pi {
 			t.Errorf("radians(180) = %v, want π", f.Value)
@@ -217,7 +217,7 @@ func TestMathFmod(t *testing.T) {
 	lib := MathLibrary
 	fmod := lib.Functions()["fmod"]
 
-	result := fmod.Fn(context.Background(), nil, &object.Float{Value: 5.5}, &object.Float{Value: 2.0})
+	result := fmod.Fn(context.Background(), object.NewKwargs(nil), &object.Float{Value: 5.5}, &object.Float{Value: 2.0})
 	if f, ok := result.(*object.Float); ok {
 		if f.Value != 1.5 {
 			t.Errorf("fmod(5.5, 2.0) = %v, want 1.5", f.Value)
@@ -227,7 +227,7 @@ func TestMathFmod(t *testing.T) {
 	}
 
 	// Test error case
-	result = fmod.Fn(context.Background(), nil, &object.Float{Value: 5.0}, &object.Float{Value: 0.0})
+	result = fmod.Fn(context.Background(), object.NewKwargs(nil), &object.Float{Value: 5.0}, &object.Float{Value: 0.0})
 	if _, ok := result.(*object.Error); !ok {
 		t.Errorf("fmod(5.0, 0.0) should return error, got %T", result)
 	}
@@ -237,7 +237,7 @@ func TestMathGcd(t *testing.T) {
 	lib := MathLibrary
 	gcd := lib.Functions()["gcd"]
 
-	result := gcd.Fn(context.Background(), nil, &object.Integer{Value: 48}, &object.Integer{Value: 18})
+	result := gcd.Fn(context.Background(), object.NewKwargs(nil), &object.Integer{Value: 48}, &object.Integer{Value: 18})
 	if i, ok := result.(*object.Integer); ok {
 		if i.Value != 6 {
 			t.Errorf("gcd(48, 18) = %v, want 6", i.Value)
@@ -251,7 +251,7 @@ func TestMathFactorial(t *testing.T) {
 	lib := MathLibrary
 	factorial := lib.Functions()["factorial"]
 
-	result := factorial.Fn(context.Background(), nil, &object.Integer{Value: 5})
+	result := factorial.Fn(context.Background(), object.NewKwargs(nil), &object.Integer{Value: 5})
 	if i, ok := result.(*object.Integer); ok {
 		if i.Value != 120 {
 			t.Errorf("factorial(5) = %v, want 120", i.Value)
@@ -261,12 +261,12 @@ func TestMathFactorial(t *testing.T) {
 	}
 
 	// Test error cases
-	result = factorial.Fn(context.Background(), nil, &object.Integer{Value: -1})
+	result = factorial.Fn(context.Background(), object.NewKwargs(nil), &object.Integer{Value: -1})
 	if _, ok := result.(*object.Error); !ok {
 		t.Errorf("factorial(-1) should return error, got %T", result)
 	}
 
-	result = factorial.Fn(context.Background(), nil, &object.Integer{Value: 21})
+	result = factorial.Fn(context.Background(), object.NewKwargs(nil), &object.Integer{Value: 21})
 	if _, ok := result.(*object.Error); !ok {
 		t.Errorf("factorial(21) should return error, got %T", result)
 	}

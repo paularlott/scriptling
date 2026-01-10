@@ -9,7 +9,7 @@ import (
 
 var FunctoolsLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"reduce": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 2 || len(args) > 3 {
 				return errors.NewError("reduce() requires 2 or 3 arguments")
 			}
@@ -91,7 +91,7 @@ Example:
   functools.reduce(add, [1, 2, 3], 10)  # 16`,
 	},
 	"partial": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 1 {
 				return errors.NewError("partial() requires at least 1 argument")
 			}
@@ -110,27 +110,27 @@ Example:
 			// Remaining args are pre-filled arguments
 			partialArgs := args[1:]
 			partialKwargs := make(map[string]object.Object)
-			for k, v := range kwargs {
+			for k, v := range kwargs.Kwargs {
 				partialKwargs[k] = v
 			}
 
 			// Create a new builtin that calls the original with pre-filled args
 			return &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					// Combine partial args with new args
 					allArgs := append(partialArgs, args...)
 					allKwargs := make(map[string]object.Object)
 					for k, v := range partialKwargs {
 						allKwargs[k] = v
 					}
-					for k, v := range kwargs {
+					for k, v := range kwargs.Kwargs {
 						allKwargs[k] = v
 					}
 
 					if fn != nil {
 						return callFunction(ctx, fn, allArgs, allKwargs)
 					} else {
-						return builtin.Fn(ctx, allKwargs, allArgs...)
+						return builtin.Fn(ctx, object.NewKwargs(allKwargs), allArgs...)
 					}
 				},
 				HelpText: "Partial function application",
@@ -179,7 +179,7 @@ func reduceWithBuiltin(ctx context.Context, builtin *object.Builtin, args []obje
 	}
 
 	for i := startIdx; i < len(list.Elements); i++ {
-		result := builtin.Fn(ctx, nil, accumulator, list.Elements[i])
+		result := builtin.Fn(ctx, object.NewKwargs(nil), accumulator, list.Elements[i])
 		if result == nil {
 			return errors.NewError("reduce function returned nil")
 		}

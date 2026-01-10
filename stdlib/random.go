@@ -17,7 +17,7 @@ func init() {
 }
 
 // gaussianRandom returns a random number from Gaussian distribution
-func gaussianRandom(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+func gaussianRandom(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 	if len(args) != 2 {
 		return errors.NewArgumentError(len(args), 2)
 	}
@@ -45,7 +45,7 @@ func gaussianRandom(ctx context.Context, kwargs map[string]object.Object, args .
 
 var RandomLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"seed": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) > 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -70,7 +70,7 @@ var RandomLibrary = object.NewLibrary(map[string]*object.Builtin{
 If a is omitted, current time is used. Otherwise, a is used as the seed.`,
 	},
 	"randint": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
 			}
@@ -98,7 +98,7 @@ If a is omitted, current time is used. Otherwise, a is used as the seed.`,
 Returns a random integer N such that min <= N <= max.`,
 	},
 	"random": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 0 {
 				return errors.NewArgumentError(len(args), 0)
 			}
@@ -109,7 +109,7 @@ Returns a random integer N such that min <= N <= max.`,
 Returns a random float in the range [0.0, 1.0).`,
 	},
 	"choice": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -134,7 +134,7 @@ Returns a random float in the range [0.0, 1.0).`,
 Returns a randomly selected element from the given list or string.`,
 	},
 	"shuffle": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -153,7 +153,7 @@ Returns a randomly selected element from the given list or string.`,
 Randomly shuffles the elements of the list in place using the Fisher-Yates algorithm. Returns None.`,
 	},
 	"uniform": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
 			}
@@ -183,7 +183,7 @@ Randomly shuffles the elements of the list in place using the Fisher-Yates algor
 Returns a random floating-point number N such that a <= N <= b.`,
 	},
 	"sample": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
 			}
@@ -223,7 +223,7 @@ Returns a k length list of unique elements chosen from the population sequence.
 Used for random sampling without replacement.`,
 	},
 	"randrange": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 1 || len(args) > 3 {
 				return errors.NewError("randrange() takes 1 to 3 arguments (%d given)", len(args))
 			}
@@ -301,7 +301,7 @@ mu is the mean, sigma is the standard deviation.
 Same as gauss() but provided for compatibility.`,
 	},
 	"expovariate": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}

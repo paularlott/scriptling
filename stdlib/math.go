@@ -33,8 +33,8 @@ func toFloat(obj object.Object) (float64, bool) {
 }
 
 // oneFloatFunc creates a math function that takes one float argument and returns a float
-func oneFloatFunc(f func(float64) float64) func(context.Context, map[string]object.Object, ...object.Object) object.Object {
-	return func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+func oneFloatFunc(f func(float64) float64) func(context.Context, object.Kwargs, ...object.Object) object.Object {
+	return func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 		if len(args) != 1 {
 			return errors.NewArgumentError(len(args), 1)
 		}
@@ -47,8 +47,8 @@ func oneFloatFunc(f func(float64) float64) func(context.Context, map[string]obje
 }
 
 // twoFloatFunc creates a function that takes two floats and applies f
-func twoFloatFunc(f func(float64, float64) float64) func(context.Context, map[string]object.Object, ...object.Object) object.Object {
-	return func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+func twoFloatFunc(f func(float64, float64) float64) func(context.Context, object.Kwargs, ...object.Object) object.Object {
+	return func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 		if len(args) != 2 {
 			return errors.NewArgumentError(len(args), 2)
 		}
@@ -87,7 +87,7 @@ x can be an integer or float.
 Always returns a float.`,
 	},
 	"floor": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -106,7 +106,7 @@ x can be an integer or float.
 Returns the largest integer less than or equal to x.`,
 	},
 	"ceil": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -147,7 +147,7 @@ x can be an integer or float in radians.
 Returns a float.`,
 	},
 	"log": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -187,7 +187,7 @@ x can be an integer or float in degrees.
 Returns a float in radians.`,
 	},
 	"fmod": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
 			}
@@ -210,7 +210,7 @@ x and y can be integers or floats.
 y must not be zero. Returns a float.`,
 	},
 	"gcd": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
 			}
@@ -230,7 +230,7 @@ a and b must be integers.
 Returns an integer.`,
 	},
 	"factorial": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -256,7 +256,7 @@ n must be a non-negative integer <= 20.
 Returns an integer.`,
 	},
 	"isnan": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -274,7 +274,7 @@ Returns an integer.`,
 Returns True if x is NaN, False otherwise.`,
 	},
 	"isinf": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -292,7 +292,7 @@ Returns True if x is NaN, False otherwise.`,
 Returns True if x is positive or negative infinity.`,
 	},
 	"isfinite": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -316,7 +316,7 @@ Returns True if x is neither NaN nor infinite.`,
 Returns a float with magnitude of x and sign of y.`,
 	},
 	"trunc": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}

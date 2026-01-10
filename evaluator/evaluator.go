@@ -937,7 +937,7 @@ func applyFunctionWithContext(ctx context.Context, fn object.Object, args []obje
 		return applyLambdaFunctionWithContext(ctx, fn, args, keywords, env)
 	case *object.Builtin:
 		ctxWithEnv := SetEnvInContext(ctx, env)
-		return fn.Fn(ctxWithEnv, keywords, args...)
+		return fn.Fn(ctxWithEnv, object.NewKwargs(keywords), args...)
 	case *object.Class:
 		return createInstance(ctx, fn, args, keywords, env)
 	default:
@@ -1854,17 +1854,20 @@ func evalFStringLiteral(ctx context.Context, fstr *ast.FStringLiteral, env *obje
 
 func formatWithSpec(obj object.Object, spec string) string {
 	if spec == "" {
-		// Check for integers first (before float conversion)
-		if intVal, ok := obj.AsInt(); ok {
-			return fmt.Sprintf("%d", intVal)
-		}
-		// For floats, provide a more Python-like representation
-		if floatVal, ok := obj.AsFloat(); ok {
-			// Check if it's a whole number
-			if floatVal == float64(int64(floatVal)) {
-				return fmt.Sprintf("%.1f", floatVal)
+		// Check the actual object type first to preserve float representation
+		switch obj.Type() {
+		case object.INTEGER_OBJ:
+			if intVal, ok := obj.AsInt(); ok {
+				return fmt.Sprintf("%d", intVal)
 			}
-			return fmt.Sprintf("%g", floatVal)
+		case object.FLOAT_OBJ:
+			if floatVal, ok := obj.AsFloat(); ok {
+				// Check if it's a whole number
+				if floatVal == float64(int64(floatVal)) {
+					return fmt.Sprintf("%.1f", floatVal)
+				}
+				return fmt.Sprintf("%g", floatVal)
+			}
 		}
 		return obj.Inspect()
 	}

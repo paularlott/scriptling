@@ -8,7 +8,7 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
-func jsonLoads(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+func jsonLoads(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 	if len(args) != 1 {
 		return errors.NewError("wrong number of arguments. got=%d, want=1", len(args))
 	}
@@ -24,12 +24,25 @@ func jsonLoads(ctx context.Context, kwargs map[string]object.Object, args ...obj
 	return jsonToObject(data)
 }
 
-func jsonDumps(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+func jsonDumps(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 	if len(args) != 1 {
 		return errors.NewError("wrong number of arguments. got=%d, want=1", len(args))
 	}
+	
+	// Use kwargs helpers for optional parameters
+	indent, _ := kwargs.GetString("indent", "")
+	
 	data := objectToJSON(args[0])
-	bytes, err := json.Marshal(data)
+	
+	var bytes []byte
+	var err error
+	
+	if indent != "" {
+		bytes, err = json.MarshalIndent(data, "", indent)
+	} else {
+		bytes, err = json.Marshal(data)
+	}
+	
 	if err != nil {
 		return errors.NewError("json serialize error: %s", err.Error())
 	}
@@ -45,9 +58,10 @@ Parses a JSON string and returns the corresponding Scriptling object.`,
 	},
 	"dumps": {
 		Fn: jsonDumps,
-		HelpText: `dumps(obj) - Serialize object to JSON string
+		HelpText: `dumps(obj, indent="") - Serialize object to JSON string
 
-Converts a Scriptling object to its JSON string representation.`,
+Converts a Scriptling object to its JSON string representation.
+Optional indent parameter for pretty-printing.`,
 	},
 	"parse": {
 		Fn: jsonLoads,
@@ -57,9 +71,10 @@ Parses a JSON string and returns the corresponding Scriptling object.`,
 	},
 	"stringify": {
 		Fn: jsonDumps,
-		HelpText: `stringify(obj) - Serialize object to JSON string (alias for dumps)
+		HelpText: `stringify(obj, indent="") - Serialize object to JSON string (alias for dumps)
 
-Converts a Scriptling object to its JSON string representation.`,
+Converts a Scriptling object to its JSON string representation.
+Optional indent parameter for pretty-printing.`,
 	},
 }, nil, "JSON encoding and decoding library")
 

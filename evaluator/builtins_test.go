@@ -19,7 +19,7 @@ func TestBuiltinLen(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		result := builtins["len"].Fn(context.Background(), nil, tt.input)
+		result := builtins["len"].Fn(context.Background(), object.NewKwargs(nil), tt.input)
 		integer, ok := result.(*object.Integer)
 		if !ok {
 			t.Errorf("object is not Integer. got=%T (%+v)", result, result)
@@ -32,7 +32,7 @@ func TestBuiltinLen(t *testing.T) {
 }
 
 func TestBuiltinLenError(t *testing.T) {
-	result := builtins["len"].Fn(context.Background(), nil, &object.Integer{Value: 1})
+	result := builtins["len"].Fn(context.Background(), object.NewKwargs(nil), &object.Integer{Value: 1})
 	if result.Type() != object.ERROR_OBJ {
 		t.Errorf("expected error for len(1), got %T", result)
 	}
@@ -50,7 +50,7 @@ func TestBuiltinStr(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		result := builtins["str"].Fn(context.Background(), nil, tt.input)
+		result := builtins["str"].Fn(context.Background(), object.NewKwargs(nil), tt.input)
 		str, ok := result.(*object.String)
 		if !ok {
 			t.Errorf("object is not String. got=%T (%+v)", result, result)
@@ -73,7 +73,7 @@ func TestBuiltinInt(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		result := builtins["int"].Fn(context.Background(), nil, tt.input)
+		result := builtins["int"].Fn(context.Background(), object.NewKwargs(nil), tt.input)
 		integer, ok := result.(*object.Integer)
 		if !ok {
 			t.Errorf("object is not Integer. got=%T (%+v)", result, result)
@@ -96,7 +96,7 @@ func TestBuiltinFloat(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		result := builtins["float"].Fn(context.Background(), nil, tt.input)
+		result := builtins["float"].Fn(context.Background(), object.NewKwargs(nil), tt.input)
 		float, ok := result.(*object.Float)
 		if !ok {
 			t.Errorf("object is not Float. got=%T (%+v)", result, result)
@@ -122,7 +122,7 @@ func TestBuiltinType(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		result := builtins["type"].Fn(context.Background(), nil, tt.input)
+		result := builtins["type"].Fn(context.Background(), object.NewKwargs(nil), tt.input)
 		str, ok := result.(*object.String)
 		if !ok {
 			t.Errorf("object is not String. got=%T (%+v)", result, result)

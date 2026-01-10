@@ -51,7 +51,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 		Name: "Path",
 		Methods: map[string]object.Object{
 			"joinpath": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) < 1 {
 						return errors.NewArgumentError(len(args), 1)
 					}
@@ -80,7 +80,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 				HelpText: "joinpath(*other) - Combine this path with other path segments",
 			},
 			"exists": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) != 1 {
 						return errors.NewArgumentError(len(args), 1)
 					}
@@ -96,7 +96,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 				HelpText: "exists() - Check if the path exists",
 			},
 			"is_file": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) != 1 {
 						return errors.NewArgumentError(len(args), 1)
 					}
@@ -115,7 +115,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 				HelpText: "is_file() - Check if the path is a regular file",
 			},
 			"is_dir": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) != 1 {
 						return errors.NewArgumentError(len(args), 1)
 					}
@@ -134,7 +134,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 				HelpText: "is_dir() - Check if the path is a directory",
 			},
 			"mkdir": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) != 1 {
 						return errors.NewArgumentError(len(args), 1)
 					}
@@ -146,7 +146,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					}
 
 					parents := false
-					if val, ok := kwargs["parents"]; ok {
+					if val, ok := kwargs.Kwargs["parents"]; ok {
 						if b, ok := val.AsBool(); ok {
 							parents = b
 						}
@@ -167,7 +167,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 				HelpText: "mkdir(parents=False) - Create a new directory at this given path",
 			},
 			"rmdir": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) != 1 {
 						return errors.NewArgumentError(len(args), 1)
 					}
@@ -187,7 +187,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 				HelpText: "rmdir() - Remove the empty directory",
 			},
 			"unlink": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) != 1 {
 						return errors.NewArgumentError(len(args), 1)
 					}
@@ -195,7 +195,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					cleanPath, _ := pathInstance.Fields["__path__"].AsString()
 
 					missingOk := false
-					if val, ok := kwargs["missing_ok"]; ok {
+					if val, ok := kwargs.Kwargs["missing_ok"]; ok {
 						if b, ok := val.AsBool(); ok {
 							missingOk = b
 						}
@@ -217,7 +217,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 				HelpText: "unlink(missing_ok=False) - Remove this file or symbolic link",
 			},
 			"read_text": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) != 1 {
 						return errors.NewArgumentError(len(args), 1)
 					}
@@ -237,7 +237,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 				HelpText: "read_text() - Read the contents of the file as a string",
 			},
 			"write_text": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) != 2 {
 						return errors.NewArgumentError(len(args), 2)
 					}
@@ -297,7 +297,7 @@ Returns a Path object representing the filesystem path.`,
 	}, "Object-oriented filesystem paths")
 }
 
-func (p *PathlibLibraryInstance) pathConstructor(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+func (p *PathlibLibraryInstance) pathConstructor(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 	if len(args) != 1 {
 		return errors.NewArgumentError(len(args), 1)
 	}

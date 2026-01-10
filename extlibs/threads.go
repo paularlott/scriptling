@@ -287,7 +287,7 @@ func getEnvFromContext(ctx context.Context) *object.Environment {
 // ThreadsLibrary provides async execution primitives
 var ThreadsLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"run": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -306,7 +306,7 @@ var ThreadsLibrary = object.NewLibrary(map[string]*object.Builtin{
 			go func() {
 				var result object.Object
 				if ApplyFunctionFunc != nil {
-					result = ApplyFunctionFunc(ctx, fn, fnArgs, kwargs, clonedEnv)
+					result = ApplyFunctionFunc(ctx, fn, fnArgs, kwargs.Kwargs, clonedEnv)
 				} else {
 					result = errors.NewError("async library not properly initialized")
 				}
@@ -322,7 +322,7 @@ var ThreadsLibrary = object.NewLibrary(map[string]*object.Builtin{
 			return &object.Builtin{
 				Attributes: map[string]object.Object{
 					"get": &object.Builtin{
-						Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 							result, err := promise.get()
 							if err != nil {
 								return errors.NewError("async error: %v", err)
@@ -332,7 +332,7 @@ var ThreadsLibrary = object.NewLibrary(map[string]*object.Builtin{
 						HelpText: "get() - Wait for and return the result",
 					},
 					"wait": &object.Builtin{
-						Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 							_, err := promise.get()
 							if err != nil {
 								return errors.NewError("async error: %v", err)
@@ -362,7 +362,7 @@ Example:
 	},
 
 	"Atomic": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			initial := int64(0)
 			if len(args) > 0 {
 				if i, ok := args[0].AsInt(); ok {
@@ -377,7 +377,7 @@ Example:
 			return &object.Builtin{
 				Attributes: map[string]object.Object{
 					"add": &object.Builtin{
-						Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 							delta := int64(1)
 							if len(args) > 0 {
 								if d, ok := args[0].AsInt(); ok {
@@ -392,13 +392,13 @@ Example:
 						HelpText: "add(delta=1) - Atomically add delta and return new value",
 					},
 					"get": &object.Builtin{
-						Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 							return object.NewInteger(atomic.get())
 						},
 						HelpText: "get() - Atomically read the value",
 					},
 					"set": &object.Builtin{
-						Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 							if len(args) != 1 {
 								return errors.NewArgumentError(len(args), 1)
 							}
@@ -427,7 +427,7 @@ Example:
 	},
 
 	"Shared": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			var initial object.Object = &object.Null{}
 			if len(args) > 0 {
 				initial = args[0]
@@ -438,13 +438,13 @@ Example:
 			return &object.Builtin{
 				Attributes: map[string]object.Object{
 					"get": &object.Builtin{
-						Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 							return shared.get()
 						},
 						HelpText: "get() - Get the current value (thread-safe)",
 					},
 					"set": &object.Builtin{
-						Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 							if len(args) != 1 {
 								return errors.NewArgumentError(len(args), 1)
 							}
@@ -475,13 +475,13 @@ Example:
 	},
 
 	"WaitGroup": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			wg := newWaitGroup()
 
 			return &object.Builtin{
 				Attributes: map[string]object.Object{
 					"add": &object.Builtin{
-						Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 							delta := int64(1)
 							if len(args) > 0 {
 								if d, ok := args[0].AsInt(); ok {
@@ -494,14 +494,14 @@ Example:
 						HelpText: "add(delta=1) - Add to the wait group counter",
 					},
 					"done": &object.Builtin{
-						Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 							wg.wg.Done()
 							return &object.Null{}
 						},
 						HelpText: "done() - Decrement the wait group counter",
 					},
 					"wait": &object.Builtin{
-						Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 							wg.wg.Wait()
 							return &object.Null{}
 						},
@@ -528,14 +528,14 @@ Example:
 	},
 
 	"Queue": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			maxsize := 0 // Unbounded by default
 			if len(args) > 0 {
 				if m, ok := args[0].AsInt(); ok {
 					maxsize = int(m)
 				}
 			}
-			if m, ok := kwargs["maxsize"]; ok {
+			if m, ok := kwargs.Kwargs["maxsize"]; ok {
 				if mInt, ok := m.AsInt(); ok {
 					maxsize = int(mInt)
 				}
@@ -546,7 +546,7 @@ Example:
 			return &object.Builtin{
 				Attributes: map[string]object.Object{
 					"put": &object.Builtin{
-						Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 							if len(args) != 1 {
 								return errors.NewArgumentError(len(args), 1)
 							}
@@ -558,7 +558,7 @@ Example:
 						HelpText: "put(item) - Add item to queue (blocks if full)",
 					},
 					"get": &object.Builtin{
-						Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 							item, err := queue.get()
 							if err != nil {
 								return errors.NewError("queue error: %v", err)
@@ -568,13 +568,13 @@ Example:
 						HelpText: "get() - Remove and return item from queue (blocks if empty)",
 					},
 					"size": &object.Builtin{
-						Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 							return object.NewInteger(int64(queue.size()))
 						},
 						HelpText: "size() - Return number of items in queue",
 					},
 					"close": &object.Builtin{
-						Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 							queue.close()
 							return &object.Null{}
 						},
@@ -605,7 +605,7 @@ Example:
 	},
 
 	"Pool": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -619,12 +619,12 @@ Example:
 					workers = int(w)
 				}
 			}
-			if w, ok := kwargs["workers"]; ok {
+			if w, ok := kwargs.Kwargs["workers"]; ok {
 				if wInt, ok := w.AsInt(); ok {
 					workers = int(wInt)
 				}
 			}
-			if q, ok := kwargs["queue_depth"]; ok {
+			if q, ok := kwargs.Kwargs["queue_depth"]; ok {
 				if qInt, ok := q.AsInt(); ok {
 					queueDepth = int(qInt)
 				}
@@ -640,7 +640,7 @@ Example:
 			return &object.Builtin{
 				Attributes: map[string]object.Object{
 					"submit": &object.Builtin{
-						Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 							if len(args) != 1 {
 								return errors.NewArgumentError(len(args), 1)
 							}
@@ -652,7 +652,7 @@ Example:
 						HelpText: "submit(data) - Submit data to pool for processing",
 					},
 					"close": &object.Builtin{
-						Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 							pool.close()
 							return &object.Null{}
 						},

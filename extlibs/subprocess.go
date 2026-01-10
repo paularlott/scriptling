@@ -39,7 +39,7 @@ var CompletedProcessClass = &object.Class{
 	Name: "CompletedProcess",
 	Methods: map[string]object.Object{
 		"check_returncode": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 1 {
 					return errors.NewArgumentError(len(args), 1)
 				}
@@ -62,7 +62,7 @@ Raises an exception if returncode is non-zero.`,
 
 var SubprocessLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"run": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -74,7 +74,7 @@ var SubprocessLibrary = object.NewLibrary(map[string]*object.Builtin{
 				cmdStr, _ = args[0].AsString()
 				// Check if shell mode is enabled
 				shell := false
-				if sh, exists := kwargs["shell"]; exists {
+				if sh, exists := kwargs.Kwargs["shell"]; exists {
 					if b, ok := sh.(*object.Boolean); ok {
 						shell = b.Value
 					}
@@ -112,49 +112,49 @@ var SubprocessLibrary = object.NewLibrary(map[string]*object.Builtin{
 			env := make(map[string]string)
 
 			// Parse kwargs (Python-style keyword arguments)
-			if capture, exists := kwargs["capture_output"]; exists {
+			if capture, exists := kwargs.Kwargs["capture_output"]; exists {
 				if b, ok := capture.(*object.Boolean); ok {
 					captureOutput = b.Value
 				}
 			}
-			if sh, exists := kwargs["shell"]; exists {
+			if sh, exists := kwargs.Kwargs["shell"]; exists {
 				if b, ok := sh.(*object.Boolean); ok {
 					shell = b.Value
 				}
 			}
-			if wd, exists := kwargs["cwd"]; exists {
+			if wd, exists := kwargs.Kwargs["cwd"]; exists {
 				if s, ok := wd.(*object.String); ok {
 					cwd = s.Value
 				}
 			}
-			if to, exists := kwargs["timeout"]; exists {
+			if to, exists := kwargs.Kwargs["timeout"]; exists {
 				if f, ok := to.(*object.Float); ok {
 					timeout = f.Value
 				} else if i, ok := to.(*object.Integer); ok {
 					timeout = float64(i.Value)
 				}
 			}
-			if ch, exists := kwargs["check"]; exists {
+			if ch, exists := kwargs.Kwargs["check"]; exists {
 				if b, ok := ch.(*object.Boolean); ok {
 					check = b.Value
 				}
 			}
-			if txt, exists := kwargs["text"]; exists {
+			if txt, exists := kwargs.Kwargs["text"]; exists {
 				if b, ok := txt.(*object.Boolean); ok {
 					text = b.Value
 				}
 			}
-			if enc, exists := kwargs["encoding"]; exists {
+			if enc, exists := kwargs.Kwargs["encoding"]; exists {
 				if s, ok := enc.(*object.String); ok {
 					encoding = s.Value
 				}
 			}
-			if inp, exists := kwargs["input"]; exists {
+			if inp, exists := kwargs.Kwargs["input"]; exists {
 				if s, ok := inp.(*object.String); ok {
 					inputData = s.Value
 				}
 			}
-			if envDict, exists := kwargs["env"]; exists {
+			if envDict, exists := kwargs.Kwargs["env"]; exists {
 				if d, ok := envDict.(*object.Dict); ok {
 					for _, pair := range d.Pairs {
 						if keyStr, ok := pair.Key.(*object.String); ok {

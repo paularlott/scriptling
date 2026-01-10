@@ -139,9 +139,9 @@ func TestWaitForFile(t *testing.T) {
 	t.Run("existing file", func(t *testing.T) {
 		filePath := createTempFile(t, "test content")
 
-		result := WaitForLibrary.Functions()["file"].Fn(ctx, map[string]object.Object{
+		result := WaitForLibrary.Functions()["file"].Fn(ctx, object.NewKwargs(map[string]object.Object{
 			"timeout": &object.Integer{Value: 1},
-		}, &object.String{Value: filePath})
+		}), &object.String{Value: filePath})
 
 		b, ok := result.(*object.Boolean)
 		if !ok {
@@ -153,9 +153,9 @@ func TestWaitForFile(t *testing.T) {
 	})
 
 	t.Run("non-existing file with timeout", func(t *testing.T) {
-		result := WaitForLibrary.Functions()["file"].Fn(ctx, map[string]object.Object{
+		result := WaitForLibrary.Functions()["file"].Fn(ctx, object.NewKwargs(map[string]object.Object{
 			"timeout": &object.Integer{Value: 1},
-		}, &object.String{Value: "/tmp/nonexistent_file_12345"})
+		}), &object.String{Value: "/tmp/nonexistent_file_12345"})
 
 		b, ok := result.(*object.Boolean)
 		if !ok {
@@ -176,9 +176,9 @@ func TestWaitForFile(t *testing.T) {
 			os.WriteFile(filePath, []byte("test"), 0644)
 		}()
 
-		result := WaitForLibrary.Functions()["file"].Fn(ctx, map[string]object.Object{
+		result := WaitForLibrary.Functions()["file"].Fn(ctx, object.NewKwargs(map[string]object.Object{
 			"timeout": &object.Integer{Value: 2},
-		}, &object.String{Value: filePath})
+		}), &object.String{Value: filePath})
 
 		b, ok := result.(*object.Boolean)
 		if !ok {
@@ -196,9 +196,9 @@ func TestWaitForDir(t *testing.T) {
 	t.Run("existing directory", func(t *testing.T) {
 		dir := t.TempDir()
 
-		result := WaitForLibrary.Functions()["dir"].Fn(ctx, map[string]object.Object{
+		result := WaitForLibrary.Functions()["dir"].Fn(ctx, object.NewKwargs(map[string]object.Object{
 			"timeout": &object.Integer{Value: 1},
-		}, &object.String{Value: dir})
+		}), &object.String{Value: dir})
 
 		b, ok := result.(*object.Boolean)
 		if !ok {
@@ -212,9 +212,9 @@ func TestWaitForDir(t *testing.T) {
 	t.Run("file instead of directory", func(t *testing.T) {
 		filePath := createTempFile(t, "test")
 
-		result := WaitForLibrary.Functions()["dir"].Fn(ctx, map[string]object.Object{
+		result := WaitForLibrary.Functions()["dir"].Fn(ctx, object.NewKwargs(map[string]object.Object{
 			"timeout": &object.Integer{Value: 1},
-		}, &object.String{Value: filePath})
+		}), &object.String{Value: filePath})
 
 		b, ok := result.(*object.Boolean)
 		if !ok {
@@ -234,9 +234,9 @@ func TestWaitForDir(t *testing.T) {
 			os.Mkdir(dirPath, 0755)
 		}()
 
-		result := WaitForLibrary.Functions()["dir"].Fn(ctx, map[string]object.Object{
+		result := WaitForLibrary.Functions()["dir"].Fn(ctx, object.NewKwargs(map[string]object.Object{
 			"timeout": &object.Integer{Value: 2},
-		}, &object.String{Value: dirPath})
+		}), &object.String{Value: dirPath})
 
 		b, ok := result.(*object.Boolean)
 		if !ok {
@@ -263,9 +263,9 @@ func TestWaitForPort(t *testing.T) {
 		addr := listener.Addr().(*net.TCPAddr)
 		port = addr.Port
 
-		result := WaitForLibrary.Functions()["port"].Fn(ctx, map[string]object.Object{
+		result := WaitForLibrary.Functions()["port"].Fn(ctx, object.NewKwargs(map[string]object.Object{
 			"timeout": &object.Integer{Value: 1},
-		}, &object.String{Value: "127.0.0.1"}, &object.Integer{Value: int64(port)})
+		}), &object.String{Value: "127.0.0.1"}, &object.Integer{Value: int64(port)})
 
 		b, ok := result.(*object.Boolean)
 		if !ok {
@@ -278,9 +278,9 @@ func TestWaitForPort(t *testing.T) {
 
 	t.Run("closed port", func(t *testing.T) {
 		// Use a port that's unlikely to be in use
-		result := WaitForLibrary.Functions()["port"].Fn(ctx, map[string]object.Object{
+		result := WaitForLibrary.Functions()["port"].Fn(ctx, object.NewKwargs(map[string]object.Object{
 			"timeout": &object.Integer{Value: 1},
-		}, &object.String{Value: "127.0.0.1"}, &object.Integer{Value: 9999})
+		}), &object.String{Value: "127.0.0.1"}, &object.Integer{Value: 9999})
 
 		b, ok := result.(*object.Boolean)
 		if !ok {
@@ -302,9 +302,9 @@ func TestWaitForPort(t *testing.T) {
 		addr := listener.Addr().(*net.TCPAddr)
 		port = addr.Port
 
-		result := WaitForLibrary.Functions()["port"].Fn(ctx, map[string]object.Object{
+		result := WaitForLibrary.Functions()["port"].Fn(ctx, object.NewKwargs(map[string]object.Object{
 			"timeout": &object.Integer{Value: 1},
-		}, &object.String{Value: "127.0.0.1"}, &object.String{Value: string(rune('0' + port))})
+		}), &object.String{Value: "127.0.0.1"}, &object.String{Value: string(rune('0' + port))})
 
 		// This test might not work perfectly with string conversion, so we just check it doesn't crash
 		_ = result
@@ -318,9 +318,9 @@ func TestWaitForHTTP(t *testing.T) {
 		server := startTestServer(t, 200)
 		defer server.Close()
 
-		result := WaitForLibrary.Functions()["http"].Fn(ctx, map[string]object.Object{
+		result := WaitForLibrary.Functions()["http"].Fn(ctx, object.NewKwargs(map[string]object.Object{
 			"timeout": &object.Integer{Value: 5},
-		}, &object.String{Value: server.URL})
+		}), &object.String{Value: server.URL})
 
 		b, ok := result.(*object.Boolean)
 		if !ok {
@@ -335,10 +335,10 @@ func TestWaitForHTTP(t *testing.T) {
 		server := startTestServer(t, 201)
 		defer server.Close()
 
-		result := WaitForLibrary.Functions()["http"].Fn(ctx, map[string]object.Object{
+		result := WaitForLibrary.Functions()["http"].Fn(ctx, object.NewKwargs(map[string]object.Object{
 			"timeout": &object.Integer{Value: 5},
 			"status_code": &object.Integer{Value: 201},
-		}, &object.String{Value: server.URL})
+		}), &object.String{Value: server.URL})
 
 		b, ok := result.(*object.Boolean)
 		if !ok {
@@ -353,9 +353,9 @@ func TestWaitForHTTP(t *testing.T) {
 		server := startTestServer(t, 404)
 		defer server.Close()
 
-		result := WaitForLibrary.Functions()["http"].Fn(ctx, map[string]object.Object{
+		result := WaitForLibrary.Functions()["http"].Fn(ctx, object.NewKwargs(map[string]object.Object{
 			"timeout": &object.Integer{Value: 2},
-		}, &object.String{Value: server.URL})
+		}), &object.String{Value: server.URL})
 
 		b, ok := result.(*object.Boolean)
 		if !ok {
@@ -367,9 +367,9 @@ func TestWaitForHTTP(t *testing.T) {
 	})
 
 	t.Run("non-existent URL", func(t *testing.T) {
-		result := WaitForLibrary.Functions()["http"].Fn(ctx, map[string]object.Object{
+		result := WaitForLibrary.Functions()["http"].Fn(ctx, object.NewKwargs(map[string]object.Object{
 			"timeout": &object.Integer{Value: 1},
-		}, &object.String{Value: "http://localhost:9999/nonexistent"})
+		}), &object.String{Value: "http://localhost:9999/nonexistent"})
 
 		b, ok := result.(*object.Boolean)
 		if !ok {
@@ -387,9 +387,9 @@ func TestWaitForFileContent(t *testing.T) {
 	t.Run("file with content", func(t *testing.T) {
 		filePath := createTempFile(t, "hello world")
 
-		result := WaitForLibrary.Functions()["file_content"].Fn(ctx, map[string]object.Object{
+		result := WaitForLibrary.Functions()["file_content"].Fn(ctx, object.NewKwargs(map[string]object.Object{
 			"timeout": &object.Integer{Value: 1},
-		}, &object.String{Value: filePath}, &object.String{Value: "world"})
+		}), &object.String{Value: filePath}, &object.String{Value: "world"})
 
 		b, ok := result.(*object.Boolean)
 		if !ok {
@@ -403,9 +403,9 @@ func TestWaitForFileContent(t *testing.T) {
 	t.Run("file without matching content", func(t *testing.T) {
 		filePath := createTempFile(t, "hello world")
 
-		result := WaitForLibrary.Functions()["file_content"].Fn(ctx, map[string]object.Object{
+		result := WaitForLibrary.Functions()["file_content"].Fn(ctx, object.NewKwargs(map[string]object.Object{
 			"timeout": &object.Integer{Value: 1},
-		}, &object.String{Value: filePath}, &object.String{Value: "goodbye"})
+		}), &object.String{Value: filePath}, &object.String{Value: "goodbye"})
 
 		b, ok := result.(*object.Boolean)
 		if !ok {
@@ -426,9 +426,9 @@ func TestWaitForFileContent(t *testing.T) {
 			os.WriteFile(filePath, []byte("initial target_content"), 0644)
 		}()
 
-		result := WaitForLibrary.Functions()["file_content"].Fn(ctx, map[string]object.Object{
+		result := WaitForLibrary.Functions()["file_content"].Fn(ctx, object.NewKwargs(map[string]object.Object{
 			"timeout": &object.Integer{Value: 2},
-		}, &object.String{Value: filePath}, &object.String{Value: "target_content"})
+		}), &object.String{Value: filePath}, &object.String{Value: "target_content"})
 
 		b, ok := result.(*object.Boolean)
 		if !ok {

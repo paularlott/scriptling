@@ -15,7 +15,7 @@ var CounterClass = &object.Class{
 	Name: "Counter",
 	Methods: map[string]object.Object{
 		"__init__": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				// __init__(self[, iterable]) - Initialize counter
 				if len(args) == 0 {
 					return &object.Null{} // No args, just return
@@ -69,7 +69,7 @@ var CounterClass = &object.Class{
 			},
 		},
 		"__getitem__": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				// __getitem__(self, key) - Get count for key
 				if len(args) != 2 {
 					return errors.NewArgumentError(len(args), 2)
@@ -86,7 +86,7 @@ var CounterClass = &object.Class{
 			HelpText: `__getitem__(key) - Get count for key (supports c[key] syntax)`,
 		},
 		"most_common": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				// most_common([n]) - Return n most common elements
 				counter := args[0].(*object.Instance)
 
@@ -144,7 +144,7 @@ Returns a list of (element, count) tuples sorted by count descending.
 If n is omitted, returns all elements.`,
 		},
 		"elements": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 0 {
 					return errors.NewArgumentError(len(args), 0)
 				}
@@ -172,7 +172,7 @@ var DefaultDictClass = &object.Class{
 	Name: "DefaultDict",
 	Methods: map[string]object.Object{
 		"__init__": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				// __init__(self, default_factory) - Initialize defaultdict
 				if len(args) != 2 {
 					return errors.NewArgumentError(len(args), 2)
@@ -186,7 +186,7 @@ var DefaultDictClass = &object.Class{
 			},
 		},
 		"__getitem__": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				// __getitem__(self, key) - Get value with default creation
 				if len(args) != 2 {
 					return errors.NewArgumentError(len(args), 2)
@@ -212,10 +212,10 @@ var DefaultDictClass = &object.Class{
 					// Call builtin with appropriate default arg
 					// For int(), float(), str(), list(), dict() we call with no args or default values
 					// Try calling with no args first (for list, dict constructors)
-					defaultValue = f.Fn(ctx, nil)
+					defaultValue = f.Fn(ctx, object.NewKwargs(nil))
 					if isError(defaultValue) {
 						// If that fails, try with a default value (for int, float, str)
-						defaultValue = f.Fn(ctx, nil, object.NewInteger(0))
+						defaultValue = f.Fn(ctx, object.NewKwargs(nil), object.NewInteger(0))
 						if isError(defaultValue) {
 							return defaultValue
 						}
@@ -247,7 +247,7 @@ var DefaultDictClass = &object.Class{
 			HelpText: `__getitem__(key) - Get value with default creation (supports d[key] syntax)`,
 		},
 		"__setitem__": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				// __setitem__(self, key, value) - Set value
 				if len(args) != 3 {
 					return errors.NewArgumentError(len(args), 3)
@@ -275,7 +275,7 @@ func createCounterInstance() *object.Instance {
 // CollectionsLibrary provides Python-like collections functions
 var CollectionsLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"Counter": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// Counter([iterable]) - Count elements
 			counter := createCounterInstance()
 
@@ -345,7 +345,7 @@ Example:
   c.elements() -> [1, 1, 2, 3, 3, 3]`,
 	},
 	"most_common": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// most_common(counter[, n]) - Return n most common elements
 			if len(args) < 1 || len(args) > 2 {
 				return errors.NewArgumentError(len(args), 1)
@@ -413,7 +413,7 @@ Example:
 	},
 
 	"OrderedDict": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// OrderedDict([items]) - Dict that remembers insertion order
 			// Note: In modern Python (3.7+), regular dicts maintain order
 			// Scriptling dicts also maintain order, so this just creates a dict
@@ -458,7 +458,7 @@ Example:
   od = collections.OrderedDict([("a", 1), ("b", 2)])`,
 	},
 	"deque": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// deque([iterable[, maxlen]]) - Double-ended queue
 			// Implemented as a list with special methods accessed via collections.* functions
 			elements := []object.Object{}
@@ -510,7 +510,7 @@ Example:
   collections.deque_appendleft(d, 0)  # [0, 1, 2, 3]`,
 	},
 	"deque_appendleft": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// deque_appendleft(deque, elem) - Add element to left
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
@@ -534,7 +534,7 @@ Example:
   collections.deque_appendleft(d, 0)  # d is now [0, 1, 2, 3]`,
 	},
 	"deque_popleft": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// deque_popleft(deque) - Remove and return element from left
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
@@ -559,7 +559,7 @@ Example:
   x = collections.deque_popleft(d)  # x=1, d=[2, 3]`,
 	},
 	"deque_extendleft": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// deque_extendleft(deque, iterable) - Extend left with iterable (reversed)
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
@@ -595,7 +595,7 @@ Example:
   collections.deque_extendleft(d, [4, 5])  # d is now [5, 4, 1, 2, 3]`,
 	},
 	"deque_rotate": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// deque_rotate(deque, n) - Rotate deque n steps
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
@@ -639,7 +639,7 @@ Example:
   collections.deque_rotate(d, -1) # d is now [1, 2, 3, 4]`,
 	},
 	"namedtuple": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// namedtuple(typename, field_names) - Create a named tuple class
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
@@ -687,7 +687,7 @@ Example:
 
 			// __init__ method - stores fields as instance attributes
 			methods["__init__"] = &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) != len(fieldNames)+1 {
 						return errors.NewArgumentError(len(args), len(fieldNames)+1)
 					}
@@ -709,7 +709,7 @@ Example:
 
 			// __getitem__ for dict-like access
 			methods["__getitem__"] = &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) != 2 {
 						return errors.NewArgumentError(len(args), 2)
 					}
@@ -746,7 +746,7 @@ Example:
   p.x()    # Also works for backward compatibility`,
 	},
 	"ChainMap": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// ChainMap(*maps) - Group multiple dicts for single lookup
 			// Returns a special dict that chains lookups
 			chainMap := &object.Dict{Pairs: make(map[string]object.DictPair)}

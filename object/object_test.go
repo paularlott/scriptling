@@ -225,7 +225,7 @@ func TestFunction(t *testing.T) {
 
 func TestBuiltinFunction(t *testing.T) {
 	builtin := &Builtin{
-		Fn: func(ctx context.Context, kwargs map[string]Object, args ...Object) Object {
+		Fn: func(ctx context.Context, kwargs Kwargs, args ...Object) Object {
 			return &Integer{Value: 42}
 		},
 	}
@@ -238,7 +238,7 @@ func TestBuiltinFunction(t *testing.T) {
 	}
 
 	// Test function call
-	result := builtin.Fn(context.Background(), nil)
+	result := builtin.Fn(context.Background(), NewKwargs(nil))
 	if result.(*Integer).Value != 42 {
 		t.Errorf("builtin function result = %d, want 42", result.(*Integer).Value)
 	}

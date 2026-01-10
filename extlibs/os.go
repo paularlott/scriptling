@@ -79,7 +79,7 @@ func NewOSLibrary(config fssecurity.Config) (*object.Library, *object.Library) {
 func (o *osLibraryInstance) createOSLibrary() *object.Library {
 	return object.NewLibrary(map[string]*object.Builtin{
 		"getenv": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) < 1 || len(args) > 2 {
 					return errors.NewArgumentError(len(args), 1)
 				}
@@ -98,7 +98,7 @@ func (o *osLibraryInstance) createOSLibrary() *object.Library {
 Returns the value of the environment variable key if it exists, or default if provided.`,
 		},
 		"environ": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 0 {
 					return errors.NewArgumentError(len(args), 0)
 				}
@@ -117,7 +117,7 @@ Returns the value of the environment variable key if it exists, or default if pr
 			HelpText: `environ() - Get all environment variables as a dictionary`,
 		},
 		"getcwd": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 0 {
 					return errors.NewArgumentError(len(args), 0)
 				}
@@ -130,7 +130,7 @@ Returns the value of the environment variable key if it exists, or default if pr
 			HelpText: `getcwd() - Get current working directory`,
 		},
 		"listdir": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				path := "."
 				if len(args) > 1 {
 					return errors.NewArgumentError(len(args), 1)
@@ -164,7 +164,7 @@ Returns the value of the environment variable key if it exists, or default if pr
 Returns a list of the names of the entries in the given directory.`,
 		},
 		"read_file": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 1 {
 					return errors.NewArgumentError(len(args), 1)
 				}
@@ -189,7 +189,7 @@ Returns a list of the names of the entries in the given directory.`,
 Returns the contents of the file as a string.`,
 		},
 		"write_file": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 2 {
 					return errors.NewArgumentError(len(args), 2)
 				}
@@ -218,7 +218,7 @@ Returns the contents of the file as a string.`,
 Writes the string content to the file, creating or overwriting it.`,
 		},
 		"append_file": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 2 {
 					return errors.NewArgumentError(len(args), 2)
 				}
@@ -252,7 +252,7 @@ Writes the string content to the file, creating or overwriting it.`,
 Appends the string content to the file, creating it if it doesn't exist.`,
 		},
 		"remove": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 1 {
 					return errors.NewArgumentError(len(args), 1)
 				}
@@ -277,7 +277,7 @@ Appends the string content to the file, creating it if it doesn't exist.`,
 Removes the specified file.`,
 		},
 		"mkdir": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 1 {
 					return errors.NewArgumentError(len(args), 1)
 				}
@@ -302,7 +302,7 @@ Removes the specified file.`,
 Creates a new directory with the specified path.`,
 		},
 		"makedirs": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 1 {
 					return errors.NewArgumentError(len(args), 1)
 				}
@@ -327,7 +327,7 @@ Creates a new directory with the specified path.`,
 Creates a directory and all parent directories as needed.`,
 		},
 		"rmdir": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 1 {
 					return errors.NewArgumentError(len(args), 1)
 				}
@@ -352,7 +352,7 @@ Creates a directory and all parent directories as needed.`,
 Removes the specified empty directory.`,
 		},
 		"rename": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 2 {
 					return errors.NewArgumentError(len(args), 2)
 				}
@@ -393,7 +393,7 @@ Renames the file or directory from old to new.`,
 func (o *osLibraryInstance) createOSPathLibrary() *object.Library {
 	return object.NewLibrary(map[string]*object.Builtin{
 		"join": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) == 0 {
 					return &object.String{Value: ""}
 				}
@@ -412,7 +412,7 @@ func (o *osLibraryInstance) createOSPathLibrary() *object.Library {
 Joins path components using the appropriate separator for the OS.`,
 		},
 		"exists": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 1 {
 					return errors.NewArgumentError(len(args), 1)
 				}
@@ -434,7 +434,7 @@ Joins path components using the appropriate separator for the OS.`,
 Returns True if the path exists, False otherwise.`,
 		},
 		"isfile": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 1 {
 					return errors.NewArgumentError(len(args), 1)
 				}
@@ -459,7 +459,7 @@ Returns True if the path exists, False otherwise.`,
 Returns True if the path is a regular file, False otherwise.`,
 		},
 		"isdir": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 1 {
 					return errors.NewArgumentError(len(args), 1)
 				}
@@ -484,7 +484,7 @@ Returns True if the path is a regular file, False otherwise.`,
 Returns True if the path is a directory, False otherwise.`,
 		},
 		"basename": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 1 {
 					return errors.NewArgumentError(len(args), 1)
 				}
@@ -499,7 +499,7 @@ Returns True if the path is a directory, False otherwise.`,
 Returns the final component of a pathname.`,
 		},
 		"dirname": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 1 {
 					return errors.NewArgumentError(len(args), 1)
 				}
@@ -514,7 +514,7 @@ Returns the final component of a pathname.`,
 Returns the directory component of a pathname.`,
 		},
 		"split": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 1 {
 					return errors.NewArgumentError(len(args), 1)
 				}
@@ -535,7 +535,7 @@ Returns the directory component of a pathname.`,
 			HelpText: `split(path) - Split path into (directory, filename) tuple`,
 		},
 		"splitext": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 1 {
 					return errors.NewArgumentError(len(args), 1)
 				}
@@ -553,7 +553,7 @@ Returns the directory component of a pathname.`,
 			HelpText: `splitext(path) - Split path into (root, extension) tuple`,
 		},
 		"abspath": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 1 {
 					return errors.NewArgumentError(len(args), 1)
 				}
@@ -570,7 +570,7 @@ Returns the directory component of a pathname.`,
 			HelpText: `abspath(path) - Get absolute path`,
 		},
 		"normpath": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 1 {
 					return errors.NewArgumentError(len(args), 1)
 				}
@@ -585,7 +585,7 @@ Returns the directory component of a pathname.`,
 Normalizes path by collapsing redundant separators and up-level references.`,
 		},
 		"relpath": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) < 1 || len(args) > 2 {
 					return errors.NewError("relpath() takes 1-2 arguments (%d given)", len(args))
 				}
@@ -611,7 +611,7 @@ Normalizes path by collapsing redundant separators and up-level references.`,
 Returns a relative filepath to path either from the current directory or from an optional start directory.`,
 		},
 		"isabs": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 1 {
 					return errors.NewArgumentError(len(args), 1)
 				}
@@ -626,7 +626,7 @@ Returns a relative filepath to path either from the current directory or from an
 Returns True if the path is an absolute pathname.`,
 		},
 		"getsize": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 1 {
 					return errors.NewArgumentError(len(args), 1)
 				}

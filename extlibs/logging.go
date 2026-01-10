@@ -95,7 +95,7 @@ func createLoggingLibrary(defaultLogger logger.Logger) *object.Library {
 	return object.NewLibrary(
 		map[string]*object.Builtin{
 			"getLogger": {
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					// Optional name parameter
 					var loggerName string = "scriptling"
 
@@ -118,38 +118,38 @@ func createLoggingLibrary(defaultLogger logger.Logger) *object.Library {
 						Class: &object.Class{
 							Name: "Logger",
 							Methods: map[string]object.Object{
-								"debug": &object.Builtin{Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+								"debug": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 									// Skip the first arg (self) when it's a method call
 									if len(args) > 0 {
 										return wrapper.CallMethod("debug", args[1:]...)
 									}
 									return wrapper.CallMethod("debug")
 								}},
-								"info": &object.Builtin{Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+								"info": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 									if len(args) > 0 {
 										return wrapper.CallMethod("info", args[1:]...)
 									}
 									return wrapper.CallMethod("info")
 								}},
-								"warning": &object.Builtin{Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+								"warning": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 									if len(args) > 0 {
 										return wrapper.CallMethod("warning", args[1:]...)
 									}
 									return wrapper.CallMethod("warning")
 								}},
-								"warn": &object.Builtin{Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+								"warn": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 									if len(args) > 0 {
 										return wrapper.CallMethod("warn", args[1:]...)
 									}
 									return wrapper.CallMethod("warn")
 								}},
-								"error": &object.Builtin{Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+								"error": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 									if len(args) > 0 {
 										return wrapper.CallMethod("error", args[1:]...)
 									}
 									return wrapper.CallMethod("error")
 								}},
-								"critical": &object.Builtin{Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+								"critical": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 									if len(args) > 0 {
 										return wrapper.CallMethod("critical", args[1:]...)
 									}
@@ -164,32 +164,32 @@ func createLoggingLibrary(defaultLogger logger.Logger) *object.Library {
 				},
 			},
 			"debug": {
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					return logWithLogger(ctx, args, defaultLogger.Debug)
 				},
 			},
 			"info": {
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					return logWithLogger(ctx, args, defaultLogger.Info)
 				},
 			},
 			"warning": {
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					return logWithLogger(ctx, args, defaultLogger.Warn)
 				},
 			},
 			"warn": {
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					return logWithLogger(ctx, args, defaultLogger.Warn)
 				},
 			},
 			"error": {
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					return logWithLogger(ctx, args, defaultLogger.Error)
 				},
 			},
 			"critical": {
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					return logWithLogger(ctx, args, defaultLogger.Error)
 				},
 			},
