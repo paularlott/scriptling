@@ -1,0 +1,623 @@
+package object
+
+import (
+	"context"
+	"fmt"
+	"reflect"
+	"strconv"
+	"strings"
+)
+
+// LibraryBuilder provides a fluent API for creating scriptling libraries.
+// It allows registering typed Go functions that are automatically wrapped
+// to handle conversion between Go types and scriptling Objects.
+//
+// Example usage:
+//
+//	lib := NewLibraryBuilder("mylib", "My custom library")
+//	lib.Function("connect", func(host string, port int) error {
+//	    // Connect to host:port
+//	    return nil
+//	})
+//	lib.Function("disconnect", func() error {
+//	    // Disconnect
+//	    return nil
+//	})
+//	lib.Constant("VERSION", "1.0.0")
+//	library := lib.Build()
+type LibraryBuilder struct {
+	name        string
+	description string
+	functions   map[string]*Builtin
+	constants   map[string]Object
+}
+
+// NewLibraryBuilder creates a new LibraryBuilder with the given name and description.
+func NewLibraryBuilder(name, description string) *LibraryBuilder {
+	return &LibraryBuilder{
+		name:        name,
+		description: description,
+		functions:   make(map[string]*Builtin),
+		constants:   make(map[string]Object),
+	}
+}
+
+// Function registers a function with the given name.
+// The function must be a Go function with typed parameters.
+// Parameters can be: string, int, int64, float64, bool, []any, map[string]any
+// Return values can be: any of the above types, or error
+//
+// Example:
+//
+//	builder.Function("add", func(a, b int) int { return a + b })
+//	builder.Function("greet", func(name string) string { return "Hello, " + name })
+//	builder.Function("connect", func(host string, port int) error { ... })
+func (b *LibraryBuilder) Function(name string, fn interface{}) *LibraryBuilder {
+	b.FunctionWithHelp(name, fn, "")
+	return b
+}
+
+// FunctionWithHelp registers a function with the given name and help text.
+// The function must be a Go function with typed parameters.
+// Help text is displayed when users call help() on the function.
+//
+// Example:
+//
+//	builder.FunctionWithHelp("sqrt", func(x float64) float64 {
+//	    return math.Sqrt(x)
+//	}, "sqrt(x) - Return the square root of x")
+func (b *LibraryBuilder) FunctionWithHelp(name string, fn interface{}, helpText string) *LibraryBuilder {
+	wrapper := b.createWrapper(reflect.ValueOf(fn), helpText)
+	b.functions[name] = wrapper
+	return b
+}
+
+// Constant registers a constant value with the given name.
+// The value is automatically converted to a scriptling Object.
+// Supported types: string, int, int64, float64, bool, nil
+//
+// Example:
+//
+//	builder.Constant("VERSION", "1.0.0")
+//	builder.Constant("MAX_CONNECTIONS", 100)
+//	builder.Constant("DEBUG", true)
+func (b *LibraryBuilder) Constant(name string, value interface{}) *LibraryBuilder {
+	b.constants[name] = convertValueToObject(value)
+	return b
+}
+
+// Build creates and returns the Library from this builder.
+// After calling Build(), the builder should not be used further.
+func (b *LibraryBuilder) Build() *Library {
+	return NewLibrary(b.functions, b.constants, b.description)
+}
+
+// createWrapper creates a Builtin wrapper for a typed Go function.
+// It uses reflection to convert between scriptling Objects and Go types.
+func (b *LibraryBuilder) createWrapper(fnValue reflect.Value, helpText string) *Builtin {
+	fnType := fnValue.Type()
+
+	// Validate that it's a function
+	if fnType.Kind() != reflect.Func {
+		panic(fmt.Sprintf("LibraryBuilder: must be a function, got %T", fnValue.Interface()))
+	}
+
+	return &Builtin{
+		Fn: func(ctx context.Context, kwargs map[string]Object, args ...Object) Object {
+			return b.callTypedFunction(fnValue, fnType, kwargs, args...)
+		},
+		HelpText: helpText,
+	}
+}
+
+// newError creates a new error object (avoids circular import with errors package)
+func newError(format string, args ...interface{}) *Error {
+	return &Error{Message: fmt.Sprintf(format, args...)}
+}
+
+// newTypeError creates a type error object
+func newTypeError(expected, got string) *Error {
+	return &Error{Message: fmt.Sprintf("type error: expected %s, got %s", expected, got)}
+}
+
+// newArgumentError creates an argument error object
+func newArgumentError(got, want int) *Error {
+	return &Error{Message: fmt.Sprintf("argument error: got %d arguments, want %d", got, want)}
+}
+
+// callTypedFunction calls a typed Go function with converted arguments.
+func (b *LibraryBuilder) callTypedFunction(fnValue reflect.Value, fnType reflect.Type, _ map[string]Object, args ...Object) Object {
+	numIn := fnType.NumIn()
+	numOut := fnType.NumOut()
+
+	// Handle variadic functions
+	isVariadic := fnType.IsVariadic()
+	var variadicIndex = -1
+	if isVariadic {
+		variadicIndex = numIn - 1
+	}
+
+	// Build argument list
+	var argValues []reflect.Value
+
+	// Positional arguments
+	argIndex := 0
+	for i := 0; i < numIn; i++ {
+		if isVariadic && i == variadicIndex {
+			// Variadic parameters - collect remaining args
+			var varArgs []reflect.Value
+			for j := argIndex; j < len(args); j++ {
+				val, convErr := convertObjectToValue(args[j], fnType.In(i).Elem())
+				if convErr != nil {
+					return convErr
+				}
+				varArgs = append(varArgs, val)
+			}
+			argValues = append(argValues, varArgs...)
+			break
+		}
+
+		if argIndex >= len(args) {
+			return newArgumentError(len(args), numIn)
+		}
+
+		val, convErr := convertObjectToValue(args[argIndex], fnType.In(i))
+		if convErr != nil {
+			return convErr
+		}
+		argValues = append(argValues, val)
+		argIndex++
+	}
+
+	// Check if we have extra positional arguments
+	if argIndex < len(args) && !isVariadic {
+		return newArgumentError(len(args), numIn)
+	}
+
+	// Call the function
+	results := fnValue.Call(argValues)
+
+	// Handle return values
+	switch numOut {
+	case 0:
+		return &Null{}
+	case 1:
+		// Single return value
+		return convertReturnValue(results[0])
+	case 2:
+		// Two return values - second must be error
+		if !isErrorType(results[1].Type()) {
+			return newError("function second return value must be error type")
+		}
+		if !results[1].IsNil() {
+			err, _ := results[1].Interface().(error)
+			return newError("%s", err.Error())
+		}
+		return convertReturnValue(results[0])
+	default:
+		return newError("function can return at most 2 values")
+	}
+}
+
+// convertObjectToValue converts a scriptling Object to a reflect.Value for the given type.
+func convertObjectToValue(obj Object, targetType reflect.Type) (reflect.Value, Object) {
+	if obj == nil {
+		return reflect.Zero(targetType), nil
+	}
+
+	switch targetType.Kind() {
+	case reflect.String:
+		if s, ok := obj.AsString(); ok {
+			return reflect.ValueOf(s).Convert(targetType), nil
+		}
+		return reflect.Value{}, newTypeError("STRING", obj.Type().String())
+
+	case reflect.Int, reflect.Int32, reflect.Int64:
+		// Try Integer first, then Float
+		if i, ok := obj.AsInt(); ok {
+			return reflect.ValueOf(i).Convert(targetType), nil
+		}
+		if f, ok := obj.AsFloat(); ok {
+			return reflect.ValueOf(int64(f)).Convert(targetType), nil
+		}
+		return reflect.Value{}, newTypeError("INTEGER", obj.Type().String())
+
+	case reflect.Float32, reflect.Float64:
+		if f, ok := obj.AsFloat(); ok {
+			return reflect.ValueOf(f).Convert(targetType), nil
+		}
+		if i, ok := obj.AsInt(); ok {
+			return reflect.ValueOf(float64(i)).Convert(targetType), nil
+		}
+		return reflect.Value{}, newTypeError("FLOAT", obj.Type().String())
+
+	case reflect.Bool:
+		if b, ok := obj.AsBool(); ok {
+			return reflect.ValueOf(b), nil
+		}
+		return reflect.Value{}, newTypeError("BOOLEAN", obj.Type().String())
+
+	case reflect.Interface:
+		// For interface{}, return the underlying value
+		switch v := obj.(type) {
+		case *String:
+			return reflect.ValueOf(v.Value), nil
+		case *Integer:
+			return reflect.ValueOf(v.Value), nil
+		case *Float:
+			return reflect.ValueOf(v.Value), nil
+		case *Boolean:
+			return reflect.ValueOf(v.Value), nil
+		case *Null:
+			return reflect.ValueOf(nil), nil
+		case *List:
+			// Convert to []any
+			items := make([]interface{}, len(v.Elements))
+			for i, el := range v.Elements {
+				items[i] = objectToAny(el)
+			}
+			return reflect.ValueOf(items), nil
+		case *Dict:
+			// Convert to map[string]any
+			m := make(map[string]interface{})
+			for key, pair := range v.Pairs {
+				m[key] = objectToAny(pair.Value)
+			}
+			return reflect.ValueOf(m), nil
+		default:
+			return reflect.Value{}, newTypeError("value", obj.Type().String())
+		}
+
+	case reflect.Slice:
+		// Convert to slice
+		if list, ok := obj.AsList(); ok {
+			elemType := targetType.Elem()
+			slice := reflect.MakeSlice(targetType, len(list), len(list))
+			for i, el := range list {
+				val, err := convertObjectToValue(el, elemType)
+				if err != nil {
+					return reflect.Value{}, err
+				}
+				slice.Index(i).Set(val)
+			}
+			return slice, nil
+		}
+		return reflect.Value{}, newTypeError("LIST", obj.Type().String())
+
+	case reflect.Map:
+		// Convert to map
+		if d, ok := obj.AsDict(); ok {
+			keyType := targetType.Key()
+			if keyType.Kind() != reflect.String {
+				return reflect.Value{}, newError("map keys must be strings")
+			}
+			valueType := targetType.Elem()
+			resultMap := reflect.MakeMap(targetType)
+			for key, val := range d {
+				convertedVal, err := convertObjectToValue(val, valueType)
+				if err != nil {
+					return reflect.Value{}, err
+				}
+				resultMap.SetMapIndex(reflect.ValueOf(key), convertedVal)
+			}
+			return resultMap, nil
+		}
+		return reflect.Value{}, newTypeError("DICT", obj.Type().String())
+
+	default:
+		return reflect.Value{}, newTypeError("supported type", targetType.String())
+	}
+}
+
+// convertReturnValue converts a Go return value to a scriptling Object.
+func convertReturnValue(v reflect.Value) Object {
+	if !v.IsValid() || v.IsNil() {
+		return &Null{}
+	}
+
+	switch v.Kind() {
+	case reflect.String:
+		return &String{Value: v.String()}
+	case reflect.Int, reflect.Int32, reflect.Int64:
+		return NewInteger(v.Int())
+	case reflect.Float32, reflect.Float64:
+		return &Float{Value: v.Float()}
+	case reflect.Bool:
+		return &Boolean{Value: v.Bool()}
+	case reflect.Interface:
+		// For interface{}, convert the underlying value
+		return convertValueToObject(v.Interface())
+	default:
+		return newError("unsupported return type: %s", v.Kind())
+	}
+}
+
+// convertValueToObject converts a Go value to a scriptling Object.
+func convertValueToObject(v interface{}) Object {
+	if v == nil {
+		return &Null{}
+	}
+
+	switch val := v.(type) {
+	case string:
+		return &String{Value: val}
+	case int, int32, int64:
+		return NewInteger(reflect.ValueOf(v).Int())
+	case float32, float64:
+		return &Float{Value: reflect.ValueOf(v).Float()}
+	case bool:
+		return &Boolean{Value: val}
+	case Object:
+		return val
+	case []interface{}:
+		elements := make([]Object, len(val))
+		for i, item := range val {
+			elements[i] = convertValueToObject(item)
+		}
+		return &List{Elements: elements}
+	case map[string]interface{}:
+		pairs := make(map[string]DictPair)
+		for key, item := range val {
+			pairs[key] = DictPair{
+				Key:   &String{Value: key},
+				Value: convertValueToObject(item),
+			}
+		}
+		return &Dict{Pairs: pairs}
+	default:
+		return newError("unsupported constant type: %T", v)
+	}
+}
+
+// objectToAny converts a scriptling Object to a Go any value.
+func objectToAny(obj Object) interface{} {
+	switch v := obj.(type) {
+	case *String:
+		return v.Value
+	case *Integer:
+		return v.Value
+	case *Float:
+		return v.Value
+	case *Boolean:
+		return v.Value
+	case *Null:
+		return nil
+	case *List:
+		items := make([]interface{}, len(v.Elements))
+		for i, el := range v.Elements {
+			items[i] = objectToAny(el)
+		}
+		return items
+	case *Dict:
+		m := make(map[string]interface{})
+		for key, pair := range v.Pairs {
+			m[key] = objectToAny(pair.Value)
+		}
+		return m
+	default:
+		return nil
+	}
+}
+
+// isErrorType checks if a type is an error type.
+func isErrorType(t reflect.Type) bool {
+	return t.Implements(reflect.TypeOf((*error)(nil)).Elem())
+}
+
+// RawFunction registers a raw BuiltinFunction for advanced use cases.
+// This allows direct access to the context, kwargs, and args without automatic conversion.
+//
+// Example:
+//
+//	builder.RawFunction("custom", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+//	    // Direct access to low-level API
+//	    return &object.String{Value: "result"}
+//	})
+func (b *LibraryBuilder) RawFunction(name string, fn BuiltinFunction) *LibraryBuilder {
+	b.RawFunctionWithHelp(name, fn, "")
+	return b
+}
+
+// RawFunctionWithHelp registers a raw BuiltinFunction with help text.
+func (b *LibraryBuilder) RawFunctionWithHelp(name string, fn BuiltinFunction, helpText string) *LibraryBuilder {
+	b.functions[name] = &Builtin{
+		Fn:       fn,
+		HelpText: helpText,
+	}
+	return b
+}
+
+// SubLibrary creates a new sub-library with the given name.
+// Sub-libraries are accessed as `parent.sub` in scriptling code.
+//
+// Example:
+//
+//	subLib := NewLibraryBuilder("parse", "URL parsing utilities")
+//	subLib.Function("quote", func(s string) string { ... })
+//	builder.SubLibrary("parse", subLib.Build())
+func (b *LibraryBuilder) SubLibrary(name string, lib *Library) *LibraryBuilder {
+	// Add sub-library as a constant (will be accessible as parent.name)
+	b.constants[name] = lib
+	return b
+}
+
+// FunctionFromVariadic registers a variadic function that accepts a variable number of arguments.
+// This is useful for functions like print() that can take any number of arguments.
+//
+// Example:
+//
+//	builder.FunctionFromVariadic("print_all", func(args ...any) {
+//	    for _, arg := range args {
+//	        fmt.Println(arg)
+//	    }
+//	})
+func (b *LibraryBuilder) FunctionFromVariadic(name string, fn interface{}) *LibraryBuilder {
+	return b.FunctionFromVariadicWithHelp(name, fn, "")
+}
+
+// FunctionFromVariadicWithHelp registers a variadic function with help text.
+func (b *LibraryBuilder) FunctionFromVariadicWithHelp(name string, fn interface{}, helpText string) *LibraryBuilder {
+	fnValue := reflect.ValueOf(fn)
+	fnType := fnValue.Type()
+
+	if fnType.Kind() != reflect.Func || !fnType.IsVariadic() {
+		panic("FunctionFromVariadic requires a variadic function")
+	}
+
+	// Create a wrapper that collects all args into a slice
+	wrapper := &Builtin{
+		Fn: func(ctx context.Context, kwargs map[string]Object, args ...Object) Object {
+			// Convert all args to interface{}
+			variadicType := fnType.In(0)
+			if variadicType.Kind() != reflect.Slice {
+				return newError("variadic function must take a slice parameter")
+			}
+
+			elemType := variadicType.Elem()
+			slice := reflect.MakeSlice(variadicType, len(args), len(args))
+
+			for i, arg := range args {
+				val, err := convertObjectToValue(arg, elemType)
+				if err != nil {
+					return err
+				}
+				slice.Index(i).Set(val)
+			}
+
+			results := fnValue.Call([]reflect.Value{slice})
+
+			if len(results) == 0 {
+				return &Null{}
+			}
+			return convertReturnValue(results[0])
+		},
+		HelpText: helpText,
+	}
+
+	b.functions[name] = wrapper
+	return b
+}
+
+// Alias creates an alias for an existing function.
+//
+// Example:
+//
+//	builder.Function("add", func(a, b int) int { return a + b })
+//	builder.Alias("sum", "add")  // "sum" is now an alias for "add"
+func (b *LibraryBuilder) Alias(alias, originalName string) *LibraryBuilder {
+	if fn, ok := b.functions[originalName]; ok {
+		b.functions[alias] = fn
+	}
+	return b
+}
+
+// Description sets or updates the library description.
+func (b *LibraryBuilder) Description(desc string) *LibraryBuilder {
+	b.description = desc
+	return b
+}
+
+// GetDescription returns the current library description.
+func (b *LibraryBuilder) GetDescription() string {
+	return b.description
+}
+
+// HasFunction checks if a function with the given name has been registered.
+func (b *LibraryBuilder) HasFunction(name string) bool {
+	_, ok := b.functions[name]
+	return ok
+}
+
+// HasConstant checks if a constant with the given name has been registered.
+func (b *LibraryBuilder) HasConstant(name string) bool {
+	_, ok := b.constants[name]
+	return ok
+}
+
+// RemoveFunction removes a function by name.
+func (b *LibraryBuilder) RemoveFunction(name string) *LibraryBuilder {
+	delete(b.functions, name)
+	return b
+}
+
+// RemoveConstant removes a constant by name.
+func (b *LibraryBuilder) RemoveConstant(name string) *LibraryBuilder {
+	delete(b.constants, name)
+	return b
+}
+
+// FunctionCount returns the number of registered functions.
+func (b *LibraryBuilder) FunctionCount() int {
+	return len(b.functions)
+}
+
+// ConstantCount returns the number of registered constants.
+func (b *LibraryBuilder) ConstantCount() int {
+	return len(b.constants)
+}
+
+// Clear removes all registered functions and constants.
+func (b *LibraryBuilder) Clear() *LibraryBuilder {
+	b.functions = make(map[string]*Builtin)
+	b.constants = make(map[string]Object)
+	return b
+}
+
+// Merge merges another builder's functions and constants into this one.
+// If there are conflicts, the other builder's values take precedence.
+func (b *LibraryBuilder) Merge(other *LibraryBuilder) *LibraryBuilder {
+	for name, fn := range other.functions {
+		b.functions[name] = fn
+	}
+	for name, c := range other.constants {
+		b.constants[name] = c
+	}
+	return b
+}
+
+// GetFunctionNames returns a sorted list of registered function names.
+func (b *LibraryBuilder) GetFunctionNames() []string {
+	names := make([]string, 0, len(b.functions))
+	for name := range b.functions {
+		names = append(names, name)
+	}
+	// Simple sort
+	for i := 0; i < len(names); i++ {
+		for j := i + 1; j < len(names); j++ {
+			if names[i] > names[j] {
+				names[i], names[j] = names[j], names[i]
+			}
+		}
+	}
+	return names
+}
+
+// GetConstantNames returns a sorted list of registered constant names.
+func (b *LibraryBuilder) GetConstantNames() []string {
+	names := make([]string, 0, len(b.constants))
+	for name := range b.constants {
+		names = append(names, name)
+	}
+	// Simple sort
+	for i := 0; i < len(names); i++ {
+		for j := i + 1; j < len(names); j++ {
+			if names[i] > names[j] {
+				names[i], names[j] = names[j], names[i]
+			}
+		}
+	}
+	return names
+}
+
+// String returns a string representation of the builder's state.
+func (b *LibraryBuilder) String() string {
+	var sb strings.Builder
+	sb.WriteString("LibraryBuilder(")
+	sb.WriteString(b.name)
+	sb.WriteString("):\n")
+	sb.WriteString("  Functions: ")
+	sb.WriteString(strconv.Itoa(len(b.functions)))
+	sb.WriteString("\n  Constants: ")
+	sb.WriteString(strconv.Itoa(len(b.constants)))
+	return sb.String()
+}
