@@ -198,7 +198,7 @@ func NewMapIterator(ctx context.Context, fn Object, iterable Object) *Iterator {
 			var result Object
 			switch f := fn.(type) {
 			case *Builtin:
-				result = f.Fn(ctx, nil, elem)
+				result = f.Fn(ctx, NewKwargs(nil), elem)
 			case *Function:
 				// Would need evaluator to call function properly
 				// For now, return the element unchanged
@@ -242,7 +242,7 @@ func NewFilterIterator(ctx context.Context, fn Object, iterable Object) *Iterato
 				var passes bool
 				switch f := fn.(type) {
 				case *Builtin:
-					result := f.Fn(ctx, nil, elem)
+					result := f.Fn(ctx, NewKwargs(nil), elem)
 					if b, ok := result.(*Boolean); ok {
 						passes = b.Value
 					} else {

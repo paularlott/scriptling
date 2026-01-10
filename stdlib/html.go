@@ -11,7 +11,7 @@ import (
 
 var HTMLLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"escape": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -36,7 +36,7 @@ Example:
   print(safe)  # "&lt;script&gt;alert(&#39;xss&#39;)&lt;/script&gt;"`,
 	},
 	"unescape": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}

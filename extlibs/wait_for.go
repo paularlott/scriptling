@@ -67,7 +67,7 @@ func parseWaitOptionsKwargsOnly(defaultTimeout int, defaultPollRate float64, kwa
 var WaitForLibrary = object.NewLibrary(
 	map[string]*object.Builtin{
 		"file": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) < 1 {
 					return errors.NewArgumentError(len(args), 1)
 				}
@@ -77,7 +77,7 @@ var WaitForLibrary = object.NewLibrary(
 					return errors.NewTypeError("STRING", args[0].Type().String())
 				}
 
-				timeout, pollRate, err := parseWaitOptions(args, kwargs)
+				timeout, pollRate, err := parseWaitOptions(args, kwargs.Kwargs)
 				if err != nil {
 					return err
 				}
@@ -117,7 +117,7 @@ Returns:
   bool: True if file exists, False if timeout exceeded`,
 		},
 		"dir": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) < 1 {
 					return errors.NewArgumentError(len(args), 1)
 				}
@@ -127,7 +127,7 @@ Returns:
 					return errors.NewTypeError("STRING", args[0].Type().String())
 				}
 
-				timeout, pollRate, err := parseWaitOptions(args, kwargs)
+				timeout, pollRate, err := parseWaitOptions(args, kwargs.Kwargs)
 				if err != nil {
 					return err
 				}
@@ -171,7 +171,7 @@ Returns:
   bool: True if directory exists, False if timeout exceeded`,
 		},
 		"port": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) < 2 {
 					return errors.NewArgumentError(len(args), 2)
 				}
@@ -195,7 +195,7 @@ Returns:
 					return errors.NewTypeError("INT|STRING", args[1].Type().String())
 				}
 
-				timeout, pollRate, err := parseWaitOptionsKwargsOnly(30, 1.0, kwargs)
+				timeout, pollRate, err := parseWaitOptionsKwargsOnly(30, 1.0, kwargs.Kwargs)
 				if err != nil {
 					return err
 				}
@@ -240,7 +240,7 @@ Returns:
   bool: True if port is open, False if timeout exceeded`,
 		},
 		"http": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) < 1 {
 					return errors.NewArgumentError(len(args), 1)
 				}
@@ -264,7 +264,7 @@ Returns:
 				}
 
 				// Handle kwargs
-				for k, v := range kwargs {
+				for k, v := range kwargs.Kwargs {
 					switch k {
 					case "timeout":
 						if t, ok := v.AsInt(); ok {
@@ -347,7 +347,7 @@ Returns:
   bool: True if endpoint responds with expected status, False if timeout exceeded`,
 		},
 		"file_content": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) < 2 {
 					return errors.NewArgumentError(len(args), 2)
 				}
@@ -362,7 +362,7 @@ Returns:
 					return errors.NewTypeError("STRING", args[1].Type().String())
 				}
 
-				timeout, pollRate, err := parseWaitOptionsKwargsOnly(30, 1.0, kwargs)
+				timeout, pollRate, err := parseWaitOptionsKwargsOnly(30, 1.0, kwargs.Kwargs)
 				if err != nil {
 					return err
 				}
@@ -407,7 +407,7 @@ Returns:
   bool: True if file contains the content, False if timeout exceeded`,
 		},
 		"process_name": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) < 1 {
 					return errors.NewArgumentError(len(args), 1)
 				}
@@ -417,7 +417,7 @@ Returns:
 					return errors.NewTypeError("STRING", args[0].Type().String())
 				}
 
-				timeout, pollRate, err := parseWaitOptions(args, kwargs)
+				timeout, pollRate, err := parseWaitOptions(args, kwargs.Kwargs)
 				if err != nil {
 					return err
 				}

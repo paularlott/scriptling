@@ -11,13 +11,9 @@ import (
 
 var TextwrapLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"wrap": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			width := 70 // Default width
-			if w, ok := kwargs["width"]; ok {
-				if intVal, ok := w.(*object.Integer); ok {
-					width = int(intVal.Value)
-				}
-			}
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			width, _ := kwargs.GetInt("width", 70)
+			widthInt := int(width)
 
 			if len(args) < 1 {
 				return errors.NewError("wrap() requires at least 1 argument")
@@ -31,11 +27,11 @@ var TextwrapLibrary = object.NewLibrary(map[string]*object.Builtin{
 			// If second positional arg provided, use it as width
 			if len(args) >= 2 {
 				if intVal, ok := args[1].(*object.Integer); ok {
-					width = int(intVal.Value)
+					widthInt = int(intVal.Value)
 				}
 			}
 
-			lines := wrapText(text.Value, width)
+			lines := wrapText(text.Value, widthInt)
 			elements := make([]object.Object, len(lines))
 			for i, line := range lines {
 				elements[i] = &object.String{Value: line}
@@ -56,13 +52,9 @@ Example:
 	},
 
 	"fill": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			width := 70
-			if w, ok := kwargs["width"]; ok {
-				if intVal, ok := w.(*object.Integer); ok {
-					width = int(intVal.Value)
-				}
-			}
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			width, _ := kwargs.GetInt("width", 70)
+			widthInt := int(width)
 
 			if len(args) < 1 {
 				return errors.NewError("fill() requires at least 1 argument")
@@ -75,11 +67,11 @@ Example:
 
 			if len(args) >= 2 {
 				if intVal, ok := args[1].(*object.Integer); ok {
-					width = int(intVal.Value)
+					widthInt = int(intVal.Value)
 				}
 			}
 
-			lines := wrapText(text.Value, width)
+			lines := wrapText(text.Value, widthInt)
 			return &object.String{Value: strings.Join(lines, "\n")}
 		},
 		HelpText: `fill(text, width=70) - Wrap text and return a single string
@@ -96,7 +88,7 @@ Example:
 	},
 
 	"dedent": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewError("dedent() requires exactly 1 argument")
 			}
@@ -125,7 +117,7 @@ Example:
 	},
 
 	"indent": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 2 {
 				return errors.NewError("indent() requires at least 2 arguments")
 			}
@@ -166,13 +158,8 @@ Example:
 	},
 
 	"shorten": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-			placeholder := "[...]"
-			if p, ok := kwargs["placeholder"]; ok {
-				if strVal, ok := p.(*object.String); ok {
-					placeholder = strVal.Value
-				}
-			}
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			placeholder, _ := kwargs.GetString("placeholder", "[...]")
 
 			if len(args) < 2 {
 				return errors.NewError("shorten() requires at least 2 arguments")

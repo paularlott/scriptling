@@ -103,7 +103,7 @@ func (b *LibraryBuilder) createWrapper(fnValue reflect.Value, helpText string) *
 	}
 
 	return &Builtin{
-		Fn: func(ctx context.Context, kwargs map[string]Object, args ...Object) Object {
+		Fn: func(ctx context.Context, kwargs Kwargs, args ...Object) Object {
 			return b.callTypedFunction(fnValue, fnType, kwargs, args...)
 		},
 		HelpText: helpText,
@@ -126,7 +126,7 @@ func newArgumentError(got, want int) *Error {
 }
 
 // callTypedFunction calls a typed Go function with converted arguments.
-func (b *LibraryBuilder) callTypedFunction(fnValue reflect.Value, fnType reflect.Type, kwargs map[string]Object, args ...Object) Object {
+func (b *LibraryBuilder) callTypedFunction(fnValue reflect.Value, fnType reflect.Type, kwargs Kwargs, args ...Object) Object {
 	numIn := fnType.NumIn()
 	numOut := fnType.NumOut()
 
@@ -142,8 +142,8 @@ func (b *LibraryBuilder) callTypedFunction(fnValue reflect.Value, fnType reflect
 	var kwargsType reflect.Type
 	if numIn > 0 && !isVariadic {
 		lastParam := fnType.In(numIn - 1)
-		// Check if it's from scriptling package and named Kwargs
-		if lastParam.PkgPath() == "github.com/paularlott/scriptling" && lastParam.Name() == "Kwargs" {
+		// Check if it's from scriptling/object package and named Kwargs
+		if lastParam.PkgPath() == "github.com/paularlott/scriptling/object" && lastParam.Name() == "Kwargs" {
 			hasKwargsParam = true
 			kwargsType = lastParam
 		}
@@ -201,7 +201,7 @@ func (b *LibraryBuilder) callTypedFunction(fnValue reflect.Value, fnType reflect
 		if kwargsStructField.CanSet() {
 			mapType := kwargsStructField.Type()
 			convertedMap := reflect.MakeMap(mapType)
-			for k, v := range kwargs {
+			for k, v := range kwargs.Kwargs {
 				convertedMap.SetMapIndex(reflect.ValueOf(k), reflect.ValueOf(v))
 			}
 			kwargsStructField.Set(convertedMap)
@@ -502,7 +502,7 @@ func (b *LibraryBuilder) FunctionFromVariadicWithHelp(name string, fn interface{
 
 	// Create a wrapper that collects all args into a slice
 	wrapper := &Builtin{
-		Fn: func(ctx context.Context, kwargs map[string]Object, args ...Object) Object {
+		Fn: func(ctx context.Context, kwargs Kwargs, args ...Object) Object {
 			// Convert all args to interface{}
 			variadicType := fnType.In(0)
 			if variadicType.Kind() != reflect.Slice {

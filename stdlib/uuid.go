@@ -10,7 +10,7 @@ import (
 
 var UUIDLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"uuid1": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 0 {
 				return errors.NewArgumentError(len(args), 0)
 			}
@@ -31,7 +31,7 @@ Example:
   print(id)  # e.g., "f47ac10b-58cc-1e4c-a26f-e3fc32165abc"`,
 	},
 	"uuid4": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 0 {
 				return errors.NewArgumentError(len(args), 0)
 			}
@@ -48,7 +48,7 @@ Example:
   print(id)  # e.g., "550e8400-e29b-41d4-a716-446655440000"`,
 	},
 	"uuid7": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 0 {
 				return errors.NewArgumentError(len(args), 0)
 			}

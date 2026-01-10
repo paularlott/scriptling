@@ -322,9 +322,9 @@ func (lf *LambdaFunction) AsDict() (map[string]Object, bool) { return nil, false
 
 // BuiltinFunction is the signature for all builtin functions
 // - ctx: Context with environment and runtime information
-// - kwargs: Keyword arguments passed to the function (may be nil or empty)
+// - kwargs: Keyword arguments passed to the function (wrapped with helper methods)
 // - args: Positional arguments passed to the function
-type BuiltinFunction func(ctx context.Context, kwargs map[string]Object, args ...Object) Object
+type BuiltinFunction func(ctx context.Context, kwargs Kwargs, args ...Object) Object
 
 type Builtin struct {
 	Fn         BuiltinFunction

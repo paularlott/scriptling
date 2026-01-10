@@ -18,7 +18,7 @@ func TestCloneEnvironment(t *testing.T) {
 	testLib := object.NewLibrary(
 		map[string]*object.Builtin{
 			"test_func": {
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					return &object.String{Value: "test"}
 				},
 			},
@@ -64,7 +64,7 @@ func TestPoolWithSharedState(t *testing.T) {
 
 	// Create a worker function that increments the counter
 	worker := &object.Builtin{
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			counter.add(1)
 			return &object.Null{}
 		},
@@ -73,7 +73,7 @@ func TestPoolWithSharedState(t *testing.T) {
 	// Mock ApplyFunctionFunc to call the builtin function directly
 	ApplyFunctionFunc = func(ctx context.Context, fn object.Object, args []object.Object, kwargs map[string]object.Object, env *object.Environment) object.Object {
 		if builtin, ok := fn.(*object.Builtin); ok {
-			return builtin.Fn(ctx, kwargs, args...)
+			return builtin.Fn(ctx, object.NewKwargs(kwargs), args...)
 		}
 		return &object.Error{Message: "not a builtin"}
 	}
@@ -132,7 +132,7 @@ func TestPoolContextCancellation(t *testing.T) {
 	env := object.NewEnvironment()
 
 	worker := &object.Builtin{
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// Simulate work
 			select {
 			case <-ctx.Done():
@@ -166,14 +166,15 @@ func TestPromiseResultPositionalAndKwargs(t *testing.T) {
 
 	// Create a worker function that returns positional + kwargs
 	worker := &object.Builtin{
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			result := int64(0)
 			for _, arg := range args {
 				if i, ok := arg.(*object.Integer); ok {
 					result += i.Value
 				}
 			}
-			for _, arg := range kwargs {
+			for _, key := range kwargs.Keys() {
+				arg := kwargs.Get(key)
 				if i, ok := arg.(*object.Integer); ok {
 					result += i.Value
 				}
@@ -185,7 +186,7 @@ func TestPromiseResultPositionalAndKwargs(t *testing.T) {
 	// Mock ApplyFunctionFunc
 	ApplyFunctionFunc = func(ctx context.Context, fn object.Object, fnArgs []object.Object, fnKwargs map[string]object.Object, env *object.Environment) object.Object {
 		if builtin, ok := fn.(*object.Builtin); ok {
-			return builtin.Fn(ctx, fnKwargs, fnArgs...)
+			return builtin.Fn(ctx, object.NewKwargs(fnKwargs), fnArgs...)
 		}
 		return &object.Error{Message: "not a builtin"}
 	}

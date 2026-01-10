@@ -55,7 +55,7 @@ func NewSysLibrary(argv []string) *object.Library {
 	// SysLibrary provides system-specific parameters and functions
 	return object.NewLibrary(map[string]*object.Builtin{
 		"exit": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				code := 0
 				if len(args) > 0 {
 					switch arg := args[0].(type) {

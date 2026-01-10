@@ -13,7 +13,7 @@ import (
 // PlatformLibrary provides system/platform information (Python's platform module)
 var PlatformLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"python_version": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 0 {
 				return errors.NewArgumentError(len(args), 0)
 			}
@@ -25,7 +25,7 @@ var PlatformLibrary = object.NewLibrary(map[string]*object.Builtin{
 Returns the Python version (Scriptling version for compatibility).`,
 	},
 	"system": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 0 {
 				return errors.NewArgumentError(len(args), 0)
 			}
@@ -48,7 +48,7 @@ Returns the Python version (Scriptling version for compatibility).`,
 Returns 'Darwin', 'Linux', 'Windows', etc.`,
 	},
 	"architecture": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 0 {
 				return errors.NewArgumentError(len(args), 0)
 			}
@@ -66,7 +66,7 @@ Returns 'Darwin', 'Linux', 'Windows', etc.`,
 Returns a list like ['64bit', ''] indicating bits and linkage.`,
 	},
 	"machine": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 0 {
 				return errors.NewArgumentError(len(args), 0)
 			}
@@ -77,7 +77,7 @@ Returns a list like ['64bit', ''] indicating bits and linkage.`,
 Returns 'amd64', 'arm64', 'arm', etc.`,
 	},
 	"platform": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 0 {
 				return errors.NewArgumentError(len(args), 0)
 			}
@@ -89,7 +89,7 @@ Returns 'amd64', 'arm64', 'arm', etc.`,
 Returns a string like 'darwin-amd64', 'linux-amd64', etc.`,
 	},
 	"scriptling_version": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 0 {
 				return errors.NewArgumentError(len(args), 0)
 			}
@@ -100,7 +100,7 @@ Returns a string like 'darwin-amd64', 'linux-amd64', etc.`,
 Returns the current version of Scriptling.`,
 	},
 	"processor": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 0 {
 				return errors.NewArgumentError(len(args), 0)
 			}
@@ -111,7 +111,7 @@ Returns the current version of Scriptling.`,
 Returns the processor name, often same as machine.`,
 	},
 	"node": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 0 {
 				return errors.NewArgumentError(len(args), 0)
 			}
@@ -125,7 +125,7 @@ Returns the processor name, often same as machine.`,
 Returns the computer's network name.`,
 	},
 	"release": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 0 {
 				return errors.NewArgumentError(len(args), 0)
 			}
@@ -137,7 +137,7 @@ Returns the computer's network name.`,
 Returns the system release (Scriptling version for compatibility).`,
 	},
 	"version": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 0 {
 				return errors.NewArgumentError(len(args), 0)
 			}
@@ -149,7 +149,7 @@ Returns the system release (Scriptling version for compatibility).`,
 Returns the system version (Scriptling version for compatibility).`,
 	},
 	"uname": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 0 {
 				return errors.NewArgumentError(len(args), 0)
 			}

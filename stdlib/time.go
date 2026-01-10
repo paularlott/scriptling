@@ -13,7 +13,7 @@ var startTime = time.Now()
 
 var TimeLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"time": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			return &object.Float{Value: float64(time.Now().UnixNano()) / 1e9}
 		},
 		HelpText: `time() - Return current time in seconds
@@ -21,7 +21,7 @@ var TimeLibrary = object.NewLibrary(map[string]*object.Builtin{
 Returns the current time as a floating point number of seconds since the Unix epoch.`,
 	},
 	"perf_counter": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			return &object.Float{Value: time.Since(startTime).Seconds()}
 		},
 		HelpText: `perf_counter() - Return performance counter
@@ -29,7 +29,7 @@ Returns the current time as a floating point number of seconds since the Unix ep
 Returns the value of a performance counter in fractional seconds.`,
 	},
 	"sleep": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -57,7 +57,7 @@ Returns the value of a performance counter in fractional seconds.`,
 Suspends execution for the given number of seconds.`,
 	},
 	"localtime": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			var t time.Time
 			if len(args) == 0 {
 				t = time.Now()
@@ -86,7 +86,7 @@ Suspends execution for the given number of seconds.`,
 Returns a time tuple in local time. If timestamp/datetime is omitted, uses current time.`,
 	},
 	"gmtime": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			var t time.Time
 			if len(args) == 0 {
 				t = time.Now()
@@ -115,7 +115,7 @@ Returns a time tuple in local time. If timestamp/datetime is omitted, uses curre
 Returns a time tuple in UTC. If timestamp/datetime is omitted, uses current time.`,
 	},
 	"mktime": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -145,7 +145,7 @@ Returns a time tuple in UTC. If timestamp/datetime is omitted, uses current time
 Converts a time tuple (9 elements) to a Unix timestamp.`,
 	},
 	"strftime": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 1 || len(args) > 2 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -185,7 +185,7 @@ Converts a time tuple (9 elements) to a Unix timestamp.`,
 Formats a time according to the given format string. If tuple is omitted, uses current time.`,
 	},
 	"strptime": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
 			}
@@ -212,7 +212,7 @@ Formats a time according to the given format string. If tuple is omitted, uses c
 Parses a time string according to the given format and returns a time tuple.`,
 	},
 	"asctime": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			var t time.Time
 			if len(args) == 0 {
 				t = time.Now()
@@ -245,7 +245,7 @@ Parses a time string according to the given format and returns a time tuple.`,
 Converts a time tuple to a string in the format 'Mon Jan 2 15:04:05 2006'. If tuple is omitted, uses current time.`,
 	},
 	"ctime": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			var t time.Time
 			if len(args) == 0 {
 				t = time.Now()

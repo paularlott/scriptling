@@ -16,14 +16,14 @@ import (
 // Forward declarations for complex builtins
 // These are defined after the builtins map for better organization
 var (
-	mapFunction    func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object
-	filterFunction func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object
-	helpFunction   func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object
+	mapFunction    func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object
+	filterFunction func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object
+	helpFunction   func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object
 )
 
 var builtins = map[string]*object.Builtin{
 	"help": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			return helpFunction(ctx, kwargs, args...)
 		},
 		HelpText: `help([object]) - Display help information
@@ -38,7 +38,7 @@ var builtins = map[string]*object.Builtin{
   help("library_name"): List functions in a library`,
 	},
 	"map": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			return mapFunction(ctx, kwargs, args...)
 		},
 		HelpText: `map(function, iterable, ...) - Apply function to every item
@@ -48,7 +48,7 @@ With multiple iterables, function must take that many arguments.
 Use list(map(...)) to get a list.`,
 	},
 	"filter": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			return filterFunction(ctx, kwargs, args...)
 		},
 		HelpText: `filter(function, iterable) - Filter elements by function
@@ -58,13 +58,13 @@ If function is None, removes falsy elements.
 Use list(filter(...)) to get a list.`,
 	},
 	"print": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			env := getEnvFromContext(ctx)
 			writer := env.GetWriter()
 
 			// Get sep kwarg (default: " ")
 			sep := " "
-			if sepObj, ok := kwargs["sep"]; ok {
+			if sepObj := kwargs.Get("sep"); sepObj != nil {
 				if sepStr, ok := sepObj.AsString(); ok {
 					sep = sepStr
 				} else if _, ok := sepObj.(*object.Null); !ok {
@@ -74,7 +74,7 @@ Use list(filter(...)) to get a list.`,
 
 			// Get end kwarg (default: "\n")
 			end := "\n"
-			if endObj, ok := kwargs["end"]; ok {
+			if endObj := kwargs.Get("end"); endObj != nil {
 				if endStr, ok := endObj.AsString(); ok {
 					end = endStr
 				} else if _, ok := endObj.(*object.Null); !ok {
@@ -101,7 +101,7 @@ Examples:
   print("no newline", end="") # Output: no newline (no trailing newline)`,
 	},
 	"len": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -131,7 +131,7 @@ Examples:
 Returns the number of items in a string, list, dict, or tuple.`,
 	},
 	"type": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -146,7 +146,7 @@ Returns the number of items in a string, list, dict, or tuple.`,
 Returns a string representing the type of the object.`,
 	},
 	"str": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -157,7 +157,7 @@ Returns a string representing the type of the object.`,
 Returns the string representation of any object.`,
 	},
 	"int": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -183,7 +183,7 @@ Converts a float, string, or integer to an integer.
 Floats are truncated (not rounded).`,
 	},
 	"float": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -209,7 +209,7 @@ Converts an integer, string, or float to a float.`,
 	},
 
 	"sum": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -260,7 +260,7 @@ Returns the sum of all elements in a list or tuple.
 Supports integers and floats, returns appropriate type.`,
 	},
 	"sorted": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 1 || len(args) > 2 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -281,15 +281,16 @@ Supports integers and floats, returns appropriate type.`,
 			// Check for key function - support both positional and keyword argument
 			var keyFunc *object.Builtin
 			if len(args) == 2 {
-				var ok bool
-				keyFunc, ok = args[1].(*object.Builtin)
-				if !ok {
+				if builtin, ok := args[1].(*object.Builtin); ok {
+					keyFunc = builtin
+				} else {
 					return errors.NewError("sorted() key parameter must be a builtin function")
 				}
-			} else if kwargs != nil {
-				if keyArg, ok := kwargs["key"]; ok {
-					keyFunc, ok = keyArg.(*object.Builtin)
-					if !ok {
+			} else if kwargs.Len() > 0 {
+				if keyArg := kwargs.Get("key"); keyArg != nil {
+					if builtin, ok := keyArg.(*object.Builtin); ok {
+						keyFunc = builtin
+					} else {
 						return errors.NewError("sorted() key parameter must be a builtin function")
 					}
 				}
@@ -297,8 +298,8 @@ Supports integers and floats, returns appropriate type.`,
 
 			// Check for reverse kwarg
 			reverse := false
-			if kwargs != nil {
-				if rev, ok := kwargs["reverse"]; ok {
+			if kwargs.Len() > 0 {
+				if rev := kwargs.Get("reverse"); rev != nil {
 					if b, ok := rev.AsBool(); ok {
 						reverse = b
 					}
@@ -314,7 +315,7 @@ Supports integers and floats, returns appropriate type.`,
 				if keyFunc != nil {
 					keys = make([]object.Object, n)
 					for i, elem := range elements {
-						key := keyFunc.Fn(ctx, nil, elem)
+						key := keyFunc.Fn(ctx, object.NewKwargs(nil), elem)
 						if isError(key) || isException(key) {
 							return key
 						}
@@ -415,7 +416,7 @@ Optional key function can be provided for custom sorting.
 Set reverse=True to sort in descending order.`,
 	},
 	"range": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 1 || len(args) > 3 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -453,7 +454,7 @@ If start is omitted, defaults to 0. If step is omitted, defaults to 1.
 Use list(range(...)) to get a list.`,
 	},
 	"keys": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -468,7 +469,7 @@ Use list(range(...)) to get a list.`,
 Returns a view object of all keys in the dictionary.`,
 	},
 	"values": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -483,7 +484,7 @@ Returns a view object of all keys in the dictionary.`,
 Returns a view object of all values in the dictionary.`,
 	},
 	"items": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -498,7 +499,7 @@ Returns a view object of all values in the dictionary.`,
 Returns a view object of (key, value) pairs for all items in the dictionary.`,
 	},
 	"enumerate": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 1 || len(args) > 2 {
 				return errors.NewError("enumerate() takes 1 or 2 arguments (%d given)", len(args))
 			}
@@ -525,7 +526,7 @@ Returns an iterator of tuples containing the index and value for each item.
 Default start is 0. Use list(enumerate(...)) to get a list.`,
 	},
 	"zip": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) == 0 {
 				// Return empty iterator for no arguments
 				return object.NewZipIterator([]object.Object{})
@@ -548,7 +549,7 @@ The iterator stops when the shortest input iterable is exhausted.
 Use list(zip(...)) to get a list.`,
 	},
 	"super": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			var classObj *object.Class
 			var instanceObj *object.Instance
 
@@ -616,7 +617,7 @@ Use list(zip(...)) to get a list.`,
 		With arguments, returns a proxy for the parent of 'type', bound to 'obj'.`,
 	},
 	"any": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -642,7 +643,7 @@ Returns True if at least one element in the iterable is truthy.
 Returns False for an empty iterable.`,
 	},
 	"all": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -667,7 +668,7 @@ Returns False for an empty iterable.`,
 Returns True if all elements in the iterable are truthy (or if empty).`,
 	},
 	"bool": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) == 0 {
 				return FALSE
 			}
@@ -685,7 +686,7 @@ Returns True if x is truthy, False otherwise.
 With no argument, returns False.`,
 	},
 	"abs": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -709,7 +710,7 @@ With no argument, returns False.`,
 Works with both integers and floats.`,
 	},
 	"min": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) == 0 {
 				return errors.NewError("min() requires at least 1 argument")
 			}
@@ -743,7 +744,7 @@ With a single iterable argument, returns its smallest item.
 With multiple arguments, returns the smallest argument.`,
 	},
 	"max": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) == 0 {
 				return errors.NewError("max() requires at least 1 argument")
 			}
@@ -777,7 +778,7 @@ With a single iterable argument, returns its largest item.
 With multiple arguments, returns the largest argument.`,
 	},
 	"round": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 1 || len(args) > 2 {
 				return errors.NewError("round() takes 1 or 2 arguments (%d given)", len(args))
 			}
@@ -817,7 +818,7 @@ Rounds to ndigits decimal places (default 0).
 Returns an integer if ndigits is omitted or 0.`,
 	},
 	"hex": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -832,7 +833,7 @@ Returns an integer if ndigits is omitted or 0.`,
 		HelpText: `hex(x) - Convert an integer to a lowercase hexadecimal string prefixed with "0x"`,
 	},
 	"bin": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -847,7 +848,7 @@ Returns an integer if ndigits is omitted or 0.`,
 		HelpText: `bin(x) - Convert an integer to a binary string prefixed with "0b"`,
 	},
 	"oct": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -862,7 +863,7 @@ Returns an integer if ndigits is omitted or 0.`,
 		HelpText: `oct(x) - Convert an integer to an octal string prefixed with "0o"`,
 	},
 	"pow": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 2 || len(args) > 3 {
 				return errors.NewError("pow() takes 2 or 3 arguments (%d given)", len(args))
 			}
@@ -911,7 +912,7 @@ Returns an integer if ndigits is omitted or 0.`,
 Equivalent to base**exp or base**exp % mod if mod is given.`,
 	},
 	"divmod": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
 			}
@@ -956,7 +957,7 @@ Equivalent to base**exp or base**exp % mod if mod is given.`,
 Equivalent to (a // b, a % b) for integers.`,
 	},
 	"callable": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -970,7 +971,7 @@ Equivalent to (a // b, a % b) for integers.`,
 		HelpText: `callable(object) - Return True if the object appears callable, False otherwise`,
 	},
 	"isinstance": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
 			}
@@ -1011,7 +1012,7 @@ Equivalent to (a // b, a % b) for integers.`,
 Type names: "int", "str", "float", "bool", "list", "dict", "tuple", "function", "None"`,
 	},
 	"chr": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -1028,7 +1029,7 @@ Type names: "int", "str", "float", "bool", "list", "dict", "tuple", "function", 
 The argument must be in the range 0-1114111 (0x10FFFF).`,
 	},
 	"ord": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -1046,7 +1047,7 @@ The argument must be in the range 0-1114111 (0x10FFFF).`,
 The argument must be a string of exactly one character.`,
 	},
 	"reversed": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -1063,7 +1064,7 @@ Works with lists, tuples, strings, and iterators.
 Use list(reversed(...)) to get a list.`,
 	},
 	"list": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) == 0 {
 				return &object.List{Elements: []object.Object{}}
 			}
@@ -1085,10 +1086,11 @@ With no argument, returns an empty list.
 Otherwise, returns a list containing the items of the iterable.`,
 	},
 	"dict": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			result := &object.Dict{Pairs: make(map[string]object.DictPair)}
 			// Handle kwargs
-			for key, val := range kwargs {
+			for _, key := range kwargs.Keys() {
+				val := kwargs.Get(key)
 				result.Pairs[key] = object.DictPair{
 					Key:   &object.String{Value: key},
 					Value: val,
@@ -1135,7 +1137,7 @@ Can initialize from another dict or list of [key, value] pairs.
 Keyword arguments are added to the dict.`,
 	},
 	"tuple": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) == 0 {
 				return &object.Tuple{Elements: []object.Object{}}
 			}
@@ -1161,7 +1163,7 @@ With no argument, returns an empty tuple.
 Otherwise, returns a tuple containing the items of the iterable.`,
 	},
 	"set": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) == 0 {
 				return object.NewSet()
 			}
@@ -1188,7 +1190,7 @@ With no argument, returns an empty set.
 Otherwise, returns a set containing unique items from the iterable.`,
 	},
 	"input": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// input() is not supported in embedded environments
 			// In a scripting engine context, there's no stdin
 			return errors.NewError("input() is not available in embedded scripting environments")
@@ -1199,7 +1201,7 @@ Note: input() is not available in embedded scripting environments.
 This function exists for compatibility but will return an error.`,
 	},
 	"repr": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -1217,7 +1219,7 @@ For strings, returns the string with quotes.
 For other objects, returns the same as str().`,
 	},
 	"hash": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -1239,7 +1241,7 @@ For other objects, returns the same as str().`,
 Returns an integer hash value for the object using FNV-1a algorithm.`,
 	},
 	"id": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -1256,7 +1258,7 @@ Returns an integer hash value for the object using FNV-1a algorithm.`,
 Returns a unique integer identifier for the object.`,
 	},
 	"format": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 1 || len(args) > 2 {
 				return errors.NewError("format() takes 1 or 2 arguments (%d given)", len(args))
 			}
@@ -1354,7 +1356,7 @@ Format a value according to the format specifier.
 Supports width, alignment, and type specifiers.`,
 	},
 	"hasattr": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
 			}
@@ -1384,7 +1386,7 @@ Supports width, alignment, and type specifiers.`,
 Returns True if the object has the named attribute.`,
 	},
 	"getattr": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 2 || len(args) > 3 {
 				return errors.NewError("getattr() takes 2 or 3 arguments (%d given)", len(args))
 			}
@@ -1418,7 +1420,7 @@ Returns the value of the named attribute.
 If default is provided, returns it when attribute doesn't exist.`,
 	},
 	"setattr": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 3 {
 				return errors.NewArgumentError(len(args), 3)
 			}
@@ -1447,7 +1449,7 @@ Sets the named attribute to the given value.
 Only works on dict-like objects.`,
 	},
 	"delattr": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
 			}
@@ -1478,7 +1480,7 @@ Only works on dict-like objects.`,
 Deletes the named attribute from the given object.`,
 	},
 	"slice": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) > 3 {
 				return errors.NewArgumentError(len(args), 3)
 			}
@@ -1635,7 +1637,7 @@ func init() {
 	helpFunction = helpFunctionImpl
 }
 
-func mapFunctionImpl(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+func mapFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 	if len(args) < 2 {
 		return errors.NewError("map() requires at least 2 arguments")
 	}
@@ -1681,7 +1683,7 @@ func mapFunctionImpl(ctx context.Context, kwargs map[string]object.Object, args 
 	})
 }
 
-func filterFunctionImpl(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+func filterFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 	if len(args) != 2 {
 		return errors.NewArgumentError(len(args), 2)
 	}
@@ -1723,7 +1725,7 @@ func filterFunctionImpl(ctx context.Context, kwargs map[string]object.Object, ar
 	})
 }
 
-func helpFunctionImpl(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+func helpFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 	env := getEnvFromContext(ctx)
 	writer := env.GetWriter()
 
@@ -2101,7 +2103,7 @@ func printFunctionHelp(writer io.Writer, name string, fn *object.Function) {
 
 func GetImportBuiltin() *object.Builtin {
 	return &object.Builtin{
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}

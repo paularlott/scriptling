@@ -24,7 +24,7 @@ var RegexClass = &object.Class{
 	Name: "Regex",
 	Methods: map[string]object.Object{
 		"match": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 2 {
 					return errors.NewArgumentError(len(args), 2)
 				}
@@ -63,7 +63,7 @@ var RegexClass = &object.Class{
 Returns a Match object if the pattern matches at the beginning, or None if no match.`,
 		},
 		"search": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 2 {
 					return errors.NewArgumentError(len(args), 2)
 				}
@@ -101,7 +101,7 @@ Returns a Match object if the pattern matches at the beginning, or None if no ma
 Returns a Match object for the first match, or None if no match found.`,
 		},
 		"findall": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 2 {
 					return errors.NewArgumentError(len(args), 2)
 				}
@@ -143,7 +143,7 @@ If there is one capturing group, returns a list of strings for that group.
 If there are no capturing groups, returns a list of strings for the full matches.`,
 		},
 		"finditer": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 2 {
 					return errors.NewArgumentError(len(args), 2)
 				}
@@ -187,7 +187,7 @@ var MatchClass = &object.Class{
 	Name: "Match",
 	Methods: map[string]object.Object{
 		"group": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) > 2 {
 					return errors.NewError("group() takes at most 1 argument (%d given)", len(args))
 				}
@@ -209,7 +209,7 @@ var MatchClass = &object.Class{
 			HelpText: `group(n=0) - Return the nth matched group (0 = full match)`,
 		},
 		"groups": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 1 {
 					return errors.NewArgumentError(len(args), 1)
 				}
@@ -227,7 +227,7 @@ var MatchClass = &object.Class{
 			HelpText: `groups() - Return tuple of all matched groups (excluding group 0)`,
 		},
 		"start": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) > 2 {
 					return errors.NewError("start() takes at most 1 argument (%d given)", len(args))
 				}
@@ -248,7 +248,7 @@ var MatchClass = &object.Class{
 			HelpText: `start(n=0) - Return start position of nth group`,
 		},
 		"end": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) > 2 {
 					return errors.NewError("end() takes at most 1 argument (%d given)", len(args))
 				}
@@ -269,7 +269,7 @@ var MatchClass = &object.Class{
 			HelpText: `end(n=0) - Return end position of nth group`,
 		},
 		"span": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) > 2 {
 					return errors.NewError("span() takes at most 1 argument (%d given)", len(args))
 				}
@@ -441,7 +441,7 @@ func getFlags(args []object.Object, flagsIndex int) (int64, error) {
 
 var ReLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"match": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 2 || len(args) > 3 {
 				return errors.NewError("match() takes 2 or 3 arguments (%d given)", len(args))
 			}
@@ -498,7 +498,7 @@ Flags:
   re.DOTALL or re.S     - . matches newlines`,
 	},
 	"search": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 2 || len(args) > 3 {
 				return errors.NewError("search() takes 2 or 3 arguments (%d given)", len(args))
 			}
@@ -554,7 +554,7 @@ Flags:
   re.DOTALL or re.S     - . matches newlines`,
 	},
 	"findall": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 2 || len(args) > 3 {
 				return errors.NewError("findall() takes 2 or 3 arguments (%d given)", len(args))
 			}
@@ -606,7 +606,7 @@ Flags:
   re.DOTALL or re.S     - . matches newlines`,
 	},
 	"finditer": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 2 || len(args) > 3 {
 				return errors.NewError("finditer() takes 2 or 3 arguments (%d given)", len(args))
 			}
@@ -653,7 +653,7 @@ Flags:
   re.DOTALL or re.S     - . matches newlines`,
 	},
 	"sub": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 3 || len(args) > 5 {
 				return errors.NewError("sub() takes 3 to 5 arguments (%d given)", len(args))
 			}
@@ -716,7 +716,7 @@ Flags:
   re.DOTALL or re.S     - . matches newlines`,
 	},
 	"split": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 2 || len(args) > 4 {
 				return errors.NewError("split() takes 2 to 4 arguments (%d given)", len(args))
 			}
@@ -770,7 +770,7 @@ Flags:
   re.DOTALL or re.S     - . matches newlines`,
 	},
 	"compile": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 1 || len(args) > 2 {
 				return errors.NewError("compile() takes 1 or 2 arguments (%d given)", len(args))
 			}
@@ -804,7 +804,7 @@ Flags:
   re.DOTALL or re.S     - . matches newlines`,
 	},
 	"escape": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -821,7 +821,7 @@ Flags:
 Returns a string with all special regex characters escaped.`,
 	},
 	"fullmatch": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 2 || len(args) > 3 {
 				return errors.NewError("fullmatch() takes 2 or 3 arguments (%d given)", len(args))
 			}

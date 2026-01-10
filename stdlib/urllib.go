@@ -14,7 +14,7 @@ var ParseResultClass = &object.Class{
 	Name: "ParseResult",
 	Methods: map[string]object.Object{
 		"geturl": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 1 {
 					return errors.NewArgumentError(len(args), 0)
 				}
@@ -64,7 +64,7 @@ func createParseResultInstance(scheme, netloc, path, params, query, fragment str
 // URLParseLibrary implements Python's urllib.parse module
 var URLParseLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"quote": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 1 || len(args) > 2 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -91,7 +91,7 @@ var URLParseLibrary = object.NewLibrary(map[string]*object.Builtin{
 Returns a URL-encoded version of the string. Characters in 'safe' are not encoded.`,
 	},
 	"quote_plus": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 1 || len(args) > 2 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -120,7 +120,7 @@ Returns a URL-encoded version of the string. Characters in 'safe' are not encode
 Like quote(), but also replaces spaces with plus signs.`,
 	},
 	"unquote": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -141,7 +141,7 @@ Like quote(), but also replaces spaces with plus signs.`,
 Returns a URL-decoded version of the string.`,
 	},
 	"unquote_plus": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -164,7 +164,7 @@ Returns a URL-decoded version of the string.`,
 Like unquote(), but also replaces plus signs with spaces.`,
 	},
 	"urlparse": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -198,7 +198,7 @@ Returns a ParseResult object with URL components: scheme, netloc, path, params, 
 Access components as attributes: result.scheme, result.netloc, etc. Use result.geturl() to reconstruct URL.`,
 	},
 	"urlunparse": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -318,7 +318,7 @@ Access components as attributes: result.scheme, result.netloc, etc. Use result.g
 Constructs a URL string from a 6-tuple or dict of URL components.`,
 	},
 	"urljoin": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
 			}
@@ -351,7 +351,7 @@ Constructs a URL string from a 6-tuple or dict of URL components.`,
 Joins a base URL with a reference URL, resolving relative references.`,
 	},
 	"urlsplit": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -392,7 +392,7 @@ Joins a base URL with a reference URL, resolving relative references.`,
 Returns a 5-tuple: (scheme, netloc, path, query, fragment).`,
 	},
 	"urlunsplit": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -430,7 +430,7 @@ Returns a 5-tuple: (scheme, netloc, path, query, fragment).`,
 Constructs a URL string from a 5-tuple of URL components.`,
 	},
 	"parse_qs": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 1 || len(args) > 2 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -465,7 +465,7 @@ Constructs a URL string from a 5-tuple of URL components.`,
 Parses a URL query string and returns a dictionary where values are lists.`,
 	},
 	"parse_qsl": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 1 || len(args) > 2 {
 				return errors.NewArgumentError(len(args), 1)
 			}
@@ -501,7 +501,7 @@ Parses a URL query string and returns a dictionary where values are lists.`,
 Parses a URL query string and returns a list of (key, value) tuples.`,
 	},
 	"urlencode": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 1 || len(args) > 2 {
 				return errors.NewArgumentError(len(args), 1)
 			}

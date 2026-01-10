@@ -21,7 +21,7 @@ func RegisterSecretsLibrary(registrar interface{ RegisterLibrary(string, *object
 // NOTE: This is an extended library and not enabled by default
 var SecretsLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"token_bytes": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			nbytes := 32 // Default
 			if len(args) > 0 {
 				if intVal, ok := args[0].(*object.Integer); ok {
@@ -59,7 +59,7 @@ Example:
 	},
 
 	"token_hex": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			nbytes := 32 // Default
 			if len(args) > 0 {
 				if intVal, ok := args[0].(*object.Integer); ok {
@@ -92,7 +92,7 @@ Example:
 	},
 
 	"token_urlsafe": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			nbytes := 32 // Default
 			if len(args) > 0 {
 				if intVal, ok := args[0].(*object.Integer); ok {
@@ -129,7 +129,7 @@ Example:
 	},
 
 	"randbelow": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewError("randbelow() requires exactly 1 argument")
 			}
@@ -163,7 +163,7 @@ Example:
 	},
 
 	"randbits": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewError("randbits() requires exactly 1 argument")
 			}
@@ -198,7 +198,7 @@ Example:
 	},
 
 	"choice": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewError("choice() requires exactly 1 argument")
 			}
@@ -246,7 +246,7 @@ Example:
 	},
 
 	"compare_digest": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 2 {
 				return errors.NewError("compare_digest() requires exactly 2 arguments")
 			}

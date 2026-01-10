@@ -10,7 +10,7 @@ import (
 // ItertoolsLibrary provides Python-like itertools functions
 var ItertoolsLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"chain": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// chain(*iterables) - Chain multiple iterables together
 			result := []object.Object{}
 			for _, arg := range args {
@@ -38,7 +38,7 @@ Example:
   itertools.chain("ab", "cd") -> ["a", "b", "c", "d"]`,
 	},
 	"repeat": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// repeat(elem, n) - Repeat element n times
 			if len(args) < 1 || len(args) > 2 {
 				return errors.NewArgumentError(len(args), 2)
@@ -70,7 +70,7 @@ Example:
   itertools.repeat(0, 5) -> [0, 0, 0, 0, 0]`,
 	},
 	"cycle": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// cycle(iterable, n) - Cycle through iterable n times
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
@@ -110,7 +110,7 @@ Example:
   itertools.cycle([1, 2, 3], 2) -> [1, 2, 3, 1, 2, 3]`,
 	},
 	"count": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// count(start, stop[, step]) - Generate a sequence of numbers
 			if len(args) < 2 || len(args) > 3 {
 				return errors.NewArgumentError(len(args), 2)
@@ -156,7 +156,7 @@ Example:
   itertools.count(0, 10, 2) -> [0, 2, 4, 6, 8]`,
 	},
 	"islice": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// islice(iterable, stop) or islice(iterable, start, stop[, step])
 			if len(args) < 2 || len(args) > 4 {
 				return errors.NewArgumentError(len(args), 2)
@@ -230,7 +230,7 @@ Example:
   itertools.islice([0, 1, 2, 3, 4], 0, 5, 2) -> [0, 2, 4]`,
 	},
 	"takewhile": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// takewhile(predicate, iterable) - Take elements while predicate is true
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
@@ -250,7 +250,7 @@ Example:
 			}
 			result := []object.Object{}
 			for _, elem := range elements {
-				res := pred.Fn(ctx, nil, elem)
+				res := pred.Fn(ctx, object.NewKwargs(nil), elem)
 				if isError(res) {
 					return res
 				}
@@ -269,7 +269,7 @@ Example:
   itertools.takewhile(lambda x: x < 5, [1, 3, 5, 2, 4]) -> [1, 3]`,
 	},
 	"dropwhile": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// dropwhile(predicate, iterable) - Drop elements while predicate is true
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
@@ -291,7 +291,7 @@ Example:
 			dropping := true
 			for _, elem := range elements {
 				if dropping {
-					res := pred.Fn(ctx, nil, elem)
+					res := pred.Fn(ctx, object.NewKwargs(nil), elem)
 					if isError(res) {
 						return res
 					}
@@ -312,7 +312,7 @@ Example:
   itertools.dropwhile(lambda x: x < 5, [1, 3, 5, 2, 4]) -> [5, 2, 4]`,
 	},
 	"zip_longest": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// zip_longest(*iterables, fillvalue=None)
 			if len(args) < 1 {
 				return &object.List{Elements: []object.Object{}}
@@ -320,9 +320,9 @@ Example:
 
 			// Get fillvalue from kwargs
 			fillvalue := object.Object(&object.Null{})
-			if kwargs != nil {
-				if fv, ok := kwargs["fillvalue"]; ok {
-					fillvalue = fv
+			if kwargs.Len() > 0 {
+				if kwargs.Has("fillvalue") {
+					fillvalue = kwargs.Get("fillvalue")
 				}
 			}
 
@@ -372,7 +372,7 @@ Example:
   itertools.zip_longest([1, 2], ["a"], fillvalue="-") -> [(1, "a"), (2, "-")]`,
 	},
 	"product": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// product(*iterables) - Cartesian product
 			if len(args) < 1 {
 				return &object.List{Elements: []object.Object{&object.Tuple{Elements: []object.Object{}}}}
@@ -441,7 +441,7 @@ Example:
   itertools.product([1, 2], [3, 4]) -> [(1, 3), (1, 4), (2, 3), (2, 4)]`,
 	},
 	"permutations": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// permutations(iterable[, r])
 			if len(args) < 1 || len(args) > 2 {
 				return errors.NewArgumentError(len(args), 1)
@@ -488,7 +488,7 @@ Example:
   itertools.permutations("ab") -> [("a", "b"), ("b", "a")]`,
 	},
 	"combinations": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// combinations(iterable, r)
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
@@ -531,7 +531,7 @@ Example:
   itertools.combinations("abc", 2) -> [("a", "b"), ("a", "c"), ("b", "c")]`,
 	},
 	"combinations_with_replacement": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// combinations_with_replacement(iterable, r)
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
@@ -577,7 +577,7 @@ Example:
   itertools.combinations_with_replacement("ab", 2) -> [("a", "a"), ("a", "b"), ("b", "b")]`,
 	},
 	"groupby": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// groupby(iterable[, key]) - Group consecutive elements
 			if len(args) < 1 || len(args) > 2 {
 				return errors.NewArgumentError(len(args), 1)
@@ -612,7 +612,7 @@ Example:
 			for i, elem := range elements {
 				var key object.Object
 				if keyFunc != nil {
-					key = keyFunc.Fn(ctx, nil, elem)
+					key = keyFunc.Fn(ctx, object.NewKwargs(nil), elem)
 					if isError(key) {
 						return key
 					}
@@ -656,7 +656,7 @@ Example:
   itertools.groupby(["aa", "ab", "ba"], lambda x: x[0]) -> [("a", ["aa", "ab"]), ("b", ["ba"])]`,
 	},
 	"accumulate": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// accumulate(iterable[, func]) - Running totals
 			if len(args) < 1 || len(args) > 2 {
 				return errors.NewArgumentError(len(args), 1)
@@ -689,7 +689,7 @@ Example:
 
 			for i := 1; i < len(elements); i++ {
 				if accumFunc != nil {
-					accumulator = accumFunc.Fn(ctx, nil, accumulator, elements[i])
+					accumulator = accumFunc.Fn(ctx, object.NewKwargs(nil), accumulator, elements[i])
 					if isError(accumulator) {
 						return accumulator
 					}
@@ -713,7 +713,7 @@ Example:
   itertools.accumulate([1, 2, 3], operator.mul) -> [1, 2, 6]`,
 	},
 	"filterfalse": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// filterfalse(predicate, iterable) - Filter elements where predicate is false
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
@@ -733,7 +733,7 @@ Example:
 			}
 			result := []object.Object{}
 			for _, elem := range elements {
-				res := pred.Fn(ctx, nil, elem)
+				res := pred.Fn(ctx, object.NewKwargs(nil), elem)
 				if isError(res) {
 					return res
 				}
@@ -751,7 +751,7 @@ Example:
   itertools.filterfalse(lambda x: x % 2, [1, 2, 3, 4]) -> [2, 4]`,
 	},
 	"starmap": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// starmap(func, iterable) - Apply function to argument tuples
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
@@ -780,7 +780,7 @@ Example:
 				default:
 					return errors.NewError("starmap() iterable must contain sequences")
 				}
-				res := fn.Fn(ctx, nil, fnArgs...)
+				res := fn.Fn(ctx, object.NewKwargs(nil), fnArgs...)
 				if isError(res) {
 					return res
 				}
@@ -796,7 +796,7 @@ Example:
   itertools.starmap(pow, [(2, 3), (3, 2)]) -> [8, 9]`,
 	},
 	"compress": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// compress(data, selectors) - Filter data based on selectors
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
@@ -841,7 +841,7 @@ Example:
   itertools.compress("abcd", [1, 0, 1, 0]) -> ["a", "c"]`,
 	},
 	"pairwise": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// pairwise(iterable) - Return successive overlapping pairs
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
@@ -879,7 +879,7 @@ Example:
   itertools.pairwise("abc") -> [("a", "b"), ("b", "c")]`,
 	},
 	"batched": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// batched(iterable, n) - Batch elements into tuples of size n
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)

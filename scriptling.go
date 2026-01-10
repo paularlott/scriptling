@@ -411,7 +411,7 @@ func (p *Scriptling) GetVarAsDict(name string) (map[string]object.Object, bool) 
 	return obj.AsDict()
 }
 
-func (p *Scriptling) RegisterFunc(name string, fn func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object, helpText ...string) {
+func (p *Scriptling) RegisterFunc(name string, fn func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object, helpText ...string) {
 	builtin := &object.Builtin{Fn: fn}
 	if len(helpText) > 0 && helpText[0] != "" {
 		builtin.HelpText = helpText[0]

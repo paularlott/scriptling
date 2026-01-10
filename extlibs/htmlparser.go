@@ -29,7 +29,7 @@ var HTMLParserLibrary = object.NewLibrary(nil, map[string]object.Object{
 
 var htmlParserMethods = map[string]object.Object{
 	"__init__": &object.Builtin{
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 1 {
 				return errors.NewError("__init__ requires self argument")
 			}
@@ -48,7 +48,7 @@ var htmlParserMethods = map[string]object.Object{
 
 			// Check for convert_charrefs kwarg (default True)
 			convertCharrefs := true
-			if val, ok := kwargs["convert_charrefs"]; ok {
+			if val, ok := kwargs.Kwargs["convert_charrefs"]; ok {
 				if boolVal, ok := val.(*object.Boolean); ok {
 					convertCharrefs = boolVal.Value
 				}
@@ -63,7 +63,7 @@ Parameters:
   convert_charrefs - If True (default), automatically convert character references`,
 	},
 	"feed": &object.Builtin{
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 2 {
 				return errors.NewError("feed() requires self and data arguments")
 			}
@@ -84,14 +84,14 @@ Parameters:
 Parses the HTML data and calls handler methods for each element.`,
 	},
 	"close": &object.Builtin{
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// Process any remaining buffered data
 			return &object.Null{}
 		},
 		HelpText: `close() - Force processing of all buffered data`,
 	},
 	"reset": &object.Builtin{
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 1 {
 				return errors.NewError("reset() requires self argument")
 			}
@@ -113,7 +113,7 @@ Parses the HTML data and calls handler methods for each element.`,
 		HelpText: `reset() - Reset the parser instance`,
 	},
 	"getpos": &object.Builtin{
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 1 {
 				return errors.NewError("getpos() requires self argument")
 			}
@@ -136,7 +136,7 @@ Parses the HTML data and calls handler methods for each element.`,
 		HelpText: `getpos() - Return current line number and offset`,
 	},
 	"get_starttag_text": &object.Builtin{
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 1 {
 				return errors.NewError("get_starttag_text() requires self argument")
 			}
@@ -155,7 +155,7 @@ Parses the HTML data and calls handler methods for each element.`,
 	},
 	// Default handler methods - do nothing, meant to be overridden
 	"handle_starttag": &object.Builtin{
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			return &object.Null{}
 		},
 		HelpText: `handle_starttag(tag, attrs) - Called when a start tag is encountered
@@ -164,7 +164,7 @@ Override this method to handle start tags like <div id="main">.
 tag is the tag name (lowercase), attrs is a list of (name, value) tuples.`,
 	},
 	"handle_endtag": &object.Builtin{
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			return &object.Null{}
 		},
 		HelpText: `handle_endtag(tag) - Called when an end tag is encountered
@@ -173,7 +173,7 @@ Override this method to handle end tags like </div>.
 tag is the tag name (lowercase).`,
 	},
 	"handle_startendtag": &object.Builtin{
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// Default: call handle_starttag and handle_endtag
 			if len(args) >= 3 {
 				instance := args[0].(*object.Instance)
@@ -182,7 +182,7 @@ tag is the tag name (lowercase).`,
 				// Call handle_starttag
 				if method, ok := instance.Class.Methods["handle_starttag"]; ok {
 					if builtin, ok := method.(*object.Builtin); ok {
-						builtin.Fn(ctx, nil, instance, tag, attrs)
+						builtin.Fn(ctx, object.NewKwargs(nil), instance, tag, attrs)
 					} else if fn, ok := method.(*object.Function); ok {
 						callMethod(ctx, fn, instance, []object.Object{tag, attrs}, nil)
 					}
@@ -190,7 +190,7 @@ tag is the tag name (lowercase).`,
 				// Call handle_endtag
 				if method, ok := instance.Class.Methods["handle_endtag"]; ok {
 					if builtin, ok := method.(*object.Builtin); ok {
-						builtin.Fn(ctx, nil, instance, tag)
+						builtin.Fn(ctx, object.NewKwargs(nil), instance, tag)
 					} else if fn, ok := method.(*object.Function); ok {
 						callMethod(ctx, fn, instance, []object.Object{tag}, nil)
 					}
@@ -203,7 +203,7 @@ tag is the tag name (lowercase).`,
 Called for tags like <img ... />. Default calls handle_starttag and handle_endtag.`,
 	},
 	"handle_data": &object.Builtin{
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			return &object.Null{}
 		},
 		HelpText: `handle_data(data) - Called to process text data
@@ -211,7 +211,7 @@ Called for tags like <img ... />. Default calls handle_starttag and handle_endta
 Override this method to handle text content between tags.`,
 	},
 	"handle_entityref": &object.Builtin{
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			return &object.Null{}
 		},
 		HelpText: `handle_entityref(name) - Called for named character references like &gt;
@@ -219,7 +219,7 @@ Override this method to handle text content between tags.`,
 Only called if convert_charrefs is False.`,
 	},
 	"handle_charref": &object.Builtin{
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			return &object.Null{}
 		},
 		HelpText: `handle_charref(name) - Called for numeric character references like &#62;
@@ -227,7 +227,7 @@ Only called if convert_charrefs is False.`,
 Only called if convert_charrefs is False.`,
 	},
 	"handle_comment": &object.Builtin{
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			return &object.Null{}
 		},
 		HelpText: `handle_comment(data) - Called when a comment is encountered
@@ -235,7 +235,7 @@ Only called if convert_charrefs is False.`,
 Override to handle HTML comments like <!-- comment -->.`,
 	},
 	"handle_decl": &object.Builtin{
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			return &object.Null{}
 		},
 		HelpText: `handle_decl(decl) - Called for DOCTYPE declarations
@@ -243,7 +243,7 @@ Override to handle HTML comments like <!-- comment -->.`,
 Override to handle <!DOCTYPE html> and similar.`,
 	},
 	"handle_pi": &object.Builtin{
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			return &object.Null{}
 		},
 		HelpText: `handle_pi(data) - Called for processing instructions
@@ -251,7 +251,7 @@ Override to handle <!DOCTYPE html> and similar.`,
 Override to handle <?xml ...?> and similar.`,
 	},
 	"unknown_decl": &object.Builtin{
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			return &object.Null{}
 		},
 		HelpText: `unknown_decl(data) - Called for unrecognized declarations`,
@@ -483,7 +483,7 @@ func callHandler(ctx context.Context, instance *object.Instance, methodName stri
 		switch m := method.(type) {
 		case *object.Builtin:
 			allArgs := append([]object.Object{instance}, args...)
-			return m.Fn(ctx, nil, allArgs...)
+			return m.Fn(ctx, object.NewKwargs(nil), allArgs...)
 		case *object.Function:
 			// For user-defined functions, we need to call through the evaluator
 			// This is handled by the ApplyMethod function if we set it up

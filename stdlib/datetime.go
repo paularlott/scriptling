@@ -109,7 +109,7 @@ func init() {
 		Methods: map[string]object.Object{
 			// __str__ for string representation
 			"__str__": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) < 1 {
 						return errors.NewArgumentError(len(args), 1)
 					}
@@ -127,7 +127,7 @@ func init() {
 			},
 			// Instance methods
 			"strftime": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) < 2 {
 						return errors.NewArgumentError(len(args), 2)
 					}
@@ -149,7 +149,7 @@ func init() {
 				HelpText: "strftime(format) - Format datetime as string",
 			},
 			"timestamp": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) < 1 {
 						return errors.NewArgumentError(len(args), 1)
 					}
@@ -166,7 +166,7 @@ func init() {
 				HelpText: "timestamp() - Return POSIX timestamp",
 			},
 			"year": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) < 1 {
 						return errors.NewArgumentError(len(args), 1)
 					}
@@ -183,7 +183,7 @@ func init() {
 				HelpText: "year() - Return the year",
 			},
 			"month": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) < 1 {
 						return errors.NewArgumentError(len(args), 1)
 					}
@@ -200,7 +200,7 @@ func init() {
 				HelpText: "month() - Return the month (1-12)",
 			},
 			"day": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) < 1 {
 						return errors.NewArgumentError(len(args), 1)
 					}
@@ -217,7 +217,7 @@ func init() {
 				HelpText: "day() - Return the day of month",
 			},
 			"hour": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) < 1 {
 						return errors.NewArgumentError(len(args), 1)
 					}
@@ -234,7 +234,7 @@ func init() {
 				HelpText: "hour() - Return the hour (0-23)",
 			},
 			"minute": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) < 1 {
 						return errors.NewArgumentError(len(args), 1)
 					}
@@ -251,7 +251,7 @@ func init() {
 				HelpText: "minute() - Return the minute (0-59)",
 			},
 			"second": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) < 1 {
 						return errors.NewArgumentError(len(args), 1)
 					}
@@ -268,7 +268,7 @@ func init() {
 				HelpText: "second() - Return the second (0-59)",
 			},
 			"weekday": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) < 1 {
 						return errors.NewArgumentError(len(args), 1)
 					}
@@ -292,7 +292,7 @@ func init() {
 				HelpText: "weekday() - Return day of week (Monday=0, Sunday=6)",
 			},
 			"isoweekday": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) < 1 {
 						return errors.NewArgumentError(len(args), 1)
 					}
@@ -314,7 +314,7 @@ func init() {
 				HelpText: "isoweekday() - Return day of week (Monday=1, Sunday=7)",
 			},
 			"isoformat": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) < 1 {
 						return errors.NewArgumentError(len(args), 1)
 					}
@@ -331,7 +331,7 @@ func init() {
 				HelpText: "isoformat() - Return ISO 8601 formatted string",
 			},
 			"replace": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) < 1 {
 						return errors.NewArgumentError(len(args), 1)
 					}
@@ -348,7 +348,7 @@ func init() {
 					year, month, day := t.Year(), t.Month(), t.Day()
 					hour, minute, second, nsec := t.Hour(), t.Minute(), t.Second(), t.Nanosecond()
 
-					for key, val := range kwargs {
+					for key, val := range kwargs.Kwargs {
 						intVal, ok := val.(*object.Integer)
 						if !ok {
 							return errors.NewTypeError("INTEGER", val.Type().String())
@@ -380,7 +380,7 @@ func init() {
 			},
 			// Comparison dunder methods
 			"__lt__": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) < 2 {
 						return errors.NewArgumentError(len(args), 2)
 					}
@@ -404,7 +404,7 @@ func init() {
 				},
 			},
 			"__gt__": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) < 2 {
 						return errors.NewArgumentError(len(args), 2)
 					}
@@ -428,7 +428,7 @@ func init() {
 				},
 			},
 			"__le__": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) < 2 {
 						return errors.NewArgumentError(len(args), 2)
 					}
@@ -452,7 +452,7 @@ func init() {
 				},
 			},
 			"__ge__": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) < 2 {
 						return errors.NewArgumentError(len(args), 2)
 					}
@@ -476,7 +476,7 @@ func init() {
 				},
 			},
 			"__eq__": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) < 2 {
 						return errors.NewArgumentError(len(args), 2)
 					}
@@ -500,7 +500,7 @@ func init() {
 				},
 			},
 			"__ne__": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) < 2 {
 						return errors.NewArgumentError(len(args), 2)
 					}
@@ -524,7 +524,7 @@ func init() {
 				},
 			},
 			"__sub__": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) < 2 {
 						return errors.NewArgumentError(len(args), 2)
 					}
@@ -549,7 +549,7 @@ func init() {
 				},
 			},
 			"__add__": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) < 2 {
 						return errors.NewArgumentError(len(args), 2)
 					}
@@ -583,7 +583,7 @@ func init() {
 		Name: "date",
 		Methods: map[string]object.Object{
 			"__str__": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) < 1 {
 						return errors.NewArgumentError(len(args), 1)
 					}
@@ -606,7 +606,7 @@ func init() {
 			"weekday":    DatetimeClass.Methods["weekday"],
 			"isoweekday": DatetimeClass.Methods["isoweekday"],
 			"isoformat": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) < 1 {
 						return errors.NewArgumentError(len(args), 1)
 					}
@@ -623,7 +623,7 @@ func init() {
 				HelpText: "isoformat() - Return ISO 8601 formatted date string",
 			},
 			"replace": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) < 1 {
 						return errors.NewArgumentError(len(args), 1)
 					}
@@ -638,7 +638,7 @@ func init() {
 
 					year, month, day := t.Year(), t.Month(), t.Day()
 
-					for key, val := range kwargs {
+					for key, val := range kwargs.Kwargs {
 						intVal, ok := val.(*object.Integer)
 						if !ok {
 							return errors.NewTypeError("INTEGER", val.Type().String())
@@ -668,7 +668,7 @@ func init() {
 			"__eq__": DatetimeClass.Methods["__eq__"],
 			"__ne__": DatetimeClass.Methods["__ne__"],
 			"__sub__": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) < 2 {
 						return errors.NewArgumentError(len(args), 2)
 					}
@@ -694,7 +694,7 @@ func init() {
 				},
 			},
 			"__add__": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) < 2 {
 						return errors.NewArgumentError(len(args), 2)
 					}
@@ -727,7 +727,7 @@ func init() {
 
 // datetimeConstructorBuiltin is the callable that creates datetime instances
 var datetimeConstructorBuiltin = &object.Builtin{
-	Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+	Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 		if len(args) < 3 {
 			return errors.NewError("datetime() requires at least 3 arguments: year, month, day")
 		}
@@ -782,7 +782,7 @@ var datetimeConstructorBuiltin = &object.Builtin{
 			}
 		}
 
-		for key, val := range kwargs {
+		for key, val := range kwargs.Kwargs {
 			intVal, ok := val.(*object.Integer)
 			if !ok {
 				return errors.NewTypeError("INTEGER", val.Type().String())
@@ -809,19 +809,19 @@ var datetimeConstructorBuiltin = &object.Builtin{
 Creates a datetime instance for the specified date and time.`,
 	Attributes: map[string]object.Object{
 		"now": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				return createDatetimeInstance(time.Now())
 			},
 			HelpText: "now() - Return current local datetime",
 		},
 		"utcnow": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				return createDatetimeInstance(time.Now().UTC())
 			},
 			HelpText: "utcnow() - Return current UTC datetime",
 		},
 		"strftime": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 2 {
 					return errors.NewArgumentError(len(args), 2)
 				}
@@ -850,7 +850,7 @@ Creates a datetime instance for the specified date and time.`,
 			HelpText: "strftime(format, timestamp_or_datetime) - Format timestamp or datetime as string",
 		},
 		"strptime": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 2 {
 					return errors.NewArgumentError(len(args), 2)
 				}
@@ -872,7 +872,7 @@ Creates a datetime instance for the specified date and time.`,
 			HelpText: "strptime(date_string, format) - Parse string to datetime",
 		},
 		"fromtimestamp": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 1 {
 					return errors.NewArgumentError(len(args), 1)
 				}
@@ -894,7 +894,7 @@ Creates a datetime instance for the specified date and time.`,
 
 // dateConstructorBuiltin is the callable that creates date instances
 var dateConstructorBuiltin = &object.Builtin{
-	Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+	Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 		if len(args) != 3 {
 			return errors.NewError("date() requires exactly 3 arguments: year, month, day")
 		}
@@ -924,7 +924,7 @@ var dateConstructorBuiltin = &object.Builtin{
 Creates a date instance for the specified date.`,
 	Attributes: map[string]object.Object{
 		"today": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				now := time.Now()
 				return createDateInstance(now)
 			},
@@ -935,7 +935,7 @@ Creates a date instance for the specified date.`,
 
 // timedeltaBuiltinNew provides Python-compatible datetime.timedelta function
 var timedeltaBuiltinNew = &object.Builtin{
-	Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+	Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 		if len(args) > 0 {
 			return errors.NewError("timedelta() takes no positional arguments")
 		}
@@ -953,7 +953,7 @@ var timedeltaBuiltinNew = &object.Builtin{
 			}
 		}
 
-		for key, val := range kwargs {
+		for key, val := range kwargs.Kwargs {
 			num, err := extractNum(val)
 			if err != nil {
 				return err

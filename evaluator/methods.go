@@ -137,7 +137,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		switch fn := pair.Value.(type) {
 		case *object.Builtin:
 			ctxWithEnv := SetEnvInContext(ctx, env)
-			return fn.Fn(ctxWithEnv, keywords, args...)
+			return fn.Fn(ctxWithEnv, object.NewKwargs(keywords), args...)
 		case *object.Function:
 			return applyFunctionWithContext(ctx, fn, args, keywords, env)
 		case *object.LambdaFunction:
@@ -159,7 +159,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		}
 		if builtin, ok := builtins["keys"]; ok {
 			ctxWithEnv := SetEnvInContext(ctx, env)
-			return builtin.Fn(ctxWithEnv, nil, dict)
+			return builtin.Fn(ctxWithEnv, object.NewKwargs(nil), dict)
 		}
 	case "values":
 		if len(args) != 0 {
@@ -170,7 +170,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		}
 		if builtin, ok := builtins["values"]; ok {
 			ctxWithEnv := SetEnvInContext(ctx, env)
-			return builtin.Fn(ctxWithEnv, nil, dict)
+			return builtin.Fn(ctxWithEnv, object.NewKwargs(nil), dict)
 		}
 	case "items":
 		if len(args) != 0 {
@@ -181,7 +181,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		}
 		if builtin, ok := builtins["items"]; ok {
 			ctxWithEnv := SetEnvInContext(ctx, env)
-			return builtin.Fn(ctxWithEnv, nil, dict)
+			return builtin.Fn(ctxWithEnv, object.NewKwargs(nil), dict)
 		}
 	case "get":
 		if len(args) < 1 || len(args) > 2 {

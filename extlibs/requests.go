@@ -46,7 +46,7 @@ var ResponseClass = &object.Class{
 	Name: "Response",
 	Methods: map[string]object.Object{
 		"json": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 1 {
 					return errors.NewArgumentError(len(args), 1)
 				}
@@ -64,7 +64,7 @@ var ResponseClass = &object.Class{
 			HelpText: `json() - Parses the response body as JSON and returns the parsed object`,
 		},
 		"raise_for_status": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 1 {
 					return errors.NewArgumentError(len(args), 1)
 				}
@@ -162,12 +162,12 @@ func parseRequestOptions(options map[string]object.Object) (int, map[string]stri
 // extractRequestArgs extracts URL, optional data, and remaining options from kwargs and args.
 // hasData should be true for POST/PUT/PATCH methods, false for GET/DELETE.
 // Returns (url, data, options, errorOrNil).
-func extractRequestArgs(kwargs map[string]object.Object, args []object.Object, hasData bool) (string, string, map[string]object.Object, object.Object) {
+func extractRequestArgs(kwargs object.Kwargs, args []object.Object, hasData bool) (string, string, map[string]object.Object, object.Object) {
 	var url, data string
 	options := make(map[string]object.Object)
 
 	// 1. Handle kwargs
-	for k, v := range kwargs {
+	for k, v := range kwargs.Kwargs {
 		if k == "url" {
 			if s, ok := v.AsString(); ok {
 				url = s
@@ -226,12 +226,12 @@ func extractRequestArgs(kwargs map[string]object.Object, args []object.Object, h
 var RequestsLibrary = object.NewLibrary(map[string]*object.Builtin{
 	// Exceptions namespace - returns dict with exception types
 	"exceptions": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			return exceptionsNamespace
 		},
 	},
 	"get": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			url, _, options, err := extractRequestArgs(kwargs, args, false)
 			if err != nil {
 				return err
@@ -254,7 +254,7 @@ Returns:
   Response object with status_code, text, headers, body, url, and json() method`,
 	},
 	"post": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			url, data, options, err := extractRequestArgs(kwargs, args, true)
 			if err != nil {
 				return err
@@ -278,7 +278,7 @@ Returns:
   Response object with status_code, text, headers, body, url, and json() method`,
 	},
 	"put": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			url, data, options, err := extractRequestArgs(kwargs, args, true)
 			if err != nil {
 				return err
@@ -302,7 +302,7 @@ Returns:
   Response object with status_code, text, headers, body, url, and json() method`,
 	},
 	"delete": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			url, _, options, err := extractRequestArgs(kwargs, args, false)
 			if err != nil {
 				return err
@@ -325,7 +325,7 @@ Returns:
   Response object with status_code, text, headers, body, url, and json() method`,
 	},
 	"patch": {
-		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			url, data, options, err := extractRequestArgs(kwargs, args, true)
 			if err != nil {
 				return err
