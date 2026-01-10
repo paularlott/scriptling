@@ -1,10 +1,14 @@
 # Taskfile.yml for building Scriptling CLI
-version: '3'
+version: "3"
 
 vars:
   BIN_DIR: bin
   CLI_DIR: scriptling-cli
   LDFLAGS: -ldflags="-s -w -X github.com/paularlott/scriptling/build.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  BUILT_AT:
+    sh: date +%Y%m%d.%H%M%S%z
+  VERSION:
+    sh: go run ./tools/getversion
 
 tasks:
   clean:
@@ -20,7 +24,15 @@ tasks:
 
   build-platforms:
     desc: Build for all platforms (Linux, macOS, Windows)
-    deps: [build-linux-amd64, build-linux-arm64, build-darwin-amd64, build-darwin-arm64, build-windows-amd64, build-windows-arm64]
+    deps:
+      [
+        build-linux-amd64,
+        build-linux-arm64,
+        build-darwin-amd64,
+        build-darwin-arm64,
+        build-windows-amd64,
+        build-windows-arm64,
+      ]
 
   build-all:
     desc: Build for all platforms
@@ -75,3 +87,17 @@ tasks:
     deps: [build]
     cmds:
       - cp {{.BIN_DIR}}/scriptling /usr/local/bin/scriptling
+
+  release:
+    desc: Tag the version and create GitHub release
+    cmds:
+      - |
+        # Check if tag exists
+        if git tag -l v{{.VERSION}} | grep -q v{{.VERSION}}; then
+          echo "Tag v{{.VERSION}} already exists, skipping tag creation"
+        else
+          echo "Creating tag v{{.VERSION}}"
+          git tag -a v{{.VERSION}} -m "Release {{.VERSION}}"
+          git push origin v{{.VERSION}}
+        fi
+        gh release create v{{.VERSION}} -t "Release {{.VERSION}}" -n "Scriptling {{.VERSION}}"
