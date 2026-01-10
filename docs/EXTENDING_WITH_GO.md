@@ -506,7 +506,29 @@ The Fluent API automatically converts between Go types and Scriptling objects:
 
 ### Function Signatures
 
-Functions can have various signatures:
+The Fluent API supports flexible function signatures with optional context and kwargs parameters:
+
+**Supported signature patterns:**
+- `func(args...) result` - Positional arguments only
+- `func(ctx context.Context, args...) result` - Context + positional arguments
+- `func(kwargs object.Kwargs, args...) result` - Kwargs + positional arguments  
+- `func(ctx context.Context, kwargs object.Kwargs, args...) result` - Context + kwargs + positional arguments
+- `func(kwargs object.Kwargs) result` - Kwargs only
+- `func(ctx context.Context, kwargs object.Kwargs) result` - Context + kwargs only
+- `func(ctx context.Context) result` - Context only
+- `func() result` - No parameters
+
+**Context parameter:**
+```go
+builder.Function("timeout_op", func(ctx context.Context, timeout int) error {
+    select {
+    case <-time.After(time.Duration(timeout) * time.Second):
+        return nil
+    case <-ctx.Done():
+        return ctx.Err()
+    }
+})
+```
 
 **Single return value:**
 ```go
@@ -561,13 +583,11 @@ builder.Function("process_config", func(config map[string]any) string {
 
 ### Keyword Arguments (Kwargs)
 
-The Fluent API supports keyword arguments through the `scriptling.Kwargs` type. When used as the last parameter in a function signature, the builder automatically passes the keyword arguments map to it.
+The Fluent API supports keyword arguments through the `object.Kwargs` type. When used as the first or second parameter (after optional context), the builder automatically passes the keyword arguments to it.
 
 **Kwargs-only function:**
 ```go
-import "github.com/paularlott/scriptling"
-
-builder.Function("connect", func(kwargs scriptling.Kwargs) (string, error) {
+builder.Function("connect", func(kwargs object.Kwargs) (string, error) {
     host, err := kwargs.GetString("host", "localhost")
     if err != nil {
         return "", err
@@ -585,9 +605,30 @@ builder.Function("connect", func(kwargs scriptling.Kwargs) (string, error) {
 // connect()                               # → "localhost:8080"
 ```
 
+**Context + kwargs:**
+```go
+builder.Function("timeout_connect", func(ctx context.Context, kwargs object.Kwargs) (string, error) {
+    host, err := kwargs.GetString("host", "localhost")
+    if err != nil {
+        return "", err
+    }
+    
+    timeout, err := kwargs.GetInt("timeout", 30)
+    if err != nil {
+        return "", err
+    }
+    
+    // Use context for timeout
+    ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+    defer cancel()
+    
+    return fmt.Sprintf("Connected to %s", host), nil
+})
+```
+
 **Mixed positional and kwargs:**
 ```go
-builder.Function("format", func(name string, count int, kwargs scriptling.Kwargs) (string, error) {
+builder.Function("format", func(kwargs object.Kwargs, name string, count int) (string, error) {
     prefix, err := kwargs.GetString("prefix", ">")
     if err != nil {
         return "", err
@@ -606,9 +647,25 @@ builder.Function("format", func(name string, count int, kwargs scriptling.Kwargs
 // format("task", 7, prefix="[", suffix="]")  # → "[ task: 7 times ]"
 ```
 
+**Context + kwargs + positional:**
+```go
+builder.Function("process", func(ctx context.Context, kwargs object.Kwargs, data string) (string, error) {
+    timeout, err := kwargs.GetInt("timeout", 30)
+    if err != nil {
+        return "", err
+    }
+    
+    // Process with context and timeout
+    ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+    defer cancel()
+    
+    return "Processed: " + data, nil
+})
+```
+
 #### Kwargs Helper Methods
 
-The `scriptling.Kwargs` type provides helper methods for extracting values with defaults:
+The `object.Kwargs` type provides helper methods for extracting values with defaults:
 
 | Method | Description |
 |--------|-------------|
@@ -616,15 +673,16 @@ The `scriptling.Kwargs` type provides helper methods for extracting values with 
 | `GetInt(name, default) (int64, error)` | Extract int (accepts Integer/Float) |
 | `GetFloat(name, default) (float64, error)` | Extract float (accepts Integer/Float) |
 | `GetBool(name, default) (bool, error)` | Extract bool |
+| `GetList(name, default) ([]Object, error)` | Extract list elements |
 | `Has(name) bool` | Check if key exists |
 | `Keys() []string` | Get all keys |
 | `Len() int` | Get number of kwargs |
 | `Get(name) object.Object` | Get raw Object value |
 
-**Must* variants (panic on error):**
+**Must* variants (ignore errors):**
 ```go
-builder.Function("quick", func(kwargs scriptling.Kwargs) string {
-    // Must helpers panic on error - use for simple cases
+builder.Function("quick", func(kwargs object.Kwargs) string {
+    // Must helpers ignore errors and return defaults
     timeout := kwargs.MustGetInt("timeout", 30)
     debug := kwargs.MustGetBool("debug", false)
     return fmt.Sprintf("timeout=%d debug=%t", timeout, debug)
@@ -638,7 +696,7 @@ Kwargs helpers return errors when:
 - This helps catch typos like passing `"123"` instead of `123`
 
 ```go
-builder.Function("connect", func(kwargs scriptling.Kwargs) (string, error) {
+builder.Function("connect", func(kwargs object.Kwargs) (string, error) {
     port, err := kwargs.GetInt("port", 8080)
     if err != nil {
         // err.Error() = "port: must be a number"

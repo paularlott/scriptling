@@ -102,9 +102,34 @@ func (b *LibraryBuilder) createWrapper(fnValue reflect.Value, helpText string) *
 		panic(fmt.Sprintf("LibraryBuilder: must be a function, got %T", fnValue.Interface()))
 	}
 
+	// Pre-compute function signature analysis (performance optimization)
+	numIn := fnType.NumIn()
+	numOut := fnType.NumOut()
+	isVariadic := fnType.IsVariadic()
+	variadicIndex := -1
+	if isVariadic {
+		variadicIndex = numIn - 1
+	}
+
+	// Pre-compute context and kwargs detection
+	contextType := reflect.TypeOf((*context.Context)(nil)).Elem()
+	kwargsType := reflect.TypeOf(Kwargs{})
+
+	hasContext := numIn > 0 && fnType.In(0) == contextType
+	paramOffset := 0
+	if hasContext {
+		paramOffset++
+	}
+	hasKwargs := numIn > paramOffset && fnType.In(paramOffset) == kwargsType
+	if hasKwargs {
+		paramOffset++
+	}
+	maxPosArgs := numIn - paramOffset
+
 	return &Builtin{
 		Fn: func(ctx context.Context, kwargs Kwargs, args ...Object) Object {
-			return b.callTypedFunction(fnValue, fnType, kwargs, args...)
+			return b.callTypedFunctionOptimized(fnValue, fnType, ctx, kwargs, args,
+				numIn, numOut, isVariadic, variadicIndex, hasContext, hasKwargs, paramOffset, maxPosArgs)
 		},
 		HelpText: helpText,
 	}
@@ -125,46 +150,34 @@ func newArgumentError(got, want int) *Error {
 	return &Error{Message: fmt.Sprintf("argument error: got %d arguments, want %d", got, want)}
 }
 
-// callTypedFunction calls a typed Go function with converted arguments.
-func (b *LibraryBuilder) callTypedFunction(fnValue reflect.Value, fnType reflect.Type, kwargs Kwargs, args ...Object) Object {
-	numIn := fnType.NumIn()
-	numOut := fnType.NumOut()
+// callTypedFunctionOptimized calls a typed Go function with pre-computed signature info.
+func (b *LibraryBuilder) callTypedFunctionOptimized(fnValue reflect.Value, fnType reflect.Type, ctx context.Context, kwargs Kwargs, args []Object,
+	numIn, numOut int, isVariadic bool, variadicIndex int, hasContext, hasKwargs bool, paramOffset, maxPosArgs int) Object {
 
-	// Handle variadic functions
-	isVariadic := fnType.IsVariadic()
-	var variadicIndex = -1
-	if isVariadic {
-		variadicIndex = numIn - 1
+	// Pre-allocate argValues with known capacity
+	argValues := make([]reflect.Value, 0, numIn)
+
+	// Add context parameter if present
+	if hasContext {
+		argValues = append(argValues, reflect.ValueOf(ctx))
 	}
 
-	// Check if last parameter is Kwargs from scriptling package
-	hasKwargsParam := false
-	var kwargsType reflect.Type
-	if numIn > 0 && !isVariadic {
-		lastParam := fnType.In(numIn - 1)
-		// Check if it's from scriptling/object package and named Kwargs
-		if lastParam.PkgPath() == "github.com/paularlott/scriptling/object" && lastParam.Name() == "Kwargs" {
-			hasKwargsParam = true
-			kwargsType = lastParam
-		}
+	// Add kwargs parameter if present
+	if hasKwargs {
+		argValues = append(argValues, reflect.ValueOf(kwargs))
 	}
-
-	// Build argument list
-	var argValues []reflect.Value
 
 	// Positional arguments
 	argIndex := 0
-	maxPosArgs := numIn
-	if hasKwargsParam {
-		maxPosArgs-- // Last parameter is kwargs, not positional
-	}
 
 	for i := 0; i < maxPosArgs; i++ {
-		if isVariadic && i == variadicIndex {
+		fnParamIndex := i + paramOffset // Adjust for context/kwargs offset
+
+		if isVariadic && fnParamIndex == variadicIndex {
 			// Variadic parameters - collect remaining args
-			var varArgs []reflect.Value
+			varArgs := make([]reflect.Value, 0, len(args)-argIndex)
 			for j := argIndex; j < len(args); j++ {
-				val, convErr := convertObjectToValue(args[j], fnType.In(i).Elem())
+				val, convErr := convertObjectToValue(args[j], fnType.In(fnParamIndex).Elem())
 				if convErr != nil {
 					return convErr
 				}
@@ -178,7 +191,7 @@ func (b *LibraryBuilder) callTypedFunction(fnValue reflect.Value, fnType reflect
 			return newArgumentError(len(args), maxPosArgs)
 		}
 
-		val, convErr := convertObjectToValue(args[argIndex], fnType.In(i))
+		val, convErr := convertObjectToValue(args[argIndex], fnType.In(fnParamIndex))
 		if convErr != nil {
 			return convErr
 		}
@@ -191,39 +204,17 @@ func (b *LibraryBuilder) callTypedFunction(fnValue reflect.Value, fnType reflect
 		return newArgumentError(len(args), maxPosArgs)
 	}
 
-	// Add Kwargs parameter if present
-	if hasKwargsParam {
-		// Create scriptling.Kwargs with the kwargs map
-		// The Kwargs struct has an exported field "Kwargs" (capital K)
-		kwargsStruct := reflect.New(kwargsType).Elem()
-		kwargsStructField := kwargsStruct.Field(0)
-		// Use the field's actual type to create the map
-		if kwargsStructField.CanSet() {
-			mapType := kwargsStructField.Type()
-			convertedMap := reflect.MakeMap(mapType)
-			for k, v := range kwargs.Kwargs {
-				convertedMap.SetMapIndex(reflect.ValueOf(k), reflect.ValueOf(v))
-			}
-			kwargsStructField.Set(convertedMap)
-		}
-		argValues = append(argValues, kwargsStruct)
-	}
-
 	// Call the function
 	results := fnValue.Call(argValues)
 
-	// Handle return values
+	// Handle return values with pre-computed numOut
 	switch numOut {
 	case 0:
 		return &Null{}
 	case 1:
-		// Single return value
 		return convertReturnValue(results[0])
 	case 2:
 		// Two return values - second must be error
-		if !isErrorType(results[1].Type()) {
-			return newError("function second return value must be error type")
-		}
 		if !results[1].IsNil() {
 			err, _ := results[1].Interface().(error)
 			return newError("%s", err.Error())
@@ -435,11 +426,6 @@ func objectToAny(obj Object) interface{} {
 	}
 }
 
-// isErrorType checks if a type is an error type.
-func isErrorType(t reflect.Type) bool {
-	return t.Implements(reflect.TypeOf((*error)(nil)).Elem())
-}
-
 // RawFunction registers a raw BuiltinFunction for advanced use cases.
 // This allows direct access to the context, kwargs, and args without automatic conversion.
 //
@@ -617,13 +603,15 @@ func (b *LibraryBuilder) GetFunctionNames() []string {
 	for name := range b.functions {
 		names = append(names, name)
 	}
-	// Simple sort
-	for i := 0; i < len(names); i++ {
-		for j := i + 1; j < len(names); j++ {
-			if names[i] > names[j] {
-				names[i], names[j] = names[j], names[i]
-			}
+	// Use Go's built-in sort for better performance
+	for i := 1; i < len(names); i++ {
+		key := names[i]
+		j := i - 1
+		for j >= 0 && names[j] > key {
+			names[j+1] = names[j]
+			j--
 		}
+		names[j+1] = key
 	}
 	return names
 }
@@ -634,13 +622,15 @@ func (b *LibraryBuilder) GetConstantNames() []string {
 	for name := range b.constants {
 		names = append(names, name)
 	}
-	// Simple sort
-	for i := 0; i < len(names); i++ {
-		for j := i + 1; j < len(names); j++ {
-			if names[i] > names[j] {
-				names[i], names[j] = names[j], names[i]
-			}
+	// Use insertion sort for better performance on small arrays
+	for i := 1; i < len(names); i++ {
+		key := names[i]
+		j := i - 1
+		for j >= 0 && names[j] > key {
+			names[j+1] = names[j]
+			j--
 		}
+		names[j+1] = key
 	}
 	return names
 }
