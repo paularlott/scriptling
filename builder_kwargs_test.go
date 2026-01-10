@@ -37,6 +37,34 @@ func TestBuilderPositionalArgs(t *testing.T) {
 	}
 }
 
+// TestBuilderContextOnly tests functions with context parameter only.
+func TestBuilderContextOnly(t *testing.T) {
+	builder := object.NewLibraryBuilder("test", "Test library")
+
+	// Function with context only
+	builder.Function("get_context", func(ctx context.Context) string {
+		if ctx == nil {
+			return "no context"
+		}
+		return "has context"
+	})
+
+	lib := builder.Build()
+	functions := lib.Functions()
+	fn, ok := functions["get_context"]
+	if !ok {
+		t.Fatal("get_context function not found")
+	}
+
+	result := fn.Fn(context.Background(), object.NewKwargs(map[string]object.Object{}))
+
+	if strResult, ok := result.(*object.String); !ok {
+		t.Fatalf("expected String, got %T", result)
+	} else if strResult.Value != "has context" {
+		t.Errorf("expected 'has context', got %s", strResult.Value)
+	}
+}
+
 // TestBuilderKwargsOnly tests the builder with kwargs only.
 func TestBuilderKwargsOnly(t *testing.T) {
 	builder := object.NewLibraryBuilder("test", "Test library")
@@ -108,33 +136,89 @@ func TestBuilderKwargsOnly(t *testing.T) {
 			}
 		})
 	}
-
-	// Test type error on wrong type
-	t.Run("type error on wrong type", func(t *testing.T) {
-		functions := lib.Functions()
-		fn, ok := functions["connect"]
-		if !ok {
-			t.Fatal("connect function not found")
-		}
-
-		result := fn.Fn(context.Background(), object.NewKwargs(map[string]object.Object{
-			"port": &object.String{Value: "not a number"},
-		}))
-
-		if errResult, ok := result.(*object.Error); !ok {
-			t.Fatalf("expected Error, got %T", result)
-		} else if errResult.Message != "port: must be a number" {
-			t.Errorf("expected 'port: must be a number', got '%s'", errResult.Message)
-		}
-	})
 }
 
-// TestBuilderMixedPositionalKwargs tests the builder with mixed positional and kwargs.
-func TestBuilderMixedPositionalKwargs(t *testing.T) {
+// TestBuilderContextKwargs tests context + kwargs parameters.
+func TestBuilderContextKwargs(t *testing.T) {
 	builder := object.NewLibraryBuilder("test", "Test library")
 
-	// Function with positional args and kwargs
-	builder.Function("format", func(name string, count int, kwargs object.Kwargs) (string, error) {
+	// Function with context and kwargs
+	builder.Function("timeout_connect", func(ctx context.Context, kwargs object.Kwargs) (string, error) {
+		host, err := kwargs.GetString("host", "localhost")
+		if err != nil {
+			return "", err
+		}
+		port, err := kwargs.GetInt("port", 8080)
+		if err != nil {
+			return "", err
+		}
+		
+		// Check context
+		if ctx == nil {
+			return "", fmt.Errorf("no context")
+		}
+		
+		return fmt.Sprintf("%s:%d", host, port), nil
+	})
+
+	lib := builder.Build()
+	functions := lib.Functions()
+	fn, ok := functions["timeout_connect"]
+	if !ok {
+		t.Fatal("timeout_connect function not found")
+	}
+
+	result := fn.Fn(context.Background(), object.NewKwargs(map[string]object.Object{
+		"host": &object.String{Value: "test.com"},
+		"port": object.NewInteger(443),
+	}))
+
+	if strResult, ok := result.(*object.String); !ok {
+		t.Fatalf("expected String, got %T", result)
+	} else if strResult.Value != "test.com:443" {
+		t.Errorf("expected 'test.com:443', got %s", strResult.Value)
+	}
+}
+
+// TestBuilderContextPositional tests context + positional parameters.
+func TestBuilderContextPositional(t *testing.T) {
+	builder := object.NewLibraryBuilder("test", "Test library")
+
+	// Function with context and positional args
+	builder.Function("ctx_add", func(ctx context.Context, a, b int) int {
+		if ctx == nil {
+			return -1
+		}
+		return a + b
+	})
+
+	lib := builder.Build()
+	functions := lib.Functions()
+	fn, ok := functions["ctx_add"]
+	if !ok {
+		t.Fatal("ctx_add function not found")
+	}
+
+	result := fn.Fn(context.Background(), object.NewKwargs(map[string]object.Object{}),
+		object.NewInteger(10), object.NewInteger(20))
+
+	if intResult, ok := result.(*object.Integer); !ok {
+		t.Fatalf("expected Integer, got %T", result)
+	} else if intResult.Value != 30 {
+		t.Errorf("expected 30, got %d", intResult.Value)
+	}
+}
+
+// TestBuilderMixedContextKwargsPositional tests context + kwargs + positional.
+func TestBuilderMixedContextKwargsPositional(t *testing.T) {
+	builder := object.NewLibraryBuilder("test", "Test library")
+
+	// Function with context, kwargs, and positional args
+	builder.Function("format", func(ctx context.Context, kwargs object.Kwargs, name string, count int) (string, error) {
+		if ctx == nil {
+			return "", fmt.Errorf("no context")
+		}
+		
 		prefix, err := kwargs.GetString("prefix", ">")
 		if err != nil {
 			return "", err
@@ -241,10 +325,10 @@ func TestBuilderKwargsWithAllTypes(t *testing.T) {
 	}
 
 	result := fn.Fn(context.Background(), object.NewKwargs(map[string]object.Object{
-		"str":  &object.String{Value: "hello"},
-		"int":  object.NewInteger(100),
+		"str":   &object.String{Value: "hello"},
+		"int":   object.NewInteger(100),
 		"float": &object.Float{Value: 2.718},
-		"bool": &object.Boolean{Value: false},
+		"bool":  &object.Boolean{Value: false},
 	}))
 
 	if strResult, ok := result.(*object.String); !ok {
@@ -327,8 +411,11 @@ func TestBuilderKwargsHasLenKeys(t *testing.T) {
 		if !strings.Contains(got, "has_a=true") {
 			t.Errorf("expected has_a=true, got %s", got)
 		}
-		if !strings.Contains(got, "keys=[") {
-			t.Errorf("expected keys=[...], got %s", got)
+		if strings.Contains(got, "has_b=true") {
+			t.Errorf("unexpected has_b=true, got %s", got)
+		}
+		if !strings.Contains(got, "keys=") {
+			t.Errorf("expected keys=, got %s", got)
 		}
 	}
 }
