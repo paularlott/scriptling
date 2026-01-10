@@ -361,7 +361,7 @@ The `scriptling` package provides helper functions in `conversion.go` that simpl
 ```go
 import "github.com/paularlott/scriptling"
 
-// Required argument extractors
+// Required positional argument extractors
 GetString(args, index, name) (string, object.Object)
 GetInt(args, index, name) (int64, object.Object)
 GetFloat(args, index, name) (float64, object.Object)
@@ -369,12 +369,84 @@ GetBool(args, index, name) (bool, object.Object)
 GetList(args, index, name) ([]object.Object, object.Object)
 GetDict(args, index, name) (map[string]object.Object, object.Object)
 
-// Optional argument extractors
+// Optional positional argument extractors
 GetStringOptional(args, index, name, defaultValue) (string, bool, object.Object)
 GetIntOptional(args, index, name, defaultValue) (int64, bool, object.Object)
+
+// Keyword argument extractors (with default values)
+GetStringFromKwargs(kwargs, name, defaultValue) (string, object.Object)
+GetIntFromKwargs(kwargs, name, defaultValue) (int64, object.Object)
+GetFloatFromKwargs(kwargs, name, defaultValue) (float64, object.Object)
+GetBoolFromKwargs(kwargs, name, defaultValue) (bool, object.Object)
 ```
 
-### Usage Example
+### Keyword Argument Helpers
+
+The kwargs helpers make working with optional named parameters much cleaner:
+
+**Without helpers (verbose):**
+```go
+p.RegisterFunc("connect", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+    var timeout int64 = 30
+    if t, ok := kwargs["timeout"]; ok {
+        if i, ok := t.AsInt(); ok {
+            timeout = i
+        } else {
+            return errors.NewError("timeout: must be a number")
+        }
+    }
+
+    var debug bool = false
+    if d, ok := kwargs["debug"]; ok {
+        if b, ok := d.AsBool(); ok {
+            debug = b
+        } else {
+            return errors.NewError("debug: must be a boolean")
+        }
+    }
+
+    var protocol string = "tcp"
+    if p, ok := kwargs["protocol"]; ok {
+        if s, ok := p.AsString(); ok {
+            protocol = s
+        } else {
+            return errors.NewError("protocol: must be a string")
+        }
+    }
+
+    // ... rest of function
+})
+```
+
+**With helpers (clean):**
+```go
+p.RegisterFunc("connect", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+    timeout, err := scriptling.GetIntFromKwargs(kwargs, "timeout", 30)
+    if err != nil {
+        return err
+    }
+    debug, err := scriptling.GetBoolFromKwargs(kwargs, "debug", false)
+    if err != nil {
+        return err
+    }
+    protocol, err := scriptling.GetStringFromKwargs(kwargs, "protocol", "tcp")
+    if err != nil {
+        return err
+    }
+
+    // ... rest of function
+})
+```
+
+### Kwargs Helper Behavior
+
+All kwargs helpers:
+1. **Return the value (nil error)** from kwargs if the key exists and type matches
+2. **Return the default value (nil error)** if key is missing
+3. **Return an error** if key exists but type doesn't match (helps catch typos like "timout" vs "timeout")
+4. **Accept type coercion** - `GetIntFromKwargs` accepts both Integer and Float, `GetFloatFromKwargs` accepts both Integer and Float
+
+### Complete Example with Positional and Keyword Arguments
 
 **Without helpers (verbose):**
 ```go
@@ -612,6 +684,95 @@ builder.Function("process_config", func(config map[string]any) string {
         return "Connected to " + host
     }
     return "No host"
+})
+```
+
+### Keyword Arguments (Kwargs)
+
+The Fluent API supports keyword arguments through the `scriptling.Kwargs` type. When used as the last parameter in a function signature, the builder automatically passes the keyword arguments map to it.
+
+**Kwargs-only function:**
+```go
+import "github.com/paularlott/scriptling"
+
+builder.Function("connect", func(kwargs scriptling.Kwargs) (string, error) {
+    host, err := kwargs.GetString("host", "localhost")
+    if err != nil {
+        return "", err
+    }
+    port, err := kwargs.GetInt("port", 8080)
+    if err != nil {
+        return "", err
+    }
+    return fmt.Sprintf("%s:%d", host, port), nil
+})
+
+// Usage in Scriptling:
+// connect(host="example.com", port=443)  # → "example.com:443"
+// connect(port=9000)                      # → "localhost:9000"
+// connect()                               # → "localhost:8080"
+```
+
+**Mixed positional and kwargs:**
+```go
+builder.Function("format", func(name string, count int, kwargs scriptling.Kwargs) (string, error) {
+    prefix, err := kwargs.GetString("prefix", ">")
+    if err != nil {
+        return "", err
+    }
+    suffix, err := kwargs.GetString("suffix", "<")
+    if err != nil {
+        return "", err
+    }
+    return fmt.Sprintf("%s %s: %d times %s", prefix, name, count, suffix), nil
+})
+
+// Usage in Scriptling:
+// format("task", 5)                          # → "> task: 5 times <"
+// format("task", 3, prefix=">>>")            # → ">>> task: 3 times <"
+// format("task", 10, suffix="<<<")           # → "> task: 10 times <<<"
+// format("task", 7, prefix="[", suffix="]")  # → "[ task: 7 times ]"
+```
+
+#### Kwargs Helper Methods
+
+The `scriptling.Kwargs` type provides helper methods for extracting values with defaults:
+
+| Method | Description |
+|--------|-------------|
+| `GetString(name, default) (string, error)` | Extract string, return default if missing |
+| `GetInt(name, default) (int64, error)` | Extract int (accepts Integer/Float) |
+| `GetFloat(name, default) (float64, error)` | Extract float (accepts Integer/Float) |
+| `GetBool(name, default) (bool, error)` | Extract bool |
+| `Has(name) bool` | Check if key exists |
+| `Keys() []string` | Get all keys |
+| `Len() int` | Get number of kwargs |
+| `Get(name) object.Object` | Get raw Object value |
+
+**Must* variants (panic on error):**
+```go
+builder.Function("quick", func(kwargs scriptling.Kwargs) string {
+    // Must helpers panic on error - use for simple cases
+    timeout := kwargs.MustGetInt("timeout", 30)
+    debug := kwargs.MustGetBool("debug", false)
+    return fmt.Sprintf("timeout=%d debug=%t", timeout, debug)
+})
+```
+
+#### Error Handling
+
+Kwargs helpers return errors when:
+- The kwarg is provided but has an incompatible type
+- This helps catch typos like passing `"123"` instead of `123`
+
+```go
+builder.Function("connect", func(kwargs scriptling.Kwargs) (string, error) {
+    port, err := kwargs.GetInt("port", 8080)
+    if err != nil {
+        // err.Error() = "port: must be a number"
+        return "", err
+    }
+    // ...
 })
 ```
 
