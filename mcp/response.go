@@ -104,8 +104,10 @@ func DictToMap(dict *object.Dict) map[string]interface{} {
 
 	result := make(map[string]interface{}, len(dict.Pairs))
 	for _, pair := range dict.Pairs {
-		key := pair.Key.(*object.String).Value
-		result[key] = scriptlib.ToGo(pair.Value)
+		key, ok := pair.Key.AsString()
+		if ok {
+			result[key] = scriptlib.ToGo(pair.Value)
+		}
 	}
 	return result
 }

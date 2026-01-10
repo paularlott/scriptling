@@ -365,8 +365,8 @@ Example:
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 			initial := int64(0)
 			if len(args) > 0 {
-				if i, ok := args[0].(*object.Integer); ok {
-					initial = i.Value
+				if i, ok := args[0].AsInt(); ok {
+					initial = i
 				} else {
 					return errors.NewTypeError("INTEGER", args[0].Type().String())
 				}
@@ -380,8 +380,8 @@ Example:
 						Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 							delta := int64(1)
 							if len(args) > 0 {
-								if d, ok := args[0].(*object.Integer); ok {
-									delta = d.Value
+								if d, ok := args[0].AsInt(); ok {
+									delta = d
 								} else {
 									return errors.NewTypeError("INTEGER", args[0].Type().String())
 								}
@@ -402,8 +402,8 @@ Example:
 							if len(args) != 1 {
 								return errors.NewArgumentError(len(args), 1)
 							}
-							if val, ok := args[0].(*object.Integer); ok {
-								atomic.set(val.Value)
+							if val, ok := args[0].AsInt(); ok {
+								atomic.set(val)
 								return &object.Null{}
 							}
 							return errors.NewTypeError("INTEGER", args[0].Type().String())
@@ -484,8 +484,8 @@ Example:
 						Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 							delta := int64(1)
 							if len(args) > 0 {
-								if d, ok := args[0].(*object.Integer); ok {
-									delta = d.Value
+								if d, ok := args[0].AsInt(); ok {
+									delta = d
 								}
 							}
 							wg.wg.Add(int(delta))
@@ -531,13 +531,13 @@ Example:
 		Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 			maxsize := 0 // Unbounded by default
 			if len(args) > 0 {
-				if m, ok := args[0].(*object.Integer); ok {
-					maxsize = int(m.Value)
+				if m, ok := args[0].AsInt(); ok {
+					maxsize = int(m)
 				}
 			}
 			if m, ok := kwargs["maxsize"]; ok {
-				if mInt, ok := m.(*object.Integer); ok {
-					maxsize = int(mInt.Value)
+				if mInt, ok := m.AsInt(); ok {
+					maxsize = int(mInt)
 				}
 			}
 
@@ -615,18 +615,18 @@ Example:
 			queueDepth := 0
 
 			if len(args) > 1 {
-				if w, ok := args[1].(*object.Integer); ok {
-					workers = int(w.Value)
+				if w, ok := args[1].AsInt(); ok {
+					workers = int(w)
 				}
 			}
 			if w, ok := kwargs["workers"]; ok {
-				if wInt, ok := w.(*object.Integer); ok {
-					workers = int(wInt.Value)
+				if wInt, ok := w.AsInt(); ok {
+					workers = int(wInt)
 				}
 			}
 			if q, ok := kwargs["queue_depth"]; ok {
-				if qInt, ok := q.(*object.Integer); ok {
-					queueDepth = int(qInt.Value)
+				if qInt, ok := q.AsInt(); ok {
+					queueDepth = int(qInt)
 				}
 			}
 

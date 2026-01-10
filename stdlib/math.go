@@ -214,15 +214,15 @@ y must not be zero. Returns a float.`,
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
 			}
-			a, aOk := args[0].(*object.Integer)
-			b, bOk := args[1].(*object.Integer)
-			if !aOk {
+			a, ok := args[0].AsInt()
+			if !ok {
 				return errors.NewTypeError("INTEGER", args[0].Type().String())
 			}
-			if !bOk {
+			b, ok := args[1].AsInt()
+			if !ok {
 				return errors.NewTypeError("INTEGER", args[1].Type().String())
 			}
-			return &object.Integer{Value: gcd(a.Value, b.Value)}
+			return &object.Integer{Value: gcd(a, b)}
 		},
 		HelpText: `gcd(a, b) - Return the greatest common divisor of a and b
 
@@ -234,11 +234,10 @@ Returns an integer.`,
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			arg, ok := args[0].(*object.Integer)
+			n, ok := args[0].AsInt()
 			if !ok {
 				return errors.NewTypeError("INTEGER", args[0].Type().String())
 			}
-			n := arg.Value
 			if n < 0 {
 				return errors.NewError("factorial: negative number")
 			}

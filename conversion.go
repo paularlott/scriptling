@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -106,8 +107,8 @@ func ToGo(obj object.Object) interface{} {
 		result := make(map[string]interface{})
 		for _, pair := range o.Pairs {
 			// Keys can be any Object, but typically are strings
-			if keyStr, ok := pair.Key.(*object.String); ok {
-				result[keyStr.Value] = ToGo(pair.Value)
+			if keyStr, ok := pair.Key.AsString(); ok {
+				result[keyStr] = ToGo(pair.Value)
 			} else {
 				// For non-string keys, use Inspect() representation
 				result[pair.Key.Inspect()] = ToGo(pair.Value)
@@ -128,4 +129,107 @@ func ToGo(obj object.Object) interface{} {
 		// For other types (like ReturnValue, Break, Continue), return string representation
 		return o.Inspect()
 	}
+}
+
+// Helper functions for extracting arguments with automatic error generation.
+// These make stdlib/extlib function implementations more compact and consistent.
+
+// GetString extracts a string argument at the given index.
+// Returns the value and nil on success, or empty string and an error on failure.
+func GetString(args []object.Object, index int, name string) (string, object.Object) {
+	if index >= len(args) {
+		return "", errors.NewError("%s: missing argument", name)
+	}
+	if s, ok := args[index].AsString(); ok {
+		return s, nil
+	}
+	return "", errors.NewError("%s: must be a string", name)
+}
+
+// GetInt extracts an integer argument at the given index.
+// Returns the value and nil on success, or 0 and an error on failure.
+func GetInt(args []object.Object, index int, name string) (int64, object.Object) {
+	if index >= len(args) {
+		return 0, errors.NewError("%s: missing argument", name)
+	}
+	if i, ok := args[index].AsInt(); ok {
+		return i, nil
+	}
+	return 0, errors.NewError("%s: must be an integer", name)
+}
+
+// GetFloat extracts a float argument at the given index.
+// Returns the value and nil on success, or 0 and an error on failure.
+func GetFloat(args []object.Object, index int, name string) (float64, object.Object) {
+	if index >= len(args) {
+		return 0, errors.NewError("%s: missing argument", name)
+	}
+	if f, ok := args[index].AsFloat(); ok {
+		return f, nil
+	}
+	// Also accept integers and convert to float
+	if i, ok := args[index].AsInt(); ok {
+		return float64(i), nil
+	}
+	return 0, errors.NewError("%s: must be a number", name)
+}
+
+// GetBool extracts a boolean argument at the given index.
+// Returns the value and nil on success, or false and an error on failure.
+func GetBool(args []object.Object, index int, name string) (bool, object.Object) {
+	if index >= len(args) {
+		return false, errors.NewError("%s: missing argument", name)
+	}
+	if b, ok := args[index].AsBool(); ok {
+		return b, nil
+	}
+	return false, errors.NewError("%s: must be a boolean", name)
+}
+
+// GetList extracts a list argument at the given index.
+// Returns the value and nil on success, or nil and an error on failure.
+func GetList(args []object.Object, index int, name string) ([]object.Object, object.Object) {
+	if index >= len(args) {
+		return nil, errors.NewError("%s: missing argument", name)
+	}
+	if l, ok := args[index].AsList(); ok {
+		return l, nil
+	}
+	return nil, errors.NewError("%s: must be a list", name)
+}
+
+// GetDict extracts a dict argument at the given index.
+// Returns the value and nil on success, or nil and an error on failure.
+func GetDict(args []object.Object, index int, name string) (map[string]object.Object, object.Object) {
+	if index >= len(args) {
+		return nil, errors.NewError("%s: missing argument", name)
+	}
+	if d, ok := args[index].AsDict(); ok {
+		return d, nil
+	}
+	return nil, errors.NewError("%s: must be a dict", name)
+}
+
+// GetStringOptional extracts an optional string argument at the given index.
+// Returns the value, true if present, or default value, false if not present or error.
+func GetStringOptional(args []object.Object, index int, name string, defaultValue string) (string, bool, object.Object) {
+	if index >= len(args) {
+		return defaultValue, false, nil
+	}
+	if s, ok := args[index].AsString(); ok {
+		return s, true, nil
+	}
+	return defaultValue, false, errors.NewError("%s: must be a string", name)
+}
+
+// GetIntOptional extracts an optional integer argument at the given index.
+// Returns the value, true if present, or default value, false if not present or error.
+func GetIntOptional(args []object.Object, index int, name string, defaultValue int64) (int64, bool, object.Object) {
+	if index >= len(args) {
+		return defaultValue, false, nil
+	}
+	if i, ok := args[index].AsInt(); ok {
+		return i, true, nil
+	}
+	return defaultValue, false, errors.NewError("%s: must be an integer", name)
 }

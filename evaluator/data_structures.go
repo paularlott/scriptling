@@ -65,7 +65,10 @@ func evalSuperIndexExpression(superObj, index object.Object) object.Object {
 	if index.Type() != object.STRING_OBJ {
 		return errors.NewError("super index must be string")
 	}
-	field := index.(*object.String).Value
+	field, ok := index.AsString()
+	if !ok {
+		return errors.NewError("super index must be string")
+	}
 	super := superObj.(*object.Super)
 
 	currentClass := super.Class.BaseClass
@@ -80,7 +83,10 @@ func evalSuperIndexExpression(superObj, index object.Object) object.Object {
 
 func evalListIndexExpression(list, index object.Object) object.Object {
 	listObject := list.(*object.List)
-	idx := index.(*object.Integer).Value
+	idx, ok := index.AsInt()
+	if !ok {
+		return errors.NewError("list index must be integer")
+	}
 	length := int64(len(listObject.Elements))
 
 	// Handle negative indices
@@ -97,7 +103,10 @@ func evalListIndexExpression(list, index object.Object) object.Object {
 
 func evalTupleIndexExpression(tuple, index object.Object) object.Object {
 	tupleObject := tuple.(*object.Tuple)
-	idx := index.(*object.Integer).Value
+	idx, ok := index.AsInt()
+	if !ok {
+		return errors.NewError("tuple index must be integer")
+	}
 	length := int64(len(tupleObject.Elements))
 
 	// Handle negative indices
@@ -127,7 +136,10 @@ func evalDictIndexExpression(dict, index object.Object) object.Object {
 func evalStringIndexExpression(str, index object.Object) object.Object {
 	strObject := str.(*object.String)
 	runes := []rune(strObject.Value)
-	idx := index.(*object.Integer).Value
+	idx, ok := index.AsInt()
+	if !ok {
+		return errors.NewError("string index must be integer")
+	}
 	length := int64(len(runes))
 
 	// Handle negative indices
@@ -156,7 +168,10 @@ func evalInstanceIndexExpression(instance, index object.Object) object.Object {
 	if index.Type() != object.STRING_OBJ {
 		return errors.NewError("instance index must be string")
 	}
-	field := index.(*object.String).Value
+	field, ok := index.AsString()
+	if !ok {
+		return errors.NewError("instance index must be string")
+	}
 	if val, ok := inst.Fields[field]; ok {
 		return val
 	}
@@ -171,7 +186,10 @@ func evalClassIndexExpression(class, index object.Object) object.Object {
 	if index.Type() != object.STRING_OBJ {
 		return errors.NewError("class index must be string")
 	}
-	field := index.(*object.String).Value
+	field, ok := index.AsString()
+	if !ok {
+		return errors.NewError("class index must be string")
+	}
 	cl := class.(*object.Class)
 	if fn, ok := cl.Methods[field]; ok {
 		return fn
@@ -183,7 +201,10 @@ func evalBuiltinIndexExpression(builtin, index object.Object) object.Object {
 	if index.Type() != object.STRING_OBJ {
 		return errors.NewError("builtin index must be string")
 	}
-	field := index.(*object.String).Value
+	field, ok := index.AsString()
+	if !ok {
+		return errors.NewError("builtin index must be string")
+	}
 	b := builtin.(*object.Builtin)
 	if b.Attributes != nil {
 		if val, ok := b.Attributes[field]; ok {
@@ -208,10 +229,11 @@ func evalSliceExpressionWithContext(ctx context.Context, node *ast.SliceExpressi
 		if isError(startObj) {
 			return startObj
 		}
-		if startObj.Type() != object.INTEGER_OBJ {
+		s, ok := startObj.AsInt()
+		if !ok {
 			return errors.NewTypeError("INTEGER", startObj.Type().String())
 		}
-		start = startObj.(*object.Integer).Value
+		start = s
 		hasStart = true
 	}
 
@@ -220,10 +242,11 @@ func evalSliceExpressionWithContext(ctx context.Context, node *ast.SliceExpressi
 		if isError(endObj) {
 			return endObj
 		}
-		if endObj.Type() != object.INTEGER_OBJ {
+		e, ok := endObj.AsInt()
+		if !ok {
 			return errors.NewTypeError("INTEGER", endObj.Type().String())
 		}
-		end = endObj.(*object.Integer).Value
+		end = e
 		hasEnd = true
 	}
 
@@ -232,10 +255,11 @@ func evalSliceExpressionWithContext(ctx context.Context, node *ast.SliceExpressi
 		if isError(stepObj) {
 			return stepObj
 		}
-		if stepObj.Type() != object.INTEGER_OBJ {
+		s, ok := stepObj.AsInt()
+		if !ok {
 			return errors.NewTypeError("INTEGER", stepObj.Type().String())
 		}
-		step = stepObj.(*object.Integer).Value
+		step = s
 		hasStep = true
 		if step == 0 {
 			return errors.NewError("slice step cannot be zero")

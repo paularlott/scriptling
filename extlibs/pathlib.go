@@ -56,7 +56,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 						return errors.NewArgumentError(len(args), 1)
 					}
 					pathInstance := args[0].(*object.Instance)
-					cleanPath := pathInstance.Fields["__path__"].(*object.String).Value
+					cleanPath, _ := pathInstance.Fields["__path__"].AsString()
 
 					parts := make([]string, 0, len(args))
 					parts = append(parts, cleanPath)
@@ -85,7 +85,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 						return errors.NewArgumentError(len(args), 1)
 					}
 					pathInstance := args[0].(*object.Instance)
-					cleanPath := pathInstance.Fields["__path__"].(*object.String).Value
+					cleanPath, _ := pathInstance.Fields["__path__"].AsString()
 
 					if err := p.checkPathSecurity(cleanPath); err != nil {
 						return err
@@ -101,7 +101,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 						return errors.NewArgumentError(len(args), 1)
 					}
 					pathInstance := args[0].(*object.Instance)
-					cleanPath := pathInstance.Fields["__path__"].(*object.String).Value
+					cleanPath, _ := pathInstance.Fields["__path__"].AsString()
 
 					if err := p.checkPathSecurity(cleanPath); err != nil {
 						return &object.Boolean{Value: false}
@@ -120,7 +120,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 						return errors.NewArgumentError(len(args), 1)
 					}
 					pathInstance := args[0].(*object.Instance)
-					cleanPath := pathInstance.Fields["__path__"].(*object.String).Value
+					cleanPath, _ := pathInstance.Fields["__path__"].AsString()
 
 					if err := p.checkPathSecurity(cleanPath); err != nil {
 						return &object.Boolean{Value: false}
@@ -139,7 +139,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 						return errors.NewArgumentError(len(args), 1)
 					}
 					pathInstance := args[0].(*object.Instance)
-					cleanPath := pathInstance.Fields["__path__"].(*object.String).Value
+					cleanPath, _ := pathInstance.Fields["__path__"].AsString()
 
 					if err := p.checkPathSecurity(cleanPath); err != nil {
 						return err
@@ -172,7 +172,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 						return errors.NewArgumentError(len(args), 1)
 					}
 					pathInstance := args[0].(*object.Instance)
-					cleanPath := pathInstance.Fields["__path__"].(*object.String).Value
+					cleanPath, _ := pathInstance.Fields["__path__"].AsString()
 
 					if err := p.checkPathSecurity(cleanPath); err != nil {
 						return err
@@ -192,7 +192,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 						return errors.NewArgumentError(len(args), 1)
 					}
 					pathInstance := args[0].(*object.Instance)
-					cleanPath := pathInstance.Fields["__path__"].(*object.String).Value
+					cleanPath, _ := pathInstance.Fields["__path__"].AsString()
 
 					missingOk := false
 					if val, ok := kwargs["missing_ok"]; ok {
@@ -222,7 +222,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 						return errors.NewArgumentError(len(args), 1)
 					}
 					pathInstance := args[0].(*object.Instance)
-					cleanPath := pathInstance.Fields["__path__"].(*object.String).Value
+					cleanPath, _ := pathInstance.Fields["__path__"].AsString()
 
 					if err := p.checkPathSecurity(cleanPath); err != nil {
 						return err
@@ -242,7 +242,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 						return errors.NewArgumentError(len(args), 2)
 					}
 					pathInstance := args[0].(*object.Instance)
-					cleanPath := pathInstance.Fields["__path__"].(*object.String).Value
+					cleanPath, _ := pathInstance.Fields["__path__"].AsString()
 					content, ok := args[1].AsString()
 					if !ok {
 						return errors.NewTypeError("STRING", args[1].Type().String())

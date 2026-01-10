@@ -8,7 +8,7 @@ require (
 	github.com/paularlott/mcp v0.7.2
 	github.com/shirou/gopsutil/v3 v3.24.5
 	golang.org/x/net v0.48.0
-	golang.org/x/text v0.32.0
+	golang.org/x/text v0.33.0
 )
 
 require (
@@ -20,5 +20,5 @@ require (
 	github.com/tklauser/numcpus v0.11.0 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	golang.org/x/oauth2 v0.34.0 // indirect
-	golang.org/x/sys v0.39.0 // indirect
+	golang.org/x/sys v0.40.0 // indirect
 )
