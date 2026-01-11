@@ -120,7 +120,7 @@ result, err := p.Eval("x = 5 + 3")
 
 // Exchange variables
 p.SetVar("name", "Alice")
-value, ok := p.GetVarAsString("name")
+value, objErr := p.GetVarAsString("name")
 
 // Register Go functions
 p.RegisterFunc("custom", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {

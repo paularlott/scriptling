@@ -63,10 +63,10 @@ result, err := p.Eval(script)
 
 ```go
     p.Eval(configScript)
-    if dbHost, ok := p.GetVarAsString("db_host"); ok {
+    if dbHost, objErr := p.GetVarAsString("db_host"); objErr == nil {
         fmt.Printf("Database host: %s\n", dbHost)
     }
-    if cacheSize, ok := p.GetVarAsInt("cache_size"); ok {
+    if cacheSize, objErr := p.GetVarAsInt("cache_size"); objErr == nil {
         fmt.Printf("Cache size: %d\n", cacheSize)
     }
 ```
@@ -82,29 +82,29 @@ result = {"status": "success", "count": 10}
 `)
 
 // Get variables using convenience methods (recommended)
-if value, ok := p.GetVarAsInt("x"); ok {
+if value, objErr := p.GetVarAsInt("x"); objErr == nil {
     fmt.Printf("x = %d\n", value)  // x = 42
 }
 
-if name, ok := p.GetVarAsString("name"); ok {
+if name, objErr := p.GetVarAsString("name"); objErr == nil {
     fmt.Printf("name = %s\n", name)  // name = Alice
 }
 
-if count, ok := p.GetVarAsBool("flag"); ok {
+if count, objErr := p.GetVarAsBool("flag"); objErr == nil {
     fmt.Printf("flag = %t\n", count)  // flag = true
 }
 
 // Get variables using generic GetVar (advanced use cases)
-if value, ok := p.GetVar("result"); ok {
+if value, objErr := p.GetVar("result"); objErr == nil {
     fmt.Printf("result = %v\n", value)  // result = {status: success, count: 10}
 }
 
 // Get complex types
-if numbers, ok := p.GetVarAsList("numbers"); ok {
+if numbers, objErr := p.GetVarAsList("numbers"); objErr == nil {
     fmt.Printf("First number: %s\n", numbers[0].Inspect())  // Access list elements
 }
 
-if config, ok := p.GetVarAsDict("config"); ok {
+if config, objErr := p.GetVarAsDict("config"); objErr == nil {
     if host, ok := config["host"]; ok {
         fmt.Printf("Host: %s\n", host.Inspect())  // Access dict values
     }
@@ -289,14 +289,14 @@ fmt.Printf("Message: %s\n", message)  // Message: Hello, World
 
 `CallFunction` automatically converts Go types to Scriptling objects:
 
-| Go Type | Scriptling Type |
-|---------|-----------------|
-| `int`, `int64` | Integer |
-| `float64` | Float |
-| `string` | String |
-| `bool` | Boolean |
-| `[]T` | List |
-| `map[string]T` | Dict |
+| Go Type        | Scriptling Type |
+| -------------- | --------------- |
+| `int`, `int64` | Integer         |
+| `float64`      | Float           |
+| `string`       | String          |
+| `bool`         | Boolean         |
+| `[]T`          | List            |
+| `map[string]T` | Dict            |
 
 ### Return Values
 
@@ -531,6 +531,7 @@ else:
 When working with Scriptling objects in Go:
 
 ### String Objects
+
 ```go
 strObj := &object.String{Value: "hello"}
 if str, ok := obj.(*object.String); ok {
@@ -539,6 +540,7 @@ if str, ok := obj.(*object.String); ok {
 ```
 
 ### Integer Objects
+
 ```go
 intObj := &object.Integer{Value: 42}
 if integer, ok := obj.(*object.Integer); ok {
@@ -547,6 +549,7 @@ if integer, ok := obj.(*object.Integer); ok {
 ```
 
 ### Boolean Objects
+
 ```go
 boolObj := &object.Boolean{Value: true}
 if boolean, ok := obj.(*object.Boolean); ok {
@@ -555,6 +558,7 @@ if boolean, ok := obj.(*object.Boolean); ok {
 ```
 
 ### Float Objects
+
 ```go
 floatObj := &object.Float{Value: 3.14}
 if float, ok := obj.(*object.Float); ok {
@@ -567,12 +571,14 @@ if float, ok := obj.(*object.Float); ok {
 By default, the `print()` function outputs to stdout. You can capture this output programmatically:
 
 ### Default Behavior (stdout)
+
 ```go
 p := scriptling.New()
 p.Eval(`print("Hello World")`)  // Prints to stdout
 ```
 
 ### Capture Output
+
 ```go
 p := scriptling.New()
 p.EnableOutputCapture()  // Enable output capture
@@ -592,6 +598,7 @@ output2 := p.GetOutput()  // Returns ""
 ```
 
 ### Mixed Usage
+
 ```go
 p := scriptling.New()
 
@@ -608,6 +615,7 @@ captured := p.GetOutput()
 ```
 
 ### Use Cases
+
 - **Testing**: Capture output for assertions
 - **Logging**: Redirect script output to custom loggers
 - **Processing**: Capture output for further processing
@@ -671,7 +679,7 @@ if err != nil {
 }
 
 // Check if variable exists before using
-if value, ok := p.GetVar("result"); ok {
+if value, objErr := p.GetVar("result"); objErr == nil {
     // Variable exists, use value
     fmt.Printf("Result: %v\n", value)
 } else {
@@ -716,7 +724,7 @@ func TestScriptlingIntegration(t *testing.T) {
     }
 
     // Test variable getting with convenience methods
-    if result, ok := p.GetVarAsInt("result"); ok {
+    if result, objErr := p.GetVarAsInt("result"); objErr == nil {
         if result != 84 {
             t.Errorf("Expected 84, got %d", result)
         }
@@ -740,6 +748,7 @@ func TestScriptlingIntegration(t *testing.T) {
 ## Common Patterns
 
 ### Configuration Scripts
+
 ```go
 import (
     "github.com/paularlott/scriptling"
@@ -761,15 +770,16 @@ else:
 `
 
 p.Eval(configScript)
-if dbHost, ok := p.GetVarAsString("db_host"); ok {
+if dbHost, objErr := p.GetVarAsString("db_host"); objErr == nil {
     fmt.Printf("Database host: %s\n", dbHost)
 }
-if cacheSize, ok := p.GetVarAsInt("cache_size"); ok {
+if cacheSize, objErr := p.GetVarAsInt("cache_size"); objErr == nil {
     fmt.Printf("Cache size: %d\n", cacheSize)
 }
 ```
 
 ### Data Processing Pipeline
+
 ```go
 import (
     "github.com/paularlott/scriptling"
@@ -795,8 +805,12 @@ result = json.stringify(processed)
 `
 
 p.Eval(pipeline)
-result, _ := p.GetVar("result")
+result, objErr := p.GetVar("result")
+if objErr != nil {
+    // Handle error
+}
 ```
+
 ## Defining Classes in Go
 
 For information on defining Scriptling classes in Go, including creating custom types with high-performance methods, see [EXTENDING_WITH_GO.md](EXTENDING_WITH_GO.md#defining-classes-in-go).
