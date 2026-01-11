@@ -71,13 +71,13 @@ func TestBuilderKwargsOnly(t *testing.T) {
 
 	// Function with only kwargs (no positional args except Kwargs)
 	builder.Function("connect", func(kwargs object.Kwargs) (string, error) {
-		host, err := kwargs.GetString("host", "localhost")
-		if err != nil {
-			return "", err
+		host, objErr := kwargs.GetString("host", "localhost")
+		if objErr != nil {
+			return "", fmt.Errorf("failed to get host: %v", objErr)
 		}
-		port, err := kwargs.GetInt("port", 8080)
-		if err != nil {
-			return "", err
+		port, objErr := kwargs.GetInt("port", 8080)
+		if objErr != nil {
+			return "", fmt.Errorf("failed to get port: %v", objErr)
 		}
 		return fmt.Sprintf("%s:%d", host, port), nil
 	})
@@ -144,20 +144,20 @@ func TestBuilderContextKwargs(t *testing.T) {
 
 	// Function with context and kwargs
 	builder.Function("timeout_connect", func(ctx context.Context, kwargs object.Kwargs) (string, error) {
-		host, err := kwargs.GetString("host", "localhost")
-		if err != nil {
-			return "", err
+		host, objErr := kwargs.GetString("host", "localhost")
+		if objErr != nil {
+			return "", fmt.Errorf("failed to get host: %v", objErr)
 		}
-		port, err := kwargs.GetInt("port", 8080)
-		if err != nil {
-			return "", err
+		port, objErr := kwargs.GetInt("port", 8080)
+		if objErr != nil {
+			return "", fmt.Errorf("failed to get port: %v", objErr)
 		}
-		
+
 		// Check context
 		if ctx == nil {
 			return "", fmt.Errorf("no context")
 		}
-		
+
 		return fmt.Sprintf("%s:%d", host, port), nil
 	})
 
@@ -218,14 +218,14 @@ func TestBuilderMixedContextKwargsPositional(t *testing.T) {
 		if ctx == nil {
 			return "", fmt.Errorf("no context")
 		}
-		
-		prefix, err := kwargs.GetString("prefix", ">")
-		if err != nil {
-			return "", err
+
+		prefix, objErr := kwargs.GetString("prefix", ">")
+		if objErr != nil {
+			return "", fmt.Errorf("failed to get prefix: %v", objErr)
 		}
-		suffix, err := kwargs.GetString("suffix", "<")
-		if err != nil {
-			return "", err
+		suffix, objErr := kwargs.GetString("suffix", "<")
+		if objErr != nil {
+			return "", fmt.Errorf("failed to get suffix: %v", objErr)
 		}
 		return fmt.Sprintf("%s %s: %d times %s", prefix, name, count, suffix), nil
 	})
@@ -296,21 +296,21 @@ func TestBuilderKwargsWithAllTypes(t *testing.T) {
 	builder := object.NewLibraryBuilder("test", "Test library")
 
 	builder.Function("all_types", func(kwargs object.Kwargs) (string, error) {
-		s, err := kwargs.GetString("str", "default")
-		if err != nil {
-			return "", err
+		s, objErr := kwargs.GetString("str", "default")
+		if objErr != nil {
+			return "", fmt.Errorf("failed to get str: %v", objErr)
 		}
-		i, err := kwargs.GetInt("int", 42)
-		if err != nil {
-			return "", err
+		i, objErr := kwargs.GetInt("int", 42)
+		if objErr != nil {
+			return "", fmt.Errorf("failed to get int: %v", objErr)
 		}
-		f, err := kwargs.GetFloat("float", 3.14)
-		if err != nil {
-			return "", err
+		f, objErr := kwargs.GetFloat("float", 3.14)
+		if objErr != nil {
+			return "", fmt.Errorf("failed to get float: %v", objErr)
 		}
-		b, err := kwargs.GetBool("bool", true)
-		if err != nil {
-			return "", err
+		b, objErr := kwargs.GetBool("bool", true)
+		if objErr != nil {
+			return "", fmt.Errorf("failed to get bool: %v", objErr)
 		}
 		return fmt.Sprintf("str=%s int=%d float=%.2f bool=%t", s, i, f, b), nil
 	})

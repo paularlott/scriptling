@@ -33,9 +33,9 @@ Returns the value of a performance counter in fractional seconds.`,
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			seconds, ok := args[0].AsFloat()
-			if !ok {
-				return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
+			seconds, err := args[0].AsFloat()
+			if err != nil {
+				return errors.ParameterError("seconds", err)
 			}
 
 			// Create a timer that respects context cancellation
@@ -250,9 +250,9 @@ Converts a time tuple to a string in the format 'Mon Jan 2 15:04:05 2006'. If tu
 			if len(args) == 0 {
 				t = time.Now()
 			} else if len(args) == 1 {
-				timestamp, ok := args[0].AsFloat()
-				if !ok {
-					return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
+				timestamp, err := args[0].AsFloat()
+				if err != nil {
+					return errors.ParameterError("timestamp", err)
 				}
 				t = time.Unix(int64(timestamp), 0)
 			} else {

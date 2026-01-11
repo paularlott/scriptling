@@ -17,9 +17,9 @@ var HashlibLibrary = object.NewLibrary(map[string]*object.Builtin{
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			str, ok := args[0].AsString()
-			if !ok {
-				return errors.NewTypeError("STRING", args[0].Type().String())
+			str, err := args[0].AsString()
+			if err != nil {
+				return err
 			}
 			hash := sha256.Sum256([]byte(str))
 			return &object.String{Value: hex.EncodeToString(hash[:])}
@@ -33,9 +33,9 @@ Returns the SHA-256 hash of the input string as a hexadecimal string.`,
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			str, ok := args[0].AsString()
-			if !ok {
-				return errors.NewTypeError("STRING", args[0].Type().String())
+			str, err := args[0].AsString()
+			if err != nil {
+				return err
 			}
 			hash := sha1.Sum([]byte(str))
 			return &object.String{Value: hex.EncodeToString(hash[:])}
@@ -49,9 +49,9 @@ Returns the SHA-1 hash of the input string as a hexadecimal string.`,
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			str, ok := args[0].AsString()
-			if !ok {
-				return errors.NewTypeError("STRING", args[0].Type().String())
+			str, err := args[0].AsString()
+			if err != nil {
+				return err
 			}
 			hash := md5.Sum([]byte(str))
 			return &object.String{Value: hex.EncodeToString(hash[:])}

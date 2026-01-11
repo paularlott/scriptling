@@ -65,7 +65,7 @@ Use list(filter(...)) to get a list.`,
 			// Get sep kwarg (default: " ")
 			sep := " "
 			if sepObj := kwargs.Get("sep"); sepObj != nil {
-				if sepStr, ok := sepObj.AsString(); ok {
+				if sepStr, err := sepObj.AsString(); err == nil {
 					sep = sepStr
 				} else if _, ok := sepObj.(*object.Null); !ok {
 					return errors.NewError("sep must be None or a string, not %s", sepObj.Type())
@@ -75,7 +75,7 @@ Use list(filter(...)) to get a list.`,
 			// Get end kwarg (default: "\n")
 			end := "\n"
 			if endObj := kwargs.Get("end"); endObj != nil {
-				if endStr, ok := endObj.AsString(); ok {
+				if endStr, err := endObj.AsString(); err == nil {
 					end = endStr
 				} else if _, ok := endObj.(*object.Null); !ok {
 					return errors.NewError("end must be None or a string, not %s", endObj.Type())
@@ -300,7 +300,7 @@ Supports integers and floats, returns appropriate type.`,
 			reverse := false
 			if kwargs.Len() > 0 {
 				if rev := kwargs.Get("reverse"); rev != nil {
-					if b, ok := rev.AsBool(); ok {
+					if b, err := rev.AsBool(); err == nil {
 						reverse = b
 					}
 				}
@@ -421,26 +421,36 @@ Set reverse=True to sort in descending order.`,
 				return errors.NewArgumentError(len(args), 1)
 			}
 			var start, stop, step int64
+			var errObj object.Object
 			if len(args) == 1 {
-				if args[0].Type() != object.INTEGER_OBJ {
-					return errors.NewTypeError("INTEGER", args[0].Type().String())
+				stop, errObj = args[0].AsInt()
+				if errObj != nil {
+					return errors.ParameterError("stop", errObj)
 				}
-				stop = args[0].(*object.Integer).Value
 				step = 1
 			} else if len(args) == 2 {
-				if args[0].Type() != object.INTEGER_OBJ || args[1].Type() != object.INTEGER_OBJ {
-					return errors.NewTypeError("INTEGER", "mixed types")
+				start, errObj = args[0].AsInt()
+				if errObj != nil {
+					return errors.ParameterError("start", errObj)
 				}
-				start = args[0].(*object.Integer).Value
-				stop = args[1].(*object.Integer).Value
+				stop, errObj = args[1].AsInt()
+				if errObj != nil {
+					return errors.ParameterError("stop", errObj)
+				}
 				step = 1
 			} else {
-				if args[0].Type() != object.INTEGER_OBJ || args[1].Type() != object.INTEGER_OBJ || args[2].Type() != object.INTEGER_OBJ {
-					return errors.NewTypeError("INTEGER", "mixed types")
+				start, errObj = args[0].AsInt()
+				if errObj != nil {
+					return errors.ParameterError("start", errObj)
 				}
-				start = args[0].(*object.Integer).Value
-				stop = args[1].(*object.Integer).Value
-				step = args[2].(*object.Integer).Value
+				stop, errObj = args[1].AsInt()
+				if errObj != nil {
+					return errors.ParameterError("stop", errObj)
+				}
+				step, errObj = args[2].AsInt()
+				if errObj != nil {
+					return errors.ParameterError("step", errObj)
+				}
 				if step == 0 {
 					return errors.NewError("range step cannot be zero")
 				}
@@ -505,11 +515,11 @@ Returns a view object of (key, value) pairs for all items in the dictionary.`,
 			}
 			start := int64(0)
 			if len(args) == 2 {
-				if startObj, ok := args[1].AsInt(); ok {
-					start = startObj
-				} else {
-					return errors.NewTypeError("INTEGER", args[1].Type().String())
+				startObj, err := args[1].AsInt()
+				if err != nil {
+					return errors.ParameterError("start", err)
 				}
+				start = startObj
 			}
 			// Validate iterable type
 			switch args[0].(type) {
@@ -784,11 +794,11 @@ With multiple arguments, returns the largest argument.`,
 			}
 			ndigits := 0
 			if len(args) == 2 {
-				if nd, ok := args[1].AsInt(); ok {
-					ndigits = int(nd)
-				} else {
-					return errors.NewTypeError("INTEGER", args[1].Type().String())
+				nd, err := args[1].AsInt()
+				if err != nil {
+					return errors.ParameterError("ndigits", err)
 				}
+				ndigits = int(nd)
 			}
 			var value float64
 			switch num := args[0].(type) {
@@ -822,13 +832,14 @@ Returns an integer if ndigits is omitted or 0.`,
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			if num, ok := args[0].AsInt(); ok {
-				if num >= 0 {
-					return &object.String{Value: fmt.Sprintf("0x%x", num)}
-				}
-				return &object.String{Value: fmt.Sprintf("-0x%x", -num)}
+			num, err := args[0].AsInt()
+			if err != nil {
+				return errors.ParameterError("x", err)
 			}
-			return errors.NewTypeError("INTEGER", args[0].Type().String())
+			if num >= 0 {
+				return &object.String{Value: fmt.Sprintf("0x%x", num)}
+			}
+			return &object.String{Value: fmt.Sprintf("-0x%x", -num)}
 		},
 		HelpText: `hex(x) - Convert an integer to a lowercase hexadecimal string prefixed with "0x"`,
 	},
@@ -837,13 +848,14 @@ Returns an integer if ndigits is omitted or 0.`,
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			if num, ok := args[0].AsInt(); ok {
-				if num >= 0 {
-					return &object.String{Value: fmt.Sprintf("0b%b", num)}
-				}
-				return &object.String{Value: fmt.Sprintf("-0b%b", -num)}
+			num, err := args[0].AsInt()
+			if err != nil {
+				return errors.ParameterError("x", err)
 			}
-			return errors.NewTypeError("INTEGER", args[0].Type().String())
+			if num >= 0 {
+				return &object.String{Value: fmt.Sprintf("0b%b", num)}
+			}
+			return &object.String{Value: fmt.Sprintf("-0b%b", -num)}
 		},
 		HelpText: `bin(x) - Convert an integer to a binary string prefixed with "0b"`,
 	},
@@ -852,13 +864,14 @@ Returns an integer if ndigits is omitted or 0.`,
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			if num, ok := args[0].AsInt(); ok {
-				if num >= 0 {
-					return &object.String{Value: fmt.Sprintf("0o%o", num)}
-				}
-				return &object.String{Value: fmt.Sprintf("-0o%o", -num)}
+			num, err := args[0].AsInt()
+			if err != nil {
+				return errors.ParameterError("x", err)
 			}
-			return errors.NewTypeError("INTEGER", args[0].Type().String())
+			if num >= 0 {
+				return &object.String{Value: fmt.Sprintf("0o%o", num)}
+			}
+			return &object.String{Value: fmt.Sprintf("-0o%o", -num)}
 		},
 		HelpText: `oct(x) - Convert an integer to an octal string prefixed with "0o"`,
 	},
@@ -975,9 +988,9 @@ Equivalent to (a // b, a % b) for integers.`,
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
 			}
-			typeName, ok := args[1].AsString()
-			if !ok {
-				return errors.NewTypeError("STRING", args[1].Type().String())
+			typeName, err := args[1].AsString()
+			if err != nil {
+				return err
 			}
 			objType := args[0].Type().String()
 			// Support common Python type names
@@ -1016,13 +1029,14 @@ Type names: "int", "str", "float", "bool", "list", "dict", "tuple", "function", 
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			if num, ok := args[0].AsInt(); ok {
-				if num < 0 || num > 0x10FFFF {
-					return errors.NewError("chr() arg not in range(0x110000)")
-				}
-				return &object.String{Value: string(rune(num))}
+			num, err := args[0].AsInt()
+			if err != nil {
+				return errors.ParameterError("i", err)
 			}
-			return errors.NewTypeError("INTEGER", args[0].Type().String())
+			if num < 0 || num > 0x10FFFF {
+				return errors.NewError("chr() arg not in range(0x110000)")
+			}
+			return &object.String{Value: string(rune(num))}
 		},
 		HelpText: `chr(i) - Return a string of one character from Unicode code point
 
@@ -1033,14 +1047,15 @@ The argument must be in the range 0-1114111 (0x10FFFF).`,
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			if str, ok := args[0].AsString(); ok {
-				runes := []rune(str)
-				if len(runes) != 1 {
-					return errors.NewError("ord() expected a character, but string of length %d found", len(runes))
-				}
-				return object.NewInteger(int64(runes[0]))
+			str, err := args[0].AsString()
+			if err != nil {
+				return errors.ParameterError("c", err)
 			}
-			return errors.NewTypeError("STRING", args[0].Type().String())
+			runes := []rune(str)
+			if len(runes) != 1 {
+				return errors.NewError("ord() expected a character, but string of length %d found", len(runes))
+			}
+			return object.NewInteger(int64(runes[0]))
 		},
 		HelpText: `ord(c) - Return Unicode code point for a one-character string
 
@@ -1265,10 +1280,10 @@ Returns a unique integer identifier for the object.`,
 			value := args[0]
 			formatSpec := ""
 			if len(args) == 2 {
-				if spec, ok := args[1].AsString(); ok {
+				if spec, err := args[1].AsString(); err == nil {
 					formatSpec = spec
 				} else {
-					return errors.NewTypeError("STRING", args[1].Type().String())
+					return err
 				}
 			}
 			// Handle format specifiers
@@ -1360,9 +1375,9 @@ Supports width, alignment, and type specifiers.`,
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
 			}
-			name, ok := args[1].AsString()
-			if !ok {
-				return errors.NewTypeError("STRING", args[1].Type().String())
+			name, err := args[1].AsString()
+			if err != nil {
+				return err
 			}
 			// Check if object has the attribute/method
 			switch obj := args[0].(type) {
@@ -1390,9 +1405,9 @@ Returns True if the object has the named attribute.`,
 			if len(args) < 2 || len(args) > 3 {
 				return errors.NewError("getattr() takes 2 or 3 arguments (%d given)", len(args))
 			}
-			name, ok := args[1].AsString()
-			if !ok {
-				return errors.NewTypeError("STRING", args[1].Type().String())
+			name, err := args[1].AsString()
+			if err != nil {
+				return err
 			}
 			// Get attribute from object
 			switch obj := args[0].(type) {
@@ -1424,9 +1439,9 @@ If default is provided, returns it when attribute doesn't exist.`,
 			if len(args) != 3 {
 				return errors.NewArgumentError(len(args), 3)
 			}
-			name, ok := args[1].AsString()
-			if !ok {
-				return errors.NewTypeError("STRING", args[1].Type().String())
+			name, err := args[1].AsString()
+			if err != nil {
+				return err
 			}
 			// Set attribute on object
 			switch obj := args[0].(type) {
@@ -1453,9 +1468,9 @@ Only works on dict-like objects.`,
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
 			}
-			name, ok := args[1].AsString()
-			if !ok {
-				return errors.NewTypeError("STRING", args[1].Type().String())
+			name, err := args[1].AsString()
+			if err != nil {
+				return err
 			}
 			// Delete attribute from object
 			switch obj := args[0].(type) {
@@ -2107,8 +2122,9 @@ func GetImportBuiltin() *object.Builtin {
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			if args[0].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("STRING", args[0].Type().String())
+			libName, err := args[0].AsString()
+			if err != nil {
+				return errors.ParameterError("module_name", err)
 			}
 
 			env := getEnvFromContext(ctx)
@@ -2116,10 +2132,9 @@ func GetImportBuiltin() *object.Builtin {
 			if importCallback == nil {
 				return errors.NewError(errors.ErrImportError)
 			}
-			libName := args[0].(*object.String).Value
-			err := importCallback(libName)
-			if err != nil {
-				return errors.NewError("%s: %s", errors.ErrImportError, err.Error())
+			importErr := importCallback(libName)
+			if importErr != nil {
+				return errors.NewError("%s: %s", errors.ErrImportError, importErr.Error())
 			}
 			return &object.Null{}
 		},

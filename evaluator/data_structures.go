@@ -65,9 +65,9 @@ func evalSuperIndexExpression(superObj, index object.Object) object.Object {
 	if index.Type() != object.STRING_OBJ {
 		return errors.NewError("super index must be string")
 	}
-	field, ok := index.AsString()
-	if !ok {
-		return errors.NewError("super index must be string")
+	field, err := index.AsString()
+	if err != nil {
+		return err
 	}
 	super := superObj.(*object.Super)
 
@@ -83,8 +83,8 @@ func evalSuperIndexExpression(superObj, index object.Object) object.Object {
 
 func evalListIndexExpression(list, index object.Object) object.Object {
 	listObject := list.(*object.List)
-	idx, ok := index.AsInt()
-	if !ok {
+	idx, err := index.AsInt()
+	if err != nil {
 		return errors.NewError("list index must be integer")
 	}
 	length := int64(len(listObject.Elements))
@@ -103,8 +103,8 @@ func evalListIndexExpression(list, index object.Object) object.Object {
 
 func evalTupleIndexExpression(tuple, index object.Object) object.Object {
 	tupleObject := tuple.(*object.Tuple)
-	idx, ok := index.AsInt()
-	if !ok {
+	idx, err := index.AsInt()
+	if err != nil {
 		return errors.NewError("tuple index must be integer")
 	}
 	length := int64(len(tupleObject.Elements))
@@ -136,8 +136,8 @@ func evalDictIndexExpression(dict, index object.Object) object.Object {
 func evalStringIndexExpression(str, index object.Object) object.Object {
 	strObject := str.(*object.String)
 	runes := []rune(strObject.Value)
-	idx, ok := index.AsInt()
-	if !ok {
+	idx, err := index.AsInt()
+	if err != nil {
 		return errors.NewError("string index must be integer")
 	}
 	length := int64(len(runes))
@@ -168,9 +168,9 @@ func evalInstanceIndexExpression(instance, index object.Object) object.Object {
 	if index.Type() != object.STRING_OBJ {
 		return errors.NewError("instance index must be string")
 	}
-	field, ok := index.AsString()
-	if !ok {
-		return errors.NewError("instance index must be string")
+	field, err := index.AsString()
+	if err != nil {
+		return err
 	}
 	if val, ok := inst.Fields[field]; ok {
 		return val
@@ -186,9 +186,9 @@ func evalClassIndexExpression(class, index object.Object) object.Object {
 	if index.Type() != object.STRING_OBJ {
 		return errors.NewError("class index must be string")
 	}
-	field, ok := index.AsString()
-	if !ok {
-		return errors.NewError("class index must be string")
+	field, err := index.AsString()
+	if err != nil {
+		return err
 	}
 	cl := class.(*object.Class)
 	if fn, ok := cl.Methods[field]; ok {
@@ -201,9 +201,9 @@ func evalBuiltinIndexExpression(builtin, index object.Object) object.Object {
 	if index.Type() != object.STRING_OBJ {
 		return errors.NewError("builtin index must be string")
 	}
-	field, ok := index.AsString()
-	if !ok {
-		return errors.NewError("builtin index must be string")
+	field, err := index.AsString()
+	if err != nil {
+		return err
 	}
 	b := builtin.(*object.Builtin)
 	if b.Attributes != nil {
@@ -229,9 +229,9 @@ func evalSliceExpressionWithContext(ctx context.Context, node *ast.SliceExpressi
 		if isError(startObj) {
 			return startObj
 		}
-		s, ok := startObj.AsInt()
-		if !ok {
-			return errors.NewTypeError("INTEGER", startObj.Type().String())
+		s, err := startObj.AsInt()
+		if err != nil {
+			return err
 		}
 		start = s
 		hasStart = true
@@ -242,9 +242,9 @@ func evalSliceExpressionWithContext(ctx context.Context, node *ast.SliceExpressi
 		if isError(endObj) {
 			return endObj
 		}
-		e, ok := endObj.AsInt()
-		if !ok {
-			return errors.NewTypeError("INTEGER", endObj.Type().String())
+		e, err := endObj.AsInt()
+		if err != nil {
+			return err
 		}
 		end = e
 		hasEnd = true
@@ -255,9 +255,9 @@ func evalSliceExpressionWithContext(ctx context.Context, node *ast.SliceExpressi
 		if isError(stepObj) {
 			return stepObj
 		}
-		s, ok := stepObj.AsInt()
-		if !ok {
-			return errors.NewTypeError("INTEGER", stepObj.Type().String())
+		s, err := stepObj.AsInt()
+		if err != nil {
+			return err
 		}
 		step = s
 		hasStep = true

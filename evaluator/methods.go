@@ -346,11 +346,12 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 		if len(args) != 1 {
 			return errors.NewArgumentError(len(args), 1)
 		}
-		if elements, ok := args[0].AsList(); ok {
-			list.Elements = append(list.Elements, elements...)
-			return NULL
+		elements, err := args[0].AsList()
+		if err != nil {
+			return errors.ParameterError("iterable", err)
 		}
-		return errors.NewTypeError("LIST", args[0].Type().String())
+		list.Elements = append(list.Elements, elements...)
+		return NULL
 	case "index":
 		if len(args) < 1 || len(args) > 3 {
 			return errors.NewError("index() takes 1-3 arguments (%d given)", len(args))
@@ -359,26 +360,26 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 		start := 0
 		end := len(list.Elements)
 		if len(args) >= 2 {
-			if s, ok := args[1].AsInt(); ok {
-				start = int(s)
+			s, errObj := args[1].AsInt()
+			if errObj != nil {
+				return errors.ParameterError("start", errObj)
+			}
+			start = int(s)
+			if start < 0 {
+				start = len(list.Elements) + start
 				if start < 0 {
-					start = len(list.Elements) + start
-					if start < 0 {
-						start = 0
-					}
+					start = 0
 				}
-			} else {
-				return errors.NewTypeError("INTEGER", args[1].Type().String())
 			}
 		}
 		if len(args) == 3 {
-			if e, ok := args[2].AsInt(); ok {
-				end = int(e)
-				if end < 0 {
-					end = len(list.Elements) + end
-				}
-			} else {
-				return errors.NewTypeError("INTEGER", args[2].Type().String())
+			e, errObj := args[2].AsInt()
+			if errObj != nil {
+				return errors.ParameterError("end", errObj)
+			}
+			end = int(e)
+			if end < 0 {
+				end = len(list.Elements) + end
 			}
 		}
 		if start > len(list.Elements) {
@@ -414,16 +415,16 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 		}
 		idx := len(list.Elements) - 1
 		if len(args) == 1 {
-			if i, ok := args[0].AsInt(); ok {
-				idx = int(i)
-				if idx < 0 {
-					idx = len(list.Elements) + idx
-				}
-				if idx < 0 || idx >= len(list.Elements) {
-					return errors.NewError("pop index out of range")
-				}
-			} else {
-				return errors.NewTypeError("INTEGER", args[0].Type().String())
+			i, errObj := args[0].AsInt()
+			if errObj != nil {
+				return errors.ParameterError("index", errObj)
+			}
+			idx = int(i)
+			if idx < 0 {
+				idx = len(list.Elements) + idx
+			}
+			if idx < 0 || idx >= len(list.Elements) {
+				return errors.NewError("pop index out of range")
 			}
 		}
 		result := list.Elements[idx]
@@ -433,25 +434,26 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 		if len(args) != 2 {
 			return errors.NewArgumentError(len(args), 2)
 		}
-		if idx, ok := args[0].AsInt(); ok {
-			i := int(idx)
-			if i < 0 {
-				// Python behavior: negative index inserts at len + i (e.g., -1 inserts before last element)
-				i = len(list.Elements) + i
-				if i < 0 {
-					i = 0
-				}
-			}
-			if i > len(list.Elements) {
-				i = len(list.Elements)
-			}
-			// Optimized insert: avoid intermediate slice allocation
-			list.Elements = append(list.Elements, nil)
-			copy(list.Elements[i+1:], list.Elements[i:])
-			list.Elements[i] = args[1]
-			return NULL
+		idx, errObj := args[0].AsInt()
+		if errObj != nil {
+			return errors.ParameterError("index", errObj)
 		}
-		return errors.NewTypeError("INTEGER", args[0].Type().String())
+		i := int(idx)
+		if i < 0 {
+			// Python behavior: negative index inserts at len + i (e.g., -1 inserts before last element)
+			i = len(list.Elements) + i
+			if i < 0 {
+				i = 0
+			}
+		}
+		if i > len(list.Elements) {
+			i = len(list.Elements)
+		}
+		// Optimized insert: avoid intermediate slice allocation
+		list.Elements = append(list.Elements, nil)
+		copy(list.Elements[i+1:], list.Elements[i:])
+		list.Elements[i] = args[1]
+		return NULL
 	case "remove":
 		if len(args) != 1 {
 			return errors.NewArgumentError(len(args), 1)
@@ -497,7 +499,7 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 				keyFunc = kf
 			}
 			if rev, ok := keywords["reverse"]; ok {
-				if b, ok := rev.AsBool(); ok {
+				if b, err := rev.AsBool(); err == nil {
 					reverse = b
 				}
 			}
@@ -575,25 +577,29 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return &object.List{Elements: elements}
 		}
 		// With separator argument
-		if sep, ok := args[0].AsString(); ok {
-			parts := strings.Split(str.Value, sep)
-			elements := make([]object.Object, len(parts))
-			for i, part := range parts {
-				elements[i] = &object.String{Value: part}
-			}
-			return &object.List{Elements: elements}
+		sep, errObj := args[0].AsString()
+		if errObj != nil {
+			return errors.ParameterError("sep", errObj)
 		}
-		return errors.NewTypeError("STRING", args[0].Type().String())
+		parts := strings.Split(str.Value, sep)
+		elements := make([]object.Object, len(parts))
+		for i, part := range parts {
+			elements[i] = &object.String{Value: part}
+		}
+		return &object.List{Elements: elements}
 	case "replace":
 		if len(args) != 2 {
 			return errors.NewArgumentError(len(args), 2)
 		}
-		old, okOld := args[0].AsString()
-		new, okNew := args[1].AsString()
-		if !okOld || !okNew {
-			return errors.NewError("replace() arguments must be strings")
+		old, err := args[0].AsString()
+		if err != nil {
+			return err
 		}
-		return &object.String{Value: strings.ReplaceAll(str.Value, old, new)}
+		newVal, err := args[1].AsString()
+		if err != nil {
+			return err
+		}
+		return &object.String{Value: strings.ReplaceAll(str.Value, old, newVal)}
 	case "join":
 		if len(args) != 1 {
 			return errors.NewArgumentError(len(args), 1)
@@ -609,7 +615,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		}
 		parts := make([]string, len(elements))
 		for i, elem := range elements {
-			if s, ok := elem.AsString(); ok {
+			if s, err := elem.AsString(); err == nil {
 				parts[i] = s
 			} else {
 				parts[i] = elem.Inspect()
@@ -656,249 +662,256 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if len(args) != 1 {
 			return errors.NewArgumentError(len(args), 1)
 		}
-		if prefix, ok := args[0].AsString(); ok {
-			return nativeBoolToBooleanObject(strings.HasPrefix(str.Value, prefix))
+		prefix, errObj := args[0].AsString()
+		if errObj != nil {
+			return errors.ParameterError("prefix", errObj)
 		}
-		return errors.NewTypeError("STRING", args[0].Type().String())
+		return nativeBoolToBooleanObject(strings.HasPrefix(str.Value, prefix))
 	case "endswith":
 		if len(args) != 1 {
 			return errors.NewArgumentError(len(args), 1)
 		}
-		if suffix, ok := args[0].AsString(); ok {
-			return nativeBoolToBooleanObject(strings.HasSuffix(str.Value, suffix))
+		suffix, errObj := args[0].AsString()
+		if errObj != nil {
+			return errors.ParameterError("suffix", errObj)
 		}
-		return errors.NewTypeError("STRING", args[0].Type().String())
+		return nativeBoolToBooleanObject(strings.HasSuffix(str.Value, suffix))
 	case "find":
 		if len(args) < 1 || len(args) > 3 {
 			return errors.NewError("find() takes 1-3 arguments (%d given)", len(args))
 		}
-		if substr, ok := args[0].AsString(); ok {
-			start := 0
-			end := len(str.Value)
-			if len(args) >= 2 {
-				if s, ok := args[1].AsInt(); ok {
-					start = int(s)
-					if start < 0 {
-						start = len(str.Value) + start
-						if start < 0 {
-							start = 0
-						}
-					}
-				} else {
-					return errors.NewTypeError("INTEGER", args[1].Type().String())
-				}
-			}
-			if len(args) == 3 {
-				if e, ok := args[2].AsInt(); ok {
-					end = int(e)
-					if end < 0 {
-						end = len(str.Value) + end
-					}
-				} else {
-					return errors.NewTypeError("INTEGER", args[2].Type().String())
-				}
-			}
-			if start > len(str.Value) {
-				start = len(str.Value)
-			}
-			if end > len(str.Value) {
-				end = len(str.Value)
-			}
-			if start > end {
-				return object.NewInteger(-1)
-			}
-			searchStr := str.Value[start:end]
-			idx := strings.Index(searchStr, substr)
-			if idx == -1 {
-				return object.NewInteger(-1)
-			}
-			return object.NewInteger(int64(start + idx))
+		substr, errObj := args[0].AsString()
+		if errObj != nil {
+			return errors.ParameterError("sub", errObj)
 		}
-		return errors.NewTypeError("STRING", args[0].Type().String())
+		start := 0
+		end := len(str.Value)
+		if len(args) >= 2 {
+			s, errObj2 := args[1].AsInt()
+			if errObj2 != nil {
+				return errors.ParameterError("start", errObj2)
+			}
+			start = int(s)
+			if start < 0 {
+				start = len(str.Value) + start
+				if start < 0 {
+					start = 0
+				}
+			}
+		}
+		if len(args) == 3 {
+			e, errObj3 := args[2].AsInt()
+			if errObj3 != nil {
+				return errors.ParameterError("end", errObj3)
+			}
+			end = int(e)
+			if end < 0 {
+				end = len(str.Value) + end
+			}
+		}
+		if start > len(str.Value) {
+			start = len(str.Value)
+		}
+		if end > len(str.Value) {
+			end = len(str.Value)
+		}
+		if start > end {
+			return object.NewInteger(-1)
+		}
+		searchStr := str.Value[start:end]
+		idx := strings.Index(searchStr, substr)
+		if idx == -1 {
+			return object.NewInteger(-1)
+		}
+		return object.NewInteger(int64(start + idx))
 	case "rfind":
 		if len(args) < 1 || len(args) > 3 {
 			return errors.NewError("rfind() takes 1-3 arguments (%d given)", len(args))
 		}
-		if substr, ok := args[0].AsString(); ok {
-			start := 0
-			end := len(str.Value)
-			if len(args) >= 2 {
-				if s, ok := args[1].AsInt(); ok {
-					start = int(s)
-					if start < 0 {
-						start = len(str.Value) + start
-						if start < 0 {
-							start = 0
-						}
-					}
-				} else {
-					return errors.NewTypeError("INTEGER", args[1].Type().String())
-				}
-			}
-			if len(args) == 3 {
-				if e, ok := args[2].AsInt(); ok {
-					end = int(e)
-					if end < 0 {
-						end = len(str.Value) + end
-					}
-				} else {
-					return errors.NewTypeError("INTEGER", args[2].Type().String())
-				}
-			}
-			if start > len(str.Value) {
-				start = len(str.Value)
-			}
-			if end > len(str.Value) {
-				end = len(str.Value)
-			}
-			if start > end {
-				return object.NewInteger(-1)
-			}
-			searchStr := str.Value[start:end]
-			idx := strings.LastIndex(searchStr, substr)
-			if idx == -1 {
-				return object.NewInteger(-1)
-			}
-			return object.NewInteger(int64(start + idx))
+		substr, errObj := args[0].AsString()
+		if errObj != nil {
+			return errors.ParameterError("sub", errObj)
 		}
-		return errors.NewTypeError("STRING", args[0].Type().String())
+		start := 0
+		end := len(str.Value)
+		if len(args) >= 2 {
+			s, errObj2 := args[1].AsInt()
+			if errObj2 != nil {
+				return errors.ParameterError("start", errObj2)
+			}
+			start = int(s)
+			if start < 0 {
+				start = len(str.Value) + start
+				if start < 0 {
+					start = 0
+				}
+			}
+		}
+		if len(args) == 3 {
+			e, errObj3 := args[2].AsInt()
+			if errObj3 != nil {
+				return errors.ParameterError("end", errObj3)
+			}
+			end = int(e)
+			if end < 0 {
+				end = len(str.Value) + end
+			}
+		}
+		if start > len(str.Value) {
+			start = len(str.Value)
+		}
+		if end > len(str.Value) {
+			end = len(str.Value)
+		}
+		if start > end {
+			return object.NewInteger(-1)
+		}
+		searchStr := str.Value[start:end]
+		idx := strings.LastIndex(searchStr, substr)
+		if idx == -1 {
+			return object.NewInteger(-1)
+		}
+		return object.NewInteger(int64(start + idx))
 	case "rindex":
 		if len(args) < 1 || len(args) > 3 {
 			return errors.NewError("rindex() takes 1-3 arguments (%d given)", len(args))
 		}
-		if substr, ok := args[0].AsString(); ok {
-			start := 0
-			end := len(str.Value)
-			if len(args) >= 2 {
-				if s, ok := args[1].AsInt(); ok {
-					start = int(s)
-					if start < 0 {
-						start = len(str.Value) + start
-						if start < 0 {
-							start = 0
-						}
-					}
-				} else {
-					return errors.NewTypeError("INTEGER", args[1].Type().String())
-				}
-			}
-			if len(args) == 3 {
-				if e, ok := args[2].AsInt(); ok {
-					end = int(e)
-					if end < 0 {
-						end = len(str.Value) + end
-					}
-				} else {
-					return errors.NewTypeError("INTEGER", args[2].Type().String())
-				}
-			}
-			if start > len(str.Value) {
-				start = len(str.Value)
-			}
-			if end > len(str.Value) {
-				end = len(str.Value)
-			}
-			if start > end {
-				return errors.NewError("substring not found")
-			}
-			searchStr := str.Value[start:end]
-			idx := strings.LastIndex(searchStr, substr)
-			if idx == -1 {
-				return errors.NewError("substring not found")
-			}
-			return object.NewInteger(int64(start + idx))
+		substr, errObj := args[0].AsString()
+		if errObj != nil {
+			return errors.ParameterError("sub", errObj)
 		}
-		return errors.NewTypeError("STRING", args[0].Type().String())
+		start := 0
+		end := len(str.Value)
+		if len(args) >= 2 {
+			s, errObj2 := args[1].AsInt()
+			if errObj2 != nil {
+				return errors.ParameterError("start", errObj2)
+			}
+			start = int(s)
+			if start < 0 {
+				start = len(str.Value) + start
+				if start < 0 {
+					start = 0
+				}
+			}
+		}
+		if len(args) == 3 {
+			e, errObj3 := args[2].AsInt()
+			if errObj3 != nil {
+				return errors.ParameterError("end", errObj3)
+			}
+			end = int(e)
+			if end < 0 {
+				end = len(str.Value) + end
+			}
+		}
+		if start > len(str.Value) {
+			start = len(str.Value)
+		}
+		if end > len(str.Value) {
+			end = len(str.Value)
+		}
+		if start > end {
+			return errors.NewError("substring not found")
+		}
+		searchStr := str.Value[start:end]
+		idx := strings.LastIndex(searchStr, substr)
+		if idx == -1 {
+			return errors.NewError("substring not found")
+		}
+		return object.NewInteger(int64(start + idx))
 	case "index":
 		if len(args) < 1 || len(args) > 3 {
 			return errors.NewError("index() takes 1-3 arguments (%d given)", len(args))
 		}
-		if substr, ok := args[0].AsString(); ok {
-			start := 0
-			end := len(str.Value)
-			if len(args) >= 2 {
-				if s, ok := args[1].AsInt(); ok {
-					start = int(s)
-					if start < 0 {
-						start = len(str.Value) + start
-						if start < 0 {
-							start = 0
-						}
-					}
-				} else {
-					return errors.NewTypeError("INTEGER", args[1].Type().String())
-				}
-			}
-			if len(args) == 3 {
-				if e, ok := args[2].AsInt(); ok {
-					end = int(e)
-					if end < 0 {
-						end = len(str.Value) + end
-					}
-				} else {
-					return errors.NewTypeError("INTEGER", args[2].Type().String())
-				}
-			}
-			if start > len(str.Value) {
-				start = len(str.Value)
-			}
-			if end > len(str.Value) {
-				end = len(str.Value)
-			}
-			if start > end {
-				return errors.NewError("substring not found")
-			}
-			searchStr := str.Value[start:end]
-			idx := strings.Index(searchStr, substr)
-			if idx == -1 {
-				return errors.NewError("substring not found")
-			}
-			return object.NewInteger(int64(start + idx))
+		substr, errObj := args[0].AsString()
+		if errObj != nil {
+			return errors.ParameterError("sub", errObj)
 		}
-		return errors.NewTypeError("STRING", args[0].Type().String())
+		start := 0
+		end := len(str.Value)
+		if len(args) >= 2 {
+			s, errObj2 := args[1].AsInt()
+			if errObj2 != nil {
+				return errors.ParameterError("start", errObj2)
+			}
+			start = int(s)
+			if start < 0 {
+				start = len(str.Value) + start
+				if start < 0 {
+					start = 0
+				}
+			}
+		}
+		if len(args) == 3 {
+			e, errObj3 := args[2].AsInt()
+			if errObj3 != nil {
+				return errors.ParameterError("end", errObj3)
+			}
+			end = int(e)
+			if end < 0 {
+				end = len(str.Value) + end
+			}
+		}
+		if start > len(str.Value) {
+			start = len(str.Value)
+		}
+		if end > len(str.Value) {
+			end = len(str.Value)
+		}
+		if start > end {
+			return errors.NewError("substring not found")
+		}
+		searchStr := str.Value[start:end]
+		idx := strings.Index(searchStr, substr)
+		if idx == -1 {
+			return errors.NewError("substring not found")
+		}
+		return object.NewInteger(int64(start + idx))
 	case "count":
 		if len(args) < 1 || len(args) > 3 {
 			return errors.NewError("count() takes 1-3 arguments (%d given)", len(args))
 		}
-		if substr, ok := args[0].AsString(); ok {
-			start := 0
-			end := len(str.Value)
-			if len(args) >= 2 {
-				if s, ok := args[1].AsInt(); ok {
-					start = int(s)
-					if start < 0 {
-						start = len(str.Value) + start
-						if start < 0 {
-							start = 0
-						}
-					}
-				} else {
-					return errors.NewTypeError("INTEGER", args[1].Type().String())
-				}
-			}
-			if len(args) == 3 {
-				if e, ok := args[2].AsInt(); ok {
-					end = int(e)
-					if end < 0 {
-						end = len(str.Value) + end
-					}
-				} else {
-					return errors.NewTypeError("INTEGER", args[2].Type().String())
-				}
-			}
-			if start > len(str.Value) {
-				start = len(str.Value)
-			}
-			if end > len(str.Value) {
-				end = len(str.Value)
-			}
-			if start > end {
-				return object.NewInteger(0)
-			}
-			searchStr := str.Value[start:end]
-			return object.NewInteger(int64(strings.Count(searchStr, substr)))
+		substr, errObj := args[0].AsString()
+		if errObj != nil {
+			return errors.ParameterError("sub", errObj)
 		}
-		return errors.NewTypeError("STRING", args[0].Type().String())
+		start := 0
+		end := len(str.Value)
+		if len(args) >= 2 {
+			s, errObj2 := args[1].AsInt()
+			if errObj2 != nil {
+				return errors.ParameterError("start", errObj2)
+			}
+			start = int(s)
+			if start < 0 {
+				start = len(str.Value) + start
+				if start < 0 {
+					start = 0
+				}
+			}
+		}
+		if len(args) == 3 {
+			e, errObj3 := args[2].AsInt()
+			if errObj3 != nil {
+				return errors.ParameterError("end", errObj3)
+			}
+			end = int(e)
+			if end < 0 {
+				end = len(str.Value) + end
+			}
+		}
+		if start > len(str.Value) {
+			start = len(str.Value)
+		}
+		if end > len(str.Value) {
+			end = len(str.Value)
+		}
+		if start > end {
+			return object.NewInteger(0)
+		}
+		searchStr := str.Value[start:end]
+		return object.NewInteger(int64(strings.Count(searchStr, substr)))
 	case "format":
 		// Simple positional formatting: "{} {}".format("hello", "world")
 		result := str.Value
@@ -999,127 +1012,131 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if len(args) != 1 {
 			return errors.NewArgumentError(len(args), 1)
 		}
-		if width, ok := args[0].AsInt(); ok {
-			w := int(width)
-			if w <= len(str.Value) {
-				return str
-			}
-			// Handle negative sign
-			if len(str.Value) > 0 && (str.Value[0] == '-' || str.Value[0] == '+') {
-				var builder strings.Builder
-				builder.Grow(w)
-				builder.WriteByte(str.Value[0])
-				builder.WriteString(strings.Repeat("0", w-len(str.Value)))
-				builder.WriteString(str.Value[1:])
-				return &object.String{Value: builder.String()}
-			}
-			// Simple case - just pad with zeros
+		width, errObj := args[0].AsInt()
+		if errObj != nil {
+			return errors.ParameterError("width", errObj)
+		}
+		w := int(width)
+		if w <= len(str.Value) {
+			return str
+		}
+		// Handle negative sign
+		if len(str.Value) > 0 && (str.Value[0] == '-' || str.Value[0] == '+') {
 			var builder strings.Builder
 			builder.Grow(w)
+			builder.WriteByte(str.Value[0])
 			builder.WriteString(strings.Repeat("0", w-len(str.Value)))
-			builder.WriteString(str.Value)
+			builder.WriteString(str.Value[1:])
 			return &object.String{Value: builder.String()}
 		}
-		return errors.NewTypeError("INTEGER", args[0].Type().String())
+		// Simple case - just pad with zeros
+		var builder strings.Builder
+		builder.Grow(w)
+		builder.WriteString(strings.Repeat("0", w-len(str.Value)))
+		builder.WriteString(str.Value)
+		return &object.String{Value: builder.String()}
 	case "center":
 		if len(args) < 1 || len(args) > 2 {
 			return errors.NewError("center() takes 1-2 arguments (%d given)", len(args))
 		}
-		if width, ok := args[0].AsInt(); ok {
-			w := int(width)
-			if w <= len(str.Value) {
-				return str
-			}
-			fillChar := " "
-			if len(args) == 2 {
-				if fill, ok := args[1].AsString(); ok {
-					if len(fill) != 1 {
-						return errors.NewError("fill character must be exactly one character")
-					}
-					fillChar = fill
-				} else {
-					return errors.NewTypeError("STRING", args[1].Type().String())
-				}
-			}
-			padding := w - len(str.Value)
-			leftPad := padding / 2
-			rightPad := padding - leftPad
-			// Use strings.Builder for efficient concatenation
-			var builder strings.Builder
-			builder.Grow(w)
-			builder.WriteString(strings.Repeat(fillChar, leftPad))
-			builder.WriteString(str.Value)
-			builder.WriteString(strings.Repeat(fillChar, rightPad))
-			return &object.String{Value: builder.String()}
+		width, errObj := args[0].AsInt()
+		if errObj != nil {
+			return errors.ParameterError("width", errObj)
 		}
-		return errors.NewTypeError("INTEGER", args[0].Type().String())
+		w := int(width)
+		if w <= len(str.Value) {
+			return str
+		}
+		fillChar := " "
+		if len(args) == 2 {
+			fill, errObj2 := args[1].AsString()
+			if errObj2 != nil {
+				return errors.ParameterError("fillchar", errObj2)
+			}
+			if len(fill) != 1 {
+				return errors.NewError("fill character must be exactly one character")
+			}
+			fillChar = fill
+		}
+		padding := w - len(str.Value)
+		leftPad := padding / 2
+		rightPad := padding - leftPad
+		// Use strings.Builder for efficient concatenation
+		var builder strings.Builder
+		builder.Grow(w)
+		builder.WriteString(strings.Repeat(fillChar, leftPad))
+		builder.WriteString(str.Value)
+		builder.WriteString(strings.Repeat(fillChar, rightPad))
+		return &object.String{Value: builder.String()}
 	case "ljust":
 		if len(args) < 1 || len(args) > 2 {
 			return errors.NewError("ljust() takes 1-2 arguments (%d given)", len(args))
 		}
-		if width, ok := args[0].AsInt(); ok {
-			w := int(width)
-			if w <= len(str.Value) {
-				return str
-			}
-			fillChar := " "
-			if len(args) == 2 {
-				if fill, ok := args[1].AsString(); ok {
-					if len(fill) != 1 {
-						return errors.NewError("fill character must be exactly one character")
-					}
-					fillChar = fill
-				} else {
-					return errors.NewTypeError("STRING", args[1].Type().String())
-				}
-			}
-			// Use strings.Builder for efficient concatenation
-			var builder strings.Builder
-			builder.Grow(w)
-			builder.WriteString(str.Value)
-			builder.WriteString(strings.Repeat(fillChar, w-len(str.Value)))
-			return &object.String{Value: builder.String()}
+		width, errObj := args[0].AsInt()
+		if errObj != nil {
+			return errors.ParameterError("width", errObj)
 		}
-		return errors.NewTypeError("INTEGER", args[0].Type().String())
+		w := int(width)
+		if w <= len(str.Value) {
+			return str
+		}
+		fillChar := " "
+		if len(args) == 2 {
+			fill, errObj2 := args[1].AsString()
+			if errObj2 != nil {
+				return errors.ParameterError("fillchar", errObj2)
+			}
+			if len(fill) != 1 {
+				return errors.NewError("fill character must be exactly one character")
+			}
+			fillChar = fill
+		}
+		// Use strings.Builder for efficient concatenation
+		var builder strings.Builder
+		builder.Grow(w)
+		builder.WriteString(str.Value)
+		builder.WriteString(strings.Repeat(fillChar, w-len(str.Value)))
+		return &object.String{Value: builder.String()}
 	case "rjust":
 		if len(args) < 1 || len(args) > 2 {
 			return errors.NewError("rjust() takes 1-2 arguments (%d given)", len(args))
 		}
-		if width, ok := args[0].AsInt(); ok {
-			w := int(width)
-			if w <= len(str.Value) {
-				return str
-			}
-			fillChar := " "
-			if len(args) == 2 {
-				if fill, ok := args[1].AsString(); ok {
-					if len(fill) != 1 {
-						return errors.NewError("fill character must be exactly one character")
-					}
-					fillChar = fill
-				} else {
-					return errors.NewTypeError("STRING", args[1].Type().String())
-				}
-			}
-			// Use strings.Builder for efficient concatenation
-			var builder strings.Builder
-			builder.Grow(w)
-			builder.WriteString(strings.Repeat(fillChar, w-len(str.Value)))
-			builder.WriteString(str.Value)
-			return &object.String{Value: builder.String()}
+		width, errObj := args[0].AsInt()
+		if errObj != nil {
+			return errors.ParameterError("width", errObj)
 		}
-		return errors.NewTypeError("INTEGER", args[0].Type().String())
+		w := int(width)
+		if w <= len(str.Value) {
+			return str
+		}
+		fillChar := " "
+		if len(args) == 2 {
+			fill, errObj2 := args[1].AsString()
+			if errObj2 != nil {
+				return errors.ParameterError("fillchar", errObj2)
+			}
+			if len(fill) != 1 {
+				return errors.NewError("fill character must be exactly one character")
+			}
+			fillChar = fill
+		}
+		// Use strings.Builder for efficient concatenation
+		var builder strings.Builder
+		builder.Grow(w)
+		builder.WriteString(strings.Repeat(fillChar, w-len(str.Value)))
+		builder.WriteString(str.Value)
+		return &object.String{Value: builder.String()}
 	case "splitlines":
 		keepends := false
 		if len(args) > 1 {
 			return errors.NewError("splitlines() takes at most 1 argument (%d given)", len(args))
 		}
 		if len(args) == 1 {
-			if b, ok := args[0].AsBool(); ok {
-				keepends = b
-			} else {
-				return errors.NewTypeError("BOOLEAN", args[0].Type().String())
+			b, errObj := args[0].AsBool()
+			if errObj != nil {
+				return errors.ParameterError("keepends", errObj)
 			}
+			keepends = b
 		}
 		lines := []object.Object{}
 		text := str.Value
@@ -1168,9 +1185,9 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if len(args) != 1 {
 			return errors.NewArgumentError(len(args), 1)
 		}
-		sep, ok := args[0].AsString()
-		if !ok {
-			return errors.NewTypeError("STRING", args[0].Type().String())
+		sep, err := args[0].AsString()
+		if err != nil {
+			return err
 		}
 		idx := strings.Index(str.Value, sep)
 		if idx < 0 {
@@ -1189,9 +1206,9 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if len(args) != 1 {
 			return errors.NewArgumentError(len(args), 1)
 		}
-		sep, ok := args[0].AsString()
-		if !ok {
-			return errors.NewTypeError("STRING", args[0].Type().String())
+		sep, err := args[0].AsString()
+		if err != nil {
+			return err
 		}
 		idx := strings.LastIndex(str.Value, sep)
 		if idx < 0 {
@@ -1210,9 +1227,9 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if len(args) != 1 {
 			return errors.NewArgumentError(len(args), 1)
 		}
-		prefix, ok := args[0].AsString()
-		if !ok {
-			return errors.NewTypeError("STRING", args[0].Type().String())
+		prefix, err := args[0].AsString()
+		if err != nil {
+			return err
 		}
 		if strings.HasPrefix(str.Value, prefix) {
 			return &object.String{Value: str.Value[len(prefix):]}
@@ -1222,9 +1239,9 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if len(args) != 1 {
 			return errors.NewArgumentError(len(args), 1)
 		}
-		suffix, ok := args[0].AsString()
-		if !ok {
-			return errors.NewTypeError("STRING", args[0].Type().String())
+		suffix, err := args[0].AsString()
+		if err != nil {
+			return err
 		}
 		if strings.HasSuffix(str.Value, suffix) {
 			return &object.String{Value: str.Value[:len(str.Value)-len(suffix)]}
@@ -1247,11 +1264,11 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return errors.NewError("expandtabs() takes at most 1 argument (%d given)", len(args))
 		}
 		if len(args) == 1 {
-			if ts, ok := args[0].AsInt(); ok {
-				tabsize = int(ts)
-			} else {
-				return errors.NewTypeError("INTEGER", args[0].Type().String())
+			ts, errObj := args[0].AsInt()
+			if errObj != nil {
+				return errors.ParameterError("tabsize", errObj)
 			}
+			tabsize = int(ts)
 		}
 		var result strings.Builder
 		col := 0
@@ -1283,19 +1300,23 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		transMap := &object.Dict{Pairs: make(map[string]object.DictPair)}
 		if len(args) == 1 {
 			// Single argument: must be a dict
-			if d, ok := args[0].AsDict(); ok {
-				for k, v := range d {
-					transMap.Pairs[k] = object.DictPair{Key: &object.String{Value: k}, Value: v}
-				}
-				return transMap
+			d, err := args[0].AsDict()
+			if err != nil {
+				return errors.ParameterError("table", err)
 			}
-			return errors.NewTypeError("DICT", args[0].Type().String())
+			for k, v := range d {
+				transMap.Pairs[k] = object.DictPair{Key: &object.String{Value: k}, Value: v}
+			}
+			return transMap
 		}
 		// Two arguments: from and to strings
-		from, okFrom := args[0].AsString()
-		to, okTo := args[1].AsString()
-		if !okFrom || !okTo {
-			return errors.NewError("maketrans() arguments must be strings")
+		from, errFrom := args[0].AsString()
+		if errFrom != nil {
+			return errors.ParameterError("from", errFrom)
+		}
+		to, errTo := args[1].AsString()
+		if errTo != nil {
+			return errors.ParameterError("to", errTo)
 		}
 		fromRunes := []rune(from)
 		toRunes := []rune(to)
@@ -1311,16 +1332,16 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		}
 		// Third argument: characters to delete
 		if len(args) == 3 {
-			if del, ok := args[2].AsString(); ok {
-				for _, ch := range del {
-					key := string(ch)
-					transMap.Pairs[key] = object.DictPair{
-						Key:   &object.String{Value: key},
-						Value: NULL,
-					}
+			del, errDel := args[2].AsString()
+			if errDel != nil {
+				return errors.ParameterError("deletechars", errDel)
+			}
+			for _, ch := range del {
+				key := string(ch)
+				transMap.Pairs[key] = object.DictPair{
+					Key:   &object.String{Value: key},
+					Value: NULL,
 				}
-			} else {
-				return errors.NewTypeError("STRING", args[2].Type().String())
 			}
 		}
 		return transMap
@@ -1340,7 +1361,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 					// Delete character
 					continue
 				}
-				if s, ok := pair.Value.AsString(); ok {
+				if s, err := pair.Value.AsString(); err == nil {
 					result.WriteString(s)
 				} else {
 					result.WriteRune(ch)

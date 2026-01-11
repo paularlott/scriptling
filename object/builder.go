@@ -200,12 +200,12 @@ func newError(format string, args ...interface{}) *Error {
 	return &Error{Message: fmt.Sprintf(format, args...)}
 }
 
-// newTypeError creates a type error object
+// newTypeError creates a type error object (matches errors.NewTypeError format)
 func newTypeError(expected, got string) *Error {
 	return &Error{Message: fmt.Sprintf("type error: expected %s, got %s", expected, got)}
 }
 
-// newArgumentError creates an argument error object
+// newArgumentError creates an argument error object (matches errors.NewArgumentError format)
 func newArgumentError(got, want int) *Error {
 	return &Error{Message: fmt.Sprintf("argument error: got %d arguments, want %d", got, want)}
 }
@@ -292,28 +292,32 @@ func convertObjectToValue(obj Object, targetType reflect.Type) (reflect.Value, O
 
 	switch targetType.Kind() {
 	case reflect.String:
-		if s, ok := obj.AsString(); ok {
+		s, err := obj.AsString()
+		if err == nil {
 			return reflect.ValueOf(s).Convert(targetType), nil
 		}
-		return reflect.Value{}, newTypeError("STRING", obj.Type().String())
+		return reflect.Value{}, err
 
 	case reflect.Int, reflect.Int32, reflect.Int64:
-		if i, ok := obj.AsInt(); ok {
+		i, err := obj.AsInt()
+		if err == nil {
 			return reflect.ValueOf(i).Convert(targetType), nil
 		}
-		return reflect.Value{}, newTypeError("INTEGER", obj.Type().String())
+		return reflect.Value{}, err
 
 	case reflect.Float32, reflect.Float64:
-		if f, ok := obj.AsFloat(); ok {
+		f, err := obj.AsFloat()
+		if err == nil {
 			return reflect.ValueOf(f).Convert(targetType), nil
 		}
-		return reflect.Value{}, newTypeError("FLOAT", obj.Type().String())
+		return reflect.Value{}, err
 
 	case reflect.Bool:
-		if b, ok := obj.AsBool(); ok {
+		b, err := obj.AsBool()
+		if err == nil {
 			return reflect.ValueOf(b), nil
 		}
-		return reflect.Value{}, newTypeError("BOOLEAN", obj.Type().String())
+		return reflect.Value{}, err
 
 	case reflect.Interface:
 		// For interface{}, return the underlying value
@@ -348,7 +352,7 @@ func convertObjectToValue(obj Object, targetType reflect.Type) (reflect.Value, O
 
 	case reflect.Slice:
 		// Convert to slice
-		if list, ok := obj.AsList(); ok {
+		if list, err := obj.AsList(); err == nil {
 			elemType := targetType.Elem()
 			slice := reflect.MakeSlice(targetType, len(list), len(list))
 			for i, el := range list {
@@ -364,7 +368,7 @@ func convertObjectToValue(obj Object, targetType reflect.Type) (reflect.Value, O
 
 	case reflect.Map:
 		// Convert to map
-		if d, ok := obj.AsDict(); ok {
+		if d, err := obj.AsDict(); err == nil {
 			keyType := targetType.Key()
 			if keyType.Kind() != reflect.String {
 				return reflect.Value{}, newError("map keys must be strings")
