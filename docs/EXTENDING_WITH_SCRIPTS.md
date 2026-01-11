@@ -135,12 +135,12 @@ print("PI: " + str(mathutils.PI))
 
 ## Adding Classes
 
-You can define classes directly in your Scriptling libraries.
+You can define classes directly in your Scriptling libraries. These classes can then be imported and used in other scripts.
 
-### Defining a Class in Scriptling
+### Registering a Library with Classes
 
 ```go
-p.RegisterScriptLibrary("shapes", `
+err := p.RegisterScriptLibrary("shapes", `
 class Rectangle:
     def __init__(self, width, height):
         self.width = width
@@ -151,13 +151,24 @@ class Rectangle:
 
     def perimeter(self):
         return 2 * (self.width + self.height)
+
+class Circle:
+    def __init__(self, radius):
+        self.radius = radius
+
+    def area(self):
+        return 3.14159 * self.radius * self.radius
 `)
 
 p.Eval(`
 import shapes
 
 rect = shapes.Rectangle(10, 20)
-print("Area: " + str(rect.area()))
+print("Rectangle Area: " + str(rect.area()))
+print("Rectangle Perimeter: " + str(rect.perimeter()))
+
+circ = shapes.Circle(5)
+print("Circle Area: " + str(circ.area()))
 `)
 ```
 
@@ -338,7 +349,7 @@ func main() {
     // Register a Go library with description
     p.RegisterLibrary("gomath", object.NewLibrary(map[string]*object.Builtin{
         "sqrt": {
-            Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+            Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
                 if len(args) != 1 {
                     return &object.Error{Message: "sqrt requires 1 argument"}
                 }
@@ -432,45 +443,6 @@ text = "hello world"
 print(string_utils.capitalize_words(text))  # Hello World
 print(string_utils.reverse_string(text))    # dlrow olleh
 print(string_utils.count_vowels(text))      # 3
-`)
-```
-
-## Defining Classes in Scripts
-
-You can define classes in your script libraries just like functions. These classes can then be imported and used in other scripts.
-
-### Registering a Library with Classes
-
-```go
-err := p.RegisterScriptLibrary("shapes", `
-class Rectangle:
-    def __init__(self, width, height):
-        self.width = width
-        self.height = height
-
-    def area(self):
-        return self.width * self.height
-
-class Circle:
-    def __init__(self, radius):
-        self.radius = radius
-
-    def area(self):
-        return 3.14159 * self.radius * self.radius
-`)
-```
-
-### Using the Library
-
-```go
-p.Eval(`
-import shapes
-
-rect = shapes.Rectangle(10, 20)
-print("Rectangle Area:", rect.area())
-
-circ = shapes.Circle(5)
-print("Circle Area:", circ.area())
 `)
 ```
 

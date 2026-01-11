@@ -245,7 +245,12 @@ This guide focuses on **using** Scriptling from Go. For information on **extendi
 
 ## Call Functions Directly from Go
 
-Instead of writing script strings to call functions, you can call registered and script-defined functions directly with Go arguments using `CallFunction()`:
+Instead of writing script strings to call functions, you can call registered and script-defined functions directly with Go arguments using `CallFunction()`.
+
+### Eval vs CallFunction
+
+- **`Eval`**: Execute arbitrary Scriptling code as strings. Best for complex scripts, loops, conditionals, or when you need to execute multiple statements.
+- **`CallFunction`**: Call specific functions with Go arguments. Best for calling individual functions, especially when you want to pass Go data types directly without string conversion.
 
 ### Calling Registered Functions
 
@@ -813,4 +818,4 @@ if objErr != nil {
 
 ## Defining Classes in Go
 
-For information on defining Scriptling classes in Go, including creating custom types with high-performance methods, see [EXTENDING_WITH_GO.md](EXTENDING_WITH_GO.md#defining-classes-in-go).
+For information on defining Scriptling classes in Go, including creating custom types with high-performance methods, see [EXTENDING_CLASSES.md](EXTENDING_CLASSES.md).
