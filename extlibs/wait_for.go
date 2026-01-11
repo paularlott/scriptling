@@ -68,9 +68,7 @@ var WaitForLibrary = object.NewLibrary(
 	map[string]*object.Builtin{
 		"file": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) < 1 {
-					return errors.NewArgumentError(len(args), 1)
-				}
+				if err := errors.MinArgs(args, 1); err != nil { return err }
 
 				path, err := args[0].AsString()
 				if err != nil {
@@ -118,9 +116,7 @@ Returns:
 		},
 		"dir": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) < 1 {
-					return errors.NewArgumentError(len(args), 1)
-				}
+				if err := errors.MinArgs(args, 1); err != nil { return err }
 
 				path, err := args[0].AsString()
 				if err != nil {
@@ -172,9 +168,7 @@ Returns:
 		},
 		"port": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) < 2 {
-					return errors.NewArgumentError(len(args), 2)
-				}
+				if err := errors.MinArgs(args, 2); err != nil { return err }
 
 				host, err := args[0].AsString()
 				if err != nil {
@@ -241,9 +235,7 @@ Returns:
 		},
 		"http": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) < 1 {
-					return errors.NewArgumentError(len(args), 1)
-				}
+				if err := errors.MinArgs(args, 1); err != nil { return err }
 
 				url, err := args[0].AsString()
 				if err != nil {
@@ -348,9 +340,7 @@ Returns:
 		},
 		"file_content": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) < 2 {
-					return errors.NewArgumentError(len(args), 2)
-				}
+				if err := errors.MinArgs(args, 2); err != nil { return err }
 
 				path, err := args[0].AsString()
 				if err != nil {
@@ -408,9 +398,7 @@ Returns:
 		},
 		"process_name": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) < 1 {
-					return errors.NewArgumentError(len(args), 1)
-				}
+				if err := errors.MinArgs(args, 1); err != nil { return err }
 
 				processName, err := args[0].AsString()
 				if err != nil {

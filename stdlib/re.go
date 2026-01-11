@@ -25,9 +25,7 @@ var RegexClass = &object.Class{
 	Methods: map[string]object.Object{
 		"match": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) != 2 {
-					return errors.NewArgumentError(len(args), 2)
-				}
+				if err := errors.ExactArgs(args, 2); err != nil { return err }
 				if args[1].Type() != object.STRING_OBJ {
 					return errors.NewTypeError("STRING", args[1].Type().String())
 				}
@@ -64,9 +62,7 @@ Returns a Match object if the pattern matches at the beginning, or None if no ma
 		},
 		"search": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) != 2 {
-					return errors.NewArgumentError(len(args), 2)
-				}
+				if err := errors.ExactArgs(args, 2); err != nil { return err }
 				if args[1].Type() != object.STRING_OBJ {
 					return errors.NewTypeError("STRING", args[1].Type().String())
 				}
@@ -102,9 +98,7 @@ Returns a Match object for the first match, or None if no match found.`,
 		},
 		"findall": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) != 2 {
-					return errors.NewArgumentError(len(args), 2)
-				}
+				if err := errors.ExactArgs(args, 2); err != nil { return err }
 				if args[1].Type() != object.STRING_OBJ {
 					return errors.NewTypeError("STRING", args[1].Type().String())
 				}
@@ -144,9 +138,7 @@ If there are no capturing groups, returns a list of strings for the full matches
 		},
 		"finditer": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) != 2 {
-					return errors.NewArgumentError(len(args), 2)
-				}
+				if err := errors.ExactArgs(args, 2); err != nil { return err }
 				if args[1].Type() != object.STRING_OBJ {
 					return errors.NewTypeError("STRING", args[1].Type().String())
 				}
@@ -210,9 +202,7 @@ var MatchClass = &object.Class{
 		},
 		"groups": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) != 1 {
-					return errors.NewArgumentError(len(args), 1)
-				}
+				if err := errors.ExactArgs(args, 1); err != nil { return err }
 				match := args[0].(*object.Instance)
 				groups := match.Fields["groups"].(*object.List).Elements
 				if len(groups) <= 1 {
@@ -805,9 +795,7 @@ Flags:
 	},
 	"escape": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
-			}
+			if err := errors.ExactArgs(args, 1); err != nil { return err }
 			if args[0].Type() != object.STRING_OBJ {
 				return errors.NewTypeError("STRING", args[0].Type().String())
 			}

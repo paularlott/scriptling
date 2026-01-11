@@ -22,8 +22,8 @@ func gcd(a, b int64) int64 {
 // oneFloatFunc creates a math function that takes one float argument and returns a float
 func oneFloatFunc(f func(float64) float64) func(context.Context, object.Kwargs, ...object.Object) object.Object {
 	return func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-		if len(args) != 1 {
-			return errors.NewArgumentError(len(args), 1)
+		if err := errors.ExactArgs(args, 1); err != nil {
+			return err
 		}
 		x, err := args[0].AsFloat()
 		if err != nil {
@@ -36,8 +36,8 @@ func oneFloatFunc(f func(float64) float64) func(context.Context, object.Kwargs, 
 // twoFloatFunc creates a function that takes two floats and applies f
 func twoFloatFunc(f func(float64, float64) float64) func(context.Context, object.Kwargs, ...object.Object) object.Object {
 	return func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-		if len(args) != 2 {
-			return errors.NewArgumentError(len(args), 2)
+		if err := errors.ExactArgs(args, 2); err != nil {
+			return err
 		}
 		x, err := args[0].AsFloat()
 		if err != nil {
@@ -75,8 +75,8 @@ Always returns a float.`,
 	},
 	"floor": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
 			switch arg := args[0].(type) {
 			case *object.Integer:
@@ -94,8 +94,8 @@ Returns the largest integer less than or equal to x.`,
 	},
 	"ceil": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
 			switch arg := args[0].(type) {
 			case *object.Integer:
@@ -135,8 +135,8 @@ Returns a float.`,
 	},
 	"log": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
 			x, err := args[0].AsFloat()
 			if err != nil {
@@ -175,8 +175,8 @@ Returns a float in radians.`,
 	},
 	"fmod": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
 			}
 			x, err := args[0].AsFloat()
 			if err != nil {
@@ -198,8 +198,8 @@ y must not be zero. Returns a float.`,
 	},
 	"gcd": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
 			}
 			a, err := args[0].AsInt()
 			if err != nil {
@@ -218,8 +218,8 @@ Returns an integer.`,
 	},
 	"factorial": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
 			n, err := args[0].AsInt()
 			if err != nil {
@@ -244,8 +244,8 @@ Returns an integer.`,
 	},
 	"isnan": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
 			switch arg := args[0].(type) {
 			case *object.Integer:
@@ -262,8 +262,8 @@ Returns True if x is NaN, False otherwise.`,
 	},
 	"isinf": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
 			switch arg := args[0].(type) {
 			case *object.Integer:
@@ -280,8 +280,8 @@ Returns True if x is positive or negative infinity.`,
 	},
 	"isfinite": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
 			switch arg := args[0].(type) {
 			case *object.Integer:
@@ -304,8 +304,8 @@ Returns a float with magnitude of x and sign of y.`,
 	},
 	"trunc": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
 			switch arg := args[0].(type) {
 			case *object.Integer:

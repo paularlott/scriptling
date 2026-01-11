@@ -11,9 +11,7 @@ import (
 var UUIDLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"uuid1": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 0 {
-				return errors.NewArgumentError(len(args), 0)
-			}
+			if err := errors.ExactArgs(args, 0); err != nil { return err }
 			id, err := uuid.NewUUID()
 			if err != nil {
 				return errors.NewError("failed to generate UUID v1: %s", err.Error())
@@ -32,9 +30,7 @@ Example:
 	},
 	"uuid4": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 0 {
-				return errors.NewArgumentError(len(args), 0)
-			}
+			if err := errors.ExactArgs(args, 0); err != nil { return err }
 			return &object.String{Value: uuid.New().String()}
 		},
 		HelpText: `uuid4() - Generate a UUID version 4 (random)
@@ -49,9 +45,7 @@ Example:
 	},
 	"uuid7": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 0 {
-				return errors.NewArgumentError(len(args), 0)
-			}
+			if err := errors.ExactArgs(args, 0); err != nil { return err }
 			id, err := uuid.NewV7()
 			if err != nil {
 				return errors.NewError("failed to generate UUID v7: %s", err.Error())
