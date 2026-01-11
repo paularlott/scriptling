@@ -33,7 +33,7 @@ func TestBuiltinLen(t *testing.T) {
 
 func TestBuiltinLenError(t *testing.T) {
 	result := builtins["len"].Fn(context.Background(), object.NewKwargs(nil), &object.Integer{Value: 1})
-	if result.Type() != object.ERROR_OBJ {
+	if !object.IsError(result) {
 		t.Errorf("expected error for len(1), got %T", result)
 	}
 }

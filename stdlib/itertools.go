@@ -251,7 +251,7 @@ Example:
 			result := []object.Object{}
 			for _, elem := range elements {
 				res := pred.Fn(ctx, object.NewKwargs(nil), elem)
-				if isError(res) {
+				if object.IsError(res) {
 					return res
 				}
 				if !isTruthy(res) {
@@ -292,7 +292,7 @@ Example:
 			for _, elem := range elements {
 				if dropping {
 					res := pred.Fn(ctx, object.NewKwargs(nil), elem)
-					if isError(res) {
+					if object.IsError(res) {
 						return res
 					}
 					if isTruthy(res) {
@@ -613,7 +613,7 @@ Example:
 				var key object.Object
 				if keyFunc != nil {
 					key = keyFunc.Fn(ctx, object.NewKwargs(nil), elem)
-					if isError(key) {
+					if object.IsError(key) {
 						return key
 					}
 				} else {
@@ -690,13 +690,13 @@ Example:
 			for i := 1; i < len(elements); i++ {
 				if accumFunc != nil {
 					accumulator = accumFunc.Fn(ctx, object.NewKwargs(nil), accumulator, elements[i])
-					if isError(accumulator) {
+					if object.IsError(accumulator) {
 						return accumulator
 					}
 				} else {
 					// Default: addition
 					accumulator = addObjects(accumulator, elements[i])
-					if isError(accumulator) {
+					if object.IsError(accumulator) {
 						return accumulator
 					}
 				}
@@ -734,7 +734,7 @@ Example:
 			result := []object.Object{}
 			for _, elem := range elements {
 				res := pred.Fn(ctx, object.NewKwargs(nil), elem)
-				if isError(res) {
+				if object.IsError(res) {
 					return res
 				}
 				if !isTruthy(res) {
@@ -781,7 +781,7 @@ Example:
 					return errors.NewError("starmap() iterable must contain sequences")
 				}
 				res := fn.Fn(ctx, object.NewKwargs(nil), fnArgs...)
-				if isError(res) {
+				if object.IsError(res) {
 					return res
 				}
 				result = append(result, res)
@@ -1036,14 +1036,6 @@ func addObjects(a, b object.Object) object.Object {
 		}
 	}
 	return errors.NewError("cannot add %s and %s", a.Type(), b.Type())
-}
-
-// isError and isTruthy helpers (same as evaluator)
-func isError(obj object.Object) bool {
-	if obj != nil {
-		return obj.Type() == object.ERROR_OBJ
-	}
-	return false
 }
 
 func isTruthy(obj object.Object) bool {

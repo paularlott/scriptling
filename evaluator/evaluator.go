@@ -155,17 +155,17 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		return NULL
 	case *ast.PrefixExpression:
 		right := evalWithContext(ctx, node.Right, env)
-		if isError(right) {
+		if object.IsError(right) {
 			return right
 		}
 		return evalPrefixExpression(node.Operator, right)
 	case *ast.InfixExpression:
 		left := evalWithContext(ctx, node.Left, env)
-		if isError(left) {
+		if object.IsError(left) {
 			return left
 		}
 		right := evalWithContext(ctx, node.Right, env)
-		if isError(right) {
+		if object.IsError(right) {
 			return right
 		}
 		return evalInfixExpression(ctx, node.Operator, left, right, env)
@@ -181,7 +181,7 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		val := object.Object(NULL)
 		if node.ReturnValue != nil {
 			val = evalWithContext(ctx, node.ReturnValue, env)
-			if isError(val) {
+			if object.IsError(val) {
 				return val
 			}
 		}
@@ -198,7 +198,7 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		return evalFromImportStatement(node, env)
 	case *ast.AssignStatement:
 		val := evalWithContext(ctx, node.Value, env)
-		if isError(val) || isException(val) {
+		if object.IsError(val) || isException(val) {
 			return val
 		}
 		if err := assignToExpression(node.Left, val, env); err != nil {
@@ -219,7 +219,7 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		return evalCallExpression(ctx, node, env)
 	case *ast.ListLiteral:
 		elements := evalExpressionsWithContext(ctx, node.Elements, env)
-		if len(elements) == 1 && isError(elements[0]) {
+		if len(elements) == 1 && object.IsError(elements[0]) {
 			return elements[0]
 		}
 		return &object.List{Elements: elements}
@@ -227,11 +227,11 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		return evalDictLiteralWithContext(ctx, node, env)
 	case *ast.IndexExpression:
 		left := evalWithContext(ctx, node.Left, env)
-		if isError(left) {
+		if object.IsError(left) {
 			return left
 		}
 		index := evalWithContext(ctx, node.Index, env)
-		if isError(index) {
+		if object.IsError(index) {
 			return index
 		}
 		return evalIndexExpression(left, index)
@@ -257,7 +257,7 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		return evalLambda(node, env)
 	case *ast.TupleLiteral:
 		elements := evalExpressionsWithContext(ctx, node.Elements, env)
-		if len(elements) == 1 && isError(elements[0]) {
+		if len(elements) == 1 && object.IsError(elements[0]) {
 			return elements[0]
 		}
 		return &object.Tuple{Elements: elements}
@@ -518,7 +518,7 @@ func evalInfixExpression(ctx context.Context, operator string, left, right objec
 
 func evalConditionalExpression(ctx context.Context, node *ast.ConditionalExpression, env *object.Environment) object.Object {
 	condition := evalWithContext(ctx, node.Condition, env)
-	if isError(condition) {
+	if object.IsError(condition) {
 		return condition
 	}
 
@@ -724,7 +724,7 @@ func evalInstanceInfixExpression(ctx context.Context, operator string, left *obj
 
 func evalIfStatementWithContext(ctx context.Context, ie *ast.IfStatement, env *object.Environment) object.Object {
 	condition := evalWithContext(ctx, ie.Condition, env)
-	if isError(condition) {
+	if object.IsError(condition) {
 		return condition
 	}
 
@@ -735,7 +735,7 @@ func evalIfStatementWithContext(ctx context.Context, ie *ast.IfStatement, env *o
 	// Check elif clauses
 	for _, elifClause := range ie.ElifClauses {
 		condition := evalWithContext(ctx, elifClause.Condition, env)
-		if isError(condition) {
+		if object.IsError(condition) {
 			return condition
 		}
 		if isTruthy(condition) {
@@ -762,7 +762,7 @@ func evalWhileStatementWithContext(ctx context.Context, ws *ast.WhileStatement, 
 		}
 
 		condition := evalWithContext(ctx, ws.Condition, env)
-		if isError(condition) {
+		if object.IsError(condition) {
 			return condition
 		}
 
@@ -822,7 +822,7 @@ func evalClassStatement(ctx context.Context, stmt *ast.ClassStatement, env *obje
 	if stmt.BaseClass != nil {
 		// Evaluate the base class expression (can be dotted like html.parser.HTMLParser)
 		baseClassObj := evalWithContext(ctx, stmt.BaseClass, env)
-		if isError(baseClassObj) {
+		if object.IsError(baseClassObj) {
 			return baseClassObj
 		}
 		baseClass, ok := baseClassObj.(*object.Class)
@@ -857,18 +857,18 @@ func evalClassStatement(ctx context.Context, stmt *ast.ClassStatement, env *obje
 
 func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *object.Environment) object.Object {
 	function := evalWithContext(ctx, node.Function, env)
-	if isError(function) {
+	if object.IsError(function) {
 		return function
 	}
 	args := evalExpressionsWithContext(ctx, node.Arguments, env)
-	if len(args) == 1 && isError(args[0]) {
+	if len(args) == 1 && object.IsError(args[0]) {
 		return args[0]
 	}
 
 	keywords := make(map[string]object.Object)
 	for k, v := range node.Keywords {
 		val := evalWithContext(ctx, v, env)
-		if isError(val) {
+		if object.IsError(val) {
 			return val
 		}
 		keywords[k] = val
@@ -890,7 +890,7 @@ func createInstance(ctx context.Context, class *object.Class, args []object.Obje
 		// We can reuse applyFunctionWithContext but we need to prepend 'self' to args.
 		newArgs := append([]object.Object{instance}, args...)
 		result := applyFunctionWithContext(ctx, initMethod, newArgs, keywords, env)
-		if isError(result) {
+		if object.IsError(result) {
 			return result
 		}
 	}
@@ -906,7 +906,7 @@ func evalExpressionsWithContext(ctx context.Context, exps []ast.Expression, env 
 
 	for i, e := range exps {
 		evaluated := evalWithContext(ctx, e, env)
-		if isError(evaluated) {
+		if object.IsError(evaluated) {
 			return []object.Object{evaluated}
 		}
 		result[i] = evaluated
@@ -1108,13 +1108,6 @@ func isTruthy(obj object.Object) bool {
 	}
 }
 
-func isError(obj object.Object) bool {
-	if obj != nil {
-		return obj.Type() == object.ERROR_OBJ
-	}
-	return false
-}
-
 // evalDictLiteralWithContext is in data_structures.go
 // evalIndexExpression is in data_structures.go
 // evalDictMemberAccess is in data_structures.go
@@ -1131,7 +1124,7 @@ func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.Augm
 	}
 
 	newVal := evalWithContext(ctx, node.Value, env)
-	if isError(newVal) {
+	if object.IsError(newVal) {
 		return newVal
 	}
 
@@ -1164,7 +1157,7 @@ func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.Augm
 	}
 
 	result := evalInfixExpression(ctx, operator, currentVal, newVal, env)
-	if isError(result) {
+	if object.IsError(result) {
 		return result
 	}
 
@@ -1432,7 +1425,7 @@ func evalIsOperator(left, right object.Object) object.Object {
 
 func evalMultipleAssignStatementWithContext(ctx context.Context, node *ast.MultipleAssignStatement, env *object.Environment) object.Object {
 	val := evalWithContext(ctx, node.Value, env)
-	if isError(val) {
+	if object.IsError(val) {
 		return val
 	}
 
@@ -1466,7 +1459,7 @@ func evalTryStatementWithContext(ctx context.Context, ts *ast.TryStatement, env 
 	result := evalWithContext(ctx, ts.Body, env)
 
 	// Check if exception or error occurred
-	if isException(result) || isError(result) {
+	if isException(result) || object.IsError(result) {
 		// Execute except block if present
 		if ts.Except != nil {
 			// Bind exception to variable if specified
@@ -1485,7 +1478,7 @@ func evalTryStatementWithContext(ctx context.Context, ts *ast.TryStatement, env 
 	}
 
 	// Clear exception if it was handled
-	if (isException(result) || isError(result)) && ts.Except != nil {
+	if (isException(result) || object.IsError(result)) && ts.Except != nil {
 		return NULL
 	}
 
@@ -1496,7 +1489,7 @@ func evalRaiseStatementWithContext(ctx context.Context, rs *ast.RaiseStatement, 
 	var message string
 	if rs.Message != nil {
 		msg := evalWithContext(ctx, rs.Message, env)
-		if isError(msg) {
+		if object.IsError(msg) {
 			return msg
 		}
 		message = msg.Inspect()
@@ -1508,7 +1501,7 @@ func evalRaiseStatementWithContext(ctx context.Context, rs *ast.RaiseStatement, 
 
 func evalAssertStatementWithContext(ctx context.Context, as *ast.AssertStatement, env *object.Environment) object.Object {
 	condition := evalWithContext(ctx, as.Condition, env)
-	if isError(condition) {
+	if object.IsError(condition) {
 		return condition
 	}
 
@@ -1516,7 +1509,7 @@ func evalAssertStatementWithContext(ctx context.Context, as *ast.AssertStatement
 		var message string
 		if as.Message != nil {
 			msg := evalWithContext(ctx, as.Message, env)
-			if isError(msg) {
+			if object.IsError(msg) {
 				return msg
 			}
 			message = msg.Inspect()
@@ -1543,11 +1536,11 @@ func assignToExpression(expr ast.Expression, value object.Object, env *object.En
 		return nil
 	case *ast.IndexExpression:
 		obj := evalWithContext(context.Background(), left.Left, env)
-		if isError(obj) {
+		if object.IsError(obj) {
 			return fmt.Errorf("assignment error")
 		}
 		index := evalWithContext(context.Background(), left.Index, env)
-		if isError(index) {
+		if object.IsError(index) {
 			return fmt.Errorf("assignment error")
 		}
 		switch o := obj.(type) {
@@ -1618,7 +1611,7 @@ func setForVariables(variables []ast.Expression, value object.Object, env *objec
 
 func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env *object.Environment) object.Object {
 	iterable := evalWithContext(ctx, fs.Iterable, env)
-	if isError(iterable) {
+	if object.IsError(iterable) {
 		return iterable
 	}
 
@@ -1719,7 +1712,7 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 
 func evalListComprehension(ctx context.Context, lc *ast.ListComprehension, env *object.Environment) object.Object {
 	iterable := evalWithContext(ctx, lc.Iterable, env)
-	if isError(iterable) {
+	if object.IsError(iterable) {
 		return iterable
 	}
 
@@ -1758,7 +1751,7 @@ func evalListComprehension(ctx context.Context, lc *ast.ListComprehension, env *
 			// Check condition if present
 			if lc.Condition != nil {
 				condition := evalWithContext(ctx, lc.Condition, compEnv)
-				if isError(condition) {
+				if object.IsError(condition) {
 					return condition
 				}
 				if !isTruthy(condition) {
@@ -1768,7 +1761,7 @@ func evalListComprehension(ctx context.Context, lc *ast.ListComprehension, env *
 
 			// Evaluate expression
 			exprResult := evalWithContext(ctx, lc.Expression, compEnv)
-			if isError(exprResult) {
+			if object.IsError(exprResult) {
 				return exprResult
 			}
 			result = append(result, exprResult)
@@ -1801,7 +1794,7 @@ func evalListComprehension(ctx context.Context, lc *ast.ListComprehension, env *
 		// Check condition if present
 		if lc.Condition != nil {
 			condition := evalWithContext(ctx, lc.Condition, compEnv)
-			if isError(condition) {
+			if object.IsError(condition) {
 				return condition
 			}
 			if !isTruthy(condition) {
@@ -1811,7 +1804,7 @@ func evalListComprehension(ctx context.Context, lc *ast.ListComprehension, env *
 
 		// Evaluate expression
 		exprResult := evalWithContext(ctx, lc.Expression, compEnv)
-		if isError(exprResult) {
+		if object.IsError(exprResult) {
 			return exprResult
 		}
 		result = append(result, exprResult)
@@ -1847,7 +1840,7 @@ func evalFStringLiteral(ctx context.Context, fstr *ast.FStringLiteral, env *obje
 		builder.WriteString(part)
 		if i < len(fstr.Expressions) {
 			exprResult := evalWithContext(ctx, fstr.Expressions[i], env)
-			if isError(exprResult) {
+			if object.IsError(exprResult) {
 				return exprResult
 			}
 			formatted := formatWithSpec(exprResult, fstr.FormatSpecs[i])

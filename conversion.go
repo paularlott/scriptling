@@ -129,3 +129,16 @@ func ToGo(obj object.Object) interface{} {
 		return o.Inspect()
 	}
 }
+
+// ToGoError converts a scriptling Object to a Go error.
+// If the object is an Error type, it returns a Go error with the error message.
+// Otherwise, it returns nil.
+func ToGoError(obj object.Object) error {
+	if obj == nil {
+		return nil
+	}
+	if err, ok := obj.(*object.Error); ok {
+		return fmt.Errorf("%s", err.Inspect())
+	}
+	return nil
+}

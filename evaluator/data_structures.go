@@ -17,12 +17,12 @@ func evalDictLiteralWithContext(ctx context.Context, node *ast.DictLiteral, env 
 
 	for keyNode, valueNode := range node.Pairs {
 		key := evalWithContext(ctx, keyNode, env)
-		if isError(key) {
+		if object.IsError(key) {
 			return key
 		}
 
 		value := evalWithContext(ctx, valueNode, env)
-		if isError(value) {
+		if object.IsError(value) {
 			return value
 		}
 
@@ -216,7 +216,7 @@ func evalBuiltinIndexExpression(builtin, index object.Object) object.Object {
 
 func evalSliceExpressionWithContext(ctx context.Context, node *ast.SliceExpression, env *object.Environment) object.Object {
 	left := evalWithContext(ctx, node.Left, env)
-	if isError(left) {
+	if object.IsError(left) {
 		return left
 	}
 
@@ -226,7 +226,7 @@ func evalSliceExpressionWithContext(ctx context.Context, node *ast.SliceExpressi
 
 	if node.Start != nil {
 		startObj := evalWithContext(ctx, node.Start, env)
-		if isError(startObj) {
+		if object.IsError(startObj) {
 			return startObj
 		}
 		s, err := startObj.AsInt()
@@ -239,7 +239,7 @@ func evalSliceExpressionWithContext(ctx context.Context, node *ast.SliceExpressi
 
 	if node.End != nil {
 		endObj := evalWithContext(ctx, node.End, env)
-		if isError(endObj) {
+		if object.IsError(endObj) {
 			return endObj
 		}
 		e, err := endObj.AsInt()
@@ -252,7 +252,7 @@ func evalSliceExpressionWithContext(ctx context.Context, node *ast.SliceExpressi
 
 	if node.Step != nil {
 		stepObj := evalWithContext(ctx, node.Step, env)
-		if isError(stepObj) {
+		if object.IsError(stepObj) {
 			return stepObj
 		}
 		s, err := stepObj.AsInt()
