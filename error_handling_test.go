@@ -18,8 +18,8 @@ except:
 		t.Fatalf("Error: %v", err)
 	}
 
-	result, _ := p.GetVar("result")
-	if result != int64(1) {
+	result, objErr := p.GetVar("result")
+	if objErr != nil || result != int64(1) {
 		t.Errorf("result = %v, want 1", result)
 	}
 }
@@ -37,8 +37,8 @@ finally:
 		t.Fatalf("Error: %v", err)
 	}
 
-	cleanup, _ := p.GetVar("cleanup")
-	if cleanup != int64(1) {
+	cleanup, objErr := p.GetVar("cleanup")
+	if objErr != nil || cleanup != int64(1) {
 		t.Errorf("cleanup = %v, want 1", cleanup)
 	}
 }
@@ -59,13 +59,13 @@ finally:
 		t.Fatalf("Error: %v", err)
 	}
 
-	result, _ := p.GetVar("result")
-	cleanup, _ := p.GetVar("cleanup")
+	result, objErr := p.GetVar("result")
+	cleanup, objErr := p.GetVar("cleanup")
 
-	if result != int64(1) {
+	if objErr != nil || result != int64(1) {
 		t.Errorf("result = %v, want 1", result)
 	}
-	if cleanup != int64(1) {
+	if objErr != nil || cleanup != int64(1) {
 		t.Errorf("cleanup = %v, want 1", cleanup)
 	}
 }
@@ -83,8 +83,8 @@ except:
 		t.Fatalf("Error: %v", err)
 	}
 
-	caught, _ := p.GetVar("caught")
-	if caught != int64(1) {
+	caught, objErr := p.GetVar("caught")
+	if objErr != nil || caught != int64(1) {
 		t.Errorf("caught = %v, want 1", caught)
 	}
 }
@@ -107,8 +107,8 @@ except:
 		t.Fatalf("Error: %v", err)
 	}
 
-	result, _ := p.GetVar("result")
-	if result != int64(-1) {
+	result, objErr := p.GetVar("result")
+	if objErr != nil || result != int64(-1) {
 		t.Errorf("result = %v, want -1", result)
 	}
 }

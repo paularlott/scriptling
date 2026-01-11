@@ -351,85 +351,61 @@ func (p *Scriptling) SetVar(name string, value interface{}) error {
 	return nil
 }
 
-func (p *Scriptling) GetVar(name string) (interface{}, bool) {
+func (p *Scriptling) GetVar(name string) (interface{}, object.Object) {
 	obj, ok := p.env.Get(name)
 	if !ok {
-		return nil, false
+		return nil, &object.Error{Message: fmt.Sprintf("variable '%s' not found", name)}
 	}
-	return ToGo(obj), true
+	return ToGo(obj), nil
 }
 
 // Convenience methods for type-safe variable access
-func (p *Scriptling) GetVarAsString(name string) (string, bool) {
+func (p *Scriptling) GetVarAsString(name string) (string, object.Object) {
 	obj, ok := p.env.Get(name)
 	if !ok {
-		return "", false
+		return "", &object.Error{Message: fmt.Sprintf("variable '%s' not found", name)}
 	}
-	val, err := obj.AsString()
-	if err != nil {
-		return "", false
-	}
-	return val, true
+	return obj.AsString()
 }
 
-func (p *Scriptling) GetVarAsInt(name string) (int64, bool) {
+func (p *Scriptling) GetVarAsInt(name string) (int64, object.Object) {
 	obj, ok := p.env.Get(name)
 	if !ok {
-		return 0, false
+		return 0, &object.Error{Message: fmt.Sprintf("variable '%s' not found", name)}
 	}
-	val, err := obj.AsInt()
-	if err != nil {
-		return 0, false
-	}
-	return val, true
+	return obj.AsInt()
 }
 
-func (p *Scriptling) GetVarAsFloat(name string) (float64, bool) {
+func (p *Scriptling) GetVarAsFloat(name string) (float64, object.Object) {
 	obj, ok := p.env.Get(name)
 	if !ok {
-		return 0, false
+		return 0, &object.Error{Message: fmt.Sprintf("variable '%s' not found", name)}
 	}
-	val, err := obj.AsFloat()
-	if err != nil {
-		return 0, false
-	}
-	return val, true
+	return obj.AsFloat()
 }
 
-func (p *Scriptling) GetVarAsBool(name string) (bool, bool) {
+func (p *Scriptling) GetVarAsBool(name string) (bool, object.Object) {
 	obj, ok := p.env.Get(name)
 	if !ok {
-		return false, false
+		return false, &object.Error{Message: fmt.Sprintf("variable '%s' not found", name)}
 	}
-	val, err := obj.AsBool()
-	if err != nil {
-		return false, false
-	}
-	return val, true
+	return obj.AsBool()
 }
 
-func (p *Scriptling) GetVarAsList(name string) ([]object.Object, bool) {
+func (p *Scriptling) GetVarAsList(name string) ([]object.Object, object.Object) {
 	obj, ok := p.env.Get(name)
 	if !ok {
-		return nil, false
+		return nil, &object.Error{Message: fmt.Sprintf("variable '%s' not found", name)}
 	}
-	val, err := obj.AsList()
-	if err != nil {
-		return nil, false
-	}
-	return val, true
+	return obj.AsList()
 }
 
-func (p *Scriptling) GetVarAsDict(name string) (map[string]object.Object, bool) {
+func (p *Scriptling) GetVarAsDict(name string) (map[string]object.Object, object.Object) {
 	obj, ok := p.env.Get(name)
 	if !ok {
-		return nil, false
+		return nil, &object.Error{Message: fmt.Sprintf("variable '%s' not found", name)}
 	}
-	val, err := obj.AsDict()
-	if err != nil {
-		return nil, false
-	}
-	return val, true
+	return obj.AsDict()
 }
 
 func (p *Scriptling) RegisterFunc(name string, fn func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object, helpText ...string) {

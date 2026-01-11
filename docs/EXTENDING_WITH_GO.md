@@ -1442,7 +1442,7 @@ logger.log("Application finished")
     fmt.Printf("Captured logs:\n%s", output)
 
     // Get stored messages
-    if messages, ok := p.GetVar("logger"); ok {
+    if messages, objErr := p.GetVar("logger"); objErr == nil {
         // Access library functions if needed
     }
 }
@@ -2303,7 +2303,7 @@ func TestCustomFunction(t *testing.T) {
     }
 
     // Check return value
-    if value, ok := p.GetVar("result"); ok {
+    if value, objErr := p.GetVar("result"); objErr == nil {
         if strObj, ok := value.(*object.String); ok {
             if strObj.Value != "success" {
                 t.Errorf("Expected 'success', got '%s'", strObj.Value)
