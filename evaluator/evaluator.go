@@ -175,6 +175,8 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		return evalBlockStatementWithContext(ctx, node, env)
 	case *ast.IfStatement:
 		return evalIfStatementWithContext(ctx, node, env)
+	case *ast.MatchStatement:
+		return evalMatchStatementWithContext(ctx, node, env)
 	case *ast.WhileStatement:
 		return evalWhileStatementWithContext(ctx, node, env)
 	case *ast.ReturnStatement:
@@ -1898,4 +1900,202 @@ func formatWithSpec(obj object.Object, spec string) string {
 
 	// Fallback to inspect
 	return obj.Inspect()
+}
+
+func evalMatchStatementWithContext(ctx context.Context, ms *ast.MatchStatement, env *object.Environment) object.Object {
+	subject := evalWithContext(ctx, ms.Subject, env)
+	if object.IsError(subject) {
+		return subject
+	}
+
+	for _, caseClause := range ms.Cases {
+		// Track captured variables for this case
+		capturedVars := make(map[string]object.Object)
+		
+		matched, capturedValue := matchPattern(subject, caseClause.Pattern, capturedVars)
+		if object.IsError(matched) {
+			return matched
+		}
+
+		if matched == TRUE {
+			// Temporarily add captured variables to environment for guard evaluation
+			for name, val := range capturedVars {
+				env.Set(name, val)
+			}
+			
+			// Check guard condition if present
+			if caseClause.Guard != nil {
+				guardResult := evalWithContext(ctx, caseClause.Guard, env)
+				if object.IsError(guardResult) {
+					return guardResult
+				}
+				if !isTruthy(guardResult) {
+					// Guard failed - try next case
+					continue
+				}
+			}
+
+			// Bind explicit capture variable if present
+			if caseClause.CaptureAs != nil {
+				env.Set(caseClause.CaptureAs.Value, capturedValue)
+			}
+
+			// Execute body in the environment (with captures)
+			return evalWithContext(ctx, caseClause.Body, env)
+		}
+	}
+
+	return NULL
+}
+
+func matchPattern(subject object.Object, pattern ast.Expression, capturedVars map[string]object.Object) (object.Object, object.Object) {
+	switch p := pattern.(type) {
+	case *ast.Identifier:
+		// Wildcard pattern
+		if p.Value == "_" {
+			return TRUE, subject
+		}
+
+		// All other identifiers are capture variables (always match)
+		// Bind the captured value to the identifier name
+		capturedVars[p.Value] = subject
+		return TRUE, subject
+
+	case *ast.CallExpression:
+		// Handle type patterns like int(), str(), list(), dict()
+		if ident, ok := p.Function.(*ast.Identifier); ok {
+			// Check if it's a type constructor with no arguments
+			if len(p.Arguments) == 0 && len(p.Keywords) == 0 {
+				typeName := ident.Value
+				subjectType := getTypeName(subject)
+				if typeName == subjectType {
+					return TRUE, subject
+				}
+				return FALSE, NULL
+			}
+		}
+		return &object.Error{Message: "call expressions in patterns must be type constructors with no arguments"}, NULL
+
+
+	case *ast.IntegerLiteral:
+		if intObj, ok := subject.(*object.Integer); ok {
+			if intObj.Value == p.Value {
+				return TRUE, subject
+			}
+		}
+		return FALSE, NULL
+
+	case *ast.FloatLiteral:
+		if floatObj, ok := subject.(*object.Float); ok {
+			if floatObj.Value == p.Value {
+				return TRUE, subject
+			}
+		}
+		return FALSE, NULL
+
+	case *ast.StringLiteral:
+		if strObj, ok := subject.(*object.String); ok {
+			if strObj.Value == p.Value {
+				return TRUE, subject
+			}
+		}
+		return FALSE, NULL
+
+	case *ast.Boolean:
+		if boolObj, ok := subject.(*object.Boolean); ok {
+			if boolObj.Value == p.Value {
+				return TRUE, subject
+			}
+		}
+		return FALSE, NULL
+
+	case *ast.None:
+		if subject == NULL {
+			return TRUE, subject
+		}
+		return FALSE, NULL
+
+	case *ast.DictLiteral:
+		// Structural matching for dictionaries
+		dictObj, ok := subject.(*object.Dict)
+		if !ok {
+			return FALSE, NULL
+		}
+
+		// Match all keys in pattern
+		for keyExpr, valueExpr := range p.Pairs {
+			keyObj := evalWithContext(context.Background(), keyExpr, object.NewEnvironment())
+			if object.IsError(keyObj) {
+				return keyObj, NULL
+			}
+
+			keyStr := keyObj.Inspect()
+			pair, exists := dictObj.Pairs[keyStr]
+			if !exists {
+				return FALSE, NULL
+			}
+
+			// If pattern value is an identifier (not _), it's a capture variable
+			if ident, ok := valueExpr.(*ast.Identifier); ok && ident.Value != "_" {
+				// Store the captured value
+				capturedVars[ident.Value] = pair.Value
+			} else {
+				// Otherwise, it must match exactly
+				matched, _ := matchPattern(pair.Value, valueExpr, capturedVars)
+				if matched == FALSE {
+					return FALSE, NULL
+				}
+			}
+		}
+
+		return TRUE, subject
+
+	case *ast.ListLiteral:
+		// Simple list matching
+		listObj, ok := subject.(*object.List)
+		if !ok {
+			return FALSE, NULL
+		}
+
+		if len(p.Elements) != len(listObj.Elements) {
+			return FALSE, NULL
+		}
+
+		for i, elemExpr := range p.Elements {
+			matched, _ := matchPattern(listObj.Elements[i], elemExpr, capturedVars)
+			if matched == FALSE {
+				return FALSE, NULL
+			}
+		}
+
+		return TRUE, subject
+
+	default:
+		return &object.Error{Message: fmt.Sprintf("unsupported pattern type: %T", pattern)}, NULL
+	}
+}
+
+func getTypeName(obj object.Object) string {
+	switch obj.Type() {
+	case object.INTEGER_OBJ:
+		return "int"
+	case object.FLOAT_OBJ:
+		return "float"
+	case object.STRING_OBJ:
+		return "str"
+	case object.BOOLEAN_OBJ:
+		return "bool"
+	case object.LIST_OBJ:
+		return "list"
+	case object.DICT_OBJ:
+		return "dict"
+	case object.TUPLE_OBJ:
+		return "tuple"
+	case object.SET_OBJ:
+		return "set"
+	case object.NULL_OBJ:
+		return "NoneType"
+	default:
+		return obj.Type().String()
+	}
 }

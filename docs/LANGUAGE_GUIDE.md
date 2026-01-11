@@ -386,6 +386,57 @@ for i in [1, 2, 3]:
         print(i)
 ```
 
+### Match Statement
+
+Pattern matching for cleaner conditional logic:
+
+```python
+# Basic value matching
+match status:
+    case 200:
+        print("Success")
+    case 404:
+        print("Not found")
+    case 500:
+        print("Server error")
+    case _:
+        print("Other status")
+
+# Type-based matching
+match data:
+    case int():
+        print("Got integer")
+    case str():
+        print("Got string")
+    case list():
+        print("Got list")
+    case _:
+        print("Other type")
+
+# Guard clauses
+match value:
+    case x if x > 100:
+        print("Large value")
+    case x if x > 50:
+        print("Medium value")
+    case x:
+        print("Small value")
+
+# Structural matching with dictionaries
+match response:
+    case {"status": 200, "data": payload}:
+        process(payload)
+    case {"error": msg}:
+        print("Error:", msg)
+    case _:
+        print("Unknown response")
+
+# Capture variables
+match value:
+    case x as num:
+        print("Captured:", num)
+```
+
 ## Functions
 
 ### Definition
@@ -1261,7 +1312,7 @@ Scriptling intentionally does not support the following Python 3 features:
 - **`async`/`await`**: Asynchronous programming is not supported. Scriptling is designed for synchronous embedded scripting.
 - **Type annotations**: Type hints (e.g., `def func(x: int) -> str:`) are not parsed or enforced.
 - **Walrus operator** (`:=`): Assignment expressions are not supported.
-- **Match/case statements** (Python 3.10+): Full pattern matching is not implemented. A simplified version may be added (see Planned Features).
+- **Match/case statements** (Python 3.10+): Simplified pattern matching is supported (see Match Statement section).
 - **Positional-only parameters** (`/`): Function parameter syntax like `def func(a, /, b)` is not supported.
 - **Keyword-only parameters** (`*`): Syntax like `def func(a, *, b)` is not supported (though kwargs work via `**kwargs` pattern).
 - **Decorators**: Function and class decorators (e.g., `@decorator`) are not supported.
@@ -1343,6 +1394,7 @@ For clarity, Scriptling **does support**:
 - ✅ `in` and `not in` operators
 - ✅ Bitwise operators (`&`, `|`, `^`, `~`, `<<`, `>>`)
 - ✅ Boolean operators with short-circuit evaluation
+- ✅ Match/case statements (simplified pattern matching)
 - ✅ String methods (most Python string methods)
 - ✅ List, dict, set methods (most Python methods)
 
