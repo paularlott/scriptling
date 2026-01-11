@@ -118,11 +118,15 @@ func callSuperMethod(ctx context.Context, super *object.Super, method string, ar
 }
 
 func callInstanceMethod(ctx context.Context, instance *object.Instance, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
-	// Check class methods
-	if fn, ok := instance.Class.Methods[method]; ok {
-		// Bind 'self'
-		newArgs := append([]object.Object{instance}, args...)
-		return applyFunctionWithContext(ctx, fn, newArgs, keywords, env)
+	// Walk up the inheritance chain to find the method
+	currentClass := instance.Class
+	for currentClass != nil {
+		if fn, ok := currentClass.Methods[method]; ok {
+			// Bind 'self'
+			newArgs := append([]object.Object{instance}, args...)
+			return applyFunctionWithContext(ctx, fn, newArgs, keywords, env)
+		}
+		currentClass = currentClass.BaseClass
 	}
 
 	return errors.NewError("instance has no method %s", method)
