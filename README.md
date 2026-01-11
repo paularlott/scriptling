@@ -216,8 +216,11 @@ go run main.go test_basics.py
 - **[Language Guide](docs/LANGUAGE_GUIDE.md)** - Complete syntax reference
 - **[LLM Guide](docs/LLM_GUIDE.md)** - Quick reference for LLM code generation
 - **[Libraries](docs/LIBRARIES.md)** - Available libraries and APIs
-- **[Go Integration](docs/GO_INTEGRATION.md)** - Embedding and extending
-- **[Extending with Go](docs/EXTENDING_WITH_GO.md)** - Adding Go functions and libraries
+- **[Go Integration](docs/GO_INTEGRATION.md)** - Embedding and using Scriptling from Go
+- **[Extending with Go](docs/EXTENDING_WITH_GO.md)** - Overview of extending Scriptling
+  - **[Functions](docs/EXTENDING_FUNCTIONS.md)** - Creating custom functions
+  - **[Libraries](docs/EXTENDING_LIBRARIES.md)** - Creating custom libraries
+  - **[Classes](docs/EXTENDING_CLASSES.md)** - Defining custom classes
 - **[Extending with Scripts](docs/EXTENDING_WITH_SCRIPTS.md)** - Creating script libraries
 - **[Help System](docs/HELP_SYSTEM.md)** - Documenting functions and classes
 
