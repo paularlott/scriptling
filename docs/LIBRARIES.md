@@ -65,52 +65,46 @@ Always available without importing:
 
 ## Standard Libraries
 
-These libraries are built-in and can be imported.
+These libraries are built-in and available for import without any registration.
 
-### Data Handling
-- **`json`**: Parse and generate JSON data.
-- **`base64`**: Base64 encoding and decoding.
-- **`html`**: HTML escaping and unescaping.
+| Import | Description | Details |
+|--------|-------------|---------|
+| `json` | Parse and generate JSON data | [libraries/json.md](libraries/json.md) |
+| `base64` | Base64 encoding and decoding | [libraries/base64.md](libraries/base64.md) |
+| `html` | HTML escaping and unescaping | [libraries/html.md](libraries/html.md) |
+| `math` | Mathematical functions and constants | [libraries/math.md](libraries/math.md) |
+| `random` | Random number generation | [libraries/random.md](libraries/random.md) |
+| `statistics` | Statistical functions | [libraries/statistics.md](libraries/statistics.md) |
+| `time` | Time access and conversions | [libraries/time.md](libraries/time.md) |
+| `datetime` | Date and time formatting | [libraries/datetime.md](libraries/datetime.md) |
+| `re` | Regular expression operations | [libraries/regex.md](libraries/regex.md) |
+| `string` | String constants | [libraries/string.md](libraries/string.md) |
+| `textwrap` | Text wrapping and filling | [libraries/textwrap.md](libraries/textwrap.md) |
+| `functools` | Higher-order functions | [libraries/functools.md](libraries/functools.md) |
+| `itertools` | Iterator functions | [libraries/itertools.md](libraries/itertools.md) |
+| `collections` | Specialized container datatypes | [libraries/collections.md](libraries/collections.md) |
+| `hashlib` | Secure hash algorithms | [libraries/hashlib.md](libraries/hashlib.md) |
+| `platform` | Platform identifying data | [libraries/platform.md](libraries/platform.md) |
+| `urllib` | URL handling | [libraries/urllib.md](libraries/urllib.md) |
+| `uuid` | UUID generation | [libraries/uuid.md](libraries/uuid.md) |
 
-### Math & Numbers
-- **`math`**: Mathematical functions and constants (`sin`, `cos`, `sqrt`, `pi`, etc.).
-- **`random`**: Random number generation (`random`, `randint`, `choice`, `shuffle`).
-- **`statistics`**: Statistical functions (`mean`, `median`, `mode`, `stdev`).
+## Extended Libraries
 
-### Date & Time
-- **`time`**: Time access and conversions.
-- **`datetime`**: Basic date and time types.
+These libraries require explicit registration by the host application (e.g., the CLI tool).
 
-### Text Processing
-- **`re`**: Regular expression operations.
-- **`string`**: Common string operations and constants.
-- **`textwrap`**: Text wrapping and filling.
-
-### Functional Programming
-- **`functools`**: Higher-order functions and operations on callable objects (`reduce`, `partial`).
-- **`itertools`**: Functions creating iterators for efficient looping (`count`, `cycle`, `repeat`).
-
-### Collections & Algorithms
-- **`collections`**: Container datatypes (`deque`, `Counter`, `defaultdict`).
-- **`hashlib`**: Secure hash and message digest algorithms (`md5`, `sha256`).
-
-### System & Network
-- **`platform`**: Access to underlying platform's identifying data.
-- **`urllib`**: URL handling modules (`urllib.parse`, `urllib.request`).
-- **`uuid`**: UUID generation.
-- **`requests`**: HTTP library for sending requests.
-
-## Extended Libraries (Host Registration Required)
-
-These libraries are not loaded by default and must be explicitly registered by the host application (e.g., the CLI tool).
-
-- **`threads`**: Asynchronous execution with isolated environments. See [async documentation](libraries/threads.md).
-- **`os`**: Operating system interfaces (filesystem access). Requires security configuration.
-- **`pathlib`**: Object-oriented filesystem paths.
-- **`secrets`**: Cryptographically strong random numbers.
-- **`subprocess`**: Spawn and manage subprocesses.
-- **`sys`**: System-specific parameters and functions (`argv`, `exit`, `version`).
-- **`wait_for`**: Wait for resources to become available (files, ports, HTTP endpoints, processes).
+| Import | Description | Details |
+|--------|-------------|---------|
+| `requests` | HTTP library for sending requests | [libraries/requests.md](libraries/requests.md) |
+| `sys` | System-specific parameters and functions | [libraries/sys.md](libraries/sys.md) |
+| `secrets` | Cryptographically strong random numbers | [libraries/secrets.md](libraries/secrets.md) |
+| `subprocess` | Spawn and manage subprocesses | [libraries/subprocess.md](libraries/subprocess.md) |
+| `html.parser` | HTML/XHTML parser | [libraries/html.parser.md](libraries/html.parser.md) |
+| `os` | Operating system interfaces (filesystem) | [libraries/os.md](libraries/os.md) |
+| `os.path` | Pathname manipulations | [libraries/os.path.md](libraries/os.path.md) |
+| `pathlib` | Object-oriented filesystem paths | [libraries/pathlib.md](libraries/pathlib.md) |
+| `threads` | Asynchronous execution with isolated environments | [libraries/threads.md](libraries/threads.md) |
+| `logging` | Logging functionality | [libraries/logging.md](libraries/logging.md) |
+| `wait_for` | Wait for resources to become available | [libraries/wait_for.md](libraries/wait_for.md) |
 
 
 

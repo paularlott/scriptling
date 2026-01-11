@@ -160,7 +160,3 @@ deck = list(range(1, 53))  # Cards 1-52
 random.shuffle(deck)
 print("Shuffled deck:", deck[:5], "...")  # First 5 cards
 ```
-    data.append(random.randint(0, 100))
-
-print("Random data:", data)
-```
