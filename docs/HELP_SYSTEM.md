@@ -260,6 +260,8 @@ Scriptling also provides a builder pattern for creating functions, libraries, an
 
 ### Function Builder
 
+The `FunctionBuilder` allows you to create individual typed Go functions with automatic type conversion.
+
 ```go
 import (
     "github.com/paularlott/scriptling"
@@ -269,35 +271,42 @@ import (
 p := scriptling.New()
 
 // Build a function with help text
-scriptling.NewFunctionBuilder(p, "my_func").
-    WithHelp(`my_func(arg1, arg2) - Brief description
-
-  Detailed description of what the function does.
+fb := object.NewFunctionBuilder()
+fn := fb.FunctionWithHelp(func(a, b int) int {
+    return a + b
+}, `add(a, b) - Add two integers
 
   Parameters:
-    arg1 - Description of first parameter
-    arg2 - Description of second parameter
+    a - First integer
+    b - Second integer
 
   Returns:
-    Description of return value`).
-    WithFunc(func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-        // Implementation
-        return &object.String{Value: "result"}
-    }).
+    The sum of a and b`).
     Build()
+
+p.RegisterFunc("add", fn)
+```
+
+You can also register a function without help text:
+
+```go
+fb := object.NewFunctionBuilder()
+fn := fb.Function(func(a, b int) int {
+    return a + b
+}).Build()
+p.RegisterFunc("add", fn)
 ```
 
 ### Library Builder
 
+The `LibraryBuilder` creates complete libraries with multiple functions, constants, and a description.
+
 ```go
 // Build a library with description and functions
-library := scriptling.NewLibraryBuilder("mylib").
-    WithDescription("My custom data processing library").
-    WithFunction("process", scriptling.NewFunctionBuilder(p, "").
-        WithFunc(func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-            return &object.String{Value: "processed"}
-        }).
-        WithHelp(`process(data) - Process the input data
+library := object.NewLibraryBuilder("mylib", "My custom data processing library").
+    FunctionWithHelp("process", func(data string) string {
+        return "processed: " + data
+    }, `process(data) - Process the input data
 
   Takes input data and processes it.
 
@@ -306,13 +315,9 @@ library := scriptling.NewLibraryBuilder("mylib").
 
   Returns:
     Processed data as string`).
-        Build(),
-    ).
-    WithFunction("validate", scriptling.NewFunctionBuilder(p, "").
-        WithFunc(func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-            return &object.Boolean{Value: true}
-        }).
-        WithHelp(`validate(input) - Validate input data
+    FunctionWithHelp("validate", func(input string) bool {
+        return len(input) > 0
+    }, `validate(input) - Validate input data
 
   Checks if the input meets criteria.
 
@@ -321,8 +326,8 @@ library := scriptling.NewLibraryBuilder("mylib").
 
   Returns:
     True if valid, False otherwise`).
-        Build(),
-    ).
+    Constant("MAX_SIZE", 1000).
+    Constant("VERSION", "1.0.0").
     Build()
 
 p.RegisterLibrary("mylib", library)
@@ -330,36 +335,27 @@ p.RegisterLibrary("mylib", library)
 
 ### Class Builder
 
+The `ClassBuilder` creates classes with typed methods.
+
 ```go
-// Build a class with help text
-classBuilder := scriptling.NewClassBuilder(p, "MyClass").
-    WithHelp(`MyClass - A custom class for data management
+// Build a class with methods
+classBuilder := object.NewClassBuilder("MyClass")
+classBuilder.Method("__init__", func(self *object.Instance, name string) {
+    self.Fields["name"] = &object.String{Value: name}
+})
+classBuilder.Method("get_data", func(self *object.Instance) string {
+    name, _ := self.Fields["name"].AsString()
+    return "data for " + name
+})
+classBuilder.Method("set_data", func(self *object.Instance, data string) {
+    self.Fields["data"] = &object.String{Value: data}
+})
+myClass := classBuilder.Build()
 
-  This class provides methods for managing and processing data.`).
-    WithConstructor(scriptling.NewFunctionBuilder(p, "__init__").
-        WithFunc(func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-            // Constructor implementation
-            return object.NULL
-        }).
-        WithHelp(`__init__(self, name) - Initialize the MyClass instance
-
-  Parameters:
-    name - The name for this instance`).
-        Build(),
-    ).
-    WithMethod("get_data", scriptling.NewFunctionBuilder(p, "").
-        WithFunc(func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-            return &object.String{Value: "data"}
-        }).
-        WithHelp(`get_data(self) - Retrieve the data
-
-  Returns:
-    The current data as a string`).
-        Build(),
-    ).
-    Build()
-
-p.RegisterClass(classBuilder)
+// Register through a library
+p.RegisterLibrary("mylib", object.NewLibrary(nil, map[string]object.Object{
+    "MyClass": myClass,
+}, "My library"))
 ```
 
 ### Registering Script Functions with Help
@@ -446,9 +442,9 @@ def format(value, fmt_type="default"):
 | `RegisterScriptFunc(name, script)` | Function from script | Docstring in script |
 | `RegisterLibrary(name, library)` | Pre-built Go library | Library's HelpText fields |
 | `RegisterScriptLibrary(name, script)` | Library from script | Module/function docstrings |
-| `NewFunctionBuilder().WithHelp()` | Builder pattern | Chainable WithHelp() |
-| `NewLibraryBuilder().WithDescription()` | Builder pattern | Chainable methods |
-| `NewClassBuilder().WithHelp()` | Builder pattern | Chainable WithHelp() |
+| `NewFunctionBuilder().FunctionWithHelp(fn, help)` | Builder pattern | Help text parameter |
+| `NewLibraryBuilder(name, description)` | Builder pattern | Description + FunctionWithHelp |
+| `NewClassBuilder(name).Method(...)` | Builder pattern | Methods automatically added |
 
 ## Help Text Best Practices
 
