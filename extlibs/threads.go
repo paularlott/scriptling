@@ -365,7 +365,7 @@ Example:
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			initial := int64(0)
 			if len(args) > 0 {
-				if i, ok := args[0].AsInt(); ok {
+				if i, err := args[0].AsInt(); err == nil {
 					initial = i
 				} else {
 					return errors.NewTypeError("INTEGER", args[0].Type().String())
@@ -380,7 +380,7 @@ Example:
 						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 							delta := int64(1)
 							if len(args) > 0 {
-								if d, ok := args[0].AsInt(); ok {
+								if d, err := args[0].AsInt(); err == nil {
 									delta = d
 								} else {
 									return errors.NewTypeError("INTEGER", args[0].Type().String())
@@ -402,7 +402,7 @@ Example:
 							if len(args) != 1 {
 								return errors.NewArgumentError(len(args), 1)
 							}
-							if val, ok := args[0].AsInt(); ok {
+							if val, err := args[0].AsInt(); err == nil {
 								atomic.set(val)
 								return &object.Null{}
 							}
@@ -484,7 +484,7 @@ Example:
 						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 							delta := int64(1)
 							if len(args) > 0 {
-								if d, ok := args[0].AsInt(); ok {
+								if d, err := args[0].AsInt(); err == nil {
 									delta = d
 								}
 							}
@@ -531,12 +531,12 @@ Example:
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			maxsize := 0 // Unbounded by default
 			if len(args) > 0 {
-				if m, ok := args[0].AsInt(); ok {
+				if m, err := args[0].AsInt(); err == nil {
 					maxsize = int(m)
 				}
 			}
 			if m, ok := kwargs.Kwargs["maxsize"]; ok {
-				if mInt, ok := m.AsInt(); ok {
+				if mInt, err := m.AsInt(); err == nil {
 					maxsize = int(mInt)
 				}
 			}
@@ -615,17 +615,17 @@ Example:
 			queueDepth := 0
 
 			if len(args) > 1 {
-				if w, ok := args[1].AsInt(); ok {
+				if w, err := args[1].AsInt(); err == nil {
 					workers = int(w)
 				}
 			}
 			if w, ok := kwargs.Kwargs["workers"]; ok {
-				if wInt, ok := w.AsInt(); ok {
+				if wInt, err := w.AsInt(); err == nil {
 					workers = int(wInt)
 				}
 			}
 			if q, ok := kwargs.Kwargs["queue_depth"]; ok {
-				if qInt, ok := q.AsInt(); ok {
+				if qInt, err := q.AsInt(); err == nil {
 					queueDepth = int(qInt)
 				}
 			}

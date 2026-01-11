@@ -73,12 +73,12 @@ p.RegisterFunc("make_duration", func(ctx context.Context, kwargs object.Kwargs, 
     if err != nil {
         return &object.Error{Message: err.Error()}
     }
-    
+
     minutes, err := kwargs.GetFloat("minutes", 0.0)
     if err != nil {
         return &object.Error{Message: err.Error()}
     }
-    
+
     seconds, err := kwargs.GetFloat("seconds", 0.0)
     if err != nil {
         return &object.Error{Message: err.Error()}
@@ -116,7 +116,7 @@ p.RegisterFunc("format_greeting", func(ctx context.Context, kwargs object.Kwargs
     if err != nil {
         return &object.Error{Message: err.Error()}
     }
-    
+
     suffix, err := kwargs.GetString("suffix", "!")
     if err != nil {
         return &object.Error{Message: err.Error()}
@@ -164,29 +164,29 @@ The `object.Kwargs` type provides convenient helper methods for extracting keywo
 
 ### Available Helper Methods
 
-| Method | Description |
-|--------|-------------|
+| Method                                     | Description                               |
+| ------------------------------------------ | ----------------------------------------- |
 | `GetString(name, default) (string, error)` | Extract string, return default if missing |
-| `GetInt(name, default) (int64, error)` | Extract int (accepts Integer/Float) |
-| `GetFloat(name, default) (float64, error)` | Extract float (accepts Integer/Float) |
-| `GetBool(name, default) (bool, error)` | Extract bool |
-| `GetList(name, default) ([]Object, error)` | Extract list elements |
-| `Has(name) bool` | Check if key exists |
-| `Keys() []string` | Get all keys |
-| `Len() int` | Get number of kwargs |
-| `Get(name) Object` | Get raw Object value |
+| `GetInt(name, default) (int64, error)`     | Extract int (accepts Integer/Float)       |
+| `GetFloat(name, default) (float64, error)` | Extract float (accepts Integer/Float)     |
+| `GetBool(name, default) (bool, error)`     | Extract bool                              |
+| `GetList(name, default) ([]Object, error)` | Extract list elements                     |
+| `Has(name) bool`                           | Check if key exists                       |
+| `Keys() []string`                          | Get all keys                              |
+| `Len() int`                                | Get number of kwargs                      |
+| `Get(name) Object`                         | Get raw Object value                      |
 
-### Must* Variants (No Error Handling)
+### Must\* Variants (No Error Handling)
 
 For simple cases where you want to use defaults on any error:
 
-| Method | Description |
-|--------|-------------|
+| Method                                | Description                   |
+| ------------------------------------- | ----------------------------- |
 | `MustGetString(name, default) string` | Extract string, ignore errors |
-| `MustGetInt(name, default) int64` | Extract int, ignore errors |
-| `MustGetFloat(name, default) float64` | Extract float, ignore errors |
-| `MustGetBool(name, default) bool` | Extract bool, ignore errors |
-| `MustGetList(name, default) []Object` | Extract list, ignore errors |
+| `MustGetInt(name, default) int64`     | Extract int, ignore errors    |
+| `MustGetFloat(name, default) float64` | Extract float, ignore errors  |
+| `MustGetBool(name, default) bool`     | Extract bool, ignore errors   |
+| `MustGetList(name, default) []Object` | Extract list, ignore errors   |
 
 ### Example Usage
 
@@ -197,22 +197,22 @@ p.RegisterFunc("connect", func(ctx context.Context, kwargs object.Kwargs, args .
     if err != nil {
         return &object.Error{Message: err.Error()}
     }
-    
+
     port, err := kwargs.GetInt("port", 8080)
     if err != nil {
         return &object.Error{Message: err.Error()}
     }
-    
+
     // Or use Must* variants for simple cases
     timeout := kwargs.MustGetInt("timeout", 30)
     debug := kwargs.MustGetBool("debug", false)
-    
+
     // Check if optional kwargs were provided
     if kwargs.Has("ssl") {
         ssl := kwargs.MustGetBool("ssl", false)
         // Handle SSL configuration
     }
-    
+
     return &object.String{Value: fmt.Sprintf("%s:%d (timeout=%d, debug=%t)", host, port, timeout, debug)}
 })
 ```
@@ -220,6 +220,7 @@ p.RegisterFunc("connect", func(ctx context.Context, kwargs object.Kwargs, args .
 ### Error Handling
 
 Kwargs helpers return errors when:
+
 - The kwarg is provided but has an incompatible type
 - This helps catch typos like passing `"123"` instead of `123`
 
@@ -257,8 +258,8 @@ Each method returns `(value, error)` where `error` is `nil` on success.
 
 ```go
 p.RegisterFunc("add_tax", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-    if len(args) != 2 {
-        return errors.NewArgumentError(len(args), 2)
+    if err := errors.ExactArgs(args, 2); err != nil {
+        return err
     }
 
     // Manual type assertion and value extraction - tedious!
@@ -290,8 +291,8 @@ p.RegisterFunc("add_tax", func(ctx context.Context, kwargs object.Kwargs, args .
 
 ```go
 p.RegisterFunc("add_tax", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-    if len(args) != 2 {
-        return errors.NewArgumentError(len(args), 2)
+    if err := errors.ExactArgs(args, 2); err != nil {
+        return err
     }
 
     // Automatic type coercion - Integer.AsFloat() returns the float value!
@@ -322,8 +323,8 @@ p.RegisterFunc("add_tax", func(ctx context.Context, kwargs object.Kwargs, args .
 
 ```go
 p.RegisterFunc("greet", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-    if len(args) != 1 {
-        return errors.NewArgumentError(len(args), 1)
+    if err := errors.ExactArgs(args, 1); err != nil {
+        return err
     }
 
     // Clean string extraction - one line!
@@ -340,8 +341,8 @@ p.RegisterFunc("greet", func(ctx context.Context, kwargs object.Kwargs, args ...
 
 ```go
 p.RegisterFunc("sum_list", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-    if len(args) != 1 {
-        return errors.NewArgumentError(len(args), 1)
+    if err := errors.ExactArgs(args, 1); err != nil {
+        return err
     }
 
     // Extract list elements directly - no .Elements needed
@@ -368,8 +369,8 @@ p.RegisterFunc("sum_list", func(ctx context.Context, kwargs object.Kwargs, args 
 
 ```go
 p.RegisterFunc("process_config", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-    if len(args) != 1 {
-        return errors.NewArgumentError(len(args), 1)
+    if err := errors.ExactArgs(args, 1); err != nil {
+        return err
     }
 
     // Get dict as simple map[string]Object - no .Pairs!
@@ -424,8 +425,8 @@ The Fluent Library API provides a clean, type-safe way to create Scriptling libr
 myLib := object.NewLibrary(map[string]*object.Builtin{
     "connect": {
         Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-            if len(args) < 2 {
-                return errors.NewArgumentError(len(args), 2)
+            if err := errors.MinArgs(args, 2); err != nil {
+                return err
             }
             host, err := args[0].AsString()
             if err != nil {
@@ -497,24 +498,25 @@ p.RegisterLibrary("mymath", myLib)
 
 The Fluent API automatically converts between Go types and Scriptling objects:
 
-| Go Type              | Scriptling Type | Notes                              |
-| -------------------- | --------------- | ----------------------------------- |
-| `string`             | `STRING`        | Direct conversion                  |
-| `int`, `int32`, `int64` | `INTEGER`    | Accepts both Integer and Float     |
-| `float32`, `float64` | `FLOAT`         | Accepts both Integer and Float     |
-| `bool`               | `BOOLEAN`       | Direct conversion                  |
-| `[]any`              | `LIST`          | Converts to/from Scriptling lists  |
-| `map[string]any`     | `DICT`          | Converts to/from Scriptling dicts  |
-| `nil`                | `None`          | Null value                         |
+| Go Type                 | Scriptling Type | Notes                             |
+| ----------------------- | --------------- | --------------------------------- |
+| `string`                | `STRING`        | Direct conversion                 |
+| `int`, `int32`, `int64` | `INTEGER`       | Accepts both Integer and Float    |
+| `float32`, `float64`    | `FLOAT`         | Accepts both Integer and Float    |
+| `bool`                  | `BOOLEAN`       | Direct conversion                 |
+| `[]any`                 | `LIST`          | Converts to/from Scriptling lists |
+| `map[string]any`        | `DICT`          | Converts to/from Scriptling dicts |
+| `nil`                   | `None`          | Null value                        |
 
 ### Function Signatures
 
 The Fluent API supports flexible function signatures with optional context and kwargs parameters:
 
 **Supported signature patterns:**
+
 - `func(args...) result` - Positional arguments only
 - `func(ctx context.Context, args...) result` - Context + positional arguments
-- `func(kwargs object.Kwargs, args...) result` - Kwargs + positional arguments  
+- `func(kwargs object.Kwargs, args...) result` - Kwargs + positional arguments
 - `func(ctx context.Context, kwargs object.Kwargs, args...) result` - Context + kwargs + positional arguments
 - `func(kwargs object.Kwargs) result` - Kwargs only
 - `func(ctx context.Context, kwargs object.Kwargs) result` - Context + kwargs only
@@ -522,6 +524,7 @@ The Fluent API supports flexible function signatures with optional context and k
 - `func() result` - No parameters
 
 **Context parameter:**
+
 ```go
 builder.Function("timeout_op", func(ctx context.Context, timeout int) error {
     select {
@@ -534,6 +537,7 @@ builder.Function("timeout_op", func(ctx context.Context, timeout int) error {
 ```
 
 **Single return value:**
+
 ```go
 builder.Function("sqrt", func(x float64) float64 {
     return math.Sqrt(x)
@@ -541,6 +545,7 @@ builder.Function("sqrt", func(x float64) float64 {
 ```
 
 **Return value + error:**
+
 ```go
 builder.Function("divide", func(a, b float64) (float64, error) {
     if b == 0 {
@@ -551,6 +556,7 @@ builder.Function("divide", func(a, b float64) (float64, error) {
 ```
 
 **No return value:**
+
 ```go
 builder.Function("print", func(msg string) {
     fmt.Println(msg)
@@ -558,6 +564,7 @@ builder.Function("print", func(msg string) {
 ```
 
 **Multiple parameters:**
+
 ```go
 builder.Function("format", func(name string, age int, score float64) string {
     return fmt.Sprintf("%s (age %d) scored %.2f", name, age, score)
@@ -565,6 +572,7 @@ builder.Function("format", func(name string, age int, score float64) string {
 ```
 
 **Complex types:**
+
 ```go
 builder.Function("sum_list", func(items []any) float64 {
     sum := 0.0
@@ -589,6 +597,7 @@ builder.Function("process_config", func(config map[string]any) string {
 The Fluent API supports keyword arguments through the `object.Kwargs` type. When used as the first or second parameter (after optional context), the builder automatically passes the keyword arguments to it.
 
 **Kwargs-only function:**
+
 ```go
 builder.Function("connect", func(kwargs object.Kwargs) (string, error) {
     host, err := kwargs.GetString("host", "localhost")
@@ -609,27 +618,29 @@ builder.Function("connect", func(kwargs object.Kwargs) (string, error) {
 ```
 
 **Context + kwargs:**
+
 ```go
 builder.Function("timeout_connect", func(ctx context.Context, kwargs object.Kwargs) (string, error) {
     host, err := kwargs.GetString("host", "localhost")
     if err != nil {
         return "", err
     }
-    
+
     timeout, err := kwargs.GetInt("timeout", 30)
     if err != nil {
         return "", err
     }
-    
+
     // Use context for timeout
     ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
     defer cancel()
-    
+
     return fmt.Sprintf("Connected to %s", host), nil
 })
 ```
 
 **Mixed positional and kwargs:**
+
 ```go
 builder.Function("format", func(kwargs object.Kwargs, name string, count int) (string, error) {
     prefix, err := kwargs.GetString("prefix", ">")
@@ -651,17 +662,18 @@ builder.Function("format", func(kwargs object.Kwargs, name string, count int) (s
 ```
 
 **Context + kwargs + positional:**
+
 ```go
 builder.Function("process", func(ctx context.Context, kwargs object.Kwargs, data string) (string, error) {
     timeout, err := kwargs.GetInt("timeout", 30)
     if err != nil {
         return "", err
     }
-    
+
     // Process with context and timeout
     ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
     defer cancel()
-    
+
     return "Processed: " + data, nil
 })
 ```
@@ -670,19 +682,20 @@ builder.Function("process", func(ctx context.Context, kwargs object.Kwargs, data
 
 The `object.Kwargs` type provides helper methods for extracting values with defaults:
 
-| Method | Description |
-|--------|-------------|
+| Method                                     | Description                               |
+| ------------------------------------------ | ----------------------------------------- |
 | `GetString(name, default) (string, error)` | Extract string, return default if missing |
-| `GetInt(name, default) (int64, error)` | Extract int (accepts Integer/Float) |
-| `GetFloat(name, default) (float64, error)` | Extract float (accepts Integer/Float) |
-| `GetBool(name, default) (bool, error)` | Extract bool |
-| `GetList(name, default) ([]Object, error)` | Extract list elements |
-| `Has(name) bool` | Check if key exists |
-| `Keys() []string` | Get all keys |
-| `Len() int` | Get number of kwargs |
-| `Get(name) object.Object` | Get raw Object value |
+| `GetInt(name, default) (int64, error)`     | Extract int (accepts Integer/Float)       |
+| `GetFloat(name, default) (float64, error)` | Extract float (accepts Integer/Float)     |
+| `GetBool(name, default) (bool, error)`     | Extract bool                              |
+| `GetList(name, default) ([]Object, error)` | Extract list elements                     |
+| `Has(name) bool`                           | Check if key exists                       |
+| `Keys() []string`                          | Get all keys                              |
+| `Len() int`                                | Get number of kwargs                      |
+| `Get(name) object.Object`                  | Get raw Object value                      |
 
-**Must* variants (ignore errors):**
+**Must\* variants (ignore errors):**
+
 ```go
 builder.Function("quick", func(kwargs object.Kwargs) string {
     // Must helpers ignore errors and return defaults
@@ -695,6 +708,7 @@ builder.Function("quick", func(kwargs object.Kwargs) string {
 #### Error Handling
 
 Kwargs helpers return errors when:
+
 - The kwarg is provided but has an incompatible type
 - This helps catch typos like passing `"123"` instead of `123`
 
@@ -806,24 +820,24 @@ builder.Alias("sum", "add")  // "sum" is now an alias for "add"
 
 ### Builder Methods Reference
 
-| Method                     | Description                                              |
-| -------------------------- | -------------------------------------------------------- |
-| `Function(name, fn)`       | Register a typed Go function                             |
-| `FunctionWithHelp(...)`    | Register a function with help text                        |
-| `Constant(name, value)`    | Register a constant value                                |
-| `RawFunction(name, fn)`    | Register a low-level builtin function                     |
-| `SubLibrary(name, lib)`    | Add a sub-library                                        |
-| `FunctionFromVariadic(...)`| Register a variadic function                             |
-| `Alias(alias, original)`   | Create an alias for an existing function                 |
-| `Build()`                  | Create and return the Library                            |
-| `Clear()`                  | Remove all registered functions and constants            |
-| `Merge(other)`             | Merge another builder's functions and constants           |
-| `FunctionCount()`          | Get number of registered functions                       |
-| `ConstantCount()`          | Get number of registered constants                       |
-| `HasFunction(name)`        | Check if a function is registered                        |
-| `HasConstant(name)`        | Check if a constant is registered                        |
-| `GetFunctionNames()`       | Get sorted list of function names                        |
-| `GetConstantNames()`       | Get sorted list of constant names                        |
+| Method                      | Description                                     |
+| --------------------------- | ----------------------------------------------- |
+| `Function(name, fn)`        | Register a typed Go function                    |
+| `FunctionWithHelp(...)`     | Register a function with help text              |
+| `Constant(name, value)`     | Register a constant value                       |
+| `RawFunction(name, fn)`     | Register a low-level builtin function           |
+| `SubLibrary(name, lib)`     | Add a sub-library                               |
+| `FunctionFromVariadic(...)` | Register a variadic function                    |
+| `Alias(alias, original)`    | Create an alias for an existing function        |
+| `Build()`                   | Create and return the Library                   |
+| `Clear()`                   | Remove all registered functions and constants   |
+| `Merge(other)`              | Merge another builder's functions and constants |
+| `FunctionCount()`           | Get number of registered functions              |
+| `ConstantCount()`           | Get number of registered constants              |
+| `HasFunction(name)`         | Check if a function is registered               |
+| `HasConstant(name)`         | Check if a constant is registered               |
+| `GetFunctionNames()`        | Get sorted list of function names               |
+| `GetConstantNames()`        | Get sorted list of constant names               |
 
 ### Complete Example
 
@@ -1000,7 +1014,7 @@ p.RegisterFunc("read_file", func(ctx context.Context, kwargs object.Kwargs, args
     fmt.Fprintf(writer, "Successfully read %d bytes from %s\n", len(content), pathObj.Value)
     return &object.String{Value: string(content)}
 })
-````
+```
 
 ### HTTP Client with Logging
 
@@ -1798,8 +1812,8 @@ p.RegisterFunc("safe_divide", func(ctx context.Context, kwargs object.Kwargs, ar
 ```go
 // ✓ RECOMMENDED: Use built-in accessors
 p.RegisterFunc("power", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-    if len(args) != 2 {
-        return errors.NewArgumentError(len(args), 2)
+    if err := errors.ExactArgs(args, 2); err != nil {
+        return err
     }
 
     // AsFloat() automatically handles both Integer and Float types

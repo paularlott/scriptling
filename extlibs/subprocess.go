@@ -27,12 +27,12 @@ func (cp *CompletedProcess) Type() object.ObjectType { return object.INSTANCE_OB
 func (cp *CompletedProcess) Inspect() string {
 	return fmt.Sprintf("CompletedProcess(args=%v, returncode=%d)", cp.Args, cp.Returncode)
 }
-func (cp *CompletedProcess) AsBool() bool                             { return true }
-func (cp *CompletedProcess) AsString() (string, bool)                 { return cp.Inspect(), true }
-func (cp *CompletedProcess) AsInt() (int64, bool)                     { return 0, false }
-func (cp *CompletedProcess) AsFloat() (float64, bool)                 { return 0, false }
-func (cp *CompletedProcess) AsDict() (map[string]object.Object, bool) { return nil, false }
-func (cp *CompletedProcess) AsList() ([]object.Object, bool)          { return nil, false }
+func (cp *CompletedProcess) AsBool() (bool, object.Object)                             { return true, nil }
+func (cp *CompletedProcess) AsString() (string, object.Object)                 { return cp.Inspect(), nil }
+func (cp *CompletedProcess) AsInt() (int64, object.Object)                     { return int64(cp.Returncode), nil }
+func (cp *CompletedProcess) AsFloat() (float64, object.Object)                 { return float64(cp.Returncode), nil }
+func (cp *CompletedProcess) AsDict() (map[string]object.Object, object.Object) { return nil, &object.Error{Message: object.ErrMustBeDict} }
+func (cp *CompletedProcess) AsList() ([]object.Object, object.Object)          { return nil, &object.Error{Message: object.ErrMustBeList} }
 
 // CompletedProcessClass defines the CompletedProcess class
 var CompletedProcessClass = &object.Class{
@@ -90,7 +90,7 @@ var SubprocessLibrary = object.NewLibrary(map[string]*object.Builtin{
 				list, _ := args[0].AsList()
 				cmdArgs = make([]string, len(list))
 				for i, arg := range list {
-					if str, ok := arg.AsString(); ok {
+					if str, err := arg.AsString(); err == nil {
 						cmdArgs[i] = str
 					} else {
 						return errors.NewTypeError("STRING", arg.Type().String())

@@ -69,17 +69,17 @@ var URLParseLibrary = object.NewLibrary(map[string]*object.Builtin{
 				return errors.NewArgumentError(len(args), 1)
 			}
 
-			str, ok := args[0].AsString()
-			if !ok {
-				return errors.NewTypeError("STRING", args[0].Type().String())
+			str, err := args[0].AsString()
+			if err != nil {
+				return err
 			}
 
 			// Optional safe parameter (characters not to encode)
 			safe := ""
 			if len(args) == 2 {
-				safe, ok = args[1].AsString()
-				if !ok {
-					return errors.NewTypeError("STRING", args[1].Type().String())
+				safe, err = args[1].AsString()
+				if err != nil {
+					return err
 				}
 			}
 
@@ -96,17 +96,17 @@ Returns a URL-encoded version of the string. Characters in 'safe' are not encode
 				return errors.NewArgumentError(len(args), 1)
 			}
 
-			str, ok := args[0].AsString()
-			if !ok {
-				return errors.NewTypeError("STRING", args[0].Type().String())
+			str, err := args[0].AsString()
+			if err != nil {
+				return err
 			}
 
 			// Optional safe parameter
 			safe := ""
 			if len(args) == 2 {
-				safe, ok = args[1].AsString()
-				if !ok {
-					return errors.NewTypeError("STRING", args[1].Type().String())
+				safe, err = args[1].AsString()
+				if err != nil {
+					return err
 				}
 			}
 
@@ -125,13 +125,13 @@ Like quote(), but also replaces spaces with plus signs.`,
 				return errors.NewArgumentError(len(args), 1)
 			}
 
-			str, ok := args[0].AsString()
-			if !ok {
-				return errors.NewTypeError("STRING", args[0].Type().String())
+			str, err := args[0].AsString()
+			if err != nil {
+				return err
 			}
 
-			decoded, err := url.PathUnescape(str)
-			if err != nil {
+			decoded, urlErr := url.PathUnescape(str)
+			if urlErr != nil {
 				return errors.NewError("unquote() invalid URL encoding")
 			}
 			return &object.String{Value: decoded}
@@ -146,15 +146,15 @@ Returns a URL-decoded version of the string.`,
 				return errors.NewArgumentError(len(args), 1)
 			}
 
-			str, ok := args[0].AsString()
-			if !ok {
-				return errors.NewTypeError("STRING", args[0].Type().String())
+			str, err := args[0].AsString()
+			if err != nil {
+				return err
 			}
 
 			// unquote_plus replaces + with space first, then unquotes
 			str = strings.ReplaceAll(str, "+", " ")
-			decoded, err := url.PathUnescape(str)
-			if err != nil {
+			decoded, urlErr := url.PathUnescape(str)
+			if urlErr != nil {
 				return errors.NewError("unquote_plus() invalid URL encoding")
 			}
 			return &object.String{Value: decoded}
@@ -169,13 +169,13 @@ Like unquote(), but also replaces plus signs with spaces.`,
 				return errors.NewArgumentError(len(args), 1)
 			}
 
-			str, ok := args[0].AsString()
-			if !ok {
-				return errors.NewTypeError("STRING", args[0].Type().String())
+			str, err := args[0].AsString()
+			if err != nil {
+				return err
 			}
 
-			u, err := url.Parse(str)
-			if err != nil {
+			u, urlErr := url.Parse(str)
+			if urlErr != nil {
 				return errors.NewError("urlparse() invalid URL")
 			}
 
@@ -210,27 +210,27 @@ Access components as attributes: result.scheme, result.netloc, etc. Use result.g
 				if arg.Class == ParseResultClass {
 					u := &url.URL{}
 					if value, ok := arg.Fields["scheme"]; ok {
-						if str, ok := value.AsString(); ok {
+						if str, err := value.AsString(); err == nil {
 							u.Scheme = str
 						}
 					}
 					if value, ok := arg.Fields["netloc"]; ok {
-						if str, ok := value.AsString(); ok {
+						if str, err := value.AsString(); err == nil {
 							u.Host = str
 						}
 					}
 					if value, ok := arg.Fields["path"]; ok {
-						if str, ok := value.AsString(); ok {
+						if str, err := value.AsString(); err == nil {
 							u.Path = str
 						}
 					}
 					if value, ok := arg.Fields["query"]; ok {
-						if str, ok := value.AsString(); ok {
+						if str, err := value.AsString(); err == nil {
 							u.RawQuery = str
 						}
 					}
 					if value, ok := arg.Fields["fragment"]; ok {
-						if str, ok := value.AsString(); ok {
+						if str, err := value.AsString(); err == nil {
 							u.Fragment = str
 						}
 					}
@@ -241,27 +241,27 @@ Access components as attributes: result.scheme, result.netloc, etc. Use result.g
 			case *object.Dict:
 				u := &url.URL{}
 				if value, ok := arg.Pairs["scheme"]; ok {
-					if str, ok := value.Value.AsString(); ok {
+					if str, err := value.Value.AsString(); err == nil {
 						u.Scheme = str
 					}
 				}
 				if value, ok := arg.Pairs["netloc"]; ok {
-					if str, ok := value.Value.AsString(); ok {
+					if str, err := value.Value.AsString(); err == nil {
 						u.Host = str
 					}
 				}
 				if value, ok := arg.Pairs["path"]; ok {
-					if str, ok := value.Value.AsString(); ok {
+					if str, err := value.Value.AsString(); err == nil {
 						u.Path = str
 					}
 				}
 				if value, ok := arg.Pairs["query"]; ok {
-					if str, ok := value.Value.AsString(); ok {
+					if str, err := value.Value.AsString(); err == nil {
 						u.RawQuery = str
 					}
 				}
 				if value, ok := arg.Pairs["fragment"]; ok {
-					if str, ok := value.Value.AsString(); ok {
+					if str, err := value.Value.AsString(); err == nil {
 						u.Fragment = str
 					}
 				}
@@ -273,9 +273,9 @@ Access components as attributes: result.scheme, result.netloc, etc. Use result.g
 				}
 				components := make([]string, 6)
 				for i, elem := range arg.Elements {
-					str, ok := elem.AsString()
-					if !ok {
-						return errors.NewTypeError("STRING", elem.Type().String())
+					str, err := elem.AsString()
+					if err != nil {
+						return err
 					}
 					components[i] = str
 				}
@@ -294,9 +294,9 @@ Access components as attributes: result.scheme, result.netloc, etc. Use result.g
 				}
 				components := make([]string, 6)
 				for i, elem := range arg.Elements {
-					str, ok := elem.AsString()
-					if !ok {
-						return errors.NewTypeError("STRING", elem.Type().String())
+					str, err := elem.AsString()
+					if err != nil {
+						return err
 					}
 					components[i] = str
 				}
@@ -323,23 +323,23 @@ Constructs a URL string from a 6-tuple or dict of URL components.`,
 				return errors.NewArgumentError(len(args), 2)
 			}
 
-			base, ok := args[0].AsString()
-			if !ok {
-				return errors.NewTypeError("STRING", args[0].Type().String())
-			}
-
-			ref, ok := args[1].AsString()
-			if !ok {
-				return errors.NewTypeError("STRING", args[1].Type().String())
-			}
-
-			baseURL, err := url.Parse(base)
+			base, err := args[0].AsString()
 			if err != nil {
+				return err
+			}
+
+			ref, err := args[1].AsString()
+			if err != nil {
+				return err
+			}
+
+			baseURL, urlErr := url.Parse(base)
+			if urlErr != nil {
 				return errors.NewError("urljoin() invalid base URL")
 			}
 
-			refURL, err := url.Parse(ref)
-			if err != nil {
+			refURL, urlErr := url.Parse(ref)
+			if urlErr != nil {
 				return errors.NewError("urljoin() invalid reference URL")
 			}
 
@@ -356,13 +356,13 @@ Joins a base URL with a reference URL, resolving relative references.`,
 				return errors.NewArgumentError(len(args), 1)
 			}
 
-			str, ok := args[0].AsString()
-			if !ok {
-				return errors.NewTypeError("STRING", args[0].Type().String())
+			str, err := args[0].AsString()
+			if err != nil {
+				return err
 			}
 
-			u, err := url.Parse(str)
-			if err != nil {
+			u, urlErr := url.Parse(str)
+			if urlErr != nil {
 				return errors.NewError("urlsplit() invalid URL")
 			}
 
@@ -397,9 +397,9 @@ Returns a 5-tuple: (scheme, netloc, path, query, fragment).`,
 				return errors.NewArgumentError(len(args), 1)
 			}
 
-			elements, ok := args[0].AsList()
-			if !ok {
-				return errors.NewTypeError("LIST or TUPLE", args[0].Type().String())
+			elements, err := args[0].AsList()
+			if err != nil {
+				return errors.ParameterError("elements", err)
 			}
 
 			if len(elements) != 5 {
@@ -408,9 +408,9 @@ Returns a 5-tuple: (scheme, netloc, path, query, fragment).`,
 
 			components := make([]string, 5)
 			for i, elem := range elements {
-				str, ok := elem.AsString()
-				if !ok {
-					return errors.NewTypeError("STRING", elem.Type().String())
+				str, err := elem.AsString()
+				if err != nil {
+					return err
 				}
 				components[i] = str
 			}
@@ -435,13 +435,13 @@ Constructs a URL string from a 5-tuple of URL components.`,
 				return errors.NewArgumentError(len(args), 1)
 			}
 
-			str, ok := args[0].AsString()
-			if !ok {
-				return errors.NewTypeError("STRING", args[0].Type().String())
+			str, err := args[0].AsString()
+			if err != nil {
+				return err
 			}
 
-			values, err := url.ParseQuery(str)
-			if err != nil {
+			values, urlErr := url.ParseQuery(str)
+			if urlErr != nil {
 				return errors.NewError("parse_qs() invalid query string")
 			}
 
@@ -470,13 +470,13 @@ Parses a URL query string and returns a dictionary where values are lists.`,
 				return errors.NewArgumentError(len(args), 1)
 			}
 
-			str, ok := args[0].AsString()
-			if !ok {
-				return errors.NewTypeError("STRING", args[0].Type().String())
+			str, err := args[0].AsString()
+			if err != nil {
+				return err
 			}
 
-			values, err := url.ParseQuery(str)
-			if err != nil {
+			values, urlErr := url.ParseQuery(str)
+			if urlErr != nil {
 				return errors.NewError("parse_qsl() invalid query string")
 			}
 
@@ -517,7 +517,7 @@ Parses a URL query string and returns a list of (key, value) tuples.`,
 					case *object.List:
 						strVals := make([]string, len(val.Elements))
 						for i, elem := range val.Elements {
-							if str, ok := elem.AsString(); ok {
+							if str, err := elem.AsString(); err == nil {
 								strVals[i] = str
 							}
 						}
@@ -528,8 +528,8 @@ Parses a URL query string and returns a list of (key, value) tuples.`,
 				// List of (key, value) tuples
 				for _, elem := range arg.Elements {
 					if tuple, ok := elem.(*object.Tuple); ok && len(tuple.Elements) == 2 {
-						if key, ok := tuple.Elements[0].AsString(); ok {
-							if val, ok := tuple.Elements[1].AsString(); ok {
+						if key, err := tuple.Elements[0].AsString(); err == nil {
+							if val, err := tuple.Elements[1].AsString(); err == nil {
 								values.Add(key, val)
 							}
 						}

@@ -22,12 +22,12 @@ func (l *loggerWrapper) Type() object.ObjectType { return object.INSTANCE_OBJ }
 func (l *loggerWrapper) Inspect() string { return "<logging.Logger>" }
 
 // Implementation of object.Object interface
-func (l *loggerWrapper) AsString() (string, bool)                 { return l.Inspect(), true }
-func (l *loggerWrapper) AsInt() (int64, bool)                     { return 0, false }
-func (l *loggerWrapper) AsFloat() (float64, bool)                 { return 0, false }
-func (l *loggerWrapper) AsBool() (bool, bool)                     { return true, true }
-func (l *loggerWrapper) AsList() ([]object.Object, bool)          { return nil, false }
-func (l *loggerWrapper) AsDict() (map[string]object.Object, bool) { return nil, false }
+func (l *loggerWrapper) AsString() (string, object.Object)                 { return l.Inspect(), nil }
+func (l *loggerWrapper) AsInt() (int64, object.Object)                     { return 0, &object.Error{Message: object.ErrMustBeInteger} }
+func (l *loggerWrapper) AsFloat() (float64, object.Object)                 { return 0, &object.Error{Message: object.ErrMustBeNumber} }
+func (l *loggerWrapper) AsBool() (bool, object.Object)                     { return true, nil }
+func (l *loggerWrapper) AsList() ([]object.Object, object.Object)          { return nil, &object.Error{Message: object.ErrMustBeList} }
+func (l *loggerWrapper) AsDict() (map[string]object.Object, object.Object) { return nil, &object.Error{Message: object.ErrMustBeDict} }
 
 // CallMethod handles method calls on logger objects
 func (l *loggerWrapper) CallMethod(method string, args ...object.Object) object.Object {
@@ -55,12 +55,12 @@ func (l *loggerWrapper) logAtLevel(args []object.Object, logFunc func(msg string
 		return errors.NewError("missing log message")
 	}
 
-	msg, ok := args[0].(*object.String)
-	if !ok {
-		return errors.NewError("log message must be a string")
+	msg, err := args[0].AsString()
+	if err != nil {
+		return errors.ParameterError("msg", err)
 	}
 
-	logFunc(msg.Value)
+	logFunc(msg)
 	return &object.Boolean{Value: true}
 }
 
