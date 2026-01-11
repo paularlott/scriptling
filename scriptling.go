@@ -365,7 +365,11 @@ func (p *Scriptling) GetVarAsString(name string) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	return obj.AsString()
+	val, err := obj.AsString()
+	if err != nil {
+		return "", false
+	}
+	return val, true
 }
 
 func (p *Scriptling) GetVarAsInt(name string) (int64, bool) {
@@ -373,7 +377,11 @@ func (p *Scriptling) GetVarAsInt(name string) (int64, bool) {
 	if !ok {
 		return 0, false
 	}
-	return obj.AsInt()
+	val, err := obj.AsInt()
+	if err != nil {
+		return 0, false
+	}
+	return val, true
 }
 
 func (p *Scriptling) GetVarAsFloat(name string) (float64, bool) {
@@ -381,7 +389,11 @@ func (p *Scriptling) GetVarAsFloat(name string) (float64, bool) {
 	if !ok {
 		return 0, false
 	}
-	return obj.AsFloat()
+	val, err := obj.AsFloat()
+	if err != nil {
+		return 0, false
+	}
+	return val, true
 }
 
 func (p *Scriptling) GetVarAsBool(name string) (bool, bool) {
@@ -389,7 +401,11 @@ func (p *Scriptling) GetVarAsBool(name string) (bool, bool) {
 	if !ok {
 		return false, false
 	}
-	return obj.AsBool()
+	val, err := obj.AsBool()
+	if err != nil {
+		return false, false
+	}
+	return val, true
 }
 
 func (p *Scriptling) GetVarAsList(name string) ([]object.Object, bool) {
@@ -397,7 +413,11 @@ func (p *Scriptling) GetVarAsList(name string) ([]object.Object, bool) {
 	if !ok {
 		return nil, false
 	}
-	return obj.AsList()
+	val, err := obj.AsList()
+	if err != nil {
+		return nil, false
+	}
+	return val, true
 }
 
 func (p *Scriptling) GetVarAsDict(name string) (map[string]object.Object, bool) {
@@ -405,7 +425,11 @@ func (p *Scriptling) GetVarAsDict(name string) (map[string]object.Object, bool) 
 	if !ok {
 		return nil, false
 	}
-	return obj.AsDict()
+	val, err := obj.AsDict()
+	if err != nil {
+		return nil, false
+	}
+	return val, true
 }
 
 func (p *Scriptling) RegisterFunc(name string, fn func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object, helpText ...string) {

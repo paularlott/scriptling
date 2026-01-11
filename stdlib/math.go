@@ -19,27 +19,14 @@ func gcd(a, b int64) int64 {
 	return a
 }
 
-// toFloat extracts a float64 from an Integer or Float object.
-// Returns (value, ok) where ok is true if extraction succeeded.
-func toFloat(obj object.Object) (float64, bool) {
-	switch arg := obj.(type) {
-	case *object.Integer:
-		return float64(arg.Value), true
-	case *object.Float:
-		return arg.Value, true
-	default:
-		return 0, false
-	}
-}
-
 // oneFloatFunc creates a math function that takes one float argument and returns a float
 func oneFloatFunc(f func(float64) float64) func(context.Context, object.Kwargs, ...object.Object) object.Object {
 	return func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 		if len(args) != 1 {
 			return errors.NewArgumentError(len(args), 1)
 		}
-		x, ok := toFloat(args[0])
-		if !ok {
+		x, err := args[0].AsFloat()
+		if err != nil {
 			return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
 		}
 		return &object.Float{Value: f(x)}
@@ -52,13 +39,13 @@ func twoFloatFunc(f func(float64, float64) float64) func(context.Context, object
 		if len(args) != 2 {
 			return errors.NewArgumentError(len(args), 2)
 		}
-		x, ok := toFloat(args[0])
-		if !ok {
-			return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
+		x, err := args[0].AsFloat()
+		if err != nil {
+			return err
 		}
-		y, ok := toFloat(args[1])
-		if !ok {
-			return errors.NewTypeError("INTEGER or FLOAT", args[1].Type().String())
+		y, err := args[1].AsFloat()
+		if err != nil {
+			return err
 		}
 		return &object.Float{Value: f(x, y)}
 	}
@@ -151,8 +138,8 @@ Returns a float.`,
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			x, ok := toFloat(args[0])
-			if !ok {
+			x, err := args[0].AsFloat()
+			if err != nil {
 				return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
 			}
 			if x <= 0 {
@@ -191,12 +178,12 @@ Returns a float in radians.`,
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
 			}
-			x, ok := toFloat(args[0])
-			if !ok {
+			x, err := args[0].AsFloat()
+			if err != nil {
 				return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
 			}
-			y, ok := toFloat(args[1])
-			if !ok {
+			y, err := args[1].AsFloat()
+			if err != nil {
 				return errors.NewTypeError("INTEGER or FLOAT", args[1].Type().String())
 			}
 			if y == 0 {
@@ -214,12 +201,12 @@ y must not be zero. Returns a float.`,
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
 			}
-			a, ok := args[0].AsInt()
-			if !ok {
+			a, err := args[0].AsInt()
+			if err != nil {
 				return errors.NewTypeError("INTEGER", args[0].Type().String())
 			}
-			b, ok := args[1].AsInt()
-			if !ok {
+			b, err := args[1].AsInt()
+			if err != nil {
 				return errors.NewTypeError("INTEGER", args[1].Type().String())
 			}
 			return &object.Integer{Value: gcd(a, b)}
@@ -234,8 +221,8 @@ Returns an integer.`,
 			if len(args) != 1 {
 				return errors.NewArgumentError(len(args), 1)
 			}
-			n, ok := args[0].AsInt()
-			if !ok {
+			n, err := args[0].AsInt()
+			if err != nil {
 				return errors.NewTypeError("INTEGER", args[0].Type().String())
 			}
 			if n < 0 {

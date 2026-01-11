@@ -131,7 +131,7 @@ if err != nil {
 }
 
 // Access the return value
-if intResult, ok := result.AsInt(); ok {
+if intResult, err := result.AsInt(); err == nil {
     fmt.Printf("Result: %d\n", intResult)  // Result: 66
 }
 ```
@@ -159,12 +159,12 @@ if err != nil {
 }
 
 // Access dictionary return value
-if dict, ok := result.AsDict(); ok {
+if dict, err := result.AsDict(); err == nil {
     if status, ok := dict["status"]; ok {
         fmt.Printf("Status: %s\n", status.Inspect())  // Status: success
     }
     if count, ok := dict["count"]; ok {
-        if countVal, ok := count.AsInt(); ok {
+        if countVal, err := count.AsInt(); err == nil {
             fmt.Printf("Count: %d\n", countVal)  // Count: 5
         }
     }
@@ -216,23 +216,23 @@ if err != nil {
 }
 
 // Process the returned dictionary
-if resultDict, ok := result.AsDict(); ok {
+if resultDict, err := result.AsDict(); err == nil {
     fmt.Println("Processing Results:")
 
     if count, ok := resultDict["original_count"]; ok {
-        if countVal, ok := count.AsInt(); ok {
+        if countVal, err := count.AsInt(); err == nil {
             fmt.Printf("  Original items: %d\n", countVal)
         }
     }
 
     if total, ok := resultDict["total"]; ok {
-        if totalVal, ok := total.AsInt(); ok {
+        if totalVal, err := total.AsInt(); err == nil {
             fmt.Printf("  Filtered total: %d\n", totalVal)
         }
     }
 
     if filtered, ok := resultDict["filtered"]; ok {
-        if filteredList, ok := filtered.AsList(); ok {
+        if filteredList, err := filtered.AsList(); err == nil {
             fmt.Printf("  Filtered items: %d\n", len(filteredList))
         }
     }
@@ -401,11 +401,11 @@ fmt.Printf("Message: %s\n", message)  // Message: Hello, World
 result, err := p.CallFunction("some_function", arg1, arg2)
 
 // Extract the value based on expected type
-if i, ok := result.AsInt(); ok {
+if i, err := result.AsInt(); err == nil {
     fmt.Printf("Integer: %d\n", i)
-} else if s, ok := result.AsString(); ok {
+} else if s, err := result.AsString(); err == nil {
     fmt.Printf("String: %s\n", s)
-} else if f, ok := result.AsFloat(); ok {
+} else if f, err := result.AsFloat(); err == nil {
     fmt.Printf("Float: %f\n", f)
 }
 ```
@@ -801,9 +801,9 @@ else:
     }
 
     // Access return value from script
-    if resultDict, ok := result.AsDict(); ok {
+    if resultDict, err := result.AsDict(); err == nil {
         if processed, ok := resultDict["processed_count"]; ok {
-            if count, ok := processed.AsInt(); ok {
+            if count, err := processed.AsInt(); err == nil {
                 fmt.Printf("Processed %d items\n", count)
             }
         }

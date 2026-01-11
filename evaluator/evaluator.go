@@ -1863,11 +1863,11 @@ func formatWithSpec(obj object.Object, spec string) string {
 		// Check the actual object type first to preserve float representation
 		switch obj.Type() {
 		case object.INTEGER_OBJ:
-			if intVal, ok := obj.AsInt(); ok {
+			if intVal, err := obj.AsInt(); err == nil {
 				return fmt.Sprintf("%d", intVal)
 			}
 		case object.FLOAT_OBJ:
-			if floatVal, ok := obj.AsFloat(); ok {
+			if floatVal, err := obj.AsFloat(); err == nil {
 				// Check if it's a whole number
 				if floatVal == float64(int64(floatVal)) {
 					return fmt.Sprintf("%.1f", floatVal)
@@ -1882,21 +1882,21 @@ func formatWithSpec(obj object.Object, spec string) string {
 	if strings.HasSuffix(spec, "d") {
 		widthStr := strings.TrimSuffix(spec, "d")
 		if widthStr == "" {
-			if intVal, ok := obj.AsInt(); ok {
+			if intVal, err := obj.AsInt(); err == nil {
 				return fmt.Sprintf("%d", intVal)
 			}
 		} else if widthStr[0] == '0' {
 			// Zero-padded
 			widthStr = widthStr[1:]
 			if width, err := strconv.Atoi(widthStr); err == nil {
-				if intVal, ok := obj.AsInt(); ok {
+				if intVal, err := obj.AsInt(); err == nil {
 					return fmt.Sprintf("%0*d", width, intVal)
 				}
 			}
 		} else {
 			// Space-padded
 			if width, err := strconv.Atoi(widthStr); err == nil {
-				if intVal, ok := obj.AsInt(); ok {
+				if intVal, err := obj.AsInt(); err == nil {
 					return fmt.Sprintf("%*d", width, intVal)
 				}
 			}

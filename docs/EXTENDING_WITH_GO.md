@@ -241,13 +241,15 @@ All Scriptling objects implement type-safe accessor methods that simplify type c
 Every `object.Object` implements these methods:
 
 ```go
-AsString() (string, bool)            // Extract string value
-AsInt() (int64, bool)                // Extract integer value
-AsFloat() (float64, bool)            // Extract float value (auto-converts integers)
-AsBool() (bool, bool)                // Extract boolean value
-AsList() ([]Object, bool)            // Extract list/tuple elements
-AsDict() (map[string]Object, bool)   // Extract dict as map (keys are strings)
+AsString() (string, Object)            // Extract string value
+AsInt() (int64, Object)                // Extract integer value
+AsFloat() (float64, Object)            // Extract float value (auto-converts integers)
+AsBool() (bool, Object)                // Extract boolean value
+AsList() ([]Object, Object)            // Extract list/tuple elements
+AsDict() (map[string]Object, Object)   // Extract dict as map (keys are strings)
 ```
+
+Each method returns `(value, error)` where `error` is `nil` on success.
 
 ### Benefits Over Type Assertions
 
@@ -293,14 +295,14 @@ p.RegisterFunc("add_tax", func(ctx context.Context, kwargs object.Kwargs, args .
     }
 
     // Automatic type coercion - Integer.AsFloat() returns the float value!
-    price, ok := args[0].AsFloat()
-    if !ok {
-        return errors.NewTypeError("NUMBER", args[0].Type().String())
+    price, err := args[0].AsFloat()
+    if err != nil {
+        return errors.ParameterError("price", err)
     }
 
-    rate, ok := args[1].AsFloat()
-    if !ok {
-        return errors.NewTypeError("NUMBER", args[1].Type().String())
+    rate, err := args[1].AsFloat()
+    if err != nil {
+        return errors.ParameterError("rate", err)
     }
 
     result := price * (1 + rate)
@@ -310,10 +312,11 @@ p.RegisterFunc("add_tax", func(ctx context.Context, kwargs object.Kwargs, args .
 
 ### Key Advantages
 
-1. **Automatic Type Coercion**: `Integer.AsFloat()` returns `(float64(value), true)` automatically
+1. **Automatic Type Coercion**: `Integer.AsFloat()` returns `(float64(value), nil)` automatically
 2. **Cleaner Code**: No need to access `.Value` field after type assertion
-3. **Consistent Pattern**: Same `(value, ok)` pattern throughout
+3. **Consistent Pattern**: Same `(value, error)` pattern throughout
 4. **Dictionary Simplification**: `AsDict()` returns `map[string]Object` instead of `map[string]DictPair`
+5. **Better Error Messages**: Use `errors.ParameterError(name, err)` to add context to type errors
 
 ### Working with Strings
 
@@ -324,9 +327,9 @@ p.RegisterFunc("greet", func(ctx context.Context, kwargs object.Kwargs, args ...
     }
 
     // Clean string extraction - one line!
-    name, ok := args[0].AsString()
-    if !ok {
-        return errors.NewTypeError("STRING", args[0].Type().String())
+    name, err := args[0].AsString()
+    if err != nil {
+        return errors.ParameterError("name", err)
     }
 
     return &object.String{Value: "Hello, " + name + "!"}
@@ -342,16 +345,16 @@ p.RegisterFunc("sum_list", func(ctx context.Context, kwargs object.Kwargs, args 
     }
 
     // Extract list elements directly - no .Elements needed
-    elements, ok := args[0].AsList()
-    if !ok {
-        return errors.NewTypeError("LIST", args[0].Type().String())
+    elements, err := args[0].AsList()
+    if err != nil {
+        return errors.ParameterError("list", err)
     }
 
     var sum float64
     for _, elem := range elements {
         // AsFloat() works on both Integer and Float
-        val, ok := elem.AsFloat()
-        if !ok {
+        val, err := elem.AsFloat()
+        if err != nil {
             return errors.NewError("all elements must be numeric")
         }
         sum += val
@@ -370,20 +373,20 @@ p.RegisterFunc("process_config", func(ctx context.Context, kwargs object.Kwargs,
     }
 
     // Get dict as simple map[string]Object - no .Pairs!
-    config, ok := args[0].AsDict()
-    if !ok {
-        return errors.NewTypeError("DICT", args[0].Type().String())
+    config, err := args[0].AsDict()
+    if err != nil {
+        return errors.ParameterError("config", err)
     }
 
     // Access values directly - clean and simple
     if hostVal, exists := config["host"]; exists {
-        if host, ok := hostVal.AsString(); ok {
+        if host, err := hostVal.AsString(); err == nil {
             fmt.Printf("Host: %s\n", host)
         }
     }
 
     if portVal, exists := config["port"]; exists {
-        if port, ok := portVal.AsInt(); ok {
+        if port, err := portVal.AsInt(); err == nil {
             fmt.Printf("Port: %d\n", port)
         }
     }
@@ -424,13 +427,13 @@ myLib := object.NewLibrary(map[string]*object.Builtin{
             if len(args) < 2 {
                 return errors.NewArgumentError(len(args), 2)
             }
-            host, ok := args[0].AsString()
-            if !ok {
-                return errors.NewTypeError("STRING", args[0].Type().String())
+            host, err := args[0].AsString()
+            if err != nil {
+                return errors.ParameterError("host", err)
             }
-            port, ok := args[1].AsInt()
-            if !ok {
-                return errors.NewTypeError("INTEGER", args[1].Type().String())
+            port, err := args[1].AsInt()
+            if err != nil {
+                return errors.ParameterError("port", err)
             }
             // ... rest of function
             return &object.Null{}
@@ -1800,14 +1803,14 @@ p.RegisterFunc("power", func(ctx context.Context, kwargs object.Kwargs, args ...
     }
 
     // AsFloat() automatically handles both Integer and Float types
-    base, ok := args[0].AsFloat()
-    if !ok {
-        return errors.NewTypeError("NUMBER", args[0].Type().String())
+    base, err := args[0].AsFloat()
+    if err != nil {
+        return errors.ParameterError("base", err)
     }
 
-    exponent, ok := args[1].AsFloat()
-    if !ok {
-        return errors.NewTypeError("NUMBER", args[1].Type().String())
+    exponent, err := args[1].AsFloat()
+    if err != nil {
+        return errors.ParameterError("exponent", err)
     }
 
     result := math.Pow(base, exponent)
@@ -1819,8 +1822,9 @@ p.RegisterFunc("power", func(ctx context.Context, kwargs object.Kwargs, args ...
 
 - `Integer.AsFloat()` automatically converts to `float64` - no manual conversion needed
 - `AsDict()` returns `map[string]Object` instead of `map[string]DictPair` - cleaner access
-- Consistent `(value, ok)` pattern across all types
+- Consistent `(value, error)` pattern across all types
 - Less code, fewer bugs
+- Better error messages with `errors.ParameterError()`
 
 See the **Type-Safe Accessor Methods** section for complete details and examples.
 
