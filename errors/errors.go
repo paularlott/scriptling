@@ -57,6 +57,14 @@ func ParameterError(name string, err object.Object) object.Object {
 
 // Argument validation helpers return nil if validation passes, otherwise return an error
 
+// NoArgs checks that args has no elements
+func NoArgs(args []object.Object) object.Object {
+	if len(args) != 0 {
+		return NewArgumentError(len(args), 0)
+	}
+	return nil
+}
+
 // ExactArgs checks that args has exactly n elements
 func ExactArgs(args []object.Object, n int) object.Object {
 	if len(args) != n {

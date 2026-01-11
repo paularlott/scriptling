@@ -25,8 +25,8 @@ var CounterClass = &object.Class{
 				if len(args) == 1 {
 					return &object.Null{} // No iterable, just return
 				}
-				if len(args) > 2 {
-					return errors.NewArgumentError(len(args)-1, 1)
+				if err := errors.MaxArgs(args, 2); err != nil {
+					return err
 				}
 
 				// Helper to increment counter for a key
@@ -71,8 +71,8 @@ var CounterClass = &object.Class{
 		"__getitem__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				// __getitem__(self, key) - Get count for key
-				if len(args) != 2 {
-					return errors.NewArgumentError(len(args), 2)
+				if err := errors.ExactArgs(args, 2); err != nil {
+					return err
 				}
 				counter := args[0].(*object.Instance)
 				key := args[1].Inspect()
@@ -145,8 +145,8 @@ If n is omitted, returns all elements.`,
 		},
 		"elements": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) != 0 {
-					return errors.NewArgumentError(len(args), 0)
+				if err := errors.NoArgs(args); err != nil {
+					return err
 				}
 				counter := args[0].(*object.Instance)
 

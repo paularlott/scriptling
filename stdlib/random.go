@@ -187,9 +187,9 @@ Returns a random floating-point number N such that a <= N <= b.`,
 			if len(args) != 2 {
 				return errors.NewArgumentError(len(args), 2)
 			}
-			list, ok := args[0].AsList()
-			if !ok {
-				return errors.NewTypeError("LIST", args[0].Type().String())
+			list, err := args[0].AsList()
+			if err != nil {
+				return err
 			}
 			k, ok := args[1].(*object.Integer)
 			if !ok {
