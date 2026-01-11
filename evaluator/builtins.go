@@ -102,7 +102,9 @@ Examples:
 	},
 	"len": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			switch arg := args[0].(type) {
 			case *object.String:
 				return object.NewInteger(int64(len([]rune(arg.Value))))
@@ -130,7 +132,9 @@ Returns the number of items in a string, list, dict, or tuple.`,
 	},
 	"type": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			obj := args[0]
 			if instance, ok := obj.(*object.Instance); ok {
 				return &object.String{Value: instance.Class.Name}
@@ -143,7 +147,9 @@ Returns a string representing the type of the object.`,
 	},
 	"str": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			return &object.String{Value: args[0].Inspect()}
 		},
 		HelpText: `str(obj) - Convert an object to a string
@@ -152,7 +158,9 @@ Returns the string representation of any object.`,
 	},
 	"int": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			switch arg := args[0].(type) {
 			case *object.Integer:
 				return arg
@@ -176,7 +184,9 @@ Floats are truncated (not rounded).`,
 	},
 	"float": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			switch arg := args[0].(type) {
 			case *object.Float:
 				return arg
@@ -200,7 +210,9 @@ Converts an integer, string, or float to a float.`,
 
 	"sum": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 
 			var elements []object.Object
 			switch arg := args[0].(type) {
@@ -304,7 +316,7 @@ Supports integers and floats, returns appropriate type.`,
 					keys = make([]object.Object, n)
 					for i, elem := range elements {
 						key := keyFunc.Fn(ctx, object.NewKwargs(nil), elem)
-						if isError(key) || isException(key) {
+						if object.IsError(key) || isException(key) {
 							return key
 						}
 						keys[i] = key
@@ -453,7 +465,9 @@ Use list(range(...)) to get a list.`,
 	},
 	"keys": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			if args[0].Type() != object.DICT_OBJ {
 				return errors.NewTypeError("DICT", args[0].Type().String())
 			}
@@ -466,7 +480,9 @@ Returns a view object of all keys in the dictionary.`,
 	},
 	"values": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			if args[0].Type() != object.DICT_OBJ {
 				return errors.NewTypeError("DICT", args[0].Type().String())
 			}
@@ -479,7 +495,9 @@ Returns a view object of all values in the dictionary.`,
 	},
 	"items": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			if args[0].Type() != object.DICT_OBJ {
 				return errors.NewTypeError("DICT", args[0].Type().String())
 			}
@@ -612,7 +630,9 @@ Use list(zip(...)) to get a list.`,
 	},
 	"any": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			var iterable []object.Object
 			switch iter := args[0].(type) {
 			case *object.List:
@@ -636,7 +656,9 @@ Returns False for an empty iterable.`,
 	},
 	"all": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			var iterable []object.Object
 			switch iter := args[0].(type) {
 			case *object.List:
@@ -662,7 +684,9 @@ Returns True if all elements in the iterable are truthy (or if empty).`,
 			if len(args) == 0 {
 				return FALSE
 			}
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			if isTruthy(args[0]) {
 				return TRUE
 			}
@@ -675,7 +699,9 @@ With no argument, returns False.`,
 	},
 	"abs": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			switch num := args[0].(type) {
 			case *object.Integer:
 				if num.Value < 0 {
@@ -805,7 +831,9 @@ Returns an integer if ndigits is omitted or 0.`,
 	},
 	"hex": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			num, err := args[0].AsInt()
 			if err != nil {
 				return errors.ParameterError("x", err)
@@ -819,7 +847,9 @@ Returns an integer if ndigits is omitted or 0.`,
 	},
 	"bin": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			num, err := args[0].AsInt()
 			if err != nil {
 				return errors.ParameterError("x", err)
@@ -833,7 +863,9 @@ Returns an integer if ndigits is omitted or 0.`,
 	},
 	"oct": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			num, err := args[0].AsInt()
 			if err != nil {
 				return errors.ParameterError("x", err)
@@ -896,7 +928,9 @@ Equivalent to base**exp or base**exp % mod if mod is given.`,
 	},
 	"divmod": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 2); err != nil { return err }
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
+			}
 			var a, b float64
 			var bothInts bool = true
 			switch n := args[0].(type) {
@@ -939,7 +973,9 @@ Equivalent to (a // b, a % b) for integers.`,
 	},
 	"callable": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			switch args[0].(type) {
 			case *object.Function, *object.Builtin, *object.LambdaFunction:
 				return TRUE
@@ -951,7 +987,9 @@ Equivalent to (a // b, a % b) for integers.`,
 	},
 	"isinstance": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 2); err != nil { return err }
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
+			}
 			typeName, err := args[1].AsString()
 			if err != nil {
 				return err
@@ -990,7 +1028,9 @@ Type names: "int", "str", "float", "bool", "list", "dict", "tuple", "function", 
 	},
 	"chr": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			num, err := args[0].AsInt()
 			if err != nil {
 				return errors.ParameterError("i", err)
@@ -1006,7 +1046,9 @@ The argument must be in the range 0-1114111 (0x10FFFF).`,
 	},
 	"ord": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			str, err := args[0].AsString()
 			if err != nil {
 				return errors.ParameterError("c", err)
@@ -1023,7 +1065,9 @@ The argument must be a string of exactly one character.`,
 	},
 	"reversed": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			switch args[0].(type) {
 			case *object.List, *object.Tuple, *object.String, *object.Iterator:
 				return object.NewReversedIterator(args[0])
@@ -1041,7 +1085,9 @@ Use list(reversed(...)) to get a list.`,
 			if len(args) == 0 {
 				return &object.List{Elements: []object.Object{}}
 			}
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			elements, ok := object.IterableToSlice(args[0])
 			if !ok {
 				return errors.NewTypeError("iterable", args[0].Type().String())
@@ -1070,7 +1116,9 @@ Otherwise, returns a list containing the items of the iterable.`,
 			if len(args) == 0 {
 				return result
 			}
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			switch iter := args[0].(type) {
 			case *object.Dict:
 				// Copy existing dict
@@ -1110,7 +1158,9 @@ Keyword arguments are added to the dict.`,
 			if len(args) == 0 {
 				return &object.Tuple{Elements: []object.Object{}}
 			}
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			// Special case: tuple returns itself (no copy needed for immutable)
 			if t, ok := args[0].(*object.Tuple); ok {
 				return t
@@ -1134,7 +1184,9 @@ Otherwise, returns a tuple containing the items of the iterable.`,
 			if len(args) == 0 {
 				return object.NewSet()
 			}
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 
 			// Special case: set returns a copy
 			if s, ok := args[0].(*object.Set); ok {
@@ -1167,7 +1219,9 @@ This function exists for compatibility but will return an error.`,
 	},
 	"repr": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			switch obj := args[0].(type) {
 			case *object.String:
 				// Add quotes around strings
@@ -1183,7 +1237,9 @@ For other objects, returns the same as str().`,
 	},
 	"hash": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			// FNV-1a hash algorithm - fast and good distribution
 			str := args[0].Inspect()
 			const (
@@ -1203,7 +1259,9 @@ Returns an integer hash value for the object using FNV-1a algorithm.`,
 	},
 	"id": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			// Use hash of inspect value as id (stable for same object)
 			str := fmt.Sprintf("%p", args[0])
 			var h int64 = 0
@@ -1316,7 +1374,9 @@ Supports width, alignment, and type specifiers.`,
 	},
 	"hasattr": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 2); err != nil { return err }
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
+			}
 			name, err := args[1].AsString()
 			if err != nil {
 				return err
@@ -1378,7 +1438,9 @@ If default is provided, returns it when attribute doesn't exist.`,
 	},
 	"setattr": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 3); err != nil { return err }
+			if err := errors.ExactArgs(args, 3); err != nil {
+				return err
+			}
 			name, err := args[1].AsString()
 			if err != nil {
 				return err
@@ -1405,7 +1467,9 @@ Only works on dict-like objects.`,
 	},
 	"delattr": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 2); err != nil { return err }
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
+			}
 			name, err := args[1].AsString()
 			if err != nil {
 				return err
@@ -1434,7 +1498,9 @@ Deletes the named attribute from the given object.`,
 	},
 	"slice": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.MaxArgs(args, 3); err != nil { return err }
+			if err := errors.MaxArgs(args, 3); err != nil {
+				return err
+			}
 
 			// Default values: slice(stop) where start=0, step=1
 			// slice(start, stop) where step=1
@@ -1616,7 +1682,7 @@ func mapFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.O
 			callArgs[j] = iterables[j][i]
 		}
 		res := applyFunctionWithContext(ctx, fn, callArgs, nil, env)
-		if isError(res) {
+		if object.IsError(res) {
 			return res
 		}
 		results[i] = res
@@ -1635,7 +1701,9 @@ func mapFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.O
 }
 
 func filterFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-	if err := errors.ExactArgs(args, 2); err != nil { return err }
+	if err := errors.ExactArgs(args, 2); err != nil {
+		return err
+	}
 	fn := args[0]
 	iterable, ok := object.IterableToSlice(args[1])
 	if !ok {
@@ -1653,7 +1721,7 @@ func filterFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 			}
 		} else {
 			res := applyFunctionWithContext(ctx, fn, []object.Object{elem}, nil, env)
-			if isError(res) {
+			if object.IsError(res) {
 				return res
 			}
 			if isTruthy(res) {
@@ -1695,7 +1763,9 @@ func helpFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.
 		return NULL
 	}
 
-	if err := errors.ExactArgs(args, 1); err != nil { return err }
+	if err := errors.ExactArgs(args, 1); err != nil {
+		return err
+	}
 
 	// Handle string arguments
 	if strObj, ok := args[0].(*object.String); ok {
@@ -2051,7 +2121,9 @@ func printFunctionHelp(writer io.Writer, name string, fn *object.Function) {
 func GetImportBuiltin() *object.Builtin {
 	return &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			libName, err := args[0].AsString()
 			if err != nil {
 				return errors.ParameterError("module_name", err)

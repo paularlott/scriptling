@@ -209,10 +209,10 @@ var DefaultDictClass = &object.Class{
 					// For int(), float(), str(), list(), dict() we call with no args or default values
 					// Try calling with no args first (for list, dict constructors)
 					defaultValue = f.Fn(ctx, object.NewKwargs(nil))
-					if isError(defaultValue) {
+					if object.IsError(defaultValue) {
 						// If that fails, try with a default value (for int, float, str)
 						defaultValue = f.Fn(ctx, object.NewKwargs(nil), object.NewInteger(0))
-						if isError(defaultValue) {
+						if object.IsError(defaultValue) {
 							return defaultValue
 						}
 					}

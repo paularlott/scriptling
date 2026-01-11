@@ -16,12 +16,12 @@ import (
 
 func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression, env *object.Environment) object.Object {
 	obj := evalWithContext(ctx, mce.Object, env)
-	if isError(obj) {
+	if object.IsError(obj) {
 		return obj
 	}
 
 	args := evalExpressionsWithContext(ctx, mce.Arguments, env)
-	if len(args) == 1 && isError(args[0]) {
+	if len(args) == 1 && object.IsError(args[0]) {
 		return args[0]
 	}
 
@@ -29,7 +29,7 @@ func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression
 	keywords := make(map[string]object.Object)
 	for k, v := range mce.Keywords {
 		val := evalWithContext(ctx, v, env)
-		if isError(val) {
+		if object.IsError(val) {
 			return val
 		}
 		keywords[k] = val
@@ -483,7 +483,7 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 				keys = make([]object.Object, n)
 				for i, elem := range list.Elements {
 					key := applyFunctionWithContext(ctx, keyFunc, []object.Object{elem}, nil, env)
-					if isError(key) {
+					if object.IsError(key) {
 						return key
 					}
 					keys[i] = key
