@@ -535,3 +535,140 @@ func TestFunctionBuilderMultipleFunctions(t *testing.T) {
 	fb.Function(func() {})
 	fb.Function(func() {}) // Should panic
 }
+
+func TestClassBuilderSimple(t *testing.T) {
+	cb := object.NewClassBuilder("TestClass")
+	cb.Method("greet", func(self *object.Instance, name string) string {
+		return "Hello, " + name
+	})
+	class := cb.Build()
+
+	if class.Name != "TestClass" {
+		t.Errorf("expected class name 'TestClass', got %s", class.Name)
+	}
+
+	if len(class.Methods) != 1 {
+		t.Errorf("expected 1 method, got %d", len(class.Methods))
+	}
+
+	method, ok := class.Methods["greet"]
+	if !ok {
+		t.Fatal("greet method not found")
+	}
+
+	builtin, ok := method.(*object.Builtin)
+	if !ok {
+		t.Fatal("method is not a Builtin")
+	}
+
+	// Create a test instance
+	instance := &object.Instance{
+		Class:  class,
+		Fields: map[string]object.Object{},
+	}
+
+	// Call the method
+	result := builtin.Fn(context.Background(), object.NewKwargs(nil), instance, &object.String{Value: "World"})
+	if strResult, ok := result.(*object.String); !ok || strResult.Value != "Hello, World" {
+		t.Errorf("expected 'Hello, World', got %v", result)
+	}
+}
+
+func TestClassBuilderWithHelp(t *testing.T) {
+	cb := object.NewClassBuilder("Person")
+	cb.MethodWithHelp("introduce", func(self *object.Instance) string {
+		return "I am a person"
+	}, "Return an introduction")
+	class := cb.Build()
+
+	method := class.Methods["introduce"].(*object.Builtin)
+	if method.HelpText != "Return an introduction" {
+		t.Errorf("expected help text 'Return an introduction', got %s", method.HelpText)
+	}
+}
+
+func TestClassBuilderMultipleMethods(t *testing.T) {
+	cb := object.NewClassBuilder("Calculator")
+	cb.Method("add", func(self *object.Instance, a, b int) int {
+		return a + b
+	})
+	cb.Method("multiply", func(self *object.Instance, a, b int) int {
+		return a * b
+	})
+	class := cb.Build()
+
+	if len(class.Methods) != 2 {
+		t.Errorf("expected 2 methods, got %d", len(class.Methods))
+	}
+
+	instance := &object.Instance{
+		Class:  class,
+		Fields: map[string]object.Object{},
+	}
+
+	// Test add method
+	addMethod := class.Methods["add"].(*object.Builtin)
+	result := addMethod.Fn(context.Background(), object.NewKwargs(nil), instance, &object.Integer{Value: 3}, &object.Integer{Value: 4})
+	if intResult, ok := result.(*object.Integer); !ok || intResult.Value != 7 {
+		t.Errorf("expected 7, got %v", result)
+	}
+
+	// Test multiply method
+	multiplyMethod := class.Methods["multiply"].(*object.Builtin)
+	result = multiplyMethod.Fn(context.Background(), object.NewKwargs(nil), instance, &object.Integer{Value: 5}, &object.Integer{Value: 6})
+	if intResult, ok := result.(*object.Integer); !ok || intResult.Value != 30 {
+		t.Errorf("expected 30, got %v", result)
+	}
+}
+
+func TestClassBuilderWithBaseClass(t *testing.T) {
+	baseClass := &object.Class{
+		Name:    "Base",
+		Methods: map[string]object.Object{},
+	}
+
+	cb := object.NewClassBuilder("Derived")
+	cb.BaseClass(baseClass)
+	cb.Method("special", func(self *object.Instance) string {
+		return "special method"
+	})
+	class := cb.Build()
+
+	if class.BaseClass != baseClass {
+		t.Error("base class not set correctly")
+	}
+
+	if class.Name != "Derived" {
+		t.Errorf("expected name 'Derived', got %s", class.Name)
+	}
+}
+
+func TestClassBuilderMethodWithError(t *testing.T) {
+	cb := object.NewClassBuilder("TestClass")
+	cb.Method("divide", func(self *object.Instance, a, b int) (int, error) {
+		if b == 0 {
+			return 0, fmt.Errorf("division by zero")
+		}
+		return a / b, nil
+	})
+	class := cb.Build()
+
+	instance := &object.Instance{
+		Class:  class,
+		Fields: map[string]object.Object{},
+	}
+
+	method := class.Methods["divide"].(*object.Builtin)
+
+	// Test success
+	result := method.Fn(context.Background(), object.NewKwargs(nil), instance, &object.Integer{Value: 10}, &object.Integer{Value: 2})
+	if intResult, ok := result.(*object.Integer); !ok || intResult.Value != 5 {
+		t.Errorf("expected 5, got %v", result)
+	}
+
+	// Test error
+	result = method.Fn(context.Background(), object.NewKwargs(nil), instance, &object.Integer{Value: 10}, &object.Integer{Value: 0})
+	if errResult, ok := result.(*object.Error); !ok || !strings.Contains(errResult.Message, "division by zero") {
+		t.Errorf("expected error containing 'division by zero', got %v", result)
+	}
+}
