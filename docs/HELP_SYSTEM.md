@@ -61,7 +61,7 @@ When registering Go functions, you can provide documentation by passing help tex
 ```go
 p := scriptling.New()
 
-p.RegisterFunc("my_func", func(ctx context.Context, args ...object.Object) object.Object {
+p.RegisterFunc("my_func", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
     // Implementation
     return object.NULL
 }, `my_func() - Description of the function
@@ -87,11 +87,11 @@ package evaluator
 
 var builtins = map[string]*object.Builtin{
     "my_func": {
-        Fn: func(ctx context.Context, args ...object.Object) object.Object {
+        Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
             // Function implementation
             return &object.String{Value: "result"}
         },
-        }, `my_func(arg1, arg2) - Brief description
+        HelpText: `my_func(arg1, arg2) - Brief description
 
   Detailed description of what the function does.
 
@@ -253,7 +253,202 @@ var MyLibrary = object.NewLibrary(map[string]*object.Builtin{
     },
 }, nil, "My custom data processing library")
 ```
+
+## Adding Help Using the Builder Pattern
+
+Scriptling also provides a builder pattern for creating functions, libraries, and classes with help text.
+
+### Function Builder
+
+```go
+import (
+    "github.com/paularlott/scriptling"
+    "github.com/paularlott/scriptling/object"
+)
+
+p := scriptling.New()
+
+// Build a function with help text
+scriptling.NewFunctionBuilder(p, "my_func").
+    WithHelp(`my_func(arg1, arg2) - Brief description
+
+  Detailed description of what the function does.
+
+  Parameters:
+    arg1 - Description of first parameter
+    arg2 - Description of second parameter
+
+  Returns:
+    Description of return value`).
+    WithFunc(func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+        // Implementation
+        return &object.String{Value: "result"}
+    }).
+    Build()
 ```
+
+### Library Builder
+
+```go
+// Build a library with description and functions
+library := scriptling.NewLibraryBuilder("mylib").
+    WithDescription("My custom data processing library").
+    WithFunction("process", scriptling.NewFunctionBuilder(p, "").
+        WithFunc(func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+            return &object.String{Value: "processed"}
+        }).
+        WithHelp(`process(data) - Process the input data
+
+  Takes input data and processes it.
+
+  Parameters:
+    data - The data to process
+
+  Returns:
+    Processed data as string`).
+        Build(),
+    ).
+    WithFunction("validate", scriptling.NewFunctionBuilder(p, "").
+        WithFunc(func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+            return &object.Boolean{Value: true}
+        }).
+        WithHelp(`validate(input) - Validate input data
+
+  Checks if the input meets criteria.
+
+  Parameters:
+    input - The data to validate
+
+  Returns:
+    True if valid, False otherwise`).
+        Build(),
+    ).
+    Build()
+
+p.RegisterLibrary("mylib", library)
+```
+
+### Class Builder
+
+```go
+// Build a class with help text
+classBuilder := scriptling.NewClassBuilder(p, "MyClass").
+    WithHelp(`MyClass - A custom class for data management
+
+  This class provides methods for managing and processing data.`).
+    WithConstructor(scriptling.NewFunctionBuilder(p, "__init__").
+        WithFunc(func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+            // Constructor implementation
+            return object.NULL
+        }).
+        WithHelp(`__init__(self, name) - Initialize the MyClass instance
+
+  Parameters:
+    name - The name for this instance`).
+        Build(),
+    ).
+    WithMethod("get_data", scriptling.NewFunctionBuilder(p, "").
+        WithFunc(func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+            return &object.String{Value: "data"}
+        }).
+        WithHelp(`get_data(self) - Retrieve the data
+
+  Returns:
+    The current data as a string`).
+        Build(),
+    ).
+    Build()
+
+p.RegisterClass(classBuilder)
+```
+
+### Registering Script Functions with Help
+
+When registering functions from scripts, docstrings in the script become the help text:
+
+```go
+// Script with docstrings - first string literal in function becomes help
+script := `
+def process_data(data):
+    """Process input data and return result.
+
+    Args:
+        data: The data to process
+
+    Returns:
+        Processed data
+    """
+    return data.upper()
+
+def format_output(value):
+    """Format a value for display.
+
+    Args:
+        value: Value to format
+
+    Returns:
+        Formatted string
+    """
+    return str(value)
+`
+
+// Register the script - docstrings are automatically extracted
+err := p.RegisterScriptFunc("process_data", script)
+err = p.RegisterScriptFunc("format_value", script)
+```
+
+### Registering Script Libraries with Help
+
+```go
+// Register a complete library with module docstring and function docstrings
+err := p.RegisterScriptLibrary("mylib", `
+"""My Library - Custom data processing utilities.
+
+This library provides functions for data processing and formatting.
+"""
+
+def process(data):
+    """Process input data.
+
+    Args:
+        data: Input string or list
+
+    Returns:
+        Processed data
+    """
+    if isinstance(data, str):
+        return data.upper()
+    return data
+
+def format(value, fmt_type="default"):
+    """Format a value for display.
+
+    Args:
+        value: Value to format
+        fmt_type: Format type (default: "default")
+
+    Returns:
+        Formatted string
+    """
+    return str(value)
+`)
+
+// Users can now access help
+// help("mylib")       # Shows module docstring
+// help("mylib.process")  # Shows function docstring
+```
+
+## Manual Registration Summary
+
+| Method | Use Case | Help Source |
+|--------|-----------|-------------|
+| `RegisterFunc(name, func, help)` | Single Go function | Help text parameter |
+| `RegisterScriptFunc(name, script)` | Function from script | Docstring in script |
+| `RegisterLibrary(name, library)` | Pre-built Go library | Library's HelpText fields |
+| `RegisterScriptLibrary(name, script)` | Library from script | Module/function docstrings |
+| `NewFunctionBuilder().WithHelp()` | Builder pattern | Chainable WithHelp() |
+| `NewLibraryBuilder().WithDescription()` | Builder pattern | Chainable methods |
+| `NewClassBuilder().WithHelp()` | Builder pattern | Chainable WithHelp() |
 
 ## Help Text Best Practices
 
