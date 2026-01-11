@@ -106,8 +106,8 @@ p.RegisterFunc("format_greeting", func(ctx context.Context, kwargs object.Kwargs
         return &object.String{Value: "Error: format_greeting requires name argument"}
     }
 
-    name, ok := args[0].(*object.String)
-    if !ok {
+    name, err := args[0].AsString()
+    if err != nil {
         return &object.String{Value: "Error: name must be string"}
     }
 
@@ -1479,8 +1479,8 @@ func main() {
                     }
                     instance := args[0].(*object.Instance)
 
-                    name, _ := instance.Fields["name"].(*object.String)
-                    return &object.String{Value: "Hello, my name is " + name.Value}
+                    name, _ := instance.Fields["name"].AsString()
+                    return &object.String{Value: "Hello, my name is " + name}
                 },
                 HelpText: "Return a greeting message from this person",
             },
@@ -1556,20 +1556,20 @@ func createPersonClass() *object.Class {
                         return &object.Error{Message: "__init__ requires instance, name, and age"}
                     }
                     instance := args[0].(*object.Instance)
-                    name := args[1].(*object.String)
-                    age := args[2].(*object.Integer)
+                    name, _ := args[1].AsString()
+                    age, _ := args[2].AsInt()
 
-                    instance.Fields["name"] = name
-                    instance.Fields["age"] = age
+                    instance.Fields["name"] = &object.String{Value: name}
+                    instance.Fields["age"] = &object.Integer{Value: age}
                     return &object.Null{}
                 },
             },
             "introduce": {
                 Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
                     instance := args[0].(*object.Instance)
-                    name, _ := instance.Fields["name"].(*object.String)
-                    age, _ := instance.Fields["age"].(*object.Integer)
-                    return &object.String{Value: fmt.Sprintf("Hi, I'm %s and I'm %d years old", name.Value, age.Value)}
+                    name, _ := instance.Fields["name"].AsString()
+                    age, _ := instance.Fields["age"].AsInt()
+                    return &object.String{Value: fmt.Sprintf("Hi, I'm %s and I'm %d years old", name, age)}
                 },
                 HelpText: "Return an introduction string",
             },
@@ -1821,6 +1821,222 @@ isinstance(obj, MyClass)    // Type checking
 ```
 
 Classes and instances integrate seamlessly with Scriptling's object system and can be used anywhere regular objects are expected.
+
+## Fluent Class API
+
+The Fluent Class API provides a clean, type-safe way to create Scriptling classes using regular Go methods with typed parameters. The API automatically handles conversion between Go types and Scriptling objects, eliminating boilerplate code for method definitions.
+
+### Overview
+
+**Without Fluent API (verbose):**
+
+```go
+personClass := &object.Class{
+    Name: "Person",
+    Methods: map[string]*object.Builtin{
+        "greet": {
+            Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+                instance := args[0].(*object.Instance)
+                name, _ := instance.Fields["name"].AsString()
+                return &object.String{Value: "Hello, " + name}
+            },
+        },
+    },
+}
+```
+
+**With Fluent API (clean):**
+
+```go
+cb := object.NewClassBuilder("Person")
+cb.Method("greet", func(self *object.Instance, name string) string {
+    name, _ := self.Fields["name"].AsString()
+    return "Hello, " + name
+})
+personClass := cb.Build()
+```
+
+### Creating a Class
+
+Use `object.NewClassBuilder()` to create a new builder, then register methods:
+
+```go
+import "github.com/paularlott/scriptling/object"
+
+// Create class builder
+cb := object.NewClassBuilder("Person")
+
+// Add methods
+cb.Method("greet", func(self *object.Instance) string {
+    name, _ := self.Fields["name"].AsString()
+    return "Hello, my name is " + name
+})
+
+cb.Method("set_age", func(self *object.Instance, age int) {
+    self.Fields["age"] = &object.Integer{Value: int64(age)}
+})
+
+// Build the class
+personClass := cb.Build()
+```
+
+### Method Signatures
+
+Class methods support the same flexible signatures as library functions:
+
+- `func(self *Instance, args...) result` - Instance + positional arguments
+- `func(self *Instance, ctx context.Context, args...) result` - Instance + context + positional
+- `func(self *Instance, kwargs object.Kwargs, args...) result` - Instance + kwargs + positional
+- `func(self *Instance, ctx context.Context, kwargs object.Kwargs, args...) result` - All parameters
+
+### Examples
+
+**Simple instance method:**
+
+```go
+cb.Method("get_name", func(self *object.Instance) string {
+    name, _ := self.Fields["name"].AsString()
+    return name
+})
+```
+
+**Method with parameters:**
+
+```go
+cb.Method("add_friend", func(self *object.Instance, friendName string) {
+    friends, _ := self.Fields["friends"].(*object.List)
+    friends.Elements = append(friends.Elements, &object.String{Value: friendName})
+})
+```
+
+**Method with context and error handling:**
+
+```go
+cb.Method("save", func(self *object.Instance, ctx context.Context) error {
+    // Simulate async save operation
+    select {
+    case <-time.After(100 * time.Millisecond):
+        return nil
+    case <-ctx.Done():
+        return ctx.Err()
+    }
+})
+```
+
+**Method with kwargs:**
+
+```go
+cb.Method("configure", func(self *object.Instance, kwargs object.Kwargs) error {
+    timeout, _ := kwargs.GetInt("timeout", 30)
+    debug, _ := kwargs.GetBool("debug", false)
+
+    self.Fields["timeout"] = &object.Integer{Value: int64(timeout)}
+    self.Fields["debug"] = &object.Boolean{Value: debug}
+    return nil
+})
+```
+
+### Adding Help Text
+
+Provide documentation for your methods using `MethodWithHelp`:
+
+```go
+cb.MethodWithHelp("calculate", func(self *object.Instance, a, b int) int {
+    return a + b
+}, "calculate(a, b) - Add two numbers")
+```
+
+### Inheritance
+
+Set a base class for inheritance:
+
+```go
+baseClass := &object.Class{Name: "Base", Methods: map[string]object.Object{}}
+cb := object.NewClassBuilder("Derived")
+cb.BaseClass(baseClass)
+cb.Method("special", func(self *object.Instance) string {
+    return "special method"
+})
+```
+
+### Complete Example
+
+```go
+package main
+
+import (
+    "github.com/paularlott/scriptling"
+    "github.com/paularlott/scriptling/object"
+)
+
+func main() {
+    p := scriptling.New()
+
+    // Create Person class using ClassBuilder
+    cb := object.NewClassBuilder("Person")
+
+    cb.Method("__init__", func(self *object.Instance, name string, age int) {
+        self.Fields["name"] = &object.String{Value: name}
+        self.Fields["age"] = &object.Integer{Value: int64(age)}
+    })
+
+    cb.Method("greet", func(self *object.Instance) string {
+        name, _ := self.Fields["name"].AsString()
+        return "Hello, I'm " + name
+    })
+
+    cb.Method("have_birthday", func(self *object.Instance) {
+        age, _ := self.Fields["age"].AsInt()
+        self.Fields["age"] = &object.Integer{Value: age + 1}
+    })
+
+    personClass := cb.Build()
+
+    // Create library with factory function
+    lib := object.NewLibraryBuilder("person", "Person class library")
+    lib.Constant("Person", personClass)
+    lib.Function("create", func(name string, age int) *object.Instance {
+        instance := &object.Instance{
+            Class:  personClass,
+            Fields: make(map[string]object.Object),
+        }
+        // Call constructor
+        initMethod := personClass.Methods["__init__"].(*object.Builtin)
+        initMethod.Fn(nil, nil, instance, &object.String{Value: name}, &object.Integer{Value: int64(age)})
+        return instance
+    })
+
+    p.RegisterLibrary("person", lib.Build())
+
+    // Use in Scriptling
+    p.Eval(`
+import person
+
+john = person.create("John", 25)
+print(john.greet())  # Hello, I'm John
+
+john.have_birthday()
+print("Age:", john.age)  # Age: 26
+`)
+}
+```
+
+### Builder Methods Reference
+
+| Method                | Description                          |
+| --------------------- | ------------------------------------ |
+| `Method(name, fn)`    | Register a typed Go method           |
+| `MethodWithHelp(...)` | Register method with help text       |
+| `BaseClass(base)`     | Set base class for inheritance       |
+| `Environment(env)`    | Set environment (usually not needed) |
+| `Build()`             | Create and return the Class          |
+
+### When to Use Class Builder vs Manual Creation
+
+- **Class Builder**: For type-safe method definitions with automatic parameter conversion
+- **Manual Creation**: For advanced use cases requiring direct control over method implementations
+
+Both approaches create the same `*object.Class` result that can be used identically in Scriptling.
 
 ## Database Library Example
 
