@@ -247,6 +247,8 @@ func (p *Parser) parseStatement() ast.Statement {
 		return p.parseClassStatement()
 	case token.IF:
 		return p.parseIfStatement()
+	case token.MATCH:
+		return p.parseMatchStatement()
 	case token.WHILE:
 		return p.parseWhileStatement()
 	case token.FOR:
@@ -1474,7 +1476,10 @@ func (p *Parser) parseAssertStatement() *ast.AssertStatement {
 func (p *Parser) parseIndexExpression(left ast.Expression) ast.Expression {
 	if p.curTokenIs(token.DOT) {
 		// Method call or member access: obj.method() or obj.member
-		if !p.expectPeek(token.IDENT) {
+		// Allow keywords as attribute names (e.g., re.match, obj.class)
+		p.nextToken()
+		if p.curToken.Type != token.IDENT && !p.isKeyword(p.curToken.Type) {
+			p.errors = append(p.errors, fmt.Sprintf("line %d: expected identifier after '.', got %s", p.curToken.Line, p.curToken.Type))
 			return nil
 		}
 		methodName := &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
@@ -1553,4 +1558,113 @@ func (p *Parser) parseIndexExpression(left ast.Expression) ast.Expression {
 		return nil
 	}
 	return exp
+}
+
+func (p *Parser) parseMatchStatement() *ast.MatchStatement {
+	stmt := &ast.MatchStatement{Token: p.curToken}
+
+	p.nextToken()
+	stmt.Subject = p.parseExpression(LOWEST_PRECEDENCE)
+
+	if !p.expectPeek(token.COLON) {
+		return nil
+	}
+
+	// Expect INDENT (parseBlockStatement-style, which handles NEWLINE internally via expectPeek)
+	if !p.expectPeek(token.INDENT) {
+		return nil
+	}
+
+	p.nextToken()
+
+	// Parse case clauses
+	stmt.Cases = []*ast.CaseClause{}
+	for p.curTokenIs(token.CASE) {
+		caseClause := p.parseCaseClause()
+		if caseClause == nil {
+			return nil
+		}
+		stmt.Cases = append(stmt.Cases, caseClause)
+		p.nextToken()
+	}
+
+	if len(stmt.Cases) == 0 {
+		p.errors = append(p.errors, "match statement must have at least one case clause")
+		return nil
+	}
+
+	// Current token should be DEDENT
+	if !p.curTokenIs(token.DEDENT) {
+		p.errors = append(p.errors, "expected DEDENT after match cases")
+		return nil
+	}
+
+	return stmt
+}
+
+func (p *Parser) parseCaseClause() *ast.CaseClause {
+	clause := &ast.CaseClause{Token: p.curToken}
+
+	p.nextToken()
+	// Parse pattern - stop before 'if' (guard) or 'as' (capture) or ':'
+	clause.Pattern = p.parseCasePattern()
+
+	// Check for 'as' capture variable
+	if p.peekTokenIs(token.AS) {
+		p.nextToken() // consume 'as'
+		if !p.expectPeek(token.IDENT) {
+			return nil
+		}
+		clause.CaptureAs = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+	}
+
+	// Check for guard condition (if clause)
+	if p.peekTokenIs(token.IF) {
+		p.nextToken() // consume 'if'
+		p.nextToken()
+		clause.Guard = p.parseExpression(LOWEST_PRECEDENCE)
+	}
+
+	if !p.expectPeek(token.COLON) {
+		return nil
+	}
+
+	clause.Body = p.parseBlockStatement()
+
+	return clause
+}
+
+// parseCasePattern parses a pattern in a case clause, stopping at 'if', 'as', or ':'
+func (p *Parser) parseCasePattern() ast.Expression {
+	// We need to parse an expression but stop at 'if' or 'as' keywords
+	// These are used for guards and captures, not part of the pattern itself
+	switch p.curToken.Type {
+	case token.IDENT:
+		// Check if next token is 'if' or 'as' - if so, this is just an identifier
+		if p.peekTokenIs(token.IF) || p.peekTokenIs(token.AS) || p.peekTokenIs(token.COLON) {
+			return &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+		}
+		// Otherwise parse as normal expression
+		return p.parseExpression(LOWEST_PRECEDENCE)
+	default:
+		return p.parseExpression(LOWEST_PRECEDENCE)
+	}
+}
+
+
+func (p *Parser) isKeyword(t token.TokenType) bool {
+	keywords := []token.TokenType{
+		token.TRUE, token.FALSE, token.NONE, token.IMPORT, token.FROM,
+		token.IF, token.ELIF, token.ELSE, token.WHILE, token.FOR, token.IN,
+		token.DEF, token.CLASS, token.RETURN, token.BREAK, token.CONTINUE,
+		token.PASS, token.AND, token.OR, token.NOT, token.IS, token.TRY,
+		token.EXCEPT, token.FINALLY, token.RAISE, token.GLOBAL, token.NONLOCAL,
+		token.LAMBDA, token.AS, token.ASSERT, token.MATCH, token.CASE,
+	}
+	for _, kw := range keywords {
+		if t == kw {
+			return true
+		}
+	}
+	return false
 }

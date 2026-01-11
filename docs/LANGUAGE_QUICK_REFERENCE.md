@@ -75,6 +75,36 @@ for item in [1, 2, 3, 4, 5]:
     if item == 4:
         break  # Stop at 4
     print(item)
+
+# Match statement (pattern matching)
+match status:
+    case 200:
+        print("Success")
+    case 404:
+        print("Not found")
+    case _:
+        print("Other")
+
+# Match with type checking
+match data:
+    case int():
+        print("Integer")
+    case str():
+        print("String")
+
+# Match with guards
+match value:
+    case x if x > 100:
+        print("Large")
+    case x:
+        print("Small")
+
+# Match with dict patterns
+match response:
+    case {"status": 200, "data": payload}:
+        process(payload)
+    case {"error": msg}:
+        print(msg)
 ```
 
 ## Functions
