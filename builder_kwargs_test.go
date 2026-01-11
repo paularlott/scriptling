@@ -246,24 +246,24 @@ func TestBuilderMixedContextKwargsPositional(t *testing.T) {
 			expected: "> task: 5 times <",
 		},
 		{
-			name:     "custom prefix",
-			args:     []object.Object{&object.String{Value: "task"}, object.NewInteger(3)},
+			name: "custom prefix",
+			args: []object.Object{&object.String{Value: "task"}, object.NewInteger(3)},
 			kwargs: map[string]object.Object{
 				"prefix": &object.String{Value: ">>>"},
 			},
 			expected: ">>> task: 3 times <",
 		},
 		{
-			name:     "custom suffix",
-			args:     []object.Object{&object.String{Value: "task"}, object.NewInteger(10)},
+			name: "custom suffix",
+			args: []object.Object{&object.String{Value: "task"}, object.NewInteger(10)},
 			kwargs: map[string]object.Object{
 				"suffix": &object.String{Value: "<<<"},
 			},
 			expected: "> task: 10 times <<<",
 		},
 		{
-			name:     "custom prefix and suffix",
-			args:     []object.Object{&object.String{Value: "task"}, object.NewInteger(7)},
+			name: "custom prefix and suffix",
+			args: []object.Object{&object.String{Value: "task"}, object.NewInteger(7)},
 			kwargs: map[string]object.Object{
 				"prefix": &object.String{Value: "["},
 				"suffix": &object.String{Value: "]"},
@@ -418,4 +418,120 @@ func TestBuilderKwargsHasLenKeys(t *testing.T) {
 			t.Errorf("expected keys=, got %s", got)
 		}
 	}
+}
+
+func TestFunctionBuilderSimple(t *testing.T) {
+	fb := object.NewFunctionBuilder()
+	fb.Function(func(a, b int) int { return a + b })
+	fn := fb.Build()
+
+	result := fn(context.Background(), object.NewKwargs(nil), &object.Integer{Value: 3}, &object.Integer{Value: 4})
+	if intResult, ok := result.(*object.Integer); !ok || intResult.Value != 7 {
+		t.Errorf("expected 7, got %v", result)
+	}
+}
+
+func TestFunctionBuilderWithHelp(t *testing.T) {
+	fb := object.NewFunctionBuilder()
+	fb.FunctionWithHelp(func(x float64) float64 { return x * 2 }, "double(x) - doubles the value")
+	fn := fb.Build()
+
+	// Test the function works
+	result := fn(context.Background(), object.NewKwargs(nil), &object.Float{Value: 3.5})
+	if floatResult, ok := result.(*object.Float); !ok || floatResult.Value != 7.0 {
+		t.Errorf("expected 7.0, got %v", result)
+	}
+}
+
+func TestFunctionBuilderContext(t *testing.T) {
+	fb := object.NewFunctionBuilder()
+	fb.Function(func(ctx context.Context, a int) string {
+		return fmt.Sprintf("got %d", a)
+	})
+	fn := fb.Build()
+
+	result := fn(context.Background(), object.NewKwargs(nil), &object.Integer{Value: 42})
+	if strResult, ok := result.(*object.String); !ok || strResult.Value != "got 42" {
+		t.Errorf("expected 'got 42', got %v", result)
+	}
+}
+
+func TestFunctionBuilderKwargs(t *testing.T) {
+	fb := object.NewFunctionBuilder()
+	fb.Function(func(kwargs object.Kwargs) (string, error) {
+		host, _ := kwargs.GetString("host", "localhost")
+		port, _ := kwargs.GetInt("port", 8080)
+		return fmt.Sprintf("%s:%d", host, port), nil
+	})
+	fn := fb.Build()
+
+	kwargs := object.NewKwargs(map[string]object.Object{
+		"host": &object.String{Value: "example.com"},
+		"port": &object.Integer{Value: 9000},
+	})
+	result := fn(context.Background(), kwargs)
+	if strResult, ok := result.(*object.String); !ok || strResult.Value != "example.com:9000" {
+		t.Errorf("expected 'example.com:9000', got %v", result)
+	}
+}
+
+func TestFunctionBuilderMixed(t *testing.T) {
+	fb := object.NewFunctionBuilder()
+	fb.Function(func(ctx context.Context, kwargs object.Kwargs, name string) string {
+		prefix, _ := kwargs.GetString("prefix", "Hello")
+		return fmt.Sprintf("%s, %s!", prefix, name)
+	})
+	fn := fb.Build()
+
+	kwargs := object.NewKwargs(map[string]object.Object{
+		"prefix": &object.String{Value: "Hi"},
+	})
+	result := fn(context.Background(), kwargs, &object.String{Value: "World"})
+	if strResult, ok := result.(*object.String); !ok || strResult.Value != "Hi, World!" {
+		t.Errorf("expected 'Hi, World!', got %v", result)
+	}
+}
+
+func TestFunctionBuilderErrorReturn(t *testing.T) {
+	fb := object.NewFunctionBuilder()
+	fb.Function(func(a, b int) (int, error) {
+		if b == 0 {
+			return 0, fmt.Errorf("division by zero")
+		}
+		return a / b, nil
+	})
+	fn := fb.Build()
+
+	// Test success
+	result := fn(context.Background(), object.NewKwargs(nil), &object.Integer{Value: 10}, &object.Integer{Value: 2})
+	if intResult, ok := result.(*object.Integer); !ok || intResult.Value != 5 {
+		t.Errorf("expected 5, got %v", result)
+	}
+
+	// Test error
+	result = fn(context.Background(), object.NewKwargs(nil), &object.Integer{Value: 10}, &object.Integer{Value: 0})
+	if errResult, ok := result.(*object.Error); !ok || !strings.Contains(errResult.Message, "division by zero") {
+		t.Errorf("expected error containing 'division by zero', got %v", result)
+	}
+}
+
+func TestFunctionBuilderNoFunction(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic when building without function")
+		}
+	}()
+	fb := object.NewFunctionBuilder()
+	fb.Build() // Should panic
+}
+
+func TestFunctionBuilderMultipleFunctions(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic when registering multiple functions")
+		}
+	}()
+	fb := object.NewFunctionBuilder()
+	fb.Function(func() {})
+	fb.Function(func() {}) // Should panic
 }
