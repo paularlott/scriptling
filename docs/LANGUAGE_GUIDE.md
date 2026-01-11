@@ -7,6 +7,7 @@ This document provides a complete reference for the Scriptling programming langu
 ## Language Overview
 
 Scriptling is a dynamically-typed, interpreted language with Python-inspired syntax. It supports:
+
 - Variables, functions, and control flow
 - Lists and dictionaries
 - String manipulation
@@ -26,7 +27,9 @@ While Scriptling is inspired by Python, it has some key differences:
 ## Syntax Rules
 
 ### Indentation
+
 Scriptling uses **Python-style indentation** (4 spaces recommended) to define code blocks:
+
 ```python
 if x > 5:
     print("yes")    # 4 spaces indent
@@ -34,20 +37,24 @@ if x > 5:
 ```
 
 ### Comments
+
 ```python
 # Single-line comments only
 x = 5  # Inline comments supported
 ```
 
 ### Triple-Quoted and Raw Strings
+
 Scriptling supports single- and double-quoted strings, triple-quoted strings for multi-line text, and raw-string prefixes `r`/`R` which are useful for regular expressions.
 
 ### Case Sensitivity
+
 - Keywords: lowercase (`if`, `while`, `def`, `return`)
 - Booleans: `True`, `False` (capitalized)
 - Variables: case-sensitive (`myVar` ≠ `myvar`)
 
 ### Multiline Syntax
+
 Scriptling supports multiline definitions for lists, dictionaries, function calls, and function definitions. Indentation is ignored inside parentheses, brackets, and braces.
 
 ```python
@@ -73,11 +80,13 @@ result = my_function(
 ```
 
 ### Trailing Commas
+
 Trailing commas are allowed in lists, dictionaries, function calls, and function definitions. This makes it easier to add or remove items in multiline structures.
 
 ## Data Types
 
 ### Integer
+
 ```python
 x = 42
 y = -10
@@ -85,24 +94,28 @@ z = 0
 ```
 
 ### Float
+
 ```python
 pi = 3.14
 temp = -273.15
 ```
 
 ### String
+
 ```python
 name = "Alice"
 message = 'Hello'  # Single or double quotes
 ```
 
 ### Boolean
+
 ```python
 flag = True
 done = False
 ```
 
 ### List
+
 ```python
 numbers = [1, 2, 3, 4, 5]
 mixed = [1, "two", 3.0, True]
@@ -111,6 +124,7 @@ empty = []
 ```
 
 ### Dictionary
+
 ```python
 person = {"name": "Alice", "age": "30"}
 config = {"host": "localhost", "port": "8080"}
@@ -118,6 +132,7 @@ empty = {}
 ```
 
 ### Set
+
 ```python
 numbers = set([1, 2, 3])
 unique = set([1, 2, 2, 3])  # {1, 2, 3}
@@ -125,11 +140,13 @@ empty = set()
 ```
 
 ### None/Null
+
 Represented as `None` (not directly creatable, returned by functions with no return value)
 
 ## Operators
 
 ### Arithmetic
+
 ```python
 x + y    # Addition
 x - y    # Subtraction
@@ -141,6 +158,7 @@ x % y    # Modulo
 ```
 
 ### Augmented Assignment
+
 ```python
 x += y   # x = x + y
 x -= y   # x = x - y
@@ -156,6 +174,7 @@ x >>= y  # x = x >> y (right shift)
 ```
 
 ### Bitwise Operators
+
 Bitwise operators work on integers at the binary level, following Python's behavior:
 
 ```python
@@ -204,6 +223,7 @@ fast_div = 56 >> 3   # 56 / 8 = 7
 **Note**: Bitwise operators only work with integers. Negative numbers use two's complement representation, matching Python's behavior.
 
 ### Comparison
+
 ```python
 x == y   # Equal
 x != y   # Not equal
@@ -214,6 +234,7 @@ x >= y   # Greater than or equal
 ```
 
 ### Boolean/Logical
+
 ```python
 x and y  # Logical AND - returns first falsy value or last value
 x or y   # Logical OR - returns first truthy value or last value
@@ -228,6 +249,7 @@ value = x and y  # Returns x if x is falsy, otherwise y
 ```
 
 ### Chained Comparisons
+
 ```python
 # Chained comparisons work like mathematical notation
 1 < x < 10        # Equivalent to: 1 < x and x < 10
@@ -243,6 +265,7 @@ if 0 < score < 100:
 ```
 
 ### Precedence (highest to lowest)
+
 1. Parentheses `()`
 2. Function calls, indexing `func()`, `list[0]`
 3. Exponentiation `**`
@@ -261,6 +284,7 @@ if 0 < score < 100:
 ## Variables
 
 ### Assignment
+
 ```python
 x = 10
 name = "Alice"
@@ -268,9 +292,11 @@ result = x * 2
 ```
 
 ### No Declaration Required
+
 Variables are created on first assignment.
 
 ### Scope
+
 - Global scope: Variables defined at module level
 - Function scope: Variables defined in functions (including parameters)
 - No block scope (if/while blocks share outer scope)
@@ -278,6 +304,7 @@ Variables are created on first assignment.
 ## Control Flow
 
 ### If/Elif/Else Statement
+
 ```python
 if condition:
     # code block
@@ -290,6 +317,7 @@ else:
 ```
 
 ### Examples
+
 ```python
 # Simple if/else
 if x > 10:
@@ -310,6 +338,7 @@ else:
 ```
 
 ### While Loop
+
 ```python
 counter = 0
 while counter < 10:
@@ -318,6 +347,7 @@ while counter < 10:
 ```
 
 ### For Loop
+
 ```python
 # Iterate over list
 for item in [1, 2, 3]:
@@ -334,6 +364,7 @@ for num in numbers:
 ```
 
 ### Loop Control
+
 ```python
 # break - exit loop immediately
 for i in [1, 2, 3, 4, 5]:
@@ -358,6 +389,7 @@ for i in [1, 2, 3]:
 ## Functions
 
 ### Definition
+
 ```python
 def function_name(param1, param2):
     # function body
@@ -394,7 +426,7 @@ greet(punctuation="?", name="Eve", greeting="Howdy")  # Howdy, Eve?
 - Keyword arguments work with default parameter values
 - Keyword arguments work with lambda functions
 
-### Variadic Arguments (*args)
+### Variadic Arguments (\*args)
 
 Functions can accept a variable number of positional arguments using the `*args` syntax. The extra arguments are collected into a list.
 
@@ -426,6 +458,7 @@ log("INFO", "System started", "Ready")
 **Note**: `*args` must come after regular parameters and default parameters. It captures all remaining positional arguments.
 
 ### Examples
+
 ```python
 # Simple function
 def greet(name):
@@ -448,6 +481,7 @@ def get_pi():
 ```
 
 ### Calling Functions
+
 ```python
 greet("Alice")
 result = add(5, 3)
@@ -455,6 +489,7 @@ fact = factorial(5)
 ```
 
 ### Return Statement
+
 ```python
 return value    # Return value
 return          # Return None
@@ -464,7 +499,9 @@ return          # Return None
 ## Error Handling
 
 ### Try/Except
+
 Catch and handle errors that occur during execution:
+
 ```python
 try:
     result = 10 / 0
@@ -475,7 +512,9 @@ except:
 ```
 
 ### Try/Finally
+
 Execute cleanup code regardless of whether an error occurs:
+
 ```python
 try:
     data = process_data()
@@ -485,7 +524,9 @@ finally:
 ```
 
 ### Try/Except/Finally
+
 Combine error handling with cleanup:
+
 ```python
 try:
     response = requests.get(url, options)
@@ -498,7 +539,9 @@ finally:
 ```
 
 ### Raise Statement
+
 Raise custom errors:
+
 ```python
 def check_positive(n):
     if n < 0:
@@ -512,6 +555,7 @@ except:
 ```
 
 ### Nested Try/Except
+
 ```python
 try:
     try:
@@ -524,7 +568,9 @@ except:
 ```
 
 ### Assert Statement
+
 Test conditions and raise errors when they fail:
+
 ```python
 # Basic assert - raises AssertionError if condition is False
 assert x > 0
@@ -544,6 +590,7 @@ def divide(a, b):
 ```
 
 ### Error Handling with HTTP
+
 ```python
 import json
 import requests
@@ -567,18 +614,21 @@ finally:
 ## Lists
 
 ### Creation
+
 ```python
 numbers = [1, 2, 3, 4, 5]
 empty = []
 ```
 
 ### Indexing (0-based)
+
 ```python
 first = numbers[0]    # 1
 last = numbers[4]     # 5
 ```
 
 ### Operations
+
 ```python
 len(numbers)              # Get length: 5
 append(numbers, 6)        # Modifies numbers in-place
@@ -586,12 +636,14 @@ print(numbers)            # [1, 2, 3, 4, 5, 6]
 ```
 
 ### Iteration
+
 ```python
 for num in numbers:
     print(num)
 ```
 
 ### Nested Lists
+
 ```python
 matrix = [[1, 2], [3, 4]]
 value = matrix[0][1]  # 2
@@ -600,23 +652,27 @@ value = matrix[0][1]  # 2
 ## Dictionaries
 
 ### Creation
+
 ```python
 person = {"name": "Alice", "age": "30", "city": "NYC"}
 empty = {}
 ```
 
 ### Access
+
 ```python
 name = person["name"]     # "Alice"
 age = person["age"]       # "30"
 ```
 
 ### Operations
+
 ```python
 len(person)  # Get number of keys: 3
 ```
 
 ### Iteration
+
 ```python
 # Iterate over keys
 for key in keys(person):
@@ -628,6 +684,7 @@ for item in items(person):
 ```
 
 ### Notes
+
 - Keys must be strings
 - Values can be any type
 - Missing keys return `None`
@@ -635,6 +692,7 @@ for item in items(person):
 ## Built-in Functions
 
 ### I/O
+
 ```python
 print(value)              # Print to stdout
 print("Hello", name)      # Multiple arguments
@@ -642,6 +700,7 @@ input("Prompt: ")         # Read user input (returns string)
 ```
 
 ### Type Conversions
+
 ```python
 str(42)                   # "42"
 int("42")                 # 42
@@ -665,6 +724,7 @@ set([1, 2, 2, 3])         # {1, 2, 3} (unique elements, returns set)
 ```
 
 ### Math Functions (built-in)
+
 ```python
 abs(-5)                   # 5
 min(3, 1, 2)              # 1
@@ -677,6 +737,7 @@ divmod(17, 5)             # (3, 2) - returns (quotient, remainder)
 ```
 
 ### Number Formatting
+
 ```python
 hex(255)                  # "0xff"
 hex(-255)                 # "-0xff"
@@ -687,6 +748,7 @@ oct(-8)                   # "-0o10"
 ```
 
 ### Type Checking
+
 ```python
 callable(len)             # True (is a function)
 callable(42)              # False
@@ -703,12 +765,14 @@ isinstance((1, 2), "tuple") # True
 ```
 
 ### Character Conversion
+
 ```python
 chr(65)                   # "A"
 ord("A")                  # 65
 ```
 
 ### Iteration Utilities
+
 ```python
 # These return iterators (lazy evaluation)
 enumerate(["a", "b"])            # Iterator: (0, "a"), (1, "b")
@@ -728,7 +792,9 @@ all([True, False, True])         # False
 ```
 
 ### Type Method
+
 All objects support the `.type()` method which returns the type name as a string:
+
 ```python
 x = 42
 x.type()                  # "INTEGER"
@@ -741,6 +807,7 @@ z.type()                  # "LIST"
 ```
 
 ### String Functions
+
 ```python
 len("hello")                        # 5
 upper("hello")                      # "HELLO"
@@ -760,6 +827,7 @@ endswith("hello", "lo")            # True
 ```
 
 ### String Methods (called on string objects)
+
 ```python
 s = "hello world"
 s.find("world")                    # 6 (index of substring, -1 if not found)
@@ -803,6 +871,7 @@ s.count("o")                       # 2 (count occurrences)
 ```
 
 ### Set Methods
+
 ```python
 s = set([1, 2])
 s.add(3)            # s is now {1, 2, 3}
@@ -824,6 +893,7 @@ s1.issuperset(s2)           # False
 ```
 
 ### List Functions
+
 ```python
 len([1, 2, 3])                     # 3
 
@@ -850,6 +920,7 @@ sorted([3, 1, 2], reverse=True)   # [3, 2, 1]
 ```
 
 ### List Methods (called on list objects)
+
 ```python
 lst = [10, 20, 30, 20, 40]
 lst.index(20)                      # 1 (first index of value)
@@ -876,6 +947,7 @@ lst.reverse()                      # lst is now [5, 4, 3, 2, 1]
 ```
 
 ### Range Function
+
 ```python
 # range() returns an iterator (lazy evaluation)
 range(5)                           # Iterator: 0, 1, 2, 3, 4
@@ -892,6 +964,7 @@ for i in range(5):
 ```
 
 ### Dictionary Methods
+
 ```python
 person = {"name": "Alice", "age": "30"}
 
@@ -907,6 +980,7 @@ for item in items(person):
 ```
 
 ### Dict Methods (called on dict objects)
+
 ```python
 d = {"a": 1, "b": 2, "c": 3}
 d.get("a")                         # 1
@@ -933,12 +1007,13 @@ d.setdefault("b", 200)             # 200 (sets and returns new value)
 ```
 
 ### Library Import
+
 ```python
 # Import libraries dynamically. The import statement loads the library
 # and makes its functions available as a global object.
 import json    # Load JSON library, creates a global 'json' object
 import requests    # Load Requests library, creates a global 'requests' object
-import re   # Load regex library, creates a global 'regex' object
+import re   # Load regex library, creates a global 're' object
 
 # Use imported libraries directly via their global object
 data = json.parse('{"key":"value"}')
@@ -948,6 +1023,7 @@ matches = re.findall("[0-9]+", "abc123def456")
 ```
 
 ### JSON Functions
+
 ```python
 # Parse JSON string to Scriptling objects
 data = json.parse('{"name":"Alice","age":30}')
@@ -962,11 +1038,13 @@ json_str = json.stringify(obj)    # '{"age":"25","name":"Bob"}'
 ### HTTP Functions
 
 All HTTP functions return a dictionary with:
+
 - `status`: HTTP status code (integer)
 - `body`: Response body (string)
 - `headers`: Dictionary of response headers
 
 #### GET Request
+
 ```python
 # Basic GET (default 5 second timeout)
 response = requests.get("https://api.example.com/users")
@@ -987,6 +1065,7 @@ response = requests.get("https://api.example.com/users", options)
 ```
 
 #### POST Request
+
 ```python
 # POST with JSON body (default 5 second timeout)
 payload = {"name": "Alice", "email": "alice@example.com"}
@@ -1010,6 +1089,7 @@ if response["status"] == 201:
 ```
 
 #### PUT Request
+
 ```python
 # Update resource (default 5 second timeout)
 payload = {"name": "Alice Updated"}
@@ -1022,6 +1102,7 @@ response = requests.put("https://api.example.com/users/1", body, options)
 ```
 
 #### DELETE Request
+
 ```python
 # Delete resource (default 5 second timeout)
 response = requests.delete("https://api.example.com/users/1")
@@ -1032,6 +1113,7 @@ response = requests.delete("https://api.example.com/users/1", options)
 ```
 
 #### PATCH Request
+
 ```python
 # Partial update (default 5 second timeout)
 payload = {"email": "newemail@example.com"}
@@ -1044,6 +1126,7 @@ response = requests.patch("https://api.example.com/users/1", body, options)
 ```
 
 #### Timeout Behavior
+
 - Default timeout: 5 seconds
 - On timeout: Returns error
 - Timeout parameter: Integer (seconds) in options dictionary
@@ -1090,6 +1173,7 @@ if create_resp["status"] == 201:
 ## Indexing and Slicing
 
 ### Single Index
+
 ```python
 word = "hello"
 first = word[0]    # "h"
@@ -1100,6 +1184,7 @@ first_num = numbers[0]    # 1
 ```
 
 ### Slice Notation
+
 ```python
 # Lists - basic slicing
 numbers = [0, 1, 2, 3, 4, 5]
@@ -1159,6 +1244,7 @@ result = tup[s]           # (1, 2, 3)
 ```
 
 The `slice()` builtin accepts:
+
 - `slice(stop)` - Equivalent to `slice(0, stop, 1)`
 - `slice(start, stop)` - Equivalent to `slice(start, stop, 1)`
 - `slice(start, stop, step)` - Full control
@@ -1171,10 +1257,11 @@ The `slice()` builtin accepts:
 Scriptling intentionally does not support the following Python 3 features:
 
 #### Language Features
+
 - **`async`/`await`**: Asynchronous programming is not supported. Scriptling is designed for synchronous embedded scripting.
 - **Type annotations**: Type hints (e.g., `def func(x: int) -> str:`) are not parsed or enforced.
 - **Walrus operator** (`:=`): Assignment expressions are not supported.
-- **Match/case statements** (Python 3.10+): Pattern matching is not implemented.
+- **Match/case statements** (Python 3.10+): Full pattern matching is not implemented. A simplified version may be added (see Planned Features).
 - **Positional-only parameters** (`/`): Function parameter syntax like `def func(a, /, b)` is not supported.
 - **Keyword-only parameters** (`*`): Syntax like `def func(a, *, b)` is not supported (though kwargs work via `**kwargs` pattern).
 - **Decorators**: Function and class decorators (e.g., `@decorator`) are not supported.
@@ -1187,6 +1274,7 @@ Scriptling intentionally does not support the following Python 3 features:
 - **Operator overloading**: Magic methods like `__add__`, `__eq__`, etc. are not supported (except `__init__`).
 
 #### Built-in Functions Not Supported
+
 - **`input()`**: Reading from stdin is not available in embedded environments (documented, returns error).
 - **`open()`**: Use `os.read_file()` and `os.write_file()` instead for file operations.
 - **`compile()`, `eval()`, `exec()`**: Dynamic code execution beyond the main script is not supported.
@@ -1199,6 +1287,7 @@ Scriptling intentionally does not support the following Python 3 features:
 - **`frozenset()`**: Immutable sets are not available (use regular `set()`).
 
 #### Standard Library Modules Not Included
+
 - **`asyncio`**: Asynchronous I/O framework
 - **`threading`**, **`multiprocessing`**: Concurrent execution (Scriptling is single-threaded by design)
 - **`socket`**: Low-level networking (use `requests` library for HTTP)
@@ -1209,19 +1298,20 @@ Scriptling intentionally does not support the following Python 3 features:
 - **`sqlite3`**: Database access
 - **`xml`**: XML processing (use `html.parser` for HTML)
 - **`email`**, **`smtplib`**: Email handling
-- **`logging`**: Structured logging (use `print()` for output)
 - **`argparse`**, **`optparse`**: Command-line parsing
 - **`unittest`**, **`doctest`**: Testing frameworks (use `assert` statements)
 - **`pdb`**: Debugger
 - **`profile`**, **`cProfile`**: Profiling tools
 
 #### Exception Handling Differences
+
 - **Exception hierarchy**: Scriptling has a simplified error model without Python's exception hierarchy.
 - **Exception groups** (Python 3.11+): Not supported.
 - **`except*` syntax**: Not supported.
 - **Custom exception classes**: You can raise string messages, but not custom exception types.
 
 #### Other Differences
+
 - **`__name__ == "__main__"`**: This pattern is not supported. Scripts always execute from top to bottom.
 - **`if __name__`**: Not applicable in embedded scripting context.
 - **Module `__all__`**: Export lists are not used.
@@ -1231,6 +1321,7 @@ Scriptling intentionally does not support the following Python 3 features:
 ### Supported Python 3 Features
 
 For clarity, Scriptling **does support**:
+
 - ✅ Classes with single inheritance and `super()`
 - ✅ Lambda functions and closures
 - ✅ List comprehensions and dictionary comprehensions
@@ -1255,14 +1346,14 @@ For clarity, Scriptling **does support**:
 - ✅ String methods (most Python string methods)
 - ✅ List, dict, set methods (most Python methods)
 
-
-
 ### Key Differences
+
 - No implicit type coercion in most operations
 
 ## Best Practices
 
 ### Error Handling
+
 ```python
 # Check HTTP status codes
 response = requests.get("https://api.example.com/data")
@@ -1271,30 +1362,33 @@ if response["status"] != 200:
     return
 
 # Validate data before use
-data = json_parse(response["body"])
+data = json.parse(response["body"])
 if data["count"] > 0:
     # Process data
 ```
 
 ### Timeouts
+
 ```python
 # Always specify timeouts for external calls
 response = requests.get("https://slow-api.com/data", 5)  # 5 second timeout
 ```
 
 ### JSON Handling
+
 ```python
 # Always parse JSON responses
 response = requests.get("https://api.example.com/users")
-users = json_parse(response["body"])
+users = json.parse(response["body"])
 
 # Always stringify before sending
 payload = {"name": "Alice"}
-body = json_stringify(payload)
+body = json.stringify(payload)
 requests.post("https://api.example.com/users", body)
 ```
 
 ### Variable Naming
+
 ```python
 # Use descriptive names
 user_count = 10
@@ -1306,6 +1400,7 @@ api_response = requests.get(url)
 ## File Extension
 
 Scriptling scripts use the `.py` extension for syntax highlighting in editors:
+
 - `script.py` - Scriptling script file
 - Most Python syntax highlighters work well with Scriptling
 
@@ -1323,205 +1418,16 @@ go test -run TestHTTP -v
 ## Examples
 
 See the `examples/` directory:
+
 - `basic.py` - Variables, operators, control flow
 - `functions.py` - Function definitions and recursion
 - `collections.py` - Lists, dictionaries, for loops
 - `rest_api.py` - Complete REST API examples
 
-## Summary for LLMs
-
-When generating Scriptling code:
-1. Use 4-space indentation for blocks
-2. Use `True`/`False` for booleans, `None` for null (all capitalized)
-3. Use `range(n)`, `range(start, stop)`, or `range(start, stop, step)` for numeric loops
-4. Use slice notation: `list[1:3]`, `list[:3]`, `list[3:]`, `list[::2]`, `list[::-1]` (step supported)
-5. Use `keys(dict)`, `values(dict)`, `items(dict)` for dictionary iteration
-6. HTTP functions return `{"status": int, "body": string, "headers": dict}`
-7. HTTP functions accept optional options dictionary with `timeout` and `headers` keys
-8. Use `import json`, `import requests`, `import re` to load libraries
-9. Always use `json.parse()` and `json.stringify()` for JSON (dot notation)
-10. Always use `requests.get()`, `requests.post()`, etc. for HTTP (dot notation)
-11. Use `re.match()`, `re.search()`, `re.findall()`, `re.sub()`, `re.split()` for regex (Python-compatible)
-12. Default HTTP timeout is 5 seconds if not specified
-13. Use `elif` for multiple conditions
-14. Use augmented assignment: `x += 1`, `x *= 2`, etc.
-15. Use `break` to exit loops, `continue` to skip iterations
-16. Use `pass` as a placeholder in empty blocks
-17. `append(list, item)` modifies list in-place (like Python)
-18. Strings use `+` for concatenation
-19. Use `.py` file extension
-20. Check `response["status"]` before processing
-21. Use `try`/`except`/`finally` for error handling
-22. Use `raise "message"` to raise custom errors
-23. Multiple assignment: `a, b = [1, 2]` for unpacking lists
-
 ## Quick Syntax Reference
 
-```python
-# Variables
-x = 10
-
-# Augmented assignment
-x += 5
-x *= 2
-
-# Booleans and None
-flag = True
-done = False
-result = None
-
-# Control flow
-if x > 10:
-    print("large")
-elif x > 5:
-    print("medium")
-else:
-    print("small")
-
-while x > 0:
-    x -= 1
-
-for item in [1, 2, 3]:
-    if item == 2:
-        continue  # Skip 2
-    print(item)
-
-# break exits loop
-for item in [1, 2, 3, 4, 5]:
-    if item == 4:
-        break  # Stop at 4
-    print(item)
-
-# Functions
-def add(a, b):
-    return a + b
-
-# Error handling
-try:
-    result = risky_operation()
-except:
-    result = None
-finally:
-    cleanup()
-
-# Raise errors
-if x < 0:
-    raise "Invalid value"
-
-# Multiple assignment
-a, b = [1, 2]
-x, y = [y, x]  # Swap
-
-# Lists & Dicts
-nums = [1, 2, 3]
-data = {"key": "value"}
-first = nums[0]
-val = data["key"]
-
-# Range and slicing
-for i in range(5):
-    print(i)
-
-sublist = nums[1:3]  # [2, 3]
-text = "hello"[1:4]  # "ell"
-
-# Dictionary methods
-for item in items(data):
-    print(item[0], item[1])
-
-# HTTP with headers and status check
-options = {
-    "timeout": 10,
-    "headers": {"Authorization": "Bearer token"}
-}
-resp = requests.get("https://api.example.com/data", options)
-if resp["status"] == 200:
-    data = json.parse(resp["body"])
-```
+For a condensed language syntax cheat sheet, see [LANGUAGE_QUICK_REFERENCE.md](LANGUAGE_QUICK_REFERENCE.md).
 
 ## Classes
 
-Scriptling supports defining classes with methods and instance fields.
-
-### Class Definition
-
-```python
-class Person:
-    def __init__(self, name, age):
-        self.name = name
-        self.age = age
-
-    def greet(self):
-        return "Hello, my name is " + self.name
-
-    def is_adult(self):
-        return self.age >= 18
-```
-
-### Instantiation and Usage
-
-```python
-# Create an instance
-p = Person("Alice", 30)
-
-# Access fields
-print(p.name)  # "Alice"
-
-# Call methods
-print(p.greet())  # "Hello, my name is Alice"
-
-# Modify fields
-p.age = 31
-```
-
-### Key Concepts
-
-1.  **`class` Keyword**: Used to define a new class.
-2.  **`__init__` Method**: The constructor method, called when a new instance is created.
-3.  **`self` Parameter**: The first parameter of every method is a reference to the current instance (similar to `this` in other languages, but explicit like in Python).
-4.  **Fields**: Instance variables are accessed and assigned using `self.field_name`.
-
-### Inheritance
-
-Scriptling supports single inheritance. A class can inherit from another class by specifying the parent class in parentheses after the class name.
-
-```python
-class Animal:
-    def __init__(self, name):
-        self.name = name
-
-    def speak(self):
-        return "Generic sound"
-
-class Dog(Animal):
-    def __init__(self, name, breed):
-        # Call parent constructor
-        super(Dog, self).__init__(name)
-        self.breed = breed
-
-    def speak(self):
-        # Call parent method
-        return super(Dog, self).speak() + " and Woof!"
-
-d = Dog("Buddy", "Pug")
-print(d.speak())  # "Generic sound and Woof!"
-```
-
-### The `super()` Function
-
-The `super()` function returns a proxy object that delegates method calls to a parent or sibling class. This is useful for accessing inherited methods that have been overridden in a class.
-
-- **Syntax**:
-    - `super()`: Parameterless version (Python 3 style). Automatically infers the class and instance from the context. Requires the first argument of the method to be named `self`.
-    - `super(CurrentClass, self)`: Explicit version.
-
-- **Arguments**:
-    - `CurrentClass`: The class object where the method is defined.
-    - `self`: The instance object.
-
-**Note**: The parameterless `super()` only works inside class methods where the first argument is named `self`.
-
-### Limitations
-
-- **Nested Classes**: Defining classes inside other classes or functions is **not** supported. Classes must be defined at the top level of a module.
-- **Multiple Inheritance**: Only single inheritance is supported.
+For class syntax, inheritance, and the `super()` function, see [LANGUAGE_QUICK_REFERENCE.md](LANGUAGE_QUICK_REFERENCE.md#classes).

@@ -239,104 +239,9 @@ if resultDict, err := result.AsDict(); err == nil {
 }
 ```
 
-## Register Go Functions
+## Extending Scriptling with Go
 
-### Basic Function Registration
-
-```go
-// Register a simple function
-p.RegisterFunc("multiply", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-    if len(args) != 2 {
-        return &object.String{Value: "multiply requires 2 arguments"}
-    }
-
-    var a, b int64
-    if intObj, ok := args[0].(*object.Integer); ok {
-        a = intObj.Value
-    }
-    if intObj, ok := args[1].(*object.Integer); ok {
-        b = intObj.Value
-    }
-
-    return &object.Integer{Value: a * b}
-})
-
-// Use from Scriptling
-p.Eval(`
-result = multiply(6, 7)
-print(result)  # 42
-`)
-```
-
-### Advanced Function with Type Checking
-
-```go
-import "github.com/paularlott/scriptling/object"
-
-p.RegisterFunc("process_data", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-    if len(args) != 2 {
-        return &object.String{Value: "Error: requires 2 arguments"}
-    }
-
-    // Get string argument
-    var text string
-    if strObj, ok := args[0].(*object.String); ok {
-        text = strObj.Value
-    } else {
-        return &object.String{Value: "Error: first argument must be string"}
-    }
-
-    // Get integer argument
-    var count int64
-    if intObj, ok := args[1].(*object.Integer); ok {
-        count = intObj.Value
-    } else {
-        return &object.String{Value: "Error: second argument must be integer"}
-    }
-
-    // Process in Go
-    result := strings.Repeat(text, int(count))
-
-    return &object.String{Value: result}
-})
-```
-
-### Function Returning Different Types
-
-```go
-// Function that returns a dictionary
-p.RegisterFunc("get_system_info", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-    pairs := []object.HashPair{
-        {
-            Key:   &object.String{Value: "os"},
-            Value: &object.String{Value: runtime.GOOS},
-        },
-        {
-            Key:   &object.String{Value: "arch"},
-            Value: &object.String{Value: runtime.GOARCH},
-        },
-        {
-            Key:   &object.String{Value: "cpus"},
-            Value: &object.Integer{Value: int64(runtime.NumCPU())},
-        },
-    }
-
-    hash := &object.Hash{Pairs: make(map[object.HashKey]object.HashPair)}
-    for _, pair := range pairs {
-        key := pair.Key.(object.Hashable).HashKey()
-        hash.Pairs[key] = pair
-    }
-
-    return hash
-})
-
-// Use from Scriptling
-p.Eval(`
-info = get_system_info()
-print("OS: " + info["os"])
-print("CPUs: " + str(info["cpus"]))
-`)
-```
+This guide focuses on **using** Scriptling from Go. For information on **extending** Scriptling by registering custom Go functions, libraries, and classes, see [EXTENDING_WITH_GO.md](EXTENDING_WITH_GO.md).
 
 ## Call Functions Directly from Go
 
@@ -515,185 +420,7 @@ text, _ = result.AsString()
 fmt.Println(text)  // Hi, Alice?
 ```
 
-## Custom Libraries
-
-### Register Custom Library
-
-```go
-// Create library with functions, optional constants, and optional description
-// NewLibrary(functions, constants, description)
-// - functions: map of builtin functions (required)
-// - constants: map of constant values (use nil if none)
-// - description: library description (use "" if none)
-
-myLib := object.NewLibrary(map[string]*object.Builtin{
-    "hello": {
-        Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-            return &object.String{Value: "Hello from custom library!"}
-        },
-        HelpText: "hello() - Returns a greeting message",
-    },
-    "add": {
-        Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-            if len(args) != 2 {
-                return &object.Integer{Value: 0}
-            }
-
-            var a, b int64
-            if intObj, ok := args[0].(*object.Integer); ok {
-                a = intObj.Value
-            }
-            if intObj, ok := args[1].(*object.Integer); ok {
-                b = intObj.Value
-            }
-
-            return &object.Integer{Value: a + b}
-        },
-        HelpText: "add(a, b) - Add two integers",
-    },
-}, nil, "My custom library")  // nil for no constants, description string
-
-// Register the library
-p.RegisterLibrary("mylib", myLib)
-
-// Use from Scriptling
-p.Eval(`
-import mylib
-message = mylib.hello()
-result = mylib.add(5, 3)
-print(message)  # Hello from custom library!
-print(result)   # 8
-
-# Alternative bracket notation
-result2 = mylib["add"](10, 20)
-`)
-```
-
-### Library with Constants
-
-```go
-// Create library with both functions and constants
-mathLib := object.NewLibrary(
-    map[string]*object.Builtin{
-        "sqrt": {
-            Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-                if len(args) != 1 {
-                    return &object.Error{Message: "sqrt requires 1 argument"}
-                }
-                if num, ok := args[0].(*object.Float); ok {
-                    return &object.Float{Value: math.Sqrt(num.Value)}
-                }
-                return &object.Error{Message: "argument must be float"}
-            },
-            HelpText: "sqrt(x) - Return the square root of x",
-        },
-    },
-    map[string]object.Object{
-        "pi": &object.Float{Value: 3.141592653589793},
-        "e":  &object.Float{Value: 2.718281828459045},
-    },
-    "Mathematical utilities library",
-)
-
-p.RegisterLibrary("mymath", mathLib)
-
-// Use constants directly (not as function calls)
-p.Eval(`
-import mymath
-area = mymath.pi * mymath.sqrt(radius)  # pi is a constant, not a function
-`)
-```
-
-### Library with State
-
-```go
-// Library that maintains state
-type Counter struct {
-    value int64
-}
-
-func (c *Counter) CreateLibrary() *object.Library {
-    return object.NewLibrary(map[string]*object.Builtin{
-        "increment": {
-            Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-                c.value++
-                return &object.Integer{Value: c.value}
-            },
-        },
-        "decrement": {
-            Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-                c.value--
-                return &object.Integer{Value: c.value}
-            },
-        },
-        "get": {
-            Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-                return &object.Integer{Value: c.value}
-            },
-        },
-        "set": {
-            Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-                if len(args) == 1 {
-                    if intObj, ok := args[0].(*object.Integer); ok {
-                        c.value = intObj.Value
-                    }
-                }
-                return &object.Integer{Value: c.value}
-            },
-        },
-    }, nil, "Counter library")
-}
-
-// Usage
-counter := &Counter{value: 0}
-p.RegisterLibrary("counter", counter.CreateLibrary())
-
-p.Eval(`
-import counter
-counter.set(10)
-print(counter.increment())  # 11
-print(counter.increment())  # 12
-print(counter.get())        # 12
-`)
-```
-
-### On-Demand Library Loading
-
-For dynamic library loading from disk or other sources, use the on-demand callback:
-
-```go
-// Set callback for loading libraries on-demand
-p.SetOnDemandLibraryCallback(func(p *Scriptling, libName string) bool {
-    // Check if we can provide this library
-    if libName == "mylib" {
-        // Load from disk
-        script, err := loadLibraryFromFile(libName + ".py")
-        if err != nil {
-            return false
-        }
-
-        // Register the loaded library
-        return p.RegisterScriptLibrary(libName, script) == nil
-    }
-
-    // Try loading from a plugin system
-    if pluginLib := loadFromPluginSystem(libName); pluginLib != nil {
-        return p.RegisterLibrary(libName, pluginLib) == nil
-    }
-
-    return false // Could not load library
-})
-
-// Now scripts can import libraries that don't exist yet
-p.Eval(`
-import mylib  # Loaded on-demand from disk
-result = mylib.do_something()
-`)
-```
-
-The callback receives the Scriptling instance and library name, and should return `true` if it successfully registered the library.
-
-### Programmatic Library Import
+## Programmatic Library Import
 
 Instead of using `import` statements in scripts, you can import libraries programmatically from Go:
 
@@ -719,10 +446,8 @@ package main
 import (
     "fmt"
     "log"
-    "os"
 
     "github.com/paularlott/scriptling"
-    "github.com/paularlott/scriptling/object"
     "github.com/paularlott/scriptling/stdlib"
     "github.com/paularlott/scriptling/extlibs"
 )
@@ -739,24 +464,11 @@ func main() {
 
     // Set configuration from Go
     p.SetVar("api_base", "https://api.example.com")
-    p.SetVar("api_key", os.Getenv("API_KEY"))
     p.SetVar("timeout", 30)
-
-    // Register custom logging function
-    p.RegisterFunc("log_info", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-        if len(args) > 0 {
-            if strObj, ok := args[0].(*object.String); ok {
-                log.Printf("INFO: %s", strObj.Value)
-            }
-        }
-        return &object.String{Value: "logged"}
-    })
 
     // Execute automation script
     script := `
-import json, request
-
-log_info("Starting API automation")
+import json, requests
 
 # Fetch data
 url = api_base + "/users"
@@ -765,19 +477,19 @@ response = requests.get(url, options)
 
 if response["status"] == 200:
     users = json.parse(response["body"])
-    log_info("Found " + str(len(users)) + " users")
+    print("Found " + str(len(users)) + " users")
 
     # Process each user
     processed_count = 0
     for user in users:
         if user["active"]:
-            log_info("Processing user: " + user["name"])
+            print("Processing user: " + user["name"])
             processed_count = processed_count + 1
             # Additional processing...
 
     success = True
 else:
-    log_info("API call failed: " + str(response["status"]))
+    print("API call failed: " + str(response["status"]))
     processed_count = 0
     success = False
 
@@ -795,13 +507,13 @@ else:
         log.Fatalf("Script error: %v", err)
     }
 
-    // Get results using convenience methods
-    if success, ok := p.GetVarAsBool("success"); ok {
-        fmt.Printf("Automation completed successfully: %t\n", success)
-    }
-
     // Access return value from script
     if resultDict, err := result.AsDict(); err == nil {
+        if success, ok := resultDict["success"]; ok {
+            if successVal, err := success.AsBool(); err == nil {
+                fmt.Printf("Automation completed: %t\n", successVal)
+            }
+        }
         if processed, ok := resultDict["processed_count"]; ok {
             if count, err := processed.AsInt(); err == nil {
                 fmt.Printf("Processed %d items\n", count)
@@ -810,6 +522,7 @@ else:
     }
 
     fmt.Printf("Script result: %s\n", result.Inspect())
+}
 }
 ```
 
@@ -1086,206 +799,4 @@ result, _ := p.GetVar("result")
 ```
 ## Defining Classes in Go
 
-You can define Scriptling classes entirely in Go, allowing you to create custom types with high-performance methods implemented in Go.
-
-### Creating a Go-Defined Class
-
-To create a class in Go, you construct an `object.Class` and register it in the interpreter. Methods can be implemented as `object.Builtin` functions.
-
-```go
-package main
-
-import (
-    "context"
-    "fmt"
-    "github.com/paularlott/scriptling"
-    "github.com/paularlott/scriptling/object"
-)
-
-func main() {
-    p := scriptling.New()
-
-    // Define a 'Person' class
-    personClass := &object.Class{
-        Name: "Person",
-        Methods: map[string]object.Object{
-            // __init__ constructor
-            "__init__": &object.Builtin{
-                Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-                    // args[0] is 'self'
-                    if len(args) != 3 {
-                        return &object.Error{Message: "__init__ requires 2 arguments (name, age)"}
-                    }
-
-                    self := args[0].(*object.Instance)
-                    name := args[1]
-                    age := args[2]
-
-                    // Set fields on the instance
-                    self.Fields["name"] = name
-                    self.Fields["age"] = age
-
-                    return &object.Null{}
-                },
-            },
-            // Custom method
-            "greet": &object.Builtin{
-                Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-                    self := args[0].(*object.Instance)
-                    name := self.Fields["name"].(*object.String).Value
-
-                    return &object.String{Value: fmt.Sprintf("Hello, my name is %s!", name)}
-                },
-            },
-        },
-    }
-
-    // Register the class in the global environment
-    p.RegisterVar("Person", personClass)
-
-    // Use the class in Scriptling
-    p.Eval(`
-    p = Person("Alice", 30)
-    print(p.greet())  # Output: Hello, my name is Alice!
-    print(p.name)     # Output: Alice
-    `)
-}
-```
-
-### Key Concepts
-
-1.  **`object.Class`**: The struct representing a class.
-2.  **`Methods` Map**: A map where keys are method names and values are `object.Object` (usually `*object.Builtin`).
-3.  **`self` Argument**: The first argument to any method (including `__init__`) is always the instance itself (`*object.Instance`).
-4.  **`Fields`**: You can access and modify instance fields via `self.Fields` map.
-
-### Defining Classes in Libraries
-
-There are two ways to include classes in libraries:
-
-#### Method 1: Script-Based Libraries (Recommended)
-
-The simplest way to define classes in libraries is using `RegisterScriptLibrary`. Classes defined in the script are automatically exported:
-
-```go
-p := scriptling.New()
-
-// Register a script library containing a class
-err := p.RegisterScriptLibrary("mylib", `
-class Greeter:
-    def __init__(self, name):
-        self.name = name
-
-    def say_hello(self):
-        return "Hello, " + self.name
-
-# Functions and constants are also exported
-def helper():
-    return "I'm a helper function"
-
-VERSION = "1.0.0"
-`)
-
-// Use from Scriptling
-p.Eval(`
-import mylib
-g = mylib.Greeter("World")
-print(g.say_hello())  # Hello, World
-`)
-```
-
-#### Method 2: Go-Based Libraries with Classes
-
-To include a Go-defined class in a library, add it to the `constants` map when creating the library. The `constants` map accepts any `object.Object`, including `*object.Class`:
-
-```go
-package main
-
-import (
-    "context"
-    "fmt"
-    "github.com/paularlott/scriptling"
-    "github.com/paularlott/scriptling/object"
-)
-
-func main() {
-    p := scriptling.New()
-
-    // Define a class in Go
-    counterClass := &object.Class{
-        Name: "Counter",
-        Methods: map[string]object.Object{
-            "__init__": &object.Builtin{
-                Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-                    self := args[0].(*object.Instance)
-                    // Default start value is 0
-                    start := int64(0)
-                    if len(args) > 1 {
-                        if intObj, ok := args[1].(*object.Integer); ok {
-                            start = intObj.Value
-                        }
-                    }
-                    self.Fields["value"] = &object.Integer{Value: start}
-                    return &object.Null{}
-                },
-            },
-            "increment": &object.Builtin{
-                Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-                    self := args[0].(*object.Instance)
-                    if val, ok := self.Fields["value"].(*object.Integer); ok {
-                        newVal := val.Value + 1
-                        self.Fields["value"] = &object.Integer{Value: newVal}
-                        return &object.Integer{Value: newVal}
-                    }
-                    return &object.Null{}
-                },
-            },
-            "get": &object.Builtin{
-                Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-                    self := args[0].(*object.Instance)
-                    if val, ok := self.Fields["value"].(*object.Integer); ok {
-                        return &object.Integer{Value: val.Value}
-                    }
-                    return &object.Null{}
-                },
-            },
-        },
-    }
-
-    // Create library with the class in the constants map
-    myLib := object.NewLibrary(
-        map[string]*object.Builtin{
-            // Regular functions go here
-            "create_counter": {
-                Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-                    return &object.String{Value: "Use Counter() class directly"}
-                },
-            },
-        },
-        map[string]object.Object{
-            // Classes and constants go here
-            "Counter": counterClass,
-            "VERSION": &object.String{Value: "1.0.0"},
-        },
-        "Counter utilities library",
-    )
-
-    p.RegisterLibrary("counters", myLib)
-
-    // Use from Scriptling
-    p.Eval(`
-import counters
-c = counters.Counter(10)
-print(c.get())        # 10
-print(c.increment())  # 11
-print(c.increment())  # 12
-`)
-}
-```
-
-#### Key Points
-
-- **Script libraries**: Classes are automatically exported when defined at the top level of the script.
-- **Go libraries**: Add classes to the `constants` map (not the `functions` map) when calling `NewLibrary`.
-- The `constants` map accepts any `object.Object` type, making it suitable for classes, constants, and other non-function values.
-- Both library types convert to `Dict` objects when imported, allowing `mylib.ClassName()` syntax to work seamlessly.
+For information on defining Scriptling classes in Go, including creating custom types with high-performance methods, see [EXTENDING_WITH_GO.md](EXTENDING_WITH_GO.md#defining-classes-in-go).
