@@ -174,9 +174,7 @@ var DefaultDictClass = &object.Class{
 		"__init__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				// __init__(self, default_factory) - Initialize defaultdict
-				if len(args) != 2 {
-					return errors.NewArgumentError(len(args), 2)
-				}
+				if err := errors.ExactArgs(args, 2); err != nil { return err }
 				dd := args[0].(*object.Instance)
 				factory := args[1]
 
@@ -188,9 +186,7 @@ var DefaultDictClass = &object.Class{
 		"__getitem__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				// __getitem__(self, key) - Get value with default creation
-				if len(args) != 2 {
-					return errors.NewArgumentError(len(args), 2)
-				}
+				if err := errors.ExactArgs(args, 2); err != nil { return err }
 				dd := args[0].(*object.Instance)
 				key := args[1].Inspect()
 
@@ -249,9 +245,7 @@ var DefaultDictClass = &object.Class{
 		"__setitem__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				// __setitem__(self, key, value) - Set value
-				if len(args) != 3 {
-					return errors.NewArgumentError(len(args), 3)
-				}
+				if err := errors.ExactArgs(args, 3); err != nil { return err }
 				dd := args[0].(*object.Instance)
 				key := args[1].Inspect()
 				value := args[2]
@@ -282,9 +276,7 @@ var CollectionsLibrary = object.NewLibrary(map[string]*object.Builtin{
 			if len(args) == 0 {
 				return counter
 			}
-			if len(args) > 1 {
-				return errors.NewArgumentError(len(args), 1)
-			}
+			if err := errors.MaxArgs(args, 1); err != nil { return err }
 
 			switch arg := args[0].(type) {
 			case *object.List:
@@ -347,8 +339,8 @@ Example:
 	"most_common": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// most_common(counter[, n]) - Return n most common elements
-			if len(args) < 1 || len(args) > 2 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.RangeArgs(args, 1, 2); err != nil {
+				return err
 			}
 			counter, ok := args[0].(*object.Instance)
 			if !ok || counter.Class != CounterClass {
@@ -422,9 +414,7 @@ Example:
 			if len(args) == 0 {
 				return od
 			}
-			if len(args) > 1 {
-				return errors.NewArgumentError(len(args), 1)
-			}
+			if err := errors.MaxArgs(args, 1); err != nil { return err }
 
 			// Initialize from list of tuples or dict
 			switch arg := args[0].(type) {
@@ -512,9 +502,7 @@ Example:
 	"deque_appendleft": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// deque_appendleft(deque, elem) - Add element to left
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
-			}
+			if err := errors.ExactArgs(args, 2); err != nil { return err }
 			deque, ok := args[0].(*object.List)
 			if !ok {
 				return errors.NewTypeError("LIST (deque)", args[0].Type().String())
@@ -536,9 +524,7 @@ Example:
 	"deque_popleft": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// deque_popleft(deque) - Remove and return element from left
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
-			}
+			if err := errors.ExactArgs(args, 1); err != nil { return err }
 			deque, ok := args[0].(*object.List)
 			if !ok {
 				return errors.NewTypeError("LIST (deque)", args[0].Type().String())
@@ -561,9 +547,7 @@ Example:
 	"deque_extendleft": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// deque_extendleft(deque, iterable) - Extend left with iterable (reversed)
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
-			}
+			if err := errors.ExactArgs(args, 2); err != nil { return err }
 			deque, ok := args[0].(*object.List)
 			if !ok {
 				return errors.NewTypeError("LIST (deque)", args[0].Type().String())
@@ -597,9 +581,7 @@ Example:
 	"deque_rotate": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// deque_rotate(deque, n) - Rotate deque n steps
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
-			}
+			if err := errors.ExactArgs(args, 2); err != nil { return err }
 			deque, ok := args[0].(*object.List)
 			if !ok {
 				return errors.NewTypeError("LIST (deque)", args[0].Type().String())
@@ -641,9 +623,7 @@ Example:
 	"namedtuple": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// namedtuple(typename, field_names) - Create a named tuple class
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
-			}
+			if err := errors.ExactArgs(args, 2); err != nil { return err }
 			typename, ok := args[0].(*object.String)
 			if !ok {
 				return errors.NewTypeError("STRING", args[0].Type().String())
@@ -710,9 +690,7 @@ Example:
 			// __getitem__ for dict-like access
 			methods["__getitem__"] = &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) != 2 {
-						return errors.NewArgumentError(len(args), 2)
-					}
+					if err := errors.ExactArgs(args, 2); err != nil { return err }
 					nt := args[0].(*object.Instance)
 					key := args[1].Inspect()
 					// Don't expose internal fields

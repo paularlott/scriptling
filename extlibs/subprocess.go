@@ -40,9 +40,7 @@ var CompletedProcessClass = &object.Class{
 	Methods: map[string]object.Object{
 		"check_returncode": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) != 1 {
-					return errors.NewArgumentError(len(args), 1)
-				}
+				if err := errors.ExactArgs(args, 1); err != nil { return err }
 				if instance, ok := args[0].(*object.Instance); ok {
 					if returncode, ok := instance.Fields["returncode"].(*object.Integer); ok {
 						if returncode.Value != 0 {
@@ -63,9 +61,7 @@ Raises an exception if returncode is non-zero.`,
 var SubprocessLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"run": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) < 1 {
-				return errors.NewArgumentError(len(args), 1)
-			}
+			if err := errors.MinArgs(args, 1); err != nil { return err }
 
 			// Parse args - can be string or list
 			var cmdArgs []string

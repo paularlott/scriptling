@@ -47,9 +47,7 @@ var ResponseClass = &object.Class{
 	Methods: map[string]object.Object{
 		"json": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) != 1 {
-					return errors.NewArgumentError(len(args), 1)
-				}
+				if err := errors.ExactArgs(args, 1); err != nil { return err }
 				if instance, ok := args[0].(*object.Instance); ok {
 					if body, err := instance.Fields["body"].AsString(); err == nil {
 						var result interface{}
@@ -65,9 +63,7 @@ var ResponseClass = &object.Class{
 		},
 		"raise_for_status": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) != 1 {
-					return errors.NewArgumentError(len(args), 1)
-				}
+				if err := errors.ExactArgs(args, 1); err != nil { return err }
 				if instance, ok := args[0].(*object.Instance); ok {
 					if statusCode, err := instance.Fields["status_code"].AsInt(); err == nil {
 						if statusCode >= 400 {

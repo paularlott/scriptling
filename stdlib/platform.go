@@ -14,9 +14,7 @@ import (
 var PlatformLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"python_version": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 0 {
-				return errors.NewArgumentError(len(args), 0)
-			}
+			if err := errors.ExactArgs(args, 0); err != nil { return err }
 			// Return Scriptling version as python_version for compatibility
 			return &object.String{Value: build.Version}
 		},
@@ -26,9 +24,7 @@ Returns the Python version (Scriptling version for compatibility).`,
 	},
 	"system": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 0 {
-				return errors.NewArgumentError(len(args), 0)
-			}
+			if err := errors.ExactArgs(args, 0); err != nil { return err }
 			// Return OS name similar to Python's platform.system()
 			switch runtime.GOOS {
 			case "darwin":
@@ -49,9 +45,7 @@ Returns 'Darwin', 'Linux', 'Windows', etc.`,
 	},
 	"architecture": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 0 {
-				return errors.NewArgumentError(len(args), 0)
-			}
+			if err := errors.ExactArgs(args, 0); err != nil { return err }
 			// Return architecture info similar to Python's platform.architecture()
 			// For simplicity, return 64bit and empty linkage
 			arch := "64bit"
@@ -67,9 +61,7 @@ Returns a list like ['64bit', ''] indicating bits and linkage.`,
 	},
 	"machine": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 0 {
-				return errors.NewArgumentError(len(args), 0)
-			}
+			if err := errors.ExactArgs(args, 0); err != nil { return err }
 			return &object.String{Value: runtime.GOARCH}
 		},
 		HelpText: `machine() - Returns the machine type (architecture)
@@ -78,9 +70,7 @@ Returns 'amd64', 'arm64', 'arm', etc.`,
 	},
 	"platform": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 0 {
-				return errors.NewArgumentError(len(args), 0)
-			}
+			if err := errors.ExactArgs(args, 0); err != nil { return err }
 			// Return platform string similar to Python's platform.platform()
 			return &object.String{Value: runtime.GOOS + "-" + runtime.GOARCH}
 		},
@@ -90,9 +80,7 @@ Returns a string like 'darwin-amd64', 'linux-amd64', etc.`,
 	},
 	"scriptling_version": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 0 {
-				return errors.NewArgumentError(len(args), 0)
-			}
+			if err := errors.ExactArgs(args, 0); err != nil { return err }
 			return &object.String{Value: build.Version}
 		},
 		HelpText: `scriptling_version() - Returns Scriptling version string
@@ -101,9 +89,7 @@ Returns the current version of Scriptling.`,
 	},
 	"processor": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 0 {
-				return errors.NewArgumentError(len(args), 0)
-			}
+			if err := errors.ExactArgs(args, 0); err != nil { return err }
 			return &object.String{Value: runtime.GOARCH}
 		},
 		HelpText: `processor() - Returns the processor name
@@ -112,9 +98,7 @@ Returns the processor name, often same as machine.`,
 	},
 	"node": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 0 {
-				return errors.NewArgumentError(len(args), 0)
-			}
+			if err := errors.ExactArgs(args, 0); err != nil { return err }
 			if hostname, err := os.Hostname(); err == nil {
 				return &object.String{Value: hostname}
 			}
@@ -126,9 +110,7 @@ Returns the computer's network name.`,
 	},
 	"release": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 0 {
-				return errors.NewArgumentError(len(args), 0)
-			}
+			if err := errors.ExactArgs(args, 0); err != nil { return err }
 			// Return Scriptling version for compatibility
 			return &object.String{Value: build.Version}
 		},
@@ -138,9 +120,7 @@ Returns the system release (Scriptling version for compatibility).`,
 	},
 	"version": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 0 {
-				return errors.NewArgumentError(len(args), 0)
-			}
+			if err := errors.ExactArgs(args, 0); err != nil { return err }
 			// Return Scriptling version for compatibility
 			return &object.String{Value: build.Version}
 		},
@@ -150,9 +130,7 @@ Returns the system version (Scriptling version for compatibility).`,
 	},
 	"uname": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 0 {
-				return errors.NewArgumentError(len(args), 0)
-			}
+			if err := errors.ExactArgs(args, 0); err != nil { return err }
 			// Return uname info similar to Python's platform.uname()
 			pairs := make(map[string]object.DictPair)
 

@@ -18,9 +18,7 @@ func init() {
 
 // gaussianRandom returns a random number from Gaussian distribution
 func gaussianRandom(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-	if len(args) != 2 {
-		return errors.NewArgumentError(len(args), 2)
-	}
+	if err := errors.ExactArgs(args, 2); err != nil { return err }
 	var mu, sigma float64
 	switch arg := args[0].(type) {
 	case *object.Integer:
@@ -46,9 +44,7 @@ func gaussianRandom(ctx context.Context, kwargs object.Kwargs, args ...object.Ob
 var RandomLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"seed": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) > 1 {
-				return errors.NewArgumentError(len(args), 1)
-			}
+			if err := errors.MaxArgs(args, 1); err != nil { return err }
 			var seedVal int64
 			if len(args) == 0 {
 				seedVal = time.Now().UnixNano()
@@ -71,9 +67,7 @@ If a is omitted, current time is used. Otherwise, a is used as the seed.`,
 	},
 	"randint": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
-			}
+			if err := errors.ExactArgs(args, 2); err != nil { return err }
 			var min, max int64
 			switch arg := args[0].(type) {
 			case *object.Integer:
@@ -99,9 +93,7 @@ Returns a random integer N such that min <= N <= max.`,
 	},
 	"random": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 0 {
-				return errors.NewArgumentError(len(args), 0)
-			}
+			if err := errors.ExactArgs(args, 0); err != nil { return err }
 			return &object.Float{Value: rng.Float64()}
 		},
 		HelpText: `random() - Return random float
@@ -110,9 +102,7 @@ Returns a random float in the range [0.0, 1.0).`,
 	},
 	"choice": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
-			}
+			if err := errors.ExactArgs(args, 1); err != nil { return err }
 			if str, ok := args[0].(*object.String); ok {
 				if len(str.Value) == 0 {
 					return errors.NewError("choice() string cannot be empty")
@@ -135,9 +125,7 @@ Returns a randomly selected element from the given list or string.`,
 	},
 	"shuffle": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
-			}
+			if err := errors.ExactArgs(args, 1); err != nil { return err }
 			if list, ok := args[0].(*object.List); ok {
 				n := len(list.Elements)
 				for i := n - 1; i > 0; i-- {
@@ -154,9 +142,7 @@ Randomly shuffles the elements of the list in place using the Fisher-Yates algor
 	},
 	"uniform": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
-			}
+			if err := errors.ExactArgs(args, 2); err != nil { return err }
 			var a, b float64
 			switch arg := args[0].(type) {
 			case *object.Integer:
@@ -184,9 +170,7 @@ Returns a random floating-point number N such that a <= N <= b.`,
 	},
 	"sample": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
-			}
+			if err := errors.ExactArgs(args, 2); err != nil { return err }
 			list, err := args[0].AsList()
 			if err != nil {
 				return err
@@ -302,9 +286,7 @@ Same as gauss() but provided for compatibility.`,
 	},
 	"expovariate": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
-			}
+			if err := errors.ExactArgs(args, 1); err != nil { return err }
 			var lambd float64
 			switch arg := args[0].(type) {
 			case *object.Integer:

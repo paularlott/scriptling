@@ -110,9 +110,7 @@ func init() {
 			// __str__ for string representation
 			"__str__": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) < 1 {
-						return errors.NewArgumentError(len(args), 1)
-					}
+					if err := errors.MinArgs(args, 1); err != nil { return err }
 					instance, ok := args[0].(*object.Instance)
 					if !ok {
 						return errors.NewTypeError("datetime instance", args[0].Type().String())
@@ -128,9 +126,7 @@ func init() {
 			// Instance methods
 			"strftime": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) < 2 {
-						return errors.NewArgumentError(len(args), 2)
-					}
+					if err := errors.MinArgs(args, 2); err != nil { return err }
 					instance, ok := args[0].(*object.Instance)
 					if !ok {
 						return errors.NewTypeError("datetime instance", args[0].Type().String())
@@ -150,9 +146,7 @@ func init() {
 			},
 			"timestamp": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) < 1 {
-						return errors.NewArgumentError(len(args), 1)
-					}
+					if err := errors.MinArgs(args, 1); err != nil { return err }
 					instance, ok := args[0].(*object.Instance)
 					if !ok {
 						return errors.NewTypeError("datetime instance", args[0].Type().String())
@@ -167,9 +161,7 @@ func init() {
 			},
 			"year": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) < 1 {
-						return errors.NewArgumentError(len(args), 1)
-					}
+					if err := errors.MinArgs(args, 1); err != nil { return err }
 					instance, ok := args[0].(*object.Instance)
 					if !ok {
 						return errors.NewTypeError("datetime instance", args[0].Type().String())
@@ -184,9 +176,7 @@ func init() {
 			},
 			"month": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) < 1 {
-						return errors.NewArgumentError(len(args), 1)
-					}
+					if err := errors.MinArgs(args, 1); err != nil { return err }
 					instance, ok := args[0].(*object.Instance)
 					if !ok {
 						return errors.NewTypeError("datetime instance", args[0].Type().String())
@@ -201,9 +191,7 @@ func init() {
 			},
 			"day": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) < 1 {
-						return errors.NewArgumentError(len(args), 1)
-					}
+					if err := errors.MinArgs(args, 1); err != nil { return err }
 					instance, ok := args[0].(*object.Instance)
 					if !ok {
 						return errors.NewTypeError("datetime instance", args[0].Type().String())
@@ -218,9 +206,7 @@ func init() {
 			},
 			"hour": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) < 1 {
-						return errors.NewArgumentError(len(args), 1)
-					}
+					if err := errors.MinArgs(args, 1); err != nil { return err }
 					instance, ok := args[0].(*object.Instance)
 					if !ok {
 						return errors.NewTypeError("datetime instance", args[0].Type().String())
@@ -235,9 +221,7 @@ func init() {
 			},
 			"minute": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) < 1 {
-						return errors.NewArgumentError(len(args), 1)
-					}
+					if err := errors.MinArgs(args, 1); err != nil { return err }
 					instance, ok := args[0].(*object.Instance)
 					if !ok {
 						return errors.NewTypeError("datetime instance", args[0].Type().String())
@@ -252,9 +236,7 @@ func init() {
 			},
 			"second": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) < 1 {
-						return errors.NewArgumentError(len(args), 1)
-					}
+					if err := errors.MinArgs(args, 1); err != nil { return err }
 					instance, ok := args[0].(*object.Instance)
 					if !ok {
 						return errors.NewTypeError("datetime instance", args[0].Type().String())
@@ -269,9 +251,7 @@ func init() {
 			},
 			"weekday": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) < 1 {
-						return errors.NewArgumentError(len(args), 1)
-					}
+					if err := errors.MinArgs(args, 1); err != nil { return err }
 					instance, ok := args[0].(*object.Instance)
 					if !ok {
 						return errors.NewTypeError("datetime instance", args[0].Type().String())
@@ -293,9 +273,7 @@ func init() {
 			},
 			"isoweekday": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) < 1 {
-						return errors.NewArgumentError(len(args), 1)
-					}
+					if err := errors.MinArgs(args, 1); err != nil { return err }
 					instance, ok := args[0].(*object.Instance)
 					if !ok {
 						return errors.NewTypeError("datetime instance", args[0].Type().String())
@@ -315,9 +293,7 @@ func init() {
 			},
 			"isoformat": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) < 1 {
-						return errors.NewArgumentError(len(args), 1)
-					}
+					if err := errors.MinArgs(args, 1); err != nil { return err }
 					instance, ok := args[0].(*object.Instance)
 					if !ok {
 						return errors.NewTypeError("datetime instance", args[0].Type().String())
@@ -332,9 +308,7 @@ func init() {
 			},
 			"replace": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) < 1 {
-						return errors.NewArgumentError(len(args), 1)
-					}
+					if err := errors.MinArgs(args, 1); err != nil { return err }
 					instance, ok := args[0].(*object.Instance)
 					if !ok {
 						return errors.NewTypeError("datetime instance", args[0].Type().String())
@@ -381,9 +355,7 @@ func init() {
 			// Comparison dunder methods
 			"__lt__": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) < 2 {
-						return errors.NewArgumentError(len(args), 2)
-					}
+					if err := errors.MinArgs(args, 2); err != nil { return err }
 					left, ok := args[0].(*object.Instance)
 					if !ok {
 						return errors.NewTypeError("datetime instance", args[0].Type().String())
@@ -405,9 +377,7 @@ func init() {
 			},
 			"__gt__": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) < 2 {
-						return errors.NewArgumentError(len(args), 2)
-					}
+					if err := errors.MinArgs(args, 2); err != nil { return err }
 					left, ok := args[0].(*object.Instance)
 					if !ok {
 						return errors.NewTypeError("datetime instance", args[0].Type().String())
@@ -429,9 +399,7 @@ func init() {
 			},
 			"__le__": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) < 2 {
-						return errors.NewArgumentError(len(args), 2)
-					}
+					if err := errors.MinArgs(args, 2); err != nil { return err }
 					left, ok := args[0].(*object.Instance)
 					if !ok {
 						return errors.NewTypeError("datetime instance", args[0].Type().String())
@@ -453,9 +421,7 @@ func init() {
 			},
 			"__ge__": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) < 2 {
-						return errors.NewArgumentError(len(args), 2)
-					}
+					if err := errors.MinArgs(args, 2); err != nil { return err }
 					left, ok := args[0].(*object.Instance)
 					if !ok {
 						return errors.NewTypeError("datetime instance", args[0].Type().String())
@@ -477,9 +443,7 @@ func init() {
 			},
 			"__eq__": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) < 2 {
-						return errors.NewArgumentError(len(args), 2)
-					}
+					if err := errors.MinArgs(args, 2); err != nil { return err }
 					left, ok := args[0].(*object.Instance)
 					if !ok {
 						return errors.NewTypeError("datetime instance", args[0].Type().String())
@@ -501,9 +465,7 @@ func init() {
 			},
 			"__ne__": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) < 2 {
-						return errors.NewArgumentError(len(args), 2)
-					}
+					if err := errors.MinArgs(args, 2); err != nil { return err }
 					left, ok := args[0].(*object.Instance)
 					if !ok {
 						return errors.NewTypeError("datetime instance", args[0].Type().String())
@@ -525,9 +487,7 @@ func init() {
 			},
 			"__sub__": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) < 2 {
-						return errors.NewArgumentError(len(args), 2)
-					}
+					if err := errors.MinArgs(args, 2); err != nil { return err }
 					left, ok := args[0].(*object.Instance)
 					if !ok {
 						return errors.NewTypeError("datetime instance", args[0].Type().String())
@@ -550,9 +510,7 @@ func init() {
 			},
 			"__add__": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) < 2 {
-						return errors.NewArgumentError(len(args), 2)
-					}
+					if err := errors.MinArgs(args, 2); err != nil { return err }
 					left, ok := args[0].(*object.Instance)
 					if !ok {
 						return errors.NewTypeError("datetime instance", args[0].Type().String())
@@ -584,9 +542,7 @@ func init() {
 		Methods: map[string]object.Object{
 			"__str__": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) < 1 {
-						return errors.NewArgumentError(len(args), 1)
-					}
+					if err := errors.MinArgs(args, 1); err != nil { return err }
 					instance, ok := args[0].(*object.Instance)
 					if !ok {
 						return errors.NewTypeError("date instance", args[0].Type().String())
@@ -607,9 +563,7 @@ func init() {
 			"isoweekday": DatetimeClass.Methods["isoweekday"],
 			"isoformat": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) < 1 {
-						return errors.NewArgumentError(len(args), 1)
-					}
+					if err := errors.MinArgs(args, 1); err != nil { return err }
 					instance, ok := args[0].(*object.Instance)
 					if !ok {
 						return errors.NewTypeError("date instance", args[0].Type().String())
@@ -624,9 +578,7 @@ func init() {
 			},
 			"replace": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) < 1 {
-						return errors.NewArgumentError(len(args), 1)
-					}
+					if err := errors.MinArgs(args, 1); err != nil { return err }
 					instance, ok := args[0].(*object.Instance)
 					if !ok {
 						return errors.NewTypeError("date instance", args[0].Type().String())
@@ -669,9 +621,7 @@ func init() {
 			"__ne__": DatetimeClass.Methods["__ne__"],
 			"__sub__": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) < 2 {
-						return errors.NewArgumentError(len(args), 2)
-					}
+					if err := errors.MinArgs(args, 2); err != nil { return err }
 					left, ok := args[0].(*object.Instance)
 					if !ok {
 						return errors.NewTypeError("date instance", args[0].Type().String())
@@ -695,9 +645,7 @@ func init() {
 			},
 			"__add__": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) < 2 {
-						return errors.NewArgumentError(len(args), 2)
-					}
+					if err := errors.MinArgs(args, 2); err != nil { return err }
 					left, ok := args[0].(*object.Instance)
 					if !ok {
 						return errors.NewTypeError("date instance", args[0].Type().String())
@@ -822,9 +770,7 @@ Creates a datetime instance for the specified date and time.`,
 		},
 		"strftime": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) != 2 {
-					return errors.NewArgumentError(len(args), 2)
-				}
+				if err := errors.ExactArgs(args, 2); err != nil { return err }
 				format, err := args[0].AsString()
 				if err != nil {
 					return err
@@ -851,9 +797,7 @@ Creates a datetime instance for the specified date and time.`,
 		},
 		"strptime": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) != 2 {
-					return errors.NewArgumentError(len(args), 2)
-				}
+				if err := errors.ExactArgs(args, 2); err != nil { return err }
 				dateStr, err := args[0].AsString()
 				if err != nil {
 					return err
@@ -873,9 +817,7 @@ Creates a datetime instance for the specified date and time.`,
 		},
 		"fromtimestamp": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) != 1 {
-					return errors.NewArgumentError(len(args), 1)
-				}
+				if err := errors.ExactArgs(args, 1); err != nil { return err }
 				var timestamp float64
 				switch t := args[0].(type) {
 				case *object.Integer:

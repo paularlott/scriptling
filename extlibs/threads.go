@@ -288,9 +288,7 @@ func getEnvFromContext(ctx context.Context) *object.Environment {
 var ThreadsLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"run": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) < 1 {
-				return errors.NewArgumentError(len(args), 1)
-			}
+			if err := errors.MinArgs(args, 1); err != nil { return err }
 
 			fn := args[0]
 			fnArgs := args[1:]
@@ -399,9 +397,7 @@ Example:
 					},
 					"set": &object.Builtin{
 						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-							if len(args) != 1 {
-								return errors.NewArgumentError(len(args), 1)
-							}
+							if err := errors.ExactArgs(args, 1); err != nil { return err }
 							if val, err := args[0].AsInt(); err == nil {
 								atomic.set(val)
 								return &object.Null{}
@@ -445,9 +441,7 @@ Example:
 					},
 					"set": &object.Builtin{
 						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-							if len(args) != 1 {
-								return errors.NewArgumentError(len(args), 1)
-							}
+							if err := errors.ExactArgs(args, 1); err != nil { return err }
 							shared.set(args[0])
 							return &object.Null{}
 						},
@@ -547,9 +541,7 @@ Example:
 				Attributes: map[string]object.Object{
 					"put": &object.Builtin{
 						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-							if len(args) != 1 {
-								return errors.NewArgumentError(len(args), 1)
-							}
+							if err := errors.ExactArgs(args, 1); err != nil { return err }
 							if err := queue.put(args[0]); err != nil {
 								return errors.NewError("queue error: %v", err)
 							}
@@ -606,9 +598,7 @@ Example:
 
 	"Pool": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) < 1 {
-				return errors.NewArgumentError(len(args), 1)
-			}
+			if err := errors.MinArgs(args, 1); err != nil { return err }
 
 			worker := args[0]
 			workers := 4
@@ -641,9 +631,7 @@ Example:
 				Attributes: map[string]object.Object{
 					"submit": &object.Builtin{
 						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-							if len(args) != 1 {
-								return errors.NewArgumentError(len(args), 1)
-							}
+							if err := errors.ExactArgs(args, 1); err != nil { return err }
 							if err := pool.submit(args[0]); err != nil {
 								return errors.NewError("pool submit error: %v", err)
 							}

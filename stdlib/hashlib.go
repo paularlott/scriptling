@@ -14,9 +14,7 @@ import (
 var HashlibLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"sha256": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
-			}
+			if err := errors.ExactArgs(args, 1); err != nil { return err }
 			str, err := args[0].AsString()
 			if err != nil {
 				return err
@@ -30,9 +28,7 @@ Returns the SHA-256 hash of the input string as a hexadecimal string.`,
 	},
 	"sha1": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
-			}
+			if err := errors.ExactArgs(args, 1); err != nil { return err }
 			str, err := args[0].AsString()
 			if err != nil {
 				return err
@@ -46,9 +42,7 @@ Returns the SHA-1 hash of the input string as a hexadecimal string.`,
 	},
 	"md5": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
-			}
+			if err := errors.ExactArgs(args, 1); err != nil { return err }
 			str, err := args[0].AsString()
 			if err != nil {
 				return err
