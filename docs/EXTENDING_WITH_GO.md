@@ -986,6 +986,188 @@ builder.Function("double", func(x int) int {
 // mymath.double(3.14) works - converts to 6 (truncates)
 ```
 
+## Fluent Function API
+
+The Fluent Function API provides a clean, type-safe way to create individual Scriptling functions using regular Go functions with typed parameters. Unlike the Library API which creates collections of functions, the Function API builds a single function that can be registered directly with `RegisterFunc()`.
+
+### Overview
+
+**Without Fluent API (verbose):**
+
+```go
+p.RegisterFunc("double", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+    if len(args) != 1 {
+        return &object.String{Value: "Error: double requires 1 argument"}
+    }
+    if intObj, ok := args[0].(*object.Integer); ok {
+        return &object.Integer{Value: intObj.Value * 2}
+    }
+    return &object.String{Value: "Error: argument must be integer"}
+})
+```
+
+**With Fluent API (clean):**
+
+```go
+fb := object.NewFunctionBuilder()
+fb.Function(func(a int) int { return a * 2 })
+p.RegisterFunc("double", fb.Build())
+```
+
+### Creating a Function
+
+Use `object.NewFunctionBuilder()` to create a new builder, then register a single typed function:
+
+```go
+import "github.com/paularlott/scriptling/object"
+
+// Create builder
+fb := object.NewFunctionBuilder()
+
+// Register typed function
+fb.Function(func(a, b int) int {
+    return a + b
+})
+
+// Build the function
+fn := fb.Build()
+
+// Register with Scriptling
+p.RegisterFunc("add", fn)
+```
+
+### Supported Types
+
+The Function API supports the same types and signatures as the Library API:
+
+| Go Type                 | Scriptling Type | Notes                             |
+| ----------------------- | --------------- | --------------------------------- |
+| `string`                | `STRING`        | Direct conversion                 |
+| `int`, `int32`, `int64` | `INTEGER`       | Accepts both Integer and Float    |
+| `float32`, `float64`    | `FLOAT`         | Accepts both Integer and Float    |
+| `bool`                  | `BOOLEAN`       | Direct conversion                 |
+| `[]any`                 | `LIST`          | Converts to/from Scriptling lists |
+| `map[string]any`        | `DICT`          | Converts to/from Scriptling dicts |
+| `nil`                   | `None`          | Null value                        |
+
+### Function Signatures
+
+The Function API supports the same flexible signatures as the Library API:
+
+**Supported signature patterns:**
+
+- `func(args...) result` - Positional arguments only
+- `func(ctx context.Context, args...) result` - Context + positional arguments
+- `func(kwargs object.Kwargs, args...) result` - Kwargs + positional arguments
+- `func(ctx context.Context, kwargs object.Kwargs, args...) result` - Context + kwargs + positional arguments
+- `func(kwargs object.Kwargs) result` - Kwargs only
+- `func(ctx context.Context, kwargs object.Kwargs) result` - Context + kwargs only
+- `func(ctx context.Context) result` - Context only
+- `func() result` - No parameters
+
+### Examples
+
+**Simple positional arguments:**
+
+```go
+fb := object.NewFunctionBuilder()
+fb.Function(func(a, b int) int { return a + b })
+p.RegisterFunc("add", fb.Build())
+
+// Usage: add(3, 4) → 7
+```
+
+**With context:**
+
+```go
+fb := object.NewFunctionBuilder()
+fb.Function(func(ctx context.Context, timeout int) error {
+    select {
+    case <-time.After(time.Duration(timeout) * time.Second):
+        return nil
+    case <-ctx.Done():
+        return ctx.Err()
+    }
+})
+p.RegisterFunc("wait", fb.Build())
+```
+
+**With kwargs:**
+
+```go
+fb := object.NewFunctionBuilder()
+fb.Function(func(kwargs object.Kwargs) (string, error) {
+    host, err := kwargs.GetString("host", "localhost")
+    if err != nil {
+        return "", err
+    }
+    port, err := kwargs.GetInt("port", 8080)
+    if err != nil {
+        return "", err
+    }
+    return fmt.Sprintf("%s:%d", host, port), nil
+})
+p.RegisterFunc("connect", fb.Build())
+
+// Usage: connect(host="example.com", port=443) → "example.com:443"
+```
+
+**Mixed positional and kwargs:**
+
+```go
+fb := object.NewFunctionBuilder()
+fb.Function(func(kwargs object.Kwargs, name string, count int) string {
+    prefix, _ := kwargs.GetString("prefix", ">")
+    return fmt.Sprintf("%s %s: %d", prefix, name, count)
+})
+p.RegisterFunc("log", fb.Build())
+
+// Usage: log("task", 5, prefix=">>>") → ">>> task: 5"
+```
+
+**With error handling:**
+
+```go
+fb := object.NewFunctionBuilder()
+fb.Function(func(a, b float64) (float64, error) {
+    if b == 0 {
+        return 0, fmt.Errorf("division by zero")
+    }
+    return a / b, nil
+})
+p.RegisterFunc("divide", fb.Build())
+
+// Usage: divide(10, 2) → 5.0
+//        divide(10, 0) → Error object
+```
+
+### Adding Help Text
+
+Provide documentation for your function using `FunctionWithHelp`:
+
+```go
+fb := object.NewFunctionBuilder()
+fb.FunctionWithHelp(func(x float64) float64 {
+    return math.Sqrt(x)
+}, "sqrt(x) - Return the square root of x")
+p.RegisterFunc("sqrt", fb.Build())
+```
+
+### Builder Methods Reference
+
+| Method                       | Description                  |
+| ---------------------------- | ---------------------------- |
+| `Function(fn)`               | Register a typed Go function |
+| `FunctionWithHelp(fn, help)` | Register with help text      |
+| `Build()`                    | Return the BuiltinFunction   |
+
+### When to Use Function Builder vs Library Builder
+
+- **Function Builder**: For registering individual functions with `RegisterFunc()`
+- **Library Builder**: For creating collections of related functions and constants
+
+Both APIs provide the same type conversion and signature flexibility.
+
 ## Advanced Function Examples
 
 ### File Operations with Output Capture

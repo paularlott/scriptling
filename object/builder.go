@@ -25,15 +25,15 @@ var (
 
 // FunctionSignature holds pre-computed function analysis
 type FunctionSignature struct {
-	numIn, numOut     int
-	isVariadic        bool
-	variadicIndex     int
-	hasContext        bool
-	hasKwargs         bool
-	paramOffset       int
-	maxPosArgs        int
-	paramTypes        []reflect.Type // Cache parameter types
-	returnIsError     bool           // Cache if second return is error
+	numIn, numOut int
+	isVariadic    bool
+	variadicIndex int
+	hasContext    bool
+	hasKwargs     bool
+	paramOffset   int
+	maxPosArgs    int
+	paramTypes    []reflect.Type // Cache parameter types
+	returnIsError bool           // Cache if second return is error
 }
 
 // LibraryBuilder provides a fluent API for creating scriptling libraries.
@@ -66,7 +66,7 @@ func analyzeFunctionSignature(fnType reflect.Type) *FunctionSignature {
 	if cached, ok := signatureCache.Load(fnType); ok {
 		return cached.(*FunctionSignature)
 	}
-	
+
 	numIn := fnType.NumIn()
 	numOut := fnType.NumOut()
 	isVariadic := fnType.IsVariadic()
@@ -92,7 +92,7 @@ func analyzeFunctionSignature(fnType reflect.Type) *FunctionSignature {
 	for i := 0; i < numIn; i++ {
 		paramTypes[i] = fnType.In(i)
 	}
-	
+
 	// Check if second return is error
 	returnIsError := numOut == 2 && fnType.Out(1).Implements(errorType)
 
@@ -108,7 +108,7 @@ func analyzeFunctionSignature(fnType reflect.Type) *FunctionSignature {
 		paramTypes:    paramTypes,
 		returnIsError: returnIsError,
 	}
-	
+
 	// Cache for future use
 	signatureCache.Store(fnType, sig)
 	return sig
