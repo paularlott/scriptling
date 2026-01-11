@@ -199,8 +199,6 @@ now = datetime.timestamp()
 tomorrow = now + datetime.timedelta(days=1)
 next_week = now + datetime.timedelta(weeks=1)
 ```
-next_week = now + datetime.timedelta({"weeks": 1})
-```
 
 ## Format Codes
 
