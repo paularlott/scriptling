@@ -48,13 +48,13 @@ Example:
   for tool in tools:
     print(tool.name + ": " + tool.description)`).
 
-		MethodWithHelp("call_tool", callToolMethod, `call_tool(name, arguments={}) - Execute a tool
+		MethodWithHelp("call_tool", callToolMethod, `call_tool(name, arguments) - Execute a tool
 
 Executes a tool by name with the provided arguments.
 
 Parameters:
   name (str): Tool name to execute
-  arguments (dict, optional): Tool arguments (default: {})
+  arguments (dict): Tool arguments
 
 Returns:
   dict: Decoded tool response
@@ -92,14 +92,14 @@ Example:
   # Get up to 5 database tools
   results = client.tool_search("database", max_results=5)`).
 
-		MethodWithHelp("execute_discovered", executeDiscoveredMethod, `execute_discovered(name, arguments={}) - Execute a discovered tool
+		MethodWithHelp("execute_discovered", executeDiscoveredMethod, `execute_discovered(name, arguments) - Execute a discovered tool
 
 Executes a tool by name using the execute_tool MCP tool. This is the only way
 to call tools that were discovered via tool_search.
 
 Parameters:
   name (str): Tool name to execute
-  arguments (dict, optional): Tool arguments (default: {})
+  arguments (dict): Tool arguments
 
 Returns:
   dict: Tool response
@@ -127,7 +127,7 @@ func getMCPClientInstance(instance *object.Instance) (*ClientInstance, *object.E
 }
 
 // tools method implementation
-func toolsMethod(ctx context.Context, self *object.Instance) object.Object {
+func toolsMethod(self *object.Instance, ctx context.Context) object.Object {
 	ci, cerr := getMCPClientInstance(self)
 	if cerr != nil {
 		return cerr
@@ -146,7 +146,7 @@ func toolsMethod(ctx context.Context, self *object.Instance) object.Object {
 }
 
 // call_tool method implementation
-func callToolMethod(ctx context.Context, self *object.Instance, name string, args ...object.Object) object.Object {
+func callToolMethod(self *object.Instance, ctx context.Context, name string, arguments map[string]any) object.Object {
 	ci, cerr := getMCPClientInstance(self)
 	if cerr != nil {
 		return cerr
@@ -156,16 +156,7 @@ func callToolMethod(ctx context.Context, self *object.Instance, name string, arg
 		return &object.Error{Message: "call_tool: no client configured"}
 	}
 
-	var argsMap map[string]any
-	if len(args) > 0 {
-		if dict, ok := args[0].(*object.Dict); ok {
-			argsMap = DictToMap(dict)
-		} else if args[0].Type() != object.NULL_OBJ {
-			return &object.Error{Message: "arguments must be a dict"}
-		}
-	}
-
-	response, err := ci.client.CallTool(ctx, name, argsMap)
+	response, err := ci.client.CallTool(ctx, name, arguments)
 	if err != nil {
 		return &object.Error{Message: "tool execution failed: " + err.Error()}
 	}
@@ -174,7 +165,7 @@ func callToolMethod(ctx context.Context, self *object.Instance, name string, arg
 }
 
 // refresh_tools method implementation
-func refreshToolsMethod(ctx context.Context, self *object.Instance) object.Object {
+func refreshToolsMethod(self *object.Instance, ctx context.Context) object.Object {
 	ci, cerr := getMCPClientInstance(self)
 	if cerr != nil {
 		return cerr
@@ -192,7 +183,7 @@ func refreshToolsMethod(ctx context.Context, self *object.Instance) object.Objec
 }
 
 // tool_search method implementation
-func toolSearchMethod(ctx context.Context, self *object.Instance, kwargs object.Kwargs, query string) object.Object {
+func toolSearchMethod(self *object.Instance, ctx context.Context, kwargs object.Kwargs, query string) object.Object {
 	ci, cerr := getMCPClientInstance(self)
 	if cerr != nil {
 		return cerr
@@ -214,7 +205,7 @@ func toolSearchMethod(ctx context.Context, self *object.Instance, kwargs object.
 }
 
 // execute_discovered method implementation
-func executeDiscoveredMethod(ctx context.Context, self *object.Instance, name string, args ...object.Object) object.Object {
+func executeDiscoveredMethod(self *object.Instance, ctx context.Context, name string, arguments map[string]any) object.Object {
 	ci, cerr := getMCPClientInstance(self)
 	if cerr != nil {
 		return cerr
@@ -224,16 +215,7 @@ func executeDiscoveredMethod(ctx context.Context, self *object.Instance, name st
 		return &object.Error{Message: "execute_discovered: no client configured"}
 	}
 
-	var argsMap map[string]any
-	if len(args) > 0 {
-		if dict, ok := args[0].(*object.Dict); ok {
-			argsMap = DictToMap(dict)
-		} else if args[0].Type() != object.NULL_OBJ {
-			return &object.Error{Message: "arguments must be a dict"}
-		}
-	}
-
-	response, err := ci.client.ExecuteDiscoveredTool(ctx, name, argsMap)
+	response, err := ci.client.ExecuteDiscoveredTool(ctx, name, arguments)
 	if err != nil {
 		return &object.Error{Message: "tool execution failed: " + err.Error()}
 	}

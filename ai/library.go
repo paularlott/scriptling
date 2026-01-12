@@ -212,7 +212,16 @@ Example:
   response = ai.response_cancel("resp_123")`).
 
 		// new_client(api_key, **kwargs) - Create a new OpenAI client
-		FunctionWithHelp("new_client", func(kwargs object.Kwargs, apiKey string) (object.Object, error) {
+		RawFunctionWithHelp("new_client", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if len(args) < 1 {
+				return &object.Error{Message: "new_client requires 1 argument: api_key"}
+			}
+
+			apiKey, err := args[0].AsString()
+			if err != nil {
+				return &object.Error{Message: "api_key must be a string"}
+			}
+
 			// Get optional base_url from kwargs
 			baseURL := kwargs.MustGetString("base_url", "")
 
@@ -221,12 +230,12 @@ Example:
 				BaseURL: baseURL,
 			}
 
-			client, err := openai.New(config)
-			if err != nil {
-				return nil, err
+			client, clientErr := openai.New(config)
+			if clientErr != nil {
+				return &object.Error{Message: "failed to create client: " + clientErr.Error()}
 			}
 
-			return createClientInstance(client), nil
+			return createClientInstance(client)
 		}, `new_client(api_key, **kwargs) - Create a new OpenAI client
 
 Creates a new OpenAI client instance for making API calls.
