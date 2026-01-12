@@ -264,12 +264,18 @@ func convertMessagesToOpenAI(messages []object.Object) ([]openai.Message, object
 			switch k {
 			case "role":
 				if role, err := v.Value.AsString(); err == nil {
+					if role == "" {
+						return nil, errors.NewError("message role cannot be empty")
+					}
 					omsg.Role = role
+				} else {
+					return nil, errors.ParameterError("role", err)
 				}
 			case "content":
 				omsg.Content = scriptlib.ToGo(v.Value)
 			case "tool_calls":
-				// TODO: implement tool_calls conversion
+				// tool_calls are handled automatically by the MCP OpenAI client
+				// Scripts don't need to send tool_calls - they're in assistant responses
 			case "tool_call_id":
 				if tcid, err := v.Value.AsString(); err == nil {
 					omsg.ToolCallID = tcid

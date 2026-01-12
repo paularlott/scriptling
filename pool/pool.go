@@ -117,6 +117,7 @@ func newScriptlingPool(cfg *Config) *scriptlingPool {
 	}
 
 	http2.ConfigureTransport(transport)
+	// Note: HTTP/2 configuration errors are non-fatal, client will fall back to HTTP/1.1
 
 	return &scriptlingPool{
 		httpClient: &http.Client{

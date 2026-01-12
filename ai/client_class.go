@@ -160,7 +160,12 @@ func chatMethod(self *object.Instance, ctx context.Context, model string, messag
 	for i, msg := range messages {
 		omsg := openai.Message{}
 		if role, ok := msg["role"].(string); ok {
+			if role == "" {
+				return &object.Error{Message: "chat: message role cannot be empty"}
+			}
 			omsg.Role = role
+		} else {
+			return &object.Error{Message: "chat: message missing required 'role' field"}
 		}
 		if content, ok := msg["content"]; ok {
 			omsg.Content = content

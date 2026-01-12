@@ -74,7 +74,7 @@ func parseToolSearchJSON(toolsJSON string) (*object.List, error) {
 				return nil, fmt.Errorf("tools key not found in JSON response")
 			}
 		} else {
-			return nil, fmt.Errorf("failed to parse tool search response: %w", err2)
+			return nil, fmt.Errorf("failed to parse as array (%v) or as object with tools key: %w", err, err2)
 		}
 	}
 
