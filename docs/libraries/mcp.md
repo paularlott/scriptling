@@ -22,13 +22,14 @@ import mcp
 decoded = mcp.decode_response(raw_response)
 ```
 
-### mcp.new_client(base_url, auth)
+### mcp.new_client(base_url, auth, prefix)
 
 Creates a new MCP client for connecting to a remote MCP server.
 
 **Parameters:**
 - `base_url` (str): URL of the MCP server
 - `auth` (dict, optional): Auth configuration with "type" and "token"
+- `prefix` (str, optional): Prefix for tool names (e.g., "scriptling" makes tools available as "scriptling/tool_name")
 
 **Returns:** MCPClient - A client instance with methods for interacting with the server
 
@@ -36,15 +37,21 @@ Creates a new MCP client for connecting to a remote MCP server.
 ```python
 import mcp
 
-# Without authentication
+# Without prefix
 client = mcp.new_client("https://api.example.com/mcp")
 
-# With bearer token authentication
+# With prefix
+client = mcp.new_client("https://api.example.com/mcp", "scriptling")
+
+# With auth and prefix
 client = mcp.new_client(
     "https://api.example.com/mcp",
-    {"type": "bearer", "token": "your-token-here"}
+    {"type": "bearer", "token": "your-token-here"},
+    "scriptling"
 )
 ```
+
+**Note:** When using a prefix, all tool names will be prefixed. For example, if the server has a tool called "execute_code" and you use prefix "scriptling", the tool will be available as "scriptling/execute_code". The prefix is automatically added to all tool names and stripped when calling tools.
 
 ## MCPClient Class
 
