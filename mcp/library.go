@@ -6,6 +6,7 @@ import (
 
 	mcplib "github.com/paularlott/mcp"
 	scriptlib "github.com/paularlott/scriptling"
+	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -41,8 +42,8 @@ func buildLibrary() *object.Library {
 
 		// decode_response(response) - Decode a raw MCP tool response
 		RawFunctionWithHelp("decode_response", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) < 1 {
-				return &object.Error{Message: "decode_response requires 1 argument: response"}
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
 
 			// Convert args[0] to mcplib.ToolResponse
@@ -103,16 +104,7 @@ Example:
   decoded = mcp.decode_response(raw_response)`).
 
 		// new_client(base_url, **kwargs) - Create a new MCP client
-		RawFunctionWithHelp("new_client", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) < 1 {
-				return &object.Error{Message: "new_client requires 1 argument: base_url"}
-			}
-
-			baseURL, err := args[0].AsString()
-			if err != nil {
-				return &object.Error{Message: "base_url must be a string"}
-			}
-
+		FunctionWithHelp("new_client", func(ctx context.Context, kwargs object.Kwargs, baseURL string) (object.Object, error) {
 			// Get optional parameters from kwargs
 			namespace := kwargs.MustGetString("namespace", "")
 			bearerToken := kwargs.MustGetString("bearer_token", "")
@@ -124,7 +116,7 @@ Example:
 			}
 
 			client := mcplib.NewClient(baseURL, authProvider, namespace)
-			return createClientInstance(client)
+			return createClientInstance(client), nil
 		}, `new_client(base_url, **kwargs) - Create a new MCP client
 
 Creates a new MCP client for connecting to a remote MCP server.

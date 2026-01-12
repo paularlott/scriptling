@@ -46,13 +46,7 @@ func DecodeToolContent(content mcp.ToolContent) object.Object {
 	switch content.Type {
 	case "text":
 		return decodeTextContent(content.Text)
-	case "image":
-		return scriptlib.FromGo(map[string]interface{}{
-			"type":     content.Type,
-			"data":     content.Data,
-			"mimeType": content.MimeType,
-		})
-	case "audio":
+	case "image", "audio":
 		return scriptlib.FromGo(map[string]interface{}{
 			"type":     content.Type,
 			"data":     content.Data,

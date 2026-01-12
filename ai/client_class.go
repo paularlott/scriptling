@@ -58,27 +58,21 @@ Example:
   for model in models:
     print(model.id)`).
 
-		MethodWithHelp("response_create", responseCreateMethod, `response_create(input, **kwargs) - Create a Responses API response
+		MethodWithHelp("response_create", responseCreateMethod, `response_create(model, input) - Create a Responses API response
 
 Creates a response using the OpenAI Responses API (new structured API).
 
 Parameters:
+  model (str): Model identifier (e.g., "gpt-4o", "gpt-4")
   input (list): Input items (messages)
-  model (str, optional): Model identifier (default: "gpt-4o")
 
 Returns:
   dict: Response object with id, status, output, usage, etc.
 
 Example:
-  # Default model (gpt-4o)
-  response = client.response_create([
+  response = client.response_create("gpt-4", [
     {"type": "message", "role": "user", "content": "Hello!"}
   ])
-
-  # Custom model
-  response = client.response_create([
-    {"type": "message", "role": "user", "content": "Hello!"}
-  ], model="gpt-4")
   print(response.output)`).
 
 		MethodWithHelp("response_get", responseGetMethod, `response_get(id) - Get a response by ID
@@ -208,7 +202,7 @@ func modelsMethod(self *object.Instance, ctx context.Context) object.Object {
 }
 
 // response_create method implementation
-func responseCreateMethod(self *object.Instance, ctx context.Context, kwargs object.Kwargs, input []any) object.Object {
+func responseCreateMethod(self *object.Instance, ctx context.Context, model string, input []any) object.Object {
 	ci, cerr := getClientInstance(self)
 	if cerr != nil {
 		return cerr
@@ -219,13 +213,8 @@ func responseCreateMethod(self *object.Instance, ctx context.Context, kwargs obj
 	}
 
 	req := openai.CreateResponseRequest{
+		Model: model,
 		Input: input,
-	}
-
-	// Get optional model parameter from kwargs (default to "gpt-4o")
-	model := kwargs.MustGetString("model", "gpt-4o")
-	if model != "" {
-		req.Model = model
 	}
 
 	resp, err := ci.client.CreateResponse(ctx, req)
@@ -333,34 +322,4 @@ func createClientInstance(client *openai.Client) *object.Instance {
 			},
 		},
 	}
-}
-
-// convertMessagesToOpenAI converts scriptling message objects to openai.Message format
-func convertMessagesToOpenAI(messages []object.Object) ([]openai.Message, object.Object) {
-	openaiMessages := make([]openai.Message, 0, len(messages))
-	for i := 0; i < len(messages); i++ {
-		msg, ok := messages[i].(*object.Dict)
-		if !ok {
-			return nil, &object.Error{Message: "messages must be dicts"}
-		}
-		omsg := openai.Message{}
-		for k, v := range msg.Pairs {
-			switch k {
-			case "role":
-				if role, err := v.Value.AsString(); err == nil {
-					omsg.Role = role
-				}
-			case "content":
-				omsg.Content = scriptlib.ToGo(v.Value)
-			case "tool_calls":
-				// TODO: implement tool_calls conversion
-			case "tool_call_id":
-				if tcid, err := v.Value.AsString(); err == nil {
-					omsg.ToolCallID = tcid
-				}
-			}
-		}
-		openaiMessages = append(openaiMessages, omsg)
-	}
-	return openaiMessages, nil
 }

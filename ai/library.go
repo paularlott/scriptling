@@ -7,6 +7,7 @@ import (
 
 	"github.com/paularlott/mcp/openai"
 	scriptlib "github.com/paularlott/scriptling"
+	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -44,17 +45,17 @@ func buildLibrary() *object.Library {
 
 		// chat(model, messages...) - Create a chat completion
 		RawFunctionWithHelp("chat", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.MinArgs(args, 2); err != nil {
+				return err
+			}
 			c := getClient()
 			if c == nil {
-				return &object.Error{Message: "ai.chat: no client configured - use ai.SetClient() or create a client from script"}
-			}
-			if len(args) < 2 {
-				return &object.Error{Message: "chat requires at least 2 arguments: model, messages"}
+				return errors.NewError("ai.chat: no client configured - use ai.SetClient() or create a client from script")
 			}
 
 			model, err := args[0].AsString()
 			if err != nil {
-				return &object.Error{Message: "model must be a string: " + object.AsError(err)}
+				return errors.ParameterError("model", err)
 			}
 
 			// Convert messages from scriptling objects to openai.Message
@@ -68,7 +69,7 @@ func buildLibrary() *object.Library {
 				Messages: messages,
 			})
 			if chatErr != nil {
-				return &object.Error{Message: "chat completion failed: " + chatErr.Error()}
+				return errors.NewError("chat completion failed: %s", chatErr.Error())
 			}
 
 			return scriptlib.FromGo(chatResp)
@@ -88,18 +89,18 @@ Example:
   print(response.choices[0].message.content)`).
 
 		// models() - List available models
-		RawFunctionWithHelp("models", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+		FunctionWithHelp("models", func(ctx context.Context) (any, error) {
 			c := getClient()
 			if c == nil {
-				return &object.Error{Message: "ai.models: no client configured - use ai.SetClient() or create a client from script"}
+				return nil, fmt.Errorf("ai.models: no client configured - use ai.SetClient() or create a client from script")
 			}
 
 			resp, err := c.GetModels(ctx)
 			if err != nil {
-				return &object.Error{Message: "failed to get models: " + err.Error()}
+				return nil, err
 			}
 
-			return scriptlib.FromGo(resp.Data)
+			return resp.Data, nil
 		}, `models() - List available models
 
 Lists all models available for the current API configuration.
@@ -112,18 +113,23 @@ Example:
   for model in models:
     print(model.id)`).
 
-		// response_create(input, **kwargs) - Create a Responses API response
+		// response_create(model, input) - Create a Responses API response
 		RawFunctionWithHelp("response_create", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
+			}
 			c := getClient()
 			if c == nil {
-				return &object.Error{Message: "ai.response_create: no client configured - use ai.SetClient() or create a client from script"}
+				return errors.NewError("ai.response_create: no client configured - use ai.SetClient() or create a client from script")
 			}
-			if len(args) < 1 {
-				return &object.Error{Message: "response_create requires at least 1 argument: input"}
+
+			model, err := args[0].AsString()
+			if err != nil {
+				return errors.ParameterError("model", err)
 			}
 
 			// Convert input from scriptling object to []any
-			inputRaw := scriptlib.ToGo(args[0])
+			inputRaw := scriptlib.ToGo(args[1])
 			input, ok := inputRaw.([]any)
 			if !ok {
 				// Wrap single item in array
@@ -132,49 +138,38 @@ Example:
 
 			// Build request
 			req := openai.CreateResponseRequest{
+				Model: model,
 				Input: input,
 			}
 
-			// Get optional model parameter from kwargs (default to "gpt-4o")
-			model := kwargs.MustGetString("model", "gpt-4o")
-			if model != "" {
-				req.Model = model
-			}
-
-			resp, err := c.CreateResponse(ctx, req)
-			if err != nil {
-				return &object.Error{Message: "failed to create response: " + err.Error()}
+			resp, createErr := c.CreateResponse(ctx, req)
+			if createErr != nil {
+				return errors.NewError("failed to create response: %s", createErr.Error())
 			}
 
 			return scriptlib.FromGo(resp)
-		}, `response_create(input, **kwargs) - Create a Responses API response
+		}, `response_create(model, input) - Create a Responses API response
 
 Creates a response using the OpenAI Responses API (new structured API).
 
 Parameters:
+  model (str): Model identifier (e.g., "gpt-4o", "gpt-4")
   input (list): Input items (messages)
-  model (str, optional): Model identifier (default: "gpt-4o")
 
 Returns:
   dict: Response object with id, status, output, usage, etc.
 
 Example:
-  # Default model (gpt-4o)
-  response = ai.response_create([
+  response = ai.response_create("gpt-4", [
     {"type": "message", "role": "user", "content": "Hello!"}
   ])
-
-  # Custom model
-  response = ai.response_create([
-    {"type": "message", "role": "user", "content": "Hello!"}
-  ], model="gpt-4")
   print(response.output)`).
 
 		// response_get(id) - Get a Responses API response by ID
 		FunctionWithHelp("response_get", func(ctx context.Context, id string) (any, error) {
 			c := getClient()
 			if c == nil {
-				return nil, fmt.Errorf("no client configured")
+				return nil, fmt.Errorf("ai.response_get: no client configured - use ai.SetClient() or create a client from script")
 			}
 			return c.GetResponse(ctx, id)
 		}, `response_get(id) - Get a response by ID
@@ -195,7 +190,7 @@ Example:
 		FunctionWithHelp("response_cancel", func(ctx context.Context, id string) (any, error) {
 			c := getClient()
 			if c == nil {
-				return nil, fmt.Errorf("no client configured")
+				return nil, fmt.Errorf("ai.response_cancel: no client configured - use ai.SetClient() or create a client from script")
 			}
 			return c.CancelResponse(ctx, id)
 		}, `response_cancel(id) - Cancel a response
@@ -212,16 +207,7 @@ Example:
   response = ai.response_cancel("resp_123")`).
 
 		// new_client(api_key, **kwargs) - Create a new OpenAI client
-		RawFunctionWithHelp("new_client", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) < 1 {
-				return &object.Error{Message: "new_client requires 1 argument: api_key"}
-			}
-
-			apiKey, err := args[0].AsString()
-			if err != nil {
-				return &object.Error{Message: "api_key must be a string"}
-			}
-
+		FunctionWithHelp("new_client", func(ctx context.Context, kwargs object.Kwargs, apiKey string) (object.Object, error) {
 			// Get optional base_url from kwargs
 			baseURL := kwargs.MustGetString("base_url", "")
 
@@ -230,12 +216,12 @@ Example:
 				BaseURL: baseURL,
 			}
 
-			client, clientErr := openai.New(config)
-			if clientErr != nil {
-				return &object.Error{Message: "failed to create client: " + clientErr.Error()}
+			client, err := openai.New(config)
+			if err != nil {
+				return nil, err
 			}
 
-			return createClientInstance(client)
+			return createClientInstance(client), nil
 		}, `new_client(api_key, **kwargs) - Create a new OpenAI client
 
 Creates a new OpenAI client instance for making API calls.
@@ -263,4 +249,34 @@ func getClient() *openai.Client {
 	clientMutex.RLock()
 	defer clientMutex.RUnlock()
 	return client
+}
+
+// convertMessagesToOpenAI converts scriptling message objects to openai.Message format
+func convertMessagesToOpenAI(messages []object.Object) ([]openai.Message, object.Object) {
+	openaiMessages := make([]openai.Message, 0, len(messages))
+	for i := 0; i < len(messages); i++ {
+		msg, ok := messages[i].(*object.Dict)
+		if !ok {
+			return nil, errors.NewError("messages must be dicts")
+		}
+		omsg := openai.Message{}
+		for k, v := range msg.Pairs {
+			switch k {
+			case "role":
+				if role, err := v.Value.AsString(); err == nil {
+					omsg.Role = role
+				}
+			case "content":
+				omsg.Content = scriptlib.ToGo(v.Value)
+			case "tool_calls":
+				// TODO: implement tool_calls conversion
+			case "tool_call_id":
+				if tcid, err := v.Value.AsString(); err == nil {
+					omsg.ToolCallID = tcid
+				}
+			}
+		}
+		openaiMessages = append(openaiMessages, omsg)
+	}
+	return openaiMessages, nil
 }
