@@ -151,7 +151,7 @@ func getClientInstance(instance *object.Instance) (*ClientInstance, *object.Erro
 }
 
 // chat method implementation
-func chatMethod(ctx context.Context, self *object.Instance, model string, messages ...object.Object) object.Object {
+func chatMethod(self *object.Instance, ctx context.Context, model string, messages ...map[string]any) object.Object {
 	ci, cerr := getClientInstance(self)
 	if cerr != nil {
 		return cerr
@@ -161,10 +161,20 @@ func chatMethod(ctx context.Context, self *object.Instance, model string, messag
 		return &object.Error{Message: "chat: no client configured"}
 	}
 
-	// Convert messages from scriptling objects to openai.Message
-	openaiMessages, err := convertMessagesToOpenAI(messages)
-	if err != nil {
-		return err
+	// Convert messages to openai.Message
+	openaiMessages := make([]openai.Message, len(messages))
+	for i, msg := range messages {
+		omsg := openai.Message{}
+		if role, ok := msg["role"].(string); ok {
+			omsg.Role = role
+		}
+		if content, ok := msg["content"]; ok {
+			omsg.Content = content
+		}
+		if toolCallID, ok := msg["tool_call_id"].(string); ok {
+			omsg.ToolCallID = toolCallID
+		}
+		openaiMessages[i] = omsg
 	}
 
 	chatResp, chatErr := ci.client.ChatCompletion(ctx, openai.ChatCompletionRequest{
@@ -179,7 +189,7 @@ func chatMethod(ctx context.Context, self *object.Instance, model string, messag
 }
 
 // models method implementation
-func modelsMethod(ctx context.Context, self *object.Instance) object.Object {
+func modelsMethod(self *object.Instance, ctx context.Context) object.Object {
 	ci, cerr := getClientInstance(self)
 	if cerr != nil {
 		return cerr
@@ -198,7 +208,7 @@ func modelsMethod(ctx context.Context, self *object.Instance) object.Object {
 }
 
 // response_create method implementation
-func responseCreateMethod(ctx context.Context, self *object.Instance, kwargs object.Kwargs, inputObj object.Object) object.Object {
+func responseCreateMethod(self *object.Instance, ctx context.Context, kwargs object.Kwargs, input []any) object.Object {
 	ci, cerr := getClientInstance(self)
 	if cerr != nil {
 		return cerr
@@ -206,13 +216,6 @@ func responseCreateMethod(ctx context.Context, self *object.Instance, kwargs obj
 
 	if ci.client == nil {
 		return &object.Error{Message: "response_create: no client configured"}
-	}
-
-	// Convert input from scriptling object to []any
-	inputRaw := scriptlib.ToGo(inputObj)
-	input, ok := inputRaw.([]any)
-	if !ok {
-		input = []any{inputRaw}
 	}
 
 	req := openai.CreateResponseRequest{
@@ -234,7 +237,7 @@ func responseCreateMethod(ctx context.Context, self *object.Instance, kwargs obj
 }
 
 // response_get method implementation
-func responseGetMethod(ctx context.Context, self *object.Instance, id string) object.Object {
+func responseGetMethod(self *object.Instance, ctx context.Context, id string) object.Object {
 	ci, cerr := getClientInstance(self)
 	if cerr != nil {
 		return cerr
@@ -253,7 +256,7 @@ func responseGetMethod(ctx context.Context, self *object.Instance, id string) ob
 }
 
 // response_cancel method implementation
-func responseCancelMethod(ctx context.Context, self *object.Instance, id string) object.Object {
+func responseCancelMethod(self *object.Instance, ctx context.Context, id string) object.Object {
 	ci, cerr := getClientInstance(self)
 	if cerr != nil {
 		return cerr
@@ -272,7 +275,7 @@ func responseCancelMethod(ctx context.Context, self *object.Instance, id string)
 }
 
 // add_remote_server method implementation
-func addRemoteServerMethod(ctx context.Context, self *object.Instance, kwargs object.Kwargs, baseURL string) object.Object {
+func addRemoteServerMethod(self *object.Instance, ctx context.Context, kwargs object.Kwargs, baseURL string) object.Object {
 	ci, cerr := getClientInstance(self)
 	if cerr != nil {
 		return cerr
@@ -304,7 +307,7 @@ func addRemoteServerMethod(ctx context.Context, self *object.Instance, kwargs ob
 }
 
 // remove_remote_server method implementation
-func removeRemoteServerMethod(ctx context.Context, self *object.Instance, prefix string) object.Object {
+func removeRemoteServerMethod(self *object.Instance, ctx context.Context, prefix string) object.Object {
 	ci, cerr := getClientInstance(self)
 	if cerr != nil {
 		return cerr

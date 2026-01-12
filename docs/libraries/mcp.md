@@ -75,13 +75,13 @@ for tool in tools:
         print(f"  Schema: {tool.input_schema}")
 ```
 
-### client.call_tool(name, arguments={})
+### client.call_tool(name, arguments)
 
 Executes a tool by name with the provided arguments.
 
 **Parameters:**
 - `name` (str): Tool name to execute
-- `arguments` (dict, optional): Tool arguments (default: {})
+- `arguments` (dict): Tool arguments
 
 **Returns:** dict - Decoded tool response
 
@@ -137,13 +137,13 @@ for tool in results:
     print(f"{tool.name}: {tool.description}")
 ```
 
-### client.execute_discovered(name, arguments={})
+### client.execute_discovered(name, arguments)
 
 Executes a tool by name using the execute_tool MCP tool. This is the only way to call tools that were discovered via tool_search.
 
 **Parameters:**
 - `name` (str): Tool name to execute
-- `arguments` (dict, optional): Tool arguments (default: {})
+- `arguments` (dict): Tool arguments
 
 **Returns:** dict - Tool response
 

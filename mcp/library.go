@@ -103,7 +103,16 @@ Example:
   decoded = mcp.decode_response(raw_response)`).
 
 		// new_client(base_url, **kwargs) - Create a new MCP client
-		FunctionWithHelp("new_client", func(kwargs object.Kwargs, baseURL string) object.Object {
+		RawFunctionWithHelp("new_client", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if len(args) < 1 {
+				return &object.Error{Message: "new_client requires 1 argument: base_url"}
+			}
+
+			baseURL, err := args[0].AsString()
+			if err != nil {
+				return &object.Error{Message: "base_url must be a string"}
+			}
+
 			// Get optional parameters from kwargs
 			namespace := kwargs.MustGetString("namespace", "")
 			bearerToken := kwargs.MustGetString("bearer_token", "")

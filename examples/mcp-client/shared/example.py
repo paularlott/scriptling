@@ -27,7 +27,7 @@ print(result)
 print()
 print("Searching for calendar-related tools...")
 
-calendar_tools = mcp_client.tool_search("calendar", 10)
+calendar_tools = mcp_client.tool_search("calendar", max_results=10)
 print(f"Found {len(calendar_tools)} calendar tools:")
 for tool in calendar_tools:
     name = tool.get("name", "unknown")
