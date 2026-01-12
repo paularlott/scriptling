@@ -2,7 +2,6 @@ package extlibs
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -11,32 +10,11 @@ import (
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
-	"golang.org/x/net/http2"
+	"github.com/paularlott/scriptling/pool"
 )
 
 func RegisterRequestsLibrary(registrar interface{ RegisterLibrary(string, *object.Library) }) {
 	registrar.RegisterLibrary(RequestsLibraryName, RequestsLibrary)
-}
-
-var httpClient *http.Client
-
-func init() {
-	// Create HTTP/2 transport with connection pooling and self-signed cert support
-	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: true, // Accept self-signed certificates
-		},
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 100,
-		IdleConnTimeout:     90 * time.Second,
-	}
-
-	// Enable HTTP/2
-	http2.ConfigureTransport(transport)
-
-	httpClient = &http.Client{
-		Transport: transport,
-	}
 }
 
 // Response class for HTTP responses
@@ -394,7 +372,7 @@ func httpRequestWithContext(parentCtx context.Context, method, url, body string,
 		req.SetBasicAuth(user, pass)
 	}
 
-	resp, err := httpClient.Do(req)
+	resp, err := pool.GetHTTPClient().Do(req)
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			return errors.NewError("http timeout after %d seconds", timeoutSecs)

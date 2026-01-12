@@ -15,6 +15,7 @@ var (
 	contextType = reflect.TypeOf((*context.Context)(nil)).Elem()
 	kwargsType  = reflect.TypeOf(Kwargs{})
 	errorType   = reflect.TypeOf((*error)(nil)).Elem()
+	objectType  = reflect.TypeOf((*Object)(nil)).Elem()
 
 	// Pre-allocated common reflect.Values
 	nullValue = reflect.ValueOf(&Null{})
@@ -320,6 +321,10 @@ func convertObjectToValue(obj Object, targetType reflect.Type) (reflect.Value, O
 		return reflect.Value{}, err
 
 	case reflect.Interface:
+		// If the target type is object.Object, return the object as-is
+		if targetType.Implements(objectType) {
+			return reflect.ValueOf(obj), nil
+		}
 		// For interface{}, return the underlying value
 		switch v := obj.(type) {
 		case *String:

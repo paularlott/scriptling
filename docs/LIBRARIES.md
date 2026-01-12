@@ -94,6 +94,9 @@ These libraries require explicit registration by the host application (e.g., the
 
 | Import | Description | Details |
 |--------|-------------|---------|
+| `ai` | AI and LLM functions for OpenAI-compatible APIs | [libraries/ai.md](libraries/ai.md) |
+| `mcp` | MCP (Model Context Protocol) tool interaction | [libraries/mcp.md](libraries/mcp.md) |
+| `toon` | TOON (Token-Oriented Object Notation) encoding/decoding | [libraries/toon.md](libraries/toon.md) |
 | `requests` | HTTP library for sending requests | [libraries/requests.md](libraries/requests.md) |
 | `sys` | System-specific parameters and functions | [libraries/sys.md](libraries/sys.md) |
 | `secrets` | Cryptographically strong random numbers | [libraries/secrets.md](libraries/secrets.md) |
