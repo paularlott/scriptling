@@ -102,36 +102,55 @@ Returns:
 Example:
   decoded = mcp.decode_response(raw_response)`).
 
-		// new_client(base_url, auth) - Create a new MCP client
-		FunctionWithHelp("new_client", func(baseURL string, auth ...object.Object) (object.Object, error) {
+		// new_client(base_url, auth, prefix) - Create a new MCP client
+		FunctionWithHelp("new_client", func(baseURL string, opts ...object.Object) (object.Object, error) {
 			var authProvider mcplib.AuthProvider
-			if len(auth) > 0 {
-				authDict, ok := auth[0].(*object.Dict)
-				if !ok {
-					return nil, nil // auth is optional
+			prefix := ""
+
+			// Parse optional arguments
+			for i, opt := range opts {
+				if i == 0 {
+					// First optional arg could be auth dict or prefix string
+					if dict, ok := opt.(*object.Dict); ok {
+						authProvider = getMCPAuth(dict)
+					} else if str, err := opt.AsString(); err == nil {
+						prefix = str
+					}
+				} else if i == 1 {
+					// Second optional arg is auth dict (if first was prefix)
+					if dict, ok := opt.(*object.Dict); ok {
+						authProvider = getMCPAuth(dict)
+					}
 				}
-				authProvider = getMCPAuth(authDict)
 			}
 
-			client := mcplib.NewClient(baseURL, authProvider)
+			client := mcplib.NewClient(baseURL, authProvider, prefix, "")
 			return createClientInstance(client), nil
-		}, `new_client(base_url, auth) - Create a new MCP client
+		}, `new_client(base_url, auth, prefix) - Create a new MCP client
 
 Creates a new MCP client for connecting to a remote MCP server.
 
 Parameters:
   base_url (str): URL of the MCP server
   auth (dict, optional): Auth configuration with "type" and "token"/"credentials"
+  prefix (str, optional): Prefix for tool names (e.g., "scriptling" makes tools available as "scriptling/tool_name")
 
 Returns:
   MCPClient: A client instance with methods for interacting with the server
 
 Example:
-  client = mcp.new_client("https://api.example.com/mcp", {"type": "bearer", "token": "secret"})
+  # Without prefix
+  client = mcp.new_client("https://api.example.com/mcp")
+
+  # With prefix
+  client = mcp.new_client("https://api.example.com/mcp", "scriptling")
+
+  # With auth and prefix
+  client = mcp.new_client("https://api.example.com/mcp", {"type": "bearer", "token": "secret"}, "scriptling")
+
   tools = client.tools()
   for tool in tools:
     print(tool.name)`).
-
 		Build()
 }
 

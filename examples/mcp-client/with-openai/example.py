@@ -2,8 +2,6 @@
 # Both clients are passed from Go, with MCP tools attached to the AI client
 
 print("Fetching available tools from MCP server...")
-# Note: mcp_client.tools() returns unprefixed tool names.
-# When used through the AI client, tools are prefixed (e.g., "scriptling/execute_code")
 tools = mcp_client.tools()
 print(f"Found {len(tools)} tools:")
 for tool in tools:

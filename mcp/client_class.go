@@ -14,6 +14,11 @@ type ClientInstance struct {
 	client *mcplib.Client
 }
 
+// GetClient returns the underlying MCP client
+func (c *ClientInstance) GetClient() *mcplib.Client {
+	return c.client
+}
+
 var (
 	mcpClientClass     *object.Class
 	mcpClientClassOnce sync.Once

@@ -51,11 +51,11 @@ func main() {
 		log.Fatalf("Failed to create OpenAI client: %v", err)
 	}
 
-	// Create MCP client for the scriptling MCP server
-	mcpClient := mcplib.NewClient("http://127.0.0.1:8080/mcp", nil)
+	// Create MCP client for the scriptling MCP server with prefix
+	mcpClient := mcplib.NewClient("http://127.0.0.1:8080/mcp", nil, "scriptling", "")
 
 	// Attach MCP server to the OpenAI client
-	client.AddRemoteServer("scriptling", mcpClient)
+	client.AddRemoteServer(mcpClient)
 
 	// Wrap the clients and set them as global variables
 	aiClient := ai.WrapClient(client)
