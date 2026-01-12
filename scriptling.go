@@ -351,6 +351,14 @@ func (p *Scriptling) SetVar(name string, value interface{}) error {
 	return nil
 }
 
+// SetObjectVar sets a variable in the environment from a scriptling Object.
+// This is useful when you already have a scriptling object (like an Instance)
+// and want to set it directly without converting from Go types.
+func (p *Scriptling) SetObjectVar(name string, obj object.Object) error {
+	p.env.Set(name, obj)
+	return nil
+}
+
 func (p *Scriptling) GetVar(name string) (interface{}, object.Object) {
 	obj, ok := p.env.Get(name)
 	if !ok {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
+	"github.com/paularlott/scriptling/pool"
 	"github.com/shirou/gopsutil/v3/process"
 )
 
@@ -284,9 +285,8 @@ Returns:
 				deadline := time.Now().Add(time.Duration(timeout) * time.Second)
 				pollInterval := time.Duration(pollRate * float64(time.Second))
 
-				client := &http.Client{
-					Timeout: 5 * time.Second,
-				}
+				// Use shared pool for HTTP client
+				client := pool.GetHTTPClient()
 
 				for time.Now().Before(deadline) {
 					req, httpErr := http.NewRequestWithContext(ctx, "GET", url, nil)
