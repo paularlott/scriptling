@@ -10,7 +10,9 @@ import (
 	"github.com/paularlott/mcp"
 	"github.com/paularlott/mcp/discovery"
 	"github.com/paularlott/scriptling"
+	"github.com/paularlott/scriptling/ai"
 	"github.com/paularlott/scriptling/extlibs"
+	scriptlingmcp "github.com/paularlott/scriptling/mcp"
 	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/scriptling/stdlib"
 )
@@ -212,6 +214,11 @@ func executeCode(code string) (*mcp.ToolResponse, error) {
 	extlibs.RegisterThreadsLibrary(p)
 	extlibs.RegisterOSLibrary(p, []string{})
 	extlibs.RegisterPathlibLibrary(p, []string{})
+
+	ai.Register(p)
+	scriptlingmcp.Register(p)
+	scriptlingmcp.RegisterToon(p)
+
 	p.EnableOutputCapture()
 
 	result, err := p.Eval(code)
