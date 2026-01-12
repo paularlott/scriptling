@@ -37,7 +37,7 @@ This pattern allows multiple clients to be used simultaneously and keeps API key
 
 Create client instances directly from scripts without needing Go code setup.
 
-### ai.new_client(api_key, base_url)
+### ai.new_client(api_key, **kwargs)
 
 Creates a new OpenAI client instance for making API calls.
 
@@ -54,8 +54,8 @@ import ai
 # Create a client with default base URL
 client = ai.new_client("sk-...")
 
-# Or with a custom base URL (e.g., for compatibility services)
-client = ai.new_client("sk-...", "https://api.example.com/v1")
+# Or with a custom base URL (e.g., for LM Studio or compatibility services)
+client = ai.new_client("lm-studio", base_url="http://127.0.0.1:1234/v1")
 ```
 
 ## OpenAIClient Class
@@ -91,7 +91,7 @@ for model in models:
     print(model.id)
 ```
 
-### client.response_create(input, model="gpt-4o")
+### client.response_create(input, **kwargs)
 
 Creates a response using the OpenAI Responses API (new structured API).
 
@@ -104,10 +104,17 @@ Creates a response using the OpenAI Responses API (new structured API).
 **Example:**
 ```python
 client = ai.new_client("sk-...")
+
+# Default model (gpt-4o)
 response = client.response_create([
     {"type": "message", "role": "user", "content": "Hello!"}
 ])
 print(response.output)
+
+# Custom model
+response = client.response_create([
+    {"type": "message", "role": "user", "content": "Hello!"}
+], model="gpt-4")
 ```
 
 ### client.response_get(id)
@@ -141,40 +148,53 @@ client = ai.new_client("sk-...")
 response = client.response_cancel("resp_123")
 ```
 
-### client.add_remote_server(prefix, base_url, auth)
+### client.add_remote_server(base_url, **kwargs)
 
 Adds a remote MCP server that will be available to all AI calls via this client.
-Tools from this server will be prefixed with the given prefix.
 
 **Parameters:**
-- `prefix` (str): Prefix for tools from this server (e.g., "knot")
 - `base_url` (str): URL of the MCP server
-- `auth` (dict, optional): Auth configuration with "type" and "token"
+- `namespace` (str, optional): Namespace for tools from this server (e.g., "knot")
+- `bearer_token` (str, optional): Bearer token for authentication
 
 **Example:**
 ```python
 client = ai.new_client("sk-...")
+
+# Without auth or namespace
+client.add_remote_server("https://api.example.com/mcp")
+
+# With namespace only
+client.add_remote_server("https://api.example.com/mcp", namespace="knot")
+
+# With bearer token only
 client.add_remote_server(
-    "knot",
     "https://api.example.com/mcp",
-    {"type": "bearer", "token": "secret"}
+    bearer_token="secret"
+)
+
+# With both namespace and bearer token
+client.add_remote_server(
+    "https://api.example.com/mcp",
+    namespace="knot",
+    bearer_token="secret"
 )
 
 # Now tools from the knot server are available in chat completions
 response = client.chat("gpt-4", {"role": "user", "content": "Search for golang news"})
 ```
 
-### client.remove_remote_server(prefix)
+### client.remove_remote_server(namespace)
 
 Removes a previously added remote MCP server.
 
 **Parameters:**
-- `prefix` (str): Prefix of the server to remove
+- `namespace` (str): Namespace of the server to remove
 
 **Example:**
 ```python
 client = ai.new_client("sk-...")
-client.add_remote_server("knot", "https://api.example.com/mcp", {...})
+client.add_remote_server("https://api.example.com/mcp", namespace="knot")
 # ... use the server ...
 client.remove_remote_server("knot")
 ```
@@ -216,13 +236,13 @@ print(response.choices[0].message.content)
 ### Using Custom Base URL
 
 ```python
-# For OpenAI-compatible services
+# For OpenAI-compatible services like LM Studio, local LLMs, etc.
 client = ai.new_client(
-    "custom-api-key",
-    "https://api.anthropic.com/v1"  # Example URL
+    "lm-studio",
+    base_url="http://127.0.0.1:1234/v1"
 )
 
-response = client.chat("claude-3", {"role": "user", "content": "Hello!"})
+response = client.chat("mistralai/ministral-3-3b", {"role": "user", "content": "Hello!"})
 ```
 
 ### Using MCP Tools with AI
@@ -230,9 +250,9 @@ response = client.chat("claude-3", {"role": "user", "content": "Hello!"})
 ```python
 client = ai.new_client("sk-...")
 client.add_remote_server(
-    "search",
     "https://search-api.example.com/mcp",
-    {"type": "bearer", "token": "search-token"}
+    namespace="search",
+    bearer_token="search-token"
 )
 
 # The AI can now use the search tools

@@ -62,6 +62,7 @@ type LibraryBuilder struct {
 }
 
 // analyzeFunctionSignature performs one-time analysis of function signature
+// For functions/libraries: [context], [kwargs], ...args (all optional)
 func analyzeFunctionSignature(fnType reflect.Type) *FunctionSignature {
 	// Check cache first
 	if cached, ok := signatureCache.Load(fnType); ok {
@@ -76,9 +77,9 @@ func analyzeFunctionSignature(fnType reflect.Type) *FunctionSignature {
 		variadicIndex = numIn - 1
 	}
 
-	// Detect context and kwargs
-	hasContext := numIn > 0 && fnType.In(0) == contextType
+	// Detect context and kwargs (both optional, context first if present)
 	paramOffset := 0
+	hasContext := numIn > paramOffset && fnType.In(paramOffset) == contextType
 	if hasContext {
 		paramOffset++
 	}
@@ -190,29 +191,15 @@ func (b *LibraryBuilder) createWrapper(fnValue reflect.Value, helpText string) *
 
 	return &Builtin{
 		Fn: func(ctx context.Context, kwargs Kwargs, args ...Object) Object {
-			return b.callTypedFunctionUltraFast(fnValue, sig, ctx, kwargs, args)
+			return callTypedFunction(fnValue, sig, ctx, kwargs, args)
 		},
 		HelpText: helpText,
 	}
 }
 
-// newError creates a new error object (avoids circular import with errors package)
-func newError(format string, args ...interface{}) *Error {
-	return &Error{Message: fmt.Sprintf(format, args...)}
-}
-
-// newTypeError creates a type error object (matches errors.NewTypeError format)
-func newTypeError(expected, got string) *Error {
-	return &Error{Message: fmt.Sprintf("type error: expected %s, got %s", expected, got)}
-}
-
-// newArgumentError creates an argument error object (matches errors.NewArgumentError format)
-func newArgumentError(got, want int) *Error {
-	return &Error{Message: fmt.Sprintf("argument error: got %d arguments, want %d", got, want)}
-}
-
-// callTypedFunctionUltraFast calls a typed Go function with cached signature info.
-func (b *LibraryBuilder) callTypedFunctionUltraFast(fnValue reflect.Value, sig *FunctionSignature, ctx context.Context, kwargs Kwargs, args []Object) Object {
+// callTypedFunction calls a typed Go function with cached signature info.
+// Shared by LibraryBuilder and FunctionBuilder.
+func callTypedFunction(fnValue reflect.Value, sig *FunctionSignature, ctx context.Context, kwargs Kwargs, args []Object) Object {
 	// Pre-allocate argValues with exact capacity
 	argValues := make([]reflect.Value, 0, sig.numIn)
 
@@ -283,6 +270,21 @@ func (b *LibraryBuilder) callTypedFunctionUltraFast(fnValue reflect.Value, sig *
 	default:
 		return newError("function can return at most 2 values")
 	}
+}
+
+// newError creates a new error object (avoids circular import with errors package)
+func newError(format string, args ...interface{}) *Error {
+	return &Error{Message: fmt.Sprintf(format, args...)}
+}
+
+// newTypeError creates a type error object (matches errors.NewTypeError format)
+func newTypeError(expected, got string) *Error {
+	return &Error{Message: fmt.Sprintf("type error: expected %s, got %s", expected, got)}
+}
+
+// newArgumentError creates an argument error object (matches errors.NewArgumentError format)
+func newArgumentError(got, want int) *Error {
+	return &Error{Message: fmt.Sprintf("argument error: got %d arguments, want %d", got, want)}
 }
 
 // convertObjectToValue converts a scriptling Object to a reflect.Value for the given type.

@@ -66,7 +66,6 @@ func (fb *FunctionBuilder) Build() func(ctx context.Context, kwargs Kwargs, args
 }
 
 // createWrapper creates a Builtin wrapper for a typed Go function.
-// This is a copy of LibraryBuilder.createWrapper for FunctionBuilder.
 func (fb *FunctionBuilder) createWrapper(fnValue reflect.Value, helpText string) *Builtin {
 	fnType := fnValue.Type()
 
@@ -80,83 +79,8 @@ func (fb *FunctionBuilder) createWrapper(fnValue reflect.Value, helpText string)
 
 	return &Builtin{
 		Fn: func(ctx context.Context, kwargs Kwargs, args ...Object) Object {
-			return fb.callTypedFunctionUltraFast(fnValue, sig, ctx, kwargs, args)
+			return callTypedFunction(fnValue, sig, ctx, kwargs, args)
 		},
 		HelpText: helpText,
-	}
-}
-
-// callTypedFunctionUltraFast calls a typed Go function with ultra-fast argument conversion.
-// This is a copy of LibraryBuilder.callTypedFunctionUltraFast for FunctionBuilder.
-func (fb *FunctionBuilder) callTypedFunctionUltraFast(fnValue reflect.Value, sig *FunctionSignature, ctx context.Context, kwargs Kwargs, args []Object) Object {
-	// Pre-allocate argValues with exact capacity
-	argValues := make([]reflect.Value, 0, sig.numIn)
-
-	// Add context parameter if present
-	if sig.hasContext {
-		argValues = append(argValues, reflect.ValueOf(ctx))
-	}
-
-	// Add kwargs parameter if present
-	if sig.hasKwargs {
-		argValues = append(argValues, reflect.ValueOf(kwargs))
-	}
-
-	// Positional arguments with cached types
-	argIndex := 0
-	for i := 0; i < sig.maxPosArgs; i++ {
-		fnParamIndex := i + sig.paramOffset
-
-		if sig.isVariadic && fnParamIndex == sig.variadicIndex {
-			// Variadic parameters - collect remaining args
-			varArgs := make([]reflect.Value, 0, len(args)-argIndex)
-			elemType := sig.paramTypes[fnParamIndex].Elem()
-			for j := argIndex; j < len(args); j++ {
-				val, convErr := convertObjectToValue(args[j], elemType)
-				if convErr != nil {
-					return convErr
-				}
-				varArgs = append(varArgs, val)
-			}
-			argValues = append(argValues, varArgs...)
-			break
-		}
-
-		if argIndex >= len(args) {
-			return newArgumentError(len(args), sig.maxPosArgs)
-		}
-
-		// Use cached parameter type
-		val, convErr := convertObjectToValue(args[argIndex], sig.paramTypes[fnParamIndex])
-		if convErr != nil {
-			return convErr
-		}
-		argValues = append(argValues, val)
-		argIndex++
-	}
-
-	// Check if we have extra positional arguments
-	if argIndex < len(args) && !sig.isVariadic {
-		return newArgumentError(len(args), sig.maxPosArgs)
-	}
-
-	// Call the function
-	results := fnValue.Call(argValues)
-
-	// Handle return values with cached info
-	switch sig.numOut {
-	case 0:
-		return &Null{}
-	case 1:
-		return convertReturnValue(results[0])
-	case 2:
-		// Use cached error check
-		if sig.returnIsError && !results[1].IsNil() {
-			err, _ := results[1].Interface().(error)
-			return newError("%s", err.Error())
-		}
-		return convertReturnValue(results[0])
-	default:
-		return newError("function can return at most 2 values")
 	}
 }

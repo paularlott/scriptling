@@ -102,75 +102,47 @@ Returns:
 Example:
   decoded = mcp.decode_response(raw_response)`).
 
-		// new_client(base_url, auth, prefix) - Create a new MCP client
-		FunctionWithHelp("new_client", func(baseURL string, opts ...object.Object) (object.Object, error) {
-			var authProvider mcplib.AuthProvider
-			prefix := ""
+		// new_client(base_url, **kwargs) - Create a new MCP client
+		FunctionWithHelp("new_client", func(kwargs object.Kwargs, baseURL string) object.Object {
+			// Get optional parameters from kwargs
+			namespace := kwargs.MustGetString("namespace", "")
+			bearerToken := kwargs.MustGetString("bearer_token", "")
 
-			// Parse optional arguments
-			for i, opt := range opts {
-				if i == 0 {
-					// First optional arg could be auth dict or prefix string
-					if dict, ok := opt.(*object.Dict); ok {
-						authProvider = getMCPAuth(dict)
-					} else if str, err := opt.AsString(); err == nil {
-						prefix = str
-					}
-				} else if i == 1 {
-					// Second optional arg is auth dict (if first was prefix)
-					if dict, ok := opt.(*object.Dict); ok {
-						authProvider = getMCPAuth(dict)
-					}
-				}
+			// Create auth provider if bearer token is provided
+			var authProvider mcplib.AuthProvider
+			if bearerToken != "" {
+				authProvider = mcplib.NewBearerTokenAuth(bearerToken)
 			}
 
-			client := mcplib.NewClient(baseURL, authProvider, prefix, "")
-			return createClientInstance(client), nil
-		}, `new_client(base_url, auth, prefix) - Create a new MCP client
+			client := mcplib.NewClient(baseURL, authProvider, namespace)
+			return createClientInstance(client)
+		}, `new_client(base_url, **kwargs) - Create a new MCP client
 
 Creates a new MCP client for connecting to a remote MCP server.
 
 Parameters:
   base_url (str): URL of the MCP server
-  auth (dict, optional): Auth configuration with "type" and "token"/"credentials"
-  prefix (str, optional): Prefix for tool names (e.g., "scriptling" makes tools available as "scriptling/tool_name")
+  namespace (str, optional): Namespace for tool names (e.g., "scriptling" makes tools available as "scriptling/tool_name")
+  bearer_token (str, optional): Bearer token for authentication
 
 Returns:
   MCPClient: A client instance with methods for interacting with the server
 
 Example:
-  # Without prefix
+  # Without namespace or auth
   client = mcp.new_client("https://api.example.com/mcp")
 
-  # With prefix
-  client = mcp.new_client("https://api.example.com/mcp", "scriptling")
+  # With namespace only
+  client = mcp.new_client("https://api.example.com/mcp", namespace="scriptling")
 
-  # With auth and prefix
-  client = mcp.new_client("https://api.example.com/mcp", {"type": "bearer", "token": "secret"}, "scriptling")
+  # With bearer token only
+  client = mcp.new_client("https://api.example.com/mcp", bearer_token="secret")
+
+  # With both namespace and bearer token
+  client = mcp.new_client("https://api.example.com/mcp", namespace="scriptling", bearer_token="secret")
 
   tools = client.tools()
   for tool in tools:
     print(tool.name)`).
 		Build()
-}
-
-// getMCPAuth creates an mcp.AuthProvider from auth configuration
-func getMCPAuth(authDict *object.Dict) mcplib.AuthProvider {
-	authType := ""
-	var token string
-
-	for k, v := range authDict.Pairs {
-		switch k {
-		case "type":
-			authType, _ = v.Value.AsString()
-		case "token":
-			token, _ = v.Value.AsString()
-		}
-	}
-
-	if authType == "bearer" && token != "" {
-		return mcplib.NewBearerTokenAuth(token)
-	}
-
-	return nil
 }

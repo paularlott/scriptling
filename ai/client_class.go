@@ -7,7 +7,6 @@ import (
 	"github.com/paularlott/mcp"
 	"github.com/paularlott/mcp/openai"
 	scriptlib "github.com/paularlott/scriptling"
-	scriptlingmcp "github.com/paularlott/scriptling/mcp"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -59,7 +58,7 @@ Example:
   for model in models:
     print(model.id)`).
 
-		MethodWithHelp("response_create", responseCreateMethod, `response_create(input, model="gpt-4o") - Create a Responses API response
+		MethodWithHelp("response_create", responseCreateMethod, `response_create(input, **kwargs) - Create a Responses API response
 
 Creates a response using the OpenAI Responses API (new structured API).
 
@@ -71,9 +70,15 @@ Returns:
   dict: Response object with id, status, output, usage, etc.
 
 Example:
+  # Default model (gpt-4o)
   response = client.response_create([
     {"type": "message", "role": "user", "content": "Hello!"}
   ])
+
+  # Custom model
+  response = client.response_create([
+    {"type": "message", "role": "user", "content": "Hello!"}
+  ], model="gpt-4")
   print(response.output)`).
 
 		MethodWithHelp("response_get", responseGetMethod, `response_get(id) - Get a response by ID
@@ -103,17 +108,18 @@ Returns:
 Example:
   response = client.response_cancel("resp_123")`).
 
-		MethodWithHelp("add_remote_server", addRemoteServerMethod, `add_remote_server(mcp_client) - Add a remote MCP server
+		MethodWithHelp("add_remote_server", addRemoteServerMethod, `add_remote_server(base_url, **kwargs) - Add a remote MCP server
 
 Adds a remote MCP server that will be available to all AI calls via this client.
-The prefix is derived from the MCP client instance.
 
 Parameters:
-  mcp_client (MCPClient): An MCP client instance
+  base_url (str): URL of the MCP server
+  namespace (str, optional): Namespace for tool names
+  bearer_token (str, optional): Bearer token for authentication
 
 Example:
-  mcp_client = mcp.new_client("https://api.example.com/mcp", "myprefix")
-  ai_client.add_remote_server(mcp_client)`).
+  ai_client.add_remote_server("https://api.example.com/mcp", namespace="myprefix")
+  ai_client.add_remote_server("https://api.example.com/mcp", namespace="myprefix", bearer_token="secret")`).
 
 		MethodWithHelp("remove_remote_server", removeRemoteServerMethod, `remove_remote_server(prefix) - Remove a remote MCP server
 
@@ -192,7 +198,7 @@ func modelsMethod(ctx context.Context, self *object.Instance) object.Object {
 }
 
 // response_create method implementation
-func responseCreateMethod(ctx context.Context, self *object.Instance, inputObj object.Object, args ...object.Object) object.Object {
+func responseCreateMethod(ctx context.Context, self *object.Instance, kwargs object.Kwargs, inputObj object.Object) object.Object {
 	ci, cerr := getClientInstance(self)
 	if cerr != nil {
 		return cerr
@@ -213,10 +219,10 @@ func responseCreateMethod(ctx context.Context, self *object.Instance, inputObj o
 		Input: input,
 	}
 
-	if len(args) > 0 {
-		if model, err := args[0].AsString(); err == nil {
-			req.Model = model
-		}
+	// Get optional model parameter from kwargs (default to "gpt-4o")
+	model := kwargs.MustGetString("model", "gpt-4o")
+	if model != "" {
+		req.Model = model
 	}
 
 	resp, err := ci.client.CreateResponse(ctx, req)
@@ -266,7 +272,7 @@ func responseCancelMethod(ctx context.Context, self *object.Instance, id string)
 }
 
 // add_remote_server method implementation
-func addRemoteServerMethod(ctx context.Context, self *object.Instance, mcpClientObj object.Object) object.Object {
+func addRemoteServerMethod(ctx context.Context, self *object.Instance, kwargs object.Kwargs, baseURL string) object.Object {
 	ci, cerr := getClientInstance(self)
 	if cerr != nil {
 		return cerr
@@ -276,26 +282,23 @@ func addRemoteServerMethod(ctx context.Context, self *object.Instance, mcpClient
 		return &object.Error{Message: "add_remote_server: no client configured"}
 	}
 
-	// Extract the MCP client from the scriptling instance
-	instance, ok := mcpClientObj.(*object.Instance)
-	if !ok {
-		return &object.Error{Message: "add_remote_server: argument must be an MCP client instance"}
+	// Get optional parameters from kwargs
+	namespace := kwargs.MustGetString("namespace", "")
+	bearerToken := kwargs.MustGetString("bearer_token", "")
+
+	// Create auth provider if bearer token is provided
+	var authProvider mcp.AuthProvider
+	if bearerToken != "" {
+		authProvider = mcp.NewBearerTokenAuth(bearerToken)
 	}
 
-	wrapper, ok := object.GetClientField(instance, "_client")
-	if !ok {
-		return &object.Error{Message: "add_remote_server: argument must be an MCP client instance"}
+	// Create the RemoteServerConfig and add it
+	config := openai.RemoteServerConfig{
+		BaseURL:    baseURL,
+		Auth:       authProvider,
+		Namespace:  namespace,
 	}
-
-	// The wrapper.Client is *scriptlingmcp.ClientInstance which has a GetClient() method
-	mcpClientInstance, ok := wrapper.Client.(*scriptlingmcp.ClientInstance)
-	if !ok {
-		return &object.Error{Message: "add_remote_server: invalid MCP client instance"}
-	}
-
-	// Get the underlying *mcp.Client from the wrapper
-	mcpClient := mcpClientInstance.GetClient()
-	ci.client.AddRemoteServer(mcpClient)
+	ci.client.AddRemoteServer(config)
 
 	return &object.Null{}
 }
@@ -357,25 +360,4 @@ func convertMessagesToOpenAI(messages []object.Object) ([]openai.Message, object
 		openaiMessages = append(openaiMessages, omsg)
 	}
 	return openaiMessages, nil
-}
-
-// getMCPAuth creates an mcp.AuthProvider from auth configuration
-func getMCPAuth(authDict *object.Dict) mcp.AuthProvider {
-	authType := ""
-	var token string
-
-	for k, v := range authDict.Pairs {
-		switch k {
-		case "type":
-			authType, _ = v.Value.AsString()
-		case "token":
-			token, _ = v.Value.AsString()
-		}
-	}
-
-	if authType == "bearer" && token != "" {
-		return mcp.NewBearerTokenAuth(token)
-	}
-
-	return nil
 }

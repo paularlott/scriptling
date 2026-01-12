@@ -5,15 +5,15 @@ import ai
 import mcp
 
 print("Creating OpenAI client for LM Studio...")
-ai_client = ai.new_client("lm-studio", "http://127.0.0.1:1234/v1")
+ai_client = ai.new_client("lm-studio", base_url="http://127.0.0.1:1234/v1")
 
 print()
-print("Creating MCP client for scriptling MCP server with prefix...")
-mcp_client = mcp.new_client("http://127.0.0.1:8080/mcp", "scriptling")
+print("Creating MCP client for scriptling MCP server with namespace...")
+mcp_client = mcp.new_client("http://127.0.0.1:8080/mcp", namespace="scriptling")
 
 print()
 print("Attaching MCP server to the AI client...")
-ai_client.add_remote_server(mcp_client)
+ai_client.add_remote_server("http://127.0.0.1:8080/mcp", namespace="scriptling")
 
 print()
 print("Fetching available tools from MCP server...")

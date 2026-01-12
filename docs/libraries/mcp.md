@@ -22,14 +22,14 @@ import mcp
 decoded = mcp.decode_response(raw_response)
 ```
 
-### mcp.new_client(base_url, auth, prefix)
+### mcp.new_client(base_url, **kwargs)
 
 Creates a new MCP client for connecting to a remote MCP server.
 
 **Parameters:**
 - `base_url` (str): URL of the MCP server
-- `auth` (dict, optional): Auth configuration with "type" and "token"
-- `prefix` (str, optional): Prefix for tool names (e.g., "scriptling" makes tools available as "scriptling/tool_name")
+- `namespace` (str, optional): Namespace for tool names (e.g., "scriptling" makes tools available as "scriptling/tool_name")
+- `bearer_token` (str, optional): Bearer token for authentication
 
 **Returns:** MCPClient - A client instance with methods for interacting with the server
 
@@ -37,37 +37,26 @@ Creates a new MCP client for connecting to a remote MCP server.
 ```python
 import mcp
 
-# Without prefix
+# Without namespace or auth
 client = mcp.new_client("https://api.example.com/mcp")
 
-# With prefix
-client = mcp.new_client("https://api.example.com/mcp", "scriptling")
+# With namespace only
+client = mcp.new_client("https://api.example.com/mcp", namespace="scriptling")
 
-# With auth and prefix
+# With bearer token only
+client = mcp.new_client("https://api.example.com/mcp", bearer_token="your-token-here")
+
+# With both namespace and bearer token
 client = mcp.new_client(
     "https://api.example.com/mcp",
-    {"type": "bearer", "token": "your-token-here"},
-    "scriptling"
+    namespace="scriptling",
+    bearer_token="your-token-here"
 )
 ```
 
-**Note:** When using a prefix, all tool names will be prefixed. For example, if the server has a tool called "execute_code" and you use prefix "scriptling", the tool will be available as "scriptling/execute_code". The prefix is automatically added to all tool names and stripped when calling tools.
+**Note:** When using a namespace, all tool names will be prefixed. For example, if the server has a tool called "execute_code" and you use namespace "scriptling", the tool will be available as "scriptling/execute_code". The namespace is automatically added to all tool names and stripped when calling tools.
 
 ## MCPClient Class
-
-### client.initialize()
-
-Performs the MCP handshake with the remote server. This is called automatically on the first operation, but can be called explicitly to ensure connection.
-
-**Returns:** null
-
-**Example:**
-```python
-client = mcp.new_client("https://api.example.com/mcp")
-# initialize() is called automatically on first operation
-tools = client.tools()
-print("Connected!")
-```
 
 ### client.tools()
 
@@ -124,13 +113,13 @@ client.refresh_tools()
 tools = client.tools()
 ```
 
-### client.tool_search(query, max_results=0)
+### client.tool_search(query, **kwargs)
 
 Searches for tools using the tool_search MCP tool. This is useful when the server has many tools registered via a discovery registry.
 
 **Parameters:**
 - `query` (str): Search query for tool names, descriptions, and keywords
-- `max_results` (int, optional): Maximum number of results (0 = no limit)
+- `max_results` (int, optional): Maximum number of results (default: 10)
 
 **Returns:** list - List of matching tool dicts
 
@@ -138,8 +127,11 @@ Searches for tools using the tool_search MCP tool. This is useful when the serve
 ```python
 client = mcp.new_client("https://api.example.com/mcp")
 
-# Search for weather-related tools
-results = client.tool_search("weather", 10)
+# Search for weather-related tools (default: up to 10 results)
+results = client.tool_search("weather")
+
+# Search with custom limit
+results = client.tool_search("database", max_results=5)
 
 for tool in results:
     print(f"{tool.name}: {tool.description}")
@@ -224,7 +216,7 @@ import mcp
 client = mcp.new_client("https://api.example.com/mcp")
 
 # Find database-related tools
-db_tools = client.tool_search("database", 20)
+db_tools = client.tool_search("database", max_results=20)
 
 for tool in db_tools:
     print(f"{tool.name}: {tool.description}")
@@ -246,7 +238,20 @@ import mcp
 
 client = mcp.new_client(
     "https://api.example.com/mcp",
-    {"type": "bearer", "token": "your-api-token"}
+    bearer_token="your-api-token"
+)
+```
+
+### Bearer Token with Namespace
+
+```python
+import mcp
+
+# Namespace and bearer token can be in any order
+client = mcp.new_client(
+    "https://api.example.com/mcp",
+    namespace="myservice",
+    bearer_token="your-api-token"
 )
 ```
 

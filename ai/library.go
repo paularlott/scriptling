@@ -112,7 +112,7 @@ Example:
   for model in models:
     print(model.id)`).
 
-		// response_create(input, model) - Create a Responses API response
+		// response_create(input, **kwargs) - Create a Responses API response
 		RawFunctionWithHelp("response_create", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			c := getClient()
 			if c == nil {
@@ -135,11 +135,10 @@ Example:
 				Input: input,
 			}
 
-			// Add optional model parameter
-			if len(args) > 1 {
-				if model, err := args[1].AsString(); err == nil {
-					req.Model = model
-				}
+			// Get optional model parameter from kwargs (default to "gpt-4o")
+			model := kwargs.MustGetString("model", "gpt-4o")
+			if model != "" {
+				req.Model = model
 			}
 
 			resp, err := c.CreateResponse(ctx, req)
@@ -148,7 +147,7 @@ Example:
 			}
 
 			return scriptlib.FromGo(resp)
-		}, `response_create(input, model="gpt-4o") - Create a Responses API response
+		}, `response_create(input, **kwargs) - Create a Responses API response
 
 Creates a response using the OpenAI Responses API (new structured API).
 
@@ -160,16 +159,22 @@ Returns:
   dict: Response object with id, status, output, usage, etc.
 
 Example:
+  # Default model (gpt-4o)
   response = ai.response_create([
     {"type": "message", "role": "user", "content": "Hello!"}
   ])
+
+  # Custom model
+  response = ai.response_create([
+    {"type": "message", "role": "user", "content": "Hello!"}
+  ], model="gpt-4")
   print(response.output)`).
 
 		// response_get(id) - Get a Responses API response by ID
 		FunctionWithHelp("response_get", func(ctx context.Context, id string) (any, error) {
 			c := getClient()
 			if c == nil {
-				return nil, fmt.Errorf("ai.response_get: no client configured")
+				return nil, fmt.Errorf("no client configured")
 			}
 			return c.GetResponse(ctx, id)
 		}, `response_get(id) - Get a response by ID
@@ -190,7 +195,7 @@ Example:
 		FunctionWithHelp("response_cancel", func(ctx context.Context, id string) (any, error) {
 			c := getClient()
 			if c == nil {
-				return nil, fmt.Errorf("ai.response_cancel: no client configured")
+				return nil, fmt.Errorf("no client configured")
 			}
 			return c.CancelResponse(ctx, id)
 		}, `response_cancel(id) - Cancel a response
@@ -206,27 +211,23 @@ Returns:
 Example:
   response = ai.response_cancel("resp_123")`).
 
-		// new_client(api_key, base_url) - Create a new OpenAI client
-		FunctionWithHelp("new_client", func(apiKey string, baseURL ...object.Object) (object.Object, error) {
-			var baseURLStr string
-			if len(baseURL) > 0 {
-				if s, err := baseURL[0].AsString(); err == nil {
-					baseURLStr = s
-				}
-			}
+		// new_client(api_key, **kwargs) - Create a new OpenAI client
+		FunctionWithHelp("new_client", func(kwargs object.Kwargs, apiKey string) (object.Object, error) {
+			// Get optional base_url from kwargs
+			baseURL := kwargs.MustGetString("base_url", "")
 
 			config := openai.Config{
 				APIKey:  apiKey,
-				BaseURL: baseURLStr,
+				BaseURL: baseURL,
 			}
 
 			client, err := openai.New(config)
 			if err != nil {
-				return nil, fmt.Errorf("failed to create OpenAI client: %w", err)
+				return nil, err
 			}
 
 			return createClientInstance(client), nil
-		}, `new_client(api_key, base_url) - Create a new OpenAI client
+		}, `new_client(api_key, **kwargs) - Create a new OpenAI client
 
 Creates a new OpenAI client instance for making API calls.
 
@@ -238,7 +239,11 @@ Returns:
   OpenAIClient: A client instance with methods for API calls
 
 Example:
-  client = ai.new_client("sk-...", "https://api.openai.com/v1")
+  # Default OpenAI API
+  client = ai.new_client("sk-...")
+
+  # Custom base URL (e.g., LM Studio, local LLM)
+  client = ai.new_client("lm-studio", base_url="http://127.0.0.1:1234/v1")
   response = client.chat("gpt-4", {"role": "user", "content": "Hello!"})`).
 
 		Build()

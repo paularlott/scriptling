@@ -36,17 +36,6 @@ func GetMCPClientClass() *object.Class {
 func buildMCPClientClass() *object.Class {
 	return object.NewClassBuilder("MCPClient").
 
-		MethodWithHelp("initialize", initializeMethod, `initialize() - Initialize the MCP connection
-
-Performs the MCP handshake with the remote server. This is called automatically
-on the first operation, but can be called explicitly to ensure connection.
-
-Returns:
-  null
-
-Example:
-  client.initialize()`).
-
 		MethodWithHelp("tools", toolsMethod, `tools() - List available tools
 
 Lists all tools available from this MCP server.
@@ -84,22 +73,24 @@ Returns:
 Example:
   client.refresh_tools()`).
 
-		MethodWithHelp("tool_search", toolSearchMethod, `tool_search(query, max_results=0) - Search for tools
+		MethodWithHelp("tool_search", toolSearchMethod, `tool_search(query, **kwargs) - Search for tools
 
 Searches for tools using the tool_search MCP tool. This is useful when the
 server has many tools registered via a discovery registry.
 
 Parameters:
   query (str): Search query for tool names, descriptions, and keywords
-  max_results (int, optional): Maximum number of results (0 = no limit)
+  max_results (int, optional): Maximum number of results (default: 10)
 
 Returns:
   list: List of matching tool dicts
 
 Example:
-  results = client.tool_search("weather", 10)
-  for tool in results:
-    print(tool.name)`).
+  # Get up to 10 weather-related tools (default)
+  results = client.tool_search("weather")
+
+  # Get up to 5 database tools
+  results = client.tool_search("database", max_results=5)`).
 
 		MethodWithHelp("execute_discovered", executeDiscoveredMethod, `execute_discovered(name, arguments={}) - Execute a discovered tool
 
@@ -133,24 +124,6 @@ func getMCPClientInstance(instance *object.Instance) (*ClientInstance, *object.E
 		return nil, &object.Error{Message: "MCPClient: invalid internal client reference"}
 	}
 	return ci, nil
-}
-
-// initialize method implementation
-func initializeMethod(ctx context.Context, self *object.Instance) object.Object {
-	ci, cerr := getMCPClientInstance(self)
-	if cerr != nil {
-		return cerr
-	}
-
-	if ci.client == nil {
-		return &object.Error{Message: "initialize: no client configured"}
-	}
-
-	if err := ci.client.Initialize(ctx); err != nil {
-		return &object.Error{Message: "initialization failed: " + err.Error()}
-	}
-
-	return &object.Null{}
 }
 
 // tools method implementation
@@ -219,7 +192,7 @@ func refreshToolsMethod(ctx context.Context, self *object.Instance) object.Objec
 }
 
 // tool_search method implementation
-func toolSearchMethod(ctx context.Context, self *object.Instance, query string, args ...object.Object) object.Object {
+func toolSearchMethod(ctx context.Context, self *object.Instance, kwargs object.Kwargs, query string) object.Object {
 	ci, cerr := getMCPClientInstance(self)
 	if cerr != nil {
 		return cerr
@@ -229,16 +202,12 @@ func toolSearchMethod(ctx context.Context, self *object.Instance, query string, 
 		return &object.Error{Message: "tool_search: no client configured"}
 	}
 
-	maxResults := 0
-	if len(args) > 0 {
-		if n, ok := args[0].(*object.Integer); ok {
-			maxResults = int(n.Value)
-		}
-	}
+	// Get max_results from kwargs (default to 10)
+	maxResults := int(kwargs.MustGetInt("max_results", 10))
 
-	results, err := ci.client.ToolSearch(ctx, query, maxResults)
-	if err != nil {
-		return &object.Error{Message: "tool search failed: " + err.Error()}
+	results, toolErr := ci.client.ToolSearch(ctx, query, maxResults)
+	if toolErr != nil {
+		return &object.Error{Message: "tool search failed: " + toolErr.Error()}
 	}
 
 	return scriptlib.FromGo(results)
