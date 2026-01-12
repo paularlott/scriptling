@@ -126,7 +126,10 @@ func (cb *ClassBuilder) callTypedMethod(fnValue reflect.Value, sig *FunctionSign
 	}
 
 	// The first argument is always the instance
-	instance := args[0]
+	instance, ok := args[0].(*Instance)
+	if !ok {
+		return newError("first argument must be an instance, got %T", args[0])
+	}
 	methodArgs := args[1:]
 
 	// Pre-allocate argValues with exact capacity
@@ -232,10 +235,10 @@ func analyzeClassMethodSignature(fnType reflect.Type) *FunctionSignature {
 	}
 
 	// For class methods: self is REQUIRED as first parameter
-	paramOffset := 0
-	if numIn > 0 && fnType.In(0) == instanceType {
-		paramOffset++ // Skip self
+	if numIn == 0 || fnType.In(0) != instanceType {
+		panic(fmt.Sprintf("class method must have *Instance as first parameter, got %v", fnType))
 	}
+	paramOffset := 1 // Skip self
 
 	// After self: [context], [kwargs], ...args (all optional)
 	hasContext := numIn > paramOffset && fnType.In(paramOffset) == contextType

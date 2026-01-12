@@ -72,6 +72,9 @@ func AsError(obj Object) string {
 // This is a convenience function for the common pattern of extracting
 // a client wrapper from the "_client" field of an instance.
 func GetClientField(instance *Instance, fieldName string) (*ClientWrapper, bool) {
+	if instance == nil {
+		return nil, false
+	}
 	obj, ok := instance.Fields[fieldName]
 	if !ok {
 		return nil, false

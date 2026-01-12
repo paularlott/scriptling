@@ -196,9 +196,9 @@ func toolSearchMethod(self *object.Instance, ctx context.Context, kwargs object.
 	// Get max_results from kwargs (default to 10)
 	maxResults := int(kwargs.MustGetInt("max_results", 10))
 
-	results, toolErr := ci.client.ToolSearch(ctx, query, maxResults)
-	if toolErr != nil {
-		return &object.Error{Message: "tool search failed: " + toolErr.Error()}
+	results, err := ci.client.ToolSearch(ctx, query, maxResults)
+	if err != nil {
+		return &object.Error{Message: "tool search failed: " + err.Error()}
 	}
 
 	return scriptlib.FromGo(results)

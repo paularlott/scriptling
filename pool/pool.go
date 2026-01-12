@@ -69,9 +69,8 @@ func GetConfig() Config {
 	return *poolCfg
 }
 
-// GetHTTPClient returns the shared HTTP client (lazy initialization)
-// The pool is created on first call with either configured or default values
-func GetHTTPClient() *http.Client {
+// ensurePoolInitialized initializes the pool if not already done
+func ensurePoolInitialized() {
 	poolOnce.Do(func() {
 		poolCfgMu.RLock()
 		cfg := poolCfg
@@ -83,22 +82,18 @@ func GetHTTPClient() *http.Client {
 
 		poolInst = newScriptlingPool(cfg)
 	})
+}
+
+// GetHTTPClient returns the shared HTTP client (lazy initialization)
+// The pool is created on first call with either configured or default values
+func GetHTTPClient() *http.Client {
+	ensurePoolInitialized()
 	return poolInst.httpClient
 }
 
 // GetPool returns the scriptling pool as an HTTPPool interface
 func GetPool() *scriptlingPool {
-	poolOnce.Do(func() {
-		poolCfgMu.RLock()
-		cfg := poolCfg
-		poolCfgMu.RUnlock()
-
-		if cfg == nil {
-			cfg = DefaultConfig()
-		}
-
-		poolInst = newScriptlingPool(cfg)
-	})
+	ensurePoolInitialized()
 	return poolInst
 }
 
@@ -113,6 +108,7 @@ func newScriptlingPool(cfg *Config) *scriptlingPool {
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: cfg.InsecureSkipVerify,
+			MinVersion:         tls.VersionTLS13,
 		},
 		MaxIdleConns:        cfg.MaxIdleConns,
 		MaxIdleConnsPerHost: cfg.MaxIdleConnsPerHost,
