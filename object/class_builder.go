@@ -6,6 +6,10 @@ import (
 	"reflect"
 )
 
+var (
+	instanceType = reflect.TypeOf((*Instance)(nil))
+)
+
 // ClassBuilder provides a fluent API for creating scriptling classes.
 // It allows registering typed Go methods that are automatically wrapped
 // to handle conversion between Go types and scriptling Objects.
@@ -105,7 +109,7 @@ func (cb *ClassBuilder) createWrapper(fn interface{}, helpText string) *Builtin 
 	}
 
 	// Analyze function signature once (cached)
-	sig := analyzeFunctionSignature(fnType)
+	sig := analyzeClassMethodSignature(fnType)
 
 	return &Builtin{
 		Fn: func(ctx context.Context, kwargs Kwargs, args ...Object) Object {
@@ -114,9 +118,8 @@ func (cb *ClassBuilder) createWrapper(fn interface{}, helpText string) *Builtin 
 		HelpText: helpText,
 	}
 }
-
-// callTypedMethod calls a typed Go method with ultra-fast argument conversion.
-// This is adapted from LibraryBuilder.callTypedFunctionUltraFast for methods.
+// callTypedMethod calls a typed Go method with cached signature info.
+// For class methods, self is ALWAYS first, then: [context], [kwargs], ...args
 func (cb *ClassBuilder) callTypedMethod(fnValue reflect.Value, sig *FunctionSignature, ctx context.Context, kwargs Kwargs, args []Object) Object {
 	if len(args) == 0 {
 		return newError("method call requires at least one argument (instance)")
@@ -129,25 +132,29 @@ func (cb *ClassBuilder) callTypedMethod(fnValue reflect.Value, sig *FunctionSign
 	// Pre-allocate argValues with exact capacity
 	argValues := make([]reflect.Value, 0, sig.numIn)
 
-	// Add context parameter if present
+	// Build arguments in the order the Go function expects:
+	// self, [ctx], [kwargs], ...args
+
+	// Add the instance parameter (always first)
+	argValues = append(argValues, reflect.ValueOf(instance))
+
+	// Add context parameter if present (second)
 	if sig.hasContext {
 		argValues = append(argValues, reflect.ValueOf(ctx))
 	}
 
-	// Add kwargs parameter if present
+	// Add kwargs parameter if present (third)
 	if sig.hasKwargs {
 		argValues = append(argValues, reflect.ValueOf(kwargs))
 	}
 
-	// Add the instance as the next parameter
-	argValues = append(argValues, reflect.ValueOf(instance))
-
 	// Now add the method arguments
+	// sig.maxPosArgs already accounts for self, context, and kwargs offset
 	argIndex := 0
-	expectedArgs := sig.maxPosArgs - 1 // -1 because instance is already handled
+	expectedArgs := sig.maxPosArgs
 
 	for i := 0; i < expectedArgs; i++ {
-		fnParamIndex := i + sig.paramOffset + 1 // +1 for instance
+		fnParamIndex := i + sig.paramOffset
 
 		if sig.isVariadic && fnParamIndex == sig.variadicIndex {
 			// Variadic parameters - collect remaining args
@@ -201,4 +208,70 @@ func (cb *ClassBuilder) callTypedMethod(fnValue reflect.Value, sig *FunctionSign
 	default:
 		return newError("method can return at most 2 values")
 	}
+}
+
+// analyzeClassMethodSignature analyzes a function signature for class methods.
+// For class methods: self (required), [context], [kwargs], ...args
+// Valid signatures:
+//   - func(self *Instance, ...args)
+//   - func(self *Instance, ctx context.Context, ...args)
+//   - func(self *Instance, kwargs Kwargs, ...args)
+//   - func(self *Instance, ctx context.Context, kwargs Kwargs, ...args)
+func analyzeClassMethodSignature(fnType reflect.Type) *FunctionSignature {
+	// Check cache first
+	if cached, ok := signatureCache.Load(fnType); ok {
+		return cached.(*FunctionSignature)
+	}
+
+	numIn := fnType.NumIn()
+	numOut := fnType.NumOut()
+	isVariadic := fnType.IsVariadic()
+	variadicIndex := -1
+	if isVariadic {
+		variadicIndex = numIn - 1
+	}
+
+	// For class methods: self is REQUIRED as first parameter
+	paramOffset := 0
+	if numIn > 0 && fnType.In(0) == instanceType {
+		paramOffset++ // Skip self
+	}
+
+	// After self: [context], [kwargs], ...args (all optional)
+	hasContext := numIn > paramOffset && fnType.In(paramOffset) == contextType
+	if hasContext {
+		paramOffset++
+	}
+
+	hasKwargs := numIn > paramOffset && fnType.In(paramOffset) == kwargsType
+	if hasKwargs {
+		paramOffset++
+	}
+	maxPosArgs := numIn - paramOffset
+
+	// Pre-cache parameter types
+	paramTypes := make([]reflect.Type, numIn)
+	for i := 0; i < numIn; i++ {
+		paramTypes[i] = fnType.In(i)
+	}
+
+	// Check if second return is error
+	returnIsError := numOut == 2 && fnType.Out(1).Implements(errorType)
+
+	sig := &FunctionSignature{
+		numIn:         numIn,
+		numOut:        numOut,
+		isVariadic:    isVariadic,
+		variadicIndex: variadicIndex,
+		hasContext:    hasContext,
+		hasKwargs:     hasKwargs,
+		paramOffset:   paramOffset,
+		maxPosArgs:    maxPosArgs,
+		paramTypes:    paramTypes,
+		returnIsError: returnIsError,
+	}
+
+	// Cache for future use
+	signatureCache.Store(fnType, sig)
+	return sig
 }

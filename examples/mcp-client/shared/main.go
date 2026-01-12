@@ -39,7 +39,7 @@ func main() {
 	extlibs.RegisterWaitForLibrary(p)
 
 	// Create MCP client for the scriptling MCP server
-	mcpClient := mcplib.NewClient("http://127.0.0.1:8080/mcp", nil, "scriptling", "")
+	mcpClient := mcplib.NewClient("http://127.0.0.1:8080/mcp", nil, "scriptling")
 
 	// Wrap the MCP client and set it as a global variable
 	wrappedClient := scriptlingmcp.WrapClient(mcpClient)

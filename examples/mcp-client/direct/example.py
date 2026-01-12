@@ -33,7 +33,7 @@ print()
 print("Searching for calendar-related tools...")
 print()
 
-calendar_tools = client.tool_search("calendar", 10)
+calendar_tools = client.tool_search("calendar", max_results=10)
 print(f"Found {len(calendar_tools)} calendar tools:")
 for tool in calendar_tools:
     name = tool.get("name", "unknown")

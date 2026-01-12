@@ -304,6 +304,11 @@ The Builder API supports flexible function signatures:
 - `func(kwargs object.Kwargs) result` - Kwargs only
 - `func(ctx context.Context, kwargs object.Kwargs) result` - Context + kwargs only
 
+**Parameter Order Rules (ALWAYS in this order):**
+1. Context (optional) - comes first if present
+2. Kwargs (optional) - comes after context (or first if no context)
+3. Positional arguments - ALWAYS LAST
+
 ### Examples
 
 **Simple functions:**

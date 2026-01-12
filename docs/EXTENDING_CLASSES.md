@@ -352,12 +352,18 @@ personClass := cb.Build()
 
 ### Method Signatures
 
-Class methods support flexible signatures:
+Class methods support flexible signatures. The first parameter is ALWAYS the instance (`self`):
 
 - `func(self *Instance, args...) result` - Instance + positional arguments
 - `func(self *Instance, ctx context.Context, args...) result` - Instance + context + positional
 - `func(self *Instance, kwargs object.Kwargs, args...) result` - Instance + kwargs + positional
 - `func(self *Instance, ctx context.Context, kwargs object.Kwargs, args...) result` - All parameters
+
+**Parameter Order Rules (ALWAYS in this order):**
+1. Instance (`self`) - ALWAYS FIRST
+2. Context (optional) - comes second if present
+3. Kwargs (optional) - comes after context (or second if no context)
+4. Positional arguments - ALWAYS LAST
 
 ### Examples
 
@@ -403,6 +409,22 @@ cb.Method("configure", func(self *object.Instance, kwargs object.Kwargs) error {
     self.Fields["timeout"] = &object.Integer{Value: int64(timeout)}
     self.Fields["debug"] = &object.Boolean{Value: debug}
     return nil
+})
+```
+
+**Method with context and kwargs:**
+
+```go
+cb.Method("fetch", func(self *object.Instance, ctx context.Context, kwargs object.Kwargs) (string, error) {
+    url, _ := kwargs.GetString("url", "")
+    timeout, _ := kwargs.GetInt("timeout", 30)
+    
+    // Use context for timeout
+    ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+    defer cancel()
+    
+    // Fetch data...
+    return "data", nil
 })
 ```
 
