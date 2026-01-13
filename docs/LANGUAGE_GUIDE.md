@@ -869,8 +869,11 @@ split("a,b,c", ",")                # ["a", "b", "c"]
 join(["a", "b", "c"], "-")         # "a-b-c"
 replace("hello world", "world", "python")  # "hello python"
 strip("  hello  ")                 # "hello"
+strip("??hello??", "?")            # "hello" (strip specific chars)
 lstrip("  hello  ")                # "hello  "
+lstrip("??hello", "?")             # "hello" (strip specific chars from left)
 rstrip("  hello  ")                # "  hello"
+rstrip("hello??", "?")             # "hello" (strip specific chars from right)
 startswith("hello", "he")          # True
 endswith("hello", "lo")            # True
 "a" * 3                            # "aaa" (repetition)

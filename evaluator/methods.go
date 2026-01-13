@@ -594,13 +594,40 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if err := errors.ExactArgs(args, 0); err != nil { return err }
 		return &object.String{Value: cases.Title(language.Und).String(str.Value)}
 	case "strip":
-		if err := errors.ExactArgs(args, 0); err != nil { return err }
+		if len(args) > 1 {
+			return errors.NewError("strip() takes at most 1 argument (%d given)", len(args))
+		}
+		if len(args) == 1 {
+			chars, errObj := args[0].AsString()
+			if errObj != nil {
+				return errors.ParameterError("chars", errObj)
+			}
+			return &object.String{Value: strings.Trim(str.Value, chars)}
+		}
 		return &object.String{Value: strings.TrimSpace(str.Value)}
 	case "lstrip":
-		if err := errors.ExactArgs(args, 0); err != nil { return err }
+		if len(args) > 1 {
+			return errors.NewError("lstrip() takes at most 1 argument (%d given)", len(args))
+		}
+		if len(args) == 1 {
+			chars, errObj := args[0].AsString()
+			if errObj != nil {
+				return errors.ParameterError("chars", errObj)
+			}
+			return &object.String{Value: strings.TrimLeft(str.Value, chars)}
+		}
 		return &object.String{Value: strings.TrimLeft(str.Value, " \t\n\r\v\f")}
 	case "rstrip":
-		if err := errors.ExactArgs(args, 0); err != nil { return err }
+		if len(args) > 1 {
+			return errors.NewError("rstrip() takes at most 1 argument (%d given)", len(args))
+		}
+		if len(args) == 1 {
+			chars, errObj := args[0].AsString()
+			if errObj != nil {
+				return errors.ParameterError("chars", errObj)
+			}
+			return &object.String{Value: strings.TrimRight(str.Value, chars)}
+		}
 		return &object.String{Value: strings.TrimRight(str.Value, " \t\n\r\v\f")}
 	case "startswith":
 		if err := errors.ExactArgs(args, 1); err != nil { return err }
