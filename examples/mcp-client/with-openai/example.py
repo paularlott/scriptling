@@ -12,7 +12,7 @@ print("Now asking the AI to use MCP tools...")
 print()
 
 # The AI can now use tools from the scriptling MCP server
-response = ai_client.chat(
+response = ai_client.completion(
     "mistralai/ministral-3-3b",
     {"role": "system", "content": "You have access to a scriptling MCP server. Use the execute_code tool to calculate 15 + 27."},
     {"role": "user", "content": "What is 15 plus 27?"}

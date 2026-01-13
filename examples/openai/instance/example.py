@@ -4,8 +4,8 @@
 import ai
 
 print("Creating OpenAI client for LM Studio...")
-# Create client directly from script
-client = ai.new_client("lm-studio", base_url="http://127.0.0.1:1234/v1")
+# Create client directly from script (LM Studio doesn't require an API key)
+client = ai.new_client("http://127.0.0.1:1234/v1")
 
 print()
 print("Fetching available models from LM Studio...")
@@ -17,7 +17,7 @@ for model in models:
 print()
 print("Running chat completion with mistralai/ministral-3-3b...")
 
-response = client.chat(
+response = client.completion(
     "mistralai/ministral-3-3b",
     {"role": "user", "content": "What is 2 + 2? Answer with just the number."}
 )

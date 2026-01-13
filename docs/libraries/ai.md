@@ -37,44 +37,104 @@ This pattern allows multiple clients to be used simultaneously and keeps API key
 
 Create client instances directly from scripts without needing Go code setup.
 
-### ai.new_client(api_key, **kwargs)
+### ai.new_client(base_url, \*\*kwargs)
 
-Creates a new OpenAI client instance for making API calls.
+Creates a new AI client instance for making API calls to supported services.
 
 **Parameters:**
-- `api_key` (str): OpenAI API key
-- `base_url` (str, optional): Custom base URL (defaults to https://api.openai.com/v1)
 
-**Returns:** OpenAIClient - A client instance with methods for API calls
+- `base_url` (str): Base URL of the API (defaults to https://api.openai.com/v1 if empty)
+- `service` (str, optional): Service type ("openai" by default)
+- `api_key` (str, optional): API key for authentication
+
+**Returns:** AIClient - A client instance with methods for API calls
 
 **Example:**
+
 ```python
 import ai
 
-# Create a client with default base URL
-client = ai.new_client("sk-...")
+# OpenAI API (default service)
+client = ai.new_client("", api_key="sk-...")
 
-# Or with a custom base URL (e.g., for LM Studio or compatibility services)
-client = ai.new_client("lm-studio", base_url="http://127.0.0.1:1234/v1")
+# LM Studio / Local LLM
+client = ai.new_client("http://127.0.0.1:1234/v1")
+
+# Explicitly specify service (same as default)
+client = ai.new_client("", service="openai", api_key="sk-...")
+
+# Future: Other services
+client = ai.new_client("https://api.anthropic.com", service="anthropic", api_key="...")
 ```
 
 ## OpenAIClient Class
 
-### client.chat(model, messages...)
+### client.completion(model, messages...)
 
 Creates a chat completion using this client's configuration.
 
 **Parameters:**
+
 - `model` (str): Model identifier (e.g., "gpt-4", "gpt-3.5-turbo")
 - `messages` (dict...): One or more message dicts with "role" and "content" keys
 
 **Returns:** dict - Response containing id, choices, usage, etc.
 
 **Example:**
+
 ```python
-client = ai.new_client("sk-...")
-response = client.chat("gpt-4", {"role": "user", "content": "What is 2+2?"})
+client = ai.new_client("", api_key="sk-...")
+response = client.completion("gpt-4", {"role": "user", "content": "What is 2+2?"})
 print(response.choices[0].message.content)
+```
+
+### client.completion_stream(model, messages...)
+
+Creates a streaming chat completion using this client's configuration. Returns a ChatStream object that can be iterated over.
+
+**Parameters:**
+
+- `model` (str): Model identifier (e.g., "gpt-4", "gpt-3.5-turbo")
+- `messages` (dict...): One or more message dicts with "role" and "content" keys
+
+**Returns:** ChatStream - A stream object with a `next()` method
+
+**Example:**
+
+```python
+client = ai.new_client("", api_key="sk-...")
+stream = client.completion_stream("gpt-4", {"role": "user", "content": "Count to 10"})
+while True:
+    chunk = stream.next()
+    if chunk is None:
+        break
+    if chunk.choices and len(chunk.choices) > 0:
+        delta = chunk.choices[0].delta
+        if delta.content:
+            print(delta.content, end="")
+print()
+```
+
+## ChatStream Class
+
+### stream.next()
+
+Advances to the next response chunk and returns it.
+
+**Returns:** dict - The next response chunk, or null if the stream is complete
+
+**Example:**
+
+```python
+stream = client.completion_stream("gpt-4", {"role": "user", "content": "Hello!"})
+while True:
+    chunk = stream.next()
+    if chunk is None:
+        break
+    if chunk.choices and len(chunk.choices) > 0:
+        delta = chunk.choices[0].delta
+        if delta.content:
+            print(delta.content, end="")
 ```
 
 ### client.models()
@@ -84,8 +144,9 @@ Lists all models available for this client configuration.
 **Returns:** list - List of model dicts with id, created, owned_by, etc.
 
 **Example:**
+
 ```python
-client = ai.new_client("sk-...")
+client = ai.new_client("", api_key="sk-...")
 models = client.models()
 for model in models:
     print(model.id)
@@ -96,14 +157,16 @@ for model in models:
 Creates a response using the OpenAI Responses API (new structured API).
 
 **Parameters:**
+
 - `model` (str): Model identifier (e.g., "gpt-4o", "gpt-4")
 - `input` (list): Input items (messages)
 
 **Returns:** dict - Response object with id, status, output, usage, etc.
 
 **Example:**
+
 ```python
-client = ai.new_client("sk-...")
+client = ai.new_client("", api_key="sk-...")
 
 response = client.response_create("gpt-4o", [
     {"type": "message", "role": "user", "content": "Hello!"}
@@ -116,13 +179,15 @@ print(response.output)
 Retrieves a previously created response by its ID.
 
 **Parameters:**
+
 - `id` (str): Response ID
 
 **Returns:** dict - Response object with id, status, output, usage, etc.
 
 **Example:**
+
 ```python
-client = ai.new_client("sk-...")
+client = ai.new_client("", api_key="sk-...")
 response = client.response_get("resp_123")
 print(response.status)
 ```
@@ -132,26 +197,30 @@ print(response.status)
 Cancels a currently in-progress response.
 
 **Parameters:**
+
 - `id` (str): Response ID to cancel
 
 **Returns:** dict - Cancelled response object
 
 **Example:**
+
 ```python
-client = ai.new_client("sk-...")
+client = ai.new_client("", api_key="sk-...")
 response = client.response_cancel("resp_123")
 ```
 
-### client.add_remote_server(base_url, **kwargs)
+### client.add_remote_server(base_url, \*\*kwargs)
 
 Adds a remote MCP server that will be available to all AI calls via this client.
 
 **Parameters:**
+
 - `base_url` (str): URL of the MCP server
 - `namespace` (str, optional): Namespace for tools from this server (e.g., "knot")
 - `bearer_token` (str, optional): Bearer token for authentication
 
 **Example:**
+
 ```python
 client = ai.new_client("sk-...")
 
@@ -183,11 +252,13 @@ response = client.chat("gpt-4", {"role": "user", "content": "Search for golang n
 Removes a previously added remote MCP server.
 
 **Parameters:**
+
 - `prefix` (str): Prefix/namespace of the server to remove
 
 **Example:**
+
 ```python
-client = ai.new_client("sk-...")
+client = ai.new_client("", api_key="sk-...")
 client.add_remote_server("https://api.example.com/mcp", namespace="knot")
 # ... use the server ...
 client.remove_remote_server("knot")
@@ -202,21 +273,21 @@ import ai
 
 # Using wrapped client from Go
 models = ai_client.models()
-response = ai_client.chat("gpt-4", {"role": "user", "content": "Hello!"})
+response = ai_client.completion("gpt-4", {"role": "user", "content": "Hello!"})
 print(response.choices[0].message.content)
 
 # Using client instance
-client = ai.new_client("sk-...")
-response = client.chat("gpt-4", {"role": "user", "content": "Hello!"})
+client = ai.new_client("", api_key="sk-...")
+response = client.completion("gpt-4", {"role": "user", "content": "Hello!"})
 print(response.choices[0].message.content)
 ```
 
 ### Conversation with Multiple Messages
 
 ```python
-client = ai.new_client("sk-...")
+client = ai.new_client("", api_key="sk-...")
 
-response = client.chat(
+response = client.completion(
     "gpt-4",
     {"role": "system", "content": "You are a helpful assistant."},
     {"role": "user", "content": "What is the capital of France?"},
@@ -227,22 +298,36 @@ response = client.chat(
 print(response.choices[0].message.content)
 ```
 
+### Streaming Chat Completion
+
+```python
+client = ai.new_client("", api_key="sk-...")
+
+stream = client.completion_stream("gpt-4", {"role": "user", "content": "Count to 10"})
+while True:
+    chunk = stream.next()
+    if chunk is None:
+        break
+    if chunk.choices and len(chunk.choices) > 0:
+        delta = chunk.choices[0].delta
+        if delta.content:
+            print(delta.content, end="")
+print()
+```
+
 ### Using Custom Base URL
 
 ```python
 # For OpenAI-compatible services like LM Studio, local LLMs, etc.
-client = ai.new_client(
-    "lm-studio",
-    base_url="http://127.0.0.1:1234/v1"
-)
+client = ai.new_client("http://127.0.0.1:1234/v1")
 
-response = client.chat("mistralai/ministral-3-3b", {"role": "user", "content": "Hello!"})
+response = client.completion("mistralai/ministral-3-3b", {"role": "user", "content": "Hello!"})
 ```
 
 ### Using MCP Tools with AI
 
 ```python
-client = ai.new_client("sk-...")
+client = ai.new_client("", api_key="sk-...")
 client.add_remote_server(
     "https://search-api.example.com/mcp",
     namespace="search",
@@ -250,7 +335,7 @@ client.add_remote_server(
 )
 
 # The AI can now use the search tools
-response = client.chat("gpt-4", {"role": "user", "content": "Search for recent golang news"})
+response = client.completion("gpt-4", {"role": "user", "content": "Search for recent golang news"})
 ```
 
 ## Error Handling
@@ -259,8 +344,8 @@ response = client.chat("gpt-4", {"role": "user", "content": "Search for recent g
 import ai
 
 try:
-    client = ai.new_client("sk-...")
-    response = client.chat("gpt-4", {"role": "user", "content": "Hello!"})
+    client = ai.new_client("", api_key="sk-...")
+    response = client.completion("gpt-4", {"role": "user", "content": "Hello!"})
     print(response.choices[0].message.content)
 except Exception as e:
     print("Error:", e)

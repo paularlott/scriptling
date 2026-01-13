@@ -5,7 +5,7 @@ import ai
 import mcp
 
 print("Creating OpenAI client for LM Studio...")
-ai_client = ai.new_client("lm-studio", base_url="http://127.0.0.1:1234/v1")
+ai_client = ai.new_client("http://127.0.0.1:1234/v1")
 
 print()
 print("Creating MCP client for scriptling MCP server with namespace...")
@@ -27,7 +27,7 @@ print("Now asking the AI to use MCP tools...")
 print()
 
 # The AI can now use tools from the scriptling MCP server
-response = ai_client.chat(
+response = ai_client.completion(
     "mistralai/ministral-3-3b",
     {"role": "system", "content": "You have access to a scriptling MCP server. Use the execute_code tool to calculate 15 + 27."},
     {"role": "user", "content": "What is 15 plus 27?"}
