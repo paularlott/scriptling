@@ -99,7 +99,7 @@ print()
 print("Running chat completion...")
 response = ai_client.completion(
     "mistralai/ministral-3-3b",
-    {"role": "user", "content": "What is 2 + 2?"}
+    [{"role": "user", "content": "What is 2 + 2?"}]
 )
 ```
 
@@ -121,7 +121,7 @@ print()
 print("Running chat completion...")
 response = client.completion(
     "mistralai/ministral-3-3b",
-    {"role": "user", "content": "What is 2 + 2?"}
+    [{"role": "user", "content": "What is 2 + 2?"}]
 )
 ```
 
@@ -137,7 +137,7 @@ client = ai.new_client("http://127.0.0.1:1234/v1")
 # Create a streaming completion
 stream = client.completion_stream(
     "mistralai/ministral-3-3b",
-    {"role": "user", "content": "Write a short haiku about coding in Python."}
+    [{"role": "user", "content": "Write a short haiku about coding in Python."}]
 )
 
 # Stream the response chunks

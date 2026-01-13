@@ -29,8 +29,10 @@ print()
 # The AI can now use tools from the scriptling MCP server
 response = ai_client.completion(
     "mistralai/ministral-3-3b",
-    {"role": "system", "content": "You have access to a scriptling MCP server. Use the execute_code tool to calculate 15 + 27."},
-    {"role": "user", "content": "What is 15 plus 27?"}
+    [
+        {"role": "system", "content": "You have access to a scriptling MCP server. Use the execute_code tool to calculate 15 + 27."},
+        {"role": "user", "content": "What is 15 plus 27?"}
+    ]
 )
 
 print("Response:")

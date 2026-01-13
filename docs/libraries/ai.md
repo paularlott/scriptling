@@ -28,7 +28,7 @@ Then in the script, use the client's instance methods directly:
 ```python
 # Use the client's instance methods
 models = ai_client.models()
-response = ai_client.chat("gpt-4", {"role": "user", "content": "Hello!"})
+response = ai_client.completion("gpt-4", [{"role": "user", "content": "Hello!"}])
 ```
 
 This pattern allows multiple clients to be used simultaneously and keeps API keys out of scripts.
@@ -69,14 +69,14 @@ client = ai.new_client("https://api.anthropic.com", service="anthropic", api_key
 
 ## OpenAIClient Class
 
-### client.completion(model, messages...)
+### client.completion(model, messages)
 
 Creates a chat completion using this client's configuration.
 
 **Parameters:**
 
 - `model` (str): Model identifier (e.g., "gpt-4", "gpt-3.5-turbo")
-- `messages` (dict...): One or more message dicts with "role" and "content" keys
+- `messages` (list): List of message dicts with "role" and "content" keys
 
 **Returns:** dict - Response containing id, choices, usage, etc.
 
@@ -84,18 +84,18 @@ Creates a chat completion using this client's configuration.
 
 ```python
 client = ai.new_client("", api_key="sk-...")
-response = client.completion("gpt-4", {"role": "user", "content": "What is 2+2?"})
+response = client.completion("gpt-4", [{"role": "user", "content": "What is 2+2?"}])
 print(response.choices[0].message.content)
 ```
 
-### client.completion_stream(model, messages...)
+### client.completion_stream(model, messages)
 
 Creates a streaming chat completion using this client's configuration. Returns a ChatStream object that can be iterated over.
 
 **Parameters:**
 
 - `model` (str): Model identifier (e.g., "gpt-4", "gpt-3.5-turbo")
-- `messages` (dict...): One or more message dicts with "role" and "content" keys
+- `messages` (list): List of message dicts with "role" and "content" keys
 
 **Returns:** ChatStream - A stream object with a `next()` method
 
@@ -103,7 +103,7 @@ Creates a streaming chat completion using this client's configuration. Returns a
 
 ```python
 client = ai.new_client("", api_key="sk-...")
-stream = client.completion_stream("gpt-4", {"role": "user", "content": "Count to 10"})
+stream = client.completion_stream("gpt-4", [{"role": "user", "content": "Count to 10"}])
 while True:
     chunk = stream.next()
     if chunk is None:
@@ -126,7 +126,7 @@ Advances to the next response chunk and returns it.
 **Example:**
 
 ```python
-stream = client.completion_stream("gpt-4", {"role": "user", "content": "Hello!"})
+stream = client.completion_stream("gpt-4", [{"role": "user", "content": "Hello!"}])
 while True:
     chunk = stream.next()
     if chunk is None:
@@ -273,12 +273,12 @@ import ai
 
 # Using wrapped client from Go
 models = ai_client.models()
-response = ai_client.completion("gpt-4", {"role": "user", "content": "Hello!"})
+response = ai_client.completion("gpt-4", [{"role": "user", "content": "Hello!"}])
 print(response.choices[0].message.content)
 
 # Using client instance
 client = ai.new_client("", api_key="sk-...")
-response = client.completion("gpt-4", {"role": "user", "content": "Hello!"})
+response = client.completion("gpt-4", [{"role": "user", "content": "Hello!"}])
 print(response.choices[0].message.content)
 ```
 
@@ -289,10 +289,12 @@ client = ai.new_client("", api_key="sk-...")
 
 response = client.completion(
     "gpt-4",
-    {"role": "system", "content": "You are a helpful assistant."},
-    {"role": "user", "content": "What is the capital of France?"},
-    {"role": "assistant", "content": "The capital of France is Paris."},
-    {"role": "user", "content": "And what about Germany?"}
+    [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "What is the capital of France?"},
+        {"role": "assistant", "content": "The capital of France is Paris."},
+        {"role": "user", "content": "And what about Germany?"}
+    ]
 )
 
 print(response.choices[0].message.content)
@@ -303,7 +305,7 @@ print(response.choices[0].message.content)
 ```python
 client = ai.new_client("", api_key="sk-...")
 
-stream = client.completion_stream("gpt-4", {"role": "user", "content": "Count to 10"})
+stream = client.completion_stream("gpt-4", [{"role": "user", "content": "Count to 10"}])
 while True:
     chunk = stream.next()
     if chunk is None:
@@ -321,7 +323,7 @@ print()
 # For OpenAI-compatible services like LM Studio, local LLMs, etc.
 client = ai.new_client("http://127.0.0.1:1234/v1")
 
-response = client.completion("mistralai/ministral-3-3b", {"role": "user", "content": "Hello!"})
+response = client.completion("mistralai/ministral-3-3b", [{"role": "user", "content": "Hello!"}])
 ```
 
 ### Using MCP Tools with AI
@@ -335,7 +337,7 @@ client.add_remote_server(
 )
 
 # The AI can now use the search tools
-response = client.completion("gpt-4", {"role": "user", "content": "Search for recent golang news"})
+response = client.completion("gpt-4", [{"role": "user", "content": "Search for recent golang news"}])
 ```
 
 ## Error Handling
@@ -345,7 +347,7 @@ import ai
 
 try:
     client = ai.new_client("", api_key="sk-...")
-    response = client.completion("gpt-4", {"role": "user", "content": "Hello!"})
+    response = client.completion("gpt-4", [{"role": "user", "content": "Hello!"}])
     print(response.choices[0].message.content)
 except Exception as e:
     print("Error:", e)

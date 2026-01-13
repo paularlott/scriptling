@@ -31,35 +31,35 @@ func GetOpenAIClientClass() *object.Class {
 // buildOpenAIClientClass builds the OpenAI Client class
 func buildOpenAIClientClass() *object.Class {
 	return object.NewClassBuilder("OpenAIClient").
-		MethodWithHelp("completion", completionMethod, `completion(model, messages...) - Create a chat completion
+		MethodWithHelp("completion", completionMethod, `completion(model, messages) - Create a chat completion
 
 Creates a chat completion using this client's configuration.
 
 Parameters:
   model (str): Model identifier (e.g., "gpt-4", "gpt-3.5-turbo")
-  messages (dict...): One or more message dicts with "role" and "content" keys
+  messages (list): List of message dicts with "role" and "content" keys
 
 Returns:
   dict: Response containing id, choices, usage, etc.
 
 Example:
-  response = client.completion("gpt-4", {"role": "user", "content": "Hello!"})
+  response = client.completion("gpt-4", [{"role": "user", "content": "Hello!"}])
   print(response.choices[0].message.content)`).
 
-		MethodWithHelp("completion_stream", completionStreamMethod, `completion_stream(model, messages...) - Create a streaming chat completion
+		MethodWithHelp("completion_stream", completionStreamMethod, `completion_stream(model, messages) - Create a streaming chat completion
 
 Creates a streaming chat completion using this client's configuration.
 Returns a ChatStream object that can be iterated over.
 
 Parameters:
   model (str): Model identifier (e.g., "gpt-4", "gpt-3.5-turbo")
-  messages (dict...): One or more message dicts with "role" and "content" keys
+  messages (list): List of message dicts with "role" and "content" keys
 
 Returns:
   ChatStream: A stream object with a next() method
 
 Example:
-  stream = client.completion_stream("gpt-4", {"role": "user", "content": "Hello!"})
+  stream = client.completion_stream("gpt-4", [{"role": "user", "content": "Hello!"}])
   while True:
     chunk = stream.next()
     if chunk is None:
@@ -169,7 +169,7 @@ func getClientInstance(instance *object.Instance) (*ClientInstance, *object.Erro
 }
 
 // completion method implementation
-func completionMethod(self *object.Instance, ctx context.Context, model string, messages ...map[string]any) object.Object {
+func completionMethod(self *object.Instance, ctx context.Context, model string, messages []map[string]any) object.Object {
 	ci, cerr := getClientInstance(self)
 	if cerr != nil {
 		return cerr
@@ -435,7 +435,7 @@ func nextStreamMethod(self *object.Instance, ctx context.Context) object.Object 
 }
 
 // completion_stream method implementation
-func completionStreamMethod(self *object.Instance, ctx context.Context, model string, messages ...map[string]any) object.Object {
+func completionStreamMethod(self *object.Instance, ctx context.Context, model string, messages []map[string]any) object.Object {
 	ci, cerr := getClientInstance(self)
 	if cerr != nil {
 		return cerr

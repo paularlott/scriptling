@@ -132,8 +132,9 @@ func (cb *ClassBuilder) callTypedMethod(fnValue reflect.Value, sig *FunctionSign
 	}
 	methodArgs := args[1:]
 
-	// Pre-allocate argValues with exact capacity
-	argValues := make([]reflect.Value, 0, sig.numIn)
+	// Get pooled slice for arguments
+	argValuesPtr := getArgValueSlice(sig.numIn)
+	argValues := *argValuesPtr
 
 	// Build arguments in the order the Go function expects:
 	// self, [ctx], [kwargs], ...args
@@ -161,26 +162,27 @@ func (cb *ClassBuilder) callTypedMethod(fnValue reflect.Value, sig *FunctionSign
 
 		if sig.isVariadic && fnParamIndex == sig.variadicIndex {
 			// Variadic parameters - collect remaining args
-			varArgs := make([]reflect.Value, 0, len(methodArgs)-argIndex)
 			elemType := sig.paramTypes[fnParamIndex].Elem()
 			for j := argIndex; j < len(methodArgs); j++ {
 				val, convErr := convertObjectToValue(methodArgs[j], elemType)
 				if convErr != nil {
+					putArgValueSlice(argValuesPtr, sig.numIn)
 					return convErr
 				}
-				varArgs = append(varArgs, val)
+				argValues = append(argValues, val)
 			}
-			argValues = append(argValues, varArgs...)
 			break
 		}
 
 		if argIndex >= len(methodArgs) {
+			putArgValueSlice(argValuesPtr, sig.numIn)
 			return newArgumentError(len(methodArgs), expectedArgs)
 		}
 
 		// Use cached parameter type
 		val, convErr := convertObjectToValue(methodArgs[argIndex], sig.paramTypes[fnParamIndex])
 		if convErr != nil {
+			putArgValueSlice(argValuesPtr, sig.numIn)
 			return convErr
 		}
 		argValues = append(argValues, val)
@@ -189,11 +191,15 @@ func (cb *ClassBuilder) callTypedMethod(fnValue reflect.Value, sig *FunctionSign
 
 	// Check if we have extra positional arguments
 	if argIndex < len(methodArgs) && !sig.isVariadic {
+		putArgValueSlice(argValuesPtr, sig.numIn)
 		return newArgumentError(len(methodArgs), expectedArgs)
 	}
 
 	// Call the method
 	results := fnValue.Call(argValues)
+
+	// Return slice to pool
+	putArgValueSlice(argValuesPtr, sig.numIn)
 
 	// Handle return values with cached info
 	switch sig.numOut {

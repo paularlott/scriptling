@@ -6,8 +6,6 @@ import (
 	"sync"
 
 	"github.com/paularlott/mcp/openai"
-	scriptlib "github.com/paularlott/scriptling"
-	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -43,49 +41,38 @@ func Register(registrar interface{ RegisterLibrary(string, *object.Library) }) {
 func buildLibrary() *object.Library {
 	return object.NewLibraryBuilder(AILibraryName, AILibraryDesc).
 
-		// completion(model, messages...) - Create a chat completion
-		RawFunctionWithHelp("completion", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.MinArgs(args, 2); err != nil {
-				return err
-			}
+		// completion(model, messages) - Create a chat completion
+		FunctionWithHelp("completion", func(ctx context.Context, model string, messages []map[string]any) (any, error) {
 			c := getClient()
 			if c == nil {
-				return errors.NewError("ai.completion: no client configured - use ai.SetClient() or create a client from script")
+				return nil, fmt.Errorf("ai.completion: no client configured - use ai.SetClient() or create a client from script")
 			}
 
-			model, err := args[0].AsString()
-			if err != nil {
-				return errors.ParameterError("model", err)
-			}
-
-			// Convert messages from scriptling objects to openai.Message
-			messages, convertErr := convertMessagesToOpenAI(args[1:])
-			if convertErr != nil {
-				return convertErr
-			}
+			// Convert messages to openai.Message
+			openaiMessages := convertMapsToOpenAI(messages)
 
 			chatResp, chatErr := c.ChatCompletion(ctx, openai.ChatCompletionRequest{
 				Model:    model,
-				Messages: messages,
+				Messages: openaiMessages,
 			})
 			if chatErr != nil {
-				return errors.NewError("chat completion failed: %s", chatErr.Error())
+				return nil, fmt.Errorf("chat completion failed: %s", chatErr.Error())
 			}
 
-			return scriptlib.FromGo(chatResp)
-		}, `completion(model, messages...) - Create a chat completion
+			return chatResp, nil
+		}, `completion(model, messages) - Create a chat completion
 
 Creates a chat completion using the specified model and messages.
 
 Parameters:
   model (str): Model identifier (e.g., "gpt-4", "gpt-3.5-turbo")
-  messages (dict...): One or more message dicts with "role" and "content" keys
+  messages (list): List of message dicts with "role" and "content" keys
 
 Returns:
   dict: Response containing id, choices, usage, etc.
 
 Example:
-  response = ai.completion("gpt-4", {"role": "user", "content": "Hello!"})
+  response = ai.completion("gpt-4", [{"role": "user", "content": "Hello!"}])
   print(response.choices[0].message.content)`).
 
 		// models() - List available models
@@ -114,26 +101,10 @@ Example:
     print(model.id)`).
 
 		// response_create(model, input) - Create a Responses API response
-		RawFunctionWithHelp("response_create", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 2); err != nil {
-				return err
-			}
+		FunctionWithHelp("response_create", func(ctx context.Context, model string, input []any) (any, error) {
 			c := getClient()
 			if c == nil {
-				return errors.NewError("ai.response_create: no client configured - use ai.SetClient() or create a client from script")
-			}
-
-			model, err := args[0].AsString()
-			if err != nil {
-				return errors.ParameterError("model", err)
-			}
-
-			// Convert input from scriptling object to []any
-			inputRaw := scriptlib.ToGo(args[1])
-			input, ok := inputRaw.([]any)
-			if !ok {
-				// Wrap single item in array
-				input = []any{inputRaw}
+				return nil, fmt.Errorf("ai.response_create: no client configured - use ai.SetClient() or create a client from script")
 			}
 
 			// Build request
@@ -144,10 +115,10 @@ Example:
 
 			resp, createErr := c.CreateResponse(ctx, req)
 			if createErr != nil {
-				return errors.NewError("failed to create response: %s", createErr.Error())
+				return nil, fmt.Errorf("failed to create response: %s", createErr.Error())
 			}
 
-			return scriptlib.FromGo(resp)
+			return resp, nil
 		}, `response_create(model, input) - Create a Responses API response
 
 Creates a response using the OpenAI Responses API (new structured API).
@@ -251,7 +222,6 @@ Example:
 
   # Future: Other services
   client = ai.new_client("https://api.anthropic.com", service="anthropic", api_key="...")`).
-
 		Build()
 }
 
@@ -262,38 +232,21 @@ func getClient() *openai.Client {
 	return client
 }
 
-// convertMessagesToOpenAI converts scriptling message objects to openai.Message format
-func convertMessagesToOpenAI(messages []object.Object) ([]openai.Message, object.Object) {
+// convertMapsToOpenAI converts Go map messages to openai.Message format
+func convertMapsToOpenAI(messages []map[string]any) []openai.Message {
 	openaiMessages := make([]openai.Message, 0, len(messages))
-	for i := 0; i < len(messages); i++ {
-		msg, ok := messages[i].(*object.Dict)
-		if !ok {
-			return nil, errors.NewError("messages must be dicts")
-		}
+	for _, msg := range messages {
 		omsg := openai.Message{}
-		for k, v := range msg.Pairs {
-			switch k {
-			case "role":
-				if role, err := v.Value.AsString(); err == nil {
-					if role == "" {
-						return nil, errors.NewError("message role cannot be empty")
-					}
-					omsg.Role = role
-				} else {
-					return nil, errors.ParameterError("role", err)
-				}
-			case "content":
-				omsg.Content = scriptlib.ToGo(v.Value)
-			case "tool_calls":
-				// tool_calls are handled automatically by the MCP OpenAI client
-				// Scripts don't need to send tool_calls - they're in assistant responses
-			case "tool_call_id":
-				if tcid, err := v.Value.AsString(); err == nil {
-					omsg.ToolCallID = tcid
-				}
-			}
+		if role, ok := msg["role"].(string); ok {
+			omsg.Role = role
+		}
+		if content, ok := msg["content"]; ok {
+			omsg.Content = content
+		}
+		if tcid, ok := msg["tool_call_id"].(string); ok {
+			omsg.ToolCallID = tcid
 		}
 		openaiMessages = append(openaiMessages, omsg)
 	}
-	return openaiMessages, nil
+	return openaiMessages
 }
