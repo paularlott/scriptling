@@ -1407,7 +1407,7 @@ func (p *Parser) parseRaiseStatement() *ast.RaiseStatement {
 	stmt := &ast.RaiseStatement{Token: p.curToken}
 	p.nextToken()
 
-	if !p.curTokenIs(token.NEWLINE) && !p.curTokenIs(token.SEMICOLON) && !p.curTokenIs(token.EOF) {
+	if !p.curTokenIs(token.NEWLINE) && !p.curTokenIs(token.SEMICOLON) && !p.curTokenIs(token.EOF) && !p.curTokenIs(token.DEDENT) {
 		stmt.Message = p.parseExpression(LOWEST)
 	}
 

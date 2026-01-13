@@ -155,11 +155,16 @@ Returns a string representing the type of the object.`,
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
+			// For exceptions, return just the message (like Python)
+			if exc, ok := args[0].(*object.Exception); ok {
+				return &object.String{Value: exc.Message}
+			}
 			return &object.String{Value: args[0].Inspect()}
 		},
 		HelpText: `str(obj) - Convert an object to a string
 
-Returns the string representation of any object.`,
+Returns the string representation of any object.
+For exceptions, returns just the exception message.`,
 	},
 	"int": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
