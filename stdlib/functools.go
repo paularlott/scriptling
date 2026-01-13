@@ -64,7 +64,7 @@ var FunctoolsLibrary = object.NewLibrary(map[string]*object.Builtin{
 				if result == nil {
 					return errors.NewError("reduce function returned nil")
 				}
-				if result.Type() == object.ERROR_OBJ {
+				if object.IsError(result) {
 					return result
 				}
 				accumulator = result
@@ -183,7 +183,7 @@ func reduceWithBuiltin(ctx context.Context, builtin *object.Builtin, args []obje
 		if result == nil {
 			return errors.NewError("reduce function returned nil")
 		}
-		if result.Type() == object.ERROR_OBJ {
+		if object.IsError(result) {
 			return result
 		}
 		accumulator = result

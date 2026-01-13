@@ -80,12 +80,12 @@ func (o *osLibraryInstance) createOSLibrary() *object.Library {
 	return object.NewLibrary(map[string]*object.Builtin{
 		"getenv": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) < 1 || len(args) > 2 {
-					return errors.NewArgumentError(len(args), 1)
+				if err := errors.RangeArgs(args, 1, 2); err != nil {
+					return err
 				}
-				key, ok := args[0].AsString()
-				if !ok {
-					return errors.NewTypeError("STRING", args[0].Type().String())
+				key, err := args[0].AsString()
+				if err != nil {
+					return err
 				}
 				value := os.Getenv(key)
 				if value == "" && len(args) == 2 {
@@ -99,8 +99,8 @@ Returns the value of the environment variable key if it exists, or default if pr
 		},
 		"environ": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) != 0 {
-					return errors.NewArgumentError(len(args), 0)
+				if err := errors.ExactArgs(args, 0); err != nil {
+					return err
 				}
 				pairs := make(map[string]object.DictPair)
 				for _, env := range os.Environ() {
@@ -118,8 +118,8 @@ Returns the value of the environment variable key if it exists, or default if pr
 		},
 		"getcwd": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) != 0 {
-					return errors.NewArgumentError(len(args), 0)
+				if err := errors.ExactArgs(args, 0); err != nil {
+					return err
 				}
 				cwd, err := os.Getwd()
 				if err != nil {
@@ -131,15 +131,15 @@ Returns the value of the environment variable key if it exists, or default if pr
 		},
 		"listdir": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				path := "."
-				if len(args) > 1 {
-					return errors.NewArgumentError(len(args), 1)
+				if err := errors.MaxArgs(args, 1); err != nil {
+					return err
 				}
+				path := "."
 				if len(args) == 1 {
-					var ok bool
-					path, ok = args[0].AsString()
-					if !ok {
-						return errors.NewTypeError("STRING", args[0].Type().String())
+					var err object.Object
+					path, err = args[0].AsString()
+					if err != nil {
+						return err
 					}
 				}
 
@@ -165,12 +165,12 @@ Returns a list of the names of the entries in the given directory.`,
 		},
 		"read_file": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) != 1 {
-					return errors.NewArgumentError(len(args), 1)
+				if err := errors.ExactArgs(args, 1); err != nil {
+					return err
 				}
-				path, ok := args[0].AsString()
-				if !ok {
-					return errors.NewTypeError("STRING", args[0].Type().String())
+				path, err := args[0].AsString()
+				if err != nil {
+					return err
 				}
 
 				// Security check
@@ -178,9 +178,9 @@ Returns a list of the names of the entries in the given directory.`,
 					return err
 				}
 
-				content, err := os.ReadFile(path)
-				if err != nil {
-					return errors.NewError("cannot read file: %s", err.Error())
+				content, fsErr := os.ReadFile(path)
+				if fsErr != nil {
+					return errors.NewError("cannot read file: %s", fsErr.Error())
 				}
 				return &object.String{Value: string(content)}
 			},
@@ -190,15 +190,13 @@ Returns the contents of the file as a string.`,
 		},
 		"write_file": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) != 2 {
-					return errors.NewArgumentError(len(args), 2)
+				if err := errors.ExactArgs(args, 2); err != nil { return err }
+				path, err := args[0].AsString()
+				if err != nil {
+					return err
 				}
-				path, ok := args[0].AsString()
-				if !ok {
-					return errors.NewTypeError("STRING", args[0].Type().String())
-				}
-				content, ok := args[1].AsString()
-				if !ok {
+				content, err := args[1].AsString()
+				if err != nil {
 					return errors.NewTypeError("STRING", args[1].Type().String())
 				}
 
@@ -207,9 +205,9 @@ Returns the contents of the file as a string.`,
 					return err
 				}
 
-				err := os.WriteFile(path, []byte(content), 0644)
-				if err != nil {
-					return errors.NewError("cannot write file: %s", err.Error())
+				fsErr := os.WriteFile(path, []byte(content), 0644)
+				if fsErr != nil {
+					return errors.NewError("cannot write file: %s", fsErr.Error())
 				}
 				return &object.Null{}
 			},
@@ -219,15 +217,13 @@ Writes the string content to the file, creating or overwriting it.`,
 		},
 		"append_file": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) != 2 {
-					return errors.NewArgumentError(len(args), 2)
+				if err := errors.ExactArgs(args, 2); err != nil { return err }
+				path, err := args[0].AsString()
+				if err != nil {
+					return err
 				}
-				path, ok := args[0].AsString()
-				if !ok {
-					return errors.NewTypeError("STRING", args[0].Type().String())
-				}
-				content, ok := args[1].AsString()
-				if !ok {
+				content, err := args[1].AsString()
+				if err != nil {
 					return errors.NewTypeError("STRING", args[1].Type().String())
 				}
 
@@ -236,9 +232,9 @@ Writes the string content to the file, creating or overwriting it.`,
 					return err
 				}
 
-				f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-				if err != nil {
-					return errors.NewError("cannot open file for append: %s", err.Error())
+				f, fsErr := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+				if fsErr != nil {
+					return errors.NewError("cannot open file for append: %s", fsErr.Error())
 				}
 				defer f.Close()
 
@@ -253,12 +249,10 @@ Appends the string content to the file, creating it if it doesn't exist.`,
 		},
 		"remove": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) != 1 {
-					return errors.NewArgumentError(len(args), 1)
-				}
-				path, ok := args[0].AsString()
-				if !ok {
-					return errors.NewTypeError("STRING", args[0].Type().String())
+				if err := errors.ExactArgs(args, 1); err != nil { return err }
+				path, err := args[0].AsString()
+				if err != nil {
+					return err
 				}
 
 				// Security check
@@ -266,9 +260,9 @@ Appends the string content to the file, creating it if it doesn't exist.`,
 					return err
 				}
 
-				err := os.Remove(path)
-				if err != nil {
-					return errors.NewError("cannot remove file: %s", err.Error())
+				fsErr := os.Remove(path)
+				if fsErr != nil {
+					return errors.NewError("cannot remove file: %s", fsErr.Error())
 				}
 				return &object.Null{}
 			},
@@ -278,12 +272,10 @@ Removes the specified file.`,
 		},
 		"mkdir": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) != 1 {
-					return errors.NewArgumentError(len(args), 1)
-				}
-				path, ok := args[0].AsString()
-				if !ok {
-					return errors.NewTypeError("STRING", args[0].Type().String())
+				if err := errors.ExactArgs(args, 1); err != nil { return err }
+				path, err := args[0].AsString()
+				if err != nil {
+					return err
 				}
 
 				// Security check
@@ -291,9 +283,9 @@ Removes the specified file.`,
 					return err
 				}
 
-				err := os.Mkdir(path, 0755)
-				if err != nil {
-					return errors.NewError("cannot create directory: %s", err.Error())
+				fsErr := os.Mkdir(path, 0755)
+				if fsErr != nil {
+					return errors.NewError("cannot create directory: %s", fsErr.Error())
 				}
 				return &object.Null{}
 			},
@@ -303,12 +295,10 @@ Creates a new directory with the specified path.`,
 		},
 		"makedirs": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) != 1 {
-					return errors.NewArgumentError(len(args), 1)
-				}
-				path, ok := args[0].AsString()
-				if !ok {
-					return errors.NewTypeError("STRING", args[0].Type().String())
+				if err := errors.ExactArgs(args, 1); err != nil { return err }
+				path, err := args[0].AsString()
+				if err != nil {
+					return err
 				}
 
 				// Security check
@@ -316,9 +306,9 @@ Creates a new directory with the specified path.`,
 					return err
 				}
 
-				err := os.MkdirAll(path, 0755)
-				if err != nil {
-					return errors.NewError("cannot create directories: %s", err.Error())
+				fsErr := os.MkdirAll(path, 0755)
+				if fsErr != nil {
+					return errors.NewError("cannot create directories: %s", fsErr.Error())
 				}
 				return &object.Null{}
 			},
@@ -328,12 +318,10 @@ Creates a directory and all parent directories as needed.`,
 		},
 		"rmdir": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) != 1 {
-					return errors.NewArgumentError(len(args), 1)
-				}
-				path, ok := args[0].AsString()
-				if !ok {
-					return errors.NewTypeError("STRING", args[0].Type().String())
+				if err := errors.ExactArgs(args, 1); err != nil { return err }
+				path, err := args[0].AsString()
+				if err != nil {
+					return err
 				}
 
 				// Security check
@@ -341,9 +329,9 @@ Creates a directory and all parent directories as needed.`,
 					return err
 				}
 
-				err := os.Remove(path)
-				if err != nil {
-					return errors.NewError("cannot remove directory: %s", err.Error())
+				fsErr := os.Remove(path)
+				if fsErr != nil {
+					return errors.NewError("cannot remove directory: %s", fsErr.Error())
 				}
 				return &object.Null{}
 			},
@@ -353,16 +341,14 @@ Removes the specified empty directory.`,
 		},
 		"rename": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) != 2 {
-					return errors.NewArgumentError(len(args), 2)
+				if err := errors.ExactArgs(args, 2); err != nil { return err }
+				oldPath, err := args[0].AsString()
+				if err != nil {
+					return err
 				}
-				oldPath, ok := args[0].AsString()
-				if !ok {
-					return errors.NewTypeError("STRING", args[0].Type().String())
-				}
-				newPath, ok := args[1].AsString()
-				if !ok {
-					return errors.NewTypeError("STRING", args[1].Type().String())
+				newPath, err := args[1].AsString()
+				if err != nil {
+					return err
 				}
 
 				// Security check both paths
@@ -373,9 +359,9 @@ Removes the specified empty directory.`,
 					return err
 				}
 
-				err := os.Rename(oldPath, newPath)
-				if err != nil {
-					return errors.NewError("cannot rename: %s", err.Error())
+				fsErr := os.Rename(oldPath, newPath)
+				if fsErr != nil {
+					return errors.NewError("cannot rename: %s", fsErr.Error())
 				}
 				return &object.Null{}
 			},
@@ -399,9 +385,9 @@ func (o *osLibraryInstance) createOSPathLibrary() *object.Library {
 				}
 				parts := make([]string, len(args))
 				for i, arg := range args {
-					s, ok := arg.AsString()
-					if !ok {
-						return errors.NewTypeError("STRING", arg.Type().String())
+					s, err := arg.AsString()
+					if err != nil {
+						return err
 					}
 					parts[i] = s
 				}
@@ -413,12 +399,10 @@ Joins path components using the appropriate separator for the OS.`,
 		},
 		"exists": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) != 1 {
-					return errors.NewArgumentError(len(args), 1)
-				}
-				path, ok := args[0].AsString()
-				if !ok {
-					return errors.NewTypeError("STRING", args[0].Type().String())
+				if err := errors.ExactArgs(args, 1); err != nil { return err }
+				path, err := args[0].AsString()
+				if err != nil {
+					return err
 				}
 
 				// Security check
@@ -426,8 +410,8 @@ Joins path components using the appropriate separator for the OS.`,
 					return err
 				}
 
-				_, err := os.Stat(path)
-				return &object.Boolean{Value: err == nil}
+				_, statErr := os.Stat(path)
+				return &object.Boolean{Value: statErr == nil}
 			},
 			HelpText: `exists(path) - Check if path exists
 
@@ -435,12 +419,10 @@ Returns True if the path exists, False otherwise.`,
 		},
 		"isfile": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) != 1 {
-					return errors.NewArgumentError(len(args), 1)
-				}
-				path, ok := args[0].AsString()
-				if !ok {
-					return errors.NewTypeError("STRING", args[0].Type().String())
+				if err := errors.ExactArgs(args, 1); err != nil { return err }
+				path, err := args[0].AsString()
+				if err != nil {
+					return err
 				}
 
 				// Security check
@@ -448,8 +430,8 @@ Returns True if the path exists, False otherwise.`,
 					return err
 				}
 
-				info, err := os.Stat(path)
-				if err != nil {
+				info, statErr := os.Stat(path)
+				if statErr != nil {
 					return &object.Boolean{Value: false}
 				}
 				return &object.Boolean{Value: !info.IsDir()}
@@ -460,12 +442,10 @@ Returns True if the path is a regular file, False otherwise.`,
 		},
 		"isdir": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) != 1 {
-					return errors.NewArgumentError(len(args), 1)
-				}
-				path, ok := args[0].AsString()
-				if !ok {
-					return errors.NewTypeError("STRING", args[0].Type().String())
+				if err := errors.ExactArgs(args, 1); err != nil { return err }
+				path, err := args[0].AsString()
+				if err != nil {
+					return err
 				}
 
 				// Security check
@@ -473,8 +453,8 @@ Returns True if the path is a regular file, False otherwise.`,
 					return err
 				}
 
-				info, err := os.Stat(path)
-				if err != nil {
+				info, statErr := os.Stat(path)
+				if statErr != nil {
 					return &object.Boolean{Value: false}
 				}
 				return &object.Boolean{Value: info.IsDir()}
@@ -485,12 +465,10 @@ Returns True if the path is a directory, False otherwise.`,
 		},
 		"basename": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) != 1 {
-					return errors.NewArgumentError(len(args), 1)
-				}
-				path, ok := args[0].AsString()
-				if !ok {
-					return errors.NewTypeError("STRING", args[0].Type().String())
+				if err := errors.ExactArgs(args, 1); err != nil { return err }
+				path, err := args[0].AsString()
+				if err != nil {
+					return err
 				}
 				return &object.String{Value: filepath.Base(path)}
 			},
@@ -500,12 +478,10 @@ Returns the final component of a pathname.`,
 		},
 		"dirname": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) != 1 {
-					return errors.NewArgumentError(len(args), 1)
-				}
-				path, ok := args[0].AsString()
-				if !ok {
-					return errors.NewTypeError("STRING", args[0].Type().String())
+				if err := errors.ExactArgs(args, 1); err != nil { return err }
+				path, err := args[0].AsString()
+				if err != nil {
+					return err
 				}
 				return &object.String{Value: filepath.Dir(path)}
 			},
@@ -515,12 +491,10 @@ Returns the directory component of a pathname.`,
 		},
 		"split": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) != 1 {
-					return errors.NewArgumentError(len(args), 1)
-				}
-				path, ok := args[0].AsString()
-				if !ok {
-					return errors.NewTypeError("STRING", args[0].Type().String())
+				if err := errors.ExactArgs(args, 1); err != nil { return err }
+				path, err := args[0].AsString()
+				if err != nil {
+					return err
 				}
 				dir, file := filepath.Split(path)
 				// Remove trailing slash from dir (Python behavior) unless it's the root
@@ -536,12 +510,10 @@ Returns the directory component of a pathname.`,
 		},
 		"splitext": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) != 1 {
-					return errors.NewArgumentError(len(args), 1)
-				}
-				path, ok := args[0].AsString()
-				if !ok {
-					return errors.NewTypeError("STRING", args[0].Type().String())
+				if err := errors.ExactArgs(args, 1); err != nil { return err }
+				path, err := args[0].AsString()
+				if err != nil {
+					return err
 				}
 				ext := filepath.Ext(path)
 				root := path[:len(path)-len(ext)]
@@ -554,16 +526,14 @@ Returns the directory component of a pathname.`,
 		},
 		"abspath": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) != 1 {
-					return errors.NewArgumentError(len(args), 1)
-				}
-				path, ok := args[0].AsString()
-				if !ok {
-					return errors.NewTypeError("STRING", args[0].Type().String())
-				}
-				absPath, err := filepath.Abs(path)
+				if err := errors.ExactArgs(args, 1); err != nil { return err }
+				path, err := args[0].AsString()
 				if err != nil {
-					return errors.NewError("cannot get absolute path: %s", err.Error())
+					return err
+				}
+				absPath, fsErr := filepath.Abs(path)
+				if fsErr != nil {
+					return errors.NewError("cannot get absolute path: %s", fsErr.Error())
 				}
 				return &object.String{Value: absPath}
 			},
@@ -571,12 +541,10 @@ Returns the directory component of a pathname.`,
 		},
 		"normpath": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) != 1 {
-					return errors.NewArgumentError(len(args), 1)
-				}
-				path, ok := args[0].AsString()
-				if !ok {
-					return errors.NewTypeError("STRING", args[0].Type().String())
+				if err := errors.ExactArgs(args, 1); err != nil { return err }
+				path, err := args[0].AsString()
+				if err != nil {
+					return err
 				}
 				return &object.String{Value: filepath.Clean(path)}
 			},
@@ -589,20 +557,20 @@ Normalizes path by collapsing redundant separators and up-level references.`,
 				if len(args) < 1 || len(args) > 2 {
 					return errors.NewError("relpath() takes 1-2 arguments (%d given)", len(args))
 				}
-				path, ok := args[0].AsString()
-				if !ok {
-					return errors.NewTypeError("STRING", args[0].Type().String())
+				path, err := args[0].AsString()
+				if err != nil {
+					return err
 				}
 				base := "."
 				if len(args) == 2 {
-					base, ok = args[1].AsString()
-					if !ok {
-						return errors.NewTypeError("STRING", args[1].Type().String())
+					base, err = args[1].AsString()
+					if err != nil {
+						return err
 					}
 				}
-				relPath, err := filepath.Rel(base, path)
-				if err != nil {
-					return errors.NewError("cannot get relative path: %s", err.Error())
+				relPath, fsErr := filepath.Rel(base, path)
+				if fsErr != nil {
+					return errors.NewError("cannot get relative path: %s", fsErr.Error())
 				}
 				return &object.String{Value: relPath}
 			},
@@ -612,12 +580,10 @@ Returns a relative filepath to path either from the current directory or from an
 		},
 		"isabs": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) != 1 {
-					return errors.NewArgumentError(len(args), 1)
-				}
-				path, ok := args[0].AsString()
-				if !ok {
-					return errors.NewTypeError("STRING", args[0].Type().String())
+				if err := errors.ExactArgs(args, 1); err != nil { return err }
+				path, err := args[0].AsString()
+				if err != nil {
+					return err
 				}
 				return &object.Boolean{Value: filepath.IsAbs(path)}
 			},
@@ -627,12 +593,10 @@ Returns True if the path is an absolute pathname.`,
 		},
 		"getsize": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) != 1 {
-					return errors.NewArgumentError(len(args), 1)
-				}
-				path, ok := args[0].AsString()
-				if !ok {
-					return errors.NewTypeError("STRING", args[0].Type().String())
+				if err := errors.ExactArgs(args, 1); err != nil { return err }
+				path, err := args[0].AsString()
+				if err != nil {
+					return err
 				}
 
 				// Security check
@@ -640,9 +604,9 @@ Returns True if the path is an absolute pathname.`,
 					return err
 				}
 
-				info, err := os.Stat(path)
-				if err != nil {
-					return errors.NewError("cannot get file size: %s", err.Error())
+				info, fsErr := os.Stat(path)
+				if fsErr != nil {
+					return errors.NewError("cannot get file size: %s", fsErr.Error())
 				}
 				return object.NewInteger(info.Size())
 			},

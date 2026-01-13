@@ -13,6 +13,7 @@ import sys
 ## Constants
 
 ### platform
+
 A string identifying the operating system platform.
 
 ```python
@@ -21,6 +22,7 @@ print(sys.platform)  # "darwin", "linux", or "win32"
 ```
 
 ### version
+
 A string containing the version of the Scriptling interpreter.
 
 ```python
@@ -29,6 +31,7 @@ print(sys.version)  # "Scriptling 1.0"
 ```
 
 ### maxsize
+
 The maximum value of a signed integer (int64).
 
 ```python
@@ -37,6 +40,7 @@ print(sys.maxsize)  # 9223372036854775807
 ```
 
 ### path_sep
+
 The path separator used by the operating system.
 
 ```python
@@ -45,6 +49,7 @@ print(sys.path_sep)  # "/" on Unix, "\" on Windows
 ```
 
 ### argv
+
 A list of command-line arguments passed to the script.
 
 ```python
@@ -55,25 +60,44 @@ print(sys.argv)  # ["script.py", "arg1", "arg2"]
 ## Functions
 
 ### exit([code])
-Exit the interpreter with an optional status code.
+
+Raise a SystemExit exception to exit the interpreter.
 
 **Parameters:**
+
 - `code` - Exit status (default: 0). Can be an integer or a string message.
+
+**Behavior:**
+
+- Raises a `SystemExit` exception that can be caught with try/except
+- If not caught, terminates the script execution with an error
+- Integer codes produce exception message: "SystemExit: <code>"
+- String messages produce exception with that message directly
 
 **Examples:**
 
 ```python
 import sys
 
-# Exit successfully
+# Exit successfully (raises SystemExit: 0)
 sys.exit()
 
-# Exit with error code
+# Exit with error code (raises SystemExit: 1)
 sys.exit(1)
 
-# Exit with error message
+# Exit with custom message
 sys.exit("Fatal error occurred")
+
+# Catching sys.exit to prevent termination
+try:
+    sys.exit(42)
+    print("This won't run")
+except Exception as e:
+    print("Caught:", str(e))  # "Caught: SystemExit: 42"
+    # Continue execution instead of exiting
 ```
+
+**Note:** Unlike Python, Scriptling doesn't have a `SystemExit` exception type - it's just a regular exception with "SystemExit" in the message.
 
 ## Enabling in Go
 
@@ -106,6 +130,7 @@ print(sys.argv)
 ## Examples
 
 ### Check Platform
+
 ```python
 import sys
 
@@ -118,6 +143,7 @@ elif sys.platform == "win32":
 ```
 
 ### Process Arguments
+
 ```python
 import sys
 
@@ -133,15 +159,15 @@ print(f"Processing {input_file}")
 
 This library implements a subset of Python's `sys` module:
 
-| Feature | Supported |
-|---------|-----------|
-| argv | ✅ |
-| exit() | ✅ |
-| platform | ✅ |
-| version | ✅ (simplified) |
-| maxsize | ✅ |
-| path | ❌ |
-| modules | ❌ |
-| stdin/stdout/stderr | ❌ |
-| executable | ❌ |
-| version_info | ❌ |
+| Feature             | Supported       |
+| ------------------- | --------------- |
+| argv                | ✅              |
+| exit()              | ✅              |
+| platform            | ✅              |
+| version             | ✅ (simplified) |
+| maxsize             | ✅              |
+| path                | ❌              |
+| modules             | ❌              |
+| stdin/stdout/stderr | ❌              |
+| executable          | ❌              |
+| version_info        | ❌              |

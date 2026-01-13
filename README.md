@@ -100,6 +100,7 @@ See [scriptling-cli/README.md](scriptling-cli/README.md) for details.
 ## Go API
 
 ### Basic Usage
+
 ```go
 import (
     "github.com/paularlott/scriptling"
@@ -119,7 +120,7 @@ result, err := p.Eval("x = 5 + 3")
 
 // Exchange variables
 p.SetVar("name", "Alice")
-value, ok := p.GetVarAsString("name")
+value, objErr := p.GetVarAsString("name")
 
 // Register Go functions
 p.RegisterFunc("custom", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
@@ -155,6 +156,7 @@ p.SetOnDemandLibraryCallback(func(p *Scriptling, libName string) bool {
 ```
 
 ### Libraries
+
 ```go
 import (
     "github.com/paularlott/scriptling"
@@ -196,10 +198,12 @@ files = os.listdir("/tmp")
 ## Examples
 
 See `examples/` directory:
+
 - **scripts/** - Script examples and Go integration
 - **mcp/** - MCP server for LLM testing
 
 Run examples:
+
 ```bash
 cd examples/scripts
 go run main.go test_basics.py
@@ -207,13 +211,18 @@ go run main.go test_basics.py
 
 ## Documentation
 
+- **[Quick Reference](docs/QUICK_REFERENCE.md)** - Library recipes and patterns
+- **[Language Quick Reference](docs/LANGUAGE_QUICK_REFERENCE.md)** - Language syntax cheat sheet
 - **[Language Guide](docs/LANGUAGE_GUIDE.md)** - Complete syntax reference
+- **[LLM Guide](docs/LLM_GUIDE.md)** - Quick reference for LLM code generation
 - **[Libraries](docs/LIBRARIES.md)** - Available libraries and APIs
-- **[Extending with Go](docs/EXTENDING_WITH_GO.md)** - Adding Go functions and libraries
+- **[Go Integration](docs/GO_INTEGRATION.md)** - Embedding and using Scriptling from Go
+- **[Extending with Go](docs/EXTENDING_WITH_GO.md)** - Overview of extending Scriptling
+  - **[Functions](docs/EXTENDING_FUNCTIONS.md)** - Creating custom functions
+  - **[Libraries](docs/EXTENDING_LIBRARIES.md)** - Creating custom libraries
+  - **[Classes](docs/EXTENDING_CLASSES.md)** - Defining custom classes
 - **[Extending with Scripts](docs/EXTENDING_WITH_SCRIPTS.md)** - Creating script libraries
-- **[Help System](docs/HELP_SYSTEM.md)**
-- **[Go Integration](docs/GO_INTEGRATION.md)** - Embedding and extending
-- **[Quick Reference](docs/QUICK_REFERENCE.md)** - Cheat sheet
+- **[Help System](docs/HELP_SYSTEM.md)** - Documenting functions and classes
 
 ## Testing
 
@@ -231,4 +240,4 @@ MIT
 
 ## Contributing
 
-Issues and pull requests welcome at [github.com/paularlott/scriptling](https://github.com/paularlott/scriptling)
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.

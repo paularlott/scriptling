@@ -15,25 +15,32 @@ var (
 	contextType = reflect.TypeOf((*context.Context)(nil)).Elem()
 	kwargsType  = reflect.TypeOf(Kwargs{})
 	errorType   = reflect.TypeOf((*error)(nil)).Elem()
+	objectType  = reflect.TypeOf((*Object)(nil)).Elem()
 
 	// Pre-allocated common reflect.Values
 	nullValue = reflect.ValueOf(&Null{})
 
 	// Function signature cache
 	signatureCache = sync.Map{} // map[reflect.Type]*FunctionSignature
+
+	// Pool for reflect.Value slices to reduce allocations
+	// We use different pools for different slice sizes
+	argValuePool2 = sync.Pool{New: func() any { s := make([]reflect.Value, 0, 2); return &s }}
+	argValuePool4 = sync.Pool{New: func() any { s := make([]reflect.Value, 0, 4); return &s }}
+	argValuePool8 = sync.Pool{New: func() any { s := make([]reflect.Value, 0, 8); return &s }}
 )
 
 // FunctionSignature holds pre-computed function analysis
 type FunctionSignature struct {
-	numIn, numOut     int
-	isVariadic        bool
-	variadicIndex     int
-	hasContext        bool
-	hasKwargs         bool
-	paramOffset       int
-	maxPosArgs        int
-	paramTypes        []reflect.Type // Cache parameter types
-	returnIsError     bool           // Cache if second return is error
+	numIn, numOut int
+	isVariadic    bool
+	variadicIndex int
+	hasContext    bool
+	hasKwargs     bool
+	paramOffset   int
+	maxPosArgs    int
+	paramTypes    []reflect.Type // Cache parameter types
+	returnIsError bool           // Cache if second return is error
 }
 
 // LibraryBuilder provides a fluent API for creating scriptling libraries.
@@ -61,12 +68,13 @@ type LibraryBuilder struct {
 }
 
 // analyzeFunctionSignature performs one-time analysis of function signature
+// For functions/libraries: [context], [kwargs], ...args (all optional)
 func analyzeFunctionSignature(fnType reflect.Type) *FunctionSignature {
 	// Check cache first
 	if cached, ok := signatureCache.Load(fnType); ok {
 		return cached.(*FunctionSignature)
 	}
-	
+
 	numIn := fnType.NumIn()
 	numOut := fnType.NumOut()
 	isVariadic := fnType.IsVariadic()
@@ -75,9 +83,9 @@ func analyzeFunctionSignature(fnType reflect.Type) *FunctionSignature {
 		variadicIndex = numIn - 1
 	}
 
-	// Detect context and kwargs
-	hasContext := numIn > 0 && fnType.In(0) == contextType
+	// Detect context and kwargs (both optional, context first if present)
 	paramOffset := 0
+	hasContext := numIn > paramOffset && fnType.In(paramOffset) == contextType
 	if hasContext {
 		paramOffset++
 	}
@@ -92,7 +100,7 @@ func analyzeFunctionSignature(fnType reflect.Type) *FunctionSignature {
 	for i := 0; i < numIn; i++ {
 		paramTypes[i] = fnType.In(i)
 	}
-	
+
 	// Check if second return is error
 	returnIsError := numOut == 2 && fnType.Out(1).Implements(errorType)
 
@@ -108,7 +116,7 @@ func analyzeFunctionSignature(fnType reflect.Type) *FunctionSignature {
 		paramTypes:    paramTypes,
 		returnIsError: returnIsError,
 	}
-	
+
 	// Cache for future use
 	signatureCache.Store(fnType, sig)
 	return sig
@@ -189,31 +197,43 @@ func (b *LibraryBuilder) createWrapper(fnValue reflect.Value, helpText string) *
 
 	return &Builtin{
 		Fn: func(ctx context.Context, kwargs Kwargs, args ...Object) Object {
-			return b.callTypedFunctionUltraFast(fnValue, sig, ctx, kwargs, args)
+			return callTypedFunction(fnValue, sig, ctx, kwargs, args)
 		},
 		HelpText: helpText,
 	}
 }
 
-// newError creates a new error object (avoids circular import with errors package)
-func newError(format string, args ...interface{}) *Error {
-	return &Error{Message: fmt.Sprintf(format, args...)}
+// getArgValueSlice gets a pooled slice with the appropriate capacity
+func getArgValueSlice(capacity int) *[]reflect.Value {
+	switch {
+	case capacity <= 2:
+		return argValuePool2.Get().(*[]reflect.Value)
+	case capacity <= 4:
+		return argValuePool4.Get().(*[]reflect.Value)
+	default:
+		return argValuePool8.Get().(*[]reflect.Value)
+	}
 }
 
-// newTypeError creates a type error object
-func newTypeError(expected, got string) *Error {
-	return &Error{Message: fmt.Sprintf("type error: expected %s, got %s", expected, got)}
+// putArgValueSlice returns a slice to the pool
+func putArgValueSlice(s *[]reflect.Value, capacity int) {
+	*s = (*s)[:0] // Reset length to 0
+	switch {
+	case capacity <= 2:
+		argValuePool2.Put(s)
+	case capacity <= 4:
+		argValuePool4.Put(s)
+	default:
+		argValuePool8.Put(s)
+	}
 }
 
-// newArgumentError creates an argument error object
-func newArgumentError(got, want int) *Error {
-	return &Error{Message: fmt.Sprintf("argument error: got %d arguments, want %d", got, want)}
-}
-
-// callTypedFunctionUltraFast calls a typed Go function with cached signature info.
-func (b *LibraryBuilder) callTypedFunctionUltraFast(fnValue reflect.Value, sig *FunctionSignature, ctx context.Context, kwargs Kwargs, args []Object) Object {
-	// Pre-allocate argValues with exact capacity
-	argValues := make([]reflect.Value, 0, sig.numIn)
+// callTypedFunction calls a typed Go function with cached signature info.
+// Shared by LibraryBuilder and FunctionBuilder.
+func callTypedFunction(fnValue reflect.Value, sig *FunctionSignature, ctx context.Context, kwargs Kwargs, args []Object) Object {
+	// Get pooled slice for arguments
+	argValuesPtr := getArgValueSlice(sig.numIn)
+	argValues := *argValuesPtr
 
 	// Add context parameter if present
 	if sig.hasContext {
@@ -232,26 +252,27 @@ func (b *LibraryBuilder) callTypedFunctionUltraFast(fnValue reflect.Value, sig *
 
 		if sig.isVariadic && fnParamIndex == sig.variadicIndex {
 			// Variadic parameters - collect remaining args
-			varArgs := make([]reflect.Value, 0, len(args)-argIndex)
 			elemType := sig.paramTypes[fnParamIndex].Elem()
 			for j := argIndex; j < len(args); j++ {
 				val, convErr := convertObjectToValue(args[j], elemType)
 				if convErr != nil {
+					putArgValueSlice(argValuesPtr, sig.numIn)
 					return convErr
 				}
-				varArgs = append(varArgs, val)
+				argValues = append(argValues, val)
 			}
-			argValues = append(argValues, varArgs...)
 			break
 		}
 
 		if argIndex >= len(args) {
+			putArgValueSlice(argValuesPtr, sig.numIn)
 			return newArgumentError(len(args), sig.maxPosArgs)
 		}
 
 		// Use cached parameter type
 		val, convErr := convertObjectToValue(args[argIndex], sig.paramTypes[fnParamIndex])
 		if convErr != nil {
+			putArgValueSlice(argValuesPtr, sig.numIn)
 			return convErr
 		}
 		argValues = append(argValues, val)
@@ -260,11 +281,15 @@ func (b *LibraryBuilder) callTypedFunctionUltraFast(fnValue reflect.Value, sig *
 
 	// Check if we have extra positional arguments
 	if argIndex < len(args) && !sig.isVariadic {
+		putArgValueSlice(argValuesPtr, sig.numIn)
 		return newArgumentError(len(args), sig.maxPosArgs)
 	}
 
 	// Call the function
 	results := fnValue.Call(argValues)
+
+	// Return slice to pool
+	putArgValueSlice(argValuesPtr, sig.numIn)
 
 	// Handle return values with cached info
 	switch sig.numOut {
@@ -284,6 +309,21 @@ func (b *LibraryBuilder) callTypedFunctionUltraFast(fnValue reflect.Value, sig *
 	}
 }
 
+// newError creates a new error object (avoids circular import with errors package)
+func newError(format string, args ...interface{}) *Error {
+	return &Error{Message: fmt.Sprintf(format, args...)}
+}
+
+// newTypeError creates a type error object (matches errors.NewTypeError format)
+func newTypeError(expected, got string) *Error {
+	return &Error{Message: fmt.Sprintf("type error: expected %s, got %s", expected, got)}
+}
+
+// newArgumentError creates an argument error object (matches errors.NewArgumentError format)
+func newArgumentError(got, want int) *Error {
+	return &Error{Message: fmt.Sprintf("argument error: got %d arguments, want %d", got, want)}
+}
+
 // convertObjectToValue converts a scriptling Object to a reflect.Value for the given type.
 func convertObjectToValue(obj Object, targetType reflect.Type) (reflect.Value, Object) {
 	if obj == nil {
@@ -292,30 +332,62 @@ func convertObjectToValue(obj Object, targetType reflect.Type) (reflect.Value, O
 
 	switch targetType.Kind() {
 	case reflect.String:
-		if s, ok := obj.AsString(); ok {
-			return reflect.ValueOf(s).Convert(targetType), nil
+		s, err := obj.AsString()
+		if err == nil {
+			return reflect.ValueOf(s), nil
 		}
-		return reflect.Value{}, newTypeError("STRING", obj.Type().String())
+		return reflect.Value{}, err
 
-	case reflect.Int, reflect.Int32, reflect.Int64:
-		if i, ok := obj.AsInt(); ok {
-			return reflect.ValueOf(i).Convert(targetType), nil
+	case reflect.Int:
+		// Fast path for int (common type)
+		i, err := obj.AsInt()
+		if err == nil {
+			return reflect.ValueOf(int(i)), nil
 		}
-		return reflect.Value{}, newTypeError("INTEGER", obj.Type().String())
+		return reflect.Value{}, err
 
-	case reflect.Float32, reflect.Float64:
-		if f, ok := obj.AsFloat(); ok {
-			return reflect.ValueOf(f).Convert(targetType), nil
+	case reflect.Int64:
+		// Fast path for int64 (most common int type in scriptling)
+		i, err := obj.AsInt()
+		if err == nil {
+			return reflect.ValueOf(i), nil
 		}
-		return reflect.Value{}, newTypeError("FLOAT", obj.Type().String())
+		return reflect.Value{}, err
+
+	case reflect.Int32:
+		i, err := obj.AsInt()
+		if err == nil {
+			return reflect.ValueOf(int32(i)), nil
+		}
+		return reflect.Value{}, err
+
+	case reflect.Float64:
+		// Fast path for float64 (most common float type)
+		f, err := obj.AsFloat()
+		if err == nil {
+			return reflect.ValueOf(f), nil
+		}
+		return reflect.Value{}, err
+
+	case reflect.Float32:
+		f, err := obj.AsFloat()
+		if err == nil {
+			return reflect.ValueOf(float32(f)), nil
+		}
+		return reflect.Value{}, err
 
 	case reflect.Bool:
-		if b, ok := obj.AsBool(); ok {
+		b, err := obj.AsBool()
+		if err == nil {
 			return reflect.ValueOf(b), nil
 		}
-		return reflect.Value{}, newTypeError("BOOLEAN", obj.Type().String())
+		return reflect.Value{}, err
 
 	case reflect.Interface:
+		// If the target type is object.Object, return the object as-is
+		if targetType.Implements(objectType) {
+			return reflect.ValueOf(obj), nil
+		}
 		// For interface{}, return the underlying value
 		switch v := obj.(type) {
 		case *String:
@@ -348,7 +420,7 @@ func convertObjectToValue(obj Object, targetType reflect.Type) (reflect.Value, O
 
 	case reflect.Slice:
 		// Convert to slice
-		if list, ok := obj.AsList(); ok {
+		if list, err := obj.AsList(); err == nil {
 			elemType := targetType.Elem()
 			slice := reflect.MakeSlice(targetType, len(list), len(list))
 			for i, el := range list {
@@ -364,7 +436,7 @@ func convertObjectToValue(obj Object, targetType reflect.Type) (reflect.Value, O
 
 	case reflect.Map:
 		// Convert to map
-		if d, ok := obj.AsDict(); ok {
+		if d, err := obj.AsDict(); err == nil {
 			keyType := targetType.Key()
 			if keyType.Kind() != reflect.String {
 				return reflect.Value{}, newError("map keys must be strings")
@@ -483,29 +555,6 @@ func objectToAny(obj Object) interface{} {
 	default:
 		return nil
 	}
-}
-
-// RawFunction registers a raw BuiltinFunction for advanced use cases.
-// This allows direct access to the context, kwargs, and args without automatic conversion.
-//
-// Example:
-//
-//	builder.RawFunction("custom", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-//	    // Direct access to low-level API
-//	    return &object.String{Value: "result"}
-//	})
-func (b *LibraryBuilder) RawFunction(name string, fn BuiltinFunction) *LibraryBuilder {
-	b.RawFunctionWithHelp(name, fn, "")
-	return b
-}
-
-// RawFunctionWithHelp registers a raw BuiltinFunction with help text.
-func (b *LibraryBuilder) RawFunctionWithHelp(name string, fn BuiltinFunction, helpText string) *LibraryBuilder {
-	b.functions[name] = &Builtin{
-		Fn:       fn,
-		HelpText: helpText,
-	}
-	return b
 }
 
 // SubLibrary creates a new sub-library with the given name.

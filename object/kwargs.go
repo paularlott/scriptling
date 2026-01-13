@@ -41,56 +41,56 @@ func (k Kwargs) Len() int {
 }
 
 // GetString extracts a string keyword argument with a default value.
-func (k Kwargs) GetString(name string, defaultValue string) (string, error) {
+func (k Kwargs) GetString(name string, defaultValue string) (string, Object) {
 	if obj, ok := k.Kwargs[name]; ok {
-		if s, ok := obj.AsString(); ok {
+		if s, err := obj.AsString(); err == nil {
 			return s, nil
 		}
-		return defaultValue, fmt.Errorf("%s: must be a string", name)
+		return defaultValue, &Error{Message: fmt.Sprintf("%s: must be a string", name)}
 	}
 	return defaultValue, nil
 }
 
 // GetInt extracts an integer keyword argument with a default value.
-func (k Kwargs) GetInt(name string, defaultValue int64) (int64, error) {
+func (k Kwargs) GetInt(name string, defaultValue int64) (int64, Object) {
 	if obj, ok := k.Kwargs[name]; ok {
-		if i, ok := obj.AsInt(); ok {
+		if i, err := obj.AsInt(); err == nil {
 			return i, nil
 		}
-		return defaultValue, fmt.Errorf("%s: must be a number", name)
+		return defaultValue, &Error{Message: fmt.Sprintf("%s: must be a number", name)}
 	}
 	return defaultValue, nil
 }
 
 // GetFloat extracts a float keyword argument with a default value.
-func (k Kwargs) GetFloat(name string, defaultValue float64) (float64, error) {
+func (k Kwargs) GetFloat(name string, defaultValue float64) (float64, Object) {
 	if obj, ok := k.Kwargs[name]; ok {
-		if f, ok := obj.AsFloat(); ok {
+		if f, err := obj.AsFloat(); err == nil {
 			return f, nil
 		}
-		return defaultValue, fmt.Errorf("%s: must be a number", name)
+		return defaultValue, &Error{Message: fmt.Sprintf("%s: must be a number", name)}
 	}
 	return defaultValue, nil
 }
 
 // GetBool extracts a boolean keyword argument with a default value.
-func (k Kwargs) GetBool(name string, defaultValue bool) (bool, error) {
+func (k Kwargs) GetBool(name string, defaultValue bool) (bool, Object) {
 	if obj, ok := k.Kwargs[name]; ok {
-		if b, ok := obj.AsBool(); ok {
+		if b, err := obj.AsBool(); err == nil {
 			return b, nil
 		}
-		return defaultValue, fmt.Errorf("%s: must be a boolean", name)
+		return defaultValue, &Error{Message: fmt.Sprintf("%s: must be a boolean", name)}
 	}
 	return defaultValue, nil
 }
 
 // GetList extracts a list keyword argument with a default value.
-func (k Kwargs) GetList(name string, defaultValue []Object) ([]Object, error) {
+func (k Kwargs) GetList(name string, defaultValue []Object) ([]Object, Object) {
 	if obj, ok := k.Kwargs[name]; ok {
-		if l, ok := obj.AsList(); ok {
+		if l, err := obj.AsList(); err == nil {
 			return l, nil
 		}
-		return defaultValue, fmt.Errorf("%s: must be a list", name)
+		return defaultValue, &Error{Message: fmt.Sprintf("%s: must be a list", name)}
 	}
 	return defaultValue, nil
 }

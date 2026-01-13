@@ -14,12 +14,10 @@ import (
 var HashlibLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"sha256": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
-			}
-			str, ok := args[0].AsString()
-			if !ok {
-				return errors.NewTypeError("STRING", args[0].Type().String())
+			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			str, err := args[0].AsString()
+			if err != nil {
+				return err
 			}
 			hash := sha256.Sum256([]byte(str))
 			return &object.String{Value: hex.EncodeToString(hash[:])}
@@ -30,12 +28,10 @@ Returns the SHA-256 hash of the input string as a hexadecimal string.`,
 	},
 	"sha1": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
-			}
-			str, ok := args[0].AsString()
-			if !ok {
-				return errors.NewTypeError("STRING", args[0].Type().String())
+			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			str, err := args[0].AsString()
+			if err != nil {
+				return err
 			}
 			hash := sha1.Sum([]byte(str))
 			return &object.String{Value: hex.EncodeToString(hash[:])}
@@ -46,12 +42,10 @@ Returns the SHA-1 hash of the input string as a hexadecimal string.`,
 	},
 	"md5": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
-			}
-			str, ok := args[0].AsString()
-			if !ok {
-				return errors.NewTypeError("STRING", args[0].Type().String())
+			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			str, err := args[0].AsString()
+			if err != nil {
+				return err
 			}
 			hash := md5.Sum([]byte(str))
 			return &object.String{Value: hex.EncodeToString(hash[:])}

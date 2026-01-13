@@ -10,7 +10,9 @@ import (
 
 	"github.com/paularlott/cli"
 	"github.com/paularlott/scriptling"
+	"github.com/paularlott/scriptling/ai"
 	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/mcp"
 	"github.com/paularlott/scriptling/stdlib"
 )
 
@@ -60,7 +62,15 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	extlibs.RegisterThreadsLibrary(p)
 	extlibs.RegisterOSLibrary(p, []string{})
 	extlibs.RegisterPathlibLibrary(p, []string{})
+	extlibs.RegisterGlobLibrary(p, []string{})
 	extlibs.RegisterWaitForLibrary(p)
+	extlibs.RegisterConsoleLibrary(p)
+
+	// Register AI and MCP libraries
+	ai.Register(p)
+
+	// Register MCP library
+	mcp.Register(p)
 
 	// Set up on-demand library loading for local .py files
 	p.SetOnDemandLibraryCallback(func(p *scriptling.Scriptling, libName string) bool {

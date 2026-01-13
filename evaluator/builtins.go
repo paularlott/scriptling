@@ -65,7 +65,7 @@ Use list(filter(...)) to get a list.`,
 			// Get sep kwarg (default: " ")
 			sep := " "
 			if sepObj := kwargs.Get("sep"); sepObj != nil {
-				if sepStr, ok := sepObj.AsString(); ok {
+				if sepStr, err := sepObj.AsString(); err == nil {
 					sep = sepStr
 				} else if _, ok := sepObj.(*object.Null); !ok {
 					return errors.NewError("sep must be None or a string, not %s", sepObj.Type())
@@ -75,7 +75,7 @@ Use list(filter(...)) to get a list.`,
 			// Get end kwarg (default: "\n")
 			end := "\n"
 			if endObj := kwargs.Get("end"); endObj != nil {
-				if endStr, ok := endObj.AsString(); ok {
+				if endStr, err := endObj.AsString(); err == nil {
 					end = endStr
 				} else if _, ok := endObj.(*object.Null); !ok {
 					return errors.NewError("end must be None or a string, not %s", endObj.Type())
@@ -85,7 +85,12 @@ Use list(filter(...)) to get a list.`,
 			// Build output string
 			parts := make([]string, len(args))
 			for i, arg := range args {
-				parts[i] = arg.Inspect()
+				// Use AsString() for strings to get actual value, Inspect() for others
+				if str, err := arg.AsString(); err == nil {
+					parts[i] = str
+				} else {
+					parts[i] = arg.Inspect()
+				}
 			}
 			fmt.Fprint(writer, strings.Join(parts, sep)+end)
 			return NULL
@@ -102,8 +107,8 @@ Examples:
 	},
 	"len": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
 			switch arg := args[0].(type) {
 			case *object.String:
@@ -132,8 +137,8 @@ Returns the number of items in a string, list, dict, or tuple.`,
 	},
 	"type": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
 			obj := args[0]
 			if instance, ok := obj.(*object.Instance); ok {
@@ -147,19 +152,24 @@ Returns a string representing the type of the object.`,
 	},
 	"str": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
+			// For exceptions, return just the message (like Python)
+			if exc, ok := args[0].(*object.Exception); ok {
+				return &object.String{Value: exc.Message}
 			}
 			return &object.String{Value: args[0].Inspect()}
 		},
 		HelpText: `str(obj) - Convert an object to a string
 
-Returns the string representation of any object.`,
+Returns the string representation of any object.
+For exceptions, returns just the exception message.`,
 	},
 	"int": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
 			switch arg := args[0].(type) {
 			case *object.Integer:
@@ -184,8 +194,8 @@ Floats are truncated (not rounded).`,
 	},
 	"float": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
 			switch arg := args[0].(type) {
 			case *object.Float:
@@ -210,8 +220,8 @@ Converts an integer, string, or float to a float.`,
 
 	"sum": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
 
 			var elements []object.Object
@@ -261,8 +271,8 @@ Supports integers and floats, returns appropriate type.`,
 	},
 	"sorted": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) < 1 || len(args) > 2 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.RangeArgs(args, 1, 2); err != nil {
+				return err
 			}
 
 			var elements []object.Object
@@ -300,7 +310,7 @@ Supports integers and floats, returns appropriate type.`,
 			reverse := false
 			if kwargs.Len() > 0 {
 				if rev := kwargs.Get("reverse"); rev != nil {
-					if b, ok := rev.AsBool(); ok {
+					if b, err := rev.AsBool(); err == nil {
 						reverse = b
 					}
 				}
@@ -316,7 +326,7 @@ Supports integers and floats, returns appropriate type.`,
 					keys = make([]object.Object, n)
 					for i, elem := range elements {
 						key := keyFunc.Fn(ctx, object.NewKwargs(nil), elem)
-						if isError(key) || isException(key) {
+						if object.IsError(key) || isException(key) {
 							return key
 						}
 						keys[i] = key
@@ -417,30 +427,40 @@ Set reverse=True to sort in descending order.`,
 	},
 	"range": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) < 1 || len(args) > 3 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.RangeArgs(args, 1, 3); err != nil {
+				return err
 			}
 			var start, stop, step int64
+			var errObj object.Object
 			if len(args) == 1 {
-				if args[0].Type() != object.INTEGER_OBJ {
-					return errors.NewTypeError("INTEGER", args[0].Type().String())
+				stop, errObj = args[0].AsInt()
+				if errObj != nil {
+					return errors.ParameterError("stop", errObj)
 				}
-				stop = args[0].(*object.Integer).Value
 				step = 1
 			} else if len(args) == 2 {
-				if args[0].Type() != object.INTEGER_OBJ || args[1].Type() != object.INTEGER_OBJ {
-					return errors.NewTypeError("INTEGER", "mixed types")
+				start, errObj = args[0].AsInt()
+				if errObj != nil {
+					return errors.ParameterError("start", errObj)
 				}
-				start = args[0].(*object.Integer).Value
-				stop = args[1].(*object.Integer).Value
+				stop, errObj = args[1].AsInt()
+				if errObj != nil {
+					return errors.ParameterError("stop", errObj)
+				}
 				step = 1
 			} else {
-				if args[0].Type() != object.INTEGER_OBJ || args[1].Type() != object.INTEGER_OBJ || args[2].Type() != object.INTEGER_OBJ {
-					return errors.NewTypeError("INTEGER", "mixed types")
+				start, errObj = args[0].AsInt()
+				if errObj != nil {
+					return errors.ParameterError("start", errObj)
 				}
-				start = args[0].(*object.Integer).Value
-				stop = args[1].(*object.Integer).Value
-				step = args[2].(*object.Integer).Value
+				stop, errObj = args[1].AsInt()
+				if errObj != nil {
+					return errors.ParameterError("stop", errObj)
+				}
+				step, errObj = args[2].AsInt()
+				if errObj != nil {
+					return errors.ParameterError("step", errObj)
+				}
 				if step == 0 {
 					return errors.NewError("range step cannot be zero")
 				}
@@ -455,8 +475,8 @@ Use list(range(...)) to get a list.`,
 	},
 	"keys": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
 			if args[0].Type() != object.DICT_OBJ {
 				return errors.NewTypeError("DICT", args[0].Type().String())
@@ -470,8 +490,8 @@ Returns a view object of all keys in the dictionary.`,
 	},
 	"values": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
 			if args[0].Type() != object.DICT_OBJ {
 				return errors.NewTypeError("DICT", args[0].Type().String())
@@ -485,8 +505,8 @@ Returns a view object of all values in the dictionary.`,
 	},
 	"items": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
 			if args[0].Type() != object.DICT_OBJ {
 				return errors.NewTypeError("DICT", args[0].Type().String())
@@ -505,11 +525,11 @@ Returns a view object of (key, value) pairs for all items in the dictionary.`,
 			}
 			start := int64(0)
 			if len(args) == 2 {
-				if startObj, ok := args[1].AsInt(); ok {
-					start = startObj
-				} else {
-					return errors.NewTypeError("INTEGER", args[1].Type().String())
+				startObj, err := args[1].AsInt()
+				if err != nil {
+					return errors.ParameterError("start", err)
 				}
+				start = startObj
 			}
 			// Validate iterable type
 			switch args[0].(type) {
@@ -591,7 +611,9 @@ Use list(zip(...)) to get a list.`,
 					return errors.NewTypeError("INSTANCE", args[1].Type().String())
 				}
 			} else {
-				return errors.NewArgumentError(len(args), 2)
+				if err := errors.MaxArgs(args, 2); err != nil {
+					return err
+				}
 			}
 
 			// Verify instance is an instance of class (or subclass)
@@ -618,8 +640,8 @@ Use list(zip(...)) to get a list.`,
 	},
 	"any": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
 			var iterable []object.Object
 			switch iter := args[0].(type) {
@@ -644,8 +666,8 @@ Returns False for an empty iterable.`,
 	},
 	"all": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
 			var iterable []object.Object
 			switch iter := args[0].(type) {
@@ -672,8 +694,8 @@ Returns True if all elements in the iterable are truthy (or if empty).`,
 			if len(args) == 0 {
 				return FALSE
 			}
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
 			if isTruthy(args[0]) {
 				return TRUE
@@ -687,8 +709,8 @@ With no argument, returns False.`,
 	},
 	"abs": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
 			switch num := args[0].(type) {
 			case *object.Integer:
@@ -784,11 +806,11 @@ With multiple arguments, returns the largest argument.`,
 			}
 			ndigits := 0
 			if len(args) == 2 {
-				if nd, ok := args[1].AsInt(); ok {
-					ndigits = int(nd)
-				} else {
-					return errors.NewTypeError("INTEGER", args[1].Type().String())
+				nd, err := args[1].AsInt()
+				if err != nil {
+					return errors.ParameterError("ndigits", err)
 				}
+				ndigits = int(nd)
 			}
 			var value float64
 			switch num := args[0].(type) {
@@ -819,46 +841,49 @@ Returns an integer if ndigits is omitted or 0.`,
 	},
 	"hex": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
-			if num, ok := args[0].AsInt(); ok {
-				if num >= 0 {
-					return &object.String{Value: fmt.Sprintf("0x%x", num)}
-				}
-				return &object.String{Value: fmt.Sprintf("-0x%x", -num)}
+			num, err := args[0].AsInt()
+			if err != nil {
+				return errors.ParameterError("x", err)
 			}
-			return errors.NewTypeError("INTEGER", args[0].Type().String())
+			if num >= 0 {
+				return &object.String{Value: fmt.Sprintf("0x%x", num)}
+			}
+			return &object.String{Value: fmt.Sprintf("-0x%x", -num)}
 		},
 		HelpText: `hex(x) - Convert an integer to a lowercase hexadecimal string prefixed with "0x"`,
 	},
 	"bin": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
-			if num, ok := args[0].AsInt(); ok {
-				if num >= 0 {
-					return &object.String{Value: fmt.Sprintf("0b%b", num)}
-				}
-				return &object.String{Value: fmt.Sprintf("-0b%b", -num)}
+			num, err := args[0].AsInt()
+			if err != nil {
+				return errors.ParameterError("x", err)
 			}
-			return errors.NewTypeError("INTEGER", args[0].Type().String())
+			if num >= 0 {
+				return &object.String{Value: fmt.Sprintf("0b%b", num)}
+			}
+			return &object.String{Value: fmt.Sprintf("-0b%b", -num)}
 		},
 		HelpText: `bin(x) - Convert an integer to a binary string prefixed with "0b"`,
 	},
 	"oct": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
-			if num, ok := args[0].AsInt(); ok {
-				if num >= 0 {
-					return &object.String{Value: fmt.Sprintf("0o%o", num)}
-				}
-				return &object.String{Value: fmt.Sprintf("-0o%o", -num)}
+			num, err := args[0].AsInt()
+			if err != nil {
+				return errors.ParameterError("x", err)
 			}
-			return errors.NewTypeError("INTEGER", args[0].Type().String())
+			if num >= 0 {
+				return &object.String{Value: fmt.Sprintf("0o%o", num)}
+			}
+			return &object.String{Value: fmt.Sprintf("-0o%o", -num)}
 		},
 		HelpText: `oct(x) - Convert an integer to an octal string prefixed with "0o"`,
 	},
@@ -913,8 +938,8 @@ Equivalent to base**exp or base**exp % mod if mod is given.`,
 	},
 	"divmod": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
 			}
 			var a, b float64
 			var bothInts bool = true
@@ -958,8 +983,8 @@ Equivalent to (a // b, a % b) for integers.`,
 	},
 	"callable": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
 			switch args[0].(type) {
 			case *object.Function, *object.Builtin, *object.LambdaFunction:
@@ -972,12 +997,12 @@ Equivalent to (a // b, a % b) for integers.`,
 	},
 	"isinstance": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
 			}
-			typeName, ok := args[1].AsString()
-			if !ok {
-				return errors.NewTypeError("STRING", args[1].Type().String())
+			typeName, err := args[1].AsString()
+			if err != nil {
+				return err
 			}
 			objType := args[0].Type().String()
 			// Support common Python type names
@@ -1013,16 +1038,17 @@ Type names: "int", "str", "float", "bool", "list", "dict", "tuple", "function", 
 	},
 	"chr": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
-			if num, ok := args[0].AsInt(); ok {
-				if num < 0 || num > 0x10FFFF {
-					return errors.NewError("chr() arg not in range(0x110000)")
-				}
-				return &object.String{Value: string(rune(num))}
+			num, err := args[0].AsInt()
+			if err != nil {
+				return errors.ParameterError("i", err)
 			}
-			return errors.NewTypeError("INTEGER", args[0].Type().String())
+			if num < 0 || num > 0x10FFFF {
+				return errors.NewError("chr() arg not in range(0x110000)")
+			}
+			return &object.String{Value: string(rune(num))}
 		},
 		HelpText: `chr(i) - Return a string of one character from Unicode code point
 
@@ -1030,17 +1056,18 @@ The argument must be in the range 0-1114111 (0x10FFFF).`,
 	},
 	"ord": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
-			if str, ok := args[0].AsString(); ok {
-				runes := []rune(str)
-				if len(runes) != 1 {
-					return errors.NewError("ord() expected a character, but string of length %d found", len(runes))
-				}
-				return object.NewInteger(int64(runes[0]))
+			str, err := args[0].AsString()
+			if err != nil {
+				return errors.ParameterError("c", err)
 			}
-			return errors.NewTypeError("STRING", args[0].Type().String())
+			runes := []rune(str)
+			if len(runes) != 1 {
+				return errors.NewError("ord() expected a character, but string of length %d found", len(runes))
+			}
+			return object.NewInteger(int64(runes[0]))
 		},
 		HelpText: `ord(c) - Return Unicode code point for a one-character string
 
@@ -1048,8 +1075,8 @@ The argument must be a string of exactly one character.`,
 	},
 	"reversed": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
 			switch args[0].(type) {
 			case *object.List, *object.Tuple, *object.String, *object.Iterator:
@@ -1068,8 +1095,8 @@ Use list(reversed(...)) to get a list.`,
 			if len(args) == 0 {
 				return &object.List{Elements: []object.Object{}}
 			}
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
 			elements, ok := object.IterableToSlice(args[0])
 			if !ok {
@@ -1099,8 +1126,8 @@ Otherwise, returns a list containing the items of the iterable.`,
 			if len(args) == 0 {
 				return result
 			}
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
 			switch iter := args[0].(type) {
 			case *object.Dict:
@@ -1141,8 +1168,8 @@ Keyword arguments are added to the dict.`,
 			if len(args) == 0 {
 				return &object.Tuple{Elements: []object.Object{}}
 			}
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
 			// Special case: tuple returns itself (no copy needed for immutable)
 			if t, ok := args[0].(*object.Tuple); ok {
@@ -1167,8 +1194,8 @@ Otherwise, returns a tuple containing the items of the iterable.`,
 			if len(args) == 0 {
 				return object.NewSet()
 			}
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
 
 			// Special case: set returns a copy
@@ -1189,21 +1216,10 @@ Otherwise, returns a tuple containing the items of the iterable.`,
 With no argument, returns an empty set.
 Otherwise, returns a set containing unique items from the iterable.`,
 	},
-	"input": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			// input() is not supported in embedded environments
-			// In a scripting engine context, there's no stdin
-			return errors.NewError("input() is not available in embedded scripting environments")
-		},
-		HelpText: `input([prompt]) - Read a line of input
-
-Note: input() is not available in embedded scripting environments.
-This function exists for compatibility but will return an error.`,
-	},
 	"repr": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
 			switch obj := args[0].(type) {
 			case *object.String:
@@ -1220,8 +1236,8 @@ For other objects, returns the same as str().`,
 	},
 	"hash": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
 			// FNV-1a hash algorithm - fast and good distribution
 			str := args[0].Inspect()
@@ -1242,8 +1258,8 @@ Returns an integer hash value for the object using FNV-1a algorithm.`,
 	},
 	"id": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
 			// Use hash of inspect value as id (stable for same object)
 			str := fmt.Sprintf("%p", args[0])
@@ -1265,10 +1281,10 @@ Returns a unique integer identifier for the object.`,
 			value := args[0]
 			formatSpec := ""
 			if len(args) == 2 {
-				if spec, ok := args[1].AsString(); ok {
+				if spec, err := args[1].AsString(); err == nil {
 					formatSpec = spec
 				} else {
-					return errors.NewTypeError("STRING", args[1].Type().String())
+					return err
 				}
 			}
 			// Handle format specifiers
@@ -1357,12 +1373,12 @@ Supports width, alignment, and type specifiers.`,
 	},
 	"hasattr": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
 			}
-			name, ok := args[1].AsString()
-			if !ok {
-				return errors.NewTypeError("STRING", args[1].Type().String())
+			name, err := args[1].AsString()
+			if err != nil {
+				return err
 			}
 			// Check if object has the attribute/method
 			switch obj := args[0].(type) {
@@ -1390,9 +1406,9 @@ Returns True if the object has the named attribute.`,
 			if len(args) < 2 || len(args) > 3 {
 				return errors.NewError("getattr() takes 2 or 3 arguments (%d given)", len(args))
 			}
-			name, ok := args[1].AsString()
-			if !ok {
-				return errors.NewTypeError("STRING", args[1].Type().String())
+			name, err := args[1].AsString()
+			if err != nil {
+				return err
 			}
 			// Get attribute from object
 			switch obj := args[0].(type) {
@@ -1421,12 +1437,12 @@ If default is provided, returns it when attribute doesn't exist.`,
 	},
 	"setattr": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 3 {
-				return errors.NewArgumentError(len(args), 3)
+			if err := errors.ExactArgs(args, 3); err != nil {
+				return err
 			}
-			name, ok := args[1].AsString()
-			if !ok {
-				return errors.NewTypeError("STRING", args[1].Type().String())
+			name, err := args[1].AsString()
+			if err != nil {
+				return err
 			}
 			// Set attribute on object
 			switch obj := args[0].(type) {
@@ -1450,12 +1466,12 @@ Only works on dict-like objects.`,
 	},
 	"delattr": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
 			}
-			name, ok := args[1].AsString()
-			if !ok {
-				return errors.NewTypeError("STRING", args[1].Type().String())
+			name, err := args[1].AsString()
+			if err != nil {
+				return err
 			}
 			// Delete attribute from object
 			switch obj := args[0].(type) {
@@ -1481,8 +1497,8 @@ Deletes the named attribute from the given object.`,
 	},
 	"slice": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) > 3 {
-				return errors.NewArgumentError(len(args), 3)
+			if err := errors.MaxArgs(args, 3); err != nil {
+				return err
 			}
 
 			// Default values: slice(stop) where start=0, step=1
@@ -1665,7 +1681,7 @@ func mapFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.O
 			callArgs[j] = iterables[j][i]
 		}
 		res := applyFunctionWithContext(ctx, fn, callArgs, nil, env)
-		if isError(res) {
+		if object.IsError(res) {
 			return res
 		}
 		results[i] = res
@@ -1684,8 +1700,8 @@ func mapFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.O
 }
 
 func filterFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-	if len(args) != 2 {
-		return errors.NewArgumentError(len(args), 2)
+	if err := errors.ExactArgs(args, 2); err != nil {
+		return err
 	}
 	fn := args[0]
 	iterable, ok := object.IterableToSlice(args[1])
@@ -1704,7 +1720,7 @@ func filterFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 			}
 		} else {
 			res := applyFunctionWithContext(ctx, fn, []object.Object{elem}, nil, env)
-			if isError(res) {
+			if object.IsError(res) {
 				return res
 			}
 			if isTruthy(res) {
@@ -1746,8 +1762,8 @@ func helpFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.
 		return NULL
 	}
 
-	if len(args) != 1 {
-		return errors.NewArgumentError(len(args), 1)
+	if err := errors.ExactArgs(args, 1); err != nil {
+		return err
 	}
 
 	// Handle string arguments
@@ -2104,11 +2120,12 @@ func printFunctionHelp(writer io.Writer, name string, fn *object.Function) {
 func GetImportBuiltin() *object.Builtin {
 	return &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
-			if args[0].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("STRING", args[0].Type().String())
+			libName, err := args[0].AsString()
+			if err != nil {
+				return errors.ParameterError("module_name", err)
 			}
 
 			env := getEnvFromContext(ctx)
@@ -2116,10 +2133,9 @@ func GetImportBuiltin() *object.Builtin {
 			if importCallback == nil {
 				return errors.NewError(errors.ErrImportError)
 			}
-			libName := args[0].(*object.String).Value
-			err := importCallback(libName)
-			if err != nil {
-				return errors.NewError("%s: %s", errors.ErrImportError, err.Error())
+			importErr := importCallback(libName)
+			if importErr != nil {
+				return errors.NewError("%s: %s", errors.ErrImportError, importErr.Error())
 			}
 			return &object.Null{}
 		},

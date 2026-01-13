@@ -40,8 +40,8 @@ Example:
 	"repeat": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// repeat(elem, n) - Repeat element n times
-			if len(args) < 1 || len(args) > 2 {
-				return errors.NewArgumentError(len(args), 2)
+			if err := errors.RangeArgs(args, 1, 2); err != nil {
+				return err
 			}
 			elem := args[0]
 			times := int64(1)
@@ -72,8 +72,8 @@ Example:
 	"cycle": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// cycle(iterable, n) - Cycle through iterable n times
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
 			}
 			var elements []object.Object
 			switch a := args[0].(type) {
@@ -112,8 +112,8 @@ Example:
 	"count": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// count(start, stop[, step]) - Generate a sequence of numbers
-			if len(args) < 2 || len(args) > 3 {
-				return errors.NewArgumentError(len(args), 2)
+			if err := errors.RangeArgs(args, 2, 3); err != nil {
+				return err
 			}
 			start, ok := args[0].(*object.Integer)
 			if !ok {
@@ -158,8 +158,8 @@ Example:
 	"islice": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// islice(iterable, stop) or islice(iterable, start, stop[, step])
-			if len(args) < 2 || len(args) > 4 {
-				return errors.NewArgumentError(len(args), 2)
+			if err := errors.RangeArgs(args, 2, 4); err != nil {
+				return err
 			}
 			var elements []object.Object
 			switch a := args[0].(type) {
@@ -232,8 +232,8 @@ Example:
 	"takewhile": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// takewhile(predicate, iterable) - Take elements while predicate is true
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
 			}
 			pred, ok := args[0].(*object.Builtin)
 			if !ok {
@@ -251,7 +251,7 @@ Example:
 			result := []object.Object{}
 			for _, elem := range elements {
 				res := pred.Fn(ctx, object.NewKwargs(nil), elem)
-				if isError(res) {
+				if object.IsError(res) {
 					return res
 				}
 				if !isTruthy(res) {
@@ -271,8 +271,8 @@ Example:
 	"dropwhile": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// dropwhile(predicate, iterable) - Drop elements while predicate is true
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
 			}
 			pred, ok := args[0].(*object.Builtin)
 			if !ok {
@@ -292,7 +292,7 @@ Example:
 			for _, elem := range elements {
 				if dropping {
 					res := pred.Fn(ctx, object.NewKwargs(nil), elem)
-					if isError(res) {
+					if object.IsError(res) {
 						return res
 					}
 					if isTruthy(res) {
@@ -443,8 +443,8 @@ Example:
 	"permutations": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// permutations(iterable[, r])
-			if len(args) < 1 || len(args) > 2 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.RangeArgs(args, 1, 2); err != nil {
+				return err
 			}
 			var elements []object.Object
 			switch a := args[0].(type) {
@@ -490,8 +490,8 @@ Example:
 	"combinations": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// combinations(iterable, r)
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
 			}
 			var elements []object.Object
 			switch a := args[0].(type) {
@@ -533,8 +533,8 @@ Example:
 	"combinations_with_replacement": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// combinations_with_replacement(iterable, r)
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
 			}
 			var elements []object.Object
 			switch a := args[0].(type) {
@@ -579,8 +579,8 @@ Example:
 	"groupby": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// groupby(iterable[, key]) - Group consecutive elements
-			if len(args) < 1 || len(args) > 2 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.RangeArgs(args, 1, 2); err != nil {
+				return err
 			}
 			var elements []object.Object
 			switch a := args[0].(type) {
@@ -613,7 +613,7 @@ Example:
 				var key object.Object
 				if keyFunc != nil {
 					key = keyFunc.Fn(ctx, object.NewKwargs(nil), elem)
-					if isError(key) {
+					if object.IsError(key) {
 						return key
 					}
 				} else {
@@ -658,8 +658,8 @@ Example:
 	"accumulate": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// accumulate(iterable[, func]) - Running totals
-			if len(args) < 1 || len(args) > 2 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.RangeArgs(args, 1, 2); err != nil {
+				return err
 			}
 			var elements []object.Object
 			switch a := args[0].(type) {
@@ -690,13 +690,13 @@ Example:
 			for i := 1; i < len(elements); i++ {
 				if accumFunc != nil {
 					accumulator = accumFunc.Fn(ctx, object.NewKwargs(nil), accumulator, elements[i])
-					if isError(accumulator) {
+					if object.IsError(accumulator) {
 						return accumulator
 					}
 				} else {
 					// Default: addition
 					accumulator = addObjects(accumulator, elements[i])
-					if isError(accumulator) {
+					if object.IsError(accumulator) {
 						return accumulator
 					}
 				}
@@ -715,8 +715,8 @@ Example:
 	"filterfalse": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// filterfalse(predicate, iterable) - Filter elements where predicate is false
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
 			}
 			pred, ok := args[0].(*object.Builtin)
 			if !ok {
@@ -734,7 +734,7 @@ Example:
 			result := []object.Object{}
 			for _, elem := range elements {
 				res := pred.Fn(ctx, object.NewKwargs(nil), elem)
-				if isError(res) {
+				if object.IsError(res) {
 					return res
 				}
 				if !isTruthy(res) {
@@ -753,8 +753,8 @@ Example:
 	"starmap": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// starmap(func, iterable) - Apply function to argument tuples
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
 			}
 			fn, ok := args[0].(*object.Builtin)
 			if !ok {
@@ -781,7 +781,7 @@ Example:
 					return errors.NewError("starmap() iterable must contain sequences")
 				}
 				res := fn.Fn(ctx, object.NewKwargs(nil), fnArgs...)
-				if isError(res) {
+				if object.IsError(res) {
 					return res
 				}
 				result = append(result, res)
@@ -798,8 +798,8 @@ Example:
 	"compress": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// compress(data, selectors) - Filter data based on selectors
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
 			}
 			var data []object.Object
 			switch a := args[0].(type) {
@@ -843,8 +843,8 @@ Example:
 	"pairwise": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// pairwise(iterable) - Return successive overlapping pairs
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
 			var elements []object.Object
 			switch a := args[0].(type) {
@@ -881,8 +881,8 @@ Example:
 	"batched": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// batched(iterable, n) - Batch elements into tuples of size n
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
 			}
 			var elements []object.Object
 			switch a := args[0].(type) {
@@ -1036,14 +1036,6 @@ func addObjects(a, b object.Object) object.Object {
 		}
 	}
 	return errors.NewError("cannot add %s and %s", a.Type(), b.Type())
-}
-
-// isError and isTruthy helpers (same as evaluator)
-func isError(obj object.Object) bool {
-	if obj != nil {
-		return obj.Type() == object.ERROR_OBJ
-	}
-	return false
 }
 
 func isTruthy(obj object.Object) bool {

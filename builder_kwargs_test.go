@@ -71,13 +71,13 @@ func TestBuilderKwargsOnly(t *testing.T) {
 
 	// Function with only kwargs (no positional args except Kwargs)
 	builder.Function("connect", func(kwargs object.Kwargs) (string, error) {
-		host, err := kwargs.GetString("host", "localhost")
-		if err != nil {
-			return "", err
+		host, objErr := kwargs.GetString("host", "localhost")
+		if objErr != nil {
+			return "", fmt.Errorf("failed to get host: %v", objErr)
 		}
-		port, err := kwargs.GetInt("port", 8080)
-		if err != nil {
-			return "", err
+		port, objErr := kwargs.GetInt("port", 8080)
+		if objErr != nil {
+			return "", fmt.Errorf("failed to get port: %v", objErr)
 		}
 		return fmt.Sprintf("%s:%d", host, port), nil
 	})
@@ -144,20 +144,20 @@ func TestBuilderContextKwargs(t *testing.T) {
 
 	// Function with context and kwargs
 	builder.Function("timeout_connect", func(ctx context.Context, kwargs object.Kwargs) (string, error) {
-		host, err := kwargs.GetString("host", "localhost")
-		if err != nil {
-			return "", err
+		host, objErr := kwargs.GetString("host", "localhost")
+		if objErr != nil {
+			return "", fmt.Errorf("failed to get host: %v", objErr)
 		}
-		port, err := kwargs.GetInt("port", 8080)
-		if err != nil {
-			return "", err
+		port, objErr := kwargs.GetInt("port", 8080)
+		if objErr != nil {
+			return "", fmt.Errorf("failed to get port: %v", objErr)
 		}
-		
+
 		// Check context
 		if ctx == nil {
 			return "", fmt.Errorf("no context")
 		}
-		
+
 		return fmt.Sprintf("%s:%d", host, port), nil
 	})
 
@@ -218,14 +218,14 @@ func TestBuilderMixedContextKwargsPositional(t *testing.T) {
 		if ctx == nil {
 			return "", fmt.Errorf("no context")
 		}
-		
-		prefix, err := kwargs.GetString("prefix", ">")
-		if err != nil {
-			return "", err
+
+		prefix, objErr := kwargs.GetString("prefix", ">")
+		if objErr != nil {
+			return "", fmt.Errorf("failed to get prefix: %v", objErr)
 		}
-		suffix, err := kwargs.GetString("suffix", "<")
-		if err != nil {
-			return "", err
+		suffix, objErr := kwargs.GetString("suffix", "<")
+		if objErr != nil {
+			return "", fmt.Errorf("failed to get suffix: %v", objErr)
 		}
 		return fmt.Sprintf("%s %s: %d times %s", prefix, name, count, suffix), nil
 	})
@@ -246,24 +246,24 @@ func TestBuilderMixedContextKwargsPositional(t *testing.T) {
 			expected: "> task: 5 times <",
 		},
 		{
-			name:     "custom prefix",
-			args:     []object.Object{&object.String{Value: "task"}, object.NewInteger(3)},
+			name: "custom prefix",
+			args: []object.Object{&object.String{Value: "task"}, object.NewInteger(3)},
 			kwargs: map[string]object.Object{
 				"prefix": &object.String{Value: ">>>"},
 			},
 			expected: ">>> task: 3 times <",
 		},
 		{
-			name:     "custom suffix",
-			args:     []object.Object{&object.String{Value: "task"}, object.NewInteger(10)},
+			name: "custom suffix",
+			args: []object.Object{&object.String{Value: "task"}, object.NewInteger(10)},
 			kwargs: map[string]object.Object{
 				"suffix": &object.String{Value: "<<<"},
 			},
 			expected: "> task: 10 times <<<",
 		},
 		{
-			name:     "custom prefix and suffix",
-			args:     []object.Object{&object.String{Value: "task"}, object.NewInteger(7)},
+			name: "custom prefix and suffix",
+			args: []object.Object{&object.String{Value: "task"}, object.NewInteger(7)},
 			kwargs: map[string]object.Object{
 				"prefix": &object.String{Value: "["},
 				"suffix": &object.String{Value: "]"},
@@ -296,21 +296,21 @@ func TestBuilderKwargsWithAllTypes(t *testing.T) {
 	builder := object.NewLibraryBuilder("test", "Test library")
 
 	builder.Function("all_types", func(kwargs object.Kwargs) (string, error) {
-		s, err := kwargs.GetString("str", "default")
-		if err != nil {
-			return "", err
+		s, objErr := kwargs.GetString("str", "default")
+		if objErr != nil {
+			return "", fmt.Errorf("failed to get str: %v", objErr)
 		}
-		i, err := kwargs.GetInt("int", 42)
-		if err != nil {
-			return "", err
+		i, objErr := kwargs.GetInt("int", 42)
+		if objErr != nil {
+			return "", fmt.Errorf("failed to get int: %v", objErr)
 		}
-		f, err := kwargs.GetFloat("float", 3.14)
-		if err != nil {
-			return "", err
+		f, objErr := kwargs.GetFloat("float", 3.14)
+		if objErr != nil {
+			return "", fmt.Errorf("failed to get float: %v", objErr)
 		}
-		b, err := kwargs.GetBool("bool", true)
-		if err != nil {
-			return "", err
+		b, objErr := kwargs.GetBool("bool", true)
+		if objErr != nil {
+			return "", fmt.Errorf("failed to get bool: %v", objErr)
 		}
 		return fmt.Sprintf("str=%s int=%d float=%.2f bool=%t", s, i, f, b), nil
 	})
@@ -417,5 +417,539 @@ func TestBuilderKwargsHasLenKeys(t *testing.T) {
 		if !strings.Contains(got, "keys=") {
 			t.Errorf("expected keys=, got %s", got)
 		}
+	}
+}
+
+func TestFunctionBuilderSimple(t *testing.T) {
+	fb := object.NewFunctionBuilder()
+	fb.Function(func(a, b int) int { return a + b })
+	fn := fb.Build()
+
+	result := fn(context.Background(), object.NewKwargs(nil), &object.Integer{Value: 3}, &object.Integer{Value: 4})
+	if intResult, ok := result.(*object.Integer); !ok || intResult.Value != 7 {
+		t.Errorf("expected 7, got %v", result)
+	}
+}
+
+func TestFunctionBuilderWithHelp(t *testing.T) {
+	fb := object.NewFunctionBuilder()
+	fb.FunctionWithHelp(func(x float64) float64 { return x * 2 }, "double(x) - doubles the value")
+	fn := fb.Build()
+
+	// Test the function works
+	result := fn(context.Background(), object.NewKwargs(nil), &object.Float{Value: 3.5})
+	if floatResult, ok := result.(*object.Float); !ok || floatResult.Value != 7.0 {
+		t.Errorf("expected 7.0, got %v", result)
+	}
+}
+
+func TestFunctionBuilderContext(t *testing.T) {
+	fb := object.NewFunctionBuilder()
+	fb.Function(func(ctx context.Context, a int) string {
+		return fmt.Sprintf("got %d", a)
+	})
+	fn := fb.Build()
+
+	result := fn(context.Background(), object.NewKwargs(nil), &object.Integer{Value: 42})
+	if strResult, ok := result.(*object.String); !ok || strResult.Value != "got 42" {
+		t.Errorf("expected 'got 42', got %v", result)
+	}
+}
+
+func TestFunctionBuilderKwargs(t *testing.T) {
+	fb := object.NewFunctionBuilder()
+	fb.Function(func(kwargs object.Kwargs) (string, error) {
+		host, _ := kwargs.GetString("host", "localhost")
+		port, _ := kwargs.GetInt("port", 8080)
+		return fmt.Sprintf("%s:%d", host, port), nil
+	})
+	fn := fb.Build()
+
+	kwargs := object.NewKwargs(map[string]object.Object{
+		"host": &object.String{Value: "example.com"},
+		"port": &object.Integer{Value: 9000},
+	})
+	result := fn(context.Background(), kwargs)
+	if strResult, ok := result.(*object.String); !ok || strResult.Value != "example.com:9000" {
+		t.Errorf("expected 'example.com:9000', got %v", result)
+	}
+}
+
+func TestFunctionBuilderMixed(t *testing.T) {
+	fb := object.NewFunctionBuilder()
+	fb.Function(func(ctx context.Context, kwargs object.Kwargs, name string) string {
+		prefix, _ := kwargs.GetString("prefix", "Hello")
+		return fmt.Sprintf("%s, %s!", prefix, name)
+	})
+	fn := fb.Build()
+
+	kwargs := object.NewKwargs(map[string]object.Object{
+		"prefix": &object.String{Value: "Hi"},
+	})
+	result := fn(context.Background(), kwargs, &object.String{Value: "World"})
+	if strResult, ok := result.(*object.String); !ok || strResult.Value != "Hi, World!" {
+		t.Errorf("expected 'Hi, World!', got %v", result)
+	}
+}
+
+func TestFunctionBuilderErrorReturn(t *testing.T) {
+	fb := object.NewFunctionBuilder()
+	fb.Function(func(a, b int) (int, error) {
+		if b == 0 {
+			return 0, fmt.Errorf("division by zero")
+		}
+		return a / b, nil
+	})
+	fn := fb.Build()
+
+	// Test success
+	result := fn(context.Background(), object.NewKwargs(nil), &object.Integer{Value: 10}, &object.Integer{Value: 2})
+	if intResult, ok := result.(*object.Integer); !ok || intResult.Value != 5 {
+		t.Errorf("expected 5, got %v", result)
+	}
+
+	// Test error
+	result = fn(context.Background(), object.NewKwargs(nil), &object.Integer{Value: 10}, &object.Integer{Value: 0})
+	if errResult, ok := result.(*object.Error); !ok || !strings.Contains(errResult.Message, "division by zero") {
+		t.Errorf("expected error containing 'division by zero', got %v", result)
+	}
+}
+
+func TestFunctionBuilderNoFunction(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic when building without function")
+		}
+	}()
+	fb := object.NewFunctionBuilder()
+	fb.Build() // Should panic
+}
+
+func TestFunctionBuilderMultipleFunctions(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic when registering multiple functions")
+		}
+	}()
+	fb := object.NewFunctionBuilder()
+	fb.Function(func() {})
+	fb.Function(func() {}) // Should panic
+}
+
+func TestClassBuilderSimple(t *testing.T) {
+	cb := object.NewClassBuilder("TestClass")
+	cb.Method("greet", func(self *object.Instance, name string) string {
+		return "Hello, " + name
+	})
+	class := cb.Build()
+
+	if class.Name != "TestClass" {
+		t.Errorf("expected class name 'TestClass', got %s", class.Name)
+	}
+
+	if len(class.Methods) != 1 {
+		t.Errorf("expected 1 method, got %d", len(class.Methods))
+	}
+
+	method, ok := class.Methods["greet"]
+	if !ok {
+		t.Fatal("greet method not found")
+	}
+
+	builtin, ok := method.(*object.Builtin)
+	if !ok {
+		t.Fatal("method is not a Builtin")
+	}
+
+	// Create a test instance
+	instance := &object.Instance{
+		Class:  class,
+		Fields: map[string]object.Object{},
+	}
+
+	// Call the method
+	result := builtin.Fn(context.Background(), object.NewKwargs(nil), instance, &object.String{Value: "World"})
+	if strResult, ok := result.(*object.String); !ok || strResult.Value != "Hello, World" {
+		t.Errorf("expected 'Hello, World', got %v", result)
+	}
+}
+
+func TestClassBuilderWithHelp(t *testing.T) {
+	cb := object.NewClassBuilder("Person")
+	cb.MethodWithHelp("introduce", func(self *object.Instance) string {
+		return "I am a person"
+	}, "Return an introduction")
+	class := cb.Build()
+
+	method := class.Methods["introduce"].(*object.Builtin)
+	if method.HelpText != "Return an introduction" {
+		t.Errorf("expected help text 'Return an introduction', got %s", method.HelpText)
+	}
+}
+
+func TestClassBuilderMultipleMethods(t *testing.T) {
+	cb := object.NewClassBuilder("Calculator")
+	cb.Method("add", func(self *object.Instance, a, b int) int {
+		return a + b
+	})
+	cb.Method("multiply", func(self *object.Instance, a, b int) int {
+		return a * b
+	})
+	class := cb.Build()
+
+	if len(class.Methods) != 2 {
+		t.Errorf("expected 2 methods, got %d", len(class.Methods))
+	}
+
+	instance := &object.Instance{
+		Class:  class,
+		Fields: map[string]object.Object{},
+	}
+
+	// Test add method
+	addMethod := class.Methods["add"].(*object.Builtin)
+	result := addMethod.Fn(context.Background(), object.NewKwargs(nil), instance, &object.Integer{Value: 3}, &object.Integer{Value: 4})
+	if intResult, ok := result.(*object.Integer); !ok || intResult.Value != 7 {
+		t.Errorf("expected 7, got %v", result)
+	}
+
+	// Test multiply method
+	multiplyMethod := class.Methods["multiply"].(*object.Builtin)
+	result = multiplyMethod.Fn(context.Background(), object.NewKwargs(nil), instance, &object.Integer{Value: 5}, &object.Integer{Value: 6})
+	if intResult, ok := result.(*object.Integer); !ok || intResult.Value != 30 {
+		t.Errorf("expected 30, got %v", result)
+	}
+}
+
+func TestClassBuilderWithBaseClass(t *testing.T) {
+	baseClass := &object.Class{
+		Name:    "Base",
+		Methods: map[string]object.Object{},
+	}
+
+	cb := object.NewClassBuilder("Derived")
+	cb.BaseClass(baseClass)
+	cb.Method("special", func(self *object.Instance) string {
+		return "special method"
+	})
+	class := cb.Build()
+
+	if class.BaseClass != baseClass {
+		t.Error("base class not set correctly")
+	}
+
+	if class.Name != "Derived" {
+		t.Errorf("expected name 'Derived', got %s", class.Name)
+	}
+}
+
+func TestClassBuilderMethodWithError(t *testing.T) {
+	cb := object.NewClassBuilder("TestClass")
+	cb.Method("divide", func(self *object.Instance, a, b int) (int, error) {
+		if b == 0 {
+			return 0, fmt.Errorf("division by zero")
+		}
+		return a / b, nil
+	})
+	class := cb.Build()
+
+	instance := &object.Instance{
+		Class:  class,
+		Fields: map[string]object.Object{},
+	}
+
+	method := class.Methods["divide"].(*object.Builtin)
+
+	// Test success
+	result := method.Fn(context.Background(), object.NewKwargs(nil), instance, &object.Integer{Value: 10}, &object.Integer{Value: 2})
+	if intResult, ok := result.(*object.Integer); !ok || intResult.Value != 5 {
+		t.Errorf("expected 5, got %v", result)
+	}
+
+	// Test error
+	result = method.Fn(context.Background(), object.NewKwargs(nil), instance, &object.Integer{Value: 10}, &object.Integer{Value: 0})
+	if errResult, ok := result.(*object.Error); !ok || !strings.Contains(errResult.Message, "division by zero") {
+		t.Errorf("expected error containing 'division by zero', got %v", result)
+	}
+}
+
+// TestClassBuilderKwargsOnly tests class methods with only kwargs parameter.
+func TestClassBuilderKwargsOnly(t *testing.T) {
+	cb := object.NewClassBuilder("Connector")
+	cb.Method("connect", func(self *object.Instance, kwargs object.Kwargs) (string, error) {
+		host, _ := kwargs.GetString("host", "localhost")
+		port, _ := kwargs.GetInt("port", 8080)
+		return fmt.Sprintf("%s:%d", host, port), nil
+	})
+	class := cb.Build()
+
+	instance := &object.Instance{
+		Class:  class,
+		Fields: map[string]object.Object{},
+	}
+
+	method := class.Methods["connect"].(*object.Builtin)
+
+	// Test with defaults
+	result := method.Fn(context.Background(), object.NewKwargs(map[string]object.Object{}), instance)
+	if strResult, ok := result.(*object.String); !ok || strResult.Value != "localhost:8080" {
+		t.Errorf("expected 'localhost:8080', got %v", result)
+	}
+
+	// Test with custom values
+	result = method.Fn(context.Background(), object.NewKwargs(map[string]object.Object{
+		"host": &object.String{Value: "example.com"},
+		"port": object.NewInteger(443),
+	}), instance)
+	if strResult, ok := result.(*object.String); !ok || strResult.Value != "example.com:443" {
+		t.Errorf("expected 'example.com:443', got %v", result)
+	}
+}
+
+// TestClassBuilderContextKwargs tests class methods with context and kwargs.
+func TestClassBuilderContextKwargs(t *testing.T) {
+	cb := object.NewClassBuilder("ContextConnector")
+	cb.Method("connect", func(self *object.Instance, ctx context.Context, kwargs object.Kwargs) (string, error) {
+		if ctx == nil {
+			return "", fmt.Errorf("no context")
+		}
+		host, _ := kwargs.GetString("host", "localhost")
+		port, _ := kwargs.GetInt("port", 8080)
+		return fmt.Sprintf("%s:%d", host, port), nil
+	})
+	class := cb.Build()
+
+	instance := &object.Instance{
+		Class:  class,
+		Fields: map[string]object.Object{},
+	}
+
+	method := class.Methods["connect"].(*object.Builtin)
+
+	result := method.Fn(context.Background(), object.NewKwargs(map[string]object.Object{
+		"host": &object.String{Value: "test.com"},
+	}), instance)
+
+	if strResult, ok := result.(*object.String); !ok || strResult.Value != "test.com:8080" {
+		t.Errorf("expected 'test.com:8080', got %v", result)
+	}
+}
+
+// TestClassBuilderMixedKwargsPositional tests class methods with kwargs and positional args.
+func TestClassBuilderMixedKwargsPositional(t *testing.T) {
+	cb := object.NewClassBuilder("Formatter")
+	cb.Method("format", func(self *object.Instance, kwargs object.Kwargs, name string, count int) (string, error) {
+		prefix, _ := kwargs.GetString("prefix", ">")
+		suffix, _ := kwargs.GetString("suffix", "<")
+		return fmt.Sprintf("%s %s: %d times %s", prefix, name, count, suffix), nil
+	})
+	class := cb.Build()
+
+	instance := &object.Instance{
+		Class:  class,
+		Fields: map[string]object.Object{},
+	}
+
+	method := class.Methods["format"].(*object.Builtin)
+
+	// Test with defaults
+	result := method.Fn(context.Background(), object.NewKwargs(map[string]object.Object{}), instance,
+		&object.String{Value: "task"}, object.NewInteger(5))
+	if strResult, ok := result.(*object.String); !ok || strResult.Value != "> task: 5 times <" {
+		t.Errorf("expected '> task: 5 times <', got %v", result)
+	}
+
+	// Test with custom kwargs
+	result = method.Fn(context.Background(), object.NewKwargs(map[string]object.Object{
+		"prefix": &object.String{Value: "["},
+		"suffix": &object.String{Value: "]"},
+	}), instance, &object.String{Value: "job"}, object.NewInteger(10))
+	if strResult, ok := result.(*object.String); !ok || strResult.Value != "[ job: 10 times ]" {
+		t.Errorf("expected '[ job: 10 times ]', got %v", result)
+	}
+}
+
+// TestClassBuilderContextKwargsPositional tests class methods with context, kwargs, and positional args.
+func TestClassBuilderContextKwargsPositional(t *testing.T) {
+	cb := object.NewClassBuilder("ContextFormatter")
+	cb.Method("format", func(self *object.Instance, ctx context.Context, kwargs object.Kwargs, name string) (string, error) {
+		if ctx == nil {
+			return "", fmt.Errorf("no context")
+		}
+		prefix, _ := kwargs.GetString("prefix", "Hello")
+		return fmt.Sprintf("%s, %s!", prefix, name), nil
+	})
+	class := cb.Build()
+
+	instance := &object.Instance{
+		Class:  class,
+		Fields: map[string]object.Object{},
+	}
+
+	method := class.Methods["format"].(*object.Builtin)
+
+	result := method.Fn(context.Background(), object.NewKwargs(map[string]object.Object{
+		"prefix": &object.String{Value: "Hi"},
+	}), instance, &object.String{Value: "World"})
+
+	if strResult, ok := result.(*object.String); !ok || strResult.Value != "Hi, World!" {
+		t.Errorf("expected 'Hi, World!', got %v", result)
+	}
+}
+
+// TestClassBuilderMustHelpers tests class methods with Must* helper methods.
+func TestClassBuilderMustHelpers(t *testing.T) {
+	cb := object.NewClassBuilder("HelperClass")
+	cb.Method("get_info", func(self *object.Instance, kwargs object.Kwargs) string {
+		name := kwargs.MustGetString("name", "default")
+		count := kwargs.MustGetInt("count", 0)
+		return fmt.Sprintf("%s:%d", name, count)
+	})
+	class := cb.Build()
+
+	instance := &object.Instance{
+		Class:  class,
+		Fields: map[string]object.Object{},
+	}
+
+	method := class.Methods["get_info"].(*object.Builtin)
+
+	result := method.Fn(context.Background(), object.NewKwargs(map[string]object.Object{
+		"name": &object.String{Value: "test"},
+	}), instance)
+
+	if strResult, ok := result.(*object.String); !ok || strResult.Value != "test:0" {
+		t.Errorf("expected 'test:0', got %v", result)
+	}
+}
+
+// TestClassBuilderNoArgs tests class methods with no arguments (except self).
+func TestClassBuilderNoArgs(t *testing.T) {
+	cb := object.NewClassBuilder("Simple")
+	cb.Method("get_value", func(self *object.Instance) int {
+		return 42
+	})
+	class := cb.Build()
+
+	instance := &object.Instance{
+		Class:  class,
+		Fields: map[string]object.Object{},
+	}
+
+	method := class.Methods["get_value"].(*object.Builtin)
+
+	result := method.Fn(context.Background(), object.NewKwargs(nil), instance)
+	if intResult, ok := result.(*object.Integer); !ok || intResult.Value != 42 {
+		t.Errorf("expected 42, got %v", result)
+	}
+}
+
+// TestClassBuilderContextOnly tests class methods with context and no other args (except self).
+func TestClassBuilderContextOnly(t *testing.T) {
+	cb := object.NewClassBuilder("Contextual")
+	cb.Method("check_context", func(self *object.Instance, ctx context.Context) string {
+		if ctx != nil {
+			return "has context"
+		}
+		return "no context"
+	})
+	class := cb.Build()
+
+	instance := &object.Instance{
+		Class:  class,
+		Fields: map[string]object.Object{},
+	}
+
+	method := class.Methods["check_context"].(*object.Builtin)
+
+	result := method.Fn(context.Background(), object.NewKwargs(nil), instance)
+	if strResult, ok := result.(*object.String); !ok || strResult.Value != "has context" {
+		t.Errorf("expected 'has context', got %v", result)
+	}
+}
+
+// TestClassBuilderAllTypes tests class methods with kwargs containing all supported types.
+func TestClassBuilderAllTypes(t *testing.T) {
+	cb := object.NewClassBuilder("AllTypes")
+	cb.Method("process", func(self *object.Instance, kwargs object.Kwargs) (string, error) {
+		s, _ := kwargs.GetString("str", "default")
+		i, _ := kwargs.GetInt("int", 42)
+		f, _ := kwargs.GetFloat("float", 3.14)
+		b, _ := kwargs.GetBool("bool", true)
+		return fmt.Sprintf("str=%s int=%d float=%.2f bool=%t", s, i, f, b), nil
+	})
+	class := cb.Build()
+
+	instance := &object.Instance{
+		Class:  class,
+		Fields: map[string]object.Object{},
+	}
+
+	method := class.Methods["process"].(*object.Builtin)
+
+	result := method.Fn(context.Background(), object.NewKwargs(map[string]object.Object{
+		"str":   &object.String{Value: "hello"},
+		"int":   object.NewInteger(100),
+		"float": &object.Float{Value: 2.718},
+		"bool":  &object.Boolean{Value: false},
+	}), instance)
+
+	if strResult, ok := result.(*object.String); !ok || strResult.Value != "str=hello int=100 float=2.72 bool=false" {
+		t.Errorf("unexpected result: %v", result)
+	}
+}
+
+// TestClassBuilderVariadic tests class methods with variadic arguments.
+func TestClassBuilderVariadic(t *testing.T) {
+	cb := object.NewClassBuilder("Variadic")
+	cb.Method("sum_all", func(self *object.Instance, nums ...int) int {
+		total := 0
+		for _, n := range nums {
+			total += n
+		}
+		return total
+	})
+	class := cb.Build()
+
+	instance := &object.Instance{
+		Class:  class,
+		Fields: map[string]object.Object{},
+	}
+
+	method := class.Methods["sum_all"].(*object.Builtin)
+
+	result := method.Fn(context.Background(), object.NewKwargs(nil), instance,
+		object.NewInteger(1), object.NewInteger(2), object.NewInteger(3), object.NewInteger(4))
+	if intResult, ok := result.(*object.Integer); !ok || intResult.Value != 10 {
+		t.Errorf("expected 10, got %v", result)
+	}
+}
+
+// TestClassBuilderContextVariadic tests class methods with context and variadic arguments.
+func TestClassBuilderContextVariadic(t *testing.T) {
+	cb := object.NewClassBuilder("ContextVariadic")
+	cb.Method("sum_with_ctx", func(self *object.Instance, ctx context.Context, nums ...int) int {
+		if ctx == nil {
+			return -1
+		}
+		total := 0
+		for _, n := range nums {
+			total += n
+		}
+		return total
+	})
+	class := cb.Build()
+
+	instance := &object.Instance{
+		Class:  class,
+		Fields: map[string]object.Object{},
+	}
+
+	method := class.Methods["sum_with_ctx"].(*object.Builtin)
+
+	result := method.Fn(context.Background(), object.NewKwargs(nil), instance,
+		object.NewInteger(5), object.NewInteger(10), object.NewInteger(15))
+	if intResult, ok := result.(*object.Integer); !ok || intResult.Value != 30 {
+		t.Errorf("expected 30, got %v", result)
 	}
 }

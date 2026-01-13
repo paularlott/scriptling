@@ -2,7 +2,6 @@ package extlibs
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -11,32 +10,11 @@ import (
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
-	"golang.org/x/net/http2"
+	"github.com/paularlott/scriptling/pool"
 )
 
 func RegisterRequestsLibrary(registrar interface{ RegisterLibrary(string, *object.Library) }) {
 	registrar.RegisterLibrary(RequestsLibraryName, RequestsLibrary)
-}
-
-var httpClient *http.Client
-
-func init() {
-	// Create HTTP/2 transport with connection pooling and self-signed cert support
-	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: true, // Accept self-signed certificates
-		},
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 100,
-		IdleConnTimeout:     90 * time.Second,
-	}
-
-	// Enable HTTP/2
-	http2.ConfigureTransport(transport)
-
-	httpClient = &http.Client{
-		Transport: transport,
-	}
 }
 
 // Response class for HTTP responses
@@ -47,11 +25,9 @@ var ResponseClass = &object.Class{
 	Methods: map[string]object.Object{
 		"json": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) != 1 {
-					return errors.NewArgumentError(len(args), 1)
-				}
+				if err := errors.ExactArgs(args, 1); err != nil { return err }
 				if instance, ok := args[0].(*object.Instance); ok {
-					if body, ok := instance.Fields["body"].AsString(); ok {
+					if body, err := instance.Fields["body"].AsString(); err == nil {
 						var result interface{}
 						if err := json.Unmarshal([]byte(body), &result); err != nil {
 							return errors.NewError("JSONDecodeError: %s", err.Error())
@@ -65,11 +41,9 @@ var ResponseClass = &object.Class{
 		},
 		"raise_for_status": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) != 1 {
-					return errors.NewArgumentError(len(args), 1)
-				}
+				if err := errors.ExactArgs(args, 1); err != nil { return err }
 				if instance, ok := args[0].(*object.Instance); ok {
-					if statusCode, ok := instance.Fields["status_code"].AsInt(); ok {
+					if statusCode, err := instance.Fields["status_code"].AsInt(); err == nil {
 						if statusCode >= 400 {
 							if statusCode >= 500 {
 								return errors.NewError("HTTPError: %d Server Error", statusCode)
@@ -135,22 +109,22 @@ func parseRequestOptions(options map[string]object.Object) (int, map[string]stri
 	user := ""
 	pass := ""
 	if timeoutPair, ok := options["timeout"]; ok {
-		if timeoutInt, ok := timeoutPair.AsInt(); ok {
+		if timeoutInt, err := timeoutPair.AsInt(); err == nil {
 			timeout = int(timeoutInt)
 		}
 	}
 	if headersPair, ok := options["headers"]; ok {
-		if headersDict, ok := headersPair.AsDict(); ok {
+		if headersDict, err := headersPair.AsDict(); err == nil {
 			headers = extractHeaders(headersDict)
 		}
 	}
 	if authPair, ok := options["auth"]; ok {
-		if authList, ok := authPair.AsList(); ok {
+		if authList, err := authPair.AsList(); err == nil {
 			if len(authList) == 2 {
-				if u, ok := authList[0].AsString(); ok {
+				if u, err := authList[0].AsString(); err == nil {
 					user = u
 				}
-				if p, ok := authList[1].AsString(); ok {
+				if p, err := authList[1].AsString(); err == nil {
 					pass = p
 				}
 			}
@@ -169,13 +143,13 @@ func extractRequestArgs(kwargs object.Kwargs, args []object.Object, hasData bool
 	// 1. Handle kwargs
 	for k, v := range kwargs.Kwargs {
 		if k == "url" {
-			if s, ok := v.AsString(); ok {
+			if s, err := v.AsString(); err == nil {
 				url = s
 			} else {
 				return "", "", nil, errors.NewTypeError("STRING", v.Type().String())
 			}
 		} else if hasData && k == "data" {
-			if s, ok := v.AsString(); ok {
+			if s, err := v.AsString(); err == nil {
 				data = s
 			} else {
 				return "", "", nil, errors.NewTypeError("STRING", v.Type().String())
@@ -188,7 +162,7 @@ func extractRequestArgs(kwargs object.Kwargs, args []object.Object, hasData bool
 	// 2. Handle positional args
 	argIdx := 0
 	if url == "" && len(args) > argIdx {
-		if s, ok := args[argIdx].AsString(); ok {
+		if s, err := args[argIdx].AsString(); err == nil {
 			url = s
 			argIdx++
 		} else {
@@ -197,7 +171,7 @@ func extractRequestArgs(kwargs object.Kwargs, args []object.Object, hasData bool
 	}
 
 	if hasData && data == "" && len(args) > argIdx {
-		if s, ok := args[argIdx].AsString(); ok {
+		if s, err := args[argIdx].AsString(); err == nil {
 			data = s
 			argIdx++
 		} else if args[argIdx].Type() != object.DICT_OBJ {
@@ -209,7 +183,7 @@ func extractRequestArgs(kwargs object.Kwargs, args []object.Object, hasData bool
 
 	// Check for legacy options dict
 	if len(args) > argIdx {
-		if d, ok := args[argIdx].AsDict(); ok {
+		if d, err := args[argIdx].AsDict(); err == nil {
 			for k, v := range d {
 				options[k] = v
 			}
@@ -358,7 +332,7 @@ Returns:
 func extractHeaders(dict map[string]object.Object) map[string]string {
 	headers := make(map[string]string)
 	for key, value := range dict {
-		if strVal, ok := value.AsString(); ok {
+		if strVal, err := value.AsString(); err == nil {
 			headers[key] = strVal
 		}
 	}
@@ -398,7 +372,7 @@ func httpRequestWithContext(parentCtx context.Context, method, url, body string,
 		req.SetBasicAuth(user, pass)
 	}
 
-	resp, err := httpClient.Do(req)
+	resp, err := pool.GetHTTPClient().Do(req)
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			return errors.NewError("http timeout after %d seconds", timeoutSecs)

@@ -16,6 +16,15 @@ import (
 const (
 	smallIntMin = -5
 	smallIntMax = 256
+
+	// Type conversion error messages (exported for use by external packages)
+	ErrMustBeString   = "must be a string"
+	ErrMustBeInteger  = "must be an integer"
+	ErrMustBeNumber   = "must be a number"
+	ErrMustBeBoolean  = "must be a boolean"
+	ErrMustBeList     = "must be a list"
+	ErrMustBeDict     = "must be a dict"
+	ErrMustBeIterable = "must be iterable"
 )
 
 var smallIntegers [smallIntMax - smallIntMin + 1]*Integer
@@ -134,12 +143,12 @@ type Object interface {
 	Inspect() string
 
 	// Type-safe accessor methods
-	AsString() (string, bool)
-	AsInt() (int64, bool)
-	AsFloat() (float64, bool)
-	AsBool() (bool, bool)
-	AsList() ([]Object, bool)
-	AsDict() (map[string]Object, bool)
+	AsString() (string, Object)
+	AsInt() (int64, Object)
+	AsFloat() (float64, Object)
+	AsBool() (bool, Object)
+	AsList() ([]Object, Object)
+	AsDict() (map[string]Object, Object)
 }
 
 type Integer struct {
@@ -149,12 +158,12 @@ type Integer struct {
 func (i *Integer) Type() ObjectType { return INTEGER_OBJ }
 func (i *Integer) Inspect() string  { return fmt.Sprintf("%d", i.Value) }
 
-func (i *Integer) AsString() (string, bool)          { return "", false }
-func (i *Integer) AsInt() (int64, bool)              { return i.Value, true }
-func (i *Integer) AsFloat() (float64, bool)          { return float64(i.Value), true }
-func (i *Integer) AsBool() (bool, bool)              { return i.Value != 0, true }
-func (i *Integer) AsList() ([]Object, bool)          { return nil, false }
-func (i *Integer) AsDict() (map[string]Object, bool) { return nil, false }
+func (i *Integer) AsString() (string, Object)          { return "", &Error{Message: ErrMustBeString} }
+func (i *Integer) AsInt() (int64, Object)              { return i.Value, nil }
+func (i *Integer) AsFloat() (float64, Object)          { return float64(i.Value), nil }
+func (i *Integer) AsBool() (bool, Object)              { return i.Value != 0, nil }
+func (i *Integer) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
+func (i *Integer) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
 type Float struct {
 	Value float64
@@ -163,12 +172,12 @@ type Float struct {
 func (f *Float) Type() ObjectType { return FLOAT_OBJ }
 func (f *Float) Inspect() string  { return fmt.Sprintf("%g", f.Value) }
 
-func (f *Float) AsString() (string, bool)          { return "", false }
-func (f *Float) AsInt() (int64, bool)              { return int64(f.Value), true }
-func (f *Float) AsFloat() (float64, bool)          { return f.Value, true }
-func (f *Float) AsBool() (bool, bool)              { return f.Value != 0, true }
-func (f *Float) AsList() ([]Object, bool)          { return nil, false }
-func (f *Float) AsDict() (map[string]Object, bool) { return nil, false }
+func (f *Float) AsString() (string, Object)          { return "", &Error{Message: ErrMustBeString} }
+func (f *Float) AsInt() (int64, Object)              { return int64(f.Value), nil }
+func (f *Float) AsFloat() (float64, Object)          { return f.Value, nil }
+func (f *Float) AsBool() (bool, Object)              { return f.Value != 0, nil }
+func (f *Float) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
+func (f *Float) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
 type Boolean struct {
 	Value bool
@@ -177,12 +186,12 @@ type Boolean struct {
 func (b *Boolean) Type() ObjectType { return BOOLEAN_OBJ }
 func (b *Boolean) Inspect() string  { return fmt.Sprintf("%t", b.Value) }
 
-func (b *Boolean) AsString() (string, bool)          { return "", false }
-func (b *Boolean) AsInt() (int64, bool)              { return 0, false }
-func (b *Boolean) AsFloat() (float64, bool)          { return 0, false }
-func (b *Boolean) AsBool() (bool, bool)              { return b.Value, true }
-func (b *Boolean) AsList() ([]Object, bool)          { return nil, false }
-func (b *Boolean) AsDict() (map[string]Object, bool) { return nil, false }
+func (b *Boolean) AsString() (string, Object)          { return "", &Error{Message: ErrMustBeString} }
+func (b *Boolean) AsInt() (int64, Object)              { return 0, &Error{Message: ErrMustBeInteger} }
+func (b *Boolean) AsFloat() (float64, Object)          { return 0, &Error{Message: ErrMustBeNumber} }
+func (b *Boolean) AsBool() (bool, Object)              { return b.Value, nil }
+func (b *Boolean) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
+func (b *Boolean) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
 type String struct {
 	Value string
@@ -191,12 +200,12 @@ type String struct {
 func (s *String) Type() ObjectType { return STRING_OBJ }
 func (s *String) Inspect() string  { return s.Value }
 
-func (s *String) AsString() (string, bool)          { return s.Value, true }
-func (s *String) AsInt() (int64, bool)              { return 0, false }
-func (s *String) AsFloat() (float64, bool)          { return 0, false }
-func (s *String) AsBool() (bool, bool)              { return s.Value != "", true }
-func (s *String) AsList() ([]Object, bool)          { return nil, false }
-func (s *String) AsDict() (map[string]Object, bool) { return nil, false }
+func (s *String) AsString() (string, Object)          { return s.Value, nil }
+func (s *String) AsInt() (int64, Object)              { return 0, &Error{Message: ErrMustBeInteger} }
+func (s *String) AsFloat() (float64, Object)          { return 0, &Error{Message: ErrMustBeNumber} }
+func (s *String) AsBool() (bool, Object)              { return s.Value != "", nil }
+func (s *String) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
+func (s *String) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
 type Slice struct {
 	Start *Integer // nil means None (default start)
@@ -226,24 +235,24 @@ func (s *Slice) Inspect() string {
 	return fmt.Sprintf("slice(%s)", strings.Join(parts, ":"))
 }
 
-func (s *Slice) AsString() (string, bool)          { return "", false }
-func (s *Slice) AsInt() (int64, bool)              { return 0, false }
-func (s *Slice) AsFloat() (float64, bool)          { return 0, false }
-func (s *Slice) AsBool() (bool, bool)              { return false, false }
-func (s *Slice) AsList() ([]Object, bool)          { return nil, false }
-func (s *Slice) AsDict() (map[string]Object, bool) { return nil, false }
+func (s *Slice) AsString() (string, Object)          { return "", &Error{Message: ErrMustBeString} }
+func (s *Slice) AsInt() (int64, Object)              { return 0, &Error{Message: ErrMustBeInteger} }
+func (s *Slice) AsFloat() (float64, Object)          { return 0, &Error{Message: ErrMustBeNumber} }
+func (s *Slice) AsBool() (bool, Object)              { return false, &Error{Message: ErrMustBeBoolean} }
+func (s *Slice) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
+func (s *Slice) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
 type Null struct{}
 
 func (n *Null) Type() ObjectType { return NULL_OBJ }
 func (n *Null) Inspect() string  { return "None" }
 
-func (n *Null) AsString() (string, bool)          { return "", false }
-func (n *Null) AsInt() (int64, bool)              { return 0, false }
-func (n *Null) AsFloat() (float64, bool)          { return 0, false }
-func (n *Null) AsBool() (bool, bool)              { return false, true }
-func (n *Null) AsList() ([]Object, bool)          { return nil, false }
-func (n *Null) AsDict() (map[string]Object, bool) { return nil, false }
+func (n *Null) AsString() (string, Object)          { return "", &Error{Message: ErrMustBeString} }
+func (n *Null) AsInt() (int64, Object)              { return 0, &Error{Message: ErrMustBeInteger} }
+func (n *Null) AsFloat() (float64, Object)          { return 0, &Error{Message: ErrMustBeNumber} }
+func (n *Null) AsBool() (bool, Object)              { return false, nil }
+func (n *Null) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
+func (n *Null) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
 type ReturnValue struct {
 	Value Object
@@ -252,36 +261,36 @@ type ReturnValue struct {
 func (rv *ReturnValue) Type() ObjectType { return RETURN_OBJ }
 func (rv *ReturnValue) Inspect() string  { return rv.Value.Inspect() }
 
-func (rv *ReturnValue) AsString() (string, bool)          { return "", false }
-func (rv *ReturnValue) AsInt() (int64, bool)              { return 0, false }
-func (rv *ReturnValue) AsFloat() (float64, bool)          { return 0, false }
-func (rv *ReturnValue) AsBool() (bool, bool)              { return false, false }
-func (rv *ReturnValue) AsList() ([]Object, bool)          { return nil, false }
-func (rv *ReturnValue) AsDict() (map[string]Object, bool) { return nil, false }
+func (rv *ReturnValue) AsString() (string, Object)          { return "", &Error{Message: ErrMustBeString} }
+func (rv *ReturnValue) AsInt() (int64, Object)              { return 0, &Error{Message: ErrMustBeInteger} }
+func (rv *ReturnValue) AsFloat() (float64, Object)          { return 0, &Error{Message: ErrMustBeNumber} }
+func (rv *ReturnValue) AsBool() (bool, Object)              { return false, &Error{Message: ErrMustBeBoolean} }
+func (rv *ReturnValue) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
+func (rv *ReturnValue) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
 type Break struct{}
 
 func (b *Break) Type() ObjectType { return BREAK_OBJ }
 func (b *Break) Inspect() string  { return "break" }
 
-func (b *Break) AsString() (string, bool)          { return "", false }
-func (b *Break) AsInt() (int64, bool)              { return 0, false }
-func (b *Break) AsFloat() (float64, bool)          { return 0, false }
-func (b *Break) AsBool() (bool, bool)              { return false, false }
-func (b *Break) AsList() ([]Object, bool)          { return nil, false }
-func (b *Break) AsDict() (map[string]Object, bool) { return nil, false }
+func (b *Break) AsString() (string, Object)          { return "", &Error{Message: ErrMustBeString} }
+func (b *Break) AsInt() (int64, Object)              { return 0, &Error{Message: ErrMustBeInteger} }
+func (b *Break) AsFloat() (float64, Object)          { return 0, &Error{Message: ErrMustBeNumber} }
+func (b *Break) AsBool() (bool, Object)              { return false, &Error{Message: ErrMustBeBoolean} }
+func (b *Break) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
+func (b *Break) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
 type Continue struct{}
 
 func (c *Continue) Type() ObjectType { return CONTINUE_OBJ }
 func (c *Continue) Inspect() string  { return "continue" }
 
-func (c *Continue) AsString() (string, bool)          { return "", false }
-func (c *Continue) AsInt() (int64, bool)              { return 0, false }
-func (c *Continue) AsFloat() (float64, bool)          { return 0, false }
-func (c *Continue) AsBool() (bool, bool)              { return false, false }
-func (c *Continue) AsList() ([]Object, bool)          { return nil, false }
-func (c *Continue) AsDict() (map[string]Object, bool) { return nil, false }
+func (c *Continue) AsString() (string, Object)          { return "", &Error{Message: ErrMustBeString} }
+func (c *Continue) AsInt() (int64, Object)              { return 0, &Error{Message: ErrMustBeInteger} }
+func (c *Continue) AsFloat() (float64, Object)          { return 0, &Error{Message: ErrMustBeNumber} }
+func (c *Continue) AsBool() (bool, Object)              { return false, &Error{Message: ErrMustBeBoolean} }
+func (c *Continue) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
+func (c *Continue) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
 type Function struct {
 	Name          string
@@ -295,12 +304,12 @@ type Function struct {
 func (f *Function) Type() ObjectType { return FUNCTION_OBJ }
 func (f *Function) Inspect() string  { return "<function>" }
 
-func (f *Function) AsString() (string, bool)          { return "", false }
-func (f *Function) AsInt() (int64, bool)              { return 0, false }
-func (f *Function) AsFloat() (float64, bool)          { return 0, false }
-func (f *Function) AsBool() (bool, bool)              { return false, false }
-func (f *Function) AsList() ([]Object, bool)          { return nil, false }
-func (f *Function) AsDict() (map[string]Object, bool) { return nil, false }
+func (f *Function) AsString() (string, Object)          { return "", &Error{Message: ErrMustBeString} }
+func (f *Function) AsInt() (int64, Object)              { return 0, &Error{Message: ErrMustBeInteger} }
+func (f *Function) AsFloat() (float64, Object)          { return 0, &Error{Message: ErrMustBeNumber} }
+func (f *Function) AsBool() (bool, Object)              { return false, &Error{Message: ErrMustBeBoolean} }
+func (f *Function) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
+func (f *Function) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
 type LambdaFunction struct {
 	Parameters    []*ast.Identifier
@@ -313,12 +322,12 @@ type LambdaFunction struct {
 func (lf *LambdaFunction) Type() ObjectType { return LAMBDA_OBJ }
 func (lf *LambdaFunction) Inspect() string  { return "<lambda>" }
 
-func (lf *LambdaFunction) AsString() (string, bool)          { return "", false }
-func (lf *LambdaFunction) AsInt() (int64, bool)              { return 0, false }
-func (lf *LambdaFunction) AsFloat() (float64, bool)          { return 0, false }
-func (lf *LambdaFunction) AsBool() (bool, bool)              { return false, false }
-func (lf *LambdaFunction) AsList() ([]Object, bool)          { return nil, false }
-func (lf *LambdaFunction) AsDict() (map[string]Object, bool) { return nil, false }
+func (lf *LambdaFunction) AsString() (string, Object)          { return "", &Error{Message: ErrMustBeString} }
+func (lf *LambdaFunction) AsInt() (int64, Object)              { return 0, &Error{Message: ErrMustBeInteger} }
+func (lf *LambdaFunction) AsFloat() (float64, Object)          { return 0, &Error{Message: ErrMustBeNumber} }
+func (lf *LambdaFunction) AsBool() (bool, Object)              { return false, &Error{Message: ErrMustBeBoolean} }
+func (lf *LambdaFunction) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
+func (lf *LambdaFunction) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
 // BuiltinFunction is the signature for all builtin functions
 // - ctx: Context with environment and runtime information
@@ -335,12 +344,17 @@ type Builtin struct {
 func (b *Builtin) Type() ObjectType { return BUILTIN_OBJ }
 func (b *Builtin) Inspect() string  { return "<builtin function>" }
 
-func (b *Builtin) AsString() (string, bool)          { return "", false }
-func (b *Builtin) AsInt() (int64, bool)              { return 0, false }
-func (b *Builtin) AsFloat() (float64, bool)          { return 0, false }
-func (b *Builtin) AsBool() (bool, bool)              { return false, false }
-func (b *Builtin) AsList() ([]Object, bool)          { return nil, false }
-func (b *Builtin) AsDict() (map[string]Object, bool) { return b.Attributes, b.Attributes != nil }
+func (b *Builtin) AsString() (string, Object)          { return "", &Error{Message: ErrMustBeString} }
+func (b *Builtin) AsInt() (int64, Object)              { return 0, &Error{Message: ErrMustBeInteger} }
+func (b *Builtin) AsFloat() (float64, Object)          { return 0, &Error{Message: ErrMustBeNumber} }
+func (b *Builtin) AsBool() (bool, Object)              { return false, &Error{Message: ErrMustBeBoolean} }
+func (b *Builtin) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
+func (b *Builtin) AsDict() (map[string]Object, Object) {
+	if b.Attributes != nil {
+		return b.Attributes, nil
+	}
+	return nil, &Error{Message: ErrMustBeDict}
+}
 
 // Library represents a pre-built collection of builtin functions and constants
 // This eliminates the need for function wrappers and provides direct access
@@ -396,12 +410,12 @@ func (l *Library) Description() string {
 func (l *Library) Type() ObjectType { return BUILTIN_OBJ } // Libraries are like builtin objects
 func (l *Library) Inspect() string  { return "<library>" }
 
-func (l *Library) AsString() (string, bool)          { return "", false }
-func (l *Library) AsInt() (int64, bool)              { return 0, false }
-func (l *Library) AsFloat() (float64, bool)          { return 0, false }
-func (l *Library) AsBool() (bool, bool)              { return false, false }
-func (l *Library) AsList() ([]Object, bool)          { return nil, false }
-func (l *Library) AsDict() (map[string]Object, bool) { return nil, false }
+func (l *Library) AsString() (string, Object)          { return "", &Error{Message: ErrMustBeString} }
+func (l *Library) AsInt() (int64, Object)              { return 0, &Error{Message: ErrMustBeInteger} }
+func (l *Library) AsFloat() (float64, Object)          { return 0, &Error{Message: ErrMustBeNumber} }
+func (l *Library) AsBool() (bool, Object)              { return false, &Error{Message: ErrMustBeBoolean} }
+func (l *Library) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
+func (l *Library) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
 type Environment struct {
 	mu                         sync.RWMutex
@@ -463,6 +477,13 @@ func (e *Environment) Set(name string, val Object) Object {
 	e.store[name] = val
 	e.mu.Unlock()
 	return val
+}
+
+// Delete removes a variable from this environment (not parent scopes)
+func (e *Environment) Delete(name string) {
+	e.mu.Lock()
+	delete(e.store, name)
+	e.mu.Unlock()
 }
 
 // SetGlobal sets a variable in the global (outermost) environment
@@ -624,12 +645,12 @@ func (l *List) Inspect() string {
 	return out.String()
 }
 
-func (l *List) AsString() (string, bool)          { return "", false }
-func (l *List) AsInt() (int64, bool)              { return 0, false }
-func (l *List) AsFloat() (float64, bool)          { return 0, false }
-func (l *List) AsBool() (bool, bool)              { return len(l.Elements) > 0, true }
-func (l *List) AsList() ([]Object, bool)          { return l.Elements, true }
-func (l *List) AsDict() (map[string]Object, bool) { return nil, false }
+func (l *List) AsString() (string, Object)          { return "", &Error{Message: ErrMustBeString} }
+func (l *List) AsInt() (int64, Object)              { return 0, &Error{Message: ErrMustBeInteger} }
+func (l *List) AsFloat() (float64, Object)          { return 0, &Error{Message: ErrMustBeNumber} }
+func (l *List) AsBool() (bool, Object)              { return len(l.Elements) > 0, nil }
+func (l *List) AsList() ([]Object, Object)          { return l.Elements, nil }
+func (l *List) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
 type Tuple struct {
 	Elements []Object
@@ -652,12 +673,12 @@ func (t *Tuple) Inspect() string {
 	return out.String()
 }
 
-func (t *Tuple) AsString() (string, bool)          { return "", false }
-func (t *Tuple) AsInt() (int64, bool)              { return 0, false }
-func (t *Tuple) AsFloat() (float64, bool)          { return 0, false }
-func (t *Tuple) AsBool() (bool, bool)              { return len(t.Elements) > 0, true }
-func (t *Tuple) AsList() ([]Object, bool)          { return t.Elements, true }
-func (t *Tuple) AsDict() (map[string]Object, bool) { return nil, false }
+func (t *Tuple) AsString() (string, Object)          { return "", &Error{Message: ErrMustBeString} }
+func (t *Tuple) AsInt() (int64, Object)              { return 0, &Error{Message: ErrMustBeInteger} }
+func (t *Tuple) AsFloat() (float64, Object)          { return 0, &Error{Message: ErrMustBeNumber} }
+func (t *Tuple) AsBool() (bool, Object)              { return len(t.Elements) > 0, nil }
+func (t *Tuple) AsList() ([]Object, Object)          { return t.Elements, nil }
+func (t *Tuple) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
 type Dict struct {
 	Pairs map[string]DictPair
@@ -686,17 +707,17 @@ func (d *Dict) Inspect() string {
 	return out.String()
 }
 
-func (d *Dict) AsString() (string, bool) { return "", false }
-func (d *Dict) AsInt() (int64, bool)     { return 0, false }
-func (d *Dict) AsFloat() (float64, bool) { return 0, false }
-func (d *Dict) AsBool() (bool, bool)     { return len(d.Pairs) > 0, true }
-func (d *Dict) AsList() ([]Object, bool) { return nil, false }
-func (d *Dict) AsDict() (map[string]Object, bool) {
+func (d *Dict) AsString() (string, Object) { return "", &Error{Message: ErrMustBeString} }
+func (d *Dict) AsInt() (int64, Object)     { return 0, &Error{Message: ErrMustBeInteger} }
+func (d *Dict) AsFloat() (float64, Object) { return 0, &Error{Message: ErrMustBeNumber} }
+func (d *Dict) AsBool() (bool, Object)     { return len(d.Pairs) > 0, nil }
+func (d *Dict) AsList() ([]Object, Object) { return nil, &Error{Message: ErrMustBeList} }
+func (d *Dict) AsDict() (map[string]Object, Object) {
 	result := make(map[string]Object)
 	for key, pair := range d.Pairs {
 		result[key] = pair.Value
 	}
-	return result, true
+	return result, nil
 }
 
 type Error struct {
@@ -721,12 +742,12 @@ func (e *Error) Inspect() string {
 	return msg
 }
 
-func (e *Error) AsString() (string, bool)          { return e.Message, true }
-func (e *Error) AsInt() (int64, bool)              { return 0, false }
-func (e *Error) AsFloat() (float64, bool)          { return 0, false }
-func (e *Error) AsBool() (bool, bool)              { return false, true }
-func (e *Error) AsList() ([]Object, bool)          { return nil, false }
-func (e *Error) AsDict() (map[string]Object, bool) { return nil, false }
+func (e *Error) AsString() (string, Object)          { return e.Message, nil }
+func (e *Error) AsInt() (int64, Object)              { return 0, &Error{Message: ErrMustBeInteger} }
+func (e *Error) AsFloat() (float64, Object)          { return 0, &Error{Message: ErrMustBeNumber} }
+func (e *Error) AsBool() (bool, Object)              { return false, nil }
+func (e *Error) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
+func (e *Error) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
 type Exception struct {
 	Message string
@@ -735,12 +756,12 @@ type Exception struct {
 func (ex *Exception) Type() ObjectType { return EXCEPTION_OBJ }
 func (ex *Exception) Inspect() string  { return "EXCEPTION: " + ex.Message }
 
-func (ex *Exception) AsString() (string, bool)          { return ex.Message, true }
-func (ex *Exception) AsInt() (int64, bool)              { return 0, false }
-func (ex *Exception) AsFloat() (float64, bool)          { return 0, false }
-func (ex *Exception) AsBool() (bool, bool)              { return false, true }
-func (ex *Exception) AsList() ([]Object, bool)          { return nil, false }
-func (ex *Exception) AsDict() (map[string]Object, bool) { return nil, false }
+func (ex *Exception) AsString() (string, Object)          { return ex.Message, nil }
+func (ex *Exception) AsInt() (int64, Object)              { return 0, &Error{Message: ErrMustBeInteger} }
+func (ex *Exception) AsFloat() (float64, Object)          { return 0, &Error{Message: ErrMustBeNumber} }
+func (ex *Exception) AsBool() (bool, Object)              { return false, nil }
+func (ex *Exception) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
+func (ex *Exception) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
 type Class struct {
 	Name      string
@@ -752,12 +773,12 @@ type Class struct {
 func (c *Class) Type() ObjectType { return CLASS_OBJ }
 func (c *Class) Inspect() string  { return fmt.Sprintf("<class '%s'>", c.Name) }
 
-func (c *Class) AsString() (string, bool)          { return c.Name, true }
-func (c *Class) AsInt() (int64, bool)              { return 0, false }
-func (c *Class) AsFloat() (float64, bool)          { return 0, false }
-func (c *Class) AsBool() (bool, bool)              { return true, true }
-func (c *Class) AsList() ([]Object, bool)          { return nil, false }
-func (c *Class) AsDict() (map[string]Object, bool) { return c.Methods, true }
+func (c *Class) AsString() (string, Object)          { return c.Name, nil }
+func (c *Class) AsInt() (int64, Object)              { return 0, &Error{Message: ErrMustBeInteger} }
+func (c *Class) AsFloat() (float64, Object)          { return 0, &Error{Message: ErrMustBeNumber} }
+func (c *Class) AsBool() (bool, Object)              { return true, nil }
+func (c *Class) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
+func (c *Class) AsDict() (map[string]Object, Object) { return c.Methods, nil }
 
 type Instance struct {
 	Class  *Class
@@ -775,12 +796,12 @@ func (i *Instance) Inspect() string {
 	return fmt.Sprintf("<%s object at %p>", i.Class.Name, i)
 }
 
-func (i *Instance) AsString() (string, bool)          { return i.Inspect(), true }
-func (i *Instance) AsInt() (int64, bool)              { return 0, false }
-func (i *Instance) AsFloat() (float64, bool)          { return 0, false }
-func (i *Instance) AsBool() (bool, bool)              { return true, true }
-func (i *Instance) AsList() ([]Object, bool)          { return nil, false }
-func (i *Instance) AsDict() (map[string]Object, bool) { return i.Fields, true }
+func (i *Instance) AsString() (string, Object)          { return i.Inspect(), nil }
+func (i *Instance) AsInt() (int64, Object)              { return 0, &Error{Message: ErrMustBeInteger} }
+func (i *Instance) AsFloat() (float64, Object)          { return 0, &Error{Message: ErrMustBeNumber} }
+func (i *Instance) AsBool() (bool, Object)              { return true, nil }
+func (i *Instance) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
+func (i *Instance) AsDict() (map[string]Object, Object) { return i.Fields, nil }
 
 type Super struct {
 	Class    *Class
@@ -792,12 +813,12 @@ func (s *Super) Inspect() string {
 	return fmt.Sprintf("<super: <class '%s'>, <%s object>>", s.Class.Name, s.Instance.Class.Name)
 }
 
-func (s *Super) AsString() (string, bool)          { return s.Inspect(), true }
-func (s *Super) AsInt() (int64, bool)              { return 0, false }
-func (s *Super) AsFloat() (float64, bool)          { return 0, false }
-func (s *Super) AsBool() (bool, bool)              { return true, true }
-func (s *Super) AsList() ([]Object, bool)          { return nil, false }
-func (s *Super) AsDict() (map[string]Object, bool) { return nil, false }
+func (s *Super) AsString() (string, Object)          { return s.Inspect(), nil }
+func (s *Super) AsInt() (int64, Object)              { return 0, &Error{Message: ErrMustBeInteger} }
+func (s *Super) AsFloat() (float64, Object)          { return 0, &Error{Message: ErrMustBeNumber} }
+func (s *Super) AsBool() (bool, Object)              { return true, nil }
+func (s *Super) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
+func (s *Super) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
 // LibraryRegistrar is an interface for registering libraries.
 // This allows external libraries to register themselves without circular imports.
