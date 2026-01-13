@@ -91,13 +91,13 @@ for model in models:
     print(model.id)
 ```
 
-### client.response_create(input, **kwargs)
+### client.response_create(model, input)
 
 Creates a response using the OpenAI Responses API (new structured API).
 
 **Parameters:**
+- `model` (str): Model identifier (e.g., "gpt-4o", "gpt-4")
 - `input` (list): Input items (messages)
-- `model` (str, optional): Model identifier (default: "gpt-4o")
 
 **Returns:** dict - Response object with id, status, output, usage, etc.
 
@@ -105,16 +105,10 @@ Creates a response using the OpenAI Responses API (new structured API).
 ```python
 client = ai.new_client("sk-...")
 
-# Default model (gpt-4o)
-response = client.response_create([
+response = client.response_create("gpt-4o", [
     {"type": "message", "role": "user", "content": "Hello!"}
 ])
 print(response.output)
-
-# Custom model
-response = client.response_create([
-    {"type": "message", "role": "user", "content": "Hello!"}
-], model="gpt-4")
 ```
 
 ### client.response_get(id)
@@ -184,12 +178,12 @@ client.add_remote_server(
 response = client.chat("gpt-4", {"role": "user", "content": "Search for golang news"})
 ```
 
-### client.remove_remote_server(namespace)
+### client.remove_remote_server(prefix)
 
 Removes a previously added remote MCP server.
 
 **Parameters:**
-- `namespace` (str): Namespace of the server to remove
+- `prefix` (str): Prefix/namespace of the server to remove
 
 **Example:**
 ```python
