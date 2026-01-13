@@ -52,18 +52,16 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 		Methods: map[string]object.Object{
 			"joinpath": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) < 1 {
-						return errors.NewArgumentError(len(args), 1)
-					}
+					if err := errors.MinArgs(args, 1); err != nil { return err }
 					pathInstance := args[0].(*object.Instance)
 					cleanPath, _ := pathInstance.Fields["__path__"].AsString()
 
 					parts := make([]string, 0, len(args))
 					parts = append(parts, cleanPath)
 					for _, arg := range args[1:] {
-						s, ok := arg.AsString()
-						if !ok {
-							return errors.NewTypeError("STRING", arg.Type().String())
+						s, err := arg.AsString()
+						if err != nil {
+							return err
 						}
 						parts = append(parts, s)
 					}
@@ -81,9 +79,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 			},
 			"exists": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) != 1 {
-						return errors.NewArgumentError(len(args), 1)
-					}
+					if err := errors.ExactArgs(args, 1); err != nil { return err }
 					pathInstance := args[0].(*object.Instance)
 					cleanPath, _ := pathInstance.Fields["__path__"].AsString()
 
@@ -97,9 +93,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 			},
 			"is_file": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) != 1 {
-						return errors.NewArgumentError(len(args), 1)
-					}
+					if err := errors.ExactArgs(args, 1); err != nil { return err }
 					pathInstance := args[0].(*object.Instance)
 					cleanPath, _ := pathInstance.Fields["__path__"].AsString()
 
@@ -116,9 +110,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 			},
 			"is_dir": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) != 1 {
-						return errors.NewArgumentError(len(args), 1)
-					}
+					if err := errors.ExactArgs(args, 1); err != nil { return err }
 					pathInstance := args[0].(*object.Instance)
 					cleanPath, _ := pathInstance.Fields["__path__"].AsString()
 
@@ -135,9 +127,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 			},
 			"mkdir": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) != 1 {
-						return errors.NewArgumentError(len(args), 1)
-					}
+					if err := errors.ExactArgs(args, 1); err != nil { return err }
 					pathInstance := args[0].(*object.Instance)
 					cleanPath, _ := pathInstance.Fields["__path__"].AsString()
 
@@ -147,7 +137,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 
 					parents := false
 					if val, ok := kwargs.Kwargs["parents"]; ok {
-						if b, ok := val.AsBool(); ok {
+						if b, err := val.AsBool(); err == nil {
 							parents = b
 						}
 					}
@@ -168,9 +158,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 			},
 			"rmdir": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) != 1 {
-						return errors.NewArgumentError(len(args), 1)
-					}
+					if err := errors.ExactArgs(args, 1); err != nil { return err }
 					pathInstance := args[0].(*object.Instance)
 					cleanPath, _ := pathInstance.Fields["__path__"].AsString()
 
@@ -188,15 +176,13 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 			},
 			"unlink": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) != 1 {
-						return errors.NewArgumentError(len(args), 1)
-					}
+					if err := errors.ExactArgs(args, 1); err != nil { return err }
 					pathInstance := args[0].(*object.Instance)
 					cleanPath, _ := pathInstance.Fields["__path__"].AsString()
 
 					missingOk := false
 					if val, ok := kwargs.Kwargs["missing_ok"]; ok {
-						if b, ok := val.AsBool(); ok {
+						if b, err := val.AsBool(); err == nil {
 							missingOk = b
 						}
 					}
@@ -218,9 +204,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 			},
 			"read_text": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) != 1 {
-						return errors.NewArgumentError(len(args), 1)
-					}
+					if err := errors.ExactArgs(args, 1); err != nil { return err }
 					pathInstance := args[0].(*object.Instance)
 					cleanPath, _ := pathInstance.Fields["__path__"].AsString()
 
@@ -238,23 +222,21 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 			},
 			"write_text": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) != 2 {
-						return errors.NewArgumentError(len(args), 2)
-					}
+					if err := errors.ExactArgs(args, 2); err != nil { return err }
 					pathInstance := args[0].(*object.Instance)
 					cleanPath, _ := pathInstance.Fields["__path__"].AsString()
-					content, ok := args[1].AsString()
-					if !ok {
-						return errors.NewTypeError("STRING", args[1].Type().String())
+					content, err := args[1].AsString()
+					if err != nil {
+						return err
 					}
 
 					if err := p.checkPathSecurity(cleanPath); err != nil {
 						return err
 					}
 
-					err := os.WriteFile(cleanPath, []byte(content), 0644)
-					if err != nil {
-						return errors.NewError("cannot write file: %s", err.Error())
+					fsErr := os.WriteFile(cleanPath, []byte(content), 0644)
+					if fsErr != nil {
+						return errors.NewError("cannot write file: %s", fsErr.Error())
 					}
 					return &object.Null{}
 				},
@@ -298,12 +280,10 @@ Returns a Path object representing the filesystem path.`,
 }
 
 func (p *PathlibLibraryInstance) pathConstructor(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-	if len(args) != 1 {
-		return errors.NewArgumentError(len(args), 1)
-	}
-	pathStr, ok := args[0].AsString()
-	if !ok {
-		return errors.NewTypeError("STRING", args[0].Type().String())
+	if err := errors.ExactArgs(args, 1); err != nil { return err }
+	pathStr, err := args[0].AsString()
+	if err != nil {
+		return err
 	}
 
 	return p.createPathObject(pathStr)

@@ -12,12 +12,12 @@ type DictKeys struct {
 func (dk *DictKeys) Type() ObjectType { return DICT_KEYS_OBJ }
 func (dk *DictKeys) Inspect() string  { return fmt.Sprintf("dict_keys(%s)", dk.Dict.Inspect()) }
 
-func (dk *DictKeys) AsString() (string, bool)          { return dk.Inspect(), true }
-func (dk *DictKeys) AsInt() (int64, bool)              { return 0, false }
-func (dk *DictKeys) AsFloat() (float64, bool)          { return 0, false }
-func (dk *DictKeys) AsBool() (bool, bool)              { return len(dk.Dict.Pairs) > 0, true }
-func (dk *DictKeys) AsList() ([]Object, bool)          { return nil, false }
-func (dk *DictKeys) AsDict() (map[string]Object, bool) { return nil, false }
+func (dk *DictKeys) AsString() (string, Object)          { return dk.Inspect(), nil }
+func (dk *DictKeys) AsInt() (int64, Object)              { return 0, &Error{Message: ErrMustBeInteger} }
+func (dk *DictKeys) AsFloat() (float64, Object)          { return 0, &Error{Message: ErrMustBeNumber} }
+func (dk *DictKeys) AsBool() (bool, Object)              { return len(dk.Dict.Pairs) > 0, nil }
+func (dk *DictKeys) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
+func (dk *DictKeys) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
 // CreateIterator returns an iterator for the keys
 func (dk *DictKeys) CreateIterator() *Iterator {
@@ -60,12 +60,12 @@ type DictValues struct {
 func (dv *DictValues) Type() ObjectType { return DICT_VALUES_OBJ }
 func (dv *DictValues) Inspect() string  { return fmt.Sprintf("dict_values(%s)", dv.Dict.Inspect()) }
 
-func (dv *DictValues) AsString() (string, bool)          { return dv.Inspect(), true }
-func (dv *DictValues) AsInt() (int64, bool)              { return 0, false }
-func (dv *DictValues) AsFloat() (float64, bool)          { return 0, false }
-func (dv *DictValues) AsBool() (bool, bool)              { return len(dv.Dict.Pairs) > 0, true }
-func (dv *DictValues) AsList() ([]Object, bool)          { return nil, false }
-func (dv *DictValues) AsDict() (map[string]Object, bool) { return nil, false }
+func (dv *DictValues) AsString() (string, Object)          { return dv.Inspect(), nil }
+func (dv *DictValues) AsInt() (int64, Object)              { return 0, &Error{Message: ErrMustBeInteger} }
+func (dv *DictValues) AsFloat() (float64, Object)          { return 0, &Error{Message: ErrMustBeNumber} }
+func (dv *DictValues) AsBool() (bool, Object)              { return len(dv.Dict.Pairs) > 0, nil }
+func (dv *DictValues) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
+func (dv *DictValues) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
 func (dv *DictValues) CreateIterator() *Iterator {
 	keys := make([]string, 0, len(dv.Dict.Pairs))
@@ -98,12 +98,12 @@ type DictItems struct {
 func (di *DictItems) Type() ObjectType { return DICT_ITEMS_OBJ }
 func (di *DictItems) Inspect() string  { return fmt.Sprintf("dict_items(%s)", di.Dict.Inspect()) }
 
-func (di *DictItems) AsString() (string, bool)          { return di.Inspect(), true }
-func (di *DictItems) AsInt() (int64, bool)              { return 0, false }
-func (di *DictItems) AsFloat() (float64, bool)          { return 0, false }
-func (di *DictItems) AsBool() (bool, bool)              { return len(di.Dict.Pairs) > 0, true }
-func (di *DictItems) AsList() ([]Object, bool)          { return nil, false }
-func (di *DictItems) AsDict() (map[string]Object, bool) { return nil, false }
+func (di *DictItems) AsString() (string, Object)          { return di.Inspect(), nil }
+func (di *DictItems) AsInt() (int64, Object)              { return 0, &Error{Message: ErrMustBeInteger} }
+func (di *DictItems) AsFloat() (float64, Object)          { return 0, &Error{Message: ErrMustBeNumber} }
+func (di *DictItems) AsBool() (bool, Object)              { return len(di.Dict.Pairs) > 0, nil }
+func (di *DictItems) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
+func (di *DictItems) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
 func (di *DictItems) CreateIterator() *Iterator {
 	keys := make([]string, 0, len(di.Dict.Pairs))

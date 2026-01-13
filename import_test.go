@@ -35,8 +35,8 @@ result = json.loads('{"test": "value"}')
 		t.Errorf("Expected no error after importing json, got: %v", err)
 	}
 
-	_, ok := p.GetVar("result")
-	if !ok {
+	_, objErr := p.GetVar("result")
+	if objErr != nil {
 		t.Error("Expected result variable to be set")
 	}
 
@@ -46,8 +46,8 @@ result = json.loads('{"test": "value"}')
 		t.Errorf("Expected no error accessing parsed data, got: %v", err)
 	}
 
-	testValue, ok := p.GetVar("test_value")
-	if !ok || testValue != "value" {
+	testValue, objErr := p.GetVar("test_value")
+	if objErr != nil || testValue != "value" {
 		t.Errorf("Expected test_value to be 'value', got: %v", testValue)
 	}
 }
@@ -77,13 +77,13 @@ current_time = time.time()
 	}
 
 	// Verify all libraries work
-	sqrtResult, ok := p.GetVar("sqrt_result")
-	if !ok || sqrtResult != 4.0 {
+	sqrtResult, objErr := p.GetVar("sqrt_result")
+	if objErr != nil || sqrtResult != 4.0 {
 		t.Errorf("Expected sqrt_result to be 4.0, got: %v", sqrtResult)
 	}
 
-	currentTime, ok := p.GetVar("current_time")
-	if !ok {
+	currentTime, objErr := p.GetVar("current_time")
+	if objErr != nil {
 		t.Error("Expected current_time to be set")
 	}
 

@@ -76,12 +76,12 @@ func IterableToSlice(obj Object) ([]Object, bool) {
 func (it *Iterator) Type() ObjectType { return ITERATOR_OBJ }
 func (it *Iterator) Inspect() string  { return "<iterator>" }
 
-func (it *Iterator) AsString() (string, bool)          { return "", false }
-func (it *Iterator) AsInt() (int64, bool)              { return 0, false }
-func (it *Iterator) AsFloat() (float64, bool)          { return 0, false }
-func (it *Iterator) AsBool() (bool, bool)              { return !it.consumed, true }
-func (it *Iterator) AsList() ([]Object, bool)          { return nil, false }
-func (it *Iterator) AsDict() (map[string]Object, bool) { return nil, false }
+func (it *Iterator) AsString() (string, Object)          { return "", &Error{Message: ErrMustBeString} }
+func (it *Iterator) AsInt() (int64, Object)              { return 0, &Error{Message: ErrMustBeInteger} }
+func (it *Iterator) AsFloat() (float64, Object)          { return 0, &Error{Message: ErrMustBeNumber} }
+func (it *Iterator) AsBool() (bool, Object)              { return !it.consumed, nil }
+func (it *Iterator) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
+func (it *Iterator) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
 // Next returns the next value from the iterator
 func (it *Iterator) Next() (Object, bool) {

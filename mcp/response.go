@@ -46,13 +46,7 @@ func DecodeToolContent(content mcp.ToolContent) object.Object {
 	switch content.Type {
 	case "text":
 		return decodeTextContent(content.Text)
-	case "image":
-		return scriptlib.FromGo(map[string]interface{}{
-			"type":     content.Type,
-			"data":     content.Data,
-			"mimeType": content.MimeType,
-		})
-	case "audio":
+	case "image", "audio":
 		return scriptlib.FromGo(map[string]interface{}{
 			"type":     content.Type,
 			"data":     content.Data,
@@ -104,8 +98,8 @@ func DictToMap(dict *object.Dict) map[string]interface{} {
 
 	result := make(map[string]interface{}, len(dict.Pairs))
 	for _, pair := range dict.Pairs {
-		key, ok := pair.Key.AsString()
-		if ok {
+		key, err := pair.Key.AsString()
+		if err == nil {
 			result[key] = scriptlib.ToGo(pair.Value)
 		}
 	}

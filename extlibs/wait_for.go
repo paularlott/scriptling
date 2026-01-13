@@ -12,6 +12,7 @@ import (
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
+	"github.com/paularlott/scriptling/pool"
 	"github.com/shirou/gopsutil/v3/process"
 )
 
@@ -27,10 +28,10 @@ func parseWaitOptions(args []object.Object, kwargs map[string]object.Object) (in
 
 	// Handle positional args (timeout can be positional)
 	if len(args) > 1 {
-		if t, ok := args[1].AsInt(); ok {
+		if t, err := args[1].AsInt(); err == nil {
 			timeout = int(t)
 		} else {
-			return 0, 0, errors.NewTypeError("INT", args[1].Type().String())
+			return 0, 0, err
 		}
 	}
 
@@ -47,16 +48,16 @@ func parseWaitOptionsKwargsOnly(defaultTimeout int, defaultPollRate float64, kwa
 	for k, v := range kwargs {
 		switch k {
 		case "timeout":
-			if t, ok := v.AsInt(); ok {
+			if t, err := v.AsInt(); err == nil {
 				timeout = int(t)
 			} else {
-				return 0, 0, errors.NewTypeError("INT", v.Type().String())
+				return 0, 0, err
 			}
 		case "poll_rate":
-			if f, ok := v.AsFloat(); ok {
+			if f, err := v.AsFloat(); err == nil {
 				pollRate = f
 			} else {
-				return 0, 0, errors.NewTypeError("FLOAT", v.Type().String())
+				return 0, 0, err
 			}
 		}
 	}
@@ -68,13 +69,11 @@ var WaitForLibrary = object.NewLibrary(
 	map[string]*object.Builtin{
 		"file": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) < 1 {
-					return errors.NewArgumentError(len(args), 1)
-				}
+				if err := errors.MinArgs(args, 1); err != nil { return err }
 
-				path, ok := args[0].AsString()
-				if !ok {
-					return errors.NewTypeError("STRING", args[0].Type().String())
+				path, err := args[0].AsString()
+				if err != nil {
+					return err
 				}
 
 				timeout, pollRate, err := parseWaitOptions(args, kwargs.Kwargs)
@@ -118,13 +117,11 @@ Returns:
 		},
 		"dir": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) < 1 {
-					return errors.NewArgumentError(len(args), 1)
-				}
+				if err := errors.MinArgs(args, 1); err != nil { return err }
 
-				path, ok := args[0].AsString()
-				if !ok {
-					return errors.NewTypeError("STRING", args[0].Type().String())
+				path, err := args[0].AsString()
+				if err != nil {
+					return err
 				}
 
 				timeout, pollRate, err := parseWaitOptions(args, kwargs.Kwargs)
@@ -172,13 +169,11 @@ Returns:
 		},
 		"port": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) < 2 {
-					return errors.NewArgumentError(len(args), 2)
-				}
+				if err := errors.MinArgs(args, 2); err != nil { return err }
 
-				host, ok := args[0].AsString()
-				if !ok {
-					return errors.NewTypeError("STRING", args[0].Type().String())
+				host, err := args[0].AsString()
+				if err != nil {
+					return err
 				}
 
 				var port int
@@ -241,13 +236,11 @@ Returns:
 		},
 		"http": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) < 1 {
-					return errors.NewArgumentError(len(args), 1)
-				}
+				if err := errors.MinArgs(args, 1); err != nil { return err }
 
-				url, ok := args[0].AsString()
-				if !ok {
-					return errors.NewTypeError("STRING", args[0].Type().String())
+				url, err := args[0].AsString()
+				if err != nil {
+					return err
 				}
 
 				timeout := 30
@@ -256,10 +249,10 @@ Returns:
 
 				// Handle positional timeout
 				if len(args) > 1 {
-					if t, ok := args[1].AsInt(); ok {
+					if t, err := args[1].AsInt(); err == nil {
 						timeout = int(t)
 					} else {
-						return errors.NewTypeError("INT", args[1].Type().String())
+						return err
 					}
 				}
 
@@ -267,24 +260,24 @@ Returns:
 				for k, v := range kwargs.Kwargs {
 					switch k {
 					case "timeout":
-						if t, ok := v.AsInt(); ok {
+						if t, err := v.AsInt(); err == nil {
 							timeout = int(t)
 						} else {
-							return errors.NewTypeError("INT", v.Type().String())
+							return err
 						}
 					case "poll_rate":
-						if f, ok := v.AsFloat(); ok {
+						if f, err := v.AsFloat(); err == nil {
 							pollRate = f
-						} else if i, ok := v.AsInt(); ok {
+						} else if i, err := v.AsInt(); err == nil {
 							pollRate = float64(i)
 						} else {
 							return errors.NewTypeError("FLOAT", v.Type().String())
 						}
 					case "status_code":
-						if s, ok := v.AsInt(); ok {
+						if s, err := v.AsInt(); err == nil {
 							expectedStatus = s
 						} else {
-							return errors.NewTypeError("INT", v.Type().String())
+							return err
 						}
 					}
 				}
@@ -292,18 +285,17 @@ Returns:
 				deadline := time.Now().Add(time.Duration(timeout) * time.Second)
 				pollInterval := time.Duration(pollRate * float64(time.Second))
 
-				client := &http.Client{
-					Timeout: 5 * time.Second,
-				}
+				// Use shared pool for HTTP client
+				client := pool.GetHTTPClient()
 
 				for time.Now().Before(deadline) {
-					req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-					if err != nil {
-						return errors.NewError("http request error: %s", err.Error())
+					req, httpErr := http.NewRequestWithContext(ctx, "GET", url, nil)
+					if httpErr != nil {
+						return errors.NewError("http request error: %s", httpErr.Error())
 					}
 
-					resp, err := client.Do(req)
-					if err == nil {
+					resp, httpErr := client.Do(req)
+					if httpErr == nil {
 						statusMatch := int64(resp.StatusCode) == expectedStatus
 						resp.Body.Close()
 						if statusMatch {
@@ -320,11 +312,11 @@ Returns:
 				}
 
 				// Final check
-				req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-				if err != nil {
+				req, httpErr := http.NewRequestWithContext(ctx, "GET", url, nil)
+				if httpErr != nil {
 					return &object.Boolean{Value: false}
 				}
-				if resp, err := client.Do(req); err == nil {
+				if resp, httpErr := client.Do(req); httpErr == nil {
 					statusMatch := int64(resp.StatusCode) == expectedStatus
 					resp.Body.Close()
 					if statusMatch {
@@ -348,18 +340,16 @@ Returns:
 		},
 		"file_content": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) < 2 {
-					return errors.NewArgumentError(len(args), 2)
+				if err := errors.MinArgs(args, 2); err != nil { return err }
+
+				path, err := args[0].AsString()
+				if err != nil {
+					return err
 				}
 
-				path, ok := args[0].AsString()
-				if !ok {
-					return errors.NewTypeError("STRING", args[0].Type().String())
-				}
-
-				content, ok := args[1].AsString()
-				if !ok {
-					return errors.NewTypeError("STRING", args[1].Type().String())
+				content, err := args[1].AsString()
+				if err != nil {
+					return err
 				}
 
 				timeout, pollRate, err := parseWaitOptionsKwargsOnly(30, 1.0, kwargs.Kwargs)
@@ -408,13 +398,11 @@ Returns:
 		},
 		"process_name": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) < 1 {
-					return errors.NewArgumentError(len(args), 1)
-				}
+				if err := errors.MinArgs(args, 1); err != nil { return err }
 
-				processName, ok := args[0].AsString()
-				if !ok {
-					return errors.NewTypeError("STRING", args[0].Type().String())
+				processName, err := args[0].AsString()
+				if err != nil {
+					return err
 				}
 
 				timeout, pollRate, err := parseWaitOptions(args, kwargs.Kwargs)

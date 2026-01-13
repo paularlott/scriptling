@@ -30,12 +30,10 @@ Returns the value of a performance counter in fractional seconds.`,
 	},
 	"sleep": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
-			}
-			seconds, ok := args[0].AsFloat()
-			if !ok {
-				return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
+			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			seconds, err := args[0].AsFloat()
+			if err != nil {
+				return errors.ParameterError("seconds", err)
 			}
 
 			// Create a timer that respects context cancellation
@@ -63,11 +61,11 @@ Suspends execution for the given number of seconds.`,
 				t = time.Now()
 			} else if len(args) == 1 {
 				// Try AsFloat first (handles both Integer and Float)
-				if ts, ok := args[0].AsFloat(); ok {
+				if ts, err := args[0].AsFloat(); err == nil {
 					t = time.Unix(int64(ts), 0)
 				} else if instance, ok := args[0].(*object.Instance); ok {
 					// Handle datetime/date instances
-					if dt, ok := GetTimeFromObject(instance); ok {
+					if dt, err := GetTimeFromObject(instance); err == nil {
 						t = dt
 					} else {
 						return errors.NewTypeError("INTEGER, FLOAT, or datetime instance", args[0].Type().String())
@@ -76,7 +74,9 @@ Suspends execution for the given number of seconds.`,
 					return errors.NewTypeError("INTEGER, FLOAT, or datetime instance", args[0].Type().String())
 				}
 			} else {
-				return errors.NewArgumentError(len(args), 0)
+				if err := errors.MaxArgs(args, 1); err != nil {
+					return err
+				}
 			}
 
 			return timeToTuple(t, false)
@@ -92,11 +92,11 @@ Returns a time tuple in local time. If timestamp/datetime is omitted, uses curre
 				t = time.Now()
 			} else if len(args) == 1 {
 				// Try AsFloat first (handles both Integer and Float)
-				if ts, ok := args[0].AsFloat(); ok {
+				if ts, err := args[0].AsFloat(); err == nil {
 					t = time.Unix(int64(ts), 0)
 				} else if instance, ok := args[0].(*object.Instance); ok {
 					// Handle datetime/date instances
-					if dt, ok := GetTimeFromObject(instance); ok {
+					if dt, err := GetTimeFromObject(instance); err == nil {
 						t = dt
 					} else {
 						return errors.NewTypeError("INTEGER, FLOAT, or datetime instance", args[0].Type().String())
@@ -105,7 +105,9 @@ Returns a time tuple in local time. If timestamp/datetime is omitted, uses curre
 					return errors.NewTypeError("INTEGER, FLOAT, or datetime instance", args[0].Type().String())
 				}
 			} else {
-				return errors.NewArgumentError(len(args), 0)
+				if err := errors.MaxArgs(args, 1); err != nil {
+					return err
+				}
 			}
 
 			return timeToTuple(t, true)
@@ -116,13 +118,11 @@ Returns a time tuple in UTC. If timestamp/datetime is omitted, uses current time
 	},
 	"mktime": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
-			}
+			if err := errors.ExactArgs(args, 1); err != nil { return err }
 
-			tuple, ok := args[0].AsList()
-			if !ok {
-				return errors.NewTypeError("LIST", args[0].Type().String())
+			tuple, err := args[0].AsList()
+			if err != nil {
+				return err
 			}
 
 			if len(tuple) != 9 {
@@ -146,22 +146,22 @@ Converts a time tuple (9 elements) to a Unix timestamp.`,
 	},
 	"strftime": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) < 1 || len(args) > 2 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.RangeArgs(args, 1, 2); err != nil {
+				return err
 			}
 
-			format, ok := args[0].AsString()
-			if !ok {
-				return errors.NewTypeError("STRING", args[0].Type().String())
+			format, err := args[0].AsString()
+			if err != nil {
+				return err
 			}
 
 			var t time.Time
 			if len(args) == 1 {
 				t = time.Now()
 			} else {
-				tuple, ok := args[1].AsList()
-				if !ok {
-					return errors.NewTypeError("LIST", args[1].Type().String())
+				tuple, err := args[1].AsList()
+				if err != nil {
+					return err
 				}
 				if len(tuple) != 9 {
 					return errors.NewError("time tuple must have exactly 9 elements")
@@ -186,23 +186,21 @@ Formats a time according to the given format string. If tuple is omitted, uses c
 	},
 	"strptime": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 2 {
-				return errors.NewArgumentError(len(args), 2)
-			}
+			if err := errors.ExactArgs(args, 2); err != nil { return err }
 
-			str, ok := args[0].AsString()
-			if !ok {
-				return errors.NewTypeError("STRING", args[0].Type().String())
-			}
-
-			format, ok := args[1].AsString()
-			if !ok {
-				return errors.NewTypeError("STRING", args[1].Type().String())
-			}
-
-			t, err := time.Parse(pythonToGoFormat(format), str)
+			str, err := args[0].AsString()
 			if err != nil {
-				return errors.NewError("strptime() parse error: %s", err.Error())
+				return err
+			}
+
+			format, err := args[1].AsString()
+			if err != nil {
+				return err
+			}
+
+			t, parseErr := time.Parse(pythonToGoFormat(format), str)
+			if parseErr != nil {
+				return errors.NewError("strptime() parse error: %s", parseErr.Error())
 			}
 
 			return timeToTuple(t, false)
@@ -217,9 +215,9 @@ Parses a time string according to the given format and returns a time tuple.`,
 			if len(args) == 0 {
 				t = time.Now()
 			} else if len(args) == 1 {
-				tuple, ok := args[0].AsList()
-				if !ok {
-					return errors.NewTypeError("LIST", args[0].Type().String())
+				tuple, err := args[0].AsList()
+				if err != nil {
+					return err
 				}
 				if len(tuple) != 9 {
 					return errors.NewError("time tuple must have exactly 9 elements")
@@ -235,7 +233,9 @@ Parses a time string according to the given format and returns a time tuple.`,
 
 				t = time.Date(int(year), time.Month(month), int(day), int(hour), int(minute), int(second), 0, time.Local)
 			} else {
-				return errors.NewArgumentError(len(args), 0)
+				if err := errors.MaxArgs(args, 1); err != nil {
+					return err
+				}
 			}
 
 			return &object.String{Value: t.Format("Mon Jan 2 15:04:05 2006")}
@@ -250,13 +250,15 @@ Converts a time tuple to a string in the format 'Mon Jan 2 15:04:05 2006'. If tu
 			if len(args) == 0 {
 				t = time.Now()
 			} else if len(args) == 1 {
-				timestamp, ok := args[0].AsFloat()
-				if !ok {
-					return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
+				timestamp, err := args[0].AsFloat()
+				if err != nil {
+					return errors.ParameterError("timestamp", err)
 				}
 				t = time.Unix(int64(timestamp), 0)
 			} else {
-				return errors.NewArgumentError(len(args), 0)
+				if err := errors.MaxArgs(args, 1); err != nil {
+					return err
+				}
 			}
 
 			return &object.String{Value: t.Format("Mon Jan 2 15:04:05 2006")}

@@ -11,6 +11,8 @@ require (
 	golang.org/x/text v0.33.0
 )
 
+replace github.com/paularlott/mcp => ../mcp
+
 require (
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20251013123823-9fd1530e3ec3 // indirect

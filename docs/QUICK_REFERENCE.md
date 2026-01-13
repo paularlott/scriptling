@@ -1,5 +1,7 @@
 # Scriptling Quick Reference
 
+A practical cheat sheet for common Scriptling patterns and library usage.
+
 ## JSON Library
 
 ```python
@@ -76,21 +78,13 @@ if response.status_code == 200:
 
 # POST with data
 import json
-body = json.stringify({"name": "Alice"})
+body = json.dumps({"name": "Alice"})
 response = requests.post("https://api.example.com/users", data=body)
 
 # Other methods
 response = requests.put(url, data=body)
 response = requests.delete(url)
 response = requests.patch(url, data=body)
-
-# LLM-compatible exception handling (dotted names supported)
-try:
-    response = requests.get(url)
-    response.raise_for_status()
-    content = response.text[:500]
-except requests.exceptions.RequestException as e:
-    print(f"Error: {e}")
 ```
 
 ### With Options (timeout, headers, auth)
@@ -108,16 +102,9 @@ response = requests.post(url, data=body, timeout=10, headers={"Content-Type": "a
 
 # Basic Authentication
 response = requests.get(url, auth=("user", "pass"))
-
-# Legacy options dictionary (still supported)
-options = {
-    "timeout": 10,
-    "headers": {"Authorization": "Bearer token123"}
-}
-response = requests.get(url, options)
 ```
 
-### Complete Example
+### Complete REST API Example
 
 ```python
 import json
@@ -132,19 +119,19 @@ options = {
 # GET request
 response = requests.get("https://api.example.com/users/1", options)
 
-if response["status"] == 200:
-    user = json.parse(response["body"])
+if response.status_code == 200:
+    user = json.loads(response.body)
     print("User: " + user["name"])
 
     # Update user
     user["email"] = "new@example.com"
-    body = json.stringify(user)
+    body = json.dumps(user)
 
     update = requests.put("https://api.example.com/users/1", body, options)
-    if update["status"] == 200:
+    if update.status_code == 200:
         print("Updated!")
 else:
-    print("Error: " + str(response["status"]))
+    print("Error: " + str(response.status_code))
 ```
 
 ## Itertools Library
@@ -200,8 +187,6 @@ collections.deque_rotate(d, 1)              # Rotate right
 Point = collections.namedtuple("Point", ["x", "y"])
 p = Point(1, 2)
 print(p.x, p.y)                                 # 1 2
-p = Point(10, 20)
-p["x"]                                      # 10
 
 # ChainMap - merge multiple dicts
 defaults = {"a": 1, "b": 2}
@@ -215,116 +200,253 @@ d = collections.defaultdict(list)
 d["key"].append(1)                              # Creates [] and appends 1
 ```
 
-## Core Built-in Functions
-
-Always available without importing:
+## Math Library
 
 ```python
-# I/O
-print("Hello")
-input("Enter name: ")         # Read user input (returns string)
+import math
 
-# Type conversions
-str(42)           # "42"
-int("42")         # 42
-float("3.14")     # 3.14
-bool(0)           # False (bool conversion)
-type(42)          # "INTEGER"
-type("hello")     # "STRING"
-list("abc")       # ["a", "b", "c"]
-dict()            # {}
-tuple([1, 2, 3])  # (1, 2, 3)
-tuple([1, 2, 3])  # (1, 2, 3)
-set([1, 2, 2, 3]) # {1, 2, 3} (unique elements)
+# Basic operations
+math.sqrt(16)           # 4.0
+math.pow(2, 8)          # 256.0
+math.log(100)           # 4.605... (natural log)
+math.log10(100)         # 2.0 (base 10)
 
-# Type checking
-callable(len)                 # True (is function)
-callable(42)                  # False
-isinstance(42, "int")         # True
-isinstance("hi", "str")       # True
-isinstance(None, "NoneType")  # True
+# Trigonometric
+math.sin(math.pi / 2)   # 1.0
+math.cos(0)             # 1.0
+math.tan(math.pi / 4)   # 1.0
 
-# Math operations
-abs(-5)           # 5
-min(3, 1, 2)      # 1
-max(3, 1, 2)      # 3
-round(3.7)        # 4
-round(3.14159, 2) # 3.14
-pow(2, 10)        # 1024
-pow(2, 10, 1000)  # 24 (modular: 2^10 % 1000)
-divmod(17, 5)     # (3, 2) - quotient and remainder
+# Rounding
+math.floor(3.7)         # 3
+math.ceil(3.2)          # 4
 
-# Number formatting
-hex(255)          # "0xff"
-bin(10)           # "0b1010"
-oct(8)            # "0o10"
-
-# Character conversion
-chr(65)           # "A"
-ord("A")          # 65
-
-# Iteration utilities (return iterators)
-list(enumerate(["a", "b"]))    # [(0, "a"), (1, "b")]
-list(zip([1, 2], ["a", "b"]))  # [(1, "a"), (2, "b")]
-list(reversed([1, 2, 3]))      # [3, 2, 1]
-list(map(lambda x: x*2, [1,2,3]))   # [2, 4, 6]
-list(filter(lambda x: x>1, [1,2,3]))# [2, 3]
-any([False, True, False])     # True
-all([True, True, True])       # True
-
-# String operations
-len("hello")                        # 5
-upper("hello")                      # "HELLO"
-lower("HELLO")                      # "hello"
-split("a,b,c", ",")                # ["a", "b", "c"]
-join(["a", "b"], "-")              # "a-b"
-replace("hello", "l", "L")         # "heLLo"
-
-# Triple-quoted and raw strings
-multi = '''Line1
-Line2
-'''
-raw = r"C:\\path\\to\\file"
-
-# List operations
-numbers = [1, 2, 3]
-len(numbers)                        # 3
-numbers.append(4)                   # numbers is now [1, 2, 3, 4]
-sum([1, 2, 3, 4])                   # 10
-sorted([3, 1, 2])                   # [1, 2, 3]
-sorted([3, 1, 2], reverse=True)     # [3, 2, 1]
-sorted(["banana", "apple"], len)    # Sort with key function
-
-# Range (returns iterator)
-list(range(5))                      # [0, 1, 2, 3, 4]
-list(range(2, 5))                   # [2, 3, 4]
-list(range(0, 10, 2))               # [0, 2, 4, 6, 8]
-
-# Slice operations
-lst = [0, 1, 2, 3, 4, 5]
-lst[1:4]                    # [1, 2, 3]
-lst[::2]                    # [0, 2, 4]
-lst[::-1]                   # [5, 4, 3, 2, 1, 0]
-
-# Using slice() builtin
-s = slice(1, 4)
-lst[s]                       # [1, 2, 3]
-s = slice(None, None, -1)
-lst[s]                       # [5, 4, 3, 2, 1, 0]
-s = slice(-3, None)
-lst[s]                       # [3, 4, 5]
-
-# Dictionary methods (return views)
-person = {"name": "Alice", "age": 30}
-list(person.keys())                 # ["name", "age"]
-list(person.values())               # ["Alice", 30]
-list(person.items())                # [("name", "Alice"), ("age", 30)]
+# Constants
+math.pi                 # 3.14159...
+math.e                  # 2.71828...
 ```
 
-## Control Flow
+## Random Library
 
 ```python
-# If/elif/else
+import random
+
+# Basic random values
+random.random()          # Float between 0 and 1
+random.randint(1, 10)   # Integer between 1 and 10 (inclusive)
+random.uniform(1.0, 10.0)  # Float between 1.0 and 10.0
+
+# Choices from sequences
+items = ["apple", "banana", "cherry"]
+random.choice(items)    # Single random element
+random.sample(items, 2) # 2 unique elements
+
+# Shuffling
+deck = [1, 2, 3, 4, 5]
+random.shuffle(deck)    # Modifies in-place
+```
+
+## Time & Date
+
+```python
+import time
+import datetime
+
+# Current time
+now = time.time()               # Unix timestamp (seconds since epoch)
+formatted = datetime.now()      # Formatted date string
+
+# Sleep
+time.sleep(1)                   # Sleep for 1 second
+
+# Parse/format
+dt = datetime.datetime("2024-01-15 10:30:00", "%Y-%m-%d %H:%M:%S")
+ts = datetime.timestamp(dt)     # Convert to timestamp
+```
+
+## Base64 Encoding
+
+```python
+import base64
+
+# Encode
+encoded = base64.encode("Hello, World!")
+print(encoded)  # "SGVsbG8sIFdvcmxkIQ=="
+
+# Decode
+decoded = base64.decode("SGVsbG8sIFdvcmxkIQ==")
+print(decoded)  # "Hello, World!"
+```
+
+## Hash Functions
+
+```python
+import hashlib
+
+# MD5
+md5_hash = hashlib.md5("data")
+print(md5_hash)  # Hex string
+
+# SHA256
+sha256_hash = hashlib.sha256("data")
+print(sha256_hash)  # 64 character hex string
+
+# SHA512
+sha512_hash = hashlib.sha512("data")
+print(sha512_hash)  # 128 character hex string
+```
+
+## String Library (Constants)
+
+```python
+import string
+
+# Character sets
+string.ascii_letters      # "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+string.ascii_lowercase    # "abcdefghijklmnopqrstuvwxyz"
+string.ascii_uppercase    # "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+string.digits             # "0123456789"
+string.hexdigits         # "0123456789abcdefABCDEF"
+string.punctuation        # Punctuation characters
+string.whitespace         # Space, tab, newline, etc.
+```
+
+## UUID Generation
+
+```python
+import uuid
+
+# Random UUID
+id = uuid.uuid4()
+print(id)  # e.g., "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+```
+
+## Platform Information
+
+```python
+import platform
+
+# System info
+platform.system()        # "Linux", "Darwin", "Windows"
+platform.machine()       # "x86_64", "arm64"
+```
+
+## Common Patterns
+
+### HTTP Error Handling
+
+```python
+import requests
+import json
+
+url = "https://api.example.com/data"
+options = {"timeout": 10}
+
+try:
+    response = requests.get(url, options)
+    if response.status_code == 200:
+        data = json.loads(response.body)
+        print("Success:", len(data))
+    else:
+        print("HTTP Error:", response.status_code)
+except Exception as e:
+    print("Request failed:", e)
+```
+
+### Retry Pattern
+
+```python
+import requests
+import time
+
+def fetch_with_retry(url, max_retries=3):
+    options = {"timeout": 5}
+    for i in range(max_retries):
+        response = requests.get(url, options)
+        if response.status_code == 200:
+            return response.body
+        time.sleep(1)  # Wait before retry
+    return None
+```
+
+### Data Processing Pipeline
+
+```python
+import json
+import requests
+
+# Fetch
+response = requests.get("https://api.example.com/items", {"timeout": 10})
+
+# Parse
+data = json.loads(response.body)
+
+# Filter
+filtered = [item for item in data if item["active"]]
+
+# Transform
+result = [{"id": x["id"], "name": x["name"].upper()} for x in filtered]
+
+# Output
+print(json.dumps(result))
+```
+
+### Batch Processing with Itertools
+
+```python
+import itertools
+import requests
+
+def process_batch(items):
+    # Process a batch of items
+    return [{"processed": True, "item": x} for x in items]
+
+# Fetch items
+response = requests.get("https://api.example.com/items")
+items = json.loads(response.body)
+
+# Process in batches of 100
+for batch in itertools.batched(items, 100):
+    results = process_batch(batch)
+    print(f"Processed {len(results)} items")
+```
+
+### URL Handling
+
+```python
+import urllib.parse
+
+# Parse URL
+url = "https://example.com/path?key=value&foo=bar"
+parsed = urllib.parse.urlparse(url)
+print(parsed.scheme)   # "https"
+print(parsed.netloc)   # "example.com"
+print(parsed.path)     # "/path"
+print(parsed.query)    # "key=value&foo=bar"
+
+# Parse query string
+query = urllib.parse.parse_qs("key=value&foo=bar")
+print(query["key"])    # ["value"]
+
+# Build URL
+params = {"key": "value", "foo": "bar"}
+query_string = urllib.parse.urlencode(params)
+url = "https://example.com/api?" + query_string
+```
+
+## Language Basics
+
+For complete language reference (types, operators, control flow, functions, classes), see [LANGUAGE_GUIDE.md](LANGUAGE_GUIDE.md).
+
+Quick reminders:
+
+```python
+# Variables and types
+x = 42
+name = "Alice"
+items = [1, 2, 3]
+data = {"key": "value"}
+
+# Control flow
 if x > 10:
     print("large")
 elif x > 5:
@@ -332,270 +454,30 @@ elif x > 5:
 else:
     print("small")
 
-# While loop
-while x > 0:
-    x = x - 1
-
-# For loop
-for item in [1, 2, 3]:
-    print(item)
-
-# For with range
+# Loops
 for i in range(5):
     print(i)
 
-# Break and continue
-for i in range(10):
-    if i == 3:
-        continue  # Skip 3
-    if i == 7:
-        break     # Stop at 7
-    print(i)
-```
+for item in items:
+    print(item)
 
-## Assert Statement
-
-```python
-# Assert condition (raises AssertionError if false)
-assert x > 0
-assert len(data) > 0
-
-# Assert with message
-assert x > 0, "x must be positive"
-assert user is not None, "User not found"
-```
-
-## String Methods
-
-```python
-# Case conversion
-"hello".upper()              # "HELLO"
-"HELLO".lower()              # "hello"
-"hello".capitalize()         # "Hello"
-"hello world".title()        # "Hello World"
-"Hello World".swapcase()     # "hELLO wORLD"
-
-# Finding and checking
-"hello".startswith("he")     # True
-"hello".endswith("lo")       # True
-"hello".find("l")            # 2 (first index or -1)
-"hello".count("l")           # 2
-"hello".isalpha()            # True
-"12345".isdigit()            # True
-"abc123".isalnum()           # True
-
-# Splitting and joining
-"a,b,c".split(",")           # ["a", "b", "c"]
-", ".join(["a", "b"])        # "a, b"
-"hello\nworld".splitlines()  # ["hello", "world"]
-"hello-world".partition("-") # ("hello", "-", "world")
-"a-b-c".rpartition("-")      # ("a-b", "-", "c")
-
-# Trimming and padding
-"  hello  ".strip()          # "hello"
-"  hello  ".lstrip()         # "hello  "
-"  hello  ".rstrip()         # "  hello"
-"hello".center(11)           # "   hello   "
-"hello".ljust(10)            # "hello     "
-"hello".rjust(10)            # "     hello"
-"5".zfill(3)                 # "005"
-
-# Replacing and removing
-"hello".replace("l", "L")    # "heLLo"
-"TestCase".removeprefix("Test")    # "Case"
-"file.py".removesuffix(".py")      # "file"
-
-# Encoding
-"ABC".encode()               # [65, 66, 67] (byte values)
-```
-
-## Functions
-
-```python
+# Functions
 def add(a, b):
     return a + b
 
-result = add(5, 3)  # 8
-
-# Recursion
-def fibonacci(n):
-    if n <= 1:
-        return n
-    else:
-        return fibonacci(n - 1) + fibonacci(n - 2)
-
-# Variadic arguments (*args)
-def sum_all(*args):
-    total = 0
-    for n in args:
-        total += n
-    return total
-
-sum_all(1, 2, 3)  # 6
-```
-
-## Error Handling
-
-```python
-# Try/except
+# Error handling
 try:
-    result = 10 / 0
+    result = risky_operation()
 except:
-    result = 0
-
-# Try/finally
-try:
-    data = process()
+    result = None
 finally:
     cleanup()
 
-# Try/except/finally
-try:
-    response = requests.get(url, options)
-    data = json.parse(response["body"])
-except:
-    data = None
-finally:
-    print("Done")
-
-# Raise errors
-def validate(x):
-    if x < 0:
-        raise "Value must be positive"
-    return x
-
-try:
-    validate(-5)
-except:
-    print("Validation failed")
-
-# Multiple assignment (tuple unpacking)
-a, b = [1, 2]
-x, y = [y, x]  # Swap variables
+# Assert
+assert x > 0, "x must be positive"
 ```
 
-## Data Types
+## See Also
 
-```python
-# Integer
-x = 42
-
-# Float
-pi = 3.14
-
-# String
-name = "Alice"
-
-# Boolean
-flag = True
-done = False
-
-# None
-result = None
-
-# List
-numbers = [1, 2, 3, 4, 5]
-mixed = [1, "two", 3.0, True]
-
-# Dictionary
-person = {
-    "name": "Alice",
-    "age": 30,
-    "active": True
-}
-
-# Set
-unique = set([1, 2, 2, 3])  # {1, 2, 3}
-
-# Indexing
-first = numbers[0]      # 1
-last = numbers[4]       # 5
-value = person["name"]  # "Alice"
-
-# Slicing
-numbers[1:3]            # [2, 3]
-numbers[:3]             # [1, 2, 3]
-numbers[3:]             # [4, 5]
-```
-
-## Operators
-
-```python
-# Arithmetic
-x + y    # Addition
-x - y    # Subtraction
-x * y    # Multiplication
-x ** y   # Exponentiation (power, e.g., 2**3 = 8)
-x / y    # Division (always returns float, e.g., 5 / 2 = 2.5)
-x // y   # Floor division (integer division, e.g., 7 // 2 = 3)
-x % y    # Modulo (remainder, e.g., 5 % 2 = 1)
-
-# Augmented assignment
-x += 5   # x = x + 5
-x -= 3   # x = x - 3
-x *= 2   # x = x * 2
-x /= 4   # x = x / 4
-x //= 3  # x = x // 3 (floor division)
-x &= 3   # x = x & 3 (bitwise AND)
-x |= 3   # x = x | 3 (bitwise OR)
-x ^= 3   # x = x ^ 3 (bitwise XOR)
-x <<= 2  # x = x << 2 (left shift)
-x >>= 2  # x = x >> 2 (right shift)
-
-# Bitwise (integers only)
-~x       # Bitwise NOT (e.g., ~5 = -6)
-x & y    # Bitwise AND (e.g., 12 & 10 = 8)
-x | y    # Bitwise OR (e.g., 12 | 10 = 14)
-x ^ y    # Bitwise XOR (e.g., 12 ^ 10 = 6)
-x << y   # Left shift (e.g., 5 << 2 = 20)
-x >> y   # Right shift (e.g., 20 >> 2 = 5)
-
-# Comparison
-x == y   # Equal
-x != y   # Not equal
-x < y    # Less than
-x > y    # Greater than
-x <= y   # Less than or equal
-x >= y   # Greater than or equal
-
-# Logical
-x and y  # Logical AND
-x or y   # Logical OR
-not x    # Logical NOT
-
-# String concatenation
-"Hello" + " " + "World"  # "Hello World"
-```
-
-## Best Practices
-
-1. **Always check HTTP status codes**
-   ```python
-   if response["status"] == 200:
-       # Process response
-   else:
-       print("Error: " + str(response["status"]))
-   ```
-
-2. **Use options dictionary for clarity**
-   ```python
-   options = {"timeout": 10}
-   response = requests.get(url, options)
-   ```
-
-3. **Parse JSON responses**
-   ```python
-   data = json.parse(response["body"])
-   ```
-
-4. **Use descriptive variable names**
-   ```python
-   user_count = 10  # Good
-   x = 10           # Bad
-   ```
-
-5. **Set appropriate timeouts**
-   ```python
-   # Default is 5 seconds, increase for slow APIs
-   options = {"timeout": 30}
-   ```
+- [LANGUAGE_GUIDE.md](LANGUAGE_GUIDE.md) - Complete syntax and language reference
+- [LIBRARIES.md](LIBRARIES.md) - All available libraries

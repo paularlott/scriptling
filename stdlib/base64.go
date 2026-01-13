@@ -11,12 +11,12 @@ import (
 var Base64Library = object.NewLibrary(map[string]*object.Builtin{
 	"b64encode": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
-			str, ok := args[0].AsString()
-			if !ok {
-				return errors.NewTypeError("STRING", args[0].Type().String())
+			str, err := args[0].AsString()
+			if err != nil {
+				return err
 			}
 			encoded := base64.StdEncoding.EncodeToString([]byte(str))
 			return &object.String{Value: encoded}
@@ -27,16 +27,16 @@ Returns a Base64-encoded version of the input string.`,
 	},
 	"b64decode": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
 			}
-			str, ok := args[0].AsString()
-			if !ok {
-				return errors.NewTypeError("STRING", args[0].Type().String())
-			}
-			decoded, err := base64.StdEncoding.DecodeString(str)
+			str, err := args[0].AsString()
 			if err != nil {
-				return errors.NewError("base64 decode error: %s", err.Error())
+				return err
+			}
+			decoded, decodeErr := base64.StdEncoding.DecodeString(str)
+			if decodeErr != nil {
+				return errors.NewError("base64 decode error: %s", decodeErr.Error())
 			}
 			return &object.String{Value: string(decoded)}
 		},

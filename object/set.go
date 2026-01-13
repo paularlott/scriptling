@@ -27,18 +27,18 @@ func (s *Set) Inspect() string {
 	return out.String()
 }
 
-func (s *Set) AsString() (string, bool) { return s.Inspect(), true }
-func (s *Set) AsInt() (int64, bool)     { return 0, false }
-func (s *Set) AsFloat() (float64, bool) { return 0, false }
-func (s *Set) AsBool() (bool, bool)     { return len(s.Elements) > 0, true }
-func (s *Set) AsList() ([]Object, bool) {
+func (s *Set) AsString() (string, Object) { return s.Inspect(), nil }
+func (s *Set) AsInt() (int64, Object)     { return 0, &Error{Message: ErrMustBeInteger} }
+func (s *Set) AsFloat() (float64, Object) { return 0, &Error{Message: ErrMustBeNumber} }
+func (s *Set) AsBool() (bool, Object)     { return len(s.Elements) > 0, nil }
+func (s *Set) AsList() ([]Object, Object) {
 	elements := make([]Object, 0, len(s.Elements))
 	for _, e := range s.Elements {
 		elements = append(elements, e)
 	}
-	return elements, true
+	return elements, nil
 }
-func (s *Set) AsDict() (map[string]Object, bool) { return nil, false }
+func (s *Set) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
 // NewSet creates a new empty Set
 func NewSet() *Set {

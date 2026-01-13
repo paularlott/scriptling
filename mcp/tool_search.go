@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"encoding/json"
+	"fmt"
 
 	mcplib "github.com/paularlott/mcp"
 	scriptlib "github.com/paularlott/scriptling"
@@ -69,11 +70,11 @@ func parseToolSearchJSON(toolsJSON string) (*object.List, error) {
 					}
 				}
 			} else {
-				// Return error if we can't find tools
-				return nil, err
+				// Return error indicating tools key not found
+				return nil, fmt.Errorf("tools key not found in JSON response")
 			}
 		} else {
-			return nil, err
+			return nil, fmt.Errorf("failed to parse as array (%v) or as object with tools key: %w", err, err2)
 		}
 	}
 

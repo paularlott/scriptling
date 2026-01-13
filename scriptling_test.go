@@ -26,8 +26,8 @@ func TestVariables(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	val, ok := p.GetVar("y")
-	if !ok {
+	val, objErr := p.GetVar("y")
+	if objErr != nil {
 		t.Fatal("variable y not found")
 	}
 	if val != int64(20) {
@@ -47,8 +47,8 @@ result = add(5, 3)
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	val, ok := p.GetVar("result")
-	if !ok {
+	val, objErr := p.GetVar("result")
+	if objErr != nil {
 		t.Fatal("variable result not found")
 	}
 	if val != int64(8) {
@@ -86,8 +86,8 @@ func TestGoFunctionRegistration(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	result, ok := p.GetVar("result")
-	if !ok || result != int64(42) {
+	result, objErr := p.GetVar("result")
+	if objErr != nil || result != int64(42) {
 		t.Errorf("expected 42, got %v", result)
 	}
 }
@@ -105,8 +105,8 @@ else:
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	val, ok := p.GetVar("result")
-	if !ok {
+	val, objErr := p.GetVar("result")
+	if objErr != nil {
 		t.Fatal("variable result not found")
 	}
 	if val != "large" {
@@ -127,8 +127,8 @@ while counter < 5:
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	val, ok := p.GetVar("sum")
-	if !ok {
+	val, objErr := p.GetVar("sum")
+	if objErr != nil {
 		t.Fatal("variable sum not found")
 	}
 	if val != int64(10) {

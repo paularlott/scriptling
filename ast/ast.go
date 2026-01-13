@@ -458,3 +458,23 @@ type TupleLiteral struct {
 func (tl *TupleLiteral) expressionNode()      {}
 func (tl *TupleLiteral) TokenLiteral() string { return tl.Token.Literal }
 func (tl *TupleLiteral) Line() int            { return tl.Token.Line }
+
+// MatchStatement represents a match statement with multiple case clauses
+type MatchStatement struct {
+	Token   token.Token // The 'match' token
+	Subject Expression  // The expression to match against
+	Cases   []*CaseClause
+}
+
+func (ms *MatchStatement) statementNode()       {}
+func (ms *MatchStatement) TokenLiteral() string { return ms.Token.Literal }
+func (ms *MatchStatement) Line() int            { return ms.Token.Line }
+
+// CaseClause represents a single case in a match statement
+type CaseClause struct {
+	Token     token.Token // The 'case' token
+	Pattern   Expression  // The pattern to match (can be literal, identifier for type, dict, or wildcard)
+	Guard     Expression  // Optional guard condition (if clause)
+	Body      *BlockStatement
+	CaptureAs *Identifier // Optional capture variable for the matched value
+}

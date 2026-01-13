@@ -26,8 +26,8 @@ func TestRegisterFunc(t *testing.T) {
 		t.Fatalf("error: %v", err)
 	}
 
-	result, ok := p.GetVar("result")
-	if !ok || result != int64(10) {
+	result, objErr := p.GetVar("result")
+	if objErr != nil || result != int64(10) {
 		t.Errorf("expected 10, got %v", result)
 	}
 }
@@ -51,8 +51,8 @@ msg = mylib.greet()
 		t.Fatalf("error: %v", err)
 	}
 
-	msg, ok := p.GetVar("msg")
-	if !ok || msg != "Hello!" {
+	msg, objErr := p.GetVar("msg")
+	if objErr != nil || msg != "Hello!" {
 		t.Errorf("expected Hello!, got %v", msg)
 	}
 }
@@ -80,8 +80,8 @@ func TestImport(t *testing.T) {
 		t.Fatalf("error: %v", err)
 	}
 
-	msg, ok := p.GetVar("msg")
-	if !ok || msg != "Hello!" {
+	msg, objErr := p.GetVar("msg")
+	if objErr != nil || msg != "Hello!" {
 		t.Errorf("expected Hello!, got %v", msg)
 	}
 }
@@ -102,8 +102,8 @@ func TestImportStandardLibrary(t *testing.T) {
 		t.Fatalf("error: %v", err)
 	}
 
-	data, ok := p.GetVar("data")
-	if !ok || data != `{"key":"value"}` {
+	data, objErr := p.GetVar("data")
+	if objErr != nil || data != `{"key":"value"}` {
 		t.Errorf("expected {\"key\":\"value\"}, got %v", data)
 	}
 }
@@ -183,23 +183,23 @@ helper_result = counters.helper()
 		t.Fatalf("error: %v", err)
 	}
 
-	initial, ok := p.GetVar("initial")
-	if !ok || initial != int64(10) {
+	initial, objErr := p.GetVar("initial")
+	if objErr != nil || initial != int64(10) {
 		t.Errorf("expected initial=10, got %v", initial)
 	}
 
-	afterInc, ok := p.GetVar("after_inc")
-	if !ok || afterInc != int64(11) {
+	afterInc, objErr := p.GetVar("after_inc")
+	if objErr != nil || afterInc != int64(11) {
 		t.Errorf("expected after_inc=11, got %v", afterInc)
 	}
 
-	version, ok := p.GetVar("version")
-	if !ok || version != "1.0.0" {
+	version, objErr := p.GetVar("version")
+	if objErr != nil || version != "1.0.0" {
 		t.Errorf("expected version=1.0.0, got %v", version)
 	}
 
-	helperResult, ok := p.GetVar("helper_result")
-	if !ok || helperResult != "helper called" {
+	helperResult, objErr := p.GetVar("helper_result")
+	if objErr != nil || helperResult != "helper called" {
 		t.Errorf("expected helper_result='helper called', got %v", helperResult)
 	}
 }
@@ -216,8 +216,8 @@ result = data["key"]
 		t.Fatalf("error: %v", err)
 	}
 
-	result, ok := p.GetVar("result")
-	if !ok || result != "value" {
+	result, objErr := p.GetVar("result")
+	if objErr != nil || result != "value" {
 		t.Errorf("expected value, got %v", result)
 	}
 }
@@ -244,13 +244,13 @@ pi_value = customlib.PI
 		t.Fatalf("error: %v", err)
 	}
 
-	result, ok := p.GetVar("result")
-	if !ok || result != int64(5) {
+	result, objErr := p.GetVar("result")
+	if objErr != nil || result != int64(5) {
 		t.Errorf("expected 5, got %v", result)
 	}
 
-	pi_value, ok := p.GetVar("pi_value")
-	if !ok || pi_value != 3.14 {
+	pi_value, objErr := p.GetVar("pi_value")
+	if objErr != nil || pi_value != 3.14 {
 		t.Errorf("expected 3.14, got %v", pi_value)
 	}
 }
@@ -262,8 +262,8 @@ func TestModuloOperator(t *testing.T) {
 		t.Fatalf("error: %v", err)
 	}
 
-	result, ok := p.GetVar("result")
-	if !ok || result != int64(1) {
+	result, objErr := p.GetVar("result")
+	if objErr != nil || result != int64(1) {
 		t.Errorf("expected 1, got %v", result)
 	}
 }
@@ -278,13 +278,13 @@ or_result = True or False
 		t.Fatalf("error: %v", err)
 	}
 
-	andResult, _ := p.GetVar("and_result")
-	if andResult != false {
+	andResult, objErr := p.GetVar("and_result")
+	if objErr != nil || andResult != false {
 		t.Errorf("expected false, got %v", andResult)
 	}
 
-	orResult, _ := p.GetVar("or_result")
-	if orResult != true {
+	orResult, objErr := p.GetVar("or_result")
+	if objErr != nil || orResult != true {
 		t.Errorf("expected true, got %v", orResult)
 	}
 }
@@ -299,13 +299,13 @@ gte = 10 >= 5
 		t.Fatalf("error: %v", err)
 	}
 
-	lte, _ := p.GetVar("lte")
-	if lte != true {
+	lte, objErr := p.GetVar("lte")
+	if objErr != nil || lte != true {
 		t.Errorf("expected true for <=, got %v", lte)
 	}
 
-	gte, _ := p.GetVar("gte")
-	if gte != true {
+	gte, objErr := p.GetVar("gte")
+	if objErr != nil || gte != true {
 		t.Errorf("expected true for >=, got %v", gte)
 	}
 }
@@ -322,8 +322,8 @@ result = data["name"]
 		t.Fatalf("error: %v", err)
 	}
 
-	result, ok := p.GetVar("result")
-	if !ok || result != "Alice" {
+	result, objErr := p.GetVar("result")
+	if objErr != nil || result != "Alice" {
 		t.Errorf("expected Alice, got %v", result)
 	}
 }
@@ -342,9 +342,9 @@ status = response.status_code
 		t.Fatalf("error: %v", err)
 	}
 
-	status, ok := p.GetVarAsInt("status")
+	status, objErr := p.GetVarAsInt("status")
 	// Accept both 200 (success) and other status codes (service issues)
-	if !ok || (status != int64(200) && status < 400) {
+	if objErr != nil || (status != int64(200) && status < 400) {
 		t.Errorf("expected 200 or success status, got %v", status)
 	}
 }
@@ -562,8 +562,8 @@ func TestCallFunction(t *testing.T) {
 			t.Fatalf("CallFunction failed: %v", err)
 		}
 
-		sum, ok := result.AsInt()
-		if !ok {
+		sum, objErr := result.AsInt()
+		if objErr != nil {
 			t.Fatal("result is not an integer")
 		}
 		if sum != 42 {
@@ -595,8 +595,8 @@ func TestCallFunction(t *testing.T) {
 			t.Fatalf("CallFunction failed: %v", err)
 		}
 
-		text, ok := result.AsString()
-		if !ok {
+		text, objErr := result.AsString()
+		if objErr != nil {
 			t.Fatal("result is not a string")
 		}
 		if text != "Hello, World" {
@@ -620,8 +620,8 @@ func TestCallFunction(t *testing.T) {
 			t.Fatalf("CallFunction failed: %v", err)
 		}
 
-		product, ok := result.AsInt()
-		if !ok {
+		product, objErr := result.AsInt()
+		if objErr != nil {
 			t.Fatal("result is not an integer")
 		}
 		if product != 120 { // (10+20+30) * 2
@@ -643,8 +643,8 @@ func TestCallFunction(t *testing.T) {
 			t.Fatalf("CallFunction failed: %v", err)
 		}
 
-		text, ok := result.AsString()
-		if !ok {
+		text, objErr := result.AsString()
+		if objErr != nil {
 			t.Fatal("result is not a string")
 		}
 		if text != "Hello, World" {
@@ -666,8 +666,8 @@ func TestCallFunction(t *testing.T) {
 			t.Fatalf("CallFunction failed: %v", err)
 		}
 
-		quotient, ok := result.AsFloat()
-		if !ok {
+		quotient, objErr := result.AsFloat()
+		if objErr != nil {
 			t.Fatal("result is not a float")
 		}
 		if quotient != 2.5 {
@@ -689,8 +689,8 @@ func TestCallFunction(t *testing.T) {
 			t.Fatalf("CallFunction failed: %v", err)
 		}
 
-		flag, ok := result.AsBool()
-		if !ok {
+		flag, objErr := result.AsBool()
+		if objErr != nil {
 			t.Fatal("result is not a boolean")
 		}
 		if !flag {
@@ -714,8 +714,8 @@ func TestCallFunction(t *testing.T) {
 			t.Fatalf("CallFunctionWithContext failed: %v", err)
 		}
 
-		flag, ok := result.AsBool()
-		if !ok {
+		flag, objErr := result.AsBool()
+		if objErr != nil {
 			t.Fatal("result is not a boolean")
 		}
 		if !flag {
@@ -745,8 +745,8 @@ func TestCallFunction(t *testing.T) {
 			t.Fatalf("CallFunctionWithContext failed: %v", err)
 		}
 
-		text, ok := result.AsString()
-		if !ok {
+		text, objErr := result.AsString()
+		if objErr != nil {
 			t.Fatal("result is not a string")
 		}
 		if text != "completed" {
@@ -769,8 +769,8 @@ func TestCallFunction(t *testing.T) {
 			t.Fatalf("CallFunction with kwargs failed: %v", err)
 		}
 
-		text, ok := result.AsString()
-		if !ok {
+		text, objErr := result.AsString()
+		if objErr != nil {
 			t.Fatal("result is not a string")
 		}
 		if text != "hello" {
@@ -799,8 +799,8 @@ func TestCallFunction(t *testing.T) {
 			t.Fatalf("CallFunction with kwargs failed: %v", err)
 		}
 
-		text, ok := result.AsString()
-		if !ok {
+		text, objErr := result.AsString()
+		if objErr != nil {
 			t.Fatal("result is not a string")
 		}
 		if text != ">> world <<" {
@@ -827,8 +827,8 @@ func TestCallFunction(t *testing.T) {
 			t.Fatalf("CallFunction with kwargs failed: %v", err)
 		}
 
-		text, ok := result.AsString()
-		if !ok {
+		text, objErr := result.AsString()
+		if objErr != nil {
 			t.Fatal("result is not a string")
 		}
 		if text != "Hi, Alice" {
@@ -862,26 +862,26 @@ func TestCallFunction(t *testing.T) {
 			t.Fatalf("CallFunction with kwargs failed: %v", err)
 		}
 
-		dict, ok := result.AsDict()
-		if !ok {
+		dict, objErr := result.AsDict()
+		if objErr != nil {
 			t.Fatal("result is not a dict")
 		}
 
 		enabledVal := dict["enabled"]
-		enabled, ok := enabledVal.AsBool()
-		if !ok || !enabled {
+		enabled, objErr := enabledVal.AsBool()
+		if objErr != nil || !enabled {
 			t.Errorf("expected enabled=true, got %v", enabledVal)
 		}
 
 		countVal := dict["count"]
-		count, ok := countVal.AsInt()
-		if !ok || count != 42 {
+		count, objErr := countVal.AsInt()
+		if objErr != nil || count != 42 {
 			t.Errorf("expected count=42, got %v", countVal)
 		}
 
 		rateVal := dict["rate"]
-		rate, ok := rateVal.AsFloat()
-		if !ok || rate != 3.14 {
+		rate, objErr := rateVal.AsFloat()
+		if objErr != nil || rate != 3.14 {
 			t.Errorf("expected rate=3.14, got %v", rateVal)
 		}
 	})
@@ -906,8 +906,8 @@ func TestCallFunction(t *testing.T) {
 			t.Fatalf("CallFunction with kwargs failed: %v", err)
 		}
 
-		text, ok := result.AsString()
-		if !ok {
+		text, objErr := result.AsString()
+		if objErr != nil {
 			t.Fatal("result is not a string")
 		}
 		if text != "## hello ##" {
@@ -931,8 +931,8 @@ func TestCallFunction(t *testing.T) {
 			t.Fatalf("CallFunction failed: %v", err)
 		}
 
-		text, ok := result.AsString()
-		if !ok {
+		text, objErr := result.AsString()
+		if objErr != nil {
 			t.Fatal("result is not a string")
 		}
 		if text != "hi" {
@@ -948,8 +948,8 @@ func TestCallFunction(t *testing.T) {
 			t.Fatalf("CallFunction with kwargs failed: %v", err)
 		}
 
-		text, ok = result.AsString()
-		if !ok {
+		text, objErr = result.AsString()
+		if objErr != nil {
 			t.Fatal("result is not a string")
 		}
 		if text != "hihihi" {
@@ -973,8 +973,8 @@ func TestCallFunction(t *testing.T) {
 			t.Fatalf("CallFunction failed: %v", err)
 		}
 
-		sum, ok := result.AsInt()
-		if !ok {
+		sum, objErr := result.AsInt()
+		if objErr != nil {
 			t.Fatal("result is not an integer")
 		}
 		if sum != 42 {
@@ -1002,8 +1002,8 @@ func TestCallFunction(t *testing.T) {
 			t.Fatalf("CallFunction with kwargs only failed: %v", err)
 		}
 
-		text, ok := result.AsString()
-		if !ok {
+		text, objErr := result.AsString()
+		if objErr != nil {
 			t.Fatal("result is not a string")
 		}
 		if text != "enabled=true,name=test" {
@@ -1035,8 +1035,8 @@ func TestCallFunction(t *testing.T) {
 			t.Fatalf("CallFunction with mixed args failed: %v", err)
 		}
 
-		text, ok := result.AsString()
-		if !ok {
+		text, objErr := result.AsString()
+		if objErr != nil {
 			t.Fatal("result is not a string")
 		}
 		if text != "[item:42]" {
@@ -1060,8 +1060,8 @@ func TestCallFunction(t *testing.T) {
 			t.Fatalf("CallFunction failed: %v", err)
 		}
 
-		sum, ok := result.AsInt()
-		if !ok {
+		sum, objErr := result.AsInt()
+		if objErr != nil {
 			t.Fatal("result is not an integer")
 		}
 		if sum != 42 {
@@ -1088,8 +1088,8 @@ func TestCallFunction(t *testing.T) {
 			t.Fatalf("CallFunction with mixed args failed: %v", err)
 		}
 
-		text, ok := result.AsString()
-		if !ok {
+		text, objErr := result.AsString()
+		if objErr != nil {
 			t.Fatal("result is not a string")
 		}
 		if text != "Greetings, Dr Smith" {
@@ -1111,8 +1111,8 @@ func TestCallFunction(t *testing.T) {
 			t.Fatalf("CallFunction failed: %v", err)
 		}
 
-		value, ok := result.AsInt()
-		if !ok {
+		value, objErr := result.AsInt()
+		if objErr != nil {
 			t.Fatal("result is not an integer")
 		}
 		if value != 42 {

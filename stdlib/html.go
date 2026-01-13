@@ -12,9 +12,7 @@ import (
 var HTMLLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"escape": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
-			}
+			if err := errors.ExactArgs(args, 1); err != nil { return err }
 			str, ok := args[0].(*object.String)
 			if !ok {
 				return errors.NewTypeError("STRING", args[0].Type().String())
@@ -37,9 +35,7 @@ Example:
 	},
 	"unescape": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) != 1 {
-				return errors.NewArgumentError(len(args), 1)
-			}
+			if err := errors.ExactArgs(args, 1); err != nil { return err }
 			str, ok := args[0].(*object.String)
 			if !ok {
 				return errors.NewTypeError("STRING", args[0].Type().String())

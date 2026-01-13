@@ -31,8 +31,8 @@ func TestMathLibrary(t *testing.T) {
 				t.Fatalf("Error: %v", err)
 			}
 
-			result, ok := p.GetVar("result")
-			if !ok {
+			result, objErr := p.GetVar("result")
+			if objErr != nil {
 				t.Fatal("result variable not found")
 			}
 
@@ -68,8 +68,8 @@ area = math.pi * math.pow(radius, 2)
 		t.Fatalf("Error: %v", err)
 	}
 
-	area, ok := p.GetVar("area")
-	if !ok {
+	area, objErr := p.GetVar("area")
+	if objErr != nil {
 		t.Fatal("area variable not found")
 	}
 

@@ -288,9 +288,7 @@ func getEnvFromContext(ctx context.Context) *object.Environment {
 var ThreadsLibrary = object.NewLibrary(map[string]*object.Builtin{
 	"run": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) < 1 {
-				return errors.NewArgumentError(len(args), 1)
-			}
+			if err := errors.MinArgs(args, 1); err != nil { return err }
 
 			fn := args[0]
 			fnArgs := args[1:]
@@ -365,7 +363,7 @@ Example:
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			initial := int64(0)
 			if len(args) > 0 {
-				if i, ok := args[0].AsInt(); ok {
+				if i, err := args[0].AsInt(); err == nil {
 					initial = i
 				} else {
 					return errors.NewTypeError("INTEGER", args[0].Type().String())
@@ -380,7 +378,7 @@ Example:
 						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 							delta := int64(1)
 							if len(args) > 0 {
-								if d, ok := args[0].AsInt(); ok {
+								if d, err := args[0].AsInt(); err == nil {
 									delta = d
 								} else {
 									return errors.NewTypeError("INTEGER", args[0].Type().String())
@@ -399,10 +397,8 @@ Example:
 					},
 					"set": &object.Builtin{
 						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-							if len(args) != 1 {
-								return errors.NewArgumentError(len(args), 1)
-							}
-							if val, ok := args[0].AsInt(); ok {
+							if err := errors.ExactArgs(args, 1); err != nil { return err }
+							if val, err := args[0].AsInt(); err == nil {
 								atomic.set(val)
 								return &object.Null{}
 							}
@@ -445,9 +441,7 @@ Example:
 					},
 					"set": &object.Builtin{
 						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-							if len(args) != 1 {
-								return errors.NewArgumentError(len(args), 1)
-							}
+							if err := errors.ExactArgs(args, 1); err != nil { return err }
 							shared.set(args[0])
 							return &object.Null{}
 						},
@@ -484,7 +478,7 @@ Example:
 						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 							delta := int64(1)
 							if len(args) > 0 {
-								if d, ok := args[0].AsInt(); ok {
+								if d, err := args[0].AsInt(); err == nil {
 									delta = d
 								}
 							}
@@ -531,12 +525,12 @@ Example:
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			maxsize := 0 // Unbounded by default
 			if len(args) > 0 {
-				if m, ok := args[0].AsInt(); ok {
+				if m, err := args[0].AsInt(); err == nil {
 					maxsize = int(m)
 				}
 			}
 			if m, ok := kwargs.Kwargs["maxsize"]; ok {
-				if mInt, ok := m.AsInt(); ok {
+				if mInt, err := m.AsInt(); err == nil {
 					maxsize = int(mInt)
 				}
 			}
@@ -547,9 +541,7 @@ Example:
 				Attributes: map[string]object.Object{
 					"put": &object.Builtin{
 						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-							if len(args) != 1 {
-								return errors.NewArgumentError(len(args), 1)
-							}
+							if err := errors.ExactArgs(args, 1); err != nil { return err }
 							if err := queue.put(args[0]); err != nil {
 								return errors.NewError("queue error: %v", err)
 							}
@@ -606,26 +598,24 @@ Example:
 
 	"Pool": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) < 1 {
-				return errors.NewArgumentError(len(args), 1)
-			}
+			if err := errors.MinArgs(args, 1); err != nil { return err }
 
 			worker := args[0]
 			workers := 4
 			queueDepth := 0
 
 			if len(args) > 1 {
-				if w, ok := args[1].AsInt(); ok {
+				if w, err := args[1].AsInt(); err == nil {
 					workers = int(w)
 				}
 			}
 			if w, ok := kwargs.Kwargs["workers"]; ok {
-				if wInt, ok := w.AsInt(); ok {
+				if wInt, err := w.AsInt(); err == nil {
 					workers = int(wInt)
 				}
 			}
 			if q, ok := kwargs.Kwargs["queue_depth"]; ok {
-				if qInt, ok := q.AsInt(); ok {
+				if qInt, err := q.AsInt(); err == nil {
 					queueDepth = int(qInt)
 				}
 			}
@@ -641,9 +631,7 @@ Example:
 				Attributes: map[string]object.Object{
 					"submit": &object.Builtin{
 						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-							if len(args) != 1 {
-								return errors.NewArgumentError(len(args), 1)
-							}
+							if err := errors.ExactArgs(args, 1); err != nil { return err }
 							if err := pool.submit(args[0]); err != nil {
 								return errors.NewError("pool submit error: %v", err)
 							}

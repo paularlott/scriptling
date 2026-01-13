@@ -6,7 +6,6 @@ import (
 	"runtime"
 
 	"github.com/paularlott/scriptling/build"
-	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -66,7 +65,7 @@ func NewSysLibrary(argv []string) *object.Library {
 						if SysExitCallback != nil {
 							SysExitCallback(1)
 						}
-						return errors.NewError("%s", arg.Value)
+						return &object.Exception{Message: arg.Value}
 					default:
 						code = 1
 					}
@@ -76,19 +75,26 @@ func NewSysLibrary(argv []string) *object.Library {
 					SysExitCallback(code)
 				}
 
-				// Return a special error that can be caught by the runtime
-				return errors.NewError("SystemExit: %d", code)
+				// Return an exception so it can be caught with try/except
+				return &object.Exception{Message: "SystemExit: " + object.NewInteger(int64(code)).Inspect()}
 			},
-			HelpText: `exit([code]) - Exit the interpreter with optional status code
+			HelpText: `exit([code]) - Raise SystemExit exception to exit the interpreter
 
 Parameters:
-  code - Exit status (default 0). If string, prints message and exits with 1.
+  code - Exit status (default 0). If string, raises exception with that message.
+
+The SystemExit exception can be caught with try/except to prevent termination.
 
 Example:
   import sys
-  sys.exit()      # Exit with code 0
-  sys.exit(1)     # Exit with code 1
-  sys.exit("Error message")  # Print error and exit with 1`,
+  sys.exit()      # Raise SystemExit: 0
+  sys.exit(1)     # Raise SystemExit: 1
+  sys.exit("Error message")  # Raise exception with custom message
+
+  try:
+      sys.exit(42)
+  except Exception as e:
+      print("Caught: " + str(e))  # "Caught: SystemExit: 42"`,
 		},
 	}, constants, "System-specific parameters and functions (extended library)")
 }

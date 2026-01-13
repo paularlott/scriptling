@@ -155,17 +155,17 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		return NULL
 	case *ast.PrefixExpression:
 		right := evalWithContext(ctx, node.Right, env)
-		if isError(right) {
+		if object.IsError(right) {
 			return right
 		}
 		return evalPrefixExpression(node.Operator, right)
 	case *ast.InfixExpression:
 		left := evalWithContext(ctx, node.Left, env)
-		if isError(left) {
+		if object.IsError(left) {
 			return left
 		}
 		right := evalWithContext(ctx, node.Right, env)
-		if isError(right) {
+		if object.IsError(right) {
 			return right
 		}
 		return evalInfixExpression(ctx, node.Operator, left, right, env)
@@ -175,13 +175,15 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		return evalBlockStatementWithContext(ctx, node, env)
 	case *ast.IfStatement:
 		return evalIfStatementWithContext(ctx, node, env)
+	case *ast.MatchStatement:
+		return evalMatchStatementWithContext(ctx, node, env)
 	case *ast.WhileStatement:
 		return evalWhileStatementWithContext(ctx, node, env)
 	case *ast.ReturnStatement:
 		val := object.Object(NULL)
 		if node.ReturnValue != nil {
 			val = evalWithContext(ctx, node.ReturnValue, env)
-			if isError(val) {
+			if object.IsError(val) {
 				return val
 			}
 		}
@@ -198,7 +200,7 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		return evalFromImportStatement(node, env)
 	case *ast.AssignStatement:
 		val := evalWithContext(ctx, node.Value, env)
-		if isError(val) || isException(val) {
+		if object.IsError(val) || isException(val) {
 			return val
 		}
 		if err := assignToExpression(node.Left, val, env); err != nil {
@@ -219,7 +221,7 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		return evalCallExpression(ctx, node, env)
 	case *ast.ListLiteral:
 		elements := evalExpressionsWithContext(ctx, node.Elements, env)
-		if len(elements) == 1 && isError(elements[0]) {
+		if len(elements) == 1 && object.IsError(elements[0]) {
 			return elements[0]
 		}
 		return &object.List{Elements: elements}
@@ -227,11 +229,11 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		return evalDictLiteralWithContext(ctx, node, env)
 	case *ast.IndexExpression:
 		left := evalWithContext(ctx, node.Left, env)
-		if isError(left) {
+		if object.IsError(left) {
 			return left
 		}
 		index := evalWithContext(ctx, node.Index, env)
-		if isError(index) {
+		if object.IsError(index) {
 			return index
 		}
 		return evalIndexExpression(left, index)
@@ -257,7 +259,7 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		return evalLambda(node, env)
 	case *ast.TupleLiteral:
 		elements := evalExpressionsWithContext(ctx, node.Elements, env)
-		if len(elements) == 1 && isError(elements[0]) {
+		if len(elements) == 1 && object.IsError(elements[0]) {
 			return elements[0]
 		}
 		return &object.Tuple{Elements: elements}
@@ -282,6 +284,9 @@ func evalProgram(ctx context.Context, program *ast.Program, env *object.Environm
 			return result.Value
 		case *object.Error:
 			return result
+		case *object.Exception:
+			// Uncaught exception at program level - convert to error
+			return errors.NewError("Uncaught exception: %s", result.Message)
 		}
 	}
 
@@ -518,7 +523,7 @@ func evalInfixExpression(ctx context.Context, operator string, left, right objec
 
 func evalConditionalExpression(ctx context.Context, node *ast.ConditionalExpression, env *object.Environment) object.Object {
 	condition := evalWithContext(ctx, node.Condition, env)
-	if isError(condition) {
+	if object.IsError(condition) {
 		return condition
 	}
 
@@ -724,7 +729,7 @@ func evalInstanceInfixExpression(ctx context.Context, operator string, left *obj
 
 func evalIfStatementWithContext(ctx context.Context, ie *ast.IfStatement, env *object.Environment) object.Object {
 	condition := evalWithContext(ctx, ie.Condition, env)
-	if isError(condition) {
+	if object.IsError(condition) {
 		return condition
 	}
 
@@ -735,7 +740,7 @@ func evalIfStatementWithContext(ctx context.Context, ie *ast.IfStatement, env *o
 	// Check elif clauses
 	for _, elifClause := range ie.ElifClauses {
 		condition := evalWithContext(ctx, elifClause.Condition, env)
-		if isError(condition) {
+		if object.IsError(condition) {
 			return condition
 		}
 		if isTruthy(condition) {
@@ -762,7 +767,7 @@ func evalWhileStatementWithContext(ctx context.Context, ws *ast.WhileStatement, 
 		}
 
 		condition := evalWithContext(ctx, ws.Condition, env)
-		if isError(condition) {
+		if object.IsError(condition) {
 			return condition
 		}
 
@@ -822,7 +827,7 @@ func evalClassStatement(ctx context.Context, stmt *ast.ClassStatement, env *obje
 	if stmt.BaseClass != nil {
 		// Evaluate the base class expression (can be dotted like html.parser.HTMLParser)
 		baseClassObj := evalWithContext(ctx, stmt.BaseClass, env)
-		if isError(baseClassObj) {
+		if object.IsError(baseClassObj) {
 			return baseClassObj
 		}
 		baseClass, ok := baseClassObj.(*object.Class)
@@ -857,18 +862,18 @@ func evalClassStatement(ctx context.Context, stmt *ast.ClassStatement, env *obje
 
 func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *object.Environment) object.Object {
 	function := evalWithContext(ctx, node.Function, env)
-	if isError(function) {
+	if object.IsError(function) {
 		return function
 	}
 	args := evalExpressionsWithContext(ctx, node.Arguments, env)
-	if len(args) == 1 && isError(args[0]) {
+	if len(args) == 1 && object.IsError(args[0]) {
 		return args[0]
 	}
 
 	keywords := make(map[string]object.Object)
 	for k, v := range node.Keywords {
 		val := evalWithContext(ctx, v, env)
-		if isError(val) {
+		if object.IsError(val) {
 			return val
 		}
 		keywords[k] = val
@@ -890,7 +895,7 @@ func createInstance(ctx context.Context, class *object.Class, args []object.Obje
 		// We can reuse applyFunctionWithContext but we need to prepend 'self' to args.
 		newArgs := append([]object.Object{instance}, args...)
 		result := applyFunctionWithContext(ctx, initMethod, newArgs, keywords, env)
-		if isError(result) {
+		if object.IsError(result) {
 			return result
 		}
 	}
@@ -906,7 +911,7 @@ func evalExpressionsWithContext(ctx context.Context, exps []ast.Expression, env 
 
 	for i, e := range exps {
 		evaluated := evalWithContext(ctx, e, env)
-		if isError(evaluated) {
+		if object.IsError(evaluated) {
 			return []object.Object{evaluated}
 		}
 		result[i] = evaluated
@@ -1108,13 +1113,6 @@ func isTruthy(obj object.Object) bool {
 	}
 }
 
-func isError(obj object.Object) bool {
-	if obj != nil {
-		return obj.Type() == object.ERROR_OBJ
-	}
-	return false
-}
-
 // evalDictLiteralWithContext is in data_structures.go
 // evalIndexExpression is in data_structures.go
 // evalDictMemberAccess is in data_structures.go
@@ -1131,7 +1129,7 @@ func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.Augm
 	}
 
 	newVal := evalWithContext(ctx, node.Value, env)
-	if isError(newVal) {
+	if object.IsError(newVal) {
 		return newVal
 	}
 
@@ -1164,7 +1162,7 @@ func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.Augm
 	}
 
 	result := evalInfixExpression(ctx, operator, currentVal, newVal, env)
-	if isError(result) {
+	if object.IsError(result) {
 		return result
 	}
 
@@ -1432,7 +1430,7 @@ func evalIsOperator(left, right object.Object) object.Object {
 
 func evalMultipleAssignStatementWithContext(ctx context.Context, node *ast.MultipleAssignStatement, env *object.Environment) object.Object {
 	val := evalWithContext(ctx, node.Value, env)
-	if isError(val) {
+	if object.IsError(val) {
 		return val
 	}
 
@@ -1466,9 +1464,12 @@ func evalTryStatementWithContext(ctx context.Context, ts *ast.TryStatement, env 
 	result := evalWithContext(ctx, ts.Body, env)
 
 	// Check if exception or error occurred
-	if isException(result) || isError(result) {
+	if isException(result) || object.IsError(result) {
 		// Execute except block if present
 		if ts.Except != nil {
+			// Store the current exception for bare raise support
+			env.Set("__current_exception__", result)
+
 			// Bind exception to variable if specified
 			if ts.ExceptVar != nil {
 				env.Set(ts.ExceptVar.Value, result)
@@ -1476,6 +1477,14 @@ func evalTryStatementWithContext(ctx context.Context, ts *ast.TryStatement, env 
 
 			// Execute except block in the same environment so variables are accessible
 			result = evalWithContext(ctx, ts.Except, env)
+
+			// Clear the current exception after except block
+			env.Delete("__current_exception__")
+
+			// If except block didn't re-raise, the exception was handled
+			if !isException(result) && !object.IsError(result) {
+				result = NULL
+			}
 		}
 	}
 
@@ -1484,31 +1493,30 @@ func evalTryStatementWithContext(ctx context.Context, ts *ast.TryStatement, env 
 		evalWithContext(ctx, ts.Finally, env)
 	}
 
-	// Clear exception if it was handled
-	if (isException(result) || isError(result)) && ts.Except != nil {
-		return NULL
-	}
-
 	return result
 }
 
 func evalRaiseStatementWithContext(ctx context.Context, rs *ast.RaiseStatement, env *object.Environment) object.Object {
-	var message string
 	if rs.Message != nil {
 		msg := evalWithContext(ctx, rs.Message, env)
-		if isError(msg) {
+		if object.IsError(msg) {
 			return msg
 		}
-		message = msg.Inspect()
-	} else {
-		message = "Exception raised"
+		return &object.Exception{Message: msg.Inspect()}
 	}
-	return &object.Exception{Message: message}
+
+	// Bare raise - re-raise the current exception if one exists
+	if currentExc, ok := env.Get("__current_exception__"); ok {
+		return currentExc
+	}
+
+	// No current exception - error
+	return errors.NewError("No active exception to re-raise")
 }
 
 func evalAssertStatementWithContext(ctx context.Context, as *ast.AssertStatement, env *object.Environment) object.Object {
 	condition := evalWithContext(ctx, as.Condition, env)
-	if isError(condition) {
+	if object.IsError(condition) {
 		return condition
 	}
 
@@ -1516,7 +1524,7 @@ func evalAssertStatementWithContext(ctx context.Context, as *ast.AssertStatement
 		var message string
 		if as.Message != nil {
 			msg := evalWithContext(ctx, as.Message, env)
-			if isError(msg) {
+			if object.IsError(msg) {
 				return msg
 			}
 			message = msg.Inspect()
@@ -1543,11 +1551,11 @@ func assignToExpression(expr ast.Expression, value object.Object, env *object.En
 		return nil
 	case *ast.IndexExpression:
 		obj := evalWithContext(context.Background(), left.Left, env)
-		if isError(obj) {
+		if object.IsError(obj) {
 			return fmt.Errorf("assignment error")
 		}
 		index := evalWithContext(context.Background(), left.Index, env)
-		if isError(index) {
+		if object.IsError(index) {
 			return fmt.Errorf("assignment error")
 		}
 		switch o := obj.(type) {
@@ -1618,7 +1626,7 @@ func setForVariables(variables []ast.Expression, value object.Object, env *objec
 
 func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env *object.Environment) object.Object {
 	iterable := evalWithContext(ctx, fs.Iterable, env)
-	if isError(iterable) {
+	if object.IsError(iterable) {
 		return iterable
 	}
 
@@ -1719,7 +1727,7 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 
 func evalListComprehension(ctx context.Context, lc *ast.ListComprehension, env *object.Environment) object.Object {
 	iterable := evalWithContext(ctx, lc.Iterable, env)
-	if isError(iterable) {
+	if object.IsError(iterable) {
 		return iterable
 	}
 
@@ -1758,7 +1766,7 @@ func evalListComprehension(ctx context.Context, lc *ast.ListComprehension, env *
 			// Check condition if present
 			if lc.Condition != nil {
 				condition := evalWithContext(ctx, lc.Condition, compEnv)
-				if isError(condition) {
+				if object.IsError(condition) {
 					return condition
 				}
 				if !isTruthy(condition) {
@@ -1768,7 +1776,7 @@ func evalListComprehension(ctx context.Context, lc *ast.ListComprehension, env *
 
 			// Evaluate expression
 			exprResult := evalWithContext(ctx, lc.Expression, compEnv)
-			if isError(exprResult) {
+			if object.IsError(exprResult) {
 				return exprResult
 			}
 			result = append(result, exprResult)
@@ -1801,7 +1809,7 @@ func evalListComprehension(ctx context.Context, lc *ast.ListComprehension, env *
 		// Check condition if present
 		if lc.Condition != nil {
 			condition := evalWithContext(ctx, lc.Condition, compEnv)
-			if isError(condition) {
+			if object.IsError(condition) {
 				return condition
 			}
 			if !isTruthy(condition) {
@@ -1811,7 +1819,7 @@ func evalListComprehension(ctx context.Context, lc *ast.ListComprehension, env *
 
 		// Evaluate expression
 		exprResult := evalWithContext(ctx, lc.Expression, compEnv)
-		if isError(exprResult) {
+		if object.IsError(exprResult) {
 			return exprResult
 		}
 		result = append(result, exprResult)
@@ -1847,7 +1855,7 @@ func evalFStringLiteral(ctx context.Context, fstr *ast.FStringLiteral, env *obje
 		builder.WriteString(part)
 		if i < len(fstr.Expressions) {
 			exprResult := evalWithContext(ctx, fstr.Expressions[i], env)
-			if isError(exprResult) {
+			if object.IsError(exprResult) {
 				return exprResult
 			}
 			formatted := formatWithSpec(exprResult, fstr.FormatSpecs[i])
@@ -1863,11 +1871,11 @@ func formatWithSpec(obj object.Object, spec string) string {
 		// Check the actual object type first to preserve float representation
 		switch obj.Type() {
 		case object.INTEGER_OBJ:
-			if intVal, ok := obj.AsInt(); ok {
+			if intVal, err := obj.AsInt(); err == nil {
 				return fmt.Sprintf("%d", intVal)
 			}
 		case object.FLOAT_OBJ:
-			if floatVal, ok := obj.AsFloat(); ok {
+			if floatVal, err := obj.AsFloat(); err == nil {
 				// Check if it's a whole number
 				if floatVal == float64(int64(floatVal)) {
 					return fmt.Sprintf("%.1f", floatVal)
@@ -1882,21 +1890,21 @@ func formatWithSpec(obj object.Object, spec string) string {
 	if strings.HasSuffix(spec, "d") {
 		widthStr := strings.TrimSuffix(spec, "d")
 		if widthStr == "" {
-			if intVal, ok := obj.AsInt(); ok {
+			if intVal, err := obj.AsInt(); err == nil {
 				return fmt.Sprintf("%d", intVal)
 			}
 		} else if widthStr[0] == '0' {
 			// Zero-padded
 			widthStr = widthStr[1:]
 			if width, err := strconv.Atoi(widthStr); err == nil {
-				if intVal, ok := obj.AsInt(); ok {
+				if intVal, err := obj.AsInt(); err == nil {
 					return fmt.Sprintf("%0*d", width, intVal)
 				}
 			}
 		} else {
 			// Space-padded
 			if width, err := strconv.Atoi(widthStr); err == nil {
-				if intVal, ok := obj.AsInt(); ok {
+				if intVal, err := obj.AsInt(); err == nil {
 					return fmt.Sprintf("%*d", width, intVal)
 				}
 			}
@@ -1905,4 +1913,202 @@ func formatWithSpec(obj object.Object, spec string) string {
 
 	// Fallback to inspect
 	return obj.Inspect()
+}
+
+func evalMatchStatementWithContext(ctx context.Context, ms *ast.MatchStatement, env *object.Environment) object.Object {
+	subject := evalWithContext(ctx, ms.Subject, env)
+	if object.IsError(subject) {
+		return subject
+	}
+
+	for _, caseClause := range ms.Cases {
+		// Track captured variables for this case
+		capturedVars := make(map[string]object.Object)
+
+		matched, capturedValue := matchPattern(subject, caseClause.Pattern, capturedVars)
+		if object.IsError(matched) {
+			return matched
+		}
+
+		if matched == TRUE {
+			// Temporarily add captured variables to environment for guard evaluation
+			for name, val := range capturedVars {
+				env.Set(name, val)
+			}
+
+			// Check guard condition if present
+			if caseClause.Guard != nil {
+				guardResult := evalWithContext(ctx, caseClause.Guard, env)
+				if object.IsError(guardResult) {
+					return guardResult
+				}
+				if !isTruthy(guardResult) {
+					// Guard failed - try next case
+					continue
+				}
+			}
+
+			// Bind explicit capture variable if present
+			if caseClause.CaptureAs != nil {
+				env.Set(caseClause.CaptureAs.Value, capturedValue)
+			}
+
+			// Execute body in the environment (with captures)
+			return evalWithContext(ctx, caseClause.Body, env)
+		}
+	}
+
+	return NULL
+}
+
+func matchPattern(subject object.Object, pattern ast.Expression, capturedVars map[string]object.Object) (object.Object, object.Object) {
+	switch p := pattern.(type) {
+	case *ast.Identifier:
+		// Wildcard pattern
+		if p.Value == "_" {
+			return TRUE, subject
+		}
+
+		// All other identifiers are capture variables (always match)
+		// Bind the captured value to the identifier name
+		capturedVars[p.Value] = subject
+		return TRUE, subject
+
+	case *ast.CallExpression:
+		// Handle type patterns like int(), str(), list(), dict()
+		if ident, ok := p.Function.(*ast.Identifier); ok {
+			// Check if it's a type constructor with no arguments
+			if len(p.Arguments) == 0 && len(p.Keywords) == 0 {
+				typeName := ident.Value
+				subjectType := getTypeName(subject)
+				if typeName == subjectType {
+					return TRUE, subject
+				}
+				return FALSE, NULL
+			}
+		}
+		return &object.Error{Message: "call expressions in patterns must be type constructors with no arguments"}, NULL
+
+
+	case *ast.IntegerLiteral:
+		if intObj, ok := subject.(*object.Integer); ok {
+			if intObj.Value == p.Value {
+				return TRUE, subject
+			}
+		}
+		return FALSE, NULL
+
+	case *ast.FloatLiteral:
+		if floatObj, ok := subject.(*object.Float); ok {
+			if floatObj.Value == p.Value {
+				return TRUE, subject
+			}
+		}
+		return FALSE, NULL
+
+	case *ast.StringLiteral:
+		if strObj, ok := subject.(*object.String); ok {
+			if strObj.Value == p.Value {
+				return TRUE, subject
+			}
+		}
+		return FALSE, NULL
+
+	case *ast.Boolean:
+		if boolObj, ok := subject.(*object.Boolean); ok {
+			if boolObj.Value == p.Value {
+				return TRUE, subject
+			}
+		}
+		return FALSE, NULL
+
+	case *ast.None:
+		if subject == NULL {
+			return TRUE, subject
+		}
+		return FALSE, NULL
+
+	case *ast.DictLiteral:
+		// Structural matching for dictionaries
+		dictObj, ok := subject.(*object.Dict)
+		if !ok {
+			return FALSE, NULL
+		}
+
+		// Match all keys in pattern
+		for keyExpr, valueExpr := range p.Pairs {
+			keyObj := evalWithContext(context.Background(), keyExpr, object.NewEnvironment())
+			if object.IsError(keyObj) {
+				return keyObj, NULL
+			}
+
+			keyStr := keyObj.Inspect()
+			pair, exists := dictObj.Pairs[keyStr]
+			if !exists {
+				return FALSE, NULL
+			}
+
+			// If pattern value is an identifier (not _), it's a capture variable
+			if ident, ok := valueExpr.(*ast.Identifier); ok && ident.Value != "_" {
+				// Store the captured value
+				capturedVars[ident.Value] = pair.Value
+			} else {
+				// Otherwise, it must match exactly
+				matched, _ := matchPattern(pair.Value, valueExpr, capturedVars)
+				if matched == FALSE {
+					return FALSE, NULL
+				}
+			}
+		}
+
+		return TRUE, subject
+
+	case *ast.ListLiteral:
+		// Simple list matching
+		listObj, ok := subject.(*object.List)
+		if !ok {
+			return FALSE, NULL
+		}
+
+		if len(p.Elements) != len(listObj.Elements) {
+			return FALSE, NULL
+		}
+
+		for i, elemExpr := range p.Elements {
+			matched, _ := matchPattern(listObj.Elements[i], elemExpr, capturedVars)
+			if matched == FALSE {
+				return FALSE, NULL
+			}
+		}
+
+		return TRUE, subject
+
+	default:
+		return &object.Error{Message: fmt.Sprintf("unsupported pattern type: %T", pattern)}, NULL
+	}
+}
+
+func getTypeName(obj object.Object) string {
+	switch obj.Type() {
+	case object.INTEGER_OBJ:
+		return "int"
+	case object.FLOAT_OBJ:
+		return "float"
+	case object.STRING_OBJ:
+		return "str"
+	case object.BOOLEAN_OBJ:
+		return "bool"
+	case object.LIST_OBJ:
+		return "list"
+	case object.DICT_OBJ:
+		return "dict"
+	case object.TUPLE_OBJ:
+		return "tuple"
+	case object.SET_OBJ:
+		return "set"
+	case object.NULL_OBJ:
+		return "NoneType"
+	default:
+		return obj.Type().String()
+	}
 }
