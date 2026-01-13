@@ -605,17 +605,42 @@ except:
     print("Caught error")
 ```
 
-### Nested Try/Except
+**Uncaught Exceptions**: If a `raise` statement is not caught by a `try/except` block, the program terminates with an error:
+
+```python
+print("Starting")
+raise "fatal error"    # Program stops here with: Error: Uncaught exception: fatal error
+print("Never reached")
+```
+
+### Accessing Exception Messages
+
+Use `str(e)` to get the exception message:
 
 ```python
 try:
-    try:
-        risky_operation()
-    except:
-        print("Inner error")
-        raise "Re-raising"
-except:
-    print("Outer error")
+    raise "something went wrong"
+except Exception as e:
+    print("Error: " + str(e))  # Prints: Error: something went wrong
+```
+
+### Bare Raise (Re-raising)
+
+Use bare `raise` to re-raise the current exception after logging or cleanup:
+
+```python
+try:
+    process_data()
+except Exception as e:
+    print("Error occurred: " + str(e))
+    log_error(e)
+    raise  # Re-raise the same exception
+```
+
+Bare `raise` outside an except block raises an error:
+
+```python
+raise  # Error: No active exception to re-raise
 ```
 
 ### Assert Statement

@@ -284,6 +284,9 @@ func evalProgram(ctx context.Context, program *ast.Program, env *object.Environm
 			return result.Value
 		case *object.Error:
 			return result
+		case *object.Exception:
+			// Uncaught exception at program level - convert to error
+			return errors.NewError("Uncaught exception: %s", result.Message)
 		}
 	}
 
@@ -1464,6 +1467,9 @@ func evalTryStatementWithContext(ctx context.Context, ts *ast.TryStatement, env 
 	if isException(result) || object.IsError(result) {
 		// Execute except block if present
 		if ts.Except != nil {
+			// Store the current exception for bare raise support
+			env.Set("__current_exception__", result)
+
 			// Bind exception to variable if specified
 			if ts.ExceptVar != nil {
 				env.Set(ts.ExceptVar.Value, result)
@@ -1471,6 +1477,14 @@ func evalTryStatementWithContext(ctx context.Context, ts *ast.TryStatement, env 
 
 			// Execute except block in the same environment so variables are accessible
 			result = evalWithContext(ctx, ts.Except, env)
+
+			// Clear the current exception after except block
+			env.Delete("__current_exception__")
+
+			// If except block didn't re-raise, the exception was handled
+			if !isException(result) && !object.IsError(result) {
+				result = NULL
+			}
 		}
 	}
 
@@ -1479,26 +1493,25 @@ func evalTryStatementWithContext(ctx context.Context, ts *ast.TryStatement, env 
 		evalWithContext(ctx, ts.Finally, env)
 	}
 
-	// Clear exception if it was handled
-	if (isException(result) || object.IsError(result)) && ts.Except != nil {
-		return NULL
-	}
-
 	return result
 }
 
 func evalRaiseStatementWithContext(ctx context.Context, rs *ast.RaiseStatement, env *object.Environment) object.Object {
-	var message string
 	if rs.Message != nil {
 		msg := evalWithContext(ctx, rs.Message, env)
 		if object.IsError(msg) {
 			return msg
 		}
-		message = msg.Inspect()
-	} else {
-		message = "Exception raised"
+		return &object.Exception{Message: msg.Inspect()}
 	}
-	return &object.Exception{Message: message}
+
+	// Bare raise - re-raise the current exception if one exists
+	if currentExc, ok := env.Get("__current_exception__"); ok {
+		return currentExc
+	}
+
+	// No current exception - error
+	return errors.NewError("No active exception to re-raise")
 }
 
 func evalAssertStatementWithContext(ctx context.Context, as *ast.AssertStatement, env *object.Environment) object.Object {
@@ -1911,7 +1924,7 @@ func evalMatchStatementWithContext(ctx context.Context, ms *ast.MatchStatement, 
 	for _, caseClause := range ms.Cases {
 		// Track captured variables for this case
 		capturedVars := make(map[string]object.Object)
-		
+
 		matched, capturedValue := matchPattern(subject, caseClause.Pattern, capturedVars)
 		if object.IsError(matched) {
 			return matched
@@ -1922,7 +1935,7 @@ func evalMatchStatementWithContext(ctx context.Context, ms *ast.MatchStatement, 
 			for name, val := range capturedVars {
 				env.Set(name, val)
 			}
-			
+
 			// Check guard condition if present
 			if caseClause.Guard != nil {
 				guardResult := evalWithContext(ctx, caseClause.Guard, env)

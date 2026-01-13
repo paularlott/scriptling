@@ -2,7 +2,11 @@ package scriptling
 
 import (
 	"os"
+	"strings"
 	"testing"
+
+	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/object"
 )
 
 func TestTryExcept(t *testing.T) {
@@ -110,6 +114,181 @@ except:
 	result, objErr := p.GetVar("result")
 	if objErr != nil || result != int64(-1) {
 		t.Errorf("result = %v, want -1", result)
+	}
+}
+
+func TestUncaughtExceptionTerminates(t *testing.T) {
+	p := New()
+	_, err := p.Eval(`
+x = 1
+raise "uncaught error"
+x = 2
+`)
+	// Should return an error for uncaught exception
+	if err == nil {
+		t.Error("Expected error for uncaught exception, got nil")
+	}
+
+	// Error message should contain the exception message
+	if err != nil && !strings.Contains(err.Error(), "uncaught error") {
+		t.Errorf("Error should contain 'uncaught error', got: %v", err)
+	}
+
+	// x should still be 1 (execution stopped before x = 2)
+	x, objErr := p.GetVar("x")
+	if objErr != nil || x != int64(1) {
+		t.Errorf("x = %v, want 1 (execution should have stopped)", x)
+	}
+}
+
+func TestStrException(t *testing.T) {
+	p := New()
+	_, err := p.Eval(`
+message = ""
+try:
+    raise "test error message"
+except Exception as e:
+    message = str(e)
+`)
+	if err != nil {
+		t.Fatalf("Error: %v", err)
+	}
+
+	message, objErr := p.GetVar("message")
+	if objErr != nil {
+		t.Fatalf("Failed to get message: %v", objErr)
+	}
+
+	// str(exception) should return just the message, not "EXCEPTION: message"
+	expected := "test error message"
+	if message != expected {
+		t.Errorf("str(exception) = %q, want %q", message, expected)
+	}
+}
+
+func TestBareRaiseReRaises(t *testing.T) {
+	p := New()
+	_, err := p.Eval(`
+caught_msg = ""
+try:
+    raise "original error"
+except Exception as e:
+    caught_msg = str(e)
+    raise
+`)
+	// Should return an error for re-raised exception
+	if err == nil {
+		t.Error("Expected error for re-raised exception, got nil")
+	}
+
+	// Error should contain the original message
+	if err != nil && !strings.Contains(err.Error(), "original error") {
+		t.Errorf("Error should contain 'original error', got: %v", err)
+	}
+
+	// Should have captured the message before re-raising
+	caught, objErr := p.GetVar("caught_msg")
+	if objErr != nil || caught != "original error" {
+		t.Errorf("caught_msg = %q, want 'original error'", caught)
+	}
+}
+
+func TestBareRaiseOutsideExceptFails(t *testing.T) {
+	p := New()
+	_, err := p.Eval(`
+raise
+`)
+	// Should return an error for bare raise outside except
+	if err == nil {
+		t.Error("Expected error for bare raise outside except, got nil")
+	}
+
+	// Error should indicate no active exception
+	if err != nil && !strings.Contains(err.Error(), "No active exception") {
+		t.Errorf("Error should contain 'No active exception', got: %v", err)
+	}
+}
+
+func TestSysExitRaisesException(t *testing.T) {
+	p := New()
+	extlibs.RegisterSysLibrary(p, []string{})
+
+	// Test that sys.exit() raises an exception that can be caught
+	code := `
+import sys
+
+result = None
+try:
+    sys.exit(42)
+except Exception as e:
+    result = str(e)
+
+result
+`
+	result, err := p.Eval(code)
+	if err != nil {
+		t.Fatalf("Failed to execute: %v", err)
+	}
+
+	if result.Type() != object.STRING_OBJ {
+		t.Fatalf("Expected STRING, got %s", result.Type())
+	}
+
+	msg := result.(*object.String).Value
+	if msg != "SystemExit: 42" {
+		t.Errorf("Expected 'SystemExit: 42', got %s", msg)
+	}
+}
+
+func TestSysExitWithStringMessage(t *testing.T) {
+	p := New()
+	extlibs.RegisterSysLibrary(p, []string{})
+
+	// Test that sys.exit() with string message can be caught
+	code := `
+import sys
+
+result = None
+try:
+    sys.exit("custom error")
+except Exception as e:
+    result = str(e)
+
+result
+`
+	result, err := p.Eval(code)
+	if err != nil {
+		t.Fatalf("Failed to execute: %v", err)
+	}
+
+	if result.Type() != object.STRING_OBJ {
+		t.Fatalf("Expected STRING, got %s", result.Type())
+	}
+
+	msg := result.(*object.String).Value
+	if msg != "custom error" {
+		t.Errorf("Expected 'custom error', got %s", msg)
+	}
+}
+
+func TestSysExitUncaughtTerminates(t *testing.T) {
+	p := New()
+	extlibs.RegisterSysLibrary(p, []string{})
+
+	// Test that uncaught sys.exit() terminates execution
+	code := `
+import sys
+
+sys.exit(99)
+result = "should not reach here"
+`
+	_, err := p.Eval(code)
+	if err == nil {
+		t.Fatal("Expected error for uncaught sys.exit()")
+	}
+
+	if !strings.Contains(err.Error(), "SystemExit: 99") {
+		t.Errorf("Expected 'SystemExit: 99' in error, got: %s", err.Error())
 	}
 }
 

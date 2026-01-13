@@ -147,6 +147,22 @@ finally:
 if x < 0:
     raise "Invalid value"
 
+# Uncaught raise terminates with error
+raise "fatal"  # Error: Uncaught exception: fatal
+
+# Bare raise re-raises current exception
+try:
+    raise "error"
+except Exception as e:
+    print("Caught: " + str(e))
+    raise  # Re-raise the same exception
+
+# Access exception message with str(e)
+try:
+    raise "something failed"
+except Exception as e:
+    print(str(e))  # "something failed"
+
 # Assert
 assert x > 0, "x must be positive"
 ```
@@ -194,6 +210,25 @@ if resp["status"] == 200:
 payload = {"name": "Alice"}
 body = json.stringify(payload)
 response = requests.post("https://api.example.com/users", body)
+```
+
+## System Functions
+
+```python
+import sys
+
+# Exit with status code (raises SystemExit exception)
+sys.exit(0)   # Success
+sys.exit(1)   # Error
+
+# Catch sys.exit to prevent termination
+try:
+    sys.exit(42)
+except Exception as e:
+    print("Caught: " + str(e))  # "Caught: SystemExit: 42"
+
+# Exit with custom message
+sys.exit("Fatal error occurred")
 ```
 
 ## Classes

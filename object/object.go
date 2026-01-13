@@ -479,6 +479,13 @@ func (e *Environment) Set(name string, val Object) Object {
 	return val
 }
 
+// Delete removes a variable from this environment (not parent scopes)
+func (e *Environment) Delete(name string) {
+	e.mu.Lock()
+	delete(e.store, name)
+	e.mu.Unlock()
+}
+
 // SetGlobal sets a variable in the global (outermost) environment
 func (e *Environment) SetGlobal(name string, val Object) Object {
 	if e.outer == nil {
