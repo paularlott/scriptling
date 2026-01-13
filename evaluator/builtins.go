@@ -85,7 +85,12 @@ Use list(filter(...)) to get a list.`,
 			// Build output string
 			parts := make([]string, len(args))
 			for i, arg := range args {
-				parts[i] = arg.Inspect()
+				// Use AsString() for strings to get actual value, Inspect() for others
+				if str, err := arg.AsString(); err == nil {
+					parts[i] = str
+				} else {
+					parts[i] = arg.Inspect()
+				}
 			}
 			fmt.Fprint(writer, strings.Join(parts, sep)+end)
 			return NULL
@@ -1205,17 +1210,6 @@ Otherwise, returns a tuple containing the items of the iterable.`,
 
 With no argument, returns an empty set.
 Otherwise, returns a set containing unique items from the iterable.`,
-	},
-	"input": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			// input() is not supported in embedded environments
-			// In a scripting engine context, there's no stdin
-			return errors.NewError("input() is not available in embedded scripting environments")
-		},
-		HelpText: `input([prompt]) - Read a line of input
-
-Note: input() is not available in embedded scripting environments.
-This function exists for compatibility but will return an error.`,
 	},
 	"repr": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {

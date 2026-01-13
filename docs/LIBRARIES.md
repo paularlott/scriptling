@@ -7,9 +7,11 @@ Scriptling provides a rich set of standard libraries and supports loading extern
 Always available without importing:
 
 ### I/O
+
 - `print(value)` - Output to console
 
 ### Type Conversions
+
 - `str(value)` - Convert to string
 - `int(value)` - Convert to integer
 - `float(value)` - Convert to float
@@ -18,6 +20,7 @@ Always available without importing:
 - `dict(value)` - Convert to dictionary
 
 ### String Functions
+
 - `len(string)` - Get length
 - `upper(string)` - Uppercase
 - `lower(string)` - Lowercase
@@ -26,15 +29,16 @@ Always available without importing:
 - `split(string, sep)` - Split to list
 - `join(list, sep)` - Join from list
 - `replace(str, old, new)` - Replace substring
-- `strip(string)` - Trim whitespace from both ends
-- `lstrip(string)` - Trim whitespace from left
-- `rstrip(string)` - Trim whitespace from right
+- `strip(string[, chars])` - Trim whitespace (or specified chars) from both ends
+- `lstrip(string[, chars])` - Trim whitespace (or specified chars) from left
+- `rstrip(string[, chars])` - Trim whitespace (or specified chars) from right
 - `startswith(string, prefix)` - Check if string starts with prefix
 - `endswith(string, suffix)` - Check if string ends with suffix
 - `find(string, sub)` - Find substring index
 - `count(string, sub)` - Count occurrences
 
 ### List Functions
+
 - `len(list)` - Get length
 - `list.append(item)` - Append item (modifies list in-place)
 - `list.extend(other_list)` - Append elements from another list (modifies list in-place)
@@ -47,6 +51,7 @@ Always available without importing:
 - `list.reverse()` - Reverse list in-place
 
 ### Dictionary Functions
+
 - `dict.keys()` - Get view of keys (iterable, reflects dict changes)
 - `dict.values()` - Get view of values (iterable, reflects dict changes)
 - `dict.items()` - Get view of (key, value) tuples (iterable, reflects dict changes)
@@ -57,6 +62,7 @@ Always available without importing:
 **Note:** `keys()`, `values()`, and `items()` now return view objects instead of lists. Use `list(dict.keys())` if you need a list.
 
 ### System
+
 - `import library_name` - Load library dynamically
 - `help([object])` - Display help information for functions, libraries, and objects
 - `type(object)` - Get type of object
@@ -67,49 +73,49 @@ Always available without importing:
 
 These libraries are built-in and available for import without any registration.
 
-| Import | Description | Details |
-|--------|-------------|---------|
-| `json` | Parse and generate JSON data | [libraries/json.md](libraries/json.md) |
-| `base64` | Base64 encoding and decoding | [libraries/base64.md](libraries/base64.md) |
-| `html` | HTML escaping and unescaping | [libraries/html.md](libraries/html.md) |
-| `math` | Mathematical functions and constants | [libraries/math.md](libraries/math.md) |
-| `random` | Random number generation | [libraries/random.md](libraries/random.md) |
-| `statistics` | Statistical functions | [libraries/statistics.md](libraries/statistics.md) |
-| `time` | Time access and conversions | [libraries/time.md](libraries/time.md) |
-| `datetime` | Date and time formatting | [libraries/datetime.md](libraries/datetime.md) |
-| `re` | Regular expression operations | [libraries/regex.md](libraries/regex.md) |
-| `string` | String constants | [libraries/string.md](libraries/string.md) |
-| `textwrap` | Text wrapping and filling | [libraries/textwrap.md](libraries/textwrap.md) |
-| `functools` | Higher-order functions | [libraries/functools.md](libraries/functools.md) |
-| `itertools` | Iterator functions | [libraries/itertools.md](libraries/itertools.md) |
-| `collections` | Specialized container datatypes | [libraries/collections.md](libraries/collections.md) |
-| `hashlib` | Secure hash algorithms | [libraries/hashlib.md](libraries/hashlib.md) |
-| `platform` | Platform identifying data | [libraries/platform.md](libraries/platform.md) |
-| `urllib` | URL handling | [libraries/urllib.md](libraries/urllib.md) |
-| `uuid` | UUID generation | [libraries/uuid.md](libraries/uuid.md) |
+| Import        | Description                          | Details                                              |
+| ------------- | ------------------------------------ | ---------------------------------------------------- |
+| `json`        | Parse and generate JSON data         | [libraries/json.md](libraries/json.md)               |
+| `base64`      | Base64 encoding and decoding         | [libraries/base64.md](libraries/base64.md)           |
+| `html`        | HTML escaping and unescaping         | [libraries/html.md](libraries/html.md)               |
+| `math`        | Mathematical functions and constants | [libraries/math.md](libraries/math.md)               |
+| `random`      | Random number generation             | [libraries/random.md](libraries/random.md)           |
+| `statistics`  | Statistical functions                | [libraries/statistics.md](libraries/statistics.md)   |
+| `time`        | Time access and conversions          | [libraries/time.md](libraries/time.md)               |
+| `datetime`    | Date and time formatting             | [libraries/datetime.md](libraries/datetime.md)       |
+| `re`          | Regular expression operations        | [libraries/regex.md](libraries/regex.md)             |
+| `string`      | String constants                     | [libraries/string.md](libraries/string.md)           |
+| `textwrap`    | Text wrapping and filling            | [libraries/textwrap.md](libraries/textwrap.md)       |
+| `functools`   | Higher-order functions               | [libraries/functools.md](libraries/functools.md)     |
+| `itertools`   | Iterator functions                   | [libraries/itertools.md](libraries/itertools.md)     |
+| `collections` | Specialized container datatypes      | [libraries/collections.md](libraries/collections.md) |
+| `hashlib`     | Secure hash algorithms               | [libraries/hashlib.md](libraries/hashlib.md)         |
+| `platform`    | Platform identifying data            | [libraries/platform.md](libraries/platform.md)       |
+| `urllib`      | URL handling                         | [libraries/urllib.md](libraries/urllib.md)           |
+| `uuid`        | UUID generation                      | [libraries/uuid.md](libraries/uuid.md)               |
 
 ## Extended Libraries
 
 These libraries require explicit registration by the host application (e.g., the CLI tool).
 
-| Import | Description | Details |
-|--------|-------------|---------|
-| `ai` | AI and LLM functions for OpenAI-compatible APIs | [libraries/ai.md](libraries/ai.md) |
-| `mcp` | MCP (Model Context Protocol) tool interaction | [libraries/mcp.md](libraries/mcp.md) |
-| `toon` | TOON (Token-Oriented Object Notation) encoding/decoding | [libraries/toon.md](libraries/toon.md) |
-| `requests` | HTTP library for sending requests | [libraries/requests.md](libraries/requests.md) |
-| `sys` | System-specific parameters and functions | [libraries/sys.md](libraries/sys.md) |
-| `secrets` | Cryptographically strong random numbers | [libraries/secrets.md](libraries/secrets.md) |
-| `subprocess` | Spawn and manage subprocesses | [libraries/subprocess.md](libraries/subprocess.md) |
-| `html.parser` | HTML/XHTML parser | [libraries/html.parser.md](libraries/html.parser.md) |
-| `os` | Operating system interfaces (filesystem) | [libraries/os.md](libraries/os.md) |
-| `os.path` | Pathname manipulations | [libraries/os.path.md](libraries/os.path.md) |
-| `pathlib` | Object-oriented filesystem paths | [libraries/pathlib.md](libraries/pathlib.md) |
-| `threads` | Asynchronous execution with isolated environments | [libraries/threads.md](libraries/threads.md) |
-| `logging` | Logging functionality | [libraries/logging.md](libraries/logging.md) |
-| `wait_for` | Wait for resources to become available | [libraries/wait_for.md](libraries/wait_for.md) |
-
-
+| Import        | Description                                             | Details                                              |
+| ------------- | ------------------------------------------------------- | ---------------------------------------------------- |
+| `ai`          | AI and LLM functions for OpenAI-compatible APIs         | [libraries/ai.md](libraries/ai.md)                   |
+| `mcp`         | MCP (Model Context Protocol) tool interaction           | [libraries/mcp.md](libraries/mcp.md)                 |
+| `toon`        | TOON (Token-Oriented Object Notation) encoding/decoding | [libraries/toon.md](libraries/toon.md)               |
+| `requests`    | HTTP library for sending requests                       | [libraries/requests.md](libraries/requests.md)       |
+| `sys`         | System-specific parameters and functions                | [libraries/sys.md](libraries/sys.md)                 |
+| `secrets`     | Cryptographically strong random numbers                 | [libraries/secrets.md](libraries/secrets.md)         |
+| `subprocess`  | Spawn and manage subprocesses                           | [libraries/subprocess.md](libraries/subprocess.md)   |
+| `html.parser` | HTML/XHTML parser                                       | [libraries/html.parser.md](libraries/html.parser.md) |
+| `os`          | Operating system interfaces (filesystem)                | [libraries/os.md](libraries/os.md)                   |
+| `os.path`     | Pathname manipulations                                  | [libraries/os.path.md](libraries/os.path.md)         |
+| `pathlib`     | Object-oriented filesystem paths                        | [libraries/pathlib.md](libraries/pathlib.md)         |
+| `glob`        | Unix shell-style wildcards for filename matching        | [libraries/glob.md](libraries/glob.md)               |
+| `threads`     | Asynchronous execution with isolated environments       | [libraries/threads.md](libraries/threads.md)         |
+| `logging`     | Logging functionality                                   | [libraries/logging.md](libraries/logging.md)         |
+| `wait_for`    | Wait for resources to become available                  | [libraries/wait_for.md](libraries/wait_for.md)       |
+| `console`     | Console input/output functions                          | [libraries/console.md](libraries/console.md)         |
 
 ## Usage Example
 
