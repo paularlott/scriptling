@@ -5,8 +5,6 @@ import (
 	"sync"
 
 	mcplib "github.com/paularlott/mcp"
-	scriptlib "github.com/paularlott/scriptling"
-	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -41,50 +39,31 @@ func buildLibrary() *object.Library {
 	return object.NewLibraryBuilder(MCPLibraryName, MCPLibraryDesc).
 
 		// decode_response(response) - Decode a raw MCP tool response
-		RawFunctionWithHelp("decode_response", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil {
-				return err
-			}
-
-			// Convert args[0] to mcplib.ToolResponse
+		FunctionWithHelp("decode_response", func(ctx context.Context, responseMap map[string]any) object.Object {
+			// Convert map to mcplib.ToolResponse
 			response := &mcplib.ToolResponse{}
 
-			// Try to convert from dict representation
-			if dict, ok := args[0].(*object.Dict); ok {
-				// Build response from dict
-				for k, v := range dict.Pairs {
-					switch k {
-					case "structured_content":
-						response.StructuredContent = scriptlib.ToGo(v.Value)
-					case "content":
-						if list, ok := v.Value.(*object.List); ok {
-							for _, item := range list.Elements {
-								if contentDict, ok := item.(*object.Dict); ok {
-									content := mcplib.ToolContent{}
-									for ck, cv := range contentDict.Pairs {
-										switch ck {
-										case "type":
-											if t, err := cv.Value.AsString(); err == nil {
-												content.Type = t
-											}
-										case "text":
-											if t, err := cv.Value.AsString(); err == nil {
-												content.Text = t
-											}
-										case "data":
-											if t, err := cv.Value.AsString(); err == nil {
-												content.Data = t
-											}
-										case "mimeType":
-											if t, err := cv.Value.AsString(); err == nil {
-												content.MimeType = t
-											}
-										}
-									}
-									response.Content = append(response.Content, content)
-								}
-							}
+			if structuredContent, ok := responseMap["structured_content"]; ok {
+				response.StructuredContent = structuredContent
+			}
+
+			if contentList, ok := responseMap["content"].([]any); ok {
+				for _, item := range contentList {
+					if contentMap, ok := item.(map[string]any); ok {
+						content := mcplib.ToolContent{}
+						if t, ok := contentMap["type"].(string); ok {
+							content.Type = t
 						}
+						if t, ok := contentMap["text"].(string); ok {
+							content.Text = t
+						}
+						if t, ok := contentMap["data"].(string); ok {
+							content.Data = t
+						}
+						if t, ok := contentMap["mimeType"].(string); ok {
+							content.MimeType = t
+						}
+						response.Content = append(response.Content, content)
 					}
 				}
 			}

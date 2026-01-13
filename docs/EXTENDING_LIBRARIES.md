@@ -6,9 +6,9 @@ This guide covers how to create custom libraries for Scriptling in Go, including
 
 Scriptling libraries group related functions and constants. You can create libraries using two approaches:
 
-| Approach | When to Use |
-|----------|-------------|
-| **Native API** | Performance-critical code, complex state management |
+| Approach        | When to Use                                              |
+| --------------- | -------------------------------------------------------- |
+| **Native API**  | Performance-critical code, complex state management      |
 | **Builder API** | Rapid development, typed functions, cleaner organization |
 
 See [EXTENDING_WITH_GO.md](EXTENDING_WITH_GO.md) for a detailed comparison.
@@ -284,14 +284,14 @@ p.RegisterLibrary("mymath", myLib)
 
 The Builder API automatically converts between Go types and Scriptling objects:
 
-| Go Type | Scriptling Type | Notes |
-|---------|-----------------|-------|
-| `string` | `STRING` | Direct conversion |
-| `int`, `int32`, `int64` | `INTEGER` | Accepts both Integer and Float |
-| `float32`, `float64` | `FLOAT` | Accepts both Integer and Float |
-| `bool` | `BOOLEAN` | Direct conversion |
-| `[]any` | `LIST` | Converts to/from Scriptling lists |
-| `map[string]any` | `DICT` | Converts to/from Scriptling dicts |
+| Go Type                 | Scriptling Type | Notes                             |
+| ----------------------- | --------------- | --------------------------------- |
+| `string`                | `STRING`        | Direct conversion                 |
+| `int`, `int32`, `int64` | `INTEGER`       | Accepts both Integer and Float    |
+| `float32`, `float64`    | `FLOAT`         | Accepts both Integer and Float    |
+| `bool`                  | `BOOLEAN`       | Direct conversion                 |
+| `[]any`                 | `LIST`          | Converts to/from Scriptling lists |
+| `map[string]any`        | `DICT`          | Converts to/from Scriptling dicts |
 
 ### Function Signatures
 
@@ -305,6 +305,7 @@ The Builder API supports flexible function signatures:
 - `func(ctx context.Context, kwargs object.Kwargs) result` - Context + kwargs only
 
 **Parameter Order Rules (ALWAYS in this order):**
+
 1. Context (optional) - comes first if present
 2. Kwargs (optional) - comes after context (or first if no context)
 3. Positional arguments - ALWAYS LAST
@@ -504,28 +505,27 @@ print("E =", mymath.E)
 
 ### Builder Methods Reference
 
-| Method | Description |
-|--------|-------------|
-| `Function(name, fn)` | Register a typed Go function |
-| `FunctionWithHelp(name, fn, help)` | Register a function with help text |
-| `Constant(name, value)` | Register a constant value |
-| `RawFunction(name, fn)` | Register a low-level builtin function |
-| `SubLibrary(name, lib)` | Add a sub-library |
-| `FunctionFromVariadic(name, fn)` | Register a variadic function |
-| `Alias(alias, original)` | Create an alias for an existing function |
-| `Build()` | Create and return the Library |
-| `Clear()` | Remove all registered functions and constants |
-| `Merge(other)` | Merge another builder's functions and constants |
+| Method                             | Description                                     |
+| ---------------------------------- | ----------------------------------------------- |
+| `Function(name, fn)`               | Register a typed Go function                    |
+| `FunctionWithHelp(name, fn, help)` | Register a function with help text              |
+| `Constant(name, value)`            | Register a constant value                       |
+| `SubLibrary(name, lib)`            | Add a sub-library                               |
+| `FunctionFromVariadic(name, fn)`   | Register a variadic function                    |
+| `Alias(alias, original)`           | Create an alias for an existing function        |
+| `Build()`                          | Create and return the Library                   |
+| `Clear()`                          | Remove all registered functions and constants   |
+| `Merge(other)`                     | Merge another builder's functions and constants |
 
 ## Choosing Between Native and Builder API
 
-| Factor | Native API | Builder API |
-|--------|------------|-------------|
-| **Performance** | Faster | Slight overhead |
-| **Type Safety** | Manual checking | Automatic conversion |
-| **State Management** | Full control with closures | Clean organization |
-| **Help Text** | Manual `HelpText` field | Chainable `FunctionWithHelp()` |
-| **Best For** | Complex state, performance-critical | Rapid development, typed functions |
+| Factor               | Native API                          | Builder API                        |
+| -------------------- | ----------------------------------- | ---------------------------------- |
+| **Performance**      | Faster                              | Slight overhead                    |
+| **Type Safety**      | Manual checking                     | Automatic conversion               |
+| **State Management** | Full control with closures          | Clean organization                 |
+| **Help Text**        | Manual `HelpText` field             | Chainable `FunctionWithHelp()`     |
+| **Best For**         | Complex state, performance-critical | Rapid development, typed functions |
 
 ## Best Practices
 

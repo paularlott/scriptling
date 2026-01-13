@@ -19,7 +19,7 @@ print("Running chat completion with mistralai/ministral-3-3b...")
 
 response = client.completion(
     "mistralai/ministral-3-3b",
-    {"role": "user", "content": "What is 2 + 2? Answer with just the number."}
+    [{"role": "user", "content": "What is 2 + 2? Answer with just the number."}]
 )
 
 print()
