@@ -23,12 +23,14 @@ go run main.go
 ```
 
 **How it works:**
+
 - Go code creates an `openai.Client` configured for the OpenAI API
 - Client is wrapped via `ai.WrapClient()` and set as a global variable via `p.SetObjectVar()`
 - Script uses instance methods like `ai_client.models()` and `ai_client.chat()` directly
 - This pattern allows multiple clients to be used simultaneously
 
 **Use this pattern when:**
+
 - You want to manage the client configuration in Go
 - Multiple scripts need to share the same client
 - You want to keep API keys out of scripts
@@ -44,15 +46,40 @@ go run main.go
 ```
 
 **How it works:**
+
 - No client is configured in Go
 - Script creates its own client via `ai.new_client()`
-- Script uses instance methods like `client.models()` and `client.chat()`
+- Script uses instance methods like `client.models()` and `client.completion()`
 - The `example.py` script handles all connection details
 
 **Use this pattern when:**
+
 - You want scripts to be self-contained
 - Each script needs different client configurations
 - You're writing scripts that can run standalone
+
+### streaming/ - Streaming Chat Completions
+
+This example demonstrates streaming responses from an OpenAI-compatible API, which is ideal for interactive applications and long-form content generation.
+
+```bash
+cd streaming
+go run main.go
+```
+
+**How it works:**
+
+- Script creates a client via `ai.new_client()`
+- Uses `client.completion_stream()` to get streaming responses
+- Iterates through chunks with `stream.next()`
+- Prints content in real-time as it arrives
+
+**Use this pattern when:**
+
+- You want real-time response streaming
+- Building interactive chat applications
+- Generating long-form content with progressive display
+- Providing immediate feedback to users
 
 ## Scripts
 
@@ -70,7 +97,7 @@ print(f"Found {len(models)} models:")
 
 print()
 print("Running chat completion...")
-response = ai_client.chat(
+response = ai_client.completion(
     "mistralai/ministral-3-3b",
     {"role": "user", "content": "What is 2 + 2?"}
 )
@@ -84,7 +111,7 @@ Creates its own client instance:
 import ai
 
 print("Creating OpenAI client for LM Studio...")
-client = ai.new_client("lm-studio", "http://127.0.0.1:1234/v1")
+client = ai.new_client("http://127.0.0.1:1234/v1")
 
 print()
 print("Fetching available models...")
@@ -92,10 +119,37 @@ models = client.models()
 
 print()
 print("Running chat completion...")
-response = client.chat(
+response = client.completion(
     "mistralai/ministral-3-3b",
     {"role": "user", "content": "What is 2 + 2?"}
 )
+```
+
+### streaming/example.py
+
+Demonstrates streaming responses:
+
+```python
+import ai
+
+client = ai.new_client("http://127.0.0.1:1234/v1")
+
+# Create a streaming completion
+stream = client.completion_stream(
+    "mistralai/ministral-3-3b",
+    {"role": "user", "content": "Write a short haiku about coding in Python."}
+)
+
+# Stream the response chunks
+while True:
+    chunk = stream.next()
+    if chunk is None:
+        break
+
+    if chunk.choices and len(chunk.choices) > 0:
+        delta = chunk.choices[0].delta
+        if delta and delta.content:
+            print(delta.content, end='', flush=True)
 ```
 
 ## Expected Output

@@ -26,4 +26,4 @@ require (
 
 replace github.com/paularlott/scriptling => ../../
 
-//replace github.com/paularlott/mcp => /Users/paul/Code/Source/mcp
+replace github.com/paularlott/mcp => /Users/paul/Code/Source/mcp

@@ -43,14 +43,14 @@ func Register(registrar interface{ RegisterLibrary(string, *object.Library) }) {
 func buildLibrary() *object.Library {
 	return object.NewLibraryBuilder(AILibraryName, AILibraryDesc).
 
-		// chat(model, messages...) - Create a chat completion
-		RawFunctionWithHelp("chat", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+		// completion(model, messages...) - Create a chat completion
+		RawFunctionWithHelp("completion", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if err := errors.MinArgs(args, 2); err != nil {
 				return err
 			}
 			c := getClient()
 			if c == nil {
-				return errors.NewError("ai.chat: no client configured - use ai.SetClient() or create a client from script")
+				return errors.NewError("ai.completion: no client configured - use ai.SetClient() or create a client from script")
 			}
 
 			model, err := args[0].AsString()
@@ -73,7 +73,7 @@ func buildLibrary() *object.Library {
 			}
 
 			return scriptlib.FromGo(chatResp)
-		}, `chat(model, messages...) - Create a chat completion
+		}, `completion(model, messages...) - Create a chat completion
 
 Creates a chat completion using the specified model and messages.
 
@@ -85,7 +85,7 @@ Returns:
   dict: Response containing id, choices, usage, etc.
 
 Example:
-  response = ai.chat("gpt-4", {"role": "user", "content": "Hello!"})
+  response = ai.completion("gpt-4", {"role": "user", "content": "Hello!"})
   print(response.choices[0].message.content)`).
 
 		// models() - List available models
@@ -206,40 +206,51 @@ Returns:
 Example:
   response = ai.response_cancel("resp_123")`).
 
-		// new_client(api_key, **kwargs) - Create a new OpenAI client
-		FunctionWithHelp("new_client", func(ctx context.Context, kwargs object.Kwargs, apiKey string) (object.Object, error) {
-			// Get optional base_url from kwargs
-			baseURL := kwargs.MustGetString("base_url", "")
+		// new_client(base_url, **kwargs) - Create a new AI client
+		FunctionWithHelp("new_client", func(ctx context.Context, kwargs object.Kwargs, baseURL string) (object.Object, error) {
+			// Get optional service from kwargs, default to "openai"
+			service := kwargs.MustGetString("service", "openai")
+			// Get optional api_key from kwargs
+			apiKey := kwargs.MustGetString("api_key", "")
 
-			config := openai.Config{
-				APIKey:  apiKey,
-				BaseURL: baseURL,
+			switch service {
+			case "openai":
+				config := openai.Config{
+					APIKey:  apiKey,
+					BaseURL: baseURL,
+				}
+
+				client, err := openai.New(config)
+				if err != nil {
+					return nil, err
+				}
+
+				return createClientInstance(client), nil
+			default:
+				return nil, fmt.Errorf("unsupported service: %s", service)
 			}
+		}, `new_client(base_url, **kwargs) - Create a new AI client
 
-			client, err := openai.New(config)
-			if err != nil {
-				return nil, err
-			}
-
-			return createClientInstance(client), nil
-		}, `new_client(api_key, **kwargs) - Create a new OpenAI client
-
-Creates a new OpenAI client instance for making API calls.
+Creates a new AI client instance for making API calls to supported services.
 
 Parameters:
-  api_key (str): OpenAI API key
-  base_url (str, optional): Custom base URL (defaults to https://api.openai.com/v1)
+  base_url (str): Base URL of the API (defaults to https://api.openai.com/v1 if empty)
+  service (str, optional): Service type ("openai" by default)
+  api_key (str, optional): API key for authentication
 
 Returns:
-  OpenAIClient: A client instance with methods for API calls
+  AIClient: A client instance with methods for API calls
 
 Example:
-  # Default OpenAI API
-  client = ai.new_client("sk-...")
+  # OpenAI API (default service)
+  client = ai.new_client("", api_key="sk-...")
+  response = client.completion("gpt-4", {"role": "user", "content": "Hello!"})
 
-  # Custom base URL (e.g., LM Studio, local LLM)
-  client = ai.new_client("lm-studio", base_url="http://127.0.0.1:1234/v1")
-  response = client.chat("gpt-4", {"role": "user", "content": "Hello!"})`).
+  # LM Studio / Local LLM
+  client = ai.new_client("http://127.0.0.1:1234/v1")
+
+  # Future: Other services
+  client = ai.new_client("https://api.anthropic.com", service="anthropic", api_key="...")`).
 
 		Build()
 }

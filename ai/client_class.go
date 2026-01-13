@@ -31,7 +31,7 @@ func GetOpenAIClientClass() *object.Class {
 // buildOpenAIClientClass builds the OpenAI Client class
 func buildOpenAIClientClass() *object.Class {
 	return object.NewClassBuilder("OpenAIClient").
-		MethodWithHelp("chat", chatMethod, `chat(model, messages...) - Create a chat completion
+		MethodWithHelp("completion", completionMethod, `completion(model, messages...) - Create a chat completion
 
 Creates a chat completion using this client's configuration.
 
@@ -43,8 +43,32 @@ Returns:
   dict: Response containing id, choices, usage, etc.
 
 Example:
-  response = client.chat("gpt-4", {"role": "user", "content": "Hello!"})
+  response = client.completion("gpt-4", {"role": "user", "content": "Hello!"})
   print(response.choices[0].message.content)`).
+
+		MethodWithHelp("completion_stream", completionStreamMethod, `completion_stream(model, messages...) - Create a streaming chat completion
+
+Creates a streaming chat completion using this client's configuration.
+Returns a ChatStream object that can be iterated over.
+
+Parameters:
+  model (str): Model identifier (e.g., "gpt-4", "gpt-3.5-turbo")
+  messages (dict...): One or more message dicts with "role" and "content" keys
+
+Returns:
+  ChatStream: A stream object with a next() method
+
+Example:
+  stream = client.completion_stream("gpt-4", {"role": "user", "content": "Hello!"})
+  while True:
+    chunk = stream.next()
+    if chunk is None:
+      break
+    if chunk.choices and len(chunk.choices) > 0:
+      delta = chunk.choices[0].delta
+      if delta.content:
+        print(delta.content, end="")
+  print()`).
 
 		MethodWithHelp("models", modelsMethod, `models() - List available models
 
@@ -144,8 +168,8 @@ func getClientInstance(instance *object.Instance) (*ClientInstance, *object.Erro
 	return ci, nil
 }
 
-// chat method implementation
-func chatMethod(self *object.Instance, ctx context.Context, model string, messages ...map[string]any) object.Object {
+// completion method implementation
+func completionMethod(self *object.Instance, ctx context.Context, model string, messages ...map[string]any) object.Object {
 	ci, cerr := getClientInstance(self)
 	if cerr != nil {
 		return cerr
@@ -324,6 +348,137 @@ func createClientInstance(client *openai.Client) *object.Instance {
 			"_client": &object.ClientWrapper{
 				TypeName: "OpenAIClient",
 				Client:   &ClientInstance{client: client},
+			},
+		},
+	}
+}
+
+// ChatStreamInstance wraps an OpenAI chat stream for use in scriptling
+type ChatStreamInstance struct {
+	stream *openai.ChatStream
+}
+
+// GetChatStreamClass returns the ChatStream class (thread-safe singleton)
+var (
+	chatStreamClass     *object.Class
+	chatStreamClassOnce sync.Once
+)
+
+func GetChatStreamClass() *object.Class {
+	chatStreamClassOnce.Do(func() {
+		chatStreamClass = buildChatStreamClass()
+	})
+	return chatStreamClass
+}
+
+// buildChatStreamClass builds the ChatStream class
+func buildChatStreamClass() *object.Class {
+	return object.NewClassBuilder("ChatStream").
+		MethodWithHelp("next", nextStreamMethod, `next() - Get the next chunk from the stream
+
+Advances to the next response chunk and returns it.
+
+Returns:
+  dict: The next response chunk, or null if the stream is complete
+
+Example:
+  while True:
+    chunk = stream.next()
+    if chunk is None:
+      break
+    if chunk.choices and len(chunk.choices) > 0:
+      delta = chunk.choices[0].delta
+      if delta.content:
+        print(delta.content, end="")`).
+		Build()
+}
+
+// getStreamInstance extracts the ChatStreamInstance from an object.Instance
+func getStreamInstance(instance *object.Instance) (*ChatStreamInstance, *object.Error) {
+	wrapper, ok := object.GetClientField(instance, "_stream")
+	if !ok {
+		return nil, &object.Error{Message: "ChatStream: missing internal stream reference"}
+	}
+	if wrapper.Client == nil {
+		return nil, &object.Error{Message: "ChatStream: stream is nil"}
+	}
+	si, ok := wrapper.Client.(*ChatStreamInstance)
+	if !ok {
+		return nil, &object.Error{Message: "ChatStream: invalid internal stream reference"}
+	}
+	return si, nil
+}
+
+// nextStream method implementation
+func nextStreamMethod(self *object.Instance, ctx context.Context) object.Object {
+	si, cerr := getStreamInstance(self)
+	if cerr != nil {
+		return cerr
+	}
+
+	if si.stream == nil {
+		return &object.Error{Message: "next: stream is nil"}
+	}
+
+	// Advance to next chunk
+	if !si.stream.Next() {
+		// Stream is done, check for error
+		if err := si.stream.Err(); err != nil {
+			return &object.Error{Message: "stream error: " + err.Error()}
+		}
+		return &object.Null{}
+	}
+
+	// Return current chunk
+	current := si.stream.Current()
+	return scriptlib.FromGo(current)
+}
+
+// completion_stream method implementation
+func completionStreamMethod(self *object.Instance, ctx context.Context, model string, messages ...map[string]any) object.Object {
+	ci, cerr := getClientInstance(self)
+	if cerr != nil {
+		return cerr
+	}
+
+	if ci.client == nil {
+		return &object.Error{Message: "completion_stream: no client configured"}
+	}
+
+	// Convert messages to openai.Message
+	openaiMessages := make([]openai.Message, len(messages))
+	for i, msg := range messages {
+		omsg := openai.Message{}
+		if role, ok := msg["role"].(string); ok {
+			if role == "" {
+				return &object.Error{Message: "completion_stream: message role cannot be empty"}
+			}
+			omsg.Role = role
+		} else {
+			return &object.Error{Message: "completion_stream: message missing required 'role' field"}
+		}
+		if content, ok := msg["content"]; ok {
+			omsg.Content = content
+		}
+		if toolCallID, ok := msg["tool_call_id"].(string); ok {
+			omsg.ToolCallID = toolCallID
+		}
+		openaiMessages[i] = omsg
+	}
+
+	// Create streaming request
+	stream := ci.client.StreamChatCompletion(ctx, openai.ChatCompletionRequest{
+		Model:    model,
+		Messages: openaiMessages,
+	})
+
+	// Wrap stream in instance
+	return &object.Instance{
+		Class: GetChatStreamClass(),
+		Fields: map[string]object.Object{
+			"_stream": &object.ClientWrapper{
+				TypeName: "ChatStream",
+				Client:   &ChatStreamInstance{stream: stream},
 			},
 		},
 	}
