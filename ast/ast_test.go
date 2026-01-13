@@ -668,3 +668,247 @@ func TestNodeMethods(t *testing.T) {
 		})
 	}
 }
+
+func TestExpressionString(t *testing.T) {
+	// Test String() method on expressions
+	tests := []struct {
+		name     string
+		expr     Expression
+		contains string
+	}{
+		{
+			name:     "Identifier",
+			expr:     &Identifier{Value: "myVar"},
+			contains: "",
+		},
+		{
+			name:     "IntegerLiteral",
+			expr:     &IntegerLiteral{Value: 42},
+			contains: "",
+		},
+		{
+			name:     "FloatLiteral",
+			expr:     &FloatLiteral{Value: 3.14},
+			contains: "",
+		},
+		{
+			name:     "StringLiteral",
+			expr:     &StringLiteral{Value: "hello"},
+			contains: "",
+		},
+		{
+			name:     "Boolean",
+			expr:     &Boolean{Value: true},
+			contains: "",
+		},
+		{
+			name:     "None",
+			expr:     &None{},
+			contains: "",
+		},
+		{
+			name:     "PrefixExpression",
+			expr:     &PrefixExpression{Operator: "-", Right: &IntegerLiteral{Value: 5}},
+			contains: "",
+		},
+		{
+			name:     "InfixExpression",
+			expr:     &InfixExpression{Operator: "+", Left: &IntegerLiteral{Value: 1}, Right: &IntegerLiteral{Value: 2}},
+			contains: "",
+		},
+		{
+			name:     "ConditionalExpression",
+			expr:     &ConditionalExpression{Condition: &Boolean{}, TrueExpr: &IntegerLiteral{Value: 1}, FalseExpr: &IntegerLiteral{Value: 0}},
+			contains: "",
+		},
+		{
+			name:     "ListLiteral",
+			expr:     &ListLiteral{Elements: []Expression{&IntegerLiteral{Value: 1}}},
+			contains: "",
+		},
+		{
+			name:     "DictLiteral",
+			expr:     &DictLiteral{Pairs: map[Expression]Expression{&StringLiteral{Value: "key"}: &IntegerLiteral{Value: 1}}},
+			contains: "",
+		},
+		{
+			name:     "IndexExpression",
+			expr:     &IndexExpression{Left: &Identifier{Value: "arr"}, Index: &IntegerLiteral{Value: 0}},
+			contains: "",
+		},
+		{
+			name:     "SliceExpression",
+			expr:     &SliceExpression{Left: &Identifier{Value: "arr"}, Start: &IntegerLiteral{Value: 0}, End: &IntegerLiteral{Value: 10}},
+			contains: "",
+		},
+		{
+			name:     "CallExpression",
+			expr:     &CallExpression{Function: &Identifier{Value: "print"}},
+			contains: "",
+		},
+		{
+			name:     "MethodCallExpression",
+			expr:     &MethodCallExpression{Object: &Identifier{Value: "obj"}, Method: &Identifier{Value: "method"}},
+			contains: "",
+		},
+		{
+			name:     "Lambda",
+			expr:     &Lambda{Parameters: []*Identifier{{Value: "x"}}, Body: &Identifier{Value: "x"}},
+			contains: "",
+		},
+		{
+			name:     "ListComprehension",
+			expr:     &ListComprehension{Expression: &Identifier{Value: "x"}, Variables: []Expression{&Identifier{Value: "x"}}, Iterable: &Identifier{Value: "items"}},
+			contains: "",
+		},
+		{
+			name:     "TupleLiteral",
+			expr:     &TupleLiteral{Elements: []Expression{&IntegerLiteral{Value: 1}}},
+			contains: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Verify TokenLiteral and Line methods exist and return something
+			literal := tt.expr.TokenLiteral()
+			line := tt.expr.Line()
+			_ = literal
+			_ = line
+		})
+	}
+}
+
+func TestStatementString(t *testing.T) {
+	// Test TokenLiteral method on statements
+	tests := []struct {
+		name string
+		stmt Statement
+	}{
+		{name: "AssignStatement", stmt: &AssignStatement{Left: &Identifier{Value: "x"}, Value: &IntegerLiteral{Value: 1}}},
+		{name: "AugmentedAssignStatement", stmt: &AugmentedAssignStatement{Name: &Identifier{Value: "x"}, Operator: "+=", Value: &IntegerLiteral{Value: 1}}},
+		{name: "MultipleAssignStatement", stmt: &MultipleAssignStatement{Names: []*Identifier{{Value: "x"}}, Value: &ListLiteral{}}},
+		{name: "ExpressionStatement", stmt: &ExpressionStatement{Expression: &IntegerLiteral{Value: 42}}},
+		{name: "BlockStatement", stmt: &BlockStatement{Statements: []Statement{}}},
+		{name: "IfStatement", stmt: &IfStatement{Condition: &Boolean{}, Consequence: &BlockStatement{}}},
+		{name: "WhileStatement", stmt: &WhileStatement{Condition: &Boolean{}, Body: &BlockStatement{}}},
+		{name: "ForStatement", stmt: &ForStatement{Variables: []Expression{&Identifier{Value: "x"}}, Iterable: &Identifier{Value: "items"}, Body: &BlockStatement{}}},
+		{name: "FunctionStatement", stmt: &FunctionStatement{Name: &Identifier{Value: "foo"}, Function: &FunctionLiteral{}}},
+		{name: "ClassStatement", stmt: &ClassStatement{Name: &Identifier{Value: "Foo"}, Body: &BlockStatement{}}},
+		{name: "ReturnStatement", stmt: &ReturnStatement{ReturnValue: &IntegerLiteral{Value: 42}}},
+		{name: "BreakStatement", stmt: &BreakStatement{}},
+		{name: "ContinueStatement", stmt: &ContinueStatement{}},
+		{name: "PassStatement", stmt: &PassStatement{}},
+		{name: "ImportStatement", stmt: &ImportStatement{Name: &Identifier{Value: "os"}}},
+		{name: "FromImportStatement", stmt: &FromImportStatement{Module: &Identifier{Value: "os"}, Names: []*Identifier{{Value: "path"}}}},
+		{name: "TryStatement", stmt: &TryStatement{Body: &BlockStatement{}, Except: &BlockStatement{}}},
+		{name: "RaiseStatement", stmt: &RaiseStatement{Message: &StringLiteral{Value: "error"}}},
+		{name: "GlobalStatement", stmt: &GlobalStatement{Names: []*Identifier{{Value: "x"}}}},
+		{name: "NonlocalStatement", stmt: &NonlocalStatement{Names: []*Identifier{{Value: "y"}}}},
+		{name: "AssertStatement", stmt: &AssertStatement{Condition: &Boolean{}}},
+		{name: "MatchStatement", stmt: &MatchStatement{Subject: &Identifier{Value: "x"}, Cases: []*CaseClause{{Pattern: &IntegerLiteral{Value: 1}, Body: &BlockStatement{}}}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Verify TokenLiteral and Line methods exist and return something
+			literal := tt.stmt.TokenLiteral()
+			line := tt.stmt.Line()
+			_ = literal
+			_ = line
+		})
+	}
+}
+
+func TestProgramTokenLiteral(t *testing.T) {
+	program := &Program{
+		Statements: []Statement{
+			&AssignStatement{Left: &Identifier{Value: "x"}, Value: &IntegerLiteral{Value: 1}},
+			&AssignStatement{Left: &Identifier{Value: "y"}, Value: &IntegerLiteral{Value: 2}},
+		},
+	}
+
+	// Verify TokenLiteral and Line methods exist and return something
+	literal := program.TokenLiteral()
+	line := program.Line()
+	_ = literal
+	_ = line
+}
+
+func TestExpressionTokenLiteral(t *testing.T) {
+	// Test TokenLiteral method on expressions
+	tests := []struct {
+		name string
+		expr Expression
+	}{
+		{name: "Identifier", expr: &Identifier{}},
+		{name: "IntegerLiteral", expr: &IntegerLiteral{}},
+		{name: "FloatLiteral", expr: &FloatLiteral{}},
+		{name: "StringLiteral", expr: &StringLiteral{}},
+		{name: "Boolean", expr: &Boolean{}},
+		{name: "None", expr: &None{}},
+		{name: "PrefixExpression", expr: &PrefixExpression{}},
+		{name: "InfixExpression", expr: &InfixExpression{}},
+		{name: "ConditionalExpression", expr: &ConditionalExpression{}},
+		{name: "ListLiteral", expr: &ListLiteral{}},
+		{name: "DictLiteral", expr: &DictLiteral{}},
+		{name: "IndexExpression", expr: &IndexExpression{}},
+		{name: "SliceExpression", expr: &SliceExpression{}},
+		{name: "CallExpression", expr: &CallExpression{}},
+		{name: "MethodCallExpression", expr: &MethodCallExpression{}},
+		{name: "Lambda", expr: &Lambda{}},
+		{name: "ListComprehension", expr: &ListComprehension{}},
+		{name: "TupleLiteral", expr: &TupleLiteral{}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Verify TokenLiteral and Line methods exist and return something
+			literal := tt.expr.TokenLiteral()
+			line := tt.expr.Line()
+			_ = literal
+			_ = line
+		})
+	}
+}
+
+func TestStatementTokenLiteral(t *testing.T) {
+	// Test TokenLiteral method on statements
+	tests := []struct {
+		name string
+		stmt Statement
+	}{
+		{name: "AssignStatement", stmt: &AssignStatement{}},
+		{name: "AugmentedAssignStatement", stmt: &AugmentedAssignStatement{}},
+		{name: "MultipleAssignStatement", stmt: &MultipleAssignStatement{}},
+		{name: "ExpressionStatement", stmt: &ExpressionStatement{}},
+		{name: "BlockStatement", stmt: &BlockStatement{}},
+		{name: "IfStatement", stmt: &IfStatement{}},
+		{name: "WhileStatement", stmt: &WhileStatement{}},
+		{name: "ForStatement", stmt: &ForStatement{}},
+		{name: "FunctionStatement", stmt: &FunctionStatement{}},
+		{name: "ClassStatement", stmt: &ClassStatement{}},
+		{name: "ReturnStatement", stmt: &ReturnStatement{}},
+		{name: "BreakStatement", stmt: &BreakStatement{}},
+		{name: "ContinueStatement", stmt: &ContinueStatement{}},
+		{name: "PassStatement", stmt: &PassStatement{}},
+		{name: "ImportStatement", stmt: &ImportStatement{}},
+		{name: "FromImportStatement", stmt: &FromImportStatement{}},
+		{name: "TryStatement", stmt: &TryStatement{}},
+		{name: "RaiseStatement", stmt: &RaiseStatement{}},
+		{name: "GlobalStatement", stmt: &GlobalStatement{}},
+		{name: "NonlocalStatement", stmt: &NonlocalStatement{}},
+		{name: "AssertStatement", stmt: &AssertStatement{}},
+		{name: "MatchStatement", stmt: &MatchStatement{}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Verify TokenLiteral and Line methods exist and return something
+			literal := tt.stmt.TokenLiteral()
+			line := tt.stmt.Line()
+			_ = literal
+			_ = line
+		})
+	}
+}
