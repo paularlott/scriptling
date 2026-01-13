@@ -71,6 +71,7 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 
 	// Register MCP library
 	mcp.Register(p)
+	mcp.RegisterToon(p)
 
 	// Set up on-demand library loading for local .py files
 	p.SetOnDemandLibraryCallback(func(p *scriptling.Scriptling, libName string) bool {

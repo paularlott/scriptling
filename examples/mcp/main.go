@@ -206,15 +206,16 @@ print(f"Response: {response.text}")`, url, data)
 func executeCode(code string) (*mcp.ToolResponse, error) {
 	p := scriptling.New()
 	stdlib.RegisterAll(p)
+	// Register extended libraries
 	extlibs.RegisterRequestsLibrary(p)
-	extlibs.RegisterSysLibrary(p, []string{})
 	extlibs.RegisterSecretsLibrary(p)
 	extlibs.RegisterSubprocessLibrary(p)
 	extlibs.RegisterHTMLParserLibrary(p)
 	extlibs.RegisterThreadsLibrary(p)
 	extlibs.RegisterOSLibrary(p, []string{})
 	extlibs.RegisterPathlibLibrary(p, []string{})
-
+	extlibs.RegisterGlobLibrary(p, []string{})
+	extlibs.RegisterWaitForLibrary(p)
 	ai.Register(p)
 	scriptlingmcp.Register(p)
 	scriptlingmcp.RegisterToon(p)
