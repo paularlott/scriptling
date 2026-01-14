@@ -264,6 +264,73 @@ client.add_remote_server("https://api.example.com/mcp", namespace="knot")
 client.remove_remote_server("knot")
 ```
 
+### client.set_tools(tools)
+
+Sets custom tools that will be sent to the AI but NOT executed by the client. Tool calls will be returned in the response for manual execution by your script.
+
+This is useful when you want to define custom tools that interact with your local system or application, rather than using MCP servers.
+
+**Parameters:**
+
+- `tools` (list): List of tool dicts with "type", "function" (name, description, parameters)
+
+**Example:**
+
+```python
+client = ai.new_client("http://127.0.0.1:1234/v1")
+
+# Define custom tools
+tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": "Read a file from the filesystem",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "File path"}
+                },
+                "required": ["path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": "Write content to a file",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "content": {"type": "string"}
+                },
+                "required": ["path", "content"]
+            }
+        }
+    }
+]
+
+client.set_tools(tools)
+
+# Now when you call the AI, it can use these tools
+response = client.completion("gpt-4", [{"role": "user", "content": "Read config.json"}])
+
+# Check if the AI wants to call a tool
+if response.choices[0].message.tool_calls:
+    for tool_call in response.choices[0].message.tool_calls:
+        tool_name = tool_call.function.name
+        tool_args = tool_call.function.arguments
+        
+        # Execute the tool yourself
+        if tool_name == "read_file":
+            result = os.read_file(tool_args["path"])
+            # Send result back to AI...
+```
+
+**See also:** [examples/openai/scriptlingcoder](../../examples/openai/scriptlingcoder/) for a complete example of using custom tools to build an AI coding assistant.
+
 ## Usage Examples
 
 ### Basic Chat Completion

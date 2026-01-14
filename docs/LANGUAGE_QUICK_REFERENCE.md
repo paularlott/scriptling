@@ -130,6 +130,9 @@ def sum_all(*args):
 
 # Lambda
 square = lambda x: x * 2
+
+# Lambda with sorted
+sorted(["ccc", "a", "bb"], key=lambda s: len(s))  # ["a", "bb", "ccc"]
 ```
 
 ## Error Handling

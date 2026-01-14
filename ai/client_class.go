@@ -149,6 +149,24 @@ Parameters:
 Example:
   client.remove_remote_server("knot")`).
 
+		MethodWithHelp("set_tools", setToolsMethod, `set_tools(tools) - Set custom tools for the AI
+
+Sets custom tools that will be sent to the AI but NOT executed by the client.
+Tool calls will be returned in the response for manual execution.
+
+Parameters:
+  tools (list): List of tool dicts with "type", "function" (name, description, parameters)
+
+Example:
+  client.set_tools([{
+    "type": "function",
+    "function": {
+      "name": "read_file",
+      "description": "Read a file",
+      "parameters": {"type": "object", "properties": {"path": {"type": "string"}}}
+    }
+  }])`).
+
 		Build()
 }
 
@@ -336,6 +354,58 @@ func removeRemoteServerMethod(self *object.Instance, ctx context.Context, prefix
 	}
 
 	ci.client.RemoveRemoteServer(prefix)
+
+	return &object.Null{}
+}
+
+// set_tools method implementation
+func setToolsMethod(self *object.Instance, ctx context.Context, tools []any) object.Object {
+	ci, cerr := getClientInstance(self)
+	if cerr != nil {
+		return cerr
+	}
+
+	if ci.client == nil {
+		return &object.Error{Message: "set_tools: no client configured"}
+	}
+
+	// Convert tools to openai.Tool format
+	openaiTools := make([]openai.Tool, 0, len(tools))
+	for _, tool := range tools {
+		toolMap, ok := tool.(map[string]any)
+		if !ok {
+			return &object.Error{Message: "set_tools: each tool must be a dict"}
+		}
+
+		toolType, _ := toolMap["type"].(string)
+		if toolType == "" {
+			toolType = "function"
+		}
+
+		funcMap, ok := toolMap["function"].(map[string]any)
+		if !ok {
+			return &object.Error{Message: "set_tools: each tool must have a 'function' dict"}
+		}
+
+		name, _ := funcMap["name"].(string)
+		description, _ := funcMap["description"].(string)
+		parameters, _ := funcMap["parameters"].(map[string]any)
+
+		if name == "" {
+			return &object.Error{Message: "set_tools: function name is required"}
+		}
+
+		openaiTools = append(openaiTools, openai.Tool{
+			Type: toolType,
+			Function: openai.ToolFunction{
+				Name:        name,
+				Description: description,
+				Parameters:  parameters,
+			},
+		})
+	}
+
+	ci.client.SetCustomTools(openaiTools)
 
 	return &object.Null{}
 }

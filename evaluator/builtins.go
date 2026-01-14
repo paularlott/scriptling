@@ -18,6 +18,7 @@ import (
 var (
 	mapFunction    func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object
 	filterFunction func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object
+	sortedFunction func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object
 	helpFunction   func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object
 )
 
@@ -271,159 +272,19 @@ Supports integers and floats, returns appropriate type.`,
 	},
 	"sorted": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.RangeArgs(args, 1, 2); err != nil {
-				return err
-			}
-
-			var elements []object.Object
-			switch arg := args[0].(type) {
-			case *object.List:
-				// Make a copy
-				elements = make([]object.Object, len(arg.Elements))
-				copy(elements, arg.Elements)
-			case *object.Tuple:
-				elements = make([]object.Object, len(arg.Elements))
-				copy(elements, arg.Elements)
-			default:
-				return errors.NewTypeError("LIST or TUPLE", args[0].Type().String())
-			}
-
-			// Check for key function - support both positional and keyword argument
-			var keyFunc *object.Builtin
-			if len(args) == 2 {
-				if builtin, ok := args[1].(*object.Builtin); ok {
-					keyFunc = builtin
-				} else {
-					return errors.NewError("sorted() key parameter must be a builtin function")
-				}
-			} else if kwargs.Len() > 0 {
-				if keyArg := kwargs.Get("key"); keyArg != nil {
-					if builtin, ok := keyArg.(*object.Builtin); ok {
-						keyFunc = builtin
-					} else {
-						return errors.NewError("sorted() key parameter must be a builtin function")
-					}
-				}
-			}
-
-			// Check for reverse kwarg
-			reverse := false
-			if kwargs.Len() > 0 {
-				if rev := kwargs.Get("reverse"); rev != nil {
-					if b, err := rev.AsBool(); err == nil {
-						reverse = b
-					}
-				}
-			}
-
-			// Use efficient O(n log n) sort
-			n := len(elements)
-			if n > 1 {
-				// Pre-compute keys if key function is provided
-				var keys []object.Object
-				var sortErr object.Object
-				if keyFunc != nil {
-					keys = make([]object.Object, n)
-					for i, elem := range elements {
-						key := keyFunc.Fn(ctx, object.NewKwargs(nil), elem)
-						if object.IsError(key) || isException(key) {
-							return key
-						}
-						keys[i] = key
-					}
-				}
-
-				// Create index array to track positions
-				indices := make([]int, n)
-				for i := range indices {
-					indices[i] = i
-				}
-
-				// Sort indices by values
-				sort.Slice(indices, func(i, j int) bool {
-					var left, right object.Object
-					if keys != nil {
-						left, right = keys[indices[i]], keys[indices[j]]
-					} else {
-						left, right = elements[indices[i]], elements[indices[j]]
-					}
-
-					// Compare based on type
-					var cmp int
-					switch l := left.(type) {
-					case *object.Integer:
-						if r, ok := right.(*object.Integer); ok {
-							if l.Value < r.Value {
-								cmp = -1
-							} else if l.Value > r.Value {
-								cmp = 1
-							}
-						} else if r, ok := right.(*object.Float); ok {
-							lf := float64(l.Value)
-							if lf < r.Value {
-								cmp = -1
-							} else if lf > r.Value {
-								cmp = 1
-							}
-						} else {
-							sortErr = errors.NewError("cannot compare %s with %s", left.Type(), right.Type())
-						}
-					case *object.Float:
-						if r, ok := right.(*object.Float); ok {
-							if l.Value < r.Value {
-								cmp = -1
-							} else if l.Value > r.Value {
-								cmp = 1
-							}
-						} else if r, ok := right.(*object.Integer); ok {
-							rf := float64(r.Value)
-							if l.Value < rf {
-								cmp = -1
-							} else if l.Value > rf {
-								cmp = 1
-							}
-						} else {
-							sortErr = errors.NewError("cannot compare %s with %s", left.Type(), right.Type())
-						}
-					case *object.String:
-						if r, ok := right.(*object.String); ok {
-							if l.Value < r.Value {
-								cmp = -1
-							} else if l.Value > r.Value {
-								cmp = 1
-							}
-						} else {
-							sortErr = errors.NewError("cannot compare %s with %s", left.Type(), right.Type())
-						}
-					default:
-						sortErr = errors.NewError("unsupported type for sorting: %s", left.Type())
-					}
-
-					if reverse {
-						return cmp > 0
-					}
-					return cmp < 0
-				})
-
-				if sortErr != nil {
-					return sortErr
-				}
-
-				// Reorder elements according to sorted indices
-				newElements := make([]object.Object, n)
-				for i, idx := range indices {
-					newElements[i] = elements[idx]
-				}
-				elements = newElements
-			}
-
-			return &object.List{Elements: elements}
+			return sortedFunction(ctx, kwargs, args...)
 		},
 		HelpText: `sorted(iterable[, key][, reverse=False]) - Return sorted list
 
 Returns a new sorted list from the elements of iterable.
-Optional key function can be provided for custom sorting.
-Set reverse=True to sort in descending order.`,
+Optional key function (builtin, function, or lambda) can be provided for custom sorting.
+Set reverse=True to sort in descending order.
+
+Example:
+  sorted([3, 1, 2])                    # [1, 2, 3]
+  sorted([3, 1, 2], reverse=True)      # [3, 2, 1]
+  sorted(["a", "bb", "ccc"], key=len)  # ["a", "bb", "ccc"]
+  sorted(files, key=lambda f: os.path.getmtime(f))  # Sort by mtime`,
 	},
 	"range": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -1650,7 +1511,164 @@ func compareObjects(a, b object.Object) int {
 func init() {
 	mapFunction = mapFunctionImpl
 	filterFunction = filterFunctionImpl
+	sortedFunction = sortedFunctionImpl
 	helpFunction = helpFunctionImpl
+}
+
+func sortedFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+	if err := errors.RangeArgs(args, 1, 2); err != nil {
+		return err
+	}
+
+	var elements []object.Object
+	switch arg := args[0].(type) {
+	case *object.List:
+		elements = make([]object.Object, len(arg.Elements))
+		copy(elements, arg.Elements)
+	case *object.Tuple:
+		elements = make([]object.Object, len(arg.Elements))
+		copy(elements, arg.Elements)
+	default:
+		return errors.NewTypeError("LIST or TUPLE", args[0].Type().String())
+	}
+
+	// Check for key function - support builtin, function, and lambda
+	var keyFunc object.Object
+	if len(args) == 2 {
+		switch args[1].(type) {
+		case *object.Builtin, *object.Function, *object.LambdaFunction:
+			keyFunc = args[1]
+		default:
+			return errors.NewError("sorted() key parameter must be a function")
+		}
+	} else if kwargs.Len() > 0 {
+		if keyArg := kwargs.Get("key"); keyArg != nil {
+			switch keyArg.(type) {
+			case *object.Builtin, *object.Function, *object.LambdaFunction:
+				keyFunc = keyArg
+			default:
+				return errors.NewError("sorted() key parameter must be a function")
+			}
+		}
+	}
+
+	// Check for reverse kwarg
+	reverse := false
+	if kwargs.Len() > 0 {
+		if rev := kwargs.Get("reverse"); rev != nil {
+			if b, err := rev.AsBool(); err == nil {
+				reverse = b
+			}
+		}
+	}
+
+	n := len(elements)
+	if n > 1 {
+		// Pre-compute keys if key function is provided
+		var keys []object.Object
+		var sortErr object.Object
+		if keyFunc != nil {
+			keys = make([]object.Object, n)
+			env := getEnvFromContext(ctx)
+			for i, elem := range elements {
+				var key object.Object
+				switch fn := keyFunc.(type) {
+				case *object.Builtin:
+					key = fn.Fn(ctx, object.NewKwargs(nil), elem)
+				case *object.Function, *object.LambdaFunction:
+					key = applyFunctionWithContext(ctx, fn, []object.Object{elem}, nil, env)
+				}
+				if object.IsError(key) || isException(key) {
+					return key
+				}
+				keys[i] = key
+			}
+		}
+
+		// Create index array
+		indices := make([]int, n)
+		for i := range indices {
+			indices[i] = i
+		}
+
+		// Sort indices
+		sort.Slice(indices, func(i, j int) bool {
+			var left, right object.Object
+			if keys != nil {
+				left, right = keys[indices[i]], keys[indices[j]]
+			} else {
+				left, right = elements[indices[i]], elements[indices[j]]
+			}
+
+			var cmp int
+			switch l := left.(type) {
+			case *object.Integer:
+				if r, ok := right.(*object.Integer); ok {
+					if l.Value < r.Value {
+						cmp = -1
+					} else if l.Value > r.Value {
+						cmp = 1
+					}
+				} else if r, ok := right.(*object.Float); ok {
+					lf := float64(l.Value)
+					if lf < r.Value {
+						cmp = -1
+					} else if lf > r.Value {
+						cmp = 1
+					}
+				} else {
+					sortErr = errors.NewError("cannot compare %s with %s", left.Type(), right.Type())
+				}
+			case *object.Float:
+				if r, ok := right.(*object.Float); ok {
+					if l.Value < r.Value {
+						cmp = -1
+					} else if l.Value > r.Value {
+						cmp = 1
+					}
+				} else if r, ok := right.(*object.Integer); ok {
+					rf := float64(r.Value)
+					if l.Value < rf {
+						cmp = -1
+					} else if l.Value > rf {
+						cmp = 1
+					}
+				} else {
+					sortErr = errors.NewError("cannot compare %s with %s", left.Type(), right.Type())
+				}
+			case *object.String:
+				if r, ok := right.(*object.String); ok {
+					if l.Value < r.Value {
+						cmp = -1
+					} else if l.Value > r.Value {
+						cmp = 1
+					}
+				} else {
+					sortErr = errors.NewError("cannot compare %s with %s", left.Type(), right.Type())
+				}
+			default:
+				sortErr = errors.NewError("unsupported type for sorting: %s", left.Type())
+			}
+
+			if reverse {
+				return cmp > 0
+			}
+			return cmp < 0
+		})
+
+		if sortErr != nil {
+			return sortErr
+		}
+
+		// Reorder elements
+		newElements := make([]object.Object, n)
+		for i, idx := range indices {
+			newElements[i] = elements[idx]
+		}
+		elements = newElements
+	}
+
+	return &object.List{Elements: elements}
 }
 
 func mapFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {

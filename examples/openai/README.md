@@ -81,6 +81,38 @@ go run main.go
 - Generating long-form content with progressive display
 - Providing immediate feedback to users
 
+### scriptlingcoder/ - AI Coding Assistant with Custom Tools
+
+An interactive AI coding assistant that can read, write, and modify files using custom tools. Inspired by [nanocode](https://github.com/1rgs/nanocode).
+
+```bash
+cd scriptlingcoder
+../../../bin/scriptling scriptlingcoder.py
+```
+
+**⚠️ WARNING**: This example executes AI-generated code and shell commands. Use at your own risk!
+
+**How it works:**
+
+- Defines custom tools (read, write, edit, glob, grep, bash)
+- Registers tools with `client.set_tools()` - tools are sent to AI but NOT executed by client
+- AI can call tools, script executes them locally and returns results
+- Supports multi-turn conversations with tool execution
+
+**Use this pattern when:**
+
+- You need custom tools that aren't MCP servers
+- You want full control over tool execution
+- Building AI agents that interact with local systems
+- Creating specialized coding assistants
+
+**Features:**
+- File operations (read, write, edit)
+- Search (glob patterns, regex grep)
+- Shell command execution
+- Interactive chat interface
+- Conversation history
+
 ## Scripts
 
 ### shared/example.py
