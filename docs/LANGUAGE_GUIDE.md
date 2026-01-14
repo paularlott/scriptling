@@ -996,6 +996,10 @@ sorted([3, 1, 4, 1, 5])           # [1, 1, 3, 4, 5]
 sorted(["banana", "apple"])       # ["apple", "banana"]
 sorted([3, 1.5, 2], len)          # Sort with key function
 sorted([3, 1, 2], reverse=True)   # [3, 2, 1]
+
+# sorted with lambda key function
+sorted(["ccc", "a", "bb"], key=lambda s: len(s))  # ["a", "bb", "ccc"]
+sorted([1, 2, 3], key=lambda x: -x)               # [3, 2, 1]
 ```
 
 ### List Methods (called on list objects)

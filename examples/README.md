@@ -21,6 +21,8 @@ This directory contains examples and tools for working with Scriptling.
 - **openai/** - AI library examples with OpenAI-compatible APIs
   - `shared/` - Using shared client configured in Go
   - `instance/` - Creating client from script
+  - `streaming/` - Streaming chat completions
+  - `scriptlingcoder/` - AI coding assistant with custom tools (⚠️ executes AI code)
   - `README.md` - OpenAI examples documentation
 
 - **extending/** - Example of extending Scriptling with custom Go functions
@@ -58,6 +60,14 @@ go run main.go
 # Instance pattern (client created from script)
 cd openai/instance
 go run main.go
+
+# Streaming responses
+cd openai/streaming
+go run main.go
+
+# AI coding assistant with custom tools (⚠️ WARNING: executes AI-generated code)
+cd openai/scriptlingcoder
+../../../bin/scriptling scriptlingcoder.py
 ```
 
 See [openai/README.md](openai/README.md) for details and prerequisites.

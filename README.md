@@ -200,6 +200,7 @@ files = os.listdir("/tmp")
 See `examples/` directory:
 
 - **scripts/** - Script examples and Go integration
+- **openai/scriptlingcoder/** - AI coding assistant with custom tools (inspired by [nanocode](https://github.com/1rgs/nanocode))
 - **mcp/** - MCP server for LLM testing
 
 Run examples:
@@ -207,6 +208,10 @@ Run examples:
 ```bash
 cd examples/scripts
 go run main.go test_basics.py
+
+# AI coding assistant (⚠️ executes AI-generated code)
+cd examples/openai/scriptlingcoder
+../../../bin/scriptling scriptlingcoder.py
 ```
 
 ## Documentation

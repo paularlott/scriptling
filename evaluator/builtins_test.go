@@ -133,3 +133,45 @@ func TestBuiltinType(t *testing.T) {
 		}
 	}
 }
+
+func TestBuiltinSortedWithLambda(t *testing.T) {
+	tests := []struct {
+		name     string
+		script   string
+		expected string
+	}{
+		{
+			name:     "sort numbers with lambda",
+			script:   `sorted([3, 1, 4, 1, 5], key=lambda x: x)`,
+			expected: "[1, 1, 3, 4, 5]",
+		},
+		{
+			name:     "sort numbers reverse with lambda",
+			script:   `sorted([3, 1, 4, 1, 5], key=lambda x: x, reverse=True)`,
+			expected: "[5, 4, 3, 1, 1]",
+		},
+		{
+			name:     "sort strings by length",
+			script:   `sorted(["ccc", "a", "bb"], key=lambda s: len(s))`,
+			expected: `[a, bb, ccc]`,
+		},
+		{
+			name:     "sort with negative key",
+			script:   `sorted([1, 2, 3], key=lambda x: -x)`,
+			expected: "[3, 2, 1]",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := testEval(tt.script)
+			if object.IsError(result) {
+				t.Fatalf("eval error: %s", result.Inspect())
+			}
+
+			if result.Inspect() != tt.expected {
+				t.Errorf("wrong result. got=%s, want=%s", result.Inspect(), tt.expected)
+			}
+		})
+	}
+}
