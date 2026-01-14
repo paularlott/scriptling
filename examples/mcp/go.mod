@@ -3,7 +3,7 @@ module scriptling-mcp-server
 go 1.25.5
 
 require (
-	github.com/paularlott/mcp v0.7.2
+	github.com/paularlott/mcp v0.8.0
 	github.com/paularlott/scriptling v0.0.0
 )
 
@@ -25,5 +25,3 @@ require (
 )
 
 replace github.com/paularlott/scriptling => ../../
-
-replace github.com/paularlott/mcp => /Users/paul/Code/Source/mcp
