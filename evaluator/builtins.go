@@ -1904,9 +1904,10 @@ func helpFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.
 
 		// Check if it's a library.function format
 		if strings.Contains(topic, ".") {
-			parts := strings.SplitN(topic, ".", 2)
-			libName := parts[0]
-			funcName := parts[1]
+			// Split on last dot to handle dotted library names like "knot.ai.completion"
+			lastDot := strings.LastIndex(topic, ".")
+			libName := topic[:lastDot]
+			funcName := topic[lastDot+1:]
 
 			// Try to get the library from environment
 			if libObj, ok := env.Get(libName); ok {
