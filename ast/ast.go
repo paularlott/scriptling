@@ -287,10 +287,11 @@ func (ps *PassStatement) TokenLiteral() string { return ps.Token.Literal }
 func (ps *PassStatement) Line() int            { return ps.Token.Line }
 
 type ImportStatement struct {
-	Token           token.Token
-	Name            *Identifier   // The full dotted name stored as single identifier (e.g., "urllib.parse")
-	Alias           *Identifier   // Optional alias for 'import X as Y'
-	AdditionalNames []*Identifier // For import lib1, lib2, lib3
+	Token            token.Token
+	Name             *Identifier   // The full dotted name stored as single identifier (e.g., "urllib.parse")
+	Alias            *Identifier   // Optional alias for 'import X as Y'
+	AdditionalNames  []*Identifier // For import lib1, lib2, lib3
+	AdditionalAliases []*Identifier // Optional aliases for additional imports (for "import lib1 as alias1, lib2 as alias2")
 }
 
 func (is *ImportStatement) statementNode()       {}

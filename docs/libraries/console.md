@@ -1,11 +1,11 @@
 # Console Library
 
-The `console` library provides console input/output functions for interactive scripts.
+The `sl.console` library provides console input/output functions for interactive scripts.
 
 ## Import
 
 ```python
-import console
+import sl.console as console
 ```
 
 ## Functions
@@ -26,7 +26,7 @@ Read a line from standard input. If a `prompt` is provided, it is written to std
 **Example:**
 
 ```python
-import console
+import sl.console as console
 
 # Simple input
 name = console.input("Enter your name: ")
@@ -49,7 +49,7 @@ print("You entered: " + line)
 The console library is an extended library and must be explicitly imported:
 
 ```python
-import console
+import sl.console as console
 ```
 
 It is automatically registered by the scriptling CLI with stdin access configured.

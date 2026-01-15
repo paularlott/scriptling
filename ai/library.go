@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	AILibraryName = "ai"
+	AILibraryName = "sl.ai"
 	AILibraryDesc = "AI and LLM functions for interacting with OpenAI-compatible APIs"
 )
 

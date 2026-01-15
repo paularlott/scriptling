@@ -2,7 +2,7 @@
 
 # Test thread safety and edge cases for the threads library
 
-import threads
+import sl.threads as threads
 
 print("=== Testing thread safety with shared variables ===")
 

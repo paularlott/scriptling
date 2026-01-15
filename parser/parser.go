@@ -400,6 +400,7 @@ func (p *Parser) parseImportStatement() *ast.ImportStatement {
 
 	// Check for additional imports separated by commas
 	stmt.AdditionalNames = []*ast.Identifier{}
+	stmt.AdditionalAliases = []*ast.Identifier{}
 	for p.peekTokenIs(token.COMMA) {
 		p.nextToken() // consume comma
 		if !p.expectPeek(token.IDENT) {
@@ -418,6 +419,17 @@ func (p *Parser) parseImportStatement() *ast.ImportStatement {
 			Token: p.curToken,
 			Value: addName,
 		})
+
+		// Check for alias on this additional import
+		var addAlias *ast.Identifier
+		if p.peekTokenIs(token.AS) {
+			p.nextToken() // consume 'as'
+			if !p.expectPeek(token.IDENT) {
+				return nil
+			}
+			addAlias = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+		}
+		stmt.AdditionalAliases = append(stmt.AdditionalAliases, addAlias)
 	}
 
 	return stmt

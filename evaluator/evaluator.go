@@ -1193,9 +1193,17 @@ func evalImportStatement(is *ast.ImportStatement, env *object.Environment) objec
 	}
 
 	// Import additional libraries if any
-	for _, name := range is.AdditionalNames {
+	for i, name := range is.AdditionalNames {
 		if err := importCallback(name.Value); err != nil {
 			return errors.NewError("%s: %s", errors.ErrImportError, err.Error())
+		}
+
+		// Handle alias for this additional import if present
+		if i < len(is.AdditionalAliases) && is.AdditionalAliases[i] != nil {
+			moduleObj, ok := env.Get(name.Value)
+			if ok {
+				env.Set(is.AdditionalAliases[i].Value, moduleObj)
+			}
 		}
 	}
 

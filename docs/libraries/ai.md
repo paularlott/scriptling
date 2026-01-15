@@ -37,7 +37,7 @@ This pattern allows multiple clients to be used simultaneously and keeps API key
 
 Create client instances directly from scripts without needing Go code setup.
 
-### ai.new_client(base_url, \*\*kwargs)
+### sl.ai.new_client(base_url, \*\*kwargs)
 
 Creates a new AI client instance for making API calls to supported services.
 
@@ -52,7 +52,7 @@ Creates a new AI client instance for making API calls to supported services.
 **Example:**
 
 ```python
-import ai
+import sl.ai as ai
 
 # OpenAI API (default service)
 client = ai.new_client("", api_key="sk-...")
@@ -336,7 +336,7 @@ if response.choices[0].message.tool_calls:
 ### Basic Chat Completion
 
 ```python
-import ai
+import sl.ai as ai
 
 # Using wrapped client from Go
 models = ai_client.models()
@@ -410,7 +410,7 @@ response = client.completion("gpt-4", [{"role": "user", "content": "Search for r
 ## Error Handling
 
 ```python
-import ai
+import sl.ai as ai
 
 try:
     client = ai.new_client("", api_key="sk-...")

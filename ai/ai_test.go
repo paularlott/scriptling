@@ -8,8 +8,8 @@ import (
 )
 
 func TestAILibraryConstants(t *testing.T) {
-	if AILibraryName != "ai" {
-		t.Errorf("AILibraryName = %q, want %q", AILibraryName, "ai")
+	if AILibraryName != "sl.ai" {
+		t.Errorf("AILibraryName = %q, want %q", AILibraryName, "sl.ai")
 	}
 
 	if AILibraryDesc == "" {
