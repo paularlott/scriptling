@@ -1,7 +1,7 @@
 # AI Library Example - Streaming Chat Completion
 # This script demonstrates streaming responses from an OpenAI-compatible API
 
-import ai
+import sl.ai as ai
 
 print("Creating OpenAI client for LM Studio...")
 # Create client directly from script (LM Studio doesn't require an API key)

@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	ToonLibraryName = "toon"
+	ToonLibraryName = "sl.toon"
 	ToonLibraryDesc = "TOON (Token-Oriented Object Notation) encoding/decoding library"
 )
 

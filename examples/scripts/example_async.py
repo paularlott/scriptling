@@ -1,7 +1,7 @@
 #!/usr/bin/env scriptling
 """Example demonstrating async library features"""
 
-import threads
+import sl.threads as threads
 
 print("=== Async Library Examples ===\n")
 

@@ -94,34 +94,45 @@ These libraries are built-in and available for import without any registration.
 | `urllib`      | URL handling                         | [libraries/urllib.md](libraries/urllib.md)           |
 | `uuid`        | UUID generation                      | [libraries/uuid.md](libraries/uuid.md)               |
 
-## Extended Libraries
+## Scriptling Libraries
 
-These libraries require explicit registration by the host application (e.g., the CLI tool).
+These are scriptling-specific libraries that provide functionality not available in Python's standard library. They use the `sl.` namespace prefix.
 
 | Import        | Description                                             | Details                                              |
 | ------------- | ------------------------------------------------------- | ---------------------------------------------------- |
-| `ai`          | AI and LLM functions for OpenAI-compatible APIs         | [libraries/ai.md](libraries/ai.md)                   |
-| `mcp`         | MCP (Model Context Protocol) tool interaction           | [libraries/mcp.md](libraries/mcp.md)                 |
-| `toon`        | TOON (Token-Oriented Object Notation) encoding/decoding | [libraries/toon.md](libraries/toon.md)               |
-| `requests`    | HTTP library for sending requests                       | [libraries/requests.md](libraries/requests.md)       |
-| `sys`         | System-specific parameters and functions                | [libraries/sys.md](libraries/sys.md)                 |
-| `secrets`     | Cryptographically strong random numbers                 | [libraries/secrets.md](libraries/secrets.md)         |
-| `subprocess`  | Spawn and manage subprocesses                           | [libraries/subprocess.md](libraries/subprocess.md)   |
-| `html.parser` | HTML/XHTML parser                                       | [libraries/html.parser.md](libraries/html.parser.md) |
-| `os`          | Operating system interfaces (filesystem)                | [libraries/os.md](libraries/os.md)                   |
-| `os.path`     | Pathname manipulations                                  | [libraries/os.path.md](libraries/os.path.md)         |
-| `pathlib`     | Object-oriented filesystem paths                        | [libraries/pathlib.md](libraries/pathlib.md)         |
-| `glob`        | Unix shell-style wildcards for filename matching        | [libraries/glob.md](libraries/glob.md)               |
-| `threads`     | Asynchronous execution with isolated environments       | [libraries/threads.md](libraries/threads.md)         |
-| `logging`     | Logging functionality                                   | [libraries/logging.md](libraries/logging.md)         |
-| `wait_for`    | Wait for resources to become available                  | [libraries/wait_for.md](libraries/wait_for.md)       |
-| `console`     | Console input/output functions                          | [libraries/console.md](libraries/console.md)         |
+| `sl.ai`       | AI and LLM functions for OpenAI-compatible APIs         | [libraries/ai.md](libraries/ai.md)                   |
+| `sl.mcp`      | MCP (Model Context Protocol) tool interaction           | [libraries/mcp.md](libraries/mcp.md)                 |
+| `sl.toon`     | TOON (Token-Oriented Object Notation) encoding/decoding | [libraries/toon.md](libraries/toon.md)               |
+| `sl.threads`  | Asynchronous execution with isolated environments       | [libraries/threads.md](libraries/threads.md)         |
+| `sl.console`  | Console input/output functions                          | [libraries/console.md](libraries/console.md)         |
+
+## Extended Libraries
+
+These libraries provide Python-compatible functionality and require explicit registration by the host application (e.g., the CLI tool).
+
+| Import        | Description                          | Details                                              |
+| ------------- | ------------------------------------ | ---------------------------------------------------- |
+| `requests`    | HTTP library for sending requests    | [libraries/requests.md](libraries/requests.md)       |
+| `sys`         | System-specific parameters           | [libraries/sys.md](libraries/sys.md)                 |
+| `secrets`     | Cryptographically strong random nums  | [libraries/secrets.md](libraries/secrets.md)         |
+| `subprocess`  | Spawn and manage subprocesses        | [libraries/subprocess.md](libraries/subprocess.md)   |
+| `html.parser` | HTML/XHTML parser                    | [libraries/html.parser.md](libraries/html.parser.md) |
+| `os`          | Operating system interfaces          | [libraries/os.md](libraries/os.md)                   |
+| `os.path`     | Pathname manipulations               | [libraries/os.path.md](libraries/os.path.md)         |
+| `pathlib`     | Object-oriented filesystem paths     | [libraries/pathlib.md](libraries/pathlib.md)         |
+| `glob`        | Unix shell-style wildcards           | [libraries/glob.md](libraries/glob.md)               |
+| `logging`     | Logging functionality                | [libraries/logging.md](libraries/logging.md)         |
+| `wait_for`    | Wait for resources to become avail   | [libraries/wait_for.md](libraries/wait_for.md)       |
 
 ## Usage Example
 
 ```python
 import json
 import math
+import logging
+
+logger = logging.getLogger("myapp")
+logger.info("Starting application")
 
 data = json.loads('{"a": 1, "b": 2}')
 print(math.sqrt(data["a"] + data["b"]))
@@ -132,4 +143,6 @@ For detailed documentation on each library, use the `help()` function within the
 ```python
 import json
 help(json)
+import sl.ai as ai
+help(ai)
 ```

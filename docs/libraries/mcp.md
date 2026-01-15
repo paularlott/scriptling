@@ -6,7 +6,7 @@ For MCP integration with OpenAI clients, see the [AI Library](ai.md) documentati
 
 ## Module Functions
 
-### mcp.decode_response(response)
+### sl.mcp.decode_response(response)
 
 Decodes a raw MCP tool response into scriptling objects.
 
@@ -17,12 +17,12 @@ Decodes a raw MCP tool response into scriptling objects.
 
 **Example:**
 ```python
-import mcp
+import sl.mcp as mcp
 
 decoded = mcp.decode_response(raw_response)
 ```
 
-### mcp.new_client(base_url, **kwargs)
+### sl.mcp.new_client(base_url, **kwargs)
 
 Creates a new MCP client for connecting to a remote MCP server.
 
@@ -35,7 +35,7 @@ Creates a new MCP client for connecting to a remote MCP server.
 
 **Example:**
 ```python
-import mcp
+import sl.mcp as mcp
 
 # Without namespace or auth
 client = mcp.new_client("https://api.example.com/mcp")
@@ -166,7 +166,7 @@ if results:
 ### Basic Tool Execution
 
 ```python
-import mcp
+import sl.mcp as mcp
 
 client = mcp.new_client("https://api.example.com/mcp")
 result = client.call_tool("calculator", {"expression": "2+2"})
@@ -176,7 +176,7 @@ print(result)  # 4
 ### Listing Available Tools
 
 ```python
-import mcp
+import sl.mcp as mcp
 
 client = mcp.new_client("https://api.example.com/mcp")
 tools = client.tools()
@@ -190,7 +190,7 @@ for tool in tools:
 ### Using Tool Schemas
 
 ```python
-import mcp
+import sl.mcp as mcp
 
 client = mcp.new_client("https://api.example.com/mcp")
 tools = client.tools()
@@ -211,7 +211,7 @@ for tool in tools:
 ### Searching for Tools
 
 ```python
-import mcp
+import sl.mcp as mcp
 
 client = mcp.new_client("https://api.example.com/mcp")
 
@@ -234,7 +234,7 @@ for tool in db_tools:
 ### Bearer Token Authentication
 
 ```python
-import mcp
+import sl.mcp as mcp
 
 client = mcp.new_client(
     "https://api.example.com/mcp",
@@ -245,7 +245,7 @@ client = mcp.new_client(
 ### Bearer Token with Namespace
 
 ```python
-import mcp
+import sl.mcp as mcp
 
 # Namespace and bearer token can be in any order
 client = mcp.new_client(
@@ -258,7 +258,7 @@ client = mcp.new_client(
 ### No Authentication
 
 ```python
-import mcp
+import sl.mcp as mcp
 
 client = mcp.new_client("https://public-api.example.com/mcp")
 ```
@@ -266,7 +266,7 @@ client = mcp.new_client("https://public-api.example.com/mcp")
 ## Error Handling
 
 ```python
-import mcp
+import sl.mcp as mcp
 
 try:
     client = mcp.new_client("https://api.example.com/mcp")
@@ -281,7 +281,7 @@ except Exception as e:
 Tool responses are automatically decoded from JSON:
 
 ```python
-import mcp
+import sl.mcp as mcp
 
 client = mcp.new_client("https://api.example.com/mcp")
 
@@ -297,7 +297,7 @@ print(result.forecast)     # [...]
 For raw responses, use `mcp.decode_response()`:
 
 ```python
-import mcp
+import sl.mcp as mcp
 
 raw_response = {
     "content": [{"type": "text", "text": '{"temp": 15}'}]
@@ -312,7 +312,7 @@ print(decoded)  # {"temp": 15}
 Tools may include an input schema defining their parameters:
 
 ```python
-import mcp
+import sl.mcp as mcp
 
 client = mcp.new_client("https://api.example.com/mcp")
 tools = client.tools()

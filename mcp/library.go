@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	MCPLibraryName = "mcp"
+	MCPLibraryName = "sl.mcp"
 	MCPLibraryDesc = "MCP (Model Context Protocol) tool interaction library"
 )
 

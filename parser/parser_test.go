@@ -772,6 +772,132 @@ func TestImportStatement(t *testing.T) {
 	}
 }
 
+func TestImportStatementWithAlias(t *testing.T) {
+	input := "import os as operating_system"
+
+	l := lexer.New(input)
+	p := New(l)
+	program := p.ParseProgram()
+	checkParserErrors(t, p)
+
+	if len(program.Statements) != 1 {
+		t.Fatalf("program.Statements does not contain %d statements. got=%d",
+			1, len(program.Statements))
+	}
+
+	stmt, ok := program.Statements[0].(*ast.ImportStatement)
+	if !ok {
+		t.Fatalf("program.Statements[0] is not ast.ImportStatement. got=%T",
+			program.Statements[0])
+	}
+
+	if stmt.Name.Value != "os" {
+		t.Errorf("stmt.Name.Value = %q, want %q", stmt.Name.Value, "os")
+	}
+
+	if stmt.Alias == nil {
+		t.Fatal("stmt.Alias is nil")
+	}
+
+	if stmt.Alias.Value != "operating_system" {
+		t.Errorf("stmt.Alias.Value = %q, want %q", stmt.Alias.Value, "operating_system")
+	}
+}
+
+func TestImportStatementMultiple(t *testing.T) {
+	tests := []struct {
+		name             string
+		input            string
+		expectedNames    []string
+		expectedAliases  []string
+	}{
+		{
+			name:          "multiple imports without aliases",
+			input:         "import os, sys, json",
+			expectedNames: []string{"os", "sys", "json"},
+			expectedAliases: []string{"", "", ""},
+		},
+		{
+			name:          "multiple imports with aliases",
+			input:         "import os as op, sys as system, json",
+			expectedNames: []string{"os", "sys", "json"},
+			expectedAliases: []string{"op", "system", ""},
+		},
+		{
+			name:          "mixed imports with and without aliases",
+			input:         "import os, sys as system, json as j",
+			expectedNames: []string{"os", "sys", "json"},
+			expectedAliases: []string{"", "system", "j"},
+		},
+		{
+			name:          "dotted imports with aliases",
+			input:         "import sl.ai as ai, sl.console as console, glob, json",
+			expectedNames: []string{"sl.ai", "sl.console", "glob", "json"},
+			expectedAliases: []string{"ai", "console", "", ""},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			l := lexer.New(tt.input)
+			p := New(l)
+			program := p.ParseProgram()
+			checkParserErrors(t, p)
+
+			if len(program.Statements) != 1 {
+				t.Fatalf("program.Statements does not contain %d statements. got=%d",
+					1, len(program.Statements))
+			}
+
+			stmt, ok := program.Statements[0].(*ast.ImportStatement)
+			if !ok {
+				t.Fatalf("program.Statements[0] is not ast.ImportStatement. got=%T",
+					program.Statements[0])
+			}
+
+			if stmt.Name.Value != tt.expectedNames[0] {
+				t.Errorf("stmt.Name.Value = %q, want %q", stmt.Name.Value, tt.expectedNames[0])
+			}
+
+			if len(stmt.AdditionalNames) != len(tt.expectedNames)-1 {
+				t.Fatalf("stmt.AdditionalNames length = %d, want %d",
+					len(stmt.AdditionalNames), len(tt.expectedNames)-1)
+			}
+
+			for i, name := range stmt.AdditionalNames {
+				expectedName := tt.expectedNames[i+1]
+				if name.Value != expectedName {
+					t.Errorf("stmt.AdditionalNames[%d].Value = %q, want %q",
+						i, name.Value, expectedName)
+				}
+			}
+
+			if len(stmt.AdditionalAliases) != len(tt.expectedAliases)-1 {
+				t.Fatalf("stmt.AdditionalAliases length = %d, want %d",
+					len(stmt.AdditionalAliases), len(tt.expectedAliases)-1)
+			}
+
+			for i, alias := range stmt.AdditionalAliases {
+				expectedAlias := tt.expectedAliases[i+1]
+				if expectedAlias == "" {
+					if alias != nil {
+						t.Errorf("stmt.AdditionalAliases[%d] should be nil, got %q",
+							i, alias.Value)
+					}
+				} else {
+					if alias == nil {
+						t.Errorf("stmt.AdditionalAliases[%d] is nil, want %q",
+							i, expectedAlias)
+					} else if alias.Value != expectedAlias {
+						t.Errorf("stmt.AdditionalAliases[%d].Value = %q, want %q",
+							i, alias.Value, expectedAlias)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestClassStatement(t *testing.T) {
 	input := `class MyClass:
     pass`
