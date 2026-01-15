@@ -17,8 +17,8 @@ import (
 
 	"github.com/paularlott/mcp/openai"
 	"github.com/paularlott/scriptling"
-	"github.com/paularlott/scriptling/ai"
 	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/ai"
 	"github.com/paularlott/scriptling/stdlib"
 )
 

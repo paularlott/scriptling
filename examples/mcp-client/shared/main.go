@@ -18,7 +18,7 @@ import (
 	mcplib "github.com/paularlott/mcp"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs"
-	scriptlingmcp "github.com/paularlott/scriptling/mcp"
+	scriptlingmcp "github.com/paularlott/scriptling/extlibs/mcp"
 	"github.com/paularlott/scriptling/stdlib"
 )
 
