@@ -10,9 +10,9 @@ import (
 
 	"github.com/paularlott/cli"
 	"github.com/paularlott/scriptling"
-	"github.com/paularlott/scriptling/ai"
 	"github.com/paularlott/scriptling/extlibs"
-	"github.com/paularlott/scriptling/mcp"
+	"github.com/paularlott/scriptling/extlibs/ai"
+	"github.com/paularlott/scriptling/extlibs/mcp"
 	"github.com/paularlott/scriptling/stdlib"
 )
 
