@@ -1,11 +1,11 @@
 module github.com/paularlott/scriptling
 
-go 1.25.5
+go 1.25.6
 
 require (
 	github.com/google/uuid v1.6.0
 	github.com/paularlott/logger v0.3.0
-	github.com/paularlott/mcp v0.8.0
+	github.com/paularlott/mcp v0.9.0
 	github.com/shirou/gopsutil/v3 v3.24.5
 	golang.org/x/net v0.49.0
 	golang.org/x/text v0.33.0

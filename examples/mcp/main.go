@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/paularlott/mcp"
-	"github.com/paularlott/mcp/discovery"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/extlibs/ai"
@@ -29,12 +28,8 @@ Use execute_tool to run a discovered tool, or execute_code for custom code.`)
 	// Register execute_code as a regular visible tool
 	registerExecuteCode(server)
 
-	// Create discovery registry and register script tools
-	registry := discovery.NewToolRegistry()
-	registerScriptTools(registry)
-
-	// Attach registry to server (registers tool_search, execute_tool)
-	registry.Attach(server)
+	// Register ondemand script tools (searchable via tool_search, not in tools/list)
+	registerScriptTools(server)
 
 	// Start HTTP server
 	http.HandleFunc("/mcp", server.HandleRequest)
@@ -58,10 +53,10 @@ func registerExecuteCode(server *mcp.Server) {
 	)
 }
 
-// registerScriptTools registers pre-built script tools with the discovery registry
-func registerScriptTools(registry *discovery.ToolRegistry) {
+// registerScriptTools registers pre-built script tools as ondemand tools
+func registerScriptTools(server *mcp.Server) {
 	// Generate Calendar
-	registry.RegisterTool(
+	server.RegisterOnDemandTool(
 		mcp.NewTool("generate_calendar",
 			"Generate a formatted ASCII calendar for any month and year",
 			mcp.Number("year", "Year (e.g., 2025)", mcp.Required()),
@@ -123,7 +118,7 @@ print(generate_calendar(%d, %d))`, year, month)
 	)
 
 	// Generate Password
-	registry.RegisterTool(
+	server.RegisterOnDemandTool(
 		mcp.NewTool("generate_password",
 			"Generate a secure random password",
 			mcp.Number("length", "Password length (default: 16)"),
@@ -177,7 +172,7 @@ print(generate_password())`, length, pyBool(upper), pyBool(lower), pyBool(digits
 	)
 
 	// HTTP POST JSON
-	registry.RegisterTool(
+	server.RegisterOnDemandTool(
 		mcp.NewTool("http_post_json",
 			"Send a JSON POST request to a URL",
 			mcp.String("url", "The URL to POST to", mcp.Required()),
