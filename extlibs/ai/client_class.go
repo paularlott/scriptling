@@ -167,6 +167,26 @@ Example:
     }
   }])`).
 
+		MethodWithHelp("embedding", embeddingMethod, `embedding(model, input) - Create an embedding
+
+Creates an embedding vector for the given input text(s) using the specified model.
+
+Parameters:
+  model (str): Model identifier (e.g., "text-embedding-3-small", "text-embedding-3-large")
+  input (str or list): Input text(s) to embed - can be a string or list of strings
+
+Returns:
+  dict: Response containing data (list of embeddings with index, embedding, object), model, and usage
+
+Example:
+  response = client.embedding("text-embedding-3-small", "Hello world")
+  print(response.data[0].embedding)
+
+  # Batch embedding
+  response = client.embedding("text-embedding-3-small", ["Hello", "World"])
+  for emb in response.data:
+    print(emb.embedding)`).
+
 		Build()
 }
 
@@ -408,6 +428,30 @@ func setToolsMethod(self *object.Instance, ctx context.Context, tools []any) obj
 	ci.client.SetCustomTools(openaiTools)
 
 	return &object.Null{}
+}
+
+// embedding method implementation
+func embeddingMethod(self *object.Instance, ctx context.Context, model string, input any) object.Object {
+	ci, cerr := getClientInstance(self)
+	if cerr != nil {
+		return cerr
+	}
+
+	if ci.client == nil {
+		return &object.Error{Message: "embedding: no client configured"}
+	}
+
+	req := openai.EmbeddingRequest{
+		Model: model,
+		Input: input,
+	}
+
+	resp, err := ci.client.CreateEmbedding(ctx, req)
+	if err != nil {
+		return &object.Error{Message: "failed to create embedding: " + err.Error()}
+	}
+
+	return scriptlib.FromGo(resp)
 }
 
 // createClientInstance creates a new scriptling Instance wrapping an OpenAI client
