@@ -9,7 +9,6 @@ import (
 
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/evaluator"
-	"github.com/paularlott/scriptling/internal/cache"
 	"github.com/paularlott/scriptling/lexer"
 	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/scriptling/parser"
@@ -325,7 +324,7 @@ func (p *Scriptling) EvalWithTimeout(timeout time.Duration, input string) (objec
 // EvalWithContext executes script with context for timeout/cancellation
 func (p *Scriptling) EvalWithContext(ctx context.Context, input string) (object.Object, error) {
 	// Try global cache first
-	program, ok := cache.Get(input)
+	program, ok := Get(input)
 	if !ok {
 		l := lexer.New(input)
 		par := parser.New(l)
@@ -334,7 +333,7 @@ func (p *Scriptling) EvalWithContext(ctx context.Context, input string) (object.
 			return nil, fmt.Errorf("parser errors: %v", par.Errors())
 		}
 		// Store in global cache
-		cache.Set(input, program)
+		Set(input, program)
 	}
 
 	result := evaluator.EvalWithContext(ctx, program, p.env)
@@ -645,7 +644,7 @@ func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[stri
 
 	// Parse and evaluate the script in the library environment
 	var program *ast.Program
-	if cached, ok := cache.Get(script); ok {
+	if cached, ok := Get(script); ok {
 		program = cached
 	} else {
 		l := lexer.New(script)
@@ -654,7 +653,7 @@ func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[stri
 		if len(par.Errors()) != 0 {
 			return nil, fmt.Errorf("parser errors: %v", par.Errors())
 		}
-		cache.Set(script, program)
+		Set(script, program)
 	}
 
 	// Check for module docstring (first statement is a string literal)
