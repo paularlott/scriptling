@@ -1,9 +1,9 @@
 module scriptling-mcp-server
 
-go 1.25.5
+go 1.25.6
 
 require (
-	github.com/paularlott/mcp v0.8.0
+	github.com/paularlott/mcp v0.9.0
 	github.com/paularlott/scriptling v0.0.0
 )
 
