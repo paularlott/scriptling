@@ -115,6 +115,47 @@ while True:
 print()
 ```
 
+### client.embedding(model, input)
+
+Creates an embedding vector for the given input text(s) using the specified model.
+
+**Parameters:**
+
+- `model` (str): Model identifier (e.g., "text-embedding-3-small", "text-embedding-3-large")
+- `input` (str or list): Input text(s) to embed - can be a string or list of strings
+
+**Returns:** dict - Response containing data (list of embeddings with index, embedding, object), model, and usage
+
+**Example:**
+
+```python
+client = ai.new_client("", api_key="sk-...")
+
+# Single text embedding
+response = client.embedding("text-embedding-3-small", "Hello world")
+print(response.data[0].embedding)
+
+# Batch embedding
+response = client.embedding("text-embedding-3-small", ["Hello", "World"])
+for emb in response.data:
+    print(emb.embedding)
+
+# Using embeddings for similarity search
+texts = ["cat", "dog", "car", "bicycle"]
+response = client.embedding("text-embedding-3-small", texts)
+
+# Query similarity
+query_resp = client.embedding("text-embedding-3-small", "vehicle")
+query_emb = query_resp.data[0].embedding
+
+# Find most similar (simplified - in practice use proper cosine similarity)
+import math
+for i, text_emb in enumerate(response.data):
+    # Simple dot product as example (use cosine similarity in production)
+    similarity = sum(a * b for a, b in zip(query_emb, text_emb.embedding))
+    print(f"{texts[i]}: {similarity}")
+```
+
 ## ChatStream Class
 
 ### stream.next()
