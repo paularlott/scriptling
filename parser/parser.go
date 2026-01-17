@@ -984,7 +984,7 @@ func (p *Parser) parseFunctionStatement() *ast.FunctionStatement {
 	}
 
 	stmt.Function = &ast.FunctionLiteral{Token: stmt.Token}
-	stmt.Function.Parameters, stmt.Function.DefaultValues, stmt.Function.Variadic = p.parseFunctionParameters()
+	stmt.Function.Parameters, stmt.Function.DefaultValues, stmt.Function.Variadic, stmt.Function.Kwargs = p.parseFunctionParameters()
 
 	if !p.expectPeek(token.COLON) {
 		return nil
@@ -1024,28 +1024,53 @@ func (p *Parser) parseClassStatement() *ast.ClassStatement {
 	return stmt
 }
 
-func (p *Parser) parseFunctionParameters() ([]*ast.Identifier, map[string]ast.Expression, *ast.Identifier) {
+func (p *Parser) parseFunctionParameters() ([]*ast.Identifier, map[string]ast.Expression, *ast.Identifier, *ast.Identifier) {
 	identifiers := []*ast.Identifier{}
 	defaults := make(map[string]ast.Expression)
 	var variadic *ast.Identifier
+	var kwargs *ast.Identifier
 
 	if p.peekTokenIs(token.RPAREN) {
 		p.nextToken()
-		return identifiers, defaults, nil
+		return identifiers, defaults, nil, nil
 	}
 
 	p.nextToken()
 
 	// Check for *args
 	if p.curTokenIs(token.ASTERISK) {
+		// *args
 		if !p.expectPeek(token.IDENT) {
-			return nil, nil, nil
+			return nil, nil, nil, nil
 		}
 		variadic = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
-		if !p.expectPeek(token.RPAREN) {
-			return nil, nil, nil
+		// Check for **kwargs after *args
+		if p.peekTokenIs(token.COMMA) {
+			p.nextToken() // consume comma
+			if p.peekTokenIs(token.POW) {
+				p.nextToken() // consume POW (**)
+				if !p.expectPeek(token.IDENT) {
+					return nil, nil, nil, nil
+				}
+				kwargs = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+			}
 		}
-		return identifiers, defaults, variadic
+		if !p.expectPeek(token.RPAREN) {
+			return nil, nil, nil, nil
+		}
+		return identifiers, defaults, variadic, kwargs
+	}
+
+	// Check for **kwargs at start
+	if p.curTokenIs(token.POW) {
+		if !p.expectPeek(token.IDENT) {
+			return nil, nil, nil, nil
+		}
+		kwargs = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+		if !p.expectPeek(token.RPAREN) {
+			return nil, nil, nil, nil
+		}
+		return identifiers, defaults, variadic, kwargs
 	}
 
 	ident := &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
@@ -1067,14 +1092,38 @@ func (p *Parser) parseFunctionParameters() ([]*ast.Identifier, map[string]ast.Ex
 
 		// Check for *args
 		if p.curTokenIs(token.ASTERISK) {
+			// *args
 			if !p.expectPeek(token.IDENT) {
-				return nil, nil, nil
+				return nil, nil, nil, nil
 			}
 			variadic = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
-			if !p.expectPeek(token.RPAREN) {
-				return nil, nil, nil
+			// Check for **kwargs after *args
+			if p.peekTokenIs(token.COMMA) {
+				p.nextToken() // consume comma
+				if p.peekTokenIs(token.POW) {
+					p.nextToken() // consume POW (**)
+					if !p.expectPeek(token.IDENT) {
+						return nil, nil, nil, nil
+					}
+					kwargs = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+				}
 			}
-			return identifiers, defaults, variadic
+			if !p.expectPeek(token.RPAREN) {
+				return nil, nil, nil, nil
+			}
+			return identifiers, defaults, variadic, kwargs
+		}
+
+		// Check for **kwargs
+		if p.curTokenIs(token.POW) {
+			if !p.expectPeek(token.IDENT) {
+				return nil, nil, nil, nil
+			}
+			kwargs = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+			if !p.expectPeek(token.RPAREN) {
+				return nil, nil, nil, nil
+			}
+			return identifiers, defaults, variadic, kwargs
 		}
 
 		ident := &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
@@ -1089,10 +1138,10 @@ func (p *Parser) parseFunctionParameters() ([]*ast.Identifier, map[string]ast.Ex
 	}
 
 	if !p.expectPeek(token.RPAREN) {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 
-	return identifiers, defaults, variadic
+	return identifiers, defaults, variadic, kwargs
 }
 
 func (p *Parser) parseForStatement() *ast.ForStatement {
@@ -1230,7 +1279,7 @@ func (p *Parser) parseLambda() ast.Expression {
 
 	// Parse parameters (optional)
 	if !p.peekTokenIs(token.COLON) {
-		lambda.Parameters, lambda.DefaultValues, lambda.Variadic = p.parseLambdaParameters()
+		lambda.Parameters, lambda.DefaultValues, lambda.Variadic, lambda.Kwargs = p.parseLambdaParameters()
 	} else {
 		lambda.Parameters = []*ast.Identifier{}
 		lambda.DefaultValues = make(map[string]ast.Expression)
@@ -1246,22 +1295,43 @@ func (p *Parser) parseLambda() ast.Expression {
 	return lambda
 }
 
-func (p *Parser) parseLambdaParameters() ([]*ast.Identifier, map[string]ast.Expression, *ast.Identifier) {
+func (p *Parser) parseLambdaParameters() ([]*ast.Identifier, map[string]ast.Expression, *ast.Identifier, *ast.Identifier) {
 	identifiers := []*ast.Identifier{}
 	defaults := make(map[string]ast.Expression)
 	var variadic *ast.Identifier
+	var kwargs *ast.Identifier
 
 	p.nextToken()
 
 	if p.curTokenIs(token.COLON) {
-		return identifiers, defaults, nil
+		return identifiers, defaults, nil, nil
 	}
 
-	// Check for *args
+	// Check for *args or **kwargs
 	if p.curTokenIs(token.ASTERISK) {
 		p.nextToken()
 		variadic = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
-		return identifiers, defaults, variadic
+		// Check for **kwargs after *args
+		if p.peekTokenIs(token.COMMA) {
+			p.nextToken() // consume comma
+			if p.peekTokenIs(token.POW) {
+				p.nextToken() // consume POW (**)
+				if !p.expectPeek(token.IDENT) {
+					return nil, nil, nil, nil
+				}
+				kwargs = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+			}
+		}
+		return identifiers, defaults, variadic, kwargs
+	}
+
+	// Check for **kwargs at start
+	if p.curTokenIs(token.POW) {
+		if !p.expectPeek(token.IDENT) {
+			return nil, nil, nil, nil
+		}
+		kwargs = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+		return identifiers, defaults, variadic, kwargs
 	}
 
 	ident := &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
@@ -1278,11 +1348,31 @@ func (p *Parser) parseLambdaParameters() ([]*ast.Identifier, map[string]ast.Expr
 		p.nextToken()
 		p.nextToken()
 
-		// Check for *args
+		// Check for *args or **kwargs
 		if p.curTokenIs(token.ASTERISK) {
 			p.nextToken()
 			variadic = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
-			return identifiers, defaults, variadic
+			// Check for **kwargs after *args
+			if p.peekTokenIs(token.COMMA) {
+				p.nextToken() // consume comma
+				if p.peekTokenIs(token.POW) {
+					p.nextToken() // consume POW (**)
+					if !p.expectPeek(token.IDENT) {
+						return nil, nil, nil, nil
+					}
+					kwargs = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+				}
+			}
+			return identifiers, defaults, variadic, kwargs
+		}
+
+		// Check for **kwargs
+		if p.curTokenIs(token.POW) {
+			if !p.expectPeek(token.IDENT) {
+				return nil, nil, nil, nil
+			}
+			kwargs = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+			return identifiers, defaults, variadic, kwargs
 		}
 
 		ident := &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
@@ -1296,7 +1386,7 @@ func (p *Parser) parseLambdaParameters() ([]*ast.Identifier, map[string]ast.Expr
 		}
 	}
 
-	return identifiers, defaults, variadic
+	return identifiers, defaults, variadic, kwargs
 }
 
 func (p *Parser) skipWhitespace() {
