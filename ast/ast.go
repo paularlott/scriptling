@@ -214,6 +214,7 @@ type FunctionLiteral struct {
 	Parameters    []*Identifier
 	DefaultValues map[string]Expression // parameter name -> default value
 	Variadic      *Identifier           // *args parameter (optional)
+	Kwargs        *Identifier           // **kwargs parameter (optional)
 	Body          *BlockStatement
 }
 
@@ -444,6 +445,7 @@ type Lambda struct {
 	Parameters    []*Identifier
 	DefaultValues map[string]Expression
 	Variadic      *Identifier // *args parameter (optional)
+	Kwargs        *Identifier // **kwargs parameter (optional)
 	Body          Expression  // single expression, not block
 }
 

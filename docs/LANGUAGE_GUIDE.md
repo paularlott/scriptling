@@ -508,6 +508,43 @@ log("INFO", "System started", "Ready")
 
 **Note**: `*args` must come after regular parameters and default parameters. It captures all remaining positional arguments.
 
+### Keyword Arguments Collection (\*\*kwargs)
+
+Functions can accept arbitrary keyword arguments using the `**kwargs` syntax. The extra keyword arguments are collected into a dictionary.
+
+```python
+def test_kwargs(**kwargs):
+    return kwargs
+
+result = test_kwargs(a=1, b=2, c=3)
+print(result)  # {"a": 1, "b": 2, "c": 3}
+```
+
+You can mix regular parameters, default parameters, `*args`, and `**kwargs`:
+
+```python
+def func_with_all(a, b=10, *args, **kwargs):
+    print("a:", a)
+    print("b:", b)
+    print("args:", args)
+    print("kwargs:", kwargs)
+
+func_with_all(1, 2, 3, 4, x=5, y=6)
+# Output:
+# a: 1
+# b: 2
+# args: [3, 4]
+# kwargs: {"x": 5, "y": 6}
+```
+
+**Parameter Order**: When using multiple parameter types, they must appear in this order:
+1. Regular parameters (e.g., `a`, `b`)
+2. Default parameters (e.g., `c=10`)
+3. Variadic arguments (`*args`)
+4. Keyword arguments (`**kwargs`)
+
+**Note**: `**kwargs` must come last in the parameter list. It captures all keyword arguments that don't match named parameters.
+
 ### Examples
 
 ```python
@@ -1345,8 +1382,7 @@ Scriptling intentionally does not support the following Python 3 features:
 - **Type annotations**: Type hints (e.g., `def func(x: int) -> str:`) are not parsed or enforced.
 - **Walrus operator** (`:=`): Assignment expressions are not supported.
 - **Match/case statements** (Python 3.10+): Simplified pattern matching is supported (see Match Statement section).
-- **Positional-only parameters** (`/`): Function parameter syntax like `def func(a, /, b)` is not supported.
-- **Keyword-only parameters** (`*`): Syntax like `def func(a, *, b)` is not supported (though kwargs work via `**kwargs` pattern).
+- **Parameter separators** (`/` and `*`): Syntax for positional-only parameters (`def func(a, /, b)`) and keyword-only parameters (`def func(a, *, b)`) is not supported. (Note: `*args` and `**kwargs` for variadic arguments ARE supported - see Keyword Arguments section).
 - **Decorators**: Function and class decorators (e.g., `@decorator`) are not supported.
 - **Context managers** (`with` statement): The `with` statement and context manager protocol are not implemented.
 - **Multiple inheritance**: Only single inheritance is supported for classes.

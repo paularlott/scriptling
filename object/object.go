@@ -297,6 +297,7 @@ type Function struct {
 	Parameters    []*ast.Identifier
 	DefaultValues map[string]ast.Expression
 	Variadic      *ast.Identifier // *args parameter
+	Kwargs        *ast.Identifier // **kwargs parameter
 	Body          *ast.BlockStatement
 	Env           *Environment
 }
@@ -315,6 +316,7 @@ type LambdaFunction struct {
 	Parameters    []*ast.Identifier
 	DefaultValues map[string]ast.Expression
 	Variadic      *ast.Identifier // *args parameter
+	Kwargs        *ast.Identifier // **kwargs parameter
 	Body          ast.Expression
 	Env           *Environment
 }

@@ -29,6 +29,8 @@ When generating Scriptling code:
 21. **Error Handling**: Use `try`/`except`/`finally` for error handling
 22. **Raise Errors**: Use `raise "message"` to raise custom errors
 23. **Unpacking**: Multiple assignment: `a, b = [1, 2]` for unpacking lists
+24. **Variadic Args**: Use `*args` to collect extra positional arguments into a list
+25. **Keyword Args**: Use `**kwargs` to collect extra keyword arguments into a dictionary
 
 ## Quick Syntax Reference
 
@@ -70,6 +72,19 @@ for item in [1, 2, 3, 4, 5]:
 # Functions
 def add(a, b):
     return a + b
+
+# Variadic arguments (*args)
+def sum_all(*args):
+    total = 0
+    for num in args:
+        total += num
+    return total
+
+# Keyword arguments collection (**kwargs)
+def test_kwargs(**kwargs):
+    return kwargs
+
+result = test_kwargs(a=1, b=2)  # {"a": 1, "b": 2}
 
 # Error handling
 try:

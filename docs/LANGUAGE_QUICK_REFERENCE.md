@@ -128,6 +128,22 @@ def sum_all(*args):
         total += num
     return total
 
+# Keyword arguments collection (**kwargs)
+def test_kwargs(**kwargs):
+    return kwargs
+
+result = test_kwargs(a=1, b=2, c=3)  # {"a": 1, "b": 2, "c": 3}
+
+# Combining all parameter types
+def func_with_all(a, b=10, *args, **kwargs):
+    print("a:", a)
+    print("b:", b)
+    print("args:", args)
+    print("kwargs:", kwargs)
+
+func_with_all(1, 2, 3, 4, x=5, y=6)
+# a: 1, b: 2, args: [3, 4], kwargs: {"x": 5, "y": 6}
+
 # Lambda
 square = lambda x: x * 2
 

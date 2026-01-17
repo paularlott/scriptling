@@ -809,6 +809,7 @@ func evalFunctionStatement(ctx context.Context, stmt *ast.FunctionStatement, env
 		Parameters:    stmt.Function.Parameters,
 		DefaultValues: stmt.Function.DefaultValues,
 		Variadic:      stmt.Function.Variadic,
+		Kwargs:        stmt.Function.Kwargs,
 		Body:          stmt.Function.Body,
 		Env:           env,
 	}
@@ -970,6 +971,7 @@ type funcParams struct {
 	parameters    []*ast.Identifier
 	defaultValues map[string]ast.Expression
 	variadic      *ast.Identifier
+	kwargs        *ast.Identifier
 	parentEnv     *object.Environment
 }
 
@@ -1003,6 +1005,8 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 	// Handle keyword arguments if present
 	if len(keywords) > 0 {
 		setParams := make(map[string]bool, numParams)
+		extraKwargs := make(map[string]object.Object)
+		
 		// Mark positional args as set
 		for i := 0; i < numParams && i < numArgs; i++ {
 			setParams[fp.parameters[i].Value] = true
@@ -1019,6 +1023,11 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 			}
 
 			if !paramExists {
+				// If **kwargs is defined, collect extra keyword arguments
+				if fp.kwargs != nil {
+					extraKwargs[key] = value
+					continue
+				}
 				return nil, errors.NewError("got an unexpected keyword argument '%s'", key)
 			}
 
@@ -1028,6 +1037,18 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 
 			env.Set(key, value)
 			setParams[key] = true
+		}
+
+		// Set **kwargs dict if defined
+		if fp.kwargs != nil {
+			kwargsDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
+			for key, value := range extraKwargs {
+				kwargsDict.Pairs[key] = object.DictPair{
+					Key:   &object.String{Value: key},
+					Value: value,
+				}
+			}
+			env.Set(fp.kwargs.Value, kwargsDict)
 		}
 
 		// Check for missing arguments and apply defaults
@@ -1042,16 +1063,23 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 				}
 			}
 		}
-	} else if numArgs < numParams {
-		// No keywords - check for missing required arguments
-		for i := numArgs; i < numParams; i++ {
-			param := fp.parameters[i]
-			if defaultExpr, ok := fp.defaultValues[param.Value]; ok {
-				defaultVal := Eval(defaultExpr, fp.parentEnv)
-				env.Set(param.Value, defaultVal)
-			} else {
-				minArgs := numParams - len(fp.defaultValues)
-				return nil, errors.NewArgumentError(numArgs, minArgs)
+	} else {
+		// No keywords - set empty **kwargs dict if defined
+		if fp.kwargs != nil {
+			env.Set(fp.kwargs.Value, &object.Dict{Pairs: make(map[string]object.DictPair)})
+		}
+		
+		if numArgs < numParams {
+			// No keywords - check for missing required arguments
+			for i := numArgs; i < numParams; i++ {
+				param := fp.parameters[i]
+				if defaultExpr, ok := fp.defaultValues[param.Value]; ok {
+					defaultVal := Eval(defaultExpr, fp.parentEnv)
+					env.Set(param.Value, defaultVal)
+				} else {
+					minArgs := numParams - len(fp.defaultValues)
+					return nil, errors.NewArgumentError(numArgs, minArgs)
+				}
 			}
 		}
 	}
@@ -1064,6 +1092,7 @@ func extendFunctionEnv(fn *object.Function, args []object.Object, keywords map[s
 		parameters:    fn.Parameters,
 		defaultValues: fn.DefaultValues,
 		variadic:      fn.Variadic,
+		kwargs:        fn.Kwargs,
 		parentEnv:     fn.Env,
 	}, args, keywords)
 }
@@ -1073,6 +1102,7 @@ func extendLambdaEnv(fn *object.LambdaFunction, args []object.Object, keywords m
 		parameters:    fn.Parameters,
 		defaultValues: fn.DefaultValues,
 		variadic:      fn.Variadic,
+		kwargs:        fn.Kwargs,
 		parentEnv:     fn.Env,
 	}, args, keywords)
 }
@@ -1841,6 +1871,7 @@ func evalLambda(lambda *ast.Lambda, env *object.Environment) object.Object {
 		Parameters:    lambda.Parameters,
 		DefaultValues: lambda.DefaultValues,
 		Variadic:      lambda.Variadic,
+		Kwargs:        lambda.Kwargs,
 		Body:          lambda.Body,
 		Env:           env,
 	}
