@@ -22,8 +22,19 @@ func (s *SysExitCode) Error() string {
 	return "sys.exit called"
 }
 
-// SysExitCallback can be set to customize sys.exit() behavior
-var SysExitCallback func(code int)
+// IsSysExitCode checks if an error is a SysExitCode error.
+// This is a helper for handling sys.exit() errors from Eval/CallFunction.
+func IsSysExitCode(err error) bool {
+	_, ok := err.(*SysExitCode)
+	return ok
+}
+
+// GetSysExitCode extracts the SysExitCode from an error if it is one.
+// Returns the SysExitCode and true if the error is a SysExitCode, nil and false otherwise.
+func GetSysExitCode(err error) (*SysExitCode, bool) {
+	sysExit, ok := err.(*SysExitCode)
+	return sysExit, ok
+}
 
 // NewSysLibrary creates a new sys library with the given argv
 func NewSysLibrary(argv []string) *object.Library {
@@ -61,22 +72,18 @@ func NewSysLibrary(argv []string) *object.Library {
 					case *object.Integer:
 						code = int(arg.Value)
 					case *object.String:
-						// Print the message to stderr and exit with code 1
-						if SysExitCallback != nil {
-							SysExitCallback(1)
-						}
-						return &object.Exception{Message: arg.Value}
+						// Return an exception with the custom message
+						return &object.Exception{Message: arg.Value, ExceptionType: "SystemExit"}
 					default:
 						code = 1
 					}
 				}
 
-				if SysExitCallback != nil {
-					SysExitCallback(code)
+				// Return a SystemExit exception that can be caught with try/except
+				return &object.Exception{
+					Message:       "SystemExit: " + object.NewInteger(int64(code)).Inspect(),
+					ExceptionType: "SystemExit",
 				}
-
-				// Return an exception so it can be caught with try/except
-				return &object.Exception{Message: "SystemExit: " + object.NewInteger(int64(code)).Inspect()}
 			},
 			HelpText: `exit([code]) - Raise SystemExit exception to exit the interpreter
 

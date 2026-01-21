@@ -752,7 +752,8 @@ func (e *Error) AsList() ([]Object, Object)          { return nil, &Error{Messag
 func (e *Error) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
 type Exception struct {
-	Message string
+	Message        string
+	ExceptionType  string // Exception type for identification (e.g., "SystemExit", "ValueError", etc.)
 }
 
 func (ex *Exception) Type() ObjectType { return EXCEPTION_OBJ }

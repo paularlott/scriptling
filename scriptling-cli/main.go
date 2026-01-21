@@ -97,11 +97,6 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	}
 	extlibs.RegisterSysLibrary(p, argv)
 
-	// Set up sys.exit callback
-	extlibs.SysExitCallback = func(code int) {
-		os.Exit(code)
-	}
-
 	// Determine execution mode
 	if interactive {
 		return runInteractive(p)
@@ -123,6 +118,10 @@ func runFile(p *scriptling.Scriptling, filename string) error {
 	}
 
 	_, err = p.Eval(string(content))
+	// Check for SystemExit to exit with the appropriate code
+	if sysExit, ok := extlibs.GetSysExitCode(err); ok {
+		os.Exit(sysExit.Code)
+	}
 	return err
 }
 
@@ -133,6 +132,10 @@ func runStdin(p *scriptling.Scriptling) error {
 	}
 
 	_, err = p.Eval(string(content))
+	// Check for SystemExit to exit with the appropriate code
+	if sysExit, ok := extlibs.GetSysExitCode(err); ok {
+		os.Exit(sysExit.Code)
+	}
 	return err
 }
 
