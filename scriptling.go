@@ -9,6 +9,7 @@ import (
 
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/evaluator"
+	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/lexer"
 	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/scriptling/parser"
@@ -341,7 +342,28 @@ func (p *Scriptling) EvalWithContext(ctx context.Context, input string) (object.
 		return nil, fmt.Errorf("%s", err.Message)
 	}
 
+	// Check for SystemExit exception
+	if ex, ok := result.(*object.Exception); ok && ex.ExceptionType == "SystemExit" {
+		// Extract exit code from the message
+		code := 0
+		if strings.HasPrefix(ex.Message, "SystemExit: ") {
+			codeStr := strings.TrimPrefix(ex.Message, "SystemExit: ")
+			code = parseIntFromMessage(codeStr)
+		}
+		return nil, &extlibs.SysExitCode{Code: code}
+	}
+
 	return result, nil
+}
+
+// parseIntFromMessage extracts an integer from a message string
+func parseIntFromMessage(msg string) int {
+	var code int
+	_, err := fmt.Sscanf(msg, "%d", &code)
+	if err != nil {
+		return 1 // Default to exit code 1 if parsing fails
+	}
+	return code
 }
 
 func (p *Scriptling) SetVar(name string, value interface{}) error {
@@ -504,6 +526,16 @@ func (p *Scriptling) CallFunctionWithContext(ctx context.Context, name string, a
 	// 4. Handle errors
 	if err, ok := result.(*object.Error); ok && err != nil {
 		return nil, fmt.Errorf("function error: %s", err.Message)
+	}
+
+	// 5. Check for SystemExit exception
+	if ex, ok := result.(*object.Exception); ok && ex.ExceptionType == "SystemExit" {
+		code := 0
+		if strings.HasPrefix(ex.Message, "SystemExit: ") {
+			codeStr := strings.TrimPrefix(ex.Message, "SystemExit: ")
+			code = parseIntFromMessage(codeStr)
+		}
+		return nil, &extlibs.SysExitCode{Code: code}
 	}
 
 	return result, nil

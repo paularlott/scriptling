@@ -97,14 +97,18 @@ except Exception as e:
     # Continue execution instead of exiting
 ```
 
-**Note:** Unlike Python, Scriptling doesn't have a `SystemExit` exception type - it's just a regular exception with "SystemExit" in the message.
+**Note:** SystemExit exceptions have an `ExceptionType` of "SystemExit" and can be detected by the caller via the returned error.
 
-## Enabling in Go
+## Go API Integration
+
+When using the Go API, `sys.exit()` returns a `*extlibs.SysExitCode` error that contains the exit code. The caller can decide how to handle it:
 
 ```go
 package main
 
 import (
+    "fmt"
+    "os"
     "github.com/paularlott/scriptling"
     "github.com/paularlott/scriptling/extlibs"
 )
@@ -113,19 +117,30 @@ func main() {
     p := scriptling.New()
 
     // Register the sys library with argv
-    p.RegisterLibrary("sys", extlibs.NewSysLibrary([]string{"script.py", "arg1", "arg2"}))
+    extlibs.RegisterSysLibrary(p, []string{"script.py", "arg1", "arg2"})
 
-    // Optionally set up exit callback
-    extlibs.SysExitCallback = func(code int) {
-        os.Exit(code)
-    }
-
-    p.Eval(`
+    // Evaluate code that calls sys.exit()
+    result, err := p.Eval(`
 import sys
-print(sys.argv)
+sys.exit(42)
     `)
+
+    // Check for SystemExit error using helper
+    if sysExit, ok := extlibs.GetSysExitCode(err); ok {
+        fmt.Printf("Script exited with code: %d\n", sysExit.Code)
+        os.Exit(sysExit.Code)  // Optionally exit the Go process
+    } else if err != nil {
+        fmt.Printf("Error: %v\n", err)
+        os.Exit(1)
+    }
 }
 ```
+
+**Helper functions:**
+- `extlibs.IsSysExitCode(err error) bool` - Check if an error is a SysExitCode
+- `extlibs.GetSysExitCode(err error) (*SysExitCode, bool)` - Extract the SysExitCode from an error
+
+**Key change from previous behavior:** `sys.exit()` no longer terminates the Go process directly. Instead, it returns an error that the caller can handle. This prevents scripts from unexpectedly terminating the host application.
 
 ## Examples
 

@@ -285,7 +285,12 @@ func evalProgram(ctx context.Context, program *ast.Program, env *object.Environm
 		case *object.Error:
 			return result
 		case *object.Exception:
-			// Uncaught exception at program level - convert to error
+			// Uncaught exception at program level
+			// SystemExit exceptions should be returned as-is for proper error handling
+			// Other exceptions are converted to errors
+			if result.ExceptionType == "SystemExit" {
+				return result
+			}
 			return errors.NewError("Uncaught exception: %s", result.Message)
 		}
 	}

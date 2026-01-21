@@ -275,7 +275,7 @@ func TestSysExitUncaughtTerminates(t *testing.T) {
 	p := New()
 	extlibs.RegisterSysLibrary(p, []string{})
 
-	// Test that uncaught sys.exit() terminates execution
+	// Test that uncaught sys.exit() returns SysExitCode error
 	code := `
 import sys
 
@@ -287,8 +287,137 @@ result = "should not reach here"
 		t.Fatal("Expected error for uncaught sys.exit()")
 	}
 
-	if !strings.Contains(err.Error(), "SystemExit: 99") {
-		t.Errorf("Expected 'SystemExit: 99' in error, got: %s", err.Error())
+	// Should be a SysExitCode error with the correct exit code
+	sysExit, ok := extlibs.GetSysExitCode(err)
+	if !ok {
+		t.Fatalf("Expected *extlibs.SysExitCode error, got: %T", err)
+	}
+
+	if sysExit.Code != 99 {
+		t.Errorf("Expected exit code 99, got: %d", sysExit.Code)
+	}
+
+	// Verify that execution stopped before the assignment
+	_, objErr := p.GetVar("result")
+	if objErr == nil {
+		t.Error("Expected result variable to not exist (execution should have stopped)")
+	}
+}
+
+func TestSysExitDefaultCode(t *testing.T) {
+	p := New()
+	extlibs.RegisterSysLibrary(p, []string{})
+
+	// Test that sys.exit() with no args defaults to code 0
+	code := `
+import sys
+sys.exit()
+`
+	_, err := p.Eval(code)
+	if err == nil {
+		t.Fatal("Expected error for uncaught sys.exit()")
+	}
+
+	sysExit, ok := err.(*extlibs.SysExitCode)
+	if !ok {
+		t.Fatalf("Expected *extlibs.SysExitCode error, got: %T", err)
+	}
+
+	if sysExit.Code != 0 {
+		t.Errorf("Expected exit code 0 (default), got: %d", sysExit.Code)
+	}
+}
+
+func TestSysExitInFunction(t *testing.T) {
+	p := New()
+	extlibs.RegisterSysLibrary(p, []string{})
+
+	// Test that sys.exit() called from a function returns SysExitCode
+	code := `
+import sys
+
+def my_function():
+    sys.exit(123)
+
+my_function()
+`
+	_, err := p.Eval(code)
+	if err == nil {
+		t.Fatal("Expected error for sys.exit() in function")
+	}
+
+	sysExit, ok := err.(*extlibs.SysExitCode)
+	if !ok {
+		t.Fatalf("Expected *extlibs.SysExitCode error, got: %T", err)
+	}
+
+	if sysExit.Code != 123 {
+		t.Errorf("Expected exit code 123, got: %d", sysExit.Code)
+	}
+}
+
+func TestSysExitViaCallFunction(t *testing.T) {
+	p := New()
+	extlibs.RegisterSysLibrary(p, []string{})
+
+	// Register a function that calls sys.exit
+	_, err := p.Eval(`
+import sys
+
+def exit_func():
+    sys.exit(45)
+`)
+	if err != nil {
+		t.Fatalf("Failed to define function: %v", err)
+	}
+
+	// Call the function via CallFunction API
+	_, err = p.CallFunction("exit_func")
+	if err == nil {
+		t.Fatal("Expected error for sys.exit() via CallFunction")
+	}
+
+	sysExit, ok := err.(*extlibs.SysExitCode)
+	if !ok {
+		t.Fatalf("Expected *extlibs.SysExitCode error, got: %T", err)
+	}
+
+	if sysExit.Code != 45 {
+		t.Errorf("Expected exit code 45, got: %d", sysExit.Code)
+	}
+}
+
+func TestSysExitDoesNotKillCaller(t *testing.T) {
+	p := New()
+	extlibs.RegisterSysLibrary(p, []string{})
+
+	// Test that sys.exit() doesn't terminate the Go process
+	// If it did, this test would crash/exit
+	code := `
+import sys
+sys.exit(1)
+`
+	_, err := p.Eval(code)
+	if err == nil {
+		t.Fatal("Expected error for uncaught sys.exit()")
+	}
+
+	// If we reach here, sys.exit() did NOT terminate the Go process
+	// (which is the correct behavior now)
+
+	sysExit, ok := err.(*extlibs.SysExitCode)
+	if !ok {
+		t.Fatalf("Expected *extlibs.SysExitCode error, got: %T", err)
+	}
+
+	if sysExit.Code != 1 {
+		t.Errorf("Expected exit code 1, got: %d", sysExit.Code)
+	}
+
+	// Verify we can still use the interpreter
+	_, err = p.Eval("x = 42")
+	if err != nil {
+		t.Errorf("Interpreter should still be usable after sys.exit(), got: %v", err)
 	}
 }
 
