@@ -448,13 +448,26 @@ func (p *Scriptling) RegisterFunc(name string, fn func(ctx context.Context, kwar
 	p.env.Set(name, builtin)
 }
 
+// Kwargs is a wrapper type to explicitly pass keyword arguments to CallFunction.
+// Use this to distinguish between a map being passed as a dict argument vs kwargs.
+//
+// Example:
+//
+//	// Pass a map as a dict argument:
+//	result, err := p.CallFunction("process", map[string]interface{}{"key": "value"})
+//
+//	// Pass keyword arguments:
+//	result, err := p.CallFunction("format", "text", Kwargs{"prefix": ">>"})
+type Kwargs map[string]interface{}
+
 // CallFunction calls a registered function by name with Go arguments.
 // Args are Go types (int, string, etc.) that will be converted to Object.
 // Returns object.Object - use .AsInt(), .AsString(), etc. to extract value.
 //
 // Works with both Go-registered functions (via RegisterFunc) and script-defined functions.
 //
-// Keyword arguments can be passed as the last argument using map[string]interface{}.
+// To pass a map as a dict argument, use map[string]interface{} directly.
+// To pass keyword arguments, wrap the map in Kwargs{}.
 //
 // Example:
 //
@@ -462,8 +475,12 @@ func (p *Scriptling) RegisterFunc(name string, fn func(ctx context.Context, kwar
 //	result, err := p.CallFunction("add", 10, 32)
 //	sum, _ := result.AsInt()
 //
-//	// With keyword arguments
-//	result, err := p.CallFunction("format", "value", map[string]interface{}{"prefix": ">>"})
+//	// Pass a map as a dict argument
+//	dataMap := map[string]interface{}{"key": "value"}
+//	result, err := p.CallFunction("process", dataMap)
+//
+//	// With keyword arguments (use Kwargs wrapper)
+//	result, err := p.CallFunction("format", "value", Kwargs{"prefix": ">>"})
 func (p *Scriptling) CallFunction(name string, args ...interface{}) (object.Object, error) {
 	return p.CallFunctionWithContext(context.Background(), name, args...)
 }
@@ -475,7 +492,8 @@ func (p *Scriptling) CallFunction(name string, args ...interface{}) (object.Obje
 //
 // Works with both Go-registered functions (via RegisterFunc) and script-defined functions.
 //
-// Keyword arguments can be passed as the last argument using map[string]interface{}.
+// To pass a map as a dict argument, use map[string]interface{} directly.
+// To pass keyword arguments, wrap the map in Kwargs{}.
 //
 // Example:
 //
@@ -484,8 +502,12 @@ func (p *Scriptling) CallFunction(name string, args ...interface{}) (object.Obje
 //	result, err := p.CallFunctionWithContext(ctx, "add", 10, 32)
 //	sum, _ := result.AsInt()
 //
-//	// With keyword arguments
-//	result, err := p.CallFunctionWithContext(ctx, "format", "value", map[string]interface{}{"prefix": ">>"})
+//	// Pass a map as a dict argument
+//	dataMap := map[string]interface{}{"key": "value"}
+//	result, err := p.CallFunctionWithContext(ctx, "process", dataMap)
+//
+//	// With keyword arguments (use Kwargs wrapper)
+//	result, err := p.CallFunctionWithContext(ctx, "format", "value", Kwargs{"prefix": ">>"})
 func (p *Scriptling) CallFunctionWithContext(ctx context.Context, name string, args ...interface{}) (object.Object, error) {
 	// 1. Look up function in environment
 	fn, ok := p.env.Get(name)
@@ -493,15 +515,16 @@ func (p *Scriptling) CallFunctionWithContext(ctx context.Context, name string, a
 		return nil, fmt.Errorf("function '%s' not found", name)
 	}
 
-	// 2. Separate args and kwargs (kwargs is optional last parameter as map[string]interface{})
+	// 2. Separate args and kwargs
+	// Kwargs must be explicitly wrapped in Kwargs{} type to distinguish from dict arguments
 	var objArgs []object.Object
 	var objKwargs map[string]object.Object
 
 	if len(args) > 0 {
-		// Check if last argument is a kwargs map
+		// Check if last argument is explicitly a Kwargs wrapper
 		lastIdx := len(args) - 1
-		if kwargsMap, ok := args[lastIdx].(map[string]interface{}); ok {
-			// Last arg is kwargs, convert it
+		if kwargsMap, ok := args[lastIdx].(Kwargs); ok {
+			// Last arg is Kwargs, convert it
 			objKwargs = make(map[string]object.Object, len(kwargsMap))
 			for key, val := range kwargsMap {
 				objKwargs[key] = FromGo(val)
@@ -512,7 +535,7 @@ func (p *Scriptling) CallFunctionWithContext(ctx context.Context, name string, a
 				objArgs[i] = FromGo(arg)
 			}
 		} else {
-			// No kwargs, convert all args
+			// No Kwargs wrapper, convert all args (including maps as dicts)
 			objArgs = make([]object.Object, len(args))
 			for i, arg := range args {
 				objArgs[i] = FromGo(arg)

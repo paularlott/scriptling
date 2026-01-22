@@ -764,7 +764,7 @@ func TestCallFunction(t *testing.T) {
 		})
 
 		// Call with empty kwargs map
-		result, err := p.CallFunction("format", "hello", map[string]interface{}{})
+		result, err := p.CallFunction("format", "hello", Kwargs{})
 		if err != nil {
 			t.Fatalf("CallFunction with kwargs failed: %v", err)
 		}
@@ -791,7 +791,7 @@ func TestCallFunction(t *testing.T) {
 
 		// Call with kwargs
 		result, err := p.CallFunction("format", "world",
-			map[string]interface{}{
+			Kwargs{
 				"prefix": ">> ",
 				"suffix": " <<",
 			})
@@ -820,7 +820,7 @@ func TestCallFunction(t *testing.T) {
 
 		// Call with only prefix kwarg
 		result, err := p.CallFunction("greet", "Alice",
-			map[string]interface{}{
+			Kwargs{
 				"prefix": "Hi",
 			})
 		if err != nil {
@@ -853,7 +853,7 @@ func TestCallFunction(t *testing.T) {
 
 		// Call with mixed type kwargs
 		result, err := p.CallFunction("configure", nil,
-			map[string]interface{}{
+			Kwargs{
 				"enabled": true,
 				"count":   42,
 				"rate":    3.14,
@@ -898,7 +898,7 @@ func TestCallFunction(t *testing.T) {
 
 		// Call with kwargs from Go
 		result, err := p.CallFunction("format_msg", "hello",
-			map[string]interface{}{
+			Kwargs{
 				"prefix": "##",
 				"suffix": "##",
 			})
@@ -941,7 +941,7 @@ func TestCallFunction(t *testing.T) {
 
 		// Call with kwargs
 		result, err = p.CallFunction("echo", "hi",
-			map[string]interface{}{
+			Kwargs{
 				"repeat": 3,
 			})
 		if err != nil {
@@ -994,7 +994,7 @@ func TestCallFunction(t *testing.T) {
 
 		// Call with ONLY kwargs - no positional args (pass nil as positional placeholder)
 		result, err := p.CallFunction("config", nil,
-			map[string]interface{}{
+			Kwargs{
 				"enabled": true,
 				"name":    "test",
 			})
@@ -1027,7 +1027,7 @@ func TestCallFunction(t *testing.T) {
 
 		// Call with 2 positional args + kwargs
 		result, err := p.CallFunction("format", "item", 42,
-			map[string]interface{}{
+			Kwargs{
 				"prefix": "[",
 				"suffix": "]",
 			})
@@ -1081,7 +1081,7 @@ func TestCallFunction(t *testing.T) {
 
 		// Call with 2 positional args + 1 kwarg
 		result, err := p.CallFunction("greet", "Dr", "Smith",
-			map[string]interface{}{
+			Kwargs{
 				"greeting": "Greetings",
 			})
 		if err != nil {

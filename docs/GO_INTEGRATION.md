@@ -353,7 +353,10 @@ if err != nil {
 
 ### Using Keyword Arguments
 
-Pass keyword arguments as the last parameter using `map[string]interface{}`:
+**Important**: To distinguish between passing a map as a dict argument versus keyword arguments, use the `Kwargs` wrapper type for keyword arguments.
+
+- **Dict argument**: Use `map[string]interface{}` directly → passes as a dict to the function
+- **Keyword arguments**: Wrap in `Kwargs{}` → passes as keyword arguments
 
 ```go
 // Register a function with keyword arguments
@@ -364,9 +367,9 @@ p.RegisterFunc("format", func(ctx context.Context, kwargs object.Kwargs, args ..
     return &object.String{Value: prefix + text + suffix}
 })
 
-// Call with keyword arguments
+// Call with keyword arguments (use Kwargs wrapper)
 result, err := p.CallFunction("format", "hello",
-    map[string]interface{}{
+    Kwargs{
         "prefix": ">> ",
         "suffix": " <<",
     })
@@ -391,9 +394,9 @@ p.RegisterFunc("configure", func(ctx context.Context, kwargs object.Kwargs, args
     return &object.Null{}
 })
 
-// Call with mixed type kwargs
+// Call with mixed type kwargs (use Kwargs wrapper)
 result, err := p.CallFunction("configure", nil,
-    map[string]interface{}{
+    Kwargs{
         "enabled": true,
         "count":   42,
         "rate":    3.14,
@@ -415,14 +418,48 @@ result, _ := p.CallFunction("greet", "World")
 text, _ := result.AsString()
 fmt.Println(text)  // Hello, World!
 
-// Call with keyword arguments
+// Call with keyword arguments (use Kwargs wrapper)
 result, _ = p.CallFunction("greet", "Alice",
-    map[string]interface{}{
+    Kwargs{
         "greeting": "Hi",
         "punctuation": "?",
     })
 text, _ = result.AsString()
 fmt.Println(text)  // Hi, Alice?
+```
+
+### Passing Maps as Dict Arguments
+
+When you want to pass a map as a dict (dictionary) argument to a function, use `map[string]interface{}` **without** the `Kwargs` wrapper:
+
+```go
+// Register a function that expects a dict as an argument
+p.RegisterFunc("process_config", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+    config, err := args[0].AsDict()
+    if err != nil {
+        return &object.Error{Message: "expected a dict"}
+    }
+
+    // Process the dict
+    if val, ok := config["key"]; ok {
+        return val
+    }
+    return &object.Null{}
+})
+
+// Pass a map as a dict argument (no Kwargs wrapper)
+configData := map[string]interface{}{
+    "key": "value",
+    "count": 42,
+}
+result, err := p.CallFunction("process_config", configData)
+
+// Compare: Passing as kwargs vs dict
+// As dict argument (passes to args):
+result, _ = p.CallFunction("func", configData)
+
+// As kwargs (passes to kwargs parameter):
+result, _ = p.CallFunction("func", Kwargs{"key": "value"})
 ```
 
 ## Programmatic Library Import
