@@ -492,7 +492,7 @@ def greet(name):
 
 		// Call with keyword arguments
 		result, err := p.CallFunction("format", "hello",
-			map[string]interface{}{
+			Kwargs{
 				"prefix": ">> ",
 				"suffix": " <<",
 			})
@@ -530,7 +530,7 @@ def greet(name, greeting="Hello", punctuation="!"):
 
 		// Call with keyword arguments
 		result, err = p.CallFunction("greet", "Alice",
-			map[string]interface{}{
+			Kwargs{
 				"greeting":    "Hi",
 				"punctuation": "?",
 			})
