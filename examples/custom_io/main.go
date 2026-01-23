@@ -44,7 +44,7 @@ func example1() {
 	p.SetOutputWriter(output)
 
 	script := `
-import sl.console as console
+import scriptling.console as console
 name = console.input("Enter your name: ")
 print("Hello, " + name + "!")
 `
@@ -80,7 +80,7 @@ func example2() {
 
 	// Execute remote script
 	script := `
-import sl.console as console
+import scriptling.console as console
 
 print("Welcome to remote execution!")
 data = console.input("Enter name and age: ")
@@ -125,7 +125,7 @@ func example3() {
 		p.SetOutputWriter(output)
 
 		script := `
-import sl.console as console
+import scriptling.console as console
 user = console.input("Username: ")
 print("Authenticated: " + user)
 `

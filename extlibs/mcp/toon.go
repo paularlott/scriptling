@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	ToonLibraryName = "sl.toon"
+	ToonLibraryName = "scriptling.toon"
 	ToonLibraryDesc = "TOON (Token-Oriented Object Notation) encoding/decoding library"
 )
 

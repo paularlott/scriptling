@@ -140,7 +140,7 @@ response = ai_client.completion(
 Creates its own client instance:
 
 ```python
-import sl.ai as ai
+import scriptling.ai as ai
 
 print("Creating OpenAI client for LM Studio...")
 client = ai.new_client("http://127.0.0.1:1234/v1")
@@ -162,7 +162,7 @@ response = client.completion(
 Demonstrates streaming responses:
 
 ```python
-import sl.ai as ai
+import scriptling.ai as ai
 
 client = ai.new_client("http://127.0.0.1:1234/v1")
 

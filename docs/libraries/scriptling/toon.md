@@ -4,7 +4,7 @@ TOON (Token-Oriented Object Notation) encoding/decoding library. TOON is a human
 
 ## Functions
 
-### sl.toon.encode(data)
+### scriptling.toon.encode(data)
 
 Encodes a scriptling value to TOON format.
 
@@ -15,7 +15,7 @@ Encodes a scriptling value to TOON format.
 
 **Example:**
 ```python
-import sl.toon as toon
+import scriptling.toon as toon
 
 # Encode a dictionary
 data = {"name": "Alice", "age": 30, "active": true}
@@ -36,7 +36,7 @@ print(text)
 # - 5
 ```
 
-### sl.toon.decode(text)
+### scriptling.toon.decode(text)
 
 Decodes a TOON formatted string to scriptling objects.
 
@@ -47,7 +47,7 @@ Decodes a TOON formatted string to scriptling objects.
 
 **Example:**
 ```python
-import sl.toon as toon
+import scriptling.toon as toon
 
 text = """
 name: Alice
@@ -65,7 +65,7 @@ print(data.active)  # true
 print(data.tags[0]) # "python"
 ```
 
-### sl.toon.encode_options(data, indent, delimiter)
+### scriptling.toon.encode_options(data, indent, delimiter)
 
 Encodes data to TOON format with custom options.
 
@@ -78,7 +78,7 @@ Encodes data to TOON format with custom options.
 
 **Example:**
 ```python
-import sl.toon as toon
+import scriptling.toon as toon
 
 data = [1, 2, 3, 4, 5]
 
@@ -92,7 +92,7 @@ print(text)
 # - 5
 ```
 
-### sl.toon.decode_options(text, strict, indent_size)
+### scriptling.toon.decode_options(text, strict, indent_size)
 
 Decodes a TOON formatted string with custom parsing options.
 
@@ -105,7 +105,7 @@ Decodes a TOON formatted string with custom parsing options.
 
 **Example:**
 ```python
-import sl.toon as toon
+import scriptling.toon as toon
 
 text = """
 name: Alice
@@ -234,7 +234,7 @@ active: true
 ### Configuration Files
 
 ```python
-import sl.toon as toon
+import scriptling.toon as toon
 
 config_text = """
 # Application Configuration
@@ -264,7 +264,7 @@ print(config.database.driver) # "postgres"
 ### Data Exchange
 
 ```python
-import sl.toon as toon
+import scriptling.toon as toon
 
 # Encode complex data
 data = {
@@ -285,7 +285,7 @@ print(toon_text)
 ### Compact Syntax
 
 ```python
-import sl.toon as toon
+import scriptling.toon as toon
 
 # TOON is more compact than JSON
 data = {
@@ -340,7 +340,7 @@ tags: [python, golang]
 ### Auto-Detection of Indent
 
 ```python
-import sl.toon as toon
+import scriptling.toon as toon
 
 # TOON can auto-detect indentation
 text = """
@@ -356,7 +356,7 @@ data = toon.decode(text)
 ### Custom Delimiters
 
 ```python
-import sl.toon as toon
+import scriptling.toon as toon
 
 # Use different delimiter for arrays
 data = [1, 2, 3, 4, 5]
@@ -367,7 +367,7 @@ text = toon.encode_options(data, 2, "|")
 ### Strict vs Lenient Parsing
 
 ```python
-import sl.toon as toon
+import scriptling.toon as toon
 
 text = """
 name: Alice
@@ -387,7 +387,7 @@ data = toon.decode_options(text, false, 0)
 ## Error Handling
 
 ```python
-import sl.toon as toon
+import scriptling.toon as toon
 
 try:
   # Invalid TOON syntax

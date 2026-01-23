@@ -33,7 +33,7 @@ Run function asynchronously in a separate goroutine with isolated environment.
 **Note:** The spawned thread has access to libraries but NOT to parent scope variables.
 
 ```python
-import sl.threads as threads
+import scriptling.threads as threads
 
 def worker(x, y=10):
     return x + y
@@ -56,7 +56,7 @@ results = [p.get() for p in promises]
 Use `Atomic()` for counters and `Shared()` for complex values:
 
 ```python
-import sl.threads as threads
+import scriptling.threads as threads
 
 counter = threads.Atomic(0)
 
@@ -75,7 +75,7 @@ print(counter.get())  # 10
 All data must be passed explicitly:
 
 ```python
-import sl.threads as threads
+import scriptling.threads as threads
 
 def process_data(data):
     return [x * 2 for x in data]
@@ -92,7 +92,7 @@ Wait for async operation to complete and discard the result.
 **Returns:** null (when operation completes)
 
 ```python
-import sl.threads as threads
+import scriptling.threads as threads
 
 def worker(x, y=10):
     print(f"Processing {x} + {y} = {x + y}")
@@ -113,7 +113,7 @@ Create an atomic integer counter for lock-free operations.
 - `set(value)` - Atomically set the value
 
 ```python
-import sl.threads as threads
+import scriptling.threads as threads
 
 counter = threads.Atomic(0)
 
@@ -136,7 +136,7 @@ Create a thread-safe shared variable with mutex protection.
 - `set(value)` - Set the value (thread-safe)
 
 ```python
-import sl.threads as threads
+import scriptling.threads as threads
 
 shared_list = threads.Shared([])
 
@@ -162,7 +162,7 @@ Create a wait group for synchronizing goroutines (Go-style).
 - `wait()` - Block until counter reaches zero
 
 ```python
-import sl.threads as threads
+import scriptling.threads as threads
 
 wg = threads.WaitGroup()
 
@@ -194,7 +194,7 @@ Create a thread-safe queue for producer-consumer patterns.
 - `close()` - Close the queue
 
 ```python
-import sl.threads as threads
+import scriptling.threads as threads
 
 queue = threads.Queue(maxsize=100)
 
@@ -228,7 +228,7 @@ Create a worker pool for processing data items.
 - `close()` - Stop accepting work and wait for completion
 
 ```python
-import sl.threads as threads
+import scriptling.threads as threads
 
 def process_data(item):
     result = item * item

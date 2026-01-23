@@ -1,7 +1,7 @@
 # AI Library Example - Creating Client Instance
 # This script creates its own OpenAI client without needing Go configuration
 
-import sl.ai as ai
+import scriptling.ai as ai
 
 print("Creating OpenAI client for LM Studio...")
 # Create client directly from script (LM Studio doesn't require an API key)

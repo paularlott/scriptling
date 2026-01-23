@@ -695,7 +695,7 @@ input := strings.NewReader("Alice\n")
 p.SetInputReader(input)
 
 result, _ := p.Eval(`
-import sl.console as console
+import scriptling.console as console
 name = console.input("Enter name: ")
 name
 `)
@@ -739,7 +739,7 @@ func executeRemote(script string, clientInput string) string {
 
 // Usage
 script := `
-import sl.console as console
+import scriptling.console as console
 print("Welcome!")
 name = console.input("Name: ")
 print("Hello, " + name)

@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	MCPLibraryName = "sl.mcp"
+	MCPLibraryName = "scriptling.mcp"
 	MCPLibraryDesc = "MCP (Model Context Protocol) tool interaction library"
 )
 

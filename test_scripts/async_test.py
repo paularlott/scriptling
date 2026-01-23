@@ -1,7 +1,7 @@
 #!/usr/bin/env scriptling
 """Test async library functionality"""
 
-import sl.threads as threads
+import scriptling.threads as threads
 
 print("=== Testing threads.run ===")
 

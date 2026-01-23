@@ -831,8 +831,8 @@ func TestImportStatementMultiple(t *testing.T) {
 		},
 		{
 			name:          "dotted imports with aliases",
-			input:         "import sl.ai as ai, sl.console as console, glob, json",
-			expectedNames: []string{"sl.ai", "sl.console", "glob", "json"},
+			input:         "import scriptling.ai as ai, scriptling.console as console, glob, json",
+			expectedNames: []string{"scriptling.ai", "scriptling.console", "glob", "json"},
 			expectedAliases: []string{"ai", "console", "", ""},
 		},
 	}

@@ -22,7 +22,7 @@ func TestCustomInputOutput(t *testing.T) {
 
 	// Test script that reads input and writes output
 	script := `
-import sl.console as console
+import scriptling.console as console
 name = console.input("Enter name: ")
 print("Hello, " + name + "!")
 `
@@ -58,7 +58,7 @@ func TestParallelInputOutput(t *testing.T) {
 			p.SetOutputWriter(output)
 
 			script := `
-import sl.console as console
+import scriptling.console as console
 name = console.input()
 print("Hello from " + name)
 `
@@ -86,7 +86,7 @@ func TestDefaultInputOutput(t *testing.T) {
 
 	// Just verify the library is registered and can be imported
 	script := `
-import sl.console as console
+import scriptling.console as console
 # Don't actually call input() as it would block waiting for stdin
 "ok"
 `
@@ -118,7 +118,7 @@ func TestMultipleInputReads(t *testing.T) {
 	p.SetOutputWriter(output)
 
 	script := `
-import sl.console as console
+import scriptling.console as console
 line = console.input("Enter text: ")
 words = line.split()
 print("Word count: " + str(len(words)))
@@ -146,7 +146,7 @@ func TestInputOutputInFunction(t *testing.T) {
 	p.SetOutputWriter(output)
 
 	script := `
-import sl.console as console
+import scriptling.console as console
 
 def greet():
     name = console.input("Name: ")
