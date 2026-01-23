@@ -370,9 +370,10 @@ Removes the specified empty directory.`,
 Renames the file or directory from old to new.`,
 		},
 	}, map[string]object.Object{
-		"sep":     &object.String{Value: string(os.PathSeparator)},
-		"linesep": &object.String{Value: getLineSep()},
-		"name":    &object.String{Value: getOSName()},
+		"sep":      &object.String{Value: string(os.PathSeparator)},
+		"linesep":  &object.String{Value: getLineSep()},
+		"name":     &object.String{Value: getOSName()},
+		"platform": &object.String{Value: runtime.GOOS},
 	}, "Operating system interface")
 }
 
@@ -625,8 +626,10 @@ func getLineSep() string {
 }
 
 func getOSName() string {
-	if runtime.GOOS == "windows" {
+	switch runtime.GOOS {
+	case "windows":
 		return "nt"
+	default:
+		return "posix"
 	}
-	return "posix"
 }

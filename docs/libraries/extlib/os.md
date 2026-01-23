@@ -46,11 +46,20 @@ print(os.linesep)  # "\n" on Unix, "\r\n" on Windows
 
 ### `os.name`
 
-The operating system name.
+The operating system name (Python-compatible).
 
 ```python
 import os
 print(os.name)  # "posix" on Unix/Linux/macOS, "nt" on Windows
+```
+
+### `os.platform`
+
+The specific platform identifier.
+
+```python
+import os
+print(os.platform)  # "darwin" on macOS, "linux" on Linux, "windows" on Windows
 ```
 
 ## Functions
@@ -323,12 +332,21 @@ import os
 print(f"Path separator: {os.sep}")
 print(f"Line separator: {repr(os.linesep)}")
 print(f"OS name: {os.name}")
+print(f"Platform: {os.platform}")
 
 # Build paths correctly (though pathlib is preferred)
 if os.name == "nt":
     path = "C:\\Users\\Documents"
 else:
     path = "/home/user/documents"
+
+# Or check specific platform
+if os.platform == "darwin":
+    print("Running on macOS")
+elif os.platform == "linux":
+    print("Running on Linux")
+elif os.platform == "windows":
+    print("Running on Windows")
 ```
 
 ## Python Compatibility
