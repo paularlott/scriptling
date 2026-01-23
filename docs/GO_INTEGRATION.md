@@ -610,7 +610,7 @@ if float, ok := obj.(*object.Float); ok {
 
 ## Output Capture
 
-By default, the `print()` function outputs to stdout. You can capture this output programmatically:
+By default, the `print()` function outputs to stdout. You can capture this output programmatically or redirect it to custom writers.
 
 ### Default Behavior (stdout)
 
@@ -639,6 +639,150 @@ fmt.Print(output)
 output2 := p.GetOutput()  // Returns ""
 ```
 
+### Custom Output Writer
+
+Redirect output to any `io.Writer` (e.g., files, websockets, loggers):
+
+```go
+import (
+    "bytes"
+    "os"
+)
+
+// Write to a buffer
+var buf bytes.Buffer
+p := scriptling.New()
+p.SetOutputWriter(&buf)
+p.Eval(`print("Hello")`)
+fmt.Println(buf.String())  // "Hello\n"
+
+// Write to a file
+file, _ := os.Create("output.txt")
+defer file.Close()
+p.SetOutputWriter(file)
+p.Eval(`print("Logged to file")`)
+
+// Write to a custom logger
+type LogWriter struct {
+    logger *log.Logger
+}
+
+func (lw *LogWriter) Write(p []byte) (n int, err error) {
+    lw.logger.Print(string(p))
+    return len(p), nil
+}
+
+logWriter := &LogWriter{logger: log.New(os.Stdout, "[SCRIPT] ", 0)}
+p.SetOutputWriter(logWriter)
+p.Eval(`print("This goes to logger")`)
+```
+
+## Custom Input Reader
+
+By default, `console.input()` reads from stdin. You can redirect input from any `io.Reader` (e.g., strings, files, websockets):
+
+```go
+import (
+    "strings"
+    "github.com/paularlott/scriptling/extlibs"
+)
+
+p := scriptling.New()
+extlibs.RegisterConsoleLibrary(p)
+
+// Read from a string
+input := strings.NewReader("Alice\n")
+p.SetInputReader(input)
+
+result, _ := p.Eval(`
+import sl.console as console
+name = console.input("Enter name: ")
+name
+`)
+
+name, _ := result.AsString()
+fmt.Println(name)  // "Alice"
+```
+
+## Remote Execution with Custom I/O
+
+Combine custom input and output for remote script execution (e.g., over websockets):
+
+```go
+import (
+    "bytes"
+    "strings"
+    "github.com/paularlott/scriptling"
+    "github.com/paularlott/scriptling/extlibs"
+)
+
+// Simulate remote execution
+func executeRemote(script string, clientInput string) string {
+    p := scriptling.New()
+    extlibs.RegisterConsoleLibrary(p)
+
+    // Setup I/O streams
+    input := strings.NewReader(clientInput)
+    output := &bytes.Buffer{}
+
+    p.SetInputReader(input)
+    p.SetOutputWriter(output)
+
+    // Execute script
+    _, err := p.Eval(script)
+    if err != nil {
+        return fmt.Sprintf("Error: %v", err)
+    }
+
+    return output.String()
+}
+
+// Usage
+script := `
+import sl.console as console
+print("Welcome!")
+name = console.input("Name: ")
+print("Hello, " + name)
+`
+
+output := executeRemote(script, "Alice\n")
+fmt.Print(output)  // "Welcome!\nName: Hello, Alice\n"
+```
+
+### Parallel Execution with Separate I/O
+
+Each Scriptling instance has its own I/O streams, enabling safe parallel execution:
+
+```go
+import (
+    "sync"
+)
+
+func handleClient(clientID int, input string) {
+    p := scriptling.New()
+    extlibs.RegisterConsoleLibrary(p)
+
+    // Each client gets its own I/O streams
+    p.SetInputReader(strings.NewReader(input))
+    p.SetOutputWriter(clientOutputWriter)
+
+    p.Eval(script)
+}
+
+// Run multiple clients in parallel
+var wg sync.WaitGroup
+for i := 0; i < 10; i++ {
+    wg.Add(1)
+    go func(id int) {
+        defer wg.Done()
+        handleClient(id, fmt.Sprintf("User%d\n", id))
+    }(i)
+}
+wg.Wait()
+```
+
+See [examples/custom_io](../examples/custom_io) for complete examples.
+
 ### Mixed Usage
 
 ```go
@@ -662,6 +806,7 @@ captured := p.GetOutput()
 - **Logging**: Redirect script output to custom loggers
 - **Processing**: Capture output for further processing
 - **UI Integration**: Display script output in applications
+- **Remote Execution**: Stream I/O over websockets or network connections
 
 ```go
 // Testing example
