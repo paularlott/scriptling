@@ -3,6 +3,7 @@ package scriptling
 import (
 	"context"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"time"
@@ -643,11 +644,8 @@ func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[stri
 	libEnv := object.NewEnvironment()
 
 	// Inherit writer from main environment (for output capture)
-	// GetWriter returns io.Writer, but if output capture is enabled, it's a *strings.Builder
 	writer := p.env.GetWriter()
-	if buf, ok := writer.(*strings.Builder); ok {
-		libEnv.SetOutput(buf)
-	}
+	libEnv.SetOutputWriter(writer)
 
 	// Set up import builtin for nested imports
 	libEnv.Set("import", evaluator.GetImportBuiltin())
@@ -763,6 +761,16 @@ func (p *Scriptling) registerScriptLibrary(name string, store map[string]object.
 // EnableOutputCapture enables capturing print output instead of sending to stdout
 func (p *Scriptling) EnableOutputCapture() {
 	p.env.EnableOutputCapture()
+}
+
+// SetOutputWriter sets a custom writer for output (e.g., for streaming to a websocket or logger)
+func (p *Scriptling) SetOutputWriter(w io.Writer) {
+	p.env.SetOutputWriter(w)
+}
+
+// SetInputReader sets a custom reader for input (e.g., for reading from a websocket)
+func (p *Scriptling) SetInputReader(r io.Reader) {
+	p.env.SetInputReader(r)
 }
 
 // GetOutput returns captured output and clears the buffer

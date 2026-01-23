@@ -425,7 +425,8 @@ type Environment struct {
 	outer                      *Environment
 	globals                    map[string]bool
 	nonlocals                  map[string]bool
-	output                     *strings.Builder
+	output                     io.Writer
+	input                      io.Reader
 	importCallback             func(string) error
 	availableLibrariesCallback func() []LibraryInfo
 }
@@ -450,6 +451,10 @@ func NewEnclosedEnvironment(outer *Environment) *Environment {
 	// Inherit output buffer from outer environment
 	if outer.output != nil {
 		env.output = outer.output
+	}
+	// Inherit input reader from outer environment
+	if outer.input != nil {
+		env.input = outer.input
 	}
 	return env
 }
@@ -554,9 +559,9 @@ func (e *Environment) EnableOutputCapture() {
 	e.output = &strings.Builder{}
 }
 
-// SetOutput sets the output buffer for this environment
-func (e *Environment) SetOutput(output *strings.Builder) {
-	e.output = output
+// SetOutputWriter sets a custom writer for output
+func (e *Environment) SetOutputWriter(w io.Writer) {
+	e.output = w
 }
 
 // GetOutput returns captured output and clears the buffer
@@ -564,9 +569,12 @@ func (e *Environment) GetOutput() string {
 	if e.output == nil {
 		return ""
 	}
-	result := e.output.String()
-	e.output.Reset()
-	return result
+	if builder, ok := e.output.(*strings.Builder); ok {
+		result := builder.String()
+		builder.Reset()
+		return result
+	}
+	return ""
 }
 
 // GetWriter returns the appropriate writer for output
@@ -575,6 +583,19 @@ func (e *Environment) GetWriter() io.Writer {
 		return e.output
 	}
 	return os.Stdout
+}
+
+// SetInputReader sets a custom reader for input
+func (e *Environment) SetInputReader(r io.Reader) {
+	e.input = r
+}
+
+// GetReader returns the appropriate reader for input
+func (e *Environment) GetReader() io.Reader {
+	if e.input != nil {
+		return e.input
+	}
+	return os.Stdin
 }
 
 // GetStore returns a copy of the environment's store (only local scope, not outer)

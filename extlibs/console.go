@@ -4,8 +4,6 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"io"
-	"os"
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
@@ -13,16 +11,15 @@ import (
 
 // RegisterConsoleLibrary registers the console library with a scriptling instance
 func RegisterConsoleLibrary(registrar interface{ RegisterLibrary(string, *object.Library) }) {
-	registrar.RegisterLibrary(ConsoleLibraryName, NewConsoleLibrary(os.Stdin))
+	registrar.RegisterLibrary(ConsoleLibraryName, NewConsoleLibrary())
 }
 
-// NewConsoleLibrary creates a new console library instance with its own scanner.
-// Each scriptling environment should have its own console library to maintain
-// proper buffering state for the input reader.
-func NewConsoleLibrary(reader io.Reader) *object.Library {
-	// Create a scanner that persists for the lifetime of this library instance
-	scanner := bufio.NewScanner(reader)
-
+// NewConsoleLibrary creates a new console library instance.
+// The library reads from the environment's input reader (defaults to os.Stdin)
+// and writes prompts to the environment's output writer (defaults to os.Stdout).
+// Note: Each call to input() creates a new scanner, so the reader must maintain
+// its position between calls (e.g., strings.Reader, os.Stdin, etc.)
+func NewConsoleLibrary() *object.Library {
 	return object.NewLibrary(map[string]*object.Builtin{
 		"input": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -35,12 +32,18 @@ func NewConsoleLibrary(reader io.Reader) *object.Library {
 					prompt = p
 				}
 
+				// Get environment from context
+				env := getEnvFromContext(ctx)
+
 				// Print prompt if provided
 				if prompt != "" {
-					fmt.Print(prompt)
+					fmt.Fprint(env.GetWriter(), prompt)
 				}
 
-				// Read from stdin using this library's scanner
+				// Read from environment's input reader
+				// Note: Creating a new scanner each time works because the underlying
+				// reader (e.g., strings.Reader, os.Stdin) maintains its position
+				scanner := bufio.NewScanner(env.GetReader())
 				if !scanner.Scan() {
 					if err := scanner.Err(); err != nil {
 						return errors.NewError("input error: %s", err.Error())
@@ -52,7 +55,7 @@ func NewConsoleLibrary(reader io.Reader) *object.Library {
 			},
 			HelpText: `input([prompt]) -> str
 
-Read a line from input. If prompt is present, it is written to stdout
+Read a line from input. If prompt is present, it is written to output
 without a trailing newline.
 
 Returns the line read from input, without the trailing newline.`,
