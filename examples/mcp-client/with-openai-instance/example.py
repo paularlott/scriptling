@@ -1,8 +1,8 @@
 # MCP + OpenAI Integration Example
 # Both clients are created in the script, with MCP attached to the AI client
 
-import sl.ai as ai
-import sl.mcp as mcp
+import scriptling.ai as ai
+import scriptling.mcp as mcp
 
 print("Creating OpenAI client for LM Studio...")
 ai_client = ai.new_client("http://127.0.0.1:1234/v1")

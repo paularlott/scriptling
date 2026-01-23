@@ -8,8 +8,8 @@ import (
 )
 
 func TestMCPLibraryConstants(t *testing.T) {
-	if MCPLibraryName != "sl.mcp" {
-		t.Errorf("MCPLibraryName = %q, want %q", MCPLibraryName, "sl.mcp")
+	if MCPLibraryName != "scriptling.mcp" {
+		t.Errorf("MCPLibraryName = %q, want %q", MCPLibraryName, "scriptling.mcp")
 	}
 
 	if MCPLibraryDesc == "" {

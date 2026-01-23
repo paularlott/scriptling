@@ -100,11 +100,11 @@ These are scriptling-specific libraries that provide functionality not available
 
 | Import        | Description                                             | Details                                                          |
 | ------------- | ------------------------------------------------------- | ---------------------------------------------------------------- |
-| `sl.ai`       | AI and LLM functions for OpenAI-compatible APIs         | [libraries/scriptling/ai.md](libraries/scriptling/ai.md)         |
-| `sl.mcp`      | MCP (Model Context Protocol) tool interaction           | [libraries/scriptling/mcp.md](libraries/scriptling/mcp.md)       |
-| `sl.toon`     | TOON (Token-Oriented Object Notation) encoding/decoding | [libraries/scriptling/toon.md](libraries/scriptling/toon.md)     |
-| `sl.threads`  | Asynchronous execution with isolated environments       | [libraries/scriptling/threads.md](libraries/scriptling/threads.md) |
-| `sl.console`  | Console input/output functions                          | [libraries/scriptling/console.md](libraries/scriptling/console.md) |
+| `scriptling.ai`       | AI and LLM functions for OpenAI-compatible APIs         | [libraries/scriptling/ai.md](libraries/scriptling/ai.md)         |
+| `scriptling.mcp`      | MCP (Model Context Protocol) tool interaction           | [libraries/scriptling/mcp.md](libraries/scriptling/mcp.md)       |
+| `scriptling.toon`     | TOON (Token-Oriented Object Notation) encoding/decoding | [libraries/scriptling/toon.md](libraries/scriptling/toon.md)     |
+| `scriptling.threads`  | Asynchronous execution with isolated environments       | [libraries/scriptling/threads.md](libraries/scriptling/threads.md) |
+| `scriptling.console`  | Console input/output functions                          | [libraries/scriptling/console.md](libraries/scriptling/console.md) |
 
 ## Extended Libraries
 
@@ -143,6 +143,6 @@ For detailed documentation on each library, use the `help()` function within the
 ```python
 import json
 help(json)
-import sl.ai as ai
+import scriptling.ai as ai
 help(ai)
 ```

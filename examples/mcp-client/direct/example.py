@@ -1,7 +1,7 @@
 # Direct MCP Client Example
 # Creates a client to connect to the scriptling MCP server
 
-import sl.mcp as mcp
+import scriptling.mcp as mcp
 
 print("Creating MCP client for localhost:8080...")
 client = mcp.new_client("http://127.0.0.1:8080/mcp")

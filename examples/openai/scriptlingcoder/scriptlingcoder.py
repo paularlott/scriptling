@@ -7,7 +7,7 @@ WARNING: This is an example that executes AI-generated code and shell commands.
 It may modify or delete files. Use at your own risk!
 """
 
-import sl.ai as ai, sl.console as console, glob, json, os, re, subprocess
+import scriptling.ai as ai, scriptling.console as console, glob, json, os, re, subprocess
 
 # Configuration from environment
 BASE_URL = os.getenv("OPENAI_BASE_URL", "http://127.0.0.1:1234/v1")

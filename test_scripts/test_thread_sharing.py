@@ -1,4 +1,4 @@
-import sl.threads as threads
+import scriptling.threads as threads
 
 # Test Atomic sharing
 counter = threads.Atomic(0)

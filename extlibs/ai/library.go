@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	AILibraryName = "sl.ai"
+	AILibraryName = "scriptling.ai"
 	AILibraryDesc = "AI and LLM functions for interacting with OpenAI-compatible APIs"
 )
 
