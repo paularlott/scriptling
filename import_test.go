@@ -24,7 +24,7 @@ func TestLibraryNotAvailableWithoutImport(t *testing.T) {
 
 func TestLibraryAvailableAfterImport(t *testing.T) {
 	p := New()
-	p.RegisterLibrary(stdlib.JSONLibraryName, stdlib.JSONLibrary)
+	p.RegisterLibrary( stdlib.JSONLibrary)
 
 	// Import and use json
 	_, err := p.Eval(`

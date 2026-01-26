@@ -30,11 +30,11 @@ func WrapClient(c *openai.Client) object.Object {
 
 // Register registers the ai library with the given registrar
 // First call builds the library, subsequent calls just register it
-func Register(registrar interface{ RegisterLibrary(string, *object.Library) }) {
+func Register(registrar interface{ RegisterLibrary(*object.Library) }) {
 	libraryOnce.Do(func() {
 		library = buildLibrary()
 	})
-	registrar.RegisterLibrary(AILibraryName, library)
+	registrar.RegisterLibrary(library)
 }
 
 // buildLibrary builds the AI library

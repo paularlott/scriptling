@@ -34,14 +34,14 @@ func TestRegisterFunc(t *testing.T) {
 
 func TestRegisterLibrary(t *testing.T) {
 	p := New()
-	myLib := object.NewLibrary(map[string]*object.Builtin{
+	myLib := object.NewLibrary("mylib", map[string]*object.Builtin{
 		"greet": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				return &object.String{Value: "Hello!"}
 			},
 		},
 	}, nil, "")
-	p.RegisterLibrary("mylib", myLib)
+	p.RegisterLibrary( myLib)
 
 	_, err := p.Eval(`
 import mylib
@@ -59,14 +59,14 @@ msg = mylib.greet()
 
 func TestImport(t *testing.T) {
 	p := New()
-	myLib := object.NewLibrary(map[string]*object.Builtin{
+	myLib := object.NewLibrary("mylib", map[string]*object.Builtin{
 		"greet": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				return &object.String{Value: "Hello!"}
 			},
 		},
 	}, nil, "")
-	p.RegisterLibrary("mylib", myLib)
+	p.RegisterLibrary( myLib)
 
 	// Import the library programmatically
 	err := p.Import("mylib")
@@ -88,7 +88,7 @@ func TestImport(t *testing.T) {
 
 func TestImportStandardLibrary(t *testing.T) {
 	p := New()
-	p.RegisterLibrary(stdlib.JSONLibraryName, stdlib.JSONLibrary)
+	p.RegisterLibrary( stdlib.JSONLibrary)
 
 	// Import the json library programmatically
 	err := p.Import("json")
@@ -153,7 +153,7 @@ func TestRegisterLibraryWithClass(t *testing.T) {
 	}
 
 	// Create library with the class in the constants map
-	myLib := object.NewLibrary(
+	myLib := object.NewLibrary("counters", 
 		map[string]*object.Builtin{
 			"helper": {
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -168,7 +168,7 @@ func TestRegisterLibraryWithClass(t *testing.T) {
 		"Counter utilities library",
 	)
 
-	p.RegisterLibrary("counters", myLib)
+	p.RegisterLibrary( myLib)
 
 	// Test using the class from the library
 	_, err := p.Eval(`
@@ -206,7 +206,7 @@ helper_result = counters.helper()
 
 func TestImportBuiltin(t *testing.T) {
 	p := New()
-	p.RegisterLibrary(stdlib.JSONLibraryName, stdlib.JSONLibrary)
+	p.RegisterLibrary( stdlib.JSONLibrary)
 	_, err := p.Eval(`
 import json
 data = json.loads('{"key":"value"}')
@@ -312,7 +312,7 @@ gte = 10 >= 5
 
 func TestDotNotation(t *testing.T) {
 	p := New()
-	p.RegisterLibrary(stdlib.JSONLibraryName, stdlib.JSONLibrary)
+	p.RegisterLibrary( stdlib.JSONLibrary)
 	_, err := p.Eval(`
 import json
 data = json.loads('{"name":"Alice"}')
@@ -330,7 +330,7 @@ result = data["name"]
 
 func TestHTTPLibrary(t *testing.T) {
 	p := New()
-	p.RegisterLibrary(extlibs.RequestsLibraryName, extlibs.RequestsLibrary)
+	p.RegisterLibrary( extlibs.RequestsLibrary)
 	_, err := p.Eval(`
 import requests
 options = {"timeout": 10}
@@ -358,7 +358,7 @@ func TestHelpSystem(t *testing.T) {
 	})
 
 	// Register a library with functions that have help text
-	myLib := object.NewLibrary(map[string]*object.Builtin{
+	myLib := object.NewLibrary("testlib", map[string]*object.Builtin{
 		"lib_func": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				return &object.String{Value: "lib result"}
@@ -371,7 +371,7 @@ This is a test library function with help text.`,
 		"LIB_CONSTANT": &object.String{Value: "1.0.0"},
 	}, "Test library for help system")
 
-	p.RegisterLibrary("testlib", myLib)
+	p.RegisterLibrary( myLib)
 
 	// Register a Scriptling function with docstring
 	err := p.RegisterScriptFunc("script_func", `
@@ -501,7 +501,7 @@ help("scriptlib")
 			},
 		}
 
-		p.RegisterLibrary("classtest", object.NewLibrary(nil, map[string]object.Object{
+		p.RegisterLibrary(object.NewLibrary("classtest", nil, map[string]object.Object{
 			"TestClass": testClass,
 		}, "Class testing library"))
 

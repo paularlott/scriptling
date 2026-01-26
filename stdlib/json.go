@@ -49,7 +49,7 @@ func jsonDumps(ctx context.Context, kwargs object.Kwargs, args ...object.Object)
 	return &object.String{Value: string(bytes)}
 }
 
-var JSONLibrary = object.NewLibrary(map[string]*object.Builtin{
+var JSONLibrary = object.NewLibrary(JSONLibraryName, map[string]*object.Builtin{
 	"loads": {
 		Fn: jsonLoads,
 		HelpText: `loads(json_string) - Parse JSON string

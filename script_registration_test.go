@@ -212,7 +212,7 @@ result
 
 func TestScriptLibraryWithStandardLibrary(t *testing.T) {
 	p := New()
-	p.RegisterLibrary(stdlib.JSONLibraryName, stdlib.JSONLibrary)
+	p.RegisterLibrary( stdlib.JSONLibrary)
 
 	// Register a library that uses a standard library
 	err := p.RegisterScriptLibrary("jsonutils", `
@@ -283,7 +283,7 @@ func TestRegisterScriptLibraryWithGoLibrary(t *testing.T) {
 	p := New()
 
 	// Register a Go library
-	p.RegisterLibrary("golib", object.NewLibrary(map[string]*object.Builtin{
+	p.RegisterLibrary(object.NewLibrary("golib", map[string]*object.Builtin{
 		"double": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 1 {

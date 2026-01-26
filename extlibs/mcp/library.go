@@ -27,11 +27,11 @@ func WrapClient(c *mcplib.Client) object.Object {
 
 // Register registers the mcp library with the given registrar
 // First call builds the library, subsequent calls just register it
-func Register(registrar interface{ RegisterLibrary(string, *object.Library) }) {
+func Register(registrar interface{ RegisterLibrary(*object.Library) }) {
 	libraryOnce.Do(func() {
 		library = buildLibrary()
 	})
-	registrar.RegisterLibrary(MCPLibraryName, library)
+	registrar.RegisterLibrary(library)
 }
 
 // buildLibrary builds the MCP library

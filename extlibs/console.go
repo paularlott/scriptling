@@ -10,8 +10,8 @@ import (
 )
 
 // RegisterConsoleLibrary registers the console library with a scriptling instance
-func RegisterConsoleLibrary(registrar interface{ RegisterLibrary(string, *object.Library) }) {
-	registrar.RegisterLibrary(ConsoleLibraryName, NewConsoleLibrary())
+func RegisterConsoleLibrary(registrar interface{ RegisterLibrary(*object.Library) }) {
+	registrar.RegisterLibrary(NewConsoleLibrary())
 }
 
 // NewConsoleLibrary creates a new console library instance.
@@ -20,7 +20,7 @@ func RegisterConsoleLibrary(registrar interface{ RegisterLibrary(string, *object
 // Note: Each call to input() creates a new scanner, so the reader must maintain
 // its position between calls (e.g., strings.Reader, os.Stdin, etc.)
 func NewConsoleLibrary() *object.Library {
-	return object.NewLibrary(map[string]*object.Builtin{
+	return object.NewLibrary(ConsoleLibraryName, map[string]*object.Builtin{
 		"input": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				prompt := ""

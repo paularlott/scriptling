@@ -936,7 +936,7 @@ Creates a timedelta representing a duration. Returns the total duration in secon
 }
 
 // DatetimeLibrary is the main datetime module
-var DatetimeLibrary = object.NewLibrary(
+var DatetimeLibrary = object.NewLibrary(DatetimeLibraryName, 
 	map[string]*object.Builtin{
 		"timedelta": timedeltaBuiltinNew,
 		"datetime":  datetimeConstructorBuiltin,

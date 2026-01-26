@@ -39,7 +39,7 @@ func RegisterGlobLibrary(registrar object.LibraryRegistrar, allowedPaths []strin
 		AllowedPaths: allowedPaths,
 	}
 	globLib := NewGlobLibrary(config)
-	registrar.RegisterLibrary(GlobLibraryName, globLib)
+	registrar.RegisterLibrary(globLib)
 }
 
 // NewGlobLibrary creates a new Glob library with the given configuration.
@@ -60,7 +60,7 @@ func NewGlobLibrary(config fssecurity.Config) *object.Library {
 }
 
 func (g *GlobLibraryInstance) createGlobLibrary() *object.Library {
-	return object.NewLibrary(map[string]*object.Builtin{
+	return object.NewLibrary(GlobLibraryName, map[string]*object.Builtin{
 		"glob": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if err := errors.RangeArgs(args, 1, 2); err != nil {

@@ -11,7 +11,7 @@ import (
 )
 
 // PlatformLibrary provides system/platform information (Python's platform module)
-var PlatformLibrary = object.NewLibrary(map[string]*object.Builtin{
+var PlatformLibrary = object.NewLibrary(PlatformLibraryName, map[string]*object.Builtin{
 	"python_version": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if err := errors.ExactArgs(args, 0); err != nil { return err }

@@ -11,8 +11,8 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
-func RegisterSubprocessLibrary(registrar interface{ RegisterLibrary(string, *object.Library) }) {
-	registrar.RegisterLibrary(SubprocessLibraryName, SubprocessLibrary)
+func RegisterSubprocessLibrary(registrar interface{ RegisterLibrary(*object.Library) }) {
+	registrar.RegisterLibrary(SubprocessLibrary)
 }
 
 // CompletedProcess represents the result of a subprocess.run call
@@ -58,7 +58,7 @@ Raises an exception if returncode is non-zero.`,
 	},
 }
 
-var SubprocessLibrary = object.NewLibrary(map[string]*object.Builtin{
+var SubprocessLibrary = object.NewLibrary(SubprocessLibraryName, map[string]*object.Builtin{
 	"run": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if err := errors.MinArgs(args, 1); err != nil { return err }

@@ -333,7 +333,7 @@ func TestExtendingFunctionsDocs(t *testing.T) {
 func TestExtendingLibrariesDocs(t *testing.T) {
 	t.Run("NativeAPI_BasicLibrary", func(t *testing.T) {
 		p := New()
-		myLib := object.NewLibrary(map[string]*object.Builtin{
+		myLib := object.NewLibrary("mylib", map[string]*object.Builtin{
 			"add": {
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					a, _ := args[0].(*object.Integer)
@@ -351,7 +351,7 @@ func TestExtendingLibrariesDocs(t *testing.T) {
 				HelpText: "multiply(a, b) - Multiplies two numbers",
 			},
 		}, nil, "My custom math library")
-		p.RegisterLibrary("mylib", myLib)
+		p.RegisterLibrary( myLib)
 
 		_, err := p.Eval(`
 import mylib
@@ -369,7 +369,7 @@ result = mylib.add(5, 3)
 
 	t.Run("NativeAPI_LibraryWithConstants", func(t *testing.T) {
 		p := New()
-		myLib := object.NewLibrary(
+		myLib := object.NewLibrary("mylib", 
 			map[string]*object.Builtin{
 				"add": {
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -385,7 +385,7 @@ result = mylib.add(5, 3)
 			},
 			"My custom math library",
 		)
-		p.RegisterLibrary("mylib", myLib)
+		p.RegisterLibrary( myLib)
 
 		_, err := p.Eval(`
 import mylib
@@ -412,7 +412,7 @@ debug = mylib.DEBUG
 		p := New()
 
 		// Create URL parsing sub-library
-		parseLib := object.NewLibrary(
+		parseLib := object.NewLibrary("url_parse", 
 			map[string]*object.Builtin{
 				"quote": {
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -434,7 +434,7 @@ debug = mylib.DEBUG
 		)
 
 		// Create main URL library
-		urlLib := object.NewLibrary(
+		urlLib := object.NewLibrary("url", 
 			map[string]*object.Builtin{
 				"join": {
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -450,8 +450,8 @@ debug = mylib.DEBUG
 			},
 			"URL utilities",
 		)
-		p.RegisterLibrary("url", urlLib)
-		p.RegisterLibrary("url_parse", parseLib)
+		p.RegisterLibrary( urlLib)
+		p.RegisterLibrary( parseLib)
 
 		_, err := p.Eval(`
 import url
@@ -488,7 +488,7 @@ quoted = url_parse.quote("hello")
 			messages: make([]string, 0),
 		}
 
-		loggerLib := object.NewLibrary(
+		loggerLib := object.NewLibrary("logger", 
 			map[string]*object.Builtin{
 				"set_level": {
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -510,7 +510,7 @@ quoted = url_parse.quote("hello")
 			nil,
 			"Logger library",
 		)
-		p.RegisterLibrary("logger", loggerLib)
+		p.RegisterLibrary( loggerLib)
 
 		_, err := p.Eval(`
 import logger
@@ -541,7 +541,7 @@ msgs = logger.get_messages()
 
 		// Build the library
 		myLib := builder.Build()
-		p.RegisterLibrary("mymath", myLib)
+		p.RegisterLibrary( myLib)
 
 		_, err := p.Eval(`
 import mymath
@@ -582,7 +582,7 @@ max_val = mymath.MAX_VALUE
 		})
 
 		lib := builder.Build()
-		p.RegisterLibrary("net", lib)
+		p.RegisterLibrary( lib)
 
 		_, err := p.Eval(`
 import net
@@ -602,7 +602,7 @@ result = net.connect(host="example.com", port=443)
 		p := New()
 
 		// Create URL parsing sub-library
-		parseBuilder := object.NewLibraryBuilder("parse", "URL parsing utilities")
+		parseBuilder := object.NewLibraryBuilder("url_parse", "URL parsing utilities")
 		parseBuilder.Function("quote", func(s string) string {
 			return "ENCODED:" + s
 		})
@@ -616,8 +616,8 @@ result = net.connect(host="example.com", port=443)
 		urlBuilder.SubLibrary("parse", parseLib)
 		urlLib := urlBuilder.Build()
 
-		p.RegisterLibrary("url", urlLib)
-		p.RegisterLibrary("url_parse", parseLib)
+		p.RegisterLibrary( urlLib)
+		p.RegisterLibrary( parseLib)
 
 		_, err := p.Eval(`
 import url
@@ -685,7 +685,7 @@ func TestExtendingClassesDocs(t *testing.T) {
 		}
 
 		// Register the class through a library to make it callable
-		p.RegisterLibrary("counters", object.NewLibrary(nil, map[string]object.Object{
+		p.RegisterLibrary(object.NewLibrary("counters", nil, map[string]object.Object{
 			"Counter": counterClass,
 		}, "Counter library"))
 
@@ -737,7 +737,7 @@ after = c.increment()
 			},
 		}
 
-		counterLib := object.NewLibrary(
+		counterLib := object.NewLibrary("counters", 
 			map[string]*object.Builtin{
 				"create_counter": {
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -760,7 +760,7 @@ after = c.increment()
 			"Counter library",
 		)
 
-		p.RegisterLibrary("counters", counterLib)
+		p.RegisterLibrary( counterLib)
 
 		_, err := p.Eval(`
 import counters
@@ -837,7 +837,7 @@ count = c.increment()
 		}
 
 		// Register classes through a library to make them callable
-		p.RegisterLibrary("animals", object.NewLibrary(nil, map[string]object.Object{
+		p.RegisterLibrary(object.NewLibrary("animals", nil, map[string]object.Object{
 			"Animal": animalClass,
 			"Dog":    dogClass,
 		}, "Animal library"))
@@ -886,7 +886,7 @@ bark = dog.bark()
 		personClass := cb.Build()
 
 		// Register the class through a library to make it callable
-		p.RegisterLibrary("people", object.NewLibrary(nil, map[string]object.Object{
+		p.RegisterLibrary(object.NewLibrary("people", nil, map[string]object.Object{
 			"Person": personClass,
 		}, "People library"))
 
@@ -961,7 +961,7 @@ new_age = p.age
 		employeeClass := cb.Build()
 
 		// Register both classes through a library to make them callable
-		p.RegisterLibrary("company", object.NewLibrary(nil, map[string]object.Object{
+		p.RegisterLibrary(object.NewLibrary("company", nil, map[string]object.Object{
 			"Person":   personClass,
 			"Employee": employeeClass,
 		}, "Company library"))
@@ -1034,7 +1034,7 @@ info = emp.get_info()
 		}
 
 		// Register both classes through a library to make them callable
-		p.RegisterLibrary("pets", object.NewLibrary(nil, map[string]object.Object{
+		p.RegisterLibrary(object.NewLibrary("pets", nil, map[string]object.Object{
 			"Animal": animalClass,
 			"Dog":    dogClass,
 		}, "Pets library"))
@@ -1094,7 +1094,7 @@ bark = dog.bark()
 		carClass := carBuilder.Build()
 
 		// Register both classes through a library to make them callable
-		p.RegisterLibrary("vehicles", object.NewLibrary(nil, map[string]object.Object{
+		p.RegisterLibrary(object.NewLibrary("vehicles", nil, map[string]object.Object{
 			"Vehicle": vehicleClass,
 			"Car":     carClass,
 		}, "Vehicles library"))
@@ -1383,7 +1383,7 @@ dist = geometry_advanced.distance_from_origin(3, 4)
 		p := New()
 
 		// Register a Go library
-		p.RegisterLibrary("gomath", object.NewLibrary(map[string]*object.Builtin{
+		p.RegisterLibrary(object.NewLibrary("gomath", map[string]*object.Builtin{
 			"sqrt": {
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) != 1 {
@@ -1437,7 +1437,7 @@ dist = advanced_math.distance_3d(0.0, 0.0, 0.0, 1.0, 2.0, 2.0)
 
 	t.Run("RegisterScriptLibrary_WithStandardLibrary", func(t *testing.T) {
 		p := New()
-		p.RegisterLibrary(stdlib.JSONLibraryName, stdlib.JSONLibrary)
+		p.RegisterLibrary( stdlib.JSONLibrary)
 
 		// Register a library that uses the json standard library
 		err := p.RegisterScriptLibrary("data_processor", `
@@ -1861,7 +1861,7 @@ Detailed documentation here.`)
 
 	t.Run("HelpForLibraryFunction", func(t *testing.T) {
 		p := New()
-		myLib := object.NewLibrary(map[string]*object.Builtin{
+		myLib := object.NewLibrary("mylib", map[string]*object.Builtin{
 			"validate": {
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					return &object.Boolean{Value: true}
@@ -1878,7 +1878,7 @@ Detailed documentation here.`)
     mylib.validate("test@example.com")`,
 			},
 		}, nil, "My custom data processing library")
-		p.RegisterLibrary("mylib", myLib)
+		p.RegisterLibrary( myLib)
 
 		_, err := p.Eval(`
 import mylib
@@ -1975,7 +1975,7 @@ func TestCompleteExamplesFromDocs(t *testing.T) {
 
 		// Build and register the library
 		myMath := builder.Build()
-		p.RegisterLibrary("mymath", myMath)
+		p.RegisterLibrary( myMath)
 
 		// Use the library
 		_, err := p.Eval(`
@@ -2050,7 +2050,7 @@ e_val = mymath.E
 		personClass := cb.Build()
 
 		// Register the class through a library to make it callable
-		p.RegisterLibrary("people", object.NewLibrary(nil, map[string]object.Object{
+		p.RegisterLibrary(object.NewLibrary("people", nil, map[string]object.Object{
 			"Person": personClass,
 		}, "People library"))
 
@@ -2154,7 +2154,7 @@ help(calculate_area)
     Processed data as string`).
 			Build()
 
-		p.RegisterLibrary("mylib", library)
+		p.RegisterLibrary( library)
 
 		_, err := p.Eval(`
 import mylib
@@ -2180,7 +2180,7 @@ help("mylib")
 		myClass := classBuilder.Build()
 
 		// Register through a library
-		p.RegisterLibrary("mylib", object.NewLibrary(nil, map[string]object.Object{
+		p.RegisterLibrary(object.NewLibrary("mylib", nil, map[string]object.Object{
 			"MyClass": myClass,
 		}, "My library"))
 
@@ -2325,7 +2325,7 @@ help("builtins")
 		p := New()
 
 		// Register a library
-		lib := object.NewLibrary(nil, map[string]object.Object{
+		lib := object.NewLibrary("custom", nil, map[string]object.Object{
 			"custom_func": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					return &object.String{Value: "result"}
@@ -2334,7 +2334,7 @@ help("builtins")
 			},
 		}, "My custom library")
 
-		p.RegisterLibrary("custom", lib)
+		p.RegisterLibrary( lib)
 
 		// Test help after import
 		_, err := p.Eval(`

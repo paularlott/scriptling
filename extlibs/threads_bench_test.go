@@ -32,9 +32,9 @@ func BenchmarkThreadsRun(b *testing.B) {
 
 	// Create environment with libraries (simulating typical usage)
 	env := object.NewEnvironment()
-	env.Set("json", object.NewLibrary(map[string]*object.Builtin{}, map[string]object.Object{}, "json library"))
-	env.Set("math", object.NewLibrary(map[string]*object.Builtin{}, map[string]object.Object{}, "math library"))
-	env.Set("time", object.NewLibrary(map[string]*object.Builtin{}, map[string]object.Object{}, "time library"))
+	env.Set("json", object.NewLibrary("json", map[string]*object.Builtin{}, map[string]object.Object{}, "json library"))
+	env.Set("math", object.NewLibrary("math", map[string]*object.Builtin{}, map[string]object.Object{}, "math library"))
+	env.Set("time", object.NewLibrary("time", map[string]*object.Builtin{}, map[string]object.Object{}, "time library"))
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -74,8 +74,8 @@ func BenchmarkThreadsRunWithLargeEnvironment(b *testing.B) {
 
 	// Create environment with many user variables (simulating typical usage)
 	env := object.NewEnvironment()
-	env.Set("json", object.NewLibrary(map[string]*object.Builtin{}, map[string]object.Object{}, "json library"))
-	env.Set("math", object.NewLibrary(map[string]*object.Builtin{}, map[string]object.Object{}, "math library"))
+	env.Set("json", object.NewLibrary("json", map[string]*object.Builtin{}, map[string]object.Object{}, "json library"))
+	env.Set("math", object.NewLibrary("math", map[string]*object.Builtin{}, map[string]object.Object{}, "math library"))
 
 	// Add 100 user variables (these should NOT be cloned)
 	for i := 0; i < 100; i++ {
@@ -98,8 +98,8 @@ func BenchmarkThreadsRunWithLargeEnvironment(b *testing.B) {
 // BenchmarkCloneEnvironmentOnly benchmarks just the clone operation
 func BenchmarkCloneEnvironmentOnly(b *testing.B) {
 	env := object.NewEnvironment()
-	env.Set("json", object.NewLibrary(map[string]*object.Builtin{}, map[string]object.Object{}, "json library"))
-	env.Set("math", object.NewLibrary(map[string]*object.Builtin{}, map[string]object.Object{}, "math library"))
+	env.Set("json", object.NewLibrary("json", map[string]*object.Builtin{}, map[string]object.Object{}, "json library"))
+	env.Set("math", object.NewLibrary("math", map[string]*object.Builtin{}, map[string]object.Object{}, "math library"))
 
 	// Add many user variables (should NOT affect performance)
 	for i := 0; i < 100; i++ {
@@ -116,10 +116,10 @@ func BenchmarkCloneEnvironmentOnly(b *testing.B) {
 // Shows performance when only libraries are present (no user variables)
 func BenchmarkCloneEnvironmentWithOnlyLibraries(b *testing.B) {
 	env := object.NewEnvironment()
-	env.Set("json", object.NewLibrary(map[string]*object.Builtin{}, map[string]object.Object{}, "json library"))
-	env.Set("math", object.NewLibrary(map[string]*object.Builtin{}, map[string]object.Object{}, "math library"))
-	env.Set("time", object.NewLibrary(map[string]*object.Builtin{}, map[string]object.Object{}, "time library"))
-	env.Set("regex", object.NewLibrary(map[string]*object.Builtin{}, map[string]object.Object{}, "regex library"))
+	env.Set("json", object.NewLibrary("json", map[string]*object.Builtin{}, map[string]object.Object{}, "json library"))
+	env.Set("math", object.NewLibrary("math", map[string]*object.Builtin{}, map[string]object.Object{}, "math library"))
+	env.Set("time", object.NewLibrary("time", map[string]*object.Builtin{}, map[string]object.Object{}, "time library"))
+	env.Set("regex", object.NewLibrary("regex", map[string]*object.Builtin{}, map[string]object.Object{}, "regex library"))
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

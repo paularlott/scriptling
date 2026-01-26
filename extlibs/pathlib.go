@@ -25,7 +25,7 @@ func RegisterPathlibLibrary(registrar object.LibraryRegistrar, allowedPaths []st
 		AllowedPaths: allowedPaths,
 	}
 	pathLib := NewPathlibLibrary(config)
-	registrar.RegisterLibrary(PathlibLibraryName, pathLib)
+	registrar.RegisterLibrary(pathLib)
 }
 
 // NewPathlibLibrary creates a new Pathlib library with the given configuration.
@@ -245,7 +245,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 		},
 	}
 
-	return object.NewLibrary(map[string]*object.Builtin{
+	return object.NewLibrary(PathlibLibraryName, map[string]*object.Builtin{
 		"Path": {
 			Fn:         p.pathConstructor,
 			Attributes: p.PathClass.Methods,

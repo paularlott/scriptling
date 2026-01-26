@@ -12,15 +12,15 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
-func RegisterHTMLParserLibrary(registrar interface{ RegisterLibrary(string, *object.Library) }) {
-	registrar.RegisterLibrary(HTMLParserLibraryName, HTMLParserLibrary)
+func RegisterHTMLParserLibrary(registrar interface{ RegisterLibrary(*object.Library) }) {
+	registrar.RegisterLibrary(HTMLParserLibrary)
 }
 
 // attrRegex is compiled once at package init for parsing HTML tag attributes
 var attrRegex = regexp.MustCompile(`(\w+)(?:=(?:"([^"]*)"|'([^']*)'|([^\s>]*)))?`)
 
 // HTMLParserLibrary provides Python-compatible html.parser functionality
-var HTMLParserLibrary = object.NewLibrary(nil, map[string]object.Object{
+var HTMLParserLibrary = object.NewLibrary(HTMLParserLibraryName, nil, map[string]object.Object{
 	"HTMLParser": &object.Class{
 		Name:    "HTMLParser",
 		Methods: htmlParserMethods,

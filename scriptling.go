@@ -566,8 +566,9 @@ func (p *Scriptling) CallFunctionWithContext(ctx context.Context, name string, a
 }
 
 // RegisterLibrary registers a new library that can be imported by scripts
-func (p *Scriptling) RegisterLibrary(name string, lib *object.Library) {
-	p.registeredLibraries[name] = lib
+// The library name is extracted from the library itself
+func (p *Scriptling) RegisterLibrary(lib *object.Library) {
+	p.registeredLibraries[lib.Name()] = lib
 }
 
 // Import imports a library into the current environment, making it available for use without needing an import statement in scripts

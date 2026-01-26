@@ -9,7 +9,7 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
-var StatisticsLibrary = object.NewLibrary(map[string]*object.Builtin{
+var StatisticsLibrary = object.NewLibrary(StatisticsLibraryName, map[string]*object.Builtin{
 	"mean": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if err := errors.ExactArgs(args, 1); err != nil { return err }

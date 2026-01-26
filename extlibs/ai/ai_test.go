@@ -577,8 +577,8 @@ type mockRegistrar struct {
 	called      bool
 }
 
-func (m *mockRegistrar) RegisterLibrary(name string, lib *object.Library) {
-	m.libraryName = name
+func (m *mockRegistrar) RegisterLibrary(lib *object.Library) {
+	m.libraryName = lib.Name()
 	m.library = lib
 	m.called = true
 }

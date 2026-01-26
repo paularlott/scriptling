@@ -429,7 +429,7 @@ func getFlags(args []object.Object, flagsIndex int) (int64, error) {
 	return val, nil
 }
 
-var ReLibrary = object.NewLibrary(map[string]*object.Builtin{
+var ReLibrary = object.NewLibrary(ReLibraryName, map[string]*object.Builtin{
 	"match": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 2 || len(args) > 3 {

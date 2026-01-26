@@ -267,7 +267,7 @@ func createCounterInstance() *object.Instance {
 }
 
 // CollectionsLibrary provides Python-like collections functions
-var CollectionsLibrary = object.NewLibrary(map[string]*object.Builtin{
+var CollectionsLibrary = object.NewLibrary(CollectionsLibraryName, map[string]*object.Builtin{
 	"Counter": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// Counter([iterable]) - Count elements

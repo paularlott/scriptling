@@ -7,7 +7,7 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
-var FunctoolsLibrary = object.NewLibrary(map[string]*object.Builtin{
+var FunctoolsLibrary = object.NewLibrary(FunctoolsLibraryName, map[string]*object.Builtin{
 	"reduce": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 2 || len(args) > 3 {
