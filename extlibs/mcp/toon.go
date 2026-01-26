@@ -19,11 +19,11 @@ var (
 
 // Register registers the toon library with the given registrar
 // First call builds the library, subsequent calls just register it
-func RegisterToon(registrar interface{ RegisterLibrary(string, *object.Library) }) {
+func RegisterToon(registrar interface{ RegisterLibrary(*object.Library) }) {
 	toonLibraryOnce.Do(func() {
 		toonLibrary = buildToonLibrary()
 	})
-	registrar.RegisterLibrary(ToonLibraryName, toonLibrary)
+	registrar.RegisterLibrary(toonLibrary)
 }
 
 // buildToonLibrary builds the TOON library

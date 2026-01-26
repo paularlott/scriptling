@@ -8,7 +8,7 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
-var Base64Library = object.NewLibrary(map[string]*object.Builtin{
+var Base64Library = object.NewLibrary(Base64LibraryName, map[string]*object.Builtin{
 	"b64encode": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if err := errors.ExactArgs(args, 1); err != nil {

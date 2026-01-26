@@ -179,7 +179,7 @@ func (b *LibraryBuilder) Constant(name string, value interface{}) *LibraryBuilde
 // Build creates and returns the Library from this builder.
 // After calling Build(), the builder should not be used further.
 func (b *LibraryBuilder) Build() *Library {
-	return NewLibrary(b.functions, b.constants, b.description)
+	return NewLibrary(b.name, b.functions, b.constants, b.description)
 }
 
 // createWrapper creates a Builtin wrapper for a typed Go function.

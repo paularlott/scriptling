@@ -13,13 +13,13 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
-func RegisterSecretsLibrary(registrar interface{ RegisterLibrary(string, *object.Library) }) {
-	registrar.RegisterLibrary(SecretsLibraryName, SecretsLibrary)
+func RegisterSecretsLibrary(registrar interface{ RegisterLibrary(*object.Library) }) {
+	registrar.RegisterLibrary(SecretsLibrary)
 }
 
 // SecretsLibrary provides cryptographically strong random number generation
 // NOTE: This is an extended library and not enabled by default
-var SecretsLibrary = object.NewLibrary(map[string]*object.Builtin{
+var SecretsLibrary = object.NewLibrary(SecretsLibraryName, map[string]*object.Builtin{
 	"token_bytes": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			nbytes := 32 // Default

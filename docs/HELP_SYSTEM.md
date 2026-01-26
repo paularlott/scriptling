@@ -188,7 +188,7 @@ import (
     "github.com/paularlott/scriptling/object"
 )
 
-var MyLibrary = object.NewLibrary(map[string]*object.Builtin{
+var MyLibrary = object.NewLibrary("mylib", map[string]*object.Builtin{
     "process": {
         Fn: func(ctx context.Context, args ...object.Object) object.Object {
             // Implementation
@@ -213,7 +213,7 @@ import (
     "github.com/paularlott/scriptling/object"
 )
 
-var MyLibrary = object.NewLibrary(map[string]*object.Builtin{
+var MyLibrary = object.NewLibrary("mylib", map[string]*object.Builtin{
     "process": {
         Fn: func(ctx context.Context, args ...object.Object) object.Object {
             // Implementation
@@ -330,7 +330,7 @@ library := object.NewLibraryBuilder("mylib", "My custom data processing library"
     Constant("VERSION", "1.0.0").
     Build()
 
-p.RegisterLibrary("mylib", library)
+p.RegisterLibrary( library)
 ```
 
 ### Class Builder
@@ -353,7 +353,7 @@ classBuilder.Method("set_data", func(self *object.Instance, data string) {
 myClass := classBuilder.Build()
 
 // Register through a library
-p.RegisterLibrary("mylib", object.NewLibrary(nil, map[string]object.Object{
+p.RegisterLibrary(object.NewLibrary("inline", nil, map[string]object.Object{
     "MyClass": myClass,
 }, "My library"))
 ```
@@ -440,7 +440,7 @@ def format(value, fmt_type="default"):
 |--------|-----------|-------------|
 | `RegisterFunc(name, func, help)` | Single Go function | Help text parameter |
 | `RegisterScriptFunc(name, script)` | Function from script | Docstring in script |
-| `RegisterLibrary(name, library)` | Pre-built Go library | Library's HelpText fields |
+| `RegisterLibrary(library)` | Pre-built Go library | Library's HelpText fields |
 | `RegisterScriptLibrary(name, script)` | Library from script | Module/function docstrings |
 | `NewFunctionBuilder().FunctionWithHelp(fn, help)` | Builder pattern | Help text parameter |
 | `NewLibraryBuilder(name, description)` | Builder pattern | Description + FunctionWithHelp |

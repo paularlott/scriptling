@@ -287,7 +287,7 @@ func CreateConfigurableLibrary(config map[string]interface{}) map[string]*object
 | Task | Native API | Builder API |
 |------|------------|-------------|
 | Add function | `p.RegisterFunc(name, fn)` | `fb := NewFunctionBuilder(); fb.Function(...)` |
-| Add library | `p.RegisterLibrary(name, lib)` | `lb := NewLibraryBuilder(name); ...` |
+| Add library | `p.RegisterLibrary( lib)` | `lb := NewLibraryBuilder(name); ...` |
 | Add class | `p.SetVar(name, class)` | `cb := NewClassBuilder(name); ...` |
 | Get kwargs | `kwargs.GetString(name, default)` | `kwargs.GetString(name, default)` (same) |
 | Type convert | `obj.AsInt(), obj.AsString()` | Automatic with typed params |

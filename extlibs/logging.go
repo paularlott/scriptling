@@ -66,7 +66,7 @@ func (l *loggerWrapper) logAtLevel(args []object.Object, logFunc func(msg string
 
 // RegisterLoggingLibrary registers the logging library with the given registrar and optional logger
 // Each environment gets its own logger instance
-func RegisterLoggingLibrary(registrar interface{ RegisterLibrary(string, *object.Library) }, loggerInstance logger.Logger) {
+func RegisterLoggingLibrary(registrar interface{ RegisterLibrary(*object.Library) }, loggerInstance logger.Logger) {
 	// Create the default logger for this environment
 	var envLogger logger.Logger
 	if loggerInstance != nil {
@@ -82,17 +82,17 @@ func RegisterLoggingLibrary(registrar interface{ RegisterLibrary(string, *object
 
 	// Create library with the environment-specific logger
 	loggingLibrary := createLoggingLibrary(envLogger)
-	registrar.RegisterLibrary(LoggingLibraryName, loggingLibrary)
+	registrar.RegisterLibrary(loggingLibrary)
 }
 
 // RegisterLoggingLibraryDefault registers the logging library with default configuration
-func RegisterLoggingLibraryDefault(registrar interface{ RegisterLibrary(string, *object.Library) }) {
+func RegisterLoggingLibraryDefault(registrar interface{ RegisterLibrary(*object.Library) }) {
 	RegisterLoggingLibrary(registrar, nil)
 }
 
 // createLoggingLibrary creates a logging library instance with the given logger
 func createLoggingLibrary(defaultLogger logger.Logger) *object.Library {
-	return object.NewLibrary(
+	return object.NewLibrary(LoggingLibraryName, 
 		map[string]*object.Builtin{
 			"getLogger": {
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {

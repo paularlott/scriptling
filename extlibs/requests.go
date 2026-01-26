@@ -13,8 +13,8 @@ import (
 	"github.com/paularlott/scriptling/pool"
 )
 
-func RegisterRequestsLibrary(registrar interface{ RegisterLibrary(string, *object.Library) }) {
-	registrar.RegisterLibrary(RequestsLibraryName, RequestsLibrary)
+func RegisterRequestsLibrary(registrar interface{ RegisterLibrary(*object.Library) }) {
+	registrar.RegisterLibrary(RequestsLibrary)
 }
 
 // Response class for HTTP responses
@@ -197,7 +197,7 @@ func extractRequestArgs(kwargs object.Kwargs, args []object.Object, hasData bool
 	return url, data, options, nil
 }
 
-var RequestsLibrary = object.NewLibrary(map[string]*object.Builtin{
+var RequestsLibrary = object.NewLibrary(RequestsLibraryName, map[string]*object.Builtin{
 	// Exceptions namespace - returns dict with exception types
 	"exceptions": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {

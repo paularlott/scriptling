@@ -362,6 +362,7 @@ func (b *Builtin) AsDict() (map[string]Object, Object) {
 // This eliminates the need for function wrappers and provides direct access
 // Libraries can contain sub-libraries for nested module support (e.g., urllib.parse)
 type Library struct {
+	name         string
 	functions    map[string]*Builtin
 	constants    map[string]Object
 	subLibraries map[string]*Library
@@ -370,8 +371,9 @@ type Library struct {
 
 // NewLibrary creates a new library with functions, optional constants, and optional description
 // Pass nil for constants if there are none, and "" for description if not needed
-func NewLibrary(functions map[string]*Builtin, constants map[string]Object, description string) *Library {
+func NewLibrary(name string, functions map[string]*Builtin, constants map[string]Object, description string) *Library {
 	return &Library{
+		name:         name,
 		functions:    functions,
 		constants:    constants,
 		subLibraries: nil,
@@ -380,13 +382,19 @@ func NewLibrary(functions map[string]*Builtin, constants map[string]Object, desc
 }
 
 // NewLibraryWithSubs creates a new library with functions, constants, sub-libraries, and description
-func NewLibraryWithSubs(functions map[string]*Builtin, constants map[string]Object, subLibraries map[string]*Library, description string) *Library {
+func NewLibraryWithSubs(name string, functions map[string]*Builtin, constants map[string]Object, subLibraries map[string]*Library, description string) *Library {
 	return &Library{
+		name:         name,
 		functions:    functions,
 		constants:    constants,
 		subLibraries: subLibraries,
 		description:  description,
 	}
+}
+
+// Name returns the library's name
+func (l *Library) Name() string {
+	return l.name
 }
 
 // Functions returns the library's function map
@@ -847,5 +855,5 @@ func (s *Super) AsDict() (map[string]Object, Object) { return nil, &Error{Messag
 // LibraryRegistrar is an interface for registering libraries.
 // This allows external libraries to register themselves without circular imports.
 type LibraryRegistrar interface {
-	RegisterLibrary(name string, lib *Library)
+	RegisterLibrary(lib *Library)
 }

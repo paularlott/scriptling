@@ -16,8 +16,8 @@ import (
 	"github.com/shirou/gopsutil/v3/process"
 )
 
-func RegisterWaitForLibrary(registrar interface{ RegisterLibrary(string, *object.Library) }) {
-	registrar.RegisterLibrary(WaitForLibraryName, WaitForLibrary)
+func RegisterWaitForLibrary(registrar interface{ RegisterLibrary(*object.Library) }) {
+	registrar.RegisterLibrary(WaitForLibrary)
 }
 
 // parseWaitOptions parses common wait options from args and kwargs
@@ -65,7 +65,7 @@ func parseWaitOptionsKwargsOnly(defaultTimeout int, defaultPollRate float64, kwa
 	return timeout, pollRate, nil
 }
 
-var WaitForLibrary = object.NewLibrary(
+var WaitForLibrary = object.NewLibrary(WaitForLibraryName, 
 	map[string]*object.Builtin{
 		"file": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {

@@ -9,8 +9,8 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
-func RegisterSysLibrary(registrar interface{ RegisterLibrary(string, *object.Library) }, argv []string) {
-	registrar.RegisterLibrary(SysLibraryName, NewSysLibrary(argv))
+func RegisterSysLibrary(registrar interface{ RegisterLibrary(*object.Library) }, argv []string) {
+	registrar.RegisterLibrary(NewSysLibrary(argv))
 }
 
 // SysExitCode is used to communicate exit codes from sys.exit()
@@ -63,7 +63,7 @@ func NewSysLibrary(argv []string) *object.Library {
 	}
 
 	// SysLibrary provides system-specific parameters and functions
-	return object.NewLibrary(map[string]*object.Builtin{
+	return object.NewLibrary(SysLibraryName, map[string]*object.Builtin{
 		"exit": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				code := 0

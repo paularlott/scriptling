@@ -347,7 +347,7 @@ func main() {
     p := scriptling.New()
 
     // Register a Go library with description
-    p.RegisterLibrary("gomath", object.NewLibrary(map[string]*object.Builtin{
+    p.RegisterLibrary(object.NewLibrary("inline", map[string]*object.Builtin{
         "sqrt": {
             Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
                 if len(args) != 1 {

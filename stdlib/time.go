@@ -11,7 +11,7 @@ import (
 
 var startTime = time.Now()
 
-var TimeLibrary = object.NewLibrary(map[string]*object.Builtin{
+var TimeLibrary = object.NewLibrary(TimeLibraryName, map[string]*object.Builtin{
 	"time": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			return &object.Float{Value: float64(time.Now().UnixNano()) / 1e9}

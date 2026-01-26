@@ -54,7 +54,7 @@ func CreateExampleLibrary() *object.Library {
 		},
 	}
 
-	return object.NewLibrary(map[string]*object.Builtin{
+	return object.NewLibrary("mathutils", map[string]*object.Builtin{
 		"power": {
 			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
 				if len(args) != 2 {
@@ -232,7 +232,7 @@ func runGoExtensionExample() {
 	})
 
 	// Register the custom example library
-	p.RegisterLibrary("mathutils", CreateExampleLibrary())
+	p.RegisterLibrary(CreateExampleLibrary())
 
 	// Run a comprehensive Scriptling script that demonstrates all features
 	_, err := p.Eval(`

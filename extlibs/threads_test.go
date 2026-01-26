@@ -16,6 +16,7 @@ func TestCloneEnvironment(t *testing.T) {
 
 	// Add a library to verify it gets copied
 	testLib := object.NewLibrary(
+		"test_lib",
 		map[string]*object.Builtin{
 			"test_func": {
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {

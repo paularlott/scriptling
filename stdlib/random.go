@@ -41,7 +41,7 @@ func gaussianRandom(ctx context.Context, kwargs object.Kwargs, args ...object.Ob
 	return &object.Float{Value: val}
 }
 
-var RandomLibrary = object.NewLibrary(map[string]*object.Builtin{
+var RandomLibrary = object.NewLibrary(RandomLibraryName, map[string]*object.Builtin{
 	"seed": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if err := errors.MaxArgs(args, 1); err != nil { return err }

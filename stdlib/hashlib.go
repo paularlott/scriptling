@@ -11,7 +11,7 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
-var HashlibLibrary = object.NewLibrary(map[string]*object.Builtin{
+var HashlibLibrary = object.NewLibrary(HashlibLibraryName, map[string]*object.Builtin{
 	"sha256": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if err := errors.ExactArgs(args, 1); err != nil { return err }

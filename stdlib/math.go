@@ -51,7 +51,7 @@ func twoFloatFunc(f func(float64, float64) float64) func(context.Context, object
 	}
 }
 
-var MathLibrary = object.NewLibrary(map[string]*object.Builtin{
+var MathLibrary = object.NewLibrary(MathLibraryName, map[string]*object.Builtin{
 	"sqrt": {
 		Fn: oneFloatFunc(math.Sqrt),
 		HelpText: `sqrt(x) - Return the square root of x

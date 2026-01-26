@@ -9,7 +9,7 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
-var TextwrapLibrary = object.NewLibrary(map[string]*object.Builtin{
+var TextwrapLibrary = object.NewLibrary(TextwrapLibraryName, map[string]*object.Builtin{
 	"wrap": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			width, _ := kwargs.GetInt("width", 70)

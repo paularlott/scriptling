@@ -64,7 +64,7 @@ func main() {
     }
 
     // Register the class as a library constant
-    p.RegisterLibrary("person", object.NewLibrary(
+    p.RegisterLibrary(object.NewLibrary("inline", 
         map[string]*object.Builtin{
             "create": {
                 Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -142,7 +142,7 @@ func createPersonClass() *object.Class {
 }
 
 // Usage with a factory function
-p.RegisterLibrary("person", object.NewLibrary(
+p.RegisterLibrary(object.NewLibrary("inline", 
     map[string]*object.Builtin{
         "Person": personClass,
         "new": {
@@ -290,7 +290,7 @@ print(c["oranges"])  # 0 (default)
 Add classes to libraries via the constants map:
 
 ```go
-myLib := object.NewLibrary(
+myLib := object.NewLibrary("mylib", 
     map[string]*object.Builtin{
         "create_counter": {
             Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -313,7 +313,7 @@ myLib := object.NewLibrary(
     "Counter utilities library",
 )
 
-p.RegisterLibrary("counters", myLib)
+p.RegisterLibrary( myLib)
 
 // Use in Scriptling
 p.Eval(`
@@ -653,7 +653,7 @@ func main() {
         return instance
     })
 
-    p.RegisterLibrary("person", lib.Build())
+    p.RegisterLibrary( lib.Build())
 
     // Use in Scriptling
     p.Eval(`
@@ -718,6 +718,7 @@ cb.MethodWithHelp("calculate", func(self *object.Instance, a, b int) int {
 
 ```go
 lib := object.NewLibrary(
+    "mylib",
     functions,
     map[string]object.Object{
         "MyClass": myClass,  // Expose for help() and isinstance()

@@ -9,7 +9,7 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
-var HTMLLibrary = object.NewLibrary(map[string]*object.Builtin{
+var HTMLLibrary = object.NewLibrary(HTMLLibraryName, map[string]*object.Builtin{
 	"escape": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if err := errors.ExactArgs(args, 1); err != nil { return err }

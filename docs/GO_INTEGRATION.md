@@ -28,7 +28,7 @@ func main() {
     // Register standard libraries as needed
     stdlib.RegisterAll(p)  // Register all standard libraries
     // Or register individual libraries:
-    // p.RegisterLibrary(stdlib.JSONLibraryName, stdlib.JSONLibrary)
+    // p.RegisterLibrary(stdlib.JSONLibrary)
 
     // Execute Scriptling code
     result, err := p.Eval(`x = 5 + 3`)
@@ -500,7 +500,7 @@ func main() {
 
     // Register libraries
     stdlib.RegisterAll(p)
-    p.RegisterLibrary(extlibs.RequestsLibraryName, extlibs.RequestsLibrary)
+    p.RegisterLibrary(extlibs.RequestsLibrary)
     extlibs.RegisterOSLibrary(p, []string{"/tmp"})
     extlibs.RegisterPathlibLibrary(p, []string{"/tmp"})
 
@@ -975,7 +975,7 @@ import (
 
 // Process data with Scriptling
 p := scriptling.New()
-p.RegisterLibrary(stdlib.JSONLibraryName, stdlib.JSONLibrary)
+p.RegisterLibrary(stdlib.JSONLibrary)
 p.SetVar("raw_data", jsonString)
 
 pipeline := `

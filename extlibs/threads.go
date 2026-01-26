@@ -11,8 +11,8 @@ import (
 )
 
 // RegisterThreadsLibrary registers the threads library with the given registrar
-func RegisterThreadsLibrary(registrar interface{ RegisterLibrary(string, *object.Library) }) {
-	registrar.RegisterLibrary(ThreadsLibraryName, ThreadsLibrary)
+func RegisterThreadsLibrary(registrar interface{ RegisterLibrary(*object.Library) }) {
+	registrar.RegisterLibrary(ThreadsLibrary)
 }
 
 // ApplyFunctionFunc is set by the evaluator to allow calling user functions
@@ -285,7 +285,7 @@ func getEnvFromContext(ctx context.Context) *object.Environment {
 }
 
 // ThreadsLibrary provides async execution primitives
-var ThreadsLibrary = object.NewLibrary(map[string]*object.Builtin{
+var ThreadsLibrary = object.NewLibrary(ThreadsLibraryName, map[string]*object.Builtin{
 	"run": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if err := errors.MinArgs(args, 1); err != nil { return err }

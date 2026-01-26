@@ -62,7 +62,7 @@ func createParseResultInstance(scheme, netloc, path, params, query, fragment str
 }
 
 // URLParseLibrary implements Python's urllib.parse module
-var URLParseLibrary = object.NewLibrary(map[string]*object.Builtin{
+var URLParseLibrary = object.NewLibrary(URLParseLibraryName, map[string]*object.Builtin{
 	"quote": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if err := errors.RangeArgs(args, 1, 2); err != nil {
@@ -534,7 +534,7 @@ Encodes a dictionary or list of tuples into a URL query string.`,
 }, nil, "URL parsing and manipulation (urllib.parse compatible)")
 
 // URLLibrary is the parent urllib module with parse as a sub-library
-var URLLibLibrary = object.NewLibraryWithSubs(
+var URLLibLibrary = object.NewLibraryWithSubs(URLLibLibraryName, 
 	nil, // No functions at urllib level
 	nil, // No constants
 	map[string]*object.Library{

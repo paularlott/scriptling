@@ -8,7 +8,7 @@ import (
 )
 
 // ItertoolsLibrary provides Python-like itertools functions
-var ItertoolsLibrary = object.NewLibrary(map[string]*object.Builtin{
+var ItertoolsLibrary = object.NewLibrary(ItertoolsLibraryName, map[string]*object.Builtin{
 	"chain": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// chain(*iterables) - Chain multiple iterables together

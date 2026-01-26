@@ -49,8 +49,8 @@ func RegisterOSLibrary(registrar object.LibraryRegistrar, allowedPaths []string)
 		AllowedPaths: allowedPaths,
 	}
 	osLib, osPathLib := NewOSLibrary(config)
-	registrar.RegisterLibrary(OSLibraryName, osLib)
-	registrar.RegisterLibrary(OSPathLibraryName, osPathLib)
+	registrar.RegisterLibrary(osLib)
+	registrar.RegisterLibrary(osPathLib)
 }
 
 // NewOSLibrary creates a new OS library with the given configuration.
@@ -77,7 +77,7 @@ func NewOSLibrary(config fssecurity.Config) (*object.Library, *object.Library) {
 }
 
 func (o *osLibraryInstance) createOSLibrary() *object.Library {
-	return object.NewLibrary(map[string]*object.Builtin{
+	return object.NewLibrary(OSLibraryName, map[string]*object.Builtin{
 		"getenv": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if err := errors.RangeArgs(args, 1, 2); err != nil {
@@ -378,7 +378,7 @@ Renames the file or directory from old to new.`,
 }
 
 func (o *osLibraryInstance) createOSPathLibrary() *object.Library {
-	return object.NewLibrary(map[string]*object.Builtin{
+	return object.NewLibrary(OSPathLibraryName, map[string]*object.Builtin{
 		"join": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) == 0 {

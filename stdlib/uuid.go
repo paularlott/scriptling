@@ -8,7 +8,7 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
-var UUIDLibrary = object.NewLibrary(map[string]*object.Builtin{
+var UUIDLibrary = object.NewLibrary(UUIDLibraryName, map[string]*object.Builtin{
 	"uuid1": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if err := errors.ExactArgs(args, 0); err != nil { return err }

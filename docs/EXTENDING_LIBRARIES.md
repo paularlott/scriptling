@@ -30,7 +30,7 @@ func main() {
     p := scriptling.New()
 
     // Create a library
-    myLib := object.NewLibrary(map[string]*object.Builtin{
+    myLib := object.NewLibrary("mylib", map[string]*object.Builtin{
         "add": {
             Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
                 if len(args) != 2 {
@@ -62,7 +62,7 @@ func main() {
     })
 
     // Register the library
-    p.RegisterLibrary("mylib", myLib)
+    p.RegisterLibrary( myLib)
 
     // Use in script
     p.Eval(`
@@ -78,7 +78,7 @@ print(result)  # 8
 Libraries can include constants that are accessible as library members:
 
 ```go
-myLib := object.NewLibrary(
+myLib := object.NewLibrary("mylib", 
     map[string]*object.Builtin{
         "add": {
             Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -97,7 +97,7 @@ myLib := object.NewLibrary(
     "My custom math library",  // Library description for help()
 )
 
-p.RegisterLibrary("mylib", myLib)
+p.RegisterLibrary( myLib)
 
 // Use in script
 p.Eval(`
@@ -181,7 +181,7 @@ func (l *Logger) CreateLibrary() map[string]*object.Builtin {
 func main() {
     p := scriptling.New()
     logger := NewLogger()
-    p.RegisterLibrary("logger", object.NewLibrary(logger.CreateLibrary(), nil, "Logger library"))
+    p.RegisterLibrary(object.NewLibrary("inline", logger.CreateLibrary(), nil, "Logger library"))
 
     p.Eval(`
 import logger
@@ -198,7 +198,7 @@ Organize related functionality into sub-libraries:
 
 ```go
 // Create URL parsing sub-library
-parseLib := object.NewLibrary(
+parseLib := object.NewLibrary("parse", 
     map[string]*object.Builtin{
         "quote": {
             Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -221,7 +221,7 @@ parseLib := object.NewLibrary(
 )
 
 // Create main URL library and add sub-library
-urlLib := object.NewLibrary(
+urlLib := object.NewLibrary("url", 
     map[string]*object.Builtin{
         "join": {
             Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -238,7 +238,7 @@ urlLib := object.NewLibrary(
     "URL utilities",
 )
 
-p.RegisterLibrary("url", urlLib)
+p.RegisterLibrary( urlLib)
 
 // Use in script
 p.Eval(`
@@ -277,7 +277,7 @@ builder.Constant("MAX_VALUE", 1000)
 myLib := builder.Build()
 
 // Register with Scriptling
-p.RegisterLibrary("mymath", myLib)
+p.RegisterLibrary( myLib)
 ```
 
 ### Supported Types
@@ -483,7 +483,7 @@ func main() {
 
     // Build and register the library
     myMath := mathBuilder.Build()
-    p.RegisterLibrary("mymath", myMath)
+    p.RegisterLibrary( myMath)
 
     // Use the library
     p.Eval(`
@@ -533,17 +533,17 @@ print("E =", mymath.E)
 
 ```go
 // Good: Organized by functionality
-mathLib := object.NewLibrary(map[string]*object.Builtin{
+mathLib := object.NewLibrary("math", map[string]*object.Builtin{
     "add": {...},
     "subtract": {...},
     "multiply": {...},
-})
+}, nil, "Math operations")
 
-stringLib := object.NewLibrary(map[string]*object.Builtin{
+stringLib := object.NewLibrary("string", map[string]*object.Builtin{
     "upper": {...},
     "lower": {...},
     "trim": {...},
-})
+}, nil, "String operations")
 ```
 
 ### 2. Provide Descriptive Help Text
@@ -569,6 +569,7 @@ stringLib := object.NewLibrary(map[string]*object.Builtin{
 
 ```go
 configLib := object.NewLibrary(
+    "config",
     map[string]*object.Builtin{
         "get_config": {...},
     },
@@ -584,7 +585,7 @@ configLib := object.NewLibrary(
 ### 4. Add Library Description
 
 ```go
-myLib := object.NewLibrary(
+myLib := object.NewLibrary("mylib", 
     functions,
     constants,
     "My custom data processing library",  // Description shown by help()
@@ -598,7 +599,7 @@ func TestLibrary(t *testing.T) {
     p := scriptling.New()
 
     // Create and register library
-    lib := object.NewLibrary(map[string]*object.Builtin{
+    lib := object.NewLibrary("testlib", map[string]*object.Builtin{
         "add": {
             Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
                 a, _ := args[0].(*object.Integer)
@@ -607,7 +608,7 @@ func TestLibrary(t *testing.T) {
             },
         },
     }, nil, "Test library")
-    p.RegisterLibrary("testlib", lib)
+    p.RegisterLibrary(lib)
 
     // Test the library
     result, err := p.Eval(`

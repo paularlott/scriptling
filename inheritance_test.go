@@ -104,7 +104,7 @@ func TestInheritance_ChainLookup(t *testing.T) {
 		}
 
 		// Register classes through a library to make them callable
-		p.RegisterLibrary("animals", object.NewLibrary(nil, map[string]object.Object{
+		p.RegisterLibrary(object.NewLibrary("animals", nil, map[string]object.Object{
 			"Animal": parentClass,
 			"Dog":    childClass,
 			"Puppy":  grandchildClass,
@@ -209,7 +209,7 @@ bark_result = dog.bark()
 			},
 		}
 
-		p.RegisterLibrary("test", object.NewLibrary(nil, map[string]object.Object{
+		p.RegisterLibrary(object.NewLibrary("test", nil, map[string]object.Object{
 			"D": classD,
 		}, "Test library"))
 
@@ -285,7 +285,7 @@ result_d = obj.method_d()
 			},
 		}
 
-		p.RegisterLibrary("test", object.NewLibrary(nil, map[string]object.Object{
+		p.RegisterLibrary(object.NewLibrary("test", nil, map[string]object.Object{
 			"Parent": parentClass,
 			"Child":  childClass,
 		}, "Test library"))
@@ -333,7 +333,7 @@ child_result = child.process()
 			},
 		}
 
-		p.RegisterLibrary("golib", object.NewLibrary(nil, map[string]object.Object{
+		p.RegisterLibrary(object.NewLibrary("golib", nil, map[string]object.Object{
 			"GoClass": goClass,
 		}, "Go library"))
 
@@ -395,7 +395,7 @@ func TestInheritance_BuilderAPI(t *testing.T) {
 		childClass := childBuilder.Build()
 
 		// Register classes through a library
-		p.RegisterLibrary("animals", object.NewLibrary(nil, map[string]object.Object{
+		p.RegisterLibrary(object.NewLibrary("animals", nil, map[string]object.Object{
 			"Animal": parentClass,
 			"Dog":    childClass,
 		}, "Animal library"))
@@ -449,7 +449,7 @@ bark_result = dog.bark()
 		})
 		cClass := classC.Build()
 
-		p.RegisterLibrary("test", object.NewLibrary(nil, map[string]object.Object{
+		p.RegisterLibrary(object.NewLibrary("test", nil, map[string]object.Object{
 			"C": cClass,
 		}, "Test library"))
 
@@ -507,7 +507,7 @@ func TestInheritance_Super(t *testing.T) {
 			},
 		}
 
-		p.RegisterLibrary("test", object.NewLibrary(nil, map[string]object.Object{
+		p.RegisterLibrary(object.NewLibrary("test", nil, map[string]object.Object{
 			"Parent": parentClass,
 		}, "Test library"))
 
@@ -566,7 +566,7 @@ result = obj.get_value()
 			},
 		}
 
-		p.RegisterLibrary("test", object.NewLibrary(nil, map[string]object.Object{
+		p.RegisterLibrary(object.NewLibrary("test", nil, map[string]object.Object{
 			"Grandparent": grandparentClass,
 			"Middle":      middleClass,
 		}, "Test library"))
@@ -606,7 +606,7 @@ result = obj.greet()
 		})
 		parentClass := parentBuilder.Build()
 
-		p.RegisterLibrary("test", object.NewLibrary(nil, map[string]object.Object{
+		p.RegisterLibrary(object.NewLibrary("test", nil, map[string]object.Object{
 			"Parent": parentClass,
 		}, "Test library"))
 
@@ -666,7 +666,7 @@ func TestInheritance_ScriptInheritsFromGo(t *testing.T) {
 			},
 		}
 
-		p.RegisterLibrary("animals", object.NewLibrary(nil, map[string]object.Object{
+		p.RegisterLibrary(object.NewLibrary("animals", nil, map[string]object.Object{
 			"GoAnimal": goClass,
 		}, "Animal library"))
 
@@ -753,7 +753,7 @@ bark_result = dog.bark()
 		})
 		goVehicle := builder.Build()
 
-		p.RegisterLibrary("vehicles", object.NewLibrary(nil, map[string]object.Object{
+		p.RegisterLibrary(object.NewLibrary("vehicles", nil, map[string]object.Object{
 			"GoVehicle": goVehicle,
 		}, "Vehicle library"))
 
@@ -861,7 +861,7 @@ combo = car.accelerate_with_honk(20)
 			},
 		}
 
-		p.RegisterLibrary("test", object.NewLibrary(nil, map[string]object.Object{
+		p.RegisterLibrary(object.NewLibrary("test", nil, map[string]object.Object{
 			"GoBase": goClass,
 		}, "Test library"))
 
