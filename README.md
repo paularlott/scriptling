@@ -225,6 +225,7 @@ cd examples/openai/scriptlingcoder
 - **[Extending with Go](docs/EXTENDING_WITH_GO.md)** - Overview of extending Scriptling
   - **[Functions](docs/EXTENDING_FUNCTIONS.md)** - Creating custom functions
   - **[Libraries](docs/EXTENDING_LIBRARIES.md)** - Creating custom libraries
+  - **[Library Instantiation](docs/LIBRARY_INSTANTIATION.md)** - Libraries with instance-specific configs
   - **[Classes](docs/EXTENDING_CLASSES.md)** - Defining custom classes
 - **[Extending with Scripts](docs/EXTENDING_WITH_SCRIPTS.md)** - Creating script libraries
 - **[Help System](docs/HELP_SYSTEM.md)** - Documenting functions and classes
