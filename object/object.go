@@ -367,6 +367,7 @@ type Library struct {
 	constants    map[string]Object
 	subLibraries map[string]*Library
 	description  string
+	instanceData any // Instance-specific data for this library
 }
 
 // NewLibrary creates a new library with functions, optional constants, and optional description
@@ -426,6 +427,51 @@ func (l *Library) AsFloat() (float64, Object)          { return 0, &Error{Messag
 func (l *Library) AsBool() (bool, Object)              { return false, &Error{Message: ErrMustBeBoolean} }
 func (l *Library) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
 func (l *Library) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
+
+// contextKey is used to store instance data in context
+type contextKey string
+
+const instanceDataKey contextKey = "library.instanceData"
+
+// Instantiate creates a new library instance with instance-specific data
+// Functions are wrapped to inject the instance data into the context
+func (l *Library) Instantiate(instanceData any) *Library {
+	newLib := &Library{
+		name:         l.name,
+		functions:    make(map[string]*Builtin, len(l.functions)),
+		constants:    l.constants, // Constants are shared (immutable)
+		subLibraries: l.subLibraries, // Sub-libraries are shared
+		description:  l.description,
+		instanceData: instanceData,
+	}
+
+	// Wrap each function to inject instance data into context
+	for name, builtin := range l.functions {
+		originalFn := builtin.Fn
+		newLib.functions[name] = &Builtin{
+			Fn: func(ctx context.Context, kwargs Kwargs, args ...Object) Object {
+				// Inject instance data into context
+				ctx = context.WithValue(ctx, instanceDataKey, instanceData)
+				return originalFn(ctx, kwargs, args...)
+			},
+			HelpText:   builtin.HelpText,
+			Attributes: builtin.Attributes,
+		}
+	}
+
+	return newLib
+}
+
+// InstanceData returns the instance-specific data for this library
+func (l *Library) InstanceData() any {
+	return l.instanceData
+}
+
+// InstanceDataFromContext retrieves instance data from the context
+// Returns nil if no instance data is present
+func InstanceDataFromContext(ctx context.Context) any {
+	return ctx.Value(instanceDataKey)
+}
 
 type Environment struct {
 	mu                         sync.RWMutex
