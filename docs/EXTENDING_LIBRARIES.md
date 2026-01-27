@@ -293,6 +293,56 @@ The Builder API automatically converts between Go types and Scriptling objects:
 | `[]any`                 | `LIST`          | Converts to/from Scriptling lists |
 | `map[string]any`        | `DICT`          | Converts to/from Scriptling dicts |
 
+### Type Conversion Methods
+
+When accepting `*object.Object` parameters (instead of specific Go types), you can use type conversion methods to extract values:
+
+| Method           | Type Safety | Description                                     |
+| ---------------- | ----------- | ----------------------------------------------- |
+| `AsString()`     | Strict      | Returns string only if object is a STRING       |
+| `AsInt()`        | Strict      | Returns int64 only if object is INTEGER/FLOAT   |
+| `AsFloat()`      | Strict      | Returns float64 only if object is INTEGER/FLOAT |
+| `AsBool()`       | Strict      | Returns bool only if object is a BOOLEAN        |
+| `AsList()`       | Strict      | Returns list only if object is a LIST/TUPLE     |
+| `AsDict()`       | Strict      | Returns dict only if object is a DICT           |
+| `CoerceString()` | Loose       | **Auto-converts** any type to string            |
+| `CoerceInt()`    | Loose       | **Auto-converts** strings/floats to int         |
+| `CoerceFloat()`  | Loose       | **Auto-converts** strings/ints to float         |
+
+**Usage Example:**
+
+```go
+// Using strict conversion (type must match exactly)
+builder.Function("get_id_strict", func(id *object.Object) string {
+    s, err := id.AsString()  // Fails if id is not a STRING
+    if err != nil {
+        return "error: " + err.Message
+    }
+    return "id: " + s
+})
+
+// Using loose conversion (auto-converts if possible)
+builder.Function("get_id_loose", func(id *object.Object) string {
+    s, err := id.CoerceString()  // Converts ints/floats to string automatically
+    if err != nil {
+        return "error: " + err.Message
+    }
+    return "id: " + s
+})
+```
+
+**Script usage:**
+```python
+# Strict function requires exact type
+get_id_strict("12345")  # Works
+get_id_strict(12345)    # Error!
+
+# Loose function auto-converts
+get_id_loose("12345")   # Works (already string)
+get_id_loose(12345)     # Works (auto-converts to "12345")
+get_id_loose(123.45)    # Works (auto-converts to "123.45")
+```
+
 ### Function Signatures
 
 The Builder API supports flexible function signatures:

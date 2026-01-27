@@ -29,6 +29,10 @@ func (l *loggerWrapper) AsBool() (bool, object.Object)                     { ret
 func (l *loggerWrapper) AsList() ([]object.Object, object.Object)          { return nil, &object.Error{Message: object.ErrMustBeList} }
 func (l *loggerWrapper) AsDict() (map[string]object.Object, object.Object) { return nil, &object.Error{Message: object.ErrMustBeDict} }
 
+func (l *loggerWrapper) CoerceString() (string, object.Object) { return l.Inspect(), nil }
+func (l *loggerWrapper) CoerceInt() (int64, object.Object)     { return 0, &object.Error{Message: object.ErrMustBeInteger} }
+func (l *loggerWrapper) CoerceFloat() (float64, object.Object) { return 0, &object.Error{Message: object.ErrMustBeNumber} }
+
 // CallMethod handles method calls on logger objects
 func (l *loggerWrapper) CallMethod(method string, args ...object.Object) object.Object {
 	switch method {

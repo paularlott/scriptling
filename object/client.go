@@ -57,6 +57,10 @@ func (w *ClientWrapper) AsList() ([]Object, Object) { return nil, &Error{Message
 // AsDict returns an error - clients cannot be converted to dict
 func (w *ClientWrapper) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
+func (w *ClientWrapper) CoerceString() (string, Object) { return w.Inspect(), nil }
+func (w *ClientWrapper) CoerceInt() (int64, Object)     { return 0, &Error{Message: ErrMustBeInteger} }
+func (w *ClientWrapper) CoerceFloat() (float64, Object) { return 0, &Error{Message: ErrMustBeNumber} }
+
 // AsError returns the error message from an Object, or empty string if not an error.
 // This is a shared helper for extracting error messages from Objects.
 func AsError(obj Object) string {

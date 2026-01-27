@@ -83,6 +83,10 @@ func (it *Iterator) AsBool() (bool, Object)              { return !it.consumed, 
 func (it *Iterator) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
 func (it *Iterator) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
+func (it *Iterator) CoerceString() (string, Object) { return it.Inspect(), nil }
+func (it *Iterator) CoerceInt() (int64, Object)     { return 0, &Error{Message: ErrMustBeInteger} }
+func (it *Iterator) CoerceFloat() (float64, Object) { return 0, &Error{Message: ErrMustBeNumber} }
+
 // Next returns the next value from the iterator
 func (it *Iterator) Next() (Object, bool) {
 	if it.consumed {
