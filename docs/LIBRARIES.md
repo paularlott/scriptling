@@ -73,56 +73,56 @@ Always available without importing:
 
 These libraries are built-in and available for import without any registration.
 
-| Import        | Description                          | Details                                                    |
-| ------------- | ------------------------------------ | ---------------------------------------------------------- |
-| `json`        | Parse and generate JSON data         | [libraries/stdlib/json.md](libraries/stdlib/json.md)       |
-| `base64`      | Base64 encoding and decoding         | [libraries/stdlib/base64.md](libraries/stdlib/base64.md)   |
-| `html`        | HTML escaping and unescaping         | [libraries/stdlib/html.md](libraries/stdlib/html.md)       |
-| `math`        | Mathematical functions and constants | [libraries/stdlib/math.md](libraries/stdlib/math.md)       |
-| `random`      | Random number generation             | [libraries/stdlib/random.md](libraries/stdlib/random.md)   |
-| `statistics`  | Statistical functions                | [libraries/stdlib/statistics.md](libraries/stdlib/statistics.md) |
-| `time`        | Time access and conversions          | [libraries/stdlib/time.md](libraries/stdlib/time.md)       |
-| `datetime`    | Date and time formatting             | [libraries/stdlib/datetime.md](libraries/stdlib/datetime.md) |
-| `re`          | Regular expression operations        | [libraries/stdlib/regex.md](libraries/stdlib/regex.md)     |
-| `string`      | String constants                     | [libraries/stdlib/string.md](libraries/stdlib/string.md)   |
-| `textwrap`    | Text wrapping and filling            | [libraries/stdlib/textwrap.md](libraries/stdlib/textwrap.md) |
-| `functools`   | Higher-order functions               | [libraries/stdlib/functools.md](libraries/stdlib/functools.md) |
-| `itertools`   | Iterator functions                   | [libraries/stdlib/itertools.md](libraries/stdlib/itertools.md) |
+| Import        | Description                          | Details                                                            |
+| ------------- | ------------------------------------ | ------------------------------------------------------------------ |
+| `json`        | Parse and generate JSON data         | [libraries/stdlib/json.md](libraries/stdlib/json.md)               |
+| `base64`      | Base64 encoding and decoding         | [libraries/stdlib/base64.md](libraries/stdlib/base64.md)           |
+| `html`        | HTML escaping and unescaping         | [libraries/stdlib/html.md](libraries/stdlib/html.md)               |
+| `math`        | Mathematical functions and constants | [libraries/stdlib/math.md](libraries/stdlib/math.md)               |
+| `random`      | Random number generation             | [libraries/stdlib/random.md](libraries/stdlib/random.md)           |
+| `statistics`  | Statistical functions                | [libraries/stdlib/statistics.md](libraries/stdlib/statistics.md)   |
+| `time`        | Time access and conversions          | [libraries/stdlib/time.md](libraries/stdlib/time.md)               |
+| `datetime`    | Date and time formatting             | [libraries/stdlib/datetime.md](libraries/stdlib/datetime.md)       |
+| `re`          | Regular expression operations        | [libraries/stdlib/regex.md](libraries/stdlib/regex.md)             |
+| `string`      | String constants                     | [libraries/stdlib/string.md](libraries/stdlib/string.md)           |
+| `textwrap`    | Text wrapping and filling            | [libraries/stdlib/textwrap.md](libraries/stdlib/textwrap.md)       |
+| `functools`   | Higher-order functions               | [libraries/stdlib/functools.md](libraries/stdlib/functools.md)     |
+| `itertools`   | Iterator functions                   | [libraries/stdlib/itertools.md](libraries/stdlib/itertools.md)     |
 | `collections` | Specialized container datatypes      | [libraries/stdlib/collections.md](libraries/stdlib/collections.md) |
-| `hashlib`     | Secure hash algorithms               | [libraries/stdlib/hashlib.md](libraries/stdlib/hashlib.md) |
-| `platform`    | Platform identifying data            | [libraries/stdlib/platform.md](libraries/stdlib/platform.md) |
-| `urllib`      | URL handling                         | [libraries/stdlib/urllib.md](libraries/stdlib/urllib.md)   |
-| `uuid`        | UUID generation                      | [libraries/stdlib/uuid.md](libraries/stdlib/uuid.md)       |
+| `hashlib`     | Secure hash algorithms               | [libraries/stdlib/hashlib.md](libraries/stdlib/hashlib.md)         |
+| `platform`    | Platform identifying data            | [libraries/stdlib/platform.md](libraries/stdlib/platform.md)       |
+| `urllib`      | URL handling                         | [libraries/stdlib/urllib.md](libraries/stdlib/urllib.md)           |
+| `uuid`        | UUID generation                      | [libraries/stdlib/uuid.md](libraries/stdlib/uuid.md)               |
 
 ## Scriptling Libraries
 
-These are scriptling-specific libraries that provide functionality not available in Python's standard library. They use the `sl.` namespace prefix.
+These are scriptling-specific libraries that provide functionality not available in Python's standard library. They use the `scriptling.` namespace prefix.
 
-| Import        | Description                                             | Details                                                          |
-| ------------- | ------------------------------------------------------- | ---------------------------------------------------------------- |
-| `scriptling.ai`       | AI and LLM functions for OpenAI-compatible APIs         | [libraries/scriptling/ai.md](libraries/scriptling/ai.md)         |
-| `scriptling.mcp`      | MCP (Model Context Protocol) tool interaction           | [libraries/scriptling/mcp.md](libraries/scriptling/mcp.md)       |
-| `scriptling.toon`     | TOON (Token-Oriented Object Notation) encoding/decoding | [libraries/scriptling/toon.md](libraries/scriptling/toon.md)     |
-| `scriptling.threads`  | Asynchronous execution with isolated environments       | [libraries/scriptling/threads.md](libraries/scriptling/threads.md) |
-| `scriptling.console`  | Console input/output functions                          | [libraries/scriptling/console.md](libraries/scriptling/console.md) |
+| Import               | Description                                             | Details                                                            |
+| -------------------- | ------------------------------------------------------- | ------------------------------------------------------------------ |
+| `scriptling.ai`      | AI and LLM functions for OpenAI-compatible APIs         | [libraries/scriptling/ai.md](libraries/scriptling/ai.md)           |
+| `scriptling.mcp`     | MCP (Model Context Protocol) tool interaction           | [libraries/scriptling/mcp.md](libraries/scriptling/mcp.md)         |
+| `scriptling.toon`    | TOON (Token-Oriented Object Notation) encoding/decoding | [libraries/scriptling/toon.md](libraries/scriptling/toon.md)       |
+| `scriptling.threads` | Asynchronous execution with isolated environments       | [libraries/scriptling/threads.md](libraries/scriptling/threads.md) |
+| `scriptling.console` | Console input/output functions                          | [libraries/scriptling/console.md](libraries/scriptling/console.md) |
 
 ## Extended Libraries
 
 These libraries provide Python-compatible functionality and require explicit registration by the host application (e.g., the CLI tool).
 
-| Import        | Description                          | Details                                                        |
-| ------------- | ------------------------------------ | -------------------------------------------------------------- |
-| `requests`    | HTTP library for sending requests    | [libraries/extlib/requests.md](libraries/extlib/requests.md)   |
-| `sys`         | System-specific parameters           | [libraries/extlib/sys.md](libraries/extlib/sys.md)             |
-| `secrets`     | Cryptographically strong random nums  | [libraries/extlib/secrets.md](libraries/extlib/secrets.md)     |
-| `subprocess`  | Spawn and manage subprocesses        | [libraries/extlib/subprocess.md](libraries/extlib/subprocess.md) |
+| Import        | Description                          | Details                                                            |
+| ------------- | ------------------------------------ | ------------------------------------------------------------------ |
+| `requests`    | HTTP library for sending requests    | [libraries/extlib/requests.md](libraries/extlib/requests.md)       |
+| `sys`         | System-specific parameters           | [libraries/extlib/sys.md](libraries/extlib/sys.md)                 |
+| `secrets`     | Cryptographically strong random nums | [libraries/extlib/secrets.md](libraries/extlib/secrets.md)         |
+| `subprocess`  | Spawn and manage subprocesses        | [libraries/extlib/subprocess.md](libraries/extlib/subprocess.md)   |
 | `html.parser` | HTML/XHTML parser                    | [libraries/extlib/html.parser.md](libraries/extlib/html.parser.md) |
-| `os`          | Operating system interfaces          | [libraries/extlib/os.md](libraries/extlib/os.md)               |
-| `os.path`     | Pathname manipulations               | [libraries/extlib/os.path.md](libraries/extlib/os.path.md)     |
-| `pathlib`     | Object-oriented filesystem paths     | [libraries/extlib/pathlib.md](libraries/extlib/pathlib.md)     |
-| `glob`        | Unix shell-style wildcards           | [libraries/extlib/glob.md](libraries/extlib/glob.md)           |
-| `logging`     | Logging functionality                | [libraries/extlib/logging.md](libraries/extlib/logging.md)     |
-| `wait_for`    | Wait for resources to become avail   | [libraries/extlib/wait_for.md](libraries/extlib/wait_for.md)   |
+| `os`          | Operating system interfaces          | [libraries/extlib/os.md](libraries/extlib/os.md)                   |
+| `os.path`     | Pathname manipulations               | [libraries/extlib/os.path.md](libraries/extlib/os.path.md)         |
+| `pathlib`     | Object-oriented filesystem paths     | [libraries/extlib/pathlib.md](libraries/extlib/pathlib.md)         |
+| `glob`        | Unix shell-style wildcards           | [libraries/extlib/glob.md](libraries/extlib/glob.md)               |
+| `logging`     | Logging functionality                | [libraries/extlib/logging.md](libraries/extlib/logging.md)         |
+| `wait_for`    | Wait for resources to become avail   | [libraries/extlib/wait_for.md](libraries/extlib/wait_for.md)       |
 
 ## Usage Example
 
