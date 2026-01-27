@@ -49,7 +49,7 @@ func TestInheritance_ChainLookup(t *testing.T) {
 		}
 
 		// Create child class that inherits from parent
-		// NOTE: We do NOT copy parent methods to child - the evaluator should handle this
+		// NOTE: Parent methods are NOT copied to child - callInstanceMethod automatically traverses BaseClass at runtime to find inherited methods
 		childClass := &object.Class{
 			Name:      "Dog",
 			BaseClass: parentClass,
