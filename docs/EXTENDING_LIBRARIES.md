@@ -295,7 +295,7 @@ The Builder API automatically converts between Go types and Scriptling objects:
 
 ### Type Conversion Methods
 
-When accepting `*object.Object` parameters (instead of specific Go types), you can use type conversion methods to extract values:
+When accepting `object.Object` parameters (instead of specific Go types), you can use type conversion methods to extract values:
 
 | Method           | Type Safety | Description                                     |
 | ---------------- | ----------- | ----------------------------------------------- |
@@ -313,7 +313,7 @@ When accepting `*object.Object` parameters (instead of specific Go types), you c
 
 ```go
 // Using strict conversion (type must match exactly)
-builder.Function("get_id_strict", func(id *object.Object) string {
+builder.Function("get_id_strict", func(id object.Object) string {
     s, err := id.AsString()  // Fails if id is not a STRING
     if err != nil {
         return "error: " + err.Message
@@ -322,7 +322,7 @@ builder.Function("get_id_strict", func(id *object.Object) string {
 })
 
 // Using loose conversion (auto-converts if possible)
-builder.Function("get_id_loose", func(id *object.Object) string {
+builder.Function("get_id_loose", func(id object.Object) string {
     s, err := id.CoerceString()  // Converts ints/floats to string automatically
     if err != nil {
         return "error: " + err.Message
