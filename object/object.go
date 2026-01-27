@@ -142,13 +142,18 @@ type Object interface {
 	Type() ObjectType
 	Inspect() string
 
-	// Type-safe accessor methods
+	// Type-safe accessor methods (strict type checking)
 	AsString() (string, Object)
 	AsInt() (int64, Object)
 	AsFloat() (float64, Object)
 	AsBool() (bool, Object)
 	AsList() ([]Object, Object)
 	AsDict() (map[string]Object, Object)
+
+	// Coercion methods (loose type conversion with best effort)
+	CoerceString() (string, Object)
+	CoerceInt() (int64, Object)
+	CoerceFloat() (float64, Object)
 }
 
 type Integer struct {
@@ -165,6 +170,10 @@ func (i *Integer) AsBool() (bool, Object)              { return i.Value != 0, ni
 func (i *Integer) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
 func (i *Integer) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
+func (i *Integer) CoerceString() (string, Object) { return i.Inspect(), nil }
+func (i *Integer) CoerceInt() (int64, Object)     { return i.Value, nil }
+func (i *Integer) CoerceFloat() (float64, Object) { return float64(i.Value), nil }
+
 type Float struct {
 	Value float64
 }
@@ -178,6 +187,10 @@ func (f *Float) AsFloat() (float64, Object)          { return f.Value, nil }
 func (f *Float) AsBool() (bool, Object)              { return f.Value != 0, nil }
 func (f *Float) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
 func (f *Float) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
+
+func (f *Float) CoerceString() (string, Object) { return f.Inspect(), nil }
+func (f *Float) CoerceInt() (int64, Object)     { return int64(f.Value), nil }
+func (f *Float) CoerceFloat() (float64, Object) { return f.Value, nil }
 
 type Boolean struct {
 	Value bool
@@ -193,6 +206,20 @@ func (b *Boolean) AsBool() (bool, Object)              { return b.Value, nil }
 func (b *Boolean) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
 func (b *Boolean) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
+func (b *Boolean) CoerceString() (string, Object) { return b.Inspect(), nil }
+func (b *Boolean) CoerceInt() (int64, Object) {
+	if b.Value {
+		return 1, nil
+	}
+	return 0, nil
+}
+func (b *Boolean) CoerceFloat() (float64, Object) {
+	if b.Value {
+		return 1, nil
+	}
+	return 0, nil
+}
+
 type String struct {
 	Value string
 }
@@ -206,6 +233,24 @@ func (s *String) AsFloat() (float64, Object)          { return 0, &Error{Message
 func (s *String) AsBool() (bool, Object)              { return s.Value != "", nil }
 func (s *String) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
 func (s *String) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
+
+func (s *String) CoerceString() (string, Object) { return s.Value, nil }
+func (s *String) CoerceInt() (int64, Object) {
+	var val int64
+	_, err := fmt.Sscanf(s.Value, "%d", &val)
+	if err != nil {
+		return 0, &Error{Message: fmt.Sprintf("cannot convert %s to int", s.Value)}
+	}
+	return val, nil
+}
+func (s *String) CoerceFloat() (float64, Object) {
+	var val float64
+	_, err := fmt.Sscanf(s.Value, "%f", &val)
+	if err != nil {
+		return 0, &Error{Message: fmt.Sprintf("cannot convert %s to float", s.Value)}
+	}
+	return val, nil
+}
 
 type Slice struct {
 	Start *Integer // nil means None (default start)
@@ -242,6 +287,10 @@ func (s *Slice) AsBool() (bool, Object)              { return false, &Error{Mess
 func (s *Slice) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
 func (s *Slice) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
+func (s *Slice) CoerceString() (string, Object) { return s.Inspect(), nil }
+func (s *Slice) CoerceInt() (int64, Object)     { return 0, &Error{Message: ErrMustBeInteger} }
+func (s *Slice) CoerceFloat() (float64, Object) { return 0, &Error{Message: ErrMustBeNumber} }
+
 type Null struct{}
 
 func (n *Null) Type() ObjectType { return NULL_OBJ }
@@ -253,6 +302,10 @@ func (n *Null) AsFloat() (float64, Object)          { return 0, &Error{Message: 
 func (n *Null) AsBool() (bool, Object)              { return false, nil }
 func (n *Null) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
 func (n *Null) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
+
+func (n *Null) CoerceString() (string, Object) { return n.Inspect(), nil }
+func (n *Null) CoerceInt() (int64, Object)     { return 0, nil }
+func (n *Null) CoerceFloat() (float64, Object) { return 0, nil }
 
 type ReturnValue struct {
 	Value Object
@@ -268,6 +321,10 @@ func (rv *ReturnValue) AsBool() (bool, Object)              { return false, &Err
 func (rv *ReturnValue) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
 func (rv *ReturnValue) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
+func (rv *ReturnValue) CoerceString() (string, Object) { return rv.Inspect(), nil }
+func (rv *ReturnValue) CoerceInt() (int64, Object)     { return 0, &Error{Message: ErrMustBeInteger} }
+func (rv *ReturnValue) CoerceFloat() (float64, Object) { return 0, &Error{Message: ErrMustBeNumber} }
+
 type Break struct{}
 
 func (b *Break) Type() ObjectType { return BREAK_OBJ }
@@ -280,6 +337,10 @@ func (b *Break) AsBool() (bool, Object)              { return false, &Error{Mess
 func (b *Break) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
 func (b *Break) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
+func (b *Break) CoerceString() (string, Object) { return b.Inspect(), nil }
+func (b *Break) CoerceInt() (int64, Object)     { return 0, &Error{Message: ErrMustBeInteger} }
+func (b *Break) CoerceFloat() (float64, Object) { return 0, &Error{Message: ErrMustBeNumber} }
+
 type Continue struct{}
 
 func (c *Continue) Type() ObjectType { return CONTINUE_OBJ }
@@ -291,6 +352,10 @@ func (c *Continue) AsFloat() (float64, Object)          { return 0, &Error{Messa
 func (c *Continue) AsBool() (bool, Object)              { return false, &Error{Message: ErrMustBeBoolean} }
 func (c *Continue) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
 func (c *Continue) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
+
+func (c *Continue) CoerceString() (string, Object) { return c.Inspect(), nil }
+func (c *Continue) CoerceInt() (int64, Object)     { return 0, &Error{Message: ErrMustBeInteger} }
+func (c *Continue) CoerceFloat() (float64, Object) { return 0, &Error{Message: ErrMustBeNumber} }
 
 type Function struct {
 	Name          string
@@ -312,6 +377,10 @@ func (f *Function) AsBool() (bool, Object)              { return false, &Error{M
 func (f *Function) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
 func (f *Function) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
+func (f *Function) CoerceString() (string, Object) { return f.Inspect(), nil }
+func (f *Function) CoerceInt() (int64, Object)     { return 0, &Error{Message: ErrMustBeInteger} }
+func (f *Function) CoerceFloat() (float64, Object) { return 0, &Error{Message: ErrMustBeNumber} }
+
 type LambdaFunction struct {
 	Parameters    []*ast.Identifier
 	DefaultValues map[string]ast.Expression
@@ -330,6 +399,10 @@ func (lf *LambdaFunction) AsFloat() (float64, Object)          { return 0, &Erro
 func (lf *LambdaFunction) AsBool() (bool, Object)              { return false, &Error{Message: ErrMustBeBoolean} }
 func (lf *LambdaFunction) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
 func (lf *LambdaFunction) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
+
+func (lf *LambdaFunction) CoerceString() (string, Object) { return lf.Inspect(), nil }
+func (lf *LambdaFunction) CoerceInt() (int64, Object)     { return 0, &Error{Message: ErrMustBeInteger} }
+func (lf *LambdaFunction) CoerceFloat() (float64, Object) { return 0, &Error{Message: ErrMustBeNumber} }
 
 // BuiltinFunction is the signature for all builtin functions
 // - ctx: Context with environment and runtime information
@@ -357,6 +430,10 @@ func (b *Builtin) AsDict() (map[string]Object, Object) {
 	}
 	return nil, &Error{Message: ErrMustBeDict}
 }
+
+func (b *Builtin) CoerceString() (string, Object) { return b.Inspect(), nil }
+func (b *Builtin) CoerceInt() (int64, Object)     { return 0, &Error{Message: ErrMustBeInteger} }
+func (b *Builtin) CoerceFloat() (float64, Object) { return 0, &Error{Message: ErrMustBeNumber} }
 
 // Library represents a pre-built collection of builtin functions and constants
 // This eliminates the need for function wrappers and provides direct access
@@ -427,6 +504,10 @@ func (l *Library) AsFloat() (float64, Object)          { return 0, &Error{Messag
 func (l *Library) AsBool() (bool, Object)              { return false, &Error{Message: ErrMustBeBoolean} }
 func (l *Library) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
 func (l *Library) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
+
+func (l *Library) CoerceString() (string, Object) { return l.Inspect(), nil }
+func (l *Library) CoerceInt() (int64, Object)     { return 0, &Error{Message: ErrMustBeInteger} }
+func (l *Library) CoerceFloat() (float64, Object) { return 0, &Error{Message: ErrMustBeNumber} }
 
 // contextKey is used to store instance data in context
 type contextKey string
@@ -729,6 +810,10 @@ func (l *List) AsBool() (bool, Object)              { return len(l.Elements) > 0
 func (l *List) AsList() ([]Object, Object)          { return l.Elements, nil }
 func (l *List) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
+func (l *List) CoerceString() (string, Object) { return l.Inspect(), nil }
+func (l *List) CoerceInt() (int64, Object)     { return 0, &Error{Message: ErrMustBeInteger} }
+func (l *List) CoerceFloat() (float64, Object) { return 0, &Error{Message: ErrMustBeNumber} }
+
 type Tuple struct {
 	Elements []Object
 }
@@ -756,6 +841,10 @@ func (t *Tuple) AsFloat() (float64, Object)          { return 0, &Error{Message:
 func (t *Tuple) AsBool() (bool, Object)              { return len(t.Elements) > 0, nil }
 func (t *Tuple) AsList() ([]Object, Object)          { return t.Elements, nil }
 func (t *Tuple) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
+
+func (t *Tuple) CoerceString() (string, Object) { return t.Inspect(), nil }
+func (t *Tuple) CoerceInt() (int64, Object)     { return 0, &Error{Message: ErrMustBeInteger} }
+func (t *Tuple) CoerceFloat() (float64, Object) { return 0, &Error{Message: ErrMustBeNumber} }
 
 type Dict struct {
 	Pairs map[string]DictPair
@@ -797,6 +886,10 @@ func (d *Dict) AsDict() (map[string]Object, Object) {
 	return result, nil
 }
 
+func (d *Dict) CoerceString() (string, Object) { return d.Inspect(), nil }
+func (d *Dict) CoerceInt() (int64, Object)     { return 0, &Error{Message: ErrMustBeInteger} }
+func (d *Dict) CoerceFloat() (float64, Object) { return 0, &Error{Message: ErrMustBeNumber} }
+
 type Error struct {
 	Message  string
 	Line     int
@@ -826,6 +919,10 @@ func (e *Error) AsBool() (bool, Object)              { return false, nil }
 func (e *Error) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
 func (e *Error) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
+func (e *Error) CoerceString() (string, Object) { return e.Inspect(), nil }
+func (e *Error) CoerceInt() (int64, Object)     { return 0, &Error{Message: ErrMustBeInteger} }
+func (e *Error) CoerceFloat() (float64, Object) { return 0, &Error{Message: ErrMustBeNumber} }
+
 type Exception struct {
 	Message        string
 	ExceptionType  string // Exception type for identification (e.g., "SystemExit", "ValueError", etc.)
@@ -840,6 +937,10 @@ func (ex *Exception) AsFloat() (float64, Object)          { return 0, &Error{Mes
 func (ex *Exception) AsBool() (bool, Object)              { return false, nil }
 func (ex *Exception) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
 func (ex *Exception) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
+
+func (ex *Exception) CoerceString() (string, Object) { return ex.Inspect(), nil }
+func (ex *Exception) CoerceInt() (int64, Object)     { return 0, &Error{Message: ErrMustBeInteger} }
+func (ex *Exception) CoerceFloat() (float64, Object) { return 0, &Error{Message: ErrMustBeNumber} }
 
 type Class struct {
 	Name      string
@@ -857,6 +958,10 @@ func (c *Class) AsFloat() (float64, Object)          { return 0, &Error{Message:
 func (c *Class) AsBool() (bool, Object)              { return true, nil }
 func (c *Class) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
 func (c *Class) AsDict() (map[string]Object, Object) { return c.Methods, nil }
+
+func (c *Class) CoerceString() (string, Object) { return c.Inspect(), nil }
+func (c *Class) CoerceInt() (int64, Object)     { return 0, &Error{Message: ErrMustBeInteger} }
+func (c *Class) CoerceFloat() (float64, Object) { return 0, &Error{Message: ErrMustBeNumber} }
 
 type Instance struct {
 	Class  *Class
@@ -881,6 +986,10 @@ func (i *Instance) AsBool() (bool, Object)              { return true, nil }
 func (i *Instance) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
 func (i *Instance) AsDict() (map[string]Object, Object) { return i.Fields, nil }
 
+func (i *Instance) CoerceString() (string, Object) { return i.Inspect(), nil }
+func (i *Instance) CoerceInt() (int64, Object)     { return 0, &Error{Message: ErrMustBeInteger} }
+func (i *Instance) CoerceFloat() (float64, Object) { return 0, &Error{Message: ErrMustBeNumber} }
+
 type Super struct {
 	Class    *Class
 	Instance *Instance
@@ -897,6 +1006,10 @@ func (s *Super) AsFloat() (float64, Object)          { return 0, &Error{Message:
 func (s *Super) AsBool() (bool, Object)              { return true, nil }
 func (s *Super) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
 func (s *Super) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
+
+func (s *Super) CoerceString() (string, Object) { return s.Inspect(), nil }
+func (s *Super) CoerceInt() (int64, Object)     { return 0, &Error{Message: ErrMustBeInteger} }
+func (s *Super) CoerceFloat() (float64, Object) { return 0, &Error{Message: ErrMustBeNumber} }
 
 // LibraryRegistrar is an interface for registering libraries.
 // This allows external libraries to register themselves without circular imports.

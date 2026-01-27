@@ -19,6 +19,10 @@ func (dk *DictKeys) AsBool() (bool, Object)              { return len(dk.Dict.Pa
 func (dk *DictKeys) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
 func (dk *DictKeys) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
+func (dk *DictKeys) CoerceString() (string, Object) { return dk.Inspect(), nil }
+func (dk *DictKeys) CoerceInt() (int64, Object)     { return 0, &Error{Message: ErrMustBeInteger} }
+func (dk *DictKeys) CoerceFloat() (float64, Object) { return 0, &Error{Message: ErrMustBeNumber} }
+
 // CreateIterator returns an iterator for the keys
 func (dk *DictKeys) CreateIterator() *Iterator {
 	// Snapshot keys to avoid concurrent map modification issues during iteration
@@ -67,6 +71,10 @@ func (dv *DictValues) AsBool() (bool, Object)              { return len(dv.Dict.
 func (dv *DictValues) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
 func (dv *DictValues) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
+func (dv *DictValues) CoerceString() (string, Object) { return dv.Inspect(), nil }
+func (dv *DictValues) CoerceInt() (int64, Object)     { return 0, &Error{Message: ErrMustBeInteger} }
+func (dv *DictValues) CoerceFloat() (float64, Object) { return 0, &Error{Message: ErrMustBeNumber} }
+
 func (dv *DictValues) CreateIterator() *Iterator {
 	keys := make([]string, 0, len(dv.Dict.Pairs))
 	for k := range dv.Dict.Pairs {
@@ -104,6 +112,10 @@ func (di *DictItems) AsFloat() (float64, Object)          { return 0, &Error{Mes
 func (di *DictItems) AsBool() (bool, Object)              { return len(di.Dict.Pairs) > 0, nil }
 func (di *DictItems) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
 func (di *DictItems) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
+
+func (di *DictItems) CoerceString() (string, Object) { return di.Inspect(), nil }
+func (di *DictItems) CoerceInt() (int64, Object)     { return 0, &Error{Message: ErrMustBeInteger} }
+func (di *DictItems) CoerceFloat() (float64, Object) { return 0, &Error{Message: ErrMustBeNumber} }
 
 func (di *DictItems) CreateIterator() *Iterator {
 	keys := make([]string, 0, len(di.Dict.Pairs))

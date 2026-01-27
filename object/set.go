@@ -40,6 +40,10 @@ func (s *Set) AsList() ([]Object, Object) {
 }
 func (s *Set) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
 
+func (s *Set) CoerceString() (string, Object) { return s.Inspect(), nil }
+func (s *Set) CoerceInt() (int64, Object)     { return 0, &Error{Message: ErrMustBeInteger} }
+func (s *Set) CoerceFloat() (float64, Object) { return 0, &Error{Message: ErrMustBeNumber} }
+
 // NewSet creates a new empty Set
 func NewSet() *Set {
 	return &Set{Elements: make(map[string]Object)}
