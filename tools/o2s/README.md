@@ -1,8 +1,8 @@
-# o2s - OpenAPI to Scriptling
+# o2s - OpenAPI to Scriptling Library Generator
 
 Convert OpenAPI v3 specifications into pure Scriptling HTTP client libraries.
 
-**Written entirely in Scriptling** - 620 lines of pure Scriptling code, no Go dependencies.
+**Written entirely in Scriptling**
 
 ## Quick Start
 
@@ -24,6 +24,7 @@ scriptling o2s.py -- <spec_file> [options]
 ```
 
 **Options:**
+
 - `--list` - List all endpoints (default)
 - `--generate` - Generate Scriptling library
 - `--filter <file>` - Filter endpoints (one per line: `METHOD /path`)
@@ -58,10 +59,12 @@ scriptling o2s.py -- examples/petstore.json --generate \
 ## Generated Library
 
 The tool generates two files:
+
 - `<base>.py` - Class-based HTTP client with methods for each endpoint
 - `<base>.md` - Complete documentation with examples
 
 **Generated library features:**
+
 - Class-based client (supports multiple environments)
 - Constructor: `APIClient(base_url, auth_token=None)`
 - Methods: `set_auth_token()`, `set_header()`
@@ -87,7 +90,7 @@ users = client.list_users(limit=10, offset=0)  # 2 params
 
 ```python
 # Methods with many parameters use data dict
-response = client.complex_operation(data={
+response = client.complex_operation({
     "user_id": "123",
     "filter": "active",
     "sort": "name",
