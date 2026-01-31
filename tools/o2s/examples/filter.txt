@@ -1,6 +1,14 @@
-# Example filter file
-# Only include these endpoints in the generated library
+# Example filter file for o2s
+# Only generate methods for these endpoints
 
+# Pet operations
 GET /pets
 POST /pets
 GET /pets/{petId}
+PUT /pets/{petId}
+
+# You can add comments anywhere
+# Blank lines are ignored
+
+# Owner operations
+GET /pets/{petId}/owner

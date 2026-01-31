@@ -29,6 +29,9 @@ scriptling o2s.py -- <spec_file> [options]
 - `--filter <file>` - Filter endpoints (one per line: `METHOD /path`)
 - `--output <base>` - Output file base (default: api_client)
   - Generates `<base>.py` and `<base>.md`
+- `--max-params <n>` - Max parameters before using data dict (default: 5)
+  - Below threshold: Individual named parameters
+  - At/above threshold: Single `data=None` parameter
 
 **Note:** Use `--` separator when running with scriptling CLI.
 
@@ -43,6 +46,9 @@ scriptling o2s.py -- examples/petstore.json --generate
 
 # Generate with custom name (creates petstore.py and petstore.md)
 scriptling o2s.py -- examples/petstore.json --generate --output petstore
+
+# Use data dict for methods with 3+ parameters
+scriptling o2s.py -- examples/petstore.json --generate --max-params 3
 
 # Generate filtered library
 scriptling o2s.py -- examples/petstore.json --generate \
@@ -65,18 +71,35 @@ The tool generates two files:
 
 ## Using Generated Libraries
 
+### Individual Parameters (< threshold)
+
 ```python
 import api_client
 
-# Single environment
 client = api_client.APIClient("https://api.example.com", "your-token")
-response = client.get_users(limit=10)
-print(response["body"])
 
-user = client.get_user("123")
-print(user["body"])
+# Methods with few parameters use named arguments
+response = client.get_user("user123")  # 1 param
+users = client.list_users(limit=10, offset=0)  # 2 params
+```
 
-# Multiple environments (no conflicts!)
+### Data Dictionary (>= threshold)
+
+```python
+# Methods with many parameters use data dict
+response = client.complex_operation(data={
+    "user_id": "123",
+    "filter": "active",
+    "sort": "name",
+    "limit": 10,
+    "offset": 0
+})
+```
+
+### Multiple Environments
+
+```python
+# No conflicts between environments
 prod = api_client.APIClient("https://prod.example.com", "prod-token")
 dev = api_client.APIClient("https://dev.example.com", "dev-token")
 

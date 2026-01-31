@@ -26,7 +26,7 @@ except:
 
 def parse_args():
     """Parse command line arguments"""
-    args = {"mode": "list", "spec": None, "filter": None, "output": None}
+    args = {"mode": "list", "spec": None, "filter": None, "output": None, "max_params": 5}
     
     # First positional arg is spec file
     if len(sys.argv) > 1 and not sys.argv[1].startswith("--"):
@@ -42,6 +42,9 @@ def parse_args():
             i += 2
         elif arg == "--output" and i + 1 < len(sys.argv):
             args["output"] = sys.argv[i + 1]
+            i += 2
+        elif arg == "--max-params" and i + 1 < len(sys.argv):
+            args["max_params"] = int(sys.argv[i + 1])
             i += 2
         elif arg == "--generate":
             args["mode"] = "generate"
@@ -62,7 +65,7 @@ def print_usage():
     print()
     print("Usage:")
     print("  scriptling o2s.py -- <spec_file> [--list]")
-    print("  scriptling o2s.py -- <spec_file> --generate [--filter <file>] [--output <base>]")
+    print("  scriptling o2s.py -- <spec_file> --generate [--filter <file>] [--output <base>] [--max-params <n>]")
     print("  ./o2s.py <spec_file> [options]  (if executable)")
     print()
     print("Note: Use '--' separator when running with scriptling CLI")
@@ -75,6 +78,7 @@ def print_usage():
     print("  --filter <file>     File with endpoints to include (one per line)")
     print("  --output <base>     Output file base (default: api_client)")
     print("                      Generates <base>.py and <base>.md")
+    print("  --max-params <n>    Max parameters before using data/kwargs (default: 5)")
     print()
     print("Examples:")
     print("  # List all endpoints")
@@ -85,6 +89,9 @@ def print_usage():
     print()
     print("  # Generate with custom name (creates petstore.py and petstore.md)")
     print("  scriptling o2s.py -- api.json --generate --output petstore")
+    print()
+    print("  # Use data/kwargs for methods with >3 params")
+    print("  scriptling o2s.py -- api.json --generate --max-params 3")
 
 def load_spec(filepath):
     """Load OpenAPI spec from JSON or YAML file with $ref support"""
@@ -349,7 +356,7 @@ def get_request_body(operation, spec, base_file):
 
     return None
 
-def generate_function(endpoint, spec, base_file):
+def generate_function(endpoint, spec, base_file, max_params=5):
     """Generate Scriptling method for endpoint"""
     op_id = get_operation_id(endpoint)
     method = endpoint["method"]
@@ -359,31 +366,41 @@ def generate_function(endpoint, spec, base_file):
     params = get_parameters(operation, spec, base_file)
     body = get_request_body(operation, spec, base_file)
 
+    # Count total parameters (excluding self)
+    total_params = len(params["path"]) + len(params["query"]) + (1 if body else 0) + (1 if params["header"] else 0)
+    use_data_only = total_params >= max_params
+
     # Build function signature with self
     args = ["self"]
 
-    # Path parameters (required)
-    for param in params["path"]:
-        args.append(sanitize_name(param["name"]))
+    if use_data_only:
+        # Use just data parameter for many parameters
+        args.append("data=None")
+        func_sig = "    def " + op_id + "(" + ", ".join(args) + "):"
+    else:
+        # Use individual named parameters
+        # Path parameters (required)
+        for param in params["path"]:
+            args.append(sanitize_name(param["name"]))
 
-    # Query parameters (optional with defaults)
-    for param in params["query"]:
-        required = param.get("required", False)
-        param_name = sanitize_name(param["name"])
-        if required:
-            args.append(param_name)
-        else:
-            args.append(param_name + "=None")
+        # Query parameters (optional with defaults)
+        for param in params["query"]:
+            required = param.get("required", False)
+            param_name = sanitize_name(param["name"])
+            if required:
+                args.append(param_name)
+            else:
+                args.append(param_name + "=None")
 
-    # Body parameter
-    if body:
-        args.append("body=None")
+        # Body parameter
+        if body:
+            args.append("data=None")
 
-    # Headers
-    if params["header"]:
-        args.append("headers=None")
+        # Headers
+        if params["header"]:
+            args.append("headers=None")
 
-    func_sig = "    def " + op_id + "(" + ", ".join(args) + "):"
+        func_sig = "    def " + op_id + "(" + ", ".join(args) + "):"
 
     # Build function body
     lines = []
@@ -399,6 +416,11 @@ def generate_function(endpoint, spec, base_file):
         lines.append("        " + method + " " + path)
 
     lines.append('        """')
+    
+    # Extract from data dict if using data-only pattern
+    if use_data_only:
+        lines.append('        if data is None:')
+        lines.append('            data = {}')
 
     # Build URL
     lines.append('        url = self.base_url + "' + path + '"')
@@ -408,6 +430,8 @@ def generate_function(endpoint, spec, base_file):
         for param in params["path"]:
             name = param["name"]
             param_name = sanitize_name(name)
+            if use_data_only:
+                lines.append('        ' + param_name + ' = data.get("' + param_name + '")')
             lines.append('        url = url.replace("{' + name + '}", str(' + param_name + '))')
 
     # Build query parameters
@@ -416,12 +440,16 @@ def generate_function(endpoint, spec, base_file):
         for param in params["query"]:
             name = param["name"]
             param_name = sanitize_name(name)
+            if use_data_only:
+                lines.append('        ' + param_name + ' = data.get("' + param_name + '")')
             lines.append('        if ' + param_name + ' is not None:')
             lines.append('            query_params["' + name + '"] = ' + param_name)
 
     # Build headers
     lines.append('        req_headers = self.headers.copy()')
     if params["header"]:
+        if use_data_only:
+            lines.append('        headers = data.get("headers")')
         lines.append('        if headers:')
         lines.append('            req_headers.update(headers)')
 
@@ -439,8 +467,13 @@ def generate_function(endpoint, spec, base_file):
     if body:
         if not params["query"]:
             lines.append('        }')
-        lines.append('        if body is not None:')
-        lines.append('            options["json"] = body')
+        if use_data_only:
+            lines.append('        body = data.get("body")')
+            lines.append('        if body is not None:')
+            lines.append('            options["json"] = body')
+        else:
+            lines.append('        if data is not None:')
+            lines.append('            options["json"] = data')
 
     if not params["query"] and not body:
         lines.append('        }')
@@ -450,7 +483,7 @@ def generate_function(endpoint, spec, base_file):
 
     return func_sig + "\n" + "\n".join(lines)
 
-def generate_library(spec, endpoints, base_file):
+def generate_library(spec, endpoints, base_file, max_params=5):
     """Generate complete Scriptling library with class-based client"""
     info = spec.get("info", {})
     title = info.get("title", "API")
@@ -537,7 +570,7 @@ def generate_library(spec, endpoints, base_file):
     lines.append('    ')
 
     for endpoint in endpoints:
-        lines.append(generate_function(endpoint, spec, base_file))
+        lines.append(generate_function(endpoint, spec, base_file, max_params))
         lines.append('    ')
 
     return "\n".join(lines)
@@ -679,7 +712,7 @@ def main():
         list_endpoints(endpoints)
     elif args["mode"] == "generate":
         # Generate library
-        library = generate_library(spec, endpoints, args["spec"])
+        library = generate_library(spec, endpoints, args["spec"], args["max_params"])
         readme = generate_readme(spec, endpoints, args["spec"])
 
         # Determine output file base
