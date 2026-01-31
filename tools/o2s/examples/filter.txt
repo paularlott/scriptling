@@ -1,0 +1,6 @@
+# Example filter file
+# Only include these endpoints in the generated library
+
+GET /pets
+POST /pets
+GET /pets/{petId}

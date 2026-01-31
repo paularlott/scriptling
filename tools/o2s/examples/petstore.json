@@ -1,0 +1,188 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Pet Store API",
+    "version": "1.0.0",
+    "description": "A simple pet store API for demonstration"
+  },
+  "servers": [
+    {
+      "url": "https://api.petstore.example.com/v1"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "paths": {
+    "/pets": {
+      "get": {
+        "operationId": "listPets",
+        "summary": "List all pets",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of pets to return",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Number of pets to skip",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A list of pets"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createPet",
+        "summary": "Create a new pet",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "species": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Pet created"
+          }
+        }
+      }
+    },
+    "/pets/{petId}": {
+      "get": {
+        "operationId": "getPet",
+        "summary": "Get a pet by ID",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PetIdParam"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pet details"
+          }
+        }
+      },
+      "put": {
+        "operationId": "updatePet",
+        "summary": "Update a pet",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PetIdParam"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/PetBody"
+        },
+        "responses": {
+          "200": {
+            "description": "Pet updated"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deletePet",
+        "summary": "Delete a pet",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PetIdParam"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Pet deleted"
+          }
+        }
+      }
+    },
+    "/pets/{petId}/owner": {
+      "get": {
+        "operationId": "getPetOwner",
+        "summary": "Get the owner of a pet",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PetIdParam"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Owner details"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "PetIdParam": {
+        "name": "petId",
+        "in": "path",
+        "required": true,
+        "description": "The ID of the pet",
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "requestBodies": {
+      "PetBody": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Pet"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Pet": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "species": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    }
+  }
+}
