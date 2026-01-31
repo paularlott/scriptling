@@ -18,4 +18,5 @@ const (
 	MCPLibraryName        = "scriptling.mcp"
 	ToonLibraryName       = "scriptling.toon"
 	ConsoleLibraryName    = "scriptling.console"
+	YAMLLibraryName       = "yaml"
 )
