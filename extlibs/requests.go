@@ -154,6 +154,22 @@ func extractRequestArgs(kwargs object.Kwargs, args []object.Object, hasData bool
 			} else {
 				return "", "", nil, errors.NewTypeError("STRING", v.Type().String())
 			}
+		} else if hasData && k == "json" {
+			// Handle json parameter - convert to JSON string
+			jsonBytes, err := json.Marshal(convertObjectToJSON(v))
+			if err != nil {
+				return "", "", nil, errors.NewError("failed to encode json: %s", err.Error())
+			}
+			data = string(jsonBytes)
+			// Set Content-Type header if not already set
+			if _, hasHeaders := options["headers"]; !hasHeaders {
+				headerPairs := make(map[string]object.DictPair)
+				headerPairs["Content-Type"] = object.DictPair{
+					Key:   &object.String{Value: "Content-Type"},
+					Value: &object.String{Value: "application/json"},
+				}
+				options["headers"] = &object.Dict{Pairs: headerPairs}
+			}
 		} else {
 			options[k] = v
 		}
@@ -236,17 +252,20 @@ Returns:
 			timeout, headers, user, pass := parseRequestOptions(options)
 			return httpRequestWithContext(ctx, "POST", url, data, timeout, headers, user, pass)
 		},
-		HelpText: `post(url, data=None, **kwargs) - Send a POST request
+		HelpText: `post(url, data=None, json=None, **kwargs) - Send a POST request
 
 Sends an HTTP POST request to the specified URL with the given data.
 
 Parameters:
   url (string): The URL to send the request to
-  data (string, optional): The request body data
+  data (string, optional): The request body data as a string
+  json (dict/list, optional): Data to be JSON-encoded and sent (sets Content-Type to application/json)
   **kwargs: Optional arguments
     - timeout (int): Request timeout in seconds (default: 5)
     - headers (dict): HTTP headers as key-value pairs
     - auth (tuple/list): Basic authentication as (username, password)
+
+Note: Use either 'data' or 'json', not both.
 
 Returns:
   Response object with status_code, text, headers, body, url, and json() method`,
@@ -260,17 +279,20 @@ Returns:
 			timeout, headers, user, pass := parseRequestOptions(options)
 			return httpRequestWithContext(ctx, "PUT", url, data, timeout, headers, user, pass)
 		},
-		HelpText: `put(url, data=None, **kwargs) - Send a PUT request
+		HelpText: `put(url, data=None, json=None, **kwargs) - Send a PUT request
 
 Sends an HTTP PUT request to the specified URL with the given data.
 
 Parameters:
   url (string): The URL to send the request to
-  data (string, optional): The request body data
+  data (string, optional): The request body data as a string
+  json (dict/list, optional): Data to be JSON-encoded and sent (sets Content-Type to application/json)
   **kwargs: Optional arguments
     - timeout (int): Request timeout in seconds (default: 5)
     - headers (dict): HTTP headers as key-value pairs
     - auth (tuple/list): Basic authentication as (username, password)
+
+Note: Use either 'data' or 'json', not both.
 
 Returns:
   Response object with status_code, text, headers, body, url, and json() method`,
@@ -307,17 +329,20 @@ Returns:
 			timeout, headers, user, pass := parseRequestOptions(options)
 			return httpRequestWithContext(ctx, "PATCH", url, data, timeout, headers, user, pass)
 		},
-		HelpText: `patch(url, data=None, **kwargs) - Send a PATCH request
+		HelpText: `patch(url, data=None, json=None, **kwargs) - Send a PATCH request
 
 Sends an HTTP PATCH request to the specified URL with the given data.
 
 Parameters:
   url (string): The URL to send the request to
-  data (string, optional): The request body data
+  data (string, optional): The request body data as a string
+  json (dict/list, optional): Data to be JSON-encoded and sent (sets Content-Type to application/json)
   **kwargs: Optional arguments
     - timeout (int): Request timeout in seconds (default: 5)
     - headers (dict): HTTP headers as key-value pairs
     - auth (tuple/list): Basic authentication as (username, password)
+
+Note: Use either 'data' or 'json', not both.
 
 Returns:
   Response object with status_code, text, headers, body, url, and json() method`,
@@ -428,5 +453,35 @@ func convertJSONToObject(data interface{}) object.Object {
 		return &object.Dict{Pairs: pairs}
 	default:
 		return &object.Null{}
+	}
+}
+
+// convertObjectToJSON converts Scriptling objects to Go's interface{} for JSON encoding
+func convertObjectToJSON(obj object.Object) interface{} {
+	switch v := obj.(type) {
+	case *object.Null:
+		return nil
+	case *object.Boolean:
+		return v.Value
+	case *object.Integer:
+		return v.Value
+	case *object.Float:
+		return v.Value
+	case *object.String:
+		return v.Value
+	case *object.List:
+		result := make([]interface{}, len(v.Elements))
+		for i, elem := range v.Elements {
+			result[i] = convertObjectToJSON(elem)
+		}
+		return result
+	case *object.Dict:
+		result := make(map[string]interface{})
+		for key, pair := range v.Pairs {
+			result[key] = convertObjectToJSON(pair.Value)
+		}
+		return result
+	default:
+		return nil
 	}
 }

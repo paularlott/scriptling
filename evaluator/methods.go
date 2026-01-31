@@ -35,6 +35,21 @@ func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression
 		keywords[k] = val
 	}
 
+	// Handle **kwargs unpacking
+	if mce.KwargsUnpack != nil {
+		kwargsVal := evalWithContext(ctx, mce.KwargsUnpack, env)
+		if object.IsError(kwargsVal) {
+			return kwargsVal
+		}
+		if dict, ok := kwargsVal.(*object.Dict); ok {
+			for k, pair := range dict.Pairs {
+				keywords[k] = pair.Value
+			}
+		} else {
+			return errors.NewError("argument after ** must be a dictionary, not %s", kwargsVal.Type())
+		}
+	}
+
 	return callStringMethodWithKeywords(ctx, obj, mce.Method.Value, args, keywords, env)
 }
 

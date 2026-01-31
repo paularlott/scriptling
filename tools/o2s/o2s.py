@@ -366,6 +366,18 @@ def generate_function(endpoint, spec, base_file, max_params=5):
     params = get_parameters(operation, spec, base_file)
     body = get_request_body(operation, spec, base_file)
 
+    # Map HTTP method to requests function
+    method_map = {
+        "GET": "requests.get",
+        "POST": "requests.post",
+        "PUT": "requests.put",
+        "PATCH": "requests.patch",
+        "DELETE": "requests.delete",
+        "HEAD": "requests.head",
+        "OPTIONS": "requests.options"
+    }
+    request_func = method_map.get(method, "requests.get")
+
     # Count total parameters (excluding self)
     total_params = len(params["path"]) + len(params["query"]) + (1 if body else 0) + (1 if params["header"] else 0)
     use_data_only = total_params >= max_params
@@ -453,33 +465,21 @@ def generate_function(endpoint, spec, base_file, max_params=5):
         lines.append('        if headers:')
         lines.append('            req_headers.update(headers)')
 
-    # Build request
+    # Build request - call appropriate requests method directly
     lines.append('        ')
-    lines.append('        options = {')
-    lines.append('            "method": "' + method + '",')
-    lines.append('            "headers": req_headers')
-
+    
+    # Build arguments for request
+    req_args = ['url=url', 'headers=req_headers']
     if params["query"]:
-        lines.append('        }')
-        lines.append('        if query_params:')
-        lines.append('            options["params"] = query_params')
-
+        req_args.append('params=query_params if query_params else None')
     if body:
-        if not params["query"]:
-            lines.append('        }')
         if use_data_only:
             lines.append('        body = data.get("body")')
-            lines.append('        if body is not None:')
-            lines.append('            options["json"] = body')
+            req_args.append('json=body')
         else:
-            lines.append('        if data is not None:')
-            lines.append('            options["json"] = data')
-
-    if not params["query"] and not body:
-        lines.append('        }')
-
-    lines.append('        ')
-    lines.append('        return self._request(url, options)')
+            req_args.append('json=data')
+    
+    lines.append('        return self._request(' + request_func + ', ' + ', '.join(req_args) + ')')
 
     return func_sig + "\n" + "\n".join(lines)
 
@@ -535,30 +535,10 @@ def generate_library(spec, endpoints, base_file, max_params=5):
     lines.append('        """Set a custom header"""')
     lines.append('        self.headers[key] = value')
     lines.append('    ')
-    lines.append('    def _request(self, url, options):')
+    lines.append('    def _request(self, method_func, **kwargs):')
     lines.append('        """Internal request handler"""')
     lines.append('        try:')
-    lines.append('            method = options["method"]')
-    lines.append('            headers = options["headers"]')
-    lines.append('            params = options.get("params")')
-    lines.append('            json_body = options.get("json")')
-    lines.append('            ')
-    lines.append('            if method == "GET":')
-    lines.append('                response = requests.get(url=url, headers=headers, params=params)')
-    lines.append('            elif method == "POST":')
-    lines.append('                response = requests.post(url=url, headers=headers, json=json_body)')
-    lines.append('            elif method == "PUT":')
-    lines.append('                response = requests.put(url=url, headers=headers, json=json_body)')
-    lines.append('            elif method == "PATCH":')
-    lines.append('                response = requests.patch(url=url, headers=headers, json=json_body)')
-    lines.append('            elif method == "DELETE":')
-    lines.append('                response = requests.delete(url=url, headers=headers)')
-    lines.append('            elif method == "HEAD":')
-    lines.append('                response = requests.head(url=url, headers=headers)')
-    lines.append('            elif method == "OPTIONS":')
-    lines.append('                response = requests.options(url=url, headers=headers)')
-    lines.append('            ')
-    lines.append('            # Parse JSON response body')
+    lines.append('            response = method_func(**kwargs)')
     lines.append('            body = response["body"]')
     lines.append('            if response["headers"].get("Content-Type", "").startswith("application/json"):')
     lines.append('                body = json.loads(body)')
