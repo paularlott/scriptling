@@ -1,0 +1,44 @@
+openapi: 3.0.0
+info:
+  title: Pet Store API (Multi-File YAML)
+  version: 1.0.0
+  description: Pet store API with external YAML component references
+servers:
+  - url: https://api.petstore.example.com/v1
+security:
+  - bearerAuth: []
+paths:
+  /pets/{petId}:
+    get:
+      operationId: getPet
+      summary: Get a pet by ID
+      parameters:
+        - $ref: 'components.yaml#/parameters/PetIdParam'
+      responses:
+        '200':
+          description: Pet details
+    put:
+      operationId: updatePet
+      summary: Update a pet
+      parameters:
+        - $ref: 'components.yaml#/parameters/PetIdParam'
+      requestBody:
+        $ref: 'components.yaml#/requestBodies/PetBody'
+      responses:
+        '200':
+          description: Pet updated
+  /owners/{ownerId}:
+    get:
+      operationId: getOwner
+      summary: Get an owner by ID
+      parameters:
+        - $ref: 'components.yaml#/parameters/OwnerIdParam'
+      responses:
+        '200':
+          description: Owner details
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

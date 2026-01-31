@@ -1,0 +1,30 @@
+parameters:
+  PetIdParam:
+    name: petId
+    in: path
+    required: true
+    description: The ID of the pet
+    schema:
+      type: string
+  OwnerIdParam:
+    name: ownerId
+    in: path
+    required: true
+    description: The ID of the owner
+    schema:
+      type: string
+requestBodies:
+  PetBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: '#/schemas/Pet'
+schemas:
+  Pet:
+    type: object
+    properties:
+      name:
+        type: string
+      species:
+        type: string
