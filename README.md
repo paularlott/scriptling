@@ -214,6 +214,10 @@ cd examples/openai/scriptlingcoder
 ../../../bin/scriptling scriptlingcoder.py
 ```
 
+## Tools
+
+- **[o2s](tools/o2s/README.md)** - OpenAPI to Scriptling converter. Generate HTTP client libraries from OpenAPI v3 specs
+
 ## Documentation
 
 - **[Quick Reference](docs/QUICK_REFERENCE.md)** - Library recipes and patterns
