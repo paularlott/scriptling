@@ -144,3 +144,80 @@ result
 		}
 	}
 }
+
+func TestChainedInExpressionsWithShortCircuit(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{
+			name: "both conditions true",
+			input: `
+operation = {"requestBody": {"content": {}}}
+result = "requestBody" in operation and "content" in operation["requestBody"]
+`,
+			expected: true,
+		},
+		{
+			name: "first condition false - should short-circuit",
+			input: `
+operation = {"other": "value"}
+result = "requestBody" in operation and "content" in operation["requestBody"]
+`,
+			expected: false,
+		},
+		{
+			name: "triple nested check",
+			input: `
+data = {"level1": {"level2": {"level3": "value"}}}
+result = "level1" in data and "level2" in data["level1"] and "level3" in data["level1"]["level2"]
+`,
+			expected: true,
+		},
+		{
+			name: "triple nested check - first fails",
+			input: `
+data = {"other": "value"}
+result = "level1" in data and "level2" in data["level1"] and "level3" in data["level1"]["level2"]
+`,
+			expected: false,
+		},
+		{
+			name: "triple nested check - second fails",
+			input: `
+data = {"level1": {"other": "value"}}
+result = "level1" in data and "level2" in data["level1"] and "level3" in data["level1"]["level2"]
+`,
+			expected: false,
+		},
+		{
+			name: "or operator with short-circuit",
+			input: `
+data = {}
+result = "key" in data or len(data) == 0
+`,
+			expected: true,
+		},
+		{
+			name: "or operator - first true should not evaluate second",
+			input: `
+data = {"key": "value"}
+result = "key" in data or data["nonexistent"]["nested"]
+`,
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, env := testEvalWithEnv(tt.input)
+			result, ok := env.Get("result")
+			if !ok {
+				t.Errorf("variable result not found in environment")
+				return
+			}
+			testBooleanObject(t, result, tt.expected)
+		})
+	}
+}

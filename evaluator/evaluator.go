@@ -160,6 +160,11 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		}
 		return evalPrefixExpression(node.Operator, right)
 	case *ast.InfixExpression:
+		// Handle short-circuit operators (and, or) specially
+		if node.Operator == "and" || node.Operator == "or" {
+			return evalShortCircuitInfixExpression(ctx, node, env)
+		}
+		// For other operators, evaluate both sides
 		left := evalWithContext(ctx, node.Left, env)
 		if object.IsError(left) {
 			return left
@@ -451,22 +456,34 @@ func evalBitwiseNotOperatorExpression(right object.Object) object.Object {
 	}
 }
 
-func evalInfixExpression(ctx context.Context, operator string, left, right object.Object, env *object.Environment) object.Object {
-	// Handle boolean operators first (they work with any type)
-	switch operator {
+// evalShortCircuitInfixExpression handles and/or operators with proper short-circuit evaluation
+func evalShortCircuitInfixExpression(ctx context.Context, node *ast.InfixExpression, env *object.Environment) object.Object {
+	left := evalWithContext(ctx, node.Left, env)
+	if object.IsError(left) {
+		return left
+	}
+
+	switch node.Operator {
 	case "and":
-		// Short-circuit: return first falsy value or last value
+		// Short-circuit: if left is falsy, return it without evaluating right
 		if !isTruthy(left) {
 			return left
 		}
-		return right
+		// Left is truthy, evaluate and return right
+		return evalWithContext(ctx, node.Right, env)
 	case "or":
-		// Short-circuit: return first truthy value or last value
+		// Short-circuit: if left is truthy, return it without evaluating right
 		if isTruthy(left) {
 			return left
 		}
-		return right
+		// Left is falsy, evaluate and return right
+		return evalWithContext(ctx, node.Right, env)
+	default:
+		return errors.NewError("unknown operator: %s", node.Operator)
 	}
+}
+
+func evalInfixExpression(ctx context.Context, operator string, left, right object.Object, env *object.Environment) object.Object {
 
 	// Handle membership operators
 	switch operator {
