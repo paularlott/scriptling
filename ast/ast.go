@@ -244,10 +244,11 @@ func (cs *ClassStatement) TokenLiteral() string { return cs.Token.Literal }
 func (cs *ClassStatement) Line() int            { return cs.Token.Line }
 
 type CallExpression struct {
-	Token     token.Token
-	Function  Expression
-	Arguments []Expression
-	Keywords  map[string]Expression
+	Token        token.Token
+	Function     Expression
+	Arguments    []Expression
+	Keywords     map[string]Expression
+	KwargsUnpack Expression // For **kwargs unpacking
 }
 
 func (ce *CallExpression) expressionNode()      {}
@@ -417,11 +418,12 @@ func (as *AssertStatement) TokenLiteral() string { return as.Token.Literal }
 func (as *AssertStatement) Line() int            { return as.Token.Line }
 
 type MethodCallExpression struct {
-	Token     token.Token
-	Object    Expression
-	Method    *Identifier
-	Arguments []Expression
-	Keywords  map[string]Expression
+	Token        token.Token
+	Object       Expression
+	Method       *Identifier
+	Arguments    []Expression
+	Keywords     map[string]Expression
+	KwargsUnpack Expression // For **kwargs unpacking
 }
 
 func (mce *MethodCallExpression) expressionNode()      {}

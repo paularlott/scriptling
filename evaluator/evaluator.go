@@ -902,6 +902,21 @@ func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *obje
 		keywords[k] = val
 	}
 
+	// Handle **kwargs unpacking
+	if node.KwargsUnpack != nil {
+		kwargsVal := evalWithContext(ctx, node.KwargsUnpack, env)
+		if object.IsError(kwargsVal) {
+			return kwargsVal
+		}
+		if dict, ok := kwargsVal.(*object.Dict); ok {
+			for k, pair := range dict.Pairs {
+				keywords[k] = pair.Value
+			}
+		} else {
+			return errors.NewError("argument after ** must be a dictionary, not %s", kwargsVal.Type())
+		}
+	}
+
 	return applyFunctionWithContext(ctx, function, args, keywords, env)
 }
 
