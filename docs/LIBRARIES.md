@@ -123,6 +123,7 @@ These libraries provide Python-compatible functionality and require explicit reg
 | `glob`        | Unix shell-style wildcards           | [libraries/extlib/glob.md](libraries/extlib/glob.md)               |
 | `logging`     | Logging functionality                | [libraries/extlib/logging.md](libraries/extlib/logging.md)         |
 | `wait_for`    | Wait for resources to become avail   | [libraries/extlib/wait_for.md](libraries/extlib/wait_for.md)       |
+| `yaml`        | YAML parsing and generation          | [libraries/extlib/yaml.md](libraries/extlib/yaml.md)               |
 
 ## Usage Example
 

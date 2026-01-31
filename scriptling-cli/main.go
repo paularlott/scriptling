@@ -65,6 +65,7 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	extlibs.RegisterGlobLibrary(p, []string{})
 	extlibs.RegisterWaitForLibrary(p)
 	extlibs.RegisterConsoleLibrary(p)
+	p.RegisterLibrary(extlibs.YAMLLibrary)
 
 	// Register AI and MCP libraries
 	ai.Register(p)
