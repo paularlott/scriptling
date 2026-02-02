@@ -9,16 +9,11 @@ import (
 	"time"
 
 	"github.com/paularlott/scriptling/errors"
+	"github.com/paularlott/scriptling/evaliface"
 	"github.com/paularlott/scriptling/object"
 )
 
-// callObjectFunction is set by the evaluator to avoid import cycles
-var callObjectFunction func(ctx context.Context, fn object.Object, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object
 
-// SetObjectFunctionCaller allows the evaluator to register its function caller for re.sub
-func SetObjectFunctionCaller(caller func(ctx context.Context, fn object.Object, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object) {
-	callObjectFunction = caller
-}
 
 // Flag constants matching Python's re module
 const (
@@ -739,18 +734,18 @@ Flags:
 					// Call the replacement function
 					var resultObj object.Object
 					if replacementFunc.Type() == object.BUILTIN_OBJ {
-						// Builtin function - call directly
 						builtin := replacementFunc.(*object.Builtin)
 						resultObj = builtin.Fn(ctx, object.Kwargs{}, matchObj)
-					} else if callObjectFunction != nil {
-						// User function or lambda - use evaluator callback
+					} else {
+						eval := evaliface.FromContext(ctx)
+						if eval == nil {
+							return errors.NewError("evaluator not available in context")
+						}
 						env := object.NewEnvironment()
 						if ctxEnv, ok := ctx.Value("scriptling-env").(*object.Environment); ok {
 							env = ctxEnv
 						}
-						resultObj = callObjectFunction(ctx, replacementFunc, []object.Object{matchObj}, nil, env)
-					} else {
-						return errors.NewError("function replacement not supported (evaluator not initialized)")
+						resultObj = eval.CallObjectFunction(ctx, replacementFunc, []object.Object{matchObj}, nil, env)
 					}
 					
 					// Check for error

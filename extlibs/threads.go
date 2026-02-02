@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 
 	"github.com/paularlott/scriptling/errors"
+	"github.com/paularlott/scriptling/evaliface"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -15,9 +16,7 @@ func RegisterThreadsLibrary(registrar interface{ RegisterLibrary(*object.Library
 	registrar.RegisterLibrary(ThreadsLibrary)
 }
 
-// ApplyFunctionFunc is set by the evaluator to allow calling user functions
-// This avoids import cycles
-var ApplyFunctionFunc func(ctx context.Context, fn object.Object, args []object.Object, kwargs map[string]object.Object, env *object.Environment) object.Object
+
 
 // Promise represents an async operation result
 type Promise struct {
@@ -213,8 +212,9 @@ func newPool(ctx context.Context, worker object.Object, env *object.Environment,
 					clonedEnv := cloneEnvironment(env)
 
 					// Call worker function with task data
-					if ApplyFunctionFunc != nil {
-						ApplyFunctionFunc(ctx, worker, []object.Object{task}, nil, clonedEnv)
+					eval := evaliface.FromContext(ctx)
+					if eval != nil {
+						eval.CallObjectFunction(ctx, worker, []object.Object{task}, nil, clonedEnv)
 					}
 				}
 			}
@@ -303,10 +303,11 @@ var ThreadsLibrary = object.NewLibrary(ThreadsLibraryName, map[string]*object.Bu
 
 			go func() {
 				var result object.Object
-				if ApplyFunctionFunc != nil {
-					result = ApplyFunctionFunc(ctx, fn, fnArgs, kwargs.Kwargs, clonedEnv)
+				eval := evaliface.FromContext(ctx)
+				if eval != nil {
+					result = eval.CallObjectFunction(ctx, fn, fnArgs, kwargs.Kwargs, clonedEnv)
 				} else {
-					result = errors.NewError("async library not properly initialized")
+					result = errors.NewError("evaluator not available in context")
 				}
 
 				if err, ok := result.(*object.Error); ok {

@@ -4,18 +4,13 @@ import (
 	"context"
 	"testing"
 
+	"github.com/paularlott/scriptling/evaliface"
 	"github.com/paularlott/scriptling/object"
 )
 
 // BenchmarkThreadsRun benchmarks the performance of threads.run
 // Measures the overhead of spawning goroutines with environment cloning
 func BenchmarkThreadsRun(b *testing.B) {
-	// Save original function
-	origApply := ApplyFunctionFunc
-	defer func() {
-		ApplyFunctionFunc = origApply
-	}()
-
 	// Simple worker function
 	worker := &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -23,12 +18,9 @@ func BenchmarkThreadsRun(b *testing.B) {
 		},
 	}
 
-	ApplyFunctionFunc = func(ctx context.Context, fn object.Object, fnArgs []object.Object, fnKwargs map[string]object.Object, env *object.Environment) object.Object {
-		if builtin, ok := fn.(*object.Builtin); ok {
-			return builtin.Fn(ctx, object.NewKwargs(fnKwargs), fnArgs...)
-		}
-		return &object.Error{Message: "not a builtin"}
-	}
+	// Create mock evaluator
+	mockEval := &mockEvaluator{}
+	ctx := evaliface.WithEvaluator(context.Background(), mockEval)
 
 	// Create environment with libraries (simulating typical usage)
 	env := object.NewEnvironment()
@@ -42,7 +34,7 @@ func BenchmarkThreadsRun(b *testing.B) {
 		cloned := cloneEnvironment(env)
 		promise := newPromise()
 		go func() {
-			result := ApplyFunctionFunc(context.Background(), worker, nil, nil, cloned)
+			result := mockEval.CallObjectFunction(ctx, worker, nil, nil, cloned)
 			promise.set(result, nil)
 		}()
 		promise.get()
@@ -52,12 +44,6 @@ func BenchmarkThreadsRun(b *testing.B) {
 // BenchmarkThreadsRunWithLargeEnvironment benchmarks with many variables in parent
 // This shows the benefit of O(1) cloning when the parent has many variables
 func BenchmarkThreadsRunWithLargeEnvironment(b *testing.B) {
-	// Save original function
-	origApply := ApplyFunctionFunc
-	defer func() {
-		ApplyFunctionFunc = origApply
-	}()
-
 	// Simple worker function
 	worker := &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -65,12 +51,9 @@ func BenchmarkThreadsRunWithLargeEnvironment(b *testing.B) {
 		},
 	}
 
-	ApplyFunctionFunc = func(ctx context.Context, fn object.Object, fnArgs []object.Object, fnKwargs map[string]object.Object, env *object.Environment) object.Object {
-		if builtin, ok := fn.(*object.Builtin); ok {
-			return builtin.Fn(ctx, object.NewKwargs(fnKwargs), fnArgs...)
-		}
-		return &object.Error{Message: "not a builtin"}
-	}
+	// Create mock evaluator
+	mockEval := &mockEvaluator{}
+	ctx := evaliface.WithEvaluator(context.Background(), mockEval)
 
 	// Create environment with many user variables (simulating typical usage)
 	env := object.NewEnvironment()
@@ -88,7 +71,7 @@ func BenchmarkThreadsRunWithLargeEnvironment(b *testing.B) {
 		cloned := cloneEnvironment(env)
 		promise := newPromise()
 		go func() {
-			result := ApplyFunctionFunc(context.Background(), worker, nil, nil, cloned)
+			result := mockEval.CallObjectFunction(ctx, worker, nil, nil, cloned)
 			promise.set(result, nil)
 		}()
 		promise.get()
