@@ -9,6 +9,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func RegisterYAMLLibrary(registrar interface{ RegisterLibrary(*object.Library) }) {
+	registrar.RegisterLibrary(YAMLLibrary)
+}
+
 // YAMLLibrary provides YAML parsing and generation functionality
 var YAMLLibrary = object.NewLibrary(YAMLLibraryName, map[string]*object.Builtin{
 	"load": {

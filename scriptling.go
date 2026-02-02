@@ -89,12 +89,24 @@ func New() *Scriptling {
 }
 
 func (p *Scriptling) loadLibrary(name string) error {
+	// For dotted names like scriptling.ai.agent, check if we need to load parent first
+	parts := strings.Split(name, ".")
+	if len(parts) > 1 {
+		// Check if parent exists, if not load it first
+		parentName := strings.Join(parts[:len(parts)-1], ".")
+		if _, ok := p.env.Get(parentName); !ok {
+			// Parent doesn't exist, try to load it
+			if err := p.loadLibrary(parentName); err != nil {
+				// Parent doesn't exist as a library, that's ok - we'll create the structure
+			}
+		}
+	}
+
 	// Check if library is already imported
 	if existingObj, ok := p.env.Get(name); ok {
 		// For simple library names, check if it's a proper library dict
 		// If it exists but is incomplete (e.g., only has sub-libraries from a dotted import),
 		// we need to merge in the parent library
-		parts := strings.Split(name, ".")
 		if len(parts) == 1 {
 			// Check if this is a registered library that should be loaded
 			if _, isRegistered := p.registeredLibraries[name]; isRegistered {
@@ -135,7 +147,6 @@ func (p *Scriptling) loadLibrary(name string) error {
 	}
 
 	// For dotted names like urllib.parse, also check if parent exists with the sub-library
-	parts := strings.Split(name, ".")
 	if len(parts) > 1 {
 		// Check if parent is already imported with this sub-library
 		if parentObj, ok := p.env.Get(parts[0]); ok {
@@ -221,11 +232,13 @@ func (p *Scriptling) registerLibrary(name string, lib *object.Library) {
 		if d, ok := existing.(*object.Dict); ok {
 			rootDict = d
 		} else {
-			// Exists but not a dict - create new
+			// Exists but not a dict - replace with new dict
 			rootDict = &object.Dict{Pairs: make(map[string]object.DictPair)}
+			p.env.Set(rootName, rootDict)
 		}
 	} else {
 		rootDict = &object.Dict{Pairs: make(map[string]object.DictPair)}
+		p.env.Set(rootName, rootDict)
 	}
 
 	// Navigate/create the path
@@ -236,7 +249,7 @@ func (p *Scriptling) registerLibrary(name string, lib *object.Library) {
 			if d, ok := pair.Value.(*object.Dict); ok {
 				current = d
 			} else {
-				// Exists but not a dict - create new
+				// Exists but not a dict - replace with new dict
 				newDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
 				current.Pairs[partName] = object.DictPair{
 					Key:   &object.String{Value: partName},
@@ -261,9 +274,6 @@ func (p *Scriptling) registerLibrary(name string, lib *object.Library) {
 		Key:   &object.String{Value: finalName},
 		Value: libDict,
 	}
-
-	// Set the root dict
-	p.env.Set(rootName, rootDict)
 
 	// Also set the full path as an alias for convenience
 	p.env.Set(name, libDict)
@@ -844,6 +854,7 @@ func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[stri
 }
 
 // registerScriptLibrary loads a script library into the current environment as a dict
+// Supports nested paths like "scriptling.ai.agent" - will create parent dicts as needed
 func (p *Scriptling) registerScriptLibrary(name string, store map[string]object.Object) {
 	lib := make(map[string]object.DictPair, len(store))
 	for fname, obj := range store {
@@ -852,7 +863,69 @@ func (p *Scriptling) registerScriptLibrary(name string, store map[string]object.
 			Value: obj,
 		}
 	}
-	p.env.Set(name, &object.Dict{Pairs: lib})
+	libDict := &object.Dict{Pairs: lib}
+
+	// Check if this is a dotted path
+	parts := strings.Split(name, ".")
+	if len(parts) == 1 {
+		// Simple case - just set directly
+		p.env.Set(name, libDict)
+		return
+	}
+
+	// Nested case - need to create/update parent dicts
+	// First, get or create the root dict
+	rootName := parts[0]
+	var rootDict *object.Dict
+	if existing, ok := p.env.Get(rootName); ok {
+		if d, ok := existing.(*object.Dict); ok {
+			rootDict = d
+		} else {
+			// Exists but not a dict - replace with new dict
+			rootDict = &object.Dict{Pairs: make(map[string]object.DictPair)}
+			p.env.Set(rootName, rootDict)
+		}
+	} else {
+		rootDict = &object.Dict{Pairs: make(map[string]object.DictPair)}
+		p.env.Set(rootName, rootDict)
+	}
+
+	// Navigate/create the path
+	current := rootDict
+	for i := 1; i < len(parts)-1; i++ {
+		partName := parts[i]
+		if pair, ok := current.Pairs[partName]; ok {
+			if d, ok := pair.Value.(*object.Dict); ok {
+				current = d
+			} else {
+				// Exists but not a dict - replace with new dict
+				newDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
+				current.Pairs[partName] = object.DictPair{
+					Key:   &object.String{Value: partName},
+					Value: newDict,
+				}
+				current = newDict
+			}
+		} else {
+			// Doesn't exist - create
+			newDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
+			current.Pairs[partName] = object.DictPair{
+				Key:   &object.String{Value: partName},
+				Value: newDict,
+			}
+			current = newDict
+		}
+	}
+
+	// Set the final part
+	finalName := parts[len(parts)-1]
+	current.Pairs[finalName] = object.DictPair{
+		Key:   &object.String{Value: finalName},
+		Value: libDict,
+	}
+
+	// Also set the full path as an alias for convenience
+	p.env.Set(name, libDict)
 }
 
 // EnableOutputCapture enables capturing print output instead of sending to stdout

@@ -6,7 +6,7 @@ Agentic AI loop for building AI agents with automatic tool execution. The agent 
 
 ```python
 import scriptling.ai as ai
-import scriptling.agent as agent
+import scriptling.ai.agent as agent
 
 # Create AI client
 client = ai.new_client("http://127.0.0.1:1234/v1", api_key="sk-...")
@@ -134,7 +134,7 @@ Creates an AI agent with automatic tool execution.
 
 ```python
 import scriptling.ai as ai
-import scriptling.agent as agent
+import scriptling.ai.agent as agent
 
 client = ai.new_client("http://127.0.0.1:1234/v1")
 tools = ai.ToolRegistry()
@@ -262,7 +262,7 @@ response = bot.trigger("What's the weather?")
 ```python
 #!/usr/bin/env scriptling
 import scriptling.ai as ai
-import scriptling.agent as agent
+import scriptling.ai.agent as agent
 import os
 
 # Create AI client

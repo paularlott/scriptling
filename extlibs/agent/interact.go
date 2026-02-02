@@ -1,14 +1,12 @@
 package agent
 
-import (
-	scriptlib "github.com/paularlott/scriptling"
+const (
+	InteractLibraryName = "scriptling.ai.agent.interact"
 )
 
-// RegisterInteract adds the interact method to Agent class (requires console library)
-func RegisterInteract(p *scriptlib.Scriptling) {
-	script := `
+const interactScript = `
 import scriptling.console as console
-import scriptling.agent as agent_module
+import scriptling.ai.agent as agent_module
 import re
 
 # Create new Agent class that extends the original with interact
@@ -25,14 +23,14 @@ class Agent(_OriginalAgent):
         CYAN = ESC + "[36m"
         PURPLE = ESC + "[35m"
         GREEN = ESC + "[32m"
-        
+
         separator = DIM + ("-" * 80) + RESET
-        
+
         while True:
             print(separator)
             user_input = console.input(BOLD + BLUE + "❯" + RESET + " ").strip()
             print(separator)
-            
+
             if not user_input:
                 continue
             if user_input == "/q" or user_input == "exit":
@@ -43,26 +41,26 @@ class Agent(_OriginalAgent):
                     self.messages.append({"role": "system", "content": self.system_prompt})
                 print(GREEN + "⏺ Cleared conversation" + RESET)
                 continue
-            
+
             # Trigger with max_iterations=20
             response = self.trigger(user_input, max_iterations=20)
-            
+
             # Display response with thinking
             if response and hasattr(response, "content") and response.content:
                 content = response.content
-                
+
                 # Extract and display thinking blocks in purple
                 think_pattern = r'<think>(.*?)</think>'
                 matches = re.findall(think_pattern, content, re.DOTALL)
-                
+
                 if matches:
                     for think in matches:
                         print()
                         print(PURPLE + think.strip() + RESET)
-                    
+
                     # Remove think blocks from content
                     content = re.sub(think_pattern, '', content, flags=re.DOTALL).strip()
-                
+
                 # Display main content
                 if content:
                     print()
@@ -71,10 +69,10 @@ class Agent(_OriginalAgent):
 
 # Replace the Agent in the module
 agent_module.Agent = Agent
+Agent
 `
 
-	_, err := p.Eval(script)
-	if err != nil {
-		panic("Failed to create Agent interact extension: " + err.Error())
-	}
+// RegisterInteract registers the interact library as a sub-library
+func RegisterInteract(registrar interface{ RegisterScriptLibrary(string, string) error }) error {
+	return registrar.RegisterScriptLibrary(InteractLibraryName, interactScript)
 }
