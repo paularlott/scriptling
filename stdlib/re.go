@@ -12,6 +12,14 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
+// callObjectFunction is set by the evaluator to avoid import cycles
+var callObjectFunction func(ctx context.Context, fn object.Object, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object
+
+// SetObjectFunctionCaller allows the evaluator to register its function caller for re.sub
+func SetObjectFunctionCaller(caller func(ctx context.Context, fn object.Object, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object) {
+	callObjectFunction = caller
+}
+
 // Flag constants matching Python's re module
 const (
 	RE_IGNORECASE = 2  // re.I or re.IGNORECASE
@@ -647,12 +655,29 @@ Flags:
 			if len(args) < 3 || len(args) > 5 {
 				return errors.NewError("sub() takes 3 to 5 arguments (%d given)", len(args))
 			}
-			if args[0].Type() != object.STRING_OBJ || args[1].Type() != object.STRING_OBJ || args[2].Type() != object.STRING_OBJ {
-				return errors.NewTypeError("STRING", "mixed types")
+			if args[0].Type() != object.STRING_OBJ {
+				return errors.NewTypeError("STRING", args[0].Type().String())
+			}
+			if args[2].Type() != object.STRING_OBJ {
+				return errors.NewTypeError("STRING", args[2].Type().String())
 			}
 			pattern, _ := args[0].AsString()
-			replacement, _ := args[1].AsString()
 			text, _ := args[2].AsString()
+
+			// Check if replacement is a string or function
+			isFunc := false
+			var replacementStr string
+			var replacementFunc object.Object
+			
+			switch args[1].Type() {
+			case object.STRING_OBJ:
+				replacementStr, _ = args[1].AsString()
+			case object.FUNCTION_OBJ, object.BUILTIN_OBJ, object.LAMBDA_OBJ:
+				isFunc = true
+				replacementFunc = args[1]
+			default:
+				return errors.NewTypeError("STRING or FUNCTION", args[1].Type().String())
+			}
 
 			// count parameter (optional, position 3)
 			count := -1 // -1 means replace all
@@ -679,15 +704,84 @@ Flags:
 			var result string
 			if count == 0 {
 				result = text
+			} else if isFunc {
+				// Function replacement - find all matches in the original text
+				replaced := 0
+				allMatches := re.FindAllStringSubmatchIndex(text, -1)
+				
+				if len(allMatches) == 0 {
+					return &object.String{Value: text}
+				}
+				
+				// Build result by replacing matches
+				var resultBuilder []byte
+				lastEnd := 0
+				
+				for _, match := range allMatches {
+					if count > 0 && replaced >= count {
+						break
+					}
+					
+					// Add text before match
+					resultBuilder = append(resultBuilder, text[lastEnd:match[0]]...)
+					
+					// Build groups for this match
+					groups := make([]string, 0)
+					for i := 0; i < len(match); i += 2 {
+						if match[i] >= 0 && match[i+1] >= 0 {
+							groups = append(groups, text[match[i]:match[i+1]])
+						} else {
+							groups = append(groups, "")
+						}
+					}
+					matchObj := createMatchInstance(groups, match[0], match[1])
+					
+					// Call the replacement function
+					var resultObj object.Object
+					if replacementFunc.Type() == object.BUILTIN_OBJ {
+						// Builtin function - call directly
+						builtin := replacementFunc.(*object.Builtin)
+						resultObj = builtin.Fn(ctx, object.Kwargs{}, matchObj)
+					} else if callObjectFunction != nil {
+						// User function or lambda - use evaluator callback
+						env := object.NewEnvironment()
+						if ctxEnv, ok := ctx.Value("scriptling-env").(*object.Environment); ok {
+							env = ctxEnv
+						}
+						resultObj = callObjectFunction(ctx, replacementFunc, []object.Object{matchObj}, nil, env)
+					} else {
+						return errors.NewError("function replacement not supported (evaluator not initialized)")
+					}
+					
+					// Check for error
+					if resultObj.Type() == object.ERROR_OBJ {
+						return resultObj
+					}
+					
+					// Convert result to string
+					if resultStr, err := resultObj.AsString(); err == nil {
+						resultBuilder = append(resultBuilder, resultStr...)
+					} else {
+						// If conversion fails, keep original match
+						resultBuilder = append(resultBuilder, text[match[0]:match[1]]...)
+					}
+					
+					lastEnd = match[1]
+					replaced++
+				}
+				
+				// Add remaining text
+				resultBuilder = append(resultBuilder, text[lastEnd:]...)
+				result = string(resultBuilder)
 			} else if count < 0 {
-				result = re.ReplaceAllString(text, replacement)
+				result = re.ReplaceAllString(text, replacementStr)
 			} else {
 				// Replace only 'count' occurrences
 				replaced := 0
 				result = re.ReplaceAllStringFunc(text, func(match string) string {
 					if replaced < count {
 						replaced++
-						return re.ReplaceAllString(match, replacement)
+						return re.ReplaceAllString(match, replacementStr)
 					}
 					return match
 				})
@@ -697,6 +791,7 @@ Flags:
 		HelpText: `sub(pattern, repl, string, count=0, flags=0) - Replace matches
 
 Replaces occurrences of the regex pattern in the string with the replacement.
+The replacement can be either a string or a function that takes a Match object and returns a string.
 If count is 0 (default), all occurrences are replaced.
 If count > 0, only the first count occurrences are replaced.
 

@@ -174,11 +174,11 @@ for match in matches:
 
 ### re.sub(pattern, repl, string, count=0, flags=0)
 
-Replaces occurrences of the pattern in the string with the replacement. This follows Python's `re.sub()` function signature.
+Replaces occurrences of the pattern in the string with the replacement. The replacement can be either a string or a function. This follows Python's `re.sub()` function signature.
 
 **Parameters:**
 - `pattern`: Regular expression pattern
-- `repl`: Replacement string
+- `repl`: Replacement string or function that takes a Match object and returns a string
 - `string`: String to modify
 - `count`: Maximum number of replacements (0 = all, default: 0)
 - `flags`: Optional flags (default: 0)
@@ -189,6 +189,7 @@ Replaces occurrences of the pattern in the string with the replacement. This fol
 ```python
 import re
 
+# String replacement
 text = re.sub("[0-9]+", "XXX", "Price: 100")
 print(text)  # "Price: XXX"
 
@@ -203,6 +204,21 @@ print(result)  # "aXbXc3"
 # Case-insensitive replacement
 result = re.sub("hello", "hi", "Hello HELLO hello", 0, re.I)
 print(result)  # "hi hi hi"
+
+# Function replacement - uppercase all words
+result = re.sub(r'(\w+)', lambda m: m.group(1).upper(), "hello world")
+print(result)  # "HELLO WORLD"
+
+# Function replacement - swap first and last name
+result = re.sub(r'(\w+) (\w+)', lambda m: m.group(2) + " " + m.group(1), "John Doe")
+print(result)  # "Doe John"
+
+# Function replacement - format inline code
+backtick = chr(96)
+result = re.sub(backtick + r'([^' + backtick + r']+)' + backtick, 
+                lambda m: "[" + m.group(1) + "]", 
+                "test `code` here")
+print(result)  # "test [code] here"
 ```
 
 ### re.split(pattern, string, maxsplit=0, flags=0)

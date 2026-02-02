@@ -615,6 +615,29 @@ Returns True if the path is an absolute pathname.`,
 
 Returns the size in bytes of the specified file.`,
 		},
+		"getmtime": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.ExactArgs(args, 1); err != nil { return err }
+				path, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
+
+				// Security check
+				if err := o.checkPathSecurity(path); err != nil {
+					return err
+				}
+
+				info, fsErr := os.Stat(path)
+				if fsErr != nil {
+					return errors.NewError("cannot get file mtime: %s", fsErr.Error())
+				}
+				return &object.Float{Value: float64(info.ModTime().Unix())}
+			},
+			HelpText: `getmtime(path) - Get file modification time
+
+Returns the time of last modification of path as a Unix timestamp (seconds since epoch).`,
+		},
 	}, nil, "Common pathname manipulations")
 }
 

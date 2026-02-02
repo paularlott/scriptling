@@ -41,6 +41,11 @@ func init() {
 		return applyFunctionWithContext(ctx, fn, args, keywords, fn.Env)
 	})
 
+	// Set up the object function caller for re.sub (and other stdlib functions that need to call any function type)
+	stdlib.SetObjectFunctionCaller(func(ctx context.Context, fn object.Object, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+		return ApplyFunction(ctx, fn, args, keywords, env)
+	})
+
 	// Set up the method caller for html.parser (and other extlibs that need to call user methods)
 	extlibs.ApplyMethodFunc = func(ctx context.Context, instance *object.Instance, method *object.Function, args []object.Object) object.Object {
 		// Prepend instance (self) to args
