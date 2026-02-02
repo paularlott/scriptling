@@ -9,9 +9,7 @@ import (
 
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/errors"
-	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/object"
-	"github.com/paularlott/scriptling/stdlib"
 )
 
 var (
@@ -35,29 +33,7 @@ func GetEnvFromContext(ctx context.Context) *object.Environment {
 	}
 	return object.NewEnvironment() // fallback
 }
-func init() {
-	// Set up the function caller for functools.reduce
-	stdlib.SetFunctionCaller(func(ctx context.Context, fn *object.Function, args []object.Object, keywords map[string]object.Object) object.Object {
-		return applyFunctionWithContext(ctx, fn, args, keywords, fn.Env)
-	})
 
-	// Set up the object function caller for re.sub (and other stdlib functions that need to call any function type)
-	stdlib.SetObjectFunctionCaller(func(ctx context.Context, fn object.Object, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
-		return ApplyFunction(ctx, fn, args, keywords, env)
-	})
-
-	// Set up the method caller for html.parser (and other extlibs that need to call user methods)
-	extlibs.ApplyMethodFunc = func(ctx context.Context, instance *object.Instance, method *object.Function, args []object.Object) object.Object {
-		// Prepend instance (self) to args
-		allArgs := append([]object.Object{instance}, args...)
-		return applyFunctionWithContext(ctx, method, allArgs, nil, method.Env)
-	}
-
-	// Set up the function caller for async library
-	extlibs.ApplyFunctionFunc = func(ctx context.Context, fn object.Object, args []object.Object, kwargs map[string]object.Object, env *object.Environment) object.Object {
-		return applyFunctionWithContext(ctx, fn, args, kwargs, env)
-	}
-}
 
 // Eval executes without context (backwards compatible)
 func Eval(node ast.Node, env *object.Environment) object.Object {
@@ -137,6 +113,9 @@ func evalWithContext(ctx context.Context, node ast.Node, env *object.Environment
 }
 
 func evalNode(ctx context.Context, node ast.Node, env *object.Environment) object.Object {
+	// Add evaluator to context if not present
+	ctx = WithEvaluator(ctx)
+	
 	// Check for cancellation
 	if err := checkContext(ctx); err != nil {
 		return err

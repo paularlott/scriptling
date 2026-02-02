@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/paularlott/scriptling/errors"
+	"github.com/paularlott/scriptling/evaliface"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -493,15 +494,12 @@ func callHandler(ctx context.Context, instance *object.Instance, methodName stri
 	return &object.Null{}
 }
 
-// ApplyMethodFunc is a function type that the evaluator can set to allow calling user methods
-var ApplyMethodFunc func(ctx context.Context, instance *object.Instance, method *object.Function, args []object.Object) object.Object
-
 // callUserMethod calls a user-defined method through the evaluator
 func callUserMethod(ctx context.Context, instance *object.Instance, fn *object.Function, args []object.Object) object.Object {
-	if ApplyMethodFunc != nil {
-		return ApplyMethodFunc(ctx, instance, fn, args)
+	eval := evaliface.FromContext(ctx)
+	if eval != nil {
+		return eval.CallMethod(ctx, instance, fn, args)
 	}
-	// Fallback: can't call user methods without the evaluator hook
 	return &object.Null{}
 }
 

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/paularlott/scriptling/evaliface"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -53,12 +54,6 @@ func TestCloneEnvironment(t *testing.T) {
 }
 
 func TestPoolWithSharedState(t *testing.T) {
-	// Save original function
-	origApply := ApplyFunctionFunc
-	defer func() {
-		ApplyFunctionFunc = origApply
-	}()
-
 	// Track executions using an atomic counter
 	counter := newAtomicInt64(0)
 	env := object.NewEnvironment()
@@ -71,16 +66,11 @@ func TestPoolWithSharedState(t *testing.T) {
 		},
 	}
 
-	// Mock ApplyFunctionFunc to call the builtin function directly
-	ApplyFunctionFunc = func(ctx context.Context, fn object.Object, args []object.Object, kwargs map[string]object.Object, env *object.Environment) object.Object {
-		if builtin, ok := fn.(*object.Builtin); ok {
-			return builtin.Fn(ctx, object.NewKwargs(kwargs), args...)
-		}
-		return &object.Error{Message: "not a builtin"}
-	}
+	// Create mock evaluator
+	mockEval := &mockEvaluator{}
+	ctx := evaliface.WithEvaluator(context.Background(), mockEval)
 
 	// Create a pool
-	ctx := context.Background()
 	pool := newPool(ctx, worker, env, 2, 10)
 
 	// Submit tasks
@@ -159,12 +149,6 @@ func TestPoolContextCancellation(t *testing.T) {
 }
 
 func TestPromiseResultPositionalAndKwargs(t *testing.T) {
-	// Save original function
-	origApply := ApplyFunctionFunc
-	defer func() {
-		ApplyFunctionFunc = origApply
-	}()
-
 	// Create a worker function that returns positional + kwargs
 	worker := &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -184,20 +168,15 @@ func TestPromiseResultPositionalAndKwargs(t *testing.T) {
 		},
 	}
 
-	// Mock ApplyFunctionFunc
-	ApplyFunctionFunc = func(ctx context.Context, fn object.Object, fnArgs []object.Object, fnKwargs map[string]object.Object, env *object.Environment) object.Object {
-		if builtin, ok := fn.(*object.Builtin); ok {
-			return builtin.Fn(ctx, object.NewKwargs(fnKwargs), fnArgs...)
-		}
-		return &object.Error{Message: "not a builtin"}
-	}
-
+	// Create mock evaluator
+	mockEval := &mockEvaluator{}
+	ctx := evaliface.WithEvaluator(context.Background(), mockEval)
 	env := object.NewEnvironment()
 
 	// Test with positional arguments
 	promise1 := newPromise()
 	go func() {
-		result := ApplyFunctionFunc(context.Background(), worker, []object.Object{
+		result := mockEval.CallObjectFunction(ctx, worker, []object.Object{
 			&object.Integer{Value: 10},
 			&object.Integer{Value: 20},
 		}, nil, env)
@@ -215,7 +194,7 @@ func TestPromiseResultPositionalAndKwargs(t *testing.T) {
 	// Test with keyword arguments
 	promise2 := newPromise()
 	go func() {
-		result := ApplyFunctionFunc(context.Background(), worker, nil, map[string]object.Object{
+		result := mockEval.CallObjectFunction(ctx, worker, nil, map[string]object.Object{
 			"a": &object.Integer{Value: 5},
 			"b": &object.Integer{Value: 15},
 		}, env)
@@ -233,7 +212,7 @@ func TestPromiseResultPositionalAndKwargs(t *testing.T) {
 	// Test with both positional and keyword arguments
 	promise3 := newPromise()
 	go func() {
-		result := ApplyFunctionFunc(context.Background(), worker, []object.Object{
+		result := mockEval.CallObjectFunction(ctx, worker, []object.Object{
 			&object.Integer{Value: 100},
 		}, map[string]object.Object{
 			"x": &object.Integer{Value: 10},
@@ -248,4 +227,22 @@ func TestPromiseResultPositionalAndKwargs(t *testing.T) {
 	if i, ok := result3.(*object.Integer); !ok || i.Value != 110 {
 		t.Errorf("Expected 110 from both args, got %v", result3)
 	}
+}
+
+// mockEvaluator for testing
+type mockEvaluator struct{}
+
+func (m *mockEvaluator) CallFunction(ctx context.Context, fn *object.Function, args []object.Object, kwargs map[string]object.Object) object.Object {
+	return &object.Null{}
+}
+
+func (m *mockEvaluator) CallObjectFunction(ctx context.Context, fn object.Object, args []object.Object, kwargs map[string]object.Object, env *object.Environment) object.Object {
+	if builtin, ok := fn.(*object.Builtin); ok {
+		return builtin.Fn(ctx, object.NewKwargs(kwargs), args...)
+	}
+	return &object.Error{Message: "not a builtin"}
+}
+
+func (m *mockEvaluator) CallMethod(ctx context.Context, instance *object.Instance, method *object.Function, args []object.Object) object.Object {
+	return &object.Null{}
 }
