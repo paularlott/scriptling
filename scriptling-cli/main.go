@@ -71,8 +71,6 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	// Register AI and MCP libraries
 	ai.Register(p)
 	agent.Register(p)
-
-	// Register agent interact (requires console and agent)
 	agent.RegisterInteract(p)
 
 	// Register MCP library

@@ -5,14 +5,13 @@ import (
 
 	scriptlib "github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs/ai"
-	"github.com/paularlott/scriptling/extlibs/ai/tools"
 	"github.com/paularlott/scriptling/stdlib"
 )
 
 func TestAgentBasic(t *testing.T) {
 	script := `
 import scriptling.ai as ai
-import scriptling.agent as agent
+import scriptling.ai.agent as agent
 
 # Mock client that returns simple responses
 class MockClient:
@@ -65,7 +64,6 @@ assert messages[2]["role"] == "assistant"
 	p := scriptlib.New()
 	stdlib.RegisterAll(p)
 	ai.Register(p)
-	tools.Register(p)
 	Register(p)
 
 	result, err := p.Eval(script)
@@ -81,7 +79,7 @@ assert messages[2]["role"] == "assistant"
 func TestAgentWithToolCalls(t *testing.T) {
 	script := `
 import scriptling.ai as ai
-import scriptling.agent as agent
+import scriptling.ai.agent as agent
 import json
 
 # Mock client that simulates tool calls
@@ -153,7 +151,6 @@ assert len(messages) >= 3
 	p := scriptlib.New()
 	stdlib.RegisterAll(p)
 	ai.Register(p)
-	tools.Register(p)
 	Register(p)
 
 	result, err := p.Eval(script)
