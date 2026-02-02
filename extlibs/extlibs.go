@@ -19,4 +19,5 @@ const (
 	ToonLibraryName       = "scriptling.toon"
 	ConsoleLibraryName    = "scriptling.console"
 	YAMLLibraryName       = "yaml"
+	AgentLibraryName      = "scriptling.agent"
 )

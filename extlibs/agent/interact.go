@@ -1,0 +1,80 @@
+package agent
+
+import (
+	scriptlib "github.com/paularlott/scriptling"
+)
+
+// RegisterInteract adds the interact method to Agent class (requires console library)
+func RegisterInteract(p *scriptlib.Scriptling) {
+	script := `
+import scriptling.console as console
+import scriptling.agent as agent_module
+import re
+
+# Create new Agent class that extends the original with interact
+_OriginalAgent = agent_module.Agent
+
+class Agent(_OriginalAgent):
+    def interact(self):
+        # ANSI colors
+        ESC = chr(27)
+        RESET = ESC + "[0m"
+        BOLD = ESC + "[1m"
+        DIM = ESC + "[2m"
+        BLUE = ESC + "[34m"
+        CYAN = ESC + "[36m"
+        PURPLE = ESC + "[35m"
+        GREEN = ESC + "[32m"
+        
+        separator = DIM + ("-" * 80) + RESET
+        
+        while True:
+            print(separator)
+            user_input = console.input(BOLD + BLUE + "❯" + RESET + " ").strip()
+            print(separator)
+            
+            if not user_input:
+                continue
+            if user_input == "/q" or user_input == "exit":
+                break
+            if user_input == "/c":
+                self.messages = []
+                if self.system_prompt:
+                    self.messages.append({"role": "system", "content": self.system_prompt})
+                print(GREEN + "⏺ Cleared conversation" + RESET)
+                continue
+            
+            # Trigger with max_iterations=20
+            response = self.trigger(user_input, max_iterations=20)
+            
+            # Display response with thinking
+            if response and hasattr(response, "content") and response.content:
+                content = response.content
+                
+                # Extract and display thinking blocks in purple
+                think_pattern = r'<think>(.*?)</think>'
+                matches = re.findall(think_pattern, content, re.DOTALL)
+                
+                if matches:
+                    for think in matches:
+                        print()
+                        print(PURPLE + think.strip() + RESET)
+                    
+                    # Remove think blocks from content
+                    content = re.sub(think_pattern, '', content, flags=re.DOTALL).strip()
+                
+                # Display main content
+                if content:
+                    print()
+                    print(CYAN + "⏺" + RESET + " " + content)
+                print()
+
+# Replace the Agent in the module
+agent_module.Agent = Agent
+`
+
+	_, err := p.Eval(script)
+	if err != nil {
+		panic("Failed to create Agent interact extension: " + err.Error())
+	}
+}
