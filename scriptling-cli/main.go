@@ -11,6 +11,7 @@ import (
 	"github.com/paularlott/cli"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/agent"
 	"github.com/paularlott/scriptling/extlibs/ai"
 	"github.com/paularlott/scriptling/extlibs/mcp"
 	"github.com/paularlott/scriptling/stdlib"
@@ -69,6 +70,10 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 
 	// Register AI and MCP libraries
 	ai.Register(p)
+	agent.Register(p)
+
+	// Register agent interact (requires console and agent)
+	agent.RegisterInteract(p)
 
 	// Register MCP library
 	mcp.Register(p)

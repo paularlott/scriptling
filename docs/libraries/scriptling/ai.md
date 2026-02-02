@@ -1,11 +1,35 @@
 # AI Library
 
-AI and LLM functions for interacting with OpenAI-compatible APIs. This library provides two ways to interact with OpenAI:
+AI and LLM functions for interacting with OpenAI-compatible APIs. This library provides:
 
-1. **Wrapped client from Go** - Create a client in Go, wrap it, and pass it to the script
-2. **Client instances from scripts** - Create your own client instances from scripts
+1. **AI Client** - Create clients and make completions
+2. **Tool Registry** - Build tool schemas for AI agents
+3. **Wrapped client from Go** - Pass Go-created clients to scripts
 
-## Wrapped Client from Go
+## Tool Registry
+
+Build OpenAI-compatible tool schemas for AI agents. See [Agent Library](agent.md) for complete agent examples.
+
+### ai.ToolRegistry()
+
+Creates a new tool registry.
+
+**Example:**
+
+```python
+import scriptling.ai as ai
+
+tools = ai.ToolRegistry()
+tools.add("read_file", "Read a file", {"path": "string"}, lambda args: os.read_file(args["path"]))
+schemas = tools.build()
+client.set_tools(schemas)
+```
+
+See [Agent Library](agent.md) for detailed ToolRegistry documentation.
+
+## AI Client
+
+### Wrapped Client from Go
 
 The recommended pattern for server-side applications is to create the client in Go code, wrap it, and pass it to the script as a global variable:
 

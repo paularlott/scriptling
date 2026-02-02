@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/paularlott/mcp/openai"
+	"github.com/paularlott/scriptling/extlibs/ai/tools"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -39,7 +40,12 @@ func Register(registrar interface{ RegisterLibrary(*object.Library) }) {
 
 // buildLibrary builds the AI library
 func buildLibrary() *object.Library {
-	return object.NewLibraryBuilder(AILibraryName, AILibraryDesc).
+	builder := object.NewLibraryBuilder(AILibraryName, AILibraryDesc)
+	
+	// Add ToolRegistry class
+	builder.Constant("ToolRegistry", tools.GetRegistryClass())
+	
+	builder.
 
 		// completion(model, messages) - Create a chat completion
 		FunctionWithHelp("completion", func(ctx context.Context, model string, messages []map[string]any) (any, error) {
@@ -221,8 +227,9 @@ Example:
   client = ai.new_client("http://127.0.0.1:1234/v1")
 
   # Future: Other services
-  client = ai.new_client("https://api.anthropic.com", service="anthropic", api_key="...")`).
-		Build()
+  client = ai.new_client("https://api.anthropic.com", service="anthropic", api_key="...")`)
+
+	return builder.Build()
 }
 
 // getClient returns the current client (thread-safe)
