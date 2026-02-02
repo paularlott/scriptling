@@ -142,3 +142,55 @@ func ToGoError(obj object.Object) error {
 	}
 	return nil
 }
+
+// convertArgsAndKwargs converts Go arguments to Object arguments and separates kwargs.
+// If prependSelf is not nil, it will be prepended to the argument list.
+// Returns (objArgs, objKwargs).
+func convertArgsAndKwargs(args []interface{}, prependSelf object.Object) ([]object.Object, map[string]object.Object) {
+	var objArgs []object.Object
+	var objKwargs map[string]object.Object
+
+	if len(args) > 0 {
+		// Check if last argument is Kwargs
+		lastIdx := len(args) - 1
+		if kwargsMap, ok := args[lastIdx].(Kwargs); ok {
+			// Convert kwargs
+			objKwargs = make(map[string]object.Object, len(kwargsMap))
+			for key, val := range kwargsMap {
+				objKwargs[key] = FromGo(val)
+			}
+			// Convert positional args (excluding kwargs)
+			if prependSelf != nil {
+				objArgs = make([]object.Object, lastIdx+1)
+				objArgs[0] = prependSelf
+				for i, arg := range args[:lastIdx] {
+					objArgs[i+1] = FromGo(arg)
+				}
+			} else {
+				objArgs = make([]object.Object, lastIdx)
+				for i, arg := range args[:lastIdx] {
+					objArgs[i] = FromGo(arg)
+				}
+			}
+		} else {
+			// No kwargs, convert all args
+			if prependSelf != nil {
+				objArgs = make([]object.Object, len(args)+1)
+				objArgs[0] = prependSelf
+				for i, arg := range args {
+					objArgs[i+1] = FromGo(arg)
+				}
+			} else {
+				objArgs = make([]object.Object, len(args))
+				for i, arg := range args {
+					objArgs[i] = FromGo(arg)
+				}
+			}
+		}
+	} else if prependSelf != nil {
+		// No args, just self
+		objArgs = []object.Object{prependSelf}
+	}
+
+	return objArgs, objKwargs
+}

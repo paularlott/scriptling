@@ -516,33 +516,8 @@ func (p *Scriptling) CallFunctionWithContext(ctx context.Context, name string, a
 		return nil, fmt.Errorf("function '%s' not found", name)
 	}
 
-	// 2. Separate args and kwargs
-	// Kwargs must be explicitly wrapped in Kwargs{} type to distinguish from dict arguments
-	var objArgs []object.Object
-	var objKwargs map[string]object.Object
-
-	if len(args) > 0 {
-		// Check if last argument is explicitly a Kwargs wrapper
-		lastIdx := len(args) - 1
-		if kwargsMap, ok := args[lastIdx].(Kwargs); ok {
-			// Last arg is Kwargs, convert it
-			objKwargs = make(map[string]object.Object, len(kwargsMap))
-			for key, val := range kwargsMap {
-				objKwargs[key] = FromGo(val)
-			}
-			// Convert remaining args (excluding kwargs)
-			objArgs = make([]object.Object, lastIdx)
-			for i, arg := range args[:lastIdx] {
-				objArgs[i] = FromGo(arg)
-			}
-		} else {
-			// No Kwargs wrapper, convert all args (including maps as dicts)
-			objArgs = make([]object.Object, len(args))
-			for i, arg := range args {
-				objArgs[i] = FromGo(arg)
-			}
-		}
-	}
+	// Convert Go args to Object args
+	objArgs, objKwargs := convertArgsAndKwargs(args, nil)
 
 	// 3. Call the function using evaluator
 	result := evaluator.ApplyFunction(ctx, fn, objArgs, objKwargs, p.env)
@@ -553,6 +528,127 @@ func (p *Scriptling) CallFunctionWithContext(ctx context.Context, name string, a
 	}
 
 	// 5. Check for SystemExit exception
+	if ex, ok := result.(*object.Exception); ok && ex.ExceptionType == "SystemExit" {
+		code := 0
+		if strings.HasPrefix(ex.Message, "SystemExit: ") {
+			codeStr := strings.TrimPrefix(ex.Message, "SystemExit: ")
+			code = parseIntFromMessage(codeStr)
+		}
+		return nil, &extlibs.SysExitCode{Code: code}
+	}
+
+	return result, nil
+}
+
+// CreateInstance creates an instance of a Scriptling class and returns it as an object.Object.
+// The className should be the name of a class defined in the script or registered via a library.
+// Args are Go types that will be converted to Object and passed to __init__.
+//
+// Example:
+//
+//	p.Eval("class Counter:\n    def __init__(self, start=0):\n        self.value = start")
+//	instance, err := p.CreateInstance("Counter", 10)
+//	if err != nil {
+//	    // handle error
+//	}
+//	// Now you can use CallMethod on this instance
+func (p *Scriptling) CreateInstance(className string, args ...interface{}) (object.Object, error) {
+	return p.CreateInstanceWithContext(context.Background(), className, args...)
+}
+
+// CreateInstanceWithContext creates an instance of a Scriptling class with a context.
+// The context can be used for cancellation or timeouts.
+//
+// Example:
+//
+//	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+//	defer cancel()
+//	instance, err := p.CreateInstanceWithContext(ctx, "Counter", 10)
+func (p *Scriptling) CreateInstanceWithContext(ctx context.Context, className string, args ...interface{}) (object.Object, error) {
+	// Look up the class in environment
+	classObj, ok := p.env.Get(className)
+	if !ok {
+		return nil, fmt.Errorf("class '%s' not found", className)
+	}
+
+	// Verify it's a class
+	class, ok := classObj.(*object.Class)
+	if !ok {
+		return nil, fmt.Errorf("'%s' is not a class, got %s", className, classObj.Type())
+	}
+
+	// Convert Go args to Object args
+	objArgs, objKwargs := convertArgsAndKwargs(args, nil)
+
+	// Create the instance using evaluator
+	instance := evaluator.ApplyFunction(ctx, class, objArgs, objKwargs, p.env)
+
+	// Check for errors
+	if err, ok := instance.(*object.Error); ok && err != nil {
+		return nil, fmt.Errorf("instance creation error: %s", err.Message)
+	}
+
+	// Check for SystemExit exception
+	if ex, ok := instance.(*object.Exception); ok && ex.ExceptionType == "SystemExit" {
+		code := 0
+		if strings.HasPrefix(ex.Message, "SystemExit: ") {
+			codeStr := strings.TrimPrefix(ex.Message, "SystemExit: ")
+			code = parseIntFromMessage(codeStr)
+		}
+		return nil, &extlibs.SysExitCode{Code: code}
+	}
+
+	return instance, nil
+}
+
+// CallMethod calls a method on a Scriptling object (typically an Instance).
+// The obj should be an object.Object (usually obtained from CreateInstance or script evaluation).
+// Args are Go types that will be converted to Object.
+// Returns object.Object - use .AsInt(), .AsString(), etc. to extract value.
+//
+// Example:
+//
+//	instance, _ := p.CreateInstance("Counter", 10)
+//	result, err := p.CallMethod(instance, "increment")
+//	value, _ := result.AsInt()
+func (p *Scriptling) CallMethod(obj object.Object, methodName string, args ...interface{}) (object.Object, error) {
+	return p.CallMethodWithContext(context.Background(), obj, methodName, args...)
+}
+
+// CallMethodWithContext calls a method on a Scriptling object with a context.
+// The context can be used for cancellation or timeouts.
+//
+// Example:
+//
+//	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+//	defer cancel()
+//	instance, _ := p.CreateInstance("Counter", 10)
+//	result, err := p.CallMethodWithContext(ctx, instance, "increment")
+func (p *Scriptling) CallMethodWithContext(ctx context.Context, obj object.Object, methodName string, args ...interface{}) (object.Object, error) {
+	// Verify obj is an Instance
+	instance, ok := obj.(*object.Instance)
+	if !ok {
+		return nil, fmt.Errorf("object is not an instance, got %s", obj.Type())
+	}
+
+	// Look up the method in the instance's class
+	method, ok := instance.Class.Methods[methodName]
+	if !ok {
+		return nil, fmt.Errorf("method '%s' not found in class '%s'", methodName, instance.Class.Name)
+	}
+
+	// Convert Go args to Object args (prepend self)
+	objArgs, objKwargs := convertArgsAndKwargs(args, instance)
+
+	// Call the method using evaluator
+	result := evaluator.ApplyFunction(ctx, method, objArgs, objKwargs, p.env)
+
+	// Handle errors
+	if err, ok := result.(*object.Error); ok && err != nil {
+		return nil, fmt.Errorf("method error: %s", err.Message)
+	}
+
+	// Check for SystemExit exception
 	if ex, ok := result.(*object.Exception); ok && ex.ExceptionType == "SystemExit" {
 		code := 0
 		if strings.HasPrefix(ex.Message, "SystemExit: ") {
