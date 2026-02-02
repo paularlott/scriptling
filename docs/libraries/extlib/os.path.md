@@ -247,6 +247,27 @@ size = os.path.getsize("/tmp/data.txt")
 print(f"File size: {size} bytes")
 ```
 
+### os.path.getmtime(path)
+
+Get the time of last modification of a file.
+
+**Parameters:**
+- `path` (string): Path to the file
+
+**Returns:** Float - modification time as Unix timestamp (seconds since epoch)
+
+```python
+import os.path
+
+mtime = os.path.getmtime("/tmp/data.txt")
+print(f"Last modified: {mtime}")
+
+# Convert to readable format
+import time
+readable = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(mtime))
+print(f"Last modified: {readable}")
+```
+
 ## Enabling in Go
 
 ```go
@@ -371,7 +392,7 @@ This library implements a subset of Python's `os.path` module:
 | relpath | ✅ |
 | isabs | ✅ |
 | getsize | ✅ |
-| getmtime | ❌ |
+| getmtime | ✅ |
 | getatime | ❌ |
 | getctime | ❌ |
 | islink | ❌ |

@@ -7,7 +7,7 @@ WARNING: This is an example that executes AI-generated code and shell commands.
 It may modify or delete files. Use at your own risk!
 """
 
-import scriptling.ai as ai, scriptling.agent as agent, glob, os, re, subprocess
+import scriptling.ai as ai, scriptling.ai.agent.interact as agent, glob, os, re, subprocess
 
 # Configuration from environment
 BASE_URL = os.getenv("OPENAI_BASE_URL", "http://127.0.0.1:1234/v1")
@@ -69,6 +69,7 @@ def glob_files(args):
     files = glob.glob(pattern, ".")
 
     # Sort by mtime descending
+    import os.path
     files = sorted(files, key=lambda f: os.path.getmtime(f) if os.path.isfile(f) else 0, reverse=True)
 
     return "\n".join(files) if len(files) > 0 else "none"
