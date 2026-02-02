@@ -1001,3 +1001,166 @@ if objErr != nil {
 ## Defining Classes in Go
 
 For information on defining Scriptling classes in Go, including creating custom types with high-performance methods, see [EXTENDING_CLASSES.md](EXTENDING_CLASSES.md).
+
+## Working with Class Instances
+
+You can create instances of Scriptling classes from Go and call methods on them directly.
+
+### Creating Instances
+
+```go
+// Define a class in Scriptling
+p.Eval(`
+class Counter:
+    def __init__(self, start=0):
+        self.value = start
+    
+    def increment(self, amount=1):
+        self.value = self.value + amount
+        return self.value
+    
+    def get(self):
+        return self.value
+`)
+
+// Create an instance from Go
+instance, err := p.CreateInstance("Counter", 10)
+if err != nil {
+    log.Fatal(err)
+}
+
+// Call methods on the instance
+result, err := p.CallMethod(instance, "increment")
+if err != nil {
+    log.Fatal(err)
+}
+
+value, _ := result.AsInt()
+fmt.Printf("Value: %d\n", value)  // Value: 11
+```
+
+### CreateInstance with Arguments
+
+```go
+// Positional arguments
+instance, err := p.CreateInstance("Counter", 100)
+
+// With keyword arguments
+instance, err := p.CreateInstance("Person", "Alice", scriptling.Kwargs{"age": 30})
+```
+
+### CallMethod with Arguments
+
+```go
+// No arguments
+result, err := p.CallMethod(instance, "get")
+
+// Positional arguments
+result, err := p.CallMethod(instance, "add", 5, 10)
+
+// With keyword arguments
+result, err := p.CallMethod(instance, "format", "text", scriptling.Kwargs{
+    "prefix": ">>",
+    "suffix": "<<",
+})
+```
+
+### Using Context
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()
+
+instance, err := p.CreateInstanceWithContext(ctx, "Counter", 10)
+result, err := p.CallMethodWithContext(ctx, instance, "increment")
+```
+
+### Storing Instances
+
+You can store instances in the environment for use in scripts:
+
+```go
+instance, _ := p.CreateInstance("Counter", 10)
+p.SetObjectVar("counter", instance)
+
+// Now use it from scripts
+p.Eval(`
+counter.increment(5)
+value = counter.get()
+`)
+
+value, _ := p.GetVarAsInt("value")  // 15
+```
+
+### Multiple Instances
+
+```go
+// Create multiple independent instances
+account1, _ := p.CreateInstance("BankAccount", "Alice", scriptling.Kwargs{"balance": 1000})
+account2, _ := p.CreateInstance("BankAccount", "Bob", scriptling.Kwargs{"balance": 500})
+
+// Operate on each independently
+p.CallMethod(account1, "deposit", 250)
+p.CallMethod(account2, "withdraw", 100)
+
+balance1, _ := p.CallMethod(account1, "get_balance")
+balance2, _ := p.CallMethod(account2, "get_balance")
+```
+
+### Complete Example
+
+```go
+package main
+
+import (
+    "fmt"
+    "log"
+    "github.com/paularlott/scriptling"
+)
+
+func main() {
+    p := scriptling.New()
+
+    // Define a class
+    _, err := p.Eval(`
+class Calculator:
+    def __init__(self):
+        self.result = 0
+    
+    def add(self, a, b):
+        self.result = a + b
+        return self.result
+    
+    def multiply(self, factor):
+        self.result = self.result * factor
+        return self.result
+    
+    def get_result(self):
+        return self.result
+`)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Create instance
+    calc, err := p.CreateInstance("Calculator")
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Use the instance
+    result, _ := p.CallMethod(calc, "add", 10, 32)
+    sum, _ := result.AsInt()
+    fmt.Printf("10 + 32 = %d\n", sum)  // 42
+
+    result, _ = p.CallMethod(calc, "multiply", 2)
+    product, _ := result.AsInt()
+    fmt.Printf("42 * 2 = %d\n", product)  // 84
+
+    result, _ = p.CallMethod(calc, "get_result")
+    final, _ := result.AsInt()
+    fmt.Printf("Final result: %d\n", final)  // 84
+}
+```
+
+See [examples/call_method](../examples/call_method) for more examples.
