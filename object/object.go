@@ -11,11 +11,12 @@ import (
 	"github.com/paularlott/scriptling/ast"
 )
 
-// Small integer cache for common values (-5 to 256)
+// Small integer cache for common values (-5 to 10000)
 // This follows Python's approach and eliminates allocations for loop counters
+// Extended range to 10000 for better loop performance
 const (
 	smallIntMin = -5
-	smallIntMax = 256
+	smallIntMax = 10000
 
 	// Type conversion error messages (exported for use by external packages)
 	ErrMustBeString   = "must be a string"

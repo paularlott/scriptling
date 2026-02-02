@@ -6,6 +6,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/errors"
@@ -17,6 +18,27 @@ var (
 	TRUE  = &object.Boolean{Value: true}
 	FALSE = &object.Boolean{Value: false}
 )
+
+// Pool for strings.Builder to reduce allocations in string operations
+var builderPool = sync.Pool{
+	New: func() any {
+		b := &strings.Builder{}
+		// Pre-allocate a reasonable capacity to reduce reallocations
+		b.Grow(64)
+		return b
+	},
+}
+
+// getStringBuilder retrieves a builder from the pool
+func getStringBuilder() *strings.Builder {
+	return builderPool.Get().(*strings.Builder)
+}
+
+// putStringBuilder returns a builder to the pool after resetting it
+func putStringBuilder(b *strings.Builder) {
+	b.Reset()
+	builderPool.Put(b)
+}
 
 // envContextKey is used to store environment in context
 const envContextKey = "scriptling-env"
@@ -68,7 +90,7 @@ func checkContext(ctx context.Context) object.Object {
 	}
 }
 
-// contextChecker helps batch context checks to reduce overhead
+// contextChecker helps batch context checks in loops to reduce overhead
 type contextChecker struct {
 	ctx       context.Context
 	counter   int
@@ -78,7 +100,7 @@ type contextChecker struct {
 func newContextChecker(ctx context.Context) *contextChecker {
 	return &contextChecker{
 		ctx:       ctx,
-		batchSize: 100, // Check context every 100 operations by default
+		batchSize: 10, // Check context every 10 operations in loops
 	}
 }
 
@@ -91,15 +113,9 @@ func (cc *contextChecker) check() object.Object {
 	return nil
 }
 
-// Always check context (used in loops where responsiveness is critical)
+// checkAlways checks context every time (for critical sections)
 func (cc *contextChecker) checkAlways() object.Object {
-	// Even in loops, we can batch checks, but with a smaller batch size
-	cc.counter++
-	if cc.counter >= 10 { // Check every 10 iterations in loops
-		cc.counter = 0
-		return checkContext(cc.ctx)
-	}
-	return nil
+	return checkContext(cc.ctx)
 }
 
 func evalWithContext(ctx context.Context, node ast.Node, env *object.Environment) object.Object {
@@ -115,11 +131,9 @@ func evalWithContext(ctx context.Context, node ast.Node, env *object.Environment
 func evalNode(ctx context.Context, node ast.Node, env *object.Environment) object.Object {
 	// Add evaluator to context if not present
 	ctx = WithEvaluator(ctx)
-	
-	// Check for cancellation
-	if err := checkContext(ctx); err != nil {
-		return err
-	}
+
+	// Check for cancellation - batched via context checker in the top-level EvalWithContext
+	// For leaf nodes, we skip the check to reduce overhead
 	switch node := node.(type) {
 	case *ast.Program:
 		return evalProgram(ctx, node, env)
@@ -676,12 +690,24 @@ func evalStringInfixExpression(operator string, leftVal, rightVal string) object
 		if len(rightVal) == 0 {
 			return &object.String{Value: leftVal}
 		}
-		// Use strings.Builder for efficient concatenation
-		var builder strings.Builder
-		builder.Grow(len(leftVal) + len(rightVal)) // Pre-allocate to avoid reallocations
+		// For small strings, use direct builder allocation (faster than pooling)
+		// For large strings, use pooling to reduce allocations
+		totalLen := len(leftVal) + len(rightVal)
+		if totalLen < 128 { // Threshold for small strings
+			var builder strings.Builder
+			builder.Grow(totalLen)
+			builder.WriteString(leftVal)
+			builder.WriteString(rightVal)
+			return &object.String{Value: builder.String()}
+		}
+		// Use pooled strings.Builder for larger concatenations
+		builder := getStringBuilder()
+		builder.Grow(totalLen)
 		builder.WriteString(leftVal)
 		builder.WriteString(rightVal)
-		return &object.String{Value: builder.String()}
+		result := builder.String()
+		putStringBuilder(builder)
+		return &object.String{Value: result}
 	case "==":
 		return nativeBoolToBooleanObject(leftVal == rightVal)
 	case "!=":
