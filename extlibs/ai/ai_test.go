@@ -697,3 +697,91 @@ func TestGetStreamInstanceValid(t *testing.T) {
 		t.Errorf("ChatStreamInstance.stream = %v, want nil", si.stream)
 	}
 }
+
+func TestExtractThinking(t *testing.T) {
+	tests := []struct {
+		name            string
+		input           string
+		expectedBlocks  int
+		expectedContent string
+	}{
+		{
+			name:            "no thinking blocks",
+			input:           "Hello, how can I help you?",
+			expectedBlocks:  0,
+			expectedContent: "Hello, how can I help you?",
+		},
+		{
+			name:            "XML think block",
+			input:           "<think>Let me think about this...</think>\nHere's my response.",
+			expectedBlocks:  1,
+			expectedContent: "Here's my response.",
+		},
+		{
+			name:            "XML thinking block",
+			input:           "<thinking>Analyzing the question</thinking>\n\nThe answer is 42.",
+			expectedBlocks:  1,
+			expectedContent: "The answer is 42.",
+		},
+		{
+			name:            "multiple think blocks",
+			input:           "<think>First thought</think>\nResponse one.\n<think>Second thought</think>\nResponse two.",
+			expectedBlocks:  2,
+			expectedContent: "Response one.\n\nResponse two.",
+		},
+		{
+			name:            "Thought block (OpenAI style)",
+			input:           "<Thought>Reasoning here</Thought>Final answer.",
+			expectedBlocks:  1,
+			expectedContent: "Final answer.",
+		},
+		{
+			name:            "markdown code block",
+			input:           "```thinking\nMy internal reasoning\n```\n\nActual response here.",
+			expectedBlocks:  1,
+			expectedContent: "Actual response here.",
+		},
+		{
+			name:            "mixed formats",
+			input:           "<think>First</think>\n```thinking\nSecond\n```\nFinal answer",
+			expectedBlocks:  2,
+			expectedContent: "Final answer",
+		},
+		{
+			name:            "multiline think block",
+			input:           "<think>\nLine 1\nLine 2\nLine 3\n</think>\n\nResponse",
+			expectedBlocks:  1,
+			expectedContent: "Response",
+		},
+		{
+			name:            "case insensitive",
+			input:           "<THINK>Caps thinking</THINK>Response here",
+			expectedBlocks:  1,
+			expectedContent: "Response here",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := extractThinking(tt.input)
+
+			thinking, ok := result["thinking"].([]any)
+			if !ok {
+				t.Fatalf("thinking is not []any, got %T", result["thinking"])
+			}
+
+			if len(thinking) != tt.expectedBlocks {
+				t.Errorf("got %d thinking blocks, want %d", len(thinking), tt.expectedBlocks)
+			}
+
+			content, ok := result["content"].(string)
+			if !ok {
+				t.Fatalf("content is not string, got %T", result["content"])
+			}
+
+			if content != tt.expectedContent {
+				t.Errorf("content = %q, want %q", content, tt.expectedContent)
+			}
+		})
+	}
+}

@@ -17,11 +17,11 @@ import scriptling.ai.agent as agent
 class MockClient:
     def __init__(self):
         self.tools = []
-    
+
     def set_tools(self, tools):
         self.tools = tools
-    
-    def completion(self, messages):
+
+    def completion(self, model, messages):
         # Return a simple response without tool calls
         return {
             "choices": [{
@@ -87,13 +87,13 @@ class MockClient:
     def __init__(self):
         self.tools = []
         self.call_count = 0
-    
+
     def set_tools(self, tools):
         self.tools = tools
-    
-    def completion(self, messages):
+
+    def completion(self, model, messages):
         self.call_count = self.call_count + 1
-        
+
         # First call: return tool call
         if self.call_count == 1:
             return {
@@ -111,7 +111,7 @@ class MockClient:
                     }
                 }]
             }
-        
+
         # Second call: return final response
         return {
             "choices": [{

@@ -4,7 +4,75 @@ AI and LLM functions for interacting with OpenAI-compatible APIs. This library p
 
 1. **AI Client** - Create clients and make completions
 2. **Tool Registry** - Build tool schemas for AI agents
-3. **Wrapped client from Go** - Pass Go-created clients to scripts
+3. **Thinking Extractor** - Extract reasoning blocks from AI responses
+4. **Wrapped client from Go** - Pass Go-created clients to scripts
+
+## Thinking Extractor
+
+### ai.extract_thinking(text)
+
+Extracts thinking/reasoning blocks from AI model responses. Many models include their reasoning in special blocks (like `<think>...</think>`) which you may want to process separately from the main response.
+
+**Supported Formats:**
+
+- XML-style: `<think>...</think>`, `<thinking>...</thinking>`
+- OpenAI style: `<Thought>...</Thought>`
+- Markdown blocks: ` ```thinking\n...\n``` `, ` ```thought\n...\n``` `
+- Claude style: `<antThinking>...</antThinking>`
+
+**Parameters:**
+
+- `text` (str): The AI response text to process
+
+**Returns:** dict - Contains:
+
+- `thinking` (list): List of extracted thinking block strings
+- `content` (str): The cleaned response text with thinking blocks removed
+
+**Example:**
+
+```python
+import scriptling.ai as ai
+
+response_text = """<think>
+Let me analyze this step by step.
+The user wants to know about Python.
+</think>
+
+Python is a high-level programming language known for its readability."""
+
+result = ai.extract_thinking(response_text)
+
+# Access the thinking blocks
+for thought in result["thinking"]:
+    print("Model reasoning:", thought)
+
+# Get the cleaned response
+print("Response:", result["content"])
+# Output: "Python is a high-level programming language known for its readability."
+```
+
+**With Agent Responses:**
+
+```python
+import scriptling.ai as ai
+import scriptling.ai.agent as agent
+
+bot = agent.Agent(client, tools=tools, system_prompt="...")
+response = bot.trigger("Explain Python")
+
+# Extract and display thinking separately
+result = ai.extract_thinking(response.content)
+
+if result["thinking"]:
+    print("=== Model Reasoning ===")
+    for thought in result["thinking"]:
+        print(thought)
+    print()
+
+print("=== Response ===")
+print(result["content"])
+```
 
 ## Tool Registry
 
@@ -387,7 +455,7 @@ if response.choices[0].message.tool_calls:
     for tool_call in response.choices[0].message.tool_calls:
         tool_name = tool_call.function.name
         tool_args = tool_call.function.arguments
-        
+
         # Execute the tool yourself
         if tool_name == "read_file":
             result = os.read_file(tool_args["path"])

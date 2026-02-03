@@ -11,7 +11,7 @@ import scriptling.ai as ai, scriptling.ai.agent.interact as agent, glob, os, re,
 
 # Configuration from environment
 BASE_URL = os.getenv("OPENAI_BASE_URL", "http://127.0.0.1:1234/v1")
-MODEL = os.getenv("OPENAI_MODEL", "qwen3-coder-30b-a3b-instruct-mlx")
+MODEL = os.getenv("OPENAI_MODEL", "zai-org/glm-4.6v-flash")
 API_KEY = os.getenv("OPENAI_API_KEY", "")
 
 # ANSI colors

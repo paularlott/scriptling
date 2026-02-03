@@ -2,6 +2,7 @@ package extlibs
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -277,17 +278,36 @@ func TestWaitForPort(t *testing.T) {
 	})
 
 	t.Run("closed port", func(t *testing.T) {
-		// Use a port that's unlikely to be in use
+		// First, find a port that is actually closed by checking several unlikely ports
+		testPort := 9999
+		closedPortFound := false
+
+		// Try a few ports to find one that's actually closed
+		for _, port := range []int{9999, 9998, 9997, 9876, 8888, 7777, 65432, 54321} {
+			conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 100*time.Millisecond)
+			if err != nil {
+				// Port is closed
+				testPort = port
+				closedPortFound = true
+				break
+			}
+			conn.Close()
+		}
+
+		if !closedPortFound {
+			t.Skip("Could not find a closed port for testing")
+		}
+
 		result := WaitForLibrary.Functions()["port"].Fn(ctx, object.NewKwargs(map[string]object.Object{
 			"timeout": &object.Integer{Value: 1},
-		}), &object.String{Value: "127.0.0.1"}, &object.Integer{Value: 9999})
+		}), &object.String{Value: "127.0.0.1"}, &object.Integer{Value: int64(testPort)})
 
 		b, ok := result.(*object.Boolean)
 		if !ok {
 			t.Fatalf("expected Boolean, got %T", result)
 		}
 		if b.Value {
-			t.Errorf("expected false, got true")
+			t.Errorf("expected false for port %d, got true", testPort)
 		}
 	})
 
