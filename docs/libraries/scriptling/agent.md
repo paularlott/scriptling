@@ -141,7 +141,7 @@ tools = ai.ToolRegistry()
 tools.add("read", "Read file", {"path": "string"}, read_func)
 
 bot = agent.Agent(
-    client=client,
+    client,
     tools=tools,
     system_prompt="You are a coding assistant",
     model="gpt-4"
@@ -295,7 +295,7 @@ tools.add("write", "Write content to file", {
 
 # Create agent
 bot = agent.Agent(
-    client=client,
+    client,
     tools=tools,
     system_prompt="Concise coding assistant. cwd: " + os.getcwd(),
     model="gpt-4"
