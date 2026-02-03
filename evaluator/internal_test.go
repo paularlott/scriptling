@@ -224,8 +224,8 @@ func TestContextChecker(t *testing.T) {
 		t.Error("contextChecker.ctx is not the same as the passed context")
 	}
 
-	if checker.batchSize != 100 {
-		t.Errorf("contextChecker.batchSize = %d, want 100", checker.batchSize)
+	if checker.batchSize != 10 {
+		t.Errorf("contextChecker.batchSize = %d, want 10", checker.batchSize)
 	}
 
 	// Test check method - should return nil when context is not done

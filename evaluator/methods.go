@@ -539,7 +539,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if err := errors.ExactArgs(args, 0); err != nil { return err }
 		return &object.String{Value: strings.ToLower(str.Value)}
 	case "split":
-		if err := errors.MaxArgs(args, 1); err != nil { return err }
+		if err := errors.MaxArgs(args, 2); err != nil { return err }
 		// If no argument, split on whitespace
 		if len(args) == 0 {
 			parts := strings.Fields(str.Value)
@@ -554,7 +554,27 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if errObj != nil {
 			return errors.ParameterError("sep", errObj)
 		}
-		parts := strings.Split(str.Value, sep)
+
+		var parts []string
+		if len(args) == 1 {
+			// No maxsplit specified, use Split (splits all occurrences)
+			parts = strings.Split(str.Value, sep)
+		} else {
+			// maxsplit specified - convert from scriptling Object to int
+			maxsplitObj := args[1]
+			maxsplit, err := maxsplitObj.AsInt()
+			if err != nil {
+				return errors.ParameterError("maxsplit", err)
+			}
+			// strings.SplitN takes n as max number of parts (maxsplit + 1 in Python terms)
+			// If maxsplit is -1 (Python's default for unlimited), use -1
+			n := int(maxsplit + 1)
+			if maxsplit < 0 {
+				n = -1
+			}
+			parts = strings.SplitN(str.Value, sep, n)
+		}
+
 		elements := make([]object.Object, len(parts))
 		for i, part := range parts {
 			elements[i] = &object.String{Value: part}

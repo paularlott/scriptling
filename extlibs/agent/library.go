@@ -6,6 +6,7 @@ const (
 
 const agentScript = `
 import json
+import scriptling.ai as ai
 
 class Agent:
     def __init__(self, client, tools=None, system_prompt="", model=""):
@@ -37,11 +38,8 @@ class Agent:
         # Agentic loop
         last_response = None
         for i in range(max_iterations):
-            # Call completion
-            if self.model:
-                response = self.client.completion(self.model, self.messages)
-            else:
-                response = self.client.completion(self.messages)
+            # Call completion (all clients accept model as first parameter)
+            response = self.client.completion(self.model, self.messages)
 
             # Get message from response
             if not response.choices or len(response.choices) == 0:
@@ -51,10 +49,10 @@ class Agent:
             message = choice.message
             last_response = message
 
-            # Strip thinking blocks from content for non-interactive use
+            # Strip thinking blocks from content using extract_thinking
             if message.content:
-                import re
-                message.content = re.sub(r'<think>.*?</think>', '', message.content, flags=re.DOTALL).strip()
+                result = ai.extract_thinking(message.content)
+                message.content = result["content"]
 
             # Check for tool calls
             tool_calls = message.tool_calls if hasattr(message, "tool_calls") else None
@@ -74,6 +72,21 @@ class Agent:
 
                 # Parse arguments
                 tool_args = json.loads(tool_args_str)
+
+                # Strip {function_name:...} wrapper from tool name if present
+                if tool_name.startswith("{") and ":" in tool_name:
+                    parts = tool_name.split(":", 1)
+                    if len(parts) == 2 and parts[1].endswith("}"):
+                        tool_name = parts[1][:-1]
+
+                # Strip {...} wrapper from argument keys if present (e.g., {name} -> name)
+                cleaned_args = {}
+                for key, value in tool_args.items():
+                    clean_key = key
+                    if clean_key.startswith("{") and clean_key.endswith("}"):
+                        clean_key = clean_key[1:-1]
+                    cleaned_args[clean_key] = value
+                tool_args = cleaned_args
 
                 # Get handler from tools
                 if self.tools is None:

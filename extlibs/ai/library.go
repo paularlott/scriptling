@@ -3,6 +3,8 @@ package ai
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strings"
 	"sync"
 
 	"github.com/paularlott/mcp/openai"
@@ -41,10 +43,10 @@ func Register(registrar interface{ RegisterLibrary(*object.Library) }) {
 // buildLibrary builds the AI library
 func buildLibrary() *object.Library {
 	builder := object.NewLibraryBuilder(AILibraryName, AILibraryDesc)
-	
+
 	// Add ToolRegistry class
 	builder.Constant("ToolRegistry", tools.GetRegistryClass())
-	
+
 	builder.
 
 		// completion(model, messages) - Create a chat completion
@@ -227,7 +229,35 @@ Example:
   client = ai.new_client("http://127.0.0.1:1234/v1")
 
   # Future: Other services
-  client = ai.new_client("https://api.anthropic.com", service="anthropic", api_key="...")`)
+  client = ai.new_client("https://api.anthropic.com", service="anthropic", api_key="...")`).
+
+		// extract_thinking(text) - Extract thinking blocks from AI response
+		FunctionWithHelp("extract_thinking", func(ctx context.Context, text string) (map[string]any, error) {
+			return extractThinking(text), nil
+		}, `extract_thinking(text) - Extract thinking blocks from AI response
+
+Extracts thinking/reasoning blocks from AI model responses and returns
+both the extracted thinking and the cleaned content.
+
+Supports multiple formats:
+  - XML-style: <think>...</think>, <thinking>...</thinking>
+  - Markdown code blocks: `+"```thinking\\n...\\n```"+`
+  - OpenAI <Thought>...</Thought> style
+
+Parameters:
+  text (str): The AI response text to process
+
+Returns:
+  dict: Contains 'thinking' (list of extracted blocks) and 'content' (cleaned text)
+
+Example:
+  response = ai.completion(...)
+  result = ai.extract_thinking(response.choices[0].message.content)
+
+  for thought in result["thinking"]:
+      print("Thinking:", thought)
+
+  print("Response:", result["content"])`)
 
 	return builder.Build()
 }
@@ -256,4 +286,58 @@ func convertMapsToOpenAI(messages []map[string]any) []openai.Message {
 		openaiMessages = append(openaiMessages, omsg)
 	}
 	return openaiMessages
+}
+
+// extractThinking extracts thinking/reasoning blocks from AI responses
+// and returns both the extracted blocks and the cleaned content.
+// Supports multiple formats used by various AI models.
+func extractThinking(text string) map[string]any {
+	var thinkingBlocks []any
+	content := text
+
+	// Define patterns for different thinking block formats
+	// Each pattern captures the content inside the thinking block
+	patterns := []struct {
+		regex *regexp.Regexp
+		name  string
+	}{
+		// XML-style: <think>...</think>
+		{regexp.MustCompile(`(?is)<think>(.*?)</think>`), "think"},
+		// XML-style: <thinking>...</thinking>
+		{regexp.MustCompile(`(?is)<thinking>(.*?)</thinking>`), "thinking"},
+		// OpenAI Thought format: <Thought>...</Thought>
+		{regexp.MustCompile(`(?is)<Thought>(.*?)</Thought>`), "Thought"},
+		// Markdown code block: ```thinking\n...\n```
+		{regexp.MustCompile("(?is)```thinking\\s*\\n(.*?)\\n?```"), "md-thinking"},
+		// Markdown code block: ```thought\n...\n```
+		{regexp.MustCompile("(?is)```thought\\s*\\n(.*?)\\n?```"), "md-thought"},
+		// Claude-style: <antThinking>...</antThinking>
+		{regexp.MustCompile(`(?is)<antThinking>(.*?)</antThinking>`), "antThinking"},
+	}
+
+	// Extract all thinking blocks
+	for _, p := range patterns {
+		matches := p.regex.FindAllStringSubmatch(content, -1)
+		for _, match := range matches {
+			if len(match) > 1 {
+				thought := strings.TrimSpace(match[1])
+				if thought != "" {
+					thinkingBlocks = append(thinkingBlocks, thought)
+				}
+			}
+		}
+		// Remove the matched blocks from content
+		content = p.regex.ReplaceAllString(content, "")
+	}
+
+	// Clean up the content - remove extra whitespace
+	content = strings.TrimSpace(content)
+	// Collapse multiple newlines into at most two
+	multiNewline := regexp.MustCompile(`\n{3,}`)
+	content = multiNewline.ReplaceAllString(content, "\n\n")
+
+	return map[string]any{
+		"thinking": thinkingBlocks,
+		"content":  content,
+	}
 }

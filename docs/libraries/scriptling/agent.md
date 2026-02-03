@@ -366,7 +366,20 @@ response = bot.trigger("List Python files")
 print(response.content)  # "I'll search for Python files in the current directory."
 ```
 
+### Manual Extraction
+
+For cases where you need to manually extract thinking blocks from AI responses (e.g., when not using the agent), use the `ai.extract_thinking()` function from the [AI Library](ai.md#thinking-extractor). This function supports multiple thinking block formats including `<think>`, `<thinking>`, `<Thought>`, `<antThinking>`, and markdown code blocks.
+
+```python
+import scriptling.ai as ai
+
+result = ai.extract_thinking(response_text)
+thinking_blocks = result["thinking"]  # List of extracted blocks
+clean_content = result["content"]     # Text with thinking blocks removed
+```
+
 ## See Also
 
 - [AI Library](ai.md) - AI client and completion functions
+- [Thinking Extractor](ai.md#thinking-extractor) - Manual thinking block extraction
 - [scriptlingcoder example](../../examples/openai/scriptlingcoder/) - Complete AI coding assistant

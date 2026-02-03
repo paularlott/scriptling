@@ -485,6 +485,9 @@ func convertReturnValue(v reflect.Value) Object {
 	case reflect.Interface:
 		// For interface{}, convert the underlying value
 		return convertValueToObject(v.Interface())
+	case reflect.Map, reflect.Slice:
+		// For maps and slices, convert via interface{}
+		return convertValueToObject(v.Interface())
 	default:
 		return newError("unsupported return type: %s", v.Kind())
 	}
