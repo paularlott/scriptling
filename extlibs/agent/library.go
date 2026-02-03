@@ -79,6 +79,10 @@ class Agent:
                     if len(parts) == 2 and parts[1].endswith("}"):
                         tool_name = parts[1][:-1]
 
+                # Strip function_name_ from tool name if present
+                if tool_name.startswith("function_name_"):
+                    tool_name = tool_name[len("function_name_"):]
+
                 # Strip {...} wrapper from argument keys if present (e.g., {name} -> name)
                 cleaned_args = {}
                 for key, value in tool_args.items():
