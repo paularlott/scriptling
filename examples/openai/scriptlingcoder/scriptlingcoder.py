@@ -117,7 +117,7 @@ tools.add("bash", "Run shell command", {"cmd": "string"}, run_bash)
 
 # Create agent
 bot = agent.Agent(
-    client=client,
+    client,
     tools=tools,
     system_prompt="Concise coding assistant. cwd: " + os.getcwd(),
     model=MODEL
