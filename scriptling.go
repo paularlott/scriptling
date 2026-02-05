@@ -10,7 +10,6 @@ import (
 
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/evaluator"
-	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/lexer"
 	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/scriptling/parser"
@@ -349,32 +348,7 @@ func (p *Scriptling) EvalWithContext(ctx context.Context, input string) (object.
 	}
 
 	result := evaluator.EvalWithContext(ctx, program, p.env)
-	if err, ok := result.(*object.Error); ok {
-		return nil, fmt.Errorf("%s", err.Message)
-	}
-
-	// Check for SystemExit exception
-	if ex, ok := result.(*object.Exception); ok && ex.ExceptionType == "SystemExit" {
-		// Extract exit code from the message
-		code := 0
-		if strings.HasPrefix(ex.Message, "SystemExit: ") {
-			codeStr := strings.TrimPrefix(ex.Message, "SystemExit: ")
-			code = parseIntFromMessage(codeStr)
-		}
-		return nil, &extlibs.SysExitCode{Code: code}
-	}
-
-	return result, nil
-}
-
-// parseIntFromMessage extracts an integer from a message string
-func parseIntFromMessage(msg string) int {
-	var code int
-	_, err := fmt.Sscanf(msg, "%d", &code)
-	if err != nil {
-		return 1 // Default to exit code 1 if parsing fails
-	}
-	return code
+	return p.handleResult(result, "")
 }
 
 func (p *Scriptling) SetVar(name string, value interface{}) error {
@@ -531,23 +505,7 @@ func (p *Scriptling) CallFunctionWithContext(ctx context.Context, name string, a
 
 	// 3. Call the function using evaluator
 	result := evaluator.ApplyFunction(ctx, fn, objArgs, objKwargs, p.env)
-
-	// 4. Handle errors
-	if err, ok := result.(*object.Error); ok && err != nil {
-		return nil, fmt.Errorf("function error: %s", err.Message)
-	}
-
-	// 5. Check for SystemExit exception
-	if ex, ok := result.(*object.Exception); ok && ex.ExceptionType == "SystemExit" {
-		code := 0
-		if strings.HasPrefix(ex.Message, "SystemExit: ") {
-			codeStr := strings.TrimPrefix(ex.Message, "SystemExit: ")
-			code = parseIntFromMessage(codeStr)
-		}
-		return nil, &extlibs.SysExitCode{Code: code}
-	}
-
-	return result, nil
+	return p.handleResult(result, fmt.Sprintf("function '%s'", name))
 }
 
 // CreateInstance creates an instance of a Scriptling class and returns it as an object.Object.
@@ -592,23 +550,7 @@ func (p *Scriptling) CreateInstanceWithContext(ctx context.Context, className st
 
 	// Create the instance using evaluator
 	instance := evaluator.ApplyFunction(ctx, class, objArgs, objKwargs, p.env)
-
-	// Check for errors
-	if err, ok := instance.(*object.Error); ok && err != nil {
-		return nil, fmt.Errorf("instance creation error: %s", err.Message)
-	}
-
-	// Check for SystemExit exception
-	if ex, ok := instance.(*object.Exception); ok && ex.ExceptionType == "SystemExit" {
-		code := 0
-		if strings.HasPrefix(ex.Message, "SystemExit: ") {
-			codeStr := strings.TrimPrefix(ex.Message, "SystemExit: ")
-			code = parseIntFromMessage(codeStr)
-		}
-		return nil, &extlibs.SysExitCode{Code: code}
-	}
-
-	return instance, nil
+	return p.handleResult(instance, fmt.Sprintf("class '%s'", className))
 }
 
 // CallMethod calls a method on a Scriptling object (typically an Instance).
@@ -652,23 +594,7 @@ func (p *Scriptling) CallMethodWithContext(ctx context.Context, obj object.Objec
 
 	// Call the method using evaluator
 	result := evaluator.ApplyFunction(ctx, method, objArgs, objKwargs, p.env)
-
-	// Handle errors
-	if err, ok := result.(*object.Error); ok && err != nil {
-		return nil, fmt.Errorf("method error: %s", err.Message)
-	}
-
-	// Check for SystemExit exception
-	if ex, ok := result.(*object.Exception); ok && ex.ExceptionType == "SystemExit" {
-		code := 0
-		if strings.HasPrefix(ex.Message, "SystemExit: ") {
-			codeStr := strings.TrimPrefix(ex.Message, "SystemExit: ")
-			code = parseIntFromMessage(codeStr)
-		}
-		return nil, &extlibs.SysExitCode{Code: code}
-	}
-
-	return result, nil
+	return p.handleResult(result, fmt.Sprintf("method '%s' on class '%s'", methodName, instance.Class.Name))
 }
 
 // RegisterLibrary registers a new library that can be imported by scripts
@@ -946,4 +872,43 @@ func (p *Scriptling) SetInputReader(r io.Reader) {
 // GetOutput returns captured output and clears the buffer
 func (p *Scriptling) GetOutput() string {
 	return p.env.GetOutput()
+}
+
+// handleResult converts an Object result to (Object, error)
+//
+// Return behavior:
+//   - Normal value: (value, nil)
+//   - Error object: (Error object, error with message)
+//   - SystemExit(0): (Exception, nil) - clean success but object available for inspection
+//   - SystemExit(!=0): (Exception, error with message)
+//   - Other exceptions: (Exception, error with message)
+//
+// The contextMsg parameter provides context for error messages, e.g.:
+//   - "function 'add'"
+//   - "method 'increment' on class 'Counter'"
+//   - "class 'Counter'"
+//   - "" (for Eval, no additional context)
+func (p *Scriptling) handleResult(result object.Object, contextMsg string) (object.Object, error) {
+	switch obj := result.(type) {
+	case *object.Error:
+		if contextMsg != "" {
+			return obj, fmt.Errorf("%s: %s", contextMsg, obj.Message)
+		}
+		return obj, fmt.Errorf("%s", obj.Message)
+
+	case *object.Exception:
+		if obj.IsSystemExit() {
+			// Always return the Exception object for consistency
+			// Error return indicates whether it's an error condition
+			if obj.GetExitCode() == 0 {
+				return obj, nil // clean exit
+			}
+			return obj, fmt.Errorf("%s", obj.Message)
+		}
+		// Other exceptions
+		return obj, fmt.Errorf("%s", obj.Message)
+
+	default:
+		return result, nil
+	}
 }

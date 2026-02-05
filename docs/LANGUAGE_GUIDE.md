@@ -586,6 +586,34 @@ return          # Return None
 
 ## Error Handling
 
+### Error vs Exception
+
+Scriptling has two distinct types of runtime error conditions, each with different semantics:
+
+| Aspect | **Error** | **Exception** |
+|--------|-----------|---------------|
+| **Purpose** | Fatal runtime errors | Recoverable conditions |
+| **Can be caught?** | No (try/except won't catch them) | Yes (with try/except) |
+| **Examples** | Parse errors, syntax errors, VM errors | SystemExit, ValueError, user-defined |
+| **Propagation** | Immediately converted to Go error | Propagated for try/except, converted only at boundaries |
+
+**Error flow:**
+```
+Script runtime error → Error object → Go error (returned immediately)
+```
+
+**Exception flow:**
+```
+Script raise/exception → Exception object → try/except can catch → uncaught → Go error at boundary
+```
+
+**Key principle**: Use `Error` for things that should never be caught (VM errors, parse errors). Use `Exception` for conditions that code might reasonably handle (SystemExit, validation errors, etc.).
+
+**For Go developers**: When calling Scriptling from Go:
+- Use `object.AsError(result)` to check for Error objects
+- Use `object.AsException(result)` to check for Exception objects
+- For SystemExit specifically: `ex.IsSystemExit()` and `ex.GetExitCode()`
+
 ### Try/Except
 
 Catch and handle errors that occur during execution:

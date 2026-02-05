@@ -322,6 +322,17 @@ if i, err := result.AsInt(); err == nil {
 
 ### Error Handling
 
+Scriptling has two distinct types of runtime error conditions: **Error** and **Exception**.
+
+| Aspect | **Error** | **Exception** |
+|--------|-----------|---------------|
+| **Purpose** | Fatal runtime errors | Recoverable conditions |
+| **Can be caught?** | No (try/except won't catch them) | Yes (with try/except) |
+| **Examples** | Parse errors, syntax errors, VM errors | SystemExit, ValueError, user-defined |
+| **Go return** | Always returns error | Returns (Exception, error) for uncaught |
+
+#### Basic Error Handling
+
 ```go
 result, err := p.CallFunction("my_function", arg1, arg2)
 if err != nil {
@@ -330,10 +341,55 @@ if err != nil {
     return
 }
 
-// Check if result is an error object
-if errObj, ok := result.(*object.Error); ok {
+// Check if result is an error object using helper
+if errObj, ok := object.AsErrorObj(result); ok {
     fmt.Printf("Function returned error: %s\n", errObj.Message)
     return
+}
+```
+
+#### Handling SystemExit Exceptions
+
+```go
+result, err := p.Eval(code)
+// Check for SystemExit first (regardless of err value)
+if ex, ok := object.AsException(result); ok && ex.IsSystemExit() {
+    // SystemExit(0) returns (Exception, nil) for clean exit
+    // SystemExit(!=0) returns (Exception, error) for error exit
+    os.Exit(ex.GetExitCode())
+}
+
+if err != nil {
+    // Error always contains a message for logging
+    fmt.Fprintln(os.Stderr, err)
+    return
+}
+```
+
+#### Type Helper Functions
+
+The `object` package provides helper functions for type checking:
+
+```go
+// Check for exceptions
+if ex, ok := object.AsException(result); ok {
+    // Handle exception
+    if ex.IsSystemExit() {
+        fmt.Printf("Exit code: %d\n", ex.GetExitCode())
+    }
+}
+
+// Check for errors
+if errObj, ok := object.AsErrorObj(result); ok {
+    // Can access errObj.Message, errObj.Line, errObj.File, etc.
+}
+
+// Simple type checking
+if result.Type() == object.EXCEPTION_OBJ {
+    // it's an exception
+}
+if result.Type() == object.ERROR_OBJ {
+    // it's an error
 }
 ```
 

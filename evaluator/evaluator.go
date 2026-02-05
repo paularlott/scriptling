@@ -291,7 +291,7 @@ func evalProgram(ctx context.Context, program *ast.Program, env *object.Environm
 			// Uncaught exception at program level
 			// SystemExit exceptions should be returned as-is for proper error handling
 			// Other exceptions are converted to errors
-			if result.ExceptionType == "SystemExit" {
+			if result.ExceptionType == object.ExceptionTypeSystemExit {
 				return result
 			}
 			return errors.NewError("Uncaught exception: %s", result.Message)
@@ -1550,6 +1550,16 @@ func evalTryStatementWithContext(ctx context.Context, ts *ast.TryStatement, env 
 
 	// Check if exception or error occurred
 	if isException(result) || object.IsError(result) {
+		// SystemExit exceptions should NOT be caught by except blocks
+		// sys.exit() always exits the program, regardless of try/except
+		if exc, ok := result.(*object.Exception); ok && exc.IsSystemExit() {
+			// Execute finally block before propagating SystemExit
+			if ts.Finally != nil {
+				evalWithContext(ctx, ts.Finally, env)
+			}
+			return result // SystemExit always propagates
+		}
+
 		// Execute except block if present
 		if ts.Except != nil {
 			// Store the current exception for bare raise support

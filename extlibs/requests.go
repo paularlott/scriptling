@@ -85,7 +85,7 @@ func createResponseInstance(statusCode int, headers map[string]string, body []by
 }
 
 // Exception types for requests library
-var requestExceptionType = &object.String{Value: "RequestException"}
+var requestExceptionType = &object.String{Value: object.ExceptionTypeRequestException}
 var httpErrorType = &object.String{Value: "HTTPError"}
 
 // Create exceptions namespace dict
