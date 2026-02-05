@@ -30,6 +30,15 @@ const (
 
 var smallIntegers [smallIntMax - smallIntMin + 1]*Integer
 
+// Exception type constants
+const (
+	ExceptionTypeSystemExit       = "SystemExit"
+	ExceptionTypeGeneric          = "" // Default for raised strings
+	ExceptionTypeRequestException = "RequestException"
+)
+
+// Small integer cache for common values (-5 to 10000)
+
 // Break and Continue singletons (like NULL, TRUE, FALSE)
 var (
 	BREAK    = &Break{}
@@ -315,12 +324,14 @@ type ReturnValue struct {
 func (rv *ReturnValue) Type() ObjectType { return RETURN_OBJ }
 func (rv *ReturnValue) Inspect() string  { return rv.Value.Inspect() }
 
-func (rv *ReturnValue) AsString() (string, Object)          { return "", &Error{Message: ErrMustBeString} }
-func (rv *ReturnValue) AsInt() (int64, Object)              { return 0, &Error{Message: ErrMustBeInteger} }
-func (rv *ReturnValue) AsFloat() (float64, Object)          { return 0, &Error{Message: ErrMustBeNumber} }
-func (rv *ReturnValue) AsBool() (bool, Object)              { return false, &Error{Message: ErrMustBeBoolean} }
-func (rv *ReturnValue) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
-func (rv *ReturnValue) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
+func (rv *ReturnValue) AsString() (string, Object) { return "", &Error{Message: ErrMustBeString} }
+func (rv *ReturnValue) AsInt() (int64, Object)     { return 0, &Error{Message: ErrMustBeInteger} }
+func (rv *ReturnValue) AsFloat() (float64, Object) { return 0, &Error{Message: ErrMustBeNumber} }
+func (rv *ReturnValue) AsBool() (bool, Object)     { return false, &Error{Message: ErrMustBeBoolean} }
+func (rv *ReturnValue) AsList() ([]Object, Object) { return nil, &Error{Message: ErrMustBeList} }
+func (rv *ReturnValue) AsDict() (map[string]Object, Object) {
+	return nil, &Error{Message: ErrMustBeDict}
+}
 
 func (rv *ReturnValue) CoerceString() (string, Object) { return rv.Inspect(), nil }
 func (rv *ReturnValue) CoerceInt() (int64, Object)     { return 0, &Error{Message: ErrMustBeInteger} }
@@ -394,12 +405,14 @@ type LambdaFunction struct {
 func (lf *LambdaFunction) Type() ObjectType { return LAMBDA_OBJ }
 func (lf *LambdaFunction) Inspect() string  { return "<lambda>" }
 
-func (lf *LambdaFunction) AsString() (string, Object)          { return "", &Error{Message: ErrMustBeString} }
-func (lf *LambdaFunction) AsInt() (int64, Object)              { return 0, &Error{Message: ErrMustBeInteger} }
-func (lf *LambdaFunction) AsFloat() (float64, Object)          { return 0, &Error{Message: ErrMustBeNumber} }
-func (lf *LambdaFunction) AsBool() (bool, Object)              { return false, &Error{Message: ErrMustBeBoolean} }
-func (lf *LambdaFunction) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
-func (lf *LambdaFunction) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
+func (lf *LambdaFunction) AsString() (string, Object) { return "", &Error{Message: ErrMustBeString} }
+func (lf *LambdaFunction) AsInt() (int64, Object)     { return 0, &Error{Message: ErrMustBeInteger} }
+func (lf *LambdaFunction) AsFloat() (float64, Object) { return 0, &Error{Message: ErrMustBeNumber} }
+func (lf *LambdaFunction) AsBool() (bool, Object)     { return false, &Error{Message: ErrMustBeBoolean} }
+func (lf *LambdaFunction) AsList() ([]Object, Object) { return nil, &Error{Message: ErrMustBeList} }
+func (lf *LambdaFunction) AsDict() (map[string]Object, Object) {
+	return nil, &Error{Message: ErrMustBeDict}
+}
 
 func (lf *LambdaFunction) CoerceString() (string, Object) { return lf.Inspect(), nil }
 func (lf *LambdaFunction) CoerceInt() (int64, Object)     { return 0, &Error{Message: ErrMustBeInteger} }
@@ -420,11 +433,11 @@ type Builtin struct {
 func (b *Builtin) Type() ObjectType { return BUILTIN_OBJ }
 func (b *Builtin) Inspect() string  { return "<builtin function>" }
 
-func (b *Builtin) AsString() (string, Object)          { return "", &Error{Message: ErrMustBeString} }
-func (b *Builtin) AsInt() (int64, Object)              { return 0, &Error{Message: ErrMustBeInteger} }
-func (b *Builtin) AsFloat() (float64, Object)          { return 0, &Error{Message: ErrMustBeNumber} }
-func (b *Builtin) AsBool() (bool, Object)              { return false, &Error{Message: ErrMustBeBoolean} }
-func (b *Builtin) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
+func (b *Builtin) AsString() (string, Object) { return "", &Error{Message: ErrMustBeString} }
+func (b *Builtin) AsInt() (int64, Object)     { return 0, &Error{Message: ErrMustBeInteger} }
+func (b *Builtin) AsFloat() (float64, Object) { return 0, &Error{Message: ErrMustBeNumber} }
+func (b *Builtin) AsBool() (bool, Object)     { return false, &Error{Message: ErrMustBeBoolean} }
+func (b *Builtin) AsList() ([]Object, Object) { return nil, &Error{Message: ErrMustBeList} }
 func (b *Builtin) AsDict() (map[string]Object, Object) {
 	if b.Attributes != nil {
 		return b.Attributes, nil
@@ -521,7 +534,7 @@ func (l *Library) Instantiate(instanceData any) *Library {
 	newLib := &Library{
 		name:         l.name,
 		functions:    make(map[string]*Builtin, len(l.functions)),
-		constants:    l.constants, // Constants are shared (immutable)
+		constants:    l.constants,    // Constants are shared (immutable)
 		subLibraries: l.subLibraries, // Sub-libraries are shared
 		description:  l.description,
 		instanceData: instanceData,
@@ -925,8 +938,9 @@ func (e *Error) CoerceInt() (int64, Object)     { return 0, &Error{Message: ErrM
 func (e *Error) CoerceFloat() (float64, Object) { return 0, &Error{Message: ErrMustBeNumber} }
 
 type Exception struct {
-	Message        string
-	ExceptionType  string // Exception type for identification (e.g., "SystemExit", "ValueError", etc.)
+	Message       string
+	ExceptionType string // Exception type for identification (e.g., "SystemExit", "ValueError", etc.)
+	Code          int    // Exit code for SystemExit; ignored for other exception types
 }
 
 func (ex *Exception) Type() ObjectType { return EXCEPTION_OBJ }
@@ -942,6 +956,17 @@ func (ex *Exception) AsDict() (map[string]Object, Object) { return nil, &Error{M
 func (ex *Exception) CoerceString() (string, Object) { return ex.Inspect(), nil }
 func (ex *Exception) CoerceInt() (int64, Object)     { return 0, &Error{Message: ErrMustBeInteger} }
 func (ex *Exception) CoerceFloat() (float64, Object) { return 0, &Error{Message: ErrMustBeNumber} }
+
+// IsSystemExit returns true if this is a SystemExit exception
+func (ex *Exception) IsSystemExit() bool {
+	return ex.ExceptionType == ExceptionTypeSystemExit
+}
+
+// GetExitCode returns the exit code for SystemExit exceptions
+// For non-SystemExit exceptions, returns 0 (the Code field is ignored)
+func (ex *Exception) GetExitCode() int {
+	return ex.Code
+}
 
 type Class struct {
 	Name      string
@@ -1016,4 +1041,32 @@ func (s *Super) CoerceFloat() (float64, Object) { return 0, &Error{Message: ErrM
 // This allows external libraries to register themselves without circular imports.
 type LibraryRegistrar interface {
 	RegisterLibrary(lib *Library)
+}
+
+// AsErrorObj returns the object as an Error, or nil/false if not
+func AsErrorObj(obj Object) (*Error, bool) {
+	if err, ok := obj.(*Error); ok {
+		return err, true
+	}
+	return nil, false
+}
+
+// AsException returns the object as an Exception, or nil/false if not
+func AsException(obj Object) (*Exception, bool) {
+	if ex, ok := obj.(*Exception); ok {
+		return ex, true
+	}
+	return nil, false
+}
+
+// NewSystemExit creates a new SystemExit exception with the given code and message
+func NewSystemExit(code int, message string) *Exception {
+	if message == "" {
+		message = fmt.Sprintf("SystemExit: %d", code)
+	}
+	return &Exception{
+		Message:       message,
+		ExceptionType: ExceptionTypeSystemExit,
+		Code:          code,
+	}
 }

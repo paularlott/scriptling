@@ -158,7 +158,7 @@ func callToolMethod(self *object.Instance, ctx context.Context, name string, arg
 
 	response, err := ci.client.CallTool(ctx, name, arguments)
 	if err != nil {
-		return &object.Error{Message: "tool execution failed: " + err.Error()}
+		return &object.Error{Message: err.Error()}
 	}
 
 	return DecodeToolResponse(response)
@@ -217,7 +217,7 @@ func executeDiscoveredMethod(self *object.Instance, ctx context.Context, name st
 
 	response, err := ci.client.ExecuteDiscoveredTool(ctx, name, arguments)
 	if err != nil {
-		return &object.Error{Message: "tool execution failed: " + err.Error()}
+		return &object.Error{Message: err.Error()}
 	}
 
 	return DecodeToolResponse(response)

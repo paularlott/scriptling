@@ -13,29 +13,6 @@ func RegisterSysLibrary(registrar interface{ RegisterLibrary(*object.Library) },
 	registrar.RegisterLibrary(NewSysLibrary(argv))
 }
 
-// SysExitCode is used to communicate exit codes from sys.exit()
-type SysExitCode struct {
-	Code int
-}
-
-func (s *SysExitCode) Error() string {
-	return "sys.exit called"
-}
-
-// IsSysExitCode checks if an error is a SysExitCode error.
-// This is a helper for handling sys.exit() errors from Eval/CallFunction.
-func IsSysExitCode(err error) bool {
-	_, ok := err.(*SysExitCode)
-	return ok
-}
-
-// GetSysExitCode extracts the SysExitCode from an error if it is one.
-// Returns the SysExitCode and true if the error is a SysExitCode, nil and false otherwise.
-func GetSysExitCode(err error) (*SysExitCode, bool) {
-	sysExit, ok := err.(*SysExitCode)
-	return sysExit, ok
-}
-
 // NewSysLibrary creates a new sys library with the given argv
 func NewSysLibrary(argv []string) *object.Library {
 	// Create argv list
@@ -67,41 +44,58 @@ func NewSysLibrary(argv []string) *object.Library {
 		"exit": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				code := 0
+				message := ""
 				if len(args) > 0 {
 					switch arg := args[0].(type) {
 					case *object.Integer:
 						code = int(arg.Value)
 					case *object.String:
-						// Return an exception with the custom message
-						return &object.Exception{Message: arg.Value, ExceptionType: "SystemExit"}
+						// Return an exception with the custom message and exit code 1
+						return object.NewSystemExit(1, arg.Value)
 					default:
 						code = 1
 					}
 				}
 
 				// Return a SystemExit exception that can be caught with try/except
-				return &object.Exception{
-					Message:       "SystemExit: " + object.NewInteger(int64(code)).Inspect(),
-					ExceptionType: "SystemExit",
-				}
+				return object.NewSystemExit(code, message)
 			},
-			HelpText: `exit([code]) - Raise SystemExit exception to exit the interpreter
+			HelpText: `exit([code]) - Exit the interpreter immediately
 
 Parameters:
   code - Exit status (default 0). If string, raises exception with that message.
 
-The SystemExit exception can be caught with try/except to prevent termination.
+IMPORTANT: sys.exit() CANNOT be caught by try/except blocks in your script.
+The exception will bypass all except blocks and propagate to the caller (CLI, REPL, etc.).
+However, finally blocks WILL execute before the exception propagates.
+
+This behavior differs from most exceptions which can be caught. To handle errors gracefully,
+use raise() with an exception message instead.
+
+Returns:
+  Does not return - propagates a SystemExit exception to the caller.
 
 Example:
   import sys
-  sys.exit()      # Raise SystemExit: 0
-  sys.exit(1)     # Raise SystemExit: 1
-  sys.exit("Error message")  # Raise exception with custom message
+  sys.exit()      # Clean exit with code 0
+  sys.exit(1)     # Exit with error code 1
+  sys.exit("Error message")  # Exit with error message and code 1
 
+  # This will NOT catch sys.exit() - except blocks are bypassed:
   try:
       sys.exit(42)
   except Exception as e:
-      print("Caught: " + str(e))  # "Caught: SystemExit: 42"`,
+      print("This will never print - except is bypassed!")
+  finally:
+      print("This WILL print - finally executes")
+
+  # To handle errors gracefully, use raise instead:
+  try:
+      if something_bad:
+          raise("Something bad happened")
+  except Exception as e:
+      print("Caught:", e)  # This works
+`,
 		},
 	}, constants, "System-specific parameters and functions (extended library)")
 }

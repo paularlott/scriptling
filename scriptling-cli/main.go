@@ -14,6 +14,7 @@ import (
 	"github.com/paularlott/scriptling/extlibs/agent"
 	"github.com/paularlott/scriptling/extlibs/ai"
 	"github.com/paularlott/scriptling/extlibs/mcp"
+	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/scriptling/stdlib"
 )
 
@@ -121,10 +122,10 @@ func runFile(p *scriptling.Scriptling, filename string) error {
 		return fmt.Errorf("failed to read file %s: %w", filename, err)
 	}
 
-	_, err = p.Eval(string(content))
+	result, err := p.Eval(string(content))
 	// Check for SystemExit to exit with the appropriate code
-	if sysExit, ok := extlibs.GetSysExitCode(err); ok {
-		os.Exit(sysExit.Code)
+	if ex, ok := object.AsException(result); ok && ex.IsSystemExit() {
+		os.Exit(ex.GetExitCode())
 	}
 	return err
 }
@@ -135,10 +136,10 @@ func runStdin(p *scriptling.Scriptling) error {
 		return fmt.Errorf("failed to read from stdin: %w", err)
 	}
 
-	_, err = p.Eval(string(content))
+	result, err := p.Eval(string(content))
 	// Check for SystemExit to exit with the appropriate code
-	if sysExit, ok := extlibs.GetSysExitCode(err); ok {
-		os.Exit(sysExit.Code)
+	if ex, ok := object.AsException(result); ok && ex.IsSystemExit() {
+		os.Exit(ex.GetExitCode())
 	}
 	return err
 }

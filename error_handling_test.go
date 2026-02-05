@@ -209,34 +209,49 @@ raise
 	}
 }
 
-func TestSysExitRaisesException(t *testing.T) {
+func TestSysExitIsUncatchable(t *testing.T) {
 	p := New()
 	extlibs.RegisterSysLibrary(p, []string{})
 
-	// Test that sys.exit() raises an exception that can be caught
+	// Test that sys.exit() CANNOT be caught by try/except blocks
+	// sys.exit() always exits the program, even inside try/except
 	code := `
 import sys
 
-result = None
+result = "not caught"
 try:
     sys.exit(42)
+    result = "should not reach here"
 except Exception as e:
-    result = str(e)
+    # This should NOT execute because SystemExit is uncatchable
+    result = "caught"
 
 result
 `
 	result, err := p.Eval(code)
-	if err != nil {
-		t.Fatalf("Failed to execute: %v", err)
+
+	// SystemExit should NOT be caught - should get error
+	if err == nil {
+		t.Fatal("Expected error for uncatchable SystemExit")
 	}
 
-	if result.Type() != object.STRING_OBJ {
-		t.Fatalf("Expected STRING, got %s", result.Type())
+	// Check for SystemExit exception
+	ex, ok := object.AsException(result)
+	if !ok || !ex.IsSystemExit() {
+		t.Fatalf("Expected SystemExit exception, got: %T (result=%v, err=%v)", result, result, err)
 	}
 
-	msg := result.(*object.String).Value
-	if msg != "SystemExit: 42" {
-		t.Errorf("Expected 'SystemExit: 42', got %s", msg)
+	if ex.GetExitCode() != 42 {
+		t.Errorf("Expected exit code 42, got: %d", ex.GetExitCode())
+	}
+
+	// Verify that result was never changed (except block didn't execute)
+	resultVal, objErr := p.GetVar("result")
+	if objErr != nil {
+		t.Fatalf("Failed to get result variable: %v", objErr)
+	}
+	if resultVal != "not caught" {
+		t.Errorf("Expected result to be 'not caught' (except block didn't execute), got: %v", resultVal)
 	}
 }
 
@@ -244,30 +259,50 @@ func TestSysExitWithStringMessage(t *testing.T) {
 	p := New()
 	extlibs.RegisterSysLibrary(p, []string{})
 
-	// Test that sys.exit() with string message can be caught
+	// Test that sys.exit() with string message is also uncatchable
 	code := `
 import sys
 
-result = None
+result = "not caught"
 try:
     sys.exit("custom error")
+    result = "should not reach here"
 except Exception as e:
-    result = str(e)
+    # This should NOT execute because SystemExit is uncatchable
+    result = "caught"
 
 result
 `
 	result, err := p.Eval(code)
-	if err != nil {
-		t.Fatalf("Failed to execute: %v", err)
+
+	// SystemExit should NOT be caught - should get error
+	if err == nil {
+		t.Fatal("Expected error for uncatchable SystemExit")
 	}
 
-	if result.Type() != object.STRING_OBJ {
-		t.Fatalf("Expected STRING, got %s", result.Type())
+	// Check for SystemExit exception with the custom message
+	ex, ok := object.AsException(result)
+	if !ok || !ex.IsSystemExit() {
+		t.Fatalf("Expected SystemExit exception, got: %T (result=%v, err=%v)", result, result, err)
 	}
 
-	msg := result.(*object.String).Value
+	if ex.GetExitCode() != 1 {
+		t.Errorf("Expected exit code 1 for string message, got: %d", ex.GetExitCode())
+	}
+
+	// Verify the message was set (stored in exception.Message)
+	msg := ex.Message
 	if msg != "custom error" {
-		t.Errorf("Expected 'custom error', got %s", msg)
+		t.Errorf("Expected message 'custom error', got: %s", msg)
+	}
+
+	// Verify that result was never changed (except block didn't execute)
+	resultVal, objErr := p.GetVar("result")
+	if objErr != nil {
+		t.Fatalf("Failed to get result variable: %v", objErr)
+	}
+	if resultVal != "not caught" {
+		t.Errorf("Expected result to be 'not caught' (except block didn't execute), got: %v", resultVal)
 	}
 }
 
@@ -282,19 +317,19 @@ import sys
 sys.exit(99)
 result = "should not reach here"
 `
-	_, err := p.Eval(code)
+	result, err := p.Eval(code)
 	if err == nil {
 		t.Fatal("Expected error for uncaught sys.exit()")
 	}
 
-	// Should be a SysExitCode error with the correct exit code
-	sysExit, ok := extlibs.GetSysExitCode(err)
-	if !ok {
-		t.Fatalf("Expected *extlibs.SysExitCode error, got: %T", err)
+	// Check for SystemExit exception using the new API
+	ex, ok := object.AsException(result)
+	if !ok || !ex.IsSystemExit() {
+		t.Fatalf("Expected SystemExit exception, got: %T (result=%v, err=%v)", result, result, err)
 	}
 
-	if sysExit.Code != 99 {
-		t.Errorf("Expected exit code 99, got: %d", sysExit.Code)
+	if ex.GetExitCode() != 99 {
+		t.Errorf("Expected exit code 99, got: %d", ex.GetExitCode())
 	}
 
 	// Verify that execution stopped before the assignment
@@ -309,22 +344,26 @@ func TestSysExitDefaultCode(t *testing.T) {
 	extlibs.RegisterSysLibrary(p, []string{})
 
 	// Test that sys.exit() with no args defaults to code 0
+	// Note: SystemExit(0) returns (Exception, nil) since it's a "clean" exit
 	code := `
 import sys
 sys.exit()
 `
-	_, err := p.Eval(code)
-	if err == nil {
-		t.Fatal("Expected error for uncaught sys.exit()")
+	result, err := p.Eval(code)
+
+	// Check for SystemExit exception using the new API
+	ex, ok := object.AsException(result)
+	if !ok || !ex.IsSystemExit() {
+		t.Fatalf("Expected SystemExit exception, got: %T (result=%v, err=%v)", result, result, err)
 	}
 
-	sysExit, ok := err.(*extlibs.SysExitCode)
-	if !ok {
-		t.Fatalf("Expected *extlibs.SysExitCode error, got: %T", err)
+	if ex.GetExitCode() != 0 {
+		t.Errorf("Expected exit code 0 (default), got: %d", ex.GetExitCode())
 	}
 
-	if sysExit.Code != 0 {
-		t.Errorf("Expected exit code 0 (default), got: %d", sysExit.Code)
+	// For exit code 0, err should be nil (clean exit)
+	if err != nil {
+		t.Errorf("Expected nil error for SystemExit(0), got: %v", err)
 	}
 }
 
@@ -332,7 +371,7 @@ func TestSysExitInFunction(t *testing.T) {
 	p := New()
 	extlibs.RegisterSysLibrary(p, []string{})
 
-	// Test that sys.exit() called from a function returns SysExitCode
+	// Test that sys.exit() called from a function returns SystemExit exception
 	code := `
 import sys
 
@@ -341,18 +380,19 @@ def my_function():
 
 my_function()
 `
-	_, err := p.Eval(code)
+	result, err := p.Eval(code)
 	if err == nil {
 		t.Fatal("Expected error for sys.exit() in function")
 	}
 
-	sysExit, ok := err.(*extlibs.SysExitCode)
-	if !ok {
-		t.Fatalf("Expected *extlibs.SysExitCode error, got: %T", err)
+	// Check for SystemExit exception using the new API
+	ex, ok := object.AsException(result)
+	if !ok || !ex.IsSystemExit() {
+		t.Fatalf("Expected SystemExit exception, got: %T (result=%v, err=%v)", result, result, err)
 	}
 
-	if sysExit.Code != 123 {
-		t.Errorf("Expected exit code 123, got: %d", sysExit.Code)
+	if ex.GetExitCode() != 123 {
+		t.Errorf("Expected exit code 123, got: %d", ex.GetExitCode())
 	}
 }
 
@@ -372,18 +412,19 @@ def exit_func():
 	}
 
 	// Call the function via CallFunction API
-	_, err = p.CallFunction("exit_func")
+	result, err := p.CallFunction("exit_func")
 	if err == nil {
 		t.Fatal("Expected error for sys.exit() via CallFunction")
 	}
 
-	sysExit, ok := err.(*extlibs.SysExitCode)
-	if !ok {
-		t.Fatalf("Expected *extlibs.SysExitCode error, got: %T", err)
+	// Check for SystemExit exception using the new API
+	ex, ok := object.AsException(result)
+	if !ok || !ex.IsSystemExit() {
+		t.Fatalf("Expected SystemExit exception, got: %T (result=%v, err=%v)", result, result, err)
 	}
 
-	if sysExit.Code != 45 {
-		t.Errorf("Expected exit code 45, got: %d", sysExit.Code)
+	if ex.GetExitCode() != 45 {
+		t.Errorf("Expected exit code 45, got: %d", ex.GetExitCode())
 	}
 }
 
@@ -397,7 +438,7 @@ func TestSysExitDoesNotKillCaller(t *testing.T) {
 import sys
 sys.exit(1)
 `
-	_, err := p.Eval(code)
+	result, err := p.Eval(code)
 	if err == nil {
 		t.Fatal("Expected error for uncaught sys.exit()")
 	}
@@ -405,19 +446,254 @@ sys.exit(1)
 	// If we reach here, sys.exit() did NOT terminate the Go process
 	// (which is the correct behavior now)
 
-	sysExit, ok := err.(*extlibs.SysExitCode)
-	if !ok {
-		t.Fatalf("Expected *extlibs.SysExitCode error, got: %T", err)
+	// Check for SystemExit exception using the new API
+	ex, ok := object.AsException(result)
+	if !ok || !ex.IsSystemExit() {
+		t.Fatalf("Expected SystemExit exception, got: %T (result=%v, err=%v)", result, result, err)
 	}
 
-	if sysExit.Code != 1 {
-		t.Errorf("Expected exit code 1, got: %d", sysExit.Code)
+	if ex.GetExitCode() != 1 {
+		t.Errorf("Expected exit code 1, got: %d", ex.GetExitCode())
 	}
 
 	// Verify we can still use the interpreter
 	_, err = p.Eval("x = 42")
 	if err != nil {
 		t.Errorf("Interpreter should still be usable after sys.exit(), got: %v", err)
+	}
+}
+
+func TestSysExitPropagatesThroughNestedTryCatch(t *testing.T) {
+	p := New()
+	extlibs.RegisterSysLibrary(p, []string{})
+
+	// Test that sys.exit() propagates through nested try/catch blocks
+	// SystemExit is uncatchable, so except blocks don't execute
+	code := `
+import sys
+
+exit_code = "not set"
+finally_executed = []
+
+try:
+    # Outer try block
+    try:
+        # Inner try block - call sys.exit
+        sys.exit(99)
+    except Exception as e:
+        # Inner except does NOT execute for SystemExit
+        exit_code = "inner caught"
+    finally:
+        finally_executed.append("inner finally")
+
+    # Should NOT reach here because SystemExit propagates
+    exit_code = "reached after inner"
+except Exception as e:
+    # Outer except also does NOT execute for SystemExit
+    exit_code = "outer caught"
+finally:
+    finally_executed.append("outer finally")
+
+# Should NOT reach here
+exit_code = "should not reach"
+`
+	result, err := p.Eval(code)
+
+	// SystemExit should NOT be caught - should get error
+	if err == nil {
+		t.Fatal("Expected error for uncatchable SystemExit")
+	}
+
+	// Check for SystemExit exception
+	ex, ok := object.AsException(result)
+	if !ok || !ex.IsSystemExit() {
+		t.Fatalf("Expected SystemExit exception, got: %T (result=%v, err=%v)", result, result, err)
+	}
+
+	if ex.GetExitCode() != 99 {
+		t.Errorf("Expected exit code 99, got: %d", ex.GetExitCode())
+	}
+
+	// Verify that exit_code was never changed (except blocks didn't execute)
+	exitCodeVal, objErr := p.GetVar("exit_code")
+	if objErr != nil {
+		t.Fatalf("Failed to get exit_code: %v", objErr)
+	}
+	if exitCodeVal != "not set" {
+		t.Errorf("Expected exit_code to be 'not set' (except blocks didn't execute), got: %v", exitCodeVal)
+	}
+
+	// Verify that both finally blocks executed
+	finallyExecuted, objErr := p.GetVar("finally_executed")
+	if objErr != nil {
+		t.Fatalf("Failed to get finally_executed: %v", objErr)
+	}
+
+	// GetVar returns Go values, so we need to check for []interface{}
+	list, ok := finallyExecuted.([]interface{})
+	if !ok {
+		t.Fatalf("Expected finally_executed to be a []interface{}, got: %T", finallyExecuted)
+	}
+
+	if len(list) != 2 {
+		t.Errorf("Expected 2 finally blocks to execute, got: %d", len(list))
+	}
+}
+
+func TestSysExitInFunctionPropagates(t *testing.T) {
+	p := New()
+	extlibs.RegisterSysLibrary(p, []string{})
+
+	// Test that sys.exit() called from a function propagates through all try/except blocks
+	code := `
+import sys
+
+def my_function():
+    try:
+        sys.exit(42)
+        return "should not return"
+    except Exception as e:
+        # This does NOT execute for SystemExit
+        return "caught"
+
+# Try to call the function and catch the SystemExit
+exit_code = "not set"
+try:
+    result = my_function()
+    exit_code = "no exception"
+except Exception as e:
+    # This also does NOT execute for SystemExit
+    exit_code = "outer caught"
+
+# Should NOT reach here
+exit_code = "should not reach"
+`
+	result, err := p.Eval(code)
+
+	// SystemExit should NOT be caught - should get error
+	if err == nil {
+		t.Fatal("Expected error for uncatchable SystemExit")
+	}
+
+	// Check for SystemExit exception
+	ex, ok := object.AsException(result)
+	if !ok || !ex.IsSystemExit() {
+		t.Fatalf("Expected SystemExit exception, got: %T (result=%v, err=%v)", result, result, err)
+	}
+
+	if ex.GetExitCode() != 42 {
+		t.Errorf("Expected exit code 42, got: %d", ex.GetExitCode())
+	}
+
+	// Verify that exit_code was never changed (except blocks didn't execute)
+	exitCodeVal, objErr := p.GetVar("exit_code")
+	if objErr != nil {
+		t.Fatalf("Failed to get exit_code: %v", objErr)
+	}
+	if exitCodeVal != "not set" {
+		t.Errorf("Expected exit_code to be 'not set' (except blocks didn't execute), got: %v", exitCodeVal)
+	}
+}
+
+func TestSysExitCannotBeSuppressed(t *testing.T) {
+	p := New()
+	extlibs.RegisterSysLibrary(p, []string{})
+
+	// Test that sys.exit() CANNOT be suppressed by except/pass blocks
+	code := `
+import sys
+
+def inner_func():
+    try:
+        sys.exit(123)
+    except:
+        # This does NOT suppress SystemExit - it's uncatchable
+        pass
+    return "should not return"
+
+# Call the function - sys.exit cannot be suppressed
+result = inner_func()
+
+# Should NOT reach here
+exit_code = "should not reach"
+`
+	result, err := p.Eval(code)
+
+	// SystemExit should NOT be suppressed - should get error
+	if err == nil {
+		t.Fatal("Expected error for uncatchable SystemExit")
+	}
+
+	// Check for SystemExit exception
+	ex, ok := object.AsException(result)
+	if !ok || !ex.IsSystemExit() {
+		t.Fatalf("Expected SystemExit exception, got: %T (result=%v, err=%v)", result, result, err)
+	}
+
+	if ex.GetExitCode() != 123 {
+		t.Errorf("Expected exit code 123, got: %d", ex.GetExitCode())
+	}
+
+	// Verify that exit_code was never set
+	_, objErr := p.GetVar("exit_code")
+	if objErr == nil {
+		t.Error("Expected exit_code variable to not exist (SystemExit should have propagated)")
+	}
+}
+
+func TestSysExitFinallyBlockExecutes(t *testing.T) {
+	p := New()
+	extlibs.RegisterSysLibrary(p, []string{})
+
+	// Test that finally blocks execute even when sys.exit is called
+	// BUT except blocks do NOT execute for SystemExit
+	code := `
+import sys
+
+finally_executed = False
+exception_caught = False
+
+try:
+    sys.exit(99)
+except Exception as e:
+    # This does NOT execute for SystemExit
+    exception_caught = True
+finally:
+    # This DOES execute even for SystemExit
+    finally_executed = True
+`
+	result, err := p.Eval(code)
+
+	// SystemExit should NOT be caught - should get error
+	if err == nil {
+		t.Fatal("Expected error for uncatchable SystemExit")
+	}
+
+	// Check for SystemExit exception
+	ex, ok := object.AsException(result)
+	if !ok || !ex.IsSystemExit() {
+		t.Fatalf("Expected SystemExit exception, got: %T (result=%v, err=%v)", result, result, err)
+	}
+
+	if ex.GetExitCode() != 99 {
+		t.Errorf("Expected exit code 99, got: %d", ex.GetExitCode())
+	}
+
+	// Check that finally executed but except did NOT
+	finallyExecuted, objErr := p.GetVarAsBool("finally_executed")
+	if objErr != nil {
+		t.Fatalf("Failed to get finally_executed: %v", objErr)
+	}
+	if !finallyExecuted {
+		t.Error("Finally block should have executed")
+	}
+
+	exceptionCaught, objErr := p.GetVarAsBool("exception_caught")
+	if objErr != nil {
+		t.Fatalf("Failed to get exception_caught: %v", objErr)
+	}
+	if exceptionCaught {
+		t.Error("Except block should NOT have executed for SystemExit")
 	}
 }
 
@@ -432,5 +708,72 @@ func TestErrorHandlingScript(t *testing.T) {
 	_, err = p.Eval(string(script))
 	if err != nil {
 		t.Fatalf("Error handling script failed: %v", err)
+	}
+}
+
+func TestSysExitStopsScriptExecution(t *testing.T) {
+	p := New()
+	extlibs.RegisterSysLibrary(p, []string{})
+
+	// Test that sys.exit(42) propagates up and stops the script completely
+	// No code after sys.exit() should execute
+	code := `
+import sys
+
+# Set some variables before sys.exit()
+before_exit = "set"
+try:
+    # This is the key line - sys.exit(42)
+    sys.exit(42)
+    # Nothing below this line should execute
+    before_exit = "should not reach here"
+    after_exit = "also should not reach"
+except Exception as e:
+    # This does NOT execute for SystemExit
+    before_exit = "except executed"
+
+# This code also does NOT execute because SystemExit propagated
+after_exit = "after try block"
+final_var = "script continued"
+
+# This line should never execute
+assert False, "script should have stopped at sys.exit(42)"
+`
+	result, err := p.Eval(code)
+
+	// sys.exit(42) should return a SystemExit exception
+	if err == nil {
+		t.Fatal("Expected error for uncaught sys.exit(42)")
+	}
+
+	// Check for SystemExit exception with exit code 42
+	ex, ok := object.AsException(result)
+	if !ok || !ex.IsSystemExit() {
+		t.Fatalf("Expected SystemExit exception, got: %T (result=%v, err=%v)", result, result, err)
+	}
+
+	if ex.GetExitCode() != 42 {
+		t.Errorf("Expected exit code 42, got: %d", ex.GetExitCode())
+	}
+
+	// Verify that only before_exit was set, and nothing after sys.exit()
+	beforeExit, objErr := p.GetVar("before_exit")
+	if objErr != nil {
+		t.Fatalf("Failed to get before_exit: %v", objErr)
+	}
+	if beforeExit != "set" {
+		t.Errorf("Expected before_exit to be 'set', got: %v", beforeExit)
+	}
+
+	// Verify that after_exit was never set
+	_, objErr = p.GetVar("after_exit")
+	if objErr == nil {
+		t.Error("Expected after_exit variable to not exist (script stopped at sys.exit)")
+	}
+
+	// Verify that final_var was never set
+	_, objErr = p.GetVar("final_var")
+	if objErr == nil {
+		t.Error("Expected final_var variable to not exist (script stopped at sys.exit)")
 	}
 }
