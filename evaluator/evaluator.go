@@ -893,6 +893,68 @@ func evalClassStatement(ctx context.Context, stmt *ast.ClassStatement, env *obje
 	return class
 }
 
+// unpackArgsFromIterable unpacks an iterable object into a slice of arguments
+func unpackArgsFromIterable(argsVal object.Object) ([]object.Object, object.Object) {
+	var unpacked []object.Object
+	switch val := argsVal.(type) {
+	case *object.List:
+		unpacked = val.Elements
+	case *object.Tuple:
+		unpacked = val.Elements
+	case *object.String:
+		for _, r := range val.Value {
+			unpacked = append(unpacked, &object.String{Value: string(r)})
+		}
+	case *object.Iterator:
+		for {
+			elem, hasNext := val.Next()
+			if !hasNext {
+				break
+			}
+			unpacked = append(unpacked, elem)
+		}
+	case *object.DictKeys:
+		iter := val.CreateIterator()
+		for {
+			elem, hasNext := iter.Next()
+			if !hasNext {
+				break
+			}
+			unpacked = append(unpacked, elem)
+		}
+	case *object.DictValues:
+		iter := val.CreateIterator()
+		for {
+			elem, hasNext := iter.Next()
+			if !hasNext {
+				break
+			}
+			unpacked = append(unpacked, elem)
+		}
+	case *object.DictItems:
+		iter := val.CreateIterator()
+		for {
+			elem, hasNext := iter.Next()
+			if !hasNext {
+				break
+			}
+			unpacked = append(unpacked, elem)
+		}
+	case *object.Set:
+		iter := val.CreateIterator()
+		for {
+			elem, hasNext := iter.Next()
+			if !hasNext {
+				break
+			}
+			unpacked = append(unpacked, elem)
+		}
+	default:
+		return nil, errors.NewError("argument after * must be iterable, not %s", argsVal.Type())
+	}
+	return unpacked, nil
+}
+
 func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *object.Environment) object.Object {
 	function := evalWithContext(ctx, node.Function, env)
 	if object.IsError(function) {
@@ -910,6 +972,19 @@ func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *obje
 			return val
 		}
 		keywords[k] = val
+	}
+
+	// Handle *args unpacking (supports multiple)
+	for _, argsUnpackExpr := range node.ArgsUnpack {
+		argsVal := evalWithContext(ctx, argsUnpackExpr, env)
+		if object.IsError(argsVal) {
+			return argsVal
+		}
+		unpacked, err := unpackArgsFromIterable(argsVal)
+		if err != nil {
+			return err
+		}
+		args = append(args, unpacked...)
 	}
 
 	// Handle **kwargs unpacking

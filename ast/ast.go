@@ -248,7 +248,8 @@ type CallExpression struct {
 	Function     Expression
 	Arguments    []Expression
 	Keywords     map[string]Expression
-	KwargsUnpack Expression // For **kwargs unpacking
+	ArgsUnpack   []Expression // For *args unpacking (supports multiple)
+	KwargsUnpack Expression   // For **kwargs unpacking
 }
 
 func (ce *CallExpression) expressionNode()      {}
@@ -423,7 +424,8 @@ type MethodCallExpression struct {
 	Method       *Identifier
 	Arguments    []Expression
 	Keywords     map[string]Expression
-	KwargsUnpack Expression // For **kwargs unpacking
+	ArgsUnpack   []Expression // For *args unpacking (supports multiple)
+	KwargsUnpack Expression   // For **kwargs unpacking
 }
 
 func (mce *MethodCallExpression) expressionNode()      {}

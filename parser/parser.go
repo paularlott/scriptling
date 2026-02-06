@@ -808,18 +808,19 @@ func (p *Parser) parseGroupedExpression() ast.Expression {
 
 func (p *Parser) parseCallExpression(function ast.Expression) ast.Expression {
 	exp := &ast.CallExpression{Token: p.curToken, Function: function}
-	exp.Arguments, exp.Keywords, exp.KwargsUnpack = p.parseCallArguments()
+	exp.Arguments, exp.Keywords, exp.ArgsUnpack, exp.KwargsUnpack = p.parseCallArguments()
 	return exp
 }
 
-func (p *Parser) parseCallArguments() ([]ast.Expression, map[string]ast.Expression, ast.Expression) {
+func (p *Parser) parseCallArguments() ([]ast.Expression, map[string]ast.Expression, []ast.Expression, ast.Expression) {
 	args := []ast.Expression{}
 	keywords := make(map[string]ast.Expression)
+	argsUnpack := []ast.Expression{}
 	var kwargsUnpack ast.Expression
 
 	if p.peekTokenIs(token.RPAREN) {
 		p.nextToken()
-		return args, keywords, nil
+		return args, keywords, nil, nil
 	}
 
 	p.nextToken()
@@ -840,13 +841,33 @@ func (p *Parser) parseCallArguments() ([]ast.Expression, map[string]ast.Expressi
 			break
 		}
 
+		// Check for *args unpacking
+		if p.curTokenIs(token.ASTERISK) {
+			if len(keywords) > 0 {
+				msg := fmt.Sprintf("line %d: positional argument follows keyword argument", p.curToken.Line)
+				p.errors = append(p.errors, msg)
+				return nil, nil, nil, nil
+			}
+			p.nextToken() // move to expression
+			argsUnpack = append(argsUnpack, p.parseExpression(LOWEST))
+			if p.peekTokenIs(token.COMMA) {
+				p.nextToken() // consume comma
+				if p.peekTokenIs(token.RPAREN) {
+					break
+				}
+				p.nextToken()
+				continue
+			}
+			break
+		}
+
 		// Check for keyword argument: name=value
 		if p.curTokenIs(token.IDENT) && p.peekTokenIs(token.ASSIGN) {
 			key := p.curToken.Literal
 			if _, exists := keywords[key]; exists {
 				msg := fmt.Sprintf("line %d: keyword argument repeated: %s", p.curToken.Line, key)
 				p.errors = append(p.errors, msg)
-				return nil, nil, nil
+				return nil, nil, nil, nil
 			}
 			p.nextToken() // consume name
 			p.nextToken() // consume =
@@ -857,7 +878,7 @@ func (p *Parser) parseCallArguments() ([]ast.Expression, map[string]ast.Expressi
 			if len(keywords) > 0 {
 				msg := fmt.Sprintf("line %d: positional argument follows keyword argument", p.curToken.Line)
 				p.errors = append(p.errors, msg)
-				return nil, nil, nil
+				return nil, nil, nil, nil
 			}
 
 			expr := p.parseExpression(LOWEST)
@@ -869,7 +890,7 @@ func (p *Parser) parseCallArguments() ([]ast.Expression, map[string]ast.Expressi
 				genExpr := p.parseGeneratorExpressionInCall(expr, token.RPAREN)
 				if genExpr != nil {
 					args = append(args, genExpr)
-					return args, keywords, kwargsUnpack
+					return args, keywords, argsUnpack, kwargsUnpack
 				}
 			}
 
@@ -888,10 +909,10 @@ func (p *Parser) parseCallArguments() ([]ast.Expression, map[string]ast.Expressi
 	}
 
 	if !p.expectPeek(token.RPAREN) {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 
-	return args, keywords, kwargsUnpack
+	return args, keywords, argsUnpack, kwargsUnpack
 }
 
 func (p *Parser) parseIfStatement() *ast.IfStatement {
@@ -1610,7 +1631,7 @@ func (p *Parser) parseIndexExpression(left ast.Expression) ast.Expression {
 				Object: left,
 				Method: methodName,
 			}
-			methodCall.Arguments, methodCall.Keywords, methodCall.KwargsUnpack = p.parseCallArguments()
+			methodCall.Arguments, methodCall.Keywords, methodCall.ArgsUnpack, methodCall.KwargsUnpack = p.parseCallArguments()
 			return methodCall
 		}
 
