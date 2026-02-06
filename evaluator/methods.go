@@ -35,6 +35,19 @@ func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression
 		keywords[k] = val
 	}
 
+	// Handle *args unpacking (supports multiple)
+	for _, argsUnpackExpr := range mce.ArgsUnpack {
+		argsVal := evalWithContext(ctx, argsUnpackExpr, env)
+		if object.IsError(argsVal) {
+			return argsVal
+		}
+		unpacked, err := unpackArgsFromIterable(argsVal)
+		if err != nil {
+			return err
+		}
+		args = append(args, unpacked...)
+	}
+
 	// Handle **kwargs unpacking
 	if mce.KwargsUnpack != nil {
 		kwargsVal := evalWithContext(ctx, mce.KwargsUnpack, env)

@@ -576,6 +576,102 @@ result = add(5, 3)
 fact = factorial(5)
 ```
 
+### Argument Unpacking
+
+You can unpack iterables (lists, tuples, strings, etc.) into positional arguments using the `*` operator, and dictionaries into keyword arguments using the `**` operator when calling functions.
+
+#### Positional Argument Unpacking (*args)
+
+Unpack a list or tuple into individual positional arguments:
+
+```python
+def sum_three(a, b, c):
+    return a + b + c
+
+numbers = [1, 2, 3]
+result = sum_three(*numbers)  # Same as sum_three(1, 2, 3)
+print(result)  # 6
+
+# Unpacking tuples
+coords = (10, 20)
+def add_coords(x, y):
+    return x + y
+print(add_coords(*coords))  # 30
+
+# Partial unpacking
+result = sum_three(10, *numbers[1:])  # Same as sum_three(10, 2, 3)
+print(result)  # 15
+
+# Multiple unpacking
+list1 = [1, 2]
+list2 = [5]
+result = sum_three(*list1, 3, *list2)  # Same as sum_three(1, 2, 3, 5) - error if too many
+```
+
+**String unpacking**: Unpacking a string treats each character as a separate argument:
+
+```python
+def concat_three(a, b, c):
+    return a + b + c
+
+result = concat_three(*"abc")
+print(result)  # "abc"
+```
+
+**Supported iterable types**:
+- Lists: `*[1, 2, 3]`
+- Tuples: `*(1, 2, 3)`
+- Strings: `*"abc"` (unpacks to 'a', 'b', 'c')
+- Sets: `*{1, 2, 3}` (order is not guaranteed)
+- Dictionary keys: `*{"a": 1, "b": 2}` (unpacks keys 'a', 'b')
+- Dictionary views: `*d.keys()`, `*d.values()`, `*d.items()`
+
+#### Keyword Argument Unpacking (**kwargs)
+
+Unpack a dictionary into keyword arguments:
+
+```python
+def create_user(name, age, active=True):
+    return {"name": name, "age": age, "active": active}
+
+user_data = {"name": "Alice", "age": 30}
+user = create_user(**user_data)
+print(user)  # {"name": "Alice", "age": 30, "active": True}
+
+# Override with additional kwargs
+user = create_user(**user_data, active=False)
+print(user)  # {"name": "Alice", "age": 30, "active": False}
+```
+
+#### Combining Both Unpacking Types
+
+You can use both `*` and `**` unpacking in the same function call:
+
+```python
+def func_with_all(a, b, *args, **kwargs):
+    return {"a": a, "b": b, "args": args, "kwargs": kwargs}
+
+args = [1, 2, 3, 4]
+kwargs = {"x": 10, "y": 20}
+result = func_with_all(*args, **kwargs)
+print(result)
+# {"a": 1, "b": 2, "args": [3, 4], "kwargs": {"x": 10, "y": 20}}
+```
+
+**Order of arguments** when unpacking in function calls:
+1. Regular positional arguments
+2. Unpacked positional arguments (`*iterable`)
+3. Keyword arguments (`name=value`)
+4. Unpacked keyword arguments (`**dict`)
+
+```python
+def example(a, b, c, d, e):
+    return a + b + c + d + e
+
+# Correct order
+result = example(1, *[2, 3], d=4, **{"e": 5})  # 15
+```
+
 ### Return Statement
 
 ```python
