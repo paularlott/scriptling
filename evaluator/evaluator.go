@@ -1048,6 +1048,8 @@ func applyUserFunction(ctx context.Context, fn *object.Function, args []object.O
 	if err != nil {
 		return err
 	}
+	defer object.PutEnvironment(extendedEnv) // Return to pool when done
+	
 	evaluated := evalWithContext(ctx, fn.Body, extendedEnv)
 	if err, ok := evaluated.(*object.Error); ok {
 		if err.Function == "" {
@@ -1084,6 +1086,8 @@ func applyLambdaFunctionWithContext(ctx context.Context, fn *object.LambdaFuncti
 	if err != nil {
 		return err
 	}
+	defer object.PutEnvironment(extendedEnv) // Return to pool when done
+	
 	evaluated := evalWithContext(ctx, fn.Body, extendedEnv)
 	return evaluated // No unwrapping needed for lambda expressions
 }
