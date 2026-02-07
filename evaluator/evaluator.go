@@ -1476,6 +1476,14 @@ func evalFromImportStatement(fis *ast.FromImportStatement, env *object.Environme
 		env.Set(bindName, value)
 	}
 
+	// Remove the module from the environment (from X import Y should not make X available)
+	env.Delete(moduleName)
+	// Also remove the first part if it's a dotted import
+	if strings.Contains(moduleName, ".") {
+		parts := strings.Split(moduleName, ".")
+		env.Delete(parts[0])
+	}
+
 	return NULL
 }
 
@@ -1639,18 +1647,46 @@ func evalTryStatementWithContext(ctx context.Context, ts *ast.TryStatement, env 
 			return result // SystemExit always propagates
 		}
 
-		// Execute except block if present
-		if ts.Except != nil {
+		// Convert Error to Exception for consistent handling (do this once, before matching)
+		var exceptionObj object.Object = result
+		if err, ok := result.(*object.Error); ok {
+			// Try to infer exception type from error message
+			exceptionType := object.ExceptionTypeException
+			msg := err.Message
+			if strings.HasPrefix(msg, "type error:") || strings.Contains(msg, "type mismatch") {
+				exceptionType = object.ExceptionTypeTypeError
+			} else if strings.Contains(msg, "value error") || strings.Contains(msg, "invalid value") {
+				exceptionType = object.ExceptionTypeValueError
+			} else if strings.Contains(msg, "identifier not found") || strings.Contains(msg, "name") && strings.Contains(msg, "not defined") {
+				exceptionType = object.ExceptionTypeNameError
+			}
+			exceptionObj = &object.Exception{
+				Message:       msg,
+				ExceptionType: exceptionType,
+			}
+		}
+
+		// Try each except clause in order
+		for _, exceptClause := range ts.ExceptClauses {
+			// Check if exception type matches (if specified)
+			if exceptClause.ExceptType != nil {
+				if !matchesExceptionType(exceptionObj, exceptClause.ExceptType, env) {
+					// Exception type doesn't match, try next except clause
+					continue
+				}
+			}
+
+			// This except clause matches - execute it
 			// Store the current exception for bare raise support
-			env.Set("__current_exception__", result)
+			env.Set("__current_exception__", exceptionObj)
 
 			// Bind exception to variable if specified
-			if ts.ExceptVar != nil {
-				env.Set(ts.ExceptVar.Value, result)
+			if exceptClause.ExceptVar != nil {
+				env.Set(exceptClause.ExceptVar.Value, exceptionObj)
 			}
 
 			// Execute except block in the same environment so variables are accessible
-			result = evalWithContext(ctx, ts.Except, env)
+			result = evalWithContext(ctx, exceptClause.Body, env)
 
 			// Clear the current exception after except block
 			env.Delete("__current_exception__")
@@ -1659,6 +1695,9 @@ func evalTryStatementWithContext(ctx context.Context, ts *ast.TryStatement, env 
 			if !isException(result) && !object.IsError(result) {
 				result = NULL
 			}
+
+			// Exception was handled (or re-raised), don't try other except clauses
+			break
 		}
 	}
 
@@ -1676,7 +1715,12 @@ func evalRaiseStatementWithContext(ctx context.Context, rs *ast.RaiseStatement, 
 		if object.IsError(msg) {
 			return msg
 		}
-		return &object.Exception{Message: msg.Inspect()}
+		// If it's already an Exception, return it as-is
+		if exc, ok := msg.(*object.Exception); ok {
+			return exc
+		}
+		// Python 3 doesn't support raise "string", only raise Exception("string")
+		return errors.NewError("exceptions must derive from BaseException")
 	}
 
 	// Bare raise - re-raise the current exception if one exists
@@ -1716,6 +1760,75 @@ func isException(obj object.Object) bool {
 		return false
 	}
 	return obj.Type() == object.EXCEPTION_OBJ
+}
+
+// matchesExceptionType checks if an exception matches the specified exception type
+// Supports: Exception (catches all), specific types (ValueError, TypeError, etc.),
+// and dotted names (requests.HTTPError)
+func matchesExceptionType(exception object.Object, exceptTypeExpr ast.Expression, env *object.Environment) bool {
+	// Get the exception type string
+	var exceptionType string
+	if exc, ok := exception.(*object.Exception); ok {
+		exceptionType = exc.ExceptionType
+		if exceptionType == "" {
+			exceptionType = "Exception" // Default to Exception if not set
+		}
+	} else if _, ok := exception.(*object.Error); ok {
+		// Errors are treated as generic exceptions
+		exceptionType = "Exception"
+	} else {
+		return false
+	}
+
+	// Evaluate the exception type expression to get the type name
+	var expectedType string
+	switch expr := exceptTypeExpr.(type) {
+	case *ast.Identifier:
+		expectedType = expr.Value
+	case *ast.IndexExpression:
+		// Handle dotted names like requests.HTTPError
+		expectedType = buildDottedName(expr)
+	default:
+		return false
+	}
+
+	// "Exception" catches all errors and exceptions
+	if expectedType == "Exception" {
+		return true
+	}
+
+	// Check for exact match
+	if exceptionType == expectedType {
+		return true
+	}
+
+	return false
+}
+
+// buildDottedName constructs a dotted name from nested IndexExpression nodes
+// e.g., requests.HTTPError becomes "requests.HTTPError"
+func buildDottedName(expr *ast.IndexExpression) string {
+	parts := []string{}
+	
+	// Walk the chain of index expressions
+	current := ast.Expression(expr)
+	for {
+		if idx, ok := current.(*ast.IndexExpression); ok {
+			// Get the rightmost part
+			if str, ok := idx.Index.(*ast.StringLiteral); ok {
+				parts = append([]string{str.Value}, parts...)
+			}
+			current = idx.Left
+		} else if ident, ok := current.(*ast.Identifier); ok {
+			// Base identifier
+			parts = append([]string{ident.Value}, parts...)
+			break
+		} else {
+			break
+		}
+	}
+	
+	return strings.Join(parts, ".")
 }
 
 func assignToExpression(expr ast.Expression, value object.Object, env *object.Environment) error {
