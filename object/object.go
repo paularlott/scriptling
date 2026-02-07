@@ -580,6 +580,15 @@ type Environment struct {
 	availableLibrariesCallback func() []LibraryInfo
 }
 
+// Pool for Environment objects to reduce allocations
+var envPool = sync.Pool{
+	New: func() any {
+		return &Environment{
+			store: make(map[string]Object, 4),
+		}
+	},
+}
+
 // LibraryInfo contains information about available libraries
 type LibraryInfo struct {
 	Name       string
@@ -588,24 +597,59 @@ type LibraryInfo struct {
 
 func NewEnvironment() *Environment {
 	return &Environment{
-		store:     make(map[string]Object, 16),
-		globals:   make(map[string]bool),
-		nonlocals: make(map[string]bool),
+		store: make(map[string]Object, 4),
+		// globals and nonlocals are nil by default - allocated on demand
 	}
 }
 
-func NewEnclosedEnvironment(outer *Environment) *Environment {
-	env := NewEnvironment()
+// getEnvironment retrieves an environment from the pool
+func getEnvironment(outer *Environment) *Environment {
+	env := envPool.Get().(*Environment)
+	
+	// Clear the store
+	for k := range env.store {
+		delete(env.store, k)
+	}
+	
+	// Set outer and inherit I/O
 	env.outer = outer
-	// Inherit output buffer from outer environment
-	if outer.output != nil {
-		env.output = outer.output
+	env.globals = nil
+	env.nonlocals = nil
+	
+	if outer != nil {
+		if outer.output != nil {
+			env.output = outer.output
+		}
+		if outer.input != nil {
+			env.input = outer.input
+		}
 	}
-	// Inherit input reader from outer environment
-	if outer.input != nil {
-		env.input = outer.input
-	}
+	
 	return env
+}
+
+// PutEnvironment returns an environment to the pool
+func PutEnvironment(env *Environment) {
+	if env == nil {
+		return
+	}
+	
+	// Clear references to allow GC
+	env.outer = nil
+	env.globals = nil
+	env.nonlocals = nil
+	env.output = nil
+	env.input = nil
+	env.importCallback = nil
+	env.availableLibrariesCallback = nil
+	
+	// Don't clear store - will be cleared on next Get (faster)
+	
+	envPool.Put(env)
+}
+
+func NewEnclosedEnvironment(outer *Environment) *Environment {
+	return getEnvironment(outer)
 }
 
 func (e *Environment) Get(name string) (Object, bool) {
@@ -620,11 +664,11 @@ func (e *Environment) Get(name string) (Object, bool) {
 
 func (e *Environment) Set(name string, val Object) Object {
 	// Check if this variable is marked as global
-	if e.globals[name] {
+	if e.globals != nil && e.globals[name] {
 		return e.SetGlobal(name, val)
 	}
 	// Check if this variable is marked as nonlocal
-	if e.nonlocals[name] {
+	if e.nonlocals != nil && e.nonlocals[name] {
 		if e.SetInParent(name, val) {
 			return val
 		}
@@ -685,22 +729,28 @@ func (e *Environment) SetInParent(name string, val Object) bool {
 
 // MarkGlobal marks a variable name as global in this scope
 func (e *Environment) MarkGlobal(name string) {
+	if e.globals == nil {
+		e.globals = make(map[string]bool, 2)
+	}
 	e.globals[name] = true
 }
 
 // MarkNonlocal marks a variable name as nonlocal in this scope
 func (e *Environment) MarkNonlocal(name string) {
+	if e.nonlocals == nil {
+		e.nonlocals = make(map[string]bool, 2)
+	}
 	e.nonlocals[name] = true
 }
 
 // IsGlobal checks if a variable is marked as global
 func (e *Environment) IsGlobal(name string) bool {
-	return e.globals[name]
+	return e.globals != nil && e.globals[name]
 }
 
 // IsNonlocal checks if a variable is marked as nonlocal
 func (e *Environment) IsNonlocal(name string) bool {
-	return e.nonlocals[name]
+	return e.nonlocals != nil && e.nonlocals[name]
 }
 
 // EnableOutputCapture enables output capture for this environment
