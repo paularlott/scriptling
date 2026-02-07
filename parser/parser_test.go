@@ -953,8 +953,8 @@ except:
 		t.Error("try statement Body is nil")
 	}
 
-	if stmt.Except == nil {
-		t.Error("try statement Except is nil")
+	if len(stmt.ExceptClauses) == 0 {
+		t.Error("try statement ExceptClauses is empty")
 	}
 }
 

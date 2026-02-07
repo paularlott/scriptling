@@ -482,12 +482,16 @@ func TestSliceExpression(t *testing.T) {
 func TestTryStatement(t *testing.T) {
 	stmt := &TryStatement{
 		Body:      &BlockStatement{},
-		Except:    &BlockStatement{},
-		ExceptVar: &Identifier{Value: "e"},
+		ExceptClauses: []*ExceptClause{
+			{
+				Body:      &BlockStatement{},
+				ExceptVar: &Identifier{Value: "e"},
+			},
+		},
 		Finally:   &BlockStatement{},
 	}
 
-	if stmt.Body == nil || stmt.Except == nil || stmt.Finally == nil {
+	if stmt.Body == nil || len(stmt.ExceptClauses) == 0 || stmt.Finally == nil {
 		t.Error("Try statement parts should not be nil")
 	}
 }
@@ -801,7 +805,7 @@ func TestStatementString(t *testing.T) {
 		{name: "PassStatement", stmt: &PassStatement{}},
 		{name: "ImportStatement", stmt: &ImportStatement{Name: &Identifier{Value: "os"}}},
 		{name: "FromImportStatement", stmt: &FromImportStatement{Module: &Identifier{Value: "os"}, Names: []*Identifier{{Value: "path"}}}},
-		{name: "TryStatement", stmt: &TryStatement{Body: &BlockStatement{}, Except: &BlockStatement{}}},
+		{name: "TryStatement", stmt: &TryStatement{Body: &BlockStatement{}, ExceptClauses: []*ExceptClause{{Body: &BlockStatement{}}}}},
 		{name: "RaiseStatement", stmt: &RaiseStatement{Message: &StringLiteral{Value: "error"}}},
 		{name: "GlobalStatement", stmt: &GlobalStatement{Names: []*Identifier{{Value: "x"}}}},
 		{name: "NonlocalStatement", stmt: &NonlocalStatement{Names: []*Identifier{{Value: "y"}}}},

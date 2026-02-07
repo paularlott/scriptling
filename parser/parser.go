@@ -1500,13 +1500,18 @@ func (p *Parser) parseTryStatement() *ast.TryStatement {
 
 	stmt.Body = p.parseBlockStatement()
 
-	// Parse except clause (optional)
-	if p.peekTokenIs(token.EXCEPT) {
-		p.nextToken()
+	// Parse except clauses (can have multiple)
+	stmt.ExceptClauses = []*ast.ExceptClause{}
+	for p.peekTokenIs(token.EXCEPT) {
+		p.nextToken() // consume except
+		exceptClause := &ast.ExceptClause{Token: p.curToken}
 
 		// Check for 'except Exception as e:' or 'except module.Exception as e:' syntax
 		if p.peekTokenIs(token.IDENT) {
 			p.nextToken() // consume exception type (or module name)
+
+			// Store the exception type as an expression
+			exceptType := ast.Expression(&ast.Identifier{Token: p.curToken, Value: p.curToken.Literal})
 
 			// Handle dotted exception names like requests.RequestException
 			for p.peekTokenIs(token.DOT) {
@@ -1514,12 +1519,20 @@ func (p *Parser) parseTryStatement() *ast.TryStatement {
 				if !p.expectPeek(token.IDENT) {
 					return nil
 				}
+				// Build index expression for dotted names
+				exceptType = &ast.IndexExpression{
+					Token: p.curToken,
+					Left:  exceptType,
+					Index: &ast.StringLiteral{Token: p.curToken, Value: p.curToken.Literal},
+				}
 			}
+
+			exceptClause.ExceptType = exceptType
 
 			if p.peekTokenIs(token.AS) {
 				p.nextToken() // consume 'as'
 				if p.expectPeek(token.IDENT) {
-					stmt.ExceptVar = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+					exceptClause.ExceptVar = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
 				}
 			}
 		}
@@ -1527,7 +1540,8 @@ func (p *Parser) parseTryStatement() *ast.TryStatement {
 		if !p.expectPeek(token.COLON) {
 			return nil
 		}
-		stmt.Except = p.parseBlockStatement()
+		exceptClause.Body = p.parseBlockStatement()
+		stmt.ExceptClauses = append(stmt.ExceptClauses, exceptClause)
 	}
 
 	// Parse finally clause (optional)

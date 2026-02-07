@@ -32,9 +32,12 @@ var smallIntegers [smallIntMax - smallIntMin + 1]*Integer
 
 // Exception type constants
 const (
-	ExceptionTypeSystemExit       = "SystemExit"
-	ExceptionTypeGeneric          = "" // Default for raised strings
-	ExceptionTypeRequestException = "RequestException"
+	ExceptionTypeSystemExit = "SystemExit"
+	ExceptionTypeException  = "Exception"
+	ExceptionTypeValueError = "ValueError"
+	ExceptionTypeTypeError  = "TypeError"
+	ExceptionTypeNameError  = "NameError"
+	ExceptionTypeGeneric    = "" // Default for legacy compatibility
 )
 
 // Small integer cache for common values (-5 to 10000)
