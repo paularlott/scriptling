@@ -165,7 +165,8 @@ Returns:
   dict: Contains 'thinking' (list of extracted blocks) and 'content' (cleaned text)
 
 Example:
-  response = ai.completion(...)
+  client = ai.new_client("", api_key="sk-...")
+  response = client.completion("gpt-4", [{"role": "user", "content": "Hello!"}])
   result = ai.extract_thinking(response.choices[0].message.content)
 
   for thought in result["thinking"]:
