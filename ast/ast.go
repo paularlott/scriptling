@@ -369,12 +369,18 @@ func (se *SliceExpression) expressionNode()      {}
 func (se *SliceExpression) TokenLiteral() string { return se.Token.Literal }
 func (se *SliceExpression) Line() int            { return se.Token.Line }
 
+type ExceptClause struct {
+	Token      token.Token
+	ExceptType Expression  // exception type to catch
+	ExceptVar  *Identifier // variable to bind exception to
+	Body       *BlockStatement
+}
+
 type TryStatement struct {
-	Token     token.Token
-	Body      *BlockStatement
-	Except    *BlockStatement
-	ExceptVar *Identifier // for 'except Exception as e:'
-	Finally   *BlockStatement
+	Token         token.Token
+	Body          *BlockStatement
+	ExceptClauses []*ExceptClause // multiple except blocks
+	Finally       *BlockStatement
 }
 
 func (ts *TryStatement) statementNode()       {}

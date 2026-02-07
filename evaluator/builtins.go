@@ -1452,6 +1452,86 @@ Parameters:
 
 Use None for any parameter to use its default value.`,
 	},
+	"Exception": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			message := ""
+			if len(args) > 0 {
+				if str, err := args[0].AsString(); err == nil {
+					message = str
+				} else {
+					message = args[0].Inspect()
+				}
+			}
+			return &object.Exception{
+				Message:       message,
+				ExceptionType: object.ExceptionTypeException,
+			}
+		},
+		HelpText: `Exception([message]) - Create a generic exception
+
+Creates an exception object that can be raised with the raise statement.
+Use with: raise Exception("error message")`,
+	},
+	"ValueError": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			message := ""
+			if len(args) > 0 {
+				if str, err := args[0].AsString(); err == nil {
+					message = str
+				} else {
+					message = args[0].Inspect()
+				}
+			}
+			return &object.Exception{
+				Message:       message,
+				ExceptionType: object.ExceptionTypeValueError,
+			}
+		},
+		HelpText: `ValueError([message]) - Create a value error exception
+
+Raised when an operation receives an argument with an inappropriate value.
+Use with: raise ValueError("invalid value")`,
+	},
+	"TypeError": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			message := ""
+			if len(args) > 0 {
+				if str, err := args[0].AsString(); err == nil {
+					message = str
+				} else {
+					message = args[0].Inspect()
+				}
+			}
+			return &object.Exception{
+				Message:       message,
+				ExceptionType: object.ExceptionTypeTypeError,
+			}
+		},
+		HelpText: `TypeError([message]) - Create a type error exception
+
+Raised when an operation is applied to an object of inappropriate type.
+Use with: raise TypeError("wrong type")`,
+	},
+	"NameError": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			message := ""
+			if len(args) > 0 {
+				if str, err := args[0].AsString(); err == nil {
+					message = str
+				} else {
+					message = args[0].Inspect()
+				}
+			}
+			return &object.Exception{
+				Message:       message,
+				ExceptionType: object.ExceptionTypeNameError,
+			}
+		},
+		HelpText: `NameError([message]) - Create a name error exception
+
+Raised when a local or global name is not found.
+Use with: raise NameError("name not defined")`,
+	},
 }
 
 func compareObjects(a, b object.Object) int {
