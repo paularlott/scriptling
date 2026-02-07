@@ -169,7 +169,9 @@ client = ai.new_client("http://127.0.0.1:1234/v1", remote_servers=[
 client = ai.new_client("https://api.anthropic.com", service="anthropic", api_key="...")
 ```
 
-## OpenAIClient Class
+## AIClient Class
+
+All client methods are instance methods on the client object returned by ai.new_client() or ai.WrapClient().
 
 ### client.completion(model, messages)
 

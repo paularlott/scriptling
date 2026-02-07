@@ -19,8 +19,6 @@ const (
 )
 
 var (
-	client      *openai.Client
-	clientMutex sync.RWMutex
 	library     *object.Library
 	libraryOnce sync.Once
 )
@@ -49,143 +47,6 @@ func buildLibrary() *object.Library {
 	builder.Constant("ToolRegistry", tools.GetRegistryClass())
 
 	builder.
-
-		// completion(model, messages) - Create a chat completion
-		FunctionWithHelp("completion", func(ctx context.Context, model string, messages []map[string]any) (any, error) {
-			c := getClient()
-			if c == nil {
-				return nil, fmt.Errorf("ai.completion: no client configured - use ai.SetClient() or create a client from script")
-			}
-
-			// Convert messages to openai.Message
-			openaiMessages := convertMapsToOpenAI(messages)
-
-			chatResp, chatErr := c.ChatCompletion(ctx, openai.ChatCompletionRequest{
-				Model:    model,
-				Messages: openaiMessages,
-			})
-			if chatErr != nil {
-				return nil, fmt.Errorf("chat completion failed: %s", chatErr.Error())
-			}
-
-			return chatResp, nil
-		}, `completion(model, messages) - Create a chat completion
-
-Creates a chat completion using the specified model and messages.
-
-Parameters:
-  model (str): Model identifier (e.g., "gpt-4", "gpt-3.5-turbo")
-  messages (list): List of message dicts with "role" and "content" keys
-
-Returns:
-  dict: Response containing id, choices, usage, etc.
-
-Example:
-  response = ai.completion("gpt-4", [{"role": "user", "content": "Hello!"}])
-  print(response.choices[0].message.content)`).
-
-		// models() - List available models
-		FunctionWithHelp("models", func(ctx context.Context) (any, error) {
-			c := getClient()
-			if c == nil {
-				return nil, fmt.Errorf("ai.models: no client configured - use ai.SetClient() or create a client from script")
-			}
-
-			resp, err := c.GetModels(ctx)
-			if err != nil {
-				return nil, err
-			}
-
-			return resp.Data, nil
-		}, `models() - List available models
-
-Lists all models available for the current API configuration.
-
-Returns:
-  list: List of model dicts with id, created, owned_by, etc.
-
-Example:
-  models = ai.models()
-  for model in models:
-    print(model.id)`).
-
-		// response_create(model, input) - Create a Responses API response
-		FunctionWithHelp("response_create", func(ctx context.Context, model string, input []any) (any, error) {
-			c := getClient()
-			if c == nil {
-				return nil, fmt.Errorf("ai.response_create: no client configured - use ai.SetClient() or create a client from script")
-			}
-
-			// Build request
-			req := openai.CreateResponseRequest{
-				Model: model,
-				Input: input,
-			}
-
-			resp, createErr := c.CreateResponse(ctx, req)
-			if createErr != nil {
-				return nil, fmt.Errorf("failed to create response: %s", createErr.Error())
-			}
-
-			return resp, nil
-		}, `response_create(model, input) - Create a Responses API response
-
-Creates a response using the OpenAI Responses API (new structured API).
-
-Parameters:
-  model (str): Model identifier (e.g., "gpt-4o", "gpt-4")
-  input (list): Input items (messages)
-
-Returns:
-  dict: Response object with id, status, output, usage, etc.
-
-Example:
-  response = ai.response_create("gpt-4", [
-    {"type": "message", "role": "user", "content": "Hello!"}
-  ])
-  print(response.output)`).
-
-		// response_get(id) - Get a Responses API response by ID
-		FunctionWithHelp("response_get", func(ctx context.Context, id string) (any, error) {
-			c := getClient()
-			if c == nil {
-				return nil, fmt.Errorf("ai.response_get: no client configured - use ai.SetClient() or create a client from script")
-			}
-			return c.GetResponse(ctx, id)
-		}, `response_get(id) - Get a response by ID
-
-Retrieves a previously created response by its ID.
-
-Parameters:
-  id (str): Response ID
-
-Returns:
-  dict: Response object with id, status, output, usage, etc.
-
-Example:
-  response = ai.response_get("resp_123")
-  print(response.status)`).
-
-		// response_cancel(id) - Cancel a Responses API response
-		FunctionWithHelp("response_cancel", func(ctx context.Context, id string) (any, error) {
-			c := getClient()
-			if c == nil {
-				return nil, fmt.Errorf("ai.response_cancel: no client configured - use ai.SetClient() or create a client from script")
-			}
-			return c.CancelResponse(ctx, id)
-		}, `response_cancel(id) - Cancel a response
-
-Cancels a currently in-progress response.
-
-Parameters:
-  id (str): Response ID to cancel
-
-Returns:
-  dict: Cancelled response object
-
-Example:
-  response = ai.response_cancel("resp_123")`).
-
 		// new_client(base_url, **kwargs) - Create a new AI client
 		FunctionWithHelp("new_client", func(ctx context.Context, kwargs object.Kwargs, baseURL string) (object.Object, error) {
 			// Get optional service from kwargs, default to "openai"
@@ -313,13 +174,6 @@ Example:
   print("Response:", result["content"])`)
 
 	return builder.Build()
-}
-
-// getClient returns the current client (thread-safe)
-func getClient() *openai.Client {
-	clientMutex.RLock()
-	defer clientMutex.RUnlock()
-	return client
 }
 
 // convertMapsToOpenAI converts Go map messages to openai.Message format

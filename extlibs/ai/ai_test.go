@@ -529,12 +529,17 @@ func TestBuildLibrary(t *testing.T) {
 		t.Errorf("library.Description() = %q, want %q", lib.Description(), AILibraryDesc)
 	}
 
-	// Check that expected functions exist
-	expectedFuncs := []string{"completion", "models", "response_create", "response_get", "response_cancel", "new_client"}
+	// Check that expected functions exist (only library-level functions)
+	expectedFuncs := []string{"new_client", "extract_thinking"}
 	for _, name := range expectedFuncs {
 		if _, ok := lib.Functions()[name]; !ok {
 			t.Errorf("library missing function %q", name)
 		}
+	}
+
+	// Check that ToolRegistry constant exists
+	if _, ok := lib.Constants()["ToolRegistry"]; !ok {
+		t.Error("library missing ToolRegistry constant")
 	}
 }
 
@@ -573,14 +578,6 @@ func TestRegister(t *testing.T) {
 
 	if registrar.library.Description() != AILibraryDesc {
 		t.Errorf("registered library description = %q, want %q", registrar.library.Description(), AILibraryDesc)
-	}
-}
-
-// Test getClient returns nil when no client is set
-func TestGetClient(t *testing.T) {
-	c := getClient()
-	if c != nil {
-		t.Errorf("getClient() = %v, want nil (no client set)", c)
 	}
 }
 
