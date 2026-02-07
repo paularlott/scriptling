@@ -138,6 +138,10 @@ Creates a new AI client instance for making API calls to supported services.
 - `base_url` (str): Base URL of the API (defaults to https://api.openai.com/v1 if empty)
 - `service` (str, optional): Service type ("openai" by default)
 - `api_key` (str, optional): API key for authentication
+- `remote_servers` (list, optional): List of remote MCP server configs, each a dict with:
+  - `base_url` (str, required): URL of the MCP server
+  - `namespace` (str, optional): Namespace prefix for tools from this server
+  - `bearer_token` (str, optional): Bearer token for authentication
 
 **Returns:** AIClient - A client instance with methods for API calls
 
@@ -154,6 +158,12 @@ client = ai.new_client("http://127.0.0.1:1234/v1")
 
 # Explicitly specify service (same as default)
 client = ai.new_client("", service="openai", api_key="sk-...")
+
+# With MCP servers configured
+client = ai.new_client("http://127.0.0.1:1234/v1", remote_servers=[
+    {"base_url": "http://127.0.0.1:8080/mcp", "namespace": "scriptling"},
+    {"base_url": "https://api.example.com/mcp", "namespace": "search", "bearer_token": "secret"},
+])
 
 # Future: Other services
 client = ai.new_client("https://api.anthropic.com", service="anthropic", api_key="...")
@@ -342,61 +352,6 @@ client = ai.new_client("", api_key="sk-...")
 response = client.response_cancel("resp_123")
 ```
 
-### client.add_remote_server(base_url, \*\*kwargs)
-
-Adds a remote MCP server that will be available to all AI calls via this client.
-
-**Parameters:**
-
-- `base_url` (str): URL of the MCP server
-- `namespace` (str, optional): Namespace for tools from this server (e.g., "knot")
-- `bearer_token` (str, optional): Bearer token for authentication
-
-**Example:**
-
-```python
-client = ai.new_client("sk-...")
-
-# Without auth or namespace
-client.add_remote_server("https://api.example.com/mcp")
-
-# With namespace only
-client.add_remote_server("https://api.example.com/mcp", namespace="knot")
-
-# With bearer token only
-client.add_remote_server(
-    "https://api.example.com/mcp",
-    bearer_token="secret"
-)
-
-# With both namespace and bearer token
-client.add_remote_server(
-    "https://api.example.com/mcp",
-    namespace="knot",
-    bearer_token="secret"
-)
-
-# Now tools from the knot server are available in chat completions
-response = client.chat("gpt-4", {"role": "user", "content": "Search for golang news"})
-```
-
-### client.remove_remote_server(prefix)
-
-Removes a previously added remote MCP server.
-
-**Parameters:**
-
-- `prefix` (str): Prefix/namespace of the server to remove
-
-**Example:**
-
-```python
-client = ai.new_client("", api_key="sk-...")
-client.add_remote_server("https://api.example.com/mcp", namespace="knot")
-# ... use the server ...
-client.remove_remote_server("knot")
-```
-
 ### client.set_tools(tools)
 
 Sets custom tools that will be sent to the AI but NOT executed by the client. Tool calls will be returned in the response for manual execution by your script.
@@ -528,15 +483,11 @@ response = client.completion("mistralai/ministral-3-3b", [{"role": "user", "cont
 
 ### Using MCP Tools with AI
 
-```python
-client = ai.new_client("", api_key="sk-...")
-client.add_remote_server(
-    "https://search-api.example.com/mcp",
-    namespace="search",
-    bearer_token="search-token"
-)
+MCP servers should be configured during client creation. See the Go documentation for how to wrap clients with MCP servers before passing them to scripts.
 
-# The AI can now use the search tools
+```python
+# The client provided by the Go code already has MCP servers configured
+# Tools from those servers are automatically available to AI calls
 response = client.completion("gpt-4", [{"role": "user", "content": "Search for recent golang news"}])
 ```
 

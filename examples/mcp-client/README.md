@@ -99,7 +99,7 @@ go run main.go
 
 ### 4. with-openai-instance/ - Both Clients in Script
 
-Creates both OpenAI and MCP clients in the script, attaches the MCP server to the OpenAI client, and uses them together.
+Creates both OpenAI and MCP clients in the script, with MCP servers attached to the AI client via the `remote_servers` parameter.
 
 ```bash
 cd with-openai-instance
@@ -107,21 +107,19 @@ go run main.go
 ```
 
 **How it works:**
-- No clients are configured in Go
-- Script creates its own OpenAI client via `ai.new_client()`
-- Script creates its own MCP client via `mcp.new_client()`
-- Script attaches MCP server to the OpenAI client via `ai_client.add_remote_server()`
-- Script uses both clients together
+- Script creates its own OpenAI client via `ai.new_client()` with `remote_servers` parameter
+- Script creates its own MCP client via `mcp.new_client()` for direct tool access
+- MCP servers are configured during AI client creation (no Go code needed)
+- AI can automatically use tools from the configured MCP servers
 
 **Use this pattern when:**
 - You want scripts to be self-contained
-- You want the AI to use MCP tools
-- You need dynamic client configuration
 - You're building standalone scripts that integrate AI with MCP tools
+- You want the AI to use MCP tools in completions
 
 **What the script does:**
-1. Creates both clients
-2. Attaches MCP server to the AI client
+1. Creates OpenAI client with MCP servers configured via `remote_servers`
+2. Creates MCP client for direct tool listing
 3. Lists available tools from the MCP client
 4. Asks the AI to use MCP tools to calculate 15 + 27
 
