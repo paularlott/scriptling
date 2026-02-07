@@ -337,38 +337,6 @@ func TestResponseMethodsErrors(t *testing.T) {
 	})
 }
 
-// Test remote server methods
-func TestRemoteServerMethods(t *testing.T) {
-	ctx := context.Background()
-
-	instance := &object.Instance{
-		Class: GetOpenAIClientClass(),
-		Fields: map[string]object.Object{
-			"_client": &object.ClientWrapper{
-				Client: &ClientInstance{client: nil},
-			},
-		},
-	}
-
-	t.Run("add_remote_server with nil client", func(t *testing.T) {
-		kwargs := object.NewKwargs(map[string]object.Object{
-			"namespace": &object.String{Value: "test"},
-			"bearer_token": &object.String{Value: "token"},
-		})
-		result := addRemoteServerMethod(instance, ctx, kwargs, "https://example.com")
-		if result.Type() != object.ERROR_OBJ {
-			t.Errorf("expected error, got %v", result.Type())
-		}
-	})
-
-	t.Run("remove_remote_server with nil client", func(t *testing.T) {
-		result := removeRemoteServerMethod(instance, ctx, "prefix")
-		if result.Type() != object.ERROR_OBJ {
-			t.Errorf("expected error, got %v", result.Type())
-		}
-	})
-}
-
 // Test getStreamInstance error paths
 func TestGetStreamInstanceErrors(t *testing.T) {
 	tests := []struct {
@@ -623,7 +591,6 @@ func TestOpenAIClientClassMethods(t *testing.T) {
 	expectedMethods := []string{
 		"completion", "completion_stream", "models",
 		"response_create", "response_get", "response_cancel",
-		"add_remote_server", "remove_remote_server",
 	}
 
 	for _, methodName := range expectedMethods {

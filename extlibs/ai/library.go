@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/paularlott/mcp"
 	"github.com/paularlott/mcp/openai"
 	"github.com/paularlott/scriptling/extlibs/ai/tools"
 	"github.com/paularlott/scriptling/object"
@@ -192,11 +193,53 @@ Example:
 			// Get optional api_key from kwargs
 			apiKey := kwargs.MustGetString("api_key", "")
 
+			// Parse remote_servers if provided
+			var remoteServerConfigs []openai.RemoteServerConfig
+			if kwargs.Has("remote_servers") {
+				remoteServersObjs := kwargs.MustGetList("remote_servers", nil)
+				remoteServerConfigs = make([]openai.RemoteServerConfig, 0, len(remoteServersObjs))
+				for i, serverObj := range remoteServersObjs {
+					// Convert Object to map[string]Object
+					serverMap, err := serverObj.AsDict()
+					if err != nil {
+						return nil, fmt.Errorf("remote_servers[%d] must be a dict: %v", i, err)
+					}
+					baseURLVal, ok := serverMap["base_url"]
+					if !ok || baseURLVal == nil {
+						return nil, fmt.Errorf("remote_servers[%d] must have a 'base_url'", i)
+					}
+					baseURLStr, err := baseURLVal.AsString()
+					if err != nil {
+						return nil, fmt.Errorf("remote_servers[%d].base_url must be a string: %v", i, err)
+					}
+
+					var namespace string
+					if nsVal, ok := serverMap["namespace"]; ok && nsVal != nil {
+						namespace, _ = nsVal.AsString()
+					}
+
+					config := openai.RemoteServerConfig{
+						BaseURL:   baseURLStr,
+						Namespace: namespace,
+					}
+
+					if tokenVal, ok := serverMap["bearer_token"]; ok && tokenVal != nil {
+						bearerToken, _ := tokenVal.AsString()
+						if bearerToken != "" {
+							config.Auth = mcp.NewBearerTokenAuth(bearerToken)
+						}
+					}
+
+					remoteServerConfigs = append(remoteServerConfigs, config)
+				}
+			}
+
 			switch service {
 			case "openai":
 				config := openai.Config{
-					APIKey:  apiKey,
-					BaseURL: baseURL,
+					APIKey:             apiKey,
+					BaseURL:            baseURL,
+					RemoteServerConfigs: remoteServerConfigs,
 				}
 
 				client, err := openai.New(config)
@@ -216,6 +259,10 @@ Parameters:
   base_url (str): Base URL of the API (defaults to https://api.openai.com/v1 if empty)
   service (str, optional): Service type ("openai" by default)
   api_key (str, optional): API key for authentication
+  remote_servers (list, optional): List of remote MCP server configs, each a dict with:
+    - base_url (str, required): URL of the MCP server
+    - namespace (str, optional): Namespace prefix for tools
+    - bearer_token (str, optional): Bearer token for authentication
 
 Returns:
   AIClient: A client instance with methods for API calls
@@ -227,6 +274,12 @@ Example:
 
   # LM Studio / Local LLM
   client = ai.new_client("http://127.0.0.1:1234/v1")
+
+  # With MCP servers
+  client = ai.new_client("http://127.0.0.1:1234/v1", remote_servers=[
+      {"base_url": "http://127.0.0.1:8080/mcp", "namespace": "scriptling"},
+      {"base_url": "https://api.example.com/mcp", "namespace": "search", "bearer_token": "secret"},
+  ])
 
   # Future: Other services
   client = ai.new_client("https://api.anthropic.com", service="anthropic", api_key="...")`).

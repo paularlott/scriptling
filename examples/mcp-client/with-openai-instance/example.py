@@ -1,19 +1,17 @@
 # MCP + OpenAI Integration Example
-# Both clients are created in the script, with MCP attached to the AI client
+# Creates both clients in the script, with MCP servers attached to the AI client
 
 import scriptling.ai as ai
 import scriptling.mcp as mcp
 
 print("Creating OpenAI client for LM Studio...")
-ai_client = ai.new_client("http://127.0.0.1:1234/v1")
+ai_client = ai.new_client("http://127.0.0.1:1234/v1", remote_servers=[
+    {"base_url": "http://127.0.0.1:8080/mcp", "namespace": "scriptling"},
+])
 
 print()
-print("Creating MCP client for scriptling MCP server with namespace...")
+print("Creating MCP client for scriptling MCP server (for direct tool access)...")
 mcp_client = mcp.new_client("http://127.0.0.1:8080/mcp", namespace="scriptling")
-
-print()
-print("Attaching MCP server to the AI client...")
-ai_client.add_remote_server("http://127.0.0.1:8080/mcp", namespace="scriptling")
 
 print()
 print("Fetching available tools from MCP server...")

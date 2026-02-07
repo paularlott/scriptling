@@ -4,7 +4,6 @@ import (
 	"context"
 	"sync"
 
-	"github.com/paularlott/mcp"
 	"github.com/paularlott/mcp/openai"
 	scriptlib "github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/object"
@@ -125,29 +124,6 @@ Returns:
 
 Example:
   response = client.response_cancel("resp_123")`).
-
-		MethodWithHelp("add_remote_server", addRemoteServerMethod, `add_remote_server(base_url, **kwargs) - Add a remote MCP server
-
-Adds a remote MCP server that will be available to all AI calls via this client.
-
-Parameters:
-  base_url (str): URL of the MCP server
-  namespace (str, optional): Namespace for tool names
-  bearer_token (str, optional): Bearer token for authentication
-
-Example:
-  ai_client.add_remote_server("https://api.example.com/mcp", namespace="myprefix")
-  ai_client.add_remote_server("https://api.example.com/mcp", namespace="myprefix", bearer_token="secret")`).
-
-		MethodWithHelp("remove_remote_server", removeRemoteServerMethod, `remove_remote_server(prefix) - Remove a remote MCP server
-
-Removes a previously added remote MCP server.
-
-Parameters:
-  prefix (str): Prefix of the server to remove
-
-Example:
-  client.remove_remote_server("knot")`).
 
 		MethodWithHelp("set_tools", setToolsMethod, `set_tools(tools) - Set custom tools for the AI
 
@@ -328,54 +304,6 @@ func responseCancelMethod(self *object.Instance, ctx context.Context, id string)
 	}
 
 	return scriptlib.FromGo(resp)
-}
-
-// add_remote_server method implementation
-func addRemoteServerMethod(self *object.Instance, ctx context.Context, kwargs object.Kwargs, baseURL string) object.Object {
-	ci, cerr := getClientInstance(self)
-	if cerr != nil {
-		return cerr
-	}
-
-	if ci.client == nil {
-		return &object.Error{Message: "add_remote_server: no client configured"}
-	}
-
-	// Get optional parameters from kwargs
-	namespace := kwargs.MustGetString("namespace", "")
-	bearerToken := kwargs.MustGetString("bearer_token", "")
-
-	// Create auth provider if bearer token is provided
-	var authProvider mcp.AuthProvider
-	if bearerToken != "" {
-		authProvider = mcp.NewBearerTokenAuth(bearerToken)
-	}
-
-	// Create the RemoteServerConfig and add it
-	config := openai.RemoteServerConfig{
-		BaseURL:    baseURL,
-		Auth:       authProvider,
-		Namespace:  namespace,
-	}
-	ci.client.AddRemoteServer(config)
-
-	return &object.Null{}
-}
-
-// remove_remote_server method implementation
-func removeRemoteServerMethod(self *object.Instance, ctx context.Context, prefix string) object.Object {
-	ci, cerr := getClientInstance(self)
-	if cerr != nil {
-		return cerr
-	}
-
-	if ci.client == nil {
-		return &object.Error{Message: "remove_remote_server: no client configured"}
-	}
-
-	ci.client.RemoveRemoteServer(prefix)
-
-	return &object.Null{}
 }
 
 // set_tools method implementation
