@@ -79,7 +79,7 @@ func TestRaiseStatement(t *testing.T) {
 	_, err := p.Eval(`
 caught = 0
 try:
-    raise "Test error"
+    raise Exception("Test error")
 except:
     caught = 1
 `)
@@ -98,7 +98,7 @@ func TestRaiseInFunction(t *testing.T) {
 	_, err := p.Eval(`
 def check_positive(n):
     if n < 0:
-        raise "Value must be positive"
+        raise ValueError("Value must be positive")
     return n * 2
 
 result = 0
@@ -121,7 +121,7 @@ func TestUncaughtExceptionTerminates(t *testing.T) {
 	p := New()
 	_, err := p.Eval(`
 x = 1
-raise "uncaught error"
+raise Exception("uncaught error")
 x = 2
 `)
 	// Should return an error for uncaught exception
@@ -146,7 +146,7 @@ func TestStrException(t *testing.T) {
 	_, err := p.Eval(`
 message = ""
 try:
-    raise "test error message"
+    raise Exception("test error message")
 except Exception as e:
     message = str(e)
 `)
@@ -171,7 +171,7 @@ func TestBareRaiseReRaises(t *testing.T) {
 	_, err := p.Eval(`
 caught_msg = ""
 try:
-    raise "original error"
+    raise Exception("original error")
 except Exception as e:
     caught_msg = str(e)
     raise
