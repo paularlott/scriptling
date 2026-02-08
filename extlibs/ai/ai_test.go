@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/paularlott/scriptling/object"
@@ -316,7 +317,7 @@ func TestResponseMethodsErrors(t *testing.T) {
 	}
 
 	t.Run("response_create with nil client", func(t *testing.T) {
-		result := responseCreateMethod(instance, ctx, "gpt-4", []any{"test"})
+		result := responseCreateMethod(instance, ctx, object.Kwargs{}, "gpt-4", []any{"test"})
 		if result.Type() != object.ERROR_OBJ {
 			t.Errorf("expected error, got %v", result.Type())
 		}
@@ -439,7 +440,7 @@ func TestCompletionStreamMethodMessageValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := completionStreamMethod(instance, ctx, "gpt-4", tt.messages)
+			result := completionStreamMethod(instance, ctx, object.Kwargs{}, "gpt-4", tt.messages)
 			if result.Type() != object.ERROR_OBJ {
 				t.Errorf("expected error, got %v", result.Type())
 			}
@@ -458,7 +459,7 @@ func TestCompletionStreamMethodNilClient(t *testing.T) {
 		},
 	}
 
-	result := completionStreamMethod(instance, ctx, "gpt-4", []map[string]any{{"role": "user", "content": "Hello"}})
+	result := completionStreamMethod(instance, ctx, object.Kwargs{}, "gpt-4", []map[string]any{{"role": "user", "content": "Hello"}})
 	if result.Type() != object.ERROR_OBJ {
 		t.Errorf("expected error, got %v", result.Type())
 	}
@@ -660,6 +661,230 @@ func TestGetStreamInstanceValid(t *testing.T) {
 	if si.stream != nil {
 		t.Errorf("ChatStreamInstance.stream = %v, want nil", si.stream)
 	}
+}
+
+// Test completionMethod with string shorthand
+func TestCompletionMethodStringShorthand(t *testing.T) {
+	ctx := context.Background()
+
+	instance := &object.Instance{
+		Class: GetOpenAIClientClass(),
+		Fields: map[string]object.Object{
+			"_client": &object.ClientWrapper{
+				Client: &ClientInstance{client: nil},
+			},
+		},
+	}
+
+	tests := []struct {
+		name          string
+		messages      any
+		kwargs        object.Kwargs
+		expectedError string
+	}{
+		{
+			name:          "string without system_prompt",
+			messages:      "Hello, AI!",
+			kwargs:        object.Kwargs{},
+			expectedError: "no client configured",
+		},
+		{
+			name:     "string with system_prompt",
+			messages: "What is 2+2?",
+			kwargs: object.NewKwargs(map[string]object.Object{
+				"system_prompt": &object.String{Value: "You are a helpful math tutor"},
+			}),
+			expectedError: "no client configured",
+		},
+		{
+			name:          "array still works",
+			messages:      []map[string]any{{"role": "user", "content": "Hello!"}},
+			kwargs:        object.Kwargs{},
+			expectedError: "no client configured",
+		},
+		{
+			name:     "system_prompt with array should error",
+			messages: []map[string]any{{"role": "user", "content": "Hello!"}},
+			kwargs: object.NewKwargs(map[string]object.Object{
+				"system_prompt": &object.String{Value: "You are helpful"},
+			}),
+			expectedError: "system_prompt kwarg is only valid when passing a string",
+		},
+		{
+			name:          "invalid type for messages",
+			messages:      123,
+			kwargs:        object.Kwargs{},
+			expectedError: "must be a string or a list",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := completionMethod(instance, ctx, tt.kwargs, "gpt-4", tt.messages)
+			if result.Type() != object.ERROR_OBJ {
+				t.Errorf("expected error, got %v", result.Type())
+				return
+			}
+			err := result.(*object.Error)
+			if err.Message == "" {
+				t.Error("error message should not be empty")
+			}
+			if tt.expectedError != "" && !contains(err.Message, tt.expectedError) {
+				t.Errorf("expected error containing %q, got %q", tt.expectedError, err.Message)
+			}
+		})
+	}
+}
+
+// Test completionStreamMethod with string shorthand
+func TestCompletionStreamMethodStringShorthand(t *testing.T) {
+	ctx := context.Background()
+
+	instance := &object.Instance{
+		Class: GetOpenAIClientClass(),
+		Fields: map[string]object.Object{
+			"_client": &object.ClientWrapper{
+				Client: &ClientInstance{client: nil},
+			},
+		},
+	}
+
+	tests := []struct {
+		name          string
+		messages      any
+		kwargs        object.Kwargs
+		expectedError string
+	}{
+		{
+			name:          "string without system_prompt",
+			messages:      "Hello, AI!",
+			kwargs:        object.Kwargs{},
+			expectedError: "no client configured",
+		},
+		{
+			name:     "string with system_prompt",
+			messages: "Explain quantum physics",
+			kwargs: object.NewKwargs(map[string]object.Object{
+				"system_prompt": &object.String{Value: "You are a physics professor"},
+			}),
+			expectedError: "no client configured",
+		},
+		{
+			name:          "array still works",
+			messages:      []map[string]any{{"role": "user", "content": "Hello!"}},
+			kwargs:        object.Kwargs{},
+			expectedError: "no client configured",
+		},
+		{
+			name:     "system_prompt with array should error",
+			messages: []map[string]any{{"role": "user", "content": "Hello!"}},
+			kwargs: object.NewKwargs(map[string]object.Object{
+				"system_prompt": &object.String{Value: "You are helpful"},
+			}),
+			expectedError: "system_prompt kwarg is only valid when passing a string",
+		},
+		{
+			name:          "invalid type for messages",
+			messages:      123,
+			kwargs:        object.Kwargs{},
+			expectedError: "must be a string or a list",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := completionStreamMethod(instance, ctx, tt.kwargs, "gpt-4", tt.messages)
+			if result.Type() != object.ERROR_OBJ {
+				t.Errorf("expected error, got %v", result.Type())
+				return
+			}
+			err := result.(*object.Error)
+			if err.Message == "" {
+				t.Error("error message should not be empty")
+			}
+			if tt.expectedError != "" && !contains(err.Message, tt.expectedError) {
+				t.Errorf("expected error containing %q, got %q", tt.expectedError, err.Message)
+			}
+		})
+	}
+}
+
+// Test responseCreateMethod with string shorthand
+func TestResponseCreateMethodStringShorthand(t *testing.T) {
+	ctx := context.Background()
+
+	instance := &object.Instance{
+		Class: GetOpenAIClientClass(),
+		Fields: map[string]object.Object{
+			"_client": &object.ClientWrapper{
+				Client: &ClientInstance{client: nil},
+			},
+		},
+	}
+
+	tests := []struct {
+		name          string
+		input         any
+		kwargs        object.Kwargs
+		expectedError string
+	}{
+		{
+			name:          "string without system_prompt",
+			input:         "Hello, AI!",
+			kwargs:        object.Kwargs{},
+			expectedError: "no client configured",
+		},
+		{
+			name:     "string with system_prompt",
+			input:    "What is AI?",
+			kwargs: object.NewKwargs(map[string]object.Object{
+				"system_prompt": &object.String{Value: "You are a helpful assistant"},
+			}),
+			expectedError: "no client configured",
+		},
+		{
+			name:          "array still works",
+			input:         []any{map[string]any{"type": "message", "role": "user", "content": "Hello!"}},
+			kwargs:        object.Kwargs{},
+			expectedError: "no client configured",
+		},
+		{
+			name: "system_prompt with array should error",
+			input: []any{map[string]any{"type": "message", "role": "user", "content": "Hello!"}},
+			kwargs: object.NewKwargs(map[string]object.Object{
+				"system_prompt": &object.String{Value: "You are helpful"},
+			}),
+			expectedError: "system_prompt kwarg is only valid when passing a string",
+		},
+		{
+			name:          "invalid type for input",
+			input:         123,
+			kwargs:        object.Kwargs{},
+			expectedError: "must be a string or a list",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := responseCreateMethod(instance, ctx, tt.kwargs, "gpt-4", tt.input)
+			if result.Type() != object.ERROR_OBJ {
+				t.Errorf("expected error, got %v", result.Type())
+				return
+			}
+			err := result.(*object.Error)
+			if err.Message == "" {
+				t.Error("error message should not be empty")
+			}
+			if tt.expectedError != "" && !contains(err.Message, tt.expectedError) {
+				t.Errorf("expected error containing %q, got %q", tt.expectedError, err.Message)
+			}
+		})
+	}
+}
+
+// Helper function for string containment
+func contains(s, substr string) bool {
+	return strings.Contains(s, substr)
 }
 
 func TestExtractThinking(t *testing.T) {
