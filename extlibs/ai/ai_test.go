@@ -203,10 +203,10 @@ func TestCompletionMethodErrors(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		name     string
-		instance *object.Instance
-		model    string
-		messages []map[string]any
+		name      string
+		instance  *object.Instance
+		model     string
+		messages  []map[string]any
 		wantError string
 	}{
 		{
@@ -217,8 +217,8 @@ func TestCompletionMethodErrors(t *testing.T) {
 					"_client": &object.ClientWrapper{Client: nil},
 				},
 			},
-			model:      "gpt-4",
-			messages:   []map[string]any{{"role": "user", "content": "Hello"}},
+			model:     "gpt-4",
+			messages:  []map[string]any{{"role": "user", "content": "Hello"}},
 			wantError: "client is nil",
 		},
 	}
@@ -248,23 +248,23 @@ func TestCompletionMethodMessageValidation(t *testing.T) {
 	}
 
 	tests := []struct {
-		name     string
-		messages []map[string]any
+		name      string
+		messages  []map[string]any
 		wantError string
 	}{
 		{
-			name:     "empty role",
-			messages: []map[string]any{{"role": "", "content": "Hello"}},
+			name:      "empty role",
+			messages:  []map[string]any{{"role": "", "content": "Hello"}},
 			wantError: "role cannot be empty",
 		},
 		{
-			name:     "missing role field",
-			messages: []map[string]any{{"content": "Hello"}},
+			name:      "missing role field",
+			messages:  []map[string]any{{"content": "Hello"}},
 			wantError: "missing required 'role' field",
 		},
 		{
-			name:     "non-string role",
-			messages: []map[string]any{{"role": 123, "content": "Hello"}},
+			name:      "non-string role",
+			messages:  []map[string]any{{"role": 123, "content": "Hello"}},
 			wantError: "missing required 'role' field",
 		},
 	}
@@ -421,18 +421,18 @@ func TestCompletionStreamMethodMessageValidation(t *testing.T) {
 	}
 
 	tests := []struct {
-		name     string
-		messages []map[string]any
+		name      string
+		messages  []map[string]any
 		wantError string
 	}{
 		{
-			name:     "empty role",
-			messages: []map[string]any{{"role": "", "content": "Hello"}},
+			name:      "empty role",
+			messages:  []map[string]any{{"role": "", "content": "Hello"}},
 			wantError: "role cannot be empty",
 		},
 		{
-			name:     "missing role field",
-			messages: []map[string]any{{"content": "Hello"}},
+			name:      "missing role field",
+			messages:  []map[string]any{{"content": "Hello"}},
 			wantError: "missing required 'role' field",
 		},
 	}

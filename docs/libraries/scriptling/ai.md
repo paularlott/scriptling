@@ -136,7 +136,7 @@ Creates a new AI client instance for making API calls to supported services.
 **Parameters:**
 
 - `base_url` (str): Base URL of the API (defaults to https://api.openai.com/v1 if empty)
-- `service` (str, optional): Service type ("openai" by default)
+- `provider` (str, optional): Provider type ("openai" by default)
 - `api_key` (str, optional): API key for authentication
 - `remote_servers` (list, optional): List of remote MCP server configs, each a dict with:
   - `base_url` (str, required): URL of the MCP server
@@ -156,8 +156,8 @@ client = ai.new_client("", api_key="sk-...")
 # LM Studio / Local LLM
 client = ai.new_client("http://127.0.0.1:1234/v1")
 
-# Explicitly specify service (same as default)
-client = ai.new_client("", service="openai", api_key="sk-...")
+# Explicitly specify provider (same as default)
+client = ai.new_client("", provider="openai", api_key="sk-...")
 
 # With MCP servers configured
 client = ai.new_client("http://127.0.0.1:1234/v1", remote_servers=[
@@ -166,7 +166,7 @@ client = ai.new_client("http://127.0.0.1:1234/v1", remote_servers=[
 ])
 
 # Future: Other services
-client = ai.new_client("https://api.anthropic.com", service="anthropic", api_key="...")
+client = ai.new_client("https://api.anthropic.com", provider="claude", api_key="...")
 ```
 
 ## AIClient Class

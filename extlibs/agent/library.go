@@ -16,7 +16,7 @@ class Agent:
         self.model = model
         self.messages = []
         # Build and store tool schemas if tools provided
-        self.tool_schemas = tools.build() if tools is not None else None
+        self.tool_schemas = tools.build() if tools is not None else []
 
     def trigger(self, message, max_iterations=1):
         # Convert message to dict if string
@@ -57,6 +57,7 @@ class Agent:
             if not tool_calls or len(tool_calls) == 0:
                 # Add assistant message and break
                 self.messages.append({"role": "assistant", "content": message.content})
+                last_response = message
                 break
 
             # Execute tool calls
@@ -116,13 +117,33 @@ class Agent:
             # Add assistant message with tool calls
             self.messages.append({
                 "role": "assistant",
-                "content": message.content,
+                "content": message.content if message.content else "",
                 "tool_calls": tool_calls
             })
 
             # Add tool results
             for tr in tool_results:
                 self.messages.append(tr)
+
+        # If we hit max iterations and last_response has no content, create a summary
+        if last_response and (not last_response.content or last_response.content == ""):
+            # Collect the last tool results
+            tool_result_contents = []
+            for msg in reversed(self.messages):
+                if msg.get("role") == "tool":
+                    tool_result_contents.append(msg.get("content", ""))
+                elif msg.get("role") == "assistant":
+                    break
+            
+            if tool_result_contents:
+                # Reverse to get correct order
+                tool_result_contents.reverse()
+                # Create a response with the tool results
+                class SummaryMessage:
+                    def __init__(self, content):
+                        self.content = content
+                        self.role = "assistant"
+                return SummaryMessage(" ".join(tool_result_contents))
 
         return last_response
 

@@ -57,16 +57,16 @@ func buildLibrary() *object.Library {
 	builder.
 		// new_client(base_url, **kwargs) - Create a new AI client
 		FunctionWithHelp("new_client", func(ctx context.Context, kwargs object.Kwargs, baseURL string) (object.Object, error) {
-			// Get optional service from kwargs, default to "openai"
-			service := kwargs.MustGetString("service", "openai")
+			// Get optional provider from kwargs, default to "openai"
+			provider := kwargs.MustGetString("provider", "openai")
 			// Get optional api_key from kwargs
 			apiKey := kwargs.MustGetString("api_key", "")
 
 			// Parse remote_servers if provided
-			var remoteServerConfigs []ai.MCPServerConfig
+			var remoteServerConfigs []ai.RemoteServerConfig
 			if kwargs.Has("remote_servers") {
 				remoteServersObjs := kwargs.MustGetList("remote_servers", nil)
-				remoteServerConfigs = make([]ai.MCPServerConfig, 0, len(remoteServersObjs))
+				remoteServerConfigs = make([]ai.RemoteServerConfig, 0, len(remoteServersObjs))
 				for i, serverObj := range remoteServersObjs {
 					// Convert Object to map[string]Object
 					serverMap, err := serverObj.AsDict()
@@ -87,7 +87,7 @@ func buildLibrary() *object.Library {
 						namespace, _ = nsVal.AsString()
 					}
 
-					config := ai.MCPServerConfig{
+					config := ai.RemoteServerConfig{
 						BaseURL:   baseURLStr,
 						Namespace: namespace,
 					}
@@ -103,27 +103,27 @@ func buildLibrary() *object.Library {
 				}
 			}
 
-			// Map service string to provider
-			var provider ai.Provider
-			switch service {
+			// Map provider string to provider
+			var providerType ai.Provider
+			switch provider {
 			case "openai":
-				provider = ai.ProviderOpenAI
+				providerType = ai.ProviderOpenAI
 			case "claude":
-				provider = ai.ProviderClaude
+				providerType = ai.ProviderClaude
 			case "gemini":
-				provider = ai.ProviderGemini
+				providerType = ai.ProviderGemini
 			case "ollama":
-				provider = ai.ProviderOllama
+				providerType = ai.ProviderOllama
 			case "zai":
-				provider = ai.ProviderZAi
+				providerType = ai.ProviderZAi
 			case "mistral":
-				provider = ai.ProviderMistral
+				providerType = ai.ProviderMistral
 			default:
-				return nil, fmt.Errorf("unsupported service: %s", service)
+				return nil, fmt.Errorf("unsupported provider: %s", provider)
 			}
 
 			client, err := ai.NewClient(ai.Config{
-				Provider:         provider,
+				Provider:         providerType,
 				APIKey:           apiKey,
 				BaseURL:          baseURL,
 				MCPServerConfigs: remoteServerConfigs,
@@ -139,7 +139,7 @@ Creates a new AI client instance for making API calls to supported services.
 
 Parameters:
   base_url (str): Base URL of the API (defaults to https://api.openai.com/v1 if empty)
-  service (str, optional): Service type ("openai" by default)
+  provider (str, optional): Provider type ("openai" by default)
   api_key (str, optional): API key for authentication
   remote_servers (list, optional): List of remote MCP server configs, each a dict with:
     - base_url (str, required): URL of the MCP server
@@ -164,7 +164,7 @@ Example:
   ])
 
   # Future: Other services
-  client = ai.new_client("https://api.anthropic.com", service="anthropic", api_key="...")`).
+  client = ai.new_client("https://api.anthropic.com", provider="claude", api_key="...")`).
 
 		// extract_thinking(text) - Extract thinking blocks from AI response
 		FunctionWithHelp("extract_thinking", func(ctx context.Context, text string) (map[string]any, error) {
