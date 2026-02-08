@@ -9,6 +9,7 @@ import (
 
 	"github.com/paularlott/mcp"
 	"github.com/paularlott/mcp/ai"
+	"github.com/paularlott/mcp/ai/openai"
 	"github.com/paularlott/scriptling/extlibs/ai/tools"
 	"github.com/paularlott/scriptling/object"
 )
@@ -61,12 +62,15 @@ func buildLibrary() *object.Library {
 			provider := kwargs.MustGetString("provider", "openai")
 			// Get optional api_key from kwargs
 			apiKey := kwargs.MustGetString("api_key", "")
+			// Get optional max_tokens and temperature
+			maxTokens := int(kwargs.MustGetInt("max_tokens", 0))
+			temperature := float32(kwargs.MustGetFloat("temperature", 0))
 
 			// Parse remote_servers if provided
-			var remoteServerConfigs []ai.RemoteServerConfig
+			var remoteServerConfigs []openai.RemoteServerConfig
 			if kwargs.Has("remote_servers") {
 				remoteServersObjs := kwargs.MustGetList("remote_servers", nil)
-				remoteServerConfigs = make([]ai.RemoteServerConfig, 0, len(remoteServersObjs))
+				remoteServerConfigs = make([]openai.RemoteServerConfig, 0, len(remoteServersObjs))
 				for i, serverObj := range remoteServersObjs {
 					// Convert Object to map[string]Object
 					serverMap, err := serverObj.AsDict()
@@ -87,7 +91,7 @@ func buildLibrary() *object.Library {
 						namespace, _ = nsVal.AsString()
 					}
 
-					config := ai.RemoteServerConfig{
+					config := openai.RemoteServerConfig{
 						BaseURL:   baseURLStr,
 						Namespace: namespace,
 					}
@@ -123,10 +127,14 @@ func buildLibrary() *object.Library {
 			}
 
 			client, err := ai.NewClient(ai.Config{
-				Provider:         providerType,
-				APIKey:           apiKey,
-				BaseURL:          baseURL,
-				MCPServerConfigs: remoteServerConfigs,
+				Provider: providerType,
+				Config: openai.Config{
+					APIKey:              apiKey,
+					BaseURL:             baseURL,
+					RemoteServerConfigs: remoteServerConfigs,
+					MaxTokens:           maxTokens,
+					Temperature:         temperature,
+				},
 			})
 			if err != nil {
 				return nil, err
@@ -141,6 +149,8 @@ Parameters:
   base_url (str): Base URL of the API (defaults to https://api.openai.com/v1 if empty)
   provider (str, optional): Provider type ("openai" by default)
   api_key (str, optional): API key for authentication
+  max_tokens (int, optional): Default max_tokens for all requests (Claude defaults to 4096 if not set)
+  temperature (float, optional): Default temperature for all requests (0.0-2.0)
   remote_servers (list, optional): List of remote MCP server configs, each a dict with:
     - base_url (str, required): URL of the MCP server
     - namespace (str, optional): Namespace prefix for tools
@@ -151,20 +161,20 @@ Returns:
 
 Example:
   # OpenAI API (default service)
-  client = ai.new_client("", api_key="sk-...")
+  client = ai.new_client("", api_key="sk-...", max_tokens=2048, temperature=0.7)
   response = client.completion("gpt-4", {"role": "user", "content": "Hello!"})
 
   # LM Studio / Local LLM
   client = ai.new_client("http://127.0.0.1:1234/v1")
 
+  # Claude (max_tokens defaults to 4096 if not specified)
+  client = ai.new_client("https://api.anthropic.com", provider="claude", api_key="sk-ant-...")
+
   # With MCP servers
   client = ai.new_client("http://127.0.0.1:1234/v1", remote_servers=[
       {"base_url": "http://127.0.0.1:8080/mcp", "namespace": "scriptling"},
       {"base_url": "https://api.example.com/mcp", "namespace": "search", "bearer_token": "secret"},
-  ])
-
-  # Future: Other services
-  client = ai.new_client("https://api.anthropic.com", provider="claude", api_key="...")`).
+  ])`).
 
 		// extract_thinking(text) - Extract thinking blocks from AI response
 		FunctionWithHelp("extract_thinking", func(ctx context.Context, text string) (map[string]any, error) {

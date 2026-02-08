@@ -284,6 +284,14 @@ func completionMethod(self *object.Instance, ctx context.Context, kwargs object.
 		Messages: openaiMessages,
 	}
 
+	// Handle optional parameters (override client defaults)
+	if kwargs.Has("temperature") {
+		req.Temperature = float32(kwargs.MustGetFloat("temperature", 0))
+	}
+	if kwargs.Has("max_tokens") {
+		req.MaxTokens = int(kwargs.MustGetInt("max_tokens", 0))
+	}
+
 	// Handle optional tools parameter
 	if kwargs.Has("tools") {
 		toolsObjs := kwargs.MustGetList("tools", nil)

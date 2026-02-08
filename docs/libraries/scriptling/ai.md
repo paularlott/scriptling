@@ -136,8 +136,10 @@ Creates a new AI client instance for making API calls to supported services.
 **Parameters:**
 
 - `base_url` (str): Base URL of the API (defaults to https://api.openai.com/v1 if empty)
-- `provider` (str, optional): Provider type ("openai" by default)
+- `provider` (str, optional): Provider type ("openai" by default). Options: "openai", "claude", "gemini", "ollama", "zai", "mistral"
 - `api_key` (str, optional): API key for authentication
+- `max_tokens` (int, optional): Default max_tokens for all requests. Claude defaults to 4096 if not set
+- `temperature` (float, optional): Default temperature for all requests (0.0-2.0)
 - `remote_servers` (list, optional): List of remote MCP server configs, each a dict with:
   - `base_url` (str, required): URL of the MCP server
   - `namespace` (str, optional): Namespace prefix for tools from this server
@@ -150,23 +152,42 @@ Creates a new AI client instance for making API calls to supported services.
 ```python
 import scriptling.ai as ai
 
-# OpenAI API (default service)
-client = ai.new_client("", api_key="sk-...")
+# OpenAI API with defaults
+client = ai.new_client("", api_key="sk-...", max_tokens=2048, temperature=0.7)
+
+# Claude (max_tokens defaults to 4096 if not specified)
+client = ai.new_client(
+    "https://api.anthropic.com", 
+    provider="claude", 
+    api_key="sk-ant-...",
+    max_tokens=4096,  # Optional, defaults to 4096 for Claude
+    temperature=0.7
+)
 
 # LM Studio / Local LLM
 client = ai.new_client("http://127.0.0.1:1234/v1")
-
-# Explicitly specify provider (same as default)
-client = ai.new_client("", provider="openai", api_key="sk-...")
 
 # With MCP servers configured
 client = ai.new_client("http://127.0.0.1:1234/v1", remote_servers=[
     {"base_url": "http://127.0.0.1:8080/mcp", "namespace": "scriptling"},
     {"base_url": "https://api.example.com/mcp", "namespace": "search", "bearer_token": "secret"},
 ])
+```
 
-# Future: Other services
-client = ai.new_client("https://api.anthropic.com", provider="claude", api_key="...")
+**Default Parameters:**
+
+When you set `max_tokens` and `temperature` at the client level, they apply to all requests unless overridden:
+
+```python
+# Set defaults at client creation
+client = ai.new_client("", api_key="sk-...", max_tokens=2048, temperature=0.7)
+
+# Uses client defaults (2048 tokens, 0.7 temperature)
+response = client.completion("gpt-4", "Hello!")
+
+# Override per request
+response = client.completion("gpt-4", "Hello!", max_tokens=4096, temperature=0.9)
+```
 ```
 
 ## AIClient Class
