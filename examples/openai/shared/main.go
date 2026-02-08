@@ -15,10 +15,10 @@ import (
 	"log"
 	"os"
 
-	"github.com/paularlott/mcp/openai"
+	"github.com/paularlott/mcp/ai"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs"
-	"github.com/paularlott/scriptling/extlibs/ai"
+	scriptlingai "github.com/paularlott/scriptling/extlibs/ai"
 	"github.com/paularlott/scriptling/stdlib"
 )
 
@@ -38,23 +38,24 @@ func main() {
 	extlibs.RegisterPathlibLibrary(p, []string{})
 	extlibs.RegisterWaitForLibrary(p)
 
-	// Create the OpenAI client for LM Studio
-	client, err := openai.New(openai.Config{
-		BaseURL: "http://127.0.0.1:1234/v1",
-		APIKey:  "lm-studio", // LM Studio doesn't require a real API key
+	// Create the AI client for LM Studio
+	client, err := ai.NewClient(ai.Config{
+		Provider: ai.ProviderOpenAI,
+		BaseURL:  "http://127.0.0.1:1234/v1",
+		APIKey:   "lm-studio", // LM Studio doesn't require a real API key
 	})
 	if err != nil {
-		log.Fatalf("Failed to create OpenAI client: %v", err)
+		log.Fatalf("Failed to create AI client: %v", err)
 	}
 
 	// Wrap the client as a scriptling object and set it as a global variable
-	aiClient := ai.WrapClient(client)
+	aiClient := scriptlingai.WrapClient(client)
 	if err := p.SetObjectVar("ai_client", aiClient); err != nil {
 		log.Fatalf("Failed to set ai_client variable: %v", err)
 	}
 
 	// Register the AI library
-	ai.Register(p)
+	scriptlingai.Register(p)
 
 	// Load script from file
 	script, err := os.ReadFile("example.py")

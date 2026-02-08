@@ -21,7 +21,7 @@ class MockClient:
     def set_tools(self, tools):
         self.tools = tools
 
-    def completion(self, model, messages):
+    def completion(self, model, messages, **kwargs):
         # Return a simple response without tool calls
         return {
             "choices": [{
@@ -91,7 +91,7 @@ class MockClient:
     def set_tools(self, tools):
         self.tools = tools
 
-    def completion(self, model, messages):
+    def completion(self, model, messages, **kwargs):
         self.call_count = self.call_count + 1
 
         # First call: return tool call

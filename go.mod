@@ -12,6 +12,8 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
+replace github.com/paularlott/mcp => /Users/paul/Code/Source/mcp
+
 require (
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20251013123823-9fd1530e3ec3 // indirect

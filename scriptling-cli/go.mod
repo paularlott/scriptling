@@ -4,6 +4,8 @@ go 1.25.6
 
 replace github.com/paularlott/scriptling => ../
 
+replace github.com/paularlott/mcp => /Users/paul/Code/Source/mcp
+
 require (
 	github.com/paularlott/cli v0.7.2
 	github.com/paularlott/scriptling v0.0.0-20260115081247-b64c0a285865

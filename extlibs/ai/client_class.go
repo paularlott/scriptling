@@ -54,7 +54,6 @@ With tools:
   tools.add("get_time", "Get current time", {}, lambda args: "12:00 PM")
   schemas = tools.build()
   response = client.completion("gpt-4", [{"role": "user", "content": "What time is it?"}], tools=schemas)`).
-
 		MethodWithHelp("completion_stream", completionStreamMethod, `completion_stream(model, messages) - Create a streaming chat completion
 
 Creates a streaming chat completion using this client's configuration.
@@ -78,7 +77,6 @@ Example:
       if delta.content:
         print(delta.content, end="")
   print()`).
-
 		MethodWithHelp("models", modelsMethod, `models() - List available models
 
 Lists all models available for this client configuration.
@@ -90,7 +88,6 @@ Example:
   models = client.models()
   for model in models:
     print(model.id)`).
-
 		MethodWithHelp("response_create", responseCreateMethod, `response_create(model, input) - Create a Responses API response
 
 Creates a response using the OpenAI Responses API (new structured API).
@@ -107,7 +104,6 @@ Example:
     {"type": "message", "role": "user", "content": "Hello!"}
   ])
   print(response.output)`).
-
 		MethodWithHelp("response_get", responseGetMethod, `response_get(id) - Get a response by ID
 
 Retrieves a previously created response by its ID.
@@ -121,7 +117,6 @@ Returns:
 Example:
   response = client.response_get("resp_123")
   print(response.status)`).
-
 		MethodWithHelp("response_cancel", responseCancelMethod, `response_cancel(id) - Cancel a response
 
 Cancels a currently in-progress response.
@@ -134,7 +129,6 @@ Returns:
 
 Example:
   response = client.response_cancel("resp_123")`).
-
 		MethodWithHelp("embedding", embeddingMethod, `embedding(model, input) - Create an embedding
 
 Creates an embedding vector for the given input text(s) using the specified model.
@@ -154,7 +148,6 @@ Example:
   response = client.embedding("text-embedding-3-small", ["Hello", "World"])
   for emb in response.data:
     print(emb.embedding)`).
-
 		Build()
 }
 
@@ -175,7 +168,7 @@ func getClientInstance(instance *object.Instance) (*ClientInstance, *object.Erro
 }
 
 // completion method implementation
-func completionMethod(self *object.Instance, ctx context.Context, model string, messages []map[string]any, kwargs object.Kwargs) object.Object {
+func completionMethod(self *object.Instance, ctx context.Context, kwargs object.Kwargs, model string, messages []map[string]any) object.Object {
 	ci, cerr := getClientInstance(self)
 	if cerr != nil {
 		return cerr
@@ -262,7 +255,7 @@ func modelsMethod(self *object.Instance, ctx context.Context) object.Object {
 		return &object.Error{Message: "models: no client configured"}
 	}
 
-	models, err := ci.client.ListModels(ctx)
+	models, err := ci.client.GetModels(ctx)
 	if err != nil {
 		return &object.Error{Message: "failed to get models: " + err.Error()}
 	}
@@ -483,13 +476,10 @@ func completionStreamMethod(self *object.Instance, ctx context.Context, model st
 	}
 
 	// Create streaming request
-	stream, err := ci.client.StreamChatCompletion(ctx, ai.ChatCompletionRequest{
+	stream := ci.client.StreamChatCompletion(ctx, ai.ChatCompletionRequest{
 		Model:    model,
 		Messages: openaiMessages,
 	})
-	if err != nil {
-		return &object.Error{Message: "completion_stream: " + err.Error()}
-	}
 
 	// Wrap stream in instance
 	return &object.Instance{

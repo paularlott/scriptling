@@ -678,6 +678,30 @@ func (p *Parser) parseFStringContent(content string) ([]string, []ast.Expression
 			// Escaped brace
 			current += "}"
 			i += 2
+		} else if content[i] == '\\' && i+1 < len(content) {
+			// Handle escape sequences
+			i++ // consume backslash
+			switch content[i] {
+			case 'n':
+				current += "\n"
+			case 't':
+				current += "\t"
+			case 'r':
+				current += "\r"
+			case '\\':
+				current += "\\"
+			case '\'':
+				current += "'"
+			case '"':
+				current += "\""
+			case '0':
+				current += string(byte(0))
+			default:
+				// Keep backslash and the character as-is
+				current += "\\"
+				current += string(content[i])
+			}
+			i++
 		} else {
 			current += string(content[i])
 			i++
