@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 
@@ -274,6 +275,93 @@ func completionMethod(self *object.Instance, ctx context.Context, kwargs object.
 		}
 		if toolCallID, ok := msg["tool_call_id"].(string); ok {
 			omsg.ToolCallID = toolCallID
+		}
+		// Extract tool_calls if present
+		if toolCallsRaw, ok := msg["tool_calls"]; ok && toolCallsRaw != nil {
+			// Convert to []any first
+			var toolCallsList []any
+			switch tc := toolCallsRaw.(type) {
+			case []any:
+				toolCallsList = tc
+			case []map[string]any:
+				toolCallsList = make([]any, len(tc))
+				for i, v := range tc {
+					toolCallsList[i] = v
+				}
+			case object.Object:
+				// Convert scriptling object to Go
+				tcGo := scriptlib.ToGo(tc)
+				if tcSlice, ok := tcGo.([]any); ok {
+					toolCallsList = tcSlice
+				}
+			}
+			
+			if len(toolCallsList) > 0 {
+				toolCalls := make([]ai.ToolCall, 0, len(toolCallsList))
+				for _, tcRaw := range toolCallsList {
+					var tcMap map[string]any
+					switch tcVal := tcRaw.(type) {
+					case map[string]any:
+						tcMap = tcVal
+					case object.Object:
+						if tcGo := scriptlib.ToGo(tcVal); tcGo != nil {
+							if m, ok := tcGo.(map[string]any); ok {
+								tcMap = m
+							}
+						}
+					}
+					
+					if tcMap != nil {
+						tc := ai.ToolCall{}
+						if id, ok := tcMap["id"].(string); ok {
+							tc.ID = id
+						}
+						if tcType, ok := tcMap["type"].(string); ok {
+							tc.Type = tcType
+						}
+						if fnRaw, ok := tcMap["function"]; ok && fnRaw != nil {
+							var fnMap map[string]any
+							switch fn := fnRaw.(type) {
+							case map[string]any:
+								fnMap = fn
+							case object.Object:
+								if fnGo := scriptlib.ToGo(fn); fnGo != nil {
+									if m, ok := fnGo.(map[string]any); ok {
+										fnMap = m
+									}
+								}
+							}
+							
+							if fnMap != nil {
+								if name, ok := fnMap["name"].(string); ok {
+									tc.Function.Name = name
+								}
+								if args, ok := fnMap["arguments"]; ok {
+									// Arguments can be string or map
+									switch argsVal := args.(type) {
+									case string:
+										// Parse JSON string to map
+										var argsMap map[string]any
+										if err := json.Unmarshal([]byte(argsVal), &argsMap); err == nil {
+											tc.Function.Arguments = argsMap
+										}
+									case map[string]any:
+										tc.Function.Arguments = argsVal
+									case object.Object:
+										if argsGo := scriptlib.ToGo(argsVal); argsGo != nil {
+											if m, ok := argsGo.(map[string]any); ok {
+												tc.Function.Arguments = m
+											}
+										}
+									}
+								}
+							}
+						}
+						toolCalls = append(toolCalls, tc)
+					}
+				}
+				omsg.ToolCalls = toolCalls
+			}
 		}
 		openaiMessages[i] = omsg
 	}
@@ -642,6 +730,93 @@ func completionStreamMethod(self *object.Instance, ctx context.Context, kwargs o
 		}
 		if toolCallID, ok := msg["tool_call_id"].(string); ok {
 			omsg.ToolCallID = toolCallID
+		}
+		// Extract tool_calls if present
+		if toolCallsRaw, ok := msg["tool_calls"]; ok && toolCallsRaw != nil {
+			// Convert to []any first
+			var toolCallsList []any
+			switch tc := toolCallsRaw.(type) {
+			case []any:
+				toolCallsList = tc
+			case []map[string]any:
+				toolCallsList = make([]any, len(tc))
+				for i, v := range tc {
+					toolCallsList[i] = v
+				}
+			case object.Object:
+				// Convert scriptling object to Go
+				tcGo := scriptlib.ToGo(tc)
+				if tcSlice, ok := tcGo.([]any); ok {
+					toolCallsList = tcSlice
+				}
+			}
+			
+			if len(toolCallsList) > 0 {
+				toolCalls := make([]ai.ToolCall, 0, len(toolCallsList))
+				for _, tcRaw := range toolCallsList {
+					var tcMap map[string]any
+					switch tcVal := tcRaw.(type) {
+					case map[string]any:
+						tcMap = tcVal
+					case object.Object:
+						if tcGo := scriptlib.ToGo(tcVal); tcGo != nil {
+							if m, ok := tcGo.(map[string]any); ok {
+								tcMap = m
+							}
+						}
+					}
+					
+					if tcMap != nil {
+						tc := ai.ToolCall{}
+						if id, ok := tcMap["id"].(string); ok {
+							tc.ID = id
+						}
+						if tcType, ok := tcMap["type"].(string); ok {
+							tc.Type = tcType
+						}
+						if fnRaw, ok := tcMap["function"]; ok && fnRaw != nil {
+							var fnMap map[string]any
+							switch fn := fnRaw.(type) {
+							case map[string]any:
+								fnMap = fn
+							case object.Object:
+								if fnGo := scriptlib.ToGo(fn); fnGo != nil {
+									if m, ok := fnGo.(map[string]any); ok {
+										fnMap = m
+									}
+								}
+							}
+							
+							if fnMap != nil {
+								if name, ok := fnMap["name"].(string); ok {
+									tc.Function.Name = name
+								}
+								if args, ok := fnMap["arguments"]; ok {
+									// Arguments can be string or map
+									switch argsVal := args.(type) {
+									case string:
+										// Parse JSON string to map
+										var argsMap map[string]any
+										if err := json.Unmarshal([]byte(argsVal), &argsMap); err == nil {
+											tc.Function.Arguments = argsMap
+										}
+									case map[string]any:
+										tc.Function.Arguments = argsVal
+									case object.Object:
+										if argsGo := scriptlib.ToGo(argsVal); argsGo != nil {
+											if m, ok := argsGo.(map[string]any); ok {
+												tc.Function.Arguments = m
+											}
+										}
+									}
+								}
+							}
+						}
+						toolCalls = append(toolCalls, tc)
+					}
+				}
+				omsg.ToolCalls = toolCalls
+			}
 		}
 		openaiMessages[i] = omsg
 	}
