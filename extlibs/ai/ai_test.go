@@ -225,7 +225,7 @@ func TestCompletionMethodErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := completionMethod(tt.instance, ctx, tt.model, tt.messages, object.Kwargs{})
+			result := completionMethod(tt.instance, ctx, object.Kwargs{}, tt.model, tt.messages)
 			if result.Type() != object.ERROR_OBJ {
 				t.Errorf("expected error, got %v", result.Type())
 			}
@@ -271,7 +271,7 @@ func TestCompletionMethodMessageValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := completionMethod(instance, ctx, "gpt-4", tt.messages, object.Kwargs{})
+			result := completionMethod(instance, ctx, object.Kwargs{}, "gpt-4", tt.messages)
 			if result.Type() != object.ERROR_OBJ {
 				t.Errorf("expected error, got %v", result.Type())
 			}

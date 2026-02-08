@@ -18,12 +18,12 @@ func TestNewClientErrors(t *testing.T) {
 		{
 			name:    "unsupported service",
 			service: "unsupported",
-			wantErr: "unsupported service: unsupported",
+			wantErr: "unsupported provider: unsupported",
 		},
 		{
 			name:    "invalid service",
 			service: "invalid_provider",
-			wantErr: "unsupported service: invalid_provider",
+			wantErr: "unsupported provider: invalid_provider",
 		},
 	}
 
@@ -33,7 +33,7 @@ func TestNewClientErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			kwargs := object.NewKwargs(map[string]object.Object{
-				"service": &object.String{Value: tt.service},
+				"provider": &object.String{Value: tt.service},
 			})
 
 			result := newClientFunc.Fn(context.Background(), kwargs, &object.String{Value: ""})
