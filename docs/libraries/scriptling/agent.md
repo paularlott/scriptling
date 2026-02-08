@@ -86,18 +86,23 @@ tools.add("search", "Search files", {
 
 ### registry.build()
 
-Builds OpenAI-compatible tool schemas.
+Builds OpenAI-compatible tool schemas for passing to completion requests.
 
 **Returns:** list - List of tool schema dicts
 
 **Example:**
 
 ```python
+# With Agent (recommended - tools handled automatically)
 tools = ai.ToolRegistry()
 tools.add("read", "Read file", {"path": "string"}, read_func)
+bot = agent.Agent(client, tools=tools, model="gpt-4")
 
+# Direct completion calls
+tools = ai.ToolRegistry()
+tools.add("get_time", "Get current time", {}, time_handler)
 schemas = tools.build()
-client.set_tools(schemas)
+response = client.completion("gpt-4", [{"role": "user", "content": "What time is it?"}], tools=schemas)
 ```
 
 ### registry.get_handler(name)

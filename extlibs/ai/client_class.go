@@ -2,16 +2,17 @@ package ai
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
-	"github.com/paularlott/mcp/openai"
+	"github.com/paularlott/mcp/ai"
 	scriptlib "github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/object"
 )
 
-// ClientInstance wraps an OpenAI client for use in scriptling
+// ClientInstance wraps an AI client for use in scriptling
 type ClientInstance struct {
-	client *openai.Client
+	client ai.Client
 }
 
 var (
@@ -30,20 +31,29 @@ func GetOpenAIClientClass() *object.Class {
 // buildOpenAIClientClass builds the OpenAI Client class
 func buildOpenAIClientClass() *object.Class {
 	return object.NewClassBuilder("OpenAIClient").
-		MethodWithHelp("completion", completionMethod, `completion(model, messages) - Create a chat completion
+		MethodWithHelp("completion", completionMethod, `completion(model, messages, **kwargs) - Create a chat completion
 
 Creates a chat completion using this client's configuration.
 
 Parameters:
   model (str): Model identifier (e.g., "gpt-4", "gpt-3.5-turbo")
   messages (list): List of message dicts with "role" and "content" keys
+  tools (list, optional): List of tool schema dicts from ToolRegistry.build()
+  temperature (float, optional): Sampling temperature (0.0-2.0)
+  max_tokens (int, optional): Maximum tokens to generate
 
 Returns:
   dict: Response containing id, choices, usage, etc.
 
 Example:
   response = client.completion("gpt-4", [{"role": "user", "content": "Hello!"}])
-  print(response.choices[0].message.content)`).
+  print(response.choices[0].message.content)
+
+With tools:
+  tools = ai.ToolRegistry()
+  tools.add("get_time", "Get current time", {}, lambda args: "12:00 PM")
+  schemas = tools.build()
+  response = client.completion("gpt-4", [{"role": "user", "content": "What time is it?"}], tools=schemas)`).
 
 		MethodWithHelp("completion_stream", completionStreamMethod, `completion_stream(model, messages) - Create a streaming chat completion
 
@@ -125,24 +135,6 @@ Returns:
 Example:
   response = client.response_cancel("resp_123")`).
 
-		MethodWithHelp("set_tools", setToolsMethod, `set_tools(tools) - Set custom tools for the AI
-
-Sets custom tools that will be sent to the AI but NOT executed by the client.
-Tool calls will be returned in the response for manual execution.
-
-Parameters:
-  tools (list): List of tool dicts with "type", "function" (name, description, parameters)
-
-Example:
-  client.set_tools([{
-    "type": "function",
-    "function": {
-      "name": "read_file",
-      "description": "Read a file",
-      "parameters": {"type": "object", "properties": {"path": {"type": "string"}}}
-    }
-  }])`).
-
 		MethodWithHelp("embedding", embeddingMethod, `embedding(model, input) - Create an embedding
 
 Creates an embedding vector for the given input text(s) using the specified model.
@@ -183,7 +175,7 @@ func getClientInstance(instance *object.Instance) (*ClientInstance, *object.Erro
 }
 
 // completion method implementation
-func completionMethod(self *object.Instance, ctx context.Context, model string, messages []map[string]any) object.Object {
+func completionMethod(self *object.Instance, ctx context.Context, model string, messages []map[string]any, kwargs object.Kwargs) object.Object {
 	ci, cerr := getClientInstance(self)
 	if cerr != nil {
 		return cerr
@@ -193,10 +185,10 @@ func completionMethod(self *object.Instance, ctx context.Context, model string, 
 		return &object.Error{Message: "chat: no client configured"}
 	}
 
-	// Convert messages to openai.Message
-	openaiMessages := make([]openai.Message, len(messages))
+	// Convert messages to ai.Message
+	openaiMessages := make([]ai.Message, len(messages))
 	for i, msg := range messages {
-		omsg := openai.Message{}
+		omsg := ai.Message{}
 		if role, ok := msg["role"].(string); ok {
 			if role == "" {
 				return &object.Error{Message: "chat: message role cannot be empty"}
@@ -214,10 +206,44 @@ func completionMethod(self *object.Instance, ctx context.Context, model string, 
 		openaiMessages[i] = omsg
 	}
 
-	chatResp, chatErr := ci.client.ChatCompletion(ctx, openai.ChatCompletionRequest{
+	// Build request
+	req := ai.ChatCompletionRequest{
 		Model:    model,
 		Messages: openaiMessages,
-	})
+	}
+
+	// Handle optional tools parameter
+	if kwargs.Has("tools") {
+		toolsObjs := kwargs.MustGetList("tools", nil)
+		tools := make([]ai.Tool, 0, len(toolsObjs))
+		for i, toolObj := range toolsObjs {
+			// Convert dict to ai.Tool
+			toolMap, err := toolObj.AsDict()
+			if err != nil {
+				return &object.Error{Message: fmt.Sprintf("tools[%d] must be a dict: %v", i, err)}
+			}
+			tool := ai.Tool{Type: "function"}
+			if fnVal, ok := toolMap["function"]; ok && fnVal != nil {
+				// Convert object.Object to Go map using ToGo
+				fnGo := scriptlib.ToGo(fnVal)
+				if fnMap, ok := fnGo.(map[string]any); ok {
+					if name, ok := fnMap["name"].(string); ok {
+						tool.Function.Name = name
+					}
+					if desc, ok := fnMap["description"].(string); ok {
+						tool.Function.Description = desc
+					}
+					if params, ok := fnMap["parameters"].(map[string]any); ok {
+						tool.Function.Parameters = params
+					}
+				}
+			}
+			tools = append(tools, tool)
+		}
+		req.Tools = tools
+	}
+
+	chatResp, chatErr := ci.client.ChatCompletion(ctx, req)
 	if chatErr != nil {
 		return &object.Error{Message: "chat completion failed: " + chatErr.Error()}
 	}
@@ -236,12 +262,12 @@ func modelsMethod(self *object.Instance, ctx context.Context) object.Object {
 		return &object.Error{Message: "models: no client configured"}
 	}
 
-	resp, err := ci.client.GetModels(ctx)
+	models, err := ci.client.ListModels(ctx)
 	if err != nil {
 		return &object.Error{Message: "failed to get models: " + err.Error()}
 	}
 
-	return scriptlib.FromGo(resp.Data)
+	return scriptlib.FromGo(models)
 }
 
 // response_create method implementation
@@ -255,7 +281,7 @@ func responseCreateMethod(self *object.Instance, ctx context.Context, model stri
 		return &object.Error{Message: "response_create: no client configured"}
 	}
 
-	req := openai.CreateResponseRequest{
+	req := ai.CreateResponseRequest{
 		Model: model,
 		Input: input,
 	}
@@ -306,58 +332,6 @@ func responseCancelMethod(self *object.Instance, ctx context.Context, id string)
 	return scriptlib.FromGo(resp)
 }
 
-// set_tools method implementation
-func setToolsMethod(self *object.Instance, ctx context.Context, tools []any) object.Object {
-	ci, cerr := getClientInstance(self)
-	if cerr != nil {
-		return cerr
-	}
-
-	if ci.client == nil {
-		return &object.Error{Message: "set_tools: no client configured"}
-	}
-
-	// Convert tools to openai.Tool format
-	openaiTools := make([]openai.Tool, 0, len(tools))
-	for _, tool := range tools {
-		toolMap, ok := tool.(map[string]any)
-		if !ok {
-			return &object.Error{Message: "set_tools: each tool must be a dict"}
-		}
-
-		toolType, _ := toolMap["type"].(string)
-		if toolType == "" {
-			toolType = "function"
-		}
-
-		funcMap, ok := toolMap["function"].(map[string]any)
-		if !ok {
-			return &object.Error{Message: "set_tools: each tool must have a 'function' dict"}
-		}
-
-		name, _ := funcMap["name"].(string)
-		description, _ := funcMap["description"].(string)
-		parameters, _ := funcMap["parameters"].(map[string]any)
-
-		if name == "" {
-			return &object.Error{Message: "set_tools: function name is required"}
-		}
-
-		openaiTools = append(openaiTools, openai.Tool{
-			Type: toolType,
-			Function: openai.ToolFunction{
-				Name:        name,
-				Description: description,
-				Parameters:  parameters,
-			},
-		})
-	}
-
-	ci.client.SetCustomTools(openaiTools)
-
-	return &object.Null{}
-}
-
 // embedding method implementation
 func embeddingMethod(self *object.Instance, ctx context.Context, model string, input any) object.Object {
 	ci, cerr := getClientInstance(self)
@@ -369,7 +343,7 @@ func embeddingMethod(self *object.Instance, ctx context.Context, model string, i
 		return &object.Error{Message: "embedding: no client configured"}
 	}
 
-	req := openai.EmbeddingRequest{
+	req := ai.EmbeddingRequest{
 		Model: model,
 		Input: input,
 	}
@@ -382,8 +356,8 @@ func embeddingMethod(self *object.Instance, ctx context.Context, model string, i
 	return scriptlib.FromGo(resp)
 }
 
-// createClientInstance creates a new scriptling Instance wrapping an OpenAI client
-func createClientInstance(client *openai.Client) *object.Instance {
+// createClientInstance creates a new scriptling Instance wrapping an AI client
+func createClientInstance(client ai.Client) *object.Instance {
 	return &object.Instance{
 		Class: GetOpenAIClientClass(),
 		Fields: map[string]object.Object{
@@ -395,9 +369,9 @@ func createClientInstance(client *openai.Client) *object.Instance {
 	}
 }
 
-// ChatStreamInstance wraps an OpenAI chat stream for use in scriptling
+// ChatStreamInstance wraps an AI chat stream for use in scriptling
 type ChatStreamInstance struct {
-	stream *openai.ChatStream
+	stream *ai.ChatStream
 }
 
 // GetChatStreamClass returns the ChatStream class (thread-safe singleton)
@@ -487,10 +461,10 @@ func completionStreamMethod(self *object.Instance, ctx context.Context, model st
 		return &object.Error{Message: "completion_stream: no client configured"}
 	}
 
-	// Convert messages to openai.Message
-	openaiMessages := make([]openai.Message, len(messages))
+	// Convert messages to ai.Message
+	openaiMessages := make([]ai.Message, len(messages))
 	for i, msg := range messages {
-		omsg := openai.Message{}
+		omsg := ai.Message{}
 		if role, ok := msg["role"].(string); ok {
 			if role == "" {
 				return &object.Error{Message: "completion_stream: message role cannot be empty"}
@@ -509,10 +483,13 @@ func completionStreamMethod(self *object.Instance, ctx context.Context, model st
 	}
 
 	// Create streaming request
-	stream := ci.client.StreamChatCompletion(ctx, openai.ChatCompletionRequest{
+	stream, err := ci.client.StreamChatCompletion(ctx, ai.ChatCompletionRequest{
 		Model:    model,
 		Messages: openaiMessages,
 	})
+	if err != nil {
+		return &object.Error{Message: "completion_stream: " + err.Error()}
+	}
 
 	// Wrap stream in instance
 	return &object.Instance{

@@ -8,14 +8,14 @@ import (
 	"sync"
 
 	"github.com/paularlott/mcp"
-	"github.com/paularlott/mcp/openai"
+	"github.com/paularlott/mcp/ai"
 	"github.com/paularlott/scriptling/extlibs/ai/tools"
 	"github.com/paularlott/scriptling/object"
 )
 
 const (
 	AILibraryName = "scriptling.ai"
-	AILibraryDesc = "AI and LLM functions for interacting with OpenAI-compatible APIs"
+	AILibraryDesc = "AI and LLM functions for interacting with multiple AI provider APIs"
 )
 
 var (
@@ -23,10 +23,10 @@ var (
 	libraryOnce sync.Once
 )
 
-// WrapClient wraps an OpenAI client as a scriptling Object that can be
+// WrapClient wraps an AI client as a scriptling Object that can be
 // passed into a script via SetObjectVar. This allows multiple clients
 // to be used simultaneously.
-func WrapClient(c *openai.Client) object.Object {
+func WrapClient(c ai.Client) object.Object {
 	return createClientInstance(c)
 }
 
@@ -46,6 +46,14 @@ func buildLibrary() *object.Library {
 	// Add ToolRegistry class
 	builder.Constant("ToolRegistry", tools.GetRegistryClass())
 
+	// Provider constants
+	builder.Constant("OPENAI", string(ai.ProviderOpenAI))
+	builder.Constant("CLAUDE", string(ai.ProviderClaude))
+	builder.Constant("GEMINI", string(ai.ProviderGemini))
+	builder.Constant("OLLAMA", string(ai.ProviderOllama))
+	builder.Constant("ZAI", string(ai.ProviderZAi))
+	builder.Constant("MISTRAL", string(ai.ProviderMistral))
+
 	builder.
 		// new_client(base_url, **kwargs) - Create a new AI client
 		FunctionWithHelp("new_client", func(ctx context.Context, kwargs object.Kwargs, baseURL string) (object.Object, error) {
@@ -55,10 +63,10 @@ func buildLibrary() *object.Library {
 			apiKey := kwargs.MustGetString("api_key", "")
 
 			// Parse remote_servers if provided
-			var remoteServerConfigs []openai.RemoteServerConfig
+			var remoteServerConfigs []ai.MCPServerConfig
 			if kwargs.Has("remote_servers") {
 				remoteServersObjs := kwargs.MustGetList("remote_servers", nil)
-				remoteServerConfigs = make([]openai.RemoteServerConfig, 0, len(remoteServersObjs))
+				remoteServerConfigs = make([]ai.MCPServerConfig, 0, len(remoteServersObjs))
 				for i, serverObj := range remoteServersObjs {
 					// Convert Object to map[string]Object
 					serverMap, err := serverObj.AsDict()
@@ -79,7 +87,7 @@ func buildLibrary() *object.Library {
 						namespace, _ = nsVal.AsString()
 					}
 
-					config := openai.RemoteServerConfig{
+					config := ai.MCPServerConfig{
 						BaseURL:   baseURLStr,
 						Namespace: namespace,
 					}
@@ -95,23 +103,36 @@ func buildLibrary() *object.Library {
 				}
 			}
 
+			// Map service string to provider
+			var provider ai.Provider
 			switch service {
 			case "openai":
-				config := openai.Config{
-					APIKey:             apiKey,
-					BaseURL:            baseURL,
-					RemoteServerConfigs: remoteServerConfigs,
-				}
-
-				client, err := openai.New(config)
-				if err != nil {
-					return nil, err
-				}
-
-				return createClientInstance(client), nil
+				provider = ai.ProviderOpenAI
+			case "claude":
+				provider = ai.ProviderClaude
+			case "gemini":
+				provider = ai.ProviderGemini
+			case "ollama":
+				provider = ai.ProviderOllama
+			case "zai":
+				provider = ai.ProviderZAi
+			case "mistral":
+				provider = ai.ProviderMistral
 			default:
 				return nil, fmt.Errorf("unsupported service: %s", service)
 			}
+
+			client, err := ai.NewClient(ai.Config{
+				Provider:         provider,
+				APIKey:           apiKey,
+				BaseURL:          baseURL,
+				MCPServerConfigs: remoteServerConfigs,
+			})
+			if err != nil {
+				return nil, err
+			}
+
+			return createClientInstance(client), nil
 		}, `new_client(base_url, **kwargs) - Create a new AI client
 
 Creates a new AI client instance for making API calls to supported services.
@@ -177,11 +198,11 @@ Example:
 	return builder.Build()
 }
 
-// convertMapsToOpenAI converts Go map messages to openai.Message format
-func convertMapsToOpenAI(messages []map[string]any) []openai.Message {
-	openaiMessages := make([]openai.Message, 0, len(messages))
+// convertMapsToOpenAI converts Go map messages to ai.Message format
+func convertMapsToOpenAI(messages []map[string]any) []ai.Message {
+	aiMessages := make([]ai.Message, 0, len(messages))
 	for _, msg := range messages {
-		omsg := openai.Message{}
+		omsg := ai.Message{}
 		if role, ok := msg["role"].(string); ok {
 			omsg.Role = role
 		}
@@ -191,9 +212,9 @@ func convertMapsToOpenAI(messages []map[string]any) []openai.Message {
 		if tcid, ok := msg["tool_call_id"].(string); ok {
 			omsg.ToolCallID = tcid
 		}
-		openaiMessages = append(openaiMessages, omsg)
+		aiMessages = append(aiMessages, omsg)
 	}
-	return openaiMessages
+	return aiMessages
 }
 
 // extractThinking extracts thinking/reasoning blocks from AI responses
