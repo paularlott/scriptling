@@ -41,11 +41,23 @@ Example:
 		MethodWithHelp("build", registryBuildMethod, `build() - Build OpenAI-compatible tool schemas
 
 Returns:
-  list: List of tool schema dicts
+  list: List of tool schema dicts suitable for passing to AI completion requests
 
 Example:
-  schemas = registry.build()
-  client.set_tools(schemas)`).
+  # Build tool schemas for use with Agent (recommended)
+  tools = ai.ToolRegistry()
+  tools.add("read_file", "Read a file", {"path": "string"}, read_func)
+  schemas = tools.build()
+  bot = agent.Agent(client, tools=tools, model="gpt-4")
+
+  # Build tool schemas for direct completion calls
+  tools = ai.ToolRegistry()
+  tools.add("get_time", "Get current time", {}, lambda args: "12:00 PM")
+  schemas = tools.build()
+  response = client.completion("gpt-4", [{"role": "user", "content": "What time is it?"}], tools=schemas)
+
+  # With streaming completion
+  response = client.completion_stream("gpt-4", [{"role": "user", "content": "What time is it?"}], tools=schemas)`).
 		MethodWithHelp("get_handler", registryGetHandlerMethod, `get_handler(name) - Get tool handler by name
 
 Parameters:

@@ -15,11 +15,8 @@ class Agent:
         self.system_prompt = system_prompt
         self.model = model
         self.messages = []
-
-        # Set tools on client if provided
-        if tools is not None:
-            schemas = tools.build()
-            client.set_tools(schemas)
+        # Build and store tool schemas if tools provided
+        self.tool_schemas = tools.build() if tools is not None else None
 
     def trigger(self, message, max_iterations=1):
         # Convert message to dict if string
@@ -38,8 +35,8 @@ class Agent:
         # Agentic loop
         last_response = None
         for i in range(max_iterations):
-            # Call completion (all clients accept model as first parameter)
-            response = self.client.completion(self.model, self.messages)
+            # Call completion with tools
+            response = self.client.completion(self.model, self.messages, tools=self.tool_schemas)
 
             # Get message from response
             if not response.choices or len(response.choices) == 0:
