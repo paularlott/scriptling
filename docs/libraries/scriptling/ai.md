@@ -180,17 +180,27 @@ Creates a chat completion using this client's configuration.
 **Parameters:**
 
 - `model` (str): Model identifier (e.g., "gpt-4", "gpt-3.5-turbo")
-- `messages` (list): List of message dicts with "role" and "content" keys
+- `messages` (str or list): Either a string (user message) or a list of message dicts with "role" and "content" keys
+- `system_prompt` (str, optional): System prompt to use when messages is a string
 - `tools` (list, optional): List of tool schema dicts from ToolRegistry.build()
 - `temperature` (float, optional): Sampling temperature (0.0-2.0)
 - `max_tokens` (int, optional): Maximum tokens to generate
 
 **Returns:** dict - Response containing id, choices, usage, etc.
 
-**Example:**
+**Examples:**
 
 ```python
+# String shorthand - simple user message
 client = ai.new_client("", api_key="sk-...")
+response = client.completion("gpt-4", "What is 2+2?")
+print(response.choices[0].message.content)
+
+# String shorthand with system prompt
+response = client.completion("gpt-4", "What is 2+2?", system_prompt="You are a helpful math tutor")
+print(response.choices[0].message.content)
+
+# Full messages array
 response = client.completion("gpt-4", [{"role": "user", "content": "What is 2+2?"}])
 print(response.choices[0].message.content)
 ```
@@ -217,18 +227,20 @@ Creates a streaming chat completion using this client's configuration. Returns a
 **Parameters:**
 
 - `model` (str): Model identifier (e.g., "gpt-4", "gpt-3.5-turbo")
-- `messages` (list): List of message dicts with "role" and "content" keys
+- `messages` (str or list): Either a string (user message) or a list of message dicts with "role" and "content" keys
+- `system_prompt` (str, optional): System prompt to use when messages is a string
 - `tools` (list, optional): List of tool schema dicts from ToolRegistry.build()
 - `temperature` (float, optional): Sampling temperature (0.0-2.0)
 - `max_tokens` (int, optional): Maximum tokens to generate
 
 **Returns:** ChatStream - A stream object with a `next()` method
 
-**Example:**
+**Examples:**
 
 ```python
+# String shorthand - simple user message
 client = ai.new_client("", api_key="sk-...")
-stream = client.completion_stream("gpt-4", [{"role": "user", "content": "Count to 10"}])
+stream = client.completion_stream("gpt-4", "Count to 10")
 while True:
     chunk = stream.next()
     if chunk is None:
@@ -238,6 +250,14 @@ while True:
         if delta.content:
             print(delta.content, end="")
 print()
+
+# String shorthand with system prompt
+stream = client.completion_stream("gpt-4", "Explain quantum physics", system_prompt="You are a physics professor")
+# ... iterate as above
+
+# Full messages array
+stream = client.completion_stream("gpt-4", [{"role": "user", "content": "Count to 10"}])
+# ... iterate as above
 ```
 
 **With Tool Calling:**
@@ -329,22 +349,31 @@ for model in models:
     print(model.id)
 ```
 
-### client.response_create(model, input)
+### client.response_create(model, input, **kwargs)
 
 Creates a response using the OpenAI Responses API (new structured API).
 
 **Parameters:**
 
 - `model` (str): Model identifier (e.g., "gpt-4o", "gpt-4")
-- `input` (list): Input items (messages)
+- `input` (str or list): Either a string (user message content) or a list of input items (messages)
+- `system_prompt` (str, optional): System prompt to use when input is a string
 
 **Returns:** dict - Response object with id, status, output, usage, etc.
 
-**Example:**
+**Examples:**
 
 ```python
+# String shorthand - simple user message
 client = ai.new_client("", api_key="sk-...")
+response = client.response_create("gpt-4o", "Hello!")
+print(response.output)
 
+# String shorthand with system prompt
+response = client.response_create("gpt-4o", "What is AI?", system_prompt="You are a helpful assistant")
+print(response.output)
+
+# Full input array (Responses API format)
 response = client.response_create("gpt-4o", [
     {"type": "message", "role": "user", "content": "Hello!"}
 ])
@@ -387,6 +416,36 @@ response = client.response_cancel("resp_123")
 ```
 
 ## Usage Examples
+
+### String Shorthand (Simple Queries)
+
+For simple queries, you can pass a string directly instead of building a messages array:
+
+```python
+import scriptling.ai as ai
+
+client = ai.new_client("", api_key="sk-...")
+
+# Simple user message
+response = client.completion("gpt-4", "What is 2+2?")
+print(response.choices[0].message.content)
+
+# With system prompt
+response = client.completion("gpt-4", "Explain quantum physics", system_prompt="You are a physics professor")
+print(response.choices[0].message.content)
+
+# Works with streaming too
+stream = client.completion_stream("gpt-4", "Tell me a story")
+while True:
+    chunk = stream.next()
+    if chunk is None:
+        break
+    if chunk.choices and len(chunk.choices) > 0:
+        delta = chunk.choices[0].delta
+        if delta.content:
+            print(delta.content, end="")
+print()
+```
 
 ### Basic Chat Completion
 
