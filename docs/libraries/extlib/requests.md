@@ -130,7 +130,7 @@ import requests
 import json
 
 new_user = {"name": "Alice", "email": "alice@example.com"}
-body = json.stringify(new_user)
+body = json.dumps(new_user)
 
 # Using kwargs
 response = requests.post("https://api.example.com/users", data=body, headers={"Content-Type": "application/json"})
@@ -196,7 +196,7 @@ try:
         "userId": 1
     }
 
-    body = json.stringify(new_post)
+    body = json.dumps(new_post)
 
     response = requests.post(
         url="https://jsonplaceholder.typicode.com/posts",
