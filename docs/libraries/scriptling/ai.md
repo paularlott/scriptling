@@ -90,10 +90,12 @@ import scriptling.ai as ai
 tools = ai.ToolRegistry()
 tools.add("read_file", "Read a file", {"path": "string"}, lambda args: os.read_file(args["path"]))
 schemas = tools.build()
-client.set_tools(schemas)
+
+# Pass tools directly to completion()
+response = client.completion("gpt-4", [{"role": "user", "content": "Read file /data/config.txt"}], tools=schemas)
 ```
 
-See [Agent Library](agent.md) for detailed ToolRegistry documentation.
+See [Agent Library](agent.md) for detailed ToolRegistry documentation and automatic tool handling.
 
 ## AI Client
 

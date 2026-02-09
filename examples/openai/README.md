@@ -95,7 +95,7 @@ cd scriptlingcoder
 **How it works:**
 
 - Defines custom tools (read, write, edit, glob, grep, bash)
-- Registers tools with `client.set_tools()` - tools are sent to AI but NOT executed by client
+- Registers tools via `tools` parameter in `completion()` - tools are sent to AI but NOT executed by client
 - AI can call tools, script executes them locally and returns results
 - Supports multi-turn conversations with tool execution
 

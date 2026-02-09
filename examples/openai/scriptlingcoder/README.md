@@ -102,7 +102,7 @@ The AI has access to these tools:
 
 ## How It Works
 
-1. **Custom Tools**: The script defines tools and registers them with `client.set_tools()`
+1. **Custom Tools**: The script defines tools and passes them via `tools` parameter to `completion()`
 2. **AI Calls**: When you send a message, the AI can choose to call tools
 3. **Tool Execution**: The script executes the tools locally and returns results
 4. **Iteration**: The AI receives tool results and can make additional calls

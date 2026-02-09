@@ -223,11 +223,11 @@ options = {
 }
 resp = requests.get("https://api.example.com/data", options)
 if resp["status"] == 200:
-    data = json.parse(resp["body"])
+    data = json.loads(resp["body"])
 
 # POST request
 payload = {"name": "Alice"}
-body = json.stringify(payload)
+body = json.dumps(payload)
 response = requests.post("https://api.example.com/users", body)
 ```
 
