@@ -19,6 +19,7 @@ import (
 
 	mcplib "github.com/paularlott/mcp"
 	"github.com/paularlott/mcp/ai"
+	"github.com/paularlott/mcp/ai/openai"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs"
 	scriptlingai "github.com/paularlott/scriptling/extlibs/ai"
@@ -44,16 +45,17 @@ func main() {
 
 	// Create OpenAI client for LM Studio
 	client, err := ai.NewClient(ai.Config{
-		Provider: ai.ProviderOpenAI,
-		BaseURL:  "http://127.0.0.1:1234/v1",
-		APIKey:   "lm-studio",
-		MCPServerConfigs: []ai.RemoteServerConfig{
-			{
-				BaseURL:   "http://127.0.0.1:8080/mcp",
-				Auth:      nil,
-				Namespace: "scriptling",
+		Config: openai.Config{
+			BaseURL: "http://127.0.0.1:1234/v1",
+			APIKey:  "lm-studio",
+			RemoteServerConfigs: []openai.RemoteServerConfig{
+				{
+					BaseURL:   "http://127.0.0.1:8080/mcp",
+					Namespace: "scriptling",
+				},
 			},
 		},
+		Provider: ai.ProviderOpenAI,
 	})
 	if err != nil {
 		log.Fatalf("Failed to create AI client: %v", err)

@@ -16,6 +16,7 @@ import (
 	"os"
 
 	"github.com/paularlott/mcp/ai"
+	"github.com/paularlott/mcp/ai/openai"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs"
 	scriptlingai "github.com/paularlott/scriptling/extlibs/ai"
@@ -40,9 +41,11 @@ func main() {
 
 	// Create the AI client for LM Studio
 	client, err := ai.NewClient(ai.Config{
+		Config: openai.Config{
+			BaseURL: "http://127.0.0.1:1234/v1",
+			APIKey:  "lm-studio", // LM Studio doesn't require a real API key
+		},
 		Provider: ai.ProviderOpenAI,
-		BaseURL:  "http://127.0.0.1:1234/v1",
-		APIKey:   "lm-studio", // LM Studio doesn't require a real API key
 	})
 	if err != nil {
 		log.Fatalf("Failed to create AI client: %v", err)
