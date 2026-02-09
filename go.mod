@@ -6,14 +6,12 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/paularlott/cli v0.7.2
 	github.com/paularlott/logger v0.3.0
-	github.com/paularlott/mcp v0.9.0
+	github.com/paularlott/mcp v0.10.1-0.20260208143825-aac1bd5944c2
 	github.com/shirou/gopsutil/v3 v3.24.5
 	golang.org/x/net v0.49.0
 	golang.org/x/text v0.33.0
 	gopkg.in/yaml.v3 v3.0.1
 )
-
-replace github.com/paularlott/mcp => /Users/paul/Code/Source/mcp
 
 require (
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
