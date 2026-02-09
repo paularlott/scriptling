@@ -531,7 +531,7 @@ func TestBuildLibrary(t *testing.T) {
 	}
 
 	// Check that expected functions exist (only library-level functions)
-	expectedFuncs := []string{"Client", "extract_thinking"}
+	expectedFuncs := []string{"Client", "extract_thinking", "text", "thinking"}
 	for _, name := range expectedFuncs {
 		if _, ok := lib.Functions()[name]; !ok {
 			t.Errorf("library missing function %q", name)
@@ -589,6 +589,7 @@ func TestOpenAIClientClassMethods(t *testing.T) {
 	expectedMethods := []string{
 		"completion", "completion_stream", "models",
 		"response_create", "response_get", "response_cancel",
+		"embedding", "ask",
 	}
 
 	for _, methodName := range expectedMethods {
