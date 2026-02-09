@@ -22,7 +22,7 @@ import scriptling.mcp as mcp
 decoded = mcp.decode_response(raw_response)
 ```
 
-### scriptling.mcp.new_client(base_url, **kwargs)
+### scriptling.mcp.Client(base_url, **kwargs)
 
 Creates a new MCP client for connecting to a remote MCP server.
 
@@ -38,16 +38,16 @@ Creates a new MCP client for connecting to a remote MCP server.
 import scriptling.mcp as mcp
 
 # Without namespace or auth
-client = mcp.new_client("https://api.example.com/mcp")
+client = mcp.Client("https://api.example.com/mcp")
 
 # With namespace only
-client = mcp.new_client("https://api.example.com/mcp", namespace="scriptling")
+client = mcp.Client("https://api.example.com/mcp", namespace="scriptling")
 
 # With bearer token only
-client = mcp.new_client("https://api.example.com/mcp", bearer_token="your-token-here")
+client = mcp.Client("https://api.example.com/mcp", bearer_token="your-token-here")
 
 # With both namespace and bearer token
-client = mcp.new_client(
+client = mcp.Client(
     "https://api.example.com/mcp",
     namespace="scriptling",
     bearer_token="your-token-here"
@@ -66,7 +66,7 @@ Lists all tools available from this MCP server.
 
 **Example:**
 ```python
-client = mcp.new_client("https://api.example.com/mcp")
+client = mcp.Client("https://api.example.com/mcp")
 tools = client.tools()
 
 for tool in tools:
@@ -87,7 +87,7 @@ Executes a tool by name with the provided arguments.
 
 **Example:**
 ```python
-client = mcp.new_client("https://api.example.com/mcp")
+client = mcp.Client("https://api.example.com/mcp")
 
 result = client.call_tool("search", {
     "query": "golang programming",
@@ -105,7 +105,7 @@ Explicitly refreshes the cached list of tools from the server.
 
 **Example:**
 ```python
-client = mcp.new_client("https://api.example.com/mcp")
+client = mcp.Client("https://api.example.com/mcp")
 
 # Tools are cached, refresh to get latest
 client.refresh_tools()
@@ -125,7 +125,7 @@ Searches for tools using the tool_search MCP tool. This is useful when the serve
 
 **Example:**
 ```python
-client = mcp.new_client("https://api.example.com/mcp")
+client = mcp.Client("https://api.example.com/mcp")
 
 # Search for weather-related tools (default: up to 10 results)
 results = client.tool_search("weather")
@@ -149,7 +149,7 @@ Executes a tool by name using the execute_tool MCP tool. This is the only way to
 
 **Example:**
 ```python
-client = mcp.new_client("https://api.example.com/mcp")
+client = mcp.Client("https://api.example.com/mcp")
 
 # First search for tools
 results = client.tool_search("weather")
@@ -168,7 +168,7 @@ if results:
 ```python
 import scriptling.mcp as mcp
 
-client = mcp.new_client("https://api.example.com/mcp")
+client = mcp.Client("https://api.example.com/mcp")
 result = client.call_tool("calculator", {"expression": "2+2"})
 print(result)  # 4
 ```
@@ -178,7 +178,7 @@ print(result)  # 4
 ```python
 import scriptling.mcp as mcp
 
-client = mcp.new_client("https://api.example.com/mcp")
+client = mcp.Client("https://api.example.com/mcp")
 tools = client.tools()
 
 print(f"Available tools: {len(tools)}")
@@ -192,7 +192,7 @@ for tool in tools:
 ```python
 import scriptling.mcp as mcp
 
-client = mcp.new_client("https://api.example.com/mcp")
+client = mcp.Client("https://api.example.com/mcp")
 tools = client.tools()
 
 for tool in tools:
@@ -213,7 +213,7 @@ for tool in tools:
 ```python
 import scriptling.mcp as mcp
 
-client = mcp.new_client("https://api.example.com/mcp")
+client = mcp.Client("https://api.example.com/mcp")
 
 # Find database-related tools
 db_tools = client.tool_search("database", max_results=20)
@@ -236,7 +236,7 @@ for tool in db_tools:
 ```python
 import scriptling.mcp as mcp
 
-client = mcp.new_client(
+client = mcp.Client(
     "https://api.example.com/mcp",
     bearer_token="your-api-token"
 )
@@ -248,7 +248,7 @@ client = mcp.new_client(
 import scriptling.mcp as mcp
 
 # Namespace and bearer token can be in any order
-client = mcp.new_client(
+client = mcp.Client(
     "https://api.example.com/mcp",
     namespace="myservice",
     bearer_token="your-api-token"
@@ -260,7 +260,7 @@ client = mcp.new_client(
 ```python
 import scriptling.mcp as mcp
 
-client = mcp.new_client("https://public-api.example.com/mcp")
+client = mcp.Client("https://public-api.example.com/mcp")
 ```
 
 ## Error Handling
@@ -269,7 +269,7 @@ client = mcp.new_client("https://public-api.example.com/mcp")
 import scriptling.mcp as mcp
 
 try:
-    client = mcp.new_client("https://api.example.com/mcp")
+    client = mcp.Client("https://api.example.com/mcp")
     result = client.call_tool("search", {"query": "golang"})
     print(result)
 except Exception as e:
@@ -283,7 +283,7 @@ Tool responses are automatically decoded from JSON:
 ```python
 import scriptling.mcp as mcp
 
-client = mcp.new_client("https://api.example.com/mcp")
+client = mcp.Client("https://api.example.com/mcp")
 
 # Response is automatically parsed
 result = client.call_tool("get_weather", {"city": "London"})
@@ -314,7 +314,7 @@ Tools may include an input schema defining their parameters:
 ```python
 import scriptling.mcp as mcp
 
-client = mcp.new_client("https://api.example.com/mcp")
+client = mcp.Client("https://api.example.com/mcp")
 tools = client.tools()
 
 for tool in tools:
@@ -330,3 +330,94 @@ for tool in tools:
         #     "required": ["query"]
         # }
 ```
+
+## Using MCP Tools with AI
+
+MCP servers can be configured during AI client creation using the `remote_servers` parameter. This allows AI models to automatically call MCP tools during completions.
+
+```python
+import scriptling.ai as ai
+import scriptling.mcp as mcp
+
+# Create AI client with MCP servers configured
+ai_client = ai.Client("http://127.0.0.1:1234/v1", remote_servers=[
+    {"base_url": "http://127.0.0.1:8080/mcp", "namespace": "scriptling"},
+])
+
+# AI can now automatically use tools from the MCP server
+response = ai_client.completion(
+    "gpt-4",
+    [{"role": "user", "content": "Calculate 15 + 27 using the execute_code tool"}]
+)
+print(response.choices[0].message.content)
+```
+
+### Combined Usage
+
+You can use both MCP and AI clients together - one for direct tool access and one for AI completions:
+
+```python
+import scriptling.ai as ai
+import scriptling.mcp as mcp
+
+# Create AI client with MCP servers configured
+ai_client = ai.Client("http://127.0.0.1:1234/v1", remote_servers=[
+    {"base_url": "http://127.0.0.1:8080/mcp", "namespace": "scriptling"},
+])
+
+# Create MCP client for direct tool access
+mcp_client = mcp.Client("http://127.0.0.1:8080/mcp", namespace="scriptling")
+
+# List tools directly
+tools = mcp_client.tools()
+print(f"Available tools: {len(tools)}")
+for tool in tools:
+    print(f"  - {tool.name}: {tool.description}")
+
+# Or let the AI use them automatically
+response = ai_client.completion(
+    "gpt-4",
+    [{"role": "user", "content": "What tools are available?"}]
+)
+print(response.choices[0].message.content)
+```
+
+### Namespace Prefixing
+
+When using MCP tools with AI, tools are prefixed with the namespace:
+
+```python
+# With namespace="scriptling", tools become "scriptling/tool_name"
+ai_client = ai.Client("http://127.0.0.1:1234/v1", remote_servers=[
+    {"base_url": "http://127.0.0.1:8080/mcp", "namespace": "scriptling"},
+])
+
+# AI will see tools like: scriptling/execute_code, scriptling/tool_search, etc.
+response = ai_client.completion(
+    "gpt-4",
+    [{"role": "user", "content": "Use scriptling/execute_code to calculate 15 + 27"}]
+)
+```
+
+### Multiple MCP Servers
+
+You can configure multiple MCP servers for the AI client:
+
+```python
+ai_client = ai.Client("http://127.0.0.1:1234/v1", remote_servers=[
+    {"base_url": "http://127.0.0.1:8080/mcp", "namespace": "scriptling"},
+    {"base_url": "http://127.0.0.1:8081/mcp", "namespace": "database"},
+    {"base_url": "https://api.example.com/mcp", "namespace": "search", "bearer_token": "secret"},
+])
+
+# AI now has access to tools from all three servers
+response = ai_client.completion(
+    "gpt-4",
+    [{"role": "user", "content": "Search for recent golang news and save to database"}]
+)
+```
+
+## See Also
+
+- [AI Library](ai.md) - AI client and completion functions
+- [Agent Library](agent.md) - Building AI agents with automatic tool execution
