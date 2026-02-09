@@ -4,7 +4,7 @@
 import scriptling.mcp as mcp
 
 print("Creating MCP client for localhost:8080...")
-client = mcp.new_client("http://127.0.0.1:8080/mcp")
+client = mcp.Client("http://127.0.0.1:8080/mcp")
 
 print()
 print("Fetching available tools...")

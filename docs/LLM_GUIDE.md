@@ -14,7 +14,7 @@ When generating Scriptling code:
 6. **HTTP Response**: HTTP functions return `{"status": int, "body": string, "headers": dict}`
 7. **HTTP Options**: HTTP functions accept optional options dictionary with `timeout` and `headers` keys
 8. **Import Libraries**: Use `import json`, `import requests`, `import re` to load libraries
-9. **JSON Functions**: Always use `json.parse()` and `json.stringify()` for JSON (dot notation)
+9. **JSON Functions**: Always use `json.loads()` and `json.dumps()` for JSON (dot notation)
 10. **HTTP Functions**: Always use `requests.get()`, `requests.post()`, etc. for HTTP (dot notation)
 11. **Regex**: Use `re.match()`, `re.search()`, `re.findall()`, `re.sub()`, `re.split()` for regex
 12. **Timeouts**: Default HTTP timeout is 5 seconds if not specified
@@ -126,7 +126,7 @@ options = {
 }
 resp = requests.get("https://api.example.com/data", options)
 if resp["status"] == 200:
-    data = json.parse(resp["body"])
+    data = json.loads(resp["body"])
 ```
 
 ## Classes

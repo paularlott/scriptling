@@ -621,7 +621,14 @@ func (l *Lexer) readFString(quote byte) string {
 	l.readChar() // consume quote
 	position := l.position
 	for l.ch != quote && l.ch != 0 {
-		l.readChar()
+		if l.ch == '\\' {
+			l.readChar() // skip backslash
+			if l.ch != 0 {
+				l.readChar() // skip escaped character
+			}
+		} else {
+			l.readChar()
+		}
 	}
 	str := l.input[position:l.position]
 	l.readChar() // consume closing quote

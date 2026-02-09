@@ -15,7 +15,7 @@ class MockClient:
         self.tools = None
     def set_tools(self, schemas):
         self.tools = schemas
-    def completion(self, *args):
+    def completion(self, *args, **kwargs):
         class MockMessage:
             def __init__(self):
                 self.content = "test"
@@ -50,7 +50,9 @@ print("✓ Tool registry builds schemas correctly")
 
 # Test 5: Agent with tools
 bot2 = agent.Agent(client, tools=registry, model="test")
-assert client.tools is not None, "Tools should be set on client"
-print("✓ Agent sets tools on client")
+# Agent stores tool schemas internally and passes via kwargs
+assert bot2.tool_schemas is not None, "Agent should store tool schemas"
+assert type(bot2.tool_schemas) == type([]), "tool_schemas should be a list"
+print("✓ Agent stores tool schemas for passing via kwargs")
 
 print("\n✅ All agent namespace tests passed")

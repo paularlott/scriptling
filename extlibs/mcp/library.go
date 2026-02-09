@@ -82,8 +82,8 @@ Returns:
 Example:
   decoded = mcp.decode_response(raw_response)`).
 
-		// new_client(base_url, **kwargs) - Create a new MCP client
-		FunctionWithHelp("new_client", func(ctx context.Context, kwargs object.Kwargs, baseURL string) (object.Object, error) {
+		// Client(base_url, **kwargs) - Create a new MCP client
+		FunctionWithHelp("Client", func(ctx context.Context, kwargs object.Kwargs, baseURL string) (object.Object, error) {
 			// Get optional parameters from kwargs
 			namespace := kwargs.MustGetString("namespace", "")
 			bearerToken := kwargs.MustGetString("bearer_token", "")
@@ -96,7 +96,7 @@ Example:
 
 			client := mcplib.NewClient(baseURL, authProvider, namespace)
 			return createClientInstance(client), nil
-		}, `new_client(base_url, **kwargs) - Create a new MCP client
+		}, `Client(base_url, **kwargs) - Create a new MCP client
 
 Creates a new MCP client for connecting to a remote MCP server.
 
@@ -110,16 +110,16 @@ Returns:
 
 Example:
   # Without namespace or auth
-  client = mcp.new_client("https://api.example.com/mcp")
+  client = mcp.Client("https://api.example.com/mcp")
 
   # With namespace only
-  client = mcp.new_client("https://api.example.com/mcp", namespace="scriptling")
+  client = mcp.Client("https://api.example.com/mcp", namespace="scriptling")
 
   # With bearer token only
-  client = mcp.new_client("https://api.example.com/mcp", bearer_token="secret")
+  client = mcp.Client("https://api.example.com/mcp", bearer_token="secret")
 
   # With both namespace and bearer token
-  client = mcp.new_client("https://api.example.com/mcp", namespace="scriptling", bearer_token="secret")
+  client = mcp.Client("https://api.example.com/mcp", namespace="scriptling", bearer_token="secret")
 
   tools = client.tools()
   for tool in tools:

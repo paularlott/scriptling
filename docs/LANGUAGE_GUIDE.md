@@ -742,7 +742,7 @@ Combine error handling with cleanup:
 ```python
 try:
     response = requests.get(url, options)
-    data = json.parse(response["body"])
+    data = json.loads(response["body"])
 except:
     print("Request failed")
     data = None
@@ -839,7 +839,7 @@ try:
     if response["status"] != 200:
         raise "HTTP error: " + str(response["status"])
 
-    data = json.parse(response["body"])
+    data = json.loads(response["body"])
     print("Success: " + str(len(data)))
 except:
     print("Request failed")
@@ -1260,7 +1260,7 @@ import requests    # Load Requests library, creates a global 'requests' object
 import re   # Load regex library, creates a global 're' object
 
 # Use imported libraries directly via their global object
-data = json.parse('{"key":"value"}')
+data = json.loads('{"key":"value"}')
 options = {"timeout": 10}
 response = requests.get("https://api.example.com", options)
 matches = re.findall("[0-9]+", "abc123def456")
@@ -1270,13 +1270,13 @@ matches = re.findall("[0-9]+", "abc123def456")
 
 ```python
 # Parse JSON string to Scriptling objects
-data = json.parse('{"name":"Alice","age":30}')
+data = json.loads('{"name":"Alice","age":30}')
 name = data["name"]                # "Alice"
 age = data["age"]                  # 30
 
 # Convert Scriptling objects to JSON string
 obj = {"name": "Bob", "age": "25"}
-json_str = json.stringify(obj)    # '{"age":"25","name":"Bob"}'
+json_str = json.dumps(obj)    # '{"age":"25","name":"Bob"}'
 ```
 
 ### HTTP Functions
@@ -1294,7 +1294,7 @@ All HTTP functions return a dictionary with:
 response = requests.get("https://api.example.com/users")
 status = response["status"]        # 200
 body = response["body"]            # Response body string
-data = json.parse(body)            # Parse JSON response
+data = json.loads(body)            # Parse JSON response
 
 # GET with options
 options = {"timeout": 10}
@@ -1313,7 +1313,7 @@ response = requests.get("https://api.example.com/users", options)
 ```python
 # POST with JSON body (default 5 second timeout)
 payload = {"name": "Alice", "email": "alice@example.com"}
-body = json.stringify(payload)
+body = json.dumps(payload)
 response = requests.post("https://api.example.com/users", body)
 
 # POST with options
@@ -1337,7 +1337,7 @@ if response["status"] == 201:
 ```python
 # Update resource (default 5 second timeout)
 payload = {"name": "Alice Updated"}
-body = json.stringify(payload)
+body = json.dumps(payload)
 response = requests.put("https://api.example.com/users/1", body)
 
 # With options
@@ -1361,7 +1361,7 @@ response = requests.delete("https://api.example.com/users/1", options)
 ```python
 # Partial update (default 5 second timeout)
 payload = {"email": "newemail@example.com"}
-body = json.stringify(payload)
+body = json.dumps(payload)
 response = requests.patch("https://api.example.com/users/1", body)
 
 # With options
@@ -1383,12 +1383,12 @@ options = {"timeout": 10}
 response = requests.get("https://api.example.com/users/1", options)
 
 if response["status"] == 200:
-    user = json.parse(response["body"])
+    user = json.loads(response["body"])
     print("User: " + user["name"])
 
     # Update user
     user["email"] = "updated@example.com"
-    body = json.stringify(user)
+    body = json.dumps(user)
     update_resp = requests.put("https://api.example.com/users/1", body, options)
 
     if update_resp["status"] == 200:
@@ -1400,11 +1400,11 @@ else:
 
 # Create new user
 new_user = {"name": "Bob", "email": "bob@example.com"}
-body = json.stringify(new_user)
+body = json.dumps(new_user)
 create_resp = requests.post("https://api.example.com/users", body, options)
 
 if create_resp["status"] == 201:
-    created = json.parse(create_resp["body"])
+    created = json.loads(create_resp["body"])
     user_id = created["id"]
     print("Created user with ID: " + user_id)
 
@@ -1606,7 +1606,7 @@ if response["status"] != 200:
     return
 
 # Validate data before use
-data = json.parse(response["body"])
+data = json.loads(response["body"])
 if data["count"] > 0:
     # Process data
 ```
@@ -1623,11 +1623,11 @@ response = requests.get("https://slow-api.com/data", 5)  # 5 second timeout
 ```python
 # Always parse JSON responses
 response = requests.get("https://api.example.com/users")
-users = json.parse(response["body"])
+users = json.loads(response["body"])
 
 # Always stringify before sending
 payload = {"name": "Alice"}
-body = json.stringify(payload)
+body = json.dumps(payload)
 requests.post("https://api.example.com/users", body)
 ```
 

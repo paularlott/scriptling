@@ -18,10 +18,11 @@ import (
 	"os"
 
 	mcplib "github.com/paularlott/mcp"
-	"github.com/paularlott/mcp/openai"
+	"github.com/paularlott/mcp/ai"
+	"github.com/paularlott/mcp/ai/openai"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs"
-	"github.com/paularlott/scriptling/extlibs/ai"
+	scriptlingai "github.com/paularlott/scriptling/extlibs/ai"
 	scriptlingmcp "github.com/paularlott/scriptling/extlibs/mcp"
 	"github.com/paularlott/scriptling/stdlib"
 )
@@ -43,26 +44,28 @@ func main() {
 	extlibs.RegisterWaitForLibrary(p)
 
 	// Create OpenAI client for LM Studio
-	client, err := openai.New(openai.Config{
-		BaseURL: "http://127.0.0.1:1234/v1",
-		APIKey:  "lm-studio",
+	client, err := ai.NewClient(ai.Config{
+		Config: openai.Config{
+			BaseURL: "http://127.0.0.1:1234/v1",
+			APIKey:  "lm-studio",
+			RemoteServerConfigs: []openai.RemoteServerConfig{
+				{
+					BaseURL:   "http://127.0.0.1:8080/mcp",
+					Namespace: "scriptling",
+				},
+			},
+		},
+		Provider: ai.ProviderOpenAI,
 	})
 	if err != nil {
-		log.Fatalf("Failed to create OpenAI client: %v", err)
+		log.Fatalf("Failed to create AI client: %v", err)
 	}
 
 	// Create MCP client for the scriptling MCP server with prefix
 	mcpClient := mcplib.NewClient("http://127.0.0.1:8080/mcp", nil, "scriptling")
 
-	// Attach MCP server to the OpenAI client
-	client.AddRemoteServer(openai.RemoteServerConfig{
-		BaseURL:   "http://127.0.0.1:8080/mcp",
-		Auth:      nil,
-		Namespace: "scriptling",
-	})
-
 	// Wrap the clients and set them as global variables
-	aiClient := ai.WrapClient(client)
+	aiClient := scriptlingai.WrapClient(client)
 	wrappedMCPClient := scriptlingmcp.WrapClient(mcpClient)
 	if err := p.SetObjectVar("ai_client", aiClient); err != nil {
 		log.Fatalf("Failed to set ai_client variable: %v", err)
@@ -72,7 +75,7 @@ func main() {
 	}
 
 	// Register both libraries
-	ai.Register(p)
+	scriptlingai.Register(p)
 	scriptlingmcp.Register(p)
 
 	// Load script from file

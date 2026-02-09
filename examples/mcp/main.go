@@ -56,12 +56,12 @@ func registerExecuteCode(server *mcp.Server) {
 // registerScriptTools registers pre-built script tools as ondemand tools
 func registerScriptTools(server *mcp.Server) {
 	// Generate Calendar
-	server.RegisterOnDemandTool(
+	server.RegisterTool(
 		mcp.NewTool("generate_calendar",
 			"Generate a formatted ASCII calendar for any month and year",
 			mcp.Number("year", "Year (e.g., 2025)", mcp.Required()),
 			mcp.Number("month", "Month 1-12", mcp.Required()),
-		),
+		).Discoverable("calendar", "date", "month", "year", "schedule", "datetime", "ascii"),
 		func(ctx context.Context, req *mcp.ToolRequest) (*mcp.ToolResponse, error) {
 			year := req.IntOr("year", 2025)
 			month := req.IntOr("month", 12)
@@ -114,11 +114,10 @@ def generate_calendar(year, month):
 print(generate_calendar(%d, %d))`, year, month)
 			return executeCode(code)
 		},
-		"calendar", "date", "month", "year", "schedule", "datetime", "ascii",
 	)
 
 	// Generate Password
-	server.RegisterOnDemandTool(
+	server.RegisterTool(
 		mcp.NewTool("generate_password",
 			"Generate a secure random password",
 			mcp.Number("length", "Password length (default: 16)"),
@@ -126,7 +125,7 @@ print(generate_calendar(%d, %d))`, year, month)
 			mcp.Boolean("lowercase", "Include lowercase (default: true)"),
 			mcp.Boolean("digits", "Include digits (default: true)"),
 			mcp.Boolean("symbols", "Include symbols (default: false)"),
-		),
+		).Discoverable("password", "random", "secure", "security", "secret", "credentials"),
 		func(ctx context.Context, req *mcp.ToolRequest) (*mcp.ToolResponse, error) {
 			length := req.IntOr("length", 16)
 			upper := req.BoolOr("uppercase", true)
@@ -168,16 +167,15 @@ def generate_password(length=%d, upper=%s, lower=%s, digits=%s, symbols=%s):
 print(generate_password())`, length, pyBool(upper), pyBool(lower), pyBool(digits), pyBool(symbols))
 			return executeCode(code)
 		},
-		"password", "random", "secure", "security", "secret", "credentials",
 	)
 
 	// HTTP POST JSON
-	server.RegisterOnDemandTool(
+	server.RegisterTool(
 		mcp.NewTool("http_post_json",
 			"Send a JSON POST request to a URL",
 			mcp.String("url", "The URL to POST to", mcp.Required()),
 			mcp.String("data", "JSON data to send", mcp.Required()),
-		),
+		).Discoverable("http", "post", "json", "api", "request", "rest", "web"),
 		func(ctx context.Context, req *mcp.ToolRequest) (*mcp.ToolResponse, error) {
 			url, _ := req.String("url")
 			data, _ := req.String("data")
@@ -193,7 +191,6 @@ print(f"Status: {response.status_code}")
 print(f"Response: {response.text}")`, url, data)
 			return executeCode(code)
 		},
-		"http", "post", "json", "api", "request", "rest", "web",
 	)
 }
 

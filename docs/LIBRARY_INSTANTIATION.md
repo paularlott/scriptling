@@ -26,7 +26,10 @@ type MyConfig struct {
 ### Step 2: Build Template with LibraryBuilder
 
 ```go
-import "github.com/paularlott/scriptling/object"
+import (
+    "context"
+    "github.com/paularlott/scriptling/object"
+)
 
 builder := object.NewLibraryBuilder("mylib", "My library with instance config")
 
