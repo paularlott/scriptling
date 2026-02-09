@@ -5,7 +5,7 @@ import scriptling.ai as ai
 
 print("Creating OpenAI client for LM Studio...")
 # Create client directly from script (LM Studio doesn't require an API key)
-client = ai.new_client("http://127.0.0.1:1234/v1")
+client = ai.Client("http://127.0.0.1:1234/v1")
 
 print()
 print("Fetching available models from LM Studio...")

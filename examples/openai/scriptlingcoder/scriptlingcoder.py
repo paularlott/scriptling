@@ -104,7 +104,7 @@ def run_bash(args):
 # --- Setup ---
 
 # Create AI client
-client = ai.new_client(BASE_URL, api_key=API_KEY)
+client = ai.Client(BASE_URL, api_key=API_KEY)
 
 # Create tool registry
 tools = ai.ToolRegistry()

@@ -28,7 +28,7 @@ func TestNewClientErrors(t *testing.T) {
 	}
 
 	lib := buildLibrary()
-	newClientFunc := lib.Functions()["new_client"]
+	newClientFunc := lib.Functions()["Client"]
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

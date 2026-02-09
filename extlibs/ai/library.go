@@ -56,8 +56,8 @@ func buildLibrary() *object.Library {
 	builder.Constant("MISTRAL", string(ai.ProviderMistral))
 
 	builder.
-		// new_client(base_url, **kwargs) - Create a new AI client
-		FunctionWithHelp("new_client", func(ctx context.Context, kwargs object.Kwargs, baseURL string) (object.Object, error) {
+		// Client(base_url, **kwargs) - Create a new AI client
+		FunctionWithHelp("Client", func(ctx context.Context, kwargs object.Kwargs, baseURL string) (object.Object, error) {
 			// Get optional provider from kwargs, default to "openai"
 			provider := kwargs.MustGetString("provider", "openai")
 			// Get optional api_key from kwargs
@@ -141,13 +141,13 @@ func buildLibrary() *object.Library {
 			}
 
 			return createClientInstance(client), nil
-		}, `new_client(base_url, **kwargs) - Create a new AI client
+		}, `Client(base_url, **kwargs) - Create a new AI client
 
 Creates a new AI client instance for making API calls to supported services.
 
 Parameters:
   base_url (str): Base URL of the API (defaults to https://api.openai.com/v1 if empty)
-  provider (str, optional): Provider type ("openai" by default)
+  provider (str, optional): Provider type (defaults to ai.OPENAI). Use constants: ai.OPENAI, ai.CLAUDE, ai.GEMINI, ai.OLLAMA, ai.ZAI, ai.MISTRAL
   api_key (str, optional): API key for authentication
   max_tokens (int, optional): Default max_tokens for all requests (Claude defaults to 4096 if not set)
   temperature (float, optional): Default temperature for all requests (0.0-2.0)
@@ -161,17 +161,17 @@ Returns:
 
 Example:
   # OpenAI API (default service)
-  client = ai.new_client("", api_key="sk-...", max_tokens=2048, temperature=0.7)
+  client = ai.Client("", api_key="sk-...", max_tokens=2048, temperature=0.7)
   response = client.completion("gpt-4", {"role": "user", "content": "Hello!"})
 
   # LM Studio / Local LLM
-  client = ai.new_client("http://127.0.0.1:1234/v1")
+  client = ai.Client("http://127.0.0.1:1234/v1")
 
   # Claude (max_tokens defaults to 4096 if not specified)
-  client = ai.new_client("https://api.anthropic.com", provider="claude", api_key="sk-ant-...")
+  client = ai.Client("https://api.anthropic.com", provider=ai.CLAUDE, api_key="sk-ant-...")
 
   # With MCP servers
-  client = ai.new_client("http://127.0.0.1:1234/v1", remote_servers=[
+  client = ai.Client("http://127.0.0.1:1234/v1", remote_servers=[
       {"base_url": "http://127.0.0.1:8080/mcp", "namespace": "scriptling"},
       {"base_url": "https://api.example.com/mcp", "namespace": "search", "bearer_token": "secret"},
   ])`).
@@ -196,7 +196,7 @@ Returns:
   dict: Contains 'thinking' (list of extracted blocks) and 'content' (cleaned text)
 
 Example:
-  client = ai.new_client("", api_key="sk-...")
+  client = ai.Client("", api_key="sk-...")
   response = client.completion("gpt-4", [{"role": "user", "content": "Hello!"}])
   result = ai.extract_thinking(response.choices[0].message.content)
 

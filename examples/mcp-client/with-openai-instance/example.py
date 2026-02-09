@@ -5,13 +5,13 @@ import scriptling.ai as ai
 import scriptling.mcp as mcp
 
 print("Creating OpenAI client for LM Studio...")
-ai_client = ai.new_client("http://127.0.0.1:1234/v1", remote_servers=[
+ai_client = ai.Client("http://127.0.0.1:1234/v1", remote_servers=[
     {"base_url": "http://127.0.0.1:8080/mcp", "namespace": "scriptling"},
 ])
 
 print()
 print("Creating MCP client for scriptling MCP server (for direct tool access)...")
-mcp_client = mcp.new_client("http://127.0.0.1:8080/mcp", namespace="scriptling")
+mcp_client = mcp.Client("http://127.0.0.1:8080/mcp", namespace="scriptling")
 
 print()
 print("Fetching available tools from MCP server...")
