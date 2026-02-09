@@ -10,6 +10,7 @@ import (
 	"github.com/paularlott/mcp"
 	"github.com/paularlott/mcp/ai"
 	"github.com/paularlott/mcp/ai/openai"
+	scriptlib "github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs/ai/tools"
 	"github.com/paularlott/scriptling/object"
 )
@@ -203,7 +204,100 @@ Example:
   for thought in result["thinking"]:
       print("Thinking:", thought)
 
-  print("Response:", result["content"])`)
+  print("Response:", result["content"])`).
+
+		// text(response) - Get text content from response (without thinking blocks)
+		FunctionWithHelp("text", func(ctx context.Context, responseObj object.Object) (object.Object, error) {
+			// Convert response to Go type to access it
+			responseGo := scriptlib.ToGo(responseObj)
+			responseMap, ok := responseGo.(map[string]any)
+			if !ok {
+				return &object.String{Value: ""}, nil
+			}
+
+			// Extract content from response.choices[0].message.content
+			content := ""
+			if choices, ok := responseMap["choices"].([]any); ok && len(choices) > 0 {
+				if choice, ok := choices[0].(map[string]any); ok {
+					if message, ok := choice["message"].(map[string]any); ok {
+						if msgContent, ok := message["content"].(string); ok {
+							// Extract thinking and get clean content
+							result := extractThinking(msgContent)
+							if contentStr, ok := result["content"].(string); ok {
+								content = contentStr
+							}
+						}
+					}
+				}
+			}
+
+			return &object.String{Value: content}, nil
+		}, `text(response) - Get text content from response (without thinking blocks)
+
+Extracts the text content from a completion response, automatically removing any thinking blocks.
+
+Parameters:
+  response (dict): Chat completion response from client.completion()
+
+Returns:
+  str: The response text with thinking blocks removed
+
+Example:
+  response = client.completion("gpt-4", "What is 2+2?")
+  text = ai.text(response)
+  print(text)  # "4"`).
+
+		// thinking(response) - Get thinking blocks from response
+		FunctionWithHelp("thinking", func(ctx context.Context, responseObj object.Object) (object.Object, error) {
+			// Convert response to Go type to access it
+			responseGo := scriptlib.ToGo(responseObj)
+			responseMap, ok := responseGo.(map[string]any)
+			if !ok {
+				return &object.List{Elements: []object.Object{}}, nil
+			}
+
+			// Extract content from response.choices[0].message.content
+			var content string
+			if choices, ok := responseMap["choices"].([]any); ok && len(choices) > 0 {
+				if choice, ok := choices[0].(map[string]any); ok {
+					if message, ok := choice["message"].(map[string]any); ok {
+						if msgContent, ok := message["content"].(string); ok {
+							content = msgContent
+						}
+					}
+				}
+			}
+
+			// Extract thinking blocks
+			result := extractThinking(content)
+			thinkingBlocks := result["thinking"]
+
+			// Convert to list of strings
+			list := make([]object.Object, 0)
+			if thinkingList, ok := thinkingBlocks.([]any); ok {
+				for _, block := range thinkingList {
+					if blockStr, ok := block.(string); ok {
+						list = append(list, &object.String{Value: blockStr})
+					}
+				}
+			}
+
+			return &object.List{Elements: list}, nil
+		}, `thinking(response) - Get thinking blocks from response
+
+Extracts thinking/reasoning blocks from a completion response.
+
+Parameters:
+  response (dict): Chat completion response from client.completion()
+
+Returns:
+  list: List of thinking block strings (empty if no thinking blocks)
+
+Example:
+  response = client.completion("gpt-4", "Explain step by step")
+  thoughts = ai.thinking(response)
+  for thought in thoughts:
+      print("Reasoning:", thought)`)
 
 	return builder.Build()
 }

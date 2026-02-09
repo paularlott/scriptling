@@ -35,6 +35,57 @@ client = ai.Client(
 client = ai.Client("http://127.0.0.1:1234/v1")
 ```
 
+## Response Helpers
+
+### ai.text(response)
+
+Extracts the text content from a completion response, automatically removing any thinking blocks.
+
+**Parameters:**
+- `response` (dict): Chat completion response from `client.completion()`
+
+**Returns:** str - The response text with thinking blocks removed
+
+**Example:**
+
+```python
+import scriptling.ai as ai
+
+client = ai.Client("", api_key="sk-...")
+response = client.completion("gpt-4", "What is 2+2?")
+
+# Get just the text, without thinking blocks
+text = ai.text(response)
+print(text)  # "4"
+```
+
+### ai.thinking(response)
+
+Extracts thinking/reasoning blocks from a completion response.
+
+**Parameters:**
+- `response` (dict): Chat completion response from `client.completion()`
+
+**Returns:** list - List of thinking block strings (empty if no thinking blocks)
+
+**Example:**
+
+```python
+import scriptling.ai as ai
+
+client = ai.Client("", api_key="sk-...")
+response = client.completion("gpt-4", "Explain step by step")
+
+# Get thinking blocks separately
+thoughts = ai.thinking(response)
+for thought in thoughts:
+    print("Reasoning:", thought)
+
+# Get clean text
+text = ai.text(response)
+print("Answer:", text)
+```
+
 ## Thinking Extractor
 
 ### ai.extract_thinking(text)
@@ -308,6 +359,41 @@ schemas = tools.build()
 
 stream = client.completion_stream("gpt-4", [{"role": "user", "content": "What's the weather in Paris?"}], tools=schemas)
 # Stream chunks...
+```
+
+### client.ask(model, messages, **kwargs)
+
+Quick completion method that returns text directly, with thinking blocks automatically removed. This is a convenience method for simple queries where you don't need the full response object.
+
+**Parameters:**
+
+- `model` (str): Model identifier (e.g., "gpt-4", "gpt-3.5-turbo")
+- `messages` (str or list): Either a string (user message) or a list of message dicts
+- `system_prompt` (str, optional): System prompt to use when messages is a string
+- `tools` (list, optional): List of tool schema dicts from ToolRegistry.build()
+- `temperature` (float, optional): Sampling temperature (0.0-2.0)
+- `max_tokens` (int, optional): Maximum tokens to generate
+
+**Returns:** str - The response text with thinking blocks removed
+
+**Examples:**
+
+```python
+import scriptling.ai as ai
+
+client = ai.Client("", api_key="sk-...")
+
+# Simple query
+answer = client.ask("gpt-4", "What is 2+2?")
+print(answer)  # "4"
+
+# With system prompt
+answer = client.ask("gpt-4", "Explain quantum physics", system_prompt="You are a physics professor")
+print(answer)
+
+# Full messages array
+answer = client.ask("gpt-4", [{"role": "user", "content": "Hello!"}])
+print(answer)
 ```
 
 ### client.embedding(model, input)

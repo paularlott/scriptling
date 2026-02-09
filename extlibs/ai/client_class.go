@@ -179,6 +179,34 @@ Example:
   response = client.embedding("text-embedding-3-small", ["Hello", "World"])
   for emb in response.data:
     print(emb.embedding)`).
+		MethodWithHelp("ask", askMethod, `ask(model, messages, **kwargs) - Quick completion that returns text directly
+
+Creates a chat completion and returns just the text content, with thinking blocks automatically removed.
+This is a convenience method for simple queries where you don't need the full response object.
+
+Parameters:
+  model (str): Model identifier (e.g., "gpt-4", "gpt-3.5-turbo")
+  messages (str or list): Either a string (user message) or a list of message dicts with "role" and "content" keys
+  system_prompt (str, optional): System prompt to use when messages is a string
+  tools (list, optional): List of tool schema dicts from ToolRegistry.build()
+  temperature (float, optional): Sampling temperature (0.0-2.0)
+  max_tokens (int, optional): Maximum tokens to generate
+
+Returns:
+  str: The response text with thinking blocks removed
+
+Examples:
+  # Simple query
+  answer = client.ask("gpt-4", "What is 2+2?")
+  print(answer)  # "4"
+
+  # With system prompt
+  answer = client.ask("gpt-4", "Explain quantum physics", system_prompt="You are a physics professor")
+  print(answer)
+
+  # Full messages array
+  answer = client.ask("gpt-4", [{"role": "user", "content": "Hello!"}])
+  print(answer)`).
 		Build()
 }
 
@@ -560,6 +588,49 @@ func embeddingMethod(self *object.Instance, ctx context.Context, model string, i
 	}
 
 	return scriptlib.FromGo(resp)
+}
+
+// ask method implementation - quick completion that returns text directly
+func askMethod(self *object.Instance, ctx context.Context, kwargs object.Kwargs, model string, messages any) object.Object {
+	// Call the completion method first
+	resp := completionMethod(self, ctx, kwargs, model, messages)
+
+	// If there was an error, return it
+	if errObj, ok := resp.(*object.Error); ok {
+		return errObj
+	}
+
+	// Extract text from response (without thinking blocks)
+	return extractTextFromResponse(resp)
+}
+
+// extractTextFromResponse extracts just the text content from a completion response
+// with thinking blocks removed
+func extractTextFromResponse(resp object.Object) object.Object {
+	// Convert response to Go type
+	respGo := scriptlib.ToGo(resp)
+	responseMap, ok := respGo.(map[string]any)
+	if !ok {
+		return &object.String{Value: ""}
+	}
+
+	// Extract content from response.choices[0].message.content
+	content := ""
+	if choices, ok := responseMap["choices"].([]any); ok && len(choices) > 0 {
+		if choice, ok := choices[0].(map[string]any); ok {
+			if message, ok := choice["message"].(map[string]any); ok {
+				if msgContent, ok := message["content"].(string); ok {
+					// Extract thinking and get clean content
+					result := extractThinking(msgContent)
+					if contentStr, ok := result["content"].(string); ok {
+						content = contentStr
+					}
+				}
+			}
+		}
+	}
+
+	return &object.String{Value: content}
 }
 
 // createClientInstance creates a new scriptling Instance wrapping an AI client
