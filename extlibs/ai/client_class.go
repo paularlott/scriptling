@@ -316,8 +316,11 @@ func completionMethod(self *object.Instance, ctx context.Context, kwargs object.
 						if id, ok := tcMap["id"].(string); ok {
 							tc.ID = id
 						}
-						if tcType, ok := tcMap["type"].(string); ok {
+						if tcType, ok := tcMap["type"].(string); ok && tcType != "" {
 							tc.Type = tcType
+						} else {
+							// Default to "function" if type is not specified or empty
+							tc.Type = "function"
 						}
 						if fnRaw, ok := tcMap["function"]; ok && fnRaw != nil {
 							var fnMap map[string]any
@@ -771,8 +774,11 @@ func completionStreamMethod(self *object.Instance, ctx context.Context, kwargs o
 						if id, ok := tcMap["id"].(string); ok {
 							tc.ID = id
 						}
-						if tcType, ok := tcMap["type"].(string); ok {
+						if tcType, ok := tcMap["type"].(string); ok && tcType != "" {
 							tc.Type = tcType
+						} else {
+							// Default to "function" if type is not specified or empty
+							tc.Type = "function"
 						}
 						if fnRaw, ok := tcMap["function"]; ok && fnRaw != nil {
 							var fnMap map[string]any
