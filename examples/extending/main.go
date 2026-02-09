@@ -18,7 +18,7 @@ func CreateExampleLibrary() *object.Library {
 		Name: "Person",
 		Methods: map[string]object.Object{
 			"__init__": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) != 3 {
 						return &object.String{Value: "Error: __init__ requires 3 arguments (self, name, age)"}
 					}
@@ -41,7 +41,7 @@ func CreateExampleLibrary() *object.Library {
 				},
 			},
 			"__str__": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) != 1 {
 						return &object.String{Value: "Error: __str__ requires 1 argument (self)"}
 					}
@@ -56,7 +56,7 @@ func CreateExampleLibrary() *object.Library {
 
 	return object.NewLibrary("mathutils", map[string]*object.Builtin{
 		"power": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 2 {
 					return &object.String{Value: "Error: power requires 2 arguments"}
 				}
@@ -77,7 +77,7 @@ func CreateExampleLibrary() *object.Library {
 			},
 		},
 		"sum_array": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 1 {
 					return &object.String{Value: "Error: sum_array requires 1 argument"}
 				}
@@ -101,7 +101,7 @@ func CreateExampleLibrary() *object.Library {
 			},
 		},
 		"get_map_value": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 2 {
 					return &object.String{Value: "Error: get_map_value requires 2 arguments"}
 				}
@@ -126,7 +126,7 @@ func CreateExampleLibrary() *object.Library {
 			},
 		},
 		"create_person": {
-			Fn: func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 2 {
 					return &object.String{Value: "Error: create_person requires 2 arguments"}
 				}
@@ -149,7 +149,7 @@ func CreateExampleLibrary() *object.Library {
 
 				// Initialize the person
 				initMethod := personClass.Methods["__init__"]
-				initMethod.(*object.Builtin).Fn(ctx, nil, personInstance, nameObj, ageObj)
+				initMethod.(*object.Builtin).Fn(ctx, object.Kwargs{}, personInstance, nameObj, ageObj)
 
 				return personInstance
 			},
@@ -194,7 +194,7 @@ func runGoExtensionExample() {
 	stdlib.RegisterAll(p)
 
 	// Register a simple custom function
-	p.RegisterFunc("greet", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+	p.RegisterFunc("greet", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 		if len(args) != 1 {
 			return &object.String{Value: "Error: greet requires 1 argument"}
 		}
@@ -208,7 +208,7 @@ func runGoExtensionExample() {
 	})
 
 	// Register a function that processes arrays
-	p.RegisterFunc("process_numbers", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
+	p.RegisterFunc("process_numbers", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 		if len(args) != 1 {
 			return &object.String{Value: "Error: process_numbers requires 1 argument"}
 		}

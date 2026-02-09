@@ -8,14 +8,16 @@ import (
 	"sync"
 
 	"github.com/paularlott/mcp"
-	"github.com/paularlott/mcp/openai"
+	"github.com/paularlott/mcp/ai"
+	"github.com/paularlott/mcp/ai/openai"
+	scriptlib "github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs/ai/tools"
 	"github.com/paularlott/scriptling/object"
 )
 
 const (
 	AILibraryName = "scriptling.ai"
-	AILibraryDesc = "AI and LLM functions for interacting with OpenAI-compatible APIs"
+	AILibraryDesc = "AI and LLM functions for interacting with multiple AI provider APIs"
 )
 
 var (
@@ -23,10 +25,10 @@ var (
 	libraryOnce sync.Once
 )
 
-// WrapClient wraps an OpenAI client as a scriptling Object that can be
+// WrapClient wraps an AI client as a scriptling Object that can be
 // passed into a script via SetObjectVar. This allows multiple clients
 // to be used simultaneously.
-func WrapClient(c *openai.Client) object.Object {
+func WrapClient(c ai.Client) object.Object {
 	return createClientInstance(c)
 }
 
@@ -46,13 +48,24 @@ func buildLibrary() *object.Library {
 	// Add ToolRegistry class
 	builder.Constant("ToolRegistry", tools.GetRegistryClass())
 
+	// Provider constants
+	builder.Constant("OPENAI", string(ai.ProviderOpenAI))
+	builder.Constant("CLAUDE", string(ai.ProviderClaude))
+	builder.Constant("GEMINI", string(ai.ProviderGemini))
+	builder.Constant("OLLAMA", string(ai.ProviderOllama))
+	builder.Constant("ZAI", string(ai.ProviderZAi))
+	builder.Constant("MISTRAL", string(ai.ProviderMistral))
+
 	builder.
-		// new_client(base_url, **kwargs) - Create a new AI client
-		FunctionWithHelp("new_client", func(ctx context.Context, kwargs object.Kwargs, baseURL string) (object.Object, error) {
-			// Get optional service from kwargs, default to "openai"
-			service := kwargs.MustGetString("service", "openai")
+		// Client(base_url, **kwargs) - Create a new AI client
+		FunctionWithHelp("Client", func(ctx context.Context, kwargs object.Kwargs, baseURL string) (object.Object, error) {
+			// Get optional provider from kwargs, default to "openai"
+			provider := kwargs.MustGetString("provider", "openai")
 			// Get optional api_key from kwargs
 			apiKey := kwargs.MustGetString("api_key", "")
+			// Get optional max_tokens and temperature
+			maxTokens := int(kwargs.MustGetInt("max_tokens", 0))
+			temperature := float32(kwargs.MustGetFloat("temperature", 0))
 
 			// Parse remote_servers if provided
 			var remoteServerConfigs []openai.RemoteServerConfig
@@ -95,31 +108,50 @@ func buildLibrary() *object.Library {
 				}
 			}
 
-			switch service {
+			// Map provider string to provider
+			var providerType ai.Provider
+			switch provider {
 			case "openai":
-				config := openai.Config{
-					APIKey:             apiKey,
-					BaseURL:            baseURL,
-					RemoteServerConfigs: remoteServerConfigs,
-				}
-
-				client, err := openai.New(config)
-				if err != nil {
-					return nil, err
-				}
-
-				return createClientInstance(client), nil
+				providerType = ai.ProviderOpenAI
+			case "claude":
+				providerType = ai.ProviderClaude
+			case "gemini":
+				providerType = ai.ProviderGemini
+			case "ollama":
+				providerType = ai.ProviderOllama
+			case "zai":
+				providerType = ai.ProviderZAi
+			case "mistral":
+				providerType = ai.ProviderMistral
 			default:
-				return nil, fmt.Errorf("unsupported service: %s", service)
+				return nil, fmt.Errorf("unsupported provider: %s", provider)
 			}
-		}, `new_client(base_url, **kwargs) - Create a new AI client
+
+			client, err := ai.NewClient(ai.Config{
+				Provider: providerType,
+				Config: openai.Config{
+					APIKey:              apiKey,
+					BaseURL:             baseURL,
+					RemoteServerConfigs: remoteServerConfigs,
+					MaxTokens:           maxTokens,
+					Temperature:         temperature,
+				},
+			})
+			if err != nil {
+				return nil, err
+			}
+
+			return createClientInstance(client), nil
+		}, `Client(base_url, **kwargs) - Create a new AI client
 
 Creates a new AI client instance for making API calls to supported services.
 
 Parameters:
   base_url (str): Base URL of the API (defaults to https://api.openai.com/v1 if empty)
-  service (str, optional): Service type ("openai" by default)
+  provider (str, optional): Provider type (defaults to ai.OPENAI). Use constants: ai.OPENAI, ai.CLAUDE, ai.GEMINI, ai.OLLAMA, ai.ZAI, ai.MISTRAL
   api_key (str, optional): API key for authentication
+  max_tokens (int, optional): Default max_tokens for all requests (Claude defaults to 4096 if not set)
+  temperature (float, optional): Default temperature for all requests (0.0-2.0)
   remote_servers (list, optional): List of remote MCP server configs, each a dict with:
     - base_url (str, required): URL of the MCP server
     - namespace (str, optional): Namespace prefix for tools
@@ -130,20 +162,20 @@ Returns:
 
 Example:
   # OpenAI API (default service)
-  client = ai.new_client("", api_key="sk-...")
+  client = ai.Client("", api_key="sk-...", max_tokens=2048, temperature=0.7)
   response = client.completion("gpt-4", {"role": "user", "content": "Hello!"})
 
   # LM Studio / Local LLM
-  client = ai.new_client("http://127.0.0.1:1234/v1")
+  client = ai.Client("http://127.0.0.1:1234/v1")
+
+  # Claude (max_tokens defaults to 4096 if not specified)
+  client = ai.Client("https://api.anthropic.com", provider=ai.CLAUDE, api_key="sk-ant-...")
 
   # With MCP servers
-  client = ai.new_client("http://127.0.0.1:1234/v1", remote_servers=[
+  client = ai.Client("http://127.0.0.1:1234/v1", remote_servers=[
       {"base_url": "http://127.0.0.1:8080/mcp", "namespace": "scriptling"},
       {"base_url": "https://api.example.com/mcp", "namespace": "search", "bearer_token": "secret"},
-  ])
-
-  # Future: Other services
-  client = ai.new_client("https://api.anthropic.com", service="anthropic", api_key="...")`).
+  ])`).
 
 		// extract_thinking(text) - Extract thinking blocks from AI response
 		FunctionWithHelp("extract_thinking", func(ctx context.Context, text string) (map[string]any, error) {
@@ -165,23 +197,116 @@ Returns:
   dict: Contains 'thinking' (list of extracted blocks) and 'content' (cleaned text)
 
 Example:
-  client = ai.new_client("", api_key="sk-...")
+  client = ai.Client("", api_key="sk-...")
   response = client.completion("gpt-4", [{"role": "user", "content": "Hello!"}])
   result = ai.extract_thinking(response.choices[0].message.content)
 
   for thought in result["thinking"]:
       print("Thinking:", thought)
 
-  print("Response:", result["content"])`)
+  print("Response:", result["content"])`).
+
+		// text(response) - Get text content from response (without thinking blocks)
+		FunctionWithHelp("text", func(ctx context.Context, responseObj object.Object) (object.Object, error) {
+			// Convert response to Go type to access it
+			responseGo := scriptlib.ToGo(responseObj)
+			responseMap, ok := responseGo.(map[string]any)
+			if !ok {
+				return &object.String{Value: ""}, nil
+			}
+
+			// Extract content from response.choices[0].message.content
+			content := ""
+			if choices, ok := responseMap["choices"].([]any); ok && len(choices) > 0 {
+				if choice, ok := choices[0].(map[string]any); ok {
+					if message, ok := choice["message"].(map[string]any); ok {
+						if msgContent, ok := message["content"].(string); ok {
+							// Extract thinking and get clean content
+							result := extractThinking(msgContent)
+							if contentStr, ok := result["content"].(string); ok {
+								content = contentStr
+							}
+						}
+					}
+				}
+			}
+
+			return &object.String{Value: content}, nil
+		}, `text(response) - Get text content from response (without thinking blocks)
+
+Extracts the text content from a completion response, automatically removing any thinking blocks.
+
+Parameters:
+  response (dict): Chat completion response from client.completion()
+
+Returns:
+  str: The response text with thinking blocks removed
+
+Example:
+  response = client.completion("gpt-4", "What is 2+2?")
+  text = ai.text(response)
+  print(text)  # "4"`).
+
+		// thinking(response) - Get thinking blocks from response
+		FunctionWithHelp("thinking", func(ctx context.Context, responseObj object.Object) (object.Object, error) {
+			// Convert response to Go type to access it
+			responseGo := scriptlib.ToGo(responseObj)
+			responseMap, ok := responseGo.(map[string]any)
+			if !ok {
+				return &object.List{Elements: []object.Object{}}, nil
+			}
+
+			// Extract content from response.choices[0].message.content
+			var content string
+			if choices, ok := responseMap["choices"].([]any); ok && len(choices) > 0 {
+				if choice, ok := choices[0].(map[string]any); ok {
+					if message, ok := choice["message"].(map[string]any); ok {
+						if msgContent, ok := message["content"].(string); ok {
+							content = msgContent
+						}
+					}
+				}
+			}
+
+			// Extract thinking blocks
+			result := extractThinking(content)
+			thinkingBlocks := result["thinking"]
+
+			// Convert to list of strings
+			list := make([]object.Object, 0)
+			if thinkingList, ok := thinkingBlocks.([]any); ok {
+				for _, block := range thinkingList {
+					if blockStr, ok := block.(string); ok {
+						list = append(list, &object.String{Value: blockStr})
+					}
+				}
+			}
+
+			return &object.List{Elements: list}, nil
+		}, `thinking(response) - Get thinking blocks from response
+
+Extracts thinking/reasoning blocks from a completion response.
+
+Parameters:
+  response (dict): Chat completion response from client.completion()
+
+Returns:
+  list: List of thinking block strings (empty if no thinking blocks)
+
+Example:
+  response = client.completion("gpt-4", "Explain step by step")
+  thoughts = ai.thinking(response)
+  for thought in thoughts:
+      print("Reasoning:", thought)`)
 
 	return builder.Build()
 }
 
-// convertMapsToOpenAI converts Go map messages to openai.Message format
-func convertMapsToOpenAI(messages []map[string]any) []openai.Message {
-	openaiMessages := make([]openai.Message, 0, len(messages))
+// convertMapsToOpenAI converts Go map messages to ai.Message format
+func convertMapsToOpenAI(messages []map[string]any) []ai.Message {
+	aiMessages := make([]ai.Message, 0, len(messages))
 	for _, msg := range messages {
-		omsg := openai.Message{}
+		omsg := ai.Message{}
 		if role, ok := msg["role"].(string); ok {
 			omsg.Role = role
 		}
@@ -191,9 +316,9 @@ func convertMapsToOpenAI(messages []map[string]any) []openai.Message {
 		if tcid, ok := msg["tool_call_id"].(string); ok {
 			omsg.ToolCallID = tcid
 		}
-		openaiMessages = append(openaiMessages, omsg)
+		aiMessages = append(aiMessages, omsg)
 	}
-	return openaiMessages
+	return aiMessages
 }
 
 // extractThinking extracts thinking/reasoning blocks from AI responses

@@ -48,7 +48,7 @@ go run main.go
 **How it works:**
 
 - No client is configured in Go
-- Script creates its own client via `ai.new_client()`
+- Script creates its own client via `ai.Client()`
 - Script uses instance methods like `client.models()` and `client.completion()`
 - The `example.py` script handles all connection details
 
@@ -69,7 +69,7 @@ go run main.go
 
 **How it works:**
 
-- Script creates a client via `ai.new_client()`
+- Script creates a client via `ai.Client()`
 - Uses `client.completion_stream()` to get streaming responses
 - Iterates through chunks with `stream.next()`
 - Prints content in real-time as it arrives
@@ -95,7 +95,7 @@ cd scriptlingcoder
 **How it works:**
 
 - Defines custom tools (read, write, edit, glob, grep, bash)
-- Registers tools with `client.set_tools()` - tools are sent to AI but NOT executed by client
+- Registers tools via `tools` parameter in `completion()` - tools are sent to AI but NOT executed by client
 - AI can call tools, script executes them locally and returns results
 - Supports multi-turn conversations with tool execution
 
@@ -143,7 +143,7 @@ Creates its own client instance:
 import scriptling.ai as ai
 
 print("Creating OpenAI client for LM Studio...")
-client = ai.new_client("http://127.0.0.1:1234/v1")
+client = ai.Client("http://127.0.0.1:1234/v1")
 
 print()
 print("Fetching available models...")
@@ -164,7 +164,7 @@ Demonstrates streaming responses:
 ```python
 import scriptling.ai as ai
 
-client = ai.new_client("http://127.0.0.1:1234/v1")
+client = ai.Client("http://127.0.0.1:1234/v1")
 
 # Create a streaming completion
 stream = client.completion_stream(

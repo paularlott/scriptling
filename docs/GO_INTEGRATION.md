@@ -574,7 +574,7 @@ options = {"timeout": timeout}
 response = requests.get(url, options)
 
 if response["status"] == 200:
-    users = json.parse(response["body"])
+    users = json.loads(response["body"])
     print("Found " + str(len(users)) + " users")
 
     # Process each user
@@ -1037,14 +1037,14 @@ p.SetVar("raw_data", jsonString)
 pipeline := `
 include json
 
-data = json.parse(raw_data)
+data = json.loads(raw_data)
 processed = []
 
 for item in data:
     if item["active"]:
         processed = append(processed, item["name"])
 
-result = json.stringify(processed)
+result = json.dumps(processed)
 `
 
 p.Eval(pipeline)

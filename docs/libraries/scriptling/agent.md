@@ -9,7 +9,7 @@ import scriptling.ai as ai
 import scriptling.ai.agent as agent
 
 # Create AI client
-client = ai.new_client("http://127.0.0.1:1234/v1", api_key="sk-...")
+client = ai.Client("http://127.0.0.1:1234/v1", api_key="sk-...")
 
 # Create tool registry
 tools = ai.ToolRegistry()
@@ -86,18 +86,23 @@ tools.add("search", "Search files", {
 
 ### registry.build()
 
-Builds OpenAI-compatible tool schemas.
+Builds OpenAI-compatible tool schemas for passing to completion requests.
 
 **Returns:** list - List of tool schema dicts
 
 **Example:**
 
 ```python
+# With Agent (recommended - tools handled automatically)
 tools = ai.ToolRegistry()
 tools.add("read", "Read file", {"path": "string"}, read_func)
+bot = agent.Agent(client, tools=tools, model="gpt-4")
 
+# Direct completion calls
+tools = ai.ToolRegistry()
+tools.add("get_time", "Get current time", {}, time_handler)
 schemas = tools.build()
-client.set_tools(schemas)
+response = client.completion("gpt-4", [{"role": "user", "content": "What time is it?"}], tools=schemas)
 ```
 
 ### registry.get_handler(name)
@@ -125,7 +130,7 @@ Creates an AI agent with automatic tool execution.
 
 **Parameters:**
 
-- `client` (AIClient): AI client instance (from `ai.new_client()`)
+- `client` (AIClient): AI client instance (from `ai.Client()`)
 - `tools` (ToolRegistry, optional): Tool registry with available tools
 - `system_prompt` (str, optional): System prompt for the agent
 - `model` (str, optional): Model to use (if not provided, client must handle model selection)
@@ -136,7 +141,7 @@ Creates an AI agent with automatic tool execution.
 import scriptling.ai as ai
 import scriptling.ai.agent as agent
 
-client = ai.new_client("http://127.0.0.1:1234/v1")
+client = ai.Client("http://127.0.0.1:1234/v1")
 tools = ai.ToolRegistry()
 tools.add("read", "Read file", {"path": "string"}, read_func)
 
@@ -266,7 +271,7 @@ import scriptling.ai.agent as agent
 import os
 
 # Create AI client
-client = ai.new_client("http://127.0.0.1:1234/v1", api_key=os.getenv("OPENAI_API_KEY", ""))
+client = ai.Client("http://127.0.0.1:1234/v1", api_key=os.getenv("OPENAI_API_KEY", ""))
 
 # Create tools
 tools = ai.ToolRegistry()

@@ -55,7 +55,7 @@ go run main.go
 
 **How it works:**
 - No client is configured in Go
-- Script creates its own MCP client via `mcp.new_client()`
+- Script creates its own MCP client via `mcp.Client()`
 - Script uses instance methods to list and call tools directly
 - Tools are called explicitly with specific arguments
 
@@ -107,8 +107,8 @@ go run main.go
 ```
 
 **How it works:**
-- Script creates its own OpenAI client via `ai.new_client()` with `remote_servers` parameter
-- Script creates its own MCP client via `mcp.new_client()` for direct tool access
+- Script creates its own OpenAI client via `ai.Client()` with `remote_servers` parameter
+- Script creates its own MCP client via `mcp.Client()` for direct tool access
 - MCP servers are configured during AI client creation (no Go code needed)
 - AI can automatically use tools from the configured MCP servers
 

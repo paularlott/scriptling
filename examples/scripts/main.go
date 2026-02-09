@@ -8,6 +8,7 @@ import (
 
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/ai"
 	"github.com/paularlott/scriptling/stdlib"
 )
 
@@ -43,6 +44,7 @@ func main() {
 	extlibs.RegisterThreadsLibrary(p)
 	extlibs.RegisterOSLibrary(p, []string{})
 	extlibs.RegisterPathlibLibrary(p, []string{})
+	ai.Register(p)
 
 	// Register a test Scriptling library with documentation
 	err = p.RegisterScriptLibrary("testlib", `
