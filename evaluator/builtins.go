@@ -60,7 +60,7 @@ Use list(filter(...)) to get a list.`,
 	},
 	"print": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			env := getEnvFromContext(ctx)
+			env := GetEnvFromContext(ctx)
 			writer := env.GetWriter()
 
 			// Get sep kwarg (default: " ")
@@ -436,7 +436,7 @@ Use list(zip(...)) to get a list.`,
 
 			if len(args) == 0 {
 				// Parameterless super() - infer from context
-				env := getEnvFromContext(ctx)
+				env := GetEnvFromContext(ctx)
 
 				// Find __class__ (should be in closure)
 				obj, ok := env.Get("__class__")
@@ -1649,7 +1649,7 @@ func sortedFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 		var sortErr object.Object
 		if keyFunc != nil {
 			keys = make([]object.Object, n)
-			env := getEnvFromContext(ctx)
+			env := GetEnvFromContext(ctx)
 			for i, elem := range elements {
 				var key object.Object
 				switch fn := keyFunc.(type) {
@@ -1772,7 +1772,7 @@ func mapFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.O
 
 	// Eagerly evaluate all results
 	results := make([]object.Object, minLen)
-	env := getEnvFromContext(ctx)
+	env := GetEnvFromContext(ctx)
 	for i := 0; i < minLen; i++ {
 		callArgs := make([]object.Object, len(iterables))
 		for j := range iterables {
@@ -1809,7 +1809,7 @@ func filterFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 
 	// Eagerly evaluate and filter
 	results := []object.Object{}
-	env := getEnvFromContext(ctx)
+	env := GetEnvFromContext(ctx)
 	for _, elem := range iterable {
 		// If function is None, use truthiness
 		if fn.Type() == object.NULL_OBJ {
@@ -1840,7 +1840,7 @@ func filterFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 }
 
 func helpFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-	env := getEnvFromContext(ctx)
+	env := GetEnvFromContext(ctx)
 	writer := env.GetWriter()
 
 	// No arguments - show general help
@@ -2227,7 +2227,7 @@ func GetImportBuiltin() *object.Builtin {
 				return errors.ParameterError("module_name", err)
 			}
 
-			env := getEnvFromContext(ctx)
+			env := GetEnvFromContext(ctx)
 			importCallback := env.GetImportCallback()
 			if importCallback == nil {
 				return errors.NewError(errors.ErrImportError)
@@ -2241,10 +2241,3 @@ func GetImportBuiltin() *object.Builtin {
 	}
 }
 
-// getEnvFromContext retrieves environment from context
-func getEnvFromContext(ctx context.Context) *object.Environment {
-	if env, ok := ctx.Value(envContextKey).(*object.Environment); ok {
-		return env
-	}
-	return object.NewEnvironment() // fallback
-}
