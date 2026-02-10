@@ -365,6 +365,15 @@ func (p *Scriptling) SetObjectVar(name string, obj object.Object) error {
 	return nil
 }
 
+// GetVarAsObject retrieves a variable from the environment as a scriptling Object.
+func (p *Scriptling) GetVarAsObject(name string) (object.Object, error) {
+	obj, ok := p.env.Get(name)
+	if !ok {
+		return nil, fmt.Errorf("variable '%s' not found", name)
+	}
+	return obj, nil
+}
+
 func (p *Scriptling) GetVar(name string) (interface{}, object.Object) {
 	obj, ok := p.env.Get(name)
 	if !ok {

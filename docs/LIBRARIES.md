@@ -103,6 +103,7 @@ These are scriptling-specific libraries that provide functionality not available
 | `scriptling.ai`         | AI and LLM functions for OpenAI-compatible APIs         | [libraries/scriptling/ai.md](libraries/scriptling/ai.md)           |
 | `scriptling.ai.agent`   | Agentic AI loop with automatic tool execution           | [libraries/scriptling/agent.md](libraries/scriptling/agent.md)     |
 | `scriptling.mcp`        | MCP (Model Context Protocol) tool interaction           | [libraries/scriptling/mcp.md](libraries/scriptling/mcp.md)         |
+| `scriptling.mcp.tool`   | MCP tool parameter access and result functions          | [libraries/scriptling/mcp.md](libraries/scriptling/mcp.md)         |
 | `scriptling.toon`       | TOON (Token-Oriented Object Notation) encoding/decoding | [libraries/scriptling/toon.md](libraries/scriptling/toon.md)       |
 | `scriptling.threads`    | Asynchronous execution with isolated environments       | [libraries/scriptling/threads.md](libraries/scriptling/threads.md) |
 | `scriptling.console`    | Console input/output functions                          | [libraries/scriptling/console.md](libraries/scriptling/console.md) |
