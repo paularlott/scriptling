@@ -117,6 +117,7 @@ Parameters:
   model (str): Model identifier (e.g., "gpt-4o", "gpt-4")
   input (str or list): Either a string (user message content) or a list of input items (messages)
   system_prompt (str, optional): System prompt to use when input is a string
+  background (bool, optional): If true, runs asynchronously and returns immediately with in_progress status
 
 Returns:
   dict: Response object with id, status, output, usage, etc.
@@ -129,6 +130,12 @@ Examples:
   # String shorthand with system prompt
   response = client.response_create("gpt-4o", "What is AI?", system_prompt="You are a helpful assistant")
   print(response.output)
+
+  # Background processing
+  response = client.response_create("gpt-4o", "What is AI?", background=True)
+  print(response.status)  # "in_progress"
+  response = client.response_get(response.id)
+  print(response.status)  # "completed"
 
   # Full input array (Responses API format)
   response = client.response_create("gpt-4o", [
@@ -518,6 +525,11 @@ func responseCreateMethod(self *object.Instance, ctx context.Context, kwargs obj
 	req := ai.CreateResponseRequest{
 		Model: model,
 		Input: inputList,
+	}
+
+	// Handle background parameter
+	if kwargs.Has("background") {
+		req.Background = kwargs.MustGetBool("background", false)
 	}
 
 	resp, err := ci.client.CreateResponse(ctx, req)

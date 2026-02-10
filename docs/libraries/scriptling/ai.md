@@ -486,6 +486,7 @@ Creates a response using the OpenAI Responses API (new structured API).
 - `model` (str): Model identifier (e.g., "gpt-4o", "gpt-4")
 - `input` (str or list): Either a string (user message content) or a list of input items (messages)
 - `system_prompt` (str, optional): System prompt to use when input is a string
+- `background` (bool, optional): If true, runs asynchronously and returns immediately with `in_progress` status
 
 **Returns:** dict - Response object with id, status, output, usage, etc.
 
@@ -499,6 +500,17 @@ print(response.output)
 
 # String shorthand with system prompt
 response = client.response_create("gpt-4o", "What is AI?", system_prompt="You are a helpful assistant")
+print(response.output)
+
+# Background processing
+response = client.response_create("gpt-4o", "What is AI?", background=True)
+print(response.status)  # "in_progress"
+# Poll for completion
+import time
+while response.status == "in_progress":
+    time.sleep(0.5)
+    response = client.response_get(response.id)
+print(response.status)  # "completed"
 print(response.output)
 
 # Full input array (Responses API format)
