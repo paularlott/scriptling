@@ -399,6 +399,8 @@ print(response.choices[0].message.content)
 When using MCP tools with AI, tools are prefixed with the namespace:
 
 ```python
+import scriptling.ai as ai
+
 # With namespace="scriptling", tools become "scriptling/tool_name"
 ai_client = ai.Client("http://127.0.0.1:1234/v1", remote_servers=[
     {"base_url": "http://127.0.0.1:8080/mcp", "namespace": "scriptling"},
@@ -416,6 +418,8 @@ response = ai_client.completion(
 You can configure multiple MCP servers for the AI client:
 
 ```python
+import scriptling.ai as ai
+
 ai_client = ai.Client("http://127.0.0.1:1234/v1", remote_servers=[
     {"base_url": "http://127.0.0.1:8080/mcp", "namespace": "scriptling"},
     {"base_url": "http://127.0.0.1:8081/mcp", "namespace": "database"},
