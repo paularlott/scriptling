@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/paularlott/cli"
+	"github.com/paularlott/logger"
+	logslog "github.com/paularlott/logger/slog"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/extlibs/agent"
@@ -16,7 +19,11 @@ import (
 	"github.com/paularlott/scriptling/extlibs/mcp"
 	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/scriptling/stdlib"
+
+	mcpcli "github.com/paularlott/scriptling/scriptling-cli/mcp"
 )
+
+var globalLogger logger.Logger
 
 func main() {
 	cmd := &cli.Command{
@@ -30,6 +37,23 @@ func main() {
 				Usage:   "Start interactive mode",
 				Aliases: []string{"i"},
 			},
+			&cli.StringFlag{
+				Name:         "libdir",
+				Usage:        "Directory to load libraries from",
+				DefaultValue: "",
+			},
+			&cli.StringFlag{
+				Name:         "log-level",
+				Usage:        "Log level (trace|debug|info|warn|error)",
+				DefaultValue: "info",
+				Global:       true,
+			},
+			&cli.StringFlag{
+				Name:         "log-format",
+				Usage:        "Log format (console|json)",
+				DefaultValue: "console",
+				Global:       true,
+			},
 		},
 		MaxArgs: cli.UnlimitedArgs,
 		Arguments: []cli.Argument{
@@ -38,6 +62,53 @@ func main() {
 				Usage:    "Script file to execute",
 				Required: false,
 			},
+		},
+		Commands: []*cli.Command{
+			{
+				Name:        "mcp",
+				Usage:       "MCP server commands",
+				Description: "Start and manage MCP server",
+				Commands: []*cli.Command{
+					{
+						Name:        "serve",
+						Usage:       "Start MCP server",
+						Description: "Start MCP server to serve tools from a folder",
+						Flags: []cli.Flag{
+							&cli.StringFlag{
+								Name:         "address",
+								Usage:        "Server address",
+								DefaultValue: "127.0.0.1:8000",
+							},
+							&cli.StringFlag{
+								Name:         "tools",
+								Usage:        "Tools folder path",
+								DefaultValue: "./tools",
+							},
+							&cli.StringFlag{
+								Name:         "bearer-token",
+								Usage:        "Bearer token for authentication (optional)",
+								DefaultValue: "",
+							},
+							&cli.BoolFlag{
+								Name:  "validate",
+								Usage: "Validate tools without starting server",
+							},
+						},
+						Run: mcpcli.RunMCPServe,
+					},
+				},
+			},
+		},
+		PreRun: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
+			logLevel := cmd.GetString("log-level")
+			logFormat := cmd.GetString("log-format")
+			globalLogger = logslog.New(logslog.Config{
+				Level:  logLevel,
+				Format: logFormat,
+				Writer: os.Stdout,
+			})
+			mcpcli.Log = globalLogger
+			return ctx, nil
 		},
 		Run: runScriptling,
 	}
@@ -80,9 +151,14 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	mcp.RegisterToolHelpers(p) // Register MCP tool helpers
 
 	// Set up on-demand library loading for local .py files
+	libdir := cmd.GetString("libdir")
 	p.SetOnDemandLibraryCallback(func(p *scriptling.Scriptling, libName string) bool {
-		// Try to load from current directory
-		filename := libName + ".py"
+		var filename string
+		if libdir != "" {
+			filename = filepath.Join(libdir, libName+".py")
+		} else {
+			filename = libName + ".py"
+		}
 		content, err := os.ReadFile(filename)
 		if err == nil {
 			return p.RegisterScriptLibrary(libName, string(content)) == nil
