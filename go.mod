@@ -6,7 +6,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/paularlott/cli v0.7.2
 	github.com/paularlott/logger v0.3.0
-	github.com/paularlott/mcp v0.11.4
+	github.com/paularlott/mcp v0.12.0
 	github.com/shirou/gopsutil/v3 v3.24.5
 	golang.org/x/net v0.50.0
 	golang.org/x/text v0.34.0
