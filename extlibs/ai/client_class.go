@@ -133,8 +133,10 @@ Examples:
 
   # Background processing
   response = client.response_create("gpt-4o", "What is AI?", background=True)
-  print(response.status)  # "in_progress"
-  response = client.response_get(response.id)
+  print(response.status)  # "queued" or "in_progress"
+  # Poll for completion
+  while response.status in ["queued", "in_progress"]:
+    response = client.response_get(response.id)
   print(response.status)  # "completed"
 
   # Full input array (Responses API format)
@@ -167,6 +169,31 @@ Returns:
 
 Example:
   response = client.response_cancel("resp_123")`).
+		MethodWithHelp("response_delete", responseDeleteMethod, `response_delete(id) - Delete a response
+
+Deletes a response by ID, removing it from storage.
+
+Parameters:
+  id (str): Response ID to delete
+
+Returns:
+  None
+
+Example:
+  client.response_delete("resp_123")`).
+		MethodWithHelp("response_compact", responseCompactMethod, `response_compact(id) - Compact a response
+
+Compacts a response by removing intermediate reasoning steps, returning a more concise version.
+
+Parameters:
+  id (str): Response ID to compact
+
+Returns:
+  dict: Compacted response object with reasoning removed
+
+Example:
+  response = client.response_compact("resp_123")
+  print(response.output)  # Output without reasoning steps`).
 		MethodWithHelp("embedding", embeddingMethod, `embedding(model, input) - Create an embedding
 
 Creates an embedding vector for the given input text(s) using the specified model.
@@ -330,7 +357,7 @@ func completionMethod(self *object.Instance, ctx context.Context, kwargs object.
 					toolCallsList = tcSlice
 				}
 			}
-			
+
 			if len(toolCallsList) > 0 {
 				toolCalls := make([]ai.ToolCall, 0, len(toolCallsList))
 				for _, tcRaw := range toolCallsList {
@@ -345,7 +372,7 @@ func completionMethod(self *object.Instance, ctx context.Context, kwargs object.
 							}
 						}
 					}
-					
+
 					if tcMap != nil {
 						tc := ai.ToolCall{}
 						if id, ok := tcMap["id"].(string); ok {
@@ -369,7 +396,7 @@ func completionMethod(self *object.Instance, ctx context.Context, kwargs object.
 									}
 								}
 							}
-							
+
 							if fnMap != nil {
 								if name, ok := fnMap["name"].(string); ok {
 									tc.Function.Name = name
@@ -573,6 +600,44 @@ func responseCancelMethod(self *object.Instance, ctx context.Context, id string)
 	resp, err := ci.client.CancelResponse(ctx, id)
 	if err != nil {
 		return &object.Error{Message: "failed to cancel response: " + err.Error()}
+	}
+
+	return scriptlib.FromGo(resp)
+}
+
+// response_delete method implementation
+func responseDeleteMethod(self *object.Instance, ctx context.Context, id string) object.Object {
+	ci, cerr := getClientInstance(self)
+	if cerr != nil {
+		return cerr
+	}
+
+	if ci.client == nil {
+		return &object.Error{Message: "response_delete: no client configured"}
+	}
+
+	err := ci.client.DeleteResponse(ctx, id)
+	if err != nil {
+		return &object.Error{Message: "failed to delete response: " + err.Error()}
+	}
+
+	return nil
+}
+
+// response_compact method implementation
+func responseCompactMethod(self *object.Instance, ctx context.Context, id string) object.Object {
+	ci, cerr := getClientInstance(self)
+	if cerr != nil {
+		return cerr
+	}
+
+	if ci.client == nil {
+		return &object.Error{Message: "response_compact: no client configured"}
+	}
+
+	resp, err := ci.client.CompactResponse(ctx, id)
+	if err != nil {
+		return &object.Error{Message: "failed to compact response: " + err.Error()}
 	}
 
 	return scriptlib.FromGo(resp)
@@ -836,7 +901,7 @@ func completionStreamMethod(self *object.Instance, ctx context.Context, kwargs o
 					toolCallsList = tcSlice
 				}
 			}
-			
+
 			if len(toolCallsList) > 0 {
 				toolCalls := make([]ai.ToolCall, 0, len(toolCallsList))
 				for _, tcRaw := range toolCallsList {
@@ -851,7 +916,7 @@ func completionStreamMethod(self *object.Instance, ctx context.Context, kwargs o
 							}
 						}
 					}
-					
+
 					if tcMap != nil {
 						tc := ai.ToolCall{}
 						if id, ok := tcMap["id"].(string); ok {
@@ -875,7 +940,7 @@ func completionStreamMethod(self *object.Instance, ctx context.Context, kwargs o
 									}
 								}
 							}
-							
+
 							if fnMap != nil {
 								if name, ok := fnMap["name"].(string); ok {
 									tc.Function.Name = name
