@@ -324,7 +324,7 @@ p.RegisterFunc("read_file", func(ctx context.Context, kwargs object.Kwargs, args
     }
 
     fmt.Fprintf(writer, "Successfully read %d bytes from %s\n", len(content), path)
-    return &object.String{Value: string(content)
+    return &object.String{Value: string(content)}
 }
 ```
 

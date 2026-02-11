@@ -42,6 +42,7 @@ client = ai.Client("http://127.0.0.1:1234/v1")
 Extracts the text content from a completion response, automatically removing any thinking blocks.
 
 **Parameters:**
+
 - `response` (dict): Chat completion response from `client.completion()`
 
 **Returns:** str - The response text with thinking blocks removed
@@ -64,6 +65,7 @@ print(text)  # "4"
 Extracts thinking/reasoning blocks from a completion response.
 
 **Parameters:**
+
 - `response` (dict): Chat completion response from `client.completion()`
 
 **Returns:** list - List of thinking block strings (empty if no thinking blocks)
@@ -164,14 +166,14 @@ Creates a new AI client instance for making API calls to supported services.
 - `base_url` (str): Base URL of the API (defaults to https://api.openai.com/v1 if empty)
 - `provider` (str, optional): Provider type (defaults to `ai.OPENAI`). Use constants:
 
-  | Constant | Provider |
-  |----------|----------|
-  | `ai.OPENAI` | OpenAI |
-  | `ai.CLAUDE` | Anthropic Claude |
-  | `ai.GEMINI` | Google Gemini |
-  | `ai.OLLAMA` | Ollama |
-  | `ai.ZAI` | Z AI |
-  | `ai.MISTRAL` | Mistral |
+  | Constant     | Provider         |
+  | ------------ | ---------------- |
+  | `ai.OPENAI`  | OpenAI           |
+  | `ai.CLAUDE`  | Anthropic Claude |
+  | `ai.GEMINI`  | Google Gemini    |
+  | `ai.OLLAMA`  | Ollama           |
+  | `ai.ZAI`     | Z AI             |
+  | `ai.MISTRAL` | Mistral          |
 
 - `api_key` (str, optional): API key for authentication
 - `max_tokens` (int, optional): Default max_tokens for all requests. Claude defaults to 4096 if not set
@@ -254,7 +256,7 @@ See [Agent Library](agent.md) for detailed ToolRegistry documentation and automa
 
 All client methods are instance methods on the client object returned by ai.Client() or ai.WrapClient().
 
-### client.completion(model, messages, **kwargs)
+### client.completion(model, messages, \*\*kwargs)
 
 Creates a chat completion using this client's configuration.
 
@@ -306,7 +308,7 @@ schemas = tools.build()
 response = client.completion("gpt-4", [{"role": "user", "content": "What time is it?"}], tools=schemas)
 ```
 
-### client.completion_stream(model, messages, **kwargs)
+### client.completion_stream(model, messages, \*\*kwargs)
 
 Creates a streaming chat completion using this client's configuration. Returns a ChatStream object that can be iterated over.
 
@@ -361,7 +363,7 @@ stream = client.completion_stream("gpt-4", [{"role": "user", "content": "What's 
 # Stream chunks...
 ```
 
-### client.ask(model, messages, **kwargs)
+### client.ask(model, messages, \*\*kwargs)
 
 Quick completion method that returns text directly, with thinking blocks automatically removed. This is a convenience method for simple queries where you don't need the full response object.
 
@@ -477,7 +479,7 @@ for model in models:
     print(model.id)
 ```
 
-### client.response_create(model, input, **kwargs)
+### client.response_create(model, input, \*\*kwargs)
 
 Creates a response using the OpenAI Responses API (new structured API).
 
@@ -504,10 +506,10 @@ print(response.output)
 
 # Background processing
 response = client.response_create("gpt-4o", "What is AI?", background=True)
-print(response.status)  # "in_progress"
+print(response.status)  # "queued" or "in_progress"
 # Poll for completion
 import time
-while response.status == "in_progress":
+while response.status in ["queued", "in_progress"]:
     time.sleep(0.5)
     response = client.response_get(response.id)
 print(response.status)  # "completed"
@@ -553,6 +555,46 @@ Cancels a currently in-progress response.
 ```python
 client = ai.Client("", api_key="sk-...")
 response = client.response_cancel("resp_123")
+```
+
+### client.response_delete(id)
+
+Deletes a response by ID, removing it from storage.
+
+**Parameters:**
+
+- `id` (str): Response ID to delete
+
+**Returns:** None
+
+**Example:**
+
+```python
+client = ai.Client("", api_key="sk-...")
+client.response_delete("resp_123")
+```
+
+### client.response_compact(id)
+
+Compacts a response by removing intermediate reasoning steps, returning a more concise version with only the final output.
+
+**Parameters:**
+
+- `id` (str): Response ID to compact
+
+**Returns:** dict - Compacted response object with reasoning removed
+
+**Example:**
+
+```python
+client = ai.Client("", api_key="sk-...")
+
+# Create a response with reasoning
+response = client.response_create("gpt-4o", "Solve this complex problem: 2+2")
+
+# Compact it to remove reasoning steps
+compacted = client.response_compact(response.id)
+print(compacted.output)  # Output without reasoning blocks
 ```
 
 ## Usage Examples

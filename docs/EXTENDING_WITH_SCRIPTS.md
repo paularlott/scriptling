@@ -446,3 +446,9 @@ print(string_utils.count_vowels(text))      # 3
 `)
 ```
 
+## See Also
+
+- [EXTENDING_WITH_GO.md](EXTENDING_WITH_GO.md) - Extending Scriptling with Go functions and libraries
+- [EXTENDING_LIBRARIES.md](EXTENDING_LIBRARIES.md) - Creating Go libraries for Scriptling
+- [EXTENDING_FUNCTIONS.md](EXTENDING_FUNCTIONS.md) - Registering individual Go functions
+- [EXTENDING_CLASSES.md](EXTENDING_CLASSES.md) - Defining Scriptling classes in Go
