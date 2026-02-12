@@ -6,6 +6,24 @@ import (
 	"github.com/paularlott/scriptling/token"
 )
 
+// Pre-computed single-character strings to avoid allocations in string(byte).
+// Covers all printable ASCII characters used for token literals.
+var singleCharStrings [128]string
+
+func init() {
+	for i := 0; i < 128; i++ {
+		singleCharStrings[i] = string(rune(i))
+	}
+}
+
+// charString returns the string representation of a byte without allocating.
+func charString(ch byte) string {
+	if ch < 128 {
+		return singleCharStrings[ch]
+	}
+	return string(rune(ch))
+}
+
 type Lexer struct {
 	input          string
 	position       int
@@ -92,7 +110,7 @@ func (l *Lexer) NextToken() token.Token {
 			l.readChar()
 			tok = token.Token{Type: token.EQ, Literal: "==", Line: l.line}
 		} else {
-			tok = token.Token{Type: token.ASSIGN, Literal: string(l.ch), Line: l.line}
+			tok = token.Token{Type: token.ASSIGN, Literal: charString(l.ch), Line: l.line}
 		}
 		l.readChar()
 	case '+':
@@ -100,7 +118,7 @@ func (l *Lexer) NextToken() token.Token {
 			l.readChar()
 			tok = token.Token{Type: token.PLUS_EQ, Literal: "+=", Line: l.line}
 		} else {
-			tok = token.Token{Type: token.PLUS, Literal: string(l.ch), Line: l.line}
+			tok = token.Token{Type: token.PLUS, Literal: charString(l.ch), Line: l.line}
 		}
 		l.readChar()
 	case '-':
@@ -108,7 +126,7 @@ func (l *Lexer) NextToken() token.Token {
 			l.readChar()
 			tok = token.Token{Type: token.MINUS_EQ, Literal: "-=", Line: l.line}
 		} else {
-			tok = token.Token{Type: token.MINUS, Literal: string(l.ch), Line: l.line}
+			tok = token.Token{Type: token.MINUS, Literal: charString(l.ch), Line: l.line}
 		}
 		l.readChar()
 	case '*':
@@ -121,7 +139,7 @@ func (l *Lexer) NextToken() token.Token {
 			tok = token.Token{Type: token.MUL_EQ, Literal: "*=", Line: l.line}
 			l.readChar()
 		} else {
-			tok = token.Token{Type: token.ASTERISK, Literal: string(l.ch), Line: l.line}
+			tok = token.Token{Type: token.ASTERISK, Literal: charString(l.ch), Line: l.line}
 			l.readChar()
 		}
 	case '/':
@@ -137,7 +155,7 @@ func (l *Lexer) NextToken() token.Token {
 			l.readChar()
 			tok = token.Token{Type: token.DIV_EQ, Literal: "/=", Line: l.line}
 		} else {
-			tok = token.Token{Type: token.SLASH, Literal: string(l.ch), Line: l.line}
+			tok = token.Token{Type: token.SLASH, Literal: charString(l.ch), Line: l.line}
 		}
 		l.readChar()
 	case '%':
@@ -145,7 +163,7 @@ func (l *Lexer) NextToken() token.Token {
 			l.readChar()
 			tok = token.Token{Type: token.MOD_EQ, Literal: "%=", Line: l.line}
 		} else {
-			tok = token.Token{Type: token.PERCENT, Literal: string(l.ch), Line: l.line}
+			tok = token.Token{Type: token.PERCENT, Literal: charString(l.ch), Line: l.line}
 		}
 		l.readChar()
 	case '!':
@@ -154,7 +172,7 @@ func (l *Lexer) NextToken() token.Token {
 			tok = token.Token{Type: token.NOT_EQ, Literal: "!=", Line: l.line}
 			l.readChar()
 		} else {
-			tok = token.Token{Type: token.ILLEGAL, Literal: string(l.ch), Line: l.line}
+			tok = token.Token{Type: token.ILLEGAL, Literal: charString(l.ch), Line: l.line}
 			l.readChar()
 		}
 	case '<':
@@ -170,7 +188,7 @@ func (l *Lexer) NextToken() token.Token {
 			l.readChar()
 			tok = token.Token{Type: token.LTE, Literal: "<=", Line: l.line}
 		} else {
-			tok = token.Token{Type: token.LT, Literal: string(l.ch), Line: l.line}
+			tok = token.Token{Type: token.LT, Literal: charString(l.ch), Line: l.line}
 		}
 		l.readChar()
 	case '>':
@@ -186,60 +204,60 @@ func (l *Lexer) NextToken() token.Token {
 			l.readChar()
 			tok = token.Token{Type: token.GTE, Literal: ">=", Line: l.line}
 		} else {
-			tok = token.Token{Type: token.GT, Literal: string(l.ch), Line: l.line}
+			tok = token.Token{Type: token.GT, Literal: charString(l.ch), Line: l.line}
 		}
 		l.readChar()
 	case '(':
-		tok = token.Token{Type: token.LPAREN, Literal: string(l.ch), Line: l.line}
+		tok = token.Token{Type: token.LPAREN, Literal: charString(l.ch), Line: l.line}
 		l.bracketDepth++
 		l.readChar()
 	case ')':
-		tok = token.Token{Type: token.RPAREN, Literal: string(l.ch), Line: l.line}
+		tok = token.Token{Type: token.RPAREN, Literal: charString(l.ch), Line: l.line}
 		if l.bracketDepth > 0 {
 			l.bracketDepth--
 		}
 		l.readChar()
 	case ':':
-		tok = token.Token{Type: token.COLON, Literal: string(l.ch), Line: l.line}
+		tok = token.Token{Type: token.COLON, Literal: charString(l.ch), Line: l.line}
 		l.readChar()
 	case ',':
-		tok = token.Token{Type: token.COMMA, Literal: string(l.ch), Line: l.line}
+		tok = token.Token{Type: token.COMMA, Literal: charString(l.ch), Line: l.line}
 		l.readChar()
 	case ';':
-		tok = token.Token{Type: token.SEMICOLON, Literal: string(l.ch), Line: l.line}
+		tok = token.Token{Type: token.SEMICOLON, Literal: charString(l.ch), Line: l.line}
 		l.readChar()
 	case '.':
-		tok = token.Token{Type: token.DOT, Literal: string(l.ch), Line: l.line}
+		tok = token.Token{Type: token.DOT, Literal: charString(l.ch), Line: l.line}
 		l.readChar()
 	case '[':
-		tok = token.Token{Type: token.LBRACKET, Literal: string(l.ch), Line: l.line}
+		tok = token.Token{Type: token.LBRACKET, Literal: charString(l.ch), Line: l.line}
 		l.bracketDepth++
 		l.readChar()
 	case ']':
-		tok = token.Token{Type: token.RBRACKET, Literal: string(l.ch), Line: l.line}
+		tok = token.Token{Type: token.RBRACKET, Literal: charString(l.ch), Line: l.line}
 		if l.bracketDepth > 0 {
 			l.bracketDepth--
 		}
 		l.readChar()
 	case '{':
-		tok = token.Token{Type: token.LBRACE, Literal: string(l.ch), Line: l.line}
+		tok = token.Token{Type: token.LBRACE, Literal: charString(l.ch), Line: l.line}
 		l.bracketDepth++
 		l.readChar()
 	case '}':
-		tok = token.Token{Type: token.RBRACE, Literal: string(l.ch), Line: l.line}
+		tok = token.Token{Type: token.RBRACE, Literal: charString(l.ch), Line: l.line}
 		if l.bracketDepth > 0 {
 			l.bracketDepth--
 		}
 		l.readChar()
 	case '~':
-		tok = token.Token{Type: token.TILDE, Literal: string(l.ch), Line: l.line}
+		tok = token.Token{Type: token.TILDE, Literal: charString(l.ch), Line: l.line}
 		l.readChar()
 	case '&':
 		if l.peekChar() == '=' {
 			l.readChar()
 			tok = token.Token{Type: token.AND_EQ, Literal: "&=", Line: l.line}
 		} else {
-			tok = token.Token{Type: token.AMPERSAND, Literal: string(l.ch), Line: l.line}
+			tok = token.Token{Type: token.AMPERSAND, Literal: charString(l.ch), Line: l.line}
 		}
 		l.readChar()
 	case '|':
@@ -247,7 +265,7 @@ func (l *Lexer) NextToken() token.Token {
 			l.readChar()
 			tok = token.Token{Type: token.OR_EQ, Literal: "|=", Line: l.line}
 		} else {
-			tok = token.Token{Type: token.PIPE, Literal: string(l.ch), Line: l.line}
+			tok = token.Token{Type: token.PIPE, Literal: charString(l.ch), Line: l.line}
 		}
 		l.readChar()
 	case '^':
@@ -255,7 +273,7 @@ func (l *Lexer) NextToken() token.Token {
 			l.readChar()
 			tok = token.Token{Type: token.XOR_EQ, Literal: "^=", Line: l.line}
 		} else {
-			tok = token.Token{Type: token.CARET, Literal: string(l.ch), Line: l.line}
+			tok = token.Token{Type: token.CARET, Literal: charString(l.ch), Line: l.line}
 		}
 		l.readChar()
 	case '"', '\'':
@@ -378,7 +396,7 @@ func (l *Lexer) NextToken() token.Token {
 			tok.Literal = num
 			return tok
 		} else {
-			tok = token.Token{Type: token.ILLEGAL, Literal: string(l.ch), Line: l.line}
+			tok = token.Token{Type: token.ILLEGAL, Literal: charString(l.ch), Line: l.line}
 			l.readChar()
 		}
 	}

@@ -133,24 +133,44 @@ func evalDictIndexExpression(dict, index object.Object) object.Object {
 	return pair.Value
 }
 
+// isASCII checks if a string contains only ASCII characters.
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
+}
+
 func evalStringIndexExpression(str, index object.Object) object.Object {
 	strObject := str.(*object.String)
-	runes := []rune(strObject.Value)
 	idx, err := index.AsInt()
 	if err != nil {
 		return errors.NewError("string index must be integer")
 	}
-	length := int64(len(runes))
 
-	// Handle negative indices
+	// ASCII fast-path: avoid []rune conversion
+	if isASCII(strObject.Value) {
+		length := int64(len(strObject.Value))
+		if idx < 0 {
+			idx += length
+		}
+		if idx < 0 || idx >= length {
+			return NULL
+		}
+		return &object.String{Value: strObject.Value[idx : idx+1]}
+	}
+
+	// Non-ASCII: fall back to rune conversion
+	runes := []rune(strObject.Value)
+	length := int64(len(runes))
 	if idx < 0 {
 		idx += length
 	}
-
 	if idx < 0 || idx >= length {
 		return NULL
 	}
-
 	return &object.String{Value: string(runes[idx])}
 }
 
@@ -356,6 +376,37 @@ func sliceList(elements []object.Object, start, end, step int64, hasStart, hasEn
 }
 
 func sliceString(str string, start, end, step int64, hasStart, hasEnd, hasStep bool) string {
+	// ASCII fast-path for step=1 (most common): use byte indexing directly
+	if step == 1 && isASCII(str) {
+		length := int64(len(str))
+		if !hasStart {
+			start = 0
+		} else if start < 0 {
+			start = length + start
+			if start < 0 {
+				start = 0
+			}
+		}
+		if !hasEnd {
+			end = length
+		} else if end < 0 {
+			end = length + end
+			if end < 0 {
+				end = 0
+			}
+		}
+		if start < 0 {
+			start = 0
+		}
+		if end > length {
+			end = length
+		}
+		if start > end {
+			start = end
+		}
+		return str[start:end]
+	}
+
 	runes := []rune(str)
 	length := int64(len(runes))
 

@@ -83,7 +83,15 @@ Use list(filter(...)) to get a list.`,
 				}
 			}
 
-			// Build output string
+			// Build output string — fast path for common single-arg case
+			if len(args) == 1 && sep == " " {
+				if str, err := args[0].AsString(); err == nil {
+					fmt.Fprint(writer, str+end)
+				} else {
+					fmt.Fprint(writer, args[0].Inspect()+end)
+				}
+				return NULL
+			}
 			parts := make([]string, len(args))
 			for i, arg := range args {
 				// Use AsString() for strings to get actual value, Inspect() for others
@@ -113,6 +121,10 @@ Examples:
 			}
 			switch arg := args[0].(type) {
 			case *object.String:
+				// ASCII fast-path: avoid []rune conversion for pure-ASCII strings
+				if isASCII(arg.Value) {
+					return object.NewInteger(int64(len(arg.Value)))
+				}
 				return object.NewInteger(int64(len([]rune(arg.Value))))
 			case *object.List:
 				return object.NewInteger(int64(len(arg.Elements)))

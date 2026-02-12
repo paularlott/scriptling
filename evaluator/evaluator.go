@@ -97,8 +97,8 @@ type contextChecker struct {
 	batchSize int
 }
 
-func newContextChecker(ctx context.Context) *contextChecker {
-	return &contextChecker{
+func newContextChecker(ctx context.Context) contextChecker {
+	return contextChecker{
 		ctx:       ctx,
 		batchSize: 10, // Check context every 10 operations in loops
 	}
@@ -965,13 +965,16 @@ func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *obje
 		return args[0]
 	}
 
-	keywords := make(map[string]object.Object)
-	for k, v := range node.Keywords {
-		val := evalWithContext(ctx, v, env)
-		if object.IsError(val) {
-			return val
+	var keywords map[string]object.Object
+	if len(node.Keywords) > 0 {
+		keywords = make(map[string]object.Object, len(node.Keywords))
+		for k, v := range node.Keywords {
+			val := evalWithContext(ctx, v, env)
+			if object.IsError(val) {
+				return val
+			}
+			keywords[k] = val
 		}
-		keywords[k] = val
 	}
 
 	// Handle *args unpacking (supports multiple)
@@ -994,6 +997,9 @@ func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *obje
 			return kwargsVal
 		}
 		if dict, ok := kwargsVal.(*object.Dict); ok {
+			if keywords == nil {
+				keywords = make(map[string]object.Object, len(dict.Pairs))
+			}
 			for k, pair := range dict.Pairs {
 				keywords[k] = pair.Value
 			}
@@ -1014,9 +1020,18 @@ func createInstance(ctx context.Context, class *object.Class, args []object.Obje
 	// Call __init__ if it exists
 	if initMethod, ok := class.Methods["__init__"]; ok {
 		// Bind 'self' to the instance
-		// We need to call the method, but applyFunction expects a Function object.
-		// We can reuse applyFunctionWithContext but we need to prepend 'self' to args.
-		newArgs := append([]object.Object{instance}, args...)
+		n := len(args) + 1
+		var newArgs []object.Object
+		if n <= 8 {
+			var buf [8]object.Object
+			buf[0] = instance
+			copy(buf[1:], args)
+			newArgs = buf[:n]
+		} else {
+			newArgs = make([]object.Object, n)
+			newArgs[0] = instance
+			copy(newArgs[1:], args)
+		}
 		result := applyFunctionWithContext(ctx, initMethod, newArgs, keywords, env)
 		if object.IsError(result) {
 			return result
@@ -1049,7 +1064,7 @@ func applyUserFunction(ctx context.Context, fn *object.Function, args []object.O
 		return err
 	}
 	defer object.PutEnvironment(extendedEnv) // Return to pool when done
-	
+
 	evaluated := evalWithContext(ctx, fn.Body, extendedEnv)
 	if err, ok := evaluated.(*object.Error); ok {
 		if err.Function == "" {
@@ -1087,7 +1102,7 @@ func applyLambdaFunctionWithContext(ctx context.Context, fn *object.LambdaFuncti
 		return err
 	}
 	defer object.PutEnvironment(extendedEnv) // Return to pool when done
-	
+
 	evaluated := evalWithContext(ctx, fn.Body, extendedEnv)
 	return evaluated // No unwrapping needed for lambda expressions
 }
@@ -1130,44 +1145,70 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 
 	// Handle keyword arguments if present
 	if len(keywords) > 0 {
-		setParams := make(map[string]bool, numParams)
-		extraKwargs := make(map[string]object.Object)
-		
-		// Mark positional args as set
-		for i := 0; i < numParams && i < numArgs; i++ {
-			setParams[fp.parameters[i].Value] = true
+		// Use a stack-allocated array for small param counts to track which params are set
+		var setSmall [8]bool
+		var setParams map[string]bool
+		if numParams <= 8 {
+			// Mark positional args as set via index
+			for i := 0; i < numParams && i < numArgs; i++ {
+				setSmall[i] = true
+			}
+		} else {
+			setParams = make(map[string]bool, numParams)
+			for i := 0; i < numParams && i < numArgs; i++ {
+				setParams[fp.parameters[i].Value] = true
+			}
 		}
+
+		isParamSet := func(idx int, name string) bool {
+			if numParams <= 8 {
+				return setSmall[idx]
+			}
+			return setParams[name]
+		}
+		markParamSet := func(idx int, name string) {
+			if numParams <= 8 {
+				setSmall[idx] = true
+			} else {
+				setParams[name] = true
+			}
+		}
+
+		var extraKwargs map[string]object.Object
 
 		for key, value := range keywords {
 			// Check if parameter exists
-			paramExists := false
-			for _, param := range fp.parameters {
+			paramIdx := -1
+			for pi, param := range fp.parameters {
 				if param.Value == key {
-					paramExists = true
+					paramIdx = pi
 					break
 				}
 			}
 
-			if !paramExists {
+			if paramIdx == -1 {
 				// If **kwargs is defined, collect extra keyword arguments
 				if fp.kwargs != nil {
+					if extraKwargs == nil {
+						extraKwargs = make(map[string]object.Object, len(keywords))
+					}
 					extraKwargs[key] = value
 					continue
 				}
 				return nil, errors.NewError("got an unexpected keyword argument '%s'", key)
 			}
 
-			if setParams[key] {
+			if isParamSet(paramIdx, key) {
 				return nil, errors.NewError("multiple values for argument '%s'", key)
 			}
 
 			env.Set(key, value)
-			setParams[key] = true
+			markParamSet(paramIdx, key)
 		}
 
 		// Set **kwargs dict if defined
 		if fp.kwargs != nil {
-			kwargsDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
+			kwargsDict := &object.Dict{Pairs: make(map[string]object.DictPair, len(extraKwargs))}
 			for key, value := range extraKwargs {
 				kwargsDict.Pairs[key] = object.DictPair{
 					Key:   &object.String{Value: key},
@@ -1178,8 +1219,8 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 		}
 
 		// Check for missing arguments and apply defaults
-		for _, param := range fp.parameters {
-			if !setParams[param.Value] {
+		for pi, param := range fp.parameters {
+			if !isParamSet(pi, param.Value) {
 				if defaultExpr, ok := fp.defaultValues[param.Value]; ok {
 					defaultVal := Eval(defaultExpr, fp.parentEnv)
 					env.Set(param.Value, defaultVal)
@@ -1194,7 +1235,7 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 		if fp.kwargs != nil {
 			env.Set(fp.kwargs.Value, &object.Dict{Pairs: make(map[string]object.DictPair)})
 		}
-		
+
 		if numArgs < numParams {
 			// No keywords - check for missing required arguments
 			for i := numArgs; i < numParams; i++ {
@@ -1491,7 +1532,7 @@ func evalInOperator(left, right object.Object) object.Object {
 	switch container := right.(type) {
 	case *object.List:
 		for _, elem := range container.Elements {
-			if left == elem || (left.Inspect() == elem.Inspect()) {
+			if left == elem || objectsDeepEqual(left, elem) {
 				return TRUE
 			}
 		}
@@ -1502,12 +1543,7 @@ func evalInOperator(left, right object.Object) object.Object {
 		return nativeBoolToBooleanObject(ok)
 	case *object.String:
 		if needle, ok := left.(*object.String); ok {
-			for i := 0; i <= len(container.Value)-len(needle.Value); i++ {
-				if container.Value[i:i+len(needle.Value)] == needle.Value {
-					return TRUE
-				}
-			}
-			return FALSE
+			return nativeBoolToBooleanObject(strings.Contains(container.Value, needle.Value))
 		}
 		return errors.NewTypeError("STRING", "non-string type")
 	case *object.DictKeys:
@@ -1516,7 +1552,7 @@ func evalInOperator(left, right object.Object) object.Object {
 		return nativeBoolToBooleanObject(ok)
 	case *object.DictValues:
 		for _, pair := range container.Dict.Pairs {
-			if left == pair.Value || (left.Inspect() == pair.Value.Inspect()) {
+			if left == pair.Value || objectsDeepEqual(left, pair.Value) {
 				return TRUE
 			}
 		}
@@ -1541,7 +1577,7 @@ func evalInOperator(left, right object.Object) object.Object {
 			// Check if key exists and value matches
 			keyStr := key.Inspect()
 			if pair, ok := container.Dict.Pairs[keyStr]; ok {
-				if val == pair.Value || (val.Inspect() == pair.Value.Inspect()) {
+				if val == pair.Value || objectsDeepEqual(val, pair.Value) {
 					return TRUE
 				}
 			}
@@ -1809,7 +1845,7 @@ func matchesExceptionType(exception object.Object, exceptTypeExpr ast.Expression
 // e.g., requests.HTTPError becomes "requests.HTTPError"
 func buildDottedName(expr *ast.IndexExpression) string {
 	parts := []string{}
-	
+
 	// Walk the chain of index expressions
 	current := ast.Expression(expr)
 	for {
@@ -1827,7 +1863,7 @@ func buildDottedName(expr *ast.IndexExpression) string {
 			break
 		}
 	}
-	
+
 	return strings.Join(parts, ".")
 }
 
