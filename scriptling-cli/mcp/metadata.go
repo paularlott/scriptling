@@ -8,25 +8,12 @@ import (
 
 	"github.com/paularlott/cli"
 	cli_toml "github.com/paularlott/cli/toml"
+	"github.com/paularlott/mcp/toolmetadata"
 )
 
-type ToolParameter struct {
-	Name        string
-	Type        string
-	Description string
-	Required    bool
-}
-
-type ToolMetadata struct {
-	Description  string
-	Keywords     []string
-	Parameters   []ToolParameter
-	Discoverable bool
-}
-
 // ScanToolsFolder scans the tools folder for .toml files and returns metadata
-func ScanToolsFolder(toolsFolder string) (map[string]*ToolMetadata, error) {
-	tools := make(map[string]*ToolMetadata)
+func ScanToolsFolder(toolsFolder string) (map[string]*toolmetadata.ToolMetadata, error) {
+	tools := make(map[string]*toolmetadata.ToolMetadata)
 
 	entries, err := os.ReadDir(toolsFolder)
 	if err != nil {
@@ -49,7 +36,7 @@ func ScanToolsFolder(toolsFolder string) (map[string]*ToolMetadata, error) {
 		}
 
 		// Parse metadata
-		meta := ToolMetadata{
+		meta := toolmetadata.ToolMetadata{
 			Description:  cfg.GetString("description"),
 			Keywords:     cfg.GetStringSlice("keywords"),
 			Discoverable: cfg.GetBool("discoverable"),
@@ -58,7 +45,7 @@ func ScanToolsFolder(toolsFolder string) (map[string]*ToolMetadata, error) {
 		// Parse parameters
 		paramObjs := cfg.GetObjectSlice("parameters")
 		for _, paramObj := range paramObjs {
-			param := ToolParameter{
+			param := toolmetadata.ToolParameter{
 				Name:        paramObj.GetString("name"),
 				Type:        paramObj.GetString("type"),
 				Description: paramObj.GetString("description"),
@@ -74,7 +61,7 @@ func ScanToolsFolder(toolsFolder string) (map[string]*ToolMetadata, error) {
 }
 
 // ValidateTool checks if a tool's metadata matches its script
-func ValidateTool(toolName string, meta *ToolMetadata, scriptPath string) []string {
+func ValidateTool(toolName string, meta *toolmetadata.ToolMetadata, scriptPath string) []string {
 	var warnings []string
 
 	// Check if script file exists
