@@ -79,12 +79,13 @@ func (c *programCache) set(script string, program *ast.Program) {
 		}
 	}
 
-	// Add new entry at front
+	// Add new entry at front (after potential eviction)
 	entry := &cacheEntry{
 		key:      key,
 		program:  program,
 		lastUsed: time.Now(),
 	}
+	// Push to front of LRU list and update map
 	elem := c.lru.PushFront(entry)
 	c.entries[key] = elem
 }
@@ -107,12 +108,7 @@ func (c *programCache) evictOldest() bool {
 
 	entry := elem.Value.(*cacheEntry)
 
-	// Check if entry is recent (used within last 3 seconds)
-	if time.Since(entry.lastUsed) < 3*time.Second {
-		return false // Don't evict recent entries
-	}
-
-	// Remove oldest entry
+	// Remove oldest entry (pure LRU, no time-based protection)
 	c.lru.Remove(elem)
 	delete(c.entries, entry.key)
 	return true
