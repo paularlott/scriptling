@@ -13,11 +13,9 @@ import (
 	"github.com/paularlott/cli"
 	"github.com/paularlott/logger"
 	mcp_lib "github.com/paularlott/mcp"
+	"github.com/paularlott/mcp/toolmetadata"
 	"github.com/paularlott/scriptling"
-	"github.com/paularlott/scriptling/extlibs"
-	"github.com/paularlott/scriptling/extlibs/ai"
 	scriptlingmcp "github.com/paularlott/scriptling/extlibs/mcp"
-	"github.com/paularlott/scriptling/stdlib"
 )
 
 var Log logger.Logger
@@ -101,50 +99,8 @@ func registerTools(server *mcp_lib.Server, toolsFolder string, libdir string) er
 	for toolName, meta := range tools {
 		scriptPath := filepath.Join(toolsFolder, toolName+".py")
 
-		// Create tool definition
-		tool := mcp_lib.NewTool(toolName, meta.Description)
-
-		// Build parameters
-		var params []mcp_lib.Parameter
-		for _, param := range meta.Parameters {
-			var p mcp_lib.Parameter
-			if param.Required {
-				switch param.Type {
-				case "string":
-					p = mcp_lib.String(param.Name, param.Description, mcp_lib.Required())
-				case "int", "integer":
-					p = mcp_lib.Number(param.Name, param.Description, mcp_lib.Required())
-				case "float", "number":
-					p = mcp_lib.Number(param.Name, param.Description, mcp_lib.Required())
-				case "bool", "boolean":
-					p = mcp_lib.Boolean(param.Name, param.Description, mcp_lib.Required())
-				default:
-					return fmt.Errorf("unsupported parameter type '%s' in tool '%s'", param.Type, toolName)
-				}
-			} else {
-				switch param.Type {
-				case "string":
-					p = mcp_lib.String(param.Name, param.Description)
-				case "int", "integer":
-					p = mcp_lib.Number(param.Name, param.Description)
-				case "float", "number":
-					p = mcp_lib.Number(param.Name, param.Description)
-				case "bool", "boolean":
-					p = mcp_lib.Boolean(param.Name, param.Description)
-				default:
-					return fmt.Errorf("unsupported parameter type '%s' in tool '%s'", param.Type, toolName)
-				}
-			}
-			params = append(params, p)
-		}
-
-		// Rebuild tool with parameters
-		tool = mcp_lib.NewTool(toolName, meta.Description, params...)
-
-		// If discoverable flag is set, register with keywords for discovery mode
-		if meta.Discoverable && len(meta.Keywords) > 0 {
-			tool.Discoverable(meta.Keywords...)
-		}
+		// Build tool definition using helper
+		tool := toolmetadata.BuildMCPTool(toolName, meta)
 
 		// Register tool with handler
 		handler := createToolHandler(scriptPath, libdir)
@@ -169,38 +125,9 @@ func createToolHandler(scriptPath string, libdir string) func(context.Context, *
 			return nil, fmt.Errorf("failed to read script: %w", err)
 		}
 
-		// Create new Scriptling instance
+		// Create new Scriptling instance and set up libraries
 		p := scriptling.New()
-
-		// Register all libraries
-		stdlib.RegisterAll(p)
-		extlibs.RegisterRequestsLibrary(p)
-		extlibs.RegisterSecretsLibrary(p)
-		extlibs.RegisterSubprocessLibrary(p)
-		extlibs.RegisterHTMLParserLibrary(p)
-		extlibs.RegisterThreadsLibrary(p)
-		extlibs.RegisterOSLibrary(p, []string{})
-		extlibs.RegisterPathlibLibrary(p, []string{})
-		extlibs.RegisterGlobLibrary(p, []string{})
-		extlibs.RegisterWaitForLibrary(p)
-		extlibs.RegisterConsoleLibrary(p)
-		p.RegisterLibrary(extlibs.YAMLLibrary)
-		ai.Register(p)
-		scriptlingmcp.Register(p)
-		scriptlingmcp.RegisterToon(p)
-		scriptlingmcp.RegisterToolHelpers(p)
-
-		// Set up on-demand library loading
-		if libdir != "" {
-			p.SetOnDemandLibraryCallback(func(p *scriptling.Scriptling, libName string) bool {
-				filename := filepath.Join(libdir, libName+".py")
-				content, err := os.ReadFile(filename)
-				if err == nil {
-					return p.RegisterScriptLibrary(libName, string(content)) == nil
-				}
-				return false
-			})
-		}
+		SetupScriptling(p, libdir, false) // false = don't register interact library
 
 		// Convert request arguments to map
 		params := req.Args()
