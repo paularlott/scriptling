@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/paularlott/scriptling/ast"
+	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/evaluator"
 	"github.com/paularlott/scriptling/lexer"
 	"github.com/paularlott/scriptling/object"
@@ -332,8 +334,16 @@ func (p *Scriptling) EvalWithTimeout(timeout time.Duration, input string) (objec
 	return p.EvalWithContext(ctx, input)
 }
 
-// EvalWithContext executes script with context for timeout/cancellation
-func (p *Scriptling) EvalWithContext(ctx context.Context, input string) (object.Object, error) {
+// EvalWithContext executes script with context for timeout/cancellation.
+// This method is safe against deep recursion (via call depth tracking) and
+// recovers from panics during script execution.
+func (p *Scriptling) EvalWithContext(ctx context.Context, input string) (result object.Object, err error) {
+	// Add call depth tracking to prevent stack overflow from deep recursion
+	// Only add if not already present (allows callers to customize max depth)
+	if evaluator.GetCallDepthFromContext(ctx) == nil {
+		ctx = evaluator.ContextWithCallDepth(ctx, evaluator.DefaultMaxCallDepth)
+	}
+
 	// Try global cache first
 	program, ok := Get(input)
 	if !ok {
@@ -347,7 +357,16 @@ func (p *Scriptling) EvalWithContext(ctx context.Context, input string) (object.
 		Set(input, program)
 	}
 
-	result := evaluator.EvalWithContext(ctx, program, p.env)
+	// Recover from any panics during execution (e.g., bugs in interpreter or builtins)
+	defer func() {
+		if r := recover(); r != nil {
+			stackTrace := string(debug.Stack())
+			result = errors.NewPanicError(r)
+			err = fmt.Errorf("script panic: %v\n%s", r, stackTrace)
+		}
+	}()
+
+	result = evaluator.EvalWithContext(ctx, program, p.env)
 	return p.handleResult(result, "")
 }
 

@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/errors"
@@ -43,6 +44,39 @@ func putStringBuilder(b *strings.Builder) {
 // envContextKey is used to store environment in context
 const envContextKey = "scriptling-env"
 
+// callDepthKey is used to store call depth counter in context
+type callDepthKey struct{}
+
+// DefaultMaxCallDepth is the default maximum call depth (1000)
+const DefaultMaxCallDepth = 1000
+
+// CallDepth tracks function call depth to prevent stack overflow
+type CallDepth struct {
+	current int32
+	max     int32
+}
+
+// NewCallDepth creates a new CallDepth tracker with the specified max depth
+func NewCallDepth(maxDepth int) *CallDepth {
+	return &CallDepth{max: int32(maxDepth)}
+}
+
+// Enter increments call depth and returns true if within limits
+func (cd *CallDepth) Enter() bool {
+	newDepth := atomic.AddInt32(&cd.current, 1)
+	return newDepth <= cd.max
+}
+
+// Exit decrements call depth
+func (cd *CallDepth) Exit() {
+	atomic.AddInt32(&cd.current, -1)
+}
+
+// Depth returns current call depth
+func (cd *CallDepth) Depth() int {
+	return int(atomic.LoadInt32(&cd.current))
+}
+
 // SetEnvInContext stores environment in context for builtin functions
 func SetEnvInContext(ctx context.Context, env *object.Environment) context.Context {
 	return context.WithValue(ctx, envContextKey, env)
@@ -54,6 +88,24 @@ func GetEnvFromContext(ctx context.Context) *object.Environment {
 		return env
 	}
 	return object.NewEnvironment() // fallback
+}
+
+// SetCallDepthInContext stores call depth tracker in context
+func SetCallDepthInContext(ctx context.Context, cd *CallDepth) context.Context {
+	return context.WithValue(ctx, callDepthKey{}, cd)
+}
+
+// GetCallDepthFromContext retrieves call depth tracker from context
+func GetCallDepthFromContext(ctx context.Context) *CallDepth {
+	if cd, ok := ctx.Value(callDepthKey{}).(*CallDepth); ok {
+		return cd
+	}
+	return nil
+}
+
+// ContextWithCallDepth creates a context with a call depth tracker
+func ContextWithCallDepth(ctx context.Context, maxDepth int) context.Context {
+	return SetCallDepthInContext(ctx, NewCallDepth(maxDepth))
 }
 
 
@@ -1059,6 +1111,14 @@ func evalExpressionsWithContext(ctx context.Context, exps []ast.Expression, env 
 }
 
 func applyUserFunction(ctx context.Context, fn *object.Function, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+	// Check call depth to prevent stack overflow
+	if cd := GetCallDepthFromContext(ctx); cd != nil {
+		if !cd.Enter() {
+			return errors.NewCallDepthExceededError(int(cd.max))
+		}
+		defer cd.Exit()
+	}
+
 	extendedEnv, err := extendFunctionEnv(fn, args, keywords)
 	if err != nil {
 		return err
@@ -1097,6 +1157,14 @@ func applyFunctionWithContext(ctx context.Context, fn object.Object, args []obje
 }
 
 func applyLambdaFunctionWithContext(ctx context.Context, fn *object.LambdaFunction, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+	// Check call depth to prevent stack overflow
+	if cd := GetCallDepthFromContext(ctx); cd != nil {
+		if !cd.Enter() {
+			return errors.NewCallDepthExceededError(int(cd.max))
+		}
+		defer cd.Exit()
+	}
+
 	extendedEnv, err := extendLambdaEnv(fn, args, keywords)
 	if err != nil {
 		return err

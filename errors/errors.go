@@ -18,6 +18,8 @@ const (
 	ErrIdentifierNotFound = "identifier not found"
 	ErrUnknownOperator    = "unknown operator"
 	ErrImportError        = "import error"
+	ErrCallDepthExceeded  = "call depth exceeded"
+	ErrPanic              = "script panic"
 )
 
 // NewError creates a new error object
@@ -33,6 +35,16 @@ func NewTimeoutError() *object.Error {
 // NewCancelledError creates a cancellation error
 func NewCancelledError() *object.Error {
 	return &object.Error{Message: ErrCancelled}
+}
+
+// NewCallDepthExceededError creates a call depth exceeded error
+func NewCallDepthExceededError(max int) *object.Error {
+	return &object.Error{Message: fmt.Sprintf("%s: maximum depth is %d", ErrCallDepthExceeded, max)}
+}
+
+// NewPanicError creates a panic error with the panic value
+func NewPanicError(panicValue interface{}) *object.Error {
+	return &object.Error{Message: fmt.Sprintf("%s: %v", ErrPanic, panicValue)}
 }
 
 // NewTypeError creates a type error

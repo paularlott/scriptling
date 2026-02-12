@@ -223,6 +223,8 @@ func TestErrorConstants(t *testing.T) {
 		ErrIdentifierNotFound: "identifier not found",
 		ErrUnknownOperator:    "unknown operator",
 		ErrImportError:        "import error",
+		ErrCallDepthExceeded:  "call depth exceeded",
+		ErrPanic:              "script panic",
 	}
 
 	for name, expected := range constants {
