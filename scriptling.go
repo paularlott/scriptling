@@ -212,8 +212,8 @@ func (p *Scriptling) loadLibrary(name string) error {
 // registerLibrary adds a library to the script environment
 // Supports nested paths like "urllib.parse" - will create parent dicts as needed
 func (p *Scriptling) registerLibrary(name string, lib *object.Library) {
-	// Convert library to dict
-	libDict := p.libraryToDict(lib)
+	// Convert library to dict (using cached version)
+	libDict := lib.GetDict()
 
 	// Check if this is a dotted path
 	parts := strings.Split(name, ".")

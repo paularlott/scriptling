@@ -561,6 +561,86 @@ ids = tool.get_list("ids")              # "1,2,3" → ["1", "2", "3"]
 tags = tool.get_list("tags", ["all"])   # "tag1, tag2" → ["tag1", "tag2"]
 ```
 
+#### mcp.tool.get_string_list(name, default=None)
+
+Get a string array parameter (array:string type) from the tool's input arguments.
+
+**Parameters:**
+
+- `name` (str): Parameter name
+- `default` (list): Default value if parameter is missing (default: empty list)
+
+**Returns:** list of strings
+
+**Example:**
+
+```python
+import scriptling.mcp.tool as tool
+
+args = tool.get_string_list("arguments")  # ["--verbose", "-o", "file.txt"]
+tags = tool.get_string_list("tags", ["default"])
+```
+
+#### mcp.tool.get_int_list(name, default=None)
+
+Get an integer array parameter (array:int type) from the tool's input arguments.
+
+**Parameters:**
+
+- `name` (str): Parameter name
+- `default` (list): Default value if parameter is missing (default: empty list)
+
+**Returns:** list of integers
+
+**Example:**
+
+```python
+import scriptling.mcp.tool as tool
+
+ids = tool.get_int_list("ids")  # [1, 2, 3, 4]
+ports = tool.get_int_list("ports", [8080])
+```
+
+#### mcp.tool.get_float_list(name, default=None)
+
+Get a float array parameter (array:float type) from the tool's input arguments.
+
+**Parameters:**
+
+- `name` (str): Parameter name
+- `default` (list): Default value if parameter is missing (default: empty list)
+
+**Returns:** list of floats
+
+**Example:**
+
+```python
+import scriptling.mcp.tool as tool
+
+prices = tool.get_float_list("prices")  # [19.99, 29.99, 39.99]
+weights = tool.get_float_list("weights", [1.0])
+```
+
+#### mcp.tool.get_bool_list(name, default=None)
+
+Get a boolean array parameter (array:bool type) from the tool's input arguments.
+
+**Parameters:**
+
+- `name` (str): Parameter name
+- `default` (list): Default value if parameter is missing (default: empty list)
+
+**Returns:** list of booleans
+
+**Example:**
+
+```python
+import scriptling.mcp.tool as tool
+
+flags = tool.get_bool_list("flags")  # [true, false, true]
+options = tool.get_bool_list("options", [false])
+```
+
 ### Result Functions
 
 Result functions set the tool's response and immediately stop script execution using `SystemExit`.
