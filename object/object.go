@@ -461,7 +461,9 @@ type Library struct {
 	constants    map[string]Object
 	subLibraries map[string]*Library
 	description  string
-	instanceData any // Instance-specific data for this library
+	instanceData any        // Instance-specific data for this library
+	cachedDict   *Dict     // Cached dict representation (built once)
+	cachedDictMu  sync.Mutex // Protects cachedDict for concurrent access
 }
 
 // NewLibrary creates a new library with functions, optional constants, and optional description
@@ -512,6 +514,68 @@ func (l *Library) Description() string {
 	return l.description
 }
 
+// GetDict returns the cached Dict representation of this library, building it if necessary
+// This caching avoids rebuilding the dict every time a library is imported
+func (l *Library) GetDict() *Dict {
+	l.cachedDictMu.Lock()
+	defer l.cachedDictMu.Unlock()
+
+	if l.cachedDict != nil {
+		return l.cachedDict
+	}
+
+	// Build dict from library contents
+	funcs := l.functions
+	consts := l.constants
+	subs := l.subLibraries
+
+	dict := make(map[string]DictPair, len(funcs)+len(consts)+len(subs))
+
+	for fname, fn := range funcs {
+		dict[fname] = DictPair{
+			Key:   &String{Value: fname},
+			Value: fn,
+		}
+	}
+
+	// Add constants
+	if consts != nil {
+		for cname, val := range consts {
+			dict[cname] = DictPair{
+				Key:   &String{Value: cname},
+				Value: val,
+			}
+		}
+	}
+
+	// Add sub-libraries (recursive)
+	if subs != nil {
+		for subName, subLib := range subs {
+			dict[subName] = DictPair{
+				Key:   &String{Value: subName},
+				Value: subLib.GetDict(),
+			}
+		}
+	}
+
+	// Add description if available
+	if l.description != "" {
+		dict["__doc__"] = DictPair{
+			Key:   &String{Value: "__doc__"},
+			Value: &String{Value: l.description},
+		}
+	}
+
+	l.cachedDict = &Dict{Pairs: dict}
+	return l.cachedDict
+}
+
+// CachedDict returns the cached dict for testing purposes
+// This is exported only for library_instantiate_test.go to verify caching behavior
+func (l *Library) CachedDict() *Dict {
+	return l.cachedDict
+}
+
 func (l *Library) Type() ObjectType { return BUILTIN_OBJ } // Libraries are like builtin objects
 func (l *Library) Inspect() string  { return "<library>" }
 
@@ -541,6 +605,7 @@ func (l *Library) Instantiate(instanceData any) *Library {
 		subLibraries: l.subLibraries, // Sub-libraries are shared
 		description:  l.description,
 		instanceData: instanceData,
+		cachedDict:   nil, // New instance needs fresh cache
 	}
 
 	// Wrap each function to inject instance data into context

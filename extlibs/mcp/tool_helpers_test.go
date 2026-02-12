@@ -105,21 +105,6 @@ func TestToolHelpersGetInt(t *testing.T) {
 	sl := scriptling.New()
 	mcp.RegisterToolHelpers(sl)
 
-	// Set up __mcp_params
-	paramsDict := &object.Dict{
-		Pairs: map[string]object.DictPair{
-			"count": {
-				Key:   &object.String{Value: "count"},
-				Value: object.NewInteger(42),
-			},
-			"limit": {
-				Key:   &object.String{Value: "limit"},
-				Value: &object.String{Value: "100"}, // String that should coerce to int
-			},
-		},
-	}
-	sl.SetObjectVar(mcp.MCPParamsVarName, paramsDict)
-
 	script := `
 from scriptling.mcp.tool import get_int
 
@@ -128,12 +113,19 @@ limit = get_int("limit", 10)
 missing = get_int("missing", 99)
 `
 
-	_, err := sl.Eval(script)
-	if err != nil {
-		t.Fatalf("Failed to evaluate script: %v", err)
+	params := map[string]interface{}{
+		"count": 42,
+		"limit": "100", // String that should coerce to int
 	}
 
-	// Check results
+	_, exitCode, err := mcp.RunToolScript(context.Background(), sl, script, params)
+	if err != nil {
+		t.Fatalf("RunToolScript failed: %v", err)
+	}
+	if exitCode != 0 {
+		t.Errorf("Expected exit code 0, got %d", exitCode)
+	}
+
 	count, objErr := sl.GetVar("count")
 	if objErr != nil || count != int64(42) {
 		t.Errorf("Expected count=42, got %v", count)
@@ -155,17 +147,6 @@ func TestToolHelpersGetString(t *testing.T) {
 	sl := scriptling.New()
 	mcp.RegisterToolHelpers(sl)
 
-	// Set up __mcp_params
-	paramsDict := &object.Dict{
-		Pairs: map[string]object.DictPair{
-			"name": {
-				Key:   &object.String{Value: "name"},
-				Value: &object.String{Value: "  Alice  "}, // With whitespace
-			},
-		},
-	}
-	sl.SetObjectVar(mcp.MCPParamsVarName, paramsDict)
-
 	script := `
 from scriptling.mcp.tool import get_string
 
@@ -173,12 +154,18 @@ name = get_string("name", "guest")
 missing = get_string("missing", "default")
 `
 
-	_, err := sl.Eval(script)
-	if err != nil {
-		t.Fatalf("Failed to evaluate script: %v", err)
+	params := map[string]interface{}{
+		"name": "  Alice  ", // With whitespace
 	}
 
-	// Check results
+	_, exitCode, err := mcp.RunToolScript(context.Background(), sl, script, params)
+	if err != nil {
+		t.Fatalf("RunToolScript failed: %v", err)
+	}
+	if exitCode != 0 {
+		t.Errorf("Expected exit code 0, got %d", exitCode)
+	}
+
 	name, objErr := sl.GetVar("name")
 	if objErr != nil || name != "Alice" { // Should be trimmed
 		t.Errorf("Expected name='Alice', got %v", name)
@@ -190,25 +177,52 @@ missing = get_string("missing", "default")
 	}
 }
 
+// TestToolHelpersGetFloat tests get_float function
+func TestToolHelpersGetFloat(t *testing.T) {
+	sl := scriptling.New()
+	mcp.RegisterToolHelpers(sl)
+
+	script := `
+from scriptling.mcp.tool import get_float
+
+price = get_float("price", 0.0)
+percentage = get_float("percentage", 100.0)
+missing = get_float("missing", 50.5)
+`
+
+	params := map[string]interface{}{
+		"price":      19.99,
+		"percentage": "75.5",
+	}
+
+	_, exitCode, err := mcp.RunToolScript(context.Background(), sl, script, params)
+	if err != nil {
+		t.Fatalf("RunToolScript failed: %v", err)
+	}
+	if exitCode != 0 {
+		t.Errorf("Expected exit code 0, got %d", exitCode)
+	}
+
+	price, objErr := sl.GetVar("price")
+	if objErr != nil || price != 19.99 {
+		t.Errorf("Expected price=19.99, got %v", price)
+	}
+
+	percentage, objErr := sl.GetVar("percentage")
+	if objErr != nil || percentage != 75.5 {
+		t.Errorf("Expected percentage=75.5, got %v", percentage)
+	}
+
+	missing, objErr := sl.GetVar("missing")
+	if objErr != nil || missing != 50.5 {
+		t.Errorf("Expected missing=50.5 (default), got %v", missing)
+	}
+}
+
 // TestToolHelpersGetBool tests get_bool function
 func TestToolHelpersGetBool(t *testing.T) {
 	sl := scriptling.New()
 	mcp.RegisterToolHelpers(sl)
-
-	// Set up __mcp_params
-	paramsDict := &object.Dict{
-		Pairs: map[string]object.DictPair{
-			"enabled": {
-				Key:   &object.String{Value: "enabled"},
-				Value: &object.Boolean{Value: true},
-			},
-			"verbose": {
-				Key:   &object.String{Value: "verbose"},
-				Value: &object.String{Value: "true"}, // String that should parse to bool
-			},
-		},
-	}
-	sl.SetObjectVar(mcp.MCPParamsVarName, paramsDict)
 
 	script := `
 from scriptling.mcp.tool import get_bool
@@ -218,12 +232,19 @@ verbose = get_bool("verbose", False)
 missing = get_bool("missing", True)
 `
 
-	_, err := sl.Eval(script)
-	if err != nil {
-		t.Fatalf("Failed to evaluate script: %v", err)
+	params := map[string]interface{}{
+		"enabled": true,
+		"verbose": "true", // String that should parse to bool
 	}
 
-	// Check results
+	_, exitCode, err := mcp.RunToolScript(context.Background(), sl, script, params)
+	if err != nil {
+		t.Fatalf("RunToolScript failed: %v", err)
+	}
+	if exitCode != 0 {
+		t.Errorf("Expected exit code 0, got %d", exitCode)
+	}
+
 	enabled, objErr := sl.GetVar("enabled")
 	if objErr != nil || enabled != true {
 		t.Errorf("Expected enabled=true, got %v", enabled)
@@ -237,6 +258,277 @@ missing = get_bool("missing", True)
 	missing, objErr := sl.GetVar("missing")
 	if objErr != nil || missing != true {
 		t.Errorf("Expected missing=true (default), got %v", missing)
+	}
+}
+
+// TestToolHelpersGetList tests get_list function
+func TestToolHelpersGetList(t *testing.T) {
+	sl := scriptling.New()
+	mcp.RegisterToolHelpers(sl)
+
+	script := `
+from scriptling.mcp.tool import get_list
+
+tags = get_list("tags")
+ids = get_list("ids")
+missing = get_list("missing")
+`
+
+	params := map[string]interface{}{
+		"tags": "tag1, tag2, tag3",
+		"ids":  []int{1, 2, 3},
+	}
+
+	_, exitCode, err := mcp.RunToolScript(context.Background(), sl, script, params)
+	if err != nil {
+		t.Fatalf("RunToolScript failed: %v", err)
+	}
+	if exitCode != 0 {
+		t.Errorf("Expected exit code 0, got %d", exitCode)
+	}
+
+	tagsObj, objErr := sl.GetVarAsObject("tags")
+	if objErr != nil {
+		t.Fatalf("Failed to get tags: %v", objErr)
+	}
+	tagsList, ok := tagsObj.(*object.List)
+	if !ok {
+		t.Fatalf("Expected List object, got %T", tagsObj)
+	}
+	if len(tagsList.Elements) != 3 {
+		t.Errorf("Expected 3 tags, got %d", len(tagsList.Elements))
+	}
+
+	idsObj, objErr := sl.GetVarAsObject("ids")
+	if objErr != nil {
+		t.Fatalf("Failed to get ids: %v", objErr)
+	}
+	idsList, ok := idsObj.(*object.List)
+	if !ok {
+		t.Fatalf("Expected List object, got %T", idsObj)
+	}
+	if len(idsList.Elements) != 3 {
+		t.Errorf("Expected 3 ids, got %d", len(idsList.Elements))
+	}
+
+	missingObj, objErr := sl.GetVarAsObject("missing")
+	if objErr != nil {
+		t.Fatalf("Failed to get missing: %v", objErr)
+	}
+	missingList, ok := missingObj.(*object.List)
+	if !ok {
+		t.Fatalf("Expected List object, got %T", missingObj)
+	}
+	if len(missingList.Elements) != 0 {
+		t.Errorf("Expected empty list, got %d elements", len(missingList.Elements))
+	}
+}
+
+// TestToolHelpersGetStringList tests get_string_list function
+func TestToolHelpersGetStringList(t *testing.T) {
+	sl := scriptling.New()
+	mcp.RegisterToolHelpers(sl)
+
+	script := `
+from scriptling.mcp.tool import get_string_list
+
+args = get_string_list("args")
+missing = get_string_list("missing", ["default"])
+`
+
+	params := map[string]interface{}{
+		"args": []string{"--verbose", "-o", "file.txt"},
+	}
+
+	_, exitCode, err := mcp.RunToolScript(context.Background(), sl, script, params)
+	if err != nil {
+		t.Fatalf("RunToolScript failed: %v", err)
+	}
+	if exitCode != 0 {
+		t.Errorf("Expected exit code 0, got %d", exitCode)
+	}
+
+	argsObj, objErr := sl.GetVarAsObject("args")
+	if objErr != nil {
+		t.Fatalf("Failed to get args: %v", objErr)
+	}
+	argsList, ok := argsObj.(*object.List)
+	if !ok {
+		t.Fatalf("Expected List object, got %T", argsObj)
+	}
+	if len(argsList.Elements) != 3 {
+		t.Errorf("Expected 3 args, got %d", len(argsList.Elements))
+	}
+
+	missingObj, objErr := sl.GetVarAsObject("missing")
+	if objErr != nil {
+		t.Fatalf("Failed to get missing: %v", objErr)
+	}
+	missingList, ok := missingObj.(*object.List)
+	if !ok {
+		t.Fatalf("Expected List object, got %T", missingObj)
+	}
+	if len(missingList.Elements) != 1 {
+		t.Errorf("Expected 1 element (default), got %d", len(missingList.Elements))
+	}
+}
+
+// TestToolHelpersGetIntList tests get_int_list function
+func TestToolHelpersGetIntList(t *testing.T) {
+	sl := scriptling.New()
+	mcp.RegisterToolHelpers(sl)
+
+	script := `
+from scriptling.mcp.tool import get_int_list
+
+ids = get_int_list("ids")
+missing = get_int_list("missing")
+`
+
+	params := map[string]interface{}{
+		"ids": []int{1, 2, 3},
+	}
+
+	_, exitCode, err := mcp.RunToolScript(context.Background(), sl, script, params)
+	if err != nil {
+		t.Fatalf("RunToolScript failed: %v", err)
+	}
+	if exitCode != 0 {
+		t.Errorf("Expected exit code 0, got %d", exitCode)
+	}
+
+	idsObj, objErr := sl.GetVarAsObject("ids")
+	if objErr != nil {
+		t.Fatalf("Failed to get ids: %v", objErr)
+	}
+	idsList, ok := idsObj.(*object.List)
+	if !ok {
+		t.Fatalf("Expected List object, got %T", idsObj)
+	}
+	if len(idsList.Elements) != 3 {
+		t.Errorf("Expected 3 ids, got %d", len(idsList.Elements))
+	}
+}
+
+// TestToolHelpersGetFloatList tests get_float_list function
+func TestToolHelpersGetFloatList(t *testing.T) {
+	sl := scriptling.New()
+	mcp.RegisterToolHelpers(sl)
+
+	script := `
+from scriptling.mcp.tool import get_float_list
+
+prices = get_float_list("prices")
+missing = get_float_list("missing")
+`
+
+	params := map[string]interface{}{
+		"prices": []float64{19.99, 29.99},
+	}
+
+	_, exitCode, err := mcp.RunToolScript(context.Background(), sl, script, params)
+	if err != nil {
+		t.Fatalf("RunToolScript failed: %v", err)
+	}
+	if exitCode != 0 {
+		t.Errorf("Expected exit code 0, got %d", exitCode)
+	}
+
+	pricesObj, objErr := sl.GetVarAsObject("prices")
+	if objErr != nil {
+		t.Fatalf("Failed to get prices: %v", objErr)
+	}
+	pricesList, ok := pricesObj.(*object.List)
+	if !ok {
+		t.Fatalf("Expected List object, got %T", pricesObj)
+	}
+	if len(pricesList.Elements) != 2 {
+		t.Errorf("Expected 2 prices, got %d", len(pricesList.Elements))
+	}
+}
+
+// TestToolHelpersGetBoolList tests get_bool_list function
+func TestToolHelpersGetBoolList(t *testing.T) {
+	sl := scriptling.New()
+	mcp.RegisterToolHelpers(sl)
+
+	script := `
+from scriptling.mcp.tool import get_bool_list
+
+flags = get_bool_list("flags")
+missing = get_bool_list("missing")
+`
+
+	params := map[string]interface{}{
+		"flags": []bool{true, false, true},
+	}
+
+	_, exitCode, err := mcp.RunToolScript(context.Background(), sl, script, params)
+	if err != nil {
+		t.Fatalf("RunToolScript failed: %v", err)
+	}
+	if exitCode != 0 {
+		t.Errorf("Expected exit code 0, got %d", exitCode)
+	}
+
+	flagsObj, objErr := sl.GetVarAsObject("flags")
+	if objErr != nil {
+		t.Fatalf("Failed to get flags: %v", objErr)
+	}
+	flagsList, ok := flagsObj.(*object.List)
+	if !ok {
+		t.Fatalf("Expected List object, got %T", flagsObj)
+	}
+	if len(flagsList.Elements) != 3 {
+		t.Errorf("Expected 3 flags, got %d", len(flagsList.Elements))
+	}
+}
+
+// TestToolHelpersReturnToon tests return_toon function
+func TestToolHelpersReturnToon(t *testing.T) {
+	sl := scriptling.New()
+	mcp.RegisterToolHelpers(sl)
+
+	script := `
+from scriptling.mcp.tool import return_toon
+
+return_toon({"status": "success", "items": [1, 2, 3]})
+`
+
+	result, err := sl.Eval(script)
+	if err != nil {
+		t.Fatalf("Failed to evaluate script: %v", err)
+	}
+
+	exitObj, ok := result.(*object.Exception)
+	if !ok {
+		t.Fatalf("Expected Exception object, got %T", result)
+	}
+
+	if !exitObj.IsSystemExit() {
+		t.Errorf("Expected SystemExit exception")
+	}
+
+	if exitObj.Code != 0 {
+		t.Errorf("Expected exit code 0, got %d", exitObj.Code)
+	}
+
+	responseObj, err := sl.GetVarAsObject(mcp.MCPResponseVarName)
+	if err != nil {
+		t.Fatalf("Failed to get __mcp_response: %v", err)
+	}
+
+	strObj, ok := responseObj.(*object.String)
+	if !ok {
+		t.Fatalf("Expected String object, got %T", responseObj)
+	}
+
+	if strObj.Value == "" {
+		t.Errorf("Expected TOON response, got empty string")
+	}
+
+	if !strings.Contains(strObj.Value, "status") || !strings.Contains(strObj.Value, "success") {
+		t.Errorf("Expected TOON to contain status and success, got %q", strObj.Value)
 	}
 }
 
