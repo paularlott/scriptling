@@ -9,16 +9,19 @@ Download the appropriate binary for your platform from the releases or build fro
 ## Usage
 
 ### Run a script file
+
 ```bash
 scriptling script.py
 ```
 
 ### Run from stdin
+
 ```bash
 echo 'print("Hello World")' | scriptling
 ```
 
 ### Interactive mode
+
 ```bash
 scriptling --interactive
 # or
@@ -26,8 +29,46 @@ scriptling -i
 ```
 
 ### Custom library directory
+
 ```bash
 scriptling --libdir ./mylibs script.py
+```
+
+### Environment Configuration
+
+The CLI automatically loads environment variables from a `.env` file in the current directory (if it exists). This is useful for setting default values for flags without typing them on the command line.
+
+**Example `.env` file:**
+
+```bash
+# Log configuration
+SCRIPTLING_LOG_LEVEL=debug
+SCRIPTLING_LOG_FORMAT=console
+
+# Library directory
+SCRIPTLING_LIBDIR=./mylibs
+
+# MCP Server configuration
+SCRIPTLING_MCP_ADDRESS=127.0.0.1:8000
+SCRIPTLING_MCP_TOOLS=./tools
+SCRIPTLING_MCP_BEARER_TOKEN=your-secret-token
+```
+
+### Accessing Environment Variables in Scripts
+
+You can access environment variables from within Scriptling scripts using the `os` library:
+
+```python
+import os
+
+# Get a specific environment variable
+api_key = os.getenv("API_KEY", "default-key")
+print(f"API Key: {api_key}")
+
+# Get all environment variables
+env = os.environ()
+print(f"Home: {env['HOME']}")
+print(f"Path: {env['PATH']}")
 ```
 
 ### MCP Server
@@ -35,7 +76,7 @@ scriptling --libdir ./mylibs script.py
 Start an MCP (Model Context Protocol) server to serve tools:
 
 ```bash
-# Start server (default: 127.0.0.1:8000, tools: ./tools)
+# Start server with defaults (address: 127.0.0.1:8000, tools: current directory)
 scriptling mcp serve
 
 # Custom configuration
@@ -63,6 +104,7 @@ Tools consist of two files: a `.toml` metadata file and a `.py` script file.
 Defines the tool's description, parameters, and registration mode:
 
 **hello.toml:**
+
 ```toml
 description = "Greet a person by name"
 keywords = ["hello", "greet", "welcome"]
@@ -85,12 +127,14 @@ required = false
 ```
 
 **Parameter Types:**
+
 - `string` - Text values
 - `int`, `integer` - Integer numbers
 - `float`, `number` - Floating point numbers
 - `bool`, `boolean` - True/false values
 
 **Registration Modes:**
+
 - **Native mode** (default): Tool appears in `tools/list` and can be called directly
 - **Discovery mode** (`discoverable = true`): Tool is hidden from `tools/list`, searchable via `tool_search`, and callable via `execute_tool`
 
@@ -99,6 +143,7 @@ required = false
 Implements the tool logic using the `scriptling.mcp.tool` library:
 
 **hello.py:**
+
 ```python
 import scriptling.mcp.tool as tool
 
@@ -139,6 +184,7 @@ tool.return_error(message)            # Return error message
 A tool that calculates the sum of two numbers:
 
 **add.toml:**
+
 ```toml
 description = "Calculate the sum of two numbers"
 keywords = ["math", "add", "sum", "calculate"]
@@ -158,6 +204,7 @@ required = true
 ```
 
 **add.py:**
+
 ```python
 import scriptling.mcp.tool as tool
 
@@ -199,6 +246,7 @@ curl -X POST http://127.0.0.1:8000/mcp \
 ```
 
 ### Help
+
 ```bash
 scriptling --help
 ```
@@ -215,16 +263,19 @@ brew install go-task/tap/go-task
 ```
 
 ### Build for current platform
+
 ```bash
 task build
 ```
 
 ### Build for all platforms
+
 ```bash
 task build-all
 ```
 
 ### Install locally
+
 ```bash
 task install
 ```
@@ -236,6 +287,7 @@ task install
 - **Interactive mode**: REPL-like interactive execution
 - **MCP Server**: Serve tools via Model Context Protocol
 - **Custom libraries**: Load libraries from custom directories with `--libdir`
+- **Environment configuration**: Auto-load settings from `.env` file
 - **Configurable logging**: Set log level with `--log-level` (debug, info, warn, error)
 - **Cross-platform**: Built for Linux, macOS, and Windows on AMD64 and ARM64
 - **Minimal size**: Optimized with stripped binaries (~7MB)
@@ -243,6 +295,7 @@ task install
 ## Libraries
 
 The CLI includes all standard libraries plus external libraries:
+
 - `datetime`, `json`, `math`, `random`, `re`, `time`, `base64`, `hashlib`, `urllib`
 - `requests` - HTTP client library
 - `subprocess` - Process execution library

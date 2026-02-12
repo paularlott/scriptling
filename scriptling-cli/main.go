@@ -6,19 +6,15 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/paularlott/cli"
+	"github.com/paularlott/cli/env"
 	"github.com/paularlott/logger"
 	logslog "github.com/paularlott/logger/slog"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs"
-	"github.com/paularlott/scriptling/extlibs/agent"
-	"github.com/paularlott/scriptling/extlibs/ai"
-	"github.com/paularlott/scriptling/extlibs/mcp"
 	"github.com/paularlott/scriptling/object"
-	"github.com/paularlott/scriptling/stdlib"
 
 	mcpcli "github.com/paularlott/scriptling/scriptling-cli/mcp"
 )
@@ -26,6 +22,9 @@ import (
 var globalLogger logger.Logger
 
 func main() {
+	// Load .env from the current directory if it exists
+	env.Load()
+
 	cmd := &cli.Command{
 		Name:        "scriptling",
 		Version:     "1.0.0",
@@ -41,18 +40,22 @@ func main() {
 				Name:         "libdir",
 				Usage:        "Directory to load libraries from",
 				DefaultValue: "",
+				Global:       true,
+				EnvVars:      []string{"SCRIPTLING_LIBDIR"},
 			},
 			&cli.StringFlag{
 				Name:         "log-level",
 				Usage:        "Log level (trace|debug|info|warn|error)",
 				DefaultValue: "info",
 				Global:       true,
+				EnvVars:      []string{"SCRIPTLING_LOG_LEVEL"},
 			},
 			&cli.StringFlag{
 				Name:         "log-format",
 				Usage:        "Log format (console|json)",
 				DefaultValue: "console",
 				Global:       true,
+				EnvVars:      []string{"SCRIPTLING_LOG_FORMAT"},
 			},
 		},
 		MaxArgs: cli.UnlimitedArgs,
@@ -78,16 +81,19 @@ func main() {
 								Name:         "address",
 								Usage:        "Server address",
 								DefaultValue: "127.0.0.1:8000",
+								EnvVars:      []string{"SCRIPTLING_MCP_ADDRESS"},
 							},
 							&cli.StringFlag{
 								Name:         "tools",
 								Usage:        "Tools folder path",
-								DefaultValue: "./tools",
+								DefaultValue: "",
+								EnvVars:      []string{"SCRIPTLING_MCP_TOOLS"},
 							},
 							&cli.StringFlag{
 								Name:         "bearer-token",
 								Usage:        "Bearer token for authentication (optional)",
 								DefaultValue: "",
+								EnvVars:      []string{"SCRIPTLING_MCP_BEARER_TOKEN"},
 							},
 							&cli.BoolFlag{
 								Name:  "validate",
@@ -124,47 +130,9 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	// Create Scriptling interpreter
 	p := scriptling.New()
 
-	// Register all standard libraries
-	stdlib.RegisterAll(p)
-
-	// Register extended libraries
-	extlibs.RegisterRequestsLibrary(p)
-	extlibs.RegisterSecretsLibrary(p)
-	extlibs.RegisterSubprocessLibrary(p)
-	extlibs.RegisterHTMLParserLibrary(p)
-	extlibs.RegisterThreadsLibrary(p)
-	extlibs.RegisterOSLibrary(p, []string{})
-	extlibs.RegisterPathlibLibrary(p, []string{})
-	extlibs.RegisterGlobLibrary(p, []string{})
-	extlibs.RegisterWaitForLibrary(p)
-	extlibs.RegisterConsoleLibrary(p)
-	p.RegisterLibrary(extlibs.YAMLLibrary)
-
-	// Register AI and MCP libraries
-	ai.Register(p)
-	agent.Register(p)
-	agent.RegisterInteract(p)
-
-	// Register MCP library
-	mcp.Register(p)
-	mcp.RegisterToon(p)
-	mcp.RegisterToolHelpers(p) // Register MCP tool helpers
-
-	// Set up on-demand library loading for local .py files
+	// Set up all libraries
 	libdir := cmd.GetString("libdir")
-	p.SetOnDemandLibraryCallback(func(p *scriptling.Scriptling, libName string) bool {
-		var filename string
-		if libdir != "" {
-			filename = filepath.Join(libdir, libName+".py")
-		} else {
-			filename = libName + ".py"
-		}
-		content, err := os.ReadFile(filename)
-		if err == nil {
-			return p.RegisterScriptLibrary(libName, string(content)) == nil
-		}
-		return false
-	})
+	mcpcli.SetupScriptling(p, libdir, true) // true = register interact library
 
 	file := cmd.GetStringArg("file")
 	interactive := cmd.GetBool("interactive")
