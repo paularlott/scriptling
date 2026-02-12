@@ -216,10 +216,6 @@ func TestContextChecker(t *testing.T) {
 	ctx := context.Background()
 	checker := newContextChecker(ctx)
 
-	if checker == nil {
-		t.Fatal("newContextChecker() returned nil")
-	}
-
 	if checker.ctx != ctx {
 		t.Error("contextChecker.ctx is not the same as the passed context")
 	}

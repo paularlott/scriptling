@@ -26,13 +26,16 @@ func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression
 	}
 
 	// Evaluate keyword arguments
-	keywords := make(map[string]object.Object)
-	for k, v := range mce.Keywords {
-		val := evalWithContext(ctx, v, env)
-		if object.IsError(val) {
-			return val
+	var keywords map[string]object.Object
+	if len(mce.Keywords) > 0 {
+		keywords = make(map[string]object.Object, len(mce.Keywords))
+		for k, v := range mce.Keywords {
+			val := evalWithContext(ctx, v, env)
+			if object.IsError(val) {
+				return val
+			}
+			keywords[k] = val
 		}
-		keywords[k] = val
 	}
 
 	// Handle *args unpacking (supports multiple)
@@ -55,6 +58,9 @@ func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression
 			return kwargsVal
 		}
 		if dict, ok := kwargsVal.(*object.Dict); ok {
+			if keywords == nil {
+				keywords = make(map[string]object.Object, len(dict.Pairs))
+			}
 			for k, pair := range dict.Pairs {
 				keywords[k] = pair.Value
 			}
@@ -126,7 +132,7 @@ func callSuperMethod(ctx context.Context, super *object.Super, method string, ar
 	for currentClass != nil {
 		if fn, ok := currentClass.Methods[method]; ok {
 			// Bind 'self' for all callable types (Function, Builtin, LambdaFunction, etc.)
-			newArgs := append([]object.Object{super.Instance}, args...)
+			newArgs := prependSelf(super.Instance, args)
 			return applyFunctionWithContext(ctx, fn, newArgs, keywords, env)
 		}
 		currentClass = currentClass.BaseClass
@@ -135,13 +141,28 @@ func callSuperMethod(ctx context.Context, super *object.Super, method string, ar
 	return errors.NewError("super object has no method %s", method)
 }
 
+// prependSelf prepends self to args using a stack buffer for small arg lists to avoid heap allocation.
+func prependSelf(self object.Object, args []object.Object) []object.Object {
+	n := len(args) + 1
+	if n <= 8 {
+		var buf [8]object.Object
+		buf[0] = self
+		copy(buf[1:], args)
+		return buf[:n]
+	}
+	newArgs := make([]object.Object, n)
+	newArgs[0] = self
+	copy(newArgs[1:], args)
+	return newArgs
+}
+
 func callInstanceMethod(ctx context.Context, instance *object.Instance, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
 	// Walk up the inheritance chain to find the method
 	currentClass := instance.Class
 	for currentClass != nil {
 		if fn, ok := currentClass.Methods[method]; ok {
 			// Bind 'self'
-			newArgs := append([]object.Object{instance}, args...)
+			newArgs := prependSelf(instance, args)
 			return applyFunctionWithContext(ctx, fn, newArgs, keywords, env)
 		}
 		currentClass = currentClass.BaseClass
