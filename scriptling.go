@@ -27,6 +27,7 @@ type Scriptling struct {
 	registeredLibraries     map[string]*object.Library
 	scriptLibraries         map[string]*scriptLibrary // Script-based libraries
 	onDemandLibraryCallback func(*Scriptling, string) bool
+	sourceFile              string // optional source file name for error reporting
 }
 
 func New() *Scriptling {
@@ -366,6 +367,11 @@ func (p *Scriptling) EvalWithContext(ctx context.Context, input string) (result 
 		}
 	}()
 
+	// Add source file info to context for error reporting
+	if p.sourceFile != "" {
+		ctx = evaluator.ContextWithSourceFile(ctx, p.sourceFile)
+	}
+
 	result = evaluator.EvalWithContext(ctx, program, p.env)
 	return p.handleResult(result, "")
 }
@@ -700,6 +706,45 @@ func (p *Scriptling) SetOnDemandLibraryCallback(callback func(*Scriptling, strin
 	p.onDemandLibraryCallback = callback
 }
 
+// SetSourceFile sets the source file name used in error messages.
+// When set, errors will include the file name and line number for better debugging.
+func (p *Scriptling) SetSourceFile(name string) {
+	p.sourceFile = name
+}
+
+// loadLibraryIntoEnv loads a script or registered library into the given environment as a dict.
+// Returns true if the library was found and loaded, false otherwise.
+func (p *Scriptling) loadLibraryIntoEnv(name string, env *object.Environment) (bool, error) {
+	// Try from script libraries
+	if lib, ok := p.scriptLibraries[name]; ok {
+		if lib.store == nil {
+			store, err := p.evaluateScriptLibrary(name, lib.source)
+			if err != nil {
+				return false, err
+			}
+			lib.store = store
+		}
+		libDict := make(map[string]object.DictPair, len(lib.store))
+		for fname, obj := range lib.store {
+			libDict[fname] = object.DictPair{
+				Key:   &object.String{Value: fname},
+				Value: obj,
+			}
+		}
+		env.Set(name, &object.Dict{Pairs: libDict})
+		return true, nil
+	}
+
+	// Try from registered libraries
+	if lib, ok := p.registeredLibraries[name]; ok {
+		libDict := p.libraryToDict(lib)
+		env.Set(name, libDict)
+		return true, nil
+	}
+
+	return false, nil
+}
+
 func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[string]object.Object, error) {
 	// Create a new environment for the library
 	libEnv := object.NewEnvironment()
@@ -719,35 +764,24 @@ func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[stri
 			return nil // Already imported, skip
 		}
 
-		// Try from script libraries first
-		if lib, ok := p.scriptLibraries[libName]; ok {
-			// Check if we need to evaluate it first (recursive lazy loading)
-			if lib.store == nil {
-				store, err := p.evaluateScriptLibrary(libName, lib.source)
-				if err != nil {
-					return err
-				}
-				lib.store = store
+		for attempts := 0; attempts < 2; attempts++ {
+			loaded, err := p.loadLibraryIntoEnv(libName, libEnv)
+			if err != nil {
+				return err
+			}
+			if loaded {
+				return nil
 			}
 
-			// Load script library into library environment
-			libDict := make(map[string]object.DictPair, len(lib.store))
-			for fname, obj := range lib.store {
-				libDict[fname] = object.DictPair{
-					Key:   &object.String{Value: fname},
-					Value: obj,
+			// If first attempt and callback exists, try on-demand loading
+			if attempts == 0 && p.onDemandLibraryCallback != nil {
+				if !p.onDemandLibraryCallback(p, libName) {
+					break // callback didn't register, stop
 				}
+				// else continue to second attempt
+			} else {
+				break
 			}
-			libEnv.Set(libName, &object.Dict{Pairs: libDict})
-			return nil
-		}
-
-		// Try from registered libraries
-		if lib, ok := p.registeredLibraries[libName]; ok {
-			// Convert library to dict and load into library environment
-			libDict := p.libraryToDict(lib)
-			libEnv.Set(libName, libDict)
-			return nil
 		}
 
 		return fmt.Errorf("unknown library: %s", libName)
@@ -780,9 +814,28 @@ func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[stri
 		}
 	}
 
-	result := evaluator.Eval(program, libEnv)
+	result := evaluator.EvalWithContext(
+		evaluator.ContextWithSourceFile(context.Background(), name),
+		program, libEnv,
+	)
 	if err, ok := result.(*object.Error); ok {
-		return nil, fmt.Errorf("%s", err.Message)
+		// Include location info in the error message
+		msg := err.Message
+		if err.Line > 0 || err.File != "" {
+			loc := ""
+			if err.File != "" {
+				loc = err.File
+			}
+			if err.Line > 0 {
+				if loc != "" {
+					loc += fmt.Sprintf(":%d", err.Line)
+				} else {
+					loc = fmt.Sprintf("line %d", err.Line)
+				}
+			}
+			msg = fmt.Sprintf("%s (%s)", msg, loc)
+		}
+		return nil, fmt.Errorf("%s", msg)
 	}
 
 	// Extract all defined names from the library environment
@@ -919,10 +972,26 @@ func (p *Scriptling) GetOutput() string {
 func (p *Scriptling) handleResult(result object.Object, contextMsg string) (object.Object, error) {
 	switch obj := result.(type) {
 	case *object.Error:
-		if contextMsg != "" {
-			return obj, fmt.Errorf("%s: %s", contextMsg, obj.Message)
+		// Build error message with location info
+		msg := obj.Message
+		if obj.Line > 0 || obj.File != "" {
+			loc := ""
+			if obj.File != "" {
+				loc = obj.File
+			}
+			if obj.Line > 0 {
+				if loc != "" {
+					loc += fmt.Sprintf(":%d", obj.Line)
+				} else {
+					loc = fmt.Sprintf("line %d", obj.Line)
+				}
+			}
+			msg = fmt.Sprintf("%s (%s)", msg, loc)
 		}
-		return obj, fmt.Errorf("%s", obj.Message)
+		if contextMsg != "" {
+			return obj, fmt.Errorf("%s: %s", contextMsg, msg)
+		}
+		return obj, fmt.Errorf("%s", msg)
 
 	case *object.Exception:
 		if obj.IsSystemExit() {

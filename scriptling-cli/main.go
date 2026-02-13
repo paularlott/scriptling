@@ -86,7 +86,7 @@ func main() {
 							&cli.StringFlag{
 								Name:         "tools",
 								Usage:        "Tools folder path",
-								DefaultValue: "",
+								DefaultValue: ".",
 								EnvVars:      []string{"SCRIPTLING_MCP_TOOLS"},
 							},
 							&cli.StringFlag{
@@ -98,6 +98,18 @@ func main() {
 							&cli.BoolFlag{
 								Name:  "validate",
 								Usage: "Validate tools without starting server",
+							},
+							&cli.StringFlag{
+								Name:    "allow-script-execute",
+								Usage:   "Allow script execution via execute_scriptling tool (off|safe|full)",
+								EnvVars: []string{"SCRIPTLING_ALLOW_SCRIPT_EXECUTE"},
+								ValidateFlag: func(c *cli.Command) error {
+									mode := c.GetString("allow-script-execute")
+									if mode != "off" && mode != "safe" && mode != "full" {
+										return fmt.Errorf("invalid value for --allow-script-execute: %s", mode)
+									}
+									return nil
+								},
 							},
 						},
 						Run: mcpcli.RunMCPServe,
@@ -132,7 +144,7 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 
 	// Set up all libraries
 	libdir := cmd.GetString("libdir")
-	mcpcli.SetupScriptling(p, libdir, true) // true = register interact library
+	mcpcli.SetupScriptling(p, libdir, true, false)
 
 	file := cmd.GetStringArg("file")
 	interactive := cmd.GetBool("interactive")

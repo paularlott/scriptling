@@ -6,36 +6,43 @@ import (
 
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs"
-	"github.com/paularlott/scriptling/extlibs/ai"
 	"github.com/paularlott/scriptling/extlibs/agent"
+	"github.com/paularlott/scriptling/extlibs/ai"
 	scriptlingmcp "github.com/paularlott/scriptling/extlibs/mcp"
 	"github.com/paularlott/scriptling/stdlib"
 )
 
-// SetupScriptling configures a Scriptling instance with all standard libraries.
+// SetupScriptling configures a Scriptling instance with libraries.
 // libdir: Optional directory for on-demand library loading (empty = current directory)
 // registerInteract: Whether to register the agent interact library
-func SetupScriptling(p *scriptling.Scriptling, libdir string, registerInteract bool) {
-	// Register all standard libraries
+// safeMode: If true, only register safe libraries (no file/network/subprocess access)
+func SetupScriptling(p *scriptling.Scriptling, libdir string, registerInteract bool, safeMode bool) {
+	// Register all standard libraries (always safe)
 	stdlib.RegisterAll(p)
 
-	// Register extended libraries
+	// Register YAML (safe - pure parsing)
+	p.RegisterLibrary(extlibs.YAMLLibrary)
+
+	// Register HTML parser (safe - no external access)
+	extlibs.RegisterHTMLParserLibrary(p)
 	extlibs.RegisterRequestsLibrary(p)
 	extlibs.RegisterSecretsLibrary(p)
-	extlibs.RegisterSubprocessLibrary(p)
-	extlibs.RegisterHTMLParserLibrary(p)
-	extlibs.RegisterThreadsLibrary(p)
 	extlibs.RegisterOSLibrary(p, []string{})
-	extlibs.RegisterPathlibLibrary(p, []string{})
-	extlibs.RegisterGlobLibrary(p, []string{})
-	extlibs.RegisterWaitForLibrary(p)
-	extlibs.RegisterConsoleLibrary(p)
-	p.RegisterLibrary(extlibs.YAMLLibrary)
+
+	// Skip dangerous libraries in safe mode
+	if !safeMode {
+		extlibs.RegisterSubprocessLibrary(p)
+		extlibs.RegisterThreadsLibrary(p)
+		extlibs.RegisterPathlibLibrary(p, []string{})
+		extlibs.RegisterGlobLibrary(p, []string{})
+		extlibs.RegisterWaitForLibrary(p)
+	}
 
 	// Register AI and MCP libraries
 	ai.Register(p)
 	agent.Register(p)
 	if registerInteract {
+		extlibs.RegisterConsoleLibrary(p)
 		agent.RegisterInteract(p)
 	}
 
