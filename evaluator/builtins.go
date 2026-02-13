@@ -20,6 +20,9 @@ var (
 	filterFunction func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object
 	sortedFunction func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object
 	helpFunction   func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object
+
+	// typeBuiltins maps type-related builtin pointers to their names for isinstance()
+	typeBuiltins map[*object.Builtin]string
 )
 
 var builtins = map[string]*object.Builtin{
@@ -873,10 +876,37 @@ Equivalent to (a // b, a % b) for integers.`,
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
-			typeName, err := args[1].AsString()
-			if err != nil {
-				return err
+
+			// Determine the type name from the second argument
+			var typeName string
+
+			// Check for class type first (before AsString, since Class.AsString returns name)
+			if class, ok := args[1].(*object.Class); ok {
+				// Class type: isinstance(x, MyClass)
+				if inst, ok := args[0].(*object.Instance); ok {
+					// Check direct class match and inheritance chain
+					for c := inst.Class; c != nil; c = c.BaseClass {
+						if c == class {
+							return TRUE
+						}
+					}
+					return FALSE
+				}
+				return FALSE
+			} else if s, err := args[1].AsString(); err == nil {
+				// String type name: isinstance(x, "dict")
+				typeName = s
+			} else if b, ok := args[1].(*object.Builtin); ok {
+				// Bare type builtin: isinstance(x, dict) where dict is a builtin function
+				if name, found := typeBuiltins[b]; found {
+					typeName = name
+				} else {
+					return errors.NewError("isinstance() arg 2 must be a type or string")
+				}
+			} else {
+				return errors.NewError("isinstance() arg 2 must be a type or string")
 			}
+
 			objType := args[0].Type().String()
 			// Support common Python type names
 			checkType := strings.ToUpper(typeName)
@@ -905,9 +935,12 @@ Equivalent to (a // b, a % b) for integers.`,
 			}
 			return FALSE
 		},
-		HelpText: `isinstance(object, classname) - Return True if object is of the given type
+		HelpText: `isinstance(object, type) - Return True if object is of the given type
 
-Type names: "int", "str", "float", "bool", "list", "dict", "tuple", "function", "None"`,
+Supports bare type names: isinstance(x, dict), isinstance(x, int)
+Also supports string type names: isinstance(x, "dict"), isinstance(x, "int")
+Type names: int, str, float, bool, list, dict, tuple, function, None
+Also works with class types: isinstance(obj, MyClass)`,
 	},
 	"chr": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -1605,6 +1638,17 @@ func init() {
 	filterFunction = filterFunctionImpl
 	sortedFunction = sortedFunctionImpl
 	helpFunction = helpFunctionImpl
+
+	// Build reverse lookup for isinstance() to support bare type names
+	typeBuiltins = map[*object.Builtin]string{
+		builtins["int"]:   "int",
+		builtins["str"]:   "str",
+		builtins["float"]: "float",
+		builtins["bool"]:  "bool",
+		builtins["list"]:  "list",
+		builtins["dict"]:  "dict",
+		builtins["tuple"]: "tuple",
+	}
 }
 
 func sortedFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {

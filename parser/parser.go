@@ -615,13 +615,49 @@ func (p *Parser) parseFloatLiteral() ast.Expression {
 }
 
 func (p *Parser) parseStringLiteral() ast.Expression {
-	return &ast.StringLiteral{Token: p.curToken, Value: p.curToken.Literal}
+	return p.parseAdjacentStrings(&ast.StringLiteral{Token: p.curToken, Value: p.curToken.Literal})
 }
 
 func (p *Parser) parseFStringLiteral() ast.Expression {
 	fstr := &ast.FStringLiteral{Token: p.curToken}
 	fstr.Parts, fstr.Expressions, fstr.FormatSpecs = p.parseFStringContent(p.curToken.Literal)
-	return fstr
+	return p.parseAdjacentStrings(fstr)
+}
+
+// parseAdjacentStrings handles implicit string concatenation (Python-style).
+// Adjacent string/f-string literals are concatenated: "hello" " world" → "hello world"
+// Plain string + plain string is merged at parse time (zero runtime cost).
+// Mixed string + f-string creates an InfixExpression with "+" operator.
+// Only concatenates on the same logical line, or across lines inside parens/brackets.
+func (p *Parser) parseAdjacentStrings(left ast.Expression) ast.Expression {
+	for (p.parenDepth > 0 || !p.skippedNewline) && (p.peekTokenIs(token.STRING) || p.peekTokenIs(token.F_STRING)) {
+		// Optimize: merge adjacent plain strings at parse time
+		if leftStr, ok := left.(*ast.StringLiteral); ok && p.peekTokenIs(token.STRING) {
+			p.nextToken()
+			leftStr.Value += p.curToken.Literal
+			continue
+		}
+
+		tok := p.curToken
+		p.nextToken()
+
+		var right ast.Expression
+		if p.curTokenIs(token.STRING) {
+			right = &ast.StringLiteral{Token: p.curToken, Value: p.curToken.Literal}
+		} else {
+			fstr := &ast.FStringLiteral{Token: p.curToken}
+			fstr.Parts, fstr.Expressions, fstr.FormatSpecs = p.parseFStringContent(p.curToken.Literal)
+			right = fstr
+		}
+
+		left = &ast.InfixExpression{
+			Token:    tok,
+			Operator: "+",
+			Left:     left,
+			Right:    right,
+		}
+	}
+	return left
 }
 
 func (p *Parser) parseFStringContent(content string) ([]string, []ast.Expression, []string) {

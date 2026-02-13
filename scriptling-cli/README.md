@@ -52,6 +52,7 @@ SCRIPTLING_LIBDIR=./mylibs
 SCRIPTLING_MCP_ADDRESS=127.0.0.1:8000
 SCRIPTLING_MCP_TOOLS=./tools
 SCRIPTLING_MCP_BEARER_TOKEN=your-secret-token
+SCRIPTLING_ALLOW_SCRIPT_EXECUTE=safe
 ```
 
 ### Accessing Environment Variables in Scripts
@@ -91,11 +92,29 @@ scriptling mcp serve --libdir ./mylibs
 # Validate tools without starting server
 scriptling mcp serve --validate --tools ./tools
 
+# Allow LLMs to execute scripts (sandboxed mode - no file/network/subprocess access)
+scriptling mcp serve --allow-script-execute=safe
+
+# Allow LLMs to execute scripts (full access mode)
+scriptling mcp serve --allow-script-execute=full
+
 # Set log level
 scriptling --log-level debug mcp serve
 ```
 
-#### Authoring Tools
+#### Hot-Reloading Tools
+
+The server automatically watches the tools folder and reloads when .toml files change:
+
+- **Tool scripts (.py)**: Changes are picked up immediately on each invocation
+- **Tool metadata (.toml)**: Auto-reloads when files are added, modified, or deleted
+
+You can also trigger a manual reload with:
+
+```bash
+# Send SIGHUP or SIGUSR1 to reload
+pkill -HUP scriptling
+```
 
 Tools consist of two files: a `.toml` metadata file and a `.py` script file.
 
@@ -245,6 +264,48 @@ curl -X POST http://127.0.0.1:8000/mcp \
   -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"execute_tool","arguments":{"name":"add","arguments":{"a":5,"b":3}}}}'
 ```
 
+#### Script Execution Tool
+
+When started with `--allow-script-execute`, the server registers an `execute_scriptling` tool that allows LLMs to execute Scriptling code directly:
+
+**Modes:**
+
+- `off` (default): No script execution tool registered
+- `safe`: Sandboxed execution - only safe libraries available (no file/network/subprocess access)
+- `full`: Full access - all libraries available including file I/O, network, and subprocess
+
+**Safe mode libraries include:**
+
+- Standard libraries: `json`, `math`, `random`, `re`, `time`, `base64`, `hashlib`, `urllib`
+- `datetime` - Date and time operations
+- `yaml` - YAML parsing
+- `html.parser` - HTML parsing
+- `requests` - HTTP client
+- `os` - Environment variables access
+- `secrets` - Cryptographic random number generation
+- AI, agent, and MCP libraries
+
+**Full mode additionally includes:**
+
+- `subprocess` - Process execution
+- `pathlib`, `glob` - File system access
+- `threads` - Multi-threading
+- `wait_for` - Process monitoring
+
+**Example usage:**
+
+```bash
+# Start server with script execution (safe mode)
+scriptling mcp serve --allow-script-execute=safe
+
+# LLM can now execute code
+curl -X POST http://127.0.0.1:8000/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"execute_scriptling","arguments":{"code":"import math\nresult = math.sqrt(16)\nprint(f\\"Square root of 16 is {result}\\")"}}}'
+```
+
+The tool description instructs LLMs to use `help()` within their scripts to discover available modules and functions.
+
 ### Help
 
 ```bash
@@ -286,6 +347,8 @@ task install
 - **Stdin execution**: Pipe scripts to stdin
 - **Interactive mode**: REPL-like interactive execution
 - **MCP Server**: Serve tools via Model Context Protocol
+- **Script execution tool**: Allow LLMs to execute Scriptling code via `execute_scriptling` tool
+- **Sandboxed execution**: Safe mode restricts access to file system, network, and subprocess
 - **Custom libraries**: Load libraries from custom directories with `--libdir`
 - **Environment configuration**: Auto-load settings from `.env` file
 - **Configurable logging**: Set log level with `--log-level` (debug, info, warn, error)

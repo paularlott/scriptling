@@ -108,6 +108,22 @@ func ContextWithCallDepth(ctx context.Context, maxDepth int) context.Context {
 	return SetCallDepthInContext(ctx, NewCallDepth(maxDepth))
 }
 
+// sourceFileKey is used to store source file name in context for error reporting
+type sourceFileKey struct{}
+
+// ContextWithSourceFile creates a context with source file info for error reporting
+func ContextWithSourceFile(ctx context.Context, filename string) context.Context {
+	return context.WithValue(ctx, sourceFileKey{}, filename)
+}
+
+// GetSourceFileFromContext retrieves source file name from context
+func GetSourceFileFromContext(ctx context.Context) string {
+	if f, ok := ctx.Value(sourceFileKey{}).(string); ok {
+		return f
+	}
+	return ""
+}
+
 
 // Eval executes without context (backwards compatible)
 func Eval(node ast.Node, env *object.Environment) object.Object {
@@ -175,6 +191,9 @@ func evalWithContext(ctx context.Context, node ast.Node, env *object.Environment
 	if err, ok := obj.(*object.Error); ok {
 		if err.Line == 0 {
 			err.Line = node.Line()
+		}
+		if err.File == "" {
+			err.File = GetSourceFileFromContext(ctx)
 		}
 	}
 	return obj
@@ -694,6 +713,13 @@ func evalFloatInfixExpression(operator string, left, right object.Object) object
 	case *object.Integer:
 		rightVal = float64(right.Value)
 	default:
+		// For == and != with non-numeric types, different types are never equal (Python behavior)
+		switch operator {
+		case "==":
+			return FALSE
+		case "!=":
+			return TRUE
+		}
 		return errors.NewTypeError("NUMBER", right.Type().String())
 	}
 
