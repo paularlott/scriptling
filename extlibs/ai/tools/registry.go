@@ -1,11 +1,12 @@
 package tools
 
 import (
+	"github.com/paularlott/scriptling/conversion"
 	"context"
 	"fmt"
 	"strings"
 
-	scriptlib "github.com/paularlott/scriptling"
+
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -164,7 +165,7 @@ func registryBuildMethod(self *object.Instance, ctx context.Context) object.Obje
 		})
 	}
 
-	return scriptlib.FromGo(result)
+	return conversion.FromGo(result)
 }
 
 func registryGetHandlerMethod(self *object.Instance, ctx context.Context, name string) object.Object {

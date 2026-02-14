@@ -1,10 +1,10 @@
 package mcp
 
 import (
+	"github.com/paularlott/scriptling/conversion"
 	"encoding/json"
 
 	"github.com/paularlott/mcp"
-	scriptlib "github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -20,7 +20,7 @@ func DecodeToolResponse(response *mcp.ToolResponse) object.Object {
 
 	// Handle structured content (new format)
 	if response.StructuredContent != nil {
-		return scriptlib.FromGo(response.StructuredContent)
+		return conversion.FromGo(response.StructuredContent)
 	}
 
 	// Handle content blocks
@@ -47,33 +47,33 @@ func DecodeToolContent(content mcp.ToolContent) object.Object {
 	case "text":
 		return decodeTextContent(content.Text)
 	case "image", "audio":
-		return scriptlib.FromGo(map[string]interface{}{
+		return conversion.FromGo(map[string]interface{}{
 			"type":     content.Type,
 			"data":     content.Data,
 			"mimeType": content.MimeType,
 		})
 	case "resource":
 		if content.Resource != nil {
-			return scriptlib.FromGo(map[string]interface{}{
+			return conversion.FromGo(map[string]interface{}{
 				"type":     content.Type,
 				"uri":      content.Resource.URI,
 				"text":     content.Resource.Text,
 				"mimeType": content.Resource.MimeType,
 			})
 		}
-		return scriptlib.FromGo(content)
+		return conversion.FromGo(content)
 	case "resource_link":
 		if content.Resource != nil {
-			return scriptlib.FromGo(map[string]interface{}{
+			return conversion.FromGo(map[string]interface{}{
 				"type": content.Type,
 				"uri":  content.Resource.URI,
 				"text": content.Resource.Text,
 			})
 		}
-		return scriptlib.FromGo(content)
+		return conversion.FromGo(content)
 	default:
 		// Unknown type, return as-is
-		return scriptlib.FromGo(content)
+		return conversion.FromGo(content)
 	}
 }
 
@@ -82,14 +82,14 @@ func decodeTextContent(text string) object.Object {
 	// Try to parse as JSON
 	var jsonValue interface{}
 	if err := json.Unmarshal([]byte(text), &jsonValue); err == nil {
-		return scriptlib.FromGo(jsonValue)
+		return conversion.FromGo(jsonValue)
 	}
 	// Return as plain string
 	return &object.String{Value: text}
 }
 
 // DictToMap converts a scriptling Dict to a Go map[string]interface{}.
-// This is a convenience wrapper around scriptlib.ToGo for the common case
+// This is a convenience wrapper around conversion.ToGo for the common case
 // of converting Dict arguments for tool calls.
 func DictToMap(dict *object.Dict) map[string]interface{} {
 	if dict == nil {
@@ -100,7 +100,7 @@ func DictToMap(dict *object.Dict) map[string]interface{} {
 	for _, pair := range dict.Pairs {
 		key, err := pair.Key.AsString()
 		if err == nil {
-			result[key] = scriptlib.ToGo(pair.Value)
+			result[key] = conversion.ToGo(pair.Value)
 		}
 	}
 	return result
