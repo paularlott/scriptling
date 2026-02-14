@@ -1,11 +1,11 @@
 package mcp
 
 import (
+	"github.com/paularlott/scriptling/conversion"
 	"context"
 	"sync"
 
 	mcplib "github.com/paularlott/mcp"
-	scriptlib "github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -201,7 +201,7 @@ func toolSearchMethod(self *object.Instance, ctx context.Context, kwargs object.
 		return &object.Error{Message: "tool search failed: " + err.Error()}
 	}
 
-	return scriptlib.FromGo(results)
+	return conversion.FromGo(results)
 }
 
 // execute_discovered method implementation
@@ -255,7 +255,7 @@ func convertToolsToList(tools []mcplib.MCPTool) object.Object {
 		if tool.InputSchema != nil {
 			toolDict.Pairs["input_schema"] = object.DictPair{
 				Key:   &object.String{Value: "input_schema"},
-				Value: scriptlib.FromGo(tool.InputSchema),
+				Value: conversion.FromGo(tool.InputSchema),
 			}
 		}
 		toolList = append(toolList, toolDict)

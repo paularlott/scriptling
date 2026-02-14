@@ -1,13 +1,13 @@
 package ai
 
 import (
+	"github.com/paularlott/scriptling/conversion"
 	"context"
 	"encoding/json"
 	"fmt"
 	"sync"
 
 	"github.com/paularlott/mcp/ai"
-	scriptlib "github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -296,7 +296,7 @@ func completionMethod(self *object.Instance, ctx context.Context, kwargs object.
 		}
 	} else if msgObj, ok := messages.(object.Object); ok {
 		// Convert scriptling object to Go type (for cases where it's still an object)
-		messagesGo := scriptlib.ToGo(msgObj)
+		messagesGo := conversion.ToGo(msgObj)
 		if msgList, ok := messagesGo.([]map[string]any); ok {
 			// Successfully converted to messages array
 			messagesList = msgList
@@ -352,7 +352,7 @@ func completionMethod(self *object.Instance, ctx context.Context, kwargs object.
 				}
 			case object.Object:
 				// Convert scriptling object to Go
-				tcGo := scriptlib.ToGo(tc)
+				tcGo := conversion.ToGo(tc)
 				if tcSlice, ok := tcGo.([]any); ok {
 					toolCallsList = tcSlice
 				}
@@ -366,7 +366,7 @@ func completionMethod(self *object.Instance, ctx context.Context, kwargs object.
 					case map[string]any:
 						tcMap = tcVal
 					case object.Object:
-						if tcGo := scriptlib.ToGo(tcVal); tcGo != nil {
+						if tcGo := conversion.ToGo(tcVal); tcGo != nil {
 							if m, ok := tcGo.(map[string]any); ok {
 								tcMap = m
 							}
@@ -390,7 +390,7 @@ func completionMethod(self *object.Instance, ctx context.Context, kwargs object.
 							case map[string]any:
 								fnMap = fn
 							case object.Object:
-								if fnGo := scriptlib.ToGo(fn); fnGo != nil {
+								if fnGo := conversion.ToGo(fn); fnGo != nil {
 									if m, ok := fnGo.(map[string]any); ok {
 										fnMap = m
 									}
@@ -413,7 +413,7 @@ func completionMethod(self *object.Instance, ctx context.Context, kwargs object.
 									case map[string]any:
 										tc.Function.Arguments = argsVal
 									case object.Object:
-										if argsGo := scriptlib.ToGo(argsVal); argsGo != nil {
+										if argsGo := conversion.ToGo(argsVal); argsGo != nil {
 											if m, ok := argsGo.(map[string]any); ok {
 												tc.Function.Arguments = m
 											}
@@ -458,7 +458,7 @@ func completionMethod(self *object.Instance, ctx context.Context, kwargs object.
 			tool := ai.Tool{Type: "function"}
 			if fnVal, ok := toolMap["function"]; ok && fnVal != nil {
 				// Convert object.Object to Go map using ToGo
-				fnGo := scriptlib.ToGo(fnVal)
+				fnGo := conversion.ToGo(fnVal)
 				if fnMap, ok := fnGo.(map[string]any); ok {
 					if name, ok := fnMap["name"].(string); ok {
 						tool.Function.Name = name
@@ -481,7 +481,7 @@ func completionMethod(self *object.Instance, ctx context.Context, kwargs object.
 		return &object.Error{Message: "chat completion failed: " + chatErr.Error()}
 	}
 
-	return scriptlib.FromGo(chatResp)
+	return conversion.FromGo(chatResp)
 }
 
 // models method implementation
@@ -500,7 +500,7 @@ func modelsMethod(self *object.Instance, ctx context.Context) object.Object {
 		return &object.Error{Message: "failed to get models: " + err.Error()}
 	}
 
-	return scriptlib.FromGo(models)
+	return conversion.FromGo(models)
 }
 
 // response_create method implementation
@@ -525,7 +525,7 @@ func responseCreateMethod(self *object.Instance, ctx context.Context, kwargs obj
 		}
 	} else if inputObj, ok := input.(object.Object); ok {
 		// Convert scriptling object to Go type (for cases where it's still an object)
-		inputGo := scriptlib.ToGo(inputObj)
+		inputGo := conversion.ToGo(inputObj)
 		if inputSlice, ok := inputGo.([]any); ok {
 			// Successfully converted to input array
 			inputList = inputSlice
@@ -564,7 +564,7 @@ func responseCreateMethod(self *object.Instance, ctx context.Context, kwargs obj
 		return &object.Error{Message: "failed to create response: " + err.Error()}
 	}
 
-	return scriptlib.FromGo(resp)
+	return conversion.FromGo(resp)
 }
 
 // response_get method implementation
@@ -583,7 +583,7 @@ func responseGetMethod(self *object.Instance, ctx context.Context, id string) ob
 		return &object.Error{Message: "failed to get response: " + err.Error()}
 	}
 
-	return scriptlib.FromGo(resp)
+	return conversion.FromGo(resp)
 }
 
 // response_cancel method implementation
@@ -602,7 +602,7 @@ func responseCancelMethod(self *object.Instance, ctx context.Context, id string)
 		return &object.Error{Message: "failed to cancel response: " + err.Error()}
 	}
 
-	return scriptlib.FromGo(resp)
+	return conversion.FromGo(resp)
 }
 
 // response_delete method implementation
@@ -640,7 +640,7 @@ func responseCompactMethod(self *object.Instance, ctx context.Context, id string
 		return &object.Error{Message: "failed to compact response: " + err.Error()}
 	}
 
-	return scriptlib.FromGo(resp)
+	return conversion.FromGo(resp)
 }
 
 // embedding method implementation
@@ -664,7 +664,7 @@ func embeddingMethod(self *object.Instance, ctx context.Context, model string, i
 		return &object.Error{Message: "failed to create embedding: " + err.Error()}
 	}
 
-	return scriptlib.FromGo(resp)
+	return conversion.FromGo(resp)
 }
 
 // ask method implementation - quick completion that returns text directly
@@ -685,7 +685,7 @@ func askMethod(self *object.Instance, ctx context.Context, kwargs object.Kwargs,
 // with thinking blocks removed
 func extractTextFromResponse(resp object.Object) object.Object {
 	// Convert response to Go type
-	respGo := scriptlib.ToGo(resp)
+	respGo := conversion.ToGo(resp)
 	responseMap, ok := respGo.(map[string]any)
 	if !ok {
 		return &object.String{Value: ""}
@@ -801,7 +801,7 @@ func nextStreamMethod(self *object.Instance, ctx context.Context) object.Object 
 
 	// Return current chunk
 	current := si.stream.Current()
-	return scriptlib.FromGo(current)
+	return conversion.FromGo(current)
 }
 
 // completion_stream method implementation
@@ -840,7 +840,7 @@ func completionStreamMethod(self *object.Instance, ctx context.Context, kwargs o
 		}
 	} else if msgObj, ok := messages.(object.Object); ok {
 		// Convert scriptling object to Go type (for cases where it's still an object)
-		messagesGo := scriptlib.ToGo(msgObj)
+		messagesGo := conversion.ToGo(msgObj)
 		if msgList, ok := messagesGo.([]map[string]any); ok {
 			// Successfully converted to messages array
 			messagesList = msgList
@@ -896,7 +896,7 @@ func completionStreamMethod(self *object.Instance, ctx context.Context, kwargs o
 				}
 			case object.Object:
 				// Convert scriptling object to Go
-				tcGo := scriptlib.ToGo(tc)
+				tcGo := conversion.ToGo(tc)
 				if tcSlice, ok := tcGo.([]any); ok {
 					toolCallsList = tcSlice
 				}
@@ -910,7 +910,7 @@ func completionStreamMethod(self *object.Instance, ctx context.Context, kwargs o
 					case map[string]any:
 						tcMap = tcVal
 					case object.Object:
-						if tcGo := scriptlib.ToGo(tcVal); tcGo != nil {
+						if tcGo := conversion.ToGo(tcVal); tcGo != nil {
 							if m, ok := tcGo.(map[string]any); ok {
 								tcMap = m
 							}
@@ -934,7 +934,7 @@ func completionStreamMethod(self *object.Instance, ctx context.Context, kwargs o
 							case map[string]any:
 								fnMap = fn
 							case object.Object:
-								if fnGo := scriptlib.ToGo(fn); fnGo != nil {
+								if fnGo := conversion.ToGo(fn); fnGo != nil {
 									if m, ok := fnGo.(map[string]any); ok {
 										fnMap = m
 									}
@@ -957,7 +957,7 @@ func completionStreamMethod(self *object.Instance, ctx context.Context, kwargs o
 									case map[string]any:
 										tc.Function.Arguments = argsVal
 									case object.Object:
-										if argsGo := scriptlib.ToGo(argsVal); argsGo != nil {
+										if argsGo := conversion.ToGo(argsVal); argsGo != nil {
 											if m, ok := argsGo.(map[string]any); ok {
 												tc.Function.Arguments = m
 											}
