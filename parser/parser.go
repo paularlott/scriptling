@@ -506,9 +506,9 @@ func (p *Parser) parseFromImportStatement() *ast.FromImportStatement {
 
 func (p *Parser) parseReturnStatement() *ast.ReturnStatement {
 	stmt := &ast.ReturnStatement{Token: p.curToken}
-	p.nextToken()
 
-	if !p.curTokenIs(token.NEWLINE) && !p.curTokenIs(token.SEMICOLON) && !p.curTokenIs(token.EOF) && !p.curTokenIs(token.DEDENT) {
+	if !p.peekTokenIs(token.NEWLINE) && !p.peekTokenIs(token.SEMICOLON) && !p.peekTokenIs(token.EOF) && !p.peekTokenIs(token.DEDENT) {
+		p.nextToken()
 		stmt.ReturnValue = p.parseExpressionWithConditional()
 	}
 
@@ -1618,9 +1618,9 @@ func (p *Parser) parseTryStatement() *ast.TryStatement {
 
 func (p *Parser) parseRaiseStatement() *ast.RaiseStatement {
 	stmt := &ast.RaiseStatement{Token: p.curToken}
-	p.nextToken()
 
-	if !p.curTokenIs(token.NEWLINE) && !p.curTokenIs(token.SEMICOLON) && !p.curTokenIs(token.EOF) && !p.curTokenIs(token.DEDENT) {
+	if !p.peekTokenIs(token.NEWLINE) && !p.peekTokenIs(token.SEMICOLON) && !p.peekTokenIs(token.EOF) && !p.peekTokenIs(token.DEDENT) {
+		p.nextToken()
 		stmt.Message = p.parseExpression(LOWEST)
 	}
 

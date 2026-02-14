@@ -708,6 +708,114 @@ func TestReturnStatement(t *testing.T) {
 	}
 }
 
+func TestBareReturnStatement(t *testing.T) {
+	// Bare return inside a function must not consume the DEDENT token,
+	// which would cause subsequent top-level code to be absorbed into
+	// the function body.
+	input := `def f():
+    return
+print("after")`
+
+	l := lexer.New(input)
+	p := New(l)
+	program := p.ParseProgram()
+	checkParserErrors(t, p)
+
+	if len(program.Statements) != 2 {
+		t.Fatalf("expected 2 top-level statements (def + print), got=%d",
+			len(program.Statements))
+	}
+
+	fnStmt, ok := program.Statements[0].(*ast.FunctionStatement)
+	if !ok {
+		t.Fatalf("program.Statements[0] is not FunctionStatement. got=%T",
+			program.Statements[0])
+	}
+	if len(fnStmt.Function.Body.Statements) != 1 {
+		t.Fatalf("function body should have 1 statement, got=%d",
+			len(fnStmt.Function.Body.Statements))
+	}
+	retStmt, ok := fnStmt.Function.Body.Statements[0].(*ast.ReturnStatement)
+	if !ok {
+		t.Fatalf("function body statement is not ReturnStatement. got=%T",
+			fnStmt.Function.Body.Statements[0])
+	}
+	if retStmt.ReturnValue != nil {
+		t.Error("bare return should have nil ReturnValue")
+	}
+
+	_, ok = program.Statements[1].(*ast.ExpressionStatement)
+	if !ok {
+		t.Fatalf("program.Statements[1] is not ExpressionStatement. got=%T",
+			program.Statements[1])
+	}
+}
+
+func TestBareReturnInIfBlock(t *testing.T) {
+	// Bare return inside an if block within a function.
+	input := `def f(x):
+    if x:
+        return
+    print("not returned")
+print("after")`
+
+	l := lexer.New(input)
+	p := New(l)
+	program := p.ParseProgram()
+	checkParserErrors(t, p)
+
+	if len(program.Statements) != 2 {
+		t.Fatalf("expected 2 top-level statements, got=%d",
+			len(program.Statements))
+	}
+
+	fnStmt, ok := program.Statements[0].(*ast.FunctionStatement)
+	if !ok {
+		t.Fatalf("program.Statements[0] is not FunctionStatement. got=%T",
+			program.Statements[0])
+	}
+	// Function body: if statement + print statement
+	if len(fnStmt.Function.Body.Statements) != 2 {
+		t.Fatalf("function body should have 2 statements, got=%d",
+			len(fnStmt.Function.Body.Statements))
+	}
+}
+
+func TestBareRaiseStatement(t *testing.T) {
+	// Bare raise (re-raise) inside a function must not consume the DEDENT.
+	input := `def f():
+    raise
+print("after")`
+
+	l := lexer.New(input)
+	p := New(l)
+	program := p.ParseProgram()
+	checkParserErrors(t, p)
+
+	if len(program.Statements) != 2 {
+		t.Fatalf("expected 2 top-level statements, got=%d",
+			len(program.Statements))
+	}
+
+	fnStmt, ok := program.Statements[0].(*ast.FunctionStatement)
+	if !ok {
+		t.Fatalf("program.Statements[0] is not FunctionStatement. got=%T",
+			program.Statements[0])
+	}
+	if len(fnStmt.Function.Body.Statements) != 1 {
+		t.Fatalf("function body should have 1 statement, got=%d",
+			len(fnStmt.Function.Body.Statements))
+	}
+	raiseStmt, ok := fnStmt.Function.Body.Statements[0].(*ast.RaiseStatement)
+	if !ok {
+		t.Fatalf("function body statement is not RaiseStatement. got=%T",
+			fnStmt.Function.Body.Statements[0])
+	}
+	if raiseStmt.Message != nil {
+		t.Error("bare raise should have nil Message")
+	}
+}
+
 func TestBreakStatement(t *testing.T) {
 	input := "break"
 
