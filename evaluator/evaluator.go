@@ -1477,8 +1477,8 @@ func evalImportStatement(is *ast.ImportStatement, env *object.Environment) objec
 
 	// Handle alias if present
 	if is.Alias != nil {
-		moduleObj, ok := env.Get(is.Name.Value)
-		if ok {
+		moduleObj := getModuleByPath(env, is.Name.Value)
+		if moduleObj != nil {
 			env.Set(is.Alias.Value, moduleObj)
 		}
 	}
@@ -1491,14 +1491,50 @@ func evalImportStatement(is *ast.ImportStatement, env *object.Environment) objec
 
 		// Handle alias for this additional import if present
 		if i < len(is.AdditionalAliases) && is.AdditionalAliases[i] != nil {
-			moduleObj, ok := env.Get(name.Value)
-			if ok {
+			moduleObj := getModuleByPath(env, name.Value)
+			if moduleObj != nil {
 				env.Set(is.AdditionalAliases[i].Value, moduleObj)
 			}
 		}
 	}
 
 	return NULL
+}
+
+// getModuleByPath gets a module from the environment, handling dotted paths
+func getModuleByPath(env *object.Environment, name string) object.Object {
+	// First try direct lookup
+	if obj, ok := env.Get(name); ok {
+		return obj
+	}
+
+	// For dotted paths, navigate from the root
+	parts := strings.Split(name, ".")
+	if len(parts) < 2 {
+		return nil
+	}
+
+	// Get the root module
+	rootObj, ok := env.Get(parts[0])
+	if !ok {
+		return nil
+	}
+
+	// Navigate through the path
+	current := rootObj
+	for i := 1; i < len(parts); i++ {
+		dict, ok := current.(*object.Dict)
+		if !ok {
+			return nil
+		}
+		pair, ok := dict.Pairs[parts[i]]
+		if !ok {
+			return nil
+		}
+		current = pair.Value
+	}
+
+	return current
 }
 
 func evalFromImportStatement(fis *ast.FromImportStatement, env *object.Environment) object.Object {
