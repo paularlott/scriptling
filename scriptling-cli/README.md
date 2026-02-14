@@ -134,7 +134,7 @@ keywords = ["hello", "greet", "welcome"]
 
 [[parameters]]
 name = "name"
-type = "string"           # Supported: string, int, integer, float, number, bool, boolean
+type = "string"
 description = "Name of the person to greet"
 required = true
 
@@ -142,15 +142,28 @@ required = true
 name = "times"
 type = "int"
 description = "Number of times to repeat the greeting"
-required = false
 ```
 
 **Parameter Types:**
 
-- `string` - Text values
-- `int`, `integer` - Integer numbers
-- `float`, `number` - Floating point numbers
-- `bool`, `boolean` - True/false values
+| Type | Aliases | Description |
+|------|---------|-------------|
+| `string` | | Text values |
+| `int` | `integer` | Integer numbers |
+| `float` | `number` | Floating point numbers |
+| `bool` | `boolean` | True/false values |
+| `array:string` | | Array of strings |
+| `array:number` | `array:int`, `array:integer`, `array:float` | Array of numbers |
+| `array:bool` | `array:boolean` | Array of booleans |
+
+**Parameter Fields:**
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | Yes | Parameter name |
+| `type` | Yes | Data type (see table above) |
+| `description` | Yes | Description shown to the LLM |
+| `required` | No | Whether the parameter must be provided (default: `false`) |
 
 **Registration Modes:**
 
