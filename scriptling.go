@@ -7,6 +7,7 @@ import (
 	"runtime/debug"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/paularlott/scriptling/ast"
@@ -20,6 +21,20 @@ import (
 type scriptLibrary struct {
 	source string
 	store  map[string]object.Object
+}
+
+const (
+	maxLibraryNestingDepth = 5  // Max depth for library imports (e.g., a.b.c.d.e)
+	maxDottedPathDepth     = 10 // Max depth for dotted paths (e.g., a.b.c.d.e.f.g.h.i.j)
+	maxPathParts           = 11 // Pre-allocate for max path parts (maxDottedPathDepth + 1)
+)
+
+// pathPartsPool reuses slices for path splitting to reduce allocations
+var pathPartsPool = sync.Pool{
+	New: func() interface{} {
+		s := make([]string, 0, maxPathParts)
+		return &s
+	},
 }
 
 type Scriptling struct {
@@ -90,90 +105,138 @@ func New() *Scriptling {
 	return p
 }
 
+// splitPath splits a dotted path and returns a slice from the pool
+// Caller must call putPathParts when done
+func splitPath(path string) []string {
+	partsPtr := pathPartsPool.Get().(*[]string)
+	parts := (*partsPtr)[:0] // Reset length but keep capacity
+	
+	// Manual split to reuse slice
+	start := 0
+	for i := 0; i < len(path); i++ {
+		if path[i] == '.' {
+			parts = append(parts, path[start:i])
+			start = i + 1
+		}
+	}
+	if start < len(path) {
+		parts = append(parts, path[start:])
+	}
+	
+	return parts
+}
+
+// putPathParts returns a path parts slice to the pool
+func putPathParts(parts []string) {
+	partsPtr := &parts
+	pathPartsPool.Put(partsPtr)
+}
+
+// traverseDictPath navigates a dotted path through Dict objects
+func traverseDictPath(root object.Object, parts []string, maxDepth int) (object.Object, error) {
+	if len(parts) > maxDepth {
+		return nil, fmt.Errorf("path too deep (max %d levels): %s", maxDepth, strings.Join(parts, "."))
+	}
+	
+	current := root
+	for i, part := range parts {
+		dict, ok := current.(*object.Dict)
+		if !ok {
+			return nil, fmt.Errorf("'%s' is not a module", strings.Join(parts[:i+1], "."))
+		}
+		pair, exists := dict.Pairs[part]
+		if !exists {
+			return nil, fmt.Errorf("'%s' not found", strings.Join(parts[:i+1], "."))
+		}
+		current = pair.Value
+	}
+	return current, nil
+}
+
+// needsParentMerge checks if an existing dict only has sub-libraries and needs parent functions merged
+func (p *Scriptling) needsParentMerge(name string, existingDict *object.Dict) bool {
+	lib, ok := p.registeredLibraries[name]
+	if !ok {
+		return false
+	}
+	
+	funcs := lib.Functions()
+	if funcs == nil {
+		return false
+	}
+	
+	// Check if dict has any library functions (not just sub-libraries)
+	for key := range existingDict.Pairs {
+		if key != "__doc__" && funcs[key] != nil {
+			return false // Already has functions
+		}
+	}
+	return true // Only has sub-libraries, needs merge
+}
+
 func (p *Scriptling) loadLibrary(name string) error {
-	// For dotted names like scriptling.ai.agent, check if we need to load parent first
-	parts := strings.Split(name, ".")
+	return p.loadLibraryWithDepth(name, 0)
+}
+
+func (p *Scriptling) loadLibraryWithDepth(name string, depth int) error {
+	parts := splitPath(name)
+	defer putPathParts(parts)
+	
+	if len(parts)-1 > maxLibraryNestingDepth {
+		return fmt.Errorf("library nesting too deep (max %d levels): %s", maxLibraryNestingDepth, name)
+	}
+	
+	if depth > maxLibraryNestingDepth {
+		return fmt.Errorf("library nesting too deep (max %d levels): %s", maxLibraryNestingDepth, name)
+	}
+	
+	// Lazy parent loading: only load parent if this library actually needs it
+	// Check if library exists first before loading parent
 	if len(parts) > 1 {
-		// Check if parent exists, if not load it first
-		parentName := strings.Join(parts[:len(parts)-1], ".")
-		if _, ok := p.env.Get(parentName); !ok {
-			// Parent doesn't exist, try to load it
-			if err := p.loadLibrary(parentName); err != nil {
-				// Parent doesn't exist as a library, that's ok - we'll create the structure
+		// Check if we have this library registered
+		_, hasScript := p.scriptLibraries[name]
+		_, hasRegistered := p.registeredLibraries[name]
+		
+		if hasScript || hasRegistered {
+			// Library exists, check if parent is needed
+			parentName := strings.Join(parts[:len(parts)-1], ".")
+			if _, ok := p.env.Get(parentName); !ok {
+				// Parent doesn't exist, try to load it
+				if err := p.loadLibraryWithDepth(parentName, depth+1); err != nil {
+					// Parent doesn't exist as a library, that's ok - we'll create the structure
+				}
 			}
 		}
 	}
 
 	// Check if library is already imported
 	if existingObj, ok := p.env.Get(name); ok {
-		// For simple library names, check if it's a proper library dict
-		// If it exists but is incomplete (e.g., only has sub-libraries from a dotted import),
-		// we need to merge in the parent library
+		// For simple library names, check if it needs parent merge
 		if len(parts) == 1 {
-			// Check if this is a registered library that should be loaded
-			if _, isRegistered := p.registeredLibraries[name]; isRegistered {
-				// Check if existing object is a dict
-				if existingDict, ok := existingObj.(*object.Dict); ok {
-					// Check if it has any functions from the library (not just sub-libraries)
-					// If it only has sub-libraries, we need to merge the parent library
-					hasLibraryFunctions := false
-					for key := range existingDict.Pairs {
-						// Check if any keys don't look like sub-library names (no dots in registered sub-libs)
-						if key != "__doc__" && !strings.Contains(key, ".") {
-							// Could be a function or a sub-library, check the registered library
-							lib := p.registeredLibraries[name]
-							if funcs := lib.Functions(); funcs != nil {
-								if _, exists := funcs[key]; exists {
-									hasLibraryFunctions = true
-									break
-								}
-							}
+			if existingDict, ok := existingObj.(*object.Dict); ok {
+				if p.needsParentMerge(name, existingDict) {
+					// Merge parent library functions
+					lib := p.registeredLibraries[name]
+					libDict := p.libraryToDict(lib)
+					for k, v := range libDict.Pairs {
+						if _, exists := existingDict.Pairs[k]; !exists {
+							existingDict.Pairs[k] = v
 						}
 					}
-					if !hasLibraryFunctions {
-						// Existing dict only has sub-libraries, merge in the parent library
-						lib := p.registeredLibraries[name]
-						libDict := p.libraryToDict(lib)
-						// Merge: add all entries from libDict to existingDict
-						for k, v := range libDict.Pairs {
-							if _, exists := existingDict.Pairs[k]; !exists {
-								existingDict.Pairs[k] = v
-							}
-						}
-						return nil
-					}
+					return nil
 				}
 			}
 		}
 		return nil // Already imported, skip
 	}
 
-	// For dotted names like urllib.parse, also check if parent exists with the sub-library
+	// For dotted names like urllib.parse, check if parent exists with the sub-library
 	if len(parts) > 1 {
-		// Check if parent is already imported with this sub-library
 		if parentObj, ok := p.env.Get(parts[0]); ok {
-			if parentDict, ok := parentObj.(*object.Dict); ok {
-				// Navigate through the parts to see if it exists
-				current := parentDict
-				allExist := true
-				for i := 1; i < len(parts); i++ {
-					if pair, ok := current.Pairs[parts[i]]; ok {
-						if subDict, ok := pair.Value.(*object.Dict); ok {
-							current = subDict
-						} else {
-							allExist = false
-							break
-						}
-					} else {
-						allExist = false
-						break
-					}
-				}
-				if allExist {
-					// Create an alias for the full path
-					p.env.Set(name, current)
-					return nil
-				}
+			if result, err := traverseDictPath(parentObj, parts[1:], maxLibraryNestingDepth); err == nil {
+				// Create an alias for the full path
+				p.env.Set(name, result)
+				return nil
 			}
 		}
 	}
@@ -528,10 +591,32 @@ func (p *Scriptling) CallFunction(name string, args ...interface{}) (object.Obje
 //	// With keyword arguments (use Kwargs wrapper)
 //	result, err := p.CallFunctionWithContext(ctx, "format", "value", Kwargs{"prefix": ">>"})
 func (p *Scriptling) CallFunctionWithContext(ctx context.Context, name string, args ...interface{}) (object.Object, error) {
-	// 1. Look up function in environment
-	fn, ok := p.env.Get(name)
-	if !ok {
-		return nil, fmt.Errorf("function '%s' not found", name)
+	// 1. Look up function in environment, supporting dotted paths like "mylib.testHandler"
+	var fn object.Object
+	var ok bool
+
+	if strings.Contains(name, ".") {
+		// Handle dotted path: split and traverse
+		parts := splitPath(name)
+		defer putPathParts(parts)
+		
+		fn, ok = p.env.Get(parts[0])
+		if !ok {
+			return nil, fmt.Errorf("function '%s' not found", name)
+		}
+		
+		if len(parts) > 1 {
+			var err error
+			fn, err = traverseDictPath(fn, parts[1:], maxDottedPathDepth)
+			if err != nil {
+				return nil, fmt.Errorf("function '%s' not found: %v", name, err)
+			}
+		}
+	} else {
+		fn, ok = p.env.Get(name)
+		if !ok {
+			return nil, fmt.Errorf("function '%s' not found", name)
+		}
 	}
 
 	// Convert Go args to Object args
@@ -715,6 +800,8 @@ func (p *Scriptling) SetSourceFile(name string) {
 // loadLibraryIntoEnv loads a script or registered library into the given environment as a dict.
 // Returns true if the library was found and loaded, false otherwise.
 func (p *Scriptling) loadLibraryIntoEnv(name string, env *object.Environment) (bool, error) {
+	var libDict *object.Dict
+
 	// Try from script libraries
 	if lib, ok := p.scriptLibraries[name]; ok {
 		if lib.store == nil {
@@ -724,25 +811,77 @@ func (p *Scriptling) loadLibraryIntoEnv(name string, env *object.Environment) (b
 			}
 			lib.store = store
 		}
-		libDict := make(map[string]object.DictPair, len(lib.store))
+		pairs := make(map[string]object.DictPair, len(lib.store))
 		for fname, obj := range lib.store {
-			libDict[fname] = object.DictPair{
+			pairs[fname] = object.DictPair{
 				Key:   &object.String{Value: fname},
 				Value: obj,
 			}
 		}
-		env.Set(name, &object.Dict{Pairs: libDict})
-		return true, nil
+		libDict = &object.Dict{Pairs: pairs}
+	} else if lib, ok := p.registeredLibraries[name]; ok {
+		// Try from registered libraries
+		libDict = p.libraryToDict(lib)
+	} else {
+		return false, nil
 	}
 
-	// Try from registered libraries
-	if lib, ok := p.registeredLibraries[name]; ok {
-		libDict := p.libraryToDict(lib)
+	// Handle dotted paths - create parent dicts as needed
+	parts := strings.Split(name, ".")
+	if len(parts) == 1 {
+		// Simple case - just set directly
 		env.Set(name, libDict)
 		return true, nil
 	}
 
-	return false, nil
+	// Nested case - create/update parent dicts
+	rootName := parts[0]
+	var rootDict *object.Dict
+	if existing, ok := env.Get(rootName); ok {
+		if d, ok := existing.(*object.Dict); ok {
+			rootDict = d
+		} else {
+			rootDict = &object.Dict{Pairs: make(map[string]object.DictPair)}
+			env.Set(rootName, rootDict)
+		}
+	} else {
+		rootDict = &object.Dict{Pairs: make(map[string]object.DictPair)}
+		env.Set(rootName, rootDict)
+	}
+
+	// Navigate/create the path
+	current := rootDict
+	for i := 1; i < len(parts)-1; i++ {
+		partName := parts[i]
+		if pair, ok := current.Pairs[partName]; ok {
+			if d, ok := pair.Value.(*object.Dict); ok {
+				current = d
+			} else {
+				newDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
+				current.Pairs[partName] = object.DictPair{
+					Key:   &object.String{Value: partName},
+					Value: newDict,
+				}
+				current = newDict
+			}
+		} else {
+			newDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
+			current.Pairs[partName] = object.DictPair{
+				Key:   &object.String{Value: partName},
+				Value: newDict,
+			}
+			current = newDict
+		}
+	}
+
+	// Set the final part
+	finalPart := parts[len(parts)-1]
+	current.Pairs[finalPart] = object.DictPair{
+		Key:   &object.String{Value: finalPart},
+		Value: libDict,
+	}
+
+	return true, nil
 }
 
 func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[string]object.Object, error) {
@@ -757,11 +896,17 @@ func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[stri
 	libEnv.Set("import", evaluator.GetImportBuiltin())
 
 	// Create a custom import callback for this library environment
-	// that loads libraries into libEnv instead of p.env
 	libEnv.SetImportCallback(func(libName string) error {
-		// Check if library is already imported in this environment
-		if _, ok := libEnv.Get(libName); ok {
-			return nil // Already imported, skip
+		// Check if library is already imported
+		parts := strings.Split(libName, ".")
+		if len(parts) > 1 {
+			if rootObj, ok := libEnv.Get(parts[0]); ok {
+				if _, err := traverseDictPath(rootObj, parts[1:], maxLibraryNestingDepth); err == nil {
+					return nil // Already imported
+				}
+			}
+		} else if _, ok := libEnv.Get(libName); ok {
+			return nil // Already imported
 		}
 
 		for attempts := 0; attempts < 2; attempts++ {
@@ -776,9 +921,8 @@ func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[stri
 			// If first attempt and callback exists, try on-demand loading
 			if attempts == 0 && p.onDemandLibraryCallback != nil {
 				if !p.onDemandLibraryCallback(p, libName) {
-					break // callback didn't register, stop
+					break
 				}
-				// else continue to second attempt
 			} else {
 				break
 			}
