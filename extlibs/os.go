@@ -77,6 +77,20 @@ func NewOSLibrary(config fssecurity.Config) (*object.Library, *object.Library) {
 }
 
 func (o *osLibraryInstance) createOSLibrary() *object.Library {
+	// Build environ dict - this happens when the library is registered/imported
+	// Environment variables are captured at that time
+	environPairs := make(map[string]object.DictPair)
+	for _, env := range os.Environ() {
+		parts := strings.SplitN(env, "=", 2)
+		if len(parts) == 2 {
+			environPairs[parts[0]] = object.DictPair{
+				Key:   &object.String{Value: parts[0]},
+				Value: &object.String{Value: parts[1]},
+			}
+		}
+	}
+	environDict := &object.Dict{Pairs: environPairs}
+
 	return object.NewLibrary(OSLibraryName, map[string]*object.Builtin{
 		"getenv": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -96,25 +110,6 @@ func (o *osLibraryInstance) createOSLibrary() *object.Library {
 			HelpText: `getenv(key[, default]) - Get environment variable
 
 Returns the value of the environment variable key if it exists, or default if provided.`,
-		},
-		"environ": {
-			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if err := errors.ExactArgs(args, 0); err != nil {
-					return err
-				}
-				pairs := make(map[string]object.DictPair)
-				for _, env := range os.Environ() {
-					parts := strings.SplitN(env, "=", 2)
-					if len(parts) == 2 {
-						pairs[parts[0]] = object.DictPair{
-							Key:   &object.String{Value: parts[0]},
-							Value: &object.String{Value: parts[1]},
-						}
-					}
-				}
-				return &object.Dict{Pairs: pairs}
-			},
-			HelpText: `environ() - Get all environment variables as a dictionary`,
 		},
 		"getcwd": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -374,6 +369,7 @@ Renames the file or directory from old to new.`,
 		"linesep":  &object.String{Value: getLineSep()},
 		"name":     &object.String{Value: getOSName()},
 		"platform": &object.String{Value: runtime.GOOS},
+		"environ":  environDict,
 	}, "Operating system interface")
 }
 

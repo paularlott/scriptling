@@ -221,7 +221,7 @@ func (p *Parser) ParseProgram() *ast.Program {
 	program.Statements = []ast.Statement{}
 
 	for !p.curTokenIs(token.EOF) {
-		if p.curTokenIs(token.NEWLINE) || p.curTokenIs(token.SEMICOLON) {
+		if p.curTokenIs(token.NEWLINE) || p.curTokenIs(token.SEMICOLON) || p.curTokenIs(token.INDENT) || p.curTokenIs(token.DEDENT) {
 			p.nextToken()
 			continue
 		}
@@ -508,7 +508,7 @@ func (p *Parser) parseReturnStatement() *ast.ReturnStatement {
 	stmt := &ast.ReturnStatement{Token: p.curToken}
 	p.nextToken()
 
-	if !p.curTokenIs(token.NEWLINE) && !p.curTokenIs(token.SEMICOLON) && !p.curTokenIs(token.EOF) {
+	if !p.curTokenIs(token.NEWLINE) && !p.curTokenIs(token.SEMICOLON) && !p.curTokenIs(token.EOF) && !p.curTokenIs(token.DEDENT) {
 		stmt.ReturnValue = p.parseExpressionWithConditional()
 	}
 
@@ -1053,7 +1053,7 @@ func (p *Parser) parseBlockStatement() *ast.BlockStatement {
 	p.nextToken()
 
 	for !p.curTokenIs(token.DEDENT) && !p.curTokenIs(token.EOF) {
-		if p.curTokenIs(token.NEWLINE) || p.curTokenIs(token.SEMICOLON) {
+		if p.curTokenIs(token.NEWLINE) || p.curTokenIs(token.SEMICOLON) || p.curTokenIs(token.INDENT) {
 			p.nextToken()
 			continue
 		}

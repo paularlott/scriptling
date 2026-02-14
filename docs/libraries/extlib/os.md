@@ -86,18 +86,26 @@ path = os.getenv("MY_PATH", "/default/path")
 print(path)
 ```
 
-### os.environ()
+### os.environ
 
-Get all environment variables as a dictionary.
+Dictionary of all environment variables. Supports both direct access and the `.get()` method.
 
 **Returns:** Dictionary of all environment variables
 
 ```python
 import os
 
-env = os.environ()
-print(env["PATH"])
-print(env["HOME"])
+# Access as dictionary
+print(os.environ["PATH"])
+print(os.environ["HOME"])
+
+# Use .get() method with default (Python-compatible)
+token = os.environ.get("API_TOKEN", "default_token")
+user = os.environ.get("USER")
+
+# Iterate over all variables
+for key, value in os.environ.items():
+    print(f"{key} = {value}")
 ```
 
 ### os.getcwd()
@@ -314,13 +322,20 @@ os.rmdir("/tmp/myproject")
 ```python
 import os
 
-# Get specific environment variable
+# Get specific environment variable with os.getenv()
 home = os.getenv("HOME", "/default/home")
 print(f"Home directory: {home}")
 
-# Get all environment variables
-env = os.environ()
-for key, value in env.items():
+# Use os.environ.get() (Python-compatible)
+api_key = os.environ.get("API_KEY", "default_key")
+print(f"API Key: {api_key}")
+
+# Direct access to os.environ
+path = os.environ["PATH"]
+print(f"PATH: {path}")
+
+# Iterate over all environment variables
+for key, value in os.environ.items():
     print(f"{key} = {value}")
 ```
 
