@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 
 	"github.com/paularlott/scriptling/errors"
+	"github.com/paularlott/scriptling/evaliface"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -19,53 +20,86 @@ type RuntimeWaitGroup struct {
 type RuntimeQueue struct {
 	mu      sync.Mutex
 	items   []object.Object
-	cond    *sync.Cond
 	maxsize int
 	closed  bool
+	putCh   chan struct{} // signals space available for put
+	getCh   chan struct{} // signals items available for get
 }
 
 func newRuntimeQueue(maxsize int) *RuntimeQueue {
-	q := &RuntimeQueue{
+	return &RuntimeQueue{
 		items:   []object.Object{},
 		maxsize: maxsize,
+		putCh:   make(chan struct{}, 1),
+		getCh:   make(chan struct{}, 1),
 	}
-	q.cond = sync.NewCond(&q.mu)
-	return q
 }
 
-func (q *RuntimeQueue) put(item object.Object) error {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	if q.closed {
-		return fmt.Errorf("queue is closed")
+// signalGet non-blocking send to getCh to wake a waiting get().
+func (q *RuntimeQueue) signalGet() {
+	select {
+	case q.getCh <- struct{}{}:
+	default:
 	}
-
-	for q.maxsize > 0 && len(q.items) >= q.maxsize {
-		q.cond.Wait()
-	}
-
-	q.items = append(q.items, item)
-	q.cond.Signal()
-	return nil
 }
 
-func (q *RuntimeQueue) get() (object.Object, error) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
+// signalPut non-blocking send to putCh to wake a waiting put().
+func (q *RuntimeQueue) signalPut() {
+	select {
+	case q.putCh <- struct{}{}:
+	default:
+	}
+}
 
-	for len(q.items) == 0 {
+func (q *RuntimeQueue) put(ctx context.Context, item object.Object) error {
+	for {
+		q.mu.Lock()
 		if q.closed {
+			q.mu.Unlock()
+			return fmt.Errorf("queue is closed")
+		}
+		if q.maxsize <= 0 || len(q.items) < q.maxsize {
+			q.items = append(q.items, item)
+			q.signalGet()
+			q.mu.Unlock()
+			return nil
+		}
+		q.mu.Unlock()
+
+		// Wait for space or context cancellation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-q.putCh:
+			// Space may be available, retry
+		}
+	}
+}
+
+func (q *RuntimeQueue) get(ctx context.Context) (object.Object, error) {
+	for {
+		q.mu.Lock()
+		if len(q.items) > 0 {
+			item := q.items[0]
+			q.items = q.items[1:]
+			q.signalPut()
+			q.mu.Unlock()
+			return item, nil
+		}
+		if q.closed {
+			q.mu.Unlock()
 			return nil, fmt.Errorf("queue is closed")
 		}
-		q.cond.Wait()
+		q.mu.Unlock()
+
+		// Wait for items or context cancellation
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-q.getCh:
+			// Items may be available, retry
+		}
 	}
-
-	item := q.items[0]
-	q.items = q.items[1:]
-	q.cond.Signal()
-
-	return item, nil
 }
 
 func (q *RuntimeQueue) size() int {
@@ -78,7 +112,9 @@ func (q *RuntimeQueue) close() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.closed = true
-	q.cond.Broadcast()
+	// Wake all waiters
+	q.signalGet()
+	q.signalPut()
 }
 
 // RuntimeAtomic is a named atomic counter
@@ -98,7 +134,9 @@ func (a *RuntimeAtomic) set(val int64) {
 	atomic.StoreInt64(&a.value, val)
 }
 
-// RuntimeShared is a named shared value
+// RuntimeShared is a named shared value.
+// Values stored should be treated as immutable. Use set() to replace.
+// For atomic read-modify-write, use update() with a callback.
 type RuntimeShared struct {
 	mu    sync.RWMutex
 	value object.Object
@@ -114,6 +152,15 @@ func (s *RuntimeShared) set(val object.Object) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.value = val
+}
+
+// update atomically applies a function to the current value and stores the result.
+// The callback receives the current value and must return the new value.
+func (s *RuntimeShared) update(fn func(object.Object) object.Object) object.Object {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.value = fn(s.value)
+	return s.value
 }
 
 var SyncSubLibrary = object.NewLibrary("sync", map[string]*object.Builtin{
@@ -226,22 +273,22 @@ Example:
 							if err := errors.ExactArgs(args, 1); err != nil {
 								return err
 							}
-							if err := queue.put(args[0]); err != nil {
+							if err := queue.put(ctx, args[0]); err != nil {
 								return errors.NewError("queue error: %v", err)
 							}
 							return &object.Null{}
 						},
-						HelpText: "put(item) - Add item to queue (blocks if full)",
+						HelpText: "put(item) - Add item to queue (blocks if full, respects context timeout)",
 					},
 					"get": &object.Builtin{
 						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-							item, err := queue.get()
+							item, err := queue.get(ctx)
 							if err != nil {
 								return errors.NewError("queue error: %v", err)
 							}
 							return item
 						},
-						HelpText: "get() - Remove and return item from queue (blocks if empty)",
+						HelpText: "get() - Remove and return item from queue (blocks if empty, respects context timeout)",
 					},
 					"size": &object.Builtin{
 						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -400,7 +447,7 @@ Example:
 						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 							return shared.get()
 						},
-						HelpText: "get() - Get the current value (thread-safe)",
+						HelpText: "get() - Get the current value (thread-safe read)",
 					},
 					"set": &object.Builtin{
 						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -410,10 +457,28 @@ Example:
 							shared.set(args[0])
 							return &object.Null{}
 						},
-						HelpText: "set(value) - Set the value (thread-safe)",
+						HelpText: "set(value) - Set the value (thread-safe write)",
+					},
+					"update": &object.Builtin{
+						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+							if err := errors.ExactArgs(args, 1); err != nil {
+								return err
+							}
+							fn := args[0]
+							result := shared.update(func(current object.Object) object.Object {
+								eval := evaliface.FromContext(ctx)
+								if eval == nil {
+									return current
+								}
+								env := getEnvFromContext(ctx)
+								return eval.CallObjectFunction(ctx, fn, []object.Object{current}, nil, env)
+							})
+							return result
+						},
+						HelpText: "update(fn) - Atomically read-modify-write: fn receives current value, returns new value",
 					},
 				},
-				HelpText: "Shared variable - thread-safe access with get()/set()",
+				HelpText: "Shared variable - thread-safe access with get()/set()/update()",
 			}
 		},
 		HelpText: `Shared(name, initial) - Get or create a named shared variable
@@ -422,16 +487,20 @@ Parameters:
   name (string): Unique name for the variable (shared across environments)
   initial: Initial value (only used if creating new variable)
 
+Note: Values should be treated as immutable. Use set() to replace, or
+update() for atomic read-modify-write operations.
+
 Example:
-    shared_list = runtime.sync.Shared("data", [])
+    counter = runtime.sync.Shared("counter", 0)
 
-    def append_item(item):
-        current = shared_list.get()
-        current.append(item)
-        shared_list.set(current)
+    def increment(current):
+        return current + 1
 
-    promises = [runtime.run(append_item, i) for i in range(100)]
-    for p in promises:
-        p.get()`,
+    # Atomic increment using update()
+    counter.update(increment)
+
+    # Simple get/set for immutable values
+    counter.set(42)
+    value = counter.get()`,
 	},
 }, nil, "Cross-environment named concurrency primitives")

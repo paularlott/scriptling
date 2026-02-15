@@ -52,8 +52,8 @@ func IterableToSlice(obj Object) ([]Object, bool) {
 		return elements, true
 	case *DictKeys:
 		elements := make([]Object, 0, len(iter.Dict.Pairs))
-		for k := range iter.Dict.Pairs {
-			elements = append(elements, &String{Value: k})
+		for _, p := range iter.Dict.Pairs {
+			elements = append(elements, p.Key)
 		}
 		return elements, true
 	case *DictValues:
@@ -64,8 +64,8 @@ func IterableToSlice(obj Object) ([]Object, bool) {
 		return elements, true
 	case *DictItems:
 		elements := make([]Object, 0, len(iter.Dict.Pairs))
-		for k, p := range iter.Dict.Pairs {
-			elements = append(elements, &Tuple{Elements: []Object{&String{Value: k}, p.Value}})
+		for _, p := range iter.Dict.Pairs {
+			elements = append(elements, &Tuple{Elements: []Object{p.Key, p.Value}})
 		}
 		return elements, true
 	default:

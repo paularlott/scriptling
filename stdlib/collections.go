@@ -56,9 +56,10 @@ var CounterClass = &object.Class{
 					}
 				case *object.Dict:
 					// Copy existing dict - convert to counter fields
-					for k, v := range arg.Pairs {
+					for _, v := range arg.Pairs {
 						if count, ok := v.Value.(*object.Integer); ok {
-							counter.Fields[k] = count
+							keyStr, _ := v.Key.AsString()
+							counter.Fields[keyStr] = count
 						}
 					}
 				default:
@@ -314,9 +315,10 @@ var CollectionsLibrary = object.NewLibrary(CollectionsLibraryName, map[string]*o
 				}
 			case *object.Dict:
 				// Copy existing dict - convert to counter fields
-				for k, v := range arg.Pairs {
+				for _, v := range arg.Pairs {
 					if count, ok := v.Value.(*object.Integer); ok {
-						counter.Fields[k] = count
+						keyStr, _ := v.Key.AsString()
+						counter.Fields[keyStr] = count
 					}
 				}
 			default:
@@ -424,7 +426,7 @@ Example:
 					if !ok || len(tuple.Elements) != 2 {
 						return errors.NewError("OrderedDict() items must be (key, value) tuples")
 					}
-					key := tuple.Elements[0].Inspect()
+					key := object.DictKey(tuple.Elements[0])
 					od.Pairs[key] = object.DictPair{
 						Key:   tuple.Elements[0],
 						Value: tuple.Elements[1],

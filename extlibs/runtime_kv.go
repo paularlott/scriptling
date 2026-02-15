@@ -370,21 +370,49 @@ Warning: This operation cannot be undone.
 Example:
   runtime.kv.clear()`,
 	},
-}, nil, "Thread-safe key-value store for sharing state across requests")
+}, nil, "Thread-safe key-value store for sharing state across requests.\n\nNote: The KV store is in-memory with no size limits. Keys without a TTL persist\nindefinitely. Use TTLs and periodic cleanup to avoid unbounded memory growth.\nExpired entries are cleaned up automatically every 60 seconds.")
 
-// init registers cleanup goroutine
-func init() {
+// kvCleanupCancel cancels the KV cleanup goroutine
+var kvCleanupCancel context.CancelFunc
+
+// startKVCleanup starts the background cleanup goroutine for expired KV entries.
+// It cancels any previously running cleanup goroutine first.
+func startKVCleanup() {
+	if kvCleanupCancel != nil {
+		kvCleanupCancel()
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	kvCleanupCancel = cancel
+
 	go func() {
 		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
-		for range ticker.C {
-			RuntimeState.Lock()
-			for key, entry := range RuntimeState.KVData {
-				if entry.isExpired() {
-					delete(RuntimeState.KVData, key)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				RuntimeState.Lock()
+				for key, entry := range RuntimeState.KVData {
+					if entry.isExpired() {
+						delete(RuntimeState.KVData, key)
+					}
 				}
+				RuntimeState.Unlock()
 			}
-			RuntimeState.Unlock()
 		}
 	}()
+}
+
+// StopKVCleanup stops the background KV cleanup goroutine.
+func StopKVCleanup() {
+	if kvCleanupCancel != nil {
+		kvCleanupCancel()
+		kvCleanupCancel = nil
+	}
+}
+
+func init() {
+	startKVCleanup()
 }

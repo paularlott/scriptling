@@ -24,21 +24,21 @@ func jsonDumps(ctx context.Context, kwargs object.Kwargs, args ...object.Object)
 	if len(args) != 1 {
 		return errors.NewError("wrong number of arguments. got=%d, want=1", len(args))
 	}
-	
+
 	// Use kwargs helpers for optional parameters
 	indent, _ := kwargs.GetString("indent", "")
-	
+
 	data := objectToJSON(args[0])
-	
+
 	var bytes []byte
 	var err error
-	
+
 	if indent != "" {
 		bytes, err = json.MarshalIndent(data, "", indent)
 	} else {
 		bytes, err = json.Marshal(data)
 	}
-	
+
 	if err != nil {
 		return errors.NewError("json serialize error: %s", err.Error())
 	}
@@ -92,8 +92,8 @@ func objectToJSON(obj object.Object) interface{} {
 		return arr
 	case *object.Dict:
 		m := make(map[string]interface{})
-		for key, pair := range obj.Pairs {
-			m[key] = objectToJSON(pair.Value)
+		for _, pair := range obj.Pairs {
+			m[pair.StringKey()] = objectToJSON(pair.Value)
 		}
 		return m
 	case *object.Null:

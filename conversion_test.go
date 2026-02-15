@@ -1,8 +1,9 @@
 package scriptling
 
 import (
-	"github.com/paularlott/scriptling/conversion"
 	"testing"
+
+	"github.com/paularlott/scriptling/conversion"
 
 	"github.com/paularlott/scriptling/object"
 )
@@ -136,18 +137,10 @@ func TestToGo_List(t *testing.T) {
 }
 
 func TestToGo_Dict(t *testing.T) {
-	input := &object.Dict{
-		Pairs: map[string]object.DictPair{
-			"key1": {
-				Key:   &object.String{Value: "key1"},
-				Value: &object.String{Value: "value1"},
-			},
-			"key2": {
-				Key:   &object.String{Value: "key2"},
-				Value: object.NewInteger(42),
-			},
-		},
-	}
+	input := object.NewStringDict(map[string]object.Object{
+		"key1": &object.String{Value: "value1"},
+		"key2": object.NewInteger(42),
+	})
 
 	result := conversion.ToGo(input)
 	resultMap, ok := result.(map[string]interface{})

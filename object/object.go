@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -11,6 +12,49 @@ import (
 
 	"github.com/paularlott/scriptling/ast"
 )
+
+// DictKey returns a canonical string key for use in Dict and Set maps.
+// Matches Python 3 semantics where:
+//   - int(1), float(1.0), and True all map to the same key
+//   - str("1") maps to a different key
+//   - None maps to its own unique key
+func DictKey(obj Object) string {
+	switch o := obj.(type) {
+	case *Integer:
+		return fmt.Sprintf("n:%d", o.Value)
+	case *Float:
+		// If float is exactly representable as int64, use integer key (Python: hash(1.0) == hash(1))
+		if !math.IsInf(o.Value, 0) && !math.IsNaN(o.Value) && o.Value == math.Trunc(o.Value) && o.Value >= math.MinInt64 && o.Value <= math.MaxInt64 {
+			return fmt.Sprintf("n:%d", int64(o.Value))
+		}
+		return fmt.Sprintf("f:%v", o.Value)
+	case *Boolean:
+		if o.Value {
+			return "n:1" // True == 1
+		}
+		return "n:0" // False == 0
+	case *String:
+		return "s:" + o.Value
+	case *Null:
+		return "null:"
+	case *Tuple:
+		// Tuples are hashable in Python if all elements are hashable
+		var b strings.Builder
+		b.WriteString("t:(")
+		for i, e := range o.Elements {
+			if i > 0 {
+				b.WriteString(",")
+			}
+			b.WriteString(DictKey(e))
+		}
+		b.WriteString(")")
+		return b.String()
+	default:
+		// Unhashable types - use type + pointer identity which will rarely collide
+		// In Python, lists, dicts, sets are unhashable and raise TypeError
+		return fmt.Sprintf("%s:%p", obj.Type(), obj)
+	}
+}
 
 // Small integer cache for common values (-5 to 10000)
 // This follows Python's approach and eliminates allocations for loop counters
@@ -542,7 +586,7 @@ func (l *Library) GetDict() *Dict {
 	dict := make(map[string]DictPair, len(funcs)+len(consts)+len(subs))
 
 	for fname, fn := range funcs {
-		dict[fname] = DictPair{
+		dict[DictKey(&String{Value: fname})] = DictPair{
 			Key:   &String{Value: fname},
 			Value: fn,
 		}
@@ -551,7 +595,7 @@ func (l *Library) GetDict() *Dict {
 	// Add constants
 	if consts != nil {
 		for cname, val := range consts {
-			dict[cname] = DictPair{
+			dict[DictKey(&String{Value: cname})] = DictPair{
 				Key:   &String{Value: cname},
 				Value: val,
 			}
@@ -561,7 +605,7 @@ func (l *Library) GetDict() *Dict {
 	// Add sub-libraries (recursive)
 	if subs != nil {
 		for subName, subLib := range subs {
-			dict[subName] = DictPair{
+			dict[DictKey(&String{Value: subName})] = DictPair{
 				Key:   &String{Value: subName},
 				Value: subLib.GetDict(),
 			}
@@ -570,7 +614,7 @@ func (l *Library) GetDict() *Dict {
 
 	// Add description if available
 	if l.description != "" {
-		dict["__doc__"] = DictPair{
+		dict[DictKey(&String{Value: "__doc__"})] = DictPair{
 			Key:   &String{Value: "__doc__"},
 			Value: &String{Value: l.description},
 		}
@@ -658,15 +702,6 @@ type Environment struct {
 	availableLibrariesCallback func() []LibraryInfo
 }
 
-// Pool for Environment objects to reduce allocations
-var envPool = sync.Pool{
-	New: func() any {
-		return &Environment{
-			store: make(map[string]Object, 4),
-		}
-	},
-}
-
 // LibraryInfo contains information about available libraries
 type LibraryInfo struct {
 	Name       string
@@ -680,19 +715,11 @@ func NewEnvironment() *Environment {
 	}
 }
 
-// getEnvironment retrieves an environment from the pool
-func getEnvironment(outer *Environment) *Environment {
-	env := envPool.Get().(*Environment)
-
-	// Clear the store
-	for k := range env.store {
-		delete(env.store, k)
+func NewEnclosedEnvironment(outer *Environment) *Environment {
+	env := &Environment{
+		store: make(map[string]Object, 4),
+		outer: outer,
 	}
-
-	// Set outer and inherit I/O
-	env.outer = outer
-	env.globals = nil
-	env.nonlocals = nil
 
 	if outer != nil {
 		if outer.output != nil {
@@ -704,30 +731,6 @@ func getEnvironment(outer *Environment) *Environment {
 	}
 
 	return env
-}
-
-// PutEnvironment returns an environment to the pool
-func PutEnvironment(env *Environment) {
-	if env == nil {
-		return
-	}
-
-	// Clear references to allow GC
-	env.outer = nil
-	env.globals = nil
-	env.nonlocals = nil
-	env.output = nil
-	env.input = nil
-	env.importCallback = nil
-	env.availableLibrariesCallback = nil
-
-	// Don't clear store - will be cleared on next Get (faster)
-
-	envPool.Put(env)
-}
-
-func NewEnclosedEnvironment(outer *Environment) *Environment {
-	return getEnvironment(outer)
 }
 
 func (e *Environment) Get(name string) (Object, bool) {
@@ -784,7 +787,6 @@ func (e *Environment) GetGlobal() *Environment {
 }
 
 // SetInParent sets a variable in the parent environment (for nonlocal)
-// Thread-safe: acquires lock during check and set operations
 func (e *Environment) SetInParent(name string, val Object) bool {
 	if e.outer == nil {
 		return false
@@ -796,8 +798,6 @@ func (e *Environment) SetInParent(name string, val Object) bool {
 		e.outer.mu.Unlock()
 		return true
 	}
-	// Not found in immediate parent, need to check further up
-	// Unlock before recursive call to avoid deadlock
 	e.outer.mu.Unlock()
 	if e.outer.outer != nil {
 		return e.outer.SetInParent(name, val)
@@ -876,24 +876,21 @@ func (e *Environment) GetReader() io.Reader {
 }
 
 // GetStore returns a copy of the environment's store (only local scope, not outer)
-// Thread-safe: acquires read lock during copy
 func (e *Environment) GetStore() map[string]Object {
 	e.mu.RLock()
-	defer e.mu.RUnlock()
 	store := make(map[string]Object, len(e.store))
 	for k, v := range e.store {
 		store[k] = v
 	}
+	e.mu.RUnlock()
 	return store
 }
 
-// SetImportCallback sets the import callback for this environment
+// SetImportCallback sets the import callback for this environment.
+// GetImportCallback walks up the scope chain, so setting on any env
+// makes it available to that env and all enclosed children.
 func (e *Environment) SetImportCallback(fn func(string) error) {
 	e.importCallback = fn
-	// Propagate to outer environments
-	if e.outer != nil {
-		e.outer.SetImportCallback(fn)
-	}
 }
 
 // GetImportCallback gets the import callback from this environment or outer
@@ -907,13 +904,11 @@ func (e *Environment) GetImportCallback() func(string) error {
 	return nil
 }
 
-// SetAvailableLibrariesCallback sets the available libraries callback for this environment
+// SetAvailableLibrariesCallback sets the available libraries callback for this environment.
+// GetAvailableLibrariesCallback walks up the scope chain, so setting on any env
+// makes it available to that env and all enclosed children.
 func (e *Environment) SetAvailableLibrariesCallback(fn func() []LibraryInfo) {
 	e.availableLibrariesCallback = fn
-	// Propagate to outer environments
-	if e.outer != nil {
-		e.outer.SetAvailableLibrariesCallback(fn)
-	}
 }
 
 // GetAvailableLibrariesCallback gets the available libraries callback from this environment or outer
@@ -949,7 +944,11 @@ func (l *List) AsString() (string, Object)          { return "", errMustBeString
 func (l *List) AsInt() (int64, Object)              { return 0, errMustBeInteger }
 func (l *List) AsFloat() (float64, Object)          { return 0, errMustBeNumber }
 func (l *List) AsBool() (bool, Object)              { return len(l.Elements) > 0, nil }
-func (l *List) AsList() ([]Object, Object)          { return l.Elements, nil }
+func (l *List) AsList() ([]Object, Object) {
+	result := make([]Object, len(l.Elements))
+	copy(result, l.Elements)
+	return result, nil
+}
 func (l *List) AsDict() (map[string]Object, Object) { return nil, errMustBeDict }
 
 func (l *List) CoerceString() (string, Object) { return l.Inspect(), nil }
@@ -981,7 +980,11 @@ func (t *Tuple) AsString() (string, Object)          { return "", errMustBeStrin
 func (t *Tuple) AsInt() (int64, Object)              { return 0, errMustBeInteger }
 func (t *Tuple) AsFloat() (float64, Object)          { return 0, errMustBeNumber }
 func (t *Tuple) AsBool() (bool, Object)              { return len(t.Elements) > 0, nil }
-func (t *Tuple) AsList() ([]Object, Object)          { return t.Elements, nil }
+func (t *Tuple) AsList() ([]Object, Object) {
+	result := make([]Object, len(t.Elements))
+	copy(result, t.Elements)
+	return result, nil
+}
 func (t *Tuple) AsDict() (map[string]Object, Object) { return nil, errMustBeDict }
 
 func (t *Tuple) CoerceString() (string, Object) { return t.Inspect(), nil }
@@ -995,6 +998,26 @@ type Dict struct {
 type DictPair struct {
 	Key   Object
 	Value Object
+}
+
+// StringKey returns the string representation of the key.
+// For String keys, returns the actual string value; for other types, returns Inspect().
+// This is the canonical way to extract a human-readable key from a DictPair.
+func (p DictPair) StringKey() string {
+	if s, ok := p.Key.(*String); ok {
+		return s.Value
+	}
+	return p.Key.Inspect()
+}
+
+// NewStringDict creates a Dict from string key-value pairs.
+// Usage: NewStringDict(map[string]Object{"key": value, ...})
+func NewStringDict(entries map[string]Object) *Dict {
+	pairs := make(map[string]DictPair, len(entries))
+	for k, v := range entries {
+		pairs[DictKey(&String{Value: k})] = DictPair{Key: &String{Value: k}, Value: v}
+	}
+	return &Dict{Pairs: pairs}
 }
 
 func (d *Dict) Type() ObjectType { return DICT_OBJ }
@@ -1022,8 +1045,8 @@ func (d *Dict) AsBool() (bool, Object)     { return len(d.Pairs) > 0, nil }
 func (d *Dict) AsList() ([]Object, Object) { return nil, errMustBeList }
 func (d *Dict) AsDict() (map[string]Object, Object) {
 	result := make(map[string]Object)
-	for key, pair := range d.Pairs {
-		result[key] = pair.Value
+	for _, pair := range d.Pairs {
+		result[pair.Key.Inspect()] = pair.Value
 	}
 	return result, nil
 }
@@ -1031,6 +1054,60 @@ func (d *Dict) AsDict() (map[string]Object, Object) {
 func (d *Dict) CoerceString() (string, Object) { return d.Inspect(), nil }
 func (d *Dict) CoerceInt() (int64, Object)     { return 0, errMustBeInteger }
 func (d *Dict) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
+
+// GetPair retrieves a pair from the dict using proper DictKey lookup.
+func (d *Dict) GetPair(key Object) (DictPair, bool) {
+	pair, ok := d.Pairs[DictKey(key)]
+	return pair, ok
+}
+
+// SetPair sets a key-value pair in the dict using proper DictKey.
+func (d *Dict) SetPair(key, value Object) {
+	d.Pairs[DictKey(key)] = DictPair{Key: key, Value: value}
+}
+
+// HasKey checks if a key exists in the dict.
+func (d *Dict) HasKey(key Object) bool {
+	_, ok := d.Pairs[DictKey(key)]
+	return ok
+}
+
+// DeleteKey removes a key from the dict. Returns true if the key existed.
+func (d *Dict) DeleteKey(key Object) bool {
+	k := DictKey(key)
+	_, ok := d.Pairs[k]
+	if ok {
+		delete(d.Pairs, k)
+	}
+	return ok
+}
+
+// GetByString retrieves a pair using a string key (convenience for attribute-style access).
+func (d *Dict) GetByString(name string) (DictPair, bool) {
+	pair, ok := d.Pairs[DictKey(&String{Value: name})]
+	return pair, ok
+}
+
+// SetByString sets a pair using a string key (convenience for attribute-style access).
+func (d *Dict) SetByString(name string, value Object) {
+	d.Pairs[DictKey(&String{Value: name})] = DictPair{Key: &String{Value: name}, Value: value}
+}
+
+// HasByString checks if a string key exists in the dict.
+func (d *Dict) HasByString(name string) bool {
+	_, ok := d.Pairs[DictKey(&String{Value: name})]
+	return ok
+}
+
+// DeleteByString deletes a string key from the dict. Returns true if key existed.
+func (d *Dict) DeleteByString(name string) bool {
+	k := DictKey(&String{Value: name})
+	_, ok := d.Pairs[k]
+	if ok {
+		delete(d.Pairs, k)
+	}
+	return ok
+}
 
 type Error struct {
 	Message  string

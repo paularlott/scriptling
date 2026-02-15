@@ -9,21 +9,29 @@ import (
 	"github.com/paularlott/scriptling/ast"
 )
 
+// cacheKey is a dual-hash key providing 128-bit collision resistance.
+// Two independent maphash seeds produce two 64-bit hashes; a false match
+// requires both to collide simultaneously (probability ~2^-128).
+type cacheKey struct {
+	h1 uint64
+	h2 uint64
+}
+
 type cacheEntry struct {
-	key      uint64
+	key      cacheKey
 	program  *ast.Program
 	lastUsed time.Time
 }
 
 type programCache struct {
 	mu      sync.RWMutex
-	entries map[uint64]*list.Element
+	entries map[cacheKey]*list.Element
 	lru     *list.List
 	maxSize int
 }
 
 var globalCache = &programCache{
-	entries: make(map[uint64]*list.Element),
+	entries: make(map[cacheKey]*list.Element),
 	lru:     list.New(),
 	maxSize: 1000, // Max 1000 cached programs
 }
@@ -49,9 +57,10 @@ func (c *programCache) get(script string) (*ast.Program, bool) {
 		return nil, false
 	}
 
+	entry := elem.Value.(*cacheEntry)
+
 	// Move to front (most recently used)
 	c.lru.MoveToFront(elem)
-	entry := elem.Value.(*cacheEntry)
 	entry.lastUsed = time.Now()
 
 	return entry.program, true
@@ -63,10 +72,10 @@ func (c *programCache) set(script string, program *ast.Program) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Check if already exists
+	// Check if already exists (same dual-hash = same script)
 	if elem, ok := c.entries[key]; ok {
-		c.lru.MoveToFront(elem)
 		entry := elem.Value.(*cacheEntry)
+		c.lru.MoveToFront(elem)
 		entry.program = program
 		entry.lastUsed = time.Now()
 		return
@@ -90,13 +99,19 @@ func (c *programCache) set(script string, program *ast.Program) {
 	c.entries[key] = elem
 }
 
-var hashSeed = maphash.MakeSeed()
+// Two independent seeds for dual-hash collision resistance
+var (
+	hashSeed1 = maphash.MakeSeed()
+	hashSeed2 = maphash.MakeSeed()
+)
 
-func hashScript(script string) uint64 {
-	var h maphash.Hash
-	h.SetSeed(hashSeed)
-	h.WriteString(script)
-	return h.Sum64()
+func hashScript(script string) cacheKey {
+	var h1, h2 maphash.Hash
+	h1.SetSeed(hashSeed1)
+	h1.WriteString(script)
+	h2.SetSeed(hashSeed2)
+	h2.WriteString(script)
+	return cacheKey{h1: h1.Sum64(), h2: h2.Sum64()}
 }
 
 func (c *programCache) evictOldest() bool {

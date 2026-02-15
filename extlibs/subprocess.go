@@ -153,10 +153,8 @@ var SubprocessLibrary = object.NewLibrary(SubprocessLibraryName, map[string]*obj
 			if envDict, exists := kwargs.Kwargs["env"]; exists {
 				if d, ok := envDict.(*object.Dict); ok {
 					for _, pair := range d.Pairs {
-						if keyStr, ok := pair.Key.(*object.String); ok {
-							if valStr, ok := pair.Value.(*object.String); ok {
-								env[keyStr.Value] = valStr.Value
-							}
+						if valStr, ok := pair.Value.(*object.String); ok {
+							env[pair.StringKey()] = valStr.Value
 						}
 					}
 				}

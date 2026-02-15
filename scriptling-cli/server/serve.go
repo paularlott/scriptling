@@ -139,7 +139,7 @@ func setupScriptling(p *scriptling.Scriptling, libDir string, safeMode bool) {
 
 	// Also set up the standard libraries
 	mcpcli.SetupScriptling(p, libDir, false, safeMode, Log)
-	
+
 	// Set factory for background tasks
 	extlibs.SetBackgroundFactory(func() interface{ LoadLibraryIntoEnv(string, *object.Environment) error } {
 		newP := scriptling.New()
@@ -461,11 +461,11 @@ func (s *Server) runHandler(handlerRef string, reqObj *object.Instance) *object.
 	if err != nil {
 		Log.Error("Handler error", "error", err)
 		// Return error response
-		return &object.Dict{Pairs: map[string]object.DictPair{
-			"status":  {Key: &object.String{Value: "status"}, Value: object.NewInteger(500)},
-			"headers": {Key: &object.String{Value: "headers"}, Value: &object.Dict{Pairs: map[string]object.DictPair{}}},
-			"body":    {Key: &object.String{Value: "body"}, Value: &object.String{Value: fmt.Sprintf(`{"error": "%s"}`, err.Error())}},
-		}}
+		return object.NewStringDict(map[string]object.Object{
+			"status":  object.NewInteger(500),
+			"headers": &object.Dict{Pairs: map[string]object.DictPair{}},
+			"body":    &object.String{Value: fmt.Sprintf(`{"error": "%s"}`, err.Error())},
+		})
 	}
 
 	// Convert result to Dict
@@ -474,25 +474,25 @@ func (s *Server) runHandler(handlerRef string, reqObj *object.Instance) *object.
 	}
 
 	// If not a dict, wrap as JSON response
-	return &object.Dict{Pairs: map[string]object.DictPair{
-		"status":  {Key: &object.String{Value: "status"}, Value: object.NewInteger(200)},
-		"headers": {Key: &object.String{Value: "headers"}, Value: &object.Dict{Pairs: map[string]object.DictPair{}}},
-		"body":    {Key: &object.String{Value: "body"}, Value: result},
-	}}
+	return object.NewStringDict(map[string]object.Object{
+		"status":  object.NewInteger(200),
+		"headers": &object.Dict{Pairs: map[string]object.DictPair{}},
+		"body":    result,
+	})
 }
 
 // writeResponse writes a response dict to the HTTP response writer
 func (s *Server) writeResponse(w http.ResponseWriter, resp *object.Dict) {
 	// Get status code
 	status := int64(200)
-	if statusObj, ok := resp.Pairs["status"]; ok {
+	if statusObj, ok := resp.GetByString("status"); ok {
 		if statusInt, err := statusObj.Value.AsInt(); err == nil {
 			status = statusInt
 		}
 	}
 
 	// Get headers
-	if headersObj, ok := resp.Pairs["headers"]; ok {
+	if headersObj, ok := resp.GetByString("headers"); ok {
 		if headersDict, err := headersObj.Value.AsDict(); err == nil {
 			for k, v := range headersDict {
 				if strVal, err := v.AsString(); err == nil {
@@ -504,7 +504,7 @@ func (s *Server) writeResponse(w http.ResponseWriter, resp *object.Dict) {
 
 	// Get body
 	var bodyBytes []byte
-	if bodyObj, ok := resp.Pairs["body"]; ok {
+	if bodyObj, ok := resp.GetByString("body"); ok {
 		// Check if body is a string or needs JSON encoding
 		if strVal, err := bodyObj.Value.AsString(); err == nil {
 			bodyBytes = []byte(strVal)
@@ -549,8 +549,8 @@ func objectToInterface(obj object.Object) interface{} {
 		return result
 	case *object.Dict:
 		result := make(map[string]interface{})
-		for k, pair := range v.Pairs {
-			result[k] = objectToInterface(pair.Value)
+		for _, pair := range v.Pairs {
+			result[pair.StringKey()] = objectToInterface(pair.Value)
 		}
 		return result
 	default:

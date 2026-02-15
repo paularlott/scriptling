@@ -153,7 +153,7 @@ func TestRegisterLibraryWithClass(t *testing.T) {
 	}
 
 	// Create library with the class in the constants map
-	myLib := object.NewLibrary("counters", 
+	myLib := object.NewLibrary("counters",
 		map[string]*object.Builtin{
 			"helper": {
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -844,11 +844,11 @@ func TestCallFunction(t *testing.T) {
 			enabled := kwargs.MustGetBool("enabled", false)
 			count := kwargs.MustGetInt("count", 0)
 			rate := kwargs.MustGetFloat("rate", 1.0)
-			return &object.Dict{Pairs: map[string]object.DictPair{
-				"enabled": {Key: &object.String{Value: "enabled"}, Value: &object.Boolean{Value: enabled}},
-				"count":   {Key: &object.String{Value: "count"}, Value: object.NewInteger(count)},
-				"rate":    {Key: &object.String{Value: "rate"}, Value: &object.Float{Value: rate}},
-			}}
+			return object.NewStringDict(map[string]object.Object{
+				"enabled": &object.Boolean{Value: enabled},
+				"count":   object.NewInteger(count),
+				"rate":    &object.Float{Value: rate},
+			})
 		})
 
 		// Call with mixed type kwargs

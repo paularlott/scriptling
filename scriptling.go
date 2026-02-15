@@ -7,7 +7,6 @@ import (
 	"runtime/debug"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/paularlott/scriptling/ast"
@@ -76,16 +75,7 @@ type scriptLibrary struct {
 const (
 	maxLibraryNestingDepth = 5  // Max depth for library imports (e.g., a.b.c.d.e)
 	maxDottedPathDepth     = 10 // Max depth for dotted paths (e.g., a.b.c.d.e.f.g.h.i.j)
-	maxPathParts           = 11 // Pre-allocate for max path parts (maxDottedPathDepth + 1)
 )
-
-// pathPartsPool reuses slices for path splitting to reduce allocations
-var pathPartsPool = sync.Pool{
-	New: func() interface{} {
-		s := make([]string, 0, maxPathParts)
-		return &s
-	},
-}
 
 type Scriptling struct {
 	env                     *object.Environment
@@ -155,31 +145,9 @@ func New() *Scriptling {
 	return p
 }
 
-// splitPath splits a dotted path and returns a slice from the pool
-// Caller must call putPathParts when done
+// splitPath splits a dotted path into parts
 func splitPath(path string) []string {
-	partsPtr := pathPartsPool.Get().(*[]string)
-	parts := (*partsPtr)[:0] // Reset length but keep capacity
-	
-	// Manual split to reuse slice
-	start := 0
-	for i := 0; i < len(path); i++ {
-		if path[i] == '.' {
-			parts = append(parts, path[start:i])
-			start = i + 1
-		}
-	}
-	if start < len(path) {
-		parts = append(parts, path[start:])
-	}
-	
-	return parts
-}
-
-// putPathParts returns a path parts slice to the pool
-func putPathParts(parts []string) {
-	partsPtr := &parts
-	pathPartsPool.Put(partsPtr)
+	return strings.Split(path, ".")
 }
 
 // traverseDictPath navigates a dotted path through Dict objects
@@ -187,14 +155,14 @@ func traverseDictPath(root object.Object, parts []string, maxDepth int) (object.
 	if len(parts) > maxDepth {
 		return nil, fmt.Errorf("path too deep (max %d levels): %s", maxDepth, strings.Join(parts, "."))
 	}
-	
+
 	current := root
 	for i, part := range parts {
 		dict, ok := current.(*object.Dict)
 		if !ok {
 			return nil, fmt.Errorf("'%s' is not a module", strings.Join(parts[:i+1], "."))
 		}
-		pair, exists := dict.Pairs[part]
+		pair, exists := dict.GetByString(part)
 		if !exists {
 			return nil, fmt.Errorf("'%s' not found", strings.Join(parts[:i+1], "."))
 		}
@@ -209,15 +177,16 @@ func (p *Scriptling) needsParentMerge(name string, existingDict *object.Dict) bo
 	if !ok {
 		return false
 	}
-	
+
 	funcs := lib.Functions()
 	if funcs == nil {
 		return false
 	}
-	
+
 	// Check if dict has any library functions (not just sub-libraries)
-	for key := range existingDict.Pairs {
-		if key != "__doc__" && funcs[key] != nil {
+	for _, pair := range existingDict.Pairs {
+		keyStr := pair.StringKey()
+		if keyStr != "__doc__" && funcs[keyStr] != nil {
 			return false // Already has functions
 		}
 	}
@@ -230,23 +199,22 @@ func (p *Scriptling) loadLibrary(name string) error {
 
 func (p *Scriptling) loadLibraryWithDepth(name string, depth int) error {
 	parts := splitPath(name)
-	defer putPathParts(parts)
-	
+
 	if len(parts)-1 > maxLibraryNestingDepth {
 		return fmt.Errorf("library nesting too deep (max %d levels): %s", maxLibraryNestingDepth, name)
 	}
-	
+
 	if depth > maxLibraryNestingDepth {
 		return fmt.Errorf("library nesting too deep (max %d levels): %s", maxLibraryNestingDepth, name)
 	}
-	
+
 	// Lazy parent loading: only load parent if this library actually needs it
 	// Check if library exists first before loading parent
 	if len(parts) > 1 {
 		// Check if we have this library registered
 		_, hasScript := p.scriptLibraries[name]
 		_, hasRegistered := p.registeredLibraries[name]
-		
+
 		if hasScript || hasRegistered {
 			// Library exists, check if parent is needed
 			parentName := strings.Join(parts[:len(parts)-1], ".")
@@ -360,35 +328,26 @@ func (p *Scriptling) registerLibrary(name string, lib *object.Library) {
 	current := rootDict
 	for i := 1; i < len(parts)-1; i++ {
 		partName := parts[i]
-		if pair, ok := current.Pairs[partName]; ok {
+		if pair, ok := current.GetByString(partName); ok {
 			if d, ok := pair.Value.(*object.Dict); ok {
 				current = d
 			} else {
 				// Exists but not a dict - replace with new dict
 				newDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
-				current.Pairs[partName] = object.DictPair{
-					Key:   &object.String{Value: partName},
-					Value: newDict,
-				}
+				current.SetByString(partName, newDict)
 				current = newDict
 			}
 		} else {
 			// Doesn't exist - create
 			newDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
-			current.Pairs[partName] = object.DictPair{
-				Key:   &object.String{Value: partName},
-				Value: newDict,
-			}
+			current.SetByString(partName, newDict)
 			current = newDict
 		}
 	}
 
 	// Set the final part
 	finalName := parts[len(parts)-1]
-	current.Pairs[finalName] = object.DictPair{
-		Key:   &object.String{Value: finalName},
-		Value: libDict,
-	}
+	current.SetByString(finalName, libDict)
 
 	// Also set the full path as an alias for convenience
 	p.env.Set(name, libDict)
@@ -403,7 +362,7 @@ func (p *Scriptling) libraryToDict(lib *object.Library) *object.Dict {
 	dict := make(map[string]object.DictPair, len(funcs)+len(consts)+len(subs))
 
 	for fname, fn := range funcs {
-		dict[fname] = object.DictPair{
+		dict[object.DictKey(&object.String{Value: fname})] = object.DictPair{
 			Key:   &object.String{Value: fname},
 			Value: fn,
 		}
@@ -411,7 +370,7 @@ func (p *Scriptling) libraryToDict(lib *object.Library) *object.Dict {
 
 	// Add constants
 	for cname, val := range consts {
-		dict[cname] = object.DictPair{
+		dict[object.DictKey(&object.String{Value: cname})] = object.DictPair{
 			Key:   &object.String{Value: cname},
 			Value: val,
 		}
@@ -419,7 +378,7 @@ func (p *Scriptling) libraryToDict(lib *object.Library) *object.Dict {
 
 	// Add sub-libraries (recursive)
 	for subName, subLib := range subs {
-		dict[subName] = object.DictPair{
+		dict[object.DictKey(&object.String{Value: subName})] = object.DictPair{
 			Key:   &object.String{Value: subName},
 			Value: p.libraryToDict(subLib),
 		}
@@ -427,7 +386,7 @@ func (p *Scriptling) libraryToDict(lib *object.Library) *object.Dict {
 
 	// Add description if available
 	if desc := lib.Description(); desc != "" {
-		dict["__doc__"] = object.DictPair{
+		dict[object.DictKey(&object.String{Value: "__doc__"})] = object.DictPair{
 			Key:   &object.String{Value: "__doc__"},
 			Value: &object.String{Value: desc},
 		}
@@ -636,13 +595,12 @@ func (p *Scriptling) CallFunctionWithContext(ctx context.Context, name string, a
 	if strings.Contains(name, ".") {
 		// Handle dotted path: split and traverse
 		parts := splitPath(name)
-		defer putPathParts(parts)
-		
+
 		fn, ok = p.env.Get(parts[0])
 		if !ok {
 			return nil, fmt.Errorf("function '%s' not found", name)
 		}
-		
+
 		if len(parts) > 1 {
 			var err error
 			fn, err = traverseDictPath(fn, parts[1:], maxDottedPathDepth)
@@ -876,7 +834,7 @@ func (p *Scriptling) loadLibraryIntoEnv(name string, env *object.Environment) (b
 		}
 		pairs := make(map[string]object.DictPair, len(lib.store))
 		for fname, obj := range lib.store {
-			pairs[fname] = object.DictPair{
+			pairs[object.DictKey(&object.String{Value: fname})] = object.DictPair{
 				Key:   &object.String{Value: fname},
 				Value: obj,
 			}
@@ -916,33 +874,24 @@ func (p *Scriptling) loadLibraryIntoEnv(name string, env *object.Environment) (b
 	current := rootDict
 	for i := 1; i < len(parts)-1; i++ {
 		partName := parts[i]
-		if pair, ok := current.Pairs[partName]; ok {
+		if pair, ok := current.GetByString(partName); ok {
 			if d, ok := pair.Value.(*object.Dict); ok {
 				current = d
 			} else {
 				newDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
-				current.Pairs[partName] = object.DictPair{
-					Key:   &object.String{Value: partName},
-					Value: newDict,
-				}
+				current.SetByString(partName, newDict)
 				current = newDict
 			}
 		} else {
 			newDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
-			current.Pairs[partName] = object.DictPair{
-				Key:   &object.String{Value: partName},
-				Value: newDict,
-			}
+			current.SetByString(partName, newDict)
 			current = newDict
 		}
 	}
 
 	// Set the final part
 	finalPart := parts[len(parts)-1]
-	current.Pairs[finalPart] = object.DictPair{
-		Key:   &object.String{Value: finalPart},
-		Value: libDict,
-	}
+	current.SetByString(finalPart, libDict)
 
 	return true, nil
 }
@@ -1072,7 +1021,7 @@ func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[stri
 func (p *Scriptling) registerScriptLibrary(name string, store map[string]object.Object) {
 	lib := make(map[string]object.DictPair, len(store))
 	for fname, obj := range store {
-		lib[fname] = object.DictPair{
+		lib[object.DictKey(&object.String{Value: fname})] = object.DictPair{
 			Key:   &object.String{Value: fname},
 			Value: obj,
 		}
@@ -1108,35 +1057,26 @@ func (p *Scriptling) registerScriptLibrary(name string, store map[string]object.
 	current := rootDict
 	for i := 1; i < len(parts)-1; i++ {
 		partName := parts[i]
-		if pair, ok := current.Pairs[partName]; ok {
+		if pair, ok := current.GetByString(partName); ok {
 			if d, ok := pair.Value.(*object.Dict); ok {
 				current = d
 			} else {
 				// Exists but not a dict - replace with new dict
 				newDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
-				current.Pairs[partName] = object.DictPair{
-					Key:   &object.String{Value: partName},
-					Value: newDict,
-				}
+				current.SetByString(partName, newDict)
 				current = newDict
 			}
 		} else {
 			// Doesn't exist - create
 			newDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
-			current.Pairs[partName] = object.DictPair{
-				Key:   &object.String{Value: partName},
-				Value: newDict,
-			}
+			current.SetByString(partName, newDict)
 			current = newDict
 		}
 	}
 
 	// Set the final part
 	finalName := parts[len(parts)-1]
-	current.Pairs[finalName] = object.DictPair{
-		Key:   &object.String{Value: finalName},
-		Value: libDict,
-	}
+	current.SetByString(finalName, libDict)
 
 	// Also set the full path as an alias for convenience
 	p.env.Set(name, libDict)

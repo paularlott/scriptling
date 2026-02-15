@@ -57,7 +57,7 @@ func TestRuntimeHTTPResponses(t *testing.T) {
 			name:   "json response",
 			script: `import scriptling.runtime as runtime; runtime.http.json(200, {"test": "data"})`,
 			check: func(d *object.Dict) error {
-				if status, ok := d.Pairs["status"]; !ok {
+				if status, ok := d.GetByString("status"); !ok {
 					t.Error("Missing status")
 				} else if s, _ := status.Value.AsInt(); s != 200 {
 					t.Errorf("Expected status 200, got %d", s)
@@ -69,7 +69,7 @@ func TestRuntimeHTTPResponses(t *testing.T) {
 			name:   "redirect response",
 			script: `import scriptling.runtime as runtime; runtime.http.redirect("/new")`,
 			check: func(d *object.Dict) error {
-				if headers, ok := d.Pairs["headers"]; ok {
+				if headers, ok := d.GetByString("headers"); ok {
 					if hDict, err := headers.Value.AsDict(); err == nil {
 						if loc, ok := hDict["Location"]; ok {
 							if locStr, err := loc.AsString(); err == nil && locStr != "/new" {

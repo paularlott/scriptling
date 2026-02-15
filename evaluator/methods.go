@@ -61,8 +61,12 @@ func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression
 			if keywords == nil {
 				keywords = make(map[string]object.Object, len(dict.Pairs))
 			}
-			for k, pair := range dict.Pairs {
-				keywords[k] = pair.Value
+			for _, pair := range dict.Pairs {
+				if str, ok := pair.Key.(*object.String); ok {
+					keywords[str.Value] = pair.Value
+				} else {
+					return errors.NewError("keywords must be strings, not %s", pair.Key.Type())
+				}
 			}
 		} else {
 			return errors.NewError("argument after ** must be a dictionary, not %s", kwargsVal.Type())
@@ -185,7 +189,7 @@ func callInstanceMethod(ctx context.Context, instance *object.Instance, method s
 func callDictMethod(ctx context.Context, dict *object.Dict, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
 	// First check for library methods (callable functions stored in dict)
 	// This takes priority over dict instance methods like get, pop, etc.
-	if pair, ok := dict.Pairs[method]; ok {
+	if pair, ok := dict.GetByString(method); ok {
 		switch fn := pair.Value.(type) {
 		case *object.Builtin:
 			ctxWithEnv := SetEnvInContext(ctx, env)
@@ -236,7 +240,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		if len(keywords) > 0 {
 			return errors.NewError("get() does not accept keyword arguments")
 		}
-		key := args[0].Inspect()
+		key := object.DictKey(args[0])
 		if pair, ok := dict.Pairs[key]; ok {
 			return pair.Value
 		}
@@ -251,7 +255,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		if len(keywords) > 0 {
 			return errors.NewError("pop() does not accept keyword arguments")
 		}
-		key := args[0].Inspect()
+		key := object.DictKey(args[0])
 		if pair, ok := dict.Pairs[key]; ok {
 			delete(dict.Pairs, key)
 			return pair.Value
@@ -266,7 +270,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		}
 		// Handle kwargs
 		for k, v := range keywords {
-			dict.Pairs[k] = object.DictPair{Key: &object.String{Value: k}, Value: v}
+			dict.SetByString(k, v)
 		}
 		// Handle positional argument (another dict or list of pairs)
 		if len(args) == 1 {
@@ -289,7 +293,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 					if len(pair) != 2 {
 						return errors.NewError("dictionary update sequence element must be [key, value] pair")
 					}
-					dict.Pairs[pair[0].Inspect()] = object.DictPair{Key: pair[0], Value: pair[1]}
+					dict.Pairs[object.DictKey(pair[0])] = object.DictPair{Key: pair[0], Value: pair[1]}
 				}
 			default:
 				return errors.NewTypeError("DICT or LIST of pairs", args[0].Type().String())
@@ -320,7 +324,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		if len(keywords) > 0 {
 			return errors.NewError("setdefault() does not accept keyword arguments")
 		}
-		key := args[0].Inspect()
+		key := object.DictKey(args[0])
 		if pair, ok := dict.Pairs[key]; ok {
 			return pair.Value
 		}
@@ -346,18 +350,19 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		switch iter := args[0].(type) {
 		case *object.List:
 			for _, elem := range iter.Elements {
-				key := elem.Inspect()
+				key := object.DictKey(elem)
 				newPairs[key] = object.DictPair{Key: elem, Value: defaultVal}
 			}
 		case *object.Tuple:
 			for _, elem := range iter.Elements {
-				key := elem.Inspect()
+				key := object.DictKey(elem)
 				newPairs[key] = object.DictPair{Key: elem, Value: defaultVal}
 			}
 		case *object.String:
 			for _, ch := range iter.Value {
 				s := string(ch)
-				newPairs[s] = object.DictPair{Key: &object.String{Value: s}, Value: defaultVal}
+				key := object.DictKey(&object.String{Value: s})
+				newPairs[key] = object.DictPair{Key: &object.String{Value: s}, Value: defaultVal}
 			}
 		default:
 			return errors.NewTypeError("iterable (LIST, TUPLE, STRING)", args[0].Type().String())
@@ -366,7 +371,8 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 	}
 
 	// Check for non-callable dict values (for accessing dict attributes)
-	if pair, ok := dict.Pairs[method]; ok {
+	dictKey := object.DictKey(&object.String{Value: method})
+	if pair, ok := dict.Pairs[dictKey]; ok {
 		// If it's not a callable, just return the value
 		if len(args) == 0 && len(keywords) == 0 {
 			return pair.Value
@@ -1328,7 +1334,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 				return errors.ParameterError("table", err)
 			}
 			for k, v := range d {
-				transMap.Pairs[k] = object.DictPair{Key: &object.String{Value: k}, Value: v}
+				transMap.Pairs[object.DictKey(&object.String{Value: k})] = object.DictPair{Key: &object.String{Value: k}, Value: v}
 			}
 			return transMap
 		}
@@ -1347,9 +1353,9 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return errors.NewError("maketrans() arguments must have equal length")
 		}
 		for i, ch := range fromRunes {
-			key := string(ch)
+			key := object.DictKey(&object.String{Value: string(ch)})
 			transMap.Pairs[key] = object.DictPair{
-				Key:   &object.String{Value: key},
+				Key:   &object.String{Value: string(ch)},
 				Value: &object.String{Value: string(toRunes[i])},
 			}
 		}
@@ -1360,9 +1366,9 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 				return errors.ParameterError("deletechars", errDel)
 			}
 			for _, ch := range del {
-				key := string(ch)
+				key := object.DictKey(&object.String{Value: string(ch)})
 				transMap.Pairs[key] = object.DictPair{
-					Key:   &object.String{Value: key},
+					Key:   &object.String{Value: string(ch)},
 					Value: NULL,
 				}
 			}
@@ -1376,7 +1382,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		}
 		var result strings.Builder
 		for _, ch := range str.Value {
-			key := string(ch)
+			key := object.DictKey(&object.String{Value: string(ch)})
 			if pair, exists := transMap.Pairs[key]; exists {
 				if pair.Value == NULL || pair.Value.Type() == object.NULL_OBJ {
 					// Delete character

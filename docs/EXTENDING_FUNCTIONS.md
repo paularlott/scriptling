@@ -234,8 +234,8 @@ p.RegisterFunc("add_tax", func(ctx context.Context, kwargs object.Kwargs, args .
 | `AsInt() (int64, error)` | Extract integer (floats truncate) |
 | `AsFloat() (float64, error)` | Extract float (ints convert automatically) |
 | `AsBool() (bool, error)` | Extract boolean |
-| `AsList() ([]Object, error)` | Extract list/tuple elements |
-| `AsDict() (map[string]Object, error)` | Extract dict as map (keys are strings) |
+| `AsList() ([]Object, error)` | Extract list/tuple elements (returns a copy) |
+| `AsDict() (map[string]Object, error)` | Extract dict as map (keys are human-readable strings) |
 
 ### Function with Output Capture
 

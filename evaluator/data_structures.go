@@ -26,13 +26,13 @@ func evalDictLiteralWithContext(ctx context.Context, node *ast.DictLiteral, env 
 			return value
 		}
 
-		pairs[key.Inspect()] = object.DictPair{Key: key, Value: value}
+		pairs[object.DictKey(key)] = object.DictPair{Key: key, Value: value}
 	}
 
 	return &object.Dict{Pairs: pairs}
 }
 
-func evalIndexExpression(left, index object.Object) object.Object {
+func evalIndexExpression(ctx context.Context, left, index object.Object) object.Object {
 	switch {
 	case left.Type() == object.LIST_OBJ && index.Type() == object.INTEGER_OBJ:
 		return evalListIndexExpression(left, index)
@@ -49,7 +49,7 @@ func evalIndexExpression(left, index object.Object) object.Object {
 	case left.Type() == object.STRING_OBJ && index.Type() == object.SLICE_OBJ:
 		return evalStringSliceExpression(left, index)
 	case left.Type() == object.INSTANCE_OBJ:
-		return evalInstanceIndexExpression(left, index)
+		return evalInstanceIndexExpression(ctx, left, index)
 	case left.Type() == object.CLASS_OBJ:
 		return evalClassIndexExpression(left, index)
 	case left.Type() == object.BUILTIN_OBJ:
@@ -123,7 +123,7 @@ func evalTupleIndexExpression(tuple, index object.Object) object.Object {
 
 func evalDictIndexExpression(dict, index object.Object) object.Object {
 	dictObject := dict.(*object.Dict)
-	key := index.Inspect()
+	key := object.DictKey(index)
 
 	pair, ok := dictObject.Pairs[key]
 	if !ok {
@@ -174,14 +174,14 @@ func evalStringIndexExpression(str, index object.Object) object.Object {
 	return &object.String{Value: string(runes[idx])}
 }
 
-func evalInstanceIndexExpression(instance, index object.Object) object.Object {
+func evalInstanceIndexExpression(ctx context.Context, instance, index object.Object) object.Object {
 	inst := instance.(*object.Instance)
 
 	// First check for __getitem__ method
 	if getitem, ok := inst.Class.Methods["__getitem__"]; ok {
 		// Call __getitem__ with the index
 		args := []object.Object{instance, index}
-		return applyFunctionWithContext(context.Background(), getitem, args, nil, nil)
+		return applyFunctionWithContext(ctx, getitem, args, nil, nil)
 	}
 
 	// Fallback to string-based field access

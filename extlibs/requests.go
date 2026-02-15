@@ -61,12 +61,9 @@ var ResponseClass = &object.Class{
 // createResponseInstance creates a new Response instance
 func createResponseInstance(statusCode int, headers map[string]string, body []byte, url string) *object.Instance {
 	// Convert headers to object.Dict
-	headerPairs := make(map[string]object.DictPair)
+	headerDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
 	for k, v := range headers {
-		headerPairs[k] = object.DictPair{
-			Key:   &object.String{Value: k},
-			Value: &object.String{Value: v},
-		}
+		headerDict.SetByString(k, &object.String{Value: v})
 	}
 
 	return &object.Instance{
@@ -74,7 +71,7 @@ func createResponseInstance(statusCode int, headers map[string]string, body []by
 		Fields: map[string]object.Object{
 			"status_code": &object.Integer{Value: int64(statusCode)},
 			"text":        &object.String{Value: string(body)},
-			"headers":     &object.Dict{Pairs: headerPairs},
+			"headers":     headerDict,
 			"body":        &object.String{Value: string(body)},
 			"url":         &object.String{Value: url},
 		},
@@ -86,18 +83,10 @@ var requestExceptionType = &object.String{Value: "RequestException"}
 var httpErrorType = &object.String{Value: "HTTPError"}
 
 // Create exceptions namespace dict
-var exceptionsNamespace = &object.Dict{
-	Pairs: map[string]object.DictPair{
-		"RequestException": {
-			Key:   &object.String{Value: "RequestException"},
-			Value: requestExceptionType,
-		},
-		"HTTPError": {
-			Key:   &object.String{Value: "HTTPError"},
-			Value: httpErrorType,
-		},
-	},
-}
+var exceptionsNamespace = object.NewStringDict(map[string]object.Object{
+	"RequestException": requestExceptionType,
+	"HTTPError":        httpErrorType,
+})
 
 // parseRequestOptions parses the options dict and returns timeout, headers, user, pass
 func parseRequestOptions(options map[string]object.Object) (int, map[string]string, string, string) {
@@ -160,12 +149,9 @@ func extractRequestArgs(kwargs object.Kwargs, args []object.Object, hasData bool
 			data = string(jsonBytes)
 			// Set Content-Type header if not already set
 			if _, hasHeaders := options["headers"]; !hasHeaders {
-				headerPairs := make(map[string]object.DictPair)
-				headerPairs["Content-Type"] = object.DictPair{
-					Key:   &object.String{Value: "Content-Type"},
-					Value: &object.String{Value: "application/json"},
-				}
-				options["headers"] = &object.Dict{Pairs: headerPairs}
+				contentTypeDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
+				contentTypeDict.SetByString("Content-Type", &object.String{Value: "application/json"})
+				options["headers"] = contentTypeDict
 			}
 		} else {
 			options[k] = v

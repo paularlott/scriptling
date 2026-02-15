@@ -118,7 +118,7 @@ func CreateExampleLibrary() *object.Library {
 				}
 
 				// Look up value in map
-				if pair, exists := mapObj.Pairs[keyObj.Value]; exists {
+				if pair, exists := mapObj.GetByString(keyObj.Value); exists {
 					return pair.Value
 				}
 

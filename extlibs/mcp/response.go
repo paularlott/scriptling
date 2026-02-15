@@ -1,8 +1,9 @@
 package mcp
 
 import (
-	"github.com/paularlott/scriptling/conversion"
 	"encoding/json"
+
+	"github.com/paularlott/scriptling/conversion"
 
 	"github.com/paularlott/mcp"
 	"github.com/paularlott/scriptling/object"
@@ -98,10 +99,7 @@ func DictToMap(dict *object.Dict) map[string]interface{} {
 
 	result := make(map[string]interface{}, len(dict.Pairs))
 	for _, pair := range dict.Pairs {
-		key, err := pair.Key.AsString()
-		if err == nil {
-			result[key] = conversion.ToGo(pair.Value)
-		}
+		result[pair.StringKey()] = conversion.ToGo(pair.Value)
 	}
 	return result
 }

@@ -132,7 +132,6 @@ Returns the system version (Scriptling version for compatibility).`,
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if err := errors.ExactArgs(args, 0); err != nil { return err }
 			// Return uname info similar to Python's platform.uname()
-			pairs := make(map[string]object.DictPair)
 
 			// Get system name (capitalized, matching system() function)
 			var systemName string
@@ -149,22 +148,23 @@ Returns the system version (Scriptling version for compatibility).`,
 				systemName = runtime.GOOS
 			}
 
-			pairs["system"] = object.DictPair{Key: &object.String{Value: "system"}, Value: &object.String{Value: systemName}}
-			pairs["machine"] = object.DictPair{Key: &object.String{Value: "machine"}, Value: &object.String{Value: runtime.GOARCH}}
-			pairs["processor"] = object.DictPair{Key: &object.String{Value: "processor"}, Value: &object.String{Value: runtime.GOARCH}}
+			result := &object.Dict{Pairs: make(map[string]object.DictPair)}
+			result.SetByString("system", &object.String{Value: systemName})
+			result.SetByString("machine", &object.String{Value: runtime.GOARCH})
+			result.SetByString("processor", &object.String{Value: runtime.GOARCH})
 
 			// Get hostname
 			node := ""
 			if hostname, err := os.Hostname(); err == nil {
 				node = hostname
 			}
-			pairs["node"] = object.DictPair{Key: &object.String{Value: "node"}, Value: &object.String{Value: node}}
+			result.SetByString("node", &object.String{Value: node})
 
 			// For release and version, use Scriptling version for compatibility
-			pairs["release"] = object.DictPair{Key: &object.String{Value: "release"}, Value: &object.String{Value: build.Version}}
-			pairs["version"] = object.DictPair{Key: &object.String{Value: "version"}, Value: &object.String{Value: build.Version}}
+			result.SetByString("release", &object.String{Value: build.Version})
+			result.SetByString("version", &object.String{Value: build.Version})
 
-			return &object.Dict{Pairs: pairs}
+			return result
 		},
 		HelpText: `uname() - Returns system information
 

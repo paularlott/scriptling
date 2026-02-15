@@ -1,11 +1,12 @@
 package mcp
 
 import (
-	"github.com/paularlott/scriptling/conversion"
 	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/paularlott/scriptling/conversion"
 
 	mcptoon "github.com/paularlott/mcp/toon"
 	"github.com/paularlott/scriptling"
@@ -41,7 +42,7 @@ func getParamValue(ctx context.Context, name string) object.Object {
 		return nil
 	}
 
-	pair, exists := paramsDict.Pairs[name]
+	pair, exists := paramsDict.GetByString(name)
 	if !exists {
 		return nil
 	}
@@ -637,10 +638,7 @@ func RunToolScript(ctx context.Context, sl *scriptling.Scriptling, script string
 	}
 	for key, value := range params {
 		obj := conversion.FromGo(value)
-		paramsDict.Pairs[key] = object.DictPair{
-			Key:   &object.String{Value: key},
-			Value: obj,
-		}
+		paramsDict.SetByString(key, obj)
 	}
 
 	// Set __mcp_params in environment

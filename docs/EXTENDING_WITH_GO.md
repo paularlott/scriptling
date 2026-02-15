@@ -131,8 +131,31 @@ value, err := args[0].AsInt()  // Works on Integer and Float
 | `AsInt() (int64, error)` | Extract integer (floats truncate) |
 | `AsFloat() (float64, error)` | Extract float (ints convert) |
 | `AsBool() (bool, error)` | Extract boolean |
-| `AsList() ([]Object, error)` | Extract list elements |
-| `AsDict() (map[string]Object, error)` | Extract dict as map |
+| `AsList() ([]Object, error)` | Extract list elements (returns a copy) |
+| `AsDict() (map[string]Object, error)` | Extract dict as map (keys are human-readable strings) |
+
+### Creating Dict Objects from Go
+
+Use `NewStringDict` to create dicts with string keys:
+
+```go
+// Create a dict with string keys
+result := object.NewStringDict(map[string]object.Object{
+    "name":  &object.String{Value: "Alice"},
+    "age":   &object.Integer{Value: 30},
+})
+
+// Access and modify using convenience methods
+if pair, ok := result.GetByString("name"); ok {
+    fmt.Println(pair.Value.Inspect()) // "Alice"
+}
+
+result.SetByString("email", &object.String{Value: "alice@example.com"})
+result.HasByString("name")       // true
+result.DeleteByString("email")   // remove key
+```
+
+**Note:** Never create dicts by directly manipulating `Pairs` map keys. The internal key format uses type-prefixed canonical keys (`DictKey`). Always use `NewStringDict`, `SetByString`, or `GetByString` for safe access from Go code.
 
 ### Output Capture
 
@@ -257,7 +280,7 @@ func (s *APIService) CreateLibrary() map[string]*object.Builtin {
         "get_user": {
             Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
                 // Use s.baseURL and s.apiKey
-                return &object.Dict{}
+                return object.NewStringDict(map[string]object.Object{})
             },
         },
     }
