@@ -127,8 +127,15 @@ func SetBackgroundFactory(factory func() interface {
 	RuntimeState.Unlock()
 }
 
+// RegisterRuntimeLibrary registers only the core runtime library (background function).
+// Sub-libraries (http, kv, sync) must be registered separately if needed.
 func RegisterRuntimeLibrary(registrar interface{ RegisterLibrary(*object.Library) }) {
-	registrar.RegisterLibrary(RuntimeLibrary)
+	registrar.RegisterLibrary(RuntimeLibraryCore)
+}
+
+// RegisterRuntimeLibraryAll registers the runtime library with all sub-libraries (http, kv, sync).
+func RegisterRuntimeLibraryAll(registrar interface{ RegisterLibrary(*object.Library) }) {
+	registrar.RegisterLibrary(RuntimeLibraryWithSubs)
 }
 
 func RegisterRuntimeHTTPLibrary(registrar interface{ RegisterLibrary(*object.Library) }) {
@@ -143,7 +150,8 @@ func RegisterRuntimeSyncLibrary(registrar interface{ RegisterLibrary(*object.Lib
 	registrar.RegisterLibrary(SyncSubLibrary)
 }
 
-var RuntimeLibrary = object.NewLibraryWithSubs(RuntimeLibraryName, map[string]*object.Builtin{
+// RuntimeLibraryFunctions contains the core runtime functions (background)
+var RuntimeLibraryFunctions = map[string]*object.Builtin{
 	"background": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if err := errors.MinArgs(args, 2); err != nil {
@@ -208,11 +216,20 @@ Example:
   if promise:
       result = promise.get()  # Returns 50`,
 	},
-}, nil, map[string]*object.Library{
+}
+
+// RuntimeLibraryCore is the runtime library without sub-libraries
+var RuntimeLibraryCore = object.NewLibrary(RuntimeLibraryName, RuntimeLibraryFunctions, nil, "Runtime library for background tasks")
+
+// RuntimeLibraryWithSubs is the runtime library with all sub-libraries (http, kv, sync)
+var RuntimeLibraryWithSubs = object.NewLibraryWithSubs(RuntimeLibraryName, RuntimeLibraryFunctions, nil, map[string]*object.Library{
 	"http": HTTPSubLibrary,
 	"kv":   KVSubLibrary,
 	"sync": SyncSubLibrary,
 }, "Runtime library for HTTP, KV store, and concurrency primitives")
+
+// RuntimeLibrary is an alias for RuntimeLibraryWithSubs for backward compatibility
+var RuntimeLibrary = RuntimeLibraryWithSubs
 
 // startBackgroundTask starts a single background task with its own isolated Scriptling instance
 func startBackgroundTask(name, handler string, fnArgs []object.Object, fnKwargs map[string]object.Object, env *object.Environment, eval evaliface.Evaluator, factory func() interface {
