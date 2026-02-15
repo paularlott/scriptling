@@ -1179,6 +1179,22 @@ func ApplyFunction(ctx context.Context, fn object.Object, args []object.Object, 
 }
 
 func applyFunctionWithContext(ctx context.Context, fn object.Object, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+	// Handle BoundMethod - prepend self to args
+	if bm, ok := fn.(*object.BoundMethod); ok {
+		n := len(args) + 1
+		var newArgs []object.Object
+		if n <= 8 {
+			var buf [8]object.Object
+			buf[0] = bm.Instance
+			copy(buf[1:], args)
+			newArgs = buf[:n]
+		} else {
+			newArgs = make([]object.Object, n)
+			newArgs[0] = bm.Instance
+			copy(newArgs[1:], args)
+		}
+		return ApplyFunction(ctx, bm.Method, newArgs, keywords, env)
+	}
 	return ApplyFunction(ctx, fn, args, keywords, env)
 }
 
