@@ -291,6 +291,28 @@ name = "Alice"
 result = x * 2
 ```
 
+### Multiple Assignment and Tuple Unpacking
+
+Unpack sequences into multiple variables:
+
+```python
+# Basic unpacking
+x, y = [1, 2]
+a, b, c = (10, 20, 30)
+
+# Extended unpacking with * (collects remaining elements)
+first, *middle, last = [1, 2, 3, 4, 5]  # first=1, middle=[2,3,4], last=5
+*head, tail = [1, 2, 3]                  # head=[1,2], tail=3
+head, *tail = [1, 2, 3]                  # head=1, tail=[2,3]
+
+# With minimal elements
+a, *b, c = [1, 2]                        # a=1, b=[], c=2
+
+# In loops
+for first, *rest in [[1,2,3], [4,5,6,7]]:
+    print(f"first={first}, rest={rest}")
+```
+
 ### No Declaration Required
 
 Variables are created on first assignment.
@@ -1575,7 +1597,7 @@ For clarity, Scriptling **does support**:
 - ✅ True division (`/` always returns float)
 - ✅ Set literals and set operations
 - ✅ Try/except/finally error handling
-- ✅ Multiple assignment and tuple unpacking
+- ✅ Multiple assignment and tuple unpacking (including extended unpacking with `*`)
 - ✅ Variadic arguments (`*args`)
 - ✅ Keyword arguments (`**kwargs` pattern via dict)
 - ✅ Default parameter values
