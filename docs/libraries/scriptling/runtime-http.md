@@ -2,6 +2,23 @@
 
 HTTP server route registration and response helpers.
 
+## Available Functions
+
+| Function                           | Description                         |
+| ---------------------------------- | ----------------------------------- |
+| `get(path, handler)`               | Register a GET route                |
+| `post(path, handler)`              | Register a POST route               |
+| `put(path, handler)`               | Register a PUT route                |
+| `delete(path, handler)`            | Register a DELETE route             |
+| `route(path, handler, methods=[])` | Register route for multiple methods |
+| `middleware(handler)`              | Register global middleware          |
+| `static(path, directory)`          | Register static file serving        |
+| `json(status_code, data)`          | Create JSON response                |
+| `html(status_code, content)`       | Create HTML response                |
+| `text(status_code, content)`       | Create text response                |
+| `redirect(url, status_code=302)`   | Create redirect response            |
+| `error(status_code, message)`      | Create error response               |
+
 ## Setup
 
 ```go
@@ -18,6 +35,7 @@ extlibs.RegisterRuntimeHTTPLibrary(p)
 Register a GET route.
 
 **Parameters:**
+
 - `path` (string): URL path (e.g., "/api/users")
 - `handler` (string): Handler function as "library.function"
 
@@ -38,6 +56,7 @@ Register a DELETE route.
 Register a route for multiple HTTP methods.
 
 **Parameters:**
+
 - `path` (string): URL path
 - `handler` (string): Handler function
 - `methods` (list, optional): HTTP methods (default: all)
@@ -47,9 +66,11 @@ Register a route for multiple HTTP methods.
 Register global middleware.
 
 **Parameters:**
+
 - `handler` (string): Middleware function
 
 The middleware receives the request and should return:
+
 - `None` to continue to the handler
 - A response dict to short-circuit
 
@@ -58,6 +79,7 @@ The middleware receives the request and should return:
 Register static file serving.
 
 **Parameters:**
+
 - `path` (string): URL path prefix (e.g., "/assets")
 - `directory` (string): Local directory to serve
 
@@ -68,6 +90,7 @@ Register static file serving.
 Create a JSON response.
 
 **Parameters:**
+
 - `status_code` (int): HTTP status code
 - `data`: Data to serialize as JSON
 
@@ -78,6 +101,7 @@ Create a JSON response.
 Create an HTML response.
 
 **Parameters:**
+
 - `status_code` (int): HTTP status code
 - `content` (string): HTML content
 
@@ -88,6 +112,7 @@ Create an HTML response.
 Create a plain text response.
 
 **Parameters:**
+
 - `status_code` (int): HTTP status code
 - `content` (string): Text content
 
@@ -98,6 +123,7 @@ Create a plain text response.
 Create a redirect response.
 
 **Parameters:**
+
 - `location` (string): URL to redirect to
 - `status` (int, optional): HTTP status code (default: 302)
 
@@ -108,6 +134,7 @@ Create a redirect response.
 Parse a URL query string.
 
 **Parameters:**
+
 - `query_string` (string): Query string to parse
 
 **Returns:** Dict of key-value pairs
@@ -123,6 +150,7 @@ Handlers receive a Request object with these fields:
 - `query` (dict): Query parameters
 
 **Methods:**
+
 - `json()`: Parse body as JSON
 
 ## Examples

@@ -6,6 +6,16 @@ AI and LLM functions for interacting with OpenAI-compatible APIs. This library p
 2. **Tool Registry** - Build tool schemas for AI agents
 3. **Thinking Extractor** - Extract reasoning blocks from AI responses
 
+## Available Functions
+
+| Function                     | Description                               |
+| ---------------------------- | ----------------------------------------- |
+| `Client(base_url, **kwargs)` | Create AI client for API interactions     |
+| `text(response)`             | Extract text content from response        |
+| `thinking(response)`         | Extract thinking blocks from response     |
+| `extract_thinking(text)`     | Extract thinking blocks from text string  |
+| `ToolRegistry()`             | Create tool registry for building schemas |
+
 ## Creating an AI Client
 
 The first step is to create an AI client instance:

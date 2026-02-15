@@ -2,6 +2,18 @@
 
 Random number generation functions. Python-compatible.
 
+## Available Functions
+
+| Function                | Description                                |
+| ----------------------- | ------------------------------------------ |
+| `seed([a])`             | Initialize the random number generator     |
+| `randint(a, b)`         | Random integer between a and b (inclusive) |
+| `random()`              | Random float between 0.0 and 1.0           |
+| `uniform(a, b)`         | Random float between a and b               |
+| `choice(seq)`           | Random element from a sequence             |
+| `shuffle(list)`         | Shuffle a list in place                    |
+| `sample(population, k)` | k unique random elements from population   |
+
 ## Functions
 
 ### random.seed([a])
@@ -9,11 +21,13 @@ Random number generation functions. Python-compatible.
 Initializes the random number generator.
 
 **Parameters:**
+
 - `a` (optional): Seed value (integer or float). If omitted, current time is used.
 
 **Returns:** None
 
 **Example:**
+
 ```python
 import random
 
@@ -26,12 +40,14 @@ num = random.random()
 Returns a random integer between a and b (inclusive).
 
 **Parameters:**
+
 - `a`: Minimum value (integer)
 - `b`: Maximum value (integer)
 
 **Returns:** Integer
 
 **Example:**
+
 ```python
 import random
 
@@ -46,6 +62,7 @@ Returns a random float between 0.0 and 1.0.
 **Returns:** Float
 
 **Example:**
+
 ```python
 import random
 
@@ -58,12 +75,14 @@ print(num)  # Random float like 0.123456
 Returns a random float N such that a <= N <= b.
 
 **Parameters:**
+
 - `a`: Minimum value (number)
 - `b`: Maximum value (number)
 
 **Returns:** Float
 
 **Example:**
+
 ```python
 import random
 
@@ -76,11 +95,13 @@ print(num)  # Random float between 1.5 and 5.5
 Returns a random element from a sequence.
 
 **Parameters:**
+
 - `seq`: List to choose from
 
 **Returns:** Element from the list
 
 **Example:**
+
 ```python
 import random
 
@@ -94,11 +115,13 @@ print(fruit)  # Random fruit from the list
 Shuffles a list in place.
 
 **Parameters:**
+
 - `x`: List to shuffle (modified in place)
 
 **Returns:** None
 
 **Example:**
+
 ```python
 import random
 
@@ -112,12 +135,14 @@ print(cards)  # [3, 7, 1, 9, 2, 5, 8, 4, 6, 10] (random order)
 Returns k unique random elements from population.
 
 **Parameters:**
+
 - `population`: List to sample from
 - `k`: Number of elements to return
 
 **Returns:** List of k unique elements
 
 **Example:**
+
 ```python
 import random
 

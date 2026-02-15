@@ -2,6 +2,24 @@
 
 The pathlib library provides object-oriented filesystem path operations, similar to Python's pathlib module. It offers a more convenient and readable way to work with file paths compared to string manipulation.
 
+## Available Properties & Methods
+
+| Property/Method    | Description                        |
+| ------------------ | ---------------------------------- |
+| `name`             | Final path component (filename)    |
+| `stem`             | Final component without suffix     |
+| `suffix`           | File extension                     |
+| `parent`           | Parent directory                   |
+| `parts`            | Tuple of path components           |
+| `joinpath(*other)` | Combine with other path components |
+| `exists()`         | Check if path exists               |
+| `is_file()`        | Check if path is a file            |
+| `is_dir()`         | Check if path is a directory       |
+| `resolve()`        | Get absolute path                  |
+| `mkdir()`          | Create directory                   |
+| `read_text()`      | Read file contents as string       |
+| `write_text(data)` | Write string to file               |
+
 ## Basic Usage
 
 ```python
@@ -20,6 +38,7 @@ print(p.parent)    # "/home/user/documents"
 ## Path Properties
 
 ### `name`
+
 The final path component (file or directory name).
 
 ```python
@@ -31,6 +50,7 @@ print(p2.name)  # "myfolder"
 ```
 
 ### `stem`
+
 The final path component without its suffix.
 
 ```python
@@ -42,6 +62,7 @@ print(p2.stem)  # "README"
 ```
 
 ### `suffix`
+
 The file extension of the final path component.
 
 ```python
@@ -53,6 +74,7 @@ print(p2.suffix)  # ""
 ```
 
 ### `parent`
+
 The parent directory of the path.
 
 ```python
@@ -64,6 +86,7 @@ print(p2.parent)  # "/home/user"
 ```
 
 ### `parts`
+
 A tuple of the path's components.
 
 ```python
@@ -74,6 +97,7 @@ print(p.parts)  # ("/", "home", "user", "file.txt")
 ## Path Operations
 
 ### `joinpath(*other)`
+
 Combine this path with other path components.
 
 ```python
@@ -87,6 +111,7 @@ print(p3)  # "a/b/c"
 ```
 
 ### `exists()`
+
 Check if the path exists.
 
 ```python
@@ -98,6 +123,7 @@ else:
 ```
 
 ### `is_file()`
+
 Check if the path is a regular file.
 
 ```python
@@ -107,6 +133,7 @@ if p.is_file():
 ```
 
 ### `is_dir()`
+
 Check if the path is a directory.
 
 ```python
@@ -118,6 +145,7 @@ if p.is_dir():
 ## File Operations
 
 ### `read_text()`
+
 Read the contents of a file as a string.
 
 ```python
@@ -127,6 +155,7 @@ print(content)
 ```
 
 ### `write_text(data)`
+
 Write a string to a file.
 
 ```python
@@ -135,6 +164,7 @@ p.write_text("Hello, World!")
 ```
 
 ### `mkdir(parents=False)`
+
 Create a directory.
 
 ```python
@@ -148,6 +178,7 @@ p2.mkdir(parents=True)
 ```
 
 ### `rmdir()`
+
 Remove an empty directory.
 
 ```python
@@ -156,6 +187,7 @@ p.rmdir()
 ```
 
 ### `unlink(missing_ok=False)`
+
 Remove a file or symbolic link.
 
 ```python

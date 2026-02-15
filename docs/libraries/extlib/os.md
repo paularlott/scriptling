@@ -10,6 +10,23 @@ The `os` library provides operating system interfaces for file system operations
 import os
 ```
 
+## Available Functions
+
+| Function                     | Description                                  |
+| ---------------------------- | -------------------------------------------- |
+| `getenv(key[, default])`     | Get an environment variable                  |
+| `environ`                    | Dictionary of all environment variables      |
+| `getcwd()`                   | Get the current working directory            |
+| `listdir(path=".")`          | List directory contents                      |
+| `read_file(path)`            | Read entire file contents as string          |
+| `write_file(path, content)`  | Write content to a file (creates/overwrites) |
+| `append_file(path, content)` | Append content to a file                     |
+| `remove(path)`               | Remove a file                                |
+| `mkdir(path)`                | Create a directory                           |
+| `makedirs(path)`             | Create directories recursively               |
+| `rmdir(path)`                | Remove an empty directory                    |
+| `rename(old, new)`           | Rename a file or directory                   |
+
 ## Security
 
 The `os` library supports filesystem security restrictions. When registering the library, you can specify allowed paths:
@@ -69,6 +86,7 @@ print(os.platform)  # "darwin" on macOS, "linux" on Linux, "windows" on Windows
 Get an environment variable.
 
 **Parameters:**
+
 - `key` (string): Name of the environment variable
 - `default` (optional): Value to return if the variable is not set
 
@@ -126,6 +144,7 @@ print(cwd)  # e.g., "/home/user/projects"
 List directory contents.
 
 **Parameters:**
+
 - `path` (string, optional): Directory path to list (default: current directory)
 
 **Returns:** List of entry names in the directory
@@ -146,6 +165,7 @@ entries = os.listdir("/tmp")
 Read entire file contents as a string.
 
 **Parameters:**
+
 - `path` (string): Path to the file
 
 **Returns:** String containing the file contents
@@ -162,6 +182,7 @@ print(content)
 Write content to a file (creates or overwrites).
 
 **Parameters:**
+
 - `path` (string): Path to the file
 - `content` (string): Content to write
 
@@ -176,6 +197,7 @@ os.write_file("/tmp/output.txt", "Hello, World!")
 Append content to a file.
 
 **Parameters:**
+
 - `path` (string): Path to the file
 - `content` (string): Content to append
 
@@ -190,6 +212,7 @@ os.append_file("/tmp/log.txt", "New log entry\n")
 Remove a file.
 
 **Parameters:**
+
 - `path` (string): Path to the file to remove
 
 ```python
@@ -203,6 +226,7 @@ os.remove("/tmp/old_file.txt")
 Create a directory.
 
 **Parameters:**
+
 - `path` (string): Path to the directory to create
 
 ```python
@@ -216,6 +240,7 @@ os.mkdir("/tmp/newdir")
 Create directories recursively (creates all parent directories as needed).
 
 **Parameters:**
+
 - `path` (string): Path to the directory to create
 
 ```python
@@ -229,6 +254,7 @@ os.makedirs("/tmp/a/b/c")  # Creates all directories in the path
 Remove an empty directory.
 
 **Parameters:**
+
 - `path` (string): Path to the directory to remove
 
 ```python
@@ -242,6 +268,7 @@ os.rmdir("/tmp/emptydir")
 Rename a file or directory.
 
 **Parameters:**
+
 - `old` (string): Current path
 - `new` (string): New path
 
@@ -368,24 +395,24 @@ elif os.platform == "windows":
 
 This library implements a subset of Python's `os` module:
 
-| Function | Supported |
-|----------|-----------|
-| getenv | ✅ |
-| environ | ✅ |
-| getcwd | ✅ |
-| listdir | ✅ |
-| mkdir | ✅ |
-| makedirs | ✅ |
-| rmdir | ✅ |
-| remove | ✅ |
-| rename | ✅ |
-| read_file | ✅ (Scriptling-specific) |
-| write_file | ✅ (Scriptling-specific) |
+| Function    | Supported                |
+| ----------- | ------------------------ |
+| getenv      | ✅                       |
+| environ     | ✅                       |
+| getcwd      | ✅                       |
+| listdir     | ✅                       |
+| mkdir       | ✅                       |
+| makedirs    | ✅                       |
+| rmdir       | ✅                       |
+| remove      | ✅                       |
+| rename      | ✅                       |
+| read_file   | ✅ (Scriptling-specific) |
+| write_file  | ✅ (Scriptling-specific) |
 | append_file | ✅ (Scriptling-specific) |
-| stat | ❌ |
-| walk | ❌ |
-| chmod | ❌ |
-| utime | ❌ |
+| stat        | ❌                       |
+| walk        | ❌                       |
+| chmod       | ❌                       |
+| utime       | ❌                       |
 
 ## Differences from Python
 

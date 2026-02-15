@@ -4,6 +4,12 @@ The `logging` library provides Python-style logging functionality, compatible wi
 
 **Note**: This is an extended library and not enabled by default. You must register it explicitly.
 
+## Available Functions
+
+| Function               | Description                               |
+| ---------------------- | ----------------------------------------- |
+| `getLogger(name=None)` | Get a logger instance with specified name |
+
 ## Registration
 
 To use this library, you must register it:
@@ -55,11 +61,13 @@ extlibs.RegisterLoggingLibrary(p2, logger2)
 Creates and returns a logger object with the specified name. If no name is provided, defaults to "scriptling".
 
 **Parameters:**
+
 - `name` (str, optional): Logger name. Used as the group name in the underlying logger.
 
 The logger name will be displayed as a nested group in the log output, e.g., `[scriptling.componentName]`.
 
 **Returns:**
+
 - Logger object with methods for logging at different levels
 
 ### Module-level logging functions
@@ -142,6 +150,7 @@ api_logger.warning('Rate limit approaching')
 ## Configuration
 
 The default logger is configured with:
+
 - Level: INFO
 - Format: console (human-readable)
 - Output: Standard output

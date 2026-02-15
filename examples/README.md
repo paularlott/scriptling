@@ -9,6 +9,10 @@ This directory contains examples and tools for working with Scriptling.
   - `*.py` - Various Scriptling example scripts (basics, features, libraries, etc.)
   - `run_all_examples.sh` - Script to run all examples
 
+- **background/** - Runtime library background tasks and concurrency example
+  - `example.py` - Demonstrates background tasks, runtime.run(), sync primitives, KV store
+  - `README.md` - Background tasks documentation
+
 - **mcp/** - MCP (Model Context Protocol) server for LLM testing
   - `main.go` - MCP server implementation
   - `README.md` - MCP server documentation
@@ -45,6 +49,20 @@ go run main.go example_basics.py
 go run main.go test_all_features.py
 ./run_all_examples.sh
 ```
+
+## Runtime Library Example
+
+Demonstrates background tasks, concurrent execution, synchronization primitives, and KV store:
+
+```bash
+# Build CLI first (from repo root)
+task build
+
+# Run the example
+./bin/scriptling examples/background/example.py
+```
+
+See [background/README.md](background/README.md) for details.
 
 ## AI/MCP Examples
 

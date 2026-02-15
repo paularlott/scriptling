@@ -2,19 +2,31 @@
 
 Regular expression functions for pattern matching and text processing. The function signatures follow Python's `re` module conventions.
 
+## Available Functions
+
+| Function                                       | Description                              |
+| ---------------------------------------------- | ---------------------------------------- |
+| `match(pattern, string, flags=0)`              | Match pattern at the beginning of string |
+| `search(pattern, string, flags=0)`             | Search for pattern anywhere in string    |
+| `findall(pattern, string, flags=0)`            | Find all non-overlapping matches         |
+| `sub(pattern, repl, string, count=0, flags=0)` | Replace pattern matches with repl        |
+| `split(pattern, string, maxsplit=0, flags=0)`  | Split string by pattern                  |
+| `compile(pattern, flags=0)`                    | Compile pattern into a regex object      |
+
 ## Match Objects
 
 The `re.match()` and `re.search()` functions return a Match object on success, or `None` if no match is found. Match objects provide the following methods:
 
-| Method | Description |
-|--------|-------------|
-| `group(n=0)` | Returns the nth matched group (0 = full match) |
-| `groups()` | Returns a tuple of all capturing groups (excluding group 0) |
-| `start(n=0)` | Returns the start position of the match |
-| `end(n=0)` | Returns the end position of the match |
-| `span(n=0)` | Returns a (start, end) tuple for the match |
+| Method       | Description                                                 |
+| ------------ | ----------------------------------------------------------- |
+| `group(n=0)` | Returns the nth matched group (0 = full match)              |
+| `groups()`   | Returns a tuple of all capturing groups (excluding group 0) |
+| `start(n=0)` | Returns the start position of the match                     |
+| `end(n=0)`   | Returns the end position of the match                       |
+| `span(n=0)`  | Returns a (start, end) tuple for the match                  |
 
 **Example:**
+
 ```python
 import re
 
@@ -35,11 +47,11 @@ if m:
 
 The regex library provides the following flags that can be passed to functions:
 
-| Flag | Shorthand | Value | Description |
-|------|-----------|-------|-------------|
-| `re.IGNORECASE` | `re.I` | 2 | Case-insensitive matching |
-| `re.MULTILINE` | `re.M` | 8 | `^` and `$` match at line boundaries |
-| `re.DOTALL` | `re.S` | 16 | `.` matches newlines |
+| Flag            | Shorthand | Value | Description                          |
+| --------------- | --------- | ----- | ------------------------------------ |
+| `re.IGNORECASE` | `re.I`    | 2     | Case-insensitive matching            |
+| `re.MULTILINE`  | `re.M`    | 8     | `^` and `$` match at line boundaries |
+| `re.DOTALL`     | `re.S`    | 16    | `.` matches newlines                 |
 
 Flags can be combined using the bitwise OR operator (`|`):
 
@@ -59,6 +71,7 @@ if m:
 Checks if the pattern matches at the beginning of the string.
 
 **Parameters:**
+
 - `pattern`: Regular expression pattern
 - `string`: String to search
 - `flags`: Optional flags (default: 0)
@@ -66,6 +79,7 @@ Checks if the pattern matches at the beginning of the string.
 **Returns:** Match object if pattern matches at start, or `None` if no match
 
 **Example:**
+
 ```python
 import re
 
@@ -88,6 +102,7 @@ if m:
 Searches for the first occurrence of the pattern anywhere in the string.
 
 **Parameters:**
+
 - `pattern`: Regular expression pattern
 - `string`: String to search
 - `flags`: Optional flags (default: 0)
@@ -95,6 +110,7 @@ Searches for the first occurrence of the pattern anywhere in the string.
 **Returns:** Match object for the first match, or `None` if no match found
 
 **Example:**
+
 ```python
 import re
 
@@ -124,6 +140,7 @@ if m:
 Finds all occurrences of the pattern in the string.
 
 **Parameters:**
+
 - `pattern`: Regular expression pattern
 - `string`: String to search
 - `flags`: Optional flags (default: 0)
@@ -131,6 +148,7 @@ Finds all occurrences of the pattern in the string.
 **Returns:** List of strings (all matches)
 
 **Example:**
+
 ```python
 import re
 
@@ -147,6 +165,7 @@ print(words)  # ["aA", "aAa"]
 Finds all occurrences of the pattern in the string and returns Match objects.
 
 **Parameters:**
+
 - `pattern`: Regular expression pattern
 - `string`: String to search
 - `flags`: Optional flags (default: 0)
@@ -154,6 +173,7 @@ Finds all occurrences of the pattern in the string and returns Match objects.
 **Returns:** List of Match objects (all matches)
 
 **Example:**
+
 ```python
 import re
 
@@ -177,6 +197,7 @@ for match in matches:
 Replaces occurrences of the pattern in the string with the replacement. The replacement can be either a string or a function. This follows Python's `re.sub()` function signature.
 
 **Parameters:**
+
 - `pattern`: Regular expression pattern
 - `repl`: Replacement string or function that takes a Match object and returns a string
 - `string`: String to modify
@@ -186,6 +207,7 @@ Replaces occurrences of the pattern in the string with the replacement. The repl
 **Returns:** String (modified text)
 
 **Example:**
+
 ```python
 import re
 
@@ -215,8 +237,8 @@ print(result)  # "Doe John"
 
 # Function replacement - format inline code
 backtick = chr(96)
-result = re.sub(backtick + r'([^' + backtick + r']+)' + backtick, 
-                lambda m: "[" + m.group(1) + "]", 
+result = re.sub(backtick + r'([^' + backtick + r']+)' + backtick,
+                lambda m: "[" + m.group(1) + "]",
                 "test `code` here")
 print(result)  # "test [code] here"
 ```
@@ -226,6 +248,7 @@ print(result)  # "test [code] here"
 Splits the string by occurrences of the pattern.
 
 **Parameters:**
+
 - `pattern`: Regular expression pattern
 - `string`: String to split
 - `maxsplit`: Maximum number of splits (0 = all, default: 0)
@@ -234,6 +257,7 @@ Splits the string by occurrences of the pattern.
 **Returns:** List of strings (split parts)
 
 **Example:**
+
 ```python
 import re
 
@@ -250,12 +274,14 @@ print(parts)  # ["a", "b;c;d"]
 Compiles a regular expression pattern for validation and caching.
 
 **Parameters:**
+
 - `pattern`: Regular expression pattern
 - `flags`: Optional flags (default: 0)
 
 **Returns:** Regex object (compiled pattern) or error if invalid
 
 **Example:**
+
 ```python
 import re
 
@@ -281,6 +307,7 @@ The Regex object returned by `re.compile()` provides the following methods:
 - `pattern.finditer(string)` - Find all matches as Match objects
 
 **Example:**
+
 ```python
 import re
 
@@ -304,11 +331,13 @@ for match in match_objects:
 Escapes special regex characters in a string.
 
 **Parameters:**
+
 - `string`: String to escape
 
 **Returns:** String (escaped text)
 
 **Example:**
+
 ```python
 import re
 
@@ -321,6 +350,7 @@ print(escaped)  # "a\.b\+c"
 Checks if the pattern matches the entire string.
 
 **Parameters:**
+
 - `pattern`: Regular expression pattern
 - `string`: String to match
 - `flags`: Optional flags (default: 0)
@@ -328,6 +358,7 @@ Checks if the pattern matches the entire string.
 **Returns:** Boolean (True if entire string matches, False otherwise)
 
 **Example:**
+
 ```python
 import re
 
@@ -347,15 +378,17 @@ if re.fullmatch("hello", "HELLO", re.I):
 Scriptling uses Go's regexp syntax, which is similar to Perl/Python:
 
 ### Basic Patterns
+
 - `.` - Any character (newlines only with DOTALL flag)
 - `\d` - Digit (0-9)
 - `\D` - Non-digit
-- `\w` - Word character (a-z, A-Z, 0-9, _)
+- `\w` - Word character (a-z, A-Z, 0-9, \_)
 - `\W` - Non-word character
 - `\s` - Whitespace
 - `\S` - Non-whitespace
 
 ### Quantifiers
+
 - `*` - Zero or more
 - `+` - One or more
 - `?` - Zero or one
@@ -364,6 +397,7 @@ Scriptling uses Go's regexp syntax, which is similar to Perl/Python:
 - `{n,m}` - Between n and m times
 
 ### Character Classes
+
 - `[abc]` - Any of a, b, or c
 - `[^abc]` - Not a, b, or c
 - `[a-z]` - Any lowercase letter
@@ -371,13 +405,16 @@ Scriptling uses Go's regexp syntax, which is similar to Perl/Python:
 - `[0-9]` - Any digit
 
 ### Anchors
+
 - `^` - Start of string (or line with MULTILINE flag)
 - `$` - End of string (or line with MULTILINE flag)
 - `\b` - Word boundary
 - `\B` - Not word boundary
 
 ### Inline Flags
+
 You can also use inline flag modifiers in your patterns:
+
 - `(?i)` - Case-insensitive
 - `(?m)` - Multiline mode
 - `(?s)` - Dotall mode (. matches newlines)

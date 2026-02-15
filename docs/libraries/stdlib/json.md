@@ -2,6 +2,13 @@
 
 Functions for parsing and generating JSON data.
 
+## Available Functions
+
+| Function        | Description                                 |
+| --------------- | ------------------------------------------- |
+| `loads(string)` | Parse a JSON string into Scriptling objects |
+| `dumps(object)` | Convert Scriptling objects to a JSON string |
+
 ## Functions
 
 ### json.loads(string)
@@ -9,11 +16,13 @@ Functions for parsing and generating JSON data.
 Parses a JSON string and returns Scriptling objects.
 
 **Parameters:**
+
 - `string`: JSON string to parse
 
 **Returns:** Scriptling object (dict, list, string, number, boolean, or null)
 
 **Example:**
+
 ```python
 import json
 
@@ -26,11 +35,13 @@ first_user = data["users"][0]["name"]  # "Alice"
 Converts Scriptling objects to a JSON string.
 
 **Parameters:**
+
 - `object`: Scriptling object to convert (dict, list, string, number, boolean, or null)
 
 **Returns:** String (JSON formatted)
 
 **Example:**
+
 ```python
 import json
 
@@ -41,6 +52,7 @@ json_str = json.dumps(obj)  # '{"count":42,"status":"success"}'
 ## Supported Types
 
 ### Parsing (json.loads)
+
 - JSON objects → Scriptling dictionaries
 - JSON arrays → Scriptling lists
 - JSON strings → Scriptling strings
@@ -49,6 +61,7 @@ json_str = json.dumps(obj)  # '{"count":42,"status":"success"}'
 - JSON null → Scriptling null
 
 ### Stringifying (json.dumps)
+
 - Scriptling dictionaries → JSON objects
 - Scriptling lists → JSON arrays
 - Scriptling strings → JSON strings

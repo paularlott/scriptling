@@ -2,6 +2,13 @@
 
 The glob library provides Unix shell-style wildcards for filename matching, similar to Python's glob module. It allows you to find files and directories matching specific patterns.
 
+## Available Functions
+
+| Function                         | Description                         |
+| -------------------------------- | ----------------------------------- |
+| `glob(pattern[, root_dir="."])`  | Find all pathnames matching pattern |
+| `iglob(pattern[, root_dir="."])` | Iterator over matching pathnames    |
+
 ## Basic Usage
 
 ```python
@@ -22,6 +29,7 @@ all_txt = glob.glob("**/*.txt")
 Find all pathnames matching a pattern. Returns a list of filenames.
 
 **Pattern Syntax:**
+
 - `*` - Matches everything
 - `?` - Matches any single character
 - `[seq]` - Matches any character in seq

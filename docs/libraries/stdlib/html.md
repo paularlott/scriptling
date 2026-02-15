@@ -8,12 +8,21 @@ HTML escaping and unescaping library, matching Python's `html` module.
 import html
 ```
 
+## Available Functions
+
+| Function      | Description                    |
+| ------------- | ------------------------------ |
+| `escape(s)`   | Escape HTML special characters |
+| `unescape(s)` | Unescape HTML entities         |
+
 ## Functions
 
 ### `escape(s)`
+
 Escape HTML special characters in a string.
 
 Converts:
+
 - `&` → `&amp;`
 - `<` → `&lt;`
 - `>` → `&gt;`
@@ -21,6 +30,7 @@ Converts:
 - `'` → `&#39;`
 
 **Parameters:**
+
 - `s` - String to escape
 
 **Returns:** Escaped string
@@ -31,13 +41,16 @@ print(safe)  # "&lt;script&gt;alert(&#39;xss&#39;)&lt;/script&gt;"
 ```
 
 ### `unescape(s)`
+
 Unescape HTML entities in a string.
 
 Converts HTML entities back to their corresponding characters. Handles:
+
 - Named entities: `&lt;`, `&gt;`, `&amp;`, `&quot;`, `&#39;`
 - Numeric entities: `&#60;`, `&#x3c;`
 
 **Parameters:**
+
 - `s` - String with HTML entities to unescape
 
 **Returns:** Unescaped string
@@ -50,6 +63,7 @@ print(text)  # "<script>"
 ## Examples
 
 ### Sanitize User Input
+
 ```python
 import html
 
@@ -60,6 +74,7 @@ print(safe_output)
 ```
 
 ### Build Safe HTML
+
 ```python
 import html
 
@@ -72,6 +87,7 @@ print(create_element("p", "Hello <world>"))
 ```
 
 ### Process HTML Entities
+
 ```python
 import html
 
@@ -82,6 +98,7 @@ print(decoded)  # "Tom & Jerry"
 ```
 
 ### Roundtrip Conversion
+
 ```python
 import html
 

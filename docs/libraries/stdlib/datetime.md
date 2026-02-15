@@ -6,6 +6,16 @@ Datetime functions for formatting and parsing dates and times. Python-compatible
 import datetime
 ```
 
+## Available Functions
+
+| Function                        | Description                                     |
+| ------------------------------- | ----------------------------------------------- |
+| `now(format?)`                  | Current local date and time as formatted string |
+| `utcnow(format?)`               | Current UTC date and time as formatted string   |
+| `today(format?)`                | Today's date as a formatted string              |
+| `strptime(date_string, format)` | Parse date string to Unix timestamp             |
+| `strftime(timestamp, format)`   | Format Unix timestamp as string                 |
+
 ## Functions
 
 ### datetime.now(format?)
@@ -13,11 +23,13 @@ import datetime
 Returns the current local date and time as a formatted string.
 
 **Parameters:**
+
 - `format` (optional): Python-style format string (default: "%Y-%m-%d %H:%M:%S")
 
 **Returns:** String
 
 **Example:**
+
 ```python
 import datetime
 
@@ -33,11 +45,13 @@ now = datetime.now("%Y-%m-%d %H:%M:%S")  # "2025-11-26 11:15:54"
 Returns the current UTC date and time as a formatted string.
 
 **Parameters:**
+
 - `format` (optional): Python-style format string (default: "%Y-%m-%d %H:%M:%S")
 
 **Returns:** String
 
 **Example:**
+
 ```python
 import datetime
 
@@ -53,11 +67,13 @@ utc_now = datetime.utcnow("%Y-%m-%d %H:%M:%S")  # "2025-11-26 03:15:54"
 Returns today's date as a formatted string.
 
 **Parameters:**
+
 - `format` (optional): Python-style format string (default: "%Y-%m-%d")
 
 **Returns:** String
 
 **Example:**
+
 ```python
 import datetime
 
@@ -73,12 +89,14 @@ today = datetime.today("%A, %B %d, %Y")  # "Wednesday, November 26, 2025"
 Parses a date string according to the given format and returns a Unix timestamp.
 
 **Parameters:**
+
 - `date_string`: String to parse
 - `format`: Python-style format string
 
 **Returns:** Float (Unix timestamp)
 
 **Example:**
+
 ```python
 import datetime
 
@@ -91,12 +109,14 @@ timestamp = datetime.strptime("2024-01-15 10:30:45", "%Y-%m-%d %H:%M:%S")
 Formats a Unix timestamp according to the given format string.
 
 **Parameters:**
+
 - `format`: Python-style format string
 - `timestamp`: Unix timestamp (integer or float)
 
 **Returns:** String
 
 **Example:**
+
 ```python
 import datetime
 
@@ -109,12 +129,14 @@ formatted = datetime.strftime("%Y-%m-%d %H:%M:%S", 1705314645.0)
 Creates a formatted datetime string from a Unix timestamp.
 
 **Parameters:**
+
 - `timestamp`: Unix timestamp (integer or float)
 - `format` (optional): Python-style format string (default: "%Y-%m-%d %H:%M:%S")
 
 **Returns:** String
 
 **Example:**
+
 ```python
 import datetime
 
@@ -130,11 +152,13 @@ dt = datetime.fromtimestamp(1705314645.0, "%A, %B %d, %Y at %I:%M %p")
 Returns the date and time in ISO 8601 format.
 
 **Parameters:**
+
 - `timestamp` (optional): Unix timestamp (integer or float). Defaults to current time.
 
 **Returns:** String
 
 **Example:**
+
 ```python
 import datetime
 
@@ -156,6 +180,7 @@ Returns the current Unix timestamp.
 **Returns:** Float (Unix timestamp)
 
 **Example:**
+
 ```python
 import datetime
 
@@ -168,6 +193,7 @@ ts = datetime.timestamp()
 Creates a timedelta representing a duration and returns the total seconds.
 
 **Parameters (all optional, keyword-only):**
+
 - `days`: Number of days
 - `seconds`: Number of seconds
 - `microseconds`: Number of microseconds
@@ -179,6 +205,7 @@ Creates a timedelta representing a duration and returns the total seconds.
 **Returns:** Float (total duration in seconds)
 
 **Example:**
+
 ```python
 import datetime
 
@@ -202,22 +229,22 @@ next_week = now + datetime.timedelta(weeks=1)
 
 ## Format Codes
 
-| Code | Description | Example |
-|------|-------------|---------|
-| `%Y` | Year (4 digits) | 2024 |
-| `%m` | Month (01-12) | 01 |
-| `%d` | Day (01-31) | 15 |
-| `%H` | Hour (00-23) | 18 |
-| `%I` | Hour (01-12) | 06 |
-| `%M` | Minute (00-59) | 30 |
-| `%S` | Second (00-59) | 45 |
-| `%A` | Full weekday | Monday |
-| `%a` | Abbreviated weekday | Mon |
-| `%B` | Full month | January |
-| `%b` | Abbreviated month | Jan |
-| `%p` | AM/PM | PM |
-| `%Z` | Timezone name | MST |
-| `%z` | Timezone offset | -0700 |
+| Code | Description         | Example |
+| ---- | ------------------- | ------- |
+| `%Y` | Year (4 digits)     | 2024    |
+| `%m` | Month (01-12)       | 01      |
+| `%d` | Day (01-31)         | 15      |
+| `%H` | Hour (00-23)        | 18      |
+| `%I` | Hour (01-12)        | 06      |
+| `%M` | Minute (00-59)      | 30      |
+| `%S` | Second (00-59)      | 45      |
+| `%A` | Full weekday        | Monday  |
+| `%a` | Abbreviated weekday | Mon     |
+| `%B` | Full month          | January |
+| `%b` | Abbreviated month   | Jan     |
+| `%p` | AM/PM               | PM      |
+| `%Z` | Timezone name       | MST     |
+| `%z` | Timezone offset     | -0700   |
 
 ## Notes
 

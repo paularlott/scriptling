@@ -8,6 +8,12 @@ The `functools` library provides higher-order functions that act on or return ot
 import functools
 ```
 
+## Available Functions
+
+| Function                                    | Description                     |
+| ------------------------------------------- | ------------------------------- |
+| `reduce(function, iterable[, initializer])` | Reduce iterable to single value |
+
 ## Functions
 
 ### reduce(function, iterable[, initializer])
@@ -15,6 +21,7 @@ import functools
 Apply a function of two arguments cumulatively to the items of an iterable, from left to right, to reduce the iterable to a single value.
 
 **Parameters:**
+
 - `function` - A function taking two arguments (accumulator, current_item)
 - `iterable` - A list of items to process
 - `initializer` - Optional. Starting value for the accumulator
@@ -73,6 +80,7 @@ reduce(add, [1, 2, 3, 4, 5])
 ```
 
 Is equivalent to:
+
 ```
 add(add(add(add(1, 2), 3), 4), 5)
 = add(add(add(3, 3), 4), 5)
@@ -82,11 +90,13 @@ add(add(add(add(1, 2), 3), 4), 5)
 ```
 
 With an initializer:
+
 ```
 reduce(add, [1, 2, 3], 10)
 ```
 
 Is equivalent to:
+
 ```
 add(add(add(10, 1), 2), 3)
 = add(add(11, 2), 3)
@@ -97,6 +107,7 @@ add(add(add(10, 1), 2), 3)
 ## Use Cases
 
 ### Summing Values
+
 ```python
 import functools
 
@@ -107,6 +118,7 @@ total = functools.reduce(add, [100, 200, 300])  # 600
 ```
 
 ### Building Data Structures
+
 ```python
 import functools
 
@@ -120,6 +132,7 @@ result = functools.reduce(merge_dicts, pairs, {})
 ```
 
 ### Processing Pipelines
+
 ```python
 import functools
 
@@ -147,14 +160,14 @@ result = functools.reduce(apply_fn, functions, 5)
 
 This library implements a subset of Python's `functools` module:
 
-| Function | Supported |
-|----------|-----------|
-| reduce | ✅ |
-| partial | ❌ |
-| partialmethod | ❌ |
-| lru_cache | ❌ |
-| cache | ❌ |
-| cached_property | ❌ |
-| wraps | ❌ |
-| total_ordering | ❌ |
-| cmp_to_key | ❌ |
+| Function        | Supported |
+| --------------- | --------- |
+| reduce          | ✅        |
+| partial         | ❌        |
+| partialmethod   | ❌        |
+| lru_cache       | ❌        |
+| cache           | ❌        |
+| cached_property | ❌        |
+| wraps           | ❌        |
+| total_ordering  | ❌        |
+| cmp_to_key      | ❌        |

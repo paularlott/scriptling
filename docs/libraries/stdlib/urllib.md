@@ -6,6 +6,17 @@ URL parsing and encoding/decoding functions. Python-compatible with the `urllib.
 import urllib.parse
 ```
 
+## Available Functions
+
+| Function                    | Description                                |
+| --------------------------- | ------------------------------------------ |
+| `quote(string, safe?)`      | URL-encode a string using percent-encoding |
+| `unquote(string)`           | Decode a URL-encoded string                |
+| `quote_plus(string, safe?)` | URL-encode with spaces as plus signs       |
+| `unquote_plus(string)`      | Decode plus signs to spaces                |
+| `urlencode(dict)`           | Convert dict to URL query string           |
+| `parse_qs(string)`          | Parse query string to dict                 |
+
 ## Functions
 
 ### urllib.parse.quote(string, safe?)
@@ -13,12 +24,14 @@ import urllib.parse
 URL-encode a string using percent-encoding.
 
 **Parameters:**
+
 - `string`: String to encode
 - `safe` (optional): String of characters that should not be encoded (default: "/")
 
 **Returns:** String
 
 **Example:**
+
 ```python
 import urllib.parse
 
@@ -36,11 +49,13 @@ encoded = urllib.parse.quote("hello/world", safe="")
 Decode a URL-encoded string.
 
 **Parameters:**
+
 - `string`: URL-encoded string to decode
 
 **Returns:** String
 
 **Example:**
+
 ```python
 import urllib.parse
 
@@ -53,12 +68,14 @@ decoded = urllib.parse.unquote("hello%20world")
 Like `quote()`, but also replaces spaces with plus signs.
 
 **Parameters:**
+
 - `string`: String to encode
 - `safe` (optional): String of characters that should not be encoded (default: "")
 
 **Returns:** String
 
 **Example:**
+
 ```python
 import urllib.parse
 
@@ -72,11 +89,13 @@ encoded = urllib.parse.quote_plus("hello world")
 Like `unquote()`, but also replaces plus signs with spaces.
 
 **Parameters:**
+
 - `string`: URL-encoded string to decode
 
 **Returns:** String
 
 **Example:**
+
 ```python
 import urllib.parse
 
@@ -89,9 +108,11 @@ decoded = urllib.parse.unquote_plus("hello+world")
 Parse a URL into its components.
 
 **Parameters:**
+
 - `url`: URL string to parse
 
 **Returns:** Dict with keys:
+
 - `scheme`: Protocol (e.g., "https")
 - `netloc`: Network location (host:port)
 - `path`: URL path
@@ -100,6 +121,7 @@ Parse a URL into its components.
 - `fragment`: URL fragment
 
 **Example:**
+
 ```python
 import urllib.parse
 
@@ -119,11 +141,13 @@ parsed = urllib.parse.urlparse("https://example.com:8080/path?query=value#sectio
 Reconstruct a URL from its components.
 
 **Parameters:**
+
 - `components`: Dict or list with URL components (scheme, netloc, path, params, query, fragment)
 
 **Returns:** String
 
 **Example:**
+
 ```python
 import urllib.parse
 
@@ -145,9 +169,11 @@ url = urllib.parse.urlunparse(["https", "example.com", "/path", "", "key=value",
 Parse a URL into 5 components (without params).
 
 **Parameters:**
+
 - `url`: URL string to parse
 
 **Returns:** Dict with keys:
+
 - `scheme`: Protocol
 - `netloc`: Network location
 - `path`: URL path
@@ -155,6 +181,7 @@ Parse a URL into 5 components (without params).
 - `fragment`: URL fragment
 
 **Example:**
+
 ```python
 import urllib.parse
 
@@ -173,11 +200,13 @@ parsed = urllib.parse.urlsplit("https://example.com/path?query=value#section")
 Reconstruct a URL from 5 components.
 
 **Parameters:**
+
 - `components`: Dict or list with 5 URL components
 
 **Returns:** String
 
 **Example:**
+
 ```python
 import urllib.parse
 
@@ -196,12 +225,14 @@ url = urllib.parse.urlunsplit({
 Join a base URL with another URL.
 
 **Parameters:**
+
 - `base`: Base URL
 - `url`: URL to join (relative or absolute)
 
 **Returns:** String
 
 **Example:**
+
 ```python
 import urllib.parse
 
@@ -219,12 +250,14 @@ full_url = urllib.parse.urljoin("https://example.com/path/", "/other")
 Parse a query string into a dict with lists of values.
 
 **Parameters:**
+
 - `query_string`: Query string to parse
 - `keep_blank_values` (optional): If true, keep blank values (default: false)
 
 **Returns:** Dict with lists of values
 
 **Example:**
+
 ```python
 import urllib.parse
 
@@ -237,12 +270,14 @@ params = urllib.parse.parse_qs("name=John&tags=python&tags=go")
 Parse a query string into a list of (key, value) pairs.
 
 **Parameters:**
+
 - `query_string`: Query string to parse
 - `keep_blank_values` (optional): If true, keep blank values (default: false)
 
 **Returns:** List of [key, value] pairs
 
 **Example:**
+
 ```python
 import urllib.parse
 
@@ -255,12 +290,14 @@ params = urllib.parse.parse_qsl("name=John&age=30")
 Encode a dict into a URL query string.
 
 **Parameters:**
+
 - `query`: Dict to encode
 - `doseq` (optional): If true, handle sequences of values (default: false)
 
 **Returns:** String
 
 **Example:**
+
 ```python
 import urllib.parse
 

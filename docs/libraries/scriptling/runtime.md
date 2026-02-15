@@ -2,6 +2,13 @@
 
 Background tasks and async execution for HTTP servers.
 
+## Available Functions
+
+| Function                     | Description                 |
+| ---------------------------- | --------------------------- |
+| `background(name, handler)`  | Register a background task  |
+| `run(func, *args, **kwargs)` | Run function asynchronously |
+
 ## Setup
 
 ```go

@@ -2,6 +2,16 @@
 
 Functions for making HTTP requests. Matches Python's `requests` library API.
 
+## Available Functions
+
+| Function                          | Description                                |
+| --------------------------------- | ------------------------------------------ |
+| `get(url, **kwargs)`              | Make a GET request to the specified URL    |
+| `post(url, data=None, **kwargs)`  | Make a POST request to the specified URL   |
+| `put(url, data=None, **kwargs)`   | Make a PUT request to the specified URL    |
+| `delete(url, **kwargs)`           | Make a DELETE request to the specified URL |
+| `patch(url, data=None, **kwargs)` | Make a PATCH request to the specified URL  |
+
 ## Setup
 
 ```go
@@ -13,11 +23,12 @@ p.RegisterLibrary("requests", extlibs.RequestsLibrary)
 
 ## Functions
 
-### requests.get(url, **kwargs)
+### requests.get(url, \*\*kwargs)
 
 Makes a GET request to the specified URL.
 
 **Parameters:**
+
 - `url`: URL to request
 - `**kwargs`: Optional arguments
   - `timeout` (int): Request timeout in seconds (default: 5)
@@ -26,11 +37,12 @@ Makes a GET request to the specified URL.
 
 **Returns:** Response object
 
-### requests.post(url, data=None, **kwargs)
+### requests.post(url, data=None, \*\*kwargs)
 
 Makes a POST request to the specified URL.
 
 **Parameters:**
+
 - `url`: URL to request
 - `data` (string, optional): Request body
 - `**kwargs`: Optional arguments
@@ -40,11 +52,12 @@ Makes a POST request to the specified URL.
 
 **Returns:** Response object
 
-### requests.put(url, data=None, **kwargs)
+### requests.put(url, data=None, \*\*kwargs)
 
 Makes a PUT request to the specified URL.
 
 **Parameters:**
+
 - `url`: URL to request
 - `data` (string, optional): Request body
 - `**kwargs`: Optional arguments
@@ -54,11 +67,12 @@ Makes a PUT request to the specified URL.
 
 **Returns:** Response object
 
-### requests.delete(url, **kwargs)
+### requests.delete(url, \*\*kwargs)
 
 Makes a DELETE request to the specified URL.
 
 **Parameters:**
+
 - `url`: URL to request
 - `**kwargs`: Optional arguments
   - `timeout` (int): Request timeout in seconds (default: 5)
@@ -67,11 +81,12 @@ Makes a DELETE request to the specified URL.
 
 **Returns:** Response object
 
-### requests.patch(url, data=None, **kwargs)
+### requests.patch(url, data=None, \*\*kwargs)
 
 Makes a PATCH request to the specified URL.
 
 **Parameters:**
+
 - `url`: URL to request
 - `data` (string, optional): Request body
 - `**kwargs`: Optional arguments

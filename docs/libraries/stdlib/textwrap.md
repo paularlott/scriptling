@@ -8,6 +8,16 @@ The `textwrap` library provides text wrapping and filling utilities, compatible 
 import textwrap
 ```
 
+## Available Functions
+
+| Function               | Description                             |
+| ---------------------- | --------------------------------------- |
+| `wrap(text, width=70)` | Wrap text into list of lines            |
+| `fill(text, width=70)` | Wrap text and join with newlines        |
+| `dedent(text)`         | Remove common leading whitespace        |
+| `indent(text, prefix)` | Add prefix to each line                 |
+| `shorten(text, width)` | Truncate text to width with placeholder |
+
 ## Functions
 
 ### wrap(text, width=70)
@@ -15,6 +25,7 @@ import textwrap
 Wrap a single paragraph of text, returning a list of wrapped lines.
 
 **Parameters:**
+
 - `text` - The text to wrap
 - `width` - Maximum line width (default: 70)
 
@@ -33,6 +44,7 @@ lines = textwrap.wrap(text, 20)
 Wrap text and return a single string with lines joined by newlines.
 
 **Parameters:**
+
 - `text` - The text to wrap
 - `width` - Maximum line width (default: 70)
 
@@ -51,6 +63,7 @@ result = textwrap.fill(text, 20)
 Remove common leading whitespace from all lines in text.
 
 **Parameters:**
+
 - `text` - The text to dedent
 
 **Returns:** Dedented text
@@ -68,6 +81,7 @@ result = textwrap.dedent(text)
 Add a prefix to the beginning of non-empty lines in text.
 
 **Parameters:**
+
 - `text` - The text to indent
 - `prefix` - String to add to each line
 
@@ -90,6 +104,7 @@ result = textwrap.indent(text, "> ")
 Truncate text to fit in the given width, using a placeholder.
 
 **Parameters:**
+
 - `text` - The text to shorten
 - `width` - Maximum width including placeholder
 - `placeholder` - String to indicate truncation (default: "[...]")
@@ -111,6 +126,7 @@ result = textwrap.shorten(text, 20, placeholder="...")
 ## Examples
 
 ### Formatting Long Text
+
 ```python
 import textwrap
 
@@ -122,6 +138,7 @@ print(wrapped)
 ```
 
 ### Creating Indented Blocks
+
 ```python
 import textwrap
 
@@ -131,6 +148,7 @@ indented = textwrap.indent(code, "    ")
 ```
 
 ### Processing Multi-line Strings
+
 ```python
 import textwrap
 
@@ -144,6 +162,7 @@ clean = textwrap.dedent(template)
 ```
 
 ### Truncating for Display
+
 ```python
 import textwrap
 
@@ -168,11 +187,11 @@ for title in titles:
 
 This library implements a subset of Python's `textwrap` module:
 
-| Function | Supported |
-|----------|-----------|
-| wrap | ✅ |
-| fill | ✅ |
-| dedent | ✅ |
-| indent | ✅ |
-| shorten | ✅ |
-| TextWrapper class | ❌ |
+| Function          | Supported |
+| ----------------- | --------- |
+| wrap              | ✅        |
+| fill              | ✅        |
+| dedent            | ✅        |
+| indent            | ✅        |
+| shorten           | ✅        |
+| TextWrapper class | ❌        |

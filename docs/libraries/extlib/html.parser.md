@@ -10,6 +10,16 @@ import html.parser
 HTMLParser = html.parser.HTMLParser
 ```
 
+## Available Methods
+
+| Method                | Description                         |
+| --------------------- | ----------------------------------- |
+| `feed(data)`          | Feed HTML data to the parser        |
+| `reset()`             | Reset the parser instance           |
+| `close()`             | Force processing of buffered data   |
+| `get_starttag_text()` | Get text of most recent start tag   |
+| `getpos()`            | Get current (line, offset) position |
+
 ## HTMLParser Class
 
 The `HTMLParser` class is the main interface for parsing HTML documents. Create a subclass and override handler methods to process HTML elements.
@@ -40,17 +50,21 @@ parser.feed("<html><body><p>Hello World!</p></body></html>")
 ## Instance Methods
 
 ### feed(data)
+
 Feed HTML data to the parser. Parses the HTML and calls appropriate handler methods.
 
 **Parameters:**
+
 - `data` - String containing HTML to parse
 
 **Example:**
+
 ```python
 parser.feed("<h1>Title</h1><p>Paragraph</p>")
 ```
 
 ### reset()
+
 Reset the parser instance. Clears internal buffers and parser state.
 
 ```python
@@ -58,6 +72,7 @@ parser.reset()
 ```
 
 ### close()
+
 Force processing of all buffered data. Call when done feeding data.
 
 ```python
@@ -65,6 +80,7 @@ parser.close()
 ```
 
 ### get_starttag_text()
+
 Returns the text of the most recently opened start tag.
 
 ```python
@@ -75,6 +91,7 @@ class MyParser(html.parser.HTMLParser):
 ```
 
 ### getpos()
+
 Returns a tuple (line, offset) representing the current position in the source.
 
 ```python
@@ -87,9 +104,11 @@ print(f"Line: {pos[0]}, Offset: {pos[1]}")
 Override these methods in your subclass to handle different HTML elements:
 
 ### handle_starttag(tag, attrs)
+
 Called when a start tag is encountered.
 
 **Parameters:**
+
 - `tag` - Lowercase tag name (e.g., "div", "p")
 - `attrs` - List of (name, value) tuples for attributes
 
@@ -101,9 +120,11 @@ def handle_starttag(self, tag, attrs):
 ```
 
 ### handle_endtag(tag)
+
 Called when an end tag is encountered.
 
 **Parameters:**
+
 - `tag` - Lowercase tag name
 
 ```python
@@ -112,9 +133,11 @@ def handle_endtag(self, tag):
 ```
 
 ### handle_startendtag(tag, attrs)
+
 Called for self-closing tags like `<br/>` or `<img/>`.
 
 **Parameters:**
+
 - `tag` - Lowercase tag name
 - `attrs` - List of (name, value) tuples
 
@@ -124,9 +147,11 @@ def handle_startendtag(self, tag, attrs):
 ```
 
 ### handle_data(data)
+
 Called for text data between tags.
 
 **Parameters:**
+
 - `data` - Text content
 
 ```python
@@ -136,9 +161,11 @@ def handle_data(self, data):
 ```
 
 ### handle_comment(data)
+
 Called when an HTML comment is encountered.
 
 **Parameters:**
+
 - `data` - Comment content (without <!-- and -->)
 
 ```python
@@ -147,9 +174,11 @@ def handle_comment(self, data):
 ```
 
 ### handle_decl(decl)
+
 Called for DOCTYPE and other declarations.
 
 **Parameters:**
+
 - `decl` - Declaration content
 
 ```python
@@ -158,9 +187,11 @@ def handle_decl(self, decl):
 ```
 
 ### handle_pi(data)
+
 Called for processing instructions like `<?xml ...?>`.
 
 **Parameters:**
+
 - `data` - Processing instruction content
 
 ```python
@@ -169,20 +200,25 @@ def handle_pi(self, data):
 ```
 
 ### handle_entityref(name)
+
 Called for named character references like `&gt;`. Only called when `convert_charrefs` is False.
 
 **Parameters:**
+
 - `name` - Entity name (without & and ;)
 
 ### handle_charref(name)
+
 Called for numeric character references like `&#62;`. Only called when `convert_charrefs` is False.
 
 **Parameters:**
+
 - `name` - Character code (without &# and ;)
 
 ## Instance Attributes
 
 ### convert_charrefs
+
 Boolean indicating whether to automatically convert character references. Default is True.
 
 When True, entities like `&amp;` are converted to `&` before being passed to `handle_data`.
@@ -273,7 +309,7 @@ parser.feed("<div>Hello</div>")
 
 ## Differences from Python
 
-- `super().__init__()` is not required (or available) - the parent class __init__ is automatically called
+- `super().__init__()` is not required (or available) - the parent class **init** is automatically called
 - The `from X import Y` syntax is not supported - use `import html.parser` then `html.parser.HTMLParser`
 
 ## See Also

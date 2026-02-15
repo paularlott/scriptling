@@ -2,6 +2,14 @@
 
 TOON (Token-Oriented Object Notation) encoding/decoding library. TOON is a human-readable data format that's more compact and readable than JSON, with support for inline objects, flexible syntax, and tabular data.
 
+## Available Functions
+
+| Function                                  | Description                   |
+| ----------------------------------------- | ----------------------------- |
+| `encode(data)`                            | Encode data to TOON format    |
+| `decode(text)`                            | Decode TOON string to objects |
+| `encode_options(data, indent, delimiter)` | Encode with custom options    |
+
 ## Functions
 
 ### scriptling.toon.encode(data)
@@ -9,11 +17,13 @@ TOON (Token-Oriented Object Notation) encoding/decoding library. TOON is a human
 Encodes a scriptling value to TOON format.
 
 **Parameters:**
+
 - `data`: Any scriptling value to encode (string, int, float, bool, list, dict)
 
 **Returns:** str - TOON formatted string
 
 **Example:**
+
 ```python
 import scriptling.toon as toon
 
@@ -41,11 +51,13 @@ print(text)
 Decodes a TOON formatted string to scriptling objects.
 
 **Parameters:**
+
 - `text` (str): TOON formatted string
 
 **Returns:** object - Decoded scriptling value (dict, list, string, int, float, bool, null)
 
 **Example:**
+
 ```python
 import scriptling.toon as toon
 
@@ -70,6 +82,7 @@ print(data.tags[0]) # "python"
 Encodes data to TOON format with custom options.
 
 **Parameters:**
+
 - `data`: Any scriptling value to encode
 - `indent` (int): Number of spaces per indentation level (default: 2)
 - `delimiter` (str): Delimiter for arrays and tabular data (default: ",")
@@ -77,6 +90,7 @@ Encodes data to TOON format with custom options.
 **Returns:** str - TOON formatted string
 
 **Example:**
+
 ```python
 import scriptling.toon as toon
 
@@ -97,6 +111,7 @@ print(text)
 Decodes a TOON formatted string with custom parsing options.
 
 **Parameters:**
+
 - `text` (str): TOON formatted string
 - `strict` (bool): Enable strict validation (default: true)
 - `indent_size` (int): Expected indentation size (0 = auto-detect, default: 0)
@@ -104,6 +119,7 @@ Decodes a TOON formatted string with custom parsing options.
 **Returns:** object - Decoded scriptling value
 
 **Example:**
+
 ```python
 import scriptling.toon as toon
 
@@ -121,6 +137,7 @@ data = toon.decode_options(text, false, 0)
 ### Basic Types
 
 **Strings:**
+
 ```toon
 name: Alice
 description: Hello, World!
@@ -128,6 +145,7 @@ empty: ""
 ```
 
 **Numbers:**
+
 ```toon
 count: 42
 price: 19.99
@@ -136,12 +154,14 @@ scientific: 1.5e-10
 ```
 
 **Booleans:**
+
 ```toon
 active: true
 deleted: false
 ```
 
 **Null:**
+
 ```toon
 value: null
 ```
@@ -149,6 +169,7 @@ value: null
 ### Lists
 
 Inline lists:
+
 ```toon
 numbers: [1, 2, 3]
 names: [Alice, Bob, Charlie]
@@ -156,6 +177,7 @@ mixed: [1, two, 3.0, true]
 ```
 
 Multiline lists:
+
 ```toon
 fruits:
   - apple
@@ -166,11 +188,13 @@ fruits:
 ### Dictionaries
 
 Inline dictionaries:
+
 ```toon
 person: {name: Alice, age: 30}
 ```
 
 Multiline dictionaries:
+
 ```toon
 person:
   name: Alice
@@ -179,6 +203,7 @@ person:
 ```
 
 Nested structures:
+
 ```toon
 company:
   name: TechCorp
@@ -205,6 +230,7 @@ users:
 ```
 
 This decodes to:
+
 ```python
 {
   "users": [
@@ -318,6 +344,7 @@ data = {
 ### Example Comparison
 
 **JSON:**
+
 ```json
 {
   "name": "Alice",
@@ -328,6 +355,7 @@ data = {
 ```
 
 **TOON:**
+
 ```toon
 name: Alice
 age: 30
@@ -412,6 +440,7 @@ except Exception as e:
 ## When to Use TOON vs JSON
 
 ### Use TOON when:
+
 - Writing configuration files by hand
 - Human readability is important
 - Data contains nested structures
@@ -419,6 +448,7 @@ except Exception as e:
 - Working with tabular data
 
 ### Use JSON when:
+
 - Interoperating with other systems
 - Machine parsing is prioritized
 - Data is simple and flat

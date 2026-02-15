@@ -6,6 +6,21 @@ Time-related functions for timestamps, time tuples, formatting, and sleeping. Py
 import time
 ```
 
+## Available Functions
+
+| Function                   | Description                                   |
+| -------------------------- | --------------------------------------------- |
+| `time()`                   | Returns the current Unix timestamp            |
+| `perf_counter()`           | Returns a high-resolution monotonic timer     |
+| `sleep(seconds)`           | Pauses execution for the specified seconds    |
+| `localtime([secs])`        | Converts timestamp to local time tuple        |
+| `gmtime([secs])`           | Converts timestamp to UTC time tuple          |
+| `mktime(tuple)`            | Converts time tuple to Unix timestamp         |
+| `strftime(format[, t])`    | Formats a time tuple as a string              |
+| `strptime(string, format)` | Parses a string to a time tuple               |
+| `asctime([t])`             | Converts time tuple to standard format string |
+| `ctime([secs])`            | Converts timestamp to standard format string  |
+
 ## Functions
 
 ### time.time()
@@ -15,6 +30,7 @@ Returns the current Unix timestamp (seconds since epoch as float).
 **Returns:** Float
 
 **Example:**
+
 ```python
 import time
 now = time.time()  # 1732435200.123456
@@ -27,6 +43,7 @@ Returns a high-resolution monotonic timer for benchmarking (seconds since progra
 **Returns:** Float
 
 **Example:**
+
 ```python
 import time
 
@@ -41,11 +58,13 @@ elapsed = end - start
 Pauses execution for the specified number of seconds.
 
 **Parameters:**
+
 - `seconds`: Number of seconds to sleep (integer or float)
 
 **Returns:** None
 
 **Example:**
+
 ```python
 import time
 
@@ -60,11 +79,13 @@ print("Done!")
 Converts a Unix timestamp to a time tuple representing local time.
 
 **Parameters:**
+
 - `secs` (optional): Unix timestamp (integer or float). Defaults to current time.
 
 **Returns:** List (9-element time tuple: [year, month, day, hour, minute, second, weekday, yearday, dst])
 
 **Example:**
+
 ```python
 import time
 
@@ -82,11 +103,13 @@ specific_tuple = time.localtime(1705314645.0)
 Converts a Unix timestamp to a time tuple representing UTC time.
 
 **Parameters:**
+
 - `secs` (optional): Unix timestamp (integer or float). Defaults to current time.
 
 **Returns:** List (9-element time tuple: [year, month, day, hour, minute, second, weekday, yearday, dst])
 
 **Example:**
+
 ```python
 import time
 
@@ -104,11 +127,13 @@ utc_specific = time.gmtime(1705314645.0)
 Converts a time tuple back to a Unix timestamp.
 
 **Parameters:**
+
 - `tuple`: 9-element time tuple (list)
 
 **Returns:** Float (Unix timestamp)
 
 **Example:**
+
 ```python
 import time
 
@@ -122,12 +147,14 @@ timestamp = time.mktime(tuple)
 Formats a time tuple according to the given format string.
 
 **Parameters:**
+
 - `format`: Python-style format string
 - `t` (optional): 9-element time tuple. Defaults to current local time.
 
 **Returns:** String
 
 **Example:**
+
 ```python
 import time
 
@@ -146,12 +173,14 @@ formatted = time.strftime("%Y-%m-%d %H:%M:%S", tuple)
 Parses a time string according to the given format and returns a time tuple.
 
 **Parameters:**
+
 - `string`: Time string to parse
 - `format`: Python-style format string
 
 **Returns:** List (9-element time tuple)
 
 **Example:**
+
 ```python
 import time
 
@@ -164,11 +193,13 @@ tuple = time.strptime("2024-01-15 10:30:45", "%Y-%m-%d %H:%M:%S")
 Converts a time tuple to a string in a standard format.
 
 **Parameters:**
+
 - `t` (optional): 9-element time tuple. Defaults to current local time.
 
 **Returns:** String
 
 **Example:**
+
 ```python
 import time
 
@@ -187,11 +218,13 @@ ascii_time = time.asctime(tuple)
 Converts a Unix timestamp to a string in a standard format.
 
 **Parameters:**
+
 - `secs` (optional): Unix timestamp. Defaults to current time.
 
 **Returns:** String
 
 **Example:**
+
 ```python
 import time
 
@@ -224,19 +257,19 @@ Time tuples are 9-element lists with the following structure:
 
 ## Format Codes
 
-| Code | Description | Example |
-|------|-------------|---------|
-| `%Y` | Year (4 digits) | 2024 |
-| `%m` | Month (01-12) | 01 |
-| `%d` | Day (01-31) | 15 |
-| `%H` | Hour (00-23) | 18 |
-| `%M` | Minute (00-59) | 30 |
-| `%S` | Second (00-59) | 45 |
-| `%A` | Full weekday | Monday |
-| `%a` | Abbreviated weekday | Mon |
-| `%B` | Full month | January |
-| `%b` | Abbreviated month | Jan |
-| `%p` | AM/PM | PM |
+| Code | Description         | Example |
+| ---- | ------------------- | ------- |
+| `%Y` | Year (4 digits)     | 2024    |
+| `%m` | Month (01-12)       | 01      |
+| `%d` | Day (01-31)         | 15      |
+| `%H` | Hour (00-23)        | 18      |
+| `%M` | Minute (00-59)      | 30      |
+| `%S` | Second (00-59)      | 45      |
+| `%A` | Full weekday        | Monday  |
+| `%a` | Abbreviated weekday | Mon     |
+| `%B` | Full month          | January |
+| `%b` | Abbreviated month   | Jan     |
+| `%p` | AM/PM               | PM      |
 
 ## Usage Examples
 

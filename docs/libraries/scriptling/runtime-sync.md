@@ -2,6 +2,15 @@
 
 Named cross-environment concurrency primitives shared across all environments.
 
+## Available Functions
+
+| Function                  | Description                        |
+| ------------------------- | ---------------------------------- |
+| `Atomic(name, initial=0)` | Get/create named atomic counter    |
+| `Shared(name, initial)`   | Get/create named shared variable   |
+| `WaitGroup(name)`         | Get/create named wait group        |
+| `Queue(name, maxsize=0)`  | Get/create named thread-safe queue |
+
 ## Setup
 
 ```go
