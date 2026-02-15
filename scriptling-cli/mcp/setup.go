@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/paularlott/logger"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/extlibs/agent"
@@ -16,7 +17,8 @@ import (
 // libdir: Optional directory for on-demand library loading (empty = current directory)
 // registerInteract: Whether to register the agent interact library
 // safeMode: If true, only register safe libraries (no file/network/subprocess access)
-func SetupScriptling(p *scriptling.Scriptling, libdir string, registerInteract bool, safeMode bool) {
+// log: Logger instance for the logging library
+func SetupScriptling(p *scriptling.Scriptling, libdir string, registerInteract bool, safeMode bool, log logger.Logger) {
 	// Register all standard libraries (always safe)
 	stdlib.RegisterAll(p)
 
@@ -28,6 +30,10 @@ func SetupScriptling(p *scriptling.Scriptling, libdir string, registerInteract b
 	extlibs.RegisterRequestsLibrary(p)
 	extlibs.RegisterSecretsLibrary(p)
 	extlibs.RegisterOSLibrary(p, []string{})
+	extlibs.RegisterLoggingLibrary(p, log)
+
+	// Register KV library (always safe - in-memory store)
+	extlibs.RegisterKVLibrary(p)
 
 	// Skip dangerous libraries in safe mode
 	if !safeMode {
