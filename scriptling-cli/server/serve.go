@@ -144,7 +144,7 @@ func (s *Server) runSetupScript() error {
 // setupScriptling configures a Scriptling instance with libraries
 func setupScriptling(p *scriptling.Scriptling, libDir string, safeMode bool) {
 	// Register the Runtime library for route registration, KV, and background tasks
-	extlibs.RegisterRuntimeLibrary(p)
+	extlibs.RegisterRuntimeLibraryAll(p)
 
 	// Also set up the standard libraries
 	mcpcli.SetupScriptling(p, libDir, false, safeMode, Log)

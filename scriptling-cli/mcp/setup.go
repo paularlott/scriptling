@@ -32,8 +32,8 @@ func SetupScriptling(p *scriptling.Scriptling, libdir string, registerInteract b
 	extlibs.RegisterOSLibrary(p, []string{})
 	extlibs.RegisterLoggingLibrary(p, log)
 
-	// Register runtime library (includes http, kv, sync sub-libraries)
-	extlibs.RegisterRuntimeLibrary(p)
+	// Register runtime library core (background) and sub-libraries (excluding http)
+	extlibs.RegisterRuntimeLibraryAll(p)
 
 	// Skip dangerous libraries in safe mode
 	if !safeMode {
