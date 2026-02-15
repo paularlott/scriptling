@@ -32,13 +32,12 @@ func SetupScriptling(p *scriptling.Scriptling, libdir string, registerInteract b
 	extlibs.RegisterOSLibrary(p, []string{})
 	extlibs.RegisterLoggingLibrary(p, log)
 
-	// Register KV library (always safe - in-memory store)
-	extlibs.RegisterKVLibrary(p)
+	// Register runtime library (includes http, kv, sync sub-libraries)
+	extlibs.RegisterRuntimeLibrary(p)
 
 	// Skip dangerous libraries in safe mode
 	if !safeMode {
 		extlibs.RegisterSubprocessLibrary(p)
-		extlibs.RegisterThreadsLibrary(p)
 		extlibs.RegisterPathlibLibrary(p, []string{})
 		extlibs.RegisterGlobLibrary(p, []string{})
 		extlibs.RegisterWaitForLibrary(p)

@@ -1,4 +1,4 @@
-import scriptling.http
+import scriptling.runtime as runtime
 
 # Simple in-memory user store
 _users = [
@@ -16,11 +16,11 @@ def auth_middleware(request):
     token = request.headers.get("authorization", "")
 
     if not token.startswith("Bearer "):
-        return scriptling.http.json(401, {"error": "Missing authorization token"})
+        return runtime.http.json(401, {"error": "Missing authorization token"})
 
     # Simple token validation (in production, use proper auth)
     if token != "Bearer secret123":
-        return scriptling.http.json(403, {"error": "Invalid token"})
+        return runtime.http.json(403, {"error": "Invalid token"})
 
     # Return None to continue to the handler
     return None
@@ -28,7 +28,7 @@ def auth_middleware(request):
 
 def list_users(request):
     """List all users."""
-    return scriptling.http.json(200, {"users": _users})
+    return runtime.http.json(200, {"users": _users})
 
 
 def create_user(request):
@@ -37,13 +37,13 @@ def create_user(request):
 
     data = request.json()
     if not data or "name" not in data:
-        return scriptling.http.json(400, {"error": "Missing 'name' field"})
+        return runtime.http.json(400, {"error": "Missing 'name' field"})
 
     user = {"id": _next_id, "name": data["name"]}
     _users.append(user)
     _next_id += 1
 
-    return scriptling.http.json(201, {"user": user})
+    return runtime.http.json(201, {"user": user})
 
 
 def search(request):
@@ -58,4 +58,4 @@ def search(request):
             if len(results) >= limit:
                 break
 
-    return scriptling.http.json(200, {"query": query, "results": results})
+    return runtime.http.json(200, {"query": query, "results": results})

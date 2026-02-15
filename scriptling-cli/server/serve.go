@@ -90,7 +90,7 @@ func NewServer(config ServerConfig) (*Server, error) {
 	}
 
 	// Reset routes from previous runs
-	extlibs.ResetHTTPRoutes()
+	extlibs.ResetRuntime()
 
 	// Run setup script if provided
 	if config.ScriptFile != "" {
@@ -107,8 +107,11 @@ func NewServer(config ServerConfig) (*Server, error) {
 		Log.Info("MCP tools enabled", "directory", config.MCPToolsDir)
 	}
 
-	// Collect registered routes from scriptling.http library
+	// Collect registered routes from scriptling.runtime library
 	s.collectRoutes()
+
+	// Start background tasks if any
+	s.startBackgroundTasks()
 
 	return s, nil
 }
@@ -131,8 +134,8 @@ func (s *Server) runSetupScript() error {
 
 // setupScriptling configures a Scriptling instance with libraries
 func setupScriptling(p *scriptling.Scriptling, libDir string, safeMode bool) {
-	// Register the HTTP and KV libraries for route registration
-	extlibs.RegisterHTTPLibrary(p)
+	// Register the Runtime library for route registration, KV, and background tasks
+	extlibs.RegisterRuntimeLibrary(p)
 
 	// Also set up the standard libraries
 	mcpcli.SetupScriptling(p, libDir, false, safeMode, Log)
@@ -216,10 +219,10 @@ func (s *Server) reloadMCPTools() {
 	}
 }
 
-// collectRoutes collects registered routes from the scriptling.http library
+// collectRoutes collects registered routes from the scriptling.runtime library
 func (s *Server) collectRoutes() {
-	routes := extlibs.HTTPRoutes.Routes
-	s.middleware = extlibs.HTTPRoutes.Middleware
+	routes := extlibs.RuntimeState.Routes
+	s.middleware = extlibs.RuntimeState.Middleware
 
 	for path, route := range routes {
 		if route.Static {
@@ -232,6 +235,54 @@ func (s *Server) collectRoutes() {
 			}
 		}
 		Log.Info("Registered route", "path", path, "methods", route.Methods, "handler", route.Handler)
+	}
+}
+
+// startBackgroundTasks starts all registered background tasks
+func (s *Server) startBackgroundTasks() {
+	extlibs.RuntimeState.RLock()
+	backgrounds := make(map[string]string)
+	for name, handler := range extlibs.RuntimeState.Backgrounds {
+		backgrounds[name] = handler
+	}
+	extlibs.RuntimeState.RUnlock()
+
+	for name, handlerRef := range backgrounds {
+		Log.Info("Starting background task", "name", name, "handler", handlerRef)
+		go s.runBackgroundTask(name, handlerRef)
+	}
+}
+
+// runBackgroundTask runs a background task in a goroutine
+func (s *Server) runBackgroundTask(name, handlerRef string) {
+	defer func() {
+		if r := recover(); r != nil {
+			Log.Error("Background task panicked", "name", name, "error", r)
+		}
+	}()
+
+	// Parse handler reference (e.g., "mylib.taskHandler")
+	parts := strings.SplitN(handlerRef, ".", 2)
+	if len(parts) != 2 {
+		Log.Error("Invalid background handler reference", "name", name, "handler", handlerRef)
+		return
+	}
+	libName := parts[0]
+
+	// Create fresh scriptling environment
+	p := scriptling.New()
+	setupScriptling(p, s.config.LibDir, s.config.ScriptMode == "safe")
+
+	// Import the library
+	if err := p.Import(libName); err != nil {
+		Log.Error("Failed to import library for background task", "name", name, "library", libName, "error", err)
+		return
+	}
+
+	// Call the handler function using the full dotted path
+	_, err := p.CallFunction(handlerRef)
+	if err != nil {
+		Log.Error("Background task error", "name", name, "error", err)
 	}
 }
 
@@ -349,7 +400,7 @@ func (s *Server) handleScriptRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check method
-	route := extlibs.HTTPRoutes.Routes[r.URL.Path]
+	route := extlibs.RuntimeState.Routes[r.URL.Path]
 	if route != nil {
 		methodAllowed := false
 		for _, m := range route.Methods {

@@ -35,7 +35,7 @@ func main() {
 	extlibs.RegisterSecretsLibrary(p)
 	extlibs.RegisterSubprocessLibrary(p)
 	extlibs.RegisterHTMLParserLibrary(p)
-	extlibs.RegisterThreadsLibrary(p)
+	// Threads library removed - use scriptling.runtime instead
 	extlibs.RegisterOSLibrary(p, []string{})
 	extlibs.RegisterPathlibLibrary(p, []string{})
 	extlibs.RegisterWaitForLibrary(p)

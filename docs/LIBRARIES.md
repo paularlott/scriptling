@@ -98,17 +98,25 @@ These libraries are built-in and available for import without any registration.
 
 These are scriptling-specific libraries that provide functionality not available in Python's standard library. They use the `scriptling.` namespace prefix.
 
-| Import                  | Description                                             | Details                                                            |
-| ----------------------- | ------------------------------------------------------- | ------------------------------------------------------------------ |
-| `scriptling.ai`         | AI and LLM functions for OpenAI-compatible APIs         | [libraries/scriptling/ai.md](libraries/scriptling/ai.md)           |
-| `scriptling.ai.agent`   | Agentic AI loop with automatic tool execution           | [libraries/scriptling/agent.md](libraries/scriptling/agent.md)     |
-| `scriptling.mcp`        | MCP (Model Context Protocol) tool interaction           | [libraries/scriptling/mcp.md](libraries/scriptling/mcp.md)         |
-| `scriptling.mcp.tool`   | MCP tool parameter access and result functions          | [libraries/scriptling/mcp.md](libraries/scriptling/mcp.md)         |
-| `scriptling.toon`       | TOON (Token-Oriented Object Notation) encoding/decoding | [libraries/scriptling/toon.md](libraries/scriptling/toon.md)       |
-| `scriptling.threads`    | Asynchronous execution with isolated environments       | [libraries/scriptling/threads.md](libraries/scriptling/threads.md) |
-| `scriptling.console`    | Console input/output functions                          | [libraries/scriptling/console.md](libraries/scriptling/console.md) |
-| `scriptling.http`       | HTTP server route registration                          | [libraries/extlib/http.md](libraries/extlib/http.md)               |
-| `scriptling.kv`         | Thread-safe key-value store for sharing state           | [libraries/extlib/kv.md](libraries/extlib/kv.md)                   |
+| Import                | Description                                             | Details                                                            |
+| --------------------- | ------------------------------------------------------- | ------------------------------------------------------------------ |
+| `scriptling.ai`       | AI and LLM functions for OpenAI-compatible APIs         | [libraries/scriptling/ai.md](libraries/scriptling/ai.md)           |
+| `scriptling.ai.agent` | Agentic AI loop with automatic tool execution           | [libraries/scriptling/agent.md](libraries/scriptling/agent.md)     |
+| `scriptling.mcp`      | MCP (Model Context Protocol) tool interaction           | [libraries/scriptling/mcp.md](libraries/scriptling/mcp.md)         |
+| `scriptling.mcp.tool` | MCP tool parameter access and result functions          | [libraries/scriptling/mcp.md](libraries/scriptling/mcp.md)         |
+| `scriptling.toon`     | TOON (Token-Oriented Object Notation) encoding/decoding | [libraries/scriptling/toon.md](libraries/scriptling/toon.md)       |
+| `scriptling.console`  | Console input/output functions                          | [libraries/scriptling/console.md](libraries/scriptling/console.md) |
+
+## Runtime Library
+
+The runtime library provides HTTP server functionality, key-value store, and concurrency primitives. It uses the `scriptling.` namespace prefix.
+
+| Import                    | Description                                    | Details                                                                  |
+| ------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------ |
+| `scriptling.runtime`      | Background tasks and async execution           | [libraries/scriptling/runtime.md](libraries/scriptling/runtime.md)       |
+| `scriptling.runtime.http` | HTTP route registration and response helpers   | [libraries/scriptling/runtime-http.md](libraries/scriptling/runtime-http.md) |
+| `scriptling.runtime.kv`   | Thread-safe key-value store                    | [libraries/scriptling/runtime-kv.md](libraries/scriptling/runtime-kv.md) |
+| `scriptling.runtime.sync` | Named cross-environment concurrency primitives | [libraries/scriptling/runtime-sync.md](libraries/scriptling/runtime-sync.md) |
 
 ## Extended Libraries
 
