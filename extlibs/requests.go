@@ -29,11 +29,7 @@ var ResponseClass = &object.Class{
 				if err := errors.ExactArgs(args, 1); err != nil { return err }
 				if instance, ok := args[0].(*object.Instance); ok {
 					if body, err := instance.Fields["body"].AsString(); err == nil {
-						var result interface{}
-						if err := json.Unmarshal([]byte(body), &result); err != nil {
-							return errors.NewError("JSONDecodeError: %s", err.Error())
-						}
-						return conversion.FromGo(result)
+						return conversion.MustParseJSON(body)
 					}
 				}
 				return errors.NewError("json() called on non-Response object")
