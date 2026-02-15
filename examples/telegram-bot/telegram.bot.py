@@ -38,7 +38,6 @@ Example:
 """
 
 import logging
-import os
 
 
 class Command:

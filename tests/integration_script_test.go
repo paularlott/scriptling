@@ -35,7 +35,7 @@ func TestIntegrationScripts(t *testing.T) {
 	extlibs.RegisterSecretsLibrary(p)
 	extlibs.RegisterSubprocessLibrary(p)
 	extlibs.RegisterHTMLParserLibrary(p)
-	extlibs.RegisterThreadsLibrary(p)
+	extlibs.RegisterRuntimeLibrary(p)
 	extlibs.RegisterOSLibrary(p, []string{})
 	extlibs.RegisterPathlibLibrary(p, []string{})
 	extlibs.RegisterConsoleLibrary(p)

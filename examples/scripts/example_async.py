@@ -1,7 +1,7 @@
 #!/usr/bin/env scriptling
 """Example demonstrating async library features"""
 
-import scriptling.threads as threads
+import scriptling.runtime as runtime
 
 print("=== Async Library Examples ===\n")
 
@@ -12,7 +12,7 @@ def calculate(x, y):
     result = x * y
     return result
 
-promise = threads.run(calculate, 6, 7)
+promise = runtime.run(calculate, 6, 7)
 result = promise.get()
 print(f"   6 * 7 = {result}\n")
 
@@ -22,20 +22,20 @@ print("2. Multiple async operations:")
 def square(n):
     return n * n
 
-promises = [threads.run(square, i) for i in range(1, 6)]
+promises = [runtime.run(square, i) for i in range(1, 6)]
 results = [p.get() for p in promises]
 print(f"   Squares of 1-5: {results}\n")
 
 # Example 3: Atomic counter
 print("3. Atomic counter:")
 
-counter = threads.Atomic(0)
+counter = runtime.sync.Atomic("example_counter", 0)
 
 def increment_counter():
     for _ in range(100):
         counter.add(1)
 
-promises = [threads.run(increment_counter) for _ in range(5)]
+promises = [runtime.run(increment_counter) for _ in range(5)]
 for p in promises:
     p.get()
 
@@ -44,7 +44,7 @@ print(f"   Counter after 5 workers * 100 increments: {counter.get()}\n")
 # Example 4: Shared state
 print("4. Shared state:")
 
-shared_data = threads.Shared({"count": 0, "items": []})
+shared_data = runtime.sync.Shared("example_shared", {"count": 0, "items": []})
 
 def update_shared(id):
     data = shared_data.get()
@@ -52,7 +52,7 @@ def update_shared(id):
     data["items"].append(id)
     shared_data.set(data)
 
-promises = [threads.run(update_shared, i) for i in range(5)]
+promises = [runtime.run(update_shared, i) for i in range(5)]
 for p in promises:
     p.get()
 
@@ -63,7 +63,7 @@ print(f"   Shared items: {final_data['items']}\n")
 # Example 5: WaitGroup synchronization
 print("5. WaitGroup synchronization:")
 
-wg = threads.WaitGroup()
+wg = runtime.sync.WaitGroup("example_wg")
 completed = []
 
 def worker(id):
@@ -73,7 +73,7 @@ def worker(id):
 print("   Starting 5 workers...")
 for i in range(5):
     wg.add(1)
-    threads.run(worker, i)
+    runtime.run(worker, i)
 
 wg.wait()
 print(f"   All workers completed: {len(completed)} workers\n")
@@ -81,13 +81,13 @@ print(f"   All workers completed: {len(completed)} workers\n")
 # Example 6: Producer-Consumer with Queue
 print("6. Producer-Consumer pattern:")
 
-queue = threads.Queue(maxsize=10)
+queue = runtime.sync.Queue("example_queue", maxsize=10)
 consumed_items = []
 
 def producer():
     for i in range(10):
         queue.put(i)
-    queue.put(None)  # Sentinel to signal end
+    queue.put(None)
 
 def consumer():
     while True:
@@ -96,29 +96,10 @@ def consumer():
             break
         consumed_items.append(item)
 
-threads.run(producer)
-consumer_promise = threads.run(consumer)
+runtime.run(producer)
+consumer_promise = runtime.run(consumer)
 consumer_promise.get()
 
 print(f"   Produced and consumed {len(consumed_items)} items\n")
-
-# Example 7: Worker Pool
-print("7. Worker Pool:")
-
-processed_results = []
-
-def process_item(item):
-    result = item * item
-    processed_results.append(result)
-
-pool = threads.Pool(process_item, workers=3, queue_depth=20)
-
-print("   Submitting 10 items to pool...")
-for i in range(1, 11):
-    pool.submit(i)
-
-pool.close()
-print(f"   Pool processed {len(processed_results)} items")
-print(f"   Results: {sorted(processed_results)}\n")
 
 print("=== All examples completed successfully! ===")

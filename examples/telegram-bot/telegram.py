@@ -23,17 +23,16 @@ Example usage:
 
     # Webhook mode (requires public HTTPS URL)
     # In webhook handler:
-    import scriptling.http
-    import scriptling.kv
+    import scriptling.runtime as runtime
 
     def webhook(request):
-        token = scriptling.kv.get("telegram_token")
+        token = runtime.kv.get("telegram_token")
         bot = telegram.Bot(token)
         update = request.json()
         if "message" in update:
             chat_id = update["message"]["chat"]["id"]
             bot.send_message(chat_id, "Got it!")
-        return scriptling.http.json(200, {"status": "ok"})
+        return runtime.http.json(200, {"status": "ok"})
 """
 
 import logging

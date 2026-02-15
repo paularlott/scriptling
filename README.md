@@ -99,6 +99,21 @@ echo 'print("Hello")' | ./bin/scriptling
 task build-all
 ```
 
+### HTTP & MCP Server
+
+The CLI can also run as an HTTP server with MCP (Model Context Protocol) support for LLM integration:
+
+```bash
+# Start HTTP server on port 8000
+./bin/scriptling --server :8000 script.py
+
+# With MCP tools for LLM integration
+./bin/scriptling --server :8000 --mcp-tools ./tools script.py
+
+# With TLS and authentication
+./bin/scriptling --server :8443 --tls-generate --bearer-token secret script.py
+```
+
 See [scriptling-cli/README.md](scriptling-cli/README.md) for details.
 
 ## Go API

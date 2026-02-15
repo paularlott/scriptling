@@ -2,9 +2,7 @@ package extlibs
 
 import (
 	"context"
-	"encoding/json"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"github.com/paularlott/scriptling/conversion"
@@ -12,24 +10,21 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
-const KVLibraryName = "scriptling.kv"
-
 // kvEntry represents a stored value with optional TTL
 type kvEntry struct {
 	value     interface{}
-	expiresAt time.Time // zero time means no expiration
+	expiresAt time.Time
 }
 
-// kvStore is the global key-value store
-var kvStore = struct {
-	sync.RWMutex
-	data map[string]*kvEntry
-}{
-	data: make(map[string]*kvEntry),
+// isExpired checks if an entry has expired
+func (e *kvEntry) isExpired() bool {
+	if e.expiresAt.IsZero() {
+		return false
+	}
+	return time.Now().After(e.expiresAt)
 }
 
-// deepCopy creates a deep copy of basic types (string, int, float, bool, list, dict)
-// This ensures thread safety - callers can modify returned values without affecting the store
+// deepCopy creates a deep copy of basic types
 func deepCopy(v interface{}) interface{} {
 	if v == nil {
 		return nil
@@ -56,30 +51,16 @@ func deepCopy(v interface{}) interface{} {
 }
 
 // convertObjectToKVValue converts a scriptling Object to a storable basic type
-// Uses the conversion package for consistency
 func convertObjectToKVValue(obj object.Object) (interface{}, *object.Error) {
 	return conversion.ToGoWithError(obj)
 }
 
 // convertKVValueToObject converts a storable basic type back to a scriptling Object
-// Uses the conversion package for consistency
 func convertKVValueToObject(v interface{}) object.Object {
 	return conversion.FromGo(v)
 }
 
-// isExpired checks if an entry has expired
-func (e *kvEntry) isExpired() bool {
-	if e.expiresAt.IsZero() {
-		return false
-	}
-	return time.Now().After(e.expiresAt)
-}
-
-func RegisterKVLibrary(registrar interface{ RegisterLibrary(*object.Library) }) {
-	registrar.RegisterLibrary(KVLibrary)
-}
-
-var KVLibrary = object.NewLibrary(KVLibraryName, map[string]*object.Builtin{
+var KVSubLibrary = object.NewLibrary("kv", map[string]*object.Builtin{
 	"set": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if err := errors.MinArgs(args, 2); err != nil {
@@ -96,7 +77,6 @@ var KVLibrary = object.NewLibrary(KVLibraryName, map[string]*object.Builtin{
 				return convErr
 			}
 
-			// Check for TTL in kwargs or third argument
 			var ttl int64 = 0
 			if t := kwargs.Get("ttl"); t != nil {
 				if ttlVal, e := t.AsInt(); e == nil {
@@ -113,9 +93,9 @@ var KVLibrary = object.NewLibrary(KVLibraryName, map[string]*object.Builtin{
 				entry.expiresAt = time.Now().Add(time.Duration(ttl) * time.Second)
 			}
 
-			kvStore.Lock()
-			kvStore.data[key] = entry
-			kvStore.Unlock()
+			RuntimeState.Lock()
+			RuntimeState.KVData[key] = entry
+			RuntimeState.Unlock()
 
 			return &object.Null{}
 		},
@@ -127,8 +107,8 @@ Parameters:
   ttl (int, optional): Time-to-live in seconds. 0 means no expiration.
 
 Example:
-  scriptling.kv.set("api_key", "secret123")
-  scriptling.kv.set("session:abc", {"user": "bob"}, ttl=3600)`,
+  runtime.kv.set("api_key", "secret123")
+  runtime.kv.set("session:abc", {"user": "bob"}, ttl=3600)`,
 	},
 
 	"get": {
@@ -142,7 +122,6 @@ Example:
 				return err
 			}
 
-			// Check for default value
 			var defaultValue object.Object = &object.Null{}
 			if d := kwargs.Get("default"); d != nil {
 				defaultValue = d
@@ -150,15 +129,14 @@ Example:
 				defaultValue = args[1]
 			}
 
-			kvStore.RLock()
-			entry, exists := kvStore.data[key]
-			kvStore.RUnlock()
+			RuntimeState.RLock()
+			entry, exists := RuntimeState.KVData[key]
+			RuntimeState.RUnlock()
 
 			if !exists || entry.isExpired() {
 				return defaultValue
 			}
 
-			// Return a deep copy to ensure thread safety
 			return convertKVValueToObject(deepCopy(entry.value))
 		},
 		HelpText: `get(key, default=None) - Retrieve a value by key
@@ -171,8 +149,8 @@ Returns:
   The stored value (deep copy), or the default if not found
 
 Example:
-  value = scriptling.kv.get("api_key")
-  count = scriptling.kv.get("counter", default=0)`,
+  value = runtime.kv.get("api_key")
+  count = runtime.kv.get("counter", default=0)`,
 	},
 
 	"delete": {
@@ -186,9 +164,9 @@ Example:
 				return err
 			}
 
-			kvStore.Lock()
-			delete(kvStore.data, key)
-			kvStore.Unlock()
+			RuntimeState.Lock()
+			delete(RuntimeState.KVData, key)
+			RuntimeState.Unlock()
 
 			return &object.Null{}
 		},
@@ -198,7 +176,7 @@ Parameters:
   key (string): The key to delete
 
 Example:
-  scriptling.kv.delete("session:abc")`,
+  runtime.kv.delete("session:abc")`,
 	},
 
 	"exists": {
@@ -212,9 +190,9 @@ Example:
 				return err
 			}
 
-			kvStore.RLock()
-			entry, exists := kvStore.data[key]
-			kvStore.RUnlock()
+			RuntimeState.RLock()
+			entry, exists := RuntimeState.KVData[key]
+			RuntimeState.RUnlock()
 
 			if !exists || entry.isExpired() {
 				return &object.Boolean{Value: false}
@@ -230,8 +208,8 @@ Returns:
   bool: True if key exists and is not expired
 
 Example:
-  if scriptling.kv.exists("config"):
-      config = scriptling.kv.get("config")`,
+  if runtime.kv.exists("config"):
+      config = runtime.kv.get("config")`,
 	},
 
 	"incr": {
@@ -245,7 +223,6 @@ Example:
 				return err
 			}
 
-			// Get increment amount
 			var amount int64 = 1
 			if a := kwargs.Get("amount"); a != nil {
 				if amt, e := a.AsInt(); e == nil {
@@ -257,17 +234,15 @@ Example:
 				}
 			}
 
-			kvStore.Lock()
-			defer kvStore.Unlock()
+			RuntimeState.Lock()
+			defer RuntimeState.Unlock()
 
-			entry, exists := kvStore.data[key]
+			entry, exists := RuntimeState.KVData[key]
 			if !exists || entry.isExpired() {
-				// Key doesn't exist, initialize with amount
-				kvStore.data[key] = &kvEntry{value: amount}
+				RuntimeState.KVData[key] = &kvEntry{value: amount}
 				return object.NewInteger(amount)
 			}
 
-			// Check existing value is an integer
 			currentVal, ok := entry.value.(int64)
 			if !ok {
 				return errors.NewError("kv.incr: value is not an integer")
@@ -288,9 +263,9 @@ Returns:
   int: The new value after incrementing
 
 Example:
-  scriptling.kv.set("counter", 0)
-  scriptling.kv.incr("counter")      # returns 1
-  scriptling.kv.incr("counter", 5)   # returns 6`,
+  runtime.kv.set("counter", 0)
+  runtime.kv.incr("counter")      # returns 1
+  runtime.kv.incr("counter", 5)   # returns 6`,
 	},
 
 	"ttl": {
@@ -304,16 +279,16 @@ Example:
 				return err
 			}
 
-			kvStore.RLock()
-			entry, exists := kvStore.data[key]
-			kvStore.RUnlock()
+			RuntimeState.RLock()
+			entry, exists := RuntimeState.KVData[key]
+			RuntimeState.RUnlock()
 
 			if !exists || entry.isExpired() {
-				return object.NewInteger(-2) // Key does not exist
+				return object.NewInteger(-2)
 			}
 
 			if entry.expiresAt.IsZero() {
-				return object.NewInteger(-1) // No expiration
+				return object.NewInteger(-1)
 			}
 
 			remaining := time.Until(entry.expiresAt).Seconds()
@@ -328,13 +303,12 @@ Returns:
   int: Remaining TTL in seconds, -1 if no expiration, -2 if key doesn't exist
 
 Example:
-  scriptling.kv.set("session", "data", ttl=3600)
-  remaining = scriptling.kv.ttl("session")  # e.g., 3599`,
+  runtime.kv.set("session", "data", ttl=3600)
+  remaining = runtime.kv.ttl("session")  # e.g., 3599`,
 	},
 
 	"keys": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			// Get optional pattern
 			pattern := "*"
 			if p := kwargs.Get("pattern"); p != nil {
 				if pat, e := p.AsString(); e == nil {
@@ -346,21 +320,18 @@ Example:
 				}
 			}
 
-			kvStore.RLock()
-			defer kvStore.RUnlock()
+			RuntimeState.RLock()
+			defer RuntimeState.RUnlock()
 
 			var keys []object.Object
-			for key, entry := range kvStore.data {
-				// Skip expired entries
+			for key, entry := range RuntimeState.KVData {
 				if entry.isExpired() {
 					continue
 				}
 
-				// Match pattern
 				if pattern == "*" {
 					keys = append(keys, &object.String{Value: key})
 				} else {
-					// Simple glob matching
 					matched, _ := filepath.Match(pattern, key)
 					if matched {
 						keys = append(keys, &object.String{Value: key})
@@ -379,16 +350,16 @@ Returns:
   list: List of matching keys
 
 Example:
-  all_keys = scriptling.kv.keys()
-  user_keys = scriptling.kv.keys("user:*")
-  session_keys = scriptling.kv.keys("session:*")`,
+  all_keys = runtime.kv.keys()
+  user_keys = runtime.kv.keys("user:*")
+  session_keys = runtime.kv.keys("session:*")`,
 	},
 
 	"clear": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			kvStore.Lock()
-			kvStore.data = make(map[string]*kvEntry)
-			kvStore.Unlock()
+			RuntimeState.Lock()
+			RuntimeState.KVData = make(map[string]*kvEntry)
+			RuntimeState.Unlock()
 
 			return &object.Null{}
 		},
@@ -397,84 +368,23 @@ Example:
 Warning: This operation cannot be undone.
 
 Example:
-  scriptling.kv.clear()`,
+  runtime.kv.clear()`,
 	},
 }, nil, "Thread-safe key-value store for sharing state across requests")
 
-// ClearExpired removes all expired entries from the store
-// This can be called periodically for cleanup
-func ClearExpired() {
-	kvStore.Lock()
-	defer kvStore.Unlock()
-
-	for key, entry := range kvStore.data {
-		if entry.isExpired() {
-			delete(kvStore.data, key)
-		}
-	}
-}
-
-// ExportStore exports the current store state as JSON
-// Useful for debugging or persistence
-func ExportStore() (string, error) {
-	kvStore.RLock()
-	defer kvStore.RUnlock()
-
-	export := make(map[string]interface{})
-	for key, entry := range kvStore.data {
-		if !entry.isExpired() {
-			export[key] = map[string]interface{}{
-				"value":     entry.value,
-				"expiresAt": entry.expiresAt,
-			}
-		}
-	}
-
-	data, err := json.Marshal(export)
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
-}
-
-// ImportStore imports store state from JSON
-// This replaces the current store
-func ImportStore(jsonData string) error {
-	var export map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(jsonData), &export); err != nil {
-		return err
-	}
-
-	kvStore.Lock()
-	defer kvStore.Unlock()
-
-	kvStore.data = make(map[string]*kvEntry)
-
-	for key, rawValue := range export {
-		var entryData struct {
-			Value     interface{} `json:"value"`
-			ExpiresAt time.Time   `json:"expiresAt"`
-		}
-		if err := json.Unmarshal(rawValue, &entryData); err != nil {
-			continue // Skip invalid entries
-		}
-		kvStore.data[key] = &kvEntry{
-			value:     entryData.Value,
-			expiresAt: entryData.ExpiresAt,
-		}
-	}
-
-	return nil
-}
-
 // init registers cleanup goroutine
 func init() {
-	// Periodic cleanup of expired entries every minute
 	go func() {
 		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
 		for range ticker.C {
-			ClearExpired()
+			RuntimeState.Lock()
+			for key, entry := range RuntimeState.KVData {
+				if entry.isExpired() {
+					delete(RuntimeState.KVData, key)
+				}
+			}
+			RuntimeState.Unlock()
 		}
 	}()
 }

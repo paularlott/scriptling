@@ -17,7 +17,7 @@ import logging
 import os
 import telegram
 import telegram.bot
-import scriptling.kv
+import scriptling.runtime as runtime
 
 
 def handle_start(cmd):
@@ -106,7 +106,7 @@ def handle_actions_callback(bot, callback_query):
 def handle_count(cmd):
     """Handle /count command - demonstrate persistent state."""
     key = f"count:{cmd.get_chat_id()}"
-    count = scriptling.kv.incr(key)
+    count = runtime.kv.incr(key)
     cmd.reply(f"You've used /count {count} time(s)!")
 
 
