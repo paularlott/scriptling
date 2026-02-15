@@ -31,6 +31,15 @@ import (
 
 var Log logger.Logger
 
+// toOSSignals converts syscall.Signal slice to os.Signal slice
+func toOSSignals(sigs []syscall.Signal) []os.Signal {
+	result := make([]os.Signal, len(sigs))
+	for i, sig := range sigs {
+		result[i] = sig
+	}
+	return result
+}
+
 // ServerConfig holds the configuration for the HTTP server
 type ServerConfig struct {
 	Address     string
@@ -612,14 +621,15 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 
 	Log.Info("Server started", "address", config.Address)
 	if config.MCPToolsDir != "" {
-		Log.Info("Press Ctrl+C to exit, tools auto-reload on file changes, SIGHUP to force reload")
+		Log.Info(getReloadMessage())
 	} else {
 		Log.Info("Press Ctrl+C to exit")
 	}
 
 	// Wait for interrupt signal
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGUSR1)
+	signals := append([]os.Signal{os.Interrupt, syscall.SIGTERM}, toOSSignals(reloadSignals)...)
+	signal.Notify(sigChan, signals...)
 
 	// Handle file watcher events in a goroutine
 	watcherDone := make(chan struct{})
@@ -657,7 +667,7 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 	sig := <-sigChan
 
 	// Handle reload signals
-	if sig == syscall.SIGHUP || sig == syscall.SIGUSR1 {
+	if sysSig, ok := sig.(syscall.Signal); ok && isReloadSignal(sysSig) {
 		if config.MCPToolsDir != "" {
 			server.reloadMCPTools()
 		}
