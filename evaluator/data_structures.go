@@ -192,12 +192,13 @@ func evalInstanceIndexExpression(instance, index object.Object) object.Object {
 	if err != nil {
 		return err
 	}
+	// Check instance fields first
 	if val, ok := inst.Fields[field]; ok {
 		return val
 	}
-	// Check class methods
+	// Check class methods - return bound method
 	if fn, ok := inst.Class.Methods[field]; ok {
-		return fn
+		return &object.BoundMethod{Instance: instance, Method: fn}
 	}
 	return NULL
 }
