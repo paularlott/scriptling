@@ -40,6 +40,15 @@ tasks:
     cmds:
       - mkdir -p {{.BIN_DIR}}
       - task: build-platforms
+      - task: create-zips
+
+  create-zips:
+    desc: Create ZIP files for Homebrew distribution
+    cmds:
+      - cd {{.BIN_DIR}} && cp scriptling-darwin-amd64 scriptling && zip scriptling-darwin-amd64.zip scriptling && rm scriptling
+      - cd {{.BIN_DIR}} && cp scriptling-darwin-arm64 scriptling && zip scriptling-darwin-arm64.zip scriptling && rm scriptling
+      - cd {{.BIN_DIR}} && cp scriptling-linux-amd64 scriptling && zip scriptling-linux-amd64.zip scriptling && rm scriptling
+      - cd {{.BIN_DIR}} && cp scriptling-linux-arm64 scriptling && zip scriptling-linux-arm64.zip scriptling && rm scriptling
 
   build-linux-amd64:
     desc: Build for Linux AMD64
@@ -82,6 +91,11 @@ tasks:
     cmds:
       - go test ./...
 
+  homebrew-formula:
+    desc: Generate the Homebrew formula
+    cmds:
+      - go run ./scripts/homebrew-formula/ > ../homebrew-tap/Formula/scriptling.rb
+
   release:
     desc: Tag the version and create GitHub release with all platform binaries
     deps: [build-all]
@@ -95,5 +109,7 @@ tasks:
           git tag -a v{{.VERSION}} -m "Release {{.VERSION}}"
           git push origin v{{.VERSION}}
         fi
-        # Create release and upload all binaries
+        # Create release and upload all binaries and zips
         gh release create v{{.VERSION}} -t "Release {{.VERSION}}" -n "Scriptling {{.VERSION}}" {{.BIN_DIR}}/*
+        # Update Homebrew formula
+        task: homebrew-formula
