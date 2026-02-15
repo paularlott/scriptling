@@ -1,6 +1,7 @@
 package scriptling
 
 import (
+	"github.com/paularlott/scriptling/conversion"
 	"testing"
 
 	"github.com/paularlott/scriptling/object"
@@ -31,9 +32,9 @@ func TestFromGo_Primitives(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := FromGo(tt.input)
+			result := conversion.FromGo(tt.input)
 			if result.Inspect() != tt.expected.Inspect() {
-				t.Errorf("FromGo(%v) = %v, want %v", tt.input, result.Inspect(), tt.expected.Inspect())
+				t.Errorf("conversion.FromGo(%v) = %v, want %v", tt.input, result.Inspect(), tt.expected.Inspect())
 			}
 		})
 	}
@@ -42,13 +43,13 @@ func TestFromGo_Primitives(t *testing.T) {
 func TestFromGo_NestedStructures(t *testing.T) {
 	// Test list
 	list := []interface{}{1, "two", true}
-	result := FromGo(list)
+	result := conversion.FromGo(list)
 	resultList, ok := result.(*object.List)
 	if !ok {
-		t.Fatalf("FromGo([]interface{}) returned %T, want *object.List", result)
+		t.Fatalf("conversion.FromGo([]interface{}) returned %T, want *object.List", result)
 	}
 	if len(resultList.Elements) != 3 {
-		t.Errorf("FromGo([]interface{}) returned %d elements, want 3", len(resultList.Elements))
+		t.Errorf("conversion.FromGo([]interface{}) returned %d elements, want 3", len(resultList.Elements))
 	}
 
 	// Test dict
@@ -59,13 +60,13 @@ func TestFromGo_NestedStructures(t *testing.T) {
 			"inner": "value",
 		},
 	}
-	result = FromGo(dict)
+	result = conversion.FromGo(dict)
 	resultDict, ok := result.(*object.Dict)
 	if !ok {
-		t.Fatalf("FromGo(map[string]interface{}) returned %T, want *object.Dict", result)
+		t.Fatalf("conversion.FromGo(map[string]interface{}) returned %T, want *object.Dict", result)
 	}
 	if len(resultDict.Pairs) != 3 {
-		t.Errorf("FromGo(map[string]interface{}) returned %d pairs, want 3", len(resultDict.Pairs))
+		t.Errorf("conversion.FromGo(map[string]interface{}) returned %d pairs, want 3", len(resultDict.Pairs))
 	}
 }
 
@@ -77,16 +78,16 @@ func TestFromGo_UnknownTypes(t *testing.T) {
 	}
 
 	input := customStruct{Name: "test", Value: 123}
-	result := FromGo(input)
+	result := conversion.FromGo(input)
 
 	// Should be converted to a Dict with the JSON fields
 	resultDict, ok := result.(*object.Dict)
 	if !ok {
-		t.Fatalf("FromGo(customStruct) returned %T, want *object.Dict", result)
+		t.Fatalf("conversion.FromGo(customStruct) returned %T, want *object.Dict", result)
 	}
 
 	if len(resultDict.Pairs) != 2 {
-		t.Errorf("FromGo(customStruct) returned %d pairs, want 2", len(resultDict.Pairs))
+		t.Errorf("conversion.FromGo(customStruct) returned %d pairs, want 2", len(resultDict.Pairs))
 	}
 }
 
@@ -106,9 +107,9 @@ func TestToGo_AllTypes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ToGo(tt.input)
+			result := conversion.ToGo(tt.input)
 			if result != tt.expected {
-				t.Errorf("ToGo(%v) = %v (%T), want %v (%T)", tt.input, result, result, tt.expected, tt.expected)
+				t.Errorf("conversion.ToGo(%v) = %v (%T), want %v (%T)", tt.input, result, result, tt.expected, tt.expected)
 			}
 		})
 	}
@@ -123,14 +124,14 @@ func TestToGo_List(t *testing.T) {
 		},
 	}
 
-	result := ToGo(input)
+	result := conversion.ToGo(input)
 	resultList, ok := result.([]interface{})
 	if !ok {
-		t.Fatalf("ToGo(List) returned %T, want []interface{}", result)
+		t.Fatalf("conversion.ToGo(List) returned %T, want []interface{}", result)
 	}
 
 	if len(resultList) != 3 {
-		t.Errorf("ToGo(List) returned %d elements, want 3", len(resultList))
+		t.Errorf("conversion.ToGo(List) returned %d elements, want 3", len(resultList))
 	}
 }
 
@@ -148,22 +149,22 @@ func TestToGo_Dict(t *testing.T) {
 		},
 	}
 
-	result := ToGo(input)
+	result := conversion.ToGo(input)
 	resultMap, ok := result.(map[string]interface{})
 	if !ok {
-		t.Fatalf("ToGo(Dict) returned %T, want map[string]interface{}", result)
+		t.Fatalf("conversion.ToGo(Dict) returned %T, want map[string]interface{}", result)
 	}
 
 	if len(resultMap) != 2 {
-		t.Errorf("ToGo(Dict) returned %d pairs, want 2", len(resultMap))
+		t.Errorf("conversion.ToGo(Dict) returned %d pairs, want 2", len(resultMap))
 	}
 
 	if resultMap["key1"] != "value1" {
-		t.Errorf("ToGo(Dict)[\"key1\"] = %v, want \"value1\"", resultMap["key1"])
+		t.Errorf("conversion.ToGo(Dict)[\"key1\"] = %v, want \"value1\"", resultMap["key1"])
 	}
 
 	if resultMap["key2"] != int64(42) {
-		t.Errorf("ToGo(Dict)[\"key2\"] = %v, want 42", resultMap["key2"])
+		t.Errorf("conversion.ToGo(Dict)[\"key2\"] = %v, want 42", resultMap["key2"])
 	}
 }
 
@@ -188,8 +189,8 @@ func TestRoundTrip(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Go -> Scriptling -> Go
-			scriptlingObj := FromGo(tt.value)
-			result := ToGo(scriptlingObj)
+			scriptlingObj := conversion.FromGo(tt.value)
+			result := conversion.ToGo(scriptlingObj)
 
 			// For complex types, compare recursively
 			compareResults(t, tt.value, result)

@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"github.com/paularlott/scriptling/conversion"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -548,7 +549,7 @@ Example:
 		}
 
 		// Convert scriptling object to Go native types
-		goObj := scriptling.ToGo(args[0])
+		goObj := conversion.ToGo(args[0])
 
 		// Marshal to JSON
 		jsonBytes, err := json.Marshal(goObj)
@@ -573,7 +574,7 @@ Example:
 		}
 
 		// Convert to Go object
-		goObj := scriptling.ToGo(args[0])
+		goObj := conversion.ToGo(args[0])
 
 		// Encode to TOON
 		toonStr, err := mcptoon.Encode(goObj)
@@ -635,7 +636,7 @@ func RunToolScript(ctx context.Context, sl *scriptling.Scriptling, script string
 		Pairs: make(map[string]object.DictPair),
 	}
 	for key, value := range params {
-		obj := scriptling.FromGo(value)
+		obj := conversion.FromGo(value)
 		paramsDict.Pairs[key] = object.DictPair{
 			Key:   &object.String{Value: key},
 			Value: obj,

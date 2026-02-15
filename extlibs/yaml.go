@@ -2,8 +2,8 @@ package extlibs
 
 import (
 	"context"
-	"fmt"
 
+	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
 	"gopkg.in/yaml.v3"
@@ -82,7 +82,7 @@ func yamlLoadFunc(ctx context.Context, kwargs object.Kwargs, args ...object.Obje
 		return errors.NewError("yaml parse error: %s", parseErr.Error())
 	}
 
-	return convertYAMLToScriptling(data)
+	return conversion.FromGo(data)
 }
 
 func yamlDumpFunc(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -90,7 +90,7 @@ func yamlDumpFunc(ctx context.Context, kwargs object.Kwargs, args ...object.Obje
 		return err
 	}
 
-	goData := convertScriptlingToGo(args[0])
+	goData := conversion.ToGo(args[0])
 
 	yamlBytes, marshalErr := yaml.Marshal(goData)
 	if marshalErr != nil {
@@ -98,83 +98,4 @@ func yamlDumpFunc(ctx context.Context, kwargs object.Kwargs, args ...object.Obje
 	}
 
 	return &object.String{Value: string(yamlBytes)}
-}
-
-// convertYAMLToScriptling converts Go types from YAML to Scriptling objects
-func convertYAMLToScriptling(data interface{}) object.Object {
-	switch v := data.(type) {
-	case nil:
-		return &object.Null{}
-	case bool:
-		return &object.Boolean{Value: v}
-	case int:
-		return object.NewInteger(int64(v))
-	case int64:
-		return object.NewInteger(v)
-	case float64:
-		return &object.Float{Value: v}
-	case string:
-		return &object.String{Value: v}
-	case []interface{}:
-		elements := make([]object.Object, len(v))
-		for i, item := range v {
-			elements[i] = convertYAMLToScriptling(item)
-		}
-		return &object.List{Elements: elements}
-	case map[string]interface{}:
-		pairs := make(map[string]object.DictPair, len(v))
-		for key, val := range v {
-			keyObj := &object.String{Value: key}
-			valObj := convertYAMLToScriptling(val)
-			pairs[key] = object.DictPair{Key: keyObj, Value: valObj}
-		}
-		return &object.Dict{Pairs: pairs}
-	case map[interface{}]interface{}:
-		pairs := make(map[string]object.DictPair, len(v))
-		for key, val := range v {
-			keyStr := ""
-			switch k := key.(type) {
-			case string:
-				keyStr = k
-			default:
-				keyStr = fmt.Sprintf("%v", k)
-			}
-			keyObj := &object.String{Value: keyStr}
-			valObj := convertYAMLToScriptling(val)
-			pairs[keyStr] = object.DictPair{Key: keyObj, Value: valObj}
-		}
-		return &object.Dict{Pairs: pairs}
-	default:
-		return &object.String{Value: fmt.Sprintf("%v", v)}
-	}
-}
-
-// convertScriptlingToGo converts Scriptling objects to Go types for YAML
-func convertScriptlingToGo(obj object.Object) interface{} {
-	switch v := obj.(type) {
-	case *object.Null:
-		return nil
-	case *object.Boolean:
-		return v.Value
-	case *object.Integer:
-		return v.Value
-	case *object.Float:
-		return v.Value
-	case *object.String:
-		return v.Value
-	case *object.List:
-		result := make([]interface{}, len(v.Elements))
-		for i, elem := range v.Elements {
-			result[i] = convertScriptlingToGo(elem)
-		}
-		return result
-	case *object.Dict:
-		result := make(map[string]interface{}, len(v.Pairs))
-		for key, pair := range v.Pairs {
-			result[key] = convertScriptlingToGo(pair.Value)
-		}
-		return result
-	default:
-		return v.Inspect()
-	}
 }

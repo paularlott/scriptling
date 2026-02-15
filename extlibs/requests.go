@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/scriptling/pool"
@@ -28,11 +29,7 @@ var ResponseClass = &object.Class{
 				if err := errors.ExactArgs(args, 1); err != nil { return err }
 				if instance, ok := args[0].(*object.Instance); ok {
 					if body, err := instance.Fields["body"].AsString(); err == nil {
-						var result interface{}
-						if err := json.Unmarshal([]byte(body), &result); err != nil {
-							return errors.NewError("JSONDecodeError: %s", err.Error())
-						}
-						return convertJSONToObject(result)
+						return conversion.MustParseJSON(body)
 					}
 				}
 				return errors.NewError("json() called on non-Response object")
@@ -156,7 +153,7 @@ func extractRequestArgs(kwargs object.Kwargs, args []object.Object, hasData bool
 			}
 		} else if hasData && k == "json" {
 			// Handle json parameter - convert to JSON string
-			jsonBytes, err := json.Marshal(convertObjectToJSON(v))
+			jsonBytes, err := json.Marshal(conversion.ToGo(v))
 			if err != nil {
 				return "", "", nil, errors.NewError("failed to encode json: %s", err.Error())
 			}
@@ -419,69 +416,4 @@ func httpRequestWithContext(parentCtx context.Context, method, url, body string,
 	}
 
 	return createResponseInstance(resp.StatusCode, respHeaders, respBody, url)
-}
-
-// convertJSONToObject converts Go's JSON interface{} to Scriptling objects
-func convertJSONToObject(data interface{}) object.Object {
-	switch v := data.(type) {
-	case nil:
-		return &object.Null{}
-	case bool:
-		return &object.Boolean{Value: v}
-	case float64:
-		// JSON numbers are always float64
-		if v == float64(int64(v)) {
-			return &object.Integer{Value: int64(v)}
-		}
-		return &object.Float{Value: v}
-	case string:
-		return &object.String{Value: v}
-	case []interface{}:
-		elements := make([]object.Object, len(v))
-		for i, item := range v {
-			elements[i] = convertJSONToObject(item)
-		}
-		return &object.List{Elements: elements}
-	case map[string]interface{}:
-		pairs := make(map[string]object.DictPair)
-		for key, val := range v {
-			pairs[key] = object.DictPair{
-				Key:   &object.String{Value: key},
-				Value: convertJSONToObject(val),
-			}
-		}
-		return &object.Dict{Pairs: pairs}
-	default:
-		return &object.Null{}
-	}
-}
-
-// convertObjectToJSON converts Scriptling objects to Go's interface{} for JSON encoding
-func convertObjectToJSON(obj object.Object) interface{} {
-	switch v := obj.(type) {
-	case *object.Null:
-		return nil
-	case *object.Boolean:
-		return v.Value
-	case *object.Integer:
-		return v.Value
-	case *object.Float:
-		return v.Value
-	case *object.String:
-		return v.Value
-	case *object.List:
-		result := make([]interface{}, len(v.Elements))
-		for i, elem := range v.Elements {
-			result[i] = convertObjectToJSON(elem)
-		}
-		return result
-	case *object.Dict:
-		result := make(map[string]interface{})
-		for key, pair := range v.Pairs {
-			result[key] = convertObjectToJSON(pair.Value)
-		}
-		return result
-	default:
-		return nil
-	}
 }

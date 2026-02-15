@@ -11,12 +11,62 @@ import (
 	"time"
 
 	"github.com/paularlott/scriptling/ast"
+	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/evaluator"
 	"github.com/paularlott/scriptling/lexer"
 	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/scriptling/parser"
 )
+
+// Kwargs is a wrapper type to explicitly pass keyword arguments to CallFunction.
+// Use this to distinguish between a map being passed as a dict argument vs kwargs.
+type Kwargs map[string]interface{}
+
+// convertArgsAndKwargs converts Go arguments to Object arguments and separates kwargs.
+func convertArgsAndKwargs(args []interface{}, prependSelf object.Object) ([]object.Object, map[string]object.Object) {
+	var objArgs []object.Object
+	var objKwargs map[string]object.Object
+
+	if len(args) > 0 {
+		lastIdx := len(args) - 1
+		if kwargsMap, ok := args[lastIdx].(Kwargs); ok {
+			objKwargs = make(map[string]object.Object, len(kwargsMap))
+			for key, val := range kwargsMap {
+				objKwargs[key] = conversion.FromGo(val)
+			}
+			if prependSelf != nil {
+				objArgs = make([]object.Object, lastIdx+1)
+				objArgs[0] = prependSelf
+				for i, arg := range args[:lastIdx] {
+					objArgs[i+1] = conversion.FromGo(arg)
+				}
+			} else {
+				objArgs = make([]object.Object, lastIdx)
+				for i, arg := range args[:lastIdx] {
+					objArgs[i] = conversion.FromGo(arg)
+				}
+			}
+		} else {
+			if prependSelf != nil {
+				objArgs = make([]object.Object, len(args)+1)
+				objArgs[0] = prependSelf
+				for i, arg := range args {
+					objArgs[i+1] = conversion.FromGo(arg)
+				}
+			} else {
+				objArgs = make([]object.Object, len(args))
+				for i, arg := range args {
+					objArgs[i] = conversion.FromGo(arg)
+				}
+			}
+		}
+	} else if prependSelf != nil {
+		objArgs = []object.Object{prependSelf}
+	}
+
+	return objArgs, objKwargs
+}
 
 type scriptLibrary struct {
 	source string
@@ -440,7 +490,7 @@ func (p *Scriptling) EvalWithContext(ctx context.Context, input string) (result 
 }
 
 func (p *Scriptling) SetVar(name string, value interface{}) error {
-	obj := FromGo(value)
+	obj := conversion.FromGo(value)
 	p.env.Set(name, obj)
 	return nil
 }
@@ -467,7 +517,7 @@ func (p *Scriptling) GetVar(name string) (interface{}, object.Object) {
 	if !ok {
 		return nil, &object.Error{Message: fmt.Sprintf("variable '%s' not found", name)}
 	}
-	return ToGo(obj), nil
+	return conversion.ToGo(obj), nil
 }
 
 // Convenience methods for type-safe variable access
@@ -529,18 +579,6 @@ func (p *Scriptling) RegisterFunc(name string, fn func(ctx context.Context, kwar
 	}
 	p.env.Set(name, builtin)
 }
-
-// Kwargs is a wrapper type to explicitly pass keyword arguments to CallFunction.
-// Use this to distinguish between a map being passed as a dict argument vs kwargs.
-//
-// Example:
-//
-//	// Pass a map as a dict argument:
-//	result, err := p.CallFunction("process", map[string]interface{}{"key": "value"})
-//
-//	// Pass keyword arguments:
-//	result, err := p.CallFunction("format", "text", Kwargs{"prefix": ">>"})
-type Kwargs map[string]interface{}
 
 // CallFunction calls a registered function by name with Go arguments.
 // Args are Go types (int, string, etc.) that will be converted to Object.

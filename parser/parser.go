@@ -221,7 +221,7 @@ func (p *Parser) ParseProgram() *ast.Program {
 	program.Statements = []ast.Statement{}
 
 	for !p.curTokenIs(token.EOF) {
-		if p.curTokenIs(token.NEWLINE) || p.curTokenIs(token.SEMICOLON) {
+		if p.curTokenIs(token.NEWLINE) || p.curTokenIs(token.SEMICOLON) || p.curTokenIs(token.INDENT) || p.curTokenIs(token.DEDENT) {
 			p.nextToken()
 			continue
 		}
@@ -280,6 +280,12 @@ func (p *Parser) parseStatement() ast.Statement {
 			return p.parseAugmentedAssignStatement()
 		}
 		return p.parseExpressionStatement()
+	case token.ASTERISK:
+		// Check if this is starred unpacking: *a, b = ...
+		if p.peekTokenIs(token.IDENT) {
+			return p.parseMultipleAssignStatement()
+		}
+		return p.parseExpressionStatement()
 	default:
 		return p.parseExpressionStatement()
 	}
@@ -309,12 +315,34 @@ func (p *Parser) parseAssignStatement() *ast.AssignStatement {
 
 func (p *Parser) parseMultipleAssignStatement() ast.Statement {
 	names := []*ast.Identifier{}
+	starredIndex := -1
+
+	// Parse first identifier (may be starred)
+	if p.curTokenIs(token.ASTERISK) {
+		starredIndex = 0
+		if !p.expectPeek(token.IDENT) {
+			return nil
+		}
+	}
 	names = append(names, &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal})
 
 	// Parse remaining identifiers
 	for p.peekTokenIs(token.COMMA) {
 		p.nextToken() // consume comma
-		if !p.expectPeek(token.IDENT) {
+		p.nextToken() // move to next token
+		
+		// Check for starred identifier
+		if p.curTokenIs(token.ASTERISK) {
+			if starredIndex != -1 {
+				p.errors = append(p.errors, "multiple starred expressions in assignment")
+				return nil
+			}
+			starredIndex = len(names)
+			if !p.expectPeek(token.IDENT) {
+				return nil
+			}
+		} else if !p.curTokenIs(token.IDENT) {
+			p.errors = append(p.errors, fmt.Sprintf("expected identifier, got %s", p.curToken.Type))
 			return nil
 		}
 		names = append(names, &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal})
@@ -343,17 +371,19 @@ func (p *Parser) parseMultipleAssignStatement() ast.Statement {
 			Elements: values,
 		}
 		return &ast.MultipleAssignStatement{
-			Token: names[0].Token,
-			Names: names,
-			Value: value,
+			Token:        names[0].Token,
+			Names:        names,
+			Value:        value,
+			StarredIndex: starredIndex,
 		}
 	}
 
 	// Single value (must be a tuple/list to unpack)
 	return &ast.MultipleAssignStatement{
-		Token: names[0].Token,
-		Names: names,
-		Value: firstValue,
+		Token:        names[0].Token,
+		Names:        names,
+		Value:        firstValue,
+		StarredIndex: starredIndex,
 	}
 }
 
@@ -506,9 +536,9 @@ func (p *Parser) parseFromImportStatement() *ast.FromImportStatement {
 
 func (p *Parser) parseReturnStatement() *ast.ReturnStatement {
 	stmt := &ast.ReturnStatement{Token: p.curToken}
-	p.nextToken()
 
-	if !p.curTokenIs(token.NEWLINE) && !p.curTokenIs(token.SEMICOLON) && !p.curTokenIs(token.EOF) {
+	if !p.peekTokenIs(token.NEWLINE) && !p.peekTokenIs(token.SEMICOLON) && !p.peekTokenIs(token.EOF) && !p.peekTokenIs(token.DEDENT) {
+		p.nextToken()
 		stmt.ReturnValue = p.parseExpressionWithConditional()
 	}
 
@@ -542,6 +572,13 @@ func (p *Parser) parseExpression(precedence int) ast.Expression {
 		if p.peekTokenIs(token.IF) && p.skippedNewline {
 			return leftExp
 		}
+		
+		// Don't continue parsing infix expressions across newlines at top level
+		// This prevents "a = 1\n*b, c = [2, 3]" from being parsed as "a = 1 * b"
+		if p.parenDepth == 0 && p.skippedNewline {
+			return leftExp
+		}
+		
 		infix := p.infixParseFns[p.peekToken.Type]
 		if infix == nil {
 			return leftExp
@@ -1053,7 +1090,7 @@ func (p *Parser) parseBlockStatement() *ast.BlockStatement {
 	p.nextToken()
 
 	for !p.curTokenIs(token.DEDENT) && !p.curTokenIs(token.EOF) {
-		if p.curTokenIs(token.NEWLINE) || p.curTokenIs(token.SEMICOLON) {
+		if p.curTokenIs(token.NEWLINE) || p.curTokenIs(token.SEMICOLON) || p.curTokenIs(token.INDENT) {
 			p.nextToken()
 			continue
 		}
@@ -1618,9 +1655,9 @@ func (p *Parser) parseTryStatement() *ast.TryStatement {
 
 func (p *Parser) parseRaiseStatement() *ast.RaiseStatement {
 	stmt := &ast.RaiseStatement{Token: p.curToken}
-	p.nextToken()
 
-	if !p.curTokenIs(token.NEWLINE) && !p.curTokenIs(token.SEMICOLON) && !p.curTokenIs(token.EOF) && !p.curTokenIs(token.DEDENT) {
+	if !p.peekTokenIs(token.NEWLINE) && !p.peekTokenIs(token.SEMICOLON) && !p.peekTokenIs(token.EOF) && !p.peekTokenIs(token.DEDENT) {
+		p.nextToken()
 		stmt.Message = p.parseExpression(LOWEST)
 	}
 

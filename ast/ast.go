@@ -154,9 +154,10 @@ func (aas *AugmentedAssignStatement) TokenLiteral() string { return aas.Token.Li
 func (aas *AugmentedAssignStatement) Line() int            { return aas.Token.Line }
 
 type MultipleAssignStatement struct {
-	Token token.Token
-	Names []*Identifier
-	Value Expression
+	Token       token.Token
+	Names       []*Identifier
+	Value       Expression
+	StarredIndex int // Index of starred variable (-1 if none)
 }
 
 func (mas *MultipleAssignStatement) statementNode()       {}

@@ -1,33 +1,33 @@
 #!/usr/bin/env scriptling
 """Test async library functionality"""
 
-import scriptling.threads as threads
+import scriptling.runtime as runtime
 
-print("=== Testing threads.run ===")
+print("=== Testing runtime.run ===")
 
 def worker(x, y):
     return x + y
 
-promise = threads.run(worker, 5, 3)
+promise = runtime.run(worker, 5, 3)
 result = promise.get()
-print(f"threads.run result: {result}")
-assert result == 8, "threads.run failed"
+print(f"runtime.run result: {result}")
+assert result == 8, "runtime.run failed"
 
 # Multiple async operations
-promises = [threads.run(worker, i, i+1) for i in range(5)]
+promises = [runtime.run(worker, i, i+1) for i in range(5)]
 results = [p.get() for p in promises]
 print(f"Multiple async results: {results}")
 assert results == [1, 3, 5, 7, 9], "Multiple async failed"
 
-print("\n=== Testing threads.Atomic ===")
+print("\n=== Testing runtime.sync.Atomic ===")
 
-counter = threads.Atomic(0)
+counter = runtime.sync.Atomic("test_counter", 0)
 print(f"Initial counter: {counter.get()}")
 
 def increment():
     counter.add(1)
 
-promises = [threads.run(increment) for _ in range(10)]
+promises = [runtime.run(increment) for _ in range(10)]
 for p in promises:
     p.get()
 
@@ -42,17 +42,14 @@ counter.add(-2)
 print(f"Counter after add(5) and add(-2): {counter.get()}")
 assert counter.get() == 3, "Atomic add with delta failed"
 
-print("\n=== Testing threads.Shared ===")
+print("\n=== Testing runtime.sync.Shared ===")
 
-# Use Atomic counter instead of Shared list for thread-safe counting
-# The Shared type is for sharing values between threads, but read-modify-write
-# operations need proper synchronization. Use Atomic for counting.
-shared_counter = threads.Atomic(0)
+shared_counter = runtime.sync.Atomic("shared_counter", 0)
 
 def increment_shared():
     shared_counter.add(1)
 
-promises = [threads.run(increment_shared) for i in range(5)]
+promises = [runtime.run(increment_shared) for i in range(5)]
 for p in promises:
     p.get()
 
@@ -60,21 +57,20 @@ final_count = shared_counter.get()
 print(f"Shared counter value: {final_count}")
 assert final_count == 5, "Shared counter failed"
 
-# Test Shared with a simple value (not read-modify-write)
-shared_value = threads.Shared("initial")
+shared_value = runtime.sync.Shared("test_shared", "initial")
 
 def set_value(val):
     shared_value.set(val)
 
-p = threads.run(set_value, "updated")
+p = runtime.run(set_value, "updated")
 p.get()
 print(f"Shared value: {shared_value.get()}")
 assert shared_value.get() == "updated", "Shared value failed"
 
-print("\n=== Testing threads.WaitGroup ===")
+print("\n=== Testing runtime.sync.WaitGroup ===")
 
-wg = threads.WaitGroup()
-wg_counter = threads.Atomic(0)
+wg = runtime.sync.WaitGroup("test_wg")
+wg_counter = runtime.sync.Atomic("wg_counter", 0)
 
 def worker_wg(id):
     wg_counter.add(1)
@@ -82,20 +78,20 @@ def worker_wg(id):
 
 for i in range(5):
     wg.add(1)
-    threads.run(worker_wg, i)
+    runtime.run(worker_wg, i)
 
 wg.wait()
 print(f"WaitGroup completed, counter: {wg_counter.get()}")
 assert wg_counter.get() == 5, "WaitGroup failed"
 
-print("\n=== Testing threads.Queue ===")
+print("\n=== Testing runtime.sync.Queue ===")
 
-queue = threads.Queue(maxsize=10)
+queue = runtime.sync.Queue("test_queue", maxsize=10)
 
 def producer():
     for i in range(5):
         queue.put(i)
-    queue.put(None)  # Sentinel
+    queue.put(None)
 
 consumed = []
 
@@ -106,50 +102,29 @@ def consumer():
             break
         consumed.append(item)
 
-threads.run(producer)
-p = threads.run(consumer)
+runtime.run(producer)
+p = runtime.run(consumer)
 p.get()
 
 print(f"Queue consumed items: {consumed}")
 assert len(consumed) == 5, "Queue failed"
 
-print("\n=== Testing threads.Pool ===")
-
-# Use Atomic counter for thread-safe counting instead of list
-processed_count = threads.Atomic(0)
-
-def process_data(item):
-    processed_count.add(1)
-
-pool = threads.Pool(process_data, workers=2, queue_depth=10)
-
-for item in range(5):
-    pool.submit(item)
-
-pool.close()
-
-print(f"Pool processed {processed_count.get()} items")
-assert processed_count.get() == 5, "Pool failed"
-
 print("\n=== Testing promise.wait ===")
 
-# Test promise.wait - promises run sequentially with wait() between them
-# Each promise completes before the next one starts
 def worker_wait(x):
     return x * 2
 
-promise1 = threads.run(worker_wait, 5)
-promise1.wait()  # Wait for completion, discard result
-promise2 = threads.run(worker_wait, 10)
-promise2.wait()  # Wait for completion, discard result
+promise1 = runtime.run(worker_wait, 5)
+promise1.wait()
+promise2 = runtime.run(worker_wait, 10)
+promise2.wait()
 print(f"promise.wait completed for both promises")
 
-# Test promise.wait with keyword args
 def worker_wait_kwargs(x, multiplier=1):
     return x * multiplier
 
-promise3 = threads.run(worker_wait_kwargs, 3, multiplier=4)
-result = promise3.get()  # Get result to verify
+promise3 = runtime.run(worker_wait_kwargs, 3, multiplier=4)
+result = promise3.get()
 print(f"promise.wait with kwargs result: {result}")
 assert result == 12, "promise.wait with kwargs failed"
 
