@@ -111,7 +111,7 @@ func NewServer(config ServerConfig) (*Server, error) {
 	s.collectRoutes()
 
 	// Start background tasks if any
-	s.startBackgroundTasks()
+	extlibs.ReleaseBackgroundTasks()
 
 	return s, nil
 }
@@ -139,6 +139,13 @@ func setupScriptling(p *scriptling.Scriptling, libDir string, safeMode bool) {
 
 	// Also set up the standard libraries
 	mcpcli.SetupScriptling(p, libDir, false, safeMode, Log)
+	
+	// Set factory for background tasks
+	extlibs.SetBackgroundFactory(func() interface{ LoadLibraryIntoEnv(string, *object.Environment) error } {
+		newP := scriptling.New()
+		mcpcli.SetupScriptling(newP, libDir, false, safeMode, Log)
+		return newP
+	})
 }
 
 // setupMCP initializes the MCP server if configured
@@ -235,54 +242,6 @@ func (s *Server) collectRoutes() {
 			}
 		}
 		Log.Info("Registered route", "path", path, "methods", route.Methods, "handler", route.Handler)
-	}
-}
-
-// startBackgroundTasks starts all registered background tasks
-func (s *Server) startBackgroundTasks() {
-	extlibs.RuntimeState.RLock()
-	backgrounds := make(map[string]string)
-	for name, handler := range extlibs.RuntimeState.Backgrounds {
-		backgrounds[name] = handler
-	}
-	extlibs.RuntimeState.RUnlock()
-
-	for name, handlerRef := range backgrounds {
-		Log.Info("Starting background task", "name", name, "handler", handlerRef)
-		go s.runBackgroundTask(name, handlerRef)
-	}
-}
-
-// runBackgroundTask runs a background task in a goroutine
-func (s *Server) runBackgroundTask(name, handlerRef string) {
-	defer func() {
-		if r := recover(); r != nil {
-			Log.Error("Background task panicked", "name", name, "error", r)
-		}
-	}()
-
-	// Parse handler reference (e.g., "mylib.taskHandler")
-	parts := strings.SplitN(handlerRef, ".", 2)
-	if len(parts) != 2 {
-		Log.Error("Invalid background handler reference", "name", name, "handler", handlerRef)
-		return
-	}
-	libName := parts[0]
-
-	// Create fresh scriptling environment
-	p := scriptling.New()
-	setupScriptling(p, s.config.LibDir, s.config.ScriptMode == "safe")
-
-	// Import the library
-	if err := p.Import(libName); err != nil {
-		Log.Error("Failed to import library for background task", "name", name, "library", libName, "error", err)
-		return
-	}
-
-	// Call the handler function using the full dotted path
-	_, err := p.CallFunction(handlerRef)
-	if err != nil {
-		Log.Error("Background task error", "name", name, "error", err)
 	}
 }
 

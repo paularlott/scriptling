@@ -324,56 +324,6 @@ runtime.background("task2", "worker.cleanup")
 	}
 }
 
-func TestRuntimeRun(t *testing.T) {
-	p := scriptling.New()
-	RegisterRuntimeLibrary(p)
-
-	script := `
-import scriptling.runtime as runtime
-
-def worker(x, y):
-    return x + y
-
-promise = runtime.run(worker, 5, 10)
-result = promise.get()
-result
-`
-
-	result, err := p.Eval(script)
-	if err != nil {
-		t.Fatalf("Script error: %v", err)
-	}
-
-	if i, _ := result.AsInt(); i != 15 {
-		t.Errorf("Expected 15, got %d", i)
-	}
-}
-
-func TestRuntimeRunWithKwargs(t *testing.T) {
-	p := scriptling.New()
-	RegisterRuntimeLibrary(p)
-
-	script := `
-import scriptling.runtime as runtime
-
-def worker(x, y=10):
-    return x + y
-
-promise = runtime.run(worker, 5, y=3)
-result = promise.get()
-result
-`
-
-	result, err := p.Eval(script)
-	if err != nil {
-		t.Fatalf("Script error: %v", err)
-	}
-
-	if i, _ := result.AsInt(); i != 8 {
-		t.Errorf("Expected 8, got %d", i)
-	}
-}
-
 func TestRuntimeCrossEnvironmentSync(t *testing.T) {
 	ResetRuntime()
 

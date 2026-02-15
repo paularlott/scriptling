@@ -9,7 +9,7 @@ def increment():
 
 promises = []
 for i in range(10):
-    promises.append(runtime.run(increment))
+    promises.append(runtime.background(f"increment_{i}", "increment"))
 
 for p in promises:
     p.get()
@@ -30,8 +30,8 @@ def consumer():
         items.append(queue.get())
     return items
 
-p1 = runtime.run(producer)
-p2 = runtime.run(consumer)
+p1 = runtime.background("producer1", "producer")
+p2 = runtime.background("consumer1", "consumer")
 
 p1.get()
 result = p2.get()
