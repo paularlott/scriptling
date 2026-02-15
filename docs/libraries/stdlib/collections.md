@@ -8,11 +8,24 @@ The `collections` library provides Python-compatible specialized container datat
 import collections
 ```
 
+## Available Functions
+
+| Function                        | Description                             |
+| ------------------------------- | --------------------------------------- |
+| `Counter([iterable])`           | Create a counter of element occurrences |
+| `most_common(counter[, n])`     | Get n most common elements              |
+| `OrderedDict([items])`          | Create order-preserving dict            |
+| `deque([iterable[, maxlen]])`   | Create a double-ended queue             |
+| `deque_appendleft(deque, elem)` | Add element to left of deque            |
+| `deque_popleft(deque)`          | Remove and return element from left     |
+| `deque_extendleft(deque, iter)` | Extend deque on left side               |
+
 ## Functions
 
 ### Counter
 
 #### `Counter([iterable])`
+
 Create a dict-like object that counts occurrences of elements.
 
 ```python
@@ -38,6 +51,7 @@ Counter objects support the following methods:
 - `c.elements()` - Return iterator over elements (repeating each by its count)
 
 #### `most_common(counter[, n])`
+
 Return the n most common elements and their counts.
 
 ```python
@@ -49,6 +63,7 @@ collections.most_common(c, 2)
 ### OrderedDict
 
 #### `OrderedDict([items])`
+
 Create a dict that maintains insertion order.
 
 ```python
@@ -61,6 +76,7 @@ od["a"]  # 1
 ### deque (Double-Ended Queue)
 
 #### `deque([iterable[, maxlen]])`
+
 Create a double-ended queue.
 
 ```python
@@ -68,6 +84,7 @@ d = collections.deque([1, 2, 3])
 ```
 
 #### `deque_appendleft(deque, elem)`
+
 Add element to the left side.
 
 ```python
@@ -77,6 +94,7 @@ collections.deque_appendleft(d, 0)
 ```
 
 #### `deque_popleft(deque)`
+
 Remove and return element from the left side.
 
 ```python
@@ -86,6 +104,7 @@ x = collections.deque_popleft(d)
 ```
 
 #### `deque_extendleft(deque, iterable)`
+
 Extend the left side with elements (in reverse order).
 
 ```python
@@ -95,6 +114,7 @@ collections.deque_extendleft(d, [4, 5])
 ```
 
 #### `deque_rotate(deque, n)`
+
 Rotate the deque n steps to the right (negative for left).
 
 ```python
@@ -110,6 +130,7 @@ collections.deque_rotate(d, -1)
 ### namedtuple
 
 #### `namedtuple(typename, field_names)`
+
 Create a class for named tuple instances.
 
 ```python
@@ -134,6 +155,7 @@ Person = collections.namedtuple("Person", "name age")
 ### defaultdict
 
 #### `defaultdict(default_factory)`
+
 Create a dict with default values for missing keys.
 
 ```python
@@ -149,6 +171,7 @@ d["count"] = d["count"] + 1  # Creates 0, then increments
 ### ChainMap
 
 #### `ChainMap(*maps)`
+
 Group multiple dicts for single lookup (first has priority).
 
 ```python
@@ -164,6 +187,7 @@ cm["c"]  # 3 (from d2)
 ## Examples
 
 ### Word frequency counter
+
 ```python
 import collections
 
@@ -176,6 +200,7 @@ top_words = collections.most_common(word_counts, 3)
 ```
 
 ### Using deque as a queue
+
 ```python
 import collections
 
@@ -194,6 +219,7 @@ while len(queue) > 0:
 ```
 
 ### Using deque as a stack
+
 ```python
 import collections
 
@@ -212,6 +238,7 @@ while len(stack) > 0:
 ```
 
 ### Using namedtuple for data records
+
 ```python
 import collections
 
@@ -227,6 +254,7 @@ print(emp1.name, "works in", emp1.department)
 ```
 
 ### Merging configurations with ChainMap
+
 ```python
 import collections
 

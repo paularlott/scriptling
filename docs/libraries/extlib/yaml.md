@@ -8,6 +8,15 @@ Parse and generate YAML (YAML Ain't Markup Language) data.
 import yaml
 ```
 
+## Available Functions
+
+| Function                 | Description                            |
+| ------------------------ | -------------------------------------- |
+| `safe_load(yaml_string)` | Parse YAML string to Scriptling object |
+| `load(yaml_string)`      | Alias for safe_load()                  |
+| `safe_dump(obj)`         | Convert object to YAML string          |
+| `dump(obj)`              | Alias for safe_dump()                  |
+
 ## Functions
 
 ### yaml.safe_load(yaml_string)
@@ -15,6 +24,7 @@ import yaml
 Parse a YAML string and return the corresponding Scriptling object.
 
 **Parameters:**
+
 - `yaml_string` (string): YAML formatted string to parse
 
 **Returns:** Parsed data as Scriptling object (dict, list, string, number, boolean, or None)
@@ -50,6 +60,7 @@ Alias for `safe_load()`. Both functions are safe and identical in Scriptling.
 Convert a Scriptling object to a YAML formatted string.
 
 **Parameters:**
+
 - `obj`: Scriptling object to convert (dict, list, string, number, boolean, or None)
 
 **Returns:** YAML formatted string
@@ -124,24 +135,26 @@ print(updated_yaml)
 ## Supported Types
 
 | YAML Type | Scriptling Type |
-|-----------|----------------|
-| String    | String         |
-| Integer   | Integer        |
-| Float     | Float          |
-| Boolean   | Boolean        |
-| Null      | None           |
-| Sequence  | List           |
-| Mapping   | Dict           |
+| --------- | --------------- |
+| String    | String          |
+| Integer   | Integer         |
+| Float     | Float           |
+| Boolean   | Boolean         |
+| Null      | None            |
+| Sequence  | List            |
+| Mapping   | Dict            |
 
 ## Differences from PyYAML
 
 **Similarities:**
+
 - ✅ `safe_load()` and `safe_dump()` functions
 - ✅ `load()` and `dump()` aliases
 - ✅ Handles all standard YAML types
 - ✅ Python-compatible API
 
 **Differences:**
+
 - ❌ No `load_all()` / `dump_all()` for multiple documents
 - ❌ No file I/O (only string input/output)
 - ❌ No custom constructors or representers

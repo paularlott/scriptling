@@ -2,6 +2,18 @@
 
 Thread-safe key-value store for sharing state across HTTP requests.
 
+## Available Functions
+
+| Function                 | Description                     |
+| ------------------------ | ------------------------------- |
+| `set(key, value, ttl=0)` | Store a value with optional TTL |
+| `get(key, default=None)` | Retrieve a value by key         |
+| `delete(key)`            | Remove a key from the store     |
+| `incr(key, delta=1)`     | Atomically increment a value    |
+| `keys(pattern="*")`      | Get all keys matching pattern   |
+| `exists(key)`            | Check if key exists             |
+| `ttl(key)`               | Get remaining TTL for a key     |
+
 ## Overview
 
 The `scriptling.kv` library provides an in-memory key-value store that persists across HTTP requests. It's perfect for:
@@ -27,6 +39,7 @@ The `scriptling.kv` library provides an in-memory key-value store that persists 
 Store a value with optional TTL in seconds.
 
 **Parameters:**
+
 - `key` (str): The key to store the value under
 - `value`: The value to store (string, int, float, bool, list, dict)
 - `ttl` (int, optional): Time-to-live in seconds. 0 means no expiration.
@@ -34,6 +47,7 @@ Store a value with optional TTL in seconds.
 **Returns:** None
 
 **Example:**
+
 ```python
 import scriptling.kv
 
@@ -55,12 +69,14 @@ scriptling.kv.set("config", {"debug": True, "port": 8080})
 Retrieve a value by key.
 
 **Parameters:**
+
 - `key` (str): The key to retrieve
 - `default`: Value to return if key doesn't exist (default: None)
 
 **Returns:** The stored value (deep copy), or the default if not found
 
 **Example:**
+
 ```python
 import scriptling.kv
 
@@ -79,11 +95,13 @@ session = scriptling.kv.get("session:old", default={})
 Remove a key from the store.
 
 **Parameters:**
+
 - `key` (str): The key to delete
 
 **Returns:** None
 
 **Example:**
+
 ```python
 import scriptling.kv
 
@@ -96,11 +114,13 @@ scriptling.kv.delete("temp_data")
 Check if a key exists and is not expired.
 
 **Parameters:**
+
 - `key` (str): The key to check
 
 **Returns:** bool - True if key exists and is not expired
 
 **Example:**
+
 ```python
 import scriptling.kv
 
@@ -115,12 +135,14 @@ else:
 Atomically increment an integer value.
 
 **Parameters:**
+
 - `key` (str): The key to increment
 - `amount` (int, optional): Amount to increment by (default: 1)
 
 **Returns:** int - The new value after incrementing
 
 **Example:**
+
 ```python
 import scriptling.kv
 
@@ -142,11 +164,13 @@ scriptling.kv.incr("new_counter")  # returns 1
 Get remaining time-to-live for a key.
 
 **Parameters:**
+
 - `key` (str): The key to check
 
 **Returns:** int - Remaining TTL in seconds, -1 if no expiration, -2 if key doesn't exist
 
 **Example:**
+
 ```python
 import scriptling.kv
 
@@ -157,16 +181,18 @@ no_expiry = scriptling.kv.ttl("config")  # -1 (no TTL)
 missing = scriptling.kv.ttl("unknown")   # -2 (doesn't exist)
 ```
 
-### scriptling.kv.keys(pattern="*")
+### scriptling.kv.keys(pattern="\*")
 
 Get all keys matching a glob pattern.
 
 **Parameters:**
-- `pattern` (str, optional): Glob pattern to match keys (default: "*")
+
+- `pattern` (str, optional): Glob pattern to match keys (default: "\*")
 
 **Returns:** list - List of matching keys
 
 **Example:**
+
 ```python
 import scriptling.kv
 
@@ -188,6 +214,7 @@ Remove all keys from the store.
 **Returns:** None
 
 **Example:**
+
 ```python
 import scriptling.kv
 

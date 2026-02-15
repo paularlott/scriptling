@@ -2,6 +2,16 @@
 
 Go-inspired async library for safe concurrent execution through isolated environments.
 
+## Available Functions
+
+| Function                     | Description                                  |
+| ---------------------------- | -------------------------------------------- |
+| `run(func, *args, **kwargs)` | Run function asynchronously in goroutine     |
+| `Atomic(value)`              | Create atomic value for thread-safe ops      |
+| `Shared(value)`              | Create shared value with mutex               |
+| `Queue(maxsize=0)`           | Create thread-safe queue                     |
+| `WaitGroup()`                | Create wait group for goroutine coordination |
+
 ## Design Principles
 
 - **Isolated Environments** - Each goroutine gets an empty environment with only libraries
@@ -19,11 +29,12 @@ For shared mutable data, use thread-safe primitives: `Atomic()`, `Shared()`, `Qu
 
 ## Functions
 
-### threads.run(func, *args, **kwargs)
+### threads.run(func, \*args, \*\*kwargs)
 
 Run function asynchronously in a separate goroutine with isolated environment.
 
 **Parameters:**
+
 - `func` - Function to execute
 - `*args` - Positional arguments to pass to the function
 - `**kwargs` - Keyword arguments to pass to the function
@@ -108,6 +119,7 @@ promise.wait()  # Waits for completion, discards result
 Create an atomic integer counter for lock-free operations.
 
 **Methods:**
+
 - `add(delta=1)` - Atomically add delta and return new value
 - `get()` - Atomically read the value
 - `set(value)` - Atomically set the value
@@ -132,6 +144,7 @@ print(counter.get())  # 1000
 Create a thread-safe shared variable with mutex protection.
 
 **Methods:**
+
 - `get()` - Get the current value (thread-safe)
 - `set(value)` - Set the value (thread-safe)
 
@@ -157,6 +170,7 @@ print(len(shared_list.get()))  # 100
 Create a wait group for synchronizing goroutines (Go-style).
 
 **Methods:**
+
 - `add(delta=1)` - Add to the wait group counter
 - `done()` - Decrement the wait group counter
 - `wait()` - Block until counter reaches zero
@@ -185,9 +199,11 @@ print("All workers complete")
 Create a thread-safe queue for producer-consumer patterns.
 
 **Parameters:**
+
 - `maxsize` - Maximum queue size (0 = unbounded)
 
 **Methods:**
+
 - `put(item)` - Add item to queue (blocks if full)
 - `get()` - Remove and return item from queue (blocks if empty)
 - `size()` - Return number of items in queue
@@ -214,16 +230,18 @@ threads.run(producer, queue)
 threads.run(consumer, queue)
 ```
 
-### threads.Pool(worker_func, workers=4, queue_depth=workers*2)
+### threads.Pool(worker_func, workers=4, queue_depth=workers\*2)
 
 Create a worker pool for processing data items.
 
 **Parameters:**
+
 - `worker_func` - Function to process each item
 - `workers` - Number of worker goroutines
 - `queue_depth` - Maximum queued items
 
 **Methods:**
+
 - `submit(data)` - Submit data to pool for processing
 - `close()` - Stop accepting work and wait for completion
 
@@ -246,17 +264,20 @@ pool.close()  # Wait for all work to complete
 ## Thread Safety Model
 
 **Isolation by default:**
+
 - Each goroutine gets an empty environment with only libraries
 - No access to parent scope variables
 - All data must be passed explicitly as parameters
 
 **Sharing through primitives:**
+
 - `Atomic()` - Lock-free atomic integers
 - `Shared()` - Mutex-protected shared values
 - `Queue()` - Thread-safe communication channel
 - `WaitGroup()` - Synchronization primitive
 
 **No implicit sharing prevents:**
+
 - Data races from accidental shared state
 - Memory overhead from deep copying
 - Performance degradation from expensive clones
@@ -264,6 +285,7 @@ pool.close()  # Wait for all work to complete
 ## Context Cancellation
 
 All async operations respect context cancellation:
+
 - When script context is cancelled, all goroutines are stopped
 - Use with `EvalWithTimeout()` for automatic cleanup
 

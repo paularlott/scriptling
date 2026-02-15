@@ -6,6 +6,16 @@ Functions for waiting on resources to become available. Useful for coordination 
 
 The `wait_for` library is available by default in the scriptling-cli.
 
+## Available Functions
+
+| Function                              | Description                             |
+| ------------------------------------- | --------------------------------------- |
+| `file(path, timeout=30, poll_rate=1)` | Wait for file to exist                  |
+| `dir(path, timeout=30, poll_rate=1)`  | Wait for directory to exist             |
+| `port(host, port, timeout=30, ...)`   | Wait for TCP port to accept connections |
+| `http(url, timeout=30, ...)`          | Wait for HTTP endpoint to return 200    |
+| `tcp(host, port, timeout=30, ...)`    | Wait for TCP connection                 |
+
 ## Functions
 
 ### wait_for.file(path, timeout=30, poll_rate=1)
@@ -13,6 +23,7 @@ The `wait_for` library is available by default in the scriptling-cli.
 Waits for a file to exist.
 
 **Parameters:**
+
 - `path` (string): Path to the file to wait for
 - `timeout` (int, optional): Maximum time to wait in seconds (default: 30)
 - `poll_rate` (float, optional): Time between checks in seconds (default: 1)
@@ -20,6 +31,7 @@ Waits for a file to exist.
 **Returns:** `bool` - `True` if file exists, `False` if timeout exceeded
 
 **Example:**
+
 ```python
 import wait_for
 
@@ -35,6 +47,7 @@ else:
 Waits for a directory to exist.
 
 **Parameters:**
+
 - `path` (string): Path to the directory to wait for
 - `timeout` (int, optional): Maximum time to wait in seconds (default: 30)
 - `poll_rate` (float, optional): Time between checks in seconds (default: 1)
@@ -42,6 +55,7 @@ Waits for a directory to exist.
 **Returns:** `bool` - `True` if directory exists, `False` if timeout exceeded
 
 **Example:**
+
 ```python
 import wait_for
 
@@ -55,6 +69,7 @@ if wait_for.dir("/mnt/nas/backups", timeout=60):
 Waits for a TCP port to accept connections.
 
 **Parameters:**
+
 - `host` (string): Hostname or IP address
 - `port` (int|string): Port number
 - `timeout` (int, optional): Maximum time to wait in seconds (default: 30)
@@ -63,6 +78,7 @@ Waits for a TCP port to accept connections.
 **Returns:** `bool` - `True` if port is open, `False` if timeout exceeded
 
 **Example:**
+
 ```python
 import wait_for
 
@@ -78,6 +94,7 @@ else:
 Waits for an HTTP endpoint to respond with the expected status code.
 
 **Parameters:**
+
 - `url` (string): URL to check
 - `timeout` (int, optional): Maximum time to wait in seconds (default: 30)
 - `poll_rate` (float, optional): Time between checks in seconds (default: 1)
@@ -86,6 +103,7 @@ Waits for an HTTP endpoint to respond with the expected status code.
 **Returns:** `bool` - `True` if endpoint responds with expected status, `False` if timeout exceeded
 
 **Example:**
+
 ```python
 import wait_for
 
@@ -103,6 +121,7 @@ if wait_for.http("http://api.example.com/ready", timeout=30, status_code=200):
 Waits for a file to exist and contain specific content.
 
 **Parameters:**
+
 - `path` (string): Path to the file to check
 - `content` (string): Content to search for in the file
 - `timeout` (int, optional): Maximum time to wait in seconds (default: 30)
@@ -111,6 +130,7 @@ Waits for a file to exist and contain specific content.
 **Returns:** `bool` - `True` if file contains the content, `False` if timeout exceeded
 
 **Example:**
+
 ```python
 import wait_for
 
@@ -128,6 +148,7 @@ if wait_for.file_content("/var/log/app.log", "Server started", timeout=30):
 Waits for a process with the specified name to be running.
 
 **Parameters:**
+
 - `name` (string): Process name to search for
 - `timeout` (int, optional): Maximum time to wait in seconds (default: 30)
 - `poll_rate` (float, optional): Time between checks in seconds (default: 1)
@@ -135,6 +156,7 @@ Waits for a process with the specified name to be running.
 **Returns:** `bool` - `True` if process is running, `False` if timeout exceeded
 
 **Example:**
+
 ```python
 import wait_for
 

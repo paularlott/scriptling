@@ -4,6 +4,23 @@ MCP (Model Context Protocol) tool interaction library. This library provides fun
 
 For MCP integration with OpenAI clients, see the [AI Library](ai.md) documentation.
 
+## Available Functions
+
+| Function                     | Description                                 |
+| ---------------------------- | ------------------------------------------- |
+| `decode_response(response)`  | Decode raw MCP tool response                |
+| `Client(base_url, **kwargs)` | Create MCP client for connecting to servers |
+
+## MCPClient Methods
+
+| Method                                       | Description               |
+| -------------------------------------------- | ------------------------- |
+| `client.tools()`                             | List available tools      |
+| `client.call_tool(name, arguments)`          | Execute a tool by name    |
+| `client.refresh_tools()`                     | Refresh cached tool list  |
+| `client.tool_search(query, **kwargs)`        | Search for tools by query |
+| `client.execute_discovered(name, arguments)` | Execute a discovered tool |
+
 ## Module Functions
 
 ### scriptling.mcp.decode_response(response)

@@ -2,6 +2,33 @@
 
 Mathematical functions and constants.
 
+## Available Functions
+
+| Function         | Description                                 |
+| ---------------- | ------------------------------------------- |
+| `sqrt(x)`        | Returns the square root of x                |
+| `pow(base, exp)` | Returns base raised to the power of exp     |
+| `fabs(x)`        | Returns the absolute value of x as a float  |
+| `floor(x)`       | Rounds x down to the nearest integer        |
+| `ceil(x)`        | Rounds x up to the nearest integer          |
+| `sin(x)`         | Returns the sine of x (in radians)          |
+| `cos(x)`         | Returns the cosine of x (in radians)        |
+| `tan(x)`         | Returns the tangent of x (in radians)       |
+| `log(x)`         | Returns the natural logarithm of x          |
+| `exp(x)`         | Returns e raised to the power of x          |
+| `degrees(x)`     | Converts radians to degrees                 |
+| `radians(x)`     | Converts degrees to radians                 |
+| `fmod(x, y)`     | Returns the floating-point remainder of x/y |
+| `gcd(a, b)`      | Returns the greatest common divisor         |
+| `factorial(n)`   | Returns the factorial of n                  |
+
+## Constants
+
+| Constant | Description                 |
+| -------- | --------------------------- |
+| `pi`     | The mathematical constant π |
+| `e`      | The mathematical constant e |
+
 ## Functions
 
 ### math.sqrt(x)
@@ -9,11 +36,13 @@ Mathematical functions and constants.
 Returns the square root of x.
 
 **Parameters:**
+
 - `x`: Number (integer or float)
 
 **Returns:** Float
 
 **Example:**
+
 ```python
 import math
 result = math.sqrt(16)  # 4.0
@@ -24,12 +53,14 @@ result = math.sqrt(16)  # 4.0
 Returns base raised to the power of exp (base^exp).
 
 **Parameters:**
+
 - `base`: Base number
 - `exp`: Exponent
 
 **Returns:** Float
 
 **Example:**
+
 ```python
 import math
 result = math.pow(2, 8)  # 256.0
@@ -40,11 +71,13 @@ result = math.pow(2, 8)  # 256.0
 Returns the absolute value of x as a float.
 
 **Parameters:**
+
 - `x`: Number (integer or float)
 
 **Returns:** Float (always returns floating-point)
 
 **Example:**
+
 ```python
 import math
 result = math.fabs(-5)    # 5.0
@@ -58,11 +91,13 @@ result = math.fabs(-3.14) # 3.14
 Rounds x down to the nearest integer.
 
 **Parameters:**
+
 - `x`: Number
 
 **Returns:** Integer
 
 **Example:**
+
 ```python
 import math
 result = math.floor(3.7)  # 3
@@ -73,11 +108,13 @@ result = math.floor(3.7)  # 3
 Rounds x up to the nearest integer.
 
 **Parameters:**
+
 - `x`: Number
 
 **Returns:** Integer
 
 **Example:**
+
 ```python
 import math
 result = math.ceil(3.2)  # 4
@@ -91,11 +128,13 @@ result = math.ceil(3.2)  # 4
 Returns the sine of x (in radians).
 
 **Parameters:**
+
 - `x`: Angle in radians
 
 **Returns:** Float
 
 **Example:**
+
 ```python
 import math
 result = math.sin(0)  # 0.0
@@ -107,11 +146,13 @@ result = math.sin(math.pi / 2)  # 1.0
 Returns the cosine of x (in radians).
 
 **Parameters:**
+
 - `x`: Angle in radians
 
 **Returns:** Float
 
 **Example:**
+
 ```python
 import math
 result = math.cos(0)  # 1.0
@@ -123,11 +164,13 @@ result = math.cos(math.pi)  # -1.0
 Returns the tangent of x (in radians).
 
 **Parameters:**
+
 - `x`: Angle in radians
 
 **Returns:** Float
 
 **Example:**
+
 ```python
 import math
 result = math.tan(0)  # 0.0
@@ -139,11 +182,13 @@ result = math.tan(math.pi / 4)  # 1.0
 Returns the natural logarithm (base e) of x.
 
 **Parameters:**
+
 - `x`: Number (must be > 0)
 
 **Returns:** Float
 
 **Example:**
+
 ```python
 import math
 result = math.log(1)  # 0.0
@@ -155,11 +200,13 @@ result = math.log(math.e)  # 1.0
 Returns e raised to the power of x (e^x).
 
 **Parameters:**
+
 - `x`: Number
 
 **Returns:** Float
 
 **Example:**
+
 ```python
 import math
 result = math.exp(0)  # 1.0
@@ -171,11 +218,13 @@ result = math.exp(1)  # 2.718281828459045
 Converts angle x from radians to degrees.
 
 **Parameters:**
+
 - `x`: Angle in radians
 
 **Returns:** Float
 
 **Example:**
+
 ```python
 import math
 result = math.degrees(math.pi)  # 180.0
@@ -187,11 +236,13 @@ result = math.degrees(math.pi / 2)  # 90.0
 Converts angle x from degrees to radians.
 
 **Parameters:**
+
 - `x`: Angle in degrees
 
 **Returns:** Float
 
 **Example:**
+
 ```python
 import math
 result = math.radians(180)  # 3.141592653589793
@@ -203,12 +254,14 @@ result = math.radians(90)   # 1.5707963267948966
 Returns the floating-point remainder of x divided by y.
 
 **Parameters:**
+
 - `x`: Dividend
 - `y`: Divisor (cannot be 0)
 
 **Returns:** Float
 
 **Example:**
+
 ```python
 import math
 result = math.fmod(5.5, 2.0)  # 1.5
@@ -220,12 +273,14 @@ result = math.fmod(7.0, 3.0)  # 1.0
 Returns the greatest common divisor of integers a and b.
 
 **Parameters:**
+
 - `a`: Integer
 - `b`: Integer
 
 **Returns:** Integer
 
 **Example:**
+
 ```python
 import math
 result = math.gcd(48, 18)  # 6
@@ -237,11 +292,13 @@ result = math.gcd(100, 75) # 25
 Returns the factorial of n (n!).
 
 **Parameters:**
+
 - `n`: Non-negative integer (0 ≤ n ≤ 20)
 
 **Returns:** Integer
 
 **Example:**
+
 ```python
 import math
 result = math.factorial(5)  # 120
@@ -257,6 +314,7 @@ The mathematical constant π (pi).
 **Value:** Float (3.141592653589793)
 
 **Example:**
+
 ```python
 import math
 pi = math.pi  # 3.141592653589793
@@ -269,6 +327,7 @@ The mathematical constant e (Euler's number).
 **Value:** Float (2.718281828459045)
 
 **Example:**
+
 ```python
 import math
 e = math.e  # 2.718281828459045

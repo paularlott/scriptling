@@ -10,12 +10,25 @@ The `secrets` library provides functions for generating cryptographically strong
 import secrets
 ```
 
+## Available Functions
+
+| Function                  | Description                       |
+| ------------------------- | --------------------------------- |
+| `token_bytes([nbytes])`   | Generate random byte sequence     |
+| `token_hex([nbytes])`     | Generate random hex string        |
+| `token_urlsafe([nbytes])` | Generate random URL-safe string   |
+| `randbelow(n)`            | Random integer in range [0, n)    |
+| `randbits(k)`             | Random integer with k random bits |
+| `choice(sequence)`        | Random element from sequence      |
+
 ## Functions
 
 ### token_bytes([nbytes])
+
 Generate a random byte sequence.
 
 **Parameters:**
+
 - `nbytes` - Number of bytes to generate (default: 32)
 
 **Returns:** List of integers (0-255) representing the bytes
@@ -27,9 +40,11 @@ bytes = secrets.token_bytes(16)
 ```
 
 ### token_hex([nbytes])
+
 Generate a random text string in hexadecimal.
 
 **Parameters:**
+
 - `nbytes` - Number of random bytes (output string will be 2x this length) (default: 32)
 
 **Returns:** Hexadecimal string
@@ -41,9 +56,11 @@ token = secrets.token_hex(16)
 ```
 
 ### token_urlsafe([nbytes])
+
 Generate a random URL-safe text string.
 
 **Parameters:**
+
 - `nbytes` - Number of random bytes (default: 32)
 
 **Returns:** URL-safe base64 encoded string
@@ -55,9 +72,11 @@ token = secrets.token_urlsafe(16)
 ```
 
 ### randbelow(n)
+
 Generate a random integer in the range [0, n).
 
 **Parameters:**
+
 - `n` - Exclusive upper bound (must be positive)
 
 **Returns:** Random integer from 0 to n-1
@@ -68,9 +87,11 @@ dice = secrets.randbelow(6) + 1  # Random 1-6
 ```
 
 ### choice(sequence)
+
 Return a cryptographically random element from a non-empty sequence.
 
 **Parameters:**
+
 - `sequence` - Non-empty list to choose from
 
 **Returns:** Random element from the sequence
@@ -81,9 +102,11 @@ winner = secrets.choice(["Alice", "Bob", "Charlie"])
 ```
 
 ### compare_digest(a, b)
+
 Compare two strings using constant-time comparison to prevent timing attacks.
 
 **Parameters:**
+
 - `a` - First string
 - `b` - Second string
 
@@ -122,6 +145,7 @@ print(token)
 ## Examples
 
 ### Generate an API Token
+
 ```python
 import secrets
 
@@ -131,6 +155,7 @@ print(f"Your API token: {api_token}")
 ```
 
 ### Secure Password Reset Token
+
 ```python
 import secrets
 
@@ -142,6 +167,7 @@ token = generate_reset_token()
 ```
 
 ### Validate a Token
+
 ```python
 import secrets
 
@@ -153,6 +179,7 @@ is_valid = validate_token(request_token, database_token)
 ```
 
 ### Random Selection
+
 ```python
 import secrets
 
@@ -167,12 +194,14 @@ print(passcode)  # Random 6-digit code
 ## When to Use
 
 Use `secrets` instead of `random` when:
+
 - Generating tokens, keys, or passwords
 - Creating nonces or salts
 - Any cryptographic or security-sensitive application
 - Protecting against prediction attacks
 
 Use `random` when:
+
 - Performance matters more than security
 - Statistical randomness is sufficient
 - Non-security applications (games, simulations)
@@ -181,12 +210,12 @@ Use `random` when:
 
 This library implements Python's `secrets` module:
 
-| Function | Supported |
-|----------|-----------|
-| token_bytes | ✅ |
-| token_hex | ✅ |
-| token_urlsafe | ✅ |
-| randbelow | ✅ |
-| choice | ✅ |
-| compare_digest | ✅ |
-| SystemRandom class | ❌ |
+| Function           | Supported |
+| ------------------ | --------- |
+| token_bytes        | ✅        |
+| token_hex          | ✅        |
+| token_urlsafe      | ✅        |
+| randbelow          | ✅        |
+| choice             | ✅        |
+| compare_digest     | ✅        |
+| SystemRandom class | ❌        |

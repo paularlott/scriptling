@@ -8,6 +8,12 @@ The `scriptling.console` library provides console input/output functions for int
 import scriptling.console as console
 ```
 
+## Available Functions
+
+| Function          | Description                     |
+| ----------------- | ------------------------------- |
+| `input([prompt])` | Read a line from standard input |
+
 ## Functions
 
 ### `console.input([prompt]) -> str`
@@ -15,12 +21,15 @@ import scriptling.console as console
 Read a line from standard input. If a `prompt` is provided, it is written to stdout without a trailing newline before reading input.
 
 **Parameters:**
+
 - `prompt` (str, optional): The prompt to display before reading input
 
 **Returns:**
+
 - str: The line read from input, without the trailing newline
 
 **Raises:**
+
 - Error: If input is not available in the current environment
 
 **Example:**

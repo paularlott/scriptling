@@ -2,6 +2,17 @@
 
 HTTP server route registration library for building web applications and webhooks.
 
+## Available Functions
+
+| Function                | Description                       |
+| ----------------------- | --------------------------------- |
+| `get(path, handler)`    | Register a GET route              |
+| `post(path, handler)`   | Register a POST route             |
+| `put(path, handler)`    | Register a PUT route              |
+| `delete(path, handler)` | Register a DELETE route           |
+| `static(path, dir)`     | Serve static files from directory |
+| `middleware(handler)`   | Add middleware for all routes     |
+
 ## Overview
 
 The `scriptling.http` library provides functions to register HTTP routes that are served by the Scriptling HTTP server. Use this library in your setup script to define how your application responds to HTTP requests.
@@ -36,10 +47,12 @@ scriptling --server :8000 --mcp-tools ./tools setup.py
 Register a GET route.
 
 **Parameters:**
+
 - `path` (str): URL path for the route (e.g., "/api/users")
 - `handler` (str): Handler function as "library.function" string
 
 **Example:**
+
 ```python
 import scriptling.http
 
@@ -52,10 +65,12 @@ scriptling.http.get("/api/users", "handlers.list_users")
 Register a POST route.
 
 **Parameters:**
+
 - `path` (str): URL path for the route
 - `handler` (str): Handler function as "library.function" string
 
 **Example:**
+
 ```python
 import scriptling.http
 
@@ -68,10 +83,12 @@ scriptling.http.post("/webhook", "handlers.webhook")
 Register a PUT route.
 
 **Parameters:**
+
 - `path` (str): URL path for the route
 - `handler` (str): Handler function as "library.function" string
 
 **Example:**
+
 ```python
 import scriptling.http
 
@@ -83,10 +100,12 @@ scriptling.http.put("/api/users/:id", "handlers.update_user")
 Register a DELETE route.
 
 **Parameters:**
+
 - `path` (str): URL path for the route
 - `handler` (str): Handler function as "library.function" string
 
 **Example:**
+
 ```python
 import scriptling.http
 
@@ -98,11 +117,13 @@ scriptling.http.delete("/api/users/:id", "handlers.delete_user")
 Register a route for multiple HTTP methods.
 
 **Parameters:**
+
 - `path` (str): URL path for the route
 - `handler` (str): Handler function as "library.function" string
 - `methods` (list): List of HTTP methods to accept
 
 **Example:**
+
 ```python
 import scriptling.http
 
@@ -118,13 +139,16 @@ scriptling.http.route("/api/resource", "handlers.resource")
 Register middleware for all routes.
 
 **Parameters:**
+
 - `handler` (str): Middleware function as "library.function" string
 
 The middleware receives the request object and should return:
+
 - None to continue to the handler
 - A response dict to short-circuit (block the request)
 
 **Example:**
+
 ```python
 import scriptling.http
 
@@ -136,10 +160,12 @@ scriptling.http.middleware("auth.check_request")
 Register a static file serving route.
 
 **Parameters:**
+
 - `path` (str): URL path prefix for static files (e.g., "/assets")
 - `directory` (str): Local directory to serve files from
 
 **Example:**
+
 ```python
 import scriptling.http
 
@@ -152,12 +178,14 @@ scriptling.http.static("/static", "/var/www/static")
 Create a JSON response.
 
 **Parameters:**
+
 - `status_code` (int): HTTP status code (e.g., 200, 404, 500)
 - `data`: Data to serialize as JSON
 
 **Returns:** dict - Response object for the server
 
 **Example:**
+
 ```python
 import scriptling.http
 
@@ -176,12 +204,14 @@ return scriptling.http.json({"items": []}, status=200)
 Create a redirect response.
 
 **Parameters:**
+
 - `location` (str): URL to redirect to
 - `status` (int, optional): HTTP status code (default: 302)
 
 **Returns:** dict - Response object for the server
 
 **Example:**
+
 ```python
 import scriptling.http
 
@@ -197,12 +227,14 @@ return scriptling.http.redirect("/permanent", status=301)
 Create an HTML response.
 
 **Parameters:**
+
 - `status_code` (int): HTTP status code
 - `content` (str): HTML content to return
 
 **Returns:** dict - Response object for the server
 
 **Example:**
+
 ```python
 import scriptling.http
 
@@ -215,12 +247,14 @@ return scriptling.http.html("<p>Simple content</p>", status=200)
 Create a plain text response.
 
 **Parameters:**
+
 - `status_code` (int): HTTP status code
 - `content` (str): Text content to return
 
 **Returns:** dict - Response object for the server
 
 **Example:**
+
 ```python
 import scriptling.http
 
@@ -233,11 +267,13 @@ return scriptling.http.text("Plain text", status=200)
 Parse a URL query string.
 
 **Parameters:**
+
 - `query_string` (str): Query string to parse (with or without leading ?)
 
 **Returns:** dict - Parsed key-value pairs
 
 **Example:**
+
 ```python
 import scriptling.http
 
@@ -253,13 +289,13 @@ params = scriptling.http.parse_query("tag=a&tag=b")
 
 Handlers receive a Request object with the following attributes:
 
-| Attribute | Type | Description |
-|-----------|------|-------------|
-| `method` | str | HTTP method (GET, POST, etc.) |
-| `path` | str | URL path |
-| `body` | str | Request body as string |
+| Attribute | Type | Description                      |
+| --------- | ---- | -------------------------------- |
+| `method`  | str  | HTTP method (GET, POST, etc.)    |
+| `path`    | str  | URL path                         |
+| `body`    | str  | Request body as string           |
 | `headers` | dict | Request headers (lowercase keys) |
-| `query` | dict | Query parameters |
+| `query`   | dict | Query parameters                 |
 
 ### Request.json()
 
@@ -268,6 +304,7 @@ Parse the request body as JSON.
 **Returns:** dict or list or None
 
 **Example:**
+
 ```python
 def handle_post(request):
     data = request.json()
@@ -280,6 +317,7 @@ def handle_post(request):
 ### Basic API
 
 **setup.py:**
+
 ```python
 import scriptling.http
 
@@ -289,6 +327,7 @@ scriptling.http.post("/api/users", "api.create_user")
 ```
 
 **api.py:**
+
 ```python
 import scriptling.http
 
@@ -308,6 +347,7 @@ def create_user(request):
 ### Authentication Middleware
 
 **auth.py:**
+
 ```python
 import scriptling.http
 
@@ -326,6 +366,7 @@ def check_request(request):
 ```
 
 **setup.py:**
+
 ```python
 import scriptling.http
 
@@ -336,6 +377,7 @@ scriptling.http.get("/api/protected", "handlers.protected")
 ### Telegram Webhook
 
 **setup.py:**
+
 ```python
 import scriptling.http
 import scriptling.kv
@@ -349,6 +391,7 @@ scriptling.http.post("/telegram/webhook", "telegram.webhook")
 ```
 
 **telegram.py:**
+
 ```python
 import scriptling.http
 import scriptling.kv

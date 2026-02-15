@@ -2,6 +2,19 @@
 
 Thread-safe key-value store for sharing state across requests and background tasks.
 
+## Available Functions
+
+| Function                 | Description                        |
+| ------------------------ | ---------------------------------- |
+| `set(key, value, ttl=0)` | Store value with optional TTL      |
+| `get(key, default=None)` | Retrieve value by key              |
+| `delete(key)`            | Remove a key from the store        |
+| `exists(key)`            | Check if key exists                |
+| `incr(key, amount=1)`    | Atomically increment integer value |
+| `ttl(key)`               | Get remaining TTL for a key        |
+| `keys(pattern="*")`      | Get keys matching glob pattern     |
+| `clear()`                | Remove all keys from store         |
+
 ## Setup
 
 ```go

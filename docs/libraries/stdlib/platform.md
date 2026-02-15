@@ -8,9 +8,24 @@ The `platform` library provides access to underlying platform's identifying data
 import platform
 ```
 
+## Available Functions
+
+| Function                       | Description                          |
+| ------------------------------ | ------------------------------------ |
+| `architecture()`               | Returns bit architecture info        |
+| `machine()`                    | Returns machine type (e.g., 'arm64') |
+| `node()`                       | Returns computer's network name      |
+| `platform(aliased=0, terse=0)` | Returns platform identifier string   |
+| `processor()`                  | Returns processor name               |
+| `python_version()`             | Returns Python/Scriptling version    |
+| `release()`                    | Returns system release               |
+| `system()`                     | Returns system name (e.g., 'Darwin') |
+| `version()`                    | Returns system version               |
+
 ## Functions
 
 ### `architecture()`
+
 Returns a tuple `(bits, linkage)` containing information about the bit architecture and the linkage format.
 
 ```python
@@ -19,6 +34,7 @@ print(platform.architecture())
 ```
 
 ### `machine()`
+
 Returns the machine type, e.g. 'i386'. An empty string is returned if the value cannot be determined.
 
 ```python
@@ -27,6 +43,7 @@ print(platform.machine())
 ```
 
 ### `node()`
+
 Returns the computer's network name (may not be fully qualified!). An empty string is returned if the value cannot be determined.
 
 ```python
@@ -35,6 +52,7 @@ print(platform.node())
 ```
 
 ### `platform(aliased=0, terse=0)`
+
 Returns a single string identifying the underlying platform with as much useful information as possible.
 
 ```python
@@ -43,6 +61,7 @@ print(platform.platform())
 ```
 
 ### `processor()`
+
 Returns the (real) processor name, e.g. 'amdk6'.
 
 ```python
@@ -51,6 +70,7 @@ print(platform.processor())
 ```
 
 ### `python_version()`
+
 Returns the Python version as string 'major.minor.patchlevel'.
 **Note:** In Scriptling, this returns the Scriptling version for compatibility.
 
@@ -60,6 +80,7 @@ print(platform.python_version())
 ```
 
 ### `release()`
+
 Returns the system's release, e.g. '2.2.0' or 'NT'.
 
 ```python
@@ -68,6 +89,7 @@ print(platform.release())
 ```
 
 ### `scriptling_version()`
+
 Returns the Scriptling version as string.
 
 ```python
@@ -76,6 +98,7 @@ print(platform.scriptling_version())
 ```
 
 ### `system()`
+
 Returns the system/OS name, e.g. 'Linux', 'Windows', or 'Java'. An empty string is returned if the value cannot be determined.
 
 ```python
@@ -84,6 +107,7 @@ print(platform.system())
 ```
 
 ### `uname()`
+
 Returns a dictionary containing system information.
 **Note:** Unlike Python which returns a `namedtuple`, Scriptling returns a dictionary with keys: `system`, `node`, `release`, `version`, `machine`, `processor`.
 
@@ -94,6 +118,7 @@ print(info["system"])
 ```
 
 ### `version()`
+
 Returns the system's release version, e.g. '#3 on degas'.
 
 ```python

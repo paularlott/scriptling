@@ -10,6 +10,16 @@ The `sys` library provides access to system-specific parameters and functions. T
 import sys
 ```
 
+## Available Constants
+
+| Constant   | Description                      |
+| ---------- | -------------------------------- |
+| `platform` | Operating system platform string |
+| `version`  | Scriptling interpreter version   |
+| `maxsize`  | Maximum signed integer value     |
+| `path_sep` | Path separator for OS            |
+| `argv`     | List of command-line arguments   |
+
 ## Constants
 
 ### platform
@@ -137,6 +147,7 @@ sys.exit(42)
 ```
 
 **Helper functions:**
+
 - `extlibs.IsSysExitCode(err error) bool` - Check if an error is a SysExitCode
 - `extlibs.GetSysExitCode(err error) (*SysExitCode, bool)` - Extract the SysExitCode from an error
 

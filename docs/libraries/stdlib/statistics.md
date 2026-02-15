@@ -8,11 +8,25 @@ The `statistics` library provides functions for calculating mathematical statist
 import statistics
 ```
 
+## Available Functions
+
+| Function               | Description                              |
+| ---------------------- | ---------------------------------------- |
+| `mean(data)`           | Arithmetic mean (average)                |
+| `fmean(data)`          | Float mean (same as mean, returns float) |
+| `geometric_mean(data)` | Geometric mean                           |
+| `harmonic_mean(data)`  | Harmonic mean                            |
+| `median(data)`         | Median (middle value)                    |
+| `mode(data)`           | Mode (most common value)                 |
+| `stdev(data)`          | Sample standard deviation                |
+| `variance(data)`       | Sample variance                          |
+
 ## Functions
 
 ### Averages
 
 #### mean(data)
+
 Calculate the arithmetic mean (average) of data.
 
 ```python
@@ -21,6 +35,7 @@ statistics.mean([10.5, 20.5, 30.5])  # Returns 20.5
 ```
 
 #### fmean(data)
+
 Calculate the arithmetic mean of data (same as mean, returns float).
 
 ```python
@@ -28,6 +43,7 @@ statistics.fmean([1, 2, 3, 4, 5])  # Returns 3.0
 ```
 
 #### geometric_mean(data)
+
 Calculate the geometric mean of data.
 
 ```python
@@ -36,6 +52,7 @@ statistics.geometric_mean([1, 3, 9, 27])  # Returns 5.196...
 ```
 
 #### harmonic_mean(data)
+
 Calculate the harmonic mean of data.
 
 ```python
@@ -45,6 +62,7 @@ statistics.harmonic_mean([1, 2, 4])  # Returns ~1.71
 ### Central Tendency
 
 #### median(data)
+
 Calculate the median (middle value) of data.
 
 ```python
@@ -53,6 +71,7 @@ statistics.median([1, 2, 3, 4])  # Returns 2.5 (even count)
 ```
 
 #### mode(data)
+
 Calculate the mode (most common value) of data.
 
 ```python
@@ -63,6 +82,7 @@ statistics.mode(["a", "b", "b"])  # Returns "b"
 ### Measures of Spread
 
 #### variance(data)
+
 Calculate the sample variance of data.
 
 ```python
@@ -71,6 +91,7 @@ statistics.variance(data)  # Returns ~4.57
 ```
 
 #### pvariance(data)
+
 Calculate the population variance of data.
 
 ```python
@@ -79,6 +100,7 @@ statistics.pvariance(data)  # Returns 4.0
 ```
 
 #### stdev(data)
+
 Calculate the sample standard deviation.
 
 ```python
@@ -87,6 +109,7 @@ statistics.stdev(data)  # Returns ~2.14
 ```
 
 #### pstdev(data)
+
 Calculate the population standard deviation.
 
 ```python
@@ -97,6 +120,7 @@ statistics.pstdev(data)  # Returns 2.0
 ## Examples
 
 ### Basic Statistics
+
 ```python
 import statistics
 
@@ -112,6 +136,7 @@ print(f"Std Dev: {std}")
 ```
 
 ### Comparing Sample vs Population Statistics
+
 ```python
 import statistics
 
@@ -127,6 +152,7 @@ pop_std = statistics.pstdev(data)
 ```
 
 ### Finding the Mode
+
 ```python
 import statistics
 
@@ -145,21 +171,21 @@ most_common = statistics.mode(responses)  # Returns "yes"
 
 This library implements a subset of Python's `statistics` module:
 
-| Function | Supported |
-|----------|-----------|
-| mean | ✅ |
-| fmean | ✅ |
-| geometric_mean | ✅ |
-| harmonic_mean | ✅ |
-| median | ✅ |
-| median_low | ❌ |
-| median_high | ❌ |
-| median_grouped | ❌ |
-| mode | ✅ |
-| multimode | ❌ |
-| variance | ✅ |
-| pvariance | ✅ |
-| stdev | ✅ |
-| pstdev | ✅ |
-| quantiles | ❌ |
-| NormalDist | ❌ |
+| Function       | Supported |
+| -------------- | --------- |
+| mean           | ✅        |
+| fmean          | ✅        |
+| geometric_mean | ✅        |
+| harmonic_mean  | ✅        |
+| median         | ✅        |
+| median_low     | ❌        |
+| median_high    | ❌        |
+| median_grouped | ❌        |
+| mode           | ✅        |
+| multimode      | ❌        |
+| variance       | ✅        |
+| pvariance      | ✅        |
+| stdev          | ✅        |
+| pstdev         | ✅        |
+| quantiles      | ❌        |
+| NormalDist     | ❌        |

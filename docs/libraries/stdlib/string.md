@@ -8,58 +8,89 @@ String constants for character classification, matching Python's `string` module
 import string
 ```
 
+## Available Constants
+
+| Constant          | Description                        |
+| ----------------- | ---------------------------------- |
+| `ascii_letters`   | All ASCII letters (a-z, A-Z)       |
+| `ascii_lowercase` | Lowercase ASCII letters (a-z)      |
+| `ascii_uppercase` | Uppercase ASCII letters (A-Z)      |
+| `digits`          | Decimal digits (0-9)               |
+| `hexdigits`       | Hexadecimal digits (0-9, a-f, A-F) |
+| `octdigits`       | Octal digits (0-7)                 |
+| `punctuation`     | ASCII punctuation characters       |
+| `whitespace`      | Whitespace characters              |
+
 ## Constants
 
 ### `ascii_letters`
+
 Concatenation of `ascii_lowercase` and `ascii_uppercase`.
+
 ```python
 string.ascii_letters  # "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 ```
 
 ### `ascii_lowercase`
+
 Lowercase ASCII letters.
+
 ```python
 string.ascii_lowercase  # "abcdefghijklmnopqrstuvwxyz"
 ```
 
 ### `ascii_uppercase`
+
 Uppercase ASCII letters.
+
 ```python
 string.ascii_uppercase  # "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 ```
 
 ### `digits`
+
 Decimal digits.
+
 ```python
 string.digits  # "0123456789"
 ```
 
 ### `hexdigits`
+
 Hexadecimal digits.
+
 ```python
 string.hexdigits  # "0123456789abcdefABCDEF"
 ```
 
 ### `octdigits`
+
 Octal digits.
+
 ```python
 string.octdigits  # "01234567"
 ```
 
 ### `punctuation`
+
 ASCII punctuation characters.
+
 ```python
 string.punctuation  # "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
 ```
 
 ### `whitespace`
+
 Whitespace characters.
+
 ```python
 string.whitespace  # " \t\n\r\v\f"
 ```
 
 ### `printable`
+
 Combination of digits, letters, punctuation, and whitespace.
+
 ```python
 string.printable
 ```
@@ -67,6 +98,7 @@ string.printable
 ## Examples
 
 ### Character Validation
+
 ```python
 import string
 
@@ -88,6 +120,7 @@ print(is_valid_identifier("123abc"))   # False
 ```
 
 ### Generate Random String
+
 ```python
 import string
 import random
@@ -103,6 +136,7 @@ print(random_string(10))  # e.g., "aB3xY7mK2p"
 ```
 
 ### Check for Hex String
+
 ```python
 import string
 

@@ -8,9 +8,18 @@ UUID generation library, matching Python's `uuid` module.
 import uuid
 ```
 
+## Available Functions
+
+| Function  | Description                                   |
+| --------- | --------------------------------------------- |
+| `uuid1()` | Generate UUID version 1 (time-based)          |
+| `uuid4()` | Generate UUID version 4 (random)              |
+| `uuid7()` | Generate UUID version 7 (timestamp, sortable) |
+
 ## Functions
 
 ### `uuid1()`
+
 Generate a UUID version 1 (time-based).
 
 Based on current time and MAC address. Good for generating unique IDs where time ordering matters.
@@ -21,6 +30,7 @@ print(id)  # e.g., "f47ac10b-58cc-1e4c-a26f-e3fc32165abc"
 ```
 
 ### `uuid4()`
+
 Generate a UUID version 4 (random).
 
 Randomly generated UUID. Most commonly used for general-purpose unique identifiers.
@@ -31,6 +41,7 @@ print(id)  # e.g., "550e8400-e29b-41d4-a716-446655440000"
 ```
 
 ### `uuid7()`
+
 Generate a UUID version 7 (Unix timestamp-based, sortable).
 
 Based on Unix timestamp in milliseconds. UUIDs generated in sequence will sort in chronological order. Ideal for database primary keys.
@@ -42,15 +53,16 @@ print(id)  # e.g., "018f6b1c-4e5d-7abc-8def-0123456789ab"
 
 ## UUID Versions Comparison
 
-| Version | Based On | Sortable | Use Case |
-|---------|----------|----------|----------|
-| uuid1() | Time + MAC | Partially | Legacy systems, audit trails |
-| uuid4() | Random | No | General purpose, most common |
-| uuid7() | Timestamp | Yes | Database keys, distributed systems |
+| Version | Based On   | Sortable  | Use Case                           |
+| ------- | ---------- | --------- | ---------------------------------- |
+| uuid1() | Time + MAC | Partially | Legacy systems, audit trails       |
+| uuid4() | Random     | No        | General purpose, most common       |
+| uuid7() | Timestamp  | Yes       | Database keys, distributed systems |
 
 ## Examples
 
 ### Generate Unique Request ID
+
 ```python
 import uuid
 
@@ -63,6 +75,7 @@ make_request()
 ```
 
 ### Database Record ID
+
 ```python
 import uuid
 
@@ -78,6 +91,7 @@ print(record["id"])
 ```
 
 ### Batch Processing with Ordered IDs
+
 ```python
 import uuid
 import time

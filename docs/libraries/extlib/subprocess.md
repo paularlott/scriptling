@@ -10,6 +10,12 @@ The `subprocess` library provides functions for spawning and managing subprocess
 import subprocess
 ```
 
+## Available Functions
+
+| Function                | Description                             |
+| ----------------------- | --------------------------------------- |
+| `run(args, options={})` | Run command and return CompletedProcess |
+
 ## Functions
 
 ### subprocess.run(args, options={})
@@ -17,10 +23,12 @@ import subprocess
 Run a command and return a CompletedProcess instance.
 
 **Parameters:**
+
 - `args`: Command to run. Can be a string (split on spaces) or a list of arguments.
 - `options`: Optional dictionary with configuration options.
 
 **Options:**
+
 - `capture_output` (boolean): Capture stdout and stderr. Default: `false`
 - `shell` (boolean): Run command through shell. Default: `false`
 - `cwd` (string): Working directory for command
@@ -75,6 +83,7 @@ Check if the process returned successfully. Raises an exception if returncode is
 **Returns:** The CompletedProcess instance if successful
 
 **Example:**
+
 ```python
 import subprocess
 

@@ -2,6 +2,15 @@
 
 Cryptographic hash functions.
 
+## Available Functions
+
+| Function         | Description                      |
+| ---------------- | -------------------------------- |
+| `md5(string)`    | Compute MD5 hash of a string     |
+| `sha1(string)`   | Compute SHA-1 hash of a string   |
+| `sha256(string)` | Compute SHA-256 hash of a string |
+| `sha512(string)` | Compute SHA-512 hash of a string |
+
 ## Functions
 
 ### hashlib.md5(string)
@@ -9,11 +18,13 @@ Cryptographic hash functions.
 Computes MD5 hash of a string.
 
 **Parameters:**
+
 - `string`: String to hash
 
 **Returns:** String (hexadecimal hash)
 
 **Example:**
+
 ```python
 import hashlib
 
@@ -26,11 +37,13 @@ print(hash)  # "5d41402abc4b2a76b9719d911017c592"
 Computes SHA-1 hash of a string.
 
 **Parameters:**
+
 - `string`: String to hash
 
 **Returns:** String (hexadecimal hash)
 
 **Example:**
+
 ```python
 import hashlib
 
@@ -43,11 +56,13 @@ print(hash)  # "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"
 Computes SHA-256 hash of a string.
 
 **Parameters:**
+
 - `string`: String to hash
 
 **Returns:** String (hexadecimal hash)
 
 **Example:**
+
 ```python
 import hashlib
 

@@ -10,17 +10,35 @@ The `os.path` library provides common pathname manipulations. This is an **exten
 import os.path
 ```
 
+## Available Functions
+
+| Function               | Description                       |
+| ---------------------- | --------------------------------- |
+| `join(*paths)`         | Join path components              |
+| `exists(path)`         | Check if path exists              |
+| `isfile(path)`         | Check if path is a file           |
+| `isdir(path)`          | Check if path is a directory      |
+| `basename(path)`       | Get final component of path       |
+| `dirname(path)`        | Get directory component of path   |
+| `split(path)`          | Split path into (head, tail)      |
+| `splitext(path)`       | Split path into (root, extension) |
+| `normpath(path)`       | Normalize path (remove . and ..)  |
+| `abspath(path)`        | Get absolute path                 |
+| `relpath(path, start)` | Get relative path from start      |
+| `commonprefix(list)`   | Get longest common path prefix    |
+
 ## Security
 
 Like the `os` library, `os.path` operations are subject to filesystem security restrictions when configured. All path operations are restricted to the allowed directories.
 
 ## Functions
 
-### os.path.join(*paths)
+### os.path.join(\*paths)
 
 Join path components using the appropriate separator for the OS.
 
 **Parameters:**
+
 - `*paths`: Path components to join
 
 **Returns:** Joined path string
@@ -42,6 +60,7 @@ print(full)  # "/home/user/documents/file.txt"
 Check if a path exists.
 
 **Parameters:**
+
 - `path` (string): Path to check
 
 **Returns:** Boolean - `True` if the path exists, `False` otherwise
@@ -60,6 +79,7 @@ else:
 Check if a path is a regular file.
 
 **Parameters:**
+
 - `path` (string): Path to check
 
 **Returns:** Boolean - `True` if the path is a file, `False` otherwise
@@ -76,6 +96,7 @@ if os.path.isfile("/tmp/data.txt"):
 Check if a path is a directory.
 
 **Parameters:**
+
 - `path` (string): Path to check
 
 **Returns:** Boolean - `True` if the path is a directory, `False` otherwise
@@ -92,6 +113,7 @@ if os.path.isdir("/tmp/mydir"):
 Get the base name of a path (final component).
 
 **Parameters:**
+
 - `path` (string): Path to process
 
 **Returns:** String - the final component of the path
@@ -108,6 +130,7 @@ print(os.path.basename("/home/user/mydir/"))    # "mydir"
 Get the directory name of a path.
 
 **Parameters:**
+
 - `path` (string): Path to process
 
 **Returns:** String - the directory component of the path
@@ -124,6 +147,7 @@ print(os.path.dirname("/home/user/mydir/"))    # "/home/user"
 Split a path into (directory, filename) tuple.
 
 **Parameters:**
+
 - `path` (string): Path to split
 
 **Returns:** Tuple of (directory, filename)
@@ -141,6 +165,7 @@ print(file)  # "file.txt"
 Split a path into (root, extension) tuple.
 
 **Parameters:**
+
 - `path` (string): Path to split
 
 **Returns:** Tuple of (root, extension)
@@ -162,6 +187,7 @@ print(ext)   # ".gz"
 Get the absolute path.
 
 **Parameters:**
+
 - `path` (string): Path to convert
 
 **Returns:** String - absolute path
@@ -178,6 +204,7 @@ print(os.path.abspath("../other/file.txt"))  # e.g., "/home/user/other/file.txt"
 Normalize a path by collapsing redundant separators and up-level references.
 
 **Parameters:**
+
 - `path` (string): Path to normalize
 
 **Returns:** String - normalized path
@@ -197,6 +224,7 @@ print(os.path.normpath("/a/b/c/../../d"))
 Get a relative path to a file.
 
 **Parameters:**
+
 - `path` (string): Path to convert to relative
 - `start` (string, optional): Starting directory (default: current directory)
 
@@ -219,6 +247,7 @@ print(os.path.relpath("/home/user/project/file.txt", "/home/user"))
 Check if a path is absolute.
 
 **Parameters:**
+
 - `path` (string): Path to check
 
 **Returns:** Boolean - `True` if the path is absolute, `False` otherwise
@@ -236,6 +265,7 @@ print(os.path.isabs("../parent/file.txt"))    # False
 Get the size of a file in bytes.
 
 **Parameters:**
+
 - `path` (string): Path to the file
 
 **Returns:** Integer - file size in bytes
@@ -252,6 +282,7 @@ print(f"File size: {size} bytes")
 Get the time of last modification of a file.
 
 **Parameters:**
+
 - `path` (string): Path to the file
 
 **Returns:** Float - modification time as Unix timestamp (seconds since epoch)
@@ -378,26 +409,26 @@ print(relative)  # "../config/settings.json"
 This library implements a subset of Python's `os.path` module:
 
 | Function | Supported |
-|----------|-----------|
-| join | ✅ |
-| exists | ✅ |
-| isfile | ✅ |
-| isdir | ✅ |
-| basename | ✅ |
-| dirname | ✅ |
-| split | ✅ |
-| splitext | ✅ |
-| abspath | ✅ |
-| normpath | ✅ |
-| relpath | ✅ |
-| isabs | ✅ |
-| getsize | ✅ |
-| getmtime | ✅ |
-| getatime | ❌ |
-| getctime | ❌ |
-| islink | ❌ |
-| ismount | ❌ |
-| samefile | ❌ |
+| -------- | --------- |
+| join     | ✅        |
+| exists   | ✅        |
+| isfile   | ✅        |
+| isdir    | ✅        |
+| basename | ✅        |
+| dirname  | ✅        |
+| split    | ✅        |
+| splitext | ✅        |
+| abspath  | ✅        |
+| normpath | ✅        |
+| relpath  | ✅        |
+| isabs    | ✅        |
+| getsize  | ✅        |
+| getmtime | ✅        |
+| getatime | ❌        |
+| getctime | ❌        |
+| islink   | ❌        |
+| ismount  | ❌        |
+| samefile | ❌        |
 
 ## See Also
 
