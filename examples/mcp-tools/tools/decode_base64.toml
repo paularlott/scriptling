@@ -1,0 +1,8 @@
+description = "Decode a base64 string to plain text"
+keywords = ["base64", "decode", "string", "conversion"]
+
+[[parameters]]
+name = "encoded"
+type = "string"
+description = "Base64 encoded string to decode"
+required = true

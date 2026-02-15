@@ -1,24 +1,21 @@
 #!/usr/bin/env scriptling
 
-# Test thread safety and edge cases for the threads library
+# Test thread safety and edge cases for the runtime library
 
-import scriptling.threads as threads
+import scriptling.runtime as runtime
 
 print("=== Testing thread safety with shared variables ===")
 
-# Test that shared variables work correctly with cloned environments
-shared_counter = threads.Atomic(0)
+shared_counter = runtime.sync.Atomic("safety_counter", 0)
 
 def increment_worker():
     shared_counter.add(1)
     return shared_counter.get()
 
-# Create multiple threads that increment the counter
 promises = []
 for i in range(10):
-    promises.append(threads.run(increment_worker))
+    promises.append(runtime.run(increment_worker))
 
-# Wait for all to complete and collect results
 results = []
 for p in promises:
     results.append(p.get())
@@ -28,17 +25,14 @@ print(f"Number of results collected: {len(results)}")
 assert shared_counter.get() == 10, f"Expected 10, got {shared_counter.get()}"
 assert len(results) == 10, f"Expected 10 results, got {len(results)}"
 
-# Test that local variables don't interfere between threads
 def worker_with_local(value):
     local = value * 2
-    # This should NOT interfere with other threads
     return local
 
 local_promises = []
 for i in range(5):
-    local_promises.append(threads.run(worker_with_local, i))
+    local_promises.append(runtime.run(worker_with_local, i))
 
-# Collect results from promises instead of using shared list
 expected = []
 for i in range(5):
     result = local_promises[i].get()
@@ -47,30 +41,10 @@ for i in range(5):
 print(f"Local thread results: {expected}")
 assert expected == [0, 2, 4, 6, 8], f"Unexpected local results: {expected}"
 
-print("\n=== Testing Pool with shared state ===")
-
-pool_counter = threads.Atomic(0)
-
-def pool_worker(x):
-    pool_counter.add(1)
-    return x * x
-
-pool = threads.Pool(pool_worker, workers=3, queue_depth=10)
-
-# Submit tasks
-for i in range(7):
-    pool.submit(i)
-
-pool.close()
-
-print(f"Pool counter: {pool_counter.get()}")
-print(f"Pool processed {pool_counter.get()} items")
-assert pool_counter.get() == 7, f"Expected 7, got {pool_counter.get()}"
-
 print("\n=== Testing Queue with multiple consumers ===")
 
-q = threads.Queue()
-consumer_count = threads.Atomic(0)
+q = runtime.sync.Queue("safety_queue")
+consumer_count = runtime.sync.Atomic("consumer_count", 0)
 
 def consumer():
     count = 0
@@ -80,22 +54,18 @@ def consumer():
             break
         count += 1
         consumer_count.add(1)
-    return count  # Return how many items this consumer consumed
+    return count
 
-# Start multiple consumers
 consumer_promises = []
 for i in range(3):
-    consumer_promises.append(threads.run(consumer))
+    consumer_promises.append(runtime.run(consumer))
 
-# Producer adds items
 for i in range(9):
     q.put(i)
 
-# Signal consumers to stop
 for i in range(3):
     q.put(None)
 
-# Wait for all consumers and get their counts
 total_consumed = 0
 for p in consumer_promises:
     total_consumed += p.get()
@@ -107,25 +77,22 @@ assert consumer_count.get() == 9, f"Expected count 9, got {consumer_count.get()}
 
 print("\n=== Testing WaitGroup edge cases ===")
 
-wg = threads.WaitGroup()
-completed_count = threads.Atomic(0)
+wg = runtime.sync.WaitGroup("safety_wg")
+completed_count = runtime.sync.Atomic("completed_count", 0)
 
 def worker_with_delay(x):
-    # Simple computation
     result = x * x
     completed_count.add(1)
-    wg.done()  # Call done when work is actually complete
+    wg.done()
     return result
 
 wg.add(5)
 promises = []
 for i in range(5):
-    promises.append(threads.run(worker_with_delay, i))
+    promises.append(runtime.run(worker_with_delay, i))
 
-# Wait for all to complete
 wg.wait()
 
-# Collect results
 results = []
 for p in promises:
     results.append(p.get())
@@ -136,17 +103,16 @@ assert completed_count.get() == 5, f"Expected count 5, got {completed_count.get(
 
 print("\n=== Testing Shared object ===")
 
-shared_list = threads.Shared([])
+shared_list = runtime.sync.Shared("safety_list", [])
 
 def list_worker():
     current = shared_list.get()
     current.append(len(current))
     shared_list.set(current)
 
-# Multiple threads modifying the shared list
 list_promises = []
 for i in range(5):
-    list_promises.append(threads.run(list_worker))
+    list_promises.append(runtime.run(list_worker))
 
 for p in list_promises:
     p.get()

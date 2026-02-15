@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
 )
@@ -16,12 +17,7 @@ func jsonLoads(ctx context.Context, kwargs object.Kwargs, args ...object.Object)
 		return errors.NewError("argument to loads/parse must be STRING")
 	}
 	str, _ := args[0].AsString()
-	var data interface{}
-	err := json.Unmarshal([]byte(str), &data)
-	if err != nil {
-		return errors.NewError("json parse error: %s", err.Error())
-	}
-	return jsonToObject(data)
+	return conversion.MustParseJSON(str)
 }
 
 func jsonDumps(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -77,38 +73,6 @@ Converts a Scriptling object to its JSON string representation.
 Optional indent parameter for pretty-printing.`,
 	},
 }, nil, "JSON encoding and decoding library")
-
-func jsonToObject(data interface{}) object.Object {
-	switch v := data.(type) {
-	case float64:
-		if v == float64(int64(v)) {
-			return &object.Integer{Value: int64(v)}
-		}
-		return &object.Float{Value: v}
-	case string:
-		return &object.String{Value: v}
-	case bool:
-		return &object.Boolean{Value: v}
-	case []interface{}:
-		elements := make([]object.Object, len(v))
-		for i, el := range v {
-			elements[i] = jsonToObject(el)
-		}
-		return &object.List{Elements: elements}
-	case map[string]interface{}:
-		pairs := make(map[string]object.DictPair)
-		for key, val := range v {
-			keyObj := &object.String{Value: key}
-			valObj := jsonToObject(val)
-			pairs[key] = object.DictPair{Key: keyObj, Value: valObj}
-		}
-		return &object.Dict{Pairs: pairs}
-	case nil:
-		return &object.Null{}
-	default:
-		return &object.Null{}
-	}
-}
 
 func objectToJSON(obj object.Object) interface{} {
 	switch obj := obj.(type) {

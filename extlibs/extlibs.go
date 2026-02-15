@@ -11,7 +11,6 @@ const (
 	OSPathLibraryName     = "os.path"
 	PathlibLibraryName    = "pathlib"
 	GlobLibraryName       = "glob"
-	ThreadsLibraryName    = "scriptling.threads"
 	LoggingLibraryName    = "logging"
 	WaitForLibraryName    = "wait_for"
 	AILibraryName         = "scriptling.ai"

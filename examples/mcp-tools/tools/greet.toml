@@ -1,0 +1,20 @@
+description = "Generate a personalized greeting message"
+keywords = ["hello", "greet", "welcome", "message"]
+
+[[parameters]]
+name = "name"
+type = "string"
+description = "Name of the person to greet"
+required = true
+
+[[parameters]]
+name = "greeting"
+type = "string"
+description = "Custom greeting word (e.g., 'Hello', 'Hi', 'Welcome')"
+required = false
+
+[[parameters]]
+name = "enthusiasm"
+type = "int"
+description = "Number of exclamation marks to add (0-5)"
+required = false

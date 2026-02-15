@@ -10,7 +10,7 @@ import (
 	"github.com/paularlott/mcp"
 	"github.com/paularlott/mcp/ai"
 	"github.com/paularlott/mcp/ai/openai"
-	scriptlib "github.com/paularlott/scriptling"
+	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/extlibs/ai/tools"
 	"github.com/paularlott/scriptling/object"
 )
@@ -209,7 +209,7 @@ Example:
 		// text(response) - Get text content from response (without thinking blocks)
 		FunctionWithHelp("text", func(ctx context.Context, responseObj object.Object) (object.Object, error) {
 			// Convert response to Go type to access it
-			responseGo := scriptlib.ToGo(responseObj)
+			responseGo := conversion.ToGo(responseObj)
 			responseMap, ok := responseGo.(map[string]any)
 			if !ok {
 				return &object.String{Value: ""}, nil
@@ -250,7 +250,7 @@ Example:
 		// thinking(response) - Get thinking blocks from response
 		FunctionWithHelp("thinking", func(ctx context.Context, responseObj object.Object) (object.Object, error) {
 			// Convert response to Go type to access it
-			responseGo := scriptlib.ToGo(responseObj)
+			responseGo := conversion.ToGo(responseObj)
 			responseMap, ok := responseGo.(map[string]any)
 			if !ok {
 				return &object.List{Elements: []object.Object{}}, nil

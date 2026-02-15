@@ -157,6 +157,17 @@ func prependSelf(self object.Object, args []object.Object) []object.Object {
 }
 
 func callInstanceMethod(ctx context.Context, instance *object.Instance, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+	// First check if it's an instance field (which might be a callable)
+	if val, ok := instance.Fields[method]; ok {
+		// If it's callable, call it without prepending self
+		switch fn := val.(type) {
+		case *object.Function, *object.LambdaFunction, *object.Builtin, *object.BoundMethod:
+			return applyFunctionWithContext(ctx, fn, args, keywords, env)
+		}
+		// If not callable and being called, that's an error
+		return errors.NewError("'%s' object is not callable", val.Type())
+	}
+
 	// Walk up the inheritance chain to find the method
 	currentClass := instance.Class
 	for currentClass != nil {

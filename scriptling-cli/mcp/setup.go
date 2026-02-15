@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/paularlott/logger"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/extlibs/agent"
@@ -16,7 +17,8 @@ import (
 // libdir: Optional directory for on-demand library loading (empty = current directory)
 // registerInteract: Whether to register the agent interact library
 // safeMode: If true, only register safe libraries (no file/network/subprocess access)
-func SetupScriptling(p *scriptling.Scriptling, libdir string, registerInteract bool, safeMode bool) {
+// log: Logger instance for the logging library
+func SetupScriptling(p *scriptling.Scriptling, libdir string, registerInteract bool, safeMode bool, log logger.Logger) {
 	// Register all standard libraries (always safe)
 	stdlib.RegisterAll(p)
 
@@ -28,11 +30,14 @@ func SetupScriptling(p *scriptling.Scriptling, libdir string, registerInteract b
 	extlibs.RegisterRequestsLibrary(p)
 	extlibs.RegisterSecretsLibrary(p)
 	extlibs.RegisterOSLibrary(p, []string{})
+	extlibs.RegisterLoggingLibrary(p, log)
+
+	// Register runtime library (includes http, kv, sync sub-libraries)
+	extlibs.RegisterRuntimeLibrary(p)
 
 	// Skip dangerous libraries in safe mode
 	if !safeMode {
 		extlibs.RegisterSubprocessLibrary(p)
-		extlibs.RegisterThreadsLibrary(p)
 		extlibs.RegisterPathlibLibrary(p, []string{})
 		extlibs.RegisterGlobLibrary(p, []string{})
 		extlibs.RegisterWaitForLibrary(p)

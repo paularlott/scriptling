@@ -1179,6 +1179,22 @@ func ApplyFunction(ctx context.Context, fn object.Object, args []object.Object, 
 }
 
 func applyFunctionWithContext(ctx context.Context, fn object.Object, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+	// Handle BoundMethod - prepend self to args
+	if bm, ok := fn.(*object.BoundMethod); ok {
+		n := len(args) + 1
+		var newArgs []object.Object
+		if n <= 8 {
+			var buf [8]object.Object
+			buf[0] = bm.Instance
+			copy(buf[1:], args)
+			newArgs = buf[:n]
+		} else {
+			newArgs = make([]object.Object, n)
+			newArgs[0] = bm.Instance
+			copy(newArgs[1:], args)
+		}
+		return ApplyFunction(ctx, bm.Method, newArgs, keywords, env)
+	}
 	return ApplyFunction(ctx, fn, args, keywords, env)
 }
 
@@ -1784,14 +1800,45 @@ func evalMultipleAssignStatementWithContext(ctx context.Context, node *ast.Multi
 		return errors.NewTypeError("list or tuple", val.Type().String())
 	}
 
-	// Check length matches
-	if len(elements) != len(node.Names) {
-		return errors.NewError("cannot unpack %d values to %d variables", len(elements), len(node.Names))
-	}
+	// Handle starred unpacking
+	if node.StarredIndex >= 0 {
+		// With starred unpacking: a, *b, c = [1, 2, 3, 4, 5]
+		// Need at least (len(names) - 1) elements
+		minElements := len(node.Names) - 1
+		if len(elements) < minElements {
+			return errors.NewError("not enough values to unpack (expected at least %d, got %d)", minElements, len(elements))
+		}
 
-	// Assign each value
-	for i, name := range node.Names {
-		env.Set(name.Value, elements[i])
+		// Assign elements before the starred variable
+		for i := 0; i < node.StarredIndex; i++ {
+			env.Set(node.Names[i].Value, elements[i])
+		}
+
+		// Calculate how many elements go to the starred variable
+		elementsAfterStar := len(node.Names) - node.StarredIndex - 1
+		starStart := node.StarredIndex
+		starEnd := len(elements) - elementsAfterStar
+
+		// Assign starred variable (as a list)
+		starredElements := elements[starStart:starEnd]
+		env.Set(node.Names[node.StarredIndex].Value, &object.List{Elements: starredElements})
+
+		// Assign elements after the starred variable
+		for i := 0; i < elementsAfterStar; i++ {
+			nameIdx := node.StarredIndex + 1 + i
+			elemIdx := starEnd + i
+			env.Set(node.Names[nameIdx].Value, elements[elemIdx])
+		}
+	} else {
+		// No starred unpacking - exact length match required
+		if len(elements) != len(node.Names) {
+			return errors.NewError("cannot unpack %d values to %d variables", len(elements), len(node.Names))
+		}
+
+		// Assign each value
+		for i, name := range node.Names {
+			env.Set(name.Value, elements[i])
+		}
 	}
 
 	return NULL

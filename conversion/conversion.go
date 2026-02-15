@@ -1,11 +1,35 @@
-package scriptling
+package conversion
 
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
+	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
 )
+
+// ParseJSON parses a JSON string and returns a Scriptling object.
+// It uses UseNumber() to preserve large integers.
+func ParseJSON(jsonStr string) (object.Object, error) {
+	var result interface{}
+	decoder := json.NewDecoder(strings.NewReader(jsonStr))
+	decoder.UseNumber()
+	if err := decoder.Decode(&result); err != nil {
+		return nil, err
+	}
+	return FromGo(result), nil
+}
+
+// MustParseJSON parses a JSON string and returns a Scriptling object,
+// returning an Error object if parsing fails.
+func MustParseJSON(jsonStr string) object.Object {
+	result, err := ParseJSON(jsonStr)
+	if err != nil {
+		return errors.NewError("JSONDecodeError: %s", err.Error())
+	}
+	return result
+}
 
 // FromGo converts a Go interface{} value to a scriptling Object.
 // It handles primitive types (nil, bool, int, float, string), nested structures
@@ -41,6 +65,15 @@ func FromGo(v interface{}) object.Object {
 		return &object.Float{Value: float64(v)}
 	case float64:
 		return &object.Float{Value: v}
+	case json.Number:
+		// Try to parse as integer first, then fall back to float
+		if intVal, err := v.Int64(); err == nil {
+			return object.NewInteger(intVal)
+		}
+		if floatVal, err := v.Float64(); err == nil {
+			return &object.Float{Value: floatVal}
+		}
+		return &object.String{Value: string(v)}
 	case string:
 		return &object.String{Value: v}
 	case []interface{}:
@@ -54,6 +87,23 @@ func FromGo(v interface{}) object.Object {
 		for key, val := range v {
 			pairs[key] = object.DictPair{
 				Key:   &object.String{Value: key},
+				Value: FromGo(val),
+			}
+		}
+		return &object.Dict{Pairs: pairs}
+	case map[interface{}]interface{}:
+		// Handle YAML-specific map[interface{}]interface{} type
+		pairs := make(map[string]object.DictPair)
+		for key, val := range v {
+			keyStr := ""
+			switch k := key.(type) {
+			case string:
+				keyStr = k
+			default:
+				keyStr = fmt.Sprintf("%v", k)
+			}
+			pairs[keyStr] = object.DictPair{
+				Key:   &object.String{Value: keyStr},
 				Value: FromGo(val),
 			}
 		}
@@ -143,54 +193,40 @@ func ToGoError(obj object.Object) error {
 	return nil
 }
 
-// convertArgsAndKwargs converts Go arguments to Object arguments and separates kwargs.
-// If prependSelf is not nil, it will be prepended to the argument list.
-// Returns (objArgs, objKwargs).
-func convertArgsAndKwargs(args []interface{}, prependSelf object.Object) ([]object.Object, map[string]object.Object) {
-	var objArgs []object.Object
-	var objKwargs map[string]object.Object
-
-	if len(args) > 0 {
-		// Check if last argument is Kwargs
-		lastIdx := len(args) - 1
-		if kwargsMap, ok := args[lastIdx].(Kwargs); ok {
-			// Convert kwargs
-			objKwargs = make(map[string]object.Object, len(kwargsMap))
-			for key, val := range kwargsMap {
-				objKwargs[key] = FromGo(val)
+// ToGoWithError converts a Scriptling object to a Go value, returning error for complex types
+func ToGoWithError(obj object.Object) (interface{}, *object.Error) {
+	switch v := obj.(type) {
+	case *object.String:
+		return v.Value, nil
+	case *object.Integer:
+		return v.Value, nil
+	case *object.Float:
+		return v.Value, nil
+	case *object.Boolean:
+		return v.Value, nil
+	case *object.Null:
+		return nil, nil
+	case *object.List:
+		result := make([]interface{}, len(v.Elements))
+		for i, elem := range v.Elements {
+			converted, err := ToGoWithError(elem)
+			if err != nil {
+				return nil, err
 			}
-			// Convert positional args (excluding kwargs)
-			if prependSelf != nil {
-				objArgs = make([]object.Object, lastIdx+1)
-				objArgs[0] = prependSelf
-				for i, arg := range args[:lastIdx] {
-					objArgs[i+1] = FromGo(arg)
-				}
-			} else {
-				objArgs = make([]object.Object, lastIdx)
-				for i, arg := range args[:lastIdx] {
-					objArgs[i] = FromGo(arg)
-				}
-			}
-		} else {
-			// No kwargs, convert all args
-			if prependSelf != nil {
-				objArgs = make([]object.Object, len(args)+1)
-				objArgs[0] = prependSelf
-				for i, arg := range args {
-					objArgs[i+1] = FromGo(arg)
-				}
-			} else {
-				objArgs = make([]object.Object, len(args))
-				for i, arg := range args {
-					objArgs[i] = FromGo(arg)
-				}
-			}
+			result[i] = converted
 		}
-	} else if prependSelf != nil {
-		// No args, just self
-		objArgs = []object.Object{prependSelf}
+		return result, nil
+	case *object.Dict:
+		result := make(map[string]interface{})
+		for key, pair := range v.Pairs {
+			converted, err := ToGoWithError(pair.Value)
+			if err != nil {
+				return nil, err
+			}
+			result[key] = converted
+		}
+		return result, nil
+	default:
+		return nil, errors.NewError("cannot convert complex types to Go")
 	}
-
-	return objArgs, objKwargs
 }

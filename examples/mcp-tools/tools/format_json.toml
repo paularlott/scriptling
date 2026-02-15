@@ -1,0 +1,14 @@
+description = "Format and validate a JSON string with indentation"
+keywords = ["json", "format", "pretty", "validate", "indent"]
+
+[[parameters]]
+name = "json_string"
+type = "string"
+description = "JSON string to format"
+required = true
+
+[[parameters]]
+name = "indent"
+type = "int"
+description = "Number of spaces for indentation (default: 2)"
+required = false

@@ -1,0 +1,8 @@
+description = "Encode a string to base64 format"
+keywords = ["base64", "encode", "string", "conversion"]
+
+[[parameters]]
+name = "text"
+type = "string"
+description = "Text string to encode"
+required = true
