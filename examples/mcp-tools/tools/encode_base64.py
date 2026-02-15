@@ -5,6 +5,6 @@ import base64
 text = tool.get_string("text")
 
 # Encode to base64
-encoded = base64.b64encode(text.encode()).decode()
+encoded = base64.b64encode(text)
 
 tool.return_string(encoded)
