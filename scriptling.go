@@ -829,6 +829,31 @@ func (p *Scriptling) SetOnDemandLibraryCallback(callback func(*Scriptling, strin
 	p.onDemandLibraryCallback = callback
 }
 
+// LoadLibraryIntoEnv loads a library into the specified environment.
+// This is useful for loading libraries into cloned environments for background tasks.
+// Returns an error if the library cannot be loaded.
+func (p *Scriptling) LoadLibraryIntoEnv(name string, env *object.Environment) error {
+	loaded, err := p.loadLibraryIntoEnv(name, env)
+	if err != nil {
+		return err
+	}
+	if !loaded {
+		// Try on-demand callback
+		if p.onDemandLibraryCallback != nil && p.onDemandLibraryCallback(p, name) {
+			// Retry after callback
+			loaded, err = p.loadLibraryIntoEnv(name, env)
+			if err != nil {
+				return err
+			}
+			if loaded {
+				return nil
+			}
+		}
+		return fmt.Errorf("library not found: %s", name)
+	}
+	return nil
+}
+
 // SetSourceFile sets the source file name used in error messages.
 // When set, errors will include the file name and line number for better debugging.
 func (p *Scriptling) SetSourceFile(name string) {

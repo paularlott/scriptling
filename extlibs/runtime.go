@@ -3,6 +3,7 @@ package extlibs
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/paularlott/scriptling/errors"
@@ -21,7 +22,16 @@ var RuntimeState = struct {
 	Middleware string
 
 	// Background tasks
-	Backgrounds map[string]string // name -> "library.function"
+	Backgrounds       map[string]string                   // name -> "function_name"
+	BackgroundArgs    map[string][]object.Object          // name -> args
+	BackgroundKwargs  map[string]map[string]object.Object // name -> kwargs
+	BackgroundEnvs    map[string]*object.Environment      // name -> environment
+	BackgroundEvals   map[string]evaliface.Evaluator      // name -> evaluator
+	BackgroundFactory func() interface {
+		LoadLibraryIntoEnv(string, *object.Environment) error
+	} // Factory to create new Scriptling instances
+	BackgroundCtxs  map[string]context.Context // name -> context
+	BackgroundReady bool                       // If true, start tasks immediately
 
 	// KV store
 	KVData map[string]*kvEntry
@@ -32,13 +42,20 @@ var RuntimeState = struct {
 	Atomics    map[string]*RuntimeAtomic
 	Shareds    map[string]*RuntimeShared
 }{
-	Routes:      make(map[string]*RouteInfo),
-	Backgrounds: make(map[string]string),
-	KVData:      make(map[string]*kvEntry),
-	WaitGroups:  make(map[string]*RuntimeWaitGroup),
-	Queues:      make(map[string]*RuntimeQueue),
-	Atomics:     make(map[string]*RuntimeAtomic),
-	Shareds:     make(map[string]*RuntimeShared),
+	Routes:            make(map[string]*RouteInfo),
+	Backgrounds:       make(map[string]string),
+	BackgroundArgs:    make(map[string][]object.Object),
+	BackgroundKwargs:  make(map[string]map[string]object.Object),
+	BackgroundEnvs:    make(map[string]*object.Environment),
+	BackgroundEvals:   make(map[string]evaliface.Evaluator),
+	BackgroundFactory: nil,
+	BackgroundCtxs:    make(map[string]context.Context),
+	BackgroundReady:   false,
+	KVData:            make(map[string]*kvEntry),
+	WaitGroups:        make(map[string]*RuntimeWaitGroup),
+	Queues:            make(map[string]*RuntimeQueue),
+	Atomics:           make(map[string]*RuntimeAtomic),
+	Shareds:           make(map[string]*RuntimeShared),
 }
 
 // ResetRuntime clears all runtime state (for testing or re-initialization)
@@ -49,6 +66,13 @@ func ResetRuntime() {
 	RuntimeState.Routes = make(map[string]*RouteInfo)
 	RuntimeState.Middleware = ""
 	RuntimeState.Backgrounds = make(map[string]string)
+	RuntimeState.BackgroundArgs = make(map[string][]object.Object)
+	RuntimeState.BackgroundKwargs = make(map[string]map[string]object.Object)
+	RuntimeState.BackgroundEnvs = make(map[string]*object.Environment)
+	RuntimeState.BackgroundEvals = make(map[string]evaliface.Evaluator)
+	RuntimeState.BackgroundFactory = nil
+	RuntimeState.BackgroundCtxs = make(map[string]context.Context)
+	RuntimeState.BackgroundReady = false
 	RuntimeState.KVData = make(map[string]*kvEntry)
 	RuntimeState.WaitGroups = make(map[string]*RuntimeWaitGroup)
 	RuntimeState.Queues = make(map[string]*RuntimeQueue)
@@ -91,21 +115,13 @@ func getEnvFromContext(ctx context.Context) *object.Environment {
 	return object.NewEnvironment()
 }
 
-// cloneEnvironment creates a lightweight environment for threading
-func cloneEnvironment(env *object.Environment) *object.Environment {
-	cloned := object.NewEnvironment()
-
-	store := env.GetStore()
-	for k, v := range store {
-		if _, isLib := v.(*object.Library); isLib {
-			cloned.Set(k, v)
-		}
-	}
-
-	cloned.SetImportCallback(env.GetImportCallback())
-	cloned.SetAvailableLibrariesCallback(env.GetAvailableLibrariesCallback())
-
-	return cloned
+// SetBackgroundFactory sets the factory function for creating Scriptling instances in background tasks
+func SetBackgroundFactory(factory func() interface {
+	LoadLibraryIntoEnv(string, *object.Environment) error
+}) {
+	RuntimeState.Lock()
+	RuntimeState.BackgroundFactory = factory
+	RuntimeState.Unlock()
 }
 
 func RegisterRuntimeLibrary(registrar interface{ RegisterLibrary(*object.Library) }) {
@@ -141,96 +157,218 @@ var RuntimeLibrary = object.NewLibraryWithSubs(RuntimeLibraryName, map[string]*o
 				return err
 			}
 
+			// Capture additional args and kwargs
+			fnArgs := args[2:]
+			fnKwargs := kwargs.Kwargs
+			env := getEnvFromContext(ctx)
+			eval := evaliface.FromContext(ctx)
+
 			RuntimeState.Lock()
 			RuntimeState.Backgrounds[name] = handler
+			RuntimeState.BackgroundArgs[name] = fnArgs
+			RuntimeState.BackgroundKwargs[name] = fnKwargs
+			RuntimeState.BackgroundEnvs[name] = env
+			RuntimeState.BackgroundEvals[name] = eval
+			RuntimeState.BackgroundCtxs[name] = ctx
+			backgroundReady := RuntimeState.BackgroundReady
+			factory := RuntimeState.BackgroundFactory
 			RuntimeState.Unlock()
+
+			// Start immediately if BackgroundReady is true
+			if backgroundReady {
+				return startBackgroundTask(name, handler, fnArgs, fnKwargs, env, eval, factory, ctx)
+			}
 
 			return &object.Null{}
 		},
-		HelpText: `background(name, handler) - Register a background task
+		HelpText: `background(name, handler, *args, **kwargs) - Register and start a background task
+
+Registers a background task and starts it immediately in a goroutine (unless in server mode).
+Returns a Promise object that can be used to wait for completion or get the result.
 
 Parameters:
   name (string): Unique name for the background task
-  handler (string): Handler function as "library.function" string
+  handler (string): Function name to execute
+  *args: Positional arguments to pass to the function
+  **kwargs: Keyword arguments to pass to the function
+
+Returns:
+  Promise object (in script mode) or null (in server mode)
 
 Example:
-  runtime.background("telegram", "bot.start_telegram")
-  runtime.background("cleanup", "workers.cleanup_expired")`,
-	},
+  def my_task(x, y, operation="add"):
+      if operation == "add":
+          return x + y
+      return x * y
 
-	"run": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.MinArgs(args, 1); err != nil {
-				return err
-			}
-
-			fn := args[0]
-			fnArgs := args[1:]
-
-			env := getEnvFromContext(ctx)
-			if env == nil {
-				return errors.NewError("runtime.run: no environment in context")
-			}
-
-			clonedEnv := cloneEnvironment(env)
-			promise := newPromise()
-
-			go func() {
-				var result object.Object
-				eval := evaliface.FromContext(ctx)
-				if eval != nil {
-					result = eval.CallObjectFunction(ctx, fn, fnArgs, kwargs.Kwargs, clonedEnv)
-				} else {
-					result = errors.NewError("evaluator not available in context")
-				}
-
-				if err, ok := result.(*object.Error); ok {
-					promise.set(nil, fmt.Errorf("%s", err.Message))
-				} else {
-					promise.set(result, nil)
-				}
-			}()
-
-			return &object.Builtin{
-				Attributes: map[string]object.Object{
-					"get": &object.Builtin{
-						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-							result, err := promise.get()
-							if err != nil {
-								return errors.NewError("async error: %v", err)
-							}
-							return result
-						},
-						HelpText: "get() - Wait for and return the result",
-					},
-					"wait": &object.Builtin{
-						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-							_, err := promise.get()
-							if err != nil {
-								return errors.NewError("async error: %v", err)
-							}
-							return &object.Null{}
-						},
-						HelpText: "wait() - Wait for completion and discard the result",
-					},
-				},
-				HelpText: "Promise object - call .get() to retrieve result or .wait() to wait without result",
-			}
-		},
-		HelpText: `run(func, *args, **kwargs) - Run function asynchronously
-
-Executes function in a separate goroutine with isolated environment.
-Returns a Promise object. Call .get() to retrieve the result or .wait() to wait without result.
-
-Example:
-    def worker(x, y=10):
-        return x + y
-
-    promise = runtime.run(worker, 5, y=3)
-    result = promise.get()  # Returns 8`,
+  promise = runtime.background("calc", "my_task", 10, 5, operation="multiply")
+  if promise:
+      result = promise.get()  # Returns 50`,
 	},
 }, nil, map[string]*object.Library{
 	"http": HTTPSubLibrary,
 	"kv":   KVSubLibrary,
 	"sync": SyncSubLibrary,
 }, "Runtime library for HTTP, KV store, and concurrency primitives")
+
+// startBackgroundTask starts a single background task with its own isolated Scriptling instance
+func startBackgroundTask(name, handler string, fnArgs []object.Object, fnKwargs map[string]object.Object, env *object.Environment, eval evaliface.Evaluator, factory func() interface {
+	LoadLibraryIntoEnv(string, *object.Environment) error
+}, ctx context.Context) object.Object {
+	if env == nil || eval == nil {
+		return &object.Null{}
+	}
+
+	promise := newPromise()
+
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				promise.set(nil, fmt.Errorf("panic: %v", r))
+			}
+		}()
+
+		// If handler contains a dot, create new Scriptling instance and import library
+		var fn object.Object
+		if strings.Contains(handler, ".") {
+			// Handler is "library.function" - need to import library
+			parts := strings.SplitN(handler, ".", 2)
+			libName := parts[0]
+			funcName := parts[1]
+
+			// Create new Scriptling instance for this task
+			if factory == nil {
+				promise.set(nil, fmt.Errorf("cannot load library: no factory configured"))
+				return
+			}
+
+			scriptling := factory()
+			if scriptling == nil {
+				promise.set(nil, fmt.Errorf("factory returned nil"))
+				return
+			}
+
+			// Create new environment and load library into it
+			newEnv := object.NewEnvironment()
+			if err := scriptling.LoadLibraryIntoEnv(libName, newEnv); err != nil {
+				promise.set(nil, fmt.Errorf("failed to load library %s: %v", libName, err))
+				return
+			}
+
+			// Get the library and function from the new environment
+			libObj, ok := newEnv.Get(libName)
+			if !ok {
+				promise.set(nil, fmt.Errorf("library not found: %s", libName))
+				return
+			}
+
+			if libDict, ok := libObj.(*object.Dict); ok {
+				if pair, exists := libDict.Pairs[funcName]; exists {
+					fn = pair.Value
+				}
+			}
+
+			if fn == nil {
+				promise.set(nil, fmt.Errorf("function not found: %s.%s", libName, funcName))
+				return
+			}
+
+			// Call the function with the new environment
+			result := eval.CallObjectFunction(ctx, fn, fnArgs, fnKwargs, newEnv)
+			if err, ok := result.(*object.Error); ok {
+				promise.set(nil, fmt.Errorf("%s", err.Message))
+			} else {
+				promise.set(result, nil)
+			}
+			return
+		} else {
+			// Simple function name - get from environment
+			fn, _ = env.Get(handler)
+		}
+
+		if fn == nil {
+			promise.set(nil, fmt.Errorf("function not found: %s", handler))
+			return
+		}
+
+		result := eval.CallObjectFunction(ctx, fn, fnArgs, fnKwargs, env)
+		if err, ok := result.(*object.Error); ok {
+			promise.set(nil, fmt.Errorf("%s", err.Message))
+		} else {
+			promise.set(result, nil)
+		}
+	}()
+
+	return &object.Builtin{
+		Attributes: map[string]object.Object{
+			"get": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					result, err := promise.get()
+					if err != nil {
+						return errors.NewError("async error: %v", err)
+					}
+					return result
+				},
+				HelpText: "get() - Wait for and return the result",
+			},
+			"wait": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					_, err := promise.get()
+					if err != nil {
+						return errors.NewError("async error: %v", err)
+					}
+					return &object.Null{}
+				},
+				HelpText: "wait() - Wait for completion and discard the result",
+			},
+		},
+		HelpText: "Promise object - call .get() to retrieve result or .wait() to wait without result",
+	}
+}
+
+// ReleaseBackgroundTasks sets BackgroundReady=true and starts all queued tasks
+func ReleaseBackgroundTasks() {
+	RuntimeState.Lock()
+	RuntimeState.BackgroundReady = true
+	factory := RuntimeState.BackgroundFactory
+	tasks := make(map[string]struct {
+		handler string
+		args    []object.Object
+		kwargs  map[string]object.Object
+		env     *object.Environment
+		eval    evaliface.Evaluator
+		ctx     context.Context
+	})
+	for name := range RuntimeState.Backgrounds {
+		tasks[name] = struct {
+			handler string
+			args    []object.Object
+			kwargs  map[string]object.Object
+			env     *object.Environment
+			eval    evaliface.Evaluator
+			ctx     context.Context
+		}{
+			handler: RuntimeState.Backgrounds[name],
+			args:    RuntimeState.BackgroundArgs[name],
+			kwargs:  RuntimeState.BackgroundKwargs[name],
+			env:     RuntimeState.BackgroundEnvs[name],
+			eval:    RuntimeState.BackgroundEvals[name],
+			ctx:     RuntimeState.BackgroundCtxs[name],
+		}
+	}
+	RuntimeState.Unlock()
+
+	// Start all queued tasks
+	for name, task := range tasks {
+		go func(n string, t struct {
+			handler string
+			args    []object.Object
+			kwargs  map[string]object.Object
+			env     *object.Environment
+			eval    evaliface.Evaluator
+			ctx     context.Context
+		}) {
+			startBackgroundTask(n, t.handler, t.args, t.kwargs, t.env, t.eval, factory, t.ctx)
+		}(name, task)
+	}
+}

@@ -44,6 +44,9 @@ func TestIntegrationScripts(t *testing.T) {
 	agent.Register(p)
 	agent.RegisterInteract(p)
 
+	// Release background tasks so they start immediately
+	extlibs.ReleaseBackgroundTasks()
+
 	p.SetOnDemandLibraryCallback(func(p *scriptling.Scriptling, libName string) bool {
 		// Try loading from file
 		filename := filepath.Join(testDir, libName+".py")

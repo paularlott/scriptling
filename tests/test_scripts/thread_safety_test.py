@@ -14,7 +14,7 @@ def increment_worker():
 
 promises = []
 for i in range(10):
-    promises.append(runtime.run(increment_worker))
+    promises.append(runtime.background(f"increment_worker_{i}", "increment_worker"))
 
 results = []
 for p in promises:
@@ -31,7 +31,7 @@ def worker_with_local(value):
 
 local_promises = []
 for i in range(5):
-    local_promises.append(runtime.run(worker_with_local, i))
+    local_promises.append(runtime.background(f"worker_with_local_{i}", "worker_with_local", i))
 
 expected = []
 for i in range(5):
@@ -58,7 +58,7 @@ def consumer():
 
 consumer_promises = []
 for i in range(3):
-    consumer_promises.append(runtime.run(consumer))
+    consumer_promises.append(runtime.background(f"consumer_{i}", "consumer"))
 
 for i in range(9):
     q.put(i)
@@ -89,7 +89,7 @@ def worker_with_delay(x):
 wg.add(5)
 promises = []
 for i in range(5):
-    promises.append(runtime.run(worker_with_delay, i))
+    promises.append(runtime.background(f"worker_with_delay_{i}", "worker_with_delay", i))
 
 wg.wait()
 
@@ -112,7 +112,7 @@ def list_worker():
 
 list_promises = []
 for i in range(5):
-    list_promises.append(runtime.run(list_worker))
+    list_promises.append(runtime.background(f"list_worker_{i}", "list_worker"))
 
 for p in list_promises:
     p.get()
