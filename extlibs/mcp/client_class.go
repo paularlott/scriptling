@@ -1,9 +1,10 @@
 package mcp
 
 import (
-	"github.com/paularlott/scriptling/conversion"
 	"context"
 	"sync"
+
+	"github.com/paularlott/scriptling/conversion"
 
 	mcplib "github.com/paularlott/mcp"
 	"github.com/paularlott/scriptling/object"
@@ -240,23 +241,12 @@ func createClientInstance(client *mcplib.Client) *object.Instance {
 func convertToolsToList(tools []mcplib.MCPTool) object.Object {
 	toolList := make([]object.Object, 0, len(tools))
 	for _, tool := range tools {
-		toolDict := &object.Dict{
-			Pairs: map[string]object.DictPair{
-				"name": {
-					Key:   &object.String{Value: "name"},
-					Value: &object.String{Value: tool.Name},
-				},
-				"description": {
-					Key:   &object.String{Value: "description"},
-					Value: &object.String{Value: tool.Description},
-				},
-			},
-		}
+		toolDict := object.NewStringDict(map[string]object.Object{
+			"name":        &object.String{Value: tool.Name},
+			"description": &object.String{Value: tool.Description},
+		})
 		if tool.InputSchema != nil {
-			toolDict.Pairs["input_schema"] = object.DictPair{
-				Key:   &object.String{Value: "input_schema"},
-				Value: conversion.FromGo(tool.InputSchema),
-			}
+			toolDict.SetByString("input_schema", conversion.FromGo(tool.InputSchema))
 		}
 		toolList = append(toolList, toolDict)
 	}

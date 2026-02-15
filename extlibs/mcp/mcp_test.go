@@ -308,25 +308,16 @@ func TestDictToMap(t *testing.T) {
 		},
 		{
 			name: "simple dict",
-			dict: &object.Dict{Pairs: map[string]object.DictPair{
-				"key": {
-					Key:   &object.String{Value: "key"},
-					Value: &object.String{Value: "value"},
-				},
-			}},
+			dict: object.NewStringDict(map[string]object.Object{
+				"key": &object.String{Value: "value"},
+			}),
 		},
 		{
 			name: "multiple keys",
-			dict: &object.Dict{Pairs: map[string]object.DictPair{
-				"key1": {
-					Key:   &object.String{Value: "key1"},
-					Value: &object.String{Value: "value1"},
-				},
-				"key2": {
-					Key:   &object.String{Value: "key2"},
-					Value: &object.Integer{Value: 42},
-				},
-			}},
+			dict: object.NewStringDict(map[string]object.Object{
+				"key1": &object.String{Value: "value1"},
+				"key2": &object.Integer{Value: 42},
+			}),
 		},
 	}
 

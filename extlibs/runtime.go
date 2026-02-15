@@ -78,6 +78,9 @@ func ResetRuntime() {
 	RuntimeState.Queues = make(map[string]*RuntimeQueue)
 	RuntimeState.Atomics = make(map[string]*RuntimeAtomic)
 	RuntimeState.Shareds = make(map[string]*RuntimeShared)
+
+	// Restart the KV cleanup goroutine
+	startKVCleanup()
 }
 
 // Promise represents an async operation result
@@ -219,6 +222,17 @@ func startBackgroundTask(name, handler string, fnArgs []object.Object, fnKwargs 
 		return &object.Null{}
 	}
 
+	// For simple (non-dotted) handlers, resolve the function from the environment
+	// on the calling goroutine to avoid concurrent map access in the background goroutine.
+	var prefetchedFn object.Object
+	isDotted := strings.Contains(handler, ".")
+	if !isDotted {
+		prefetchedFn, _ = env.Get(handler)
+		if prefetchedFn == nil {
+			return errors.NewError("function not found: %s", handler)
+		}
+	}
+
 	promise := newPromise()
 
 	go func() {
@@ -263,7 +277,7 @@ func startBackgroundTask(name, handler string, fnArgs []object.Object, fnKwargs 
 			}
 
 			if libDict, ok := libObj.(*object.Dict); ok {
-				if pair, exists := libDict.Pairs[funcName]; exists {
+				if pair, exists := libDict.GetByString(funcName); exists {
 					fn = pair.Value
 				}
 			}
@@ -282,8 +296,8 @@ func startBackgroundTask(name, handler string, fnArgs []object.Object, fnKwargs 
 			}
 			return
 		} else {
-			// Simple function name - get from environment
-			fn, _ = env.Get(handler)
+			// Simple function name - already resolved before goroutine launch
+			fn = prefetchedFn
 		}
 
 		if fn == nil {
@@ -291,7 +305,9 @@ func startBackgroundTask(name, handler string, fnArgs []object.Object, fnKwargs 
 			return
 		}
 
-		result := eval.CallObjectFunction(ctx, fn, fnArgs, fnKwargs, env)
+		// Create a new isolated environment for the background task
+		newEnv := object.NewEnvironment()
+		result := eval.CallObjectFunction(ctx, fn, fnArgs, fnKwargs, newEnv)
 		if err, ok := result.(*object.Error); ok {
 			promise.set(nil, fmt.Errorf("%s", err.Message))
 		} else {

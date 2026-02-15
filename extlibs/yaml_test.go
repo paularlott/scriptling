@@ -69,7 +69,7 @@ func checkResult(t *testing.T, obj object.Object, expected interface{}) {
 			return
 		}
 		for key, val := range exp {
-			pair, exists := dict.Pairs[key]
+			pair, exists := dict.GetByString(key)
 			if !exists {
 				t.Errorf("missing key %s", key)
 				continue
@@ -122,19 +122,19 @@ func TestYAMLConversionRoundTrip(t *testing.T) {
 	// Create a dict to test round-trip
 	original := &object.Dict{
 		Pairs: map[string]object.DictPair{
-			"name": {
+			object.DictKey(&object.String{Value: "name"}): {
 				Key:   &object.String{Value: "name"},
 				Value: &object.String{Value: "Test"},
 			},
-			"count": {
+			object.DictKey(&object.String{Value: "count"}): {
 				Key:   &object.String{Value: "count"},
 				Value: &object.Integer{Value: 123},
 			},
-			"active": {
+			object.DictKey(&object.String{Value: "active"}): {
 				Key:   &object.String{Value: "active"},
 				Value: &object.Boolean{Value: true},
 			},
-			"items": {
+			object.DictKey(&object.String{Value: "items"}): {
 				Key: &object.String{Value: "items"},
 				Value: &object.List{
 					Elements: []object.Object{
@@ -167,14 +167,14 @@ func TestYAMLConversionRoundTrip(t *testing.T) {
 	}
 
 	// Check some values
-	namePair, exists := loadedDict.Pairs["name"]
+	namePair, exists := loadedDict.GetByString("name")
 	if !exists {
 		t.Error("missing name key")
 	} else if str, ok := namePair.Value.(*object.String); !ok || str.Value != "Test" {
 		t.Errorf("expected name 'Test', got %v", namePair.Value)
 	}
 
-	countPair, exists := loadedDict.Pairs["count"]
+	countPair, exists := loadedDict.GetByString("count")
 	if !exists {
 		t.Error("missing count key")
 	} else if i, ok := countPair.Value.(*object.Integer); !ok || i.Value != 123 {

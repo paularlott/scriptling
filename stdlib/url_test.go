@@ -71,30 +71,13 @@ func TestURLLibrary(t *testing.T) {
 
 	t.Run("urlunparse basic", func(t *testing.T) {
 		urlunparse := lib.Functions()["urlunparse"]
-		components := &object.Dict{
-			Pairs: map[string]object.DictPair{
-				"scheme": {
-					Key:   &object.String{Value: "scheme"},
-					Value: &object.String{Value: "https"},
-				},
-				"netloc": {
-					Key:   &object.String{Value: "netloc"},
-					Value: &object.String{Value: "api.example.com"},
-				},
-				"path": {
-					Key:   &object.String{Value: "path"},
-					Value: &object.String{Value: "/v1/users"},
-				},
-				"query": {
-					Key:   &object.String{Value: "query"},
-					Value: &object.String{Value: "limit=10&offset=0"},
-				},
-				"fragment": {
-					Key:   &object.String{Value: "fragment"},
-					Value: &object.String{Value: "section1"},
-				},
-			},
-		}
+		components := object.NewStringDict(map[string]object.Object{
+			"scheme":   &object.String{Value: "https"},
+			"netloc":   &object.String{Value: "api.example.com"},
+			"path":     &object.String{Value: "/v1/users"},
+			"query":    &object.String{Value: "limit=10&offset=0"},
+			"fragment": &object.String{Value: "section1"},
+		})
 		result := urlunparse.Fn(context.Background(), object.NewKwargs(nil), components)
 
 		if str, ok := result.(*object.String); ok {
@@ -190,7 +173,7 @@ func TestURLLibrary(t *testing.T) {
 		result := parseQs.Fn(context.Background(), object.NewKwargs(nil), &object.String{Value: "key=value"})
 
 		if dict, ok := result.(*object.Dict); ok {
-			if pair, exists := dict.Pairs["key"]; exists {
+			if pair, exists := dict.GetByString("key"); exists {
 				if list, ok := pair.Value.(*object.List); ok {
 					if len(list.Elements) == 1 {
 						if str, ok := list.Elements[0].(*object.String); ok {
@@ -219,7 +202,7 @@ func TestURLLibrary(t *testing.T) {
 		result := parseQs.Fn(context.Background(), object.NewKwargs(nil), &object.String{Value: "key=value1&key=value2"})
 
 		if dict, ok := result.(*object.Dict); ok {
-			if pair, exists := dict.Pairs["key"]; exists {
+			if pair, exists := dict.GetByString("key"); exists {
 				if list, ok := pair.Value.(*object.List); ok {
 					expected := []string{"value1", "value2"}
 					if len(list.Elements) != len(expected) {
@@ -247,18 +230,10 @@ func TestURLLibrary(t *testing.T) {
 
 	t.Run("urlencode dict", func(t *testing.T) {
 		urlencode := lib.Functions()["urlencode"]
-		dict := &object.Dict{
-			Pairs: map[string]object.DictPair{
-				"key": {
-					Key:   &object.String{Value: "key"},
-					Value: &object.String{Value: "value"},
-				},
-				"foo": {
-					Key:   &object.String{Value: "foo"},
-					Value: &object.String{Value: "bar"},
-				},
-			},
-		}
+		dict := object.NewStringDict(map[string]object.Object{
+			"key": &object.String{Value: "value"},
+			"foo": &object.String{Value: "bar"},
+		})
 		result := urlencode.Fn(context.Background(), object.NewKwargs(nil), dict)
 
 		if str, ok := result.(*object.String); ok {
@@ -273,19 +248,14 @@ func TestURLLibrary(t *testing.T) {
 
 	t.Run("urlencode with list values", func(t *testing.T) {
 		urlencode := lib.Functions()["urlencode"]
-		dict := &object.Dict{
-			Pairs: map[string]object.DictPair{
-				"key": {
-					Key: &object.String{Value: "key"},
-					Value: &object.List{
-						Elements: []object.Object{
-							&object.String{Value: "value1"},
-							&object.String{Value: "value2"},
-						},
-					},
+		dict := object.NewStringDict(map[string]object.Object{
+			"key": &object.List{
+				Elements: []object.Object{
+					&object.String{Value: "value1"},
+					&object.String{Value: "value2"},
 				},
 			},
-		}
+		})
 		result := urlencode.Fn(context.Background(), object.NewKwargs(nil), dict)
 
 		if str, ok := result.(*object.String); ok {

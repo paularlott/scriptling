@@ -60,12 +60,12 @@ func NewSetFromElements(elements []Object) *Set {
 
 // Add adds an element to the set
 func (s *Set) Add(obj Object) {
-	s.Elements[obj.Inspect()] = obj
+	s.Elements[DictKey(obj)] = obj
 }
 
 // Remove removes an element from the set
 func (s *Set) Remove(obj Object) bool {
-	key := obj.Inspect()
+	key := DictKey(obj)
 	if _, ok := s.Elements[key]; ok {
 		delete(s.Elements, key)
 		return true
@@ -75,7 +75,7 @@ func (s *Set) Remove(obj Object) bool {
 
 // Contains checks if an element is in the set
 func (s *Set) Contains(obj Object) bool {
-	_, ok := s.Elements[obj.Inspect()]
+	_, ok := s.Elements[DictKey(obj)]
 	return ok
 }
 

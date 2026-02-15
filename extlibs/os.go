@@ -79,17 +79,13 @@ func NewOSLibrary(config fssecurity.Config) (*object.Library, *object.Library) {
 func (o *osLibraryInstance) createOSLibrary() *object.Library {
 	// Build environ dict - this happens when the library is registered/imported
 	// Environment variables are captured at that time
-	environPairs := make(map[string]object.DictPair)
+	environDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
 	for _, env := range os.Environ() {
 		parts := strings.SplitN(env, "=", 2)
 		if len(parts) == 2 {
-			environPairs[parts[0]] = object.DictPair{
-				Key:   &object.String{Value: parts[0]},
-				Value: &object.String{Value: parts[1]},
-			}
+			environDict.SetByString(parts[0], &object.String{Value: parts[1]})
 		}
 	}
-	environDict := &object.Dict{Pairs: environPairs}
 
 	return object.NewLibrary(OSLibraryName, map[string]*object.Builtin{
 		"getenv": {

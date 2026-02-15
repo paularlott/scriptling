@@ -32,6 +32,8 @@ The `scriptling.kv` library provides an in-memory key-value store that persists 
 - Atomic increment operations
 - Glob pattern matching for keys
 
+**Important:** The KV store is an in-memory data structure with no size limits. Keys without a TTL persist indefinitely until explicitly deleted or `clear()` is called. In long-running processes, ensure you manage key lifetimes appropriately to avoid unbounded memory growth. Use TTLs where possible and periodically review stored keys with `keys()`. Expired entries are cleaned up automatically every 60 seconds.
+
 ## Functions
 
 ### scriptling.kv.set(key, value, ttl=0)

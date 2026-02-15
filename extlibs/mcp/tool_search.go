@@ -1,9 +1,10 @@
 package mcp
 
 import (
-	"github.com/paularlott/scriptling/conversion"
 	"encoding/json"
 	"fmt"
+
+	"github.com/paularlott/scriptling/conversion"
 
 	mcplib "github.com/paularlott/mcp"
 	"github.com/paularlott/scriptling/object"
@@ -85,10 +86,7 @@ func parseToolSearchJSON(toolsJSON string) (*object.List, error) {
 			Pairs: map[string]object.DictPair{},
 		}
 		for k, v := range tool {
-			toolDict.Pairs[k] = object.DictPair{
-				Key:   &object.String{Value: k},
-				Value: conversion.FromGo(v),
-			}
+			toolDict.SetByString(k, conversion.FromGo(v))
 		}
 		toolList = append(toolList, toolDict)
 	}

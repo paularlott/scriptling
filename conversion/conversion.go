@@ -85,7 +85,7 @@ func FromGo(v interface{}) object.Object {
 	case map[string]interface{}:
 		pairs := make(map[string]object.DictPair)
 		for key, val := range v {
-			pairs[key] = object.DictPair{
+			pairs[object.DictKey(&object.String{Value: key})] = object.DictPair{
 				Key:   &object.String{Value: key},
 				Value: FromGo(val),
 			}
@@ -102,7 +102,7 @@ func FromGo(v interface{}) object.Object {
 			default:
 				keyStr = fmt.Sprintf("%v", k)
 			}
-			pairs[keyStr] = object.DictPair{
+			pairs[object.DictKey(&object.String{Value: keyStr})] = object.DictPair{
 				Key:   &object.String{Value: keyStr},
 				Value: FromGo(val),
 			}
@@ -155,13 +155,7 @@ func ToGo(obj object.Object) interface{} {
 	case *object.Dict:
 		result := make(map[string]interface{})
 		for _, pair := range o.Pairs {
-			// Keys can be any Object, but typically are strings
-			if keyStr, err := pair.Key.AsString(); err == nil {
-				result[keyStr] = ToGo(pair.Value)
-			} else {
-				// For non-string keys, use Inspect() representation
-				result[pair.Key.Inspect()] = ToGo(pair.Value)
-			}
+			result[pair.StringKey()] = ToGo(pair.Value)
 		}
 		return result
 	case *object.Error:
@@ -218,12 +212,12 @@ func ToGoWithError(obj object.Object) (interface{}, *object.Error) {
 		return result, nil
 	case *object.Dict:
 		result := make(map[string]interface{})
-		for key, pair := range v.Pairs {
+		for _, pair := range v.Pairs {
 			converted, err := ToGoWithError(pair.Value)
 			if err != nil {
 				return nil, err
 			}
-			result[key] = converted
+			result[pair.StringKey()] = converted
 		}
 		return result, nil
 	default:

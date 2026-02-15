@@ -63,8 +63,8 @@ func NewCallDepth(maxDepth int) *CallDepth {
 
 // Enter increments call depth and returns true if within limits
 func (cd *CallDepth) Enter() bool {
-	newDepth := atomic.AddInt32(&cd.current, 1)
-	return newDepth <= cd.max
+	v := atomic.AddInt32(&cd.current, 1)
+	return v <= cd.max
 }
 
 // Exit decrements call depth
@@ -277,7 +277,7 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		if object.IsError(val) || isException(val) {
 			return val
 		}
-		if err := assignToExpression(node.Left, val, env); err != nil {
+		if err := assignToExpression(ctx, node.Left, val, env); err != nil {
 			return errors.NewError("%s", err.Error())
 		}
 		return NULL
@@ -310,7 +310,7 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		if object.IsError(index) {
 			return index
 		}
-		return evalIndexExpression(left, index)
+		return evalIndexExpression(ctx, left, index)
 	case *ast.SliceExpression:
 		return evalSliceExpressionWithContext(ctx, node, env)
 	case *ast.ForStatement:
@@ -650,7 +650,13 @@ func evalIntegerInfixExpression(operator string, leftVal, rightVal int64) object
 		if rightVal < 0 {
 			return evalFloatInfixExpression("**", object.NewInteger(leftVal), object.NewInteger(rightVal))
 		}
-		// Integer exponentiation
+		// Integer exponentiation with overflow detection.
+		// Unlike Python 3 which has arbitrary precision integers, scriptling uses
+		// int64. If the result would overflow, we fall back to float64.
+		if rightVal > 63 || (leftVal > 1 && rightVal > 40) || (leftVal < -1 && rightVal > 40) {
+			// Definitely overflows int64, use float
+			return &object.Float{Value: math.Pow(float64(leftVal), float64(rightVal))}
+		}
 		result := int64(1)
 		base := leftVal
 		exp := rightVal
@@ -663,6 +669,9 @@ func evalIntegerInfixExpression(operator string, leftVal, rightVal int64) object
 		}
 		return object.NewInteger(result)
 	case "%":
+		if rightVal == 0 {
+			return errors.NewError(errors.ErrDivisionByZero)
+		}
 		return object.NewInteger(leftVal % rightVal)
 	case "&":
 		return object.NewInteger(leftVal & rightVal)
@@ -1078,8 +1087,9 @@ func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *obje
 			if keywords == nil {
 				keywords = make(map[string]object.Object, len(dict.Pairs))
 			}
-			for k, pair := range dict.Pairs {
-				keywords[k] = pair.Value
+			for _, pair := range dict.Pairs {
+				// Use the original string key, not the DictKey-formatted map key
+				keywords[pair.StringKey()] = pair.Value
 			}
 		} else {
 			return errors.NewError("argument after ** must be a dictionary, not %s", kwargsVal.Type())
@@ -1149,7 +1159,6 @@ func applyUserFunction(ctx context.Context, fn *object.Function, args []object.O
 	if err != nil {
 		return err
 	}
-	defer object.PutEnvironment(extendedEnv) // Return to pool when done
 
 	evaluated := evalWithContext(ctx, fn.Body, extendedEnv)
 	if err, ok := evaluated.(*object.Error); ok {
@@ -1211,7 +1220,6 @@ func applyLambdaFunctionWithContext(ctx context.Context, fn *object.LambdaFuncti
 	if err != nil {
 		return err
 	}
-	defer object.PutEnvironment(extendedEnv) // Return to pool when done
 
 	evaluated := evalWithContext(ctx, fn.Body, extendedEnv)
 	return evaluated // No unwrapping needed for lambda expressions
@@ -1320,7 +1328,7 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 		if fp.kwargs != nil {
 			kwargsDict := &object.Dict{Pairs: make(map[string]object.DictPair, len(extraKwargs))}
 			for key, value := range extraKwargs {
-				kwargsDict.Pairs[key] = object.DictPair{
+				kwargsDict.Pairs[object.DictKey(&object.String{Value: key})] = object.DictPair{
 					Key:   &object.String{Value: key},
 					Value: value,
 				}
@@ -1543,7 +1551,7 @@ func getModuleByPath(env *object.Environment, name string) object.Object {
 		if !ok {
 			return nil
 		}
-		pair, ok := dict.Pairs[parts[i]]
+		pair, ok := dict.GetByString(parts[i])
 		if !ok {
 			return nil
 		}
@@ -1561,6 +1569,11 @@ func evalFromImportStatement(fis *ast.FromImportStatement, env *object.Environme
 
 	// First, import the module
 	moduleName := fis.Module.Value
+
+	// Check if module was already in the environment before importing
+	// (e.g. user did `import json` before `from json import dumps`)
+	_, wasPresent := env.Get(moduleName)
+
 	err := importCallback(moduleName)
 	if err != nil {
 		return errors.NewError("%s: %s", errors.ErrImportError, err.Error())
@@ -1579,7 +1592,7 @@ func evalFromImportStatement(fis *ast.FromImportStatement, env *object.Environme
 		for i := 1; i < len(parts); i++ {
 			switch m := moduleObj.(type) {
 			case *object.Dict:
-				if pair, exists := m.Pairs[parts[i]]; exists {
+				if pair, exists := m.GetByString(parts[i]); exists {
 					moduleObj = pair.Value
 				} else {
 					return errors.NewError("%s: cannot find '%s' in module '%s'", errors.ErrImportError, parts[i], strings.Join(parts[:i], "."))
@@ -1613,7 +1626,7 @@ func evalFromImportStatement(fis *ast.FromImportStatement, env *object.Environme
 
 		switch m := moduleObj.(type) {
 		case *object.Dict:
-			if pair, exists := m.Pairs[name.Value]; exists {
+			if pair, exists := m.GetByString(name.Value); exists {
 				value = pair.Value
 				found = true
 			}
@@ -1664,11 +1677,12 @@ func evalFromImportStatement(fis *ast.FromImportStatement, env *object.Environme
 	}
 
 	// Remove the module from the environment (from X import Y should not make X available)
-	env.Delete(moduleName)
-	// Also remove the first part if it's a dotted import
-	if strings.Contains(moduleName, ".") {
-		parts := strings.Split(moduleName, ".")
-		env.Delete(parts[0])
+	// But only if the module was NOT already in the environment before this from-import.
+	// This preserves modules that were explicitly imported (e.g. `import json` before `from json import dumps`).
+	// For dotted imports (e.g. from a.b.c import X), only the full dotted name is deleted.
+	// The root module (parts[0]) is NOT deleted as it may be needed by other imports.
+	if !wasPresent {
+		env.Delete(moduleName)
 	}
 
 	return NULL
@@ -1684,7 +1698,7 @@ func evalInOperator(left, right object.Object) object.Object {
 		}
 		return FALSE
 	case *object.Dict:
-		key := left.Inspect()
+		key := object.DictKey(left)
 		_, ok := container.Pairs[key]
 		return nativeBoolToBooleanObject(ok)
 	case *object.String:
@@ -1693,7 +1707,7 @@ func evalInOperator(left, right object.Object) object.Object {
 		}
 		return errors.NewTypeError("STRING", "non-string type")
 	case *object.DictKeys:
-		key := left.Inspect()
+		key := object.DictKey(left)
 		_, ok := container.Dict.Pairs[key]
 		return nativeBoolToBooleanObject(ok)
 	case *object.DictValues:
@@ -1721,7 +1735,7 @@ func evalInOperator(left, right object.Object) object.Object {
 
 		if key != nil {
 			// Check if key exists and value matches
-			keyStr := key.Inspect()
+			keyStr := object.DictKey(key)
 			if pair, ok := container.Dict.Pairs[keyStr]; ok {
 				if val == pair.Value || objectsDeepEqual(val, pair.Value) {
 					return TRUE
@@ -2044,17 +2058,17 @@ func buildDottedName(expr *ast.IndexExpression) string {
 	return strings.Join(parts, ".")
 }
 
-func assignToExpression(expr ast.Expression, value object.Object, env *object.Environment) error {
+func assignToExpression(ctx context.Context, expr ast.Expression, value object.Object, env *object.Environment) error {
 	switch left := expr.(type) {
 	case *ast.Identifier:
 		env.Set(left.Value, value)
 		return nil
 	case *ast.IndexExpression:
-		obj := evalWithContext(context.Background(), left.Left, env)
+		obj := evalWithContext(ctx, left.Left, env)
 		if object.IsError(obj) {
 			return fmt.Errorf("assignment error")
 		}
-		index := evalWithContext(context.Background(), left.Index, env)
+		index := evalWithContext(ctx, left.Index, env)
 		if object.IsError(index) {
 			return fmt.Errorf("assignment error")
 		}
@@ -2074,7 +2088,7 @@ func assignToExpression(expr ast.Expression, value object.Object, env *object.En
 				return nil
 			}
 		case *object.Dict:
-			key := index.Inspect()
+			key := object.DictKey(index)
 			o.Pairs[key] = object.DictPair{Key: index, Value: value}
 			return nil
 		case *object.Instance:
@@ -2187,11 +2201,31 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 	case *object.Tuple:
 		elements = iter.Elements
 	case *object.String:
-		// Convert string chars to objects
-		elements = make([]object.Object, len(iter.Value))
-		for i, char := range iter.Value {
-			elements[i] = &object.String{Value: string(char)}
+		// Iterate over string runes lazily to avoid pre-allocating all characters
+		cc := newContextChecker(ctx)
+		for _, char := range iter.Value {
+			if err := cc.checkAlways(); err != nil {
+				return err
+			}
+
+			element := &object.String{Value: string(char)}
+			if err := setForVariables(fs.Variables, element, env); err != nil {
+				return errors.NewError("%s", err.Error())
+			}
+
+			result = evalWithContext(ctx, fs.Body, env)
+			if result != nil {
+				switch result.Type() {
+				case object.ERROR_OBJ, object.RETURN_OBJ:
+					return result
+				case object.BREAK_OBJ:
+					return NULL
+				case object.CONTINUE_OBJ:
+					continue
+				}
+			}
 		}
+		return result
 	default:
 		return errors.NewTypeError("iterable", iterable.Type().String())
 	}
@@ -2292,10 +2326,30 @@ func evalListComprehension(ctx context.Context, lc *ast.ListComprehension, env *
 	case *object.Tuple:
 		elements = iter.Elements
 	case *object.String:
-		elements = make([]object.Object, len(iter.Value))
-		for i, char := range iter.Value {
-			elements[i] = &object.String{Value: string(char)}
+		// Iterate over string runes lazily to avoid pre-allocating all characters
+		for _, char := range iter.Value {
+			element := &object.String{Value: string(char)}
+			if err := setForVariables(lc.Variables, element, compEnv); err != nil {
+				return errors.NewError("%s", err.Error())
+			}
+
+			if lc.Condition != nil {
+				condition := evalWithContext(ctx, lc.Condition, compEnv)
+				if object.IsError(condition) {
+					return condition
+				}
+				if !isTruthy(condition) {
+					continue
+				}
+			}
+
+			exprResult := evalWithContext(ctx, lc.Expression, compEnv)
+			if object.IsError(exprResult) {
+				return exprResult
+			}
+			result = append(result, exprResult)
 		}
+		return &object.List{Elements: result}
 	default:
 		return errors.NewTypeError("iterable", iterable.Type().String())
 	}
@@ -2426,7 +2480,7 @@ func evalMatchStatementWithContext(ctx context.Context, ms *ast.MatchStatement, 
 		// Track captured variables for this case
 		capturedVars := make(map[string]object.Object)
 
-		matched, capturedValue := matchPattern(subject, caseClause.Pattern, capturedVars)
+		matched, capturedValue := matchPattern(ctx, subject, caseClause.Pattern, capturedVars)
 		if object.IsError(matched) {
 			return matched
 		}
@@ -2462,7 +2516,7 @@ func evalMatchStatementWithContext(ctx context.Context, ms *ast.MatchStatement, 
 	return NULL
 }
 
-func matchPattern(subject object.Object, pattern ast.Expression, capturedVars map[string]object.Object) (object.Object, object.Object) {
+func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expression, capturedVars map[string]object.Object) (object.Object, object.Object) {
 	switch p := pattern.(type) {
 	case *ast.Identifier:
 		// Wildcard pattern
@@ -2538,12 +2592,12 @@ func matchPattern(subject object.Object, pattern ast.Expression, capturedVars ma
 
 		// Match all keys in pattern
 		for keyExpr, valueExpr := range p.Pairs {
-			keyObj := evalWithContext(context.Background(), keyExpr, object.NewEnvironment())
+			keyObj := evalWithContext(ctx, keyExpr, object.NewEnvironment())
 			if object.IsError(keyObj) {
 				return keyObj, NULL
 			}
 
-			keyStr := keyObj.Inspect()
+			keyStr := object.DictKey(keyObj)
 			pair, exists := dictObj.Pairs[keyStr]
 			if !exists {
 				return FALSE, NULL
@@ -2555,7 +2609,7 @@ func matchPattern(subject object.Object, pattern ast.Expression, capturedVars ma
 				capturedVars[ident.Value] = pair.Value
 			} else {
 				// Otherwise, it must match exactly
-				matched, _ := matchPattern(pair.Value, valueExpr, capturedVars)
+				matched, _ := matchPattern(ctx, pair.Value, valueExpr, capturedVars)
 				if matched == FALSE {
 					return FALSE, NULL
 				}
@@ -2576,7 +2630,7 @@ func matchPattern(subject object.Object, pattern ast.Expression, capturedVars ma
 		}
 
 		for i, elemExpr := range p.Elements {
-			matched, _ := matchPattern(listObj.Elements[i], elemExpr, capturedVars)
+			matched, _ := matchPattern(ctx, listObj.Elements[i], elemExpr, capturedVars)
 			if matched == FALSE {
 				return FALSE, NULL
 			}

@@ -410,8 +410,8 @@ func convertObjectToValue(obj Object, targetType reflect.Type) (reflect.Value, O
 		case *Dict:
 			// Convert to map[string]any
 			m := make(map[string]interface{})
-			for key, pair := range v.Pairs {
-				m[key] = objectToAny(pair.Value)
+			for _, pair := range v.Pairs {
+				m[pair.StringKey()] = objectToAny(pair.Value)
 			}
 			return reflect.ValueOf(m), nil
 		default:
@@ -519,7 +519,7 @@ func convertValueToObject(v interface{}) Object {
 	case map[string]interface{}:
 		pairs := make(map[string]DictPair)
 		for key, item := range val {
-			pairs[key] = DictPair{
+			pairs[DictKey(&String{Value: key})] = DictPair{
 				Key:   &String{Value: key},
 				Value: convertValueToObject(item),
 			}
@@ -551,8 +551,8 @@ func objectToAny(obj Object) interface{} {
 		return items
 	case *Dict:
 		m := make(map[string]interface{})
-		for key, pair := range v.Pairs {
-			m[key] = objectToAny(pair.Value)
+		for _, pair := range v.Pairs {
+			m[pair.StringKey()] = objectToAny(pair.Value)
 		}
 		return m
 	default:

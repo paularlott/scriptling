@@ -1024,7 +1024,7 @@ Otherwise, returns a list containing the items of the iterable.`,
 			// Handle kwargs
 			for _, key := range kwargs.Keys() {
 				val := kwargs.Get(key)
-				result.Pairs[key] = object.DictPair{
+				result.Pairs[object.DictKey(&object.String{Value: key})] = object.DictPair{
 					Key:   &object.String{Value: key},
 					Value: val,
 				}
@@ -1056,7 +1056,7 @@ Otherwise, returns a list containing the items of the iterable.`,
 					if len(pair) != 2 {
 						return errors.NewError("dictionary update sequence element must be [key, value] pair")
 					}
-					result.Pairs[pair[0].Inspect()] = object.DictPair{Key: pair[0], Value: pair[1]}
+					result.Pairs[object.DictKey(pair[0])] = object.DictPair{Key: pair[0], Value: pair[1]}
 				}
 			default:
 				return errors.NewTypeError("DICT or LIST of pairs", args[0].Type().String())
@@ -1297,7 +1297,7 @@ Supports width, alignment, and type specifiers.`,
 				}
 				return FALSE
 			case *object.Dict:
-				_, exists := obj.Pairs[name]
+				_, exists := obj.Pairs[object.DictKey(&object.String{Value: name})]
 				return nativeBoolToBooleanObject(exists)
 			default:
 				return FALSE
@@ -1326,7 +1326,7 @@ Returns True if the object has the named attribute.`,
 					return method
 				}
 			case *object.Dict:
-				if pair, exists := obj.Pairs[name]; exists {
+				if pair, exists := obj.Pairs[object.DictKey(&object.String{Value: name})]; exists {
 					return pair.Value
 				}
 			}
@@ -1356,7 +1356,7 @@ If default is provided, returns it when attribute doesn't exist.`,
 				obj.Fields[name] = args[2]
 				return NULL
 			case *object.Dict:
-				obj.Pairs[name] = object.DictPair{
+				obj.Pairs[object.DictKey(&object.String{Value: name})] = object.DictPair{
 					Key:   &object.String{Value: name},
 					Value: args[2],
 				}
@@ -1388,8 +1388,9 @@ Only works on dict-like objects.`,
 				}
 				return errors.NewError("'%s' object has no attribute '%s'", obj.Class.Name, name)
 			case *object.Dict:
-				if _, ok := obj.Pairs[name]; ok {
-					delete(obj.Pairs, name)
+				dictKey := object.DictKey(&object.String{Value: name})
+				if _, ok := obj.Pairs[dictKey]; ok {
+					delete(obj.Pairs, dictKey)
 					return NULL
 				}
 				return errors.NewError("dictionary has no key '%s'", name)
@@ -2048,7 +2049,7 @@ func helpFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.
 			// Try to get the library from environment
 			if libObj, ok := env.Get(libName); ok {
 				if dict, ok := libObj.(*object.Dict); ok {
-					if pair, ok := dict.Pairs[funcName]; ok {
+					if pair, ok := dict.Pairs[object.DictKey(&object.String{Value: funcName})]; ok {
 						if builtin, ok := pair.Value.(*object.Builtin); ok {
 							fmt.Fprintf(writer, "Help for %s.%s:\n", libName, funcName)
 							if builtin.HelpText != "" {
@@ -2079,7 +2080,7 @@ func helpFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.
 				fmt.Fprintf(writer, "%s functions:\n", topic)
 
 				// Check for module docstring
-				if docPair, ok := dict.Pairs["__doc__"]; ok {
+				if docPair, ok := dict.Pairs[object.DictKey(&object.String{Value: "__doc__"})]; ok {
 					if docStr, ok := docPair.Value.(*object.String); ok {
 						fmt.Fprintln(writer, "")
 						fmt.Fprintln(writer, "Description:")
@@ -2095,9 +2096,11 @@ func helpFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.
 				fmt.Fprintln(writer, "Available functions:")
 				// Collect and sort function names
 				var names []string
-				for name := range dict.Pairs {
-					if name != "__doc__" {
-						names = append(names, name)
+				docKey := object.DictKey(&object.String{Value: "__doc__"})
+				for k, pair := range dict.Pairs {
+					if k != docKey {
+						keyStr, _ := pair.Key.AsString()
+						names = append(names, keyStr)
 					}
 				}
 				sort.Strings(names)
@@ -2174,8 +2177,9 @@ func helpFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.
 		fmt.Fprintln(writer, "Available keys:")
 		// Collect and sort keys
 		var names []string
-		for name := range obj.Pairs {
-			names = append(names, name)
+		for _, pair := range obj.Pairs {
+			keyStr, _ := pair.Key.AsString()
+			names = append(names, keyStr)
 		}
 		sort.Strings(names)
 		for _, name := range names {

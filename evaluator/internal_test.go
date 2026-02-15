@@ -151,22 +151,22 @@ func TestObjectsDeepEqual(t *testing.T) {
 		},
 		{
 			name: "equal dicts",
-			a:    &object.Dict{Pairs: map[string]object.DictPair{
-				"a": {Key: &object.String{Value: "a"}, Value: &object.Integer{Value: 1}},
-			}},
-			b:    &object.Dict{Pairs: map[string]object.DictPair{
-				"a": {Key: &object.String{Value: "a"}, Value: &object.Integer{Value: 1}},
-			}},
+			a:    object.NewStringDict(map[string]object.Object{
+				"a": &object.Integer{Value: 1},
+			}),
+			b:    object.NewStringDict(map[string]object.Object{
+				"a": &object.Integer{Value: 1},
+			}),
 			want: true,
 		},
 		{
 			name: "unequal dicts different keys",
-			a:    &object.Dict{Pairs: map[string]object.DictPair{
-				"a": {Key: &object.String{Value: "a"}, Value: &object.Integer{Value: 1}},
-			}},
-			b:    &object.Dict{Pairs: map[string]object.DictPair{
-				"b": {Key: &object.String{Value: "b"}, Value: &object.Integer{Value: 2}},
-			}},
+			a:    object.NewStringDict(map[string]object.Object{
+				"a": &object.Integer{Value: 1},
+			}),
+			b:    object.NewStringDict(map[string]object.Object{
+				"b": &object.Integer{Value: 2},
+			}),
 			want: false,
 		},
 		{

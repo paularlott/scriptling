@@ -78,7 +78,7 @@ print(result)  # 8
 Libraries can include constants that are accessible as library members:
 
 ```go
-myLib := object.NewLibrary("mylib", 
+myLib := object.NewLibrary("mylib",
     map[string]*object.Builtin{
         "add": {
             Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -198,7 +198,7 @@ Organize related functionality into sub-libraries:
 
 ```go
 // Create URL parsing sub-library
-parseLib := object.NewLibrary("parse", 
+parseLib := object.NewLibrary("parse",
     map[string]*object.Builtin{
         "quote": {
             Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -221,7 +221,7 @@ parseLib := object.NewLibrary("parse",
 )
 
 // Create main URL library and add sub-library
-urlLib := object.NewLibrary("url", 
+urlLib := object.NewLibrary("url",
     map[string]*object.Builtin{
         "join": {
             Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -303,8 +303,8 @@ When accepting `object.Object` parameters (instead of specific Go types), you ca
 | `AsInt()`        | Strict      | Returns int64 only if object is INTEGER/FLOAT   |
 | `AsFloat()`      | Strict      | Returns float64 only if object is INTEGER/FLOAT |
 | `AsBool()`       | Strict      | Returns bool only if object is a BOOLEAN        |
-| `AsList()`       | Strict      | Returns list only if object is a LIST/TUPLE     |
-| `AsDict()`       | Strict      | Returns dict only if object is a DICT           |
+| `AsList()`       | Strict      | Returns list only if object is a LIST/TUPLE (returns a copy) |
+| `AsDict()`       | Strict      | Returns dict only if object is a DICT (keys are human-readable strings) |
 | `CoerceString()` | Loose       | **Auto-converts** any type to string            |
 | `CoerceInt()`    | Loose       | **Auto-converts** strings/floats to int         |
 | `CoerceFloat()`  | Loose       | **Auto-converts** strings/ints to float         |
@@ -635,7 +635,7 @@ configLib := object.NewLibrary(
 ### 4. Add Library Description
 
 ```go
-myLib := object.NewLibrary("mylib", 
+myLib := object.NewLibrary("mylib",
     functions,
     constants,
     "My custom data processing library",  // Description shown by help()

@@ -64,7 +64,7 @@ func main() {
     }
 
     // Register the class as a library constant
-    p.RegisterLibrary(object.NewLibrary("inline", 
+    p.RegisterLibrary(object.NewLibrary("inline",
         map[string]*object.Builtin{
             "create": {
                 Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -142,7 +142,7 @@ func createPersonClass() *object.Class {
 }
 
 // Usage with a factory function
-p.RegisterLibrary(object.NewLibrary("inline", 
+p.RegisterLibrary(object.NewLibrary("inline",
     map[string]*object.Builtin{
         "Person": personClass,
         "new": {
@@ -237,7 +237,7 @@ counterClass := &object.Class{
         "__init__": &object.Builtin{
             Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
                 instance := args[0].(*object.Instance)
-                instance.Fields["data"] = &object.Dict{Pairs: make(map[string]object.DictPair)}
+                instance.Fields["data"] = object.NewStringDict(map[string]object.Object{})
                 return object.NULL
             },
         },
@@ -246,8 +246,8 @@ counterClass := &object.Class{
                 instance := args[0].(*object.Instance)
                 key := args[1].Inspect()
                 data := instance.Fields["data"].(*object.Dict)
-                if val, ok := data.Pairs[key]; ok {
-                    return val.Value
+                if pair, ok := data.GetByString(key); ok {
+                    return pair.Value
                 }
                 return &object.Integer{Value: 0}  // Default for missing keys
             },
@@ -259,7 +259,7 @@ counterClass := &object.Class{
                 key := args[1].Inspect()
                 value := args[2]
                 data := instance.Fields["data"].(*object.Dict)
-                data.Pairs[key] = object.DictPair{Key: &object.String{Value: key}, Value: value}
+                data.SetByString(key, value)
                 return object.NULL
             },
             HelpText: "set(key, value) - Set a count",
@@ -276,6 +276,8 @@ print(c["oranges"])  # 0 (default)
 `)
 ```
 
+**Note:** Use `object.NewStringDict()` to create dicts and `GetByString()`/`SetByString()` for access. Never manipulate the internal `Pairs` map keys directly — they use a type-prefixed canonical format.
+
 #### Other Special Methods
 
 | Method | Purpose |
@@ -290,7 +292,7 @@ print(c["oranges"])  # 0 (default)
 Add classes to libraries via the constants map:
 
 ```go
-myLib := object.NewLibrary("mylib", 
+myLib := object.NewLibrary("mylib",
     map[string]*object.Builtin{
         "create_counter": {
             Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -418,11 +420,11 @@ cb.Method("configure", func(self *object.Instance, kwargs object.Kwargs) error {
 cb.Method("fetch", func(self *object.Instance, ctx context.Context, kwargs object.Kwargs) (string, error) {
     url, _ := kwargs.GetString("url", "")
     timeout, _ := kwargs.GetInt("timeout", 30)
-    
+
     // Use context for timeout
     ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
     defer cancel()
-    
+
     // Fetch data...
     return "data", nil
 })

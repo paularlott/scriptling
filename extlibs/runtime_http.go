@@ -10,6 +10,21 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
+// httpResponse creates a standard HTTP response dict with status, headers, and body.
+// The headers parameter should be a map of header names to values that will be converted to object.String.
+func httpResponse(statusCode int64, headers map[string]string, body object.Object) object.Object {
+	headerDict := make(map[string]object.Object, len(headers))
+	for k, v := range headers {
+		headerDict[k] = &object.String{Value: v}
+	}
+
+	return object.NewStringDict(map[string]object.Object{
+		"status":  object.NewInteger(statusCode),
+		"headers": object.NewStringDict(headerDict),
+		"body":    body,
+	})
+}
+
 // RouteInfo stores information about a registered route
 type RouteInfo struct {
 	Methods   []string
@@ -52,20 +67,15 @@ Returns the parsed JSON as a dict or list, or None if body is empty.`,
 
 // CreateRequestInstance creates a new Request instance with the given data
 func CreateRequestInstance(method, path, body string, headers map[string]string, query map[string]string) *object.Instance {
-	headerPairs := make(map[string]object.DictPair)
+	headerDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
 	for k, v := range headers {
-		headerPairs[strings.ToLower(k)] = object.DictPair{
-			Key:   &object.String{Value: strings.ToLower(k)},
-			Value: &object.String{Value: v},
-		}
+		lk := strings.ToLower(k)
+		headerDict.SetByString(lk, &object.String{Value: v})
 	}
 
-	queryPairs := make(map[string]object.DictPair)
+	queryDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
 	for k, v := range query {
-		queryPairs[k] = object.DictPair{
-			Key:   &object.String{Value: k},
-			Value: &object.String{Value: v},
-		}
+		queryDict.SetByString(k, &object.String{Value: v})
 	}
 
 	return &object.Instance{
@@ -74,8 +84,8 @@ func CreateRequestInstance(method, path, body string, headers map[string]string,
 			"method":  &object.String{Value: method},
 			"path":    &object.String{Value: path},
 			"body":    &object.String{Value: body},
-			"headers": &object.Dict{Pairs: headerPairs},
-			"query":   &object.Dict{Pairs: queryPairs},
+			"headers": headerDict,
+			"query":   queryDict,
 		},
 	}
 }
@@ -361,13 +371,9 @@ Example:
 				}
 			}
 
-			return &object.Dict{Pairs: map[string]object.DictPair{
-				"status":  {Key: &object.String{Value: "status"}, Value: object.NewInteger(statusCode)},
-				"headers": {Key: &object.String{Value: "headers"}, Value: &object.Dict{Pairs: map[string]object.DictPair{
-					"Content-Type": {Key: &object.String{Value: "Content-Type"}, Value: &object.String{Value: "application/json"}},
-				}}},
-				"body": {Key: &object.String{Value: "body"}, Value: data},
-			}}
+			return httpResponse(statusCode, map[string]string{
+				"Content-Type": "application/json",
+			}, data)
 		},
 		HelpText: `json(status_code, data) - Create a JSON response
 
@@ -406,13 +412,9 @@ Example:
 				}
 			}
 
-			return &object.Dict{Pairs: map[string]object.DictPair{
-				"status":  {Key: &object.String{Value: "status"}, Value: object.NewInteger(statusCode)},
-				"headers": {Key: &object.String{Value: "headers"}, Value: &object.Dict{Pairs: map[string]object.DictPair{
-					"Location": {Key: &object.String{Value: "Location"}, Value: &object.String{Value: location}},
-				}}},
-				"body": {Key: &object.String{Value: "body"}, Value: &object.String{Value: ""}},
-			}}
+			return httpResponse(statusCode, map[string]string{
+				"Location": location,
+			}, &object.String{Value: ""})
 		},
 		HelpText: `redirect(location, status=302) - Create a redirect response
 
@@ -452,13 +454,9 @@ Example:
 				}
 			}
 
-			return &object.Dict{Pairs: map[string]object.DictPair{
-				"status":  {Key: &object.String{Value: "status"}, Value: object.NewInteger(statusCode)},
-				"headers": {Key: &object.String{Value: "headers"}, Value: &object.Dict{Pairs: map[string]object.DictPair{
-					"Content-Type": {Key: &object.String{Value: "Content-Type"}, Value: &object.String{Value: "text/html; charset=utf-8"}},
-				}}},
-				"body": {Key: &object.String{Value: "body"}, Value: htmlContent},
-			}}
+			return httpResponse(statusCode, map[string]string{
+				"Content-Type": "text/html; charset=utf-8",
+			}, htmlContent)
 		},
 		HelpText: `html(status_code, content) - Create an HTML response
 
@@ -497,13 +495,9 @@ Example:
 				}
 			}
 
-			return &object.Dict{Pairs: map[string]object.DictPair{
-				"status":  {Key: &object.String{Value: "status"}, Value: object.NewInteger(statusCode)},
-				"headers": {Key: &object.String{Value: "headers"}, Value: &object.Dict{Pairs: map[string]object.DictPair{
-					"Content-Type": {Key: &object.String{Value: "Content-Type"}, Value: &object.String{Value: "text/plain; charset=utf-8"}},
-				}}},
-				"body": {Key: &object.String{Value: "body"}, Value: textContent},
-			}}
+			return httpResponse(statusCode, map[string]string{
+				"Content-Type": "text/plain; charset=utf-8",
+			}, textContent)
 		},
 		HelpText: `text(status_code, content) - Create a plain text response
 
@@ -536,9 +530,11 @@ Example:
 
 			pairs := make(map[string]object.DictPair)
 			for key, vals := range values {
+				keyObj := &object.String{Value: key}
+				dk := object.DictKey(keyObj)
 				if len(vals) == 1 {
-					pairs[key] = object.DictPair{
-						Key:   &object.String{Value: key},
+					pairs[dk] = object.DictPair{
+						Key:   keyObj,
 						Value: &object.String{Value: vals[0]},
 					}
 				} else {
@@ -546,8 +542,8 @@ Example:
 					for i, v := range vals {
 						elements[i] = &object.String{Value: v}
 					}
-					pairs[key] = object.DictPair{
-						Key:   &object.String{Value: key},
+					pairs[dk] = object.DictPair{
+						Key:   keyObj,
 						Value: &object.List{Elements: elements},
 					}
 				}

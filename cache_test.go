@@ -13,7 +13,7 @@ import (
 // helper to create a small cache for testing
 func newTestCache(maxSize int) *programCache {
 	return &programCache{
-		entries: make(map[uint64]*list.Element),
+		entries: make(map[cacheKey]*list.Element),
 		lru:     list.New(),
 		maxSize: maxSize,
 	}
@@ -286,7 +286,20 @@ func TestCache_DifferentScriptsDifferentHashes(t *testing.T) {
 	h1 := hashScript("script_a")
 	h2 := hashScript("script_b")
 	if h1 == h2 {
-		t.Fatal("different scripts produced the same hash (unlikely collision)")
+		t.Fatal("different scripts produced the same dual hash (astronomically unlikely)")
+	}
+}
+
+func TestCache_DualHashIndependence(t *testing.T) {
+	// Verify both hash components are populated and different from each other
+	key := hashScript("test_independence")
+	if key.h1 == 0 && key.h2 == 0 {
+		t.Fatal("both hash components are zero")
+	}
+	// The two hashes use different seeds, so they should differ
+	// (not guaranteed but astronomically unlikely for them to match)
+	if key.h1 == key.h2 {
+		t.Log("warning: h1 == h2 for 'test_independence' (extremely unlikely but not impossible)")
 	}
 }
 
@@ -378,5 +391,242 @@ func TestCache_ConcurrentEviction(t *testing.T) {
 	}
 	if c.lru.Len() != len(c.entries) {
 		t.Fatalf("lru/map mismatch: %d vs %d", c.lru.Len(), len(c.entries))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Stress tests — hammer the cache hard
+// ---------------------------------------------------------------------------
+
+func TestCache_StressHighVolume(t *testing.T) {
+	c := newTestCache(100)
+	const goroutines = 100
+	const opsPerGoroutine = 1000
+	var wg sync.WaitGroup
+
+	wg.Add(goroutines)
+	for g := 0; g < goroutines; g++ {
+		go func(id int) {
+			defer wg.Done()
+			for i := 0; i < opsPerGoroutine; i++ {
+				script := fmt.Sprintf("script_%d_%d", id, i)
+				prog := dummyProgram(script)
+				c.set(script, prog)
+
+				// Read back what we just wrote
+				if got, ok := c.get(script); ok {
+					if got != prog {
+						t.Errorf("goroutine %d: got wrong program for %s", id, script)
+					}
+				}
+				// Also read a shared key to exercise contention
+				c.get(fmt.Sprintf("script_%d_0", id%goroutines))
+			}
+		}(g)
+	}
+
+	wg.Wait()
+
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if len(c.entries) > c.maxSize {
+		t.Fatalf("cache exceeded maxSize: %d > %d", len(c.entries), c.maxSize)
+	}
+	if c.lru.Len() != len(c.entries) {
+		t.Fatalf("lru/map desync: list=%d map=%d", c.lru.Len(), len(c.entries))
+	}
+
+	// Walk the entire LRU list and verify every entry is also in the map
+	for elem := c.lru.Front(); elem != nil; elem = elem.Next() {
+		entry := elem.Value.(*cacheEntry)
+		if _, ok := c.entries[entry.key]; !ok {
+			t.Fatalf("LRU entry with key %v not found in map", entry.key)
+		}
+	}
+}
+
+func TestCache_StressConcurrentReadWrite(t *testing.T) {
+	// Many concurrent readers and writers on a small cache to stress eviction
+	c := newTestCache(10)
+	const writers = 20
+	const readers = 40
+	const ops = 500
+	var wg sync.WaitGroup
+
+	wg.Add(writers + readers)
+
+	// Writers: continuously insert new entries, causing constant eviction
+	for w := 0; w < writers; w++ {
+		go func(id int) {
+			defer wg.Done()
+			for i := 0; i < ops; i++ {
+				script := fmt.Sprintf("w%d_%d", id, i)
+				c.set(script, dummyProgram(script))
+			}
+		}(w)
+	}
+
+	// Readers: continuously read, mostly misses but shouldn't panic
+	for r := 0; r < readers; r++ {
+		go func(id int) {
+			defer wg.Done()
+			for i := 0; i < ops; i++ {
+				script := fmt.Sprintf("w%d_%d", id%writers, i)
+				c.get(script)
+			}
+		}(r)
+	}
+
+	wg.Wait()
+
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if len(c.entries) > c.maxSize {
+		t.Fatalf("exceeded maxSize: %d > %d", len(c.entries), c.maxSize)
+	}
+	if c.lru.Len() != len(c.entries) {
+		t.Fatalf("desync after stress: list=%d map=%d", c.lru.Len(), len(c.entries))
+	}
+}
+
+func TestCache_StressUpdateSameKeys(t *testing.T) {
+	// Many goroutines updating the same set of keys
+	c := newTestCache(50)
+	const goroutines = 50
+	const rounds = 500
+	const keyCount = 20 // only 20 distinct keys
+	var wg sync.WaitGroup
+
+	wg.Add(goroutines)
+	for g := 0; g < goroutines; g++ {
+		go func(id int) {
+			defer wg.Done()
+			for i := 0; i < rounds; i++ {
+				key := fmt.Sprintf("shared_%d", i%keyCount)
+				prog := dummyProgram(fmt.Sprintf("v%d_%d", id, i))
+				c.set(key, prog)
+				c.get(key)
+			}
+		}(g)
+	}
+
+	wg.Wait()
+
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if len(c.entries) > c.maxSize {
+		t.Fatalf("exceeded maxSize: %d > %d", len(c.entries), c.maxSize)
+	}
+	if c.lru.Len() != len(c.entries) {
+		t.Fatalf("desync: list=%d map=%d", c.lru.Len(), len(c.entries))
+	}
+	// Should have at most keyCount entries since all goroutines share the same keys
+	if len(c.entries) > keyCount {
+		t.Fatalf("expected at most %d entries (shared keys), got %d", keyCount, len(c.entries))
+	}
+}
+
+func TestCache_StressRapidEviction(t *testing.T) {
+	// Cache of size 1: every insert evicts the previous entry
+	c := newTestCache(1)
+	const goroutines = 30
+	const ops = 1000
+	var wg sync.WaitGroup
+
+	wg.Add(goroutines)
+	for g := 0; g < goroutines; g++ {
+		go func(id int) {
+			defer wg.Done()
+			for i := 0; i < ops; i++ {
+				script := fmt.Sprintf("rapid_%d_%d", id, i)
+				c.set(script, dummyProgram(script))
+				c.get(script) // might hit or miss depending on race
+			}
+		}(g)
+	}
+
+	wg.Wait()
+
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if len(c.entries) != 1 {
+		t.Fatalf("maxSize=1 cache should have exactly 1 entry, got %d", len(c.entries))
+	}
+	if c.lru.Len() != 1 {
+		t.Fatalf("LRU list should have exactly 1 element, got %d", c.lru.Len())
+	}
+}
+
+func TestCache_HashUniqueness(t *testing.T) {
+	// Generate many hashes and verify no collisions in a reasonable set
+	const count = 10000
+	seen := make(map[cacheKey]string, count)
+
+	for i := 0; i < count; i++ {
+		script := fmt.Sprintf("unique_script_number_%d_with_padding", i)
+		key := hashScript(script)
+		if prev, exists := seen[key]; exists {
+			t.Fatalf("dual-hash collision between %q and %q (key: %v)", prev, script, key)
+		}
+		seen[key] = script
+	}
+}
+
+func TestCache_StressInterleavedOps(t *testing.T) {
+	// Interleave set, get, and eviction in complex patterns
+	c := newTestCache(25)
+	const goroutines = 40
+	const ops = 300
+	var wg sync.WaitGroup
+
+	wg.Add(goroutines)
+	for g := 0; g < goroutines; g++ {
+		go func(id int) {
+			defer wg.Done()
+			for i := 0; i < ops; i++ {
+				switch i % 5 {
+				case 0, 1, 2:
+					// Insert new unique key
+					key := fmt.Sprintf("il_%d_%d", id, i)
+					c.set(key, dummyProgram(key))
+				case 3:
+					// Read a potentially evicted key
+					key := fmt.Sprintf("il_%d_%d", id, i-3)
+					c.get(key)
+				case 4:
+					// Update a previous key
+					key := fmt.Sprintf("il_%d_%d", id, i-4)
+					c.set(key, dummyProgram(fmt.Sprintf("updated_%d_%d", id, i)))
+				}
+			}
+		}(g)
+	}
+
+	wg.Wait()
+
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if len(c.entries) > c.maxSize {
+		t.Fatalf("exceeded maxSize: %d > %d", len(c.entries), c.maxSize)
+	}
+	if c.lru.Len() != len(c.entries) {
+		t.Fatalf("desync: list=%d map=%d", c.lru.Len(), len(c.entries))
+	}
+
+	// Verify every map entry has a matching LRU element
+	lruKeys := make(map[cacheKey]bool)
+	for elem := c.lru.Front(); elem != nil; elem = elem.Next() {
+		entry := elem.Value.(*cacheEntry)
+		lruKeys[entry.key] = true
+	}
+	for key := range c.entries {
+		if !lruKeys[key] {
+			t.Fatalf("map entry %v not found in LRU list", key)
+		}
 	}
 }

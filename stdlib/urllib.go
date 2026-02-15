@@ -232,27 +232,27 @@ Access components as attributes: result.scheme, result.netloc, etc. Use result.g
 
 			case *object.Dict:
 				u := &url.URL{}
-				if value, ok := arg.Pairs["scheme"]; ok {
+				if value, ok := arg.GetByString("scheme"); ok {
 					if str, err := value.Value.AsString(); err == nil {
 						u.Scheme = str
 					}
 				}
-				if value, ok := arg.Pairs["netloc"]; ok {
+				if value, ok := arg.GetByString("netloc"); ok {
 					if str, err := value.Value.AsString(); err == nil {
 						u.Host = str
 					}
 				}
-				if value, ok := arg.Pairs["path"]; ok {
+				if value, ok := arg.GetByString("path"); ok {
 					if str, err := value.Value.AsString(); err == nil {
 						u.Path = str
 					}
 				}
-				if value, ok := arg.Pairs["query"]; ok {
+				if value, ok := arg.GetByString("query"); ok {
 					if str, err := value.Value.AsString(); err == nil {
 						u.RawQuery = str
 					}
 				}
-				if value, ok := arg.Pairs["fragment"]; ok {
+				if value, ok := arg.GetByString("fragment"); ok {
 					if str, err := value.Value.AsString(); err == nil {
 						u.Fragment = str
 					}
@@ -438,8 +438,9 @@ Constructs a URL string from a 5-tuple of URL components.`,
 				for i, val := range vals {
 					elements[i] = &object.String{Value: val}
 				}
-				pairs[key] = object.DictPair{
-					Key:   &object.String{Value: key},
+				keyObj := &object.String{Value: key}
+				pairs[object.DictKey(keyObj)] = object.DictPair{
+					Key:   keyObj,
 					Value: &object.List{Elements: elements},
 				}
 			}
@@ -496,10 +497,14 @@ Parses a URL query string and returns a list of (key, value) tuples.`,
 
 			switch arg := args[0].(type) {
 			case *object.Dict:
-				for key, pair := range arg.Pairs {
+				for _, pair := range arg.Pairs {
+					keyStr, keyErr := pair.Key.AsString()
+					if keyErr != nil {
+						continue
+					}
 					switch val := pair.Value.(type) {
 					case *object.String:
-						values[key] = []string{val.Value}
+						values[keyStr] = []string{val.Value}
 					case *object.List:
 						strVals := make([]string, len(val.Elements))
 						for i, elem := range val.Elements {
@@ -507,7 +512,7 @@ Parses a URL query string and returns a list of (key, value) tuples.`,
 								strVals[i] = str
 							}
 						}
-						values[key] = strVals
+						values[keyStr] = strVals
 					}
 				}
 			case *object.List:
@@ -534,7 +539,7 @@ Encodes a dictionary or list of tuples into a URL query string.`,
 }, nil, "URL parsing and manipulation (urllib.parse compatible)")
 
 // URLLibrary is the parent urllib module with parse as a sub-library
-var URLLibLibrary = object.NewLibraryWithSubs(URLLibLibraryName, 
+var URLLibLibrary = object.NewLibraryWithSubs(URLLibLibraryName,
 	nil, // No functions at urllib level
 	nil, // No constants
 	map[string]*object.Library{
