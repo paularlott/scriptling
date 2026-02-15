@@ -889,9 +889,23 @@ func (p *Scriptling) loadLibraryIntoEnv(name string, env *object.Environment) (b
 		}
 	}
 
-	// Set the final part
+	// Set the final part, merging any existing sub-module entries
+	// This preserves sub-library registrations when a parent library is loaded
+	// after its children (e.g., importing scriptling.ai after scriptling.ai.agent)
 	finalPart := parts[len(parts)-1]
+	if existingPair, ok := current.GetByString(finalPart); ok {
+		if existingDict, ok := existingPair.Value.(*object.Dict); ok {
+			for k, v := range existingDict.Pairs {
+				if _, exists := libDict.Pairs[k]; !exists {
+					libDict.Pairs[k] = v
+				}
+			}
+		}
+	}
 	current.SetByString(finalPart, libDict)
+
+	// Also store the full dotted name for reliable "already imported" checks
+	env.Set(name, libDict)
 
 	return true, nil
 }
@@ -909,15 +923,11 @@ func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[stri
 
 	// Create a custom import callback for this library environment
 	libEnv.SetImportCallback(func(libName string) error {
-		// Check if library is already imported
-		parts := strings.Split(libName, ".")
-		if len(parts) > 1 {
-			if rootObj, ok := libEnv.Get(parts[0]); ok {
-				if _, err := traverseDictPath(rootObj, parts[1:], maxLibraryNestingDepth); err == nil {
-					return nil // Already imported
-				}
-			}
-		} else if _, ok := libEnv.Get(libName); ok {
+		// Check if library is already imported using direct lookup.
+		// We use env.Get(libName) rather than path traversal because intermediate
+		// dicts created for child libraries (e.g., scriptling.ai created as a
+		// placeholder when loading scriptling.ai.agent) can produce false positives.
+		if _, ok := libEnv.Get(libName); ok {
 			return nil // Already imported
 		}
 
