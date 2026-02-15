@@ -17,6 +17,7 @@ import (
 	"github.com/paularlott/scriptling/object"
 
 	mcpcli "github.com/paularlott/scriptling/scriptling-cli/mcp"
+	"github.com/paularlott/scriptling/scriptling-cli/server"
 )
 
 var globalLogger logger.Logger
@@ -57,6 +58,53 @@ func main() {
 				Global:       true,
 				EnvVars:      []string{"SCRIPTLING_LOG_FORMAT"},
 			},
+			// Server flags
+			&cli.StringFlag{
+				Name:         "server",
+				Usage:        "Enable HTTP server mode with address (host:port)",
+				Aliases:      []string{"S"},
+				DefaultValue: "",
+				EnvVars:      []string{"SCRIPTLING_SERVER"},
+			},
+			&cli.StringFlag{
+				Name:         "mcp-tools",
+				Usage:        "Enable MCP server with tools from directory",
+				DefaultValue: "",
+				EnvVars:      []string{"SCRIPTLING_MCP_TOOLS"},
+			},
+			&cli.StringFlag{
+				Name:         "bearer-token",
+				Usage:        "Bearer token for authentication",
+				DefaultValue: "",
+				EnvVars:      []string{"SCRIPTLING_BEARER_TOKEN"},
+			},
+			&cli.StringFlag{
+				Name:         "script-mode",
+				Usage:        "Script mode: safe or full",
+				DefaultValue: "full",
+				EnvVars:      []string{"SCRIPTLING_SCRIPT_MODE"},
+				ValidateFlag: func(c *cli.Command) error {
+					mode := c.GetString("script-mode")
+					if mode != "safe" && mode != "full" {
+						return fmt.Errorf("invalid value for --script-mode: %s (must be 'safe' or 'full')", mode)
+					}
+					return nil
+				},
+			},
+			&cli.StringFlag{
+				Name:    "tls-cert",
+				Usage:   "TLS certificate file",
+				EnvVars: []string{"SCRIPTLING_TLS_CERT"},
+			},
+			&cli.StringFlag{
+				Name:    "tls-key",
+				Usage:   "TLS key file",
+				EnvVars: []string{"SCRIPTLING_TLS_KEY"},
+			},
+			&cli.BoolFlag{
+				Name:  "tls-generate",
+				Usage: "Generate self-signed certificate in memory",
+			},
 		},
 		MaxArgs: cli.UnlimitedArgs,
 		Arguments: []cli.Argument{
@@ -64,57 +112,6 @@ func main() {
 				Name:     "file",
 				Usage:    "Script file to execute",
 				Required: false,
-			},
-		},
-		Commands: []*cli.Command{
-			{
-				Name:        "mcp",
-				Usage:       "MCP server commands",
-				Description: "Start and manage MCP server",
-				Commands: []*cli.Command{
-					{
-						Name:        "serve",
-						Usage:       "Start MCP server",
-						Description: "Start MCP server to serve tools from a folder",
-						Flags: []cli.Flag{
-							&cli.StringFlag{
-								Name:         "address",
-								Usage:        "Server address",
-								DefaultValue: "127.0.0.1:8000",
-								EnvVars:      []string{"SCRIPTLING_MCP_ADDRESS"},
-							},
-							&cli.StringFlag{
-								Name:         "tools",
-								Usage:        "Tools folder path",
-								DefaultValue: ".",
-								EnvVars:      []string{"SCRIPTLING_MCP_TOOLS"},
-							},
-							&cli.StringFlag{
-								Name:         "bearer-token",
-								Usage:        "Bearer token for authentication (optional)",
-								DefaultValue: "",
-								EnvVars:      []string{"SCRIPTLING_MCP_BEARER_TOKEN"},
-							},
-							&cli.BoolFlag{
-								Name:  "validate",
-								Usage: "Validate tools without starting server",
-							},
-							&cli.StringFlag{
-								Name:    "allow-script-execute",
-								Usage:   "Allow script execution via execute_scriptling tool (off|safe|full)",
-								EnvVars: []string{"SCRIPTLING_ALLOW_SCRIPT_EXECUTE"},
-								ValidateFlag: func(c *cli.Command) error {
-									mode := c.GetString("allow-script-execute")
-									if mode != "off" && mode != "safe" && mode != "full" {
-										return fmt.Errorf("invalid value for --allow-script-execute: %s", mode)
-									}
-									return nil
-								},
-							},
-						},
-						Run: mcpcli.RunMCPServe,
-					},
-				},
 			},
 		},
 		PreRun: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
@@ -125,7 +122,7 @@ func main() {
 				Format: logFormat,
 				Writer: os.Stdout,
 			})
-			mcpcli.Log = globalLogger
+			server.Log = globalLogger
 			return ctx, nil
 		},
 		Run: runScriptling,
@@ -139,38 +136,55 @@ func main() {
 }
 
 func runScriptling(ctx context.Context, cmd *cli.Command) error {
+	// Check if server mode is enabled
+	serverAddr := cmd.GetString("server")
+	if serverAddr != "" {
+		return runServer(ctx, cmd, serverAddr)
+	}
+
 	// Create Scriptling interpreter
 	p := scriptling.New()
 
 	// Set up all libraries
 	libdir := cmd.GetString("libdir")
-	mcpcli.SetupScriptling(p, libdir, true, false)
+	mcpcli.SetupScriptling(p, libdir, true, false, globalLogger)
 
 	file := cmd.GetStringArg("file")
 	interactive := cmd.GetBool("interactive")
 
 	// Set up sys.argv with all arguments
-	var argv []string
+	argv := []string{file}
 	if file != "" {
-		// When running a file, argv[0] is the script name, followed by remaining args
-		argv = append([]string{file}, cmd.GetArgs()...)
-	} else {
-		argv = []string{""}
+		argv = append(argv, cmd.GetArgs()...)
 	}
 	extlibs.RegisterSysLibrary(p, argv)
 
 	// Determine execution mode
 	if interactive {
 		return runInteractive(p)
-	} else if file != "" {
-		return runFile(p, file)
-	} else if !isStdinEmpty() {
-		return runStdin(p)
-	} else {
-		// No input provided, show help
-		cmd.ShowHelp()
-		return nil
 	}
+	if file != "" {
+		return runFile(p, file)
+	}
+	if !isStdinEmpty() {
+		return runStdin(p)
+	}
+	cmd.ShowHelp()
+	return nil
+}
+
+func runServer(ctx context.Context, cmd *cli.Command, address string) error {
+	return server.RunServer(ctx, server.ServerConfig{
+		Address:     address,
+		ScriptFile:  cmd.GetStringArg("file"),
+		LibDir:      cmd.GetString("libdir"),
+		BearerToken: cmd.GetString("bearer-token"),
+		ScriptMode:  cmd.GetString("script-mode"),
+		MCPToolsDir: cmd.GetString("mcp-tools"),
+		TLSCert:     cmd.GetString("tls-cert"),
+		TLSKey:      cmd.GetString("tls-key"),
+		TLSGenerate: cmd.GetBool("tls-generate"),
+	})
 }
 
 func runFile(p *scriptling.Scriptling, filename string) error {
@@ -178,13 +192,7 @@ func runFile(p *scriptling.Scriptling, filename string) error {
 	if err != nil {
 		return fmt.Errorf("failed to read file %s: %w", filename, err)
 	}
-
-	result, err := p.Eval(string(content))
-	// Check for SystemExit to exit with the appropriate code
-	if ex, ok := object.AsException(result); ok && ex.IsSystemExit() {
-		os.Exit(ex.GetExitCode())
-	}
-	return err
+	return evalAndCheckExit(p, string(content))
 }
 
 func runStdin(p *scriptling.Scriptling) error {
@@ -192,13 +200,7 @@ func runStdin(p *scriptling.Scriptling) error {
 	if err != nil {
 		return fmt.Errorf("failed to read from stdin: %w", err)
 	}
-
-	result, err := p.Eval(string(content))
-	// Check for SystemExit to exit with the appropriate code
-	if ex, ok := object.AsException(result); ok && ex.IsSystemExit() {
-		os.Exit(ex.GetExitCode())
-	}
-	return err
+	return evalAndCheckExit(p, string(content))
 }
 
 func runInteractive(p *scriptling.Scriptling) error {
@@ -236,6 +238,14 @@ func runInteractive(p *scriptling.Scriptling) error {
 	}
 
 	return nil
+}
+
+func evalAndCheckExit(p *scriptling.Scriptling, code string) error {
+	result, err := p.Eval(code)
+	if ex, ok := object.AsException(result); ok && ex.IsSystemExit() {
+		os.Exit(ex.GetExitCode())
+	}
+	return err
 }
 
 func isStdinEmpty() bool {
