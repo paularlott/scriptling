@@ -5,7 +5,7 @@ CLI_DIR = scriptling-cli
 BUILD_DATE = $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS = -ldflags="-s -w -X github.com/paularlott/scriptling/build.BuildDate=$(BUILD_DATE)"
 
-.PHONY: clean build build-all build-linux-amd64 build-linux-arm64 build-darwin-amd64 build-darwin-arm64 build-windows-amd64 build-windows-arm64 test install
+.PHONY: clean build build-all build-linux-amd64 build-linux-arm64 build-darwin-amd64 build-darwin-arm64 build-windows-amd64 build-windows-arm64 test release
 
 clean:
 	rm -rf $(BIN_DIR)
@@ -39,5 +39,14 @@ build-windows-arm64: $(BIN_DIR)
 test:
 	go test ./...
 
-install: build
-	cp $(BIN_DIR)/scriptling /usr/local/bin/scriptling
+release: build-all
+	# Check if tag exists
+	if git tag -l v$(shell go run ./tools/getversion) | grep -q v$(shell go run ./tools/getversion); then \
+		echo "Tag already exists, skipping tag creation"; \
+	else \
+		echo "Creating tag"; \
+		git tag -a v$(shell go run ./tools/getversion) -m "Release $(shell go run ./tools/getversion)"; \
+		git push origin v$(shell go run ./tools/getversion); \
+	fi
+	# Create release and upload all binaries
+	gh release create v$(shell go run ./tools/getversion) -t "Release $(shell go run ./tools/getversion)" -n "Scriptling $(shell go run ./tools/getversion)" $(BIN_DIR)/*
