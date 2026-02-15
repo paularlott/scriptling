@@ -3,10 +3,33 @@ package conversion
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
 )
+
+// ParseJSON parses a JSON string and returns a Scriptling object.
+// It uses UseNumber() to preserve large integers.
+func ParseJSON(jsonStr string) (object.Object, error) {
+	var result interface{}
+	decoder := json.NewDecoder(strings.NewReader(jsonStr))
+	decoder.UseNumber()
+	if err := decoder.Decode(&result); err != nil {
+		return nil, err
+	}
+	return FromGo(result), nil
+}
+
+// MustParseJSON parses a JSON string and returns a Scriptling object,
+// returning an Error object if parsing fails.
+func MustParseJSON(jsonStr string) object.Object {
+	result, err := ParseJSON(jsonStr)
+	if err != nil {
+		return errors.NewError("JSONDecodeError: %s", err.Error())
+	}
+	return result
+}
 
 // FromGo converts a Go interface{} value to a scriptling Object.
 // It handles primitive types (nil, bool, int, float, string), nested structures
@@ -42,6 +65,15 @@ func FromGo(v interface{}) object.Object {
 		return &object.Float{Value: float64(v)}
 	case float64:
 		return &object.Float{Value: v}
+	case json.Number:
+		// Try to parse as integer first, then fall back to float
+		if intVal, err := v.Int64(); err == nil {
+			return object.NewInteger(intVal)
+		}
+		if floatVal, err := v.Float64(); err == nil {
+			return &object.Float{Value: floatVal}
+		}
+		return &object.String{Value: string(v)}
 	case string:
 		return &object.String{Value: v}
 	case []interface{}:
