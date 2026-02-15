@@ -82,14 +82,9 @@ tasks:
     cmds:
       - go test ./...
 
-  install:
-    desc: Install CLI tool locally
-    deps: [build]
-    cmds:
-      - cp {{.BIN_DIR}}/scriptling /usr/local/bin/scriptling
-
   release:
-    desc: Tag the version and create GitHub release
+    desc: Tag the version and create GitHub release with all platform binaries
+    deps: [build-all]
     cmds:
       - |
         # Check if tag exists
@@ -100,4 +95,5 @@ tasks:
           git tag -a v{{.VERSION}} -m "Release {{.VERSION}}"
           git push origin v{{.VERSION}}
         fi
-        gh release create v{{.VERSION}} -t "Release {{.VERSION}}" -n "Scriptling {{.VERSION}}"
+        # Create release and upload all binaries
+        gh release create v{{.VERSION}} -t "Release {{.VERSION}}" -n "Scriptling {{.VERSION}}" {{.BIN_DIR}}/*
