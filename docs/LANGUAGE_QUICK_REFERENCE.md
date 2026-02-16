@@ -328,7 +328,7 @@ The `super()` function returns a proxy object that delegates method calls to a p
 
 - No nested classes
 - No multiple inheritance
-- HTTP response always returns `{"status": int, "body": string, "headers": dict}`
+- HTTP response is a Response object with `status_code`, `body`, `text`, `headers`, `url` fields
 - Default HTTP timeout: 5 seconds
 
 ## See Also

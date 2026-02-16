@@ -20,7 +20,6 @@ Scriptling is a dynamically-typed, interpreted language with Python-inspired syn
 While Scriptling is inspired by Python, it has some key differences:
 
 - **No Nested Classes**: Classes cannot be defined within other classes.
-- **Simplified Scope**: `nonlocal` and `global` keywords work slightly differently.
 - **Go Integration**: Designed primarily for embedding in Go, with direct type mapping.
 - **Sandboxed**: No direct access to filesystem or network unless explicitly enabled via libraries.
 
@@ -764,7 +763,7 @@ Combine error handling with cleanup:
 ```python
 try:
     response = requests.get(url, options)
-    data = json.loads(response["body"])
+    data = json.loads(response.body)
 except:
     print("Request failed")
     data = None
@@ -858,10 +857,10 @@ try:
     options = {"timeout": 5}
     response = requests.get("https://api.example.com/data", options)
 
-    if response["status"] != 200:
-        raise "HTTP error: " + str(response["status"])
+    if response.status_code != 200:
+        raise "HTTP error: " + str(response.status_code)
 
-    data = json.loads(response["body"])
+    data = json.loads(response.body)
     print("Success: " + str(len(data)))
 except:
     print("Request failed")
@@ -1303,19 +1302,21 @@ json_str = json.dumps(obj)    # '{"age":"25","name":"Bob"}'
 
 ### HTTP Functions
 
-All HTTP functions return a dictionary with:
+All HTTP functions return a Response object with:
 
-- `status`: HTTP status code (integer)
+- `status_code`: HTTP status code (integer)
 - `body`: Response body (string)
+- `text`: Response body (string, same as `body`)
 - `headers`: Dictionary of response headers
+- `url`: Request URL (string)
 
 #### GET Request
 
 ```python
 # Basic GET (default 5 second timeout)
 response = requests.get("https://api.example.com/users")
-status = response["status"]        # 200
-body = response["body"]            # Response body string
+status = response.status_code      # 200
+body = response.body               # Response body string
 data = json.loads(body)            # Parse JSON response
 
 # GET with options
@@ -1350,7 +1351,7 @@ options = {
 response = requests.post("https://api.example.com/users", body, options)
 
 # Check status
-if response["status"] == 201:
+if response.status_code == 201:
     print("Created successfully")
 ```
 
@@ -1404,8 +1405,8 @@ response = requests.patch("https://api.example.com/users/1", body, options)
 options = {"timeout": 10}
 response = requests.get("https://api.example.com/users/1", options)
 
-if response["status"] == 200:
-    user = json.loads(response["body"])
+if response.status_code == 200:
+    user = json.loads(response.body)
     print("User: " + user["name"])
 
     # Update user
@@ -1413,10 +1414,10 @@ if response["status"] == 200:
     body = json.dumps(user)
     update_resp = requests.put("https://api.example.com/users/1", body, options)
 
-    if update_resp["status"] == 200:
+    if update_resp.status_code == 200:
         print("Updated successfully")
     else:
-        print("Update failed: " + str(update_resp["status"]))
+        print("Update failed: " + str(update_resp.status_code))
 else:
     print("Failed to fetch user")
 
@@ -1581,7 +1582,6 @@ Scriptling intentionally does not support the following Python 3 features:
 - **`if __name__`**: Not applicable in embedded scripting context.
 - **Module `__all__`**: Export lists are not used.
 - **`__future__` imports**: Not applicable.
-- **`nonlocal` and `global`**: Supported but with simplified semantics compared to Python.
 
 ### Supported Python 3 Features
 
@@ -1623,12 +1623,12 @@ For clarity, Scriptling **does support**:
 ```python
 # Check HTTP status codes
 response = requests.get("https://api.example.com/data")
-if response["status"] != 200:
-    print("Error: " + str(response["status"]))
+if response.status_code != 200:
+    print("Error: " + str(response.status_code))
     return
 
 # Validate data before use
-data = json.loads(response["body"])
+data = json.loads(response.body)
 if data["count"] > 0:
     # Process data
 ```
@@ -1645,7 +1645,7 @@ response = requests.get("https://slow-api.com/data", 5)  # 5 second timeout
 ```python
 # Always parse JSON responses
 response = requests.get("https://api.example.com/users")
-users = json.loads(response["body"])
+users = json.loads(response.body)
 
 # Always stringify before sending
 payload = {"name": "Alice"}
