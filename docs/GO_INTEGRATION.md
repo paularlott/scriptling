@@ -573,8 +573,8 @@ url = api_base + "/users"
 options = {"timeout": timeout}
 response = requests.get(url, options)
 
-if response["status"] == 200:
-    users = json.loads(response["body"])
+if response.status_code == 200:
+    users = json.loads(response.body)
     print("Found " + str(len(users)) + " users")
 
     # Process each user
@@ -587,7 +587,7 @@ if response["status"] == 200:
 
     success = True
 else:
-    print("API call failed: " + str(response["status"]))
+    print("API call failed: " + str(response.status_code))
     processed_count = 0
     success = False
 
@@ -596,7 +596,7 @@ else:
     "success": success,
     "total_users": len(users) if "users" in locals() else 0,
     "processed_count": processed_count,
-    "api_status": response["status"]
+    "api_status": response.status_code
 }
 `
 
