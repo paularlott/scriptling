@@ -145,16 +145,10 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	// Create Scriptling interpreter
 	p := scriptling.New()
 
-	// Set up all libraries
+	// Set up all libraries and factories
 	libdir := cmd.GetString("libdir")
+	mcpcli.SetupFactories(libdir, false, globalLogger)
 	mcpcli.SetupScriptling(p, libdir, true, false, globalLogger)
-	
-	// Set factory for background tasks
-	extlibs.SetBackgroundFactory(func() interface{ LoadLibraryIntoEnv(string, *object.Environment) error } {
-		newP := scriptling.New()
-		mcpcli.SetupScriptling(newP, libdir, true, false, globalLogger)
-		return newP
-	})
 
 	file := cmd.GetStringArg("file")
 	interactive := cmd.GetBool("interactive")

@@ -109,14 +109,15 @@ These are scriptling-specific libraries that provide functionality not available
 
 ## Runtime Library
 
-The runtime library provides HTTP server functionality, key-value store, and concurrency primitives. It uses the `scriptling.` namespace prefix.
+The runtime library provides HTTP server functionality, key-value store, concurrency primitives, and sandboxed execution. It uses the `scriptling.` namespace prefix.
 
-| Import                    | Description                                    | Details                                                                  |
-| ------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------ |
-| `scriptling.runtime`      | Background tasks and async execution           | [libraries/scriptling/runtime.md](libraries/scriptling/runtime.md)       |
-| `scriptling.runtime.http` | HTTP route registration and response helpers   | [libraries/scriptling/runtime-http.md](libraries/scriptling/runtime-http.md) |
-| `scriptling.runtime.kv`   | Thread-safe key-value store                    | [libraries/scriptling/runtime-kv.md](libraries/scriptling/runtime-kv.md) |
-| `scriptling.runtime.sync` | Named cross-environment concurrency primitives | [libraries/scriptling/runtime-sync.md](libraries/scriptling/runtime-sync.md) |
+| Import                       | Description                                    | Details                                                                  |
+| ---------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------ |
+| `scriptling.runtime`         | Background tasks and async execution           | [libraries/scriptling/runtime.md](libraries/scriptling/runtime.md)       |
+| `scriptling.runtime.http`    | HTTP route registration and response helpers   | [libraries/scriptling/runtime-http.md](libraries/scriptling/runtime-http.md) |
+| `scriptling.runtime.kv`      | Thread-safe key-value store                    | [libraries/scriptling/runtime-kv.md](libraries/scriptling/runtime-kv.md) |
+| `scriptling.runtime.sync`    | Named cross-environment concurrency primitives | [libraries/scriptling/runtime-sync.md](libraries/scriptling/runtime-sync.md) |
+| `scriptling.runtime.sandbox` | Isolated script execution environments         | [libraries/scriptling/sandbox.md](libraries/scriptling/sandbox.md) |
 
 ## Extended Libraries
 

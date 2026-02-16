@@ -101,6 +101,9 @@ func NewServer(config ServerConfig) (*Server, error) {
 	// Reset routes from previous runs
 	extlibs.ResetRuntime()
 
+	// Set up the sandbox/background factory once
+	mcpcli.SetupFactories(config.LibDir, config.ScriptMode == "safe", Log)
+
 	// Run setup script if provided
 	if config.ScriptFile != "" {
 		if err := s.runSetupScript(); err != nil {
@@ -134,27 +137,11 @@ func (s *Server) runSetupScript() error {
 
 	// Create scriptling instance for setup
 	p := scriptling.New()
-	setupScriptling(p, s.config.LibDir, s.config.ScriptMode == "safe")
+	mcpcli.SetupScriptling(p, s.config.LibDir, false, s.config.ScriptMode == "safe", Log)
 
 	// Execute setup script
 	_, err = p.Eval(string(content))
 	return err
-}
-
-// setupScriptling configures a Scriptling instance with libraries
-func setupScriptling(p *scriptling.Scriptling, libDir string, safeMode bool) {
-	// Register the Runtime library for route registration, KV, and background tasks
-	extlibs.RegisterRuntimeLibraryAll(p)
-
-	// Also set up the standard libraries
-	mcpcli.SetupScriptling(p, libDir, false, safeMode, Log)
-
-	// Set factory for background tasks
-	extlibs.SetBackgroundFactory(func() interface{ LoadLibraryIntoEnv(string, *object.Environment) error } {
-		newP := scriptling.New()
-		mcpcli.SetupScriptling(newP, libDir, false, safeMode, Log)
-		return newP
-	})
 }
 
 // setupMCP initializes the MCP server if configured
@@ -457,7 +444,7 @@ func (s *Server) runHandler(handlerRef string, reqObj *object.Instance) *object.
 
 	// Create fresh scriptling environment
 	p := scriptling.New()
-	setupScriptling(p, s.config.LibDir, s.config.ScriptMode == "safe")
+	mcpcli.SetupScriptling(p, s.config.LibDir, false, s.config.ScriptMode == "safe", Log)
 
 	// Import the library
 	if err := p.Import(libName); err != nil {
@@ -708,7 +695,7 @@ func createMCPToolHandler(scriptPath string, libDir string, safeMode bool) func(
 		}
 
 		p := scriptling.New()
-		setupScriptling(p, libDir, safeMode)
+		mcpcli.SetupScriptling(p, libDir, false, safeMode, Log)
 
 		params := req.Args()
 		response, exitCode, err := scriptlingmcp.RunToolScript(ctx, p, string(script), params)
