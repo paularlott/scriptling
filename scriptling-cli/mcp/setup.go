@@ -13,7 +13,7 @@ import (
 	"github.com/paularlott/scriptling/stdlib"
 )
 
-// SetupScriptling configures a Scriptling instance with libraries.
+// SetupScriptling configures a Scriptling instance with all libraries.
 // libdir: Optional directory for on-demand library loading (empty = current directory)
 // registerInteract: Whether to register the agent interact library
 // safeMode: If true, only register safe libraries (no file/network/subprocess access)
@@ -70,4 +70,17 @@ func SetupScriptling(p *scriptling.Scriptling, libdir string, registerInteract b
 		}
 		return false
 	})
+}
+
+// SetupFactories configures the global sandbox and background factories.
+// Call this once at startup, before any scripts execute.
+// The factories create new Scriptling instances with the same library configuration.
+func SetupFactories(libdir string, safeMode bool, log logger.Logger) {
+	factory := func() extlibs.SandboxInstance {
+		p := scriptling.New()
+		SetupScriptling(p, libdir, false, safeMode, log)
+		return p
+	}
+	extlibs.SetSandboxFactory(factory)
+	extlibs.SetBackgroundFactory(factory)
 }

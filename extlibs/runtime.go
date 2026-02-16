@@ -27,9 +27,7 @@ var RuntimeState = struct {
 	BackgroundKwargs  map[string]map[string]object.Object // name -> kwargs
 	BackgroundEnvs    map[string]*object.Environment      // name -> environment
 	BackgroundEvals   map[string]evaliface.Evaluator      // name -> evaluator
-	BackgroundFactory func() interface {
-		LoadLibraryIntoEnv(string, *object.Environment) error
-	} // Factory to create new Scriptling instances
+	BackgroundFactory SandboxFactory // Factory to create new Scriptling instances
 	BackgroundCtxs  map[string]context.Context // name -> context
 	BackgroundReady bool                       // If true, start tasks immediately
 
@@ -118,10 +116,9 @@ func getEnvFromContext(ctx context.Context) *object.Environment {
 	return object.NewEnvironment()
 }
 
-// SetBackgroundFactory sets the factory function for creating Scriptling instances in background tasks
-func SetBackgroundFactory(factory func() interface {
-	LoadLibraryIntoEnv(string, *object.Environment) error
-}) {
+// SetBackgroundFactory sets the factory function for creating Scriptling instances in background tasks.
+// Deprecated: Use SetSandboxFactory instead, which sets the factory for both sandbox and background use.
+func SetBackgroundFactory(factory SandboxFactory) {
 	RuntimeState.Lock()
 	RuntimeState.BackgroundFactory = factory
 	RuntimeState.Unlock()
@@ -133,7 +130,7 @@ func RegisterRuntimeLibrary(registrar interface{ RegisterLibrary(*object.Library
 	registrar.RegisterLibrary(RuntimeLibraryCore)
 }
 
-// RegisterRuntimeLibraryAll registers the runtime library with all sub-libraries (http, kv, sync).
+// RegisterRuntimeLibraryAll registers the runtime library with all sub-libraries (http, kv, sync, sandbox).
 func RegisterRuntimeLibraryAll(registrar interface{ RegisterLibrary(*object.Library) }) {
 	registrar.RegisterLibrary(RuntimeLibraryWithSubs)
 }
@@ -148,6 +145,10 @@ func RegisterRuntimeKVLibrary(registrar interface{ RegisterLibrary(*object.Libra
 
 func RegisterRuntimeSyncLibrary(registrar interface{ RegisterLibrary(*object.Library) }) {
 	registrar.RegisterLibrary(SyncSubLibrary)
+}
+
+func RegisterRuntimeSandboxLibrary(registrar interface{ RegisterLibrary(*object.Library) }) {
+	registrar.RegisterLibrary(SandboxSubLibrary)
 }
 
 // RuntimeLibraryFunctions contains the core runtime functions (background)
@@ -221,20 +222,19 @@ Example:
 // RuntimeLibraryCore is the runtime library without sub-libraries
 var RuntimeLibraryCore = object.NewLibrary(RuntimeLibraryName, RuntimeLibraryFunctions, nil, "Runtime library for background tasks")
 
-// RuntimeLibraryWithSubs is the runtime library with all sub-libraries (http, kv, sync)
+// RuntimeLibraryWithSubs is the runtime library with all sub-libraries (http, kv, sync, sandbox)
 var RuntimeLibraryWithSubs = object.NewLibraryWithSubs(RuntimeLibraryName, RuntimeLibraryFunctions, nil, map[string]*object.Library{
-	"http": HTTPSubLibrary,
-	"kv":   KVSubLibrary,
-	"sync": SyncSubLibrary,
-}, "Runtime library for HTTP, KV store, and concurrency primitives")
+	"http":    HTTPSubLibrary,
+	"kv":      KVSubLibrary,
+	"sync":    SyncSubLibrary,
+	"sandbox": SandboxSubLibrary,
+}, "Runtime library for HTTP, KV store, concurrency primitives, and sandboxed execution")
 
 // RuntimeLibrary is an alias for RuntimeLibraryWithSubs for backward compatibility
 var RuntimeLibrary = RuntimeLibraryWithSubs
 
 // startBackgroundTask starts a single background task with its own isolated Scriptling instance
-func startBackgroundTask(name, handler string, fnArgs []object.Object, fnKwargs map[string]object.Object, env *object.Environment, eval evaliface.Evaluator, factory func() interface {
-	LoadLibraryIntoEnv(string, *object.Environment) error
-}, ctx context.Context) object.Object {
+func startBackgroundTask(name, handler string, fnArgs []object.Object, fnKwargs map[string]object.Object, env *object.Environment, eval evaliface.Evaluator, factory SandboxFactory, ctx context.Context) object.Object {
 	if env == nil || eval == nil {
 		return &object.Null{}
 	}
