@@ -5,9 +5,9 @@ go 1.26.0
 require (
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/google/uuid v1.6.0
-	github.com/paularlott/cli v0.7.2
+	github.com/paularlott/cli v0.7.3
 	github.com/paularlott/logger v0.3.0
-	github.com/paularlott/mcp v0.12.3
+	github.com/paularlott/mcp v0.12.5
 	github.com/shirou/gopsutil/v3 v3.24.5
 	golang.org/x/net v0.50.0
 	golang.org/x/text v0.34.0
@@ -17,7 +17,7 @@ require (
 require (
 	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
-	github.com/lufia/plan9stats v0.0.0-20251013123823-9fd1530e3ec3 // indirect
+	github.com/lufia/plan9stats v0.0.0-20260216142805-b3301c5f2a88 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
 	github.com/shoenig/go-m1cpu v0.1.7 // indirect
 	github.com/tklauser/go-sysconf v0.3.16 // indirect

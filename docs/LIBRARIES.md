@@ -106,6 +106,7 @@ These are scriptling-specific libraries that provide functionality not available
 | `scriptling.mcp.tool` | MCP tool parameter access and result functions          | [libraries/scriptling/mcp.md](libraries/scriptling/mcp.md)         |
 | `scriptling.toon`     | TOON (Token-Oriented Object Notation) encoding/decoding | [libraries/scriptling/toon.md](libraries/scriptling/toon.md)       |
 | `scriptling.console`  | Console input/output functions                          | [libraries/scriptling/console.md](libraries/scriptling/console.md) |
+| `scriptling.fuzzy`    | Fuzzy string matching and search utilities              | [libraries/scriptling/fuzzy.md](libraries/scriptling/fuzzy.md)     |
 
 ## Runtime Library
 
