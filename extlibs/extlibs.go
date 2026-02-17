@@ -20,4 +20,5 @@ const (
 	YAMLLibraryName       = "yaml"
 	AgentLibraryName      = "scriptling.ai.agent"
 	InteractLibraryName   = "scriptling.ai.agent.interact"
+	FuzzyLibraryName      = "scriptling.fuzzy"
 )
