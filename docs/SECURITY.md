@@ -160,18 +160,6 @@ stdlib.RegisterAll(p)
 extlibs.RegisterRequestsLibrary(p)
 ```
 
-### URL Whitelisting (Recommended)
-
-For production, consider implementing URL filtering:
-
-```go
-// Example: Custom requests wrapper with URL filtering
-func registerSafeRequests(p *scriptling.Program) {
-    // You would need to implement this wrapper
-    // to filter allowed domains/URLs
-}
-```
-
 ## Resource Limits
 
 ### Execution Timeout
