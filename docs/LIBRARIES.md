@@ -138,6 +138,7 @@ These libraries provide Python-compatible functionality and require explicit reg
 | `logging`     | Logging functionality                | [libraries/extlib/logging.md](libraries/extlib/logging.md)         |
 | `wait_for`    | Wait for resources to become avail   | [libraries/extlib/wait_for.md](libraries/extlib/wait_for.md)       |
 | `yaml`        | YAML parsing and generation          | [libraries/extlib/yaml.md](libraries/extlib/yaml.md)               |
+| `toml`        | TOML parsing and generation          | [libraries/extlib/toml.md](libraries/extlib/toml.md)               |
 
 ## Usage Example
 

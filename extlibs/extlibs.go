@@ -21,4 +21,5 @@ const (
 	AgentLibraryName      = "scriptling.ai.agent"
 	InteractLibraryName   = "scriptling.ai.agent.interact"
 	FuzzyLibraryName      = "scriptling.fuzzy"
+	TOMLLibraryName       = "toml"
 )
