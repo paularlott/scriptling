@@ -28,11 +28,22 @@ scriptling --interactive
 scriptling -i
 ```
 
-### Custom library directory
+### Command Line Options
 
-```bash
-scriptling --libdir ./mylibs script.py
-```
+| Flag | Environment Variable | Description | Default |
+|------|---------------------|-------------|---------|
+| `-i`, `--interactive` | - | Start interactive mode | false |
+| `--libdir` | `SCRIPTLING_LIBDIR` | Directory to load libraries from | (current dir) |
+| `--log-level` | `SCRIPTLING_LOG_LEVEL` | Log level (trace/debug/info/warn/error) | info |
+| `--log-format` | `SCRIPTLING_LOG_FORMAT` | Log format (console/json) | console |
+| `-S`, `--server` | `SCRIPTLING_SERVER` | HTTP server address (host:port) | (disabled) |
+| `--mcp-tools` | `SCRIPTLING_MCP_TOOLS` | Directory containing MCP tools | (disabled) |
+| `--bearer-token` | `SCRIPTLING_BEARER_TOKEN` | Bearer token for authentication | none |
+| `--script-mode` | `SCRIPTLING_SCRIPT_MODE` | Script mode: safe or full | full |
+| `--allowed-paths` | `SCRIPTLING_ALLOWED_PATHS` | Comma-separated allowed filesystem paths | (no restriction) |
+| `--tls-cert` | `SCRIPTLING_TLS_CERT` | TLS certificate file | none |
+| `--tls-key` | `SCRIPTLING_TLS_KEY` | TLS key file | none |
+| `--tls-generate` | - | Generate self-signed certificate | false |
 
 ### Environment Configuration
 
@@ -48,12 +59,87 @@ SCRIPTLING_LOG_FORMAT=console
 # Library directory
 SCRIPTLING_LIBDIR=./mylibs
 
-# MCP Server configuration
-SCRIPTLING_MCP_ADDRESS=127.0.0.1:8000
+# Server configuration
+SCRIPTLING_SERVER=:8000
 SCRIPTLING_MCP_TOOLS=./tools
-SCRIPTLING_MCP_BEARER_TOKEN=your-secret-token
-SCRIPTLING_ALLOW_SCRIPT_EXECUTE=safe
+SCRIPTLING_BEARER_TOKEN=your-secret-token
+SCRIPTLING_SCRIPT_MODE=full
+
+# Filesystem restrictions
+SCRIPTLING_ALLOWED_PATHS=/tmp/data,./uploads
 ```
+
+### Script Execution Modes
+
+Scriptling supports three levels of filesystem access control:
+
+| Mode | Flag | Filesystem Access | Path Restrictions |
+|------|------|-------------------|-------------------|
+| **Full** | `--script-mode full` (default) | All libraries | None |
+| **Restricted** | `--allowed-paths /path1,/path2` | All libraries | Only specified paths |
+| **Safe** | `--script-mode safe` | No filesystem libraries | N/A |
+
+#### Full Mode (default)
+
+All libraries available, no restrictions:
+
+```bash
+scriptling script.py
+```
+
+#### Restricted Mode
+
+All libraries available, but filesystem operations restricted to specified paths:
+
+```bash
+# Restrict to specific directories
+scriptling --allowed-paths "/tmp/data,./uploads" script.py
+
+# With relative paths
+scriptling --allowed-paths "./data,../shared" script.py
+
+# Via environment variable
+SCRIPTLING_ALLOWED_PATHS="/var/www,./public" scriptling script.py
+```
+
+When a script tries to access a path outside the allowed directories:
+
+```python
+import os
+# This will raise an error if /etc/passwd is not in allowed paths
+try:
+    content = os.read_file("/etc/passwd")
+except Exception as e:
+    print(f"Access denied: {e}")
+    # Output: Access denied: access denied: path '/etc/passwd' is outside allowed directories
+```
+
+#### Safe Mode
+
+Only safe libraries available (no filesystem, subprocess, or network access libraries):
+
+```bash
+scriptling --script-mode safe script.py
+```
+
+**Safe mode libraries include:**
+
+- Standard libraries: `json`, `math`, `random`, `re`, `time`, `base64`, `hashlib`, `urllib`
+- `datetime` - Date and time operations
+- `yaml` - YAML parsing
+- `html.parser` - HTML parsing
+- `requests` - HTTP client
+- `os` - Environment variables access only
+- `secrets` - Cryptographic random number generation
+- `scriptling.kv` - Key-value store
+- AI, agent, and MCP libraries
+
+**Full mode additionally includes:**
+
+- `subprocess` - Process execution
+- `pathlib`, `glob` - File system access
+- `threads` - Multi-threading
+- `wait_for` - Process monitoring
 
 ### Accessing Environment Variables in Scripts
 
@@ -89,24 +175,12 @@ scriptling --server :8000 --mcp-tools ./tools setup.py
 # With authentication
 scriptling --server :8000 --bearer-token my-secret-token setup.py
 
-# Safe mode (sandboxed - no file/network/subprocess access)
+# With filesystem restrictions
+scriptling --server :8000 --allowed-paths "/var/www,./uploads" setup.py
+
+# Safe mode (no filesystem access)
 scriptling --server :8000 --script-mode safe setup.py
-
-# Full access mode
-scriptling --server :8000 --script-mode full setup.py
 ```
-
-**Server Flags:**
-
-| Flag | Description | Default |
-|------|-------------|---------|
-| `--server`, `-S` | Server address (host:port) | (disabled) |
-| `--mcp-tools` | Directory containing MCP tools | (disabled) |
-| `--bearer-token` | Bearer token for authentication | none |
-| `--script-mode` | Script execution mode: safe or full | full |
-| `--tls-cert` | TLS certificate file | none |
-| `--tls-key` | TLS key file | none |
-| `--tls-generate` | Generate self-signed certificate | false |
 
 #### MCP Tools
 
@@ -267,32 +341,6 @@ curl -X POST http://127.0.0.1:8000/mcp \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"execute_tool","arguments":{"name":"add","arguments":{"a":5,"b":3}}}}'
 ```
-
-#### Script Execution Mode
-
-The server supports two script execution modes:
-
-- `--script-mode safe`: Sandboxed execution - only safe libraries available (no file/network/subprocess access)
-- `--script-mode full`: Full access - all libraries available including file I/O, network, and subprocess
-
-**Safe mode libraries include:**
-
-- Standard libraries: `json`, `math`, `random`, `re`, `time`, `base64`, `hashlib`, `urllib`
-- `datetime` - Date and time operations
-- `yaml` - YAML parsing
-- `html.parser` - HTML parsing
-- `requests` - HTTP client
-- `os` - Environment variables access
-- `secrets` - Cryptographic random number generation
-- `scriptling.kv` - Key-value store
-- AI, agent, and MCP libraries
-
-**Full mode additionally includes:**
-
-- `subprocess` - Process execution
-- `pathlib`, `glob` - File system access
-- `threads` - Multi-threading
-- `wait_for` - Process monitoring
 
 ### Help
 

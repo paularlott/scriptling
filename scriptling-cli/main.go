@@ -92,6 +92,12 @@ func main() {
 				},
 			},
 			&cli.StringFlag{
+				Name:         "allowed-paths",
+				Usage:        "Comma-separated list of allowed filesystem paths (restricts os, pathlib, glob, sandbox)",
+				DefaultValue: "",
+				EnvVars:      []string{"SCRIPTLING_ALLOWED_PATHS"},
+			},
+			&cli.StringFlag{
 				Name:    "tls-cert",
 				Usage:   "TLS certificate file",
 				EnvVars: []string{"SCRIPTLING_TLS_CERT"},
@@ -142,13 +148,17 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 		return runServer(ctx, cmd, serverAddr)
 	}
 
+	// Parse allowed paths
+	allowedPaths := parseAllowedPaths(cmd.GetString("allowed-paths"))
+
 	// Create Scriptling interpreter
 	p := scriptling.New()
 
 	// Set up all libraries and factories
 	libdir := cmd.GetString("libdir")
-	mcpcli.SetupFactories(libdir, false, globalLogger)
-	mcpcli.SetupScriptling(p, libdir, true, false, globalLogger)
+	safeMode := cmd.GetString("script-mode") == "safe"
+	mcpcli.SetupFactories(libdir, safeMode, allowedPaths, globalLogger)
+	mcpcli.SetupScriptling(p, libdir, true, safeMode, allowedPaths, globalLogger)
 
 	file := cmd.GetStringArg("file")
 	interactive := cmd.GetBool("interactive")
@@ -179,16 +189,35 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 
 func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 	return server.RunServer(ctx, server.ServerConfig{
-		Address:     address,
-		ScriptFile:  cmd.GetStringArg("file"),
-		LibDir:      cmd.GetString("libdir"),
-		BearerToken: cmd.GetString("bearer-token"),
-		ScriptMode:  cmd.GetString("script-mode"),
-		MCPToolsDir: cmd.GetString("mcp-tools"),
-		TLSCert:     cmd.GetString("tls-cert"),
-		TLSKey:      cmd.GetString("tls-key"),
-		TLSGenerate: cmd.GetBool("tls-generate"),
+		Address:      address,
+		ScriptFile:   cmd.GetStringArg("file"),
+		LibDir:       cmd.GetString("libdir"),
+		BearerToken:  cmd.GetString("bearer-token"),
+		ScriptMode:   cmd.GetString("script-mode"),
+		AllowedPaths: parseAllowedPaths(cmd.GetString("allowed-paths")),
+		MCPToolsDir:  cmd.GetString("mcp-tools"),
+		TLSCert:      cmd.GetString("tls-cert"),
+		TLSKey:       cmd.GetString("tls-key"),
+		TLSGenerate:  cmd.GetBool("tls-generate"),
 	})
+}
+
+// parseAllowedPaths parses a comma-separated list of paths into a slice
+func parseAllowedPaths(paths string) []string {
+	if paths == "" {
+		return nil
+	}
+	result := []string{}
+	for _, p := range strings.Split(paths, ",") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 func runFile(p *scriptling.Scriptling, filename string) error {

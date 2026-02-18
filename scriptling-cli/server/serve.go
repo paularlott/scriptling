@@ -42,15 +42,16 @@ func toOSSignals(sigs []syscall.Signal) []os.Signal {
 
 // ServerConfig holds the configuration for the HTTP server
 type ServerConfig struct {
-	Address     string
-	ScriptFile  string
-	LibDir      string
-	BearerToken string
-	ScriptMode  string // "safe" or "full"
-	MCPToolsDir string // Empty means MCP disabled
-	TLSCert     string
-	TLSKey      string
-	TLSGenerate bool
+	Address      string
+	ScriptFile   string
+	LibDir       string
+	BearerToken  string
+	ScriptMode   string   // "safe" or "full"
+	AllowedPaths []string // Filesystem path restrictions (empty = no restrictions)
+	MCPToolsDir  string   // Empty means MCP disabled
+	TLSCert      string
+	TLSKey       string
+	TLSGenerate  bool
 }
 
 // scriptHandler holds the handler function reference
@@ -102,7 +103,7 @@ func NewServer(config ServerConfig) (*Server, error) {
 	extlibs.ResetRuntime()
 
 	// Set up the sandbox/background factory once
-	mcpcli.SetupFactories(config.LibDir, config.ScriptMode == "safe", Log)
+	mcpcli.SetupFactories(config.LibDir, config.ScriptMode == "safe", config.AllowedPaths, Log)
 
 	// Run setup script if provided
 	if config.ScriptFile != "" {
@@ -137,7 +138,7 @@ func (s *Server) runSetupScript() error {
 
 	// Create scriptling instance for setup
 	p := scriptling.New()
-	mcpcli.SetupScriptling(p, s.config.LibDir, false, s.config.ScriptMode == "safe", Log)
+	mcpcli.SetupScriptling(p, s.config.LibDir, false, s.config.ScriptMode == "safe", s.config.AllowedPaths, Log)
 
 	// Execute setup script
 	_, err = p.Eval(string(content))
@@ -192,7 +193,7 @@ func (s *Server) createMCPServer(safeMode bool) (*mcp_lib.Server, error) {
 	for toolName, meta := range tools {
 		scriptPath := filepath.Join(s.config.MCPToolsDir, toolName+".py")
 		tool := toolmetadata.BuildMCPTool(toolName, meta)
-		handler := createMCPToolHandler(scriptPath, s.config.LibDir, safeMode)
+		handler := createMCPToolHandler(scriptPath, s.config.LibDir, safeMode, s.config.AllowedPaths)
 		server.RegisterTool(tool, handler)
 
 		mode := "native"
@@ -444,7 +445,7 @@ func (s *Server) runHandler(handlerRef string, reqObj *object.Instance) *object.
 
 	// Create fresh scriptling environment
 	p := scriptling.New()
-	mcpcli.SetupScriptling(p, s.config.LibDir, false, s.config.ScriptMode == "safe", Log)
+	mcpcli.SetupScriptling(p, s.config.LibDir, false, s.config.ScriptMode == "safe", s.config.AllowedPaths, Log)
 
 	// Import the library
 	if err := p.Import(libName); err != nil {
@@ -687,7 +688,7 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 }
 
 // createMCPToolHandler creates a handler function for an MCP tool
-func createMCPToolHandler(scriptPath string, libDir string, safeMode bool) func(context.Context, *mcp_lib.ToolRequest) (*mcp_lib.ToolResponse, error) {
+func createMCPToolHandler(scriptPath string, libDir string, safeMode bool, allowedPaths []string) func(context.Context, *mcp_lib.ToolRequest) (*mcp_lib.ToolResponse, error) {
 	return func(ctx context.Context, req *mcp_lib.ToolRequest) (*mcp_lib.ToolResponse, error) {
 		script, err := os.ReadFile(scriptPath)
 		if err != nil {
@@ -695,7 +696,7 @@ func createMCPToolHandler(scriptPath string, libDir string, safeMode bool) func(
 		}
 
 		p := scriptling.New()
-		mcpcli.SetupScriptling(p, libDir, false, safeMode, Log)
+		mcpcli.SetupScriptling(p, libDir, false, safeMode, allowedPaths, Log)
 
 		params := req.Args()
 		response, exitCode, err := scriptlingmcp.RunToolScript(ctx, p, string(script), params)
