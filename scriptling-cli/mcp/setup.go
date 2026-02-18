@@ -27,6 +27,9 @@ func SetupScriptling(p *scriptling.Scriptling, libdir string, registerInteract b
 	// Register YAML (safe - pure parsing)
 	p.RegisterLibrary(extlibs.YAMLLibrary)
 
+	// Register TOML (safe - pure parsing)
+	p.RegisterLibrary(extlibs.TOMLLibrary)
+
 	// Register HTML parser (safe - no external access)
 	extlibs.RegisterHTMLParserLibrary(p)
 	extlibs.RegisterRequestsLibrary(p)
