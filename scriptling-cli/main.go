@@ -14,6 +14,7 @@ import (
 	logslog "github.com/paularlott/logger/slog"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/lint"
 	"github.com/paularlott/scriptling/object"
 
 	mcpcli "github.com/paularlott/scriptling/scriptling-cli/mcp"
@@ -111,6 +112,17 @@ func main() {
 				Name:  "tls-generate",
 				Usage: "Generate self-signed certificate in memory",
 			},
+			&cli.BoolFlag{
+				Name:    "lint",
+				Usage:   "Lint script files without executing them",
+				Aliases: []string{"l"},
+			},
+			&cli.StringFlag{
+				Name:         "lint-format",
+				Usage:        "Output format for lint results (text|json)",
+				DefaultValue: "text",
+				EnvVars:      []string{"SCRIPTLING_LINT_FORMAT"},
+			},
 		},
 		MaxArgs: cli.UnlimitedArgs,
 		Arguments: []cli.Argument{
@@ -146,6 +158,11 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	serverAddr := cmd.GetString("server")
 	if serverAddr != "" {
 		return runServer(ctx, cmd, serverAddr)
+	}
+
+	// Check if lint mode is enabled
+	if cmd.GetBool("lint") {
+		return runLint(cmd)
 	}
 
 	// Parse allowed paths
@@ -287,4 +304,94 @@ func isStdinEmpty() bool {
 		return true
 	}
 	return (stat.Mode() & os.ModeCharDevice) != 0
+}
+
+func runLint(cmd *cli.Command) error {
+	format := cmd.GetString("lint-format")
+	if format != "text" && format != "json" {
+		return fmt.Errorf("invalid value for --lint-format: %s (must be 'text' or 'json')", format)
+	}
+
+	file := cmd.GetStringArg("file")
+
+	// Lint from file
+	if file != "" {
+		result, err := lint.LintFile(file)
+		if err != nil {
+			return err
+		}
+		return outputLintResult(result, format)
+	}
+
+	// Lint from stdin
+	if !isStdinEmpty() {
+		content, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return fmt.Errorf("failed to read from stdin: %w", err)
+		}
+		result := lint.Lint(string(content), &lint.Options{Filename: "stdin"})
+		return outputLintResult(result, format)
+	}
+
+	cmd.ShowHelp()
+	return nil
+}
+
+func outputLintResult(result *lint.Result, format string) error {
+	if format == "json" {
+		output, err := formatLintJSON(result)
+		if err != nil {
+			return fmt.Errorf("failed to format JSON output: %w", err)
+		}
+		fmt.Println(output)
+	} else {
+		if result.HasIssues() {
+			fmt.Println(result.String())
+		} else {
+			fmt.Println("No issues found")
+		}
+	}
+
+	// Exit with error code if there are errors
+	if result.HasErrors {
+		os.Exit(1)
+	}
+	return nil
+}
+
+func formatLintJSON(result *lint.Result) (string, error) {
+	// Simple JSON formatting without external dependencies
+	var sb strings.Builder
+	sb.WriteString("{\n")
+	fmt.Fprintf(&sb, "  \"files_checked\": %d,\n", result.FilesChecked)
+	fmt.Fprintf(&sb, "  \"has_errors\": %t,\n", result.HasErrors)
+	sb.WriteString("  \"errors\": [")
+
+	if len(result.Errors) > 0 {
+		sb.WriteString("\n")
+		for i, err := range result.Errors {
+			sb.WriteString("    {\n")
+			if err.File != "" {
+				fmt.Fprintf(&sb, "      \"file\": %q,\n", err.File)
+			}
+			fmt.Fprintf(&sb, "      \"line\": %d,\n", err.Line)
+			if err.Column > 0 {
+				fmt.Fprintf(&sb, "      \"column\": %d,\n", err.Column)
+			}
+			fmt.Fprintf(&sb, "      \"message\": %q,\n", err.Message)
+			fmt.Fprintf(&sb, "      \"severity\": %q", err.Severity)
+			if err.Code != "" {
+				fmt.Fprintf(&sb, ",\n      \"code\": %q", err.Code)
+			}
+			sb.WriteString("\n    }")
+			if i < len(result.Errors)-1 {
+				sb.WriteString(",")
+			}
+			sb.WriteString("\n")
+		}
+		sb.WriteString("  ")
+	}
+	sb.WriteString("]\n")
+	sb.WriteString("}")
+	return sb.String(), nil
 }

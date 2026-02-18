@@ -16,13 +16,15 @@ A minimal, sandboxed interpreter for LLM agents to execute code and interact wit
 - **Control flow**: if/elif/else, while, for loops, break, continue
 - **Object-oriented**: Classes with single inheritance, methods, and constructors
 - **Advanced features**: functions, lambda, list comprehensions, error handling
-- **Implicit string concatenation**: `"hello " "world"` → `"hello world"` (including with f-strings)
-- **isinstance()**: Supports bare types (`isinstance(x, dict)`) and string type names
-- **Cross-type equality**: `==`/`!=` work across types (e.g., `5 != "hello"` → `True`)
-- **Error reporting**: Errors include file name and line number when available
 - **Libraries**: including json, regex, math, time, requests, subprocess (load on demand)
 - **Go integration**: Register functions, exchange variables
 - **Fast**: Lightweight interpreter, only loads what you need
+- **Sandboxed**: No filesystem or network access unless enabled via libraries
+- **MCP support**: Model Context Protocol for LLM integration
+- **CLI tool**: Run scripts, start HTTP server with MCP support
+- **Extensible**: Create custom functions, libraries, and classes in Go or Scriptling
+- **Linter**: Built-in linter for syntax checks
+- **OpenAPI support**: Generate Scriptling client libraries from OpenAPI specs with o2s tool
 
 ## Differences from Python
 

@@ -28,11 +28,52 @@ scriptling --interactive
 scriptling -i
 ```
 
+### Lint mode
+
+Lint scripts for syntax errors without executing them:
+
+```bash
+# Lint a file
+scriptling --lint script.py
+
+# Lint from stdin
+echo 'x = 1 +' | scriptling --lint
+
+# JSON output format
+scriptling --lint --lint-format json script.py
+```
+
+**Output format (text):**
+```
+script.py:3: expected token COLON (error)
+```
+
+**Output format (JSON):**
+```json
+{
+  "files_checked": 1,
+  "has_errors": true,
+  "errors": [
+    {
+      "file": "script.py",
+      "line": 3,
+      "message": "expected token COLON",
+      "severity": "error",
+      "code": "parse-error"
+    }
+  ]
+}
+```
+
+The linter exits with code 0 if no errors are found, and code 1 if any errors exist.
+
 ### Command Line Options
 
 | Flag | Environment Variable | Description | Default |
 |------|---------------------|-------------|---------|
 | `-i`, `--interactive` | - | Start interactive mode | false |
+| `-l`, `--lint` | - | Lint script files without executing | false |
+| `--lint-format` | `SCRIPTLING_LINT_FORMAT` | Output format for lint (text/json) | text |
 | `--libdir` | `SCRIPTLING_LIBDIR` | Directory to load libraries from | (current dir) |
 | `--log-level` | `SCRIPTLING_LOG_LEVEL` | Log level (trace/debug/info/warn/error) | info |
 | `--log-format` | `SCRIPTLING_LOG_FORMAT` | Log format (console/json) | console |
@@ -382,6 +423,7 @@ task install
 - **File execution**: Run Scriptling scripts from files
 - **Stdin execution**: Pipe scripts to stdin
 - **Interactive mode**: REPL-like interactive execution
+- **Lint mode**: Check scripts for syntax errors without execution
 - **HTTP Server**: Start HTTP server with custom routes via `--server`
 - **MCP Server**: Serve tools via Model Context Protocol with `--mcp-tools`
 - **Sandboxed execution**: Safe mode restricts access to file system, network, and subprocess
