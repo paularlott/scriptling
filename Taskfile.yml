@@ -111,5 +111,4 @@ tasks:
         fi
         # Create release and upload all binaries and zips
         gh release create v{{.VERSION}} -t "Release {{.VERSION}}" -n "Scriptling {{.VERSION}}" {{.BIN_DIR}}/*
-        # Update Homebrew formula
-        task: homebrew-formula
+      - task: homebrew-formula
