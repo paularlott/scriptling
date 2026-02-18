@@ -194,17 +194,19 @@ bot.callback("admin_", handle_admin_buttons)  # Matches "admin_delete", "admin_e
 
 ### Storing User State
 
-Use `scriptling.kv` to persist data across restarts:
+Use `scriptling.runtime.kv` to persist data across restarts:
 
 ```python
+import scriptling.runtime as runtime
+
 # Store user data
-scriptling.kv.set(f"user:{chat_id}", {"name": "Alice", "count": 0})
+runtime.kv.set(f"user:{chat_id}", {"name": "Alice", "count": 0})
 
 # Retrieve user data
-user = scriptling.kv.get(f"user:{chat_id}", default={})
+user = runtime.kv.get(f"user:{chat_id}", default={})
 
 # Increment a counter
-count = scriptling.kv.incr(f"count:{chat_id}")
+count = runtime.kv.incr(f"count:{chat_id}")
 ```
 
 ## Environment Variables
@@ -216,5 +218,5 @@ count = scriptling.kv.incr(f"count:{chat_id}")
 
 ## See Also
 
-- [scriptling.kv](../../docs/scriptling.kv.md) - Key-value store documentation
+- [scriptling.runtime.kv](../../docs/libraries/scriptling/runtime-kv.md) - Key-value store documentation
 - [Telegram Bot API](https://core.telegram.org/bots/api) - Official API documentation

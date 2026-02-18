@@ -172,7 +172,7 @@ scriptling --script-mode safe script.py
 - `requests` - HTTP client
 - `os` - Environment variables access only
 - `secrets` - Cryptographic random number generation
-- `scriptling.kv` - Key-value store
+- `scriptling.runtime.kv` - Key-value store
 - AI, agent, and MCP libraries
 
 **Full mode additionally includes:**
