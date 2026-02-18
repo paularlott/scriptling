@@ -1,6 +1,6 @@
 # HTTP Server Example
 
-This example demonstrates how to build an HTTP server using the `scriptling.http` library.
+This example demonstrates how to build an HTTP server using the `scriptling.runtime.http` library.
 
 ## What It Shows
 
@@ -60,13 +60,13 @@ curl -X POST http://localhost:8000/api/users \
 ## Key Points
 
 - `/health` is a built-in route that's always available - no need to register it
-- Routes are registered using `scriptling.http.get()`, `scriptling.http.post()`, etc.
+- Routes are registered using `scriptling.runtime.http.get()`, `scriptling.runtime.http.post()`, etc.
 - Handlers are specified as `"library.function"` strings (e.g., `"handlers.health"`)
 - Middleware can intercept requests and return early responses
-- Use `scriptling.http.json()` to return JSON responses
+- Use `scriptling.runtime.http.json()` to return JSON responses
 - Request objects provide `method`, `path`, `headers`, `query`, and `body`
 
 ## See Also
 
-- [scriptling.http documentation](../../docs/libraries/extlib/http.md)
-- [scriptling.kv documentation](../../docs/libraries/extlib/kv.md) - Thread-safe key-value store
+- [scriptling.runtime.http documentation](../../docs/libraries/scriptling/runtime-http.md)
+- [scriptling.runtime.kv documentation](../../docs/libraries/scriptling/runtime-kv.md) - Thread-safe key-value store

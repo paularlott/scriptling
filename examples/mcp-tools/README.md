@@ -171,4 +171,4 @@ tool.return_string(result)
 ## See Also
 
 - [HTTP Server Example](../http-server/) - HTTP routes and handlers
-- [scriptling.http documentation](../../docs/libraries/extlib/http.md)
+- [scriptling.runtime.http documentation](../../docs/libraries/scriptling/runtime-http.md)
