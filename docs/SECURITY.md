@@ -18,49 +18,98 @@ By default, Scriptling:
 
 ## Library Security
 
-### Safe Libraries (Default)
+### Safe Libraries (Standard Library)
 
-These libraries are safe to use in most sandboxed environments:
+These libraries are safe to use in most sandboxed environments and are available by default:
 
-| Library | Security Notes |
-|---------|---------------|
-| `math` | Pure computation, no external access |
-| `json` | Pure computation, no external access |
-| `datetime` | Pure computation, no external access |
-| `string` | Pure computation, no external access |
-| `list` | Pure computation, no external access |
-| `dict` | Pure computation, no external access |
+| Library       | Security Notes                               |
+| ------------- | -------------------------------------------- |
+| `math`        | Pure computation, no external access         |
+| `json`        | Pure computation, no external access         |
+| `datetime`    | Pure computation, no external access         |
+| `time`        | Pure computation, no external access         |
+| `string`      | Pure computation, no external access         |
+| `base64`      | Pure computation, no external access         |
+| `html`        | Pure computation, no external access         |
+| `re`          | Regular expressions, no external access      |
+| `random`      | Pseudo-random generation, no external access |
+| `statistics`  | Pure computation, no external access         |
+| `textwrap`    | Pure computation, no external access         |
+| `functools`   | Pure computation, no external access         |
+| `itertools`   | Pure computation, no external access         |
+| `collections` | Pure computation, no external access         |
+| `hashlib`     | Cryptographic hashing, no external access    |
+| `platform`    | Platform information, read-only              |
+| `urllib`      | URL parsing only, no network access          |
+| `uuid`        | UUID generation, no external access          |
+
+### Scriptling-Specific Libraries
+
+These libraries provide Scriptling-specific functionality:
+
+| Library               | Security Considerations                                       |
+| --------------------- | ------------------------------------------------------------- |
+| `scriptling.ai`       | **NETWORK ACCESS** - Makes HTTP requests to AI APIs           |
+| `scriptling.ai.agent` | **NETWORK + CODE EXECUTION** - Agentic AI with tool execution |
+| `scriptling.mcp`      | **NETWORK ACCESS** - MCP protocol communication               |
+| `scriptling.console`  | Console I/O, safe for interactive use                         |
+| `scriptling.fuzzy`    | Pure computation, no external access                          |
+| `scriptling.toon`     | Pure computation, no external access                          |
+
+### Runtime Libraries
+
+These libraries provide server and concurrency functionality:
+
+| Library                      | Security Considerations                                     |
+| ---------------------------- | ----------------------------------------------------------- |
+| `scriptling.runtime`         | Background task execution - safe but uses goroutines        |
+| `scriptling.runtime.http`    | **HTTP SERVER** - Registers HTTP routes and handlers        |
+| `scriptling.runtime.kv`      | In-memory key-value store - safe but unbounded memory       |
+| `scriptling.runtime.sync`    | Concurrency primitives - safe but can cause deadlocks       |
+| `scriptling.runtime.sandbox` | **CODE EXECUTION** - Executes code in isolated environments |
 
 ### Extended Libraries (Require Explicit Registration)
 
 These libraries extend functionality but require explicit registration:
 
-| Library | Security Considerations |
-|---------|------------------------|
-| `requests` | Allows network HTTP/HTTPS requests to external URLs |
-| `os` | Provides controlled file system access based on allowed paths |
-| `pathlib` | File path manipulation (restricted to allowed paths) |
-| `subprocess` | **HIGH RISK** - Allows executing external commands |
-| `secrets` | Secure random generation, but needs proper seeding |
-| `threads` | **HIGH RISK** - Can cause resource exhaustion through goroutine spawning |
+| Library       | Security Considerations                                                     |
+| ------------- | --------------------------------------------------------------------------- |
+| `requests`    | **NETWORK ACCESS** - Allows HTTP/HTTPS requests to external URLs            |
+| `os`          | **FILE SYSTEM ACCESS** - Controlled by allowed paths                        |
+| `os.path`     | **FILE SYSTEM ACCESS** - Path operations, controlled by allowed paths       |
+| `pathlib`     | **FILE SYSTEM ACCESS** - Object-oriented paths, controlled by allowed paths |
+| `glob`        | **FILE SYSTEM ACCESS** - Pattern matching, controlled by allowed paths      |
+| `subprocess`  | **CRITICAL RISK** - Allows arbitrary command execution                      |
+| `sys`         | **SYSTEM ACCESS** - Provides access to system internals                     |
+| `secrets`     | Cryptographically secure random generation                                  |
+| `logging`     | File and console logging - may write to disk                                |
+| `wait_for`    | Network/resource polling - may access network                               |
+| `yaml`        | YAML parsing - safe but watch for large files                               |
+| `toml`        | TOML parsing - safe but watch for large files                               |
+| `html.parser` | HTML parsing - safe but watch for large files                               |
 
-### Never Register in Production
+### Never Register in Untrusted Environments
 
-**Do NOT register these libraries in untrusted environments:**
+**Do NOT register these libraries when executing untrusted code:**
 
 - `subprocess` - Allows arbitrary command execution
-- `threads` - Can cause resource exhaustion and denial of service
-- `sys` - Provides access to system internals
+- `sys` - Provides access to system internals and environment
+- `scriptling.runtime.sandbox` - Can execute arbitrary code
+- `scriptling.ai.agent` - Can execute AI-generated code with tools
 
 ## File System Security
 
 ### Restricting File Access
 
-When registering the `os` or `pathlib` libraries, you **must** specify allowed paths:
+When registering the `os`, `os.path`, `pathlib`, or `glob` libraries, you **must** specify allowed paths:
 
 ```go
 // Safe: Only allows access to specific directories
 extlibs.RegisterOSLibrary(p, []string{
+    "/tmp/myapp/data",
+    "/home/user/documents",
+})
+extlibs.RegisterPathlibLibrary(p, []string{
     "/tmp/myapp/data",
     "/home/user/documents",
 })
@@ -72,38 +121,54 @@ extlibs.RegisterOSLibrary(p, nil)       // Nil = read-only access everywhere
 
 ### Path Traversal Protection
 
-Scriptling's `os` library automatically prevents path traversal attacks:
+Scriptling's file system libraries automatically prevent path traversal attacks:
 
 ```python
 # User tries to escape allowed directory
 import os
+import pathlib
 
 allowed_path = "/tmp/myapp/data"
 # Trying to access parent directories
 os.read_file("/tmp/myapp/data/../../etc/passwd")  # BLOCKED
 os.read_file("/tmp/myapp/data/secrets.txt")        # ALLOWED
+
+path = pathlib.Path("/tmp/myapp/data/../../../etc/passwd")  # BLOCKED
 ```
 
 ## Network Security
 
-### HTTP Library Configuration
+### Network-Enabled Libraries
 
-The `requests` library supports network access. To disable it:
+These libraries can make network requests:
+
+- `requests` - HTTP client library
+- `scriptling.ai` - AI API client
+- `scriptling.ai.agent` - Agentic AI with tool execution
+- `scriptling.mcp` - MCP protocol client
+- `wait_for` - Resource polling (may check network endpoints)
+
+### Disabling Network Access
+
+To keep the sandbox network-free, don't register network-enabled libraries:
 
 ```go
-// Don't register the requests library to keep sandbox network-free
-stdlib.RegisterAll(p)  // Does NOT include requests by default
+// Safe: Only register standard libraries (no network access)
+stdlib.RegisterAll(p)
+
+// Unsafe: Registers network-enabled library
+extlibs.RegisterRequestsLibrary(p)
 ```
 
 ### URL Whitelisting (Recommended)
 
-For production, consider implementing URL filtering before registration:
+For production, consider implementing URL filtering:
 
 ```go
 // Example: Custom requests wrapper with URL filtering
 func registerSafeRequests(p *scriptling.Program) {
     // You would need to implement this wrapper
-    extlibs.RegisterFilteredRequestsLibrary(p, allowedDomains)
+    // to filter allowed domains/URLs
 }
 ```
 
@@ -132,37 +197,6 @@ Scriptling runs within Go's memory management, but consider:
 1. **Large allocations** can cause memory pressure
 2. **Infinite loops** can consume CPU indefinitely
 3. **Recursion depth** is limited by Go's stack
-4. **Goroutine spawning** (via `threads` library) can exhaust resources if not properly limited
-
-### Thread Limits (If Using threads Library)
-
-If you must register the `threads` library:
-
-```go
-// Implement a goroutine pool with limits
-type ThreadPool struct {
-    maxGoRoutines int
-    semaphore     chan struct{}
-}
-
-func (p *ThreadPool) Acquire() error {
-    select {
-    case p.semaphore <- struct{}{}:
-        return nil
-    default:
-        return fmt.Errorf("maximum concurrent goroutines reached")
-    }
-}
-
-func (p *ThreadPool) Release() {
-    <-p.semaphore
-}
-```
-
-**Risks of unbounded threading:**
-- Goroutine exhaustion can crash the host process
-- Each goroutine consumes stack memory (~2KB minimum)
-- Unbounded concurrency can cause scheduler thrashing
 
 ## Code Injection Prevention
 
@@ -202,16 +236,20 @@ p.SetEnv(map[string]string{
 
 Use this checklist when deploying Scriptling in production:
 
-- [ ] File system access is restricted to specific paths
-- [ ] Network access is disabled or URL-filtered
+- [ ] File system access is restricted to specific paths (`os`, `pathlib`, `glob`)
+- [ ] Network access is disabled or URL-filtered (`requests`, `scriptling.ai`, `scriptling.mcp`)
 - [ ] Execution timeout is configured
 - [ ] `subprocess` library is NOT registered
-- [ ] `threads` library is NOT registered (or properly limited)
+- [ ] `sys` library is NOT registered (or carefully controlled)
+- [ ] `scriptling.runtime.sandbox` is NOT registered for untrusted code
+- [ ] `scriptling.ai.agent` is NOT registered for untrusted code
 - [ ] Environment variables are filtered
 - [ ] Untrusted user input is validated
 - [ ] Scripts run with minimal privileges
 - [ ] Error messages don't leak sensitive information
 - [ ] Logs are sanitized before display
+- [ ] Runtime KV store size is monitored (unbounded memory)
+- [ ] Background tasks are properly managed and terminated
 
 ## Common Attack Vectors
 
@@ -256,28 +294,19 @@ sys.get_environment_variables()  # Not available in default sandbox
 
 **Mitigation**: Don't register `sys` or other introspection libraries.
 
-### 5. Thread-based Resource Exhaustion (If threads Library is Registered)
-
-```python
-# Spawn unlimited goroutines to exhaust resources
-import threads
-
-while True:
-    threads.spawn(lambda: while True: pass)  # Each spawns a CPU-eating goroutine
-```
-
-**Mitigation**: Do NOT register `threads` library in untrusted environments. If required, implement a goroutine pool with strict limits.
-
 ## Best Practices
 
 1. **Principle of Least Privilege**: Only register the libraries that are absolutely necessary
 2. **Validate All Input**: Never trust user-provided code or data
 3. **Use Timeouts**: Always set execution time limits
-4. **Restrict File Access**: Explicitly whitelist allowed directories
-5. **Disable Network**: Unless needed, keep the sandbox offline
+4. **Restrict File Access**: Explicitly whitelist allowed directories for `os`, `pathlib`, `glob`
+5. **Disable Network**: Unless needed, keep the sandbox offline (don't register `requests`, `scriptling.ai`, `scriptling.mcp`)
 6. **Monitor Resource Usage**: Watch for unusual memory/CPU consumption
 7. **Sanitize Errors**: Don't expose internal paths or stack traces to users
 8. **Keep Updated**: Update Scriptling regularly for security patches
+9. **Limit Runtime State**: Monitor `scriptling.runtime.kv` store size and use TTLs
+10. **Control Concurrency**: Be aware that `scriptling.runtime.sync` primitives can cause deadlocks
+11. **Sandbox Isolation**: Use `scriptling.runtime.sandbox` carefully - it executes code in isolated environments but still runs in the same process
 
 ## Reporting Security Issues
 

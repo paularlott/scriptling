@@ -179,7 +179,6 @@ scriptling --script-mode safe script.py
 
 - `subprocess` - Process execution
 - `pathlib`, `glob` - File system access
-- `threads` - Multi-threading
 - `wait_for` - Process monitoring
 
 ### Accessing Environment Variables in Scripts
