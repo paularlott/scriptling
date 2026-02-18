@@ -18,8 +18,9 @@ import (
 // libdir: Optional directory for on-demand library loading (empty = current directory)
 // registerInteract: Whether to register the agent interact library
 // safeMode: If true, only register safe libraries (no file/network/subprocess access)
+// allowedPaths: Filesystem path restrictions for os, pathlib, glob, sandbox (nil = no restrictions)
 // log: Logger instance for the logging library
-func SetupScriptling(p *scriptling.Scriptling, libdir string, registerInteract bool, safeMode bool, log logger.Logger) {
+func SetupScriptling(p *scriptling.Scriptling, libdir string, registerInteract bool, safeMode bool, allowedPaths []string, log logger.Logger) {
 	// Register all standard libraries (always safe)
 	stdlib.RegisterAll(p)
 
@@ -30,17 +31,22 @@ func SetupScriptling(p *scriptling.Scriptling, libdir string, registerInteract b
 	extlibs.RegisterHTMLParserLibrary(p)
 	extlibs.RegisterRequestsLibrary(p)
 	extlibs.RegisterSecretsLibrary(p)
-	extlibs.RegisterOSLibrary(p, []string{})
+	extlibs.RegisterOSLibrary(p, allowedPaths)
 	extlibs.RegisterLoggingLibrary(p, log)
 
 	// Register runtime library core (background) and sub-libraries (excluding http)
 	extlibs.RegisterRuntimeLibraryAll(p)
 
+	// Set sandbox allowed paths for exec_file restrictions
+	if allowedPaths != nil {
+		extlibs.SetSandboxAllowedPaths(allowedPaths)
+	}
+
 	// Skip dangerous libraries in safe mode
 	if !safeMode {
 		extlibs.RegisterSubprocessLibrary(p)
-		extlibs.RegisterPathlibLibrary(p, []string{})
-		extlibs.RegisterGlobLibrary(p, []string{})
+		extlibs.RegisterPathlibLibrary(p, allowedPaths)
+		extlibs.RegisterGlobLibrary(p, allowedPaths)
 		extlibs.RegisterWaitForLibrary(p)
 	}
 
@@ -77,10 +83,10 @@ func SetupScriptling(p *scriptling.Scriptling, libdir string, registerInteract b
 // SetupFactories configures the global sandbox and background factories.
 // Call this once at startup, before any scripts execute.
 // The factories create new Scriptling instances with the same library configuration.
-func SetupFactories(libdir string, safeMode bool, log logger.Logger) {
+func SetupFactories(libdir string, safeMode bool, allowedPaths []string, log logger.Logger) {
 	factory := func() extlibs.SandboxInstance {
 		p := scriptling.New()
-		SetupScriptling(p, libdir, false, safeMode, log)
+		SetupScriptling(p, libdir, false, safeMode, allowedPaths, log)
 		return p
 	}
 	extlibs.SetSandboxFactory(factory)
