@@ -191,33 +191,42 @@ Scriptling runs within Go's memory management, but consider:
 ### Never Execute Untrusted Input Directly
 
 ```python
-# DANGEROUS: Never do this
+# DANGEROUS: Never do this with scriptling.runtime.sandbox
+import scriptling.runtime.sandbox as sandbox
+
 user_input = get_user_code()  # e.g., "os.remove('/important/file')"
-eval(user_input)              # Executes arbitrary code!
+sandbox.eval(user_input)      # Executes arbitrary code!
 ```
+
+**Note**: The `scriptling.runtime.sandbox` library allows executing arbitrary code strings. Never pass untrusted user input directly to it.
 
 ### Safe Patterns
 
 ```python
-# SAFE: Use structured data
+# SAFE: Use structured data and predefined functions
 user_config = get_user_config()  # Returns validated dict
 name = user_config.get("name", "Anonymous")
 greet(name)  # Controlled execution
+
+# SAFE: Whitelist allowed operations
+allowed_operations = {"add", "subtract", "multiply"}
+operation = user_config.get("operation")
+if operation in allowed_operations:
+    result = perform_operation(operation, x, y)
 ```
 
 ## Environment Variables
 
-Never expose sensitive environment variables to scripts:
+Environment variables are only accessible if the `sys` library is registered. Never register `sys` with untrusted code:
 
 ```go
-// DANGEROUS: Exposes all environment variables
-// p.SetEnv(os.Environ())
+// DANGEROUS: Allows access to all environment variables
+extlibs.RegisterSysLibrary(p)
 
-// SAFE: Only expose necessary variables
-p.SetEnv(map[string]string{
-    "APP_VERSION": "1.0.0",
-    "API_ENDPOINT": apiEndpoint, // User-provided, but controlled
-})
+// SAFE: Don't register sys library for untrusted code
+// Use SetVar to pass only necessary configuration
+p.SetVar("APP_VERSION", "1.0.0")
+p.SetVar("API_ENDPOINT", apiEndpoint)
 ```
 
 ## Security Checklist

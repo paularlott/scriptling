@@ -1,13 +1,12 @@
 # Runtime Library
 
-Background tasks and async execution for HTTP servers.
+Background tasks for HTTP servers.
 
 ## Available Functions
 
-| Function                     | Description                 |
-| ---------------------------- | --------------------------- |
-| `background(name, handler)`  | Register a background task  |
-| `run(func, *args, **kwargs)` | Run function asynchronously |
+| Function                    | Description                |
+| --------------------------- | -------------------------- |
+| `background(name, handler)` | Register a background task |
 
 ## Setup
 
@@ -36,6 +35,8 @@ Register a background task.
 
 - `name` (string): Unique name for the task (used in logs and error messages)
 - `handler` (string): Handler function as "library.function"
+- `*args`: Positional arguments to pass to the function
+- `**kwargs`: Keyword arguments to pass to the function
 
 Background tasks run in separate goroutines alongside the HTTP server. The name is used to identify the task in server logs.
 
@@ -59,6 +60,7 @@ Run function asynchronously within the current environment.
 - [scriptling.runtime.http](runtime-http.md) - HTTP route registration and response helpers
 - [scriptling.runtime.kv](runtime-kv.md) - Thread-safe key-value store
 - [scriptling.runtime.sync](runtime-sync.md) - Named cross-environment concurrency primitives
+- [scriptling.runtime.sandbox](runtime-sandbox.md) - Isolated script execution environments
 
 ## Examples
 
@@ -83,18 +85,6 @@ def increment_counter():
         counter.add(1)
         print(f"Counter: {counter.get()}")
         time.sleep(1)
-```
-
-### Async Execution
-
-```python
-import scriptling.runtime as runtime
-
-def worker(x, y):
-    return x + y
-
-promise = runtime.run(worker, 5, 10)
-result = promise.get()  # Returns 15
 ```
 
 ## Notes

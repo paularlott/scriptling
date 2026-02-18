@@ -118,7 +118,7 @@ The runtime library provides HTTP server functionality, key-value store, concurr
 | `scriptling.runtime.http`    | HTTP route registration and response helpers   | [libraries/scriptling/runtime-http.md](libraries/scriptling/runtime-http.md) |
 | `scriptling.runtime.kv`      | Thread-safe key-value store                    | [libraries/scriptling/runtime-kv.md](libraries/scriptling/runtime-kv.md) |
 | `scriptling.runtime.sync`    | Named cross-environment concurrency primitives | [libraries/scriptling/runtime-sync.md](libraries/scriptling/runtime-sync.md) |
-| `scriptling.runtime.sandbox` | Isolated script execution environments         | [libraries/scriptling/sandbox.md](libraries/scriptling/sandbox.md) |
+| `scriptling.runtime.sandbox` | Isolated script execution environments         | [libraries/scriptling/runtime-sandbox.md](libraries/scriptling/runtime-sandbox.md) |
 
 ## Extended Libraries
 
