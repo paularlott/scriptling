@@ -313,7 +313,7 @@ sys.get_environment_variables()  # Not available in default sandbox
 If you discover a security vulnerability in Scriptling, please report it responsibly:
 
 1. Do **NOT** create a public issue
-2. Email details to: security@example.com
+2. Submit details via: [Security Report Form](https://forms.gle/86ckNpahQWPP5xRLA)
 3. Include steps to reproduce
 4. Allow time for a fix to be released before disclosure
 
