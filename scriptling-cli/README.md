@@ -209,8 +209,14 @@ scriptling --server :8000 setup.py
 # With TLS (self-signed certificate)
 scriptling --server :8443 --tls-generate setup.py
 
-# With MCP tools
+# With MCP tools from directory
 scriptling --server :8000 --mcp-tools ./tools setup.py
+
+# With MCP script execution tool
+scriptling --server :8000 --mcp-exec-script setup.py
+
+# With both MCP tools and exec tool
+scriptling --server :8000 --mcp-tools ./tools --mcp-exec-script setup.py
 
 # With authentication
 scriptling --server :8000 --bearer-token my-secret-token setup.py
@@ -220,6 +226,77 @@ scriptling --server :8000 --allowed-paths "/var/www,./uploads" setup.py
 
 # Safe mode (no filesystem access)
 scriptling --server :8000 --script-mode safe setup.py
+```
+
+#### MCP Script Execution Tool
+
+The `--mcp-exec-script` flag enables a built-in MCP tool that allows LLMs to execute Scriptling code directly:
+
+```bash
+# Enable script execution tool
+scriptling --server :8000 --mcp-exec-script setup.py
+
+# Combine with custom tools
+scriptling --server :8000 --mcp-tools ./tools --mcp-exec-script setup.py
+```
+
+**Tool Details:**
+
+- **Name:** `execute_script`
+- **Description:** Execute Scriptling code and return the result. Scriptling is a Python 3-like scripting language.
+- **Parameters:**
+  - `code` (string, required): Scriptling code to execute
+
+**Return Behavior:**
+
+- Output from `print()` statements is automatically captured and returned
+- For structured data (JSON), use `import scriptling.mcp.tool` and call `tool.return_object(data)`
+- For text output, use `tool.return_string(text)`
+
+**Usage Example:**
+
+```bash
+# Call the tool via MCP - print() output is captured
+curl -X POST http://127.0.0.1:8000/mcp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc":"2.0",
+    "id":1,
+    "method":"tools/call",
+    "params":{
+      "name":"execute_script",
+      "arguments":{
+        "code":"for i in range(1, 21, 3):\n    print(i)"
+      }
+    }
+  }'
+```
+
+**Returning Structured Data:**
+
+```python
+import scriptling.mcp.tool as tool
+
+# Return JSON object
+data = {"users": ["Alice", "Bob"], "count": 2}
+tool.return_object(data)
+
+# Or return text
+tool.return_string("Operation completed successfully")
+```
+
+The tool description instructs LLMs to use `help(topic)` to discover available functions and libraries:
+
+```python
+# Get help on built-in functions
+help('builtins')
+
+# Get help on string methods
+help('str')
+
+# Get help on a library
+import json
+help('json')
 ```
 
 #### MCP Tools

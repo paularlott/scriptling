@@ -218,5 +218,5 @@ count = runtime.kv.incr(f"count:{chat_id}")
 
 ## See Also
 
-- [scriptling.runtime.kv](../../docs/libraries/scriptling/runtime-kv.md) - Key-value store documentation
+- [scriptling.runtime.kv](https://scriptling.dev/docs/libraries/scriptling/runtime-kv/) - Key-value store documentation
 - [Telegram Bot API](https://core.telegram.org/bots/api) - Official API documentation

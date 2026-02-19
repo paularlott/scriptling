@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -49,6 +50,7 @@ type ServerConfig struct {
 	ScriptMode   string   // "safe" or "full"
 	AllowedPaths []string // Filesystem path restrictions (empty = no restrictions)
 	MCPToolsDir  string   // Empty means MCP disabled
+	MCPExecTool  bool     // Enable code execution tool
 	TLSCert      string
 	TLSKey       string
 	TLSGenerate  bool
@@ -112,12 +114,17 @@ func NewServer(config ServerConfig) (*Server, error) {
 		}
 	}
 
-	// Set up MCP if tools directory provided
-	if config.MCPToolsDir != "" {
+	// Set up MCP if tools directory provided or exec tool enabled
+	if config.MCPToolsDir != "" || config.MCPExecTool {
 		if err := s.setupMCP(); err != nil {
 			return nil, fmt.Errorf("MCP setup failed: %w", err)
 		}
-		Log.Info("MCP tools enabled", "directory", config.MCPToolsDir)
+		if config.MCPToolsDir != "" {
+			Log.Info("MCP tools enabled", "directory", config.MCPToolsDir)
+		}
+		if config.MCPExecTool {
+			Log.Info("MCP script execution tool enabled")
+		}
 	}
 
 	// Collect registered routes from scriptling.runtime library
@@ -162,17 +169,19 @@ func (s *Server) setupMCP() error {
 	s.mcpServer = server
 	s.mcpHandler.server.Store(server)
 
-	// Set up file watcher for tools folder
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		Log.Warn("Failed to create file watcher, auto-reload disabled", "error", err)
-	} else {
-		if err := watcher.Add(s.config.MCPToolsDir); err != nil {
-			Log.Warn("Failed to watch tools folder, auto-reload disabled", "error", err)
-			watcher.Close()
+	// Set up file watcher for tools folder if provided
+	if s.config.MCPToolsDir != "" {
+		watcher, err := fsnotify.NewWatcher()
+		if err != nil {
+			Log.Warn("Failed to create file watcher, auto-reload disabled", "error", err)
 		} else {
-			s.watcher = watcher
-			Log.Info("Watching tools folder for changes", "path", s.config.MCPToolsDir)
+			if err := watcher.Add(s.config.MCPToolsDir); err != nil {
+				Log.Warn("Failed to watch tools folder, auto-reload disabled", "error", err)
+				watcher.Close()
+			} else {
+				s.watcher = watcher
+				Log.Info("Watching tools folder for changes", "path", s.config.MCPToolsDir)
+			}
 		}
 	}
 
@@ -184,26 +193,102 @@ func (s *Server) createMCPServer(safeMode bool) (*mcp_lib.Server, error) {
 	server := mcp_lib.NewServer("scriptling-server", "1.0.0")
 	server.SetInstructions("Execute Scriptling tools from the tools folder.")
 
-	// Register tools from folder
-	tools, err := mcpcli.ScanToolsFolder(s.config.MCPToolsDir)
-	if err != nil {
-		return nil, err
+	// Register exec tool if enabled
+	if s.config.MCPExecTool {
+		s.registerExecTool(server, safeMode)
 	}
 
-	for toolName, meta := range tools {
-		scriptPath := filepath.Join(s.config.MCPToolsDir, toolName+".py")
-		tool := toolmetadata.BuildMCPTool(toolName, meta)
-		handler := createMCPToolHandler(scriptPath, s.config.LibDir, safeMode, s.config.AllowedPaths)
-		server.RegisterTool(tool, handler)
-
-		mode := "native"
-		if meta.Discoverable {
-			mode = "discoverable"
+	// Register tools from folder if provided
+	if s.config.MCPToolsDir != "" {
+		tools, err := mcpcli.ScanToolsFolder(s.config.MCPToolsDir)
+		if err != nil {
+			return nil, err
 		}
-		Log.Info("Registered MCP tool", "name", toolName, "params", len(meta.Parameters), "mode", mode)
+
+		for toolName, meta := range tools {
+			scriptPath := filepath.Join(s.config.MCPToolsDir, toolName+".py")
+			tool := toolmetadata.BuildMCPTool(toolName, meta)
+			handler := createMCPToolHandler(scriptPath, s.config.LibDir, safeMode, s.config.AllowedPaths)
+			server.RegisterTool(tool, handler)
+
+			mode := "native"
+			if meta.Discoverable {
+				mode = "discoverable"
+			}
+			Log.Info("Registered MCP tool", "name", toolName, "params", len(meta.Parameters), "mode", mode)
+		}
 	}
 
 	return server, nil
+}
+
+// registerExecTool registers the built-in code execution tool
+func (s *Server) registerExecTool(server *mcp_lib.Server, safeMode bool) {
+	server.RegisterTool(
+		mcp_lib.NewTool("execute_script",
+			`Execute Scriptling code and return the result. Scriptling is a Python 3-like scripting language.
+
+KEY SYNTAX RULES:
+- Use True/False (capitalized), None for null
+- Use elif (not else if)
+- 4-space indentation for blocks
+- No nested classes, no multiple inheritance, no generators/yield
+
+HTTP & JSON:
+- HTTP response is an object: response.status_code, response.body, response.headers
+- Use json.loads(str) and json.dumps(obj) for JSON
+- Use requests.get(url, options), requests.post(url, body, options) for HTTP
+- Default HTTP timeout is 5 seconds
+- HTTP options dict: {"timeout": 10, "headers": {"Authorization": "Bearer token"}}
+
+COMMON PATTERNS:
+- Dict iteration: for item in items(dict): key=item[0], value=item[1]
+- List append: append(list, item) modifies in-place
+- Use join() for string building in loops: result = "".join(parts)
+- Error handling: try/except/finally, raise "message" or raise ValueError("msg")
+
+RETURNING RESULTS:
+- print() output is captured and returned automatically
+- For structured data: import scriptling.mcp.tool; tool.return_object(data)
+- For text: tool.return_string(text)
+- Use help(topic) for built-in help: help("builtins"), help("json"), help("requests")`,
+			mcp_lib.String("code", "Scriptling code to execute (Python 3-like syntax)", mcp_lib.Required()),
+		),
+		func(ctx context.Context, req *mcp_lib.ToolRequest) (*mcp_lib.ToolResponse, error) {
+			code, _ := req.String("code")
+
+			// Create fresh scriptling environment for isolation
+			p := scriptling.New()
+			mcpcli.SetupScriptling(p, s.config.LibDir, false, safeMode, s.config.AllowedPaths, Log)
+
+			// Capture stdout for returning if no explicit return is made
+			outputBuffer := &bytes.Buffer{}
+			p.SetOutputWriter(outputBuffer)
+
+			// Try using RunToolScript first (handles tool.return_string())
+			response, exitCode, err := scriptlingmcp.RunToolScript(ctx, p, code, map[string]interface{}{})
+
+			// If exitCode is 0 and we have an explicit response, use it
+			if exitCode == 0 && response != "" {
+				return mcp_lib.NewToolResponseText(response), nil
+			}
+
+			// If there was an error and exitCode != 0, return error
+			if err != nil && exitCode != 0 {
+				return nil, fmt.Errorf("execution error: %w", err)
+			}
+
+			// If no explicit return, return captured stdout
+			capturedOutput := strings.TrimSpace(outputBuffer.String())
+			if capturedOutput != "" {
+				return mcp_lib.NewToolResponseText(capturedOutput), nil
+			}
+
+			// Otherwise return "(no output)"
+			return mcp_lib.NewToolResponseText("(no output)"), nil
+		},
+	)
+	Log.Info("Registered MCP tool", "name", "execute_script", "params", 1, "mode", "native")
 }
 
 // reloadMCPTools reloads all MCP tools

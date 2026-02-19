@@ -74,6 +74,11 @@ func main() {
 				DefaultValue: "",
 				EnvVars:      []string{"SCRIPTLING_MCP_TOOLS"},
 			},
+			&cli.BoolFlag{
+				Name:    "mcp-exec-script",
+				Usage:   "Enable MCP server with script execution tool",
+				EnvVars: []string{"SCRIPTLING_MCP_EXEC_SCRIPT"},
+			},
 			&cli.StringFlag{
 				Name:         "bearer-token",
 				Usage:        "Bearer token for authentication",
@@ -214,6 +219,7 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 		ScriptMode:   cmd.GetString("script-mode"),
 		AllowedPaths: parseAllowedPaths(cmd.GetString("allowed-paths")),
 		MCPToolsDir:  cmd.GetString("mcp-tools"),
+		MCPExecTool:  cmd.GetBool("mcp-exec-script"),
 		TLSCert:      cmd.GetString("tls-cert"),
 		TLSKey:       cmd.GetString("tls-key"),
 		TLSGenerate:  cmd.GetBool("tls-generate"),

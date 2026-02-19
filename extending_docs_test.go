@@ -11,7 +11,8 @@ import (
 	"github.com/paularlott/scriptling/stdlib"
 )
 
-// TestExtendingFunctionsDocs validates all examples from EXTENDING_FUNCTIONS.md
+// TestExtendingFunctionsDocs validates all examples from the Go Integration documentation
+// See: https://scriptling.dev/docs/go-integration/native/functions/ and https://scriptling.dev/docs/go-integration/builder/functions/
 func TestExtendingFunctionsDocs(t *testing.T) {
 	t.Run("NativeAPI_SimpleFunction", func(t *testing.T) {
 		p := New()
@@ -329,7 +330,8 @@ func TestExtendingFunctionsDocs(t *testing.T) {
 	})
 }
 
-// TestExtendingLibrariesDocs validates all examples from EXTENDING_LIBRARIES.md
+// TestExtendingLibrariesDocs validates all examples from the Go Integration documentation
+// See: https://scriptling.dev/docs/go-integration/native/libraries/ and https://scriptling.dev/docs/go-integration/builder/libraries/
 func TestExtendingLibrariesDocs(t *testing.T) {
 	t.Run("NativeAPI_BasicLibrary", func(t *testing.T) {
 		p := New()
@@ -641,7 +643,8 @@ quoted = url_parse.quote("test")
 	})
 }
 
-// TestExtendingClassesDocs validates all examples from EXTENDING_CLASSES.md
+// TestExtendingClassesDocs validates all examples from the Go Integration documentation
+// See: https://scriptling.dev/docs/go-integration/native/classes/ and https://scriptling.dev/docs/go-integration/builder/classes/
 func TestExtendingClassesDocs(t *testing.T) {
 	t.Run("NativeAPI_BasicClass", func(t *testing.T) {
 		p := New()
@@ -1121,7 +1124,8 @@ honk = car.honk()
 	})
 }
 
-// TestExtendingWithScriptsDocs validates all examples from EXTENDING_WITH_SCRIPTS.md
+// TestExtendingWithScriptsDocs validates all examples from the Go Integration documentation
+// See: https://scriptling.dev/docs/go-integration/scripts/
 func TestExtendingWithScriptsDocs(t *testing.T) {
 	t.Run("RegisterScriptFunc_Simple", func(t *testing.T) {
 		p := New()
@@ -2083,7 +2087,8 @@ new_age = p.age
 	})
 }
 
-// TestHelpSystemComprehensive validates all help system examples from HELP_SYSTEM.md
+// TestHelpSystemComprehensive validates all help system examples from the Go Integration documentation
+// See: https://scriptling.dev/docs/go-integration/documentation/
 func TestHelpSystemComprehensive(t *testing.T) {
 	t.Run("UserFunctionDocstrings", func(t *testing.T) {
 		p := New()
