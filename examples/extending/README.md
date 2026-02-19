@@ -69,4 +69,4 @@ For more advanced examples including:
 - HTTP clients
 - Testing custom extensions
 
-See the main [EXTENDING_SCRIPTLING.md](../docs/EXTENDING_SCRIPTLING.md) guide.
+See the **[Go Integration](https://scriptling.dev/docs/go-integration/)** documentation at scriptling.dev.

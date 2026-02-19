@@ -68,5 +68,5 @@ curl -X POST http://localhost:8000/api/users \
 
 ## See Also
 
-- [scriptling.runtime.http documentation](../../docs/libraries/scriptling/runtime-http.md)
-- [scriptling.runtime.kv documentation](../../docs/libraries/scriptling/runtime-kv.md) - Thread-safe key-value store
+- [scriptling.runtime.http documentation](https://scriptling.dev/docs/libraries/scriptling/runtime-http/)
+- [scriptling.runtime.kv documentation](https://scriptling.dev/docs/libraries/scriptling/runtime-kv/) - Thread-safe key-value store

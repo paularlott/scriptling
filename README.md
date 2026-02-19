@@ -241,19 +241,13 @@ cd examples/openai/scriptlingcoder
 
 ## Documentation
 
-- **[Quick Reference](docs/QUICK_REFERENCE.md)** - Library recipes and patterns
-- **[Language Quick Reference](docs/LANGUAGE_QUICK_REFERENCE.md)** - Language syntax cheat sheet
-- **[Language Guide](docs/LANGUAGE_GUIDE.md)** - Complete syntax reference
-- **[LLM Guide](docs/LLM_GUIDE.md)** - Quick reference for LLM code generation
-- **[Libraries](docs/LIBRARIES.md)** - Available libraries and APIs
-- **[Go Integration](docs/GO_INTEGRATION.md)** - Embedding and using Scriptling from Go
-- **[Extending with Go](docs/EXTENDING_WITH_GO.md)** - Overview of extending Scriptling
-  - **[Functions](docs/EXTENDING_FUNCTIONS.md)** - Creating custom functions
-  - **[Libraries](docs/EXTENDING_LIBRARIES.md)** - Creating custom libraries
-  - **[Library Instantiation](docs/LIBRARY_INSTANTIATION.md)** - Libraries with instance-specific configs
-  - **[Classes](docs/EXTENDING_CLASSES.md)** - Defining custom classes
-- **[Extending with Scripts](docs/EXTENDING_WITH_SCRIPTS.md)** - Creating script libraries
-- **[Help System](docs/HELP_SYSTEM.md)** - Documenting functions and classes
+Full documentation is available at **[scriptling.dev](https://scriptling.dev)**
+
+- **[Quick Start](https://scriptling.dev/docs/quick-start/)** - Get up and running quickly
+- **[Language Guide](https://scriptling.dev/docs/language/)** - Complete syntax reference
+- **[Go Integration](https://scriptling.dev/docs/go-integration/)** - Embedding Scriptling in Go applications
+- **[Libraries](https://scriptling.dev/docs/libraries/)** - Standard and extended library reference
+- **[CLI Reference](https://scriptling.dev/docs/cli/)** - Command-line tool documentation
 
 ## Testing
 
