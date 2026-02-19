@@ -80,7 +80,6 @@ The linter exits with code 0 if no errors are found, and code 1 if any errors ex
 | `-S`, `--server` | `SCRIPTLING_SERVER` | HTTP server address (host:port) | (disabled) |
 | `--mcp-tools` | `SCRIPTLING_MCP_TOOLS` | Directory containing MCP tools | (disabled) |
 | `--bearer-token` | `SCRIPTLING_BEARER_TOKEN` | Bearer token for authentication | none |
-| `--script-mode` | `SCRIPTLING_SCRIPT_MODE` | Script mode: safe or full | full |
 | `--allowed-paths` | `SCRIPTLING_ALLOWED_PATHS` | Comma-separated allowed filesystem paths | (no restriction) |
 | `--tls-cert` | `SCRIPTLING_TLS_CERT` | TLS certificate file | none |
 | `--tls-key` | `SCRIPTLING_TLS_KEY` | TLS key file | none |
@@ -104,7 +103,6 @@ SCRIPTLING_LIBDIR=./mylibs
 SCRIPTLING_SERVER=:8000
 SCRIPTLING_MCP_TOOLS=./tools
 SCRIPTLING_BEARER_TOKEN=your-secret-token
-SCRIPTLING_SCRIPT_MODE=full
 
 # Filesystem restrictions
 SCRIPTLING_ALLOWED_PATHS=/tmp/data,./uploads
@@ -112,13 +110,12 @@ SCRIPTLING_ALLOWED_PATHS=/tmp/data,./uploads
 
 ### Script Execution Modes
 
-Scriptling supports three levels of filesystem access control:
+Scriptling supports two levels of filesystem access control:
 
 | Mode | Flag | Filesystem Access | Path Restrictions |
 |------|------|-------------------|-------------------|
-| **Full** | `--script-mode full` (default) | All libraries | None |
+| **Full** | (default) | All libraries | None |
 | **Restricted** | `--allowed-paths /path1,/path2` | All libraries | Only specified paths |
-| **Safe** | `--script-mode safe` | No filesystem libraries | N/A |
 
 #### Full Mode (default)
 
@@ -155,31 +152,20 @@ except Exception as e:
     # Output: Access denied: access denied: path '/etc/passwd' is outside allowed directories
 ```
 
-#### Safe Mode
-
-Only safe libraries available (no filesystem, subprocess, or network access libraries):
-
-```bash
-scriptling --script-mode safe script.py
-```
-
-**Safe mode libraries include:**
+**Available libraries:**
 
 - Standard libraries: `json`, `math`, `random`, `re`, `time`, `base64`, `hashlib`, `urllib`
 - `datetime` - Date and time operations
-- `yaml` - YAML parsing
+- `yaml`, `toml` - YAML and TOML parsing
 - `html.parser` - HTML parsing
 - `requests` - HTTP client
-- `os` - Environment variables access only
+- `os` - Environment variables and file operations (path-restricted)
+- `pathlib`, `glob` - File system access (path-restricted)
 - `secrets` - Cryptographic random number generation
-- `scriptling.runtime.kv` - Key-value store
-- AI, agent, and MCP libraries
-
-**Full mode additionally includes:**
-
+- `scriptling.runtime` - Runtime utilities including sandbox and background tasks
 - `subprocess` - Process execution
-- `pathlib`, `glob` - File system access
 - `wait_for` - Process monitoring
+- AI, agent, and MCP libraries
 
 ### Accessing Environment Variables in Scripts
 
@@ -223,9 +209,6 @@ scriptling --server :8000 --bearer-token my-secret-token setup.py
 
 # With filesystem restrictions
 scriptling --server :8000 --allowed-paths "/var/www,./uploads" setup.py
-
-# Safe mode (no filesystem access)
-scriptling --server :8000 --script-mode safe setup.py
 ```
 
 #### MCP Script Execution Tool
@@ -502,7 +485,7 @@ task install
 - **Lint mode**: Check scripts for syntax errors without execution
 - **HTTP Server**: Start HTTP server with custom routes via `--server`
 - **MCP Server**: Serve tools via Model Context Protocol with `--mcp-tools`
-- **Sandboxed execution**: Safe mode restricts access to file system, network, and subprocess
+- **Path restrictions**: Restrict filesystem access with `--allowed-paths`
 - **Custom libraries**: Load libraries from custom directories with `--libdir`
 - **Environment configuration**: Auto-load settings from `.env` file
 - **Configurable logging**: Set log level with `--log-level` (debug, info, warn, error)

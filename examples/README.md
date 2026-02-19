@@ -13,10 +13,6 @@ This directory contains examples and tools for working with Scriptling.
   - `example.py` - Demonstrates background tasks, runtime.run(), sync primitives, KV store
   - `README.md` - Background tasks documentation
 
-- **mcp/** - MCP (Model Context Protocol) server for LLM testing
-  - `main.go` - MCP server implementation
-  - `README.md` - MCP server documentation
-
 - **mcp-client/** - MCP client examples
   - `with-openai/` - Using MCP tools through an OpenAI client
   - `direct/` - Direct MCP server connection
@@ -40,6 +36,27 @@ This directory contains examples and tools for working with Scriptling.
 - **multi-environment/** - Example of using multiple isolated Scriptling environments
   - `main.go` - Go integration example
   - `README.md` - Multi-environment documentation
+
+- **call_method/** - Example of calling methods on Scriptling objects from Go
+  - `main.go` - Go integration example
+  - `README.md` - Method calling documentation
+
+- **custom_io/** - Example of custom input/output handling
+  - `main.go` - Go integration example
+  - `README.md` - Custom I/O documentation
+
+- **http-server/** - Example of using the HTTP server library
+  - `main.go` - Go integration example
+  - `README.md` - HTTP server documentation
+
+- **mcp-tools/** - Example MCP tools for use with the CLI MCP server
+  - `*.toml` - Tool metadata files
+  - `*.py` - Tool implementation scripts
+  - `README.md` - MCP tools documentation
+
+- **telegram-bot/** - Example Telegram bot using Scriptling
+  - `main.go` - Go integration example
+  - `README.md` - Telegram bot documentation
 
 ## Running Script Examples
 
@@ -104,11 +121,7 @@ cd mcp-client/direct
 go run main.go
 ```
 
-**Prerequisites**: Start the MCP server first:
-```bash
-cd mcp
-go run main.go
-```
+**Prerequisites**: Start an MCP server first (e.g., using the CLI with `--server :8000 --mcp-tools ./tools`).
 
 ## Example Scripts
 
@@ -122,22 +135,17 @@ The `scripts/` directory contains numerous examples covering:
 - **Async**: `example_async.py`
 - **And many more...**
 
-## MCP Server for LLM Testing
-
-The MCP server allows LLMs to execute Scriptling code and learn about language differences:
-
-```bash
-cd mcp
-go mod tidy
-go run main.go
-```
-
-See `mcp/README.md` for detailed usage instructions.
-
 ## Other Examples
 
 See individual example directories for more details:
+- [background/README.md](background/README.md) - Background tasks and concurrency
+- [call_method/README.md](call_method/README.md) - Calling methods on Scriptling objects
+- [custom_io/README.md](custom_io/README.md) - Custom input/output handling
 - [extending/README.md](extending/README.md) - Extending Scriptling with Go
+- [http-server/README.md](http-server/README.md) - HTTP server library
 - [logging/](logging/) - Logging library example
+- [mcp-client/README.md](mcp-client/README.md) - MCP client examples
+- [mcp-tools/README.md](mcp-tools/README.md) - MCP tools examples
 - [multi-environment/README.md](multi-environment/README.md) - Multi-environment usage
 - [openai/README.md](openai/README.md) - AI library with OpenAI-compatible APIs
+- [telegram-bot/README.md](telegram-bot/README.md) - Telegram bot example
