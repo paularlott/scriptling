@@ -48,8 +48,8 @@ release: build-all
 		git tag -a v$(shell go run ./tools/getversion) -m "Release $(shell go run ./tools/getversion)"; \
 		git push origin v$(shell go run ./tools/getversion); \
 	fi
-	# Create release and upload all binaries
-	gh release create v$(shell go run ./tools/getversion) -t "Release $(shell go run ./tools/getversion)" -n "Scriptling $(shell go run ./tools/getversion)" $(BIN_DIR)/*
+	# Create release and upload zip files only
+	gh release create v$(shell go run ./tools/getversion) -t "Release $(shell go run ./tools/getversion)" -n "Scriptling $(shell go run ./tools/getversion)" $(BIN_DIR)/*.zip
 	# Update Homebrew formula
 	go run ./scripts/homebrew-formula/ > ../homebrew-tap/Formula/scriptling.rb
 
@@ -61,5 +61,7 @@ create-zips:
 	cd $(BIN_DIR) && cp scriptling-darwin-arm64 scriptling && zip scriptling-darwin-arm64.zip scriptling && rm scriptling
 	cd $(BIN_DIR) && cp scriptling-linux-amd64 scriptling && zip scriptling-linux-amd64.zip scriptling && rm scriptling
 	cd $(BIN_DIR) && cp scriptling-linux-arm64 scriptling && zip scriptling-linux-arm64.zip scriptling && rm scriptling
+	cd $(BIN_DIR) && cp scriptling-windows-amd64.exe scriptling.exe && zip scriptling-windows-amd64.zip scriptling.exe && rm scriptling.exe
+	cd $(BIN_DIR) && cp scriptling-windows-arm64.exe scriptling.exe && zip scriptling-windows-arm64.zip scriptling.exe && rm scriptling.exe
 
 build-all: clean $(BIN_DIR) build-linux-amd64 build-linux-arm64 build-darwin-amd64 build-darwin-arm64 build-windows-amd64 build-windows-arm64 create-zips
