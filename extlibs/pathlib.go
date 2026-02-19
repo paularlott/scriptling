@@ -31,15 +31,18 @@ func RegisterPathlibLibrary(registrar object.LibraryRegistrar, allowedPaths []st
 // NewPathlibLibrary creates a new Pathlib library with the given configuration.
 func NewPathlibLibrary(config fssecurity.Config) *object.Library {
 	// Normalize and validate allowed paths (same as in os.go)
-	normalizedPaths := make([]string, 0, len(config.AllowedPaths))
-	for _, p := range config.AllowedPaths {
-		absPath, err := filepath.Abs(p)
-		if err != nil {
-			continue
+	// IMPORTANT: nil means no restrictions, empty slice means deny all
+	if config.AllowedPaths != nil {
+		normalizedPaths := make([]string, 0, len(config.AllowedPaths))
+		for _, p := range config.AllowedPaths {
+			absPath, err := filepath.Abs(p)
+			if err != nil {
+				continue
+			}
+			normalizedPaths = append(normalizedPaths, filepath.Clean(absPath))
 		}
-		normalizedPaths = append(normalizedPaths, filepath.Clean(absPath))
+		config.AllowedPaths = normalizedPaths
 	}
-	config.AllowedPaths = normalizedPaths
 
 	instance := &PathlibLibraryInstance{config: config}
 	return instance.createPathlibLibrary()

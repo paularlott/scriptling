@@ -58,15 +58,18 @@ func RegisterOSLibrary(registrar object.LibraryRegistrar, allowedPaths []string)
 // Prefer using RegisterOSLibrary which handles registration automatically.
 func NewOSLibrary(config fssecurity.Config) (*object.Library, *object.Library) {
 	// Normalize and validate allowed paths
-	normalizedPaths := make([]string, 0, len(config.AllowedPaths))
-	for _, p := range config.AllowedPaths {
-		absPath, err := filepath.Abs(p)
-		if err != nil {
-			continue
+	// IMPORTANT: nil means no restrictions, empty slice means deny all
+	if config.AllowedPaths != nil {
+		normalizedPaths := make([]string, 0, len(config.AllowedPaths))
+		for _, p := range config.AllowedPaths {
+			absPath, err := filepath.Abs(p)
+			if err != nil {
+				continue
+			}
+			normalizedPaths = append(normalizedPaths, filepath.Clean(absPath))
 		}
-		normalizedPaths = append(normalizedPaths, filepath.Clean(absPath))
+		config.AllowedPaths = normalizedPaths
 	}
-	config.AllowedPaths = normalizedPaths
 
 	instance := &osLibraryInstance{config: config}
 

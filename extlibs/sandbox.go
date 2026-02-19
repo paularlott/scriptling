@@ -5,7 +5,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sync"
 
 	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/errors"
@@ -31,11 +30,9 @@ type SandboxInstance interface {
 	SetOutputWriter(w io.Writer)
 }
 
-// sandboxState holds the factory and path restrictions for sandbox instances
+// sandboxState holds the factory for sandbox instances
 var sandboxState = struct {
-	sync.RWMutex
-	factory      SandboxFactory
-	allowedPaths fssecurity.Config
+	factory SandboxFactory
 }{}
 
 // SetSandboxFactory sets the factory function for creating sandbox instances.
@@ -49,55 +46,35 @@ var sandboxState = struct {
 //	    return p
 //	})
 func SetSandboxFactory(factory SandboxFactory) {
-	sandboxState.Lock()
 	sandboxState.factory = factory
-	sandboxState.Unlock()
 }
 
-// SetSandboxAllowedPaths restricts exec_file() to the given directories.
-// If allowedPaths is empty or nil, all paths are allowed (no restrictions).
-// Paths are normalized to absolute paths at set time.
-//
-// SECURITY: When running untrusted scripts, ALWAYS provide allowedPaths to restrict
-// which script files the sandbox can load and execute.
-//
-// Example:
-//
-//	extlibs.SetSandboxAllowedPaths([]string{"/opt/scripts"})
-func SetSandboxAllowedPaths(allowedPaths []string) {
-	normalizedPaths := make([]string, 0, len(allowedPaths))
-	for _, p := range allowedPaths {
-		absPath, err := filepath.Abs(p)
-		if err != nil {
-			continue
-		}
-		normalizedPaths = append(normalizedPaths, filepath.Clean(absPath))
-	}
-
-	sandboxState.Lock()
-	sandboxState.allowedPaths = fssecurity.Config{AllowedPaths: normalizedPaths}
-	sandboxState.Unlock()
+// GetSandboxFactory returns the currently configured sandbox factory.
+// Returns nil if no factory has been set.
+func GetSandboxFactory() SandboxFactory {
+	return sandboxState.factory
 }
 
 // sandboxEnv wraps a SandboxInstance and tracks execution state
 type sandboxEnv struct {
-	instance SandboxInstance
-	exitCode int
-	executed bool
+	instance     SandboxInstance
+	exitCode     int
+	executed     bool
+	allowedPaths fssecurity.Config
 }
 
-// SandboxSubLibrary is the sandbox sub-library for scriptling.runtime.
-// Access it as scriptling.runtime.sandbox in scripts.
-var SandboxSubLibrary = buildSandboxLibrary()
+// NewSandboxLibrary creates a new sandbox library with the given allowed paths.
+// If allowedPaths is nil, all paths are allowed (no restrictions).
+// If allowedPaths is empty slice, no paths are allowed (deny all).
+func NewSandboxLibrary(allowedPaths []string) *object.Library {
+	// Normalize allowed paths
+	config := normalizeAllowedPaths(allowedPaths)
 
-func buildSandboxLibrary() *object.Library {
 	builder := object.NewLibraryBuilder("sandbox", "Isolated script execution environments")
 
 	// create() - Create a new sandbox environment
 	builder.FunctionWithHelp("create", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-		sandboxState.RLock()
 		factory := sandboxState.factory
-		sandboxState.RUnlock()
 
 		if factory == nil {
 			return errors.NewError("sandbox.create() requires a factory — call extlibs.SetSandboxFactory() in Go first")
@@ -120,9 +97,10 @@ func buildSandboxLibrary() *object.Library {
 		}
 
 		env := &sandboxEnv{
-			instance: instance,
-			exitCode: 0,
-			executed: false,
+			instance:     instance,
+			exitCode:     0,
+			executed:     false,
+			allowedPaths: config,
 		}
 
 		return env.buildObject()
@@ -153,6 +131,27 @@ Example:
   print(env.get("result"))  # True`)
 
 	return builder.Build()
+}
+
+// normalizeAllowedPaths normalizes the allowed paths slice.
+// nil means no restrictions, empty slice means deny all.
+func normalizeAllowedPaths(allowedPaths []string) fssecurity.Config {
+	// nil means no restrictions
+	if allowedPaths == nil {
+		return fssecurity.Config{AllowedPaths: nil}
+	}
+
+	// Empty slice means deny all
+	normalizedPaths := make([]string, 0, len(allowedPaths))
+	for _, p := range allowedPaths {
+		absPath, err := filepath.Abs(p)
+		if err != nil {
+			continue
+		}
+		normalizedPaths = append(normalizedPaths, filepath.Clean(absPath))
+	}
+
+	return fssecurity.Config{AllowedPaths: normalizedPaths}
 }
 
 // buildObject creates the scriptling object representing a sandbox environment
@@ -248,12 +247,8 @@ func (env *sandboxEnv) execFile(ctx context.Context, kwargs object.Kwargs, args 
 		return pathErr
 	}
 
-	// Check path restrictions
-	sandboxState.RLock()
-	config := sandboxState.allowedPaths
-	sandboxState.RUnlock()
-
-	if !config.IsPathAllowed(path) {
+	// Check path restrictions using the sandbox's own config
+	if !env.allowedPaths.IsPathAllowed(path) {
 		env.exitCode = 1
 		return &object.Null{}
 	}

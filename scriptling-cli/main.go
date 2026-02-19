@@ -211,10 +211,14 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 	})
 }
 
-// parseAllowedPaths parses a comma-separated list of paths into a slice
+// parseAllowedPaths parses a comma-separated list of paths into a slice.
+// Returns nil for no restrictions, empty slice for deny all (when paths is "-").
 func parseAllowedPaths(paths string) []string {
 	if paths == "" {
 		return nil
+	}
+	if paths == "-" {
+		return []string{} // Empty slice means deny all
 	}
 	result := []string{}
 	for _, p := range strings.Split(paths, ",") {

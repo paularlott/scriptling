@@ -11,24 +11,45 @@ import (
 )
 
 // setupSandboxTest creates a Scriptling instance with runtime (including sandbox)
-// and sets the sandbox factory.
+// and sets the sandbox factory. Uses no path restrictions (nil).
 func setupSandboxTest(t *testing.T) *scriptling.Scriptling {
 	t.Helper()
 	ResetRuntime()
 
 	// Clear any previous sandbox state
 	SetSandboxFactory(nil)
-	SetSandboxAllowedPaths(nil)
 
 	p := scriptling.New()
 	stdlib.RegisterAll(p)
-	RegisterRuntimeLibraryAll(p)
+	RegisterRuntimeLibraryAll(p, nil) // No restrictions
 
 	// Set up factory that creates instances with stdlib + runtime
 	SetSandboxFactory(func() SandboxInstance {
 		newP := scriptling.New()
 		stdlib.RegisterAll(newP)
-		RegisterRuntimeLibraryAll(newP)
+		RegisterRuntimeLibraryAll(newP, nil)
+		return newP
+	})
+
+	return p
+}
+
+// setupSandboxTestWithPaths creates a Scriptling instance with restricted sandbox paths.
+func setupSandboxTestWithPaths(t *testing.T, allowedPaths []string) *scriptling.Scriptling {
+	t.Helper()
+	ResetRuntime()
+
+	SetSandboxFactory(nil)
+
+	p := scriptling.New()
+	stdlib.RegisterAll(p)
+	RegisterRuntimeLibraryAll(p, allowedPaths)
+
+	// Set up factory that creates instances with same restrictions
+	SetSandboxFactory(func() SandboxInstance {
+		newP := scriptling.New()
+		stdlib.RegisterAll(newP)
+		RegisterRuntimeLibraryAll(newP, allowedPaths)
 		return newP
 	})
 
@@ -239,11 +260,10 @@ results
 func TestSandboxNoFactory(t *testing.T) {
 	ResetRuntime()
 	SetSandboxFactory(nil)
-	SetSandboxAllowedPaths(nil)
 
 	p := scriptling.New()
 	stdlib.RegisterAll(p)
-	RegisterRuntimeLibraryAll(p)
+	RegisterRuntimeLibraryAll(p, nil)
 
 	// When no factory is set, create() returns an error which
 	// propagates as a script error
@@ -331,10 +351,8 @@ func TestSandboxExecFilePathRestriction(t *testing.T) {
 	os.WriteFile(allowedFile, []byte("result = 'allowed'\n"), 0644)
 	os.WriteFile(deniedFile, []byte("result = 'denied'\n"), 0644)
 
-	p := setupSandboxTest(t)
-
-	// Restrict to allowedDir only
-	SetSandboxAllowedPaths([]string{allowedDir})
+	// Create instance restricted to allowedDir only
+	p := setupSandboxTestWithPaths(t, []string{allowedDir})
 
 	// Test allowed path
 	script := `
@@ -377,9 +395,8 @@ func TestSandboxExecFileNoRestriction(t *testing.T) {
 	scriptFile := filepath.Join(tmpDir, "test.py")
 	os.WriteFile(scriptFile, []byte("result = 'ok'\n"), 0644)
 
+	// setupSandboxTest uses nil (no restrictions)
 	p := setupSandboxTest(t)
-	// Explicitly clear restrictions (default is unrestricted)
-	SetSandboxAllowedPaths(nil)
 
 	script := `
 import scriptling.runtime as runtime

@@ -130,9 +130,22 @@ func RegisterRuntimeLibrary(registrar interface{ RegisterLibrary(*object.Library
 	registrar.RegisterLibrary(RuntimeLibraryCore)
 }
 
-// RegisterRuntimeLibraryAll registers the runtime library with all sub-libraries (http, kv, sync, sandbox).
-func RegisterRuntimeLibraryAll(registrar interface{ RegisterLibrary(*object.Library) }) {
-	registrar.RegisterLibrary(RuntimeLibraryWithSubs)
+// RegisterRuntimeLibraryAll registers the runtime library with all sub-libraries,
+// including sandbox with the specified allowed paths for exec_file restrictions.
+// If allowedPaths is nil, all paths are allowed (no restrictions).
+// If allowedPaths is empty slice, no paths are allowed (deny all).
+func RegisterRuntimeLibraryAll(registrar interface{ RegisterLibrary(*object.Library) }, allowedPaths []string) {
+	registrar.RegisterLibrary(NewRuntimeLibraryWithSubs(allowedPaths))
+}
+
+// NewRuntimeLibraryWithSubs creates the runtime library with all sub-libraries including sandbox.
+func NewRuntimeLibraryWithSubs(allowedPaths []string) *object.Library {
+	return object.NewLibraryWithSubs(RuntimeLibraryName, RuntimeLibraryFunctions, nil, map[string]*object.Library{
+		"http":    HTTPSubLibrary,
+		"kv":      KVSubLibrary,
+		"sync":    SyncSubLibrary,
+		"sandbox": NewSandboxLibrary(allowedPaths),
+	}, "Runtime library for HTTP, KV store, concurrency primitives, and sandboxed execution")
 }
 
 func RegisterRuntimeHTTPLibrary(registrar interface{ RegisterLibrary(*object.Library) }) {
@@ -147,8 +160,11 @@ func RegisterRuntimeSyncLibrary(registrar interface{ RegisterLibrary(*object.Lib
 	registrar.RegisterLibrary(SyncSubLibrary)
 }
 
-func RegisterRuntimeSandboxLibrary(registrar interface{ RegisterLibrary(*object.Library) }) {
-	registrar.RegisterLibrary(SandboxSubLibrary)
+// RegisterRuntimeSandboxLibrary registers the sandbox library with the specified allowed paths.
+// If allowedPaths is nil, all paths are allowed (no restrictions).
+// If allowedPaths is empty slice, no paths are allowed (deny all).
+func RegisterRuntimeSandboxLibrary(registrar interface{ RegisterLibrary(*object.Library) }, allowedPaths []string) {
+	registrar.RegisterLibrary(NewSandboxLibrary(allowedPaths))
 }
 
 // RuntimeLibraryFunctions contains the core runtime functions (background)
@@ -223,12 +239,9 @@ Example:
 var RuntimeLibraryCore = object.NewLibrary(RuntimeLibraryName, RuntimeLibraryFunctions, nil, "Runtime library for background tasks")
 
 // RuntimeLibraryWithSubs is the runtime library with all sub-libraries (http, kv, sync, sandbox)
-var RuntimeLibraryWithSubs = object.NewLibraryWithSubs(RuntimeLibraryName, RuntimeLibraryFunctions, nil, map[string]*object.Library{
-	"http":    HTTPSubLibrary,
-	"kv":      KVSubLibrary,
-	"sync":    SyncSubLibrary,
-	"sandbox": SandboxSubLibrary,
-}, "Runtime library for HTTP, KV store, concurrency primitives, and sandboxed execution")
+// Note: This uses nil for sandbox allowed paths (no restrictions).
+// For custom sandbox paths, use NewRuntimeLibraryWithSubs(allowedPaths).
+var RuntimeLibraryWithSubs = NewRuntimeLibraryWithSubs(nil)
 
 // RuntimeLibrary is an alias for RuntimeLibraryWithSubs for backward compatibility
 var RuntimeLibrary = RuntimeLibraryWithSubs

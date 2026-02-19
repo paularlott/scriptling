@@ -9,7 +9,8 @@ import (
 // Config holds the configuration for file system security
 type Config struct {
 	// AllowedPaths is a list of absolute directory paths that file operations are restricted to.
-	// If empty, all paths are allowed (no restrictions).
+	// If nil, all paths are allowed (no restrictions).
+	// If empty slice (not nil), no paths are allowed (deny all).
 	// All paths must be absolute and will be cleaned/normalized.
 	AllowedPaths []string
 }
@@ -24,9 +25,13 @@ type Config struct {
 // - Symlink attacks (by evaluating the real path)
 // - Prefix attacks (/allowed vs /allowed-other)
 func (c *Config) IsPathAllowed(path string) bool {
-	// If no restrictions, allow all
-	if len(c.AllowedPaths) == 0 {
+	// If nil, no restrictions - allow all
+	if c.AllowedPaths == nil {
 		return true
+	}
+	// If empty slice (not nil), deny all
+	if len(c.AllowedPaths) == 0 {
+		return false
 	}
 
 	// Get absolute path to prevent relative path attacks
