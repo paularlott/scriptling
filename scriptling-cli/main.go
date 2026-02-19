@@ -13,6 +13,7 @@ import (
 	"github.com/paularlott/logger"
 	logslog "github.com/paularlott/logger/slog"
 	"github.com/paularlott/scriptling"
+	"github.com/paularlott/scriptling/build"
 	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/lint"
 	"github.com/paularlott/scriptling/object"
@@ -29,7 +30,7 @@ func main() {
 
 	cmd := &cli.Command{
 		Name:        "scriptling",
-		Version:     "1.0.0",
+		Version:     build.Version,
 		Usage:       "Scriptling interpreter",
 		Description: "Run Scriptling scripts from files, stdin, or interactively",
 		Flags: []cli.Flag{
