@@ -17,20 +17,19 @@ import (
 // SetupScriptling configures a Scriptling instance with all libraries.
 // libdir: Optional directory for on-demand library loading (empty = current directory)
 // registerInteract: Whether to register the agent interact library
-// safeMode: If true, only register safe libraries (no file/network/subprocess access)
 // allowedPaths: Filesystem path restrictions for os, pathlib, glob, sandbox (nil = no restrictions)
 // log: Logger instance for the logging library
-func SetupScriptling(p *scriptling.Scriptling, libdir string, registerInteract bool, safeMode bool, allowedPaths []string, log logger.Logger) {
-	// Register all standard libraries (always safe)
+func SetupScriptling(p *scriptling.Scriptling, libdir string, registerInteract bool, allowedPaths []string, log logger.Logger) {
+	// Register all standard libraries
 	stdlib.RegisterAll(p)
 
-	// Register YAML (safe - pure parsing)
+	// Register YAML
 	p.RegisterLibrary(extlibs.YAMLLibrary)
 
-	// Register TOML (safe - pure parsing)
+	// Register TOML
 	p.RegisterLibrary(extlibs.TOMLLibrary)
 
-	// Register HTML parser (safe - no external access)
+	// Register HTML parser
 	extlibs.RegisterHTMLParserLibrary(p)
 	extlibs.RegisterRequestsLibrary(p)
 	extlibs.RegisterSecretsLibrary(p)
@@ -45,13 +44,11 @@ func SetupScriptling(p *scriptling.Scriptling, libdir string, registerInteract b
 		extlibs.SetSandboxAllowedPaths(allowedPaths)
 	}
 
-	// Skip dangerous libraries in safe mode
-	if !safeMode {
-		extlibs.RegisterSubprocessLibrary(p)
-		extlibs.RegisterPathlibLibrary(p, allowedPaths)
-		extlibs.RegisterGlobLibrary(p, allowedPaths)
-		extlibs.RegisterWaitForLibrary(p)
-	}
+	// Register all libraries (use --allowed-paths to restrict file access)
+	extlibs.RegisterSubprocessLibrary(p)
+	extlibs.RegisterPathlibLibrary(p, allowedPaths)
+	extlibs.RegisterGlobLibrary(p, allowedPaths)
+	extlibs.RegisterWaitForLibrary(p)
 
 	// Register AI and MCP libraries
 	ai.Register(p)
@@ -86,10 +83,10 @@ func SetupScriptling(p *scriptling.Scriptling, libdir string, registerInteract b
 // SetupFactories configures the global sandbox and background factories.
 // Call this once at startup, before any scripts execute.
 // The factories create new Scriptling instances with the same library configuration.
-func SetupFactories(libdir string, safeMode bool, allowedPaths []string, log logger.Logger) {
+func SetupFactories(libdir string, allowedPaths []string, log logger.Logger) {
 	factory := func() extlibs.SandboxInstance {
 		p := scriptling.New()
-		SetupScriptling(p, libdir, false, safeMode, allowedPaths, log)
+		SetupScriptling(p, libdir, false, allowedPaths, log)
 		return p
 	}
 	extlibs.SetSandboxFactory(factory)

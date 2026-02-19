@@ -192,11 +192,11 @@ p := scriptling.New()
 stdlib.RegisterAll(p)
 
 // Or register individual standard libraries
-p.RegisterLibrary(stdlib.JSONLibraryName, stdlib.JSONLibrary)
-p.RegisterLibrary(stdlib.MathLibraryName, stdlib.MathLibrary)
+p.RegisterLibrary(stdlib.JSONLibrary)
+p.RegisterLibrary(stdlib.MathLibrary)
 
 // Register additional custom libraries
-p.RegisterLibrary(extlibs.RequestsLibraryName, extlibs.RequestsLibrary)
+p.RegisterLibrary(extlibs.RequestsLibrary)
 
 // Register os and pathlib with security restrictions
 extlibs.RegisterOSLibrary(p, []string{"/tmp", "/home/user/data"})
@@ -222,7 +222,7 @@ See `examples/` directory:
 
 - **scripts/** - Script examples and Go integration
 - **openai/scriptlingcoder/** - AI coding assistant with custom tools (inspired by [nanocode](https://github.com/1rgs/nanocode))
-- **mcp/** - MCP server for LLM testing
+- **mcp-tools/** - MCP tools for use with CLI MCP server
 
 Run examples:
 

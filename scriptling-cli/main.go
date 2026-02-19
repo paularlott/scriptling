@@ -86,19 +86,6 @@ func main() {
 				EnvVars:      []string{"SCRIPTLING_BEARER_TOKEN"},
 			},
 			&cli.StringFlag{
-				Name:         "script-mode",
-				Usage:        "Script mode: safe or full",
-				DefaultValue: "full",
-				EnvVars:      []string{"SCRIPTLING_SCRIPT_MODE"},
-				ValidateFlag: func(c *cli.Command) error {
-					mode := c.GetString("script-mode")
-					if mode != "safe" && mode != "full" {
-						return fmt.Errorf("invalid value for --script-mode: %s (must be 'safe' or 'full')", mode)
-					}
-					return nil
-				},
-			},
-			&cli.StringFlag{
 				Name:         "allowed-paths",
 				Usage:        "Comma-separated list of allowed filesystem paths (restricts os, pathlib, glob, sandbox)",
 				DefaultValue: "",
@@ -179,9 +166,8 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 
 	// Set up all libraries and factories
 	libdir := cmd.GetString("libdir")
-	safeMode := cmd.GetString("script-mode") == "safe"
-	mcpcli.SetupFactories(libdir, safeMode, allowedPaths, globalLogger)
-	mcpcli.SetupScriptling(p, libdir, true, safeMode, allowedPaths, globalLogger)
+	mcpcli.SetupFactories(libdir, allowedPaths, globalLogger)
+	mcpcli.SetupScriptling(p, libdir, true, allowedPaths, globalLogger)
 
 	file := cmd.GetStringArg("file")
 	interactive := cmd.GetBool("interactive")
@@ -216,7 +202,6 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 		ScriptFile:   cmd.GetStringArg("file"),
 		LibDir:       cmd.GetString("libdir"),
 		BearerToken:  cmd.GetString("bearer-token"),
-		ScriptMode:   cmd.GetString("script-mode"),
 		AllowedPaths: parseAllowedPaths(cmd.GetString("allowed-paths")),
 		MCPToolsDir:  cmd.GetString("mcp-tools"),
 		MCPExecTool:  cmd.GetBool("mcp-exec-script"),

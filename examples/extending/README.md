@@ -38,7 +38,7 @@ This will execute a comprehensive Scriptling script that demonstrates all the ex
 ### Function Signature
 All Scriptling functions must follow this signature:
 ```go
-func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object
+func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object
 ```
 
 ### Type System
@@ -58,7 +58,7 @@ return &object.String{Value: "Error: invalid argument"}
 
 ### Registration
 - Functions: `p.RegisterFunc(name, function)`
-- Libraries: `p.RegisterLibrary(name, library)`
+- Libraries: `p.RegisterLibrary(library)` (name is extracted from library)
 
 ## Advanced Topics
 
