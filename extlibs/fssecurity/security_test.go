@@ -10,7 +10,7 @@ import (
 func TestConfig_IsPathAllowed_NoRestrictions(t *testing.T) {
 	config := Config{}
 
-	// With no restrictions, all paths should be allowed
+	// With nil AllowedPaths, all paths should be allowed
 	tests := []string{
 		"/",
 		"/home/user",
@@ -23,6 +23,28 @@ func TestConfig_IsPathAllowed_NoRestrictions(t *testing.T) {
 	for _, path := range tests {
 		if !config.IsPathAllowed(path) {
 			t.Errorf("Expected path %s to be allowed with no restrictions", path)
+		}
+	}
+}
+
+func TestConfig_IsPathAllowed_DenyAll(t *testing.T) {
+	// Empty slice (not nil) means deny all
+	config := Config{
+		AllowedPaths: []string{}, // Empty slice, not nil
+	}
+
+	// All paths should be denied
+	tests := []string{
+		"/",
+		"/home/user",
+		"./relative",
+		"/etc/passwd",
+		"/tmp",
+	}
+
+	for _, path := range tests {
+		if config.IsPathAllowed(path) {
+			t.Errorf("Expected path %s to be denied with empty AllowedPaths", path)
 		}
 	}
 }

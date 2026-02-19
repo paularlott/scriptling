@@ -45,15 +45,18 @@ func RegisterGlobLibrary(registrar object.LibraryRegistrar, allowedPaths []strin
 // NewGlobLibrary creates a new Glob library with the given configuration.
 func NewGlobLibrary(config fssecurity.Config) *object.Library {
 	// Normalize and validate allowed paths
-	normalizedPaths := make([]string, 0, len(config.AllowedPaths))
-	for _, p := range config.AllowedPaths {
-		absPath, err := filepath.Abs(p)
-		if err != nil {
-			continue
+	// IMPORTANT: nil means no restrictions, empty slice means deny all
+	if config.AllowedPaths != nil {
+		normalizedPaths := make([]string, 0, len(config.AllowedPaths))
+		for _, p := range config.AllowedPaths {
+			absPath, err := filepath.Abs(p)
+			if err != nil {
+				continue
+			}
+			normalizedPaths = append(normalizedPaths, filepath.Clean(absPath))
 		}
-		normalizedPaths = append(normalizedPaths, filepath.Clean(absPath))
+		config.AllowedPaths = normalizedPaths
 	}
-	config.AllowedPaths = normalizedPaths
 
 	instance := &GlobLibraryInstance{config: config}
 	return instance.createGlobLibrary()

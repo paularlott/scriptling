@@ -12,7 +12,7 @@ import (
 func TestRuntimeHTTP(t *testing.T) {
 	ResetRuntime()
 	p := scriptling.New()
-	RegisterRuntimeLibraryAll(p)
+	RegisterRuntimeLibraryAll(p, nil)
 
 	script := `
 import scriptling.runtime as runtime
@@ -46,7 +46,7 @@ runtime.http.static("/assets", "./public")
 
 func TestRuntimeHTTPResponses(t *testing.T) {
 	p := scriptling.New()
-	RegisterRuntimeLibraryAll(p)
+	RegisterRuntimeLibraryAll(p, nil)
 
 	tests := []struct {
 		name   string
@@ -103,7 +103,7 @@ func TestRuntimeHTTPResponses(t *testing.T) {
 func TestRuntimeKV(t *testing.T) {
 	ResetRuntime()
 	p := scriptling.New()
-	RegisterRuntimeLibraryAll(p)
+	RegisterRuntimeLibraryAll(p, nil)
 
 	script := `
 import scriptling.runtime as runtime
@@ -164,7 +164,7 @@ v5 = runtime.kv.get("key1")
 func TestRuntimeKVIncr(t *testing.T) {
 	ResetRuntime()
 	p := scriptling.New()
-	RegisterRuntimeLibraryAll(p)
+	RegisterRuntimeLibraryAll(p, nil)
 
 	script := `
 import scriptling.runtime as runtime
@@ -197,7 +197,7 @@ v3 = runtime.kv.incr("new_counter")
 func TestRuntimeKVTTL(t *testing.T) {
 	ResetRuntime()
 	p := scriptling.New()
-	RegisterRuntimeLibraryAll(p)
+	RegisterRuntimeLibraryAll(p, nil)
 
 	script := `
 import scriptling.runtime as runtime
@@ -238,7 +238,7 @@ runtime.kv.exists("temp")
 func TestRuntimeSync(t *testing.T) {
 	ResetRuntime()
 	p := scriptling.New()
-	RegisterRuntimeLibraryAll(p)
+	RegisterRuntimeLibraryAll(p, nil)
 
 	script := `
 import scriptling.runtime as runtime
@@ -298,7 +298,7 @@ wg.done()
 func TestRuntimeBackground(t *testing.T) {
 	ResetRuntime()
 	p := scriptling.New()
-	RegisterRuntimeLibraryAll(p)
+	RegisterRuntimeLibraryAll(p, nil)
 
 	script := `
 import scriptling.runtime as runtime
@@ -329,10 +329,10 @@ func TestRuntimeCrossEnvironmentSync(t *testing.T) {
 
 	// Create two separate scriptling instances
 	p1 := scriptling.New()
-	RegisterRuntimeLibraryAll(p1)
+	RegisterRuntimeLibraryAll(p1, nil)
 
 	p2 := scriptling.New()
-	RegisterRuntimeLibraryAll(p2)
+	RegisterRuntimeLibraryAll(p2, nil)
 
 	// Set value in p1
 	_, err := p1.Eval(`
@@ -370,7 +370,7 @@ v2 = counter.get()
 func BenchmarkRuntimeKVSet(b *testing.B) {
 	ResetRuntime()
 	p := scriptling.New()
-	RegisterRuntimeLibraryAll(p)
+	RegisterRuntimeLibraryAll(p, nil)
 
 	ctx := context.Background()
 	key := &object.String{Value: "bench_key"}
@@ -387,7 +387,7 @@ func BenchmarkRuntimeKVSet(b *testing.B) {
 func BenchmarkRuntimeKVGet(b *testing.B) {
 	ResetRuntime()
 	p := scriptling.New()
-	RegisterRuntimeLibraryAll(p)
+	RegisterRuntimeLibraryAll(p, nil)
 
 	ctx := context.Background()
 	key := &object.String{Value: "bench_key"}
@@ -407,7 +407,7 @@ func BenchmarkRuntimeKVGet(b *testing.B) {
 func BenchmarkRuntimeAtomicAdd(b *testing.B) {
 	ResetRuntime()
 	p := scriptling.New()
-	RegisterRuntimeLibraryAll(p)
+	RegisterRuntimeLibraryAll(p, nil)
 
 	ctx := context.Background()
 	name := &object.String{Value: "bench_counter"}

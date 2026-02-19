@@ -1123,21 +1123,18 @@ func TestSandboxRelativePath(t *testing.T) {
 	// Setup sandbox with relative path restriction
 	ResetRuntime()
 	SetSandboxFactory(nil)
-	SetSandboxAllowedPaths(nil)
 
+	// Register runtime with sandbox restricted to ./allowed
 	p := scriptling.New()
 	stdlib.RegisterAll(p)
-	RegisterRuntimeLibraryAll(p)
+	RegisterRuntimeLibraryAll(p, []string{"./allowed"})
 
 	SetSandboxFactory(func() SandboxInstance {
 		newP := scriptling.New()
 		stdlib.RegisterAll(newP)
-		RegisterRuntimeLibraryAll(newP)
+		RegisterRuntimeLibraryAll(newP, []string{"./allowed"})
 		return newP
 	})
-
-	// Restrict to relative path ./allowed
-	SetSandboxAllowedPaths([]string{"./allowed"})
 
 	// Should be able to exec from allowed
 	script := `

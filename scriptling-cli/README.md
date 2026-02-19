@@ -110,12 +110,13 @@ SCRIPTLING_ALLOWED_PATHS=/tmp/data,./uploads
 
 ### Script Execution Modes
 
-Scriptling supports two levels of filesystem access control:
+Scriptling supports three levels of filesystem access control:
 
 | Mode | Flag | Filesystem Access | Path Restrictions |
 |------|------|-------------------|-------------------|
 | **Full** | (default) | All libraries | None |
 | **Restricted** | `--allowed-paths /path1,/path2` | All libraries | Only specified paths |
+| **None** | `--allowed-paths -` | All libraries | No paths allowed |
 
 #### Full Mode (default)
 
@@ -139,6 +140,16 @@ scriptling --allowed-paths "./data,../shared" script.py
 # Via environment variable
 SCRIPTLING_ALLOWED_PATHS="/var/www,./public" scriptling script.py
 ```
+
+#### No File Access Mode
+
+Disable all filesystem access (useful for running untrusted scripts):
+
+```bash
+scriptling --allowed-paths - script.py
+```
+
+All file operations (`os.read_file`, `os.write_file`, `pathlib`, `glob`, `sandbox.exec_file`) will be denied.
 
 When a script tries to access a path outside the allowed directories:
 

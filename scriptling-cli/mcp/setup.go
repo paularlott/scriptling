@@ -36,13 +36,8 @@ func SetupScriptling(p *scriptling.Scriptling, libdir string, registerInteract b
 	extlibs.RegisterOSLibrary(p, allowedPaths)
 	extlibs.RegisterLoggingLibrary(p, log)
 
-	// Register runtime library core (background) and sub-libraries (excluding http)
-	extlibs.RegisterRuntimeLibraryAll(p)
-
-	// Set sandbox allowed paths for exec_file restrictions
-	if allowedPaths != nil {
-		extlibs.SetSandboxAllowedPaths(allowedPaths)
-	}
+	// Register runtime library with sandbox using the same allowed paths
+	extlibs.RegisterRuntimeLibraryAll(p, allowedPaths)
 
 	// Register all libraries (use --allowed-paths to restrict file access)
 	extlibs.RegisterSubprocessLibrary(p)
