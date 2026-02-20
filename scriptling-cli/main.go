@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/paularlott/cli"
 	"github.com/paularlott/cli/env"
+	"github.com/paularlott/cli/tui"
 	"github.com/paularlott/logger"
 	logslog "github.com/paularlott/logger/slog"
 	"github.com/paularlott/scriptling"
@@ -250,40 +250,52 @@ func runStdin(p *scriptling.Scriptling) error {
 }
 
 func runInteractive(p *scriptling.Scriptling) error {
-	fmt.Println("Scriptling Interactive Mode")
-	fmt.Println("Type 'exit' or 'quit' to exit")
-	fmt.Println()
-
-	scanner := bufio.NewScanner(os.Stdin)
-	for {
-		fmt.Print(">>> ")
-		if !scanner.Scan() {
-			break
-		}
-
-		line := strings.TrimSpace(scanner.Text())
-		if line == "exit" || line == "quit" {
-			break
-		}
-
-		if line == "" {
-			continue
-		}
-
-		// Try to evaluate the line
-		result, err := p.Eval(line)
-		if err != nil {
-			fmt.Printf("Error: %v\n", err)
-		} else if result != nil {
-			fmt.Printf("%v\n", result.Inspect())
-		}
+	cwd, err := os.Getwd()
+	if err != nil {
+		cwd = "scriptling"
 	}
 
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("reading input: %w", err)
-	}
+	var t *tui.TUI
+	t = tui.New(tui.Config{
+		HideHeaders: true,
+		StatusLeft:  cwd,
+		StatusRight: "Ctrl+C to exit",
+		Commands: []*tui.Command{
+			{
+				Name:        "exit",
+				Description: "Exit interactive mode",
+				Handler:     func(_ string) { t.Exit() },
+			},
+			{
+				Name:        "clear",
+				Description: "Clear output",
+				Handler:     func(_ string) { t.ClearOutput() },
+			},
+		},
+		OnSubmit: func(line string) {
+			t.AddMessage(tui.RoleUser, line)
+			var buf strings.Builder
+			p.SetOutputWriter(&buf)
+			t.StartSpinner("Evaluating…")
+			result, err := p.Eval(line)
+			t.StopSpinner()
+			p.SetOutputWriter(nil)
+			if err != nil {
+				t.AddMessage(tui.RoleSystem, err.Error())
+				return
+			}
+			output := strings.TrimRight(buf.String(), "\n")
+			if output != "" {
+				t.AddMessage(tui.RoleAssistant, output)
+			} else if result != nil && result.Inspect() != "None" {
+				t.AddMessage(tui.RoleAssistant, result.Inspect())
+			}
+		},
+	})
 
-	return nil
+	t.AddMessage(tui.RoleSystem, tui.Styled(t.Theme().Text, "scriptling")+"\n"+tui.Styled(t.Theme().Primary, "v"+build.Version))
+
+	return t.Run(context.Background())
 }
 
 func evalAndCheckExit(p *scriptling.Scriptling, code string) error {

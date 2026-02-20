@@ -6,7 +6,7 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/google/uuid v1.6.0
-	github.com/paularlott/cli v0.7.3
+	github.com/paularlott/cli v0.7.4
 	github.com/paularlott/logger v0.3.0
 	github.com/paularlott/mcp v0.12.5
 	github.com/shirou/gopsutil/v3 v3.24.5
@@ -25,4 +25,5 @@ require (
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	golang.org/x/oauth2 v0.35.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
+	golang.org/x/term v0.40.0 // indirect
 )
