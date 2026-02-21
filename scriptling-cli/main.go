@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/paularlott/cli"
 	"github.com/paularlott/cli/env"
@@ -250,15 +251,14 @@ func runStdin(p *scriptling.Scriptling) error {
 }
 
 func runInteractive(p *scriptling.Scriptling) error {
-	cwd, err := os.Getwd()
-	if err != nil {
-		cwd = "scriptling"
-	}
+	var (
+		t         *tui.TUI
+		cancel    context.CancelFunc
+		runningMu sync.Mutex
+	)
 
-	var t *tui.TUI
 	t = tui.New(tui.Config{
 		HideHeaders: true,
-		StatusLeft:  cwd,
 		StatusRight: "Ctrl+C to exit",
 		Commands: []*tui.Command{
 			{
@@ -272,30 +272,62 @@ func runInteractive(p *scriptling.Scriptling) error {
 				Handler:     func(_ string) { t.ClearOutput() },
 			},
 		},
+		OnEscape: func() {
+			runningMu.Lock()
+			if cancel != nil {
+				cancel()
+			}
+			runningMu.Unlock()
+		},
 		OnSubmit: func(line string) {
 			t.AddMessage(tui.RoleUser, line)
-			var buf strings.Builder
-			p.SetOutputWriter(&buf)
-			t.StartSpinner("Evaluating…")
-			result, err := p.Eval(line)
-			t.StopSpinner()
-			p.SetOutputWriter(nil)
-			if err != nil {
-				t.AddMessage(tui.RoleSystem, err.Error())
-				return
-			}
-			output := strings.TrimRight(buf.String(), "\n")
-			if output != "" {
-				t.AddMessage(tui.RoleAssistant, output)
-			} else if result != nil && result.Inspect() != "None" {
-				t.AddMessage(tui.RoleAssistant, result.Inspect())
-			}
+
+			ctx, c := context.WithCancel(context.Background())
+			runningMu.Lock()
+			cancel = c
+			runningMu.Unlock()
+
+			t.StartStreaming()
+			t.StartSpinner("Esc to stop")
+			p.SetOutputWriter(&streamWriter{t: t})
+
+			go func() {
+				defer func() {
+					p.SetOutputWriter(nil)
+					runningMu.Lock()
+					cancel = nil
+					runningMu.Unlock()
+					c()
+					t.StopSpinner()
+					t.StreamComplete()
+				}()
+				result, err := p.EvalWithContext(ctx, line)
+				if err != nil {
+					if ctx.Err() == nil {
+						t.StreamChunk(err.Error())
+					}
+					return
+				}
+				if result != nil && result.Inspect() != "None" && !t.IsStreaming() {
+					t.AddMessage(tui.RoleAssistant, result.Inspect())
+				}
+			}()
 		},
 	})
 
 	t.AddMessage(tui.RoleSystem, tui.Styled(t.Theme().Text, "scriptling")+"\n"+tui.Styled(t.Theme().Primary, "v"+build.Version))
 
 	return t.Run(context.Background())
+}
+
+// streamWriter forwards script output chunks to the TUI streaming message.
+type streamWriter struct {
+	t *tui.TUI
+}
+
+func (w *streamWriter) Write(p []byte) (int, error) {
+	w.t.StreamChunk(string(p))
+	return len(p), nil
 }
 
 func evalAndCheckExit(p *scriptling.Scriptling, code string) error {
