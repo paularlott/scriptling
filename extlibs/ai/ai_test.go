@@ -588,7 +588,7 @@ func TestOpenAIClientClassMethods(t *testing.T) {
 
 	expectedMethods := []string{
 		"completion", "completion_stream", "models",
-		"response_create", "response_get", "response_cancel",
+		"response_create", "response_stream", "response_get", "response_cancel",
 		"embedding", "ask",
 	}
 

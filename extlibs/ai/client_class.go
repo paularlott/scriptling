@@ -181,6 +181,38 @@ Returns:
 
 Example:
   client.response_delete("resp_123")`).
+		MethodWithHelp("response_stream", responseStreamMethod, `response_stream(model, input, **kwargs) - Stream a Responses API response
+
+Streams a response using the OpenAI Responses API, returning a ResponseStream object.
+
+Parameters:
+  model (str): Model identifier (e.g., "gpt-4o", "gpt-4")
+  input (str or list): Either a string (user message content) or a list of input items (messages)
+  system_prompt (str, optional): System prompt to use when input is a string
+
+Returns:
+  ResponseStream: A stream object with a next() method that yields ResponseStreamEvent dicts
+
+Event types:
+  - "response.created"           - response object created
+  - "response.output_item.added" - new output item started
+  - "response.output_text.delta" - text delta (use event.delta field)
+  - "response.output_text.done"  - text item complete
+  - "response.completed"         - full response object available
+  - "error"                      - stream error
+
+Examples:
+  stream = client.response_stream("gpt-4o", "Hello!")
+  while True:
+    event = stream.next()
+    if event is None:
+      break
+    if event.type == "response.output_text.delta":
+      print(event.delta, end="")
+  print()
+
+  # With system prompt
+  stream = client.response_stream("gpt-4o", "Explain AI", system_prompt="You are a helpful assistant")`).
 		MethodWithHelp("response_compact", responseCompactMethod, `response_compact(id) - Compact a response
 
 Compacts a response by removing intermediate reasoning steps, returning a more concise version.
@@ -721,6 +753,152 @@ func createClientInstance(client ai.Client) *object.Instance {
 			},
 		},
 	}
+}
+
+// response_stream method implementation
+func responseStreamMethod(self *object.Instance, ctx context.Context, kwargs object.Kwargs, model string, input any) object.Object {
+	var inputList []any
+
+	if inputStr, ok := input.(string); ok {
+		inputList = []any{map[string]any{"type": "message", "role": "user", "content": inputStr}}
+		if kwargs.Has("system_prompt") {
+			systemPrompt := kwargs.MustGetString("system_prompt", "")
+			inputList = append([]any{map[string]any{"type": "message", "role": "system", "content": systemPrompt}}, inputList...)
+		}
+	} else if inputSlice, ok := input.([]any); ok {
+		inputList = inputSlice
+		if kwargs.Has("system_prompt") {
+			return &object.Error{Message: "response_stream: system_prompt kwarg is only valid when passing a string, not an input array"}
+		}
+	} else if inputObj, ok := input.(object.Object); ok {
+		inputGo := conversion.ToGo(inputObj)
+		if inputSlice, ok := inputGo.([]any); ok {
+			inputList = inputSlice
+			if kwargs.Has("system_prompt") {
+				return &object.Error{Message: "response_stream: system_prompt kwarg is only valid when passing a string, not an input array"}
+			}
+		} else {
+			return &object.Error{Message: "response_stream: input must be a string or a list of input items"}
+		}
+	} else {
+		return &object.Error{Message: "response_stream: input must be a string or a list of input items"}
+	}
+
+	ci, cerr := getClientInstance(self)
+	if cerr != nil {
+		return cerr
+	}
+
+	if ci.client == nil {
+		return &object.Error{Message: "response_stream: no client configured"}
+	}
+
+	stream := ci.client.StreamResponse(ctx, ai.CreateResponseRequest{
+		Model: model,
+		Input: inputList,
+	})
+
+	return &object.Instance{
+		Class: GetResponseStreamClass(),
+		Fields: map[string]object.Object{
+			"_stream": &object.ClientWrapper{
+				TypeName: "ResponseStream",
+				Client:   &ResponseStreamInstance{stream: stream},
+			},
+		},
+	}
+}
+
+// ResponseStreamInstance wraps an AI response stream for use in scriptling
+type ResponseStreamInstance struct {
+	stream *ai.ResponseStream
+}
+
+var (
+	responseStreamClass     *object.Class
+	responseStreamClassOnce sync.Once
+)
+
+// GetResponseStreamClass returns the ResponseStream class (thread-safe singleton)
+func GetResponseStreamClass() *object.Class {
+	responseStreamClassOnce.Do(func() {
+		responseStreamClass = buildResponseStreamClass()
+	})
+	return responseStreamClass
+}
+
+func buildResponseStreamClass() *object.Class {
+	return object.NewClassBuilder("ResponseStream").
+		MethodWithHelp("next", nextResponseStreamMethod, `next() - Get the next event from the response stream
+
+Advances to the next SSE event and returns it as a dict.
+
+Returns:
+  dict: The next event with 'type' and event-specific fields, or null if the stream is complete
+
+Event types and fields:
+  - "response.output_text.delta": {type, delta, item_id, output_index, content_index}
+  - "response.output_text.done":  {type, text, item_id, output_index, content_index}
+  - "response.completed":         {type, response} where response is the full ResponseObject
+  - others: {type, ...}
+
+Example:
+  stream = client.response_stream("gpt-4o", "Hello!")
+  while True:
+    event = stream.next()
+    if event is None:
+      break
+    if event.type == "response.output_text.delta":
+      print(event.delta, end="")`).
+		Build()
+}
+
+func getResponseStreamInstance(instance *object.Instance) (*ResponseStreamInstance, *object.Error) {
+	wrapper, ok := object.GetClientField(instance, "_stream")
+	if !ok {
+		return nil, &object.Error{Message: "ResponseStream: missing internal stream reference"}
+	}
+	if wrapper.Client == nil {
+		return nil, &object.Error{Message: "ResponseStream: stream is nil"}
+	}
+	si, ok := wrapper.Client.(*ResponseStreamInstance)
+	if !ok {
+		return nil, &object.Error{Message: "ResponseStream: invalid internal stream reference"}
+	}
+	return si, nil
+}
+
+func nextResponseStreamMethod(self *object.Instance, ctx context.Context) object.Object {
+	si, cerr := getResponseStreamInstance(self)
+	if cerr != nil {
+		return cerr
+	}
+
+	if si.stream == nil {
+		return &object.Error{Message: "next: stream is nil"}
+	}
+
+	if !si.stream.Next() {
+		if err := si.stream.Err(); err != nil {
+			return &object.Error{Message: "stream error: " + err.Error()}
+		}
+		return &object.Null{}
+	}
+
+	event := si.stream.Current()
+	// Convert event to a map: type + parsed data fields
+	result := map[string]any{"type": event.Type}
+	if len(event.Data) > 0 {
+		var fields map[string]any
+		if err := json.Unmarshal(event.Data, &fields); err == nil {
+			for k, v := range fields {
+				if k != "type" {
+					result[k] = v
+				}
+			}
+		}
+	}
+	return conversion.FromGo(result)
 }
 
 // ChatStreamInstance wraps an AI chat stream for use in scriptling
