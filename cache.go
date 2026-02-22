@@ -49,21 +49,26 @@ func Set(script string, program *ast.Program) {
 func (c *programCache) get(script string) (*ast.Program, bool) {
 	key := hashScript(script)
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
+	// Fast path: read lock for lookup
+	c.mu.RLock()
 	elem, ok := c.entries[key]
 	if !ok {
+		c.mu.RUnlock()
 		return nil, false
 	}
+	program := elem.Value.(*cacheEntry).program
+	c.mu.RUnlock()
 
-	entry := elem.Value.(*cacheEntry)
+	// Promote under write lock (best-effort; skip if contended)
+	if c.mu.TryLock() {
+		if elem, ok := c.entries[key]; ok {
+			c.lru.MoveToFront(elem)
+			elem.Value.(*cacheEntry).lastUsed = time.Now()
+		}
+		c.mu.Unlock()
+	}
 
-	// Move to front (most recently used)
-	c.lru.MoveToFront(elem)
-	entry.lastUsed = time.Now()
-
-	return entry.program, true
+	return program, true
 }
 
 func (c *programCache) set(script string, program *ast.Program) {
