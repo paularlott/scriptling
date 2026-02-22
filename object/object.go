@@ -88,12 +88,13 @@ var (
 
 // Exception type constants
 const (
-	ExceptionTypeSystemExit = "SystemExit"
-	ExceptionTypeException  = "Exception"
-	ExceptionTypeValueError = "ValueError"
-	ExceptionTypeTypeError  = "TypeError"
-	ExceptionTypeNameError  = "NameError"
-	ExceptionTypeGeneric    = "" // Default for legacy compatibility
+	ExceptionTypeSystemExit      = "SystemExit"
+	ExceptionTypeException       = "Exception"
+	ExceptionTypeValueError      = "ValueError"
+	ExceptionTypeTypeError       = "TypeError"
+	ExceptionTypeNameError       = "NameError"
+	ExceptionTypeStopIteration   = "StopIteration"
+	ExceptionTypeGeneric         = "" // Default for legacy compatibility
 )
 
 // Small integer cache for common values (-5 to 10000)

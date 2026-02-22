@@ -21,6 +21,9 @@ var (
 	sortedFunction func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object
 	helpFunction   func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object
 
+	// callDunderMethodFn is set in init() to break the initialization cycle
+	callDunderMethodFn func(ctx context.Context, inst *object.Instance, method string, args []object.Object, env *object.Environment) object.Object
+
 	// typeBuiltins maps type-related builtin pointers to their names for isinstance()
 	typeBuiltins map[*object.Builtin]string
 )
@@ -90,6 +93,16 @@ Use list(filter(...)) to get a list.`,
 			if len(args) == 1 && sep == " " {
 				if str, err := args[0].AsString(); err == nil {
 					fmt.Fprint(writer, str+end)
+				} else if inst, ok := args[0].(*object.Instance); ok {
+					if result := callDunderMethodFn(ctx, inst, "__str__", nil, env); result != nil {
+						if s, err2 := result.AsString(); err2 == nil {
+							fmt.Fprint(writer, s+end)
+						} else {
+							fmt.Fprint(writer, result.Inspect()+end)
+						}
+					} else {
+						fmt.Fprint(writer, args[0].Inspect()+end)
+					}
 				} else {
 					fmt.Fprint(writer, args[0].Inspect()+end)
 				}
@@ -100,6 +113,16 @@ Use list(filter(...)) to get a list.`,
 				// Use AsString() for strings to get actual value, Inspect() for others
 				if str, err := arg.AsString(); err == nil {
 					parts[i] = str
+				} else if inst, ok := arg.(*object.Instance); ok {
+					if result := callDunderMethodFn(ctx, inst, "__str__", nil, env); result != nil {
+						if s, err2 := result.AsString(); err2 == nil {
+							parts[i] = s
+						} else {
+							parts[i] = result.Inspect()
+						}
+					} else {
+						parts[i] = arg.Inspect()
+					}
 				} else {
 					parts[i] = arg.Inspect()
 				}
@@ -143,6 +166,13 @@ Examples:
 				return object.NewInteger(int64(len(arg.Dict.Pairs)))
 			case *object.Set:
 				return object.NewInteger(int64(len(arg.Elements)))
+			case *object.Instance:
+				// Call __len__ dunder method if defined
+				env := GetEnvFromContext(ctx)
+				if result := callDunderMethodFn(ctx, arg, "__len__", nil, env); result != nil {
+					return result
+				}
+				return errors.NewTypeError("object with __len__", "INSTANCE")
 			default:
 				return errors.NewTypeError("STRING, LIST, DICT, TUPLE, SET, or VIEW", args[0].Type().String())
 			}
@@ -174,6 +204,13 @@ Returns a string representing the type of the object.`,
 			// For exceptions, return just the message (like Python)
 			if exc, ok := args[0].(*object.Exception); ok {
 				return &object.String{Value: exc.Message}
+			}
+			// Call __str__ dunder method on instances
+			if inst, ok := args[0].(*object.Instance); ok {
+				env := GetEnvFromContext(ctx)
+				if result := callDunderMethodFn(ctx, inst, "__str__", nil, env); result != nil {
+					return result
+				}
 			}
 			return &object.String{Value: args[0].Inspect()}
 		},
@@ -1131,6 +1168,16 @@ Otherwise, returns a set containing unique items from the iterable.`,
 			case *object.String:
 				// Add quotes around strings
 				return &object.String{Value: fmt.Sprintf("'%s'", obj.Value)}
+			case *object.Instance:
+				// Call __repr__ first, then __str__, then fallback
+				env := GetEnvFromContext(ctx)
+				if result := callDunderMethodFn(ctx, obj, "__repr__", nil, env); result != nil {
+					return result
+				}
+				if result := callDunderMethodFn(ctx, obj, "__str__", nil, env); result != nil {
+					return result
+				}
+				return &object.String{Value: obj.Inspect()}
 			default:
 				return &object.String{Value: obj.Inspect()}
 			}
@@ -1578,6 +1625,26 @@ Use with: raise TypeError("wrong type")`,
 Raised when a local or global name is not found.
 Use with: raise NameError("name not defined")`,
 	},
+	"StopIteration": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			message := ""
+			if len(args) > 0 {
+				if str, err := args[0].AsString(); err == nil {
+					message = str
+				} else {
+					message = args[0].Inspect()
+				}
+			}
+			return &object.Exception{
+				Message:       message,
+				ExceptionType: object.ExceptionTypeStopIteration,
+			}
+		},
+		HelpText: `StopIteration([message]) - Signal end of iteration
+
+Raised by __next__ to signal that there are no more items.
+Use with: raise StopIteration()`,
+	},
 }
 
 func compareObjects(a, b object.Object) int {
@@ -1639,6 +1706,7 @@ func init() {
 	filterFunction = filterFunctionImpl
 	sortedFunction = sortedFunctionImpl
 	helpFunction = helpFunctionImpl
+	callDunderMethodFn = callDunderMethod
 
 	// Build reverse lookup for isinstance() to support bare type names
 	typeBuiltins = map[*object.Builtin]string{
@@ -1782,6 +1850,28 @@ func sortedFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 					}
 				} else {
 					sortErr = errors.NewError("cannot compare %s with %s", left.Type(), right.Type())
+				}
+			case *object.Instance:
+				// Use __lt__ dunder method for instance comparison
+				if result := callDunderMethodFn(ctx, l, "__lt__", []object.Object{right}, GetEnvFromContext(ctx)); result != nil {
+					if object.IsError(result) {
+						sortErr = result
+					} else if b, ok := result.(*object.Boolean); ok && b.Value {
+						cmp = -1
+					} else {
+						// Check __eq__ for cmp == 0
+						if eqResult := callDunderMethodFn(ctx, l, "__eq__", []object.Object{right}, GetEnvFromContext(ctx)); eqResult != nil {
+							if b2, ok := eqResult.(*object.Boolean); ok && b2.Value {
+								cmp = 0
+							} else {
+								cmp = 1
+							}
+						} else {
+							cmp = 1
+						}
+					}
+				} else {
+					sortErr = errors.NewError("unsupported type for sorting: %s (no __lt__)", left.Type())
 				}
 			default:
 				sortErr = errors.NewError("unsupported type for sorting: %s", left.Type())
