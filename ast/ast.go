@@ -348,6 +348,15 @@ func (dl *DictLiteral) expressionNode()      {}
 func (dl *DictLiteral) TokenLiteral() string { return dl.Token.Literal }
 func (dl *DictLiteral) Line() int            { return dl.Token.Line }
 
+type SetLiteral struct {
+	Token    token.Token
+	Elements []Expression
+}
+
+func (sl *SetLiteral) expressionNode()      {}
+func (sl *SetLiteral) TokenLiteral() string { return sl.Token.Literal }
+func (sl *SetLiteral) Line() int            { return sl.Token.Line }
+
 type IndexExpression struct {
 	Token token.Token
 	Left  Expression

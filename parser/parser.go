@@ -1530,7 +1530,8 @@ func (p *Parser) skipWhitespace() {
 }
 
 func (p *Parser) parseDictLiteral() ast.Expression {
-	dict := &ast.DictLiteral{Token: p.curToken}
+	tok := p.curToken
+	dict := &ast.DictLiteral{Token: tok}
 	dict.Pairs = make(map[ast.Expression]ast.Expression)
 
 	p.skipWhitespace()
@@ -1551,7 +1552,14 @@ func (p *Parser) parseDictLiteral() ast.Expression {
 			return dict
 		}
 
-		key := p.parseExpression(LOWEST)
+		first := p.parseExpression(LOWEST)
+
+		// Peek past whitespace to determine dict vs set
+		p.skipWhitespace()
+		if p.peekTokenIs(token.COMMA) || p.peekTokenIs(token.RBRACE) {
+			// Set literal: {expr, expr, ...} or {expr}
+			return p.parseSetLiteralFrom(tok, first)
+		}
 
 		p.skipWhitespace()
 		if !p.expectPeek(token.COLON) {
@@ -1566,7 +1574,7 @@ func (p *Parser) parseDictLiteral() ast.Expression {
 
 		value := p.parseExpression(LOWEST)
 
-		dict.Pairs[key] = value
+		dict.Pairs[first] = value
 
 		p.skipWhitespace()
 		if !p.peekTokenIs(token.COMMA) {
@@ -1586,6 +1594,29 @@ func (p *Parser) parseDictLiteral() ast.Expression {
 	}
 
 	return dict
+}
+
+func (p *Parser) parseSetLiteralFrom(tok token.Token, first ast.Expression) ast.Expression {
+	set := &ast.SetLiteral{Token: tok, Elements: []ast.Expression{first}}
+
+	for p.peekTokenIs(token.COMMA) {
+		p.nextToken() // consume comma
+		p.skipWhitespace()
+		if p.peekTokenIs(token.RBRACE) {
+			break
+		}
+		p.nextToken()
+		for p.curTokenIs(token.NEWLINE) || p.curTokenIs(token.INDENT) || p.curTokenIs(token.DEDENT) {
+			p.nextToken()
+		}
+		set.Elements = append(set.Elements, p.parseExpression(LOWEST))
+	}
+
+	p.skipWhitespace()
+	if !p.expectPeek(token.RBRACE) {
+		return nil
+	}
+	return set
 }
 
 func (p *Parser) parseTryStatement() *ast.TryStatement {

@@ -768,6 +768,157 @@ result = data["key"]
 	}
 }
 
+// ============================================================================
+// Assert Statement Tests
+// ============================================================================
+
+func TestAssertPassing(t *testing.T) {
+	tests := []struct {
+		name string
+		code string
+	}{
+		{"true literal", `assert True`},
+		{"equality", `assert 1 == 1`},
+		{"comparison", `assert 10 > 5`},
+		{"string length", `assert len("hello") == 5`},
+		{"truthy list", `assert [1, 2, 3]`},
+		{"truthy dict", `assert {"k": "v"}`},
+		{"with message", `assert True, "should not appear"`},
+		{"with fstring message", `x = 10; assert x == 10, f"expected 10 got {x}"`},
+		{"not false", `assert not False`},
+		{"complex expr", `assert 2 ** 8 == 256`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := New()
+			_, err := p.Eval(tt.code)
+			if err != nil {
+				t.Errorf("Expected assert to pass, got error: %v", err)
+			}
+		})
+	}
+}
+
+func TestAssertFailing(t *testing.T) {
+	tests := []struct {
+		name        string
+		code        string
+		wantMsgPart string
+	}{
+		{
+			name:        "false literal",
+			code:        `assert False`,
+			wantMsgPart: "AssertionError",
+		},
+		{
+			name:        "failing comparison",
+			code:        `assert 1 == 2`,
+			wantMsgPart: "AssertionError",
+		},
+		{
+			name:        "custom message string",
+			code:        `assert False, "x must be positive"`,
+			wantMsgPart: "x must be positive",
+		},
+		{
+			name:        "custom message fstring",
+			code:        `x = 5; assert x > 10, f"x={x} is not > 10"`,
+			wantMsgPart: "x=5 is not > 10",
+		},
+		{
+			name:        "zero is falsy",
+			code:        `assert 0`,
+			wantMsgPart: "AssertionError",
+		},
+		{
+			name:        "empty string is falsy",
+			code:        `assert ""`,
+			wantMsgPart: "AssertionError",
+		},
+		{
+			name:        "empty list is falsy",
+			code:        `assert []`,
+			wantMsgPart: "AssertionError",
+		},
+		{
+			name:        "none is falsy",
+			code:        `assert None`,
+			wantMsgPart: "AssertionError",
+		},
+		{
+			name:        "includes line number",
+			code:        "x = 1\nassert x == 2",
+			wantMsgPart: "line 2",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := New()
+			_, err := p.Eval(tt.code)
+			if err == nil {
+				t.Fatal("Expected assert to fail, got no error")
+			}
+			if !strings.Contains(err.Error(), tt.wantMsgPart) {
+				t.Errorf("Expected error to contain %q, got: %v", tt.wantMsgPart, err)
+			}
+		})
+	}
+}
+
+func TestAssertInsideFunction(t *testing.T) {
+	p := New()
+	_, err := p.Eval(`
+def validate(x):
+    assert x > 0, "must be positive"
+    return x * 2
+
+result = validate(5)
+`)
+	if err != nil {
+		t.Fatalf("Expected passing assert in function, got: %v", err)
+	}
+	result, _ := p.GetVar("result")
+	if result != int64(10) {
+		t.Errorf("Expected 10, got %v", result)
+	}
+
+	// Now test failing assert inside function
+	p2 := New()
+	_, err = p2.Eval(`
+def validate(x):
+    assert x > 0, "must be positive"
+
+validate(-1)
+`)
+	if err == nil {
+		t.Fatal("Expected assert failure inside function")
+	}
+	if !strings.Contains(err.Error(), "must be positive") {
+		t.Errorf("Expected custom message, got: %v", err)
+	}
+}
+
+func TestAssertNotCatchableByTryExcept(t *testing.T) {
+	// In Python, AssertionError IS catchable by try/except.
+	// Scriptling matches this behaviour — assert raises an Error which
+	// try/except converts to an Exception and catches.
+	p := New()
+	_, err := p.Eval(`
+caught = False
+try:
+    assert False, "caught me"
+except:
+    caught = True
+`)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	caught, _ := p.GetVar("caught")
+	if caught != true {
+		t.Error("Expected AssertionError to be catchable by try/except (matches Python behaviour)")
+	}
+}
+
 func TestRegressionCallFunctionWithContextStillWorks(t *testing.T) {
 	p := New()
 	p.RegisterFunc("add", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
