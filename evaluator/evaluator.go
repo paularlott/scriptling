@@ -335,6 +335,8 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		return evalNonlocalStatement(node, env)
 	case *ast.AssertStatement:
 		return evalAssertStatementWithContext(ctx, node, env)
+	case *ast.WithStatement:
+		return evalWithStatementWithContext(ctx, node, env)
 	case *ast.MethodCallExpression:
 		return evalMethodCallExpression(ctx, node, env)
 	case *ast.ListComprehension:
@@ -2058,6 +2060,65 @@ func evalAssertStatementWithContext(ctx context.Context, as *ast.AssertStatement
 	}
 
 	return NULL
+}
+
+func evalWithStatementWithContext(ctx context.Context, ws *ast.WithStatement, env *object.Environment) object.Object {
+	// Evaluate the context expression
+	ctxObj := evalWithContext(ctx, ws.ContextExpr, env)
+	if object.IsError(ctxObj) {
+		return ctxObj
+	}
+
+	// Call __enter__
+	var enterResult object.Object
+	if inst, ok := ctxObj.(*object.Instance); ok {
+		enterResult = callDunderMethod(ctx, inst, "__enter__", nil, env)
+		if enterResult == nil {
+			enterResult = NULL
+		}
+		if object.IsError(enterResult) {
+			return enterResult
+		}
+	} else {
+		return errors.NewError("with statement requires an object with __enter__ and __exit__ methods")
+	}
+
+	// Bind 'as' target if present
+	if ws.Target != nil {
+		env.Set(ws.Target.Value, enterResult)
+	}
+
+	// Execute body
+	result := evalWithContext(ctx, ws.Body, env)
+
+	// Call __exit__ — always, even on exception
+	// __exit__(exc_type, exc_val, exc_tb) — pass None, None, None on success
+	// or exception info on error. If __exit__ returns truthy, suppress the exception.
+	inst := ctxObj.(*object.Instance)
+	var excType object.Object = NULL
+	var excVal object.Object = NULL
+	if isException(result) || object.IsError(result) {
+		if exc, ok := result.(*object.Exception); ok {
+			excType = &object.String{Value: exc.ExceptionType}
+			excVal = &object.String{Value: exc.Message}
+		} else if err, ok := result.(*object.Error); ok {
+			excType = &object.String{Value: "Exception"}
+			excVal = &object.String{Value: err.Message}
+		}
+	}
+	exitArgs := []object.Object{excType, excVal, NULL}
+
+	exitResult := callDunderMethod(ctx, inst, "__exit__", exitArgs, env)
+	if exitResult != nil && object.IsError(exitResult) {
+		return exitResult
+	}
+
+	// If body raised and __exit__ returned truthy, suppress the exception
+	if (isException(result) || object.IsError(result)) && exitResult != nil && isTruthy(exitResult) {
+		return NULL
+	}
+
+	return result
 }
 
 func isException(obj object.Object) bool {

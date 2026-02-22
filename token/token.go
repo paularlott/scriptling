@@ -101,6 +101,7 @@ const (
 	ASSERT   = "ASSERT"
 	MATCH    = "MATCH"
 	CASE     = "CASE"
+	WITH     = "WITH"
 )
 
 var keywords = map[string]TokenType{
@@ -136,6 +137,7 @@ var keywords = map[string]TokenType{
 	"assert":   ASSERT,
 	"match":    MATCH,
 	"case":     CASE,
+	"with":     WITH,
 }
 
 func LookupIdent(ident string) TokenType {
