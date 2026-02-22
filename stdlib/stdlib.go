@@ -5,6 +5,7 @@ import "github.com/paularlott/scriptling/object"
 // Library names as constants for easy reference
 const (
 	ContextlibLibraryName  = "contextlib"
+	DifflibLibraryName     = "difflib"
 	IOLibraryName          = "io"
 	JSONLibraryName        = "json"
 	ReLibraryName          = "re"
@@ -50,4 +51,5 @@ func RegisterAll(p interface{ RegisterLibrary(*object.Library) }) {
 	p.RegisterLibrary(CollectionsLibrary)
 	p.RegisterLibrary(IOLibrary)
 	p.RegisterLibrary(ContextlibLibrary)
+	p.RegisterLibrary(DifflibLibrary)
 }
