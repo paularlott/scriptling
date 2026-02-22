@@ -12,20 +12,23 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
+
 const LibraryName = "scriptling.console"
 
 // ConsoleBackend is the interface scriptling.console calls through.
-// The default implementation uses env.GetReader()/GetWriter().
 // The CLI registers a TUI-backed implementation via SetBackend().
 type ConsoleBackend interface {
 	Input(prompt string, env *object.Environment) (string, error)
 	Print(text string, env *object.Environment)
+	PrintAs(label, text string, env *object.Environment)
 	StreamStart()
+	StreamStartAs(label string)
 	StreamChunk(chunk string)
 	StreamEnd()
 	SpinnerStart(text string)
 	SpinnerStop()
 	SetProgress(label string, pct float64)
+	SetLabels(user, assistant, system string)
 	SetStatus(left, right string)
 	SetStatusLeft(left string)
 	SetStatusRight(right string)
@@ -39,7 +42,7 @@ type ConsoleBackend interface {
 
 var (
 	mu      sync.RWMutex
-	backend ConsoleBackend = &plainBackend{}
+	backend ConsoleBackend = &noopBackend{}
 )
 
 // SetBackend registers a custom backend (e.g. TUI). Call before running scripts.
@@ -62,13 +65,11 @@ func getBackend() ConsoleBackend {
 	return backend
 }
 
-// plainBackend is the default plain-I/O implementation.
-type plainBackend struct {
-	mu  sync.Mutex
-	buf strings.Builder
-}
+// noopBackend is the default backend used before a real backend is registered.
+// It falls back to plain I/O for Input/Print and is a no-op for everything else.
+type noopBackend struct{}
 
-func (p *plainBackend) Input(prompt string, env *object.Environment) (string, error) {
+func (n *noopBackend) Input(prompt string, env *object.Environment) (string, error) {
 	if prompt != "" {
 		fmt.Fprint(env.GetWriter(), prompt)
 	}
@@ -82,48 +83,25 @@ func (p *plainBackend) Input(prompt string, env *object.Environment) (string, er
 	return scanner.Text(), nil
 }
 
-func (p *plainBackend) Print(text string, env *object.Environment) {
-	fmt.Fprint(env.GetWriter(), text)
-}
-
-func (p *plainBackend) StreamStart() {
-	p.mu.Lock()
-	p.buf.Reset()
-	p.mu.Unlock()
-}
-
-func (p *plainBackend) StreamChunk(chunk string) {
-	p.mu.Lock()
-	p.buf.WriteString(chunk)
-	p.mu.Unlock()
-}
-
-func (p *plainBackend) StreamEnd() {
-	p.mu.Lock()
-	s := p.buf.String()
-	p.buf.Reset()
-	p.mu.Unlock()
-	fmt.Println(s)
-}
-
-func (p *plainBackend) SpinnerStart(text string) { fmt.Println(text + "...") }
-func (p *plainBackend) SpinnerStop()              { fmt.Println() }
-
-func (p *plainBackend) SetProgress(label string, pct float64) {
-	if pct >= 0 {
-		fmt.Printf("%s: %.0f%%\n", label, pct*100)
-	}
-}
-
-func (p *plainBackend) SetStatus(_, _ string)                        {}
-func (p *plainBackend) SetStatusLeft(_ string)                       {}
-func (p *plainBackend) SetStatusRight(_ string)                      {}
-func (p *plainBackend) RegisterCommand(_, _ string, _ func(string))  {}
-func (p *plainBackend) RemoveCommand(_ string)                        {}
-func (p *plainBackend) OnSubmit(_ func(context.Context, string)) {}
-func (p *plainBackend) OnEscape(_ func())                            {}
-func (p *plainBackend) ClearOutput()                                 {}
-func (p *plainBackend) Run() error                                   { return nil }
+func (n *noopBackend) Print(text string, env *object.Environment)        { fmt.Fprint(env.GetWriter(), text) }
+func (n *noopBackend) PrintAs(_, text string, env *object.Environment)   { fmt.Fprint(env.GetWriter(), text) }
+func (n *noopBackend) StreamStart()                                      {}
+func (n *noopBackend) StreamStartAs(_ string)                            {}
+func (n *noopBackend) StreamChunk(_ string)                              {}
+func (n *noopBackend) StreamEnd()                                        {}
+func (n *noopBackend) SpinnerStart(_ string)                             {}
+func (n *noopBackend) SpinnerStop()                                      {}
+func (n *noopBackend) SetProgress(_ string, _ float64)                   {}
+func (n *noopBackend) SetLabels(_, _, _ string)                          {}
+func (n *noopBackend) SetStatus(_, _ string)                             {}
+func (n *noopBackend) SetStatusLeft(_ string)                            {}
+func (n *noopBackend) SetStatusRight(_ string)                           {}
+func (n *noopBackend) RegisterCommand(_, _ string, _ func(string))       {}
+func (n *noopBackend) RemoveCommand(_ string)                            {}
+func (n *noopBackend) OnSubmit(_ func(context.Context, string))          {}
+func (n *noopBackend) OnEscape(_ func())                                 {}
+func (n *noopBackend) ClearOutput()                                      {}
+func (n *noopBackend) Run() error                                        { return nil }
 
 // getEnv retrieves the environment from context.
 func getEnv(ctx context.Context) *object.Environment {
@@ -168,12 +146,43 @@ func NewLibrary() *object.Library {
 			},
 			HelpText: "print(*args) — write to console output",
 		},
+		"print_as": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if len(args) < 2 {
+					return &object.Null{}
+				}
+				label, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
+				parts := make([]string, len(args)-1)
+				for i, a := range args[1:] {
+					parts[i] = a.Inspect()
+				}
+				getBackend().PrintAs(label, strings.Join(parts, " ")+"\n", getEnv(ctx))
+				return &object.Null{}
+			},
+			HelpText: "print_as(label, *args) — write to console output with a custom label",
+		},
 		"stream_start": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				getBackend().StreamStart()
 				return &object.Null{}
 			},
 			HelpText: "stream_start() — begin a streaming message",
+		},
+		"stream_start_as": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				label := ""
+				if len(args) > 0 {
+					if s, err := args[0].AsString(); err == nil {
+						label = s
+					}
+				}
+				getBackend().StreamStartAs(label)
+				return &object.Null{}
+			},
+			HelpText: "stream_start_as(label) — begin a streaming message with a custom label",
 		},
 		"stream_chunk": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -233,6 +242,29 @@ func NewLibrary() *object.Library {
 				return &object.Null{}
 			},
 			HelpText: "set_progress(label, pct) — set progress bar (0.0–1.0, or <0 to clear)",
+		},
+		"set_labels": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				user, assistant, system := "", "", ""
+				if len(args) > 0 {
+					if s, err := args[0].AsString(); err == nil {
+						user = s
+					}
+				}
+				if len(args) > 1 {
+					if s, err := args[1].AsString(); err == nil {
+						assistant = s
+					}
+				}
+				if len(args) > 2 {
+					if s, err := args[2].AsString(); err == nil {
+						system = s
+					}
+				}
+				getBackend().SetLabels(user, assistant, system)
+				return &object.Null{}
+			},
+			HelpText: "set_labels(user, assistant, system) — set default role labels; empty string leaves label unchanged",
 		},
 		"set_status": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
