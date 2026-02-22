@@ -315,6 +315,9 @@ func (l *Lexer) NextToken() token.Token {
 			tok.Type = token.LookupIdent(tok.Literal)
 			return tok
 		}
+	case '@':
+		tok = token.Token{Type: token.AT, Literal: "@", Line: l.line}
+		l.readChar()
 	case '#':
 		l.skipComment()
 		return l.NextToken()

@@ -224,9 +224,10 @@ func (fl *FunctionLiteral) TokenLiteral() string { return fl.Token.Literal }
 func (fl *FunctionLiteral) Line() int            { return fl.Token.Line }
 
 type FunctionStatement struct {
-	Token    token.Token
-	Name     *Identifier
-	Function *FunctionLiteral
+	Token      token.Token
+	Name       *Identifier
+	Function   *FunctionLiteral
+	Decorators []Expression // @decorator expressions, outermost first
 }
 
 func (fs *FunctionStatement) statementNode()       {}
@@ -234,10 +235,11 @@ func (fs *FunctionStatement) TokenLiteral() string { return fs.Token.Literal }
 func (fs *FunctionStatement) Line() int            { return fs.Token.Line }
 
 type ClassStatement struct {
-	Token     token.Token
-	Name      *Identifier
-	BaseClass Expression // optional base class for inheritance (can be dotted like html.parser.HTMLParser)
-	Body      *BlockStatement
+	Token      token.Token
+	Name       *Identifier
+	BaseClass  Expression // optional base class for inheritance (can be dotted like html.parser.HTMLParser)
+	Body       *BlockStatement
+	Decorators []Expression // @decorator expressions, outermost first
 }
 
 func (cs *ClassStatement) statementNode()       {}

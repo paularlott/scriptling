@@ -214,4 +214,48 @@ class Cat(Animal):
 c = Cat("Whiskers")
 assert str(c) == "Cat(Whiskers)", f"overridden __str__ = {str(c)}"
 
+# ── __init__ inherited via base class chain ───────────────────────────────────
+
+class Base:
+    def __init__(self, x):
+        self.x = x
+
+class Child(Base):
+    pass  # no __init__, inherits Base's
+
+child = Child(42)
+assert child.x == 42, f"expected 42, got {child.x}"
+
+# Three-level chain
+class GrandChild(Child):
+    pass
+
+gc = GrandChild(99)
+assert gc.x == 99, f"expected 99, got {gc.x}"
+
+# ── Arithmetic dunder methods ─────────────────────────────────────────────────
+
+class Vec:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+    def __add__(self, other):
+        return Vec(self.x + other.x, self.y + other.y)
+
+    def __sub__(self, other):
+        return Vec(self.x - other.x, self.y - other.y)
+
+    def __mul__(self, scalar):
+        return Vec(self.x * scalar, self.y * scalar)
+
+    def __eq__(self, other):
+        return self.x == other.x and self.y == other.y
+
+v1 = Vec(1, 2)
+v2 = Vec(3, 4)
+assert (v1 + v2) == Vec(4, 6), f"add failed"
+assert (v2 - v1) == Vec(2, 2), f"sub failed"
+assert (v1 * 3) == Vec(3, 6), f"mul failed"
+
 True

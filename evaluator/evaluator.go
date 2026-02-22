@@ -963,8 +963,20 @@ func evalFunctionStatement(ctx context.Context, stmt *ast.FunctionStatement, env
 		Body:          stmt.Function.Body,
 		Env:           env,
 	}
-	env.Set(stmt.Name.Value, fn)
-	return fn
+	var result object.Object = fn
+	// Apply decorators right-to-left (innermost first)
+	for i := len(stmt.Decorators) - 1; i >= 0; i-- {
+		dec := evalWithContext(ctx, stmt.Decorators[i], env)
+		if object.IsError(dec) {
+			return dec
+		}
+		result = applyFunctionWithContext(ctx, dec, []object.Object{result}, nil, env)
+		if object.IsError(result) {
+			return result
+		}
+	}
+	env.Set(stmt.Name.Value, result)
+	return result
 }
 
 func evalClassStatement(ctx context.Context, stmt *ast.ClassStatement, env *object.Environment) object.Object {
@@ -1001,14 +1013,34 @@ func evalClassStatement(ctx context.Context, stmt *ast.ClassStatement, env *obje
 	for _, s := range stmt.Body.Statements {
 		if fnStmt, ok := s.(*ast.FunctionStatement); ok {
 			obj := evalFunctionStatement(ctx, fnStmt, classEnv)
-			if fn, ok := obj.(*object.Function); ok {
-				class.Methods[fn.Name] = fn
+			switch m := obj.(type) {
+			case *object.Function:
+				class.Methods[m.Name] = m
+			case *object.Property:
+				class.Methods[fnStmt.Name.Value] = m
+			case *object.StaticMethod:
+				class.Methods[fnStmt.Name.Value] = m
 			}
 		}
 	}
 
 	env.Set(stmt.Name.Value, class)
-	return class
+	var result object.Object = class
+	// Apply decorators right-to-left (innermost first)
+	for i := len(stmt.Decorators) - 1; i >= 0; i-- {
+		dec := evalWithContext(ctx, stmt.Decorators[i], env)
+		if object.IsError(dec) {
+			return dec
+		}
+		result = applyFunctionWithContext(ctx, dec, []object.Object{result}, nil, env)
+		if object.IsError(result) {
+			return result
+		}
+	}
+	if result != class {
+		env.Set(stmt.Name.Value, result)
+	}
+	return result
 }
 
 // unpackArgsFromIterable unpacks an iterable object into a slice of arguments
@@ -1136,8 +1168,15 @@ func createInstance(ctx context.Context, class *object.Class, args []object.Obje
 		Fields: make(map[string]object.Object),
 	}
 
-	// Call __init__ if it exists
-	if initMethod, ok := class.Methods["__init__"]; ok {
+	// Call __init__ if it exists, walking the base class chain
+	var initMethod object.Object
+	for c := class; c != nil; c = c.BaseClass {
+		if m, ok := c.Methods["__init__"]; ok {
+			initMethod = m
+			break
+		}
+	}
+	if initMethod != nil {
 		// Bind 'self' to the instance
 		n := len(args) + 1
 		var newArgs []object.Object
@@ -2232,15 +2271,45 @@ func assignToExpression(ctx context.Context, expr ast.Expression, value object.O
 			return nil
 		case *object.Instance:
 			if key, ok := index.(*object.String); ok {
+				// Check class hierarchy for a property descriptor before writing to Fields
+				if p := findPropertyInClass(key.Value, o.Class); p != nil {
+					if p.Setter == nil {
+						return fmt.Errorf("can't set attribute '%s': property is read-only", key.Value)
+					}
+					result := applyFunctionWithContext(ctx, p.Setter, []object.Object{o, value}, nil, nil)
+					if object.IsError(result) {
+						return fmt.Errorf("%s", result.(*object.Error).Message)
+					}
+					return nil
+				}
 				o.Fields[key.Value] = value
 				return nil
 			}
 			return fmt.Errorf("instance attribute must be string")
+		case *object.Class:
+			if key, ok := index.(*object.String); ok {
+				o.Methods[key.Value] = value
+				return nil
+			}
+			return fmt.Errorf("class attribute must be string")
 		}
 		return fmt.Errorf("cannot assign to index")
 	default:
 		return fmt.Errorf("cannot assign to expression")
 	}
+}
+
+// findPropertyInClass walks the class hierarchy looking for a Property descriptor.
+func findPropertyInClass(name string, class *object.Class) *object.Property {
+	for c := class; c != nil; c = c.BaseClass {
+		if fn, ok := c.Methods[name]; ok {
+			if prop, ok := fn.(*object.Property); ok {
+				return prop
+			}
+			return nil // found as non-property; stop
+		}
+	}
+	return nil
 }
 
 func setForVariables(variables []ast.Expression, value object.Object, env *object.Environment) error {

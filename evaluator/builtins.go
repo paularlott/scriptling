@@ -908,6 +908,25 @@ Equivalent to (a // b, a % b) for integers.`,
 		},
 		HelpText: `callable(object) - Return True if the object appears callable, False otherwise`,
 	},
+	"property": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
+			return &object.Property{Getter: args[0]}
+		},
+		HelpText: `property(fget) - Return a property attribute. Use as @property decorator.`,
+	},
+	"staticmethod": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
+			// Wrap in a StaticMethod so callInstanceMethod skips prepending self
+			return &object.StaticMethod{Fn: args[0]}
+		},
+		HelpText: `staticmethod(f) - Return a static method for function f. Use as @staticmethod decorator.`,
+	},
 	"isinstance": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if err := errors.ExactArgs(args, 2); err != nil {

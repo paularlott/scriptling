@@ -273,6 +273,8 @@ func (p *Parser) parseStatement() ast.Statement {
 		return p.parseAssertStatement()
 	case token.WITH:
 		return p.parseWithStatement()
+	case token.AT:
+		return p.parseDecoratedStatement()
 	case token.IDENT:
 		if p.peekTokenIs(token.ASSIGN) {
 			return p.parseAssignStatement()
@@ -1737,6 +1739,42 @@ func (p *Parser) parseNonlocalStatement() *ast.NonlocalStatement {
 	}
 
 	return stmt
+}
+
+func (p *Parser) parseDecoratedStatement() ast.Statement {
+	// Collect all decorator expressions
+	var decorators []ast.Expression
+	for p.curTokenIs(token.AT) {
+		p.nextToken() // consume '@', move to decorator name
+		dec := p.parseExpression(LOWEST)
+		if dec == nil {
+			return nil
+		}
+		decorators = append(decorators, dec)
+		// nextToken is called by ParseProgram/parseBlockStatement after each statement,
+		// but here we need to advance past the decorator line manually.
+		// After parseExpression the curToken is the last token of the decorator.
+		// The NEWLINE was already consumed by nextToken's skip logic, so peekToken
+		// should be AT, DEF, or CLASS.
+		p.nextToken()
+	}
+	switch p.curToken.Type {
+	case token.DEF:
+		stmt := p.parseFunctionStatement()
+		if stmt != nil {
+			stmt.Decorators = decorators
+		}
+		return stmt
+	case token.CLASS:
+		stmt := p.parseClassStatement()
+		if stmt != nil {
+			stmt.Decorators = decorators
+		}
+		return stmt
+	default:
+		p.errors = append(p.errors, fmt.Sprintf("line %d: expected def or class after decorator, got %s", p.curToken.Line, p.curToken.Type))
+		return nil
+	}
 }
 
 func (p *Parser) parseWithStatement() *ast.WithStatement {
