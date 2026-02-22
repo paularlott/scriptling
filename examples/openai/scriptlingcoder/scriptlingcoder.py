@@ -108,7 +108,7 @@ tools.add("bash", "Run shell command", {"cmd": "string"}, run_bash)
 bot = agent.Agent(
     client,
     tools=tools,
-    system_prompt="Concise coding assistant. cwd: " + os.getcwd(),
+    system_prompt="Concise coding assistant. cwd: " + os.getcwd() + ". Tools: read, write, edit files; glob to find files; grep to search; bash for shell commands.",
     model=MODEL
 )
 
