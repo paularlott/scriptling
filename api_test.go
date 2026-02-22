@@ -3,6 +3,7 @@ package scriptling
 import (
 	"context"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -1117,6 +1118,215 @@ func TestCallFunction(t *testing.T) {
 		}
 		if value != 42 {
 			t.Errorf("expected 42, got %d", value)
+		}
+	})
+}
+
+func TestGetVarAsSet(t *testing.T) {
+	p := New()
+	_, err := p.Eval(`s = {1, 2, 3}`)
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+
+	s, objErr := p.GetVarAsSet("s")
+	if objErr != nil {
+		t.Fatalf("GetVarAsSet failed: %v", objErr)
+	}
+	if len(s.Elements) != 3 {
+		t.Errorf("expected 3 elements, got %d", len(s.Elements))
+	}
+
+	_, objErr = p.GetVarAsSet("nonexistent")
+	if objErr == nil {
+		t.Error("expected error for nonexistent variable")
+	}
+
+	p.SetVar("x", int64(42))
+	_, objErr = p.GetVarAsSet("x")
+	if objErr == nil {
+		t.Error("expected error for non-set variable")
+	}
+}
+
+func TestGetVarAsTuple(t *testing.T) {
+	p := New()
+	_, err := p.Eval(`t = (1, 2, 3)`)
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+
+	elems, objErr := p.GetVarAsTuple("t")
+	if objErr != nil {
+		t.Fatalf("GetVarAsTuple failed: %v", objErr)
+	}
+	if len(elems) != 3 {
+		t.Errorf("expected 3 elements, got %d", len(elems))
+	}
+
+	_, objErr = p.GetVarAsTuple("nonexistent")
+	if objErr == nil {
+		t.Error("expected error for nonexistent variable")
+	}
+
+	p.SetVar("x", int64(42))
+	_, objErr = p.GetVarAsTuple("x")
+	if objErr == nil {
+		t.Error("expected error for non-tuple variable")
+	}
+}
+
+func TestEvalFile(t *testing.T) {
+	t.Run("nonexistent_file", func(t *testing.T) {
+		p := New()
+		_, err := p.EvalFile("/nonexistent/path/script.py")
+		if err == nil {
+			t.Error("expected error for nonexistent file")
+		}
+	})
+
+	t.Run("valid_file", func(t *testing.T) {
+		f, err := os.CreateTemp("", "scriptling_test_*.py")
+		if err != nil {
+			t.Fatalf("failed to create temp file: %v", err)
+		}
+		defer os.Remove(f.Name())
+		f.WriteString("result = 21 * 2")
+		f.Close()
+
+		p := New()
+		_, err = p.EvalFile(f.Name())
+		if err != nil {
+			t.Fatalf("EvalFile failed: %v", err)
+		}
+		v, objErr := p.GetVarAsInt("result")
+		if objErr != nil || v != 42 {
+			t.Errorf("expected 42, got %d", v)
+		}
+	})
+}
+
+func TestListVars(t *testing.T) {
+	p := New()
+	_, err := p.Eval(`
+x = 1
+y = 2
+name = "Alice"
+`)
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+
+	vars := p.ListVars()
+
+	// Should contain user-defined variables
+	found := make(map[string]bool)
+	for _, v := range vars {
+		found[v] = true
+	}
+	if !found["x"] || !found["y"] || !found["name"] {
+		t.Errorf("expected x, y, name in ListVars, got %v", vars)
+	}
+
+	// Should not contain the import builtin
+	if found["import"] {
+		t.Error("ListVars should not include 'import' builtin")
+	}
+
+	// Should be sorted
+	for i := 1; i < len(vars); i++ {
+		if vars[i] < vars[i-1] {
+			t.Errorf("ListVars not sorted: %v", vars)
+			break
+		}
+	}
+}
+
+func TestUnsetVar(t *testing.T) {
+	p := New()
+	p.SetVar("x", int64(42))
+
+	_, objErr := p.GetVar("x")
+	if objErr != nil {
+		t.Fatal("variable should exist before UnsetVar")
+	}
+
+	p.UnsetVar("x")
+
+	_, objErr = p.GetVar("x")
+	if objErr == nil {
+		t.Error("expected error after UnsetVar")
+	}
+
+	// Unsetting a nonexistent variable should not panic
+	p.UnsetVar("nonexistent")
+}
+
+func TestClone(t *testing.T) {
+	t.Run("inherits_library_registrations", func(t *testing.T) {
+		p := New()
+		p.RegisterScriptLibrary("mylib", "VALUE = 99\ndef add(a, b):\n    return a + b\n")
+
+		child := p.Clone()
+
+		_, err := child.Eval(`
+import mylib
+result = mylib.add(1, 2)
+val = mylib.VALUE
+`)
+		if err != nil {
+			t.Fatalf("clone failed to use parent library: %v", err)
+		}
+
+		result, objErr := child.GetVarAsInt("result")
+		if objErr != nil || result != 3 {
+			t.Errorf("expected 3, got %d", result)
+		}
+	})
+
+	t.Run("isolated_environment", func(t *testing.T) {
+		p := New()
+		p.SetVar("x", int64(1))
+		_, _ = p.Eval(`y = 100`)
+
+		child := p.Clone()
+
+		// Child should not see parent's variables
+		_, objErr := child.GetVar("x")
+		if objErr == nil {
+			t.Error("clone should not inherit parent variables")
+		}
+		_, objErr = child.GetVar("y")
+		if objErr == nil {
+			t.Error("clone should not inherit parent script variables")
+		}
+	})
+
+	t.Run("mutations_do_not_cross", func(t *testing.T) {
+		p := New()
+		p.RegisterScriptLibrary("counter", "count = 0\ndef inc():\n    global count\n    count = count + 1\n    return count\n")
+
+		c1 := p.Clone()
+		c2 := p.Clone()
+
+		_, err := c1.Eval(`import counter; r1 = counter.inc()`)
+		if err != nil {
+			t.Fatalf("c1 eval: %v", err)
+		}
+		_, err = c2.Eval(`import counter; r2 = counter.inc()`)
+		if err != nil {
+			t.Fatalf("c2 eval: %v", err)
+		}
+
+		r1, _ := c1.GetVarAsInt("r1")
+		r2, _ := c2.GetVarAsInt("r2")
+
+		// Each clone re-evaluates the library, so both start from 0
+		if r1 != 1 {
+			t.Errorf("c1: expected 1, got %d", r1)
+		}
+		if r2 != 1 {
+			t.Errorf("c2: expected 1, got %d", r2)
 		}
 	})
 }
