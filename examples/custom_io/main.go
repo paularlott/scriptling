@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/paularlott/scriptling"
-	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/console"
 )
 
 // MockWebSocketConn simulates a websocket connection with separate input/output streams
@@ -34,7 +34,7 @@ func example1() {
 	fmt.Println("----------------------------")
 
 	p := scriptling.New()
-	extlibs.RegisterConsoleLibrary(p)
+	console.Register(p)
 
 	// Setup custom streams
 	input := strings.NewReader("World\n")
@@ -73,7 +73,7 @@ func example2() {
 
 	// Server-side: Create scriptling instance with websocket I/O
 	p := scriptling.New()
-	extlibs.RegisterConsoleLibrary(p)
+	console.Register(p)
 
 	p.SetInputReader(conn.input)
 	p.SetOutputWriter(conn.output)
@@ -119,7 +119,7 @@ func example3() {
 		output := &bytes.Buffer{}
 
 		p := scriptling.New()
-		extlibs.RegisterConsoleLibrary(p)
+		console.Register(p)
 
 		p.SetInputReader(strings.NewReader(session.input))
 		p.SetOutputWriter(output)

@@ -16,6 +16,7 @@ import (
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/build"
 	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/console"
 	"github.com/paularlott/scriptling/lint"
 	"github.com/paularlott/scriptling/object"
 
@@ -239,7 +240,7 @@ func runFile(p *scriptling.Scriptling, filename string) error {
 	if err != nil {
 		return fmt.Errorf("failed to read file %s: %w", filename, err)
 	}
-	return evalAndCheckExit(p, string(content))
+	return runWithTUI(p, func() error { return evalAndCheckExit(p, string(content)) })
 }
 
 func runStdin(p *scriptling.Scriptling) error {
@@ -247,15 +248,31 @@ func runStdin(p *scriptling.Scriptling) error {
 	if err != nil {
 		return fmt.Errorf("failed to read from stdin: %w", err)
 	}
-	return evalAndCheckExit(p, string(content))
+	return runWithTUI(p, func() error { return evalAndCheckExit(p, string(content)) })
 }
 
-func runInteractive(p *scriptling.Scriptling) error {
+// runWithTUI sets up a TUI + console backend, runs fn in a goroutine, then
+// starts the TUI event loop. If fn never calls console.run() the TUI exits
+// automatically when fn returns.
+func runWithTUI(p *scriptling.Scriptling, fn func() error) error {
 	var (
 		t         *tui.TUI
 		cancel    context.CancelFunc
 		runningMu sync.Mutex
+		prevDone  = make(chan struct{}) // closed when previous submit goroutine exits
 	)
+	close(prevDone) // initially "done"
+
+	tb := &tuiBackend{
+		done: make(chan struct{}),
+		cancelFn: func() {
+			runningMu.Lock()
+			if cancel != nil {
+				cancel()
+			}
+			runningMu.Unlock()
+		},
+	}
 
 	t = tui.New(tui.Config{
 		HideHeaders: true,
@@ -263,13 +280,8 @@ func runInteractive(p *scriptling.Scriptling) error {
 		Commands: []*tui.Command{
 			{
 				Name:        "exit",
-				Description: "Exit interactive mode",
+				Description: "Exit",
 				Handler:     func(_ string) { t.Exit() },
-			},
-			{
-				Name:        "clear",
-				Description: "Clear output",
-				Handler:     func(_ string) { t.ClearOutput() },
 			},
 		},
 		OnEscape: func() {
@@ -278,46 +290,126 @@ func runInteractive(p *scriptling.Scriptling) error {
 				cancel()
 			}
 			runningMu.Unlock()
+			tb.mu.Lock()
+			cb := tb.escapeCb
+			tb.mu.Unlock()
+			if cb != nil {
+				go cb()
+			}
 		},
 		OnSubmit: func(line string) {
 			t.AddMessage(tui.RoleUser, line)
-
-			ctx, c := context.WithCancel(context.Background())
-			runningMu.Lock()
-			cancel = c
-			runningMu.Unlock()
-
-			t.StartStreaming()
-			t.StartSpinner("Esc to stop")
-			p.SetOutputWriter(&streamWriter{t: t})
-
-			go func() {
-				defer func() {
-					p.SetOutputWriter(nil)
-					runningMu.Lock()
-					cancel = nil
-					runningMu.Unlock()
-					c()
-					t.StopSpinner()
-					t.StreamComplete()
-				}()
-				result, err := p.EvalWithContext(ctx, line)
-				if err != nil {
-					if ctx.Err() == nil {
-						t.StreamChunk(err.Error())
+			tb.mu.Lock()
+			scb := tb.submitCb
+			ecb := tb.escapeCb
+			tb.mu.Unlock()
+			if scb != nil {
+				ctx, c := context.WithCancel(context.Background())
+				runningMu.Lock()
+				if cancel != nil {
+					cancel() // cancel any in-flight request
+					if ecb != nil {
+						go ecb() // notify script the previous request was cancelled
 					}
-					return
 				}
-				if result != nil && result.Inspect() != "None" && !t.IsStreaming() {
-					t.AddMessage(tui.RoleAssistant, result.Inspect())
-				}
-			}()
+				cancel = c
+				waitFor := prevDone
+				nextDone := make(chan struct{})
+				prevDone = nextDone
+				runningMu.Unlock()
+				go func() {
+					defer func() {
+						runningMu.Lock()
+						cancel = nil
+						runningMu.Unlock()
+						c()
+						close(nextDone)
+					}()
+					<-waitFor // wait for previous submit to fully finish
+					scb(ctx, line)
+				}()
+			}
 		},
 	})
+	tb.t = t
+	console.SetBackend(tb)
 
-	t.AddMessage(tui.RoleSystem, tui.Styled(t.Theme().Text, "scriptling")+"\n"+tui.Styled(t.Theme().Primary, "v"+build.Version))
+	// Run the script in a goroutine; exit TUI when it returns (unless script called console.run())
+	go func() {
+		fn()
+		t.Exit()
+	}()
 
-	return t.Run(context.Background())
+	err := t.Run(context.Background())
+	close(tb.done)
+	return err
+}
+
+func runInteractive(p *scriptling.Scriptling) error {
+	return runWithTUI(p, func() error {
+		_, err := p.Eval(`
+import scriptling.console as console
+console.run()
+`)
+		return err
+	})
+}
+
+// tuiBackend implements console.ConsoleBackend using the TUI.
+type tuiBackend struct {
+	t        *tui.TUI
+	cancelFn func()
+	escapeCb func()
+	submitCb func(context.Context, string)
+	mu       sync.Mutex
+	done     chan struct{} // closed when the TUI's Run() returns
+}
+
+func (b *tuiBackend) Input(prompt string, env *object.Environment) (string, error) {
+	// In TUI mode input comes via OnSubmit; this path is for non-interactive use
+	if prompt != "" {
+		b.t.StreamChunk(prompt)
+	}
+	return "", nil
+}
+
+func (b *tuiBackend) Print(text string, _ *object.Environment) {
+	b.t.AddMessage(tui.RoleAssistant, strings.TrimRight(text, "\n"))
+}
+
+func (b *tuiBackend) StreamStart()             { b.t.StartStreaming() }
+func (b *tuiBackend) StreamChunk(s string)     { b.t.StreamChunk(s) }
+func (b *tuiBackend) StreamEnd()               { b.t.StreamComplete() }
+func (b *tuiBackend) SpinnerStart(text string) { b.t.StartSpinner(text) }
+func (b *tuiBackend) SpinnerStop()             { b.t.StopSpinner() }
+func (b *tuiBackend) SetProgress(label string, pct float64) {
+	if pct < 0 {
+		b.t.ClearProgress()
+	} else {
+		b.t.SetProgress(label, pct)
+	}
+}
+func (b *tuiBackend) SetStatus(left, right string) { b.t.SetStatus(left, right) }
+func (b *tuiBackend) SetStatusLeft(s string)       { b.t.SetStatusLeft(s) }
+func (b *tuiBackend) SetStatusRight(s string)      { b.t.SetStatusRight(s) }
+func (b *tuiBackend) RegisterCommand(name, desc string, handler func(args string)) {
+	b.t.AddCommand(&tui.Command{Name: name, Description: desc, Handler: handler})
+}
+func (b *tuiBackend) RemoveCommand(name string) { b.t.RemoveCommand(name) }
+func (b *tuiBackend) ClearOutput()               { b.t.ClearOutput() }
+func (b *tuiBackend) OnSubmit(fn func(context.Context, string)) {
+	b.mu.Lock()
+	b.submitCb = fn
+	b.mu.Unlock()
+}
+func (b *tuiBackend) Run() error {
+	<-b.done
+	return nil
+}
+func (b *tuiBackend) OnEscape(fn func()) {
+	b.mu.Lock()
+	b.escapeCb = fn
+	b.mu.Unlock()
 }
 
 // streamWriter forwards script output chunks to the TUI streaming message.

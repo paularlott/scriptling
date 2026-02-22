@@ -6,12 +6,12 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/console"
 )
 
 func TestCustomInputOutput(t *testing.T) {
 	p := New()
-	extlibs.RegisterConsoleLibrary(p)
+	console.Register(p)
 
 	// Setup custom input and output
 	input := strings.NewReader("Alice\n")
@@ -48,7 +48,7 @@ func TestParallelInputOutput(t *testing.T) {
 			defer wg.Done()
 
 			p := New()
-			extlibs.RegisterConsoleLibrary(p)
+			console.Register(p)
 
 			// Each instance has its own I/O streams
 			input := strings.NewReader("User" + string(rune('A'+id)) + "\n")
@@ -82,7 +82,7 @@ print("Hello from " + name)
 func TestDefaultInputOutput(t *testing.T) {
 	// Test that defaults work (os.Stdin/os.Stdout)
 	p := New()
-	extlibs.RegisterConsoleLibrary(p)
+	console.Register(p)
 
 	// Just verify the library is registered and can be imported
 	script := `
@@ -108,7 +108,7 @@ import scriptling.console as console
 
 func TestMultipleInputReads(t *testing.T) {
 	p := New()
-	extlibs.RegisterConsoleLibrary(p)
+	console.Register(p)
 
 	// Test reading a single line with multiple words
 	input := strings.NewReader("Hello World Test\n")
@@ -137,7 +137,7 @@ print("Word count: " + str(len(words)))
 
 func TestInputOutputInFunction(t *testing.T) {
 	p := New()
-	extlibs.RegisterConsoleLibrary(p)
+	console.Register(p)
 
 	input := strings.NewReader("test\n")
 	output := &bytes.Buffer{}
