@@ -6,6 +6,7 @@ import (
 	"io"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/paularlott/scriptling/ast"
@@ -221,29 +222,55 @@ For exceptions, returns just the exception message.`,
 	},
 	"int": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil {
+			if err := errors.RangeArgs(args, 1, 2); err != nil {
 				return err
+			}
+			base := 10
+			if len(args) == 2 {
+				b, ok := args[1].(*object.Integer)
+				if !ok {
+					return errors.NewTypeError("INTEGER", args[1].Type().String())
+				}
+				base = int(b.Value)
+				if base < 2 || base > 36 {
+					return errors.NewError("int() base must be >= 2 and <= 36")
+				}
 			}
 			switch arg := args[0].(type) {
 			case *object.Integer:
 				return arg
 			case *object.Float:
+				if len(args) == 2 {
+					return errors.NewTypeError("STRING", arg.Type().String())
+				}
 				return object.NewInteger(int64(arg.Value))
 			case *object.String:
-				var val int64
-				_, err := fmt.Sscanf(arg.Value, "%d", &val)
+				s := strings.TrimSpace(arg.Value)
+				if len(args) == 2 {
+					switch {
+					case base == 16 && (strings.HasPrefix(s, "0x") || strings.HasPrefix(s, "0X")):
+						s = s[2:]
+					case base == 2 && (strings.HasPrefix(s, "0b") || strings.HasPrefix(s, "0B")):
+						s = s[2:]
+					case base == 8 && (strings.HasPrefix(s, "0o") || strings.HasPrefix(s, "0O")):
+						s = s[2:]
+					}
+				}
+				val, err := strconv.ParseInt(s, base, 64)
 				if err != nil {
-					return errors.NewError("cannot convert %s to int", arg.Value)
+					return errors.NewError("cannot convert %q to int with base %d", arg.Value, base)
 				}
 				return object.NewInteger(val)
 			default:
 				return errors.NewTypeError("INTEGER, FLOAT, or STRING", arg.Type().String())
 			}
 		},
-		HelpText: `int(obj) - Convert an object to an integer
+		HelpText: `int(x[, base]) - Convert an object to an integer
 
 Converts a float, string, or integer to an integer.
-Floats are truncated (not rounded).`,
+Floats are truncated (not rounded).
+With base, converts a string in the given base (2-36) to an integer.
+Examples: int("ff", 16) == 255, int("0b1010", 2) == 10, int("77", 8) == 63`,
 	},
 	"float": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
