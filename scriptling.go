@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"runtime/debug"
 	"sort"
 	"strings"
@@ -526,6 +527,85 @@ func (p *Scriptling) GetVarAsDict(name string) (map[string]object.Object, object
 		return nil, &object.Error{Message: fmt.Sprintf("variable '%s' not found", name)}
 	}
 	return obj.AsDict()
+}
+
+func (p *Scriptling) GetVarAsSet(name string) (*object.Set, object.Object) {
+	obj, ok := p.env.Get(name)
+	if !ok {
+		return nil, &object.Error{Message: fmt.Sprintf("variable '%s' not found", name)}
+	}
+	if s, ok := obj.(*object.Set); ok {
+		return s, nil
+	}
+	return nil, &object.Error{Message: "must be a set"}
+}
+
+func (p *Scriptling) GetVarAsTuple(name string) ([]object.Object, object.Object) {
+	obj, ok := p.env.Get(name)
+	if !ok {
+		return nil, &object.Error{Message: fmt.Sprintf("variable '%s' not found", name)}
+	}
+	if t, ok := obj.(*object.Tuple); ok {
+		result := make([]object.Object, len(t.Elements))
+		copy(result, t.Elements)
+		return result, nil
+	}
+	return nil, &object.Error{Message: "must be a tuple"}
+}
+
+// EvalFile reads a file from disk and evaluates it.
+func (p *Scriptling) EvalFile(path string) (object.Object, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("EvalFile: %w", err)
+	}
+	prev := p.sourceFile
+	p.sourceFile = path
+	result, evalErr := p.Eval(string(data))
+	p.sourceFile = prev
+	return result, evalErr
+}
+
+// ListVars returns a sorted list of variable names in the current environment,
+// excluding internal names (import builtin).
+func (p *Scriptling) ListVars() []string {
+	store := p.env.GetStore()
+	names := make([]string, 0, len(store))
+	for k := range store {
+		if k == "import" {
+			continue
+		}
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// UnsetVar removes a variable from the current environment.
+func (p *Scriptling) UnsetVar(name string) {
+	p.env.Delete(name)
+}
+
+// Clone creates a new Scriptling interpreter that shares library registrations
+// (both Go and script libraries) with the parent but starts with a fresh,
+// isolated environment. Already-imported libraries are NOT copied; each clone
+// re-evaluates script libraries on first import, so no mutable state is shared.
+// Useful for per-request / multi-tenant isolation.
+func (p *Scriptling) Clone() *Scriptling {
+	child := New()
+
+	// Share library registrations (definitions only, not imported state)
+	for name, lib := range p.registeredLibraries {
+		child.registeredLibraries[name] = lib
+	}
+	for name, lib := range p.scriptLibraries {
+		// Copy registration but clear cached store so the child re-evaluates
+		child.scriptLibraries[name] = &scriptLibrary{source: lib.source}
+	}
+
+	child.onDemandLibraryCallback = p.onDemandLibraryCallback
+
+	return child
 }
 
 func (p *Scriptling) RegisterFunc(name string, fn func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object, helpText ...string) {
