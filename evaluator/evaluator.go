@@ -301,6 +301,16 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		return &object.List{Elements: elements}
 	case *ast.DictLiteral:
 		return evalDictLiteralWithContext(ctx, node, env)
+	case *ast.SetLiteral:
+		elements := evalExpressionsWithContext(ctx, node.Elements, env)
+		if len(elements) == 1 && object.IsError(elements[0]) {
+			return elements[0]
+		}
+		s := object.NewSet()
+		for _, elem := range elements {
+			s.Add(elem)
+		}
+		return s
 	case *ast.IndexExpression:
 		left := evalWithContext(ctx, node.Left, env)
 		if object.IsError(left) {
