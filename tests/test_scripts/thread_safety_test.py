@@ -106,9 +106,11 @@ print("\n=== Testing Shared object ===")
 shared_list = runtime.sync.Shared("safety_list", [])
 
 def list_worker():
-    current = shared_list.get()
-    current.append(len(current))
-    shared_list.set(current)
+    def do_append(current):
+        new_list = list(current)
+        new_list.append(len(new_list))
+        return new_list
+    shared_list.update(do_append)
 
 list_promises = []
 for i in range(5):
