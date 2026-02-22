@@ -2047,6 +2047,172 @@ r4 = issubclass(A, B)
 	}
 }
 
+// ============================================================================
+// io.StringIO Tests (§3.2)
+// ============================================================================
+
+func TestStringIOBasic(t *testing.T) {
+	p := New()
+	p.RegisterLibrary(stdlib.IOLibrary)
+	_, err := p.Eval(`
+import io
+buf = io.StringIO()
+buf.write("hello")
+buf.write(" world")
+result = buf.getvalue()
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	result, _ := p.GetVarAsString("result")
+	if result != "hello world" {
+		t.Errorf("expected 'hello world', got %q", result)
+	}
+}
+
+func TestStringIOInitialValue(t *testing.T) {
+	p := New()
+	p.RegisterLibrary(stdlib.IOLibrary)
+	_, err := p.Eval(`
+import io
+buf = io.StringIO("initial")
+result = buf.getvalue()
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	result, _ := p.GetVarAsString("result")
+	if result != "initial" {
+		t.Errorf("expected 'initial', got %q", result)
+	}
+}
+
+func TestStringIOReadSeekTell(t *testing.T) {
+	p := New()
+	p.RegisterLibrary(stdlib.IOLibrary)
+	_, err := p.Eval(`
+import io
+buf = io.StringIO("abcdef")
+r1 = buf.read(3)
+r2 = buf.read(3)
+pos = buf.tell()
+buf.seek(0)
+r3 = buf.read()
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	for name, want := range map[string]string{"r1": "abc", "r2": "def", "r3": "abcdef"} {
+		got, _ := p.GetVarAsString(name)
+		if got != want {
+			t.Errorf("%s: expected %q, got %q", name, want, got)
+		}
+	}
+	pos, _ := p.GetVar("pos")
+	if pos != int64(6) {
+		t.Errorf("tell: expected 6, got %v", pos)
+	}
+}
+
+func TestStringIOReadline(t *testing.T) {
+	p := New()
+	p.RegisterLibrary(stdlib.IOLibrary)
+	_, err := p.Eval(`
+import io
+buf = io.StringIO("line1\nline2\nline3")
+r1 = buf.readline()
+r2 = buf.readline()
+r3 = buf.readline()
+r4 = buf.readline()
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	for name, want := range map[string]string{"r1": "line1\n", "r2": "line2\n", "r3": "line3", "r4": ""} {
+		got, _ := p.GetVarAsString(name)
+		if got != want {
+			t.Errorf("%s: expected %q, got %q", name, want, got)
+		}
+	}
+}
+
+func TestStringIOTruncate(t *testing.T) {
+	p := New()
+	p.RegisterLibrary(stdlib.IOLibrary)
+	_, err := p.Eval(`
+import io
+buf = io.StringIO("hello world")
+buf.truncate(5)
+result = buf.getvalue()
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	result, _ := p.GetVarAsString("result")
+	if result != "hello" {
+		t.Errorf("expected 'hello', got %q", result)
+	}
+}
+
+func TestStringIOWithStatement(t *testing.T) {
+	p := New()
+	p.RegisterLibrary(stdlib.IOLibrary)
+	_, err := p.Eval(`
+import io
+with io.StringIO() as buf:
+    buf.write("context")
+    val = buf.getvalue()
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	val, _ := p.GetVarAsString("val")
+	if val != "context" {
+		t.Errorf("expected 'context', got %q", val)
+	}
+}
+
+func TestStringIOClosedError(t *testing.T) {
+	p := New()
+	p.RegisterLibrary(stdlib.IOLibrary)
+	_, err := p.Eval(`
+import io
+buf = io.StringIO("data")
+buf.close()
+caught = False
+try:
+    buf.write("more")
+except Exception as e:
+    caught = True
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	caught, _ := p.GetVar("caught")
+	if caught != true {
+		t.Error("expected error on write to closed StringIO")
+	}
+}
+
+func TestStringIOPrintFile(t *testing.T) {
+	p := New()
+	p.RegisterLibrary(stdlib.IOLibrary)
+	_, err := p.Eval(`
+import io
+buf = io.StringIO()
+print("hello", file=buf)
+print("world", file=buf)
+result = buf.getvalue()
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	result, _ := p.GetVarAsString("result")
+	if result != "hello\nworld\n" {
+		t.Errorf("expected 'hello\\nworld\\n', got %q", result)
+	}
+}
+
 func TestCopyBuiltin(t *testing.T) {
 	p := New()
 	_, err := p.Eval(`
