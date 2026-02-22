@@ -25,46 +25,30 @@ type Kwargs map[string]interface{}
 
 // convertArgsAndKwargs converts Go arguments to Object arguments and separates kwargs.
 func convertArgsAndKwargs(args []interface{}, prependSelf object.Object) ([]object.Object, map[string]object.Object) {
-	var objArgs []object.Object
 	var objKwargs map[string]object.Object
+	positional := args
 
 	if len(args) > 0 {
-		lastIdx := len(args) - 1
-		if kwargsMap, ok := args[lastIdx].(Kwargs); ok {
+		if kwargsMap, ok := args[len(args)-1].(Kwargs); ok {
 			objKwargs = make(map[string]object.Object, len(kwargsMap))
 			for key, val := range kwargsMap {
 				objKwargs[key] = conversion.FromGo(val)
 			}
-			if prependSelf != nil {
-				objArgs = make([]object.Object, lastIdx+1)
-				objArgs[0] = prependSelf
-				for i, arg := range args[:lastIdx] {
-					objArgs[i+1] = conversion.FromGo(arg)
-				}
-			} else {
-				objArgs = make([]object.Object, lastIdx)
-				for i, arg := range args[:lastIdx] {
-					objArgs[i] = conversion.FromGo(arg)
-				}
-			}
-		} else {
-			if prependSelf != nil {
-				objArgs = make([]object.Object, len(args)+1)
-				objArgs[0] = prependSelf
-				for i, arg := range args {
-					objArgs[i+1] = conversion.FromGo(arg)
-				}
-			} else {
-				objArgs = make([]object.Object, len(args))
-				for i, arg := range args {
-					objArgs[i] = conversion.FromGo(arg)
-				}
-			}
+			positional = args[:len(args)-1]
 		}
-	} else if prependSelf != nil {
-		objArgs = []object.Object{prependSelf}
 	}
 
+	offset := 0
+	if prependSelf != nil {
+		offset = 1
+	}
+	objArgs := make([]object.Object, offset+len(positional))
+	if prependSelf != nil {
+		objArgs[0] = prependSelf
+	}
+	for i, arg := range positional {
+		objArgs[offset+i] = conversion.FromGo(arg)
+	}
 	return objArgs, objKwargs
 }
 

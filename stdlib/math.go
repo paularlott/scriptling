@@ -51,6 +51,24 @@ func twoFloatFunc(f func(float64, float64) float64) func(context.Context, object
 	}
 }
 
+// oneIntOrFloatFunc creates a math function that takes one int-or-float and returns an integer or boolean.
+// intFn is called for integers, floatFn for floats; both receive the value and return an object.Object.
+func oneIntOrFloatFunc(intFn func(*object.Integer) object.Object, floatFn func(*object.Float) object.Object) func(context.Context, object.Kwargs, ...object.Object) object.Object {
+	return func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+		if err := errors.ExactArgs(args, 1); err != nil {
+			return err
+		}
+		switch arg := args[0].(type) {
+		case *object.Integer:
+			return intFn(arg)
+		case *object.Float:
+			return floatFn(arg)
+		default:
+			return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
+		}
+	}
+}
+
 var MathLibrary = object.NewLibrary(MathLibraryName, map[string]*object.Builtin{
 	"sqrt": {
 		Fn: oneFloatFunc(math.Sqrt),
@@ -74,38 +92,20 @@ x can be an integer or float.
 Always returns a float.`,
 	},
 	"floor": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil {
-				return err
-			}
-			switch arg := args[0].(type) {
-			case *object.Integer:
-				return arg
-			case *object.Float:
-				return &object.Integer{Value: int64(math.Floor(arg.Value))}
-			default:
-				return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
-			}
-		},
+		Fn: oneIntOrFloatFunc(
+			func(i *object.Integer) object.Object { return i },
+			func(f *object.Float) object.Object { return &object.Integer{Value: int64(math.Floor(f.Value))} },
+		),
 		HelpText: `floor(x) - Return the floor of x
 
 x can be an integer or float.
 Returns the largest integer less than or equal to x.`,
 	},
 	"ceil": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil {
-				return err
-			}
-			switch arg := args[0].(type) {
-			case *object.Integer:
-				return arg
-			case *object.Float:
-				return &object.Integer{Value: int64(math.Ceil(arg.Value))}
-			default:
-				return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
-			}
-		},
+		Fn: oneIntOrFloatFunc(
+			func(i *object.Integer) object.Object { return i },
+			func(f *object.Float) object.Object { return &object.Integer{Value: int64(math.Ceil(f.Value))} },
+		),
 		HelpText: `ceil(x) - Return the ceiling of x
 
 x can be an integer or float.
@@ -243,55 +243,30 @@ n must be a non-negative integer <= 20.
 Returns an integer.`,
 	},
 	"isnan": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil {
-				return err
-			}
-			switch arg := args[0].(type) {
-			case *object.Integer:
-				return &object.Boolean{Value: false}
-			case *object.Float:
-				return &object.Boolean{Value: math.IsNaN(arg.Value)}
-			default:
-				return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
-			}
-		},
+		Fn: oneIntOrFloatFunc(
+			func(i *object.Integer) object.Object { return &object.Boolean{Value: false} },
+			func(f *object.Float) object.Object { return &object.Boolean{Value: math.IsNaN(f.Value)} },
+		),
 		HelpText: `isnan(x) - Check if x is NaN (Not a Number)
 
 Returns True if x is NaN, False otherwise.`,
 	},
 	"isinf": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil {
-				return err
-			}
-			switch arg := args[0].(type) {
-			case *object.Integer:
-				return &object.Boolean{Value: false}
-			case *object.Float:
-				return &object.Boolean{Value: math.IsInf(arg.Value, 0)}
-			default:
-				return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
-			}
-		},
+		Fn: oneIntOrFloatFunc(
+			func(i *object.Integer) object.Object { return &object.Boolean{Value: false} },
+			func(f *object.Float) object.Object { return &object.Boolean{Value: math.IsInf(f.Value, 0)} },
+		),
 		HelpText: `isinf(x) - Check if x is infinite
 
 Returns True if x is positive or negative infinity.`,
 	},
 	"isfinite": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil {
-				return err
-			}
-			switch arg := args[0].(type) {
-			case *object.Integer:
-				return &object.Boolean{Value: true}
-			case *object.Float:
-				return &object.Boolean{Value: !math.IsNaN(arg.Value) && !math.IsInf(arg.Value, 0)}
-			default:
-				return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
-			}
-		},
+		Fn: oneIntOrFloatFunc(
+			func(i *object.Integer) object.Object { return &object.Boolean{Value: true} },
+			func(f *object.Float) object.Object {
+				return &object.Boolean{Value: !math.IsNaN(f.Value) && !math.IsInf(f.Value, 0)}
+			},
+		),
 		HelpText: `isfinite(x) - Check if x is finite
 
 Returns True if x is neither NaN nor infinite.`,
@@ -303,19 +278,10 @@ Returns True if x is neither NaN nor infinite.`,
 Returns a float with magnitude of x and sign of y.`,
 	},
 	"trunc": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil {
-				return err
-			}
-			switch arg := args[0].(type) {
-			case *object.Integer:
-				return arg
-			case *object.Float:
-				return &object.Integer{Value: int64(math.Trunc(arg.Value))}
-			default:
-				return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
-			}
-		},
+		Fn: oneIntOrFloatFunc(
+			func(i *object.Integer) object.Object { return i },
+			func(f *object.Float) object.Object { return &object.Integer{Value: int64(math.Trunc(f.Value))} },
+		),
 		HelpText: `trunc(x) - Truncate x to the nearest integer toward zero
 
 Returns an integer.`,

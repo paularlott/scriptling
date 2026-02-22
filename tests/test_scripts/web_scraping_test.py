@@ -1,5 +1,5 @@
 import requests, re
-url='https://getknot.dev'
+url='https://scriptling.dev'
 resp=requests.get(url)
 html=resp.text
 pattern=re.compile(r'<a[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', re.S)
