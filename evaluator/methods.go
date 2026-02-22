@@ -114,6 +114,10 @@ func callStringMethodWithKeywords(ctx context.Context, obj object.Object, method
 			if sm, ok := fn.(*object.StaticMethod); ok {
 				return applyFunctionWithContext(ctx, sm.Fn, args, keywords, env)
 			}
+			if cm, ok := fn.(*object.ClassMethod); ok {
+				newArgs := prependSelf(cl, args)
+				return applyFunctionWithContext(ctx, cm.Fn, newArgs, keywords, env)
+			}
 			return applyFunctionWithContext(ctx, fn, args, keywords, env)
 		}
 		return errors.NewError("object CLASS has no method %s", method)
@@ -191,6 +195,11 @@ func callInstanceMethod(ctx context.Context, instance *object.Instance, method s
 			// StaticMethod: call without self
 			if sm, ok := fn.(*object.StaticMethod); ok {
 				return applyFunctionWithContext(ctx, sm.Fn, args, keywords, env)
+			}
+			// ClassMethod: call with class as first arg
+			if cm, ok := fn.(*object.ClassMethod); ok {
+				newArgs := prependSelf(instance.Class, args)
+				return applyFunctionWithContext(ctx, cm.Fn, newArgs, keywords, env)
 			}
 			// Property: calling a property raises an error (not callable)
 			if _, ok := fn.(*object.Property); ok {

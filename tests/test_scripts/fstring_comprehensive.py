@@ -59,10 +59,10 @@ pi = 3.14159
 float_fstring = f"Pi is approximately {pi}"
 assert float_fstring == "Pi is approximately 3.14159"
 
-# Test f-string with strings and format specs (should fallback to inspect)
+# Test f-string with strings and format specs
 test_str = "hello"
 str_format = f"String: {test_str:>10}"
-assert str_format == "String: hello"  # fallback to inspect since we only implemented int formatting
+assert str_format == "String:      hello", f"Got: {str_format}"
 
 # Test edge cases
 zero = 0

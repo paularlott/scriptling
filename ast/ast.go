@@ -204,6 +204,7 @@ type WhileStatement struct {
 	Token     token.Token
 	Condition Expression
 	Body      *BlockStatement
+	Else      *BlockStatement // optional else clause
 }
 
 func (ws *WhileStatement) statementNode()       {}
@@ -326,6 +327,7 @@ type ForStatement struct {
 	Variables []Expression
 	Iterable  Expression
 	Body      *BlockStatement
+	Else      *BlockStatement // optional else clause
 }
 
 func (fs *ForStatement) statementNode()       {}
@@ -462,6 +464,19 @@ func (lc *ListComprehension) expressionNode()      {}
 func (lc *ListComprehension) TokenLiteral() string { return lc.Token.Literal }
 func (lc *ListComprehension) Line() int            { return lc.Token.Line }
 
+type DictComprehension struct {
+	Token     token.Token
+	Key       Expression
+	Value     Expression
+	Variables []Expression
+	Iterable  Expression
+	Condition Expression // optional
+}
+
+func (dc *DictComprehension) expressionNode()      {}
+func (dc *DictComprehension) TokenLiteral() string { return dc.Token.Literal }
+func (dc *DictComprehension) Line() int            { return dc.Token.Line }
+
 type Lambda struct {
 	Token         token.Token
 	Parameters    []*Identifier
@@ -514,3 +529,13 @@ type CaseClause struct {
 	Body      *BlockStatement
 	CaptureAs *Identifier // Optional capture variable for the matched value
 }
+
+// OrPattern represents a pattern like `case 1 | 2 | 3:`
+type OrPattern struct {
+	Token    token.Token
+	Patterns []Expression
+}
+
+func (op *OrPattern) expressionNode()      {}
+func (op *OrPattern) TokenLiteral() string { return op.Token.Literal }
+func (op *OrPattern) Line() int            { return op.Token.Line }

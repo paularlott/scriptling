@@ -341,6 +341,8 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		return evalMethodCallExpression(ctx, node, env)
 	case *ast.ListComprehension:
 		return evalListComprehension(ctx, node, env)
+	case *ast.DictComprehension:
+		return evalDictComprehension(ctx, node, env)
 	case *ast.Lambda:
 		return evalLambda(node, env)
 	case *ast.TupleLiteral:
@@ -909,6 +911,7 @@ func evalIfStatementWithContext(ctx context.Context, ie *ast.IfStatement, env *o
 func evalWhileStatementWithContext(ctx context.Context, ws *ast.WhileStatement, env *object.Environment) object.Object {
 	var result object.Object = NULL
 	cc := newContextChecker(ctx)
+	broke := false
 
 	for {
 		if err := cc.check(); err != nil {
@@ -932,6 +935,7 @@ func evalWhileStatementWithContext(ctx context.Context, ws *ast.WhileStatement, 
 			case object.RETURN_OBJ:
 				return result
 			case object.BREAK_OBJ:
+				broke = true
 				return NULL
 			case object.CONTINUE_OBJ:
 				continue
@@ -939,6 +943,9 @@ func evalWhileStatementWithContext(ctx context.Context, ws *ast.WhileStatement, 
 		}
 	}
 
+	if !broke && ws.Else != nil {
+		return evalWithContext(ctx, ws.Else, env)
+	}
 	return result
 }
 
@@ -1018,6 +1025,8 @@ func evalClassStatement(ctx context.Context, stmt *ast.ClassStatement, env *obje
 			case *object.Property:
 				class.Methods[fnStmt.Name.Value] = m
 			case *object.StaticMethod:
+				class.Methods[fnStmt.Name.Value] = m
+			case *object.ClassMethod:
 				class.Methods[fnStmt.Name.Value] = m
 			}
 		}
@@ -2372,6 +2381,7 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 	}
 
 	var result object.Object = NULL
+	broke := false
 
 	// Handle Iterator objects and Views
 	var iter *object.Iterator
@@ -2427,31 +2437,63 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 				case object.ERROR_OBJ, object.RETURN_OBJ:
 					return result
 				case object.BREAK_OBJ:
-					return NULL
+					broke = true
+					result = NULL
+					goto forDone
 				case object.CONTINUE_OBJ:
 					continue
 				}
 			}
 		}
-		return result
+		goto forDone
 	}
 
 	// Get elements to iterate over based on type
-	var elements []object.Object
-	switch iter := iterable.(type) {
-	case *object.List:
-		elements = iter.Elements
-	case *object.Tuple:
-		elements = iter.Elements
-	case *object.String:
-		// Iterate over string runes lazily to avoid pre-allocating all characters
-		cc := newContextChecker(ctx)
-		for _, char := range iter.Value {
-			if err := cc.checkAlways(); err != nil {
+	{
+		var elements []object.Object
+		switch o := iterable.(type) {
+		case *object.List:
+			elements = o.Elements
+		case *object.Tuple:
+			elements = o.Elements
+		case *object.String:
+			// Iterate over string runes lazily to avoid pre-allocating all characters
+			cc := newContextChecker(ctx)
+			for _, char := range o.Value {
+				if err := cc.checkAlways(); err != nil {
+					return err
+				}
+
+				element := &object.String{Value: string(char)}
+				if err := setForVariables(fs.Variables, element, env); err != nil {
+					return errors.NewError("%s", err.Error())
+				}
+
+				result = evalWithContext(ctx, fs.Body, env)
+				if result != nil {
+					switch result.Type() {
+					case object.ERROR_OBJ, object.RETURN_OBJ:
+						return result
+					case object.BREAK_OBJ:
+						broke = true
+						result = NULL
+						goto forDone
+					case object.CONTINUE_OBJ:
+						continue
+					}
+				}
+			}
+			goto forDone
+		default:
+			return errors.NewTypeError("iterable", iterable.Type().String())
+		}
+
+		// Single loop for all iterable types
+		for _, element := range elements {
+			if err := checkContext(ctx); err != nil {
 				return err
 			}
 
-			element := &object.String{Value: string(char)}
 			if err := setForVariables(fs.Variables, element, env); err != nil {
 				return errors.NewError("%s", err.Error())
 			}
@@ -2462,40 +2504,20 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 				case object.ERROR_OBJ, object.RETURN_OBJ:
 					return result
 				case object.BREAK_OBJ:
-					return NULL
+					broke = true
+					result = NULL
+					goto forDone
 				case object.CONTINUE_OBJ:
 					continue
 				}
 			}
 		}
-		return result
-	default:
-		return errors.NewTypeError("iterable", iterable.Type().String())
 	}
 
-	// Single loop for all iterable types
-	for _, element := range elements {
-		if err := checkContext(ctx); err != nil {
-			return err
-		}
-
-		if err := setForVariables(fs.Variables, element, env); err != nil {
-			return errors.NewError("%s", err.Error())
-		}
-
-		result = evalWithContext(ctx, fs.Body, env)
-		if result != nil {
-			switch result.Type() {
-			case object.ERROR_OBJ, object.RETURN_OBJ:
-				return result
-			case object.BREAK_OBJ:
-				return NULL
-			case object.CONTINUE_OBJ:
-				continue
-			}
-		}
+forDone:
+	if !broke && fs.Else != nil {
+		return evalWithContext(ctx, fs.Else, env)
 	}
-
 	return result
 }
 
@@ -2641,6 +2663,92 @@ func evalListComprehension(ctx context.Context, lc *ast.ListComprehension, env *
 	return &object.List{Elements: result}
 }
 
+func evalDictComprehension(ctx context.Context, dc *ast.DictComprehension, env *object.Environment) object.Object {
+	iterable := evalWithContext(ctx, dc.Iterable, env)
+	if object.IsError(iterable) {
+		return iterable
+	}
+
+	result := &object.Dict{Pairs: make(map[string]object.DictPair)}
+	compEnv := object.NewEnclosedEnvironment(env)
+
+	var iter *object.Iterator
+	switch o := iterable.(type) {
+	case *object.Iterator:
+		iter = o
+	case *object.DictKeys:
+		iter = o.CreateIterator()
+	case *object.DictValues:
+		iter = o.CreateIterator()
+	case *object.DictItems:
+		iter = o.CreateIterator()
+	case *object.Set:
+		iter = o.CreateIterator()
+	}
+
+	runBody := func(element object.Object) object.Object {
+		if err := setForVariables(dc.Variables, element, compEnv); err != nil {
+			return errors.NewError("%s", err.Error())
+		}
+		if dc.Condition != nil {
+			cond := evalWithContext(ctx, dc.Condition, compEnv)
+			if object.IsError(cond) {
+				return cond
+			}
+			if !isTruthy(cond) {
+				return nil
+			}
+		}
+		k := evalWithContext(ctx, dc.Key, compEnv)
+		if object.IsError(k) {
+			return k
+		}
+		v := evalWithContext(ctx, dc.Value, compEnv)
+		if object.IsError(v) {
+			return v
+		}
+		result.Pairs[object.DictKey(k)] = object.DictPair{Key: k, Value: v}
+		return nil
+	}
+
+	if iter != nil {
+		for {
+			element, hasNext := iter.Next()
+			if !hasNext {
+				break
+			}
+			if err := runBody(element); err != nil {
+				return err
+			}
+		}
+		return result
+	}
+
+	var elements []object.Object
+	switch o := iterable.(type) {
+	case *object.List:
+		elements = o.Elements
+	case *object.Tuple:
+		elements = o.Elements
+	case *object.String:
+		for _, char := range o.Value {
+			if err := runBody(&object.String{Value: string(char)}); err != nil {
+				return err
+			}
+		}
+		return result
+	default:
+		return errors.NewTypeError("iterable", iterable.Type().String())
+	}
+
+	for _, element := range elements {
+		if err := runBody(element); err != nil {
+			return err
+		}
+	}
+	return result
+}
+
 func evalLambda(lambda *ast.Lambda, env *object.Environment) object.Object {
 	return &object.LambdaFunction{
 		Parameters:    lambda.Parameters,
@@ -2706,33 +2814,337 @@ func formatWithSpec(obj object.Object, spec string) string {
 		return obj.Inspect()
 	}
 
-	// Handle integer formatting like :2d, :02d
-	if strings.HasSuffix(spec, "d") {
-		widthStr := strings.TrimSuffix(spec, "d")
-		if widthStr == "" {
-			if intVal, err := obj.AsInt(); err == nil {
-				return fmt.Sprintf("%d", intVal)
-			}
-		} else if widthStr[0] == '0' {
-			// Zero-padded
-			widthStr = widthStr[1:]
-			if width, err := strconv.Atoi(widthStr); err == nil {
-				if intVal, err := obj.AsInt(); err == nil {
-					return fmt.Sprintf("%0*d", width, intVal)
+	// Parse the format spec: [[fill]align][sign][#][0][width][grouping][.precision][type]
+	// We support: [fill]align, 0width, width, .precision, type
+	// Types: d, f, e, E, g, G, x, X, o, b, s, %
+	// Align: <, >, ^, = (with optional fill char)
+	// Grouping: ,
+
+	var fill rune = ' '
+	var align rune
+	var sign rune // '+', '-', or ' '
+	var zero bool
+	var width int
+	var precision int = -1
+	var grouping bool
+	var typeChar byte
+
+	i := 0
+	runes := []rune(spec)
+	n := len(runes)
+
+	// Check for fill+align (2 chars: fill then align)
+	if n >= 2 && (runes[1] == '<' || runes[1] == '>' || runes[1] == '^' || runes[1] == '=') {
+		fill = runes[0]
+		align = runes[1]
+		i = 2
+	} else if n >= 1 && (runes[0] == '<' || runes[0] == '>' || runes[0] == '^' || runes[0] == '=') {
+		align = runes[0]
+		i = 1
+	}
+
+	// Sign (+, -, space)
+	if i < n && (runes[i] == '+' || runes[i] == '-' || runes[i] == ' ') {
+		sign = runes[i]
+		i++
+	}
+
+	// Skip # (alternate form)
+	if i < n && runes[i] == '#' {
+		i++
+	}
+
+	// Zero padding
+	if i < n && runes[i] == '0' && align == 0 {
+		zero = true
+		i++
+	}
+
+	// Width
+	for i < n && runes[i] >= '0' && runes[i] <= '9' {
+		width = width*10 + int(runes[i]-'0')
+		i++
+	}
+
+	// Grouping
+	if i < n && runes[i] == ',' {
+		grouping = true
+		i++
+	}
+
+	// Precision
+	if i < n && runes[i] == '.' {
+		i++
+		precision = 0
+		for i < n && runes[i] >= '0' && runes[i] <= '9' {
+			precision = precision*10 + int(runes[i]-'0')
+			i++
+		}
+	}
+
+	// Type
+	if i < n {
+		typeChar = byte(runes[i])
+	}
+
+	// Format the value
+	var formatted string
+	switch typeChar {
+	case 'd', 0:
+		if typeChar == 0 && obj.Type() == object.FLOAT_OBJ {
+			// No type char with float: use 'g' or precision
+			if floatVal, err := obj.AsFloat(); err == nil {
+				if precision >= 0 {
+					formatted = fmt.Sprintf("%."+ strconv.Itoa(precision)+"f", floatVal)
+				} else {
+					formatted = fmt.Sprintf("%g", floatVal)
 				}
+				formatted = applySign(formatted, floatVal >= 0, sign)
+			} else {
+				formatted = obj.Inspect()
+			}
+		} else if typeChar == 0 && obj.Type() == object.STRING_OBJ {
+			// No type char with string: apply precision as truncation
+			if s, err := obj.AsString(); err == nil {
+				formatted = s
+				if precision >= 0 {
+					runes := []rune(formatted)
+					if len(runes) > precision {
+						formatted = string(runes[:precision])
+					}
+				}
+			} else {
+				formatted = obj.Inspect()
+			}
+		} else if intVal, err := obj.AsInt(); err == nil {
+			if zero && width > 0 {
+				if intVal < 0 {
+					formatted = "-" + fmt.Sprintf("%0*d", width-1, -intVal)
+				} else {
+					formatted = fmt.Sprintf("%0*d", width, intVal)
+					formatted = applySign(formatted, true, sign)
+				}
+			} else {
+				formatted = fmt.Sprintf("%d", intVal)
+				formatted = applySign(formatted, intVal >= 0, sign)
 			}
 		} else {
-			// Space-padded
-			if width, err := strconv.Atoi(widthStr); err == nil {
-				if intVal, err := obj.AsInt(); err == nil {
-					return fmt.Sprintf("%*d", width, intVal)
+			formatted = obj.Inspect()
+		}
+	case 'f', 'F':
+		if floatVal, err := obj.AsFloat(); err == nil {
+			prec := 6
+			if precision >= 0 {
+				prec = precision
+			}
+			formatted = fmt.Sprintf("%."+ strconv.Itoa(prec)+"f", floatVal)
+			formatted = applySign(formatted, floatVal >= 0, sign)
+		} else {
+			formatted = obj.Inspect()
+		}
+	case 'e':
+		if floatVal, err := obj.AsFloat(); err == nil {
+			prec := 6
+			if precision >= 0 {
+				prec = precision
+			}
+			formatted = fmt.Sprintf("%."+ strconv.Itoa(prec)+"e", floatVal)
+			formatted = applySign(formatted, floatVal >= 0, sign)
+		} else {
+			formatted = obj.Inspect()
+		}
+	case 'E':
+		if floatVal, err := obj.AsFloat(); err == nil {
+			prec := 6
+			if precision >= 0 {
+				prec = precision
+			}
+			formatted = fmt.Sprintf("%."+ strconv.Itoa(prec)+"E", floatVal)
+			formatted = applySign(formatted, floatVal >= 0, sign)
+		} else {
+			formatted = obj.Inspect()
+		}
+	case 'g', 'G':
+		if floatVal, err := obj.AsFloat(); err == nil {
+			if precision >= 0 {
+				if typeChar == 'G' {
+					formatted = fmt.Sprintf("%."+ strconv.Itoa(precision)+"G", floatVal)
+				} else {
+					formatted = fmt.Sprintf("%."+ strconv.Itoa(precision)+"g", floatVal)
 				}
+			} else {
+				formatted = fmt.Sprintf("%g", floatVal)
+			}
+			formatted = applySign(formatted, floatVal >= 0, sign)
+		} else {
+			formatted = obj.Inspect()
+		}
+	case 'x':
+		if intVal, err := obj.AsInt(); err == nil {
+			if zero && width > 0 {
+				formatted = fmt.Sprintf("%0*x", width, intVal)
+			} else {
+				formatted = fmt.Sprintf("%x", intVal)
+			}
+		} else {
+			formatted = obj.Inspect()
+		}
+	case 'X':
+		if intVal, err := obj.AsInt(); err == nil {
+			if zero && width > 0 {
+				formatted = fmt.Sprintf("%0*X", width, intVal)
+			} else {
+				formatted = fmt.Sprintf("%X", intVal)
+			}
+		} else {
+			formatted = obj.Inspect()
+		}
+	case 'o':
+		if intVal, err := obj.AsInt(); err == nil {
+			if zero && width > 0 {
+				formatted = fmt.Sprintf("%0*o", width, intVal)
+			} else {
+				formatted = fmt.Sprintf("%o", intVal)
+			}
+		} else {
+			formatted = obj.Inspect()
+		}
+	case 'b':
+		if intVal, err := obj.AsInt(); err == nil {
+			if zero && width > 0 {
+				formatted = fmt.Sprintf("%0*b", width, intVal)
+			} else {
+				formatted = fmt.Sprintf("%b", intVal)
+			}
+		} else {
+			formatted = obj.Inspect()
+		}
+	case 's':
+		if s, err := obj.AsString(); err == nil {
+			formatted = s
+		} else {
+			formatted = obj.Inspect()
+		}
+		if precision >= 0 {
+			runes := []rune(formatted)
+			if len(runes) > precision {
+				formatted = string(runes[:precision])
+			}
+		}
+	case '%':
+		if floatVal, err := obj.AsFloat(); err == nil {
+			prec := 6
+			if precision >= 0 {
+				prec = precision
+			}
+			formatted = fmt.Sprintf("%."+ strconv.Itoa(prec)+"f%%", floatVal*100)
+			formatted = applySign(formatted, floatVal >= 0, sign)
+		} else {
+			formatted = obj.Inspect()
+		}
+	default:
+		formatted = obj.Inspect()
+	}
+
+	// Apply thousands grouping
+	if grouping && (typeChar == 'd' || typeChar == 0) {
+		if intVal, err := obj.AsInt(); err == nil {
+			commaStr := formatWithCommas(intVal)
+			commaStr = applySign(commaStr, intVal >= 0, sign)
+			formatted = commaStr
+		}
+	} else if grouping && (typeChar == 'f' || typeChar == 'F') {
+		parts := strings.SplitN(formatted, ".", 2)
+		if intVal, err := strconv.ParseInt(strings.TrimLeft(parts[0], "-"), 10, 64); err == nil {
+			commaInt := formatWithCommas(intVal)
+			if strings.HasPrefix(parts[0], "-") {
+				commaInt = "-" + commaInt
+			}
+			if len(parts) == 2 {
+				formatted = commaInt + "." + parts[1]
+			} else {
+				formatted = commaInt
 			}
 		}
 	}
 
-	// Fallback to inspect
-	return obj.Inspect()
+	// Apply width and alignment (use rune-aware length for Unicode)
+	if width > 0 && len([]rune(formatted)) < width {
+		width = width // keep as rune-count comparison below
+	}
+	if width > 0 && len([]rune(formatted)) < width {
+		padding := width - len([]rune(formatted))
+		switch align {
+		case '<':
+			formatted = formatted + strings.Repeat(string(fill), padding)
+		case '>':
+			formatted = strings.Repeat(string(fill), padding) + formatted
+		case '^':
+			left := padding / 2
+			right := padding - left
+			formatted = strings.Repeat(string(fill), left) + formatted + strings.Repeat(string(fill), right)
+		default:
+			// Default alignment: right for numbers, left for strings
+			if zero {
+				// Already handled in the type formatting above for integers/hex/oct/bin
+				// For floats, apply zero padding (preserving sign)
+				if obj.Type() == object.FLOAT_OBJ {
+					if len(formatted) > 0 && (formatted[0] == '+' || formatted[0] == '-' || formatted[0] == ' ') {
+						formatted = string(formatted[0]) + strings.Repeat("0", padding) + formatted[1:]
+					} else {
+						formatted = strings.Repeat("0", padding) + formatted
+					}
+				} else {
+					formatted = strings.Repeat(" ", padding) + formatted
+				}
+			} else if obj.Type() == object.STRING_OBJ || typeChar == 's' {
+				formatted = formatted + strings.Repeat(string(fill), padding)
+			} else {
+				formatted = strings.Repeat(string(fill), padding) + formatted
+			}
+		}
+	}
+
+	return formatted
+}
+
+// applySign prepends a sign character to a formatted number string.
+// sign: '+' always show sign, ' ' show space for positive, 0 means no sign prefix.
+// The formatted string may already have a '-' prefix for negative numbers.
+func applySign(formatted string, positive bool, sign rune) string {
+	if !positive {
+		return formatted // already has '-'
+	}
+	switch sign {
+	case '+':
+		return "+" + formatted
+	case ' ':
+		return " " + formatted
+	}
+	return formatted
+}
+
+// formatWithCommas formats an integer with thousands separators
+func formatWithCommas(n int64) string {
+	if n < 0 {
+		return "-" + formatWithCommas(-n)
+	}
+	s := fmt.Sprintf("%d", n)
+	if len(s) <= 3 {
+		return s
+	}
+	var result strings.Builder
+	start := len(s) % 3
+	if start > 0 {
+		result.WriteString(s[:start])
+	}
+	for i := start; i < len(s); i += 3 {
+		if i > 0 || start > 0 {
+			result.WriteByte(',')
+		}
+		result.WriteString(s[i : i+3])
+	}
+	return result.String()
 }
 
 func evalMatchStatementWithContext(ctx context.Context, ms *ast.MatchStatement, env *object.Environment) object.Object {
@@ -2783,6 +3195,18 @@ func evalMatchStatementWithContext(ctx context.Context, ms *ast.MatchStatement, 
 
 func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expression, capturedVars map[string]object.Object) (object.Object, object.Object) {
 	switch p := pattern.(type) {
+	case *ast.OrPattern:
+		for _, alt := range p.Patterns {
+			matched, val := matchPattern(ctx, subject, alt, capturedVars)
+			if object.IsError(matched) {
+				return matched, NULL
+			}
+			if matched == TRUE {
+				return TRUE, val
+			}
+		}
+		return FALSE, NULL
+
 	case *ast.Identifier:
 		// Wildcard pattern
 		if p.Value == "_" {
