@@ -150,6 +150,7 @@ const (
 	SLICE_OBJ
 	PROPERTY_OBJ
 	STATICMETHOD_OBJ
+	CLASSMETHOD_OBJ
 )
 
 // String returns the string representation of the ObjectType
@@ -209,6 +210,8 @@ func (ot ObjectType) String() string {
 		return "PROPERTY"
 	case STATICMETHOD_OBJ:
 		return "STATICMETHOD"
+	case CLASSMETHOD_OBJ:
+		return "CLASSMETHOD"
 	default:
 		return "UNKNOWN"
 	}
@@ -1288,6 +1291,26 @@ func (s *StaticMethod) AsDict() (map[string]Object, Object) { return nil, errMus
 func (s *StaticMethod) CoerceString() (string, Object) { return s.Inspect(), nil }
 func (s *StaticMethod) CoerceInt() (int64, Object)     { return 0, errMustBeInteger }
 func (s *StaticMethod) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
+
+// ClassMethod wraps a function for use with @classmethod.
+// When called, the class is passed as the first argument instead of self.
+type ClassMethod struct {
+	Fn Object
+}
+
+func (c *ClassMethod) Type() ObjectType { return CLASSMETHOD_OBJ }
+func (c *ClassMethod) Inspect() string  { return "<classmethod>" }
+
+func (c *ClassMethod) AsString() (string, Object)          { return "", errMustBeString }
+func (c *ClassMethod) AsInt() (int64, Object)              { return 0, errMustBeInteger }
+func (c *ClassMethod) AsFloat() (float64, Object)          { return 0, errMustBeNumber }
+func (c *ClassMethod) AsBool() (bool, Object)              { return true, nil }
+func (c *ClassMethod) AsList() ([]Object, Object)          { return nil, errMustBeList }
+func (c *ClassMethod) AsDict() (map[string]Object, Object) { return nil, errMustBeDict }
+
+func (c *ClassMethod) CoerceString() (string, Object) { return c.Inspect(), nil }
+func (c *ClassMethod) CoerceInt() (int64, Object)     { return 0, errMustBeInteger }
+func (c *ClassMethod) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
 
 // LibraryRegistrar is an interface for registering libraries.
 // This allows external libraries to register themselves without circular imports.

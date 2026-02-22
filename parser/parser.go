@@ -1069,6 +1069,14 @@ func (p *Parser) parseWhileStatement() *ast.WhileStatement {
 
 	stmt.Body = p.parseBlockStatement()
 
+	if p.peekTokenIs(token.ELSE) {
+		p.nextToken()
+		if !p.expectPeek(token.COLON) {
+			return nil
+		}
+		stmt.Else = p.parseBlockStatement()
+	}
+
 	return stmt
 }
 
@@ -1309,6 +1317,14 @@ func (p *Parser) parseForStatement() *ast.ForStatement {
 	}
 
 	stmt.Body = p.parseBlockStatement()
+
+	if p.peekTokenIs(token.ELSE) {
+		p.nextToken()
+		if !p.expectPeek(token.COLON) {
+			return nil
+		}
+		stmt.Else = p.parseBlockStatement()
+	}
 
 	return stmt
 }
@@ -1578,6 +1594,11 @@ func (p *Parser) parseDictLiteral() ast.Expression {
 
 		value := p.parseExpression(LOWEST)
 
+		// Check for dict comprehension: {k: v for ...}
+		if p.peekTokenIs(token.FOR) {
+			return p.parseDictComprehension(tok, first, value)
+		}
+
 		dict.Pairs[first] = value
 
 		p.skipWhitespace()
@@ -1598,6 +1619,43 @@ func (p *Parser) parseDictLiteral() ast.Expression {
 	}
 
 	return dict
+}
+
+func (p *Parser) parseDictComprehension(tok token.Token, keyExpr, valueExpr ast.Expression) ast.Expression {
+	comp := &ast.DictComprehension{
+		Token: tok,
+		Key:   keyExpr,
+		Value: valueExpr,
+	}
+
+	if !p.expectPeek(token.FOR) {
+		return nil
+	}
+
+	p.nextToken()
+	comp.Variables = []ast.Expression{p.parseExpression(EQUALS)}
+	for p.peekTokenIs(token.COMMA) {
+		p.nextToken()
+		p.nextToken()
+		comp.Variables = append(comp.Variables, p.parseExpression(EQUALS))
+	}
+
+	if !p.expectPeek(token.IN) {
+		return nil
+	}
+	p.nextToken()
+	comp.Iterable = p.parseExpression(CONDITIONAL)
+
+	if p.peekTokenIs(token.IF) {
+		p.nextToken()
+		p.nextToken()
+		comp.Condition = p.parseExpression(CONDITIONAL)
+	}
+
+	if !p.expectPeek(token.RBRACE) {
+		return nil
+	}
+	return comp
 }
 
 func (p *Parser) parseSetLiteralFrom(tok token.Token, first ast.Expression) ast.Expression {
@@ -1977,17 +2035,32 @@ func (p *Parser) parseCaseClause() *ast.CaseClause {
 func (p *Parser) parseCasePattern() ast.Expression {
 	// We need to parse an expression but stop at 'if' or 'as' keywords
 	// These are used for guards and captures, not part of the pattern itself
+	// Use BIT_OR precedence to stop before '|' (used for OR patterns)
+	var first ast.Expression
 	switch p.curToken.Type {
 	case token.IDENT:
 		// Check if next token is 'if' or 'as' - if so, this is just an identifier
-		if p.peekTokenIs(token.IF) || p.peekTokenIs(token.AS) || p.peekTokenIs(token.COLON) {
-			return &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+		if p.peekTokenIs(token.IF) || p.peekTokenIs(token.AS) || p.peekTokenIs(token.COLON) || p.peekTokenIs(token.PIPE) {
+			first = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+		} else {
+			// Otherwise parse as normal expression, stopping before '|'
+			first = p.parseExpression(BIT_OR)
 		}
-		// Otherwise parse as normal expression
-		return p.parseExpression(LOWEST_PRECEDENCE)
 	default:
-		return p.parseExpression(LOWEST_PRECEDENCE)
+		first = p.parseExpression(BIT_OR)
 	}
+
+	// Check for OR pattern: case 1 | 2 | 3
+	if p.peekTokenIs(token.PIPE) {
+		patterns := []ast.Expression{first}
+		for p.peekTokenIs(token.PIPE) {
+			p.nextToken() // consume '|'
+			p.nextToken() // move to next pattern
+			patterns = append(patterns, p.parseExpression(BIT_OR))
+		}
+		return &ast.OrPattern{Token: p.curToken, Patterns: patterns}
+	}
+	return first
 }
 
 
