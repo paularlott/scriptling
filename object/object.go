@@ -148,6 +148,8 @@ const (
 	DICT_ITEMS_OBJ
 	SET_OBJ
 	SLICE_OBJ
+	PROPERTY_OBJ
+	STATICMETHOD_OBJ
 )
 
 // String returns the string representation of the ObjectType
@@ -203,6 +205,10 @@ func (ot ObjectType) String() string {
 		return "SET"
 	case SLICE_OBJ:
 		return "SLICE"
+	case PROPERTY_OBJ:
+		return "PROPERTY"
+	case STATICMETHOD_OBJ:
+		return "STATICMETHOD"
 	default:
 		return "UNKNOWN"
 	}
@@ -1242,6 +1248,46 @@ func (s *Super) AsDict() (map[string]Object, Object) { return nil, errMustBeDict
 func (s *Super) CoerceString() (string, Object) { return s.Inspect(), nil }
 func (s *Super) CoerceInt() (int64, Object)     { return 0, errMustBeInteger }
 func (s *Super) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
+
+// Property wraps a getter (and optional setter) for use with @property.
+type Property struct {
+	Getter Object // Function to call when the attribute is accessed
+	Setter Object // Function to call when the attribute is assigned (nil = read-only)
+}
+
+func (p *Property) Type() ObjectType { return PROPERTY_OBJ }
+func (p *Property) Inspect() string  { return "<property>" }
+
+func (p *Property) AsString() (string, Object)          { return "", errMustBeString }
+func (p *Property) AsInt() (int64, Object)              { return 0, errMustBeInteger }
+func (p *Property) AsFloat() (float64, Object)          { return 0, errMustBeNumber }
+func (p *Property) AsBool() (bool, Object)              { return true, nil }
+func (p *Property) AsList() ([]Object, Object)          { return nil, errMustBeList }
+func (p *Property) AsDict() (map[string]Object, Object) { return nil, errMustBeDict }
+
+func (p *Property) CoerceString() (string, Object) { return p.Inspect(), nil }
+func (p *Property) CoerceInt() (int64, Object)     { return 0, errMustBeInteger }
+func (p *Property) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
+
+// StaticMethod wraps a function for use with @staticmethod.
+// When called on an instance, self is not prepended.
+type StaticMethod struct {
+	Fn Object
+}
+
+func (s *StaticMethod) Type() ObjectType { return STATICMETHOD_OBJ }
+func (s *StaticMethod) Inspect() string  { return "<staticmethod>" }
+
+func (s *StaticMethod) AsString() (string, Object)          { return "", errMustBeString }
+func (s *StaticMethod) AsInt() (int64, Object)              { return 0, errMustBeInteger }
+func (s *StaticMethod) AsFloat() (float64, Object)          { return 0, errMustBeNumber }
+func (s *StaticMethod) AsBool() (bool, Object)              { return true, nil }
+func (s *StaticMethod) AsList() ([]Object, Object)          { return nil, errMustBeList }
+func (s *StaticMethod) AsDict() (map[string]Object, Object) { return nil, errMustBeDict }
+
+func (s *StaticMethod) CoerceString() (string, Object) { return s.Inspect(), nil }
+func (s *StaticMethod) CoerceInt() (int64, Object)     { return 0, errMustBeInteger }
+func (s *StaticMethod) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
 
 // LibraryRegistrar is an interface for registering libraries.
 // This allows external libraries to register themselves without circular imports.

@@ -22,10 +22,13 @@ var (
 //	})
 //	class := cb.Build()
 type ClassBuilder struct {
-	name      string
-	baseClass *Class
-	methods   map[string]*Builtin
-	env       *Environment
+	name       string
+	baseClass  *Class
+	methods    map[string]*Builtin
+	properties map[string]*Builtin
+	setters    map[string]*Builtin
+	statics    map[string]*Builtin
+	env        *Environment
 }
 
 // NewClassBuilder creates a new ClassBuilder with the given class name.
@@ -71,6 +74,62 @@ func (cb *ClassBuilder) MethodWithHelp(name string, fn interface{}, helpText str
 	return cb
 }
 
+// Property registers a getter function as a @property on the class.
+// The getter receives self as its only argument.
+//
+// Example:
+//
+//	cb.Property("area", func(self *Instance) float64 {
+//	    r, _ := self.Fields["radius"].AsFloat()
+//	    return math.Pi * r * r
+//	})
+func (cb *ClassBuilder) Property(name string, fn interface{}) *ClassBuilder {
+	if cb.properties == nil {
+		cb.properties = make(map[string]*Builtin)
+	}
+	cb.properties[name] = cb.createWrapper(fn, "")
+	return cb
+}
+
+// PropertyWithSetter registers a getter and setter as a @property on the class.
+// The getter receives self only; the setter receives self and the new value.
+//
+// Example:
+//
+//	cb.PropertyWithSetter("radius",
+//	    func(self *Instance) float64 { r, _ := self.Fields["r"].AsFloat(); return r },
+//	    func(self *Instance, v float64) { self.Fields["r"] = &Float{Value: v} },
+//	)
+func (cb *ClassBuilder) PropertyWithSetter(name string, getter interface{}, setter interface{}) *ClassBuilder {
+	if cb.properties == nil {
+		cb.properties = make(map[string]*Builtin)
+	}
+	if cb.setters == nil {
+		cb.setters = make(map[string]*Builtin)
+	}
+	cb.properties[name] = cb.createWrapper(getter, "")
+	cb.setters[name] = cb.createWrapper(setter, "")
+	return cb
+}
+
+// StaticMethod registers a function as a @staticmethod on the class.
+// The function does NOT receive self — do not include *Instance as the first parameter.
+//
+// Example:
+//
+//	cb.StaticMethod("from_degrees", func(deg float64) float64 {
+//	    return deg * math.Pi / 180
+//	})
+func (cb *ClassBuilder) StaticMethod(name string, fn interface{}) *ClassBuilder {
+	if cb.statics == nil {
+		cb.statics = make(map[string]*Builtin)
+	}
+	fb := NewFunctionBuilder()
+	fb.Function(fn)
+	cb.statics[name] = &Builtin{Fn: fb.Build()}
+	return cb
+}
+
 // Environment sets the environment for the class.
 // This is optional and usually not needed.
 func (cb *ClassBuilder) Environment(env *Environment) *ClassBuilder {
@@ -90,9 +149,21 @@ func (cb *ClassBuilder) Build() *Class {
 
 // convertMethodsToObjects converts the methods map to map[string]Object
 func (cb *ClassBuilder) convertMethodsToObjects() map[string]Object {
-	result := make(map[string]Object, len(cb.methods))
+	result := make(map[string]Object, len(cb.methods)+len(cb.properties)+len(cb.statics))
 	for name, builtin := range cb.methods {
 		result[name] = builtin
+	}
+	for name, getter := range cb.properties {
+		var setter Object
+		if cb.setters != nil {
+			if s, ok := cb.setters[name]; ok {
+				setter = s
+			}
+		}
+		result[name] = &Property{Getter: getter, Setter: setter}
+	}
+	for name, fn := range cb.statics {
+		result[name] = &StaticMethod{Fn: fn}
 	}
 	return result
 }

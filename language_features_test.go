@@ -1408,3 +1408,467 @@ with Child() as v:
 		t.Errorf("expected 'from_base', got %q", result)
 	}
 }
+
+// ============================================================================
+// Decorator Tests (§1.5)
+// ============================================================================
+
+func TestDecoratorBasic(t *testing.T) {
+	p := New()
+	_, err := p.Eval(`
+def double(fn):
+    def wrapper(*args):
+        return fn(*args) * 2
+    return wrapper
+
+@double
+def add(a, b):
+    return a + b
+
+result = add(3, 4)
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	result, _ := p.GetVar("result")
+	if result != int64(14) {
+		t.Errorf("expected 14, got %v", result)
+	}
+}
+
+func TestDecoratorStacked(t *testing.T) {
+	p := New()
+	_, err := p.Eval(`
+def add_one(fn):
+    def wrapper(*args):
+        return fn(*args) + 1
+    return wrapper
+
+def double(fn):
+    def wrapper(*args):
+        return fn(*args) * 2
+    return wrapper
+
+@add_one
+@double
+def val():
+    return 5
+
+result = val()
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	// val() = 5, double wraps -> 10, add_one wraps -> 11
+	result, _ := p.GetVar("result")
+	if result != int64(11) {
+		t.Errorf("expected 11, got %v", result)
+	}
+}
+
+func TestDecoratorProperty(t *testing.T) {
+	p := New()
+	_, err := p.Eval(`
+class Circle:
+    def __init__(self, r):
+        self._r = r
+
+    @property
+    def radius(self):
+        return self._r
+
+    @property
+    def diameter(self):
+        return self._r * 2
+
+c = Circle(5)
+r = c.radius
+d = c.diameter
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	r, _ := p.GetVar("r")
+	if r != int64(5) {
+		t.Errorf("radius: expected 5, got %v", r)
+	}
+	d, _ := p.GetVar("d")
+	if d != int64(10) {
+		t.Errorf("diameter: expected 10, got %v", d)
+	}
+}
+
+func TestDecoratorPropertyInheritance(t *testing.T) {
+	p := New()
+	_, err := p.Eval(`
+class Base:
+    def __init__(self, name):
+        self._name = name
+
+    @property
+    def name(self):
+        return self._name
+
+class Child(Base):
+    pass
+
+c = Child("test")
+result = c.name
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	result, _ := p.GetVarAsString("result")
+	if result != "test" {
+		t.Errorf("inherited property: expected 'test', got %q", result)
+	}
+}
+
+func TestDecoratorStaticMethod(t *testing.T) {
+	p := New()
+	_, err := p.Eval(`
+class Math:
+    @staticmethod
+    def square(x):
+        return x * x
+
+r1 = Math.square(4)
+m = Math()
+r2 = m.square(3)
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	r1, _ := p.GetVar("r1")
+	if r1 != int64(16) {
+		t.Errorf("class staticmethod: expected 16, got %v", r1)
+	}
+	r2, _ := p.GetVar("r2")
+	if r2 != int64(9) {
+		t.Errorf("instance staticmethod: expected 9, got %v", r2)
+	}
+}
+
+func TestDecoratorClassDecorator(t *testing.T) {
+	p := New()
+	_, err := p.Eval(`
+def add_version(cls):
+    cls.version = "1.0"
+    return cls
+
+@add_version
+class App:
+    pass
+
+a = App()
+result = a.version
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	result, _ := p.GetVarAsString("result")
+	if result != "1.0" {
+		t.Errorf("class decorator: expected '1.0', got %q", result)
+	}
+}
+
+// ============================================================================
+// ClassBuilder Property / StaticMethod Tests
+// ============================================================================
+
+func TestClassBuilderProperty(t *testing.T) {
+	p := New()
+
+	cb := object.NewClassBuilder("Circle")
+	cb.MethodWithHelp("__init__", func(self *object.Instance, r float64) {
+		self.Fields["radius"] = &object.Float{Value: r}
+	}, "")
+	cb.Property("radius", func(self *object.Instance) float64 {
+		v, _ := self.Fields["radius"].AsFloat()
+		return v
+	})
+	cb.Property("diameter", func(self *object.Instance) float64 {
+		v, _ := self.Fields["radius"].AsFloat()
+		return v * 2
+	})
+	p.SetObjectVar("Circle", cb.Build())
+
+	_, err := p.Eval(`
+c = Circle(5.0)
+r = c.radius
+d = c.diameter
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	r, _ := p.GetVar("r")
+	if r != float64(5) {
+		t.Errorf("radius: expected 5.0, got %v", r)
+	}
+	d, _ := p.GetVar("d")
+	if d != float64(10) {
+		t.Errorf("diameter: expected 10.0, got %v", d)
+	}
+}
+
+func TestClassBuilderStaticMethod(t *testing.T) {
+	p := New()
+
+	cb := object.NewClassBuilder("Math")
+	cb.StaticMethod("square", func(x float64) float64 {
+		return x * x
+	})
+	cb.StaticMethod("add", func(a, b int) int {
+		return a + b
+	})
+	p.SetObjectVar("Math", cb.Build())
+
+	_, err := p.Eval(`
+r1 = Math.square(4.0)
+r2 = Math.add(3, 7)
+m = Math()
+r3 = m.square(3.0)
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	r1, _ := p.GetVar("r1")
+	if r1 != float64(16) {
+		t.Errorf("class static square: expected 16.0, got %v", r1)
+	}
+	r2, _ := p.GetVar("r2")
+	if r2 != int64(10) {
+		t.Errorf("class static add: expected 10, got %v", r2)
+	}
+	r3, _ := p.GetVar("r3")
+	if r3 != float64(9) {
+		t.Errorf("instance static square: expected 9.0, got %v", r3)
+	}
+}
+
+func TestClassBuilderPropertyInheritance(t *testing.T) {
+	p := New()
+
+	base := object.NewClassBuilder("Base")
+	base.MethodWithHelp("__init__", func(self *object.Instance, name string) {
+		self.Fields["name"] = &object.String{Value: name}
+	}, "")
+	base.Property("name", func(self *object.Instance) string {
+		v, _ := self.Fields["name"].AsString()
+		return v
+	})
+	baseClass := base.Build()
+
+	child := object.NewClassBuilder("Child")
+	child.BaseClass(baseClass)
+	// Child needs its own __init__ to set fields (inherited __init__ is not auto-called)
+	child.Method("__init__", func(self *object.Instance, name string) {
+		self.Fields["name"] = &object.String{Value: name}
+	})
+	p.SetObjectVar("Base", baseClass)
+	p.SetObjectVar("Child", child.Build())
+
+	_, err := p.Eval(`
+c = Child("hello")
+result = c.name
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	result, _ := p.GetVarAsString("result")
+	if result != "hello" {
+		t.Errorf("inherited property: expected 'hello', got %q", result)
+	}
+}
+
+func TestClassBuilderNativePropertyAndStaticMethod(t *testing.T) {
+	// Verify object.Property and object.StaticMethod work when set directly
+	// in the Methods map (native API path).
+	p := New()
+
+	getterFn := func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+		inst := args[0].(*object.Instance)
+		v, _ := inst.Fields["val"].AsInt()
+		return object.NewInteger(v * 2)
+	}
+	staticFn := func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+		v, _ := args[0].AsInt()
+		return object.NewInteger(v + 100)
+	}
+
+	cls := &object.Class{
+		Name: "Box",
+		Methods: map[string]object.Object{
+			"__init__": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					inst := args[0].(*object.Instance)
+					n, _ := args[1].AsInt()
+					inst.Fields["val"] = object.NewInteger(n)
+					return &object.Null{}
+				},
+			},
+			"doubled": &object.Property{Getter: &object.Builtin{Fn: getterFn}},
+			"offset":  &object.StaticMethod{Fn: &object.Builtin{Fn: staticFn}},
+		},
+	}
+	p.SetObjectVar("Box", cls)
+
+	_, err := p.Eval(`
+b = Box(7)
+r1 = b.doubled
+r2 = Box.offset(5)
+r3 = b.offset(3)
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	r1, _ := p.GetVar("r1")
+	if r1 != int64(14) {
+		t.Errorf("property: expected 14, got %v", r1)
+	}
+	r2, _ := p.GetVar("r2")
+	if r2 != int64(105) {
+		t.Errorf("class staticmethod: expected 105, got %v", r2)
+	}
+	r3, _ := p.GetVar("r3")
+	if r3 != int64(103) {
+		t.Errorf("instance staticmethod: expected 103, got %v", r3)
+	}
+}
+
+// ============================================================================
+// Property Setter Tests
+// ============================================================================
+
+func TestDecoratorPropertySetter(t *testing.T) {
+	p := New()
+	_, err := p.Eval(`
+class Temperature:
+    def __init__(self, c):
+        self._c = c
+
+    @property
+    def celsius(self):
+        return self._c
+
+    @celsius.setter
+    def celsius(self, v):
+        self._c = v
+
+t = Temperature(100)
+r1 = t.celsius
+t.celsius = 0
+r2 = t.celsius
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	r1, _ := p.GetVar("r1")
+	if r1 != int64(100) {
+		t.Errorf("getter: expected 100, got %v", r1)
+	}
+	r2, _ := p.GetVar("r2")
+	if r2 != int64(0) {
+		t.Errorf("setter: expected 0, got %v", r2)
+	}
+}
+
+func TestDecoratorPropertyReadOnly(t *testing.T) {
+	p := New()
+	_, err := p.Eval(`
+class Circle:
+    def __init__(self, r):
+        self._r = r
+
+    @property
+    def radius(self):
+        return self._r
+
+c = Circle(5)
+try:
+    c.radius = 10
+    result = "no error"
+except Exception as e:
+    result = str(e)
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	result, _ := p.GetVarAsString("result")
+	if result == "no error" {
+		t.Error("expected error when assigning to read-only property")
+	}
+}
+
+func TestDecoratorPropertySetterInheritance(t *testing.T) {
+	p := New()
+	_, err := p.Eval(`
+class Base:
+    def __init__(self, v):
+        self._v = v
+
+    @property
+    def value(self):
+        return self._v
+
+    @value.setter
+    def value(self, v):
+        self._v = v
+
+class Child(Base):
+    pass
+
+c = Child(10)
+r1 = c.value
+c.value = 99
+r2 = c.value
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	r1, _ := p.GetVar("r1")
+	if r1 != int64(10) {
+		t.Errorf("inherited getter: expected 10, got %v", r1)
+	}
+	r2, _ := p.GetVar("r2")
+	if r2 != int64(99) {
+		t.Errorf("inherited setter: expected 99, got %v", r2)
+	}
+}
+
+func TestClassBuilderPropertySetter(t *testing.T) {
+	p := New()
+
+	cb := object.NewClassBuilder("Box")
+	cb.MethodWithHelp("__init__", func(self *object.Instance, v int) {
+		self.Fields["_v"] = object.NewInteger(int64(v))
+	}, "")
+	cb.PropertyWithSetter("value",
+		func(self *object.Instance) int {
+			v, _ := self.Fields["_v"].AsInt()
+			return int(v)
+		},
+		func(self *object.Instance, v int) {
+			self.Fields["_v"] = object.NewInteger(int64(v))
+		},
+	)
+	p.SetObjectVar("Box", cb.Build())
+
+	_, err := p.Eval(`
+b = Box(5)
+r1 = b.value
+b.value = 42
+r2 = b.value
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	r1, _ := p.GetVar("r1")
+	if r1 != int64(5) {
+		t.Errorf("getter: expected 5, got %v", r1)
+	}
+	r2, _ := p.GetVar("r2")
+	if r2 != int64(42) {
+		t.Errorf("setter: expected 42, got %v", r2)
+	}
+}

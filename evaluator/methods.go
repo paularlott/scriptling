@@ -107,6 +107,18 @@ func callStringMethodWithKeywords(ctx context.Context, obj object.Object, method
 		return callInstanceMethod(ctx, obj.(*object.Instance), method, args, keywords, env)
 	}
 
+	// Handle Class method calls (e.g. Math.square(4) for staticmethods)
+	if obj.Type() == object.CLASS_OBJ {
+		cl := obj.(*object.Class)
+		if fn, ok := cl.Methods[method]; ok {
+			if sm, ok := fn.(*object.StaticMethod); ok {
+				return applyFunctionWithContext(ctx, sm.Fn, args, keywords, env)
+			}
+			return applyFunctionWithContext(ctx, fn, args, keywords, env)
+		}
+		return errors.NewError("object CLASS has no method %s", method)
+	}
+
 	// Handle Super method calls
 	if obj.Type() == object.SUPER_OBJ {
 		return callSuperMethod(ctx, obj.(*object.Super), method, args, keywords, env)
@@ -176,6 +188,14 @@ func callInstanceMethod(ctx context.Context, instance *object.Instance, method s
 	currentClass := instance.Class
 	for currentClass != nil {
 		if fn, ok := currentClass.Methods[method]; ok {
+			// StaticMethod: call without self
+			if sm, ok := fn.(*object.StaticMethod); ok {
+				return applyFunctionWithContext(ctx, sm.Fn, args, keywords, env)
+			}
+			// Property: calling a property raises an error (not callable)
+			if _, ok := fn.(*object.Property); ok {
+				return errors.NewError("'property' object is not callable")
+			}
 			// Bind 'self'
 			newArgs := prependSelf(instance, args)
 			return applyFunctionWithContext(ctx, fn, newArgs, keywords, env)

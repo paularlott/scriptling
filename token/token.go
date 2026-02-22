@@ -102,6 +102,7 @@ const (
 	MATCH    = "MATCH"
 	CASE     = "CASE"
 	WITH     = "WITH"
+	AT       = "@"
 )
 
 var keywords = map[string]TokenType{

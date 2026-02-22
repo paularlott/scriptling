@@ -54,6 +54,8 @@ func evalIndexExpression(ctx context.Context, left, index object.Object) object.
 		return evalClassIndexExpression(left, index)
 	case left.Type() == object.BUILTIN_OBJ:
 		return evalBuiltinIndexExpression(left, index)
+	case left.Type() == object.PROPERTY_OBJ:
+		return evalPropertyIndexExpression(left, index)
 	case left.Type() == object.SUPER_OBJ:
 		return evalSuperIndexExpression(left, index)
 	default:
@@ -194,11 +196,45 @@ func evalInstanceIndexExpression(ctx context.Context, instance, index object.Obj
 	}
 	// Check instance fields first
 	if val, ok := inst.Fields[field]; ok {
+		// If it's a property descriptor, call the getter
+		if prop, ok := val.(*object.Property); ok {
+			return applyFunctionWithContext(ctx, prop.Getter, []object.Object{instance}, nil, nil)
+		}
 		return val
 	}
-	// Check class methods - return bound method
+	// Check class methods - property descriptors on the class are also supported
 	if fn, ok := inst.Class.Methods[field]; ok {
-		return &object.BoundMethod{Instance: instance, Method: fn}
+		if prop, ok := fn.(*object.Property); ok {
+			return applyFunctionWithContext(ctx, prop.Getter, []object.Object{instance}, nil, nil)
+		}
+		if sm, ok := fn.(*object.StaticMethod); ok {
+			return sm.Fn // return the raw function for later calling
+		}
+		switch fn.(type) {
+		case *object.Function, *object.LambdaFunction, *object.Builtin:
+			return &object.BoundMethod{Instance: instance, Method: fn}
+		default:
+			return fn // non-callable class attribute (e.g. string set by class decorator)
+		}
+	}
+	// Walk base classes
+	currentClass := inst.Class.BaseClass
+	for currentClass != nil {
+		if fn, ok := currentClass.Methods[field]; ok {
+			if prop, ok := fn.(*object.Property); ok {
+				return applyFunctionWithContext(ctx, prop.Getter, []object.Object{instance}, nil, nil)
+			}
+			if sm, ok := fn.(*object.StaticMethod); ok {
+				return sm.Fn
+			}
+			switch fn.(type) {
+			case *object.Function, *object.LambdaFunction, *object.Builtin:
+				return &object.BoundMethod{Instance: instance, Method: fn}
+			default:
+				return fn
+			}
+		}
+		currentClass = currentClass.BaseClass
 	}
 	return NULL
 }
@@ -213,9 +249,32 @@ func evalClassIndexExpression(class, index object.Object) object.Object {
 	}
 	cl := class.(*object.Class)
 	if fn, ok := cl.Methods[field]; ok {
+		if sm, ok := fn.(*object.StaticMethod); ok {
+			return sm.Fn
+		}
 		return fn
 	}
 	return NULL
+}
+
+func evalPropertyIndexExpression(prop, index object.Object) object.Object {
+	field, err := index.AsString()
+	if err != nil {
+		return errors.NewError("property attribute must be string")
+	}
+	if field != "setter" {
+		return errors.NewError("property has no attribute '%s'", field)
+	}
+	p := prop.(*object.Property)
+	// Return a callable: setter(fn) -> new Property{Getter: p.Getter, Setter: fn}
+	return &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if len(args) != 1 {
+				return errors.NewError("setter() takes exactly 1 argument")
+			}
+			return &object.Property{Getter: p.Getter, Setter: args[0]}
+		},
+	}
 }
 
 func evalBuiltinIndexExpression(builtin, index object.Object) object.Object {
