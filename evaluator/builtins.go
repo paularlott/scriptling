@@ -12,6 +12,7 @@ import (
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
+	"github.com/paularlott/scriptling/stdlib"
 )
 
 // Forward declarations for complex builtins
@@ -72,6 +73,15 @@ Use list(filter(...)) to get a list.`,
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			env := GetEnvFromContext(ctx)
 			writer := env.GetWriter()
+
+			// Get file kwarg (StringIO or any object with write method)
+			if fileObj := kwargs.Get("file"); fileObj != nil {
+				if inst, ok := fileObj.(*object.Instance); ok {
+					if w, ok := stdlib.GetStringIOWriter(inst); ok {
+						writer = w
+					}
+				}
+			}
 
 			// Get sep kwarg (default: " ")
 			sep := " "
