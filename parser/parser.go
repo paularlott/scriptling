@@ -271,6 +271,8 @@ func (p *Parser) parseStatement() ast.Statement {
 		return p.parseNonlocalStatement()
 	case token.ASSERT:
 		return p.parseAssertStatement()
+	case token.WITH:
+		return p.parseWithStatement()
 	case token.IDENT:
 		if p.peekTokenIs(token.ASSIGN) {
 			return p.parseAssignStatement()
@@ -1737,6 +1739,24 @@ func (p *Parser) parseNonlocalStatement() *ast.NonlocalStatement {
 	return stmt
 }
 
+func (p *Parser) parseWithStatement() *ast.WithStatement {
+	stmt := &ast.WithStatement{Token: p.curToken}
+	p.nextToken()
+	stmt.ContextExpr = p.parseExpression(LOWEST)
+	if p.peekTokenIs(token.AS) {
+		p.nextToken() // consume 'as'
+		if !p.expectPeek(token.IDENT) {
+			return nil
+		}
+		stmt.Target = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+	}
+	if !p.expectPeek(token.COLON) {
+		return nil
+	}
+	stmt.Body = p.parseBlockStatement()
+	return stmt
+}
+
 func (p *Parser) parseAssertStatement() *ast.AssertStatement {
 	stmt := &ast.AssertStatement{Token: p.curToken}
 	p.nextToken()
@@ -1940,7 +1960,7 @@ func (p *Parser) isKeyword(t token.TokenType) bool {
 		token.DEF, token.CLASS, token.RETURN, token.BREAK, token.CONTINUE,
 		token.PASS, token.AND, token.OR, token.NOT, token.IS, token.TRY,
 		token.EXCEPT, token.FINALLY, token.RAISE, token.GLOBAL, token.NONLOCAL,
-		token.LAMBDA, token.AS, token.ASSERT, token.MATCH, token.CASE,
+		token.LAMBDA, token.AS, token.ASSERT, token.MATCH, token.CASE, token.WITH,
 	}
 	for _, kw := range keywords {
 		if t == kw {

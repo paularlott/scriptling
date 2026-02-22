@@ -1269,3 +1269,142 @@ s = str(obj)
 		t.Errorf("str(plain obj): expected class name in fallback, got %q", s)
 	}
 }
+
+// ============================================================================
+// With Statement Tests (§1.4)
+// ============================================================================
+
+func TestWithBasic(t *testing.T) {
+	p := New()
+	_, err := p.Eval(`
+class CM:
+    def __init__(self):
+        self.entered = False
+        self.exited = False
+    def __enter__(self):
+        self.entered = True
+        return self
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.exited = True
+        return False
+
+cm = CM()
+with cm:
+    pass
+entered = cm.entered
+exited = cm.exited
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	entered, _ := p.GetVar("entered")
+	if entered != true {
+		t.Error("expected __enter__ to be called")
+	}
+	exited, _ := p.GetVar("exited")
+	if exited != true {
+		t.Error("expected __exit__ to be called")
+	}
+}
+
+func TestWithAsBinding(t *testing.T) {
+	p := New()
+	_, err := p.Eval(`
+class CM:
+    def __enter__(self):
+        return 99
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return False
+
+with CM() as val:
+    result = val
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	result, _ := p.GetVar("result")
+	if result != int64(99) {
+		t.Errorf("expected 99, got %v", result)
+	}
+}
+
+func TestWithExitCalledOnException(t *testing.T) {
+	p := New()
+	_, err := p.Eval(`
+class CM:
+    def __init__(self):
+        self.exited = False
+    def __enter__(self):
+        return self
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.exited = True
+        return False
+
+cm = CM()
+caught = False
+try:
+    with cm:
+        raise ValueError("boom")
+except:
+    caught = True
+exited = cm.exited
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	exited, _ := p.GetVar("exited")
+	if exited != true {
+		t.Error("expected __exit__ to be called on exception")
+	}
+	caught, _ := p.GetVar("caught")
+	if caught != true {
+		t.Error("expected exception to propagate when __exit__ returns False")
+	}
+}
+
+func TestWithSuppressException(t *testing.T) {
+	p := New()
+	_, err := p.Eval(`
+class CM:
+    def __enter__(self):
+        return self
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return True  # suppress
+
+reached = False
+with CM():
+    raise ValueError("suppressed")
+reached = True
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	reached, _ := p.GetVar("reached")
+	if reached != true {
+		t.Error("expected exception to be suppressed when __exit__ returns True")
+	}
+}
+
+func TestWithInheritedDunders(t *testing.T) {
+	p := New()
+	_, err := p.Eval(`
+class Base:
+    def __enter__(self):
+        return "from_base"
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return False
+
+class Child(Base):
+    pass
+
+with Child() as v:
+    result = v
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	result, _ := p.GetVarAsString("result")
+	if result != "from_base" {
+		t.Errorf("expected 'from_base', got %q", result)
+	}
+}

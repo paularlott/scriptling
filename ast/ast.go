@@ -482,6 +482,17 @@ func (tl *TupleLiteral) expressionNode()      {}
 func (tl *TupleLiteral) TokenLiteral() string { return tl.Token.Literal }
 func (tl *TupleLiteral) Line() int            { return tl.Token.Line }
 
+type WithStatement struct {
+	Token       token.Token
+	ContextExpr Expression
+	Target      *Identifier // optional: 'as' binding
+	Body        *BlockStatement
+}
+
+func (ws *WithStatement) statementNode()       {}
+func (ws *WithStatement) TokenLiteral() string { return ws.Token.Literal }
+func (ws *WithStatement) Line() int            { return ws.Token.Line }
+
 // MatchStatement represents a match statement with multiple case clauses
 type MatchStatement struct {
 	Token   token.Token // The 'match' token
