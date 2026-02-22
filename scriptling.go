@@ -146,9 +146,49 @@ func New() *Scriptling {
 	return p
 }
 
-// splitPath splits a dotted path into parts
-func splitPath(path string) []string {
-	return strings.Split(path, ".")
+// setNestedDictPath sets libDict at the dotted path `name` in env,
+// creating intermediate *object.Dict nodes as needed.
+func setNestedDictPath(env *object.Environment, name string, libDict *object.Dict) {
+	parts := strings.Split(name, ".")
+	if len(parts) == 1 {
+		env.Set(name, libDict)
+		return
+	}
+
+	rootName := parts[0]
+	var rootDict *object.Dict
+	if existing, ok := env.Get(rootName); ok {
+		if d, ok := existing.(*object.Dict); ok {
+			rootDict = d
+		} else {
+			rootDict = &object.Dict{Pairs: make(map[string]object.DictPair)}
+			env.Set(rootName, rootDict)
+		}
+	} else {
+		rootDict = &object.Dict{Pairs: make(map[string]object.DictPair)}
+		env.Set(rootName, rootDict)
+	}
+
+	current := rootDict
+	for i := 1; i < len(parts)-1; i++ {
+		part := parts[i]
+		if pair, ok := current.GetByString(part); ok {
+			if d, ok := pair.Value.(*object.Dict); ok {
+				current = d
+			} else {
+				newDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
+				current.SetByString(part, newDict)
+				current = newDict
+			}
+		} else {
+			newDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
+			current.SetByString(part, newDict)
+			current = newDict
+		}
+	}
+
+	current.SetByString(parts[len(parts)-1], libDict)
+	env.Set(name, libDict)
 }
 
 // traverseDictPath navigates a dotted path through Dict objects
@@ -199,7 +239,7 @@ func (p *Scriptling) loadLibrary(name string) error {
 }
 
 func (p *Scriptling) loadLibraryWithDepth(name string, depth int) error {
-	parts := splitPath(name)
+	parts := strings.Split(name, ".")
 
 	if len(parts)-1 > maxLibraryNestingDepth {
 		return fmt.Errorf("library nesting too deep (max %d levels): %s", maxLibraryNestingDepth, name)
@@ -236,7 +276,7 @@ func (p *Scriptling) loadLibraryWithDepth(name string, depth int) error {
 				if p.needsParentMerge(name, existingDict) {
 					// Merge parent library functions
 					lib := p.registeredLibraries[name]
-					libDict := p.libraryToDict(lib)
+					libDict := lib.GetDict()
 					for k, v := range libDict.Pairs {
 						if _, exists := existingDict.Pairs[k]; !exists {
 							existingDict.Pairs[k] = v
@@ -297,103 +337,8 @@ func (p *Scriptling) loadLibraryWithDepth(name string, depth int) error {
 // registerLibrary adds a library to the script environment
 // Supports nested paths like "urllib.parse" - will create parent dicts as needed
 func (p *Scriptling) registerLibrary(name string, lib *object.Library) {
-	// Convert library to dict (using cached version)
 	libDict := lib.GetDict()
-
-	// Check if this is a dotted path
-	parts := strings.Split(name, ".")
-	if len(parts) == 1 {
-		// Simple case - just set directly
-		p.env.Set(name, libDict)
-		return
-	}
-
-	// Nested case - need to create/update parent dicts
-	// First, get or create the root dict
-	rootName := parts[0]
-	var rootDict *object.Dict
-	if existing, ok := p.env.Get(rootName); ok {
-		if d, ok := existing.(*object.Dict); ok {
-			rootDict = d
-		} else {
-			// Exists but not a dict - replace with new dict
-			rootDict = &object.Dict{Pairs: make(map[string]object.DictPair)}
-			p.env.Set(rootName, rootDict)
-		}
-	} else {
-		rootDict = &object.Dict{Pairs: make(map[string]object.DictPair)}
-		p.env.Set(rootName, rootDict)
-	}
-
-	// Navigate/create the path
-	current := rootDict
-	for i := 1; i < len(parts)-1; i++ {
-		partName := parts[i]
-		if pair, ok := current.GetByString(partName); ok {
-			if d, ok := pair.Value.(*object.Dict); ok {
-				current = d
-			} else {
-				// Exists but not a dict - replace with new dict
-				newDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
-				current.SetByString(partName, newDict)
-				current = newDict
-			}
-		} else {
-			// Doesn't exist - create
-			newDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
-			current.SetByString(partName, newDict)
-			current = newDict
-		}
-	}
-
-	// Set the final part
-	finalName := parts[len(parts)-1]
-	current.SetByString(finalName, libDict)
-
-	// Also set the full path as an alias for convenience
-	p.env.Set(name, libDict)
-}
-
-// libraryToDict converts a Library to a Dict object
-func (p *Scriptling) libraryToDict(lib *object.Library) *object.Dict {
-	funcs := lib.Functions()
-	consts := lib.Constants()
-	subs := lib.SubLibraries()
-
-	dict := make(map[string]object.DictPair, len(funcs)+len(consts)+len(subs))
-
-	for fname, fn := range funcs {
-		dict[object.DictKey(&object.String{Value: fname})] = object.DictPair{
-			Key:   &object.String{Value: fname},
-			Value: fn,
-		}
-	}
-
-	// Add constants
-	for cname, val := range consts {
-		dict[object.DictKey(&object.String{Value: cname})] = object.DictPair{
-			Key:   &object.String{Value: cname},
-			Value: val,
-		}
-	}
-
-	// Add sub-libraries (recursive)
-	for subName, subLib := range subs {
-		dict[object.DictKey(&object.String{Value: subName})] = object.DictPair{
-			Key:   &object.String{Value: subName},
-			Value: p.libraryToDict(subLib),
-		}
-	}
-
-	// Add description if available
-	if desc := lib.Description(); desc != "" {
-		dict[object.DictKey(&object.String{Value: "__doc__"})] = object.DictPair{
-			Key:   &object.String{Value: "__doc__"},
-			Value: &object.String{Value: desc},
-		}
-	}
-
-	return &object.Dict{Pairs: dict}
+	setNestedDictPath(p.env, name, libDict)
 }
 
 // Eval executes script without timeout (backwards compatible)
@@ -673,8 +618,7 @@ func (p *Scriptling) CallFunctionWithContext(ctx context.Context, name string, a
 	var ok bool
 
 	if strings.Contains(name, ".") {
-		// Handle dotted path: split and traverse
-		parts := splitPath(name)
+		parts := strings.Split(name, ".")
 
 		fn, ok = p.env.Get(parts[0])
 		if !ok {
@@ -922,7 +866,7 @@ func (p *Scriptling) loadLibraryIntoEnv(name string, env *object.Environment) (b
 		libDict = &object.Dict{Pairs: pairs}
 	} else if lib, ok := p.registeredLibraries[name]; ok {
 		// Try from registered libraries
-		libDict = p.libraryToDict(lib)
+		libDict = lib.GetDict()
 	} else {
 		return false, nil
 	}
@@ -930,63 +874,26 @@ func (p *Scriptling) loadLibraryIntoEnv(name string, env *object.Environment) (b
 	// Handle dotted paths - create parent dicts as needed
 	parts := strings.Split(name, ".")
 	if len(parts) == 1 {
-		// Simple case - just set directly
 		env.Set(name, libDict)
 		return true, nil
 	}
 
-	// Nested case - create/update parent dicts
-	rootName := parts[0]
-	var rootDict *object.Dict
-	if existing, ok := env.Get(rootName); ok {
-		if d, ok := existing.(*object.Dict); ok {
-			rootDict = d
-		} else {
-			rootDict = &object.Dict{Pairs: make(map[string]object.DictPair)}
-			env.Set(rootName, rootDict)
-		}
-	} else {
-		rootDict = &object.Dict{Pairs: make(map[string]object.DictPair)}
-		env.Set(rootName, rootDict)
-	}
-
-	// Navigate/create the path
-	current := rootDict
-	for i := 1; i < len(parts)-1; i++ {
-		partName := parts[i]
-		if pair, ok := current.GetByString(partName); ok {
-			if d, ok := pair.Value.(*object.Dict); ok {
-				current = d
-			} else {
-				newDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
-				current.SetByString(partName, newDict)
-				current = newDict
-			}
-		} else {
-			newDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
-			current.SetByString(partName, newDict)
-			current = newDict
-		}
-	}
-
-	// Set the final part, merging any existing sub-module entries
+	// For nested paths, merge any existing sub-module entries into libDict first,
+	// then use setNestedDictPath to place it.
 	// This preserves sub-library registrations when a parent library is loaded
 	// after its children (e.g., importing scriptling.ai after scriptling.ai.agent)
-	finalPart := parts[len(parts)-1]
-	if existingPair, ok := current.GetByString(finalPart); ok {
-		if existingDict, ok := existingPair.Value.(*object.Dict); ok {
-			for k, v := range existingDict.Pairs {
-				if _, exists := libDict.Pairs[k]; !exists {
-					libDict.Pairs[k] = v
+	if parentObj, ok := env.Get(parts[0]); ok {
+		if existing, err := traverseDictPath(parentObj, parts[1:], maxLibraryNestingDepth); err == nil {
+			if existingDict, ok := existing.(*object.Dict); ok {
+				for k, v := range existingDict.Pairs {
+					if _, exists := libDict.Pairs[k]; !exists {
+						libDict.Pairs[k] = v
+					}
 				}
 			}
 		}
 	}
-	current.SetByString(finalPart, libDict)
-
-	// Also store the full dotted name for reliable "already imported" checks
-	env.Set(name, libDict)
-
+	setNestedDictPath(env, name, libDict)
 	return true, nil
 }
 
@@ -1116,60 +1023,7 @@ func (p *Scriptling) registerScriptLibrary(name string, store map[string]object.
 			Value: obj,
 		}
 	}
-	libDict := &object.Dict{Pairs: lib}
-
-	// Check if this is a dotted path
-	parts := strings.Split(name, ".")
-	if len(parts) == 1 {
-		// Simple case - just set directly
-		p.env.Set(name, libDict)
-		return
-	}
-
-	// Nested case - need to create/update parent dicts
-	// First, get or create the root dict
-	rootName := parts[0]
-	var rootDict *object.Dict
-	if existing, ok := p.env.Get(rootName); ok {
-		if d, ok := existing.(*object.Dict); ok {
-			rootDict = d
-		} else {
-			// Exists but not a dict - replace with new dict
-			rootDict = &object.Dict{Pairs: make(map[string]object.DictPair)}
-			p.env.Set(rootName, rootDict)
-		}
-	} else {
-		rootDict = &object.Dict{Pairs: make(map[string]object.DictPair)}
-		p.env.Set(rootName, rootDict)
-	}
-
-	// Navigate/create the path
-	current := rootDict
-	for i := 1; i < len(parts)-1; i++ {
-		partName := parts[i]
-		if pair, ok := current.GetByString(partName); ok {
-			if d, ok := pair.Value.(*object.Dict); ok {
-				current = d
-			} else {
-				// Exists but not a dict - replace with new dict
-				newDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
-				current.SetByString(partName, newDict)
-				current = newDict
-			}
-		} else {
-			// Doesn't exist - create
-			newDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
-			current.SetByString(partName, newDict)
-			current = newDict
-		}
-	}
-
-	// Set the final part
-	finalName := parts[len(parts)-1]
-	current.SetByString(finalName, libDict)
-
-	// Also set the full path as an alias for convenience
-	p.env.Set(name, libDict)
+	setNestedDictPath(p.env, name, &object.Dict{Pairs: lib})
 }
 
 // EnableOutputCapture enables capturing print output instead of sending to stdout

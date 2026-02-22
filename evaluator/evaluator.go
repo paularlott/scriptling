@@ -911,8 +911,7 @@ func evalWhileStatementWithContext(ctx context.Context, ws *ast.WhileStatement, 
 	cc := newContextChecker(ctx)
 
 	for {
-		// Always check in loops for responsiveness, but batch the checks
-		if err := cc.checkAlways(); err != nil {
+		if err := cc.check(); err != nil {
 			return err
 		}
 
