@@ -821,6 +821,25 @@ func evalStringMultiplication(str string, multiplier int64) object.Object {
 	return &object.String{Value: strings.Repeat(str, int(multiplier))}
 }
 
+// callDunderMethod calls a dunder method on an instance, returning nil if not defined.
+// Returns the result string object for __str__/__repr__, or the raw result for others.
+func callDunderMethod(ctx context.Context, inst *object.Instance, method string, args []object.Object, env *object.Environment) object.Object {
+	// Walk the class hierarchy
+	currentClass := inst.Class
+	for currentClass != nil {
+		if fn, ok := currentClass.Methods[method]; ok {
+			newArgs := prependSelf(inst, args)
+			result := applyFunctionWithContext(ctx, fn, newArgs, nil, env)
+			if object.IsError(result) {
+				return result
+			}
+			return result
+		}
+		currentClass = currentClass.BaseClass
+	}
+	return nil
+}
+
 // operatorToDunderMethod maps operators to their corresponding dunder method names
 var operatorToDunderMethod = map[string]string{
 	"<":  "__lt__",
@@ -1432,9 +1451,48 @@ func isTruthy(obj object.Object) bool {
 			return len(v.Elements) > 0
 		case *object.Dict:
 			return len(v.Pairs) > 0
+		case *object.Instance:
+			// Try __bool__ first, then __len__ via the function variable (avoids init cycle)
+			if isTruthyInstanceFn != nil {
+				return isTruthyInstanceFn(v)
+			}
+			return true
 		default:
 			return true
 		}
+	}
+}
+
+// isTruthyInstanceFn is set in init() to break the initialization cycle
+var isTruthyInstanceFn func(inst *object.Instance) bool
+
+// findDunderMethod looks up a dunder method in the instance's class hierarchy
+func findDunderMethod(inst *object.Instance, method string) (object.Object, bool) {
+	currentClass := inst.Class
+	for currentClass != nil {
+		if fn, ok := currentClass.Methods[method]; ok {
+			return fn, true
+		}
+		currentClass = currentClass.BaseClass
+	}
+	return nil, false
+}
+
+func init() {
+	isTruthyInstanceFn = func(inst *object.Instance) bool {
+		if fn, ok := findDunderMethod(inst, "__bool__"); ok {
+			result := applyFunctionWithContext(context.Background(), fn, prependSelf(inst, nil), nil, inst.Class.Env)
+			if b, ok := result.(*object.Boolean); ok {
+				return b.Value
+			}
+		}
+		if fn, ok := findDunderMethod(inst, "__len__"); ok {
+			result := applyFunctionWithContext(context.Background(), fn, prependSelf(inst, nil), nil, inst.Class.Env)
+			if i, ok := result.(*object.Integer); ok {
+				return i.Value != 0
+			}
+		}
+		return true
 	}
 }
 
@@ -1755,6 +1813,16 @@ func evalInOperator(left, right object.Object) object.Object {
 		return FALSE
 	case *object.Set:
 		return nativeBoolToBooleanObject(container.Contains(left))
+	case *object.Instance:
+		// Call __contains__ dunder method if defined
+		if fn, ok := findDunderMethod(container, "__contains__"); ok {
+			result := applyFunctionWithContext(context.Background(), fn, prependSelf(container, []object.Object{left}), nil, container.Class.Env)
+			if object.IsError(result) {
+				return result
+			}
+			return nativeBoolToBooleanObject(isTruthy(result))
+		}
+		return errors.NewTypeError("iterable", right.Type().String())
 	default:
 		return errors.NewTypeError("iterable", right.Type().String())
 	}
@@ -2148,6 +2216,24 @@ func setForVariables(variables []ast.Expression, value object.Object, env *objec
 	return nil
 }
 
+// instanceToIterator wraps an instance with __next__ as an object.Iterator
+func instanceToIterator(ctx context.Context, inst *object.Instance, env *object.Environment) *object.Iterator {
+	return object.NewIterator(func() (object.Object, bool) {
+		result := callDunderMethod(ctx, inst, "__next__", nil, env)
+		if result == nil {
+			return nil, false
+		}
+		// StopIteration is signalled by returning an Exception with type StopIteration
+		if exc, ok := result.(*object.Exception); ok && exc.ExceptionType == object.ExceptionTypeStopIteration {
+			return nil, false
+		}
+		if object.IsError(result) {
+			return nil, false
+		}
+		return result, true
+	})
+}
+
 func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env *object.Environment) object.Object {
 	iterable := evalWithContext(ctx, fs.Iterable, env)
 	if object.IsError(iterable) {
@@ -2169,6 +2255,22 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 		iter = o.CreateIterator()
 	case *object.Set:
 		iter = o.CreateIterator()
+	case *object.Instance:
+		if fn, ok := findDunderMethod(o, "__iter__"); ok {
+			iterObj := applyFunctionWithContext(ctx, fn, prependSelf(o, nil), nil, env)
+			if object.IsError(iterObj) {
+				return iterObj
+			}
+			if iterInst, ok := iterObj.(*object.Instance); ok {
+				iter = instanceToIterator(ctx, iterInst, env)
+			} else if iterIter, ok := iterObj.(*object.Iterator); ok {
+				iter = iterIter
+			} else {
+				return errors.NewError("__iter__ must return an iterator")
+			}
+		} else {
+			return errors.NewTypeError("iterable", iterable.Type().String())
+		}
 	}
 
 	if iter != nil {
@@ -2293,6 +2395,22 @@ func evalListComprehension(ctx context.Context, lc *ast.ListComprehension, env *
 		iter = o.CreateIterator()
 	case *object.Set:
 		iter = o.CreateIterator()
+	case *object.Instance:
+		if fn, ok := findDunderMethod(o, "__iter__"); ok {
+			iterObj := applyFunctionWithContext(ctx, fn, prependSelf(o, nil), nil, env)
+			if object.IsError(iterObj) {
+				return iterObj
+			}
+			if iterInst, ok := iterObj.(*object.Instance); ok {
+				iter = instanceToIterator(ctx, iterInst, env)
+			} else if iterIter, ok := iterObj.(*object.Iterator); ok {
+				iter = iterIter
+			} else {
+				return errors.NewError("__iter__ must return an iterator")
+			}
+		} else {
+			return errors.NewTypeError("iterable", iterable.Type().String())
+		}
 	}
 
 	if iter != nil {
@@ -2422,6 +2540,12 @@ func evalFStringLiteral(ctx context.Context, fstr *ast.FStringLiteral, env *obje
 			exprResult := evalWithContext(ctx, fstr.Expressions[i], env)
 			if object.IsError(exprResult) {
 				return exprResult
+			}
+			// Call __str__ on instances for f-string formatting
+			if inst, ok := exprResult.(*object.Instance); ok && fstr.FormatSpecs[i] == "" {
+				if result := callDunderMethod(ctx, inst, "__str__", nil, env); result != nil {
+					exprResult = result
+				}
 			}
 			formatted := formatWithSpec(exprResult, fstr.FormatSpecs[i])
 			builder.WriteString(formatted)
