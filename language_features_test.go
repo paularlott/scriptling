@@ -1872,3 +1872,207 @@ r2 = b.value
 		t.Errorf("setter: expected 42, got %v", r2)
 	}
 }
+
+// ============================================================================
+// Builtin: next(), iter(), dir(), issubclass(), copy()
+// ============================================================================
+
+func TestNextBasic(t *testing.T) {
+	p := New()
+	_, err := p.Eval(`
+it = iter([10, 20, 30])
+a = next(it)
+b = next(it)
+c = next(it)
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	for name, want := range map[string]int64{"a": 10, "b": 20, "c": 30} {
+		got, _ := p.GetVar(name)
+		if got != want {
+			t.Errorf("next %s: expected %d, got %v", name, want, got)
+		}
+	}
+}
+
+func TestNextDefault(t *testing.T) {
+	p := New()
+	_, err := p.Eval(`
+it = iter([1])
+next(it)
+result = next(it, "done")
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	result, _ := p.GetVarAsString("result")
+	if result != "done" {
+		t.Errorf("next default: expected 'done', got %q", result)
+	}
+}
+
+func TestNextInstance(t *testing.T) {
+	p := New()
+	_, err := p.Eval(`
+class Count:
+    def __init__(self, n):
+        self.n = n
+        self.i = 0
+    def __next__(self):
+        if self.i >= self.n:
+            raise StopIteration()
+        v = self.i
+        self.i = self.i + 1
+        return v
+
+c = Count(2)
+a = next(c)
+b = next(c)
+d = next(c, -1)
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	a, _ := p.GetVar("a")
+	b, _ := p.GetVar("b")
+	d, _ := p.GetVar("d")
+	if a != int64(0) || b != int64(1) || d != int64(-1) {
+		t.Errorf("next instance: got a=%v b=%v d=%v", a, b, d)
+	}
+}
+
+func TestIterBasic(t *testing.T) {
+	p := New()
+	_, err := p.Eval(`
+it = iter([5, 6, 7])
+a = next(it)
+b = next(it)
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	a, _ := p.GetVar("a")
+	b, _ := p.GetVar("b")
+	if a != int64(5) || b != int64(6) {
+		t.Errorf("iter basic: got a=%v b=%v", a, b)
+	}
+}
+
+func TestIterInstance(t *testing.T) {
+	p := New()
+	_, err := p.Eval(`
+class Range2:
+    def __init__(self):
+        self.i = 0
+    def __iter__(self):
+        return self
+    def __next__(self):
+        if self.i >= 2:
+            raise StopIteration()
+        v = self.i
+        self.i = self.i + 1
+        return v
+
+result = list(iter(Range2()))
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	result, _ := p.GetVar("result")
+	lst, ok := result.([]interface{})
+	if !ok || len(lst) != 2 {
+		t.Errorf("iter instance: expected [0,1], got %v", result)
+	}
+}
+
+func TestDirBuiltin(t *testing.T) {
+	p := New()
+	_, err := p.Eval(`
+names = dir()
+has_len = "len" in names
+has_next = "next" in names
+has_copy = "copy" in names
+
+class Foo:
+    def __init__(self):
+        self.x = 1
+    def bar(self):
+        pass
+
+f = Foo()
+attrs = dir(f)
+has_x = "x" in attrs
+has_bar = "bar" in attrs
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	for name, want := range map[string]bool{
+		"has_len": true, "has_next": true, "has_copy": true,
+		"has_x": true, "has_bar": true,
+	} {
+		got, _ := p.GetVar(name)
+		if got != want {
+			t.Errorf("dir %s: expected %v, got %v", name, want, got)
+		}
+	}
+}
+
+func TestIssubclass(t *testing.T) {
+	p := New()
+	_, err := p.Eval(`
+class A:
+    pass
+class B(A):
+    pass
+class C:
+    pass
+
+r1 = issubclass(B, A)
+r2 = issubclass(A, A)
+r3 = issubclass(C, A)
+r4 = issubclass(A, B)
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	for name, want := range map[string]bool{
+		"r1": true, "r2": true, "r3": false, "r4": false,
+	} {
+		got, _ := p.GetVar(name)
+		if got != want {
+			t.Errorf("issubclass %s: expected %v, got %v", name, want, got)
+		}
+	}
+}
+
+func TestCopyBuiltin(t *testing.T) {
+	p := New()
+	_, err := p.Eval(`
+orig = [1, 2, 3]
+c = copy(orig)
+c.append(4)
+orig_len = len(orig)
+copy_len = len(c)
+
+d = {"a": 1}
+dc = copy(d)
+dc["b"] = 2
+d_len = len(d.keys())
+dc_len = len(dc.keys())
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	origLen, _ := p.GetVar("orig_len")
+	copyLen, _ := p.GetVar("copy_len")
+	dLen, _ := p.GetVar("d_len")
+	dcLen, _ := p.GetVar("dc_len")
+	if origLen != int64(3) || copyLen != int64(4) {
+		t.Errorf("copy list: orig=%v copy=%v", origLen, copyLen)
+	}
+	if dLen != int64(1) || dcLen != int64(2) {
+		t.Errorf("copy dict: d=%v dc=%v", dLen, dcLen)
+	}
+}

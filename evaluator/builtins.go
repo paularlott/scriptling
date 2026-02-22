@@ -21,6 +21,9 @@ var (
 	filterFunction func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object
 	sortedFunction func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object
 	helpFunction   func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object
+	dirFunction    func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object
+	iterFunction   func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object
+	nextFunction   func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object
 
 	// callDunderMethodFn is set in init() to break the initialization cycle
 	callDunderMethodFn func(ctx context.Context, inst *object.Instance, method string, args []object.Object, env *object.Environment) object.Object
@@ -1591,6 +1594,95 @@ Parameters:
 
 Use None for any parameter to use its default value.`,
 	},
+	"next": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			return nextFunction(ctx, kwargs, args...)
+		},
+		HelpText: `next(iterator[, default]) - Return the next item from an iterator
+
+Calls the iterator's next method. If the iterator is exhausted and default
+is provided, returns default. Otherwise raises StopIteration.`,
+	},
+	"iter": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			return iterFunction(ctx, kwargs, args...)
+		},
+		HelpText: `iter(obj) - Return an iterator for an object
+
+Returns an iterator for lists, tuples, strings, sets, dicts, and instances
+with __iter__ or __next__. Use with next() to manually advance iteration.`,
+	},
+	"dir": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			return dirFunction(ctx, kwargs, args...)
+		},
+		HelpText: `dir([obj]) - Return a sorted list of names
+
+With no argument: returns all builtin names.
+For instances: fields and methods (including inherited).
+For classes: method names.
+For dicts: key names.`,
+	},
+	"issubclass": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
+			}
+			cls, ok := args[0].(*object.Class)
+			if !ok {
+				return errors.NewTypeError("CLASS", args[0].Type().String())
+			}
+			parent, ok := args[1].(*object.Class)
+			if !ok {
+				return errors.NewTypeError("CLASS", args[1].Type().String())
+			}
+			for c := cls; c != nil; c = c.BaseClass {
+				if c == parent {
+					return TRUE
+				}
+			}
+			return FALSE
+		},
+		HelpText: `issubclass(cls, parent) - Return True if cls is a subclass of parent
+
+Checks the full inheritance chain. issubclass(C, C) is True.`,
+	},
+	"copy": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
+			switch o := args[0].(type) {
+			case *object.List:
+				newElems := make([]object.Object, len(o.Elements))
+				copy(newElems, o.Elements)
+				return &object.List{Elements: newElems}
+			case *object.Dict:
+				newPairs := make(map[string]object.DictPair, len(o.Pairs))
+				for k, v := range o.Pairs {
+					newPairs[k] = v
+				}
+				return &object.Dict{Pairs: newPairs}
+			case *object.Set:
+				return o.Copy()
+			case *object.Tuple:
+				return o // immutable, safe to return same object
+			case *object.Instance:
+				newFields := make(map[string]object.Object, len(o.Fields))
+				for k, v := range o.Fields {
+					newFields[k] = v
+				}
+				return &object.Instance{Class: o.Class, Fields: newFields}
+			default:
+				return args[0] // scalars are immutable
+			}
+		},
+		HelpText: `copy(obj) - Return a shallow copy of an object
+
+For lists, dicts, sets, and instances: returns a new object with the same
+top-level contents. Nested objects are not copied (use copy.deepcopy for that).
+Tuples and scalars are returned as-is (they are immutable).`,
+	},
 	"Exception": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			message := ""
@@ -1752,6 +1844,9 @@ func init() {
 	filterFunction = filterFunctionImpl
 	sortedFunction = sortedFunctionImpl
 	helpFunction = helpFunctionImpl
+	dirFunction = dirFunctionImpl
+	iterFunction = iterFunctionImpl
+	nextFunction = nextFunctionImpl
 	callDunderMethodFn = callDunderMethod
 
 	// Build reverse lookup for isinstance() to support bare type names
@@ -2410,6 +2505,119 @@ func printFunctionHelp(writer io.Writer, name string, fn *object.Function) {
 
 	// No docstring
 	fmt.Fprintf(writer, " - User-defined function\n")
+}
+
+func nextFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+	if err := errors.RangeArgs(args, 1, 2); err != nil {
+		return err
+	}
+	var iter *object.Iterator
+	switch o := args[0].(type) {
+	case *object.Iterator:
+		iter = o
+	case *object.Instance:
+		env := GetEnvFromContext(ctx)
+		iter = instanceToIterator(ctx, o, env)
+	default:
+		return errors.NewTypeError("ITERATOR or iterable instance", args[0].Type().String())
+	}
+	val, ok := iter.Next()
+	if !ok {
+		if len(args) == 2 {
+			return args[1]
+		}
+		return &object.Exception{Message: "StopIteration", ExceptionType: object.ExceptionTypeStopIteration}
+	}
+	return val
+}
+
+func iterFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+	if err := errors.ExactArgs(args, 1); err != nil {
+		return err
+	}
+	switch o := args[0].(type) {
+	case *object.Iterator:
+		return o
+	case *object.List, *object.Tuple, *object.String, *object.Set, *object.Dict,
+		*object.DictKeys, *object.DictValues, *object.DictItems:
+		elems, _ := object.IterableToSlice(args[0])
+		i := 0
+		return object.NewIterator(func() (object.Object, bool) {
+			if i >= len(elems) {
+				return nil, false
+			}
+			v := elems[i]
+			i++
+			return v, true
+		})
+	case *object.Instance:
+		env := GetEnvFromContext(ctx)
+		if fn, ok := findDunderMethod(o, "__iter__"); ok {
+			result := applyFunctionWithContext(ctx, fn, prependSelf(o, nil), nil, env)
+			if object.IsError(result) {
+				return result
+			}
+			if iterInst, ok := result.(*object.Instance); ok {
+				return instanceToIterator(ctx, iterInst, env)
+			}
+			if iterIter, ok := result.(*object.Iterator); ok {
+				return iterIter
+			}
+			return errors.NewError("__iter__ must return an iterator")
+		}
+		if _, ok := findDunderMethod(o, "__next__"); ok {
+			return instanceToIterator(ctx, o, env)
+		}
+		return errors.NewTypeError("iterable", "INSTANCE (no __iter__ or __next__)")
+	default:
+		return errors.NewTypeError("iterable", args[0].Type().String())
+	}
+}
+
+func dirFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+	var names []string
+	if len(args) == 0 {
+		for name := range builtins {
+			names = append(names, name)
+		}
+	} else {
+		switch o := args[0].(type) {
+		case *object.Instance:
+			seen := map[string]bool{}
+			for name := range o.Fields {
+				if !seen[name] {
+					names = append(names, name)
+					seen[name] = true
+				}
+			}
+			for c := o.Class; c != nil; c = c.BaseClass {
+				for name := range c.Methods {
+					if !seen[name] {
+						names = append(names, name)
+						seen[name] = true
+					}
+				}
+			}
+		case *object.Class:
+			for name := range o.Methods {
+				names = append(names, name)
+			}
+		case *object.Dict:
+			for _, p := range o.Pairs {
+				if s, err := p.Key.AsString(); err == nil {
+					names = append(names, s)
+				}
+			}
+		default:
+			return &object.List{Elements: []object.Object{}}
+		}
+	}
+	sort.Strings(names)
+	elems := make([]object.Object, len(names))
+	for i, n := range names {
+		elems[i] = &object.String{Value: n}
+	}
+	return &object.List{Elements: elems}
 }
 
 func GetImportBuiltin() *object.Builtin {
