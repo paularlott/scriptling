@@ -2191,8 +2191,10 @@ func matchesExceptionType(exception object.Object, exceptTypeExpr ast.Expression
 	case *ast.Identifier:
 		expectedType = expr.Value
 	case *ast.IndexExpression:
-		// Handle dotted names like requests.HTTPError
-		expectedType = buildDottedName(expr)
+		// Handle dotted names like requests.HTTPError — match on the last component
+		dotted := buildDottedName(expr)
+		parts := strings.Split(dotted, ".")
+		expectedType = parts[len(parts)-1]
 	default:
 		return false
 	}

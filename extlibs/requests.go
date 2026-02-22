@@ -3,6 +3,7 @@ package extlibs
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -42,10 +43,13 @@ var ResponseClass = &object.Class{
 				if instance, ok := args[0].(*object.Instance); ok {
 					if statusCode, err := instance.Fields["status_code"].AsInt(); err == nil {
 						if statusCode >= 400 {
+							kind := "Client"
 							if statusCode >= 500 {
-								return errors.NewError("HTTPError: %d Server Error", statusCode)
-							} else {
-								return errors.NewError("HTTPError: %d Client Error", statusCode)
+								kind = "Server"
+							}
+							return &object.Exception{
+								ExceptionType: "HTTPError",
+								Message:       fmt.Sprintf("HTTPError: %d %s Error", statusCode, kind),
 							}
 						}
 						return &object.Null{}
