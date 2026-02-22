@@ -29,6 +29,7 @@ class Agent(_OriginalAgent):
                 self.model = args
                 console.print("Model set to: " + self.model)
             console.set_status("scriptling", self.model if self.model else "default")
+            console.set_labels("", self.model if self.model else "Assistant", "")
 
         def cmd_history(args):
             for msg in self.messages:

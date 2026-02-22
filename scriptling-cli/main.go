@@ -275,7 +275,6 @@ func runWithTUI(p *scriptling.Scriptling, fn func() error) error {
 	}
 
 	t = tui.New(tui.Config{
-		HideHeaders: true,
 		StatusRight: "Ctrl+C to exit",
 		Commands: []*tui.Command{
 			{
@@ -346,13 +345,73 @@ func runWithTUI(p *scriptling.Scriptling, fn func() error) error {
 }
 
 func runInteractive(p *scriptling.Scriptling) error {
-	return runWithTUI(p, func() error {
-		_, err := p.Eval(`
-import scriptling.console as console
-console.run()
-`)
-		return err
+	var (
+		t         *tui.TUI
+		cancel    context.CancelFunc
+		runningMu sync.Mutex
+	)
+
+	t = tui.New(tui.Config{
+		HideHeaders: true,
+		StatusRight: "Ctrl+C to exit",
+		Commands: []*tui.Command{
+			{
+				Name:        "exit",
+				Description: "Exit interactive mode",
+				Handler:     func(_ string) { t.Exit() },
+			},
+			{
+				Name:        "clear",
+				Description: "Clear output",
+				Handler:     func(_ string) { t.ClearOutput() },
+			},
+		},
+		OnEscape: func() {
+			runningMu.Lock()
+			if cancel != nil {
+				cancel()
+			}
+			runningMu.Unlock()
+		},
+		OnSubmit: func(line string) {
+			t.AddMessage(tui.RoleUser, line)
+
+			ctx, c := context.WithCancel(context.Background())
+			runningMu.Lock()
+			cancel = c
+			runningMu.Unlock()
+
+			t.StartStreaming()
+			t.StartSpinner("Esc to stop")
+			p.SetOutputWriter(&streamWriter{t: t})
+
+			go func() {
+				defer func() {
+					p.SetOutputWriter(nil)
+					runningMu.Lock()
+					cancel = nil
+					runningMu.Unlock()
+					c()
+					t.StopSpinner()
+					t.StreamComplete()
+				}()
+				result, err := p.EvalWithContext(ctx, line)
+				if err != nil {
+					if ctx.Err() == nil {
+						t.StreamChunk(err.Error())
+					}
+					return
+				}
+				if result != nil && result.Inspect() != "None" && !t.IsStreaming() {
+					t.AddMessage(tui.RoleAssistant, result.Inspect())
+				}
+			}()
+		},
 	})
+
+	t.AddMessage(tui.RoleSystem, tui.Styled(t.Theme().Text, "scriptling")+"\n"+tui.Styled(t.Theme().Primary, "v"+build.Version))
+
+	return t.Run(context.Background())
 }
 
 // tuiBackend implements console.ConsoleBackend using the TUI.
@@ -377,7 +436,12 @@ func (b *tuiBackend) Print(text string, _ *object.Environment) {
 	b.t.AddMessage(tui.RoleAssistant, strings.TrimRight(text, "\n"))
 }
 
+func (b *tuiBackend) PrintAs(label, text string, _ *object.Environment) {
+	b.t.AddMessageAs(tui.RoleAssistant, label, strings.TrimRight(text, "\n"))
+}
+
 func (b *tuiBackend) StreamStart()             { b.t.StartStreaming() }
+func (b *tuiBackend) StreamStartAs(label string) { b.t.StartStreamingAs(label) }
 func (b *tuiBackend) StreamChunk(s string)     { b.t.StreamChunk(s) }
 func (b *tuiBackend) StreamEnd()               { b.t.StreamComplete() }
 func (b *tuiBackend) SpinnerStart(text string) { b.t.StartSpinner(text) }
@@ -388,6 +452,9 @@ func (b *tuiBackend) SetProgress(label string, pct float64) {
 	} else {
 		b.t.SetProgress(label, pct)
 	}
+}
+func (b *tuiBackend) SetLabels(user, assistant, system string) {
+	b.t.SetLabels(user, assistant, system)
 }
 func (b *tuiBackend) SetStatus(left, right string) { b.t.SetStatus(left, right) }
 func (b *tuiBackend) SetStatusLeft(s string)       { b.t.SetStatusLeft(s) }
