@@ -938,6 +938,13 @@ Example:
       delta = chunk.choices[0].delta
       if delta.content:
         print(delta.content, end="")`).
+		MethodWithHelp("err", errStreamMethod, `err() - Get any error from the stream
+
+Returns the error that caused the stream to stop, or None if no error.
+A context.Canceled error indicates the stream was cancelled (e.g. user pressed Esc).
+
+Returns:
+  str: Error message, or None if no error`).
 		Build()
 }
 
@@ -970,16 +977,27 @@ func nextStreamMethod(self *object.Instance, ctx context.Context) object.Object 
 
 	// Advance to next chunk
 	if !si.stream.Next() {
-		// Stream is done, check for error
-		if err := si.stream.Err(); err != nil {
-			return &object.Error{Message: "stream error: " + err.Error()}
-		}
 		return &object.Null{}
 	}
 
 	// Return current chunk
 	current := si.stream.Current()
 	return conversion.FromGo(current)
+}
+
+// errStream method implementation
+func errStreamMethod(self *object.Instance, ctx context.Context) object.Object {
+	si, cerr := getStreamInstance(self)
+	if cerr != nil {
+		return cerr
+	}
+	if si.stream == nil {
+		return &object.Null{}
+	}
+	if err := si.stream.Err(); err != nil {
+		return &object.String{Value: err.Error()}
+	}
+	return &object.Null{}
 }
 
 // completion_stream method implementation

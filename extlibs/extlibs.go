@@ -16,7 +16,6 @@ const (
 	AILibraryName         = "scriptling.ai"
 	MCPLibraryName        = "scriptling.mcp"
 	ToonLibraryName       = "scriptling.toon"
-	ConsoleLibraryName    = "scriptling.console"
 	YAMLLibraryName       = "yaml"
 	AgentLibraryName      = "scriptling.ai.agent"
 	InteractLibraryName   = "scriptling.ai.agent.interact"

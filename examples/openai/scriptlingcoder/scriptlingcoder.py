@@ -7,23 +7,12 @@ WARNING: This is an example that executes AI-generated code and shell commands.
 It may modify or delete files. Use at your own risk!
 """
 
-import scriptling.ai as ai, scriptling.ai.agent.interact as agent, glob, os, re, subprocess
+import scriptling.ai as ai, scriptling.ai.agent.interact as agent, scriptling.console as console, glob, os, re, subprocess
 
 # Configuration from environment
 BASE_URL = os.getenv("OPENAI_BASE_URL", "http://127.0.0.1:1234/v1")
-MODEL = os.getenv("OPENAI_MODEL", "zai-org/glm-4.6v-flash")
+MODEL = os.getenv("OPENAI_MODEL", "mistralai/ministral-3-3b")
 API_KEY = os.getenv("OPENAI_API_KEY", "")
-
-# ANSI colors
-ESC = chr(27)
-RESET = ESC + "[0m"
-BOLD = ESC + "[1m"
-DIM = ESC + "[2m"
-YELLOW = ESC + "[33m"
-
-print(BOLD + "scriptlingcoder" + RESET + " | " + DIM + MODEL + " | " + os.getcwd() + RESET)
-print(DIM + "Inspired by https://github.com/1rgs/nanocode" + RESET)
-print(YELLOW + "⚠ WARNING: This tool executes AI-generated code. Use at your own risk!" + RESET + "\n")
 
 # --- Tool implementations ---
 
@@ -69,8 +58,7 @@ def glob_files(args):
     files = glob.glob(pattern, ".")
 
     # Sort by mtime descending
-    import os.path
-    files = sorted(files, key=lambda f: os.path.getmtime(f) if os.path.isfile(f) else 0, reverse=True)
+    files = sorted(files, key=lambda f: os.getmtime(f) if os.isfile(f) else 0, reverse=True)
 
     return "\n".join(files) if len(files) > 0 else "none"
 
@@ -96,10 +84,11 @@ def grep_files(args):
     return "\n".join(hits) if len(hits) > 0 else "none"
 
 def run_bash(args):
-    result = subprocess.run(args["cmd"])
-    if result:
-        return result if type(result) == type("") else str(result)
-    return "(empty)"
+    result = subprocess.run(args["cmd"], capture_output=True, shell=True, text=True)
+    output = result.stdout
+    if result.stderr:
+        output = output + result.stderr if output else result.stderr
+    return output if output else "(empty)"
 
 # --- Setup ---
 
