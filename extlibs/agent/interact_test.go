@@ -25,12 +25,15 @@ type testBackend struct {
 
 func (b *testBackend) Input(_ string, _ *object.Environment) (string, error) { return "", nil }
 func (b *testBackend) Print(text string, _ *object.Environment)              { b.printed = append(b.printed, text) }
+func (b *testBackend) PrintAs(_, text string, _ *object.Environment)         { b.printed = append(b.printed, text) }
 func (b *testBackend) StreamStart()                                          {}
+func (b *testBackend) StreamStartAs(_ string)                                {}
 func (b *testBackend) StreamChunk(s string)                                  { b.printed = append(b.printed, s) }
 func (b *testBackend) StreamEnd()                                            {}
 func (b *testBackend) SpinnerStart(_ string)                                 {}
 func (b *testBackend) SpinnerStop()                                          {}
 func (b *testBackend) SetProgress(_ string, _ float64)                       {}
+func (b *testBackend) SetLabels(_, _, _ string)                              {}
 func (b *testBackend) SetStatus(l, r string)                                 { b.statusL = l; b.statusR = r }
 func (b *testBackend) SetStatusLeft(l string)                                { b.statusL = l }
 func (b *testBackend) SetStatusRight(r string)                               { b.statusR = r }
