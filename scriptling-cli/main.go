@@ -16,7 +16,6 @@ import (
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/build"
 	"github.com/paularlott/scriptling/extlibs"
-	"github.com/paularlott/scriptling/extlibs/console"
 	"github.com/paularlott/scriptling/lint"
 	"github.com/paularlott/scriptling/object"
 
@@ -240,7 +239,7 @@ func runFile(p *scriptling.Scriptling, filename string) error {
 	if err != nil {
 		return fmt.Errorf("failed to read file %s: %w", filename, err)
 	}
-	return runWithTUI(p, func() error { return evalAndCheckExit(p, string(content)) })
+	return evalAndCheckExit(p, string(content))
 }
 
 func runStdin(p *scriptling.Scriptling) error {
@@ -248,100 +247,7 @@ func runStdin(p *scriptling.Scriptling) error {
 	if err != nil {
 		return fmt.Errorf("failed to read from stdin: %w", err)
 	}
-	return runWithTUI(p, func() error { return evalAndCheckExit(p, string(content)) })
-}
-
-// runWithTUI sets up a TUI + console backend, runs fn in a goroutine, then
-// starts the TUI event loop. If fn never calls console.run() the TUI exits
-// automatically when fn returns.
-func runWithTUI(p *scriptling.Scriptling, fn func() error) error {
-	var (
-		t         *tui.TUI
-		cancel    context.CancelFunc
-		runningMu sync.Mutex
-		prevDone  = make(chan struct{}) // closed when previous submit goroutine exits
-	)
-	close(prevDone) // initially "done"
-
-	tb := &tuiBackend{
-		done: make(chan struct{}),
-		cancelFn: func() {
-			runningMu.Lock()
-			if cancel != nil {
-				cancel()
-			}
-			runningMu.Unlock()
-		},
-	}
-
-	t = tui.New(tui.Config{
-		StatusRight: "Ctrl+C to exit",
-		Commands: []*tui.Command{
-			{
-				Name:        "exit",
-				Description: "Exit",
-				Handler:     func(_ string) { t.Exit() },
-			},
-		},
-		OnEscape: func() {
-			runningMu.Lock()
-			if cancel != nil {
-				cancel()
-			}
-			runningMu.Unlock()
-			tb.mu.Lock()
-			cb := tb.escapeCb
-			tb.mu.Unlock()
-			if cb != nil {
-				go cb()
-			}
-		},
-		OnSubmit: func(line string) {
-			t.AddMessage(tui.RoleUser, line)
-			tb.mu.Lock()
-			scb := tb.submitCb
-			ecb := tb.escapeCb
-			tb.mu.Unlock()
-			if scb != nil {
-				ctx, c := context.WithCancel(context.Background())
-				runningMu.Lock()
-				if cancel != nil {
-					cancel() // cancel any in-flight request
-					if ecb != nil {
-						go ecb() // notify script the previous request was cancelled
-					}
-				}
-				cancel = c
-				waitFor := prevDone
-				nextDone := make(chan struct{})
-				prevDone = nextDone
-				runningMu.Unlock()
-				go func() {
-					defer func() {
-						runningMu.Lock()
-						cancel = nil
-						runningMu.Unlock()
-						c()
-						close(nextDone)
-					}()
-					<-waitFor // wait for previous submit to fully finish
-					scb(ctx, line)
-				}()
-			}
-		},
-	})
-	tb.t = t
-	console.SetBackend(tb)
-
-	// Run the script in a goroutine; exit TUI when it returns (unless script called console.run())
-	go func() {
-		fn()
-		t.Exit()
-	}()
-
-	err := t.Run(context.Background())
-	close(tb.done)
-	return err
+	return evalAndCheckExit(p, string(content))
 }
 
 func runInteractive(p *scriptling.Scriptling) error {
