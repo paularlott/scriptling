@@ -112,5 +112,14 @@ bot = agent.Agent(
     model=MODEL
 )
 
+def on_start():
+    console.print(
+        console.styled(console.PRIMARY, "ScriptlingCoder") + " — type your coding requests.\n" +
+        console.styled(console.DIM, "Type '/exit' to quit.") + "\n\n" +
+        console.styled(console.SECONDARY, "WARNING: This is an example that executes AI-generated code, use at your own risk!")
+    )
+
+console.on_init(on_start)
+
 # Run interactive session
 bot.interact()

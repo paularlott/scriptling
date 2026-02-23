@@ -41,7 +41,7 @@ type ConsoleBackend interface {
 
 var (
 	mu      sync.RWMutex
-	backend ConsoleBackend = &noopBackend{}
+	backend ConsoleBackend = &lazyBackend{}
 )
 
 // SetBackend registers a custom backend (e.g. TUI). Call before running scripts.
@@ -64,11 +64,18 @@ func getBackend() ConsoleBackend {
 	return backend
 }
 
-// noopBackend is the default backend used before a real backend is registered.
-// It falls back to plain I/O for Input/Print and is a no-op for everything else.
-type noopBackend struct{}
+// lazyBackend is the default backend. It stores callbacks and state set by the
+// script before console.run() is called, then on Run() creates the real TUI
+// backend, transfers everything to it, and starts it. If Run() is never called
+// (e.g. telegram bot), plain stdout I/O is used for Input/Print.
+type lazyBackend struct {
+	mu       sync.Mutex
+	submitCb func(context.Context, string)
+	escapeCb func()
+	initCb   func()
+}
 
-func (n *noopBackend) Input(prompt string, env *object.Environment) (string, error) {
+func (l *lazyBackend) Input(prompt string, env *object.Environment) (string, error) {
 	if prompt != "" {
 		fmt.Fprint(env.GetWriter(), prompt)
 	}
@@ -81,28 +88,58 @@ func (n *noopBackend) Input(prompt string, env *object.Environment) (string, err
 	}
 	return scanner.Text(), nil
 }
-
-func (n *noopBackend) Print(text string, env *object.Environment) { fmt.Fprint(env.GetWriter(), text) }
-func (n *noopBackend) PrintAs(_, text string, env *object.Environment) {
+func (l *lazyBackend) Print(text string, env *object.Environment) { fmt.Fprint(env.GetWriter(), text) }
+func (l *lazyBackend) PrintAs(_, text string, env *object.Environment) {
 	fmt.Fprint(env.GetWriter(), text)
 }
-func (n *noopBackend) StreamStart()                                {}
-func (n *noopBackend) StreamStartAs(_ string)                      {}
-func (n *noopBackend) StreamChunk(_ string)                        {}
-func (n *noopBackend) StreamEnd()                                  {}
-func (n *noopBackend) SpinnerStart(_ string)                       {}
-func (n *noopBackend) SpinnerStop()                                {}
-func (n *noopBackend) SetProgress(_ string, _ float64)             {}
-func (n *noopBackend) SetLabels(_, _, _ string)                    {}
-func (n *noopBackend) SetStatus(_, _ string)                       {}
-func (n *noopBackend) SetStatusLeft(_ string)                      {}
-func (n *noopBackend) SetStatusRight(_ string)                     {}
-func (n *noopBackend) RegisterCommand(_, _ string, _ func(string)) {}
-func (n *noopBackend) RemoveCommand(_ string)                      {}
-func (n *noopBackend) OnSubmit(_ func(context.Context, string))    {}
-func (n *noopBackend) OnEscape(_ func())                           {}
-func (n *noopBackend) ClearOutput()                                {}
-func (n *noopBackend) Run() error                                  { return nil }
+func (l *lazyBackend) StreamStart()                                {}
+func (l *lazyBackend) StreamStartAs(_ string)                      {}
+func (l *lazyBackend) StreamChunk(_ string)                        {}
+func (l *lazyBackend) StreamEnd()                                  {}
+func (l *lazyBackend) SpinnerStart(_ string)                       {}
+func (l *lazyBackend) SpinnerStop()                                {}
+func (l *lazyBackend) SetProgress(_ string, _ float64)             {}
+func (l *lazyBackend) SetLabels(_, _, _ string)                    {}
+func (l *lazyBackend) SetStatus(_, _ string)                       {}
+func (l *lazyBackend) SetStatusLeft(_ string)                      {}
+func (l *lazyBackend) SetStatusRight(_ string)                     {}
+func (l *lazyBackend) RegisterCommand(_, _ string, _ func(string)) {}
+func (l *lazyBackend) RemoveCommand(_ string)                      {}
+func (l *lazyBackend) ClearOutput()                                {}
+func (l *lazyBackend) OnSubmit(fn func(context.Context, string)) {
+	l.mu.Lock()
+	l.submitCb = fn
+	l.mu.Unlock()
+}
+func (l *lazyBackend) OnEscape(fn func()) {
+	l.mu.Lock()
+	l.escapeCb = fn
+	l.mu.Unlock()
+}
+func (l *lazyBackend) OnInit(fn func()) {
+	l.mu.Lock()
+	l.initCb = fn
+	l.mu.Unlock()
+}
+func (l *lazyBackend) Run() error {
+	l.mu.Lock()
+	scb := l.submitCb
+	ecb := l.escapeCb
+	icb := l.initCb
+	l.mu.Unlock()
+	tb := newTUIBackend()
+	if scb != nil {
+		tb.OnSubmit(scb)
+	}
+	if ecb != nil {
+		tb.OnEscape(ecb)
+	}
+	SetBackend(tb)
+	if icb != nil {
+		icb()
+	}
+	return tb.Run()
+}
 
 // getEnv retrieves the environment from context.
 func getEnv(ctx context.Context) *object.Environment {
@@ -331,6 +368,45 @@ func NewLibrary() *object.Library {
 			},
 			HelpText: "clear_output() — clear the output area",
 		},
+		"styled": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if len(args) < 2 {
+					return &object.String{Value: ""}
+				}
+				color, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
+				text, err := args[1].AsString()
+				if err != nil {
+					return err
+				}
+				type styledBackend interface{ Styled(string, string) string }
+				if sb, ok := getBackend().(styledBackend); ok {
+					return &object.String{Value: sb.Styled(color, text)}
+				}
+				return &object.String{Value: text}
+			},
+			HelpText: "styled(color, text) — apply theme color to text; colors: primary, secondary, error, dim, user, text",
+		},
+		"on_init": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if len(args) > 0 {
+					fn := args[0]
+					eval := evaliface.FromContext(ctx)
+					env := getEnv(ctx)
+					if lb, ok := getBackend().(*lazyBackend); ok {
+						lb.OnInit(func() {
+							if eval != nil {
+								eval.CallObjectFunction(context.Background(), fn, nil, nil, env)
+							}
+						})
+					}
+				}
+				return &object.Null{}
+			},
+			HelpText: "on_init(fn) — register a callback invoked once when the console starts (before run() blocks)",
+		},
 		"on_escape": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) > 0 {
@@ -374,7 +450,14 @@ func NewLibrary() *object.Library {
 			HelpText: "run() — start the console event loop (blocks until exit)",
 		},
 	}
-	return object.NewLibrary(LibraryName, fns, nil, "Console I/O with optional TUI backend")
+	return object.NewLibrary(LibraryName, fns, map[string]object.Object{
+		"PRIMARY":   &object.String{Value: "primary"},
+		"SECONDARY": &object.String{Value: "secondary"},
+		"ERROR":     &object.String{Value: "error"},
+		"DIM":       &object.String{Value: "dim"},
+		"USER":      &object.String{Value: "user"},
+		"TEXT":      &object.String{Value: "text"},
+	}, "Console I/O with TUI backend")
 }
 
 // Register registers the console library with a scriptling instance.
