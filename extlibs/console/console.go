@@ -12,7 +12,6 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
-
 const LibraryName = "scriptling.console"
 
 // ConsoleBackend is the interface scriptling.console calls through.
@@ -83,25 +82,27 @@ func (n *noopBackend) Input(prompt string, env *object.Environment) (string, err
 	return scanner.Text(), nil
 }
 
-func (n *noopBackend) Print(text string, env *object.Environment)        { fmt.Fprint(env.GetWriter(), text) }
-func (n *noopBackend) PrintAs(_, text string, env *object.Environment)   { fmt.Fprint(env.GetWriter(), text) }
-func (n *noopBackend) StreamStart()                                      {}
-func (n *noopBackend) StreamStartAs(_ string)                            {}
-func (n *noopBackend) StreamChunk(_ string)                              {}
-func (n *noopBackend) StreamEnd()                                        {}
-func (n *noopBackend) SpinnerStart(_ string)                             {}
-func (n *noopBackend) SpinnerStop()                                      {}
-func (n *noopBackend) SetProgress(_ string, _ float64)                   {}
-func (n *noopBackend) SetLabels(_, _, _ string)                          {}
-func (n *noopBackend) SetStatus(_, _ string)                             {}
-func (n *noopBackend) SetStatusLeft(_ string)                            {}
-func (n *noopBackend) SetStatusRight(_ string)                           {}
-func (n *noopBackend) RegisterCommand(_, _ string, _ func(string))       {}
-func (n *noopBackend) RemoveCommand(_ string)                            {}
-func (n *noopBackend) OnSubmit(_ func(context.Context, string))          {}
-func (n *noopBackend) OnEscape(_ func())                                 {}
-func (n *noopBackend) ClearOutput()                                      {}
-func (n *noopBackend) Run() error                                        { return nil }
+func (n *noopBackend) Print(text string, env *object.Environment) { fmt.Fprint(env.GetWriter(), text) }
+func (n *noopBackend) PrintAs(_, text string, env *object.Environment) {
+	fmt.Fprint(env.GetWriter(), text)
+}
+func (n *noopBackend) StreamStart()                                {}
+func (n *noopBackend) StreamStartAs(_ string)                      {}
+func (n *noopBackend) StreamChunk(_ string)                        {}
+func (n *noopBackend) StreamEnd()                                  {}
+func (n *noopBackend) SpinnerStart(_ string)                       {}
+func (n *noopBackend) SpinnerStop()                                {}
+func (n *noopBackend) SetProgress(_ string, _ float64)             {}
+func (n *noopBackend) SetLabels(_, _, _ string)                    {}
+func (n *noopBackend) SetStatus(_, _ string)                       {}
+func (n *noopBackend) SetStatusLeft(_ string)                      {}
+func (n *noopBackend) SetStatusRight(_ string)                     {}
+func (n *noopBackend) RegisterCommand(_, _ string, _ func(string)) {}
+func (n *noopBackend) RemoveCommand(_ string)                      {}
+func (n *noopBackend) OnSubmit(_ func(context.Context, string))    {}
+func (n *noopBackend) OnEscape(_ func())                           {}
+func (n *noopBackend) ClearOutput()                                {}
+func (n *noopBackend) Run() error                                  { return nil }
 
 // getEnv retrieves the environment from context.
 func getEnv(ctx context.Context) *object.Environment {
@@ -141,48 +142,28 @@ func NewLibrary() *object.Library {
 				for i, a := range args {
 					parts[i] = a.Inspect()
 				}
-				getBackend().Print(strings.Join(parts, " ")+"\n", getEnv(ctx))
-				return &object.Null{}
-			},
-			HelpText: "print(*args) — write to console output",
-		},
-		"print_as": {
-			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) < 2 {
+				text := strings.Join(parts, " ") + "\n"
+				if kwargs.Has("label") {
+					label, _ := kwargs.GetString("label", "")
+					getBackend().PrintAs(label, text, getEnv(ctx))
 					return &object.Null{}
 				}
-				label, err := args[0].AsString()
-				if err != nil {
-					return err
-				}
-				parts := make([]string, len(args)-1)
-				for i, a := range args[1:] {
-					parts[i] = a.Inspect()
-				}
-				getBackend().PrintAs(label, strings.Join(parts, " ")+"\n", getEnv(ctx))
+				getBackend().Print(text, getEnv(ctx))
 				return &object.Null{}
 			},
-			HelpText: "print_as(label, *args) — write to console output with a custom label",
+			HelpText: "print(*args, [label=]) — write to console output, optionally with a custom label",
 		},
 		"stream_start": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if kwargs.Has("label") {
+					label, _ := kwargs.GetString("label", "")
+					getBackend().StreamStartAs(label)
+					return &object.Null{}
+				}
 				getBackend().StreamStart()
 				return &object.Null{}
 			},
-			HelpText: "stream_start() — begin a streaming message",
-		},
-		"stream_start_as": {
-			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				label := ""
-				if len(args) > 0 {
-					if s, err := args[0].AsString(); err == nil {
-						label = s
-					}
-				}
-				getBackend().StreamStartAs(label)
-				return &object.Null{}
-			},
-			HelpText: "stream_start_as(label) — begin a streaming message with a custom label",
+			HelpText: "stream_start([label=]) — begin a streaming message, optionally with a custom label",
 		},
 		"stream_chunk": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {

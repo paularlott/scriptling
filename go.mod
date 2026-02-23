@@ -6,7 +6,7 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/google/uuid v1.6.0
-	github.com/paularlott/cli v0.7.6
+	github.com/paularlott/cli v0.7.7
 	github.com/paularlott/logger v0.3.0
 	github.com/paularlott/mcp v0.12.7
 	github.com/shirou/gopsutil/v3 v3.24.5
