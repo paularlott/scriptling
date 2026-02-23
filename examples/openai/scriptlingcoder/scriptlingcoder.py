@@ -53,9 +53,8 @@ def edit_file(args):
     return "ok"
 
 def glob_files(args):
-    pattern = args.get("path", ".") + "/" + args["pat"]
-    pattern = pattern.replace("//", "/")
-    files = glob.glob(pattern, ".")
+    root = args.get("path", ".")
+    files = glob.glob(args["pat"], root)
 
     # Sort by mtime descending
     files = sorted(files, key=lambda f: os.getmtime(f) if os.isfile(f) else 0, reverse=True)
@@ -112,14 +111,12 @@ bot = agent.Agent(
     model=MODEL
 )
 
-def on_start():
-    console.print(
-        console.styled(console.PRIMARY, "ScriptlingCoder") + " — type your coding requests.\n" +
-        console.styled(console.DIM, "Type '/exit' to quit.") + "\n\n" +
-        console.styled(console.SECONDARY, "WARNING: This is an example that executes AI-generated code, use at your own risk!")
-    )
-
-console.on_init(on_start)
+c = console.Console()
+c.add_message(
+    c.styled(console.PRIMARY, "ScriptlingCoder") + " — type your coding requests.\n" +
+    c.styled(console.DIM, "Type '/exit' to quit.") + "\n\n" +
+    c.styled(console.SECONDARY, "WARNING: This is an example that executes AI-generated code, use at your own risk!")
+)
 
 # Run interactive session
-bot.interact()
+bot.interact(c)
