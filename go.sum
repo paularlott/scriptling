@@ -15,6 +15,8 @@ github.com/lufia/plan9stats v0.0.0-20260216142805-b3301c5f2a88 h1:PTw+yKnXcOFCR6
 github.com/lufia/plan9stats v0.0.0-20260216142805-b3301c5f2a88/go.mod h1:autxFIvghDt3jPTLoqZ9OZ7s9qTGNAWmYCjVFWPX/zg=
 github.com/paularlott/cli v0.7.8 h1:vMq0RQdKEML60wukad8SVS/wmXNPKoy/BayVmah2N6k=
 github.com/paularlott/cli v0.7.8/go.mod h1:pN1JVlAw7EDUVf4mKRUP708jzXKLsb1wBfHgdhDQbfA=
+github.com/paularlott/cli v0.7.10 h1:ctYnOXAW82bfOtfc5+R+bNtbRwbco8XTMtmjIi7jxRc=
+github.com/paularlott/cli v0.7.10/go.mod h1:ZSHKSCzhS4y0I4PWCAWo+++plYEocRdsZPBy6OBOKHs=
 github.com/paularlott/logger v0.3.0 h1:QwVUoxmlEFkfHI25y5dn56OJvK4Bpe3OvoJu4GZM7ng=
 github.com/paularlott/logger v0.3.0/go.mod h1:vjAOY1vUvYigmJxxQ0eMclryIjDS6VWNK6FprtTMce0=
 github.com/paularlott/mcp v0.12.7 h1:0rvaXcYZl0KqxNk8VkNIP9UfCphP+Nu89ufg7T1OAuo=
