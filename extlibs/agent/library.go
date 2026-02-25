@@ -18,6 +18,68 @@ class Agent:
         # Build and store tool schemas if tools provided
         self.tool_schemas = tools.build() if tools is not None else []
 
+    def _execute_tools(self, tool_calls):
+        """Execute tool calls and return list of tool results."""
+        tool_results = []
+        for tool_call in tool_calls:
+            tool_func = tool_call.function
+            tool_name = tool_func.name
+            tool_args_str = tool_func.arguments
+            tool_id = tool_call.id
+
+            # Parse arguments
+            tool_args = json.loads(tool_args_str)
+
+            # Strip {function_name:...} wrapper from tool name if present
+            if tool_name.startswith("{") and ":" in tool_name:
+                parts = tool_name.split(":", 1)
+                if len(parts) == 2 and parts[1].endswith("}"):
+                    tool_name = parts[1][:-1]
+
+            # Strip function_name_ from tool name if present
+            if tool_name.startswith("function_name_"):
+                tool_name = tool_name[len("function_name_"):]
+
+            # Strip {...} wrapper from argument keys if present (e.g., {name} -> name)
+            cleaned_args = {}
+            for key, value in tool_args.items():
+                clean_key = key
+                if clean_key.startswith("{") and clean_key.endswith("}"):
+                    clean_key = clean_key[1:-1]
+                cleaned_args[clean_key] = value
+            tool_args = cleaned_args
+
+            # Get handler from tools
+            if self.tools is None:
+                tool_results.append({
+                    "role": "tool",
+                    "tool_call_id": tool_id,
+                    "content": "error: no tools configured"
+                })
+                continue
+
+            try:
+                handler = self.tools.get_handler(tool_name)
+                result = handler(tool_args)
+                # Auto-encode complex types to JSON
+                if isinstance(result, (dict, list, tuple)):
+                    content = json.dumps(result)
+                else:
+                    content = str(result)
+                tool_results.append({
+                    "role": "tool",
+                    "tool_call_id": tool_id,
+                    "content": content
+                })
+            except Exception as e:
+                tool_results.append({
+                    "role": "tool",
+                    "tool_call_id": tool_id,
+                    "content": "error: " + str(e)
+                })
+
+        return tool_results
+
     def trigger(self, message, max_iterations=1):
         # Convert message to dict if string
         if type(message) == type(""):
@@ -61,58 +123,7 @@ class Agent:
                 break
 
             # Execute tool calls
-            tool_results = []
-            for tool_call in tool_calls:
-                tool_func = tool_call.function
-                tool_name = tool_func.name
-                tool_args_str = tool_func.arguments
-                tool_id = tool_call.id
-
-                # Parse arguments
-                tool_args = json.loads(tool_args_str)
-
-                # Strip {function_name:...} wrapper from tool name if present
-                if tool_name.startswith("{") and ":" in tool_name:
-                    parts = tool_name.split(":", 1)
-                    if len(parts) == 2 and parts[1].endswith("}"):
-                        tool_name = parts[1][:-1]
-
-                # Strip function_name_ from tool name if present
-                if tool_name.startswith("function_name_"):
-                    tool_name = tool_name[len("function_name_"):]
-
-                # Strip {...} wrapper from argument keys if present (e.g., {name} -> name)
-                cleaned_args = {}
-                for key, value in tool_args.items():
-                    clean_key = key
-                    if clean_key.startswith("{") and clean_key.endswith("}"):
-                        clean_key = clean_key[1:-1]
-                    cleaned_args[clean_key] = value
-                tool_args = cleaned_args
-
-                # Get handler from tools
-                if self.tools is None:
-                    tool_results.append({
-                        "role": "tool",
-                        "tool_call_id": tool_id,
-                        "content": "error: no tools configured"
-                    })
-                    continue
-
-                try:
-                    handler = self.tools.get_handler(tool_name)
-                    result = handler(tool_args)
-                    tool_results.append({
-                        "role": "tool",
-                        "tool_call_id": tool_id,
-                        "content": str(result)
-                    })
-                except Exception as e:
-                    tool_results.append({
-                        "role": "tool",
-                        "tool_call_id": tool_id,
-                        "content": "error: " + str(e)
-                    })
+            tool_results = self._execute_tools(tool_calls)
 
             # Add assistant message with tool calls
             self.messages.append({
