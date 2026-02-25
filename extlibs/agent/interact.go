@@ -98,20 +98,8 @@ class Agent(_OriginalAgent):
                         self.messages = self.messages[:msg_index]
                     break
 
-                import json
-                tool_results = []
-                for tool_call in tool_calls:
-                    tool_func = tool_call.function
-                    tool_name = tool_func.name
-                    tool_args = json.loads(tool_func.arguments)
-                    tool_id = tool_call.id
-
-                    try:
-                        handler = self.tools.get_handler(tool_name)
-                        result = handler(tool_args)
-                        tool_results.append({"role": "tool", "tool_call_id": tool_id, "content": str(result)})
-                    except Exception as e:
-                        tool_results.append({"role": "tool", "tool_call_id": tool_id, "content": "error: " + str(e)})
+                # Execute tool calls
+                tool_results = self._execute_tools(tool_calls)
 
                 self.messages.append({
                     "role": "assistant",
