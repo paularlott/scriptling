@@ -63,9 +63,18 @@ func buildLibrary() *object.Library {
 			provider := kwargs.MustGetString("provider", "openai")
 			// Get optional api_key from kwargs
 			apiKey := kwargs.MustGetString("api_key", "")
-			// Get optional max_tokens and temperature
+			// Get optional max_tokens, temperature and top_p
 			maxTokens := int(kwargs.MustGetInt("max_tokens", 0))
-			temperature := float32(kwargs.MustGetFloat("temperature", 0))
+			var temperature *float64
+			if kwargs.Has("temperature") {
+				v := kwargs.MustGetFloat("temperature", 0)
+				temperature = &v
+			}
+			var topP *float64
+			if kwargs.Has("top_p") {
+				v := kwargs.MustGetFloat("top_p", 0)
+				topP = &v
+			}
 
 			// Parse remote_servers if provided
 			var remoteServerConfigs []openai.RemoteServerConfig
@@ -135,6 +144,7 @@ func buildLibrary() *object.Library {
 					RemoteServerConfigs: remoteServerConfigs,
 					MaxTokens:           maxTokens,
 					Temperature:         temperature,
+					TopP:                topP,
 				},
 			})
 			if err != nil {
@@ -152,6 +162,7 @@ Parameters:
   api_key (str, optional): API key for authentication
   max_tokens (int, optional): Default max_tokens for all requests (Claude defaults to 4096 if not set)
   temperature (float, optional): Default temperature for all requests (0.0-2.0)
+  top_p (float, optional): Default top_p (nucleus sampling) for all requests (0.0-1.0)
   remote_servers (list, optional): List of remote MCP server configs, each a dict with:
     - base_url (str, required): URL of the MCP server
     - namespace (str, optional): Namespace prefix for tools

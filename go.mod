@@ -8,9 +8,9 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/paularlott/cli v0.7.10
 	github.com/paularlott/logger v0.3.0
-	github.com/paularlott/mcp v0.12.7
+	github.com/paularlott/mcp v0.12.8
 	github.com/shirou/gopsutil/v3 v3.24.5
-	golang.org/x/net v0.50.0
+	golang.org/x/net v0.51.0
 	golang.org/x/text v0.34.0
 	gopkg.in/yaml.v3 v3.0.1
 )
