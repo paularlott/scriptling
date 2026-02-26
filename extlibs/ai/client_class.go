@@ -1,11 +1,12 @@
 package ai
 
 import (
-	"github.com/paularlott/scriptling/conversion"
 	"context"
 	"encoding/json"
 	"fmt"
 	"sync"
+
+	"github.com/paularlott/scriptling/conversion"
 
 	"github.com/paularlott/mcp/ai"
 	"github.com/paularlott/scriptling/object"
@@ -42,6 +43,7 @@ Parameters:
   system_prompt (str, optional): System prompt to use when messages is a string
   tools (list, optional): List of tool schema dicts from ToolRegistry.build()
   temperature (float, optional): Sampling temperature (0.0-2.0)
+  top_p (float, optional): Nucleus sampling threshold (0.0-1.0)
   max_tokens (int, optional): Maximum tokens to generate
 
 Returns:
@@ -74,6 +76,9 @@ Parameters:
   model (str): Model identifier (e.g., "gpt-4", "gpt-3.5-turbo")
   messages (str or list): Either a string (user message) or a list of message dicts with "role" and "content" keys
   system_prompt (str, optional): System prompt to use when messages is a string
+  temperature (float, optional): Sampling temperature (0.0-2.0)
+  top_p (float, optional): Nucleus sampling threshold (0.0-1.0)
+  max_tokens (int, optional): Maximum tokens to generate
 
 Returns:
   ChatStream: A stream object with a next() method
@@ -256,6 +261,7 @@ Parameters:
   system_prompt (str, optional): System prompt to use when messages is a string
   tools (list, optional): List of tool schema dicts from ToolRegistry.build()
   temperature (float, optional): Sampling temperature (0.0-2.0)
+  top_p (float, optional): Nucleus sampling threshold (0.0-1.0)
   max_tokens (int, optional): Maximum tokens to generate
 
 Returns:
@@ -471,7 +477,12 @@ func completionMethod(self *object.Instance, ctx context.Context, kwargs object.
 
 	// Handle optional parameters (override client defaults)
 	if kwargs.Has("temperature") {
-		req.Temperature = float32(kwargs.MustGetFloat("temperature", 0))
+		v := kwargs.MustGetFloat("temperature", 0)
+		req.Temperature = &v
+	}
+	if kwargs.Has("top_p") {
+		v := kwargs.MustGetFloat("top_p", 0)
+		req.TopP = &v
 	}
 	if kwargs.Has("max_tokens") {
 		req.MaxTokens = int(kwargs.MustGetInt("max_tokens", 0))
@@ -1172,10 +1183,25 @@ func completionStreamMethod(self *object.Instance, ctx context.Context, kwargs o
 	}
 
 	// Create streaming request
-	stream := ci.client.StreamChatCompletion(ctx, ai.ChatCompletionRequest{
+	streamReq := ai.ChatCompletionRequest{
 		Model:    model,
 		Messages: openaiMessages,
-	})
+	}
+
+	// Handle optional parameters (override client defaults)
+	if kwargs.Has("temperature") {
+		v := kwargs.MustGetFloat("temperature", 0)
+		streamReq.Temperature = &v
+	}
+	if kwargs.Has("top_p") {
+		v := kwargs.MustGetFloat("top_p", 0)
+		streamReq.TopP = &v
+	}
+	if kwargs.Has("max_tokens") {
+		streamReq.MaxTokens = int(kwargs.MustGetInt("max_tokens", 0))
+	}
+
+	stream := ci.client.StreamChatCompletion(ctx, streamReq)
 
 	// Wrap stream in instance
 	return &object.Instance{
