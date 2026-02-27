@@ -178,7 +178,13 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	if file != "" {
 		argv = append(argv, cmd.GetArgs()...)
 	}
-	extlibs.RegisterSysLibrary(p, argv)
+	// Pass os.Stdin when running a file so scripts can read piped data.
+	// When running from stdin, stdin is consumed as source so pass nil.
+	var stdinReader io.Reader
+	if file != "" {
+		stdinReader = os.Stdin
+	}
+	extlibs.RegisterSysLibrary(p, argv, stdinReader)
 
 	// Release background tasks for script mode
 	extlibs.ReleaseBackgroundTasks()

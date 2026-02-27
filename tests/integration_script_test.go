@@ -21,7 +21,7 @@ func newTestInterpreter(t *testing.T) *scriptling.Scriptling {
 	p := scriptling.New()
 	stdlib.RegisterAll(p)
 	extlibs.RegisterRequestsLibrary(p)
-	extlibs.RegisterSysLibrary(p, nil)
+	extlibs.RegisterSysLibrary(p, nil, nil)
 	extlibs.RegisterSecretsLibrary(p)
 	extlibs.RegisterSubprocessLibrary(p)
 	extlibs.RegisterHTMLParserLibrary(p)

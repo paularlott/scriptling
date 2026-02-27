@@ -211,7 +211,7 @@ raise
 
 func TestSysExitIsUncatchable(t *testing.T) {
 	p := New()
-	extlibs.RegisterSysLibrary(p, []string{})
+	extlibs.RegisterSysLibrary(p, []string{}, nil)
 
 	// Test that sys.exit() CANNOT be caught by try/except blocks
 	// sys.exit() always exits the program, even inside try/except
@@ -257,7 +257,7 @@ result
 
 func TestSysExitWithStringMessage(t *testing.T) {
 	p := New()
-	extlibs.RegisterSysLibrary(p, []string{})
+	extlibs.RegisterSysLibrary(p, []string{}, nil)
 
 	// Test that sys.exit() with string message is also uncatchable
 	code := `
@@ -308,7 +308,7 @@ result
 
 func TestSysExitUncaughtTerminates(t *testing.T) {
 	p := New()
-	extlibs.RegisterSysLibrary(p, []string{})
+	extlibs.RegisterSysLibrary(p, []string{}, nil)
 
 	// Test that uncaught sys.exit() returns SysExitCode error
 	code := `
@@ -341,7 +341,7 @@ result = "should not reach here"
 
 func TestSysExitDefaultCode(t *testing.T) {
 	p := New()
-	extlibs.RegisterSysLibrary(p, []string{})
+	extlibs.RegisterSysLibrary(p, []string{}, nil)
 
 	// Test that sys.exit() with no args defaults to code 0
 	// Note: SystemExit(0) returns (Exception, nil) since it's a "clean" exit
@@ -369,7 +369,7 @@ sys.exit()
 
 func TestSysExitInFunction(t *testing.T) {
 	p := New()
-	extlibs.RegisterSysLibrary(p, []string{})
+	extlibs.RegisterSysLibrary(p, []string{}, nil)
 
 	// Test that sys.exit() called from a function returns SystemExit exception
 	code := `
@@ -398,7 +398,7 @@ my_function()
 
 func TestSysExitViaCallFunction(t *testing.T) {
 	p := New()
-	extlibs.RegisterSysLibrary(p, []string{})
+	extlibs.RegisterSysLibrary(p, []string{}, nil)
 
 	// Register a function that calls sys.exit
 	_, err := p.Eval(`
@@ -430,7 +430,7 @@ def exit_func():
 
 func TestSysExitDoesNotKillCaller(t *testing.T) {
 	p := New()
-	extlibs.RegisterSysLibrary(p, []string{})
+	extlibs.RegisterSysLibrary(p, []string{}, nil)
 
 	// Test that sys.exit() doesn't terminate the Go process
 	// If it did, this test would crash/exit
@@ -465,7 +465,7 @@ sys.exit(1)
 
 func TestSysExitPropagatesThroughNestedTryCatch(t *testing.T) {
 	p := New()
-	extlibs.RegisterSysLibrary(p, []string{})
+	extlibs.RegisterSysLibrary(p, []string{}, nil)
 
 	// Test that sys.exit() propagates through nested try/catch blocks
 	// SystemExit is uncatchable, so except blocks don't execute
@@ -542,7 +542,7 @@ exit_code = "should not reach"
 
 func TestSysExitInFunctionPropagates(t *testing.T) {
 	p := New()
-	extlibs.RegisterSysLibrary(p, []string{})
+	extlibs.RegisterSysLibrary(p, []string{}, nil)
 
 	// Test that sys.exit() called from a function propagates through all try/except blocks
 	code := `
@@ -597,7 +597,7 @@ exit_code = "should not reach"
 
 func TestSysExitCannotBeSuppressed(t *testing.T) {
 	p := New()
-	extlibs.RegisterSysLibrary(p, []string{})
+	extlibs.RegisterSysLibrary(p, []string{}, nil)
 
 	// Test that sys.exit() CANNOT be suppressed by except/pass blocks
 	code := `
@@ -643,7 +643,7 @@ exit_code = "should not reach"
 
 func TestSysExitFinallyBlockExecutes(t *testing.T) {
 	p := New()
-	extlibs.RegisterSysLibrary(p, []string{})
+	extlibs.RegisterSysLibrary(p, []string{}, nil)
 
 	// Test that finally blocks execute even when sys.exit is called
 	// BUT except blocks do NOT execute for SystemExit
@@ -713,7 +713,7 @@ func TestErrorHandlingScript(t *testing.T) {
 
 func TestSysExitStopsScriptExecution(t *testing.T) {
 	p := New()
-	extlibs.RegisterSysLibrary(p, []string{})
+	extlibs.RegisterSysLibrary(p, []string{}, nil)
 
 	// Test that sys.exit(42) propagates up and stops the script completely
 	// No code after sys.exit() should execute

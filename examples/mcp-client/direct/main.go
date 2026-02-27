@@ -35,7 +35,7 @@ func main() {
 
 	// Register extended libraries
 	extlibs.RegisterRequestsLibrary(p)
-	extlibs.RegisterSysLibrary(p, []string{})
+	extlibs.RegisterSysLibrary(p, []string{}, nil)
 	extlibs.RegisterSecretsLibrary(p)
 	extlibs.RegisterSubprocessLibrary(p)
 	extlibs.RegisterHTMLParserLibrary(p)
