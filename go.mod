@@ -6,9 +6,9 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/google/uuid v1.6.0
-	github.com/paularlott/cli v0.7.10
+	github.com/paularlott/cli v0.7.11
 	github.com/paularlott/logger v0.3.0
-	github.com/paularlott/mcp v0.12.8
+	github.com/paularlott/mcp v0.12.10
 	github.com/shirou/gopsutil/v3 v3.24.5
 	golang.org/x/net v0.51.0
 	golang.org/x/text v0.34.0
