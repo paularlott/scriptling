@@ -1075,6 +1075,68 @@ func TestKwargsMustGetString(t *testing.T) {
 	}
 }
 
+func TestResetStore(t *testing.T) {
+	t.Run("removes_all_keys_when_keep_is_empty", func(t *testing.T) {
+		env := NewEnvironment()
+		env.Set("a", &Integer{Value: 1})
+		env.Set("b", &Integer{Value: 2})
+
+		env.ResetStore(map[string]bool{})
+
+		if _, ok := env.Get("a"); ok {
+			t.Error("expected 'a' to be removed")
+		}
+		if _, ok := env.Get("b"); ok {
+			t.Error("expected 'b' to be removed")
+		}
+	})
+
+	t.Run("keeps_specified_keys", func(t *testing.T) {
+		env := NewEnvironment()
+		env.Set("keep", &Integer{Value: 1})
+		env.Set("remove", &Integer{Value: 2})
+
+		env.ResetStore(map[string]bool{"keep": true})
+
+		if _, ok := env.Get("keep"); !ok {
+			t.Error("expected 'keep' to remain")
+		}
+		if _, ok := env.Get("remove"); ok {
+			t.Error("expected 'remove' to be removed")
+		}
+	})
+
+	t.Run("nil_keep_removes_all", func(t *testing.T) {
+		env := NewEnvironment()
+		env.Set("x", &Integer{Value: 42})
+
+		env.ResetStore(nil)
+
+		if _, ok := env.Get("x"); ok {
+			t.Error("expected 'x' to be removed when keep is nil")
+		}
+	})
+
+	t.Run("does_not_affect_outer_scope", func(t *testing.T) {
+		outer := NewEnvironment()
+		outer.Set("outer_var", &Integer{Value: 99})
+		inner := NewEnclosedEnvironment(outer)
+		inner.Set("inner_var", &Integer{Value: 1})
+
+		inner.ResetStore(map[string]bool{})
+
+		// outer_var still visible via scope chain
+		if _, ok := inner.Get("outer_var"); !ok {
+			t.Error("outer scope variable should still be accessible")
+		}
+		// inner_var removed from local store
+		store := inner.GetStore()
+		if _, ok := store["inner_var"]; ok {
+			t.Error("inner_var should be removed from local store")
+		}
+	})
+}
+
 func TestGetClientField(t *testing.T) {
 	instance := &Instance{
 		Fields: map[string]Object{

@@ -896,6 +896,17 @@ func (e *Environment) GetStore() map[string]Object {
 	return store
 }
 
+// ResetStore removes all keys from the environment store except those in keep.
+func (e *Environment) ResetStore(keep map[string]bool) {
+	e.mu.Lock()
+	for k := range e.store {
+		if !keep[k] {
+			delete(e.store, k)
+		}
+	}
+	e.mu.Unlock()
+}
+
 // SetImportCallback sets the import callback for this environment.
 // GetImportCallback walks up the scope chain, so setting on any env
 // makes it available to that env and all enclosed children.

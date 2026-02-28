@@ -1262,6 +1262,93 @@ func TestUnsetVar(t *testing.T) {
 	p.UnsetVar("nonexistent")
 }
 
+func TestResetEnv(t *testing.T) {
+	t.Run("clears_all_user_vars", func(t *testing.T) {
+		p := New()
+		p.SetVar("x", int64(1))
+		p.SetVar("y", int64(2))
+
+		p.ResetEnv()
+
+		_, objErr := p.GetVar("x")
+		if objErr == nil {
+			t.Error("expected 'x' to be removed after ResetEnv")
+		}
+		_, objErr = p.GetVar("y")
+		if objErr == nil {
+			t.Error("expected 'y' to be removed after ResetEnv")
+		}
+	})
+
+	t.Run("preserves_import_builtin", func(t *testing.T) {
+		p := New()
+		p.RegisterLibrary(stdlib.JSONLibrary)
+		p.SetVar("x", int64(42))
+
+		p.ResetEnv()
+
+		// import builtin must survive so scripts can still import libraries
+		_, err := p.Eval(`import json`)
+		if err != nil {
+			t.Errorf("import should still work after ResetEnv: %v", err)
+		}
+	})
+
+	t.Run("keeps_specified_keys", func(t *testing.T) {
+		p := New()
+		p.SetVar("keep", int64(1))
+		p.SetVar("remove", int64(2))
+
+		p.ResetEnv("keep")
+
+		v, objErr := p.GetVar("keep")
+		if objErr != nil || v != int64(1) {
+			t.Errorf("expected 'keep' to remain with value 1, got %v / %v", v, objErr)
+		}
+		_, objErr = p.GetVar("remove")
+		if objErr == nil {
+			t.Error("expected 'remove' to be gone")
+		}
+	})
+
+	t.Run("preserves_imported_library_when_kept", func(t *testing.T) {
+		p := New()
+		p.RegisterLibrary(stdlib.JSONLibrary)
+		_, err := p.Eval(`import json`)
+		if err != nil {
+			t.Fatalf("import failed: %v", err)
+		}
+
+		p.ResetEnv("json")
+
+		// json dict should still be present
+		_, err = p.Eval(`data = json.dumps({"k": 1})`)
+		if err != nil {
+			t.Errorf("json should still be usable after ResetEnv with keep: %v", err)
+		}
+	})
+
+	t.Run("env_reusable_after_reset", func(t *testing.T) {
+		p := New()
+		_, _ = p.Eval(`x = 10`)
+
+		p.ResetEnv()
+
+		_, err := p.Eval(`y = 20`)
+		if err != nil {
+			t.Fatalf("eval after ResetEnv failed: %v", err)
+		}
+		v, objErr := p.GetVarAsInt("y")
+		if objErr != nil || v != 20 {
+			t.Errorf("expected y=20, got %d / %v", v, objErr)
+		}
+		_, objErr = p.GetVar("x")
+		if objErr == nil {
+			t.Error("x should not exist after ResetEnv")
+		}
+	})
+}
+
 func TestClone(t *testing.T) {
 	t.Run("inherits_library_registrations", func(t *testing.T) {
 		p := New()
