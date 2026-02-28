@@ -515,6 +515,19 @@ func (p *Scriptling) UnsetVar(name string) {
 	p.env.Delete(name)
 }
 
+// ResetEnv clears all user-defined variables from the environment, keeping only
+// the listed keys (plus the "import" builtin which is always preserved).
+// Imported library dicts remain if their names are passed in keepKeys.
+// This allows VM reuse across requests without re-registering libraries.
+func (p *Scriptling) ResetEnv(keepKeys ...string) {
+	keep := make(map[string]bool, len(keepKeys)+1)
+	keep["import"] = true
+	for _, k := range keepKeys {
+		keep[k] = true
+	}
+	p.env.ResetStore(keep)
+}
+
 // Clone creates a new Scriptling interpreter that shares library registrations
 // (both Go and script libraries) with the parent but starts with a fresh,
 // isolated environment. Already-imported libraries are NOT copied; each clone
