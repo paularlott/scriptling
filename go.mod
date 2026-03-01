@@ -8,7 +8,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/paularlott/cli v0.7.11
 	github.com/paularlott/logger v0.3.0
-	github.com/paularlott/mcp v0.13.0
+	github.com/paularlott/mcp v0.13.1
 	github.com/shirou/gopsutil/v3 v3.24.5
 	golang.org/x/net v0.51.0
 	golang.org/x/text v0.34.0
