@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/paularlott/scriptling/libloader"
 	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/scriptling/stdlib"
 )
@@ -526,27 +527,19 @@ two_pi = derived_lib.TWO_PI
 func TestNestedOnDemandImport(t *testing.T) {
 	p := New()
 
-	// Set up on-demand callback that registers libraries on first access
-	p.SetOnDemandLibraryCallback(func(s *Scriptling, name string) bool {
-		switch name {
-		case "utils":
-			return s.RegisterScriptLibrary("utils", `
-def add(a, b):
-    return a + b
-`) == nil
-		case "calculator":
-			return s.RegisterScriptLibrary("calculator", `
-import utils
+	// Set up loader that provides libraries on demand
+	loader := libloader.NewMemoryLoader(map[string]string{
+		"utils": `def add(a, b):
+    return a + b`,
+		"calculator": `import utils
 
 def sum_list(items):
     total = 0
     for item in items:
         total = utils.add(total, item)
-    return total
-`) == nil
-		}
-		return false
+    return total`,
 	})
+	p.SetLibraryLoader(loader)
 
 	_, err := p.Eval(`
 import calculator

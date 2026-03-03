@@ -12,6 +12,7 @@ import (
 	"github.com/paularlott/scriptling/extlibs/agent"
 	"github.com/paularlott/scriptling/extlibs/ai"
 	"github.com/paularlott/scriptling/extlibs/console"
+	"github.com/paularlott/scriptling/libloader"
 	"github.com/paularlott/scriptling/stdlib"
 )
 
@@ -56,14 +57,10 @@ func TestIntegrationScripts(t *testing.T) {
 
 		t.Run(baseName, func(t *testing.T) {
 			p := newTestInterpreter(t)
-			p.SetOnDemandLibraryCallback(func(p *scriptling.Scriptling, libName string) bool {
-				filename := filepath.Join(testDir, libName+".py")
-				content, err := os.ReadFile(filename)
-				if err == nil {
-					return p.RegisterScriptLibrary(libName, string(content)) == nil
-				}
-				return false
-			})
+
+			// Set up library loader for test libraries
+			loader := libloader.NewFilesystem(testDir)
+			p.SetLibraryLoader(loader)
 
 			content, err := os.ReadFile(file)
 			if err != nil {

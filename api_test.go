@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/libloader"
 	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/scriptling/stdlib"
 )
@@ -223,17 +224,14 @@ result = data["key"]
 	}
 }
 
-func TestOnDemandLibraryCallback(t *testing.T) {
+func TestLibraryLoader(t *testing.T) {
 	p := New()
 
-	// Set callback that registers a custom library on demand
-	p.SetOnDemandLibraryCallback(func(s *Scriptling, name string) bool {
-		if name == "customlib" {
-			// Register a simple library
-			return s.RegisterScriptLibrary("customlib", "PI = 3.14\ndef add(a, b):\n    return a + b") == nil
-		}
-		return false
+	// Set loader that provides a custom library on demand
+	loader := libloader.NewMemoryLoader(map[string]string{
+		"customlib": "PI = 3.14\ndef add(a, b):\n    return a + b",
 	})
+	p.SetLibraryLoader(loader)
 
 	// Try to import the library that doesn't exist yet
 	_, err := p.Eval(`

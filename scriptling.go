@@ -62,20 +62,26 @@ const (
 	maxDottedPathDepth     = 10 // Max depth for dotted paths (e.g., a.b.c.d.e.f.g.h.i.j)
 )
 
+// LibraryLoader is the interface for loading libraries from various sources.
+// This is an alias for the libloader.LibraryLoader interface to avoid import cycles.
+type LibraryLoader interface {
+	Load(name string) (source string, found bool, err error)
+	Description() string
+}
+
 type Scriptling struct {
-	env                     *object.Environment
-	registeredLibraries     map[string]*object.Library
-	scriptLibraries         map[string]*scriptLibrary // Script-based libraries
-	onDemandLibraryCallback func(*Scriptling, string) bool
-	sourceFile              string // optional source file name for error reporting
+	env                 *object.Environment
+	registeredLibraries map[string]*object.Library
+	scriptLibraries     map[string]*scriptLibrary // Script-based libraries
+	libraryLoader       LibraryLoader             // Loader for dynamic library loading
+	sourceFile          string                    // optional source file name for error reporting
 }
 
 func New() *Scriptling {
 	p := &Scriptling{
-		env:                     object.NewEnvironment(),
-		registeredLibraries:     make(map[string]*object.Library),
-		scriptLibraries:         make(map[string]*scriptLibrary),
-		onDemandLibraryCallback: nil,
+		env:                 object.NewEnvironment(),
+		registeredLibraries: make(map[string]*object.Library),
+		scriptLibraries:     make(map[string]*scriptLibrary),
 	}
 
 	// Register import builtin
@@ -304,10 +310,27 @@ func (p *Scriptling) loadLibraryWithDepth(name string, depth int) error {
 			return nil
 		}
 
-		// If first attempt and callback exists, call it
-		if attempts == 0 && p.onDemandLibraryCallback != nil {
-			if !p.onDemandLibraryCallback(p, name) {
-				break // callback didn't register, stop
+		// If first attempt, try to load from library loader
+		if attempts == 0 {
+			loaded := false
+
+			// Try library loader
+			if p.libraryLoader != nil {
+				source, found, err := p.libraryLoader.Load(name)
+				if err != nil {
+					return fmt.Errorf("loader error for %s: %w", name, err)
+				}
+				if found {
+					// Register as script library
+					if regErr := p.RegisterScriptLibrary(name, source); regErr != nil {
+						return fmt.Errorf("failed to register library %s: %w", name, regErr)
+					}
+					loaded = true
+				}
+			}
+
+			if !loaded {
+				break // nothing found, stop
 			}
 			// else continue to second attempt
 		} else {
@@ -545,7 +568,7 @@ func (p *Scriptling) Clone() *Scriptling {
 		child.scriptLibraries[name] = &scriptLibrary{source: lib.source}
 	}
 
-	child.onDemandLibraryCallback = p.onDemandLibraryCallback
+	child.libraryLoader = p.libraryLoader
 
 	return child
 }
@@ -801,11 +824,19 @@ func (p *Scriptling) RegisterScriptLibrary(name string, script string) error {
 	return nil
 }
 
-// SetOnDemandLibraryCallback sets a callback that is called when a library import fails
-// The callback receives the Scriptling instance and the library name, and should return true
-// if it successfully registered the library using RegisterLibrary or RegisterScriptLibrary
-func (p *Scriptling) SetOnDemandLibraryCallback(callback func(*Scriptling, string) bool) {
-	p.onDemandLibraryCallback = callback
+// SetLibraryLoader sets a loader for dynamically loading libraries.
+// This is the preferred way to load libraries from various sources
+// (filesystem, API, etc.) using the libloader package.
+//
+// Example:
+//
+//	loader := libloader.NewChain(
+//	    libloader.NewFilesystem("/app/libs"),
+//	    libloader.NewAPI("https://api.example.com/libs"),
+//	)
+//	p.SetLibraryLoader(loader)
+func (p *Scriptling) SetLibraryLoader(loader LibraryLoader) {
+	p.libraryLoader = loader
 }
 
 // LoadLibraryIntoEnv loads a library into the specified environment.
@@ -817,15 +848,24 @@ func (p *Scriptling) LoadLibraryIntoEnv(name string, env *object.Environment) er
 		return err
 	}
 	if !loaded {
-		// Try on-demand callback
-		if p.onDemandLibraryCallback != nil && p.onDemandLibraryCallback(p, name) {
-			// Retry after callback
-			loaded, err = p.loadLibraryIntoEnv(name, env)
-			if err != nil {
-				return err
+		// Try library loader
+		if p.libraryLoader != nil {
+			source, found, loadErr := p.libraryLoader.Load(name)
+			if loadErr != nil {
+				return fmt.Errorf("loader error for %s: %w", name, loadErr)
 			}
-			if loaded {
-				return nil
+			if found {
+				if regErr := p.RegisterScriptLibrary(name, source); regErr != nil {
+					return fmt.Errorf("failed to register library %s: %w", name, regErr)
+				}
+				// Retry after loading
+				loaded, err = p.loadLibraryIntoEnv(name, env)
+				if err != nil {
+					return err
+				}
+				if loaded {
+					return nil
+				}
 			}
 		}
 		return fmt.Errorf("library not found: %s", name)
@@ -924,9 +964,25 @@ func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[stri
 				return nil
 			}
 
-			// If first attempt and callback exists, try on-demand loading
-			if attempts == 0 && p.onDemandLibraryCallback != nil {
-				if !p.onDemandLibraryCallback(p, libName) {
+			// If first attempt, try to load from library loader or callback
+			if attempts == 0 {
+				didLoad := false
+
+				// Try library loader
+				if p.libraryLoader != nil {
+					source, found, loadErr := p.libraryLoader.Load(libName)
+					if loadErr != nil {
+						return fmt.Errorf("loader error for %s: %w", libName, loadErr)
+					}
+					if found {
+						if regErr := p.RegisterScriptLibrary(libName, source); regErr != nil {
+							return fmt.Errorf("failed to register library %s: %w", libName, regErr)
+						}
+						didLoad = true
+					}
+				}
+
+				if !didLoad {
 					break
 				}
 			} else {

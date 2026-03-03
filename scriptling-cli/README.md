@@ -74,7 +74,7 @@ The linter exits with code 0 if no errors are found, and code 1 if any errors ex
 | `-i`, `--interactive` | - | Start interactive mode | false |
 | `-l`, `--lint` | - | Lint script files without executing | false |
 | `--lint-format` | `SCRIPTLING_LINT_FORMAT` | Output format for lint (text/json) | text |
-| `--libdir` | `SCRIPTLING_LIBDIR` | Directory to load libraries from | (current dir) |
+| `--libdir` | `SCRIPTLING_LIBDIR` | Directory to load libraries from | (none) |
 | `--log-level` | `SCRIPTLING_LOG_LEVEL` | Log level (trace/debug/info/warn/error) | info |
 | `--log-format` | `SCRIPTLING_LOG_FORMAT` | Log format (console/json) | console |
 | `-S`, `--server` | `SCRIPTLING_SERVER` | HTTP server address (host:port) | (disabled) |
@@ -510,3 +510,38 @@ The CLI includes all standard libraries plus external libraries:
 - `datetime`, `json`, `math`, `random`, `re`, `time`, `base64`, `hashlib`, `urllib`
 - `requests` - HTTP client library
 - `subprocess` - Process execution library
+
+### Library Organization
+
+The `--libdir` option lets you load custom libraries from a directory. Libraries can be organized using Python-style folder structure:
+
+**Directory structure:**
+```
+mylibs/
+  utils.py              # import utils
+  knot/
+    __init__.py         # (optional) package initialization
+    groups.py           # import knot.groups
+    roles.py            # import knot.roles
+    users.py            # import knot.users
+```
+
+**Usage:**
+```bash
+scriptling --libdir ./mylibs script.py
+```
+
+```python
+# In script.py
+import utils           # Loads from mylibs/utils.py
+import knot.groups     # Loads from mylibs/knot/groups.py
+import knot.roles      # Loads from mylibs/knot/roles.py
+```
+
+**Loading Priority:**
+
+For nested imports like `knot.groups`, the loader checks:
+1. `mylibs/knot/groups.py` (folder structure - preferred)
+2. `mylibs/knot.groups.py` (flat file - legacy fallback)
+
+This follows Python's module organization conventions, keeping related modules grouped together in folders.

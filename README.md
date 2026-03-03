@@ -126,6 +126,7 @@ See [scriptling-cli/README.md](scriptling-cli/README.md) for details.
 ```go
 import (
     "github.com/paularlott/scriptling"
+    "github.com/paularlott/scriptling/libloader"
     "github.com/paularlott/scriptling/stdlib"
 )
 
@@ -163,18 +164,10 @@ def add(a, b):
 PI = 3.14159
 `)
 
-// Set on-demand library callback for dynamic loading
-p.SetOnDemandLibraryCallback(func(p *Scriptling, libName string) bool {
-    if libName == "disklib" {
-        // Load library from disk and register it
-        script, err := loadLibraryFromDisk(libName)
-        if err != nil {
-            return false
-        }
-        return p.RegisterScriptLibrary(libName, script) == nil
-    }
-    return false
-})
+// Set up library loader for dynamic loading from filesystem
+// Supports Python-style folder structure: libs/knot/groups.py → import knot.groups
+loader := libloader.NewFilesystem("/app/libs")
+p.SetLibraryLoader(loader)
 ```
 
 ### Libraries

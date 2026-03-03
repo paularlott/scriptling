@@ -1,9 +1,6 @@
 package mcp
 
 import (
-	"os"
-	"path/filepath"
-
 	"github.com/paularlott/logger"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs"
@@ -12,14 +9,19 @@ import (
 	"github.com/paularlott/scriptling/extlibs/console"
 	scriptlingfuzzy "github.com/paularlott/scriptling/extlibs/fuzzy"
 	scriptlingmcp "github.com/paularlott/scriptling/extlibs/mcp"
+	"github.com/paularlott/scriptling/libloader"
 	"github.com/paularlott/scriptling/stdlib"
 )
 
 // SetupScriptling configures a Scriptling instance with all libraries.
-// libdir: Optional directory for on-demand library loading (empty = current directory)
+// libdir: Optional directory for on-demand library loading (empty = no filesystem loading)
 // registerInteract: Whether to register the agent interact library
 // allowedPaths: Filesystem path restrictions for os, pathlib, glob, sandbox (nil = no restrictions)
 // log: Logger instance for the logging library
+//
+// Library loading supports Python-style folder structure:
+//   - libs/knot/groups.py → import knot.groups (preferred)
+//   - libs/knot.groups.py → import knot.groups (legacy fallback)
 func SetupScriptling(p *scriptling.Scriptling, libdir string, registerInteract bool, allowedPaths []string, log logger.Logger) {
 	// Register all standard libraries
 	stdlib.RegisterAll(p)
@@ -60,20 +62,12 @@ func SetupScriptling(p *scriptling.Scriptling, libdir string, registerInteract b
 	scriptlingmcp.RegisterToon(p)
 	scriptlingmcp.RegisterToolHelpers(p)
 
-	// Set up on-demand library loading for local .py files
-	p.SetOnDemandLibraryCallback(func(p *scriptling.Scriptling, libName string) bool {
-		var filename string
-		if libdir != "" {
-			filename = filepath.Join(libdir, libName+".py")
-		} else {
-			filename = libName + ".py"
-		}
-		content, err := os.ReadFile(filename)
-		if err == nil {
-			return p.RegisterScriptLibrary(libName, string(content)) == nil
-		}
-		return false
-	})
+	// Set up library loading from filesystem using the new loader
+	// Supports Python-style folder structure: knot/groups.py → import knot.groups
+	if libdir != "" {
+		loader := libloader.NewFilesystem(libdir)
+		p.SetLibraryLoader(loader)
+	}
 }
 
 // SetupFactories configures the global sandbox and background factories.
