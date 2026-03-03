@@ -12,7 +12,7 @@ import scriptling.ai as ai
 _OriginalAgent = agent_module.Agent
 
 class Agent(_OriginalAgent):
-    def interact(self, c=None):
+    def interact(self, c=None, max_iterations=25):
         if c is None:
             c = console.Console()
         c.set_status("scriptling", self.model if self.model else "default")
@@ -58,7 +58,8 @@ class Agent(_OriginalAgent):
 
             c.spinner_start("Thinking")
 
-            for i in range(20):
+            hit_limit = False
+            for i in range(max_iterations):
                 if cancelled[0]:
                     break
 
@@ -108,6 +109,14 @@ class Agent(_OriginalAgent):
                 })
                 for tr in tool_results:
                     self.messages.append(tr)
+
+                # Check if we're about to hit the limit
+                if i == max_iterations - 1:
+                    hit_limit = True
+
+            if hit_limit and not cancelled[0]:
+                c.spinner_stop()
+                c.add_message("[Reached max iterations (" + str(max_iterations) + "). Type 'continue' or ask me to proceed.]", "system")
 
             if cancelled[0]:
                 self.messages = self.messages[:msg_index]
