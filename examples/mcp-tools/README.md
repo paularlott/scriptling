@@ -150,10 +150,10 @@ Add to your Claude Desktop configuration:
 
 ## Using with Libraries
 
-Tools can import libraries from the same directory or from `--libdir`:
+Tools can import libraries from the same directory as the tool script, or from any path added via `--libpath`:
 
 ```python
-import mylib  # Loads mylib.py from tools directory or libdir
+import mylib  # Loads mylib.py from the tools directory (searched automatically)
 import scriptling.mcp.tool as tool
 
 result = mylib.process(tool.get_string("input"))

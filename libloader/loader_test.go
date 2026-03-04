@@ -277,6 +277,63 @@ func TestFilesystemLoaderWithCustomExtension(t *testing.T) {
 	}
 }
 
+func TestMultiFilesystemLoaderScriptDirFirst(t *testing.T) {
+	// Simulate the CLI behaviour: script dir is first, extra --libpath dirs follow.
+	// A library in the script dir should shadow one with the same name in an extra dir.
+	scriptDir, err := os.MkdirTemp("", "libloader-scriptdir-*")
+	if err != nil {
+		t.Fatalf("failed to create script dir: %v", err)
+	}
+	defer os.RemoveAll(scriptDir)
+
+	extraDir, err := os.MkdirTemp("", "libloader-extradir-*")
+	if err != nil {
+		t.Fatalf("failed to create extra dir: %v", err)
+	}
+	defer os.RemoveAll(extraDir)
+
+	// Same library name in both dirs
+	if err := os.WriteFile(filepath.Join(scriptDir, "mylib.py"), []byte(`VERSION = "local"`), 0644); err != nil {
+		t.Fatalf("failed to write script dir lib: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(extraDir, "mylib.py"), []byte(`VERSION = "extra"`), 0644); err != nil {
+		t.Fatalf("failed to write extra dir lib: %v", err)
+	}
+	// Library only in extra dir
+	if err := os.WriteFile(filepath.Join(extraDir, "shared.py"), []byte(`X = 1`), 0644); err != nil {
+		t.Fatalf("failed to write shared lib: %v", err)
+	}
+
+	loader := NewMultiFilesystem(scriptDir, extraDir)
+
+	t.Run("script dir shadows extra dir", func(t *testing.T) {
+		source, found, err := loader.Load("mylib")
+		if err != nil || !found {
+			t.Fatalf("expected to find mylib: err=%v, found=%v", err, found)
+		}
+		if source != `VERSION = "local"` {
+			t.Errorf("expected local version, got: %s", source)
+		}
+	})
+
+	t.Run("falls back to extra dir when not in script dir", func(t *testing.T) {
+		source, found, err := loader.Load("shared")
+		if err != nil || !found {
+			t.Fatalf("expected to find shared: err=%v, found=%v", err, found)
+		}
+		if source != `X = 1` {
+			t.Errorf("unexpected source: %s", source)
+		}
+	})
+
+	t.Run("not found in any dir", func(t *testing.T) {
+		_, found, err := loader.Load("nonexistent")
+		if err != nil || found {
+			t.Errorf("expected not found: err=%v, found=%v", err, found)
+		}
+	})
+}
+
 func TestMultiFilesystemLoader(t *testing.T) {
 	// Create two temp directories
 	dir1, err := os.MkdirTemp("", "libloader-test1-*")

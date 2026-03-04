@@ -14,15 +14,11 @@ import (
 )
 
 // SetupScriptling configures a Scriptling instance with all libraries.
-// libdir: Optional directory for on-demand library loading (empty = no filesystem loading)
+// libdirs: Directories for on-demand library loading (first entry is typically the script dir or cwd)
 // registerInteract: Whether to register the agent interact library
 // allowedPaths: Filesystem path restrictions for os, pathlib, glob, sandbox (nil = no restrictions)
 // log: Logger instance for the logging library
-//
-// Library loading supports Python-style folder structure:
-//   - libs/knot/groups.py → import knot.groups (preferred)
-//   - libs/knot.groups.py → import knot.groups (legacy fallback)
-func SetupScriptling(p *scriptling.Scriptling, libdir string, registerInteract bool, allowedPaths []string, log logger.Logger) {
+func SetupScriptling(p *scriptling.Scriptling, libdirs []string, registerInteract bool, allowedPaths []string, log logger.Logger) {
 	// Register all standard libraries
 	stdlib.RegisterAll(p)
 
@@ -62,21 +58,19 @@ func SetupScriptling(p *scriptling.Scriptling, libdir string, registerInteract b
 	scriptlingmcp.RegisterToon(p)
 	scriptlingmcp.RegisterToolHelpers(p)
 
-	// Set up library loading from filesystem using the new loader
-	// Supports Python-style folder structure: knot/groups.py → import knot.groups
-	if libdir != "" {
-		loader := libloader.NewFilesystem(libdir)
-		p.SetLibraryLoader(loader)
+	// Set up library loading from filesystem
+	if len(libdirs) > 0 {
+		p.SetLibraryLoader(libloader.NewMultiFilesystem(libdirs...))
 	}
 }
 
 // SetupFactories configures the global sandbox and background factories.
 // Call this once at startup, before any scripts execute.
 // The factories create new Scriptling instances with the same library configuration.
-func SetupFactories(libdir string, allowedPaths []string, log logger.Logger) {
+func SetupFactories(libdirs []string, allowedPaths []string, log logger.Logger) {
 	factory := func() extlibs.SandboxInstance {
 		p := scriptling.New()
-		SetupScriptling(p, libdir, false, allowedPaths, log)
+		SetupScriptling(p, libdirs, false, allowedPaths, log)
 		return p
 	}
 	extlibs.SetSandboxFactory(factory)

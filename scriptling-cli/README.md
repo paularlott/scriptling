@@ -74,7 +74,7 @@ The linter exits with code 0 if no errors are found, and code 1 if any errors ex
 | `-i`, `--interactive` | - | Start interactive mode | false |
 | `-l`, `--lint` | - | Lint script files without executing | false |
 | `--lint-format` | `SCRIPTLING_LINT_FORMAT` | Output format for lint (text/json) | text |
-| `--libdir` | `SCRIPTLING_LIBDIR` | Directory to load libraries from | (none) |
+| `-L`, `--libpath` | `SCRIPTLING_LIBPATH` | Additional library search directories (repeatable) | (none) |
 | `--log-level` | `SCRIPTLING_LOG_LEVEL` | Log level (trace/debug/info/warn/error) | info |
 | `--log-format` | `SCRIPTLING_LOG_FORMAT` | Log format (console/json) | console |
 | `-S`, `--server` | `SCRIPTLING_SERVER` | HTTP server address (host:port) | (disabled) |
@@ -96,8 +96,8 @@ The CLI automatically loads environment variables from a `.env` file in the curr
 SCRIPTLING_LOG_LEVEL=debug
 SCRIPTLING_LOG_FORMAT=console
 
-# Library directory
-SCRIPTLING_LIBDIR=./mylibs
+# Additional library search paths (colon-separated on Unix, semicolon on Windows)
+SCRIPTLING_LIBPATH=/shared/libs
 
 # Server configuration
 SCRIPTLING_SERVER=:8000
@@ -497,7 +497,7 @@ task install
 - **HTTP Server**: Start HTTP server with custom routes via `--server`
 - **MCP Server**: Serve tools via Model Context Protocol with `--mcp-tools`
 - **Path restrictions**: Restrict filesystem access with `--allowed-paths`
-- **Custom libraries**: Load libraries from custom directories with `--libdir`
+- **Custom libraries**: Load libraries from the script directory automatically, with optional extra paths via `--libpath`
 - **Environment configuration**: Auto-load settings from `.env` file
 - **Configurable logging**: Set log level with `--log-level` (debug, info, warn, error)
 - **Cross-platform**: Built for Linux, macOS, and Windows on AMD64 and ARM64
@@ -511,37 +511,51 @@ The CLI includes all standard libraries plus external libraries:
 - `requests` - HTTP client library
 - `subprocess` - Process execution library
 
-### Library Organization
+### Library Loading
 
-The `--libdir` option lets you load custom libraries from a directory. Libraries can be organized using Python-style folder structure:
+Scriptling automatically searches for libraries relative to the running script, matching Python's behaviour. For interactive mode or stdin, the current working directory is used instead.
 
-**Directory structure:**
+```bash
+# Libraries in ./myproject/ are found automatically
+scriptling ./myproject/script.py
+
+# Interactive mode: libraries in cwd are found automatically
+scriptling --interactive
 ```
-mylibs/
+
+Use `--libpath` (repeatable) to add extra search directories. The script directory (or cwd) is always searched first:
+
+```bash
+# Search script dir first, then /shared/libs
+scriptling --libpath /shared/libs script.py
+
+# Multiple extra directories
+scriptling --libpath /shared/libs --libpath /company/libs script.py
+
+# Via environment variable (space-separated list)
+SCRIPTLING_LIBPATH=/shared/libs scriptling script.py
+```
+
+Libraries can be organised using Python-style folder structure:
+
+```
+myproject/
+  script.py
   utils.py              # import utils
   knot/
     __init__.py         # (optional) package initialization
     groups.py           # import knot.groups
     roles.py            # import knot.roles
-    users.py            # import knot.users
-```
-
-**Usage:**
-```bash
-scriptling --libdir ./mylibs script.py
 ```
 
 ```python
-# In script.py
-import utils           # Loads from mylibs/utils.py
-import knot.groups     # Loads from mylibs/knot/groups.py
-import knot.roles      # Loads from mylibs/knot/roles.py
+# In script.py — no --libpath needed, same directory is searched automatically
+import utils           # Loads from myproject/utils.py
+import knot.groups     # Loads from myproject/knot/groups.py
 ```
 
 **Loading Priority:**
 
 For nested imports like `knot.groups`, the loader checks:
-1. `mylibs/knot/groups.py` (folder structure - preferred)
-2. `mylibs/knot.groups.py` (flat file - legacy fallback)
-
-This follows Python's module organization conventions, keeping related modules grouped together in folders.
+1. `dir/knot/groups.py` (folder structure - preferred)
+2. `dir/knot.groups.py` (flat file - legacy fallback)

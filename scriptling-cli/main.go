@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -40,12 +41,12 @@ func main() {
 				Usage:   "Start interactive mode",
 				Aliases: []string{"i"},
 			},
-			&cli.StringFlag{
-				Name:         "libdir",
-				Usage:        "Directory to load libraries from",
-				DefaultValue: "",
-				Global:       true,
-				EnvVars:      []string{"SCRIPTLING_LIBDIR"},
+			&cli.StringSliceFlag{
+				Name:    "libpath",
+				Usage:   "Additional directories to search for libraries (script dir / cwd is always searched first)",
+				Aliases: []string{"L"},
+				Global:  true,
+				EnvVars: []string{"SCRIPTLING_LIBPATH"},
 			},
 			&cli.StringFlag{
 				Name:         "log-level",
@@ -165,13 +166,23 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	// Create Scriptling interpreter
 	p := scriptling.New()
 
-	// Set up all libraries and factories
-	libdir := cmd.GetString("libdir")
-	mcpcli.SetupFactories(libdir, allowedPaths, globalLogger)
-	mcpcli.SetupScriptling(p, libdir, true, allowedPaths, globalLogger)
-
+	// Determine the implicit base dir: script dir, or cwd for interactive/stdin
 	file := cmd.GetStringArg("file")
 	interactive := cmd.GetBool("interactive")
+
+	baseDir := ""
+	if file != "" {
+		baseDir = filepath.Dir(file)
+	} else {
+		baseDir, _ = os.Getwd()
+	}
+
+	// Build lib dirs: implicit base dir first, then any --libpath entries
+	libDirs := buildLibDirs(baseDir, cmd.GetStringSlice("libpath"))
+
+	// Set up all libraries and factories
+	mcpcli.SetupFactories(libDirs, allowedPaths, globalLogger)
+	mcpcli.SetupScriptling(p, libDirs, true, allowedPaths, globalLogger)
 
 	// Set up sys.argv with all arguments
 	argv := []string{file}
@@ -204,10 +215,17 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 }
 
 func runServer(ctx context.Context, cmd *cli.Command, address string) error {
+	file := cmd.GetStringArg("file")
+	baseDir := ""
+	if file != "" {
+		baseDir = filepath.Dir(file)
+	} else {
+		baseDir, _ = os.Getwd()
+	}
 	return server.RunServer(ctx, server.ServerConfig{
 		Address:      address,
-		ScriptFile:   cmd.GetStringArg("file"),
-		LibDir:       cmd.GetString("libdir"),
+		ScriptFile:   file,
+		LibDirs:      buildLibDirs(baseDir, cmd.GetStringSlice("libpath")),
 		BearerToken:  cmd.GetString("bearer-token"),
 		AllowedPaths: parseAllowedPaths(cmd.GetString("allowed-paths")),
 		MCPToolsDir:  cmd.GetString("mcp-tools"),
@@ -216,6 +234,22 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 		TLSKey:       cmd.GetString("tls-key"),
 		TLSGenerate:  cmd.GetBool("tls-generate"),
 	})
+}
+
+// buildLibDirs constructs the ordered list of library search directories.
+// baseDir (script dir or cwd) is always first; extra dirs are appended.
+// Empty strings are skipped.
+func buildLibDirs(baseDir string, extra []string) []string {
+	var dirs []string
+	if baseDir != "" {
+		dirs = append(dirs, baseDir)
+	}
+	for _, d := range extra {
+		if d != "" {
+			dirs = append(dirs, d)
+		}
+	}
+	return dirs
 }
 
 // parseAllowedPaths parses a comma-separated list of paths into a slice.
