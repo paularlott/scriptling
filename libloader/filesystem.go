@@ -111,11 +111,19 @@ func (l *FilesystemLoader) resolvePaths(name string) []string {
 	folderPath := filepath.Join(l.baseDir, filepath.Join(parts...) + l.extension)
 	paths = append(paths, folderPath)
 
-	// Priority 2: Flat file (legacy support)
+	// Priority 2: Package __init__.py (for single-part names)
+	// telegram -> baseDir/telegram/__init__.py
+	// This allows importing a package that has submodules
+	initPath := filepath.Join(l.baseDir, filepath.Join(parts...), "__init__.py")
+	if initPath != folderPath {
+		paths = append(paths, initPath)
+	}
+
+	// Priority 3: Flat file (legacy support)
 	// knot.groups -> baseDir/knot.groups.py
 	if len(parts) > 1 {
 		flatPath := filepath.Join(l.baseDir, name + l.extension)
-		if flatPath != folderPath {
+		if flatPath != folderPath && flatPath != initPath {
 			paths = append(paths, flatPath)
 		}
 	}
