@@ -6,7 +6,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/object"
+	"github.com/paularlott/scriptling/stdlib"
 )
 
 func TestRaiseForStatus(t *testing.T) {
@@ -81,4 +83,150 @@ func findStr(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+func TestBuildURLWithParams(t *testing.T) {
+	tests := []struct {
+		name     string
+		baseURL  string
+		params   map[string]string
+		wantContains string
+	}{
+		{
+			name:     "no params",
+			baseURL:  "https://example.com/api",
+			params:   nil,
+			wantContains: "https://example.com/api",
+		},
+		{
+			name:     "single param",
+			baseURL:  "https://example.com/api",
+			params:   map[string]string{"key": "value"},
+			wantContains: "key=value",
+		},
+		{
+			name:     "multiple params",
+			baseURL:  "https://example.com/api",
+			params:   map[string]string{"name": "test", "count": "5"},
+			wantContains: "name=test",
+		},
+		{
+			name:     "with existing query params",
+			baseURL:  "https://example.com/api?existing=1",
+			params:   map[string]string{"new": "2"},
+			wantContains: "existing=1",
+		},
+		{
+			name:     "special characters in params",
+			baseURL:  "https://example.com/api",
+			params:   map[string]string{"city": "New York"},
+			wantContains: "city=New+York",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := buildURLWithParams(tt.baseURL, tt.params)
+			if !containsStr(result, tt.wantContains) {
+				t.Errorf("buildURLWithParams(%q, %v) = %q, want to contain %q",
+					tt.baseURL, tt.params, result, tt.wantContains)
+			}
+		})
+	}
+}
+
+func TestExtractParams(t *testing.T) {
+	dict := map[string]object.Object{
+		"string": &object.String{Value: "hello"},
+		"int":    &object.Integer{Value: 42},
+		"float":  &object.Float{Value: 3.14},
+		"bool":   &object.Boolean{Value: true},
+	}
+
+	params := extractParams(dict)
+
+	if params["string"] != "hello" {
+		t.Errorf("expected string='hello', got %q", params["string"])
+	}
+	if params["int"] != "42" {
+		t.Errorf("expected int='42', got %q", params["int"])
+	}
+	if params["float"] != "3.14" {
+		t.Errorf("expected float='3.14', got %q", params["float"])
+	}
+	if params["bool"] != "true" {
+		t.Errorf("expected bool='true', got %q", params["bool"])
+	}
+}
+
+func TestRequestsGetWithParams(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Verify query params are present
+		query := r.URL.Query()
+		if query.Get("name") != "test" {
+			t.Errorf("expected name=test, got %q", query.Get("name"))
+		}
+		if query.Get("count") != "10" {
+			t.Errorf("expected count=10, got %q", query.Get("count"))
+		}
+		w.WriteHeader(200)
+		w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer srv.Close()
+
+	// Test using scriptling evaluator
+	p := scriptling.New()
+	stdlib.RegisterAll(p)
+	RegisterRequestsLibrary(p)
+
+	script := `
+import requests
+
+params = {"name": "test", "count": 10}
+response = requests.get("` + srv.URL + `", params=params, timeout=5)
+response.status_code
+`
+
+	result, err := p.Eval(script)
+	if err != nil {
+		t.Fatalf("Script error: %v", err)
+	}
+
+	if status, _ := result.AsInt(); status != 200 {
+		t.Errorf("Expected status 200, got %d", status)
+	}
+}
+
+func TestRequestsPostWithParams(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Verify query params are present even for POST
+		query := r.URL.Query()
+		if query.Get("api_key") != "secret" {
+			t.Errorf("expected api_key=secret, got %q", query.Get("api_key"))
+		}
+		w.WriteHeader(200)
+		w.Write([]byte(`{"result":"created"}`))
+	}))
+	defer srv.Close()
+
+	p := scriptling.New()
+	stdlib.RegisterAll(p)
+	RegisterRequestsLibrary(p)
+
+	script := `
+import requests
+
+params = {"api_key": "secret"}
+response = requests.post("` + srv.URL + `", data="test data", params=params, timeout=5)
+response.status_code
+`
+
+	result, err := p.Eval(script)
+	if err != nil {
+		t.Fatalf("Script error: %v", err)
+	}
+
+	if status, _ := result.AsInt(); status != 200 {
+		t.Errorf("Expected status 200, got %d", status)
+	}
 }

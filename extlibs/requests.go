@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -92,10 +93,11 @@ var exceptionsNamespace = object.NewStringDict(map[string]object.Object{
 	"HTTPError":        httpErrorType,
 })
 
-// parseRequestOptions parses the options dict and returns timeout, headers, user, pass
-func parseRequestOptions(options map[string]object.Object) (int, map[string]string, string, string) {
+// parseRequestOptions parses the options dict and returns timeout, headers, params, user, pass
+func parseRequestOptions(options map[string]object.Object) (int, map[string]string, map[string]string, string, string) {
 	timeout := 5
 	headers := make(map[string]string)
+	params := make(map[string]string)
 	user := ""
 	pass := ""
 	if timeoutPair, ok := options["timeout"]; ok {
@@ -106,6 +108,11 @@ func parseRequestOptions(options map[string]object.Object) (int, map[string]stri
 	if headersPair, ok := options["headers"]; ok {
 		if headersDict, err := headersPair.AsDict(); err == nil {
 			headers = extractHeaders(headersDict)
+		}
+	}
+	if paramsPair, ok := options["params"]; ok {
+		if paramsDict, err := paramsPair.AsDict(); err == nil {
+			params = extractParams(paramsDict)
 		}
 	}
 	if authPair, ok := options["auth"]; ok {
@@ -120,7 +127,50 @@ func parseRequestOptions(options map[string]object.Object) (int, map[string]stri
 			}
 		}
 	}
-	return timeout, headers, user, pass
+	return timeout, headers, params, user, pass
+}
+
+// extractParams extracts params from a dict, converting all values to strings
+func extractParams(dict map[string]object.Object) map[string]string {
+	params := make(map[string]string)
+	for key, value := range dict {
+		// Convert any value type to string (int, float, bool, etc.)
+		if strVal, err := value.CoerceString(); err == nil {
+			params[key] = strVal
+		}
+	}
+	return params
+}
+
+// buildURLWithParams appends query parameters to a URL
+func buildURLWithParams(baseURL string, params map[string]string) string {
+	if len(params) == 0 {
+		return baseURL
+	}
+
+	// Parse existing URL to preserve any existing query params
+	parsedURL, err := url.Parse(baseURL)
+	if err != nil {
+		// If parsing fails, just append params naively
+		return baseURL + "?" + encodeParams(params)
+	}
+
+	// Add new params to existing query
+	query := parsedURL.Query()
+	for key, value := range params {
+		query.Set(key, value)
+	}
+	parsedURL.RawQuery = query.Encode()
+	return parsedURL.String()
+}
+
+// encodeParams encodes params to URL query string format
+func encodeParams(params map[string]string) string {
+	values := url.Values{}
+	for key, value := range params {
+		values.Set(key, value)
+	}
+	return values.Encode()
 }
 
 // extractRequestArgs extracts URL, optional data, and remaining options from kwargs and args.
@@ -209,12 +259,14 @@ var RequestsLibrary = object.NewLibrary(RequestsLibraryName, map[string]*object.
 	},
 	"get": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			url, _, options, err := extractRequestArgs(kwargs, args, false)
+			rawURL, _, options, err := extractRequestArgs(kwargs, args, false)
 			if err != nil {
 				return err
 			}
-			timeout, headers, user, pass := parseRequestOptions(options)
-			return httpRequestWithContext(ctx, "GET", url, "", timeout, headers, user, pass)
+			timeout, headers, params, user, pass := parseRequestOptions(options)
+			// Build URL with query params
+			fullURL := buildURLWithParams(rawURL, params)
+			return httpRequestWithContext(ctx, "GET", fullURL, "", timeout, headers, user, pass)
 		},
 		HelpText: `get(url, **kwargs) - Send a GET request
 
@@ -225,6 +277,7 @@ Parameters:
   **kwargs: Optional arguments
     - timeout (int): Request timeout in seconds (default: 5)
     - headers (dict): HTTP headers as key-value pairs
+    - params (dict): Query parameters to append to URL
     - auth (tuple/list): Basic authentication as (username, password)
 
 Returns:
@@ -236,8 +289,10 @@ Returns:
 			if err != nil {
 				return err
 			}
-			timeout, headers, user, pass := parseRequestOptions(options)
-			return httpRequestWithContext(ctx, "POST", url, data, timeout, headers, user, pass)
+			timeout, headers, params, user, pass := parseRequestOptions(options)
+			// POST can also have query params
+			fullURL := buildURLWithParams(url, params)
+			return httpRequestWithContext(ctx, "POST", fullURL, data, timeout, headers, user, pass)
 		},
 		HelpText: `post(url, data=None, json=None, **kwargs) - Send a POST request
 
@@ -263,8 +318,9 @@ Returns:
 			if err != nil {
 				return err
 			}
-			timeout, headers, user, pass := parseRequestOptions(options)
-			return httpRequestWithContext(ctx, "PUT", url, data, timeout, headers, user, pass)
+			timeout, headers, params, user, pass := parseRequestOptions(options)
+			fullURL := buildURLWithParams(url, params)
+			return httpRequestWithContext(ctx, "PUT", fullURL, data, timeout, headers, user, pass)
 		},
 		HelpText: `put(url, data=None, json=None, **kwargs) - Send a PUT request
 
@@ -286,12 +342,13 @@ Returns:
 	},
 	"delete": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			url, _, options, err := extractRequestArgs(kwargs, args, false)
+			rawURL, _, options, err := extractRequestArgs(kwargs, args, false)
 			if err != nil {
 				return err
 			}
-			timeout, headers, user, pass := parseRequestOptions(options)
-			return httpRequestWithContext(ctx, "DELETE", url, "", timeout, headers, user, pass)
+			timeout, headers, params, user, pass := parseRequestOptions(options)
+			fullURL := buildURLWithParams(rawURL, params)
+			return httpRequestWithContext(ctx, "DELETE", fullURL, "", timeout, headers, user, pass)
 		},
 		HelpText: `delete(url, **kwargs) - Send a DELETE request
 
@@ -313,8 +370,9 @@ Returns:
 			if err != nil {
 				return err
 			}
-			timeout, headers, user, pass := parseRequestOptions(options)
-			return httpRequestWithContext(ctx, "PATCH", url, data, timeout, headers, user, pass)
+			timeout, headers, params, user, pass := parseRequestOptions(options)
+			fullURL := buildURLWithParams(url, params)
+			return httpRequestWithContext(ctx, "PATCH", fullURL, data, timeout, headers, user, pass)
 		},
 		HelpText: `patch(url, data=None, json=None, **kwargs) - Send a PATCH request
 
