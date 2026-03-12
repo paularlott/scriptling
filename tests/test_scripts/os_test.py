@@ -8,13 +8,23 @@ passed = True
 # Test 1: Environment variables
 print("Testing environment variables...")
 home = os.getenv("HOME", "/default")
-if home == "":
+if not home:
     home = "/default"
 passed = passed and len(home) > 0
 
 # Test getenv with default
 test_env = os.getenv("NONEXISTENT_VAR", "default_value")
 assert test_env == "default_value"
+
+# Test getenv without default returns None
+missing = os.getenv("NONEXISTENT_VAR_12345_SCRIPTLING")
+assert missing is None
+
+# Test getenv None works with 'if not' pattern
+base = os.getenv("NONEXISTENT_VAR_12345_SCRIPTLING")
+if not base:
+    base = "applied"
+assert base == "applied"
 
 # Test environ dict
 environ = os.environ()

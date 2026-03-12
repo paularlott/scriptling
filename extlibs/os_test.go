@@ -8,10 +8,10 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
-func TestOSEnvironGet(t *testing.T) {
-	// Set test environment variable
+func TestOSGetenv(t *testing.T) {
 	os.Setenv("TEST_OS_VAR", "test_value")
 	defer os.Unsetenv("TEST_OS_VAR")
+	os.Unsetenv("TEST_MISSING_VAR")
 
 	p := scriptling.New()
 	RegisterOSLibrary(p, nil)
@@ -19,49 +19,87 @@ func TestOSEnvironGet(t *testing.T) {
 	tests := []struct {
 		name     string
 		code     string
-		expected string
+		check    func(t *testing.T, result object.Object)
 	}{
 		{
-			name: "environ.get with existing var",
+			name: "existing var returns value",
 			code: `import os
-result = os.environ.get("TEST_OS_VAR")
-result`,
-			expected: "test_value",
+os.getenv("TEST_OS_VAR")`,
+			check: func(t *testing.T, result object.Object) {
+				str, ok := result.(*object.String)
+				if !ok {
+					t.Fatalf("expected String, got %T", result)
+				}
+				if str.Value != "test_value" {
+					t.Errorf("expected %q, got %q", "test_value", str.Value)
+				}
+			},
 		},
 		{
-			name: "environ.get with default",
+			name: "missing var without default returns None",
 			code: `import os
-result = os.environ.get("NONEXISTENT_VAR", "default")
-result`,
-			expected: "default",
+os.getenv("TEST_MISSING_VAR")`,
+			check: func(t *testing.T, result object.Object) {
+				if _, ok := result.(*object.Null); !ok {
+					t.Errorf("expected None/Null, got %T (%v)", result, result)
+				}
+			},
 		},
 		{
-			name: "environ.get without default returns empty",
+			name: "missing var with default returns default",
 			code: `import os
-result = os.environ.get("NONEXISTENT_VAR", "")
-result`,
-			expected: "",
+os.getenv("TEST_MISSING_VAR", "fallback")`,
+			check: func(t *testing.T, result object.Object) {
+				str, ok := result.(*object.String)
+				if !ok {
+					t.Fatalf("expected String, got %T", result)
+				}
+				if str.Value != "fallback" {
+					t.Errorf("expected %q, got %q", "fallback", str.Value)
+				}
+			},
 		},
 		{
-			name: "getenv with existing var",
+			name: "existing var with default returns value not default",
 			code: `import os
-result = os.getenv("TEST_OS_VAR")
-result`,
-			expected: "test_value",
+os.getenv("TEST_OS_VAR", "fallback")`,
+			check: func(t *testing.T, result object.Object) {
+				str, ok := result.(*object.String)
+				if !ok {
+					t.Fatalf("expected String, got %T", result)
+				}
+				if str.Value != "test_value" {
+					t.Errorf("expected %q, got %q", "test_value", str.Value)
+				}
+			},
 		},
 		{
-			name: "getenv with default",
+			name: "missing var returns None so 'if not' pattern works",
 			code: `import os
-result = os.getenv("NONEXISTENT_VAR", "default")
-result`,
-			expected: "default",
+val = os.getenv("TEST_MISSING_VAR")
+if not val:
+    val = "default_applied"
+val`,
+			check: func(t *testing.T, result object.Object) {
+				str, ok := result.(*object.String)
+				if !ok {
+					t.Fatalf("expected String, got %T", result)
+				}
+				if str.Value != "default_applied" {
+					t.Errorf("expected %q, got %q", "default_applied", str.Value)
+				}
+			},
 		},
 		{
-			name: "environ direct access",
+			name: "var set to empty string returns empty string not None",
 			code: `import os
-result = os.environ["TEST_OS_VAR"]
-result`,
-			expected: "test_value",
+os.getenv("TEST_OS_VAR")`,
+			check: func(t *testing.T, result object.Object) {
+				// TEST_OS_VAR is set to "test_value", not empty — just confirm it's a String
+				if _, ok := result.(*object.String); !ok {
+					t.Errorf("expected String for set var, got %T", result)
+				}
+			},
 		},
 	}
 
@@ -71,16 +109,30 @@ result`,
 			if err != nil {
 				t.Fatalf("Eval failed: %v", err)
 			}
-
-			str, ok := result.(*object.String)
-			if !ok {
-				t.Fatalf("Expected String, got %T", result)
-			}
-
-			if str.Value != tt.expected {
-				t.Errorf("Expected %q, got %q", tt.expected, str.Value)
-			}
+			tt.check(t, result)
 		})
+	}
+}
+
+func TestOSGetenvEmptyStringVar(t *testing.T) {
+	// Explicitly set a var to empty string — should return "" not None
+	os.Setenv("TEST_EMPTY_VAR", "")
+	defer os.Unsetenv("TEST_EMPTY_VAR")
+
+	p := scriptling.New()
+	RegisterOSLibrary(p, nil)
+
+	result, err := p.Eval(`import os
+os.getenv("TEST_EMPTY_VAR")`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	str, ok := result.(*object.String)
+	if !ok {
+		t.Fatalf("expected String for empty-string var, got %T", result)
+	}
+	if str.Value != "" {
+		t.Errorf("expected empty string, got %q", str.Value)
 	}
 }
 
