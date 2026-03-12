@@ -512,9 +512,16 @@ func (p *Scriptling) EvalFile(path string) (object.Object, error) {
 		return nil, fmt.Errorf("EvalFile: %w", err)
 	}
 	prev := p.sourceFile
+	prevFile, hasPrevFile := p.env.Get("__file__")
 	p.sourceFile = path
+	p.env.Set("__file__", &object.String{Value: path})
 	result, evalErr := p.Eval(string(data))
 	p.sourceFile = prev
+	if hasPrevFile {
+		p.env.Set("__file__", prevFile)
+	} else {
+		p.env.Delete("__file__")
+	}
 	return result, evalErr
 }
 
@@ -873,10 +880,13 @@ func (p *Scriptling) LoadLibraryIntoEnv(name string, env *object.Environment) er
 	return nil
 }
 
-// SetSourceFile sets the source file name used in error messages.
-// When set, errors will include the file name and line number for better debugging.
+// SetSourceFile sets the source file name used in error messages and sets
+// the __file__ variable in the script environment.
 func (p *Scriptling) SetSourceFile(name string) {
 	p.sourceFile = name
+	if name != "" {
+		p.env.Set("__file__", &object.String{Value: name})
+	}
 }
 
 // loadLibraryIntoEnv loads a script or registered library into the given environment as a dict.

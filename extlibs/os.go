@@ -100,15 +100,18 @@ func (o *osLibraryInstance) createOSLibrary() *object.Library {
 				if err != nil {
 					return err
 				}
-				value := os.Getenv(key)
-				if value == "" && len(args) == 2 {
-					return args[1]
+				value, found := os.LookupEnv(key)
+				if !found {
+					if len(args) == 2 {
+						return args[1]
+					}
+					return &object.Null{}
 				}
 				return &object.String{Value: value}
 			},
 			HelpText: `getenv(key[, default]) - Get environment variable
 
-Returns the value of the environment variable key if it exists, or default if provided.`,
+Returns the value of the environment variable key if it exists, None if not set (or default if provided).`,
 		},
 		"getcwd": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {

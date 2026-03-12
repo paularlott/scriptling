@@ -279,6 +279,7 @@ func runFile(p *scriptling.Scriptling, filename string) error {
 	if err != nil {
 		return fmt.Errorf("failed to read file %s: %w", filename, err)
 	}
+	p.SetSourceFile(filename)
 	return evalAndCheckExit(p, string(content))
 }
 
