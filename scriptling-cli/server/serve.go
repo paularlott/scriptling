@@ -766,6 +766,11 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 
 // createMCPToolHandler creates a handler function for an MCP tool
 func createMCPToolHandler(scriptPath string, libDirs []string, allowedPaths []string) func(context.Context, *mcp_lib.ToolRequest) (*mcp_lib.ToolResponse, error) {
+	// Include the script's directory in the library search path
+	// so tools can import other modules from the same tools folder
+	scriptDir := filepath.Dir(scriptPath)
+	toolLibDirs := append([]string{scriptDir}, libDirs...)
+
 	return func(ctx context.Context, req *mcp_lib.ToolRequest) (*mcp_lib.ToolResponse, error) {
 		script, err := os.ReadFile(scriptPath)
 		if err != nil {
@@ -773,7 +778,10 @@ func createMCPToolHandler(scriptPath string, libDirs []string, allowedPaths []st
 		}
 
 		p := scriptling.New()
-		mcpcli.SetupScriptling(p, libDirs, false, allowedPaths, Log)
+		mcpcli.SetupScriptling(p, toolLibDirs, false, allowedPaths, Log)
+
+		// Enable output capture so print() output is available as fallback
+		p.EnableOutputCapture()
 
 		params := req.Args()
 		response, exitCode, err := scriptlingmcp.RunToolScript(ctx, p, string(script), params)
@@ -783,6 +791,11 @@ func createMCPToolHandler(scriptPath string, libDirs []string, allowedPaths []st
 
 		if exitCode != 0 {
 			return nil, fmt.Errorf("script exited with code %d: %s", exitCode, response)
+		}
+
+		// If no explicit return, use captured stdout as the response
+		if response == "" {
+			response = p.GetOutput()
 		}
 
 		return mcp_lib.NewToolResponseText(response), nil
