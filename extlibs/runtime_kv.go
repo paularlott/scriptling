@@ -3,6 +3,8 @@ package extlibs
 import (
 	"context"
 	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/paularlott/scriptling/conversion"
@@ -11,17 +13,31 @@ import (
 	"github.com/paularlott/snapshotkv"
 )
 
-// InitKVStore initializes the KV store with the given storage path.
+const kvMemoryPrefix = ":memory:"
+
+// kvRegistryEntry holds a shared DB and its reference count.
+type kvRegistryEntry struct {
+	db      *snapshotkv.DB
+	refCount int
+}
+
+// kvRegistry is the global store registry, keyed by path/name.
+var kvRegistry = struct {
+	sync.Mutex
+	stores map[string]*kvRegistryEntry
+}{
+	stores: make(map[string]*kvRegistryEntry),
+}
+
+// InitKVStore initializes the system-wide default KV store.
 // If path is empty, the store operates in memory-only mode.
 func InitKVStore(path string) error {
-	// Close existing store if any
 	if RuntimeState.KVDB != nil {
 		RuntimeState.KVDB.Close()
 	}
 
-	// Configure with short TTL cleanup interval for background cleanup
 	cfg := &snapshotkv.Config{
-		TTLCleanupInterval: time.Minute, // Periodic cleanup
+		TTLCleanupInterval: time.Minute,
 	}
 
 	db, err := snapshotkv.Open(path, cfg)
@@ -36,7 +52,7 @@ func InitKVStore(path string) error {
 	return nil
 }
 
-// CloseKVStore closes the KV store
+// CloseKVStore closes the system-wide default KV store.
 func CloseKVStore() {
 	if RuntimeState.KVDB != nil {
 		RuntimeState.KVDB.Close()
@@ -44,348 +60,280 @@ func CloseKVStore() {
 	}
 }
 
-var KVSubLibrary = object.NewLibrary("kv", map[string]*object.Builtin{
-	"set": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if objErr := errors.MinArgs(args, 2); objErr != nil {
-				return objErr
-			}
+// closeKVRegistry closes all stores in the registry and clears it.
+func closeKVRegistry() {
+	kvRegistry.Lock()
+	defer kvRegistry.Unlock()
+	for _, entry := range kvRegistry.stores {
+		entry.db.Close()
+	}
+	kvRegistry.stores = make(map[string]*kvRegistryEntry)
+}
 
-			key, objErr := args[0].AsString()
-			if objErr != nil {
-				return objErr
-			}
+// openRegisteredStore opens or reuses a store from the registry.
+func openRegisteredStore(name string) (*snapshotkv.DB, error) {
+	kvRegistry.Lock()
+	defer kvRegistry.Unlock()
 
-			value, convErr := conversion.ToGoWithError(args[1])
-			if convErr != nil {
-				return convErr
-			}
+	if entry, ok := kvRegistry.stores[name]; ok {
+		entry.refCount++
+		return entry.db, nil
+	}
 
-			var ttl int64 = 0
-			if t := kwargs.Get("ttl"); t != nil {
-				if ttlVal, e := t.AsInt(); e == nil {
-					ttl = ttlVal
-				}
-			} else if len(args) > 2 {
-				if ttlVal, e := args[2].AsInt(); e == nil {
-					ttl = ttlVal
-				}
-			}
+	// Determine actual filesystem path vs memory
+	var fsPath string
+	if !strings.HasPrefix(name, kvMemoryPrefix) {
+		fsPath = name
+	}
 
-			db := RuntimeState.KVDB
-			if db == nil {
-				return errors.NewError("kv.set: KV store not initialized")
-			}
+	cfg := &snapshotkv.Config{
+		TTLCleanupInterval: time.Minute,
+	}
+	db, err := snapshotkv.Open(fsPath, cfg)
+	if err != nil {
+		return nil, err
+	}
 
-			var ttlDuration time.Duration
-			if ttl > 0 {
-				ttlDuration = time.Duration(ttl) * time.Second
-			}
+	kvRegistry.stores[name] = &kvRegistryEntry{db: db, refCount: 1}
+	return db, nil
+}
 
-			if goErr := db.SetEx(key, value, ttlDuration); goErr != nil {
-				return errors.NewError("kv.set: %v", goErr)
-			}
+// releaseRegisteredStore decrements the ref count and closes the DB when it reaches zero.
+func releaseRegisteredStore(name string) {
+	kvRegistry.Lock()
+	defer kvRegistry.Unlock()
 
-			return &object.Null{}
-		},
-		HelpText: `set(key, value, ttl=0) - Store a value with optional TTL in seconds
+	entry, ok := kvRegistry.stores[name]
+	if !ok {
+		return
+	}
+	entry.refCount--
+	if entry.refCount <= 0 {
+		entry.db.Close()
+		delete(kvRegistry.stores, name)
+	}
+}
 
-Parameters:
-  key (string): The key to store the value under
-  value: The value to store (string, int, float, bool, list, dict)
-  ttl (int, optional): Time-to-live in seconds. 0 means no expiration.
-
-Example:
-  runtime.kv.set("api_key", "secret123")
-  runtime.kv.set("session:abc", {"user": "bob"}, ttl=3600)`,
-	},
-
-	"get": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if objErr := errors.MinArgs(args, 1); objErr != nil {
-				return objErr
-			}
-
-			key, objErr := args[0].AsString()
-			if objErr != nil {
-				return objErr
-			}
-
-			var defaultValue object.Object = &object.Null{}
-			if d := kwargs.Get("default"); d != nil {
-				defaultValue = d
-			} else if len(args) > 1 {
-				defaultValue = args[1]
-			}
-
-			db := RuntimeState.KVDB
-			if db == nil {
-				return errors.NewError("kv.get: KV store not initialized")
-			}
-
-			value, goErr := db.Get(key)
-			if goErr != nil {
-				return defaultValue
-			}
-
-			return conversion.FromGo(value)
-		},
-		HelpText: `get(key, default=None) - Retrieve a value by key
-
-Parameters:
-  key (string): The key to retrieve
-  default: Value to return if key doesn't exist (default: None)
-
-Returns:
-  The stored value, or the default if not found
-
-Example:
-  value = runtime.kv.get("api_key")
-  count = runtime.kv.get("counter", default=0)`,
-	},
-
-	"delete": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if objErr := errors.MinArgs(args, 1); objErr != nil {
-				return objErr
-			}
-
-			key, objErr := args[0].AsString()
-			if objErr != nil {
-				return objErr
-			}
-
-			db := RuntimeState.KVDB
-			if db == nil {
-				return errors.NewError("kv.delete: KV store not initialized")
-			}
-
-			db.Delete(key)
-			return &object.Null{}
-		},
-		HelpText: `delete(key) - Remove a key from the store
-
-Parameters:
-  key (string): The key to delete
-
-Example:
-  runtime.kv.delete("session:abc")`,
-	},
-
-	"exists": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if objErr := errors.MinArgs(args, 1); objErr != nil {
-				return objErr
-			}
-
-			key, objErr := args[0].AsString()
-			if objErr != nil {
-				return objErr
-			}
-
-			db := RuntimeState.KVDB
-			if db == nil {
-				return errors.NewError("kv.exists: KV store not initialized")
-			}
-
-			return &object.Boolean{Value: db.Exists(key)}
-		},
-		HelpText: `exists(key) - Check if a key exists and is not expired
-
-Parameters:
-  key (string): The key to check
-
-Returns:
-  bool: True if key exists and is not expired
-
-Example:
-  if runtime.kv.exists("config"):
-      config = runtime.kv.get("config")`,
-	},
-
-	"incr": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if objErr := errors.MinArgs(args, 1); objErr != nil {
-				return objErr
-			}
-
-			key, objErr := args[0].AsString()
-			if objErr != nil {
-				return objErr
-			}
-
-			var amount int64 = 1
-			if a := kwargs.Get("amount"); a != nil {
-				if amt, e := a.AsInt(); e == nil {
-					amount = amt
-				}
-			} else if len(args) > 1 {
-				if amt, e := args[1].AsInt(); e == nil {
-					amount = amt
-				}
-			}
-
-			// Lock for atomic read-modify-write (snapshotkv is thread-safe but
-			// we need to ensure the Get and Set happen atomically for incr)
-			RuntimeState.Lock()
-			defer RuntimeState.Unlock()
-
-			db := RuntimeState.KVDB
-			if db == nil {
-				return errors.NewError("kv.incr: KV store not initialized")
-			}
-
-			currentVal, goErr := db.Get(key)
-			if goErr != nil {
-				// Key doesn't exist, create it
-				db.Set(key, amount)
-				return object.NewInteger(amount)
-			}
-
-			// Handle different integer types from deserialization
-			var intVal int64
-			switch v := currentVal.(type) {
-			case int64:
-				intVal = v
-			case int:
-				intVal = int64(v)
-			case float64:
-				intVal = int64(v)
-			default:
-				return errors.NewError("kv.incr: value is not an integer")
-			}
-
-			newVal := intVal + amount
-			db.Set(key, newVal)
-
-			return object.NewInteger(newVal)
-		},
-		HelpText: `incr(key, amount=1) - Atomically increment an integer value
-
-Parameters:
-  key (string): The key to increment
-  amount (int, optional): Amount to increment by (default: 1)
-
-Returns:
-  int: The new value after incrementing
-
-Example:
-  runtime.kv.set("counter", 0)
-  runtime.kv.incr("counter")      # returns 1
-  runtime.kv.incr("counter", 5)   # returns 6`,
-	},
-
-	"ttl": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if objErr := errors.MinArgs(args, 1); objErr != nil {
-				return objErr
-			}
-
-			key, objErr := args[0].AsString()
-			if objErr != nil {
-				return objErr
-			}
-
-			db := RuntimeState.KVDB
-			if db == nil {
-				return errors.NewError("kv.ttl: KV store not initialized")
-			}
-
-			// Check if key exists first
-			if !db.Exists(key) {
-				return object.NewInteger(-2) // Key doesn't exist
-			}
-
-			// Get TTL from snapshotkv
-			remaining := db.TTL(key)
-			if remaining < 0 {
-				return object.NewInteger(-1) // No expiration
-			}
-
-			return object.NewInteger(int64(remaining.Seconds()))
-		},
-		HelpText: `ttl(key) - Get remaining time-to-live for a key
-
-Parameters:
-  key (string): The key to check
-
-Returns:
-  int: Remaining TTL in seconds, -1 if no expiration, -2 if key doesn't exist
-
-Example:
-  runtime.kv.set("session", "data", ttl=3600)
-  remaining = runtime.kv.ttl("session")  # e.g., 3599`,
-	},
-
-	"keys": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			pattern := "*"
-			if p := kwargs.Get("pattern"); p != nil {
-				if pat, e := p.AsString(); e == nil {
-					pattern = pat
-				}
-			} else if len(args) > 0 {
-				if pat, e := args[0].AsString(); e == nil {
-					pattern = pat
-				}
-			}
-
-			db := RuntimeState.KVDB
-			if db == nil {
-				return errors.NewError("kv.keys: KV store not initialized")
-			}
-
-			// Get all keys (empty prefix matches all)
-			allKeys := db.FindKeysByPrefix("")
-
-			var keys []object.Object
-			for _, key := range allKeys {
-				if pattern == "*" {
-					keys = append(keys, &object.String{Value: key})
-				} else {
-					matched, _ := filepath.Match(pattern, key)
-					if matched {
-						keys = append(keys, &object.String{Value: key})
+// newKVStoreObject returns a Builtin object with kv methods bound to db.
+// If registryName is non-empty, close() will decrement the registry ref count.
+// If registryName is empty (system default), close() is a no-op.
+func newKVStoreObject(db *snapshotkv.DB, registryName string) *object.Builtin {
+	return &object.Builtin{
+		Attributes: map[string]object.Object{
+			"set": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if objErr := errors.MinArgs(args, 2); objErr != nil {
+						return objErr
 					}
-				}
-			}
+					key, objErr := args[0].AsString()
+					if objErr != nil {
+						return objErr
+					}
+					value, convErr := conversion.ToGoWithError(args[1])
+					if convErr != nil {
+						return convErr
+					}
+					var ttl int64
+					if t := kwargs.Get("ttl"); t != nil {
+						if ttlVal, e := t.AsInt(); e == nil {
+							ttl = ttlVal
+						}
+					} else if len(args) > 2 {
+						if ttlVal, e := args[2].AsInt(); e == nil {
+							ttl = ttlVal
+						}
+					}
+					var ttlDuration time.Duration
+					if ttl > 0 {
+						ttlDuration = time.Duration(ttl) * time.Second
+					}
+					if goErr := db.SetEx(key, value, ttlDuration); goErr != nil {
+						return errors.NewError("kv.set: %v", goErr)
+					}
+					return &object.Null{}
+				},
+				HelpText: `set(key, value, ttl=0) - Store a value with optional TTL in seconds`,
+			},
 
-			return &object.List{Elements: keys}
+			"get": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if objErr := errors.MinArgs(args, 1); objErr != nil {
+						return objErr
+					}
+					key, objErr := args[0].AsString()
+					if objErr != nil {
+						return objErr
+					}
+					var defaultValue object.Object = &object.Null{}
+					if d := kwargs.Get("default"); d != nil {
+						defaultValue = d
+					} else if len(args) > 1 {
+						defaultValue = args[1]
+					}
+					value, goErr := db.Get(key)
+					if goErr != nil {
+						return defaultValue
+					}
+					return conversion.FromGo(value)
+				},
+				HelpText: `get(key, default=None) - Retrieve a value by key`,
+			},
+
+			"delete": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if objErr := errors.MinArgs(args, 1); objErr != nil {
+						return objErr
+					}
+					key, objErr := args[0].AsString()
+					if objErr != nil {
+						return objErr
+					}
+					db.Delete(key)
+					return &object.Null{}
+				},
+				HelpText: `delete(key) - Remove a key from the store`,
+			},
+
+			"exists": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if objErr := errors.MinArgs(args, 1); objErr != nil {
+						return objErr
+					}
+					key, objErr := args[0].AsString()
+					if objErr != nil {
+						return objErr
+					}
+					return &object.Boolean{Value: db.Exists(key)}
+				},
+				HelpText: `exists(key) - Check if a key exists and is not expired`,
+			},
+
+			"ttl": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if objErr := errors.MinArgs(args, 1); objErr != nil {
+						return objErr
+					}
+					key, objErr := args[0].AsString()
+					if objErr != nil {
+						return objErr
+					}
+					if !db.Exists(key) {
+						return object.NewInteger(-2)
+					}
+					remaining := db.TTL(key)
+					if remaining < 0 {
+						return object.NewInteger(-1)
+					}
+					return object.NewInteger(int64(remaining.Seconds()))
+				},
+				HelpText: `ttl(key) - Get remaining TTL in seconds; -1 if no expiration, -2 if key doesn't exist`,
+			},
+
+			"keys": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					pattern := "*"
+					if p := kwargs.Get("pattern"); p != nil {
+						if pat, e := p.AsString(); e == nil {
+							pattern = pat
+						}
+					} else if len(args) > 0 {
+						if pat, e := args[0].AsString(); e == nil {
+							pattern = pat
+						}
+					}
+					allKeys := db.FindKeysByPrefix("")
+					var keys []object.Object
+					for _, key := range allKeys {
+						if pattern == "*" {
+							keys = append(keys, &object.String{Value: key})
+						} else {
+							matched, _ := filepath.Match(pattern, key)
+							if matched {
+								keys = append(keys, &object.String{Value: key})
+							}
+						}
+					}
+					return &object.List{Elements: keys}
+				},
+				HelpText: `keys(pattern="*") - Get all keys matching a glob pattern`,
+			},
+
+			"clear": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					for _, key := range db.FindKeysByPrefix("") {
+						db.Delete(key)
+					}
+					return &object.Null{}
+				},
+				HelpText: `clear() - Remove all keys from the store`,
+			},
+
+			"close": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if registryName != "" {
+						releaseRegisteredStore(registryName)
+					}
+					// no-op for the default system store
+					return &object.Null{}
+				},
+				HelpText: `close() - Release this store. No-op on the default store.`,
+			},
 		},
-		HelpText: `keys(pattern="*") - Get all keys matching a glob pattern
+		HelpText: "KV store object — call .get(), .set(), .delete(), .exists(), .ttl(), .keys(), .clear(), .close()",
+	}
+}
+
+var kvOpenBuiltin = &object.Builtin{
+	Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+		if objErr := errors.MinArgs(args, 1); objErr != nil {
+			return objErr
+		}
+		name, objErr := args[0].AsString()
+		if objErr != nil {
+			return objErr
+		}
+		if name == "" {
+			return errors.NewError("kv.open: store name must not be empty; use \":memory:name\" for in-memory stores")
+		}
+		db, err := openRegisteredStore(name)
+		if err != nil {
+			return errors.NewError("kv.open: %v", err)
+		}
+		return newKVStoreObject(db, name)
+	},
+	HelpText: `open(name) - Open or reuse a named KV store
 
 Parameters:
-  pattern (string, optional): Glob pattern to match keys (default: "*")
+  name (string): Store name. Use ":memory:name" for in-memory stores,
+                 or a filesystem path for persistent stores.
 
 Returns:
-  list: List of matching keys
+  KV store object with get, set, delete, exists, ttl, keys, clear, close methods.
 
 Example:
-  all_keys = runtime.kv.keys()
-  user_keys = runtime.kv.keys("user:*")
-  session_keys = runtime.kv.keys("session:*")`,
-	},
+  import scriptling.runtime.kv as kv
 
-	"clear": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			db := RuntimeState.KVDB
-			if db == nil {
-				return errors.NewError("kv.clear: KV store not initialized")
-			}
+  mem = kv.open(":memory:session")
+  mem.set("user", "alice")
+  mem.close()
 
-			// Get all keys and delete them (snapshotkv is thread-safe)
-			allKeys := db.FindKeysByPrefix("")
-			for _, key := range allKeys {
-				db.Delete(key)
-			}
+  db = kv.open("/data/agent.db")
+  db.set("fact", "the sky is blue")
+  db.close()`,
+}
 
-			return &object.Null{}
+// NewKVSubLibrary builds the kv sub-library with kv.default wired to the
+// live system store and registers closeKVRegistry as a cleanup function.
+// Must be called after InitKVStore so RuntimeState.KVDB is set.
+func NewKVSubLibrary() *object.Library {
+	RegisterCleanup(closeKVRegistry)
+	return object.NewLibrary("kv",
+		map[string]*object.Builtin{
+			"open": kvOpenBuiltin,
 		},
-		HelpText: `clear() - Remove all keys from the store
-
-Warning: This operation cannot be undone.
-
-Example:
-  runtime.kv.clear()`,
-	},
-}, nil, "Thread-safe key-value store for sharing state across requests.\n\nNote: By default the KV store is in-memory. To persist data, configure a storage\npath when starting the server. Keys without a TTL persist indefinitely.\nUse TTLs and periodic cleanup to avoid unbounded storage growth.")
+		map[string]object.Object{
+			"default": newKVStoreObject(RuntimeState.KVDB, ""),
+		},
+		"Thread-safe key-value store. Use kv.default for the system store or kv.open() for named stores.",
+	)
+}

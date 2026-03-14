@@ -40,6 +40,9 @@ var RuntimeState = struct {
 	Queues     map[string]*RuntimeQueue
 	Atomics    map[string]*RuntimeAtomic
 	Shareds    map[string]*RuntimeShared
+
+	// Cleanup functions registered by libraries
+	cleanupFuncs []func()
 }{
 	Routes:            make(map[string]*RouteInfo),
 	Backgrounds:       make(map[string]string),
@@ -57,8 +60,26 @@ var RuntimeState = struct {
 	Shareds:           make(map[string]*RuntimeShared),
 }
 
+// RegisterCleanup registers a function to be called during ResetRuntime.
+// Libraries use this to clean up their own state without creating
+// dependencies between packages.
+func RegisterCleanup(fn func()) {
+	RuntimeState.Lock()
+	RuntimeState.cleanupFuncs = append(RuntimeState.cleanupFuncs, fn)
+	RuntimeState.Unlock()
+}
+
 // ResetRuntime clears all runtime state (for testing or re-initialization)
 func ResetRuntime() {
+	// Run library cleanup functions before acquiring the lock, as they
+	// manage their own synchronisation.
+	RuntimeState.Lock()
+	cleanups := RuntimeState.cleanupFuncs
+	RuntimeState.Unlock()
+	for _, fn := range cleanups {
+		fn()
+	}
+
 	RuntimeState.Lock()
 	defer RuntimeState.Unlock()
 
@@ -78,7 +99,6 @@ func ResetRuntime() {
 		RuntimeState.KVDB.Close()
 		RuntimeState.KVDB = nil
 	}
-	// Initialize in-memory KV store by default
 	if db, err := snapshotkv.Open("", nil); err == nil {
 		RuntimeState.KVDB = db
 	}
@@ -87,6 +107,7 @@ func ResetRuntime() {
 	RuntimeState.Queues = make(map[string]*RuntimeQueue)
 	RuntimeState.Atomics = make(map[string]*RuntimeAtomic)
 	RuntimeState.Shareds = make(map[string]*RuntimeShared)
+	RuntimeState.cleanupFuncs = nil
 }
 
 // Promise represents an async operation result
@@ -150,7 +171,7 @@ func RegisterRuntimeLibraryAll(registrar interface{ RegisterLibrary(*object.Libr
 func NewRuntimeLibraryWithSubs(allowedPaths []string) *object.Library {
 	return object.NewLibraryWithSubs(RuntimeLibraryName, RuntimeLibraryFunctions, nil, map[string]*object.Library{
 		"http":    HTTPSubLibrary,
-		"kv":      KVSubLibrary,
+		"kv":      NewKVSubLibrary(),
 		"sync":    SyncSubLibrary,
 		"sandbox": NewSandboxLibrary(allowedPaths),
 	}, "Runtime library for HTTP, KV store, concurrency primitives, and sandboxed execution")
@@ -161,7 +182,7 @@ func RegisterRuntimeHTTPLibrary(registrar interface{ RegisterLibrary(*object.Lib
 }
 
 func RegisterRuntimeKVLibrary(registrar interface{ RegisterLibrary(*object.Library) }) {
-	registrar.RegisterLibrary(KVSubLibrary)
+	registrar.RegisterLibrary(NewKVSubLibrary())
 }
 
 func RegisterRuntimeSyncLibrary(registrar interface{ RegisterLibrary(*object.Library) }) {
@@ -246,13 +267,9 @@ Example:
 // RuntimeLibraryCore is the runtime library without sub-libraries
 var RuntimeLibraryCore = object.NewLibrary(RuntimeLibraryName, RuntimeLibraryFunctions, nil, "Runtime library for background tasks")
 
-// RuntimeLibraryWithSubs is the runtime library with all sub-libraries (http, kv, sync, sandbox)
-// Note: This uses nil for sandbox allowed paths (no restrictions).
-// For custom sandbox paths, use NewRuntimeLibraryWithSubs(allowedPaths).
-var RuntimeLibraryWithSubs = NewRuntimeLibraryWithSubs(nil)
-
-// RuntimeLibrary is an alias for RuntimeLibraryWithSubs for backward compatibility
-var RuntimeLibrary = RuntimeLibraryWithSubs
+// RuntimeLibrary is the runtime library with all sub-libraries.
+// For custom sandbox paths use NewRuntimeLibraryWithSubs(allowedPaths).
+var RuntimeLibrary = NewRuntimeLibraryWithSubs(nil)
 
 // startBackgroundTask starts a single background task with its own isolated Scriptling instance
 func startBackgroundTask(name, handler string, fnArgs []object.Object, fnKwargs map[string]object.Object, env *object.Environment, eval evaliface.Evaluator, factory SandboxFactory, ctx context.Context) object.Object {

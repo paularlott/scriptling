@@ -108,20 +108,20 @@ func TestRuntimeKV(t *testing.T) {
 	script := `
 import scriptling.runtime as runtime
 
-runtime.kv.set("key1", "value1")
-runtime.kv.set("key2", 42)
-runtime.kv.set("key3", {"nested": "data"})
+runtime.kv.default.set("key1", "value1")
+runtime.kv.default.set("key2", 42)
+runtime.kv.default.set("key3", {"nested": "data"})
 
-v1 = runtime.kv.get("key1")
-v2 = runtime.kv.get("key2")
-v3 = runtime.kv.get("key3")
-v4 = runtime.kv.get("missing", default="default")
+v1 = runtime.kv.default.get("key1")
+v2 = runtime.kv.default.get("key2")
+v3 = runtime.kv.default.get("key3")
+v4 = runtime.kv.default.get("missing", default="default")
 
-exists1 = runtime.kv.exists("key1")
-exists2 = runtime.kv.exists("missing")
+exists1 = runtime.kv.default.exists("key1")
+exists2 = runtime.kv.default.exists("missing")
 
-runtime.kv.delete("key1")
-v5 = runtime.kv.get("key1")
+runtime.kv.default.delete("key1")
+v5 = runtime.kv.default.get("key1")
 
 [v1, v2, v3, v4, exists1, exists2, v5]
 `
@@ -161,7 +161,7 @@ v5 = runtime.kv.get("key1")
 	}
 }
 
-func TestRuntimeKVIncr(t *testing.T) {
+func TestRuntimeKVOpenStore(t *testing.T) {
 	ResetRuntime()
 	p := scriptling.New()
 	RegisterRuntimeLibraryAll(p, nil)
@@ -169,12 +169,14 @@ func TestRuntimeKVIncr(t *testing.T) {
 	script := `
 import scriptling.runtime as runtime
 
-runtime.kv.set("counter", 0)
-v1 = runtime.kv.incr("counter")
-v2 = runtime.kv.incr("counter", 5)
-v3 = runtime.kv.incr("new_counter")
+store = runtime.kv.open(":memory:test_open")
+store.set("counter", 1)
+v1 = store.get("counter")
+store.set("counter", 2)
+v2 = store.get("counter")
+store.close()
 
-[v1, v2, v3]
+[v1, v2]
 `
 
 	result, err := p.Eval(script)
@@ -186,11 +188,8 @@ v3 = runtime.kv.incr("new_counter")
 	if i, _ := list.Elements[0].AsInt(); i != 1 {
 		t.Errorf("Expected 1, got %d", i)
 	}
-	if i, _ := list.Elements[1].AsInt(); i != 6 {
-		t.Errorf("Expected 6, got %d", i)
-	}
-	if i, _ := list.Elements[2].AsInt(); i != 1 {
-		t.Errorf("Expected 1, got %d", i)
+	if i, _ := list.Elements[1].AsInt(); i != 2 {
+		t.Errorf("Expected 2, got %d", i)
 	}
 }
 
@@ -202,9 +201,9 @@ func TestRuntimeKVTTL(t *testing.T) {
 	script := `
 import scriptling.runtime as runtime
 
-runtime.kv.set("temp", "data", ttl=1)
-exists1 = runtime.kv.exists("temp")
-ttl1 = runtime.kv.ttl("temp")
+runtime.kv.default.set("temp", "data", ttl=1)
+exists1 = runtime.kv.default.exists("temp")
+ttl1 = runtime.kv.default.ttl("temp")
 
 exists1
 `
@@ -222,7 +221,7 @@ exists1
 
 	script2 := `
 import scriptling.runtime as runtime
-runtime.kv.exists("temp")
+runtime.kv.default.exists("temp")
 `
 
 	result2, err := p.Eval(script2)
@@ -337,7 +336,7 @@ func TestRuntimeCrossEnvironmentSync(t *testing.T) {
 	// Set value in p1
 	_, err := p1.Eval(`
 import scriptling.runtime as runtime
-runtime.kv.set("shared_key", "shared_value")
+runtime.kv.default.set("shared_key", "shared_value")
 counter = runtime.sync.Atomic("shared_counter", initial=0)
 counter.add(10)
 `)
@@ -348,7 +347,7 @@ counter.add(10)
 	// Read value in p2
 	result, err := p2.Eval(`
 import scriptling.runtime as runtime
-v1 = runtime.kv.get("shared_key")
+v1 = runtime.kv.default.get("shared_key")
 counter = runtime.sync.Atomic("shared_counter")
 v2 = counter.get()
 [v1, v2]
@@ -376,7 +375,8 @@ func BenchmarkRuntimeKVSet(b *testing.B) {
 	key := &object.String{Value: "bench_key"}
 	value := &object.String{Value: "bench_value"}
 
-	setFn := KVSubLibrary.Functions()["set"]
+	store := newKVStoreObject(RuntimeState.KVDB, "")
+	setFn := store.Attributes["set"].(*object.Builtin)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -393,8 +393,9 @@ func BenchmarkRuntimeKVGet(b *testing.B) {
 	key := &object.String{Value: "bench_key"}
 	value := &object.String{Value: "bench_value"}
 
-	setFn := KVSubLibrary.Functions()["set"]
-	getFn := KVSubLibrary.Functions()["get"]
+	store := newKVStoreObject(RuntimeState.KVDB, "")
+	setFn := store.Attributes["set"].(*object.Builtin)
+	getFn := store.Attributes["get"].(*object.Builtin)
 
 	setFn.Fn(ctx, object.Kwargs{}, key, value)
 
