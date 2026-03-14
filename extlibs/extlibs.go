@@ -12,7 +12,7 @@ const (
 	PathlibLibraryName    = "pathlib"
 	GlobLibraryName       = "glob"
 	LoggingLibraryName    = "logging"
-	WaitForLibraryName    = "wait_for"
+	WaitForLibraryName    = "scriptling.wait_for"
 	AILibraryName         = "scriptling.ai"
 	MCPLibraryName        = "scriptling.mcp"
 	ToonLibraryName       = "scriptling.toon"
