@@ -94,6 +94,12 @@ func main() {
 				EnvVars:      []string{"SCRIPTLING_ALLOWED_PATHS"},
 			},
 			&cli.StringFlag{
+				Name:         "kv-storage",
+				Usage:        "Directory for persistent KV store (empty = in-memory only)",
+				DefaultValue: "",
+				EnvVars:      []string{"SCRIPTLING_KV_STORAGE"},
+			},
+			&cli.StringFlag{
 				Name:    "tls-cert",
 				Usage:   "TLS certificate file",
 				EnvVars: []string{"SCRIPTLING_TLS_CERT"},
@@ -189,6 +195,14 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	if file != "" {
 		argv = append(argv, cmd.GetArgs()...)
 	}
+
+	// Initialize KV store (memory-only if no path specified)
+	kvStoragePath := cmd.GetString("kv-storage")
+	if err := extlibs.InitKVStore(kvStoragePath); err != nil {
+		return fmt.Errorf("failed to initialize KV store: %w", err)
+	}
+	defer extlibs.CloseKVStore()
+
 	// Pass os.Stdin when running a file so scripts can read piped data.
 	// When running from stdin, stdin is consumed as source so pass nil.
 	var stdinReader io.Reader
@@ -223,16 +237,17 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 		baseDir, _ = os.Getwd()
 	}
 	return server.RunServer(ctx, server.ServerConfig{
-		Address:      address,
-		ScriptFile:   file,
-		LibDirs:      buildLibDirs(baseDir, cmd.GetStringSlice("libpath")),
-		BearerToken:  cmd.GetString("bearer-token"),
-		AllowedPaths: parseAllowedPaths(cmd.GetString("allowed-paths")),
-		MCPToolsDir:  cmd.GetString("mcp-tools"),
-		MCPExecTool:  cmd.GetBool("mcp-exec-script"),
-		TLSCert:      cmd.GetString("tls-cert"),
-		TLSKey:       cmd.GetString("tls-key"),
-		TLSGenerate:  cmd.GetBool("tls-generate"),
+		Address:       address,
+		ScriptFile:    file,
+		LibDirs:       buildLibDirs(baseDir, cmd.GetStringSlice("libpath")),
+		BearerToken:   cmd.GetString("bearer-token"),
+		AllowedPaths:  parseAllowedPaths(cmd.GetString("allowed-paths")),
+		MCPToolsDir:   cmd.GetString("mcp-tools"),
+		MCPExecTool:   cmd.GetBool("mcp-exec-script"),
+		KVStoragePath: cmd.GetString("kv-storage"),
+		TLSCert:       cmd.GetString("tls-cert"),
+		TLSKey:        cmd.GetString("tls-key"),
+		TLSGenerate:   cmd.GetBool("tls-generate"),
 	})
 }
 

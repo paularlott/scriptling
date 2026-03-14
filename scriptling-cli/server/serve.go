@@ -43,16 +43,17 @@ func toOSSignals(sigs []syscall.Signal) []os.Signal {
 
 // ServerConfig holds the configuration for the HTTP server
 type ServerConfig struct {
-	Address      string
-	ScriptFile   string
-	LibDirs      []string
-	BearerToken  string
-	AllowedPaths []string // Filesystem path restrictions (empty = no restrictions)
-	MCPToolsDir  string   // Empty means MCP disabled
-	MCPExecTool  bool     // Enable code execution tool
-	TLSCert      string
-	TLSKey       string
-	TLSGenerate  bool
+	Address       string
+	ScriptFile    string
+	LibDirs       []string
+	BearerToken   string
+	AllowedPaths  []string // Filesystem path restrictions (empty = no restrictions)
+	MCPToolsDir   string   // Empty means MCP disabled
+	MCPExecTool   bool     // Enable code execution tool
+	KVStoragePath string   // Empty means in-memory KV store
+	TLSCert       string
+	TLSKey        string
+	TLSGenerate   bool
 }
 
 // scriptHandler holds the handler function reference
@@ -100,6 +101,11 @@ func NewServer(config ServerConfig) (*Server, error) {
 
 	// Reset routes from previous runs
 	extlibs.ResetRuntime()
+
+	// Initialize KV store (memory-only if no path specified)
+	if err := extlibs.InitKVStore(config.KVStoragePath); err != nil {
+		return nil, fmt.Errorf("failed to initialize KV store: %w", err)
+	}
 
 	// Set up the sandbox/background factory once
 	mcpcli.SetupFactories(config.LibDirs, config.AllowedPaths, Log)

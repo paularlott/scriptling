@@ -8,71 +8,55 @@ import (
 	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
+	"github.com/paularlott/snapshotkv"
 )
 
-// kvEntry represents a stored value with optional TTL
-type kvEntry struct {
-	value     interface{}
-	expiresAt time.Time
-}
-
-// isExpired checks if an entry has expired
-func (e *kvEntry) isExpired() bool {
-	if e.expiresAt.IsZero() {
-		return false
-	}
-	return time.Now().After(e.expiresAt)
-}
-
-// deepCopy creates a deep copy of basic types
-func deepCopy(v interface{}) interface{} {
-	if v == nil {
-		return nil
+// InitKVStore initializes the KV store with the given storage path.
+// If path is empty, the store operates in memory-only mode.
+func InitKVStore(path string) error {
+	// Close existing store if any
+	if RuntimeState.KVDB != nil {
+		RuntimeState.KVDB.Close()
 	}
 
-	switch val := v.(type) {
-	case string, int, int64, float64, bool:
-		return val
-	case []interface{}:
-		result := make([]interface{}, len(val))
-		for i, item := range val {
-			result[i] = deepCopy(item)
-		}
-		return result
-	case map[string]interface{}:
-		result := make(map[string]interface{})
-		for k, v := range val {
-			result[k] = deepCopy(v)
-		}
-		return result
-	default:
-		return val
+	// Configure with short TTL cleanup interval for background cleanup
+	cfg := &snapshotkv.Config{
+		TTLCleanupInterval: time.Minute, // Periodic cleanup
 	}
+
+	db, err := snapshotkv.Open(path, cfg)
+	if err != nil {
+		return err
+	}
+
+	RuntimeState.Lock()
+	RuntimeState.KVDB = db
+	RuntimeState.Unlock()
+
+	return nil
 }
 
-// convertObjectToKVValue converts a scriptling Object to a storable basic type
-func convertObjectToKVValue(obj object.Object) (interface{}, *object.Error) {
-	return conversion.ToGoWithError(obj)
-}
-
-// convertKVValueToObject converts a storable basic type back to a scriptling Object
-func convertKVValueToObject(v interface{}) object.Object {
-	return conversion.FromGo(v)
+// CloseKVStore closes the KV store
+func CloseKVStore() {
+	if RuntimeState.KVDB != nil {
+		RuntimeState.KVDB.Close()
+		RuntimeState.KVDB = nil
+	}
 }
 
 var KVSubLibrary = object.NewLibrary("kv", map[string]*object.Builtin{
 	"set": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.MinArgs(args, 2); err != nil {
-				return err
+			if objErr := errors.MinArgs(args, 2); objErr != nil {
+				return objErr
 			}
 
-			key, err := args[0].AsString()
-			if err != nil {
-				return err
+			key, objErr := args[0].AsString()
+			if objErr != nil {
+				return objErr
 			}
 
-			value, convErr := convertObjectToKVValue(args[1])
+			value, convErr := conversion.ToGoWithError(args[1])
 			if convErr != nil {
 				return convErr
 			}
@@ -88,14 +72,19 @@ var KVSubLibrary = object.NewLibrary("kv", map[string]*object.Builtin{
 				}
 			}
 
-			entry := &kvEntry{value: value}
-			if ttl > 0 {
-				entry.expiresAt = time.Now().Add(time.Duration(ttl) * time.Second)
+			db := RuntimeState.KVDB
+			if db == nil {
+				return errors.NewError("kv.set: KV store not initialized")
 			}
 
-			RuntimeState.Lock()
-			RuntimeState.KVData[key] = entry
-			RuntimeState.Unlock()
+			var ttlDuration time.Duration
+			if ttl > 0 {
+				ttlDuration = time.Duration(ttl) * time.Second
+			}
+
+			if goErr := db.SetEx(key, value, ttlDuration); goErr != nil {
+				return errors.NewError("kv.set: %v", goErr)
+			}
 
 			return &object.Null{}
 		},
@@ -113,13 +102,13 @@ Example:
 
 	"get": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.MinArgs(args, 1); err != nil {
-				return err
+			if objErr := errors.MinArgs(args, 1); objErr != nil {
+				return objErr
 			}
 
-			key, err := args[0].AsString()
-			if err != nil {
-				return err
+			key, objErr := args[0].AsString()
+			if objErr != nil {
+				return objErr
 			}
 
 			var defaultValue object.Object = &object.Null{}
@@ -129,15 +118,17 @@ Example:
 				defaultValue = args[1]
 			}
 
-			RuntimeState.RLock()
-			entry, exists := RuntimeState.KVData[key]
-			RuntimeState.RUnlock()
+			db := RuntimeState.KVDB
+			if db == nil {
+				return errors.NewError("kv.get: KV store not initialized")
+			}
 
-			if !exists || entry.isExpired() {
+			value, goErr := db.Get(key)
+			if goErr != nil {
 				return defaultValue
 			}
 
-			return convertKVValueToObject(deepCopy(entry.value))
+			return conversion.FromGo(value)
 		},
 		HelpText: `get(key, default=None) - Retrieve a value by key
 
@@ -146,7 +137,7 @@ Parameters:
   default: Value to return if key doesn't exist (default: None)
 
 Returns:
-  The stored value (deep copy), or the default if not found
+  The stored value, or the default if not found
 
 Example:
   value = runtime.kv.get("api_key")
@@ -155,19 +146,21 @@ Example:
 
 	"delete": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.MinArgs(args, 1); err != nil {
-				return err
+			if objErr := errors.MinArgs(args, 1); objErr != nil {
+				return objErr
 			}
 
-			key, err := args[0].AsString()
-			if err != nil {
-				return err
+			key, objErr := args[0].AsString()
+			if objErr != nil {
+				return objErr
 			}
 
-			RuntimeState.Lock()
-			delete(RuntimeState.KVData, key)
-			RuntimeState.Unlock()
+			db := RuntimeState.KVDB
+			if db == nil {
+				return errors.NewError("kv.delete: KV store not initialized")
+			}
 
+			db.Delete(key)
 			return &object.Null{}
 		},
 		HelpText: `delete(key) - Remove a key from the store
@@ -181,23 +174,21 @@ Example:
 
 	"exists": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.MinArgs(args, 1); err != nil {
-				return err
+			if objErr := errors.MinArgs(args, 1); objErr != nil {
+				return objErr
 			}
 
-			key, err := args[0].AsString()
-			if err != nil {
-				return err
+			key, objErr := args[0].AsString()
+			if objErr != nil {
+				return objErr
 			}
 
-			RuntimeState.RLock()
-			entry, exists := RuntimeState.KVData[key]
-			RuntimeState.RUnlock()
-
-			if !exists || entry.isExpired() {
-				return &object.Boolean{Value: false}
+			db := RuntimeState.KVDB
+			if db == nil {
+				return errors.NewError("kv.exists: KV store not initialized")
 			}
-			return &object.Boolean{Value: true}
+
+			return &object.Boolean{Value: db.Exists(key)}
 		},
 		HelpText: `exists(key) - Check if a key exists and is not expired
 
@@ -214,13 +205,13 @@ Example:
 
 	"incr": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.MinArgs(args, 1); err != nil {
-				return err
+			if objErr := errors.MinArgs(args, 1); objErr != nil {
+				return objErr
 			}
 
-			key, err := args[0].AsString()
-			if err != nil {
-				return err
+			key, objErr := args[0].AsString()
+			if objErr != nil {
+				return objErr
 			}
 
 			var amount int64 = 1
@@ -234,22 +225,38 @@ Example:
 				}
 			}
 
+			// Lock for atomic read-modify-write (snapshotkv is thread-safe but
+			// we need to ensure the Get and Set happen atomically for incr)
 			RuntimeState.Lock()
 			defer RuntimeState.Unlock()
 
-			entry, exists := RuntimeState.KVData[key]
-			if !exists || entry.isExpired() {
-				RuntimeState.KVData[key] = &kvEntry{value: amount}
+			db := RuntimeState.KVDB
+			if db == nil {
+				return errors.NewError("kv.incr: KV store not initialized")
+			}
+
+			currentVal, goErr := db.Get(key)
+			if goErr != nil {
+				// Key doesn't exist, create it
+				db.Set(key, amount)
 				return object.NewInteger(amount)
 			}
 
-			currentVal, ok := entry.value.(int64)
-			if !ok {
+			// Handle different integer types from deserialization
+			var intVal int64
+			switch v := currentVal.(type) {
+			case int64:
+				intVal = v
+			case int:
+				intVal = int64(v)
+			case float64:
+				intVal = int64(v)
+			default:
 				return errors.NewError("kv.incr: value is not an integer")
 			}
 
-			newVal := currentVal + amount
-			entry.value = newVal
+			newVal := intVal + amount
+			db.Set(key, newVal)
 
 			return object.NewInteger(newVal)
 		},
@@ -270,29 +277,32 @@ Example:
 
 	"ttl": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.MinArgs(args, 1); err != nil {
-				return err
+			if objErr := errors.MinArgs(args, 1); objErr != nil {
+				return objErr
 			}
 
-			key, err := args[0].AsString()
-			if err != nil {
-				return err
+			key, objErr := args[0].AsString()
+			if objErr != nil {
+				return objErr
 			}
 
-			RuntimeState.RLock()
-			entry, exists := RuntimeState.KVData[key]
-			RuntimeState.RUnlock()
-
-			if !exists || entry.isExpired() {
-				return object.NewInteger(-2)
+			db := RuntimeState.KVDB
+			if db == nil {
+				return errors.NewError("kv.ttl: KV store not initialized")
 			}
 
-			if entry.expiresAt.IsZero() {
-				return object.NewInteger(-1)
+			// Check if key exists first
+			if !db.Exists(key) {
+				return object.NewInteger(-2) // Key doesn't exist
 			}
 
-			remaining := time.Until(entry.expiresAt).Seconds()
-			return object.NewInteger(int64(remaining))
+			// Get TTL from snapshotkv
+			remaining := db.TTL(key)
+			if remaining < 0 {
+				return object.NewInteger(-1) // No expiration
+			}
+
+			return object.NewInteger(int64(remaining.Seconds()))
 		},
 		HelpText: `ttl(key) - Get remaining time-to-live for a key
 
@@ -320,15 +330,16 @@ Example:
 				}
 			}
 
-			RuntimeState.RLock()
-			defer RuntimeState.RUnlock()
+			db := RuntimeState.KVDB
+			if db == nil {
+				return errors.NewError("kv.keys: KV store not initialized")
+			}
+
+			// Get all keys (empty prefix matches all)
+			allKeys := db.FindKeysByPrefix("")
 
 			var keys []object.Object
-			for key, entry := range RuntimeState.KVData {
-				if entry.isExpired() {
-					continue
-				}
-
+			for _, key := range allKeys {
 				if pattern == "*" {
 					keys = append(keys, &object.String{Value: key})
 				} else {
@@ -357,9 +368,16 @@ Example:
 
 	"clear": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			RuntimeState.Lock()
-			RuntimeState.KVData = make(map[string]*kvEntry)
-			RuntimeState.Unlock()
+			db := RuntimeState.KVDB
+			if db == nil {
+				return errors.NewError("kv.clear: KV store not initialized")
+			}
+
+			// Get all keys and delete them (snapshotkv is thread-safe)
+			allKeys := db.FindKeysByPrefix("")
+			for _, key := range allKeys {
+				db.Delete(key)
+			}
 
 			return &object.Null{}
 		},
@@ -370,49 +388,4 @@ Warning: This operation cannot be undone.
 Example:
   runtime.kv.clear()`,
 	},
-}, nil, "Thread-safe key-value store for sharing state across requests.\n\nNote: The KV store is in-memory with no size limits. Keys without a TTL persist\nindefinitely. Use TTLs and periodic cleanup to avoid unbounded memory growth.\nExpired entries are cleaned up automatically every 60 seconds.")
-
-// kvCleanupCancel cancels the KV cleanup goroutine
-var kvCleanupCancel context.CancelFunc
-
-// startKVCleanup starts the background cleanup goroutine for expired KV entries.
-// It cancels any previously running cleanup goroutine first.
-func startKVCleanup() {
-	if kvCleanupCancel != nil {
-		kvCleanupCancel()
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	kvCleanupCancel = cancel
-
-	go func() {
-		ticker := time.NewTicker(time.Minute)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				RuntimeState.Lock()
-				for key, entry := range RuntimeState.KVData {
-					if entry.isExpired() {
-						delete(RuntimeState.KVData, key)
-					}
-				}
-				RuntimeState.Unlock()
-			}
-		}
-	}()
-}
-
-// StopKVCleanup stops the background KV cleanup goroutine.
-func StopKVCleanup() {
-	if kvCleanupCancel != nil {
-		kvCleanupCancel()
-		kvCleanupCancel = nil
-	}
-}
-
-func init() {
-	startKVCleanup()
-}
+}, nil, "Thread-safe key-value store for sharing state across requests.\n\nNote: By default the KV store is in-memory. To persist data, configure a storage\npath when starting the server. Keys without a TTL persist indefinitely.\nUse TTLs and periodic cleanup to avoid unbounded storage growth.")

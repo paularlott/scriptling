@@ -9,6 +9,7 @@ import (
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/evaliface"
 	"github.com/paularlott/scriptling/object"
+	"github.com/paularlott/snapshotkv"
 )
 
 const RuntimeLibraryName = "scriptling.runtime"
@@ -32,7 +33,7 @@ var RuntimeState = struct {
 	BackgroundReady bool                       // If true, start tasks immediately
 
 	// KV store
-	KVData map[string]*kvEntry
+	KVDB *snapshotkv.DB
 
 	// Sync primitives
 	WaitGroups map[string]*RuntimeWaitGroup
@@ -49,7 +50,7 @@ var RuntimeState = struct {
 	BackgroundFactory: nil,
 	BackgroundCtxs:    make(map[string]context.Context),
 	BackgroundReady:   false,
-	KVData:            make(map[string]*kvEntry),
+	KVDB:              nil,
 	WaitGroups:        make(map[string]*RuntimeWaitGroup),
 	Queues:            make(map[string]*RuntimeQueue),
 	Atomics:           make(map[string]*RuntimeAtomic),
@@ -71,14 +72,21 @@ func ResetRuntime() {
 	RuntimeState.BackgroundFactory = nil
 	RuntimeState.BackgroundCtxs = make(map[string]context.Context)
 	RuntimeState.BackgroundReady = false
-	RuntimeState.KVData = make(map[string]*kvEntry)
+
+	// Close and reset KV store, then reinitialize in-memory
+	if RuntimeState.KVDB != nil {
+		RuntimeState.KVDB.Close()
+		RuntimeState.KVDB = nil
+	}
+	// Initialize in-memory KV store by default
+	if db, err := snapshotkv.Open("", nil); err == nil {
+		RuntimeState.KVDB = db
+	}
+
 	RuntimeState.WaitGroups = make(map[string]*RuntimeWaitGroup)
 	RuntimeState.Queues = make(map[string]*RuntimeQueue)
 	RuntimeState.Atomics = make(map[string]*RuntimeAtomic)
 	RuntimeState.Shareds = make(map[string]*RuntimeShared)
-
-	// Restart the KV cleanup goroutine
-	startKVCleanup()
 }
 
 // Promise represents an async operation result
