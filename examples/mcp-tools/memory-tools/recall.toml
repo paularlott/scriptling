@@ -1,0 +1,20 @@
+description = "Search long-term memory for relevant information"
+keywords = ["memory", "recall", "search", "find", "retrieve", "remember"]
+
+[[parameters]]
+name = "query"
+type = "string"
+description = "Search query matched against both memory content and keys (e.g. 'dog', 'wife name', 'dark mode')"
+required = false
+
+[[parameters]]
+name = "type"
+type = "string"
+description = "Filter by type: 'fact', 'preference', 'event', 'note'"
+required = false
+
+[[parameters]]
+name = "limit"
+type = "int"
+description = "Maximum number of memories to return (default: 10)"
+required = false
