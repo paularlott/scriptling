@@ -164,17 +164,28 @@ func RegisterRuntimeLibrary(registrar interface{ RegisterLibrary(*object.Library
 // If allowedPaths is nil, all paths are allowed (no restrictions).
 // If allowedPaths is empty slice, no paths are allowed (deny all).
 func RegisterRuntimeLibraryAll(registrar interface{ RegisterLibrary(*object.Library) }, allowedPaths []string) {
-	registrar.RegisterLibrary(NewRuntimeLibraryWithSubs(allowedPaths))
-}
+	httpLib := HTTPSubLibrary
+	kvLib := NewKVSubLibrary()
+	syncLib := SyncSubLibrary
+	sandboxLib := NewSandboxLibrary(allowedPaths)
 
-// NewRuntimeLibraryWithSubs creates the runtime library with all sub-libraries including sandbox.
-func NewRuntimeLibraryWithSubs(allowedPaths []string) *object.Library {
-	return object.NewLibraryWithSubs(RuntimeLibraryName, RuntimeLibraryFunctions, nil, map[string]*object.Library{
-		"http":    HTTPSubLibrary,
-		"kv":      NewKVSubLibrary(),
-		"sync":    SyncSubLibrary,
-		"sandbox": NewSandboxLibrary(allowedPaths),
-	}, "Runtime library for HTTP, KV store, concurrency primitives, and sandboxed execution")
+	// Register each sub-library independently under its full name
+	registrar.RegisterLibrary(httpLib)
+	registrar.RegisterLibrary(kvLib)
+	registrar.RegisterLibrary(syncLib)
+	registrar.RegisterLibrary(sandboxLib)
+
+	// Register the parent with sub-library dicts as constants so
+	// `import scriptling.runtime as rt; rt.kv.open(...)` keeps working.
+	parent := object.NewLibrary(RuntimeLibraryName, RuntimeLibraryFunctions,
+		map[string]object.Object{
+			"http":    httpLib.GetDict(),
+			"kv":      kvLib.GetDict(),
+			"sync":    syncLib.GetDict(),
+			"sandbox": sandboxLib.GetDict(),
+		},
+		"Runtime library for HTTP, KV store, concurrency primitives, and sandboxed execution")
+	registrar.RegisterLibrary(parent)
 }
 
 func RegisterRuntimeHTTPLibrary(registrar interface{ RegisterLibrary(*object.Library) }) {
@@ -266,10 +277,6 @@ Example:
 
 // RuntimeLibraryCore is the runtime library without sub-libraries
 var RuntimeLibraryCore = object.NewLibrary(RuntimeLibraryName, RuntimeLibraryFunctions, nil, "Runtime library for background tasks")
-
-// RuntimeLibrary is the runtime library with all sub-libraries.
-// For custom sandbox paths use NewRuntimeLibraryWithSubs(allowedPaths).
-var RuntimeLibrary = NewRuntimeLibraryWithSubs(nil)
 
 // startBackgroundTask starts a single background task with its own isolated Scriptling instance
 func startBackgroundTask(name, handler string, fnArgs []object.Object, fnKwargs map[string]object.Object, env *object.Environment, eval evaliface.Evaluator, factory SandboxFactory, ctx context.Context) object.Object {

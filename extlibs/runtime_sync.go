@@ -163,7 +163,7 @@ func (s *RuntimeShared) update(fn func(object.Object) object.Object) object.Obje
 	return s.value
 }
 
-var SyncSubLibrary = object.NewLibrary("sync", map[string]*object.Builtin{
+var SyncSubLibrary = object.NewLibrary(RuntimeSyncLibraryName, map[string]*object.Builtin{
 	"WaitGroup": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if err := errors.MinArgs(args, 1); err != nil {

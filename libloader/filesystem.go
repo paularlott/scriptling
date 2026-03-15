@@ -140,6 +140,11 @@ func (l *FilesystemLoader) readFile(path string) (string, bool, error) {
 			if os.IsNotExist(err) {
 				return "", false, nil
 			}
+			// A path component exists but is not a directory (e.g. a file
+			// named "scriptling" blocking resolution of scriptling/runtime/kv.py)
+			if strings.Contains(err.Error(), "not a directory") {
+				return "", false, nil
+			}
 			return "", false, fmt.Errorf("failed to resolve symlink %s: %w", path, err)
 		}
 		path = resolved

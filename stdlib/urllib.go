@@ -538,15 +538,8 @@ Encodes a dictionary or list of tuples into a URL query string.`,
 	},
 }, nil, "URL parsing and manipulation (urllib.parse compatible)")
 
-// URLLibrary is the parent urllib module with parse as a sub-library
-var URLLibLibrary = object.NewLibraryWithSubs(URLLibLibraryName,
-	nil, // No functions at urllib level
-	nil, // No constants
-	map[string]*object.Library{
-		"parse": URLParseLibrary,
-	},
-	"URL handling modules",
-)
+// URLLibrary is the parent urllib module - registered so `import urllib` works
+var URLLibLibrary = object.NewLibrary(URLLibLibraryName, nil, nil, "URL handling modules")
 
 // urlQuote encodes a string for URL, with optional safe characters
 func urlQuote(s string, safe string) string {

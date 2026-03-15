@@ -70,7 +70,7 @@ func NewSandboxLibrary(allowedPaths []string) *object.Library {
 	// Normalize allowed paths
 	config := normalizeAllowedPaths(allowedPaths)
 
-	builder := object.NewLibraryBuilder("sandbox", "Isolated script execution environments")
+	builder := object.NewLibraryBuilder(RuntimeSandboxLibraryName, "Isolated script execution environments")
 
 	// create() - Create a new sandbox environment
 	builder.FunctionWithHelp("create", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
