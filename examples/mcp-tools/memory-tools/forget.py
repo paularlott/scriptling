@@ -13,7 +13,4 @@ mem = memory.new(db, idle_timeout=0)
 
 ok = mem.forget(id)
 
-mem.close()
-db.close()
-
 tool.return_object({"status": "forgotten" if ok else "not_found", "removed": ok})

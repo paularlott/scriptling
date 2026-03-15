@@ -15,18 +15,12 @@ import (
 
 const kvMemoryPrefix = ":memory:"
 
-// kvRegistryEntry holds a shared DB and its reference count.
-type kvRegistryEntry struct {
-	db       *snapshotkv.DB
-	refCount int
-}
-
 // kvRegistry is the global store registry, keyed by path/name.
 var kvRegistry = struct {
 	sync.Mutex
-	stores map[string]*kvRegistryEntry
+	stores map[string]*snapshotkv.DB
 }{
-	stores: make(map[string]*kvRegistryEntry),
+	stores: make(map[string]*snapshotkv.DB),
 }
 
 // InitKVStore initializes the system-wide default KV store.
@@ -64,10 +58,10 @@ func CloseKVStore() {
 func closeKVRegistry() {
 	kvRegistry.Lock()
 	defer kvRegistry.Unlock()
-	for _, entry := range kvRegistry.stores {
-		entry.db.Close()
+	for _, db := range kvRegistry.stores {
+		db.Close()
 	}
-	kvRegistry.stores = make(map[string]*kvRegistryEntry)
+	kvRegistry.stores = make(map[string]*snapshotkv.DB)
 }
 
 // openRegisteredStore opens or reuses a store from the registry.
@@ -75,12 +69,10 @@ func openRegisteredStore(name string) (*snapshotkv.DB, error) {
 	kvRegistry.Lock()
 	defer kvRegistry.Unlock()
 
-	if entry, ok := kvRegistry.stores[name]; ok {
-		entry.refCount++
-		return entry.db, nil
+	if db, ok := kvRegistry.stores[name]; ok {
+		return db, nil
 	}
 
-	// Determine actual filesystem path vs memory
 	var fsPath string
 	if !strings.HasPrefix(name, kvMemoryPrefix) {
 		fsPath = name
@@ -94,24 +86,21 @@ func openRegisteredStore(name string) (*snapshotkv.DB, error) {
 		return nil, err
 	}
 
-	kvRegistry.stores[name] = &kvRegistryEntry{db: db, refCount: 1}
+	kvRegistry.stores[name] = db
 	return db, nil
 }
 
-// releaseRegisteredStore decrements the ref count and closes the DB when it reaches zero.
-func releaseRegisteredStore(name string) {
+// closeRegisteredStore immediately closes and removes a store from the registry.
+func closeRegisteredStore(name string) {
 	kvRegistry.Lock()
 	defer kvRegistry.Unlock()
 
-	entry, ok := kvRegistry.stores[name]
+	db, ok := kvRegistry.stores[name]
 	if !ok {
 		return
 	}
-	entry.refCount--
-	if entry.refCount <= 0 {
-		entry.db.Close()
-		delete(kvRegistry.stores, name)
-	}
+	db.Close()
+	delete(kvRegistry.stores, name)
 }
 
 // kvDBRegistry maps a kv store Builtin pointer to its underlying DB so that
@@ -292,12 +281,12 @@ func newKVStoreObject(db *snapshotkv.DB, registryName string) *object.Builtin {
 			"close": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if registryName != "" {
-						releaseRegisteredStore(registryName)
+						closeRegisteredStore(registryName)
 					}
 					// no-op for the default system store
 					return &object.Null{}
 				},
-				HelpText: `close() - Release this store. No-op on the default store.`,
+				HelpText: `close() - Close this store immediately. No-op on the default store.`,
 			},
 		},
 		HelpText: "KV store object — call .get(), .set(), .delete(), .exists(), .ttl(), .keys(), .clear(), .close()",

@@ -20,7 +20,4 @@ if query == "" and mem_type == "":
 else:
     result = {"memories": mem.recall(query, limit=limit, type=mem_type)}
 
-mem.close()
-db.close()
-
 tool.return_object(result)

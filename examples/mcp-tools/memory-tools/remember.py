@@ -14,8 +14,6 @@ db = kv.open(os.getenv("SCRIPTLING_MEMORY_DB", "./memory-db"))
 mem = memory.new(db, idle_timeout=0)  # compaction managed separately
 
 result = mem.remember(content, type=mem_type, importance=importance)
-mem.close()
-db.close()
 
 tool.return_object({
     "status": "remembered",

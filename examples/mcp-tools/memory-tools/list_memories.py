@@ -12,7 +12,4 @@ mem = memory.new(db, idle_timeout=0)
 memories = mem.list(mem_type, limit=limit)
 total = mem.count()
 
-mem.close()
-db.close()
-
 tool.return_object({"memories": memories, "total": total})

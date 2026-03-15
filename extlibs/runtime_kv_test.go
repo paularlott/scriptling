@@ -336,22 +336,16 @@ func TestKVNamedMemoryStore(t *testing.T) {
 		assertNull(t, kvCall(b, "get", &object.String{Value: "k"}))
 	})
 
-	t.Run("RefCountPartialClose", func(t *testing.T) {
-		s1 := kvOpen(":memory:refcount")
-		s2 := kvOpen(":memory:refcount")
-
+	t.Run("CloseRemovesFromRegistry", func(t *testing.T) {
+		s1 := kvOpen(":memory:closeme")
 		kvCall(s1, "set", &object.String{Value: "alive"}, &object.String{Value: "yes"})
-		kvCall(s1, "close") // ref count → 1, DB still open
-
-		// s2 should still work
-		assertString(t, kvCall(s2, "get", &object.String{Value: "alive"}), "yes")
-		kvCall(s2, "close") // ref count → 0, DB closed
+		kvCall(s1, "close") // immediately closes and removes from registry
 
 		kvRegistry.Lock()
-		_, stillOpen := kvRegistry.stores[":memory:refcount"]
+		_, stillOpen := kvRegistry.stores[":memory:closeme"]
 		kvRegistry.Unlock()
 		if stillOpen {
-			t.Error("Registry entry should be removed after all refs closed")
+			t.Error("Registry entry should be removed after close")
 		}
 	})
 
@@ -394,7 +388,7 @@ func TestKVNamedPersistentStore(t *testing.T) {
 		kvRegistry.Lock()
 		entry := kvRegistry.stores[path]
 		kvRegistry.Unlock()
-		if err := entry.db.Save(); err != nil {
+		if err := entry.Save(); err != nil {
 			t.Fatalf("Save: %v", err)
 		}
 		kvCall(store, "close")
@@ -418,7 +412,7 @@ func TestKVNamedPersistentStore(t *testing.T) {
 		kvRegistry.Lock()
 		entry := kvRegistry.stores[path2]
 		kvRegistry.Unlock()
-		entry.db.Save()
+		entry.Save()
 
 		kvCall(s1, "close")
 		kvCall(s2, "close")
@@ -483,7 +477,7 @@ func TestKVNamedMemoryConcurrent(t *testing.T) {
 	const goroutines = 20
 	const keysPerGoroutine = 50
 
-	// Hold one ref open for the duration so the DB survives all goroutine closes
+	// Open once; all goroutines share the same underlying DB without closing it
 	keeper := kvOpen(":memory:concurrent")
 	defer kvCall(keeper, "close")
 
@@ -493,8 +487,7 @@ func TestKVNamedMemoryConcurrent(t *testing.T) {
 	for g := 0; g < goroutines; g++ {
 		go func(id int) {
 			defer wg.Done()
-			store := kvOpen(":memory:concurrent")
-			defer kvCall(store, "close")
+			store := kvOpen(":memory:concurrent") // returns same DB
 			for k := 0; k < keysPerGoroutine; k++ {
 				key := &object.String{Value: fmt.Sprintf("g%d:k%d", id, k)}
 				val := object.NewInteger(int64(id*1000 + k))
@@ -536,17 +529,17 @@ func TestKVRegistryConcurrentOpenClose(t *testing.T) {
 			store := kvOpen(":memory:race")
 			kvCall(store, "set", &object.String{Value: "k"}, &object.String{Value: "v"})
 			kvCall(store, "get", &object.String{Value: "k"})
-			kvCall(store, "close")
+			// No close — store persists in registry across calls
 		}()
 	}
 	wg.Wait()
 
-	// All goroutines closed — registry entry should be gone
+	// Store should still be open in the registry
 	kvRegistry.Lock()
 	_, stillOpen := kvRegistry.stores[":memory:race"]
 	kvRegistry.Unlock()
-	if stillOpen {
-		t.Error("Registry entry should be removed after all concurrent refs closed")
+	if !stillOpen {
+		t.Error("Registry entry should remain open when not explicitly closed")
 	}
 }
 
