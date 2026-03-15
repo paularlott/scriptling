@@ -1,0 +1,14 @@
+description = "List all stored memories, optionally filtered by type"
+keywords = ["memory", "list", "all", "show", "inspect"]
+
+[[parameters]]
+name = "type"
+type = "string"
+description = "Filter by type: 'fact', 'preference', 'event', 'note'"
+required = false
+
+[[parameters]]
+name = "limit"
+type = "int"
+description = "Maximum number of memories to return (default: 50)"
+required = false

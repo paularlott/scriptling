@@ -1,0 +1,26 @@
+description = "Store information in long-term memory for future reference"
+keywords = ["memory", "remember", "store", "save", "persist"]
+
+[[parameters]]
+name = "content"
+type = "string"
+description = "The information to remember"
+required = true
+
+[[parameters]]
+name = "type"
+type = "string"
+description = "Category: 'fact', 'preference', 'event', or 'note' (default: 'note')"
+required = false
+
+[[parameters]]
+name = "key"
+type = "string"
+description = "Optional semantic key to tag this memory for easier searching (e.g. 'user_name', 'api_limit')"
+required = false
+
+[[parameters]]
+name = "importance"
+type = "float"
+description = "Importance 0.0-1.0; memories >= 0.8 are exempt from compaction (default: 0.5)"
+required = false

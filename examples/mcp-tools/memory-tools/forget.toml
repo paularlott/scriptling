@@ -1,0 +1,8 @@
+description = "Remove information from long-term memory"
+keywords = ["memory", "forget", "delete", "remove"]
+
+[[parameters]]
+name = "id_or_key"
+type = "string"
+description = "Memory ID or semantic key to forget (e.g. 'user_name' or a UUID from recall)"
+required = true
