@@ -60,7 +60,7 @@ Example:
   import scriptling.ai.memory as memory
 
   mem = memory.new(kv.default)
-  mem.remember("User's name is Alice", type="fact", key="user_name")
+  mem.remember("User's name is Alice", type="fact", importance=0.9)
 
   # With a dedicated persistent store
   db = kv.open("/data/agent.db")
@@ -85,7 +85,6 @@ func newMemoryObject(store *Store) *object.Builtin {
 					}
 
 					memType := kwargs.MustGetString("type", TypeNote)
-					key := kwargs.MustGetString("key", "")
 					importance := kwargs.MustGetFloat("importance", 0.5)
 
 					if len(args) > 1 {
@@ -94,32 +93,26 @@ func newMemoryObject(store *Store) *object.Builtin {
 						}
 					}
 					if len(args) > 2 {
-						if v, err := args[2].AsString(); err == nil {
-							key = v
-						}
-					}
-					if len(args) > 3 {
-						if v, err := args[3].CoerceFloat(); err == nil {
+						if v, err := args[2].CoerceFloat(); err == nil {
 							importance = v
 						}
 					}
 
-					m, err := store.Remember(content, memType, key, importance)
+					m, err := store.Remember(content, memType, importance)
 					if err != nil {
 						return errors.NewError("memory.remember: %v", err)
 					}
 					return memoryToDict(m)
 				},
-				HelpText: `remember(content, type="note", key="", importance=0.5) - Store a memory
+				HelpText: `remember(content, type="note", importance=0.5) - Store a memory
 
 Parameters:
   content (str): What to remember
   type (str, optional): "fact", "preference", "event", or "note" (default: "note")
-  key (str, optional): Semantic key for direct lookup (e.g. "user_name")
   importance (float, optional): 0.0-1.0; memories >= 0.8 are exempt from compaction (default: 0.5)
 
 Returns:
-  dict: The stored memory with id, content, type, key, importance, created_at, accessed_at`,
+  dict: The stored memory with id, content, type, importance, created_at, accessed_at`,
 			},
 
 			"recall": &object.Builtin{
@@ -149,7 +142,7 @@ Returns:
 				HelpText: `recall(query="", limit=10, type="") - Search memories by keyword
 
 Parameters:
-  query (str, optional): Keyword search query against content and key; empty returns memories ranked by recency/importance
+  query (str, optional): Keyword search query against memory content; empty returns memories ranked by recency/importance
   limit (int, optional): Maximum results to return (default: 10)
   type (str, optional): Filter by type: "fact", "preference", "event", "note"
 
@@ -162,27 +155,16 @@ Returns:
 					if objErr := errors.MinArgs(args, 1); objErr != nil {
 						return objErr
 					}
-					val, objErr := args[0].AsString()
+					id, objErr := args[0].AsString()
 					if objErr != nil {
 						return objErr
 					}
-					byKey := kwargs.MustGetBool("by_key", false)
-					var ok bool
-					if byKey {
-						ok = store.ForgetByKey(val)
-					} else {
-						ok = store.Forget(val)
-						if !ok {
-							ok = store.ForgetByKey(val)
-						}
-					}
-					return &object.Boolean{Value: ok}
+					return &object.Boolean{Value: store.Forget(id)}
 				},
-				HelpText: `forget(id_or_key, by_key=False) - Remove a memory
+				HelpText: `forget(id) - Remove a memory by ID
 
 Parameters:
-  id_or_key (str): Memory ID or semantic key
-  by_key (bool, optional): If True, treat argument as a key (default: False, tries ID then key)
+  id (str): Memory ID returned by remember()
 
 Returns:
   bool: True if a memory was removed`,
@@ -275,7 +257,6 @@ func memoryToDict(m *Memory) *object.Dict {
 	d.SetByString("id", &object.String{Value: m.ID})
 	d.SetByString("content", &object.String{Value: m.Content})
 	d.SetByString("type", &object.String{Value: m.Type})
-	d.SetByString("key", &object.String{Value: m.Key})
 	d.SetByString("importance", &object.Float{Value: m.Importance})
 	d.SetByString("created_at", conversion.FromGo(m.CreatedAt.Format(time.RFC3339)))
 	d.SetByString("accessed_at", conversion.FromGo(m.AccessedAt.Format(time.RFC3339)))

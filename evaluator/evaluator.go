@@ -598,6 +598,17 @@ func evalInfixExpression(ctx context.Context, operator string, left, right objec
 		if r, ok := right.(*object.String); ok && operator == "*" {
 			return evalStringMultiplication(r.Value, l.Value)
 		}
+		// Handle int * list
+		if r, ok := right.(*object.List); ok && operator == "*" {
+			if l.Value <= 0 {
+				return &object.List{Elements: []object.Object{}}
+			}
+			result := make([]object.Object, int(l.Value)*len(r.Elements))
+			for i := range int(l.Value) {
+				copy(result[i*len(r.Elements):], r.Elements)
+			}
+			return &object.List{Elements: result}
+		}
 		return evalFloatInfixExpression(operator, left, right)
 	case *object.Float:
 		return evalFloatInfixExpression(operator, left, right)
@@ -613,6 +624,36 @@ func evalInfixExpression(ctx context.Context, operator string, left, right objec
 		// Handle instance operators via dunder methods (__lt__, __gt__, __eq__, __sub__, __add__, etc.)
 		if result := evalInstanceInfixExpression(ctx, operator, l, right, env); result != nil {
 			return result
+		}
+	case *object.List:
+		switch operator {
+		case "+":
+			// Accept any list/tuple on the right
+			var rightElems []object.Object
+			switch r := right.(type) {
+			case *object.List:
+				rightElems = r.Elements
+			case *object.Tuple:
+				rightElems = r.Elements
+			default:
+				return errors.NewTypeError("list", right.Type().String())
+			}
+			result := make([]object.Object, len(l.Elements)+len(rightElems))
+			copy(result, l.Elements)
+			copy(result[len(l.Elements):], rightElems)
+			return &object.List{Elements: result}
+		case "*":
+			if r, ok := right.(*object.Integer); ok {
+				if r.Value <= 0 {
+					return &object.List{Elements: []object.Object{}}
+				}
+				result := make([]object.Object, int(r.Value)*len(l.Elements))
+				for i := range int(r.Value) {
+					copy(result[i*len(l.Elements):], l.Elements)
+				}
+				return &object.List{Elements: result}
+			}
+			return errors.NewTypeError("int", right.Type().String())
 		}
 	}
 
