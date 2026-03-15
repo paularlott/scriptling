@@ -517,39 +517,23 @@ func (b *Builtin) CoerceInt() (int64, Object)     { return 0, errMustBeInteger }
 func (b *Builtin) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
 
 // Library represents a pre-built collection of builtin functions and constants
-// This eliminates the need for function wrappers and provides direct access
-// Libraries can contain sub-libraries for nested module support (e.g., urllib.parse)
 type Library struct {
 	name         string
 	functions    map[string]*Builtin
 	constants    map[string]Object
-	subLibraries map[string]*Library
 	description  string
-	instanceData any        // Instance-specific data for this library
-	cachedDict   *Dict      // Cached dict representation (built once)
-	cachedDictMu sync.Mutex // Protects cachedDict for concurrent access
+	instanceData any
+	cachedDict   *Dict
+	cachedDictMu sync.Mutex
 }
 
 // NewLibrary creates a new library with functions, optional constants, and optional description
-// Pass nil for constants if there are none, and "" for description if not needed
 func NewLibrary(name string, functions map[string]*Builtin, constants map[string]Object, description string) *Library {
 	return &Library{
-		name:         name,
-		functions:    functions,
-		constants:    constants,
-		subLibraries: nil,
-		description:  description,
-	}
-}
-
-// NewLibraryWithSubs creates a new library with functions, constants, sub-libraries, and description
-func NewLibraryWithSubs(name string, functions map[string]*Builtin, constants map[string]Object, subLibraries map[string]*Library, description string) *Library {
-	return &Library{
-		name:         name,
-		functions:    functions,
-		constants:    constants,
-		subLibraries: subLibraries,
-		description:  description,
+		name:        name,
+		functions:   functions,
+		constants:   constants,
+		description: description,
 	}
 }
 
@@ -557,7 +541,6 @@ func NewLibraryWithSubs(name string, functions map[string]*Builtin, constants ma
 func (l *Library) Name() string {
 	return l.name
 }
-
 // Functions returns the library's function map
 func (l *Library) Functions() map[string]*Builtin {
 	return l.functions
@@ -566,11 +549,6 @@ func (l *Library) Functions() map[string]*Builtin {
 // Constants returns the library's constants map
 func (l *Library) Constants() map[string]Object {
 	return l.constants
-}
-
-// SubLibraries returns the library's sub-libraries map
-func (l *Library) SubLibraries() map[string]*Library {
-	return l.subLibraries
 }
 
 // Description returns the library's description
@@ -591,9 +569,8 @@ func (l *Library) GetDict() *Dict {
 	// Build dict from library contents
 	funcs := l.functions
 	consts := l.constants
-	subs := l.subLibraries
 
-	dict := make(map[string]DictPair, len(funcs)+len(consts)+len(subs))
+	dict := make(map[string]DictPair, len(funcs)+len(consts))
 
 	for fname, fn := range funcs {
 		dict[DictKey(&String{Value: fname})] = DictPair{
@@ -608,16 +585,6 @@ func (l *Library) GetDict() *Dict {
 			dict[DictKey(&String{Value: cname})] = DictPair{
 				Key:   &String{Value: cname},
 				Value: val,
-			}
-		}
-	}
-
-	// Add sub-libraries (recursive)
-	if subs != nil {
-		for subName, subLib := range subs {
-			dict[DictKey(&String{Value: subName})] = DictPair{
-				Key:   &String{Value: subName},
-				Value: subLib.GetDict(),
 			}
 		}
 	}
@@ -665,11 +632,10 @@ func (l *Library) Instantiate(instanceData any) *Library {
 	newLib := &Library{
 		name:         l.name,
 		functions:    make(map[string]*Builtin, len(l.functions)),
-		constants:    l.constants,    // Constants are shared (immutable)
-		subLibraries: l.subLibraries, // Sub-libraries are shared
+		constants:    l.constants,
 		description:  l.description,
 		instanceData: instanceData,
-		cachedDict:   nil, // New instance needs fresh cache
+		cachedDict:   nil,
 	}
 
 	// Wrap each function to inject instance data into context

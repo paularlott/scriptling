@@ -1714,22 +1714,6 @@ func evalFromImportStatement(fis *ast.FromImportStatement, env *object.Environme
 				} else {
 					return errors.NewError("%s: cannot find '%s' in module '%s'", errors.ErrImportError, parts[i], strings.Join(parts[:i], "."))
 				}
-			case *object.Library:
-				if sub := m.SubLibraries(); sub != nil {
-					if subLib, exists := sub[parts[i]]; exists {
-						moduleObj = subLib
-					} else {
-						return errors.NewError("%s: cannot find '%s' in module '%s'", errors.ErrImportError, parts[i], strings.Join(parts[:i], "."))
-					}
-				} else if funcs := m.Functions(); funcs != nil {
-					if fn, exists := funcs[parts[i]]; exists {
-						moduleObj = fn
-					} else {
-						return errors.NewError("%s: cannot find '%s' in module '%s'", errors.ErrImportError, parts[i], strings.Join(parts[:i], "."))
-					}
-				} else {
-					return errors.NewError("%s: cannot find '%s' in module '%s'", errors.ErrImportError, parts[i], strings.Join(parts[:i], "."))
-				}
 			default:
 				return errors.NewError("%s: '%s' is not a module", errors.ErrImportError, strings.Join(parts[:i], "."))
 			}
@@ -1760,15 +1744,6 @@ func evalFromImportStatement(fis *ast.FromImportStatement, env *object.Environme
 				if consts := m.Constants(); consts != nil {
 					if c, exists := consts[name.Value]; exists {
 						value = c
-						found = true
-					}
-				}
-			}
-			// Check sub-libraries (for classes like BeautifulSoup)
-			if !found {
-				if subs := m.SubLibraries(); subs != nil {
-					if sub, exists := subs[name.Value]; exists {
-						value = sub
 						found = true
 					}
 				}

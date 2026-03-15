@@ -17,7 +17,7 @@ const kvMemoryPrefix = ":memory:"
 
 // kvRegistryEntry holds a shared DB and its reference count.
 type kvRegistryEntry struct {
-	db      *snapshotkv.DB
+	db       *snapshotkv.DB
 	refCount int
 }
 
@@ -114,11 +114,32 @@ func releaseRegisteredStore(name string) {
 	}
 }
 
+// kvDBRegistry maps a kv store Builtin pointer to its underlying DB so that
+// other packages (e.g. scriptling.ai.memory) can retrieve it via KVStoreDB.
+var kvDBRegistry = struct {
+	sync.RWMutex
+	m map[*object.Builtin]*snapshotkv.DB
+}{
+	m: make(map[*object.Builtin]*snapshotkv.DB),
+}
+
+// KVStoreDB returns the underlying snapshotkv.DB for a kv store object,
+// or nil if the object is not a kv store.
+func KVStoreDB(store object.Object) *snapshotkv.DB {
+	b, ok := store.(*object.Builtin)
+	if !ok {
+		return nil
+	}
+	kvDBRegistry.RLock()
+	defer kvDBRegistry.RUnlock()
+	return kvDBRegistry.m[b]
+}
+
 // newKVStoreObject returns a Builtin object with kv methods bound to db.
 // If registryName is non-empty, close() will decrement the registry ref count.
 // If registryName is empty (system default), close() is a no-op.
 func newKVStoreObject(db *snapshotkv.DB, registryName string) *object.Builtin {
-	return &object.Builtin{
+	obj := &object.Builtin{
 		Attributes: map[string]object.Object{
 			"set": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -281,6 +302,10 @@ func newKVStoreObject(db *snapshotkv.DB, registryName string) *object.Builtin {
 		},
 		HelpText: "KV store object — call .get(), .set(), .delete(), .exists(), .ttl(), .keys(), .clear(), .close()",
 	}
+	kvDBRegistry.Lock()
+	kvDBRegistry.m[obj] = db
+	kvDBRegistry.Unlock()
+	return obj
 }
 
 var kvOpenBuiltin = &object.Builtin{
@@ -327,7 +352,7 @@ Example:
 // Must be called after InitKVStore so RuntimeState.KVDB is set.
 func NewKVSubLibrary() *object.Library {
 	RegisterCleanup(closeKVRegistry)
-	return object.NewLibrary("kv",
+	return object.NewLibrary(RuntimeKVLibraryName,
 		map[string]*object.Builtin{
 			"open": kvOpenBuiltin,
 		},

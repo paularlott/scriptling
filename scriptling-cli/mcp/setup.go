@@ -6,6 +6,7 @@ import (
 	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/extlibs/agent"
 	"github.com/paularlott/scriptling/extlibs/ai"
+	aimemory "github.com/paularlott/scriptling/extlibs/ai/memory"
 	"github.com/paularlott/scriptling/extlibs/console"
 	scriptlingfuzzy "github.com/paularlott/scriptling/extlibs/fuzzy"
 	scriptlingmcp "github.com/paularlott/scriptling/extlibs/mcp"
@@ -46,6 +47,7 @@ func SetupScriptling(p *scriptling.Scriptling, libdirs []string, registerInterac
 
 	// Register AI and MCP libraries
 	ai.Register(p)
+	aimemory.Register(p)
 	agent.Register(p)
 	scriptlingfuzzy.Register(p)
 	if registerInteract {

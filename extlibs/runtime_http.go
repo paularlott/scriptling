@@ -90,7 +90,7 @@ func CreateRequestInstance(method, path, body string, headers map[string]string,
 	}
 }
 
-var HTTPSubLibrary = object.NewLibrary("http", map[string]*object.Builtin{
+var HTTPSubLibrary = object.NewLibrary(RuntimeHTTPLibraryName, map[string]*object.Builtin{
 	"get": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if err := errors.MinArgs(args, 2); err != nil {

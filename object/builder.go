@@ -560,16 +560,18 @@ func objectToAny(obj Object) interface{} {
 	}
 }
 
-// SubLibrary creates a new sub-library with the given name.
-// Sub-libraries are accessed as `parent.sub` in scriptling code.
+// SubLibrary embeds a library as a named constant in the parent, enabling
+// attribute-style access: `import parent as p; p.sub.func()`.
+//
+// Note: for `import parent.sub` to work, the sub-library must also be
+// registered independently via RegisterLibrary using its full dotted name.
 //
 // Example:
 //
-//	subLib := NewLibraryBuilder("parse", "URL parsing utilities")
-//	subLib.Function("quote", func(s string) string { ... })
-//	builder.SubLibrary("parse", subLib.Build())
+//	subLib := NewLibraryBuilder("mylib.sub", "Sub utilities").Function(...).Build()
+//	p.RegisterLibrary(subLib)  // enables: import mylib.sub as sub
+//	builder.SubLibrary("sub", subLib)  // enables: import mylib as m; m.sub.func()
 func (b *LibraryBuilder) SubLibrary(name string, lib *Library) *LibraryBuilder {
-	// Add sub-library as a constant (will be accessible as parent.name)
 	b.constants[name] = lib
 	return b
 }
