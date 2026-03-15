@@ -14,12 +14,6 @@ description = "Category: 'fact', 'preference', 'event', or 'note' (default: 'not
 required = false
 
 [[parameters]]
-name = "key"
-type = "string"
-description = "Optional semantic key to tag this memory for easier searching (e.g. 'user_name', 'api_limit')"
-required = false
-
-[[parameters]]
 name = "importance"
 type = "float"
 description = "Importance 0.0-1.0; memories >= 0.8 are exempt from compaction (default: 0.5)"

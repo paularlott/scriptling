@@ -1,7 +1,6 @@
 package memory
 
 import (
-	"encoding/json"
 	"strings"
 	"sync"
 	"time"
@@ -12,7 +11,7 @@ import (
 
 const (
 	memPrefix = "mem:"
-	keyPrefix = "key:"
+	idxPrefix = "idx:"
 
 	TypeFact       = "fact"
 	TypePreference = "preference"
@@ -20,15 +19,19 @@ const (
 	TypeNote       = "note"
 )
 
+// typePrefix returns the full KV key prefix for a memory type.
+func typePrefix(memType string) string {
+	return memPrefix + memType + ":"
+}
+
 // Memory is a single stored memory entry.
 type Memory struct {
-	ID         string    `json:"id"`
-	Content    string    `json:"content"`
-	Type       string    `json:"type"`
-	Key        string    `json:"key,omitempty"`
-	Importance float64   `json:"importance"`
-	CreatedAt  time.Time `json:"created_at"`
-	AccessedAt time.Time `json:"accessed_at"`
+	ID         string    `msgpack:"id"`
+	Content    string    `msgpack:"content"`
+	Type       string    `msgpack:"type"`
+	Importance float64   `msgpack:"importance"`
+	CreatedAt  time.Time `msgpack:"created_at"`
+	AccessedAt time.Time `msgpack:"accessed_at"`
 }
 
 // Store is a memory store backed by a snapshotkv DB.
@@ -65,8 +68,8 @@ func (s *Store) Close() {
 	}
 }
 
-// Remember stores a memory. If key is non-empty a secondary index is written.
-func (s *Store) Remember(content, memType, key string, importance float64) (*Memory, error) {
+// Remember stores a memory and returns it with a UUIDv7 ID.
+func (s *Store) Remember(content, memType string, importance float64) (*Memory, error) {
 	if memType == "" {
 		memType = TypeNote
 	}
@@ -77,12 +80,16 @@ func (s *Store) Remember(content, memType, key string, importance float64) (*Mem
 		importance = 1
 	}
 
+	id, err := uuid.NewV7()
+	if err != nil {
+		return nil, err
+	}
+
 	now := time.Now().UTC()
 	m := &Memory{
-		ID:         uuid.New().String(),
+		ID:         id.String(),
 		Content:    content,
 		Type:       memType,
-		Key:        key,
 		Importance: importance,
 		CreatedAt:  now,
 		AccessedAt: now,
@@ -98,50 +105,40 @@ func (s *Store) Remember(content, memType, key string, importance float64) (*Mem
 }
 
 // Recall searches memories by keyword and returns up to limit results ranked by score.
-// Matches against both content and the semantic key field.
 func (s *Store) Recall(query string, limit int, typeFilter string) []*Memory {
 	if limit <= 0 {
 		limit = 10
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	all := s.allMemories()
 	now := time.Now().UTC()
+	queryLower := strings.ToLower(strings.TrimSpace(query))
+	queryTokens := tokenise(queryLower)
 
 	type scored struct {
 		m     *Memory
 		score float64
 	}
-
 	var results []scored
-	queryLower := strings.ToLower(strings.TrimSpace(query))
-	queryTokens := tokenise(queryLower)
 
-	for _, m := range all {
-		if typeFilter != "" && m.Type != typeFilter {
-			continue
-		}
-
+	// Scan phase is read-only.
+	s.mu.RLock()
+	s.scanType(typeFilter, func(m *Memory) bool {
 		var score float64
 		if queryLower == "" {
-			// No query — rank by recency + importance only
 			score = recencyScore(m, now)*0.6 + m.Importance*0.4
 		} else {
-			keyHits := keywordHits(queryTokens, m.Key)
 			contentHits := keywordHits(queryTokens, m.Content)
-			if keyHits == 0 && contentHits == 0 {
-				continue
+			if contentHits == 0 {
+				return true
 			}
-			// Key matches weighted higher than content matches
-			score = float64(keyHits)*0.5 + float64(contentHits)*0.25 + m.Importance*0.15 + recencyScore(m, now)*0.1
+			score = float64(contentHits)*0.5 + m.Importance*0.3 + recencyScore(m, now)*0.2
 		}
-
 		results = append(results, scored{m, score})
-	}
+		return true
+	})
+	s.mu.RUnlock()
 
-	// Sort descending by score (simple insertion sort — memory stores are small)
+	// Sort descending by score (insertion sort — memory stores are small)
 	for i := 1; i < len(results); i++ {
 		for j := i; j > 0 && results[j].score > results[j-1].score; j-- {
 			results[j], results[j-1] = results[j-1], results[j]
@@ -152,46 +149,42 @@ func (s *Store) Recall(query string, limit int, typeFilter string) []*Memory {
 		results = results[:limit]
 	}
 
+	// Batch-update AccessedAt — write lock only for the mutation phase.
+	// Re-check existence: a concurrent Forget may have removed a result between
+	// releasing RLock and acquiring Lock here.
 	out := make([]*Memory, 0, len(results))
+	accessed := time.Now().UTC()
+	s.mu.Lock()
+	_ = s.db.BeginTransaction()
 	for _, r := range results {
-		r.m.AccessedAt = time.Now().UTC()
+		if !s.db.Exists(idxPrefix + r.m.ID) {
+			continue
+		}
+		r.m.AccessedAt = accessed
 		_ = s.save(r.m)
 		out = append(out, r.m)
 	}
+	_ = s.db.Commit()
+	s.mu.Unlock()
+
 	return out
 }
 
-// Forget removes a memory by ID. Also removes the key index if present.
+// Forget removes a memory by ID.
 func (s *Store) Forget(id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	m := s.load(id)
-	if m == nil {
-		return false
-	}
-	if m.Key != "" {
-		s.db.Delete(keyPrefix + m.Key)
-	}
-	s.db.Delete(memPrefix + id)
-	return true
-}
-
-// ForgetByKey removes the memory with the given semantic key.
-func (s *Store) ForgetByKey(key string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	idVal, err := s.db.Get(keyPrefix + key)
+	val, err := s.db.Get(idxPrefix + id)
 	if err != nil {
 		return false
 	}
-	id, ok := idVal.(string)
+	key, ok := val.(string)
 	if !ok {
 		return false
 	}
-	s.db.Delete(keyPrefix + key)
-	s.db.Delete(memPrefix + id)
+	s.db.Delete(key)
+	s.db.Delete(idxPrefix + id)
 	return true
 }
 
@@ -200,20 +193,14 @@ func (s *Store) List(typeFilter string, limit int) []*Memory {
 	if limit <= 0 {
 		limit = 50
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
-	all := s.allMemories()
-	out := make([]*Memory, 0, len(all))
-	for _, m := range all {
-		if typeFilter != "" && m.Type != typeFilter {
-			continue
-		}
+	out := make([]*Memory, 0, limit)
+	s.scanType(typeFilter, func(m *Memory) bool {
 		out = append(out, m)
-		if len(out) >= limit {
-			break
-		}
-	}
+		return len(out) < limit
+	})
 	return out
 }
 
@@ -221,75 +208,87 @@ func (s *Store) List(typeFilter string, limit int) []*Memory {
 func (s *Store) Count() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return len(s.db.FindKeysByPrefix(memPrefix))
+	return s.db.Count(idxPrefix)
 }
 
 // Compact removes memories that have not been accessed within idleTimeout,
 // exempting memories with importance >= exemptThreshold.
+// A zero idleTimeout is a no-op.
 func (s *Store) Compact(idleTimeout time.Duration, exemptThreshold float64) int {
+	if idleTimeout == 0 {
+		return 0
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	cutoff := time.Now().UTC().Add(-idleTimeout)
-	removed := 0
 
-	for _, m := range s.allMemories() {
-		if m.Importance >= exemptThreshold {
-			continue
+	// Collect keys to delete — no mutations inside Scan callback.
+	type toDelete struct{ memKey, idxKey string }
+	var victims []toDelete
+
+	s.scanType("", func(m *Memory) bool {
+		if m.Importance < exemptThreshold && m.AccessedAt.Before(cutoff) {
+			victims = append(victims, toDelete{typePrefix(m.Type) + m.ID, idxPrefix + m.ID})
 		}
-		if m.AccessedAt.Before(cutoff) {
-			if m.Key != "" {
-				s.db.Delete(keyPrefix + m.Key)
-			}
-			s.db.Delete(memPrefix + m.ID)
-			removed++
-		}
+		return true
+	})
+
+	_ = s.db.BeginTransaction()
+	for _, v := range victims {
+		s.db.Delete(v.memKey)
+		s.db.Delete(v.idxKey)
 	}
-	return removed
+	_ = s.db.Commit()
+
+	return len(victims)
 }
 
 // --- internal helpers ---
 
-func (s *Store) save(m *Memory) error {
-	data, err := json.Marshal(m)
-	if err != nil {
-		return err
+// scanType iterates memories, optionally filtered to a single type, calling fn for each.
+// Stops early if fn returns false. Must be called with s.mu held.
+// fn must not call any DB methods (Scan holds db.mu.RLock).
+func (s *Store) scanType(typeFilter string, fn func(*Memory) bool) {
+	prefix := memPrefix
+	if typeFilter != "" {
+		prefix = typePrefix(typeFilter)
 	}
-	if err := s.db.Set(memPrefix+m.ID, string(data)); err != nil {
-		return err
-	}
-	if m.Key != "" {
-		_ = s.db.Set(keyPrefix+m.Key, m.ID)
-	}
-	return nil
+	s.db.Scan(prefix, func(_ string, value any) bool {
+		m := toMemory(value)
+		if m == nil {
+			return true
+		}
+		return fn(m)
+	})
 }
 
-func (s *Store) load(id string) *Memory {
-	val, err := s.db.Get(memPrefix + id)
-	if err != nil {
-		return nil
-	}
-	raw, ok := val.(string)
+// toMemory converts a decoded map[string]any value to a *Memory.
+// msgpack always decodes into map[string]any with concrete types: string, float64, time.Time.
+func toMemory(value any) *Memory {
+	m, ok := value.(map[string]any)
 	if !ok {
 		return nil
 	}
-	var m Memory
-	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+	mem := &Memory{}
+	mem.ID, _ = m["id"].(string)
+	mem.Content, _ = m["content"].(string)
+	mem.Type, _ = m["type"].(string)
+	mem.Importance, _ = m["importance"].(float64)
+	mem.CreatedAt, _ = m["created_at"].(time.Time)
+	mem.AccessedAt, _ = m["accessed_at"].(time.Time)
+	if mem.ID == "" {
 		return nil
 	}
-	return &m
+	return mem
 }
 
-func (s *Store) allMemories() []*Memory {
-	keys := s.db.FindKeysByPrefix(memPrefix)
-	out := make([]*Memory, 0, len(keys))
-	for _, k := range keys {
-		id := strings.TrimPrefix(k, memPrefix)
-		if m := s.load(id); m != nil {
-			out = append(out, m)
-		}
+func (s *Store) save(m *Memory) error {
+	key := typePrefix(m.Type) + m.ID
+	if err := s.db.Set(key, m); err != nil {
+		return err
 	}
-	return out
+	return s.db.Set(idxPrefix+m.ID, key)
 }
 
 func (s *Store) compactLoop() {
@@ -306,10 +305,11 @@ func (s *Store) compactLoop() {
 }
 
 // tokenise splits text into lowercase words, stripping punctuation.
+// text must already be lowercased.
 func tokenise(text string) []string {
 	var tokens []string
 	var buf strings.Builder
-	for _, r := range strings.ToLower(text) {
+	for _, r := range text {
 		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
 			buf.WriteRune(r)
 		} else if buf.Len() > 0 {
@@ -323,7 +323,7 @@ func tokenise(text string) []string {
 	return tokens
 }
 
-// keywordHits counts how many query tokens appear in the content or key.
+// keywordHits counts how many query tokens appear in content.
 // Tries exact match first, then strips a trailing 's' for basic plural tolerance.
 func keywordHits(queryTokens []string, content string) int {
 	contentLower := strings.ToLower(content)

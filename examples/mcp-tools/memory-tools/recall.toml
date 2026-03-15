@@ -1,10 +1,10 @@
-description = "Search long-term memory for relevant information"
-keywords = ["memory", "recall", "search", "find", "retrieve", "remember"]
+description = "Search long-term memory, or load full context when called with no arguments. Call with no arguments at the start of every conversation to load all preferences and recent activity before responding."
+keywords = ["memory", "recall", "search", "find", "retrieve", "remember", "context", "load"]
 
 [[parameters]]
 name = "query"
 type = "string"
-description = "Search query matched against both memory content and keys (e.g. 'dog', 'wife name', 'dark mode')"
+description = "Keyword search against memory content (e.g. 'dark mode', 'api key'). Omit to load full context."
 required = false
 
 [[parameters]]
@@ -16,5 +16,5 @@ required = false
 [[parameters]]
 name = "limit"
 type = "int"
-description = "Maximum number of memories to return (default: 10)"
+description = "Maximum number of memories to return for keyword searches (default: 10)"
 required = false

@@ -2,7 +2,7 @@ description = "Remove information from long-term memory"
 keywords = ["memory", "forget", "delete", "remove"]
 
 [[parameters]]
-name = "id_or_key"
+name = "id"
 type = "string"
-description = "Memory ID or semantic key to forget (e.g. 'user_name' or a UUID from recall)"
+description = "Memory ID to forget (returned by remember)"
 required = true
