@@ -64,6 +64,49 @@ SCRIPTLING_MEMORY_DB=~/.scriptling/memory ./bin/scriptling --server :8000 --mcp-
 }
 ```
 
+## Using with the Scriptling Agent
+
+When using the `scriptling.ai.agent` library, pass a memory object directly to the `Agent` constructor. Memory tools are wired automatically and the system prompt is augmented with memory instructions and any stored preferences:
+
+```python
+import scriptling.ai as ai
+import scriptling.ai.agent as agent
+import scriptling.ai.memory as memory
+import scriptling.runtime.kv as kv
+
+mem = memory.new(kv.open("./memory-db"))
+
+bot = agent.Agent(
+    ai.Client("http://127.0.0.1:1234/v1"),
+    model="qwen3-8b",
+    system_prompt="You are a helpful assistant.",
+    memory=mem
+)
+
+response = bot.trigger("What do you know about me?")
+print(response.content)
+```
+
+The agent automatically:
+- Registers `memory_remember`, `memory_recall`, and `memory_forget` as tools
+- Appends memory usage instructions to the system prompt
+- Pre-loads all stored `preference` memories into the system prompt so the LLM has immediate context without needing a tool call
+
+### With LLM Compaction (Mode 2)
+
+To enable intelligent memory compaction (deduplication and summarisation via LLM):
+
+```python
+import scriptling.ai as ai
+import scriptling.ai.memory as memory
+import scriptling.runtime.kv as kv
+
+client = ai.Client("http://127.0.0.1:1234/v1")
+mem = memory.new(kv.open("./memory-db"), client, model="qwen3-8b")
+
+bot = agent.Agent(client, model="qwen3-8b", memory=mem)
+```
+
 ## System Prompt
 
 Add this to your LLM's system prompt to enable memory-aware behaviour:
@@ -96,16 +139,20 @@ Guidelines for using memory:
 ## Memory Types
 
 | Type | Use for |
-|------|---------|
+|------|---------| 
 | `fact` | Objective information (names, IDs, limits) |
-| `preference` | User preferences (themes, formats, styles) |
+| `preference` | User preferences (themes, formats, styles) — pre-loaded into system prompt |
 | `event` | Things that happened (deployments, meetings) |
 | `note` | Agent's own notes (default) |
 
-## Importance
+## Importance and Compaction
 
-The `importance` field (0.0–1.0) controls compaction behaviour:
+The `importance` field (0.0–1.0) controls how long a memory survives automatic compaction:
 
-- Memories with `importance >= 0.8` are **never** automatically removed
-- Lower importance memories are removed after the configured idle timeout
-- Default is `0.5`; use `0.9`–`1.0` for critical facts like API keys or names
+| Importance | Behaviour |
+|------------|-----------|
+| 0.9–1.0 | Survives for the full 180-day hard cap |
+| 0.5 (default) | ~1 year effective lifetime for facts, ~3 months for notes |
+| 0.1 | Pruned quickly — a note at 0.1 is gone in ~7 days |
+
+Compaction runs automatically in the background after every 10 new memories (configurable). `preference` type memories never decay regardless of importance — they are only removed after the 180-day hard age cap.

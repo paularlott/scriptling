@@ -8,13 +8,67 @@ const agentScript = `
 import json
 import scriptling.ai as ai
 
+_MEMORY_INSTRUCTIONS = """
+
+## Memory
+
+You have persistent memory across conversations via the following tools:
+- memory_remember(content, type, importance) — store a fact, preference, event or note
+- memory_recall(query, limit, type) — search memory by keyword; omit query to get recent context
+- memory_forget(id) — remove a memory by its ID
+
+Guidelines:
+- At the start of each conversation, call memory_recall() with no query to load recent context.
+- When the user shares personal information, preferences, or important facts, store them immediately with memory_remember().
+- Use type="preference" for how the user likes things done. Use type="fact" for objective information. Use type="event" for things that happened. Use type="note" for general notes.
+- Use importance=0.9 for critical facts (names, keys, deadlines) and importance=0.5 for general notes.
+- Before answering questions that may benefit from past context, call memory_recall(query) first.
+- Do not mention the memory tools to the user unless asked — use them silently.
+"""
+
 class Agent:
-    def __init__(self, client, tools=None, system_prompt="", model=""):
+    def __init__(self, client, tools=None, system_prompt="", model="", memory=None):
         self.client = client
-        self.tools = tools
         self.system_prompt = system_prompt
         self.model = model
         self.messages = []
+        self.memory = memory
+
+        # Wire memory tools and augment system prompt if a memory object was provided
+        if memory is not None:
+            if tools is None:
+                tools = ai.ToolRegistry()
+            tools.add(
+                "memory_remember",
+                "Store a memory for later recall. Use for facts, preferences, events or notes about the user or conversation.",
+                {"content": "string", "type": "string?", "importance": "number?"},
+                lambda args: memory.remember(args["content"], type=args.get("type", "note"), importance=float(args.get("importance", 0.5)))
+            )
+            tools.add(
+                "memory_recall",
+                "Search stored memories by keyword. Returns relevant memories ranked by relevance. Use before answering questions that may benefit from past context.",
+                {"query": "string?", "limit": "number?", "type": "string?"},
+                lambda args: memory.recall(args.get("query", ""), limit=int(args.get("limit", 10)), type=args.get("type", ""))
+            )
+            tools.add(
+                "memory_forget",
+                "Remove a specific memory by its ID.",
+                {"id": "string"},
+                lambda args: memory.forget(args["id"])
+            )
+
+            # Append memory instructions to system prompt
+            self.system_prompt = system_prompt + _MEMORY_INSTRUCTIONS
+
+            # Pre-load preferences into system prompt so the LLM has immediate context
+            preferences = memory.recall("", limit=50, type="preference")
+            if preferences and len(preferences) > 0:
+                pref_lines = ["\n## Remembered Preferences"]
+                for p in preferences:
+                    pref_lines.append("- " + p["content"])
+                self.system_prompt = self.system_prompt + "\n".join(pref_lines)
+
+        self.tools = tools
         # Build and store tool schemas if tools provided
         self.tool_schemas = tools.build() if tools is not None else []
 
