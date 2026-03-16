@@ -624,6 +624,6 @@ func BenchmarkFindMostSimilar(b *testing.B) {
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		s.findMostSimilar("memory content about topics", TypeNote)
+		_, _ = s.findMostSimilar("memory content about topics", TypeNote)
 	}
 }

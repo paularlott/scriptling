@@ -176,19 +176,22 @@ func (s *Store) Remember(content, memType string, importance float64) (*Memory, 
 	}
 
 	// Pre-flight: find the closest existing memory of the same type.
-	best, bestScore := s.findMostSimilar(content, memType)
+	bestID, bestScore := s.findMostSimilar(content, memType)
 
-	if best != nil && bestScore >= s.cfg.similarityHighThreshold {
+	if bestID != "" && bestScore >= s.cfg.similarityHighThreshold {
 		// Near-exact duplicate - update in place, no new memory.
-		s.log.Debug("pre-flight merge", "score", bestScore, "existing", best.ID)
-		updated := s.updateExisting(best, content, importance)
-		return updated, nil
+			s.log.Debug("pre-flight merge", "score", bestScore, "existing", sanitiseLog(bestID))
+		updated := s.updateExistingByID(bestID, content, importance)
+		if updated != nil {
+			return updated, nil
+		}
+		// Memory was deleted between find and update — fall through to save new.
 	}
 
-	if best != nil && bestScore >= s.cfg.similarityMidThreshold && s.cfg.aiClient != nil {
+	if bestID != "" && bestScore >= s.cfg.similarityMidThreshold && s.cfg.aiClient != nil {
 		// Ambiguous - ask the LLM whether to merge or keep separate.
-		s.log.Debug("pre-flight LLM resolve", "score", bestScore, "existing", best.ID)
-		if merged := s.resolveSimilarWithLLM(content, importance, best); merged != nil {
+		s.log.Debug("pre-flight LLM resolve", "score", bestScore, "existing", sanitiseLog(bestID))
+		if merged := s.resolveSimilarWithLLM(content, importance, bestID); merged != nil {
 			return merged, nil
 		}
 		// LLM said keep separate (or failed) - fall through to normal save.
@@ -224,43 +227,55 @@ func (s *Store) saveNew(content, memType string, importance float64) (*Memory, e
 	return m, nil
 }
 
-// findMostSimilar returns the existing memory of the given type with the highest
-// MinHash similarity to content, and its score. Returns nil if the store is empty.
-func (s *Store) findMostSimilar(content, memType string) (*Memory, float64) {
+// findMostSimilar returns the ID and MinHash of the existing memory of the given
+// type with the highest MinHash similarity to content, and its score.
+// Returns empty string if the store is empty.
+func (s *Store) findMostSimilar(content, memType string) (bestID string, bestScore float64) {
 	newHash := computeMinHash(content)
-	var best *Memory
-	var bestScore float64
 	s.mu.RLock()
 	s.scanType(memType, func(m *Memory) bool {
 		if score := minHashSimilarity(newHash, m.MinHash); score > bestScore {
 			bestScore = score
-			best = m
+			bestID = m.ID
 		}
 		return true
 	})
 	s.mu.RUnlock()
-	return best, bestScore
+	return bestID, bestScore
 }
 
-// updateExisting updates an existing memory's content and importance (taking the
-// higher value) and refreshes AccessedAt. Returns the updated memory.
-func (s *Store) updateExisting(existing *Memory, newContent string, newImportance float64) *Memory {
+// updateExistingByID re-fetches a memory by ID under the write lock, updates its
+// content and importance (taking the higher value), and refreshes AccessedAt.
+// Returns nil if the memory no longer exists.
+func (s *Store) updateExistingByID(id, newContent string, newImportance float64) *Memory {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	existing.Content = newContent
-	existing.MinHash = computeMinHash(newContent) // recompute for new content
-	if newImportance > existing.Importance {
-		existing.Importance = newImportance
+	m := s.getMemoryByID(id)
+	if m == nil {
+		return nil
 	}
-	existing.AccessedAt = time.Now().UTC()
-	_ = s.save(existing)
-	return existing
+	m.Content = newContent
+	m.MinHash = computeMinHash(newContent)
+	if newImportance > m.Importance {
+		m.Importance = newImportance
+	}
+	m.AccessedAt = time.Now().UTC()
+	_ = s.save(m)
+	return m
 }
 
-// resolveSimilarWithLLM sends the new content and the closest existing memory to
-// the LLM and asks whether to merge them. Returns the merged/updated memory if the
-// LLM decides to merge, or nil if it decides to keep them separate.
-func (s *Store) resolveSimilarWithLLM(newContent string, importance float64, existing *Memory) *Memory {
+// resolveSimilarWithLLM fetches the existing memory by ID, sends it and the new
+// content to the LLM, and asks whether to merge them. Returns the merged/updated
+// memory if the LLM decides to merge, or nil if it decides to keep them separate.
+func (s *Store) resolveSimilarWithLLM(newContent string, importance float64, existingID string) *Memory {
+	// Snapshot the existing memory fields without holding the lock during the LLM call.
+	s.mu.RLock()
+	existing := s.getMemoryByID(existingID)
+	s.mu.RUnlock()
+	if existing == nil {
+		return nil
+	}
+
 	prompt := fmt.Sprintf(
 		"Existing memory:\n%s (%s, importance: %.1f) %q\n\nNew memory:\n%q\n",
 		existing.ID, existing.Type, existing.Importance, existing.Content, newContent,
@@ -273,7 +288,7 @@ func (s *Store) resolveSimilarWithLLM(newContent string, importance float64, exi
 		},
 	})
 	if err != nil {
-		s.log.Error("LLM resolve failed", "error", err)
+		s.log.Error("LLM resolve failed", "error", sanitiseLog(err.Error()))
 		return nil
 	}
 
@@ -292,7 +307,7 @@ func (s *Store) resolveSimilarWithLLM(newContent string, importance float64, exi
 		Importance float64 `json:"importance"`
 	}
 	if err := json.Unmarshal([]byte(content), &decision); err != nil {
-		s.log.Error("failed to parse LLM resolve response", "error", err)
+		s.log.Error("failed to parse LLM resolve response", "error", sanitiseLog(err.Error()))
 		return nil
 	}
 	if decision.Action != "merge" || decision.NewContent == "" {
@@ -305,7 +320,7 @@ func (s *Store) resolveSimilarWithLLM(newContent string, importance float64, exi
 			mergedImportance = existing.Importance
 		}
 	}
-	return s.updateExisting(existing, decision.NewContent, mergedImportance)
+	return s.updateExistingByID(existing.ID, decision.NewContent, mergedImportance)
 }
 
 const resolveSystemPrompt = `You are a memory deduplication assistant. You are given an existing memory and a new memory that are similar but not identical.
@@ -390,12 +405,15 @@ func (s *Store) Recall(query string, limit int, typeFilter string) []*Memory {
 	s.mu.Lock()
 	_ = s.db.BeginTransaction()
 	for _, r := range results {
-		if !s.db.Exists(idxPrefix + r.m.ID) {
+		// Re-fetch under the write lock to avoid mutating a stale pointer and to
+		// guard against a concurrent Forget between the scan and this update.
+		m := s.getMemoryByID(r.m.ID)
+		if m == nil {
 			continue
 		}
-		r.m.AccessedAt = accessed
-		_ = s.save(r.m)
-		out = append(out, r.m)
+		m.AccessedAt = accessed
+		_ = s.save(m)
+		out = append(out, m)
 	}
 	_ = s.db.Commit()
 	s.mu.Unlock()
@@ -442,12 +460,7 @@ func (s *Store) Compact() int {
 // compact runs pruning followed by pairwise similarity-based deduplication.
 func (s *Store) compact() {
 	start := time.Now()
-
-	s.mu.RLock()
-	total := s.db.Count(idxPrefix)
-	s.mu.RUnlock()
-
-	s.log.Debug("compact started", "memories", total)
+	s.log.Debug("compact started")
 
 	// Phase 1: Prune by age and decay
 	pruned := s.prune()
@@ -572,10 +585,12 @@ func (s *Store) deduplicateType(memories []memData) int {
 			candidateID := memories[j].id
 
 			if score >= s.cfg.similarityHighThreshold {
-				// Auto-merge: update existing, delete candidate
+				// Auto-merge: re-fetch live data, update existing, delete candidate.
 				s.log.Debug("auto-merge", "score", score, "into", existingID, "from", candidateID)
 				s.mu.Lock()
-				s.mergeInto(existingID, memories[j].content, memories[j].importance)
+				if live := s.getMemoryByID(candidateID); live != nil {
+					s.mergeInto(existingID, live.Content, live.Importance)
+				}
 				s.deleteByID(candidateID)
 				s.mu.Unlock()
 				merged[candidateID] = true
@@ -643,7 +658,7 @@ func (s *Store) resolveAndMergePair(existing, candidate memData) bool {
 		},
 	})
 	if err != nil {
-		s.log.Error("LLM resolve pair failed", "error", err)
+		s.log.Error("LLM resolve pair failed", "error", sanitiseLog(err.Error()))
 		return false
 	}
 
@@ -662,7 +677,7 @@ func (s *Store) resolveAndMergePair(existing, candidate memData) bool {
 		Importance float64 `json:"importance"`
 	}
 	if err := json.Unmarshal([]byte(content), &decision); err != nil {
-		s.log.Error("failed to parse LLM resolve response", "error", err)
+		s.log.Error("failed to parse LLM resolve response", "error", sanitiseLog(err.Error()))
 		return false
 	}
 
@@ -671,7 +686,7 @@ func (s *Store) resolveAndMergePair(existing, candidate memData) bool {
 	}
 
 	// Merge: update existing with merged content, delete candidate
-	s.log.Debug("LLM merge", "into", existing.id, "from", candidate.id)
+	s.log.Debug("LLM merge", "into", sanitiseLog(existing.id), "from", sanitiseLog(candidate.id))
 	mergedImportance := decision.Importance
 	if mergedImportance <= 0 {
 		mergedImportance = existing.importance
@@ -722,7 +737,7 @@ func (s *Store) decayFactor(memType string, age time.Duration) float64 {
 	return math.Pow(0.5, exponent)
 }
 
-// stripThinkingBlocks removes <think...</think}> and similar reasoning blocks.
+// stripThinkingBlocks removes <think...</think> and similar reasoning blocks.
 func stripThinkingBlocks(s string) string {
 	for _, pair := range [][2]string{
 		{"<think", "</think"},
@@ -730,17 +745,19 @@ func stripThinkingBlocks(s string) string {
 		{"<Thought>", "</Thought>"},
 		{"<antThinking>", "</antThinking>"},
 	} {
+		sl := strings.ToLower(s)
 		for {
-			start := strings.Index(strings.ToLower(s), strings.ToLower(pair[0]))
+			start := strings.Index(sl, strings.ToLower(pair[0]))
 			if start == -1 {
 				break
 			}
-			end := strings.Index(strings.ToLower(s[start:]), strings.ToLower(pair[1]))
+			end := strings.Index(sl[start:], strings.ToLower(pair[1]))
 			if end == -1 {
 				s = s[:start]
 				break
 			}
 			s = s[:start] + s[start+end+len(pair[1]):]
+			sl = strings.ToLower(s)
 		}
 	}
 	return strings.TrimSpace(s)
@@ -885,6 +902,13 @@ func (s *Store) save(m *Memory) error {
 		return err
 	}
 	return s.db.Set(idxPrefix+m.ID, key)
+}
+
+// sanitiseLog replaces newlines and carriage returns to prevent log injection.
+func sanitiseLog(s string) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	return s
 }
 
 func tokenise(text string) []string {
