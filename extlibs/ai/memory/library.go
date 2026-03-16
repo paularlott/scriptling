@@ -2,8 +2,11 @@ package memory
 
 import (
 	"context"
+	"sync"
 	"time"
 
+	"github.com/paularlott/logger"
+	"github.com/paularlott/snapshotkv"
 	extai "github.com/paularlott/scriptling/extlibs/ai"
 	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/errors"
@@ -13,12 +16,39 @@ import (
 
 const MemoryLibraryName = "scriptling.ai.memory"
 
-// Register registers the scriptling.ai.memory library.
-func Register(registrar interface{ RegisterLibrary(*object.Library) }) {
-	registrar.RegisterLibrary(buildLibrary())
+// storeRegistry maps a DB pointer to its single Store instance for this process.
+var storeRegistry = struct {
+	mu     sync.Mutex
+	stores map[*snapshotkv.DB]*Store
+}{
+	stores: make(map[*snapshotkv.DB]*Store),
 }
 
-func buildLibrary() *object.Library {
+func getOrCreateStore(db *snapshotkv.DB, opts []Option) *Store {
+	storeRegistry.mu.Lock()
+	defer storeRegistry.mu.Unlock()
+	if s, ok := storeRegistry.stores[db]; ok {
+		// Apply any opts that update mutable config (e.g. AI client added after first creation)
+		for _, o := range opts {
+			o(&s.cfg)
+		}
+		return s
+	}
+	s := New(db, opts...)
+	storeRegistry.stores[db] = s
+	return s
+}
+
+// Register registers the scriptling.ai.memory library.
+func Register(registrar interface{ RegisterLibrary(*object.Library) }, log ...logger.Logger) {
+	var l logger.Logger
+	if len(log) > 0 {
+		l = log[0]
+	}
+	registrar.RegisterLibrary(buildLibrary(l))
+}
+
+func buildLibrary(log logger.Logger) *object.Library {
 	builder := object.NewLibraryBuilder(MemoryLibraryName,
 		"Long-term memory store for AI agents. Pass a kv store object to memory.new() to create a memory store.")
 
@@ -35,15 +65,23 @@ func buildLibrary() *object.Library {
 
 		var opts []Option
 
-		// Optional second arg: AI client object for Mode 2
-		if len(args) > 1 {
-			if client := extai.AIClientFromObject(args[1]); client != nil {
-				model := kwargs.MustGetString("model", "")
-				opts = append(opts, WithAIClient(client, model))
-			}
+		if log != nil {
+			opts = append(opts, WithLogger(log))
 		}
 
-		store := New(db, opts...)
+		// ai_client kwarg (or positional arg[1]) for Mode 2 compaction
+		var clientObj object.Object
+		if c := kwargs.Get("ai_client"); c != nil {
+			clientObj = c
+		} else if len(args) > 1 {
+			clientObj = args[1]
+		}
+		if client := extai.AIClientFromObject(clientObj); client != nil {
+			model := kwargs.MustGetString("model", "")
+			opts = append(opts, WithAIClient(client, model))
+		}
+
+		store := getOrCreateStore(db, opts)
 		return newMemoryObject(store)
 	}, `new(kv_store, ai_client=None, model="") - Create a memory store backed by a kv store
 
@@ -53,7 +91,7 @@ Parameters:
   model (str, optional): Model name to use for LLM compaction (required if ai_client provided)
 
 Returns:
-  Memory store object with remember, recall, forget, list, count methods
+  Memory store object with remember, recall, forget, list, count, compact methods
 
 Example:
   import scriptling.runtime.kv as kv
@@ -65,7 +103,10 @@ Example:
 
   # With LLM compaction (Mode 2)
   client = ai.Client("http://127.0.0.1:1234/v1")
-  mem = memory.new(kv.default, client, model="qwen3-8b")`)
+  mem = memory.new(kv.default, ai_client=client, model="qwen3-8b")
+
+  # ai_client=None disables Mode 2 (same as omitting it)
+  mem = memory.new(kv.default, ai_client=None)`)
 
 	return builder.Build()
 }
@@ -209,6 +250,18 @@ Returns:
 					return object.NewInteger(int64(store.Count()))
 				},
 				HelpText: `count() - Return the total number of stored memories`,
+			},
+
+			"compact": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					before := store.Count()
+					remaining := store.Compact()
+					return &object.Dict{Pairs: map[string]object.DictPair{
+						"removed":   {Key: &object.String{Value: "removed"}, Value: object.NewInteger(int64(before - remaining))},
+						"remaining": {Key: &object.String{Value: "remaining"}, Value: object.NewInteger(int64(remaining))},
+					}}
+				},
+				HelpText: `compact() - Manually trigger compaction; returns removed and remaining counts`,
 			},
 
 		},

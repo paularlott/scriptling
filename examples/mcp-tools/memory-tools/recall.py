@@ -1,14 +1,11 @@
 import scriptling.mcp.tool as tool
-import scriptling.runtime.kv as kv
-import scriptling.ai.memory as memory
-import os
+import memory_client
 
 query = tool.get_string("query", "")
 mem_type = tool.get_string("type", "")
 limit = tool.get_int("limit", 10)
 
-db = kv.open(os.getenv("SCRIPTLING_MEMORY_DB", "./memory-db"))
-mem = memory.new(db, idle_timeout=0)
+mem = memory_client.open_memory()
 
 if query == "" and mem_type == "":
     # Context load: all preferences + top memories by recency/importance

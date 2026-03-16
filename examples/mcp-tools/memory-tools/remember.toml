@@ -16,5 +16,5 @@ required = false
 [[parameters]]
 name = "importance"
 type = "float"
-description = "Importance 0.0-1.0; memories >= 0.8 are exempt from compaction (default: 0.5)"
+description = "Importance 0.0-1.0; higher values survive compaction longer (default: 0.5). Use 0.9 for critical facts, 0.5 for general notes."
 required = false

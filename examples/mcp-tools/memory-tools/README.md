@@ -10,6 +10,7 @@ Long-term memory tools for LLM agents via the Scriptling MCP server. Any MCP-com
 | `recall` | No arguments: loads full context (all preferences + top memories). With a query: keyword search against content |
 | `forget` | Remove a memory by ID |
 | `list_memories` | List all memories, optionally filtered by type |
+| `compact` | Manually trigger compaction; returns removed and remaining counts |
 
 ## Storage
 
@@ -19,17 +20,42 @@ The tools read the `SCRIPTLING_MEMORY_DB` environment variable for the storage p
 export SCRIPTLING_MEMORY_DB=/home/user/.scriptling/memory
 ```
 
+## AI Provider (Mode 2 Compaction)
+
+Set these environment variables to enable LLM-based compaction (deduplication and summarisation). Both `SCRIPTLING_AI_BASE_URL` and `SCRIPTLING_AI_MODEL` must be set to activate Mode 2.
+
+| Variable | Description |
+|----------|-------------|
+| `SCRIPTLING_AI_BASE_URL` | Base URL of the AI provider (e.g. `http://127.0.0.1:1234/v1`) |
+| `SCRIPTLING_AI_PROVIDER` | Provider type: `openai`, `claude`, `gemini`, `ollama`, `zai`, `mistral` (default: `openai`) |
+| `SCRIPTLING_AI_MODEL` | Model name (e.g. `qwen3-8b`, `gpt-4o-mini`) |
+| `SCRIPTLING_AI_TOKEN` | API key / bearer token (optional for local providers) |
+
+```bash
+export SCRIPTLING_AI_BASE_URL=http://127.0.0.1:1234/v1
+export SCRIPTLING_AI_MODEL=qwen3-8b
+# export SCRIPTLING_AI_TOKEN=sk-...  # required for hosted providers
+```
+
 ## Running the MCP Server
 
 ```bash
 # Build the CLI first
 task build
 
-# Start the MCP server with the memory tools
-SCRIPTLING_MEMORY_DB=~/.scriptling/memory ./bin/scriptling --server :8000 --mcp-tools ./examples/mcp-tools/memory-tools
+# Mode 1 only (rule-based compaction)
+SCRIPTLING_MEMORY_DB=~/.scriptling/memory \
+  ./bin/scriptling --server :8000 --mcp-tools ./examples/mcp-tools/memory-tools
+
+# With Mode 2 LLM compaction (local provider)
+SCRIPTLING_MEMORY_DB=~/.scriptling/memory \
+SCRIPTLING_AI_BASE_URL=http://127.0.0.1:1234/v1 \
+SCRIPTLING_AI_MODEL=qwen3-8b \
+  ./bin/scriptling --server :8000 --mcp-tools ./examples/mcp-tools/memory-tools
 
 # With bearer token authentication
-SCRIPTLING_MEMORY_DB=~/.scriptling/memory ./bin/scriptling --server :8000 --mcp-tools ./examples/mcp-tools/memory-tools --bearer-token your-secret
+SCRIPTLING_MEMORY_DB=~/.scriptling/memory \
+  ./bin/scriptling --server :8000 --mcp-tools ./examples/mcp-tools/memory-tools --bearer-token your-secret
 ```
 
 ## Client Configuration
@@ -102,7 +128,7 @@ import scriptling.ai.memory as memory
 import scriptling.runtime.kv as kv
 
 client = ai.Client("http://127.0.0.1:1234/v1")
-mem = memory.new(kv.open("./memory-db"), client, model="qwen3-8b")
+mem = memory.new(kv.open("./memory-db"), ai_client=client, model="qwen3-8b")
 
 bot = agent.Agent(client, model="qwen3-8b", memory=mem)
 ```
@@ -114,9 +140,8 @@ Add this to your LLM's system prompt to enable memory-aware behaviour:
 ```
 You are a helpful assistant with long-term memory.
 
-At the start of every new conversation, call recall() with no arguments before responding to
-the user. This loads all your preferences and recent activity so you have full context before
-you begin.
+At the start of every new conversation, call recall() with no arguments to load your stored
+preferences and recent context before responding.
 
 You have access to the following memory tools:
 - remember(content, type, importance) — store something for later; returns an id
@@ -126,6 +151,8 @@ You have access to the following memory tools:
 - list_memories(type, limit) — see everything stored
 
 Guidelines for using memory:
+- Store one fact per memory — do not combine multiple subjects into a single remember() call.
+- Keep memory content concise: a single clear sentence, no padding or filler.
 - When the user shares personal information (name, preferences, goals, API keys, project details),
   store it immediately using remember() with an appropriate type.
 - Use type="preference" for anything about how the user likes things done — editors, formats,

@@ -47,7 +47,7 @@ func SetupScriptling(p *scriptling.Scriptling, libdirs []string, registerInterac
 
 	// Register AI and MCP libraries
 	ai.Register(p)
-	aimemory.Register(p)
+	aimemory.Register(p, log)
 	agent.Register(p)
 	scriptlingfuzzy.Register(p)
 	if registerInteract {

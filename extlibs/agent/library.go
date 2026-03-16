@@ -19,6 +19,8 @@ You have persistent memory across conversations via the following tools:
 
 Guidelines:
 - At the start of each conversation, call memory_recall() with no query to load recent context.
+- Store one fact per memory — do not combine multiple subjects into a single memory_remember() call.
+- Keep memory content concise: a single clear sentence, no padding or filler.
 - When the user shares personal information, preferences, or important facts, store them immediately with memory_remember().
 - Use type="preference" for how the user likes things done. Use type="fact" for objective information. Use type="event" for things that happened. Use type="note" for general notes.
 - Use importance=0.9 for critical facts (names, keys, deadlines) and importance=0.5 for general notes.

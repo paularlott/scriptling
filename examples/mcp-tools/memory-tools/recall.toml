@@ -1,10 +1,10 @@
-description = "Search long-term memory, or load full context when called with no arguments. Call with no arguments at the start of every conversation to load all preferences and recent activity before responding."
+description = "Search long-term memory for relevant context. Always pass a query matching the topic being discussed. Call with no arguments only at the start of a conversation to load preferences and recent activity."
 keywords = ["memory", "recall", "search", "find", "retrieve", "remember", "context", "load"]
 
 [[parameters]]
 name = "query"
 type = "string"
-description = "Keyword search against memory content (e.g. 'dark mode', 'api key'). Omit to load full context."
+description = "Keyword search against memory content (e.g. 'employer', 'dark mode', 'api key'). Omit only to load full context at conversation start."
 required = false
 
 [[parameters]]
