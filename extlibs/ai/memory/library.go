@@ -186,7 +186,7 @@ Returns:
 Parameters:
   query (str, optional): Keyword search query; empty returns memories ranked by recency/importance
   limit (int, optional): Maximum results (default: 10, use -1 for unlimited)
-  type (str, optional): Filter by type: "fact", "preference", "event", "note"
+  type (str, optional): Filter by type: "fact", "preference", "event", "note", or "!type" to exclude
 
 Returns:
   list: Matching memory dicts ranked by relevance`,

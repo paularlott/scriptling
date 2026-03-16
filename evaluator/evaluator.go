@@ -343,6 +343,8 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		return evalListComprehension(ctx, node, env)
 	case *ast.DictComprehension:
 		return evalDictComprehension(ctx, node, env)
+	case *ast.SetComprehension:
+		return evalSetComprehension(ctx, node, env)
 	case *ast.Lambda:
 		return evalLambda(node, env)
 	case *ast.TupleLiteral:
@@ -2724,6 +2726,88 @@ func evalDictComprehension(ctx context.Context, dc *ast.DictComprehension, env *
 			return v
 		}
 		result.Pairs[object.DictKey(k)] = object.DictPair{Key: k, Value: v}
+		return nil
+	}
+
+	if iter != nil {
+		for {
+			element, hasNext := iter.Next()
+			if !hasNext {
+				break
+			}
+			if err := runBody(element); err != nil {
+				return err
+			}
+		}
+		return result
+	}
+
+	var elements []object.Object
+	switch o := iterable.(type) {
+	case *object.List:
+		elements = o.Elements
+	case *object.Tuple:
+		elements = o.Elements
+	case *object.String:
+		for _, char := range o.Value {
+			if err := runBody(&object.String{Value: string(char)}); err != nil {
+				return err
+			}
+		}
+		return result
+	default:
+		return errors.NewTypeError("iterable", iterable.Type().String())
+	}
+
+	for _, element := range elements {
+		if err := runBody(element); err != nil {
+			return err
+		}
+	}
+	return result
+}
+
+func evalSetComprehension(ctx context.Context, sc *ast.SetComprehension, env *object.Environment) object.Object {
+	iterable := evalWithContext(ctx, sc.Iterable, env)
+	if object.IsError(iterable) {
+		return iterable
+	}
+
+	result := object.NewSet()
+	compEnv := object.NewEnclosedEnvironment(env)
+
+	var iter *object.Iterator
+	switch o := iterable.(type) {
+	case *object.Iterator:
+		iter = o
+	case *object.DictKeys:
+		iter = o.CreateIterator()
+	case *object.DictValues:
+		iter = o.CreateIterator()
+	case *object.DictItems:
+		iter = o.CreateIterator()
+	case *object.Set:
+		iter = o.CreateIterator()
+	}
+
+	runBody := func(element object.Object) object.Object {
+		if err := setForVariables(sc.Variables, element, compEnv); err != nil {
+			return errors.NewError("%s", err.Error())
+		}
+		if sc.Condition != nil {
+			cond := evalWithContext(ctx, sc.Condition, compEnv)
+			if object.IsError(cond) {
+				return cond
+			}
+			if !isTruthy(cond) {
+				return nil
+			}
+		}
+		v := evalWithContext(ctx, sc.Expression, compEnv)
+		if object.IsError(v) {
+			return v
+		}
+		result.Add(v)
 		return nil
 	}
 

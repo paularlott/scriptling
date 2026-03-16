@@ -1,4 +1,4 @@
-description = "Search long-term memory for relevant context. Always pass a query matching the topic being discussed. Call with no arguments only at the start of a conversation to load preferences and recent activity."
+description = "Search long-term memory for relevant context. Always pass a query matching the topic being discussed. Call with no arguments at conversation start to load all preferences + top 10 recent memories."
 keywords = ["memory", "recall", "search", "find", "retrieve", "remember", "context", "load"]
 
 [[parameters]]
@@ -10,7 +10,7 @@ required = false
 [[parameters]]
 name = "type"
 type = "string"
-description = "Filter by type: 'fact', 'preference', 'event', 'note'"
+description = "Filter by type: 'fact', 'preference', 'event', 'note', or '!type' to exclude"
 required = false
 
 [[parameters]]

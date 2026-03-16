@@ -87,3 +87,32 @@ assert s1.issubset(u)
 assert u.issuperset(s1)
 
 print("Set tests passed!")
+
+# Set comprehensions
+sc = {x for x in [1, 2, 3]}
+assert len(sc) == 3
+assert 1 in sc
+assert 2 in sc
+assert 3 in sc
+
+# With filter condition
+sc2 = {x for x in [1, 2, 3, 4, 5] if x % 2 == 0}
+assert len(sc2) == 2
+assert 2 in sc2
+assert 4 in sc2
+assert 1 not in sc2
+
+# Deduplication
+sc3 = {x % 3 for x in [0, 1, 2, 3, 4, 5]}
+assert len(sc3) == 3
+assert 0 in sc3
+assert 1 in sc3
+assert 2 in sc3
+
+# From string
+sc4 = {c for c in "hello"}
+assert len(sc4) == 4  # h, e, l, o
+assert "h" in sc4
+assert "l" in sc4
+
+print("Set comprehension tests passed!")

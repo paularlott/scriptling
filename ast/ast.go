@@ -477,6 +477,18 @@ func (dc *DictComprehension) expressionNode()      {}
 func (dc *DictComprehension) TokenLiteral() string { return dc.Token.Literal }
 func (dc *DictComprehension) Line() int            { return dc.Token.Line }
 
+type SetComprehension struct {
+	Token      token.Token
+	Expression Expression
+	Variables  []Expression
+	Iterable   Expression
+	Condition  Expression // optional
+}
+
+func (sc *SetComprehension) expressionNode()      {}
+func (sc *SetComprehension) TokenLiteral() string { return sc.Token.Literal }
+func (sc *SetComprehension) Line() int            { return sc.Token.Line }
+
 type Lambda struct {
 	Token         token.Token
 	Parameters    []*Identifier

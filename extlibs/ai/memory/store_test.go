@@ -154,6 +154,32 @@ func TestRecall_EmptyQuery_ReturnsByRecency(t *testing.T) {
 	}
 }
 
+func TestRecall_ExcludeType(t *testing.T) {
+	s := newTestStore(t)
+
+	// Create distinct preferences
+	s.Remember("user prefers dark mode theme", TypePreference, 0.5)
+	s.Remember("user likes concise responses", TypePreference, 0.5)
+	s.Remember("user speaks english language", TypePreference, 0.5)
+
+	// Create distinct notes
+	s.Remember("alice is working on the api integration", TypeNote, 0.5)
+	s.Remember("the database migration completed successfully", TypeNote, 0.5)
+	s.Remember("meeting scheduled for friday afternoon", TypeNote, 0.5)
+
+	// Get all non-preferences with limit=2
+	results := s.Recall("", 2, "!preference")
+
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	for _, r := range results {
+		if r.Type == TypePreference {
+			t.Errorf("should not return preferences, got %q", r.Content)
+		}
+	}
+}
+
 func TestRecall_Limit(t *testing.T) {
 	s := newTestStore(t)
 	words := []string{"alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta", "iota", "kappa"}

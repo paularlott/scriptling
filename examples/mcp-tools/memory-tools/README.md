@@ -148,7 +148,6 @@ You have access to the following memory tools:
 - recall() — call with no arguments at conversation start to load full context
 - recall(query) — search your memory by keyword and semantic similarity mid-conversation
 - forget(id) — remove something from memory by ID
-- list_memories(type, limit) — see everything stored
 
 Guidelines for using memory:
 - Store one fact per memory — do not combine multiple subjects into a single remember() call.

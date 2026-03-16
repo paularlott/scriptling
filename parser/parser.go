@@ -1576,6 +1576,11 @@ func (p *Parser) parseDictLiteral() ast.Expression {
 
 		// Peek past whitespace to determine dict vs set
 		p.skipWhitespace()
+		if p.peekTokenIs(token.FOR) {
+			// Set comprehension: {expr for var in iterable}
+			return p.parseSetComprehension(tok, first)
+		}
+
 		if p.peekTokenIs(token.COMMA) || p.peekTokenIs(token.RBRACE) {
 			// Set literal: {expr, expr, ...} or {expr}
 			return p.parseSetLiteralFrom(tok, first)
@@ -1626,6 +1631,42 @@ func (p *Parser) parseDictComprehension(tok token.Token, keyExpr, valueExpr ast.
 		Token: tok,
 		Key:   keyExpr,
 		Value: valueExpr,
+	}
+
+	if !p.expectPeek(token.FOR) {
+		return nil
+	}
+
+	p.nextToken()
+	comp.Variables = []ast.Expression{p.parseExpression(EQUALS)}
+	for p.peekTokenIs(token.COMMA) {
+		p.nextToken()
+		p.nextToken()
+		comp.Variables = append(comp.Variables, p.parseExpression(EQUALS))
+	}
+
+	if !p.expectPeek(token.IN) {
+		return nil
+	}
+	p.nextToken()
+	comp.Iterable = p.parseExpression(CONDITIONAL)
+
+	if p.peekTokenIs(token.IF) {
+		p.nextToken()
+		p.nextToken()
+		comp.Condition = p.parseExpression(CONDITIONAL)
+	}
+
+	if !p.expectPeek(token.RBRACE) {
+		return nil
+	}
+	return comp
+}
+
+func (p *Parser) parseSetComprehension(tok token.Token, expr ast.Expression) ast.Expression {
+	comp := &ast.SetComprehension{
+		Token:      tok,
+		Expression: expr,
 	}
 
 	if !p.expectPeek(token.FOR) {

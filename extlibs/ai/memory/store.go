@@ -326,10 +326,18 @@ IMPORTANT: new_content must be a single concise sentence. Do not pad or combine 
 
 // Recall searches memories by keyword and semantic similarity, returning up to limit results ranked by score.
 // Use limit=-1 for unlimited results.
+// Use typeFilter="!xxx" to exclude a type (e.g., "!preference" returns all non-preferences).
 func (s *Store) Recall(query string, limit int, typeFilter string) []*Memory {
 	if limit == 0 {
 		limit = 10
 	} // -1 means unlimited, 0 defaults to 10
+
+	// Check for exclusion filter (type="!xxx")
+	excludeType := ""
+	if strings.HasPrefix(typeFilter, "!") && len(typeFilter) > 1 {
+		excludeType = typeFilter[1:]
+		typeFilter = ""
+	}
 
 	now := time.Now().UTC()
 	queryLower := strings.ToLower(strings.TrimSpace(query))
@@ -344,6 +352,11 @@ func (s *Store) Recall(query string, limit int, typeFilter string) []*Memory {
 
 	s.mu.RLock()
 	s.scanType(typeFilter, func(m *Memory) bool {
+		// Skip excluded type
+		if excludeType != "" && m.Type == excludeType {
+			return true
+		}
+
 		var score float64
 		if queryLower == "" {
 			score = recencyScore(m, now)*0.6 + m.Importance*0.4
