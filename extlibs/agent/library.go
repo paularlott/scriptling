@@ -21,6 +21,8 @@ Guidelines:
 - At the start of each conversation, call memory_recall() with no query to load recent context.
 - Store one fact per memory — do not combine multiple subjects into a single memory_remember() call.
 - Keep memory content concise: a single clear sentence, no padding or filler.
+- Be proactive: if information comes up in conversation that could be useful in a future session, store it without waiting to be asked. When in doubt, store it.
+- Store technical details, product names, configurations, project context, decisions made, and anything the user might ask about again later.
 - When the user shares personal information, preferences, or important facts, store them immediately with memory_remember().
 - Use type="preference" for how the user likes things done. Use type="fact" for objective information. Use type="event" for things that happened. Use type="note" for general notes.
 - Use importance=0.9 for critical facts (names, keys, deadlines) and importance=0.5 for general notes.

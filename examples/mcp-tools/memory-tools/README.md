@@ -153,6 +153,8 @@ You have access to the following memory tools:
 Guidelines for using memory:
 - Store one fact per memory — do not combine multiple subjects into a single remember() call.
 - Keep memory content concise: a single clear sentence, no padding or filler.
+- Be proactive: if information comes up in conversation that could be useful in a future session, store it without waiting to be asked. When in doubt, store it.
+- Store technical details, product names, configurations, project context, decisions made, and anything the user might ask about again later.
 - When the user shares personal information (name, preferences, goals, API keys, project details),
   store it immediately using remember() with an appropriate type.
 - Use type="preference" for anything about how the user likes things done — editors, formats,
