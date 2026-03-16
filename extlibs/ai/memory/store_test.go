@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -132,8 +133,9 @@ func TestRecall_EmptyQuery_ReturnsByRecency(t *testing.T) {
 
 func TestRecall_Limit(t *testing.T) {
 	s := newTestStore(t)
-	for i := 0; i < 10; i++ {
-		s.Remember("memory about cats", TypeNote, 0.5)
+	words := []string{"alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta", "iota", "kappa"}
+	for _, w := range words {
+		s.Remember("cats like "+w, TypeNote, 0.5)
 	}
 	results := s.Recall("cats", 3, "")
 	if len(results) != 3 {
@@ -213,8 +215,9 @@ func TestList(t *testing.T) {
 
 func TestList_Limit(t *testing.T) {
 	s := newTestStore(t)
-	for i := 0; i < 10; i++ {
-		s.Remember("item", TypeNote, 0.5)
+	words := []string{"alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta", "iota", "kappa"}
+	for _, w := range words {
+		s.Remember("list entry "+w, TypeNote, 0.5)
 	}
 	results := s.List("", 4)
 	if len(results) != 4 {
@@ -288,9 +291,9 @@ func TestDecayFactor_CustomHalfLife(t *testing.T) {
 	}
 }
 
-// --- Mode 1 compaction ---
+// --- Prune compaction ---
 
-func TestCompactMode1_HardAgeCap(t *testing.T) {
+func TestPrune_HardAgeCap(t *testing.T) {
 	s := newTestStore(t, WithMaxAge(30*24*time.Hour))
 
 	// Old memory (beyond max age)
@@ -303,7 +306,7 @@ func TestCompactMode1_HardAgeCap(t *testing.T) {
 	// Recent memory
 	s.Remember("recent note", TypeNote, 0.9)
 
-	removed := s.compactMode1()
+	removed := s.prune()
 	if removed != 1 {
 		t.Errorf("expected 1 removed by age cap, got %d", removed)
 	}
@@ -312,7 +315,7 @@ func TestCompactMode1_HardAgeCap(t *testing.T) {
 	}
 }
 
-func TestCompactMode1_DecayPrune(t *testing.T) {
+func TestPrune_DecayThreshold(t *testing.T) {
 	s := newTestStore(t,
 		WithHalfLifeNote(7*24*time.Hour),
 		WithPruneThreshold(0.1),
@@ -328,13 +331,13 @@ func TestCompactMode1_DecayPrune(t *testing.T) {
 	// High importance note — should survive
 	s.Remember("important note", TypeNote, 0.9)
 
-	removed := s.compactMode1()
+	removed := s.prune()
 	if removed != 1 {
 		t.Errorf("expected 1 removed by decay, got %d", removed)
 	}
 }
 
-func TestCompactMode1_PreferenceNotDecayed(t *testing.T) {
+func TestPrune_PreferenceNotDecayed(t *testing.T) {
 	s := newTestStore(t,
 		WithPruneThreshold(0.1),
 		WithMaxAge(365*24*time.Hour),
@@ -347,13 +350,13 @@ func TestCompactMode1_PreferenceNotDecayed(t *testing.T) {
 	_ = s.save(pref)
 	s.mu.Unlock()
 
-	removed := s.compactMode1()
+	removed := s.prune()
 	if removed != 0 {
 		t.Errorf("preference should not be pruned by decay, removed %d", removed)
 	}
 }
 
-func TestCompactMode1_PreferenceHardAgeCap(t *testing.T) {
+func TestPrune_PreferenceHardAgeCap(t *testing.T) {
 	s := newTestStore(t, WithMaxAge(30*24*time.Hour))
 
 	// Preference beyond hard age cap — should be deleted
@@ -363,24 +366,24 @@ func TestCompactMode1_PreferenceHardAgeCap(t *testing.T) {
 	_ = s.save(pref)
 	s.mu.Unlock()
 
-	removed := s.compactMode1()
+	removed := s.prune()
 	if removed != 1 {
 		t.Errorf("preference beyond hard age cap should be removed, got %d removed", removed)
 	}
 }
 
-func TestCompactMode1_NothingToPrune(t *testing.T) {
+func TestPrune_NothingToPrune(t *testing.T) {
 	s := newTestStore(t)
 	s.Remember("fresh high importance", TypeFact, 0.9)
-	removed := s.compactMode1()
+	removed := s.prune()
 	if removed != 0 {
 		t.Errorf("expected 0 removed, got %d", removed)
 	}
 }
 
-func TestCompactMode1_Empty(t *testing.T) {
+func TestPrune_Empty(t *testing.T) {
 	s := newTestStore(t)
-	removed := s.compactMode1()
+	removed := s.prune()
 	if removed != 0 {
 		t.Errorf("expected 0 on empty store, got %d", removed)
 	}
@@ -528,19 +531,23 @@ func TestRememberForget_Concurrent(t *testing.T) {
 
 	for i := 0; i < 25; i++ {
 		wg.Add(1)
-		go func() {
+		go func(n int) {
 			defer wg.Done()
-			m, _ := s.Remember("concurrent write", TypeNote, 0.5)
+			m, _ := s.Remember(fmt.Sprintf("concurrent write unique %d", n), TypeNote, 0.5)
 			if m != nil {
 				ids <- m.ID
 			}
-		}()
+		}(i)
 	}
 	wg.Wait()
 	close(ids)
 
+	seen := make(map[string]bool)
 	for id := range ids {
-		s.Forget(id)
+		if !seen[id] {
+			seen[id] = true
+			s.Forget(id)
+		}
 	}
 	if s.Count() != 0 {
 		t.Errorf("expected 0 after concurrent forget, got %d", s.Count())
@@ -579,37 +586,6 @@ func TestRecencyScore(t *testing.T) {
 	score := recencyScore(mid, now)
 	if score <= 0 || score >= 1 {
 		t.Errorf("15-day-old memory score = %f, want between 0 and 1", score)
-	}
-}
-
-func TestSampleEvenly(t *testing.T) {
-	items := make([]*Memory, 10)
-	for i := range items {
-		items[i] = &Memory{ID: string(rune('a' + i))}
-	}
-
-	// Fewer than n — returns all
-	result := sampleEvenly(items, 20)
-	if len(result) != 10 {
-		t.Errorf("expected 10, got %d", len(result))
-	}
-
-	// Exactly n
-	result = sampleEvenly(items, 10)
-	if len(result) != 10 {
-		t.Errorf("expected 10, got %d", len(result))
-	}
-
-	// Sample 5 from 10 — should include first and last
-	result = sampleEvenly(items, 5)
-	if len(result) != 5 {
-		t.Errorf("expected 5, got %d", len(result))
-	}
-	if result[0].ID != items[0].ID {
-		t.Errorf("first sample should be first item")
-	}
-	if result[4].ID != items[9].ID {
-		t.Errorf("last sample should be last item")
 	}
 }
 

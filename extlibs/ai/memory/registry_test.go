@@ -52,9 +52,11 @@ func TestRegistry_CounterAccumulatesAcrossCalls(t *testing.T) {
 	db := newTestDB(t)
 
 	// Simulate 3 separate "tool invocations" each calling memory.new(db)
-	for i := 0; i < 3; i++ {
+	// Use distinct content so pre-flight dedup doesn't collapse them.
+	contents := []string{"alice visited paris", "bob likes cycling", "carol prefers tea"}
+	for _, c := range contents {
 		s := getOrCreateStore(db, nil)
-		s.Remember("memory "+string(rune('a'+i)), TypeNote, 0.5)
+		s.Remember(c, TypeNote, 0.5)
 	}
 
 	s := getOrCreateStore(db, nil)
@@ -79,8 +81,10 @@ func TestRegistry_CounterResetsAfterCompaction(t *testing.T) {
 	})
 	s.lastCompaction = time.Now().Add(-time.Hour)
 
-	for i := 0; i < 3; i++ {
-		getOrCreateStore(db, nil).Remember("item", TypeNote, 0.5)
+	// Use distinct content so pre-flight dedup doesn't collapse them.
+	contents := []string{"alice visited paris", "bob likes cycling", "carol prefers tea"}
+	for _, c := range contents {
+		getOrCreateStore(db, nil).Remember(c, TypeNote, 0.5)
 	}
 	time.Sleep(50 * time.Millisecond)
 

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,88 +25,18 @@ const (
 	TypeEvent      = "event"
 	TypeNote       = "note"
 
-	DefaultActivityThreshold  = 10
-	DefaultMinCompactInterval = 5 * time.Minute
-	DefaultMaxCompactInterval = 2 * time.Hour
-	DefaultMaxAge             = 180 * 24 * time.Hour
-	DefaultPruneThreshold     = 0.1
-	DefaultHalfLifeFact       = 90 * 24 * time.Hour
-	DefaultHalfLifeEvent      = 30 * 24 * time.Hour
-	DefaultHalfLifeNote       = 7 * 24 * time.Hour
-	DefaultMinMemoriesForLLM  = 5
-	DefaultMaxMemoriesForLLM  = 20
-	DefaultLLMBatchSize       = 5
-	DefaultDuplicateThreshold = 0.85 // Jaccard similarity above this → duplicate
+	DefaultActivityThreshold       = 10
+	DefaultMinCompactInterval      = 5 * time.Minute
+	DefaultMaxCompactInterval      = 2 * time.Hour
+	DefaultMaxAge                  = 180 * 24 * time.Hour
+	DefaultPruneThreshold          = 0.1
+	DefaultHalfLifeFact            = 90 * 24 * time.Hour
+	DefaultHalfLifeEvent           = 30 * 24 * time.Hour
+	DefaultHalfLifeNote            = 7 * 24 * time.Hour
+	DefaultSimilarityHighThreshold = 0.85 // Jaccard >= this -> update existing in place
+	DefaultSimilarityMidThreshold  = 0.50 // Jaccard >= this -> ask LLM if available
 )
 
-// compactionDecision is the parsed response from the LLM for Mode 2.
-type compactionDecision struct {
-	Merge  []mergeAction   `json:"merge"`
-	Delete json.RawMessage `json:"delete"`
-}
-
-// deleteIDs extracts IDs from the delete field, tolerating both
-// []string and []object (with source_ids or id field) formats.
-func (d *compactionDecision) deleteIDs() []string {
-	if len(d.Delete) == 0 {
-		return nil
-	}
-	// Try []string first
-	var ids []string
-	if json.Unmarshal(d.Delete, &ids) == nil {
-		return cleanIDs(ids)
-	}
-	// Try []object with source_ids or id
-	var objs []map[string]json.RawMessage
-	if json.Unmarshal(d.Delete, &objs) != nil {
-		return nil
-	}
-	for _, obj := range objs {
-		if raw, ok := obj["source_ids"]; ok {
-			var sub []string
-			if json.Unmarshal(raw, &sub) == nil {
-				ids = append(ids, sub...)
-			}
-		} else if raw, ok := obj["id"]; ok {
-			var s string
-			if json.Unmarshal(raw, &s) == nil {
-				ids = append(ids, s)
-			}
-		}
-	}
-	return cleanIDs(ids)
-}
-
-// cleanIDs strips any "id: " prefix the LLM may copy from the prompt format.
-func cleanIDs(ids []string) []string {
-	for i, id := range ids {
-		ids[i] = strings.TrimPrefix(strings.TrimSpace(id), "id: ")
-	}
-	return ids
-}
-
-type mergeAction struct {
-	SourceIDs  []string `json:"source_ids"`
-	NewContent string   `json:"new_content"`
-	Type       string   `json:"type"`
-	Importance float64  `json:"importance"`
-}
-
-// cleanMergeIDs strips "id: " prefixes from merge source IDs.
-func cleanMergeIDs(ids []string) []string { return cleanIDs(ids) }
-
-// compactionResult holds the outcome of a compaction run.
-type compactionResult struct {
-	removed int // memories deleted from the store
-	added   int // new merged memories created
-}
-
-func (r compactionResult) add(other compactionResult) compactionResult {
-	return compactionResult{
-		removed: r.removed + other.removed,
-		added:   r.added + other.added,
-	}
-}
 func typePrefix(memType string) string {
 	return memPrefix + memType + ":"
 }
@@ -124,37 +53,33 @@ type Memory struct {
 
 // storeConfig holds all tunable parameters.
 type storeConfig struct {
-	activityThreshold  int
-	minCompactInterval time.Duration
-	maxCompactInterval time.Duration
-	maxAge             time.Duration
-	pruneThreshold     float64
-	halfLifeFact       time.Duration
-	halfLifeEvent      time.Duration
-	halfLifeNote       time.Duration
-	minMemoriesForLLM  int
-	maxMemoriesForLLM  int
-	llmBatchSize       int
-	duplicateThreshold float64
-	aiClient           mcpai.Client
-	aiModel            string
-	logger             logger.Logger
+	activityThreshold       int
+	minCompactInterval      time.Duration
+	maxCompactInterval      time.Duration
+	maxAge                  time.Duration
+	pruneThreshold          float64
+	halfLifeFact            time.Duration
+	halfLifeEvent           time.Duration
+	halfLifeNote            time.Duration
+	similarityHighThreshold float64
+	similarityMidThreshold  float64
+	aiClient                mcpai.Client
+	aiModel                 string
+	logger                  logger.Logger
 }
 
 func defaultConfig() storeConfig {
 	return storeConfig{
-		activityThreshold:  DefaultActivityThreshold,
-		minCompactInterval: DefaultMinCompactInterval,
-		maxCompactInterval: DefaultMaxCompactInterval,
-		maxAge:             DefaultMaxAge,
-		pruneThreshold:     DefaultPruneThreshold,
-		halfLifeFact:       DefaultHalfLifeFact,
-		halfLifeEvent:      DefaultHalfLifeEvent,
-		halfLifeNote:       DefaultHalfLifeNote,
-		minMemoriesForLLM:  DefaultMinMemoriesForLLM,
-		maxMemoriesForLLM:  DefaultMaxMemoriesForLLM,
-		llmBatchSize:       DefaultLLMBatchSize,
-		duplicateThreshold: DefaultDuplicateThreshold,
+		activityThreshold:       DefaultActivityThreshold,
+		minCompactInterval:      DefaultMinCompactInterval,
+		maxCompactInterval:      DefaultMaxCompactInterval,
+		maxAge:                  DefaultMaxAge,
+		pruneThreshold:          DefaultPruneThreshold,
+		halfLifeFact:            DefaultHalfLifeFact,
+		halfLifeEvent:           DefaultHalfLifeEvent,
+		halfLifeNote:            DefaultHalfLifeNote,
+		similarityHighThreshold: DefaultSimilarityHighThreshold,
+		similarityMidThreshold:  DefaultSimilarityMidThreshold,
 	}
 }
 
@@ -193,20 +118,15 @@ func WithHalfLifeNote(d time.Duration) Option {
 	return func(c *storeConfig) { c.halfLifeNote = d }
 }
 
-func WithMinMemoriesForLLM(n int) Option {
-	return func(c *storeConfig) { c.minMemoriesForLLM = n }
-}
-
-func WithMaxMemoriesForLLM(n int) Option {
-	return func(c *storeConfig) { c.maxMemoriesForLLM = n }
-}
-
-func WithLLMBatchSize(n int) Option {
-	return func(c *storeConfig) { c.llmBatchSize = n }
-}
-
-func WithDuplicateThreshold(f float64) Option {
-	return func(c *storeConfig) { c.duplicateThreshold = f }
+// WithSimilarityMergeRange sets the Jaccard similarity thresholds for pre-flight
+// deduplication at write time.
+// high: score >= high -> update existing memory in place (no LLM needed).
+// mid:  score >= mid  -> ask LLM to merge or keep separate (if LLM configured).
+func WithSimilarityMergeRange(mid, high float64) Option {
+	return func(c *storeConfig) {
+		c.similarityMidThreshold = mid
+		c.similarityHighThreshold = high
+	}
 }
 
 // WithLogger sets the logger for the store.
@@ -214,8 +134,8 @@ func WithLogger(l logger.Logger) Option {
 	return func(c *storeConfig) { c.logger = l }
 }
 
-// WithAIClient enables Mode 2 LLM-based compaction.
-// If client is nil, Mode 2 is disabled.
+// WithAIClient enables LLM-based similarity resolution for compaction.
+// If client is nil, only rule-based pruning and auto-merging are performed.
 func WithAIClient(client mcpai.Client, model string) Option {
 	return func(c *storeConfig) {
 		c.aiClient = client
@@ -224,7 +144,7 @@ func WithAIClient(client mcpai.Client, model string) Option {
 }
 
 // Store is a memory store backed by a snapshotkv DB.
-// It does not own the DB — the caller manages its lifecycle.
+// It does not own the DB - the caller manages its lifecycle.
 type Store struct {
 	mu                   sync.RWMutex
 	db                   *snapshotkv.DB
@@ -258,7 +178,12 @@ func New(db *snapshotkv.DB, opts ...Option) *Store {
 }
 
 // Remember stores a memory and returns it with a UUIDv7 ID.
-// After saving, checks whether compaction should be triggered.
+// Before saving, performs a pre-flight similarity check against existing memories
+// of the same type:
+//   - score >= similarityHighThreshold -> update the existing memory in place
+//   - score >= similarityMidThreshold  -> ask LLM to merge or keep (if configured)
+//
+// After saving, checks whether background compaction should be triggered.
 func (s *Store) Remember(content, memType string, importance float64) (*Memory, error) {
 	if memType == "" {
 		memType = TypeNote
@@ -270,11 +195,34 @@ func (s *Store) Remember(content, memType string, importance float64) (*Memory, 
 		importance = 1
 	}
 
+	// Pre-flight: find the closest existing memory of the same type.
+	best, bestScore := s.findMostSimilar(content, memType)
+
+	if best != nil && bestScore >= s.cfg.similarityHighThreshold {
+		// Near-exact duplicate - update in place, no new memory.
+		s.log.Debug("pre-flight merge", "score", bestScore, "existing", best.ID)
+		updated := s.updateExisting(best, content, importance)
+		return updated, nil
+	}
+
+	if best != nil && bestScore >= s.cfg.similarityMidThreshold && s.cfg.aiClient != nil {
+		// Ambiguous - ask the LLM whether to merge or keep separate.
+		s.log.Debug("pre-flight LLM resolve", "score", bestScore, "existing", best.ID)
+		if merged := s.resolveSimilarWithLLM(content, importance, best); merged != nil {
+			return merged, nil
+		}
+		// LLM said keep separate (or failed) - fall through to normal save.
+	}
+
+	return s.saveNew(content, memType, importance)
+}
+
+// saveNew creates a new memory entry and triggers compaction if needed.
+func (s *Store) saveNew(content, memType string, importance float64) (*Memory, error) {
 	id, err := uuid.NewV7()
 	if err != nil {
 		return nil, err
 	}
-
 	now := time.Now().UTC()
 	m := &Memory{
 		ID:         id.String(),
@@ -295,7 +243,7 @@ func (s *Store) Remember(content, memType string, importance float64) (*Memory, 
 	since := time.Since(s.lastCompaction)
 	shouldCompact := !s.compactionInProgress.Load() &&
 		added > 0 && ((added >= s.cfg.activityThreshold && since >= s.cfg.minCompactInterval) ||
-		since >= s.cfg.maxCompactInterval)
+			since >= s.cfg.maxCompactInterval)
 	if shouldCompact {
 		s.memoriesSinceCompact = 0
 		s.lastCompaction = time.Now()
@@ -321,6 +269,108 @@ func (s *Store) Remember(content, memType string, importance float64) (*Memory, 
 
 	return m, nil
 }
+
+// findMostSimilar returns the existing memory of the given type with the highest
+// Jaccard similarity to content, and its score. Returns nil if the store is empty.
+func (s *Store) findMostSimilar(content, memType string) (*Memory, float64) {
+	newToks := tokenSet(content)
+	if len(newToks) == 0 {
+		return nil, 0
+	}
+	var best *Memory
+	var bestScore float64
+	s.mu.RLock()
+	s.scanType(memType, func(m *Memory) bool {
+		if score := jaccardSimilarity(newToks, tokenSet(m.Content)); score > bestScore {
+			bestScore = score
+			best = m
+		}
+		return true
+	})
+	s.mu.RUnlock()
+	return best, bestScore
+}
+
+// updateExisting updates an existing memory's content and importance (taking the
+// higher value) and refreshes AccessedAt. Returns the updated memory.
+func (s *Store) updateExisting(existing *Memory, newContent string, newImportance float64) *Memory {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	existing.Content = newContent
+	if newImportance > existing.Importance {
+		existing.Importance = newImportance
+	}
+	existing.AccessedAt = time.Now().UTC()
+	_ = s.save(existing)
+	return existing
+}
+
+// resolveSimilarWithLLM sends the new content and the closest existing memory to
+// the LLM and asks whether to merge them. Returns the merged/updated memory if the
+// LLM decides to merge, or nil if it decides to keep them separate.
+func (s *Store) resolveSimilarWithLLM(newContent string, importance float64, existing *Memory) *Memory {
+	prompt := fmt.Sprintf(
+		"Existing memory:\n%s (%s, importance: %.1f) %q\n\nNew memory:\n%q\n",
+		existing.ID, existing.Type, existing.Importance, existing.Content, newContent,
+	)
+	resp, err := s.cfg.aiClient.ChatCompletion(context.Background(), mcpai.ChatCompletionRequest{
+		Model: s.cfg.aiModel,
+		Messages: []mcpai.Message{
+			{Role: "system", Content: resolveSystemPrompt},
+			{Role: "user", Content: prompt},
+		},
+	})
+	if err != nil {
+		s.log.Error("LLM resolve failed", "error", err)
+		return nil
+	}
+
+	var content string
+	if len(resp.Choices) > 0 {
+		if c, ok := resp.Choices[0].Message.Content.(string); ok {
+			content = c
+		}
+	}
+	content = stripThinkingBlocks(content)
+	content = extractJSON(content)
+
+	var decision struct {
+		Action     string  `json:"action"` // "merge" or "keep"
+		NewContent string  `json:"new_content"`
+		Importance float64 `json:"importance"`
+	}
+	if err := json.Unmarshal([]byte(content), &decision); err != nil {
+		s.log.Error("failed to parse LLM resolve response", "error", err)
+		return nil
+	}
+	if decision.Action != "merge" || decision.NewContent == "" {
+		return nil
+	}
+	mergedImportance := decision.Importance
+	if mergedImportance <= 0 {
+		mergedImportance = importance
+		if existing.Importance > mergedImportance {
+			mergedImportance = existing.Importance
+		}
+	}
+	return s.updateExisting(existing, decision.NewContent, mergedImportance)
+}
+
+const resolveSystemPrompt = `You are a memory deduplication assistant. You are given an existing memory and a new memory that are similar but not identical.
+
+Decide whether to merge them into one updated memory, or keep them as separate memories.
+
+Merge when: they describe the same fact/preference/event with updated or complementary details.
+Keep separate when: they cover genuinely different subjects or both pieces of information are independently useful.
+
+Respond with ONLY a valid JSON object - no explanation, no markdown, no code fences.
+
+Schema:
+{ "action": "merge", "new_content": "<single concise sentence>", "importance": <0.0-1.0> }
+or
+{ "action": "keep" }
+
+IMPORTANT: new_content must be a single concise sentence. Do not pad or combine unrelated facts.`
 
 func triggerReason(added, threshold int, since, maxInterval time.Duration) string {
 	if since >= maxInterval {
@@ -435,7 +485,7 @@ func (s *Store) Count() int {
 }
 
 // Compact runs compaction synchronously and resets the activity counter and timer.
-// Returns the number of memories removed.
+// Returns the number of memories remaining after compaction.
 func (s *Store) Compact() int {
 	if !s.compactionInProgress.CompareAndSwap(false, true) {
 		s.log.Debug("compact skipped: already in progress")
@@ -456,7 +506,8 @@ func (s *Store) Compact() int {
 	return remaining
 }
 
-// compact runs Mode 1 (and optionally Mode 2) compaction. Called internally.
+// compact runs pruning followed by pairwise similarity-based deduplication.
+// Called internally after activity threshold or max interval is reached.
 func (s *Store) compact() {
 	start := time.Now()
 
@@ -465,10 +516,14 @@ func (s *Store) compact() {
 	s.mu.RUnlock()
 
 	s.log.Debug("compact started", "memories", total)
-	res := compactionResult{removed: s.compactMode1()}
 
+	// Phase 1: Prune by age and decay
+	pruned := s.prune()
+
+	// Phase 2: Pairwise similarity deduplication (if AI client available)
+	merged := 0
 	if s.cfg.aiClient != nil {
-		res = res.add(s.compactMode2())
+		merged = s.deduplicateSimilar()
 	}
 
 	s.mu.RLock()
@@ -476,150 +531,187 @@ func (s *Store) compact() {
 	s.mu.RUnlock()
 
 	s.log.Info("compact complete",
-		"removed", res.removed,
-		"added", res.added,
+		"pruned", pruned,
+		"merged", merged,
 		"remaining", remaining,
 		"duration", time.Since(start).Round(time.Millisecond))
 }
 
-// compactMode1 applies rule-based pruning: hard age cap, decay threshold, and
-// exact/near-duplicate detection within each type group.
+// prune applies rule-based pruning: hard age cap and decay threshold.
 // Returns the number of memories deleted.
-func (s *Store) compactMode1() int {
+func (s *Store) prune() int {
 	now := time.Now().UTC()
+	var toDelete []string
+	ageCap, decay := 0, 0
 
 	s.mu.RLock()
-	var candidates []*Memory
 	s.scanType("", func(m *Memory) bool {
-		candidates = append(candidates, m)
+		age := now.Sub(m.AccessedAt)
+		if age > s.cfg.maxAge {
+			toDelete = append(toDelete, m.ID)
+			ageCap++
+			return true
+		}
+		if m.Importance*s.decayFactor(m.Type, age) < s.cfg.pruneThreshold {
+			toDelete = append(toDelete, m.ID)
+			decay++
+		}
 		return true
 	})
 	s.mu.RUnlock()
 
-	deleted := make(map[string]bool)
-	ageCap, decay, dupes := 0, 0, 0
-
-	// Age cap and decay pass
-	for _, m := range candidates {
-		age := now.Sub(m.AccessedAt)
-		if age > s.cfg.maxAge {
-			deleted[m.ID] = true
-			ageCap++
-			continue
-		}
-		if m.Importance*s.decayFactor(m.Type, age) < s.cfg.pruneThreshold {
-			deleted[m.ID] = true
-			decay++
-		}
-	}
-
-	// Near-duplicate pass: within each type, compare token sets.
-	// Keep the newer memory (higher UUIDv7 = later), delete the older.
-	byType := make(map[string][]*Memory)
-	for _, m := range candidates {
-		if !deleted[m.ID] {
-			byType[m.Type] = append(byType[m.Type], m)
-		}
-	}
-	for _, group := range byType {
-		for i := 0; i < len(group); i++ {
-			if deleted[group[i].ID] {
-				continue
-			}
-			tokA := tokenSet(group[i].Content)
-			for j := i + 1; j < len(group); j++ {
-				if deleted[group[j].ID] {
-					continue
-				}
-				if jaccardSimilarity(tokA, tokenSet(group[j].Content)) >= s.cfg.duplicateThreshold {
-					// Delete the older one (lower UUIDv7 string = earlier)
-					if group[i].ID < group[j].ID {
-						deleted[group[i].ID] = true
-					} else {
-						deleted[group[j].ID] = true
-					}
-					dupes++
-				}
-			}
-		}
-	}
-
-	s.log.Info("pruned", "total", len(deleted), "age_cap", ageCap, "decay", decay, "dupes", dupes)
-
-	if len(deleted) == 0 {
+	if len(toDelete) == 0 {
 		return 0
 	}
 
+	s.log.Info("pruned", "total", len(toDelete), "age_cap", ageCap, "decay", decay)
+
 	s.mu.Lock()
 	_ = s.db.BeginTransaction()
-	for id := range deleted {
-		val, err := s.db.Get(idxPrefix + id)
-		if err != nil {
-			continue
-		}
-		if key, ok := val.(string); ok {
-			s.db.Delete(key)
-		}
-		s.db.Delete(idxPrefix + id)
+	for _, id := range toDelete {
+		s.deleteByID(id)
 	}
 	_ = s.db.Commit()
 	s.mu.Unlock()
 
-	return len(deleted)
+	return len(toDelete)
 }
 
-// compactMode2 uses an LLM to deduplicate and summarise memories.
-// Processes in small batches per type to keep prompts small and fast.
-// Returns the number of memories removed/replaced.
-func (s *Store) compactMode2() compactionResult {
+// memData is a compact struct for deduplication (avoids holding full Memory objects).
+type memData struct {
+	id, content, memType string
+	importance            float64
+	tokens                map[string]struct{}
+}
+
+// deduplicateSimilar scans all memories for similar pairs and merges them.
+// Uses the same logic as Remember's pre-flight check: high threshold auto-merges,
+// mid threshold asks LLM. Returns count of memories removed via merging.
+func (s *Store) deduplicateSimilar() int {
 	s.mu.RLock()
-	byType := make(map[string][]*Memory)
+	byType := make(map[string][]memData)
 	s.scanType("", func(m *Memory) bool {
-		byType[m.Type] = append(byType[m.Type], m)
+		byType[m.Type] = append(byType[m.Type], memData{
+			id:         m.ID,
+			content:    m.Content,
+			memType:    m.Type,
+			importance: m.Importance,
+			tokens:     tokenSet(m.Content),
+		})
 		return true
 	})
 	s.mu.RUnlock()
 
-	var total compactionResult
-	for memType, group := range byType {
-		if len(group) < s.cfg.minMemoriesForLLM {
-			s.log.Debug("LLM skip", "type", memType, "count", len(group), "min", s.cfg.minMemoriesForLLM)
+	totalMerged := 0
+	for memType, memories := range byType {
+		if len(memories) < 2 {
 			continue
 		}
-		// Sort oldest-first, cap to maxMemoriesForLLM, then process in batches
-		sort.Slice(group, func(i, j int) bool {
-			return group[i].AccessedAt.Before(group[j].AccessedAt)
-		})
-		if len(group) > s.cfg.maxMemoriesForLLM {
-			group = group[:s.cfg.maxMemoriesForLLM]
-		}
-		for i := 0; i < len(group); i += s.cfg.llmBatchSize {
-			end := i + s.cfg.llmBatchSize
-			if end > len(group) {
-				end = len(group)
-			}
-			batch := group[i:end]
-			s.log.Debug("LLM batch", "type", memType, "size", len(batch))
-			total = total.add(s.compactBatch(batch))
+		merged := s.deduplicateType(memories)
+		if merged > 0 {
+			s.log.Debug("deduplicated", "type", memType, "merged", merged)
+			totalMerged += merged
 		}
 	}
-	return total
+	return totalMerged
 }
 
-// compactBatch sends a single small batch to the LLM and applies decisions.
-func (s *Store) compactBatch(batch []*Memory) compactionResult {
-	prompt := buildCompactionPrompt(batch)
+// deduplicateType finds and merges similar pairs within a single type.
+// Does not hold locks during LLM calls.
+func (s *Store) deduplicateType(memories []memData) int {
+	merged := make(map[string]bool)
+	mergeCount := 0
+
+	for i := 0; i < len(memories); i++ {
+		if merged[memories[i].id] {
+			continue
+		}
+		for j := i + 1; j < len(memories); j++ {
+			if merged[memories[j].id] {
+				continue
+			}
+
+			score := jaccardSimilarity(memories[i].tokens, memories[j].tokens)
+			if score < s.cfg.similarityMidThreshold {
+				continue
+			}
+
+			existingID := memories[i].id
+			candidateID := memories[j].id
+
+			if score >= s.cfg.similarityHighThreshold {
+				// Auto-merge: update existing, delete candidate
+				s.log.Debug("auto-merge", "score", score, "into", existingID, "from", candidateID)
+				s.mu.Lock()
+				s.mergeInto(existingID, memories[j].content, memories[j].importance)
+				s.deleteByID(candidateID)
+				s.mu.Unlock()
+				merged[candidateID] = true
+				mergeCount++
+			} else if s.cfg.aiClient != nil {
+				// Ask LLM to resolve (no lock held during call)
+				if s.resolveAndMergePair(memories[i], memories[j]) {
+					merged[candidateID] = true
+					mergeCount++
+				}
+			}
+		}
+	}
+	return mergeCount
+}
+
+// mergeInto updates an existing memory with new content and importance.
+// Caller must hold lock.
+func (s *Store) mergeInto(existingID, newContent string, newImportance float64) {
+	m := s.getMemoryByID(existingID)
+	if m == nil {
+		return
+	}
+	m.Content = newContent
+	if newImportance > m.Importance {
+		m.Importance = newImportance
+	}
+	m.AccessedAt = time.Now().UTC()
+	_ = s.save(m)
+}
+
+// getMemoryByID retrieves a memory by ID. Caller must hold lock.
+func (s *Store) getMemoryByID(id string) *Memory {
+	keyVal, err := s.db.Get(idxPrefix + id)
+	if err != nil {
+		return nil
+	}
+	key, ok := keyVal.(string)
+	if !ok {
+		return nil
+	}
+	val, err := s.db.Get(key)
+	if err != nil {
+		return nil
+	}
+	return toMemory(val)
+}
+
+// resolveAndMergePair asks the LLM whether to merge two memories.
+// Returns true if they were merged (candidate deleted into existing).
+// Does not hold locks during LLM call.
+func (s *Store) resolveAndMergePair(existing, candidate memData) bool {
+	prompt := fmt.Sprintf(
+		"Memory A:\n%s (%s, importance: %.1f) %q\n\nMemory B:\n%s (%s, importance: %.1f) %q\n",
+		existing.id, existing.memType, existing.importance, existing.content,
+		candidate.id, candidate.memType, candidate.importance, candidate.content,
+	)
 
 	resp, err := s.cfg.aiClient.ChatCompletion(context.Background(), mcpai.ChatCompletionRequest{
 		Model: s.cfg.aiModel,
 		Messages: []mcpai.Message{
-			{Role: "system", Content: compactionSystemPrompt},
+			{Role: "system", Content: resolveSystemPrompt},
 			{Role: "user", Content: prompt},
 		},
 	})
 	if err != nil {
-		s.log.Error("LLM batch failed", "error", err)
-		return compactionResult{}
+		s.log.Error("LLM resolve pair failed", "error", err)
+		return false
 	}
 
 	var content string
@@ -628,143 +720,51 @@ func (s *Store) compactBatch(batch []*Memory) compactionResult {
 			content = c
 		}
 	}
-
 	content = stripThinkingBlocks(content)
 	content = extractJSON(content)
 
-	var decisions compactionDecision
-	if err := json.Unmarshal([]byte(content), &decisions); err != nil {
-		s.log.Error("failed to parse LLM response", "error", err)
-		return compactionResult{}
+	var decision struct {
+		Action     string  `json:"action"` // "merge" or "keep"
+		NewContent string  `json:"new_content"`
+		Importance float64 `json:"importance"`
+	}
+	if err := json.Unmarshal([]byte(content), &decision); err != nil {
+		s.log.Error("failed to parse LLM resolve response", "error", err)
+		return false
 	}
 
-	res := s.applyDecisions(decisions)
-	s.log.Debug("batch applied", "removed", res.removed, "added", res.added)
-	return res
-}
+	if decision.Action != "merge" || decision.NewContent == "" {
+		return false
+	}
 
-// rememberDirect saves a memory without touching compaction state.
-func (s *Store) rememberDirect(content, memType string, importance float64) (*Memory, error) {
-	id, err := uuid.NewV7()
-	if err != nil {
-		return nil, err
+	// Merge: update existing with merged content, delete candidate
+	s.log.Debug("LLM merge", "into", existing.id, "from", candidate.id)
+	mergedImportance := decision.Importance
+	if mergedImportance <= 0 {
+		mergedImportance = existing.importance
+		if candidate.importance > mergedImportance {
+			mergedImportance = candidate.importance
+		}
 	}
-	now := time.Now().UTC()
-	m := &Memory{
-		ID:         id.String(),
-		Content:    content,
-		Type:       memType,
-		Importance: importance,
-		CreatedAt:  now,
-		AccessedAt: now,
-	}
+
 	s.mu.Lock()
-	err = s.save(m)
+	s.mergeInto(existing.id, decision.NewContent, mergedImportance)
+	s.deleteByID(candidate.id)
 	s.mu.Unlock()
-	return m, err
+
+	return true
 }
 
-// applyDecisions applies the LLM compaction decisions to the store.
-func (s *Store) applyDecisions(decisions compactionDecision) compactionResult {
-	var res compactionResult
-
-	// Process merges: delete source memories, create new merged memory.
-	for _, merge := range decisions.Merge {
-		if len(merge.SourceIDs) == 0 || merge.NewContent == "" {
-			continue
-		}
-		memType := merge.Type
-		if memType == "" {
-			memType = TypeNote
-		}
-		importance := merge.Importance
-		if importance <= 0 {
-			importance = 0.5
-		}
-
-		// Delete sources.
-		s.mu.Lock()
-		_ = s.db.BeginTransaction()
-		for _, id := range cleanMergeIDs(merge.SourceIDs) {
-			val, err := s.db.Get(idxPrefix + id)
-			if err != nil {
-				continue
-			}
-			if key, ok := val.(string); ok {
-				s.db.Delete(key)
-			}
-			s.db.Delete(idxPrefix + id)
-			res.removed++
-		}
-		_ = s.db.Commit()
-		s.mu.Unlock()
-
-		// Create merged memory directly, bypassing compaction side-effects.
-		_, _ = s.rememberDirect(merge.NewContent, memType, importance)
-		res.added++
+// deleteByID removes a memory by ID (caller must hold lock).
+func (s *Store) deleteByID(id string) {
+	val, err := s.db.Get(idxPrefix + id)
+	if err != nil {
+		return
 	}
-
-	// Process deletes.
-	if deleteIDs := decisions.deleteIDs(); len(deleteIDs) > 0 {
-		s.mu.Lock()
-		_ = s.db.BeginTransaction()
-		for _, id := range deleteIDs {
-			val, err := s.db.Get(idxPrefix + id)
-			if err != nil {
-				continue
-			}
-			if key, ok := val.(string); ok {
-				s.db.Delete(key)
-			}
-			s.db.Delete(idxPrefix + id)
-			res.removed++
-		}
-		_ = s.db.Commit()
-		s.mu.Unlock()
+	if key, ok := val.(string); ok {
+		s.db.Delete(key)
 	}
-
-	return res
-}
-
-const compactionSystemPrompt = `/nothink
-You are a memory compaction assistant. Reduce redundancy in the memory store.
-
-Rules:
-- Merge memories that convey the same or very similar information into one cleaner memory.
-- Delete memories that are clearly outdated, superseded, or trivially redundant after merging.
-- Keep memories that are distinct and still relevant.
-- Do not merge memories that cover different subjects — one memory, one fact.
-- Write merged content as a single concise sentence. No padding, no filler, no conjunctions joining unrelated facts.
-
-Respond with ONLY a valid JSON object — no explanation, no markdown, no code fences.
-
-Schema:
-{
-  "merge": [
-    {
-      "source_ids": ["<exact uuid>", "<exact uuid>"],
-      "new_content": "<combined memory text>",
-      "type": "<fact|preference|event|note>",
-      "importance": <0.0-1.0>
-    }
-  ],
-  "delete": ["<exact uuid>", "<exact uuid>"]
-}
-
-IMPORTANT:
-- Use the EXACT uuid values from the input, not any surrounding label.
-- "merge" and "delete" must be present, even if empty arrays.
-- Do NOT include the same id in both merge and delete.
-- Do NOT invent new ids.`
-
-// buildCompactionPrompt builds the user prompt for Mode 2 — memories only.
-func buildCompactionPrompt(memories []*Memory) string {
-	var sb strings.Builder
-	sb.WriteString("Memories to compact:\n")
-	for _, m := range memories {
-		sb.WriteString(fmt.Sprintf("%s (%s, importance: %.1f) %q\n", m.ID, m.Type, m.Importance, m.Content))
-	}
-	return sb.String()
+	s.db.Delete(idxPrefix + id)
 }
 
 // tokenSet returns the unique token set for a string, used for Jaccard similarity.
@@ -796,19 +796,6 @@ func jaccardSimilarity(a, b map[string]struct{}) float64 {
 	return float64(intersection) / float64(union)
 }
 
-// sampleEvenly picks n items evenly distributed across the slice.
-func sampleEvenly(items []*Memory, n int) []*Memory {
-	if len(items) <= n {
-		return items
-	}
-	result := make([]*Memory, n)
-	for i := 0; i < n; i++ {
-		idx := i * (len(items) - 1) / (n - 1)
-		result[i] = items[idx]
-	}
-	return result
-}
-
 // decayFactor returns the exponential decay multiplier for a memory type and age.
 // preference never decays (returns 1.0 always).
 func (s *Store) decayFactor(memType string, age time.Duration) float64 {
@@ -831,10 +818,10 @@ func (s *Store) decayFactor(memType string, age time.Duration) float64 {
 	return math.Pow(0.5, exponent)
 }
 
-// stripThinkingBlocks removes <think>...</think> and similar reasoning blocks.
+// stripThinkingBlocks removes <think...</think}> and similar reasoning blocks.
 func stripThinkingBlocks(s string) string {
 	for _, pair := range [][2]string{
-		{"<think>", "</think>"},
+		{"<think", "</think"},
 		{"<thinking>", "</thinking>"},
 		{"<Thought>", "</Thought>"},
 		{"<antThinking>", "</antThinking>"},
