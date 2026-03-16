@@ -646,3 +646,125 @@ func TestKVConversion(t *testing.T) {
 		})
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Path security — kv.open
+// ---------------------------------------------------------------------------
+
+func kvOpenWithSecurity(allowedPaths []string, name string) object.Object {
+	lib := NewKVSubLibraryWithSecurity(allowedPaths)
+	dict := lib.GetDict()
+	pair, _ := dict.GetByString("open")
+	fn := pair.Value.(*object.Builtin)
+	return fn.Fn(context.Background(), object.Kwargs{}, &object.String{Value: name})
+}
+
+func TestKVPathSecurity(t *testing.T) {
+	if err := InitKVStore(""); err != nil {
+		t.Fatalf("InitKVStore: %v", err)
+	}
+	defer CloseKVStore()
+	defer closeKVRegistry()
+
+	tmpDir, err := os.MkdirTemp("", "kv-security-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	allowedDir := filepath.Join(tmpDir, "allowed")
+	deniedDir := filepath.Join(tmpDir, "denied")
+	if err := os.MkdirAll(allowedDir, 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.MkdirAll(deniedDir, 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	t.Run("AllowedPath_Opens", func(t *testing.T) {
+		path := filepath.Join(allowedDir, "store.db")
+		result := kvOpenWithSecurity([]string{allowedDir}, path)
+		if _, ok := result.(*object.Error); ok {
+			t.Errorf("expected store to open, got error: %v", result)
+		}
+		if b, ok := result.(*object.Builtin); ok {
+			kvCall(b, "close")
+		}
+	})
+
+	t.Run("DeniedPath_Blocked", func(t *testing.T) {
+		path := filepath.Join(deniedDir, "store.db")
+		result := kvOpenWithSecurity([]string{allowedDir}, path)
+		if _, ok := result.(*object.Error); !ok {
+			t.Errorf("expected error for path outside allowed dirs, got %T", result)
+		}
+	})
+
+	t.Run("PathTraversal_Blocked", func(t *testing.T) {
+		// Try to escape allowed dir via ../
+		path := filepath.Join(allowedDir, "..", "denied", "store.db")
+		result := kvOpenWithSecurity([]string{allowedDir}, path)
+		if _, ok := result.(*object.Error); !ok {
+			t.Errorf("expected error for path traversal, got %T", result)
+		}
+	})
+
+	t.Run("InMemory_AlwaysAllowed", func(t *testing.T) {
+		// In-memory stores bypass path restrictions entirely
+		result := kvOpenWithSecurity([]string{allowedDir}, ":memory:test-security")
+		if _, ok := result.(*object.Error); ok {
+			t.Errorf("in-memory store should always be allowed, got error: %v", result)
+		}
+		if b, ok := result.(*object.Builtin); ok {
+			kvCall(b, "close")
+		}
+	})
+
+	t.Run("EmptyAllowedPaths_DeniesAll", func(t *testing.T) {
+		path := filepath.Join(allowedDir, "store.db")
+		result := kvOpenWithSecurity([]string{}, path)
+		if _, ok := result.(*object.Error); !ok {
+			t.Errorf("expected error when allowed paths is empty slice, got %T", result)
+		}
+	})
+
+	t.Run("NilAllowedPaths_AllowsAll", func(t *testing.T) {
+		path := filepath.Join(deniedDir, "store.db")
+		result := kvOpenWithSecurity(nil, path)
+		if _, ok := result.(*object.Error); ok {
+			t.Errorf("nil allowed paths should allow all, got error: %v", result)
+		}
+		if b, ok := result.(*object.Builtin); ok {
+			kvCall(b, "close")
+		}
+	})
+
+	t.Run("SubdirectoryOfAllowed_Allowed", func(t *testing.T) {
+		subDir := filepath.Join(allowedDir, "sub")
+		if err := os.MkdirAll(subDir, 0755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		path := filepath.Join(subDir, "store.db")
+		result := kvOpenWithSecurity([]string{allowedDir}, path)
+		if _, ok := result.(*object.Error); ok {
+			t.Errorf("subdirectory of allowed path should be allowed, got error: %v", result)
+		}
+		if b, ok := result.(*object.Builtin); ok {
+			kvCall(b, "close")
+		}
+	})
+
+	t.Run("PrefixAttack_Blocked", func(t *testing.T) {
+		// /allowed-other should not match /allowed
+		otherDir := tmpDir + "-other"
+		if err := os.MkdirAll(otherDir, 0755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		defer os.RemoveAll(otherDir)
+		path := filepath.Join(otherDir, "store.db")
+		result := kvOpenWithSecurity([]string{tmpDir}, path)
+		if _, ok := result.(*object.Error); !ok {
+			t.Errorf("prefix attack should be blocked, got %T", result)
+		}
+	})
+}

@@ -1,84 +1,70 @@
 package memory
 
 import (
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/paularlott/snapshotkv"
 )
 
-func newTestStore(t *testing.T) (*Store, func()) {
+func newTestStore(t *testing.T, opts ...Option) *Store {
 	t.Helper()
 	db, err := snapshotkv.Open("", nil)
 	if err != nil {
 		t.Fatalf("snapshotkv.Open: %v", err)
 	}
-	store := New(db, 0) // no background compaction in tests
-	return store, func() {
-		store.Close()
-		db.Close()
-	}
+	t.Cleanup(func() { db.Close() })
+	return New(db, opts...)
 }
 
-func TestRememberAndRecall(t *testing.T) {
-	store, cleanup := newTestStore(t)
-	defer cleanup()
+// --- Remember ---
 
-	m, err := store.Remember("User's name is Alice", TypeFact, 0.9)
+func TestRemember_ReturnsMemoryWithID(t *testing.T) {
+	s := newTestStore(t)
+	m, err := s.Remember("User's name is Alice", TypeFact, 0.9)
 	if err != nil {
 		t.Fatalf("Remember: %v", err)
 	}
 	if m.ID == "" {
 		t.Fatal("expected non-empty ID")
 	}
-
-	results := store.Recall("Alice", 1, "")
-	if len(results) == 0 {
-		t.Fatal("Recall returned no results")
+	if m.Type != TypeFact {
+		t.Errorf("type = %q, want %q", m.Type, TypeFact)
 	}
-	got := results[0]
-	if got.Content != "User's name is Alice" {
-		t.Errorf("content = %q, want %q", got.Content, "User's name is Alice")
-	}
-	if got.Type != TypeFact {
-		t.Errorf("type = %q, want %q", got.Type, TypeFact)
+	if m.Importance != 0.9 {
+		t.Errorf("importance = %f, want 0.9", m.Importance)
 	}
 }
 
-func TestRecall_Missing(t *testing.T) {
-	store, cleanup := newTestStore(t)
-	defer cleanup()
-
-	results := store.Recall("no_such_content", 1, "")
-	if len(results) != 0 {
-		t.Errorf("expected no results, got %+v", results)
+func TestRemember_DefaultType(t *testing.T) {
+	s := newTestStore(t)
+	m, _ := s.Remember("no type given", "", 0.5)
+	if m.Type != TypeNote {
+		t.Errorf("default type = %q, want %q", m.Type, TypeNote)
 	}
 }
 
-func TestRecall_UpdatesAccessedAt(t *testing.T) {
-	store, cleanup := newTestStore(t)
-	defer cleanup()
-
-	before := time.Now().UTC().Add(-time.Second)
-	store.Remember("test content", TypeNote, 0.5)
-	results := store.Recall("test", 1, "")
-	if len(results) == 0 {
-		t.Fatal("Recall returned no results")
+func TestRemember_ImportanceClamping(t *testing.T) {
+	s := newTestStore(t)
+	m1, _ := s.Remember("too high", TypeNote, 2.0)
+	if m1.Importance != 1.0 {
+		t.Errorf("importance should be clamped to 1.0, got %f", m1.Importance)
 	}
-	if !results[0].AccessedAt.After(before) {
-		t.Error("AccessedAt should be updated on recall")
+	m2, _ := s.Remember("too low", TypeNote, -1.0)
+	if m2.Importance != 0.0 {
+		t.Errorf("importance should be clamped to 0.0, got %f", m2.Importance)
 	}
 }
+
+// --- Recall ---
 
 func TestRecall_KeywordMatch(t *testing.T) {
-	store, cleanup := newTestStore(t)
-	defer cleanup()
+	s := newTestStore(t)
+	s.Remember("User prefers dark mode", TypePreference, 0.7)
+	s.Remember("API rate limit is 1000 per day", TypeFact, 0.9)
 
-	store.Remember("User prefers dark mode", TypePreference, 0.7)
-	store.Remember("API rate limit is 1000 per day", TypeFact, 0.9)
-	store.Remember("Deployed version 2.1 on Friday", TypeEvent, 0.5)
-
-	results := store.Recall("dark mode", 10, "")
+	results := s.Recall("dark mode", 10, "")
 	if len(results) == 0 {
 		t.Fatal("expected at least one result for 'dark mode'")
 	}
@@ -87,15 +73,21 @@ func TestRecall_KeywordMatch(t *testing.T) {
 	}
 }
 
+func TestRecall_NoMatch(t *testing.T) {
+	s := newTestStore(t)
+	results := s.Recall("no_such_content", 1, "")
+	if len(results) != 0 {
+		t.Errorf("expected no results, got %+v", results)
+	}
+}
+
 func TestRecall_TypeFilter(t *testing.T) {
-	store, cleanup := newTestStore(t)
-	defer cleanup()
+	s := newTestStore(t)
+	s.Remember("Alice likes dark mode", TypePreference, 0.5)
+	s.Remember("Alice's name is Alice", TypeFact, 0.9)
+	s.Remember("Alice deployed on Friday", TypeEvent, 0.5)
 
-	store.Remember("Alice likes dark mode", TypePreference, 0.5)
-	store.Remember("Alice's name is Alice", TypeFact, 0.9)
-	store.Remember("Alice deployed on Friday", TypeEvent, 0.5)
-
-	results := store.Recall("Alice", 10, TypeFact)
+	results := s.Recall("Alice", 10, TypeFact)
 	if len(results) != 1 {
 		t.Fatalf("expected 1 fact result, got %d", len(results))
 	}
@@ -104,21 +96,32 @@ func TestRecall_TypeFilter(t *testing.T) {
 	}
 }
 
-func TestRecall_EmptyQuery_ReturnsByRecency(t *testing.T) {
-	store, cleanup := newTestStore(t)
-	defer cleanup()
+func TestRecall_UpdatesAccessedAt(t *testing.T) {
+	s := newTestStore(t)
+	before := time.Now().UTC().Add(-time.Second)
+	s.Remember("test content", TypeNote, 0.5)
+	results := s.Recall("test", 1, "")
+	if len(results) == 0 {
+		t.Fatal("Recall returned no results")
+	}
+	if !results[0].AccessedAt.After(before) {
+		t.Error("AccessedAt should be updated on recall")
+	}
+}
 
+func TestRecall_EmptyQuery_ReturnsByRecency(t *testing.T) {
+	s := newTestStore(t)
 	now := time.Now().UTC()
 
-	old, _ := store.Remember("old memory", TypeNote, 0.3)
+	old, _ := s.Remember("old memory", TypeNote, 0.3)
 	old.AccessedAt = now.Add(-10 * 24 * time.Hour)
-	store.mu.Lock()
-	_ = store.save(old)
-	store.mu.Unlock()
+	s.mu.Lock()
+	_ = s.save(old)
+	s.mu.Unlock()
 
-	store.Remember("recent memory", TypeNote, 0.3)
+	s.Remember("recent memory", TypeNote, 0.3)
 
-	results := store.Recall("", 10, "")
+	results := s.Recall("", 10, "")
 	if len(results) < 2 {
 		t.Fatalf("expected 2 results, got %d", len(results))
 	}
@@ -128,211 +131,423 @@ func TestRecall_EmptyQuery_ReturnsByRecency(t *testing.T) {
 }
 
 func TestRecall_Limit(t *testing.T) {
-	store, cleanup := newTestStore(t)
-	defer cleanup()
-
+	s := newTestStore(t)
 	for i := 0; i < 10; i++ {
-		store.Remember("memory about cats", TypeNote, 0.5)
+		s.Remember("memory about cats", TypeNote, 0.5)
 	}
-
-	results := store.Recall("cats", 3, "")
+	results := s.Recall("cats", 3, "")
 	if len(results) != 3 {
 		t.Errorf("expected 3 results, got %d", len(results))
 	}
 }
 
 func TestRecall_ForgetRace(t *testing.T) {
-	store, cleanup := newTestStore(t)
-	defer cleanup()
+	s := newTestStore(t)
+	m, _ := s.Remember("to be forgotten during recall", TypeNote, 0.5)
 
-	m, _ := store.Remember("to be forgotten during recall", TypeNote, 0.5)
-
-	// Simulate: scan found the memory, then it gets forgotten before the write phase.
-	// We do this sequentially to test the existence check in the write phase.
-	store.mu.RLock()
+	s.mu.RLock()
 	var found []*Memory
-	store.scanType("", func(mem *Memory) bool {
+	s.scanType("", func(mem *Memory) bool {
 		found = append(found, mem)
 		return true
 	})
-	store.mu.RUnlock()
+	s.mu.RUnlock()
 
-	store.Forget(m.ID)
+	s.Forget(m.ID)
 
-	// Now manually run the write phase — the existence check should skip the deleted memory.
 	accessed := time.Now().UTC()
-	store.mu.Lock()
-	_ = store.db.BeginTransaction()
+	s.mu.Lock()
+	_ = s.db.BeginTransaction()
 	for _, mem := range found {
-		if !store.db.Exists(idxPrefix + mem.ID) {
+		if !s.db.Exists(idxPrefix + mem.ID) {
 			continue
 		}
 		mem.AccessedAt = accessed
-		_ = store.save(mem)
+		_ = s.save(mem)
 	}
-	_ = store.db.Commit()
-	store.mu.Unlock()
+	_ = s.db.Commit()
+	s.mu.Unlock()
 
-	// Memory should still be gone, not re-created.
-	if store.Count() != 0 {
-		t.Errorf("forgotten memory was re-created by recall write phase, count = %d", store.Count())
+	if s.Count() != 0 {
+		t.Errorf("forgotten memory was re-created by recall write phase, count = %d", s.Count())
 	}
 }
 
-func TestForget_ByID(t *testing.T) {
-	store, cleanup := newTestStore(t)
-	defer cleanup()
+// --- Forget ---
 
-	m, _ := store.Remember("to be forgotten", TypeNote, 0.5)
-	if !store.Forget(m.ID) {
+func TestForget_ByID(t *testing.T) {
+	s := newTestStore(t)
+	m, _ := s.Remember("to be forgotten", TypeNote, 0.5)
+	if !s.Forget(m.ID) {
 		t.Fatal("Forget returned false")
 	}
-	if store.Count() != 0 {
-		t.Errorf("expected 0 memories, got %d", store.Count())
+	if s.Count() != 0 {
+		t.Errorf("expected 0 memories, got %d", s.Count())
 	}
 }
 
 func TestForget_Missing(t *testing.T) {
-	store, cleanup := newTestStore(t)
-	defer cleanup()
-
-	if store.Forget("nonexistent-id") {
+	s := newTestStore(t)
+	if s.Forget("nonexistent-id") {
 		t.Error("Forget should return false for missing ID")
 	}
 }
 
+// --- List / Count ---
+
 func TestList(t *testing.T) {
-	store, cleanup := newTestStore(t)
-	defer cleanup()
+	s := newTestStore(t)
+	s.Remember("fact one", TypeFact, 0.5)
+	s.Remember("fact two", TypeFact, 0.5)
+	s.Remember("a preference", TypePreference, 0.5)
 
-	store.Remember("fact one", TypeFact, 0.5)
-	store.Remember("fact two", TypeFact, 0.5)
-	store.Remember("a preference", TypePreference, 0.5)
-
-	all := store.List("", 50)
+	all := s.List("", 50)
 	if len(all) != 3 {
 		t.Errorf("expected 3, got %d", len(all))
 	}
-
-	facts := store.List(TypeFact, 50)
+	facts := s.List(TypeFact, 50)
 	if len(facts) != 2 {
 		t.Errorf("expected 2 facts, got %d", len(facts))
 	}
 }
 
 func TestList_Limit(t *testing.T) {
-	store, cleanup := newTestStore(t)
-	defer cleanup()
-
+	s := newTestStore(t)
 	for i := 0; i < 10; i++ {
-		store.Remember("item", TypeNote, 0.5)
+		s.Remember("item", TypeNote, 0.5)
 	}
-
-	results := store.List("", 4)
+	results := s.List("", 4)
 	if len(results) != 4 {
 		t.Errorf("expected 4, got %d", len(results))
 	}
 }
 
 func TestCount(t *testing.T) {
-	store, cleanup := newTestStore(t)
-	defer cleanup()
-
-	if store.Count() != 0 {
-		t.Errorf("expected 0, got %d", store.Count())
+	s := newTestStore(t)
+	if s.Count() != 0 {
+		t.Errorf("expected 0, got %d", s.Count())
 	}
-	store.Remember("one", TypeNote, 0.5)
-	store.Remember("two", TypeNote, 0.5)
-	if store.Count() != 2 {
-		t.Errorf("expected 2, got %d", store.Count())
+	s.Remember("one", TypeNote, 0.5)
+	s.Remember("two", TypeNote, 0.5)
+	if s.Count() != 2 {
+		t.Errorf("expected 2, got %d", s.Count())
 	}
 }
 
-func TestCompact_RemovesIdle(t *testing.T) {
-	store, cleanup := newTestStore(t)
-	defer cleanup()
+// --- Decay ---
 
-	store.Remember("low importance idle", TypeNote, 0.3)
-	store.Remember("high importance idle", TypeFact, 0.9)
+func TestDecayFactor_Preference_NeverDecays(t *testing.T) {
+	s := newTestStore(t)
+	for _, age := range []time.Duration{0, 7 * 24 * time.Hour, 90 * 24 * time.Hour, 365 * 24 * time.Hour} {
+		if f := s.decayFactor(TypePreference, age); f != 1.0 {
+			t.Errorf("preference decay at age %v = %f, want 1.0", age, f)
+		}
+	}
+}
 
-	removed := store.Compact(-1*time.Second, 0.8)
+func TestDecayFactor_ZeroAge(t *testing.T) {
+	s := newTestStore(t)
+	for _, typ := range []string{TypeFact, TypeEvent, TypeNote} {
+		if f := s.decayFactor(typ, 0); f != 1.0 {
+			t.Errorf("decay at age 0 for %q = %f, want 1.0", typ, f)
+		}
+	}
+}
+
+func TestDecayFactor_HalfLife(t *testing.T) {
+	s := newTestStore(t)
+	cases := []struct {
+		typ      string
+		halfLife time.Duration
+	}{
+		{TypeFact, DefaultHalfLifeFact},
+		{TypeEvent, DefaultHalfLifeEvent},
+		{TypeNote, DefaultHalfLifeNote},
+	}
+	for _, c := range cases {
+		f := s.decayFactor(c.typ, c.halfLife)
+		if f < 0.49 || f > 0.51 {
+			t.Errorf("%s at half-life: decay = %f, want ~0.5", c.typ, f)
+		}
+	}
+}
+
+func TestDecayFactor_TwoHalfLives(t *testing.T) {
+	s := newTestStore(t)
+	f := s.decayFactor(TypeNote, 2*DefaultHalfLifeNote)
+	if f < 0.24 || f > 0.26 {
+		t.Errorf("note at 2 half-lives: decay = %f, want ~0.25", f)
+	}
+}
+
+func TestDecayFactor_CustomHalfLife(t *testing.T) {
+	s := newTestStore(t, WithHalfLifeNote(14*24*time.Hour))
+	f := s.decayFactor(TypeNote, 14*24*time.Hour)
+	if f < 0.49 || f > 0.51 {
+		t.Errorf("custom half-life: decay = %f, want ~0.5", f)
+	}
+}
+
+// --- Mode 1 compaction ---
+
+func TestCompactMode1_HardAgeCap(t *testing.T) {
+	s := newTestStore(t, WithMaxAge(30*24*time.Hour))
+
+	// Old memory (beyond max age)
+	old, _ := s.Remember("old note", TypeNote, 0.9)
+	old.AccessedAt = time.Now().UTC().Add(-31 * 24 * time.Hour)
+	s.mu.Lock()
+	_ = s.save(old)
+	s.mu.Unlock()
+
+	// Recent memory
+	s.Remember("recent note", TypeNote, 0.9)
+
+	removed := s.compactMode1()
 	if removed != 1 {
-		t.Errorf("expected 1 removed (low importance), got %d", removed)
+		t.Errorf("expected 1 removed by age cap, got %d", removed)
 	}
-	if store.Count() != 1 {
-		t.Errorf("expected 1 high importance memory to survive, got %d", store.Count())
+	if s.Count() != 1 {
+		t.Errorf("expected 1 remaining, got %d", s.Count())
 	}
 }
 
-func TestCompact_ExemptsHighImportance(t *testing.T) {
-	store, cleanup := newTestStore(t)
-	defer cleanup()
+func TestCompactMode1_DecayPrune(t *testing.T) {
+	s := newTestStore(t,
+		WithHalfLifeNote(7*24*time.Hour),
+		WithPruneThreshold(0.1),
+	)
 
-	store.Remember("critical fact", TypeFact, 1.0)
-	store.Remember("disposable note", TypeNote, 0.1)
+	// importance=0.8, age=3 half-lives → 0.8 * 0.125 = 0.1 → at threshold, should prune
+	m, _ := s.Remember("decayed note", TypeNote, 0.8)
+	m.AccessedAt = time.Now().UTC().Add(-21 * 24 * time.Hour)
+	s.mu.Lock()
+	_ = s.save(m)
+	s.mu.Unlock()
 
-	removed := store.Compact(-1*time.Second, 0.8)
+	// High importance note — should survive
+	s.Remember("important note", TypeNote, 0.9)
+
+	removed := s.compactMode1()
 	if removed != 1 {
-		t.Errorf("expected 1 removed, got %d", removed)
-	}
-	if store.Count() != 1 {
-		t.Errorf("expected 1 remaining, got %d", store.Count())
+		t.Errorf("expected 1 removed by decay, got %d", removed)
 	}
 }
 
-func TestCompact_ZeroTimeout(t *testing.T) {
-	store, cleanup := newTestStore(t)
-	defer cleanup()
+func TestCompactMode1_PreferenceNotDecayed(t *testing.T) {
+	s := newTestStore(t,
+		WithPruneThreshold(0.1),
+		WithMaxAge(365*24*time.Hour),
+	)
 
-	store.Remember("should survive", TypeNote, 0.1)
-	removed := store.Compact(0, 0)
+	// Old preference with low importance — should NOT be pruned by decay (preference never decays)
+	pref, _ := s.Remember("user prefers dark mode", TypePreference, 0.2)
+	pref.AccessedAt = time.Now().UTC().Add(-60 * 24 * time.Hour)
+	s.mu.Lock()
+	_ = s.save(pref)
+	s.mu.Unlock()
+
+	removed := s.compactMode1()
 	if removed != 0 {
-		t.Errorf("Compact(0) should be a no-op, removed %d", removed)
-	}
-	if store.Count() != 1 {
-		t.Errorf("expected 1 memory to survive, got %d", store.Count())
+		t.Errorf("preference should not be pruned by decay, removed %d", removed)
 	}
 }
 
-func TestImportanceClamping(t *testing.T) {
-	store, cleanup := newTestStore(t)
-	defer cleanup()
+func TestCompactMode1_PreferenceHardAgeCap(t *testing.T) {
+	s := newTestStore(t, WithMaxAge(30*24*time.Hour))
 
-	m1, _ := store.Remember("too high", TypeNote, 2.0)
-	if m1.Importance != 1.0 {
-		t.Errorf("importance should be clamped to 1.0, got %f", m1.Importance)
-	}
+	// Preference beyond hard age cap — should be deleted
+	pref, _ := s.Remember("old preference", TypePreference, 1.0)
+	pref.AccessedAt = time.Now().UTC().Add(-31 * 24 * time.Hour)
+	s.mu.Lock()
+	_ = s.save(pref)
+	s.mu.Unlock()
 
-	m2, _ := store.Remember("too low", TypeNote, -1.0)
-	if m2.Importance != 0.0 {
-		t.Errorf("importance should be clamped to 0.0, got %f", m2.Importance)
-	}
-}
-
-func TestDefaultType(t *testing.T) {
-	store, cleanup := newTestStore(t)
-	defer cleanup()
-
-	m, _ := store.Remember("no type given", "", 0.5)
-	if m.Type != TypeNote {
-		t.Errorf("default type = %q, want %q", m.Type, TypeNote)
+	removed := s.compactMode1()
+	if removed != 1 {
+		t.Errorf("preference beyond hard age cap should be removed, got %d removed", removed)
 	}
 }
 
-func TestNew_WithIdleTimeout(t *testing.T) {
-	db, err := snapshotkv.Open("", nil)
+func TestCompactMode1_NothingToPrune(t *testing.T) {
+	s := newTestStore(t)
+	s.Remember("fresh high importance", TypeFact, 0.9)
+	removed := s.compactMode1()
+	if removed != 0 {
+		t.Errorf("expected 0 removed, got %d", removed)
+	}
+}
+
+func TestCompactMode1_Empty(t *testing.T) {
+	s := newTestStore(t)
+	removed := s.compactMode1()
+	if removed != 0 {
+		t.Errorf("expected 0 on empty store, got %d", removed)
+	}
+}
+
+// --- Compaction trigger ---
+
+func TestCompactionTrigger_ActivityThreshold(t *testing.T) {
+	s := newTestStore(t,
+		WithActivityThreshold(3),
+		WithMinCompactInterval(0),
+		WithMaxCompactInterval(24*time.Hour),
+		// Use tiny max age so compaction actually removes something
+		WithMaxAge(time.Millisecond),
+	)
+	// Force lastCompaction to be old enough
+	s.lastCompaction = time.Now().Add(-time.Hour)
+
+	// Add memories below threshold — no compaction yet
+	s.Remember("one", TypeNote, 0.5)
+	s.Remember("two", TypeNote, 0.5)
+	if s.compactionInProgress.Load() {
+		t.Error("compaction should not have triggered below threshold")
+	}
+
+	// Third memory crosses threshold
+	s.Remember("three", TypeNote, 0.5)
+	// Give goroutine a moment
+	time.Sleep(50 * time.Millisecond)
+	// memoriesSinceCompact should have been reset
+	s.mu.Lock()
+	count := s.memoriesSinceCompact
+	s.mu.Unlock()
+	if count != 0 {
+		t.Errorf("memoriesSinceCompact should be reset after trigger, got %d", count)
+	}
+}
+
+func TestCompactionTrigger_MaxInterval(t *testing.T) {
+	s := newTestStore(t,
+		WithActivityThreshold(100),
+		WithMinCompactInterval(0),
+		WithMaxCompactInterval(0), // immediate
+	)
+	s.lastCompaction = time.Now().Add(-time.Hour)
+
+	s.Remember("one", TypeNote, 0.5)
+	time.Sleep(50 * time.Millisecond)
+
+	s.mu.Lock()
+	count := s.memoriesSinceCompact
+	s.mu.Unlock()
+	if count != 0 {
+		t.Errorf("memoriesSinceCompact should be reset after max interval trigger, got %d", count)
+	}
+}
+
+func TestCompactionTrigger_NoDoubleCompaction(t *testing.T) {
+	s := newTestStore(t,
+		WithActivityThreshold(1),
+		WithMinCompactInterval(0),
+		WithMaxCompactInterval(24*time.Hour),
+	)
+	s.lastCompaction = time.Now().Add(-time.Hour)
+	s.compactionInProgress.Store(true)
+
+	s.Remember("one", TypeNote, 0.5)
+
+	s.mu.Lock()
+	count := s.memoriesSinceCompact
+	s.mu.Unlock()
+	// Should NOT have reset because compactionInProgress was true
+	if count == 0 {
+		t.Error("memoriesSinceCompact should not be reset when compaction already in progress")
+	}
+}
+
+// --- Persistence ---
+
+func TestPersistence_SnapshotRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+
+	db1, err := snapshotkv.Open(dir, &snapshotkv.Config{SaveDebounce: 0})
 	if err != nil {
-		t.Fatalf("snapshotkv.Open: %v", err)
+		t.Fatalf("Open: %v", err)
 	}
-	store := New(db, 100*time.Millisecond)
-	store.Remember("disposable", TypeNote, 0.1)
-	time.Sleep(500 * time.Millisecond)
-	store.Close()
-	if store.Count() != 0 {
-		t.Errorf("expected compaction to remove idle memory, got %d", store.Count())
+	s1 := New(db1)
+	m, err := s1.Remember("persisted fact", TypeFact, 0.8)
+	if err != nil {
+		t.Fatalf("Remember: %v", err)
 	}
-	db.Close()
+	id := m.ID
+	db1.Close()
+
+	db2, err := snapshotkv.Open(dir, nil)
+	if err != nil {
+		t.Fatalf("Reopen: %v", err)
+	}
+	defer db2.Close()
+	s2 := New(db2)
+
+	results := s2.Recall("persisted", 1, "")
+	if len(results) == 0 {
+		t.Fatal("no results after snapshot reload")
+	}
+	if results[0].ID != id {
+		t.Errorf("ID = %q, want %q", results[0].ID, id)
+	}
+	if results[0].Content != "persisted fact" {
+		t.Errorf("Content = %q, want %q", results[0].Content, "persisted fact")
+	}
+	if results[0].Importance != 0.8 {
+		t.Errorf("Importance = %f, want 0.8", results[0].Importance)
+	}
+	if !s2.Forget(id) {
+		t.Error("Forget returned false after reload")
+	}
+	if s2.Count() != 0 {
+		t.Errorf("Count = %d after forget, want 0", s2.Count())
+	}
 }
+
+// --- Concurrency ---
+
+func TestRecall_Concurrent(t *testing.T) {
+	s := newTestStore(t)
+	for i := 0; i < 20; i++ {
+		s.Remember("concurrent memory", TypeNote, 0.5)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.Recall("concurrent", 5, "")
+		}()
+	}
+	wg.Wait()
+}
+
+func TestRememberForget_Concurrent(t *testing.T) {
+	s := newTestStore(t)
+	var wg sync.WaitGroup
+	ids := make(chan string, 50)
+
+	for i := 0; i < 25; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			m, _ := s.Remember("concurrent write", TypeNote, 0.5)
+			if m != nil {
+				ids <- m.ID
+			}
+		}()
+	}
+	wg.Wait()
+	close(ids)
+
+	for id := range ids {
+		s.Forget(id)
+	}
+	if s.Count() != 0 {
+		t.Errorf("expected 0 after concurrent forget, got %d", s.Count())
+	}
+}
+
+// --- Helpers ---
 
 func TestTokenise(t *testing.T) {
 	tokens := tokenise("hello, world! 123 foo-bar")
@@ -367,73 +582,42 @@ func TestRecencyScore(t *testing.T) {
 	}
 }
 
-func TestPersistence_SnapshotRoundTrip(t *testing.T) {
-	dir := t.TempDir()
-
-	db1, err := snapshotkv.Open(dir, &snapshotkv.Config{SaveDebounce: 0})
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	store1 := New(db1, 0)
-
-	m, err := store1.Remember("persisted fact", TypeFact, 0.8)
-	if err != nil {
-		t.Fatalf("Remember: %v", err)
-	}
-	id := m.ID
-
-	store1.Close()
-	db1.Close()
-
-	db2, err := snapshotkv.Open(dir, nil)
-	if err != nil {
-		t.Fatalf("Reopen: %v", err)
-	}
-	defer db2.Close()
-	store2 := New(db2, 0)
-	defer store2.Close()
-
-	results := store2.Recall("persisted", 1, "")
-	if len(results) == 0 {
-		t.Fatal("no results after snapshot reload")
-	}
-	if results[0].ID != id {
-		t.Errorf("ID = %q, want %q", results[0].ID, id)
-	}
-	if results[0].Content != "persisted fact" {
-		t.Errorf("Content = %q, want %q", results[0].Content, "persisted fact")
-	}
-	if results[0].Type != TypeFact {
-		t.Errorf("Type = %q, want %q", results[0].Type, TypeFact)
-	}
-	if results[0].Importance != 0.8 {
-		t.Errorf("Importance = %f, want 0.8", results[0].Importance)
+func TestSampleEvenly(t *testing.T) {
+	items := make([]*Memory, 10)
+	for i := range items {
+		items[i] = &Memory{ID: string(rune('a' + i))}
 	}
 
-	if !store2.Forget(id) {
-		t.Error("Forget returned false after reload")
+	// Fewer than n — returns all
+	result := sampleEvenly(items, 20)
+	if len(result) != 10 {
+		t.Errorf("expected 10, got %d", len(result))
 	}
-	if store2.Count() != 0 {
-		t.Errorf("Count = %d after forget, want 0", store2.Count())
+
+	// Exactly n
+	result = sampleEvenly(items, 10)
+	if len(result) != 10 {
+		t.Errorf("expected 10, got %d", len(result))
+	}
+
+	// Sample 5 from 10 — should include first and last
+	result = sampleEvenly(items, 5)
+	if len(result) != 5 {
+		t.Errorf("expected 5, got %d", len(result))
+	}
+	if result[0].ID != items[0].ID {
+		t.Errorf("first sample should be first item")
+	}
+	if result[4].ID != items[9].ID {
+		t.Errorf("last sample should be last item")
 	}
 }
 
-func TestRecall_Concurrent(t *testing.T) {
-	store, cleanup := newTestStore(t)
-	defer cleanup()
-
-	for i := 0; i < 20; i++ {
-		store.Remember("concurrent memory", TypeNote, 0.5)
+func TestTriggerReason(t *testing.T) {
+	if triggerReason(5, 10, 3*time.Hour, 2*time.Hour) != "max_interval" {
+		t.Error("expected max_interval")
 	}
-
-	done := make(chan struct{})
-	for i := 0; i < 10; i++ {
-		go func() {
-			store.Recall("concurrent", 5, "")
-			done <- struct{}{}
-		}()
-	}
-	for i := 0; i < 10; i++ {
-		<-done
+	if triggerReason(10, 10, 10*time.Minute, 2*time.Hour) != "activity_threshold" {
+		t.Error("expected activity_threshold")
 	}
 }

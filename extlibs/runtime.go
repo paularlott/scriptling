@@ -196,6 +196,13 @@ func RegisterRuntimeKVLibrary(registrar interface{ RegisterLibrary(*object.Libra
 	registrar.RegisterLibrary(NewKVSubLibrary())
 }
 
+// RegisterRuntimeKVLibraryWithSecurity registers the kv library restricted to allowedPaths.
+// In-memory stores are always permitted regardless of allowedPaths.
+// If allowedPaths is nil, all paths are allowed. If empty slice, all filesystem paths are denied.
+func RegisterRuntimeKVLibraryWithSecurity(registrar interface{ RegisterLibrary(*object.Library) }, allowedPaths []string) {
+	registrar.RegisterLibrary(NewKVSubLibraryWithSecurity(allowedPaths))
+}
+
 func RegisterRuntimeSyncLibrary(registrar interface{ RegisterLibrary(*object.Library) }) {
 	registrar.RegisterLibrary(SyncSubLibrary)
 }

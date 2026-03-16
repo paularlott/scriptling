@@ -1,11 +1,19 @@
 package memory
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"math"
+	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
+	mcpai "github.com/paularlott/mcp/ai"
+	"github.com/paularlott/logger"
 	"github.com/paularlott/snapshotkv"
 )
 
@@ -17,7 +25,31 @@ const (
 	TypePreference = "preference"
 	TypeEvent      = "event"
 	TypeNote       = "note"
+
+	DefaultActivityThreshold  = 10
+	DefaultMinCompactInterval = 5 * time.Minute
+	DefaultMaxCompactInterval = 2 * time.Hour
+	DefaultMaxAge             = 180 * 24 * time.Hour
+	DefaultPruneThreshold     = 0.1
+	DefaultHalfLifeFact       = 90 * 24 * time.Hour
+	DefaultHalfLifeEvent      = 30 * 24 * time.Hour
+	DefaultHalfLifeNote       = 7 * 24 * time.Hour
+	DefaultMinMemoriesForLLM  = 20
+	DefaultMaxMemoriesForLLM  = 100
 )
+
+// compactionDecision is the parsed response from the LLM for Mode 2.
+type compactionDecision struct {
+	Merge  []mergeAction `json:"merge"`
+	Delete []string      `json:"delete"`
+}
+
+type mergeAction struct {
+	SourceIDs  []string `json:"source_ids"`
+	NewContent string   `json:"new_content"`
+	Type       string   `json:"type"`
+	Importance float64  `json:"importance"`
+}
 
 // typePrefix returns the full KV key prefix for a memory type.
 func typePrefix(memType string) string {
@@ -34,41 +66,117 @@ type Memory struct {
 	AccessedAt time.Time `msgpack:"accessed_at"`
 }
 
+// storeConfig holds all tunable parameters.
+type storeConfig struct {
+	activityThreshold  int
+	minCompactInterval time.Duration
+	maxCompactInterval time.Duration
+	maxAge             time.Duration
+	pruneThreshold     float64
+	halfLifeFact       time.Duration
+	halfLifeEvent      time.Duration
+	halfLifeNote       time.Duration
+	minMemoriesForLLM  int
+	maxMemoriesForLLM  int
+	aiClient           mcpai.Client
+	aiModel            string
+}
+
+func defaultConfig() storeConfig {
+	return storeConfig{
+		activityThreshold:  DefaultActivityThreshold,
+		minCompactInterval: DefaultMinCompactInterval,
+		maxCompactInterval: DefaultMaxCompactInterval,
+		maxAge:             DefaultMaxAge,
+		pruneThreshold:     DefaultPruneThreshold,
+		halfLifeFact:       DefaultHalfLifeFact,
+		halfLifeEvent:      DefaultHalfLifeEvent,
+		halfLifeNote:       DefaultHalfLifeNote,
+		minMemoriesForLLM:  DefaultMinMemoriesForLLM,
+		maxMemoriesForLLM:  DefaultMaxMemoriesForLLM,
+	}
+}
+
+// Option is a functional option for Store.
+type Option func(*storeConfig)
+
+func WithActivityThreshold(n int) Option {
+	return func(c *storeConfig) { c.activityThreshold = n }
+}
+
+func WithMinCompactInterval(d time.Duration) Option {
+	return func(c *storeConfig) { c.minCompactInterval = d }
+}
+
+func WithMaxCompactInterval(d time.Duration) Option {
+	return func(c *storeConfig) { c.maxCompactInterval = d }
+}
+
+func WithMaxAge(d time.Duration) Option {
+	return func(c *storeConfig) { c.maxAge = d }
+}
+
+func WithPruneThreshold(f float64) Option {
+	return func(c *storeConfig) { c.pruneThreshold = f }
+}
+
+func WithHalfLifeFact(d time.Duration) Option {
+	return func(c *storeConfig) { c.halfLifeFact = d }
+}
+
+func WithHalfLifeEvent(d time.Duration) Option {
+	return func(c *storeConfig) { c.halfLifeEvent = d }
+}
+
+func WithHalfLifeNote(d time.Duration) Option {
+	return func(c *storeConfig) { c.halfLifeNote = d }
+}
+
+func WithMinMemoriesForLLM(n int) Option {
+	return func(c *storeConfig) { c.minMemoriesForLLM = n }
+}
+
+func WithMaxMemoriesForLLM(n int) Option {
+	return func(c *storeConfig) { c.maxMemoriesForLLM = n }
+}
+
+// WithAIClient enables Mode 2 LLM-based compaction.
+// If client is nil, Mode 2 is disabled.
+func WithAIClient(client mcpai.Client, model string) Option {
+	return func(c *storeConfig) {
+		c.aiClient = client
+		c.aiModel = model
+	}
+}
+
 // Store is a memory store backed by a snapshotkv DB.
 // It does not own the DB — the caller manages its lifecycle.
 type Store struct {
-	mu          sync.RWMutex
-	db          *snapshotkv.DB
-	idleTimeout time.Duration
-	stopCompact chan struct{}
+	mu                 sync.RWMutex
+	db                 *snapshotkv.DB
+	cfg                storeConfig
+	memoriesSinceCompact int
+	lastCompaction     time.Time
+	compactionInProgress atomic.Bool
+	log                logger.Logger
 }
 
-// New creates a Store using the provided DB.
-// idleTimeout is how long a memory can go unaccessed before compaction removes it.
-// Pass 0 to disable automatic compaction.
-func New(db *snapshotkv.DB, idleTimeout time.Duration) *Store {
-	s := &Store{
-		db:          db,
-		idleTimeout: idleTimeout,
-		stopCompact: make(chan struct{}),
+// New creates a Store using the provided DB and optional functional options.
+func New(db *snapshotkv.DB, opts ...Option) *Store {
+	cfg := defaultConfig()
+	for _, o := range opts {
+		o(&cfg)
 	}
-	if idleTimeout > 0 {
-		go s.compactLoop()
-	}
-	return s
-}
-
-// Close stops the background compaction goroutine.
-// It does NOT close the underlying DB.
-func (s *Store) Close() {
-	select {
-	case <-s.stopCompact:
-	default:
-		close(s.stopCompact)
+	return &Store{
+		db:             db,
+		cfg:            cfg,
+		lastCompaction: time.Now(),
+		log:            logger.NewNullLogger(),
 	}
 }
 
 // Remember stores a memory and returns it with a UUIDv7 ID.
+// After saving, checks whether compaction should be triggered.
 func (s *Store) Remember(content, memType string, importance float64) (*Memory, error) {
 	if memType == "" {
 		memType = TypeNote
@@ -96,12 +204,51 @@ func (s *Store) Remember(content, memType string, importance float64) (*Memory, 
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if err := s.save(m); err != nil {
+		s.mu.Unlock()
 		return nil, err
 	}
+	s.memoriesSinceCompact++
+	added := s.memoriesSinceCompact
+	since := time.Since(s.lastCompaction)
+	shouldCompact := !s.compactionInProgress.Load() &&
+		added > 0 && (
+		(added >= s.cfg.activityThreshold && since >= s.cfg.minCompactInterval) ||
+			since >= s.cfg.maxCompactInterval)
+	if shouldCompact {
+		s.memoriesSinceCompact = 0
+		s.lastCompaction = time.Now()
+	}
+	s.mu.Unlock()
+
+	if shouldCompact {
+		s.log.Debug("compact triggered",
+			"reason", triggerReason(added, s.cfg.activityThreshold, since, s.cfg.maxCompactInterval),
+			"added", added,
+			"since", since.Round(time.Second))
+		s.compactionInProgress.Store(true)
+		go func() {
+			defer s.compactionInProgress.Store(false)
+			s.compact()
+		}()
+	} else {
+		s.log.Debug("compact check",
+			"added", added,
+			"threshold", s.cfg.activityThreshold,
+			"since", since.Round(time.Second))
+	}
+
 	return m, nil
+}
+
+func triggerReason(added, threshold int, since, maxInterval time.Duration) string {
+	if since >= maxInterval {
+		return "max_interval"
+	}
+	if added >= threshold {
+		return "activity_threshold"
+	}
+	return "unknown"
 }
 
 // Recall searches memories by keyword and returns up to limit results ranked by score.
@@ -120,7 +267,6 @@ func (s *Store) Recall(query string, limit int, typeFilter string) []*Memory {
 	}
 	var results []scored
 
-	// Scan phase is read-only.
 	s.mu.RLock()
 	s.scanType(typeFilter, func(m *Memory) bool {
 		var score float64
@@ -138,7 +284,6 @@ func (s *Store) Recall(query string, limit int, typeFilter string) []*Memory {
 	})
 	s.mu.RUnlock()
 
-	// Sort descending by score (insertion sort — memory stores are small)
 	for i := 1; i < len(results); i++ {
 		for j := i; j > 0 && results[j].score > results[j-1].score; j-- {
 			results[j], results[j-1] = results[j-1], results[j]
@@ -149,9 +294,6 @@ func (s *Store) Recall(query string, limit int, typeFilter string) []*Memory {
 		results = results[:limit]
 	}
 
-	// Batch-update AccessedAt — write lock only for the mutation phase.
-	// Re-check existence: a concurrent Forget may have removed a result between
-	// releasing RLock and acquiring Lock here.
 	out := make([]*Memory, 0, len(results))
 	accessed := time.Now().UTC()
 	s.mu.Lock()
@@ -211,44 +353,272 @@ func (s *Store) Count() int {
 	return s.db.Count(idxPrefix)
 }
 
-// Compact removes memories that have not been accessed within idleTimeout,
-// exempting memories with importance >= exemptThreshold.
-// A zero idleTimeout is a no-op.
-func (s *Store) Compact(idleTimeout time.Duration, exemptThreshold float64) int {
-	if idleTimeout == 0 {
-		return 0
+// compact runs Mode 1 (and optionally Mode 2) compaction. Called from a goroutine.
+func (s *Store) compact() {
+	start := time.Now()
+	totalRemoved := 0
+
+	s.mu.RLock()
+	total := s.db.Count(idxPrefix)
+	s.mu.RUnlock()
+
+	s.log.Info("mode 1 compact started", "memories", total)
+	totalRemoved += s.compactMode1()
+
+	if s.cfg.aiClient != nil {
+		totalRemoved += s.compactMode2()
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 
-	cutoff := time.Now().UTC().Add(-idleTimeout)
+	s.log.Info("compact complete", "total_removed", totalRemoved, "duration", time.Since(start).Round(time.Millisecond))
+}
 
-	// Collect keys to delete — no mutations inside Scan callback.
-	type toDelete struct{ memKey, idxKey string }
-	var victims []toDelete
+// compactMode1 applies rule-based pruning: hard age cap then decay threshold.
+// Returns the number of memories deleted.
+func (s *Store) compactMode1() int {
+	now := time.Now().UTC()
 
+	s.mu.RLock()
+	var candidates []*Memory
 	s.scanType("", func(m *Memory) bool {
-		if m.Importance < exemptThreshold && m.AccessedAt.Before(cutoff) {
-			victims = append(victims, toDelete{typePrefix(m.Type) + m.ID, idxPrefix + m.ID})
-		}
+		candidates = append(candidates, m)
 		return true
 	})
+	s.mu.RUnlock()
 
+	var toDelete []string
+	ageCap, decay := 0, 0
+
+	for _, m := range candidates {
+		age := now.Sub(m.AccessedAt)
+
+		if age > s.cfg.maxAge {
+			toDelete = append(toDelete, m.ID)
+			ageCap++
+			continue
+		}
+
+		factor := s.decayFactor(m.Type, age)
+		if m.Importance*factor < s.cfg.pruneThreshold {
+			toDelete = append(toDelete, m.ID)
+			decay++
+		}
+	}
+
+	s.log.Info("mode 1 pruned", "total", len(toDelete), "age_cap", ageCap, "decay", decay)
+
+	if len(toDelete) == 0 {
+		return 0
+	}
+
+	s.mu.Lock()
 	_ = s.db.BeginTransaction()
-	for _, v := range victims {
-		s.db.Delete(v.memKey)
-		s.db.Delete(v.idxKey)
+	for _, id := range toDelete {
+		val, err := s.db.Get(idxPrefix + id)
+		if err != nil {
+			continue
+		}
+		if key, ok := val.(string); ok {
+			s.db.Delete(key)
+		}
+		s.db.Delete(idxPrefix + id)
 	}
 	_ = s.db.Commit()
+	s.mu.Unlock()
 
-	return len(victims)
+	return len(toDelete)
+}
+
+// compactMode2 uses an LLM to deduplicate and summarise memories.
+// Runs after Mode 1. Returns the number of memories removed/replaced.
+func (s *Store) compactMode2() int {
+	s.mu.RLock()
+	var all []*Memory
+	s.scanType("", func(m *Memory) bool {
+		all = append(all, m)
+		return true
+	})
+	s.mu.RUnlock()
+
+	if len(all) < s.cfg.minMemoriesForLLM {
+		s.log.Debug("mode 2 skipped: below min threshold", "count", len(all), "min", s.cfg.minMemoriesForLLM)
+		return 0
+	}
+
+	// Representative sample across time: sort by AccessedAt, then pick evenly spaced.
+	sort.Slice(all, func(i, j int) bool {
+		return all[i].AccessedAt.Before(all[j].AccessedAt)
+	})
+	batch := all
+	if len(batch) > s.cfg.maxMemoriesForLLM {
+		batch = sampleEvenly(all, s.cfg.maxMemoriesForLLM)
+	}
+
+	s.log.Info("mode 2 compact started", "candidates", len(batch))
+
+	prompt := buildCompactionPrompt(batch)
+	s.log.Debug("mode 2 LLM call", "memories", len(batch))
+
+	resp, err := s.cfg.aiClient.ChatCompletion(context.Background(), mcpai.ChatCompletionRequest{
+		Model: s.cfg.aiModel,
+		Messages: []mcpai.Message{
+			{Role: "system", Content: "You are a memory compaction assistant. Respond only with valid JSON."},
+			{Role: "user", Content: prompt},
+		},
+	})
+	if err != nil {
+		s.log.Error("mode 2 LLM failed", "error", err)
+		return 0
+	}
+
+	var content string
+	if len(resp.Choices) > 0 {
+		if c, ok := resp.Choices[0].Message.Content.(string); ok {
+			content = c
+		}
+	}
+
+	// Strip markdown code fences if present.
+	content = strings.TrimSpace(content)
+	if strings.HasPrefix(content, "```") {
+		if idx := strings.Index(content, "\n"); idx != -1 {
+			content = content[idx+1:]
+		}
+		content = strings.TrimSuffix(strings.TrimSpace(content), "```")
+	}
+
+	var decisions compactionDecision
+	if err := json.Unmarshal([]byte(content), &decisions); err != nil {
+		s.log.Error("mode 2 failed to parse LLM response", "error", err)
+		return 0
+	}
+
+	count := s.applyDecisions(decisions)
+	s.log.Info("mode 2 applied", "changes", count, "merged", len(decisions.Merge), "deleted", len(decisions.Delete))
+	return count
+}
+
+// applyDecisions applies the LLM compaction decisions to the store.
+func (s *Store) applyDecisions(decisions compactionDecision) int {
+	count := 0
+
+	// Process merges: delete source memories, create new merged memory.
+	for _, merge := range decisions.Merge {
+		if len(merge.SourceIDs) == 0 || merge.NewContent == "" {
+			continue
+		}
+		memType := merge.Type
+		if memType == "" {
+			memType = TypeNote
+		}
+		importance := merge.Importance
+		if importance <= 0 {
+			importance = 0.5
+		}
+
+		// Delete sources.
+		s.mu.Lock()
+		_ = s.db.BeginTransaction()
+		for _, id := range merge.SourceIDs {
+			val, err := s.db.Get(idxPrefix + id)
+			if err != nil {
+				continue
+			}
+			if key, ok := val.(string); ok {
+				s.db.Delete(key)
+			}
+			s.db.Delete(idxPrefix + id)
+			count++
+		}
+		_ = s.db.Commit()
+		s.mu.Unlock()
+
+		// Create merged memory.
+		_, _ = s.Remember(merge.NewContent, memType, importance)
+	}
+
+	// Process deletes.
+	if len(decisions.Delete) > 0 {
+		s.mu.Lock()
+		_ = s.db.BeginTransaction()
+		for _, id := range decisions.Delete {
+			val, err := s.db.Get(idxPrefix + id)
+			if err != nil {
+				continue
+			}
+			if key, ok := val.(string); ok {
+				s.db.Delete(key)
+			}
+			s.db.Delete(idxPrefix + id)
+			count++
+		}
+		_ = s.db.Commit()
+		s.mu.Unlock()
+	}
+
+	return count
+}
+
+// buildCompactionPrompt builds the LLM prompt for Mode 2.
+func buildCompactionPrompt(memories []*Memory) string {
+	var sb strings.Builder
+	sb.WriteString(`You are managing a memory store. Given these memories, decide:
+1. Which can be merged (combine into one)
+2. Which are outdated and should be deleted
+3. Which are duplicates
+
+Memories:
+`)
+	for _, m := range memories {
+		sb.WriteString(fmt.Sprintf("[id: %s] (%s, importance: %.1f) %q\n", m.ID, m.Type, m.Importance, m.Content))
+	}
+	sb.WriteString(`
+Respond in JSON. Only include merge and delete — anything not listed is kept as-is:
+{
+  "merge": [
+    {"source_ids": ["id1", "id2"], "new_content": "combined content", "type": "preference", "importance": 0.9}
+  ],
+  "delete": ["id3"]
+}`)
+	return sb.String()
+}
+
+// sampleEvenly picks n items evenly distributed across the slice.
+func sampleEvenly(items []*Memory, n int) []*Memory {
+	if len(items) <= n {
+		return items
+	}
+	result := make([]*Memory, n)
+	for i := 0; i < n; i++ {
+		idx := i * (len(items) - 1) / (n - 1)
+		result[i] = items[idx]
+	}
+	return result
+}
+
+// decayFactor returns the exponential decay multiplier for a memory type and age.
+// preference never decays (returns 1.0 always).
+func (s *Store) decayFactor(memType string, age time.Duration) float64 {
+	if memType == TypePreference || age <= 0 {
+		return 1.0
+	}
+	var halfLife time.Duration
+	switch memType {
+	case TypeFact:
+		halfLife = s.cfg.halfLifeFact
+	case TypeEvent:
+		halfLife = s.cfg.halfLifeEvent
+	default: // note and any unknown type
+		halfLife = s.cfg.halfLifeNote
+	}
+	if halfLife <= 0 {
+		return 1.0
+	}
+	exponent := float64(age) / float64(halfLife)
+	return math.Pow(0.5, exponent)
 }
 
 // --- internal helpers ---
 
-// scanType iterates memories, optionally filtered to a single type, calling fn for each.
-// Stops early if fn returns false. Must be called with s.mu held.
-// fn must not call any DB methods (Scan holds db.mu.RLock).
 func (s *Store) scanType(typeFilter string, fn func(*Memory) bool) {
 	prefix := memPrefix
 	if typeFilter != "" {
@@ -263,8 +633,6 @@ func (s *Store) scanType(typeFilter string, fn func(*Memory) bool) {
 	})
 }
 
-// toMemory converts a decoded map[string]any value to a *Memory.
-// msgpack always decodes into map[string]any with concrete types: string, float64, time.Time.
 func toMemory(value any) *Memory {
 	m, ok := value.(map[string]any)
 	if !ok {
@@ -291,21 +659,6 @@ func (s *Store) save(m *Memory) error {
 	return s.db.Set(idxPrefix+m.ID, key)
 }
 
-func (s *Store) compactLoop() {
-	ticker := time.NewTicker(s.idleTimeout / 4)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-s.stopCompact:
-			return
-		case <-ticker.C:
-			s.Compact(s.idleTimeout, 0.8)
-		}
-	}
-}
-
-// tokenise splits text into lowercase words, stripping punctuation.
-// text must already be lowercased.
 func tokenise(text string) []string {
 	var tokens []string
 	var buf strings.Builder
@@ -323,8 +676,6 @@ func tokenise(text string) []string {
 	return tokens
 }
 
-// keywordHits counts how many query tokens appear in content.
-// Tries exact match first, then strips a trailing 's' for basic plural tolerance.
 func keywordHits(queryTokens []string, content string) int {
 	contentLower := strings.ToLower(content)
 	hits := 0
@@ -338,8 +689,6 @@ func keywordHits(queryTokens []string, content string) int {
 	return hits
 }
 
-// recencyScore returns a 0–1 score based on how recently the memory was accessed.
-// Memories accessed within the last hour score 1.0; score decays over 30 days.
 func recencyScore(m *Memory, now time.Time) float64 {
 	age := now.Sub(m.AccessedAt)
 	if age <= time.Hour {

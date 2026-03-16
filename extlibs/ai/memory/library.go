@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	extai "github.com/paularlott/scriptling/extlibs/ai"
 	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/extlibs"
@@ -32,39 +33,39 @@ func buildLibrary() *object.Library {
 			return errors.NewError("memory.new: argument must be a kv store object (e.g. kv.default or kv.open(...))")
 		}
 
-		idleHours := kwargs.MustGetFloat("idle_timeout", 24)
+		var opts []Option
+
+		// Optional second arg: AI client object for Mode 2
 		if len(args) > 1 {
-			if v, err := args[1].CoerceFloat(); err == nil {
-				idleHours = v
+			if client := extai.AIClientFromObject(args[1]); client != nil {
+				model := kwargs.MustGetString("model", "")
+				opts = append(opts, WithAIClient(client, model))
 			}
 		}
 
-		var idleTimeout time.Duration
-		if idleHours > 0 {
-			idleTimeout = time.Duration(float64(time.Hour) * idleHours)
-		}
-
-		store := New(db, idleTimeout)
+		store := New(db, opts...)
 		return newMemoryObject(store)
-	}, `new(kv_store, idle_timeout=24) - Create a memory store backed by a kv store
+	}, `new(kv_store, ai_client=None, model="") - Create a memory store backed by a kv store
 
 Parameters:
   kv_store: A kv store object (e.g. kv.default or kv.open(...))
-  idle_timeout (float, optional): Hours before unaccessed memories are compacted (default: 24, 0 = disabled)
+  ai_client (optional): An ai.Client instance to enable Mode 2 LLM compaction
+  model (str, optional): Model name to use for LLM compaction (required if ai_client provided)
 
 Returns:
-  Memory store object with remember, recall, forget, list, count, compact, close methods
+  Memory store object with remember, recall, forget, list, count methods
 
 Example:
   import scriptling.runtime.kv as kv
   import scriptling.ai.memory as memory
+  import scriptling.ai as ai
 
   mem = memory.new(kv.default)
   mem.remember("User's name is Alice", type="fact", importance=0.9)
 
-  # With a dedicated persistent store
-  db = kv.open("/data/agent.db")
-  mem = memory.new(db, idle_timeout=48)`)
+  # With LLM compaction (Mode 2)
+  client = ai.Client("http://127.0.0.1:1234/v1")
+  mem = memory.new(kv.default, client, model="qwen3-8b")`)
 
 	return builder.Build()
 }
@@ -109,7 +110,7 @@ func newMemoryObject(store *Store) *object.Builtin {
 Parameters:
   content (str): What to remember
   type (str, optional): "fact", "preference", "event", or "note" (default: "note")
-  importance (float, optional): 0.0-1.0; memories >= 0.8 are exempt from compaction (default: 0.5)
+  importance (float, optional): 0.0-1.0 (default: 0.5)
 
 Returns:
   dict: The stored memory with id, content, type, importance, created_at, accessed_at`,
@@ -210,44 +211,8 @@ Returns:
 				HelpText: `count() - Return the total number of stored memories`,
 			},
 
-			"compact": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					idleHours := kwargs.MustGetFloat("idle_timeout", 24)
-					exemptThreshold := kwargs.MustGetFloat("exempt_threshold", 0.8)
-
-					if len(args) > 0 {
-						if v, err := args[0].CoerceFloat(); err == nil {
-							idleHours = v
-						}
-					}
-					if len(args) > 1 {
-						if v, err := args[1].CoerceFloat(); err == nil {
-							exemptThreshold = v
-						}
-					}
-
-					removed := store.Compact(time.Duration(float64(time.Hour)*idleHours), exemptThreshold)
-					return object.NewInteger(int64(removed))
-				},
-				HelpText: `compact(idle_timeout=24, exempt_threshold=0.8) - Manually trigger compaction
-
-Parameters:
-  idle_timeout (float, optional): Remove memories not accessed in this many hours (default: 24)
-  exempt_threshold (float, optional): Memories with importance >= this are kept (default: 0.8)
-
-Returns:
-  int: Number of memories removed`,
-			},
-
-			"close": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					store.Close()
-					return &object.Null{}
-				},
-				HelpText: `close() - Stop the background compaction goroutine`,
-			},
 		},
-		HelpText: "Memory store object — call .remember(), .recall(), .forget(), .list(), .count(), .compact(), .close()",
+		HelpText: "Memory store object — call .remember(), .recall(), .forget(), .list(), .count()",
 	}
 }
 

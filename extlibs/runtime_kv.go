@@ -9,6 +9,7 @@ import (
 
 	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/errors"
+	"github.com/paularlott/scriptling/extlibs/fssecurity"
 	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/snapshotkv"
 )
@@ -297,25 +298,32 @@ func newKVStoreObject(db *snapshotkv.DB, registryName string) *object.Builtin {
 	return obj
 }
 
-var kvOpenBuiltin = &object.Builtin{
-	Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-		if objErr := errors.MinArgs(args, 1); objErr != nil {
-			return objErr
-		}
-		name, objErr := args[0].AsString()
-		if objErr != nil {
-			return objErr
-		}
-		if name == "" {
-			return errors.NewError("kv.open: store name must not be empty; use \":memory:name\" for in-memory stores")
-		}
-		db, err := openRegisteredStore(name)
-		if err != nil {
-			return errors.NewError("kv.open: %v", err)
-		}
-		return newKVStoreObject(db, name)
-	},
-	HelpText: `open(name) - Open or reuse a named KV store
+// newKVOpenBuiltin returns a kv.open builtin restricted to the given fssecurity.Config.
+// In-memory stores (":memory:...") are always allowed regardless of the config.
+func newKVOpenBuiltin(cfg fssecurity.Config) *object.Builtin {
+	return &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if objErr := errors.MinArgs(args, 1); objErr != nil {
+				return objErr
+			}
+			name, objErr := args[0].AsString()
+			if objErr != nil {
+				return objErr
+			}
+			if name == "" {
+				return errors.NewError("kv.open: store name must not be empty; use \":memory:name\" for in-memory stores")
+			}
+			// Only validate filesystem paths — in-memory stores are always allowed.
+			if !strings.HasPrefix(name, kvMemoryPrefix) && !cfg.IsPathAllowed(name) {
+				return errors.NewError("kv.open: access denied: path '%s' is outside allowed directories", name)
+			}
+			db, err := openRegisteredStore(name)
+			if err != nil {
+				return errors.NewError("kv.open: %v", err)
+			}
+			return newKVStoreObject(db, name)
+		},
+		HelpText: `open(name) - Open or reuse a named KV store
 
 Parameters:
   name (string): Store name. Use ":memory:name" for in-memory stores,
@@ -334,16 +342,42 @@ Example:
   db = kv.open("/data/agent.db")
   db.set("fact", "the sky is blue")
   db.close()`,
+	}
 }
 
-// NewKVSubLibrary builds the kv sub-library with kv.default wired to the
-// live system store and registers closeKVRegistry as a cleanup function.
+// kvOpenBuiltin is the unrestricted default (nil AllowedPaths = allow all).
+var kvOpenBuiltin = newKVOpenBuiltin(fssecurity.Config{AllowedPaths: nil})
+
+// NewKVSubLibrary builds the kv sub-library with no path restrictions.
 // Must be called after InitKVStore so RuntimeState.KVDB is set.
 func NewKVSubLibrary() *object.Library {
+	return newKVSubLibraryWithConfig(fssecurity.Config{AllowedPaths: nil})
+}
+
+// NewKVSubLibraryWithSecurity builds the kv sub-library restricted to allowedPaths.
+// In-memory stores are always permitted. If allowedPaths is nil, all paths are allowed.
+// If allowedPaths is an empty slice, all filesystem paths are denied.
+// Must be called after InitKVStore so RuntimeState.KVDB is set.
+func NewKVSubLibraryWithSecurity(allowedPaths []string) *object.Library {
+	var normalized []string
+	if allowedPaths != nil {
+		normalized = make([]string, 0, len(allowedPaths))
+		for _, p := range allowedPaths {
+			abs, err := filepath.Abs(p)
+			if err != nil {
+				continue
+			}
+			normalized = append(normalized, filepath.Clean(abs))
+		}
+	}
+	return newKVSubLibraryWithConfig(fssecurity.Config{AllowedPaths: normalized})
+}
+
+func newKVSubLibraryWithConfig(cfg fssecurity.Config) *object.Library {
 	RegisterCleanup(closeKVRegistry)
 	return object.NewLibrary(RuntimeKVLibraryName,
 		map[string]*object.Builtin{
-			"open": kvOpenBuiltin,
+			"open": newKVOpenBuiltin(cfg),
 		},
 		map[string]object.Object{
 			"default": newKVStoreObject(RuntimeState.KVDB, ""),
