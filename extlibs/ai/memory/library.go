@@ -174,7 +174,25 @@ Returns:
 						}
 					}
 
-					memories := store.Recall(query, limit, typeFilter)
+					var memories []*Memory
+					if query == "" && typeFilter == "" {
+						// Context load: all preferences + top limit non-preferences, deduplicated
+						preferences := store.Recall("", -1, TypePreference)
+						others := store.Recall("", limit, "!"+TypePreference)
+						prefIDs := make(map[string]struct{}, len(preferences))
+						for _, m := range preferences {
+							prefIDs[m.ID] = struct{}{}
+						}
+						memories = preferences
+						for _, m := range others {
+							if _, seen := prefIDs[m.ID]; !seen {
+								memories = append(memories, m)
+							}
+						}
+					} else {
+						memories = store.Recall(query, limit, typeFilter)
+					}
+
 					elems := make([]object.Object, 0, len(memories))
 					for _, m := range memories {
 						elems = append(elems, memoryToDict(m))
@@ -184,9 +202,12 @@ Returns:
 				HelpText: `recall(query="", limit=10, type="") - Search memories by keyword and semantic similarity
 
 Parameters:
-  query (str, optional): Keyword search query; empty returns memories ranked by recency/importance
-  limit (int, optional): Maximum results (default: 10, use -1 for unlimited)
-  type (str, optional): Filter by type: "fact", "preference", "event", "note", or "!type" to exclude
+  query (str, optional): Keyword search query; empty string with no type filter triggers context load
+                         (all preferences + top limit non-preferences, deduplicated)
+  limit (int, optional): Maximum results for non-preference memories in context load, or total results
+                         when querying (default: 10, use -1 for unlimited)
+  type (str, optional): Filter by type: "fact", "preference", "event", "note", or "!type" to exclude;
+                        setting this disables context load mode
 
 Returns:
   list: Matching memory dicts ranked by relevance`,
