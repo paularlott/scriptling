@@ -218,35 +218,7 @@ func TestForget_Missing(t *testing.T) {
 	}
 }
 
-// --- List / Count ---
-
-func TestList(t *testing.T) {
-	s := newTestStore(t)
-	s.Remember("fact one", TypeFact, 0.5)
-	s.Remember("fact two", TypeFact, 0.5)
-	s.Remember("a preference", TypePreference, 0.5)
-
-	all := s.List("", 50)
-	if len(all) != 3 {
-		t.Errorf("expected 3, got %d", len(all))
-	}
-	facts := s.List(TypeFact, 50)
-	if len(facts) != 2 {
-		t.Errorf("expected 2 facts, got %d", len(facts))
-	}
-}
-
-func TestList_Limit(t *testing.T) {
-	s := newTestStore(t)
-	words := []string{"alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta", "iota", "kappa"}
-	for _, w := range words {
-		s.Remember("list entry "+w, TypeNote, 0.5)
-	}
-	results := s.List("", 4)
-	if len(results) != 4 {
-		t.Errorf("expected 4, got %d", len(results))
-	}
-}
+// --- Count ---
 
 func TestCount(t *testing.T) {
 	s := newTestStore(t)
@@ -254,7 +226,7 @@ func TestCount(t *testing.T) {
 		t.Errorf("expected 0, got %d", s.Count())
 	}
 	s.Remember("one", TypeNote, 0.5)
-	s.Remember("two", TypeNote, 0.5)
+	s.Remember("two unique", TypeNote, 0.5)
 	if s.Count() != 2 {
 		t.Errorf("expected 2, got %d", s.Count())
 	}

@@ -181,11 +181,11 @@ Returns:
 					}
 					return &object.List{Elements: elems}
 				},
-				HelpText: `recall(query="", limit=10, type="") - Search memories by keyword
+				HelpText: `recall(query="", limit=10, type="") - Search memories by keyword and semantic similarity
 
 Parameters:
-  query (str, optional): Keyword search query against memory content; empty returns memories ranked by recency/importance
-  limit (int, optional): Maximum results to return (default: 10)
+  query (str, optional): Keyword search query; empty returns memories ranked by recency/importance
+  limit (int, optional): Maximum results (default: 10, use -1 for unlimited)
   type (str, optional): Filter by type: "fact", "preference", "event", "note"
 
 Returns:
@@ -212,39 +212,6 @@ Returns:
   bool: True if a memory was removed`,
 			},
 
-			"list": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					typeFilter := kwargs.MustGetString("type", "")
-					limit := int(kwargs.MustGetInt("limit", 50))
-
-					if len(args) > 0 {
-						if v, err := args[0].AsString(); err == nil {
-							typeFilter = v
-						}
-					}
-					if len(args) > 1 {
-						if v, err := args[1].AsInt(); err == nil {
-							limit = int(v)
-						}
-					}
-
-					memories := store.List(typeFilter, limit)
-					elems := make([]object.Object, 0, len(memories))
-					for _, m := range memories {
-						elems = append(elems, memoryToDict(m))
-					}
-					return &object.List{Elements: elems}
-				},
-				HelpText: `list(type="", limit=50) - List stored memories
-
-Parameters:
-  type (str, optional): Filter by type: "fact", "preference", "event", "note"
-  limit (int, optional): Maximum results (default: 50)
-
-Returns:
-  list: Memory dicts`,
-			},
-
 			"count": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					return object.NewInteger(int64(store.Count()))
@@ -265,7 +232,7 @@ Returns:
 			},
 
 		},
-		HelpText: "Memory store object — call .remember(), .recall(), .forget(), .list(), .count()",
+		HelpText: "Memory store object — call .remember(), .recall(), .forget(), .count(), .compact()",
 	}
 }
 

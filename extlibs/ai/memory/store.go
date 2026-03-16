@@ -325,10 +325,11 @@ or
 IMPORTANT: new_content must be a single concise sentence. Do not pad or combine unrelated facts.`
 
 // Recall searches memories by keyword and semantic similarity, returning up to limit results ranked by score.
+// Use limit=-1 for unlimited results.
 func (s *Store) Recall(query string, limit int, typeFilter string) []*Memory {
-	if limit <= 0 {
+	if limit == 0 {
 		limit = 10
-	}
+	} // -1 means unlimited, 0 defaults to 10
 
 	now := time.Now().UTC()
 	queryLower := strings.ToLower(strings.TrimSpace(query))
@@ -367,7 +368,7 @@ func (s *Store) Recall(query string, limit int, typeFilter string) []*Memory {
 		}
 	}
 
-	if len(results) > limit {
+	if limit > 0 && len(results) > limit {
 		results = results[:limit]
 	}
 
@@ -405,22 +406,6 @@ func (s *Store) Forget(id string) bool {
 	s.db.Delete(key)
 	s.db.Delete(idxPrefix + id)
 	return true
-}
-
-// List returns all memories, optionally filtered by type, up to limit.
-func (s *Store) List(typeFilter string, limit int) []*Memory {
-	if limit <= 0 {
-		limit = 50
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	out := make([]*Memory, 0, limit)
-	s.scanType(typeFilter, func(m *Memory) bool {
-		out = append(out, m)
-		return len(out) < limit
-	})
-	return out
 }
 
 // Count returns the total number of stored memories.

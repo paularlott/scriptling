@@ -9,7 +9,6 @@ Long-term memory tools for LLM agents via the Scriptling MCP server. Any MCP-com
 | `remember`      | Store information with optional type and importance; returns a UUIDv7 ID                            |
 | `recall`        | Hybrid keyword + semantic search. No arguments: loads full context (all preferences + top memories) |
 | `forget`        | Remove a memory by ID                                                                               |
-| `list_memories` | List all memories, optionally filtered by type                                                      |
 | `compact`       | Manually trigger compaction; returns remaining count                                                |
 
 ## Storage
