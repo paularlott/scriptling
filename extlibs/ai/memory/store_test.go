@@ -597,3 +597,93 @@ func TestTriggerReason(t *testing.T) {
 		t.Error("expected activity_threshold")
 	}
 }
+
+// --- MinHash ---
+
+func TestMinHash_IdenticalContent(t *testing.T) {
+	hash1 := computeMinHash("the quick brown fox jumps over the lazy dog")
+	hash2 := computeMinHash("the quick brown fox jumps over the lazy dog")
+	score := minHashSimilarity(hash1, hash2)
+	if score != 1.0 {
+		t.Errorf("identical content should have similarity 1.0, got %f", score)
+	}
+}
+
+func TestMinHash_SimilarContent(t *testing.T) {
+	hash1 := computeMinHash("the quick brown fox jumps over the lazy dog")
+	hash2 := computeMinHash("the quick brown fox jumped over the lazy dogs")
+	score := minHashSimilarity(hash1, hash2)
+	// MinHash estimates Jaccard similarity with some variance
+	if score < 0.4 {
+		t.Errorf("similar content should have moderate-high similarity, got %f", score)
+	}
+}
+
+func TestMinHash_DifferentContent(t *testing.T) {
+	hash1 := computeMinHash("the quick brown fox jumps over the lazy dog")
+	hash2 := computeMinHash("completely different text about programming go")
+	score := minHashSimilarity(hash1, hash2)
+	if score > 0.3 {
+		t.Errorf("different content should have low similarity, got %f", score)
+	}
+}
+
+func TestMinHash_EmptyContent(t *testing.T) {
+	hash := computeMinHash("")
+	if len(hash) != minHashSize {
+		t.Errorf("empty content should still produce %d hash values", minHashSize)
+	}
+}
+
+func TestMinHash_PreComputedVsComputed(t *testing.T) {
+	s := newTestStore(t)
+	m, _ := s.Remember("user prefers dark mode for coding", TypePreference, 0.8)
+
+	// Verify MinHash was computed and stored
+	if len(m.MinHash) != minHashSize {
+		t.Errorf("stored memory should have %d hash values, got %d", minHashSize, len(m.MinHash))
+	}
+
+	// Verify similarity check uses stored MinHash
+	newHash := computeMinHash("user prefers dark mode for coding")
+	score := minHashSimilarity(m.MinHash, newHash)
+	if score != 1.0 {
+		t.Errorf("stored MinHash should match recomputed hash, got %f", score)
+	}
+}
+
+// --- Benchmarks ---
+
+func BenchmarkMinHashSimilarity(b *testing.B) {
+	hash1 := computeMinHash("the quick brown fox jumps over the lazy dog and some more text")
+	hash2 := computeMinHash("the quick brown fox jumped over the lazy dogs with extra words")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = minHashSimilarity(hash1, hash2)
+	}
+}
+
+func BenchmarkComputeMinHash(b *testing.B) {
+	text := "the quick brown fox jumps over the lazy dog and some additional content here"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = computeMinHash(text)
+	}
+}
+
+func BenchmarkFindMostSimilar(b *testing.B) {
+	db, err := snapshotkv.Open("", nil)
+	if err != nil {
+		b.Fatalf("snapshotkv.Open: %v", err)
+	}
+	defer db.Close()
+	s := New(db)
+	// Add 100 memories
+	for i := 0; i < 100; i++ {
+		s.Remember(fmt.Sprintf("memory content number %d about various topics", i), TypeNote, 0.5)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		s.findMostSimilar("memory content about topics", TypeNote)
+	}
+}

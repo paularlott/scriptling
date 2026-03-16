@@ -2,8 +2,10 @@ package memory
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"math"
 	"strings"
 	"sync"
@@ -33,8 +35,11 @@ const (
 	DefaultHalfLifeFact            = 90 * 24 * time.Hour
 	DefaultHalfLifeEvent           = 30 * 24 * time.Hour
 	DefaultHalfLifeNote            = 7 * 24 * time.Hour
-	DefaultSimilarityHighThreshold = 0.85 // Jaccard >= this -> update existing in place
-	DefaultSimilarityMidThreshold  = 0.50 // Jaccard >= this -> ask LLM if available
+	DefaultSimilarityHighThreshold = 0.85 // MinHash >= this -> update existing in place
+	DefaultSimilarityMidThreshold  = 0.50 // MinHash >= this -> ask LLM if available
+
+	// MinHash signature size - 64 hashes gives good accuracy with low overhead (256 bytes)
+	minHashSize = 64
 )
 
 func typePrefix(memType string) string {
@@ -49,6 +54,7 @@ type Memory struct {
 	Importance float64   `msgpack:"importance"`
 	CreatedAt  time.Time `msgpack:"created_at"`
 	AccessedAt time.Time `msgpack:"accessed_at"`
+	MinHash    []uint32  `msgpack:"min_hash"` // pre-computed MinHash signature for similarity
 }
 
 // storeConfig holds all tunable parameters.
@@ -231,6 +237,7 @@ func (s *Store) saveNew(content, memType string, importance float64) (*Memory, e
 		Importance: importance,
 		CreatedAt:  now,
 		AccessedAt: now,
+		MinHash:    computeMinHash(content),
 	}
 
 	s.mu.Lock()
@@ -271,17 +278,14 @@ func (s *Store) saveNew(content, memType string, importance float64) (*Memory, e
 }
 
 // findMostSimilar returns the existing memory of the given type with the highest
-// Jaccard similarity to content, and its score. Returns nil if the store is empty.
+// MinHash similarity to content, and its score. Returns nil if the store is empty.
 func (s *Store) findMostSimilar(content, memType string) (*Memory, float64) {
-	newToks := tokenSet(content)
-	if len(newToks) == 0 {
-		return nil, 0
-	}
+	newHash := computeMinHash(content)
 	var best *Memory
 	var bestScore float64
 	s.mu.RLock()
 	s.scanType(memType, func(m *Memory) bool {
-		if score := jaccardSimilarity(newToks, tokenSet(m.Content)); score > bestScore {
+		if score := minHashSimilarity(newHash, m.MinHash); score > bestScore {
 			bestScore = score
 			best = m
 		}
@@ -297,6 +301,7 @@ func (s *Store) updateExisting(existing *Memory, newContent string, newImportanc
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	existing.Content = newContent
+	existing.MinHash = computeMinHash(newContent) // recompute for new content
 	if newImportance > existing.Importance {
 		existing.Importance = newImportance
 	}
@@ -581,7 +586,7 @@ func (s *Store) prune() int {
 type memData struct {
 	id, content, memType string
 	importance            float64
-	tokens                map[string]struct{}
+	minHash               []uint32
 }
 
 // deduplicateSimilar scans all memories for similar pairs and merges them.
@@ -596,7 +601,7 @@ func (s *Store) deduplicateSimilar() int {
 			content:    m.Content,
 			memType:    m.Type,
 			importance: m.Importance,
-			tokens:     tokenSet(m.Content),
+			minHash:    m.MinHash,
 		})
 		return true
 	})
@@ -631,7 +636,7 @@ func (s *Store) deduplicateType(memories []memData) int {
 				continue
 			}
 
-			score := jaccardSimilarity(memories[i].tokens, memories[j].tokens)
+			score := minHashSimilarity(memories[i].minHash, memories[j].minHash)
 			if score < s.cfg.similarityMidThreshold {
 				continue
 			}
@@ -668,6 +673,7 @@ func (s *Store) mergeInto(existingID, newContent string, newImportance float64) 
 		return
 	}
 	m.Content = newContent
+	m.MinHash = computeMinHash(newContent) // recompute for new content
 	if newImportance > m.Importance {
 		m.Importance = newImportance
 	}
@@ -767,35 +773,6 @@ func (s *Store) deleteByID(id string) {
 	s.db.Delete(idxPrefix + id)
 }
 
-// tokenSet returns the unique token set for a string, used for Jaccard similarity.
-func tokenSet(text string) map[string]struct{} {
-	set := make(map[string]struct{})
-	for _, t := range tokenise(strings.ToLower(text)) {
-		if len(t) > 2 {
-			set[t] = struct{}{}
-		}
-	}
-	return set
-}
-
-// jaccardSimilarity returns the Jaccard similarity between two token sets.
-func jaccardSimilarity(a, b map[string]struct{}) float64 {
-	if len(a) == 0 && len(b) == 0 {
-		return 1.0
-	}
-	intersection := 0
-	for t := range a {
-		if _, ok := b[t]; ok {
-			intersection++
-		}
-	}
-	union := len(a) + len(b) - intersection
-	if union == 0 {
-		return 0
-	}
-	return float64(intersection) / float64(union)
-}
-
 // decayFactor returns the exponential decay multiplier for a memory type and age.
 // preference never decays (returns 1.0 always).
 func (s *Store) decayFactor(memType string, age time.Duration) float64 {
@@ -865,6 +842,62 @@ func extractJSON(s string) string {
 		return strings.TrimSpace(s)
 	}
 	return s[start : end+1]
+}
+
+// --- MinHash functions ---
+
+// computeMinHash generates a MinHash signature for the given text.
+// Uses FNV-1a hash with different seeds for each hash function.
+func computeMinHash(text string) []uint32 {
+	tokens := tokenise(strings.ToLower(text))
+	if len(tokens) == 0 {
+		return make([]uint32, minHashSize)
+	}
+
+	signature := make([]uint32, minHashSize)
+	for i := range signature {
+		signature[i] = ^uint32(0) // max uint32
+	}
+
+	for _, token := range tokens {
+		if len(token) <= 2 {
+			continue
+		}
+		// Compute base hash of token
+		h := fnv.New128a()
+		h.Write([]byte(token))
+		tokenHash := h.Sum(nil)
+
+		// Derive all hash values from the base hash
+		for i := 0; i < minHashSize; i++ {
+			// Mix in the index to get different hash per position
+			seed := uint32(i)
+			hashVal := binary.BigEndian.Uint32(tokenHash[:4]) ^ seed
+			hashVal ^= hashVal >> 13
+			hashVal *= 0x5bd1e995
+			hashVal ^= hashVal >> 15
+
+			if hashVal < signature[i] {
+				signature[i] = hashVal
+			}
+		}
+	}
+	return signature
+}
+
+// minHashSimilarity returns the estimated Jaccard similarity from two MinHash signatures.
+// It's simply the fraction of matching hash values.
+func minHashSimilarity(a, b []uint32) float64 {
+	if len(a) == 0 || len(b) == 0 || len(a) != len(b) {
+		return 0
+	}
+	matches := 0
+	for i := range a {
+		if a[i] == b[i] {
+			matches++
+		}
+	}
+	return float64(matches) / float64(len(a))
 }
 
 // --- internal helpers ---
