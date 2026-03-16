@@ -98,16 +98,14 @@ func cleanMergeIDs(ids []string) []string { return cleanIDs(ids) }
 
 // compactionResult holds the outcome of a compaction run.
 type compactionResult struct {
-	removed int
-	merged  int
-	deleted int
+	removed int // memories deleted from the store
+	added   int // new merged memories created
 }
 
 func (r compactionResult) add(other compactionResult) compactionResult {
 	return compactionResult{
 		removed: r.removed + other.removed,
-		merged:  r.merged + other.merged,
-		deleted: r.deleted + other.deleted,
+		added:   r.added + other.added,
 	}
 }
 func typePrefix(memType string) string {
@@ -479,8 +477,7 @@ func (s *Store) compact() {
 
 	s.log.Info("compact complete",
 		"removed", res.removed,
-		"merged", res.merged,
-		"deleted", res.deleted,
+		"added", res.added,
 		"remaining", remaining,
 		"duration", time.Since(start).Round(time.Millisecond))
 }
@@ -642,7 +639,7 @@ func (s *Store) compactBatch(batch []*Memory) compactionResult {
 	}
 
 	res := s.applyDecisions(decisions)
-	s.log.Debug("batch applied", "removed", res.removed, "merged", res.merged, "deleted", res.deleted)
+	s.log.Debug("batch applied", "removed", res.removed, "added", res.added)
 	return res
 }
 
@@ -704,7 +701,7 @@ func (s *Store) applyDecisions(decisions compactionDecision) compactionResult {
 
 		// Create merged memory directly, bypassing compaction side-effects.
 		_, _ = s.rememberDirect(merge.NewContent, memType, importance)
-		res.merged++
+		res.added++
 	}
 
 	// Process deletes.
@@ -721,7 +718,6 @@ func (s *Store) applyDecisions(decisions compactionDecision) compactionResult {
 			}
 			s.db.Delete(idxPrefix + id)
 			res.removed++
-			res.deleted++
 		}
 		_ = s.db.Commit()
 		s.mu.Unlock()
