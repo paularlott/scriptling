@@ -97,6 +97,29 @@ func TestRecall_TypeFilter(t *testing.T) {
 	}
 }
 
+func TestRecall_SemanticSimilarity(t *testing.T) {
+	s := newTestStore(t)
+	s.Remember("user prefers dark theme for coding", TypePreference, 0.7)
+	s.Remember("API rate limit is 1000 per day", TypeFact, 0.9)
+
+	// Query with similar but not identical words - should find the preference
+	results := s.Recall("programming with dark mode settings", 10, "")
+	if len(results) == 0 {
+		t.Fatal("expected at least one result from semantic similarity")
+	}
+	// The preference should rank highly due to MinHash similarity
+	found := false
+	for _, r := range results {
+		if r.Type == TypePreference {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected to find preference memory via semantic similarity")
+	}
+}
+
 func TestRecall_UpdatesAccessedAt(t *testing.T) {
 	s := newTestStore(t)
 	before := time.Now().UTC().Add(-time.Second)
@@ -389,78 +412,6 @@ func TestPrune_Empty(t *testing.T) {
 	}
 }
 
-// --- Compaction trigger ---
-
-func TestCompactionTrigger_ActivityThreshold(t *testing.T) {
-	s := newTestStore(t,
-		WithActivityThreshold(3),
-		WithMinCompactInterval(0),
-		WithMaxCompactInterval(24*time.Hour),
-		// Use tiny max age so compaction actually removes something
-		WithMaxAge(time.Millisecond),
-	)
-	// Force lastCompaction to be old enough
-	s.lastCompaction = time.Now().Add(-time.Hour)
-
-	// Add memories below threshold — no compaction yet
-	s.Remember("one", TypeNote, 0.5)
-	s.Remember("two", TypeNote, 0.5)
-	if s.compactionInProgress.Load() {
-		t.Error("compaction should not have triggered below threshold")
-	}
-
-	// Third memory crosses threshold
-	s.Remember("three", TypeNote, 0.5)
-	// Give goroutine a moment
-	time.Sleep(50 * time.Millisecond)
-	// memoriesSinceCompact should have been reset
-	s.mu.Lock()
-	count := s.memoriesSinceCompact
-	s.mu.Unlock()
-	if count != 0 {
-		t.Errorf("memoriesSinceCompact should be reset after trigger, got %d", count)
-	}
-}
-
-func TestCompactionTrigger_MaxInterval(t *testing.T) {
-	s := newTestStore(t,
-		WithActivityThreshold(100),
-		WithMinCompactInterval(0),
-		WithMaxCompactInterval(0), // immediate
-	)
-	s.lastCompaction = time.Now().Add(-time.Hour)
-
-	s.Remember("one", TypeNote, 0.5)
-	time.Sleep(50 * time.Millisecond)
-
-	s.mu.Lock()
-	count := s.memoriesSinceCompact
-	s.mu.Unlock()
-	if count != 0 {
-		t.Errorf("memoriesSinceCompact should be reset after max interval trigger, got %d", count)
-	}
-}
-
-func TestCompactionTrigger_NoDoubleCompaction(t *testing.T) {
-	s := newTestStore(t,
-		WithActivityThreshold(1),
-		WithMinCompactInterval(0),
-		WithMaxCompactInterval(24*time.Hour),
-	)
-	s.lastCompaction = time.Now().Add(-time.Hour)
-	s.compactionInProgress.Store(true)
-
-	s.Remember("one", TypeNote, 0.5)
-
-	s.mu.Lock()
-	count := s.memoriesSinceCompact
-	s.mu.Unlock()
-	// Should NOT have reset because compactionInProgress was true
-	if count == 0 {
-		t.Error("memoriesSinceCompact should not be reset when compaction already in progress")
-	}
-}
-
 // --- Persistence ---
 
 func TestPersistence_SnapshotRoundTrip(t *testing.T) {
@@ -586,15 +537,6 @@ func TestRecencyScore(t *testing.T) {
 	score := recencyScore(mid, now)
 	if score <= 0 || score >= 1 {
 		t.Errorf("15-day-old memory score = %f, want between 0 and 1", score)
-	}
-}
-
-func TestTriggerReason(t *testing.T) {
-	if triggerReason(5, 10, 3*time.Hour, 2*time.Hour) != "max_interval" {
-		t.Error("expected max_interval")
-	}
-	if triggerReason(10, 10, 10*time.Minute, 2*time.Hour) != "activity_threshold" {
-		t.Error("expected activity_threshold")
 	}
 }
 

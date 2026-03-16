@@ -4,13 +4,13 @@ Long-term memory tools for LLM agents via the Scriptling MCP server. Any MCP-com
 
 ## Tools
 
-| Tool | Description |
-|------|-------------|
-| `remember` | Store information with optional type and importance; returns a UUIDv7 ID |
-| `recall` | No arguments: loads full context (all preferences + top memories). With a query: keyword search against content |
-| `forget` | Remove a memory by ID |
-| `list_memories` | List all memories, optionally filtered by type |
-| `compact` | Manually trigger compaction; returns removed and remaining counts |
+| Tool            | Description                                                                                         |
+| --------------- | --------------------------------------------------------------------------------------------------- |
+| `remember`      | Store information with optional type and importance; returns a UUIDv7 ID                            |
+| `recall`        | Hybrid keyword + semantic search. No arguments: loads full context (all preferences + top memories) |
+| `forget`        | Remove a memory by ID                                                                               |
+| `list_memories` | List all memories, optionally filtered by type                                                      |
+| `compact`       | Manually trigger compaction; returns remaining count                                                |
 
 ## Storage
 
@@ -20,16 +20,16 @@ The tools read the `SCRIPTLING_MEMORY_DB` environment variable for the storage p
 export SCRIPTLING_MEMORY_DB=/home/user/.scriptling/memory
 ```
 
-## AI Provider (Mode 2 Compaction)
+## AI Provider (LLM Deduplication)
 
-Set these environment variables to enable LLM-based compaction (deduplication and summarisation). Both `SCRIPTLING_AI_BASE_URL` and `SCRIPTLING_AI_MODEL` must be set to activate Mode 2.
+Set these environment variables to enable LLM-based deduplication. When similar memories are found during `remember()` or `compact()`, the LLM decides whether to merge them or keep them separate. Both `SCRIPTLING_AI_BASE_URL` and `SCRIPTLING_AI_MODEL` must be set.
 
-| Variable | Description |
-|----------|-------------|
-| `SCRIPTLING_AI_BASE_URL` | Base URL of the AI provider (e.g. `http://127.0.0.1:1234/v1`) |
+| Variable                 | Description                                                                                 |
+| ------------------------ | ------------------------------------------------------------------------------------------- |
+| `SCRIPTLING_AI_BASE_URL` | Base URL of the AI provider (e.g. `http://127.0.0.1:1234/v1`)                               |
 | `SCRIPTLING_AI_PROVIDER` | Provider type: `openai`, `claude`, `gemini`, `ollama`, `zai`, `mistral` (default: `openai`) |
-| `SCRIPTLING_AI_MODEL` | Model name (e.g. `qwen3-8b`, `gpt-4o-mini`) |
-| `SCRIPTLING_AI_TOKEN` | API key / bearer token (optional for local providers) |
+| `SCRIPTLING_AI_MODEL`    | Model name (e.g. `qwen3-8b`, `gpt-4o-mini`)                                                 |
+| `SCRIPTLING_AI_TOKEN`    | API key / bearer token (optional for local providers)                                       |
 
 ```bash
 export SCRIPTLING_AI_BASE_URL=http://127.0.0.1:1234/v1
@@ -43,11 +43,11 @@ export SCRIPTLING_AI_MODEL=qwen3-8b
 # Build the CLI first
 task build
 
-# Mode 1 only (rule-based compaction)
+# Basic (rule-based deduplication only)
 SCRIPTLING_MEMORY_DB=~/.scriptling/memory \
   ./bin/scriptling --server :8000 --mcp-tools ./examples/mcp-tools/memory-tools
 
-# With Mode 2 LLM compaction (local provider)
+# With LLM deduplication (local provider)
 SCRIPTLING_MEMORY_DB=~/.scriptling/memory \
 SCRIPTLING_AI_BASE_URL=http://127.0.0.1:1234/v1 \
 SCRIPTLING_AI_MODEL=qwen3-8b \
@@ -114,13 +114,14 @@ print(response.content)
 ```
 
 The agent automatically:
+
 - Registers `memory_remember`, `memory_recall`, and `memory_forget` as tools
 - Appends memory usage instructions to the system prompt
-- Pre-loads all stored `preference` memories into the system prompt so the LLM has immediate context without needing a tool call
+- Pre-loads all stored `preference` memories into the system prompt for immediate context without needing a tool call
 
-### With LLM Compaction (Mode 2)
+### With LLM Deduplication
 
-To enable intelligent memory compaction (deduplication and summarisation via LLM):
+To enable intelligent deduplication when similar memories are found:
 
 ```python
 import scriptling.ai as ai
@@ -146,7 +147,7 @@ preferences and recent context before responding.
 You have access to the following memory tools:
 - remember(content, type, importance) — store something for later; returns an id
 - recall() — call with no arguments at conversation start to load full context
-- recall(query) — search your memory by keyword mid-conversation
+- recall(query) — search your memory by keyword and semantic similarity mid-conversation
 - forget(id) — remove something from memory by ID
 - list_memories(type, limit) — see everything stored
 
@@ -167,21 +168,31 @@ Guidelines for using memory:
 
 ## Memory Types
 
-| Type | Use for |
-|------|---------| 
-| `fact` | Objective information (names, IDs, limits) |
-| `preference` | User preferences (themes, formats, styles) — pre-loaded into system prompt |
-| `event` | Things that happened (deployments, meetings) |
-| `note` | Agent's own notes (default) |
+| Type         | Use for                                                                                  |
+| ------------ | ---------------------------------------------------------------------------------------- |
+| `fact`       | Objective information (names, IDs, limits)                                               |
+| `preference` | User preferences (themes, formats, styles) — pre-loaded into system prompt, never decays |
+| `event`      | Things that happened (deployments, meetings)                                             |
+| `note`       | Agent's own notes (default)                                                              |
 
 ## Importance and Compaction
 
-The `importance` field (0.0–1.0) controls how long a memory survives automatic compaction:
+The `importance` field (0.0–1.0) controls how long a memory survives compaction:
 
-| Importance | Behaviour |
-|------------|-----------|
-| 0.9–1.0 | Survives for the full 180-day hard cap |
+| Importance    | Behaviour                                                 |
+| ------------- | --------------------------------------------------------- |
+| 0.9–1.0       | Survives for the full 180-day hard cap                    |
 | 0.5 (default) | ~1 year effective lifetime for facts, ~3 months for notes |
-| 0.1 | Pruned quickly — a note at 0.1 is gone in ~7 days |
+| 0.1           | Pruned quickly — a note at 0.1 is gone in ~7 days         |
 
-Compaction runs automatically in the background after every 10 new memories (configurable). `preference` type memories never decay regardless of importance — they are only removed after the 180-day hard age cap.
+**Compaction is manual** — call `compact()` to prune old/decayed memories. `preference` type memories never decay regardless of importance — they are only removed after the 180-day hard age cap (based on last access).
+
+## Deduplication
+
+When storing a memory, the system checks for similar existing memories using MinHash similarity:
+
+- **Similarity ≥ 85%**: Auto-merges into the existing memory
+- **Similarity 50–85%** (with AI client): LLM decides whether to merge or keep separate
+- **Similarity < 50%**: Creates new memory
+
+This prevents duplicate memories from accumulating while preserving genuinely distinct information.

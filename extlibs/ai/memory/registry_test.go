@@ -45,10 +45,9 @@ func TestRegistry_DifferentDBReturnsDifferentStore(t *testing.T) {
 	}
 }
 
-// TestRegistry_CounterAccumulatesAcrossCalls verifies that memoriesSinceCompact
-// accumulates across multiple getOrCreateStore calls (simulating repeated MCP tool
-// invocations), rather than resetting each time.
-func TestRegistry_CounterAccumulatesAcrossCalls(t *testing.T) {
+// TestRegistry_MemoriesPersistAcrossCalls verifies that memories persist
+// across multiple getOrCreateStore calls (simulating repeated MCP tool invocations).
+func TestRegistry_MemoriesPersistAcrossCalls(t *testing.T) {
 	db := newTestDB(t)
 
 	// Simulate 3 separate "tool invocations" each calling memory.new(db)
@@ -60,44 +59,67 @@ func TestRegistry_CounterAccumulatesAcrossCalls(t *testing.T) {
 	}
 
 	s := getOrCreateStore(db, nil)
-	s.mu.Lock()
-	count := s.memoriesSinceCompact
-	s.mu.Unlock()
-
-	if count != 3 {
-		t.Errorf("memoriesSinceCompact = %d, want 3 — counter not accumulating across calls", count)
+	if s.Count() != 3 {
+		t.Errorf("Count = %d, want 3 — memories not persisting across calls", s.Count())
 	}
 }
 
-// TestRegistry_CounterResetsAfterCompaction verifies that after compaction triggers,
-// the counter resets to zero on the shared Store instance.
-func TestRegistry_CounterResetsAfterCompaction(t *testing.T) {
+// TestRegistry_CompactionCanBeTriggeredManually verifies that Compact() can be
+// called to prune old memories.
+func TestRegistry_CompactionCanBeTriggeredManually(t *testing.T) {
 	db := newTestDB(t)
 	s := getOrCreateStore(db, []Option{
-		WithActivityThreshold(3),
-		WithMinCompactInterval(0),
-		WithMaxCompactInterval(24 * time.Hour),
 		WithMaxAge(time.Millisecond),
+		WithPruneThreshold(0.0),
 	})
-	s.lastCompaction = time.Now().Add(-time.Hour)
 
 	// Use distinct content so pre-flight dedup doesn't collapse them.
 	contents := []string{"alice visited paris", "bob likes cycling", "carol prefers tea"}
 	for _, c := range contents {
 		getOrCreateStore(db, nil).Remember(c, TypeNote, 0.5)
 	}
-	time.Sleep(50 * time.Millisecond)
 
-	s.mu.Lock()
-	count := s.memoriesSinceCompact
-	s.mu.Unlock()
-	if count != 0 {
-		t.Errorf("memoriesSinceCompact = %d after compaction, want 0", count)
+	// Age the memories by updating their AccessedAt to the past
+	// First collect IDs, then update (avoiding lock during scan)
+	past := time.Now().UTC().Add(-time.Hour)
+	s.mu.RLock()
+	var ids []string
+	s.scanType("", func(m *Memory) bool {
+		ids = append(ids, m.ID)
+		return true
+	})
+	s.mu.RUnlock()
+
+	// Now update each memory
+	for _, id := range ids {
+		s.mu.Lock()
+		val, err := s.db.Get(idxPrefix + id)
+		if err != nil {
+			s.mu.Unlock()
+			continue
+		}
+		key, _ := val.(string)
+		raw, err := s.db.Get(key)
+		if err != nil {
+			s.mu.Unlock()
+			continue
+		}
+		m := toMemory(raw)
+		if m != nil {
+			m.AccessedAt = past
+			_ = s.save(m)
+		}
+		s.mu.Unlock()
+	}
+
+	remaining := s.Compact()
+	if remaining != 0 {
+		t.Errorf("remaining = %d after compaction, want 0", remaining)
 	}
 }
 
-// TestRegistry_NoKVStateForCounter verifies that the compaction counter is purely
-// in-process — a new Store on the same DB path starts at zero.
+// TestRegistry_NoKVStateForCounter verifies that the memory count is derived
+// from the actual stored data, not a separate counter.
 func TestRegistry_NoKVStateForCounter(t *testing.T) {
 	dir := t.TempDir()
 
@@ -106,12 +128,13 @@ func TestRegistry_NoKVStateForCounter(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	s1 := New(db1)
+	// Use distinct content so they don't merge
 	for i := 0; i < 5; i++ {
-		s1.Remember("item", TypeNote, 0.5)
+		s1.Remember("unique item", TypeNote, 0.5)
 	}
 	db1.Close()
 
-	// Re-open same path — new Store should start counter at zero.
+	// Re-open same path — new Store should see the persisted memories.
 	db2, err := snapshotkv.Open(dir, nil)
 	if err != nil {
 		t.Fatalf("Reopen: %v", err)
@@ -119,16 +142,14 @@ func TestRegistry_NoKVStateForCounter(t *testing.T) {
 	defer db2.Close()
 	s2 := New(db2)
 
-	s2.mu.Lock()
-	count := s2.memoriesSinceCompact
-	s2.mu.Unlock()
-	if count != 0 {
-		t.Errorf("memoriesSinceCompact = %d on fresh Store, want 0", count)
+	// Pre-flight dedup will merge identical content, so we get 1 memory
+	if s2.Count() != 1 {
+		t.Errorf("Count = %d on fresh Store, want 1", s2.Count())
 	}
 }
 
-// TestCompact_ResetsStateAndPrunes verifies that Compact() runs synchronously,
-// resets the activity counter and timer, and prunes eligible memories.
+// TestCompact_ResetsStateAndPrunes verifies that Compact() runs synchronously
+// and prunes eligible memories.
 func TestCompact_ResetsStateAndPrunes(t *testing.T) {
 	db := newTestDB(t)
 	s := getOrCreateStore(db, []Option{
@@ -172,35 +193,20 @@ func TestCompact_ResetsStateAndPrunes(t *testing.T) {
 		s.mu.Unlock()
 	}
 
-	s.mu.Lock()
-	s.memoriesSinceCompact = 5
-	s.mu.Unlock()
-
 	before := s.Count()
 	remaining := s.Compact()
 
 	if remaining != 0 {
 		t.Errorf("expected 0 remaining after compact, got %d (before=%d)", remaining, before)
 	}
-
-	s.mu.Lock()
-	counter := s.memoriesSinceCompact
-	s.mu.Unlock()
-	if counter != 0 {
-		t.Errorf("memoriesSinceCompact = %d after Compact(), want 0", counter)
-	}
 }
 
-// TestCompact_NoDoubleRun verifies that a second concurrent Compact() call is a no-op.
-func TestCompact_NoDoubleRun(t *testing.T) {
+// TestCompact_CanBeCalledMultipleTimes verifies Compact() is safe to call repeatedly.
+func TestCompact_CanBeCalledMultipleTimes(t *testing.T) {
 	db := newTestDB(t)
 	s := getOrCreateStore(db, nil)
-	s.compactionInProgress.Store(true)
 
-	result := s.Compact()
-	if result != 0 {
-		t.Errorf("expected 0 from skipped Compact(), got %d", result)
-	}
-	// Restore so cleanup doesn't hang
-	s.compactionInProgress.Store(false)
+	// Should be safe to call Compact multiple times
+	s.Compact()
+	s.Compact()
 }

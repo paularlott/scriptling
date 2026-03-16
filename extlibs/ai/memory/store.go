@@ -9,7 +9,6 @@ import (
 	"math"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,9 +26,6 @@ const (
 	TypeEvent      = "event"
 	TypeNote       = "note"
 
-	DefaultActivityThreshold       = 10
-	DefaultMinCompactInterval      = 5 * time.Minute
-	DefaultMaxCompactInterval      = 2 * time.Hour
 	DefaultMaxAge                  = 180 * 24 * time.Hour
 	DefaultPruneThreshold          = 0.1
 	DefaultHalfLifeFact            = 90 * 24 * time.Hour
@@ -59,9 +55,6 @@ type Memory struct {
 
 // storeConfig holds all tunable parameters.
 type storeConfig struct {
-	activityThreshold       int
-	minCompactInterval      time.Duration
-	maxCompactInterval      time.Duration
 	maxAge                  time.Duration
 	pruneThreshold          float64
 	halfLifeFact            time.Duration
@@ -76,9 +69,6 @@ type storeConfig struct {
 
 func defaultConfig() storeConfig {
 	return storeConfig{
-		activityThreshold:       DefaultActivityThreshold,
-		minCompactInterval:      DefaultMinCompactInterval,
-		maxCompactInterval:      DefaultMaxCompactInterval,
 		maxAge:                  DefaultMaxAge,
 		pruneThreshold:          DefaultPruneThreshold,
 		halfLifeFact:            DefaultHalfLifeFact,
@@ -91,18 +81,6 @@ func defaultConfig() storeConfig {
 
 // Option is a functional option for Store.
 type Option func(*storeConfig)
-
-func WithActivityThreshold(n int) Option {
-	return func(c *storeConfig) { c.activityThreshold = n }
-}
-
-func WithMinCompactInterval(d time.Duration) Option {
-	return func(c *storeConfig) { c.minCompactInterval = d }
-}
-
-func WithMaxCompactInterval(d time.Duration) Option {
-	return func(c *storeConfig) { c.maxCompactInterval = d }
-}
 
 func WithMaxAge(d time.Duration) Option {
 	return func(c *storeConfig) { c.maxAge = d }
@@ -152,13 +130,10 @@ func WithAIClient(client mcpai.Client, model string) Option {
 // Store is a memory store backed by a snapshotkv DB.
 // It does not own the DB - the caller manages its lifecycle.
 type Store struct {
-	mu                   sync.RWMutex
-	db                   *snapshotkv.DB
-	cfg                  storeConfig
-	memoriesSinceCompact int
-	lastCompaction       time.Time
-	compactionInProgress atomic.Bool
-	log                  logger.Logger
+	mu  sync.RWMutex
+	db  *snapshotkv.DB
+	cfg storeConfig
+	log logger.Logger
 }
 
 // New creates a Store using the provided DB and optional functional options.
@@ -176,10 +151,9 @@ func New(db *snapshotkv.DB, opts ...Option) *Store {
 	}
 
 	return &Store{
-		db:             db,
-		cfg:            cfg,
-		lastCompaction: time.Now(),
-		log:            log,
+		db:  db,
+		cfg: cfg,
+		log: log,
 	}
 }
 
@@ -223,7 +197,7 @@ func (s *Store) Remember(content, memType string, importance float64) (*Memory, 
 	return s.saveNew(content, memType, importance)
 }
 
-// saveNew creates a new memory entry and triggers compaction if needed.
+// saveNew creates a new memory entry.
 func (s *Store) saveNew(content, memType string, importance float64) (*Memory, error) {
 	id, err := uuid.NewV7()
 	if err != nil {
@@ -245,34 +219,7 @@ func (s *Store) saveNew(content, memType string, importance float64) (*Memory, e
 		s.mu.Unlock()
 		return nil, err
 	}
-	s.memoriesSinceCompact++
-	added := s.memoriesSinceCompact
-	since := time.Since(s.lastCompaction)
-	shouldCompact := !s.compactionInProgress.Load() &&
-		added > 0 && ((added >= s.cfg.activityThreshold && since >= s.cfg.minCompactInterval) ||
-			since >= s.cfg.maxCompactInterval)
-	if shouldCompact {
-		s.memoriesSinceCompact = 0
-		s.lastCompaction = time.Now()
-	}
 	s.mu.Unlock()
-
-	if shouldCompact {
-		s.log.Debug("compact triggered",
-			"reason", triggerReason(added, s.cfg.activityThreshold, since, s.cfg.maxCompactInterval),
-			"added", added,
-			"since", since.Round(time.Second))
-		s.compactionInProgress.Store(true)
-		go func() {
-			defer s.compactionInProgress.Store(false)
-			s.compact()
-		}()
-	} else {
-		s.log.Debug("compact check",
-			"added", added,
-			"threshold", s.cfg.activityThreshold,
-			"since", since.Round(time.Second))
-	}
 
 	return m, nil
 }
@@ -377,17 +324,7 @@ or
 
 IMPORTANT: new_content must be a single concise sentence. Do not pad or combine unrelated facts.`
 
-func triggerReason(added, threshold int, since, maxInterval time.Duration) string {
-	if since >= maxInterval {
-		return "max_interval"
-	}
-	if added >= threshold {
-		return "activity_threshold"
-	}
-	return "unknown"
-}
-
-// Recall searches memories by keyword and returns up to limit results ranked by score.
+// Recall searches memories by keyword and semantic similarity, returning up to limit results ranked by score.
 func (s *Store) Recall(query string, limit int, typeFilter string) []*Memory {
 	if limit <= 0 {
 		limit = 10
@@ -396,6 +333,7 @@ func (s *Store) Recall(query string, limit int, typeFilter string) []*Memory {
 	now := time.Now().UTC()
 	queryLower := strings.ToLower(strings.TrimSpace(query))
 	queryTokens := tokenise(queryLower)
+	queryMinHash := computeMinHash(queryLower)
 
 	type scored struct {
 		m     *Memory
@@ -409,11 +347,14 @@ func (s *Store) Recall(query string, limit int, typeFilter string) []*Memory {
 		if queryLower == "" {
 			score = recencyScore(m, now)*0.6 + m.Importance*0.4
 		} else {
+			// Hybrid scoring: keyword hits + MinHash similarity
 			contentHits := keywordHits(queryTokens, m.Content)
-			if contentHits == 0 {
+			semScore := minHashSimilarity(queryMinHash, m.MinHash)
+			// Require at least some relevance (keyword match OR semantic similarity)
+			if contentHits == 0 && semScore < 0.1 {
 				return true
 			}
-			score = float64(contentHits)*0.5 + m.Importance*0.3 + recencyScore(m, now)*0.2
+			score = float64(contentHits)*0.3 + semScore*0.3 + m.Importance*0.2 + recencyScore(m, now)*0.2
 		}
 		results = append(results, scored{m, score})
 		return true
@@ -489,20 +430,9 @@ func (s *Store) Count() int {
 	return s.db.Count(idxPrefix)
 }
 
-// Compact runs compaction synchronously and resets the activity counter and timer.
+// Compact runs compaction synchronously (prune + deduplicate).
 // Returns the number of memories remaining after compaction.
 func (s *Store) Compact() int {
-	if !s.compactionInProgress.CompareAndSwap(false, true) {
-		s.log.Debug("compact skipped: already in progress")
-		return 0
-	}
-	defer s.compactionInProgress.Store(false)
-
-	s.mu.Lock()
-	s.memoriesSinceCompact = 0
-	s.lastCompaction = time.Now()
-	s.mu.Unlock()
-
 	s.compact()
 
 	s.mu.RLock()
@@ -512,7 +442,6 @@ func (s *Store) Compact() int {
 }
 
 // compact runs pruning followed by pairwise similarity-based deduplication.
-// Called internally after activity threshold or max interval is reached.
 func (s *Store) compact() {
 	start := time.Now()
 
@@ -928,6 +857,24 @@ func toMemory(value any) *Memory {
 	mem.Importance, _ = m["importance"].(float64)
 	mem.CreatedAt, _ = m["created_at"].(time.Time)
 	mem.AccessedAt, _ = m["accessed_at"].(time.Time)
+	// Extract MinHash from storage (msgpack stores as []any with various numeric types)
+	if mh, ok := m["min_hash"].([]any); ok {
+		mem.MinHash = make([]uint32, len(mh))
+		for i, v := range mh {
+			switch val := v.(type) {
+			case uint32:
+				mem.MinHash[i] = val
+			case int:
+				mem.MinHash[i] = uint32(val)
+			case float64:
+				mem.MinHash[i] = uint32(val)
+			}
+		}
+	}
+	// Recompute MinHash if missing (legacy data without min_hash field)
+	if len(mem.MinHash) == 0 && mem.Content != "" {
+		mem.MinHash = computeMinHash(mem.Content)
+	}
 	if mem.ID == "" {
 		return nil
 	}
