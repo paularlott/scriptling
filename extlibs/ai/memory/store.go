@@ -1,12 +1,14 @@
 package memory
 
 import (
+	"cmp"
 	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"math"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -390,11 +392,9 @@ func (s *Store) Recall(query string, limit int, typeFilter string) []*Memory {
 	})
 	s.mu.RUnlock()
 
-	for i := 1; i < len(results); i++ {
-		for j := i; j > 0 && results[j].score > results[j-1].score; j-- {
-			results[j], results[j-1] = results[j-1], results[j]
-		}
-	}
+	slices.SortFunc(results, func(a, b scored) int {
+		return cmp.Compare(b.score, a.score) // descending
+	})
 
 	if limit > 0 && len(results) > limit {
 		results = results[:limit]
