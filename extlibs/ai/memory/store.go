@@ -132,10 +132,11 @@ func WithAIClient(client mcpai.Client, model string) Option {
 // Store is a memory store backed by a snapshotkv DB.
 // It does not own the DB - the caller manages its lifecycle.
 type Store struct {
-	mu  sync.RWMutex
-	db  *snapshotkv.DB
-	cfg storeConfig
-	log logger.Logger
+	mu          sync.RWMutex
+	db          *snapshotkv.DB
+	cfg         storeConfig
+	log         logger.Logger
+	pruneSignal chan struct{}
 }
 
 // New creates a Store using the provided DB and optional functional options.
@@ -152,11 +153,20 @@ func New(db *snapshotkv.DB, opts ...Option) *Store {
 		log = log.With("ai", "memory")
 	}
 
-	return &Store{
-		db:  db,
-		cfg: cfg,
-		log: log,
+	s := &Store{
+		db:          db,
+		cfg:         cfg,
+		log:         log,
+		pruneSignal: make(chan struct{}, 1),
 	}
+
+	go func() {
+		for range s.pruneSignal {
+			s.prune()
+		}
+	}()
+
+	return s
 }
 
 // Remember stores a memory and returns it with a UUIDv7 ID.
@@ -202,7 +212,7 @@ func (s *Store) Remember(content, memType string, importance float64) (*Memory, 
 	return s.saveNew(content, memType, importance)
 }
 
-// saveNew creates a new memory entry.
+// saveNew creates a new memory entry and signals the background prune goroutine.
 func (s *Store) saveNew(content, memType string, importance float64) (*Memory, error) {
 	id, err := uuid.NewV7()
 	if err != nil {
@@ -225,6 +235,12 @@ func (s *Store) saveNew(content, memType string, importance float64) (*Memory, e
 		return nil, err
 	}
 	s.mu.Unlock()
+
+	// Signal background prune; non-blocking so if one is already queued we skip.
+	select {
+	case s.pruneSignal <- struct{}{}:
+	default:
+	}
 
 	return m, nil
 }
