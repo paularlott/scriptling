@@ -161,6 +161,61 @@ results
 	}
 }
 
+func TestNestedUnpackingInForLoop(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		// for k, (a, b) in list of tuples
+		{
+			`data = [("x", (1, 2)), ("y", (3, 4))]
+results = []
+for k, (a, b) in data:
+    results.append([k, a, b])
+results`,
+			`[[x, 1, 2], [y, 3, 4]]`,
+		},
+		// for k, (_, v) in — discard first element of nested tuple
+		{
+			`data = [("a", ("ignore", 10)), ("b", ("ignore", 20))]
+results = []
+for k, (_, v) in data:
+    results.append(v)
+results`,
+			`[10, 20]`,
+		},
+		// for (a, b), c in — nested tuple on the left
+		{
+			`pairs = [((1, 2), "x"), ((3, 4), "y")]
+results = []
+for (a, b), c in pairs:
+    results.append([a, b, c])
+results`,
+			`[[1, 2, x], [3, 4, y]]`,
+		},
+		// deeply nested: for a, (b, (c, d)) in
+		{
+			`data = [(1, (2, (3, 4))), (5, (6, (7, 8)))]
+results = []
+for a, (b, (c, d)) in data:
+    results.append([a, b, c, d])
+results`,
+			`[[1, 2, 3, 4], [5, 6, 7, 8]]`,
+		},
+	}
+
+	for _, tt := range tests {
+		evaluated := testEval(tt.input)
+		if evaluated == nil {
+			t.Errorf("testEval returned nil for input: %s", tt.input)
+			continue
+		}
+		if evaluated.Inspect() != tt.expected {
+			t.Errorf("for input %q:\n  expected %s\n  got     %s", tt.input, tt.expected, evaluated.Inspect())
+		}
+	}
+}
+
 func TestBasicUnpackingStillWorks(t *testing.T) {
 	tests := []struct {
 		input    string

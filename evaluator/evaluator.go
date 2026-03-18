@@ -2342,14 +2342,10 @@ func findPropertyInClass(name string, class *object.Class) *object.Property {
 
 func setForVariables(variables []ast.Expression, value object.Object, env *object.Environment) error {
 	if len(variables) == 1 {
-		if ident, ok := variables[0].(*ast.Identifier); ok {
-			env.Set(ident.Value, value)
-			return nil
-		}
-		return fmt.Errorf("for loop variable must be an identifier")
+		return setForVariable(variables[0], value, env)
 	}
 
-	// Unpacking - get elements from tuple or list
+	// Flat unpacking: a, b in ...
 	var elements []object.Object
 	switch v := value.(type) {
 	case *object.Tuple:
@@ -2365,13 +2361,27 @@ func setForVariables(variables []ast.Expression, value object.Object, env *objec
 	}
 
 	for i, varExpr := range variables {
-		if ident, ok := varExpr.(*ast.Identifier); ok {
-			env.Set(ident.Value, elements[i])
-		} else {
-			return fmt.Errorf("for loop variables must be identifiers")
+		if err := setForVariable(varExpr, elements[i], env); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// setForVariable assigns a single for-loop target expression to a value.
+// Supports identifiers and nested tuple/list unpacking, e.g. for a, (b, c) in ...
+func setForVariable(varExpr ast.Expression, value object.Object, env *object.Environment) error {
+	switch target := varExpr.(type) {
+	case *ast.Identifier:
+		env.Set(target.Value, value)
+		return nil
+	case *ast.TupleLiteral:
+		return setForVariables(target.Elements, value, env)
+	case *ast.ListLiteral:
+		return setForVariables(target.Elements, value, env)
+	default:
+		return fmt.Errorf("for loop variables must be identifiers")
+	}
 }
 
 // instanceToIterator wraps an instance with __next__ as an object.Iterator
