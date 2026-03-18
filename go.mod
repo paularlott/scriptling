@@ -8,7 +8,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/paularlott/cli v0.7.11
 	github.com/paularlott/logger v0.3.0
-	github.com/paularlott/mcp v0.14.1
+	github.com/paularlott/mcp v0.15.0
 	github.com/paularlott/snapshotkv v0.3.0
 	github.com/shirou/gopsutil/v3 v3.24.5
 	golang.org/x/net v0.52.0
@@ -20,7 +20,7 @@ require (
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20260216142805-b3301c5f2a88 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
-	github.com/shoenig/go-m1cpu v0.2.0 // indirect
+	github.com/shoenig/go-m1cpu v0.2.1 // indirect
 	github.com/tklauser/go-sysconf v0.3.16 // indirect
 	github.com/tklauser/numcpus v0.11.0 // indirect
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect

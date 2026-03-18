@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/paularlott/scriptling/conversion"
@@ -108,6 +109,48 @@ Returns:
 Example:
   result = client.execute_discovered("custom_tool", {"param": "value"})`).
 
+		MethodWithHelp("call_tools_parallel", callToolsParallelMethod, `call_tools_parallel(calls) - Execute multiple tools concurrently
+
+Executes multiple tools in parallel and returns results in the same order as the input.
+
+Parameters:
+  calls (list): List of dicts with "name" (str) and "arguments" (dict) keys
+
+Returns:
+  list: List of dicts with "name", "result", and "error" keys
+
+Example:
+  results = client.call_tools_parallel([
+    {"name": "search", "arguments": {"query": "golang"}},
+    {"name": "weather", "arguments": {"city": "London"}},
+  ])
+  for r in results:
+    if r.error:
+      print("Error:", r.error)
+    else:
+      print(r.name, r.result)`).
+
+		MethodWithHelp("execute_discovered_parallel", executeDiscoveredParallelMethod, `execute_discovered_parallel(calls) - Execute multiple discovered tools concurrently
+
+Executes multiple discovered tools in parallel and returns results in the same order as the input.
+
+Parameters:
+  calls (list): List of dicts with "name" (str) and "arguments" (dict) keys
+
+Returns:
+  list: List of dicts with "name", "result", and "error" keys
+
+Example:
+  results = client.execute_discovered_parallel([
+    {"name": "tool_a", "arguments": {"x": 1}},
+    {"name": "tool_b", "arguments": {"y": 2}},
+  ])
+  for r in results:
+    if r.error:
+      print("Error:", r.error)
+    else:
+      print(r.name, r.result)`).
+
 		Build()
 }
 
@@ -205,6 +248,96 @@ func toolSearchMethod(self *object.Instance, ctx context.Context, kwargs object.
 	return conversion.FromGo(results)
 }
 
+// call_tools_parallel method implementation
+func callToolsParallelMethod(self *object.Instance, ctx context.Context, calls *object.List) object.Object {
+	ci, cerr := getMCPClientInstance(self)
+	if cerr != nil {
+		return cerr
+	}
+	if ci.client == nil {
+		return &object.Error{Message: "call_tools_parallel: no client configured"}
+	}
+
+	toolCalls, err := listToToolCalls(calls)
+	if err != nil {
+		return err
+	}
+
+	results := ci.client.CallToolsParallel(ctx, toolCalls)
+	return parallelResultsToList(results)
+}
+
+// execute_discovered_parallel method implementation
+func executeDiscoveredParallelMethod(self *object.Instance, ctx context.Context, calls *object.List) object.Object {
+	ci, cerr := getMCPClientInstance(self)
+	if cerr != nil {
+		return cerr
+	}
+	if ci.client == nil {
+		return &object.Error{Message: "execute_discovered_parallel: no client configured"}
+	}
+
+	toolCalls, err := listToToolCalls(calls)
+	if err != nil {
+		return err
+	}
+
+	results := ci.client.ExecuteDiscoveredToolsParallel(ctx, toolCalls)
+	return parallelResultsToList(results)
+}
+
+// listToToolCalls converts a scriptling List of call dicts to []mcplib.ToolCall
+func listToToolCalls(calls *object.List) ([]mcplib.ToolCall, *object.Error) {
+	toolCalls := make([]mcplib.ToolCall, 0, len(calls.Elements))
+	for i, elem := range calls.Elements {
+		d, ok := elem.(*object.Dict)
+		if !ok {
+			return nil, &object.Error{Message: fmt.Sprintf("call at index %d must be a dict", i)}
+		}
+		namePair, exists := d.GetByString("name")
+		if !exists {
+			return nil, &object.Error{Message: fmt.Sprintf("call at index %d missing 'name'", i)}
+		}
+		name, nerr := namePair.Value.CoerceString()
+		if nerr != nil {
+			return nil, &object.Error{Message: fmt.Sprintf("call at index %d 'name' must be a string", i)}
+		}
+		var args map[string]any
+		if argsPair, exists := d.GetByString("arguments"); exists {
+			if argsDict, ok := argsPair.Value.(*object.Dict); ok {
+				args = DictToMap(argsDict)
+			}
+		}
+		if args == nil {
+			args = map[string]any{}
+		}
+		toolCalls = append(toolCalls, mcplib.ToolCall{Name: name, Arguments: args})
+	}
+	return toolCalls, nil
+}
+
+// parallelResultsToList converts []mcplib.ParallelToolResult to a scriptling List
+func parallelResultsToList(results []mcplib.ParallelToolResult) *object.List {
+	elements := make([]object.Object, len(results))
+	for i, r := range results {
+		var resultObj object.Object
+		var errStr string
+		if r.Err != nil {
+			errStr = r.Err.Error()
+			resultObj = &object.Null{}
+		} else {
+			resultObj = DecodeToolResponse(r.Response)
+			errStr = ""
+		}
+		elements[i] = object.NewStringDict(map[string]object.Object{
+			"name":   &object.String{Value: r.Name},
+			"result": resultObj,
+			"error":  &object.String{Value: errStr},
+		})
+	}
+	return &object.List{Elements: elements}
+}
+
 // execute_discovered method implementation
 func executeDiscoveredMethod(self *object.Instance, ctx context.Context, name string, arguments map[string]any) object.Object {
 	ci, cerr := getMCPClientInstance(self)
@@ -247,6 +380,9 @@ func convertToolsToList(tools []mcplib.MCPTool) object.Object {
 		})
 		if tool.InputSchema != nil {
 			toolDict.SetByString("input_schema", conversion.FromGo(tool.InputSchema))
+		}
+		if tool.OutputSchema != nil {
+			toolDict.SetByString("output_schema", conversion.FromGo(tool.OutputSchema))
 		}
 		toolList = append(toolList, toolDict)
 	}
