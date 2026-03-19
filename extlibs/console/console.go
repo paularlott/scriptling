@@ -98,6 +98,25 @@ func newTUIWrapper() *tuiWrapper {
 	return w
 }
 
+// TUIFrom extracts the underlying *tui.TUI from a Console instance.
+// Used by external packages (e.g. scriptling.messaging.console) to bridge into the TUI.
+func TUIFrom(inst *object.Instance) *tui.TUI {
+	if w, ok := inst.Fields[nativeTUIKey].(*tuiWrapper); ok {
+		return w.t
+	}
+	return nil
+}
+
+// SetSubmit wires an external submit handler into a Console instance,
+// replacing any previously registered on_submit callback.
+func SetSubmit(inst *object.Instance, fn func(ctx context.Context, text string)) {
+	if w, ok := inst.Fields[nativeTUIKey].(*tuiWrapper); ok {
+		w.mu.Lock()
+		w.submitCb = fn
+		w.mu.Unlock()
+	}
+}
+
 // wrapperFrom extracts the tuiWrapper from a Console instance (args[0]).
 func wrapperFrom(args []object.Object) *tuiWrapper {
 	return args[0].(*object.Instance).Fields[nativeTUIKey].(*tuiWrapper)

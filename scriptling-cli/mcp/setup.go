@@ -10,6 +10,10 @@ import (
 	"github.com/paularlott/scriptling/extlibs/console"
 	scriptlingfuzzy "github.com/paularlott/scriptling/extlibs/fuzzy"
 	scriptlingmcp "github.com/paularlott/scriptling/extlibs/mcp"
+	"github.com/paularlott/scriptling/extlibs/messaging/discord"
+	messagingconsole "github.com/paularlott/scriptling/extlibs/messaging/console"
+	"github.com/paularlott/scriptling/extlibs/messaging/slack"
+	"github.com/paularlott/scriptling/extlibs/messaging/telegram"
 	"github.com/paularlott/scriptling/libloader"
 	"github.com/paularlott/scriptling/stdlib"
 )
@@ -50,10 +54,16 @@ func SetupScriptling(p *scriptling.Scriptling, libdirs []string, registerInterac
 	aimemory.Register(p, log)
 	agent.Register(p)
 	scriptlingfuzzy.Register(p)
+	console.Register(p)
 	if registerInteract {
-		console.Register(p)
 		agent.RegisterInteract(p)
 	}
+
+	// Register messaging libraries
+	telegram.Register(p, log)
+	discord.Register(p, log)
+	slack.Register(p, log)
+	messagingconsole.Register(p)
 
 	// Register MCP library
 	scriptlingmcp.Register(p)
