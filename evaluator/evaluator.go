@@ -651,6 +651,17 @@ func evalInfixExpression(ctx context.Context, operator string, left, right objec
 			}
 			return &object.List{Elements: result}
 		}
+		// Handle int * tuple
+		if r, ok := right.(*object.Tuple); ok && operator == "*" {
+			if l.Value <= 0 {
+				return &object.Tuple{Elements: []object.Object{}}
+			}
+			result := make([]object.Object, int(l.Value)*len(r.Elements))
+			for i := range int(l.Value) {
+				copy(result[i*len(r.Elements):], r.Elements)
+			}
+			return &object.Tuple{Elements: result}
+		}
 		return evalFloatInfixExpression(operator, left, right)
 	case *object.Float:
 		return evalFloatInfixExpression(operator, left, right)
@@ -666,6 +677,33 @@ func evalInfixExpression(ctx context.Context, operator string, left, right objec
 		// Handle instance operators via dunder methods (__lt__, __gt__, __eq__, __sub__, __add__, etc.)
 		if result := evalInstanceInfixExpression(ctx, operator, l, right, env); result != nil {
 			return result
+		}
+	case *object.Tuple:
+		switch operator {
+		case "+":
+			if r, ok := right.(*object.Tuple); ok {
+				result := make([]object.Object, len(l.Elements)+len(r.Elements))
+				copy(result, l.Elements)
+				copy(result[len(l.Elements):], r.Elements)
+				return &object.Tuple{Elements: result}
+			}
+			return errors.NewTypeError("tuple", right.Type().String())
+		case "*":
+			if r, ok := right.(*object.Integer); ok {
+				if r.Value <= 0 {
+					return &object.Tuple{Elements: []object.Object{}}
+				}
+				result := make([]object.Object, int(r.Value)*len(l.Elements))
+				for i := range int(r.Value) {
+					copy(result[i*len(l.Elements):], l.Elements)
+				}
+				return &object.Tuple{Elements: result}
+			}
+			return errors.NewTypeError("int", right.Type().String())
+		case "==":
+			return nativeBoolToBooleanObject(objectsDeepEqual(left, right))
+		case "!=":
+			return nativeBoolToBooleanObject(!objectsDeepEqual(left, right))
 		}
 	case *object.List:
 		switch operator {
