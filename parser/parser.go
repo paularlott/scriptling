@@ -247,8 +247,6 @@ func (p *Parser) parseStatement() ast.Statement {
 		return p.parseClassStatement()
 	case token.IF:
 		return p.parseIfStatement()
-	case token.MATCH:
-		return p.parseMatchStatement()
 	case token.WHILE:
 		return p.parseWhileStatement()
 	case token.FOR:
@@ -276,6 +274,9 @@ func (p *Parser) parseStatement() ast.Statement {
 	case token.AT:
 		return p.parseDecoratedStatement()
 	case token.IDENT:
+		if p.curToken.Literal == "match" && !p.peekTokenIs(token.ASSIGN) && !p.peekTokenIs(token.COMMA) && !p.isAugmentedAssign() && !p.peekTokenIs(token.LPAREN) && !p.peekTokenIs(token.DOT) && !p.peekTokenIs(token.LBRACKET) {
+			return p.parseMatchStatement()
+		}
 		if p.peekTokenIs(token.ASSIGN) {
 			return p.parseAssignStatement()
 		} else if p.peekTokenIs(token.COMMA) {
@@ -2017,7 +2018,7 @@ func (p *Parser) parseMatchStatement() *ast.MatchStatement {
 
 	// Parse case clauses
 	stmt.Cases = []*ast.CaseClause{}
-	for p.curTokenIs(token.CASE) {
+	for p.curTokenIs(token.IDENT) && p.curToken.Literal == "case" {
 		caseClause := p.parseCaseClause()
 		if caseClause == nil {
 			return nil
@@ -2112,7 +2113,7 @@ func (p *Parser) isKeyword(t token.TokenType) bool {
 		token.DEF, token.CLASS, token.RETURN, token.BREAK, token.CONTINUE,
 		token.PASS, token.AND, token.OR, token.NOT, token.IS, token.TRY,
 		token.EXCEPT, token.FINALLY, token.RAISE, token.GLOBAL, token.NONLOCAL,
-		token.LAMBDA, token.AS, token.ASSERT, token.MATCH, token.CASE, token.WITH,
+		token.LAMBDA, token.AS, token.ASSERT, token.WITH,
 	}
 	for _, kw := range keywords {
 		if t == kw {

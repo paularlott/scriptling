@@ -110,8 +110,8 @@ func TestLookupIdent(t *testing.T) {
 		{"lambda", LAMBDA},
 		{"as", AS},
 		{"assert", ASSERT},
-		{"match", MATCH},
-		{"case", CASE},
+		{"match", IDENT},
+		{"case", IDENT},
 
 		// Identifiers
 		{"x", IDENT},

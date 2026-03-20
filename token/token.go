@@ -136,8 +136,6 @@ var keywords = map[string]TokenType{
 	"lambda":   LAMBDA,
 	"as":       AS,
 	"assert":   ASSERT,
-	"match":    MATCH,
-	"case":     CASE,
 	"with":     WITH,
 }
 
