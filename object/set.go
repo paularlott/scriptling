@@ -175,3 +175,14 @@ func (s *Set) CreateIterator() *Iterator {
 		},
 	}
 }
+
+// AddKeyed adds an element with a pre-computed key (used when __hash__ is involved)
+func (s *Set) AddKeyed(key string, obj Object) {
+	s.Elements[key] = obj
+}
+
+// ContainsKeyed checks membership using a pre-computed key
+func (s *Set) ContainsKeyed(key string) bool {
+	_, ok := s.Elements[key]
+	return ok
+}

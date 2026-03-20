@@ -29,6 +29,9 @@ var (
 	// callDunderMethodFn is set in init() to break the initialization cycle
 	callDunderMethodFn func(ctx context.Context, inst *object.Instance, method string, args []object.Object, env *object.Environment) object.Object
 
+	// hashInstanceFn calls __hash__ on an instance; set in init() to break init cycle
+	hashInstanceFn func(ctx context.Context, inst *object.Instance) object.Object
+
 	// typeBuiltins maps type-related builtin pointers to their names for isinstance()
 	typeBuiltins map[*object.Builtin]string
 )
@@ -1267,6 +1270,12 @@ For other objects, returns the same as str().`,
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
+			// Call __hash__ on instances that define it
+			if inst, ok := args[0].(*object.Instance); ok {
+				if _, hasHash := inst.Class.Methods["__hash__"]; hasHash && hashInstanceFn != nil {
+					return hashInstanceFn(ctx, inst)
+				}
+			}
 			// FNV-1a hash algorithm - fast and good distribution
 			str := args[0].Inspect()
 			const (
@@ -1958,6 +1967,10 @@ func init() {
 	iterFunction = iterFunctionImpl
 	nextFunction = nextFunctionImpl
 	callDunderMethodFn = callDunderMethod
+	hashInstanceFn = func(ctx context.Context, inst *object.Instance) object.Object {
+		hashFn := inst.Class.Methods["__hash__"]
+		return applyFunctionWithContext(ctx, hashFn, []object.Object{inst}, nil, nil)
+	}
 
 	// Build reverse lookup for isinstance() to support bare type names
 	typeBuiltins = map[*object.Builtin]string{

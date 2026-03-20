@@ -1428,6 +1428,34 @@ func (p *Parser) parseGeneratorExpressionInCall(expr ast.Expression, end token.T
 	return p.parseComprehensionCore(expr, end)
 }
 
+// parseAdditionalClauses parses zero or more additional `for var in iter [if cond]` clauses
+func (p *Parser) parseAdditionalClauses() []ast.ComprehensionClause {
+	var clauses []ast.ComprehensionClause
+	for p.peekTokenIs(token.FOR) {
+		p.nextToken() // consume FOR
+		p.nextToken() // move to variable
+		vars := []ast.Expression{p.parseExpression(EQUALS)}
+		for p.peekTokenIs(token.COMMA) {
+			p.nextToken()
+			p.nextToken()
+			vars = append(vars, p.parseExpression(EQUALS))
+		}
+		if !p.expectPeek(token.IN) {
+			return nil
+		}
+		p.nextToken()
+		iter := p.parseExpression(CONDITIONAL)
+		var cond ast.Expression
+		if p.peekTokenIs(token.IF) {
+			p.nextToken()
+			p.nextToken()
+			cond = p.parseExpression(CONDITIONAL)
+		}
+		clauses = append(clauses, ast.ComprehensionClause{Variables: vars, Iterable: iter, Condition: cond})
+	}
+	return clauses
+}
+
 // parseComprehensionCore is the unified implementation for list comprehensions and generator expressions
 func (p *Parser) parseComprehensionCore(expr ast.Expression, endToken token.TokenType) ast.Expression {
 	comp := &ast.ListComprehension{
@@ -1439,38 +1467,31 @@ func (p *Parser) parseComprehensionCore(expr ast.Expression, endToken token.Toke
 		return nil
 	}
 
-	// Parse variable(s) - supports tuple unpacking like: for h, t in ...
-	p.nextToken() // move to first variable
-	comp.Variables = []ast.Expression{}
-	comp.Variables = append(comp.Variables, p.parseExpression(EQUALS))
-
+	p.nextToken()
+	comp.Variables = []ast.Expression{p.parseExpression(EQUALS)}
 	for p.peekTokenIs(token.COMMA) {
-		p.nextToken() // consume comma
-		p.nextToken() // move to next expression
+		p.nextToken()
+		p.nextToken()
 		comp.Variables = append(comp.Variables, p.parseExpression(EQUALS))
 	}
 
 	if !p.expectPeek(token.IN) {
 		return nil
 	}
-
 	p.nextToken()
-	// Use CONDITIONAL precedence to prevent 'if' from being consumed as conditional expression
-	// In list comprehensions, 'if' is the filter keyword, not conditional expression
 	comp.Iterable = p.parseExpression(CONDITIONAL)
 
-	// Check for optional if condition
 	if p.peekTokenIs(token.IF) {
 		p.nextToken()
 		p.nextToken()
-		// The condition also shouldn't consume 'if' as conditional (though unlikely)
 		comp.Condition = p.parseExpression(CONDITIONAL)
 	}
+
+	comp.AdditionalClauses = p.parseAdditionalClauses()
 
 	if !p.expectPeek(endToken) {
 		return nil
 	}
-
 	return comp
 }
 
@@ -1703,6 +1724,8 @@ func (p *Parser) parseDictComprehension(tok token.Token, keyExpr, valueExpr ast.
 		comp.Condition = p.parseExpression(CONDITIONAL)
 	}
 
+	comp.AdditionalClauses = p.parseAdditionalClauses()
+
 	if !p.expectPeek(token.RBRACE) {
 		return nil
 	}
@@ -1738,6 +1761,8 @@ func (p *Parser) parseSetComprehension(tok token.Token, expr ast.Expression) ast
 		p.nextToken()
 		comp.Condition = p.parseExpression(CONDITIONAL)
 	}
+
+	comp.AdditionalClauses = p.parseAdditionalClauses()
 
 	if !p.expectPeek(token.RBRACE) {
 		return nil
@@ -1990,7 +2015,7 @@ func (p *Parser) parseIndexExpression(left ast.Expression) ast.Expression {
 		}
 
 		// Regular member access: obj.member
-		exp := &ast.IndexExpression{Token: p.curToken, Left: left}
+		exp := &ast.IndexExpression{Token: p.curToken, Left: left, IsDotAccess: true}
 		exp.Index = &ast.StringLiteral{Token: p.curToken, Value: p.curToken.Literal}
 		return exp
 	}

@@ -363,9 +363,10 @@ func (sl *SetLiteral) TokenLiteral() string { return sl.Token.Literal }
 func (sl *SetLiteral) Line() int            { return sl.Token.Line }
 
 type IndexExpression struct {
-	Token token.Token
-	Left  Expression
-	Index Expression
+	Token       token.Token
+	Left        Expression
+	Index       Expression
+	IsDotAccess bool // true when desugared from dot notation (obj.attr)
 }
 
 func (ie *IndexExpression) expressionNode()      {}
@@ -454,12 +455,20 @@ func (mce *MethodCallExpression) expressionNode()      {}
 func (mce *MethodCallExpression) TokenLiteral() string { return mce.Token.Literal }
 func (mce *MethodCallExpression) Line() int            { return mce.Token.Line }
 
+// ComprehensionClause represents an additional `for var in iterable [if cond]` clause
+type ComprehensionClause struct {
+	Variables []Expression
+	Iterable  Expression
+	Condition Expression // optional
+}
+
 type ListComprehension struct {
-	Token      token.Token
-	Expression Expression
-	Variables  []Expression // supports tuple unpacking like: for h, t in ...
-	Iterable   Expression
-	Condition  Expression // optional
+	Token             token.Token
+	Expression        Expression
+	Variables         []Expression // supports tuple unpacking like: for h, t in ...
+	Iterable          Expression
+	Condition         Expression // optional
+	AdditionalClauses []ComprehensionClause // additional for clauses
 }
 
 func (lc *ListComprehension) expressionNode()      {}
@@ -467,12 +476,13 @@ func (lc *ListComprehension) TokenLiteral() string { return lc.Token.Literal }
 func (lc *ListComprehension) Line() int            { return lc.Token.Line }
 
 type DictComprehension struct {
-	Token     token.Token
-	Key       Expression
-	Value     Expression
-	Variables []Expression
-	Iterable  Expression
-	Condition Expression // optional
+	Token             token.Token
+	Key               Expression
+	Value             Expression
+	Variables         []Expression
+	Iterable          Expression
+	Condition         Expression // optional
+	AdditionalClauses []ComprehensionClause // additional for clauses
 }
 
 func (dc *DictComprehension) expressionNode()      {}
@@ -480,11 +490,12 @@ func (dc *DictComprehension) TokenLiteral() string { return dc.Token.Literal }
 func (dc *DictComprehension) Line() int            { return dc.Token.Line }
 
 type SetComprehension struct {
-	Token      token.Token
-	Expression Expression
-	Variables  []Expression
-	Iterable   Expression
-	Condition  Expression // optional
+	Token             token.Token
+	Expression        Expression
+	Variables         []Expression
+	Iterable          Expression
+	Condition         Expression // optional
+	AdditionalClauses []ComprehensionClause // additional for clauses
 }
 
 func (sc *SetComprehension) expressionNode()      {}

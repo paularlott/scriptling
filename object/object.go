@@ -58,7 +58,8 @@ func DictKey(obj Object) string {
 
 // IsHashable reports whether obj can be used as a set element or dict key.
 // Matches Python semantics: int, float, bool, string, None, and tuples of
-// hashable elements are hashable; lists, dicts, sets, and instances are not.
+// hashable elements are hashable; lists, dicts, sets, and instances are not
+// unless the instance defines __hash__.
 func IsHashable(obj Object) bool {
 	switch o := obj.(type) {
 	case *Integer, *Float, *Boolean, *String, *Null:
@@ -70,6 +71,9 @@ func IsHashable(obj Object) bool {
 			}
 		}
 		return true
+	case *Instance:
+		_, ok := o.Class.Methods["__hash__"]
+		return ok
 	default:
 		return false
 	}

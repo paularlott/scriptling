@@ -2,12 +2,37 @@ package evaluator
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
 )
+
+// evalHashKey returns the canonical map key string for obj, calling __hash__
+// on instances that define it. Falls back to object.DictKey for all other types.
+func evalHashKey(ctx context.Context, obj object.Object) string {
+	if inst, ok := obj.(*object.Instance); ok {
+		if _, hasHash := inst.Class.Methods["__hash__"]; hasHash && hashInstanceFn != nil {
+			result := hashInstanceFn(ctx, inst)
+			if n, ok := result.(*object.Integer); ok {
+				return fmt.Sprintf("h:%d", n.Value)
+			}
+		}
+	}
+	return object.DictKey(obj)
+}
+
+// evalSetAdd adds obj to set s, using __hash__ for instances.
+// Returns a TypeError exception if obj is not hashable.
+func evalSetAdd(ctx context.Context, s *object.Set, obj object.Object) object.Object {
+	if !object.IsHashable(obj) {
+		return &object.Exception{Message: "unhashable type: '" + obj.Type().String() + "'", ExceptionType: object.ExceptionTypeTypeError}
+	}
+	s.AddKeyed(evalHashKey(ctx, obj), obj)
+	return nil
+}
 
 func evalDictLiteralWithContext(ctx context.Context, node *ast.DictLiteral, env *object.Environment) object.Object {
 	if len(node.Pairs) == 0 {
@@ -26,13 +51,13 @@ func evalDictLiteralWithContext(ctx context.Context, node *ast.DictLiteral, env 
 			return value
 		}
 
-		pairs[object.DictKey(key)] = object.DictPair{Key: key, Value: value}
+		pairs[evalHashKey(ctx, key)] = object.DictPair{Key: key, Value: value}
 	}
 
 	return &object.Dict{Pairs: pairs}
 }
 
-func evalIndexExpression(ctx context.Context, left, index object.Object) object.Object {
+func evalIndexExpression(ctx context.Context, left, index object.Object, isDotAccess bool) object.Object {
 	switch {
 	case left.Type() == object.LIST_OBJ && index.Type() == object.INTEGER_OBJ:
 		return evalListIndexExpression(left, index)
@@ -43,13 +68,13 @@ func evalIndexExpression(ctx context.Context, left, index object.Object) object.
 	case left.Type() == object.TUPLE_OBJ && index.Type() == object.SLICE_OBJ:
 		return evalTupleSliceExpression(left, index)
 	case left.Type() == object.DICT_OBJ:
-		return evalDictIndexExpression(left, index)
+		return evalDictIndexExpression(ctx, left, index)
 	case left.Type() == object.STRING_OBJ && index.Type() == object.INTEGER_OBJ:
 		return evalStringIndexExpression(left, index)
 	case left.Type() == object.STRING_OBJ && index.Type() == object.SLICE_OBJ:
 		return evalStringSliceExpression(left, index)
 	case left.Type() == object.INSTANCE_OBJ:
-		return evalInstanceIndexExpression(ctx, left, index)
+		return evalInstanceIndexExpression(ctx, left, index, isDotAccess)
 	case left.Type() == object.CLASS_OBJ:
 		return evalClassIndexExpression(left, index)
 	case left.Type() == object.BUILTIN_OBJ:
@@ -123,9 +148,9 @@ func evalTupleIndexExpression(tuple, index object.Object) object.Object {
 	return tupleObject.Elements[idx]
 }
 
-func evalDictIndexExpression(dict, index object.Object) object.Object {
+func evalDictIndexExpression(ctx context.Context, dict, index object.Object) object.Object {
 	dictObject := dict.(*object.Dict)
-	key := object.DictKey(index)
+	key := evalHashKey(ctx, index)
 
 	pair, ok := dictObject.Pairs[key]
 	if !ok {
@@ -176,14 +201,15 @@ func evalStringIndexExpression(str, index object.Object) object.Object {
 	return &object.String{Value: string(runes[idx])}
 }
 
-func evalInstanceIndexExpression(ctx context.Context, instance, index object.Object) object.Object {
+func evalInstanceIndexExpression(ctx context.Context, instance, index object.Object, isDotAccess bool) object.Object {
 	inst := instance.(*object.Instance)
 
-	// First check for __getitem__ method
-	if getitem, ok := inst.Class.Methods["__getitem__"]; ok {
-		// Call __getitem__ with the index
-		args := []object.Object{instance, index}
-		return applyFunctionWithContext(ctx, getitem, args, nil, nil)
+	// Only call __getitem__ for explicit bracket access (obj[key]), not dot access (obj.attr)
+	if !isDotAccess {
+		if getitem, ok := inst.Class.Methods["__getitem__"]; ok {
+			args := []object.Object{instance, index}
+			return applyFunctionWithContext(ctx, getitem, args, nil, nil)
+		}
 	}
 
 	// Fallback to string-based field access

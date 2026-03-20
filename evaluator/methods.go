@@ -1524,10 +1524,9 @@ func callSetMethod(ctx context.Context, set *object.Set, method string, args []o
 	switch method {
 	case "add":
 		if err := errors.ExactArgs(args, 1); err != nil { return err }
-		if !object.IsHashable(args[0]) {
-			return &object.Exception{Message: "unhashable type: '" + args[0].Type().String() + "'", ExceptionType: object.ExceptionTypeTypeError}
+		if err := evalSetAdd(ctx, set, args[0]); err != nil {
+			return err
 		}
-		set.Add(args[0])
 		return NULL
 	case "remove":
 		if err := errors.ExactArgs(args, 1); err != nil { return err }

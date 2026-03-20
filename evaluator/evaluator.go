@@ -320,10 +320,9 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		}
 		s := object.NewSet()
 		for _, elem := range elements {
-			if !object.IsHashable(elem) {
-				return &object.Exception{Message: "unhashable type: '" + elem.Type().String() + "'", ExceptionType: object.ExceptionTypeTypeError}
+			if err := evalSetAdd(ctx, s, elem); err != nil {
+				return err
 			}
-			s.Add(elem)
 		}
 		return s
 	case *ast.IndexExpression:
@@ -335,7 +334,7 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		if object.IsError(index) {
 			return index
 		}
-		return evalIndexExpression(ctx, left, index)
+		return evalIndexExpression(ctx, left, index, node.IsDotAccess)
 	case *ast.SliceExpression:
 		return evalSliceExpressionWithContext(ctx, node, env)
 	case *ast.ForStatement:
@@ -588,9 +587,9 @@ func evalInfixExpression(ctx context.Context, operator string, left, right objec
 	// Handle membership operators
 	switch operator {
 	case "in":
-		return evalInOperator(left, right)
+		return evalInOperator(ctx, left, right)
 	case "not in":
-		result := evalInOperator(left, right)
+		result := evalInOperator(ctx, left, right)
 		if result == TRUE {
 			return FALSE
 		}
@@ -1926,7 +1925,7 @@ func evalFromImportStatement(fis *ast.FromImportStatement, env *object.Environme
 	return NULL
 }
 
-func evalInOperator(left, right object.Object) object.Object {
+func evalInOperator(ctx context.Context, left, right object.Object) object.Object {
 	switch container := right.(type) {
 	case *object.List:
 		for _, elem := range container.Elements {
@@ -1936,7 +1935,7 @@ func evalInOperator(left, right object.Object) object.Object {
 		}
 		return FALSE
 	case *object.Dict:
-		key := object.DictKey(left)
+		key := evalHashKey(ctx, left)
 		_, ok := container.Pairs[key]
 		return nativeBoolToBooleanObject(ok)
 	case *object.String:
@@ -1945,7 +1944,7 @@ func evalInOperator(left, right object.Object) object.Object {
 		}
 		return errors.NewTypeError("STRING", "non-string type")
 	case *object.DictKeys:
-		key := object.DictKey(left)
+		key := evalHashKey(ctx, left)
 		_, ok := container.Dict.Pairs[key]
 		return nativeBoolToBooleanObject(ok)
 	case *object.DictValues:
@@ -1956,9 +1955,6 @@ func evalInOperator(left, right object.Object) object.Object {
 		}
 		return FALSE
 	case *object.DictItems:
-		// Expect left to be a tuple/list of [key, value]
-		// Actually, Python allows (key, value) tuple.
-		// Let's check if left is a tuple/list of 2 elements.
 		var key, val object.Object
 		switch l := left.(type) {
 		case *object.Tuple:
@@ -1970,10 +1966,8 @@ func evalInOperator(left, right object.Object) object.Object {
 				key, val = l.Elements[0], l.Elements[1]
 			}
 		}
-
 		if key != nil {
-			// Check if key exists and value matches
-			keyStr := object.DictKey(key)
+			keyStr := evalHashKey(ctx, key)
 			if pair, ok := container.Dict.Pairs[keyStr]; ok {
 				if val == pair.Value || objectsDeepEqual(val, pair.Value) {
 					return TRUE
@@ -1982,11 +1976,10 @@ func evalInOperator(left, right object.Object) object.Object {
 		}
 		return FALSE
 	case *object.Set:
-		return nativeBoolToBooleanObject(container.Contains(left))
+		return nativeBoolToBooleanObject(container.ContainsKeyed(evalHashKey(ctx, left)))
 	case *object.Instance:
-		// Call __contains__ dunder method if defined
 		if fn, ok := findDunderMethod(container, "__contains__"); ok {
-			result := applyFunctionWithContext(context.Background(), fn, prependSelf(container, []object.Object{left}), nil, container.Class.Env)
+			result := applyFunctionWithContext(ctx, fn, prependSelf(container, []object.Object{left}), nil, container.Class.Env)
 			if object.IsError(result) {
 				return result
 			}
@@ -2419,10 +2412,20 @@ func assignToExpression(ctx context.Context, expr ast.Expression, value object.O
 				return nil
 			}
 		case *object.Dict:
-			key := object.DictKey(index)
+			key := evalHashKey(ctx, index)
 			o.Pairs[key] = object.DictPair{Key: index, Value: value}
 			return nil
 		case *object.Instance:
+			// For explicit bracket access (not dot), call __setitem__ if defined
+			if !left.IsDotAccess {
+				if setitem, ok := o.Class.Methods["__setitem__"]; ok {
+					result := applyFunctionWithContext(ctx, setitem, []object.Object{obj, index, value}, nil, nil)
+					if object.IsError(result) {
+						return fmt.Errorf("%s", result.(*object.Error).Message)
+					}
+					return nil
+				}
+			}
 			if key, ok := index.(*object.String); ok {
 				// Check class hierarchy for a property descriptor before writing to Fields
 				if p := findPropertyInClass(key.Value, o.Class); p != nil {
@@ -2677,142 +2680,174 @@ forDone:
 // evalMethodCallExpression is in methods.go
 // callStringMethodWithKeywords is in methods.go
 
-func evalListComprehension(ctx context.Context, lc *ast.ListComprehension, env *object.Environment) object.Object {
-	iterable := evalWithContext(ctx, lc.Iterable, env)
+func evalAdditionalClauses(ctx context.Context, clauses []ast.ComprehensionClause, idx int, env *object.Environment, action func() object.Object) object.Object {
+	if idx >= len(clauses) {
+		return action()
+	}
+	c := clauses[idx]
+	iterable := evalWithContext(ctx, c.Iterable, env)
 	if object.IsError(iterable) {
 		return iterable
 	}
+	return iterateObject(ctx, iterable, func(element object.Object) object.Object {
+		if err := setForVariables(c.Variables, element, env); err != nil {
+			return errors.NewError("%s", err.Error())
+		}
+		if c.Condition != nil {
+			cond := evalWithContext(ctx, c.Condition, env)
+			if object.IsError(cond) {
+				return cond
+			}
+			if !isTruthy(cond) {
+				return nil
+			}
+		}
+		return evalAdditionalClauses(ctx, clauses, idx+1, env, action)
+	})
+}
 
-	result := []object.Object{}
-
-	// Create new scope for comprehension variable(s)
-	compEnv := object.NewEnclosedEnvironment(env)
-
-	// Handle Iterator objects and Views
-	var iter *object.Iterator
-	switch o := iterable.(type) {
+func iterateObject(ctx context.Context, obj object.Object, fn func(object.Object) object.Object) object.Object {
+	switch o := obj.(type) {
+	case *object.List:
+		for _, el := range o.Elements {
+			if err := fn(el); err != nil {
+				return err
+			}
+		}
+	case *object.Tuple:
+		for _, el := range o.Elements {
+			if err := fn(el); err != nil {
+				return err
+			}
+		}
 	case *object.Iterator:
-		iter = o
+		for {
+			el, ok := o.Next()
+			if !ok {
+				break
+			}
+			if err := fn(el); err != nil {
+				return err
+			}
+		}
 	case *object.DictKeys:
-		iter = o.CreateIterator()
+		iter := o.CreateIterator()
+		for {
+			el, ok := iter.Next()
+			if !ok {
+				break
+			}
+			if err := fn(el); err != nil {
+				return err
+			}
+		}
 	case *object.DictValues:
-		iter = o.CreateIterator()
+		iter := o.CreateIterator()
+		for {
+			el, ok := iter.Next()
+			if !ok {
+				break
+			}
+			if err := fn(el); err != nil {
+				return err
+			}
+		}
 	case *object.DictItems:
-		iter = o.CreateIterator()
+		iter := o.CreateIterator()
+		for {
+			el, ok := iter.Next()
+			if !ok {
+				break
+			}
+			if err := fn(el); err != nil {
+				return err
+			}
+		}
 	case *object.Set:
-		iter = o.CreateIterator()
+		iter := o.CreateIterator()
+		for {
+			el, ok := iter.Next()
+			if !ok {
+				break
+			}
+			if err := fn(el); err != nil {
+				return err
+			}
+		}
+	case *object.String:
+		for _, ch := range o.Value {
+			if err := fn(&object.String{Value: string(ch)}); err != nil {
+				return err
+			}
+		}
 	case *object.Instance:
-		if fn, ok := findDunderMethod(o, "__iter__"); ok {
-			iterObj := applyFunctionWithContext(ctx, fn, prependSelf(o, nil), nil, env)
+		if iterFn, ok := findDunderMethod(o, "__iter__"); ok {
+			iterObj := applyFunctionWithContext(ctx, iterFn, prependSelf(o, nil), nil, nil)
 			if object.IsError(iterObj) {
 				return iterObj
 			}
+			var iter *object.Iterator
 			if iterInst, ok := iterObj.(*object.Instance); ok {
-				iter = instanceToIterator(ctx, iterInst, env)
+				iter = instanceToIterator(ctx, iterInst, nil)
 			} else if iterIter, ok := iterObj.(*object.Iterator); ok {
 				iter = iterIter
 			} else {
 				return errors.NewError("__iter__ must return an iterator")
 			}
+			for {
+				el, ok := iter.Next()
+				if !ok {
+					break
+				}
+				if err := fn(el); err != nil {
+					return err
+				}
+			}
 		} else {
-			return errors.NewTypeError("iterable", iterable.Type().String())
+			return errors.NewTypeError("iterable", obj.Type().String())
 		}
-	}
-
-	if iter != nil {
-		for {
-			element, hasNext := iter.Next()
-			if !hasNext {
-				break
-			}
-
-			// Set variable(s) - supports tuple unpacking
-			if err := setForVariables(lc.Variables, element, compEnv); err != nil {
-				return errors.NewError("%s", err.Error())
-			}
-
-			// Check condition if present
-			if lc.Condition != nil {
-				condition := evalWithContext(ctx, lc.Condition, compEnv)
-				if object.IsError(condition) {
-					return condition
-				}
-				if !isTruthy(condition) {
-					continue
-				}
-			}
-
-			// Evaluate expression
-			exprResult := evalWithContext(ctx, lc.Expression, compEnv)
-			if object.IsError(exprResult) {
-				return exprResult
-			}
-			result = append(result, exprResult)
-		}
-		return &object.List{Elements: result}
-	}
-
-	// Get elements based on iterable type
-	var elements []object.Object
-	switch iter := iterable.(type) {
-	case *object.List:
-		elements = iter.Elements
-	case *object.Tuple:
-		elements = iter.Elements
-	case *object.String:
-		// Iterate over string runes lazily to avoid pre-allocating all characters
-		for _, char := range iter.Value {
-			element := &object.String{Value: string(char)}
-			if err := setForVariables(lc.Variables, element, compEnv); err != nil {
-				return errors.NewError("%s", err.Error())
-			}
-
-			if lc.Condition != nil {
-				condition := evalWithContext(ctx, lc.Condition, compEnv)
-				if object.IsError(condition) {
-					return condition
-				}
-				if !isTruthy(condition) {
-					continue
-				}
-			}
-
-			exprResult := evalWithContext(ctx, lc.Expression, compEnv)
-			if object.IsError(exprResult) {
-				return exprResult
-			}
-			result = append(result, exprResult)
-		}
-		return &object.List{Elements: result}
 	default:
-		return errors.NewTypeError("iterable", iterable.Type().String())
+		return errors.NewTypeError("iterable", obj.Type().String())
 	}
+	return nil
+}
 
-	for _, element := range elements {
-		// Set variable(s) - supports tuple unpacking
+func evalListComprehension(ctx context.Context, lc *ast.ListComprehension, env *object.Environment) object.Object {
+	iterable := evalWithContext(ctx, lc.Iterable, env)
+	if object.IsError(iterable) {
+		return iterable
+	}
+	result := []object.Object{}
+	compEnv := object.NewEnclosedEnvironment(env)
+	emit := func() object.Object {
+		v := evalWithContext(ctx, lc.Expression, compEnv)
+		if object.IsError(v) {
+			return v
+		}
+		result = append(result, v)
+		return nil
+	}
+	runBody := func(element object.Object) object.Object {
 		if err := setForVariables(lc.Variables, element, compEnv); err != nil {
 			return errors.NewError("%s", err.Error())
 		}
-
-		// Check condition if present
 		if lc.Condition != nil {
-			condition := evalWithContext(ctx, lc.Condition, compEnv)
-			if object.IsError(condition) {
-				return condition
+			cond := evalWithContext(ctx, lc.Condition, compEnv)
+			if object.IsError(cond) {
+				return cond
 			}
-			if !isTruthy(condition) {
-				continue
+			if !isTruthy(cond) {
+				return nil
 			}
 		}
-
-		// Evaluate expression
-		exprResult := evalWithContext(ctx, lc.Expression, compEnv)
-		if object.IsError(exprResult) {
-			return exprResult
+		if len(lc.AdditionalClauses) > 0 {
+			return evalAdditionalClauses(ctx, lc.AdditionalClauses, 0, compEnv, emit)
 		}
-		result = append(result, exprResult)
+		return emit()
 	}
-
+	if err := iterateObject(ctx, iterable, runBody); err != nil {
+		return err
+	}
 	return &object.List{Elements: result}
 }
 
@@ -2821,24 +2856,20 @@ func evalDictComprehension(ctx context.Context, dc *ast.DictComprehension, env *
 	if object.IsError(iterable) {
 		return iterable
 	}
-
 	result := &object.Dict{Pairs: make(map[string]object.DictPair)}
 	compEnv := object.NewEnclosedEnvironment(env)
-
-	var iter *object.Iterator
-	switch o := iterable.(type) {
-	case *object.Iterator:
-		iter = o
-	case *object.DictKeys:
-		iter = o.CreateIterator()
-	case *object.DictValues:
-		iter = o.CreateIterator()
-	case *object.DictItems:
-		iter = o.CreateIterator()
-	case *object.Set:
-		iter = o.CreateIterator()
+	emit := func() object.Object {
+		k := evalWithContext(ctx, dc.Key, compEnv)
+		if object.IsError(k) {
+			return k
+		}
+		v := evalWithContext(ctx, dc.Value, compEnv)
+		if object.IsError(v) {
+			return v
+		}
+		result.Pairs[evalHashKey(ctx, k)] = object.DictPair{Key: k, Value: v}
+		return nil
 	}
-
 	runBody := func(element object.Object) object.Object {
 		if err := setForVariables(dc.Variables, element, compEnv); err != nil {
 			return errors.NewError("%s", err.Error())
@@ -2852,52 +2883,13 @@ func evalDictComprehension(ctx context.Context, dc *ast.DictComprehension, env *
 				return nil
 			}
 		}
-		k := evalWithContext(ctx, dc.Key, compEnv)
-		if object.IsError(k) {
-			return k
+		if len(dc.AdditionalClauses) > 0 {
+			return evalAdditionalClauses(ctx, dc.AdditionalClauses, 0, compEnv, emit)
 		}
-		v := evalWithContext(ctx, dc.Value, compEnv)
-		if object.IsError(v) {
-			return v
-		}
-		result.Pairs[object.DictKey(k)] = object.DictPair{Key: k, Value: v}
-		return nil
+		return emit()
 	}
-
-	if iter != nil {
-		for {
-			element, hasNext := iter.Next()
-			if !hasNext {
-				break
-			}
-			if err := runBody(element); err != nil {
-				return err
-			}
-		}
-		return result
-	}
-
-	var elements []object.Object
-	switch o := iterable.(type) {
-	case *object.List:
-		elements = o.Elements
-	case *object.Tuple:
-		elements = o.Elements
-	case *object.String:
-		for _, char := range o.Value {
-			if err := runBody(&object.String{Value: string(char)}); err != nil {
-				return err
-			}
-		}
-		return result
-	default:
-		return errors.NewTypeError("iterable", iterable.Type().String())
-	}
-
-	for _, element := range elements {
-		if err := runBody(element); err != nil {
-			return err
-		}
+	if err := iterateObject(ctx, iterable, runBody); err != nil {
+		return err
 	}
 	return result
 }
@@ -2907,24 +2899,15 @@ func evalSetComprehension(ctx context.Context, sc *ast.SetComprehension, env *ob
 	if object.IsError(iterable) {
 		return iterable
 	}
-
 	result := object.NewSet()
 	compEnv := object.NewEnclosedEnvironment(env)
-
-	var iter *object.Iterator
-	switch o := iterable.(type) {
-	case *object.Iterator:
-		iter = o
-	case *object.DictKeys:
-		iter = o.CreateIterator()
-	case *object.DictValues:
-		iter = o.CreateIterator()
-	case *object.DictItems:
-		iter = o.CreateIterator()
-	case *object.Set:
-		iter = o.CreateIterator()
+	emit := func() object.Object {
+		v := evalWithContext(ctx, sc.Expression, compEnv)
+		if object.IsError(v) {
+			return v
+		}
+		return evalSetAdd(ctx, result, v)
 	}
-
 	runBody := func(element object.Object) object.Object {
 		if err := setForVariables(sc.Variables, element, compEnv); err != nil {
 			return errors.NewError("%s", err.Error())
@@ -2938,54 +2921,17 @@ func evalSetComprehension(ctx context.Context, sc *ast.SetComprehension, env *ob
 				return nil
 			}
 		}
-		v := evalWithContext(ctx, sc.Expression, compEnv)
-		if object.IsError(v) {
-			return v
+		if len(sc.AdditionalClauses) > 0 {
+			return evalAdditionalClauses(ctx, sc.AdditionalClauses, 0, compEnv, emit)
 		}
-		if !object.IsHashable(v) {
-			return &object.Exception{Message: "unhashable type: '" + v.Type().String() + "'", ExceptionType: object.ExceptionTypeTypeError}
-		}
-		result.Add(v)
-		return nil
+		return emit()
 	}
-
-	if iter != nil {
-		for {
-			element, hasNext := iter.Next()
-			if !hasNext {
-				break
-			}
-			if err := runBody(element); err != nil {
-				return err
-			}
-		}
-		return result
-	}
-
-	var elements []object.Object
-	switch o := iterable.(type) {
-	case *object.List:
-		elements = o.Elements
-	case *object.Tuple:
-		elements = o.Elements
-	case *object.String:
-		for _, char := range o.Value {
-			if err := runBody(&object.String{Value: string(char)}); err != nil {
-				return err
-			}
-		}
-		return result
-	default:
-		return errors.NewTypeError("iterable", iterable.Type().String())
-	}
-
-	for _, element := range elements {
-		if err := runBody(element); err != nil {
-			return err
-		}
+	if err := iterateObject(ctx, iterable, runBody); err != nil {
+		return err
 	}
 	return result
 }
+
 
 func evalLambda(lambda *ast.Lambda, env *object.Environment) object.Object {
 	return &object.LambdaFunction{
