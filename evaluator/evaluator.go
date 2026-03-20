@@ -3286,9 +3286,6 @@ func formatWithSpec(obj object.Object, spec string) string {
 
 	// Apply width and alignment (use rune-aware length for Unicode)
 	if width > 0 && len([]rune(formatted)) < width {
-		width = width // keep as rune-count comparison below
-	}
-	if width > 0 && len([]rune(formatted)) < width {
 		padding := width - len([]rune(formatted))
 		switch align {
 		case '<':

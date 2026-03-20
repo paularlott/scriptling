@@ -394,9 +394,9 @@ func BenchmarkMultipleFunctionTypes(b *testing.B) {
 func TestReflectionOnlyAtBuildTime(t *testing.T) {
 	// Track if analyzeFunctionSignature is called
 	callCount := 0
-	originalCache := signatureCache
+
+	// Reset cache for clean test, restore after
 	signatureCache = sync.Map{}
-	defer func() { signatureCache = originalCache }()
 
 	// Create builder and register function
 	builder := NewLibraryBuilder("test", "test")

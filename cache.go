@@ -4,7 +4,6 @@ import (
 	"container/list"
 	"hash/maphash"
 	"sync"
-	"time"
 
 	"github.com/paularlott/scriptling/ast"
 )
@@ -18,9 +17,8 @@ type cacheKey struct {
 }
 
 type cacheEntry struct {
-	key      cacheKey
-	program  *ast.Program
-	lastUsed time.Time
+	key     cacheKey
+	program *ast.Program
 }
 
 type programCache struct {
@@ -63,7 +61,6 @@ func (c *programCache) get(script string) (*ast.Program, bool) {
 	if c.mu.TryLock() {
 		if elem, ok := c.entries[key]; ok {
 			c.lru.MoveToFront(elem)
-			elem.Value.(*cacheEntry).lastUsed = time.Now()
 		}
 		c.mu.Unlock()
 	}
@@ -82,7 +79,6 @@ func (c *programCache) set(script string, program *ast.Program) {
 		entry := elem.Value.(*cacheEntry)
 		c.lru.MoveToFront(elem)
 		entry.program = program
-		entry.lastUsed = time.Now()
 		return
 	}
 
@@ -95,9 +91,8 @@ func (c *programCache) set(script string, program *ast.Program) {
 
 	// Add new entry at front (after potential eviction)
 	entry := &cacheEntry{
-		key:      key,
-		program:  program,
-		lastUsed: time.Now(),
+		key:     key,
+		program: program,
 	}
 	// Push to front of LRU list and update map
 	elem := c.lru.PushFront(entry)

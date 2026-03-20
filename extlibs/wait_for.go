@@ -2,7 +2,6 @@ package extlibs
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -197,7 +196,7 @@ Returns:
 
 				deadline := time.Now().Add(time.Duration(timeout) * time.Second)
 				pollInterval := time.Duration(pollRate * float64(time.Second))
-				address := fmt.Sprintf("%s:%d", host, port)
+				address := net.JoinHostPort(host, strconv.Itoa(port))
 
 				for time.Now().Before(deadline) {
 					conn, err := net.DialTimeout("tcp", address, time.Second)
