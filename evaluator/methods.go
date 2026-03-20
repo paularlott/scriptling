@@ -102,6 +102,11 @@ func callStringMethodWithKeywords(ctx context.Context, obj object.Object, method
 		return callSetMethod(ctx, obj.(*object.Set), method, args, keywords, env)
 	}
 
+	// Handle tuple methods
+	if obj.Type() == object.TUPLE_OBJ {
+		return callTupleMethod(obj.(*object.Tuple), method, args)
+	}
+
 	// Handle Instance method calls
 	if obj.Type() == object.INSTANCE_OBJ {
 		return callInstanceMethod(ctx, obj.(*object.Instance), method, args, keywords, env)
@@ -1520,6 +1525,47 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		return errors.NewError("%s: %s", errors.ErrIdentifierNotFound, method)
 	}
 }
+func callTupleMethod(tuple *object.Tuple, method string, args []object.Object) object.Object {
+	switch method {
+	case "count":
+		if err := errors.ExactArgs(args, 1); err != nil { return err }
+		count := int64(0)
+		for _, elem := range tuple.Elements {
+			if objectsEqual(elem, args[0]) {
+				count++
+			}
+		}
+		return object.NewInteger(count)
+	case "index":
+		if len(args) < 1 || len(args) > 3 {
+			return errors.NewError("index() takes 1-3 arguments (%d given)", len(args))
+		}
+		start, end := 0, len(tuple.Elements)
+		if len(args) >= 2 {
+			s, err := args[1].AsInt()
+			if err != nil { return errors.ParameterError("start", err) }
+			start = int(s)
+			if start < 0 { start = len(tuple.Elements) + start }
+			if start < 0 { start = 0 }
+		}
+		if len(args) == 3 {
+			e, err := args[2].AsInt()
+			if err != nil { return errors.ParameterError("end", err) }
+			end = int(e)
+			if end < 0 { end = len(tuple.Elements) + end }
+		}
+		if start > len(tuple.Elements) { start = len(tuple.Elements) }
+		if end > len(tuple.Elements) { end = len(tuple.Elements) }
+		for i := start; i < end; i++ {
+			if objectsEqual(tuple.Elements[i], args[0]) {
+				return object.NewInteger(int64(i))
+			}
+		}
+		return errors.NewError("value not in tuple")
+	}
+	return errors.NewError("object TUPLE has no method %s", method)
+}
+
 func callSetMethod(ctx context.Context, set *object.Set, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
 	switch method {
 	case "add":

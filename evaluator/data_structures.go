@@ -375,6 +375,12 @@ func evalSliceExpressionWithContext(ctx context.Context, node *ast.SliceExpressi
 	switch obj := left.(type) {
 	case *object.List:
 		return sliceList(obj.Elements, start, end, step, hasStart, hasEnd, hasStep)
+	case *object.Tuple:
+		result := sliceList(obj.Elements, start, end, step, hasStart, hasEnd, hasStep)
+		if list, ok := result.(*object.List); ok {
+			return &object.Tuple{Elements: list.Elements}
+		}
+		return result
 	case *object.String:
 		elements := sliceString(obj.Value, start, end, step, hasStart, hasEnd, hasStep)
 		return &object.String{Value: elements}

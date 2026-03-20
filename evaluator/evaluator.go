@@ -1934,6 +1934,13 @@ func evalInOperator(ctx context.Context, left, right object.Object) object.Objec
 			}
 		}
 		return FALSE
+	case *object.Tuple:
+		for _, elem := range container.Elements {
+			if left == elem || objectsDeepEqual(left, elem) {
+				return TRUE
+			}
+		}
+		return FALSE
 	case *object.Dict:
 		key := evalHashKey(ctx, left)
 		_, ok := container.Pairs[key]
