@@ -4,12 +4,12 @@ Long-term memory tools for LLM agents via the Scriptling MCP server. Any MCP-com
 
 ## Tools
 
-| Tool            | Description                                                                                         |
-| --------------- | --------------------------------------------------------------------------------------------------- |
-| `remember`      | Store information with optional type and importance; returns a UUIDv7 ID                            |
-| `recall`        | Hybrid keyword + semantic search. No arguments: loads full context (all preferences + top memories) |
-| `forget`        | Remove a memory by ID                                                                               |
-| `compact`       | Manually trigger compaction; returns remaining count                                                |
+| Tool               | Description                                                                                         |
+| ------------------ | --------------------------------------------------------------------------------------------------- |
+| `memory_remember`  | Store information with optional type and importance; returns a UUIDv7 ID                            |
+| `memory_recall`    | Hybrid keyword + semantic search. No arguments: loads full context (all preferences + top memories) |
+| `memory_forget`    | Remove a memory by ID                                                                               |
+| `memory_compact`   | Manually trigger compaction; returns remaining count                                                |
 
 ## Storage
 
@@ -140,14 +140,14 @@ Add this to your LLM's system prompt to enable memory-aware behaviour:
 ```
 You are a helpful assistant with long-term memory.
 
-At the start of every new conversation, call recall() with no arguments to load your stored
+At the start of every new conversation, call memory_recall() with no arguments to load your stored
 preferences and recent context before responding.
 
 You have access to the following memory tools:
-- remember(content, type, importance) — store something for later; returns an id
-- recall() — call with no arguments at conversation start to load full context
-- recall(query) — search your memory by keyword and semantic similarity mid-conversation
-- forget(id) — remove something from memory by ID
+- memory_remember(content, type, importance) — store something for later; returns an id
+- memory_recall() — call with no arguments at conversation start to load full context
+- memory_recall(query) — search your memory by keyword and semantic similarity mid-conversation
+- memory_forget(id) — remove something from memory by ID
 
 Guidelines for using memory:
 - Store one fact per memory — do not combine multiple subjects into a single remember() call.
@@ -158,9 +158,9 @@ Guidelines for using memory:
   store it immediately using remember() with an appropriate type.
 - Use type="preference" for anything about how the user likes things done — editors, formats,
   communication style, language. Recall preferences proactively before making suggestions.
-- Before answering questions that might benefit from context, call recall(query) to check your memory.
+- Before answering questions that might benefit from context, call memory_recall(query) to check your memory.
 - Use importance=0.9 for critical facts (names, API keys, deadlines) and importance=0.5 for general notes.
-- When the user asks you to forget something, call forget() with the ID from when it was remembered.
+- When the user asks you to forget something, call memory_forget() with the ID from when it was remembered.
 - Do not mention the memory tools to the user unless they ask — just use them silently.
 ```
 
@@ -183,7 +183,7 @@ The `importance` field (0.0–1.0) controls how long a memory survives compactio
 | 0.5 (default) | ~1 year effective lifetime for facts, ~3 months for notes |
 | 0.1           | Pruned quickly — a note at 0.1 is gone in ~7 days         |
 
-**Compaction is manual** — call `compact()` to prune old/decayed memories. `preference` type memories never decay regardless of importance — they are only removed after the 180-day hard age cap (based on last access).
+**Compaction is manual** — call `memory_compact()` to prune old/decayed memories. `preference` type memories never decay regardless of importance — they are only removed after the 180-day hard age cap (based on last access).
 
 ## Deduplication
 
