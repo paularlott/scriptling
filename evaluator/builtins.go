@@ -1220,7 +1220,14 @@ Otherwise, returns a tuple containing the items of the iterable.`,
 				return errors.NewTypeError("iterable", args[0].Type().String())
 			}
 
-			return object.NewSetFromElements(elements)
+			s := object.NewSet()
+			for _, e := range elements {
+				if !object.IsHashable(e) {
+					return &object.Exception{Message: "unhashable type: '" + e.Type().String() + "'", ExceptionType: object.ExceptionTypeTypeError}
+				}
+				s.Add(e)
+			}
+			return s
 		},
 		HelpText: `set([iterable]) - Create a set from an iterable
 

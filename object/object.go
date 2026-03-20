@@ -56,6 +56,25 @@ func DictKey(obj Object) string {
 	}
 }
 
+// IsHashable reports whether obj can be used as a set element or dict key.
+// Matches Python semantics: int, float, bool, string, None, and tuples of
+// hashable elements are hashable; lists, dicts, sets, and instances are not.
+func IsHashable(obj Object) bool {
+	switch o := obj.(type) {
+	case *Integer, *Float, *Boolean, *String, *Null:
+		return true
+	case *Tuple:
+		for _, e := range o.Elements {
+			if !IsHashable(e) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
 // Small integer cache for common values (-5 to 10000)
 // This follows Python's approach and eliminates allocations for loop counters
 // Extended range to 10000 for better loop performance

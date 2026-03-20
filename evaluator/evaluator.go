@@ -320,6 +320,9 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		}
 		s := object.NewSet()
 		for _, elem := range elements {
+			if !object.IsHashable(elem) {
+				return &object.Exception{Message: "unhashable type: '" + elem.Type().String() + "'", ExceptionType: object.ExceptionTypeTypeError}
+			}
 			s.Add(elem)
 		}
 		return s
@@ -2900,6 +2903,9 @@ func evalSetComprehension(ctx context.Context, sc *ast.SetComprehension, env *ob
 		v := evalWithContext(ctx, sc.Expression, compEnv)
 		if object.IsError(v) {
 			return v
+		}
+		if !object.IsHashable(v) {
+			return &object.Exception{Message: "unhashable type: '" + v.Type().String() + "'", ExceptionType: object.ExceptionTypeTypeError}
 		}
 		result.Add(v)
 		return nil

@@ -116,3 +116,38 @@ assert "h" in sc4
 assert "l" in sc4
 
 print("Set comprehension tests passed!")
+
+# Hashability: unhashable types must raise TypeError
+try:
+    s = set([[1, 2]])
+    assert False, "expected TypeError for list in set()"
+except TypeError:
+    pass
+
+try:
+    s = {[1, 2]}
+    assert False, "expected TypeError for list in set literal"
+except TypeError:
+    pass
+
+try:
+    s = set()
+    s.add([1, 2])
+    assert False, "expected TypeError for set.add(list)"
+except TypeError:
+    pass
+
+try:
+    s = {x for x in [[1], [2]]}
+    assert False, "expected TypeError for list in set comprehension"
+except TypeError:
+    pass
+
+# Hashable types must still work
+s = set([1, 1.0, True])   # 1, 1.0, True all hash to same key
+assert len(s) == 1
+
+s2 = set([(1, 2), (3, 4), (1, 2)])
+assert len(s2) == 2
+
+print("Set hashability tests passed!")
