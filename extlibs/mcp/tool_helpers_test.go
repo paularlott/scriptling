@@ -7,9 +7,45 @@ import (
 	"testing"
 
 	"github.com/paularlott/scriptling"
+	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/extlibs/mcp"
 	"github.com/paularlott/scriptling/object"
 )
+
+// TestRunToolScriptSecurityDeniedPathInTryExcept tests that a PermissionError
+// from a security-denied path access bypasses try/except and surfaces as an
+// error from RunToolScript (exitCode=1, err!=nil), not as a silent success.
+func TestRunToolScriptSecurityDeniedPathInTryExcept(t *testing.T) {
+	sl := scriptling.New()
+	mcp.RegisterToolHelpers(sl)
+	// Register OS library restricted to /tmp only
+	extlibs.RegisterOSLibrary(sl, []string{"/tmp"})
+
+	code := `
+import os
+
+def list_files():
+    try:
+        files = os.listdir("/etc")
+        return f"Files: {files}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+list_files()
+`
+
+	_, exitCode, err := mcp.RunToolScript(context.Background(), sl, code, map[string]interface{}{})
+
+	if err == nil {
+		t.Fatal("expected PermissionError to bypass try/except and return err, got nil")
+	}
+	if exitCode != 1 {
+		t.Errorf("expected exitCode=1, got %d", exitCode)
+	}
+	if !strings.Contains(err.Error(), "access denied") {
+		t.Errorf("expected 'access denied' in error, got: %v", err)
+	}
+}
 
 // TestRunToolScript tests the RunToolScript Go helper function
 func TestRunToolScript(t *testing.T) {

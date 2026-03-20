@@ -343,7 +343,7 @@ func (p *PathlibLibraryInstance) createPathObject(pathStr string) object.Object 
 
 func (p *PathlibLibraryInstance) checkPathSecurity(path string) object.Object {
 	if !p.config.IsPathAllowed(path) {
-		return errors.NewError("access denied: path '%s' is outside allowed directories", path)
+		return errors.NewPermissionError("access denied: path '%s' is outside allowed directories", path)
 	}
 	return nil
 }

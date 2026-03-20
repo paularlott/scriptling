@@ -132,6 +132,97 @@ result
 	}
 }
 
+// TestExceptBlockReturnPropagation ensures that return/break/continue inside
+// an except block are not swallowed (regression for the result=NULL bug).
+func TestExceptBlockReturnPropagation(t *testing.T) {
+	t.Run("return from except propagates out of function", func(t *testing.T) {
+		input := `
+def f():
+    try:
+        raise Exception("boom")
+    except Exception as e:
+        return "caught: " + str(e)
+
+f()
+`
+		l := lexer.New(input)
+		p := parser.New(l)
+		program := p.ParseProgram()
+		if len(p.Errors()) != 0 {
+			t.Fatalf("parser errors: %v", p.Errors())
+		}
+		env := object.NewEnvironment()
+		result := EvalWithContext(context.Background(), program, env)
+		if object.IsError(result) {
+			t.Fatalf("unexpected error: %s", result.Inspect())
+		}
+		if result.Inspect() != "caught: boom" {
+			t.Errorf("expected %q, got %q", "caught: boom", result.Inspect())
+		}
+	})
+
+	t.Run("break from except exits loop", func(t *testing.T) {
+		input := `
+result = 0
+for i in range(5):
+    try:
+        if i == 2:
+            raise Exception("stop")
+    except Exception:
+        break
+    result = i
+result
+`
+		l := lexer.New(input)
+		p := parser.New(l)
+		program := p.ParseProgram()
+		if len(p.Errors()) != 0 {
+			t.Fatalf("parser errors: %v", p.Errors())
+		}
+		env := object.NewEnvironment()
+		result := EvalWithContext(context.Background(), program, env)
+		if object.IsError(result) {
+			t.Fatalf("unexpected error: %s", result.Inspect())
+		}
+		if result.Inspect() != "1" {
+			t.Errorf("expected %q, got %q", "1", result.Inspect())
+		}
+	})
+
+	t.Run("continue from except skips to next iteration", func(t *testing.T) {
+		input := `
+result = []
+for i in range(4):
+    try:
+        if i == 2:
+            raise Exception("skip")
+    except Exception:
+        continue
+    result.append(i)
+result
+`
+		l := lexer.New(input)
+		p := parser.New(l)
+		program := p.ParseProgram()
+		if len(p.Errors()) != 0 {
+			t.Fatalf("parser errors: %v", p.Errors())
+		}
+		env := object.NewEnvironment()
+		result := EvalWithContext(context.Background(), program, env)
+		if object.IsError(result) {
+			t.Fatalf("unexpected error: %s", result.Inspect())
+		}
+		// Should be [0, 1, 3] — 2 was skipped
+		list, ok := result.(*object.List)
+		if !ok {
+			t.Fatalf("expected List, got %T", result)
+		}
+		if len(list.Elements) != 3 {
+			t.Errorf("expected 3 elements, got %d: %s", len(list.Elements), result.Inspect())
+		}
+	})
+}
+
 func TestExceptionInspect(t *testing.T) {
 	tests := []struct {
 		name     string

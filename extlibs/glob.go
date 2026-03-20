@@ -274,7 +274,7 @@ func (g *GlobLibraryInstance) walkAndMatch(base, suffix string) []string {
 // checkPathSecurity validates a path and returns an error if access is denied
 func (g *GlobLibraryInstance) checkPathSecurity(path string) object.Object {
 	if !g.config.IsPathAllowed(path) {
-		return errors.NewError("access denied: path '%s' is outside allowed directories", path)
+		return errors.NewPermissionError("access denied: path '%s' is outside allowed directories", path)
 	}
 	return nil
 }

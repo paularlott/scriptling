@@ -2026,12 +2026,14 @@ func evalTryStatementWithContext(ctx context.Context, ts *ast.TryStatement, env 
 	if isException(result) || object.IsError(result) {
 		// SystemExit exceptions should NOT be caught by except blocks
 		// sys.exit() always exits the program, regardless of try/except
-		if exc, ok := result.(*object.Exception); ok && exc.IsSystemExit() {
-			// Execute finally block before propagating SystemExit
+		// PermissionError exceptions also bypass try/except — security violations
+		// must not be silently swallowed by scripts.
+		if exc, ok := result.(*object.Exception); ok && (exc.IsSystemExit() || exc.IsPermissionError()) {
+			// Execute finally block before propagating
 			if ts.Finally != nil {
 				evalWithContext(ctx, ts.Finally, env)
 			}
-			return result // SystemExit always propagates
+			return result // always propagates
 		}
 
 		// Convert Error to Exception for consistent handling (do this once, before matching)
@@ -2078,9 +2080,16 @@ func evalTryStatementWithContext(ctx context.Context, ts *ast.TryStatement, env 
 			// Clear the current exception after except block
 			env.Delete("__current_exception__")
 
-			// If except block didn't re-raise, the exception was handled
+			// If except block didn't re-raise, the exception was handled.
+			// Preserve control-flow signals (return, break, continue) so they
+			// propagate correctly out of the try/except.
 			if !isException(result) && !object.IsError(result) {
-				result = NULL
+				switch result.(type) {
+				case *object.ReturnValue, *object.Break, *object.Continue:
+					// keep result as-is
+				default:
+					result = NULL
+				}
 			}
 
 			// Exception was handled (or re-raised), don't try other except clauses

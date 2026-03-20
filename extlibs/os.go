@@ -22,7 +22,7 @@ type osLibraryInstance struct {
 // checkPathSecurity validates a path and returns an error if access is denied
 func (o *osLibraryInstance) checkPathSecurity(path string) object.Object {
 	if !o.config.IsPathAllowed(path) {
-		return errors.NewError("access denied: path '%s' is outside allowed directories", path)
+		return errors.NewPermissionError("access denied: path '%s' is outside allowed directories", path)
 	}
 	return nil
 }

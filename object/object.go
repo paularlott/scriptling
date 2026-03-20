@@ -89,6 +89,7 @@ var (
 // Exception type constants
 const (
 	ExceptionTypeSystemExit      = "SystemExit"
+	ExceptionTypePermissionError = "PermissionError"
 	ExceptionTypeException       = "Exception"
 	ExceptionTypeValueError      = "ValueError"
 	ExceptionTypeTypeError       = "TypeError"
@@ -1152,6 +1153,10 @@ func (ex *Exception) CoerceFloat() (float64, Object) { return 0, errMustBeNumber
 // IsSystemExit returns true if this is a SystemExit exception
 func (ex *Exception) IsSystemExit() bool {
 	return ex.ExceptionType == ExceptionTypeSystemExit
+}
+
+func (ex *Exception) IsPermissionError() bool {
+	return ex.ExceptionType == ExceptionTypePermissionError
 }
 
 // GetExitCode returns the exit code for SystemExit exceptions

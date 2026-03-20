@@ -22,6 +22,14 @@ const (
 	ErrPanic              = "script panic"
 )
 
+// NewPermissionError creates a PermissionError exception that bypasses try/except
+func NewPermissionError(format string, args ...interface{}) *object.Exception {
+	return &object.Exception{
+		Message:       fmt.Sprintf(format, args...),
+		ExceptionType: object.ExceptionTypePermissionError,
+	}
+}
+
 // NewError creates a new error object
 func NewError(format string, args ...interface{}) *object.Error {
 	return &object.Error{Message: fmt.Sprintf(format, args...)}
