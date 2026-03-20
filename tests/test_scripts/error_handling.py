@@ -102,3 +102,6 @@ except RuntimeError as e:
     assert str(e) == "wrapped"
 assert inner_caught
 assert outer_caught
+
+# raise X from Y is NOT supported — use raise ExcType(msg) directly
+# raise RuntimeError("wrapped") from original_exc  # parse error
