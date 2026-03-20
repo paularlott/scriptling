@@ -277,6 +277,18 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		if object.IsError(val) || isException(val) {
 			return val
 		}
+		// Execute chained assignments first (a = b = 5: assign 5 to b, then to a)
+		if node.Chained != nil {
+			if err := assignToExpression(ctx, node.Chained.Left, val, env); err != nil {
+				return errors.NewError("%s", err.Error())
+			}
+			// Handle deeper chains recursively
+			for c := node.Chained.Chained; c != nil; c = c.Chained {
+				if err := assignToExpression(ctx, c.Left, val, env); err != nil {
+					return errors.NewError("%s", err.Error())
+				}
+			}
+		}
 		if err := assignToExpression(ctx, node.Left, val, env); err != nil {
 			return errors.NewError("%s", err.Error())
 		}
@@ -591,6 +603,31 @@ func evalInfixExpression(ctx context.Context, operator string, left, right objec
 	}
 
 	// Type switch is faster than Type() method calls
+	// Coerce booleans to integers for arithmetic (Python: bool is a subclass of int)
+	coercedLeft := left
+	coercedRight := right
+	if b, ok := left.(*object.Boolean); ok {
+		if b.Value {
+			coercedLeft = &object.Integer{Value: 1}
+		} else {
+			coercedLeft = &object.Integer{Value: 0}
+		}
+	}
+	if b, ok := right.(*object.Boolean); ok {
+		if b.Value {
+			coercedRight = &object.Integer{Value: 1}
+		} else {
+			coercedRight = &object.Integer{Value: 0}
+		}
+	}
+	// Only use coerced values for arithmetic/comparison, not identity
+	if coercedLeft != left || coercedRight != right {
+		switch operator {
+		case "+", "-", "*", "/", "//", "%", "**", "<", ">", "<=", ">=", "==", "!=":
+			return evalInfixExpression(ctx, operator, coercedLeft, coercedRight, env)
+		}
+	}
+
 	switch l := left.(type) {
 	case *object.Integer:
 		if r, ok := right.(*object.Integer); ok {
@@ -856,6 +893,14 @@ func evalStringInfixExpression(operator string, leftVal, rightVal string) object
 		return nativeBoolToBooleanObject(leftVal == rightVal)
 	case "!=":
 		return nativeBoolToBooleanObject(leftVal != rightVal)
+	case "<":
+		return nativeBoolToBooleanObject(leftVal < rightVal)
+	case ">":
+		return nativeBoolToBooleanObject(leftVal > rightVal)
+	case "<=":
+		return nativeBoolToBooleanObject(leftVal <= rightVal)
+	case ">=":
+		return nativeBoolToBooleanObject(leftVal >= rightVal)
 	default:
 		return errors.NewError("%s: STRING %s STRING", errors.ErrUnknownOperator, operator)
 	}
@@ -1622,6 +1667,8 @@ func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.Augm
 		operator = "//"
 	case "%=":
 		operator = "%"
+	case "**=":
+		operator = "**"
 	case "&=":
 		operator = "&"
 	case "|=":

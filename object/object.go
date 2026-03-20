@@ -95,6 +95,12 @@ const (
 	ExceptionTypeTypeError       = "TypeError"
 	ExceptionTypeNameError       = "NameError"
 	ExceptionTypeStopIteration   = "StopIteration"
+	ExceptionTypeRuntimeError    = "RuntimeError"
+	ExceptionTypeZeroDivisionError = "ZeroDivisionError"
+	ExceptionTypeIndexError      = "IndexError"
+	ExceptionTypeKeyError        = "KeyError"
+	ExceptionTypeAttributeError  = "AttributeError"
+	ExceptionTypeOSError         = "OSError"
 	ExceptionTypeGeneric         = "" // Default for legacy compatibility
 )
 

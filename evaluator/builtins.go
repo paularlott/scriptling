@@ -1802,6 +1802,90 @@ Use with: raise NameError("name not defined")`,
 Raised by __next__ to signal that there are no more items.
 Use with: raise StopIteration()`,
 	},
+	"RuntimeError": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			message := ""
+			if len(args) > 0 {
+				if str, err := args[0].AsString(); err == nil {
+					message = str
+				} else {
+					message = args[0].Inspect()
+				}
+			}
+			return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeRuntimeError}
+		},
+		HelpText: `RuntimeError([message]) - Create a runtime error exception`,
+	},
+	"ZeroDivisionError": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			message := ""
+			if len(args) > 0 {
+				if str, err := args[0].AsString(); err == nil {
+					message = str
+				} else {
+					message = args[0].Inspect()
+				}
+			}
+			return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeZeroDivisionError}
+		},
+		HelpText: `ZeroDivisionError([message]) - Create a zero division error exception`,
+	},
+	"IndexError": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			message := ""
+			if len(args) > 0 {
+				if str, err := args[0].AsString(); err == nil {
+					message = str
+				} else {
+					message = args[0].Inspect()
+				}
+			}
+			return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeIndexError}
+		},
+		HelpText: `IndexError([message]) - Create an index error exception`,
+	},
+	"KeyError": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			message := ""
+			if len(args) > 0 {
+				if str, err := args[0].AsString(); err == nil {
+					message = str
+				} else {
+					message = args[0].Inspect()
+				}
+			}
+			return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeKeyError}
+		},
+		HelpText: `KeyError([message]) - Create a key error exception`,
+	},
+	"AttributeError": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			message := ""
+			if len(args) > 0 {
+				if str, err := args[0].AsString(); err == nil {
+					message = str
+				} else {
+					message = args[0].Inspect()
+				}
+			}
+			return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeAttributeError}
+		},
+		HelpText: `AttributeError([message]) - Create an attribute error exception`,
+	},
+	"OSError": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			message := ""
+			if len(args) > 0 {
+				if str, err := args[0].AsString(); err == nil {
+					message = str
+				} else {
+					message = args[0].Inspect()
+				}
+			}
+			return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeOSError}
+		},
+		HelpText: `OSError([message]) - Create an OS error exception`,
+	},
 }
 
 func compareObjects(a, b object.Object) int {

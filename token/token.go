@@ -25,6 +25,7 @@ const (
 	DIV_EQ      = "/="
 	FLOORDIV_EQ = "//="
 	MOD_EQ      = "%="
+	POW_EQ      = "**="
 	PLUS        = "+"
 	MINUS       = "-"
 	ASTERISK    = "*"

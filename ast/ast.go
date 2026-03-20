@@ -133,9 +133,10 @@ func (ce *ConditionalExpression) TokenLiteral() string { return ce.Token.Literal
 func (ce *ConditionalExpression) Line() int            { return ce.Token.Line }
 
 type AssignStatement struct {
-	Token token.Token
-	Left  Expression
-	Value Expression
+	Token   token.Token
+	Left    Expression
+	Value   Expression
+	Chained *AssignStatement // for chained assignment: a = b = 5
 }
 
 func (as *AssignStatement) statementNode()       {}

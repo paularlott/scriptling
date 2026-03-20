@@ -132,8 +132,14 @@ func (l *Lexer) NextToken() token.Token {
 	case '*':
 		if l.peekChar() == '*' {
 			l.readChar()
-			tok = token.Token{Type: token.POW, Literal: "**", Line: l.line}
-			l.readChar()
+			if l.peekChar() == '=' {
+				l.readChar()
+				tok = token.Token{Type: token.POW_EQ, Literal: "**=", Line: l.line}
+				l.readChar()
+			} else {
+				tok = token.Token{Type: token.POW, Literal: "**", Line: l.line}
+				l.readChar()
+			}
 		} else if l.peekChar() == '=' {
 			l.readChar()
 			tok = token.Token{Type: token.MUL_EQ, Literal: "*=", Line: l.line}

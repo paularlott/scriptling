@@ -299,7 +299,7 @@ func (p *Parser) parseStatement() ast.Statement {
 func (p *Parser) isAugmentedAssign() bool {
 	return p.peekTokenIs(token.PLUS_EQ) || p.peekTokenIs(token.MINUS_EQ) ||
 		p.peekTokenIs(token.MUL_EQ) || p.peekTokenIs(token.DIV_EQ) || p.peekTokenIs(token.FLOORDIV_EQ) ||
-		p.peekTokenIs(token.MOD_EQ) ||
+		p.peekTokenIs(token.MOD_EQ) || p.peekTokenIs(token.POW_EQ) ||
 		p.peekTokenIs(token.AND_EQ) || p.peekTokenIs(token.OR_EQ) || p.peekTokenIs(token.XOR_EQ) ||
 		p.peekTokenIs(token.LSHIFT_EQ) || p.peekTokenIs(token.RSHIFT_EQ)
 }
@@ -313,7 +313,32 @@ func (p *Parser) parseAssignStatement() *ast.AssignStatement {
 	}
 
 	p.nextToken()
-	stmt.Value = p.parseExpressionWithConditional()
+
+	// Handle chained assignment: a = b = 5
+	// Peek ahead: if we have IDENT = ... then parse the inner assignment first
+	if p.curTokenIs(token.IDENT) && p.peekTokenIs(token.ASSIGN) {
+		inner := p.parseAssignStatement()
+		if inner == nil {
+			return nil
+		}
+		// The value of the outer assignment is the same as the inner's value
+		stmt.Value = inner.Value
+		// Wrap as a block: evaluate inner first, then assign same value to outer
+		// We do this by making the value a ChainedAssign expression
+		// Simplest approach: store inner as a preceding statement via a sequence
+		// Actually: just assign inner.Value to both. Return a synthetic block.
+		// For simplicity, return the inner statement and let the outer be a separate assign.
+		// We need both to execute, so use the existing AST by returning a sequence.
+		// The cleanest approach without new AST nodes: evaluate inner, use its value.
+		stmt.Value = inner.Value
+		// We need inner to also execute. Embed it as a ChainedAssign.
+		// Since we don't have a sequence node, we'll add a Chained field to AssignStatement.
+		stmt.Chained = inner
+		return stmt
+	}
+
+	first := p.parseExpressionWithConditional()
+	stmt.Value = p.parseTuplePackingTail(stmt.Token, first)
 
 	return stmt
 }
@@ -544,7 +569,8 @@ func (p *Parser) parseReturnStatement() *ast.ReturnStatement {
 
 	if !p.peekTokenIs(token.NEWLINE) && !p.peekTokenIs(token.SEMICOLON) && !p.peekTokenIs(token.EOF) && !p.peekTokenIs(token.DEDENT) {
 		p.nextToken()
-		stmt.ReturnValue = p.parseExpressionWithConditional()
+		first := p.parseExpressionWithConditional()
+		stmt.ReturnValue = p.parseTuplePackingTail(stmt.Token, first)
 	}
 
 	return stmt
@@ -553,13 +579,14 @@ func (p *Parser) parseReturnStatement() *ast.ReturnStatement {
 func (p *Parser) parseExpressionStatement() ast.Statement {
 	expr := p.parseExpressionWithConditional()
 	if p.peekTokenIs(token.ASSIGN) {
-		// It's an assignment
 		stmt := &ast.AssignStatement{Token: p.curToken, Left: expr}
 		p.nextToken() // consume =
 		p.nextToken() // move to value
-		stmt.Value = p.parseExpressionWithConditional()
+		first := p.parseExpressionWithConditional()
+		stmt.Value = p.parseTuplePackingTail(p.curToken, first)
 		return stmt
 	}
+	expr = p.parseTuplePackingTail(p.curToken, expr)
 	return &ast.ExpressionStatement{Token: p.curToken, Expression: expr}
 }
 
@@ -621,6 +648,24 @@ func (p *Parser) parseConditionalExpression(trueExpr ast.Expression) ast.Express
 // The actual conditional expression handling is done via the registered infix parser
 func (p *Parser) parseExpressionWithConditional() ast.Expression {
 	return p.parseExpression(LOWEST)
+}
+
+// parseTuplePackingTail checks for a trailing comma indicating implicit tuple packing.
+// tok is the token to use for the TupleLiteral node.
+func (p *Parser) parseTuplePackingTail(tok token.Token, first ast.Expression) ast.Expression {
+	if !p.peekTokenIs(token.COMMA) {
+		return first
+	}
+	elements := []ast.Expression{first}
+	for p.peekTokenIs(token.COMMA) {
+		p.nextToken() // consume comma — skippedNewline is now set if a newline followed
+		if p.skippedNewline || p.peekTokenIs(token.EOF) || p.peekTokenIs(token.DEDENT) {
+			break // trailing comma at end of line
+		}
+		p.nextToken()
+		elements = append(elements, p.parseExpressionWithConditional())
+	}
+	return &ast.TupleLiteral{Token: tok, Elements: elements}
 }
 
 func (p *Parser) noPrefixParseFnError(t token.TokenType) {
