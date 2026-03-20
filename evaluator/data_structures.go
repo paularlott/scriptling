@@ -83,6 +83,27 @@ func evalIndexExpression(ctx context.Context, left, index object.Object, isDotAc
 		return evalPropertyIndexExpression(left, index)
 	case left.Type() == object.SUPER_OBJ:
 		return evalSuperIndexExpression(left, index)
+	case left.Type() == object.FUNCTION_OBJ:
+		if !isDotAccess {
+			return errors.NewError("index operator not supported: %s", left.Type())
+		}
+		attr, _ := index.AsString()
+		fn := left.(*object.Function)
+		switch attr {
+		case "__name__", "name":
+			return &object.String{Value: fn.Name}
+		}
+		return errors.NewError("function has no attribute '%s'", attr)
+	case left.Type() == object.LAMBDA_OBJ:
+		if !isDotAccess {
+			return errors.NewError("index operator not supported: %s", left.Type())
+		}
+		attr, _ := index.AsString()
+		switch attr {
+		case "__name__", "name":
+			return &object.String{Value: "<lambda>"}
+		}
+		return errors.NewError("lambda has no attribute '%s'", attr)
 	default:
 		return errors.NewError("index operator not supported: %s", left.Type())
 	}

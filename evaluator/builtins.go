@@ -1041,6 +1041,14 @@ Equivalent to (a // b, a % b) for integers.`,
 			if objType == checkType {
 				return TRUE
 			}
+			// For string class names, walk the instance's inheritance chain
+			if inst, ok := args[0].(*object.Instance); ok {
+				for c := inst.Class; c != nil; c = c.BaseClass {
+					if strings.EqualFold(c.Name, typeName) {
+						return TRUE
+					}
+				}
+			}
 			return FALSE
 		},
 		HelpText: `isinstance(object, type) - Return True if object is of the given type

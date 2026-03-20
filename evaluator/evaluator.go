@@ -257,7 +257,7 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		val := object.Object(NULL)
 		if node.ReturnValue != nil {
 			val = evalWithContext(ctx, node.ReturnValue, env)
-			if object.IsError(val) {
+			if object.IsError(val) || isException(val) {
 				return val
 			}
 		}
@@ -280,16 +280,18 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		// Execute chained assignments first (a = b = 5: assign 5 to b, then to a)
 		if node.Chained != nil {
 			if err := assignToExpression(ctx, node.Chained.Left, val, env); err != nil {
+				if ae, ok := err.(*assignmentExceptionError); ok { return ae.ex }
 				return errors.NewError("%s", err.Error())
 			}
-			// Handle deeper chains recursively
 			for c := node.Chained.Chained; c != nil; c = c.Chained {
 				if err := assignToExpression(ctx, c.Left, val, env); err != nil {
+					if ae, ok := err.(*assignmentExceptionError); ok { return ae.ex }
 					return errors.NewError("%s", err.Error())
 				}
 			}
 		}
 		if err := assignToExpression(ctx, node.Left, val, env); err != nil {
+			if ae, ok := err.(*assignmentExceptionError); ok { return ae.ex }
 			return errors.NewError("%s", err.Error())
 		}
 		return NULL
@@ -1108,6 +1110,11 @@ func evalFunctionStatement(ctx context.Context, stmt *ast.FunctionStatement, env
 		if object.IsError(result) {
 			return result
 		}
+		// If the decorator returned a Function with a different name, rename it
+		// so class method lookup (which keys by Function.Name) still works.
+		if wrapped, ok := result.(*object.Function); ok && wrapped.Name != fn.Name {
+			wrapped.Name = fn.Name
+		}
 	}
 	env.Set(stmt.Name.Value, result)
 	return result
@@ -1156,6 +1163,12 @@ func evalClassStatement(ctx context.Context, stmt *ast.ClassStatement, env *obje
 				class.Methods[fnStmt.Name.Value] = m
 			case *object.ClassMethod:
 				class.Methods[fnStmt.Name.Value] = m
+			default:
+				// Decorator returned something other than a bare Function
+				// (e.g. a wrapper closure). Store under the original method name.
+				if obj != nil && !object.IsError(obj) {
+					class.Methods[fnStmt.Name.Value] = obj
+				}
 			}
 		}
 	}
@@ -2389,6 +2402,12 @@ func buildDottedName(expr *ast.IndexExpression) string {
 	return strings.Join(parts, ".")
 }
 
+// assignmentExceptionError wraps an object.Exception so it can travel through
+// the Go error interface returned by assignToExpression.
+type assignmentExceptionError struct{ ex *object.Exception }
+
+func (e *assignmentExceptionError) Error() string { return e.ex.Message }
+
 func assignToExpression(ctx context.Context, expr ast.Expression, value object.Object, env *object.Environment) error {
 	switch left := expr.(type) {
 	case *ast.Identifier:
@@ -2430,6 +2449,9 @@ func assignToExpression(ctx context.Context, expr ast.Expression, value object.O
 					if object.IsError(result) {
 						return fmt.Errorf("%s", result.(*object.Error).Message)
 					}
+					if isException(result) {
+						return &assignmentExceptionError{ex: result.(*object.Exception)}
+					}
 					return nil
 				}
 			}
@@ -2442,6 +2464,9 @@ func assignToExpression(ctx context.Context, expr ast.Expression, value object.O
 					result := applyFunctionWithContext(ctx, p.Setter, []object.Object{o, value}, nil, nil)
 					if object.IsError(result) {
 						return fmt.Errorf("%s", result.(*object.Error).Message)
+					}
+					if isException(result) {
+						return &assignmentExceptionError{ex: result.(*object.Exception)}
 					}
 					return nil
 				}
