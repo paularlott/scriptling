@@ -1,6 +1,6 @@
 import scriptling.runtime as runtime
 
-# Test Atomic sharing
+# Test Atomic sharing across goroutines
 counter = runtime.sync.Atomic("test_counter", 0)
 
 def increment():
@@ -14,10 +14,9 @@ for i in range(10):
 for p in promises:
     p.get()
 
-print("Counter value:", counter.get())
-print("Expected: 1000")
+assert counter.get() == 1000, f"Expected 1000, got {counter.get()}"
 
-# Test Queue sharing
+# Test Queue sharing between producer and consumer
 queue = runtime.sync.Queue("test_queue")
 
 def producer():
@@ -35,4 +34,5 @@ p2 = runtime.background("consumer1", "consumer")
 
 p1.get()
 result = p2.get()
-print("Queue items:", result)
+assert len(result) == 5
+assert sorted(result) == [0, 1, 2, 3, 4]

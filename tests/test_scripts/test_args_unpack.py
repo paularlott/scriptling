@@ -236,4 +236,4 @@ if failures == 0:
 else:
     print(f"FAILED: {failures} test(s)")
 
-failures == 0
+assert failures == 0

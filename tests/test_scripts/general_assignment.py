@@ -63,4 +63,4 @@ for key, val in items:
 if len(unique) != 2:
     fails = fails + 1
 
-fails == 0
+assert fails == 0

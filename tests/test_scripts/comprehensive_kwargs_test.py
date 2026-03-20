@@ -126,4 +126,4 @@ if failures == 0:
 else:
     print("FAILED: " + str(failures) + " test(s)")
 
-failures == 0
+assert failures == 0

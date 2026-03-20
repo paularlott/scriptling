@@ -1,32 +1,101 @@
 # Test exception type matching
 
-print("Test 1: Bare except catches all")
+# Bare except catches all
+caught = False
 try:
     x = 1 / 0
 except:
-    print("  ✓ Caught with bare except")
+    caught = True
+assert caught
 
-print("\nTest 2: except Exception as e catches all")
+# except Exception as e catches all
+caught = False
 try:
     y = 1 / 0
 except Exception as e:
-    print(f"  ✓ Caught with Exception: {e}")
+    caught = True
+    assert "division" in str(e) or len(str(e)) > 0
+assert caught
 
-print("\nTest 3: Specific exception type (should not catch)")
-caught = False
+# Specific exception type does NOT catch a different type
+caught_inner = False
+caught_outer = False
 try:
     try:
         z = 1 / 0
     except ValueError as e:
-        caught = True
-        print(f"  ✗ Should not catch ValueError")
+        caught_inner = True
 except:
-    print("  ✓ ValueError didn't match, outer except caught it")
+    caught_outer = True
+assert not caught_inner
+assert caught_outer
 
-print("\nTest 4: Exception variable binding with raise")
+# Exception variable binding with raise
+msg = ""
 try:
     raise Exception("custom message")
 except Exception as e:
-    print(f"  ✓ Exception variable: {e}")
+    msg = str(e)
+assert msg == "custom message"
 
-print("\nAll tests complete!")
+# Multiple except clauses — first matching one runs
+result = ""
+try:
+    raise ValueError("val error")
+except TypeError:
+    result = "type"
+except ValueError:
+    result = "value"
+except Exception:
+    result = "generic"
+assert result == "value"
+
+# try/except/else — else runs when no exception
+else_ran = False
+try:
+    x = 1 + 1
+except Exception:
+    pass
+else:
+    else_ran = True
+assert else_ran
+
+# try/except/else — else does NOT run when exception is caught
+else_ran = False
+try:
+    raise ValueError("oops")
+except ValueError:
+    pass
+else:
+    else_ran = True
+assert not else_ran
+
+# try/finally — finally always runs
+finally_ran = False
+try:
+    pass
+finally:
+    finally_ran = True
+assert finally_ran
+
+# try/except/finally — finally runs even when exception is caught
+finally_ran = False
+try:
+    raise ValueError("x")
+except ValueError:
+    pass
+finally:
+    finally_ran = True
+assert finally_ran
+
+# Re-raise with bare raise
+caught_outer = False
+try:
+    try:
+        raise ValueError("original")
+    except ValueError:
+        raise
+except ValueError as e:
+    caught_outer = True
+    assert str(e) == "original"
+assert caught_outer

@@ -29,4 +29,4 @@ while True:
 if total != 3:
     failures += 1
 
-failures == 0
+assert failures == 0

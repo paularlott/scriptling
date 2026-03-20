@@ -1776,6 +1776,15 @@ func (p *Parser) parseTryStatement() *ast.TryStatement {
 		stmt.ExceptClauses = append(stmt.ExceptClauses, exceptClause)
 	}
 
+	// Parse else clause (optional, runs only when no exception was raised)
+	if p.peekTokenIs(token.ELSE) {
+		p.nextToken()
+		if !p.expectPeek(token.COLON) {
+			return nil
+		}
+		stmt.Else = p.parseBlockStatement()
+	}
+
 	// Parse finally clause (optional)
 	if p.peekTokenIs(token.FINALLY) {
 		p.nextToken()

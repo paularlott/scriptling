@@ -34,4 +34,4 @@ part2 = text[7:12]
 if len(part2) != 5 or part2[0] != "W" or part2[4] != "d":
     failures += 1
 
-failures == 0
+assert failures == 0

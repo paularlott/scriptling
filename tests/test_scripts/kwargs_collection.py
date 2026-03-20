@@ -84,4 +84,4 @@ result = lambda_both(1, 2, 3, x=1, y=2)
 if result[0] != 3 or result[1] != 2:
     failures += 1
 
-failures == 0
+assert failures == 0

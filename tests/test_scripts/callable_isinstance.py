@@ -27,4 +27,4 @@ r16 = isinstance(42, "str") == False
 r17 = isinstance("hello", "int") == False
 r18 = isinstance([1, 2], "dict") == False
 
-r1 and r2 and r3 and r4 and r5 and r6 and r7 and r8 and r9 and r10 and r11 and r12 and r13 and r14 and r15 and r16 and r17 and r18
+assert r1 and r2 and r3 and r4 and r5 and r6 and r7 and r8 and r9 and r10 and r11 and r12 and r13 and r14 and r15 and r16 and r17 and r18

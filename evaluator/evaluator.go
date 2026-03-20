@@ -2022,6 +2022,8 @@ func evalTryStatementWithContext(ctx context.Context, ts *ast.TryStatement, env 
 	// Execute try block
 	result := evalWithContext(ctx, ts.Body, env)
 
+	exceptionCaught := false
+
 	// Check if exception or error occurred
 	if isException(result) || object.IsError(result) {
 		// SystemExit exceptions should NOT be caught by except blocks
@@ -2066,6 +2068,7 @@ func evalTryStatementWithContext(ctx context.Context, ts *ast.TryStatement, env 
 			}
 
 			// This except clause matches - execute it
+			exceptionCaught = true
 			// Store the current exception for bare raise support
 			env.Set("__current_exception__", exceptionObj)
 
@@ -2094,6 +2097,16 @@ func evalTryStatementWithContext(ctx context.Context, ts *ast.TryStatement, env 
 
 			// Exception was handled (or re-raised), don't try other except clauses
 			break
+		}
+	}
+
+	// Execute else block only if no exception was raised (and not re-raised)
+	if ts.Else != nil && !exceptionCaught && !isException(result) && !object.IsError(result) {
+		switch result.(type) {
+		case *object.ReturnValue, *object.Break, *object.Continue:
+			// don't run else on control flow
+		default:
+			result = evalWithContext(ctx, ts.Else, env)
 		}
 	}
 

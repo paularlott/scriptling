@@ -1,16 +1,16 @@
 def test_func(a, b, c=3):
     return a + b + c
 
-# Test **kwargs unpacking
+# Basic **kwargs unpacking
 kwargs = {"a": 1, "b": 2, "c": 10}
 result = test_func(**kwargs)
-print("Result:", result)  # Should be 13
+assert result == 13
 
-# Test with partial kwargs
+# Partial kwargs unpacking
 result2 = test_func(1, **{"b": 5, "c": 7})
-print("Result2:", result2)  # Should be 13
+assert result2 == 13
 
-# Test method call with **kwargs
+# Method call with **kwargs
 class TestClass:
     def method(self, x, y):
         return x * y
@@ -18,6 +18,13 @@ class TestClass:
 obj = TestClass()
 params = {"x": 3, "y": 4}
 result3 = obj.method(**params)
-print("Result3:", result3)  # Should be 12
+assert result3 == 12
 
-print("All kwargs unpacking tests passed!")
+# Mixed positional and **kwargs
+def mixed(a, b, c=0, d=0):
+    return a + b + c + d
+
+assert mixed(1, 2, **{"c": 3, "d": 4}) == 10
+
+# **kwargs overrides default
+assert mixed(1, 2, **{"c": 10}) == 13

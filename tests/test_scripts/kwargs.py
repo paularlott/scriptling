@@ -18,4 +18,4 @@ if greet("World") != "Hello, World!":
 if greet(name="Scriptling", greeting="Hi") != "Hi, Scriptling!":
     failures += 1
 
-failures == 0
+assert failures == 0

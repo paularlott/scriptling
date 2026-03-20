@@ -21,4 +21,4 @@ prefixed = prefix_print(">", 1, 2)
 if len(prefixed) != 2 or prefixed[0] != ">1":
     failures += 1
 
-failures == 0
+assert failures == 0

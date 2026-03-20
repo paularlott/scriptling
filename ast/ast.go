@@ -394,6 +394,7 @@ type TryStatement struct {
 	Token         token.Token
 	Body          *BlockStatement
 	ExceptClauses []*ExceptClause // multiple except blocks
+	Else          *BlockStatement // runs only when no exception was raised
 	Finally       *BlockStatement
 }
 

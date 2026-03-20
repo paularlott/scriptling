@@ -12,4 +12,4 @@ evens = [x for x in (x for x in numbers if x % 2 == 0)]
 if len(evens) != 2 or evens[0] != 2:
     failures += 1
 
-failures == 0
+assert failures == 0

@@ -38,7 +38,7 @@ assert say_hi("Alice") == "Hi, Alice!"
 
 # Test reduce with single element
 result = functools.reduce(add, [42])
-result == 42
+assert result == 42
 
 # Test reduce to find max
 def max_fn(a, b):
@@ -47,11 +47,11 @@ def max_fn(a, b):
     return b
 
 result = functools.reduce(max_fn, [3, 1, 4, 1, 5, 9, 2, 6])
-result == 9
+assert result == 9
 
 # Test reduce to build a string
 def concat(a, b):
     return str(a) + str(b)
 
 result = functools.reduce(concat, ["a", "b", "c"])
-result == "abc"
+assert result == "abc"

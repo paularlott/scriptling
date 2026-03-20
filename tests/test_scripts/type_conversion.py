@@ -24,4 +24,4 @@ if len([1,2,3]) != 3:
 if len("hello") != 5:
     failures += 1
 
-failures == 0
+assert failures == 0

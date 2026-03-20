@@ -1,18 +1,23 @@
 # Test import statement functionality
-print("Testing import statements...")
 
-# Test 1: Single import
-try:
-    import math
-    print("Single import works")
-except Exception as e:
-    print(f"Single import failed: {e}")
+# Single import
+import math
+assert math.sqrt(4) == 2.0
 
-# Test 2: Multiple imports on one line
-try:
-    import json, re
-    print("Multiple imports work")
-except Exception as e:
-    print(f"Multiple imports failed: {e}")
+# Multiple imports on one line
+import json, re
+assert json.dumps({"a": 1}) != ""
+assert re.match(r"\d+", "123") is not None
 
-print("Import statement tests completed!")
+# from import
+from math import pi, floor
+assert floor(3.9) == 3
+assert pi > 3.14 and pi < 3.15
+
+# import as
+import math as m
+assert m.pow(2, 3) == 8.0
+
+# from import as
+from math import sqrt as sq
+assert sq(9) == 3.0

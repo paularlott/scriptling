@@ -22,4 +22,4 @@ is_even = lambda n: n % 2 == 0
 if not is_even(4) or is_even(7):
     failures += 1
 
-failures == 0
+assert failures == 0

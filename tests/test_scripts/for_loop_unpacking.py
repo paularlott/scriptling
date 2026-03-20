@@ -59,4 +59,4 @@ for i in range(2):
 if result != [3, 7, 13, 17]:
     fails = fails + 1
 
-fails == 0
+assert fails == 0
