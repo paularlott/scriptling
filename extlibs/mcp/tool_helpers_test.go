@@ -701,3 +701,131 @@ return_error("Something went wrong")
 		t.Errorf("Expected error message to contain 'Something went wrong', got %v", data["error"])
 	}
 }
+
+// TestRunToolScriptDirectReturn tests that scripts returning values directly
+// (without using return_* functions) have those values captured
+func TestRunToolScriptDirectReturn(t *testing.T) {
+	tests := []struct {
+		name     string
+		code     string
+		expected string
+	}{
+		{
+			name:     "string return",
+			code:     `def f(): return "hello world"; f()`,
+			expected: "hello world",
+		},
+		{
+			name:     "integer return",
+			code:     `def f(): return 42; f()`,
+			expected: "42",
+		},
+		{
+			name:     "float return",
+			code:     `def f(): return 3.14; f()`,
+			expected: "3.14",
+		},
+		{
+			name:     "boolean true return",
+			code:     `def f(): return True; f()`,
+			expected: "true",
+		},
+		{
+			name:     "boolean false return",
+			code:     `def f(): return False; f()`,
+			expected: "false",
+		},
+		{
+			name:     "dict return as JSON",
+			code:     `def f(): return {"a": 1, "b": 2}; f()`,
+			expected: `{"a":1,"b":2}`,
+		},
+		{
+			name:     "list return as JSON",
+			code:     `def f(): return [1, 2, 3]; f()`,
+			expected: "[1,2,3]",
+		},
+		{
+			name:     "nested dict return",
+			code:     `def f(): return {"data": {"name": "test", "count": 42}}; f()`,
+			expected: `{"data":{"count":42,"name":"test"}}`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			sl := scriptling.New()
+			mcp.RegisterToolHelpers(sl)
+
+			response, exitCode, err := mcp.RunToolScript(context.Background(), sl, test.code, nil)
+
+			if err != nil {
+				t.Fatalf("RunToolScript failed: %v", err)
+			}
+
+			if exitCode != 0 {
+				t.Errorf("Expected exit code 0, got %d", exitCode)
+			}
+
+			if response != test.expected {
+				t.Errorf("Expected response=%q, got %q", test.expected, response)
+			}
+		})
+	}
+}
+
+// TestRunToolScriptNullReturn tests that None returns are ignored
+func TestRunToolScriptNullReturn(t *testing.T) {
+	sl := scriptling.New()
+	mcp.RegisterToolHelpers(sl)
+
+	// Script that returns None explicitly
+	code := `def f(): return None; f()`
+
+	response, exitCode, err := mcp.RunToolScript(context.Background(), sl, code, nil)
+
+	if err != nil {
+		t.Fatalf("RunToolScript failed: %v", err)
+	}
+
+	if exitCode != 0 {
+		t.Errorf("Expected exit code 0, got %d", exitCode)
+	}
+
+	// None should result in empty response
+	if response != "" {
+		t.Errorf("Expected empty response for None, got %q", response)
+	}
+}
+
+// TestRunToolScriptMixedReturn tests that explicit return_* takes precedence over direct return
+func TestRunToolScriptMixedReturn(t *testing.T) {
+	sl := scriptling.New()
+	mcp.RegisterToolHelpers(sl)
+
+	// Script that uses return_string should take precedence
+	code := `
+import scriptling.mcp.tool as tool
+
+def f(): return "direct return"
+
+# The return_string should win
+tool.return_string("explicit return")
+f()
+`
+
+	response, exitCode, err := mcp.RunToolScript(context.Background(), sl, code, nil)
+
+	if err != nil {
+		t.Fatalf("RunToolScript failed: %v", err)
+	}
+
+	if exitCode != 0 {
+		t.Errorf("Expected exit code 0, got %d", exitCode)
+	}
+
+	// return_string should take precedence
+	if response != "explicit return" {
+		t.Errorf("Expected 'explicit return', got %q", response)
+	}
+}

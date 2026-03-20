@@ -649,7 +649,7 @@ func RunToolScript(ctx context.Context, sl *scriptling.Scriptling, script string
 	// Run the script
 	result, evalErr := sl.EvalWithContext(ctx, script)
 
-	// Get the response
+	// Get the explicit response (set by return_string/return_object/return_toon)
 	responseObj, getErr := sl.GetVarAsObject(MCPResponseVarName)
 	if getErr == nil {
 		if strObj, ok := responseObj.(*object.String); ok {
@@ -657,7 +657,7 @@ func RunToolScript(ctx context.Context, sl *scriptling.Scriptling, script string
 		}
 	}
 
-	// Check for SystemExit
+	// Check for SystemExit (from return_* functions)
 	if exc, ok := result.(*object.Exception); ok && exc.IsSystemExit() {
 		exitCode = exc.GetExitCode()
 		if exitCode != 0 && evalErr != nil {
@@ -669,6 +669,25 @@ func RunToolScript(ctx context.Context, sl *scriptling.Scriptling, script string
 	// Check for other errors
 	if evalErr != nil {
 		return response, 1, evalErr
+	}
+
+	// If no explicit response via return_*, check the script's return value
+	if response == "" && result != nil {
+		switch result.(type) {
+		case *object.String, *object.Integer, *object.Float, *object.Boolean:
+			// For simple types, use CoerceString to get the string representation
+			if strVal, err := result.CoerceString(); err == nil {
+				response = strVal
+			}
+		case *object.Null:
+			// NULL means no meaningful return value, leave response empty
+		default:
+			// For complex types (list, dict, etc.), convert to JSON
+			goObj := conversion.ToGo(result)
+			if jsonBytes, jsonErr := json.Marshal(goObj); jsonErr == nil {
+				response = string(jsonBytes)
+			}
+		}
 	}
 
 	// Success

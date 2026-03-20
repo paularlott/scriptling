@@ -1816,8 +1816,23 @@ func evalFromImportStatement(fis *ast.FromImportStatement, env *object.Environme
 	// This preserves modules that were explicitly imported (e.g. `import json` before `from json import dumps`).
 	// For dotted imports (e.g. from a.b.c import X), only the full dotted name is deleted.
 	// The root module (parts[0]) is NOT deleted as it may be needed by other imports.
+	// IMPORTANT: Don't delete if one of the imported names (or aliases) matches the module name,
+	// as that would delete the just-imported value (e.g. `from datetime import datetime`).
 	if !wasPresent {
-		env.Delete(moduleName)
+		shouldDelete := true
+		for i, name := range fis.Names {
+			bindName := name.Value
+			if fis.Aliases[i] != nil {
+				bindName = fis.Aliases[i].Value
+			}
+			if bindName == moduleName {
+				shouldDelete = false
+				break
+			}
+		}
+		if shouldDelete {
+			env.Delete(moduleName)
+		}
 	}
 
 	return NULL
