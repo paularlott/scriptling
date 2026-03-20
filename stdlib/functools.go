@@ -104,7 +104,9 @@ Example:
 
 			return &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					allArgs := append(partialArgs, args...)
+					allArgs := make([]object.Object, len(partialArgs)+len(args))
+					copy(allArgs, partialArgs)
+					copy(allArgs[len(partialArgs):], args)
 					allKwargs := make(map[string]object.Object)
 					for k, v := range partialKwargs {
 						allKwargs[k] = v

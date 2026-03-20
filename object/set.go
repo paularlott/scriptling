@@ -28,8 +28,8 @@ func (s *Set) Inspect() string {
 }
 
 func (s *Set) AsString() (string, Object) { return s.Inspect(), nil }
-func (s *Set) AsInt() (int64, Object)     { return 0, &Error{Message: ErrMustBeInteger} }
-func (s *Set) AsFloat() (float64, Object) { return 0, &Error{Message: ErrMustBeNumber} }
+func (s *Set) AsInt() (int64, Object)     { return 0, errMustBeInteger }
+func (s *Set) AsFloat() (float64, Object) { return 0, errMustBeNumber }
 func (s *Set) AsBool() (bool, Object)     { return len(s.Elements) > 0, nil }
 func (s *Set) AsList() ([]Object, Object) {
 	elements := make([]Object, 0, len(s.Elements))
@@ -38,11 +38,11 @@ func (s *Set) AsList() ([]Object, Object) {
 	}
 	return elements, nil
 }
-func (s *Set) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
+func (s *Set) AsDict() (map[string]Object, Object) { return nil, errMustBeDict }
 
 func (s *Set) CoerceString() (string, Object) { return s.Inspect(), nil }
-func (s *Set) CoerceInt() (int64, Object)     { return 0, &Error{Message: ErrMustBeInteger} }
-func (s *Set) CoerceFloat() (float64, Object) { return 0, &Error{Message: ErrMustBeNumber} }
+func (s *Set) CoerceInt() (int64, Object)     { return 0, errMustBeInteger }
+func (s *Set) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
 
 // NewSet creates a new empty Set
 func NewSet() *Set {

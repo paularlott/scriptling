@@ -72,16 +72,16 @@ func IterableToSlice(obj Object) ([]Object, bool) {
 func (it *Iterator) Type() ObjectType { return ITERATOR_OBJ }
 func (it *Iterator) Inspect() string  { return "<iterator>" }
 
-func (it *Iterator) AsString() (string, Object)          { return "", &Error{Message: ErrMustBeString} }
-func (it *Iterator) AsInt() (int64, Object)              { return 0, &Error{Message: ErrMustBeInteger} }
-func (it *Iterator) AsFloat() (float64, Object)          { return 0, &Error{Message: ErrMustBeNumber} }
+func (it *Iterator) AsString() (string, Object)          { return "", errMustBeString }
+func (it *Iterator) AsInt() (int64, Object)              { return 0, errMustBeInteger }
+func (it *Iterator) AsFloat() (float64, Object)          { return 0, errMustBeNumber }
 func (it *Iterator) AsBool() (bool, Object)              { return !it.consumed, nil }
-func (it *Iterator) AsList() ([]Object, Object)          { return nil, &Error{Message: ErrMustBeList} }
-func (it *Iterator) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
+func (it *Iterator) AsList() ([]Object, Object)          { return nil, errMustBeList }
+func (it *Iterator) AsDict() (map[string]Object, Object) { return nil, errMustBeDict }
 
 func (it *Iterator) CoerceString() (string, Object) { return it.Inspect(), nil }
-func (it *Iterator) CoerceInt() (int64, Object)     { return 0, &Error{Message: ErrMustBeInteger} }
-func (it *Iterator) CoerceFloat() (float64, Object) { return 0, &Error{Message: ErrMustBeNumber} }
+func (it *Iterator) CoerceInt() (int64, Object)     { return 0, errMustBeInteger }
+func (it *Iterator) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
 
 // Next returns the next value from the iterator
 func (it *Iterator) Next() (Object, bool) {

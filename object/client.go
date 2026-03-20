@@ -43,23 +43,23 @@ func (w *ClientWrapper) Inspect() string {
 func (w *ClientWrapper) AsString() (string, Object) { return w.Inspect(), nil }
 
 // AsInt returns an error - clients cannot be converted to int
-func (w *ClientWrapper) AsInt() (int64, Object) { return 0, &Error{Message: ErrMustBeInteger} }
+func (w *ClientWrapper) AsInt() (int64, Object) { return 0, errMustBeInteger }
 
 // AsFloat returns an error - clients cannot be converted to float
-func (w *ClientWrapper) AsFloat() (float64, Object) { return 0, &Error{Message: ErrMustBeNumber} }
+func (w *ClientWrapper) AsFloat() (float64, Object) { return 0, errMustBeNumber }
 
 // AsBool returns true - clients are truthy
 func (w *ClientWrapper) AsBool() (bool, Object) { return true, nil }
 
 // AsList returns an error - clients cannot be converted to list
-func (w *ClientWrapper) AsList() ([]Object, Object) { return nil, &Error{Message: ErrMustBeList} }
+func (w *ClientWrapper) AsList() ([]Object, Object) { return nil, errMustBeList }
 
 // AsDict returns an error - clients cannot be converted to dict
-func (w *ClientWrapper) AsDict() (map[string]Object, Object) { return nil, &Error{Message: ErrMustBeDict} }
+func (w *ClientWrapper) AsDict() (map[string]Object, Object) { return nil, errMustBeDict }
 
 func (w *ClientWrapper) CoerceString() (string, Object) { return w.Inspect(), nil }
-func (w *ClientWrapper) CoerceInt() (int64, Object)     { return 0, &Error{Message: ErrMustBeInteger} }
-func (w *ClientWrapper) CoerceFloat() (float64, Object) { return 0, &Error{Message: ErrMustBeNumber} }
+func (w *ClientWrapper) CoerceInt() (int64, Object)     { return 0, errMustBeInteger }
+func (w *ClientWrapper) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
 
 // AsError returns the error message from an Object, or empty string if not an error.
 // This is a shared helper for extracting error messages from Objects.
