@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -39,8 +40,10 @@ type Manifest struct {
 
 // Package represents a loaded package.
 // All file contents are decompressed into memory at Open time.
+// docs/ entries are intentionally excluded; use ZipDocReader for those.
 type Package struct {
 	Manifest Manifest
+	hasDocs  bool
 	files    map[string][]byte
 }
 
@@ -77,6 +80,11 @@ func Open(r io.ReaderAt, size int64) (*Package, error) {
 	}
 	for _, f := range zr.File {
 		if f.FileInfo().IsDir() {
+			continue
+		}
+			// Track docs presence but skip loading — loaded on demand by the docs viewer.
+		if strings.HasPrefix(f.Name, DocsDir+"/") {
+			p.hasDocs = true
 			continue
 		}
 		rc, err := f.Open()
@@ -143,11 +151,110 @@ func (p *Package) List(dir string) []string {
 }
 
 // HasDocs returns true if the package contains a docs folder.
+// Since docs/ is not loaded into p.files, we track this separately.
 func (p *Package) HasDocs() bool {
-	for name := range p.files {
-		if strings.HasPrefix(name, DocsDir+"/") {
-			return true
-		}
+	return p.hasDocs
+}
+
+// DocReader provides access to docs/ content from a package source.
+type DocReader interface {
+	// Name returns a display name for this source.
+	Name() string
+	// ListDocs returns all doc file paths relative to docs/ (e.g. "guide.md").
+	ListDocs() []string
+	// ReadDoc reads a doc file by its relative path.
+	ReadDoc(name string) ([]byte, error)
+}
+
+// ZipDocReader reads docs from a zip package file.
+type ZipDocReader struct {
+	name string
+	files map[string][]byte // docs/ relative path -> content
+}
+
+// NewZipDocReader opens a zip and extracts only the docs/ entries.
+func NewZipDocReader(src string, insecure bool) (*ZipDocReader, error) {
+	data, err := Fetch(src, insecure)
+	if err != nil {
+		return nil, err
 	}
-	return false
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return nil, ErrInvalidPackage
+	}
+	r := &ZipDocReader{
+		name:  filepath.Base(src),
+		files: make(map[string][]byte),
+	}
+	prefix := DocsDir + "/"
+	for _, f := range zr.File {
+		if f.FileInfo().IsDir() || !strings.HasPrefix(f.Name, prefix) {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			return nil, err
+		}
+		content, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			return nil, err
+		}
+		r.files[f.Name[len(prefix):]] = content
+	}
+	return r, nil
+}
+
+func (r *ZipDocReader) Name() string { return r.name }
+
+func (r *ZipDocReader) ListDocs() []string {
+	out := make([]string, 0, len(r.files))
+	for k := range r.files {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (r *ZipDocReader) ReadDoc(name string) ([]byte, error) {
+	if data, ok := r.files[name]; ok {
+		return data, nil
+	}
+	return nil, ErrModuleNotFound
+}
+
+// DirDocReader reads docs from an unpacked package directory.
+type DirDocReader struct {
+	root string
+}
+
+// NewDirDocReader creates a DocReader for an unpacked package directory.
+func NewDirDocReader(dir string) *DirDocReader {
+	return &DirDocReader{root: dir}
+}
+
+func (r *DirDocReader) Name() string { return filepath.Base(r.root) }
+
+func (r *DirDocReader) ListDocs() []string {
+	docsDir := filepath.Join(r.root, DocsDir)
+	var out []string
+	_ = filepath.WalkDir(docsDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		rel, _ := filepath.Rel(docsDir, path)
+		out = append(out, filepath.ToSlash(rel))
+		return nil
+	})
+	sort.Strings(out)
+	return out
+}
+
+func (r *DirDocReader) ReadDoc(name string) ([]byte, error) {
+	path := filepath.Join(r.root, DocsDir, filepath.FromSlash(name))
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, ErrModuleNotFound
+	}
+	return data, nil
 }

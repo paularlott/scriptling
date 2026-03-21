@@ -42,7 +42,6 @@ func main() {
 			helpCmd(),
 			packCmd(),
 			unpackCmd(),
-			manifestCmd(),
 			cacheCmd(),
 		},
 		Flags: []cli.Flag{
@@ -606,7 +605,11 @@ func helpCmd() *cli.Command {
 func packCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "pack",
-		Usage: "Pack a directory into a package",
+		Usage: "Pack a directory into a package, or manage packages",
+		Commands: []*cli.Command{
+			manifestCmd(),
+			docsCmd(),
+		},
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:     "output",

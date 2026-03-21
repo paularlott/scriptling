@@ -84,18 +84,6 @@ func (l *Loader) Description() string {
 	return "pack loader"
 }
 
-// GetDoc looks up a doc file by relative path (e.g. "mymod.md") from the docs/
-// directory of loaded packages, searching in reverse priority order.
-func (l *Loader) GetDoc(name string) ([]byte, bool) {
-	path := DocsDir + "/" + name
-	for i := len(l.packages) - 1; i >= 0; i-- {
-		if data, err := l.packages[i].ReadFile(path); err == nil {
-			return data, true
-		}
-	}
-	return nil, false
-}
-
 // GetMainEntry returns the main entry point from the last package that defines one.
 // Returns module, function, and whether one was found.
 func (l *Loader) GetMainEntry() (module, function string, found bool) {

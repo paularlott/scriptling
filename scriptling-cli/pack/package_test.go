@@ -172,12 +172,16 @@ def run():
 		"lib/app.py",
 		"lib/sub/__init__.py",
 		"lib/sub/mod.py",
-		"docs/guide.md",
 	}
 	for _, f := range expectedFiles {
 		if _, err := pkg.ReadFile(f); err != nil {
 			t.Errorf("expected file %q in package: %v", f, err)
 		}
+	}
+
+	// docs/ is not loaded into memory — verify via HasDocs and ZipDocReader
+	if _, err := pkg.ReadFile("docs/guide.md"); err == nil {
+		t.Error("docs/guide.md should not be accessible via ReadFile (excluded from memory)")
 	}
 
 	// Verify excluded file is not present
