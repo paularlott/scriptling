@@ -558,12 +558,11 @@ func helpCmd() *cli.Command {
 		Arguments: []cli.Argument{
 			&cli.StringArg{
 				Name:     "topic",
-				Usage:    "Module or module.function to show help for (e.g. mymod or mymod.func)",
-				Required: true,
+				Usage:    "Module or module.function to show help for (e.g. json or json.loads)",
+				Required: false,
 			},
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
-			topic := cmd.GetStringArg("topic")
 			allowedPaths := parseAllowedPaths(cmd.GetString("allowed-paths"))
 			cwd, _ := os.Getwd()
 			libDirs := buildLibDirs(cwd, cmd.GetStringSlice("libpath"))
@@ -585,21 +584,65 @@ func helpCmd() *cli.Command {
 				p.SetLibraryLoader(libloader.NewChain(p.GetLibraryLoader(), l))
 			}
 
-			// Try importing the full topic first, then progressively shorter prefixes.
-			for t := topic; t != ""; {
-				if err := p.Import(t); err == nil {
-					break
-				}
-				if i := strings.LastIndex(t, "."); i >= 0 {
-					t = t[:i]
-				} else {
-					break
-				}
+			topic := cmd.GetStringArg("topic")
+			if topic != "" {
+				return lookupHelp(p, topic)
 			}
-			_, err := p.Eval(fmt.Sprintf("help(%q)", topic))
-			return err
+			return runHelpTUI(ctx, p)
 		},
 	}
+}
+
+// lookupHelp imports the relevant module and prints help for topic.
+func lookupHelp(p *scriptling.Scriptling, topic string) error {
+	for t := topic; t != ""; {
+		if err := p.Import(t); err == nil {
+			break
+		}
+		if i := strings.LastIndex(t, "."); i >= 0 {
+			t = t[:i]
+		} else {
+			break
+		}
+	}
+	_, err := p.Eval(fmt.Sprintf("help(%q)", topic))
+	return err
+}
+
+func runHelpTUI(ctx context.Context, p *scriptling.Scriptling) error {
+	var t *tui.TUI
+
+	t = tui.New(tui.Config{
+		HideHeaders: true,
+		StatusLeft:  "help",
+		StatusRight: "Ctrl+C exit",
+		OnSubmit: func(topic string) {
+			topic = strings.TrimSpace(topic)
+			if topic == "" {
+				return
+			}
+			t.AddMessage(tui.RoleUser, topic)
+			var buf strings.Builder
+			p.SetOutputWriter(&helpWriter{b: &buf})
+			_ = lookupHelp(p, topic)
+			p.SetOutputWriter(nil)
+			output := strings.TrimSpace(buf.String())
+			if output == "" {
+				output = "No help found for " + topic
+			}
+			t.AddMessage(tui.RoleAssistant, output)
+		},
+	})
+
+	t.AddMessage(tui.RoleSystem, "Enter a module or function name to look up help, e.g. json or json.loads")
+	return t.Run(ctx)
+}
+
+type helpWriter struct{ b *strings.Builder }
+
+func (w *helpWriter) Write(p []byte) (int, error) {
+	w.b.Write(p)
+	return len(p), nil
 }
 
 func packCmd() *cli.Command {
