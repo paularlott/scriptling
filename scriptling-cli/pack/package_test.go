@@ -672,3 +672,100 @@ func TestHashVerification(t *testing.T) {
 		}
 	})
 }
+
+func TestHashBytes(t *testing.T) {
+	// SHA256 of empty input is known
+	empty := HashBytes([]byte{})
+	if empty != "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" {
+		t.Errorf("HashBytes(empty) = %q, want known sha256", empty)
+	}
+
+	// Same input produces same hash
+	data := []byte("hello world")
+	h1 := HashBytes(data)
+	h2 := HashBytes(data)
+	if h1 != h2 {
+		t.Errorf("HashBytes not deterministic: %q != %q", h1, h2)
+	}
+
+	// Different input produces different hash
+	h3 := HashBytes([]byte("hello world!"))
+	if h1 == h3 {
+		t.Error("HashBytes: different inputs produced same hash")
+	}
+}
+
+func TestPackHash(t *testing.T) {
+	// Pack a directory and verify the returned hash matches HashBytes of the file
+	srcDir := t.TempDir()
+	os.WriteFile(filepath.Join(srcDir, "manifest.toml"), []byte("name = \"hashpack\"\nversion = \"1.0.0\"\n"), 0644)
+	os.MkdirAll(filepath.Join(srcDir, "lib"), 0755)
+	os.WriteFile(filepath.Join(srcDir, "lib", "mod.py"), []byte("x = 42\n"), 0644)
+
+	pkgFile := filepath.Join(t.TempDir(), "hashpack.zip")
+	hash, err := Pack(srcDir, pkgFile, false)
+	if err != nil {
+		t.Fatalf("Pack failed: %v", err)
+	}
+
+	// Hash returned by Pack must match HashBytes of the written file
+	data, err := os.ReadFile(pkgFile)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+	expected := HashBytes(data)
+	if hash != expected {
+		t.Errorf("Pack hash = %q, HashBytes = %q", hash, expected)
+	}
+
+	// Hash must be a 64-char hex string (sha256)
+	if len(hash) != 64 {
+		t.Errorf("expected 64-char hash, got %d chars: %q", len(hash), hash)
+	}
+}
+
+func TestUnpackRemove(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Build a package with lib and docs
+	srcDir := filepath.Join(tmpDir, "src")
+	os.MkdirAll(filepath.Join(srcDir, "lib"), 0755)
+	os.MkdirAll(filepath.Join(srcDir, "docs"), 0755)
+	os.WriteFile(filepath.Join(srcDir, "manifest.toml"), []byte("name = \"rm\"\nversion = \"1.0.0\"\n"), 0644)
+	os.WriteFile(filepath.Join(srcDir, "lib", "mod.py"), []byte("x = 1\n"), 0644)
+	os.WriteFile(filepath.Join(srcDir, "docs", "mod.md"), []byte("# mod\n"), 0644)
+
+	pkgFile := filepath.Join(tmpDir, "rm.zip")
+	if _, err := Pack(srcDir, pkgFile, false); err != nil {
+		t.Fatalf("Pack failed: %v", err)
+	}
+
+	destDir := filepath.Join(tmpDir, "dest")
+
+	// Unpack first
+	if err := Unpack(pkgFile, UnpackOptions{DestDir: destDir}); err != nil {
+		t.Fatalf("Unpack failed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(destDir, "lib", "mod.py")); err != nil {
+		t.Fatal("lib/mod.py should exist after unpack")
+	}
+	if _, err := os.Stat(filepath.Join(destDir, "docs", "mod.md")); err != nil {
+		t.Fatal("docs/mod.md should exist after unpack")
+	}
+
+	// Remove
+	if err := UnpackRemove(pkgFile, false, destDir); err != nil {
+		t.Fatalf("UnpackRemove failed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(destDir, "lib", "mod.py")); !os.IsNotExist(err) {
+		t.Error("lib/mod.py should be removed")
+	}
+	if _, err := os.Stat(filepath.Join(destDir, "docs", "mod.md")); !os.IsNotExist(err) {
+		t.Error("docs/mod.md should be removed")
+	}
+
+	// Remove on already-removed files should not error
+	if err := UnpackRemove(pkgFile, false, destDir); err != nil {
+		t.Errorf("UnpackRemove on missing files should not error: %v", err)
+	}
+}

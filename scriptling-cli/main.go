@@ -612,25 +612,42 @@ func packCmd() *cli.Command {
 				Name:     "output",
 				Usage:    "Output package path",
 				Aliases:  []string{"o"},
-				Required: true,
+				Required: false,
 			},
 			&cli.BoolFlag{
 				Name:    "force",
 				Usage:   "Overwrite existing package",
 				Aliases: []string{"f"},
 			},
+			&cli.BoolFlag{
+				Name:    "hash",
+				Usage:   "Print the sha256 hash of an existing package file",
+				Aliases: []string{"H"},
+			},
 		},
 		Arguments: []cli.Argument{
 			&cli.StringArg{
 				Name:     "dir",
-				Usage:    "Source directory to pack",
+				Usage:    "Source directory to pack, or package file when using --hash",
 				Required: true,
 			},
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
+			if cmd.GetBool("hash") {
+				data, err := os.ReadFile(cmd.GetStringArg("dir"))
+				if err != nil {
+					return fmt.Errorf("failed to read file: %w", err)
+				}
+				fmt.Printf("sha256:%s\n", pack.HashBytes(data))
+				return nil
+			}
+			output := cmd.GetString("output")
+			if output == "" {
+				return fmt.Errorf("--output is required when packing")
+			}
 			hash, err := pack.Pack(
 				cmd.GetStringArg("dir"),
-				cmd.GetString("output"),
+				output,
 				cmd.GetBool("force"),
 			)
 			if err != nil {
