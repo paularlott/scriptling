@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -19,7 +18,6 @@ import (
 	"github.com/paularlott/scriptling/build"
 	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/libloader"
-	"github.com/paularlott/scriptling/lint"
 	"github.com/paularlott/scriptling/object"
 
 	mcpcli "github.com/paularlott/scriptling/scriptling-cli/mcp"
@@ -30,7 +28,6 @@ import (
 var globalLogger logger.Logger
 
 func main() {
-	// Load .env from the current directory if it exists
 	env.Load()
 
 	cmd := &cli.Command{
@@ -91,7 +88,6 @@ func main() {
 				Global:       true,
 				EnvVars:      []string{"SCRIPTLING_LOG_FORMAT"},
 			},
-			// Server flags
 			&cli.StringFlag{
 				Name:         "server",
 				Usage:        "Enable HTTP server mode with address (host:port)",
@@ -163,11 +159,9 @@ func main() {
 			},
 		},
 		PreRun: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
-			logLevel := cmd.GetString("log-level")
-			logFormat := cmd.GetString("log-format")
 			globalLogger = logslog.New(logslog.Config{
-				Level:  logLevel,
-				Format: logFormat,
+				Level:  cmd.GetString("log-level"),
+				Format: cmd.GetString("log-format"),
 				Writer: os.Stdout,
 			})
 			server.Log = globalLogger
@@ -176,32 +170,24 @@ func main() {
 		Run: runScriptling,
 	}
 
-	err := cmd.Execute(context.Background())
-	if err != nil {
+	if err := cmd.Execute(context.Background()); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
 func runScriptling(ctx context.Context, cmd *cli.Command) error {
-	// Check if server mode is enabled
-	serverAddr := cmd.GetString("server")
-	if serverAddr != "" {
+	if serverAddr := cmd.GetString("server"); serverAddr != "" {
 		return runServer(ctx, cmd, serverAddr)
 	}
 
-	// Check if lint mode is enabled
 	if cmd.GetBool("lint") {
 		return runLint(cmd)
 	}
 
-	// Parse allowed paths
 	allowedPaths := parseAllowedPaths(cmd.GetString("allowed-paths"))
-
-	// Create Scriptling interpreter
 	p := scriptling.New()
 
-	// Determine the implicit base dir: script dir, or cwd for interactive/stdin
 	file := cmd.GetStringArg("file")
 	interactive := cmd.GetBool("interactive")
 
@@ -212,14 +198,10 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 		baseDir, _ = os.Getwd()
 	}
 
-	// Build lib dirs: implicit base dir first, then any --libpath entries
 	libDirs := buildLibDirs(baseDir, cmd.GetStringSlice("libpath"))
-
-	// Set up all libraries and factories
 	mcpcli.SetupFactories(libDirs, allowedPaths, globalLogger)
 	mcpcli.SetupScriptling(p, libDirs, true, allowedPaths, globalLogger)
 
-	// Load packages and wire up loader
 	packages := cmd.GetStringSlice("package")
 	insecure := cmd.GetBool("insecure")
 	var packLoader *pack.Loader
@@ -235,36 +217,27 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 		p.SetLibraryLoader(libloader.NewChain(p.GetLibraryLoader(), packLoader))
 	}
 
-	// Set up sys.argv with all arguments
 	argv := []string{file}
 	if file != "" {
 		argv = append(argv, cmd.GetArgs()...)
 	}
 
-	// Initialize KV store (memory-only if no path specified)
 	kvStoragePath := cmd.GetString("kv-storage")
 	if err := extlibs.InitKVStore(kvStoragePath); err != nil {
 		return fmt.Errorf("failed to initialize KV store: %w", err)
 	}
 	defer extlibs.CloseKVStore()
 
-	// Pass os.Stdin when running a file so scripts can read piped data.
-	// When running from stdin, stdin is consumed as source so pass nil.
 	var stdinReader io.Reader
 	if file != "" {
 		stdinReader = os.Stdin
 	}
 	extlibs.RegisterSysLibrary(p, argv, stdinReader)
-
-	// Release background tasks for script mode
 	extlibs.ReleaseBackgroundTasks()
 
-	// Inline code
 	if code := cmd.GetString("code"); code != "" {
 		return evalAndCheckExit(p, code)
 	}
-
-	// Determine execution mode
 	if interactive {
 		return runInteractive(p)
 	}
@@ -274,7 +247,6 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	if !isStdinEmpty() {
 		return runStdin(p)
 	}
-	// No script: run main entry from last package that defines one
 	if packLoader != nil {
 		if mod, fn, ok := packLoader.GetMainEntry(); ok {
 			return evalAndCheckExit(p, fmt.Sprintf("import %s\n%s.%s()", mod, mod, fn))
@@ -308,44 +280,6 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 		TLSKey:        cmd.GetString("tls-key"),
 		TLSGenerate:   cmd.GetBool("tls-generate"),
 	})
-}
-
-// buildLibDirs constructs the ordered list of library search directories.
-// baseDir (script dir or cwd) is always first; extra dirs are appended.
-// Empty strings are skipped.
-func buildLibDirs(baseDir string, extra []string) []string {
-	var dirs []string
-	if baseDir != "" {
-		dirs = append(dirs, baseDir)
-	}
-	for _, d := range extra {
-		if d != "" {
-			dirs = append(dirs, d)
-		}
-	}
-	return dirs
-}
-
-// parseAllowedPaths parses a comma-separated list of paths into a slice.
-// Returns nil for no restrictions, empty slice for deny all (when paths is "-").
-func parseAllowedPaths(paths string) []string {
-	if paths == "" {
-		return nil
-	}
-	if paths == "-" {
-		return []string{} // Empty slice means deny all
-	}
-	result := []string{}
-	for _, p := range strings.Split(paths, ",") {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			result = append(result, p)
-		}
-	}
-	if len(result) == 0 {
-		return nil
-	}
-	return result
 }
 
 func runFile(p *scriptling.Scriptling, filename string) error {
@@ -431,14 +365,10 @@ func runInteractive(p *scriptling.Scriptling) error {
 	})
 
 	t.AddMessage(tui.RoleSystem, tui.Styled(t.Theme().Text, "scriptling")+"\n"+tui.Styled(t.Theme().Primary, "v"+build.Version))
-
 	return t.Run(context.Background())
 }
 
-// streamWriter forwards script output chunks to the TUI streaming message.
-type streamWriter struct {
-	t *tui.TUI
-}
+type streamWriter struct{ t *tui.TUI }
 
 func (w *streamWriter) Write(p []byte) (int, error) {
 	w.t.StreamChunk(string(p))
@@ -461,400 +391,42 @@ func isStdinEmpty() bool {
 	return (stat.Mode() & os.ModeCharDevice) != 0
 }
 
-func runLint(cmd *cli.Command) error {
-	format := cmd.GetString("lint-format")
-	if format != "text" && format != "json" {
-		return fmt.Errorf("invalid value for --lint-format: %s (must be 'text' or 'json')", format)
+// buildLibDirs constructs the ordered list of library search directories.
+func buildLibDirs(baseDir string, extra []string) []string {
+	var dirs []string
+	if baseDir != "" {
+		dirs = append(dirs, baseDir)
 	}
-
-	file := cmd.GetStringArg("file")
-
-	// Lint from file
-	if file != "" {
-		result, err := lint.LintFile(file)
-		if err != nil {
-			return err
-		}
-		return outputLintResult(result, format)
-	}
-
-	// Lint from stdin
-	if !isStdinEmpty() {
-		content, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			return fmt.Errorf("failed to read from stdin: %w", err)
-		}
-		result := lint.Lint(string(content), &lint.Options{Filename: "stdin"})
-		return outputLintResult(result, format)
-	}
-
-	cmd.ShowHelp()
-	return nil
-}
-
-func outputLintResult(result *lint.Result, format string) error {
-	if format == "json" {
-		output, err := formatLintJSON(result)
-		if err != nil {
-			return fmt.Errorf("failed to format JSON output: %w", err)
-		}
-		fmt.Println(output)
-	} else {
-		if result.HasIssues() {
-			fmt.Println(result.String())
-		} else {
-			fmt.Println("No issues found")
+	for _, d := range extra {
+		if d != "" {
+			dirs = append(dirs, d)
 		}
 	}
-
-	// Exit with error code if there are errors
-	if result.HasErrors {
-		os.Exit(1)
-	}
-	return nil
+	return dirs
 }
 
-func formatLintJSON(result *lint.Result) (string, error) {
-	// Simple JSON formatting without external dependencies
-	var sb strings.Builder
-	sb.WriteString("{\n")
-	fmt.Fprintf(&sb, "  \"files_checked\": %d,\n", result.FilesChecked)
-	fmt.Fprintf(&sb, "  \"has_errors\": %t,\n", result.HasErrors)
-	sb.WriteString("  \"errors\": [")
-
-	if len(result.Errors) > 0 {
-		sb.WriteString("\n")
-		for i, err := range result.Errors {
-			sb.WriteString("    {\n")
-			if err.File != "" {
-				fmt.Fprintf(&sb, "      \"file\": %q,\n", err.File)
-			}
-			fmt.Fprintf(&sb, "      \"line\": %d,\n", err.Line)
-			if err.Column > 0 {
-				fmt.Fprintf(&sb, "      \"column\": %d,\n", err.Column)
-			}
-			fmt.Fprintf(&sb, "      \"message\": %q,\n", err.Message)
-			fmt.Fprintf(&sb, "      \"severity\": %q", err.Severity)
-			if err.Code != "" {
-				fmt.Fprintf(&sb, ",\n      \"code\": %q", err.Code)
-			}
-			sb.WriteString("\n    }")
-			if i < len(result.Errors)-1 {
-				sb.WriteString(",")
-			}
-			sb.WriteString("\n")
-		}
-		sb.WriteString("  ")
+// parseAllowedPaths parses a comma-separated list of paths.
+// Returns nil for no restrictions, empty slice for deny-all (paths == "-").
+func parseAllowedPaths(paths string) []string {
+	if paths == "" {
+		return nil
 	}
-	sb.WriteString("]\n")
-	sb.WriteString("}")
-	return sb.String(), nil
-}
-
-func helpCmd() *cli.Command {
-	return &cli.Command{
-		Name:  "help",
-		Usage: "Show help for a module or function",
-		Arguments: []cli.Argument{
-			&cli.StringArg{
-				Name:     "topic",
-				Usage:    "Module or module.function to show help for (e.g. json or json.loads)",
-				Required: false,
-			},
-		},
-		Run: func(ctx context.Context, cmd *cli.Command) error {
-			allowedPaths := parseAllowedPaths(cmd.GetString("allowed-paths"))
-			cwd, _ := os.Getwd()
-			libDirs := buildLibDirs(cwd, cmd.GetStringSlice("libpath"))
-
-			p := scriptling.New()
-			mcpcli.SetupScriptling(p, libDirs, false, allowedPaths, globalLogger)
-
-			// Load packages if provided
-			packages := cmd.GetStringSlice("package")
-			if len(packages) > 0 {
-				l := pack.NewLoader()
-				l.SetCacheDir(cmd.GetString("cache-dir"))
-				for _, src := range packages {
-					if err := l.AddFromPath(src, cmd.GetBool("insecure")); err != nil {
-						return fmt.Errorf("failed to load package %s: %w", src, err)
-					}
-				}
-				l.SetFallback(nil)
-				p.SetLibraryLoader(libloader.NewChain(p.GetLibraryLoader(), l))
-			}
-
-			topic := cmd.GetStringArg("topic")
-			if topic != "" {
-				return lookupHelp(p, topic)
-			}
-			return runHelpTUI(ctx, p)
-		},
+	if paths == "-" {
+		return []string{}
 	}
-}
-
-// lookupHelp imports the relevant module and prints help for topic.
-func lookupHelp(p *scriptling.Scriptling, topic string) error {
-	for t := topic; t != ""; {
-		if err := p.Import(t); err == nil {
-			break
-		}
-		if i := strings.LastIndex(t, "."); i >= 0 {
-			t = t[:i]
-		} else {
-			break
+	var result []string
+	for _, p := range strings.Split(paths, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			result = append(result, p)
 		}
 	}
-	_, err := p.Eval(fmt.Sprintf("help(%q)", topic))
-	return err
-}
-
-func runHelpTUI(ctx context.Context, p *scriptling.Scriptling) error {
-	var t *tui.TUI
-
-	t = tui.New(tui.Config{
-		HideHeaders: true,
-		StatusLeft:  "help",
-		StatusRight: "Ctrl+C exit",
-		OnSubmit: func(topic string) {
-			topic = strings.TrimSpace(topic)
-			if topic == "" {
-				return
-			}
-			t.AddMessage(tui.RoleUser, topic)
-			var buf strings.Builder
-			p.SetOutputWriter(&helpWriter{b: &buf})
-			_ = lookupHelp(p, topic)
-			p.SetOutputWriter(nil)
-			output := strings.TrimSpace(buf.String())
-			if output == "" {
-				output = "No help found for " + topic
-			}
-			t.AddMessage(tui.RoleAssistant, output)
-		},
-	})
-
-	t.AddMessage(tui.RoleSystem, "Enter a module or function name to look up help, e.g. json or json.loads")
-	return t.Run(ctx)
-}
-
-type helpWriter struct{ b *strings.Builder }
-
-func (w *helpWriter) Write(p []byte) (int, error) {
-	w.b.Write(p)
-	return len(p), nil
-}
-
-func packCmd() *cli.Command {
-	return &cli.Command{
-		Name:  "pack",
-		Usage: "Pack a directory into a package, or manage packages",
-		Commands: []*cli.Command{
-			manifestCmd(),
-			docsCmd(),
-		},
-		Flags: []cli.Flag{
-			&cli.StringFlag{
-				Name:     "output",
-				Usage:    "Output package path",
-				Aliases:  []string{"o"},
-				Required: false,
-			},
-			&cli.BoolFlag{
-				Name:    "force",
-				Usage:   "Overwrite existing package",
-				Aliases: []string{"f"},
-			},
-			&cli.BoolFlag{
-				Name:    "hash",
-				Usage:   "Print the sha256 hash of an existing package file",
-				Aliases: []string{"H"},
-			},
-		},
-		Arguments: []cli.Argument{
-			&cli.StringArg{
-				Name:     "dir",
-				Usage:    "Source directory to pack, or package file when using --hash",
-				Required: true,
-			},
-		},
-		Run: func(ctx context.Context, cmd *cli.Command) error {
-			if cmd.GetBool("hash") {
-				data, err := os.ReadFile(cmd.GetStringArg("dir"))
-				if err != nil {
-					return fmt.Errorf("failed to read file: %w", err)
-				}
-				fmt.Printf("sha256:%s\n", pack.HashBytes(data))
-				return nil
-			}
-			output := cmd.GetString("output")
-			if output == "" {
-				return fmt.Errorf("--output is required when packing")
-			}
-			hash, err := pack.Pack(
-				cmd.GetStringArg("dir"),
-				output,
-				cmd.GetBool("force"),
-			)
-			if err != nil {
-				return err
-			}
-			fmt.Printf("sha256:%s\n", hash)
-			return nil
-		},
+	if len(result) == 0 {
+		return nil
 	}
+	return result
 }
 
-func unpackCmd() *cli.Command {
-	return &cli.Command{
-		Name:  "unpack",
-		Usage: "Unpack a package to a directory",
-		Flags: []cli.Flag{
-			&cli.StringFlag{
-				Name:         "dir",
-				Usage:        "Destination directory",
-				Aliases:      []string{"d"},
-				DefaultValue: ".",
-			},
-			&cli.BoolFlag{
-				Name:    "force",
-				Usage:   "Overwrite existing files",
-				Aliases: []string{"f"},
-			},
-			&cli.BoolFlag{
-				Name:  "remove",
-				Usage: "Remove previously unpacked files instead of extracting",
-				Aliases: []string{"r"},
-			},
-			&cli.BoolFlag{
-				Name:  "list",
-				Usage: "List contents only, don't extract",
-			},
-			&cli.BoolFlag{
-				Name:    "insecure",
-				Usage:   "Allow self-signed/insecure HTTPS certificates",
-				Aliases: []string{"k"},
-			},
-		},
-		Arguments: []cli.Argument{
-			&cli.StringArg{
-				Name:     "src",
-				Usage:    "Package path or URL",
-				Required: true,
-			},
-		},
-		Run: func(ctx context.Context, cmd *cli.Command) error {
-			if cmd.GetBool("remove") {
-				return pack.UnpackRemove(cmd.GetStringArg("src"), cmd.GetBool("insecure"), cmd.GetString("dir"))
-			}
-			return pack.Unpack(cmd.GetStringArg("src"), pack.UnpackOptions{
-				DestDir:  cmd.GetString("dir"),
-				Force:    cmd.GetBool("force"),
-				List:     cmd.GetBool("list"),
-				Insecure: cmd.GetBool("insecure"),
-			})
-		},
-	}
-}
-
-func manifestCmd() *cli.Command {
-	return &cli.Command{
-		Name:  "manifest",
-		Usage: "Show manifest from a package or source directory",
-		Flags: []cli.Flag{
-			&cli.BoolFlag{
-				Name:  "json",
-				Usage: "Output as JSON",
-			},
-			&cli.BoolFlag{
-				Name:    "insecure",
-				Usage:   "Allow self-signed/insecure HTTPS certificates",
-				Aliases: []string{"k"},
-			},
-		},
-		Arguments: []cli.Argument{
-			&cli.StringArg{
-				Name:     "src",
-				Usage:    "Package path, URL, or source directory",
-				Required: true,
-			},
-		},
-		Run: func(ctx context.Context, cmd *cli.Command) error {
-			src := cmd.GetStringArg("src")
-			insecure := cmd.GetBool("insecure")
-
-			var manifest pack.Manifest
-			if pack.IsURL(src) || strings.HasSuffix(src, pack.Extension) {
-				data, err := pack.Fetch(src, insecure)
-				if err != nil {
-					return err
-				}
-				p, err := pack.Open(bytesReaderAt(data), int64(len(data)))
-				if err != nil {
-					return err
-				}
-				manifest = p.Manifest
-			} else {
-				// Source directory: read manifest.toml directly
-				m, err := pack.ReadManifestFromDir(src)
-				if err != nil {
-					return err
-				}
-				manifest = m
-			}
-
-			if cmd.GetBool("json") {
-				out, err := json.MarshalIndent(manifest, "", "  ")
-				if err != nil {
-					return err
-				}
-				fmt.Println(string(out))
-				return nil
-			}
-
-			fmt.Printf("Name:        %s\n", manifest.Name)
-			fmt.Printf("Version:     %s\n", manifest.Version)
-			if manifest.Description != "" {
-				fmt.Printf("Description: %s\n", manifest.Description)
-			}
-			if manifest.Main != "" {
-				fmt.Printf("Main:        %s\n", manifest.Main)
-			}
-			return nil
-		},
-	}
-}
-
-// bytesReaderAt wraps a byte slice as an io.ReaderAt for use with pack.Open.
-type bytesReaderAt []byte
-
-func (b bytesReaderAt) ReadAt(p []byte, off int64) (int, error) {
-	if off >= int64(len(b)) {
-		return 0, nil
-	}
-	return copy(p, b[off:]), nil
-}
-
-func cacheCmd() *cli.Command {
-	return &cli.Command{
-		Name:  "cache",
-		Usage: "Manage the package download cache",
-		Commands: []*cli.Command{
-			{
-				Name:  "clear",
-				Usage: "Remove all cached remote packages",
-				Run: func(ctx context.Context, cmd *cli.Command) error {
-					cacheDir := cmd.GetString("cache-dir")
-					if err := pack.ClearCache(cacheDir); err != nil {
-						return err
-					}
-					if cacheDir == "" {
-						cacheDir, _ = pack.DefaultCacheDir()
-					}
-					fmt.Printf("Cache cleared: %s\n", cacheDir)
-					return nil
-				},
-			},
-		},
-	}
+// readFile reads a local file, used by packCmd --hash.
+func readFile(path string) ([]byte, error) {
+	return os.ReadFile(path)
 }
