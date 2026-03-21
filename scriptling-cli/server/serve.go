@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -24,28 +23,24 @@ import (
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs"
 	scriptlingmcp "github.com/paularlott/scriptling/extlibs/mcp"
+	"github.com/paularlott/scriptling/libloader"
 	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/scriptling/util"
 
 	mcpcli "github.com/paularlott/scriptling/scriptling-cli/mcp"
+	"github.com/paularlott/scriptling/scriptling-cli/pack"
 )
 
 var Log logger.Logger
-
-// toOSSignals converts syscall.Signal slice to os.Signal slice
-func toOSSignals(sigs []syscall.Signal) []os.Signal {
-	result := make([]os.Signal, len(sigs))
-	for i, sig := range sigs {
-		result[i] = sig
-	}
-	return result
-}
 
 // ServerConfig holds the configuration for the HTTP server
 type ServerConfig struct {
 	Address       string
 	ScriptFile    string
 	LibDirs       []string
+	Packages      []string // Package (.zip) or file (.py) paths or URLs
+	Insecure      bool     // Allow self-signed HTTPS for package URLs
+	CacheDir      string   // Override default OS cache dir for remote packages
 	BearerToken   string
 	AllowedPaths  []string // Filesystem path restrictions (empty = no restrictions)
 	MCPToolsDir   string   // Empty means MCP disabled
@@ -54,11 +49,6 @@ type ServerConfig struct {
 	TLSCert       string
 	TLSKey        string
 	TLSGenerate   bool
-}
-
-// scriptHandler holds the handler function reference
-type scriptHandler struct {
-	handlerRef string // "library.function"
 }
 
 // reloadableMCPHandler wraps an MCP server pointer to allow hot-reloading of tools
@@ -79,24 +69,45 @@ func (h *reloadableMCPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 type Server struct {
 	config           ServerConfig
 	httpServer       *http.Server
-	scriptling       *scriptling.Scriptling
-	mcpServer        *mcp_lib.Server
 	mcpHandler       *reloadableMCPHandler
-	handlers         map[string]*scriptHandler
+	handlers         map[string]string // path -> "library.function"
 	middleware       string
 	staticRoutes     map[string]string
 	mu               sync.RWMutex
 	watcher          *fsnotify.Watcher
 	reloadDebounce   *time.Timer
 	debounceDuration time.Duration
+	packLoader       *pack.Loader           // nil if no packages configured
+	fsLoader         scriptling.LibraryLoader // filesystem loader, set when packLoader is set
+	bearerExpected   string       // precomputed "Bearer <token>"
 }
 
 // NewServer creates a new HTTP server
 func NewServer(config ServerConfig) (*Server, error) {
 	s := &Server{
-		config:       config,
-		handlers:     make(map[string]*scriptHandler),
-		staticRoutes: make(map[string]string),
+		config:         config,
+		handlers:       make(map[string]string),
+		staticRoutes:   make(map[string]string),
+		bearerExpected: "Bearer " + config.BearerToken,
+	}
+
+	// Build pack loader if packages are configured
+	if len(config.Packages) > 0 {
+		l := pack.NewLoader()
+		l.SetCacheDir(config.CacheDir)
+		for _, src := range config.Packages {
+			if err := l.AddFromPath(src, config.Insecure); err != nil {
+				return nil, fmt.Errorf("failed to load package %s: %w", src, err)
+			}
+		}
+		// Wire filesystem loader first, pack as fallback via Chain.
+		tmp := scriptling.New()
+		mcpcli.SetupScriptling(tmp, config.LibDirs, false, config.AllowedPaths, Log)
+		s.packLoader = l
+		s.packLoader.SetFallback(nil)
+		// Store the chain so applyPackLoader can set it on each interpreter.
+		// We keep packLoader separate for GetMainEntry/GetDoc access.
+		s.fsLoader = tmp.GetLibraryLoader()
 	}
 
 	// Reset routes from previous runs
@@ -110,8 +121,8 @@ func NewServer(config ServerConfig) (*Server, error) {
 	// Set up the sandbox/background factory once
 	mcpcli.SetupFactories(config.LibDirs, config.AllowedPaths, Log)
 
-	// Run setup script if provided
-	if config.ScriptFile != "" {
+	// Run setup script if provided, or if packages have a main entry
+	if config.ScriptFile != "" || s.packLoader != nil {
 		if err := s.runSetupScript(); err != nil {
 			return nil, fmt.Errorf("setup script failed: %w", err)
 		}
@@ -141,18 +152,43 @@ func NewServer(config ServerConfig) (*Server, error) {
 
 // runSetupScript runs the setup script once to register routes
 func (s *Server) runSetupScript() error {
-	content, err := os.ReadFile(s.config.ScriptFile)
-	if err != nil {
-		return fmt.Errorf("failed to read setup script: %w", err)
-	}
-
-	// Create scriptling instance for setup
 	p := scriptling.New()
 	mcpcli.SetupScriptling(p, s.config.LibDirs, false, s.config.AllowedPaths, Log)
+	s.applyPackLoader(p)
 
-	// Execute setup script
-	_, err = p.Eval(string(content))
-	return err
+	if s.config.ScriptFile != "" {
+		content, err := os.ReadFile(s.config.ScriptFile)
+		if err != nil {
+			return fmt.Errorf("failed to read setup script: %w", err)
+		}
+		_, err = p.Eval(string(content))
+		return err
+	}
+
+	// No script file: run main entry from last package that defines one
+	if s.packLoader != nil {
+		if mod, fn, ok := s.packLoader.GetMainEntry(); ok {
+			_, err := p.Eval(fmt.Sprintf("import %s\n%s.%s()", mod, mod, fn))
+			return err
+		}
+	}
+	return nil
+}
+
+// applyPackLoader sets the pack loader (if any) as the outermost loader on a scriptling instance.
+// The fallback is already wired once at startup; this is a read-only operation on the loader.
+func (s *Server) applyPackLoader(p *scriptling.Scriptling) {
+	if s.packLoader == nil {
+		return
+	}
+	// Filesystem first, pack as fallback
+	var loader scriptling.LibraryLoader
+	if s.fsLoader != nil {
+		loader = libloader.NewChain(s.fsLoader, s.packLoader)
+	} else {
+		loader = s.packLoader
+	}
+	p.SetLibraryLoader(loader)
 }
 
 // setupMCP initializes the MCP server if configured
@@ -167,7 +203,6 @@ func (s *Server) setupMCP() error {
 		return err
 	}
 
-	s.mcpServer = server
 	s.mcpHandler.server.Store(server)
 
 	// Set up file watcher for tools folder if provided
@@ -209,7 +244,10 @@ func (s *Server) createMCPServer() (*mcp_lib.Server, error) {
 		for toolName, meta := range tools {
 			scriptPath := filepath.Join(s.config.MCPToolsDir, toolName+".py")
 			tool := toolmetadata.BuildMCPTool(toolName, meta)
-			handler := createMCPToolHandler(scriptPath, s.config.LibDirs, s.config.AllowedPaths)
+			handler, err := createMCPToolHandler(scriptPath, s.config.LibDirs, s.config.AllowedPaths, s.packLoader)
+			if err != nil {
+				return nil, fmt.Errorf("failed to load tool %s: %w", toolName, err)
+			}
 			server.RegisterTool(tool, handler)
 
 			mode := "native"
@@ -257,36 +295,21 @@ RETURNING RESULTS:
 		),
 		func(ctx context.Context, req *mcp_lib.ToolRequest) (*mcp_lib.ToolResponse, error) {
 			code, _ := req.String("code")
-
-			// Create fresh scriptling environment for isolation
 			p := scriptling.New()
 			mcpcli.SetupScriptling(p, s.config.LibDirs, false, s.config.AllowedPaths, Log)
+			p.EnableOutputCapture()
 
-			// Capture stdout for returning if no explicit return is made
-			outputBuffer := &bytes.Buffer{}
-			p.SetOutputWriter(outputBuffer)
-
-			// Try using RunToolScript first (handles tool.return_string())
 			response, exitCode, err := scriptlingmcp.RunToolScript(ctx, p, code, map[string]interface{}{})
-
-			// If exitCode is 0 and we have an explicit response, use it
-			if exitCode == 0 && response != "" {
-				return mcp_lib.NewToolResponseText(response), nil
-			}
-
-			// If there was an error and exitCode != 0, return error
 			if err != nil && exitCode != 0 {
 				return nil, fmt.Errorf("execution error: %w", err)
 			}
-
-			// If no explicit return, return captured stdout
-			capturedOutput := strings.TrimSpace(outputBuffer.String())
-			if capturedOutput != "" {
-				return mcp_lib.NewToolResponseText(capturedOutput), nil
+			if response == "" {
+				response = strings.TrimSpace(p.GetOutput())
 			}
-
-			// Otherwise return "(no output)"
-			return mcp_lib.NewToolResponseText("(no output)"), nil
+			if response == "" {
+				response = "(no output)"
+			}
+			return mcp_lib.NewToolResponseText(response), nil
 		},
 	)
 	Log.Info("Registered MCP tool", "name", "execute_script", "params", 1, "mode", "native")
@@ -295,31 +318,23 @@ RETURNING RESULTS:
 // reloadMCPTools reloads all MCP tools
 func (s *Server) reloadMCPTools() {
 	Log.Info("Reloading MCP tools...")
-
 	newServer, err := s.createMCPServer()
 	if err != nil {
 		Log.Error("Failed to reload MCP tools", "error", err)
-	} else {
-		s.mcpHandler.server.Store(newServer)
-		s.mu.Lock()
-		s.mcpServer = newServer
-		s.mu.Unlock()
-		Log.Info("MCP tools reloaded successfully")
+		return
 	}
+	s.mcpHandler.server.Store(newServer)
+	Log.Info("MCP tools reloaded successfully")
 }
 
 // collectRoutes collects registered routes from the scriptling.runtime library
 func (s *Server) collectRoutes() {
-	routes := extlibs.RuntimeState.Routes
 	s.middleware = extlibs.RuntimeState.Middleware
-
-	for path, route := range routes {
+	for path, route := range extlibs.RuntimeState.Routes {
 		if route.Static {
 			s.staticRoutes[path] = route.StaticDir
 		} else {
-				s.handlers[path] = &scriptHandler{
-				handlerRef: route.Handler,
-			}
+			s.handlers[path] = route.Handler
 		}
 		Log.Info("Registered route", "path", path, "methods", route.Methods, "handler", route.Handler)
 	}
@@ -337,7 +352,6 @@ func (s *Server) Start() error {
 	// Health check endpoint
 	mux.HandleFunc("GET /health", s.handleHealth)
 
-	// Register dynamic script handlers
 	for path := range s.handlers {
 		mux.HandleFunc(path, s.handleScriptRequest)
 	}
@@ -348,14 +362,13 @@ func (s *Server) Start() error {
 		mux.Handle(path, http.StripPrefix(path, fs))
 	}
 
-	// Apply authentication middleware
 	var handler http.Handler = mux
-	if s.config.BearerToken != "" && s.middleware == "" {
-		// Bearer token protects all endpoints if no custom middleware
-		handler = s.bearerTokenMiddleware(mux)
-	} else if s.config.BearerToken != "" && s.middleware != "" {
-		// Bearer token protects MCP only, custom middleware handles script routes
-		handler = s.bearerTokenMCPOnlyMiddleware(mux)
+	if s.config.BearerToken != "" {
+		if s.middleware == "" {
+			handler = s.bearerTokenMiddleware(mux)
+		} else {
+			handler = s.bearerTokenMCPOnlyMiddleware(mux)
+		}
 	}
 
 	// Create HTTP server
@@ -411,35 +424,28 @@ func (s *Server) Stop(ctx context.Context) error {
 
 // handleHealth handles health check requests
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("OK"))
+	io.WriteString(w, "OK")
 }
 
 // handleScriptRequest handles requests to script handlers
 func (s *Server) handleScriptRequest(w http.ResponseWriter, r *http.Request) {
-	// Find matching handler
+	path := r.URL.Path
 	s.mu.RLock()
-	_, ok := s.handlers[r.URL.Path]
-	s.mu.RUnlock()
-
-	if !ok {
-		// Try to find a matching route with trailing slash handling
-		path := r.URL.Path
-		if !strings.HasSuffix(path, "/") {
+	_, ok := s.handlers[path]
+	if !ok && !strings.HasSuffix(path, "/") {
+		_, ok = s.handlers[path+"/"]
+		if ok {
 			path += "/"
 		}
-		s.mu.RLock()
-		_, ok = s.handlers[path]
-		s.mu.RUnlock()
 	}
+	s.mu.RUnlock()
 
 	if !ok {
 		http.Error(w, "Not Found", http.StatusNotFound)
 		return
 	}
 
-	// Check method
-	route := extlibs.RuntimeState.Routes[r.URL.Path]
+	route := extlibs.RuntimeState.Routes[path]
 	if route != nil {
 		methodAllowed := false
 		for _, m := range route.Methods {
@@ -454,38 +460,25 @@ func (s *Server) handleScriptRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Run middleware if configured
-	if s.middleware != "" {
-		// Create request object for middleware
-		reqObj := s.createRequestObject(r)
+	reqObj := s.createRequestObject(r)
 
-		// Run middleware
-		resp := s.runHandler(s.middleware, reqObj)
-		if resp != nil {
-			// Middleware returned a response - short-circuit
+	if s.middleware != "" {
+		if resp := s.runHandler(s.middleware, reqObj); resp != nil {
 			s.writeResponse(w, resp)
 			return
 		}
 	}
 
-	// Create request object
-	reqObj := s.createRequestObject(r)
-
-	// Get handler reference from route
 	handlerRef := ""
 	if route != nil {
 		handlerRef = route.Handler
 	}
 
-	// Run handler
-	resp := s.runHandler(handlerRef, reqObj)
-	if resp == nil {
+	if resp := s.runHandler(handlerRef, reqObj); resp != nil {
+		s.writeResponse(w, resp)
+	} else {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
 	}
-
-	// Write response
-	s.writeResponse(w, resp)
 }
 
 // createRequestObject creates a Request instance from an HTTP request
@@ -518,17 +511,16 @@ func (s *Server) createRequestObject(r *http.Request) *object.Instance {
 
 // runHandler runs a handler function and returns the response
 func (s *Server) runHandler(handlerRef string, reqObj *object.Instance) *object.Dict {
-	// Parse handler reference (e.g., "mylib.testHandler")
-	parts := strings.SplitN(handlerRef, ".", 2)
-	if len(parts) != 2 {
+	libName, _, ok := strings.Cut(handlerRef, ".")
+	if !ok {
 		Log.Error("Invalid handler reference", "handler", handlerRef)
 		return nil
 	}
-	libName := parts[0]
 
 	// Create fresh scriptling environment
 	p := scriptling.New()
 	mcpcli.SetupScriptling(p, s.config.LibDirs, false, s.config.AllowedPaths, Log)
+	s.applyPackLoader(p)
 
 	// Import the library
 	if err := p.Import(libName); err != nil {
@@ -641,14 +633,10 @@ func objectToInterface(obj object.Object) interface{} {
 // bearerTokenMiddleware creates authentication middleware for all endpoints
 func (s *Server) bearerTokenMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		auth := r.Header.Get("Authorization")
-		expected := "Bearer " + s.config.BearerToken
-
-		if auth != expected {
+		if r.Header.Get("Authorization") != s.bearerExpected {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
-
 		next.ServeHTTP(w, r)
 	})
 }
@@ -656,17 +644,10 @@ func (s *Server) bearerTokenMiddleware(next http.Handler) http.Handler {
 // bearerTokenMCPOnlyMiddleware creates authentication middleware for MCP only
 func (s *Server) bearerTokenMCPOnlyMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Only protect MCP endpoint
-		if r.URL.Path == "/mcp" {
-			auth := r.Header.Get("Authorization")
-			expected := "Bearer " + s.config.BearerToken
-
-			if auth != expected {
-				http.Error(w, "Unauthorized", http.StatusUnauthorized)
-				return
-			}
+		if r.URL.Path == "/mcp" && r.Header.Get("Authorization") != s.bearerExpected {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
 		}
-
 		next.ServeHTTP(w, r)
 	})
 }
@@ -697,14 +678,17 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 		Log.Info("Press Ctrl+C to exit")
 	}
 
-	// Wait for interrupt signal
 	sigChan := make(chan os.Signal, 1)
-	signals := append([]os.Signal{os.Interrupt, syscall.SIGTERM}, toOSSignals(reloadSignals)...)
+	signals := make([]os.Signal, 0, 2+len(reloadSignals))
+	signals = append(signals, os.Interrupt, syscall.SIGTERM)
+	for _, sig := range reloadSignals {
+		signals = append(signals, sig)
+	}
 	signal.Notify(sigChan, signals...)
 
-	// Handle file watcher events in a goroutine
-	watcherDone := make(chan struct{})
+	var watcherDone chan struct{}
 	if server.watcher != nil {
+		watcherDone = make(chan struct{})
 		go func() {
 			defer close(watcherDone)
 			for {
@@ -713,9 +697,7 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 					if !ok {
 						return
 					}
-					// Only watch for .toml file changes (create, write, remove, rename)
 					if filepath.Ext(event.Name) == ".toml" {
-						// Debounce: reset timer on each event
 						if server.reloadDebounce != nil {
 							server.reloadDebounce.Stop()
 						}
@@ -749,7 +731,6 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 	// Clean shutdown
 	Log.Info("Shutting down server...")
 
-	// Clean up watcher
 	if server.watcher != nil {
 		server.watcher.Close()
 		<-watcherDone
@@ -770,21 +751,24 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 	return nil
 }
 
-// createMCPToolHandler creates a handler function for an MCP tool
-func createMCPToolHandler(scriptPath string, libDirs []string, allowedPaths []string) func(context.Context, *mcp_lib.ToolRequest) (*mcp_lib.ToolResponse, error) {
-	// Include the script's directory in the library search path
-	// so tools can import other modules from the same tools folder
+// createMCPToolHandler creates a handler function for an MCP tool.
+// The script is read once at registration time; packLoader is already loaded
+// into memory at startup — no fetching happens per call.
+func createMCPToolHandler(scriptPath string, libDirs []string, allowedPaths []string, packLoader *pack.Loader) (func(context.Context, *mcp_lib.ToolRequest) (*mcp_lib.ToolResponse, error), error) {
+	script, err := os.ReadFile(scriptPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read script %s: %w", scriptPath, err)
+	}
+
 	scriptDir := filepath.Dir(scriptPath)
 	toolLibDirs := append([]string{scriptDir}, libDirs...)
 
-	return func(ctx context.Context, req *mcp_lib.ToolRequest) (*mcp_lib.ToolResponse, error) {
-		script, err := os.ReadFile(scriptPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read script: %w", err)
-		}
-
+	handler := func(ctx context.Context, req *mcp_lib.ToolRequest) (*mcp_lib.ToolResponse, error) {
 		p := scriptling.New()
 		mcpcli.SetupScriptling(p, toolLibDirs, false, allowedPaths, Log)
+		if packLoader != nil {
+			p.SetLibraryLoader(packLoader)
+		}
 
 		// Enable output capture so print() output is available as fallback
 		p.EnableOutputCapture()
@@ -806,4 +790,5 @@ func createMCPToolHandler(scriptPath string, libDirs []string, allowedPaths []st
 
 		return mcp_lib.NewToolResponseText(response), nil
 	}
+	return handler, nil
 }
