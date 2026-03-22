@@ -49,7 +49,7 @@ func main() {
 			},
 			&cli.StringSliceFlag{
 				Name:    "package",
-				Usage:   "Package (.zip) or file (.py) path or URL to load (can be repeated)",
+				Usage:   "Package (.zip) path or URL to load (can be repeated)",
 				Aliases: []string{"p"},
 			},
 			&cli.BoolFlag{

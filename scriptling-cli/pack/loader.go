@@ -1,24 +1,22 @@
 package pack
 
 import (
-	"path/filepath"
 	"strings"
 
 	"github.com/paularlott/scriptling/libloader"
 )
 
-// Loader implements libloader.LibraryLoader over a set of packages and single files.
+// Loader implements libloader.LibraryLoader over a set of packages.
 // Packages are searched in reverse order (last added = highest priority).
 type Loader struct {
 	packages []*Package
-	files    map[string]string // module name -> source
 	fallback libloader.LibraryLoader
 	cacheDir string // empty = OS default
 }
 
 // NewLoader creates a new Loader.
 func NewLoader() *Loader {
-	return &Loader{files: make(map[string]string)}
+	return &Loader{}
 }
 
 // SetCacheDir overrides the default OS cache directory for remote packages.
@@ -31,25 +29,18 @@ func (l *Loader) AddPackage(p *Package) {
 	l.packages = append(l.packages, p)
 }
 
-// AddFromPath loads a .zip package or .py file from a local path or URL.
+// AddFromPath loads a .zip package from a local path or URL.
 // source may include a #sha256:<hex> fragment for integrity verification.
 func (l *Loader) AddFromPath(source string, insecure bool) error {
-	cleanSource, _ := splitHash(source)
 	data, err := FetchWithCache(source, insecure, l.cacheDir)
 	if err != nil {
 		return err
 	}
-	if strings.HasSuffix(cleanSource, Extension) {
-		p, err := Open(bytesReaderAt(data), int64(len(data)))
-		if err != nil {
-			return err
-		}
-		l.AddPackage(p)
-		return nil
+	p, err := Open(bytesReaderAt(data), int64(len(data)))
+	if err != nil {
+		return err
 	}
-	// Single .py file
-	name := strings.TrimSuffix(filepath.Base(cleanSource), ".py")
-	l.files[name] = string(data)
+	l.AddPackage(p)
 	return nil
 }
 
@@ -59,20 +50,13 @@ func (l *Loader) SetFallback(fallback libloader.LibraryLoader) {
 }
 
 // Load implements libloader.LibraryLoader.
-// Searches single files first, then packages in reverse order, then fallback.
+// Searches packages in reverse order (last = highest priority), then fallback.
 func (l *Loader) Load(name string) (string, bool, error) {
-	// Single files take priority
-	if src, ok := l.files[name]; ok {
-		return src, true, nil
-	}
-
-	// Packages in reverse order (last = highest priority)
 	for i := len(l.packages) - 1; i >= 0; i-- {
 		if src, ok := loadFromPackage(l.packages[i], name); ok {
 			return src, true, nil
 		}
 	}
-
 	if l.fallback != nil {
 		return l.fallback.Load(name)
 	}

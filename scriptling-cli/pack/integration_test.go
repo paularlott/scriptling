@@ -275,41 +275,6 @@ utils.get_value()
 	}
 }
 
-// TestIntegrationSingleFile tests loading a single .py file
-func TestIntegrationSingleFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	singleFile := filepath.Join(tmpDir, "helper.py")
-	code := `
-def greet(name):
-    return f"Hello, {name}!"
-
-def add(a, b):
-    return a + b
-`
-	if err := os.WriteFile(singleFile, []byte(code), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	p := scriptling.New()
-	loader := NewLoader()
-	if err := loader.AddFromPath(singleFile, false); err != nil {
-		t.Fatal(err)
-	}
-	loader.SetFallback(p.GetLibraryLoader())
-	p.SetLibraryLoader(loader)
-
-	result, err := p.Eval(`
-import helper
-helper.greet("World")
-`)
-	if err != nil {
-		t.Fatalf("eval failed: %v", err)
-	}
-	if result.Inspect() != "Hello, World!" {
-		t.Errorf("expected 'Hello, World!', got %s", result.Inspect())
-	}
-}
-
 // TestIntegrationWithFilesystemFallback tests that filesystem loader still works
 func TestIntegrationWithFilesystemFallback(t *testing.T) {
 	tmpDir := t.TempDir()

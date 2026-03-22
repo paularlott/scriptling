@@ -38,7 +38,7 @@ type ServerConfig struct {
 	Address       string
 	ScriptFile    string
 	LibDirs       []string
-	Packages      []string // Package (.zip) or file (.py) paths or URLs
+	Packages      []string // Package (.zip) paths or URLs
 	Insecure      bool     // Allow self-signed HTTPS for package URLs
 	CacheDir      string   // Override default OS cache dir for remote packages
 	BearerToken   string

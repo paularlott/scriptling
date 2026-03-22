@@ -412,35 +412,6 @@ main = "app.main"
 	})
 }
 
-func TestLoaderSingleFile(t *testing.T) {
-	// Create a single .py file
-	tmpDir := t.TempDir()
-	singleFile := filepath.Join(tmpDir, "mymodule.py")
-	code := `
-def greet(name):
-    return f"Hello, {name}!"
-`
-	if err := os.WriteFile(singleFile, []byte(code), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	loader := NewLoader()
-	if err := loader.AddFromPath(singleFile, false); err != nil {
-		t.Fatalf("AddFromPath failed: %v", err)
-	}
-
-	src, ok, err := loader.Load("mymodule")
-	if err != nil {
-		t.Fatalf("Load failed: %v", err)
-	}
-	if !ok {
-		t.Fatal("module 'mymodule' not found")
-	}
-	if !bytes.Contains([]byte(src), []byte("def greet")) {
-		t.Errorf("expected source to contain 'def greet', got %q", src)
-	}
-}
-
 func TestLoaderPriority(t *testing.T) {
 	// Create two packages with same module name
 	tmpDir := t.TempDir()
