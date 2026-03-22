@@ -88,6 +88,11 @@ tasks:
     cmds:
       - GOOS=windows GOARCH=arm64 go build {{.LDFLAGS}} -o ../{{.BIN_DIR}}/scriptling-windows-arm64.exe .
 
+  build-sample-package:
+    desc: Build the sample package to examples folder
+    cmds:
+      - go run ./scriptling-cli pack -o examples/sample-package.zip -f examples/sample-package
+
   test:
     desc: Run tests
     cmds:
