@@ -182,39 +182,35 @@ func fetchURLCached(url string, insecure bool, cacheDir string, limit int64) ([]
 	// Read cached metadata (etag\nlast-modified)
 	etag, lastMod := readCacheMeta(metaFile)
 
-	// If we have a cached copy, do a conditional HEAD request
-	if _, err := os.Stat(dataFile); err == nil && (etag != "" || lastMod != "") {
-		req, err := http.NewRequest(http.MethodHead, url, nil)
-		if err == nil {
-			if etag != "" {
-				req.Header.Set("If-None-Match", etag)
-			}
-			if lastMod != "" {
-				req.Header.Set("If-Modified-Since", lastMod)
-			}
-			resp, err := client.Do(req)
-			if err == nil {
-				resp.Body.Close()
-				if resp.StatusCode == http.StatusNotModified {
-					// Cache is fresh — touch mod time so TTL resets on access
-					now := time.Now()
-					_ = os.Chtimes(dataFile, now, now)
-					return os.ReadFile(dataFile)
-				}
-			}
-		}
-	}
-
-	// Download fresh copy
+	// Build the GET request
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s: %v", ErrFetchFailed, url, err)
 	}
+
+	// Add conditional headers if we have a cached copy
+	if _, err := os.Stat(dataFile); err == nil {
+		if etag != "" {
+			req.Header.Set("If-None-Match", etag)
+		}
+		if lastMod != "" {
+			req.Header.Set("If-Modified-Since", lastMod)
+		}
+	}
+
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s: %v", ErrFetchFailed, url, err)
 	}
 	defer resp.Body.Close()
+
+	// Cache hit - server says not modified
+	if resp.StatusCode == http.StatusNotModified {
+		now := time.Now()
+		_ = os.Chtimes(dataFile, now, now)
+		return os.ReadFile(dataFile)
+	}
+
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("%w: %s: HTTP %d", ErrFetchFailed, url, resp.StatusCode)
 	}
