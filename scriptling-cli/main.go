@@ -206,6 +206,7 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	insecure := cmd.GetBool("insecure")
 	var packLoader *pack.Loader
 	if len(packages) > 0 {
+		go pack.PruneCache(cmd.GetString("cache-dir"), 0) // async, best-effort
 		packLoader = pack.NewLoader()
 		packLoader.SetCacheDir(cmd.GetString("cache-dir"))
 		for _, src := range packages {

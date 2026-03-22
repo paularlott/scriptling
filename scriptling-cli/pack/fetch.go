@@ -10,9 +10,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
-const DefaultMaxPackageSize int64 = 100 * 1024 * 1024 // 100MB
+const (
+	DefaultMaxPackageSize int64         = 100 * 1024 * 1024 // 100MB
+	DefaultCacheTTL                     = 7 * 24 * time.Hour // 7 days
+)
 
 // IsURL returns true if source starts with http:// or https://.
 func IsURL(source string) bool {
@@ -94,6 +98,46 @@ func ClearCache(cacheDir string) error {
 	return os.RemoveAll(cacheDir)
 }
 
+// PruneCache removes cache entries that have not been accessed within ttl.
+// If cacheDir is empty, uses the OS default cache directory.
+// If ttl is 0, uses DefaultCacheTTL.
+// Each cache entry is a .zip/.meta pair; the .zip mod time tracks last access.
+func PruneCache(cacheDir string, ttl time.Duration) error {
+	if cacheDir == "" {
+		var err error
+		cacheDir, err = DefaultCacheDir()
+		if err != nil {
+			return nil // no cache dir, nothing to prune
+		}
+	}
+	if ttl <= 0 {
+		ttl = DefaultCacheTTL
+	}
+	entries, err := os.ReadDir(cacheDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	cutoff := time.Now().Add(-ttl)
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".zip" {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().Before(cutoff) {
+			base := strings.TrimSuffix(filepath.Join(cacheDir, e.Name()), ".zip")
+			_ = os.Remove(base + ".zip")
+			_ = os.Remove(base + ".meta")
+		}
+	}
+	return nil
+}
+
 // FetchFile loads from local filesystem.
 func FetchFile(path string, maxSize ...int64) ([]byte, error) {
 	f, err := os.Open(path)
@@ -152,7 +196,9 @@ func fetchURLCached(url string, insecure bool, cacheDir string, limit int64) ([]
 			if err == nil {
 				resp.Body.Close()
 				if resp.StatusCode == http.StatusNotModified {
-					// Cache is fresh
+					// Cache is fresh — touch mod time so TTL resets on access
+					now := time.Now()
+					_ = os.Chtimes(dataFile, now, now)
 					return os.ReadFile(dataFile)
 				}
 			}
