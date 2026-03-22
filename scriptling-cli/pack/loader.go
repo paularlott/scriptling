@@ -30,7 +30,7 @@ func (l *Loader) AddPackage(p *Package) {
 }
 
 // AddFromPath loads a .zip package from a local path or URL.
-// source may include a #sha256:<hex> fragment for integrity verification.
+// source may include a #sha256=<hex> fragment for integrity verification.
 func (l *Loader) AddFromPath(source string, insecure bool) error {
 	data, err := FetchWithCache(source, insecure, l.cacheDir)
 	if err != nil {

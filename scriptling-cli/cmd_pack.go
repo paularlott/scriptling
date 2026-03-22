@@ -49,7 +49,7 @@ func packCmd() *cli.Command {
 				if err != nil {
 					return fmt.Errorf("failed to read file: %w", err)
 				}
-				fmt.Printf("sha256:%s\n", pack.HashBytes(data))
+				fmt.Printf("sha256=%s\n", pack.HashBytes(data))
 				return nil
 			}
 			output := cmd.GetString("output")
@@ -60,7 +60,7 @@ func packCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Printf("sha256:%s\n", hash)
+			fmt.Printf("sha256=%s\n", hash)
 			return nil
 		},
 	}

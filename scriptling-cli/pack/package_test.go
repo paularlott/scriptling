@@ -573,8 +573,8 @@ func TestSplitHash(t *testing.T) {
 		wantHash     string
 	}{
 		{"file.zip", "file.zip", ""},
-		{"file.zip#sha256:abc123", "file.zip", "abc123"},
-		{"https://example.com/pkg.zip#sha256:deadbeef", "https://example.com/pkg.zip", "deadbeef"},
+		{"file.zip#sha256=abc123", "file.zip", "abc123"},
+		{"https://example.com/pkg.zip#sha256=deadbeef", "https://example.com/pkg.zip", "deadbeef"},
 		{"https://example.com/pkg.zip", "https://example.com/pkg.zip", ""},
 	}
 	for _, tt := range tests {
@@ -610,36 +610,36 @@ func TestHashVerification(t *testing.T) {
 
 	t.Run("correct hash - local file", func(t *testing.T) {
 		loader := NewLoader()
-		if err := loader.AddFromPath(pkgFile+"#sha256:"+hash, false); err != nil {
+		if err := loader.AddFromPath(pkgFile+"#sha256="+hash, false); err != nil {
 			t.Errorf("expected no error with correct hash, got: %v", err)
 		}
 	})
 
 	t.Run("wrong hash - local file", func(t *testing.T) {
 		loader := NewLoader()
-		err := loader.AddFromPath(pkgFile+"#sha256:0000000000000000000000000000000000000000000000000000000000000000", false)
+		err := loader.AddFromPath(pkgFile+"#sha256=0000000000000000000000000000000000000000000000000000000000000000", false)
 		if err == nil {
 			t.Error("expected error with wrong hash, got nil")
 		}
 	})
 
 	t.Run("correct hash - FetchWithCache direct", func(t *testing.T) {
-		if _, err := FetchWithCache(pkgFile+"#sha256:"+hash, false, ""); err != nil {
+		if _, err := FetchWithCache(pkgFile+"#sha256="+hash, false, ""); err != nil {
 			t.Errorf("expected no error with correct hash, got: %v", err)
 		}
 	})
 
 	t.Run("wrong hash - FetchWithCache direct", func(t *testing.T) {
-		_, err := FetchWithCache(pkgFile+"#sha256:0000000000000000000000000000000000000000000000000000000000000000", false, "")
+		_, err := FetchWithCache(pkgFile+"#sha256=0000000000000000000000000000000000000000000000000000000000000000", false, "")
 		if err == nil {
 			t.Error("expected error with wrong hash, got nil")
 		}
 	})
 
 	t.Run("zip suffix check with hash", func(t *testing.T) {
-		// Ensure file.zip#sha256:... is still recognised as a zip, not a .py
+		// Ensure file.zip#sha256=... is still recognised as a zip, not a .py
 		loader := NewLoader()
-		if err := loader.AddFromPath(pkgFile+"#sha256:"+hash, false); err != nil {
+		if err := loader.AddFromPath(pkgFile+"#sha256="+hash, false); err != nil {
 			t.Fatalf("AddFromPath failed: %v", err)
 		}
 		if len(loader.packages) != 1 {

@@ -23,10 +23,10 @@ func IsURL(source string) bool {
 	return strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://")
 }
 
-// splitHash separates a source string from an optional #sha256:<hex> fragment.
+// splitHash separates a source string from an optional #sha256=<hex> fragment.
 // Returns the clean source and the expected hash (empty if none).
 func splitHash(source string) (string, string) {
-	if i := strings.LastIndex(source, "#sha256:"); i != -1 {
+	if i := strings.LastIndex(source, "#sha256="); i != -1 {
 		return source[:i], source[i+8:]
 	}
 	return source, ""
@@ -46,7 +46,7 @@ func Fetch(source string, insecure bool) ([]byte, error) {
 
 // FetchWithCache loads bytes from a URL or local path, using cacheDir for remote URLs.
 // If cacheDir is empty, uses the OS default cache directory.
-// An optional #sha256:<hex> fragment on source is stripped before fetching and
+// An optional #sha256=<hex> fragment on source is stripped before fetching and
 // used to verify the downloaded bytes; a mismatch is a fatal error.
 // maxSize limits download size (0 = use DefaultMaxPackageSize).
 func FetchWithCache(source string, insecure bool, cacheDir string, maxSize ...int64) ([]byte, error) {
