@@ -1,0 +1,108 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/paularlott/cli"
+	"github.com/paularlott/cli/tui"
+	"github.com/paularlott/scriptling"
+	"github.com/paularlott/scriptling/libloader"
+	mcpcli "github.com/paularlott/scriptling/scriptling-cli/mcp"
+	"github.com/paularlott/scriptling/scriptling-cli/pack"
+)
+
+func helpCmd() *cli.Command {
+	return &cli.Command{
+		Name:  "help",
+		Usage: "Show help for a module or function",
+		Arguments: []cli.Argument{
+			&cli.StringArg{
+				Name:     "topic",
+				Usage:    "Module or module.function to show help for (e.g. json or json.loads)",
+				Required: false,
+			},
+		},
+		Run: func(ctx context.Context, cmd *cli.Command) error {
+			allowedPaths := parseAllowedPaths(cmd.GetString("allowed-paths"))
+			cwd, _ := os.Getwd()
+			libDirs := buildLibDirs(cwd, cmd.GetStringSlice("libpath"))
+
+			p := scriptling.New()
+			mcpcli.SetupScriptling(p, libDirs, false, allowedPaths, globalLogger)
+
+			packages := cmd.GetStringSlice("package")
+			if len(packages) > 0 {
+				l := pack.NewLoader()
+				l.SetCacheDir(cmd.GetString("cache-dir"))
+				for _, src := range packages {
+					if err := l.AddFromPath(src, cmd.GetBool("insecure")); err != nil {
+						return fmt.Errorf("failed to load package %s: %w", src, err)
+					}
+				}
+				l.SetFallback(nil)
+				p.SetLibraryLoader(libloader.NewChain(p.GetLibraryLoader(), l))
+			}
+
+			topic := cmd.GetStringArg("topic")
+			if topic != "" {
+				return lookupHelp(p, topic)
+			}
+			return runHelpTUI(ctx, p)
+		},
+	}
+}
+
+// lookupHelp imports the relevant module and prints help for topic.
+func lookupHelp(p *scriptling.Scriptling, topic string) error {
+	for t := topic; t != ""; {
+		if err := p.Import(t); err == nil {
+			break
+		}
+		if i := strings.LastIndex(t, "."); i >= 0 {
+			t = t[:i]
+		} else {
+			break
+		}
+	}
+	_, err := p.Eval(fmt.Sprintf("help(%q)", topic))
+	return err
+}
+
+func runHelpTUI(ctx context.Context, p *scriptling.Scriptling) error {
+	var t *tui.TUI
+
+	t = tui.New(tui.Config{
+		HideHeaders: true,
+		StatusLeft:  "help",
+		StatusRight: "Ctrl+C exit",
+		OnSubmit: func(topic string) {
+			topic = strings.TrimSpace(topic)
+			if topic == "" {
+				return
+			}
+			t.AddMessage(tui.RoleUser, topic)
+			var buf strings.Builder
+			p.SetOutputWriter(&helpWriter{b: &buf})
+			_ = lookupHelp(p, topic)
+			p.SetOutputWriter(nil)
+			output := strings.TrimSpace(buf.String())
+			if output == "" {
+				output = "No help found for " + topic
+			}
+			t.AddMessage(tui.RoleAssistant, output)
+		},
+	})
+
+	t.AddMessage(tui.RoleSystem, "Enter a module or function name to look up help, e.g. json or json.loads")
+	return t.Run(ctx)
+}
+
+type helpWriter struct{ b *strings.Builder }
+
+func (w *helpWriter) Write(p []byte) (int, error) {
+	w.b.Write(p)
+	return len(p), nil
+}

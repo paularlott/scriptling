@@ -1,0 +1,4 @@
+name = "sample"
+version = "1.0.0"
+description = "Sample package for testing the docs viewer"
+main = "demo.run"

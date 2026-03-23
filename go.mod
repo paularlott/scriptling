@@ -7,7 +7,7 @@ require (
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/paularlott/cli v0.7.11
+	github.com/paularlott/cli v0.7.12
 	github.com/paularlott/logger v0.3.0
 	github.com/paularlott/mcp v0.15.0
 	github.com/paularlott/snapshotkv v0.3.0

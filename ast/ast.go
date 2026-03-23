@@ -312,11 +312,13 @@ func (is *ImportStatement) FullName() string {
 }
 
 // FromImportStatement represents "from X import Y, Z" statements
+// Also supports relative imports: "from . import X", "from .. import X", "from .module import X"
 type FromImportStatement struct {
-	Token   token.Token   // The 'from' token
-	Module  *Identifier   // The module name (e.g., "bs4" or "urllib.parse")
-	Names   []*Identifier // The names to import (e.g., ["BeautifulSoup"])
-	Aliases []*Identifier // Optional aliases (for "import X as Y"), nil if no alias
+	Token         token.Token   // The 'from' token
+	Module        *Identifier   // The module name (e.g., "bs4" or "urllib.parse"), nil for "from . import X"
+	Names         []*Identifier // The names to import (e.g., ["BeautifulSoup"])
+	Aliases       []*Identifier // Optional aliases (for "import X as Y"), nil if no alias
+	RelativeLevel int           // Number of leading dots for relative imports (0 = absolute, 1 = ".", 2 = "..", etc.)
 }
 
 func (fis *FromImportStatement) statementNode()       {}

@@ -72,9 +72,9 @@ type LibraryLoader interface {
 type Scriptling struct {
 	env                 *object.Environment
 	registeredLibraries map[string]*object.Library
-	scriptLibraries     map[string]*scriptLibrary // Script-based libraries
-	libraryLoader       LibraryLoader             // Loader for dynamic library loading
-	sourceFile          string                    // optional source file name for error reporting
+	scriptLibraries     map[string]*scriptLibrary
+	libraryLoader       LibraryLoader
+	sourceFile          string
 }
 
 func New() *Scriptling {
@@ -831,6 +831,11 @@ func (p *Scriptling) RegisterScriptLibrary(name string, script string) error {
 	return nil
 }
 
+// GetLibraryLoader returns the current library loader, or nil if none is set.
+func (p *Scriptling) GetLibraryLoader() LibraryLoader {
+	return p.libraryLoader
+}
+
 // SetLibraryLoader sets a loader for dynamically loading libraries.
 // This is the preferred way to load libraries from various sources
 // (filesystem, API, etc.) using the libloader package.
@@ -1005,6 +1010,9 @@ func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[stri
 
 	// Copy available libraries callback from parent environment
 	libEnv.SetAvailableLibrariesCallback(p.env.GetAvailableLibrariesCallback())
+
+	// Set the current module for relative import resolution
+	libEnv.SetCurrentModule(name)
 
 	// Parse and evaluate the script in the library environment
 	var program *ast.Program

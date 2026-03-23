@@ -2412,6 +2412,11 @@ func helpFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.
 			if libObj, ok := env.Get(libName); ok {
 				if dict, ok := libObj.(*object.Dict); ok {
 					if pair, ok := dict.Pairs[object.DictKey(&object.String{Value: funcName})]; ok {
+						// Sub-library (nested dict) — treat topic as a library name
+						if subDict, ok := pair.Value.(*object.Dict); ok {
+							printLibraryHelp(writer, fmt.Sprintf("%s.%s", libName, funcName), subDict)
+							return NULL
+						}
 						if builtin, ok := pair.Value.(*object.Builtin); ok {
 							fmt.Fprintf(writer, "Help for %s.%s:\n", libName, funcName)
 							if builtin.HelpText != "" {
@@ -2439,38 +2444,7 @@ func helpFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.
 		// Check if it's a library name
 		if libObj, ok := env.Get(topic); ok {
 			if dict, ok := libObj.(*object.Dict); ok {
-				fmt.Fprintf(writer, "%s functions:\n", topic)
-
-				// Check for module docstring
-				if docPair, ok := dict.Pairs[object.DictKey(&object.String{Value: "__doc__"})]; ok {
-					if docStr, ok := docPair.Value.(*object.String); ok {
-						fmt.Fprintln(writer, "")
-						fmt.Fprintln(writer, "Description:")
-						// Indent the docstring
-						lines := strings.Split(docStr.Value, "\n")
-						for _, line := range lines {
-							fmt.Fprintf(writer, "  %s\n", line)
-						}
-						fmt.Fprintln(writer, "")
-					}
-				}
-
-				fmt.Fprintln(writer, "Available functions:")
-				// Collect and sort function names
-				var names []string
-				docKey := object.DictKey(&object.String{Value: "__doc__"})
-				for k, pair := range dict.Pairs {
-					if k != docKey {
-						keyStr, _ := pair.Key.AsString()
-						names = append(names, keyStr)
-					}
-				}
-				sort.Strings(names)
-				for _, name := range names {
-					fmt.Fprintf(writer, "  - %s\n", name)
-				}
-				fmt.Fprintln(writer, "")
-				fmt.Fprintf(writer, "Use help(\"%s.function_name\") for details on a specific function\n", topic)
+				printLibraryHelp(writer, topic, dict)
 				return NULL
 			}
 		} // Check if it's a builtin function name (from builtins map)
@@ -2589,6 +2563,35 @@ func helpFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.
 }
 
 // Helper to extract and print docstrings from functions
+func printLibraryHelp(writer io.Writer, name string, dict *object.Dict) {
+	fmt.Fprintf(writer, "%s functions:\n", name)
+	if docPair, ok := dict.Pairs[object.DictKey(&object.String{Value: "__doc__"})]; ok {
+		if docStr, ok := docPair.Value.(*object.String); ok {
+			fmt.Fprintln(writer, "")
+			fmt.Fprintln(writer, "Description:")
+			for _, line := range strings.Split(docStr.Value, "\n") {
+				fmt.Fprintf(writer, "  %s\n", line)
+			}
+			fmt.Fprintln(writer, "")
+		}
+	}
+	fmt.Fprintln(writer, "Available functions:")
+	var names []string
+	docKey := object.DictKey(&object.String{Value: "__doc__"})
+	for k, pair := range dict.Pairs {
+		if k != docKey {
+			keyStr, _ := pair.Key.AsString()
+			names = append(names, keyStr)
+		}
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		fmt.Fprintf(writer, "  - %s\n", n)
+	}
+	fmt.Fprintln(writer, "")
+	fmt.Fprintf(writer, "Use help(\"%s.function_name\") for details on a specific function\n", name)
+}
+
 func printFunctionHelp(writer io.Writer, name string, fn *object.Function) {
 	// Build function signature
 	fmt.Fprintf(writer, "%s(", name)

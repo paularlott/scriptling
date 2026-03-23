@@ -17,17 +17,17 @@ import (
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/build"
 	"github.com/paularlott/scriptling/extlibs"
-	"github.com/paularlott/scriptling/lint"
+	"github.com/paularlott/scriptling/libloader"
 	"github.com/paularlott/scriptling/object"
 
 	mcpcli "github.com/paularlott/scriptling/scriptling-cli/mcp"
+	"github.com/paularlott/scriptling/scriptling-cli/pack"
 	"github.com/paularlott/scriptling/scriptling-cli/server"
 )
 
 var globalLogger logger.Logger
 
 func main() {
-	// Load .env from the current directory if it exists
 	env.Load()
 
 	cmd := &cli.Command{
@@ -35,11 +35,37 @@ func main() {
 		Version:     build.Version,
 		Usage:       "Scriptling interpreter",
 		Description: "Run Scriptling scripts from files, stdin, or interactively",
+		Commands: []*cli.Command{
+			helpCmd(),
+			packCmd(),
+			unpackCmd(),
+			cacheCmd(),
+		},
 		Flags: []cli.Flag{
 			&cli.BoolFlag{
 				Name:    "interactive",
 				Usage:   "Start interactive mode",
 				Aliases: []string{"i"},
+			},
+			&cli.StringSliceFlag{
+				Name:    "package",
+				Usage:   "Package (.zip) path or URL to load (can be repeated)",
+				Aliases: []string{"p"},
+			},
+			&cli.BoolFlag{
+				Name:    "insecure",
+				Usage:   "Allow self-signed/insecure HTTPS certificates for package URLs",
+				Aliases: []string{"k"},
+			},
+			&cli.StringFlag{
+				Name:    "cache-dir",
+				Usage:   "Override default OS cache directory for remote packages",
+				EnvVars: []string{"SCRIPTLING_CACHE_DIR"},
+			},
+			&cli.StringFlag{
+				Name:    "code",
+				Usage:   "Execute inline code string",
+				Aliases: []string{"c"},
 			},
 			&cli.StringSliceFlag{
 				Name:    "libpath",
@@ -62,7 +88,6 @@ func main() {
 				Global:       true,
 				EnvVars:      []string{"SCRIPTLING_LOG_FORMAT"},
 			},
-			// Server flags
 			&cli.StringFlag{
 				Name:         "server",
 				Usage:        "Enable HTTP server mode with address (host:port)",
@@ -134,11 +159,9 @@ func main() {
 			},
 		},
 		PreRun: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
-			logLevel := cmd.GetString("log-level")
-			logFormat := cmd.GetString("log-format")
 			globalLogger = logslog.New(logslog.Config{
-				Level:  logLevel,
-				Format: logFormat,
+				Level:  cmd.GetString("log-level"),
+				Format: cmd.GetString("log-format"),
 				Writer: os.Stdout,
 			})
 			server.Log = globalLogger
@@ -147,32 +170,24 @@ func main() {
 		Run: runScriptling,
 	}
 
-	err := cmd.Execute(context.Background())
-	if err != nil {
+	if err := cmd.Execute(context.Background()); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
 func runScriptling(ctx context.Context, cmd *cli.Command) error {
-	// Check if server mode is enabled
-	serverAddr := cmd.GetString("server")
-	if serverAddr != "" {
+	if serverAddr := cmd.GetString("server"); serverAddr != "" {
 		return runServer(ctx, cmd, serverAddr)
 	}
 
-	// Check if lint mode is enabled
 	if cmd.GetBool("lint") {
 		return runLint(cmd)
 	}
 
-	// Parse allowed paths
 	allowedPaths := parseAllowedPaths(cmd.GetString("allowed-paths"))
-
-	// Create Scriptling interpreter
 	p := scriptling.New()
 
-	// Determine the implicit base dir: script dir, or cwd for interactive/stdin
 	file := cmd.GetStringArg("file")
 	interactive := cmd.GetBool("interactive")
 
@@ -183,38 +198,47 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 		baseDir, _ = os.Getwd()
 	}
 
-	// Build lib dirs: implicit base dir first, then any --libpath entries
 	libDirs := buildLibDirs(baseDir, cmd.GetStringSlice("libpath"))
-
-	// Set up all libraries and factories
 	mcpcli.SetupFactories(libDirs, allowedPaths, globalLogger)
 	mcpcli.SetupScriptling(p, libDirs, true, allowedPaths, globalLogger)
 
-	// Set up sys.argv with all arguments
+	packages := cmd.GetStringSlice("package")
+	insecure := cmd.GetBool("insecure")
+	var packLoader *pack.Loader
+	if len(packages) > 0 {
+		go pack.PruneCache(cmd.GetString("cache-dir"), 0) // async, best-effort
+		packLoader = pack.NewLoader()
+		packLoader.SetCacheDir(cmd.GetString("cache-dir"))
+		for _, src := range packages {
+			if err := packLoader.AddFromPath(src, insecure); err != nil {
+				return fmt.Errorf("failed to load package %s: %w", src, err)
+			}
+		}
+		packLoader.SetFallback(nil)
+		p.SetLibraryLoader(libloader.NewChain(p.GetLibraryLoader(), packLoader))
+	}
+
 	argv := []string{file}
 	if file != "" {
 		argv = append(argv, cmd.GetArgs()...)
 	}
 
-	// Initialize KV store (memory-only if no path specified)
 	kvStoragePath := cmd.GetString("kv-storage")
 	if err := extlibs.InitKVStore(kvStoragePath); err != nil {
 		return fmt.Errorf("failed to initialize KV store: %w", err)
 	}
 	defer extlibs.CloseKVStore()
 
-	// Pass os.Stdin when running a file so scripts can read piped data.
-	// When running from stdin, stdin is consumed as source so pass nil.
 	var stdinReader io.Reader
 	if file != "" {
 		stdinReader = os.Stdin
 	}
 	extlibs.RegisterSysLibrary(p, argv, stdinReader)
-
-	// Release background tasks for script mode
 	extlibs.ReleaseBackgroundTasks()
 
-	// Determine execution mode
+	if code := cmd.GetString("code"); code != "" {
+		return evalAndCheckExit(p, code)
+	}
 	if interactive {
 		return runInteractive(p)
 	}
@@ -223,6 +247,11 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	}
 	if !isStdinEmpty() {
 		return runStdin(p)
+	}
+	if packLoader != nil {
+		if mod, fn, ok := packLoader.GetMainEntry(); ok {
+			return evalAndCheckExit(p, fmt.Sprintf("import %s\n%s.%s()", mod, mod, fn))
+		}
 	}
 	cmd.ShowHelp()
 	return nil
@@ -240,6 +269,9 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 		Address:       address,
 		ScriptFile:    file,
 		LibDirs:       buildLibDirs(baseDir, cmd.GetStringSlice("libpath")),
+		Packages:      cmd.GetStringSlice("package"),
+		Insecure:      cmd.GetBool("insecure"),
+		CacheDir:      cmd.GetString("cache-dir"),
 		BearerToken:   cmd.GetString("bearer-token"),
 		AllowedPaths:  parseAllowedPaths(cmd.GetString("allowed-paths")),
 		MCPToolsDir:   cmd.GetString("mcp-tools"),
@@ -249,44 +281,6 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 		TLSKey:        cmd.GetString("tls-key"),
 		TLSGenerate:   cmd.GetBool("tls-generate"),
 	})
-}
-
-// buildLibDirs constructs the ordered list of library search directories.
-// baseDir (script dir or cwd) is always first; extra dirs are appended.
-// Empty strings are skipped.
-func buildLibDirs(baseDir string, extra []string) []string {
-	var dirs []string
-	if baseDir != "" {
-		dirs = append(dirs, baseDir)
-	}
-	for _, d := range extra {
-		if d != "" {
-			dirs = append(dirs, d)
-		}
-	}
-	return dirs
-}
-
-// parseAllowedPaths parses a comma-separated list of paths into a slice.
-// Returns nil for no restrictions, empty slice for deny all (when paths is "-").
-func parseAllowedPaths(paths string) []string {
-	if paths == "" {
-		return nil
-	}
-	if paths == "-" {
-		return []string{} // Empty slice means deny all
-	}
-	result := []string{}
-	for _, p := range strings.Split(paths, ",") {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			result = append(result, p)
-		}
-	}
-	if len(result) == 0 {
-		return nil
-	}
-	return result
 }
 
 func runFile(p *scriptling.Scriptling, filename string) error {
@@ -372,14 +366,10 @@ func runInteractive(p *scriptling.Scriptling) error {
 	})
 
 	t.AddMessage(tui.RoleSystem, tui.Styled(t.Theme().Text, "scriptling")+"\n"+tui.Styled(t.Theme().Primary, "v"+build.Version))
-
 	return t.Run(context.Background())
 }
 
-// streamWriter forwards script output chunks to the TUI streaming message.
-type streamWriter struct {
-	t *tui.TUI
-}
+type streamWriter struct{ t *tui.TUI }
 
 func (w *streamWriter) Write(p []byte) (int, error) {
 	w.t.StreamChunk(string(p))
@@ -402,92 +392,42 @@ func isStdinEmpty() bool {
 	return (stat.Mode() & os.ModeCharDevice) != 0
 }
 
-func runLint(cmd *cli.Command) error {
-	format := cmd.GetString("lint-format")
-	if format != "text" && format != "json" {
-		return fmt.Errorf("invalid value for --lint-format: %s (must be 'text' or 'json')", format)
+// buildLibDirs constructs the ordered list of library search directories.
+func buildLibDirs(baseDir string, extra []string) []string {
+	var dirs []string
+	if baseDir != "" {
+		dirs = append(dirs, baseDir)
 	}
-
-	file := cmd.GetStringArg("file")
-
-	// Lint from file
-	if file != "" {
-		result, err := lint.LintFile(file)
-		if err != nil {
-			return err
+	for _, d := range extra {
+		if d != "" {
+			dirs = append(dirs, d)
 		}
-		return outputLintResult(result, format)
 	}
-
-	// Lint from stdin
-	if !isStdinEmpty() {
-		content, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			return fmt.Errorf("failed to read from stdin: %w", err)
-		}
-		result := lint.Lint(string(content), &lint.Options{Filename: "stdin"})
-		return outputLintResult(result, format)
-	}
-
-	cmd.ShowHelp()
-	return nil
+	return dirs
 }
 
-func outputLintResult(result *lint.Result, format string) error {
-	if format == "json" {
-		output, err := formatLintJSON(result)
-		if err != nil {
-			return fmt.Errorf("failed to format JSON output: %w", err)
-		}
-		fmt.Println(output)
-	} else {
-		if result.HasIssues() {
-			fmt.Println(result.String())
-		} else {
-			fmt.Println("No issues found")
+// parseAllowedPaths parses a comma-separated list of paths.
+// Returns nil for no restrictions, empty slice for deny-all (paths == "-").
+func parseAllowedPaths(paths string) []string {
+	if paths == "" {
+		return nil
+	}
+	if paths == "-" {
+		return []string{}
+	}
+	var result []string
+	for _, p := range strings.Split(paths, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			result = append(result, p)
 		}
 	}
-
-	// Exit with error code if there are errors
-	if result.HasErrors {
-		os.Exit(1)
+	if len(result) == 0 {
+		return nil
 	}
-	return nil
+	return result
 }
 
-func formatLintJSON(result *lint.Result) (string, error) {
-	// Simple JSON formatting without external dependencies
-	var sb strings.Builder
-	sb.WriteString("{\n")
-	fmt.Fprintf(&sb, "  \"files_checked\": %d,\n", result.FilesChecked)
-	fmt.Fprintf(&sb, "  \"has_errors\": %t,\n", result.HasErrors)
-	sb.WriteString("  \"errors\": [")
-
-	if len(result.Errors) > 0 {
-		sb.WriteString("\n")
-		for i, err := range result.Errors {
-			sb.WriteString("    {\n")
-			if err.File != "" {
-				fmt.Fprintf(&sb, "      \"file\": %q,\n", err.File)
-			}
-			fmt.Fprintf(&sb, "      \"line\": %d,\n", err.Line)
-			if err.Column > 0 {
-				fmt.Fprintf(&sb, "      \"column\": %d,\n", err.Column)
-			}
-			fmt.Fprintf(&sb, "      \"message\": %q,\n", err.Message)
-			fmt.Fprintf(&sb, "      \"severity\": %q", err.Severity)
-			if err.Code != "" {
-				fmt.Fprintf(&sb, ",\n      \"code\": %q", err.Code)
-			}
-			sb.WriteString("\n    }")
-			if i < len(result.Errors)-1 {
-				sb.WriteString(",")
-			}
-			sb.WriteString("\n")
-		}
-		sb.WriteString("  ")
-	}
-	sb.WriteString("]\n")
-	sb.WriteString("}")
-	return sb.String(), nil
+// readFile reads a local file, used by packCmd --hash.
+func readFile(path string) ([]byte, error) {
+	return os.ReadFile(path)
 }
