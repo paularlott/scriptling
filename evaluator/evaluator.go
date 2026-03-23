@@ -1827,13 +1827,111 @@ func evalFromImportStatement(fis *ast.FromImportStatement, env *object.Environme
 		return errors.NewError(errors.ErrImportError)
 	}
 
-	// First, import the module
-	moduleName := fis.Module.Value
+	// Resolve the base module name, handling relative imports
+	var baseModuleName string
+	if fis.RelativeLevel > 0 {
+		// Relative import: resolve based on current module
+		currentModule := env.GetCurrentModule()
+		if currentModule == "" {
+			return errors.NewError("%s: relative import outside of module context", errors.ErrImportError)
+		}
 
+		// Split current module path into parts
+		parts := strings.Split(currentModule, ".")
+
+		// Calculate how many levels we can go up
+		// e.g., currentModule = "a.b.c", relativeLevel = 1 -> go up 1 level -> "a.b"
+		// e.g., currentModule = "a.b.c", relativeLevel = 2 -> go up 2 levels -> "a"
+		// e.g., currentModule = "a.b.c", relativeLevel = 3 -> error (can't go beyond root)
+		if fis.RelativeLevel > len(parts) {
+			return errors.NewError("%s: relative import level %d exceeds module depth for '%s'", errors.ErrImportError, fis.RelativeLevel, currentModule)
+		}
+
+		// Strip the appropriate number of levels from the current module
+		resolvedParts := parts[:len(parts)-fis.RelativeLevel]
+
+		// Build the resolved base module name
+		if fis.Module != nil {
+			// from .module import X or from ..module import X
+			baseModuleName = strings.Join(resolvedParts, ".") + "." + fis.Module.Value
+		} else {
+			// from . import X or from .. import X (no additional module)
+			// In this case, each name to import is a submodule of the parent
+			baseModuleName = strings.Join(resolvedParts, ".")
+			// If empty after stripping, it means we're at the package root - this is an error
+			if baseModuleName == "" {
+				return errors.NewError("%s: relative import at package root has no target", errors.ErrImportError)
+			}
+		}
+	} else {
+		// Absolute import
+		if fis.Module == nil {
+			return errors.NewError("%s: missing module name in from-import", errors.ErrImportError)
+		}
+		baseModuleName = fis.Module.Value
+	}
+
+	// For "from . import X" (no module specified), we need to import each name as a submodule
+	// For "from .module import X" (module specified), we import the module once
+	if fis.Module == nil && fis.RelativeLevel > 0 {
+		// "from . import X, Y" - each name is a submodule to import
+		return evalFromImportMultipleSubmodules(fis, baseModuleName, env, importCallback)
+	}
+
+	// Standard from-import: import the module and extract names
+	return evalFromImportStandard(fis, baseModuleName, env, importCallback)
+}
+
+// evalFromImportMultipleSubmodules handles "from . import X, Y" where each name is a submodule
+func evalFromImportMultipleSubmodules(fis *ast.FromImportStatement, baseModule string, env *object.Environment, importCallback func(string) error) object.Object {
+	for i, name := range fis.Names {
+		// Build the full module name: base + "." + name
+		fullModuleName := baseModule + "." + name.Value
+
+		// Import the submodule
+		err := importCallback(fullModuleName)
+		if err != nil {
+			return errors.NewError("%s: %s", errors.ErrImportError, err.Error())
+		}
+
+		// Get the imported submodule
+		moduleObj, ok := env.Get(fullModuleName)
+		if !ok {
+			// Try getting from parent module
+			parentObj, parentOk := env.Get(baseModule)
+			if parentOk {
+				switch p := parentObj.(type) {
+				case *object.Dict:
+					if pair, exists := p.GetByString(name.Value); exists {
+						moduleObj = pair.Value
+						ok = true
+					}
+				}
+			}
+			if !ok {
+				return errors.NewError("%s: cannot import name '%s' from '%s'", errors.ErrImportError, name.Value, baseModule)
+			}
+		}
+
+		// Use alias if provided, otherwise use the original name
+		bindName := name.Value
+		if fis.Aliases[i] != nil {
+			bindName = fis.Aliases[i].Value
+		}
+
+		env.Set(bindName, moduleObj)
+	}
+
+	return NULL
+}
+
+// evalFromImportStandard handles standard "from module import X, Y"
+func evalFromImportStandard(fis *ast.FromImportStatement, moduleName string, env *object.Environment, importCallback func(string) error) object.Object {
 	// Check if module was already in the environment before importing
 	// (e.g. user did `import json` before `from json import dumps`)
 	_, wasPresent := env.Get(moduleName)
 
+	// Import the module
 	err := importCallback(moduleName)
 	if err != nil {
 		return errors.NewError("%s: %s", errors.ErrImportError, err.Error())

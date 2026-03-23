@@ -706,6 +706,7 @@ type Environment struct {
 	input                      io.Reader
 	importCallback             func(string) error
 	availableLibrariesCallback func() []LibraryInfo
+	currentModule              string // Current module path for relative import resolution
 }
 
 // LibraryInfo contains information about available libraries
@@ -937,6 +938,22 @@ func (e *Environment) GetAvailableLibrariesCallback() func() []LibraryInfo {
 		return e.outer.GetAvailableLibrariesCallback()
 	}
 	return nil
+}
+
+// SetCurrentModule sets the current module path for relative import resolution
+func (e *Environment) SetCurrentModule(module string) {
+	e.currentModule = module
+}
+
+// GetCurrentModule gets the current module path from this environment or outer
+func (e *Environment) GetCurrentModule() string {
+	if e.currentModule != "" {
+		return e.currentModule
+	}
+	if e.outer != nil {
+		return e.outer.GetCurrentModule()
+	}
+	return ""
 }
 
 type List struct {

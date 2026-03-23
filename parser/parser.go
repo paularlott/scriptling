@@ -496,24 +496,66 @@ func (p *Parser) parseImportStatement() *ast.ImportStatement {
 }
 
 // parseFromImportStatement parses "from X import Y, Z" or "from X import Y as A"
+// Also handles relative imports: "from . import X", "from .. import X", "from .module import X"
 func (p *Parser) parseFromImportStatement() *ast.FromImportStatement {
 	stmt := &ast.FromImportStatement{Token: p.curToken}
 
-	if !p.expectPeek(token.IDENT) {
-		return nil
-	}
-
-	// Build up the dotted module name (e.g., urllib.parse)
-	moduleName := p.curToken.Literal
+	// Check for relative imports (leading dots)
+	relativeLevel := 0
 	for p.peekTokenIs(token.DOT) {
 		p.nextToken() // consume dot
-		if !p.expectPeek(token.IDENT) {
-			return nil
-		}
-		moduleName = moduleName + "." + p.curToken.Literal
+		relativeLevel++
 	}
 
-	stmt.Module = &ast.Identifier{Token: p.curToken, Value: moduleName}
+	stmt.RelativeLevel = relativeLevel
+
+	// After dots, check what comes next:
+	// - If we have dots and next is IMPORT: "from . import X" or "from .. import X"
+	// - If we have dots and next is IDENT: "from .module import X"
+	// - If no dots and next is IDENT: "from module import X" (absolute import)
+	if relativeLevel > 0 {
+		if p.peekTokenIs(token.IMPORT) {
+			// Pure relative import: "from . import X" - no module name
+			stmt.Module = nil
+		} else if p.peekTokenIs(token.IDENT) {
+			// Relative import with module: "from .module import X"
+			p.nextToken() // move to identifier
+			moduleName := p.curToken.Literal
+
+			// Build up any additional dotted parts (e.g., from .a.b import X)
+			for p.peekTokenIs(token.DOT) {
+				p.nextToken() // consume dot
+				if !p.expectPeek(token.IDENT) {
+					return nil
+				}
+				moduleName = moduleName + "." + p.curToken.Literal
+			}
+
+			stmt.Module = &ast.Identifier{Token: p.curToken, Value: moduleName}
+		} else {
+			p.errors = append(p.errors, fmt.Sprintf("line %d: expected identifier or 'import' after relative import dots", p.curToken.Line))
+			return nil
+		}
+	} else {
+		// Absolute import: "from module import X"
+		if !p.peekTokenIs(token.IDENT) {
+			p.errors = append(p.errors, fmt.Sprintf("line %d: expected module name after 'from'", p.curToken.Line))
+			return nil
+		}
+		p.nextToken() // move to identifier
+
+		// Build up the dotted module name (e.g., urllib.parse)
+		moduleName := p.curToken.Literal
+		for p.peekTokenIs(token.DOT) {
+			p.nextToken() // consume dot
+			if !p.expectPeek(token.IDENT) {
+				return nil
+			}
+			moduleName = moduleName + "." + p.curToken.Literal
+		}
+
+		stmt.Module = &ast.Identifier{Token: p.curToken, Value: moduleName}
+	}
 
 	// Expect 'import' keyword
 	if !p.expectPeek(token.IMPORT) {

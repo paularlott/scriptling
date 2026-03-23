@@ -1011,6 +1011,9 @@ func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[stri
 	// Copy available libraries callback from parent environment
 	libEnv.SetAvailableLibrariesCallback(p.env.GetAvailableLibrariesCallback())
 
+	// Set the current module for relative import resolution
+	libEnv.SetCurrentModule(name)
+
 	// Parse and evaluate the script in the library environment
 	var program *ast.Program
 	if cached, ok := Get(script); ok {
