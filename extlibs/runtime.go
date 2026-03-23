@@ -22,6 +22,10 @@ var RuntimeState = struct {
 	Routes     map[string]*RouteInfo
 	Middleware string
 
+	// WebSocket routes and connections
+	WebSocketRoutes      map[string]*WebSocketRouteInfo
+	WebSocketConnections map[string]*WebSocketServerConn
+
 	// Background tasks
 	Backgrounds       map[string]string                   // name -> "function_name"
 	BackgroundArgs    map[string][]object.Object          // name -> args
@@ -44,7 +48,9 @@ var RuntimeState = struct {
 	// Cleanup functions registered by libraries
 	cleanupFuncs []func()
 }{
-	Routes:            make(map[string]*RouteInfo),
+	Routes:               make(map[string]*RouteInfo),
+	WebSocketRoutes:      make(map[string]*WebSocketRouteInfo),
+	WebSocketConnections: make(map[string]*WebSocketServerConn),
 	Backgrounds:       make(map[string]string),
 	BackgroundArgs:    make(map[string][]object.Object),
 	BackgroundKwargs:  make(map[string]map[string]object.Object),
@@ -85,6 +91,14 @@ func ResetRuntime() {
 
 	RuntimeState.Routes = make(map[string]*RouteInfo)
 	RuntimeState.Middleware = ""
+
+	// Close all WebSocket connections
+	for _, conn := range RuntimeState.WebSocketConnections {
+		conn.Close()
+	}
+	RuntimeState.WebSocketRoutes = make(map[string]*WebSocketRouteInfo)
+	RuntimeState.WebSocketConnections = make(map[string]*WebSocketServerConn)
+
 	RuntimeState.Backgrounds = make(map[string]string)
 	RuntimeState.BackgroundArgs = make(map[string][]object.Object)
 	RuntimeState.BackgroundKwargs = make(map[string]map[string]object.Object)

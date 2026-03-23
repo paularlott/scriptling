@@ -48,6 +48,7 @@ func SetupScriptling(p *scriptling.Scriptling, libdirs []string, registerInterac
 	extlibs.RegisterPathlibLibrary(p, allowedPaths)
 	extlibs.RegisterGlobLibrary(p, allowedPaths)
 	extlibs.RegisterWaitForLibrary(p)
+	extlibs.RegisterWebSocketLibrary(p)
 
 	// Register AI and MCP libraries
 	ai.Register(p)

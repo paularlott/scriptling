@@ -601,6 +601,9 @@ func (l *Lexer) readTripleString(quote byte) string {
 		if l.ch == quote && l.peekChar() == quote && l.peekN(2) == quote {
 			break
 		}
+		if l.ch == '\n' {
+			l.line++
+		}
 		l.readChar()
 	}
 	str := l.input[position:l.position]
@@ -627,6 +630,9 @@ func (l *Lexer) readRawTripleString(quote byte) string {
 	for l.ch != 0 {
 		if l.ch == quote && l.peekChar() == quote && l.peekN(2) == quote {
 			break
+		}
+		if l.ch == '\n' {
+			l.line++
 		}
 		l.readChar()
 	}

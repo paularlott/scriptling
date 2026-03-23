@@ -2,9 +2,14 @@ package extlibs
 
 import (
 	"context"
+	"encoding/json"
+	"net"
 	"net/url"
 	"strings"
+	"sync"
+	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
@@ -31,6 +36,114 @@ type RouteInfo struct {
 	Handler   string
 	Static    bool
 	StaticDir string
+}
+
+// WebSocketRouteInfo stores information about a registered WebSocket route
+type WebSocketRouteInfo struct {
+	Handler string // "library.function" to call for each connection
+}
+
+// WebSocketServerConn wraps a server-side WebSocket connection
+type WebSocketServerConn struct {
+	mu         sync.Mutex
+	conn       *websocket.Conn
+	id         string
+	remoteAddr string
+	closed     bool
+	closedCh   chan struct{}
+}
+
+// NewWebSocketServerConn creates a new server WebSocket connection wrapper
+func NewWebSocketServerConn(conn *websocket.Conn, id string) *WebSocketServerConn {
+	addr := ""
+	if conn.RemoteAddr() != nil {
+		addr = conn.RemoteAddr().String()
+	}
+	return &WebSocketServerConn{
+		conn:       conn,
+		id:         id,
+		remoteAddr: addr,
+		closedCh:   make(chan struct{}),
+	}
+}
+
+// ID returns the connection ID
+func (c *WebSocketServerConn) ID() string {
+	return c.id
+}
+
+// RemoteAddr returns the remote address
+func (c *WebSocketServerConn) RemoteAddr() string {
+	return c.remoteAddr
+}
+
+// ReadWithTimeout reads a message with timeout. Returns messageType, data, error.
+// On timeout, returns 0, nil, nil
+func (c *WebSocketServerConn) ReadWithTimeout(timeout time.Duration) (int, []byte, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.closed {
+		return 0, nil, net.ErrClosed
+	}
+
+	if timeout > 0 {
+		deadline := time.Now().Add(timeout)
+		if err := c.conn.SetReadDeadline(deadline); err != nil {
+			return 0, nil, err
+		}
+	} else {
+		if err := c.conn.SetReadDeadline(time.Time{}); err != nil {
+			return 0, nil, err
+		}
+	}
+
+	msgType, data, err := c.conn.ReadMessage()
+	if err != nil {
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			return 0, nil, nil
+		}
+		c.closed = true
+		close(c.closedCh)
+		return 0, nil, err
+	}
+	return msgType, data, nil
+}
+
+// WriteMessage sends a message
+func (c *WebSocketServerConn) WriteMessage(msgType int, data []byte) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.closed {
+		return net.ErrClosed
+	}
+	return c.conn.WriteMessage(msgType, data)
+}
+
+// Close closes the connection
+func (c *WebSocketServerConn) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.closed {
+		return nil
+	}
+	c.closed = true
+	close(c.closedCh)
+	return c.conn.Close()
+}
+
+// IsConnected returns whether the connection is still open
+func (c *WebSocketServerConn) IsConnected() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return !c.closed
+}
+
+// ClosedChan returns a channel that closes when the connection closes
+func (c *WebSocketServerConn) ClosedChan() <-chan struct{} {
+	return c.closedCh
 }
 
 // RequestClass is the class for Request objects passed to handlers
@@ -86,6 +199,216 @@ func CreateRequestInstance(method, path, body string, headers map[string]string,
 			"body":    &object.String{Value: body},
 			"headers": headerDict,
 			"query":   queryDict,
+		},
+	}
+}
+
+// WebSocketClientClass is the class for WebSocket client objects passed to handlers
+var WebSocketClientClass = &object.Class{
+	Name: "WebSocketClient",
+	Methods: map[string]object.Object{
+		"connected": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.ExactArgs(args, 1); err != nil {
+					return err
+				}
+				instance, ok := args[0].(*object.Instance)
+				if !ok {
+					return errors.NewError("connected() called on non-WebSocketClient object")
+				}
+
+				conn := getWSConnFromInstance(instance)
+				if conn == nil {
+					return &object.Boolean{Value: false}
+				}
+				return &object.Boolean{Value: conn.IsConnected()}
+			},
+			HelpText: `connected() - Check if the WebSocket connection is still open
+
+Returns True if connected, False otherwise.`,
+		},
+		"receive": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.MinArgs(args, 1); err != nil {
+					return err
+				}
+				instance, ok := args[0].(*object.Instance)
+				if !ok {
+					return errors.NewError("receive() called on non-WebSocketClient object")
+				}
+
+				timeout := 30.0
+				if t := kwargs.Get("timeout"); t != nil {
+					if timeoutFloat, e := t.AsFloat(); e == nil {
+						timeout = timeoutFloat
+					}
+				}
+
+				conn := getWSConnFromInstance(instance)
+				if conn == nil {
+					return &object.Null{}
+				}
+
+				msgType, data, err := conn.ReadWithTimeout(time.Duration(timeout * float64(time.Second)))
+				if err != nil || data == nil {
+					return &object.Null{}
+				}
+
+				if msgType == websocket.TextMessage {
+					return &object.String{Value: string(data)}
+				}
+				// Binary message - return as list of bytes
+				elements := make([]object.Object, len(data))
+				for i, b := range data {
+					elements[i] = &object.Integer{Value: int64(b)}
+				}
+				return &object.List{Elements: elements}
+			},
+			HelpText: `receive(timeout=30) - Receive a message from the WebSocket
+
+Parameters:
+  timeout (number, optional): Timeout in seconds (default: 30)
+
+Returns:
+  string for text messages, list of bytes for binary, or None on timeout/disconnect`,
+		},
+		"send": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.MinArgs(args, 2); err != nil {
+					return err
+				}
+				instance, ok := args[0].(*object.Instance)
+				if !ok {
+					return errors.NewError("send() called on non-WebSocketClient object")
+				}
+
+				msg := args[1]
+				var data []byte
+
+				// Check if it's a dict - convert to JSON
+				if dict, ok := msg.(*object.Dict); ok {
+					jsonData, jsonErr := json.Marshal(conversion.ToGo(dict))
+					if jsonErr != nil {
+						return errors.NewError("failed to encode JSON: %s", jsonErr.Error())
+					}
+					data = jsonData
+				} else if str, ok := msg.(*object.String); ok {
+					data = []byte(str.Value)
+				} else {
+					strVal, coerceErr := msg.CoerceString()
+					if coerceErr != nil {
+						return errors.NewError("message must be string or dict")
+					}
+					data = []byte(strVal)
+				}
+
+				conn := getWSConnFromInstance(instance)
+				if conn == nil {
+					return errors.NewError("connection closed")
+				}
+
+				if writeErr := conn.WriteMessage(websocket.TextMessage, data); writeErr != nil {
+					return errors.NewError("send failed: %s", writeErr.Error())
+				}
+				return &object.Null{}
+			},
+			HelpText: `send(message) - Send a message to the WebSocket client
+
+Parameters:
+  message (string or dict): Message to send. Dicts are automatically JSON encoded.`,
+		},
+		"send_binary": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.MinArgs(args, 2); err != nil {
+					return err
+				}
+				instance, ok := args[0].(*object.Instance)
+				if !ok {
+					return errors.NewError("send_binary() called on non-WebSocketClient object")
+				}
+
+				list, ok := args[1].(*object.List)
+				if !ok {
+					return errors.NewError("send_binary requires a list of bytes")
+				}
+
+				data := make([]byte, len(list.Elements))
+				for i, elem := range list.Elements {
+					b, e := elem.AsInt()
+					if e != nil || b < 0 || b > 255 {
+						return errors.NewError("send_binary requires list of bytes (0-255)")
+					}
+					data[i] = byte(b)
+				}
+
+				conn := getWSConnFromInstance(instance)
+				if conn == nil {
+					return errors.NewError("connection closed")
+				}
+
+				if writeErr := conn.WriteMessage(websocket.BinaryMessage, data); writeErr != nil {
+					return errors.NewError("send_binary failed: %s", writeErr.Error())
+				}
+				return &object.Null{}
+			},
+			HelpText: `send_binary(data) - Send binary data to the WebSocket client
+
+Parameters:
+  data (list): List of byte values (0-255)`,
+		},
+		"close": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.ExactArgs(args, 1); err != nil {
+					return err
+				}
+				instance, ok := args[0].(*object.Instance)
+				if !ok {
+					return errors.NewError("close() called on non-WebSocketClient object")
+				}
+
+				conn := getWSConnFromInstance(instance)
+				if conn != nil {
+					conn.Close()
+				}
+				return &object.Null{}
+			},
+			HelpText: `close() - Close the WebSocket connection`,
+		},
+	},
+}
+
+// getWSConnFromInstance extracts the WebSocketServerConn from an instance
+func getWSConnFromInstance(instance *object.Instance) *WebSocketServerConn {
+	if instance.Fields == nil {
+		return nil
+	}
+	connIDObj, ok := instance.Fields["__conn_id__"]
+	if !ok {
+		return nil
+	}
+	connID, ok := connIDObj.(*object.String)
+	if !ok {
+		return nil
+	}
+
+	RuntimeState.RLock()
+	conn := RuntimeState.WebSocketConnections[connID.Value]
+	RuntimeState.RUnlock()
+	return conn
+}
+
+// CreateWebSocketClientInstance creates a new WebSocketClient instance
+func CreateWebSocketClientInstance(conn *WebSocketServerConn) *object.Instance {
+	// Store connection in global map
+	RuntimeState.Lock()
+	RuntimeState.WebSocketConnections[conn.ID()] = conn
+	RuntimeState.Unlock()
+
+	return &object.Instance{
+		Class: WebSocketClientClass,
+		Fields: map[string]object.Object{
+			"remote_addr": &object.String{Value: conn.RemoteAddr()},
+			"__conn_id__": &object.String{Value: conn.ID()},
 		},
 	}
 }
@@ -562,6 +885,52 @@ Returns:
 Example:
   params = runtime.http.parse_query("name=John&age=30")`,
 	},
+
+	"websocket": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.MinArgs(args, 2); err != nil {
+				return err
+			}
+
+			path, err := args[0].AsString()
+			if err != nil {
+				return err
+			}
+
+			handler, err := args[1].AsString()
+			if err != nil {
+				return err
+			}
+
+			RuntimeState.Lock()
+			RuntimeState.WebSocketRoutes[path] = &WebSocketRouteInfo{
+				Handler: handler,
+			}
+			RuntimeState.Unlock()
+
+			return &object.Null{}
+		},
+		HelpText: `websocket(path, handler) - Register a WebSocket route
+
+Parameters:
+  path (string): URL path for the WebSocket endpoint (e.g., "/ws")
+  handler (string): Handler function as "library.function" string
+
+The handler receives a WebSocketClient object and runs for the connection lifetime.
+The handler should loop while client.connected() and use client.receive()/client.send().
+
+Example:
+  runtime.http.websocket("/chat", "handlers.chat_handler")
+
+  # In handlers.py:
+  def chat_handler(client):
+      client.send("Welcome!")
+      while client.connected():
+          msg = client.receive(timeout=60)
+          if msg:
+              client.send(f"Echo: {msg}")`,
+	},
 }, map[string]object.Object{
-	"Request": RequestClass,
+	"Request":        RequestClass,
+	"WebSocketClient": WebSocketClientClass,
 }, "HTTP server route registration and response helpers")

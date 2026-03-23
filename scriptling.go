@@ -32,7 +32,11 @@ func convertArgsAndKwargs(args []interface{}, prependSelf object.Object) ([]obje
 		if kwargsMap, ok := args[len(args)-1].(Kwargs); ok {
 			objKwargs = make(map[string]object.Object, len(kwargsMap))
 			for key, val := range kwargsMap {
-				objKwargs[key] = conversion.FromGo(val)
+				if obj, ok := val.(object.Object); ok {
+					objKwargs[key] = obj
+				} else {
+					objKwargs[key] = conversion.FromGo(val)
+				}
 			}
 			positional = args[:len(args)-1]
 		}
@@ -47,7 +51,11 @@ func convertArgsAndKwargs(args []interface{}, prependSelf object.Object) ([]obje
 		objArgs[0] = prependSelf
 	}
 	for i, arg := range positional {
-		objArgs[offset+i] = conversion.FromGo(arg)
+		if obj, ok := arg.(object.Object); ok {
+			objArgs[offset+i] = obj
+		} else {
+			objArgs[offset+i] = conversion.FromGo(arg)
+		}
 	}
 	return objArgs, objKwargs
 }

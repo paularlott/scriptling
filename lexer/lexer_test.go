@@ -205,3 +205,179 @@ c""" r"a\b\c" r'href=["\'](.*?)[\'"]'`
 		}
 	}
 }
+
+func TestLineNumbers(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		// Each entry is (tokenType, expectedLine). Only tokens we care about checking.
+		checks []struct {
+			typ  token.TokenType
+			line int
+		}
+	}{
+		{
+			name:  "simple single-line tokens all on line 1",
+			input: "x = 5",
+			checks: []struct {
+				typ  token.TokenType
+				line int
+			}{
+				{token.IDENT, 1},
+				{token.ASSIGN, 1},
+				{token.INT, 1},
+			},
+		},
+		{
+			name:  "tokens on multiple lines",
+			input: "x = 1\ny = 2\nz = 3",
+			checks: []struct {
+				typ  token.TokenType
+				line int
+			}{
+				{token.IDENT, 1}, // x
+				{token.ASSIGN, 1},
+				{token.INT, 1},
+				{token.NEWLINE, 1},
+				{token.IDENT, 2}, // y
+				{token.ASSIGN, 2},
+				{token.INT, 2},
+				{token.NEWLINE, 2},
+				{token.IDENT, 3}, // z
+				{token.ASSIGN, 3},
+				{token.INT, 3},
+			},
+		},
+		{
+			name:  "triple-quoted string advances line counter",
+			input: "x = \"\"\"\nline2\nline3\n\"\"\"\ny = 1",
+			checks: []struct {
+				typ  token.TokenType
+				line int
+			}{
+				{token.IDENT, 1},   // x
+				{token.ASSIGN, 1},
+				{token.STRING, 1},  // the triple-quoted string token itself
+				{token.NEWLINE, 4}, // newline after closing """
+				{token.IDENT, 5},   // y — must be on line 5, not line 2
+				{token.ASSIGN, 5},
+				{token.INT, 5},
+			},
+		},
+		{
+			name:  "single-quoted triple string advances line counter",
+			input: "a = '''\nfoo\nbar\n'''\nb = 2",
+			checks: []struct {
+				typ  token.TokenType
+				line int
+			}{
+				{token.IDENT, 1},  // a
+				{token.STRING, 1}, // triple-quoted string
+				{token.NEWLINE, 4},
+				{token.IDENT, 5},  // b
+				{token.INT, 5},
+			},
+		},
+		{
+			name:  "raw triple-quoted string advances line counter",
+			input: "a = r\"\"\"\nfoo\nbar\n\"\"\"\nb = 2",
+			checks: []struct {
+				typ  token.TokenType
+				line int
+			}{
+				{token.IDENT, 1},  // a
+				{token.STRING, 1}, // raw triple-quoted string
+				{token.NEWLINE, 4},
+				{token.IDENT, 5},  // b
+				{token.INT, 5},
+			},
+		},
+		{
+			name:  "code after triple-quoted string has correct line numbers",
+			input: "def foo():\n    x = \"\"\"\n    line2\n    line3\n    \"\"\"\n    return x\n\ny = 1",
+			checks: []struct {
+				typ  token.TokenType
+				line int
+			}{
+				{token.DEF, 1},
+				{token.IDENT, 1},   // foo
+				{token.STRING, 2},  // triple-quoted string starts on line 2
+				{token.RETURN, 6},  // return is on line 6
+				{token.IDENT, 6},   // x in "return x" is on line 6
+				{token.IDENT, 8},   // y is on line 8
+				{token.INT, 8},
+			},
+		},
+		{
+			name:  "multiple triple-quoted strings accumulate line counts",
+			input: "a = \"\"\"\none\n\"\"\"\nb = \"\"\"\ntwo\nthree\n\"\"\"\nc = 1",
+			checks: []struct {
+				typ  token.TokenType
+				line int
+			}{
+				{token.IDENT, 1},  // a
+				{token.STRING, 1}, // first triple string
+				{token.NEWLINE, 3},
+				{token.IDENT, 4},  // b
+				{token.STRING, 4}, // second triple string
+				{token.NEWLINE, 7},
+				{token.IDENT, 8},  // c
+				{token.INT, 8},
+			},
+		},
+		{
+			name:  "regular string does not affect line counting",
+			input: "x = \"hello\"\ny = 2",
+			checks: []struct {
+				typ  token.TokenType
+				line int
+			}{
+				{token.IDENT, 1},
+				{token.STRING, 1},
+				{token.NEWLINE, 1},
+				{token.IDENT, 2},
+				{token.INT, 2},
+			},
+		},
+		{
+			name:  "comment lines are counted",
+			input: "# comment\nx = 1\n# another\ny = 2",
+			checks: []struct {
+				typ  token.TokenType
+				line int
+			}{
+				{token.IDENT, 2}, // x — comment on line 1 is skipped
+				{token.INT, 2},
+				{token.NEWLINE, 2},
+				{token.IDENT, 4}, // y — comment on line 3 is skipped
+				{token.INT, 4},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			l := New(tt.input)
+			checkIdx := 0
+			for checkIdx < len(tt.checks) {
+				tok := l.NextToken()
+				if tok.Type == token.EOF {
+					break
+				}
+				// Skip tokens we're not checking
+				if tok.Type != tt.checks[checkIdx].typ {
+					continue
+				}
+				want := tt.checks[checkIdx].line
+				if tok.Line != want {
+					t.Errorf("check[%d]: token %q: expected line %d, got %d",
+						checkIdx, tok.Literal, want, tok.Line)
+				}
+				checkIdx++
+			}
+			if checkIdx < len(tt.checks) {
+				t.Errorf("only matched %d of %d expected tokens", checkIdx, len(tt.checks))
+			}
+		})
+	}
+}

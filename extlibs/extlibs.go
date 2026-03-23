@@ -25,4 +25,5 @@ const (
 	InteractLibraryName   = "scriptling.ai.agent.interact"
 	FuzzyLibraryName      = "scriptling.fuzzy"
 	TOMLLibraryName       = "toml"
+	WebSocketLibraryName  = "scriptling.websocket"
 )

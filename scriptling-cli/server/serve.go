@@ -71,6 +71,7 @@ type Server struct {
 	httpServer       *http.Server
 	mcpHandler       *reloadableMCPHandler
 	handlers         map[string]string // path -> "library.function"
+	wsHandlers        map[string]string // path -> "library.function" for WebSocket
 	middleware       string
 	staticRoutes     map[string]string
 	mu               sync.RWMutex
@@ -87,6 +88,7 @@ func NewServer(config ServerConfig) (*Server, error) {
 	s := &Server{
 		config:         config,
 		handlers:       make(map[string]string),
+		wsHandlers:     make(map[string]string),
 		staticRoutes:   make(map[string]string),
 		bearerExpected: "Bearer " + config.BearerToken,
 	}
@@ -338,6 +340,11 @@ func (s *Server) collectRoutes() {
 		}
 		Log.Info("Registered route", "path", path, "methods", route.Methods, "handler", route.Handler)
 	}
+	// Collect WebSocket routes
+	for path, wsRoute := range extlibs.RuntimeState.WebSocketRoutes {
+		s.wsHandlers[path] = wsRoute.Handler
+		Log.Info("Registered WebSocket route", "path", path, "handler", wsRoute.Handler)
+	}
 }
 
 // Start starts the HTTP server
@@ -353,6 +360,11 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /health", s.handleHealth)
 
 	for path := range s.handlers {
+		mux.HandleFunc(path, s.handleScriptRequest)
+	}
+
+	// Register WebSocket routes
+	for path := range s.wsHandlers {
 		mux.HandleFunc(path, s.handleScriptRequest)
 	}
 
@@ -419,6 +431,19 @@ func (s *Server) Start() error {
 
 // Stop gracefully stops the server
 func (s *Server) Stop(ctx context.Context) error {
+	// Close all WebSocket connections
+	extlibs.RuntimeState.Lock()
+	conns := make([]*extlibs.WebSocketServerConn, 0, len(extlibs.RuntimeState.WebSocketConnections))
+	for _, conn := range extlibs.RuntimeState.WebSocketConnections {
+		conns = append(conns, conn)
+	}
+	extlibs.RuntimeState.WebSocketConnections = make(map[string]*extlibs.WebSocketServerConn)
+	extlibs.RuntimeState.Unlock()
+
+	for _, conn := range conns {
+		conn.Close()
+	}
+
 	return s.httpServer.Shutdown(ctx)
 }
 
@@ -430,6 +455,19 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 // handleScriptRequest handles requests to script handlers
 func (s *Server) handleScriptRequest(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
+
+	// Check if this is a WebSocket upgrade request
+	if isWebSocketRequest(r) {
+		s.mu.RLock()
+		_, isWS := s.wsHandlers[path]
+		s.mu.RUnlock()
+
+		if isWS {
+			s.handleWebSocketUpgrade(w, r, path)
+			return
+		}
+	}
+
 	s.mu.RLock()
 	_, ok := s.handlers[path]
 	if !ok && !strings.HasSuffix(path, "/") {
