@@ -95,6 +95,9 @@ func New() *Scriptling {
 	// Register import builtin
 	p.env.Set("import", evaluator.GetImportBuiltin())
 
+	// Set __name__ to "__main__" by default (overridden when importing modules)
+	p.env.Set("__name__", &object.String{Value: "__main__"})
+
 	// Set import callback on environment
 	p.env.SetImportCallback(func(libName string) error {
 		return p.loadLibrary(libName)
@@ -521,14 +524,21 @@ func (p *Scriptling) EvalFile(path string) (object.Object, error) {
 	}
 	prev := p.sourceFile
 	prevFile, hasPrevFile := p.env.Get("__file__")
+	prevName, hasPrevName := p.env.Get("__name__")
 	p.sourceFile = path
 	p.env.Set("__file__", &object.String{Value: path})
+	p.env.Set("__name__", &object.String{Value: "__main__"})
 	result, evalErr := p.Eval(string(data))
 	p.sourceFile = prev
 	if hasPrevFile {
 		p.env.Set("__file__", prevFile)
 	} else {
 		p.env.Delete("__file__")
+	}
+	if hasPrevName {
+		p.env.Set("__name__", prevName)
+	} else {
+		p.env.Delete("__name__")
 	}
 	return result, evalErr
 }
@@ -894,11 +904,13 @@ func (p *Scriptling) LoadLibraryIntoEnv(name string, env *object.Environment) er
 }
 
 // SetSourceFile sets the source file name used in error messages and sets
-// the __file__ variable in the script environment.
+// the __file__ and __name__ variables in the script environment.
+// When a script file is set, __name__ is set to "__main__".
 func (p *Scriptling) SetSourceFile(name string) {
 	p.sourceFile = name
 	if name != "" {
 		p.env.Set("__file__", &object.String{Value: name})
+		p.env.Set("__name__", &object.String{Value: "__main__"})
 	}
 }
 
@@ -1021,6 +1033,9 @@ func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[stri
 
 	// Set the current module for relative import resolution
 	libEnv.SetCurrentModule(name)
+
+	// Set __name__ to the library/module name (not "__main__")
+	libEnv.Set("__name__", &object.String{Value: name})
 
 	// Parse and evaluate the script in the library environment
 	var program *ast.Program
