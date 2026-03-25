@@ -9,7 +9,9 @@ import (
 
 func newTestDB(t *testing.T) *snapshotkv.DB {
 	t.Helper()
-	db, err := snapshotkv.Open("", nil)
+	// Use t.TempDir() which automatically cleans up when the test completes
+	dir := t.TempDir()
+	db, err := snapshotkv.Open(dir, nil)
 	if err != nil {
 		t.Fatalf("snapshotkv.Open: %v", err)
 	}

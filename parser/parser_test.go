@@ -326,8 +326,8 @@ func TestStringLiteralExpression(t *testing.T) {
 
 func TestBooleanExpressions(t *testing.T) {
 	tests := []struct {
-		input  string
-		value  bool
+		input string
+		value bool
 	}{
 		{"True", true},
 		{"False", false},
@@ -914,33 +914,33 @@ func TestImportStatementWithAlias(t *testing.T) {
 
 func TestImportStatementMultiple(t *testing.T) {
 	tests := []struct {
-		name             string
-		input            string
-		expectedNames    []string
-		expectedAliases  []string
+		name            string
+		input           string
+		expectedNames   []string
+		expectedAliases []string
 	}{
 		{
-			name:          "multiple imports without aliases",
-			input:         "import os, sys, json",
-			expectedNames: []string{"os", "sys", "json"},
+			name:            "multiple imports without aliases",
+			input:           "import os, sys, json",
+			expectedNames:   []string{"os", "sys", "json"},
 			expectedAliases: []string{"", "", ""},
 		},
 		{
-			name:          "multiple imports with aliases",
-			input:         "import os as op, sys as system, json",
-			expectedNames: []string{"os", "sys", "json"},
+			name:            "multiple imports with aliases",
+			input:           "import os as op, sys as system, json",
+			expectedNames:   []string{"os", "sys", "json"},
 			expectedAliases: []string{"op", "system", ""},
 		},
 		{
-			name:          "mixed imports with and without aliases",
-			input:         "import os, sys as system, json as j",
-			expectedNames: []string{"os", "sys", "json"},
+			name:            "mixed imports with and without aliases",
+			input:           "import os, sys as system, json as j",
+			expectedNames:   []string{"os", "sys", "json"},
 			expectedAliases: []string{"", "system", "j"},
 		},
 		{
-			name:          "dotted imports with aliases",
-			input:         "import scriptling.ai as ai, scriptling.console as console, glob, json",
-			expectedNames: []string{"scriptling.ai", "scriptling.console", "glob", "json"},
+			name:            "dotted imports with aliases",
+			input:           "import scriptling.ai as ai, scriptling.console as console, glob, json",
+			expectedNames:   []string{"scriptling.ai", "scriptling.console", "glob", "json"},
 			expectedAliases: []string{"ai", "console", "", ""},
 		},
 	}

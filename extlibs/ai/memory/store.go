@@ -67,6 +67,7 @@ type storeConfig struct {
 	aiClient                mcpai.Client
 	aiModel                 string
 	logger                  logger.Logger
+	noBackgroundPrune       bool
 }
 
 func defaultConfig() storeConfig {
@@ -129,6 +130,12 @@ func WithAIClient(client mcpai.Client, model string) Option {
 	}
 }
 
+// WithNoBackgroundPrune disables the background prune goroutine.
+// Useful for tests that need deterministic prune behavior.
+func WithNoBackgroundPrune() Option {
+	return func(c *storeConfig) { c.noBackgroundPrune = true }
+}
+
 // Store is a memory store backed by a snapshotkv DB.
 // It does not own the DB - the caller manages its lifecycle.
 type Store struct {
@@ -160,11 +167,13 @@ func New(db *snapshotkv.DB, opts ...Option) *Store {
 		pruneSignal: make(chan struct{}, 1),
 	}
 
-	go func() {
-		for range s.pruneSignal {
-			s.prune()
-		}
-	}()
+	if !cfg.noBackgroundPrune {
+		go func() {
+			for range s.pruneSignal {
+				s.prune()
+			}
+		}()
+	}
 
 	return s
 }

@@ -11,11 +11,15 @@ import (
 
 func newTestStore(t *testing.T, opts ...Option) *Store {
 	t.Helper()
-	db, err := snapshotkv.Open("", nil)
+	// Use t.TempDir() which automatically cleans up when the test completes
+	dir := t.TempDir()
+	db, err := snapshotkv.Open(dir, nil)
 	if err != nil {
 		t.Fatalf("snapshotkv.Open: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
+	// Always disable background prune for deterministic test behavior
+	opts = append([]Option{WithNoBackgroundPrune()}, opts...)
 	return New(db, opts...)
 }
 

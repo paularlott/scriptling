@@ -366,6 +366,342 @@ v2 = counter.get()
 	}
 }
 
+func TestRuntimeSyncSharedUpdate(t *testing.T) {
+	ResetRuntime()
+	p := scriptling.New()
+	RegisterRuntimeLibraryAll(p, nil)
+
+	script := `
+import scriptling.runtime as runtime
+
+shared = runtime.sync.Shared("test_update", initial=0)
+
+# Test update with a callback
+def increment(current):
+    return current + 10
+
+result = shared.update(increment)
+v1 = shared.get()
+
+# Chain multiple updates
+shared.update(lambda x: x + 5)
+shared.update(lambda x: x * 2)
+v2 = shared.get()
+
+[result, v1, v2]
+`
+
+	result, err := p.Eval(script)
+	if err != nil {
+		t.Fatalf("Script error: %v", err)
+	}
+
+	list, _ := result.(*object.List)
+
+	if i, _ := list.Elements[0].AsInt(); i != 10 {
+		t.Errorf("Expected update result 10, got %d", i)
+	}
+
+	if i, _ := list.Elements[1].AsInt(); i != 10 {
+		t.Errorf("Expected v1=10, got %d", i)
+	}
+
+	// (10 + 5) * 2 = 30
+	if i, _ := list.Elements[2].AsInt(); i != 30 {
+		t.Errorf("Expected v2=30, got %d", i)
+	}
+}
+
+func TestRuntimeSyncQueueClose(t *testing.T) {
+	ResetRuntime()
+	p := scriptling.New()
+	RegisterRuntimeLibraryAll(p, nil)
+
+	// Test basic close and size
+	script := `
+import scriptling.runtime as runtime
+
+queue = runtime.sync.Queue("test_close_queue", maxsize=5)
+queue.put("item1")
+queue.put("item2")
+s1 = queue.size()
+
+queue.close()
+s2 = queue.size()
+
+[s1, s2]
+`
+
+	result, err := p.Eval(script)
+	if err != nil {
+		t.Fatalf("Script error: %v", err)
+	}
+
+	list, _ := result.(*object.List)
+
+	if i, _ := list.Elements[0].AsInt(); i != 2 {
+		t.Errorf("Expected size 2, got %d", i)
+	}
+
+	if i, _ := list.Elements[1].AsInt(); i != 2 {
+		t.Errorf("Expected size still 2 after close, got %d", i)
+	}
+
+	// Test that putting after close returns an error
+	ctx := context.Background()
+	queueName := &object.String{Value: "test_close_queue"}
+	queueFn := SyncSubLibrary.Functions()["Queue"]
+	queueObj := queueFn.Fn(ctx, object.Kwargs{}, queueName)
+	putFn := queueObj.(*object.Builtin).Attributes["put"].(*object.Builtin)
+
+	putResult := putFn.Fn(ctx, object.Kwargs{}, &object.String{Value: "item3"})
+	if _, ok := putResult.(*object.Error); !ok {
+		t.Errorf("Expected error when putting to closed queue, got %T", putResult)
+	}
+}
+
+func TestRuntimeSyncWaitGroupWait(t *testing.T) {
+	ResetRuntime()
+	p := scriptling.New()
+	RegisterRuntimeLibraryAll(p, nil)
+
+	script := `
+import scriptling.runtime as runtime
+
+wg = runtime.sync.WaitGroup("test_wg_wait")
+counter = runtime.sync.Atomic("wg_counter", initial=0)
+
+# Add 3 workers
+wg.add(3)
+
+# Simulate completing workers
+counter.add(1)
+wg.done()
+
+counter.add(1)
+wg.done()
+
+counter.add(1)
+wg.done()
+
+# Now wait should return immediately
+wg.wait()
+final_count = counter.get()
+
+final_count
+`
+
+	result, err := p.Eval(script)
+	if err != nil {
+		t.Fatalf("Script error: %v", err)
+	}
+
+	if i, _ := result.AsInt(); i != 3 {
+		t.Errorf("Expected counter 3, got %d", i)
+	}
+}
+
+func TestRuntimeSyncQueueMaxsize(t *testing.T) {
+	ResetRuntime()
+	p := scriptling.New()
+	RegisterRuntimeLibraryAll(p, nil)
+
+	script := `
+import scriptling.runtime as runtime
+
+queue = runtime.sync.Queue("test_maxsize", maxsize=3)
+queue.put(1)
+queue.put(2)
+queue.put(3)
+s1 = queue.size()
+
+# Get one item to make room
+item = queue.get()
+s2 = queue.size()
+
+[item, s1, s2]
+`
+
+	result, err := p.Eval(script)
+	if err != nil {
+		t.Fatalf("Script error: %v", err)
+	}
+
+	list, _ := result.(*object.List)
+
+	if i, _ := list.Elements[1].AsInt(); i != 3 {
+		t.Errorf("Expected max size 3, got %d", i)
+	}
+
+	if i, _ := list.Elements[2].AsInt(); i != 2 {
+		t.Errorf("Expected size 2 after get, got %d", i)
+	}
+}
+
+func TestRuntimeSyncAtomicDefaultDelta(t *testing.T) {
+	ResetRuntime()
+	p := scriptling.New()
+	RegisterRuntimeLibraryAll(p, nil)
+
+	script := `
+import scriptling.runtime as runtime
+
+counter = runtime.sync.Atomic("test_default_delta", initial=0)
+
+# add() with no args should add 1
+v1 = counter.add()
+v2 = counter.add()
+v3 = counter.get()
+
+[v1, v2, v3]
+`
+
+	result, err := p.Eval(script)
+	if err != nil {
+		t.Fatalf("Script error: %v", err)
+	}
+
+	list, _ := result.(*object.List)
+
+	if i, _ := list.Elements[0].AsInt(); i != 1 {
+		t.Errorf("Expected first add to return 1, got %d", i)
+	}
+
+	if i, _ := list.Elements[1].AsInt(); i != 2 {
+		t.Errorf("Expected second add to return 2, got %d", i)
+	}
+
+	if i, _ := list.Elements[2].AsInt(); i != 2 {
+		t.Errorf("Expected final value 2, got %d", i)
+	}
+}
+
+func TestRuntimeSyncSharedWithList(t *testing.T) {
+	ResetRuntime()
+	p := scriptling.New()
+	RegisterRuntimeLibraryAll(p, nil)
+
+	script := `
+import scriptling.runtime as runtime
+
+shared = runtime.sync.Shared("test_shared_list", initial=[])
+shared.set([1, 2, 3])
+v1 = shared.get()
+
+# Update that appends to the list
+def append_item(lst):
+    return lst + [4]
+
+shared.update(append_item)
+v2 = shared.get()
+
+[len(v1), len(v2)]
+`
+
+	result, err := p.Eval(script)
+	if err != nil {
+		t.Fatalf("Script error: %v", err)
+	}
+
+	list, _ := result.(*object.List)
+
+	if i, _ := list.Elements[0].AsInt(); i != 3 {
+		t.Errorf("Expected list length 3, got %d", i)
+	}
+
+	if i, _ := list.Elements[1].AsInt(); i != 4 {
+		t.Errorf("Expected list length 4 after update, got %d", i)
+	}
+}
+
+func TestRuntimeSyncAtomicNegative(t *testing.T) {
+	ResetRuntime()
+	p := scriptling.New()
+	RegisterRuntimeLibraryAll(p, nil)
+
+	script := `
+import scriptling.runtime as runtime
+
+counter = runtime.sync.Atomic("test_negative", initial=100)
+counter.add(-50)
+v1 = counter.get()
+counter.add(-100)
+v2 = counter.get()
+
+[v1, v2]
+`
+
+	result, err := p.Eval(script)
+	if err != nil {
+		t.Fatalf("Script error: %v", err)
+	}
+
+	list, _ := result.(*object.List)
+
+	if i, _ := list.Elements[0].AsInt(); i != 50 {
+		t.Errorf("Expected 50, got %d", i)
+	}
+
+	if i, _ := list.Elements[1].AsInt(); i != -50 {
+		t.Errorf("Expected -50, got %d", i)
+	}
+}
+
+func TestRuntimeBackgroundReturnsPromise(t *testing.T) {
+	ResetRuntime()
+
+	// Set BackgroundReady to true so background() returns a promise
+	RuntimeState.Lock()
+	RuntimeState.BackgroundReady = true
+	RuntimeState.Unlock()
+
+	p := scriptling.New()
+	RegisterRuntimeLibraryAll(p, nil)
+
+	// Set up a factory for background tasks
+	SetSandboxFactory(func() SandboxInstance {
+		p2 := scriptling.New()
+		RegisterRuntimeLibraryAll(p2, nil)
+		return p2
+	})
+
+	// First define a handler function
+	_, err := p.Eval(`
+import scriptling.runtime as runtime
+
+def my_handler(a, b):
+    return a + b
+`)
+	if err != nil {
+		t.Fatalf("Setup error: %v", err)
+	}
+
+	// Test that background returns a promise object with get/wait methods
+	script := `
+promise = runtime.background("test_promise", "my_handler", 5, 3)
+promise
+`
+
+	result, err := p.Eval(script)
+	if err != nil {
+		t.Fatalf("Script error: %v", err)
+	}
+
+	// Check that result is a Builtin with get and wait methods
+	promise, ok := result.(*object.Builtin)
+	if !ok {
+		t.Fatalf("Expected Builtin (promise), got %T", result)
+	}
+
+	if _, ok := promise.Attributes["get"]; !ok {
+		t.Error("Promise should have 'get' method")
+	}
+
+	if _, ok := promise.Attributes["wait"]; !ok {
+		t.Error("Promise should have 'wait' method")
+	}
+}
+
 func BenchmarkRuntimeKVSet(b *testing.B) {
 	ResetRuntime()
 	p := scriptling.New()
