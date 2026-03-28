@@ -23,17 +23,6 @@ func TestLibraryName(t *testing.T) {
 	}
 }
 
-func TestConsoleClassExists(t *testing.T) {
-	p := newInterpreter(t)
-	_, err := p.Eval(`
-import scriptling.console as console
-c = console.Console()
-`)
-	if err != nil {
-		t.Fatalf("Console() constructor failed: %v", err)
-	}
-}
-
 func TestConsoleColorConstants(t *testing.T) {
 	p := newInterpreter(t)
 	_, err := p.Eval(`
@@ -50,46 +39,62 @@ assert console.TEXT == "text"
 	}
 }
 
-func TestConsoleMethodsExist(t *testing.T) {
+func TestModuleFunctionsExist(t *testing.T) {
 	p := newInterpreter(t)
 	_, err := p.Eval(`
 import scriptling.console as console
-c = console.Console()
-# Verify all expected methods are callable attributes
-assert hasattr(c, "add_message")
-assert hasattr(c, "stream_start")
-assert hasattr(c, "stream_chunk")
-assert hasattr(c, "stream_end")
-assert hasattr(c, "spinner_start")
-assert hasattr(c, "spinner_stop")
-assert hasattr(c, "set_progress")
-assert hasattr(c, "set_labels")
-assert hasattr(c, "set_status")
-assert hasattr(c, "set_status_left")
-assert hasattr(c, "set_status_right")
-assert hasattr(c, "register_command")
-assert hasattr(c, "remove_command")
-assert hasattr(c, "clear_output")
-assert hasattr(c, "styled")
-assert hasattr(c, "on_escape")
-assert hasattr(c, "on_submit")
-assert hasattr(c, "run")
+assert hasattr(console, "panel")
+assert hasattr(console, "main_panel")
+assert hasattr(console, "create_panel")
+assert hasattr(console, "add_left")
+assert hasattr(console, "add_right")
+assert hasattr(console, "clear_layout")
+assert hasattr(console, "has_panels")
+assert hasattr(console, "styled")
+assert hasattr(console, "set_status")
+assert hasattr(console, "set_status_left")
+assert hasattr(console, "set_status_right")
+assert hasattr(console, "set_labels")
+assert hasattr(console, "register_command")
+assert hasattr(console, "remove_command")
+assert hasattr(console, "on_submit")
+assert hasattr(console, "on_escape")
+assert hasattr(console, "spinner_start")
+assert hasattr(console, "spinner_stop")
+assert hasattr(console, "set_progress")
+assert hasattr(console, "run")
 `)
 	if err != nil {
-		t.Fatalf("method existence check failed: %v", err)
+		t.Fatalf("module functions check failed: %v", err)
 	}
 }
 
-func TestMultipleIndependentInstances(t *testing.T) {
+func TestMainPanelReturnsPanel(t *testing.T) {
 	p := newInterpreter(t)
-	// Two Console instances should be independent objects
 	_, err := p.Eval(`
 import scriptling.console as console
-c1 = console.Console()
-c2 = console.Console()
-assert c1 is not c2
+main = console.main_panel()
+assert main is not None
+assert hasattr(main, "add_message")
+assert hasattr(main, "stream_start")
+assert hasattr(main, "stream_chunk")
+assert hasattr(main, "stream_end")
+assert hasattr(main, "clear")
+assert hasattr(main, "styled")
 `)
 	if err != nil {
-		t.Fatalf("independent instances check failed: %v", err)
+		t.Fatalf("main_panel check failed: %v", err)
+	}
+}
+
+func TestPanelDefaultIsMain(t *testing.T) {
+	p := newInterpreter(t)
+	_, err := p.Eval(`
+import scriptling.console as console
+p = console.panel()
+assert p is not None
+`)
+	if err != nil {
+		t.Fatalf("panel() default check failed: %v", err)
 	}
 }

@@ -12,8 +12,7 @@ import scriptling.console as console
 import scriptling.messaging.console as messaging_console
 import bot_handlers
 
-con = console.Console()
-client = messaging_console.client(con)
+client = messaging_console.client()
 
 bot_handlers.register_common(client)
 

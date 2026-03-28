@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/paularlott/cli/tui"
+	scriptconsole "github.com/paularlott/scriptling/extlibs/console"
 	"github.com/paularlott/scriptling/extlibs/messaging/shared"
-	"github.com/paularlott/scriptling/object"
 )
 
 const consoleDest = "console"
@@ -18,12 +18,11 @@ type commandEntry struct {
 }
 
 type consoleClient struct {
-	t            *tui.TUI
-	consoleInst  *object.Instance
-	inst         *consoleInstance
-	commands     map[string]commandEntry
-	onMessage    shared.Handler
-	onCallback   shared.Handler
+	t        *tui.TUI
+	inst     *consoleInstance
+	commands map[string]commandEntry
+	onMessage  shared.Handler
+	onCallback shared.Handler
 }
 
 // consoleInstance is a thin shared.Sender adapter so BuildCtxDict has a sender reference.
@@ -105,11 +104,10 @@ func (s *consoleInstance) SendFile(_ context.Context, _, _, _, _ string, _ bool)
 	return fmt.Errorf("console: send_file not supported")
 }
 
-func newClient(t *tui.TUI, consoleInst *object.Instance) *consoleClient {
+func newClient(t *tui.TUI) *consoleClient {
 	c := &consoleClient{
-		t:          t,
-		consoleInst: consoleInst,
-		commands:   make(map[string]commandEntry),
+		t:        t,
+		commands: make(map[string]commandEntry),
 	}
 	c.inst = &consoleInstance{c: c}
 	return c
@@ -254,7 +252,7 @@ func (c *consoleClient) BotRun(ctx context.Context) error {
 			c.dispatch(context.Background(), "/help")
 		},
 	})
-	setSubmit(c.consoleInst, func(submitCtx context.Context, text string) {
+	scriptconsole.SetSubmit(func(submitCtx context.Context, text string) {
 		c.dispatch(submitCtx, text)
 	})
 	return c.t.Run(ctx)

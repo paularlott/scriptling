@@ -111,12 +111,12 @@ bot = agent.Agent(
     model=MODEL
 )
 
-c = console.Console()
-c.add_message(
-    c.styled(console.PRIMARY, "ScriptlingCoder") + " — type your coding requests.\n" +
-    c.styled(console.DIM, "Type '/exit' to quit.") + "\n\n" +
-    c.styled(console.SECONDARY, "WARNING: This is an example that executes AI-generated code, use at your own risk!")
+main = console.main_panel()
+main.add_message(
+    console.styled(console.PRIMARY, "ScriptlingCoder") + " — type your coding requests.\n" +
+    console.styled(console.DIM, "Type '/exit' to quit.") + "\n\n" +
+    console.styled(console.SECONDARY, "WARNING: This is an example that executes AI-generated code, use at your own risk!")
 )
 
 # Run interactive session
-bot.interact(c)
+bot.interact()

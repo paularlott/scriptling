@@ -11,11 +11,6 @@ import (
 
 const nativeClientKey = "__con_client__"
 
-// setSubmit wires a submit handler into the Console instance via the exported helper.
-func setSubmit(inst *object.Instance, fn func(ctx context.Context, text string)) {
-	scriptconsole.SetSubmit(inst, fn)
-}
-
 type clientWrapper struct {
 	c *consoleClient
 }
@@ -93,21 +88,14 @@ func NewLibrary() *object.Library {
 
 	builtins["client"] = &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil {
+			if err := errors.ExactArgs(args, 0); err != nil {
 				return err
 			}
-			consoleInst, ok := args[0].(*object.Instance)
-			if !ok {
-				return errors.NewError("console.client: expected a Console instance")
-			}
-			t := scriptconsole.TUIFrom(consoleInst)
-			if t == nil {
-				return errors.NewError("console.client: argument is not a Console instance")
-			}
-			c := newClient(t, consoleInst)
+			t := scriptconsole.TUI()
+			c := newClient(t)
 			return newClientInstance(c, builtins)
 		},
-		HelpText: `client(console) - Wrap a Console instance as a messaging bot client`,
+		HelpText: `client() - Create a console messaging bot client`,
 	}
 
 	return object.NewLibrary(LibraryName, builtins, map[string]object.Object{

@@ -12,51 +12,50 @@ import scriptling.ai as ai
 _OriginalAgent = agent_module.Agent
 
 class Agent(_OriginalAgent):
-    def interact(self, c=None, max_iterations=25):
-        if c is None:
-            c = console.Console()
-        c.set_status("scriptling", self.model if self.model else "default")
+    def interact(self, max_iterations=25):
+        main = console.main_panel()
+        console.set_status("scriptling", self.model if self.model else "default")
 
         def cmd_clear(args):
             self.messages = []
             if self.system_prompt:
                 self.messages.append({"role": "system", "content": self.system_prompt})
-            c.clear_output()
+            main.clear()
 
         def cmd_model(args):
             if not args or args == "none":
                 self.model = ""
-                c.add_message("Model reset to default.")
+                main.add_message("Model reset to default.")
             else:
                 self.model = args
-                c.add_message("Model set to: " + self.model)
-            c.set_status("scriptling", self.model if self.model else "default")
-            c.set_labels("", self.model if self.model else "Assistant", "")
+                main.add_message("Model set to: " + self.model)
+            console.set_status("scriptling", self.model if self.model else "default")
+            console.set_labels("", self.model if self.model else "Assistant", "")
 
         def cmd_history(args):
             for msg in self.messages:
                 role = msg.get("role", "?")
                 content = msg.get("content", "")
                 if content:
-                    c.add_message("[" + role + "] " + str(content)[:120])
+                    main.add_message("[" + role + "] " + str(content)[:120])
 
-        c.register_command("clear", "Clear conversation history and screen", cmd_clear)
-        c.register_command("model", "Switch model (or 'none' for default)", cmd_model)
-        c.register_command("history", "Show conversation history", cmd_history)
+        console.register_command("clear", "Clear conversation history and screen", cmd_clear)
+        console.register_command("model", "Switch model (or 'none' for default)", cmd_model)
+        console.register_command("history", "Show conversation history", cmd_history)
 
         def on_submit(user_input):
             cancelled = [False]
             def on_esc():
                 cancelled[0] = True
-                c.spinner_stop()
-            c.on_escape(on_esc)
+                console.spinner_stop()
+            console.on_escape(on_esc)
 
             if len(self.messages) == 0 and self.system_prompt:
                 self.messages.append({"role": "system", "content": self.system_prompt})
             msg_index = len(self.messages)
             self.messages.append({"role": "user", "content": user_input})
 
-            c.spinner_start("Thinking")
+            console.spinner_start("Thinking")
 
             hit_limit = False
             for i in range(max_iterations):
@@ -72,13 +71,13 @@ class Agent(_OriginalAgent):
                 tool_calls = message.tool_calls if hasattr(message, "tool_calls") else None
 
                 if not tool_calls or len(tool_calls) == 0:
-                    c.spinner_stop()
+                    console.spinner_stop()
                     if cancelled[0]:
                         break
 
                     stream = self.client.completion_stream(self.model, self.messages, tools=self.tool_schemas)
                     full_content = ""
-                    c.stream_start()
+                    main.stream_start()
                     while True:
                         if cancelled[0]:
                             break
@@ -88,9 +87,9 @@ class Agent(_OriginalAgent):
                         if chunk.choices and len(chunk.choices) > 0:
                             delta = chunk.choices[0].delta
                             if delta.content:
-                                c.stream_chunk(delta.content)
+                                main.stream_chunk(delta.content)
                                 full_content = full_content + delta.content
-                    c.stream_end()
+                    main.stream_end()
 
                     if not cancelled[0] and stream.err() is None:
                         result = ai.extract_thinking(full_content)
@@ -115,14 +114,14 @@ class Agent(_OriginalAgent):
                     hit_limit = True
 
             if hit_limit and not cancelled[0]:
-                c.spinner_stop()
-                c.add_message("[Reached max iterations (" + str(max_iterations) + "). Type 'continue' or ask me to proceed.]", "system")
+                console.spinner_stop()
+                main.add_message("[Reached max iterations (" + str(max_iterations) + "). Type 'continue' or ask me to proceed.]", "system")
 
             if cancelled[0]:
                 self.messages = self.messages[:msg_index]
 
-        c.on_submit(on_submit)
-        c.run()
+        console.on_submit(on_submit)
+        console.run()
 
 agent_module.Agent = Agent
 Agent
