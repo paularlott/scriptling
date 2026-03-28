@@ -667,6 +667,10 @@ func evalInfixExpression(ctx context.Context, operator string, left, right objec
 	case *object.Float:
 		return evalFloatInfixExpression(operator, left, right)
 	case *object.String:
+		// Handle string % value (Python-style formatting)
+		if operator == "%" {
+			return evalStringPercentFormat(l.Value, right)
+		}
 		if r, ok := right.(*object.String); ok {
 			return evalStringInfixExpression(operator, l.Value, r.Value)
 		}
@@ -945,6 +949,165 @@ func evalStringInfixExpression(operator string, leftVal, rightVal string) object
 		return nativeBoolToBooleanObject(leftVal >= rightVal)
 	default:
 		return errors.NewError("%s: STRING %s STRING", errors.ErrUnknownOperator, operator)
+	}
+}
+
+// evalStringPercentFormat implements Python-style % string formatting.
+// Supports: %s, %d, %i, %f, %e, %g, %x, %X, %o, %c, %r, %%
+// With width/precision: %10s, %-10s, %.2f, %05d, etc.
+// Right side can be a single value or a tuple of values.
+func evalStringPercentFormat(format string, right object.Object) object.Object {
+	// Collect values: if right is a tuple, use its elements; otherwise single value
+	var values []object.Object
+	if tuple, ok := right.(*object.Tuple); ok {
+		values = tuple.Elements
+	} else {
+		values = []object.Object{right}
+	}
+
+	var result strings.Builder
+	valueIdx := 0
+	i := 0
+
+	for i < len(format) {
+		if format[i] == '%' {
+			i++
+			if i >= len(format) {
+				return errors.NewError("incomplete format string ending with %%")
+			}
+			// Literal %%
+			if format[i] == '%' {
+				result.WriteByte('%')
+				i++
+				continue
+			}
+
+			// Parse format specifier: %[flags][width][.precision]type
+			specStart := i - 1
+
+			// Flags
+			for i < len(format) && (format[i] == '-' || format[i] == '+' || format[i] == ' ' || format[i] == '#' || format[i] == '0') {
+				i++
+			}
+			// Width (number or *)
+			for i < len(format) && format[i] >= '0' && format[i] <= '9' {
+				i++
+			}
+			// Precision
+			if i < len(format) && format[i] == '.' {
+				i++
+				for i < len(format) && format[i] >= '0' && format[i] <= '9' {
+					i++
+				}
+			}
+
+			if i >= len(format) {
+				return errors.NewError("incomplete format string")
+			}
+
+			spec := format[specStart : i+1]
+			conversion := format[i]
+			i++
+
+			if valueIdx >= len(values) {
+				return errors.NewError("not enough arguments for format string")
+			}
+			val := values[valueIdx]
+			valueIdx++
+
+			formatted, err := formatPercentValue(spec, conversion, val)
+			if err != nil {
+				return err
+			}
+			result.WriteString(formatted)
+		} else {
+			result.WriteByte(format[i])
+			i++
+		}
+	}
+
+	if valueIdx < len(values) {
+		return errors.NewError("not all arguments converted during string formatting")
+	}
+
+	return &object.String{Value: result.String()}
+}
+
+// formatPercentValue formats a single value according to a Python % format specifier.
+func formatPercentValue(spec string, conversion byte, val object.Object) (string, object.Object) {
+	switch conversion {
+	case 's':
+		return val.Inspect(), nil
+	case 'r':
+		return fmt.Sprintf("%#v", val.Inspect()), nil
+	case 'd', 'i':
+		var intVal int64
+		switch v := val.(type) {
+		case *object.Integer:
+			intVal = v.Value
+		case *object.Float:
+			intVal = int64(v.Value)
+		case *object.Boolean:
+			if v.Value {
+				intVal = 1
+			}
+		default:
+			return "", errors.NewError("%%d format: a number is required, not %s", val.Type().String())
+		}
+		return fmt.Sprintf(spec[:len(spec)-1]+"d", intVal), nil
+	case 'f':
+		floatVal, err := val.AsFloat()
+		if err != nil {
+			return "", errors.NewError("%%f format: a number is required, not %s", val.Type().String())
+		}
+		return fmt.Sprintf(spec[:len(spec)-1]+"f", floatVal), nil
+	case 'e':
+		floatVal, err := val.AsFloat()
+		if err != nil {
+			return "", errors.NewError("%%e format: a number is required, not %s", val.Type().String())
+		}
+		return fmt.Sprintf(spec[:len(spec)-1]+"e", floatVal), nil
+	case 'g':
+		floatVal, err := val.AsFloat()
+		if err != nil {
+			return "", errors.NewError("%%g format: a number is required, not %s", val.Type().String())
+		}
+		return fmt.Sprintf(spec[:len(spec)-1]+"g", floatVal), nil
+	case 'x':
+		intVal, err := val.AsInt()
+		if err != nil {
+			return "", errors.NewError("%%x format: an integer is required, not %s", val.Type().String())
+		}
+		return fmt.Sprintf(spec[:len(spec)-1]+"x", intVal), nil
+	case 'X':
+		intVal, err := val.AsInt()
+		if err != nil {
+			return "", errors.NewError("%%X format: an integer is required, not %s", val.Type().String())
+		}
+		return fmt.Sprintf(spec[:len(spec)-1]+"X", intVal), nil
+	case 'o':
+		intVal, err := val.AsInt()
+		if err != nil {
+			return "", errors.NewError("%%o format: an integer is required, not %s", val.Type().String())
+		}
+		return fmt.Sprintf(spec[:len(spec)-1]+"o", intVal), nil
+	case 'c':
+		switch v := val.(type) {
+		case *object.Integer:
+			if v.Value < 0 || v.Value > 0x10ffff {
+				return "", errors.NewError("%%c: ordinal out of range")
+			}
+			return string(rune(v.Value)), nil
+		case *object.String:
+			if len(v.Value) != 1 {
+				return "", errors.NewError("%%c requires int or char")
+			}
+			return v.Value, nil
+		default:
+			return "", errors.NewError("%%c requires int or char")
+		}
+	default:
+		return "", errors.NewError("unsupported format character: %c", conversion)
 	}
 }
 

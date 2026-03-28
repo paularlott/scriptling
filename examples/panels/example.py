@@ -128,7 +128,7 @@ def update_cpu():
         bar = make_bar(cpu)
         content = console.styled(console.PRIMARY, "CPU Usage") + "\n\n"
         content += "  " + bar + "\n\n"
-        content += "  " + str(int(cpu)) + "%"
+        content += "  %.0f%%" % cpu
         cpu_panel.set_content(content)
 
         state["cpu_val"] = cpu
@@ -156,7 +156,7 @@ def update_mem():
         bar = make_bar(mem)
         content = console.styled(console.PRIMARY, "Memory Usage") + "\n\n"
         content += "  " + bar + "\n\n"
-        content += "  " + str(int(mem)) + "%"
+        content += "  %.0f%%" % mem
         mem_panel.set_content(content)
 
         state["mem_val"] = mem

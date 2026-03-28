@@ -12,6 +12,14 @@ import (
 var startTime = time.Now()
 
 var TimeLibrary = object.NewLibrary(TimeLibraryName, map[string]*object.Builtin{
+	"now": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			return &object.String{Value: time.Now().Format("2006-01-02T15:04:05.999999")}
+		},
+		HelpText: `now() - Return current date and time
+
+Returns the current date and time as an ISO 8601 formatted string (YYYY-MM-DDTHH:MM:SS.ffffff).`,
+	},
 	"time": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			return &object.Float{Value: float64(time.Now().UnixNano()) / 1e9}
