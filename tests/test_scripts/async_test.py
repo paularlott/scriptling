@@ -5,35 +5,61 @@ import scriptling.runtime as runtime
 
 print("=== Testing runtime.background ===")
 
+# Test 1: Basic background task writes to shared Atomic
+runtime.sync.Atomic("bg_result", initial=0)
+runtime.sync.WaitGroup("bg_wg1")
+
 def worker(x, y):
-    return x + y
+    import scriptling.runtime as runtime
+    runtime.sync.Atomic("bg_result").set(x + y)
+    runtime.sync.WaitGroup("bg_wg1").done()
 
-promise = runtime.background("worker1", "worker", 5, 3)
-result = promise.get()
+runtime.sync.WaitGroup("bg_wg1").add(1)
+runtime.background("worker1", "worker", 5, 3)
+runtime.sync.WaitGroup("bg_wg1").wait()
+result = runtime.sync.Atomic("bg_result").get()
 print(f"runtime.background result: {result}")
-assert result == 8, "runtime.background failed"
+assert result == 8, f"runtime.background failed, got {result}"
 
-# Multiple async operations
-promises = [runtime.background(f"worker_multi_{i}", "worker", i, i+1) for i in range(5)]
-results = [p.get() for p in promises]
+# Test 2: Multiple background tasks with individual results
+runtime.sync.WaitGroup("bg_wg2")
+
+def worker_multi(idx, x, y):
+    import scriptling.runtime as runtime
+    runtime.sync.Atomic(f"multi_{idx}").set(x + y)
+    runtime.sync.WaitGroup("bg_wg2").done()
+
+for i in range(5):
+    runtime.sync.Atomic(f"multi_{i}", initial=0)
+    runtime.sync.WaitGroup("bg_wg2").add(1)
+    runtime.background(f"worker_multi_{i}", "worker_multi", i, i, i+1)
+
+runtime.sync.WaitGroup("bg_wg2").wait()
+results = [runtime.sync.Atomic(f"multi_{i}").get() for i in range(5)]
 print(f"Multiple async results: {results}")
-assert results == [1, 3, 5, 7, 9], "Multiple async failed"
+assert results == [1, 3, 5, 7, 9], f"Multiple async failed, got {results}"
 
 print("\n=== Testing runtime.sync.Atomic ===")
 
-counter = runtime.sync.Atomic("test_counter", 0)
+counter = runtime.sync.Atomic("test_counter", initial=0)
 print(f"Initial counter: {counter.get()}")
 
+# Test concurrent increments
+runtime.sync.WaitGroup("bg_wg3")
+
 def increment():
-    counter.add(1)
+    import scriptling.runtime as runtime
+    runtime.sync.Atomic("test_counter").add(1)
+    runtime.sync.WaitGroup("bg_wg3").done()
 
-promises = [runtime.background(f"increment_{i}", "increment") for i in range(10)]
-for p in promises:
-    p.get()
+for i in range(10):
+    runtime.sync.WaitGroup("bg_wg3").add(1)
+    runtime.background(f"increment_{i}", "increment")
 
+runtime.sync.WaitGroup("bg_wg3").wait()
 final_count = counter.get()
 print(f"Final counter after 10 increments: {final_count}")
-assert final_count == 10, "Atomic counter failed"
+assert final_count == 10, f"Atomic counter failed, got {final_count}"
 
 # Test add with delta
 counter.set(0)
@@ -44,37 +70,29 @@ assert counter.get() == 3, "Atomic add with delta failed"
 
 print("\n=== Testing runtime.sync.Shared ===")
 
-shared_counter = runtime.sync.Atomic("shared_counter", 0)
-
-def increment_shared():
-    shared_counter.add(1)
-
-promises = [runtime.background(f"increment_shared_{i}", "increment_shared") for i in range(5)]
-for p in promises:
-    p.get()
-
-final_count = shared_counter.get()
-print(f"Shared counter value: {final_count}")
-assert final_count == 5, "Shared counter failed"
-
 shared_value = runtime.sync.Shared("test_shared", "initial")
+runtime.sync.WaitGroup("bg_wg4")
 
 def set_value(val):
-    shared_value.set(val)
+    import scriptling.runtime as runtime
+    runtime.sync.Shared("test_shared").set(val)
+    runtime.sync.WaitGroup("bg_wg4").done()
 
-p = runtime.background("set_value1", "set_value", "updated")
-p.get()
+runtime.sync.WaitGroup("bg_wg4").add(1)
+runtime.background("set_value1", "set_value", "updated")
+runtime.sync.WaitGroup("bg_wg4").wait()
 print(f"Shared value: {shared_value.get()}")
 assert shared_value.get() == "updated", "Shared value failed"
 
 print("\n=== Testing runtime.sync.WaitGroup ===")
 
 wg = runtime.sync.WaitGroup("test_wg")
-wg_counter = runtime.sync.Atomic("wg_counter", 0)
+wg_counter = runtime.sync.Atomic("wg_counter", initial=0)
 
 def worker_wg(id):
-    wg_counter.add(1)
-    wg.done()
+    import scriptling.runtime as runtime
+    runtime.sync.Atomic("wg_counter").add(1)
+    runtime.sync.WaitGroup("test_wg").done()
 
 for i in range(5):
     wg.add(1)
@@ -87,45 +105,32 @@ assert wg_counter.get() == 5, "WaitGroup failed"
 print("\n=== Testing runtime.sync.Queue ===")
 
 queue = runtime.sync.Queue("test_queue", maxsize=10)
+runtime.sync.Atomic("queue_total", initial=0)
+runtime.sync.WaitGroup("queue_wg")
 
-def producer():
-    for i in range(5):
-        queue.put(i)
-    queue.put(None)
+def queue_consumer():
+    import scriptling.runtime as runtime
+    q = runtime.sync.Queue("test_queue")
+    total = 0
+    total = total + q.get()
+    total = total + q.get()
+    total = total + q.get()
+    total = total + q.get()
+    total = total + q.get()
+    runtime.sync.Atomic("queue_total").set(total)
+    runtime.sync.WaitGroup("queue_wg").done()
 
-consumed = []
+runtime.sync.WaitGroup("queue_wg").add(1)
+runtime.background("consumer1", "queue_consumer")
+queue.put(10)
+queue.put(20)
+queue.put(30)
+queue.put(40)
+queue.put(50)
+runtime.sync.WaitGroup("queue_wg").wait()
 
-def consumer():
-    while True:
-        item = queue.get()
-        if item is None:
-            break
-        consumed.append(item)
-
-runtime.background("producer1", "producer")
-p = runtime.background("consumer1", "consumer")
-p.get()
-
-print(f"Queue consumed items: {consumed}")
-assert len(consumed) == 5, "Queue failed"
-
-print("\n=== Testing promise.wait ===")
-
-def worker_wait(x):
-    return x * 2
-
-promise1 = runtime.background("worker_wait1", "worker_wait", 5)
-promise1.wait()
-promise2 = runtime.background("worker_wait2", "worker_wait", 10)
-promise2.wait()
-print(f"promise.wait completed for both promises")
-
-def worker_wait_kwargs(x, multiplier=1):
-    return x * multiplier
-
-promise3 = runtime.background("worker_wait3", "worker_wait_kwargs", 3, multiplier=4)
-result = promise3.get()
-print(f"promise.wait with kwargs result: {result}")
-assert result == 12, "promise.wait with kwargs failed"
+total = runtime.sync.Atomic("queue_total").get()
+print(f"Queue total: {total}")
+assert total == 150, f"Queue failed, got {total}"
 
 print("\n=== All async tests passed! ===")

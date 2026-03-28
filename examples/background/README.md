@@ -15,12 +15,21 @@ Register and start background tasks with arguments. Returns a Promise to get res
 
 ### 2. Synchronization Primitives
 
+Background tasks run in isolated environments. Always look up sync primitives **by name inside the task** — do not rely on closure variables from the outer script.
+
 **WaitGroup** - Coordinate multiple goroutines:
 ```python
-wg = runtime.sync.WaitGroup("name")
-wg.add(3)
-# ... start tasks ...
+# Outer script
+wg = runtime.sync.WaitGroup("my_wg")
+wg.add(1)
+runtime.background("t", "my_task")
 wg.wait()
+
+# Inside the task — look up by name, not via closure
+def my_task():
+    wg = runtime.sync.WaitGroup("my_wg")  # look up by name
+    # ... do work ...
+    wg.done()
 ```
 
 **Atomic** - Thread-safe counter:

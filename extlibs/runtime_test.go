@@ -650,7 +650,6 @@ v2 = counter.get()
 func TestRuntimeBackgroundReturnsPromise(t *testing.T) {
 	ResetRuntime()
 
-	// Set BackgroundReady to true so background() returns a promise
 	RuntimeState.Lock()
 	RuntimeState.BackgroundReady = true
 	RuntimeState.Unlock()
@@ -658,14 +657,12 @@ func TestRuntimeBackgroundReturnsPromise(t *testing.T) {
 	p := scriptling.New()
 	RegisterRuntimeLibraryAll(p, nil)
 
-	// Set up a factory for background tasks
-	SetSandboxFactory(func() SandboxInstance {
+	SetBackgroundFactory(func() SandboxInstance {
 		p2 := scriptling.New()
 		RegisterRuntimeLibraryAll(p2, nil)
 		return p2
 	})
 
-	// First define a handler function
 	_, err := p.Eval(`
 import scriptling.runtime as runtime
 
@@ -676,29 +673,226 @@ def my_handler(a, b):
 		t.Fatalf("Setup error: %v", err)
 	}
 
-	// Test that background returns a promise object with get/wait methods
-	script := `
+	// background() should return a Promise (Builtin with get/wait)
+	result, err := p.Eval(`
 promise = runtime.background("test_promise", "my_handler", 5, 3)
-promise
-`
-
-	result, err := p.Eval(script)
+promise.get()
+`)
 	if err != nil {
 		t.Fatalf("Script error: %v", err)
 	}
 
-	// Check that result is a Builtin with get and wait methods
-	promise, ok := result.(*object.Builtin)
-	if !ok {
-		t.Fatalf("Expected Builtin (promise), got %T", result)
+	if i, err := result.AsInt(); err != nil || i != 8 {
+		t.Errorf("Expected promise result 8, got %v (%T)", result.Inspect(), result)
+	}
+}
+
+func TestRuntimeBackgroundFuncNameClean(t *testing.T) {
+	ResetRuntime()
+
+	RuntimeState.Lock()
+	RuntimeState.BackgroundReady = true
+	RuntimeState.Unlock()
+
+	p := scriptling.New()
+	RegisterRuntimeLibraryAll(p, nil)
+
+	SetBackgroundFactory(func() SandboxInstance {
+		p2 := scriptling.New()
+		RegisterRuntimeLibraryAll(p2, nil)
+		return p2
+	})
+
+	// Define a function that writes to shared state, then accesses an undefined variable
+	_, err := p.Eval(`
+import scriptling.runtime as runtime
+
+# Pre-create the atomic so the background task can look it up by name
+runtime.sync.Atomic("clean_test", initial=0)
+
+def my_task():
+    import scriptling.runtime as runtime
+    counter = runtime.sync.Atomic("clean_test")
+    counter.add(1)
+    x  # undefined — should error here
+`)
+	if err != nil {
+		t.Fatalf("setup error: %v", err)
 	}
 
-	if _, ok := promise.Attributes["get"]; !ok {
-		t.Error("Promise should have 'get' method")
+	// Call background — should run the function (incrementing counter) then error on x
+	_, err = p.Eval(`runtime.background("test_clean", "my_task")`)
+	if err != nil {
+		t.Fatalf("background call error: %v", err)
 	}
 
-	if _, ok := promise.Attributes["wait"]; !ok {
-		t.Error("Promise should have 'wait' method")
+	// Wait briefly for the goroutine to run
+	time.Sleep(100 * time.Millisecond)
+
+	RuntimeState.RLock()
+	atomic := RuntimeState.Atomics["clean_test"]
+	RuntimeState.RUnlock()
+	if atomic == nil {
+		t.Fatal("Atomic not found")
+	}
+	if v := atomic.get(); v != 1 {
+		t.Errorf("Expected counter 1 (ran but errored on x), got %d", v)
+	}
+}
+
+func TestRuntimeBackgroundFuncNameWithArgs(t *testing.T) {
+	ResetRuntime()
+
+	RuntimeState.Lock()
+	RuntimeState.BackgroundReady = true
+	RuntimeState.Unlock()
+
+	p := scriptling.New()
+	RegisterRuntimeLibraryAll(p, nil)
+
+	SetBackgroundFactory(func() SandboxInstance {
+		p2 := scriptling.New()
+		RegisterRuntimeLibraryAll(p2, nil)
+		return p2
+	})
+
+	// Define a function that writes to shared state via import
+	_, err := p.Eval(`
+import scriptling.runtime as runtime
+
+# Pre-create the atomic so the background task can look it up by name
+runtime.sync.Atomic("args_test", initial=0)
+
+def my_task(x, y):
+    import scriptling.runtime as runtime
+    counter = runtime.sync.Atomic("args_test")
+    counter.set(x + y)
+`)
+	if err != nil {
+		t.Fatalf("setup error: %v", err)
+	}
+
+	// Call background with args
+	_, err = p.Eval(`runtime.background("test_args", "my_task", 10, 5)`)
+	if err != nil {
+		t.Fatalf("background call error: %v", err)
+	}
+
+	// Wait for the goroutine to complete
+	time.Sleep(100 * time.Millisecond)
+
+	RuntimeState.RLock()
+	atomic := RuntimeState.Atomics["args_test"]
+	RuntimeState.RUnlock()
+	if atomic == nil {
+		t.Fatal("Atomic not found")
+	}
+	if v := atomic.get(); v != 15 {
+		t.Errorf("Expected counter 15, got %d", v)
+	}
+}
+
+func TestRuntimeBackgroundFuncNameSiblingCall(t *testing.T) {
+	ResetRuntime()
+
+	RuntimeState.Lock()
+	RuntimeState.BackgroundReady = true
+	RuntimeState.Unlock()
+
+	p := scriptling.New()
+	RegisterRuntimeLibraryAll(p, nil)
+
+	SetBackgroundFactory(func() SandboxInstance {
+		p2 := scriptling.New()
+		RegisterRuntimeLibraryAll(p2, nil)
+		return p2
+	})
+
+	// Define functions that call each other, accessing shared state via import
+	_, err := p.Eval(`
+import scriptling.runtime as runtime
+
+# Pre-create the atomic so the background task can look it up by name
+runtime.sync.Atomic("sibling_test", initial=0)
+
+def helper(x, y):
+    return x * y
+
+def my_task():
+    import scriptling.runtime as runtime
+    counter = runtime.sync.Atomic("sibling_test")
+    counter.set(helper(3, 5))
+`)
+	if err != nil {
+		t.Fatalf("setup error: %v", err)
+	}
+
+	// Call background — the function calls helper (sibling)
+	_, err = p.Eval(`runtime.background("test_sibling", "my_task")`)
+	if err != nil {
+		t.Fatalf("background call error: %v", err)
+	}
+
+	// Wait for the goroutine to complete
+	time.Sleep(100 * time.Millisecond)
+
+	RuntimeState.RLock()
+	atomic := RuntimeState.Atomics["sibling_test"]
+	RuntimeState.RUnlock()
+	if atomic == nil {
+		t.Fatal("Atomic not found")
+	}
+	if v := atomic.get(); v != 15 {
+		t.Errorf("Expected counter 15, got %d", v)
+	}
+}
+func TestRuntimeBackgroundImportsCopied(t *testing.T) {
+	ResetRuntime()
+
+	RuntimeState.Lock()
+	RuntimeState.BackgroundReady = true
+	RuntimeState.Unlock()
+
+	p := scriptling.New()
+	RegisterRuntimeLibraryAll(p, nil)
+
+	SetBackgroundFactory(func() SandboxInstance {
+		p2 := scriptling.New()
+		RegisterRuntimeLibraryAll(p2, nil)
+		return p2
+	})
+
+	// The function does NOT re-import runtime — it relies on the top-level
+	// import being copied into the clean env.
+	_, err := p.Eval(`
+import scriptling.runtime as runtime
+
+runtime.sync.Atomic("import_test", initial=0)
+
+def my_task():
+    # No import here — runtime should be available from caller's global scope
+    counter = runtime.sync.Atomic("import_test")
+    counter.add(1)
+`)
+	if err != nil {
+		t.Fatalf("setup error: %v", err)
+	}
+
+	_, err = p.Eval(`runtime.background("test_imports", "my_task")`)
+	if err != nil {
+		t.Fatalf("background call error: %v", err)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	RuntimeState.RLock()
+	atomic := RuntimeState.Atomics["import_test"]
+	RuntimeState.RUnlock()
+	if atomic == nil {
+		t.Fatal("Atomic not found")
+	}
+	if v := atomic.get(); v != 1 {
+		t.Errorf("Expected counter 1, got %d", v)
 	}
 }
 

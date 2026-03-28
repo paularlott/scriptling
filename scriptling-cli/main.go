@@ -198,6 +198,12 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 		baseDir, _ = os.Getwd()
 	}
 
+	kvStoragePath := cmd.GetString("kv-storage")
+	if err := extlibs.InitKVStore(kvStoragePath); err != nil {
+		return fmt.Errorf("failed to initialize KV store: %w", err)
+	}
+	defer extlibs.CloseKVStore()
+
 	libDirs := buildLibDirs(baseDir, cmd.GetStringSlice("libpath"))
 	mcpcli.SetupFactories(libDirs, allowedPaths, globalLogger)
 	mcpcli.SetupScriptling(p, libDirs, true, allowedPaths, globalLogger)
@@ -222,12 +228,6 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	if file != "" {
 		argv = append(argv, cmd.GetArgs()...)
 	}
-
-	kvStoragePath := cmd.GetString("kv-storage")
-	if err := extlibs.InitKVStore(kvStoragePath); err != nil {
-		return fmt.Errorf("failed to initialize KV store: %w", err)
-	}
-	defer extlibs.CloseKVStore()
 
 	var stdinReader io.Reader
 	if file != "" {

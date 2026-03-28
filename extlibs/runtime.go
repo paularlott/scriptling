@@ -265,58 +265,64 @@ var RuntimeLibraryFunctions = map[string]*object.Builtin{
 
 			// Start immediately if BackgroundReady is true
 			if backgroundReady {
-				return startBackgroundTask(name, handler, fnArgs, fnKwargs, env, eval, factory, ctx)
+				return startBackgroundTask(handler, fnArgs, fnKwargs, env, eval, factory, ctx)
 			}
 
 			return &object.Null{}
 		},
-		HelpText: `background(name, handler, *args, **kwargs) - Register and start a background task
+		HelpText: `background(name, handler, *args, **kwargs) - Start a fire-and-forget background task
 
-Registers a background task and starts it immediately in a goroutine (unless in server mode).
-Returns a Promise object that can be used to wait for completion or get the result.
+Starts a background task in a goroutine and returns immediately.
+Returns null on success, or an error if the handler is not found.
+
+  Both handler patterns run in isolated environments with no
+  access to the calling script's data.
 
 Parameters:
   name (string): Unique name for the background task
-  handler (string): Function name to execute
+  handler (string): Function name or "library.function"
+    "func_name" - runs in isolated env with import support and sibling functions
+    "lib.func" - loads library.function in a new Scriptling instance
   *args: Positional arguments to pass to the function
   **kwargs: Keyword arguments to pass to the function
 
 Returns:
-  Promise object (in script mode) or null (in server mode)
+  null on success, error if handler validation fails
 
-Example:
-  def my_task(x, y, operation="add"):
-      if operation == "add":
-          return x + y
-      return x * y
+  Background tasks are fire-and-forget. Pass data via
+  *args/**kwargs or use runtime.sync primitives
+  (Shared, Atomic, Queue) for coordination. Access panels
+  via console.Console().panel("name") from background tasks.
 
-  promise = runtime.background("calc", "my_task", 10, 5, operation="multiply")
-  if promise:
-      result = promise.get()  # Returns 50`,
+`,
 	},
 }
 
 // RuntimeLibraryCore is the runtime library without sub-libraries
 var RuntimeLibraryCore = object.NewLibrary(RuntimeLibraryName, RuntimeLibraryFunctions, nil, "Runtime library for background tasks")
 
-// startBackgroundTask starts a single background task with its own isolated Scriptling instance
-func startBackgroundTask(name, handler string, fnArgs []object.Object, fnKwargs map[string]object.Object, env *object.Environment, eval evaliface.Evaluator, factory SandboxFactory, ctx context.Context) object.Object {
+// startBackgroundTask starts a background task in a goroutine and returns a Promise.
+func startBackgroundTask(handler string, fnArgs []object.Object, fnKwargs map[string]object.Object, env *object.Environment, eval evaliface.Evaluator, factory SandboxFactory, ctx context.Context) object.Object {
 	if env == nil || eval == nil {
 		return &object.Null{}
 	}
 
-	// For simple (non-dotted) handlers, resolve the function from the environment
-	// on the calling goroutine to avoid concurrent map access in the background goroutine.
-	var prefetchedFn object.Object
+	promise := newPromise()
+
+	// For simple (non-dotted) handlers, validate the function exists synchronously.
 	isDotted := strings.Contains(handler, ".")
 	if !isDotted {
-		prefetchedFn, _ = env.Get(handler)
-		if prefetchedFn == nil {
+		fn, _ := env.Get(handler)
+		if fn == nil {
 			return errors.NewError("function not found: %s", handler)
 		}
+		switch fn.(type) {
+		case *object.Function, *object.LambdaFunction:
+			// ok
+		default:
+			return errors.NewError("handler is not a function: %s (%T)", handler, fn)
+		}
 	}
-
-	promise := newPromise()
 
 	go func() {
 		defer func() {
@@ -325,76 +331,116 @@ func startBackgroundTask(name, handler string, fnArgs []object.Object, fnKwargs 
 			}
 		}()
 
-		// If handler contains a dot, create new Scriptling instance and import library
-		var fn object.Object
-		if strings.Contains(handler, ".") {
-			// Handler is "library.function" - need to import library
+		if isDotted {
+			// Handler is "library.function" — load into new instance
 			parts := strings.SplitN(handler, ".", 2)
 			libName := parts[0]
 			funcName := parts[1]
 
-			// Create new Scriptling instance for this task
 			if factory == nil {
 				promise.set(nil, fmt.Errorf("cannot load library: no factory configured"))
 				return
 			}
-
 			scriptling := factory()
 			if scriptling == nil {
 				promise.set(nil, fmt.Errorf("factory returned nil"))
 				return
 			}
 
-			// Create new environment and load library into it
 			newEnv := object.NewEnvironment()
 			if err := scriptling.LoadLibraryIntoEnv(libName, newEnv); err != nil {
 				promise.set(nil, fmt.Errorf("failed to load library %s: %v", libName, err))
 				return
 			}
 
-			// Get the library and function from the new environment
+			var fn object.Object
 			libObj, ok := newEnv.Get(libName)
 			if !ok {
 				promise.set(nil, fmt.Errorf("library not found: %s", libName))
 				return
 			}
-
 			if libDict, ok := libObj.(*object.Dict); ok {
 				if pair, exists := libDict.GetByString(funcName); exists {
 					fn = pair.Value
 				}
 			}
-
 			if fn == nil {
 				promise.set(nil, fmt.Errorf("function not found: %s.%s", libName, funcName))
 				return
 			}
 
-			// Call the function with the new environment
 			result := eval.CallObjectFunction(ctx, fn, fnArgs, fnKwargs, newEnv)
-			if err, ok := result.(*object.Error); ok {
-				promise.set(nil, fmt.Errorf("%s", err.Message))
+			if errObj, ok := result.(*object.Error); ok {
+				promise.set(nil, fmt.Errorf("%s", errObj.Message))
 			} else {
 				promise.set(result, nil)
 			}
-			return
 		} else {
-			// Simple function name - already resolved before goroutine launch
-			fn = prefetchedFn
-		}
+			// Simple function name — create clean environment via factory
+			if factory == nil {
+				promise.set(nil, fmt.Errorf("no factory configured"))
+				return
+			}
+			scriptling := factory()
+			if scriptling == nil {
+				promise.set(nil, fmt.Errorf("factory returned nil"))
+				return
+			}
 
-		if fn == nil {
-			promise.set(nil, fmt.Errorf("function not found: %s", handler))
-			return
-		}
+			newEnv := object.NewEnvironment()
 
-		// Create a new isolated environment for the background task
-		newEnv := object.NewEnvironment()
-		result := eval.CallObjectFunction(ctx, fn, fnArgs, fnKwargs, newEnv)
-		if err, ok := result.(*object.Error); ok {
-			promise.set(nil, fmt.Errorf("%s", err.Message))
-		} else {
-			promise.set(result, nil)
+			// Set up import callback so the function can import libraries
+			newEnv.SetImportCallback(func(libName string) error {
+				return scriptling.LoadLibraryIntoEnv(libName, newEnv)
+			})
+
+			// Copy the caller's global scope into the clean env:
+			// - Functions get fresh copies bound to newEnv so closures work
+			// - Everything else (Builtins, Dicts, primitives, lists, etc.) is
+			//   shared directly — builtins are stateless or manage their own
+			//   synchronisation, and sharing lets tasks use wg/task_status etc.
+			globalEnv := env.GetGlobal()
+			store := globalEnv.GetStore()
+			for k, v := range store {
+				switch origFn := v.(type) {
+				case *object.Function:
+					newEnv.Set(k, &object.Function{
+						Name:          origFn.Name,
+						Parameters:    origFn.Parameters,
+						DefaultValues: origFn.DefaultValues,
+						Variadic:      origFn.Variadic,
+						Kwargs:        origFn.Kwargs,
+						Body:          origFn.Body,
+						Env:           newEnv,
+					})
+				case *object.LambdaFunction:
+					newEnv.Set(k, &object.LambdaFunction{
+						Parameters:    origFn.Parameters,
+						DefaultValues: origFn.DefaultValues,
+						Variadic:      origFn.Variadic,
+						Kwargs:        origFn.Kwargs,
+						Body:          origFn.Body,
+						Env:           newEnv,
+					})
+				case *object.Class:
+					// skip — classes can't be safely shared across envs
+				default:
+					newEnv.Set(k, origFn)
+				}
+			}
+
+			fn, _ := newEnv.Get(handler)
+			if fn == nil {
+				promise.set(nil, fmt.Errorf("function not found: %s", handler))
+				return
+			}
+
+			result := eval.CallObjectFunction(ctx, fn, fnArgs, fnKwargs, newEnv)
+			if errObj, ok := result.(*object.Error); ok {
+				promise.set(nil, fmt.Errorf("%s", errObj.Message))
+			} else {
+				promise.set(result, nil)
+			}
 		}
 	}()
 
@@ -405,6 +451,9 @@ func startBackgroundTask(name, handler string, fnArgs []object.Object, fnKwargs 
 					result, err := promise.get()
 					if err != nil {
 						return errors.NewError("async error: %v", err)
+					}
+					if result == nil {
+						return &object.Null{}
 					}
 					return result
 				},
@@ -421,7 +470,7 @@ func startBackgroundTask(name, handler string, fnArgs []object.Object, fnKwargs 
 				HelpText: "wait() - Wait for completion and discard the result",
 			},
 		},
-		HelpText: "Promise object - call .get() to retrieve result or .wait() to wait without result",
+		HelpText: "Promise - call .get() to retrieve result or .wait() to wait without result",
 	}
 }
 
@@ -467,7 +516,7 @@ func ReleaseBackgroundTasks() {
 			eval    evaliface.Evaluator
 			ctx     context.Context
 		}) {
-			startBackgroundTask(n, t.handler, t.args, t.kwargs, t.env, t.eval, factory, t.ctx)
+			startBackgroundTask(t.handler, t.args, t.kwargs, t.env, t.eval, factory, t.ctx)
 		}(name, task)
 	}
 }

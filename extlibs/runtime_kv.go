@@ -279,6 +279,39 @@ func newKVStoreObject(db *snapshotkv.DB, registryName string) *object.Builtin {
 				HelpText: `clear() - Remove all keys from the store`,
 			},
 
+			"incr": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if objErr := errors.MinArgs(args, 1); objErr != nil {
+						return objErr
+					}
+					key, objErr := args[0].AsString()
+					if objErr != nil {
+						return objErr
+					}
+					delta := int64(1)
+					if len(args) > 1 {
+						if d, e := args[1].AsInt(); e == nil {
+							delta = d
+						}
+					}
+					var current int64
+					if val, err := db.Get(key); err == nil {
+						switch v := val.(type) {
+						case int64:
+							current = v
+						case float64:
+							current = int64(v)
+						}
+					}
+					newVal := current + delta
+					if goErr := db.Set(key, newVal); goErr != nil {
+						return errors.NewError("kv.incr: %v", goErr)
+					}
+					return object.NewInteger(newVal)
+				},
+				HelpText: `incr(key, delta=1) - Atomically increment an integer value, returns new value`,
+			},
+
 			"close": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if registryName != "" {
@@ -290,7 +323,7 @@ func newKVStoreObject(db *snapshotkv.DB, registryName string) *object.Builtin {
 				HelpText: `close() - Close this store immediately. No-op on the default store.`,
 			},
 		},
-		HelpText: "KV store object — call .get(), .set(), .delete(), .exists(), .ttl(), .keys(), .clear(), .close()",
+		HelpText: "KV store object — call .get(), .set(), .incr(), .delete(), .exists(), .ttl(), .keys(), .clear(), .close()",
 	}
 	kvDBRegistry.Lock()
 	kvDBRegistry.m[obj] = db

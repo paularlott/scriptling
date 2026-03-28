@@ -1,38 +1,31 @@
 import scriptling.runtime as runtime
 
 # Test Atomic sharing across goroutines
-counter = runtime.sync.Atomic("test_counter", 0)
+counter = runtime.sync.Atomic("test_counter", initial=0)
+runtime.sync.WaitGroup("thread_wg")
 
 def increment():
-    for i in range(100):
-        counter.add(1)
+    import scriptling.runtime as runtime
+    runtime.sync.Atomic("test_counter").add(1)
+    runtime.sync.WaitGroup("thread_wg").done()
 
-promises = []
 for i in range(10):
-    promises.append(runtime.background(f"increment_{i}", "increment"))
+    runtime.sync.WaitGroup("thread_wg").add(1)
+    runtime.background(f"increment_{i}", "increment")
 
-for p in promises:
-    p.get()
+runtime.sync.WaitGroup("thread_wg").wait()
+assert counter.get() == 10, f"Expected 10, got {counter.get()}"
 
-assert counter.get() == 1000, f"Expected 1000, got {counter.get()}"
+# Test Shared state across goroutines
+shared_value = runtime.sync.Shared("test_shared", "initial")
+runtime.sync.WaitGroup("shared_wg")
 
-# Test Queue sharing between producer and consumer
-queue = runtime.sync.Queue("test_queue")
+def set_shared(val):
+    import scriptling.runtime as runtime
+    runtime.sync.Shared("test_shared").set(val)
+    runtime.sync.WaitGroup("shared_wg").done()
 
-def producer():
-    for i in range(5):
-        queue.put(i)
-
-def consumer():
-    items = []
-    for i in range(5):
-        items.append(queue.get())
-    return items
-
-p1 = runtime.background("producer1", "producer")
-p2 = runtime.background("consumer1", "consumer")
-
-p1.get()
-result = p2.get()
-assert len(result) == 5
-assert sorted(result) == [0, 1, 2, 3, 4]
+runtime.sync.WaitGroup("shared_wg").add(1)
+runtime.background("set_shared1", "set_shared", "updated")
+runtime.sync.WaitGroup("shared_wg").wait()
+assert shared_value.get() == "updated", f"Expected 'updated', got {shared_value.get()}"

@@ -34,6 +34,12 @@ func newTestInterpreter(t *testing.T) *scriptling.Scriptling {
 	ai.Register(p)
 	agent.Register(p)
 	agent.RegisterInteract(p)
+	extlibs.SetBackgroundFactory(func() extlibs.SandboxInstance {
+		p2 := scriptling.New()
+		stdlib.RegisterAll(p2)
+		extlibs.RegisterRuntimeLibraryAll(p2, nil)
+		return p2
+	})
 	extlibs.ReleaseBackgroundTasks()
 	return p
 }
