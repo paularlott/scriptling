@@ -71,16 +71,16 @@ type Server struct {
 	httpServer       *http.Server
 	mcpHandler       *reloadableMCPHandler
 	handlers         map[string]string // path -> "library.function"
-	wsHandlers        map[string]string // path -> "library.function" for WebSocket
+	wsHandlers       map[string]string // path -> "library.function" for WebSocket
 	middleware       string
 	staticRoutes     map[string]string
 	mu               sync.RWMutex
 	watcher          *fsnotify.Watcher
 	reloadDebounce   *time.Timer
 	debounceDuration time.Duration
-	packLoader       *pack.Loader           // nil if no packages configured
+	packLoader       *pack.Loader             // nil if no packages configured
 	fsLoader         scriptling.LibraryLoader // filesystem loader, set when packLoader is set
-	bearerExpected   string       // precomputed "Bearer <token>"
+	bearerExpected   string                   // precomputed "Bearer <token>"
 }
 
 // NewServer creates a new HTTP server
@@ -299,17 +299,10 @@ RETURNING RESULTS:
 			code, _ := req.String("code")
 			p := scriptling.New()
 			mcpcli.SetupScriptling(p, s.config.LibDirs, false, s.config.AllowedPaths, Log)
-			p.EnableOutputCapture()
 
 			response, exitCode, err := scriptlingmcp.RunToolScript(ctx, p, code, map[string]interface{}{})
 			if err != nil && exitCode != 0 {
 				return nil, fmt.Errorf("execution error: %w", err)
-			}
-			if response == "" {
-				response = strings.TrimSpace(p.GetOutput())
-			}
-			if response == "" {
-				response = "(no output)"
 			}
 			return mcp_lib.NewToolResponseText(response), nil
 		},
@@ -809,8 +802,6 @@ func createMCPToolHandler(scriptPath string, libDirs []string, allowedPaths []st
 		}
 
 		// Enable output capture so print() output is available as fallback
-		p.EnableOutputCapture()
-
 		params := req.Args()
 		response, exitCode, err := scriptlingmcp.RunToolScript(ctx, p, string(script), params)
 		if err != nil {
@@ -819,11 +810,6 @@ func createMCPToolHandler(scriptPath string, libDirs []string, allowedPaths []st
 
 		if exitCode != 0 {
 			return nil, fmt.Errorf("script exited with code %d: %s", exitCode, response)
-		}
-
-		// If no explicit return, use captured stdout as the response
-		if response == "" {
-			response = p.GetOutput()
 		}
 
 		return mcp_lib.NewToolResponseText(response), nil

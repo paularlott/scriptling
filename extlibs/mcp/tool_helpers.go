@@ -629,16 +629,26 @@ func RegisterToolHelpers(registrar interface{ RegisterLibrary(*object.Library) }
 	registrar.RegisterLibrary(toolLib)
 }
 
-// RunToolScript is a Go helper that sets up MCP parameters, runs a script, and retrieves the response
-// This simplifies calling MCP tool scripts from Go code
-func RunToolScript(ctx context.Context, sl *scriptling.Scriptling, script string, params map[string]interface{}) (response string, exitCode int, err error) {
+// RunToolScript is a Go helper that sets up MCP parameters, runs a script, and retrieves the response.
+// It enables output capture automatically so print() output is available as a fallback response
+// when no explicit return_* call is made.
+// params may be map[string]interface{} or map[string]object.Object.
+func RunToolScript(ctx context.Context, sl *scriptling.Scriptling, script string, params interface{}) (response string, exitCode int, err error) {
+	// Enable output capture so print() output is available as fallback
+	sl.EnableOutputCapture()
 	// Convert params map to scriptling Dict
 	paramsDict := &object.Dict{
 		Pairs: make(map[string]object.DictPair),
 	}
-	for key, value := range params {
-		obj := conversion.FromGo(value)
-		paramsDict.SetByString(key, obj)
+	switch p := params.(type) {
+	case map[string]object.Object:
+		for key, value := range p {
+			paramsDict.SetByString(key, value)
+		}
+	case map[string]interface{}:
+		for key, value := range p {
+			paramsDict.SetByString(key, conversion.FromGo(value))
+		}
 	}
 
 	// Set __mcp_params in environment
@@ -671,7 +681,11 @@ func RunToolScript(ctx context.Context, sl *scriptling.Scriptling, script string
 		return response, 1, evalErr
 	}
 
-	// If no explicit response via return_*, check the script's return value
+	// If no explicit response via return_*, check captured output then return value
+	if response == "" {
+		response = strings.TrimRight(sl.GetOutput(), "\n")
+	}
+
 	if response == "" && result != nil {
 		switch result.(type) {
 		case *object.String, *object.Integer, *object.Float, *object.Boolean:
