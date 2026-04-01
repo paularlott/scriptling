@@ -3770,7 +3770,7 @@ func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expres
 				return keyObj, NULL
 			}
 
-			keyStr := object.DictKey(keyObj)
+			keyStr := evalHashKey(ctx, keyObj)
 			pair, exists := dictObj.Pairs[keyStr]
 			if !exists {
 				return FALSE, NULL

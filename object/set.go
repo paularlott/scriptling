@@ -49,22 +49,18 @@ func NewSet() *Set {
 	return &Set{Elements: make(map[string]Object)}
 }
 
-// NewSetFromElements creates a new Set from a slice of objects
-func NewSetFromElements(elements []Object) *Set {
-	s := &Set{Elements: make(map[string]Object)}
-	for _, e := range elements {
-		s.Add(e)
-	}
-	return s
-}
-
-// Add adds an element to the set
-func (s *Set) Add(obj Object) {
+// add adds an element to the set using DictKey for hashing.
+// Safe for all scalar types (int, float, bool, string, None, tuple).
+// Do NOT use with Instance objects that define __hash__; use
+// evalSetAdd (evaluator package) instead, which calls __hash__ via the
+// interpreter and then delegates to AddKeyed.
+func (s *Set) add(obj Object) {
 	s.Elements[DictKey(obj)] = obj
 }
 
-// Remove removes an element from the set
-func (s *Set) Remove(obj Object) bool {
+// remove removes an element from the set using DictKey for hashing.
+// Safe for scalar types only; see add for the Instance caveat.
+func (s *Set) remove(obj Object) bool {
 	key := DictKey(obj)
 	if _, ok := s.Elements[key]; ok {
 		delete(s.Elements, key)
@@ -73,8 +69,9 @@ func (s *Set) Remove(obj Object) bool {
 	return false
 }
 
-// Contains checks if an element is in the set
-func (s *Set) Contains(obj Object) bool {
+// contains checks if an element is in the set using DictKey for hashing.
+// Safe for scalar types only; see add for the Instance caveat.
+func (s *Set) contains(obj Object) bool {
 	_, ok := s.Elements[DictKey(obj)]
 	return ok
 }
@@ -82,11 +79,11 @@ func (s *Set) Contains(obj Object) bool {
 // Union returns a new set with elements from both sets
 func (s *Set) Union(other *Set) *Set {
 	result := NewSet()
-	for _, e := range s.Elements {
-		result.Add(e)
+	for key, e := range s.Elements {
+		result.AddKeyed(key, e)
 	}
-	for _, e := range other.Elements {
-		result.Add(e)
+	for key, e := range other.Elements {
+		result.AddKeyed(key, e)
 	}
 	return result
 }
@@ -96,7 +93,7 @@ func (s *Set) Intersection(other *Set) *Set {
 	result := NewSet()
 	for key, e := range s.Elements {
 		if _, ok := other.Elements[key]; ok {
-			result.Add(e)
+			result.AddKeyed(key, e)
 		}
 	}
 	return result
@@ -107,7 +104,7 @@ func (s *Set) Difference(other *Set) *Set {
 	result := NewSet()
 	for key, e := range s.Elements {
 		if _, ok := other.Elements[key]; !ok {
-			result.Add(e)
+			result.AddKeyed(key, e)
 		}
 	}
 	return result
@@ -118,12 +115,12 @@ func (s *Set) SymmetricDifference(other *Set) *Set {
 	result := NewSet()
 	for key, e := range s.Elements {
 		if _, ok := other.Elements[key]; !ok {
-			result.Add(e)
+			result.AddKeyed(key, e)
 		}
 	}
 	for key, e := range other.Elements {
 		if _, ok := s.Elements[key]; !ok {
-			result.Add(e)
+			result.AddKeyed(key, e)
 		}
 	}
 	return result
@@ -150,8 +147,8 @@ func (s *Set) IsSuperset(other *Set) bool {
 // Copy returns a shallow copy of the set
 func (s *Set) Copy() *Set {
 	result := NewSet()
-	for _, e := range s.Elements {
-		result.Add(e)
+	for key, e := range s.Elements {
+		result.AddKeyed(key, e)
 	}
 	return result
 }

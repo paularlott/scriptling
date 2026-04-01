@@ -862,16 +862,16 @@ func TestRuntimeBackgroundImportsCopied(t *testing.T) {
 		return p2
 	})
 
-	// The function does NOT re-import runtime — it relies on the top-level
-	// import being copied into the clean env.
+	// The function re-imports runtime — the background task gets a clean
+	// env with only sibling functions, not the caller's imports.
 	_, err := p.Eval(`
 import scriptling.runtime as runtime
 
 runtime.sync.Atomic("import_test", initial=0)
 
 def my_task():
-    # No import here — runtime should be available from caller's global scope
-    counter = runtime.sync.Atomic("import_test")
+    import scriptling.runtime as rt
+    counter = rt.sync.Atomic("import_test")
     counter.add(1)
 `)
 	if err != nil {

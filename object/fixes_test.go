@@ -255,24 +255,24 @@ func TestSetOperationsWithDictKey(t *testing.T) {
 	s := &Set{Elements: make(map[string]Object)}
 
 	// Add various types
-	s.Add(&String{Value: "hello"})
-	s.Add(&Integer{Value: 42})
-	s.Add(&Boolean{Value: true})
+	s.add(&String{Value: "hello"})
+	s.add(&Integer{Value: 42})
+	s.add(&Boolean{Value: true})
 
 	// Check contains
-	if !s.Contains(&String{Value: "hello"}) {
+	if !s.contains(&String{Value: "hello"}) {
 		t.Error("Set should contain 'hello'")
 	}
-	if !s.Contains(&Integer{Value: 42}) {
+	if !s.contains(&Integer{Value: 42}) {
 		t.Error("Set should contain 42")
 	}
-	if s.Contains(&String{Value: "missing"}) {
+	if s.contains(&String{Value: "missing"}) {
 		t.Error("Set should not contain 'missing'")
 	}
 
 	// Remove
-	s.Remove(&String{Value: "hello"})
-	if s.Contains(&String{Value: "hello"}) {
+	s.remove(&String{Value: "hello"})
+	if s.contains(&String{Value: "hello"}) {
 		t.Error("Set should not contain 'hello' after remove")
 	}
 }

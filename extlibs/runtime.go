@@ -14,23 +14,6 @@ import (
 
 const RuntimeLibraryName = "scriptling.runtime"
 
-// deepCopyDict recursively copies a Dict and any nested Dict values,
-// so background tasks get their own mutable tree and don't race on
-// shared module dicts when setNestedDictPath mutates intermediates.
-func deepCopyDict(d *object.Dict) *object.Dict {
-	if d == nil {
-		return nil
-	}
-	pairs := make(map[string]object.DictPair, len(d.Pairs))
-	for k, v := range d.Pairs {
-		if nested, ok := v.Value.(*object.Dict); ok {
-			v.Value = deepCopyDict(nested)
-		}
-		pairs[k] = v
-	}
-	return &object.Dict{Pairs: pairs}
-}
-
 // RuntimeState holds all runtime state
 var RuntimeState = struct {
 	sync.RWMutex
@@ -314,7 +297,8 @@ Starts a background task in a goroutine and returns immediately.
 Returns null on success, or an error if the handler is not found.
 
   Both handler patterns run in isolated environments with no
-  access to the calling script's data.
+  access to the calling script's data. Only sibling functions
+  are copied; data must be passed via args or runtime.sync.
 
 Parameters:
   name (string): Unique name for the background task
@@ -441,11 +425,10 @@ func startBackgroundTask(handler string, fnArgs []object.Object, fnKwargs map[st
 				return scriptling.LoadLibraryIntoEnv(libName, newEnv)
 			})
 
-			// Copy the caller's global scope into the clean env:
-			// - Functions get fresh copies bound to newEnv so closures work
-			// - Everything else (Builtins, Dicts, primitives, lists, etc.) is
-			//   shared directly — builtins are stateless or manage their own
-			//   synchronisation, and sharing lets tasks use wg/task_status etc.
+			// Copy only sibling functions into the clean env, rebound to
+			// newEnv so closures resolve correctly. No other globals are
+			// shared — the task accesses data through validated args and
+			// coordination via runtime.sync primitives.
 			globalEnv := env.GetGlobal()
 			store := globalEnv.GetStore()
 			for k, v := range store {
@@ -469,15 +452,6 @@ func startBackgroundTask(handler string, fnArgs []object.Object, fnKwargs map[st
 						Body:          origFn.Body,
 						Env:           newEnv,
 					})
-				case *object.Class:
-					// skip — classes can't be safely shared across envs
-				case *object.Dict:
-					// Deep-copy dicts (including nested module dicts)
-					// so concurrent background tasks don't race when
-					// setNestedDictPath mutates intermediate dicts.
-					newEnv.Set(k, deepCopyDict(origFn))
-				default:
-					newEnv.Set(k, origFn)
 				}
 			}
 

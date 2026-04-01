@@ -425,26 +425,26 @@ func TestSet(t *testing.T) {
 	}
 
 	// Test Add and Contains
-	s.Add(&String{Value: "hello"})
-	s.Add(&Integer{Value: 42})
+	s.add(&String{Value: "hello"})
+	s.add(&Integer{Value: 42})
 
-	if !s.Contains(&String{Value: "hello"}) {
+	if !s.contains(&String{Value: "hello"}) {
 		t.Error("Set should contain added element")
 	}
 
 	// Test Remove
-	if !s.Remove(&String{Value: "hello"}) {
+	if !s.remove(&String{Value: "hello"}) {
 		t.Error("Remove() should return true for existing element")
 	}
-	if s.Remove(&String{Value: "nonexistent"}) {
+	if s.remove(&String{Value: "nonexistent"}) {
 		t.Error("Remove() should return false for non-existent element")
 	}
 
 	// Test Inspect
 	s = NewSet()
-	s.Add(&Integer{Value: 3})
-	s.Add(&Integer{Value: 1})
-	s.Add(&Integer{Value: 2})
+	s.add(&Integer{Value: 3})
+	s.add(&Integer{Value: 1})
+	s.add(&Integer{Value: 2})
 
 	inspect := s.Inspect()
 	if inspect[0] != '{' || inspect[len(inspect)-1] != '}' {
@@ -452,68 +452,55 @@ func TestSet(t *testing.T) {
 	}
 }
 
+func newTestSet(elements ...Object) *Set {
+	s := NewSet()
+	for _, e := range elements {
+		s.AddKeyed(DictKey(e), e)
+	}
+	return s
+}
+
 func TestSetUnion(t *testing.T) {
-	s1 := NewSetFromElements([]Object{
-		&Integer{Value: 1},
-		&Integer{Value: 2},
-	})
-	s2 := NewSetFromElements([]Object{
-		&Integer{Value: 2},
-		&Integer{Value: 3},
-	})
+	s1 := newTestSet(&Integer{Value: 1}, &Integer{Value: 2})
+	s2 := newTestSet(&Integer{Value: 2}, &Integer{Value: 3})
 
 	result := s1.Union(s2)
-	if result.Contains(&Integer{Value: 1}) == false ||
-		result.Contains(&Integer{Value: 2}) == false ||
-		result.Contains(&Integer{Value: 3}) == false {
+	if result.contains(&Integer{Value: 1}) == false ||
+		result.contains(&Integer{Value: 2}) == false ||
+		result.contains(&Integer{Value: 3}) == false {
 		t.Error("Union() should contain all elements from both sets")
 	}
 }
 
 func TestSetIntersection(t *testing.T) {
-	s1 := NewSetFromElements([]Object{
-		&Integer{Value: 1},
-		&Integer{Value: 2},
-	})
-	s2 := NewSetFromElements([]Object{
-		&Integer{Value: 2},
-		&Integer{Value: 3},
-	})
+	s1 := newTestSet(&Integer{Value: 1}, &Integer{Value: 2})
+	s2 := newTestSet(&Integer{Value: 2}, &Integer{Value: 3})
 
 	result := s1.Intersection(s2)
-	if !result.Contains(&Integer{Value: 2}) {
+	if !result.contains(&Integer{Value: 2}) {
 		t.Error("Intersection() should contain common element")
 	}
-	if result.Contains(&Integer{Value: 1}) || result.Contains(&Integer{Value: 3}) {
+	if result.contains(&Integer{Value: 1}) || result.contains(&Integer{Value: 3}) {
 		t.Error("Intersection() should not contain unique elements")
 	}
 }
 
 func TestSetDifference(t *testing.T) {
-	s1 := NewSetFromElements([]Object{
-		&Integer{Value: 1},
-		&Integer{Value: 2},
-	})
-	s2 := NewSetFromElements([]Object{
-		&Integer{Value: 2},
-		&Integer{Value: 3},
-	})
+	s1 := newTestSet(&Integer{Value: 1}, &Integer{Value: 2})
+	s2 := newTestSet(&Integer{Value: 2}, &Integer{Value: 3})
 
 	result := s1.Difference(s2)
-	if !result.Contains(&Integer{Value: 1}) {
+	if !result.contains(&Integer{Value: 1}) {
 		t.Error("Difference() should contain element only in s1")
 	}
-	if result.Contains(&Integer{Value: 2}) {
+	if result.contains(&Integer{Value: 2}) {
 		t.Error("Difference() should not contain common element")
 	}
 }
 
 func TestSetIsSubset(t *testing.T) {
-	s1 := NewSetFromElements([]Object{&Integer{Value: 1}})
-	s2 := NewSetFromElements([]Object{
-		&Integer{Value: 1},
-		&Integer{Value: 2},
-	})
+	s1 := newTestSet(&Integer{Value: 1})
+	s2 := newTestSet(&Integer{Value: 1}, &Integer{Value: 2})
 
 	if !s1.IsSubset(s2) {
 		t.Error("s1 should be a subset of s2")
@@ -524,16 +511,16 @@ func TestSetIsSubset(t *testing.T) {
 }
 
 func TestSetCopy(t *testing.T) {
-	s1 := NewSetFromElements([]Object{&Integer{Value: 1}})
+	s1 := newTestSet(&Integer{Value: 1})
 	s2 := s1.Copy()
 
-	if !s2.Contains(&Integer{Value: 1}) {
+	if !s2.contains(&Integer{Value: 1}) {
 		t.Error("Copy() should contain all elements")
 	}
 
 	// Modify original
-	s1.Add(&Integer{Value: 2})
-	if s2.Contains(&Integer{Value: 2}) {
+	s1.add(&Integer{Value: 2})
+	if s2.contains(&Integer{Value: 2}) {
 		t.Error("Copy() should be independent")
 	}
 }
@@ -545,7 +532,7 @@ func TestSetAsBool(t *testing.T) {
 		t.Errorf("Empty set AsBool() = %t, want false", boolVal)
 	}
 
-	s1.Add(&Integer{Value: 1})
+	s1.add(&Integer{Value: 1})
 	boolVal, _ = s1.AsBool()
 	if boolVal != true {
 		t.Errorf("Non-empty set AsBool() = %t, want true", boolVal)

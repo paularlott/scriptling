@@ -1083,33 +1083,6 @@ func (d *Dict) CoerceString() (string, Object) { return d.Inspect(), nil }
 func (d *Dict) CoerceInt() (int64, Object)     { return 0, errMustBeInteger }
 func (d *Dict) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
 
-// GetPair retrieves a pair from the dict using proper DictKey lookup.
-func (d *Dict) GetPair(key Object) (DictPair, bool) {
-	pair, ok := d.Pairs[DictKey(key)]
-	return pair, ok
-}
-
-// SetPair sets a key-value pair in the dict using proper DictKey.
-func (d *Dict) SetPair(key, value Object) {
-	d.Pairs[DictKey(key)] = DictPair{Key: key, Value: value}
-}
-
-// HasKey checks if a key exists in the dict.
-func (d *Dict) HasKey(key Object) bool {
-	_, ok := d.Pairs[DictKey(key)]
-	return ok
-}
-
-// DeleteKey removes a key from the dict. Returns true if the key existed.
-func (d *Dict) DeleteKey(key Object) bool {
-	k := DictKey(key)
-	_, ok := d.Pairs[k]
-	if ok {
-		delete(d.Pairs, k)
-	}
-	return ok
-}
-
 // GetByString retrieves a pair using a string key (convenience for attribute-style access).
 func (d *Dict) GetByString(name string) (DictPair, bool) {
 	pair, ok := d.Pairs[DictKey(&String{Value: name})]

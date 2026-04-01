@@ -274,7 +274,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		if len(keywords) > 0 {
 			return errors.NewError("get() does not accept keyword arguments")
 		}
-		key := object.DictKey(args[0])
+		key := evalHashKey(ctx, args[0])
 		if pair, ok := dict.Pairs[key]; ok {
 			return pair.Value
 		}
@@ -289,7 +289,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		if len(keywords) > 0 {
 			return errors.NewError("pop() does not accept keyword arguments")
 		}
-		key := object.DictKey(args[0])
+		key := evalHashKey(ctx, args[0])
 		if pair, ok := dict.Pairs[key]; ok {
 			delete(dict.Pairs, key)
 			return pair.Value
@@ -327,7 +327,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 					if len(pair) != 2 {
 						return errors.NewError("dictionary update sequence element must be [key, value] pair")
 					}
-					dict.Pairs[object.DictKey(pair[0])] = object.DictPair{Key: pair[0], Value: pair[1]}
+					dict.Pairs[evalHashKey(ctx, pair[0])] = object.DictPair{Key: pair[0], Value: pair[1]}
 				}
 			default:
 				return errors.NewTypeError("DICT or LIST of pairs", args[0].Type().String())
@@ -358,7 +358,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		if len(keywords) > 0 {
 			return errors.NewError("setdefault() does not accept keyword arguments")
 		}
-		key := object.DictKey(args[0])
+		key := evalHashKey(ctx, args[0])
 		if pair, ok := dict.Pairs[key]; ok {
 			return pair.Value
 		}
@@ -384,12 +384,12 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		switch iter := args[0].(type) {
 		case *object.List:
 			for _, elem := range iter.Elements {
-				key := object.DictKey(elem)
+				key := evalHashKey(ctx, elem)
 				newPairs[key] = object.DictPair{Key: elem, Value: defaultVal}
 			}
 		case *object.Tuple:
 			for _, elem := range iter.Elements {
-				key := object.DictKey(elem)
+				key := evalHashKey(ctx, elem)
 				newPairs[key] = object.DictPair{Key: elem, Value: defaultVal}
 			}
 		case *object.String:
@@ -1576,13 +1576,15 @@ func callSetMethod(ctx context.Context, set *object.Set, method string, args []o
 		return NULL
 	case "remove":
 		if err := errors.ExactArgs(args, 1); err != nil { return err }
-		if !set.Remove(args[0]) {
+		key := evalHashKey(ctx, args[0])
+		if !set.ContainsKeyed(key) {
 			return errors.NewError("KeyError: %s", args[0].Inspect())
 		}
+		delete(set.Elements, key)
 		return NULL
 	case "discard":
 		if err := errors.ExactArgs(args, 1); err != nil { return err }
-		set.Remove(args[0])
+		delete(set.Elements, evalHashKey(ctx, args[0]))
 		return NULL
 	case "pop":
 		if err := errors.ExactArgs(args, 0); err != nil { return err }
@@ -1590,8 +1592,8 @@ func callSetMethod(ctx context.Context, set *object.Set, method string, args []o
 			return errors.NewError("pop from an empty set")
 		}
 		// Go map iteration order is random, which matches Python's arbitrary pop
-		for _, elem := range set.Elements {
-			set.Remove(elem)
+		for k, elem := range set.Elements {
+			delete(set.Elements, k)
 			return elem
 		}
 	case "clear":

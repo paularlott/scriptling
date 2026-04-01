@@ -1233,10 +1233,9 @@ Otherwise, returns a tuple containing the items of the iterable.`,
 
 			s := object.NewSet()
 			for _, e := range elements {
-				if !object.IsHashable(e) {
-					return &object.Exception{Message: "unhashable type: '" + e.Type().String() + "'", ExceptionType: object.ExceptionTypeTypeError}
+				if err := evalSetAdd(ctx, s, e); err != nil {
+					return err
 				}
-				s.Add(e)
 			}
 			return s
 		},
