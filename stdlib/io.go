@@ -260,7 +260,7 @@ var stringIOClass = &object.Class{
 		"__exit__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) < 1 {
-					return &object.Boolean{Value: false}
+					return object.NewBoolean(false)
 				}
 				inst, ok := args[0].(*object.Instance)
 				if ok {
@@ -268,7 +268,7 @@ var stringIOClass = &object.Class{
 						data.closed = true
 					}
 				}
-				return &object.Boolean{Value: false}
+				return object.NewBoolean(false)
 			},
 		},
 	},

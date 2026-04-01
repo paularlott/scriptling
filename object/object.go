@@ -301,6 +301,19 @@ func (f *Float) CoerceString() (string, Object) { return f.Inspect(), nil }
 func (f *Float) CoerceInt() (int64, Object)     { return int64(f.Value), nil }
 func (f *Float) CoerceFloat() (float64, Object) { return f.Value, nil }
 
+var (
+	boolTrue  = &Boolean{Value: true}
+	boolFalse = &Boolean{Value: false}
+)
+
+// NewBoolean returns a singleton Boolean object, avoiding heap allocations.
+func NewBoolean(v bool) *Boolean {
+	if v {
+		return boolTrue
+	}
+	return boolFalse
+}
+
 type Boolean struct {
 	Value bool
 }

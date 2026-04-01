@@ -9,19 +9,6 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
-// Boolean constants for datetime comparisons
-var (
-	TRUE  = &object.Boolean{Value: true}
-	FALSE = &object.Boolean{Value: false}
-)
-
-// nativeBoolToBooleanObject converts a native bool to object.Boolean
-func nativeBoolToBooleanObject(input bool) *object.Boolean {
-	if input {
-		return TRUE
-	}
-	return FALSE
-}
 
 // PythonToGoReplacer converts Python datetime format codes to Go format in a single pass
 var pythonToGoReplacer = strings.NewReplacer(
@@ -362,7 +349,7 @@ func init() {
 					}
 					right, ok := args[1].(*object.Instance)
 					if !ok {
-						return FALSE
+						return object.NewBoolean(false)
 					}
 					lt, err := getTimeFromInstance(left)
 					if err != nil {
@@ -370,9 +357,9 @@ func init() {
 					}
 					rt, err := getTimeFromInstance(right)
 					if err != nil {
-						return FALSE
+						return object.NewBoolean(false)
 					}
-					return nativeBoolToBooleanObject(lt.Before(rt))
+					return object.NewBoolean(lt.Before(rt))
 				},
 			},
 			"__gt__": &object.Builtin{
@@ -384,7 +371,7 @@ func init() {
 					}
 					right, ok := args[1].(*object.Instance)
 					if !ok {
-						return FALSE
+						return object.NewBoolean(false)
 					}
 					lt, err := getTimeFromInstance(left)
 					if err != nil {
@@ -392,9 +379,9 @@ func init() {
 					}
 					rt, err := getTimeFromInstance(right)
 					if err != nil {
-						return FALSE
+						return object.NewBoolean(false)
 					}
-					return nativeBoolToBooleanObject(lt.After(rt))
+					return object.NewBoolean(lt.After(rt))
 				},
 			},
 			"__le__": &object.Builtin{
@@ -406,7 +393,7 @@ func init() {
 					}
 					right, ok := args[1].(*object.Instance)
 					if !ok {
-						return FALSE
+						return object.NewBoolean(false)
 					}
 					lt, err := getTimeFromInstance(left)
 					if err != nil {
@@ -414,9 +401,9 @@ func init() {
 					}
 					rt, err := getTimeFromInstance(right)
 					if err != nil {
-						return FALSE
+						return object.NewBoolean(false)
 					}
-					return nativeBoolToBooleanObject(!lt.After(rt))
+					return object.NewBoolean(!lt.After(rt))
 				},
 			},
 			"__ge__": &object.Builtin{
@@ -428,7 +415,7 @@ func init() {
 					}
 					right, ok := args[1].(*object.Instance)
 					if !ok {
-						return FALSE
+						return object.NewBoolean(false)
 					}
 					lt, err := getTimeFromInstance(left)
 					if err != nil {
@@ -436,9 +423,9 @@ func init() {
 					}
 					rt, err := getTimeFromInstance(right)
 					if err != nil {
-						return FALSE
+						return object.NewBoolean(false)
 					}
-					return nativeBoolToBooleanObject(!lt.Before(rt))
+					return object.NewBoolean(!lt.Before(rt))
 				},
 			},
 			"__eq__": &object.Builtin{
@@ -450,7 +437,7 @@ func init() {
 					}
 					right, ok := args[1].(*object.Instance)
 					if !ok {
-						return FALSE
+						return object.NewBoolean(false)
 					}
 					lt, err := getTimeFromInstance(left)
 					if err != nil {
@@ -458,9 +445,9 @@ func init() {
 					}
 					rt, err := getTimeFromInstance(right)
 					if err != nil {
-						return FALSE
+						return object.NewBoolean(false)
 					}
-					return nativeBoolToBooleanObject(lt.Equal(rt))
+					return object.NewBoolean(lt.Equal(rt))
 				},
 			},
 			"__ne__": &object.Builtin{
@@ -472,7 +459,7 @@ func init() {
 					}
 					right, ok := args[1].(*object.Instance)
 					if !ok {
-						return TRUE
+						return object.NewBoolean(true)
 					}
 					lt, err := getTimeFromInstance(left)
 					if err != nil {
@@ -480,9 +467,9 @@ func init() {
 					}
 					rt, err := getTimeFromInstance(right)
 					if err != nil {
-						return TRUE
+						return object.NewBoolean(true)
 					}
-					return nativeBoolToBooleanObject(!lt.Equal(rt))
+					return object.NewBoolean(!lt.Equal(rt))
 				},
 			},
 			"__sub__": &object.Builtin{

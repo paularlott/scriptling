@@ -125,7 +125,7 @@ func BuildCtxDict(c *Ctx) *object.Dict {
 	d.SetByString("message_id", &object.String{Value: u.MessageID})
 	d.SetByString("text", &object.String{Value: u.Text})
 	d.SetByString("command", &object.String{Value: u.Command})
-	d.SetByString("is_callback", &object.Boolean{Value: u.IsCallback})
+	d.SetByString("is_callback", object.NewBoolean(u.IsCallback))
 	d.SetByString("callback_id", &object.String{Value: u.CallbackID})
 	d.SetByString("callback_token", &object.String{Value: u.CallbackToken})
 	d.SetByString("callback_data", &object.String{Value: u.CallbackData})
@@ -235,10 +235,10 @@ func BuildCtxDict(c *Ctx) *object.Dict {
 			name, _ := args[0].AsString()
 			for _, cap := range c.Sender.Capabilities() {
 				if cap == name {
-					return &object.Boolean{Value: true}
+					return object.NewBoolean(true)
 				}
 			}
-			return &object.Boolean{Value: false}
+			return object.NewBoolean(false)
 		},
 		HelpText: `ctx.has_capability(name) - Return True if the platform supports the named capability`,
 	})

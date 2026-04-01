@@ -410,7 +410,7 @@ Joins path components using the appropriate separator for the OS.`,
 				}
 
 				_, statErr := os.Stat(path)
-				return &object.Boolean{Value: statErr == nil}
+				return object.NewBoolean(statErr == nil)
 			},
 			HelpText: `exists(path) - Check if path exists
 
@@ -431,9 +431,9 @@ Returns True if the path exists, False otherwise.`,
 
 				info, statErr := os.Stat(path)
 				if statErr != nil {
-					return &object.Boolean{Value: false}
+					return object.NewBoolean(false)
 				}
-				return &object.Boolean{Value: !info.IsDir()}
+				return object.NewBoolean(!info.IsDir())
 			},
 			HelpText: `isfile(path) - Check if path is a file
 
@@ -454,9 +454,9 @@ Returns True if the path is a regular file, False otherwise.`,
 
 				info, statErr := os.Stat(path)
 				if statErr != nil {
-					return &object.Boolean{Value: false}
+					return object.NewBoolean(false)
 				}
-				return &object.Boolean{Value: info.IsDir()}
+				return object.NewBoolean(info.IsDir())
 			},
 			HelpText: `isdir(path) - Check if path is a directory
 
@@ -584,7 +584,7 @@ Returns a relative filepath to path either from the current directory or from an
 				if err != nil {
 					return err
 				}
-				return &object.Boolean{Value: filepath.IsAbs(path)}
+				return object.NewBoolean(filepath.IsAbs(path))
 			},
 			HelpText: `isabs(path) - Check if path is absolute
 

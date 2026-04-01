@@ -328,7 +328,7 @@ func TestBuilderKwargsWithAllTypes(t *testing.T) {
 		"str":   &object.String{Value: "hello"},
 		"int":   object.NewInteger(100),
 		"float": &object.Float{Value: 2.718},
-		"bool":  &object.Boolean{Value: false},
+		"bool":  object.NewBoolean(false),
 	}))
 
 	if strResult, ok := result.(*object.String); !ok {
@@ -891,7 +891,7 @@ func TestClassBuilderAllTypes(t *testing.T) {
 		"str":   &object.String{Value: "hello"},
 		"int":   object.NewInteger(100),
 		"float": &object.Float{Value: 2.718},
-		"bool":  &object.Boolean{Value: false},
+		"bool":  object.NewBoolean(false),
 	}), instance)
 
 	if strResult, ok := result.(*object.String); !ok || strResult.Value != "str=hello int=100 float=2.72 bool=false" {

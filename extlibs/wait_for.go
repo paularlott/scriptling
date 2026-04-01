@@ -85,12 +85,12 @@ var WaitForLibrary = object.NewLibrary(WaitForLibraryName,
 
 				for time.Now().Before(deadline) {
 					if _, err := os.Stat(path); err == nil {
-						return &object.Boolean{Value: true}
+						return object.NewBoolean(true)
 					}
 
 					select {
 					case <-ctx.Done():
-						return &object.Boolean{Value: false}
+						return object.NewBoolean(false)
 					case <-time.After(pollInterval):
 						// Continue polling
 					}
@@ -98,9 +98,9 @@ var WaitForLibrary = object.NewLibrary(WaitForLibraryName,
 
 				// Final check
 				if _, err := os.Stat(path); err == nil {
-					return &object.Boolean{Value: true}
+					return object.NewBoolean(true)
 				}
-				return &object.Boolean{Value: false}
+				return object.NewBoolean(false)
 			},
 			HelpText: `file(path, timeout=30, poll_rate=1) - Wait for a file to exist
 
@@ -134,13 +134,13 @@ Returns:
 				for time.Now().Before(deadline) {
 					if info, err := os.Stat(path); err == nil {
 						if info.IsDir() {
-							return &object.Boolean{Value: true}
+							return object.NewBoolean(true)
 						}
 					}
 
 					select {
 					case <-ctx.Done():
-						return &object.Boolean{Value: false}
+						return object.NewBoolean(false)
 					case <-time.After(pollInterval):
 						// Continue polling
 					}
@@ -149,10 +149,10 @@ Returns:
 				// Final check
 				if info, err := os.Stat(path); err == nil {
 					if info.IsDir() {
-						return &object.Boolean{Value: true}
+						return object.NewBoolean(true)
 					}
 				}
-				return &object.Boolean{Value: false}
+				return object.NewBoolean(false)
 			},
 			HelpText: `dir(path, timeout=30, poll_rate=1) - Wait for a directory to exist
 
@@ -202,12 +202,12 @@ Returns:
 					conn, err := net.DialTimeout("tcp", address, time.Second)
 					if err == nil {
 						conn.Close()
-						return &object.Boolean{Value: true}
+						return object.NewBoolean(true)
 					}
 
 					select {
 					case <-ctx.Done():
-						return &object.Boolean{Value: false}
+						return object.NewBoolean(false)
 					case <-time.After(pollInterval):
 						// Continue polling
 					}
@@ -216,9 +216,9 @@ Returns:
 				// Final check
 				if conn, err := net.DialTimeout("tcp", address, time.Second); err == nil {
 					conn.Close()
-					return &object.Boolean{Value: true}
+					return object.NewBoolean(true)
 				}
-				return &object.Boolean{Value: false}
+				return object.NewBoolean(false)
 			},
 			HelpText: `port(host, port, timeout=30, poll_rate=1) - Wait for a TCP port to be open
 
@@ -298,13 +298,13 @@ Returns:
 						statusMatch := int64(resp.StatusCode) == expectedStatus
 						resp.Body.Close()
 						if statusMatch {
-							return &object.Boolean{Value: true}
+							return object.NewBoolean(true)
 						}
 					}
 
 					select {
 					case <-ctx.Done():
-						return &object.Boolean{Value: false}
+						return object.NewBoolean(false)
 					case <-time.After(pollInterval):
 						// Continue polling
 					}
@@ -313,16 +313,16 @@ Returns:
 				// Final check
 				req, httpErr := http.NewRequestWithContext(ctx, "GET", url, nil)
 				if httpErr != nil {
-					return &object.Boolean{Value: false}
+					return object.NewBoolean(false)
 				}
 				if resp, httpErr := client.Do(req); httpErr == nil {
 					statusMatch := int64(resp.StatusCode) == expectedStatus
 					resp.Body.Close()
 					if statusMatch {
-						return &object.Boolean{Value: true}
+						return object.NewBoolean(true)
 					}
 				}
-				return &object.Boolean{Value: false}
+				return object.NewBoolean(false)
 			},
 			HelpText: `http(url, timeout=30, poll_rate=1, status_code=200) - Wait for HTTP endpoint
 
@@ -362,13 +362,13 @@ Returns:
 				for time.Now().Before(deadline) {
 					if data, err := os.ReadFile(path); err == nil {
 						if strings.Contains(string(data), content) {
-							return &object.Boolean{Value: true}
+							return object.NewBoolean(true)
 						}
 					}
 
 					select {
 					case <-ctx.Done():
-						return &object.Boolean{Value: false}
+						return object.NewBoolean(false)
 					case <-time.After(pollInterval):
 						// Continue polling
 					}
@@ -377,10 +377,10 @@ Returns:
 				// Final check
 				if data, err := os.ReadFile(path); err == nil {
 					if strings.Contains(string(data), content) {
-						return &object.Boolean{Value: true}
+						return object.NewBoolean(true)
 					}
 				}
-				return &object.Boolean{Value: false}
+				return object.NewBoolean(false)
 			},
 			HelpText: `file_content(path, content, timeout=30, poll_rate=1) - Wait for file to contain content
 
@@ -414,12 +414,12 @@ Returns:
 
 				for time.Now().Before(deadline) {
 					if processRunning(processName) {
-						return &object.Boolean{Value: true}
+						return object.NewBoolean(true)
 					}
 
 					select {
 					case <-ctx.Done():
-						return &object.Boolean{Value: false}
+						return object.NewBoolean(false)
 					case <-time.After(pollInterval):
 						// Continue polling
 					}
@@ -427,9 +427,9 @@ Returns:
 
 				// Final check
 				if processRunning(processName) {
-					return &object.Boolean{Value: true}
+					return object.NewBoolean(true)
 				}
-				return &object.Boolean{Value: false}
+				return object.NewBoolean(false)
 			},
 			HelpText: `process_name(name, timeout=30, poll_rate=1) - Wait for a process to be running
 

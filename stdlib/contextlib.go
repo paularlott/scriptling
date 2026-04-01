@@ -54,35 +54,35 @@ var suppressClass = &object.Class{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				// args: self, exc_type, exc_val, exc_tb
 				if len(args) < 2 {
-					return &object.Boolean{Value: false}
+					return object.NewBoolean(false)
 				}
 				inst, ok := args[0].(*object.Instance)
 				if !ok {
-					return &object.Boolean{Value: false}
+					return object.NewBoolean(false)
 				}
 				excType := args[1]
 				if excType == nil || excType.Type() == object.NULL_OBJ {
-					return &object.Boolean{Value: false}
+					return object.NewBoolean(false)
 				}
 				typesObj, ok := inst.Fields[suppressKey]
 				if !ok {
-					return &object.Boolean{Value: false}
+					return object.NewBoolean(false)
 				}
 				typesList, ok := typesObj.(*object.List)
 				if !ok {
-					return &object.Boolean{Value: false}
+					return object.NewBoolean(false)
 				}
 				if len(typesList.Elements) == 0 {
-					return &object.Boolean{Value: true}
+					return object.NewBoolean(true)
 				}
 				excTypeName, _ := excType.AsString()
 				for _, t := range typesList.Elements {
 					name := resolveExcTypeName(ctx, t)
 					if name == excTypeName || name == object.ExceptionTypeException {
-						return &object.Boolean{Value: true}
+						return object.NewBoolean(true)
 					}
 				}
-				return &object.Boolean{Value: false}
+				return object.NewBoolean(false)
 			},
 		},
 	},

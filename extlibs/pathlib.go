@@ -90,7 +90,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 						return err
 					}
 					_, err := os.Stat(cleanPath)
-					return &object.Boolean{Value: err == nil}
+					return object.NewBoolean(err == nil)
 				},
 				HelpText: "exists() - Check if the path exists",
 			},
@@ -101,13 +101,13 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					cleanPath, _ := pathInstance.Fields["__path__"].AsString()
 
 					if err := p.checkPathSecurity(cleanPath); err != nil {
-						return &object.Boolean{Value: false}
+						return object.NewBoolean(false)
 					}
 					info, err := os.Stat(cleanPath)
 					if err != nil {
-						return &object.Boolean{Value: false}
+						return object.NewBoolean(false)
 					}
-					return &object.Boolean{Value: !info.IsDir()}
+					return object.NewBoolean(!info.IsDir())
 				},
 				HelpText: "is_file() - Check if the path is a regular file",
 			},
@@ -118,13 +118,13 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					cleanPath, _ := pathInstance.Fields["__path__"].AsString()
 
 					if err := p.checkPathSecurity(cleanPath); err != nil {
-						return &object.Boolean{Value: false}
+						return object.NewBoolean(false)
 					}
 					info, err := os.Stat(cleanPath)
 					if err != nil {
-						return &object.Boolean{Value: false}
+						return object.NewBoolean(false)
 					}
-					return &object.Boolean{Value: info.IsDir()}
+					return object.NewBoolean(info.IsDir())
 				},
 				HelpText: "is_dir() - Check if the path is a directory",
 			},

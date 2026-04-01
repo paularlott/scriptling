@@ -140,7 +140,7 @@ func TestExtractParams(t *testing.T) {
 		"string": &object.String{Value: "hello"},
 		"int":    &object.Integer{Value: 42},
 		"float":  &object.Float{Value: 3.14},
-		"bool":   &object.Boolean{Value: true},
+		"bool":   object.NewBoolean(true),
 	}
 
 	params := extractParams(dict)

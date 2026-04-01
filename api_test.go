@@ -680,7 +680,7 @@ func TestCallFunction(t *testing.T) {
 		p.RegisterFunc("is_greater", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			a, _ := args[0].AsInt()
 			b, _ := args[1].AsInt()
-			return &object.Boolean{Value: a > b}
+			return object.NewBoolean(a > b)
 		})
 
 		result, err := p.CallFunction("is_greater", 10, 5)
@@ -703,9 +703,9 @@ func TestCallFunction(t *testing.T) {
 		// Register a function that checks for context
 		p.RegisterFunc("check_ctx", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if ctx != nil {
-				return &object.Boolean{Value: true}
+				return object.NewBoolean(true)
 			}
-			return &object.Boolean{Value: false}
+			return object.NewBoolean(false)
 		})
 
 		result, err := p.CallFunctionWithContext(context.Background(), "check_ctx")
@@ -844,7 +844,7 @@ func TestCallFunction(t *testing.T) {
 			count := kwargs.MustGetInt("count", 0)
 			rate := kwargs.MustGetFloat("rate", 1.0)
 			return object.NewStringDict(map[string]object.Object{
-				"enabled": &object.Boolean{Value: enabled},
+				"enabled": object.NewBoolean(enabled),
 				"count":   object.NewInteger(count),
 				"rate":    &object.Float{Value: rate},
 			})

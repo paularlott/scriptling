@@ -106,7 +106,7 @@ func TestKVDefaultMemory(t *testing.T) {
 	})
 
 	t.Run("SetAndGet_Bool", func(t *testing.T) {
-		kvCall(store, "set", &object.String{Value: "b"}, &object.Boolean{Value: true})
+		kvCall(store, "set", &object.String{Value: "b"}, object.NewBoolean(true))
 		assertBool(t, kvCall(store, "get", &object.String{Value: "b"}), true)
 	})
 
@@ -227,7 +227,7 @@ func TestKVDefaultPersistence(t *testing.T) {
 		store := kvStore()
 		kvCall(store, "set", &object.String{Value: "str"}, &object.String{Value: "hello"})
 		kvCall(store, "set", &object.String{Value: "num"}, object.NewInteger(42))
-		kvCall(store, "set", &object.String{Value: "flag"}, &object.Boolean{Value: true})
+		kvCall(store, "set", &object.String{Value: "flag"}, object.NewBoolean(true))
 		if err := RuntimeState.KVDB.Save(); err != nil {
 			t.Fatalf("Save: %v", err)
 		}
@@ -629,8 +629,8 @@ func TestKVConversion(t *testing.T) {
 		{"string", &object.String{Value: "hello"}, "hello"},
 		{"int", object.NewInteger(42), int64(42)},
 		{"float", &object.Float{Value: 3.14}, 3.14},
-		{"bool true", &object.Boolean{Value: true}, true},
-		{"bool false", &object.Boolean{Value: false}, false},
+		{"bool true", object.NewBoolean(true), true},
+		{"bool false", object.NewBoolean(false), false},
 		{"null", &object.Null{}, nil},
 	}
 

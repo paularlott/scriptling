@@ -587,7 +587,7 @@ func TestGoIntegration_ObjectTypes(t *testing.T) {
 	})
 
 	t.Run("BooleanObjects", func(t *testing.T) {
-		boolObj := &object.Boolean{Value: true}
+		boolObj := object.NewBoolean(true)
 		if boolObj.Value != true {
 			t.Errorf("expected true, got %t", boolObj.Value)
 		}

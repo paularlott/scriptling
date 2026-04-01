@@ -54,7 +54,7 @@ var htmlParserMethods = map[string]object.Object{
 					convertCharrefs = boolVal.Value
 				}
 			}
-			instance.Fields["convert_charrefs"] = &object.Boolean{Value: convertCharrefs}
+			instance.Fields["convert_charrefs"] = object.NewBoolean(convertCharrefs)
 
 			return &object.Null{}
 		},

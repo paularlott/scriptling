@@ -72,7 +72,7 @@ func ConvertToObject(v interface{}) object.Object {
 		}
 		return &object.Float{Value: val}
 	case bool:
-		return &object.Boolean{Value: val}
+		return object.NewBoolean(val)
 	default:
 		return &object.String{Value: fmt.Sprintf("%v", val)}
 	}

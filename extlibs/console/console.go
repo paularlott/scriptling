@@ -249,7 +249,7 @@ var moduleBuiltins = map[string]*object.Builtin{
 	},
 	"has_panels": &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			return &object.Boolean{Value: TUI().HasMultiplePanels()}
+			return object.NewBoolean(TUI().HasMultiplePanels())
 		},
 		HelpText: "has_panels() — return True if multi-panel layout is active",
 	},

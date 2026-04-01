@@ -383,7 +383,7 @@ result = mylib.add(5, 3)
 			map[string]object.Object{
 				"VERSION":   &object.String{Value: "1.0.0"},
 				"MAX_VALUE": &object.Integer{Value: 1000},
-				"DEBUG":     &object.Boolean{Value: false},
+				"DEBUG":     object.NewBoolean(false),
 			},
 			"My custom math library",
 		)
@@ -1573,7 +1573,7 @@ func TestKwargsHelpers(t *testing.T) {
 			if errObj != nil {
 				return errObj
 			}
-			return &object.Boolean{Value: val}
+			return object.NewBoolean(val)
 		})
 
 		_, err := p.Eval("result = test()")
@@ -1600,7 +1600,7 @@ func TestKwargsHelpers(t *testing.T) {
 		p.RegisterFunc("test", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			hasA := kwargs.Has("a")
 			hasB := kwargs.Has("b")
-			return &object.Boolean{Value: hasA && !hasB}
+			return object.NewBoolean(hasA && !hasB)
 		})
 
 		_, err := p.Eval(`result = test(a="value")`)
@@ -1783,7 +1783,7 @@ func TestTypeSafeAccessors(t *testing.T) {
 			if errObj != nil {
 				return errObj
 			}
-			return &object.Boolean{Value: !val}
+			return object.NewBoolean(!val)
 		})
 
 		_, err := p.Eval("result = test(True)")
@@ -1868,7 +1868,7 @@ Detailed documentation here.`)
 		myLib := object.NewLibrary("mylib", map[string]*object.Builtin{
 			"validate": {
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					return &object.Boolean{Value: true}
+					return object.NewBoolean(true)
 				},
 				HelpText: `validate(email) - Validate email address
 

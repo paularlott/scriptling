@@ -132,7 +132,7 @@ func TestYAMLConversionRoundTrip(t *testing.T) {
 			},
 			object.DictKey(&object.String{Value: "active"}): {
 				Key:   &object.String{Value: "active"},
-				Value: &object.Boolean{Value: true},
+				Value: object.NewBoolean(true),
 			},
 			object.DictKey(&object.String{Value: "items"}): {
 				Key: &object.String{Value: "items"},

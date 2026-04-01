@@ -279,7 +279,7 @@ Returns:
 					},
 					"connected": &object.Builtin{
 						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-							return &object.Boolean{Value: wsConn.IsConnected()}
+							return object.NewBoolean(wsConn.IsConnected())
 						},
 						HelpText: `connected() - Check if connection is still open
 
@@ -363,7 +363,7 @@ Note: This is a module-level function. Prefer using conn.close() instead.`,
 				return err
 			}
 			_, ok := args[0].(*object.String)
-			return &object.Boolean{Value: ok}
+			return object.NewBoolean(ok)
 		},
 		HelpText: `is_text(message) - Check if a received message is a text message
 
@@ -384,7 +384,7 @@ Example:
 				return err
 			}
 			_, ok := args[0].(*object.List)
-			return &object.Boolean{Value: ok}
+			return object.NewBoolean(ok)
 		},
 		HelpText: `is_binary(message) - Check if a received message is a binary message
 

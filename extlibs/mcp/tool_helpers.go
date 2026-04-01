@@ -237,27 +237,27 @@ Example:
 		// Get parameter value
 		paramValue := getParamValue(ctx, name)
 		if paramValue == nil {
-			return &object.Boolean{Value: defaultVal}
+			return object.NewBoolean(defaultVal)
 		}
 
 		// Handle string "true"/"false"
 		if strVal, ok := paramValue.(*object.String); ok {
 			lower := strings.ToLower(strings.TrimSpace(strVal.Value))
 			if lower == "true" || lower == "1" {
-				return &object.Boolean{Value: true}
+				return object.NewBoolean(true)
 			}
 			if lower == "false" || lower == "0" {
-				return &object.Boolean{Value: false}
+				return object.NewBoolean(false)
 			}
 		}
 
 		// Coerce to bool
 		val, err := paramValue.AsBool()
 		if err != nil {
-			return &object.Boolean{Value: defaultVal}
+			return object.NewBoolean(defaultVal)
 		}
 
-		return &object.Boolean{Value: val}
+		return object.NewBoolean(val)
 	}, `get_bool(name, default=false) - Get a parameter as boolean
 
 Safely gets a parameter and converts it to a boolean.

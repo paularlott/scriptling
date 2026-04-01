@@ -15,8 +15,8 @@ func TestFromGo_Primitives(t *testing.T) {
 		expected object.Object
 	}{
 		{"nil", nil, &object.Null{}},
-		{"bool true", true, &object.Boolean{Value: true}},
-		{"bool false", false, &object.Boolean{Value: false}},
+		{"bool true", true, object.NewBoolean(true)},
+		{"bool false", false, object.NewBoolean(false)},
 		{"int", 42, object.NewInteger(42)},
 		{"int8", int8(8), object.NewInteger(8)},
 		{"int16", int16(16), object.NewInteger(16)},
@@ -99,8 +99,8 @@ func TestToGo_AllTypes(t *testing.T) {
 		expected interface{}
 	}{
 		{"null", &object.Null{}, nil},
-		{"bool true", &object.Boolean{Value: true}, true},
-		{"bool false", &object.Boolean{Value: false}, false},
+		{"bool true", object.NewBoolean(true), true},
+		{"bool false", object.NewBoolean(false), false},
 		{"integer", object.NewInteger(42), int64(42)},
 		{"float", &object.Float{Value: 3.14}, 3.14},
 		{"string", &object.String{Value: "hello"}, "hello"},
@@ -121,7 +121,7 @@ func TestToGo_List(t *testing.T) {
 		Elements: []object.Object{
 			&object.String{Value: "one"},
 			object.NewInteger(2),
-			&object.Boolean{Value: true},
+			object.NewBoolean(true),
 		},
 	}
 

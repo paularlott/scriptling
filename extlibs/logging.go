@@ -65,7 +65,7 @@ func (l *loggerWrapper) logAtLevel(args []object.Object, logFunc func(msg string
 	}
 
 	logFunc(msg)
-	return &object.Boolean{Value: true}
+	return object.NewBoolean(true)
 }
 
 // RegisterLoggingLibrary registers the logging library with the given registrar and optional logger
@@ -222,5 +222,5 @@ func logWithLogger(ctx context.Context, args []object.Object, logFunc func(msg s
 	}
 
 	logFunc(msg.Value)
-	return &object.Boolean{Value: true}
+	return object.NewBoolean(true)
 }

@@ -219,9 +219,9 @@ var WebSocketClientClass = &object.Class{
 
 				conn := getWSConnFromInstance(instance)
 				if conn == nil {
-					return &object.Boolean{Value: false}
+					return object.NewBoolean(false)
 				}
-				return &object.Boolean{Value: conn.IsConnected()}
+				return object.NewBoolean(conn.IsConnected())
 			},
 			HelpText: `connected() - Check if the WebSocket connection is still open
 

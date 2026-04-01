@@ -259,9 +259,9 @@ Example:
 
 			// Use crypto/subtle for constant-time comparison to prevent timing attacks
 			if subtle.ConstantTimeCompare([]byte(a.Value), []byte(b.Value)) == 1 {
-				return &object.Boolean{Value: true}
+				return object.NewBoolean(true)
 			}
-			return &object.Boolean{Value: false}
+			return object.NewBoolean(false)
 		},
 		HelpText: `compare_digest(a, b) - Compare two strings using constant-time comparison
 

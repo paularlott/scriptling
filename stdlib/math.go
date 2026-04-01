@@ -244,8 +244,8 @@ Returns an integer.`,
 	},
 	"isnan": {
 		Fn: oneIntOrFloatFunc(
-			func(i *object.Integer) object.Object { return &object.Boolean{Value: false} },
-			func(f *object.Float) object.Object { return &object.Boolean{Value: math.IsNaN(f.Value)} },
+			func(i *object.Integer) object.Object { return object.NewBoolean(false) },
+			func(f *object.Float) object.Object { return object.NewBoolean(math.IsNaN(f.Value)) },
 		),
 		HelpText: `isnan(x) - Check if x is NaN (Not a Number)
 
@@ -253,8 +253,8 @@ Returns True if x is NaN, False otherwise.`,
 	},
 	"isinf": {
 		Fn: oneIntOrFloatFunc(
-			func(i *object.Integer) object.Object { return &object.Boolean{Value: false} },
-			func(f *object.Float) object.Object { return &object.Boolean{Value: math.IsInf(f.Value, 0)} },
+			func(i *object.Integer) object.Object { return object.NewBoolean(false) },
+			func(f *object.Float) object.Object { return object.NewBoolean(math.IsInf(f.Value, 0)) },
 		),
 		HelpText: `isinf(x) - Check if x is infinite
 
@@ -262,9 +262,9 @@ Returns True if x is positive or negative infinity.`,
 	},
 	"isfinite": {
 		Fn: oneIntOrFloatFunc(
-			func(i *object.Integer) object.Object { return &object.Boolean{Value: true} },
+			func(i *object.Integer) object.Object { return object.NewBoolean(true) },
 			func(f *object.Float) object.Object {
-				return &object.Boolean{Value: !math.IsNaN(f.Value) && !math.IsInf(f.Value, 0)}
+				return object.NewBoolean(!math.IsNaN(f.Value) && !math.IsInf(f.Value, 0))
 			},
 		),
 		HelpText: `isfinite(x) - Check if x is finite

@@ -222,7 +222,7 @@ Returns:
 					if objErr != nil {
 						return objErr
 					}
-					return &object.Boolean{Value: store.Forget(id)}
+					return object.NewBoolean(store.Forget(id))
 				},
 				HelpText: `forget(id) - Remove a memory by ID
 

@@ -11,13 +11,14 @@ import (
 
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/errors"
+	"github.com/paularlott/scriptling/evaliface"
 	"github.com/paularlott/scriptling/object"
 )
 
 var (
 	NULL  = &object.Null{}
-	TRUE  = &object.Boolean{Value: true}
-	FALSE = &object.Boolean{Value: false}
+	TRUE  = object.NewBoolean(true)
+	FALSE = object.NewBoolean(false)
 )
 
 // Pool for strings.Builder to reduce allocations in string operations
@@ -142,6 +143,7 @@ func EvalWithContext(ctx context.Context, node ast.Node, env *object.Environment
 	default:
 	}
 
+	ctx = WithEvaluator(ctx)
 	return evalWithContext(ctx, node, env)
 }
 
@@ -187,6 +189,9 @@ func (cc *contextChecker) checkAlways() object.Object {
 }
 
 func evalWithContext(ctx context.Context, node ast.Node, env *object.Environment) object.Object {
+	if evaliface.FromContext(ctx) == nil {
+		ctx = WithEvaluator(ctx)
+	}
 	obj := evalNode(ctx, node, env)
 	if err, ok := obj.(*object.Error); ok {
 		if err.Line == 0 {
@@ -200,9 +205,6 @@ func evalWithContext(ctx context.Context, node ast.Node, env *object.Environment
 }
 
 func evalNode(ctx context.Context, node ast.Node, env *object.Environment) object.Object {
-	// Add evaluator to context if not present
-	ctx = WithEvaluator(ctx)
-
 	// Check for cancellation - batched via context checker in the top-level EvalWithContext
 	// For leaf nodes, we skip the check to reduce overhead
 	switch node := node.(type) {
@@ -2288,6 +2290,14 @@ func evalIsOperator(left, right object.Object) object.Object {
 	}
 	if left == FALSE && right == FALSE {
 		return TRUE
+	}
+
+	// Booleans: compare by value (like Python, True is always True)
+	if l, ok := left.(*object.Boolean); ok {
+		if r, ok := right.(*object.Boolean); ok {
+			return nativeBoolToBooleanObject(l.Value == r.Value)
+		}
+		return FALSE
 	}
 
 	// For immutable types like small integers and strings, Python caches them

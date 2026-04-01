@@ -39,7 +39,7 @@ func FromGo(v interface{}) object.Object {
 	case nil:
 		return &object.Null{}
 	case bool:
-		return &object.Boolean{Value: v}
+		return object.NewBoolean(v)
 	case int:
 		return object.NewInteger(int64(v))
 	case int8:

@@ -214,7 +214,7 @@ func newKVStoreObject(db *snapshotkv.DB, registryName string) *object.Builtin {
 					if objErr != nil {
 						return objErr
 					}
-					return &object.Boolean{Value: db.Exists(key)}
+					return object.NewBoolean(db.Exists(key))
 				},
 				HelpText: `exists(key) - Check if a key exists and is not expired`,
 			},

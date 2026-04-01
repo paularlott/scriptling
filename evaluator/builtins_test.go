@@ -46,7 +46,7 @@ func TestBuiltinStr(t *testing.T) {
 		{&object.Integer{Value: 42}, "42"},
 		{&object.Float{Value: 3.14}, "3.14"},
 		{&object.String{Value: "hello"}, "hello"},
-		{&object.Boolean{Value: true}, "true"},
+		{object.NewBoolean(true), "true"},
 	}
 
 	for _, tt := range tests {
@@ -116,7 +116,7 @@ func TestBuiltinType(t *testing.T) {
 		{&object.Integer{Value: 42}, "INTEGER"},
 		{&object.Float{Value: 3.14}, "FLOAT"},
 		{&object.String{Value: "hello"}, "STRING"},
-		{&object.Boolean{Value: true}, "BOOLEAN"},
+		{object.NewBoolean(true), "BOOLEAN"},
 		{&object.List{Elements: []object.Object{}}, "LIST"},
 		{&object.Dict{Pairs: make(map[string]object.DictPair)}, "DICT"},
 	}

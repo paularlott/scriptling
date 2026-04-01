@@ -53,14 +53,14 @@ func TestObjectsEqual(t *testing.T) {
 		},
 		{
 			name: "equal booleans",
-			a:    &object.Boolean{Value: true},
-			b:    &object.Boolean{Value: true},
+			a:    object.NewBoolean(true),
+			b:    object.NewBoolean(true),
 			want: true,
 		},
 		{
 			name: "unequal booleans",
-			a:    &object.Boolean{Value: true},
-			b:    &object.Boolean{Value: false},
+			a:    object.NewBoolean(true),
+			b:    object.NewBoolean(false),
 			want: false,
 		},
 		{
