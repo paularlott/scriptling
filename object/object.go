@@ -21,13 +21,13 @@ import (
 func DictKey(obj Object) string {
 	switch o := obj.(type) {
 	case *Integer:
-		return fmt.Sprintf("n:%d", o.Value)
+		return "n:" + strconv.FormatInt(o.Value, 10)
 	case *Float:
 		// If float is exactly representable as int64, use integer key (Python: hash(1.0) == hash(1))
 		if !math.IsInf(o.Value, 0) && !math.IsNaN(o.Value) && o.Value == math.Trunc(o.Value) && o.Value >= math.MinInt64 && o.Value <= math.MaxInt64 {
-			return fmt.Sprintf("n:%d", int64(o.Value))
+			return "n:" + strconv.FormatInt(int64(o.Value), 10)
 		}
-		return fmt.Sprintf("f:%v", o.Value)
+		return "f:" + strconv.FormatFloat(o.Value, 'g', -1, 64)
 	case *Boolean:
 		if o.Value {
 			return "n:1" // True == 1
@@ -561,13 +561,11 @@ func (b *Builtin) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
 
 // Library represents a pre-built collection of builtin functions and constants
 type Library struct {
-	name         string
-	functions    map[string]*Builtin
-	constants    map[string]Object
-	description  string
+	name        string
+	functions   map[string]*Builtin
+	constants   map[string]Object
+	description string
 	instanceData any
-	cachedDict   *Dict
-	cachedDictMu sync.Mutex
 }
 
 // NewLibrary creates a new library with functions, optional constants, and optional description
@@ -599,40 +597,26 @@ func (l *Library) Description() string {
 	return l.description
 }
 
-// GetDict returns the cached Dict representation of this library, building it if necessary
-// This caching avoids rebuilding the dict every time a library is imported
+// GetDict builds and returns a fresh Dict representation of this library.
+// Returns a new dict each time so callers (including concurrent goroutines)
+// never share mutable state.
 func (l *Library) GetDict() *Dict {
-	l.cachedDictMu.Lock()
-	defer l.cachedDictMu.Unlock()
+	dict := make(map[string]DictPair, len(l.functions)+len(l.constants))
 
-	if l.cachedDict != nil {
-		return l.cachedDict
-	}
-
-	// Build dict from library contents
-	funcs := l.functions
-	consts := l.constants
-
-	dict := make(map[string]DictPair, len(funcs)+len(consts))
-
-	for fname, fn := range funcs {
+	for fname, fn := range l.functions {
 		dict[DictKey(&String{Value: fname})] = DictPair{
 			Key:   &String{Value: fname},
 			Value: fn,
 		}
 	}
 
-	// Add constants
-	if consts != nil {
-		for cname, val := range consts {
-			dict[DictKey(&String{Value: cname})] = DictPair{
-				Key:   &String{Value: cname},
-				Value: val,
-			}
+	for cname, val := range l.constants {
+		dict[DictKey(&String{Value: cname})] = DictPair{
+			Key:   &String{Value: cname},
+			Value: val,
 		}
 	}
 
-	// Add description if available
 	if l.description != "" {
 		dict[DictKey(&String{Value: "__doc__"})] = DictPair{
 			Key:   &String{Value: "__doc__"},
@@ -640,14 +624,12 @@ func (l *Library) GetDict() *Dict {
 		}
 	}
 
-	l.cachedDict = &Dict{Pairs: dict}
-	return l.cachedDict
+	return &Dict{Pairs: dict}
 }
 
-// CachedDict returns the cached dict for testing purposes
-// This is exported only for library_instantiate_test.go to verify caching behavior
+// CachedDict returns nil (caching removed). Kept for test compatibility.
 func (l *Library) CachedDict() *Dict {
-	return l.cachedDict
+	return nil
 }
 
 func (l *Library) Type() ObjectType { return BUILTIN_OBJ } // Libraries are like builtin objects
@@ -678,7 +660,6 @@ func (l *Library) Instantiate(instanceData any) *Library {
 		constants:    l.constants,
 		description:  l.description,
 		instanceData: instanceData,
-		cachedDict:   nil,
 	}
 
 	// Wrap each function to inject instance data into context
@@ -1365,6 +1346,115 @@ func AsErrorObj(obj Object) (*Error, bool) {
 		return err, true
 	}
 	return nil, false
+}
+
+// ValidateTransferable checks whether obj contains only types that can be
+// safely passed to a background task. Transferable types are scalars (Null,
+// Boolean, Integer, Float, String) and recursively transferable containers
+// (List, Dict, Set, Tuple). Instances, classes, functions, builtins, and
+// other stateful objects are rejected. Circular references are also rejected.
+func ValidateTransferable(obj Object) error {
+	return validateTransferable(obj, make(map[any]struct{}))
+}
+
+func validateTransferable(obj Object, visited map[any]struct{}) error {
+	switch v := obj.(type) {
+	case *Null, *Boolean, *Integer, *Float, *String:
+		return nil
+	case *List:
+		if _, seen := visited[v]; seen {
+			return fmt.Errorf("circular reference in list")
+		}
+		visited[v] = struct{}{}
+		for i, e := range v.Elements {
+			if err := validateTransferable(e, visited); err != nil {
+				return fmt.Errorf("list[%d]: %w", i, err)
+			}
+		}
+		delete(visited, v)
+		return nil
+	case *Tuple:
+		for i, e := range v.Elements {
+			if err := validateTransferable(e, visited); err != nil {
+				return fmt.Errorf("tuple[%d]: %w", i, err)
+			}
+		}
+		return nil
+	case *Dict:
+		if _, seen := visited[v]; seen {
+			return fmt.Errorf("circular reference in dict")
+		}
+		visited[v] = struct{}{}
+		for k, p := range v.Pairs {
+			if err := validateTransferable(p.Key, visited); err != nil {
+				return fmt.Errorf("dict key %q: %w", k, err)
+			}
+			if err := validateTransferable(p.Value, visited); err != nil {
+				return fmt.Errorf("dict[%q]: %w", k, err)
+			}
+		}
+		delete(visited, v)
+		return nil
+	case *Set:
+		if _, seen := visited[v]; seen {
+			return fmt.Errorf("circular reference in set")
+		}
+		visited[v] = struct{}{}
+		for k, e := range v.Elements {
+			if err := validateTransferable(e, visited); err != nil {
+				return fmt.Errorf("set element %q: %w", k, err)
+			}
+		}
+		delete(visited, v)
+		return nil
+	default:
+		return fmt.Errorf("%s is not transferable to background tasks (allowed: None, bool, int, float, str, list, dict, set, tuple)", v.Type())
+	}
+}
+
+// CloneObject returns a deep copy of mutable Scriptling objects.
+// Immutable/scalar types (Null, Boolean, Integer, Float, String, Builtin,
+// Function, LambdaFunction, Class, Error, Exception) are returned as-is.
+// Mutable containers (List, Dict, Set, Tuple, Instance) are recursively cloned
+// so the caller and callee cannot race on shared state.
+func CloneObject(obj Object) Object {
+	switch v := obj.(type) {
+	case *Null, *Boolean, *Integer, *Float, *String:
+		return obj
+	case *List:
+		elems := make([]Object, len(v.Elements))
+		for i, e := range v.Elements {
+			elems[i] = CloneObject(e)
+		}
+		return &List{Elements: elems}
+	case *Tuple:
+		elems := make([]Object, len(v.Elements))
+		for i, e := range v.Elements {
+			elems[i] = CloneObject(e)
+		}
+		return &Tuple{Elements: elems}
+	case *Dict:
+		pairs := make(map[string]DictPair, len(v.Pairs))
+		for k, p := range v.Pairs {
+			pairs[k] = DictPair{Key: CloneObject(p.Key), Value: CloneObject(p.Value)}
+		}
+		return &Dict{Pairs: pairs}
+	case *Set:
+		elements := make(map[string]Object, len(v.Elements))
+		for k, e := range v.Elements {
+			elements[k] = CloneObject(e)
+		}
+		return &Set{Elements: elements}
+	case *Instance:
+		fields := make(map[string]Object, len(v.Fields))
+		for k, val := range v.Fields {
+			fields[k] = CloneObject(val)
+		}
+		return &Instance{Class: v.Class, Fields: fields}
+	default:
+		// Builtins, Functions, Classes, Errors, etc. — immutable or singleton
+		return obj
+	}
 }
 
 // AsException returns the object as an Exception, or nil/false if not

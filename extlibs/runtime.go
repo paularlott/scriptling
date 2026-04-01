@@ -14,6 +14,23 @@ import (
 
 const RuntimeLibraryName = "scriptling.runtime"
 
+// deepCopyDict recursively copies a Dict and any nested Dict values,
+// so background tasks get their own mutable tree and don't race on
+// shared module dicts when setNestedDictPath mutates intermediates.
+func deepCopyDict(d *object.Dict) *object.Dict {
+	if d == nil {
+		return nil
+	}
+	pairs := make(map[string]object.DictPair, len(d.Pairs))
+	for k, v := range d.Pairs {
+		if nested, ok := v.Value.(*object.Dict); ok {
+			v.Value = deepCopyDict(nested)
+		}
+		pairs[k] = v
+	}
+	return &object.Dict{Pairs: pairs}
+}
+
 // RuntimeState holds all runtime state
 var RuntimeState = struct {
 	sync.RWMutex
@@ -246,21 +263,42 @@ var RuntimeLibraryFunctions = map[string]*object.Builtin{
 				return err
 			}
 
-			// Capture additional args and kwargs
-			fnArgs := args[2:]
-			fnKwargs := kwargs.Kwargs
+			// Validate that all args/kwargs are transferable types
+			// (scalars and recursively safe containers only).
+			for i, a := range args[2:] {
+				if err := object.ValidateTransferable(a); err != nil {
+					return errors.NewError("background arg %d: %s", i, err)
+				}
+			}
+			for k, v := range kwargs.Kwargs {
+				if err := object.ValidateTransferable(v); err != nil {
+					return errors.NewError("background kwarg '%s': %s", k, err)
+				}
+			}
+
+			// Clone args and kwargs so the background task owns its own copy.
+			fnArgs := make([]object.Object, len(args[2:]))
+			for i, a := range args[2:] {
+				fnArgs[i] = object.CloneObject(a)
+			}
+			fnKwargs := make(map[string]object.Object, len(kwargs.Kwargs))
+			for k, v := range kwargs.Kwargs {
+				fnKwargs[k] = object.CloneObject(v)
+			}
 			env := getEnvFromContext(ctx)
 			eval := evaliface.FromContext(ctx)
 
 			RuntimeState.Lock()
-			RuntimeState.Backgrounds[name] = handler
-			RuntimeState.BackgroundArgs[name] = fnArgs
-			RuntimeState.BackgroundKwargs[name] = fnKwargs
-			RuntimeState.BackgroundEnvs[name] = env
-			RuntimeState.BackgroundEvals[name] = eval
-			RuntimeState.BackgroundCtxs[name] = ctx
 			backgroundReady := RuntimeState.BackgroundReady
 			factory := RuntimeState.BackgroundFactory
+			if !backgroundReady {
+				RuntimeState.Backgrounds[name] = handler
+				RuntimeState.BackgroundArgs[name] = fnArgs
+				RuntimeState.BackgroundKwargs[name] = fnKwargs
+				RuntimeState.BackgroundEnvs[name] = env
+				RuntimeState.BackgroundEvals[name] = eval
+				RuntimeState.BackgroundCtxs[name] = ctx
+			}
 			RuntimeState.Unlock()
 
 			// Start immediately if BackgroundReady is true
@@ -286,13 +324,22 @@ Parameters:
   *args: Positional arguments to pass to the function
   **kwargs: Keyword arguments to pass to the function
 
+Arguments must be transferable types — only simple values and
+recursively transferable containers are allowed:
+  - Scalars: None, bool, int, float, str
+  - Containers: list, dict, set, tuple (elements must also be
+    transferable)
+  - Not allowed: instances, classes, functions, builtins, or any
+    other runtime-backed objects
+Arguments are deep-copied before the task starts so the caller and
+task cannot race on shared state.
+
 Returns:
   null on success, error if handler validation fails
 
-  Background tasks are fire-and-forget. Pass data via
-  *args/**kwargs or use runtime.sync primitives
-  (Shared, Atomic, Queue) for coordination. Access panels
-  via console.Console().panel("name") from background tasks.
+  Background tasks are fire-and-forget. For coordination between
+  tasks use runtime.sync primitives (Shared, Atomic, Queue, WaitGroup).
+  Access panels via console.Console().panel("name") from background tasks.
 
 `,
 	},
@@ -424,6 +471,11 @@ func startBackgroundTask(handler string, fnArgs []object.Object, fnKwargs map[st
 					})
 				case *object.Class:
 					// skip — classes can't be safely shared across envs
+				case *object.Dict:
+					// Deep-copy dicts (including nested module dicts)
+					// so concurrent background tasks don't race when
+					// setNestedDictPath mutates intermediate dicts.
+					newEnv.Set(k, deepCopyDict(origFn))
 				default:
 					newEnv.Set(k, origFn)
 				}
@@ -504,6 +556,13 @@ func ReleaseBackgroundTasks() {
 			ctx:     RuntimeState.BackgroundCtxs[name],
 		}
 	}
+		// Drain the queues so ReleaseBackgroundTasks can't re-launch them
+		RuntimeState.Backgrounds = make(map[string]string)
+		RuntimeState.BackgroundArgs = make(map[string][]object.Object)
+		RuntimeState.BackgroundKwargs = make(map[string]map[string]object.Object)
+		RuntimeState.BackgroundEnvs = make(map[string]*object.Environment)
+		RuntimeState.BackgroundEvals = make(map[string]evaliface.Evaluator)
+		RuntimeState.BackgroundCtxs = make(map[string]context.Context)
 	RuntimeState.Unlock()
 
 	// Start all queued tasks
