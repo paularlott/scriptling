@@ -444,9 +444,9 @@ func TestListLiteral(t *testing.T) {
 
 func TestDictLiteral(t *testing.T) {
 	dct := &DictLiteral{
-		Pairs: map[Expression]Expression{
-			&StringLiteral{Value: "key"}: &IntegerLiteral{Value: 1},
-			&StringLiteral{Value: "key2"}: &IntegerLiteral{Value: 2},
+		Pairs: []DictPairLiteral{
+			{Key: &StringLiteral{Value: "key"}, Value: &IntegerLiteral{Value: 1}},
+			{Key: &StringLiteral{Value: "key2"}, Value: &IntegerLiteral{Value: 2}},
 		},
 	}
 
@@ -481,14 +481,14 @@ func TestSliceExpression(t *testing.T) {
 
 func TestTryStatement(t *testing.T) {
 	stmt := &TryStatement{
-		Body:      &BlockStatement{},
+		Body: &BlockStatement{},
 		ExceptClauses: []*ExceptClause{
 			{
 				Body:      &BlockStatement{},
 				ExceptVar: &Identifier{Value: "e"},
 			},
 		},
-		Finally:   &BlockStatement{},
+		Finally: &BlockStatement{},
 	}
 
 	if stmt.Body == nil || len(stmt.ExceptClauses) == 0 || stmt.Finally == nil {
@@ -732,7 +732,7 @@ func TestExpressionString(t *testing.T) {
 		},
 		{
 			name:     "DictLiteral",
-			expr:     &DictLiteral{Pairs: map[Expression]Expression{&StringLiteral{Value: "key"}: &IntegerLiteral{Value: 1}}},
+			expr:     &DictLiteral{Pairs: []DictPairLiteral{{Key: &StringLiteral{Value: "key"}, Value: &IntegerLiteral{Value: 1}}}},
 			contains: "",
 		},
 		{

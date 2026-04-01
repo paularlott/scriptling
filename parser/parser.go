@@ -360,7 +360,7 @@ func (p *Parser) parseMultipleAssignStatement() ast.Statement {
 	for p.peekTokenIs(token.COMMA) {
 		p.nextToken() // consume comma
 		p.nextToken() // move to next token
-		
+
 		// Check for starred identifier
 		if p.curTokenIs(token.ASTERISK) {
 			if starredIndex != -1 {
@@ -646,13 +646,13 @@ func (p *Parser) parseExpression(precedence int) ast.Expression {
 		if p.peekTokenIs(token.IF) && p.skippedNewline {
 			return leftExp
 		}
-		
+
 		// Don't continue parsing infix expressions across newlines at top level
 		// This prevents "a = 1\n*b, c = [2, 3]" from being parsed as "a = 1 * b"
 		if p.parenDepth == 0 && p.skippedNewline {
 			return leftExp
 		}
-		
+
 		infix := p.infixParseFns[p.peekToken.Type]
 		if infix == nil {
 			return leftExp
@@ -1661,7 +1661,7 @@ func (p *Parser) skipWhitespace() {
 func (p *Parser) parseDictLiteral() ast.Expression {
 	tok := p.curToken
 	dict := &ast.DictLiteral{Token: tok}
-	dict.Pairs = make(map[ast.Expression]ast.Expression)
+	dict.Pairs = []ast.DictPairLiteral{}
 
 	p.skipWhitespace()
 	if p.peekTokenIs(token.RBRACE) {
@@ -1713,7 +1713,10 @@ func (p *Parser) parseDictLiteral() ast.Expression {
 			return p.parseDictComprehension(tok, first, value)
 		}
 
-		dict.Pairs[first] = value
+		dict.Pairs = append(dict.Pairs, ast.DictPairLiteral{
+			Key:   first,
+			Value: value,
+		})
 
 		p.skipWhitespace()
 		if !p.peekTokenIs(token.COMMA) {
@@ -2225,7 +2228,6 @@ func (p *Parser) parseCasePattern() ast.Expression {
 	}
 	return first
 }
-
 
 func (p *Parser) isKeyword(t token.TokenType) bool {
 	keywords := []token.TokenType{

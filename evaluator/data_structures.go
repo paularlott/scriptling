@@ -40,13 +40,13 @@ func evalDictLiteralWithContext(ctx context.Context, node *ast.DictLiteral, env 
 	}
 	pairs := make(map[string]object.DictPair, len(node.Pairs))
 
-	for keyNode, valueNode := range node.Pairs {
-		key := evalWithContext(ctx, keyNode, env)
+	for _, pairNode := range node.Pairs {
+		key := evalWithContext(ctx, pairNode.Key, env)
 		if object.IsError(key) {
 			return key
 		}
 
-		value := evalWithContext(ctx, valueNode, env)
+		value := evalWithContext(ctx, pairNode.Value, env)
 		if object.IsError(value) {
 			return value
 		}

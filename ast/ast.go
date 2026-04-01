@@ -155,9 +155,9 @@ func (aas *AugmentedAssignStatement) TokenLiteral() string { return aas.Token.Li
 func (aas *AugmentedAssignStatement) Line() int            { return aas.Token.Line }
 
 type MultipleAssignStatement struct {
-	Token       token.Token
-	Names       []*Identifier
-	Value       Expression
+	Token        token.Token
+	Names        []*Identifier
+	Value        Expression
 	StarredIndex int // Index of starred variable (-1 if none)
 }
 
@@ -295,10 +295,10 @@ func (ps *PassStatement) TokenLiteral() string { return ps.Token.Literal }
 func (ps *PassStatement) Line() int            { return ps.Token.Line }
 
 type ImportStatement struct {
-	Token            token.Token
-	Name             *Identifier   // The full dotted name stored as single identifier (e.g., "urllib.parse")
-	Alias            *Identifier   // Optional alias for 'import X as Y'
-	AdditionalNames  []*Identifier // For import lib1, lib2, lib3
+	Token             token.Token
+	Name              *Identifier   // The full dotted name stored as single identifier (e.g., "urllib.parse")
+	Alias             *Identifier   // Optional alias for 'import X as Y'
+	AdditionalNames   []*Identifier // For import lib1, lib2, lib3
 	AdditionalAliases []*Identifier // Optional aliases for additional imports (for "import lib1 as alias1, lib2 as alias2")
 }
 
@@ -348,12 +348,17 @@ func (ll *ListLiteral) Line() int            { return ll.Token.Line }
 
 type DictLiteral struct {
 	Token token.Token
-	Pairs map[Expression]Expression
+	Pairs []DictPairLiteral
 }
 
 func (dl *DictLiteral) expressionNode()      {}
 func (dl *DictLiteral) TokenLiteral() string { return dl.Token.Literal }
 func (dl *DictLiteral) Line() int            { return dl.Token.Line }
+
+type DictPairLiteral struct {
+	Key   Expression
+	Value Expression
+}
 
 type SetLiteral struct {
 	Token    token.Token
@@ -469,7 +474,7 @@ type ListComprehension struct {
 	Expression        Expression
 	Variables         []Expression // supports tuple unpacking like: for h, t in ...
 	Iterable          Expression
-	Condition         Expression // optional
+	Condition         Expression            // optional
 	AdditionalClauses []ComprehensionClause // additional for clauses
 }
 
@@ -483,7 +488,7 @@ type DictComprehension struct {
 	Value             Expression
 	Variables         []Expression
 	Iterable          Expression
-	Condition         Expression // optional
+	Condition         Expression            // optional
 	AdditionalClauses []ComprehensionClause // additional for clauses
 }
 
@@ -496,7 +501,7 @@ type SetComprehension struct {
 	Expression        Expression
 	Variables         []Expression
 	Iterable          Expression
-	Condition         Expression // optional
+	Condition         Expression            // optional
 	AdditionalClauses []ComprehensionClause // additional for clauses
 }
 

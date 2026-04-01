@@ -125,7 +125,6 @@ func GetSourceFileFromContext(ctx context.Context) string {
 	return ""
 }
 
-
 // Eval executes without context (backwards compatible)
 func Eval(node ast.Node, env *object.Environment) object.Object {
 	return EvalWithContext(context.Background(), node, env)
@@ -282,18 +281,24 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		// Execute chained assignments first (a = b = 5: assign 5 to b, then to a)
 		if node.Chained != nil {
 			if err := assignToExpression(ctx, node.Chained.Left, val, env); err != nil {
-				if ae, ok := err.(*assignmentExceptionError); ok { return ae.ex }
+				if ae, ok := err.(*assignmentExceptionError); ok {
+					return ae.ex
+				}
 				return errors.NewError("%s", err.Error())
 			}
 			for c := node.Chained.Chained; c != nil; c = c.Chained {
 				if err := assignToExpression(ctx, c.Left, val, env); err != nil {
-					if ae, ok := err.(*assignmentExceptionError); ok { return ae.ex }
+					if ae, ok := err.(*assignmentExceptionError); ok {
+						return ae.ex
+					}
 					return errors.NewError("%s", err.Error())
 				}
 			}
 		}
 		if err := assignToExpression(ctx, node.Left, val, env); err != nil {
-			if ae, ok := err.(*assignmentExceptionError); ok { return ae.ex }
+			if ae, ok := err.(*assignmentExceptionError); ok {
+				return ae.ex
+			}
 			return errors.NewError("%s", err.Error())
 		}
 		return NULL
@@ -3235,7 +3240,6 @@ func evalSetComprehension(ctx context.Context, sc *ast.SetComprehension, env *ob
 	return result
 }
 
-
 func evalLambda(lambda *ast.Lambda, env *object.Environment) object.Object {
 	return &object.LambdaFunction{
 		Parameters:    lambda.Parameters,
@@ -3382,7 +3386,7 @@ func formatWithSpec(obj object.Object, spec string) string {
 			// No type char with float: use 'g' or precision
 			if floatVal, err := obj.AsFloat(); err == nil {
 				if precision >= 0 {
-					formatted = fmt.Sprintf("%."+ strconv.Itoa(precision)+"f", floatVal)
+					formatted = fmt.Sprintf("%."+strconv.Itoa(precision)+"f", floatVal)
 				} else {
 					formatted = fmt.Sprintf("%g", floatVal)
 				}
@@ -3424,7 +3428,7 @@ func formatWithSpec(obj object.Object, spec string) string {
 			if precision >= 0 {
 				prec = precision
 			}
-			formatted = fmt.Sprintf("%."+ strconv.Itoa(prec)+"f", floatVal)
+			formatted = fmt.Sprintf("%."+strconv.Itoa(prec)+"f", floatVal)
 			formatted = applySign(formatted, floatVal >= 0, sign)
 		} else {
 			formatted = obj.Inspect()
@@ -3435,7 +3439,7 @@ func formatWithSpec(obj object.Object, spec string) string {
 			if precision >= 0 {
 				prec = precision
 			}
-			formatted = fmt.Sprintf("%."+ strconv.Itoa(prec)+"e", floatVal)
+			formatted = fmt.Sprintf("%."+strconv.Itoa(prec)+"e", floatVal)
 			formatted = applySign(formatted, floatVal >= 0, sign)
 		} else {
 			formatted = obj.Inspect()
@@ -3446,7 +3450,7 @@ func formatWithSpec(obj object.Object, spec string) string {
 			if precision >= 0 {
 				prec = precision
 			}
-			formatted = fmt.Sprintf("%."+ strconv.Itoa(prec)+"E", floatVal)
+			formatted = fmt.Sprintf("%."+strconv.Itoa(prec)+"E", floatVal)
 			formatted = applySign(formatted, floatVal >= 0, sign)
 		} else {
 			formatted = obj.Inspect()
@@ -3455,9 +3459,9 @@ func formatWithSpec(obj object.Object, spec string) string {
 		if floatVal, err := obj.AsFloat(); err == nil {
 			if precision >= 0 {
 				if typeChar == 'G' {
-					formatted = fmt.Sprintf("%."+ strconv.Itoa(precision)+"G", floatVal)
+					formatted = fmt.Sprintf("%."+strconv.Itoa(precision)+"G", floatVal)
 				} else {
-					formatted = fmt.Sprintf("%."+ strconv.Itoa(precision)+"g", floatVal)
+					formatted = fmt.Sprintf("%."+strconv.Itoa(precision)+"g", floatVal)
 				}
 			} else {
 				formatted = fmt.Sprintf("%g", floatVal)
@@ -3524,7 +3528,7 @@ func formatWithSpec(obj object.Object, spec string) string {
 			if precision >= 0 {
 				prec = precision
 			}
-			formatted = fmt.Sprintf("%."+ strconv.Itoa(prec)+"f%%", floatVal*100)
+			formatted = fmt.Sprintf("%."+strconv.Itoa(prec)+"f%%", floatVal*100)
 			formatted = applySign(formatted, floatVal >= 0, sign)
 		} else {
 			formatted = obj.Inspect()
@@ -3717,7 +3721,6 @@ func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expres
 		}
 		return &object.Error{Message: "call expressions in patterns must be type constructors with no arguments"}, NULL
 
-
 	case *ast.IntegerLiteral:
 		if intObj, ok := subject.(*object.Integer); ok {
 			if intObj.Value == p.Value {
@@ -3764,25 +3767,25 @@ func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expres
 		}
 
 		// Match all keys in pattern
-		for keyExpr, valueExpr := range p.Pairs {
-			keyObj := evalWithContext(ctx, keyExpr, object.NewEnvironment())
+		for _, patternPair := range p.Pairs {
+			keyObj := evalWithContext(ctx, patternPair.Key, object.NewEnvironment())
 			if object.IsError(keyObj) {
 				return keyObj, NULL
 			}
 
 			keyStr := evalHashKey(ctx, keyObj)
-			pair, exists := dictObj.Pairs[keyStr]
+			dictPair, exists := dictObj.Pairs[keyStr]
 			if !exists {
 				return FALSE, NULL
 			}
 
 			// If pattern value is an identifier (not _), it's a capture variable
-			if ident, ok := valueExpr.(*ast.Identifier); ok && ident.Value != "_" {
+			if ident, ok := patternPair.Value.(*ast.Identifier); ok && ident.Value != "_" {
 				// Store the captured value
-				capturedVars[ident.Value] = pair.Value
+				capturedVars[ident.Value] = dictPair.Value
 			} else {
 				// Otherwise, it must match exactly
-				matched, _ := matchPattern(ctx, pair.Value, valueExpr, capturedVars)
+				matched, _ := matchPattern(ctx, dictPair.Value, patternPair.Value, capturedVars)
 				if matched == FALSE {
 					return FALSE, NULL
 				}
