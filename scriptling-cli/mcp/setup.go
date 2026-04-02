@@ -8,12 +8,12 @@ import (
 	"github.com/paularlott/scriptling/extlibs/ai"
 	aimemory "github.com/paularlott/scriptling/extlibs/ai/memory"
 	"github.com/paularlott/scriptling/extlibs/console"
-	scriptlingfuzzy "github.com/paularlott/scriptling/extlibs/fuzzy"
 	scriptlingmcp "github.com/paularlott/scriptling/extlibs/mcp"
-	"github.com/paularlott/scriptling/extlibs/messaging/discord"
 	messagingconsole "github.com/paularlott/scriptling/extlibs/messaging/console"
+	"github.com/paularlott/scriptling/extlibs/messaging/discord"
 	"github.com/paularlott/scriptling/extlibs/messaging/slack"
 	"github.com/paularlott/scriptling/extlibs/messaging/telegram"
+	scriptlingsimilarity "github.com/paularlott/scriptling/extlibs/similarity"
 	"github.com/paularlott/scriptling/libloader"
 	"github.com/paularlott/scriptling/stdlib"
 )
@@ -54,7 +54,7 @@ func SetupScriptling(p *scriptling.Scriptling, libdirs []string, registerInterac
 	ai.Register(p)
 	aimemory.Register(p, log)
 	agent.Register(p)
-	scriptlingfuzzy.Register(p)
+	scriptlingsimilarity.Register(p)
 	console.Register(p)
 	if registerInteract {
 		agent.RegisterInteract(p)

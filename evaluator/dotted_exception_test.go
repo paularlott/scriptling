@@ -42,6 +42,33 @@ result
 `,
 			expected: "outer",
 		},
+		{
+			name: "tuple with dotted name catches matching exception",
+			input: `
+import requests
+try:
+    raise HTTPError("not found")
+except (ValueError, requests.HTTPError) as e:
+    result = "caught"
+result
+`,
+			expected: "caught",
+		},
+		{
+			name: "tuple with dotted name does not catch non-matching exception",
+			input: `
+import requests
+try:
+    try:
+        raise TypeError("bad type")
+    except (ValueError, requests.HTTPError):
+        result = "wrong"
+except:
+    result = "outer"
+result
+`,
+			expected: "outer",
+		},
 	}
 
 	for _, tt := range tests {
@@ -80,6 +107,17 @@ result
 						}
 					}
 					return &object.Exception{ExceptionType: "ValueError", Message: msg}
+				},
+			})
+			env.Set("TypeError", &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					msg := "TypeError"
+					if len(args) > 0 {
+						if s, err := args[0].AsString(); err == nil {
+							msg = s
+						}
+					}
+					return &object.Exception{ExceptionType: "TypeError", Message: msg}
 				},
 			})
 			// import callback that does nothing (requests already in env)

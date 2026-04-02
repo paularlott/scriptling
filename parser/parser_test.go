@@ -1066,6 +1066,41 @@ except:
 	}
 }
 
+func TestTryStatementExceptTuple(t *testing.T) {
+	input := `try:
+    x = int("bad")
+except (TypeError, ValueError) as e:
+    pass`
+
+	l := lexer.New(input)
+	p := New(l)
+	program := p.ParseProgram()
+	checkParserErrors(t, p)
+
+	if len(program.Statements) != 1 {
+		t.Fatalf("program.Statements does not contain %d statements. got=%d",
+			1, len(program.Statements))
+	}
+
+	stmt, ok := program.Statements[0].(*ast.TryStatement)
+	if !ok {
+		t.Fatalf("program.Statements[0] is not ast.TryStatement. got=%T",
+			program.Statements[0])
+	}
+
+	if len(stmt.ExceptClauses) != 1 {
+		t.Fatalf("expected 1 except clause, got %d", len(stmt.ExceptClauses))
+	}
+
+	if _, ok := stmt.ExceptClauses[0].ExceptType.(*ast.TupleLiteral); !ok {
+		t.Fatalf("except type is not ast.TupleLiteral. got=%T", stmt.ExceptClauses[0].ExceptType)
+	}
+
+	if stmt.ExceptClauses[0].ExceptVar == nil || stmt.ExceptClauses[0].ExceptVar.Value != "e" {
+		t.Fatalf("except variable not parsed correctly: %#v", stmt.ExceptClauses[0].ExceptVar)
+	}
+}
+
 func TestFStringLiteral(t *testing.T) {
 	input := `f"Hello {name}"`
 

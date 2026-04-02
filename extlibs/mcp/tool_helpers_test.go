@@ -135,7 +135,6 @@ if age < 0:
 	}
 }
 
-
 // TestToolHelpersGetInt tests get_int function
 func TestToolHelpersGetInt(t *testing.T) {
 	sl := scriptling.New()
@@ -831,6 +830,37 @@ func TestRunToolScriptNullReturn(t *testing.T) {
 	// None should result in empty response
 	if response != "" {
 		t.Errorf("Expected empty response for None, got %q", response)
+	}
+}
+
+func TestRunToolScriptIgnoresLeakedContinueFromLoop(t *testing.T) {
+	sl := scriptling.New()
+	mcp.RegisterToolHelpers(sl)
+
+	code := `
+def f():
+    values = []
+    for i in [1, 2]:
+        if i == 2:
+            continue
+        values.append(i)
+    return values
+
+f()
+`
+
+	response, exitCode, err := mcp.RunToolScript(context.Background(), sl, code, nil)
+
+	if err != nil {
+		t.Fatalf("RunToolScript failed: %v", err)
+	}
+
+	if exitCode != 0 {
+		t.Errorf("Expected exit code 0, got %d", exitCode)
+	}
+
+	if response != "[1]" {
+		t.Errorf("Expected response=[1], got %q", response)
 	}
 }
 

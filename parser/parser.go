@@ -1853,29 +1853,11 @@ func (p *Parser) parseTryStatement() *ast.TryStatement {
 		p.nextToken() // consume except
 		exceptClause := &ast.ExceptClause{Token: p.curToken}
 
-		// Check for 'except Exception as e:' or 'except module.Exception as e:' syntax
-		if p.peekTokenIs(token.IDENT) {
-			p.nextToken() // consume exception type (or module name)
-
-			// Store the exception type as an expression
-			exceptType := ast.Expression(&ast.Identifier{Token: p.curToken, Value: p.curToken.Literal})
-
-			// Handle dotted exception names like requests.RequestException
-			for p.peekTokenIs(token.DOT) {
-				p.nextToken() // consume '.'
-				if !p.expectPeek(token.IDENT) {
-					return nil
-				}
-				// Build index expression for dotted names
-				exceptType = &ast.IndexExpression{
-					Token: p.curToken,
-					Left:  exceptType,
-					Index: &ast.StringLiteral{Token: p.curToken, Value: p.curToken.Literal},
-				}
-			}
-
-			exceptClause.ExceptType = exceptType
-
+		// Support bare except, single exception types, dotted names, and tuples
+		// like `except (TypeError, ValueError):`.
+		if !p.peekTokenIs(token.COLON) {
+			p.nextToken()
+			exceptClause.ExceptType = p.parseExpression(LOWEST)
 			if p.peekTokenIs(token.AS) {
 				p.nextToken() // consume 'as'
 				if p.expectPeek(token.IDENT) {

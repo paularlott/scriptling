@@ -1238,6 +1238,7 @@ func evalWhileStatementWithContext(ctx context.Context, ws *ast.WhileStatement, 
 				broke = true
 				return NULL
 			case object.CONTINUE_OBJ:
+				result = NULL
 				continue
 			}
 		}
@@ -2625,31 +2626,42 @@ func matchesExceptionType(exception object.Object, exceptTypeExpr ast.Expression
 		return false
 	}
 
-	// Evaluate the exception type expression to get the type name
-	var expectedType string
+	return matchesExceptionTypeExpr(exceptionType, exceptTypeExpr)
+}
+
+func matchesExceptionTypeExpr(exceptionType string, exceptTypeExpr ast.Expression) bool {
 	switch expr := exceptTypeExpr.(type) {
 	case *ast.Identifier:
-		expectedType = expr.Value
+		return matchesNamedExceptionType(exceptionType, expr.Value)
 	case *ast.IndexExpression:
 		// Handle dotted names like requests.HTTPError — match on the last component
 		dotted := buildDottedName(expr)
 		parts := strings.Split(dotted, ".")
-		expectedType = parts[len(parts)-1]
+		return matchesNamedExceptionType(exceptionType, parts[len(parts)-1])
+	case *ast.TupleLiteral:
+		for _, elem := range expr.Elements {
+			if matchesExceptionTypeExpr(exceptionType, elem) {
+				return true
+			}
+		}
+		return false
+	case *ast.ListLiteral:
+		for _, elem := range expr.Elements {
+			if matchesExceptionTypeExpr(exceptionType, elem) {
+				return true
+			}
+		}
+		return false
 	default:
 		return false
 	}
+}
 
-	// "Exception" catches all errors and exceptions
+func matchesNamedExceptionType(exceptionType, expectedType string) bool {
 	if expectedType == "Exception" {
 		return true
 	}
-
-	// Check for exact match
-	if exceptionType == expectedType {
-		return true
-	}
-
-	return false
+	return exceptionType == expectedType
 }
 
 // buildDottedName constructs a dotted name from nested IndexExpression nodes
@@ -2905,6 +2917,7 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 					result = NULL
 					goto forDone
 				case object.CONTINUE_OBJ:
+					result = NULL
 					continue
 				}
 			}
@@ -2943,6 +2956,7 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 						result = NULL
 						goto forDone
 					case object.CONTINUE_OBJ:
+						result = NULL
 						continue
 					}
 				}
@@ -2972,6 +2986,7 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 					result = NULL
 					goto forDone
 				case object.CONTINUE_OBJ:
+					result = NULL
 					continue
 				}
 			}

@@ -164,6 +164,108 @@ result
 	testIntegerObject(t, evaluated, 12) // 1 + 2 + 4 + 5
 }
 
+func TestContinueAsLastIterationDoesNotLeakFromLoop(t *testing.T) {
+	input := `
+def f():
+    values = []
+    for i in [1, 2]:
+        if i == 2:
+            continue
+        values.append(i)
+    return values
+
+f()
+`
+	evaluated := testEval(input)
+	list, ok := evaluated.(*object.List)
+	if !ok {
+		t.Fatalf("object is not List. got=%T (%+v)", evaluated, evaluated)
+	}
+	if len(list.Elements) != 1 {
+		t.Fatalf("list has wrong length. got=%d", len(list.Elements))
+	}
+	testIntegerObject(t, list.Elements[0], 1)
+}
+
+func TestContinueAsLastIterationDoesNotLeakFromWhileLoop(t *testing.T) {
+	input := `
+def f():
+    values = []
+    i = 0
+    while i < 3:
+        i = i + 1
+        if i == 3:
+            continue
+        values.append(i)
+    return values
+
+f()
+`
+	evaluated := testEval(input)
+	list, ok := evaluated.(*object.List)
+	if !ok {
+		t.Fatalf("object is not List. got=%T (%+v)", evaluated, evaluated)
+	}
+	if len(list.Elements) != 2 {
+		t.Fatalf("list has wrong length. got=%d, want 2", len(list.Elements))
+	}
+	testIntegerObject(t, list.Elements[0], 1)
+	testIntegerObject(t, list.Elements[1], 2)
+}
+
+func TestContinueAsLastIterationDoesNotLeakFromForDictLoop(t *testing.T) {
+	input := `
+def f():
+    seen = []
+    d = {"a": 1, "b": 2}
+    for k, v in d.items():
+        if k == "b":
+            continue
+        seen.append(v)
+    return seen
+
+f()
+`
+	evaluated := testEval(input)
+	list, ok := evaluated.(*object.List)
+	if !ok {
+		t.Fatalf("object is not List. got=%T (%+v)", evaluated, evaluated)
+	}
+	if len(list.Elements) != 1 {
+		t.Fatalf("list has wrong length. got=%d, want 1", len(list.Elements))
+	}
+	testIntegerObject(t, list.Elements[0], 1)
+}
+
+func TestContinueAsLastIterationDoesNotLeakFromForStringLoop(t *testing.T) {
+	input := `
+def f():
+    seen = []
+    for ch in "ab":
+        if ch == "b":
+            continue
+        seen.append(ch)
+    return seen
+
+f()
+`
+	evaluated := testEval(input)
+	list, ok := evaluated.(*object.List)
+	if !ok {
+		t.Fatalf("object is not List. got=%T (%+v)", evaluated, evaluated)
+	}
+	if len(list.Elements) != 1 {
+		t.Fatalf("list has wrong length. got=%d, want 1", len(list.Elements))
+	}
+	str, ok := list.Elements[0].(*object.String)
+	if !ok {
+		t.Fatalf("element is not String. got=%T", list.Elements[0])
+	}
+	if str.Value != "a" {
+		t.Fatalf("element value = %q, want %q", str.Value, "a")
+	}
+}
+
 func TestPassStatement(t *testing.T) {
 	input := `
 x = 0

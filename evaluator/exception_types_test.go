@@ -99,6 +99,39 @@ result
 `,
 			expected: "caught",
 		},
+		{
+			name: "tuple except catches matching exception",
+			input: `
+try:
+    raise ValueError("bad value")
+except (TypeError, ValueError) as e:
+    result = str(e)
+result
+`,
+			expected: "bad value",
+		},
+		{
+			name: "tuple except matches first type",
+			input: `
+try:
+    raise TypeError("wrong type")
+except (TypeError, ValueError) as e:
+    result = str(e)
+result
+`,
+			expected: "wrong type",
+		},
+		{
+			name:    "tuple except does not catch non-matching exception",
+			isError: true,
+			input: `
+try:
+    raise RuntimeError("boom")
+except (TypeError, ValueError):
+    result = "should not get here"
+result
+`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -271,7 +304,7 @@ result
 			}
 
 			resultStr := result.Inspect()
-			if len(resultStr) < len(tt.contains) || resultStr[:len(tt.contains)] != tt.contains && 
+			if len(resultStr) < len(tt.contains) || resultStr[:len(tt.contains)] != tt.contains &&
 				!contains(resultStr, tt.contains) {
 				t.Errorf("expected result to contain %q, got %q", tt.contains, resultStr)
 			}
@@ -280,9 +313,9 @@ result
 }
 
 func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && 
-		(s[:len(substr)] == substr || s[len(s)-len(substr):] == substr || 
-		findSubstring(s, substr)))
+	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) &&
+		(s[:len(substr)] == substr || s[len(s)-len(substr):] == substr ||
+			findSubstring(s, substr)))
 }
 
 func findSubstring(s, substr string) bool {
