@@ -481,48 +481,65 @@ type panelWrapper struct {
 	t *tui.TUI
 }
 
-func (w *panelWrapper) Type() object.ObjectType                          { return object.BUILTIN_OBJ }
-func (w *panelWrapper) Inspect() string                                  { return "<Panel>" }
-func (w *panelWrapper) AsString() (string, object.Object)                { return "<Panel>", nil }
-func (w *panelWrapper) AsInt() (int64, object.Object)                    { return 0, nil }
-func (w *panelWrapper) AsFloat() (float64, object.Object)                { return 0, nil }
-func (w *panelWrapper) AsBool() (bool, object.Object)                    { return true, nil }
-func (w *panelWrapper) AsList() ([]object.Object, object.Object)         { return nil, nil }
+func (w *panelWrapper) Type() object.ObjectType                           { return object.BUILTIN_OBJ }
+func (w *panelWrapper) Inspect() string                                   { return "<Panel>" }
+func (w *panelWrapper) AsString() (string, object.Object)                 { return "<Panel>", nil }
+func (w *panelWrapper) AsInt() (int64, object.Object)                     { return 0, nil }
+func (w *panelWrapper) AsFloat() (float64, object.Object)                 { return 0, nil }
+func (w *panelWrapper) AsBool() (bool, object.Object)                     { return true, nil }
+func (w *panelWrapper) AsList() ([]object.Object, object.Object)          { return nil, nil }
 func (w *panelWrapper) AsDict() (map[string]object.Object, object.Object) { return nil, nil }
-func (w *panelWrapper) CoerceString() (string, object.Object)            { return "<Panel>", nil }
-func (w *panelWrapper) CoerceInt() (int64, object.Object)                { return 0, nil }
-func (w *panelWrapper) CoerceFloat() (float64, object.Object)            { return 0, nil }
+func (w *panelWrapper) CoerceString() (string, object.Object)             { return "<Panel>", nil }
+func (w *panelWrapper) CoerceInt() (int64, object.Object)                 { return 0, nil }
+func (w *panelWrapper) CoerceFloat() (float64, object.Object)             { return 0, nil }
 
 // Dispatch helpers for methods that work on both main and named panels.
 
-func (pw *panelWrapper) panelAddMessage(text, label string) {
+func parseMessageRole(role string) tui.MessageRole {
+	switch strings.ToLower(role) {
+	case "user":
+		return tui.RoleUser
+	case "system":
+		return tui.RoleSystem
+	case "thinking":
+		return tui.RoleThinking
+	case "tool":
+		return tui.RoleTool
+	default:
+		return tui.RoleAssistant
+	}
+}
+
+func (pw *panelWrapper) panelAddMessage(text, label, role string) {
+	messageRole := parseMessageRole(role)
 	if pw.p != nil {
 		if label != "" {
-			pw.p.AddMessageAs(tui.RoleAssistant, label, text)
+			pw.p.AddMessageAs(messageRole, label, text)
 		} else {
-			pw.p.AddMessage(tui.RoleAssistant, text)
+			pw.p.AddMessage(messageRole, text)
 		}
 	} else {
 		if label != "" {
-			pw.t.AddMessageAs(tui.RoleAssistant, label, text)
+			pw.t.AddMessageAs(messageRole, label, text)
 		} else {
-			pw.t.AddMessage(tui.RoleAssistant, text)
+			pw.t.AddMessage(messageRole, text)
 		}
 	}
 }
 
-func (pw *panelWrapper) panelStartStreaming(label string) {
+func (pw *panelWrapper) panelStartStreaming(label, role string) {
+	messageRole := parseMessageRole(role)
 	if pw.p != nil {
 		if label != "" {
-			pw.p.StartStreamingAs(label)
+			pw.p.StartStreamingWithRole(messageRole, label)
 		} else {
-			pw.p.StartStreaming()
+			pw.p.StartStreamingWithRole(messageRole, "")
 		}
 	} else {
 		if label != "" {
-			pw.t.StartStreamingAs(label)
+			pw.t.StartStreamingWithRole(messageRole, label)
 		} else {
-			pw.t.StartStreaming()
+			pw.t.StartStreamingWithRole(messageRole, "")
 		}
 	}
 }
@@ -674,19 +691,21 @@ var panelClass = &object.Class{
 				}
 				text := strings.Join(parts, " ")
 				label, _ := kwargs.GetString("label", "")
-				pw.panelAddMessage(text, label)
+				role, _ := kwargs.GetString("role", "")
+				pw.panelAddMessage(text, label, role)
 				return &object.Null{}
 			},
-			HelpText: "add_message(*args, [label=]) — add a message to the panel",
+			HelpText: "add_message(*args, [label=], [role=]) — add a message to the panel",
 		},
 		"stream_start": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				pw := panelWrapperFrom(args)
 				label, _ := kwargs.GetString("label", "")
-				pw.panelStartStreaming(label)
+				role, _ := kwargs.GetString("role", "")
+				pw.panelStartStreaming(label, role)
 				return &object.Null{}
 			},
-			HelpText: "stream_start([label=]) — begin a streaming message in this panel",
+			HelpText: "stream_start([label=], [role=]) — begin a streaming message in this panel",
 		},
 		"stream_chunk": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {

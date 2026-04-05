@@ -1,11 +1,10 @@
 package tools
 
 import (
-	"github.com/paularlott/scriptling/conversion"
 	"context"
 	"fmt"
+	"github.com/paularlott/scriptling/conversion"
 	"strings"
-
 
 	"github.com/paularlott/scriptling/object"
 )
@@ -104,6 +103,26 @@ func getRegistryData(self *object.Instance) (*registryData, *object.Error) {
 		return nil, &object.Error{Message: "Registry: invalid internal data"}
 	}
 	return data, nil
+}
+
+// BuildSchemasObject returns the built tool schema list for a registry instance.
+func BuildSchemasObject(self *object.Instance, ctx context.Context) object.Object {
+	return registryBuildMethod(self, ctx)
+}
+
+// GetHandlerObject returns the registered tool handler for a given name.
+func GetHandlerObject(self *object.Instance, name string) (object.Object, *object.Error) {
+	data, err := getRegistryData(self)
+	if err != nil {
+		return nil, err
+	}
+
+	handler, ok := data.handlers[name]
+	if !ok {
+		return nil, &object.Error{Message: fmt.Sprintf("no handler for tool: %s", name)}
+	}
+
+	return handler, nil
 }
 
 func registryAddMethod(self *object.Instance, ctx context.Context, name string, description string, params map[string]string, handler object.Object) object.Object {

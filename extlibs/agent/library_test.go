@@ -163,6 +163,83 @@ assert len(messages) >= 3
 	}
 }
 
+func TestAgentWithDictStyleToolCalls(t *testing.T) {
+	script := `
+import scriptling.ai as ai
+import scriptling.ai.agent as agent
+
+class MockClient:
+    def __init__(self):
+        self.call_count = 0
+
+    def completion(self, model, messages, **kwargs):
+        self.call_count = self.call_count + 1
+        if self.call_count == 1:
+            return {
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [{
+                            "id": "call_dict_1",
+                            "function": {
+                                "name": "function_name_read",
+                                "arguments": {"{path}": "test.txt"}
+                            }
+                        }]
+                    }
+                }]
+            }
+
+        return {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "Loaded dict-style tool call successfully"
+                }
+            }]
+        }
+
+tools = ai.ToolRegistry()
+
+def read_func(args):
+    assert args["path"] == "test.txt"
+    return "dict content"
+
+tools.add("read", "Read file", {"path": "string"}, read_func)
+
+bot = agent.Agent(MockClient(), tools=tools)
+response = bot.trigger("Read test.txt", max_iterations=5)
+
+assert response["content"] == "Loaded dict-style tool call successfully"
+
+messages = bot.get_messages()
+tool_messages = [m for m in messages if m["role"] == "tool"]
+assert len(tool_messages) == 1
+assert tool_messages[0]["content"] == "dict content"
+
+assistant_messages = [m for m in messages if m["role"] == "assistant" and "tool_calls" in m]
+assert len(assistant_messages) == 1
+assert assistant_messages[0]["tool_calls"][0]["function"]["name"] == "function_name_read"
+
+"OK"
+`
+
+	p := scriptlib.New()
+	stdlib.RegisterAll(p)
+	ai.Register(p)
+	Register(p)
+
+	result, err := p.Eval(script)
+	if err != nil {
+		t.Fatalf("Script failed: %v", err)
+	}
+
+	if str, err := result.AsString(); err != nil || str != "OK" {
+		t.Fatalf("Expected 'OK', got: %v (err: %v)", result, err)
+	}
+}
+
 func TestAgentMemoryToolsAutoWired(t *testing.T) {
 	script := `
 import scriptling.ai as ai
@@ -224,6 +301,76 @@ assert mem.recalled[-1]["query"] == "Python"
 handler = bot.tools.get_handler("memory_forget")
 result = handler({"id": "mock-id-1"})
 assert mem.forgotten[-1] == "mock-id-1"
+
+"OK"
+`
+
+	p := scriptlib.New()
+	stdlib.RegisterAll(p)
+	ai.Register(p)
+	Register(p)
+
+	result, err := p.Eval(script)
+	if err != nil {
+		t.Fatalf("Script failed: %v", err)
+	}
+	if str, err := result.AsString(); err != nil || str != "OK" {
+		t.Fatalf("Expected 'OK', got: %v (err: %v)", result, err)
+	}
+}
+
+func TestAgentCompletionKwargsIncludeTimeout(t *testing.T) {
+	script := `
+import scriptling.ai as ai
+import scriptling.ai.agent as agent
+import json
+
+class MockClient:
+    def __init__(self):
+        self.kwargs_seen = []
+        self.call_count = 0
+
+    def completion(self, model, messages, **kwargs):
+        self.call_count = self.call_count + 1
+        self.kwargs_seen.append(kwargs)
+        assert kwargs["timeout_ms"] == 30000
+        assert len(kwargs["tools"]) == 1
+
+        if self.call_count == 1:
+            return {
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [{
+                            "id": "call_1",
+                            "function": {
+                                "name": "read",
+                                "arguments": json.dumps({"path": "demo.txt"})
+                            }
+                        }]
+                    }
+                }]
+            }
+
+        return {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "done"
+                }
+            }]
+        }
+
+tools = ai.ToolRegistry()
+tools.add("read", "Read file", {"path": "string"}, lambda args: "contents")
+
+client = MockClient()
+bot = agent.Agent(client, tools=tools)
+response = bot.trigger("read demo.txt", max_iterations=5)
+
+assert response["content"] == "done"
+assert client.call_count == 2
 
 "OK"
 `
@@ -356,6 +503,227 @@ bot2 = agent.Agent(MockClient(), tools=tools)
 schema_names = [s["function"]["name"] for s in bot2.tool_schemas]
 assert "my_tool" in schema_names
 assert "memory_remember" not in schema_names
+
+"OK"
+`
+
+	p := scriptlib.New()
+	stdlib.RegisterAll(p)
+	ai.Register(p)
+	Register(p)
+
+	result, err := p.Eval(script)
+	if err != nil {
+		t.Fatalf("Script failed: %v", err)
+	}
+	if str, err := result.AsString(); err != nil || str != "OK" {
+		t.Fatalf("Expected 'OK', got: %v (err: %v)", result, err)
+	}
+}
+
+func TestAgentCompactionDefaults(t *testing.T) {
+	script := `
+import scriptling.ai as ai
+import scriptling.ai.agent as agent
+
+class MockClient:
+    def completion(self, model, messages, **kwargs):
+        return {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+
+bot = agent.Agent(MockClient())
+
+# Check defaults
+assert bot.max_tokens == 32000, "Expected max_tokens=32000, got " + str(bot.max_tokens)
+assert bot.compaction_threshold == 80, "Expected compaction_threshold=80, got " + str(bot.compaction_threshold)
+
+# With custom values
+bot2 = agent.Agent(MockClient(), max_tokens=16000, compaction_threshold=50)
+assert bot2.max_tokens == 16000
+assert bot2.compaction_threshold == 50
+
+# With compaction disabled
+bot3 = agent.Agent(MockClient(), max_tokens=0)
+assert bot3.max_tokens == 0
+
+"OK"
+`
+
+	p := scriptlib.New()
+	stdlib.RegisterAll(p)
+	ai.Register(p)
+	Register(p)
+
+	result, err := p.Eval(script)
+	if err != nil {
+		t.Fatalf("Script failed: %v", err)
+	}
+	if str, err := result.AsString(); err != nil || str != "OK" {
+		t.Fatalf("Expected 'OK', got: %v (err: %v)", result, err)
+	}
+}
+
+func TestAgentCompactionNotNeeded(t *testing.T) {
+	script := `
+import scriptling.ai as ai
+import scriptling.ai.agent as agent
+
+class MockClient:
+    def completion(self, model, messages, **kwargs):
+        return {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+
+bot = agent.Agent(MockClient(), max_tokens=32000, compaction_threshold=80)
+bot.messages = [
+    {"role": "system", "content": "You are helpful."},
+    {"role": "user", "content": "Hello"},
+]
+
+# Should not need compaction with small messages
+assert not bot._should_compact(), "Should not need compaction for small conversation"
+
+"OK"
+`
+
+	p := scriptlib.New()
+	stdlib.RegisterAll(p)
+	ai.Register(p)
+	Register(p)
+
+	result, err := p.Eval(script)
+	if err != nil {
+		t.Fatalf("Script failed: %v", err)
+	}
+	if str, err := result.AsString(); err != nil || str != "OK" {
+		t.Fatalf("Expected 'OK', got: %v (err: %v)", result, err)
+	}
+}
+
+func TestAgentCompactionTriggeredByLargeHistory(t *testing.T) {
+	script := `
+import scriptling.ai as ai
+import scriptling.ai.agent as agent
+
+class MockClient:
+    def __init__(self):
+        self.summary_called = False
+
+    def completion(self, model, messages, **kwargs):
+        # Check if this is a summary request
+        if len(messages) > 0 and len(messages[-1].get("content", "")) > 100:
+            self.summary_called = True
+            return {"choices": [{"message": {"role": "assistant", "content": "Summary of the conversation about testing."}}]}
+        return {"choices": [{"message": {"role": "assistant", "content": "Final response"}}]}
+
+client = MockClient()
+bot = agent.Agent(client, max_tokens=100, compaction_threshold=80)
+
+# Build a large conversation that exceeds the threshold
+bot.messages = [{"role": "system", "content": "You are helpful."}]
+for i in range(20):
+    bot.messages.append({"role": "user", "content": "This is message number " + str(i) + " with some extra text to make it longer"})
+    bot.messages.append({"role": "assistant", "content": "Response " + str(i) + " with some details and information"})
+
+# Should need compaction
+assert bot._should_compact(), "Should need compaction for large conversation"
+
+# Trigger compaction
+bot._compact_messages()
+
+# After compaction, messages should be reduced
+assert len(bot.messages) < 43, "Messages should be compacted, got " + str(len(bot.messages))
+
+# System prompt should be preserved
+assert bot.messages[0]["role"] == "system"
+assert "helpful" in bot.messages[0]["content"]
+
+"OK"
+`
+
+	p := scriptlib.New()
+	stdlib.RegisterAll(p)
+	ai.Register(p)
+	Register(p)
+
+	result, err := p.Eval(script)
+	if err != nil {
+		t.Fatalf("Script failed: %v", err)
+	}
+	if str, err := result.AsString(); err != nil || str != "OK" {
+		t.Fatalf("Expected 'OK', got: %v (err: %v)", result, err)
+	}
+}
+
+func TestAgentCompactionPreservesActiveToolRound(t *testing.T) {
+	script := `
+import scriptling.ai as ai
+import scriptling.ai.agent as agent
+import json
+
+class MockClient:
+    def completion(self, model, messages, **kwargs):
+        return {"choices": [{"message": {"role": "assistant", "content": "Summary context"}}]}
+
+bot = agent.Agent(MockClient(), max_tokens=100, compaction_threshold=10)
+bot.messages = [
+    {"role": "system", "content": "You are helpful."},
+    {"role": "user", "content": "Earlier question"},
+    {"role": "assistant", "content": "Earlier answer"},
+    {"role": "user", "content": "Read scriptling.go"},
+    {"role": "assistant", "content": "", "tool_calls": [{
+        "id": "call_1",
+        "function": {
+            "name": "read",
+            "arguments": json.dumps({"path": "scriptling.go"})
+        }
+    }]},
+    {"role": "tool", "tool_call_id": "call_1", "content": "file contents here"}
+]
+
+bot._compact_messages()
+
+msgs = bot.get_messages()
+assert msgs[0]["role"] == "system"
+assert msgs[-2]["role"] == "assistant"
+assert "tool_calls" in msgs[-2]
+assert msgs[-1]["role"] == "tool"
+assert msgs[-1]["tool_call_id"] == "call_1"
+assert msgs[-2]["tool_calls"][0]["function"]["name"] == "read"
+
+"OK"
+`
+
+	p := scriptlib.New()
+	stdlib.RegisterAll(p)
+	ai.Register(p)
+	Register(p)
+
+	result, err := p.Eval(script)
+	if err != nil {
+		t.Fatalf("Script failed: %v", err)
+	}
+	if str, err := result.AsString(); err != nil || str != "OK" {
+		t.Fatalf("Expected 'OK', got: %v (err: %v)", result, err)
+	}
+}
+
+func TestAgentCompactionDisabled(t *testing.T) {
+	script := `
+import scriptling.ai as ai
+import scriptling.ai.agent as agent
+
+class MockClient:
+    def completion(self, model, messages, **kwargs):
+        return {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+
+bot = agent.Agent(MockClient(), max_tokens=0, compaction_threshold=0)
+
+# Build a large conversation
+bot.messages = [{"role": "system", "content": "You are helpful."}]
+for i in range(50):
+    bot.messages.append({"role": "user", "content": "This is a very long message " * 50})
+    bot.messages.append({"role": "assistant", "content": "Response " * 50})
+
+# Should NOT need compaction when disabled
+assert not bot._should_compact(), "Should not compact when max_tokens=0"
 
 "OK"
 `

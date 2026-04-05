@@ -5,7 +5,8 @@ print("Using the AI client from the wrapped global variable...")
 print()
 
 print("Fetching available models from LM Studio...")
-models = ai_client.models()
+models_response = ai_client.models()
+models = models_response.data
 print(f"Found {len(models)} models:")
 for model in models:
     print(f"  - {model.id}")
@@ -14,7 +15,7 @@ print()
 print("Running chat completion with mistralai/ministral-3-3b...")
 
 response = ai_client.completion(
-    "mistralai/ministral-3-3b",
+    "gemma4:e4b",
     [{"role": "user", "content": "What is 2 + 2? Answer with just the number."}]
 )
 

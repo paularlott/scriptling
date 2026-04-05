@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/paularlott/scriptling/conversion"
 
 	"github.com/paularlott/mcp/ai"
+	openaiapi "github.com/paularlott/mcp/ai/openai"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -45,6 +47,7 @@ Parameters:
   temperature (float, optional): Sampling temperature (0.0-2.0)
   top_p (float, optional): Nucleus sampling threshold (0.0-1.0)
   max_tokens (int, optional): Maximum tokens to generate
+  timeout_ms (int, optional): Request timeout in milliseconds
 
 Returns:
   dict: Response containing id, choices, usage, etc.
@@ -76,9 +79,11 @@ Parameters:
   model (str): Model identifier (e.g., "gpt-4", "gpt-3.5-turbo")
   messages (str or list): Either a string (user message) or a list of message dicts with "role" and "content" keys
   system_prompt (str, optional): System prompt to use when messages is a string
+  tools (list, optional): List of tool schema dicts from ToolRegistry.build()
   temperature (float, optional): Sampling temperature (0.0-2.0)
   top_p (float, optional): Nucleus sampling threshold (0.0-1.0)
   max_tokens (int, optional): Maximum tokens to generate
+  timeout_ms (int, optional): Overall request timeout in milliseconds
 
 Returns:
   ChatStream: A stream object with a next() method
@@ -108,11 +113,11 @@ Examples:
 Lists all models available for this client configuration.
 
 Returns:
-  list: List of model dicts with id, created, owned_by, etc.
+  dict: Response object with "object" and "data" fields. "data" contains the model list.
 
 Example:
   models = client.models()
-  for model in models:
+  for model in models.data:
     print(model.id)`).
 		MethodWithHelp("response_create", responseCreateMethod, `response_create(model, input, **kwargs) - Create a Responses API response
 
@@ -296,6 +301,110 @@ func getClientInstance(instance *object.Instance) (*ClientInstance, *object.Erro
 		return nil, &object.Error{Message: "OpenAIClient: invalid internal client reference"}
 	}
 	return ci, nil
+}
+
+func chatMessageToGoMap(msg ai.Message) map[string]any {
+	result := map[string]any{
+		"role": msg.Role,
+	}
+	if msg.Content != nil {
+		result["content"] = msg.Content
+	}
+	if msg.Refusal != "" {
+		result["refusal"] = msg.Refusal
+	}
+	if msg.ToolCallID != "" {
+		result["tool_call_id"] = msg.ToolCallID
+	}
+	if len(msg.ToolCalls) > 0 {
+		toolCalls := make([]any, 0, len(msg.ToolCalls))
+		for _, tc := range msg.ToolCalls {
+			toolCalls = append(toolCalls, map[string]any{
+				"id":   tc.ID,
+				"type": tc.Type,
+				"function": map[string]any{
+					"name":      tc.Function.Name,
+					"arguments": tc.Function.Arguments,
+				},
+			})
+		}
+		result["tool_calls"] = toolCalls
+	}
+	return result
+}
+
+func chatDeltaToGoMap(delta openaiapi.Delta) map[string]any {
+	result := map[string]any{}
+	if delta.ReasoningContent != "" {
+		result["reasoning_content"] = delta.ReasoningContent
+	}
+	if delta.Reasoning != "" {
+		result["reasoning"] = delta.Reasoning
+	}
+	if delta.Role != "" {
+		result["role"] = delta.Role
+	}
+	if delta.Content != "" {
+		result["content"] = delta.Content
+	}
+	if delta.Refusal != "" {
+		result["refusal"] = delta.Refusal
+	}
+	if len(delta.ToolCalls) > 0 {
+		toolCalls := make([]any, 0, len(delta.ToolCalls))
+		for _, tc := range delta.ToolCalls {
+			toolCalls = append(toolCalls, map[string]any{
+				"index": tc.Index,
+				"id":    tc.ID,
+				"type":  tc.Type,
+				"function": map[string]any{
+					"name":      tc.Function.Name,
+					"arguments": tc.Function.Arguments,
+				},
+			})
+		}
+		result["tool_calls"] = toolCalls
+	}
+	return result
+}
+
+func chatCompletionResponseToGoMap(resp *ai.ChatCompletionResponse) map[string]any {
+	result := map[string]any{
+		"id":      resp.ID,
+		"object":  resp.Object,
+		"created": resp.Created,
+		"model":   resp.Model,
+	}
+	if resp.SystemFingerprint != "" {
+		result["system_fingerprint"] = resp.SystemFingerprint
+	}
+
+	choices := make([]any, 0, len(resp.Choices))
+	for _, choice := range resp.Choices {
+		choiceMap := map[string]any{
+			"index":         choice.Index,
+			"finish_reason": choice.FinishReason,
+		}
+		if choice.Message.Role != "" || choice.Message.Content != nil || len(choice.Message.ToolCalls) > 0 || choice.Message.ToolCallID != "" || choice.Message.Refusal != "" {
+			choiceMap["message"] = chatMessageToGoMap(choice.Message)
+		}
+		deltaMap := chatDeltaToGoMap(choice.Delta)
+		if len(deltaMap) > 0 {
+			choiceMap["delta"] = deltaMap
+		}
+		choices = append(choices, choiceMap)
+	}
+	result["choices"] = choices
+
+	if resp.Usage != nil {
+		result["usage"] = map[string]any{
+			"prompt_tokens":     resp.Usage.PromptTokens,
+			"completion_tokens": resp.Usage.CompletionTokens,
+			"total_tokens":      resp.Usage.TotalTokens,
+		}
+	}
+
+	return result
 }
 
 // completion method implementation
@@ -487,6 +596,14 @@ func completionMethod(self *object.Instance, ctx context.Context, kwargs object.
 	if kwargs.Has("max_tokens") {
 		req.MaxTokens = int(kwargs.MustGetInt("max_tokens", 0))
 	}
+	if kwargs.Has("timeout_ms") {
+		timeoutMs := kwargs.MustGetInt("timeout_ms", 0)
+		if timeoutMs > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond)
+			defer cancel()
+		}
+	}
 
 	// Handle optional tools parameter
 	if kwargs.Has("tools") {
@@ -524,7 +641,7 @@ func completionMethod(self *object.Instance, ctx context.Context, kwargs object.
 		return &object.Error{Message: "chat completion failed: " + chatErr.Error()}
 	}
 
-	return conversion.FromGo(chatResp)
+	return conversion.FromGo(chatCompletionResponseToGoMap(chatResp))
 }
 
 // models method implementation
@@ -914,7 +1031,9 @@ func nextResponseStreamMethod(self *object.Instance, ctx context.Context) object
 
 // ChatStreamInstance wraps an AI chat stream for use in scriptling
 type ChatStreamInstance struct {
-	stream *ai.ChatStream
+	stream              *ai.ChatStream
+	cancel              context.CancelFunc
+	suppressCancelError bool
 }
 
 // GetChatStreamClass returns the ChatStream class (thread-safe singleton)
@@ -949,6 +1068,16 @@ Example:
       delta = chunk.choices[0].delta
       if delta.content:
         print(delta.content, end="")`).
+		MethodWithHelp("next_timeout", nextTimeoutStreamMethod, `next_timeout(timeout_ms) - Get the next chunk, but stop waiting after a timeout
+
+Advances to the next response chunk and returns it. If no chunk arrives within
+the timeout, returns a dict with {"timed_out": true}.
+
+Parameters:
+  timeout_ms (int): Timeout in milliseconds
+
+Returns:
+  dict: The next response chunk, {"timed_out": true}, or null if the stream is complete`).
 		MethodWithHelp("err", errStreamMethod, `err() - Get any error from the stream
 
 Returns the error that caused the stream to stop, or None if no error.
@@ -993,7 +1122,46 @@ func nextStreamMethod(self *object.Instance, ctx context.Context) object.Object 
 
 	// Return current chunk
 	current := si.stream.Current()
-	return conversion.FromGo(current)
+	return conversion.FromGo(chatCompletionResponseToGoMap(&current))
+}
+
+// nextTimeoutStream method implementation
+func nextTimeoutStreamMethod(self *object.Instance, ctx context.Context, timeoutMs int64) object.Object {
+	si, cerr := getStreamInstance(self)
+	if cerr != nil {
+		return cerr
+	}
+
+	if si.stream == nil {
+		return &object.Error{Message: "next_timeout: stream is nil"}
+	}
+
+	if timeoutMs <= 0 {
+		return nextStreamMethod(self, ctx)
+	}
+
+	done := make(chan bool, 1)
+	go func() {
+		done <- si.stream.Next()
+	}()
+
+	select {
+	case ok := <-done:
+		if !ok {
+			return &object.Null{}
+		}
+		current := si.stream.Current()
+		return conversion.FromGo(current)
+	case <-time.After(time.Duration(timeoutMs) * time.Millisecond):
+		if si.cancel != nil {
+			si.suppressCancelError = true
+			si.cancel()
+			si.cancel = nil
+		}
+		return conversion.FromGo(map[string]any{"timed_out": true})
+	case <-ctx.Done():
+		return &object.Null{}
+	}
 }
 
 // errStream method implementation
@@ -1006,6 +1174,9 @@ func errStreamMethod(self *object.Instance, ctx context.Context) object.Object {
 		return &object.Null{}
 	}
 	if err := si.stream.Err(); err != nil {
+		if si.suppressCancelError && err == context.Canceled {
+			return &object.Null{}
+		}
 		return &object.String{Value: err.Error()}
 	}
 	return &object.Null{}
@@ -1200,8 +1371,54 @@ func completionStreamMethod(self *object.Instance, ctx context.Context, kwargs o
 	if kwargs.Has("max_tokens") {
 		streamReq.MaxTokens = int(kwargs.MustGetInt("max_tokens", 0))
 	}
+	streamCancel := context.CancelFunc(nil)
+	if kwargs.Has("timeout_ms") {
+		timeoutMs := kwargs.MustGetInt("timeout_ms", 0)
+		if timeoutMs > 0 {
+			ctx, streamCancel = context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond)
+		}
+	}
 
-	stream := ci.client.StreamChatCompletion(ctx, streamReq)
+	// Handle optional tools parameter
+	if kwargs.Has("tools") {
+		toolsObjs := kwargs.MustGetList("tools", nil)
+		tools := make([]ai.Tool, 0, len(toolsObjs))
+		for i, toolObj := range toolsObjs {
+			toolMap, err := toolObj.AsDict()
+			if err != nil {
+				return &object.Error{Message: fmt.Sprintf("tools[%d] must be a dict: %v", i, err)}
+			}
+			tool := ai.Tool{Type: "function"}
+			if fnVal, ok := toolMap["function"]; ok && fnVal != nil {
+				fnGo := conversion.ToGo(fnVal)
+				if fnMap, ok := fnGo.(map[string]any); ok {
+					if name, ok := fnMap["name"].(string); ok {
+						tool.Function.Name = name
+					}
+					if desc, ok := fnMap["description"].(string); ok {
+						tool.Function.Description = desc
+					}
+					if params, ok := fnMap["parameters"].(map[string]any); ok {
+						tool.Function.Parameters = params
+					}
+				}
+			}
+			tools = append(tools, tool)
+		}
+		streamReq.Tools = tools
+	}
+
+	streamCtx, cancel := context.WithCancel(ctx)
+	stream := ci.client.StreamChatCompletion(streamCtx, streamReq)
+
+	finalCancel := cancel
+	if streamCancel != nil {
+		baseCancel := finalCancel
+		finalCancel = func() {
+			baseCancel()
+			streamCancel()
+		}
+	}
 
 	// Wrap stream in instance
 	return &object.Instance{
@@ -1209,7 +1426,7 @@ func completionStreamMethod(self *object.Instance, ctx context.Context, kwargs o
 		Fields: map[string]object.Object{
 			"_stream": &object.ClientWrapper{
 				TypeName: "ChatStream",
-				Client:   &ChatStreamInstance{stream: stream},
+				Client:   &ChatStreamInstance{stream: stream, cancel: finalCancel},
 			},
 		},
 	}

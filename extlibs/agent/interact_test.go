@@ -108,3 +108,30 @@ assert hasattr(bot, "trigger")
 		t.Fatalf("Script failed: %v", err)
 	}
 }
+
+func TestInteractToolSummaryHandlesDictCalls(t *testing.T) {
+	p := newInteractInterpreter(t)
+	_, err := p.Eval(`
+import scriptling.ai.agent.interact as interact_lib
+
+class FakeClient:
+    def completion(self, model, messages, **kwargs):
+        return {"choices": [{"message": {"role": "assistant", "content": "hi"}}]}
+
+bot = interact_lib.Agent(FakeClient())
+summary = bot._tool_summary({
+    "id": "call_1",
+    "function": {
+        "name": "read",
+        "arguments": {"path": "README.md", "limit": 10}
+    }
+})
+
+assert summary.startswith("read(")
+assert "path=README.md" in summary
+assert "limit=10" in summary
+`)
+	if err != nil {
+		t.Fatalf("Script failed: %v", err)
+	}
+}

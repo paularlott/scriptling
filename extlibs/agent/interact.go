@@ -5,6 +5,7 @@ const (
 )
 
 const InteractScript = `
+import json
 import scriptling.console as console
 import scriptling.ai.agent as agent_module
 import scriptling.ai as ai
@@ -12,6 +13,56 @@ import scriptling.ai as ai
 _OriginalAgent = agent_module.Agent
 
 class Agent(_OriginalAgent):
+    def _is_error_result(self, value):
+        return type(value) == "ERROR" or str(value).startswith("ERROR:")
+
+    def _show_error(self, main, err):
+        console.spinner_stop()
+        main.add_message("[Error: " + str(err) + "]", label="Error", role="system")
+
+    def _stream_reasoning_chunk(self, main, text, reasoning_state):
+        if not text:
+            return
+        if not reasoning_state["open"]:
+            main.stream_start(label="Thinking", role="thinking")
+            reasoning_state["open"] = True
+        main.stream_chunk(text)
+
+    def _stream_content_chunk(self, main, text, reasoning_state, content_state):
+        if not text:
+            return
+        if reasoning_state["open"]:
+            main.stream_end()
+            reasoning_state["open"] = False
+        if not content_state["open"]:
+            main.stream_start()
+            content_state["open"] = True
+        main.stream_chunk(text)
+
+    def _tool_result_summary(self, tool_call, tool_result):
+        summary = self._tool_summary(tool_call)
+        content = ""
+        if isinstance(tool_result, dict):
+            content = str(tool_result.get("content", ""))
+        else:
+            content = str(tool_result)
+
+        status = "done"
+        lowered = content.lower()
+        if lowered.startswith("error:") or lowered.startswith("[error"):
+            status = "error"
+
+        preview = content.strip()
+        if len(preview) > 80:
+            preview = preview[:77] + "..."
+
+        if preview:
+            return status + " " + summary + " -> " + preview
+        return status + " " + summary
+
+    def _tool_message(self, tool_call, tool_result):
+        return "Calling " + self._tool_summary(tool_call) + "\n" + self._tool_result_summary(tool_call, tool_result)
+
     def interact(self, max_iterations=25):
         main = console.main_panel()
         console.set_status("scriptling", self.model if self.model else "default")
@@ -55,67 +106,106 @@ class Agent(_OriginalAgent):
             msg_index = len(self.messages)
             self.messages.append({"role": "user", "content": user_input})
 
-            console.spinner_start("Thinking")
+            console.spinner_start("Working")
 
             hit_limit = False
             for i in range(max_iterations):
                 if cancelled[0]:
                     break
 
-                response = self.client.completion(self.model, self.messages, tools=self.tool_schemas)
+                # Auto-compact if conversation exceeds threshold
+                if self._should_compact():
+                    console.spinner_start("Compacting")
+                    self._compact_messages()
+                    console.spinner_start("Working")
 
-                if not response.choices or len(response.choices) == 0:
+                try:
+                    stream = self.client.completion_stream(self.model, self.messages, **self._completion_kwargs())
+                except Exception as e:
+                    self._show_error(main, e)
+                    self.messages = self.messages[:msg_index]
                     break
 
-                message = response.choices[0].message
-                tool_calls = message.tool_calls if hasattr(message, "tool_calls") else None
+                reasoning_state = {"open": False}
+                content_state = {"open": False}
+                seen_tools = set()
+                pending_tool_calls = []
 
-                if not tool_calls or len(tool_calls) == 0:
-                    console.spinner_stop()
+                def on_event(event):
                     if cancelled[0]:
-                        break
+                        return
+                    if event["type"] == "reasoning":
+                        self._stream_reasoning_chunk(main, event["content"], reasoning_state)
+                    elif event["type"] == "content":
+                        self._stream_content_chunk(main, event["content"], reasoning_state, content_state)
+                    elif event["type"] == "tool_call":
+                        tc = event["tool_call"]
+                        tc_id = tc.get("id", "")
+                        fn = tc.get("function", {})
+                        name = fn.get("name", "")
+                        args_text = str(fn.get("arguments", "{}"))
+                        seen_key = tc_id if tc_id else name + ":" + args_text
+                        if name and seen_key not in seen_tools:
+                            seen_tools.add(seen_key)
+                            # Close any open streams before showing tool message
+                            if reasoning_state["open"]:
+                                main.stream_end()
+                                reasoning_state["open"] = False
+                            if content_state["open"]:
+                                main.stream_end()
+                                content_state["open"] = False
+                            pending_tool_calls.append(tc)
 
-                    stream = self.client.completion_stream(self.model, self.messages, tools=self.tool_schemas)
-                    full_content = ""
-                    main.stream_start()
-                    while True:
-                        if cancelled[0]:
-                            break
-                        chunk = stream.next()
-                        if chunk is None:
-                            break
-                        if chunk.choices and len(chunk.choices) > 0:
-                            delta = chunk.choices[0].delta
-                            if delta.content:
-                                main.stream_chunk(delta.content)
-                                full_content = full_content + delta.content
+                result = ai.collect_stream(stream, first_chunk_timeout_ms=120000, chunk_timeout_ms=60000, on_event=on_event)
+
+                # Close any open streams
+                if reasoning_state["open"]:
+                    main.stream_end()
+                if content_state["open"]:
                     main.stream_end()
 
-                    if not cancelled[0] and stream.err() is None:
-                        result = ai.extract_thinking(full_content)
-                        self.messages.append({"role": "assistant", "content": result["content"]})
-                    else:
-                        self.messages = self.messages[:msg_index]
+                if cancelled[0]:
+                    self.messages = self.messages[:msg_index]
                     break
 
-                # Execute tool calls
-                tool_results = self._execute_tools(tool_calls)
+                if result["timed_out"]:
+                    self._show_error(main, "Streaming stalled before completion")
+                    self.messages = self.messages[:msg_index]
+                    break
 
-                self.messages.append({
-                    "role": "assistant",
-                    "content": message.content if message.content else "",
-                    "tool_calls": tool_calls
-                })
-                for tr in tool_results:
-                    self.messages.append(tr)
+                # Execute tool calls if present
+                calls = result["tool_calls"]
+                if len(calls) > 0:
+                    console.spinner_start("Running tools")
+                    tool_results = ai.execute_tool_calls(self.tools, calls)
+                    if self._is_error_result(tool_results):
+                        if len(calls) > 0:
+                            main.add_message(self._tool_message(calls[0], {"content": str(tool_results)}), label="Tool", role="tool")
+                        self._show_error(main, tool_results)
+                        self.messages = self.messages[:msg_index]
+                        break
 
-                # Check if we're about to hit the limit
-                if i == max_iterations - 1:
-                    hit_limit = True
+                    for idx in range(min(len(calls), len(tool_results))):
+                        tr = tool_results[idx]
+                        main.add_message(self._tool_message(calls[idx], tr), label="Tool", role="tool")
+
+                    self.messages.append(result["assistant_message"])
+                    for tr in tool_results:
+                        self.messages.append(tr)
+
+                    console.spinner_start("Working")
+                    if i == max_iterations - 1:
+                        hit_limit = True
+                    continue
+
+                # No tool calls — final response
+                console.spinner_stop()
+                self.messages.append(result["assistant_message"])
+                break
 
             if hit_limit and not cancelled[0]:
                 console.spinner_stop()
-                main.add_message("[Reached max iterations (" + str(max_iterations) + "). Type 'continue' or ask me to proceed.]", "system")
+                main.add_message("[Reached max iterations (" + str(max_iterations) + "). Type 'continue' or ask me to proceed.]", label="System")
 
             if cancelled[0]:
                 self.messages = self.messages[:msg_index]

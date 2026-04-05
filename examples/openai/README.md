@@ -81,6 +81,29 @@ go run main.go
 - Generating long-form content with progressive display
 - Providing immediate feedback to users
 
+### tools/ - Local Tool Calling Examples
+
+These examples expose a local tool to the model, execute it from the script, and then send the tool result back for a final answer.
+
+```bash
+../../../bin/scriptling tools/example.py
+../../../bin/scriptling tools/streaming.py
+```
+
+**How it works:**
+
+- Registers a local `echo_tool` via `ai.ToolRegistry()`
+- Sends the tool schema to the model with `tools=schemas`
+- Detects tool calls in the assistant response
+- Executes the tool locally and prints when it was invoked
+- Sends the tool result back to the model for the final response
+
+**Use this pattern when:**
+
+- You want a minimal proof that tool calling works end to end
+- You need to debug model-side tool call behavior
+- You want both non-streaming and streaming tool-call examples
+
 ### scriptlingcoder/ - AI Coding Assistant with Custom Tools
 
 An interactive AI coding assistant that can read, write, and modify files using custom tools. Inspired by [nanocode](https://github.com/1rgs/nanocode).
@@ -124,7 +147,8 @@ print("Using the AI client from the wrapped global variable...")
 print()
 
 print("Fetching available models from LM Studio...")
-models = ai_client.models()
+models_response = ai_client.models()
+models = models_response.data
 print(f"Found {len(models)} models:")
 
 print()
@@ -147,12 +171,13 @@ client = ai.Client("http://127.0.0.1:1234/v1")
 
 print()
 print("Fetching available models...")
-models = client.models()
+models_response = client.models()
+models = models_response.data
 
 print()
 print("Running chat completion...")
 response = client.completion(
-    "mistralai/ministral-3-3b",
+    "gemma4:e4b",
     [{"role": "user", "content": "What is 2 + 2?"}]
 )
 ```
@@ -168,7 +193,7 @@ client = ai.Client("http://127.0.0.1:1234/v1")
 
 # Create a streaming completion
 stream = client.completion_stream(
-    "mistralai/ministral-3-3b",
+    "gemma4:e4b",
     [{"role": "user", "content": "Write a short haiku about coding in Python."}]
 )
 
@@ -182,6 +207,38 @@ while True:
         delta = chunk.choices[0].delta
         if delta and delta.content:
             print(delta.content, end='', flush=True)
+```
+
+### tools/example.py
+
+Demonstrates a complete non-streaming tool call:
+
+```python
+import scriptling.ai as ai
+
+client = ai.Client("http://127.0.0.1:11434/v1")
+
+tools = ai.ToolRegistry()
+tools.add("echo_tool", "Echo a message back to the assistant", {"message": "string"}, echo_tool)
+schemas = tools.build()
+
+response = client.completion(
+    "gemma4:e4b",
+    [{"role": "user", "content": "Call the echo_tool with message 'hello from tool test'."}],
+    tools=schemas
+)
+```
+
+### tools/streaming.py
+
+Demonstrates streaming a tool-enabled turn:
+
+```python
+stream = client.completion_stream(
+    "gemma4:e4b",
+    [{"role": "user", "content": "Call the echo_tool with message 'hello from streaming tool test'."}],
+    tools=schemas
+)
 ```
 
 ## Expected Output

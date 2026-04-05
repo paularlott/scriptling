@@ -3,18 +3,18 @@
 
 import scriptling.ai as ai
 
-print("Creating OpenAI client for LM Studio...")
+print("Creating OpenAI client...")
 # Create client directly from script (LM Studio doesn't require an API key)
-client = ai.Client("http://127.0.0.1:1234/v1")
+client = ai.Client("http://127.0.0.1:11434/v1")
 
 print()
-print("Streaming chat completion with mistralai/ministral-3-3b...")
+print("Streaming chat completion with gemma4:e4b...")
 print("Response (streaming):")
 print("-" * 60)
 
 # Create a streaming completion
 stream = client.completion_stream(
-    "mistralai/ministral-3-3b",
+    "gemma4:e4b",
     [{"role": "user", "content": "Write a short haiku about coding in Python. Be creative."}]
 )
 

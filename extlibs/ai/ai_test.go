@@ -4,10 +4,242 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
+	mcpai "github.com/paularlott/mcp/ai"
+	openaiapi "github.com/paularlott/mcp/ai/openai"
+	scriptlib "github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/object"
+	"github.com/paularlott/scriptling/stdlib"
 )
+
+type timeoutMockClient struct{}
+type toolArgsMockClient struct{}
+type toolStreamMockClient struct{}
+type thinkingTagStreamMockClient struct{}
+
+func (timeoutMockClient) Provider() string                                         { return "mock" }
+func (timeoutMockClient) SupportsCapability(string) bool                           { return false }
+func (timeoutMockClient) GetModels(context.Context) (*mcpai.ModelsResponse, error) { return nil, nil }
+func (timeoutMockClient) ChatCompletion(ctx context.Context, req mcpai.ChatCompletionRequest) (*mcpai.ChatCompletionResponse, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+func (timeoutMockClient) StreamChatCompletion(ctx context.Context, req mcpai.ChatCompletionRequest) *mcpai.ChatStream {
+	responseChan := make(chan openaiapi.ChatCompletionResponse)
+	errorChan := make(chan error)
+	go func() {
+		<-ctx.Done()
+		errorChan <- ctx.Err()
+		close(errorChan)
+		close(responseChan)
+	}()
+	return openaiapi.NewChatStream(ctx, responseChan, errorChan)
+}
+func (timeoutMockClient) CreateEmbedding(context.Context, mcpai.EmbeddingRequest) (*mcpai.EmbeddingResponse, error) {
+	return nil, nil
+}
+func (timeoutMockClient) CreateResponse(context.Context, mcpai.CreateResponseRequest) (*mcpai.ResponseObject, error) {
+	return nil, nil
+}
+func (timeoutMockClient) StreamResponse(context.Context, mcpai.CreateResponseRequest) *mcpai.ResponseStream {
+	return nil
+}
+func (timeoutMockClient) GetResponse(context.Context, string) (*mcpai.ResponseObject, error) {
+	return nil, nil
+}
+func (timeoutMockClient) CancelResponse(context.Context, string) (*mcpai.ResponseObject, error) {
+	return nil, nil
+}
+func (timeoutMockClient) DeleteResponse(context.Context, string) error { return nil }
+func (timeoutMockClient) CompactResponse(context.Context, string) (*mcpai.ResponseObject, error) {
+	return nil, nil
+}
+func (timeoutMockClient) Close() error { return nil }
+
+func (toolArgsMockClient) Provider() string                                         { return "mock" }
+func (toolArgsMockClient) SupportsCapability(string) bool                           { return false }
+func (toolArgsMockClient) GetModels(context.Context) (*mcpai.ModelsResponse, error) { return nil, nil }
+func (toolArgsMockClient) ChatCompletion(ctx context.Context, req mcpai.ChatCompletionRequest) (*mcpai.ChatCompletionResponse, error) {
+	return &mcpai.ChatCompletionResponse{
+		Choices: []openaiapi.Choice{
+			{
+				Message: openaiapi.Message{
+					Role:    "assistant",
+					Content: "",
+					ToolCalls: []openaiapi.ToolCall{
+						{
+							ID:   "call_1",
+							Type: "function",
+							Function: openaiapi.ToolCallFunction{
+								Name: "echo_tool",
+								Arguments: map[string]any{
+									"message": "hello from tool test",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}, nil
+}
+func (toolArgsMockClient) StreamChatCompletion(ctx context.Context, req mcpai.ChatCompletionRequest) *mcpai.ChatStream {
+	responseChan := make(chan openaiapi.ChatCompletionResponse)
+	errorChan := make(chan error)
+	close(responseChan)
+	close(errorChan)
+	return openaiapi.NewChatStream(ctx, responseChan, errorChan)
+}
+func (toolArgsMockClient) CreateEmbedding(context.Context, mcpai.EmbeddingRequest) (*mcpai.EmbeddingResponse, error) {
+	return nil, nil
+}
+func (toolArgsMockClient) CreateResponse(context.Context, mcpai.CreateResponseRequest) (*mcpai.ResponseObject, error) {
+	return nil, nil
+}
+func (toolArgsMockClient) StreamResponse(context.Context, mcpai.CreateResponseRequest) *mcpai.ResponseStream {
+	return nil
+}
+func (toolArgsMockClient) GetResponse(context.Context, string) (*mcpai.ResponseObject, error) {
+	return nil, nil
+}
+func (toolArgsMockClient) CancelResponse(context.Context, string) (*mcpai.ResponseObject, error) {
+	return nil, nil
+}
+func (toolArgsMockClient) DeleteResponse(context.Context, string) error { return nil }
+func (toolArgsMockClient) CompactResponse(context.Context, string) (*mcpai.ResponseObject, error) {
+	return nil, nil
+}
+func (toolArgsMockClient) Close() error { return nil }
+
+func (toolStreamMockClient) Provider() string               { return "mock" }
+func (toolStreamMockClient) SupportsCapability(string) bool { return false }
+func (toolStreamMockClient) GetModels(context.Context) (*mcpai.ModelsResponse, error) {
+	return nil, nil
+}
+func (toolStreamMockClient) ChatCompletion(context.Context, mcpai.ChatCompletionRequest) (*mcpai.ChatCompletionResponse, error) {
+	return &mcpai.ChatCompletionResponse{}, nil
+}
+func (toolStreamMockClient) StreamChatCompletion(ctx context.Context, req mcpai.ChatCompletionRequest) *mcpai.ChatStream {
+	responseChan := make(chan openaiapi.ChatCompletionResponse, 2)
+	errorChan := make(chan error, 1)
+	go func() {
+		defer close(responseChan)
+		defer close(errorChan)
+		responseChan <- openaiapi.ChatCompletionResponse{
+			Choices: []openaiapi.Choice{
+				{
+					Delta: openaiapi.Delta{
+						ReasoningContent: "Thinking about tools.",
+						ToolCalls: []openaiapi.DeltaToolCall{
+							{
+								Index: 0,
+								ID:    "call_stream_1",
+								Type:  "function",
+								Function: openaiapi.DeltaFunction{
+									Name:      "echo_tool",
+									Arguments: `{"message":"hello from streaming helper"}`,
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		responseChan <- openaiapi.ChatCompletionResponse{
+			Choices: []openaiapi.Choice{
+				{
+					FinishReason: "tool_calls",
+				},
+			},
+		}
+	}()
+	return openaiapi.NewChatStream(ctx, responseChan, errorChan)
+}
+func (toolStreamMockClient) CreateEmbedding(context.Context, mcpai.EmbeddingRequest) (*mcpai.EmbeddingResponse, error) {
+	return nil, nil
+}
+func (toolStreamMockClient) CreateResponse(context.Context, mcpai.CreateResponseRequest) (*mcpai.ResponseObject, error) {
+	return nil, nil
+}
+func (toolStreamMockClient) StreamResponse(context.Context, mcpai.CreateResponseRequest) *mcpai.ResponseStream {
+	return nil
+}
+func (toolStreamMockClient) GetResponse(context.Context, string) (*mcpai.ResponseObject, error) {
+	return nil, nil
+}
+func (toolStreamMockClient) CancelResponse(context.Context, string) (*mcpai.ResponseObject, error) {
+	return nil, nil
+}
+func (toolStreamMockClient) DeleteResponse(context.Context, string) error { return nil }
+func (toolStreamMockClient) CompactResponse(context.Context, string) (*mcpai.ResponseObject, error) {
+	return nil, nil
+}
+func (toolStreamMockClient) Close() error { return nil }
+
+func (thinkingTagStreamMockClient) Provider() string               { return "mock" }
+func (thinkingTagStreamMockClient) SupportsCapability(string) bool { return false }
+func (thinkingTagStreamMockClient) GetModels(context.Context) (*mcpai.ModelsResponse, error) {
+	return nil, nil
+}
+func (thinkingTagStreamMockClient) ChatCompletion(context.Context, mcpai.ChatCompletionRequest) (*mcpai.ChatCompletionResponse, error) {
+	return &mcpai.ChatCompletionResponse{}, nil
+}
+func (thinkingTagStreamMockClient) StreamChatCompletion(ctx context.Context, req mcpai.ChatCompletionRequest) *mcpai.ChatStream {
+	responseChan := make(chan openaiapi.ChatCompletionResponse, 3)
+	errorChan := make(chan error, 1)
+	go func() {
+		defer close(responseChan)
+		defer close(errorChan)
+		responseChan <- openaiapi.ChatCompletionResponse{
+			Choices: []openaiapi.Choice{
+				{
+					Delta: openaiapi.Delta{
+						Content: "<thinking>\nThe user asked to read the ",
+					},
+				},
+			},
+		}
+		responseChan <- openaiapi.ChatCompletionResponse{
+			Choices: []openaiapi.Choice{
+				{
+					Delta: openaiapi.Delta{
+						Content: "`LICENSE.txt` file.\n</thinking>\n\nHere is the file content.",
+					},
+				},
+			},
+		}
+		responseChan <- openaiapi.ChatCompletionResponse{
+			Choices: []openaiapi.Choice{
+				{
+					FinishReason: "stop",
+				},
+			},
+		}
+	}()
+	return openaiapi.NewChatStream(ctx, responseChan, errorChan)
+}
+func (thinkingTagStreamMockClient) CreateEmbedding(context.Context, mcpai.EmbeddingRequest) (*mcpai.EmbeddingResponse, error) {
+	return nil, nil
+}
+func (thinkingTagStreamMockClient) CreateResponse(context.Context, mcpai.CreateResponseRequest) (*mcpai.ResponseObject, error) {
+	return nil, nil
+}
+func (thinkingTagStreamMockClient) StreamResponse(context.Context, mcpai.CreateResponseRequest) *mcpai.ResponseStream {
+	return nil
+}
+func (thinkingTagStreamMockClient) GetResponse(context.Context, string) (*mcpai.ResponseObject, error) {
+	return nil, nil
+}
+func (thinkingTagStreamMockClient) CancelResponse(context.Context, string) (*mcpai.ResponseObject, error) {
+	return nil, nil
+}
+func (thinkingTagStreamMockClient) DeleteResponse(context.Context, string) error { return nil }
+func (thinkingTagStreamMockClient) CompactResponse(context.Context, string) (*mcpai.ResponseObject, error) {
+	return nil, nil
+}
+func (thinkingTagStreamMockClient) Close() error { return nil }
 
 func TestAILibraryConstants(t *testing.T) {
 	if AILibraryName != "scriptling.ai" {
@@ -466,6 +698,250 @@ func TestCompletionStreamMethodNilClient(t *testing.T) {
 	}
 }
 
+func TestCompletionMethodTimeoutKwarg(t *testing.T) {
+	ctx := context.Background()
+	instance := &object.Instance{
+		Class: GetOpenAIClientClass(),
+		Fields: map[string]object.Object{
+			"_client": &object.ClientWrapper{
+				Client: &ClientInstance{client: timeoutMockClient{}},
+			},
+		},
+	}
+
+	kwargs := object.NewKwargs(map[string]object.Object{
+		"timeout_ms": &object.Integer{Value: 10},
+	})
+	result := completionMethod(instance, ctx, kwargs, "gpt-4", []map[string]any{{"role": "user", "content": "Hello"}})
+	if result.Type() != object.ERROR_OBJ {
+		t.Fatalf("expected error, got %v", result.Type())
+	}
+	if !strings.Contains(result.Inspect(), "deadline exceeded") {
+		t.Fatalf("expected deadline exceeded error, got %s", result.Inspect())
+	}
+}
+
+func TestNextTimeoutSuppressesFallbackCancelError(t *testing.T) {
+	ctx := context.Background()
+	streamCtx, cancel := context.WithCancel(ctx)
+	responseChan := make(chan openaiapi.ChatCompletionResponse)
+	errorChan := make(chan error)
+	go func() {
+		<-streamCtx.Done()
+		errorChan <- streamCtx.Err()
+		close(errorChan)
+		close(responseChan)
+	}()
+
+	instance := &object.Instance{
+		Class: GetChatStreamClass(),
+		Fields: map[string]object.Object{
+			"_stream": &object.ClientWrapper{
+				Client: &ChatStreamInstance{
+					stream: openaiapi.NewChatStream(streamCtx, responseChan, errorChan),
+					cancel: cancel,
+				},
+			},
+		},
+	}
+
+	result := nextTimeoutStreamMethod(instance, ctx, 5)
+	if result.Type() != object.DICT_OBJ {
+		t.Fatalf("expected dict timeout marker, got %v", result.Type())
+	}
+
+	time.Sleep(20 * time.Millisecond)
+
+	errResult := errStreamMethod(instance, ctx)
+	if errResult.Type() != object.NULL_OBJ {
+		t.Fatalf("expected null after internal timeout cancellation, got %v (%s)", errResult.Type(), errResult.Inspect())
+	}
+}
+
+func TestCompletionToolCallArgumentsSupportDictGet(t *testing.T) {
+	p := scriptlib.New()
+	stdlib.RegisterAll(p)
+	Register(p)
+
+	if err := p.SetObjectVar("ai_client", WrapClient(toolArgsMockClient{})); err != nil {
+		t.Fatalf("SetObjectVar(ai_client): %v", err)
+	}
+
+	result, err := p.Eval(`
+response = ai_client.completion("gpt-4", "hello")
+tool_calls = response.choices[0].message.tool_calls
+tool_calls[0].function.arguments.get("message", "missing")
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+
+	str, ok := result.(*object.String)
+	if !ok {
+		t.Fatalf("expected String, got %T", result)
+	}
+	if str.Value != "hello from tool test" {
+		t.Fatalf("expected %q, got %q", "hello from tool test", str.Value)
+	}
+}
+
+func TestExtractToolCallsFromGo(t *testing.T) {
+	response, err := toolArgsMockClient{}.ChatCompletion(context.Background(), mcpai.ChatCompletionRequest{})
+	if err != nil {
+		t.Fatalf("ChatCompletion failed: %v", err)
+	}
+
+	toolCalls := extractToolCallsFromGo(chatCompletionResponseToGoMap(response))
+	if len(toolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(toolCalls))
+	}
+	if got := toolCalls[0]["function"].(map[string]any)["name"]; got != "echo_tool" {
+		t.Fatalf("expected tool name echo_tool, got %#v", got)
+	}
+	args, ok := toolCalls[0]["function"].(map[string]any)["arguments"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected normalized arguments dict")
+	}
+	if args["message"] != "hello from tool test" {
+		t.Fatalf("expected message argument, got %#v", args["message"])
+	}
+}
+
+func TestCollectStreamAggregatesToolCalls(t *testing.T) {
+	stream := toolStreamMockClient{}.StreamChatCompletion(context.Background(), mcpai.ChatCompletionRequest{})
+	instance := &object.Instance{
+		Class: GetChatStreamClass(),
+		Fields: map[string]object.Object{
+			"_stream": &object.ClientWrapper{
+				TypeName: "ChatStream",
+				Client: &ChatStreamInstance{
+					stream: stream,
+				},
+			},
+		},
+	}
+
+	result, errObj := collectStream(context.Background(), instance, 100, 0, nil)
+	if errObj != nil {
+		t.Fatalf("collectStream returned error: %s", errObj.Message)
+	}
+	if result["reasoning"] != "Thinking about tools." {
+		t.Fatalf("unexpected reasoning: %#v", result["reasoning"])
+	}
+	if result["finish_reason"] != "tool_calls" {
+		t.Fatalf("unexpected finish_reason: %#v", result["finish_reason"])
+	}
+	toolCalls, ok := result["tool_calls"].([]map[string]any)
+	if !ok || len(toolCalls) != 1 {
+		t.Fatalf("expected one aggregated tool call, got %#v", result["tool_calls"])
+	}
+	args, ok := toolCalls[0]["function"].(map[string]any)["arguments"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected tool arguments dict")
+	}
+	if args["message"] != "hello from streaming helper" {
+		t.Fatalf("unexpected streamed message: %#v", args["message"])
+	}
+}
+
+func TestCollectStreamExtractsThinkingTagsFromContentDeltas(t *testing.T) {
+	stream := thinkingTagStreamMockClient{}.StreamChatCompletion(context.Background(), mcpai.ChatCompletionRequest{})
+	instance := &object.Instance{
+		Class: GetChatStreamClass(),
+		Fields: map[string]object.Object{
+			"_stream": &object.ClientWrapper{
+				TypeName: "ChatStream",
+				Client: &ChatStreamInstance{
+					stream: stream,
+				},
+			},
+		},
+	}
+
+	result, errObj := collectStream(context.Background(), instance, 100, 0, nil)
+	if errObj != nil {
+		t.Fatalf("collectStream returned error: %s", errObj.Message)
+	}
+	if result["reasoning"] != "The user asked to read the `LICENSE.txt` file." {
+		t.Fatalf("unexpected reasoning: %#v", result["reasoning"])
+	}
+	if result["content"] != "Here is the file content." {
+		t.Fatalf("unexpected content: %#v", result["content"])
+	}
+
+	assistantMessage, ok := result["assistant_message"].(map[string]any)
+	if !ok {
+		t.Fatalf("assistant_message should be a map, got %T", result["assistant_message"])
+	}
+	if assistantMessage["content"] != "<thinking>\nThe user asked to read the `LICENSE.txt` file.\n</thinking>\n\nHere is the file content." {
+		t.Fatalf("unexpected assistant message content: %#v", assistantMessage["content"])
+	}
+}
+
+func TestAIToolHelperScriptAPI(t *testing.T) {
+	t.Run("tool_round executes non-streaming tool calls", func(t *testing.T) {
+		p := scriptlib.New()
+		stdlib.RegisterAll(p)
+		Register(p)
+
+		if err := p.SetObjectVar("ai_client", WrapClient(toolArgsMockClient{})); err != nil {
+			t.Fatalf("SetObjectVar(ai_client): %v", err)
+		}
+
+		result, err := p.Eval(`
+import scriptling.ai as ai
+
+tools = ai.ToolRegistry()
+tools.add("echo_tool", "Echo a message", {"message": "string"}, lambda args: "handled:" + args.get("message", "missing"))
+
+round = ai.tool_round(ai_client, "gpt-4", "hello", tools)
+round["tool_results"][0]["content"]
+`)
+		if err != nil {
+			t.Fatalf("Eval failed: %v", err)
+		}
+
+		str, ok := result.(*object.String)
+		if !ok {
+			t.Fatalf("expected String, got %T", result)
+		}
+		if str.Value != "handled:hello from tool test" {
+			t.Fatalf("expected tool result, got %q", str.Value)
+		}
+	})
+
+	t.Run("tool_round executes streaming tool calls", func(t *testing.T) {
+		p := scriptlib.New()
+		stdlib.RegisterAll(p)
+		Register(p)
+
+		if err := p.SetObjectVar("ai_client", WrapClient(toolStreamMockClient{})); err != nil {
+			t.Fatalf("SetObjectVar(ai_client): %v", err)
+		}
+
+		result, err := p.Eval(`
+import scriptling.ai as ai
+
+tools = ai.ToolRegistry()
+tools.add("echo_tool", "Echo a message", {"message": "string"}, lambda args: "streamed:" + args.get("message", "missing"))
+
+round = ai.tool_round(ai_client, "gpt-4", "hello", tools, stream=True, chunk_timeout_ms=100)
+round["reasoning"] + "|" + round["tool_results"][0]["content"]
+`)
+		if err != nil {
+			t.Fatalf("Eval failed: %v", err)
+		}
+
+		str, ok := result.(*object.String)
+		if !ok {
+			t.Fatalf("expected String, got %T", result)
+		}
+		if str.Value != "Thinking about tools.|streamed:hello from streaming helper" {
+			t.Fatalf("unexpected streaming tool round output: %q", str.Value)
+		}
+	})
+}
+
 // Test createClientInstance creates a valid instance
 func TestCreateClientInstance(t *testing.T) {
 	instance := createClientInstance(nil)
@@ -532,7 +1008,7 @@ func TestBuildLibrary(t *testing.T) {
 	}
 
 	// Check that expected functions exist (only library-level functions)
-	expectedFuncs := []string{"Client", "extract_thinking", "text", "thinking", "estimate_tokens"}
+	expectedFuncs := []string{"Client", "extract_thinking", "text", "thinking", "tool_calls", "execute_tool_calls", "collect_stream", "tool_round", "estimate_tokens"}
 	for _, name := range expectedFuncs {
 		if _, ok := lib.Functions()[name]; !ok {
 			t.Errorf("library missing function %q", name)
@@ -837,8 +1313,8 @@ func TestResponseCreateMethodStringShorthand(t *testing.T) {
 			expectedError: "no client configured",
 		},
 		{
-			name:     "string with system_prompt",
-			input:    "What is AI?",
+			name:  "string with system_prompt",
+			input: "What is AI?",
 			kwargs: object.NewKwargs(map[string]object.Object{
 				"system_prompt": &object.String{Value: "You are a helpful assistant"},
 			}),
@@ -851,7 +1327,7 @@ func TestResponseCreateMethodStringShorthand(t *testing.T) {
 			expectedError: "no client configured",
 		},
 		{
-			name: "system_prompt with array should error",
+			name:  "system_prompt with array should error",
 			input: []any{map[string]any{"type": "message", "role": "user", "content": "Hello!"}},
 			kwargs: object.NewKwargs(map[string]object.Object{
 				"system_prompt": &object.String{Value: "You are helpful"},
