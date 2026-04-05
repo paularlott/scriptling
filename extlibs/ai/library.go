@@ -308,10 +308,78 @@ Example:
   response = client.completion("gpt-4", "Explain step by step")
   thoughts = ai.thinking(response)
   for thought in thoughts:
-      print("Reasoning:", thought)`)
+      print("Reasoning:", thought)`).
+
+			// estimate_tokens(request, response) - Estimate token counts for request and response
+			FunctionWithHelp("estimate_tokens", func(ctx context.Context, requestObj object.Object, responseObj object.Object) (object.Object, error) {
+					tc := openai.NewTokenCounter()
+
+					// Estimate prompt tokens from request messages
+					requestGo := conversion.ToGo(requestObj)
+					if requestMap, ok := requestGo.(map[string]any); ok {
+						if messagesRaw, ok := requestMap["messages"]; ok {
+							requestGo = messagesRaw
+						}
+					}
+
+					switch req := requestGo.(type) {
+					case []any:
+						maps := make([]map[string]any, 0, len(req))
+						for _, item := range req {
+							if m, ok := item.(map[string]any); ok {
+								maps = append(maps, m)
+							}
+						}
+						tc.AddPromptTokensFromMaps(maps)
+					case string:
+						tc.AddPromptTokensFromMessages([]ai.Message{{Role: "user", Content: req}})
+					}
+
+					// Estimate completion tokens from response
+					responseGo := conversion.ToGo(responseObj)
+					if responseMap, ok := responseGo.(map[string]any); ok {
+						tc.AddCompletionTokensFromResponseMap(responseMap)
+					}
+
+					usage := tc.GetUsage()
+					return conversion.FromGo(map[string]any{
+						"prompt_tokens":     usage.PromptTokens,
+						"completion_tokens": usage.CompletionTokens,
+						"total_tokens":      usage.TotalTokens,
+					}), nil
+				}, `estimate_tokens(request, response) - Estimate token counts for messages and response
+
+	Estimates the number of tokens in the request messages and response using
+	a character-based heuristic (~4 characters per token). This provides a fast,
+	reproducible approximation useful for cost estimation and context window management.
+
+	Parameters:
+	  request (str, list, or dict): The messages sent to the AI. Can be:
+	    - A string (user message)
+	    - A list of message dicts with "role" and "content" keys
+	    - A completion request dict with a "messages" key
+	  response (dict): The completion response from client.completion() or client.response_create()
+
+	Returns:
+	  dict: Token usage estimates with keys:
+	    - prompt_tokens (int): Estimated tokens in the request messages
+	    - completion_tokens (int): Estimated tokens in the response
+	    - total_tokens (int): Sum of prompt and completion tokens
+
+	Example:
+	  client = ai.Client("", api_key="sk-...")
+	  messages = [{"role": "user", "content": "Hello!"}]
+	  response = client.completion("gpt-4", messages)
+	  usage = ai.estimate_tokens(messages, response)
+	  print(f"Prompt: {usage.prompt_tokens}, Completion: {usage.completion_tokens}")
+
+	  # Also works with string shorthand
+	  response = client.completion("gpt-4", "What is 2+2?")
+	  usage = ai.estimate_tokens("What is 2+2?", response)
+	  print(f"Total: {usage.total_tokens} tokens")`)
 
 	return builder.Build()
-}
+	}
 
 // convertMapsToOpenAI converts Go map messages to ai.Message format
 func convertMapsToOpenAI(messages []map[string]any) []ai.Message {

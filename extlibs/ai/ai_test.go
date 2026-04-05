@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -531,7 +532,7 @@ func TestBuildLibrary(t *testing.T) {
 	}
 
 	// Check that expected functions exist (only library-level functions)
-	expectedFuncs := []string{"Client", "extract_thinking", "text", "thinking"}
+	expectedFuncs := []string{"Client", "extract_thinking", "text", "thinking", "estimate_tokens"}
 	for _, name := range expectedFuncs {
 		if _, ok := lib.Functions()[name]; !ok {
 			t.Errorf("library missing function %q", name)
@@ -974,4 +975,243 @@ func TestExtractThinking(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEstimateTokens(t *testing.T) {
+	lib := buildLibrary()
+	fn, ok := lib.Functions()["estimate_tokens"]
+	if !ok {
+		t.Fatal("estimate_tokens function not found in library")
+	}
+
+	t.Run("string request with chat completion response", func(t *testing.T) {
+		request := conversion.FromGo("What is 2+2?")
+		response := conversion.FromGo(map[string]any{
+			"choices": []any{
+				map[string]any{
+					"message": map[string]any{
+						"role":    "assistant",
+						"content": "The answer is 4.",
+					},
+				},
+			},
+		})
+
+		result := fn.Fn(context.Background(), object.NewKwargs(nil), request, response)
+		if errObj, ok := result.(*object.Error); ok {
+			t.Fatalf("unexpected error: %s", errObj.Message)
+		}
+
+		resultGo := conversion.ToGo(result)
+		usage, ok := resultGo.(map[string]any)
+		if !ok {
+			t.Fatalf("result is %T, want map[string]any", resultGo)
+		}
+
+		promptTokens, _ := usage["prompt_tokens"].(int64)
+		completionTokens, _ := usage["completion_tokens"].(int64)
+		totalTokens, _ := usage["total_tokens"].(int64)
+
+		if promptTokens == 0 {
+			t.Error("prompt_tokens should be > 0")
+		}
+		if completionTokens == 0 {
+			t.Error("completion_tokens should be > 0")
+		}
+		if totalTokens != promptTokens+completionTokens {
+			t.Errorf("total_tokens (%d) != prompt (%d) + completion (%d)",
+				totalTokens, promptTokens, completionTokens)
+		}
+	})
+
+	t.Run("list of message maps request", func(t *testing.T) {
+		request := conversion.FromGo([]any{
+			map[string]any{"role": "system", "content": "You are helpful."},
+			map[string]any{"role": "user", "content": "Hello!"},
+		})
+		response := conversion.FromGo(map[string]any{
+			"choices": []any{
+				map[string]any{
+					"message": map[string]any{
+						"role":    "assistant",
+						"content": "Hi there!",
+					},
+				},
+			},
+		})
+
+		result := fn.Fn(context.Background(), object.NewKwargs(nil), request, response)
+		if errObj, ok := result.(*object.Error); ok {
+			t.Fatalf("unexpected error: %s", errObj.Message)
+		}
+
+		resultGo := conversion.ToGo(result)
+		usage, ok := resultGo.(map[string]any)
+		if !ok {
+			t.Fatalf("result is %T, want map[string]any", resultGo)
+		}
+
+		promptTokens, _ := usage["prompt_tokens"].(int64)
+		if promptTokens == 0 {
+			t.Error("prompt_tokens should be > 0 for messages")
+		}
+	})
+
+	t.Run("request dict with messages key", func(t *testing.T) {
+		request := conversion.FromGo(map[string]any{
+			"messages": []any{
+				map[string]any{"role": "user", "content": "What is AI?"},
+			},
+		})
+		response := conversion.FromGo(map[string]any{
+			"choices": []any{
+				map[string]any{
+					"message": map[string]any{
+						"role":    "assistant",
+						"content": "AI is a field of computer science.",
+					},
+				},
+			},
+		})
+
+		result := fn.Fn(context.Background(), object.NewKwargs(nil), request, response)
+		if errObj, ok := result.(*object.Error); ok {
+			t.Fatalf("unexpected error: %s", errObj.Message)
+		}
+
+		resultGo := conversion.ToGo(result)
+		usage, ok := resultGo.(map[string]any)
+		if !ok {
+			t.Fatalf("result is %T, want map[string]any", resultGo)
+		}
+
+		promptTokens, _ := usage["prompt_tokens"].(int64)
+		if promptTokens == 0 {
+			t.Error("prompt_tokens should be > 0 for request dict")
+		}
+	})
+
+	t.Run("response with tool calls", func(t *testing.T) {
+		request := conversion.FromGo("What's the weather?")
+		response := conversion.FromGo(map[string]any{
+			"choices": []any{
+				map[string]any{
+					"message": map[string]any{
+						"role":    "assistant",
+						"content": "",
+						"tool_calls": []any{
+							map[string]any{
+								"id":   "call_1",
+								"type": "function",
+								"function": map[string]any{
+									"name":      "get_weather",
+									"arguments": `{"city": "Paris"}`,
+								},
+							},
+						},
+					},
+				},
+			},
+		})
+
+		result := fn.Fn(context.Background(), object.NewKwargs(nil), request, response)
+		if errObj, ok := result.(*object.Error); ok {
+			t.Fatalf("unexpected error: %s", errObj.Message)
+		}
+
+		resultGo := conversion.ToGo(result)
+		usage, ok := resultGo.(map[string]any)
+		if !ok {
+			t.Fatalf("result is %T, want map[string]any", resultGo)
+		}
+
+		completionTokens, _ := usage["completion_tokens"].(int64)
+		if completionTokens == 0 {
+			t.Error("completion_tokens should be > 0 with tool calls")
+		}
+	})
+
+	t.Run("responses API format", func(t *testing.T) {
+		request := conversion.FromGo("Explain AI")
+		response := conversion.FromGo(map[string]any{
+			"output": []any{
+				map[string]any{
+					"type": "message",
+					"content": []any{
+						map[string]any{
+							"type": "output_text",
+							"text": "AI stands for artificial intelligence.",
+						},
+					},
+				},
+			},
+		})
+
+		result := fn.Fn(context.Background(), object.NewKwargs(nil), request, response)
+		if errObj, ok := result.(*object.Error); ok {
+			t.Fatalf("unexpected error: %s", errObj.Message)
+		}
+
+		resultGo := conversion.ToGo(result)
+		usage, ok := resultGo.(map[string]any)
+		if !ok {
+			t.Fatalf("result is %T, want map[string]any", resultGo)
+		}
+
+		completionTokens, _ := usage["completion_tokens"].(int64)
+		if completionTokens == 0 {
+			t.Error("completion_tokens should be > 0 for Responses API format")
+		}
+	})
+
+	t.Run("empty response", func(t *testing.T) {
+		request := conversion.FromGo("Hello")
+		response := conversion.FromGo(map[string]any{})
+
+		result := fn.Fn(context.Background(), object.NewKwargs(nil), request, response)
+		if errObj, ok := result.(*object.Error); ok {
+			t.Fatalf("unexpected error: %s", errObj.Message)
+		}
+
+		resultGo := conversion.ToGo(result)
+		usage, ok := resultGo.(map[string]any)
+		if !ok {
+			t.Fatalf("result is %T, want map[string]any", resultGo)
+		}
+
+		promptTokens, _ := usage["prompt_tokens"].(int64)
+		completionTokens, _ := usage["completion_tokens"].(int64)
+		if promptTokens == 0 {
+			t.Error("prompt_tokens should be > 0 even with empty response")
+		}
+		if completionTokens != 0 {
+			t.Error("completion_tokens should be 0 for empty response")
+		}
+	})
+
+	t.Run("consistency - same input gives same output", func(t *testing.T) {
+		request := conversion.FromGo("Hello world, this is a test of token estimation.")
+		response := conversion.FromGo(map[string]any{
+			"choices": []any{
+				map[string]any{
+					"message": map[string]any{
+						"role":    "assistant",
+						"content": "This is the response from the AI model.",
+					},
+				},
+			},
+		})
+
+		result1 := fn.Fn(context.Background(), object.NewKwargs(nil), request, response)
+		result2 := fn.Fn(context.Background(), object.NewKwargs(nil), request, response)
+
+		usage1 := conversion.ToGo(result1).(map[string]any)
+		usage2 := conversion.ToGo(result2).(map[string]any)
+
+		for _, key := range []string{"prompt_tokens", "completion_tokens", "total_tokens"} {
+			if usage1[key] != usage2[key] {
+				t.Errorf("inconsistent results for %s: %v vs %v", key, usage1[key], usage2[key])
+			}
+		}
+	})
 }
