@@ -251,6 +251,100 @@ is_str = isinstance(dog, str)
 	}
 }
 
+func TestIsinstanceWithTupleOfTypes(t *testing.T) {
+	tests := []struct {
+		name     string
+		code     string
+		expected bool
+	}{
+		// Tuple of bare types
+		{"dict in (dict, list, tuple)", `result = isinstance({}, (dict, list, tuple))`, true},
+		{"list in (dict, list, tuple)", `result = isinstance([], (dict, list, tuple))`, true},
+		{"tuple in (dict, list, tuple)", `result = isinstance((1,2), (dict, list, tuple))`, true},
+		{"int not in (dict, list, tuple)", `result = isinstance(42, (dict, list, tuple))`, false},
+		{"str not in (dict, list)", `result = isinstance("hi", (dict, list))`, false},
+		{"int in (dict, list, int)", `result = isinstance(42, (dict, list, int))`, true},
+		{"str in (int, str)", `result = isinstance("hi", (int, str))`, true},
+		{"float in (int, float)", `result = isinstance(3.14, (int, float))`, true},
+		{"bool in (int, bool)", `result = isinstance(True, (int, bool))`, true},
+
+		// Single-element tuple
+		{"single element tuple match", `result = isinstance(42, (int,))`, true},
+		{"single element tuple no match", `result = isinstance("x", (int,))`, false},
+
+		// List of types (also supported)
+		{"list of types match", `result = isinstance([], [dict, list])`, true},
+		{"list of types no match", `result = isinstance(42, [dict, list])`, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := New()
+			_, err := p.Eval(tt.code)
+			if err != nil {
+				t.Fatalf("Eval failed: %v", err)
+			}
+			result, _ := p.GetVar("result")
+			if result != tt.expected {
+				t.Errorf("Expected %v, got %v for: %s", tt.expected, result, tt.code)
+			}
+		})
+	}
+}
+
+func TestIsinstanceWithTupleOfTypesAndClasses(t *testing.T) {
+	p := New()
+	_, err := p.Eval(`
+class Animal:
+    def __init__(self, name):
+        self.name = name
+
+class Dog(Animal):
+    def __init__(self, name, breed):
+        self.name = name
+        self.breed = breed
+
+dog = Dog("Rex", "Labrador")
+
+# Tuple with class types
+is_animal_or_str = isinstance(dog, (Animal, str))
+is_animal_or_int = isinstance(dog, (Animal, int))
+is_str_or_int = isinstance(dog, (str, int))
+
+# Mixed class and builtin types
+is_dog_or_dict = isinstance(dog, (Dog, dict))
+is_animal_or_list = isinstance(dog, (Animal, list))
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+
+	isAnimalOrStr, _ := p.GetVar("is_animal_or_str")
+	if isAnimalOrStr != true {
+		t.Error("Expected isinstance(dog, (Animal, str)) to be True")
+	}
+
+	isAnimalOrInt, _ := p.GetVar("is_animal_or_int")
+	if isAnimalOrInt != true {
+		t.Error("Expected isinstance(dog, (Animal, int)) to be True")
+	}
+
+	isStrOrInt, _ := p.GetVar("is_str_or_int")
+	if isStrOrInt != false {
+		t.Error("Expected isinstance(dog, (str, int)) to be False")
+	}
+
+	isDogOrDict, _ := p.GetVar("is_dog_or_dict")
+	if isDogOrDict != true {
+		t.Error("Expected isinstance(dog, (Dog, dict)) to be True")
+	}
+
+	isAnimalOrList, _ := p.GetVar("is_animal_or_list")
+	if isAnimalOrList != true {
+		t.Error("Expected isinstance(dog, (Animal, list)) to be True")
+	}
+}
+
 // ============================================================================
 // Cross-Type Comparison Tests
 // ============================================================================

@@ -985,67 +985,75 @@ Equivalent to (a // b, a % b) for integers.`,
 				return err
 			}
 
-			// Determine the type name from the second argument
-			var typeName string
+			// Collect types to check - handle tuple/list of types
+			var typeArgs []object.Object
+			switch t := args[1].(type) {
+			case *object.Tuple:
+				typeArgs = t.Elements
+			case *object.List:
+				typeArgs = t.Elements
+			default:
+				typeArgs = []object.Object{args[1]}
+			}
 
-			// Check for class type first (before AsString, since Class.AsString returns name)
-			if class, ok := args[1].(*object.Class); ok {
-				// Class type: isinstance(x, MyClass)
-				if inst, ok := args[0].(*object.Instance); ok {
-					// Check direct class match and inheritance chain
-					for c := inst.Class; c != nil; c = c.BaseClass {
-						if c == class {
-							return TRUE
+			obj := args[0]
+			objType := obj.Type().String()
+
+			for _, typeArg := range typeArgs {
+				// Check for class type (before AsString, since Class.AsString returns name)
+				if class, ok := typeArg.(*object.Class); ok {
+					if inst, ok := obj.(*object.Instance); ok {
+						for c := inst.Class; c != nil; c = c.BaseClass {
+							if c == class {
+								return TRUE
+							}
 						}
 					}
-					return FALSE
+					continue
 				}
-				return FALSE
-			} else if s, err := args[1].AsString(); err == nil {
-				// String type name: isinstance(x, "dict")
-				typeName = s
-			} else if b, ok := args[1].(*object.Builtin); ok {
-				// Bare type builtin: isinstance(x, dict) where dict is a builtin function
-				if name, found := typeBuiltins[b]; found {
-					typeName = name
-				} else {
-					return errors.NewError("isinstance() arg 2 must be a type or string")
-				}
-			} else {
-				return errors.NewError("isinstance() arg 2 must be a type or string")
-			}
 
-			objType := args[0].Type().String()
-			// Support common Python type names
-			checkType := strings.ToUpper(typeName)
-			switch checkType {
-			case "INT", "INTEGER":
-				checkType = "INTEGER"
-			case "STR", "STRING":
-				checkType = "STRING"
-			case "FLOAT":
-				checkType = "FLOAT"
-			case "BOOL", "BOOLEAN":
-				checkType = "BOOLEAN"
-			case "LIST":
-				checkType = "LIST"
-			case "DICT":
-				checkType = "DICT"
-			case "TUPLE":
-				checkType = "TUPLE"
-			case "FUNCTION":
-				checkType = "FUNCTION"
-			case "NONE", "NULL", "NONETYPE":
-				checkType = "NULL"
-			}
-			if objType == checkType {
-				return TRUE
-			}
-			// For string class names, walk the instance's inheritance chain
-			if inst, ok := args[0].(*object.Instance); ok {
-				for c := inst.Class; c != nil; c = c.BaseClass {
-					if strings.EqualFold(c.Name, typeName) {
-						return TRUE
+				var typeName string
+				if s, err := typeArg.AsString(); err == nil {
+					typeName = s
+				} else if b, ok := typeArg.(*object.Builtin); ok {
+					if name, found := typeBuiltins[b]; found {
+						typeName = name
+					} else {
+						return errors.NewError("isinstance() arg 2 must be a type, string, or tuple of types")
+					}
+				} else {
+					return errors.NewError("isinstance() arg 2 must be a type, string, or tuple of types")
+				}
+
+				checkType := strings.ToUpper(typeName)
+				switch checkType {
+				case "INT", "INTEGER":
+					checkType = "INTEGER"
+				case "STR", "STRING":
+					checkType = "STRING"
+				case "FLOAT":
+					checkType = "FLOAT"
+				case "BOOL", "BOOLEAN":
+					checkType = "BOOLEAN"
+				case "LIST":
+					checkType = "LIST"
+				case "DICT":
+					checkType = "DICT"
+				case "TUPLE":
+					checkType = "TUPLE"
+				case "FUNCTION":
+					checkType = "FUNCTION"
+				case "NONE", "NULL", "NONETYPE":
+					checkType = "NULL"
+				}
+				if objType == checkType {
+					return TRUE
+				}
+				if inst, ok := obj.(*object.Instance); ok {
+					for c := inst.Class; c != nil; c = c.BaseClass {
+						if strings.EqualFold(c.Name, typeName) {
+							return TRUE
+						}
 					}
 				}
 			}
@@ -1055,6 +1063,7 @@ Equivalent to (a // b, a % b) for integers.`,
 
 Supports bare type names: isinstance(x, dict), isinstance(x, int)
 Also supports string type names: isinstance(x, "dict"), isinstance(x, "int")
+Supports tuple/list of types: isinstance(x, (dict, list, tuple))
 Type names: int, str, float, bool, list, dict, tuple, function, None
 Also works with class types: isinstance(obj, MyClass)`,
 	},
