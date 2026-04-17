@@ -132,11 +132,9 @@ func init() {
 }
 
 func New(l *lexer.Lexer) *Parser {
-	p := &Parser{l: l, errors: []string{}}
-
+	p := &Parser{l: l, errors: make([]string, 0, 8)}
 	p.nextToken()
 	p.nextToken()
-
 	return p
 }
 
@@ -338,7 +336,7 @@ func (p *Parser) parseAssignStatement() *ast.AssignStatement {
 }
 
 func (p *Parser) parseMultipleAssignStatement() ast.Statement {
-	names := []*ast.Identifier{}
+	names := make([]*ast.Identifier, 0, 4)
 	starredIndex := -1
 
 	// Parse first identifier (may be starred)
@@ -383,7 +381,8 @@ func (p *Parser) parseMultipleAssignStatement() ast.Statement {
 
 	// If there's a comma after the first value, it's tuple packing
 	if p.peekTokenIs(token.COMMA) {
-		values := []ast.Expression{firstValue}
+		values := make([]ast.Expression, 1, 4)
+		values[0] = firstValue
 		for p.peekTokenIs(token.COMMA) {
 			p.nextToken() // consume comma
 			p.nextToken() // move to next expression
@@ -447,9 +446,11 @@ func (p *Parser) parseImportStatement() *ast.ImportStatement {
 	}
 
 	// Check for additional imports separated by commas
-	stmt.AdditionalNames = []*ast.Identifier{}
-	stmt.AdditionalAliases = []*ast.Identifier{}
 	for p.peekTokenIs(token.COMMA) {
+		if stmt.AdditionalNames == nil {
+			stmt.AdditionalNames = make([]*ast.Identifier, 0, 2)
+			stmt.AdditionalAliases = make([]*ast.Identifier, 0, 2)
+		}
 		p.nextToken() // consume comma
 		if !p.expectPeek(token.IDENT) {
 			return nil
@@ -698,7 +699,8 @@ func (p *Parser) parseTuplePackingTail(tok token.Token, first ast.Expression) as
 	if !p.peekTokenIs(token.COMMA) {
 		return first
 	}
-	elements := []ast.Expression{first}
+	elements := make([]ast.Expression, 1, 4)
+	elements[0] = first
 	for p.peekTokenIs(token.COMMA) {
 		p.nextToken() // consume comma — skippedNewline is now set if a newline followed
 		if p.skippedNewline || p.peekTokenIs(token.EOF) || p.peekTokenIs(token.DEDENT) {
@@ -828,9 +830,7 @@ func (p *Parser) parseFStringContent(content string) ([]string, []ast.Expression
 			// Parse the expression
 			exprText := exprStr.String()
 			if exprText != "" {
-				lexer := lexer.New(exprText)
-				parser := New(lexer)
-				expr := parser.parseExpression(LOWEST)
+				expr := parseExpressionString(exprText)
 				if expr != nil {
 					expressions = append(expressions, expr)
 					formatSpecs = append(formatSpecs, formatSpec.String())
@@ -876,6 +876,12 @@ func (p *Parser) parseFStringContent(content string) ([]string, []ast.Expression
 
 	parts = append(parts, current.String())
 	return parts, expressions, formatSpecs
+}
+
+func parseExpressionString(input string) ast.Expression {
+	p := New(lexer.New(input))
+	expr := p.parseExpression(LOWEST)
+	return expr
 }
 
 func (p *Parser) parseBoolean() ast.Expression {
@@ -958,7 +964,7 @@ func (p *Parser) parseGroupedExpression() ast.Expression {
 
 	// Check for empty tuple
 	if p.curTokenIs(token.RPAREN) {
-		return &ast.TupleLiteral{Token: p.curToken, Elements: []ast.Expression{}}
+		return &ast.TupleLiteral{Token: p.curToken, Elements: nil}
 	}
 
 	firstExp := p.parseExpression(LOWEST_PRECEDENCE)
@@ -970,7 +976,8 @@ func (p *Parser) parseGroupedExpression() ast.Expression {
 
 	// Check if this is a tuple (has comma)
 	if p.peekTokenIs(token.COMMA) {
-		elements := []ast.Expression{firstExp}
+		elements := make([]ast.Expression, 1, 4)
+		elements[0] = firstExp
 
 		for p.peekTokenIs(token.COMMA) {
 			p.nextToken() // consume comma
@@ -1003,9 +1010,9 @@ func (p *Parser) parseCallExpression(function ast.Expression) ast.Expression {
 }
 
 func (p *Parser) parseCallArguments() ([]ast.Expression, map[string]ast.Expression, []ast.Expression, ast.Expression) {
-	args := []ast.Expression{}
-	keywords := make(map[string]ast.Expression)
-	argsUnpack := []ast.Expression{}
+	var args []ast.Expression
+	var keywords map[string]ast.Expression
+	var argsUnpack []ast.Expression
 	var kwargsUnpack ast.Expression
 
 	if p.peekTokenIs(token.RPAREN) {
@@ -1054,6 +1061,9 @@ func (p *Parser) parseCallArguments() ([]ast.Expression, map[string]ast.Expressi
 		// Check for keyword argument: name=value
 		if p.curTokenIs(token.IDENT) && p.peekTokenIs(token.ASSIGN) {
 			key := p.curToken.Literal
+			if keywords == nil {
+				keywords = make(map[string]ast.Expression, 2)
+			}
 			if _, exists := keywords[key]; exists {
 				msg := fmt.Sprintf("line %d: keyword argument repeated: %s", p.curToken.Line, key)
 				p.errors = append(p.errors, msg)
@@ -1118,8 +1128,10 @@ func (p *Parser) parseIfStatement() *ast.IfStatement {
 	stmt.Consequence = p.parseBlockStatement()
 
 	// Parse elif clauses
-	stmt.ElifClauses = []*ast.ElifClause{}
 	for p.peekTokenIs(token.ELIF) {
+		if stmt.ElifClauses == nil {
+			stmt.ElifClauses = make([]*ast.ElifClause, 0, 2)
+		}
 		p.nextToken() // consume elif
 		elifClause := &ast.ElifClause{Token: p.curToken}
 
@@ -1170,8 +1182,7 @@ func (p *Parser) parseWhileStatement() *ast.WhileStatement {
 }
 
 func (p *Parser) parseBlockStatement() *ast.BlockStatement {
-	block := &ast.BlockStatement{Token: p.curToken}
-	block.Statements = []ast.Statement{}
+	block := &ast.BlockStatement{Token: p.curToken, Statements: make([]ast.Statement, 0, 4)}
 
 	// Check for single-line block (statement on same line after colon)
 	// e.g., "if True: x = 1" or "if True: return x"
