@@ -540,6 +540,8 @@ func (p *Parser) parseFromImportStatement() *ast.FromImportStatement {
 
 	// First name
 	name := &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+	stmt.Names = make([]*ast.Identifier, 0, 2)
+	stmt.Aliases = make([]*ast.Identifier, 0, 2)
 	stmt.Names = append(stmt.Names, name)
 
 	// Check for alias (as)
@@ -1271,8 +1273,8 @@ func (p *Parser) parseClassStatement() *ast.ClassStatement {
 }
 
 func (p *Parser) parseFunctionParameters() ([]*ast.Identifier, map[string]ast.Expression, *ast.Identifier, *ast.Identifier) {
-	identifiers := []*ast.Identifier{}
-	defaults := make(map[string]ast.Expression)
+	var identifiers []*ast.Identifier
+	var defaults map[string]ast.Expression
 	var variadic *ast.Identifier
 	var kwargs *ast.Identifier
 
@@ -1324,6 +1326,9 @@ func (p *Parser) parseFunctionParameters() ([]*ast.Identifier, map[string]ast.Ex
 
 	// Check for default value
 	if p.peekTokenIs(token.ASSIGN) {
+		if defaults == nil {
+			defaults = make(map[string]ast.Expression, 2)
+		}
 		p.nextToken() // consume =
 		p.nextToken()
 		defaults[ident.Value] = p.parseExpression(LOWEST)
@@ -1377,6 +1382,9 @@ func (p *Parser) parseFunctionParameters() ([]*ast.Identifier, map[string]ast.Ex
 
 		// Check for default value
 		if p.peekTokenIs(token.ASSIGN) {
+			if defaults == nil {
+				defaults = make(map[string]ast.Expression, 2)
+			}
 			p.nextToken() // consume =
 			p.nextToken()
 			defaults[ident.Value] = p.parseExpression(LOWEST)
@@ -1396,7 +1404,7 @@ func (p *Parser) parseForStatement() *ast.ForStatement {
 	p.nextToken() // move to first variable
 
 	// Parse the variable list (can be single or multiple separated by commas)
-	stmt.Variables = []ast.Expression{}
+	stmt.Variables = make([]ast.Expression, 0, 2)
 	stmt.Variables = append(stmt.Variables, p.parseExpression(EQUALS))
 
 	for p.peekTokenIs(token.COMMA) {
@@ -1447,7 +1455,8 @@ func (p *Parser) parseListLiteral() ast.Expression {
 	}
 
 	// Regular list literal
-	elements := []ast.Expression{firstExpr}
+	elements := make([]ast.Expression, 1, 4)
+	elements[0] = firstExpr
 
 	for p.peekTokenIs(token.COMMA) {
 		p.nextToken()
@@ -1488,7 +1497,8 @@ func (p *Parser) parseAdditionalClauses() []ast.ComprehensionClause {
 	for p.peekTokenIs(token.FOR) {
 		p.nextToken() // consume FOR
 		p.nextToken() // move to variable
-		vars := []ast.Expression{p.parseExpression(EQUALS)}
+		vars := make([]ast.Expression, 1, 2)
+		vars[0] = p.parseExpression(EQUALS)
 		for p.peekTokenIs(token.COMMA) {
 			p.nextToken()
 			p.nextToken()
@@ -1522,7 +1532,8 @@ func (p *Parser) parseComprehensionCore(expr ast.Expression, endToken token.Toke
 	}
 
 	p.nextToken()
-	comp.Variables = []ast.Expression{p.parseExpression(EQUALS)}
+	comp.Variables = make([]ast.Expression, 1, 2)
+	comp.Variables[0] = p.parseExpression(EQUALS)
 	for p.peekTokenIs(token.COMMA) {
 		p.nextToken()
 		p.nextToken()
@@ -1555,9 +1566,6 @@ func (p *Parser) parseLambda() ast.Expression {
 	// Parse parameters (optional)
 	if !p.peekTokenIs(token.COLON) {
 		lambda.Parameters, lambda.DefaultValues, lambda.Variadic, lambda.Kwargs = p.parseLambdaParameters()
-	} else {
-		lambda.Parameters = []*ast.Identifier{}
-		lambda.DefaultValues = make(map[string]ast.Expression)
 	}
 
 	if !p.expectPeek(token.COLON) {
@@ -1571,8 +1579,8 @@ func (p *Parser) parseLambda() ast.Expression {
 }
 
 func (p *Parser) parseLambdaParameters() ([]*ast.Identifier, map[string]ast.Expression, *ast.Identifier, *ast.Identifier) {
-	identifiers := []*ast.Identifier{}
-	defaults := make(map[string]ast.Expression)
+	var identifiers []*ast.Identifier
+	var defaults map[string]ast.Expression
 	var variadic *ast.Identifier
 	var kwargs *ast.Identifier
 
@@ -1614,6 +1622,9 @@ func (p *Parser) parseLambdaParameters() ([]*ast.Identifier, map[string]ast.Expr
 
 	// Check for default value
 	if p.peekTokenIs(token.ASSIGN) {
+		if defaults == nil {
+			defaults = make(map[string]ast.Expression, 2)
+		}
 		p.nextToken() // consume =
 		p.nextToken()
 		defaults[ident.Value] = p.parseExpression(LOWEST)
@@ -1655,6 +1666,9 @@ func (p *Parser) parseLambdaParameters() ([]*ast.Identifier, map[string]ast.Expr
 
 		// Check for default value
 		if p.peekTokenIs(token.ASSIGN) {
+			if defaults == nil {
+				defaults = make(map[string]ast.Expression, 2)
+			}
 			p.nextToken() // consume =
 			p.nextToken()
 			defaults[ident.Value] = p.parseExpression(LOWEST)
@@ -1673,7 +1687,6 @@ func (p *Parser) skipWhitespace() {
 func (p *Parser) parseDictLiteral() ast.Expression {
 	tok := p.curToken
 	dict := &ast.DictLiteral{Token: tok}
-	dict.Pairs = []ast.DictPairLiteral{}
 
 	p.skipWhitespace()
 	if p.peekTokenIs(token.RBRACE) {
@@ -1762,7 +1775,8 @@ func (p *Parser) parseDictComprehension(tok token.Token, keyExpr, valueExpr ast.
 	}
 
 	p.nextToken()
-	comp.Variables = []ast.Expression{p.parseExpression(EQUALS)}
+	comp.Variables = make([]ast.Expression, 1, 2)
+	comp.Variables[0] = p.parseExpression(EQUALS)
 	for p.peekTokenIs(token.COMMA) {
 		p.nextToken()
 		p.nextToken()
@@ -1800,7 +1814,8 @@ func (p *Parser) parseSetComprehension(tok token.Token, expr ast.Expression) ast
 	}
 
 	p.nextToken()
-	comp.Variables = []ast.Expression{p.parseExpression(EQUALS)}
+	comp.Variables = make([]ast.Expression, 1, 2)
+	comp.Variables[0] = p.parseExpression(EQUALS)
 	for p.peekTokenIs(token.COMMA) {
 		p.nextToken()
 		p.nextToken()
@@ -1828,7 +1843,8 @@ func (p *Parser) parseSetComprehension(tok token.Token, expr ast.Expression) ast
 }
 
 func (p *Parser) parseSetLiteralFrom(tok token.Token, first ast.Expression) ast.Expression {
-	set := &ast.SetLiteral{Token: tok, Elements: []ast.Expression{first}}
+	set := &ast.SetLiteral{Token: tok, Elements: make([]ast.Expression, 1, 4)}
+	set.Elements[0] = first
 
 	for p.peekTokenIs(token.COMMA) {
 		p.nextToken() // consume comma
@@ -1860,8 +1876,10 @@ func (p *Parser) parseTryStatement() *ast.TryStatement {
 	stmt.Body = p.parseBlockStatement()
 
 	// Parse except clauses (can have multiple)
-	stmt.ExceptClauses = []*ast.ExceptClause{}
 	for p.peekTokenIs(token.EXCEPT) {
+		if stmt.ExceptClauses == nil {
+			stmt.ExceptClauses = make([]*ast.ExceptClause, 0, 2)
+		}
 		p.nextToken() // consume except
 		exceptClause := &ast.ExceptClause{Token: p.curToken}
 
@@ -1919,7 +1937,7 @@ func (p *Parser) parseRaiseStatement() *ast.RaiseStatement {
 
 func (p *Parser) parseGlobalStatement() *ast.GlobalStatement {
 	stmt := &ast.GlobalStatement{Token: p.curToken}
-	stmt.Names = []*ast.Identifier{}
+	stmt.Names = make([]*ast.Identifier, 0, 2)
 
 	if !p.expectPeek(token.IDENT) {
 		return nil
@@ -1940,7 +1958,7 @@ func (p *Parser) parseGlobalStatement() *ast.GlobalStatement {
 
 func (p *Parser) parseNonlocalStatement() *ast.NonlocalStatement {
 	stmt := &ast.NonlocalStatement{Token: p.curToken}
-	stmt.Names = []*ast.Identifier{}
+	stmt.Names = make([]*ast.Identifier, 0, 2)
 
 	if !p.expectPeek(token.IDENT) {
 		return nil
@@ -2135,8 +2153,10 @@ func (p *Parser) parseMatchStatement() *ast.MatchStatement {
 	p.nextToken()
 
 	// Parse case clauses
-	stmt.Cases = []*ast.CaseClause{}
 	for p.curTokenIs(token.IDENT) && p.curToken.Literal == "case" {
+		if stmt.Cases == nil {
+			stmt.Cases = make([]*ast.CaseClause, 0, 2)
+		}
 		caseClause := p.parseCaseClause()
 		if caseClause == nil {
 			return nil
@@ -2212,7 +2232,8 @@ func (p *Parser) parseCasePattern() ast.Expression {
 
 	// Check for OR pattern: case 1 | 2 | 3
 	if p.peekTokenIs(token.PIPE) {
-		patterns := []ast.Expression{first}
+		patterns := make([]ast.Expression, 1, 4)
+		patterns[0] = first
 		for p.peekTokenIs(token.PIPE) {
 			p.nextToken() // consume '|'
 			p.nextToken() // move to next pattern
@@ -2224,18 +2245,15 @@ func (p *Parser) parseCasePattern() ast.Expression {
 }
 
 func (p *Parser) isKeyword(t token.TokenType) bool {
-	keywords := []token.TokenType{
-		token.TRUE, token.FALSE, token.NONE, token.IMPORT, token.FROM,
+	switch t {
+	case token.TRUE, token.FALSE, token.NONE, token.IMPORT, token.FROM,
 		token.IF, token.ELIF, token.ELSE, token.WHILE, token.FOR, token.IN,
 		token.DEF, token.CLASS, token.RETURN, token.BREAK, token.CONTINUE,
 		token.PASS, token.DEL, token.AND, token.OR, token.NOT, token.IS, token.TRY,
 		token.EXCEPT, token.FINALLY, token.RAISE, token.GLOBAL, token.NONLOCAL,
-		token.LAMBDA, token.AS, token.ASSERT, token.WITH,
+		token.LAMBDA, token.AS, token.ASSERT, token.WITH:
+		return true
+	default:
+		return false
 	}
-	for _, kw := range keywords {
-		if t == kw {
-			return true
-		}
-	}
-	return false
 }
