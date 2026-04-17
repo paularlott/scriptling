@@ -39,12 +39,27 @@ func Get(script string) (*ast.Program, bool) {
 	return globalCache.get(script)
 }
 
+// GetKey retrieves the cache key and cached program by script content.
+func GetKey(script string) (cacheKey, *ast.Program, bool) {
+	return globalCache.getWithKey(script)
+}
+
 // Set stores a program in the cache by script content
 func Set(script string, program *ast.Program) {
 	globalCache.set(script, program)
 }
 
+// SetWithKey stores a program in the cache using a previously computed key.
+func SetWithKey(key cacheKey, program *ast.Program) {
+	globalCache.setWithKey(key, program)
+}
+
 func (c *programCache) get(script string) (*ast.Program, bool) {
+	_, program, ok := c.getWithKey(script)
+	return program, ok
+}
+
+func (c *programCache) getWithKey(script string) (cacheKey, *ast.Program, bool) {
 	key := hashScript(script)
 
 	// Fast path: read lock for lookup
@@ -52,7 +67,7 @@ func (c *programCache) get(script string) (*ast.Program, bool) {
 	elem, ok := c.entries[key]
 	if !ok {
 		c.mu.RUnlock()
-		return nil, false
+		return key, nil, false
 	}
 	program := elem.Value.(*cacheEntry).program
 	c.mu.RUnlock()
@@ -65,12 +80,14 @@ func (c *programCache) get(script string) (*ast.Program, bool) {
 		c.mu.Unlock()
 	}
 
-	return program, true
+	return key, program, true
 }
 
 func (c *programCache) set(script string, program *ast.Program) {
-	key := hashScript(script)
+	c.setWithKey(hashScript(script), program)
+}
 
+func (c *programCache) setWithKey(key cacheKey, program *ast.Program) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

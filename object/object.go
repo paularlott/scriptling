@@ -695,6 +695,7 @@ type Environment struct {
 	mu                         sync.RWMutex
 	store                      map[string]Object
 	outer                      *Environment
+	root                       *Environment
 	globals                    map[string]bool
 	nonlocals                  map[string]bool
 	output                     io.Writer
@@ -711,16 +712,23 @@ type LibraryInfo struct {
 }
 
 func NewEnvironment() *Environment {
-	return &Environment{
+	env := &Environment{
 		store: make(map[string]Object, 4),
 		// globals and nonlocals are nil by default - allocated on demand
 	}
+	env.root = env
+	return env
 }
 
 func NewEnclosedEnvironment(outer *Environment) *Environment {
 	env := &Environment{
 		store: make(map[string]Object, 4),
 		outer: outer,
+	}
+	if outer != nil {
+		env.root = outer.root
+	} else {
+		env.root = env
 	}
 
 	if outer != nil {
@@ -736,13 +744,15 @@ func NewEnclosedEnvironment(outer *Environment) *Environment {
 }
 
 func (e *Environment) Get(name string) (Object, bool) {
-	e.mu.RLock()
-	obj, ok := e.store[name]
-	e.mu.RUnlock()
-	if !ok && e.outer != nil {
-		obj, ok = e.outer.Get(name)
+	for env := e; env != nil; env = env.outer {
+		env.mu.RLock()
+		obj, ok := env.store[name]
+		env.mu.RUnlock()
+		if ok {
+			return obj, true
+		}
 	}
-	return obj, ok
+	return nil, false
 }
 
 func (e *Environment) Set(name string, val Object) Object {
@@ -771,38 +781,29 @@ func (e *Environment) Delete(name string) {
 
 // SetGlobal sets a variable in the global (outermost) environment
 func (e *Environment) SetGlobal(name string, val Object) Object {
-	if e.outer == nil {
-		e.mu.Lock()
-		e.store[name] = val
-		e.mu.Unlock()
-		return val
-	}
-	return e.outer.SetGlobal(name, val)
+	root := e.root
+	root.mu.Lock()
+	root.store[name] = val
+	root.mu.Unlock()
+	return val
 }
 
 // GetGlobal gets the global (outermost) environment
 func (e *Environment) GetGlobal() *Environment {
-	if e.outer == nil {
-		return e
-	}
-	return e.outer.GetGlobal()
+	return e.root
 }
 
 // SetInParent sets a variable in the parent environment (for nonlocal)
 func (e *Environment) SetInParent(name string, val Object) bool {
-	if e.outer == nil {
-		return false
-	}
-	e.outer.mu.Lock()
-	_, ok := e.outer.store[name]
-	if ok {
-		e.outer.store[name] = val
-		e.outer.mu.Unlock()
-		return true
-	}
-	e.outer.mu.Unlock()
-	if e.outer.outer != nil {
-		return e.outer.SetInParent(name, val)
+	for env := e.outer; env != nil; env = env.outer {
+		env.mu.Lock()
+		_, ok := env.store[name]
+		if ok {
+			env.store[name] = val
+			env.mu.Unlock()
+			return true
+		}
+		env.mu.Unlock()
 	}
 	return false
 }
@@ -941,11 +942,10 @@ func (e *Environment) SetImportCallback(fn func(string) error) {
 
 // GetImportCallback gets the import callback from this environment or outer
 func (e *Environment) GetImportCallback() func(string) error {
-	if e.importCallback != nil {
-		return e.importCallback
-	}
-	if e.outer != nil {
-		return e.outer.GetImportCallback()
+	for env := e; env != nil; env = env.outer {
+		if env.importCallback != nil {
+			return env.importCallback
+		}
 	}
 	return nil
 }
@@ -959,11 +959,10 @@ func (e *Environment) SetAvailableLibrariesCallback(fn func() []LibraryInfo) {
 
 // GetAvailableLibrariesCallback gets the available libraries callback from this environment or outer
 func (e *Environment) GetAvailableLibrariesCallback() func() []LibraryInfo {
-	if e.availableLibrariesCallback != nil {
-		return e.availableLibrariesCallback
-	}
-	if e.outer != nil {
-		return e.outer.GetAvailableLibrariesCallback()
+	for env := e; env != nil; env = env.outer {
+		if env.availableLibrariesCallback != nil {
+			return env.availableLibrariesCallback
+		}
 	}
 	return nil
 }
@@ -975,11 +974,10 @@ func (e *Environment) SetCurrentModule(module string) {
 
 // GetCurrentModule gets the current module path from this environment or outer
 func (e *Environment) GetCurrentModule() string {
-	if e.currentModule != "" {
-		return e.currentModule
-	}
-	if e.outer != nil {
-		return e.outer.GetCurrentModule()
+	for env := e; env != nil; env = env.outer {
+		if env.currentModule != "" {
+			return env.currentModule
+		}
 	}
 	return ""
 }

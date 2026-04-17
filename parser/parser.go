@@ -3,6 +3,7 @@ package parser
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/lexer"
@@ -28,35 +29,37 @@ const (
 	CALL              = 15
 )
 
-var precedences = map[token.TokenType]int{
-	token.IF:        CONDITIONAL,
-	token.OR:        OR,
-	token.PIPE:      BIT_OR,
-	token.CARET:     BIT_XOR,
-	token.AMPERSAND: BIT_AND,
-	token.AND:       AND,
-	token.EQ:        EQUALS,
-	token.NOT_EQ:    EQUALS,
-	token.IN:        EQUALS,
-	token.NOT_IN:    EQUALS,
-	token.IS:        EQUALS,
-	token.IS_NOT:    EQUALS,
-	token.LT:        LESSGREATER,
-	token.GT:        LESSGREATER,
-	token.LTE:       LESSGREATER,
-	token.GTE:       LESSGREATER,
-	token.LSHIFT:    BIT_SHIFT,
-	token.RSHIFT:    BIT_SHIFT,
-	token.PLUS:      SUM,
-	token.MINUS:     SUM,
-	token.SLASH:     PRODUCT,
-	token.FLOORDIV:  PRODUCT,
-	token.ASTERISK:  PRODUCT,
-	token.PERCENT:   PRODUCT,
-	token.POW:       POWER,
-	token.LPAREN:    CALL,
-	token.LBRACKET:  CALL,
-	token.DOT:       CALL,
+func precedenceFor(tok token.TokenType) int {
+	switch tok {
+	case token.IF:
+		return CONDITIONAL
+	case token.OR:
+		return OR
+	case token.PIPE:
+		return BIT_OR
+	case token.CARET:
+		return BIT_XOR
+	case token.AMPERSAND:
+		return BIT_AND
+	case token.AND:
+		return AND
+	case token.EQ, token.NOT_EQ, token.IN, token.NOT_IN, token.IS, token.IS_NOT:
+		return EQUALS
+	case token.LT, token.GT, token.LTE, token.GTE:
+		return LESSGREATER
+	case token.LSHIFT, token.RSHIFT:
+		return BIT_SHIFT
+	case token.PLUS, token.MINUS:
+		return SUM
+	case token.SLASH, token.FLOORDIV, token.ASTERISK, token.PERCENT:
+		return PRODUCT
+	case token.POW:
+		return POWER
+	case token.LPAREN, token.LBRACKET, token.DOT:
+		return CALL
+	default:
+		return LOWEST
+	}
 }
 
 type Parser struct {
@@ -67,65 +70,69 @@ type Parser struct {
 	peekToken      token.Token
 	skippedNewline bool // true if a NEWLINE was skipped between curToken and peekToken
 	parenDepth     int  // track parenthesis depth for multiline support
-
-	prefixParseFns map[token.TokenType]prefixParseFn
-	infixParseFns  map[token.TokenType]infixParseFn
 }
 
 type (
-	prefixParseFn func() ast.Expression
-	infixParseFn  func(ast.Expression) ast.Expression
+	prefixParseFn func(*Parser) ast.Expression
+	infixParseFn  func(*Parser, ast.Expression) ast.Expression
 )
+
+var prefixParseFns map[token.TokenType]prefixParseFn
+var infixParseFns map[token.TokenType]infixParseFn
+
+func init() {
+	prefixParseFns = map[token.TokenType]prefixParseFn{
+		token.IDENT:    (*Parser).parseIdentifier,
+		token.INT:      (*Parser).parseIntegerLiteral,
+		token.FLOAT:    (*Parser).parseFloatLiteral,
+		token.STRING:   (*Parser).parseStringLiteral,
+		token.F_STRING: (*Parser).parseFStringLiteral,
+		token.TRUE:     (*Parser).parseBoolean,
+		token.FALSE:    (*Parser).parseBoolean,
+		token.NONE:     (*Parser).parseNone,
+		token.MINUS:    (*Parser).parsePrefixExpression,
+		token.NOT:      (*Parser).parsePrefixExpression,
+		token.TILDE:    (*Parser).parsePrefixExpression,
+		token.LPAREN:   (*Parser).parseGroupedExpression,
+		token.LBRACKET: (*Parser).parseListLiteral,
+		token.LBRACE:   (*Parser).parseDictLiteral,
+		token.LAMBDA:   (*Parser).parseLambda,
+	}
+
+	infixParseFns = map[token.TokenType]infixParseFn{
+		token.PLUS:      (*Parser).parseInfixExpression,
+		token.MINUS:     (*Parser).parseInfixExpression,
+		token.SLASH:     (*Parser).parseInfixExpression,
+		token.FLOORDIV:  (*Parser).parseInfixExpression,
+		token.ASTERISK:  (*Parser).parseInfixExpression,
+		token.POW:       (*Parser).parseInfixExpression,
+		token.PERCENT:   (*Parser).parseInfixExpression,
+		token.EQ:        (*Parser).parseInfixExpression,
+		token.NOT_EQ:    (*Parser).parseInfixExpression,
+		token.LT:        (*Parser).parseInfixExpression,
+		token.GT:        (*Parser).parseInfixExpression,
+		token.LTE:       (*Parser).parseInfixExpression,
+		token.GTE:       (*Parser).parseInfixExpression,
+		token.AND:       (*Parser).parseInfixExpression,
+		token.OR:        (*Parser).parseInfixExpression,
+		token.IN:        (*Parser).parseInfixExpression,
+		token.NOT_IN:    (*Parser).parseInfixExpression,
+		token.IS:        (*Parser).parseInfixExpression,
+		token.IS_NOT:    (*Parser).parseInfixExpression,
+		token.AMPERSAND: (*Parser).parseInfixExpression,
+		token.PIPE:      (*Parser).parseInfixExpression,
+		token.CARET:     (*Parser).parseInfixExpression,
+		token.LSHIFT:    (*Parser).parseInfixExpression,
+		token.RSHIFT:    (*Parser).parseInfixExpression,
+		token.LPAREN:    (*Parser).parseCallExpression,
+		token.LBRACKET:  (*Parser).parseIndexExpression,
+		token.DOT:       (*Parser).parseIndexExpression,
+		token.IF:        (*Parser).parseConditionalExpression,
+	}
+}
 
 func New(l *lexer.Lexer) *Parser {
 	p := &Parser{l: l, errors: []string{}}
-
-	p.prefixParseFns = make(map[token.TokenType]prefixParseFn)
-	p.registerPrefix(token.IDENT, p.parseIdentifier)
-	p.registerPrefix(token.INT, p.parseIntegerLiteral)
-	p.registerPrefix(token.FLOAT, p.parseFloatLiteral)
-	p.registerPrefix(token.STRING, p.parseStringLiteral)
-	p.registerPrefix(token.F_STRING, p.parseFStringLiteral)
-	p.registerPrefix(token.TRUE, p.parseBoolean)
-	p.registerPrefix(token.FALSE, p.parseBoolean)
-	p.registerPrefix(token.NONE, p.parseNone)
-	p.registerPrefix(token.MINUS, p.parsePrefixExpression)
-	p.registerPrefix(token.NOT, p.parsePrefixExpression)
-	p.registerPrefix(token.TILDE, p.parsePrefixExpression)
-	p.registerPrefix(token.LPAREN, p.parseGroupedExpression)
-	p.registerPrefix(token.LBRACKET, p.parseListLiteral)
-	p.registerPrefix(token.LBRACE, p.parseDictLiteral)
-	p.registerPrefix(token.LAMBDA, p.parseLambda)
-
-	p.infixParseFns = make(map[token.TokenType]infixParseFn)
-	p.registerInfix(token.PLUS, p.parseInfixExpression)
-	p.registerInfix(token.MINUS, p.parseInfixExpression)
-	p.registerInfix(token.SLASH, p.parseInfixExpression)
-	p.registerInfix(token.FLOORDIV, p.parseInfixExpression)
-	p.registerInfix(token.ASTERISK, p.parseInfixExpression)
-	p.registerInfix(token.POW, p.parseInfixExpression)
-	p.registerInfix(token.PERCENT, p.parseInfixExpression)
-	p.registerInfix(token.EQ, p.parseInfixExpression)
-	p.registerInfix(token.NOT_EQ, p.parseInfixExpression)
-	p.registerInfix(token.LT, p.parseInfixExpression)
-	p.registerInfix(token.GT, p.parseInfixExpression)
-	p.registerInfix(token.LTE, p.parseInfixExpression)
-	p.registerInfix(token.GTE, p.parseInfixExpression)
-	p.registerInfix(token.AND, p.parseInfixExpression)
-	p.registerInfix(token.OR, p.parseInfixExpression)
-	p.registerInfix(token.IN, p.parseInfixExpression)
-	p.registerInfix(token.NOT_IN, p.parseInfixExpression)
-	p.registerInfix(token.IS, p.parseInfixExpression)
-	p.registerInfix(token.IS_NOT, p.parseInfixExpression)
-	p.registerInfix(token.AMPERSAND, p.parseInfixExpression)
-	p.registerInfix(token.PIPE, p.parseInfixExpression)
-	p.registerInfix(token.CARET, p.parseInfixExpression)
-	p.registerInfix(token.LSHIFT, p.parseInfixExpression)
-	p.registerInfix(token.RSHIFT, p.parseInfixExpression)
-	p.registerInfix(token.LPAREN, p.parseCallExpression)
-	p.registerInfix(token.LBRACKET, p.parseIndexExpression)
-	p.registerInfix(token.DOT, p.parseIndexExpression)
-	p.registerInfix(token.IF, p.parseConditionalExpression)
 
 	p.nextToken()
 	p.nextToken()
@@ -194,31 +201,16 @@ func (p *Parser) expectPeek(t token.TokenType) bool {
 	return false
 }
 
-func (p *Parser) registerPrefix(tokenType token.TokenType, fn prefixParseFn) {
-	p.prefixParseFns[tokenType] = fn
-}
-
-func (p *Parser) registerInfix(tokenType token.TokenType, fn infixParseFn) {
-	p.infixParseFns[tokenType] = fn
-}
-
 func (p *Parser) peekPrecedence() int {
-	if p, ok := precedences[p.peekToken.Type]; ok {
-		return p
-	}
-	return LOWEST
+	return precedenceFor(p.peekToken.Type)
 }
 
 func (p *Parser) curPrecedence() int {
-	if p, ok := precedences[p.curToken.Type]; ok {
-		return p
-	}
-	return LOWEST
+	return precedenceFor(p.curToken.Type)
 }
 
 func (p *Parser) ParseProgram() *ast.Program {
-	program := &ast.Program{}
-	program.Statements = []ast.Statement{}
+	program := &ast.Program{Statements: make([]ast.Statement, 0, 8)}
 
 	for !p.curTokenIs(token.EOF) {
 		if p.curTokenIs(token.NEWLINE) || p.curTokenIs(token.SEMICOLON) || p.curTokenIs(token.INDENT) || p.curTokenIs(token.DEDENT) {
@@ -439,17 +431,11 @@ func (p *Parser) parseImportStatement() *ast.ImportStatement {
 		return nil
 	}
 
-	// Build up the dotted name (e.g., urllib.parse)
-	name := p.curToken.Literal
-	for p.peekTokenIs(token.DOT) {
-		p.nextToken() // consume dot
-		if !p.expectPeek(token.IDENT) {
-			return nil
-		}
-		name = name + "." + p.curToken.Literal
+	name, tok, ok := p.parseDottedName()
+	if !ok {
+		return nil
 	}
-
-	stmt.Name = &ast.Identifier{Token: p.curToken, Value: name}
+	stmt.Name = &ast.Identifier{Token: tok, Value: name}
 
 	// Check for alias (as)
 	if p.peekTokenIs(token.AS) {
@@ -468,17 +454,12 @@ func (p *Parser) parseImportStatement() *ast.ImportStatement {
 		if !p.expectPeek(token.IDENT) {
 			return nil
 		}
-		// Build up the dotted name for additional imports too
-		addName := p.curToken.Literal
-		for p.peekTokenIs(token.DOT) {
-			p.nextToken() // consume dot
-			if !p.expectPeek(token.IDENT) {
-				return nil
-			}
-			addName = addName + "." + p.curToken.Literal
+		addName, tok, ok := p.parseDottedName()
+		if !ok {
+			return nil
 		}
 		stmt.AdditionalNames = append(stmt.AdditionalNames, &ast.Identifier{
-			Token: p.curToken,
+			Token: tok,
 			Value: addName,
 		})
 
@@ -522,18 +503,11 @@ func (p *Parser) parseFromImportStatement() *ast.FromImportStatement {
 		} else if p.peekTokenIs(token.IDENT) {
 			// Relative import with module: "from .module import X"
 			p.nextToken() // move to identifier
-			moduleName := p.curToken.Literal
-
-			// Build up any additional dotted parts (e.g., from .a.b import X)
-			for p.peekTokenIs(token.DOT) {
-				p.nextToken() // consume dot
-				if !p.expectPeek(token.IDENT) {
-					return nil
-				}
-				moduleName = moduleName + "." + p.curToken.Literal
+			moduleName, tok, ok := p.parseDottedName()
+			if !ok {
+				return nil
 			}
-
-			stmt.Module = &ast.Identifier{Token: p.curToken, Value: moduleName}
+			stmt.Module = &ast.Identifier{Token: tok, Value: moduleName}
 		} else {
 			p.errors = append(p.errors, fmt.Sprintf("line %d: expected identifier or 'import' after relative import dots", p.curToken.Line))
 			return nil
@@ -546,17 +520,11 @@ func (p *Parser) parseFromImportStatement() *ast.FromImportStatement {
 		}
 		p.nextToken() // move to identifier
 
-		// Build up the dotted module name (e.g., urllib.parse)
-		moduleName := p.curToken.Literal
-		for p.peekTokenIs(token.DOT) {
-			p.nextToken() // consume dot
-			if !p.expectPeek(token.IDENT) {
-				return nil
-			}
-			moduleName = moduleName + "." + p.curToken.Literal
+		moduleName, tok, ok := p.parseDottedName()
+		if !ok {
+			return nil
 		}
-
-		stmt.Module = &ast.Identifier{Token: p.curToken, Value: moduleName}
+		stmt.Module = &ast.Identifier{Token: tok, Value: moduleName}
 	}
 
 	// Expect 'import' keyword
@@ -608,6 +576,22 @@ func (p *Parser) parseFromImportStatement() *ast.FromImportStatement {
 	return stmt
 }
 
+func (p *Parser) parseDottedName() (string, token.Token, bool) {
+	var builder strings.Builder
+	tok := p.curToken
+	builder.WriteString(p.curToken.Literal)
+	for p.peekTokenIs(token.DOT) {
+		p.nextToken() // consume dot
+		if !p.expectPeek(token.IDENT) {
+			return "", token.Token{}, false
+		}
+		builder.WriteByte('.')
+		builder.WriteString(p.curToken.Literal)
+		tok = p.curToken
+	}
+	return builder.String(), tok, true
+}
+
 func (p *Parser) parseReturnStatement() *ast.ReturnStatement {
 	stmt := &ast.ReturnStatement{Token: p.curToken}
 
@@ -649,12 +633,12 @@ func (p *Parser) parseExpressionStatement() ast.Statement {
 }
 
 func (p *Parser) parseExpression(precedence int) ast.Expression {
-	prefix := p.prefixParseFns[p.curToken.Type]
+	prefix := prefixParseFns[p.curToken.Type]
 	if prefix == nil {
 		p.noPrefixParseFnError(p.curToken.Type)
 		return nil
 	}
-	leftExp := prefix()
+	leftExp := prefix(p)
 
 	for !p.peekTokenIs(token.NEWLINE) && !p.peekTokenIs(token.SEMICOLON) && !p.peekTokenIs(token.EOF) && !p.peekTokenIs(token.COLON) && precedence < p.peekPrecedence() {
 		// Special handling for IF token: only treat as conditional expression
@@ -669,12 +653,12 @@ func (p *Parser) parseExpression(precedence int) ast.Expression {
 			return leftExp
 		}
 
-		infix := p.infixParseFns[p.peekToken.Type]
+		infix := infixParseFns[p.peekToken.Type]
 		if infix == nil {
 			return leftExp
 		}
 		p.nextToken()
-		leftExp = infix(leftExp)
+		leftExp = infix(p, leftExp)
 	}
 
 	return leftExp
@@ -806,24 +790,24 @@ func (p *Parser) parseAdjacentStrings(left ast.Expression) ast.Expression {
 }
 
 func (p *Parser) parseFStringContent(content string) ([]string, []ast.Expression, []string) {
-	parts := []string{}
-	expressions := []ast.Expression{}
-	formatSpecs := []string{}
-	current := ""
+	parts := make([]string, 0, 4)
+	expressions := make([]ast.Expression, 0, 2)
+	formatSpecs := make([]string, 0, 2)
+	var current strings.Builder
 	i := 0
 
 	for i < len(content) {
 		if content[i] == '{' && i+1 < len(content) && content[i+1] != '{' {
 			// Found expression start
-			parts = append(parts, current)
-			current = ""
+			parts = append(parts, current.String())
+			current.Reset()
 			i++ // skip {
 
 			// Extract expression until : or }
-			exprStr := ""
-			formatSpec := ""
+			var exprStr strings.Builder
+			var formatSpec strings.Builder
 			for i < len(content) && content[i] != '}' && content[i] != ':' {
-				exprStr += string(content[i])
+				exprStr.WriteByte(content[i])
 				i++
 			}
 
@@ -832,7 +816,7 @@ func (p *Parser) parseFStringContent(content string) ([]string, []ast.Expression
 				i++ // skip :
 				// Extract format spec until }
 				for i < len(content) && content[i] != '}' {
-					formatSpec += string(content[i])
+					formatSpec.WriteByte(content[i])
 					i++
 				}
 			}
@@ -842,54 +826,55 @@ func (p *Parser) parseFStringContent(content string) ([]string, []ast.Expression
 			}
 
 			// Parse the expression
-			if exprStr != "" {
-				lexer := lexer.New(exprStr)
+			exprText := exprStr.String()
+			if exprText != "" {
+				lexer := lexer.New(exprText)
 				parser := New(lexer)
 				expr := parser.parseExpression(LOWEST)
 				if expr != nil {
 					expressions = append(expressions, expr)
-					formatSpecs = append(formatSpecs, formatSpec)
+					formatSpecs = append(formatSpecs, formatSpec.String())
 				}
 			}
 		} else if content[i] == '{' && i+1 < len(content) && content[i+1] == '{' {
 			// Escaped brace
-			current += "{"
+			current.WriteByte('{')
 			i += 2
 		} else if content[i] == '}' && i+1 < len(content) && content[i+1] == '}' {
 			// Escaped brace
-			current += "}"
+			current.WriteByte('}')
 			i += 2
 		} else if content[i] == '\\' && i+1 < len(content) {
 			// Handle escape sequences
 			i++ // consume backslash
 			switch content[i] {
 			case 'n':
-				current += "\n"
+				current.WriteByte('\n')
 			case 't':
-				current += "\t"
+				current.WriteByte('\t')
 			case 'r':
-				current += "\r"
+				current.WriteByte('\r')
 			case '\\':
-				current += "\\"
+				current.WriteByte('\\')
 			case '\'':
-				current += "'"
+				current.WriteByte('\'')
 			case '"':
-				current += "\""
+				current.WriteByte('"')
 			case '0':
-				current += string(byte(0))
+				current.WriteByte(0)
 			default:
 				// Keep backslash and the character as-is
-				current += "\\"
-				current += string(content[i])
+				current.WriteByte('\\')
+				current.WriteByte(content[i])
 			}
 			i++
 		} else {
-			current += string(content[i])
+			current.WriteByte(content[i])
 			i++
 		}
 	}
 
-	parts = append(parts, current)
+	parts = append(parts, current.String())
 	return parts, expressions, formatSpecs
 }
 

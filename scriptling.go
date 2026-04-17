@@ -382,16 +382,9 @@ func (p *Scriptling) EvalWithContext(ctx context.Context, input string) (result 
 	}
 
 	// Try global cache first
-	program, ok := Get(input)
-	if !ok {
-		l := lexer.New(input)
-		par := parser.New(l)
-		program = par.ParseProgram()
-		if len(par.Errors()) != 0 {
-			return nil, fmt.Errorf("parser errors: %v", par.Errors())
-		}
-		// Store in global cache
-		Set(input, program)
+	program, err := parseProgramCached(input)
+	if err != nil {
+		return nil, err
 	}
 
 	// Recover from any panics during execution (e.g., bugs in interpreter or builtins)
@@ -410,6 +403,23 @@ func (p *Scriptling) EvalWithContext(ctx context.Context, input string) (result 
 
 	result = evaluator.EvalWithContext(ctx, program, p.env)
 	return p.handleResult(result, "")
+}
+
+func parseProgramCached(input string) (*ast.Program, error) {
+	key, program, ok := GetKey(input)
+	if ok {
+		return program, nil
+	}
+
+	l := lexer.New(input)
+	par := parser.New(l)
+	program = par.ParseProgram()
+	if len(par.Errors()) != 0 {
+		return nil, fmt.Errorf("parser errors: %v", par.Errors())
+	}
+
+	SetWithKey(key, program)
+	return program, nil
 }
 
 func (p *Scriptling) SetVar(name string, value interface{}) error {
@@ -1038,17 +1048,9 @@ func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[stri
 	libEnv.Set("__name__", &object.String{Value: name})
 
 	// Parse and evaluate the script in the library environment
-	var program *ast.Program
-	if cached, ok := Get(script); ok {
-		program = cached
-	} else {
-		l := lexer.New(script)
-		par := parser.New(l)
-		program = par.ParseProgram()
-		if len(par.Errors()) != 0 {
-			return nil, fmt.Errorf("parser errors: %v", par.Errors())
-		}
-		Set(script, program)
+	program, err := parseProgramCached(script)
+	if err != nil {
+		return nil, err
 	}
 
 	// Check for module docstring (first statement is a string literal)

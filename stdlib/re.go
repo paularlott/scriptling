@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,8 +13,6 @@ import (
 	"github.com/paularlott/scriptling/evaliface"
 	"github.com/paularlott/scriptling/object"
 )
-
-
 
 // Flag constants matching Python's re module
 const (
@@ -28,7 +27,9 @@ var RegexClass = &object.Class{
 	Methods: map[string]object.Object{
 		"match": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if err := errors.ExactArgs(args, 2); err != nil { return err }
+				if err := errors.ExactArgs(args, 2); err != nil {
+					return err
+				}
 				if args[1].Type() != object.STRING_OBJ {
 					return errors.NewTypeError("STRING", args[1].Type().String())
 				}
@@ -47,17 +48,7 @@ var RegexClass = &object.Class{
 					return &object.Null{}
 				}
 
-				// Build groups from submatch indices
-				groups := make([]string, 0)
-				for i := 0; i < len(match); i += 2 {
-					if match[i] >= 0 && match[i+1] >= 0 {
-						groups = append(groups, text[match[i]:match[i+1]])
-					} else {
-						groups = append(groups, "")
-					}
-				}
-
-				return createMatchInstance(groups, match[0], match[1])
+				return createMatchInstance(groupsFromIndices(text, match), match[0], match[1])
 			},
 			HelpText: `match(string) - Match pattern at start of string
 
@@ -65,7 +56,9 @@ Returns a Match object if the pattern matches at the beginning, or None if no ma
 		},
 		"search": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if err := errors.ExactArgs(args, 2); err != nil { return err }
+				if err := errors.ExactArgs(args, 2); err != nil {
+					return err
+				}
 				if args[1].Type() != object.STRING_OBJ {
 					return errors.NewTypeError("STRING", args[1].Type().String())
 				}
@@ -83,17 +76,7 @@ Returns a Match object if the pattern matches at the beginning, or None if no ma
 					return &object.Null{}
 				}
 
-				// Build groups from submatch indices
-				groups := make([]string, 0)
-				for i := 0; i < len(match); i += 2 {
-					if match[i] >= 0 && match[i+1] >= 0 {
-						groups = append(groups, text[match[i]:match[i+1]])
-					} else {
-						groups = append(groups, "")
-					}
-				}
-
-				return createMatchInstance(groups, match[0], match[1])
+				return createMatchInstance(groupsFromIndices(text, match), match[0], match[1])
 			},
 			HelpText: `search(string) - Search for pattern anywhere in string
 
@@ -101,7 +84,9 @@ Returns a Match object for the first match, or None if no match found.`,
 		},
 		"findall": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if err := errors.ExactArgs(args, 2); err != nil { return err }
+				if err := errors.ExactArgs(args, 2); err != nil {
+					return err
+				}
 				if args[1].Type() != object.STRING_OBJ {
 					return errors.NewTypeError("STRING", args[1].Type().String())
 				}
@@ -114,21 +99,40 @@ Returns a Match object for the first match, or None if no match found.`,
 					return errors.NewError("regex compile error: %s", err.Error())
 				}
 
-				matches := re.FindAllStringSubmatch(text, -1)
-				elements := make([]object.Object, len(matches))
 				numGroups := re.NumSubexp()
-				for i, match := range matches {
-					if numGroups == 0 {
-						elements[i] = &object.String{Value: match[0]}
-					} else if numGroups == 1 {
-						elements[i] = &object.String{Value: match[1]}
-					} else {
-						groupElements := make([]object.Object, numGroups)
-						for j := 1; j <= numGroups; j++ {
-							groupElements[j-1] = &object.String{Value: match[j]}
-						}
-						elements[i] = &object.Tuple{Elements: groupElements}
+
+				if numGroups == 0 {
+					matches := re.FindAllString(text, -1)
+					elements := make([]object.Object, len(matches))
+					for i, match := range matches {
+						elements[i] = &object.String{Value: match}
 					}
+					return &object.List{Elements: elements}
+				}
+
+				matches := re.FindAllStringSubmatchIndex(text, -1)
+				elements := make([]object.Object, len(matches))
+				for i, match := range matches {
+					if numGroups == 1 {
+						start, end := match[2], match[3]
+						if start >= 0 && end >= 0 {
+							elements[i] = &object.String{Value: text[start:end]}
+						} else {
+							elements[i] = &object.String{Value: ""}
+						}
+						continue
+					}
+
+					groupElements := make([]object.Object, numGroups)
+					for j := 0; j < numGroups; j++ {
+						start, end := match[(j+1)*2], match[(j+1)*2+1]
+						if start >= 0 && end >= 0 {
+							groupElements[j] = &object.String{Value: text[start:end]}
+						} else {
+							groupElements[j] = &object.String{Value: ""}
+						}
+					}
+					elements[i] = &object.Tuple{Elements: groupElements}
 				}
 				return &object.List{Elements: elements}
 			},
@@ -141,7 +145,9 @@ If there are no capturing groups, returns a list of strings for the full matches
 		},
 		"finditer": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if err := errors.ExactArgs(args, 2); err != nil { return err }
+				if err := errors.ExactArgs(args, 2); err != nil {
+					return err
+				}
 				if args[1].Type() != object.STRING_OBJ {
 					return errors.NewTypeError("STRING", args[1].Type().String())
 				}
@@ -205,7 +211,9 @@ var MatchClass = &object.Class{
 		},
 		"groups": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if err := errors.ExactArgs(args, 1); err != nil { return err }
+				if err := errors.ExactArgs(args, 1); err != nil {
+					return err
+				}
 				match := args[0].(*object.Instance)
 				groups := match.Fields["groups"].(*object.List).Elements
 				if len(groups) <= 1 {
@@ -348,9 +356,26 @@ func applyFlags(pattern string, flags int64) string {
 		prefix += "s"
 	}
 	if prefix != "" {
-		return fmt.Sprintf("(?%s)%s", prefix, pattern)
+		var builder strings.Builder
+		builder.Grow(len(prefix) + len(pattern) + 4)
+		builder.WriteString("(?")
+		builder.WriteString(prefix)
+		builder.WriteByte(')')
+		builder.WriteString(pattern)
+		return builder.String()
 	}
 	return pattern
+}
+
+func groupsFromIndices(text string, match []int) []string {
+	groups := make([]string, len(match)/2)
+	for i := 0; i < len(match); i += 2 {
+		groupIdx := i / 2
+		if match[i] >= 0 && match[i+1] >= 0 {
+			groups[groupIdx] = text[match[i]:match[i+1]]
+		}
+	}
+	return groups
 }
 
 // GetCompiledRegex retrieves a compiled regex from cache or compiles and caches it
@@ -623,16 +648,7 @@ Flags:
 			allMatches := re.FindAllStringSubmatchIndex(text, -1)
 			elements := make([]object.Object, len(allMatches))
 			for i, match := range allMatches {
-				// Build groups from submatch indices
-				groups := make([]string, 0)
-				for j := 0; j < len(match); j += 2 {
-					if match[j] >= 0 && match[j+1] >= 0 {
-						groups = append(groups, text[match[j]:match[j+1]])
-					} else {
-						groups = append(groups, "")
-					}
-				}
-				elements[i] = createMatchInstance(groups, match[0], match[1])
+				elements[i] = createMatchInstance(groupsFromIndices(text, match), match[0], match[1])
 			}
 			return &object.List{Elements: elements}
 		},
@@ -663,7 +679,7 @@ Flags:
 			isFunc := false
 			var replacementStr string
 			var replacementFunc object.Object
-			
+
 			switch args[1].Type() {
 			case object.STRING_OBJ:
 				replacementStr, _ = args[1].AsString()
@@ -703,34 +719,25 @@ Flags:
 				// Function replacement - find all matches in the original text
 				replaced := 0
 				allMatches := re.FindAllStringSubmatchIndex(text, -1)
-				
+
 				if len(allMatches) == 0 {
 					return &object.String{Value: text}
 				}
-				
+
 				// Build result by replacing matches
 				var resultBuilder []byte
 				lastEnd := 0
-				
+
 				for _, match := range allMatches {
 					if count > 0 && replaced >= count {
 						break
 					}
-					
+
 					// Add text before match
 					resultBuilder = append(resultBuilder, text[lastEnd:match[0]]...)
-					
-					// Build groups for this match
-					groups := make([]string, 0)
-					for i := 0; i < len(match); i += 2 {
-						if match[i] >= 0 && match[i+1] >= 0 {
-							groups = append(groups, text[match[i]:match[i+1]])
-						} else {
-							groups = append(groups, "")
-						}
-					}
-					matchObj := createMatchInstance(groups, match[0], match[1])
-					
+
+					matchObj := createMatchInstance(groupsFromIndices(text, match), match[0], match[1])
+
 					// Call the replacement function
 					var resultObj object.Object
 					if replacementFunc.Type() == object.BUILTIN_OBJ {
@@ -747,12 +754,12 @@ Flags:
 						}
 						resultObj = eval.CallObjectFunction(ctx, replacementFunc, []object.Object{matchObj}, nil, env)
 					}
-					
+
 					// Check for error
 					if resultObj.Type() == object.ERROR_OBJ {
 						return resultObj
 					}
-					
+
 					// Convert result to string
 					if resultStr, err := resultObj.AsString(); err == nil {
 						resultBuilder = append(resultBuilder, resultStr...)
@@ -760,11 +767,11 @@ Flags:
 						// If conversion fails, keep original match
 						resultBuilder = append(resultBuilder, text[match[0]:match[1]]...)
 					}
-					
+
 					lastEnd = match[1]
 					replaced++
 				}
-				
+
 				// Add remaining text
 				resultBuilder = append(resultBuilder, text[lastEnd:]...)
 				result = string(resultBuilder)
@@ -885,7 +892,9 @@ Flags:
 	},
 	"escape": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			if args[0].Type() != object.STRING_OBJ {
 				return errors.NewTypeError("STRING", args[0].Type().String())
 			}

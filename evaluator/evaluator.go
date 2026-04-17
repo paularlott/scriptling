@@ -627,16 +627,16 @@ func evalInfixExpression(ctx context.Context, operator string, left, right objec
 	coercedRight := right
 	if b, ok := left.(*object.Boolean); ok {
 		if b.Value {
-			coercedLeft = &object.Integer{Value: 1}
+			coercedLeft = object.NewInteger(1)
 		} else {
-			coercedLeft = &object.Integer{Value: 0}
+			coercedLeft = object.NewInteger(0)
 		}
 	}
 	if b, ok := right.(*object.Boolean); ok {
 		if b.Value {
-			coercedRight = &object.Integer{Value: 1}
+			coercedRight = object.NewInteger(1)
 		} else {
-			coercedRight = &object.Integer{Value: 0}
+			coercedRight = object.NewInteger(0)
 		}
 	}
 	// Only use coerced values for arithmetic/comparison, not identity
@@ -651,6 +651,9 @@ func evalInfixExpression(ctx context.Context, operator string, left, right objec
 	case *object.Integer:
 		if r, ok := right.(*object.Integer); ok {
 			return evalIntegerInfixExpression(operator, l.Value, r.Value)
+		}
+		if r, ok := right.(*object.Float); ok {
+			return evalFloatInfixValues(operator, float64(l.Value), r.Value)
 		}
 		// Handle int * string
 		if r, ok := right.(*object.String); ok && operator == "*" {
@@ -680,7 +683,14 @@ func evalInfixExpression(ctx context.Context, operator string, left, right objec
 		}
 		return evalFloatInfixExpression(operator, left, right)
 	case *object.Float:
-		return evalFloatInfixExpression(operator, left, right)
+		switch r := right.(type) {
+		case *object.Float:
+			return evalFloatInfixValues(operator, l.Value, r.Value)
+		case *object.Integer:
+			return evalFloatInfixValues(operator, l.Value, float64(r.Value))
+		default:
+			return evalFloatInfixExpression(operator, left, right)
+		}
 	case *object.String:
 		// Handle string % value (Python-style formatting)
 		if operator == "%" {
@@ -803,7 +813,7 @@ func evalIntegerInfixExpression(operator string, leftVal, rightVal int64) object
 	case "**":
 		// Power operator - use float for negative exponents
 		if rightVal < 0 {
-			return evalFloatInfixExpression("**", object.NewInteger(leftVal), object.NewInteger(rightVal))
+			return evalFloatInfixValues("**", float64(leftVal), float64(rightVal))
 		}
 		// Integer exponentiation with overflow detection.
 		// Unlike Python 3 which has arbitrary precision integers, scriptling uses
@@ -862,21 +872,12 @@ func evalIntegerInfixExpression(operator string, leftVal, rightVal int64) object
 }
 
 func evalFloatInfixExpression(operator string, left, right object.Object) object.Object {
-	var leftVal, rightVal float64
-
-	switch left := left.(type) {
-	case *object.Float:
-		leftVal = left.Value
-	case *object.Integer:
-		leftVal = float64(left.Value)
+	leftVal, ok := numericFloatValue(left)
+	if !ok {
+		return errors.NewTypeError("NUMBER", left.Type().String())
 	}
-
-	switch right := right.(type) {
-	case *object.Float:
-		rightVal = right.Value
-	case *object.Integer:
-		rightVal = float64(right.Value)
-	default:
+	rightVal, ok := numericFloatValue(right)
+	if !ok {
 		// For == and != with non-numeric types, different types are never equal (Python behavior)
 		switch operator {
 		case "==":
@@ -886,7 +887,10 @@ func evalFloatInfixExpression(operator string, left, right object.Object) object
 		}
 		return errors.NewTypeError("NUMBER", right.Type().String())
 	}
+	return evalFloatInfixValues(operator, leftVal, rightVal)
+}
 
+func evalFloatInfixValues(operator string, leftVal, rightVal float64) object.Object {
 	switch operator {
 	case "+":
 		return &object.Float{Value: leftVal + rightVal}
@@ -920,6 +924,17 @@ func evalFloatInfixExpression(operator string, left, right object.Object) object
 		return nativeBoolToBooleanObject(leftVal != rightVal)
 	default:
 		return errors.NewError("unknown operator: FLOAT %s FLOAT", operator)
+	}
+}
+
+func numericFloatValue(obj object.Object) (float64, bool) {
+	switch v := obj.(type) {
+	case *object.Float:
+		return v.Value, true
+	case *object.Integer:
+		return float64(v.Value), true
+	default:
+		return 0, false
 	}
 }
 
@@ -3599,20 +3614,15 @@ func evalFStringLiteral(ctx context.Context, fstr *ast.FStringLiteral, env *obje
 
 func formatWithSpec(obj object.Object, spec string) string {
 	if spec == "" {
-		// Check the actual object type first to preserve float representation
-		switch obj.Type() {
-		case object.INTEGER_OBJ:
-			if intVal, err := obj.AsInt(); err == nil {
-				return fmt.Sprintf("%d", intVal)
+		switch v := obj.(type) {
+		case *object.Integer:
+			return strconv.FormatInt(v.Value, 10)
+		case *object.Float:
+			// Check if it's a whole number
+			if v.Value == float64(int64(v.Value)) {
+				return strconv.FormatFloat(v.Value, 'f', 1, 64)
 			}
-		case object.FLOAT_OBJ:
-			if floatVal, err := obj.AsFloat(); err == nil {
-				// Check if it's a whole number
-				if floatVal == float64(int64(floatVal)) {
-					return fmt.Sprintf("%.1f", floatVal)
-				}
-				return fmt.Sprintf("%g", floatVal)
-			}
+			return strconv.FormatFloat(v.Value, 'g', -1, 64)
 		}
 		return obj.Inspect()
 	}
@@ -3696,11 +3706,11 @@ func formatWithSpec(obj object.Object, spec string) string {
 	case 'd', 0:
 		if typeChar == 0 && obj.Type() == object.FLOAT_OBJ {
 			// No type char with float: use 'g' or precision
-			if floatVal, err := obj.AsFloat(); err == nil {
+			if floatVal, ok := numericFloatValue(obj); ok {
 				if precision >= 0 {
-					formatted = fmt.Sprintf("%."+strconv.Itoa(precision)+"f", floatVal)
+					formatted = strconv.FormatFloat(floatVal, 'f', precision, 64)
 				} else {
-					formatted = fmt.Sprintf("%g", floatVal)
+					formatted = strconv.FormatFloat(floatVal, 'g', -1, 64)
 				}
 				formatted = applySign(formatted, floatVal >= 0, sign)
 			} else {
@@ -3721,62 +3731,61 @@ func formatWithSpec(obj object.Object, spec string) string {
 			}
 		} else if intVal, err := obj.AsInt(); err == nil {
 			if zero && width > 0 {
-				if intVal < 0 {
-					formatted = "-" + fmt.Sprintf("%0*d", width-1, -intVal)
-				} else {
-					formatted = fmt.Sprintf("%0*d", width, intVal)
-					formatted = applySign(formatted, true, sign)
-				}
+				formatted = formatZeroPaddedInt(intVal, width)
+				formatted = applySign(formatted, intVal >= 0, sign)
 			} else {
-				formatted = fmt.Sprintf("%d", intVal)
+				formatted = strconv.FormatInt(intVal, 10)
 				formatted = applySign(formatted, intVal >= 0, sign)
 			}
 		} else {
 			formatted = obj.Inspect()
 		}
 	case 'f', 'F':
-		if floatVal, err := obj.AsFloat(); err == nil {
+		if floatVal, ok := numericFloatValue(obj); ok {
 			prec := 6
 			if precision >= 0 {
 				prec = precision
 			}
-			formatted = fmt.Sprintf("%."+strconv.Itoa(prec)+"f", floatVal)
+			formatted = strconv.FormatFloat(floatVal, 'f', prec, 64)
 			formatted = applySign(formatted, floatVal >= 0, sign)
 		} else {
 			formatted = obj.Inspect()
 		}
 	case 'e':
-		if floatVal, err := obj.AsFloat(); err == nil {
+		if floatVal, ok := numericFloatValue(obj); ok {
 			prec := 6
 			if precision >= 0 {
 				prec = precision
 			}
-			formatted = fmt.Sprintf("%."+strconv.Itoa(prec)+"e", floatVal)
+			formatted = strconv.FormatFloat(floatVal, 'e', prec, 64)
 			formatted = applySign(formatted, floatVal >= 0, sign)
 		} else {
 			formatted = obj.Inspect()
 		}
 	case 'E':
-		if floatVal, err := obj.AsFloat(); err == nil {
+		if floatVal, ok := numericFloatValue(obj); ok {
 			prec := 6
 			if precision >= 0 {
 				prec = precision
 			}
-			formatted = fmt.Sprintf("%."+strconv.Itoa(prec)+"E", floatVal)
+			formatted = strings.ToUpper(strconv.FormatFloat(floatVal, 'e', prec, 64))
 			formatted = applySign(formatted, floatVal >= 0, sign)
 		} else {
 			formatted = obj.Inspect()
 		}
 	case 'g', 'G':
-		if floatVal, err := obj.AsFloat(); err == nil {
+		if floatVal, ok := numericFloatValue(obj); ok {
 			if precision >= 0 {
 				if typeChar == 'G' {
-					formatted = fmt.Sprintf("%."+strconv.Itoa(precision)+"G", floatVal)
+					formatted = strings.ToUpper(strconv.FormatFloat(floatVal, 'g', precision, 64))
 				} else {
-					formatted = fmt.Sprintf("%."+strconv.Itoa(precision)+"g", floatVal)
+					formatted = strconv.FormatFloat(floatVal, 'g', precision, 64)
 				}
 			} else {
-				formatted = fmt.Sprintf("%g", floatVal)
+				formatted = strconv.FormatFloat(floatVal, 'g', -1, 64)
+				if typeChar == 'G' {
+					formatted = strings.ToUpper(formatted)
+				}
 			}
 			formatted = applySign(formatted, floatVal >= 0, sign)
 		} else {
@@ -3784,41 +3793,25 @@ func formatWithSpec(obj object.Object, spec string) string {
 		}
 	case 'x':
 		if intVal, err := obj.AsInt(); err == nil {
-			if zero && width > 0 {
-				formatted = fmt.Sprintf("%0*x", width, intVal)
-			} else {
-				formatted = fmt.Sprintf("%x", intVal)
-			}
+			formatted = formatBaseInt(intVal, 16, false, width, zero)
 		} else {
 			formatted = obj.Inspect()
 		}
 	case 'X':
 		if intVal, err := obj.AsInt(); err == nil {
-			if zero && width > 0 {
-				formatted = fmt.Sprintf("%0*X", width, intVal)
-			} else {
-				formatted = fmt.Sprintf("%X", intVal)
-			}
+			formatted = formatBaseInt(intVal, 16, true, width, zero)
 		} else {
 			formatted = obj.Inspect()
 		}
 	case 'o':
 		if intVal, err := obj.AsInt(); err == nil {
-			if zero && width > 0 {
-				formatted = fmt.Sprintf("%0*o", width, intVal)
-			} else {
-				formatted = fmt.Sprintf("%o", intVal)
-			}
+			formatted = formatBaseInt(intVal, 8, false, width, zero)
 		} else {
 			formatted = obj.Inspect()
 		}
 	case 'b':
 		if intVal, err := obj.AsInt(); err == nil {
-			if zero && width > 0 {
-				formatted = fmt.Sprintf("%0*b", width, intVal)
-			} else {
-				formatted = fmt.Sprintf("%b", intVal)
-			}
+			formatted = formatBaseInt(intVal, 2, false, width, zero)
 		} else {
 			formatted = obj.Inspect()
 		}
@@ -3835,12 +3828,12 @@ func formatWithSpec(obj object.Object, spec string) string {
 			}
 		}
 	case '%':
-		if floatVal, err := obj.AsFloat(); err == nil {
+		if floatVal, ok := numericFloatValue(obj); ok {
 			prec := 6
 			if precision >= 0 {
 				prec = precision
 			}
-			formatted = fmt.Sprintf("%."+strconv.Itoa(prec)+"f%%", floatVal*100)
+			formatted = strconv.FormatFloat(floatVal*100, 'f', prec, 64) + "%"
 			formatted = applySign(formatted, floatVal >= 0, sign)
 		} else {
 			formatted = obj.Inspect()
@@ -3929,7 +3922,7 @@ func formatWithCommas(n int64) string {
 	if n < 0 {
 		return "-" + formatWithCommas(-n)
 	}
-	s := fmt.Sprintf("%d", n)
+	s := strconv.FormatInt(n, 10)
 	if len(s) <= 3 {
 		return s
 	}
@@ -3945,6 +3938,38 @@ func formatWithCommas(n int64) string {
 		result.WriteString(s[i : i+3])
 	}
 	return result.String()
+}
+
+func formatZeroPaddedInt(n int64, width int) string {
+	if width <= 0 {
+		return strconv.FormatInt(n, 10)
+	}
+	if n < 0 {
+		digits := strconv.FormatInt(-n, 10)
+		if len(digits)+1 >= width {
+			return "-" + digits
+		}
+		return "-" + strings.Repeat("0", width-len(digits)-1) + digits
+	}
+	digits := strconv.FormatInt(n, 10)
+	if len(digits) >= width {
+		return digits
+	}
+	return strings.Repeat("0", width-len(digits)) + digits
+}
+
+func formatBaseInt(n int64, base int, upper bool, width int, zero bool) string {
+	formatted := strconv.FormatInt(n, base)
+	if upper {
+		formatted = strings.ToUpper(formatted)
+	}
+	if !zero || width <= 0 || len(formatted) >= width {
+		return formatted
+	}
+	if n < 0 {
+		return "-" + strings.Repeat("0", width-len(formatted)) + formatted[1:]
+	}
+	return strings.Repeat("0", width-len(formatted)) + formatted
 }
 
 func evalMatchStatementWithContext(ctx context.Context, ms *ast.MatchStatement, env *object.Environment) object.Object {
