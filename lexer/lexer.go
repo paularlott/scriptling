@@ -67,6 +67,37 @@ func (l *Lexer) peekN(n int) byte {
 	return l.input[idx]
 }
 
+func isIdentifierChar(ch byte) bool {
+	return ch == '_' || (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')
+}
+
+// consumeKeywordAfterSpaces consumes horizontal whitespace followed by the
+// exact keyword when present, without allocating or doing speculative lexer
+// state mutations that then need to be rolled back.
+func (l *Lexer) consumeKeywordAfterSpaces(keyword string) bool {
+	i := l.position
+	for i < len(l.input) && (l.input[i] == ' ' || l.input[i] == '\t') {
+		i++
+	}
+	end := i + len(keyword)
+	if end > len(l.input) || l.input[i:end] != keyword {
+		return false
+	}
+	if end < len(l.input) && isIdentifierChar(l.input[end]) {
+		return false
+	}
+	if end >= len(l.input) {
+		l.position = end
+		l.readPosition = end
+		l.ch = 0
+		return true
+	}
+	l.position = end
+	l.readPosition = end + 1
+	l.ch = l.input[end]
+	return true
+}
+
 func (l *Lexer) NextToken() token.Token {
 	if l.pendingDedents > 0 {
 		l.pendingDedents--
@@ -342,57 +373,12 @@ func (l *Lexer) NextToken() token.Token {
 		if isLetter(l.ch) {
 			tok.Literal = l.readIdentifier()
 			tok.Type = token.LookupIdent(tok.Literal)
-			// Check for 'not in' special case
-			if tok.Type == token.NOT && l.ch == ' ' {
-				// Peek ahead to see if next word is 'in'
-				savedPos := l.position
-				savedReadPos := l.readPosition
-				savedCh := l.ch
-
-				// Skip whitespace
-				for l.ch == ' ' || l.ch == '\t' {
-					l.readChar()
-				}
-
-				// Check if next identifier is 'in'
-				if isLetter(l.ch) {
-					nextIdent := l.readIdentifier()
-					if nextIdent == "in" {
-						// Return NOT_IN token
-						return token.Token{Type: token.NOT_IN, Literal: "not in", Line: l.line}
-					}
-				}
-
-				// Restore position if not 'not in'
-				l.position = savedPos
-				l.readPosition = savedReadPos
-				l.ch = savedCh
+			// Check for compound keywords that include a following identifier.
+			if tok.Type == token.NOT && (l.ch == ' ' || l.ch == '\t') && l.consumeKeywordAfterSpaces("in") {
+				return token.Token{Type: token.NOT_IN, Literal: "not in", Line: l.line}
 			}
-			// Check for 'is not' special case
-			if tok.Type == token.IS && l.ch == ' ' {
-				// Peek ahead to see if next word is 'not'
-				savedPos := l.position
-				savedReadPos := l.readPosition
-				savedCh := l.ch
-
-				// Skip whitespace
-				for l.ch == ' ' || l.ch == '\t' {
-					l.readChar()
-				}
-
-				// Check if next identifier is 'not'
-				if isLetter(l.ch) {
-					nextIdent := l.readIdentifier()
-					if nextIdent == "not" {
-						// Return IS_NOT token
-						return token.Token{Type: token.IS_NOT, Literal: "is not", Line: l.line}
-					}
-				}
-
-				// Restore position if not 'is not'
-				l.position = savedPos
-				l.readPosition = savedReadPos
-				l.ch = savedCh
+			if tok.Type == token.IS && (l.ch == ' ' || l.ch == '\t') && l.consumeKeywordAfterSpaces("not") {
+				return token.Token{Type: token.IS_NOT, Literal: "is not", Line: l.line}
 			}
 			return tok
 		} else if isDigit(l.ch) {
@@ -442,7 +428,7 @@ func (l *Lexer) countIndent() int {
 
 func (l *Lexer) readIdentifier() string {
 	start := l.position
-	for l.ch == '_' || (l.ch >= 'a' && l.ch <= 'z') || (l.ch >= 'A' && l.ch <= 'Z') || (l.ch >= '0' && l.ch <= '9') {
+	for isIdentifierChar(l.ch) {
 		l.readChar()
 	}
 	return l.input[start:l.position]

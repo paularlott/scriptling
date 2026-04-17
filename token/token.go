@@ -107,44 +107,97 @@ const (
 	AT       = "@"
 )
 
-var keywords = map[string]TokenType{
-	"True":     TRUE,
-	"False":    FALSE,
-	"None":     NONE,
-	"import":   IMPORT,
-	"from":     FROM,
-	"if":       IF,
-	"elif":     ELIF,
-	"else":     ELSE,
-	"while":    WHILE,
-	"for":      FOR,
-	"in":       IN,
-	"def":      DEF,
-	"class":    CLASS,
-	"return":   RETURN,
-	"break":    BREAK,
-	"continue": CONTINUE,
-	"pass":     PASS,
-	"del":      DEL,
-	"and":      AND,
-	"or":       OR,
-	"not":      NOT,
-	"is":       IS,
-	"try":      TRY,
-	"except":   EXCEPT,
-	"finally":  FINALLY,
-	"raise":    RAISE,
-	"global":   GLOBAL,
-	"nonlocal": NONLOCAL,
-	"lambda":   LAMBDA,
-	"as":       AS,
-	"assert":   ASSERT,
-	"with":     WITH,
-}
-
 func LookupIdent(ident string) TokenType {
-	if tok, ok := keywords[ident]; ok {
-		return tok
+	switch len(ident) {
+	case 2:
+		switch ident {
+		case "if":
+			return IF
+		case "in":
+			return IN
+		case "is":
+			return IS
+		case "as":
+			return AS
+		case "or":
+			return OR
+		}
+	case 3:
+		switch ident {
+		case "and":
+			return AND
+		case "for":
+			return FOR
+		case "def":
+			return DEF
+		case "del":
+			return DEL
+		case "not":
+			return NOT
+		case "try":
+			return TRY
+		}
+	case 4:
+		switch ident {
+		case "True":
+			return TRUE
+		case "None":
+			return NONE
+		case "from":
+			return FROM
+		case "elif":
+			return ELIF
+		case "else":
+			return ELSE
+		case "pass":
+			return PASS
+		case "or":
+			return OR
+		case "with":
+			return WITH
+		}
+	case 5:
+		switch ident {
+		case "False":
+			return FALSE
+		case "while":
+			return WHILE
+		case "class":
+			return CLASS
+		case "break":
+			return BREAK
+		case "raise":
+			return RAISE
+		case "assert":
+			return ASSERT
+		}
+	case 6:
+		switch ident {
+		case "import":
+			return IMPORT
+		case "return":
+			return RETURN
+		case "lambda":
+			return LAMBDA
+		case "assert":
+			return ASSERT
+		case "except":
+			return EXCEPT
+		case "global":
+			return GLOBAL
+		}
+	case 7:
+		switch ident {
+		case "finally":
+			return FINALLY
+		}
+	case 8:
+		switch ident {
+		case "continue":
+			return CONTINUE
+		case "nonlocal":
+			return NONLOCAL
+		}
 	}
 	return IDENT
 }
