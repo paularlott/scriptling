@@ -600,7 +600,13 @@ func (b *LibraryBuilder) FunctionFromVariadicWithHelp(name string, fn interface{
 
 	// Create a wrapper that collects all args into a slice
 	wrapper := &Builtin{
-		Fn: func(ctx context.Context, kwargs Kwargs, args ...Object) Object {
+		Fn: func(ctx context.Context, kwargs Kwargs, args ...Object) (result Object) {
+			defer func() {
+				if r := recover(); r != nil {
+					result = newError("panic in builtin: %v", r)
+				}
+			}()
+
 			// Convert all args to interface{}
 			variadicType := fnType.In(0)
 			if variadicType.Kind() != reflect.Slice {
@@ -618,12 +624,22 @@ func (b *LibraryBuilder) FunctionFromVariadicWithHelp(name string, fn interface{
 				slice.Index(i).Set(val)
 			}
 
-			results := fnValue.Call([]reflect.Value{slice})
+			results := fnValue.CallSlice([]reflect.Value{slice})
 
-			if len(results) == 0 {
+			switch len(results) {
+			case 0:
 				return &Null{}
+			case 1:
+				return convertReturnValue(results[0])
+			case 2:
+				if results[1].Type().Implements(errorType) && !results[1].IsNil() {
+					err, _ := results[1].Interface().(error)
+					return newError("%s", err.Error())
+				}
+				return convertReturnValue(results[0])
+			default:
+				return newError("function can return at most 2 values")
 			}
-			return convertReturnValue(results[0])
 		},
 		HelpText: helpText,
 	}

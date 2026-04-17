@@ -758,6 +758,90 @@ func TestNextTimeoutSuppressesFallbackCancelError(t *testing.T) {
 	}
 }
 
+func TestNextTimeoutCancelsStreamOnCallerCancellation(t *testing.T) {
+	parentCtx := context.Background()
+	streamCtx, cancel := context.WithCancel(parentCtx)
+	responseChan := make(chan openaiapi.ChatCompletionResponse)
+	errorChan := make(chan error)
+	go func() {
+		<-streamCtx.Done()
+		errorChan <- streamCtx.Err()
+		close(errorChan)
+		close(responseChan)
+	}()
+
+	callCtx, callCancel := context.WithCancel(parentCtx)
+	callCancel()
+
+	instance := &object.Instance{
+		Class: GetChatStreamClass(),
+		Fields: map[string]object.Object{
+			"_stream": &object.ClientWrapper{
+				Client: &ChatStreamInstance{
+					stream: openaiapi.NewChatStream(streamCtx, responseChan, errorChan),
+					cancel: cancel,
+				},
+			},
+		},
+	}
+
+	result := nextTimeoutStreamMethod(instance, callCtx, 100)
+	if result.Type() != object.NULL_OBJ {
+		t.Fatalf("expected null on caller cancellation, got %v", result.Type())
+	}
+
+	time.Sleep(20 * time.Millisecond)
+
+	errResult := errStreamMethod(instance, parentCtx)
+	errStr, ok := errResult.(*object.String)
+	if !ok {
+		t.Fatalf("expected String error after caller cancellation, got %T", errResult)
+	}
+	if errStr.Value != context.Canceled.Error() {
+		t.Fatalf("expected %q, got %q", context.Canceled.Error(), errStr.Value)
+	}
+}
+
+func TestNextTimeoutCallerCancellationDoesNotWedgeSubsequentNext(t *testing.T) {
+	parentCtx := context.Background()
+	streamCtx, cancel := context.WithCancel(parentCtx)
+	responseChan := make(chan openaiapi.ChatCompletionResponse)
+	errorChan := make(chan error)
+	go func() {
+		<-streamCtx.Done()
+		errorChan <- streamCtx.Err()
+		close(errorChan)
+		close(responseChan)
+	}()
+
+	callCtx, callCancel := context.WithCancel(parentCtx)
+	callCancel()
+
+	instance := &object.Instance{
+		Class: GetChatStreamClass(),
+		Fields: map[string]object.Object{
+			"_stream": &object.ClientWrapper{
+				Client: &ChatStreamInstance{
+					stream: openaiapi.NewChatStream(streamCtx, responseChan, errorChan),
+					cancel: cancel,
+				},
+			},
+		},
+	}
+
+	result := nextTimeoutStreamMethod(instance, callCtx, 100)
+	if result.Type() != object.NULL_OBJ {
+		t.Fatalf("expected null on caller cancellation, got %v", result.Type())
+	}
+
+	time.Sleep(20 * time.Millisecond)
+
+	nextResult := nextStreamMethod(instance, parentCtx)
+	if nextResult.Type() != object.NULL_OBJ {
+		t.Fatalf("expected null from subsequent next() after cancellation, got %v", nextResult.Type())
+	}
+}
+
 func TestCompletionToolCallArgumentsSupportDictGet(t *testing.T) {
 	p := scriptlib.New()
 	stdlib.RegisterAll(p)

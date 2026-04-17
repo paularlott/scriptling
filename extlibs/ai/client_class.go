@@ -1038,6 +1038,22 @@ type ChatStreamInstance struct {
 	suppressCancelError bool
 }
 
+func (si *ChatStreamInstance) cancelStream(suppressCancelError bool) {
+	si.stateMu.Lock()
+	cancel := si.cancel
+	if cancel != nil {
+		if suppressCancelError {
+			si.suppressCancelError = true
+		}
+		si.cancel = nil
+	}
+	si.stateMu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+}
+
 // GetChatStreamClass returns the ChatStream class (thread-safe singleton)
 var (
 	chatStreamClass     *object.Class
@@ -1170,18 +1186,10 @@ func nextTimeoutStreamMethod(self *object.Instance, ctx context.Context, timeout
 		}
 		return conversion.FromGo(chatCompletionResponseToGoMap(&result.current))
 	case <-time.After(time.Duration(timeoutMs) * time.Millisecond):
-		si.stateMu.Lock()
-		cancel := si.cancel
-		if cancel != nil {
-			si.suppressCancelError = true
-			si.cancel = nil
-		}
-		si.stateMu.Unlock()
-		if cancel != nil {
-			cancel()
-		}
+		si.cancelStream(true)
 		return conversion.FromGo(map[string]any{"timed_out": true})
 	case <-ctx.Done():
+		si.cancelStream(false)
 		return &object.Null{}
 	}
 }

@@ -1,6 +1,7 @@
 package extlibs
 
 import (
+	"bytes"
 	"context"
 	"net"
 	"net/http"
@@ -22,7 +23,7 @@ func RegisterWaitForLibrary(registrar interface{ RegisterLibrary(*object.Library
 // parseWaitOptions parses common wait options from args and kwargs
 // Returns (timeout, pollRate, errorOrNil)
 func parseWaitOptions(args []object.Object, kwargs map[string]object.Object) (int, float64, object.Object) {
-	timeout := 30  // default timeout in seconds
+	timeout := 30   // default timeout in seconds
 	pollRate := 1.0 // default poll rate in seconds
 
 	// Handle positional args (timeout can be positional)
@@ -64,11 +65,34 @@ func parseWaitOptionsKwargsOnly(defaultTimeout int, defaultPollRate float64, kwa
 	return timeout, pollRate, nil
 }
 
-var WaitForLibrary = object.NewLibrary(WaitForLibraryName, 
+func stopTimer(timer *time.Timer) {
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+}
+
+func waitForNextPoll(ctx context.Context, timer *time.Timer, pollInterval time.Duration) bool {
+	stopTimer(timer)
+	timer.Reset(pollInterval)
+
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+var WaitForLibrary = object.NewLibrary(WaitForLibraryName,
 	map[string]*object.Builtin{
 		"file": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if err := errors.MinArgs(args, 1); err != nil { return err }
+				if err := errors.MinArgs(args, 1); err != nil {
+					return err
+				}
 
 				path, err := args[0].AsString()
 				if err != nil {
@@ -82,17 +106,16 @@ var WaitForLibrary = object.NewLibrary(WaitForLibraryName,
 
 				deadline := time.Now().Add(time.Duration(timeout) * time.Second)
 				pollInterval := time.Duration(pollRate * float64(time.Second))
+				timer := time.NewTimer(pollInterval)
+				defer stopTimer(timer)
 
 				for time.Now().Before(deadline) {
 					if _, err := os.Stat(path); err == nil {
 						return object.NewBoolean(true)
 					}
 
-					select {
-					case <-ctx.Done():
+					if !waitForNextPoll(ctx, timer, pollInterval) {
 						return object.NewBoolean(false)
-					case <-time.After(pollInterval):
-						// Continue polling
 					}
 				}
 
@@ -116,7 +139,9 @@ Returns:
 		},
 		"dir": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if err := errors.MinArgs(args, 1); err != nil { return err }
+				if err := errors.MinArgs(args, 1); err != nil {
+					return err
+				}
 
 				path, err := args[0].AsString()
 				if err != nil {
@@ -130,6 +155,8 @@ Returns:
 
 				deadline := time.Now().Add(time.Duration(timeout) * time.Second)
 				pollInterval := time.Duration(pollRate * float64(time.Second))
+				timer := time.NewTimer(pollInterval)
+				defer stopTimer(timer)
 
 				for time.Now().Before(deadline) {
 					if info, err := os.Stat(path); err == nil {
@@ -138,11 +165,8 @@ Returns:
 						}
 					}
 
-					select {
-					case <-ctx.Done():
+					if !waitForNextPoll(ctx, timer, pollInterval) {
 						return object.NewBoolean(false)
-					case <-time.After(pollInterval):
-						// Continue polling
 					}
 				}
 
@@ -168,7 +192,9 @@ Returns:
 		},
 		"port": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if err := errors.MinArgs(args, 2); err != nil { return err }
+				if err := errors.MinArgs(args, 2); err != nil {
+					return err
+				}
 
 				host, err := args[0].AsString()
 				if err != nil {
@@ -197,6 +223,8 @@ Returns:
 				deadline := time.Now().Add(time.Duration(timeout) * time.Second)
 				pollInterval := time.Duration(pollRate * float64(time.Second))
 				address := net.JoinHostPort(host, strconv.Itoa(port))
+				timer := time.NewTimer(pollInterval)
+				defer stopTimer(timer)
 
 				for time.Now().Before(deadline) {
 					conn, err := net.DialTimeout("tcp", address, time.Second)
@@ -205,11 +233,8 @@ Returns:
 						return object.NewBoolean(true)
 					}
 
-					select {
-					case <-ctx.Done():
+					if !waitForNextPoll(ctx, timer, pollInterval) {
 						return object.NewBoolean(false)
-					case <-time.After(pollInterval):
-						// Continue polling
 					}
 				}
 
@@ -235,7 +260,9 @@ Returns:
 		},
 		"http": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if err := errors.MinArgs(args, 1); err != nil { return err }
+				if err := errors.MinArgs(args, 1); err != nil {
+					return err
+				}
 
 				url, err := args[0].AsString()
 				if err != nil {
@@ -283,6 +310,8 @@ Returns:
 
 				deadline := time.Now().Add(time.Duration(timeout) * time.Second)
 				pollInterval := time.Duration(pollRate * float64(time.Second))
+				timer := time.NewTimer(pollInterval)
+				defer stopTimer(timer)
 
 				// Use shared pool for HTTP client
 				client := pool.GetHTTPClient()
@@ -302,11 +331,8 @@ Returns:
 						}
 					}
 
-					select {
-					case <-ctx.Done():
+					if !waitForNextPoll(ctx, timer, pollInterval) {
 						return object.NewBoolean(false)
-					case <-time.After(pollInterval):
-						// Continue polling
 					}
 				}
 
@@ -339,7 +365,9 @@ Returns:
 		},
 		"file_content": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if err := errors.MinArgs(args, 2); err != nil { return err }
+				if err := errors.MinArgs(args, 2); err != nil {
+					return err
+				}
 
 				path, err := args[0].AsString()
 				if err != nil {
@@ -358,25 +386,25 @@ Returns:
 
 				deadline := time.Now().Add(time.Duration(timeout) * time.Second)
 				pollInterval := time.Duration(pollRate * float64(time.Second))
+				needle := []byte(content)
+				timer := time.NewTimer(pollInterval)
+				defer stopTimer(timer)
 
 				for time.Now().Before(deadline) {
 					if data, err := os.ReadFile(path); err == nil {
-						if strings.Contains(string(data), content) {
+						if bytes.Contains(data, needle) {
 							return object.NewBoolean(true)
 						}
 					}
 
-					select {
-					case <-ctx.Done():
+					if !waitForNextPoll(ctx, timer, pollInterval) {
 						return object.NewBoolean(false)
-					case <-time.After(pollInterval):
-						// Continue polling
 					}
 				}
 
 				// Final check
 				if data, err := os.ReadFile(path); err == nil {
-					if strings.Contains(string(data), content) {
+					if bytes.Contains(data, needle) {
 						return object.NewBoolean(true)
 					}
 				}
@@ -397,7 +425,9 @@ Returns:
 		},
 		"process_name": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if err := errors.MinArgs(args, 1); err != nil { return err }
+				if err := errors.MinArgs(args, 1); err != nil {
+					return err
+				}
 
 				processName, err := args[0].AsString()
 				if err != nil {
@@ -411,17 +441,16 @@ Returns:
 
 				deadline := time.Now().Add(time.Duration(timeout) * time.Second)
 				pollInterval := time.Duration(pollRate * float64(time.Second))
+				timer := time.NewTimer(pollInterval)
+				defer stopTimer(timer)
 
 				for time.Now().Before(deadline) {
 					if processRunning(processName) {
 						return object.NewBoolean(true)
 					}
 
-					select {
-					case <-ctx.Done():
+					if !waitForNextPoll(ctx, timer, pollInterval) {
 						return object.NewBoolean(false)
-					case <-time.After(pollInterval):
-						// Continue polling
 					}
 				}
 

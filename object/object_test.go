@@ -1057,8 +1057,103 @@ func TestLibraryBuilderRecoversPanics(t *testing.T) {
 	}
 }
 
-// Note: FunctionFromVariadic has a reflection bug when calling variadic functions via reflection.
-// Skipping these tests until the implementation is fixed.
+func TestLibraryBuilderFunctionFromVariadic(t *testing.T) {
+	builder := NewLibraryBuilder("test", "Test library")
+	builder.FunctionFromVariadic("sum", func(values ...int) int {
+		total := 0
+		for _, v := range values {
+			total += v
+		}
+		return total
+	})
+
+	result := builder.Build().Functions()["sum"].Fn(
+		context.Background(),
+		NewKwargs(nil),
+		NewInteger(1),
+		NewInteger(2),
+		NewInteger(3),
+	)
+
+	intObj, ok := result.(*Integer)
+	if !ok {
+		t.Fatalf("expected *Integer, got %T", result)
+	}
+	if intObj.Value != 6 {
+		t.Fatalf("expected 6, got %d", intObj.Value)
+	}
+}
+
+func TestLibraryBuilderFunctionFromVariadicZeroArgs(t *testing.T) {
+	builder := NewLibraryBuilder("test", "Test library")
+	builder.FunctionFromVariadic("count", func(values ...int) int {
+		return len(values)
+	})
+
+	result := builder.Build().Functions()["count"].Fn(context.Background(), NewKwargs(nil))
+	intObj, ok := result.(*Integer)
+	if !ok {
+		t.Fatalf("expected *Integer, got %T", result)
+	}
+	if intObj.Value != 0 {
+		t.Fatalf("expected 0, got %d", intObj.Value)
+	}
+}
+
+func TestLibraryBuilderFunctionFromVariadicErrorReturn(t *testing.T) {
+	builder := NewLibraryBuilder("test", "Test library")
+	builder.FunctionFromVariadic("fail", func(values ...int) (int, error) {
+		return 0, context.Canceled
+	})
+
+	result := builder.Build().Functions()["fail"].Fn(context.Background(), NewKwargs(nil), NewInteger(1))
+	errObj, ok := result.(*Error)
+	if !ok {
+		t.Fatalf("expected *Error, got %T", result)
+	}
+	if errObj.Message != context.Canceled.Error() {
+		t.Fatalf("unexpected error message: %q", errObj.Message)
+	}
+}
+
+func TestLibraryBuilderFunctionFromVariadicRecoversPanics(t *testing.T) {
+	builder := NewLibraryBuilder("test", "Test library")
+	builder.FunctionFromVariadic("explode", func(values ...int) int {
+		panic("boom")
+	})
+
+	result := builder.Build().Functions()["explode"].Fn(context.Background(), NewKwargs(nil), NewInteger(1))
+	errObj, ok := result.(*Error)
+	if !ok {
+		t.Fatalf("expected *Error, got %T", result)
+	}
+	if errObj.Message != "panic in builtin: boom" {
+		t.Fatalf("unexpected error message: %q", errObj.Message)
+	}
+}
+
+func TestClassBuilderRecoversPanics(t *testing.T) {
+	builder := NewClassBuilder("Exploder")
+	builder.Method("explode", func(self *Instance) string {
+		panic("boom")
+	})
+
+	class := builder.Build()
+	method, ok := class.Methods["explode"].(*Builtin)
+	if !ok {
+		t.Fatalf("expected *Builtin, got %T", class.Methods["explode"])
+	}
+
+	instance := &Instance{Class: class, Fields: map[string]Object{}}
+	result := method.Fn(context.Background(), NewKwargs(nil), instance)
+	errObj, ok := result.(*Error)
+	if !ok {
+		t.Fatalf("expected *Error, got %T", result)
+	}
+	if errObj.Message != "panic in method: boom" {
+		t.Fatalf("unexpected error message: %q", errObj.Message)
+	}
+}
 
 func TestNewKwargs(t *testing.T) {
 	// Test with nil map

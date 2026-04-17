@@ -189,9 +189,10 @@ func (cb *ClassBuilder) createWrapper(fn interface{}, helpText string) *Builtin 
 		HelpText: helpText,
 	}
 }
+
 // callTypedMethod calls a typed Go method with cached signature info.
 // For class methods, self is ALWAYS first, then: [context], [kwargs], ...args
-func (cb *ClassBuilder) callTypedMethod(fnValue reflect.Value, sig *FunctionSignature, ctx context.Context, kwargs Kwargs, args []Object) Object {
+func (cb *ClassBuilder) callTypedMethod(fnValue reflect.Value, sig *FunctionSignature, ctx context.Context, kwargs Kwargs, args []Object) (result Object) {
 	if len(args) == 0 {
 		return newError("method call requires at least one argument (instance)")
 	}
@@ -206,6 +207,12 @@ func (cb *ClassBuilder) callTypedMethod(fnValue reflect.Value, sig *FunctionSign
 	// Get pooled slice for arguments
 	argValuesPtr := getArgValueSlice(sig.numIn)
 	argValues := *argValuesPtr
+	defer func() {
+		putArgValueSlice(argValuesPtr, sig.numIn)
+		if r := recover(); r != nil {
+			result = newError("panic in method: %v", r)
+		}
+	}()
 
 	// Build arguments in the order the Go function expects:
 	// self, [ctx], [kwargs], ...args
@@ -237,7 +244,6 @@ func (cb *ClassBuilder) callTypedMethod(fnValue reflect.Value, sig *FunctionSign
 			for j := argIndex; j < len(methodArgs); j++ {
 				val, convErr := convertObjectToValue(methodArgs[j], elemType)
 				if convErr != nil {
-					putArgValueSlice(argValuesPtr, sig.numIn)
 					return convErr
 				}
 				argValues = append(argValues, val)
@@ -246,14 +252,12 @@ func (cb *ClassBuilder) callTypedMethod(fnValue reflect.Value, sig *FunctionSign
 		}
 
 		if argIndex >= len(methodArgs) {
-			putArgValueSlice(argValuesPtr, sig.numIn)
 			return newArgumentError(len(methodArgs), expectedArgs)
 		}
 
 		// Use cached parameter type
 		val, convErr := convertObjectToValue(methodArgs[argIndex], sig.paramTypes[fnParamIndex])
 		if convErr != nil {
-			putArgValueSlice(argValuesPtr, sig.numIn)
 			return convErr
 		}
 		argValues = append(argValues, val)
@@ -262,15 +266,11 @@ func (cb *ClassBuilder) callTypedMethod(fnValue reflect.Value, sig *FunctionSign
 
 	// Check if we have extra positional arguments
 	if argIndex < len(methodArgs) && !sig.isVariadic {
-		putArgValueSlice(argValuesPtr, sig.numIn)
 		return newArgumentError(len(methodArgs), expectedArgs)
 	}
 
 	// Call the method
 	results := fnValue.Call(argValues)
-
-	// Return slice to pool
-	putArgValueSlice(argValuesPtr, sig.numIn)
 
 	// Handle return values with cached info
 	switch sig.numOut {
