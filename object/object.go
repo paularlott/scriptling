@@ -111,20 +111,20 @@ var (
 
 // Exception type constants
 const (
-	ExceptionTypeSystemExit      = "SystemExit"
-	ExceptionTypePermissionError = "PermissionError"
-	ExceptionTypeException       = "Exception"
-	ExceptionTypeValueError      = "ValueError"
-	ExceptionTypeTypeError       = "TypeError"
-	ExceptionTypeNameError       = "NameError"
-	ExceptionTypeStopIteration   = "StopIteration"
-	ExceptionTypeRuntimeError    = "RuntimeError"
+	ExceptionTypeSystemExit        = "SystemExit"
+	ExceptionTypePermissionError   = "PermissionError"
+	ExceptionTypeException         = "Exception"
+	ExceptionTypeValueError        = "ValueError"
+	ExceptionTypeTypeError         = "TypeError"
+	ExceptionTypeNameError         = "NameError"
+	ExceptionTypeStopIteration     = "StopIteration"
+	ExceptionTypeRuntimeError      = "RuntimeError"
 	ExceptionTypeZeroDivisionError = "ZeroDivisionError"
-	ExceptionTypeIndexError      = "IndexError"
-	ExceptionTypeKeyError        = "KeyError"
-	ExceptionTypeAttributeError  = "AttributeError"
-	ExceptionTypeOSError         = "OSError"
-	ExceptionTypeGeneric         = "" // Default for legacy compatibility
+	ExceptionTypeIndexError        = "IndexError"
+	ExceptionTypeKeyError          = "KeyError"
+	ExceptionTypeAttributeError    = "AttributeError"
+	ExceptionTypeOSError           = "OSError"
+	ExceptionTypeGeneric           = "" // Default for legacy compatibility
 )
 
 // Small integer cache for common values (-5 to 10000)
@@ -561,10 +561,10 @@ func (b *Builtin) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
 
 // Library represents a pre-built collection of builtin functions and constants
 type Library struct {
-	name        string
-	functions   map[string]*Builtin
-	constants   map[string]Object
-	description string
+	name         string
+	functions    map[string]*Builtin
+	constants    map[string]Object
+	description  string
 	instanceData any
 }
 
@@ -582,6 +582,7 @@ func NewLibrary(name string, functions map[string]*Builtin, constants map[string
 func (l *Library) Name() string {
 	return l.name
 }
+
 // Functions returns the library's function map
 func (l *Library) Functions() map[string]*Builtin {
 	return l.functions
@@ -887,6 +888,39 @@ func (e *Environment) GetStore() map[string]Object {
 	return store
 }
 
+// CopyCallableBindingsTo copies local function and lambda bindings into target,
+// rebinding them to the target environment without allocating an intermediate
+// full store snapshot.
+func (e *Environment) CopyCallableBindingsTo(target *Environment) {
+	e.mu.RLock()
+	target.mu.Lock()
+	for name, value := range e.store {
+		switch origFn := value.(type) {
+		case *Function:
+			target.store[name] = &Function{
+				Name:          origFn.Name,
+				Parameters:    origFn.Parameters,
+				DefaultValues: origFn.DefaultValues,
+				Variadic:      origFn.Variadic,
+				Kwargs:        origFn.Kwargs,
+				Body:          origFn.Body,
+				Env:           target,
+			}
+		case *LambdaFunction:
+			target.store[name] = &LambdaFunction{
+				Parameters:    origFn.Parameters,
+				DefaultValues: origFn.DefaultValues,
+				Variadic:      origFn.Variadic,
+				Kwargs:        origFn.Kwargs,
+				Body:          origFn.Body,
+				Env:           target,
+			}
+		}
+	}
+	target.mu.Unlock()
+	e.mu.RUnlock()
+}
+
 // ResetStore removes all keys from the environment store except those in keep.
 func (e *Environment) ResetStore(keep map[string]bool) {
 	e.mu.Lock()
@@ -968,10 +1002,10 @@ func (l *List) Inspect() string {
 	return out.String()
 }
 
-func (l *List) AsString() (string, Object)          { return "", errMustBeString }
-func (l *List) AsInt() (int64, Object)              { return 0, errMustBeInteger }
-func (l *List) AsFloat() (float64, Object)          { return 0, errMustBeNumber }
-func (l *List) AsBool() (bool, Object)              { return len(l.Elements) > 0, nil }
+func (l *List) AsString() (string, Object) { return "", errMustBeString }
+func (l *List) AsInt() (int64, Object)     { return 0, errMustBeInteger }
+func (l *List) AsFloat() (float64, Object) { return 0, errMustBeNumber }
+func (l *List) AsBool() (bool, Object)     { return len(l.Elements) > 0, nil }
 func (l *List) AsList() ([]Object, Object) {
 	result := make([]Object, len(l.Elements))
 	copy(result, l.Elements)
@@ -1004,10 +1038,10 @@ func (t *Tuple) Inspect() string {
 	return out.String()
 }
 
-func (t *Tuple) AsString() (string, Object)          { return "", errMustBeString }
-func (t *Tuple) AsInt() (int64, Object)              { return 0, errMustBeInteger }
-func (t *Tuple) AsFloat() (float64, Object)          { return 0, errMustBeNumber }
-func (t *Tuple) AsBool() (bool, Object)              { return len(t.Elements) > 0, nil }
+func (t *Tuple) AsString() (string, Object) { return "", errMustBeString }
+func (t *Tuple) AsInt() (int64, Object)     { return 0, errMustBeInteger }
+func (t *Tuple) AsFloat() (float64, Object) { return 0, errMustBeNumber }
+func (t *Tuple) AsBool() (bool, Object)     { return len(t.Elements) > 0, nil }
 func (t *Tuple) AsList() ([]Object, Object) {
 	result := make([]Object, len(t.Elements))
 	copy(result, t.Elements)

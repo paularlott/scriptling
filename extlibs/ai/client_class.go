@@ -1032,6 +1032,8 @@ func nextResponseStreamMethod(self *object.Instance, ctx context.Context) object
 // ChatStreamInstance wraps an AI chat stream for use in scriptling
 type ChatStreamInstance struct {
 	stream              *ai.ChatStream
+	streamMu            sync.Mutex
+	stateMu             sync.Mutex
 	cancel              context.CancelFunc
 	suppressCancelError bool
 }
@@ -1115,6 +1117,9 @@ func nextStreamMethod(self *object.Instance, ctx context.Context) object.Object 
 		return &object.Error{Message: "next: stream is nil"}
 	}
 
+	si.streamMu.Lock()
+	defer si.streamMu.Unlock()
+
 	// Advance to next chunk
 	if !si.stream.Next() {
 		return &object.Null{}
@@ -1140,23 +1145,40 @@ func nextTimeoutStreamMethod(self *object.Instance, ctx context.Context, timeout
 		return nextStreamMethod(self, ctx)
 	}
 
-	done := make(chan bool, 1)
+	type nextResult struct {
+		ok      bool
+		current openaiapi.ChatCompletionResponse
+	}
+
+	done := make(chan nextResult, 1)
 	go func() {
-		done <- si.stream.Next()
+		si.streamMu.Lock()
+		defer si.streamMu.Unlock()
+
+		ok := si.stream.Next()
+		result := nextResult{ok: ok}
+		if ok {
+			result.current = si.stream.Current()
+		}
+		done <- result
 	}()
 
 	select {
-	case ok := <-done:
-		if !ok {
+	case result := <-done:
+		if !result.ok {
 			return &object.Null{}
 		}
-		current := si.stream.Current()
-		return conversion.FromGo(current)
+		return conversion.FromGo(chatCompletionResponseToGoMap(&result.current))
 	case <-time.After(time.Duration(timeoutMs) * time.Millisecond):
-		if si.cancel != nil {
+		si.stateMu.Lock()
+		cancel := si.cancel
+		if cancel != nil {
 			si.suppressCancelError = true
-			si.cancel()
 			si.cancel = nil
+		}
+		si.stateMu.Unlock()
+		if cancel != nil {
+			cancel()
 		}
 		return conversion.FromGo(map[string]any{"timed_out": true})
 	case <-ctx.Done():
@@ -1173,8 +1195,14 @@ func errStreamMethod(self *object.Instance, ctx context.Context) object.Object {
 	if si.stream == nil {
 		return &object.Null{}
 	}
-	if err := si.stream.Err(); err != nil {
-		if si.suppressCancelError && err == context.Canceled {
+	si.streamMu.Lock()
+	err := si.stream.Err()
+	si.streamMu.Unlock()
+	si.stateMu.Lock()
+	suppressCancelError := si.suppressCancelError
+	si.stateMu.Unlock()
+	if err != nil {
+		if suppressCancelError && err == context.Canceled {
 			return &object.Null{}
 		}
 		return &object.String{Value: err.Error()}
@@ -1371,14 +1399,6 @@ func completionStreamMethod(self *object.Instance, ctx context.Context, kwargs o
 	if kwargs.Has("max_tokens") {
 		streamReq.MaxTokens = int(kwargs.MustGetInt("max_tokens", 0))
 	}
-	streamCancel := context.CancelFunc(nil)
-	if kwargs.Has("timeout_ms") {
-		timeoutMs := kwargs.MustGetInt("timeout_ms", 0)
-		if timeoutMs > 0 {
-			ctx, streamCancel = context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond)
-		}
-	}
-
 	// Handle optional tools parameter
 	if kwargs.Has("tools") {
 		toolsObjs := kwargs.MustGetList("tools", nil)
@@ -1406,6 +1426,14 @@ func completionStreamMethod(self *object.Instance, ctx context.Context, kwargs o
 			tools = append(tools, tool)
 		}
 		streamReq.Tools = tools
+	}
+
+	streamCancel := context.CancelFunc(nil)
+	if kwargs.Has("timeout_ms") {
+		timeoutMs := kwargs.MustGetInt("timeout_ms", 0)
+		if timeoutMs > 0 {
+			ctx, streamCancel = context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond)
+		}
 	}
 
 	streamCtx, cancel := context.WithCancel(ctx)

@@ -105,6 +105,53 @@ func TestEnvironment(t *testing.T) {
 	}
 }
 
+func TestEnvironmentCopyCallableBindingsTo(t *testing.T) {
+	source := NewEnvironment()
+	target := NewEnvironment()
+
+	fn := &Function{Name: "work", Env: source}
+	lambda := &LambdaFunction{Env: source}
+	source.Set("work", fn)
+	source.Set("helper", lambda)
+	source.Set("value", &Integer{Value: 42})
+
+	source.CopyCallableBindingsTo(target)
+
+	copiedFnObj, ok := target.Get("work")
+	if !ok {
+		t.Fatal("expected function to be copied")
+	}
+	copiedFn, ok := copiedFnObj.(*Function)
+	if !ok {
+		t.Fatalf("expected copied function, got %T", copiedFnObj)
+	}
+	if copiedFn == fn {
+		t.Fatal("expected copied function to be rebound, not shared")
+	}
+	if copiedFn.Env != target {
+		t.Fatal("expected copied function env to point at target")
+	}
+
+	copiedLambdaObj, ok := target.Get("helper")
+	if !ok {
+		t.Fatal("expected lambda to be copied")
+	}
+	copiedLambda, ok := copiedLambdaObj.(*LambdaFunction)
+	if !ok {
+		t.Fatalf("expected copied lambda, got %T", copiedLambdaObj)
+	}
+	if copiedLambda == lambda {
+		t.Fatal("expected copied lambda to be rebound, not shared")
+	}
+	if copiedLambda.Env != target {
+		t.Fatal("expected copied lambda env to point at target")
+	}
+
+	if _, ok := target.Get("value"); ok {
+		t.Fatal("expected non-callable binding to be skipped")
+	}
+}
+
 func TestEnclosedEnvironment(t *testing.T) {
 	outer := NewEnvironment()
 	outer.Set("x", &Integer{Value: 10})
@@ -991,6 +1038,22 @@ func TestLibraryBuilderConstant(t *testing.T) {
 	}
 	if pi.Value != 3.14 {
 		t.Errorf("PI = %f, want 3.14", pi.Value)
+	}
+}
+
+func TestLibraryBuilderRecoversPanics(t *testing.T) {
+	builder := NewLibraryBuilder("test", "Test library")
+	builder.Function("explode", func() string {
+		panic("boom")
+	})
+
+	result := builder.Build().Functions()["explode"].Fn(context.Background(), NewKwargs(nil))
+	errObj, ok := result.(*Error)
+	if !ok {
+		t.Fatalf("expected *Error, got %T", result)
+	}
+	if errObj.Message != "panic in builtin: boom" {
+		t.Fatalf("unexpected error message: %q", errObj.Message)
 	}
 }
 

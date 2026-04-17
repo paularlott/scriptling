@@ -32,9 +32,9 @@ var RuntimeState = struct {
 	BackgroundKwargs  map[string]map[string]object.Object // name -> kwargs
 	BackgroundEnvs    map[string]*object.Environment      // name -> environment
 	BackgroundEvals   map[string]evaliface.Evaluator      // name -> evaluator
-	BackgroundFactory SandboxFactory // Factory to create new Scriptling instances
-	BackgroundCtxs  map[string]context.Context // name -> context
-	BackgroundReady bool                       // If true, start tasks immediately
+	BackgroundFactory SandboxFactory                      // Factory to create new Scriptling instances
+	BackgroundCtxs    map[string]context.Context          // name -> context
+	BackgroundReady   bool                                // If true, start tasks immediately
 
 	// KV store
 	KVDB *snapshotkv.DB
@@ -51,19 +51,19 @@ var RuntimeState = struct {
 	Routes:               make(map[string]*RouteInfo),
 	WebSocketRoutes:      make(map[string]*WebSocketRouteInfo),
 	WebSocketConnections: make(map[string]*WebSocketServerConn),
-	Backgrounds:       make(map[string]string),
-	BackgroundArgs:    make(map[string][]object.Object),
-	BackgroundKwargs:  make(map[string]map[string]object.Object),
-	BackgroundEnvs:    make(map[string]*object.Environment),
-	BackgroundEvals:   make(map[string]evaliface.Evaluator),
-	BackgroundFactory: nil,
-	BackgroundCtxs:    make(map[string]context.Context),
-	BackgroundReady:   false,
-	KVDB:              nil,
-	WaitGroups:        make(map[string]*RuntimeWaitGroup),
-	Queues:            make(map[string]*RuntimeQueue),
-	Atomics:           make(map[string]*RuntimeAtomic),
-	Shareds:           make(map[string]*RuntimeShared),
+	Backgrounds:          make(map[string]string),
+	BackgroundArgs:       make(map[string][]object.Object),
+	BackgroundKwargs:     make(map[string]map[string]object.Object),
+	BackgroundEnvs:       make(map[string]*object.Environment),
+	BackgroundEvals:      make(map[string]evaliface.Evaluator),
+	BackgroundFactory:    nil,
+	BackgroundCtxs:       make(map[string]context.Context),
+	BackgroundReady:      false,
+	KVDB:                 nil,
+	WaitGroups:           make(map[string]*RuntimeWaitGroup),
+	Queues:               make(map[string]*RuntimeQueue),
+	Atomics:              make(map[string]*RuntimeAtomic),
+	Shareds:              make(map[string]*RuntimeShared),
 }
 
 // RegisterCleanup registers a function to be called during ResetRuntime.
@@ -429,31 +429,7 @@ func startBackgroundTask(handler string, fnArgs []object.Object, fnKwargs map[st
 			// newEnv so closures resolve correctly. No other globals are
 			// shared — the task accesses data through validated args and
 			// coordination via runtime.sync primitives.
-			globalEnv := env.GetGlobal()
-			store := globalEnv.GetStore()
-			for k, v := range store {
-				switch origFn := v.(type) {
-				case *object.Function:
-					newEnv.Set(k, &object.Function{
-						Name:          origFn.Name,
-						Parameters:    origFn.Parameters,
-						DefaultValues: origFn.DefaultValues,
-						Variadic:      origFn.Variadic,
-						Kwargs:        origFn.Kwargs,
-						Body:          origFn.Body,
-						Env:           newEnv,
-					})
-				case *object.LambdaFunction:
-					newEnv.Set(k, &object.LambdaFunction{
-						Parameters:    origFn.Parameters,
-						DefaultValues: origFn.DefaultValues,
-						Variadic:      origFn.Variadic,
-						Kwargs:        origFn.Kwargs,
-						Body:          origFn.Body,
-						Env:           newEnv,
-					})
-				}
-			}
+			env.GetGlobal().CopyCallableBindingsTo(newEnv)
 
 			fn, _ := newEnv.Get(handler)
 			if fn == nil {
@@ -530,13 +506,13 @@ func ReleaseBackgroundTasks() {
 			ctx:     RuntimeState.BackgroundCtxs[name],
 		}
 	}
-		// Drain the queues so ReleaseBackgroundTasks can't re-launch them
-		RuntimeState.Backgrounds = make(map[string]string)
-		RuntimeState.BackgroundArgs = make(map[string][]object.Object)
-		RuntimeState.BackgroundKwargs = make(map[string]map[string]object.Object)
-		RuntimeState.BackgroundEnvs = make(map[string]*object.Environment)
-		RuntimeState.BackgroundEvals = make(map[string]evaliface.Evaluator)
-		RuntimeState.BackgroundCtxs = make(map[string]context.Context)
+	// Drain the queues so ReleaseBackgroundTasks can't re-launch them
+	RuntimeState.Backgrounds = make(map[string]string)
+	RuntimeState.BackgroundArgs = make(map[string][]object.Object)
+	RuntimeState.BackgroundKwargs = make(map[string]map[string]object.Object)
+	RuntimeState.BackgroundEnvs = make(map[string]*object.Environment)
+	RuntimeState.BackgroundEvals = make(map[string]evaliface.Evaluator)
+	RuntimeState.BackgroundCtxs = make(map[string]context.Context)
 	RuntimeState.Unlock()
 
 	// Start all queued tasks

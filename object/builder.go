@@ -230,10 +230,16 @@ func putArgValueSlice(s *[]reflect.Value, capacity int) {
 
 // callTypedFunction calls a typed Go function with cached signature info.
 // Shared by LibraryBuilder and FunctionBuilder.
-func callTypedFunction(fnValue reflect.Value, sig *FunctionSignature, ctx context.Context, kwargs Kwargs, args []Object) Object {
+func callTypedFunction(fnValue reflect.Value, sig *FunctionSignature, ctx context.Context, kwargs Kwargs, args []Object) (result Object) {
 	// Get pooled slice for arguments
 	argValuesPtr := getArgValueSlice(sig.numIn)
 	argValues := *argValuesPtr
+	defer func() {
+		putArgValueSlice(argValuesPtr, sig.numIn)
+		if r := recover(); r != nil {
+			result = newError("panic in builtin: %v", r)
+		}
+	}()
 
 	// Add context parameter if present
 	if sig.hasContext {
@@ -256,7 +262,6 @@ func callTypedFunction(fnValue reflect.Value, sig *FunctionSignature, ctx contex
 			for j := argIndex; j < len(args); j++ {
 				val, convErr := convertObjectToValue(args[j], elemType)
 				if convErr != nil {
-					putArgValueSlice(argValuesPtr, sig.numIn)
 					return convErr
 				}
 				argValues = append(argValues, val)
@@ -265,14 +270,12 @@ func callTypedFunction(fnValue reflect.Value, sig *FunctionSignature, ctx contex
 		}
 
 		if argIndex >= len(args) {
-			putArgValueSlice(argValuesPtr, sig.numIn)
 			return newArgumentError(len(args), sig.maxPosArgs)
 		}
 
 		// Use cached parameter type
 		val, convErr := convertObjectToValue(args[argIndex], sig.paramTypes[fnParamIndex])
 		if convErr != nil {
-			putArgValueSlice(argValuesPtr, sig.numIn)
 			return convErr
 		}
 		argValues = append(argValues, val)
@@ -281,15 +284,11 @@ func callTypedFunction(fnValue reflect.Value, sig *FunctionSignature, ctx contex
 
 	// Check if we have extra positional arguments
 	if argIndex < len(args) && !sig.isVariadic {
-		putArgValueSlice(argValuesPtr, sig.numIn)
 		return newArgumentError(len(args), sig.maxPosArgs)
 	}
 
 	// Call the function
 	results := fnValue.Call(argValues)
-
-	// Return slice to pool
-	putArgValueSlice(argValuesPtr, sig.numIn)
 
 	// Handle return values with cached info
 	switch sig.numOut {
