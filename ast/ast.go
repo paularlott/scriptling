@@ -294,6 +294,15 @@ func (ps *PassStatement) statementNode()       {}
 func (ps *PassStatement) TokenLiteral() string { return ps.Token.Literal }
 func (ps *PassStatement) Line() int            { return ps.Token.Line }
 
+type DelStatement struct {
+	Token  token.Token
+	Target Expression
+}
+
+func (ds *DelStatement) statementNode()       {}
+func (ds *DelStatement) TokenLiteral() string { return ds.Token.Literal }
+func (ds *DelStatement) Line() int            { return ds.Token.Line }
+
 type ImportStatement struct {
 	Token             token.Token
 	Name              *Identifier   // The full dotted name stored as single identifier (e.g., "urllib.parse")

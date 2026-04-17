@@ -269,6 +269,14 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		return object.CONTINUE
 	case *ast.PassStatement:
 		return NULL
+	case *ast.DelStatement:
+		if err := deleteFromExpression(ctx, node.Target, env); err != nil {
+			if ae, ok := err.(*assignmentExceptionError); ok {
+				return ae.ex
+			}
+			return errors.NewError("%s", err.Error())
+		}
+		return NULL
 	case *ast.ImportStatement:
 		return evalImportStatement(node, env)
 	case *ast.FromImportStatement:
@@ -2695,6 +2703,295 @@ func buildDottedName(expr *ast.IndexExpression) string {
 type assignmentExceptionError struct{ ex *object.Exception }
 
 func (e *assignmentExceptionError) Error() string { return e.ex.Message }
+
+func exceptionDeleteError(exceptionType, message string) error {
+	return &assignmentExceptionError{
+		ex: &object.Exception{
+			Message:       message,
+			ExceptionType: exceptionType,
+		},
+	}
+}
+
+func evalSliceObjectWithContext(ctx context.Context, node *ast.SliceExpression, env *object.Environment) (*object.Slice, object.Object) {
+	sliceObj := &object.Slice{}
+
+	if node.Start != nil {
+		startObj := evalWithContext(ctx, node.Start, env)
+		if object.IsError(startObj) || isException(startObj) {
+			return nil, startObj
+		}
+		start, err := startObj.AsInt()
+		if err != nil {
+			return nil, err
+		}
+		sliceObj.Start = object.NewInteger(start)
+	}
+
+	if node.End != nil {
+		endObj := evalWithContext(ctx, node.End, env)
+		if object.IsError(endObj) || isException(endObj) {
+			return nil, endObj
+		}
+		end, err := endObj.AsInt()
+		if err != nil {
+			return nil, err
+		}
+		sliceObj.End = object.NewInteger(end)
+	}
+
+	if node.Step != nil {
+		stepObj := evalWithContext(ctx, node.Step, env)
+		if object.IsError(stepObj) || isException(stepObj) {
+			return nil, stepObj
+		}
+		step, err := stepObj.AsInt()
+		if err != nil {
+			return nil, err
+		}
+		if step == 0 {
+			return nil, errors.NewError("slice step cannot be zero")
+		}
+		sliceObj.Step = object.NewInteger(step)
+	}
+
+	return sliceObj, nil
+}
+
+func sliceDeleteIndices(length, start, end, step int64, hasStart, hasEnd, hasStep bool) []int64 {
+	if !hasStep {
+		step = 1
+	}
+
+	indices := []int64{}
+
+	if step < 0 {
+		if !hasStart {
+			start = length - 1
+		} else if start < 0 {
+			start = length + start
+		}
+		if !hasEnd {
+			end = -1
+		} else if end < 0 {
+			end = length + end
+		}
+
+		if start >= length {
+			start = length - 1
+		}
+		if start < 0 {
+			start = -1
+		}
+		if end >= length {
+			end = length - 1
+		}
+
+		for i := start; i > end; i += step {
+			if i >= 0 && i < length {
+				indices = append(indices, i)
+			}
+		}
+		return indices
+	}
+
+	if !hasStart {
+		start = 0
+	} else if start < 0 {
+		start = length + start
+		if start < 0 {
+			start = 0
+		}
+	}
+	if !hasEnd {
+		end = length
+	} else if end < 0 {
+		end = length + end
+		if end < 0 {
+			end = 0
+		}
+	}
+
+	if start < 0 {
+		start = 0
+	}
+	if end > length {
+		end = length
+	}
+	if start > end {
+		start = end
+	}
+
+	for i := start; i < end; i += step {
+		indices = append(indices, i)
+	}
+
+	return indices
+}
+
+func deleteListIndices(listObj *object.List, indices []int64) {
+	if len(indices) == 0 {
+		return
+	}
+
+	toDelete := make(map[int64]struct{}, len(indices))
+	for _, idx := range indices {
+		toDelete[idx] = struct{}{}
+	}
+
+	newElements := make([]object.Object, 0, len(listObj.Elements)-len(toDelete))
+	for i, elem := range listObj.Elements {
+		if _, shouldDelete := toDelete[int64(i)]; shouldDelete {
+			continue
+		}
+		newElements = append(newElements, elem)
+	}
+	listObj.Elements = newElements
+}
+
+func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.Environment) error {
+	switch target := expr.(type) {
+	case *ast.Identifier:
+		if _, ok := env.Get(target.Value); !ok {
+			return fmt.Errorf("%s", errors.NewIdentifierError(target.Value).Message)
+		}
+		env.Delete(target.Value)
+		return nil
+	case *ast.IndexExpression:
+		obj := evalWithContext(ctx, target.Left, env)
+		if object.IsError(obj) {
+			return fmt.Errorf("deletion error")
+		}
+		if isException(obj) {
+			return &assignmentExceptionError{ex: obj.(*object.Exception)}
+		}
+
+		index := evalWithContext(ctx, target.Index, env)
+		if object.IsError(index) {
+			return fmt.Errorf("deletion error")
+		}
+		if isException(index) {
+			return &assignmentExceptionError{ex: index.(*object.Exception)}
+		}
+
+		switch o := obj.(type) {
+		case *object.List:
+			idx, ok := index.(*object.Integer)
+			if !ok {
+				return fmt.Errorf("list index must be integer")
+			}
+			i := idx.Value
+			length := int64(len(o.Elements))
+			if i < 0 {
+				i += length
+			}
+			if i < 0 || i >= length {
+				return exceptionDeleteError(object.ExceptionTypeIndexError, "list index out of range")
+			}
+			o.Elements = append(o.Elements[:i], o.Elements[i+1:]...)
+			return nil
+		case *object.Dict:
+			key := evalHashKey(ctx, index)
+			if _, ok := o.Pairs[key]; !ok {
+				return exceptionDeleteError(object.ExceptionTypeKeyError, index.Inspect())
+			}
+			delete(o.Pairs, key)
+			return nil
+		case *object.Instance:
+			if !target.IsDotAccess {
+				if delitem, ok := o.Class.Methods["__delitem__"]; ok {
+					result := applyFunctionWithContext(ctx, delitem, []object.Object{obj, index}, nil, nil)
+					if object.IsError(result) {
+						return fmt.Errorf("%s", result.(*object.Error).Message)
+					}
+					if isException(result) {
+						return &assignmentExceptionError{ex: result.(*object.Exception)}
+					}
+					return nil
+				}
+				return fmt.Errorf("cannot delete index")
+			}
+			key, ok := index.(*object.String)
+			if !ok {
+				return fmt.Errorf("instance attribute must be string")
+			}
+			if _, exists := o.Fields[key.Value]; exists {
+				delete(o.Fields, key.Value)
+				return nil
+			}
+			if findPropertyInClass(key.Value, o.Class) != nil {
+				return exceptionDeleteError(object.ExceptionTypeAttributeError, fmt.Sprintf("can't delete attribute '%s'", key.Value))
+			}
+			return exceptionDeleteError(object.ExceptionTypeAttributeError, fmt.Sprintf("'%s' object has no attribute '%s'", o.Class.Name, key.Value))
+		case *object.Class:
+			key, ok := index.(*object.String)
+			if !ok {
+				return fmt.Errorf("class attribute must be string")
+			}
+			if _, exists := o.Methods[key.Value]; !exists {
+				return exceptionDeleteError(object.ExceptionTypeAttributeError, fmt.Sprintf("type object '%s' has no attribute '%s'", o.Name, key.Value))
+			}
+			delete(o.Methods, key.Value)
+			return nil
+		default:
+			return fmt.Errorf("cannot delete index")
+		}
+	case *ast.SliceExpression:
+		obj := evalWithContext(ctx, target.Left, env)
+		if object.IsError(obj) {
+			return fmt.Errorf("deletion error")
+		}
+		if isException(obj) {
+			return &assignmentExceptionError{ex: obj.(*object.Exception)}
+		}
+
+		sliceObj, errObj := evalSliceObjectWithContext(ctx, target, env)
+		if errObj != nil {
+			if exc, ok := errObj.(*object.Exception); ok {
+				return &assignmentExceptionError{ex: exc}
+			}
+			if evalErr, ok := errObj.(*object.Error); ok {
+				return fmt.Errorf("%s", evalErr.Message)
+			}
+			return fmt.Errorf("deletion error")
+		}
+
+		switch o := obj.(type) {
+		case *object.List:
+			var start, end, step int64
+			hasStart := sliceObj.Start != nil
+			hasEnd := sliceObj.End != nil
+			hasStep := sliceObj.Step != nil
+			if hasStart {
+				start = sliceObj.Start.Value
+			}
+			if hasEnd {
+				end = sliceObj.End.Value
+			}
+			if hasStep {
+				step = sliceObj.Step.Value
+			}
+			deleteListIndices(o, sliceDeleteIndices(int64(len(o.Elements)), start, end, step, hasStart, hasEnd, hasStep))
+			return nil
+		case *object.Instance:
+			if delitem, ok := o.Class.Methods["__delitem__"]; ok {
+				result := applyFunctionWithContext(ctx, delitem, []object.Object{obj, sliceObj}, nil, nil)
+				if object.IsError(result) {
+					return fmt.Errorf("%s", result.(*object.Error).Message)
+				}
+				if isException(result) {
+					return &assignmentExceptionError{ex: result.(*object.Exception)}
+				}
+				return nil
+			}
+			return fmt.Errorf("cannot delete slice")
+		default:
+			return fmt.Errorf("cannot delete slice")
+		}
+	default:
+		return fmt.Errorf("cannot delete expression")
+	}
+}
 
 func assignToExpression(ctx context.Context, expr ast.Expression, value object.Object, env *object.Environment) error {
 	switch left := expr.(type) {

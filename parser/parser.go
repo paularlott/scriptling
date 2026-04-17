@@ -259,6 +259,8 @@ func (p *Parser) parseStatement() ast.Statement {
 		return &ast.ContinueStatement{Token: p.curToken}
 	case token.PASS:
 		return &ast.PassStatement{Token: p.curToken}
+	case token.DEL:
+		return p.parseDelStatement()
 	case token.TRY:
 		return p.parseTryStatement()
 	case token.RAISE:
@@ -614,6 +616,20 @@ func (p *Parser) parseReturnStatement() *ast.ReturnStatement {
 		first := p.parseExpressionWithConditional()
 		stmt.ReturnValue = p.parseTuplePackingTail(stmt.Token, first)
 	}
+
+	return stmt
+}
+
+func (p *Parser) parseDelStatement() *ast.DelStatement {
+	stmt := &ast.DelStatement{Token: p.curToken}
+
+	if p.peekTokenIs(token.NEWLINE) || p.peekTokenIs(token.SEMICOLON) || p.peekTokenIs(token.EOF) || p.peekTokenIs(token.DEDENT) {
+		p.errors = append(p.errors, fmt.Sprintf("line %d: expected target after 'del'", p.curToken.Line))
+		return nil
+	}
+
+	p.nextToken()
+	stmt.Target = p.parseExpression(LOWEST)
 
 	return stmt
 }
@@ -2216,7 +2232,7 @@ func (p *Parser) isKeyword(t token.TokenType) bool {
 		token.TRUE, token.FALSE, token.NONE, token.IMPORT, token.FROM,
 		token.IF, token.ELIF, token.ELSE, token.WHILE, token.FOR, token.IN,
 		token.DEF, token.CLASS, token.RETURN, token.BREAK, token.CONTINUE,
-		token.PASS, token.AND, token.OR, token.NOT, token.IS, token.TRY,
+		token.PASS, token.DEL, token.AND, token.OR, token.NOT, token.IS, token.TRY,
 		token.EXCEPT, token.FINALLY, token.RAISE, token.GLOBAL, token.NONLOCAL,
 		token.LAMBDA, token.AS, token.ASSERT, token.WITH,
 	}

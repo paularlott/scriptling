@@ -229,6 +229,42 @@ func TestCallExpression(t *testing.T) {
 	}
 }
 
+func TestDelStatement(t *testing.T) {
+	input := `del items[1]
+del values[1:4:2]
+del user.name`
+
+	l := lexer.New(input)
+	p := New(l)
+	program := p.ParseProgram()
+	checkParserErrors(t, p)
+
+	if len(program.Statements) != 3 {
+		t.Fatalf("program.Statements does not contain 3 statements. got=%d", len(program.Statements))
+	}
+
+	if _, ok := program.Statements[0].(*ast.DelStatement); !ok {
+		t.Fatalf("statement 0 is not ast.DelStatement. got=%T", program.Statements[0])
+	}
+
+	sliceStmt, ok := program.Statements[1].(*ast.DelStatement)
+	if !ok {
+		t.Fatalf("statement 1 is not ast.DelStatement. got=%T", program.Statements[1])
+	}
+	if _, ok := sliceStmt.Target.(*ast.SliceExpression); !ok {
+		t.Fatalf("statement 1 target is not ast.SliceExpression. got=%T", sliceStmt.Target)
+	}
+
+	attrStmt, ok := program.Statements[2].(*ast.DelStatement)
+	if !ok {
+		t.Fatalf("statement 2 is not ast.DelStatement. got=%T", program.Statements[2])
+	}
+	indexExpr, ok := attrStmt.Target.(*ast.IndexExpression)
+	if !ok || !indexExpr.IsDotAccess {
+		t.Fatalf("statement 2 target is not dot-access ast.IndexExpression. got=%T", attrStmt.Target)
+	}
+}
+
 func checkParserErrors(t *testing.T, p *Parser) {
 	errors := p.Errors()
 	if len(errors) == 0 {

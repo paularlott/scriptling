@@ -25,7 +25,6 @@ func TestEvalIntegerExpression(t *testing.T) {
 		{"2 * (5 + 10)", 30},
 		{"3 * 3 * 3 + 10", 37},
 		{"3 * (3 * 3) + 10", 37},
-
 	}
 
 	for _, tt := range tests {
@@ -244,6 +243,116 @@ func TestBuiltinFunctions(t *testing.T) {
 		case int:
 			testIntegerObject(t, evaluated, int64(expected))
 		}
+	}
+}
+
+func TestDelStatement(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected interface{}
+	}{
+		{
+			name: "delete list index",
+			input: `
+items = [10, 20, 30]
+del items[1]
+str(items)
+`,
+			expected: "[10, 30]",
+		},
+		{
+			name: "delete list slice with step",
+			input: `
+items = [0, 1, 2, 3, 4, 5]
+del items[1:5:2]
+str(items)
+`,
+			expected: "[0, 2, 4, 5]",
+		},
+		{
+			name: "delete dict key",
+			input: `
+data = {"a": 1, "b": 2}
+del data["a"]
+data["a"] == None and data["b"] == 2
+`,
+			expected: true,
+		},
+		{
+			name: "delete attribute",
+			input: `
+class User:
+    def __init__(self):
+        self.name = "Alice"
+        self.age = 30
+
+user = User()
+del user.name
+user.name == None and user.age == 30
+`,
+			expected: true,
+		},
+		{
+			name: "delete missing index raises catchable IndexError",
+			input: `
+items = [1]
+caught = False
+try:
+    del items[2]
+except IndexError:
+    caught = True
+caught
+`,
+			expected: true,
+		},
+		{
+			name: "delete missing key raises catchable KeyError",
+			input: `
+data = {}
+caught = False
+try:
+    del data["missing"]
+except KeyError:
+    caught = True
+caught
+`,
+			expected: true,
+		},
+		{
+			name: "delete missing attribute raises catchable AttributeError",
+			input: `
+class User:
+    pass
+
+user = User()
+caught = False
+try:
+    del user.name
+except AttributeError:
+    caught = True
+caught
+`,
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			evaluated := testEval(tt.input)
+			switch expected := tt.expected.(type) {
+			case bool:
+				testBooleanObject(t, evaluated, expected)
+			case string:
+				str, ok := evaluated.(*object.String)
+				if !ok {
+					t.Fatalf("object is not String. got=%T (%+v)", evaluated, evaluated)
+				}
+				if str.Value != expected {
+					t.Fatalf("wrong string value. got=%q want=%q", str.Value, expected)
+				}
+			}
+		})
 	}
 }
 

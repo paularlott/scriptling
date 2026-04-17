@@ -85,6 +85,7 @@ const (
 	BREAK    = "BREAK"
 	CONTINUE = "CONTINUE"
 	PASS     = "PASS"
+	DEL      = "DEL"
 	AND      = "AND"
 	OR       = "OR"
 	NOT      = "NOT"
@@ -124,6 +125,7 @@ var keywords = map[string]TokenType{
 	"break":    BREAK,
 	"continue": CONTINUE,
 	"pass":     PASS,
+	"del":      DEL,
 	"and":      AND,
 	"or":       OR,
 	"not":      NOT,

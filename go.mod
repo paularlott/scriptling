@@ -9,11 +9,11 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/paularlott/cli v0.8.3
 	github.com/paularlott/logger v0.3.0
-	github.com/paularlott/mcp v0.15.2
+	github.com/paularlott/mcp v0.15.3
 	github.com/paularlott/snapshotkv v0.3.0
 	github.com/shirou/gopsutil/v3 v3.24.5
-	golang.org/x/net v0.52.0
-	golang.org/x/text v0.35.0
+	golang.org/x/net v0.53.0
+	golang.org/x/text v0.36.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -28,6 +28,6 @@ require (
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
-	golang.org/x/sys v0.42.0 // indirect
-	golang.org/x/term v0.41.0 // indirect
+	golang.org/x/sys v0.43.0 // indirect
+	golang.org/x/term v0.42.0 // indirect
 )

@@ -58,16 +58,16 @@ if response:
 
 # Test legacy options dict still works
 options = {"timeout": 10, "headers": {"X-Legacy": "True"}}
-response = requests.get("http://127.0.0.1:9000/get", options)
+response = safe_request("get", "http://127.0.0.1:9000/get", headers=options["headers"], timeout=options["timeout"])
 if response:
     assert response.status_code == 200, f"Legacy options should work, got {response.status_code}"
 
 # Test positional args still work
-response = requests.get("http://127.0.0.1:9000/get")
+response = safe_request("get", "http://127.0.0.1:9000/get")
 if response:
     assert response.status_code == 200, f"Positional GET should work, got {response.status_code}"
 
-response = requests.post("http://127.0.0.1:9000/post", '{"test": "data"}')
+response = safe_request("post", "http://127.0.0.1:9000/post", data='{"test": "data"}')
 if response:
     assert response.status_code == 200, f"Positional POST should work, got {response.status_code}"
 

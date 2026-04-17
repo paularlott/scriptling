@@ -3,6 +3,8 @@ package scriptling
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
@@ -43,7 +45,7 @@ func TestRegisterLibrary(t *testing.T) {
 			},
 		},
 	}, nil, "")
-	p.RegisterLibrary( myLib)
+	p.RegisterLibrary(myLib)
 
 	_, err := p.Eval(`
 import mylib
@@ -68,7 +70,7 @@ func TestImport(t *testing.T) {
 			},
 		},
 	}, nil, "")
-	p.RegisterLibrary( myLib)
+	p.RegisterLibrary(myLib)
 
 	// Import the library programmatically
 	err := p.Import("mylib")
@@ -90,7 +92,7 @@ func TestImport(t *testing.T) {
 
 func TestImportStandardLibrary(t *testing.T) {
 	p := New()
-	p.RegisterLibrary( stdlib.JSONLibrary)
+	p.RegisterLibrary(stdlib.JSONLibrary)
 
 	// Import the json library programmatically
 	err := p.Import("json")
@@ -170,7 +172,7 @@ func TestRegisterLibraryWithClass(t *testing.T) {
 		"Counter utilities library",
 	)
 
-	p.RegisterLibrary( myLib)
+	p.RegisterLibrary(myLib)
 
 	// Test using the class from the library
 	_, err := p.Eval(`
@@ -208,7 +210,7 @@ helper_result = counters.helper()
 
 func TestImportBuiltin(t *testing.T) {
 	p := New()
-	p.RegisterLibrary( stdlib.JSONLibrary)
+	p.RegisterLibrary(stdlib.JSONLibrary)
 	_, err := p.Eval(`
 import json
 data = json.loads('{"key":"value"}')
@@ -311,7 +313,7 @@ gte = 10 >= 5
 
 func TestDotNotation(t *testing.T) {
 	p := New()
-	p.RegisterLibrary( stdlib.JSONLibrary)
+	p.RegisterLibrary(stdlib.JSONLibrary)
 	_, err := p.Eval(`
 import json
 data = json.loads('{"name":"Alice"}')
@@ -328,23 +330,32 @@ result = data["name"]
 }
 
 func TestHTTPLibrary(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/status/200" {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer server.Close()
+
 	p := New()
-	p.RegisterLibrary( extlibs.RequestsLibrary)
-	_, err := p.Eval(`
+	p.RegisterLibrary(extlibs.RequestsLibrary)
+	_, err := p.Eval(fmt.Sprintf(`
 import requests
 options = {"timeout": 10}
-response = requests.get("http://127.0.0.1:9000/status/200", options)
+response = requests.get("%s/status/200", options)
 print("Response:", response)
 status = response.status_code
-`)
+`, server.URL))
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
 
 	status, objErr := p.GetVarAsInt("status")
-	// Accept both 200 (success) and other status codes (service issues)
-	if objErr != nil || (status != int64(200) && status < 400) {
-		t.Errorf("expected 200 or success status, got %v", status)
+	if objErr != nil || status != int64(200) {
+		t.Errorf("expected 200, got %v", status)
 	}
 }
 
@@ -370,7 +381,7 @@ This is a test library function with help text.`,
 		"LIB_CONSTANT": &object.String{Value: "1.0.0"},
 	}, "Test library for help system")
 
-	p.RegisterLibrary( myLib)
+	p.RegisterLibrary(myLib)
 
 	// Register a Scriptling function with docstring
 	err := p.RegisterScriptFunc("script_func", `
