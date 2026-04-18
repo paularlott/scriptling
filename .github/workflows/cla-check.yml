@@ -19,6 +19,7 @@ jobs:
       - name: Run CLA check
         uses: actions/github-script@v7
         with:
+          github-token: ${{ secrets.CLA_TOKEN }}
           script: |
             const pr = context.payload.pull_request;
             const username = pr.user.login;
