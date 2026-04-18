@@ -30,6 +30,7 @@ var (
 		sync.RWMutex
 		m map[string]*gossip.Cluster
 	}{m: make(map[string]*gossip.Cluster)}
+	log logger.Logger
 )
 
 func nodeToObject(n *gossip.Node) *object.Dict {
@@ -52,10 +53,10 @@ func nodeToObject(n *gossip.Node) *object.Dict {
 	}
 
 	return object.NewStringDict(map[string]object.Object{
-		"id":        &object.String{Value: n.ID.String()},
-		"addr":      &object.String{Value: n.AdvertisedAddr()},
-		"state":     &object.String{Value: state},
-		"metadata":  object.NewStringDict(mdPairs),
+		"id":       &object.String{Value: n.ID.String()},
+		"addr":     &object.String{Value: n.AdvertisedAddr()},
+		"state":    &object.String{Value: state},
+		"metadata": object.NewStringDict(mdPairs),
 	})
 }
 
@@ -574,8 +575,8 @@ func buildLibrary() *object.Library {
 				config.Tags = tags
 				config.ApplicationVersion = appVersion
 				config.BearerToken = bearerToken
-				config.Logger = logger.NewNullLogger()
-				config.MsgCodec = codec.NewShamatonMsgpackCodec()
+				config.Logger = log.WithGroup("gossip")
+				config.MsgCodec = codec.NewVmihailencoMsgpackCodec()
 
 				if enableCompression {
 					config.Compressor = compression.NewSnappyCompressor()
@@ -659,8 +660,12 @@ func getEnvFromContext(ctx context.Context) *object.Environment {
 	return object.NewEnvironment()
 }
 
-func Register(registrar interface{ RegisterLibrary(*object.Library) }) {
+func Register(registrar interface{ RegisterLibrary(*object.Library) }, loggerInstance logger.Logger) {
+	if loggerInstance == nil {
+		loggerInstance = logger.NewNullLogger()
+	}
 	libraryOnce.Do(func() {
+		log = loggerInstance
 		library = buildLibrary()
 		extlibs.RegisterCleanup(func() {
 			clusters.Lock()

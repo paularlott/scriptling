@@ -9,7 +9,7 @@ import (
 
 func newScriptling() *scriptling.Scriptling {
 	p := scriptling.New()
-	Register(p)
+	Register(p, nil)
 	return p
 }
 

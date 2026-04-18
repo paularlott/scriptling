@@ -56,7 +56,7 @@ func SetupScriptling(p *scriptling.Scriptling, libdirs []string, registerInterac
 	// Register networking libraries
 	scriptlingmulticast.Register(p)
 	scriptlingunicast.Register(p)
-	scriptlinggossip.Register(p)
+	scriptlinggossip.Register(p, log)
 
 	// Register AI and MCP libraries
 	ai.Register(p)

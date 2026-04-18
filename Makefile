@@ -3,7 +3,7 @@
 BIN_DIR = bin
 CLI_DIR = scriptling-cli
 BUILD_DATE = $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
-LDFLAGS = -ldflags="-s -w -X github.com/paularlott/scriptling/build.BuildDate=$(BUILD_DATE)"
+LDFLAGS = -ldflags="-s -w -X github.com/paularlott/scriptling/build.BuildDate=$(BUILD_DATE)" --tags="skip_codec_hashicorp_msgpack skip_codec_json skip_codec_shamaton_msgpack skip_encryption_chacha20 skip_websocket_coder"
 
 .PHONY: clean build build-all build-linux-amd64 build-linux-arm64 build-darwin-amd64 build-darwin-arm64 build-windows-amd64 build-windows-arm64 test release
 
