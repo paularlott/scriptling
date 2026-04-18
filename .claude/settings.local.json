@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(sed -n '326,335p' /Users/martinsuchenak/Devel/scriptling/extlibs/net/unicast/library.go)",
+      "Bash(sed -n '412,420p' /Users/martinsuchenak/Devel/scriptling/extlibs/net/unicast/library.go)",
+      "Bash(python3 *)",
+      "Bash(sed -i '' 's|examples/multicast/|examples/net/multicast/|g' examples/net/multicast/README.md)",
+      "Bash(sed -i '' 's|examples/unicast/|examples/net/unicast/|g' examples/net/unicast/README.md)"
+    ]
+  }
+}

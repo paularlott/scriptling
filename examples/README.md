@@ -49,6 +49,19 @@ This directory contains examples and tools for working with Scriptling.
   - `main.go` - Go integration example
   - `README.md` - HTTP server documentation
 
+- **net/** - Networking library examples (`scriptling.net.*`)
+  - **net/multicast/** - UDP multicast group messaging
+    - `multicast_demo.py` - Join a multicast group, send and receive messages
+    - `README.md` - Multicast library documentation
+  - **net/unicast/** - UDP and TCP point-to-point messaging
+    - `tcp_echo.py` - TCP echo server and client
+    - `udp_ping_pong.py` - UDP ping-pong example
+    - `README.md` - Unicast library documentation
+  - **net/gossip/** - Gossip protocol cluster membership and messaging
+    - `gossip_demo.py` - Single-node metadata and introspection demo
+    - `gossip_cluster.py` - Two-node cluster with message passing
+    - `README.md` - Gossip library documentation
+
 - **mcp-tools/** - Example MCP tools for use with the CLI MCP server
   - `*.toml` - Tool metadata files
   - `*.py` - Tool implementation scripts
@@ -149,3 +162,6 @@ See individual example directories for more details:
 - [multi-environment/README.md](multi-environment/README.md) - Multi-environment usage
 - [openai/README.md](openai/README.md) - AI library with OpenAI-compatible APIs
 - [telegram-bot/README.md](telegram-bot/README.md) - Telegram bot example
+- [net/unicast/README.md](net/unicast/README.md) - UDP and TCP point-to-point messaging
+- [net/multicast/README.md](net/multicast/README.md) - UDP multicast group messaging
+- [net/gossip/README.md](net/gossip/README.md) - Gossip protocol cluster membership and messaging
