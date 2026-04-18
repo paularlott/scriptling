@@ -29,6 +29,7 @@ import (
 
 	mcpcli "github.com/paularlott/scriptling/scriptling-cli/mcp"
 	"github.com/paularlott/scriptling/scriptling-cli/pack"
+	"github.com/paularlott/scriptling/scriptling-cli/setup"
 )
 
 var Log logger.Logger
@@ -104,7 +105,7 @@ func NewServer(config ServerConfig) (*Server, error) {
 		}
 		// Wire filesystem loader first, pack as fallback via Chain.
 		tmp := scriptling.New()
-		mcpcli.SetupScriptling(tmp, config.LibDirs, false, config.AllowedPaths, Log)
+		setup.Scriptling(tmp, config.LibDirs, false, config.AllowedPaths, Log)
 		s.packLoader = l
 		s.packLoader.SetFallback(nil)
 		// Store the chain so applyPackLoader can set it on each interpreter.
@@ -121,7 +122,7 @@ func NewServer(config ServerConfig) (*Server, error) {
 	}
 
 	// Set up the sandbox/background factory once
-	mcpcli.SetupFactories(config.LibDirs, config.AllowedPaths, Log)
+	setup.Factories(config.LibDirs, config.AllowedPaths, Log)
 
 	// Run setup script if provided, or if packages have a main entry
 	if config.ScriptFile != "" || s.packLoader != nil {
@@ -155,7 +156,7 @@ func NewServer(config ServerConfig) (*Server, error) {
 // runSetupScript runs the setup script once to register routes
 func (s *Server) runSetupScript() error {
 	p := scriptling.New()
-	mcpcli.SetupScriptling(p, s.config.LibDirs, false, s.config.AllowedPaths, Log)
+	setup.Scriptling(p, s.config.LibDirs, false, s.config.AllowedPaths, Log)
 	s.applyPackLoader(p)
 
 	if s.config.ScriptFile != "" {
@@ -298,7 +299,7 @@ RETURNING RESULTS:
 		func(ctx context.Context, req *mcp_lib.ToolRequest) (*mcp_lib.ToolResponse, error) {
 			code, _ := req.String("code")
 			p := scriptling.New()
-			mcpcli.SetupScriptling(p, s.config.LibDirs, false, s.config.AllowedPaths, Log)
+			setup.Scriptling(p, s.config.LibDirs, false, s.config.AllowedPaths, Log)
 
 			response, exitCode, err := scriptlingmcp.RunToolScript(ctx, p, code, map[string]interface{}{})
 			if err != nil && exitCode != 0 {
@@ -550,7 +551,7 @@ func (s *Server) runHandler(handlerRef string, reqObj *object.Instance) *object.
 
 	// Create fresh scriptling environment
 	p := scriptling.New()
-	mcpcli.SetupScriptling(p, s.config.LibDirs, false, s.config.AllowedPaths, Log)
+	setup.Scriptling(p, s.config.LibDirs, false, s.config.AllowedPaths, Log)
 	s.applyPackLoader(p)
 
 	// Import the library
@@ -796,7 +797,7 @@ func createMCPToolHandler(scriptPath string, libDirs []string, allowedPaths []st
 
 	handler := func(ctx context.Context, req *mcp_lib.ToolRequest) (*mcp_lib.ToolResponse, error) {
 		p := scriptling.New()
-		mcpcli.SetupScriptling(p, toolLibDirs, false, allowedPaths, Log)
+		setup.Scriptling(p, toolLibDirs, false, allowedPaths, Log)
 		if packLoader != nil {
 			p.SetLibraryLoader(packLoader)
 		}

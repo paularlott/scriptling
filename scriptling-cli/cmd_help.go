@@ -10,8 +10,8 @@ import (
 	"github.com/paularlott/cli/tui"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/libloader"
-	mcpcli "github.com/paularlott/scriptling/scriptling-cli/mcp"
 	"github.com/paularlott/scriptling/scriptling-cli/pack"
+	"github.com/paularlott/scriptling/scriptling-cli/setup"
 )
 
 func helpCmd() *cli.Command {
@@ -31,7 +31,7 @@ func helpCmd() *cli.Command {
 			libDirs := buildLibDirs(cwd, cmd.GetStringSlice("libpath"))
 
 			p := scriptling.New()
-			mcpcli.SetupScriptling(p, libDirs, false, allowedPaths, globalLogger)
+			setup.Scriptling(p, libDirs, false, allowedPaths, globalLogger)
 
 			packages := cmd.GetStringSlice("package")
 			if len(packages) > 0 {

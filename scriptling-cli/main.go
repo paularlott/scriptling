@@ -20,9 +20,9 @@ import (
 	"github.com/paularlott/scriptling/libloader"
 	"github.com/paularlott/scriptling/object"
 
-	mcpcli "github.com/paularlott/scriptling/scriptling-cli/mcp"
 	"github.com/paularlott/scriptling/scriptling-cli/pack"
 	"github.com/paularlott/scriptling/scriptling-cli/server"
+	"github.com/paularlott/scriptling/scriptling-cli/setup"
 )
 
 var globalLogger logger.Logger
@@ -205,8 +205,8 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	defer extlibs.CloseKVStore()
 
 	libDirs := buildLibDirs(baseDir, cmd.GetStringSlice("libpath"))
-	mcpcli.SetupFactories(libDirs, allowedPaths, globalLogger)
-	mcpcli.SetupScriptling(p, libDirs, true, allowedPaths, globalLogger)
+	setup.Factories(libDirs, allowedPaths, globalLogger)
+	setup.Scriptling(p, libDirs, true, allowedPaths, globalLogger)
 
 	packages := cmd.GetStringSlice("package")
 	insecure := cmd.GetBool("insecure")

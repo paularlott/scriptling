@@ -1,4 +1,4 @@
-package mcp
+package setup
 
 import (
 	"github.com/paularlott/logger"
@@ -8,57 +8,47 @@ import (
 	"github.com/paularlott/scriptling/extlibs/ai"
 	aimemory "github.com/paularlott/scriptling/extlibs/ai/memory"
 	scriptlingconsole "github.com/paularlott/scriptling/extlibs/console"
-	scriptlinggossip "github.com/paularlott/scriptling/extlibs/net/gossip"
 	scriptlingmcp "github.com/paularlott/scriptling/extlibs/mcp"
 	messagingconsole "github.com/paularlott/scriptling/extlibs/messaging/console"
 	"github.com/paularlott/scriptling/extlibs/messaging/discord"
 	"github.com/paularlott/scriptling/extlibs/messaging/slack"
 	"github.com/paularlott/scriptling/extlibs/messaging/telegram"
+	scriptlinggossip "github.com/paularlott/scriptling/extlibs/net/gossip"
 	scriptlingmulticast "github.com/paularlott/scriptling/extlibs/net/multicast"
-	scriptlingsimilarity "github.com/paularlott/scriptling/extlibs/similarity"
 	scriptlingunicast "github.com/paularlott/scriptling/extlibs/net/unicast"
+	scriptlingsimilarity "github.com/paularlott/scriptling/extlibs/similarity"
 	"github.com/paularlott/scriptling/libloader"
 	"github.com/paularlott/scriptling/stdlib"
 )
 
-// SetupScriptling configures a Scriptling instance with all libraries.
+// Scriptling configures a Scriptling instance with the built-in CLI libraries.
 // libdirs: Directories for on-demand library loading (first entry is typically the script dir or cwd)
 // registerInteract: Whether to register the agent interact library
 // allowedPaths: Filesystem path restrictions for os, pathlib, glob, sandbox (nil = no restrictions)
 // log: Logger instance for the logging library
-func SetupScriptling(p *scriptling.Scriptling, libdirs []string, registerInteract bool, allowedPaths []string, log logger.Logger) {
-	// Register all standard libraries
+func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract bool, allowedPaths []string, log logger.Logger) {
+	// Register all standard libraries.
 	stdlib.RegisterAll(p)
 
-	// Register YAML
 	p.RegisterLibrary(extlibs.YAMLLibrary)
-
-	// Register TOML
 	p.RegisterLibrary(extlibs.TOMLLibrary)
 
-	// Register HTML parser
 	extlibs.RegisterHTMLParserLibrary(p)
 	extlibs.RegisterRequestsLibrary(p)
 	extlibs.RegisterSecretsLibrary(p)
 	extlibs.RegisterOSLibrary(p, allowedPaths)
 	extlibs.RegisterLoggingLibrary(p, log)
-
-	// Register runtime library with sandbox using the same allowed paths
 	extlibs.RegisterRuntimeLibraryAll(p, allowedPaths)
-
-	// Register all libraries (use --allowed-paths to restrict file access)
 	extlibs.RegisterSubprocessLibrary(p)
 	extlibs.RegisterPathlibLibrary(p, allowedPaths)
 	extlibs.RegisterGlobLibrary(p, allowedPaths)
 	extlibs.RegisterWaitForLibrary(p)
 	extlibs.RegisterWebSocketLibrary(p)
 
-	// Register networking libraries
 	scriptlingmulticast.Register(p)
 	scriptlingunicast.Register(p)
 	scriptlinggossip.Register(p, log)
 
-	// Register AI and MCP libraries
 	ai.Register(p)
 	aimemory.Register(p, log)
 	agent.Register(p)
@@ -68,30 +58,26 @@ func SetupScriptling(p *scriptling.Scriptling, libdirs []string, registerInterac
 		agent.RegisterInteract(p)
 	}
 
-	// Register messaging libraries
 	telegram.Register(p, log)
 	discord.Register(p, log)
 	slack.Register(p, log)
 	messagingconsole.Register(p)
 
-	// Register MCP library
 	scriptlingmcp.Register(p)
 	scriptlingmcp.RegisterToon(p)
 	scriptlingmcp.RegisterToolHelpers(p)
 
-	// Set up library loading from filesystem
 	if len(libdirs) > 0 {
 		p.SetLibraryLoader(libloader.NewMultiFilesystem(libdirs...))
 	}
 }
 
-// SetupFactories configures the global sandbox and background factories.
+// Factories configures the global sandbox and background factories.
 // Call this once at startup, before any scripts execute.
-// The factories create new Scriptling instances with the same library configuration.
-func SetupFactories(libdirs []string, allowedPaths []string, log logger.Logger) {
+func Factories(libdirs []string, allowedPaths []string, log logger.Logger) {
 	factory := func() extlibs.SandboxInstance {
 		p := scriptling.New()
-		SetupScriptling(p, libdirs, false, allowedPaths, log)
+		Scriptling(p, libdirs, false, allowedPaths, log)
 		return p
 	}
 	extlibs.SetSandboxFactory(factory)

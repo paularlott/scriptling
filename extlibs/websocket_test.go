@@ -44,7 +44,7 @@ func TestWebSocketClientConnect(t *testing.T) {
 	RegisterWebSocketLibrary(p)
 
 	script := `
-import scriptling.websocket as ws
+import scriptling.net.websocket as ws
 
 conn = ws.connect("` + wsURL + `", timeout=5)
 connected = conn.connected()
@@ -106,7 +106,7 @@ func TestWebSocketClientEcho(t *testing.T) {
 	RegisterWebSocketLibrary(p)
 
 	script := `
-import scriptling.websocket as ws
+import scriptling.net.websocket as ws
 
 conn = ws.connect("` + wsURL + `", timeout=5)
 conn.send("Hello, WebSocket!")
@@ -158,7 +158,7 @@ func TestWebSocketClientJSON(t *testing.T) {
 	RegisterWebSocketLibrary(p)
 
 	script := `
-import scriptling.websocket as ws
+import scriptling.net.websocket as ws
 
 conn = ws.connect("` + wsURL + `", timeout=5)
 # Send a dict - should be JSON encoded
@@ -207,7 +207,7 @@ func TestWebSocketClientTimeout(t *testing.T) {
 	RegisterWebSocketLibrary(p)
 
 	script := `
-import scriptling.websocket as ws
+import scriptling.net.websocket as ws
 
 conn = ws.connect("` + wsURL + `", timeout=5)
 msg = conn.receive(timeout=1)  # 1 second timeout
@@ -344,7 +344,7 @@ func TestWebSocketIsTextIsBinary(t *testing.T) {
 
 	// Test is_text with string
 	script := `
-import scriptling.websocket as ws
+import scriptling.net.websocket as ws
 
 text_msg = "hello"
 binary_msg = [1, 2, 3, 255]

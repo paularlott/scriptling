@@ -311,7 +311,7 @@ Returns:
   Connection object with methods: send(), send_binary(), receive(), connected(), close()
 
 Example:
-  import scriptling.websocket as ws
+  import scriptling.net.websocket as ws
   conn = ws.connect("wss://echo.websocket.org")
   conn.send("Hello")
   msg = conn.receive(timeout=5)

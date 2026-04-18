@@ -9,8 +9,8 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs"
-	mcpcli "github.com/paularlott/scriptling/scriptling-cli/mcp"
 	"github.com/paularlott/scriptling/object"
+	"github.com/paularlott/scriptling/scriptling-cli/setup"
 )
 
 // websocketUpgrader upgrades HTTP connections to WebSocket
@@ -80,7 +80,7 @@ func (s *Server) runWebSocketHandler(handlerRef string, clientObj *object.Instan
 
 	// Create fresh scriptling environment
 	p := scriptling.New()
-	mcpcli.SetupScriptling(p, s.config.LibDirs, false, s.config.AllowedPaths, Log)
+	setup.Scriptling(p, s.config.LibDirs, false, s.config.AllowedPaths, Log)
 	s.applyPackLoader(p)
 
 	// Import the library

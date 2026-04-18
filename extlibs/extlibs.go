@@ -25,7 +25,7 @@ const (
 	InteractLibraryName       = "scriptling.ai.agent.interact"
 	SimilarityLibraryName     = "scriptling.similarity"
 	TOMLLibraryName           = "toml"
-	WebSocketLibraryName      = "scriptling.websocket"
+	WebSocketLibraryName      = "scriptling.net.websocket"
 	MulticastLibraryName      = "scriptling.net.multicast"
 	UnicastLibraryName        = "scriptling.net.unicast"
 	GossipLibraryName         = "scriptling.net.gossip"

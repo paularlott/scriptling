@@ -1,7 +1,7 @@
 # WebSocket Client Example
 # Run with: scriptling-cli run examples/websocket/client.py
 
-import scriptling.websocket as ws
+import scriptling.net.websocket as ws
 
 # Connect to the echo server
 print("Connecting to WebSocket server...")
