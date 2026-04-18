@@ -26,4 +26,7 @@ const (
 	SimilarityLibraryName     = "scriptling.similarity"
 	TOMLLibraryName           = "toml"
 	WebSocketLibraryName      = "scriptling.websocket"
+	MulticastLibraryName      = "scriptling.multicast"
+	UnicastLibraryName        = "scriptling.unicast"
+	GossipLibraryName         = "scriptling.gossip"
 )

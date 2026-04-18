@@ -7,13 +7,16 @@ import (
 	"github.com/paularlott/scriptling/extlibs/agent"
 	"github.com/paularlott/scriptling/extlibs/ai"
 	aimemory "github.com/paularlott/scriptling/extlibs/ai/memory"
-	"github.com/paularlott/scriptling/extlibs/console"
+	scriptlingconsole "github.com/paularlott/scriptling/extlibs/console"
+	scriptlinggossip "github.com/paularlott/scriptling/extlibs/gossip"
 	scriptlingmcp "github.com/paularlott/scriptling/extlibs/mcp"
 	messagingconsole "github.com/paularlott/scriptling/extlibs/messaging/console"
 	"github.com/paularlott/scriptling/extlibs/messaging/discord"
 	"github.com/paularlott/scriptling/extlibs/messaging/slack"
 	"github.com/paularlott/scriptling/extlibs/messaging/telegram"
+	scriptlingmulticast "github.com/paularlott/scriptling/extlibs/multicast"
 	scriptlingsimilarity "github.com/paularlott/scriptling/extlibs/similarity"
+	scriptlingunicast "github.com/paularlott/scriptling/extlibs/unicast"
 	"github.com/paularlott/scriptling/libloader"
 	"github.com/paularlott/scriptling/stdlib"
 )
@@ -50,12 +53,17 @@ func SetupScriptling(p *scriptling.Scriptling, libdirs []string, registerInterac
 	extlibs.RegisterWaitForLibrary(p)
 	extlibs.RegisterWebSocketLibrary(p)
 
+	// Register networking libraries
+	scriptlingmulticast.Register(p)
+	scriptlingunicast.Register(p)
+	scriptlinggossip.Register(p)
+
 	// Register AI and MCP libraries
 	ai.Register(p)
 	aimemory.Register(p, log)
 	agent.Register(p)
 	scriptlingsimilarity.Register(p)
-	console.Register(p)
+	scriptlingconsole.Register(p)
 	if registerInteract {
 		agent.RegisterInteract(p)
 	}
