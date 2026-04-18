@@ -9,68 +9,84 @@ jobs:
 
     permissions:
       contents: read
-      pull-requests: write
-      issues: write
 
     steps:
+      - uses: actions/checkout@v4
+
       - name: Run CLA check
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.CLA_TOKEN }}
-          script: |
-            const username = context.payload.pull_request.user.login.toLowerCase();
-            const issue_number = context.payload.pull_request.number;
-            const { owner, repo } = context.repo;
+        env:
+          CLA_TOKEN: ${{ secrets.CLA_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          CLA_URL: https://forms.gle/dVYXv5geiZGmR1KG9
+        run: |
+          AUTHOR=$(echo "$PR_AUTHOR" | tr '[:upper:]' '[:lower:]')
 
-            const contributors = new Set(
-              JSON.parse(require('fs').readFileSync('.clabot.json', 'utf8'))
-                .contributors.map(u => u.toLowerCase())
-            );
+          # Check if author is in contributors list
+          HAS_SIGNED=$(jq -r --arg a "$AUTHOR" '.contributors | map(downcase) | index($a) != null' .clabot.json)
 
-            const hasSigned = contributors.has(username);
+          LABEL="cla: ok"
+          REMOVE_LABEL="cla: required"
+          if [ "$HAS_SIGNED" = "false" ]; then
+            LABEL="cla: required"
+            REMOVE_LABEL="cla: ok"
+          fi
 
-            const desired = hasSigned ? 'cla: ok' : 'cla: required';
-            const undesired = hasSigned ? 'cla: required' : 'cla: ok';
+          # Set labels via API
+          curl -s -X POST \
+            -H "Authorization: token $CLA_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/$GH_REPO/issues/$PR_NUMBER/labels" \
+            -d "{\"labels\":[\"$LABEL\"]}"
 
-            const { data: labels } = await github.rest.issues.listLabelsOnIssue({ owner, repo, issue_number });
-            const names = labels.map(l => l.name);
+          curl -s -X DELETE \
+            -H "Authorization: token $CLA_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/$GH_REPO/issues/$PR_NUMBER/labels/$REMOVE_LABEL"
 
-            if (!names.includes(desired)) {
-              await github.rest.issues.addLabels({ owner, repo, issue_number, labels: [desired] });
-            }
-            if (names.includes(undesired)) {
-              await github.rest.issues.removeLabel({ owner, repo, issue_number, name: undesired });
-            }
+          # Handle comment if CLA not signed
+          MARKER='<!-- CLA-MISSING-MARKER -->'
 
-            const MARKER = '<!-- CLA-MISSING-MARKER -->';
+          if [ "$HAS_SIGNED" = "false" ]; then
+            BODY=$(jq -n --arg m "$MARKER" --arg u "$PR_AUTHOR" --arg url "$CLA_URL" \
+              '"\($m)\nThanks for your contribution, @\($u)!\n\nBefore we can review this pull request, you need to accept the Contributor License Agreement (CLA).\n\nPlease read and sign the CLA here: \($url)\n\nOnce you have signed, a maintainer will add your GitHub username to the `.clabot.json` file and this PR will automatically update."')
 
-            if (!hasSigned) {
-              const CLA_URL = 'https://forms.gle/dVYXv5geiZGmR1KG9';
-              const message = [
-                MARKER,
-                `Thanks for your contribution, @${username}!`,
-                '',
-                'Before we can review this pull request, you need to accept the Contributor License Agreement (CLA).',
-                '',
-                `Please read and sign the CLA here: ${CLA_URL}`,
-                '',
-                'Once you have signed, a maintainer will add your GitHub username to the `.clabot.json` file and this PR will automatically update.'
-              ].join('\n');
+            # Check for existing comment
+            EXISTING=$(curl -s -H "Authorization: token $CLA_TOKEN" \
+              -H "Accept: application/vnd.github.v3+json" \
+              "https://api.github.com/repos/$GH_REPO/issues/$PR_NUMBER/comments?per_page=100" \
+              | jq -r --arg m "$MARKER" '.[] | select(.body | test($m)) | .id' | head -1)
 
-              const { data: comments } = await github.rest.issues.listComments({ owner, repo, issue_number, per_page: 100 });
-              const existing = comments.find(c => c.body?.includes(MARKER));
+            if [ -n "$EXISTING" ]; then
+              curl -s -X PATCH \
+                -H "Authorization: token $CLA_TOKEN" \
+                -H "Accept: application/vnd.github.v3+json" \
+                "https://api.github.com/repos/$GH_REPO/issues/comments/$EXISTING" \
+                -d "{\"body\":$BODY}" > /dev/null
+            else
+              curl -s -X POST \
+                -H "Authorization: token $CLA_TOKEN" \
+                -H "Accept: application/vnd.github.v3+json" \
+                "https://api.github.com/repos/$GH_REPO/issues/$PR_NUMBER/comments" \
+                -d "{\"body\":$BODY}" > /dev/null
+            fi
 
-              if (existing) {
-                await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body: message });
-              } else {
-                await github.rest.issues.createComment({ owner, repo, issue_number, body: message });
-              }
+            echo "CLA not signed for user $PR_AUTHOR"
+            exit 1
+          else
+            # Remove any old CLA comment
+            EXISTING=$(curl -s -H "Authorization: token $CLA_TOKEN" \
+              -H "Accept: application/vnd.github.v3+json" \
+              "https://api.github.com/repos/$GH_REPO/issues/$PR_NUMBER/comments?per_page=100" \
+              | jq -r --arg m "$MARKER" '.[] | select(.body | test($m)) | .id' | head -1)
 
-              core.setFailed(`CLA not signed for user ${username}`);
-            } else {
-              const { data: comments } = await github.rest.issues.listComments({ owner, repo, issue_number, per_page: 100 });
-              const existing = comments.find(c => c.body?.includes(MARKER));
-              if (existing) {
-                await github.rest.issues.deleteComment({ owner, repo, comment_id: existing.id });
-              }
-            }
+            if [ -n "$EXISTING" ]; then
+              curl -s -X DELETE \
+                -H "Authorization: token $CLA_TOKEN" \
+                -H "Accept: application/vnd.github.v3+json" \
+                "https://api.github.com/repos/$GH_REPO/issues/comments/$EXISTING" > /dev/null
+            fi
+
+            echo "CLA already signed by $PR_AUTHOR"
+          fi
