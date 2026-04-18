@@ -1,4 +1,6 @@
 {
-  "individuals": ["paularlott", "martinsuchenak"],
-  "companies": {}
+  "contributors": [
+    "paularlott",
+    "martinsuchenak"
+  ]
 }
