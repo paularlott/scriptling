@@ -1,5 +1,5 @@
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, reopened, synchronize]
 
 jobs:
@@ -63,15 +63,19 @@ jobs:
                 await github.rest.issues.getLabel({ owner, repo, name });
               } catch (err) {
                 if (err.status === 404) {
-                  await github.rest.issues.createLabel({
-                    owner,
-                    repo,
-                    name,
-                    color,
-                    description
-                  });
+                  try {
+                    await github.rest.issues.createLabel({
+                      owner,
+                      repo,
+                      name,
+                      color,
+                      description
+                    });
+                  } catch (createErr) {
+                    core.warning(`Could not create label "${name}": ${createErr.message}. Ensure it exists manually.`);
+                  }
                 } else {
-                  throw err;
+                  core.warning(`Could not check label "${name}": ${err.message}`);
                 }
               }
             }
