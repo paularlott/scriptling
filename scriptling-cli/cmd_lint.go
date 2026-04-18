@@ -55,7 +55,7 @@ func outputLintResult(result *lint.Result, format string) error {
 		}
 	}
 	if result.HasErrors {
-		os.Exit(1)
+		return exitCodeError{code: 1}
 	}
 	return nil
 }

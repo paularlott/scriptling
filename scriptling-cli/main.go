@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
-	"strings"
 	"sync"
 
 	"github.com/paularlott/cli"
@@ -17,8 +15,8 @@ import (
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/build"
 	"github.com/paularlott/scriptling/extlibs"
-	"github.com/paularlott/scriptling/libloader"
 	"github.com/paularlott/scriptling/object"
+	"github.com/paularlott/scriptling/scriptling-cli/bootstrap"
 
 	"github.com/paularlott/scriptling/scriptling-cli/pack"
 	"github.com/paularlott/scriptling/scriptling-cli/server"
@@ -171,6 +169,12 @@ func main() {
 	}
 
 	if err := cmd.Execute(context.Background()); err != nil {
+		if code, ok := getExitCode(err); ok {
+			if err.Error() != "" {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			}
+			os.Exit(code)
+		}
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
@@ -185,17 +189,15 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 		return runLint(cmd)
 	}
 
-	allowedPaths := parseAllowedPaths(cmd.GetString("allowed-paths"))
+	allowedPaths := bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths"))
 	p := scriptling.New()
 
 	file := cmd.GetStringArg("file")
 	interactive := cmd.GetBool("interactive")
 
-	baseDir := ""
-	if file != "" {
-		baseDir = filepath.Dir(file)
-	} else {
-		baseDir, _ = os.Getwd()
+	baseDir, err := bootstrap.BaseDir(file)
+	if err != nil {
+		return err
 	}
 
 	kvStoragePath := cmd.GetString("kv-storage")
@@ -204,24 +206,19 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	}
 	defer extlibs.CloseKVStore()
 
-	libDirs := buildLibDirs(baseDir, cmd.GetStringSlice("libpath"))
+	libDirs := bootstrap.BuildLibDirs(baseDir, cmd.GetStringSlice("libpath"))
 	setup.Factories(libDirs, allowedPaths, globalLogger)
 	setup.Scriptling(p, libDirs, true, allowedPaths, globalLogger)
 
 	packages := cmd.GetStringSlice("package")
 	insecure := cmd.GetBool("insecure")
-	var packLoader *pack.Loader
-	if len(packages) > 0 {
+	packLoader, err := bootstrap.NewPackLoader(packages, insecure, cmd.GetString("cache-dir"))
+	if err != nil {
+		return err
+	}
+	if packLoader != nil {
 		go pack.PruneCache(cmd.GetString("cache-dir"), 0) // async, best-effort
-		packLoader = pack.NewLoader()
-		packLoader.SetCacheDir(cmd.GetString("cache-dir"))
-		for _, src := range packages {
-			if err := packLoader.AddFromPath(src, insecure); err != nil {
-				return fmt.Errorf("failed to load package %s: %w", src, err)
-			}
-		}
-		packLoader.SetFallback(nil)
-		p.SetLibraryLoader(libloader.NewChain(p.GetLibraryLoader(), packLoader))
+		bootstrap.ApplyPackLoader(p, packLoader)
 	}
 
 	argv := []string{file}
@@ -259,21 +256,19 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 
 func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 	file := cmd.GetStringArg("file")
-	baseDir := ""
-	if file != "" {
-		baseDir = filepath.Dir(file)
-	} else {
-		baseDir, _ = os.Getwd()
+	baseDir, err := bootstrap.BaseDir(file)
+	if err != nil {
+		return err
 	}
 	return server.RunServer(ctx, server.ServerConfig{
 		Address:       address,
 		ScriptFile:    file,
-		LibDirs:       buildLibDirs(baseDir, cmd.GetStringSlice("libpath")),
+		LibDirs:       bootstrap.BuildLibDirs(baseDir, cmd.GetStringSlice("libpath")),
 		Packages:      cmd.GetStringSlice("package"),
 		Insecure:      cmd.GetBool("insecure"),
 		CacheDir:      cmd.GetString("cache-dir"),
 		BearerToken:   cmd.GetString("bearer-token"),
-		AllowedPaths:  parseAllowedPaths(cmd.GetString("allowed-paths")),
+		AllowedPaths:  bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths")),
 		MCPToolsDir:   cmd.GetString("mcp-tools"),
 		MCPExecTool:   cmd.GetBool("mcp-exec-script"),
 		KVStoragePath: cmd.GetString("kv-storage"),
@@ -379,7 +374,7 @@ func (w *streamWriter) Write(p []byte) (int, error) {
 func evalAndCheckExit(p *scriptling.Scriptling, code string) error {
 	result, err := p.Eval(code)
 	if ex, ok := object.AsException(result); ok && ex.IsSystemExit() {
-		os.Exit(ex.GetExitCode())
+		return exitCodeError{code: ex.GetExitCode()}
 	}
 	return err
 }
@@ -390,41 +385,6 @@ func isStdinEmpty() bool {
 		return true
 	}
 	return (stat.Mode() & os.ModeCharDevice) != 0
-}
-
-// buildLibDirs constructs the ordered list of library search directories.
-func buildLibDirs(baseDir string, extra []string) []string {
-	var dirs []string
-	if baseDir != "" {
-		dirs = append(dirs, baseDir)
-	}
-	for _, d := range extra {
-		if d != "" {
-			dirs = append(dirs, d)
-		}
-	}
-	return dirs
-}
-
-// parseAllowedPaths parses a comma-separated list of paths.
-// Returns nil for no restrictions, empty slice for deny-all (paths == "-").
-func parseAllowedPaths(paths string) []string {
-	if paths == "" {
-		return nil
-	}
-	if paths == "-" {
-		return []string{}
-	}
-	var result []string
-	for _, p := range strings.Split(paths, ",") {
-		if p = strings.TrimSpace(p); p != "" {
-			result = append(result, p)
-		}
-	}
-	if len(result) == 0 {
-		return nil
-	}
-	return result
 }
 
 // readFile reads a local file, used by packCmd --hash.

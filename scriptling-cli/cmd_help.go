@@ -9,8 +9,7 @@ import (
 	"github.com/paularlott/cli"
 	"github.com/paularlott/cli/tui"
 	"github.com/paularlott/scriptling"
-	"github.com/paularlott/scriptling/libloader"
-	"github.com/paularlott/scriptling/scriptling-cli/pack"
+	"github.com/paularlott/scriptling/scriptling-cli/bootstrap"
 	"github.com/paularlott/scriptling/scriptling-cli/setup"
 )
 
@@ -26,24 +25,23 @@ func helpCmd() *cli.Command {
 			},
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
-			allowedPaths := parseAllowedPaths(cmd.GetString("allowed-paths"))
-			cwd, _ := os.Getwd()
-			libDirs := buildLibDirs(cwd, cmd.GetStringSlice("libpath"))
+			allowedPaths := bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths"))
+			cwd, err := os.Getwd()
+			if err != nil {
+				return fmt.Errorf("failed to determine current working directory: %w", err)
+			}
+			libDirs := bootstrap.BuildLibDirs(cwd, cmd.GetStringSlice("libpath"))
 
 			p := scriptling.New()
 			setup.Scriptling(p, libDirs, false, allowedPaths, globalLogger)
 
 			packages := cmd.GetStringSlice("package")
 			if len(packages) > 0 {
-				l := pack.NewLoader()
-				l.SetCacheDir(cmd.GetString("cache-dir"))
-				for _, src := range packages {
-					if err := l.AddFromPath(src, cmd.GetBool("insecure")); err != nil {
-						return fmt.Errorf("failed to load package %s: %w", src, err)
-					}
+				l, err := bootstrap.NewPackLoader(packages, cmd.GetBool("insecure"), cmd.GetString("cache-dir"))
+				if err != nil {
+					return err
 				}
-				l.SetFallback(nil)
-				p.SetLibraryLoader(libloader.NewChain(p.GetLibraryLoader(), l))
+				bootstrap.ApplyPackLoader(p, l)
 			}
 
 			topic := cmd.GetStringArg("topic")

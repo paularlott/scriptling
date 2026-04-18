@@ -1,19 +1,24 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"testing"
+
+	"github.com/paularlott/scriptling/lint"
+	"github.com/paularlott/scriptling/scriptling-cli/bootstrap"
 )
 
 func TestBuildLibDirs(t *testing.T) {
 	t.Run("base dir only when no extras", func(t *testing.T) {
-		dirs := buildLibDirs("/app/scripts", nil)
+		dirs := bootstrap.BuildLibDirs("/app/scripts", nil)
 		if len(dirs) != 1 || dirs[0] != "/app/scripts" {
 			t.Errorf("expected [/app/scripts], got %v", dirs)
 		}
 	})
 
 	t.Run("base dir first then extras", func(t *testing.T) {
-		dirs := buildLibDirs("/app/scripts", []string{"/shared/libs", "/extra"})
+		dirs := bootstrap.BuildLibDirs("/app/scripts", []string{"/shared/libs", "/extra"})
 		if len(dirs) != 3 {
 			t.Fatalf("expected 3 dirs, got %d: %v", len(dirs), dirs)
 		}
@@ -29,7 +34,7 @@ func TestBuildLibDirs(t *testing.T) {
 	})
 
 	t.Run("empty strings in extras are skipped", func(t *testing.T) {
-		dirs := buildLibDirs("/base", []string{"", "/valid", ""})
+		dirs := bootstrap.BuildLibDirs("/base", []string{"", "/valid", ""})
 		if len(dirs) != 2 {
 			t.Fatalf("expected 2 dirs, got %d: %v", len(dirs), dirs)
 		}
@@ -42,21 +47,21 @@ func TestBuildLibDirs(t *testing.T) {
 	})
 
 	t.Run("empty extras slice", func(t *testing.T) {
-		dirs := buildLibDirs("/base", []string{})
+		dirs := bootstrap.BuildLibDirs("/base", []string{})
 		if len(dirs) != 1 || dirs[0] != "/base" {
 			t.Errorf("expected [/base], got %v", dirs)
 		}
 	})
 
 	t.Run("empty base dir is skipped", func(t *testing.T) {
-		dirs := buildLibDirs("", []string{"/extra"})
+		dirs := bootstrap.BuildLibDirs("", []string{"/extra"})
 		if len(dirs) != 1 || dirs[0] != "/extra" {
 			t.Errorf("expected [/extra], got %v", dirs)
 		}
 	})
 
 	t.Run("empty base dir and no extras returns empty", func(t *testing.T) {
-		dirs := buildLibDirs("", nil)
+		dirs := bootstrap.BuildLibDirs("", nil)
 		if len(dirs) != 0 {
 			t.Errorf("expected empty slice, got %v", dirs)
 		}
@@ -65,27 +70,27 @@ func TestBuildLibDirs(t *testing.T) {
 
 func TestParseAllowedPaths(t *testing.T) {
 	t.Run("empty string returns nil", func(t *testing.T) {
-		if parseAllowedPaths("") != nil {
+		if bootstrap.ParseAllowedPaths("") != nil {
 			t.Error("expected nil for empty string")
 		}
 	})
 
 	t.Run("dash returns empty slice (deny all)", func(t *testing.T) {
-		result := parseAllowedPaths("-")
+		result := bootstrap.ParseAllowedPaths("-")
 		if result == nil || len(result) != 0 {
 			t.Errorf("expected empty slice, got %v", result)
 		}
 	})
 
 	t.Run("single path", func(t *testing.T) {
-		result := parseAllowedPaths("/tmp")
+		result := bootstrap.ParseAllowedPaths("/tmp")
 		if len(result) != 1 || result[0] != "/tmp" {
 			t.Errorf("expected [/tmp], got %v", result)
 		}
 	})
 
 	t.Run("multiple paths", func(t *testing.T) {
-		result := parseAllowedPaths("/tmp,/var/data, /home/user")
+		result := bootstrap.ParseAllowedPaths("/tmp,/var/data, /home/user")
 		if len(result) != 3 {
 			t.Fatalf("expected 3 paths, got %d: %v", len(result), result)
 		}
@@ -95,9 +100,41 @@ func TestParseAllowedPaths(t *testing.T) {
 	})
 
 	t.Run("whitespace-only entries are ignored", func(t *testing.T) {
-		result := parseAllowedPaths("/tmp, , /var")
+		result := bootstrap.ParseAllowedPaths("/tmp, , /var")
 		if len(result) != 2 {
 			t.Fatalf("expected 2 paths, got %d: %v", len(result), result)
 		}
 	})
+}
+
+func TestGetExitCode(t *testing.T) {
+	t.Run("plain exit error", func(t *testing.T) {
+		code, ok := getExitCode(exitCodeError{code: 7})
+		if !ok || code != 7 {
+			t.Fatalf("expected exit code 7, got code=%d ok=%v", code, ok)
+		}
+	})
+
+	t.Run("wrapped exit error", func(t *testing.T) {
+		err := fmt.Errorf("wrapped: %w", exitCodeError{code: 3, err: errors.New("boom")})
+		code, ok := getExitCode(err)
+		if !ok || code != 3 {
+			t.Fatalf("expected exit code 3, got code=%d ok=%v", code, ok)
+		}
+	})
+}
+
+func TestOutputLintResultReturnsExitError(t *testing.T) {
+	result := &lint.Result{
+		HasErrors: true,
+		Errors: []lint.LintError{
+			{Line: 1, Message: "bad", Severity: lint.SeverityError},
+		},
+	}
+
+	err := outputLintResult(result, "text")
+	code, ok := getExitCode(err)
+	if !ok || code != 1 {
+		t.Fatalf("expected exit code 1, got code=%d ok=%v err=%v", code, ok, err)
+	}
 }
