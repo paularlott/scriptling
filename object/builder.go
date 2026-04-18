@@ -157,7 +157,7 @@ func (b *LibraryBuilder) Function(name string, fn interface{}) *LibraryBuilder {
 //	    return math.Sqrt(x)
 //	}, "sqrt(x) - Return the square root of x")
 func (b *LibraryBuilder) FunctionWithHelp(name string, fn interface{}, helpText string) *LibraryBuilder {
-	wrapper := b.createWrapper(reflect.ValueOf(fn), helpText)
+	wrapper := b.createWrapper(fn, helpText)
 	b.functions[name] = wrapper
 	return b
 }
@@ -184,7 +184,8 @@ func (b *LibraryBuilder) Build() *Library {
 
 // createWrapper creates a Builtin wrapper for a typed Go function.
 // It uses reflection to convert between scriptling Objects and Go types.
-func (b *LibraryBuilder) createWrapper(fnValue reflect.Value, helpText string) *Builtin {
+func (b *LibraryBuilder) createWrapper(fn interface{}, helpText string) *Builtin {
+	fnValue := reflect.ValueOf(fn)
 	fnType := fnValue.Type()
 
 	// Validate that it's a function
@@ -195,11 +196,194 @@ func (b *LibraryBuilder) createWrapper(fnValue reflect.Value, helpText string) *
 	// Analyze function signature once (cached)
 	sig := analyzeFunctionSignature(fnType)
 
+	if wrapper, ok := createFastFunctionWrapper(fn, helpText); ok {
+		return wrapper
+	}
+
 	return &Builtin{
 		Fn: func(ctx context.Context, kwargs Kwargs, args ...Object) Object {
 			return callTypedFunction(fnValue, sig, ctx, kwargs, args)
 		},
 		HelpText: helpText,
+	}
+}
+
+func createFastFunctionWrapper(fn interface{}, helpText string) (*Builtin, bool) {
+	switch typed := fn.(type) {
+	case func() int:
+		return &Builtin{
+			Fn: func(ctx context.Context, kwargs Kwargs, args ...Object) Object {
+				if len(args) != 0 {
+					return newArgumentError(len(args), 0)
+				}
+				return NewInteger(int64(typed()))
+			},
+			HelpText: helpText,
+		}, true
+	case func(int) int:
+		return &Builtin{
+			Fn: func(ctx context.Context, kwargs Kwargs, args ...Object) Object {
+				if len(args) != 1 {
+					return newArgumentError(len(args), 1)
+				}
+				a, err := args[0].AsInt()
+				if err != nil {
+					return err
+				}
+				return NewInteger(int64(typed(int(a))))
+			},
+			HelpText: helpText,
+		}, true
+	case func(int, int) int:
+		return &Builtin{
+			Fn: func(ctx context.Context, kwargs Kwargs, args ...Object) Object {
+				if len(args) != 2 {
+					return newArgumentError(len(args), 2)
+				}
+				a, err := args[0].AsInt()
+				if err != nil {
+					return err
+				}
+				b, err := args[1].AsInt()
+				if err != nil {
+					return err
+				}
+				return NewInteger(int64(typed(int(a), int(b))))
+			},
+			HelpText: helpText,
+		}, true
+	case func(context.Context, int, int) int:
+		return &Builtin{
+			Fn: func(ctx context.Context, kwargs Kwargs, args ...Object) Object {
+				if len(args) != 2 {
+					return newArgumentError(len(args), 2)
+				}
+				a, err := args[0].AsInt()
+				if err != nil {
+					return err
+				}
+				b, err := args[1].AsInt()
+				if err != nil {
+					return err
+				}
+				return NewInteger(int64(typed(ctx, int(a), int(b))))
+			},
+			HelpText: helpText,
+		}, true
+	case func(Kwargs, int, int) int:
+		return &Builtin{
+			Fn: func(ctx context.Context, kwargs Kwargs, args ...Object) Object {
+				if len(args) != 2 {
+					return newArgumentError(len(args), 2)
+				}
+				a, err := args[0].AsInt()
+				if err != nil {
+					return err
+				}
+				b, err := args[1].AsInt()
+				if err != nil {
+					return err
+				}
+				return NewInteger(int64(typed(kwargs, int(a), int(b))))
+			},
+			HelpText: helpText,
+		}, true
+	case func(int, int) (int, error):
+		return &Builtin{
+			Fn: func(ctx context.Context, kwargs Kwargs, args ...Object) Object {
+				if len(args) != 2 {
+					return newArgumentError(len(args), 2)
+				}
+				a, err := args[0].AsInt()
+				if err != nil {
+					return err
+				}
+				b, err := args[1].AsInt()
+				if err != nil {
+					return err
+				}
+				result, callErr := typed(int(a), int(b))
+				if callErr != nil {
+					return newError("%s", callErr.Error())
+				}
+				return NewInteger(int64(result))
+			},
+			HelpText: helpText,
+		}, true
+	case func(string) string:
+		return &Builtin{
+			Fn: func(ctx context.Context, kwargs Kwargs, args ...Object) Object {
+				if len(args) != 1 {
+					return newArgumentError(len(args), 1)
+				}
+				s, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
+				return &String{Value: typed(s)}
+			},
+			HelpText: helpText,
+		}, true
+	case func(string, string) string:
+		return &Builtin{
+			Fn: func(ctx context.Context, kwargs Kwargs, args ...Object) Object {
+				if len(args) != 2 {
+					return newArgumentError(len(args), 2)
+				}
+				a, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
+				b, err := args[1].AsString()
+				if err != nil {
+					return err
+				}
+				return &String{Value: typed(a, b)}
+			},
+			HelpText: helpText,
+		}, true
+	case func(context.Context, Kwargs, string, int) string:
+		return &Builtin{
+			Fn: func(ctx context.Context, kwargs Kwargs, args ...Object) Object {
+				if len(args) != 2 {
+					return newArgumentError(len(args), 2)
+				}
+				s, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
+				i, err := args[1].AsInt()
+				if err != nil {
+					return err
+				}
+				return &String{Value: typed(ctx, kwargs, s, int(i))}
+			},
+			HelpText: helpText,
+		}, true
+	case func(string, int, float64) string:
+		return &Builtin{
+			Fn: func(ctx context.Context, kwargs Kwargs, args ...Object) Object {
+				if len(args) != 3 {
+					return newArgumentError(len(args), 3)
+				}
+				s, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
+				i, err := args[1].AsInt()
+				if err != nil {
+					return err
+				}
+				f, err := args[2].AsFloat()
+				if err != nil {
+					return err
+				}
+				return &String{Value: typed(s, int(i), f)}
+			},
+			HelpText: helpText,
+		}, true
+	default:
+		return nil, false
 	}
 }
 
@@ -258,9 +442,8 @@ func callTypedFunction(fnValue reflect.Value, sig *FunctionSignature, ctx contex
 
 		if sig.isVariadic && fnParamIndex == sig.variadicIndex {
 			// Variadic parameters - collect remaining args
-			elemType := sig.paramTypes[fnParamIndex].Elem()
 			for j := argIndex; j < len(args); j++ {
-				val, convErr := convertObjectToValue(args[j], elemType)
+				val, convErr := convertObjectToValue(args[j], sig.paramTypes[fnParamIndex].Elem())
 				if convErr != nil {
 					return convErr
 				}

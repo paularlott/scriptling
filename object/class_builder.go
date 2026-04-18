@@ -182,11 +182,191 @@ func (cb *ClassBuilder) createWrapper(fn interface{}, helpText string) *Builtin 
 	// Analyze function signature once (cached)
 	sig := analyzeClassMethodSignature(fnType)
 
+	if wrapper, ok := createFastMethodWrapper(fn, helpText); ok {
+		return wrapper
+	}
+
 	return &Builtin{
 		Fn: func(ctx context.Context, kwargs Kwargs, args ...Object) Object {
 			return cb.callTypedMethod(fnValue, sig, ctx, kwargs, args)
 		},
 		HelpText: helpText,
+	}
+}
+
+func createFastMethodWrapper(fn interface{}, helpText string) (*Builtin, bool) {
+	switch typed := fn.(type) {
+	case func(*Instance) string:
+		return &Builtin{
+			Fn: func(ctx context.Context, kwargs Kwargs, args ...Object) (result Object) {
+				defer func() {
+					if r := recover(); r != nil {
+						result = newError("panic in method: %v", r)
+					}
+				}()
+				if len(args) == 0 {
+					return newError("method call requires at least one argument (instance)")
+				}
+				if len(args) != 1 {
+					return newArgumentError(len(args), 1)
+				}
+				self, ok := args[0].(*Instance)
+				if !ok {
+					return newError("first argument must be an instance, got %T", args[0])
+				}
+				return &String{Value: typed(self)}
+			},
+			HelpText: helpText,
+		}, true
+	case func(*Instance) Object:
+		return &Builtin{
+			Fn: func(ctx context.Context, kwargs Kwargs, args ...Object) (result Object) {
+				defer func() {
+					if r := recover(); r != nil {
+						result = newError("panic in method: %v", r)
+					}
+				}()
+				if len(args) == 0 {
+					return newError("method call requires at least one argument (instance)")
+				}
+				if len(args) != 1 {
+					return newArgumentError(len(args), 1)
+				}
+				self, ok := args[0].(*Instance)
+				if !ok {
+					return newError("first argument must be an instance, got %T", args[0])
+				}
+				out := typed(self)
+				if out == nil {
+					return &Null{}
+				}
+				return out
+			},
+			HelpText: helpText,
+		}, true
+	case func(*Instance, context.Context) Object:
+		return &Builtin{
+			Fn: func(ctx context.Context, kwargs Kwargs, args ...Object) (result Object) {
+				defer func() {
+					if r := recover(); r != nil {
+						result = newError("panic in method: %v", r)
+					}
+				}()
+				if len(args) == 0 {
+					return newError("method call requires at least one argument (instance)")
+				}
+				if len(args) != 1 {
+					return newArgumentError(len(args), 1)
+				}
+				self, ok := args[0].(*Instance)
+				if !ok {
+					return newError("first argument must be an instance, got %T", args[0])
+				}
+				out := typed(self, ctx)
+				if out == nil {
+					return &Null{}
+				}
+				return out
+			},
+			HelpText: helpText,
+		}, true
+	case func(*Instance, string) string:
+		return &Builtin{
+			Fn: func(ctx context.Context, kwargs Kwargs, args ...Object) (result Object) {
+				defer func() {
+					if r := recover(); r != nil {
+						result = newError("panic in method: %v", r)
+					}
+				}()
+				if len(args) == 0 {
+					return newError("method call requires at least one argument (instance)")
+				}
+				if len(args) != 2 {
+					return newArgumentError(len(args)-1, 1)
+				}
+				self, ok := args[0].(*Instance)
+				if !ok {
+					return newError("first argument must be an instance, got %T", args[0])
+				}
+				s, err := args[1].AsString()
+				if err != nil {
+					return err
+				}
+				return &String{Value: typed(self, s)}
+			},
+			HelpText: helpText,
+		}, true
+	case func(*Instance, context.Context, string) Object:
+		return &Builtin{
+			Fn: func(ctx context.Context, kwargs Kwargs, args ...Object) (result Object) {
+				defer func() {
+					if r := recover(); r != nil {
+						result = newError("panic in method: %v", r)
+					}
+				}()
+				if len(args) == 0 {
+					return newError("method call requires at least one argument (instance)")
+				}
+				if len(args) != 2 {
+					return newArgumentError(len(args)-1, 1)
+				}
+				self, ok := args[0].(*Instance)
+				if !ok {
+					return newError("first argument must be an instance, got %T", args[0])
+				}
+				s, err := args[1].AsString()
+				if err != nil {
+					return err
+				}
+				out := typed(self, ctx, s)
+				if out == nil {
+					return &Null{}
+				}
+				return out
+			},
+			HelpText: helpText,
+		}, true
+	case func(*Instance, context.Context, string, string, map[string]string, Object) Object:
+		return &Builtin{
+			Fn: func(ctx context.Context, kwargs Kwargs, args ...Object) (result Object) {
+				defer func() {
+					if r := recover(); r != nil {
+						result = newError("panic in method: %v", r)
+					}
+				}()
+				if len(args) == 0 {
+					return newError("method call requires at least one argument (instance)")
+				}
+				if len(args) != 5 {
+					return newArgumentError(len(args)-1, 4)
+				}
+				self, ok := args[0].(*Instance)
+				if !ok {
+					return newError("first argument must be an instance, got %T", args[0])
+				}
+				name, err := args[1].AsString()
+				if err != nil {
+					return err
+				}
+				description, err := args[2].AsString()
+				if err != nil {
+					return err
+				}
+				paramsVal, convErr := convertObjectToValue(args[3], reflect.TypeOf(map[string]string{}))
+				if convErr != nil {
+					return convErr
+				}
+				params, _ := paramsVal.Interface().(map[string]string)
+				out := typed(self, ctx, name, description, params, args[4])
+				if out == nil {
+					return &Null{}
+				}
+				return out
+			},
+			HelpText: helpText,
+		}, true
+	default:
+		return nil, false
 	}
 }
 

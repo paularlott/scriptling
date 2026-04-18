@@ -459,3 +459,34 @@ func BenchmarkCacheHitRate(b *testing.B) {
 		lib.Functions()[fnName].Fn(ctx, kwargs, args...)
 	}
 }
+
+func BenchmarkClassBuilderMethodNoArgs(b *testing.B) {
+	class := NewClassBuilder("Greeter").
+		Method("greet", func(self *Instance) string { return "hello" }).
+		Build()
+	method := class.Methods["greet"].(*Builtin)
+	instance := &Instance{Class: class, Fields: map[string]Object{}}
+	ctx := context.Background()
+	kwargs := NewKwargs(nil)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		method.Fn(ctx, kwargs, instance)
+	}
+}
+
+func BenchmarkClassBuilderMethodStringArg(b *testing.B) {
+	class := NewClassBuilder("Greeter").
+		Method("greet", func(self *Instance, name string) string { return "hello " + name }).
+		Build()
+	method := class.Methods["greet"].(*Builtin)
+	instance := &Instance{Class: class, Fields: map[string]Object{}}
+	ctx := context.Background()
+	kwargs := NewKwargs(nil)
+	arg := &String{Value: "alice"}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		method.Fn(ctx, kwargs, instance, arg)
+	}
+}

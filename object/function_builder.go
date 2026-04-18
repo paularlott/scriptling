@@ -17,8 +17,8 @@ import (
 //	fn := fb.Build()
 //	p.RegisterFunc("add", fn)
 type FunctionBuilder struct {
-	fn       *Builtin
-	hasFunc  bool
+	fn      *Builtin
+	hasFunc bool
 }
 
 // NewFunctionBuilder creates a new FunctionBuilder for building individual functions.
@@ -50,7 +50,7 @@ func (fb *FunctionBuilder) FunctionWithHelp(fn interface{}, helpText string) *Fu
 	if fb.hasFunc {
 		panic("FunctionBuilder: only one function can be registered")
 	}
-	wrapper := fb.createWrapper(reflect.ValueOf(fn), helpText)
+	wrapper := fb.createWrapper(fn, helpText)
 	fb.fn = wrapper
 	fb.hasFunc = true
 	return fb
@@ -66,7 +66,8 @@ func (fb *FunctionBuilder) Build() func(ctx context.Context, kwargs Kwargs, args
 }
 
 // createWrapper creates a Builtin wrapper for a typed Go function.
-func (fb *FunctionBuilder) createWrapper(fnValue reflect.Value, helpText string) *Builtin {
+func (fb *FunctionBuilder) createWrapper(fn interface{}, helpText string) *Builtin {
+	fnValue := reflect.ValueOf(fn)
 	fnType := fnValue.Type()
 
 	// Validate that it's a function
@@ -76,6 +77,10 @@ func (fb *FunctionBuilder) createWrapper(fnValue reflect.Value, helpText string)
 
 	// Analyze function signature once (cached)
 	sig := analyzeFunctionSignature(fnType)
+
+	if wrapper, ok := createFastFunctionWrapper(fn, helpText); ok {
+		return wrapper
+	}
 
 	return &Builtin{
 		Fn: func(ctx context.Context, kwargs Kwargs, args ...Object) Object {
