@@ -1,9 +1,12 @@
 package mcp
 
 import (
+	"context"
 	"sync"
 
 	mcptoon "github.com/paularlott/mcp/toon"
+	"github.com/paularlott/scriptling/conversion"
+	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -28,12 +31,21 @@ func RegisterToon(registrar interface{ RegisterLibrary(*object.Library) }) {
 
 // buildToonLibrary builds the TOON library
 func buildToonLibrary() *object.Library {
-	return object.NewLibraryBuilder(ToonLibraryName, ToonLibraryDesc).
+	return object.NewLibrary(ToonLibraryName, map[string]*object.Builtin{
+		"encode": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.ExactArgs(args, 1); err != nil {
+					return err
+				}
 
-		// encode(data) - Encode data to TOON format
-		FunctionWithHelp("encode", func(data any) (string, error) {
-			return mcptoon.Encode(data)
-		}, `encode(data) - Encode data to TOON format
+				encoded, err := mcptoon.Encode(conversion.ToGo(args[0]))
+				if err != nil {
+					return &object.Error{Message: err.Error()}
+				}
+
+				return &object.String{Value: encoded}
+			},
+			HelpText: `encode(data) - Encode data to TOON format
 
 Encodes a scriptling value (string, int, float, bool, list, dict) to TOON format.
 
@@ -45,12 +57,27 @@ Returns:
 
 Example:
   text = toon.encode({"name": "Alice", "age": 30})
-  # Returns: TOON formatted string`).
+  # Returns: TOON formatted string`,
+		},
+		"decode": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.ExactArgs(args, 1); err != nil {
+					return err
+				}
 
-		// decode(text) - Decode TOON format to scriptling objects
-		FunctionWithHelp("decode", func(text string) (any, error) {
-			return mcptoon.Decode(text)
-		}, `decode(text) - Decode TOON format to scriptling objects
+				text, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
+
+				decoded, decodeErr := mcptoon.Decode(text)
+				if decodeErr != nil {
+					return &object.Error{Message: decodeErr.Error()}
+				}
+
+				return conversion.FromGo(decoded)
+			},
+			HelpText: `decode(text) - Decode TOON format to scriptling objects
 
 Decodes a TOON formatted string to scriptling objects (strings, ints, floats, bools, lists, dicts).
 
@@ -62,15 +89,34 @@ Returns:
 
 Example:
   data = toon.decode(text)
-  # Returns: decoded dict/list/string/etc`).
+  # Returns: decoded dict/list/string/etc`,
+		},
+		"encode_options": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.ExactArgs(args, 3); err != nil {
+					return err
+				}
 
-		// encode_options(data, indent, delimiter) - Encode with options
-		FunctionWithHelp("encode_options", func(data any, indent int, delimiter string) (string, error) {
-			return mcptoon.EncodeWithOptions(data, &mcptoon.EncodeOptions{
-				Indent:    indent,
-				Delimiter: delimiter,
-			})
-		}, `encode_options(data, indent, delimiter) - Encode data to TOON format with custom options
+				indent, err := args[1].AsInt()
+				if err != nil {
+					return err
+				}
+				delimiter, err := args[2].AsString()
+				if err != nil {
+					return err
+				}
+
+				encoded, encodeErr := mcptoon.EncodeWithOptions(conversion.ToGo(args[0]), &mcptoon.EncodeOptions{
+					Indent:    int(indent),
+					Delimiter: delimiter,
+				})
+				if encodeErr != nil {
+					return &object.Error{Message: encodeErr.Error()}
+				}
+
+				return &object.String{Value: encoded}
+			},
+			HelpText: `encode_options(data, indent, delimiter) - Encode data to TOON format with custom options
 
 Encodes a scriptling value to TOON format with custom indentation and delimiter.
 
@@ -80,15 +126,38 @@ Parameters:
   delimiter (str): Delimiter for arrays and tabular data (default: ",")
 
 Returns:
-  str: TOON formatted string`).
+  str: TOON formatted string`,
+		},
+		"decode_options": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.ExactArgs(args, 3); err != nil {
+					return err
+				}
 
-		// decode_options(text, strict, indent_size) - Decode with options
-		FunctionWithHelp("decode_options", func(text string, strict bool, indentSize int) (any, error) {
-			return mcptoon.DecodeWithOptions(text, &mcptoon.DecodeOptions{
-				Strict:     strict,
-				IndentSize: indentSize,
-			})
-		}, `decode_options(text, strict, indent_size) - Decode TOON format with custom options
+				text, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
+				strict, err := args[1].AsBool()
+				if err != nil {
+					return err
+				}
+				indentSize, err := args[2].AsInt()
+				if err != nil {
+					return err
+				}
+
+				decoded, decodeErr := mcptoon.DecodeWithOptions(text, &mcptoon.DecodeOptions{
+					Strict:     strict,
+					IndentSize: int(indentSize),
+				})
+				if decodeErr != nil {
+					return &object.Error{Message: decodeErr.Error()}
+				}
+
+				return conversion.FromGo(decoded)
+			},
+			HelpText: `decode_options(text, strict, indent_size) - Decode TOON format with custom options
 
 Decodes a TOON formatted string with custom parsing options.
 
@@ -98,7 +167,7 @@ Parameters:
   indent_size (int): Expected indentation size (0 = auto-detect, default: 0)
 
 Returns:
-  object: Decoded scriptling value`).
-
-		Build()
+  object: Decoded scriptling value`,
+		},
+	}, nil, ToonLibraryDesc)
 }

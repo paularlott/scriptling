@@ -519,6 +519,137 @@ missing = get_bool_list("missing")
 	}
 }
 
+func TestToolHelpersDefaultsAndFallbacks(t *testing.T) {
+	sl := scriptling.New()
+	mcp.RegisterToolHelpers(sl)
+
+	script := `
+from scriptling.mcp.tool import get_bool, get_list, get_string_list, get_int_list, get_float_list, get_bool_list
+
+bool_zero = get_bool("bool_zero", True)
+bool_false = get_bool("bool_false", True)
+blank_list = get_list("blank_list", ["fallback"])
+string_list = get_string_list("string_list", ["fallback"])
+int_list = get_int_list("int_list", [99])
+float_list = get_float_list("float_list", [1.5])
+bool_list = get_bool_list("bool_list", [True])
+`
+
+	params := map[string]interface{}{
+		"bool_zero":   "0",
+		"bool_false":  "false",
+		"blank_list":  "   ",
+		"string_list": "not-a-list",
+		"int_list":    "not-a-list",
+		"float_list":  "not-a-list",
+		"bool_list":   "not-a-list",
+	}
+
+	_, exitCode, err := mcp.RunToolScript(context.Background(), sl, script, params)
+	if err != nil {
+		t.Fatalf("RunToolScript failed: %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("Expected exit code 0, got %d", exitCode)
+	}
+
+	boolZero, objErr := sl.GetVar("bool_zero")
+	if objErr != nil || boolZero != false {
+		t.Fatalf("expected bool_zero=false, got %v (err=%v)", boolZero, objErr)
+	}
+
+	boolFalse, objErr := sl.GetVar("bool_false")
+	if objErr != nil || boolFalse != false {
+		t.Fatalf("expected bool_false=false, got %v (err=%v)", boolFalse, objErr)
+	}
+
+	for _, name := range []string{"blank_list", "string_list", "int_list", "float_list", "bool_list"} {
+		obj, err := sl.GetVarAsObject(name)
+		if err != nil {
+			t.Fatalf("failed to get %s: %v", name, err)
+		}
+		list, ok := obj.(*object.List)
+		if !ok {
+			t.Fatalf("expected %s to be list, got %T", name, obj)
+		}
+		if len(list.Elements) != 1 {
+			t.Fatalf("expected %s fallback list of len 1, got %d", name, len(list.Elements))
+		}
+	}
+}
+
+func TestToolHelpersArgumentValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		script  string
+		wantMsg string
+	}{
+		{
+			name: "get_int_requires_name",
+			script: `
+from scriptling.mcp.tool import get_int
+get_int()
+`,
+			wantMsg: "get_int() requires at least 1 argument",
+		},
+		{
+			name: "get_list_default_must_be_list",
+			script: `
+from scriptling.mcp.tool import get_list
+get_list("tags", "bad")
+`,
+			wantMsg: "default must be a list",
+		},
+		{
+			name: "return_string_requires_argument",
+			script: `
+from scriptling.mcp.tool import return_string
+return_string()
+`,
+			wantMsg: "return_string() requires a text argument",
+		},
+		{
+			name: "return_object_requires_argument",
+			script: `
+from scriptling.mcp.tool import return_object
+return_object()
+`,
+			wantMsg: "return_object() requires an object argument",
+		},
+		{
+			name: "return_toon_requires_argument",
+			script: `
+from scriptling.mcp.tool import return_toon
+return_toon()
+`,
+			wantMsg: "return_toon() requires an object argument",
+		},
+		{
+			name: "return_error_requires_argument",
+			script: `
+from scriptling.mcp.tool import return_error
+return_error()
+`,
+			wantMsg: "return_error() requires a message argument",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sl := scriptling.New()
+			mcp.RegisterToolHelpers(sl)
+
+			_, err := sl.Eval(tt.script)
+			if err == nil {
+				t.Fatal("expected eval error")
+			}
+			if !strings.Contains(err.Error(), tt.wantMsg) {
+				t.Fatalf("expected error containing %q, got %v", tt.wantMsg, err)
+			}
+		})
+	}
+}
+
 // TestToolHelpersReturnToon tests return_toon function
 func TestToolHelpersReturnToon(t *testing.T) {
 	sl := scriptling.New()

@@ -35,40 +35,41 @@ func Register(registrar interface{ RegisterLibrary(*object.Library) }) {
 }
 
 func buildLibrary() *object.Library {
-	builder := object.NewLibraryBuilder(LibraryName, LibraryDesc)
+	return object.NewLibrary(LibraryName, map[string]*object.Builtin{
+		"search": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				query, itemsList, err := parseSearchArgs(kwargs, args)
+				if err != nil {
+					return &object.Error{Message: err.Error()}
+				}
 
-	builder.FunctionWithHelp("search", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) (object.Object, error) {
-		query, itemsList, err := parseSearchArgs(kwargs, args)
-		if err != nil {
-			return nil, err
-		}
+				maxResults := kwargs.MustGetInt("max_results", 5)
+				threshold := kwargs.MustGetFloat("threshold", 0.5)
+				keyField := kwargs.MustGetString("key", defaultKey)
 
-		maxResults := kwargs.MustGetInt("max_results", 5)
-		threshold := kwargs.MustGetFloat("threshold", 0.5)
-		keyField := kwargs.MustGetString("key", defaultKey)
+				if maxResults < 1 {
+					maxResults = 5
+				}
+				if threshold < 0 || threshold > 1 {
+					threshold = 0.5
+				}
 
-		if maxResults < 1 {
-			maxResults = 5
-		}
-		if threshold < 0 || threshold > 1 {
-			threshold = 0.5
-		}
+				items := toNamedItems(itemsList, keyField)
+				opts := clifuzzy.Options{MaxResults: int(maxResults), Threshold: threshold}
+				results := clifuzzy.Search(query, items, opts)
 
-		items := toNamedItems(itemsList, keyField)
-		opts := clifuzzy.Options{MaxResults: int(maxResults), Threshold: threshold}
-		results := clifuzzy.Search(query, items, opts)
+				resultList := make([]map[string]any, len(results))
+				for i, r := range results {
+					resultList[i] = map[string]any{
+						"id":    r.ID,
+						"name":  r.Name,
+						"score": r.Score,
+					}
+				}
 
-		resultList := make([]map[string]any, len(results))
-		for i, r := range results {
-			resultList[i] = map[string]any{
-				"id":    r.ID,
-				"name":  r.Name,
-				"score": r.Score,
-			}
-		}
-
-		return conversion.FromGo(resultList), nil
-	}, `search(query, items, max_results=5, threshold=0.5, key="name") - Search for fuzzy matches
+				return conversion.FromGo(resultList)
+			},
+			HelpText: `search(query, items, max_results=5, threshold=0.5, key="name") - Search for fuzzy matches
 
 Searches for fuzzy matches in a list of items using a multi-tier algorithm
 (exact -> substring -> word boundary -> Levenshtein distance).
@@ -81,38 +82,40 @@ Parameters:
   key (str, optional): Key to use for item names in dicts. Default: "name"
 
 Returns:
-  list: List of match dictionaries with id, name, and score`)
+  list: List of match dictionaries with id, name, and score`,
+		},
+		"best": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				query, itemsList, err := parseSearchArgs(kwargs, args)
+				if err != nil {
+					return &object.Error{Message: err.Error()}
+				}
 
-	builder.FunctionWithHelp("best", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) (object.Object, error) {
-		query, itemsList, err := parseSearchArgs(kwargs, args)
-		if err != nil {
-			return nil, err
-		}
+				entityType := kwargs.MustGetString("entity_type", "item")
+				keyField := kwargs.MustGetString("key", defaultKey)
+				threshold := kwargs.MustGetFloat("threshold", 0.5)
 
-		entityType := kwargs.MustGetString("entity_type", "item")
-		keyField := kwargs.MustGetString("key", defaultKey)
-		threshold := kwargs.MustGetFloat("threshold", 0.5)
+				items := toNamedItems(itemsList, keyField)
+				opts := clifuzzy.Options{MaxResults: 5, Threshold: threshold}
+				result := clifuzzy.Best(query, items, entityType, opts)
 
-		items := toNamedItems(itemsList, keyField)
-		opts := clifuzzy.Options{MaxResults: 5, Threshold: threshold}
-		result := clifuzzy.Best(query, items, entityType, opts)
+				resultMap := map[string]any{
+					"found": result.Found,
+					"id":    nil,
+					"name":  nil,
+					"score": 0.0,
+					"error": result.Error,
+				}
+				if result.Found {
+					resultMap["id"] = result.ID
+					resultMap["name"] = result.Name
+					resultMap["score"] = result.Score
+					resultMap["error"] = nil
+				}
 
-		resultMap := map[string]any{
-			"found": result.Found,
-			"id":    nil,
-			"name":  nil,
-			"score": 0.0,
-			"error": result.Error,
-		}
-		if result.Found {
-			resultMap["id"] = result.ID
-			resultMap["name"] = result.Name
-			resultMap["score"] = result.Score
-			resultMap["error"] = nil
-		}
-
-		return conversion.FromGo(resultMap), nil
-	}, `best(query, items, entity_type="item", key="name", threshold=0.5) - Find best match with error formatting
+				return conversion.FromGo(resultMap)
+			},
+			HelpText: `best(query, items, entity_type="item", key="name", threshold=0.5) - Find best match with error formatting
 
 Finds the best fuzzy match for a query and returns either the match or a
 helpful error message with suggestions.
@@ -125,105 +128,113 @@ Parameters:
   threshold (float, optional): Minimum similarity threshold (0.0-1.0). Default: 0.5
 
 Returns:
-  dict: {found, id, name, score, error}`)
+  dict: {found, id, name, score, error}`,
+		},
+		"score": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				var s1, s2 string
+				if len(args) >= 2 {
+					var objErr object.Object
+					s1, objErr = args[0].AsString()
+					if objErr != nil {
+						return &object.Error{Message: "first argument must be a string"}
+					}
+					s2, objErr = args[1].AsString()
+					if objErr != nil {
+						return &object.Error{Message: "second argument must be a string"}
+					}
+				} else {
+					s1 = kwargs.MustGetString("s1", "")
+					s2 = kwargs.MustGetString("s2", "")
+				}
 
-	builder.FunctionWithHelp("score", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) (object.Object, error) {
-		var s1, s2 string
-		if len(args) >= 2 {
-			var objErr object.Object
-			s1, objErr = args[0].AsString()
-			if objErr != nil {
-				return nil, fmt.Errorf("first argument must be a string")
-			}
-			s2, objErr = args[1].AsString()
-			if objErr != nil {
-				return nil, fmt.Errorf("second argument must be a string")
-			}
-		} else {
-			s1 = kwargs.MustGetString("s1", "")
-			s2 = kwargs.MustGetString("s2", "")
-		}
+				if s1 == "" || s2 == "" {
+					return &object.Float{Value: 0.0}
+				}
 
-		if s1 == "" || s2 == "" {
-			return &object.Float{Value: 0.0}, nil
-		}
-
-		return &object.Float{Value: clifuzzy.Score(s1, s2)}, nil
-	}, `score(s1, s2) - Calculate fuzzy similarity between two strings
+				return &object.Float{Value: clifuzzy.Score(s1, s2)}
+			},
+			HelpText: `score(s1, s2) - Calculate fuzzy similarity between two strings
 
 Returns a normalized score between 0.0 and 1.0 using edit-distance based
-matching.`)
-
-	builder.FunctionWithHelp("tokenize", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) (object.Object, error) {
-		if len(args) == 0 {
-			return nil, fmt.Errorf("text parameter is required")
-		}
-		text, err := args[0].AsString()
-		if err != nil {
-			return nil, fmt.Errorf("text must be a string")
-		}
-		return conversion.FromGo(tokenize(text)), nil
-	}, `tokenize(text) - Split text into lowercase alphanumeric tokens
+matching.`,
+		},
+		"tokenize": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if len(args) == 0 {
+					return &object.Error{Message: "text parameter is required"}
+				}
+				text, err := args[0].AsString()
+				if err != nil {
+					return &object.Error{Message: "text must be a string"}
+				}
+				return conversion.FromGo(tokenize(text))
+			},
+			HelpText: `tokenize(text) - Split text into lowercase alphanumeric tokens
 
 Only letters a-z and digits 0-9 are retained; everything else becomes a word
 boundary.
 
 Returns:
-  list[str]: Lowercase tokens`)
-
-	builder.FunctionWithHelp("minhash", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) (object.Object, error) {
-		if len(args) == 0 {
-			return nil, fmt.Errorf("text parameter is required")
-		}
-		text, err := args[0].AsString()
-		if err != nil {
-			return nil, fmt.Errorf("text must be a string")
-		}
-		numHashes := int(kwargs.MustGetInt("num_hashes", defaultHashes))
-		if numHashes <= 0 {
-			numHashes = defaultHashes
-		}
-		return conversion.FromGo(computeMinHash(text, numHashes)), nil
-	}, `minhash(text, num_hashes=64) - Compute a MinHash signature for text
+  list[str]: Lowercase tokens`,
+		},
+		"minhash": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if len(args) == 0 {
+					return &object.Error{Message: "text parameter is required"}
+				}
+				text, err := args[0].AsString()
+				if err != nil {
+					return &object.Error{Message: "text must be a string"}
+				}
+				numHashes := int(kwargs.MustGetInt("num_hashes", defaultHashes))
+				if numHashes <= 0 {
+					numHashes = defaultHashes
+				}
+				return conversion.FromGo(computeMinHash(text, numHashes))
+			},
+			HelpText: `minhash(text, num_hashes=64) - Compute a MinHash signature for text
 
 Useful for approximate set similarity and semantic-ish recall over tokenized
 text. The default output contains 64 32-bit hash values.
 
 Returns:
-  list[int]: MinHash signature`)
+  list[int]: MinHash signature`,
+		},
+		"minhash_similarity": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				var leftObj, rightObj object.Object
+				if len(args) >= 2 {
+					leftObj = args[0]
+					rightObj = args[1]
+				} else {
+					leftObj = kwargs.Get("a")
+					rightObj = kwargs.Get("b")
+				}
+				if leftObj == nil || rightObj == nil {
+					return &object.Error{Message: "a and b parameters are required"}
+				}
 
-	builder.FunctionWithHelp("minhash_similarity", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) (object.Object, error) {
-		var leftObj, rightObj object.Object
-		if len(args) >= 2 {
-			leftObj = args[0]
-			rightObj = args[1]
-		} else {
-			leftObj = kwargs.Get("a")
-			rightObj = kwargs.Get("b")
-		}
-		if leftObj == nil || rightObj == nil {
-			return nil, fmt.Errorf("a and b parameters are required")
-		}
+				left, err := objectListToUint32s(leftObj)
+				if err != nil {
+					return &object.Error{Message: "a must be a list of integers"}
+				}
+				right, err := objectListToUint32s(rightObj)
+				if err != nil {
+					return &object.Error{Message: "b must be a list of integers"}
+				}
 
-		left, err := objectListToUint32s(leftObj)
-		if err != nil {
-			return nil, fmt.Errorf("a must be a list of integers")
-		}
-		right, err := objectListToUint32s(rightObj)
-		if err != nil {
-			return nil, fmt.Errorf("b must be a list of integers")
-		}
-
-		return &object.Float{Value: minHashSimilarity(left, right)}, nil
-	}, `minhash_similarity(a, b) - Compare two MinHash signatures
+				return &object.Float{Value: minHashSimilarity(left, right)}
+			},
+			HelpText: `minhash_similarity(a, b) - Compare two MinHash signatures
 
 Returns the fraction of matching positions between two signatures. This is an
 estimate of Jaccard similarity.
 
 Returns:
-  float: Similarity score between 0.0 and 1.0`)
-
-	return builder.Build()
+  float: Similarity score between 0.0 and 1.0`,
+		},
+	}, nil, LibraryDesc)
 }
 
 type namedItemWrapper struct {

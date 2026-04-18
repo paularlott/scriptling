@@ -68,42 +68,39 @@ func setResponseAndExit(ctx context.Context, response string, exitCode int) obje
 // buildToolHelpersLibrary creates the scriptling.mcp.tool sub-library
 // This provides parameter access and result functions for MCP tools
 func buildToolHelpersLibrary() *object.Library {
-	builder := object.NewLibraryBuilder("scriptling.mcp.tool", "MCP tool parameter access and result functions")
+	return object.NewLibrary("scriptling.mcp.tool", map[string]*object.Builtin{
+		"get_int": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if len(args) == 0 {
+					return &object.Error{Message: "get_int() requires at least 1 argument (name)"}
+				}
 
-	// get_int(name, default=0) - Get integer parameter
-	builder.FunctionWithHelp("get_int", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-		if len(args) == 0 {
-			return &object.Error{Message: "get_int() requires at least 1 argument (name)"}
-		}
+				name, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
 
-		name, err := args[0].AsString()
-		if err != nil {
-			return err
-		}
+				var defaultVal int64
+				if len(args) > 1 {
+					defaultVal, err = args[1].CoerceInt()
+					if err != nil {
+						return err
+					}
+				}
 
-		// Get default value if provided
-		var defaultVal int64 = 0
-		if len(args) > 1 {
-			defaultVal, err = args[1].CoerceInt()
-			if err != nil {
-				return err
-			}
-		}
+				paramValue := getParamValue(ctx, name)
+				if paramValue == nil {
+					return object.NewInteger(defaultVal)
+				}
 
-		// Get parameter value
-		paramValue := getParamValue(ctx, name)
-		if paramValue == nil {
-			return object.NewInteger(defaultVal)
-		}
+				val, err := paramValue.CoerceInt()
+				if err != nil {
+					return object.NewInteger(defaultVal)
+				}
 
-		// Coerce to int
-		val, err := paramValue.CoerceInt()
-		if err != nil {
-			return object.NewInteger(defaultVal)
-		}
-
-		return object.NewInteger(val)
-	}, `get_int(name, default=0) - Get a parameter as integer
+				return object.NewInteger(val)
+			},
+			HelpText: `get_int(name, default=0) - Get a parameter as integer
 
 Safely gets a parameter and converts it to an integer, handling None, empty strings, and whitespace.
 Returns the default value if the parameter doesn't exist, is None, empty, or whitespace-only.
@@ -114,42 +111,40 @@ Parameters:
 
 Example:
   project_id = mcp.tool.get_int("project_id", 0)
-  limit = mcp.tool.get_int("limit", 100)`)
+  limit = mcp.tool.get_int("limit", 100)`,
+		},
+		"get_float": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if len(args) == 0 {
+					return &object.Error{Message: "get_float() requires at least 1 argument (name)"}
+				}
 
-	// get_float(name, default=0.0) - Get float parameter
-	builder.FunctionWithHelp("get_float", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-		if len(args) == 0 {
-			return &object.Error{Message: "get_float() requires at least 1 argument (name)"}
-		}
+				name, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
 
-		name, err := args[0].AsString()
-		if err != nil {
-			return err
-		}
+				var defaultVal float64
+				if len(args) > 1 {
+					defaultVal, err = args[1].CoerceFloat()
+					if err != nil {
+						return err
+					}
+				}
 
-		// Get default value if provided
-		var defaultVal float64 = 0.0
-		if len(args) > 1 {
-			defaultVal, err = args[1].CoerceFloat()
-			if err != nil {
-				return err
-			}
-		}
+				paramValue := getParamValue(ctx, name)
+				if paramValue == nil {
+					return &object.Float{Value: defaultVal}
+				}
 
-		// Get parameter value
-		paramValue := getParamValue(ctx, name)
-		if paramValue == nil {
-			return &object.Float{Value: defaultVal}
-		}
+				val, err := paramValue.CoerceFloat()
+				if err != nil {
+					return &object.Float{Value: defaultVal}
+				}
 
-		// Coerce to float
-		val, err := paramValue.CoerceFloat()
-		if err != nil {
-			return &object.Float{Value: defaultVal}
-		}
-
-		return &object.Float{Value: val}
-	}, `get_float(name, default=0.0) - Get a parameter as float
+				return &object.Float{Value: val}
+			},
+			HelpText: `get_float(name, default=0.0) - Get a parameter as float
 
 Safely gets a parameter and converts it to a float, handling None, empty strings, and whitespace.
 Returns the default value if the parameter doesn't exist, is None, empty, or whitespace-only.
@@ -160,48 +155,45 @@ Parameters:
 
 Example:
   price = mcp.tool.get_float("price", 0.0)
-  percentage = mcp.tool.get_float("percentage", 100.0)`)
+  percentage = mcp.tool.get_float("percentage", 100.0)`,
+		},
+		"get_string": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if len(args) == 0 {
+					return &object.Error{Message: "get_string() requires at least 1 argument (name)"}
+				}
 
-	// get_string(name, default="") - Get string parameter
-	builder.FunctionWithHelp("get_string", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-		if len(args) == 0 {
-			return &object.Error{Message: "get_string() requires at least 1 argument (name)"}
-		}
+				name, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
 
-		name, err := args[0].AsString()
-		if err != nil {
-			return err
-		}
+				defaultVal := ""
+				if len(args) > 1 {
+					defaultVal, err = args[1].CoerceString()
+					if err != nil {
+						return err
+					}
+				}
 
-		// Get default value if provided
-		defaultVal := ""
-		if len(args) > 1 {
-			defaultVal, err = args[1].CoerceString()
-			if err != nil {
-				return err
-			}
-		}
+				paramValue := getParamValue(ctx, name)
+				if paramValue == nil {
+					return &object.String{Value: defaultVal}
+				}
 
-		// Get parameter value
-		paramValue := getParamValue(ctx, name)
-		if paramValue == nil {
-			return &object.String{Value: defaultVal}
-		}
+				val, err := paramValue.CoerceString()
+				if err != nil {
+					return &object.String{Value: defaultVal}
+				}
 
-		// Coerce to string
-		val, err := paramValue.CoerceString()
-		if err != nil {
-			return &object.String{Value: defaultVal}
-		}
+				val = strings.TrimSpace(val)
+				if val == "" {
+					return &object.String{Value: defaultVal}
+				}
 
-		// Trim whitespace
-		val = strings.TrimSpace(val)
-		if val == "" {
-			return &object.String{Value: defaultVal}
-		}
-
-		return &object.String{Value: val}
-	}, `get_string(name, default="") - Get a parameter as string
+				return &object.String{Value: val}
+			},
+			HelpText: `get_string(name, default="") - Get a parameter as string
 
 Safely gets a parameter as a string, handling None, empty strings, and whitespace.
 Trims whitespace and returns the default value if the parameter doesn't exist, is None, empty, or whitespace-only.
@@ -212,53 +204,50 @@ Parameters:
 
 Example:
   name = mcp.tool.get_string("name", "guest")
-  query = mcp.tool.get_string("query")`)
+  query = mcp.tool.get_string("query")`,
+		},
+		"get_bool": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if len(args) == 0 {
+					return &object.Error{Message: "get_bool() requires at least 1 argument (name)"}
+				}
 
-	// get_bool(name, default=false) - Get boolean parameter
-	builder.FunctionWithHelp("get_bool", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-		if len(args) == 0 {
-			return &object.Error{Message: "get_bool() requires at least 1 argument (name)"}
-		}
+				name, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
 
-		name, err := args[0].AsString()
-		if err != nil {
-			return err
-		}
+				defaultVal := false
+				if len(args) > 1 {
+					defaultVal, err = args[1].AsBool()
+					if err != nil {
+						return err
+					}
+				}
 
-		// Get default value if provided
-		defaultVal := false
-		if len(args) > 1 {
-			defaultVal, err = args[1].AsBool()
-			if err != nil {
-				return err
-			}
-		}
+				paramValue := getParamValue(ctx, name)
+				if paramValue == nil {
+					return object.NewBoolean(defaultVal)
+				}
 
-		// Get parameter value
-		paramValue := getParamValue(ctx, name)
-		if paramValue == nil {
-			return object.NewBoolean(defaultVal)
-		}
+				if strVal, ok := paramValue.(*object.String); ok {
+					lower := strings.ToLower(strings.TrimSpace(strVal.Value))
+					if lower == "true" || lower == "1" {
+						return object.NewBoolean(true)
+					}
+					if lower == "false" || lower == "0" {
+						return object.NewBoolean(false)
+					}
+				}
 
-		// Handle string "true"/"false"
-		if strVal, ok := paramValue.(*object.String); ok {
-			lower := strings.ToLower(strings.TrimSpace(strVal.Value))
-			if lower == "true" || lower == "1" {
-				return object.NewBoolean(true)
-			}
-			if lower == "false" || lower == "0" {
-				return object.NewBoolean(false)
-			}
-		}
+				val, err := paramValue.AsBool()
+				if err != nil {
+					return object.NewBoolean(defaultVal)
+				}
 
-		// Coerce to bool
-		val, err := paramValue.AsBool()
-		if err != nil {
-			return object.NewBoolean(defaultVal)
-		}
-
-		return object.NewBoolean(val)
-	}, `get_bool(name, default=false) - Get a parameter as boolean
+				return object.NewBoolean(val)
+			},
+			HelpText: `get_bool(name, default=false) - Get a parameter as boolean
 
 Safely gets a parameter and converts it to a boolean.
 Handles string values "true"/"false" (case-insensitive) and numeric 0/1.
@@ -270,62 +259,59 @@ Parameters:
 
 Example:
   enabled = mcp.tool.get_bool("enabled", true)
-  verbose = mcp.tool.get_bool("verbose")`)
-
-	// get_list(name, default=None) - Get list parameter
-	builder.FunctionWithHelp("get_list", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-		if len(args) == 0 {
-			return &object.Error{Message: "get_list() requires at least 1 argument (name)"}
-		}
-
-		name, err := args[0].AsString()
-		if err != nil {
-			return err
-		}
-
-		// Get default value if provided
-		var defaultVal *object.List
-		if len(args) > 1 {
-			if list, ok := args[1].(*object.List); ok {
-				defaultVal = list
-			} else {
-				return &object.Error{Message: "get_list() default must be a list"}
-			}
-		}
-		if defaultVal == nil {
-			defaultVal = &object.List{Elements: []object.Object{}}
-		}
-
-		// Get parameter value
-		paramValue := getParamValue(ctx, name)
-		if paramValue == nil {
-			return defaultVal
-		}
-
-		// If already a list, return it
-		if list, ok := paramValue.(*object.List); ok {
-			return list
-		}
-
-		// If string, split by comma
-		if strVal, ok := paramValue.(*object.String); ok {
-			val := strings.TrimSpace(strVal.Value)
-			if val == "" {
-				return defaultVal
-			}
-			parts := strings.Split(val, ",")
-			elements := make([]object.Object, 0, len(parts))
-			for _, part := range parts {
-				trimmed := strings.TrimSpace(part)
-				if trimmed != "" {
-					elements = append(elements, &object.String{Value: trimmed})
+  verbose = mcp.tool.get_bool("verbose")`,
+		},
+		"get_list": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if len(args) == 0 {
+					return &object.Error{Message: "get_list() requires at least 1 argument (name)"}
 				}
-			}
-			return &object.List{Elements: elements}
-		}
 
-		return defaultVal
-	}, `get_list(name, default=None) - Get a parameter as list
+				name, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
+
+				var defaultVal *object.List
+				if len(args) > 1 {
+					if list, ok := args[1].(*object.List); ok {
+						defaultVal = list
+					} else {
+						return &object.Error{Message: "get_list() default must be a list"}
+					}
+				}
+				if defaultVal == nil {
+					defaultVal = &object.List{Elements: []object.Object{}}
+				}
+
+				paramValue := getParamValue(ctx, name)
+				if paramValue == nil {
+					return defaultVal
+				}
+
+				if list, ok := paramValue.(*object.List); ok {
+					return list
+				}
+
+				if strVal, ok := paramValue.(*object.String); ok {
+					val := strings.TrimSpace(strVal.Value)
+					if val == "" {
+						return defaultVal
+					}
+					parts := strings.Split(val, ",")
+					elements := make([]object.Object, 0, len(parts))
+					for _, part := range parts {
+						trimmed := strings.TrimSpace(part)
+						if trimmed != "" {
+							elements = append(elements, &object.String{Value: trimmed})
+						}
+					}
+					return &object.List{Elements: elements}
+				}
+
+				return defaultVal
+			},
+			HelpText: `get_list(name, default=None) - Get a parameter as list
 
 Gets a list parameter. If the value is a string, splits it by comma.
 Returns the default value if the parameter doesn't exist.
@@ -336,42 +322,43 @@ Parameters:
 
 Example:
   ids = mcp.tool.get_list("ids")              # "1,2,3" → ["1", "2", "3"]
-  tags = mcp.tool.get_list("tags", ["all"])   # "tag1, tag2" → ["tag1", "tag2"]`)
+  tags = mcp.tool.get_list("tags", ["all"])   # "tag1, tag2" → ["tag1", "tag2"]`,
+		},
+		"get_string_list": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if len(args) == 0 {
+					return &object.Error{Message: "get_string_list() requires at least 1 argument (name)"}
+				}
 
-	// get_string_list(name, default=None) - Get string array parameter
-	builder.FunctionWithHelp("get_string_list", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-		if len(args) == 0 {
-			return &object.Error{Message: "get_string_list() requires at least 1 argument (name)"}
-		}
+				name, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
 
-		name, err := args[0].AsString()
-		if err != nil {
-			return err
-		}
+				var defaultVal *object.List
+				if len(args) > 1 {
+					if list, ok := args[1].(*object.List); ok {
+						defaultVal = list
+					} else {
+						return &object.Error{Message: "get_string_list() default must be a list"}
+					}
+				}
+				if defaultVal == nil {
+					defaultVal = &object.List{Elements: []object.Object{}}
+				}
 
-		var defaultVal *object.List
-		if len(args) > 1 {
-			if list, ok := args[1].(*object.List); ok {
-				defaultVal = list
-			} else {
-				return &object.Error{Message: "get_string_list() default must be a list"}
-			}
-		}
-		if defaultVal == nil {
-			defaultVal = &object.List{Elements: []object.Object{}}
-		}
+				paramValue := getParamValue(ctx, name)
+				if paramValue == nil {
+					return defaultVal
+				}
 
-		paramValue := getParamValue(ctx, name)
-		if paramValue == nil {
-			return defaultVal
-		}
+				if list, ok := paramValue.(*object.List); ok {
+					return list
+				}
 
-		if list, ok := paramValue.(*object.List); ok {
-			return list
-		}
-
-		return defaultVal
-	}, `get_string_list(name, default=None) - Get a string array parameter
+				return defaultVal
+			},
+			HelpText: `get_string_list(name, default=None) - Get a string array parameter
 
 Gets an array:string parameter as a list of strings.
 Returns the default value if the parameter doesn't exist.
@@ -382,42 +369,43 @@ Parameters:
 
 Example:
   args = mcp.tool.get_string_list("arguments")  # ["--verbose", "-o", "file.txt"]
-  tags = mcp.tool.get_string_list("tags", ["default"])`)
+  tags = mcp.tool.get_string_list("tags", ["default"])`,
+		},
+		"get_int_list": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if len(args) == 0 {
+					return &object.Error{Message: "get_int_list() requires at least 1 argument (name)"}
+				}
 
-	// get_int_list(name, default=None) - Get integer array parameter
-	builder.FunctionWithHelp("get_int_list", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-		if len(args) == 0 {
-			return &object.Error{Message: "get_int_list() requires at least 1 argument (name)"}
-		}
+				name, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
 
-		name, err := args[0].AsString()
-		if err != nil {
-			return err
-		}
+				var defaultVal *object.List
+				if len(args) > 1 {
+					if list, ok := args[1].(*object.List); ok {
+						defaultVal = list
+					} else {
+						return &object.Error{Message: "get_int_list() default must be a list"}
+					}
+				}
+				if defaultVal == nil {
+					defaultVal = &object.List{Elements: []object.Object{}}
+				}
 
-		var defaultVal *object.List
-		if len(args) > 1 {
-			if list, ok := args[1].(*object.List); ok {
-				defaultVal = list
-			} else {
-				return &object.Error{Message: "get_int_list() default must be a list"}
-			}
-		}
-		if defaultVal == nil {
-			defaultVal = &object.List{Elements: []object.Object{}}
-		}
+				paramValue := getParamValue(ctx, name)
+				if paramValue == nil {
+					return defaultVal
+				}
 
-		paramValue := getParamValue(ctx, name)
-		if paramValue == nil {
-			return defaultVal
-		}
+				if list, ok := paramValue.(*object.List); ok {
+					return list
+				}
 
-		if list, ok := paramValue.(*object.List); ok {
-			return list
-		}
-
-		return defaultVal
-	}, `get_int_list(name, default=None) - Get an integer array parameter
+				return defaultVal
+			},
+			HelpText: `get_int_list(name, default=None) - Get an integer array parameter
 
 Gets an array:int parameter as a list of integers.
 Returns the default value if the parameter doesn't exist.
@@ -428,42 +416,43 @@ Parameters:
 
 Example:
   ids = mcp.tool.get_int_list("ids")  # [1, 2, 3, 4]
-  ports = mcp.tool.get_int_list("ports", [8080])`)
+  ports = mcp.tool.get_int_list("ports", [8080])`,
+		},
+		"get_float_list": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if len(args) == 0 {
+					return &object.Error{Message: "get_float_list() requires at least 1 argument (name)"}
+				}
 
-	// get_float_list(name, default=None) - Get float array parameter
-	builder.FunctionWithHelp("get_float_list", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-		if len(args) == 0 {
-			return &object.Error{Message: "get_float_list() requires at least 1 argument (name)"}
-		}
+				name, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
 
-		name, err := args[0].AsString()
-		if err != nil {
-			return err
-		}
+				var defaultVal *object.List
+				if len(args) > 1 {
+					if list, ok := args[1].(*object.List); ok {
+						defaultVal = list
+					} else {
+						return &object.Error{Message: "get_float_list() default must be a list"}
+					}
+				}
+				if defaultVal == nil {
+					defaultVal = &object.List{Elements: []object.Object{}}
+				}
 
-		var defaultVal *object.List
-		if len(args) > 1 {
-			if list, ok := args[1].(*object.List); ok {
-				defaultVal = list
-			} else {
-				return &object.Error{Message: "get_float_list() default must be a list"}
-			}
-		}
-		if defaultVal == nil {
-			defaultVal = &object.List{Elements: []object.Object{}}
-		}
+				paramValue := getParamValue(ctx, name)
+				if paramValue == nil {
+					return defaultVal
+				}
 
-		paramValue := getParamValue(ctx, name)
-		if paramValue == nil {
-			return defaultVal
-		}
+				if list, ok := paramValue.(*object.List); ok {
+					return list
+				}
 
-		if list, ok := paramValue.(*object.List); ok {
-			return list
-		}
-
-		return defaultVal
-	}, `get_float_list(name, default=None) - Get a float array parameter
+				return defaultVal
+			},
+			HelpText: `get_float_list(name, default=None) - Get a float array parameter
 
 Gets an array:float parameter as a list of floats.
 Returns the default value if the parameter doesn't exist.
@@ -474,42 +463,43 @@ Parameters:
 
 Example:
   prices = mcp.tool.get_float_list("prices")  # [19.99, 29.99, 39.99]
-  weights = mcp.tool.get_float_list("weights", [1.0])`)
+  weights = mcp.tool.get_float_list("weights", [1.0])`,
+		},
+		"get_bool_list": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if len(args) == 0 {
+					return &object.Error{Message: "get_bool_list() requires at least 1 argument (name)"}
+				}
 
-	// get_bool_list(name, default=None) - Get boolean array parameter
-	builder.FunctionWithHelp("get_bool_list", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-		if len(args) == 0 {
-			return &object.Error{Message: "get_bool_list() requires at least 1 argument (name)"}
-		}
+				name, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
 
-		name, err := args[0].AsString()
-		if err != nil {
-			return err
-		}
+				var defaultVal *object.List
+				if len(args) > 1 {
+					if list, ok := args[1].(*object.List); ok {
+						defaultVal = list
+					} else {
+						return &object.Error{Message: "get_bool_list() default must be a list"}
+					}
+				}
+				if defaultVal == nil {
+					defaultVal = &object.List{Elements: []object.Object{}}
+				}
 
-		var defaultVal *object.List
-		if len(args) > 1 {
-			if list, ok := args[1].(*object.List); ok {
-				defaultVal = list
-			} else {
-				return &object.Error{Message: "get_bool_list() default must be a list"}
-			}
-		}
-		if defaultVal == nil {
-			defaultVal = &object.List{Elements: []object.Object{}}
-		}
+				paramValue := getParamValue(ctx, name)
+				if paramValue == nil {
+					return defaultVal
+				}
 
-		paramValue := getParamValue(ctx, name)
-		if paramValue == nil {
-			return defaultVal
-		}
+				if list, ok := paramValue.(*object.List); ok {
+					return list
+				}
 
-		if list, ok := paramValue.(*object.List); ok {
-			return list
-		}
-
-		return defaultVal
-	}, `get_bool_list(name, default=None) - Get a boolean array parameter
+				return defaultVal
+			},
+			HelpText: `get_bool_list(name, default=None) - Get a boolean array parameter
 
 Gets an array:bool parameter as a list of booleans.
 Returns the default value if the parameter doesn't exist.
@@ -520,71 +510,68 @@ Parameters:
 
 Example:
   flags = mcp.tool.get_bool_list("flags")  # [true, false, true]
-  options = mcp.tool.get_bool_list("options", [false])`)
+  options = mcp.tool.get_bool_list("options", [false])`,
+		},
+		"return_string": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if len(args) == 0 {
+					return &object.Error{Message: "return_string() requires a text argument"}
+				}
 
-	// return_string(text) - Return string result
-	builder.FunctionWithHelp("return_string", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-		if len(args) == 0 {
-			return &object.Error{Message: "return_string() requires a text argument"}
-		}
+				text, err := args[0].CoerceString()
+				if err != nil {
+					return err
+				}
 
-		text, err := args[0].CoerceString()
-		if err != nil {
-			return err
-		}
-
-		return setResponseAndExit(ctx, text, 0)
-	}, `return_string(text) - Return a string result from the tool and stop execution
+				return setResponseAndExit(ctx, text, 0)
+			},
+			HelpText: `return_string(text) - Return a string result from the tool and stop execution
 
 Sets the tool's return value to the given string and stops script execution.
 No code after this call will execute.
 
 Example:
   mcp.tool.return_string("Search completed successfully")
-  # Code here will not execute`)
+  # Code here will not execute`,
+		},
+		"return_object": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if len(args) == 0 {
+					return &object.Error{Message: "return_object() requires an object argument"}
+				}
 
-	// return_object(obj) - Return object as JSON
-	builder.FunctionWithHelp("return_object", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-		if len(args) == 0 {
-			return &object.Error{Message: "return_object() requires an object argument"}
-		}
+				goObj := conversion.ToGo(args[0])
+				jsonBytes, err := json.Marshal(goObj)
+				if err != nil {
+					return &object.Error{Message: fmt.Sprintf("Failed to serialize object to JSON: %v", err)}
+				}
 
-		// Convert scriptling object to Go native types
-		goObj := conversion.ToGo(args[0])
-
-		// Marshal to JSON
-		jsonBytes, err := json.Marshal(goObj)
-		if err != nil {
-			return &object.Error{Message: fmt.Sprintf("Failed to serialize object to JSON: %v", err)}
-		}
-
-		return setResponseAndExit(ctx, string(jsonBytes), 0)
-	}, `return_object(obj) - Return an object as JSON from the tool and stop execution
+				return setResponseAndExit(ctx, string(jsonBytes), 0)
+			},
+			HelpText: `return_object(obj) - Return an object as JSON from the tool and stop execution
 
 Serializes the object to JSON and sets it as the tool's return value.
 Stops script execution immediately - no code after this call will execute.
 
 Example:
   mcp.tool.return_object({"status": "success", "count": 42})
-  # Code here will not execute`)
+  # Code here will not execute`,
+		},
+		"return_toon": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if len(args) == 0 {
+					return &object.Error{Message: "return_toon() requires an object argument"}
+				}
 
-	// return_toon(obj) - Return object as TOON
-	builder.FunctionWithHelp("return_toon", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-		if len(args) == 0 {
-			return &object.Error{Message: "return_toon() requires an object argument"}
-		}
+				goObj := conversion.ToGo(args[0])
+				toonStr, err := mcptoon.Encode(goObj)
+				if err != nil {
+					return &object.Error{Message: fmt.Sprintf("Failed to encode to TOON: %v", err)}
+				}
 
-		// Convert to Go object
-		goObj := conversion.ToGo(args[0])
-
-		// Encode to TOON
-		toonStr, err := mcptoon.Encode(goObj)
-		if err != nil {
-			return &object.Error{Message: fmt.Sprintf("Failed to encode to TOON: %v", err)}
-		}
-
-		return setResponseAndExit(ctx, toonStr, 0)
-	}, `return_toon(obj) - Return an object encoded as TOON from the tool and stop execution
+				return setResponseAndExit(ctx, toonStr, 0)
+			},
+			HelpText: `return_toon(obj) - Return an object encoded as TOON from the tool and stop execution
 
 Serializes the object to TOON format and sets it as the tool's return value.
 TOON is a compact text format optimized for LLM consumption.
@@ -592,23 +579,23 @@ Stops script execution immediately - no code after this call will execute.
 
 Example:
   mcp.tool.return_toon({"result": data})
-  # Code here will not execute`)
+  # Code here will not execute`,
+		},
+		"return_error": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if len(args) == 0 {
+					return &object.Error{Message: "return_error() requires a message argument"}
+				}
 
-	// return_error(message) - Return error
-	builder.FunctionWithHelp("return_error", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-		if len(args) == 0 {
-			return &object.Error{Message: "return_error() requires a message argument"}
-		}
+				message, err := args[0].CoerceString()
+				if err != nil {
+					return err
+				}
 
-		message, err := args[0].CoerceString()
-		if err != nil {
-			return err
-		}
-
-		// Set error response as JSON
-		errorJSON := fmt.Sprintf(`{"error": "%s"}`, message)
-		return setResponseAndExit(ctx, errorJSON, 1)
-	}, `return_error(message) - Return an error from the tool and stop execution
+				errorJSON := fmt.Sprintf(`{"error": "%s"}`, message)
+				return setResponseAndExit(ctx, errorJSON, 1)
+			},
+			HelpText: `return_error(message) - Return an error from the tool and stop execution
 
 Returns an error message to the MCP client and stops script execution immediately.
 
@@ -617,9 +604,9 @@ Arguments:
 
 Example:
   mcp.tool.return_error("Customer not found")
-  mcp.tool.return_error("Invalid input: project ID is required")`)
-
-	return builder.Build()
+  mcp.tool.return_error("Invalid input: project ID is required")`,
+		},
+	}, nil, "MCP tool parameter access and result functions")
 }
 
 // RegisterToolHelpers registers the scriptling.mcp.tool sub-library
