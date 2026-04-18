@@ -175,9 +175,9 @@ except Exception as e:
 - `secrets` - Cryptographic random number generation
 - `scriptling.runtime` - Runtime utilities including sandbox and background tasks
 - `scriptling.websocket` - WebSocket client
-- `scriptling.multicast` - UDP multicast group messaging
-- `scriptling.unicast` - UDP and TCP point-to-point messaging
-- `scriptling.gossip` - Gossip protocol cluster membership and messaging
+- `scriptling.net.multicast` - UDP multicast group messaging
+- `scriptling.net.unicast` - UDP and TCP point-to-point messaging
+- `scriptling.net.gossip` - Gossip protocol cluster membership and messaging
 - `subprocess` - Process execution
 - `wait_for` - Process monitoring
 - AI, agent, and MCP libraries
@@ -514,9 +514,9 @@ The CLI includes all standard libraries plus external libraries:
 - `datetime`, `json`, `math`, `random`, `re`, `time`, `base64`, `hashlib`, `urllib`
 - `requests` - HTTP client library
 - `scriptling.websocket` - WebSocket client
-- `scriptling.multicast` - UDP multicast group messaging
-- `scriptling.unicast` - UDP and TCP point-to-point messaging
-- `scriptling.gossip` - Gossip protocol cluster membership and messaging
+- `scriptling.net.multicast` - UDP multicast group messaging
+- `scriptling.net.unicast` - UDP and TCP point-to-point messaging
+- `scriptling.net.gossip` - Gossip protocol cluster membership and messaging
 - `subprocess` - Process execution library
 
 ### Library Loading

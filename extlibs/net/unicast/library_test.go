@@ -18,7 +18,7 @@ func TestUnicastTCPEcho(t *testing.T) {
 	p := newScriptling()
 
 	script := `
-import scriptling.unicast as uc
+import scriptling.net.unicast as uc
 
 server = uc.listen("127.0.0.1", 0, protocol="tcp")
 addr = server.addr
@@ -55,7 +55,7 @@ func TestUnicastTCPReceiveReturnsDict(t *testing.T) {
 	p := newScriptling()
 
 	script := `
-import scriptling.unicast as uc
+import scriptling.net.unicast as uc
 
 server = uc.listen("127.0.0.1", 0, protocol="tcp")
 port = int(server.addr.split(":")[1])
@@ -92,7 +92,7 @@ func TestUnicastUDPEcho(t *testing.T) {
 	p := newScriptling()
 
 	script := `
-import scriptling.unicast as uc
+import scriptling.net.unicast as uc
 
 server = uc.listen("127.0.0.1", 0, protocol="udp")
 port = int(server.addr.split(":")[1])
@@ -127,7 +127,7 @@ func TestUnicastUDPReceiveReturnsDict(t *testing.T) {
 	p := newScriptling()
 
 	script := `
-import scriptling.unicast as uc
+import scriptling.net.unicast as uc
 
 server = uc.listen("127.0.0.1", 0, protocol="udp")
 port = int(server.addr.split(":")[1])
@@ -161,7 +161,7 @@ func TestUnicastTCPTimeout(t *testing.T) {
 	p := newScriptling()
 
 	script := `
-import scriptling.unicast as uc
+import scriptling.net.unicast as uc
 
 server = uc.listen("127.0.0.1", 0, protocol="tcp")
 port = int(server.addr.split(":")[1])
@@ -190,7 +190,7 @@ func TestUnicastTCPAcceptTimeout(t *testing.T) {
 	p := newScriptling()
 
 	script := `
-import scriptling.unicast as uc
+import scriptling.net.unicast as uc
 
 server = uc.listen("127.0.0.1", 0, protocol="tcp")
 conn = server.accept(timeout=0.1)
@@ -210,7 +210,7 @@ func TestUnicastConnected(t *testing.T) {
 	p := newScriptling()
 
 	script := `
-import scriptling.unicast as uc
+import scriptling.net.unicast as uc
 
 server = uc.listen("127.0.0.1", 0, protocol="tcp")
 port = int(server.addr.split(":")[1])
@@ -243,7 +243,7 @@ func TestUnicastJSONMessage(t *testing.T) {
 	p := newScriptling()
 
 	script := `
-import scriptling.unicast as uc
+import scriptling.net.unicast as uc
 
 server = uc.listen("127.0.0.1", 0, protocol="tcp")
 port = int(server.addr.split(":")[1])
@@ -278,7 +278,7 @@ func TestUnicastListenInvalidHost(t *testing.T) {
 
 	// Passing a non-string host should return an error, not silently use 0.0.0.0.
 	_, err := p.Eval(`
-import scriptling.unicast as uc
+import scriptling.net.unicast as uc
 uc.listen(42, 8080, protocol="tcp")
 `)
 	if err == nil {
@@ -290,7 +290,7 @@ func TestUnicastConnectInvalidProtocol(t *testing.T) {
 	p := newScriptling()
 
 	_, err := p.Eval(`
-import scriptling.unicast as uc
+import scriptling.net.unicast as uc
 uc.connect("127.0.0.1", 9999, protocol="sctp")
 `)
 	if err == nil {
@@ -306,7 +306,7 @@ func TestUnicastListenerTracking(t *testing.T) {
 
 	p := newScriptling()
 	result, err := p.Eval(`
-import scriptling.unicast as uc
+import scriptling.net.unicast as uc
 s = uc.listen("127.0.0.1", 0, protocol="tcp")
 s.addr
 `)

@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	LibraryName = "scriptling.gossip"
+	LibraryName = "scriptling.net.gossip"
 	LibraryDesc = "Gossip protocol cluster membership and messaging"
 )
 
@@ -31,7 +31,6 @@ var (
 		m map[string]*gossip.Cluster
 	}{m: make(map[string]*gossip.Cluster)}
 )
-
 
 func nodeToObject(n *gossip.Node) *object.Dict {
 	state := "unknown"
@@ -617,7 +616,7 @@ Returns:
   Cluster object with methods for membership and messaging
 
 Example:
-  import scriptling.gossip as gossip
+  import scriptling.net.gossip as gossip
   cluster = gossip.create(bind_addr="127.0.0.1:8000", tags=["web"])
   cluster.start()
   cluster.join(["127.0.0.1:8001"])

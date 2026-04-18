@@ -16,7 +16,7 @@ func TestMulticastLibraryRegistered(t *testing.T) {
 	p := newScriptling()
 
 	result, err := p.Eval(`
-import scriptling.multicast as mc
+import scriptling.net.multicast as mc
 type(mc) == "DICT"
 `)
 	if err != nil {
@@ -32,7 +32,7 @@ func TestMulticastJoinNonMulticastAddress(t *testing.T) {
 
 	// A unicast address must be rejected before any OS call.
 	_, err := p.Eval(`
-import scriptling.multicast as mc
+import scriptling.net.multicast as mc
 mc.join("192.168.1.1", 9999)
 `)
 	if err == nil {
@@ -44,7 +44,7 @@ func TestMulticastJoinInvalidAddress(t *testing.T) {
 	p := newScriptling()
 
 	_, err := p.Eval(`
-import scriptling.multicast as mc
+import scriptling.net.multicast as mc
 mc.join("not-an-ip", 9999)
 `)
 	if err == nil {
@@ -56,7 +56,7 @@ func TestMulticastJoinMissingArgs(t *testing.T) {
 	p := newScriptling()
 
 	_, err := p.Eval(`
-import scriptling.multicast as mc
+import scriptling.net.multicast as mc
 mc.join()
 `)
 	if err == nil {
@@ -73,7 +73,7 @@ func TestMulticastGroupHasMethods(t *testing.T) {
 
 	// Access each method to verify it exists (accessing a non-existent attribute errors).
 	_, err := p.Eval(`
-import scriptling.multicast as mc
+import scriptling.net.multicast as mc
 g = mc.join("239.255.0.1", 9999)
 _ = g.send
 _ = g.receive

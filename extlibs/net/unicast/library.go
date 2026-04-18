@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	LibraryName = "scriptling.unicast"
+	LibraryName = "scriptling.net.unicast"
 	LibraryDesc = "UDP and TCP point-to-point messaging"
 )
 
@@ -387,7 +387,7 @@ Returns:
   Properties: local_addr, remote_addr
 
 Example:
-  import scriptling.unicast as uc
+  import scriptling.net.unicast as uc
   conn = uc.connect("192.168.1.1", 8080, protocol="tcp")
   conn.send("Hello!")
   msg = conn.receive(timeout=5)
@@ -584,7 +584,7 @@ For TCP: returns a listener with accept(), close(), addr
 For UDP: returns a listener with receive(), send_to(), close(), addr
 
 Example:
-  import scriptling.unicast as uc
+  import scriptling.net.unicast as uc
   server = uc.listen("0.0.0.0", 8080)
   conn = server.accept(timeout=60)
   if conn:

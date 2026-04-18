@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	LibraryName = "scriptling.multicast"
+	LibraryName = "scriptling.net.multicast"
 	LibraryDesc = "UDP multicast group messaging"
 )
 
@@ -260,7 +260,7 @@ Returns:
   Properties: group_addr, port, local_addr
 
 Example:
-  import scriptling.multicast as mc
+  import scriptling.net.multicast as mc
   group = mc.join("239.1.1.1", 9999)
   group.send("Hello group!")
   msg = group.receive(timeout=5)

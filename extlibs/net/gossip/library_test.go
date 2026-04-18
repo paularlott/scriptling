@@ -17,7 +17,7 @@ func TestGossipLibraryRegistered(t *testing.T) {
 	p := newScriptling()
 
 	result, err := p.Eval(`
-import scriptling.gossip as gossip
+import scriptling.net.gossip as gossip
 type(gossip) == "DICT"
 `)
 	if err != nil {
@@ -32,7 +32,7 @@ func TestGossipMSGUSERConstant(t *testing.T) {
 	p := newScriptling()
 
 	result, err := p.Eval(`
-import scriptling.gossip as gossip
+import scriptling.net.gossip as gossip
 gossip.MSG_USER
 `)
 	if err != nil {
@@ -51,7 +51,7 @@ func TestGossipCreateAndStop(t *testing.T) {
 	p := newScriptling()
 
 	result, err := p.Eval(`
-import scriptling.gossip as gossip
+import scriptling.net.gossip as gossip
 c = gossip.create(bind_addr="127.0.0.1:0")
 c.start()
 id = c.node_id()
@@ -71,7 +71,7 @@ func TestGossipClusterHasMethods(t *testing.T) {
 	p := newScriptling()
 
 	_, err := p.Eval(`
-import scriptling.gossip as gossip
+import scriptling.net.gossip as gossip
 c = gossip.create(bind_addr="127.0.0.1:0")
 _ = c.start
 _ = c.join
@@ -103,7 +103,7 @@ func TestGossipLocalNode(t *testing.T) {
 	p := newScriptling()
 
 	result, err := p.Eval(`
-import scriptling.gossip as gossip
+import scriptling.net.gossip as gossip
 c = gossip.create(bind_addr="127.0.0.1:0")
 c.start()
 n = c.local_node()
@@ -128,7 +128,7 @@ func TestGossipMetadata(t *testing.T) {
 	p := newScriptling()
 
 	result, err := p.Eval(`
-import scriptling.gossip as gossip
+import scriptling.net.gossip as gossip
 c = gossip.create(bind_addr="127.0.0.1:0")
 c.start()
 
@@ -163,7 +163,7 @@ func TestGossipDecodeJSON(t *testing.T) {
 	p := newScriptling()
 
 	result, err := p.Eval(`
-import scriptling.gossip as gossip
+import scriptling.net.gossip as gossip
 d = gossip.decode_json('{"x": 1, "y": "hello"}')
 [type(d) == "DICT", d["x"] == 1, d["y"] == "hello"]
 `)
@@ -185,7 +185,7 @@ func TestGossipDecodeJSONInvalid(t *testing.T) {
 	p := newScriptling()
 
 	_, err := p.Eval(`
-import scriptling.gossip as gossip
+import scriptling.net.gossip as gossip
 gossip.decode_json("not json")
 `)
 	if err == nil {
@@ -197,7 +197,7 @@ func TestGossipSendMessageTypeTooLow(t *testing.T) {
 	p := newScriptling()
 
 	_, err := p.Eval(`
-import scriptling.gossip as gossip
+import scriptling.net.gossip as gossip
 c = gossip.create(bind_addr="127.0.0.1:0")
 c.start()
 c.send(64, "data")
@@ -211,7 +211,7 @@ func TestGossipNodeCount(t *testing.T) {
 	p := newScriptling()
 
 	result, err := p.Eval(`
-import scriptling.gossip as gossip
+import scriptling.net.gossip as gossip
 c = gossip.create(bind_addr="127.0.0.1:0")
 c.start()
 n = c.num_nodes()
