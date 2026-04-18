@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	mcp_lib "github.com/paularlott/mcp"
+	"github.com/paularlott/scriptling/extlibs/secretprovider"
 	"github.com/paularlott/scriptling/scriptling-cli/bootstrap"
 	"github.com/paularlott/scriptling/scriptling-cli/pack"
 )
@@ -52,7 +53,7 @@ tool.return_string(localmod.value() + "+" + packmod.value())
 		t.Fatal(err)
 	}
 
-	handler, err := createMCPToolHandler(scriptPath, nil, nil, packLoader)
+	handler, err := createMCPToolHandler(scriptPath, nil, nil, secretprovider.NewRegistry(), packLoader)
 	if err != nil {
 		t.Fatal(err)
 	}

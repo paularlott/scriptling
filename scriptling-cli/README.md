@@ -84,6 +84,7 @@ The linter exits with code 0 if no errors are found, and code 1 if any errors ex
 | `--tls-cert` | `SCRIPTLING_TLS_CERT` | TLS certificate file | none |
 | `--tls-key` | `SCRIPTLING_TLS_KEY` | TLS key file | none |
 | `--tls-generate` | - | Generate self-signed certificate | false |
+| `--secret-config` | `SCRIPTLING_SECRET_CONFIG` | TOML file defining host-owned secret provider aliases for `scriptling.secret` | none |
 
 ### Environment Configuration
 
@@ -106,6 +107,9 @@ SCRIPTLING_BEARER_TOKEN=your-secret-token
 
 # Filesystem restrictions
 SCRIPTLING_ALLOWED_PATHS=/tmp/data,./uploads
+
+# Secret provider aliases for scriptling.secret
+SCRIPTLING_SECRET_CONFIG=./secrets.toml
 ```
 
 ### Script Execution Modes
@@ -173,6 +177,7 @@ except Exception as e:
 - `os` - Environment variables and file operations (path-restricted)
 - `pathlib`, `glob` - File system access (path-restricted)
 - `secrets` - Cryptographic random number generation
+- `scriptling.secret` - Host-configured secret resolution through provider aliases
 - `scriptling.runtime` - Runtime utilities including sandbox and background tasks
 - `scriptling.net.websocket` - WebSocket client
 - `scriptling.net.multicast` - UDP multicast group messaging
@@ -198,6 +203,42 @@ env = os.environ()
 print(f"Home: {env['HOME']}")
 print(f"Path: {env['PATH']}")
 ```
+
+### Host-Owned Secret Providers
+
+Use `scriptling.secret` when the host application or CLI owns the provider configuration and scripts should only see aliases plus logical secret paths:
+
+```toml
+[[secrets.provider]]
+provider = "vault"
+alias = "prod_vault"
+address = "https://vault.internal:8200"
+token = "hvs.example"
+cache_ttl = "5m"
+
+[[secrets.provider]]
+provider = "onepassword"
+alias = "op"
+address = "http://op-connect:8080"
+token = "example-token"
+```
+
+Run a script with the config file:
+
+```bash
+scriptling --secret-config ./secrets.toml script.py
+```
+
+In the script:
+
+```python
+import scriptling.secret as secret
+
+db_password = secret.get("prod_vault", "secret/data/app", "password")
+api_key = secret.get("op", "Engineering/api-key", "credential")
+```
+
+The script never receives provider URLs, API tokens, or other private configuration. Those stay in the host application or CLI config file.
 
 ### HTTP Server Mode
 

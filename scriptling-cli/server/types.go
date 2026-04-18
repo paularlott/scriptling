@@ -9,6 +9,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/paularlott/logger"
 	mcp_lib "github.com/paularlott/mcp"
+	"github.com/paularlott/scriptling/extlibs/secretprovider"
 	"github.com/paularlott/scriptling/scriptling-cli/pack"
 )
 
@@ -16,20 +17,21 @@ var Log logger.Logger
 
 // ServerConfig holds the configuration for the HTTP server
 type ServerConfig struct {
-	Address       string
-	ScriptFile    string
-	LibDirs       []string
-	Packages      []string // Package (.zip) paths or URLs
-	Insecure      bool     // Allow self-signed HTTPS for package URLs
-	CacheDir      string   // Override default OS cache dir for remote packages
-	BearerToken   string
-	AllowedPaths  []string // Filesystem path restrictions (empty = no restrictions)
-	MCPToolsDir   string   // Empty means MCP disabled
-	MCPExecTool   bool     // Enable code execution tool
-	KVStoragePath string   // Empty means in-memory KV store
-	TLSCert       string
-	TLSKey        string
-	TLSGenerate   bool
+	Address        string
+	ScriptFile     string
+	LibDirs        []string
+	Packages       []string // Package (.zip) paths or URLs
+	Insecure       bool     // Allow self-signed HTTPS for package URLs
+	CacheDir       string   // Override default OS cache dir for remote packages
+	BearerToken    string
+	AllowedPaths   []string // Filesystem path restrictions (empty = no restrictions)
+	MCPToolsDir    string   // Empty means MCP disabled
+	MCPExecTool    bool     // Enable code execution tool
+	KVStoragePath  string   // Empty means in-memory KV store
+	SecretRegistry *secretprovider.Registry
+	TLSCert        string
+	TLSKey         string
+	TLSGenerate    bool
 }
 
 // reloadableMCPHandler wraps an MCP server pointer to allow hot-reloading of tools

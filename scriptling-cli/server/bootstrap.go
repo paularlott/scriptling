@@ -32,7 +32,7 @@ func NewServer(config ServerConfig) (*Server, error) {
 		return nil, fmt.Errorf("failed to initialize KV store: %w", err)
 	}
 
-	setup.Factories(config.LibDirs, config.AllowedPaths, Log)
+	setup.Factories(config.LibDirs, config.AllowedPaths, config.SecretRegistry, Log)
 
 	if config.ScriptFile != "" || s.packLoader != nil {
 		if err := s.runSetupScript(); err != nil {
@@ -61,7 +61,7 @@ func NewServer(config ServerConfig) (*Server, error) {
 // runSetupScript runs the setup script once to register routes
 func (s *Server) runSetupScript() error {
 	p := scriptling.New()
-	setup.Scriptling(p, s.config.LibDirs, false, s.config.AllowedPaths, Log)
+	setup.Scriptling(p, s.config.LibDirs, false, s.config.AllowedPaths, s.config.SecretRegistry, Log)
 	s.applyPackLoader(p)
 
 	if s.config.ScriptFile != "" {

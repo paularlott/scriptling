@@ -12,6 +12,7 @@ import (
 	"github.com/paularlott/mcp/toolmetadata"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs/mcp"
+	"github.com/paularlott/scriptling/extlibs/secretprovider"
 	"github.com/paularlott/scriptling/scriptling-cli/bootstrap"
 	mcpcli "github.com/paularlott/scriptling/scriptling-cli/mcp"
 	"github.com/paularlott/scriptling/scriptling-cli/pack"
@@ -66,7 +67,7 @@ func (s *Server) createMCPServer() (*mcp_lib.Server, error) {
 		for toolName, meta := range tools {
 			scriptPath := filepath.Join(s.config.MCPToolsDir, toolName+".py")
 			tool := toolmetadata.BuildMCPTool(toolName, meta)
-			handler, err := createMCPToolHandler(scriptPath, s.config.LibDirs, s.config.AllowedPaths, s.packLoader)
+			handler, err := createMCPToolHandler(scriptPath, s.config.LibDirs, s.config.AllowedPaths, s.config.SecretRegistry, s.packLoader)
 			if err != nil {
 				return nil, fmt.Errorf("failed to load tool %s: %w", toolName, err)
 			}
@@ -118,7 +119,7 @@ RETURNING RESULTS:
 		func(ctx context.Context, req *mcp_lib.ToolRequest) (*mcp_lib.ToolResponse, error) {
 			code, _ := req.String("code")
 			p := scriptling.New()
-			setup.Scriptling(p, s.config.LibDirs, false, s.config.AllowedPaths, Log)
+			setup.Scriptling(p, s.config.LibDirs, false, s.config.AllowedPaths, s.config.SecretRegistry, Log)
 
 			response, exitCode, err := mcp.RunToolScript(ctx, p, code, map[string]interface{}{})
 			if err != nil && exitCode != 0 {
@@ -145,7 +146,7 @@ func (s *Server) reloadMCPTools() {
 // createMCPToolHandler creates a handler function for an MCP tool.
 // The script is read once at registration time; packLoader is already loaded
 // into memory at startup - no fetching happens per call.
-func createMCPToolHandler(scriptPath string, libDirs []string, allowedPaths []string, packLoader *pack.Loader) (func(context.Context, *mcp_lib.ToolRequest) (*mcp_lib.ToolResponse, error), error) {
+func createMCPToolHandler(scriptPath string, libDirs []string, allowedPaths []string, secretRegistry *secretprovider.Registry, packLoader *pack.Loader) (func(context.Context, *mcp_lib.ToolRequest) (*mcp_lib.ToolResponse, error), error) {
 	script, err := os.ReadFile(scriptPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read script %s: %w", scriptPath, err)
@@ -156,7 +157,7 @@ func createMCPToolHandler(scriptPath string, libDirs []string, allowedPaths []st
 
 	handler := func(ctx context.Context, req *mcp_lib.ToolRequest) (*mcp_lib.ToolResponse, error) {
 		p := scriptling.New()
-		setup.Scriptling(p, toolLibDirs, false, allowedPaths, Log)
+		setup.Scriptling(p, toolLibDirs, false, allowedPaths, secretRegistry, Log)
 		bootstrap.ApplyPackLoader(p, packLoader)
 
 		params := req.Args()

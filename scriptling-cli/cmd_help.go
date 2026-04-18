@@ -9,6 +9,7 @@ import (
 	"github.com/paularlott/cli"
 	"github.com/paularlott/cli/tui"
 	"github.com/paularlott/scriptling"
+	"github.com/paularlott/scriptling/extlibs/secretprovider"
 	"github.com/paularlott/scriptling/scriptling-cli/bootstrap"
 	"github.com/paularlott/scriptling/scriptling-cli/setup"
 )
@@ -31,9 +32,10 @@ func helpCmd() *cli.Command {
 				return fmt.Errorf("failed to determine current working directory: %w", err)
 			}
 			libDirs := bootstrap.BuildLibDirs(cwd, cmd.GetStringSlice("libpath"))
+			secretRegistry := secretprovider.NewRegistry()
 
 			p := scriptling.New()
-			setup.Scriptling(p, libDirs, false, allowedPaths, globalLogger)
+			setup.Scriptling(p, libDirs, false, allowedPaths, secretRegistry, globalLogger)
 
 			packages := cmd.GetStringSlice("package")
 			if len(packages) > 0 {

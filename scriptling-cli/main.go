@@ -15,10 +15,12 @@ import (
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/build"
 	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/secretprovider"
 	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/scriptling/scriptling-cli/bootstrap"
 
 	"github.com/paularlott/scriptling/scriptling-cli/pack"
+	"github.com/paularlott/scriptling/scriptling-cli/secretconfig"
 	"github.com/paularlott/scriptling/scriptling-cli/server"
 	"github.com/paularlott/scriptling/scriptling-cli/setup"
 )
@@ -123,6 +125,11 @@ func main() {
 				EnvVars:      []string{"SCRIPTLING_KV_STORAGE"},
 			},
 			&cli.StringFlag{
+				Name:    "secret-config",
+				Usage:   "TOML file that defines host-owned secret provider aliases for scriptling.secret",
+				EnvVars: []string{"SCRIPTLING_SECRET_CONFIG"},
+			},
+			&cli.StringFlag{
 				Name:    "tls-cert",
 				Usage:   "TLS certificate file",
 				EnvVars: []string{"SCRIPTLING_TLS_CERT"},
@@ -191,6 +198,10 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 
 	allowedPaths := bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths"))
 	p := scriptling.New()
+	secretRegistry, err := loadSecretRegistry(cmd.GetString("secret-config"))
+	if err != nil {
+		return err
+	}
 
 	file := cmd.GetStringArg("file")
 	interactive := cmd.GetBool("interactive")
@@ -207,8 +218,8 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	defer extlibs.CloseKVStore()
 
 	libDirs := bootstrap.BuildLibDirs(baseDir, cmd.GetStringSlice("libpath"))
-	setup.Factories(libDirs, allowedPaths, globalLogger)
-	setup.Scriptling(p, libDirs, true, allowedPaths, globalLogger)
+	setup.Factories(libDirs, allowedPaths, secretRegistry, globalLogger)
+	setup.Scriptling(p, libDirs, true, allowedPaths, secretRegistry, globalLogger)
 
 	packages := cmd.GetStringSlice("package")
 	insecure := cmd.GetBool("insecure")
@@ -260,22 +271,34 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 	if err != nil {
 		return err
 	}
+	secretRegistry, err := loadSecretRegistry(cmd.GetString("secret-config"))
+	if err != nil {
+		return err
+	}
 	return server.RunServer(ctx, server.ServerConfig{
-		Address:       address,
-		ScriptFile:    file,
-		LibDirs:       bootstrap.BuildLibDirs(baseDir, cmd.GetStringSlice("libpath")),
-		Packages:      cmd.GetStringSlice("package"),
-		Insecure:      cmd.GetBool("insecure"),
-		CacheDir:      cmd.GetString("cache-dir"),
-		BearerToken:   cmd.GetString("bearer-token"),
-		AllowedPaths:  bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths")),
-		MCPToolsDir:   cmd.GetString("mcp-tools"),
-		MCPExecTool:   cmd.GetBool("mcp-exec-script"),
-		KVStoragePath: cmd.GetString("kv-storage"),
-		TLSCert:       cmd.GetString("tls-cert"),
-		TLSKey:        cmd.GetString("tls-key"),
-		TLSGenerate:   cmd.GetBool("tls-generate"),
+		Address:        address,
+		ScriptFile:     file,
+		LibDirs:        bootstrap.BuildLibDirs(baseDir, cmd.GetStringSlice("libpath")),
+		Packages:       cmd.GetStringSlice("package"),
+		Insecure:       cmd.GetBool("insecure"),
+		CacheDir:       cmd.GetString("cache-dir"),
+		BearerToken:    cmd.GetString("bearer-token"),
+		AllowedPaths:   bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths")),
+		MCPToolsDir:    cmd.GetString("mcp-tools"),
+		MCPExecTool:    cmd.GetBool("mcp-exec-script"),
+		KVStoragePath:  cmd.GetString("kv-storage"),
+		SecretRegistry: secretRegistry,
+		TLSCert:        cmd.GetString("tls-cert"),
+		TLSKey:         cmd.GetString("tls-key"),
+		TLSGenerate:    cmd.GetBool("tls-generate"),
 	})
+}
+
+func loadSecretRegistry(path string) (*secretprovider.Registry, error) {
+	if path == "" {
+		return secretprovider.NewRegistry(), nil
+	}
+	return secretconfig.LoadRegistryFile(path)
 }
 
 func runFile(p *scriptling.Scriptling, filename string) error {

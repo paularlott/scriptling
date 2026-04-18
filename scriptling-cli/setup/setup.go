@@ -16,6 +16,7 @@ import (
 	scriptlinggossip "github.com/paularlott/scriptling/extlibs/net/gossip"
 	scriptlingmulticast "github.com/paularlott/scriptling/extlibs/net/multicast"
 	scriptlingunicast "github.com/paularlott/scriptling/extlibs/net/unicast"
+	"github.com/paularlott/scriptling/extlibs/secretprovider"
 	scriptlingsimilarity "github.com/paularlott/scriptling/extlibs/similarity"
 	"github.com/paularlott/scriptling/libloader"
 	"github.com/paularlott/scriptling/stdlib"
@@ -26,7 +27,7 @@ import (
 // registerInteract: Whether to register the agent interact library
 // allowedPaths: Filesystem path restrictions for os, pathlib, glob, sandbox (nil = no restrictions)
 // log: Logger instance for the logging library
-func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract bool, allowedPaths []string, log logger.Logger) {
+func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract bool, allowedPaths []string, secretRegistry *secretprovider.Registry, log logger.Logger) {
 	// Register all standard libraries.
 	stdlib.RegisterAll(p)
 
@@ -39,6 +40,7 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 	extlibs.RegisterOSLibrary(p, allowedPaths)
 	extlibs.RegisterLoggingLibrary(p, log)
 	extlibs.RegisterRuntimeLibraryAll(p, allowedPaths)
+	extlibs.RegisterSecretLibrary(p, secretRegistry)
 	extlibs.RegisterSubprocessLibrary(p)
 	extlibs.RegisterPathlibLibrary(p, allowedPaths)
 	extlibs.RegisterGlobLibrary(p, allowedPaths)
@@ -74,10 +76,10 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 
 // Factories configures the global sandbox and background factories.
 // Call this once at startup, before any scripts execute.
-func Factories(libdirs []string, allowedPaths []string, log logger.Logger) {
+func Factories(libdirs []string, allowedPaths []string, secretRegistry *secretprovider.Registry, log logger.Logger) {
 	factory := func() extlibs.SandboxInstance {
 		p := scriptling.New()
-		Scriptling(p, libdirs, false, allowedPaths, log)
+		Scriptling(p, libdirs, false, allowedPaths, secretRegistry, log)
 		return p
 	}
 	extlibs.SetSandboxFactory(factory)
