@@ -1283,7 +1283,6 @@ func evalFunctionStatement(ctx context.Context, stmt *ast.FunctionStatement, env
 	fn := &object.Function{
 		Name:           stmt.Name.Value,
 		Parameters:     stmt.Function.Parameters,
-		ParamIndex:     buildParamIndex(stmt.Function.Parameters),
 		DefaultValues:  stmt.Function.DefaultValues,
 		Variadic:       stmt.Function.Variadic,
 		Kwargs:         stmt.Function.Kwargs,
@@ -1448,6 +1447,10 @@ func unpackArgsFromIterable(argsVal object.Object) ([]object.Object, object.Obje
 }
 
 func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *object.Environment) object.Object {
+	if fastResult, ok := tryEvalFastBuiltinCall(ctx, node, env); ok {
+		return fastResult
+	}
+
 	function := evalWithContext(ctx, node.Function, env)
 	if object.IsError(function) {
 		return function
@@ -1502,6 +1505,243 @@ func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *obje
 	}
 
 	return applyFunctionWithContext(ctx, function, args, keywords, env)
+}
+
+func tryEvalFastBuiltinCall(ctx context.Context, node *ast.CallExpression, env *object.Environment) (object.Object, bool) {
+	if len(node.Keywords) > 0 || node.KwargsUnpack != nil || len(node.ArgsUnpack) > 0 {
+		return nil, false
+	}
+
+	ident, ok := node.Function.(*ast.Identifier)
+	if !ok {
+		return nil, false
+	}
+	if _, shadowed := env.Get(ident.Value); shadowed {
+		return nil, false
+	}
+
+	switch ident.Value {
+	case "len":
+		if len(node.Arguments) != 1 {
+			return nil, false
+		}
+		arg := evalWithContext(ctx, node.Arguments[0], env)
+		if object.IsError(arg) {
+			return arg, true
+		}
+		return fastLenBuiltin(ctx, env, arg), true
+	case "type":
+		if len(node.Arguments) != 1 {
+			return nil, false
+		}
+		arg := evalWithContext(ctx, node.Arguments[0], env)
+		if object.IsError(arg) {
+			return arg, true
+		}
+		return fastTypeBuiltin(arg), true
+	case "str":
+		if len(node.Arguments) != 1 {
+			return nil, false
+		}
+		arg := evalWithContext(ctx, node.Arguments[0], env)
+		if object.IsError(arg) {
+			return arg, true
+		}
+		return fastStrBuiltin(ctx, env, arg), true
+	case "int":
+		if len(node.Arguments) < 1 || len(node.Arguments) > 2 {
+			return nil, false
+		}
+		first := evalWithContext(ctx, node.Arguments[0], env)
+		if object.IsError(first) {
+			return first, true
+		}
+		if len(node.Arguments) == 1 {
+			return fastIntBuiltin(first, nil), true
+		}
+		second := evalWithContext(ctx, node.Arguments[1], env)
+		if object.IsError(second) {
+			return second, true
+		}
+		return fastIntBuiltin(first, second), true
+	case "float":
+		if len(node.Arguments) != 1 {
+			return nil, false
+		}
+		arg := evalWithContext(ctx, node.Arguments[0], env)
+		if object.IsError(arg) {
+			return arg, true
+		}
+		return fastFloatBuiltin(arg), true
+	case "range":
+		if len(node.Arguments) < 1 || len(node.Arguments) > 3 {
+			return nil, false
+		}
+		args := make([]object.Object, len(node.Arguments))
+		for i, expr := range node.Arguments {
+			arg := evalWithContext(ctx, expr, env)
+			if object.IsError(arg) {
+				return arg, true
+			}
+			args[i] = arg
+		}
+		return fastRangeBuiltin(args), true
+	default:
+		return nil, false
+	}
+}
+
+func fastLenBuiltin(ctx context.Context, env *object.Environment, arg object.Object) object.Object {
+	switch v := arg.(type) {
+	case *object.String:
+		if isASCII(v.Value) {
+			return object.NewInteger(int64(len(v.Value)))
+		}
+		return object.NewInteger(int64(len([]rune(v.Value))))
+	case *object.List:
+		return object.NewInteger(int64(len(v.Elements)))
+	case *object.Dict:
+		return object.NewInteger(int64(len(v.Pairs)))
+	case *object.Tuple:
+		return object.NewInteger(int64(len(v.Elements)))
+	case *object.DictKeys:
+		return object.NewInteger(int64(len(v.Dict.Pairs)))
+	case *object.DictValues:
+		return object.NewInteger(int64(len(v.Dict.Pairs)))
+	case *object.DictItems:
+		return object.NewInteger(int64(len(v.Dict.Pairs)))
+	case *object.Set:
+		return object.NewInteger(int64(len(v.Elements)))
+	case *object.Instance:
+		if result := callDunderMethodFn(ctx, v, "__len__", nil, env); result != nil {
+			return result
+		}
+		return errors.NewTypeError("object with __len__", "INSTANCE")
+	default:
+		return errors.NewTypeError("STRING, LIST, DICT, TUPLE, SET, or VIEW", arg.Type().String())
+	}
+}
+
+func fastTypeBuiltin(obj object.Object) object.Object {
+	if instance, ok := obj.(*object.Instance); ok {
+		return &object.String{Value: instance.Class.Name}
+	}
+	return &object.String{Value: obj.Type().String()}
+}
+
+func fastStrBuiltin(ctx context.Context, env *object.Environment, arg object.Object) object.Object {
+	if exc, ok := arg.(*object.Exception); ok {
+		return &object.String{Value: exc.Message}
+	}
+	if inst, ok := arg.(*object.Instance); ok {
+		if result := callDunderMethodFn(ctx, inst, "__str__", nil, env); result != nil {
+			return result
+		}
+	}
+	return &object.String{Value: arg.Inspect()}
+}
+
+func fastIntBuiltin(first object.Object, second object.Object) object.Object {
+	base := 10
+	if second != nil {
+		b, ok := second.(*object.Integer)
+		if !ok {
+			return errors.NewTypeError("INTEGER", second.Type().String())
+		}
+		base = int(b.Value)
+		if base < 2 || base > 36 {
+			return errors.NewError("int() base must be >= 2 and <= 36")
+		}
+	}
+
+	switch arg := first.(type) {
+	case *object.Integer:
+		return arg
+	case *object.Float:
+		if second != nil {
+			return errors.NewTypeError("STRING", arg.Type().String())
+		}
+		return object.NewInteger(int64(arg.Value))
+	case *object.String:
+		s := strings.TrimSpace(arg.Value)
+		if second != nil {
+			switch {
+			case base == 16 && (strings.HasPrefix(s, "0x") || strings.HasPrefix(s, "0X")):
+				s = s[2:]
+			case base == 2 && (strings.HasPrefix(s, "0b") || strings.HasPrefix(s, "0B")):
+				s = s[2:]
+			case base == 8 && (strings.HasPrefix(s, "0o") || strings.HasPrefix(s, "0O")):
+				s = s[2:]
+			}
+		}
+		val, err := strconv.ParseInt(s, base, 64)
+		if err != nil {
+			return errors.NewError("cannot convert %q to int with base %d", arg.Value, base)
+		}
+		return object.NewInteger(val)
+	default:
+		return errors.NewTypeError("INTEGER, FLOAT, or STRING", arg.Type().String())
+	}
+}
+
+func fastFloatBuiltin(arg object.Object) object.Object {
+	switch v := arg.(type) {
+	case *object.Float:
+		return v
+	case *object.Integer:
+		return &object.Float{Value: float64(v.Value)}
+	case *object.String:
+		var val float64
+		_, err := fmt.Sscanf(v.Value, "%f", &val)
+		if err != nil {
+			return errors.NewError("cannot convert %s to float", v.Value)
+		}
+		return &object.Float{Value: val}
+	default:
+		return errors.NewTypeError("INTEGER, FLOAT, or STRING", arg.Type().String())
+	}
+}
+
+func fastRangeBuiltin(args []object.Object) object.Object {
+	var start, stop, step int64
+	var errObj object.Object
+	switch len(args) {
+	case 1:
+		stop, errObj = args[0].AsInt()
+		if errObj != nil {
+			return errors.ParameterError("stop", errObj)
+		}
+		step = 1
+	case 2:
+		start, errObj = args[0].AsInt()
+		if errObj != nil {
+			return errors.ParameterError("start", errObj)
+		}
+		stop, errObj = args[1].AsInt()
+		if errObj != nil {
+			return errors.ParameterError("stop", errObj)
+		}
+		step = 1
+	case 3:
+		start, errObj = args[0].AsInt()
+		if errObj != nil {
+			return errors.ParameterError("start", errObj)
+		}
+		stop, errObj = args[1].AsInt()
+		if errObj != nil {
+			return errors.ParameterError("stop", errObj)
+		}
+		step, errObj = args[2].AsInt()
+		if errObj != nil {
+			return errors.ParameterError("step", errObj)
+		}
+		if step == 0 {
+			return errors.NewError("range step cannot be zero")
+		}
+	default:
+		return errors.NewError("range() takes 1-3 arguments (%d given)", len(args))
+	}
+	return object.NewRangeIterator(start, stop, step)
 }
 
 func createInstance(ctx context.Context, class *object.Class, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
@@ -1643,7 +1883,6 @@ func applyLambdaFunctionWithContext(ctx context.Context, fn *object.LambdaFuncti
 // funcParams abstracts the common parts of Function and LambdaFunction for parameter handling
 type funcParams struct {
 	parameters     []*ast.Identifier
-	paramIndex     map[string]int
 	defaultValues  map[string]ast.Expression
 	variadic       *ast.Identifier
 	kwargs         *ast.Identifier
@@ -1714,9 +1953,15 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 
 		for key, value := range keywords {
 			// Check if parameter exists
-			paramIdx, hasParam := fp.paramIndex[key]
+			paramIdx := -1
+			for pi, param := range fp.parameters {
+				if param.Value == key {
+					paramIdx = pi
+					break
+				}
+			}
 
-			if !hasParam {
+			if paramIdx == -1 {
 				// If **kwargs is defined, collect extra keyword arguments
 				if fp.kwargs != nil {
 					if extraKwargs == nil {
@@ -1787,7 +2032,6 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 func extendFunctionEnv(fn *object.Function, args []object.Object, keywords map[string]object.Object) (*object.Environment, object.Object) {
 	return extendEnvWithParams(funcParams{
 		parameters:     fn.Parameters,
-		paramIndex:     fn.ParamIndex,
 		defaultValues:  fn.DefaultValues,
 		variadic:       fn.Variadic,
 		kwargs:         fn.Kwargs,
@@ -1800,7 +2044,6 @@ func extendFunctionEnv(fn *object.Function, args []object.Object, keywords map[s
 func extendLambdaEnv(fn *object.LambdaFunction, args []object.Object, keywords map[string]object.Object) (*object.Environment, object.Object) {
 	return extendEnvWithParams(funcParams{
 		parameters:     fn.Parameters,
-		paramIndex:     fn.ParamIndex,
 		defaultValues:  fn.DefaultValues,
 		variadic:       fn.Variadic,
 		kwargs:         fn.Kwargs,
@@ -1873,17 +2116,6 @@ func analyzeLambdaLocals(lambda *ast.Lambda) (map[string]int, []string) {
 		uniq = append(uniq, name)
 	}
 	return slots, uniq
-}
-
-func buildParamIndex(params []*ast.Identifier) map[string]int {
-	if len(params) == 0 {
-		return nil
-	}
-	index := make(map[string]int, len(params))
-	for i, param := range params {
-		index[param.Value] = i
-	}
-	return index
 }
 
 func collectScopeDirectives(block *ast.BlockStatement) (map[string]bool, map[string]bool) {
@@ -3776,7 +4008,6 @@ func evalLambda(lambda *ast.Lambda, env *object.Environment) object.Object {
 	localSlots, localSlotNames := analyzeLambdaLocals(lambda)
 	return &object.LambdaFunction{
 		Parameters:     lambda.Parameters,
-		ParamIndex:     buildParamIndex(lambda.Parameters),
 		DefaultValues:  lambda.DefaultValues,
 		Variadic:       lambda.Variadic,
 		Kwargs:         lambda.Kwargs,
