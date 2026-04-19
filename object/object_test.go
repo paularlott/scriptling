@@ -105,6 +105,38 @@ func TestEnvironment(t *testing.T) {
 	}
 }
 
+func TestEnvironmentWithSlots(t *testing.T) {
+	env := NewEnclosedEnvironmentWithSlots(NewEnvironment(), map[string]int{
+		"x": 0,
+		"y": 1,
+	}, []string{"x", "y"})
+
+	xVal := &Integer{Value: 42}
+	yVal := &String{Value: "slot"}
+	env.Set("x", xVal)
+	env.Set("y", yVal)
+
+	gotX, ok := env.Get("x")
+	if !ok || gotX != xVal {
+		t.Fatalf("slot x lookup failed: got=%v ok=%v", gotX, ok)
+	}
+
+	gotY, ok := env.Get("y")
+	if !ok || gotY != yVal {
+		t.Fatalf("slot y lookup failed: got=%v ok=%v", gotY, ok)
+	}
+
+	store := env.GetStore()
+	if store["x"] != xVal || store["y"] != yVal {
+		t.Fatalf("slot values missing from store snapshot: %#v", store)
+	}
+
+	env.Delete("x")
+	if _, ok := env.Get("x"); ok {
+		t.Fatal("expected deleted slot binding to be gone")
+	}
+}
+
 func TestEnvironmentCopyCallableBindingsTo(t *testing.T) {
 	source := NewEnvironment()
 	target := NewEnvironment()
@@ -149,6 +181,54 @@ func TestEnvironmentCopyCallableBindingsTo(t *testing.T) {
 
 	if _, ok := target.Get("value"); ok {
 		t.Fatal("expected non-callable binding to be skipped")
+	}
+}
+
+func TestEnvironmentCopyCallableBindingsToWithSlots(t *testing.T) {
+	source := NewEnclosedEnvironmentWithSlots(NewEnvironment(), map[string]int{
+		"work":   0,
+		"helper": 1,
+	}, []string{"work", "helper"})
+	target := NewEnvironment()
+
+	fn := &Function{
+		Name:           "work",
+		Env:            source,
+		LocalSlots:     map[string]int{"local": 0},
+		LocalSlotNames: []string{"local"},
+	}
+	lambda := &LambdaFunction{
+		Env:            source,
+		LocalSlots:     map[string]int{"value": 0},
+		LocalSlotNames: []string{"value"},
+	}
+
+	source.Set("work", fn)
+	source.Set("helper", lambda)
+	source.CopyCallableBindingsTo(target)
+
+	copiedFnObj, ok := target.Get("work")
+	if !ok {
+		t.Fatal("expected slotted function to be copied")
+	}
+	copiedFn := copiedFnObj.(*Function)
+	if copiedFn.Env != target {
+		t.Fatal("expected copied function env to point at target")
+	}
+	if copiedFn.LocalSlots["local"] != 0 || len(copiedFn.LocalSlotNames) != 1 {
+		t.Fatal("expected copied function slot metadata to be preserved")
+	}
+
+	copiedLambdaObj, ok := target.Get("helper")
+	if !ok {
+		t.Fatal("expected slotted lambda to be copied")
+	}
+	copiedLambda := copiedLambdaObj.(*LambdaFunction)
+	if copiedLambda.Env != target {
+		t.Fatal("expected copied lambda env to point at target")
+	}
+	if copiedLambda.LocalSlots["value"] != 0 || len(copiedLambda.LocalSlotNames) != 1 {
+		t.Fatal("expected copied lambda slot metadata to be preserved")
 	}
 }
 
@@ -231,6 +311,54 @@ func TestNonlocalVariables(t *testing.T) {
 	// Check IsNonlocal
 	if !inner.IsNonlocal("nonlocal_var") {
 		t.Error("expected nonlocal_var to be marked as nonlocal")
+	}
+}
+
+func TestNonlocalVariablesWithSlots(t *testing.T) {
+	outer := NewEnclosedEnvironmentWithSlots(NewEnvironment(), map[string]int{
+		"shared": 0,
+	}, []string{"shared"})
+	outer.Set("shared", &Integer{Value: 10})
+
+	inner := NewEnclosedEnvironment(outer)
+	inner.MarkNonlocal("shared")
+	inner.Set("shared", &Integer{Value: 20})
+
+	result, ok := outer.Get("shared")
+	if !ok {
+		t.Fatal("expected slotted nonlocal variable to exist in outer scope")
+	}
+	if result.(*Integer).Value != 20 {
+		t.Errorf("shared = %d, want 20", result.(*Integer).Value)
+	}
+}
+
+func TestEnvironmentResetStoreWithSlots(t *testing.T) {
+	env := NewEnclosedEnvironmentWithSlots(NewEnvironment(), map[string]int{
+		"keep_slot": 0,
+		"drop_slot": 1,
+	}, []string{"keep_slot", "drop_slot"})
+	env.Set("keep_slot", &Integer{Value: 1})
+	env.Set("drop_slot", &Integer{Value: 2})
+	env.Set("keep_map", &Integer{Value: 3})
+	env.Set("drop_map", &Integer{Value: 4})
+
+	env.ResetStore(map[string]bool{
+		"keep_slot": true,
+		"keep_map":  true,
+	})
+
+	if _, ok := env.Get("keep_slot"); !ok {
+		t.Fatal("expected keep_slot to remain after reset")
+	}
+	if _, ok := env.Get("keep_map"); !ok {
+		t.Fatal("expected keep_map to remain after reset")
+	}
+	if _, ok := env.Get("drop_slot"); ok {
+		t.Fatal("expected drop_slot to be removed by reset")
+	}
+	if _, ok := env.Get("drop_map"); ok {
+		t.Fatal("expected drop_map to be removed by reset")
 	}
 }
 

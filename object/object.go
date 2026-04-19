@@ -480,13 +480,15 @@ func (c *Continue) CoerceInt() (int64, Object)     { return 0, errMustBeInteger 
 func (c *Continue) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
 
 type Function struct {
-	Name          string
-	Parameters    []*ast.Identifier
-	DefaultValues map[string]ast.Expression
-	Variadic      *ast.Identifier // *args parameter
-	Kwargs        *ast.Identifier // **kwargs parameter
-	Body          *ast.BlockStatement
-	Env           *Environment
+	Name           string
+	Parameters     []*ast.Identifier
+	DefaultValues  map[string]ast.Expression
+	Variadic       *ast.Identifier // *args parameter
+	Kwargs         *ast.Identifier // **kwargs parameter
+	Body           *ast.BlockStatement
+	Env            *Environment
+	LocalSlots     map[string]int
+	LocalSlotNames []string
 }
 
 func (f *Function) Type() ObjectType { return FUNCTION_OBJ }
@@ -504,12 +506,14 @@ func (f *Function) CoerceInt() (int64, Object)     { return 0, errMustBeInteger 
 func (f *Function) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
 
 type LambdaFunction struct {
-	Parameters    []*ast.Identifier
-	DefaultValues map[string]ast.Expression
-	Variadic      *ast.Identifier // *args parameter
-	Kwargs        *ast.Identifier // **kwargs parameter
-	Body          ast.Expression
-	Env           *Environment
+	Parameters     []*ast.Identifier
+	DefaultValues  map[string]ast.Expression
+	Variadic       *ast.Identifier // *args parameter
+	Kwargs         *ast.Identifier // **kwargs parameter
+	Body           ast.Expression
+	Env            *Environment
+	LocalSlots     map[string]int
+	LocalSlotNames []string
 }
 
 func (lf *LambdaFunction) Type() ObjectType { return LAMBDA_OBJ }
@@ -694,6 +698,9 @@ func InstanceDataFromContext(ctx context.Context) any {
 type Environment struct {
 	mu                         sync.RWMutex
 	store                      map[string]Object
+	slotIndex                  map[string]int
+	slotNames                  []string
+	slots                      []Object
 	outer                      *Environment
 	root                       *Environment
 	globals                    map[string]bool
@@ -743,9 +750,26 @@ func NewEnclosedEnvironment(outer *Environment) *Environment {
 	return env
 }
 
+func NewEnclosedEnvironmentWithSlots(outer *Environment, slotIndex map[string]int, slotNames []string) *Environment {
+	env := NewEnclosedEnvironment(outer)
+	if len(slotIndex) > 0 {
+		env.slotIndex = slotIndex
+		env.slotNames = slotNames
+		env.slots = make([]Object, len(slotNames))
+	}
+	return env
+}
+
 func (e *Environment) Get(name string) (Object, bool) {
 	for env := e; env != nil; env = env.outer {
 		env.mu.RLock()
+		if idx, ok := env.slotIndex[name]; ok {
+			if idx >= 0 && idx < len(env.slots) && env.slots[idx] != nil {
+				obj := env.slots[idx]
+				env.mu.RUnlock()
+				return obj, true
+			}
+		}
 		obj, ok := env.store[name]
 		env.mu.RUnlock()
 		if ok {
@@ -767,6 +791,11 @@ func (e *Environment) Set(name string, val Object) Object {
 		}
 	}
 	e.mu.Lock()
+	if idx, ok := e.slotIndex[name]; ok && idx >= 0 && idx < len(e.slots) {
+		e.slots[idx] = val
+		e.mu.Unlock()
+		return val
+	}
 	e.store[name] = val
 	e.mu.Unlock()
 	return val
@@ -775,6 +804,9 @@ func (e *Environment) Set(name string, val Object) Object {
 // Delete removes a variable from this environment (not parent scopes)
 func (e *Environment) Delete(name string) {
 	e.mu.Lock()
+	if idx, ok := e.slotIndex[name]; ok && idx >= 0 && idx < len(e.slots) {
+		e.slots[idx] = nil
+	}
 	delete(e.store, name)
 	e.mu.Unlock()
 }
@@ -797,6 +829,11 @@ func (e *Environment) GetGlobal() *Environment {
 func (e *Environment) SetInParent(name string, val Object) bool {
 	for env := e.outer; env != nil; env = env.outer {
 		env.mu.Lock()
+		if idx, ok := env.slotIndex[name]; ok && idx >= 0 && idx < len(env.slots) {
+			env.slots[idx] = val
+			env.mu.Unlock()
+			return true
+		}
 		_, ok := env.store[name]
 		if ok {
 			env.store[name] = val
@@ -881,9 +918,14 @@ func (e *Environment) GetReader() io.Reader {
 // GetStore returns a copy of the environment's store (only local scope, not outer)
 func (e *Environment) GetStore() map[string]Object {
 	e.mu.RLock()
-	store := make(map[string]Object, len(e.store))
+	store := make(map[string]Object, len(e.store)+len(e.slotNames))
 	for k, v := range e.store {
 		store[k] = v
+	}
+	for idx, name := range e.slotNames {
+		if idx >= 0 && idx < len(e.slots) && e.slots[idx] != nil {
+			store[name] = e.slots[idx]
+		}
 	}
 	e.mu.RUnlock()
 	return store
@@ -895,27 +937,39 @@ func (e *Environment) GetStore() map[string]Object {
 func (e *Environment) CopyCallableBindingsTo(target *Environment) {
 	e.mu.RLock()
 	target.mu.Lock()
-	for name, value := range e.store {
+	copyCallable := func(name string, value Object) {
 		switch origFn := value.(type) {
 		case *Function:
 			target.store[name] = &Function{
-				Name:          origFn.Name,
-				Parameters:    origFn.Parameters,
-				DefaultValues: origFn.DefaultValues,
-				Variadic:      origFn.Variadic,
-				Kwargs:        origFn.Kwargs,
-				Body:          origFn.Body,
-				Env:           target,
+				Name:           origFn.Name,
+				Parameters:     origFn.Parameters,
+				DefaultValues:  origFn.DefaultValues,
+				Variadic:       origFn.Variadic,
+				Kwargs:         origFn.Kwargs,
+				Body:           origFn.Body,
+				Env:            target,
+				LocalSlots:     origFn.LocalSlots,
+				LocalSlotNames: origFn.LocalSlotNames,
 			}
 		case *LambdaFunction:
 			target.store[name] = &LambdaFunction{
-				Parameters:    origFn.Parameters,
-				DefaultValues: origFn.DefaultValues,
-				Variadic:      origFn.Variadic,
-				Kwargs:        origFn.Kwargs,
-				Body:          origFn.Body,
-				Env:           target,
+				Parameters:     origFn.Parameters,
+				DefaultValues:  origFn.DefaultValues,
+				Variadic:       origFn.Variadic,
+				Kwargs:         origFn.Kwargs,
+				Body:           origFn.Body,
+				Env:            target,
+				LocalSlots:     origFn.LocalSlots,
+				LocalSlotNames: origFn.LocalSlotNames,
 			}
+		}
+	}
+	for name, value := range e.store {
+		copyCallable(name, value)
+	}
+	for idx, name := range e.slotNames {
+		if idx >= 0 && idx < len(e.slots) && e.slots[idx] != nil {
+			copyCallable(name, e.slots[idx])
 		}
 	}
 	target.mu.Unlock()
@@ -928,6 +982,11 @@ func (e *Environment) ResetStore(keep map[string]bool) {
 	for k := range e.store {
 		if !keep[k] {
 			delete(e.store, k)
+		}
+	}
+	for idx, name := range e.slotNames {
+		if !keep[name] && idx >= 0 && idx < len(e.slots) {
+			e.slots[idx] = nil
 		}
 	}
 	e.mu.Unlock()

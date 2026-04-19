@@ -64,9 +64,42 @@ func BenchmarkEnvironmentNestedGet(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		inner.Get("inner_var")   // Direct access
-		inner.Get("outer_var")    // One level up
-		inner.Get("global_var")   // Two levels up
+		inner.Get("inner_var")  // Direct access
+		inner.Get("outer_var")  // One level up
+		inner.Get("global_var") // Two levels up
+	}
+}
+
+func BenchmarkEnvironmentSlotGet(b *testing.B) {
+	env := NewEnclosedEnvironmentWithSlots(NewEnvironment(), map[string]int{
+		"x":    0,
+		"y":    1,
+		"name": 2,
+	}, []string{"x", "y", "name"})
+	env.Set("x", &Integer{Value: 1})
+	env.Set("y", &Integer{Value: 2})
+	env.Set("name", &String{Value: "test"})
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		env.Get("x")
+		env.Get("y")
+		env.Get("name")
+	}
+}
+
+func BenchmarkEnvironmentSlotSet(b *testing.B) {
+	env := NewEnclosedEnvironmentWithSlots(NewEnvironment(), map[string]int{
+		"x": 0,
+		"y": 1,
+		"z": 2,
+	}, []string{"x", "y", "z"})
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		env.Set("x", &Integer{Value: int64(i)})
+		env.Set("y", &Integer{Value: int64(i + 1)})
+		env.Set("z", &Integer{Value: int64(i + 2)})
 	}
 }
 
