@@ -1,7 +1,6 @@
 package scriptling
 
 import (
-	"container/list"
 	"fmt"
 	"sync"
 	"testing"
@@ -12,11 +11,9 @@ import (
 
 // helper to create a small cache for testing
 func newTestCache(maxSize int) *programCache {
-	return &programCache{
-		entries: make(map[cacheKey]*list.Element),
-		lru:     list.New(),
-		maxSize: maxSize,
-	}
+	c := newProgramCache(maxSize)
+	c.maxSizeCap = maxSize
+	return c
 }
 
 // helper to create a dummy program distinguishable by a label
@@ -287,6 +284,38 @@ func TestCache_DifferentScriptsDifferentHashes(t *testing.T) {
 	h2 := hashScript("script_b")
 	if h1 == h2 {
 		t.Fatal("different scripts produced the same dual hash (astronomically unlikely)")
+	}
+}
+
+func TestCache_SignatureBucketsDoNotOverlapSimilarScripts(t *testing.T) {
+	c := newTestCache(10)
+	header := "############################\n# Copyright 2026 Paul     #\n############################\n"
+	footer := "\n############################\n# End copyright block      #\n############################"
+	padding := "########"
+
+	scriptA := header + "result = skills.get(name)\n" + padding + footer
+	scriptB := header + "result = skills.put(name)\n" + padding + footer
+	if len(scriptA) != len(scriptB) {
+		t.Fatalf("expected equal length scripts, got %d and %d", len(scriptA), len(scriptB))
+	}
+	if signatureForScript(scriptA) != signatureForScript(scriptB) {
+		t.Fatal("expected scripts to land in the same signature bucket")
+	}
+
+	progA := dummyProgram("script-a")
+	progB := dummyProgram("script-b")
+
+	c.set(scriptA, progA)
+	c.set(scriptB, progB)
+
+	gotA, ok := c.get(scriptA)
+	if !ok || gotA != progA {
+		t.Fatal("expected scriptA to retrieve its own cached program")
+	}
+
+	gotB, ok := c.get(scriptB)
+	if !ok || gotB != progB {
+		t.Fatal("expected scriptB to retrieve its own cached program")
 	}
 }
 

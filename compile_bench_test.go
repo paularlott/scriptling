@@ -1,6 +1,7 @@
 package scriptling
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/paularlott/scriptling/lexer"
@@ -64,4 +65,84 @@ func BenchmarkParseUncached_Import(b *testing.B) {
 
 func BenchmarkParseUncached_AdjacentStrings(b *testing.B) {
 	benchmarkParseUncached(b, `result = "alpha" "beta" "gamma" "delta"`)
+}
+
+func BenchmarkParseCached_Hit(b *testing.B) {
+	script := "def add(a, b):\n    return a + b\nresult = add(5, 3)"
+	globalCache = newProgramCache(1000)
+	if _, err := parseProgramCached(script); err != nil {
+		b.Fatalf("warmup parse failed: %v", err)
+	}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		program, err := parseProgramCached(script)
+		if err != nil {
+			b.Fatalf("unexpected parse error: %v", err)
+		}
+		if program == nil {
+			b.Fatal("expected cached program")
+		}
+	}
+}
+
+func BenchmarkParseCached_TinyHit(b *testing.B) {
+	script := "x = 5"
+	globalCache = newProgramCache(1000)
+	if _, err := parseProgramCached(script); err != nil {
+		b.Fatalf("warmup parse failed: %v", err)
+	}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		program, err := parseProgramCached(script)
+		if err != nil {
+			b.Fatalf("unexpected parse error: %v", err)
+		}
+		if program == nil {
+			b.Fatal("expected cached program")
+		}
+	}
+}
+
+func BenchmarkParseCached_Miss(b *testing.B) {
+	globalCache = newProgramCache(1000)
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		script := fmt.Sprintf("x = %d\n# miss_%d", i, i)
+		program, err := parseProgramCached(script)
+		if err != nil {
+			b.Fatalf("unexpected parse error: %v", err)
+		}
+		if program == nil {
+			b.Fatal("expected program")
+		}
+	}
+}
+
+func BenchmarkParseCached_WorkingSet(b *testing.B) {
+	const workingSet = 1500
+	scripts := make([]string, workingSet)
+	for i := range scripts {
+		scripts[i] = fmt.Sprintf("def f%d(x):\n    return x + %d\nresult = f%d(10)", i, i, i)
+	}
+	globalCache = newProgramCache(1000)
+	for _, script := range scripts {
+		if _, err := parseProgramCached(script); err != nil {
+			b.Fatalf("warmup parse failed: %v", err)
+		}
+	}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		script := scripts[i%workingSet]
+		program, err := parseProgramCached(script)
+		if err != nil {
+			b.Fatalf("unexpected parse error: %v", err)
+		}
+		if program == nil {
+			b.Fatal("expected program")
+		}
+	}
 }
