@@ -57,3 +57,11 @@ func BenchmarkParseUncached_Loop(b *testing.B) {
 func BenchmarkParseUncached_Complex(b *testing.B) {
 	benchmarkParseUncached(b, "def fib(n):\n    if n <= 1:\n        return n\n    return fib(n-1) + fib(n-2)\nresult = fib(10)")
 }
+
+func BenchmarkParseUncached_Import(b *testing.B) {
+	benchmarkParseUncached(b, "from alpha.beta.gamma import delta as d, epsilon as e")
+}
+
+func BenchmarkParseUncached_AdjacentStrings(b *testing.B) {
+	benchmarkParseUncached(b, `result = "alpha" "beta" "gamma" "delta"`)
+}

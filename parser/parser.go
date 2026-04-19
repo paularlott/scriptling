@@ -78,57 +78,53 @@ type (
 	infixParseFn  func(*Parser, ast.Expression) ast.Expression
 )
 
-var prefixParseFns map[token.TokenType]prefixParseFn
-var infixParseFns map[token.TokenType]infixParseFn
-
-func init() {
-	prefixParseFns = map[token.TokenType]prefixParseFn{
-		token.IDENT:    (*Parser).parseIdentifier,
-		token.INT:      (*Parser).parseIntegerLiteral,
-		token.FLOAT:    (*Parser).parseFloatLiteral,
-		token.STRING:   (*Parser).parseStringLiteral,
-		token.F_STRING: (*Parser).parseFStringLiteral,
-		token.TRUE:     (*Parser).parseBoolean,
-		token.FALSE:    (*Parser).parseBoolean,
-		token.NONE:     (*Parser).parseNone,
-		token.MINUS:    (*Parser).parsePrefixExpression,
-		token.NOT:      (*Parser).parsePrefixExpression,
-		token.TILDE:    (*Parser).parsePrefixExpression,
-		token.LPAREN:   (*Parser).parseGroupedExpression,
-		token.LBRACKET: (*Parser).parseListLiteral,
-		token.LBRACE:   (*Parser).parseDictLiteral,
-		token.LAMBDA:   (*Parser).parseLambda,
+func prefixParseFnFor(t token.TokenType) prefixParseFn {
+	switch t {
+	case token.IDENT:
+		return (*Parser).parseIdentifier
+	case token.INT:
+		return (*Parser).parseIntegerLiteral
+	case token.FLOAT:
+		return (*Parser).parseFloatLiteral
+	case token.STRING:
+		return (*Parser).parseStringLiteral
+	case token.F_STRING:
+		return (*Parser).parseFStringLiteral
+	case token.TRUE, token.FALSE:
+		return (*Parser).parseBoolean
+	case token.NONE:
+		return (*Parser).parseNone
+	case token.MINUS, token.NOT, token.TILDE:
+		return (*Parser).parsePrefixExpression
+	case token.LPAREN:
+		return (*Parser).parseGroupedExpression
+	case token.LBRACKET:
+		return (*Parser).parseListLiteral
+	case token.LBRACE:
+		return (*Parser).parseDictLiteral
+	case token.LAMBDA:
+		return (*Parser).parseLambda
+	default:
+		return nil
 	}
+}
 
-	infixParseFns = map[token.TokenType]infixParseFn{
-		token.PLUS:      (*Parser).parseInfixExpression,
-		token.MINUS:     (*Parser).parseInfixExpression,
-		token.SLASH:     (*Parser).parseInfixExpression,
-		token.FLOORDIV:  (*Parser).parseInfixExpression,
-		token.ASTERISK:  (*Parser).parseInfixExpression,
-		token.POW:       (*Parser).parseInfixExpression,
-		token.PERCENT:   (*Parser).parseInfixExpression,
-		token.EQ:        (*Parser).parseInfixExpression,
-		token.NOT_EQ:    (*Parser).parseInfixExpression,
-		token.LT:        (*Parser).parseInfixExpression,
-		token.GT:        (*Parser).parseInfixExpression,
-		token.LTE:       (*Parser).parseInfixExpression,
-		token.GTE:       (*Parser).parseInfixExpression,
-		token.AND:       (*Parser).parseInfixExpression,
-		token.OR:        (*Parser).parseInfixExpression,
-		token.IN:        (*Parser).parseInfixExpression,
-		token.NOT_IN:    (*Parser).parseInfixExpression,
-		token.IS:        (*Parser).parseInfixExpression,
-		token.IS_NOT:    (*Parser).parseInfixExpression,
-		token.AMPERSAND: (*Parser).parseInfixExpression,
-		token.PIPE:      (*Parser).parseInfixExpression,
-		token.CARET:     (*Parser).parseInfixExpression,
-		token.LSHIFT:    (*Parser).parseInfixExpression,
-		token.RSHIFT:    (*Parser).parseInfixExpression,
-		token.LPAREN:    (*Parser).parseCallExpression,
-		token.LBRACKET:  (*Parser).parseIndexExpression,
-		token.DOT:       (*Parser).parseIndexExpression,
-		token.IF:        (*Parser).parseConditionalExpression,
+func infixParseFnFor(t token.TokenType) infixParseFn {
+	switch t {
+	case token.PLUS, token.MINUS, token.SLASH, token.FLOORDIV, token.ASTERISK,
+		token.POW, token.PERCENT, token.EQ, token.NOT_EQ, token.LT, token.GT,
+		token.LTE, token.GTE, token.AND, token.OR, token.IN, token.NOT_IN,
+		token.IS, token.IS_NOT, token.AMPERSAND, token.PIPE, token.CARET,
+		token.LSHIFT, token.RSHIFT:
+		return (*Parser).parseInfixExpression
+	case token.LPAREN:
+		return (*Parser).parseCallExpression
+	case token.LBRACKET, token.DOT:
+		return (*Parser).parseIndexExpression
+	case token.IF:
+		return (*Parser).parseConditionalExpression
+	default:
+		return nil
 	}
 }
 
@@ -647,17 +643,26 @@ func (p *Parser) parseExpressionStatement() ast.Statement {
 }
 
 func (p *Parser) parseExpression(precedence int) ast.Expression {
-	prefix := prefixParseFns[p.curToken.Type]
+	prefix := prefixParseFnFor(p.curToken.Type)
 	if prefix == nil {
 		p.noPrefixParseFnError(p.curToken.Type)
 		return nil
 	}
 	leftExp := prefix(p)
 
-	for !p.peekTokenIs(token.NEWLINE) && !p.peekTokenIs(token.SEMICOLON) && !p.peekTokenIs(token.EOF) && !p.peekTokenIs(token.COLON) && precedence < p.peekPrecedence() {
+	for {
+		peekType := p.peekToken.Type
+		switch peekType {
+		case token.NEWLINE, token.SEMICOLON, token.EOF, token.COLON:
+			return leftExp
+		}
+		if precedence >= precedenceFor(peekType) {
+			return leftExp
+		}
+
 		// Special handling for IF token: only treat as conditional expression
 		// if it appears on the same line (no newline was skipped)
-		if p.peekTokenIs(token.IF) && p.skippedNewline {
+		if peekType == token.IF && p.skippedNewline {
 			return leftExp
 		}
 
@@ -667,15 +672,13 @@ func (p *Parser) parseExpression(precedence int) ast.Expression {
 			return leftExp
 		}
 
-		infix := infixParseFns[p.peekToken.Type]
+		infix := infixParseFnFor(peekType)
 		if infix == nil {
 			return leftExp
 		}
 		p.nextToken()
 		leftExp = infix(p, leftExp)
 	}
-
-	return leftExp
 }
 
 // parseConditionalExpression parses conditional expressions (x if cond else y)
@@ -736,6 +739,10 @@ func (p *Parser) parseIdentifier() ast.Expression {
 
 func (p *Parser) parseIntegerLiteral() ast.Expression {
 	lit := &ast.IntegerLiteral{Token: p.curToken}
+	if value, ok := parseFastIntegerLiteral(p.curToken.Literal); ok {
+		lit.Value = value
+		return lit
+	}
 	value, err := strconv.ParseInt(p.curToken.Literal, 0, 64)
 	if err != nil {
 		msg := fmt.Sprintf("line %d: could not parse %q as integer", p.curToken.Line, p.curToken.Literal)
@@ -744,6 +751,25 @@ func (p *Parser) parseIntegerLiteral() ast.Expression {
 	}
 	lit.Value = value
 	return lit
+}
+
+func parseFastIntegerLiteral(s string) (int64, bool) {
+	if len(s) == 0 || len(s) > 19 {
+		return 0, false
+	}
+	var value int64
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		if ch < '0' || ch > '9' {
+			return 0, false
+		}
+		digit := int64(ch - '0')
+		if value > (1<<63-1-digit)/10 {
+			return 0, false
+		}
+		value = value*10 + digit
+	}
+	return value, true
 }
 
 func (p *Parser) parseFloatLiteral() ast.Expression {
@@ -774,14 +800,24 @@ func (p *Parser) parseFStringLiteral() ast.Expression {
 // Mixed string + f-string creates an InfixExpression with "+" operator.
 // Only concatenates on the same logical line, or across lines inside parens/brackets.
 func (p *Parser) parseAdjacentStrings(left ast.Expression) ast.Expression {
-	for (p.parenDepth > 0 || !p.skippedNewline) && (p.peekTokenIs(token.STRING) || p.peekTokenIs(token.F_STRING)) {
-		// Optimize: merge adjacent plain strings at parse time
-		if leftStr, ok := left.(*ast.StringLiteral); ok && p.peekTokenIs(token.STRING) {
+	if leftStr, ok := left.(*ast.StringLiteral); ok {
+		var builder strings.Builder
+		usedBuilder := false
+		for (p.parenDepth > 0 || !p.skippedNewline) && p.peekTokenIs(token.STRING) {
+			if !usedBuilder {
+				builder.Grow(len(leftStr.Value) + len(p.peekToken.Literal) + 8)
+				builder.WriteString(leftStr.Value)
+				usedBuilder = true
+			}
 			p.nextToken()
-			leftStr.Value += p.curToken.Literal
-			continue
+			builder.WriteString(p.curToken.Literal)
 		}
+		if usedBuilder {
+			leftStr.Value = builder.String()
+		}
+	}
 
+	for (p.parenDepth > 0 || !p.skippedNewline) && (p.peekTokenIs(token.STRING) || p.peekTokenIs(token.F_STRING)) {
 		tok := p.curToken
 		p.nextToken()
 
@@ -1195,7 +1231,7 @@ func (p *Parser) parseWhileStatement() *ast.WhileStatement {
 }
 
 func (p *Parser) parseBlockStatement() *ast.BlockStatement {
-	block := &ast.BlockStatement{Token: p.curToken, Statements: make([]ast.Statement, 0, 4)}
+	block := &ast.BlockStatement{Token: p.curToken, Statements: make([]ast.Statement, 0, 2)}
 
 	// Check for single-line block (statement on same line after colon)
 	// e.g., "if True: x = 1" or "if True: return x"
