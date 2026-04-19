@@ -63,8 +63,9 @@ func precedenceFor(tok token.TokenType) int {
 }
 
 type Parser struct {
-	l      *lexer.Lexer
-	errors []string
+	l        *lexer.Lexer
+	errors   []string
+	errorBuf [8]string
 
 	curToken       token.Token
 	peekToken      token.Token
@@ -132,10 +133,20 @@ func init() {
 }
 
 func New(l *lexer.Lexer) *Parser {
-	p := &Parser{l: l, errors: make([]string, 0, 8)}
-	p.nextToken()
-	p.nextToken()
+	p := &Parser{}
+	p.Reset(l)
 	return p
+}
+
+func (p *Parser) Reset(l *lexer.Lexer) {
+	p.l = l
+	p.errors = p.errorBuf[:0]
+	p.curToken = token.Token{}
+	p.peekToken = token.Token{}
+	p.skippedNewline = false
+	p.parenDepth = 0
+	p.nextToken()
+	p.nextToken()
 }
 
 func (p *Parser) Errors() []string {
@@ -208,7 +219,7 @@ func (p *Parser) curPrecedence() int {
 }
 
 func (p *Parser) ParseProgram() *ast.Program {
-	program := &ast.Program{Statements: make([]ast.Statement, 0, 8)}
+	program := &ast.Program{Statements: make([]ast.Statement, 0, 4)}
 
 	for !p.curTokenIs(token.EOF) {
 		if p.curTokenIs(token.NEWLINE) || p.curTokenIs(token.SEMICOLON) || p.curTokenIs(token.INDENT) || p.curTokenIs(token.DEDENT) {

@@ -30,15 +30,29 @@ type Lexer struct {
 	readPosition   int
 	ch             byte
 	line           int
+	indentBase     [8]int
 	indentStack    []int
 	pendingDedents int
 	bracketDepth   int // Track depth of (), [], {}
 }
 
 func New(input string) *Lexer {
-	l := &Lexer{input: input, line: 1, indentStack: []int{0}}
-	l.readChar()
+	l := &Lexer{}
+	l.Reset(input)
 	return l
+}
+
+func (l *Lexer) Reset(input string) {
+	l.input = input
+	l.position = 0
+	l.readPosition = 0
+	l.ch = 0
+	l.line = 1
+	l.pendingDedents = 0
+	l.bracketDepth = 0
+	l.indentStack = l.indentBase[:1]
+	l.indentStack[0] = 0
+	l.readChar()
 }
 
 func (l *Lexer) readChar() {

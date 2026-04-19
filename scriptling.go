@@ -8,6 +8,7 @@ import (
 	"runtime/debug"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/paularlott/scriptling/ast"
@@ -17,6 +18,19 @@ import (
 	"github.com/paularlott/scriptling/lexer"
 	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/scriptling/parser"
+)
+
+var (
+	lexerPool = sync.Pool{
+		New: func() interface{} {
+			return &lexer.Lexer{}
+		},
+	}
+	parserPool = sync.Pool{
+		New: func() interface{} {
+			return &parser.Parser{}
+		},
+	}
 )
 
 // Kwargs is a wrapper type to explicitly pass keyword arguments to CallFunction.
@@ -411,14 +425,34 @@ func parseProgramCached(input string) (*ast.Program, error) {
 		return program, nil
 	}
 
-	l := lexer.New(input)
-	par := parser.New(l)
-	program = par.ParseProgram()
-	if len(par.Errors()) != 0 {
-		return nil, fmt.Errorf("parser errors: %v", par.Errors())
+	program, err := parseProgramUncached(input)
+	if err != nil {
+		return nil, err
 	}
 
 	SetWithKey(key, program)
+	return program, nil
+}
+
+func parseProgramUncached(input string) (*ast.Program, error) {
+	l := lexerPool.Get().(*lexer.Lexer)
+	l.Reset(input)
+
+	par := parserPool.Get().(*parser.Parser)
+	par.Reset(l)
+
+	program := par.ParseProgram()
+	var err error
+	if parseErrs := par.Errors(); len(parseErrs) != 0 {
+		err = fmt.Errorf("parser errors: %v", parseErrs)
+	}
+
+	parserPool.Put(par)
+	lexerPool.Put(l)
+
+	if err != nil {
+		return nil, err
+	}
 	return program, nil
 }
 
