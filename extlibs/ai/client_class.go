@@ -47,7 +47,7 @@ Parameters:
   temperature (float, optional): Sampling temperature (0.0-2.0)
   top_p (float, optional): Nucleus sampling threshold (0.0-1.0)
   max_tokens (int, optional): Maximum tokens to generate
-  timeout_ms (int, optional): Request timeout in milliseconds
+  timeout (int, optional): Request timeout in seconds
 
 Returns:
   dict: Response containing id, choices, usage, etc.
@@ -83,7 +83,7 @@ Parameters:
   temperature (float, optional): Sampling temperature (0.0-2.0)
   top_p (float, optional): Nucleus sampling threshold (0.0-1.0)
   max_tokens (int, optional): Maximum tokens to generate
-  timeout_ms (int, optional): Overall request timeout in milliseconds
+  timeout (int, optional): Overall request timeout in seconds
 
 Returns:
   ChatStream: A stream object with a next() method
@@ -596,11 +596,11 @@ func completionMethod(self *object.Instance, ctx context.Context, kwargs object.
 	if kwargs.Has("max_tokens") {
 		req.MaxTokens = int(kwargs.MustGetInt("max_tokens", 0))
 	}
-	if kwargs.Has("timeout_ms") {
-		timeoutMs := kwargs.MustGetInt("timeout_ms", 0)
-		if timeoutMs > 0 {
+	if kwargs.Has("timeout") {
+		timeoutSec := kwargs.MustGetInt("timeout", 0)
+		if timeoutSec > 0 {
 			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond)
+			ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
 			defer cancel()
 		}
 	}
@@ -1086,13 +1086,13 @@ Example:
       delta = chunk.choices[0].delta
       if delta.content:
         print(delta.content, end="")`).
-		MethodWithHelp("next_timeout", nextTimeoutStreamMethod, `next_timeout(timeout_ms) - Get the next chunk, but stop waiting after a timeout
+		MethodWithHelp("next_timeout", nextTimeoutStreamMethod, `next_timeout(timeout) - Get the next chunk, but stop waiting after a timeout
 
 Advances to the next response chunk and returns it. If no chunk arrives within
 the timeout, returns a dict with {"timed_out": true}.
 
 Parameters:
-  timeout_ms (int): Timeout in milliseconds
+  timeout (int): Timeout in seconds
 
 Returns:
   dict: The next response chunk, {"timed_out": true}, or null if the stream is complete`).
@@ -1147,7 +1147,7 @@ func nextStreamMethod(self *object.Instance, ctx context.Context) object.Object 
 }
 
 // nextTimeoutStream method implementation
-func nextTimeoutStreamMethod(self *object.Instance, ctx context.Context, timeoutMs int64) object.Object {
+func nextTimeoutStreamMethod(self *object.Instance, ctx context.Context, timeoutSec int64) object.Object {
 	si, cerr := getStreamInstance(self)
 	if cerr != nil {
 		return cerr
@@ -1157,7 +1157,7 @@ func nextTimeoutStreamMethod(self *object.Instance, ctx context.Context, timeout
 		return &object.Error{Message: "next_timeout: stream is nil"}
 	}
 
-	if timeoutMs <= 0 {
+	if timeoutSec <= 0 {
 		return nextStreamMethod(self, ctx)
 	}
 
@@ -1185,7 +1185,7 @@ func nextTimeoutStreamMethod(self *object.Instance, ctx context.Context, timeout
 			return &object.Null{}
 		}
 		return conversion.FromGo(chatCompletionResponseToGoMap(&result.current))
-	case <-time.After(time.Duration(timeoutMs) * time.Millisecond):
+	case <-time.After(time.Duration(timeoutSec) * time.Second):
 		si.cancelStream(true)
 		return conversion.FromGo(map[string]any{"timed_out": true})
 	case <-ctx.Done():
@@ -1437,10 +1437,10 @@ func completionStreamMethod(self *object.Instance, ctx context.Context, kwargs o
 	}
 
 	streamCancel := context.CancelFunc(nil)
-	if kwargs.Has("timeout_ms") {
-		timeoutMs := kwargs.MustGetInt("timeout_ms", 0)
-		if timeoutMs > 0 {
-			ctx, streamCancel = context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond)
+	if kwargs.Has("timeout") {
+		timeoutSec := kwargs.MustGetInt("timeout", 0)
+		if timeoutSec > 0 {
+			ctx, streamCancel = context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
 		}
 	}
 

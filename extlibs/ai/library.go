@@ -362,10 +362,10 @@ Example:
 			if !ok {
 				return &object.Error{Message: "collect_stream: stream must be a ChatStream"}, nil
 			}
-			chunkTimeoutMs := kwargs.MustGetInt("chunk_timeout_ms", 0)
-			firstChunkTimeoutMs := kwargs.MustGetInt("first_chunk_timeout_ms", 0)
+			chunkTimeoutSec := kwargs.MustGetInt("chunk_timeout", 0)
+			firstChunkTimeoutSec := kwargs.MustGetInt("first_chunk_timeout", 0)
 			callback := kwargs.Get("on_event")
-			result, errObj := collectStream(ctx, stream, chunkTimeoutMs, firstChunkTimeoutMs, callback)
+			result, errObj := collectStream(ctx, stream, chunkTimeoutSec, firstChunkTimeoutSec, callback)
 			if errObj != nil {
 				return errObj, nil
 			}
@@ -377,8 +377,8 @@ and optionally emits events to a callback while chunks are processed.
 
 Parameters:
   stream (ChatStream): Stream returned by client.completion_stream()
-  chunk_timeout_ms (int, optional): Per-chunk timeout in milliseconds. Default: 0
-  first_chunk_timeout_ms (int, optional): Timeout for the first chunk only (models may need time to load). Falls back to chunk_timeout_ms. Default: 0
+  chunk_timeout (int, optional): Per-chunk timeout in seconds. Default: 0
+  first_chunk_timeout (int, optional): Timeout for the first chunk only (models may need time to load). Falls back to chunk_timeout. Default: 0
   on_event (callable, optional): Callback invoked with event dicts during collection
 
 Returns:
@@ -387,7 +387,7 @@ Returns:
 
 Example:
   stream = client.completion_stream("gpt-4", messages, tools=schemas)
-  result = ai.collect_stream(stream, first_chunk_timeout_ms=30000, chunk_timeout_ms=4000)
+  result = ai.collect_stream(stream, first_chunk_timeout=30, chunk_timeout=4)
   print(result["content"])
   print(len(result["tool_calls"]))`).
 		FunctionWithHelp("tool_round", func(ctx context.Context, kwargs object.Kwargs, clientObj object.Object, model string, messages object.Object, registryObj object.Object) (object.Object, error) {
@@ -415,20 +415,20 @@ Parameters:
   messages (str or list): User message string or message list
   registry (ToolRegistry): Tool registry containing schemas and handlers
   stream (bool, optional): Use completion_stream() instead of completion(). Default: False
-  chunk_timeout_ms (int, optional): Per-chunk timeout for streaming mode. Default: 0
+  chunk_timeout (int, optional): Per-chunk timeout in seconds for streaming mode. Default: 0
   on_event (callable, optional): Streaming callback that receives event dicts
   system_prompt (str, optional): System prompt when messages is a string
   temperature (float, optional): Sampling temperature
   top_p (float, optional): Nucleus sampling threshold
   max_tokens (int, optional): Maximum tokens to generate
-  timeout_ms (int, optional): Overall request timeout in milliseconds
+  timeout (int, optional): Overall request timeout in seconds
 
 Returns:
   dict: Round result with assistant_message, content, reasoning, tool_calls, tool_results,
         finish_reason, and timed_out. Non-streaming mode also includes response.
 
 Example:
-  result = ai.tool_round(client, "gpt-4", messages, tools, timeout_ms=30000)
+  result = ai.tool_round(client, "gpt-4", messages, tools, timeout=30)
   if len(result["tool_calls"]) > 0:
       messages.append(result["assistant_message"])
       for tool_result in result["tool_results"]:
@@ -836,7 +836,7 @@ func executeToolCalls(ctx context.Context, registry *object.Instance, toolCalls 
 	return results, nil
 }
 
-func collectStream(ctx context.Context, stream *object.Instance, chunkTimeoutMs int64, firstChunkTimeoutMs int64, callback object.Object) (map[string]any, *object.Error) {
+func collectStream(ctx context.Context, stream *object.Instance, chunkTimeoutSec int64, firstChunkTimeoutSec int64, callback object.Object) (map[string]any, *object.Error) {
 	reasoning := strings.Builder{}
 	content := strings.Builder{}
 	thinkingState := &streamingThinkingState{}
@@ -848,10 +848,10 @@ func collectStream(ctx context.Context, stream *object.Instance, chunkTimeoutMs 
 
 	for {
 		var chunkObj object.Object
-		if chunkTimeoutMs > 0 || firstChunkTimeoutMs > 0 {
-			timeout := chunkTimeoutMs
-			if firstChunk && firstChunkTimeoutMs > 0 {
-				timeout = firstChunkTimeoutMs
+		if chunkTimeoutSec > 0 || firstChunkTimeoutSec > 0 {
+			timeout := chunkTimeoutSec
+			if firstChunk && firstChunkTimeoutSec > 0 {
+				timeout = firstChunkTimeoutSec
 			}
 			if timeout > 0 {
 				chunkObj = nextTimeoutStreamMethod(stream, ctx, timeout)
@@ -1018,7 +1018,7 @@ func runToolRound(ctx context.Context, kwargs object.Kwargs, client *object.Inst
 	}
 
 	streaming := kwargs.MustGetBool("stream", false)
-	chunkTimeoutMs := kwargs.MustGetInt("chunk_timeout_ms", 0)
+	chunkTimeoutSec := kwargs.MustGetInt("chunk_timeout", 0)
 	callback := kwargs.Get("on_event")
 
 	requestKwargs := filterCompletionKwargs(kwargs)
@@ -1039,7 +1039,7 @@ func runToolRound(ctx context.Context, kwargs object.Kwargs, client *object.Inst
 			return nil, &object.Error{Message: "tool_round: completion_stream did not return a ChatStream"}
 		}
 
-		streamResult, errObj := collectStream(ctx, streamInstance, chunkTimeoutMs, chunkTimeoutMs, callback)
+		streamResult, errObj := collectStream(ctx, streamInstance, chunkTimeoutSec, chunkTimeoutSec, callback)
 		if errObj != nil {
 			return nil, errObj
 		}
@@ -1260,7 +1260,7 @@ func filterCompletionKwargs(kwargs object.Kwargs) object.Kwargs {
 	filtered := object.NewKwargs(map[string]object.Object{})
 	for key, value := range kwargs.Kwargs {
 		switch key {
-		case "stream", "chunk_timeout_ms", "on_event":
+		case "stream", "chunk_timeout", "on_event":
 			continue
 		default:
 			filtered.Kwargs[key] = value

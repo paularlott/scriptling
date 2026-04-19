@@ -710,7 +710,7 @@ func TestCompletionMethodTimeoutKwarg(t *testing.T) {
 	}
 
 	kwargs := object.NewKwargs(map[string]object.Object{
-		"timeout_ms": &object.Integer{Value: 10},
+		"timeout": &object.Integer{Value: 10},
 	})
 	result := completionMethod(instance, ctx, kwargs, "gpt-4", []map[string]any{{"role": "user", "content": "Hello"}})
 	if result.Type() != object.ERROR_OBJ {
@@ -1009,7 +1009,7 @@ import scriptling.ai as ai
 tools = ai.ToolRegistry()
 tools.add("echo_tool", "Echo a message", {"message": "string"}, lambda args: "streamed:" + args.get("message", "missing"))
 
-round = ai.tool_round(ai_client, "gpt-4", "hello", tools, stream=True, chunk_timeout_ms=100)
+round = ai.tool_round(ai_client, "gpt-4", "hello", tools, stream=True, chunk_timeout=0)
 round["reasoning"] + "|" + round["tool_results"][0]["content"]
 `)
 		if err != nil {

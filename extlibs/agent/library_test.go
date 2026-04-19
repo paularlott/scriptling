@@ -333,7 +333,7 @@ class MockClient:
     def completion(self, model, messages, **kwargs):
         self.call_count = self.call_count + 1
         self.kwargs_seen.append(kwargs)
-        assert kwargs["timeout_ms"] == 30000
+        assert kwargs["timeout"] == 300
         assert len(kwargs["tools"]) == 1
 
         if self.call_count == 1:

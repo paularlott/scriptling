@@ -31,7 +31,7 @@ Guidelines:
 """
 
 class Agent:
-    def __init__(self, client, tools=None, system_prompt="", model="", memory=None, max_tokens=32000, compaction_threshold=80):
+    def __init__(self, client, tools=None, system_prompt="", model="", memory=None, max_tokens=32000, compaction_threshold=80, request_timeout=300):
         self.client = client
         self.system_prompt = system_prompt
         self.model = model
@@ -39,7 +39,7 @@ class Agent:
         self.memory = memory
         self.max_tokens = max_tokens
         self.compaction_threshold = compaction_threshold
-        self.request_timeout_ms = 30000
+        self.request_timeout = request_timeout
 
         # Wire memory tools and augment system prompt if a memory object was provided
         if memory is not None:
@@ -83,8 +83,8 @@ class Agent:
         kwargs = {}
         if include_tools and self.tool_schemas:
             kwargs["tools"] = self.tool_schemas
-        if self.request_timeout_ms and self.request_timeout_ms > 0:
-            kwargs["timeout_ms"] = self.request_timeout_ms
+        if self.request_timeout and self.request_timeout > 0:
+            kwargs["timeout"] = self.request_timeout
         return kwargs
 
     def _field(self, value, name, default=None):

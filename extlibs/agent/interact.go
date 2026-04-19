@@ -156,7 +156,7 @@ class Agent(_OriginalAgent):
                                 content_state["open"] = False
                             pending_tool_calls.append(tc)
 
-                result = ai.collect_stream(stream, first_chunk_timeout_ms=120000, chunk_timeout_ms=60000, on_event=on_event)
+                result = ai.collect_stream(stream, first_chunk_timeout=120, chunk_timeout=60, on_event=on_event)
 
                 # Close any open streams
                 if reasoning_state["open"]:

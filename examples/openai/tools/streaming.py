@@ -35,7 +35,7 @@ messages = [{
 
 print()
 print("Streaming initial response with " + MODEL + "...")
-stream = client.completion_stream(MODEL, messages, tools=tools.build(), timeout_ms=30000)
+stream = client.completion_stream(MODEL, messages, tools=tools.build(), timeout=30)
 result = ai.collect_stream(stream, on_event=on_event)
 
 print()
@@ -53,6 +53,6 @@ else:
 
     print()
     print("Streaming final assistant answer...")
-    final_stream = client.completion_stream(MODEL, messages, timeout_ms=30000)
+    final_stream = client.completion_stream(MODEL, messages, timeout=30)
     ai.collect_stream(final_stream, on_event=on_event)
     print()

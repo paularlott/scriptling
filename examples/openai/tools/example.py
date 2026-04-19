@@ -29,7 +29,7 @@ messages = [{
     "content": "Call the echo_tool with message 'hello from tool test', then briefly tell me what it returned."
 }]
 
-response = client.completion(MODEL, messages, tools=tools.build(), timeout_ms=30000)
+response = client.completion(MODEL, messages, tools=tools.build(), timeout=30)
 calls = ai.tool_calls(response)
 
 if len(calls) == 0:
@@ -52,7 +52,7 @@ else:
 
     print()
     print("Requesting final assistant answer...")
-    final_response = client.completion(MODEL, messages, timeout_ms=30000)
+    final_response = client.completion(MODEL, messages, timeout=30)
 
     print()
     print("Final response:")
