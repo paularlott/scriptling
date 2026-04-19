@@ -201,6 +201,27 @@ func BenchmarkRuntime_ForRange(b *testing.B) {
 	}
 }
 
+func BenchmarkRuntime_ListComprehensionRange(b *testing.B) {
+	p := New()
+	for i := 0; i < b.N; i++ {
+		p.Eval("result = [i * 2 for i in range(10)]")
+	}
+}
+
+func BenchmarkRuntime_ListComprehensionFilter(b *testing.B) {
+	p := New()
+	for i := 0; i < b.N; i++ {
+		p.Eval("result = [i for i in range(20) if i % 2 == 0]")
+	}
+}
+
+func BenchmarkRuntime_DictComprehension(b *testing.B) {
+	p := New()
+	for i := 0; i < b.N; i++ {
+		p.Eval(`result = {str(i): i * 2 for i in range(10)}`)
+	}
+}
+
 // === RUNTIME - Functions ===
 func BenchmarkRuntime_FunctionCall(b *testing.B) {
 	p := New()

@@ -1586,6 +1586,24 @@ func tryEvalFastBuiltinCall(ctx context.Context, node *ast.CallExpression, env *
 			args[i] = arg
 		}
 		return fastRangeBuiltin(args), true
+	case "append":
+		if len(node.Arguments) != 2 {
+			return nil, false
+		}
+		listObj := evalWithContext(ctx, node.Arguments[0], env)
+		if object.IsError(listObj) {
+			return listObj, true
+		}
+		list, ok := listObj.(*object.List)
+		if !ok {
+			return nil, false
+		}
+		value := evalWithContext(ctx, node.Arguments[1], env)
+		if object.IsError(value) {
+			return value, true
+		}
+		list.Elements = append(list.Elements, value)
+		return NULL, true
 	default:
 		return nil, false
 	}
@@ -3889,6 +3907,9 @@ func evalListComprehension(ctx context.Context, lc *ast.ListComprehension, env *
 	if object.IsError(iterable) {
 		return iterable
 	}
+	if result, ok := tryEvalFastListComprehension(ctx, lc, iterable, env); ok {
+		return result
+	}
 	result := []object.Object{}
 	compEnv := object.NewEnclosedEnvironment(env)
 	emit := func() object.Object {
@@ -3921,6 +3942,75 @@ func evalListComprehension(ctx context.Context, lc *ast.ListComprehension, env *
 		return err
 	}
 	return &object.List{Elements: result}
+}
+
+func tryEvalFastListComprehension(ctx context.Context, lc *ast.ListComprehension, iterable object.Object, env *object.Environment) (object.Object, bool) {
+	if len(lc.AdditionalClauses) > 0 || len(lc.Variables) != 1 {
+		return nil, false
+	}
+	ident, ok := lc.Variables[0].(*ast.Identifier)
+	if !ok {
+		return nil, false
+	}
+
+	compEnv := object.NewEnclosedEnvironment(env)
+	result := make([]object.Object, 0)
+	runElement := func(element object.Object) object.Object {
+		compEnv.Set(ident.Value, element)
+		if lc.Condition != nil {
+			cond := evalWithContext(ctx, lc.Condition, compEnv)
+			if object.IsError(cond) {
+				return cond
+			}
+			if !isTruthy(cond) {
+				return nil
+			}
+		}
+		value := evalWithContext(ctx, lc.Expression, compEnv)
+		if object.IsError(value) {
+			return value
+		}
+		result = append(result, value)
+		return nil
+	}
+
+	switch it := iterable.(type) {
+	case *object.List:
+		result = make([]object.Object, 0, len(it.Elements))
+		for _, element := range it.Elements {
+			if out := runElement(element); out != nil {
+				return out, true
+			}
+		}
+	case *object.Tuple:
+		result = make([]object.Object, 0, len(it.Elements))
+		for _, element := range it.Elements {
+			if out := runElement(element); out != nil {
+				return out, true
+			}
+		}
+	case *object.Set:
+		result = make([]object.Object, 0, len(it.Elements))
+		for _, element := range it.Elements {
+			if out := runElement(element); out != nil {
+				return out, true
+			}
+		}
+	case *object.Iterator:
+		for {
+			element, ok := it.Next()
+			if !ok {
+				break
+			}
+			if out := runElement(element); out != nil {
+				return out, true
+			}
+		}
+	default:
+		return nil, false
+	}
+
+	return &object.List{Elements: result}, true
 }
 
 func evalDictComprehension(ctx context.Context, dc *ast.DictComprehension, env *object.Environment) object.Object {
