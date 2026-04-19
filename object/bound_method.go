@@ -5,6 +5,7 @@ package object
 type BoundMethod struct {
 	Instance Object // The instance (self)
 	Method   Object // The method function
+	selfBuf  [1]Object
 }
 
 func (bm *BoundMethod) Type() ObjectType { return FUNCTION_OBJ } // Behaves like a function
@@ -20,3 +21,7 @@ func (bm *BoundMethod) AsDict() (map[string]Object, Object) { return nil, errMus
 func (bm *BoundMethod) CoerceString() (string, Object) { return bm.Inspect(), nil }
 func (bm *BoundMethod) CoerceInt() (int64, Object)     { return 0, errMustBeInteger }
 func (bm *BoundMethod) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
+
+func (bm *BoundMethod) SelfArgs() []Object {
+	return bm.selfBuf[:]
+}

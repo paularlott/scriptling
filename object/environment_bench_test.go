@@ -103,6 +103,76 @@ func BenchmarkEnvironmentSlotSet(b *testing.B) {
 	}
 }
 
+func BenchmarkClassLookupMemberHot(b *testing.B) {
+	base := &Class{
+		Name:    "Base",
+		Methods: map[string]Object{"work": &Builtin{}},
+	}
+	child := &Class{
+		Name:      "Child",
+		BaseClass: base,
+		Methods:   map[string]Object{},
+	}
+	child.LookupMember("work")
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		child.LookupMember("work")
+	}
+}
+
+func BenchmarkClassLookupMemberCold(b *testing.B) {
+	base := &Class{
+		Name:    "Base",
+		Methods: map[string]Object{"work": &Builtin{}},
+	}
+	child := &Class{
+		Name:      "Child",
+		BaseClass: base,
+		Methods:   map[string]Object{},
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		base.InvalidateLookupCache()
+		child.LookupMember("work")
+	}
+}
+
+func BenchmarkInstanceGetBoundMethodHot(b *testing.B) {
+	method := &Builtin{}
+	instance := &Instance{
+		Class: &Class{
+			Name:    "Worker",
+			Methods: map[string]Object{"work": method},
+		},
+		Fields: map[string]Object{},
+	}
+	instance.GetBoundMethod("work", method)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		instance.GetBoundMethod("work", method)
+	}
+}
+
+func BenchmarkInstanceGetBoundMethodCold(b *testing.B) {
+	method := &Builtin{}
+	instance := &Instance{
+		Class: &Class{
+			Name:    "Worker",
+			Methods: map[string]Object{"work": method},
+		},
+		Fields: map[string]Object{},
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		instance.InvalidateBoundMethod("work")
+		instance.GetBoundMethod("work", method)
+	}
+}
+
 // Benchmark concurrent access (simulating goroutines)
 func BenchmarkEnvironmentConcurrent(b *testing.B) {
 	env := NewEnvironment()

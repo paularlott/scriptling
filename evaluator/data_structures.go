@@ -250,7 +250,7 @@ func evalInstanceIndexExpression(ctx context.Context, instance, index object.Obj
 		return val
 	}
 	// Check class methods - property descriptors on the class are also supported
-	if fn, ok := inst.Class.Methods[field]; ok {
+	if fn, ok := inst.Class.LookupMember(field); ok {
 		if prop, ok := fn.(*object.Property); ok {
 			return applyFunctionWithContext(ctx, prop.Getter, []object.Object{instance}, nil, nil)
 		}
@@ -259,29 +259,10 @@ func evalInstanceIndexExpression(ctx context.Context, instance, index object.Obj
 		}
 		switch fn.(type) {
 		case *object.Function, *object.LambdaFunction, *object.Builtin:
-			return &object.BoundMethod{Instance: instance, Method: fn}
+			return inst.GetBoundMethod(field, fn)
 		default:
 			return fn // non-callable class attribute (e.g. string set by class decorator)
 		}
-	}
-	// Walk base classes
-	currentClass := inst.Class.BaseClass
-	for currentClass != nil {
-		if fn, ok := currentClass.Methods[field]; ok {
-			if prop, ok := fn.(*object.Property); ok {
-				return applyFunctionWithContext(ctx, prop.Getter, []object.Object{instance}, nil, nil)
-			}
-			if sm, ok := fn.(*object.StaticMethod); ok {
-				return sm.Fn
-			}
-			switch fn.(type) {
-			case *object.Function, *object.LambdaFunction, *object.Builtin:
-				return &object.BoundMethod{Instance: instance, Method: fn}
-			default:
-				return fn
-			}
-		}
-		currentClass = currentClass.BaseClass
 	}
 	return NULL
 }
@@ -295,7 +276,7 @@ func evalClassIndexExpression(class, index object.Object) object.Object {
 		return err
 	}
 	cl := class.(*object.Class)
-	if fn, ok := cl.Methods[field]; ok {
+	if fn, ok := cl.LookupMember(field); ok {
 		if sm, ok := fn.(*object.StaticMethod); ok {
 			return sm.Fn
 		}

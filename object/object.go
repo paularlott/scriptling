@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/paularlott/scriptling/ast"
 )
@@ -151,6 +152,20 @@ func NewInteger(val int64) *Integer {
 }
 
 type ObjectType int
+
+type classLookupCacheEntry struct {
+	value Object
+	ok    bool
+	epoch uint64
+}
+
+type boundMethodCacheEntry struct {
+	bound  *BoundMethod
+	method Object
+	epoch  uint64
+}
+
+var classLookupEpoch atomic.Uint64
 
 const (
 	INTEGER_OBJ ObjectType = iota
@@ -1274,6 +1289,8 @@ type Class struct {
 	BaseClass *Class // optional parent class for inheritance
 	Methods   map[string]Object
 	Env       *Environment
+	cacheMu   sync.RWMutex
+	cache     map[string]classLookupCacheEntry
 }
 
 func (c *Class) Type() ObjectType { return CLASS_OBJ }
@@ -1290,9 +1307,53 @@ func (c *Class) CoerceString() (string, Object) { return c.Inspect(), nil }
 func (c *Class) CoerceInt() (int64, Object)     { return 0, errMustBeInteger }
 func (c *Class) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
 
+func (c *Class) LookupMember(name string) (Object, bool) {
+	epoch := classLookupEpoch.Load()
+
+	c.cacheMu.RLock()
+	if entry, ok := c.cache[name]; ok && entry.epoch == epoch {
+		c.cacheMu.RUnlock()
+		return entry.value, entry.ok
+	}
+	c.cacheMu.RUnlock()
+
+	currentClass := c
+	var (
+		value Object
+		ok    bool
+	)
+	for currentClass != nil {
+		if value, ok = currentClass.Methods[name]; ok {
+			break
+		}
+		currentClass = currentClass.BaseClass
+	}
+
+	c.cacheMu.Lock()
+	if c.cache == nil {
+		c.cache = make(map[string]classLookupCacheEntry)
+	}
+	c.cache[name] = classLookupCacheEntry{
+		value: value,
+		ok:    ok,
+		epoch: epoch,
+	}
+	c.cacheMu.Unlock()
+
+	return value, ok
+}
+
+func (c *Class) InvalidateLookupCache() {
+	classLookupEpoch.Add(1)
+	c.cacheMu.Lock()
+	c.cache = nil
+	c.cacheMu.Unlock()
+}
+
 type Instance struct {
-	Class  *Class
-	Fields map[string]Object
+	Class            *Class
+	Fields           map[string]Object
+	boundMethodCache map[string]boundMethodCacheEntry
 }
 
 func (i *Instance) Type() ObjectType { return INSTANCE_OBJ }
@@ -1316,6 +1377,31 @@ func (i *Instance) AsDict() (map[string]Object, Object) { return i.Fields, nil }
 func (i *Instance) CoerceString() (string, Object) { return i.Inspect(), nil }
 func (i *Instance) CoerceInt() (int64, Object)     { return 0, errMustBeInteger }
 func (i *Instance) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
+
+func (i *Instance) GetBoundMethod(name string, method Object) *BoundMethod {
+	epoch := classLookupEpoch.Load()
+	if entry, ok := i.boundMethodCache[name]; ok && entry.epoch == epoch && entry.method == method {
+		return entry.bound
+	}
+	if i.boundMethodCache == nil {
+		i.boundMethodCache = make(map[string]boundMethodCacheEntry)
+	}
+	bound := &BoundMethod{Instance: i, Method: method}
+	bound.selfBuf[0] = i
+	i.boundMethodCache[name] = boundMethodCacheEntry{
+		bound:  bound,
+		method: method,
+		epoch:  epoch,
+	}
+	return bound
+}
+
+func (i *Instance) InvalidateBoundMethod(name string) {
+	if i.boundMethodCache == nil {
+		return
+	}
+	delete(i.boundMethodCache, name)
+}
 
 type Super struct {
 	Class    *Class

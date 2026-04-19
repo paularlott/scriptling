@@ -398,6 +398,72 @@ func TestFunction(t *testing.T) {
 	}
 }
 
+func TestClassLookupMemberCachesAndInvalidates(t *testing.T) {
+	baseMethod := &Builtin{}
+	updatedMethod := &Builtin{}
+
+	base := &Class{
+		Name:    "Base",
+		Methods: map[string]Object{"work": baseMethod},
+	}
+	child := &Class{
+		Name:      "Child",
+		BaseClass: base,
+		Methods:   map[string]Object{},
+	}
+
+	got, ok := child.LookupMember("work")
+	if !ok || got != baseMethod {
+		t.Fatalf("expected inherited method lookup to find base method, got=%T ok=%v", got, ok)
+	}
+
+	base.Methods["work"] = updatedMethod
+	base.InvalidateLookupCache()
+
+	got, ok = child.LookupMember("work")
+	if !ok || got != updatedMethod {
+		t.Fatalf("expected invalidated lookup to see updated base method, got=%T ok=%v", got, ok)
+	}
+
+	delete(base.Methods, "work")
+	base.InvalidateLookupCache()
+
+	if _, ok := child.LookupMember("work"); ok {
+		t.Fatal("expected inherited lookup miss after deleting base method")
+	}
+}
+
+func TestInstanceBoundMethodCacheReuseAndInvalidate(t *testing.T) {
+	methodA := &Builtin{}
+	methodB := &Builtin{}
+	instance := &Instance{
+		Class: &Class{
+			Name:    "Worker",
+			Methods: map[string]Object{"work": methodA},
+		},
+		Fields: map[string]Object{},
+	}
+
+	bound1 := instance.GetBoundMethod("work", methodA)
+	bound2 := instance.GetBoundMethod("work", methodA)
+	if bound1 != bound2 {
+		t.Fatal("expected bound method cache to reuse wrapper")
+	}
+
+	instance.Class.Methods["work"] = methodB
+	instance.Class.InvalidateLookupCache()
+	bound3 := instance.GetBoundMethod("work", methodB)
+	if bound3 == bound1 {
+		t.Fatal("expected changed class method to invalidate cached wrapper")
+	}
+
+	instance.InvalidateBoundMethod("work")
+	bound4 := instance.GetBoundMethod("work", methodB)
+	if bound4 == bound3 {
+		t.Fatal("expected explicit invalidation to drop cached wrapper")
+	}
+}
+
 func TestBuiltinFunction(t *testing.T) {
 	builtin := &Builtin{
 		Fn: func(ctx context.Context, kwargs Kwargs, args ...Object) Object {

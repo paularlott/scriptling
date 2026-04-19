@@ -1151,18 +1151,13 @@ func evalStringMultiplication(str string, multiplier int64) object.Object {
 // callDunderMethod calls a dunder method on an instance, returning nil if not defined.
 // Returns the result string object for __str__/__repr__, or the raw result for others.
 func callDunderMethod(ctx context.Context, inst *object.Instance, method string, args []object.Object, env *object.Environment) object.Object {
-	// Walk the class hierarchy
-	currentClass := inst.Class
-	for currentClass != nil {
-		if fn, ok := currentClass.Methods[method]; ok {
-			newArgs := prependSelf(inst, args)
-			result := applyFunctionWithContext(ctx, fn, newArgs, nil, env)
-			if object.IsError(result) {
-				return result
-			}
+	if fn, ok := inst.Class.LookupMember(method); ok {
+		newArgs := prependSelf(inst, args)
+		result := applyFunctionWithContext(ctx, fn, newArgs, nil, env)
+		if object.IsError(result) {
 			return result
 		}
-		currentClass = currentClass.BaseClass
+		return result
 	}
 	return nil
 }
@@ -1606,6 +1601,9 @@ func ApplyFunction(ctx context.Context, fn object.Object, args []object.Object, 
 func applyFunctionWithContext(ctx context.Context, fn object.Object, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
 	// Handle BoundMethod - prepend self to args
 	if bm, ok := fn.(*object.BoundMethod); ok {
+		if len(args) == 0 {
+			return ApplyFunction(ctx, bm.Method, bm.SelfArgs(), keywords, env)
+		}
 		n := len(args) + 1
 		var newArgs []object.Object
 		if n <= 8 {
@@ -2056,14 +2054,7 @@ var isTruthyInstanceFn func(inst *object.Instance) bool
 
 // findDunderMethod looks up a dunder method in the instance's class hierarchy
 func findDunderMethod(inst *object.Instance, method string) (object.Object, bool) {
-	currentClass := inst.Class
-	for currentClass != nil {
-		if fn, ok := currentClass.Methods[method]; ok {
-			return fn, true
-		}
-		currentClass = currentClass.BaseClass
-	}
-	return nil, false
+	return inst.Class.LookupMember(method)
 }
 
 func init() {
@@ -3136,6 +3127,7 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 			}
 			if _, exists := o.Fields[key.Value]; exists {
 				delete(o.Fields, key.Value)
+				o.InvalidateBoundMethod(key.Value)
 				return nil
 			}
 			if findPropertyInClass(key.Value, o.Class) != nil {
@@ -3151,6 +3143,7 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 				return exceptionDeleteError(object.ExceptionTypeAttributeError, fmt.Sprintf("type object '%s' has no attribute '%s'", o.Name, key.Value))
 			}
 			delete(o.Methods, key.Value)
+			o.InvalidateLookupCache()
 			return nil
 		default:
 			return fmt.Errorf("cannot delete index")
@@ -3275,12 +3268,14 @@ func assignToExpression(ctx context.Context, expr ast.Expression, value object.O
 					return nil
 				}
 				o.Fields[key.Value] = value
+				o.InvalidateBoundMethod(key.Value)
 				return nil
 			}
 			return fmt.Errorf("instance attribute must be string")
 		case *object.Class:
 			if key, ok := index.(*object.String); ok {
 				o.Methods[key.Value] = value
+				o.InvalidateLookupCache()
 				return nil
 			}
 			return fmt.Errorf("class attribute must be string")
@@ -3293,12 +3288,9 @@ func assignToExpression(ctx context.Context, expr ast.Expression, value object.O
 
 // findPropertyInClass walks the class hierarchy looking for a Property descriptor.
 func findPropertyInClass(name string, class *object.Class) *object.Property {
-	for c := class; c != nil; c = c.BaseClass {
-		if fn, ok := c.Methods[name]; ok {
-			if prop, ok := fn.(*object.Property); ok {
-				return prop
-			}
-			return nil // found as non-property; stop
+	if fn, ok := class.LookupMember(name); ok {
+		if prop, ok := fn.(*object.Property); ok {
+			return prop
 		}
 	}
 	return nil

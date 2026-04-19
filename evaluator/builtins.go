@@ -1439,7 +1439,7 @@ Supports width, alignment, and type specifiers.`,
 				if _, ok := obj.Fields[name]; ok {
 					return TRUE
 				}
-				if _, ok := obj.Class.Methods[name]; ok {
+				if _, ok := obj.Class.LookupMember(name); ok {
 					return TRUE
 				}
 				return FALSE
@@ -1469,7 +1469,7 @@ Returns True if the object has the named attribute.`,
 				if val, ok := obj.Fields[name]; ok {
 					return val
 				}
-				if method, ok := obj.Class.Methods[name]; ok {
+				if method, ok := obj.Class.LookupMember(name); ok {
 					return method
 				}
 			case *object.Dict:
@@ -1501,6 +1501,7 @@ If default is provided, returns it when attribute doesn't exist.`,
 			switch obj := args[0].(type) {
 			case *object.Instance:
 				obj.Fields[name] = args[2]
+				obj.InvalidateBoundMethod(name)
 				return NULL
 			case *object.Dict:
 				obj.Pairs[object.DictKey(&object.String{Value: name})] = object.DictPair{
@@ -1531,6 +1532,7 @@ Only works on dict-like objects.`,
 			case *object.Instance:
 				if _, ok := obj.Fields[name]; ok {
 					delete(obj.Fields, name)
+					obj.InvalidateBoundMethod(name)
 					return NULL
 				}
 				return errors.NewError("'%s' object has no attribute '%s'", obj.Class.Name, name)
@@ -2786,4 +2788,3 @@ func GetImportBuiltin() *object.Builtin {
 		},
 	}
 }
-

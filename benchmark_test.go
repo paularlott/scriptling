@@ -210,6 +210,62 @@ func BenchmarkRuntime_FunctionCall(b *testing.B) {
 	}
 }
 
+func BenchmarkRuntime_MethodCall(b *testing.B) {
+	p := New()
+	p.Eval(`
+class Counter:
+    def add(self, x, y):
+        return x + y
+
+c = Counter()
+`)
+	for i := 0; i < b.N; i++ {
+		p.Eval("result = c.add(5, 3)")
+	}
+}
+
+func BenchmarkRuntime_AttributeRead(b *testing.B) {
+	p := New()
+	p.Eval(`
+class Counter:
+    def __init__(self):
+        self.value = 42
+
+c = Counter()
+`)
+	for i := 0; i < b.N; i++ {
+		p.Eval("result = c.value")
+	}
+}
+
+func BenchmarkRuntime_BoundMethodRead(b *testing.B) {
+	p := New()
+	p.Eval(`
+class Counter:
+    def add(self, x, y):
+        return x + y
+
+c = Counter()
+`)
+	for i := 0; i < b.N; i++ {
+		p.Eval("result = c.add")
+	}
+}
+
+func BenchmarkRuntime_NoArgMethodCall(b *testing.B) {
+	p := New()
+	p.Eval(`
+class Counter:
+    def ping(self):
+        return 1
+
+c = Counter()
+`)
+	for i := 0; i < b.N; i++ {
+		p.Eval("result = c.ping()")
+	}
+}
+
 func BenchmarkRuntime_RecursiveFib(b *testing.B) {
 	p := New()
 	p.Eval("def fib(n):\n    if n <= 1:\n        return n\n    return fib(n-1) + fib(n-2)")
