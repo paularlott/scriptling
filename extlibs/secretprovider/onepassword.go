@@ -111,6 +111,48 @@ func (p *onePasswordProvider) Resolve(ctx context.Context, path, field string) (
 	return value, nil
 }
 
+func (p *onePasswordProvider) List(ctx context.Context, path string) ([]string, error) {
+	path = strings.Trim(path, "/")
+	if path == "" {
+		return nil, fmt.Errorf("onepassword: path must be a vault name or vault/item")
+	}
+
+	parts := strings.SplitN(path, "/", 2)
+	vaultRef := parts[0]
+
+	vaultID, err := p.resolveVaultID(ctx, vaultRef)
+	if err != nil {
+		return nil, err
+	}
+
+	// vault/item — list fields in the item
+	if len(parts) == 2 && parts[1] != "" {
+		item, err := p.resolveItem(ctx, vaultID, parts[1])
+		if err != nil {
+			return nil, err
+		}
+		names := make([]string, 0, len(item.Fields))
+		for _, f := range item.Fields {
+			if f.Label != "" {
+				names = append(names, f.Label)
+			}
+		}
+		return names, nil
+	}
+
+	// vault only — list items
+	var items []onePasswordItem
+	if err := p.getJSON(ctx, "/v1/vaults/"+url.PathEscape(vaultID)+"/items", &items); err != nil {
+		return nil, fmt.Errorf("onepassword: list items in vault %q: %w", vaultRef, err)
+	}
+
+	titles := make([]string, 0, len(items))
+	for _, item := range items {
+		titles = append(titles, item.Title)
+	}
+	return titles, nil
+}
+
 func splitOnePasswordPath(path string) (string, string, error) {
 	path = strings.Trim(path, "/")
 	parts := strings.SplitN(path, "/", 2)

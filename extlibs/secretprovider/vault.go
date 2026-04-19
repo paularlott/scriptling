@@ -112,6 +112,80 @@ func (v *vaultProvider) Resolve(ctx context.Context, path, field string) (string
 	return resolved, nil
 }
 
+func (v *vaultProvider) List(ctx context.Context, path string) ([]string, error) {
+	reqPath := strings.TrimLeft(path, "/")
+
+	// Try reading the secret first — if it exists, return its field names.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, v.address+"/v1/"+reqPath, nil)
+	if err != nil {
+		return nil, fmt.Errorf("vault: create list request: %w", err)
+	}
+	v.decorate(req)
+
+	resp, err := v.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("vault: list %q: %w", path, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusOK {
+		var payload map[string]any
+		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+			return nil, fmt.Errorf("vault: decode list %q: %w", path, err)
+		}
+		data, err := extractVaultData(payload, path, v.kvVersion)
+		if err != nil {
+			return nil, err
+		}
+		keys := make([]string, 0, len(data))
+		for key := range data {
+			keys = append(keys, key)
+		}
+		return keys, nil
+	}
+
+	// Not a leaf secret — try listing sub-paths via the metadata endpoint.
+	listPath := reqPath
+	if v.kvVersion != 1 {
+		if idx := strings.Index(listPath, "/data/"); idx >= 0 {
+			listPath = listPath[:idx] + "/metadata/" + listPath[idx+6:]
+		} else if strings.HasSuffix(listPath, "/data") {
+			listPath = listPath[:len(listPath)-5] + "/metadata"
+		}
+	}
+
+	req, err = http.NewRequestWithContext(ctx, http.MethodGet, v.address+"/v1/"+listPath+"?list=true", nil)
+	if err != nil {
+		return nil, fmt.Errorf("vault: create list request: %w", err)
+	}
+	v.decorate(req)
+
+	resp, err = v.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("vault: list %q: %w", path, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return nil, fmt.Errorf("vault: list %q returned %s: %s", path, resp.Status, strings.TrimSpace(string(body)))
+	}
+
+	var listPayload struct {
+		Data struct {
+			Keys []string `json:"keys"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&listPayload); err != nil {
+		return nil, fmt.Errorf("vault: decode list %q: %w", path, err)
+	}
+
+	return listPayload.Data.Keys, nil
+}
+
 func (v *vaultProvider) loginWithAppRole(ctx context.Context, roleID, secret string) (string, error) {
 	body, err := json.Marshal(map[string]string{
 		"role_id":   roleID,

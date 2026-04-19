@@ -16,6 +16,7 @@ var aliasPattern = regexp.MustCompile(`^[a-z0-9_]+$`)
 type Provider interface {
 	ID() string
 	Resolve(ctx context.Context, path string, field string) (string, error)
+	List(ctx context.Context, path string) ([]string, error)
 }
 
 type registration struct {
@@ -110,6 +111,22 @@ func (r *Registry) Resolve(ctx context.Context, alias, path, field string) (stri
 	})
 
 	return value, nil
+}
+
+// List returns the keys at a path using the provider registered for alias.
+func (r *Registry) List(ctx context.Context, alias, path string) ([]string, error) {
+	if r == nil {
+		return nil, fmt.Errorf("secret registry is nil")
+	}
+
+	r.mu.RLock()
+	entry, ok := r.byAlias[alias]
+	r.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("secret provider alias %q not registered", alias)
+	}
+
+	return entry.provider.List(ctx, path)
 }
 
 // HasProviders reports whether any aliases are registered.
