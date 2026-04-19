@@ -1283,6 +1283,7 @@ func evalFunctionStatement(ctx context.Context, stmt *ast.FunctionStatement, env
 	fn := &object.Function{
 		Name:           stmt.Name.Value,
 		Parameters:     stmt.Function.Parameters,
+		ParamIndex:     buildParamIndex(stmt.Function.Parameters),
 		DefaultValues:  stmt.Function.DefaultValues,
 		Variadic:       stmt.Function.Variadic,
 		Kwargs:         stmt.Function.Kwargs,
@@ -1642,6 +1643,7 @@ func applyLambdaFunctionWithContext(ctx context.Context, fn *object.LambdaFuncti
 // funcParams abstracts the common parts of Function and LambdaFunction for parameter handling
 type funcParams struct {
 	parameters     []*ast.Identifier
+	paramIndex     map[string]int
 	defaultValues  map[string]ast.Expression
 	variadic       *ast.Identifier
 	kwargs         *ast.Identifier
@@ -1712,15 +1714,9 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 
 		for key, value := range keywords {
 			// Check if parameter exists
-			paramIdx := -1
-			for pi, param := range fp.parameters {
-				if param.Value == key {
-					paramIdx = pi
-					break
-				}
-			}
+			paramIdx, hasParam := fp.paramIndex[key]
 
-			if paramIdx == -1 {
+			if !hasParam {
 				// If **kwargs is defined, collect extra keyword arguments
 				if fp.kwargs != nil {
 					if extraKwargs == nil {
@@ -1791,6 +1787,7 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 func extendFunctionEnv(fn *object.Function, args []object.Object, keywords map[string]object.Object) (*object.Environment, object.Object) {
 	return extendEnvWithParams(funcParams{
 		parameters:     fn.Parameters,
+		paramIndex:     fn.ParamIndex,
 		defaultValues:  fn.DefaultValues,
 		variadic:       fn.Variadic,
 		kwargs:         fn.Kwargs,
@@ -1803,6 +1800,7 @@ func extendFunctionEnv(fn *object.Function, args []object.Object, keywords map[s
 func extendLambdaEnv(fn *object.LambdaFunction, args []object.Object, keywords map[string]object.Object) (*object.Environment, object.Object) {
 	return extendEnvWithParams(funcParams{
 		parameters:     fn.Parameters,
+		paramIndex:     fn.ParamIndex,
 		defaultValues:  fn.DefaultValues,
 		variadic:       fn.Variadic,
 		kwargs:         fn.Kwargs,
@@ -1875,6 +1873,17 @@ func analyzeLambdaLocals(lambda *ast.Lambda) (map[string]int, []string) {
 		uniq = append(uniq, name)
 	}
 	return slots, uniq
+}
+
+func buildParamIndex(params []*ast.Identifier) map[string]int {
+	if len(params) == 0 {
+		return nil
+	}
+	index := make(map[string]int, len(params))
+	for i, param := range params {
+		index[param.Value] = i
+	}
+	return index
 }
 
 func collectScopeDirectives(block *ast.BlockStatement) (map[string]bool, map[string]bool) {
@@ -3767,6 +3776,7 @@ func evalLambda(lambda *ast.Lambda, env *object.Environment) object.Object {
 	localSlots, localSlotNames := analyzeLambdaLocals(lambda)
 	return &object.LambdaFunction{
 		Parameters:     lambda.Parameters,
+		ParamIndex:     buildParamIndex(lambda.Parameters),
 		DefaultValues:  lambda.DefaultValues,
 		Variadic:       lambda.Variadic,
 		Kwargs:         lambda.Kwargs,

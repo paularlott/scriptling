@@ -497,6 +497,7 @@ func (c *Continue) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
 type Function struct {
 	Name           string
 	Parameters     []*ast.Identifier
+	ParamIndex     map[string]int
 	DefaultValues  map[string]ast.Expression
 	Variadic       *ast.Identifier // *args parameter
 	Kwargs         *ast.Identifier // **kwargs parameter
@@ -522,6 +523,7 @@ func (f *Function) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
 
 type LambdaFunction struct {
 	Parameters     []*ast.Identifier
+	ParamIndex     map[string]int
 	DefaultValues  map[string]ast.Expression
 	Variadic       *ast.Identifier // *args parameter
 	Kwargs         *ast.Identifier // **kwargs parameter
@@ -958,6 +960,7 @@ func (e *Environment) CopyCallableBindingsTo(target *Environment) {
 			target.store[name] = &Function{
 				Name:           origFn.Name,
 				Parameters:     origFn.Parameters,
+				ParamIndex:     origFn.ParamIndex,
 				DefaultValues:  origFn.DefaultValues,
 				Variadic:       origFn.Variadic,
 				Kwargs:         origFn.Kwargs,
@@ -969,6 +972,7 @@ func (e *Environment) CopyCallableBindingsTo(target *Environment) {
 		case *LambdaFunction:
 			target.store[name] = &LambdaFunction{
 				Parameters:     origFn.Parameters,
+				ParamIndex:     origFn.ParamIndex,
 				DefaultValues:  origFn.DefaultValues,
 				Variadic:       origFn.Variadic,
 				Kwargs:         origFn.Kwargs,

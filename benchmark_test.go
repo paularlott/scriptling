@@ -266,6 +266,31 @@ c = Counter()
 	}
 }
 
+func BenchmarkRuntime_FunctionKeywordCall(b *testing.B) {
+	p := New()
+	p.Eval(`
+def wrap(text, prefix="[", suffix="]"):
+    return prefix + text + suffix
+`)
+	for i := 0; i < b.N; i++ {
+		p.Eval(`result = wrap("test", prefix=">>", suffix="<<")`)
+	}
+}
+
+func BenchmarkRuntime_MethodKeywordCall(b *testing.B) {
+	p := New()
+	p.Eval(`
+class Formatter:
+    def wrap(self, text, prefix="[", suffix="]"):
+        return prefix + text + suffix
+
+f = Formatter()
+`)
+	for i := 0; i < b.N; i++ {
+		p.Eval(`result = f.wrap("test", prefix=">>", suffix="<<")`)
+	}
+}
+
 func BenchmarkRuntime_RecursiveFib(b *testing.B) {
 	p := New()
 	p.Eval("def fib(n):\n    if n <= 1:\n        return n\n    return fib(n-1) + fib(n-2)")
