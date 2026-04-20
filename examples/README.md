@@ -60,6 +60,10 @@ This directory contains examples and tools for working with Scriptling.
   - **net/gossip/** - Gossip protocol cluster membership and messaging
     - `gossip_demo.py` - Single-node metadata and introspection demo
     - `gossip_cluster.py` - Two-node cluster with message passing
+    - `gossip_nodegroups.py` - Metadata-criteria-based node groups
+    - `gossip_leader.py` - Leader election and failover
+    - `gossip_request_reply.py` - Request/reply messaging pattern
+    - `gossip_advanced.py` - Advanced config and event handlers
     - `README.md` - Gossip library documentation
 
 - **mcp-tools/** - Example MCP tools for use with the CLI MCP server
