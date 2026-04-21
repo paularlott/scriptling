@@ -24,7 +24,7 @@ jobs:
           AUTHOR=$(echo "$PR_AUTHOR" | tr '[:upper:]' '[:lower:]')
 
           # Check if author is in contributors list
-          HAS_SIGNED=$(jq -r --arg a "$AUTHOR" '.contributors | map(downcase) | index($a) != null' .clabot.json)
+          HAS_SIGNED=$(jq -r --arg a "$AUTHOR" '.contributors | map(ascii_downcase) | index($a) != null' .clabot.json)
 
           LABEL="cla: ok"
           REMOVE_LABEL="cla: required"
