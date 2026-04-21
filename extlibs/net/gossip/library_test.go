@@ -67,7 +67,6 @@ len(id) > 0
 }
 
 func TestGossipClusterHasMethods(t *testing.T) {
-	// Accessing each attribute verifies it exists; a missing attribute causes a script error.
 	p := newScriptling()
 
 	_, err := p.Eval(`
@@ -81,12 +80,25 @@ _ = c.send
 _ = c.send_tagged
 _ = c.send_to
 _ = c.handle
+_ = c.handle_with_reply
+_ = c.send_request
+_ = c.unhandle
 _ = c.on_state_change
+_ = c.on_metadata_change
+_ = c.on_gossip_interval
+_ = c.create_node_group
+_ = c.create_leader_election
 _ = c.nodes
 _ = c.alive_nodes
+_ = c.nodes_by_tag
+_ = c.get_node
 _ = c.local_node
 _ = c.num_nodes
 _ = c.num_alive
+_ = c.num_suspect
+_ = c.num_dead
+_ = c.is_local
+_ = c.candidates
 _ = c.set_metadata
 _ = c.get_metadata
 _ = c.all_metadata
@@ -108,7 +120,7 @@ c = gossip.create(bind_addr="127.0.0.1:0")
 c.start()
 n = c.local_node()
 c.stop()
-[type(n) == "DICT", "id" in n, "addr" in n, "state" in n, "metadata" in n]
+[type(n) == "DICT", "id" in n, "addr" in n, "state" in n, "metadata" in n, "tags" in n]
 `)
 	if err != nil {
 		t.Fatalf("script error: %v", err)
@@ -216,8 +228,10 @@ c = gossip.create(bind_addr="127.0.0.1:0")
 c.start()
 n = c.num_nodes()
 a = c.num_alive()
+s = c.num_suspect()
+d = c.num_dead()
 c.stop()
-[n >= 1, a >= 1]
+[n >= 1, a >= 1, s >= 0, d >= 0]
 `)
 	if err != nil {
 		t.Fatalf("script error: %v", err)
@@ -230,6 +244,334 @@ c.stop()
 		if b, _ := elem.AsBool(); !b {
 			t.Errorf("element %d: expected true", i)
 		}
+	}
+}
+
+func TestGossipGetNode(t *testing.T) {
+	p := newScriptling()
+
+	result, err := p.Eval(`
+import scriptling.net.gossip as gossip
+c = gossip.create(bind_addr="127.0.0.1:0")
+c.start()
+id = c.node_id()
+node = c.get_node(id)
+missing = c.get_node("00000000-0000-0000-0000-000000000000")
+c.stop()
+[type(node) == "DICT", node["id"] == id, type(missing) == "NULL"]
+`)
+	if err != nil {
+		t.Fatalf("script error: %v", err)
+	}
+	list, ok := result.(*object.List)
+	if !ok {
+		t.Fatalf("expected list, got %T", result)
+	}
+	for i, elem := range list.Elements {
+		if b, _ := elem.AsBool(); !b {
+			t.Errorf("element %d: expected true", i)
+		}
+	}
+}
+
+func TestGossipIsLocal(t *testing.T) {
+	p := newScriptling()
+
+	result, err := p.Eval(`
+import scriptling.net.gossip as gossip
+c = gossip.create(bind_addr="127.0.0.1:0")
+c.start()
+id = c.node_id()
+local = c.is_local(id)
+other = c.is_local("00000000-0000-0000-0000-000000000000")
+c.stop()
+[local == True, other == False]
+`)
+	if err != nil {
+		t.Fatalf("script error: %v", err)
+	}
+	list, ok := result.(*object.List)
+	if !ok {
+		t.Fatalf("expected list, got %T", result)
+	}
+	for i, elem := range list.Elements {
+		if b, _ := elem.AsBool(); !b {
+			t.Errorf("element %d: expected true", i)
+		}
+	}
+}
+
+func TestGossipNodesByTag(t *testing.T) {
+	p := newScriptling()
+
+	result, err := p.Eval(`
+import scriptling.net.gossip as gossip
+c = gossip.create(bind_addr="127.0.0.1:0", tags=["web", "api"])
+c.start()
+web_nodes = c.nodes_by_tag("web")
+api_nodes = c.nodes_by_tag("api")
+missing_nodes = c.nodes_by_tag("nonexistent")
+c.stop()
+[len(web_nodes) >= 1, len(api_nodes) >= 1, len(missing_nodes) == 0]
+`)
+	if err != nil {
+		t.Fatalf("script error: %v", err)
+	}
+	list, ok := result.(*object.List)
+	if !ok {
+		t.Fatalf("expected list, got %T", result)
+	}
+	for i, elem := range list.Elements {
+		if b, _ := elem.AsBool(); !b {
+			t.Errorf("element %d: expected true", i)
+		}
+	}
+}
+
+func TestGossipCandidates(t *testing.T) {
+	p := newScriptling()
+
+	result, err := p.Eval(`
+import scriptling.net.gossip as gossip
+c = gossip.create(bind_addr="127.0.0.1:0")
+c.start()
+cands = c.candidates()
+c.stop()
+type(cands) == "LIST"
+`)
+	if err != nil {
+		t.Fatalf("script error: %v", err)
+	}
+	if b, _ := result.AsBool(); !b {
+		t.Error("expected candidates to return a list")
+	}
+}
+
+func TestGossipNodeGroup(t *testing.T) {
+	p := newScriptling()
+
+	result, err := p.Eval(`
+import scriptling.net.gossip as gossip
+c = gossip.create(bind_addr="127.0.0.1:0")
+c.start()
+c.set_metadata("role", "worker")
+ng = c.create_node_group(criteria={"role": "worker"})
+count = ng.count()
+local_id = c.node_id()
+contains_local = ng.contains(local_id)
+nodes = ng.nodes()
+ng.close()
+c.stop()
+[count >= 1, contains_local == True, len(nodes) >= 1]
+`)
+	if err != nil {
+		t.Fatalf("script error: %v", err)
+	}
+	list, ok := result.(*object.List)
+	if !ok {
+		t.Fatalf("expected list, got %T", result)
+	}
+	for i, elem := range list.Elements {
+		if b, _ := elem.AsBool(); !b {
+			t.Errorf("element %d: expected true", i)
+		}
+	}
+}
+
+func TestGossipNodeGroupMissingCriteria(t *testing.T) {
+	p := newScriptling()
+
+	_, err := p.Eval(`
+import scriptling.net.gossip as gossip
+c = gossip.create(bind_addr="127.0.0.1:0")
+c.start()
+c.create_node_group()
+`)
+	if err == nil {
+		t.Error("expected error for missing criteria")
+	}
+}
+
+func TestGossipNodeGroupMethods(t *testing.T) {
+	p := newScriptling()
+
+	_, err := p.Eval(`
+import scriptling.net.gossip as gossip
+c = gossip.create(bind_addr="127.0.0.1:0")
+c.start()
+c.set_metadata("zone", "us-east")
+ng = c.create_node_group(criteria={"zone": "us-east"})
+_ = ng.nodes
+_ = ng.contains
+_ = ng.count
+_ = ng.send_to_peers
+_ = ng.close
+ng.close()
+c.stop()
+`)
+	if err != nil {
+		t.Fatalf("script error (missing node_group method): %v", err)
+	}
+}
+
+func TestGossipLeaderElection(t *testing.T) {
+	p := newScriptling()
+
+	result, err := p.Eval(`
+import scriptling.net.gossip as gossip
+c = gossip.create(bind_addr="127.0.0.1:0")
+c.start()
+le = c.create_leader_election(check_interval="500ms", leader_timeout="2s")
+le.start()
+is_leader = le.is_leader()
+has_leader = le.has_leader()
+leader_id = le.get_leader_id()
+le.stop()
+c.stop()
+[is_leader == True, has_leader == True, leader_id == c.node_id()]
+`)
+	if err != nil {
+		t.Fatalf("script error: %v", err)
+	}
+	list, ok := result.(*object.List)
+	if !ok {
+		t.Fatalf("expected list, got %T", result)
+	}
+	for i, elem := range list.Elements {
+		if b, _ := elem.AsBool(); !b {
+			t.Errorf("element %d: expected true", i)
+		}
+	}
+}
+
+func TestGossipLeaderElectionMethods(t *testing.T) {
+	p := newScriptling()
+
+	_, err := p.Eval(`
+import scriptling.net.gossip as gossip
+c = gossip.create(bind_addr="127.0.0.1:0")
+c.start()
+le = c.create_leader_election()
+_ = le.start
+_ = le.stop
+_ = le.is_leader
+_ = le.has_leader
+_ = le.get_leader_id
+_ = le.send_to_peers
+_ = le.on_event
+le.stop()
+c.stop()
+`)
+	if err != nil {
+		t.Fatalf("script error (missing leader_election method): %v", err)
+	}
+}
+
+func TestGossipUnhandle(t *testing.T) {
+	p := newScriptling()
+
+	result, err := p.Eval(`
+import scriptling.net.gossip as gossip
+c = gossip.create(bind_addr="127.0.0.1:0")
+c.start()
+c.handle(128, lambda msg: None)
+removed = c.unhandle(128)
+removed_again = c.unhandle(128)
+c.stop()
+[removed == True, removed_again == False]
+`)
+	if err != nil {
+		t.Fatalf("script error: %v", err)
+	}
+	list, ok := result.(*object.List)
+	if !ok {
+		t.Fatalf("expected list, got %T", result)
+	}
+	for i, elem := range list.Elements {
+		if b, _ := elem.AsBool(); !b {
+			t.Errorf("element %d: expected true", i)
+		}
+	}
+}
+
+func TestGossipHTTPTransport(t *testing.T) {
+	p := newScriptling()
+
+	_, err := p.Eval(`
+import scriptling.net.gossip as gossip
+c = gossip.create(bind_addr="127.0.0.1:0", transport="http")
+c.start()
+c.stop()
+`)
+	if err != nil {
+		t.Fatalf("script error (http transport): %v", err)
+	}
+}
+
+func TestGossipInvalidTransport(t *testing.T) {
+	p := newScriptling()
+
+	_, err := p.Eval(`
+import scriptling.net.gossip as gossip
+c = gossip.create(bind_addr="127.0.0.1:0", transport="invalid")
+`)
+	if err == nil {
+		t.Error("expected error for invalid transport")
+	}
+}
+
+func TestGossipAdvancedConfig(t *testing.T) {
+	p := newScriptling()
+
+	_, err := p.Eval(`
+import scriptling.net.gossip as gossip
+c = gossip.create(
+    bind_addr="127.0.0.1:0",
+    gossip_interval="3s",
+    gossip_max_interval="15s",
+    fan_out_multiplier=1.5,
+    ttl_multiplier=1.2,
+    force_reliable_transport=False,
+    prefer_ipv6=False,
+    health_check_interval="3s",
+    suspect_timeout="2s",
+    dead_node_timeout="10s",
+    node_retention_time="30m",
+    compress_min_size=512,
+)
+c.start()
+c.stop()
+`)
+	if err != nil {
+		t.Fatalf("script error (advanced config): %v", err)
+	}
+}
+
+func TestGossipNodeGroupWithCallbacks(t *testing.T) {
+	p := newScriptling()
+
+	result, err := p.Eval(`
+import scriptling.net.gossip as gossip
+
+c = gossip.create(bind_addr="127.0.0.1:0")
+c.start()
+c.set_metadata("role", "api")
+
+ng = c.create_node_group(
+    criteria={"role": "api"},
+    on_node_added=lambda node: None,
+    on_node_removed=lambda node: None,
+)
+count = ng.count()
+ng.close()
+c.stop()
+count >= 1
+`)
+	if err != nil {
+		t.Fatalf("script error: %v", err)
+	}
+	if b, _ := result.AsBool(); !b {
+		t.Error("expected node group to have at least 1 node")
 	}
 }
 
