@@ -3,13 +3,10 @@ package extlibs
 
 import (
 	"bufio"
-	"bytes"
 	"context"
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"sync"
 
@@ -17,17 +14,6 @@ import (
 	"github.com/paularlott/scriptling/extlibs/fssecurity"
 	"github.com/paularlott/scriptling/object"
 )
-
-// grepWorkerPoolSize is the minimum number of concurrent file-search goroutines.
-// The actual pool size is max(grepWorkerPoolSize, NumCPU/2).
-const grepWorkerPoolSize = 4
-
-// grepDefaultMaxFileSize is the default maximum file size to search (1 MiB, matching rg).
-// Pass max_size=None to disable the limit.
-const grepDefaultMaxFileSize int64 = 1 * 1024 * 1024
-
-// grepBinarySniffLen is the number of bytes read to detect binary files.
-const grepBinarySniffLen = 8000
 
 // grepLibraryInstance holds the configured grep library instance.
 type grepLibraryInstance struct {
@@ -72,84 +58,6 @@ func (g *grepLibraryInstance) createLibrary() *object.Library {
 	}, nil, "Fast file content search with regex or literal patterns")
 }
 
-// workerCount returns the bounded worker pool size.
-func workerCount() int {
-	n := runtime.NumCPU() / 2
-	if n < grepWorkerPoolSize {
-		n = grepWorkerPoolSize
-	}
-	return n
-}
-
-// grepOptions holds parsed kwargs for a search call.
-type grepOptions struct {
-	recursive   bool
-	ignoreCase  bool
-	glob        string
-	maxSize     int64
-	followLinks bool
-}
-
-func parseGrepKwargs(kwargs object.Kwargs) (grepOptions, object.Object) {
-	opts := grepOptions{
-		maxSize: grepDefaultMaxFileSize,
-	}
-
-	if v := kwargs.Get("recursive"); v != nil {
-		b, err := v.AsBool()
-		if err != nil {
-			return opts, err
-		}
-		opts.recursive = b
-	}
-	if v := kwargs.Get("ignore_case"); v != nil {
-		b, err := v.AsBool()
-		if err != nil {
-			return opts, err
-		}
-		opts.ignoreCase = b
-	}
-	if v := kwargs.Get("glob"); v != nil {
-		s, err := v.AsString()
-		if err != nil {
-			return opts, err
-		}
-		opts.glob = s
-	}
-	if v := kwargs.Get("follow_links"); v != nil {
-		b, err := v.AsBool()
-		if err != nil {
-			return opts, err
-		}
-		opts.followLinks = b
-	}
-	if v := kwargs.Get("max_size"); v != nil {
-		if _, isNull := v.(*object.Null); isNull {
-			opts.maxSize = 0
-		} else {
-			n, err := v.AsInt()
-			if err != nil {
-				return opts, err
-			}
-			opts.maxSize = n
-		}
-	}
-
-	return opts, nil
-}
-
-// compilePattern compiles the search pattern into a *regexp.Regexp.
-func compilePattern(pattern string, literal bool, ignoreCase bool) (*regexp.Regexp, error) {
-	p := pattern
-	if literal {
-		p = regexp.QuoteMeta(p)
-	}
-	if ignoreCase {
-		p = "(?i)" + p
-	}
-	return regexp.Compile(p)
-}
-
 // matchResult is a single line match.
 type matchResult struct {
 	File string
@@ -157,12 +65,12 @@ type matchResult struct {
 	Text string
 }
 
-// fnPattern implements grep.pattern(pattern, path, **kwargs) — regex search
+// fnPattern implements grep.pattern(regex, path, **kwargs) — regex search.
 func (g *grepLibraryInstance) fnPattern(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 	return g.run(ctx, kwargs, args, false)
 }
 
-// fnString implements grep.string(text, path, **kwargs) — literal string search
+// fnString implements grep.string(text, path, **kwargs) — literal string search.
 func (g *grepLibraryInstance) fnString(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 	return g.run(ctx, kwargs, args, true)
 }
@@ -181,11 +89,11 @@ func (g *grepLibraryInstance) run(ctx context.Context, kwargs object.Kwargs, arg
 		return err
 	}
 
-	if secErr := g.checkPath(searchPath); secErr != nil {
-		return secErr
+	if !g.config.IsPathAllowed(searchPath) {
+		return errors.NewPermissionError("access denied: path '%s' is outside allowed directories", searchPath)
 	}
 
-	opts, oErr := parseGrepKwargs(kwargs)
+	opts, oErr := parseFileopsKwargs(kwargs)
 	if oErr != nil {
 		return oErr
 	}
@@ -211,20 +119,17 @@ func (g *grepLibraryInstance) run(ctx context.Context, kwargs object.Kwargs, arg
 }
 
 // searchDir walks a directory and searches files concurrently.
-func (g *grepLibraryInstance) searchDir(ctx context.Context, root string, re *regexp.Regexp, opts grepOptions) []matchResult {
-	type job struct{ path string }
-
-	jobs := make(chan job, 64)
+func (g *grepLibraryInstance) searchDir(ctx context.Context, root string, re *regexp.Regexp, opts fileopsOptions) []matchResult {
+	jobs := make(chan string, 64)
 	resultsCh := make(chan []matchResult, 64)
 
-	n := workerCount()
 	var wg sync.WaitGroup
-	for i := 0; i < n; i++ {
+	for i := 0; i < workerCount(); i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for j := range jobs {
-				resultsCh <- g.searchFile(j.path, re, opts)
+			for path := range jobs {
+				resultsCh <- g.searchFile(path, re, opts)
 			}
 		}()
 	}
@@ -234,49 +139,7 @@ func (g *grepLibraryInstance) searchDir(ctx context.Context, root string, re *re
 		close(resultsCh)
 	}()
 
-	// Walk in a separate goroutine so workers can start immediately.
-	go func() {
-		defer close(jobs)
-		filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-			if err != nil || d.IsDir() {
-				if d != nil && d.IsDir() && !opts.recursive && path != root {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-
-			// Handle symlinks
-			if d.Type()&os.ModeSymlink != 0 {
-				if !opts.followLinks {
-					return nil
-				}
-				real, err := filepath.EvalSymlinks(path)
-				if err != nil {
-					return nil
-				}
-				if !g.config.IsPathAllowed(real) {
-					return nil
-				}
-			} else if !g.config.IsPathAllowed(path) {
-				return nil
-			}
-
-			// Glob filter
-			if opts.glob != "" {
-				matched, err := filepath.Match(opts.glob, filepath.Base(path))
-				if err != nil || !matched {
-					return nil
-				}
-			}
-
-			select {
-			case <-ctx.Done():
-				return filepath.SkipAll
-			case jobs <- job{path: path}:
-			}
-			return nil
-		})
-	}()
+	go walkFiles(ctx, root, opts, g.config, jobs)
 
 	var all []matchResult
 	for r := range resultsCh {
@@ -286,30 +149,12 @@ func (g *grepLibraryInstance) searchDir(ctx context.Context, root string, re *re
 }
 
 // searchFile searches a single file for matches.
-func (g *grepLibraryInstance) searchFile(path string, re *regexp.Regexp, opts grepOptions) []matchResult {
-	f, err := os.Open(path)
-	if err != nil {
+func (g *grepLibraryInstance) searchFile(path string, re *regexp.Regexp, opts fileopsOptions) []matchResult {
+	f, ok := openTextFile(path, opts.maxSize)
+	if !ok {
 		return nil
 	}
 	defer f.Close()
-
-	// Max size check
-	if opts.maxSize > 0 {
-		info, err := f.Stat()
-		if err != nil || info.Size() > opts.maxSize {
-			return nil
-		}
-	}
-
-	// Binary sniff
-	sniff := make([]byte, grepBinarySniffLen)
-	n, _ := f.Read(sniff)
-	if bytes.IndexByte(sniff[:n], 0) >= 0 {
-		return nil
-	}
-	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		return nil
-	}
 
 	var results []matchResult
 	scanner := bufio.NewScanner(f)
@@ -339,14 +184,6 @@ func matchesToList(matches []matchResult) object.Object {
 		elements[i] = d
 	}
 	return &object.List{Elements: elements}
-}
-
-// checkPath validates a path against the security config.
-func (g *grepLibraryInstance) checkPath(path string) object.Object {
-	if !g.config.IsPathAllowed(path) {
-		return errors.NewPermissionError("access denied: path '%s' is outside allowed directories", path)
-	}
-	return nil
 }
 
 const grepPatternHelp = `pattern(regex, path, *, recursive=False, ignore_case=False, glob="", follow_links=False, max_size=1048576) -> list

@@ -61,6 +61,7 @@ func AllLibraryNames() []string {
 		extlibs.PathlibLibraryName,
 		extlibs.GlobLibraryName,
 		extlibs.GrepLibraryName,
+		extlibs.TextLibraryName,
 		extlibs.WaitForLibraryName,
 		extlibs.WebSocketLibraryName,
 		extlibs.MulticastLibraryName,
@@ -138,6 +139,7 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 	reg(extlibs.PathlibLibraryName, func() { extlibs.RegisterPathlibLibrary(p, allowedPaths) })
 	reg(extlibs.GlobLibraryName, func() { extlibs.RegisterGlobLibrary(p, allowedPaths) })
 	reg(extlibs.GrepLibraryName, func() { extlibs.RegisterGrepLibrary(p, allowedPaths) })
+	reg(extlibs.TextLibraryName, func() { extlibs.RegisterTextLibrary(p, allowedPaths) })
 	reg(extlibs.WaitForLibraryName, func() { extlibs.RegisterWaitForLibrary(p) })
 	reg(extlibs.WebSocketLibraryName, func() { extlibs.RegisterWebSocketLibrary(p) })
 

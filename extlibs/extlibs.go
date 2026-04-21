@@ -31,4 +31,5 @@ const (
 	UnicastLibraryName        = "scriptling.net.unicast"
 	GossipLibraryName         = "scriptling.net.gossip"
 	GrepLibraryName           = "scriptling.grep"
+	TextLibraryName           = "scriptling.text"
 )
