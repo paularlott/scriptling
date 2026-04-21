@@ -25,6 +25,7 @@ type ServerConfig struct {
 	CacheDir       string   // Override default OS cache dir for remote packages
 	BearerToken    string
 	AllowedPaths   []string // Filesystem path restrictions (empty = no restrictions)
+	DisabledLibs   []string // Built-in libraries to disable (empty = all enabled)
 	MCPToolsDir    string   // Empty means MCP disabled
 	MCPExecTool    bool     // Enable code execution tool
 	KVStoragePath  string   // Empty means in-memory KV store

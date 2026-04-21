@@ -118,6 +118,16 @@ func main() {
 				DefaultValue: "",
 				EnvVars:      []string{"SCRIPTLING_ALLOWED_PATHS"},
 			},
+			&cli.StringSliceFlag{
+				Name:    "disable-lib",
+				Usage:   "Disable a built-in library by name (can be repeated)",
+				Global:  true,
+				EnvVars: []string{"SCRIPTLING_DISABLE_LIB"},
+			},
+			&cli.BoolFlag{
+				Name:  "list-libs",
+				Usage: "List available built-in libraries and exit",
+			},
 			&cli.StringFlag{
 				Name:         "kv-storage",
 				Usage:        "Directory for persistent KV store (empty = in-memory only)",
@@ -196,6 +206,21 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 		return runLint(cmd)
 	}
 
+	disabledLibs := cmd.GetStringSlice("disable-lib")
+
+	if cmd.GetBool("list-libs") {
+		disabled := make(map[string]bool, len(disabledLibs))
+		for _, name := range disabledLibs {
+			disabled[name] = true
+		}
+		for _, name := range setup.AllLibraryNames() {
+			if !disabled[name] {
+				fmt.Println(name)
+			}
+		}
+		return nil
+	}
+
 	allowedPaths := bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths"))
 	p := scriptling.New()
 	secretRegistry, err := loadSecretRegistry(cmd.GetString("secret-config"))
@@ -218,8 +243,8 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	defer extlibs.CloseKVStore()
 
 	libDirs := bootstrap.BuildLibDirs(baseDir, cmd.GetStringSlice("libpath"))
-	setup.Factories(libDirs, allowedPaths, secretRegistry, globalLogger)
-	setup.Scriptling(p, libDirs, true, allowedPaths, secretRegistry, globalLogger)
+	setup.Factories(libDirs, allowedPaths, disabledLibs, secretRegistry, globalLogger)
+	setup.Scriptling(p, libDirs, true, allowedPaths, disabledLibs, secretRegistry, globalLogger)
 
 	packages := cmd.GetStringSlice("package")
 	insecure := cmd.GetBool("insecure")
@@ -284,6 +309,7 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 		CacheDir:       cmd.GetString("cache-dir"),
 		BearerToken:    cmd.GetString("bearer-token"),
 		AllowedPaths:   bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths")),
+		DisabledLibs:   cmd.GetStringSlice("disable-lib"),
 		MCPToolsDir:    cmd.GetString("mcp-tools"),
 		MCPExecTool:    cmd.GetBool("mcp-exec-script"),
 		KVStoragePath:  cmd.GetString("kv-storage"),
