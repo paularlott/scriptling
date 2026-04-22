@@ -11,7 +11,7 @@ func TestScriptlingRegistersLoaderAndMCPLibrary(t *testing.T) {
 	p := scriptling.New()
 	log := logslog.New(logslog.Config{Level: "error"})
 
-	Scriptling(p, []string{"/tmp/scriptling-lib"}, false, nil, nil, log)
+	Scriptling(p, []string{"/tmp/scriptling-lib"}, false, nil, nil, nil, log, "", "")
 
 	if p.GetLibraryLoader() == nil {
 		t.Fatal("expected library loader to be configured")

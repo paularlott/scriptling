@@ -53,7 +53,7 @@ tool.return_string(localmod.value() + "+" + packmod.value())
 		t.Fatal(err)
 	}
 
-	handler, err := createMCPToolHandler(scriptPath, nil, nil, secretprovider.NewRegistry(), packLoader)
+	handler, err := createMCPToolHandler(scriptPath, nil, nil, nil, secretprovider.NewRegistry(), packLoader)
 	if err != nil {
 		t.Fatal(err)
 	}
