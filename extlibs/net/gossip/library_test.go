@@ -5,10 +5,12 @@ import (
 
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/object"
+	"github.com/paularlott/scriptling/stdlib"
 )
 
 func newScriptling() *scriptling.Scriptling {
 	p := scriptling.New()
+	stdlib.RegisterAll(p)
 	Register(p, nil)
 	return p
 }
