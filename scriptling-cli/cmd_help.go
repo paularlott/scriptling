@@ -36,7 +36,7 @@ func helpCmd() *cli.Command {
 			secretRegistry := secretprovider.NewRegistry()
 
 			p := scriptling.New()
-			setup.Scriptling(p, libDirs, false, allowedPaths, disabledLibs, secretRegistry, globalLogger)
+			setup.Scriptling(p, libDirs, false, allowedPaths, disabledLibs, secretRegistry, globalLogger, cmd.GetString("docker-host"), cmd.GetString("podman-host"))
 
 			packages := cmd.GetStringSlice("package")
 			if len(packages) > 0 {

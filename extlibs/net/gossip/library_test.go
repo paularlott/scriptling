@@ -175,8 +175,8 @@ func TestGossipDecodeJSON(t *testing.T) {
 	p := newScriptling()
 
 	result, err := p.Eval(`
-import scriptling.net.gossip as gossip
-d = gossip.decode_json('{"x": 1, "y": "hello"}')
+import json
+d = json.loads('{"x": 1, "y": "hello"}')
 [type(d) == "DICT", d["x"] == 1, d["y"] == "hello"]
 `)
 	if err != nil {
@@ -197,8 +197,8 @@ func TestGossipDecodeJSONInvalid(t *testing.T) {
 	p := newScriptling()
 
 	_, err := p.Eval(`
-import scriptling.net.gossip as gossip
-gossip.decode_json("not json")
+import json
+json.loads("not json")
 `)
 	if err == nil {
 		t.Error("expected error for invalid JSON")

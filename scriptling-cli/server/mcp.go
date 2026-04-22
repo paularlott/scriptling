@@ -119,7 +119,7 @@ RETURNING RESULTS:
 		func(ctx context.Context, req *mcp_lib.ToolRequest) (*mcp_lib.ToolResponse, error) {
 			code, _ := req.String("code")
 			p := scriptling.New()
-			setup.Scriptling(p, s.config.LibDirs, false, s.config.AllowedPaths, s.config.DisabledLibs, s.config.SecretRegistry, Log)
+			setup.Scriptling(p, s.config.LibDirs, false, s.config.AllowedPaths, s.config.DisabledLibs, s.config.SecretRegistry, Log, s.config.DockerSock, s.config.PodmanSock)
 
 			response, exitCode, err := mcp.RunToolScript(ctx, p, code, map[string]interface{}{})
 			if err != nil && exitCode != 0 {
@@ -157,7 +157,7 @@ func createMCPToolHandler(scriptPath string, libDirs []string, allowedPaths []st
 
 	handler := func(ctx context.Context, req *mcp_lib.ToolRequest) (*mcp_lib.ToolResponse, error) {
 		p := scriptling.New()
-		setup.Scriptling(p, toolLibDirs, false, allowedPaths, disabledLibs, secretRegistry, Log)
+		setup.Scriptling(p, toolLibDirs, false, allowedPaths, disabledLibs, secretRegistry, Log, "", "")
 		bootstrap.ApplyPackLoader(p, packLoader)
 
 		params := req.Args()

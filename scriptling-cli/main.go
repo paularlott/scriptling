@@ -16,6 +16,7 @@ import (
 	"github.com/paularlott/scriptling/build"
 	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/extlibs/secretprovider"
+	scriptlingcontainer "github.com/paularlott/scriptling/extlibs/container"
 	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/scriptling/scriptling-cli/bootstrap"
 
@@ -135,6 +136,18 @@ func main() {
 				EnvVars:      []string{"SCRIPTLING_KV_STORAGE"},
 			},
 			&cli.StringFlag{
+				Name:         "docker-host",
+				Usage:        "Docker endpoint (Unix socket path, unix://, tcp://, or https://)",
+				DefaultValue: scriptlingcontainer.DefaultDockerSocket,
+				EnvVars:      []string{"DOCKER_HOST"},
+			},
+			&cli.StringFlag{
+				Name:         "podman-host",
+				Usage:        "Podman endpoint (Unix socket path or unix:// URI)",
+				DefaultValue: scriptlingcontainer.DefaultPodmanSocket,
+				EnvVars:      []string{"CONTAINER_HOST"},
+			},
+			&cli.StringFlag{
 				Name:    "secret-config",
 				Usage:   "TOML file that defines host-owned secret provider aliases for scriptling.secret",
 				EnvVars: []string{"SCRIPTLING_SECRET_CONFIG"},
@@ -243,8 +256,8 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	defer extlibs.CloseKVStore()
 
 	libDirs := bootstrap.BuildLibDirs(baseDir, cmd.GetStringSlice("libpath"))
-	setup.Factories(libDirs, allowedPaths, disabledLibs, secretRegistry, globalLogger)
-	setup.Scriptling(p, libDirs, true, allowedPaths, disabledLibs, secretRegistry, globalLogger)
+	setup.Factories(libDirs, allowedPaths, disabledLibs, secretRegistry, globalLogger, cmd.GetString("docker-host"), cmd.GetString("podman-host"))
+	setup.Scriptling(p, libDirs, true, allowedPaths, disabledLibs, secretRegistry, globalLogger, cmd.GetString("docker-host"), cmd.GetString("podman-host"))
 
 	packages := cmd.GetStringSlice("package")
 	insecure := cmd.GetBool("insecure")
@@ -314,6 +327,8 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 		MCPExecTool:    cmd.GetBool("mcp-exec-script"),
 		KVStoragePath:  cmd.GetString("kv-storage"),
 		SecretRegistry: secretRegistry,
+		DockerSock:     cmd.GetString("docker-host"),
+		PodmanSock:     cmd.GetString("podman-host"),
 		TLSCert:        cmd.GetString("tls-cert"),
 		TLSKey:         cmd.GetString("tls-key"),
 		TLSGenerate:    cmd.GetBool("tls-generate"),

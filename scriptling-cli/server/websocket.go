@@ -80,7 +80,7 @@ func (s *Server) runWebSocketHandler(handlerRef string, clientObj *object.Instan
 
 	// Create fresh scriptling environment
 	p := scriptling.New()
-	setup.Scriptling(p, s.config.LibDirs, false, s.config.AllowedPaths, s.config.DisabledLibs, s.config.SecretRegistry, Log)
+	setup.Scriptling(p, s.config.LibDirs, false, s.config.AllowedPaths, s.config.DisabledLibs, s.config.SecretRegistry, Log, s.config.DockerSock, s.config.PodmanSock)
 	s.applyPackLoader(p)
 
 	// Import the library

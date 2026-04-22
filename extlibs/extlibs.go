@@ -32,4 +32,5 @@ const (
 	GossipLibraryName         = "scriptling.net.gossip"
 	GrepLibraryName           = "scriptling.grep"
 	TextLibraryName           = "scriptling.text"
+	ContainerLibraryName      = "scriptling.container"
 )

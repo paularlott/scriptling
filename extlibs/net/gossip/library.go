@@ -2,7 +2,6 @@ package gossip
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -1380,29 +1379,6 @@ Advanced configuration:
 
 Returns:
   Cluster object with methods for membership and messaging`,
-		},
-		"decode_json": {
-			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if err := errors.MinArgs(args, 1); err != nil {
-					return err
-				}
-				str, strErr := args[0].AsString()
-				if strErr != nil {
-					return strErr
-				}
-				var data interface{}
-				if jsonErr := json.Unmarshal([]byte(str), &data); jsonErr != nil {
-					return errors.NewError("JSON decode failed: %s", jsonErr.Error())
-				}
-				return conversion.FromGo(data)
-			},
-			HelpText: `decode_json(json_string) - Decode a JSON string to a scriptling value
-
-Parameters:
-  json_string (string): JSON string to decode
-
-Returns:
-  Decoded value (dict, list, string, int, float, bool, or None)`,
 		},
 	}, map[string]object.Object{
 		"MSG_USER": object.NewInteger(128),

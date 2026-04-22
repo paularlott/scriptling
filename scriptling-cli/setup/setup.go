@@ -8,6 +8,7 @@ import (
 	"github.com/paularlott/scriptling/extlibs/ai"
 	aimemory "github.com/paularlott/scriptling/extlibs/ai/memory"
 	scriptlingconsole "github.com/paularlott/scriptling/extlibs/console"
+	scriptlingcontainer "github.com/paularlott/scriptling/extlibs/container"
 	scriptlingmcp "github.com/paularlott/scriptling/extlibs/mcp"
 	messagingconsole "github.com/paularlott/scriptling/extlibs/messaging/console"
 	"github.com/paularlott/scriptling/extlibs/messaging/discord"
@@ -62,6 +63,7 @@ func AllLibraryNames() []string {
 		extlibs.GlobLibraryName,
 		extlibs.GrepLibraryName,
 		extlibs.TextLibraryName,
+		extlibs.ContainerLibraryName,
 		extlibs.WaitForLibraryName,
 		extlibs.WebSocketLibraryName,
 		extlibs.MulticastLibraryName,
@@ -86,7 +88,7 @@ func AllLibraryNames() []string {
 // allowedPaths: Filesystem path restrictions for os, pathlib, glob, sandbox (nil = no restrictions)
 // disabledLibs: Library names to skip registration (nil = all enabled)
 // log: Logger instance for the logging library
-func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract bool, allowedPaths []string, disabledLibs []string, secretRegistry *secretprovider.Registry, log logger.Logger) {
+func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract bool, allowedPaths []string, disabledLibs []string, secretRegistry *secretprovider.Registry, log logger.Logger, dockerSock, podmanSock string) {
 	disabled := make(map[string]bool, len(disabledLibs))
 	for _, name := range disabledLibs {
 		disabled[name] = true
@@ -140,6 +142,7 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 	reg(extlibs.GlobLibraryName, func() { extlibs.RegisterGlobLibrary(p, allowedPaths) })
 	reg(extlibs.GrepLibraryName, func() { extlibs.RegisterGrepLibrary(p, allowedPaths) })
 	reg(extlibs.TextLibraryName, func() { extlibs.RegisterTextLibrary(p, allowedPaths) })
+	reg(extlibs.ContainerLibraryName, func() { scriptlingcontainer.Register(p, dockerSock, podmanSock) })
 	reg(extlibs.WaitForLibraryName, func() { extlibs.RegisterWaitForLibrary(p) })
 	reg(extlibs.WebSocketLibraryName, func() { extlibs.RegisterWebSocketLibrary(p) })
 
@@ -174,10 +177,10 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 
 // Factories configures the global sandbox and background factories.
 // Call this once at startup, before any scripts execute.
-func Factories(libdirs []string, allowedPaths []string, disabledLibs []string, secretRegistry *secretprovider.Registry, log logger.Logger) {
+func Factories(libdirs []string, allowedPaths []string, disabledLibs []string, secretRegistry *secretprovider.Registry, log logger.Logger, dockerSock, podmanSock string) {
 	factory := func() extlibs.SandboxInstance {
 		p := scriptling.New()
-		Scriptling(p, libdirs, false, allowedPaths, disabledLibs, secretRegistry, log)
+		Scriptling(p, libdirs, false, allowedPaths, disabledLibs, secretRegistry, log, dockerSock, podmanSock)
 		return p
 	}
 	extlibs.SetSandboxFactory(factory)

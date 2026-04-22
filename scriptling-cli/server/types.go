@@ -30,6 +30,8 @@ type ServerConfig struct {
 	MCPExecTool    bool     // Enable code execution tool
 	KVStoragePath  string   // Empty means in-memory KV store
 	SecretRegistry *secretprovider.Registry
+	DockerSock     string
+	PodmanSock     string
 	TLSCert        string
 	TLSKey         string
 	TLSGenerate    bool
