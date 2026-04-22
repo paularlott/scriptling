@@ -5,18 +5,20 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/paularlott/cli"
 	"github.com/paularlott/cli/env"
+	cli_toml "github.com/paularlott/cli/toml"
 	"github.com/paularlott/cli/tui"
 	"github.com/paularlott/logger"
 	logslog "github.com/paularlott/logger/slog"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/build"
 	"github.com/paularlott/scriptling/extlibs"
-	"github.com/paularlott/scriptling/extlibs/secretprovider"
 	scriptlingcontainer "github.com/paularlott/scriptling/extlibs/container"
+	"github.com/paularlott/scriptling/extlibs/secretprovider"
 	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/scriptling/scriptling-cli/bootstrap"
 
@@ -28,14 +30,30 @@ import (
 
 var globalLogger logger.Logger
 
+const (
+	configFile = "scriptling.toml"
+	configDir  = "scriptling"
+)
+
 func main() {
 	env.Load()
+
+	cfgFile := configFile
 
 	cmd := &cli.Command{
 		Name:        "scriptling",
 		Version:     build.Version,
 		Usage:       "Scriptling interpreter",
 		Description: "Run Scriptling scripts from files, stdin, or interactively",
+		ConfigFile: cli_toml.NewConfigFile(&cfgFile, func() []string {
+			paths := []string{"."}
+			home, err := os.UserHomeDir()
+			if err == nil {
+				paths = append(paths, home)
+				paths = append(paths, filepath.Join(home, ".config", configDir))
+			}
+			return paths
+		}),
 		Commands: []*cli.Command{
 			helpCmd(),
 			packCmd(),
@@ -43,25 +61,37 @@ func main() {
 			cacheCmd(),
 		},
 		Flags: []cli.Flag{
+			&cli.StringFlag{
+				Name:        "config",
+				Aliases:     []string{"C"},
+				Usage:       "Path to configuration file",
+				DefaultText: configFile + " in ., $HOME/, $HOME/.config/" + configDir + "/, /etc/" + configDir + "/",
+				EnvVars:     []string{"SCRIPTLING_CONFIG"},
+				AssignTo:    &cfgFile,
+				Global:      true,
+			},
 			&cli.BoolFlag{
 				Name:    "interactive",
 				Usage:   "Start interactive mode",
 				Aliases: []string{"i"},
 			},
 			&cli.StringSliceFlag{
-				Name:    "package",
-				Usage:   "Package (.zip) path or URL to load (can be repeated)",
-				Aliases: []string{"p"},
+				Name:       "package",
+				Usage:      "Package (.zip) path or URL to load (can be repeated)",
+				Aliases:    []string{"p"},
+				ConfigPath: []string{"packages"},
 			},
 			&cli.BoolFlag{
-				Name:    "insecure",
-				Usage:   "Allow self-signed/insecure HTTPS certificates for package URLs",
-				Aliases: []string{"k"},
+				Name:       "insecure",
+				Usage:      "Allow self-signed/insecure HTTPS certificates for package URLs",
+				Aliases:    []string{"k"},
+				ConfigPath: []string{"insecure"},
 			},
 			&cli.StringFlag{
-				Name:    "cache-dir",
-				Usage:   "Override default OS cache directory for remote packages",
-				EnvVars: []string{"SCRIPTLING_CACHE_DIR"},
+				Name:       "cache-dir",
+				Usage:      "Override default OS cache directory for remote packages",
+				EnvVars:    []string{"SCRIPTLING_CACHE_DIR"},
+				ConfigPath: []string{"cache.dir"},
 			},
 			&cli.StringFlag{
 				Name:    "code",
@@ -69,11 +99,12 @@ func main() {
 				Aliases: []string{"c"},
 			},
 			&cli.StringSliceFlag{
-				Name:    "libpath",
-				Usage:   "Additional directories to search for libraries (script dir / cwd is always searched first)",
-				Aliases: []string{"L"},
-				Global:  true,
-				EnvVars: []string{"SCRIPTLING_LIBPATH"},
+				Name:       "libpath",
+				Usage:      "Additional directories to search for libraries (script dir / cwd is always searched first)",
+				Aliases:    []string{"L"},
+				Global:     true,
+				EnvVars:    []string{"SCRIPTLING_LIBPATH"},
+				ConfigPath: []string{"libpath"},
 			},
 			&cli.StringFlag{
 				Name:         "log-level",
@@ -81,6 +112,7 @@ func main() {
 				DefaultValue: "info",
 				Global:       true,
 				EnvVars:      []string{"SCRIPTLING_LOG_LEVEL"},
+				ConfigPath:   []string{"log.level"},
 			},
 			&cli.StringFlag{
 				Name:         "log-format",
@@ -88,6 +120,7 @@ func main() {
 				DefaultValue: "console",
 				Global:       true,
 				EnvVars:      []string{"SCRIPTLING_LOG_FORMAT"},
+				ConfigPath:   []string{"log.format"},
 			},
 			&cli.StringFlag{
 				Name:         "server",
@@ -95,35 +128,41 @@ func main() {
 				Aliases:      []string{"S"},
 				DefaultValue: "",
 				EnvVars:      []string{"SCRIPTLING_SERVER"},
+				ConfigPath:   []string{"server.address"},
 			},
 			&cli.StringFlag{
 				Name:         "mcp-tools",
 				Usage:        "Enable MCP server with tools from directory",
 				DefaultValue: "",
 				EnvVars:      []string{"SCRIPTLING_MCP_TOOLS"},
+				ConfigPath:   []string{"mcp.tools"},
 			},
 			&cli.BoolFlag{
-				Name:    "mcp-exec-script",
-				Usage:   "Enable MCP server with script execution tool",
-				EnvVars: []string{"SCRIPTLING_MCP_EXEC_SCRIPT"},
+				Name:       "mcp-exec-script",
+				Usage:      "Enable MCP server with script execution tool",
+				EnvVars:    []string{"SCRIPTLING_MCP_EXEC_SCRIPT"},
+				ConfigPath: []string{"mcp.exec_script"},
 			},
 			&cli.StringFlag{
 				Name:         "bearer-token",
 				Usage:        "Bearer token for authentication",
 				DefaultValue: "",
 				EnvVars:      []string{"SCRIPTLING_BEARER_TOKEN"},
+				ConfigPath:   []string{"server.bearer_token"},
 			},
 			&cli.StringFlag{
 				Name:         "allowed-paths",
 				Usage:        "Comma-separated list of allowed filesystem paths (restricts os, pathlib, glob, sandbox)",
 				DefaultValue: "",
 				EnvVars:      []string{"SCRIPTLING_ALLOWED_PATHS"},
+				ConfigPath:   []string{"security.allowed_paths"},
 			},
 			&cli.StringSliceFlag{
-				Name:    "disable-lib",
-				Usage:   "Disable a built-in library by name (can be repeated)",
-				Global:  true,
-				EnvVars: []string{"SCRIPTLING_DISABLE_LIB"},
+				Name:       "disable-lib",
+				Usage:      "Disable a built-in library by name (can be repeated)",
+				Global:     true,
+				EnvVars:    []string{"SCRIPTLING_DISABLE_LIB"},
+				ConfigPath: []string{"security.disable_libs"},
 			},
 			&cli.BoolFlag{
 				Name:  "list-libs",
@@ -134,37 +173,44 @@ func main() {
 				Usage:        "Directory for persistent KV store (empty = in-memory only)",
 				DefaultValue: "",
 				EnvVars:      []string{"SCRIPTLING_KV_STORAGE"},
+				ConfigPath:   []string{"kv.storage"},
 			},
 			&cli.StringFlag{
 				Name:         "docker-host",
 				Usage:        "Docker endpoint (Unix socket path, unix://, tcp://, or https://)",
 				DefaultValue: scriptlingcontainer.DefaultDockerSocket,
 				EnvVars:      []string{"DOCKER_HOST"},
+				ConfigPath:   []string{"container.docker_host"},
 			},
 			&cli.StringFlag{
 				Name:         "podman-host",
 				Usage:        "Podman endpoint (Unix socket path or unix:// URI)",
 				DefaultValue: scriptlingcontainer.DefaultPodmanSocket,
 				EnvVars:      []string{"CONTAINER_HOST"},
+				ConfigPath:   []string{"container.podman_host"},
 			},
 			&cli.StringFlag{
-				Name:    "secret-config",
-				Usage:   "TOML file that defines host-owned secret provider aliases for scriptling.secret",
-				EnvVars: []string{"SCRIPTLING_SECRET_CONFIG"},
+				Name:       "secret-config",
+				Usage:      "TOML file that defines host-owned secret provider aliases for scriptling.secret",
+				EnvVars:    []string{"SCRIPTLING_SECRET_CONFIG"},
+				ConfigPath: []string{"secret.config"},
 			},
 			&cli.StringFlag{
-				Name:    "tls-cert",
-				Usage:   "TLS certificate file",
-				EnvVars: []string{"SCRIPTLING_TLS_CERT"},
+				Name:       "tls-cert",
+				Usage:      "TLS certificate file",
+				EnvVars:    []string{"SCRIPTLING_TLS_CERT"},
+				ConfigPath: []string{"tls.cert"},
 			},
 			&cli.StringFlag{
-				Name:    "tls-key",
-				Usage:   "TLS key file",
-				EnvVars: []string{"SCRIPTLING_TLS_KEY"},
+				Name:       "tls-key",
+				Usage:      "TLS key file",
+				EnvVars:    []string{"SCRIPTLING_TLS_KEY"},
+				ConfigPath: []string{"tls.key"},
 			},
 			&cli.BoolFlag{
-				Name:  "tls-generate",
-				Usage: "Generate self-signed certificate in memory",
+				Name:       "tls-generate",
+				Usage:      "Generate self-signed certificate in memory",
+				ConfigPath: []string{"tls.generate"},
 			},
 			&cli.BoolFlag{
 				Name:    "lint",
@@ -176,6 +222,7 @@ func main() {
 				Usage:        "Output format for lint results (text|json)",
 				DefaultValue: "text",
 				EnvVars:      []string{"SCRIPTLING_LINT_FORMAT"},
+				ConfigPath:   []string{"lint.format"},
 			},
 		},
 		MaxArgs: cli.UnlimitedArgs,
