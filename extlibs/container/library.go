@@ -148,7 +148,7 @@ func newDriverWithSocket(driver, endpoint string) (ContainerDriver, error) {
 		}
 		return newDockerClient(endpoint), nil
 	case DriverApple:
-		return &appleClient{}, nil
+		return newAppleDriver()
 	}
 	return nil, fmt.Errorf("unknown container driver %q: must be \"docker\", \"podman\", or \"apple\"", driver)
 }
@@ -198,6 +198,32 @@ func getClientInstance(self *object.Instance) (*clientInstance, *object.Error) {
 
 func buildClientClass() *object.Class {
 	cb := object.NewClassBuilder("ContainerClient")
+
+	cb.MethodWithHelp("login", func(self *object.Instance, ctx context.Context, server, username, password string) object.Object {
+		ci, err := getClientInstance(self)
+		if err != nil {
+			return err
+		}
+		if goErr := ci.driver.Login(ctx, server, username, password); goErr != nil {
+			return &object.Error{Message: goErr.Error()}
+		}
+		return &object.Null{}
+	}, `login(server, username, password) - Authenticate with a container registry
+
+For Docker/Podman the credentials are stored on the client and injected
+automatically into subsequent image_pull calls for the same registry.
+For Apple Containers the host CLI credential store is updated.
+
+Parameters:
+  server (str): Registry server e.g. "ghcr.io" or "registry.example.com".
+               Pass "" to target Docker Hub.
+  username (str): Registry username
+  password (str): Registry password or access token
+
+Example:
+  c.login("", "myuser", "mytoken")          # Docker Hub
+  c.login("ghcr.io", "myuser", "ghp_token")  # GitHub Container Registry
+  c.image_pull("ghcr.io/myorg/myimage:latest")`)
 
 	cb.MethodWithHelp("driver", func(self *object.Instance) string {
 		ci, err := getClientInstance(self)

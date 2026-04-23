@@ -52,6 +52,9 @@ type ImageInfo struct {
 
 // ContainerDriver is the interface every runtime driver must implement.
 type ContainerDriver interface {
+	// Login authenticates with a container registry.
+	Login(ctx context.Context, server, username, password string) error
+
 	// Pull fetches an image from a registry.
 	Pull(ctx context.Context, image string) error
 

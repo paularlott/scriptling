@@ -1,3 +1,5 @@
+//go:build darwin
+
 package container
 
 import (
@@ -14,9 +16,26 @@ import (
 // appleClient drives Apple Containers via the `container` CLI.
 type appleClient struct{}
 
+func newAppleDriver() (ContainerDriver, error) {
+	return &appleClient{}, nil
+}
+
 func (c *appleClient) run(ctx context.Context, args ...string) (string, error) {
 	out, err := exec.CommandContext(ctx, "container", args...).CombinedOutput()
 	return strings.TrimSpace(string(out)), err
+}
+
+// Login implements ContainerDriver.
+func (c *appleClient) Login(ctx context.Context, server, username, password string) error {
+	if server == "" {
+		server = "registry-1.docker.io"
+	}
+	cmd := exec.CommandContext(ctx, "container", "registry", "login", "--username", username, "--password-stdin", server)
+	cmd.Stdin = strings.NewReader(password)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("login: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // Pull implements ContainerDriver.

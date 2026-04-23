@@ -4,12 +4,14 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -17,6 +19,14 @@ import (
 type dockerClient struct {
 	httpClient *http.Client
 	baseURL    string
+	credsMu    sync.RWMutex
+	creds      map[string]dockerAuthConfig // keyed by registry hostname
+}
+
+type dockerAuthConfig struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+	ServerAddress string `json:"serveraddress"`
 }
 
 // newDockerClient creates a client from an endpoint string.
@@ -44,6 +54,7 @@ func newDockerClient(endpoint string) *dockerClient {
 		return &dockerClient{
 			httpClient: &http.Client{Transport: transport, Timeout: 30 * time.Second},
 			baseURL:    "http://localhost",
+			creds:      map[string]dockerAuthConfig{},
 		}
 	}
 
@@ -60,6 +71,7 @@ func newDockerClient(endpoint string) *dockerClient {
 	return &dockerClient{
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 		baseURL:    baseURL,
+		creds:      map[string]dockerAuthConfig{},
 	}
 }
 
@@ -103,11 +115,35 @@ func (c *dockerClient) doJSON(ctx context.Context, method, path string, body, ou
 	return nil
 }
 
+// Login implements ContainerDriver.
+func (c *dockerClient) Login(ctx context.Context, server, username, password string) error {
+	if server == "" {
+		server = "https://index.docker.io/v1/"
+	}
+	body := dockerAuthConfig{Username: username, Password: password, ServerAddress: server}
+	if err := c.doJSON(ctx, http.MethodPost, "/auth", body, nil, http.StatusOK); err != nil {
+		return fmt.Errorf("login: %w", err)
+	}
+	host := registryHost(server)
+	c.credsMu.Lock()
+	c.creds[host] = body
+	c.credsMu.Unlock()
+	return nil
+}
+
 // Pull implements ContainerDriver.
 func (c *dockerClient) Pull(ctx context.Context, image string) error {
 	name, tag := splitImageTag(image)
 	path := fmt.Sprintf("/images/create?fromImage=%s&tag=%s", name, tag)
-	resp, err := c.do(ctx, http.MethodPost, path, nil)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url(path), nil)
+	if err != nil {
+		return err
+	}
+	if authHeader := c.registryAuthHeader(name); authHeader != "" {
+		req.Header.Set("X-Registry-Auth", authHeader)
+	}
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -465,6 +501,38 @@ func (c *dockerClient) VolumeList(ctx context.Context) ([]string, error) {
 		names[i] = v.Name
 	}
 	return names, nil
+}
+
+// registryHost extracts the hostname from a registry server string.
+func registryHost(server string) string {
+	server = strings.TrimPrefix(server, "https://")
+	server = strings.TrimPrefix(server, "http://")
+	if idx := strings.Index(server, "/"); idx != -1 {
+		server = server[:idx]
+	}
+	return server
+}
+
+// registryAuthHeader returns a base64-encoded X-Registry-Auth value for the
+// registry that hosts the given image name, or empty string if no creds stored.
+func (c *dockerClient) registryAuthHeader(image string) string {
+	// Determine registry host: if image contains a '.' or ':' before the first
+	// '/', treat the first segment as the registry; otherwise it's Docker Hub.
+	host := "index.docker.io"
+	if idx := strings.Index(image, "/"); idx != -1 {
+		prefix := image[:idx]
+		if strings.ContainsAny(prefix, ".:" ) {
+			host = prefix
+		}
+	}
+	c.credsMu.RLock()
+	auth, ok := c.creds[host]
+	c.credsMu.RUnlock()
+	if !ok {
+		return ""
+	}
+	b, _ := json.Marshal(auth)
+	return base64.URLEncoding.EncodeToString(b)
 }
 
 // portKey ensures a port string has a /tcp suffix.
