@@ -9,10 +9,10 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
-func newTextInterpreter(t *testing.T, allowedPaths []string) *scriptling.Scriptling {
+func newSedInterpreter(t *testing.T, allowedPaths []string) *scriptling.Scriptling {
 	t.Helper()
 	p := scriptling.New()
-	RegisterTextLibrary(p, allowedPaths)
+	RegisterSedLibrary(p, allowedPaths)
 	return p
 }
 
@@ -40,9 +40,9 @@ func TestTextReplaceFile(t *testing.T) {
 	path := filepath.Join(dir, "a.txt")
 	writeFile(t, path, "hello world\nfoo bar\n")
 
-	p := newTextInterpreter(t, nil)
-	result, err := p.Eval(`import scriptling.text as text
-text.replace("world", "earth", "` + path + `")`)
+	p := newSedInterpreter(t, nil)
+	result, err := p.Eval(`import scriptling.sed as sed
+sed.replace("world", "earth", "` + path + `")`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,9 +61,9 @@ func TestTextReplaceFileNoMatch(t *testing.T) {
 	path := filepath.Join(dir, "a.txt")
 	writeFile(t, path, "hello world\n")
 
-	p := newTextInterpreter(t, nil)
-	result, err := p.Eval(`import scriptling.text as text
-text.replace("notfound", "x", "` + path + `")`)
+	p := newSedInterpreter(t, nil)
+	result, err := p.Eval(`import scriptling.sed as sed
+sed.replace("notfound", "x", "` + path + `")`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,9 +80,9 @@ func TestTextReplaceLiteralNotRegex(t *testing.T) {
 	path := filepath.Join(dir, "a.txt")
 	writeFile(t, path, "foo.bar\nfoo bar\n")
 
-	p := newTextInterpreter(t, nil)
-	_, err := p.Eval(`import scriptling.text as text
-text.replace("foo.bar", "replaced", "` + path + `")`)
+	p := newSedInterpreter(t, nil)
+	_, err := p.Eval(`import scriptling.sed as sed
+sed.replace("foo.bar", "replaced", "` + path + `")`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,9 +97,9 @@ func TestTextReplaceIgnoreCase(t *testing.T) {
 	path := filepath.Join(dir, "a.txt")
 	writeFile(t, path, "Hello World\nhello world\n")
 
-	p := newTextInterpreter(t, nil)
-	result, err := p.Eval(`import scriptling.text as text
-text.replace("hello", "hi", "` + path + `", ignore_case=True)`)
+	p := newSedInterpreter(t, nil)
+	result, err := p.Eval(`import scriptling.sed as sed
+sed.replace("hello", "hi", "` + path + `", ignore_case=True)`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,9 +117,9 @@ func TestTextReplacePatternFile(t *testing.T) {
 	path := filepath.Join(dir, "a.py")
 	writeFile(t, path, "def old_func(x):\n    pass\n")
 
-	p := newTextInterpreter(t, nil)
-	result, err := p.Eval(`import scriptling.text as text
-text.replace_pattern("old_(\\w+)", "new_${1}", "` + path + `")`)
+	p := newSedInterpreter(t, nil)
+	result, err := p.Eval(`import scriptling.sed as sed
+sed.replace_pattern("old_(\\w+)", "new_${1}", "` + path + `")`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,9 +138,9 @@ func TestTextReplaceDirNonRecursive(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "b.txt"), "hello world\n")
 	writeFile(t, filepath.Join(dir, "sub/c.txt"), "hello world\n")
 
-	p := newTextInterpreter(t, nil)
-	result, err := p.Eval(`import scriptling.text as text
-text.replace("hello", "hi", "` + dir + `")`)
+	p := newSedInterpreter(t, nil)
+	result, err := p.Eval(`import scriptling.sed as sed
+sed.replace("hello", "hi", "` + dir + `")`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,9 +157,9 @@ func TestTextReplaceDirRecursive(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "a.txt"), "hello world\n")
 	writeFile(t, filepath.Join(dir, "sub/b.txt"), "hello world\n")
 
-	p := newTextInterpreter(t, nil)
-	result, err := p.Eval(`import scriptling.text as text
-text.replace("hello", "hi", "` + dir + `", recursive=True)`)
+	p := newSedInterpreter(t, nil)
+	result, err := p.Eval(`import scriptling.sed as sed
+sed.replace("hello", "hi", "` + dir + `", recursive=True)`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,9 +176,9 @@ func TestTextReplaceGlob(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "a.py"), "hello world\n")
 	writeFile(t, filepath.Join(dir, "b.txt"), "hello world\n")
 
-	p := newTextInterpreter(t, nil)
-	result, err := p.Eval(`import scriptling.text as text
-text.replace("hello", "hi", "` + dir + `", glob="*.py")`)
+	p := newSedInterpreter(t, nil)
+	result, err := p.Eval(`import scriptling.sed as sed
+sed.replace("hello", "hi", "` + dir + `", glob="*.py")`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,9 +195,9 @@ func TestTextReplaceSkipsBinary(t *testing.T) {
 	path := filepath.Join(dir, "bin.dat")
 	writeFile(t, path, "hello\x00world")
 
-	p := newTextInterpreter(t, nil)
-	result, err := p.Eval(`import scriptling.text as text
-text.replace("hello", "hi", "` + path + `")`)
+	p := newSedInterpreter(t, nil)
+	result, err := p.Eval(`import scriptling.sed as sed
+sed.replace("hello", "hi", "` + path + `")`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,9 +211,9 @@ func TestTextReplaceMaxSize(t *testing.T) {
 	path := filepath.Join(dir, "big.txt")
 	writeFile(t, path, "hello world this is a long line\n")
 
-	p := newTextInterpreter(t, nil)
-	result, err := p.Eval(`import scriptling.text as text
-text.replace("hello", "hi", "` + path + `", max_size=10)`)
+	p := newSedInterpreter(t, nil)
+	result, err := p.Eval(`import scriptling.sed as sed
+sed.replace("hello", "hi", "` + path + `", max_size=10)`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,9 +227,9 @@ func TestTextReplacePathRestriction(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "a.txt"), "hello\n")
 	otherDir := t.TempDir()
 
-	p := newTextInterpreter(t, []string{otherDir})
-	_, err := p.Eval(`import scriptling.text as text
-text.replace("hello", "hi", "` + dir + `")`)
+	p := newSedInterpreter(t, []string{otherDir})
+	_, err := p.Eval(`import scriptling.sed as sed
+sed.replace("hello", "hi", "` + dir + `")`)
 	if err == nil {
 		t.Error("expected permission error for restricted path")
 	}
@@ -239,9 +239,9 @@ func TestTextReplacePathRestrictionAllowed(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "a.txt"), "hello world\n")
 
-	p := newTextInterpreter(t, []string{dir})
-	result, err := p.Eval(`import scriptling.text as text
-text.replace("hello", "hi", "` + dir + `")`)
+	p := newSedInterpreter(t, []string{dir})
+	result, err := p.Eval(`import scriptling.sed as sed
+sed.replace("hello", "hi", "` + dir + `")`)
 	if err != nil {
 		t.Fatalf("expected success within allowed path: %v", err)
 	}
@@ -255,9 +255,9 @@ func TestTextReplaceAtomicWrite(t *testing.T) {
 	path := filepath.Join(dir, "a.txt")
 	writeFile(t, path, "line one\nline two\nline three\n")
 
-	p := newTextInterpreter(t, nil)
-	_, err := p.Eval(`import scriptling.text as text
-text.replace("two", "TWO", "` + path + `")`)
+	p := newSedInterpreter(t, nil)
+	_, err := p.Eval(`import scriptling.sed as sed
+sed.replace("two", "TWO", "` + path + `")`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,9 +274,9 @@ func TestTextExtractFile(t *testing.T) {
 	path := filepath.Join(dir, "a.py")
 	writeFile(t, path, "def get_user(id):\ndef get_order(id):\ndef set_value(x):\n")
 
-	p := newTextInterpreter(t, nil)
-	result, err := p.Eval(`import scriptling.text as text
-text.extract(r"def (\w+)\(", "` + path + `")`)
+	p := newSedInterpreter(t, nil)
+	result, err := p.Eval(`import scriptling.sed as sed
+sed.extract(r"def (\w+)\(", "` + path + `")`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,9 +301,9 @@ func TestTextExtractMultipleGroupsPerLine(t *testing.T) {
 	path := filepath.Join(dir, "a.txt")
 	writeFile(t, path, "key=value\nfoo=bar\n")
 
-	p := newTextInterpreter(t, nil)
-	result, err := p.Eval(`import scriptling.text as text
-text.extract(r"(\w+)=(\w+)", "` + path + `")`)
+	p := newSedInterpreter(t, nil)
+	result, err := p.Eval(`import scriptling.sed as sed
+sed.extract(r"(\w+)=(\w+)", "` + path + `")`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -331,9 +331,9 @@ func TestTextExtractNoGroups(t *testing.T) {
 	path := filepath.Join(dir, "a.txt")
 	writeFile(t, path, "hello world\n")
 
-	p := newTextInterpreter(t, nil)
-	result, err := p.Eval(`import scriptling.text as text
-text.extract(r"hello", "` + path + `")`)
+	p := newSedInterpreter(t, nil)
+	result, err := p.Eval(`import scriptling.sed as sed
+sed.extract(r"hello", "` + path + `")`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,9 +355,9 @@ func TestTextExtractDictShape(t *testing.T) {
 	path := filepath.Join(dir, "a.txt")
 	writeFile(t, path, "version=1.2.3\n")
 
-	p := newTextInterpreter(t, nil)
-	result, err := p.Eval(`import scriptling.text as text
-matches = text.extract(r"version=(\S+)", "` + path + `")
+	p := newSedInterpreter(t, nil)
+	result, err := p.Eval(`import scriptling.sed as sed
+matches = sed.extract(r"version=(\S+)", "` + path + `")
 m = matches[0]
 [m["file"], m["line"], m["text"], m["groups"]]`)
 	if err != nil {
@@ -387,9 +387,9 @@ func TestTextExtractDirRecursive(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "a.py"), "def foo():\n")
 	writeFile(t, filepath.Join(dir, "sub/b.py"), "def bar():\n")
 
-	p := newTextInterpreter(t, nil)
-	result, err := p.Eval(`import scriptling.text as text
-text.extract(r"def (\w+)\(", "` + dir + `", recursive=True, glob="*.py")`)
+	p := newSedInterpreter(t, nil)
+	result, err := p.Eval(`import scriptling.sed as sed
+sed.extract(r"def (\w+)\(", "` + dir + `", recursive=True, glob="*.py")`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -405,9 +405,9 @@ func TestTextExtractIgnoreCase(t *testing.T) {
 	path := filepath.Join(dir, "a.txt")
 	writeFile(t, path, "TODO: fix\ntodo: also\n")
 
-	p := newTextInterpreter(t, nil)
-	result, err := p.Eval(`import scriptling.text as text
-text.extract(r"(todo): (\w+)", "` + path + `", ignore_case=True)`)
+	p := newSedInterpreter(t, nil)
+	result, err := p.Eval(`import scriptling.sed as sed
+sed.extract(r"(todo): (\w+)", "` + path + `", ignore_case=True)`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -423,9 +423,9 @@ func TestTextExtractPathRestriction(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "a.txt"), "hello\n")
 	otherDir := t.TempDir()
 
-	p := newTextInterpreter(t, []string{otherDir})
-	_, err := p.Eval(`import scriptling.text as text
-text.extract(r"hello", "` + dir + `")`)
+	p := newSedInterpreter(t, []string{otherDir})
+	_, err := p.Eval(`import scriptling.sed as sed
+sed.extract(r"hello", "` + dir + `")`)
 	if err == nil {
 		t.Error("expected permission error for restricted path")
 	}

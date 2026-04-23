@@ -31,6 +31,6 @@ const (
 	UnicastLibraryName        = "scriptling.net.unicast"
 	GossipLibraryName         = "scriptling.net.gossip"
 	GrepLibraryName           = "scriptling.grep"
-	TextLibraryName           = "scriptling.text"
+	SedLibraryName            = "scriptling.sed"
 	ContainerLibraryName      = "scriptling.container"
 )

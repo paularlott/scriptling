@@ -14,21 +14,21 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
-// textLibraryInstance holds the configured text library instance.
-type textLibraryInstance struct {
+// sedLibraryInstance holds the configured text library instance.
+type sedLibraryInstance struct {
 	config fssecurity.Config
 }
 
-// RegisterTextLibrary registers the scriptling.text library with a Scriptling instance.
+// RegisterSedLibrary registers the scriptling.sed library with a Scriptling instance.
 // If allowedPaths is nil, all paths are allowed. If non-nil, operations are restricted
 // to those directories (same semantics as RegisterOSLibrary).
-func RegisterTextLibrary(registrar object.LibraryRegistrar, allowedPaths []string) {
+func RegisterSedLibrary(registrar object.LibraryRegistrar, allowedPaths []string) {
 	config := fssecurity.Config{AllowedPaths: allowedPaths}
-	registrar.RegisterLibrary(NewTextLibrary(config))
+	registrar.RegisterLibrary(NewSedLibrary(config))
 }
 
-// NewTextLibrary creates a new scriptling.text library with the given configuration.
-func NewTextLibrary(config fssecurity.Config) *object.Library {
+// NewSedLibrary creates a new scriptling.sed library with the given configuration.
+func NewSedLibrary(config fssecurity.Config) *object.Library {
 	if config.AllowedPaths != nil {
 		normalized := make([]string, 0, len(config.AllowedPaths))
 		for _, p := range config.AllowedPaths {
@@ -40,12 +40,12 @@ func NewTextLibrary(config fssecurity.Config) *object.Library {
 		}
 		config.AllowedPaths = normalized
 	}
-	inst := &textLibraryInstance{config: config}
+	inst := &sedLibraryInstance{config: config}
 	return inst.createLibrary()
 }
 
-func (t *textLibraryInstance) createLibrary() *object.Library {
-	return object.NewLibrary(TextLibraryName, map[string]*object.Builtin{
+func (t *sedLibraryInstance) createLibrary() *object.Library {
+	return object.NewLibrary(SedLibraryName, map[string]*object.Builtin{
 		"replace": {
 			Fn:       t.fnReplace,
 			HelpText: textReplaceHelp,
@@ -62,18 +62,18 @@ func (t *textLibraryInstance) createLibrary() *object.Library {
 }
 
 // fnReplace implements text.replace(old, new, path, **kwargs) — literal replacement.
-func (t *textLibraryInstance) fnReplace(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+func (t *sedLibraryInstance) fnReplace(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 	return t.run(ctx, kwargs, args, true)
 }
 
 // fnReplacePattern implements text.replace_pattern(regex, new, path, **kwargs) — regex replacement.
-func (t *textLibraryInstance) fnReplacePattern(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+func (t *sedLibraryInstance) fnReplacePattern(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 	return t.run(ctx, kwargs, args, false)
 }
 
 // run is the shared implementation for replace and replace_pattern.
 // args: [needle, replacement, path]
-func (t *textLibraryInstance) run(ctx context.Context, kwargs object.Kwargs, args []object.Object, literal bool) object.Object {
+func (t *sedLibraryInstance) run(ctx context.Context, kwargs object.Kwargs, args []object.Object, literal bool) object.Object {
 	if err := errors.ExactArgs(args, 3); err != nil {
 		return err
 	}
@@ -122,7 +122,7 @@ func (t *textLibraryInstance) run(ctx context.Context, kwargs object.Kwargs, arg
 }
 
 // replaceDir walks a directory and replaces concurrently, returning the number of files modified.
-func (t *textLibraryInstance) replaceDir(ctx context.Context, root string, re *regexp.Regexp, replacement string, opts fileopsOptions) int64 {
+func (t *sedLibraryInstance) replaceDir(ctx context.Context, root string, re *regexp.Regexp, replacement string, opts fileopsOptions) int64 {
 	jobs := make(chan string, 64)
 	resultsCh := make(chan bool, 64)
 
@@ -155,7 +155,7 @@ func (t *textLibraryInstance) replaceDir(ctx context.Context, root string, re *r
 
 // replaceFile performs in-place replacement on a single file using a temp file + rename.
 // Returns true if the file was modified.
-func (t *textLibraryInstance) replaceFile(path string, re *regexp.Regexp, replacement string, opts fileopsOptions) bool {
+func (t *sedLibraryInstance) replaceFile(path string, re *regexp.Regexp, replacement string, opts fileopsOptions) bool {
 	f, ok := openTextFile(path, opts.maxSize)
 	if !ok {
 		return false
@@ -221,7 +221,7 @@ func (t *textLibraryInstance) replaceFile(path string, re *regexp.Regexp, replac
 
 
 // fnExtract implements text.extract(regex, path, **kwargs) — capture group extraction.
-func (t *textLibraryInstance) fnExtract(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+func (t *sedLibraryInstance) fnExtract(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 	if err := errors.ExactArgs(args, 2); err != nil {
 		return err
 	}
@@ -272,7 +272,7 @@ type extractResult struct {
 }
 
 // extractDir walks a directory extracting captures concurrently.
-func (t *textLibraryInstance) extractDir(ctx context.Context, root string, re *regexp.Regexp, opts fileopsOptions) []extractResult {
+func (t *sedLibraryInstance) extractDir(ctx context.Context, root string, re *regexp.Regexp, opts fileopsOptions) []extractResult {
 	jobs := make(chan string, 64)
 	resultsCh := make(chan []extractResult, 64)
 
@@ -302,7 +302,7 @@ func (t *textLibraryInstance) extractDir(ctx context.Context, root string, re *r
 }
 
 // extractFile scans a single file returning all capture group matches.
-func (t *textLibraryInstance) extractFile(path string, re *regexp.Regexp, opts fileopsOptions) []extractResult {
+func (t *sedLibraryInstance) extractFile(path string, re *regexp.Regexp, opts fileopsOptions) []extractResult {
 	f, ok := openTextFile(path, opts.maxSize)
 	if !ok {
 		return nil
