@@ -431,7 +431,7 @@ var HTTPSubLibrary = object.NewLibrary(RuntimeHTTPLibraryName, map[string]*objec
 			}
 
 			RuntimeState.Lock()
-			RuntimeState.Routes[path] = &RouteInfo{
+			RuntimeState.Routes["GET "+path] = &RouteInfo{
 				Methods: []string{"GET"},
 				Handler: handler,
 			}
@@ -466,7 +466,7 @@ Example:
 			}
 
 			RuntimeState.Lock()
-			RuntimeState.Routes[path] = &RouteInfo{
+			RuntimeState.Routes["POST "+path] = &RouteInfo{
 				Methods: []string{"POST"},
 				Handler: handler,
 			}
@@ -501,7 +501,7 @@ Example:
 			}
 
 			RuntimeState.Lock()
-			RuntimeState.Routes[path] = &RouteInfo{
+			RuntimeState.Routes["PUT "+path] = &RouteInfo{
 				Methods: []string{"PUT"},
 				Handler: handler,
 			}
@@ -536,7 +536,7 @@ Example:
 			}
 
 			RuntimeState.Lock()
-			RuntimeState.Routes[path] = &RouteInfo{
+			RuntimeState.Routes["DELETE "+path] = &RouteInfo{
 				Methods: []string{"DELETE"},
 				Handler: handler,
 			}
@@ -585,9 +585,11 @@ Example:
 			}
 
 			RuntimeState.Lock()
-			RuntimeState.Routes[path] = &RouteInfo{
-				Methods: methods,
-				Handler: handler,
+			for _, method := range methods {
+				RuntimeState.Routes[method+" "+path] = &RouteInfo{
+					Methods: []string{method},
+					Handler: handler,
+				}
 			}
 			RuntimeState.Unlock()
 
@@ -651,7 +653,7 @@ Example:
 			}
 
 			RuntimeState.Lock()
-			RuntimeState.Routes[path] = &RouteInfo{
+			RuntimeState.Routes["GET "+path] = &RouteInfo{
 				Methods:   []string{"GET"},
 				Static:    true,
 				StaticDir: directory,
@@ -884,6 +886,36 @@ Returns:
 
 Example:
   params = runtime.http.parse_query("name=John&age=30")`,
+	},
+
+	"not_found": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.MinArgs(args, 1); err != nil {
+				return err
+			}
+
+			handler, err := args[0].AsString()
+			if err != nil {
+				return err
+			}
+
+			RuntimeState.Lock()
+			RuntimeState.NotFoundHandler = handler
+			RuntimeState.Unlock()
+
+			return &object.Null{}
+		},
+		HelpText: `not_found(handler) - Register a handler for 404 Not Found responses
+
+Parameters:
+  handler (string): Handler function as "library.function" string
+
+The handler receives the request object and should return a response.
+It is called when no route matches the request path, or when a static
+asset is not found.
+
+Example:
+  runtime.http.not_found("handlers.not_found")`,
 	},
 
 	"websocket": {

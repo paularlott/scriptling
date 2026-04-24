@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs"
@@ -89,13 +90,16 @@ func (s *Server) applyPackLoader(p *scriptling.Scriptling) {
 // collectRoutes collects registered routes from the scriptling.runtime library
 func (s *Server) collectRoutes() {
 	s.middleware = extlibs.RuntimeState.Middleware
-	for path, route := range extlibs.RuntimeState.Routes {
+	s.notFoundHandler = extlibs.RuntimeState.NotFoundHandler
+	for key, route := range extlibs.RuntimeState.Routes {
 		if route.Static {
+			// key is "GET path" for static routes; extract the path
+			_, path, _ := strings.Cut(key, " ")
 			s.staticRoutes[path] = route.StaticDir
 		} else {
-			s.handlers[path] = route.Handler
+			s.handlers[key] = route.Handler
 		}
-		Log.Info("Registered route", "path", path, "methods", route.Methods, "handler", route.Handler)
+		Log.Info("Registered route", "key", key, "handler", route.Handler)
 	}
 	for path, wsRoute := range extlibs.RuntimeState.WebSocketRoutes {
 		s.wsHandlers[path] = wsRoute.Handler

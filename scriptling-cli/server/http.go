@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/paularlott/scriptling"
@@ -26,8 +28,8 @@ func (s *Server) Start() error {
 
 	mux.HandleFunc("GET /health", s.handleHealth)
 
-	for path := range s.handlers {
-		mux.HandleFunc(path, s.handleScriptRequest)
+	for key := range s.handlers {
+		mux.HandleFunc(key, s.handleScriptRequest)
 	}
 
 	for path := range s.wsHandlers {
@@ -37,6 +39,11 @@ func (s *Server) Start() error {
 	for path, dir := range s.staticRoutes {
 		fs := http.FileServer(http.Dir(dir))
 		mux.Handle(path, http.StripPrefix(path, fs))
+	}
+
+	// Web root: serve files not matched by any route, fall through to 404 handler
+	if s.config.WebRoot != "" || s.notFoundHandler != "" {
+		mux.HandleFunc("/", s.handleFallback)
 	}
 
 	var handler http.Handler = mux
@@ -128,34 +135,18 @@ func (s *Server) handleScriptRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Look up handler by "METHOD path"
+	key := r.Method + " " + path
 	s.mu.RLock()
-	_, ok := s.handlers[path]
+	handlerRef, ok := s.handlers[key]
 	if !ok && !strings.HasSuffix(path, "/") {
-		_, ok = s.handlers[path+"/"]
-		if ok {
-			path += "/"
-		}
+		handlerRef, ok = s.handlers[key+"/"]
 	}
 	s.mu.RUnlock()
 
 	if !ok {
-		http.Error(w, "Not Found", http.StatusNotFound)
+		s.serveNotFound(w, r)
 		return
-	}
-
-	route := extlibs.RuntimeState.Routes[path]
-	if route != nil {
-		methodAllowed := false
-		for _, m := range route.Methods {
-			if m == r.Method {
-				methodAllowed = true
-				break
-			}
-		}
-		if !methodAllowed {
-			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-			return
-		}
 	}
 
 	reqObj := s.createRequestObject(r)
@@ -167,16 +158,52 @@ func (s *Server) handleScriptRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	handlerRef := ""
-	if route != nil {
-		handlerRef = route.Handler
-	}
-
 	if resp := s.runHandler(handlerRef, reqObj); resp != nil {
 		s.writeResponse(w, resp)
 	} else {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 	}
+}
+
+// handleFallback serves files from WebRoot or calls the not_found handler
+func (s *Server) handleFallback(w http.ResponseWriter, r *http.Request) {
+	if s.config.WebRoot != "" {
+		// Resolve the web root to an absolute path once
+		webRoot, err := filepath.Abs(s.config.WebRoot)
+		if err != nil {
+			s.serveNotFound(w, r)
+			return
+		}
+
+		// Build candidate path and resolve to absolute to prevent traversal
+		urlPath := filepath.FromSlash(r.URL.Path)
+		candidate, err := filepath.Abs(filepath.Join(webRoot, urlPath))
+		if err != nil || !strings.HasPrefix(candidate, webRoot+string(filepath.Separator)) && candidate != webRoot {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+
+		// Try the path directly, then index.html for directory-like requests
+		for _, p := range []string{candidate, filepath.Join(candidate, "index.html")} {
+			if info, err := os.Stat(p); err == nil && !info.IsDir() {
+				http.ServeFile(w, r, p)
+				return
+			}
+		}
+	}
+	s.serveNotFound(w, r)
+}
+
+// serveNotFound calls the not_found handler or returns a plain 404
+func (s *Server) serveNotFound(w http.ResponseWriter, r *http.Request) {
+	if s.notFoundHandler != "" {
+		reqObj := s.createRequestObject(r)
+		if resp := s.runHandler(s.notFoundHandler, reqObj); resp != nil {
+			s.writeResponse(w, resp)
+			return
+		}
+	}
+	http.Error(w, "Not Found", http.StatusNotFound)
 }
 
 // createRequestObject creates a Request instance from an HTTP request
@@ -233,6 +260,11 @@ func (s *Server) runHandler(handlerRef string, reqObj *object.Instance) *object.
 
 	if dict, ok := result.(*object.Dict); ok {
 		return dict
+	}
+
+	// Null means "no response" (e.g. middleware returning None to continue)
+	if _, ok := result.(*object.Null); ok {
+		return nil
 	}
 
 	return object.NewStringDict(map[string]object.Object{

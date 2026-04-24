@@ -19,8 +19,9 @@ var RuntimeState = struct {
 	sync.RWMutex
 
 	// HTTP routes
-	Routes     map[string]*RouteInfo
-	Middleware string
+	Routes          map[string]*RouteInfo
+	Middleware      string
+	NotFoundHandler string
 
 	// WebSocket routes and connections
 	WebSocketRoutes      map[string]*WebSocketRouteInfo
@@ -49,6 +50,7 @@ var RuntimeState = struct {
 	cleanupFuncs []func()
 }{
 	Routes:               make(map[string]*RouteInfo),
+	NotFoundHandler:      "",
 	WebSocketRoutes:      make(map[string]*WebSocketRouteInfo),
 	WebSocketConnections: make(map[string]*WebSocketServerConn),
 	Backgrounds:          make(map[string]string),
@@ -91,6 +93,7 @@ func ResetRuntime() {
 
 	RuntimeState.Routes = make(map[string]*RouteInfo)
 	RuntimeState.Middleware = ""
+	RuntimeState.NotFoundHandler = ""
 
 	// Close all WebSocket connections
 	for _, conn := range RuntimeState.WebSocketConnections {

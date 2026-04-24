@@ -29,6 +29,7 @@ type ServerConfig struct {
 	MCPToolsDir    string   // Empty means MCP disabled
 	MCPExecTool    bool     // Enable code execution tool
 	KVStoragePath  string   // Empty means in-memory KV store
+	WebRoot        string   // Directory to serve static files from (empty = disabled)
 	SecretRegistry *secretprovider.Registry
 	DockerSock     string
 	PodmanSock     string
@@ -59,6 +60,7 @@ type Server struct {
 	handlers         map[string]string // path -> "library.function"
 	wsHandlers       map[string]string // path -> "library.function" for WebSocket
 	middleware       string
+	notFoundHandler  string
 	staticRoutes     map[string]string
 	mu               sync.RWMutex
 	watcher          *fsnotify.Watcher

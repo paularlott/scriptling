@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Scriptling HTTP Server</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <h1>Scriptling HTTP Server</h1>
+  <p>Welcome! This page is served as a static asset.</p>
+  <h2>API Endpoints</h2>
+  <ul>
+    <li><a href="/api/users">GET /api/users</a> - List users</li>
+    <li><a href="/api/users/me">GET /api/users/me</a> - Get current user (requires Bearer token: secret123)</li>
+    <li>POST /api/users - Create user (requires Bearer token: secret123)</li>
+    <li><a href="/api/search?q=alice">GET /api/search?q=alice</a> - Search users</li>
+  </ul>
+  <h2>More Pages</h2>
+  <ul>
+    <li><a href="/about.html">About</a></li>
+    <li><a href="/missing.html">Missing page (triggers 404 handler)</a></li>
+  </ul>
+  <script src="/app.js"></script>
+</body>
+</html>

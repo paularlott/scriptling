@@ -212,6 +212,13 @@ func main() {
 				Usage:      "Generate self-signed certificate in memory",
 				ConfigPath: []string{"tls.generate"},
 			},
+			&cli.StringFlag{
+				Name:         "web-root",
+				Usage:        "Directory to serve static files from (served when no route matches)",
+				DefaultValue: "",
+				EnvVars:      []string{"SCRIPTLING_WEB_ROOT"},
+				ConfigPath:   []string{"server.web_root"},
+			},
 			&cli.BoolFlag{
 				Name:    "lint",
 				Usage:   "Lint script files without executing them",
@@ -373,6 +380,7 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 		MCPToolsDir:    cmd.GetString("mcp-tools"),
 		MCPExecTool:    cmd.GetBool("mcp-exec-script"),
 		KVStoragePath:  cmd.GetString("kv-storage"),
+		WebRoot:        cmd.GetString("web-root"),
 		SecretRegistry: secretRegistry,
 		DockerSock:     cmd.GetString("docker-host"),
 		PodmanSock:     cmd.GetString("podman-host"),
