@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -112,6 +114,10 @@ func (s *Server) Stop(ctx context.Context) error {
 		conn.Close()
 	}
 
+	if s.webRootZip != nil {
+		s.webRootZip.Close()
+	}
+
 	return s.httpServer.Shutdown(ctx)
 }
 
@@ -165,28 +171,67 @@ func (s *Server) handleScriptRequest(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleFallback serves files from WebRoot or calls the not_found handler
+// handleFallback serves files from WebRoot (directory or zip) or calls the not_found handler
 func (s *Server) handleFallback(w http.ResponseWriter, r *http.Request) {
 	if s.config.WebRoot != "" {
-		// Resolve the web root to an absolute path once
-		webRoot, err := filepath.Abs(s.config.WebRoot)
-		if err != nil {
-			s.serveNotFound(w, r)
+		if s.webRootZip != nil {
+			s.serveFromZip(w, r)
 			return
 		}
+		s.serveFromDir(w, r)
+		return
+	}
+	s.serveNotFound(w, r)
+}
 
-		// Build candidate path and resolve to absolute to prevent traversal
-		urlPath := filepath.FromSlash(r.URL.Path)
-		candidate, err := filepath.Abs(filepath.Join(webRoot, urlPath))
-		if err != nil || !strings.HasPrefix(candidate, webRoot+string(filepath.Separator)) && candidate != webRoot {
-			http.Error(w, "Forbidden", http.StatusForbidden)
+// serveFromDir serves a file from the web root directory
+func (s *Server) serveFromDir(w http.ResponseWriter, r *http.Request) {
+	webRoot, err := filepath.Abs(s.config.WebRoot)
+	if err != nil {
+		s.serveNotFound(w, r)
+		return
+	}
+
+	urlPath := filepath.FromSlash(r.URL.Path)
+	candidate, err := filepath.Abs(filepath.Join(webRoot, urlPath))
+	if err != nil || !strings.HasPrefix(candidate, webRoot+string(filepath.Separator)) && candidate != webRoot {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	for _, p := range []string{candidate, filepath.Join(candidate, "index.html")} {
+		if info, err := os.Stat(p); err == nil && !info.IsDir() {
+			http.ServeFile(w, r, p)
 			return
 		}
+	}
+	s.serveNotFound(w, r)
+}
 
-		// Try the path directly, then index.html for directory-like requests
-		for _, p := range []string{candidate, filepath.Join(candidate, "index.html")} {
-			if info, err := os.Stat(p); err == nil && !info.IsDir() {
-				http.ServeFile(w, r, p)
+// serveFromZip serves a file from the web root zip archive
+func (s *Server) serveFromZip(w http.ResponseWriter, r *http.Request) {
+	// Normalise the URL path: strip leading slash, never allow traversal
+	urlPath := path.Clean(strings.TrimPrefix(r.URL.Path, "/"))
+	if urlPath == "." {
+		urlPath = ""
+	}
+
+	candidates := []string{urlPath, urlPath + "/index.html"}
+	if urlPath == "" {
+		candidates = []string{"index.html"}
+	}
+
+	for _, candidate := range candidates {
+		for _, f := range s.webRootZip.File {
+			if f.Name == candidate && !f.FileInfo().IsDir() {
+				rc, err := f.Open()
+				if err != nil {
+					http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+					return
+				}
+				defer rc.Close()
+				w.Header().Set("Content-Type", mime.TypeByExtension(filepath.Ext(f.Name)))
+				io.Copy(w, rc)
 				return
 			}
 		}

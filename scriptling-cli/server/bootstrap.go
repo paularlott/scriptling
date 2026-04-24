@@ -1,6 +1,7 @@
 package server
 
 import (
+	"archive/zip"
 	"fmt"
 	"os"
 	"strings"
@@ -55,6 +56,15 @@ func NewServer(config ServerConfig) (*Server, error) {
 
 	s.collectRoutes()
 	extlibs.ReleaseBackgroundTasks()
+
+	// Open zip web root if configured
+	if strings.HasSuffix(strings.ToLower(config.WebRoot), ".zip") {
+		zr, err := zip.OpenReader(config.WebRoot)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open web root zip %s: %w", config.WebRoot, err)
+		}
+		s.webRootZip = zr
+	}
 
 	return s, nil
 }

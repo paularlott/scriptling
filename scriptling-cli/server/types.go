@@ -1,6 +1,7 @@
 package server
 
 import (
+	"archive/zip"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -62,6 +63,7 @@ type Server struct {
 	middleware       string
 	notFoundHandler  string
 	staticRoutes     map[string]string
+	webRootZip       *zip.ReadCloser  // non-nil when WebRoot is a .zip file
 	mu               sync.RWMutex
 	watcher          *fsnotify.Watcher
 	reloadDebounce   *time.Timer
