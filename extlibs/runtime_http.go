@@ -379,37 +379,18 @@ Parameters:
 
 // getWSConnFromInstance extracts the WebSocketServerConn from an instance
 func getWSConnFromInstance(instance *object.Instance) *WebSocketServerConn {
-	if instance.Fields == nil {
-		return nil
-	}
-	connIDObj, ok := instance.Fields["__conn_id__"]
-	if !ok {
-		return nil
-	}
-	connID, ok := connIDObj.(*object.String)
-	if !ok {
-		return nil
-	}
-
-	RuntimeState.RLock()
-	conn := RuntimeState.WebSocketConnections[connID.Value]
-	RuntimeState.RUnlock()
+	conn, _ := instance.NativeData.(*WebSocketServerConn)
 	return conn
 }
 
 // CreateWebSocketClientInstance creates a new WebSocketClient instance
 func CreateWebSocketClientInstance(conn *WebSocketServerConn) *object.Instance {
-	// Store connection in global map
-	RuntimeState.Lock()
-	RuntimeState.WebSocketConnections[conn.ID()] = conn
-	RuntimeState.Unlock()
-
 	return &object.Instance{
 		Class: WebSocketClientClass,
 		Fields: map[string]object.Object{
 			"remote_addr": &object.String{Value: conn.RemoteAddr()},
-			"__conn_id__": &object.String{Value: conn.ID()},
 		},
+		NativeData: conn,
 	}
 }
 

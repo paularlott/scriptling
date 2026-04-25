@@ -217,7 +217,7 @@ var moduleBuiltins = map[string]*object.Builtin{
 			if len(args) < 1 {
 				return errors.NewError("console.add_left: panel required")
 			}
-			pw, ok := args[0].(*object.Instance).Fields[nativePanelKey].(*panelWrapper)
+			pw, ok := args[0].(*object.Instance).NativeData.(*panelWrapper)
 			if !ok || pw.p == nil {
 				return errors.NewError("console.add_left: expected a named Panel")
 			}
@@ -231,7 +231,7 @@ var moduleBuiltins = map[string]*object.Builtin{
 			if len(args) < 1 {
 				return errors.NewError("console.add_right: panel required")
 			}
-			pw, ok := args[0].(*object.Instance).Fields[nativePanelKey].(*panelWrapper)
+			pw, ok := args[0].(*object.Instance).NativeData.(*panelWrapper)
 			if !ok || pw.p == nil {
 				return errors.NewError("console.add_right: expected a named Panel")
 			}
@@ -472,26 +472,12 @@ var moduleBuiltins = map[string]*object.Builtin{
 
 // ─── Panel ────────────────────────────────────────────────────────────
 
-const nativePanelKey = "__panel__"
-
 // panelWrapper holds a *tui.Panel and the parent TUI.
 // For the main chat panel, p is nil and methods dispatch to the TUI.
 type panelWrapper struct {
 	p *tui.Panel // nil for main panel
 	t *tui.TUI
 }
-
-func (w *panelWrapper) Type() object.ObjectType                           { return object.BUILTIN_OBJ }
-func (w *panelWrapper) Inspect() string                                   { return "<Panel>" }
-func (w *panelWrapper) AsString() (string, object.Object)                 { return "<Panel>", nil }
-func (w *panelWrapper) AsInt() (int64, object.Object)                     { return 0, nil }
-func (w *panelWrapper) AsFloat() (float64, object.Object)                 { return 0, nil }
-func (w *panelWrapper) AsBool() (bool, object.Object)                     { return true, nil }
-func (w *panelWrapper) AsList() ([]object.Object, object.Object)          { return nil, nil }
-func (w *panelWrapper) AsDict() (map[string]object.Object, object.Object) { return nil, nil }
-func (w *panelWrapper) CoerceString() (string, object.Object)             { return "<Panel>", nil }
-func (w *panelWrapper) CoerceInt() (int64, object.Object)                 { return 0, nil }
-func (w *panelWrapper) CoerceFloat() (float64, object.Object)             { return 0, nil }
 
 // Dispatch helpers for methods that work on both main and named panels.
 
@@ -572,27 +558,31 @@ func newPanelInstance(nativePanel *tui.Panel, t *tui.TUI) *object.Instance {
 	pw := &panelWrapper{p: nativePanel, t: t}
 	name := nativePanel.Name()
 	return &object.Instance{
-		Class: panelClass,
-		Fields: map[string]object.Object{
-			nativePanelKey: pw,
-			"__str_repr__": &object.String{Value: "<Panel: " + name + ">"},
-		},
+		Class:      panelClass,
+		Fields:     map[string]object.Object{"__str_repr__": &object.String{Value: "<Panel: " + name + ">"}},
+		NativeData: pw,
 	}
 }
 
 func newMainPanelInstance(t *tui.TUI) *object.Instance {
 	pw := &panelWrapper{p: nil, t: t}
 	return &object.Instance{
-		Class: panelClass,
-		Fields: map[string]object.Object{
-			nativePanelKey: pw,
-			"__str_repr__": &object.String{Value: "<Panel: main>"},
-		},
+		Class:      panelClass,
+		Fields:     map[string]object.Object{"__str_repr__": &object.String{Value: "<Panel: main>"}},
+		NativeData: pw,
 	}
 }
 
-func panelWrapperFrom(args []object.Object) *panelWrapper {
-	return args[0].(*object.Instance).Fields[nativePanelKey].(*panelWrapper)
+func panelWrapperFrom(args []object.Object) (*panelWrapper, object.Object) {
+	inst, ok := args[0].(*object.Instance)
+	if !ok {
+		return nil, errors.NewError("Panel: expected a Panel instance")
+	}
+	pw, ok := inst.NativeData.(*panelWrapper)
+	if !ok {
+		return nil, errors.NewError("Panel: invalid native data")
+	}
+	return pw, nil
 }
 
 var panelClass = &object.Class{
@@ -600,7 +590,10 @@ var panelClass = &object.Class{
 	Methods: map[string]object.Object{
 		"write": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				pw := panelWrapperFrom(args)
+				pw, errObj := panelWrapperFrom(args)
+				if errObj != nil {
+					return errObj
+				}
 				if pw.p == nil {
 					return &object.Null{}
 				}
@@ -615,7 +608,10 @@ var panelClass = &object.Class{
 		},
 		"set_content": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				pw := panelWrapperFrom(args)
+				pw, errObj := panelWrapperFrom(args)
+				if errObj != nil {
+					return errObj
+				}
 				if pw.p == nil {
 					return &object.Null{}
 				}
@@ -630,14 +626,21 @@ var panelClass = &object.Class{
 		},
 		"clear": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				panelWrapperFrom(args).panelClear()
+				pw, errObj := panelWrapperFrom(args)
+				if errObj != nil {
+					return errObj
+				}
+				pw.panelClear()
 				return &object.Null{}
 			},
 			HelpText: "clear() — remove all panel content",
 		},
 		"set_title": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				pw := panelWrapperFrom(args)
+				pw, errObj := panelWrapperFrom(args)
+				if errObj != nil {
+					return errObj
+				}
 				if pw.p == nil {
 					return &object.Null{}
 				}
@@ -652,7 +655,10 @@ var panelClass = &object.Class{
 		},
 		"set_color": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				pw := panelWrapperFrom(args)
+				pw, errObj := panelWrapperFrom(args)
+				if errObj != nil {
+					return errObj
+				}
 				if pw.p == nil {
 					return &object.Null{}
 				}
@@ -669,7 +675,10 @@ var panelClass = &object.Class{
 		},
 		"set_scrollable": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				pw := panelWrapperFrom(args)
+				pw, errObj := panelWrapperFrom(args)
+				if errObj != nil {
+					return errObj
+				}
 				if pw.p == nil {
 					return &object.Null{}
 				}
@@ -684,7 +693,10 @@ var panelClass = &object.Class{
 		},
 		"add_message": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				pw := panelWrapperFrom(args)
+				pw, errObj := panelWrapperFrom(args)
+				if errObj != nil {
+					return errObj
+				}
 				parts := make([]string, len(args)-1)
 				for i, a := range args[1:] {
 					parts[i] = a.Inspect()
@@ -699,7 +711,10 @@ var panelClass = &object.Class{
 		},
 		"stream_start": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				pw := panelWrapperFrom(args)
+				pw, errObj := panelWrapperFrom(args)
+				if errObj != nil {
+					return errObj
+				}
 				label, _ := kwargs.GetString("label", "")
 				role, _ := kwargs.GetString("role", "")
 				pw.panelStartStreaming(label, role)
@@ -709,7 +724,10 @@ var panelClass = &object.Class{
 		},
 		"stream_chunk": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				pw := panelWrapperFrom(args)
+				pw, errObj := panelWrapperFrom(args)
+				if errObj != nil {
+					return errObj
+				}
 				if len(args) > 1 {
 					if s, err := args[1].AsString(); err == nil {
 						pw.panelStreamChunk(s)
@@ -721,14 +739,21 @@ var panelClass = &object.Class{
 		},
 		"stream_end": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				panelWrapperFrom(args).panelStreamComplete()
+				pw, errObj := panelWrapperFrom(args)
+				if errObj != nil {
+					return errObj
+				}
+				pw.panelStreamComplete()
 				return &object.Null{}
 			},
 			HelpText: "stream_end() — finalise the current stream",
 		},
 		"scroll_to_top": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				pw := panelWrapperFrom(args)
+				pw, errObj := panelWrapperFrom(args)
+				if errObj != nil {
+					return errObj
+				}
 				if pw.p != nil {
 					pw.p.ScrollToTop()
 				}
@@ -738,7 +763,10 @@ var panelClass = &object.Class{
 		},
 		"scroll_to_bottom": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				pw := panelWrapperFrom(args)
+				pw, errObj := panelWrapperFrom(args)
+				if errObj != nil {
+					return errObj
+				}
 				if pw.p != nil {
 					pw.p.ScrollToBottom()
 				}
@@ -748,7 +776,10 @@ var panelClass = &object.Class{
 		},
 		"size": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				pw := panelWrapperFrom(args)
+				pw, errObj := panelWrapperFrom(args)
+				if errObj != nil {
+					return errObj
+				}
 				if pw.p != nil {
 					w, h := pw.p.Size()
 					return &object.List{
@@ -769,7 +800,10 @@ var panelClass = &object.Class{
 		},
 		"styled": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				pw := panelWrapperFrom(args)
+				pw, errObj := panelWrapperFrom(args)
+				if errObj != nil {
+					return errObj
+				}
 				if len(args) < 3 {
 					return &object.String{Value: ""}
 				}
@@ -787,7 +821,10 @@ var panelClass = &object.Class{
 		},
 		"write_at": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				pw := panelWrapperFrom(args)
+				pw, errObj := panelWrapperFrom(args)
+				if errObj != nil {
+					return errObj
+				}
 				if pw.p == nil {
 					return &object.Null{}
 				}
@@ -807,7 +844,10 @@ var panelClass = &object.Class{
 		},
 		"clear_line": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				pw := panelWrapperFrom(args)
+				pw, errObj := panelWrapperFrom(args)
+				if errObj != nil {
+					return errObj
+				}
 				if pw.p == nil {
 					return &object.Null{}
 				}
@@ -822,7 +862,10 @@ var panelClass = &object.Class{
 		},
 		"add_column": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				pw := panelWrapperFrom(args)
+				pw, errObj := panelWrapperFrom(args)
+				if errObj != nil {
+					return errObj
+				}
 				if pw.p == nil {
 					return &object.Null{}
 				}
@@ -833,7 +876,7 @@ var panelClass = &object.Class{
 				if !ok {
 					return &object.Null{}
 				}
-				childNative, ok := childPw.Fields[nativePanelKey].(*panelWrapper)
+				childNative, ok := childPw.NativeData.(*panelWrapper)
 				if !ok || childNative.p == nil {
 					return &object.Null{}
 				}
@@ -844,7 +887,10 @@ var panelClass = &object.Class{
 		},
 		"add_row": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				pw := panelWrapperFrom(args)
+				pw, errObj := panelWrapperFrom(args)
+				if errObj != nil {
+					return errObj
+				}
 				if pw.p == nil {
 					return &object.Null{}
 				}
@@ -855,7 +901,7 @@ var panelClass = &object.Class{
 				if !ok {
 					return &object.Null{}
 				}
-				childNative, ok := childPw.Fields[nativePanelKey].(*panelWrapper)
+				childNative, ok := childPw.NativeData.(*panelWrapper)
 				if !ok || childNative.p == nil {
 					return &object.Null{}
 				}
@@ -866,7 +912,10 @@ var panelClass = &object.Class{
 		},
 		"__name__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				pw := panelWrapperFrom(args)
+				pw, errObj := panelWrapperFrom(args)
+				if errObj != nil {
+					return errObj
+				}
 				if pw.p != nil {
 					return &object.String{Value: pw.p.Name()}
 				}
@@ -876,7 +925,10 @@ var panelClass = &object.Class{
 		},
 		"__str_repr__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				pw := panelWrapperFrom(args)
+				pw, errObj := panelWrapperFrom(args)
+				if errObj != nil {
+					return errObj
+				}
 				if pw.p != nil {
 					return &object.String{Value: "<Panel: " + pw.p.Name() + ">"}
 				}

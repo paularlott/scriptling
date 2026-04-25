@@ -1,0 +1,14 @@
+Subject: Your {{.Product}} trial expires in {{.ExpiryDays}} days
+
+Hi {{.Name}},
+
+Your trial of {{.Product}} will expire in {{.ExpiryDays}} days.
+
+{{- if gt .ExpiryDays 7}}
+You still have plenty of time — enjoy exploring all the features!
+{{- else}}
+Don't miss out — upgrade now to keep access.
+{{- end}}
+
+Thanks,
+The Scriptling Team

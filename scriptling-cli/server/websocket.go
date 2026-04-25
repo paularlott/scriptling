@@ -55,6 +55,11 @@ func (s *Server) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Request, 
 
 	Log.Info("WebSocket connected", "path", path, "id", connID, "remote", conn.RemoteAddr())
 
+	// Register connection for lifecycle tracking
+	extlibs.RuntimeState.Lock()
+	extlibs.RuntimeState.WebSocketConnections[connID] = wsConn
+	extlibs.RuntimeState.Unlock()
+
 	// Create client object for scriptling
 	clientObj := extlibs.CreateWebSocketClientInstance(wsConn)
 

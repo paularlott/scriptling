@@ -33,4 +33,6 @@ const (
 	GrepLibraryName           = "scriptling.grep"
 	SedLibraryName            = "scriptling.sed"
 	ContainerLibraryName      = "scriptling.container"
+	TemplateHTMLLibraryName   = "scriptling.template.html"
+	TemplateTextLibraryName   = "scriptling.template.text"
 )

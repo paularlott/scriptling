@@ -10,64 +10,6 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
-const nativeClientKey = "__dc_client__"
-
-type clientWrapper struct {
-	c *discordClient
-}
-
-func (w *clientWrapper) Type() object.ObjectType                           { return object.BUILTIN_OBJ }
-func (w *clientWrapper) Inspect() string                                   { return "<DiscordClient>" }
-func (w *clientWrapper) AsString() (string, object.Object)                 { return "<DiscordClient>", nil }
-func (w *clientWrapper) AsInt() (int64, object.Object)                     { return 0, nil }
-func (w *clientWrapper) AsFloat() (float64, object.Object)                 { return 0, nil }
-func (w *clientWrapper) AsBool() (bool, object.Object)                     { return true, nil }
-func (w *clientWrapper) AsList() ([]object.Object, object.Object)          { return nil, nil }
-func (w *clientWrapper) AsDict() (map[string]object.Object, object.Object) { return nil, nil }
-func (w *clientWrapper) CoerceString() (string, object.Object)             { return "<DiscordClient>", nil }
-func (w *clientWrapper) CoerceInt() (int64, object.Object)                 { return 0, nil }
-func (w *clientWrapper) CoerceFloat() (float64, object.Object)             { return 0, nil }
-
-func (w *clientWrapper) Platform() string { return w.c.Platform() }
-func (w *clientWrapper) SendMessage(ctx context.Context, dest, text string, opts *shared.SendOptions) error {
-	return w.c.SendMessage(ctx, dest, text, opts)
-}
-func (w *clientWrapper) SendRichMessage(ctx context.Context, dest string, msg *shared.RichMessage) error {
-	return w.c.SendRichMessage(ctx, dest, msg)
-}
-func (w *clientWrapper) EditMessage(ctx context.Context, dest, msgID, text string) error {
-	return w.c.EditMessage(ctx, dest, msgID, text)
-}
-func (w *clientWrapper) DeleteMessage(ctx context.Context, dest, msgID string) error {
-	return w.c.DeleteMessage(ctx, dest, msgID)
-}
-func (w *clientWrapper) SendFile(ctx context.Context, dest, source, fileName, caption string, isB64 bool) error {
-	return w.c.SendFile(ctx, dest, source, fileName, caption, isB64)
-}
-func (w *clientWrapper) SendTyping(ctx context.Context, dest string) error {
-	return w.c.SendTyping(ctx, dest)
-}
-func (w *clientWrapper) AckCallback(ctx context.Context, id, token, text string) error {
-	return w.c.AckCallback(ctx, id, token, text)
-}
-func (w *clientWrapper) Download(ctx context.Context, ref string) ([]byte, error) {
-	return w.c.Download(ctx, ref)
-}
-func (w *clientWrapper) BotCommand(name, helpText string, h shared.Handler) {
-	w.c.BotCommand(name, helpText, h)
-}
-func (w *clientWrapper) BotOnCallback(prefix string, h shared.Handler) {
-	w.c.BotOnCallback(prefix, h)
-}
-func (w *clientWrapper) BotOnMessage(h shared.Handler) { w.c.BotOnMessage(h) }
-func (w *clientWrapper) BotOnFile(h shared.Handler)    { w.c.BotOnFile(h) }
-func (w *clientWrapper) BotAuth(h shared.Handler)      { w.c.BotAuth(h) }
-func (w *clientWrapper) BotRun(ctx context.Context) error {
-	return w.c.BotRun(ctx)
-}
-func (w *clientWrapper) Capabilities() []string    { return w.c.Capabilities() }
-func (w *clientWrapper) BotCapabilities() []string { return w.c.Capabilities() }
-
 var discordClientClass = &object.Class{
 	Name:    "DiscordClient",
 	Methods: map[string]object.Object{},
@@ -75,17 +17,17 @@ var discordClientClass = &object.Class{
 
 func newClientInstance(c *discordClient, builtins map[string]*object.Builtin) *object.Instance {
 	inst := &object.Instance{
-		Class:  discordClientClass,
-		Fields: map[string]object.Object{},
+		Class:      discordClientClass,
+		Fields:     map[string]object.Object{},
+		NativeData: c,
 	}
-	inst.Fields[nativeClientKey] = &clientWrapper{c: c}
 	shared.BindToInstance(inst, builtins)
 	return inst
 }
 
 // NewLibrary creates the scriptling.messaging.discord library.
 func NewLibrary(log logger.Logger) *object.Library {
-	builtins := shared.SharedBuiltins(nativeClientKey)
+	builtins := shared.SharedBuiltins()
 
 	// Discord-specific: client constructor
 	builtins["client"] = &object.Builtin{

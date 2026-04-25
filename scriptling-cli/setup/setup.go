@@ -66,6 +66,8 @@ func AllLibraryNames() []string {
 		extlibs.ContainerLibraryName,
 		extlibs.WaitForLibraryName,
 		extlibs.WebSocketLibraryName,
+		extlibs.TemplateHTMLLibraryName,
+		extlibs.TemplateTextLibraryName,
 		extlibs.MulticastLibraryName,
 		extlibs.UnicastLibraryName,
 		extlibs.GossipLibraryName,
@@ -145,6 +147,8 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 	reg(extlibs.ContainerLibraryName, func() { scriptlingcontainer.Register(p, dockerSock, podmanSock) })
 	reg(extlibs.WaitForLibraryName, func() { extlibs.RegisterWaitForLibrary(p) })
 	reg(extlibs.WebSocketLibraryName, func() { extlibs.RegisterWebSocketLibrary(p) })
+	reg(extlibs.TemplateHTMLLibraryName, func() { extlibs.RegisterTemplateHTMLLibrary(p) })
+	reg(extlibs.TemplateTextLibraryName, func() { extlibs.RegisterTemplateTextLibrary(p) })
 
 	reg(extlibs.MulticastLibraryName, func() { scriptlingmulticast.Register(p) })
 	reg(extlibs.UnicastLibraryName, func() { scriptlingunicast.Register(p) })

@@ -145,7 +145,8 @@ func TestEnvironmentCopyCallableBindingsTo(t *testing.T) {
 	lambda := &LambdaFunction{Env: source}
 	source.Set("work", fn)
 	source.Set("helper", lambda)
-	source.Set("value", &Integer{Value: 42})
+	sourceVal := &Integer{Value: 42}
+	source.Set("value", sourceVal)
 
 	source.CopyCallableBindingsTo(target)
 
@@ -179,8 +180,12 @@ func TestEnvironmentCopyCallableBindingsTo(t *testing.T) {
 		t.Fatal("expected copied lambda env to point at target")
 	}
 
-	if _, ok := target.Get("value"); ok {
-		t.Fatal("expected non-callable binding to be skipped")
+	copiedVal, ok := target.Get("value")
+	if !ok {
+		t.Fatal("expected non-callable binding to be shared")
+	}
+	if copiedVal != sourceVal {
+		t.Fatal("expected non-callable binding to be the same object (shared)")
 	}
 }
 

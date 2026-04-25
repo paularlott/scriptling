@@ -113,9 +113,8 @@ func newClient(t *tui.TUI) *consoleClient {
 	return c
 }
 
-func (c *consoleClient) Platform() string          { return "console" }
-func (c *consoleClient) Capabilities() []string    { return c.inst.Capabilities() }
-func (c *consoleClient) BotCapabilities() []string { return c.inst.Capabilities() }
+func (c *consoleClient) Platform() string       { return "console" }
+func (c *consoleClient) Capabilities() []string { return c.inst.Capabilities() }
 
 func (c *consoleClient) BotCommand(name, helpText string, h shared.Handler) {
 	c.commands[strings.ToLower(name)] = commandEntry{handler: h, helpText: helpText}

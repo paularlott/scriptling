@@ -1725,7 +1725,7 @@ Checks the full inheritance chain. issubclass(C, C) is True.`,
 				for k, v := range o.Fields {
 					newFields[k] = v
 				}
-				return &object.Instance{Class: o.Class, Fields: newFields}
+				return &object.Instance{Class: o.Class, Fields: newFields, NativeData: o.NativeData}
 			default:
 				return args[0] // scalars are immutable
 			}

@@ -946,49 +946,72 @@ func (e *Environment) GetStore() map[string]Object {
 	return store
 }
 
-// CopyCallableBindingsTo copies local function and lambda bindings into target,
-// rebinding them to the target environment without allocating an intermediate
-// full store snapshot.
+// CopyCallableBindingsTo copies bindings into target for background task use.
+// Functions and lambdas are deep-copied and rebound to target.
+// Dicts (imported modules) are deep-copied so concurrent tasks don't race.
+// Classes are skipped. Everything else (builtins, primitives) is shared directly.
 func (e *Environment) CopyCallableBindingsTo(target *Environment) {
 	e.mu.RLock()
 	target.mu.Lock()
-	copyCallable := func(name string, value Object) {
-		switch origFn := value.(type) {
+	copyBinding := func(name string, value Object) {
+		switch v := value.(type) {
 		case *Function:
 			target.store[name] = &Function{
-				Name:           origFn.Name,
-				Parameters:     origFn.Parameters,
-				DefaultValues:  origFn.DefaultValues,
-				Variadic:       origFn.Variadic,
-				Kwargs:         origFn.Kwargs,
-				Body:           origFn.Body,
+				Name:           v.Name,
+				Parameters:     v.Parameters,
+				DefaultValues:  v.DefaultValues,
+				Variadic:       v.Variadic,
+				Kwargs:         v.Kwargs,
+				Body:           v.Body,
 				Env:            target,
-				LocalSlots:     origFn.LocalSlots,
-				LocalSlotNames: origFn.LocalSlotNames,
+				LocalSlots:     v.LocalSlots,
+				LocalSlotNames: v.LocalSlotNames,
 			}
 		case *LambdaFunction:
 			target.store[name] = &LambdaFunction{
-				Parameters:     origFn.Parameters,
-				DefaultValues:  origFn.DefaultValues,
-				Variadic:       origFn.Variadic,
-				Kwargs:         origFn.Kwargs,
-				Body:           origFn.Body,
+				Parameters:     v.Parameters,
+				DefaultValues:  v.DefaultValues,
+				Variadic:       v.Variadic,
+				Kwargs:         v.Kwargs,
+				Body:           v.Body,
 				Env:            target,
-				LocalSlots:     origFn.LocalSlots,
-				LocalSlotNames: origFn.LocalSlotNames,
+				LocalSlots:     v.LocalSlots,
+				LocalSlotNames: v.LocalSlotNames,
 			}
+		case *Class:
+			// Classes can't be safely shared across envs.
+		case *Dict:
+			target.store[name] = deepCopyDict(v)
+		default:
+			target.store[name] = v
 		}
 	}
 	for name, value := range e.store {
-		copyCallable(name, value)
+		copyBinding(name, value)
 	}
 	for idx, name := range e.slotNames {
 		if idx >= 0 && idx < len(e.slots) && e.slots[idx] != nil {
-			copyCallable(name, e.slots[idx])
+			copyBinding(name, e.slots[idx])
 		}
 	}
 	target.mu.Unlock()
 	e.mu.RUnlock()
+}
+
+// deepCopyDict recursively copies a Dict so concurrent tasks don't race
+// when mutating intermediate dicts.
+func deepCopyDict(d *Dict) *Dict {
+	if d == nil {
+		return nil
+	}
+	pairs := make(map[string]DictPair, len(d.Pairs))
+	for k, v := range d.Pairs {
+		if nested, ok := v.Value.(*Dict); ok {
+			v.Value = deepCopyDict(nested)
+		}
+		pairs[k] = v
+	}
+	return &Dict{Pairs: pairs}
 }
 
 // ResetStore removes all keys from the environment store except those in keep.
@@ -1353,6 +1376,7 @@ func (c *Class) InvalidateLookupCache() {
 type Instance struct {
 	Class            *Class
 	Fields           map[string]Object
+	NativeData       any
 	boundMethodCache map[string]boundMethodCacheEntry
 }
 
@@ -1600,7 +1624,7 @@ func CloneObject(obj Object) Object {
 		for k, val := range v.Fields {
 			fields[k] = CloneObject(val)
 		}
-		return &Instance{Class: v.Class, Fields: fields}
+		return &Instance{Class: v.Class, Fields: fields, NativeData: v.NativeData}
 	default:
 		// Builtins, Functions, Classes, Errors, etc. — immutable or singleton
 		return obj

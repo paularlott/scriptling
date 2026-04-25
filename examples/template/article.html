@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+<head><title>{{.Title}}</title></head>
+<body>
+  <article>
+    <h1>{{.Title}}</h1>
+    <p><em>By {{.Author}}</em></p>
+    <p>{{.Body}}</p>
+    <ul>
+    {{range .Tags}}<li>{{.}}</li>
+    {{end}}</ul>
+  </article>
+</body>
+</html>
