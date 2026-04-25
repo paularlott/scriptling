@@ -2,15 +2,16 @@ package multicast
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net"
 	"sync"
 	"time"
 
-	"github.com/paularlott/scriptling/conversion"
+	"golang.org/x/net/ipv4"
+
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/net/internal"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -20,8 +21,8 @@ const (
 )
 
 type multicastGroup struct {
-	mu        sync.Mutex
-	recvMu    sync.Mutex
+	mu        sync.Mutex // protects closed, conn for send/close
+	recvMu    sync.Mutex // serializes receive calls; always acquired before mu if both needed
 	conn      *net.UDPConn
 	addr      *net.UDPAddr
 	iface     *net.Interface
@@ -29,6 +30,7 @@ type multicastGroup struct {
 	groupAddr string
 	port      int
 	localAddr string
+	key       string
 }
 
 var (
@@ -40,7 +42,7 @@ var (
 	}{m: make(map[string]*multicastGroup)}
 )
 
-func (g *multicastGroup) close() {
+func (g *multicastGroup) closeConn() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.closed {
@@ -50,6 +52,13 @@ func (g *multicastGroup) close() {
 	if g.conn != nil {
 		g.conn.Close()
 	}
+}
+
+func (g *multicastGroup) close() {
+	g.closeConn()
+	groups.Lock()
+	delete(groups.m, g.key)
+	groups.Unlock()
 }
 
 func (g *multicastGroup) send(data []byte) error {
@@ -62,45 +71,44 @@ func (g *multicastGroup) send(data []byte) error {
 	return err
 }
 
+var bufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 65536)
+		return &b
+	},
+}
+
 func (g *multicastGroup) receive(timeout time.Duration) ([]byte, *net.UDPAddr, error) {
 	g.recvMu.Lock()
 	defer g.recvMu.Unlock()
+	g.mu.Lock()
+	if g.closed {
+		g.mu.Unlock()
+		return nil, nil, fmt.Errorf("group is closed")
+	}
+	conn := g.conn
+	g.mu.Unlock()
 	if timeout > 0 {
-		if err := g.conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
 			return nil, nil, err
 		}
 	} else {
-		if err := g.conn.SetReadDeadline(time.Time{}); err != nil {
+		if err := conn.SetReadDeadline(time.Time{}); err != nil {
 			return nil, nil, err
 		}
 	}
-	buf := make([]byte, 65536)
-	n, src, err := g.conn.ReadFromUDP(buf)
+	buf := *bufPool.Get().(*[]byte)
+	defer bufPool.Put(&buf)
+	n, src, err := conn.ReadFromUDP(buf)
 	if err != nil {
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 			return nil, nil, nil
 		}
 		return nil, nil, err
 	}
-	return buf[:n], src, nil
-}
-
-func msgToBytes(msg object.Object) ([]byte, object.Object) {
-	if dict, ok := msg.(*object.Dict); ok {
-		jsonData, jsonErr := json.Marshal(conversion.ToGo(dict))
-		if jsonErr != nil {
-			return nil, errors.NewError("failed to encode JSON: %s", jsonErr.Error())
-		}
-		return jsonData, nil
-	}
-	if str, ok := msg.(*object.String); ok {
-		return []byte(str.Value), nil
-	}
-	strVal, coerceErr := msg.CoerceString()
-	if coerceErr != nil {
-		return nil, errors.NewError("message must be string or dict")
-	}
-	return []byte(strVal), nil
+	result := make([]byte, n)
+	copy(result, buf[:n])
+	return result, src, nil
 }
 
 func buildGroupObject(g *multicastGroup) *object.Builtin {
@@ -111,7 +119,7 @@ func buildGroupObject(g *multicastGroup) *object.Builtin {
 					if err := errors.MinArgs(args, 1); err != nil {
 						return err
 					}
-					data, dataErr := msgToBytes(args[0])
+					data, dataErr := internal.MsgToBytes(args[0])
 					if dataErr != nil {
 						return dataErr
 					}
@@ -194,11 +202,21 @@ func buildLibrary() *object.Library {
 						port = pv
 					}
 				}
+				if port <= 0 || port > 65535 {
+					return errors.NewError("port must be between 1 and 65535")
+				}
 
 				ifaceName := ""
 				if iface := kwargs.Get("interface"); iface != nil {
 					if iv, e := iface.AsString(); e == nil {
 						ifaceName = iv
+					}
+				}
+
+				ttl := int64(1)
+				if t := kwargs.Get("ttl"); t != nil {
+					if tv, e := t.AsInt(); e == nil {
+						ttl = tv
 					}
 				}
 
@@ -224,12 +242,18 @@ func buildLibrary() *object.Library {
 				if listenErr != nil {
 					return errors.NewError("failed to join multicast group: %s", listenErr.Error())
 				}
+				// Wrap conn to configure multicast options; pc shares the same fd as conn
+				// so no separate close is needed — closing conn cleans up both.
+				pc := ipv4.NewPacketConn(conn)
+				_ = pc.SetMulticastLoopback(true)
+				_ = pc.SetMulticastTTL(int(ttl))
 
 				localAddr := ""
 				if conn.LocalAddr() != nil {
 					localAddr = conn.LocalAddr().String()
 				}
 
+				key := fmt.Sprintf("%s:%d:%p", groupAddr, port, conn)
 				g := &multicastGroup{
 					conn:      conn,
 					addr:      addr,
@@ -237,23 +261,22 @@ func buildLibrary() *object.Library {
 					groupAddr: groupAddr,
 					port:      int(port),
 					localAddr: localAddr,
+					key:       key,
 				}
 
 				groups.Lock()
-				if old, exists := groups.m[groupAddr]; exists {
-					old.close()
-				}
-				groups.m[groupAddr] = g
+				groups.m[key] = g
 				groups.Unlock()
 
 				return buildGroupObject(g)
 			},
-			HelpText: `join(group_addr, port, interface="") - Join a multicast group
+			HelpText: `join(group_addr, port, interface="", ttl=1) - Join a multicast group
 
 Parameters:
   group_addr (string): Multicast group address (e.g., "239.1.1.1")
   port (int): Port number for the multicast group
   interface (string, optional): Network interface to bind to
+  ttl (int, optional): Multicast TTL / hop limit (default: 1, local network only)
 
 Returns:
   Group object with methods: send(), receive(), close()
@@ -275,7 +298,7 @@ func Register(registrar interface{ RegisterLibrary(*object.Library) }) {
 		extlibs.RegisterCleanup(func() {
 			groups.Lock()
 			for _, g := range groups.m {
-				g.close()
+				g.closeConn()
 			}
 			groups.m = make(map[string]*multicastGroup)
 			groups.Unlock()

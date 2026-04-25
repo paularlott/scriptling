@@ -21,7 +21,6 @@ type ScriptSender interface {
 	BotOnFile(h Handler)
 	BotAuth(h Handler)
 	BotRun(ctx context.Context) error
-	BotCapabilities() []string
 }
 
 // richMessageFromDict converts a Scriptling dict to a *RichMessage.
@@ -246,13 +245,13 @@ func BuildCtxDict(c *Ctx) *object.Dict {
 	return d
 }
 
-// clientFrom extracts the ScriptSender from args[0] (the instance self).
-func ClientFrom(nativeKey string, args []object.Object) (ScriptSender, *object.Instance, bool) {
+// ClientFrom extracts the ScriptSender from args[0] (the instance self).
+func ClientFrom(args []object.Object) (ScriptSender, *object.Instance, bool) {
 	inst, ok := args[0].(*object.Instance)
 	if !ok {
 		return nil, nil, false
 	}
-	s, ok := inst.Fields[nativeKey].(ScriptSender)
+	s, ok := inst.NativeData.(ScriptSender)
 	if !ok {
 		return nil, nil, false
 	}
@@ -278,8 +277,7 @@ func BindToInstance(inst *object.Instance, builtins map[string]*object.Builtin) 
 }
 
 // SharedBuiltins returns the map of Scriptling builtins that are identical across all platforms.
-// nativeKey is the field name used to store the ScriptSender in the Instance.Fields map.
-func SharedBuiltins(nativeKey string) map[string]*object.Builtin {
+func SharedBuiltins() map[string]*object.Builtin {
 	return map[string]*object.Builtin{
 
 		"capabilities": {
@@ -287,11 +285,11 @@ func SharedBuiltins(nativeKey string) map[string]*object.Builtin {
 				if err := errors.ExactArgs(args, 1); err != nil {
 					return err
 				}
-				s, _, ok := ClientFrom(nativeKey, args)
+				s, _, ok := ClientFrom(args)
 				if !ok {
 					return errors.NewError("capabilities: invalid client")
 				}
-				caps := s.BotCapabilities()
+				caps := s.Capabilities()
 				elems := make([]object.Object, len(caps))
 				for i, c := range caps {
 					elems[i] = &object.String{Value: c}
@@ -306,7 +304,7 @@ func SharedBuiltins(nativeKey string) map[string]*object.Builtin {
 				if err := errors.RangeArgs(args, 3, 4); err != nil {
 					return err
 				}
-				s, inst, ok := ClientFrom(nativeKey, args)
+				s, inst, ok := ClientFrom(args)
 				if !ok {
 					return errors.NewError("command: invalid client")
 				}
@@ -335,7 +333,7 @@ func SharedBuiltins(nativeKey string) map[string]*object.Builtin {
 				if err := errors.RangeArgs(args, 2, 3); err != nil {
 					return err
 				}
-				s, inst, ok := ClientFrom(nativeKey, args)
+				s, inst, ok := ClientFrom(args)
 				if !ok {
 					return errors.NewError("on_callback: invalid client")
 				}
@@ -363,7 +361,7 @@ func SharedBuiltins(nativeKey string) map[string]*object.Builtin {
 				if err := errors.ExactArgs(args, 2); err != nil {
 					return err
 				}
-				s, inst, ok := ClientFrom(nativeKey, args)
+				s, inst, ok := ClientFrom(args)
 				if !ok {
 					return errors.NewError("on_message: invalid client")
 				}
@@ -383,7 +381,7 @@ func SharedBuiltins(nativeKey string) map[string]*object.Builtin {
 				if err := errors.ExactArgs(args, 2); err != nil {
 					return err
 				}
-				s, inst, ok := ClientFrom(nativeKey, args)
+				s, inst, ok := ClientFrom(args)
 				if !ok {
 					return errors.NewError("on_file: invalid client")
 				}
@@ -403,7 +401,7 @@ func SharedBuiltins(nativeKey string) map[string]*object.Builtin {
 				if err := errors.ExactArgs(args, 2); err != nil {
 					return err
 				}
-				s, inst, ok := ClientFrom(nativeKey, args)
+				s, inst, ok := ClientFrom(args)
 				if !ok {
 					return errors.NewError("auth: invalid client")
 				}
@@ -423,7 +421,7 @@ func SharedBuiltins(nativeKey string) map[string]*object.Builtin {
 				if err := errors.ExactArgs(args, 1); err != nil {
 					return err
 				}
-				s, _, ok := ClientFrom(nativeKey, args)
+				s, _, ok := ClientFrom(args)
 				if !ok {
 					return errors.NewError("run: invalid client")
 				}
@@ -440,7 +438,7 @@ func SharedBuiltins(nativeKey string) map[string]*object.Builtin {
 				if err := errors.MinArgs(args, 3); err != nil {
 					return err
 				}
-				s, _, ok := ClientFrom(nativeKey, args)
+				s, _, ok := ClientFrom(args)
 				if !ok {
 					return errors.NewError("send_message: invalid client")
 				}
@@ -478,7 +476,7 @@ func SharedBuiltins(nativeKey string) map[string]*object.Builtin {
 				if err := errors.ExactArgs(args, 3); err != nil {
 					return err
 				}
-				s, _, ok := ClientFrom(nativeKey, args)
+				s, _, ok := ClientFrom(args)
 				if !ok {
 					return errors.NewError("send_rich_message: invalid client")
 				}
@@ -503,7 +501,7 @@ func SharedBuiltins(nativeKey string) map[string]*object.Builtin {
 				if err := errors.ExactArgs(args, 4); err != nil {
 					return err
 				}
-				s, _, ok := ClientFrom(nativeKey, args)
+				s, _, ok := ClientFrom(args)
 				if !ok {
 					return errors.NewError("edit_message: invalid client")
 				}
@@ -523,7 +521,7 @@ func SharedBuiltins(nativeKey string) map[string]*object.Builtin {
 				if err := errors.ExactArgs(args, 3); err != nil {
 					return err
 				}
-				s, _, ok := ClientFrom(nativeKey, args)
+				s, _, ok := ClientFrom(args)
 				if !ok {
 					return errors.NewError("delete_message: invalid client")
 				}
@@ -542,7 +540,7 @@ func SharedBuiltins(nativeKey string) map[string]*object.Builtin {
 				if err := errors.MinArgs(args, 3); err != nil {
 					return err
 				}
-				s, _, ok := ClientFrom(nativeKey, args)
+				s, _, ok := ClientFrom(args)
 				if !ok {
 					return errors.NewError("send_file: invalid client")
 				}
@@ -564,7 +562,7 @@ func SharedBuiltins(nativeKey string) map[string]*object.Builtin {
 				if err := errors.ExactArgs(args, 2); err != nil {
 					return err
 				}
-				s, _, ok := ClientFrom(nativeKey, args)
+				s, _, ok := ClientFrom(args)
 				if !ok {
 					return errors.NewError("typing: invalid client")
 				}
@@ -582,7 +580,7 @@ func SharedBuiltins(nativeKey string) map[string]*object.Builtin {
 				if err := errors.RangeArgs(args, 2, 4); err != nil {
 					return err
 				}
-				s, _, ok := ClientFrom(nativeKey, args)
+				s, _, ok := ClientFrom(args)
 				if !ok {
 					return errors.NewError("answer_callback: invalid client")
 				}
@@ -610,7 +608,7 @@ func SharedBuiltins(nativeKey string) map[string]*object.Builtin {
 				if err := errors.ExactArgs(args, 2); err != nil {
 					return err
 				}
-				s, _, ok := ClientFrom(nativeKey, args)
+				s, _, ok := ClientFrom(args)
 				if !ok {
 					return errors.NewError("download: invalid client")
 				}

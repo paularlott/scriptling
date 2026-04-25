@@ -35,7 +35,7 @@ runtime.http.static("/assets", "./public")
 		t.Errorf("Expected 3 routes, got %d", len(RuntimeState.Routes))
 	}
 
-	if route, ok := RuntimeState.Routes["/test"]; !ok || route.Handler != "handler.test" {
+	if route, ok := RuntimeState.Routes["GET /test"]; !ok || route.Handler != "handler.test" {
 		t.Error("GET route not registered correctly")
 	}
 

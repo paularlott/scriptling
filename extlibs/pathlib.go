@@ -11,7 +11,25 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
-// PathClass is defined per library instance to avoid initialization cycle
+// pathNativeData holds the internal path string stored in Instance.NativeData.
+type pathNativeData struct {
+	path string
+}
+
+func pathFrom(inst *object.Instance) (string, object.Object) {
+	if nd, ok := inst.NativeData.(*pathNativeData); ok {
+		return nd.path, nil
+	}
+	return "", errors.NewError("Path: invalid native data")
+}
+
+func pathArg(args []object.Object) (string, object.Object) {
+	inst, ok := args[0].(*object.Instance)
+	if !ok {
+		return "", errors.NewError("Path: expected a Path instance")
+	}
+	return pathFrom(inst)
+}
 
 // PathlibLibraryInstance holds the configured Pathlib library instance
 type PathlibLibraryInstance struct {
@@ -30,8 +48,6 @@ func RegisterPathlibLibrary(registrar object.LibraryRegistrar, allowedPaths []st
 
 // NewPathlibLibrary creates a new Pathlib library with the given configuration.
 func NewPathlibLibrary(config fssecurity.Config) *object.Library {
-	// Normalize and validate allowed paths (same as in os.go)
-	// IMPORTANT: nil means no restrictions, empty slice means deny all
 	if config.AllowedPaths != nil {
 		normalizedPaths := make([]string, 0, len(config.AllowedPaths))
 		for _, p := range config.AllowedPaths {
@@ -48,19 +64,73 @@ func NewPathlibLibrary(config fssecurity.Config) *object.Library {
 	return instance.createPathlibLibrary()
 }
 
+func (p *PathlibLibraryInstance) checkPathSecurity(path string) object.Object {
+	if !p.config.IsPathAllowed(path) {
+		return errors.NewPermissionError("access denied: path '%s' is outside allowed directories", path)
+	}
+	return nil
+}
+
+func (p *PathlibLibraryInstance) createPathObject(pathStr string) object.Object {
+	cleanPath := filepath.Clean(pathStr)
+
+	base := filepath.Base(cleanPath)
+	ext := filepath.Ext(cleanPath)
+	stem := strings.TrimSuffix(base, ext)
+	if base == "/" {
+		stem = ""
+	}
+
+	parts := strings.Split(cleanPath, string(os.PathSeparator))
+	if len(parts) > 1 && parts[0] == "" && parts[1] == "" {
+		parts = []string{"/"}
+	} else if len(parts) > 0 && parts[0] == "" {
+		parts[0] = "/"
+	}
+	partObjs := make([]object.Object, len(parts))
+	for i, part := range parts {
+		partObjs[i] = &object.String{Value: part}
+	}
+
+	return &object.Instance{
+		Class: p.PathClass,
+		Fields: map[string]object.Object{
+			"name":    &object.String{Value: base},
+			"stem":    &object.String{Value: stem},
+			"suffix":  &object.String{Value: ext},
+			"parent":  &object.String{Value: filepath.Dir(cleanPath)},
+			"parts":   &object.Tuple{Elements: partObjs},
+			"__str__": &object.String{Value: cleanPath},
+		},
+		NativeData: &pathNativeData{path: cleanPath},
+	}
+}
+
+func (p *PathlibLibraryInstance) pathConstructor(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+	if err := errors.ExactArgs(args, 1); err != nil {
+		return err
+	}
+	pathStr, err := args[0].AsString()
+	if err != nil {
+		return err
+	}
+	return p.createPathObject(pathStr)
+}
+
 func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
-	// Define PathClass with methods that capture the library instance
 	p.PathClass = &object.Class{
 		Name: "Path",
 		Methods: map[string]object.Object{
 			"joinpath": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if err := errors.MinArgs(args, 1); err != nil { return err }
-					pathInstance := args[0].(*object.Instance)
-					cleanPath, _ := pathInstance.Fields["__path__"].AsString()
-
-					parts := make([]string, 0, len(args))
-					parts = append(parts, cleanPath)
+					if err := errors.MinArgs(args, 1); err != nil {
+						return err
+					}
+					cleanPath, errObj := pathArg(args)
+					if errObj != nil {
+						return errObj
+					}
+					parts := []string{cleanPath}
 					for _, arg := range args[1:] {
 						s, err := arg.AsString()
 						if err != nil {
@@ -82,10 +152,13 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 			},
 			"exists": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if err := errors.ExactArgs(args, 1); err != nil { return err }
-					pathInstance := args[0].(*object.Instance)
-					cleanPath, _ := pathInstance.Fields["__path__"].AsString()
-
+					if err := errors.ExactArgs(args, 1); err != nil {
+						return err
+					}
+					cleanPath, errObj := pathArg(args)
+					if errObj != nil {
+						return errObj
+					}
 					if err := p.checkPathSecurity(cleanPath); err != nil {
 						return err
 					}
@@ -96,10 +169,13 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 			},
 			"is_file": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if err := errors.ExactArgs(args, 1); err != nil { return err }
-					pathInstance := args[0].(*object.Instance)
-					cleanPath, _ := pathInstance.Fields["__path__"].AsString()
-
+					if err := errors.ExactArgs(args, 1); err != nil {
+						return err
+					}
+					cleanPath, errObj := pathArg(args)
+					if errObj != nil {
+						return errObj
+					}
 					if err := p.checkPathSecurity(cleanPath); err != nil {
 						return object.NewBoolean(false)
 					}
@@ -113,10 +189,13 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 			},
 			"is_dir": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if err := errors.ExactArgs(args, 1); err != nil { return err }
-					pathInstance := args[0].(*object.Instance)
-					cleanPath, _ := pathInstance.Fields["__path__"].AsString()
-
+					if err := errors.ExactArgs(args, 1); err != nil {
+						return err
+					}
+					cleanPath, errObj := pathArg(args)
+					if errObj != nil {
+						return errObj
+					}
 					if err := p.checkPathSecurity(cleanPath); err != nil {
 						return object.NewBoolean(false)
 					}
@@ -130,28 +209,28 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 			},
 			"mkdir": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if err := errors.ExactArgs(args, 1); err != nil { return err }
-					pathInstance := args[0].(*object.Instance)
-					cleanPath, _ := pathInstance.Fields["__path__"].AsString()
-
+					if err := errors.ExactArgs(args, 1); err != nil {
+						return err
+					}
+					cleanPath, errObj := pathArg(args)
+					if errObj != nil {
+						return errObj
+					}
 					if err := p.checkPathSecurity(cleanPath); err != nil {
 						return err
 					}
-
 					parents := false
 					if val, ok := kwargs.Kwargs["parents"]; ok {
 						if b, err := val.AsBool(); err == nil {
 							parents = b
 						}
 					}
-
 					var err error
 					if parents {
 						err = os.MkdirAll(cleanPath, 0755)
 					} else {
 						err = os.Mkdir(cleanPath, 0755)
 					}
-
 					if err != nil {
 						return errors.NewError("cannot create directory: %s", err.Error())
 					}
@@ -161,16 +240,17 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 			},
 			"rmdir": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if err := errors.ExactArgs(args, 1); err != nil { return err }
-					pathInstance := args[0].(*object.Instance)
-					cleanPath, _ := pathInstance.Fields["__path__"].AsString()
-
+					if err := errors.ExactArgs(args, 1); err != nil {
+						return err
+					}
+					cleanPath, errObj := pathArg(args)
+					if errObj != nil {
+						return errObj
+					}
 					if err := p.checkPathSecurity(cleanPath); err != nil {
 						return err
 					}
-
-					err := os.Remove(cleanPath)
-					if err != nil {
+					if err := os.Remove(cleanPath); err != nil {
 						return errors.NewError("cannot remove directory: %s", err.Error())
 					}
 					return &object.Null{}
@@ -179,21 +259,22 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 			},
 			"unlink": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if err := errors.ExactArgs(args, 1); err != nil { return err }
-					pathInstance := args[0].(*object.Instance)
-					cleanPath, _ := pathInstance.Fields["__path__"].AsString()
-
+					if err := errors.ExactArgs(args, 1); err != nil {
+						return err
+					}
+					cleanPath, errObj := pathArg(args)
+					if errObj != nil {
+						return errObj
+					}
 					missingOk := false
 					if val, ok := kwargs.Kwargs["missing_ok"]; ok {
 						if b, err := val.AsBool(); err == nil {
 							missingOk = b
 						}
 					}
-
 					if err := p.checkPathSecurity(cleanPath); err != nil {
 						return err
 					}
-
 					err := os.Remove(cleanPath)
 					if err != nil {
 						if missingOk && os.IsNotExist(err) {
@@ -207,14 +288,16 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 			},
 			"read_text": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if err := errors.ExactArgs(args, 1); err != nil { return err }
-					pathInstance := args[0].(*object.Instance)
-					cleanPath, _ := pathInstance.Fields["__path__"].AsString()
-
+					if err := errors.ExactArgs(args, 1); err != nil {
+						return err
+					}
+					cleanPath, errObj := pathArg(args)
+					if errObj != nil {
+						return errObj
+					}
 					if err := p.checkPathSecurity(cleanPath); err != nil {
 						return err
 					}
-
 					content, err := os.ReadFile(cleanPath)
 					if err != nil {
 						return errors.NewError("cannot read file: %s", err.Error())
@@ -225,21 +308,22 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 			},
 			"write_text": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if err := errors.ExactArgs(args, 2); err != nil { return err }
-					pathInstance := args[0].(*object.Instance)
-					cleanPath, _ := pathInstance.Fields["__path__"].AsString()
+					if err := errors.ExactArgs(args, 2); err != nil {
+						return err
+					}
+					cleanPath, errObj := pathArg(args)
+					if errObj != nil {
+						return errObj
+					}
 					content, err := args[1].AsString()
 					if err != nil {
 						return err
 					}
-
 					if err := p.checkPathSecurity(cleanPath); err != nil {
 						return err
 					}
-
-					fsErr := os.WriteFile(cleanPath, []byte(content), 0644)
-					if fsErr != nil {
-						return errors.NewError("cannot write file: %s", fsErr.Error())
+					if err := os.WriteFile(cleanPath, []byte(content), 0644); err != nil {
+						return errors.NewError("cannot write file: %s", err.Error())
 					}
 					return &object.Null{}
 				},
@@ -280,70 +364,4 @@ Returns a Path object representing the filesystem path.`,
 	}, map[string]object.Object{
 		"PathClass": p.PathClass,
 	}, "Object-oriented filesystem paths")
-}
-
-func (p *PathlibLibraryInstance) pathConstructor(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-	if err := errors.ExactArgs(args, 1); err != nil { return err }
-	pathStr, err := args[0].AsString()
-	if err != nil {
-		return err
-	}
-
-	return p.createPathObject(pathStr)
-}
-
-func (p *PathlibLibraryInstance) createPathObject(pathStr string) object.Object {
-	// Clean the path
-	cleanPath := filepath.Clean(pathStr)
-
-	// Create the Path instance
-	pathInstance := &object.Instance{
-		Class:  p.PathClass,
-		Fields: make(map[string]object.Object),
-	}
-
-	// Store the internal path
-	pathInstance.Fields["__path__"] = &object.String{Value: cleanPath}
-
-	// Store allowed paths for security checks
-	allowedPaths := make([]object.Object, len(p.config.AllowedPaths))
-	for i, path := range p.config.AllowedPaths {
-		allowedPaths[i] = &object.String{Value: path}
-	}
-	pathInstance.Fields["__allowed_paths__"] = &object.List{Elements: allowedPaths}
-
-	// Properties
-	base := filepath.Base(cleanPath)
-	ext := filepath.Ext(cleanPath)
-	stem := strings.TrimSuffix(base, ext)
-	if base == "/" {
-		stem = ""
-	}
-	pathInstance.Fields["name"] = &object.String{Value: base}
-	pathInstance.Fields["stem"] = &object.String{Value: stem}
-	pathInstance.Fields["suffix"] = &object.String{Value: ext}
-	pathInstance.Fields["parent"] = &object.String{Value: filepath.Dir(cleanPath)}
-
-	parts := strings.Split(cleanPath, string(os.PathSeparator))
-	if len(parts) > 1 && parts[0] == "" && parts[1] == "" {
-		parts = []string{"/"}
-	} else if len(parts) > 0 && parts[0] == "" {
-		parts[0] = "/"
-	}
-	partObjs := make([]object.Object, len(parts))
-	for i, part := range parts {
-		partObjs[i] = &object.String{Value: part}
-	}
-	pathInstance.Fields["parts"] = &object.Tuple{Elements: partObjs}
-
-	pathInstance.Fields["__str__"] = &object.String{Value: cleanPath}
-
-	return pathInstance
-}
-
-func (p *PathlibLibraryInstance) checkPathSecurity(path string) object.Object {
-	if !p.config.IsPathAllowed(path) {
-		return errors.NewPermissionError("access denied: path '%s' is outside allowed directories", path)
-	}
-	return nil
 }
