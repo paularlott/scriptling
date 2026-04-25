@@ -2,7 +2,6 @@ package multicast
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net"
 	"sync"
@@ -10,9 +9,9 @@ import (
 
 	"golang.org/x/net/ipv4"
 
-	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/net/internal"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -112,24 +111,6 @@ func (g *multicastGroup) receive(timeout time.Duration) ([]byte, *net.UDPAddr, e
 	return result, src, nil
 }
 
-func msgToBytes(msg object.Object) ([]byte, object.Object) {
-	if dict, ok := msg.(*object.Dict); ok {
-		jsonData, jsonErr := json.Marshal(conversion.ToGo(dict))
-		if jsonErr != nil {
-			return nil, errors.NewError("failed to encode JSON: %s", jsonErr.Error())
-		}
-		return jsonData, nil
-	}
-	if str, ok := msg.(*object.String); ok {
-		return []byte(str.Value), nil
-	}
-	strVal, coerceErr := msg.CoerceString()
-	if coerceErr != nil {
-		return nil, errors.NewError("message must be string or dict")
-	}
-	return []byte(strVal), nil
-}
-
 func buildGroupObject(g *multicastGroup) *object.Builtin {
 	return &object.Builtin{
 		Attributes: map[string]object.Object{
@@ -138,7 +119,7 @@ func buildGroupObject(g *multicastGroup) *object.Builtin {
 					if err := errors.MinArgs(args, 1); err != nil {
 						return err
 					}
-					data, dataErr := msgToBytes(args[0])
+					data, dataErr := internal.MsgToBytes(args[0])
 					if dataErr != nil {
 						return dataErr
 					}

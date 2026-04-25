@@ -2,16 +2,16 @@ package unicast
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
 	"sync"
 	"time"
 
-	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/net/internal"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -19,6 +19,13 @@ const (
 	LibraryName = "scriptling.net.unicast"
 	LibraryDesc = "UDP and TCP point-to-point messaging"
 )
+
+var bufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 65536)
+		return &b
+	},
+}
 
 var (
 	library     *object.Library
@@ -46,37 +53,22 @@ func untrackListener(id uint64) {
 	listeners.Unlock()
 }
 
-func msgToBytes(msg object.Object) ([]byte, object.Object) {
-	if dict, ok := msg.(*object.Dict); ok {
-		jsonData, jsonErr := json.Marshal(conversion.ToGo(dict))
-		if jsonErr != nil {
-			return nil, errors.NewError("failed to encode JSON: %s", jsonErr.Error())
-		}
-		return jsonData, nil
-	}
-	if str, ok := msg.(*object.String); ok {
-		return []byte(str.Value), nil
-	}
-	strVal, coerceErr := msg.CoerceString()
-	if coerceErr != nil {
-		return nil, errors.NewError("message must be string or dict")
-	}
-	return []byte(strVal), nil
-}
-
-// udpConn wraps a connected UDP socket (from net.Dialer.DialContext).
-// Using net.Conn (not *net.UDPConn) avoids the EISCONN error that WriteToUDP
-// raises on connected sockets on Linux.
-type udpConn struct {
+// netConn is shared by both UDP (connected) and TCP connections.
+// mu protects closed/conn for send and close; recvMu serializes receives
+// without blocking concurrent sends (always acquired before mu if both needed).
+// For TCP, messages are length-prefixed (4-byte big-endian) to provide
+// message framing over the stream protocol.
+type netConn struct {
 	mu         sync.Mutex
-	recvMu     sync.Mutex
+	recvMu     sync.Mutex // always acquired before mu if both needed
 	conn       net.Conn
 	closed     bool
+	tcp        bool // true = apply length-prefix framing
 	localAddr  string
 	remoteAddr string
 }
 
-func (c *udpConn) close() {
+func (c *netConn) close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
@@ -86,36 +78,78 @@ func (c *udpConn) close() {
 	c.conn.Close()
 }
 
-func (c *udpConn) send(data []byte) error {
+func (c *netConn) send(data []byte) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
 		return fmt.Errorf("connection is closed")
 	}
+	if c.tcp {
+		var hdr [4]byte
+		binary.BigEndian.PutUint32(hdr[:], uint32(len(data)))
+		if _, err := c.conn.Write(hdr[:]); err != nil {
+			return err
+		}
+	}
 	_, err := c.conn.Write(data)
 	return err
 }
 
-func (c *udpConn) receive(timeout time.Duration) ([]byte, error) {
+func (c *netConn) receive(timeout time.Duration) ([]byte, error) {
 	c.recvMu.Lock()
 	defer c.recvMu.Unlock()
-	if timeout > 0 {
-		c.conn.SetReadDeadline(time.Now().Add(timeout))
-	} else {
-		c.conn.SetReadDeadline(time.Time{})
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return nil, fmt.Errorf("connection is closed")
 	}
-	buf := make([]byte, 65536)
-	n, err := c.conn.Read(buf)
+	conn := c.conn
+	c.mu.Unlock()
+	if timeout > 0 {
+		if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := conn.SetReadDeadline(time.Time{}); err != nil {
+			return nil, err
+		}
+	}
+	if c.tcp {
+		var hdr [4]byte
+		if _, err := io.ReadFull(conn, hdr[:]); err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				return nil, nil
+			}
+			if err == io.EOF || err == io.ErrUnexpectedEOF {
+				return nil, fmt.Errorf("connection closed by peer")
+			}
+			return nil, err
+		}
+		size := binary.BigEndian.Uint32(hdr[:])
+		if size > 65536 {
+			return nil, fmt.Errorf("message too large: %d bytes", size)
+		}
+		body := make([]byte, size)
+		if _, err := io.ReadFull(conn, body); err != nil {
+			return nil, err
+		}
+		return body, nil
+	}
+	buf := *bufPool.Get().(*[]byte)
+	defer bufPool.Put(&buf)
+	n, err := conn.Read(buf)
 	if err != nil {
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 			return nil, nil
 		}
 		return nil, err
 	}
-	return buf[:n], nil
+	result := make([]byte, n)
+	copy(result, buf[:n])
+	return result, nil
 }
 
-func buildUDPConnObject(c *udpConn) *object.Builtin {
+func buildConnObject(c *netConn, helpText string) *object.Builtin {
 	return &object.Builtin{
 		Attributes: map[string]object.Object{
 			"send": &object.Builtin{
@@ -123,127 +157,7 @@ func buildUDPConnObject(c *udpConn) *object.Builtin {
 					if err := errors.MinArgs(args, 1); err != nil {
 						return err
 					}
-					data, dataErr := msgToBytes(args[0])
-					if dataErr != nil {
-						return dataErr
-					}
-					if sendErr := c.send(data); sendErr != nil {
-						return errors.NewError("send failed: %s", sendErr.Error())
-					}
-					return &object.Null{}
-				},
-				HelpText: `send(message) - Send a message to the remote peer
-
-Parameters:
-  message (string or dict): Message to send. Dicts are automatically JSON encoded.`,
-			},
-			"receive": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					timeout := 30.0
-					if t := kwargs.Get("timeout"); t != nil {
-						if timeoutFloat, e := t.AsFloat(); e == nil {
-							timeout = timeoutFloat
-						}
-					}
-					data, err := c.receive(time.Duration(timeout * float64(time.Second)))
-					if err != nil {
-						return errors.NewError("receive failed: %s", err.Error())
-					}
-					if data == nil {
-						return &object.Null{}
-					}
-					return object.NewStringDict(map[string]object.Object{
-						"data":   &object.String{Value: string(data)},
-						"source": &object.String{Value: c.remoteAddr},
-					})
-				},
-				HelpText: `receive(timeout=30) - Receive a message
-
-Parameters:
-  timeout (number, optional): Timeout in seconds (default: 30)
-
-Returns:
-  dict with "data" and "source" keys, or None on timeout`,
-			},
-			"close": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					c.close()
-					return &object.Null{}
-				},
-				HelpText: `close() - Close the connection`,
-			},
-			"connected": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					c.mu.Lock()
-					defer c.mu.Unlock()
-					return object.NewBoolean(!c.closed)
-				},
-				HelpText: `connected() - Check if connection is still open`,
-			},
-			"local_addr":  &object.String{Value: c.localAddr},
-			"remote_addr": &object.String{Value: c.remoteAddr},
-		},
-		HelpText: "UDP connection object",
-	}
-}
-
-type tcpConn struct {
-	mu         sync.Mutex
-	recvMu     sync.Mutex
-	conn       net.Conn
-	closed     bool
-	localAddr  string
-	remoteAddr string
-}
-
-func (c *tcpConn) close() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.closed {
-		return
-	}
-	c.closed = true
-	c.conn.Close()
-}
-
-func (c *tcpConn) send(data []byte) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.closed {
-		return fmt.Errorf("connection is closed")
-	}
-	_, err := c.conn.Write(data)
-	return err
-}
-
-func (c *tcpConn) receive(timeout time.Duration) ([]byte, error) {
-	c.recvMu.Lock()
-	defer c.recvMu.Unlock()
-	if timeout > 0 {
-		c.conn.SetReadDeadline(time.Now().Add(timeout))
-	} else {
-		c.conn.SetReadDeadline(time.Time{})
-	}
-	buf := make([]byte, 65536)
-	n, err := c.conn.Read(buf)
-	if err != nil {
-		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return buf[:n], nil
-}
-
-func buildTCPConnObject(c *tcpConn) *object.Builtin {
-	return &object.Builtin{
-		Attributes: map[string]object.Object{
-			"send": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if err := errors.MinArgs(args, 1); err != nil {
-						return err
-					}
-					data, dataErr := msgToBytes(args[0])
+					data, dataErr := internal.MsgToBytes(args[0])
 					if dataErr != nil {
 						return dataErr
 					}
@@ -283,7 +197,9 @@ Parameters:
   timeout (number, optional): Timeout in seconds (default: 30)
 
 Returns:
-  dict with "data" and "source" keys, or None on timeout`,
+  dict with "data" and "source" keys, or None on timeout
+
+Note: TCP messages are limited to 64KB.`,
 			},
 			"close": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -303,7 +219,223 @@ Returns:
 			"local_addr":  &object.String{Value: c.localAddr},
 			"remote_addr": &object.String{Value: c.remoteAddr},
 		},
-		HelpText: "TCP connection object",
+		HelpText: helpText,
+	}
+}
+
+// udpListener wraps a *net.UDPConn for use as a server-side UDP listener.
+// recvMu serializes receive calls; mu guards closed state for idempotent close.
+type udpListener struct {
+	mu         sync.Mutex
+	recvMu     sync.Mutex
+	conn       *net.UDPConn
+	closed     bool
+	listenerID uint64
+	localAddr  string
+}
+
+func (l *udpListener) close() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		return
+	}
+	l.closed = true
+	untrackListener(l.listenerID)
+	l.conn.Close()
+}
+
+func (l *udpListener) receive(timeout time.Duration) ([]byte, *net.UDPAddr, error) {
+	l.recvMu.Lock()
+	defer l.recvMu.Unlock()
+	l.mu.Lock()
+	if l.closed {
+		l.mu.Unlock()
+		return nil, nil, fmt.Errorf("listener is closed")
+	}
+	conn := l.conn
+	l.mu.Unlock()
+	if timeout > 0 {
+		if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+			return nil, nil, err
+		}
+	} else {
+		if err := conn.SetReadDeadline(time.Time{}); err != nil {
+			return nil, nil, err
+		}
+	}
+	buf := *bufPool.Get().(*[]byte)
+	defer bufPool.Put(&buf)
+	n, src, err := conn.ReadFromUDP(buf)
+	if err != nil {
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			return nil, nil, nil
+		}
+		return nil, nil, err
+	}
+	result := make([]byte, n)
+	copy(result, buf[:n])
+	return result, src, nil
+}
+
+func (l *udpListener) sendTo(addr *net.UDPAddr, data []byte) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		return fmt.Errorf("listener is closed")
+	}
+	_, err := l.conn.WriteToUDP(data, addr)
+	return err
+}
+
+func buildUDPListenerObject(l *udpListener) *object.Builtin {
+	return &object.Builtin{
+		Attributes: map[string]object.Object{
+			"receive": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					timeout := 30.0
+					if t := kwargs.Get("timeout"); t != nil {
+						if timeoutFloat, e := t.AsFloat(); e == nil {
+							timeout = timeoutFloat
+						}
+					}
+					data, src, err := l.receive(time.Duration(timeout * float64(time.Second)))
+					if err != nil {
+						return errors.NewError("receive failed: %s", err.Error())
+					}
+					if data == nil {
+						return &object.Null{}
+					}
+					return object.NewStringDict(map[string]object.Object{
+						"data":   &object.String{Value: string(data)},
+						"source": &object.String{Value: src.String()},
+					})
+				},
+				HelpText: `receive(timeout=30) - Receive a message from any sender
+
+Returns:
+  dict with "data" and "source" keys, or None on timeout`,
+			},
+			"send_to": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.MinArgs(args, 2); err != nil {
+						return err
+					}
+					addrStr, addrErr := args[0].AsString()
+					if addrErr != nil {
+						return addrErr
+					}
+					data, dataErr := internal.MsgToBytes(args[1])
+					if dataErr != nil {
+						return dataErr
+					}
+					raddr, resolveErr := net.ResolveUDPAddr("udp", addrStr)
+					if resolveErr != nil {
+						return errors.NewError("invalid address: %s", resolveErr.Error())
+					}
+					if err := l.sendTo(raddr, data); err != nil {
+						return errors.NewError("send failed: %s", err.Error())
+					}
+					return &object.Null{}
+				},
+				HelpText: `send_to(address, message) - Send a message to a specific address
+
+Parameters:
+  address (string): Target address (e.g., "192.168.1.1:8080")
+  message (string or dict): Message to send`,
+			},
+			"close": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					l.close()
+					return &object.Null{}
+				},
+				HelpText: `close() - Close the listener`,
+			},
+			"addr": &object.String{Value: l.localAddr},
+		},
+		HelpText: "UDP listener object",
+	}
+}
+
+// tcpListener wraps a *net.TCPListener with idempotent close, mirroring udpListener.
+type tcpListener struct {
+	mu         sync.Mutex
+	listener   *net.TCPListener
+	closed     bool
+	listenerID uint64
+	listenerAddr string
+}
+
+func (l *tcpListener) close() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		return
+	}
+	l.closed = true
+	untrackListener(l.listenerID)
+	l.listener.Close()
+}
+
+func (l *tcpListener) accept(timeout time.Duration) (net.Conn, error) {
+	l.mu.Lock()
+	if l.closed {
+		l.mu.Unlock()
+		return nil, fmt.Errorf("listener is closed")
+	}
+	l.mu.Unlock()
+	if timeout > 0 {
+		l.listener.SetDeadline(time.Now().Add(timeout))
+	}
+	conn, err := l.listener.Accept()
+	l.listener.SetDeadline(time.Time{})
+	return conn, err
+}
+
+func buildTCPListenerObject(l *tcpListener) *object.Builtin {
+	return &object.Builtin{
+		Attributes: map[string]object.Object{
+			"accept": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					timeout := 30.0
+					if t := kwargs.Get("timeout"); t != nil {
+						if timeoutFloat, e := t.AsFloat(); e == nil {
+							timeout = timeoutFloat
+						}
+					}
+					conn, acceptErr := l.accept(time.Duration(timeout * float64(time.Second)))
+					if acceptErr != nil {
+						if netErr, ok := acceptErr.(net.Error); ok && netErr.Timeout() {
+							return &object.Null{}
+						}
+						return errors.NewError("accept failed: %s", acceptErr.Error())
+					}
+					c := &netConn{
+						conn:       conn,
+						tcp:        true,
+						localAddr:  conn.LocalAddr().String(),
+						remoteAddr: conn.RemoteAddr().String(),
+					}
+					return buildConnObject(c, "TCP connection object")
+				},
+				HelpText: `accept(timeout=30) - Accept an incoming TCP connection
+
+Parameters:
+  timeout (number, optional): Timeout in seconds (default: 30)
+
+Returns:
+  TCP connection object or None on timeout`,
+			},
+			"close": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					l.close()
+					return &object.Null{}
+				},
+				HelpText: `close() - Close the listener`,
+			},
+			"addr": &object.String{Value: l.listenerAddr},
+		},
+		HelpText: "TCP listener object",
 	}
 }
 
@@ -348,13 +480,12 @@ func buildLibrary() *object.Library {
 					if dialErr != nil {
 						return errors.NewError("connect failed: %s", dialErr.Error())
 					}
-
-					uc := &udpConn{
+					c := &netConn{
 						conn:       conn,
 						localAddr:  conn.LocalAddr().String(),
 						remoteAddr: conn.RemoteAddr().String(),
 					}
-					return buildUDPConnObject(uc)
+					return buildConnObject(c, "UDP connection object")
 
 				case "tcp":
 					dialer := &net.Dialer{Timeout: time.Duration(timeout * float64(time.Second))}
@@ -362,13 +493,13 @@ func buildLibrary() *object.Library {
 					if dialErr != nil {
 						return errors.NewError("connect failed: %s", dialErr.Error())
 					}
-
-					tc := &tcpConn{
+					c := &netConn{
 						conn:       conn,
+						tcp:        true,
 						localAddr:  conn.LocalAddr().String(),
 						remoteAddr: conn.RemoteAddr().String(),
 					}
-					return buildTCPConnObject(tc)
+					return buildConnObject(c, "TCP connection object")
 
 				default:
 					return errors.NewError("unsupported protocol: %s (use 'udp' or 'tcp')", protocol)
@@ -430,144 +561,24 @@ Example:
 						return errors.NewError("listen failed: %s", listenErr.Error())
 					}
 
-					localAddr := conn.LocalAddr().String()
-					listenerID := trackListener(conn)
-
-					return &object.Builtin{
-						Attributes: map[string]object.Object{
-							"receive": &object.Builtin{
-								Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-									timeout := 30.0
-									if t := kwargs.Get("timeout"); t != nil {
-										if timeoutFloat, e := t.AsFloat(); e == nil {
-											timeout = timeoutFloat
-										}
-									}
-									if timeout > 0 {
-										conn.SetReadDeadline(time.Now().Add(time.Duration(timeout * float64(time.Second))))
-									} else {
-										conn.SetReadDeadline(time.Time{})
-									}
-									buf := make([]byte, 65536)
-									n, src, err := conn.ReadFromUDP(buf)
-									if err != nil {
-										if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-											return &object.Null{}
-										}
-										return errors.NewError("receive failed: %s", err.Error())
-									}
-
-									return object.NewStringDict(map[string]object.Object{
-										"data":   &object.String{Value: string(buf[:n])},
-										"source": &object.String{Value: src.String()},
-									})
-								},
-								HelpText: `receive(timeout=30) - Receive a message from any sender
-
-Returns:
-  dict with "data" and "source" keys, or None on timeout`,
-							},
-							"send_to": &object.Builtin{
-								Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-									if err := errors.MinArgs(args, 2); err != nil {
-										return err
-									}
-									addrStr, addrErr := args[0].AsString()
-									if addrErr != nil {
-										return addrErr
-									}
-									data, dataErr := msgToBytes(args[1])
-									if dataErr != nil {
-										return dataErr
-									}
-
-									raddr, resolveErr := net.ResolveUDPAddr("udp", addrStr)
-									if resolveErr != nil {
-										return errors.NewError("invalid address: %s", resolveErr.Error())
-									}
-
-									if _, writeErr := conn.WriteToUDP(data, raddr); writeErr != nil {
-										return errors.NewError("send failed: %s", writeErr.Error())
-									}
-									return &object.Null{}
-								},
-								HelpText: `send_to(address, message) - Send a message to a specific address
-
-Parameters:
-  address (string): Target address (e.g., "192.168.1.1:8080")
-  message (string or dict): Message to send`,
-							},
-							"close": &object.Builtin{
-								Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-									untrackListener(listenerID)
-									conn.Close()
-									return &object.Null{}
-								},
-								HelpText: `close() - Close the listener`,
-							},
-							"addr": &object.String{Value: localAddr},
-						},
-						HelpText: "UDP listener object",
+					l := &udpListener{
+						conn:      conn,
+						localAddr: conn.LocalAddr().String(),
 					}
+					l.listenerID = trackListener(conn)
+					return buildUDPListenerObject(l)
 
 				case "tcp":
 					listener, listenErr := net.Listen("tcp", fmt.Sprintf("%s:%d", host, port))
 					if listenErr != nil {
 						return errors.NewError("listen failed: %s", listenErr.Error())
 					}
-
-					listenerAddr := listener.Addr().String()
-					listenerID := trackListener(listener)
-
-					return &object.Builtin{
-						Attributes: map[string]object.Object{
-							"accept": &object.Builtin{
-								Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-									timeout := 30.0
-									if t := kwargs.Get("timeout"); t != nil {
-										if timeoutFloat, e := t.AsFloat(); e == nil {
-											timeout = timeoutFloat
-										}
-									}
-									if timeout > 0 {
-										listener.(*net.TCPListener).SetDeadline(time.Now().Add(time.Duration(timeout * float64(time.Second))))
-									}
-
-									conn, acceptErr := listener.Accept()
-									if acceptErr != nil {
-										if netErr, ok := acceptErr.(net.Error); ok && netErr.Timeout() {
-											return &object.Null{}
-										}
-										return errors.NewError("accept failed: %s", acceptErr.Error())
-									}
-
-									tc := &tcpConn{
-										conn:       conn,
-										localAddr:  conn.LocalAddr().String(),
-										remoteAddr: conn.RemoteAddr().String(),
-									}
-									return buildTCPConnObject(tc)
-								},
-								HelpText: `accept(timeout=30) - Accept an incoming TCP connection
-
-Parameters:
-  timeout (number, optional): Timeout in seconds (default: 30)
-
-Returns:
-  TCP connection object or None on timeout`,
-							},
-							"close": &object.Builtin{
-								Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-									untrackListener(listenerID)
-									listener.Close()
-									return &object.Null{}
-								},
-								HelpText: `close() - Close the listener`,
-							},
-							"addr": &object.String{Value: listenerAddr},
-						},
-						HelpText: "TCP listener object",
+					l := &tcpListener{
+						listener:     listener.(*net.TCPListener),
+						listenerAddr: listener.Addr().String(),
 					}
+					l.listenerID = trackListener(listener)
+					return buildTCPListenerObject(l)
 
 				default:
 					return errors.NewError("unsupported protocol: %s (use 'udp' or 'tcp')", protocol)
