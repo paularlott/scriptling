@@ -2412,6 +2412,9 @@ func evalImportStatement(is *ast.ImportStatement, env *object.Environment) objec
 		moduleObj := getModuleByPath(env, is.Name.Value)
 		if moduleObj != nil {
 			env.Set(is.Alias.Value, moduleObj)
+			if _, ok := moduleObj.(*object.Dict); ok {
+				env.MarkImportedBinding(is.Alias.Value)
+			}
 		}
 	}
 
@@ -2426,6 +2429,9 @@ func evalImportStatement(is *ast.ImportStatement, env *object.Environment) objec
 			moduleObj := getModuleByPath(env, name.Value)
 			if moduleObj != nil {
 				env.Set(is.AdditionalAliases[i].Value, moduleObj)
+				if _, ok := moduleObj.(*object.Dict); ok {
+					env.MarkImportedBinding(is.AdditionalAliases[i].Value)
+				}
 			}
 		}
 	}
@@ -2568,6 +2574,9 @@ func evalFromImportMultipleSubmodules(fis *ast.FromImportStatement, baseModule s
 		}
 
 		env.Set(bindName, moduleObj)
+		if _, ok := moduleObj.(*object.Dict); ok {
+			env.MarkImportedBinding(bindName)
+		}
 	}
 
 	return NULL
@@ -2655,6 +2664,9 @@ func evalFromImportStandard(fis *ast.FromImportStatement, moduleName string, env
 		}
 
 		env.Set(bindName, value)
+		if _, ok := value.(*object.Dict); ok {
+			env.MarkImportedBinding(bindName)
+		}
 	}
 
 	// Remove the module from the environment (from X import Y should not make X available)

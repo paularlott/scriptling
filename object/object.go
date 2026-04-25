@@ -720,6 +720,7 @@ type Environment struct {
 	root                       *Environment
 	globals                    map[string]bool
 	nonlocals                  map[string]bool
+	importedBindings           map[string]bool
 	output                     io.Writer
 	input                      io.Reader
 	importCallback             func(string) error
@@ -808,10 +809,12 @@ func (e *Environment) Set(name string, val Object) Object {
 	e.mu.Lock()
 	if idx, ok := e.slotIndex[name]; ok && idx >= 0 && idx < len(e.slots) {
 		e.slots[idx] = val
+		delete(e.importedBindings, name)
 		e.mu.Unlock()
 		return val
 	}
 	e.store[name] = val
+	delete(e.importedBindings, name)
 	e.mu.Unlock()
 	return val
 }
@@ -823,6 +826,7 @@ func (e *Environment) Delete(name string) {
 		e.slots[idx] = nil
 	}
 	delete(e.store, name)
+	delete(e.importedBindings, name)
 	e.mu.Unlock()
 }
 
@@ -831,6 +835,7 @@ func (e *Environment) SetGlobal(name string, val Object) Object {
 	root := e.root
 	root.mu.Lock()
 	root.store[name] = val
+	delete(root.importedBindings, name)
 	root.mu.Unlock()
 	return val
 }
@@ -852,6 +857,7 @@ func (e *Environment) SetInParent(name string, val Object) bool {
 		_, ok := env.store[name]
 		if ok {
 			env.store[name] = val
+			delete(env.importedBindings, name)
 			env.mu.Unlock()
 			return true
 		}
@@ -874,6 +880,24 @@ func (e *Environment) MarkNonlocal(name string) {
 		e.nonlocals = make(map[string]bool, 2)
 	}
 	e.nonlocals[name] = true
+}
+
+// MarkImportedBinding marks a local binding as coming from an import.
+func (e *Environment) MarkImportedBinding(name string) {
+	e.mu.Lock()
+	if e.importedBindings == nil {
+		e.importedBindings = make(map[string]bool, 2)
+	}
+	e.importedBindings[name] = true
+	e.mu.Unlock()
+}
+
+// IsImportedBinding reports whether a local binding came from an import.
+func (e *Environment) IsImportedBinding(name string) bool {
+	e.mu.RLock()
+	ok := e.importedBindings != nil && e.importedBindings[name]
+	e.mu.RUnlock()
+	return ok
 }
 
 // IsGlobal checks if a variable is marked as global
@@ -946,10 +970,10 @@ func (e *Environment) GetStore() map[string]Object {
 	return store
 }
 
-// CopyCallableBindingsTo copies bindings into target for background task use.
-// Functions and lambdas are deep-copied and rebound to target.
-// Dicts (imported modules) are deep-copied so concurrent tasks don't race.
-// Classes are skipped. Everything else (builtins, primitives) is shared directly.
+// CopyCallableBindingsTo copies safe bindings into target for background task use.
+// Functions and lambdas are copied and rebound to target. Dicts are copied so
+// imported modules remain available. Other globals are intentionally skipped so
+// background tasks cannot share caller-owned mutable or native-backed state.
 func (e *Environment) CopyCallableBindingsTo(target *Environment) {
 	e.mu.RLock()
 	target.mu.Lock()
@@ -981,9 +1005,13 @@ func (e *Environment) CopyCallableBindingsTo(target *Environment) {
 		case *Class:
 			// Classes can't be safely shared across envs.
 		case *Dict:
-			target.store[name] = deepCopyDict(v)
-		default:
-			target.store[name] = v
+			if e.importedBindings != nil && e.importedBindings[name] {
+				target.store[name] = deepCopyDict(v)
+				if target.importedBindings == nil {
+					target.importedBindings = make(map[string]bool, 2)
+				}
+				target.importedBindings[name] = true
+			}
 		}
 	}
 	for name, value := range e.store {
@@ -1589,8 +1617,9 @@ func validateTransferable(obj Object, visited map[any]struct{}) error {
 // CloneObject returns a deep copy of mutable Scriptling objects.
 // Immutable/scalar types (Null, Boolean, Integer, Float, String, Builtin,
 // Function, LambdaFunction, Class, Error, Exception) are returned as-is.
-// Mutable containers (List, Dict, Set, Tuple, Instance) are recursively cloned
-// so the caller and callee cannot race on shared state.
+// Mutable containers (List, Dict, Set, Tuple, Instance) are recursively cloned.
+// Opaque Instance.NativeData is not cloned because there is no generic way to
+// duplicate native Go state safely.
 func CloneObject(obj Object) Object {
 	switch v := obj.(type) {
 	case *Null, *Boolean, *Integer, *Float, *String:
@@ -1624,7 +1653,7 @@ func CloneObject(obj Object) Object {
 		for k, val := range v.Fields {
 			fields[k] = CloneObject(val)
 		}
-		return &Instance{Class: v.Class, Fields: fields, NativeData: v.NativeData}
+		return &Instance{Class: v.Class, Fields: fields}
 	default:
 		// Builtins, Functions, Classes, Errors, etc. — immutable or singleton
 		return obj

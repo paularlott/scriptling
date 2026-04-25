@@ -16,11 +16,19 @@ type pathNativeData struct {
 	path string
 }
 
-func pathFrom(inst *object.Instance) string {
+func pathFrom(inst *object.Instance) (string, object.Object) {
 	if nd, ok := inst.NativeData.(*pathNativeData); ok {
-		return nd.path
+		return nd.path, nil
 	}
-	return ""
+	return "", errors.NewError("Path: invalid native data")
+}
+
+func pathArg(args []object.Object) (string, object.Object) {
+	inst, ok := args[0].(*object.Instance)
+	if !ok {
+		return "", errors.NewError("Path: expected a Path instance")
+	}
+	return pathFrom(inst)
 }
 
 // PathlibLibraryInstance holds the configured Pathlib library instance
@@ -118,7 +126,10 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					if err := errors.MinArgs(args, 1); err != nil {
 						return err
 					}
-					cleanPath := pathFrom(args[0].(*object.Instance))
+					cleanPath, errObj := pathArg(args)
+					if errObj != nil {
+						return errObj
+					}
 					parts := []string{cleanPath}
 					for _, arg := range args[1:] {
 						s, err := arg.AsString()
@@ -144,7 +155,10 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					if err := errors.ExactArgs(args, 1); err != nil {
 						return err
 					}
-					cleanPath := pathFrom(args[0].(*object.Instance))
+					cleanPath, errObj := pathArg(args)
+					if errObj != nil {
+						return errObj
+					}
 					if err := p.checkPathSecurity(cleanPath); err != nil {
 						return err
 					}
@@ -158,7 +172,10 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					if err := errors.ExactArgs(args, 1); err != nil {
 						return err
 					}
-					cleanPath := pathFrom(args[0].(*object.Instance))
+					cleanPath, errObj := pathArg(args)
+					if errObj != nil {
+						return errObj
+					}
 					if err := p.checkPathSecurity(cleanPath); err != nil {
 						return object.NewBoolean(false)
 					}
@@ -175,7 +192,10 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					if err := errors.ExactArgs(args, 1); err != nil {
 						return err
 					}
-					cleanPath := pathFrom(args[0].(*object.Instance))
+					cleanPath, errObj := pathArg(args)
+					if errObj != nil {
+						return errObj
+					}
 					if err := p.checkPathSecurity(cleanPath); err != nil {
 						return object.NewBoolean(false)
 					}
@@ -192,7 +212,10 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					if err := errors.ExactArgs(args, 1); err != nil {
 						return err
 					}
-					cleanPath := pathFrom(args[0].(*object.Instance))
+					cleanPath, errObj := pathArg(args)
+					if errObj != nil {
+						return errObj
+					}
 					if err := p.checkPathSecurity(cleanPath); err != nil {
 						return err
 					}
@@ -220,7 +243,10 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					if err := errors.ExactArgs(args, 1); err != nil {
 						return err
 					}
-					cleanPath := pathFrom(args[0].(*object.Instance))
+					cleanPath, errObj := pathArg(args)
+					if errObj != nil {
+						return errObj
+					}
 					if err := p.checkPathSecurity(cleanPath); err != nil {
 						return err
 					}
@@ -236,7 +262,10 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					if err := errors.ExactArgs(args, 1); err != nil {
 						return err
 					}
-					cleanPath := pathFrom(args[0].(*object.Instance))
+					cleanPath, errObj := pathArg(args)
+					if errObj != nil {
+						return errObj
+					}
 					missingOk := false
 					if val, ok := kwargs.Kwargs["missing_ok"]; ok {
 						if b, err := val.AsBool(); err == nil {
@@ -262,7 +291,10 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					if err := errors.ExactArgs(args, 1); err != nil {
 						return err
 					}
-					cleanPath := pathFrom(args[0].(*object.Instance))
+					cleanPath, errObj := pathArg(args)
+					if errObj != nil {
+						return errObj
+					}
 					if err := p.checkPathSecurity(cleanPath); err != nil {
 						return err
 					}
@@ -279,7 +311,10 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					if err := errors.ExactArgs(args, 2); err != nil {
 						return err
 					}
-					cleanPath := pathFrom(args[0].(*object.Instance))
+					cleanPath, errObj := pathArg(args)
+					if errObj != nil {
+						return errObj
+					}
 					content, err := args[1].AsString()
 					if err != nil {
 						return err

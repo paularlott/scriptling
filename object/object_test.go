@@ -147,6 +147,21 @@ func TestEnvironmentCopyCallableBindingsTo(t *testing.T) {
 	source.Set("helper", lambda)
 	sourceVal := &Integer{Value: 42}
 	source.Set("value", sourceVal)
+	module := &Dict{Pairs: map[string]DictPair{
+		DictKey(&String{Value: "answer"}): {
+			Key:   &String{Value: "answer"},
+			Value: &Integer{Value: 42},
+		},
+	}}
+	source.Set("module", module)
+	source.MarkImportedBinding("module")
+	userDict := &Dict{Pairs: map[string]DictPair{
+		DictKey(&String{Value: "secret"}): {
+			Key:   &String{Value: "secret"},
+			Value: &String{Value: "do-not-copy"},
+		},
+	}}
+	source.Set("user_data", userDict)
 
 	source.CopyCallableBindingsTo(target)
 
@@ -180,12 +195,26 @@ func TestEnvironmentCopyCallableBindingsTo(t *testing.T) {
 		t.Fatal("expected copied lambda env to point at target")
 	}
 
-	copiedVal, ok := target.Get("value")
-	if !ok {
-		t.Fatal("expected non-callable binding to be shared")
+	if _, ok := target.Get("value"); ok {
+		t.Fatal("expected non-callable binding to be skipped")
 	}
-	if copiedVal != sourceVal {
-		t.Fatal("expected non-callable binding to be the same object (shared)")
+
+	copiedModuleObj, ok := target.Get("module")
+	if !ok {
+		t.Fatal("expected module dict to be copied")
+	}
+	copiedModule, ok := copiedModuleObj.(*Dict)
+	if !ok {
+		t.Fatalf("expected copied module dict, got %T", copiedModuleObj)
+	}
+	if copiedModule == module {
+		t.Fatal("expected module dict to be copied, not shared")
+	}
+	if !target.IsImportedBinding("module") {
+		t.Fatal("expected copied module dict to stay marked as imported")
+	}
+	if _, ok := target.Get("user_data"); ok {
+		t.Fatal("expected unmarked user dict to be skipped")
 	}
 }
 
@@ -234,6 +263,17 @@ func TestEnvironmentCopyCallableBindingsToWithSlots(t *testing.T) {
 	}
 	if copiedLambda.LocalSlots["value"] != 0 || len(copiedLambda.LocalSlotNames) != 1 {
 		t.Fatal("expected copied lambda slot metadata to be preserved")
+	}
+}
+
+func TestEnvironmentSetClearsImportedBindingMark(t *testing.T) {
+	env := NewEnvironment()
+	env.Set("module", &Dict{Pairs: map[string]DictPair{}})
+	env.MarkImportedBinding("module")
+	env.Set("module", &Dict{Pairs: map[string]DictPair{}})
+
+	if env.IsImportedBinding("module") {
+		t.Fatal("expected normal assignment to clear imported binding mark")
 	}
 }
 
@@ -1510,5 +1550,30 @@ func TestGetClientField(t *testing.T) {
 	_, ok = GetClientField(instance, "foo")
 	if ok {
 		t.Error("GetClientField should return false for non-ClientWrapper field")
+	}
+}
+
+func TestCloneObjectDropsInstanceNativeData(t *testing.T) {
+	class := &Class{Name: "NativeBacked", Methods: map[string]Object{}}
+	native := &String{Value: "native"}
+	instance := &Instance{
+		Class:      class,
+		Fields:     map[string]Object{"items": &List{Elements: []Object{&String{Value: "value"}}}},
+		NativeData: native,
+	}
+
+	clonedObj := CloneObject(instance)
+	cloned, ok := clonedObj.(*Instance)
+	if !ok {
+		t.Fatalf("expected cloned instance, got %T", clonedObj)
+	}
+	if cloned == instance {
+		t.Fatal("expected a new instance")
+	}
+	if cloned.NativeData != nil {
+		t.Fatal("expected cloned instance to drop NativeData")
+	}
+	if cloned.Fields["items"] == instance.Fields["items"] {
+		t.Fatal("expected instance fields to be deep-cloned")
 	}
 }

@@ -167,6 +167,7 @@ func setNestedDictPath(env *object.Environment, name string, libDict *object.Dic
 	parts := strings.Split(name, ".")
 	if len(parts) == 1 {
 		env.Set(name, libDict)
+		env.MarkImportedBinding(name)
 		return
 	}
 
@@ -182,6 +183,7 @@ func setNestedDictPath(env *object.Environment, name string, libDict *object.Dic
 	} else {
 		rootDict = &object.Dict{Pairs: make(map[string]object.DictPair)}
 		env.Set(rootName, rootDict)
+		env.MarkImportedBinding(rootName)
 	}
 
 	current := rootDict
@@ -204,6 +206,7 @@ func setNestedDictPath(env *object.Environment, name string, libDict *object.Dic
 
 	current.SetByString(parts[len(parts)-1], libDict)
 	env.Set(name, libDict)
+	env.MarkImportedBinding(name)
 }
 
 // traverseDictPath navigates a dotted path through Dict objects
@@ -310,6 +313,9 @@ func (p *Scriptling) loadLibraryWithDepth(name string, depth int) error {
 			if result, err := traverseDictPath(parentObj, parts[1:], maxLibraryNestingDepth); err == nil {
 				// Create an alias for the full path
 				p.env.Set(name, result)
+				if _, ok := result.(*object.Dict); ok {
+					p.env.MarkImportedBinding(name)
+				}
 				return nil
 			}
 		}
@@ -995,6 +1001,7 @@ func (p *Scriptling) loadLibraryIntoEnv(name string, env *object.Environment) (b
 	parts := strings.Split(name, ".")
 	if len(parts) == 1 {
 		env.Set(name, libDict)
+		env.MarkImportedBinding(name)
 		return true, nil
 	}
 
