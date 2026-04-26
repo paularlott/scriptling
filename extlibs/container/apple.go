@@ -259,8 +259,13 @@ func (c *appleClient) List(ctx context.Context) ([]ContainerInfo, error) {
 }
 
 // VolumeCreate implements ContainerDriver.
-func (c *appleClient) VolumeCreate(ctx context.Context, name string) error {
-	out, err := c.run(ctx, "volume", "create", name)
+func (c *appleClient) VolumeCreate(ctx context.Context, name, size string) error {
+	args := []string{"volume", "create"}
+	if size != "" {
+		args = append(args, "-s", size)
+	}
+	args = append(args, name)
+	out, err := c.run(ctx, args...)
 	if err != nil {
 		return fmt.Errorf("volume create: %s", out)
 	}

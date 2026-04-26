@@ -468,7 +468,7 @@ func (c *dockerClient) List(ctx context.Context) ([]ContainerInfo, error) {
 }
 
 // VolumeCreate implements ContainerDriver.
-func (c *dockerClient) VolumeCreate(ctx context.Context, name string) error {
+func (c *dockerClient) VolumeCreate(ctx context.Context, name, _ string) error {
 	return c.doJSON(ctx, http.MethodPost, "/volumes/create", map[string]string{"Name": name}, nil, http.StatusCreated)
 }
 

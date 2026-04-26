@@ -578,22 +578,26 @@ Example:
   for item in c.list():
     print(item["name"], item["status"])`)
 
-	cb.MethodWithHelp("volume_create", func(self *object.Instance, ctx context.Context, name string) object.Object {
+	cb.MethodWithHelp("volume_create", func(self *object.Instance, ctx context.Context, kwargs object.Kwargs, name string) object.Object {
 		ci, err := getClientInstance(self)
 		if err != nil {
 			return err
 		}
-		if goErr := ci.driver.VolumeCreate(ctx, name); goErr != nil {
+		size := kwargs.MustGetString("size", "")
+		if goErr := ci.driver.VolumeCreate(ctx, name, size); goErr != nil {
 			return &object.Error{Message: goErr.Error()}
 		}
 		return &object.Null{}
-	}, `volume_create(name) - Create a named volume
+	}, `volume_create(name, **kwargs) - Create a named volume
 
 Parameters:
   name (str): Volume name
+  size (str, optional): Volume size e.g. "20G" or "512M" (Apple Containers only;
+                        silently ignored for Docker and Podman)
 
 Example:
-  c.volume_create("mydata")`)
+  c.volume_create("mydata")
+  c.volume_create("mydata", size="20G")`)
 
 	cb.MethodWithHelp("volume_remove", func(self *object.Instance, ctx context.Context, name string) object.Object {
 		ci, err := getClientInstance(self)

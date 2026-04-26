@@ -85,8 +85,9 @@ type ContainerDriver interface {
 	// List returns all containers (running and stopped).
 	List(ctx context.Context) ([]ContainerInfo, error)
 
-	// VolumeCreate creates a named volume.
-	VolumeCreate(ctx context.Context, name string) error
+	// VolumeCreate creates a named volume. size is optional (e.g. "20G") and
+	// only honoured by Apple Containers; other drivers silently ignore it.
+	VolumeCreate(ctx context.Context, name, size string) error
 
 	// VolumeRemove removes a named volume.
 	VolumeRemove(ctx context.Context, name string) error
