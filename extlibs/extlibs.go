@@ -30,6 +30,7 @@ const (
 	MulticastLibraryName      = "scriptling.net.multicast"
 	UnicastLibraryName        = "scriptling.net.unicast"
 	GossipLibraryName         = "scriptling.net.gossip"
+	FSLibraryName             = "fs"
 	GrepLibraryName           = "scriptling.grep"
 	SedLibraryName            = "scriptling.sed"
 	ContainerLibraryName      = "scriptling.container"

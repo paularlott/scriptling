@@ -61,6 +61,7 @@ func AllLibraryNames() []string {
 		extlibs.SubprocessLibraryName,
 		extlibs.PathlibLibraryName,
 		extlibs.GlobLibraryName,
+		extlibs.FSLibraryName,
 		extlibs.GrepLibraryName,
 		extlibs.SedLibraryName,
 		extlibs.ContainerLibraryName,
@@ -142,6 +143,7 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 	reg(extlibs.SubprocessLibraryName, func() { extlibs.RegisterSubprocessLibrary(p) })
 	reg(extlibs.PathlibLibraryName, func() { extlibs.RegisterPathlibLibrary(p, allowedPaths) })
 	reg(extlibs.GlobLibraryName, func() { extlibs.RegisterGlobLibrary(p, allowedPaths) })
+	reg(extlibs.FSLibraryName, func() { extlibs.RegisterFSLibrary(p, allowedPaths) })
 	reg(extlibs.GrepLibraryName, func() { extlibs.RegisterGrepLibrary(p, allowedPaths) })
 	reg(extlibs.SedLibraryName, func() { extlibs.RegisterSedLibrary(p, allowedPaths) })
 	reg(extlibs.ContainerLibraryName, func() { scriptlingcontainer.Register(p, dockerSock, podmanSock) })

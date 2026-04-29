@@ -75,6 +75,21 @@ This directory contains examples and tools for working with Scriptling.
   - `main.go` - Go integration example
   - `README.md` - Telegram bot documentation
 
+- **fs/** - Binary file I/O with the `fs` library
+  - `read_gguf.py` - Parse GGUF (LLM model) file headers
+  - `read_wav.py` - Parse WAV audio file headers
+  - `read_png.py` - Parse PNG image file headers
+  - `README.md` - fs library documentation
+
+- **math/** - Linear algebra and advanced math functions
+  - `neural_network.py` - Neural network forward pass using matmul, tanh, softmax
+  - `matrix_ops.py` - Matrix multiplication, transpose, addition, dot product
+  - `README.md` - math library documentation
+
+- **random/** - Random number generation and distributions
+  - `distributions.py` - Weighted sampling, Monte Carlo, distribution sampling, card dealing
+  - `README.md` - random library documentation
+
 ## Running Script Examples
 
 ```bash
@@ -169,3 +184,6 @@ See individual example directories for more details:
 - [net/unicast/README.md](net/unicast/README.md) - UDP and TCP point-to-point messaging
 - [net/multicast/README.md](net/multicast/README.md) - UDP multicast group messaging
 - [net/gossip/README.md](net/gossip/README.md) - Gossip protocol cluster membership and messaging
+- [fs/README.md](fs/README.md) - Binary I/O: pack, unpack, read/write bytes
+- [math/README.md](math/README.md) - Linear algebra: matmul, dot, transpose, softmax, special functions
+- [random/README.md](random/README.md) - Distributions: gauss, beta, gamma, pareto, weibull, choices
