@@ -29,6 +29,7 @@ func newTestInterpreter(t *testing.T) *scriptling.Scriptling {
 	extlibs.RegisterRuntimeLibraryAll(p, nil)
 	extlibs.RegisterOSLibrary(p, nil)
 	extlibs.RegisterPathlibLibrary(p, nil)
+	extlibs.RegisterFSLibrary(p, nil)
 	console.Register(p)
 	extlibs.RegisterYAMLLibrary(p)
 	ai.Register(p)

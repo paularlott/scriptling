@@ -118,3 +118,76 @@ assert result == 3
 # Float floor division
 result = 7.5 // 2
 assert result == 3.0
+
+# Test math.tanh
+assert math.tanh(0) == 0.0
+tanh_val = math.tanh(1.0)
+assert tanh_val > 0.76 and tanh_val < 0.77
+
+# Test math.softmax
+probs = math.softmax([2.0, 1.0, 0.1])
+assert len(probs) == 3
+total = probs[0] + probs[1] + probs[2]
+assert total > 0.999 and total < 1.001
+assert probs[0] > probs[1] and probs[1] > probs[2]
+
+# Test math.dot
+assert math.dot([1.0, 2.0, 3.0], [4.0, 5.0, 6.0]) == 32.0
+
+# Test math.erf
+assert math.erf(0) == 0.0
+erf1 = math.erf(1.0)
+assert erf1 > 0.84 and erf1 < 0.85
+
+# Test math.erfc
+assert math.erfc(0) == 1.0
+assert math.erfc(1.0) > 0.15 and math.erfc(1.0) < 0.16
+
+# Test math.gamma
+assert math.gamma(5) == 24.0
+assert math.gamma(1) == 1.0
+
+# Test math.lgamma
+lg = math.lgamma(5)
+assert lg[0] > 3.17 and lg[0] < 3.19
+
+# Test math.cbrt
+assert math.cbrt(27.0) == 3.0
+assert math.cbrt(-8.0) == -2.0
+
+# Test math.log1p
+assert math.log1p(0) == 0.0
+assert math.log1p(math.e - 1) > 0.99 and math.log1p(math.e - 1) < 1.01
+
+# Test math.expm1
+assert math.expm1(0) == 0.0
+
+# Test math.nextafter
+na = math.nextafter(0.0, 1.0)
+assert na > 0.0
+
+# Test math.comb
+assert math.comb(5, 2) == 10
+assert math.comb(10, 0) == 1
+assert math.comb(5, 6) == 0
+assert math.comb(5, 5) == 1
+
+# Test math.perm
+assert math.perm(5, 2) == 20
+assert math.perm(5) == 120
+assert math.perm(5, 0) == 1
+
+# Test math.prod
+assert math.prod([2, 3, 4]) == 24
+assert math.prod([]) == 1
+assert math.prod([1.5, 2.0]) == 3.0
+
+# Test math.dist
+assert math.dist([0, 0], [3, 4]) == 5.0
+assert math.dist([1, 1], [1, 1]) == 0.0
+
+# Test math.remainder
+assert math.remainder(7.5, 2.5) == 0.0
+
+# Test tau constant
+assert math.tau > 6.28 and math.tau < 6.29
