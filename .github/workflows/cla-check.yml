@@ -32,6 +32,7 @@ jobs:
             LABEL="cla: required"
             REMOVE_LABEL="cla: ok"
           fi
+          ENCODED_REMOVE_LABEL=$(echo -n "$REMOVE_LABEL" | jq -sRr @uri)
 
           # Set labels via API
           curl -s -X POST \
@@ -43,7 +44,7 @@ jobs:
           curl -s -X DELETE \
             -H "Authorization: token $CLA_TOKEN" \
             -H "Accept: application/vnd.github.v3+json" \
-            "https://api.github.com/repos/$GH_REPO/issues/$PR_NUMBER/labels/$REMOVE_LABEL"
+            "https://api.github.com/repos/$GH_REPO/issues/$PR_NUMBER/labels/$ENCODED_REMOVE_LABEL"
 
           # Handle comment if CLA not signed
           MARKER='<!-- CLA-MISSING-MARKER -->'
