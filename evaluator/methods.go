@@ -15,7 +15,7 @@ import (
 )
 
 func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression, env *object.Environment) object.Object {
-	obj := evalWithContext(ctx, mce.Object, env)
+	obj := evalNode(ctx, mce.Object, env)
 	if object.IsError(obj) {
 		return obj
 	}
@@ -30,7 +30,7 @@ func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression
 	if len(mce.Keywords) > 0 {
 		keywords = make(map[string]object.Object, len(mce.Keywords))
 		for k, v := range mce.Keywords {
-			val := evalWithContext(ctx, v, env)
+			val := evalNode(ctx, v, env)
 			if object.IsError(val) {
 				return val
 			}
@@ -40,7 +40,7 @@ func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression
 
 	// Handle *args unpacking (supports multiple)
 	for _, argsUnpackExpr := range mce.ArgsUnpack {
-		argsVal := evalWithContext(ctx, argsUnpackExpr, env)
+		argsVal := evalNode(ctx, argsUnpackExpr, env)
 		if object.IsError(argsVal) {
 			return argsVal
 		}
@@ -53,7 +53,7 @@ func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression
 
 	// Handle **kwargs unpacking
 	if mce.KwargsUnpack != nil {
-		kwargsVal := evalWithContext(ctx, mce.KwargsUnpack, env)
+		kwargsVal := evalNode(ctx, mce.KwargsUnpack, env)
 		if object.IsError(kwargsVal) {
 			return kwargsVal
 		}
