@@ -46,7 +46,9 @@ func sampleGamma(alpha float64) float64 {
 
 // gaussianRandom returns a random number from Gaussian distribution
 func gaussianRandom(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-	if err := errors.ExactArgs(args, 2); err != nil { return err }
+	if err := errors.ExactArgs(args, 2); err != nil {
+		return err
+	}
 	var mu, sigma float64
 	switch arg := args[0].(type) {
 	case *object.Integer:
@@ -72,7 +74,9 @@ func gaussianRandom(ctx context.Context, kwargs object.Kwargs, args ...object.Ob
 var RandomLibrary = object.NewLibrary(RandomLibraryName, map[string]*object.Builtin{
 	"seed": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.MaxArgs(args, 1); err != nil { return err }
+			if err := errors.MaxArgs(args, 1); err != nil {
+				return err
+			}
 			var seedVal int64
 			if len(args) == 0 {
 				seedVal = time.Now().UnixNano()
@@ -95,7 +99,9 @@ If a is omitted, current time is used. Otherwise, a is used as the seed.`,
 	},
 	"randint": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 2); err != nil { return err }
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
+			}
 			var min, max int64
 			switch arg := args[0].(type) {
 			case *object.Integer:
@@ -121,7 +127,9 @@ Returns a random integer N such that min <= N <= max.`,
 	},
 	"random": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 0); err != nil { return err }
+			if err := errors.ExactArgs(args, 0); err != nil {
+				return err
+			}
 			return &object.Float{Value: rng.Float64()}
 		},
 		HelpText: `random() - Return random float
@@ -130,7 +138,9 @@ Returns a random float in the range [0.0, 1.0).`,
 	},
 	"choice": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			if str, ok := args[0].(*object.String); ok {
 				if len(str.Value) == 0 {
 					return errors.NewError("choice() string cannot be empty")
@@ -153,7 +163,9 @@ Returns a randomly selected element from the given list or string.`,
 	},
 	"shuffle": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			if list, ok := args[0].(*object.List); ok {
 				n := len(list.Elements)
 				for i := n - 1; i > 0; i-- {
@@ -170,7 +182,9 @@ Randomly shuffles the elements of the list in place using the Fisher-Yates algor
 	},
 	"uniform": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 2); err != nil { return err }
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
+			}
 			var a, b float64
 			switch arg := args[0].(type) {
 			case *object.Integer:
@@ -198,7 +212,9 @@ Returns a random floating-point number N such that a <= N <= b.`,
 	},
 	"sample": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 2); err != nil { return err }
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
+			}
 			list, err := args[0].AsList()
 			if err != nil {
 				return err
@@ -314,7 +330,9 @@ Same as gauss() but provided for compatibility.`,
 	},
 	"expovariate": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			var lambd float64
 			switch arg := args[0].(type) {
 			case *object.Integer:
@@ -337,7 +355,7 @@ lambd is 1.0 divided by the desired mean.`,
 	},
 	"choices": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.MinArgs(args, 1); err != nil {
+			if err := errors.RangeArgs(args, 1, 3); err != nil {
 				return err
 			}
 			population, err := args[0].AsList()
@@ -350,7 +368,19 @@ lambd is 1.0 divided by the desired mean.`,
 			}
 
 			var weights []float64
-			if wObj := kwargs.Get("weights"); wObj != nil {
+			wObj := kwargs.Get("weights")
+			if len(args) >= 2 {
+				if kwargs.Has("weights") {
+					return errors.NewError("choices: weights specified both positionally and by keyword")
+				}
+				wObj = args[1]
+			}
+			if wObj != nil {
+				if _, ok := wObj.(*object.Null); ok {
+					wObj = nil
+				}
+			}
+			if wObj != nil {
 				wList, ok := wObj.(*object.List)
 				if !ok {
 					return errors.NewTypeError("LIST", wObj.Type().String())
@@ -363,6 +393,9 @@ lambd is 1.0 divided by the desired mean.`,
 					f, err := w.AsFloat()
 					if err != nil {
 						return errors.NewTypeError("INTEGER or FLOAT", w.Type().String())
+					}
+					if f < 0 || math.IsNaN(f) || math.IsInf(f, 0) {
+						return errors.NewError("choices: weights must be finite and non-negative")
 					}
 					weights[i] = f
 				}
@@ -379,12 +412,19 @@ lambd is 1.0 divided by the desired mean.`,
 				cumWeights[i] = cumWeights[i-1] + weights[i]
 			}
 			total := cumWeights[n-1]
-			if total <= 0 {
-				return errors.NewError("choices: total of weights must be positive")
+			if total <= 0 || math.IsInf(total, 0) || math.IsNaN(total) {
+				return errors.NewError("choices: total of weights must be positive and finite")
 			}
 
 			k := 1
-			if kObj := kwargs.Get("k"); kObj != nil {
+			kObj := kwargs.Get("k")
+			if len(args) >= 3 {
+				if kwargs.Has("k") {
+					return errors.NewError("choices: k specified both positionally and by keyword")
+				}
+				kObj = args[2]
+			}
+			if kObj != nil {
 				kVal, err := kObj.AsInt()
 				if err != nil {
 					return err
@@ -399,7 +439,7 @@ lambd is 1.0 divided by the desired mean.`,
 			for i := 0; i < k; i++ {
 				r := rng.Float64() * total
 				idx := 0
-				for idx < n-1 && cumWeights[idx] < r {
+				for idx < n-1 && cumWeights[idx] <= r {
 					idx++
 				}
 				result[i] = population[idx]

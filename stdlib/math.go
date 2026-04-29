@@ -3,6 +3,7 @@ package stdlib
 import (
 	"context"
 	"math"
+	"math/big"
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
@@ -25,10 +26,16 @@ func toFloatMatrix(obj object.Object, fnName, paramName string) ([][]float64, ob
 		return nil, errors.NewTypeError("LIST", obj.Type().String())
 	}
 	rows := make([][]float64, len(list.Elements))
+	width := -1
 	for i, rowObj := range list.Elements {
 		row, ok := rowObj.(*object.List)
 		if !ok {
 			return nil, errors.NewError("%s: %s must be a list of lists", fnName, paramName)
+		}
+		if width == -1 {
+			width = len(row.Elements)
+		} else if len(row.Elements) != width {
+			return nil, errors.NewError("%s: %s must be a rectangular matrix", fnName, paramName)
 		}
 		rows[i] = make([]float64, len(row.Elements))
 		for j, el := range row.Elements {
@@ -644,14 +651,12 @@ Returns a float.`,
 			if k > n-k {
 				k = n - k
 			}
-			var result int64 = 1
-			for i := int64(0); i < k; i++ {
-				if result > (math.MaxInt64-1)/(n-i)/(i+1) {
-					return errors.NewError("comb: result too large")
-				}
-				result = result * (n - i) / (i + 1)
+			var result big.Int
+			result.Binomial(n, k)
+			if !result.IsInt64() {
+				return errors.NewError("comb: result too large")
 			}
-			return object.NewInteger(result)
+			return object.NewInteger(result.Int64())
 		},
 		HelpText: `comb(n, k) - Return the number of ways to choose k items from n
 

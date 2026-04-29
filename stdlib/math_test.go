@@ -482,6 +482,25 @@ func TestMathMatmulDimensionMismatch(t *testing.T) {
 	}
 }
 
+func TestMathMatmulRaggedMatrixError(t *testing.T) {
+	lib := MathLibrary
+	matmul := lib.Functions()["matmul"]
+
+	a := &object.List{Elements: []object.Object{
+		&object.List{Elements: []object.Object{&object.Float{Value: 1.0}, &object.Float{Value: 2.0}}},
+		&object.List{Elements: []object.Object{&object.Float{Value: 3.0}}},
+	}}
+	b := &object.List{Elements: []object.Object{
+		&object.List{Elements: []object.Object{&object.Float{Value: 1.0}}},
+		&object.List{Elements: []object.Object{&object.Float{Value: 2.0}}},
+	}}
+
+	result := matmul.Fn(context.Background(), object.NewKwargs(nil), a, b)
+	if _, ok := result.(*object.Error); !ok {
+		t.Errorf("matmul() with ragged matrix should return error, got %T", result)
+	}
+}
+
 func TestMathTranspose(t *testing.T) {
 	lib := MathLibrary
 	transpose := lib.Functions()["transpose"]
@@ -523,6 +542,21 @@ func TestMathTransposeEmpty(t *testing.T) {
 	}
 	if len(list.Elements) != 0 {
 		t.Errorf("transpose of empty should be empty, got %d elements", len(list.Elements))
+	}
+}
+
+func TestMathTransposeRaggedMatrixError(t *testing.T) {
+	lib := MathLibrary
+	transpose := lib.Functions()["transpose"]
+
+	m := &object.List{Elements: []object.Object{
+		&object.List{Elements: []object.Object{&object.Float{Value: 1.0}}},
+		&object.List{Elements: []object.Object{}},
+	}}
+
+	result := transpose.Fn(context.Background(), object.NewKwargs(nil), m)
+	if _, ok := result.(*object.Error); !ok {
+		t.Errorf("transpose() with ragged matrix should return error, got %T", result)
 	}
 }
 
@@ -571,6 +605,25 @@ func TestMathMatAddShapeMismatch(t *testing.T) {
 	result := matAdd.Fn(context.Background(), object.NewKwargs(nil), a, b)
 	if _, ok := result.(*object.Error); !ok {
 		t.Errorf("mat_add() with shape mismatch should return error, got %T", result)
+	}
+}
+
+func TestMathMatAddRaggedMatrixError(t *testing.T) {
+	lib := MathLibrary
+	matAdd := lib.Functions()["mat_add"]
+
+	a := &object.List{Elements: []object.Object{
+		&object.List{Elements: []object.Object{&object.Float{Value: 1.0}}},
+		&object.List{Elements: []object.Object{&object.Float{Value: 2.0}}},
+	}}
+	b := &object.List{Elements: []object.Object{
+		&object.List{Elements: []object.Object{&object.Float{Value: 1.0}}},
+		&object.List{Elements: []object.Object{}},
+	}}
+
+	result := matAdd.Fn(context.Background(), object.NewKwargs(nil), a, b)
+	if _, ok := result.(*object.Error); !ok {
+		t.Errorf("mat_add() with ragged matrix should return error, got %T", result)
 	}
 }
 
@@ -731,6 +784,16 @@ func TestMathComb(t *testing.T) {
 	result = fn.Fn(context.Background(), object.NewKwargs(nil), object.NewInteger(5), object.NewInteger(6))
 	if i, ok := result.(*object.Integer); !ok || i.Value != 0 {
 		t.Errorf("comb(5, 6) = %v, want 0", result)
+	}
+
+	result = fn.Fn(context.Background(), object.NewKwargs(nil), object.NewInteger(66), object.NewInteger(33))
+	if i, ok := result.(*object.Integer); !ok || i.Value != 7219428434016265740 {
+		t.Errorf("comb(66, 33) = %v, want 7219428434016265740", result)
+	}
+
+	result = fn.Fn(context.Background(), object.NewKwargs(nil), object.NewInteger(67), object.NewInteger(33))
+	if _, ok := result.(*object.Error); !ok {
+		t.Errorf("comb(67, 33) should return overflow error, got %T", result)
 	}
 
 	result = fn.Fn(context.Background(), object.NewKwargs(nil), object.NewInteger(-1), object.NewInteger(0))

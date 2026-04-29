@@ -78,6 +78,17 @@ fs.read_bytes("` + testFile + `", 4, 3)`)
 	}
 }
 
+func TestFSReadBytesRejectsHugeLength(t *testing.T) {
+	fn := fsFn("read_bytes")
+	ctx := context.Background()
+	kwargs := object.NewKwargs(nil)
+
+	result := fn.Fn(ctx, kwargs, &object.String{Value: "unused.bin"}, object.NewInteger(0), object.NewInteger(fsMaxReadBytes+1))
+	if _, ok := result.(*object.Error); !ok {
+		t.Errorf("expected error for huge read length, got %T", result)
+	}
+}
+
 func TestFSReadBytesPathSecurity(t *testing.T) {
 	tmpDir := t.TempDir()
 	outsideDir := t.TempDir()
@@ -307,6 +318,20 @@ func TestFSUnpackRepeatCount(t *testing.T) {
 	}
 	if list.Elements[1].(*object.Integer).Value != 84 {
 		t.Errorf("expected 84, got %d", list.Elements[1].(*object.Integer).Value)
+	}
+}
+
+func TestFSUnpackUint64Overflow(t *testing.T) {
+	fn := fsUnpackFn()
+	ctx := context.Background()
+	kwargs := object.NewKwargs(nil)
+
+	data := make([]byte, 8)
+	binary.LittleEndian.PutUint64(data, uint64(maxInt64Value)+1)
+
+	result := fn.Fn(ctx, kwargs, &object.String{Value: "<Q"}, &object.String{Value: string(data)})
+	if _, ok := result.(*object.Error); !ok {
+		t.Errorf("expected error for uint64 overflow, got %T", result)
 	}
 }
 
@@ -578,6 +603,42 @@ func TestFSPackWrongValueCount(t *testing.T) {
 	}})
 	if _, ok := result.(*object.Error); !ok {
 		t.Errorf("expected error for wrong value count, got %T", result)
+	}
+}
+
+func TestFSPackIntegerRangeChecks(t *testing.T) {
+	fn := fsFn("pack")
+	ctx := context.Background()
+	kwargs := object.NewKwargs(nil)
+
+	tests := []struct {
+		format string
+		value  int64
+	}{
+		{"<B", -1},
+		{"<B", 256},
+		{"<b", -129},
+		{"<b", 128},
+		{"<H", -1},
+		{"<H", 65536},
+		{"<h", -32769},
+		{"<h", 32768},
+		{"<I", -1},
+		{"<I", 4294967296},
+		{"<i", -2147483649},
+		{"<i", 2147483648},
+		{"<Q", -1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.format, func(t *testing.T) {
+			result := fn.Fn(ctx, kwargs, &object.String{Value: tt.format}, &object.List{Elements: []object.Object{
+				object.NewInteger(tt.value),
+			}})
+			if _, ok := result.(*object.Error); !ok {
+				t.Errorf("pack(%q, %d) should return error, got %T", tt.format, tt.value, result)
+			}
+		})
 	}
 }
 

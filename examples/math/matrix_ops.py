@@ -17,9 +17,9 @@ print(f"\nTranspose of A (2x3) -> {len(T)}x{len(T[0])}")
 for row in T:
     print(f"  {row}")
 
-# Verify: A @ B should equal transpose(B @ A^T)
-T2 = math.transpose(math.matmul(B, math.transpose(A)))
-print(f"\nVerification (transpose(B @ A^T)): {T2}")
+# Verify: A @ B should equal transpose(B^T @ A^T)
+T2 = math.transpose(math.matmul(math.transpose(B), math.transpose(A)))
+print(f"\nVerification (transpose(B^T @ A^T)): {T2}")
 assert C[0][0] == T2[0][0]
 
 # Element-wise addition
@@ -36,5 +36,5 @@ print(f"\nNorm of {v} = {norm}")  # 5.0
 # Outer product via matmul
 x = [1.0, 2.0, 3.0]
 y = [4.0, 5.0]
-outer = math.matmul([x], math.transpose([y]))
+outer = math.matmul(math.transpose([x]), [y])
 print(f"\nOuter product: {outer}")

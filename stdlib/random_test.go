@@ -325,6 +325,106 @@ func TestRandomChoicesEmpty(t *testing.T) {
 	}
 }
 
+func TestRandomChoicesPositionalWeightsAndK(t *testing.T) {
+	fn := randomFn("choices")
+	ctx := context.Background()
+
+	pop := &object.List{Elements: []object.Object{
+		&object.String{Value: "a"},
+		&object.String{Value: "b"},
+		&object.String{Value: "c"},
+	}}
+	weights := &object.List{Elements: []object.Object{
+		object.NewInteger(0),
+		object.NewInteger(0),
+		object.NewInteger(1),
+	}}
+
+	result := fn.Fn(ctx, object.NewKwargs(nil), pop, weights, object.NewInteger(10))
+	list, ok := result.(*object.List)
+	if !ok {
+		t.Fatalf("choices() returned %T, want List", result)
+	}
+	if len(list.Elements) != 10 {
+		t.Fatalf("choices() returned %d elements, want 10", len(list.Elements))
+	}
+	for _, el := range list.Elements {
+		if s := el.(*object.String).Value; s != "c" {
+			t.Errorf("choices() with zero weights returned %q, want c", s)
+		}
+	}
+}
+
+func TestRandomChoicesInvalidArgsAndWeights(t *testing.T) {
+	fn := randomFn("choices")
+	ctx := context.Background()
+
+	pop := &object.List{Elements: []object.Object{
+		&object.String{Value: "a"},
+		&object.String{Value: "b"},
+	}}
+
+	tests := []struct {
+		name   string
+		kwargs object.Kwargs
+		args   []object.Object
+	}{
+		{
+			name:   "too many positional args",
+			kwargs: object.NewKwargs(nil),
+			args: []object.Object{
+				pop,
+				&object.List{Elements: []object.Object{object.NewInteger(1), object.NewInteger(1)}},
+				object.NewInteger(1),
+				object.NewInteger(2),
+			},
+		},
+		{
+			name: "duplicate weights",
+			kwargs: object.NewKwargs(map[string]object.Object{
+				"weights": &object.List{Elements: []object.Object{object.NewInteger(1), object.NewInteger(1)}},
+			}),
+			args: []object.Object{
+				pop,
+				&object.List{Elements: []object.Object{object.NewInteger(1), object.NewInteger(1)}},
+			},
+		},
+		{
+			name:   "negative weight",
+			kwargs: object.NewKwargs(nil),
+			args: []object.Object{
+				pop,
+				&object.List{Elements: []object.Object{object.NewInteger(-1), object.NewInteger(1)}},
+			},
+		},
+		{
+			name:   "nan weight",
+			kwargs: object.NewKwargs(nil),
+			args: []object.Object{
+				pop,
+				&object.List{Elements: []object.Object{&object.Float{Value: math.NaN()}, object.NewInteger(1)}},
+			},
+		},
+		{
+			name:   "zero total",
+			kwargs: object.NewKwargs(nil),
+			args: []object.Object{
+				pop,
+				&object.List{Elements: []object.Object{object.NewInteger(0), object.NewInteger(0)}},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := fn.Fn(ctx, tt.kwargs, tt.args...)
+			if _, ok := result.(*object.Error); !ok {
+				t.Errorf("choices() should return error, got %T", result)
+			}
+		})
+	}
+}
+
 func TestRandomExpovariate(t *testing.T) {
 	fn := randomFn("expovariate")
 	ctx := context.Background()

@@ -17,6 +17,24 @@ type fsLibraryInstance struct {
 	config fssecurity.Config
 }
 
+const (
+	fsMaxReadBytes int64 = 64 * 1024 * 1024
+
+	int8Min  int64 = -1 << 7
+	int8Max  int64 = 1<<7 - 1
+	uint8Max int64 = 1<<8 - 1
+
+	int16Min  int64 = -1 << 15
+	int16Max  int64 = 1<<15 - 1
+	uint16Max int64 = 1<<16 - 1
+
+	int32Min  int64 = -1 << 31
+	int32Max  int64 = 1<<31 - 1
+	uint32Max int64 = 1<<32 - 1
+
+	maxInt64Value int64 = 1<<63 - 1
+)
+
 func (f *fsLibraryInstance) checkPathSecurity(path string) object.Object {
 	if !f.config.IsPathAllowed(path) {
 		return errors.NewPermissionError("access denied: path '%s' is outside allowed directories", path)
@@ -66,6 +84,9 @@ func (f *fsLibraryInstance) createFSLibrary() *object.Library {
 				if length < 0 {
 					return errors.NewError("read_bytes: length must be non-negative")
 				}
+				if length > fsMaxReadBytes {
+					return errors.NewError("read_bytes: length exceeds maximum of %d bytes", fsMaxReadBytes)
+				}
 
 				if err := f.checkPathSecurity(path); err != nil {
 					return err
@@ -86,7 +107,8 @@ func (f *fsLibraryInstance) createFSLibrary() *object.Library {
 			},
 			HelpText: `read_bytes(path, offset, length) - Read a range of bytes from a file
 
-Returns raw bytes as a string. offset is 0-based byte position, length is number of bytes to read.`,
+Returns raw bytes as a string. offset is 0-based byte position, length is number of bytes to read.
+length is capped at 64 MiB per call.`,
 		},
 		"unpack": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -371,7 +393,11 @@ func unpackBinary(format string, data []byte) object.Object {
 			case 'q':
 				result = append(result, object.NewInteger(int64(int64(bo.Uint64(sl)))))
 			case 'Q':
-				result = append(result, object.NewInteger(int64(bo.Uint64(sl))))
+				u := bo.Uint64(sl)
+				if u > uint64(maxInt64Value) {
+					return errors.NewError("unpack: unsigned 64-bit value %d exceeds INTEGER range", u)
+				}
+				result = append(result, object.NewInteger(int64(u)))
 			case 'f':
 				result = append(result, &object.Float{Value: float64(math.Float32frombits(bo.Uint32(sl)))})
 			case 'd':
@@ -401,8 +427,8 @@ func float64ToFloat16(f float64) uint16 {
 		return sign << 15
 	}
 	bits := math.Float64bits(f)
-	exp := int((bits >> 52) & 0x7FF) - 1023
-	frac := float64(bits & 0xFFFFFFFFFFFFF) / (1 << 52)
+	exp := int((bits>>52)&0x7FF) - 1023
+	frac := float64(bits&0xFFFFFFFFFFFFF) / (1 << 52)
 	if exp < -24 {
 		return sign << 15
 	}
@@ -446,51 +472,51 @@ func packBinary(format string, values []object.Object) object.Object {
 			sl := make([]byte, sz)
 			switch spec.ch {
 			case 'b':
-				v, err := values[valIdx].AsInt()
-				if err != nil {
-					return errors.NewTypeError("INTEGER", values[valIdx].Type().String())
+				v, errObj := packIntValue(values[valIdx], spec.ch)
+				if errObj != nil {
+					return errObj
 				}
 				sl[0] = byte(int8(v))
 			case 'B':
-				v, err := values[valIdx].AsInt()
-				if err != nil {
-					return errors.NewTypeError("INTEGER", values[valIdx].Type().String())
+				v, errObj := packIntValue(values[valIdx], spec.ch)
+				if errObj != nil {
+					return errObj
 				}
 				sl[0] = byte(v)
 			case 'h':
-				v, err := values[valIdx].AsInt()
-				if err != nil {
-					return errors.NewTypeError("INTEGER", values[valIdx].Type().String())
+				v, errObj := packIntValue(values[valIdx], spec.ch)
+				if errObj != nil {
+					return errObj
 				}
 				bo.PutUint16(sl, uint16(int16(v)))
 			case 'H':
-				v, err := values[valIdx].AsInt()
-				if err != nil {
-					return errors.NewTypeError("INTEGER", values[valIdx].Type().String())
+				v, errObj := packIntValue(values[valIdx], spec.ch)
+				if errObj != nil {
+					return errObj
 				}
 				bo.PutUint16(sl, uint16(v))
 			case 'i':
-				v, err := values[valIdx].AsInt()
-				if err != nil {
-					return errors.NewTypeError("INTEGER", values[valIdx].Type().String())
+				v, errObj := packIntValue(values[valIdx], spec.ch)
+				if errObj != nil {
+					return errObj
 				}
 				bo.PutUint32(sl, uint32(int32(v)))
 			case 'I':
-				v, err := values[valIdx].AsInt()
-				if err != nil {
-					return errors.NewTypeError("INTEGER", values[valIdx].Type().String())
+				v, errObj := packIntValue(values[valIdx], spec.ch)
+				if errObj != nil {
+					return errObj
 				}
 				bo.PutUint32(sl, uint32(v))
 			case 'q':
-				v, err := values[valIdx].AsInt()
-				if err != nil {
-					return errors.NewTypeError("INTEGER", values[valIdx].Type().String())
+				v, errObj := packIntValue(values[valIdx], spec.ch)
+				if errObj != nil {
+					return errObj
 				}
 				bo.PutUint64(sl, uint64(v))
 			case 'Q':
-				v, err := values[valIdx].AsInt()
-				if err != nil {
-					return errors.NewTypeError("INTEGER", values[valIdx].Type().String())
+				v, errObj := packIntValue(values[valIdx], spec.ch)
+				if errObj != nil {
+					return errObj
 				}
 				bo.PutUint64(sl, uint64(v))
 			case 'f':
@@ -517,4 +543,38 @@ func packBinary(format string, values []object.Object) object.Object {
 		}
 	}
 	return &object.String{Value: string(buf)}
+}
+
+func packIntValue(obj object.Object, ch byte) (int64, object.Object) {
+	v, err := obj.AsInt()
+	if err != nil {
+		return 0, errors.NewTypeError("INTEGER", obj.Type().String())
+	}
+
+	var min, max int64
+	switch ch {
+	case 'b':
+		min, max = int8Min, int8Max
+	case 'B':
+		min, max = 0, uint8Max
+	case 'h':
+		min, max = int16Min, int16Max
+	case 'H':
+		min, max = 0, uint16Max
+	case 'i':
+		min, max = int32Min, int32Max
+	case 'I':
+		min, max = 0, uint32Max
+	case 'Q':
+		min, max = 0, maxInt64Value
+	case 'q':
+		return v, nil
+	default:
+		return 0, errors.NewError("pack: unsupported integer format character '%c'", ch)
+	}
+
+	if v < min || v > max {
+		return 0, errors.NewError("pack: value %d out of range for '%c'", v, ch)
+	}
+	return v, nil
 }

@@ -14,7 +14,7 @@ for i in range(1000):
     counts[r] = counts.get(r, 0) + 1
 
 print("\nDistribution over 1000 rolls:")
-for face in sorted(counts.keys()):
+for face in sorted(list(counts.keys())):
     bar = "#" * (counts[face] // 5)
     print(f"  {face}: {counts[face]:4d} {bar}")
 
