@@ -230,7 +230,24 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		if node.Operator == "and" || node.Operator == "or" {
 			return evalShortCircuitInfixExpression(ctx, node, env)
 		}
-		// For other operators, evaluate both sides
+		// Fast path: Identifier op Identifier where both resolve to Integer
+		switch node.Operator {
+		case "+", "-", "*", "//", "%", "<", ">", "<=", ">=", "==", "!=", "&", "|", "^", "<<", ">>":
+			if lid, ok := node.Left.(*ast.Identifier); ok {
+				if rid, ok := node.Right.(*ast.Identifier); ok {
+					if lv, ok := env.Get(lid.Value); ok {
+						if li, ok := lv.(*object.Integer); ok {
+							if rv, ok := env.Get(rid.Value); ok {
+								if ri, ok := rv.(*object.Integer); ok {
+									return evalIntegerInfixExpression(node.Operator, li.Value, ri.Value)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		// General path: evaluate both sides
 		left := evalNode(ctx, node.Left, env)
 		if object.IsError(left) {
 			return left
