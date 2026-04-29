@@ -387,24 +387,27 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 func evalProgram(ctx context.Context, program *ast.Program, env *object.Environment) object.Object {
 	var result object.Object = NULL
 	cc := newContextChecker(ctx)
+	srcFile := GetSourceFileFromContext(ctx)
 
 	for _, statement := range program.Statements {
-		// Check for cancellation less frequently
 		if err := cc.check(); err != nil {
 			return err
 		}
 
-		result = evalWithContext(ctx, statement, env)
+		result = evalNode(ctx, statement, env)
 
 		switch result := result.(type) {
 		case *object.ReturnValue:
 			return result.Value
 		case *object.Error:
+			if result.Line == 0 {
+				result.Line = statement.Line()
+			}
+			if result.File == "" {
+				result.File = srcFile
+			}
 			return result
 		case *object.Exception:
-			// Uncaught exception at program level
-			// SystemExit exceptions should be returned as-is for proper error handling
-			// Other exceptions are converted to errors
 			if result.ExceptionType == object.ExceptionTypeSystemExit {
 				return result
 			}
@@ -418,23 +421,33 @@ func evalProgram(ctx context.Context, program *ast.Program, env *object.Environm
 func evalBlockStatementWithContext(ctx context.Context, block *ast.BlockStatement, env *object.Environment) object.Object {
 	var result object.Object = NULL
 	cc := newContextChecker(ctx)
+	srcFile := GetSourceFileFromContext(ctx)
 
 	for _, statement := range block.Statements {
-		// Check for cancellation less frequently
 		if err := cc.check(); err != nil {
 			return err
 		}
 
-		result = evalWithContext(ctx, statement, env)
+		result = evalNode(ctx, statement, env)
 
 		if result != nil {
-			rt := result.Type()
-			if rt == object.RETURN_OBJ || rt == object.BREAK_OBJ || rt == object.CONTINUE_OBJ {
-				return result
-			}
-			// Don't return errors immediately - let try/catch handle them
-			if rt == object.ERROR_OBJ || rt == object.EXCEPTION_OBJ {
-				return result
+			switch r := result.(type) {
+			case *object.Error:
+				if r.Line == 0 {
+					r.Line = statement.Line()
+				}
+				if r.File == "" {
+					r.File = srcFile
+				}
+				return r
+			default:
+				rt := r.Type()
+				if rt == object.RETURN_OBJ || rt == object.BREAK_OBJ || rt == object.CONTINUE_OBJ {
+					return result
+				}
+				if rt == object.EXCEPTION_OBJ {
+					return result
+				}
 			}
 		}
 	}
