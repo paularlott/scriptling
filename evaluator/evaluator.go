@@ -771,23 +771,7 @@ func evalInfixExpression(ctx context.Context, operator string, left, right objec
 	case "==":
 		if la, ok := left.(*object.FloatArray); ok {
 			if ra, ok := right.(*object.FloatArray); ok {
-				if len(la.Shape) != len(ra.Shape) {
-					return FALSE
-				}
-				for i := range la.Shape {
-					if la.Shape[i] != ra.Shape[i] {
-						return FALSE
-					}
-				}
-				if len(la.Data) != len(ra.Data) {
-					return FALSE
-				}
-				for i := range la.Data {
-					if la.Data[i] != ra.Data[i] {
-						return FALSE
-					}
-				}
-				return TRUE
+				return nativeBoolToBooleanObject(floatArraysEqual(la, ra))
 			}
 			return FALSE
 		}
@@ -795,11 +779,7 @@ func evalInfixExpression(ctx context.Context, operator string, left, right objec
 	case "!=":
 		if la, ok := left.(*object.FloatArray); ok {
 			if ra, ok := right.(*object.FloatArray); ok {
-				result := evalInfixExpression(ctx, "==", la, ra, env)
-				if result == TRUE {
-					return FALSE
-				}
-				return TRUE
+				return nativeBoolToBooleanObject(!floatArraysEqual(la, ra))
 			}
 			return TRUE
 		}
@@ -807,6 +787,26 @@ func evalInfixExpression(ctx context.Context, operator string, left, right objec
 	default:
 		return errors.NewError("%s: type mismatch", errors.ErrTypeError)
 	}
+}
+
+func floatArraysEqual(left, right *object.FloatArray) bool {
+	if len(left.Shape) != len(right.Shape) {
+		return false
+	}
+	for i := range left.Shape {
+		if left.Shape[i] != right.Shape[i] {
+			return false
+		}
+	}
+	if len(left.Data) != len(right.Data) {
+		return false
+	}
+	for i := range left.Data {
+		if left.Data[i] != right.Data[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func evalConditionalExpression(ctx context.Context, node *ast.ConditionalExpression, env *object.Environment) object.Object {
@@ -1755,11 +1755,6 @@ func fastFloatBuiltin(arg object.Object) object.Object {
 			return errors.NewError("cannot convert %s to float", v.Value)
 		}
 		return &object.Float{Value: val}
-	case *object.FloatArray:
-		if len(v.Data) == 1 && !v.Is2D() {
-			return &object.Float{Value: v.Data[0]}
-		}
-		return errors.NewError("cannot convert FloatArray with %d elements to float", len(v.Data))
 	default:
 		return errors.NewTypeError("INTEGER, FLOAT, or STRING", arg.Type().String())
 	}
@@ -3538,6 +3533,15 @@ func assignToExpression(ctx context.Context, expr ast.Expression, value object.O
 		env.Set(left.Value, value)
 		return nil
 	case *ast.IndexExpression:
+		if err := assignToNestedFloatArrayIndex(ctx, left, value, env); err != nil {
+			if err == errNotNestedFloatArrayAssignment {
+				// Fall through to regular assignment handling.
+			} else {
+				return err
+			}
+		} else {
+			return nil
+		}
 		obj := evalWithContext(ctx, left.Left, env)
 		if object.IsError(obj) {
 			return fmt.Errorf("assignment error")
@@ -3636,7 +3640,10 @@ func assignToExpression(ctx context.Context, expr ast.Expression, value object.O
 					}
 				case *object.FloatArray:
 					cols := o.Cols()
-					if !v.Is2D() && len(v.Data) != cols {
+					if v.Is2D() {
+						return fmt.Errorf("float_array row assignment requires a 1D FloatArray")
+					}
+					if len(v.Data) != cols {
 						return fmt.Errorf("row length mismatch: expected %d, got %d", cols, len(v.Data))
 					}
 					off := int(i) * cols
@@ -3664,6 +3671,67 @@ func assignToExpression(ctx context.Context, expr ast.Expression, value object.O
 	default:
 		return fmt.Errorf("cannot assign to expression")
 	}
+}
+
+var errNotNestedFloatArrayAssignment = fmt.Errorf("not nested float_array assignment")
+
+func assignToNestedFloatArrayIndex(ctx context.Context, expr *ast.IndexExpression, value object.Object, env *object.Environment) error {
+	rowExpr, ok := expr.Left.(*ast.IndexExpression)
+	if !ok {
+		return errNotNestedFloatArrayAssignment
+	}
+
+	baseObj := evalWithContext(ctx, rowExpr.Left, env)
+	if object.IsError(baseObj) {
+		return fmt.Errorf("assignment error")
+	}
+	fa, ok := baseObj.(*object.FloatArray)
+	if !ok || !fa.Is2D() {
+		return errNotNestedFloatArrayAssignment
+	}
+
+	rowIndexObj := evalWithContext(ctx, rowExpr.Index, env)
+	if object.IsError(rowIndexObj) {
+		return fmt.Errorf("assignment error")
+	}
+	rowIndex, ok := rowIndexObj.(*object.Integer)
+	if !ok {
+		return fmt.Errorf("float_array index must be integer")
+	}
+
+	colIndexObj := evalWithContext(ctx, expr.Index, env)
+	if object.IsError(colIndexObj) {
+		return fmt.Errorf("assignment error")
+	}
+	colIndex, ok := colIndexObj.(*object.Integer)
+	if !ok {
+		return fmt.Errorf("float_array index must be integer")
+	}
+
+	row := rowIndex.Value
+	rows := int64(fa.Rows())
+	if row < 0 {
+		row += rows
+	}
+	if row < 0 || row >= rows {
+		return fmt.Errorf("index out of range")
+	}
+
+	col := colIndex.Value
+	cols := int64(fa.Cols())
+	if col < 0 {
+		col += cols
+	}
+	if col < 0 || col >= cols {
+		return fmt.Errorf("index out of range")
+	}
+
+	f, err := value.AsFloat()
+	if err != nil {
+		return fmt.Errorf("float_array element must be a number")
+	}
+	fa.Data[int(row)*fa.Cols()+int(col)] = f
+	return nil
 }
 
 // findPropertyInClass walks the class hierarchy looking for a Property descriptor.

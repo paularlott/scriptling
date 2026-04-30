@@ -605,8 +605,8 @@ func sliceList(elements []object.Object, start, end, step int64, hasStart, hasEn
 }
 
 func sliceFloatArray(fa *object.FloatArray, start, end, step int64, hasStart, hasEnd, hasStep bool) object.Object {
-	if step < 0 {
-		return errors.NewError("slice step cannot be negative for FloatArray")
+	if step <= 0 {
+		return errors.NewError("slice step cannot be zero or negative for FloatArray")
 	}
 
 	if fa.Is2D() {

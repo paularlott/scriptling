@@ -26,7 +26,7 @@ func TestMathLibrary(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := New()
-			p.RegisterLibrary( stdlib.MathLibrary)
+			p.RegisterLibrary(stdlib.MathLibrary)
 			_, err := p.Eval(tt.script)
 			if err != nil {
 				t.Fatalf("Error: %v", err)
@@ -57,7 +57,7 @@ func TestMathLibrary(t *testing.T) {
 
 func TestMathInExpression(t *testing.T) {
 	p := New()
-	p.RegisterLibrary( stdlib.MathLibrary)
+	p.RegisterLibrary(stdlib.MathLibrary)
 	_, err := p.Eval(`
 import math
 
@@ -165,6 +165,37 @@ val = m[0][0]
 	val, _ := p.GetVar("val")
 	if val != 10.0 {
 		t.Errorf("val = %v, want 10.0", val)
+	}
+}
+
+func TestFloatArrayNestedIndexAssignment(t *testing.T) {
+	p := New()
+	p.RegisterLibrary(stdlib.MathLibrary)
+	_, err := p.Eval(`
+import math
+m = math.array([[1.0, 2.0], [3.0, 4.0]])
+m[0][1] = 9.0
+val = m[0][1]
+`)
+	if err != nil {
+		t.Fatalf("Error: %v", err)
+	}
+	val, _ := p.GetVar("val")
+	if val != 9.0 {
+		t.Errorf("val = %v, want 9.0", val)
+	}
+}
+
+func TestFloatArrayRowAssignmentRejects2DArray(t *testing.T) {
+	p := New()
+	p.RegisterLibrary(stdlib.MathLibrary)
+	_, err := p.Eval(`
+import math
+m = math.array([[1.0, 2.0], [3.0, 4.0]])
+m[0] = math.array([[9.0, 8.0]])
+`)
+	if err == nil {
+		t.Fatal("expected row assignment with 2D FloatArray to fail")
 	}
 }
 
@@ -292,6 +323,27 @@ n = len(l)
 	}
 }
 
+func TestFloatArrayReversed(t *testing.T) {
+	p := New()
+	p.RegisterLibrary(stdlib.MathLibrary)
+	_, err := p.Eval(`
+import math
+a = math.array([1.0, 2.0, 3.0])
+r = list(reversed(a))
+`)
+	if err != nil {
+		t.Fatalf("Error: %v", err)
+	}
+	r, _ := p.GetVar("r")
+	list, ok := r.([]interface{})
+	if !ok {
+		t.Fatalf("r is %T, want []interface{}", r)
+	}
+	if len(list) != 3 || list[0] != 3.0 || list[1] != 2.0 || list[2] != 1.0 {
+		t.Errorf("r = %v, want [3 2 1]", r)
+	}
+}
+
 func TestFloatArraySoftmaxSum(t *testing.T) {
 	p := New()
 	p.RegisterLibrary(stdlib.MathLibrary)
@@ -312,6 +364,48 @@ for v in s:
 	}
 	if f < 0.999 || f > 1.001 {
 		t.Errorf("softmax sum = %v, want ~1.0", f)
+	}
+}
+
+func TestFloatArraySum(t *testing.T) {
+	p := New()
+	p.RegisterLibrary(stdlib.MathLibrary)
+	_, err := p.Eval(`
+import math
+a = math.array([1.0, 2.0, 3.0])
+total = sum(a)
+`)
+	if err != nil {
+		t.Fatalf("Error: %v", err)
+	}
+	total, _ := p.GetVar("total")
+	if total != 6.0 {
+		t.Errorf("sum(a) = %v, want 6.0", total)
+	}
+}
+
+func TestFloatArrayFloatConversionRejected(t *testing.T) {
+	p := New()
+	p.RegisterLibrary(stdlib.MathLibrary)
+	_, err := p.Eval(`
+import math
+a = math.array([1.0])
+v = float(a)
+`)
+	if err == nil {
+		t.Fatal("expected float(FloatArray) to fail")
+	}
+}
+
+func TestFloatArrayMixedRowTypesRejected(t *testing.T) {
+	p := New()
+	p.RegisterLibrary(stdlib.MathLibrary)
+	_, err := p.Eval(`
+import math
+a = math.array([[1.0, 2.0], math.array([3.0, 4.0])])
+`)
+	if err == nil {
+		t.Fatal("expected mixed row types in math.array() to fail")
 	}
 }
 
@@ -390,6 +484,33 @@ val = t[0][1]
 	val, _ := p.GetVar("val")
 	if val != 4.0 {
 		t.Errorf("t[0][1] = %v, want 4.0", val)
+	}
+}
+
+func TestFloatArrayTransposeZeroWidthPreservesType(t *testing.T) {
+	p := New()
+	p.RegisterLibrary(stdlib.MathLibrary)
+	_, err := p.Eval(`
+import math
+a = math.array([[]])
+t = math.transpose(a)
+is_fa = type(t) == "FLOAT_ARRAY"
+s = math.shape(t)
+`)
+	if err != nil {
+		t.Fatalf("Error: %v", err)
+	}
+	isFA, _ := p.GetVar("is_fa")
+	if isFA != true {
+		t.Fatalf("transpose result type = %v, want FLOAT_ARRAY", isFA)
+	}
+	s, _ := p.GetVar("s")
+	shape, ok := s.([]interface{})
+	if !ok {
+		t.Fatalf("shape is %T, want []interface{}", s)
+	}
+	if len(shape) != 2 || shape[0].(int64) != 0 || shape[1].(int64) != 1 {
+		t.Errorf("shape = %v, want [0,1]", s)
 	}
 }
 

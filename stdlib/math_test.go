@@ -901,6 +901,33 @@ func TestMathArray1D(t *testing.T) {
 	}
 }
 
+func TestMathArrayEmptyUsesEmptySlice(t *testing.T) {
+	lib := MathLibrary
+	arrayFn := lib.Functions()["array"]
+
+	result := arrayFn.Fn(context.Background(), object.NewKwargs(nil), &object.List{Elements: []object.Object{}})
+	fa, ok := result.(*object.FloatArray)
+	if !ok {
+		t.Fatalf("array() returned %T, want FloatArray", result)
+	}
+	if fa.Data == nil {
+		t.Fatal("expected empty FloatArray data slice, got nil")
+	}
+	if len(fa.Data) != 0 || len(fa.Shape) != 1 || fa.Shape[0] != 0 {
+		t.Fatalf("unexpected empty array state: data=%v shape=%v", fa.Data, fa.Shape)
+	}
+}
+
+func TestFloatArrayInspectMatchesPrettyPrint(t *testing.T) {
+	fa := object.NewFloatArray2D([]float64{1.0, 2.0, 3.0, 4.0}, 2, 2)
+	if fa.Inspect() != "[[1, 2], [3, 4]]" {
+		t.Fatalf("Inspect() = %q", fa.Inspect())
+	}
+	if fa.Inspect() != fa.PrettyPrint() {
+		t.Fatalf("Inspect() = %q, PrettyPrint() = %q", fa.Inspect(), fa.PrettyPrint())
+	}
+}
+
 func TestMathArray2D(t *testing.T) {
 	lib := MathLibrary
 	arrayFn := lib.Functions()["array"]

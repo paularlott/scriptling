@@ -222,6 +222,36 @@ func NewEnumerateIterator(iterable Object, start int64) *Iterator {
 
 // ReversedIterator creates an iterator that returns elements in reverse order
 func NewReversedIterator(iterable Object) *Iterator {
+	if fa, ok := iterable.(*FloatArray); ok {
+		if fa.Is2D() {
+			index := fa.Rows() - 1
+			cols := fa.Cols()
+			return &Iterator{
+				next: func() (Object, bool) {
+					if index < 0 {
+						return nil, false
+					}
+					off := index * cols
+					rowData := make([]float64, cols)
+					copy(rowData, fa.Data[off:off+cols])
+					index--
+					return NewFloatArray1D(rowData), true
+				},
+			}
+		}
+		index := len(fa.Data) - 1
+		return &Iterator{
+			next: func() (Object, bool) {
+				if index < 0 {
+					return nil, false
+				}
+				val := &Float{Value: fa.Data[index]}
+				index--
+				return val, true
+			},
+		}
+	}
+
 	// Convert iterable to slice - need to copy to avoid modifying original
 	srcElements, ok := IterableToSlice(iterable)
 	if !ok {

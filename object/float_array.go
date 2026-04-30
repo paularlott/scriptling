@@ -11,6 +11,9 @@ type FloatArray struct {
 }
 
 func NewFloatArray1D(data []float64) *FloatArray {
+	if data == nil {
+		data = []float64{}
+	}
 	return &FloatArray{Data: data, Shape: []int{len(data)}}
 }
 
@@ -20,7 +23,7 @@ func NewFloatArray2D(data []float64, rows, cols int) *FloatArray {
 
 func (fa *FloatArray) Type() ObjectType { return FLOAT_ARRAY_OBJ }
 func (fa *FloatArray) Inspect() string {
-	return fmt.Sprintf("<float_array shape=%v len=%d>", fa.Shape, len(fa.Data))
+	return fa.PrettyPrint()
 }
 
 func (fa *FloatArray) AsString() (string, Object)          { return fa.Inspect(), nil }

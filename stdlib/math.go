@@ -25,7 +25,10 @@ func toFloatMatrix(obj object.Object, fnName, paramName string) ([][]float64, bo
 		rows := fa.Rows()
 		result := make([][]float64, rows)
 		for i := 0; i < rows; i++ {
-			result[i] = fa.Row(i)
+			row := fa.Row(i)
+			rowCopy := make([]float64, len(row))
+			copy(rowCopy, row)
+			result[i] = rowCopy
 		}
 		return result, true, nil
 	}
@@ -44,7 +47,9 @@ func toFloatMatrix(obj object.Object, fnName, paramName string) ([][]float64, bo
 			} else if len(fa.Data) != width {
 				return nil, false, errors.NewError("%s: %s must be a rectangular matrix", fnName, paramName)
 			}
-			rows[i] = fa.Data
+			rowCopy := make([]float64, len(fa.Data))
+			copy(rowCopy, fa.Data)
+			rows[i] = rowCopy
 			continue
 		}
 		row, ok := rowObj.(*object.List)
@@ -80,12 +85,12 @@ func floatMatrixToObject(m [][]float64) object.Object {
 	return &object.List{Elements: rows}
 }
 
-func floatMatrixToFloatArray(m [][]float64) object.Object {
-	if len(m) == 0 {
-		return &object.List{Elements: []object.Object{}}
-	}
+func floatMatrixToFloatArray(m [][]float64, emptyCols int) object.Object {
 	rows := len(m)
-	cols := len(m[0])
+	cols := emptyCols
+	if rows > 0 {
+		cols = len(m[0])
+	}
 	data := make([]float64, 0, rows*cols)
 	for _, r := range m {
 		data = append(data, r...)
@@ -93,9 +98,9 @@ func floatMatrixToFloatArray(m [][]float64) object.Object {
 	return object.NewFloatArray2D(data, rows, cols)
 }
 
-func toMatrixOutput(m [][]float64, useFloatArray bool) object.Object {
+func toMatrixOutput(m [][]float64, useFloatArray bool, emptyCols int) object.Object {
 	if useFloatArray {
-		return floatMatrixToFloatArray(m)
+		return floatMatrixToFloatArray(m, emptyCols)
 	}
 	return floatMatrixToObject(m)
 }
@@ -568,7 +573,7 @@ a and b must be lists or 1D FloatArrays of numbers with the same length.`,
 					result[i][j] = sum
 				}
 			}
-			return toMatrixOutput(result, aFA || bFA)
+			return toMatrixOutput(result, aFA || bFA, n)
 		},
 		HelpText: `matmul(a, b) - Matrix-matrix multiply
 
@@ -584,6 +589,9 @@ a is (M x K), b is (K x N). Returns (M x N) matrix as list of lists.`,
 				return errObj
 			}
 			if len(rows) == 0 {
+				if useFA {
+					return object.NewFloatArray2D(nil, 0, 0)
+				}
 				return &object.List{Elements: []object.Object{}}
 			}
 			m := len(rows)
@@ -595,7 +603,7 @@ a is (M x K), b is (K x N). Returns (M x N) matrix as list of lists.`,
 					result[j][i] = rows[i][j]
 				}
 			}
-			return toMatrixOutput(result, useFA)
+			return toMatrixOutput(result, useFA, m)
 		},
 		HelpText: `transpose(m) - Transpose a 2D matrix
 
@@ -618,6 +626,9 @@ Rows become columns. Returns a new matrix.`,
 				return errors.NewError("mat_add: matrices must have the same shape")
 			}
 			if len(aRows) == 0 {
+				if aFA || bFA {
+					return object.NewFloatArray2D(nil, 0, 0)
+				}
 				return &object.List{Elements: []object.Object{}}
 			}
 			if len(aRows[0]) != len(bRows[0]) {
@@ -630,7 +641,7 @@ Rows become columns. Returns a new matrix.`,
 					result[i][j] = aRows[i][j] + bRows[i][j]
 				}
 			}
-			return toMatrixOutput(result, aFA || bFA)
+			return toMatrixOutput(result, aFA || bFA, len(aRows[0]))
 		},
 		HelpText: `mat_add(a, b) - Element-wise addition of two matrices
 
@@ -881,7 +892,7 @@ p and q must be lists of numbers with the same length.`,
 				return a
 			case *object.List:
 				if len(a.Elements) == 0 {
-					return object.NewFloatArray1D(nil)
+					return object.NewFloatArray1D([]float64{})
 				}
 				if inner, ok := a.Elements[0].(*object.List); ok {
 					rows := len(a.Elements)
@@ -890,7 +901,7 @@ p and q must be lists of numbers with the same length.`,
 					for _, rowObj := range a.Elements {
 						row, ok := rowObj.(*object.List)
 						if !ok {
-							return errors.NewError("array: all rows must be lists")
+							return errors.NewError("array: cannot mix list rows with non-list rows")
 						}
 						if len(row.Elements) != cols {
 							return errors.NewError("array: all rows must have the same length")
@@ -912,7 +923,7 @@ p and q must be lists of numbers with the same length.`,
 					for _, rowObj := range a.Elements {
 						fa, ok := rowObj.(*object.FloatArray)
 						if !ok || fa.Is2D() {
-							return errors.NewError("array: all rows must be 1D FloatArrays")
+							return errors.NewError("array: cannot mix FloatArray rows with non-FloatArray rows")
 						}
 						if len(fa.Data) != cols {
 							return errors.NewError("array: all rows must have the same length")
