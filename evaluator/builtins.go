@@ -326,8 +326,14 @@ Converts an integer, string, or float to a float.`,
 				elements = arg.Elements
 			case *object.Tuple:
 				elements = arg.Elements
+			case *object.FloatArray:
+				var sum float64
+				for _, v := range arg.Data {
+					sum += v
+				}
+				return &object.Float{Value: sum}
 			default:
-				return errors.NewTypeError("LIST or TUPLE", args[0].Type().String())
+				return errors.NewTypeError("LIST, TUPLE, or FLOAT_ARRAY", args[0].Type().String())
 			}
 
 			// Start with integer 0
@@ -489,10 +495,10 @@ Returns a view object of (key, value) pairs for all items in the dictionary.`,
 			}
 			// Validate iterable type
 			switch args[0].(type) {
-			case *object.List, *object.Tuple, *object.String, *object.Iterator:
+			case *object.List, *object.Tuple, *object.String, *object.Iterator, *object.FloatArray:
 				// Valid iterable types
 			default:
-				return errors.NewTypeError("iterable (LIST, TUPLE, STRING, ITERATOR)", args[0].Type().String())
+				return errors.NewTypeError("iterable (LIST, TUPLE, STRING, ITERATOR, FLOAT_ARRAY)", args[0].Type().String())
 			}
 			return object.NewEnumerateIterator(args[0], start)
 		},
@@ -510,10 +516,10 @@ Default start is 0. Use list(enumerate(...)) to get a list.`,
 			// Validate all arguments are iterable
 			for _, arg := range args {
 				switch arg.(type) {
-				case *object.List, *object.Tuple, *object.String, *object.Iterator:
+				case *object.List, *object.Tuple, *object.String, *object.Iterator, *object.FloatArray:
 					// Valid iterable types
 				default:
-					return errors.NewTypeError("iterable (LIST, TUPLE, STRING, ITERATOR)", arg.Type().String())
+					return errors.NewTypeError("iterable (LIST, TUPLE, STRING, ITERATOR, FLOAT_ARRAY)", arg.Type().String())
 				}
 			}
 			return object.NewZipIterator(args)
@@ -705,6 +711,17 @@ Works with both integers and floats.`,
 						return errors.NewError("min() arg is an empty sequence")
 					}
 					args = iter.Elements
+				case *object.FloatArray:
+					if len(iter.Data) == 0 {
+						return errors.NewError("min() arg is an empty sequence")
+					}
+					minVal := iter.Data[0]
+					for _, v := range iter.Data[1:] {
+						if v < minVal {
+							minVal = v
+						}
+					}
+					return &object.Float{Value: minVal}
 				}
 			}
 			minVal := args[0]
@@ -721,7 +738,7 @@ Works with both integers and floats.`,
 With a single iterable argument, returns its smallest item.
 With multiple arguments, returns the smallest argument.`,
 	},
-	"max": {
+		"max": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) == 0 {
 				return errors.NewError("max() requires at least 1 argument")
@@ -739,6 +756,17 @@ With multiple arguments, returns the smallest argument.`,
 						return errors.NewError("max() arg is an empty sequence")
 					}
 					args = iter.Elements
+				case *object.FloatArray:
+					if len(iter.Data) == 0 {
+						return errors.NewError("max() arg is an empty sequence")
+					}
+					maxVal := iter.Data[0]
+					for _, v := range iter.Data[1:] {
+						if v > maxVal {
+							maxVal = v
+						}
+					}
+					return &object.Float{Value: maxVal}
 				}
 			}
 			maxVal := args[0]
@@ -1110,10 +1138,10 @@ The argument must be a string of exactly one character.`,
 				return err
 			}
 			switch args[0].(type) {
-			case *object.List, *object.Tuple, *object.String, *object.Iterator:
+			case *object.List, *object.Tuple, *object.String, *object.Iterator, *object.FloatArray:
 				return object.NewReversedIterator(args[0])
 			default:
-				return errors.NewTypeError("sequence (LIST, TUPLE, STRING, ITERATOR)", args[0].Type().String())
+				return errors.NewTypeError("sequence (LIST, TUPLE, STRING, ITERATOR, FLOAT_ARRAY)", args[0].Type().String())
 			}
 		},
 		HelpText: `reversed(seq) - Return a reversed iterator over the sequence

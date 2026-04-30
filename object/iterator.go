@@ -64,6 +64,24 @@ func IterableToSlice(obj Object) ([]Object, bool) {
 			elements = append(elements, &Tuple{Elements: []Object{p.Key, p.Value}})
 		}
 		return elements, true
+	case *FloatArray:
+		if iter.Is2D() {
+			rows := iter.Rows()
+			cols := iter.Cols()
+			elements := make([]Object, rows)
+			for i := 0; i < rows; i++ {
+				off := i * cols
+				rowData := make([]float64, cols)
+				copy(rowData, iter.Data[off:off+cols])
+				elements[i] = NewFloatArray1D(rowData)
+			}
+			return elements, true
+		}
+		elements := make([]Object, len(iter.Data))
+		for i, v := range iter.Data {
+			elements[i] = &Float{Value: v}
+		}
+		return elements, true
 	default:
 		return nil, false
 	}

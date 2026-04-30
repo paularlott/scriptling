@@ -168,6 +168,26 @@ func ToGo(obj object.Object) interface{} {
 		return "<builtin function>"
 	case *object.Function:
 		return o.Name
+	case *object.FloatArray:
+		if o.Is2D() {
+			rows := o.Rows()
+			cols := o.Cols()
+			result := make([]interface{}, rows)
+			for i := 0; i < rows; i++ {
+				row := make([]interface{}, cols)
+				off := i * cols
+				for j := 0; j < cols; j++ {
+					row[j] = o.Data[off+j]
+				}
+				result[i] = row
+			}
+			return result
+		}
+		result := make([]interface{}, len(o.Data))
+		for i, v := range o.Data {
+			result[i] = v
+		}
+		return result
 	default:
 		// For other types (like ReturnValue, Break, Continue), return string representation
 		return o.Inspect()

@@ -196,6 +196,7 @@ const (
 	PROPERTY_OBJ
 	STATICMETHOD_OBJ
 	CLASSMETHOD_OBJ
+	FLOAT_ARRAY_OBJ
 )
 
 // String returns the string representation of the ObjectType
@@ -257,6 +258,8 @@ func (ot ObjectType) String() string {
 		return "STATICMETHOD"
 	case CLASSMETHOD_OBJ:
 		return "CLASSMETHOD"
+	case FLOAT_ARRAY_OBJ:
+		return "FLOAT_ARRAY"
 	default:
 		return "UNKNOWN"
 	}
@@ -1561,7 +1564,7 @@ func ValidateTransferable(obj Object) error {
 
 func validateTransferable(obj Object, visited map[any]struct{}) error {
 	switch v := obj.(type) {
-	case *Null, *Boolean, *Integer, *Float, *String:
+	case *Null, *Boolean, *Integer, *Float, *String, *FloatArray:
 		return nil
 	case *List:
 		if _, seen := visited[v]; seen {
@@ -1624,6 +1627,12 @@ func CloneObject(obj Object) Object {
 	switch v := obj.(type) {
 	case *Null, *Boolean, *Integer, *Float, *String:
 		return obj
+	case *FloatArray:
+		data := make([]float64, len(v.Data))
+		copy(data, v.Data)
+		shape := make([]int, len(v.Shape))
+		copy(shape, v.Shape)
+		return &FloatArray{Data: data, Shape: shape}
 	case *List:
 		elems := make([]Object, len(v.Elements))
 		for i, e := range v.Elements {

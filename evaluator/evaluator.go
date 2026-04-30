@@ -769,8 +769,40 @@ func evalInfixExpression(ctx context.Context, operator string, left, right objec
 
 	switch operator {
 	case "==":
+		if la, ok := left.(*object.FloatArray); ok {
+			if ra, ok := right.(*object.FloatArray); ok {
+				if len(la.Shape) != len(ra.Shape) {
+					return FALSE
+				}
+				for i := range la.Shape {
+					if la.Shape[i] != ra.Shape[i] {
+						return FALSE
+					}
+				}
+				if len(la.Data) != len(ra.Data) {
+					return FALSE
+				}
+				for i := range la.Data {
+					if la.Data[i] != ra.Data[i] {
+						return FALSE
+					}
+				}
+				return TRUE
+			}
+			return FALSE
+		}
 		return nativeBoolToBooleanObject(objectsDeepEqual(left, right))
 	case "!=":
+		if la, ok := left.(*object.FloatArray); ok {
+			if ra, ok := right.(*object.FloatArray); ok {
+				result := evalInfixExpression(ctx, "==", la, ra, env)
+				if result == TRUE {
+					return FALSE
+				}
+				return TRUE
+			}
+			return TRUE
+		}
 		return nativeBoolToBooleanObject(!objectsDeepEqual(left, right))
 	default:
 		return errors.NewError("%s: type mismatch", errors.ErrTypeError)
@@ -1630,6 +1662,11 @@ func fastLenBuiltin(ctx context.Context, env *object.Environment, arg object.Obj
 		return object.NewInteger(int64(len(v.Dict.Pairs)))
 	case *object.Set:
 		return object.NewInteger(int64(len(v.Elements)))
+	case *object.FloatArray:
+		if v.Is2D() {
+			return object.NewInteger(int64(v.Rows()))
+		}
+		return object.NewInteger(int64(len(v.Data)))
 	case *object.Instance:
 		if result := callDunderMethodFn(ctx, v, "__len__", nil, env); result != nil {
 			return result
@@ -1655,6 +1692,9 @@ func fastStrBuiltin(ctx context.Context, env *object.Environment, arg object.Obj
 		if result := callDunderMethodFn(ctx, inst, "__str__", nil, env); result != nil {
 			return result
 		}
+	}
+	if fa, ok := arg.(*object.FloatArray); ok {
+		return &object.String{Value: fa.PrettyPrint()}
 	}
 	return &object.String{Value: arg.Inspect()}
 }
@@ -1715,6 +1755,11 @@ func fastFloatBuiltin(arg object.Object) object.Object {
 			return errors.NewError("cannot convert %s to float", v.Value)
 		}
 		return &object.Float{Value: val}
+	case *object.FloatArray:
+		if len(v.Data) == 1 && !v.Is2D() {
+			return &object.Float{Value: v.Data[0]}
+		}
+		return errors.NewError("cannot convert FloatArray with %d elements to float", len(v.Data))
 	default:
 		return errors.NewTypeError("INTEGER, FLOAT, or STRING", arg.Type().String())
 	}
@@ -2296,6 +2341,8 @@ func isTruthy(obj object.Object) bool {
 			return len(v.Elements) > 0
 		case *object.Dict:
 			return len(v.Pairs) > 0
+		case *object.FloatArray:
+			return len(v.Data) > 0
 		case *object.Instance:
 			// Try __bool__ first, then __len__ via the function variable (avoids init cycle)
 			if isTruthyInstanceFn != nil {
@@ -2755,6 +2802,15 @@ func evalInOperator(ctx context.Context, left, right object.Object) object.Objec
 		return FALSE
 	case *object.Set:
 		return nativeBoolToBooleanObject(container.ContainsKeyed(evalHashKey(ctx, left)))
+	case *object.FloatArray:
+		if f, err := left.AsFloat(); err == nil {
+			for _, v := range container.Data {
+				if v == f {
+					return TRUE
+				}
+			}
+		}
+		return FALSE
 	case *object.Instance:
 		if fn, ok := findDunderMethod(container, "__contains__"); ok {
 			result := applyFunctionWithContext(ctx, fn, prependSelf(container, []object.Object{left}), nil, container.Class.Env)
@@ -3550,6 +3606,59 @@ func assignToExpression(ctx context.Context, expr ast.Expression, value object.O
 				return nil
 			}
 			return fmt.Errorf("class attribute must be string")
+		case *object.FloatArray:
+			idx, ok := index.(*object.Integer)
+			if !ok {
+				return fmt.Errorf("float_array index must be integer")
+			}
+			i := idx.Value
+			if o.Is2D() {
+				rows := int64(o.Rows())
+				if i < 0 {
+					i += rows
+				}
+				if i < 0 || i >= rows {
+					return fmt.Errorf("index out of range")
+				}
+				switch v := value.(type) {
+				case *object.List:
+					cols := o.Cols()
+					if len(v.Elements) != cols {
+						return fmt.Errorf("row length mismatch: expected %d, got %d", cols, len(v.Elements))
+					}
+					off := int(i) * cols
+					for j, el := range v.Elements {
+						f, err := el.AsFloat()
+						if err != nil {
+							return fmt.Errorf("row element must be a number")
+						}
+						o.Data[off+j] = f
+					}
+				case *object.FloatArray:
+					cols := o.Cols()
+					if !v.Is2D() && len(v.Data) != cols {
+						return fmt.Errorf("row length mismatch: expected %d, got %d", cols, len(v.Data))
+					}
+					off := int(i) * cols
+					copy(o.Data[off:off+cols], v.Data)
+				default:
+					return fmt.Errorf("float_array row assignment requires a list or FloatArray")
+				}
+				return nil
+			}
+			length := int64(len(o.Data))
+			if i < 0 {
+				i += length
+			}
+			if i < 0 || i >= length {
+				return fmt.Errorf("index out of range")
+			}
+			f, err := value.AsFloat()
+			if err != nil {
+				return fmt.Errorf("float_array element must be a number")
+			}
+			o.Data[i] = f
+			return nil
 		}
 		return fmt.Errorf("cannot assign to index")
 	default:
@@ -3712,6 +3821,64 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 			elements = o.Elements
 		case *object.Tuple:
 			elements = o.Elements
+		case *object.FloatArray:
+			if o.Is2D() {
+				rows := o.Rows()
+				cols := o.Cols()
+				cc := newContextChecker(ctx)
+				for i := 0; i < rows; i++ {
+					if err := cc.checkAlways(); err != nil {
+						return err
+					}
+					off := i * cols
+					rowData := make([]float64, cols)
+					copy(rowData, o.Data[off:off+cols])
+					element := object.NewFloatArray1D(rowData)
+					if err := setForVariables(fs.Variables, element, env); err != nil {
+						return errors.NewError("%s", err.Error())
+					}
+					result = evalWithContext(ctx, fs.Body, env)
+					if result != nil {
+						switch result.Type() {
+						case object.ERROR_OBJ, object.RETURN_OBJ:
+							return result
+						case object.BREAK_OBJ:
+							broke = true
+							result = NULL
+							goto forDone
+						case object.CONTINUE_OBJ:
+							result = NULL
+							continue
+						}
+					}
+				}
+				goto forDone
+			}
+			cc := newContextChecker(ctx)
+			for _, v := range o.Data {
+				if err := cc.checkAlways(); err != nil {
+					return err
+				}
+				element := &object.Float{Value: v}
+				if err := setForVariables(fs.Variables, element, env); err != nil {
+					return errors.NewError("%s", err.Error())
+				}
+				result = evalWithContext(ctx, fs.Body, env)
+				if result != nil {
+					switch result.Type() {
+					case object.ERROR_OBJ, object.RETURN_OBJ:
+						return result
+					case object.BREAK_OBJ:
+						broke = true
+						result = NULL
+						goto forDone
+					case object.CONTINUE_OBJ:
+						result = NULL
+						continue
+					}
+				}
+			}
+			goto forDone
 		case *object.String:
 			// Iterate over string runes lazily to avoid pre-allocating all characters
 			cc := newContextChecker(ctx)
