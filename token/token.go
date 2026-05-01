@@ -16,7 +16,8 @@ const (
 	INT      = "INT"
 	FLOAT    = "FLOAT"
 	STRING   = "STRING"
-	F_STRING = "F_STRING"
+	F_STRING  = "F_STRING"
+	RF_STRING = "RF_STRING"
 
 	ASSIGN      = "="
 	PLUS_EQ     = "+="

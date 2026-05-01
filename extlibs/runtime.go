@@ -358,6 +358,13 @@ func startBackgroundTask(handler string, fnArgs []object.Object, fnKwargs map[st
 		}
 	}
 
+	// Snapshot callable bindings before spawning the goroutine so we never
+	// read the source Environment from another goroutine.
+	var snapshot *object.CallableSnapshot
+	if !isDotted {
+		snapshot = env.GetGlobal().SnapshotCallables()
+	}
+
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -432,7 +439,7 @@ func startBackgroundTask(handler string, fnArgs []object.Object, fnKwargs map[st
 			// newEnv so closures resolve correctly. No other globals are
 			// shared — the task accesses data through validated args and
 			// coordination via runtime.sync primitives.
-			env.GetGlobal().CopyCallableBindingsTo(newEnv)
+			snapshot.ApplySnapshot(newEnv)
 
 			fn, _ := newEnv.Get(handler)
 			if fn == nil {
