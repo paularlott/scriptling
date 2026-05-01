@@ -339,9 +339,17 @@ func (l *Lexer) NextToken() token.Token {
 		}
 	case 'f', 'F':
 		if l.peekChar() == '"' || l.peekChar() == '\'' {
-			l.readChar() // consume 'f'
-			tok.Type = token.F_STRING
-			tok.Literal = l.readFString(l.ch)
+			quote := l.peekChar()
+			// Triple-quoted f-string? Need peekN(3) since 'f' prefix not yet consumed
+			if l.peekN(2) == quote && l.peekN(3) == quote {
+				l.readChar() // consume 'f'
+				tok.Type = token.F_STRING
+				tok.Literal = l.readTripleFString(quote)
+			} else {
+				l.readChar() // consume 'f'
+				tok.Type = token.F_STRING
+				tok.Literal = l.readFString(l.ch)
+			}
 		} else {
 			tok.Literal = l.readIdentifier()
 			tok.Type = token.LookupIdent(tok.Literal)
@@ -351,8 +359,8 @@ func (l *Lexer) NextToken() token.Token {
 		// Raw string prefix: r"..." or r'...'
 		if l.peekChar() == '"' || l.peekChar() == '\'' {
 			quote := l.peekChar()
-			// Triple-quoted raw string?
-			if l.peekN(2) == quote {
+			// Triple-quoted raw string? Need peekN(3) since 'r' prefix not yet consumed
+			if l.peekN(2) == quote && l.peekN(3) == quote {
 				l.readChar() // consume 'r' so l.ch == quote
 				tok.Type = token.STRING
 				tok.Literal = l.readRawTripleString(quote)
@@ -665,6 +673,37 @@ func (l *Lexer) readFString(quote byte) string {
 	}
 	str := l.input[position:l.position]
 	l.readChar() // consume closing quote
+	return str
+}
+
+// readTripleFString reads a triple-quoted f-string (f"""...""" or f'''...''').
+// Entry: current l.ch is the opening quote (either ' or ").
+func (l *Lexer) readTripleFString(quote byte) string {
+	// Consume the three opening quotes
+	l.readChar()
+	l.readChar()
+	l.readChar()
+	position := l.position
+	for l.ch != 0 {
+		if l.ch == quote && l.peekChar() == quote && l.peekN(2) == quote {
+			break
+		}
+		if l.ch == '\n' {
+			l.line++
+		}
+		l.readChar()
+	}
+	str := l.input[position:l.position]
+	// Consume the three closing quotes if present
+	if l.ch == quote {
+		l.readChar()
+		if l.ch == quote {
+			l.readChar()
+			if l.ch == quote {
+				l.readChar()
+			}
+		}
+	}
 	return str
 }
 
