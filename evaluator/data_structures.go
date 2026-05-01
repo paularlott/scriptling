@@ -63,6 +63,10 @@ func evalIndexExpression(ctx context.Context, left, index object.Object, isDotAc
 		return evalListIndexExpression(left, index)
 	case left.Type() == object.LIST_OBJ && index.Type() == object.SLICE_OBJ:
 		return evalListSliceExpression(left, index)
+	case left.Type() == object.FLOAT_ARRAY_OBJ && index.Type() == object.INTEGER_OBJ:
+		return evalFloatArrayIndexExpression(left, index)
+	case left.Type() == object.FLOAT_ARRAY_OBJ && index.Type() == object.SLICE_OBJ:
+		return evalFloatArraySliceExpression(left, index)
 	case left.Type() == object.TUPLE_OBJ && index.Type() == object.INTEGER_OBJ:
 		return evalTupleIndexExpression(left, index)
 	case left.Type() == object.TUPLE_OBJ && index.Type() == object.SLICE_OBJ:
@@ -147,6 +151,135 @@ func evalListIndexExpression(list, index object.Object) object.Object {
 	}
 
 	return listObject.Elements[idx]
+}
+
+func evalFloatArrayIndexExpression(faObj, index object.Object) object.Object {
+	fa := faObj.(*object.FloatArray)
+	idx, err := index.AsInt()
+	if err != nil {
+		return errors.NewError("float_array index must be integer")
+	}
+
+	if fa.Is2D() {
+		rows := int64(fa.Rows())
+		if idx < 0 {
+			idx += rows
+		}
+		if idx < 0 || idx >= rows {
+			return NULL
+		}
+		cols := fa.Cols()
+		start := int(idx) * cols
+		rowData := make([]float64, cols)
+		copy(rowData, fa.Data[start:start+cols])
+		return object.NewFloatArray1D(rowData)
+	}
+
+	length := int64(len(fa.Data))
+	if idx < 0 {
+		idx += length
+	}
+	if idx < 0 || idx >= length {
+		return NULL
+	}
+	return &object.Float{Value: fa.Data[idx]}
+}
+
+func evalFloatArraySliceExpression(faObj, sliceObj object.Object) object.Object {
+	fa := faObj.(*object.FloatArray)
+	slice := sliceObj.(*object.Slice)
+
+	if fa.Is2D() {
+		rows := int64(fa.Rows())
+		cols := fa.Cols()
+		start := int64(0)
+		end := rows
+		step := int64(1)
+
+		if slice.Start != nil {
+			start = slice.Start.Value
+			if start < 0 {
+				start += rows
+			}
+			if start < 0 {
+				start = 0
+			}
+			if start > rows {
+				start = rows
+			}
+		}
+		if slice.End != nil {
+			end = slice.End.Value
+			if end < 0 {
+				end += rows
+			}
+			if end < 0 {
+				end = 0
+			}
+			if end > rows {
+				end = rows
+			}
+		}
+		if slice.Step != nil {
+			step = slice.Step.Value
+		}
+		if step <= 0 {
+			return errors.NewError("slice step cannot be zero or negative")
+		}
+
+		var data []float64
+		for i := start; i < end; i += step {
+			rowStart := int(i) * cols
+			data = append(data, fa.Data[rowStart:rowStart+cols]...)
+		}
+		resultRows := 0
+		if start < end && len(data) > 0 {
+			resultRows = len(data) / cols
+		}
+		return object.NewFloatArray2D(data, resultRows, cols)
+	}
+
+	length := int64(len(fa.Data))
+	start := int64(0)
+	end := length
+	step := int64(1)
+
+	if slice.Start != nil {
+		start = slice.Start.Value
+		if start < 0 {
+			start += length
+		}
+		if start < 0 {
+			start = 0
+		}
+		if start > length {
+			start = length
+		}
+	}
+	if slice.End != nil {
+		end = slice.End.Value
+		if end < 0 {
+			end += length
+		}
+		if end < 0 {
+			end = 0
+		}
+		if end > length {
+			end = length
+		}
+	}
+	if slice.Step != nil {
+		step = slice.Step.Value
+	}
+	if step <= 0 {
+		return errors.NewError("slice step cannot be zero or negative")
+	}
+
+	var data []float64
+	for i := start; i < end; i += step {
+		data = append(data, fa.Data[i])
+	}
+	return object.NewFloatArray1D(data)
 }
 
 func evalTupleIndexExpression(tuple, index object.Object) object.Object {
@@ -386,6 +519,8 @@ func evalSliceExpressionWithContext(ctx context.Context, node *ast.SliceExpressi
 	case *object.String:
 		elements := sliceString(obj.Value, start, end, step, hasStart, hasEnd, hasStep)
 		return &object.String{Value: elements}
+	case *object.FloatArray:
+		return sliceFloatArray(obj, start, end, step, hasStart, hasEnd, hasStep)
 	default:
 		return errors.NewError("slice operator not supported: %s", left.Type())
 	}
@@ -467,6 +602,80 @@ func sliceList(elements []object.Object, start, end, step int64, hasStart, hasEn
 		result = append(result, elements[i])
 	}
 	return &object.List{Elements: result}
+}
+
+func sliceFloatArray(fa *object.FloatArray, start, end, step int64, hasStart, hasEnd, hasStep bool) object.Object {
+	if step <= 0 {
+		return errors.NewError("slice step cannot be zero or negative for FloatArray")
+	}
+
+	if fa.Is2D() {
+		length := int64(fa.Rows())
+		if !hasStart {
+			start = 0
+		} else if start < 0 {
+			start += length
+			if start < 0 {
+				start = 0
+			}
+		}
+		if !hasEnd {
+			end = length
+		} else if end < 0 {
+			end += length
+			if end < 0 {
+				end = 0
+			}
+		}
+		if start > length {
+			start = length
+		}
+		if end > length {
+			end = length
+		}
+
+		cols := fa.Cols()
+		var data []float64
+		for i := start; i < end; i += step {
+			off := int(i) * cols
+			data = append(data, fa.Data[off:off+cols]...)
+		}
+		resultRows := 0
+		if len(data) > 0 {
+			resultRows = len(data) / cols
+		}
+		return object.NewFloatArray2D(data, resultRows, cols)
+	}
+
+	length := int64(len(fa.Data))
+	if !hasStart {
+		start = 0
+	} else if start < 0 {
+		start += length
+		if start < 0 {
+			start = 0
+		}
+	}
+	if !hasEnd {
+		end = length
+	} else if end < 0 {
+		end += length
+		if end < 0 {
+			end = 0
+		}
+	}
+	if start > length {
+		start = length
+	}
+	if end > length {
+		end = length
+	}
+
+	var data []float64
+	for i := start; i < end; i += step {
+		data = append(data, fa.Data[i])
+	}
+	return object.NewFloatArray1D(data)
 }
 
 func sliceString(str string, start, end, step int64, hasStart, hasEnd, hasStep bool) string {

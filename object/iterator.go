@@ -64,6 +64,24 @@ func IterableToSlice(obj Object) ([]Object, bool) {
 			elements = append(elements, &Tuple{Elements: []Object{p.Key, p.Value}})
 		}
 		return elements, true
+	case *FloatArray:
+		if iter.Is2D() {
+			rows := iter.Rows()
+			cols := iter.Cols()
+			elements := make([]Object, rows)
+			for i := 0; i < rows; i++ {
+				off := i * cols
+				rowData := make([]float64, cols)
+				copy(rowData, iter.Data[off:off+cols])
+				elements[i] = NewFloatArray1D(rowData)
+			}
+			return elements, true
+		}
+		elements := make([]Object, len(iter.Data))
+		for i, v := range iter.Data {
+			elements[i] = &Float{Value: v}
+		}
+		return elements, true
 	default:
 		return nil, false
 	}
@@ -204,6 +222,36 @@ func NewEnumerateIterator(iterable Object, start int64) *Iterator {
 
 // ReversedIterator creates an iterator that returns elements in reverse order
 func NewReversedIterator(iterable Object) *Iterator {
+	if fa, ok := iterable.(*FloatArray); ok {
+		if fa.Is2D() {
+			index := fa.Rows() - 1
+			cols := fa.Cols()
+			return &Iterator{
+				next: func() (Object, bool) {
+					if index < 0 {
+						return nil, false
+					}
+					off := index * cols
+					rowData := make([]float64, cols)
+					copy(rowData, fa.Data[off:off+cols])
+					index--
+					return NewFloatArray1D(rowData), true
+				},
+			}
+		}
+		index := len(fa.Data) - 1
+		return &Iterator{
+			next: func() (Object, bool) {
+				if index < 0 {
+					return nil, false
+				}
+				val := &Float{Value: fa.Data[index]}
+				index--
+				return val, true
+			},
+		}
+	}
+
 	// Convert iterable to slice - need to copy to avoid modifying original
 	srcElements, ok := IterableToSlice(iterable)
 	if !ok {

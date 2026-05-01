@@ -20,33 +20,57 @@ func gcd(a, b int64) int64 {
 	return a
 }
 
-func toFloatMatrix(obj object.Object, fnName, paramName string) ([][]float64, object.Object) {
+func toFloatMatrix(obj object.Object, fnName, paramName string) ([][]float64, bool, object.Object) {
+	if fa, ok := obj.(*object.FloatArray); ok && fa.Is2D() {
+		rows := fa.Rows()
+		result := make([][]float64, rows)
+		for i := 0; i < rows; i++ {
+			row := fa.Row(i)
+			rowCopy := make([]float64, len(row))
+			copy(rowCopy, row)
+			result[i] = rowCopy
+		}
+		return result, true, nil
+	}
 	list, ok := obj.(*object.List)
 	if !ok {
-		return nil, errors.NewTypeError("LIST", obj.Type().String())
+		return nil, false, errors.NewTypeError("LIST", obj.Type().String())
 	}
+	sawFloatArray := false
 	rows := make([][]float64, len(list.Elements))
 	width := -1
 	for i, rowObj := range list.Elements {
+		if fa, ok := rowObj.(*object.FloatArray); ok && !fa.Is2D() {
+			sawFloatArray = true
+			if width == -1 {
+				width = len(fa.Data)
+			} else if len(fa.Data) != width {
+				return nil, false, errors.NewError("%s: %s must be a rectangular matrix", fnName, paramName)
+			}
+			rowCopy := make([]float64, len(fa.Data))
+			copy(rowCopy, fa.Data)
+			rows[i] = rowCopy
+			continue
+		}
 		row, ok := rowObj.(*object.List)
 		if !ok {
-			return nil, errors.NewError("%s: %s must be a list of lists", fnName, paramName)
+			return nil, false, errors.NewError("%s: %s must be a list of lists", fnName, paramName)
 		}
 		if width == -1 {
 			width = len(row.Elements)
 		} else if len(row.Elements) != width {
-			return nil, errors.NewError("%s: %s must be a rectangular matrix", fnName, paramName)
+			return nil, false, errors.NewError("%s: %s must be a rectangular matrix", fnName, paramName)
 		}
 		rows[i] = make([]float64, len(row.Elements))
 		for j, el := range row.Elements {
 			f, err := el.AsFloat()
 			if err != nil {
-				return nil, errors.NewTypeError("INTEGER or FLOAT", el.Type().String())
+				return nil, false, errors.NewTypeError("INTEGER or FLOAT", el.Type().String())
 			}
 			rows[i][j] = f
 		}
 	}
-	return rows, nil
+	return rows, sawFloatArray, nil
 }
 
 func floatMatrixToObject(m [][]float64) object.Object {
@@ -59,6 +83,26 @@ func floatMatrixToObject(m [][]float64) object.Object {
 		rows[i] = &object.List{Elements: elems}
 	}
 	return &object.List{Elements: rows}
+}
+
+func floatMatrixToFloatArray(m [][]float64, emptyCols int) object.Object {
+	rows := len(m)
+	cols := emptyCols
+	if rows > 0 {
+		cols = len(m[0])
+	}
+	data := make([]float64, 0, rows*cols)
+	for _, r := range m {
+		data = append(data, r...)
+	}
+	return object.NewFloatArray2D(data, rows, cols)
+}
+
+func toMatrixOutput(m [][]float64, useFloatArray bool, emptyCols int) object.Object {
+	if useFloatArray {
+		return floatMatrixToFloatArray(m, emptyCols)
+	}
+	return floatMatrixToObject(m)
 }
 
 // oneFloatFunc creates a math function that takes one float argument and returns a float
@@ -383,90 +427,128 @@ Returns a float in the range [-1, 1].`,
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
-			list, ok := args[0].(*object.List)
-			if !ok {
-				return errors.NewTypeError("LIST", args[0].Type().String())
-			}
-			n := len(list.Elements)
-			if n == 0 {
-				return errors.NewError("softmax: input list cannot be empty")
-			}
-			vals := make([]float64, n)
-			maxVal := math.Inf(-1)
-			for i, el := range list.Elements {
-				f, err := el.AsFloat()
-				if err != nil {
-					return errors.NewTypeError("INTEGER or FLOAT", el.Type().String())
+			var vals []float64
+			inputIsFA := false
+			switch a := args[0].(type) {
+			case *object.FloatArray:
+				if a.Is2D() {
+					return errors.NewError("softmax: expected 1D array, got 2D")
 				}
-				vals[i] = f
-				if f > maxVal {
-					maxVal = f
+				vals = a.Data
+				inputIsFA = true
+			case *object.List:
+				n := len(a.Elements)
+				if n == 0 {
+					return errors.NewError("softmax: input list cannot be empty")
+				}
+				vals = make([]float64, n)
+				for i, el := range a.Elements {
+					f, err := el.AsFloat()
+					if err != nil {
+						return errors.NewTypeError("INTEGER or FLOAT", el.Type().String())
+					}
+					vals[i] = f
+				}
+			default:
+				return errors.NewTypeError("LIST or FLOAT_ARRAY", args[0].Type().String())
+			}
+			if len(vals) == 0 {
+				return errors.NewError("softmax: input cannot be empty")
+			}
+			maxVal := math.Inf(-1)
+			for _, v := range vals {
+				if v > maxVal {
+					maxVal = v
 				}
 			}
 			var sum float64
-			exps := make([]float64, n)
+			exps := make([]float64, len(vals))
 			for i, v := range vals {
 				exps[i] = math.Exp(v - maxVal)
 				sum += exps[i]
 			}
-			result := make([]object.Object, n)
+			result := make([]float64, len(vals))
 			for i, e := range exps {
-				result[i] = &object.Float{Value: e / sum}
+				result[i] = e / sum
 			}
-			return &object.List{Elements: result}
+			if inputIsFA {
+				return object.NewFloatArray1D(result)
+			}
+			out := make([]object.Object, len(result))
+			for i, v := range result {
+				out[i] = &object.Float{Value: v}
+			}
+			return &object.List{Elements: out}
 		},
 		HelpText: `softmax(x) - Return numerically stable softmax of a vector
 
-Returns a probability distribution (list of floats summing to 1.0).`,
+Returns a FloatArray probability distribution summing to 1.0.`,
 	},
 	"dot": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
-			aList, ok := args[0].(*object.List)
-			if !ok {
-				return errors.NewTypeError("LIST", args[0].Type().String())
+			var aData, bData []float64
+			switch a := args[0].(type) {
+			case *object.FloatArray:
+				if a.Is2D() {
+					return errors.NewError("dot: expected 1D array, got 2D")
+				}
+				aData = a.Data
+			case *object.List:
+				aData = make([]float64, len(a.Elements))
+				for i, el := range a.Elements {
+					f, err := el.AsFloat()
+					if err != nil {
+						return errors.NewTypeError("INTEGER or FLOAT", el.Type().String())
+					}
+					aData[i] = f
+				}
+			default:
+				return errors.NewTypeError("LIST or FLOAT_ARRAY", args[0].Type().String())
 			}
-			bList, ok := args[1].(*object.List)
-			if !ok {
-				return errors.NewTypeError("LIST", args[1].Type().String())
+			switch b := args[1].(type) {
+			case *object.FloatArray:
+				if b.Is2D() {
+					return errors.NewError("dot: expected 1D array, got 2D")
+				}
+				bData = b.Data
+			case *object.List:
+				bData = make([]float64, len(b.Elements))
+				for i, el := range b.Elements {
+					f, err := el.AsFloat()
+					if err != nil {
+						return errors.NewTypeError("INTEGER or FLOAT", el.Type().String())
+					}
+					bData[i] = f
+				}
+			default:
+				return errors.NewTypeError("LIST or FLOAT_ARRAY", args[1].Type().String())
 			}
-			if len(aList.Elements) != len(bList.Elements) {
+			if len(aData) != len(bData) {
 				return errors.NewError("dot: vectors must have the same length")
 			}
-			n := len(aList.Elements)
-			if n == 0 {
-				return &object.Float{Value: 0}
-			}
 			var sum float64
-			for i := 0; i < n; i++ {
-				a, err := aList.Elements[i].AsFloat()
-				if err != nil {
-					return errors.NewTypeError("INTEGER or FLOAT", aList.Elements[i].Type().String())
-				}
-				b, err := bList.Elements[i].AsFloat()
-				if err != nil {
-					return errors.NewTypeError("INTEGER or FLOAT", bList.Elements[i].Type().String())
-				}
-				sum += a * b
+			for i := range aData {
+				sum += aData[i] * bData[i]
 			}
 			return &object.Float{Value: sum}
 		},
 		HelpText: `dot(a, b) - Return the dot product of two vectors
 
-a and b must be lists of numbers with the same length.`,
+a and b must be lists or 1D FloatArrays of numbers with the same length.`,
 	},
 	"matmul": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
-			aRows, errObj := toFloatMatrix(args[0], "matmul", "a")
+			aRows, aFA, errObj := toFloatMatrix(args[0], "matmul", "a")
 			if errObj != nil {
 				return errObj
 			}
-			bRows, errObj := toFloatMatrix(args[1], "matmul", "b")
+			bRows, bFA, errObj := toFloatMatrix(args[1], "matmul", "b")
 			if errObj != nil {
 				return errObj
 			}
@@ -491,7 +573,7 @@ a and b must be lists of numbers with the same length.`,
 					result[i][j] = sum
 				}
 			}
-			return floatMatrixToObject(result)
+			return toMatrixOutput(result, aFA || bFA, n)
 		},
 		HelpText: `matmul(a, b) - Matrix-matrix multiply
 
@@ -502,11 +584,14 @@ a is (M x K), b is (K x N). Returns (M x N) matrix as list of lists.`,
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
-			rows, errObj := toFloatMatrix(args[0], "transpose", "matrix")
+			rows, useFA, errObj := toFloatMatrix(args[0], "transpose", "matrix")
 			if errObj != nil {
 				return errObj
 			}
 			if len(rows) == 0 {
+				if useFA {
+					return object.NewFloatArray2D(nil, 0, 0)
+				}
 				return &object.List{Elements: []object.Object{}}
 			}
 			m := len(rows)
@@ -518,7 +603,7 @@ a is (M x K), b is (K x N). Returns (M x N) matrix as list of lists.`,
 					result[j][i] = rows[i][j]
 				}
 			}
-			return floatMatrixToObject(result)
+			return toMatrixOutput(result, useFA, m)
 		},
 		HelpText: `transpose(m) - Transpose a 2D matrix
 
@@ -529,11 +614,11 @@ Rows become columns. Returns a new matrix.`,
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
-			aRows, errObj := toFloatMatrix(args[0], "mat_add", "a")
+			aRows, aFA, errObj := toFloatMatrix(args[0], "mat_add", "a")
 			if errObj != nil {
 				return errObj
 			}
-			bRows, errObj := toFloatMatrix(args[1], "mat_add", "b")
+			bRows, bFA, errObj := toFloatMatrix(args[1], "mat_add", "b")
 			if errObj != nil {
 				return errObj
 			}
@@ -541,6 +626,9 @@ Rows become columns. Returns a new matrix.`,
 				return errors.NewError("mat_add: matrices must have the same shape")
 			}
 			if len(aRows) == 0 {
+				if aFA || bFA {
+					return object.NewFloatArray2D(nil, 0, 0)
+				}
 				return &object.List{Elements: []object.Object{}}
 			}
 			if len(aRows[0]) != len(bRows[0]) {
@@ -553,7 +641,7 @@ Rows become columns. Returns a new matrix.`,
 					result[i][j] = aRows[i][j] + bRows[i][j]
 				}
 			}
-			return floatMatrixToObject(result)
+			return toMatrixOutput(result, aFA || bFA, len(aRows[0]))
 		},
 		HelpText: `mat_add(a, b) - Element-wise addition of two matrices
 
@@ -793,6 +881,91 @@ Returns an integer for all-integer inputs, float otherwise.`,
 		HelpText: `dist(p, q) - Return the Euclidean distance between two points
 
 p and q must be lists of numbers with the same length.`,
+	},
+	"array": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
+			switch a := args[0].(type) {
+			case *object.FloatArray:
+				return a
+			case *object.List:
+				if len(a.Elements) == 0 {
+					return object.NewFloatArray1D([]float64{})
+				}
+				if inner, ok := a.Elements[0].(*object.List); ok {
+					rows := len(a.Elements)
+					cols := len(inner.Elements)
+					data := make([]float64, 0, rows*cols)
+					for _, rowObj := range a.Elements {
+						row, ok := rowObj.(*object.List)
+						if !ok {
+							return errors.NewError("array: cannot mix list rows with non-list rows")
+						}
+						if len(row.Elements) != cols {
+							return errors.NewError("array: all rows must have the same length")
+						}
+						for _, el := range row.Elements {
+							f, err := el.AsFloat()
+							if err != nil {
+								return errors.NewTypeError("INTEGER or FLOAT", el.Type().String())
+							}
+							data = append(data, f)
+						}
+					}
+					return object.NewFloatArray2D(data, rows, cols)
+				}
+				if innerFA, ok := a.Elements[0].(*object.FloatArray); ok && !innerFA.Is2D() {
+					cols := len(innerFA.Data)
+					rows := len(a.Elements)
+					data := make([]float64, 0, rows*cols)
+					for _, rowObj := range a.Elements {
+						fa, ok := rowObj.(*object.FloatArray)
+						if !ok || fa.Is2D() {
+							return errors.NewError("array: cannot mix FloatArray rows with non-FloatArray rows")
+						}
+						if len(fa.Data) != cols {
+							return errors.NewError("array: all rows must have the same length")
+						}
+						data = append(data, fa.Data...)
+					}
+					return object.NewFloatArray2D(data, rows, cols)
+				}
+				data := make([]float64, len(a.Elements))
+				for i, el := range a.Elements {
+					f, err := el.AsFloat()
+					if err != nil {
+						return errors.NewTypeError("INTEGER or FLOAT", el.Type().String())
+					}
+					data[i] = f
+				}
+				return object.NewFloatArray1D(data)
+			default:
+				return errors.NewTypeError("LIST or FLOAT_ARRAY", args[0].Type().String())
+			}
+		},
+		HelpText: `array(data) - Create an efficient FloatArray from a list
+
+Accepts a 1D list of numbers or a 2D list of lists.
+Returns a FloatArray that avoids per-element boxing overhead.`,
+	},
+	"shape": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
+			fa, ok := args[0].(*object.FloatArray)
+			if !ok {
+				return errors.NewTypeError("FLOAT_ARRAY", args[0].Type().String())
+			}
+			elems := make([]object.Object, len(fa.Shape))
+			for i, s := range fa.Shape {
+				elems[i] = object.NewInteger(int64(s))
+			}
+			return &object.List{Elements: elems}
+		},
+		HelpText: `shape(a) - Return the shape of a FloatArray as a list of ints`,
 	},
 }, map[string]object.Object{
 	"pi":  &object.Float{Value: math.Pi},

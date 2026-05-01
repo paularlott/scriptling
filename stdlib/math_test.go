@@ -538,7 +538,7 @@ func TestMathTransposeEmpty(t *testing.T) {
 	result := transpose.Fn(context.Background(), object.NewKwargs(nil), &object.List{Elements: []object.Object{}})
 	list, ok := result.(*object.List)
 	if !ok {
-		t.Fatalf("transpose() returned %T, want List", result)
+		t.Fatalf("transpose() returned %T, want List for empty input", result)
 	}
 	if len(list.Elements) != 0 {
 		t.Errorf("transpose of empty should be empty, got %d elements", len(list.Elements))
@@ -876,5 +876,262 @@ func TestMathTau(t *testing.T) {
 	tau := lib.Constants()["tau"]
 	if f, ok := tau.(*object.Float); !ok || math.Abs(f.Value-2*math.Pi) > 1e-10 {
 		t.Errorf("math.tau = %v, want 2*pi", tau)
+	}
+}
+
+func TestMathArray1D(t *testing.T) {
+	lib := MathLibrary
+	arrayFn := lib.Functions()["array"]
+
+	result := arrayFn.Fn(context.Background(), object.NewKwargs(nil), &object.List{Elements: []object.Object{
+		&object.Float{Value: 1.0}, &object.Float{Value: 2.0}, &object.Float{Value: 3.0},
+	}})
+	fa, ok := result.(*object.FloatArray)
+	if !ok {
+		t.Fatalf("array() returned %T, want FloatArray", result)
+	}
+	if fa.Is2D() {
+		t.Error("expected 1D FloatArray, got 2D")
+	}
+	if len(fa.Data) != 3 {
+		t.Fatalf("expected 3 elements, got %d", len(fa.Data))
+	}
+	if fa.Data[0] != 1.0 || fa.Data[1] != 2.0 || fa.Data[2] != 3.0 {
+		t.Errorf("data = %v, want [1 2 3]", fa.Data)
+	}
+}
+
+func TestMathArrayEmptyUsesEmptySlice(t *testing.T) {
+	lib := MathLibrary
+	arrayFn := lib.Functions()["array"]
+
+	result := arrayFn.Fn(context.Background(), object.NewKwargs(nil), &object.List{Elements: []object.Object{}})
+	fa, ok := result.(*object.FloatArray)
+	if !ok {
+		t.Fatalf("array() returned %T, want FloatArray", result)
+	}
+	if fa.Data == nil {
+		t.Fatal("expected empty FloatArray data slice, got nil")
+	}
+	if len(fa.Data) != 0 || len(fa.Shape) != 1 || fa.Shape[0] != 0 {
+		t.Fatalf("unexpected empty array state: data=%v shape=%v", fa.Data, fa.Shape)
+	}
+}
+
+func TestFloatArrayInspectMatchesPrettyPrint(t *testing.T) {
+	fa := object.NewFloatArray2D([]float64{1.0, 2.0, 3.0, 4.0}, 2, 2)
+	if fa.Inspect() != "[[1, 2], [3, 4]]" {
+		t.Fatalf("Inspect() = %q", fa.Inspect())
+	}
+	if fa.Inspect() != fa.PrettyPrint() {
+		t.Fatalf("Inspect() = %q, PrettyPrint() = %q", fa.Inspect(), fa.PrettyPrint())
+	}
+}
+
+func TestMathArray2D(t *testing.T) {
+	lib := MathLibrary
+	arrayFn := lib.Functions()["array"]
+
+	result := arrayFn.Fn(context.Background(), object.NewKwargs(nil), &object.List{Elements: []object.Object{
+		&object.List{Elements: []object.Object{&object.Float{Value: 1.0}, &object.Float{Value: 2.0}}},
+		&object.List{Elements: []object.Object{&object.Float{Value: 3.0}, &object.Float{Value: 4.0}}},
+	}})
+	fa, ok := result.(*object.FloatArray)
+	if !ok {
+		t.Fatalf("array() returned %T, want FloatArray", result)
+	}
+	if !fa.Is2D() {
+		t.Error("expected 2D FloatArray, got 1D")
+	}
+	if fa.Rows() != 2 || fa.Cols() != 2 {
+		t.Fatalf("expected shape [2,2], got %v", fa.Shape)
+	}
+	expected := []float64{1.0, 2.0, 3.0, 4.0}
+	for i, v := range fa.Data {
+		if v != expected[i] {
+			t.Errorf("data[%d] = %v, want %v", i, v, expected[i])
+		}
+	}
+}
+
+func TestMathArrayIdempotent(t *testing.T) {
+	lib := MathLibrary
+	arrayFn := lib.Functions()["array"]
+
+	original := object.NewFloatArray1D([]float64{1.0, 2.0})
+	result := arrayFn.Fn(context.Background(), object.NewKwargs(nil), original)
+	if result != original {
+		t.Error("array(FloatArray) should return the same object")
+	}
+}
+
+func TestMathShape(t *testing.T) {
+	lib := MathLibrary
+	shapeFn := lib.Functions()["shape"]
+
+	fa := object.NewFloatArray2D([]float64{1, 2, 3, 4, 5, 6}, 2, 3)
+	result := shapeFn.Fn(context.Background(), object.NewKwargs(nil), fa)
+	list, ok := result.(*object.List)
+	if !ok {
+		t.Fatalf("shape() returned %T, want List", result)
+	}
+	if len(list.Elements) != 2 {
+		t.Fatalf("expected 2 shape dims, got %d", len(list.Elements))
+	}
+	if list.Elements[0].(*object.Integer).Value != 2 {
+		t.Errorf("shape[0] = %v, want 2", list.Elements[0])
+	}
+	if list.Elements[1].(*object.Integer).Value != 3 {
+		t.Errorf("shape[1] = %v, want 3", list.Elements[1])
+	}
+}
+
+func TestMatmulWithFloatArrayInput(t *testing.T) {
+	lib := MathLibrary
+	matmul := lib.Functions()["matmul"]
+
+	a := object.NewFloatArray2D([]float64{1.0, 2.0, 3.0, 4.0}, 2, 2)
+	b := object.NewFloatArray2D([]float64{5.0, 6.0, 7.0, 8.0}, 2, 2)
+
+	result := matmul.Fn(context.Background(), object.NewKwargs(nil), a, b)
+	fa, ok := result.(*object.FloatArray)
+	if !ok {
+		t.Fatalf("matmul(FloatArray, FloatArray) returned %T, want FloatArray", result)
+	}
+	if !fa.Is2D() || fa.Rows() != 2 || fa.Cols() != 2 {
+		t.Fatalf("expected [2,2] shape, got %v", fa.Shape)
+	}
+	expected := []float64{19.0, 22.0, 43.0, 50.0}
+	for i, v := range fa.Data {
+		if v != expected[i] {
+			t.Errorf("matmul result[%d] = %v, want %v", i, v, expected[i])
+		}
+	}
+}
+
+func TestTransposeWithFloatArrayInput(t *testing.T) {
+	lib := MathLibrary
+	transpose := lib.Functions()["transpose"]
+
+	m := object.NewFloatArray2D([]float64{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, 2, 3)
+	result := transpose.Fn(context.Background(), object.NewKwargs(nil), m)
+	fa, ok := result.(*object.FloatArray)
+	if !ok {
+		t.Fatalf("transpose(FloatArray) returned %T, want FloatArray", result)
+	}
+	if !fa.Is2D() || fa.Rows() != 3 || fa.Cols() != 2 {
+		t.Fatalf("expected [3,2] shape, got %v", fa.Shape)
+	}
+	expected := []float64{1.0, 4.0, 2.0, 5.0, 3.0, 6.0}
+	for i, v := range fa.Data {
+		if v != expected[i] {
+			t.Errorf("transpose result[%d] = %v, want %v", i, v, expected[i])
+		}
+	}
+}
+
+func TestSoftmaxWithFloatArrayInput(t *testing.T) {
+	lib := MathLibrary
+	softmax := lib.Functions()["softmax"]
+
+	input := object.NewFloatArray1D([]float64{1.0, 2.0, 3.0})
+	result := softmax.Fn(context.Background(), object.NewKwargs(nil), input)
+	fa, ok := result.(*object.FloatArray)
+	if !ok {
+		t.Fatalf("softmax(FloatArray) returned %T, want FloatArray", result)
+	}
+	if len(fa.Data) != 3 {
+		t.Fatalf("expected 3 elements, got %d", len(fa.Data))
+	}
+	var sum float64
+	for _, v := range fa.Data {
+		sum += v
+	}
+	if math.Abs(sum-1.0) > 1e-10 {
+		t.Errorf("softmax values sum to %v, want 1.0", sum)
+	}
+}
+
+func TestDotWithFloatArrayInput(t *testing.T) {
+	lib := MathLibrary
+	dot := lib.Functions()["dot"]
+
+	a := object.NewFloatArray1D([]float64{1.0, 2.0, 3.0})
+	b := object.NewFloatArray1D([]float64{4.0, 5.0, 6.0})
+	result := dot.Fn(context.Background(), object.NewKwargs(nil), a, b)
+	f, ok := result.(*object.Float)
+	if !ok {
+		t.Fatalf("dot(FloatArray, FloatArray) returned %T, want Float", result)
+	}
+	if f.Value != 32.0 {
+		t.Errorf("dot = %v, want 32.0", f.Value)
+	}
+}
+
+func TestDotMixedTypes(t *testing.T) {
+	lib := MathLibrary
+	dot := lib.Functions()["dot"]
+
+	listA := &object.List{Elements: []object.Object{&object.Float{Value: 1.0}, &object.Float{Value: 2.0}}}
+	faB := object.NewFloatArray1D([]float64{3.0, 4.0})
+	result := dot.Fn(context.Background(), object.NewKwargs(nil), listA, faB)
+	f, ok := result.(*object.Float)
+	if !ok {
+		t.Fatalf("dot(List, FloatArray) returned %T, want Float", result)
+	}
+	if f.Value != 11.0 {
+		t.Errorf("dot = %v, want 11.0", f.Value)
+	}
+}
+
+func TestMatAddWithFloatArrayInput(t *testing.T) {
+	lib := MathLibrary
+	matAdd := lib.Functions()["mat_add"]
+
+	a := object.NewFloatArray2D([]float64{1.0, 2.0, 3.0, 4.0}, 2, 2)
+	b := object.NewFloatArray2D([]float64{5.0, 6.0, 7.0, 8.0}, 2, 2)
+	result := matAdd.Fn(context.Background(), object.NewKwargs(nil), a, b)
+	fa, ok := result.(*object.FloatArray)
+	if !ok {
+		t.Fatalf("mat_add(FloatArray) returned %T, want FloatArray", result)
+	}
+	expected := []float64{6.0, 8.0, 10.0, 12.0}
+	for i, v := range fa.Data {
+		if v != expected[i] {
+			t.Errorf("mat_add[%d] = %v, want %v", i, v, expected[i])
+		}
+	}
+}
+
+func TestFloatArrayToList1D(t *testing.T) {
+	fa := object.NewFloatArray1D([]float64{1.0, 2.0, 3.0})
+	list := fa.ToList()
+	if len(list.Elements) != 3 {
+		t.Fatalf("expected 3 elements, got %d", len(list.Elements))
+	}
+	for i, el := range list.Elements {
+		f, ok := el.(*object.Float)
+		if !ok {
+			t.Fatalf("element %d is %T, want Float", i, el)
+		}
+		if f.Value != float64(i)+1.0 {
+			t.Errorf("element[%d] = %v, want %v", i, f.Value, float64(i)+1.0)
+		}
+	}
+}
+
+func TestFloatArrayToList2D(t *testing.T) {
+	fa := object.NewFloatArray2D([]float64{1.0, 2.0, 3.0, 4.0}, 2, 2)
+	list := fa.ToList()
+	if len(list.Elements) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(list.Elements))
+	}
+	row0 := list.Elements[0].(*object.List)
+	if row0.Elements[0].(*object.Float).Value != 1.0 || row0.Elements[1].(*object.Float).Value != 2.0 {
+		t.Errorf("row0 = %v, want [1, 2]", row0)
+	}
+	row1 := list.Elements[1].(*object.List)
+	if row1.Elements[0].(*object.Float).Value != 3.0 || row1.Elements[1].(*object.Float).Value != 4.0 {
+		t.Errorf("row1 = %v, want [3, 4]", row1)
 	}
 }
