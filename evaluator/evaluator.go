@@ -3555,6 +3555,15 @@ func assignToExpression(ctx context.Context, expr ast.Expression, value object.O
 		env.Set(left.Value, value)
 		return nil
 	case *ast.IndexExpression:
+		if err := assignToNestedFloatArrayIndex(ctx, left, value, env); err != nil {
+			if err == errNotNestedFloatArrayAssignment {
+				// Fall through to regular assignment handling.
+			} else {
+				return err
+			}
+		} else {
+			return nil
+		}
 		obj := evalWithContext(ctx, left.Left, env)
 		if object.IsError(obj) {
 			return fmt.Errorf("assignment error")
