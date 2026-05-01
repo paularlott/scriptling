@@ -41,12 +41,12 @@ func evalDictLiteralWithContext(ctx context.Context, node *ast.DictLiteral, env 
 	pairs := make(map[string]object.DictPair, len(node.Pairs))
 
 	for _, pairNode := range node.Pairs {
-		key := evalWithContext(ctx, pairNode.Key, env)
+		key := evalNode(ctx, pairNode.Key, env)
 		if object.IsError(key) {
 			return key
 		}
 
-		value := evalWithContext(ctx, pairNode.Value, env)
+		value := evalNode(ctx, pairNode.Value, env)
 		if object.IsError(value) {
 			return value
 		}
@@ -456,7 +456,7 @@ func evalBuiltinIndexExpression(builtin, index object.Object) object.Object {
 }
 
 func evalSliceExpressionWithContext(ctx context.Context, node *ast.SliceExpression, env *object.Environment) object.Object {
-	left := evalWithContext(ctx, node.Left, env)
+	left := evalNode(ctx, node.Left, env)
 	if object.IsError(left) {
 		return left
 	}
@@ -466,7 +466,7 @@ func evalSliceExpressionWithContext(ctx context.Context, node *ast.SliceExpressi
 	step = 1 // default step
 
 	if node.Start != nil {
-		startObj := evalWithContext(ctx, node.Start, env)
+		startObj := evalNode(ctx, node.Start, env)
 		if object.IsError(startObj) {
 			return startObj
 		}
@@ -479,7 +479,7 @@ func evalSliceExpressionWithContext(ctx context.Context, node *ast.SliceExpressi
 	}
 
 	if node.End != nil {
-		endObj := evalWithContext(ctx, node.End, env)
+		endObj := evalNode(ctx, node.End, env)
 		if object.IsError(endObj) {
 			return endObj
 		}
@@ -492,7 +492,7 @@ func evalSliceExpressionWithContext(ctx context.Context, node *ast.SliceExpressi
 	}
 
 	if node.Step != nil {
-		stepObj := evalWithContext(ctx, node.Step, env)
+		stepObj := evalNode(ctx, node.Step, env)
 		if object.IsError(stepObj) {
 			return stepObj
 		}

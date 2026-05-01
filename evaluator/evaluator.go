@@ -11,7 +11,6 @@ import (
 
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/errors"
-	"github.com/paularlott/scriptling/evaliface"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -188,9 +187,6 @@ func (cc *contextChecker) checkAlways() object.Object {
 }
 
 func evalWithContext(ctx context.Context, node ast.Node, env *object.Environment) object.Object {
-	if evaliface.FromContext(ctx) == nil {
-		ctx = WithEvaluator(ctx)
-	}
 	obj := evalNode(ctx, node, env)
 	if err, ok := obj.(*object.Error); ok {
 		if err.Line == 0 {
@@ -224,7 +220,7 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 	case *ast.None:
 		return NULL
 	case *ast.PrefixExpression:
-		right := evalWithContext(ctx, node.Right, env)
+		right := evalNode(ctx, node.Right, env)
 		if object.IsError(right) {
 			return right
 		}
@@ -234,12 +230,29 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		if node.Operator == "and" || node.Operator == "or" {
 			return evalShortCircuitInfixExpression(ctx, node, env)
 		}
-		// For other operators, evaluate both sides
-		left := evalWithContext(ctx, node.Left, env)
+		// Fast path: Identifier op Identifier where both resolve to Integer
+		switch node.Operator {
+		case "+", "-", "*", "//", "%", "<", ">", "<=", ">=", "==", "!=", "&", "|", "^", "<<", ">>":
+			if lid, ok := node.Left.(*ast.Identifier); ok {
+				if rid, ok := node.Right.(*ast.Identifier); ok {
+					if lv, ok := env.Get(lid.Value); ok {
+						if li, ok := lv.(*object.Integer); ok {
+							if rv, ok := env.Get(rid.Value); ok {
+								if ri, ok := rv.(*object.Integer); ok {
+									return evalIntegerInfixExpression(node.Operator, li.Value, ri.Value)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		// General path: evaluate both sides
+		left := evalNode(ctx, node.Left, env)
 		if object.IsError(left) {
 			return left
 		}
-		right := evalWithContext(ctx, node.Right, env)
+		right := evalNode(ctx, node.Right, env)
 		if object.IsError(right) {
 			return right
 		}
@@ -257,7 +270,7 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 	case *ast.ReturnStatement:
 		val := object.Object(NULL)
 		if node.ReturnValue != nil {
-			val = evalWithContext(ctx, node.ReturnValue, env)
+			val = evalNode(ctx, node.ReturnValue, env)
 			if object.IsError(val) || isException(val) {
 				return val
 			}
@@ -282,7 +295,7 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 	case *ast.FromImportStatement:
 		return evalFromImportStatement(node, env)
 	case *ast.AssignStatement:
-		val := evalWithContext(ctx, node.Value, env)
+		val := evalNode(ctx, node.Value, env)
 		if object.IsError(val) || isException(val) {
 			return val
 		}
@@ -343,11 +356,11 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		}
 		return s
 	case *ast.IndexExpression:
-		left := evalWithContext(ctx, node.Left, env)
+		left := evalNode(ctx, node.Left, env)
 		if object.IsError(left) {
 			return left
 		}
-		index := evalWithContext(ctx, node.Index, env)
+		index := evalNode(ctx, node.Index, env)
 		if object.IsError(index) {
 			return index
 		}
@@ -391,24 +404,27 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 func evalProgram(ctx context.Context, program *ast.Program, env *object.Environment) object.Object {
 	var result object.Object = NULL
 	cc := newContextChecker(ctx)
+	srcFile := GetSourceFileFromContext(ctx)
 
 	for _, statement := range program.Statements {
-		// Check for cancellation less frequently
 		if err := cc.check(); err != nil {
 			return err
 		}
 
-		result = evalWithContext(ctx, statement, env)
+		result = evalNode(ctx, statement, env)
 
 		switch result := result.(type) {
 		case *object.ReturnValue:
 			return result.Value
 		case *object.Error:
+			if result.Line == 0 {
+				result.Line = statement.Line()
+			}
+			if result.File == "" {
+				result.File = srcFile
+			}
 			return result
 		case *object.Exception:
-			// Uncaught exception at program level
-			// SystemExit exceptions should be returned as-is for proper error handling
-			// Other exceptions are converted to errors
 			if result.ExceptionType == object.ExceptionTypeSystemExit {
 				return result
 			}
@@ -422,23 +438,33 @@ func evalProgram(ctx context.Context, program *ast.Program, env *object.Environm
 func evalBlockStatementWithContext(ctx context.Context, block *ast.BlockStatement, env *object.Environment) object.Object {
 	var result object.Object = NULL
 	cc := newContextChecker(ctx)
+	srcFile := GetSourceFileFromContext(ctx)
 
 	for _, statement := range block.Statements {
-		// Check for cancellation less frequently
 		if err := cc.check(); err != nil {
 			return err
 		}
 
-		result = evalWithContext(ctx, statement, env)
+		result = evalNode(ctx, statement, env)
 
 		if result != nil {
-			rt := result.Type()
-			if rt == object.RETURN_OBJ || rt == object.BREAK_OBJ || rt == object.CONTINUE_OBJ {
-				return result
-			}
-			// Don't return errors immediately - let try/catch handle them
-			if rt == object.ERROR_OBJ || rt == object.EXCEPTION_OBJ {
-				return result
+			switch r := result.(type) {
+			case *object.Error:
+				if r.Line == 0 {
+					r.Line = statement.Line()
+				}
+				if r.File == "" {
+					r.File = srcFile
+				}
+				return r
+			default:
+				rt := r.Type()
+				if rt == object.RETURN_OBJ || rt == object.BREAK_OBJ || rt == object.CONTINUE_OBJ {
+					return result
+				}
+				if rt == object.EXCEPTION_OBJ {
+					return result
+				}
 			}
 		}
 	}
@@ -574,26 +600,22 @@ func evalBitwiseNotOperatorExpression(right object.Object) object.Object {
 
 // evalShortCircuitInfixExpression handles and/or operators with proper short-circuit evaluation
 func evalShortCircuitInfixExpression(ctx context.Context, node *ast.InfixExpression, env *object.Environment) object.Object {
-	left := evalWithContext(ctx, node.Left, env)
+	left := evalNode(ctx, node.Left, env)
 	if object.IsError(left) {
 		return left
 	}
 
 	switch node.Operator {
 	case "and":
-		// Short-circuit: if left is falsy, return it without evaluating right
 		if !isTruthy(left) {
 			return left
 		}
-		// Left is truthy, evaluate and return right
-		return evalWithContext(ctx, node.Right, env)
+		return evalNode(ctx, node.Right, env)
 	case "or":
-		// Short-circuit: if left is truthy, return it without evaluating right
 		if isTruthy(left) {
 			return left
 		}
-		// Left is falsy, evaluate and return right
-		return evalWithContext(ctx, node.Right, env)
+		return evalNode(ctx, node.Right, env)
 	default:
 		return errors.NewError("unknown operator: %s", node.Operator)
 	}
@@ -810,15 +832,15 @@ func floatArraysEqual(left, right *object.FloatArray) bool {
 }
 
 func evalConditionalExpression(ctx context.Context, node *ast.ConditionalExpression, env *object.Environment) object.Object {
-	condition := evalWithContext(ctx, node.Condition, env)
+	condition := evalNode(ctx, node.Condition, env)
 	if object.IsError(condition) {
 		return condition
 	}
 
 	if isTruthy(condition) {
-		return evalWithContext(ctx, node.TrueExpr, env)
+		return evalNode(ctx, node.TrueExpr, env)
 	} else {
-		return evalWithContext(ctx, node.FalseExpr, env)
+		return evalNode(ctx, node.FalseExpr, env)
 	}
 }
 
@@ -1230,7 +1252,7 @@ func evalInstanceInfixExpression(ctx context.Context, operator string, left *obj
 }
 
 func evalIfStatementWithContext(ctx context.Context, ie *ast.IfStatement, env *object.Environment) object.Object {
-	condition := evalWithContext(ctx, ie.Condition, env)
+	condition := evalNode(ctx, ie.Condition, env)
 	if object.IsError(condition) {
 		return condition
 	}
@@ -1241,7 +1263,7 @@ func evalIfStatementWithContext(ctx context.Context, ie *ast.IfStatement, env *o
 
 	// Check elif clauses
 	for _, elifClause := range ie.ElifClauses {
-		condition := evalWithContext(ctx, elifClause.Condition, env)
+		condition := evalNode(ctx, elifClause.Condition, env)
 		if object.IsError(condition) {
 			return condition
 		}
@@ -1268,7 +1290,7 @@ func evalWhileStatementWithContext(ctx context.Context, ws *ast.WhileStatement, 
 			return err
 		}
 
-		condition := evalWithContext(ctx, ws.Condition, env)
+		condition := evalNode(ctx, ws.Condition, env)
 		if object.IsError(condition) {
 			return condition
 		}
@@ -1326,7 +1348,7 @@ func evalFunctionStatement(ctx context.Context, stmt *ast.FunctionStatement, env
 	var result object.Object = fn
 	// Apply decorators right-to-left (innermost first)
 	for i := len(stmt.Decorators) - 1; i >= 0; i-- {
-		dec := evalWithContext(ctx, stmt.Decorators[i], env)
+		dec := evalNode(ctx, stmt.Decorators[i], env)
 		if object.IsError(dec) {
 			return dec
 		}
@@ -1354,7 +1376,7 @@ func evalClassStatement(ctx context.Context, stmt *ast.ClassStatement, env *obje
 	// Handle base class inheritance
 	if stmt.BaseClass != nil {
 		// Evaluate the base class expression (can be dotted like html.parser.HTMLParser)
-		baseClassObj := evalWithContext(ctx, stmt.BaseClass, env)
+		baseClassObj := evalNode(ctx, stmt.BaseClass, env)
 		if object.IsError(baseClassObj) {
 			return baseClassObj
 		}
@@ -1401,7 +1423,7 @@ func evalClassStatement(ctx context.Context, stmt *ast.ClassStatement, env *obje
 	var result object.Object = class
 	// Apply decorators right-to-left (innermost first)
 	for i := len(stmt.Decorators) - 1; i >= 0; i-- {
-		dec := evalWithContext(ctx, stmt.Decorators[i], env)
+		dec := evalNode(ctx, stmt.Decorators[i], env)
 		if object.IsError(dec) {
 			return dec
 		}
@@ -1483,7 +1505,7 @@ func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *obje
 		return fastResult
 	}
 
-	function := evalWithContext(ctx, node.Function, env)
+	function := evalNode(ctx, node.Function, env)
 	if object.IsError(function) {
 		return function
 	}
@@ -1496,7 +1518,7 @@ func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *obje
 	if len(node.Keywords) > 0 {
 		keywords = make(map[string]object.Object, len(node.Keywords))
 		for k, v := range node.Keywords {
-			val := evalWithContext(ctx, v, env)
+			val := evalNode(ctx, v, env)
 			if object.IsError(val) {
 				return val
 			}
@@ -1506,7 +1528,7 @@ func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *obje
 
 	// Handle *args unpacking (supports multiple)
 	for _, argsUnpackExpr := range node.ArgsUnpack {
-		argsVal := evalWithContext(ctx, argsUnpackExpr, env)
+		argsVal := evalNode(ctx, argsUnpackExpr, env)
 		if object.IsError(argsVal) {
 			return argsVal
 		}
@@ -1519,7 +1541,7 @@ func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *obje
 
 	// Handle **kwargs unpacking
 	if node.KwargsUnpack != nil {
-		kwargsVal := evalWithContext(ctx, node.KwargsUnpack, env)
+		kwargsVal := evalNode(ctx, node.KwargsUnpack, env)
 		if object.IsError(kwargsVal) {
 			return kwargsVal
 		}
@@ -1557,7 +1579,7 @@ func tryEvalFastBuiltinCall(ctx context.Context, node *ast.CallExpression, env *
 		if len(node.Arguments) != 1 {
 			return nil, false
 		}
-		arg := evalWithContext(ctx, node.Arguments[0], env)
+		arg := evalNode(ctx, node.Arguments[0], env)
 		if object.IsError(arg) {
 			return arg, true
 		}
@@ -1566,7 +1588,7 @@ func tryEvalFastBuiltinCall(ctx context.Context, node *ast.CallExpression, env *
 		if len(node.Arguments) != 1 {
 			return nil, false
 		}
-		arg := evalWithContext(ctx, node.Arguments[0], env)
+		arg := evalNode(ctx, node.Arguments[0], env)
 		if object.IsError(arg) {
 			return arg, true
 		}
@@ -1575,7 +1597,7 @@ func tryEvalFastBuiltinCall(ctx context.Context, node *ast.CallExpression, env *
 		if len(node.Arguments) != 1 {
 			return nil, false
 		}
-		arg := evalWithContext(ctx, node.Arguments[0], env)
+		arg := evalNode(ctx, node.Arguments[0], env)
 		if object.IsError(arg) {
 			return arg, true
 		}
@@ -1584,14 +1606,14 @@ func tryEvalFastBuiltinCall(ctx context.Context, node *ast.CallExpression, env *
 		if len(node.Arguments) < 1 || len(node.Arguments) > 2 {
 			return nil, false
 		}
-		first := evalWithContext(ctx, node.Arguments[0], env)
+		first := evalNode(ctx, node.Arguments[0], env)
 		if object.IsError(first) {
 			return first, true
 		}
 		if len(node.Arguments) == 1 {
 			return fastIntBuiltin(first, nil), true
 		}
-		second := evalWithContext(ctx, node.Arguments[1], env)
+		second := evalNode(ctx, node.Arguments[1], env)
 		if object.IsError(second) {
 			return second, true
 		}
@@ -1600,7 +1622,7 @@ func tryEvalFastBuiltinCall(ctx context.Context, node *ast.CallExpression, env *
 		if len(node.Arguments) != 1 {
 			return nil, false
 		}
-		arg := evalWithContext(ctx, node.Arguments[0], env)
+		arg := evalNode(ctx, node.Arguments[0], env)
 		if object.IsError(arg) {
 			return arg, true
 		}
@@ -1611,7 +1633,7 @@ func tryEvalFastBuiltinCall(ctx context.Context, node *ast.CallExpression, env *
 		}
 		args := make([]object.Object, len(node.Arguments))
 		for i, expr := range node.Arguments {
-			arg := evalWithContext(ctx, expr, env)
+			arg := evalNode(ctx, expr, env)
 			if object.IsError(arg) {
 				return arg, true
 			}
@@ -1622,7 +1644,7 @@ func tryEvalFastBuiltinCall(ctx context.Context, node *ast.CallExpression, env *
 		if len(node.Arguments) != 2 {
 			return nil, false
 		}
-		listObj := evalWithContext(ctx, node.Arguments[0], env)
+		listObj := evalNode(ctx, node.Arguments[0], env)
 		if object.IsError(listObj) {
 			return listObj, true
 		}
@@ -1630,7 +1652,7 @@ func tryEvalFastBuiltinCall(ctx context.Context, node *ast.CallExpression, env *
 		if !ok {
 			return nil, false
 		}
-		value := evalWithContext(ctx, node.Arguments[1], env)
+		value := evalNode(ctx, node.Arguments[1], env)
 		if object.IsError(value) {
 			return value, true
 		}
@@ -1846,7 +1868,7 @@ func evalExpressionsWithContext(ctx context.Context, exps []ast.Expression, env 
 	result := make([]object.Object, len(exps))
 
 	for i, e := range exps {
-		evaluated := evalWithContext(ctx, e, env)
+		evaluated := evalNode(ctx, e, env)
 		if object.IsError(evaluated) {
 			return []object.Object{evaluated}
 		}
@@ -2391,7 +2413,7 @@ func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.Augm
 		return errors.NewIdentifierError(node.Name.Value)
 	}
 
-	newVal := evalWithContext(ctx, node.Value, env)
+	newVal := evalNode(ctx, node.Value, env)
 	if object.IsError(newVal) {
 		return newVal
 	}
@@ -2875,7 +2897,7 @@ func evalIsOperator(left, right object.Object) object.Object {
 }
 
 func evalMultipleAssignStatementWithContext(ctx context.Context, node *ast.MultipleAssignStatement, env *object.Environment) object.Object {
-	val := evalWithContext(ctx, node.Value, env)
+	val := evalNode(ctx, node.Value, env)
 	if object.IsError(val) {
 		return val
 	}
@@ -3038,7 +3060,7 @@ func evalTryStatementWithContext(ctx context.Context, ts *ast.TryStatement, env 
 
 func evalRaiseStatementWithContext(ctx context.Context, rs *ast.RaiseStatement, env *object.Environment) object.Object {
 	if rs.Message != nil {
-		msg := evalWithContext(ctx, rs.Message, env)
+		msg := evalNode(ctx, rs.Message, env)
 		if object.IsError(msg) {
 			return msg
 		}
@@ -3060,7 +3082,7 @@ func evalRaiseStatementWithContext(ctx context.Context, rs *ast.RaiseStatement, 
 }
 
 func evalAssertStatementWithContext(ctx context.Context, as *ast.AssertStatement, env *object.Environment) object.Object {
-	condition := evalWithContext(ctx, as.Condition, env)
+	condition := evalNode(ctx, as.Condition, env)
 	if object.IsError(condition) {
 		return condition
 	}
@@ -3068,7 +3090,7 @@ func evalAssertStatementWithContext(ctx context.Context, as *ast.AssertStatement
 	if !isTruthy(condition) {
 		var message string
 		if as.Message != nil {
-			msg := evalWithContext(ctx, as.Message, env)
+			msg := evalNode(ctx, as.Message, env)
 			if object.IsError(msg) {
 				return msg
 			}
@@ -3084,7 +3106,7 @@ func evalAssertStatementWithContext(ctx context.Context, as *ast.AssertStatement
 
 func evalWithStatementWithContext(ctx context.Context, ws *ast.WithStatement, env *object.Environment) object.Object {
 	// Evaluate the context expression
-	ctxObj := evalWithContext(ctx, ws.ContextExpr, env)
+	ctxObj := evalNode(ctx, ws.ContextExpr, env)
 	if object.IsError(ctxObj) {
 		return ctxObj
 	}
@@ -3249,7 +3271,7 @@ func evalSliceObjectWithContext(ctx context.Context, node *ast.SliceExpression, 
 	sliceObj := &object.Slice{}
 
 	if node.Start != nil {
-		startObj := evalWithContext(ctx, node.Start, env)
+		startObj := evalNode(ctx, node.Start, env)
 		if object.IsError(startObj) || isException(startObj) {
 			return nil, startObj
 		}
@@ -3261,7 +3283,7 @@ func evalSliceObjectWithContext(ctx context.Context, node *ast.SliceExpression, 
 	}
 
 	if node.End != nil {
-		endObj := evalWithContext(ctx, node.End, env)
+		endObj := evalNode(ctx, node.End, env)
 		if object.IsError(endObj) || isException(endObj) {
 			return nil, endObj
 		}
@@ -3273,7 +3295,7 @@ func evalSliceObjectWithContext(ctx context.Context, node *ast.SliceExpression, 
 	}
 
 	if node.Step != nil {
-		stepObj := evalWithContext(ctx, node.Step, env)
+		stepObj := evalNode(ctx, node.Step, env)
 		if object.IsError(stepObj) || isException(stepObj) {
 			return nil, stepObj
 		}
@@ -3390,7 +3412,7 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 		env.Delete(target.Value)
 		return nil
 	case *ast.IndexExpression:
-		obj := evalWithContext(ctx, target.Left, env)
+		obj := evalNode(ctx, target.Left, env)
 		if object.IsError(obj) {
 			return fmt.Errorf("deletion error")
 		}
@@ -3398,7 +3420,7 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 			return &assignmentExceptionError{ex: obj.(*object.Exception)}
 		}
 
-		index := evalWithContext(ctx, target.Index, env)
+		index := evalNode(ctx, target.Index, env)
 		if object.IsError(index) {
 			return fmt.Errorf("deletion error")
 		}
@@ -3471,7 +3493,7 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 			return fmt.Errorf("cannot delete index")
 		}
 	case *ast.SliceExpression:
-		obj := evalWithContext(ctx, target.Left, env)
+		obj := evalNode(ctx, target.Left, env)
 		if object.IsError(obj) {
 			return fmt.Errorf("deletion error")
 		}
@@ -3533,20 +3555,11 @@ func assignToExpression(ctx context.Context, expr ast.Expression, value object.O
 		env.Set(left.Value, value)
 		return nil
 	case *ast.IndexExpression:
-		if err := assignToNestedFloatArrayIndex(ctx, left, value, env); err != nil {
-			if err == errNotNestedFloatArrayAssignment {
-				// Fall through to regular assignment handling.
-			} else {
-				return err
-			}
-		} else {
-			return nil
-		}
 		obj := evalWithContext(ctx, left.Left, env)
 		if object.IsError(obj) {
 			return fmt.Errorf("assignment error")
 		}
-		index := evalWithContext(ctx, left.Index, env)
+		index := evalNode(ctx, left.Index, env)
 		if object.IsError(index) {
 			return fmt.Errorf("assignment error")
 		}
@@ -3807,7 +3820,7 @@ func instanceToIterator(ctx context.Context, inst *object.Instance, env *object.
 }
 
 func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env *object.Environment) object.Object {
-	iterable := evalWithContext(ctx, fs.Iterable, env)
+	iterable := evalNode(ctx, fs.Iterable, env)
 	if object.IsError(iterable) {
 		return iterable
 	}
@@ -4022,7 +4035,7 @@ func evalAdditionalClauses(ctx context.Context, clauses []ast.ComprehensionClaus
 		return action()
 	}
 	c := clauses[idx]
-	iterable := evalWithContext(ctx, c.Iterable, env)
+	iterable := evalNode(ctx, c.Iterable, env)
 	if object.IsError(iterable) {
 		return iterable
 	}
@@ -4031,7 +4044,7 @@ func evalAdditionalClauses(ctx context.Context, clauses []ast.ComprehensionClaus
 			return errors.NewError("%s", err.Error())
 		}
 		if c.Condition != nil {
-			cond := evalWithContext(ctx, c.Condition, env)
+			cond := evalNode(ctx, c.Condition, env)
 			if object.IsError(cond) {
 				return cond
 			}
@@ -4150,7 +4163,7 @@ func iterateObject(ctx context.Context, obj object.Object, fn func(object.Object
 }
 
 func evalListComprehension(ctx context.Context, lc *ast.ListComprehension, env *object.Environment) object.Object {
-	iterable := evalWithContext(ctx, lc.Iterable, env)
+	iterable := evalNode(ctx, lc.Iterable, env)
 	if object.IsError(iterable) {
 		return iterable
 	}
@@ -4160,7 +4173,7 @@ func evalListComprehension(ctx context.Context, lc *ast.ListComprehension, env *
 	result := []object.Object{}
 	compEnv := object.NewEnclosedEnvironment(env)
 	emit := func() object.Object {
-		v := evalWithContext(ctx, lc.Expression, compEnv)
+		v := evalNode(ctx, lc.Expression, compEnv)
 		if object.IsError(v) {
 			return v
 		}
@@ -4172,7 +4185,7 @@ func evalListComprehension(ctx context.Context, lc *ast.ListComprehension, env *
 			return errors.NewError("%s", err.Error())
 		}
 		if lc.Condition != nil {
-			cond := evalWithContext(ctx, lc.Condition, compEnv)
+			cond := evalNode(ctx, lc.Condition, compEnv)
 			if object.IsError(cond) {
 				return cond
 			}
@@ -4205,7 +4218,7 @@ func tryEvalFastListComprehension(ctx context.Context, lc *ast.ListComprehension
 	runElement := func(element object.Object) object.Object {
 		compEnv.Set(ident.Value, element)
 		if lc.Condition != nil {
-			cond := evalWithContext(ctx, lc.Condition, compEnv)
+			cond := evalNode(ctx, lc.Condition, compEnv)
 			if object.IsError(cond) {
 				return cond
 			}
@@ -4213,7 +4226,7 @@ func tryEvalFastListComprehension(ctx context.Context, lc *ast.ListComprehension
 				return nil
 			}
 		}
-		value := evalWithContext(ctx, lc.Expression, compEnv)
+		value := evalNode(ctx, lc.Expression, compEnv)
 		if object.IsError(value) {
 			return value
 		}
@@ -4261,18 +4274,18 @@ func tryEvalFastListComprehension(ctx context.Context, lc *ast.ListComprehension
 }
 
 func evalDictComprehension(ctx context.Context, dc *ast.DictComprehension, env *object.Environment) object.Object {
-	iterable := evalWithContext(ctx, dc.Iterable, env)
+	iterable := evalNode(ctx, dc.Iterable, env)
 	if object.IsError(iterable) {
 		return iterable
 	}
 	result := &object.Dict{Pairs: make(map[string]object.DictPair)}
 	compEnv := object.NewEnclosedEnvironment(env)
 	emit := func() object.Object {
-		k := evalWithContext(ctx, dc.Key, compEnv)
+		k := evalNode(ctx, dc.Key, compEnv)
 		if object.IsError(k) {
 			return k
 		}
-		v := evalWithContext(ctx, dc.Value, compEnv)
+		v := evalNode(ctx, dc.Value, compEnv)
 		if object.IsError(v) {
 			return v
 		}
@@ -4284,7 +4297,7 @@ func evalDictComprehension(ctx context.Context, dc *ast.DictComprehension, env *
 			return errors.NewError("%s", err.Error())
 		}
 		if dc.Condition != nil {
-			cond := evalWithContext(ctx, dc.Condition, compEnv)
+			cond := evalNode(ctx, dc.Condition, compEnv)
 			if object.IsError(cond) {
 				return cond
 			}
@@ -4304,14 +4317,14 @@ func evalDictComprehension(ctx context.Context, dc *ast.DictComprehension, env *
 }
 
 func evalSetComprehension(ctx context.Context, sc *ast.SetComprehension, env *object.Environment) object.Object {
-	iterable := evalWithContext(ctx, sc.Iterable, env)
+	iterable := evalNode(ctx, sc.Iterable, env)
 	if object.IsError(iterable) {
 		return iterable
 	}
 	result := object.NewSet()
 	compEnv := object.NewEnclosedEnvironment(env)
 	emit := func() object.Object {
-		v := evalWithContext(ctx, sc.Expression, compEnv)
+		v := evalNode(ctx, sc.Expression, compEnv)
 		if object.IsError(v) {
 			return v
 		}
@@ -4322,7 +4335,7 @@ func evalSetComprehension(ctx context.Context, sc *ast.SetComprehension, env *ob
 			return errors.NewError("%s", err.Error())
 		}
 		if sc.Condition != nil {
-			cond := evalWithContext(ctx, sc.Condition, compEnv)
+			cond := evalNode(ctx, sc.Condition, compEnv)
 			if object.IsError(cond) {
 				return cond
 			}
@@ -4371,7 +4384,7 @@ func evalFStringLiteral(ctx context.Context, fstr *ast.FStringLiteral, env *obje
 	for i, part := range fstr.Parts {
 		builder.WriteString(part)
 		if i < len(fstr.Expressions) {
-			exprResult := evalWithContext(ctx, fstr.Expressions[i], env)
+			exprResult := evalNode(ctx, fstr.Expressions[i], env)
 			if object.IsError(exprResult) {
 				return exprResult
 			}
@@ -4750,7 +4763,7 @@ func formatBaseInt(n int64, base int, upper bool, width int, zero bool) string {
 }
 
 func evalMatchStatementWithContext(ctx context.Context, ms *ast.MatchStatement, env *object.Environment) object.Object {
-	subject := evalWithContext(ctx, ms.Subject, env)
+	subject := evalNode(ctx, ms.Subject, env)
 	if object.IsError(subject) {
 		return subject
 	}
@@ -4772,7 +4785,7 @@ func evalMatchStatementWithContext(ctx context.Context, ms *ast.MatchStatement, 
 
 			// Check guard condition if present
 			if caseClause.Guard != nil {
-				guardResult := evalWithContext(ctx, caseClause.Guard, env)
+				guardResult := evalNode(ctx, caseClause.Guard, env)
 				if object.IsError(guardResult) {
 					return guardResult
 				}
@@ -4882,7 +4895,7 @@ func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expres
 
 		// Match all keys in pattern
 		for _, patternPair := range p.Pairs {
-			keyObj := evalWithContext(ctx, patternPair.Key, object.NewEnvironment())
+			keyObj := evalNode(ctx, patternPair.Key, object.NewEnvironment())
 			if object.IsError(keyObj) {
 				return keyObj, NULL
 			}

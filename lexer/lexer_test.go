@@ -206,6 +206,65 @@ c""" r"a\b\c" r'href=["\'](.*?)[\'"]'`
 	}
 }
 
+func TestRawFStrings(t *testing.T) {
+	tests := []struct {
+		name            string
+		input           string
+		expectedType    token.TokenType
+		expectedLiteral string
+	}{
+		{"rf double quote", `rf"hello\n{world}"`, token.RF_STRING, "hello\\n{world}"},
+		{"rf single quote", `rf'hello\n{world}'`, token.RF_STRING, "hello\\n{world}"},
+		{"fr double quote", `fr"hello\n{world}"`, token.RF_STRING, "hello\\n{world}"},
+		{"fr single quote", `fr'hello\n{world}'`, token.RF_STRING, "hello\\n{world}"},
+		{"RF double quote", `RF"hello\n"`, token.RF_STRING, "hello\\n"},
+		{"Fr single quote", `Fr'hello\t'`, token.RF_STRING, "hello\\t"},
+		{"fR double quote", `fR"hello\d+"`, token.RF_STRING, "hello\\d+"},
+		{"Rf single quote", `Rf'hello\s+'`, token.RF_STRING, "hello\\s+"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			l := New(tt.input)
+			tok := l.NextToken()
+			if tok.Type != tt.expectedType {
+				t.Fatalf("tokentype wrong. expected=%q, got=%q", tt.expectedType, tok.Type)
+			}
+			if tok.Literal != tt.expectedLiteral {
+				t.Fatalf("literal wrong. expected=%q, got=%q", tt.expectedLiteral, tok.Literal)
+			}
+		})
+	}
+}
+
+func TestRawTripleFStrings(t *testing.T) {
+	tests := []struct {
+		name            string
+		input           string
+		expectedType    token.TokenType
+		expectedLiteral string
+	}{
+		{"rf triple double", `rf"""hello\n{world}"""`, token.RF_STRING, "hello\\n{world}"},
+		{"rf triple single", `rf'''hello\n{world}'''`, token.RF_STRING, "hello\\n{world}"},
+		{"fr triple double", `fr"""hello\n{world}"""`, token.RF_STRING, "hello\\n{world}"},
+		{"fr triple single", `fr'''hello\n{world}'''`, token.RF_STRING, "hello\\n{world}"},
+		{"RF triple double", `RF"""hello\tworld"""`, token.RF_STRING, "hello\\tworld"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			l := New(tt.input)
+			tok := l.NextToken()
+			if tok.Type != tt.expectedType {
+				t.Fatalf("tokentype wrong. expected=%q, got=%q", tt.expectedType, tok.Type)
+			}
+			if tok.Literal != tt.expectedLiteral {
+				t.Fatalf("literal wrong. expected=%q, got=%q", tt.expectedLiteral, tok.Literal)
+			}
+		})
+	}
+}
+
 func TestLineNumbers(t *testing.T) {
 	tests := []struct {
 		name  string

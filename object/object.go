@@ -714,7 +714,6 @@ func InstanceDataFromContext(ctx context.Context) any {
 }
 
 type Environment struct {
-	mu                         sync.RWMutex
 	store                      map[string]Object
 	slotIndex                  map[string]int
 	slotNames                  []string
@@ -781,16 +780,12 @@ func NewEnclosedEnvironmentWithSlots(outer *Environment, slotIndex map[string]in
 
 func (e *Environment) Get(name string) (Object, bool) {
 	for env := e; env != nil; env = env.outer {
-		env.mu.RLock()
 		if idx, ok := env.slotIndex[name]; ok {
 			if idx >= 0 && idx < len(env.slots) && env.slots[idx] != nil {
-				obj := env.slots[idx]
-				env.mu.RUnlock()
-				return obj, true
+				return env.slots[idx], true
 			}
 		}
 		obj, ok := env.store[name]
-		env.mu.RUnlock()
 		if ok {
 			return obj, true
 		}
@@ -809,37 +804,30 @@ func (e *Environment) Set(name string, val Object) Object {
 			return val
 		}
 	}
-	e.mu.Lock()
 	if idx, ok := e.slotIndex[name]; ok && idx >= 0 && idx < len(e.slots) {
 		e.slots[idx] = val
 		delete(e.importedBindings, name)
-		e.mu.Unlock()
 		return val
 	}
 	e.store[name] = val
 	delete(e.importedBindings, name)
-	e.mu.Unlock()
 	return val
 }
 
 // Delete removes a variable from this environment (not parent scopes)
 func (e *Environment) Delete(name string) {
-	e.mu.Lock()
 	if idx, ok := e.slotIndex[name]; ok && idx >= 0 && idx < len(e.slots) {
 		e.slots[idx] = nil
 	}
 	delete(e.store, name)
 	delete(e.importedBindings, name)
-	e.mu.Unlock()
 }
 
 // SetGlobal sets a variable in the global (outermost) environment
 func (e *Environment) SetGlobal(name string, val Object) Object {
 	root := e.root
-	root.mu.Lock()
 	root.store[name] = val
 	delete(root.importedBindings, name)
-	root.mu.Unlock()
 	return val
 }
 
@@ -851,20 +839,16 @@ func (e *Environment) GetGlobal() *Environment {
 // SetInParent sets a variable in the parent environment (for nonlocal)
 func (e *Environment) SetInParent(name string, val Object) bool {
 	for env := e.outer; env != nil; env = env.outer {
-		env.mu.Lock()
 		if idx, ok := env.slotIndex[name]; ok && idx >= 0 && idx < len(env.slots) {
 			env.slots[idx] = val
-			env.mu.Unlock()
 			return true
 		}
 		_, ok := env.store[name]
 		if ok {
 			env.store[name] = val
 			delete(env.importedBindings, name)
-			env.mu.Unlock()
 			return true
 		}
-		env.mu.Unlock()
 	}
 	return false
 }
@@ -887,20 +871,15 @@ func (e *Environment) MarkNonlocal(name string) {
 
 // MarkImportedBinding marks a local binding as coming from an import.
 func (e *Environment) MarkImportedBinding(name string) {
-	e.mu.Lock()
 	if e.importedBindings == nil {
 		e.importedBindings = make(map[string]bool, 2)
 	}
 	e.importedBindings[name] = true
-	e.mu.Unlock()
 }
 
 // IsImportedBinding reports whether a local binding came from an import.
 func (e *Environment) IsImportedBinding(name string) bool {
-	e.mu.RLock()
-	ok := e.importedBindings != nil && e.importedBindings[name]
-	e.mu.RUnlock()
-	return ok
+	return e.importedBindings != nil && e.importedBindings[name]
 }
 
 // IsGlobal checks if a variable is marked as global
@@ -959,7 +938,6 @@ func (e *Environment) GetReader() io.Reader {
 
 // GetStore returns a copy of the environment's store (only local scope, not outer)
 func (e *Environment) GetStore() map[string]Object {
-	e.mu.RLock()
 	store := make(map[string]Object, len(e.store)+len(e.slotNames))
 	for k, v := range e.store {
 		store[k] = v
@@ -969,8 +947,87 @@ func (e *Environment) GetStore() map[string]Object {
 			store[name] = e.slots[idx]
 		}
 	}
-	e.mu.RUnlock()
 	return store
+}
+
+// CallableSnapshot holds a snapshot of callable bindings safe to pass across
+// goroutine boundaries. Use ApplySnapshot to write them into a new Environment.
+type CallableSnapshot struct {
+	functions map[string]*Function
+	lambdas   map[string]*LambdaFunction
+	dicts     map[string]*Dict
+}
+
+// SnapshotCallables reads callable bindings from this environment into a
+// self-contained snapshot. No references to the source Environment's maps are
+// retained, so it is safe to pass the snapshot to another goroutine.
+func (e *Environment) SnapshotCallables() *CallableSnapshot {
+	s := &CallableSnapshot{
+		functions: make(map[string]*Function, len(e.store)+len(e.slotNames)),
+		lambdas:   make(map[string]*LambdaFunction, len(e.store)+len(e.slotNames)),
+		dicts:     make(map[string]*Dict, len(e.store)+len(e.slotNames)),
+	}
+	snapshot := func(name string, value Object) {
+		switch v := value.(type) {
+		case *Function:
+			s.functions[name] = v
+		case *LambdaFunction:
+			s.lambdas[name] = v
+		case *Class:
+			// Classes can't be safely shared across envs.
+		case *Dict:
+			if e.importedBindings != nil && e.importedBindings[name] {
+				s.dicts[name] = v
+			}
+		}
+	}
+	for name, value := range e.store {
+		snapshot(name, value)
+	}
+	for idx, name := range e.slotNames {
+		if idx >= 0 && idx < len(e.slots) && e.slots[idx] != nil {
+			snapshot(name, e.slots[idx])
+		}
+	}
+	return s
+}
+
+// ApplySnapshot writes the snapshot's bindings into target, rebound to target
+// so closures resolve correctly. Dicts are deep-copied so concurrent tasks
+// don't race when mutating intermediate dicts.
+func (s *CallableSnapshot) ApplySnapshot(target *Environment) {
+	for name, v := range s.functions {
+		target.store[name] = &Function{
+			Name:           v.Name,
+			Parameters:     v.Parameters,
+			DefaultValues:  v.DefaultValues,
+			Variadic:       v.Variadic,
+			Kwargs:         v.Kwargs,
+			Body:           v.Body,
+			Env:            target,
+			LocalSlots:     v.LocalSlots,
+			LocalSlotNames: v.LocalSlotNames,
+		}
+	}
+	for name, v := range s.lambdas {
+		target.store[name] = &LambdaFunction{
+			Parameters:     v.Parameters,
+			DefaultValues:  v.DefaultValues,
+			Variadic:       v.Variadic,
+			Kwargs:         v.Kwargs,
+			Body:           v.Body,
+			Env:            target,
+			LocalSlots:     v.LocalSlots,
+			LocalSlotNames: v.LocalSlotNames,
+		}
+	}
+	for name, v := range s.dicts {
+		target.store[name] = deepCopyDict(v)
+		if target.importedBindings == nil {
+			target.importedBindings = make(map[string]bool, 2)
+		}
+		target.importedBindings[name] = true
+	}
 }
 
 // CopyCallableBindingsTo copies safe bindings into target for background task use.
@@ -978,55 +1035,7 @@ func (e *Environment) GetStore() map[string]Object {
 // imported modules remain available. Other globals are intentionally skipped so
 // background tasks cannot share caller-owned mutable or native-backed state.
 func (e *Environment) CopyCallableBindingsTo(target *Environment) {
-	e.mu.RLock()
-	target.mu.Lock()
-	copyBinding := func(name string, value Object) {
-		switch v := value.(type) {
-		case *Function:
-			target.store[name] = &Function{
-				Name:           v.Name,
-				Parameters:     v.Parameters,
-				DefaultValues:  v.DefaultValues,
-				Variadic:       v.Variadic,
-				Kwargs:         v.Kwargs,
-				Body:           v.Body,
-				Env:            target,
-				LocalSlots:     v.LocalSlots,
-				LocalSlotNames: v.LocalSlotNames,
-			}
-		case *LambdaFunction:
-			target.store[name] = &LambdaFunction{
-				Parameters:     v.Parameters,
-				DefaultValues:  v.DefaultValues,
-				Variadic:       v.Variadic,
-				Kwargs:         v.Kwargs,
-				Body:           v.Body,
-				Env:            target,
-				LocalSlots:     v.LocalSlots,
-				LocalSlotNames: v.LocalSlotNames,
-			}
-		case *Class:
-			// Classes can't be safely shared across envs.
-		case *Dict:
-			if e.importedBindings != nil && e.importedBindings[name] {
-				target.store[name] = deepCopyDict(v)
-				if target.importedBindings == nil {
-					target.importedBindings = make(map[string]bool, 2)
-				}
-				target.importedBindings[name] = true
-			}
-		}
-	}
-	for name, value := range e.store {
-		copyBinding(name, value)
-	}
-	for idx, name := range e.slotNames {
-		if idx >= 0 && idx < len(e.slots) && e.slots[idx] != nil {
-			copyBinding(name, e.slots[idx])
-		}
-	}
-	target.mu.Unlock()
-	e.mu.RUnlock()
+	e.SnapshotCallables().ApplySnapshot(target)
 }
 
 // deepCopyDict recursively copies a Dict so concurrent tasks don't race
@@ -1047,7 +1056,6 @@ func deepCopyDict(d *Dict) *Dict {
 
 // ResetStore removes all keys from the environment store except those in keep.
 func (e *Environment) ResetStore(keep map[string]bool) {
-	e.mu.Lock()
 	for k := range e.store {
 		if !keep[k] {
 			delete(e.store, k)
@@ -1058,7 +1066,6 @@ func (e *Environment) ResetStore(keep map[string]bool) {
 			e.slots[idx] = nil
 		}
 	}
-	e.mu.Unlock()
 }
 
 // SetImportCallback sets the import callback for this environment.
