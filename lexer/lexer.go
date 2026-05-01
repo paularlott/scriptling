@@ -350,6 +350,20 @@ func (l *Lexer) NextToken() token.Token {
 				tok.Type = token.F_STRING
 				tok.Literal = l.readFString(l.ch)
 			}
+		} else if (l.peekChar() == 'r' || l.peekChar() == 'R') && (l.peekN(2) == '"' || l.peekN(2) == '\'') {
+			// Raw f-string: fr"..." or fr"""..."""
+			quote := l.peekN(2)
+			if l.peekN(3) == quote && l.peekN(4) == quote {
+				l.readChar() // consume 'f'
+				l.readChar() // consume 'r', l.ch == quote
+				tok.Type = token.RF_STRING
+				tok.Literal = l.readRawTripleString(quote)
+			} else {
+				l.readChar() // consume 'f'
+				l.readChar() // consume 'r', l.ch == quote
+				tok.Type = token.RF_STRING
+				tok.Literal = l.readRawString(quote)
+			}
 		} else {
 			tok.Literal = l.readIdentifier()
 			tok.Type = token.LookupIdent(tok.Literal)
@@ -367,6 +381,20 @@ func (l *Lexer) NextToken() token.Token {
 			} else {
 				l.readChar() // consume 'r'
 				tok.Type = token.STRING
+				tok.Literal = l.readRawString(quote)
+			}
+		} else if (l.peekChar() == 'f' || l.peekChar() == 'F') && (l.peekN(2) == '"' || l.peekN(2) == '\'') {
+			// Raw f-string: rf"..." or rf"""..."""
+			quote := l.peekN(2)
+			if l.peekN(3) == quote && l.peekN(4) == quote {
+				l.readChar() // consume 'r'
+				l.readChar() // consume 'f', l.ch == quote
+				tok.Type = token.RF_STRING
+				tok.Literal = l.readRawTripleString(quote)
+			} else {
+				l.readChar() // consume 'r'
+				l.readChar() // consume 'f', l.ch == quote
+				tok.Type = token.RF_STRING
 				tok.Literal = l.readRawString(quote)
 			}
 		} else {

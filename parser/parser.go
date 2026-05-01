@@ -90,6 +90,8 @@ func prefixParseFnFor(t token.TokenType) prefixParseFn {
 		return (*Parser).parseStringLiteral
 	case token.F_STRING:
 		return (*Parser).parseFStringLiteral
+	case token.RF_STRING:
+		return (*Parser).parseRawFStringLiteral
 	case token.TRUE, token.FALSE:
 		return (*Parser).parseBoolean
 	case token.NONE:
@@ -790,7 +792,13 @@ func (p *Parser) parseStringLiteral() ast.Expression {
 
 func (p *Parser) parseFStringLiteral() ast.Expression {
 	fstr := &ast.FStringLiteral{Token: p.curToken}
-	fstr.Parts, fstr.Expressions, fstr.FormatSpecs = p.parseFStringContent(p.curToken.Literal)
+	fstr.Parts, fstr.Expressions, fstr.FormatSpecs = p.parseFStringContent(p.curToken.Literal, false)
+	return p.parseAdjacentStrings(fstr)
+}
+
+func (p *Parser) parseRawFStringLiteral() ast.Expression {
+	fstr := &ast.FStringLiteral{Token: p.curToken}
+	fstr.Parts, fstr.Expressions, fstr.FormatSpecs = p.parseFStringContent(p.curToken.Literal, true)
 	return p.parseAdjacentStrings(fstr)
 }
 
@@ -817,7 +825,7 @@ func (p *Parser) parseAdjacentStrings(left ast.Expression) ast.Expression {
 		}
 	}
 
-	for (p.parenDepth > 0 || !p.skippedNewline) && (p.peekTokenIs(token.STRING) || p.peekTokenIs(token.F_STRING)) {
+	for (p.parenDepth > 0 || !p.skippedNewline) && (p.peekTokenIs(token.STRING) || p.peekTokenIs(token.F_STRING) || p.peekTokenIs(token.RF_STRING)) {
 		tok := p.curToken
 		p.nextToken()
 
@@ -826,7 +834,7 @@ func (p *Parser) parseAdjacentStrings(left ast.Expression) ast.Expression {
 			right = &ast.StringLiteral{Token: p.curToken, Value: p.curToken.Literal}
 		} else {
 			fstr := &ast.FStringLiteral{Token: p.curToken}
-			fstr.Parts, fstr.Expressions, fstr.FormatSpecs = p.parseFStringContent(p.curToken.Literal)
+			fstr.Parts, fstr.Expressions, fstr.FormatSpecs = p.parseFStringContent(p.curToken.Literal, p.curTokenIs(token.RF_STRING))
 			right = fstr
 		}
 
@@ -840,7 +848,7 @@ func (p *Parser) parseAdjacentStrings(left ast.Expression) ast.Expression {
 	return left
 }
 
-func (p *Parser) parseFStringContent(content string) ([]string, []ast.Expression, []string) {
+func (p *Parser) parseFStringContent(content string, raw bool) ([]string, []ast.Expression, []string) {
 	parts := make([]string, 0, 4)
 	expressions := make([]ast.Expression, 0, 2)
 	formatSpecs := make([]string, 0, 2)
@@ -893,8 +901,8 @@ func (p *Parser) parseFStringContent(content string) ([]string, []ast.Expression
 			// Escaped brace
 			current.WriteByte('}')
 			i += 2
-		} else if content[i] == '\\' && i+1 < len(content) {
-			// Handle escape sequences
+		} else if !raw && content[i] == '\\' && i+1 < len(content) {
+			// Handle escape sequences (only for non-raw f-strings)
 			i++ // consume backslash
 			switch content[i] {
 			case 'n':
