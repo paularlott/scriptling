@@ -11,3 +11,4 @@ __pycache__/
 /plans/
 /memory-db
 /examples/sample-package.zip
+/.claude/settings.local.json
