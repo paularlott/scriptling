@@ -49,6 +49,7 @@ release: build-all
 		git push origin v$(shell go run ./tools/getversion); \
 	fi
 	# Create release and upload zip files only
+	gh repo set-default paularlott/scriptling
 	gh release create v$(shell go run ./tools/getversion) -t "Release $(shell go run ./tools/getversion)" -n "Scriptling $(shell go run ./tools/getversion)" $(BIN_DIR)/*.zip
 	# Update Homebrew formula
 	go run ./scripts/homebrew-formula/ > ../homebrew-tap/Formula/scriptling.rb

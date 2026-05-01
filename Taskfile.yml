@@ -117,5 +117,6 @@ tasks:
           git push origin v{{.VERSION}}
         fi
         # Create release and upload zip files only
+        gh repo set-default paularlott/scriptling
         gh release create v{{.VERSION}} -t "Release {{.VERSION}}" -n "Scriptling {{.VERSION}}" {{.BIN_DIR}}/*.zip
       - task: homebrew-formula
