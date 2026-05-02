@@ -134,3 +134,11 @@ func GetFloatArrayData(obj Object) ([]float64, []int, bool) {
 	}
 	return nil, nil, false
 }
+
+func GetFloatMatrix(obj Object) (data []float64, rows, cols int, ok bool) {
+	fa, ok := obj.(*FloatArray)
+	if !ok || !fa.Is2D() {
+		return nil, 0, 0, false
+	}
+	return fa.Data, fa.Rows(), fa.Cols(), true
+}

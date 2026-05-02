@@ -1577,3 +1577,32 @@ func TestCloneObjectDropsInstanceNativeData(t *testing.T) {
 		t.Fatal("expected instance fields to be deep-cloned")
 	}
 }
+
+func TestGetFloatMatrix(t *testing.T) {
+	fa := NewFloatArray2D([]float64{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, 2, 3)
+	data, rows, cols, ok := GetFloatMatrix(fa)
+	if !ok {
+		t.Fatal("expected ok=true for 2D FloatArray")
+	}
+	if rows != 2 || cols != 3 {
+		t.Fatalf("shape = %dx%d, want 2x3", rows, cols)
+	}
+	if len(data) != 6 {
+		t.Fatalf("len(data) = %d, want 6", len(data))
+	}
+	if data[0] != 1.0 || data[5] != 6.0 {
+		t.Errorf("data = %v, want [1 2 3 4 5 6]", data)
+	}
+
+	fa1d := NewFloatArray1D([]float64{1.0, 2.0})
+	_, _, _, ok = GetFloatMatrix(fa1d)
+	if ok {
+		t.Fatal("expected ok=false for 1D FloatArray")
+	}
+
+	list := &List{Elements: []Object{&Float{Value: 1.0}}}
+	_, _, _, ok = GetFloatMatrix(list)
+	if ok {
+		t.Fatal("expected ok=false for List")
+	}
+}

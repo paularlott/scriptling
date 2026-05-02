@@ -725,6 +725,19 @@ func evalInfixExpression(ctx context.Context, operator string, left, right objec
 		if r, ok := right.(*object.Integer); ok && operator == "*" {
 			return evalStringMultiplication(l.Value, r.Value)
 		}
+	case *object.FloatArray:
+		if operator == "+" {
+			if r, ok := right.(*object.FloatArray); ok {
+				newData := make([]float64, len(l.Data)+len(r.Data))
+				copy(newData, l.Data)
+				copy(newData[len(l.Data):], r.Data)
+				if l.Is2D() && r.Is2D() {
+					return object.NewFloatArray2D(newData, l.Rows()+r.Rows(), l.Cols())
+				}
+				return object.NewFloatArray1D(newData)
+			}
+			return errors.NewTypeError("FLOAT_ARRAY", right.Type().String())
+		}
 	case *object.Instance:
 		// Handle instance operators via dunder methods (__lt__, __gt__, __eq__, __sub__, __add__, etc.)
 		if result := evalInstanceInfixExpression(ctx, operator, l, right, env); result != nil {
@@ -4139,6 +4152,26 @@ func iterateObject(ctx context.Context, obj object.Object, fn func(object.Object
 				return err
 			}
 		}
+	case *object.FloatArray:
+		if o.Is2D() {
+			rows := o.Rows()
+			cols := o.Cols()
+			for i := 0; i < rows; i++ {
+				off := i * cols
+				rowData := make([]float64, cols)
+				copy(rowData, o.Data[off:off+cols])
+				row := object.NewFloatArray1D(rowData)
+				if err := fn(row); err != nil {
+					return err
+				}
+			}
+		} else {
+			for _, v := range o.Data {
+				if err := fn(&object.Float{Value: v}); err != nil {
+					return err
+				}
+			}
+		}
 	case *object.Instance:
 		if iterFn, ok := findDunderMethod(o, "__iter__"); ok {
 			iterObj := applyFunctionWithContext(ctx, iterFn, prependSelf(o, nil), nil, nil)
@@ -4273,6 +4306,28 @@ func tryEvalFastListComprehension(ctx context.Context, lc *ast.ListComprehension
 			}
 			if out := runElement(element); out != nil {
 				return out, true
+			}
+		}
+	case *object.FloatArray:
+		if it.Is2D() {
+			rows := it.Rows()
+			cols := it.Cols()
+			result = make([]object.Object, 0, rows)
+			for i := 0; i < rows; i++ {
+				off := i * cols
+				rowData := make([]float64, cols)
+				copy(rowData, it.Data[off:off+cols])
+				row := object.NewFloatArray1D(rowData)
+				if out := runElement(row); out != nil {
+					return out, true
+				}
+			}
+		} else {
+			result = make([]object.Object, 0, len(it.Data))
+			for _, v := range it.Data {
+				if out := runElement(&object.Float{Value: v}); out != nil {
+					return out, true
+				}
 			}
 		}
 	default:

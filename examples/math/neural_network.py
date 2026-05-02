@@ -2,6 +2,7 @@ import math
 
 # Linear Algebra Example: Simple neural network forward pass
 # Demonstrates math.dot, math.matmul, math.transpose, math.softmax, math.tanh
+# Also shows FloatArray features: list comprehensions, + concat, .tolist(), .shape()
 
 # Input vector (e.g., 3 features)
 x = [0.5, -0.3, 0.8]
@@ -33,10 +34,8 @@ b2 = [0.1, -0.1]
 x_matrix = [x]  # shape (1, 3)
 z1 = math.matmul(x_matrix, math.transpose(W1))  # shape (1, 4)
 
-# Add bias and apply tanh activation
-h1 = []
-for i in range(len(b1)):
-    h1.append(math.tanh(z1[0][i] + b1[i]))
+# Add bias and apply tanh activation using list comprehension over FloatArray
+h1 = [math.tanh(z1[0][i] + b1[i]) for i in range(len(b1))]
 print(f"Hidden layer activations: {[round(v, 4) for v in h1]}")
 
 # Layer 2: z2 = W2 @ h1 + b2
@@ -51,6 +50,21 @@ print(f"Logits: {[round(v, 4) for v in logits]}")
 probs = math.softmax(logits)
 print(f"Probabilities: {[round(v, 4) for v in probs]}")
 print(f"Prediction: class {probs.index(max(probs))}")
+
+# --- FloatArray features demo ---
+
+# Convert weights to FloatArray for efficient operations
+W1_arr = math.array(W1)
+print(f"\nW1 shape: {W1_arr.shape()}")
+
+# FloatArray + concatenation (like KV cache appending)
+new_row = math.array([[0.3, -0.1, 0.5]])
+appended = W1_arr + new_row
+print(f"After concatenation: shape {appended.shape()}")
+
+# Convert FloatArray back to list
+plain = appended.tolist()
+print(f"As plain list: {type(plain)} with {len(plain)} rows")
 
 # --- Dot product example ---
 # Cosine similarity between two vectors
