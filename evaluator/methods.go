@@ -109,6 +109,11 @@ func callStringMethodWithKeywords(ctx context.Context, obj object.Object, method
 		return callTupleMethod(obj.(*object.Tuple), method, args)
 	}
 
+	// Handle FloatArray methods
+	if obj.Type() == object.FLOAT_ARRAY_OBJ {
+		return callFloatArrayMethod(obj.(*object.FloatArray), method, args)
+	}
+
 	// Handle Instance method calls
 	if obj.Type() == object.INSTANCE_OBJ {
 		return callInstanceMethod(ctx, obj.(*object.Instance), method, args, keywords, env)
@@ -1655,6 +1660,27 @@ func callTupleMethod(tuple *object.Tuple, method string, args []object.Object) o
 		return errors.NewError("value not in tuple")
 	}
 	return errors.NewError("object TUPLE has no method %s", method)
+}
+
+func callFloatArrayMethod(fa *object.FloatArray, method string, args []object.Object) object.Object {
+	switch method {
+	case "tolist":
+		if err := errors.ExactArgs(args, 0); err != nil {
+			return err
+		}
+		return fa.ToList()
+	case "shape":
+		if err := errors.ExactArgs(args, 0); err != nil {
+			return err
+		}
+		elems := make([]object.Object, len(fa.Shape))
+		for i, v := range fa.Shape {
+			elems[i] = object.NewInteger(int64(v))
+		}
+		return &object.List{Elements: elems}
+	default:
+		return errors.NewError("object FLOAT_ARRAY has no method %s", method)
+	}
 }
 
 func callSetMethod(ctx context.Context, set *object.Set, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {

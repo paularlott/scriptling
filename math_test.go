@@ -571,3 +571,192 @@ is_fa = type(r) == "FLOAT_ARRAY"
 		t.Errorf("type(transpose(FloatArray)) should be FLOAT_ARRAY, got %v", isFA)
 	}
 }
+
+func TestFloatArrayListComprehension2D(t *testing.T) {
+	p := New()
+	p.RegisterLibrary(stdlib.MathLibrary)
+	_, err := p.Eval(`
+import math
+m = math.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+firsts = [row[0] for row in m]
+`)
+	if err != nil {
+		t.Fatalf("Error: %v", err)
+	}
+	firsts, _ := p.GetVar("firsts")
+	list, ok := firsts.([]interface{})
+	if !ok {
+		t.Fatalf("firsts is %T, want []interface{}", firsts)
+	}
+	if len(list) != 2 {
+		t.Fatalf("len(firsts) = %d, want 2", len(list))
+	}
+	if list[0] != 1.0 || list[1] != 4.0 {
+		t.Errorf("firsts = %v, want [1.0, 4.0]", list)
+	}
+}
+
+func TestFloatArrayListComprehension1D(t *testing.T) {
+	p := New()
+	p.RegisterLibrary(stdlib.MathLibrary)
+	_, err := p.Eval(`
+import math
+a = math.array([1.0, 2.0, 3.0, 4.0])
+doubled = [v * 2 for v in a]
+`)
+	if err != nil {
+		t.Fatalf("Error: %v", err)
+	}
+	doubled, _ := p.GetVar("doubled")
+	list, ok := doubled.([]interface{})
+	if !ok {
+		t.Fatalf("doubled is %T, want []interface{}", doubled)
+	}
+	if len(list) != 4 {
+		t.Fatalf("len(doubled) = %d, want 4", len(list))
+	}
+	if list[0] != 2.0 || list[3] != 8.0 {
+		t.Errorf("doubled = %v, want [2.0, 4.0, 6.0, 8.0]", list)
+	}
+}
+
+func TestFloatArrayListComprehensionWithFilter(t *testing.T) {
+	p := New()
+	p.RegisterLibrary(stdlib.MathLibrary)
+	_, err := p.Eval(`
+import math
+a = math.array([1.0, 2.0, 3.0, 4.0, 5.0])
+big = [v for v in a if v > 2.5]
+`)
+	if err != nil {
+		t.Fatalf("Error: %v", err)
+	}
+	big, _ := p.GetVar("big")
+	list, ok := big.([]interface{})
+	if !ok {
+		t.Fatalf("big is %T, want []interface{}", big)
+	}
+	if len(list) != 3 {
+		t.Fatalf("len(big) = %d, want 3", len(list))
+	}
+	if list[0] != 3.0 || list[1] != 4.0 || list[2] != 5.0 {
+		t.Errorf("big = %v, want [3.0, 4.0, 5.0]", list)
+	}
+}
+
+func TestFloatArrayConcatenation2D(t *testing.T) {
+	p := New()
+	p.RegisterLibrary(stdlib.MathLibrary)
+	_, err := p.Eval(`
+import math
+a = math.array([[1.0, 2.0], [3.0, 4.0]])
+b = math.array([[5.0, 6.0]])
+c = a + b
+`)
+	if err != nil {
+		t.Fatalf("Error: %v", err)
+	}
+	c, _ := p.GetVarAsObject("c")
+	fa, ok := c.(*object.FloatArray)
+	if !ok {
+		t.Fatalf("c is %T, want FloatArray", c)
+	}
+	if fa.Rows() != 3 || fa.Cols() != 2 {
+		t.Fatalf("shape = %v, want [3,2]", fa.Shape)
+	}
+	if fa.Data[0] != 1.0 || fa.Data[4] != 5.0 || fa.Data[5] != 6.0 {
+		t.Errorf("data = %v", fa.Data)
+	}
+}
+
+func TestFloatArrayConcatenation1D(t *testing.T) {
+	p := New()
+	p.RegisterLibrary(stdlib.MathLibrary)
+	_, err := p.Eval(`
+import math
+a = math.array([1.0, 2.0])
+b = math.array([3.0, 4.0])
+c = a + b
+`)
+	if err != nil {
+		t.Fatalf("Error: %v", err)
+	}
+	c, _ := p.GetVarAsObject("c")
+	fa, ok := c.(*object.FloatArray)
+	if !ok {
+		t.Fatalf("c is %T, want FloatArray", c)
+	}
+	if len(fa.Data) != 4 {
+		t.Fatalf("len(data) = %d, want 4", len(fa.Data))
+	}
+	if fa.Data[0] != 1.0 || fa.Data[3] != 4.0 {
+		t.Errorf("data = %v, want [1 2 3 4]", fa.Data)
+	}
+}
+
+func TestFloatArrayTolist1D(t *testing.T) {
+	p := New()
+	p.RegisterLibrary(stdlib.MathLibrary)
+	_, err := p.Eval(`
+import math
+a = math.array([1.0, 2.0, 3.0])
+l = a.tolist()
+`)
+	if err != nil {
+		t.Fatalf("Error: %v", err)
+	}
+	l, _ := p.GetVar("l")
+	list, ok := l.([]interface{})
+	if !ok {
+		t.Fatalf("l is %T, want []interface{}", l)
+	}
+	if len(list) != 3 || list[0] != 1.0 || list[2] != 3.0 {
+		t.Errorf("l = %v, want [1.0, 2.0, 3.0]", list)
+	}
+}
+
+func TestFloatArrayTolist2D(t *testing.T) {
+	p := New()
+	p.RegisterLibrary(stdlib.MathLibrary)
+	_, err := p.Eval(`
+import math
+m = math.array([[1.0, 2.0], [3.0, 4.0]])
+l = m.tolist()
+`)
+	if err != nil {
+		t.Fatalf("Error: %v", err)
+	}
+	l, _ := p.GetVar("l")
+	list, ok := l.([]interface{})
+	if !ok {
+		t.Fatalf("l is %T, want []interface{}", l)
+	}
+	if len(list) != 2 {
+		t.Fatalf("len(l) = %d, want 2", len(list))
+	}
+	row0 := list[0].([]interface{})
+	if row0[0] != 1.0 || row0[1] != 2.0 {
+		t.Errorf("row0 = %v, want [1.0, 2.0]", row0)
+	}
+}
+
+func TestFloatArrayShapeMethod(t *testing.T) {
+	p := New()
+	p.RegisterLibrary(stdlib.MathLibrary)
+	_, err := p.Eval(`
+import math
+m = math.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+s = m.shape()
+`)
+	if err != nil {
+		t.Fatalf("Error: %v", err)
+	}
+	s, _ := p.GetVar("s")
+	list, ok := s.([]interface{})
+	if !ok {
+		t.Fatalf("s is %T, want []interface{}", s)
+	}
+	if list[0].(int64) != 2 || list[1].(int64) != 3 {
+		t.Errorf("shape = %v, want [2, 3]", list)
+	}
+}
