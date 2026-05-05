@@ -4,13 +4,13 @@ go 1.26.1
 
 require (
 	github.com/BurntSushi/toml v1.6.0
-	github.com/fsnotify/fsnotify v1.9.0
+	github.com/fsnotify/fsnotify v1.10.1
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/paularlott/cli v0.8.3
+	github.com/paularlott/cli v0.8.4
 	github.com/paularlott/gossip v0.12.4
 	github.com/paularlott/logger v0.3.0
-	github.com/paularlott/mcp v0.15.4
+	github.com/paularlott/mcp v0.15.7
 	github.com/paularlott/snapshotkv v0.3.0
 	github.com/shirou/gopsutil/v3 v3.24.5
 	golang.org/x/net v0.53.0
@@ -21,7 +21,7 @@ require (
 require (
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/hashicorp/go-msgpack/v2 v2.1.5 // indirect
-	github.com/klauspost/compress v1.18.5 // indirect
+	github.com/klauspost/compress v1.18.6 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20260330125221-c963978e514e // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect

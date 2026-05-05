@@ -2,6 +2,10 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -866,6 +870,80 @@ tool_calls[0].function.arguments.get("message", "missing")
 	}
 	if str.Value != "hello from tool test" {
 		t.Fatalf("expected %q, got %q", "hello from tool test", str.Value)
+	}
+}
+
+func TestClientCustomHeadersSentWithCompletion(t *testing.T) {
+	var gotHeader string
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		gotHeader = r.Header.Get("X-Scriptling-Test")
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("failed reading request body: %v", err)
+		}
+		if err := json.Unmarshal(bodyBytes, &gotBody); err != nil {
+			t.Fatalf("failed decoding request body: %v\n%s", err, string(bodyBytes))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":      "chatcmpl-test",
+			"object":  "chat.completion",
+			"created": 1,
+			"model":   "test-model",
+			"choices": []map[string]any{{
+				"index":         0,
+				"finish_reason": "stop",
+				"message": map[string]any{
+					"role":    "assistant",
+					"content": "ok",
+				},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	p := scriptlib.New()
+	stdlib.RegisterAll(p)
+	Register(p)
+	if err := p.SetVar("server_url", server.URL); err != nil {
+		t.Fatalf("SetVar(server_url): %v", err)
+	}
+
+	result, err := p.Eval(`
+import scriptling.ai as ai
+
+client = ai.Client(server_url + "/v1", headers={"X-Scriptling-Test": "custom-value"})
+response = client.completion("test-model", "hello", extra_body={
+    "thinking": {"type": "enabled", "clear_thinking": False}
+})
+response.choices[0].message.content
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	str, ok := result.(*object.String)
+	if !ok {
+		t.Fatalf("expected String, got %T", result)
+	}
+	if str.Value != "ok" {
+		t.Fatalf("expected response content ok, got %q", str.Value)
+	}
+	if gotHeader != "custom-value" {
+		t.Fatalf("expected custom header, got %q", gotHeader)
+	}
+	if _, ok := gotBody["extra_body"]; ok {
+		t.Fatalf("extra_body should not be sent literally: %#v", gotBody)
+	}
+	thinking, ok := gotBody["thinking"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected merged thinking body, got %#v", gotBody)
+	}
+	if thinking["type"] != "enabled" || thinking["clear_thinking"] != false {
+		t.Fatalf("unexpected thinking body: %#v", thinking)
 	}
 }
 
@@ -1746,6 +1824,84 @@ func TestEstimateTokens(t *testing.T) {
 		}
 		if completionTokens != 0 {
 			t.Error("completion_tokens should be 0 for empty response")
+		}
+	})
+
+	t.Run("request only with omitted response", func(t *testing.T) {
+		request := conversion.FromGo([]any{
+			map[string]any{"role": "user", "content": "Estimate this request before sending."},
+		})
+
+		result := fn.Fn(context.Background(), object.NewKwargs(nil), request)
+		if errObj, ok := result.(*object.Error); ok {
+			t.Fatalf("unexpected error: %s", errObj.Message)
+		}
+
+		usage := conversion.ToGo(result).(map[string]any)
+		promptTokens, _ := usage["prompt_tokens"].(int64)
+		completionTokens, _ := usage["completion_tokens"].(int64)
+		totalTokens, _ := usage["total_tokens"].(int64)
+		if promptTokens == 0 {
+			t.Error("prompt_tokens should be > 0 for request-only estimate")
+		}
+		if completionTokens != 0 {
+			t.Errorf("completion_tokens = %d, want 0", completionTokens)
+		}
+		if totalTokens != promptTokens {
+			t.Errorf("total_tokens = %d, want prompt_tokens %d", totalTokens, promptTokens)
+		}
+	})
+
+	t.Run("request only with None response", func(t *testing.T) {
+		request := conversion.FromGo([]any{
+			map[string]any{"role": "user", "content": "Estimate this request before sending."},
+		})
+
+		result := fn.Fn(context.Background(), object.NewKwargs(nil), request, &object.Null{})
+		if errObj, ok := result.(*object.Error); ok {
+			t.Fatalf("unexpected error: %s", errObj.Message)
+		}
+
+		usage := conversion.ToGo(result).(map[string]any)
+		promptTokens, _ := usage["prompt_tokens"].(int64)
+		completionTokens, _ := usage["completion_tokens"].(int64)
+		if promptTokens == 0 {
+			t.Error("prompt_tokens should be > 0 for request-only estimate")
+		}
+		if completionTokens != 0 {
+			t.Errorf("completion_tokens = %d, want 0", completionTokens)
+		}
+	})
+
+	t.Run("response only with None request", func(t *testing.T) {
+		response := conversion.FromGo(map[string]any{
+			"choices": []any{
+				map[string]any{
+					"message": map[string]any{
+						"role":    "assistant",
+						"content": "Only count this response.",
+					},
+				},
+			},
+		})
+
+		result := fn.Fn(context.Background(), object.NewKwargs(nil), &object.Null{}, response)
+		if errObj, ok := result.(*object.Error); ok {
+			t.Fatalf("unexpected error: %s", errObj.Message)
+		}
+
+		usage := conversion.ToGo(result).(map[string]any)
+		promptTokens, _ := usage["prompt_tokens"].(int64)
+		completionTokens, _ := usage["completion_tokens"].(int64)
+		totalTokens, _ := usage["total_tokens"].(int64)
+		if promptTokens != 0 {
+			t.Errorf("prompt_tokens = %d, want 0", promptTokens)
+		}
+		if completionTokens == 0 {
+			t.Error("completion_tokens should be > 0 for response-only estimate")
+		}
+		if totalTokens != completionTokens {
+			t.Errorf("total_tokens = %d, want completion_tokens %d", totalTokens, completionTokens)
 		}
 	})
 

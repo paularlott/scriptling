@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"regexp"
 	"strings"
 	"sync"
@@ -78,6 +79,24 @@ func buildLibrary() *object.Library {
 				topP = &v
 			}
 
+			extraHeaders := http.Header{}
+			if kwargs.Has("headers") {
+				headersObj := kwargs.Get("headers")
+				if headersObj.Type() != object.NULL_OBJ {
+					headersMap, errObj := headersObj.AsDict()
+					if errObj != nil {
+						return nil, fmt.Errorf("headers must be a dict")
+					}
+					for key, valueObj := range headersMap {
+						value, errObj := valueObj.AsString()
+						if errObj != nil {
+							return nil, fmt.Errorf("headers.%s must be a string", key)
+						}
+						extraHeaders.Set(key, value)
+					}
+				}
+			}
+
 			// Parse remote_servers if provided
 			var remoteServerConfigs []openai.RemoteServerConfig
 			if kwargs.Has("remote_servers") {
@@ -147,6 +166,7 @@ func buildLibrary() *object.Library {
 					MaxTokens:           maxTokens,
 					Temperature:         temperature,
 					TopP:                topP,
+					ExtraHeaders:        extraHeaders,
 				},
 			})
 			if err != nil {
@@ -165,6 +185,7 @@ Parameters:
   max_tokens (int, optional): Default max_tokens for all requests (Claude defaults to 4096 if not set)
   temperature (float, optional): Default temperature for all requests (0.0-2.0)
   top_p (float, optional): Default top_p (nucleus sampling) for all requests (0.0-1.0)
+  headers (dict, optional): Extra HTTP headers to include with every AI API request
   remote_servers (list, optional): List of remote MCP server configs, each a dict with:
     - base_url (str, required): URL of the MCP server
     - namespace (str, optional): Namespace prefix for tools
@@ -180,6 +201,9 @@ Example:
 
   # LM Studio / Local LLM
   client = ai.Client("http://127.0.0.1:1234/v1")
+
+  # With custom request headers
+  client = ai.Client("", api_key="sk-...", headers={"X-Project": "docs-bot"})
 
   # Claude (max_tokens defaults to 4096 if not specified)
   client = ai.Client("https://api.anthropic.com", provider=ai.CLAUDE, api_key="sk-ant-...")
@@ -434,35 +458,43 @@ Example:
       for tool_result in result["tool_results"]:
           messages.append(tool_result)`).
 
-		// estimate_tokens(request, response) - Estimate token counts for request and response
-		FunctionWithHelp("estimate_tokens", func(ctx context.Context, requestObj object.Object, responseObj object.Object) (object.Object, error) {
+		// estimate_tokens(request, response=None) - Estimate token counts for request and/or response
+		FunctionWithHelp("estimate_tokens", func(ctx context.Context, args ...object.Object) (object.Object, error) {
+			if len(args) < 1 || len(args) > 2 {
+				return nil, fmt.Errorf("estimate_tokens expected 1 or 2 arguments, got %d", len(args))
+			}
+
 			tc := openai.NewTokenCounter()
 
 			// Estimate prompt tokens from request messages
-			requestGo := conversion.ToGo(requestObj)
-			if requestMap, ok := requestGo.(map[string]any); ok {
-				if messagesRaw, ok := requestMap["messages"]; ok {
-					requestGo = messagesRaw
-				}
-			}
-
-			switch req := requestGo.(type) {
-			case []any:
-				maps := make([]map[string]any, 0, len(req))
-				for _, item := range req {
-					if m, ok := item.(map[string]any); ok {
-						maps = append(maps, m)
+			requestGo := conversion.ToGo(args[0])
+			if requestGo != nil {
+				if requestMap, ok := requestGo.(map[string]any); ok {
+					if messagesRaw, ok := requestMap["messages"]; ok {
+						requestGo = messagesRaw
 					}
 				}
-				tc.AddPromptTokensFromMaps(maps)
-			case string:
-				tc.AddPromptTokensFromMessages([]ai.Message{{Role: "user", Content: req}})
+
+				switch req := requestGo.(type) {
+				case []any:
+					maps := make([]map[string]any, 0, len(req))
+					for _, item := range req {
+						if m, ok := item.(map[string]any); ok {
+							maps = append(maps, m)
+						}
+					}
+					tc.AddPromptTokensFromMaps(maps)
+				case string:
+					tc.AddPromptTokensFromMessages([]ai.Message{{Role: "user", Content: req}})
+				}
 			}
 
 			// Estimate completion tokens from response
-			responseGo := conversion.ToGo(responseObj)
-			if responseMap, ok := responseGo.(map[string]any); ok {
-				tc.AddCompletionTokensFromResponseMap(responseMap)
+			if len(args) == 2 {
+				responseGo := conversion.ToGo(args[1])
+				if responseMap, ok := responseGo.(map[string]any); ok {
+					tc.AddCompletionTokensFromResponseMap(responseMap)
+				}
 			}
 
 			usage := tc.GetUsage()
@@ -471,18 +503,20 @@ Example:
 				"completion_tokens": usage.CompletionTokens,
 				"total_tokens":      usage.TotalTokens,
 			}), nil
-		}, `estimate_tokens(request, response) - Estimate token counts for messages and response
+		}, `estimate_tokens(request, response=None) - Estimate token counts for messages and/or response
 
-	Estimates the number of tokens in the request messages and response using
+	Estimates the number of tokens in the request messages and/or response using
 	a character-based heuristic (~4 characters per token). This provides a fast,
 	reproducible approximation useful for cost estimation and context window management.
 
 	Parameters:
-	  request (str, list, or dict): The messages sent to the AI. Can be:
+	  request (str, list, dict, or None): The messages sent to the AI. Can be:
 	    - A string (user message)
 	    - A list of message dicts with "role" and "content" keys
 	    - A completion request dict with a "messages" key
-	  response (dict): The completion response from client.completion() or client.response_create()
+	    - None to estimate only response tokens
+	  response (dict or None, optional): The completion response from client.completion()
+	    or client.response_create(). Use None or omit it to estimate only request tokens.
 
 	Returns:
 	  dict: Token usage estimates with keys:
@@ -496,6 +530,14 @@ Example:
 	  response = client.completion("gpt-4", messages)
 	  usage = ai.estimate_tokens(messages, response)
 	  print(f"Prompt: {usage.prompt_tokens}, Completion: {usage.completion_tokens}")
+
+	  # Estimate a request before sending it
+	  usage = ai.estimate_tokens(messages)
+	  print(f"Prompt: {usage.prompt_tokens}")
+
+	  # Estimate only a response
+	  usage = ai.estimate_tokens(None, response)
+	  print(f"Completion: {usage.completion_tokens}")
 
 	  # Also works with string shorthand
 	  response = client.completion("gpt-4", "What is 2+2?")
