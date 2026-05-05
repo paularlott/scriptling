@@ -31,7 +31,7 @@ Guidelines:
 """
 
 class Agent:
-    def __init__(self, client, tools=None, system_prompt="", model="", memory=None, max_tokens=32000, compaction_threshold=80, request_timeout=300):
+    def __init__(self, client, tools=None, system_prompt="", model="", memory=None, max_tokens=32000, compaction_threshold=80, request_timeout=300, extra_body=None):
         self.client = client
         self.system_prompt = system_prompt
         self.model = model
@@ -40,6 +40,7 @@ class Agent:
         self.max_tokens = max_tokens
         self.compaction_threshold = compaction_threshold
         self.request_timeout = request_timeout
+        self.extra_body = extra_body
 
         # Wire memory tools and augment system prompt if a memory object was provided
         if memory is not None:
@@ -85,6 +86,8 @@ class Agent:
             kwargs["tools"] = self.tool_schemas
         if self.request_timeout and self.request_timeout > 0:
             kwargs["timeout"] = self.request_timeout
+        if self.extra_body:
+            kwargs["extra_body"] = self.extra_body
         return kwargs
 
     def _field(self, value, name, default=None):
