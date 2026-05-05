@@ -50,6 +50,17 @@ func joinGroup(addr string, port int) (*multicastGroup, error) {
 	return g, nil
 }
 
+func skipIfNoMulticastRoute(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		return
+	}
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "no route to host") || strings.Contains(msg, "network is unreachable") {
+		t.Skipf("multicast route unavailable in this environment: %v", err)
+	}
+}
+
 func TestMulticastLibraryRegistered(t *testing.T) {
 	p := newScriptling()
 
@@ -194,6 +205,7 @@ func TestMulticastSendReceiveString(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	if err := sender.send([]byte("hello multicast")); err != nil {
+		skipIfNoMulticastRoute(t, err)
 		t.Fatalf("send failed: %v", err)
 	}
 
@@ -241,6 +253,7 @@ func TestMulticastSendReceiveJSON(t *testing.T) {
 
 	time.Sleep(20 * time.Millisecond)
 	if err := sender.send(payload); err != nil {
+		skipIfNoMulticastRoute(t, err)
 		t.Fatalf("send failed: %v", err)
 	}
 	wg.Wait()
@@ -292,6 +305,7 @@ listener.close()
 msg["data"] if msg else ""
 `)
 	if err != nil {
+		skipIfNoMulticastRoute(t, err)
 		t.Fatalf("script error: %v", err)
 	}
 	str, ok := result.(*object.String)

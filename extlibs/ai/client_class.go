@@ -47,6 +47,7 @@ Parameters:
   temperature (float, optional): Sampling temperature (0.0-2.0)
   top_p (float, optional): Nucleus sampling threshold (0.0-1.0)
   max_tokens (int, optional): Maximum tokens to generate
+  extra_body (dict, optional): Provider-specific fields to merge into the request body
   timeout (int, optional): Request timeout in seconds
 
 Returns:
@@ -83,6 +84,7 @@ Parameters:
   temperature (float, optional): Sampling temperature (0.0-2.0)
   top_p (float, optional): Nucleus sampling threshold (0.0-1.0)
   max_tokens (int, optional): Maximum tokens to generate
+  extra_body (dict, optional): Provider-specific fields to merge into the request body
   timeout (int, optional): Overall request timeout in seconds
 
 Returns:
@@ -407,6 +409,22 @@ func chatCompletionResponseToGoMap(resp *ai.ChatCompletionResponse) map[string]a
 	return result
 }
 
+func extraBodyFromKwargs(kwargs object.Kwargs, method string) (map[string]any, *object.Error) {
+	if !kwargs.Has("extra_body") {
+		return nil, nil
+	}
+	extraBodyObj := kwargs.Get("extra_body")
+	if extraBodyObj == nil || extraBodyObj.Type() == object.NULL_OBJ {
+		return nil, nil
+	}
+	extraBodyGo := conversion.ToGo(extraBodyObj)
+	extraBody, ok := extraBodyGo.(map[string]any)
+	if !ok {
+		return nil, &object.Error{Message: method + ": extra_body must be a dict"}
+	}
+	return extraBody, nil
+}
+
 // completion method implementation
 func completionMethod(self *object.Instance, ctx context.Context, kwargs object.Kwargs, model string, messages any) object.Object {
 	// Validate input and handle string shorthand BEFORE client check
@@ -583,6 +601,11 @@ func completionMethod(self *object.Instance, ctx context.Context, kwargs object.
 		Model:    model,
 		Messages: openaiMessages,
 	}
+	extraBody, extraBodyErr := extraBodyFromKwargs(kwargs, "chat")
+	if extraBodyErr != nil {
+		return extraBodyErr
+	}
+	req.ExtraBody = extraBody
 
 	// Handle optional parameters (override client defaults)
 	if kwargs.Has("temperature") {
@@ -1394,6 +1417,11 @@ func completionStreamMethod(self *object.Instance, ctx context.Context, kwargs o
 		Model:    model,
 		Messages: openaiMessages,
 	}
+	extraBody, extraBodyErr := extraBodyFromKwargs(kwargs, "completion_stream")
+	if extraBodyErr != nil {
+		return extraBodyErr
+	}
+	streamReq.ExtraBody = extraBody
 
 	// Handle optional parameters (override client defaults)
 	if kwargs.Has("temperature") {
