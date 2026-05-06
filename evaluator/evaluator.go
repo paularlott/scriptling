@@ -1751,167 +1751,6 @@ func applyBuiltinFast(ctx context.Context, node *ast.CallExpression, env *object
 //     envFn holds the resolved value so the caller can skip a redundant lookup.
 //   - ok=false, envFn==nil: not applicable, caller should use normal resolution.
 
-func fastLenBuiltin(ctx context.Context, env *object.Environment, arg object.Object) object.Object {
-	switch v := arg.(type) {
-	case *object.String:
-		if isASCII(v.Value) {
-			return object.NewInteger(int64(len(v.Value)))
-		}
-		return object.NewInteger(int64(len([]rune(v.Value))))
-	case *object.List:
-		return object.NewInteger(int64(len(v.Elements)))
-	case *object.Dict:
-		return object.NewInteger(int64(len(v.Pairs)))
-	case *object.Tuple:
-		return object.NewInteger(int64(len(v.Elements)))
-	case *object.DictKeys:
-		return object.NewInteger(int64(len(v.Dict.Pairs)))
-	case *object.DictValues:
-		return object.NewInteger(int64(len(v.Dict.Pairs)))
-	case *object.DictItems:
-		return object.NewInteger(int64(len(v.Dict.Pairs)))
-	case *object.Set:
-		return object.NewInteger(int64(len(v.Elements)))
-	case *object.FloatArray:
-		if v.Is2D() {
-			return object.NewInteger(int64(v.Rows()))
-		}
-		return object.NewInteger(int64(len(v.Data)))
-	case *object.Instance:
-		if result := callDunderMethodFn(ctx, v, "__len__", nil, env); result != nil {
-			return result
-		}
-		return errors.NewTypeError("object with __len__", "INSTANCE")
-	default:
-		return errors.NewTypeError("STRING, LIST, DICT, TUPLE, SET, or VIEW", arg.Type().String())
-	}
-}
-
-func fastTypeBuiltin(obj object.Object) object.Object {
-	if instance, ok := obj.(*object.Instance); ok {
-		return &object.String{Value: instance.Class.Name}
-	}
-	return &object.String{Value: obj.Type().String()}
-}
-
-func fastStrBuiltin(ctx context.Context, env *object.Environment, arg object.Object) object.Object {
-	if exc, ok := arg.(*object.Exception); ok {
-		return &object.String{Value: exc.Message}
-	}
-	if inst, ok := arg.(*object.Instance); ok {
-		if result := callDunderMethodFn(ctx, inst, "__str__", nil, env); result != nil {
-			return result
-		}
-	}
-	if fa, ok := arg.(*object.FloatArray); ok {
-		return &object.String{Value: fa.PrettyPrint()}
-	}
-	return &object.String{Value: arg.Inspect()}
-}
-
-func fastIntBuiltin(first object.Object, second object.Object) object.Object {
-	base := 10
-	if second != nil {
-		b, ok := second.(*object.Integer)
-		if !ok {
-			return errors.NewTypeError("INTEGER", second.Type().String())
-		}
-		base = int(b.Value)
-		if base < 2 || base > 36 {
-			return errors.NewError("int() base must be >= 2 and <= 36")
-		}
-	}
-
-	switch arg := first.(type) {
-	case *object.Integer:
-		return arg
-	case *object.Float:
-		if second != nil {
-			return errors.NewTypeError("STRING", arg.Type().String())
-		}
-		return object.NewInteger(int64(arg.Value))
-	case *object.String:
-		s := strings.TrimSpace(arg.Value)
-		if second != nil {
-			switch {
-			case base == 16 && (strings.HasPrefix(s, "0x") || strings.HasPrefix(s, "0X")):
-				s = s[2:]
-			case base == 2 && (strings.HasPrefix(s, "0b") || strings.HasPrefix(s, "0B")):
-				s = s[2:]
-			case base == 8 && (strings.HasPrefix(s, "0o") || strings.HasPrefix(s, "0O")):
-				s = s[2:]
-			}
-		}
-		val, err := strconv.ParseInt(s, base, 64)
-		if err != nil {
-			return errors.NewError("cannot convert %q to int with base %d", arg.Value, base)
-		}
-		return object.NewInteger(val)
-	default:
-		return errors.NewTypeError("INTEGER, FLOAT, or STRING", arg.Type().String())
-	}
-}
-
-func fastFloatBuiltin(arg object.Object) object.Object {
-	switch v := arg.(type) {
-	case *object.Float:
-		return v
-	case *object.Integer:
-		return &object.Float{Value: float64(v.Value)}
-	case *object.String:
-		var val float64
-		_, err := fmt.Sscanf(v.Value, "%f", &val)
-		if err != nil {
-			return errors.NewError("cannot convert %s to float", v.Value)
-		}
-		return &object.Float{Value: val}
-	default:
-		return errors.NewTypeError("INTEGER, FLOAT, or STRING", arg.Type().String())
-	}
-}
-
-func fastRangeBuiltin(args []object.Object) object.Object {
-	var start, stop, step int64
-	var errObj object.Object
-	switch len(args) {
-	case 1:
-		stop, errObj = args[0].AsInt()
-		if errObj != nil {
-			return errors.ParameterError("stop", errObj)
-		}
-		step = 1
-	case 2:
-		start, errObj = args[0].AsInt()
-		if errObj != nil {
-			return errors.ParameterError("start", errObj)
-		}
-		stop, errObj = args[1].AsInt()
-		if errObj != nil {
-			return errors.ParameterError("stop", errObj)
-		}
-		step = 1
-	case 3:
-		start, errObj = args[0].AsInt()
-		if errObj != nil {
-			return errors.ParameterError("start", errObj)
-		}
-		stop, errObj = args[1].AsInt()
-		if errObj != nil {
-			return errors.ParameterError("stop", errObj)
-		}
-		step, errObj = args[2].AsInt()
-		if errObj != nil {
-			return errors.ParameterError("step", errObj)
-		}
-		if step == 0 {
-			return errors.NewError("range step cannot be zero")
-		}
-	default:
-		return errors.NewError("range() takes 1-3 arguments (%d given)", len(args))
-	}
-	return object.NewRangeIterator(start, stop, step)
-}
-
 func createInstance(ctx context.Context, class *object.Class, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
 	instance := &object.Instance{
 		Class:  class,
@@ -4138,8 +3977,8 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 	if iter != nil {
 		cc := newContextChecker(ctx)
 		for {
-			// Check context frequently in loops for responsiveness
-			if err := cc.checkAlways(); err != nil {
+			// Check context periodically in loops for responsiveness
+			if err := cc.check(); err != nil {
 				return err
 			}
 
@@ -4152,7 +3991,7 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 				return errors.NewError("%s", err.Error())
 			}
 
-			result = evalWithContext(ctx, fs.Body, env)
+			result = evalBlockStatementWithContext(ctx, fs.Body, env)
 			if result != nil {
 				switch result.Type() {
 				case object.ERROR_OBJ, object.RETURN_OBJ:
@@ -4184,7 +4023,7 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 				cols := o.Cols()
 				cc := newContextChecker(ctx)
 				for i := 0; i < rows; i++ {
-					if err := cc.checkAlways(); err != nil {
+					if err := cc.check(); err != nil {
 						return err
 					}
 					off := i * cols
@@ -4194,7 +4033,7 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 					if err := setForVariables(fs.Variables, element, env); err != nil {
 						return errors.NewError("%s", err.Error())
 					}
-					result = evalWithContext(ctx, fs.Body, env)
+					result = evalBlockStatementWithContext(ctx, fs.Body, env)
 					if result != nil {
 						switch result.Type() {
 						case object.ERROR_OBJ, object.RETURN_OBJ:
@@ -4213,14 +4052,14 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 			}
 			cc := newContextChecker(ctx)
 			for _, v := range o.Data {
-				if err := cc.checkAlways(); err != nil {
+				if err := cc.check(); err != nil {
 					return err
 				}
 				element := &object.Float{Value: v}
 				if err := setForVariables(fs.Variables, element, env); err != nil {
 					return errors.NewError("%s", err.Error())
 				}
-				result = evalWithContext(ctx, fs.Body, env)
+				result = evalBlockStatementWithContext(ctx, fs.Body, env)
 				if result != nil {
 					switch result.Type() {
 					case object.ERROR_OBJ, object.RETURN_OBJ:
@@ -4240,7 +4079,7 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 			// Iterate over string runes lazily to avoid pre-allocating all characters
 			cc := newContextChecker(ctx)
 			for _, char := range o.Value {
-				if err := cc.checkAlways(); err != nil {
+				if err := cc.check(); err != nil {
 					return err
 				}
 
@@ -4249,7 +4088,7 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 					return errors.NewError("%s", err.Error())
 				}
 
-				result = evalWithContext(ctx, fs.Body, env)
+				result = evalBlockStatementWithContext(ctx, fs.Body, env)
 				if result != nil {
 					switch result.Type() {
 					case object.ERROR_OBJ, object.RETURN_OBJ:
@@ -4270,8 +4109,9 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 		}
 
 		// Single loop for all iterable types
+		cc := newContextChecker(ctx)
 		for _, element := range elements {
-			if err := checkContext(ctx); err != nil {
+			if err := cc.check(); err != nil {
 				return err
 			}
 
@@ -4279,7 +4119,7 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 				return errors.NewError("%s", err.Error())
 			}
 
-			result = evalWithContext(ctx, fs.Body, env)
+			result = evalBlockStatementWithContext(ctx, fs.Body, env)
 			if result != nil {
 				switch result.Type() {
 				case object.ERROR_OBJ, object.RETURN_OBJ:
@@ -4298,7 +4138,7 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 
 forDone:
 	if !broke && fs.Else != nil {
-		return evalWithContext(ctx, fs.Else, env)
+		return evalBlockStatementWithContext(ctx, fs.Else, env)
 	}
 	return result
 }
