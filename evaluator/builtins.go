@@ -183,6 +183,11 @@ Examples:
 				return object.NewInteger(int64(len(arg.Dict.Pairs)))
 			case *object.Set:
 				return object.NewInteger(int64(len(arg.Elements)))
+			case *object.FloatArray:
+				if arg.Is2D() {
+					return object.NewInteger(int64(arg.Rows()))
+				}
+				return object.NewInteger(int64(len(arg.Data)))
 			case *object.Instance:
 				// Call __len__ dunder method if defined
 				env := GetEnvFromContext(ctx)
@@ -1170,6 +1175,23 @@ Use list(reversed(...)) to get a list.`,
 
 With no argument, returns an empty list.
 Otherwise, returns a list containing the items of the iterable.`,
+	},
+	"append": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
+			}
+			list, ok := args[0].(*object.List)
+			if !ok {
+				return errors.NewTypeError("list", args[0].Type().String())
+			}
+			list.Elements = append(list.Elements, args[1])
+			return NULL
+		},
+		HelpText: `append(list, value) - Append a value to a list
+
+	Adds the value to the end of the list in place.
+	Returns None.`,
 	},
 	"dict": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
