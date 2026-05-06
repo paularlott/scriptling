@@ -1336,7 +1336,23 @@ func evalWhileStatementWithContext(ctx context.Context, ws *ast.WhileStatement, 
 }
 
 func evalIdentifier(node *ast.Identifier, env *object.Environment) object.Object {
+	// Fast path: use cached slot index to skip the slotIndex map lookup.
+	// SlotCache encoding: 0=uncached, -1=not a local slot, >0=slot index+1.
+	if cached := node.SlotCache.Load(); cached > 0 {
+		if val, ok := env.GetSlotByIndex(int(cached - 1)); ok {
+			return val
+		}
+		// Cache miss (wrong scope), fall through to full lookup.
+		node.SlotCache.Store(0)
+	}
+
 	if val, ok := env.Get(node.Value); ok {
+		// Cache the slot index if this variable is in the local scope's slots.
+		if idx, ok := env.GetSlotIndex(node.Value); ok {
+			node.SlotCache.Store(int32(idx + 1))
+		} else if node.SlotCache.Load() == 0 {
+			node.SlotCache.Store(-1) // not a local slot
+		}
 		return val
 	}
 	if builtin, ok := builtins[node.Value]; ok {
@@ -1514,14 +1530,23 @@ func unpackArgsFromIterable(argsVal object.Object) ([]object.Object, object.Obje
 }
 
 func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *object.Environment) object.Object {
-	if fastResult, ok := tryEvalFastBuiltinCall(ctx, node, env); ok {
+	// Try fast builtin path; if the function was found in the environment
+	// (shadowed), resolvedFn holds the value so we skip a redundant lookup.
+	fastResult, resolvedFn, isFastBuiltin := tryEvalFastBuiltinCall(ctx, node, env)
+	if isFastBuiltin {
 		return fastResult
 	}
 
-	function := evalNode(ctx, node.Function, env)
-	if object.IsError(function) {
-		return function
+	var function object.Object
+	if resolvedFn != nil {
+		function = resolvedFn
+	} else {
+		function = evalNode(ctx, node.Function, env)
+		if object.IsError(function) {
+			return function
+		}
 	}
+
 	args := evalExpressionsWithContext(ctx, node.Arguments, env)
 	if len(args) == 1 && object.IsError(args[0]) {
 		return args[0]
@@ -1574,105 +1599,111 @@ func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *obje
 	return applyFunctionWithContext(ctx, function, args, keywords, env)
 }
 
-func tryEvalFastBuiltinCall(ctx context.Context, node *ast.CallExpression, env *object.Environment) (object.Object, bool) {
+// tryEvalFastBuiltinCall handles fast-path builtin calls (len, type, str, etc.).
+// Returns (result, envFn, ok):
+//   - ok=true:   result is the builtin's return value, envFn is nil.
+//   - ok=false, envFn!=nil: name was found in the environment (not a builtin),
+//     envFn holds the resolved value so the caller can skip a redundant lookup.
+//   - ok=false, envFn==nil: not applicable, caller should use normal resolution.
+func tryEvalFastBuiltinCall(ctx context.Context, node *ast.CallExpression, env *object.Environment) (result object.Object, envFn object.Object, ok bool) {
 	if len(node.Keywords) > 0 || node.KwargsUnpack != nil || len(node.ArgsUnpack) > 0 {
-		return nil, false
+		return nil, nil, false
 	}
 
 	ident, ok := node.Function.(*ast.Identifier)
 	if !ok {
-		return nil, false
+		return nil, nil, false
 	}
-	if _, shadowed := env.Get(ident.Value); shadowed {
-		return nil, false
+	if val, found := env.Get(ident.Value); found {
+		return nil, val, false
 	}
 
 	switch ident.Value {
 	case "len":
 		if len(node.Arguments) != 1 {
-			return nil, false
+			return nil, nil, false
 		}
 		arg := evalNode(ctx, node.Arguments[0], env)
 		if object.IsError(arg) {
-			return arg, true
+			return arg, nil, true
 		}
-		return fastLenBuiltin(ctx, env, arg), true
+		return fastLenBuiltin(ctx, env, arg), nil, true
 	case "type":
 		if len(node.Arguments) != 1 {
-			return nil, false
+			return nil, nil, false
 		}
 		arg := evalNode(ctx, node.Arguments[0], env)
 		if object.IsError(arg) {
-			return arg, true
+			return arg, nil, true
 		}
-		return fastTypeBuiltin(arg), true
+		return fastTypeBuiltin(arg), nil, true
 	case "str":
 		if len(node.Arguments) != 1 {
-			return nil, false
+			return nil, nil, false
 		}
 		arg := evalNode(ctx, node.Arguments[0], env)
 		if object.IsError(arg) {
-			return arg, true
+			return arg, nil, true
 		}
-		return fastStrBuiltin(ctx, env, arg), true
+		return fastStrBuiltin(ctx, env, arg), nil, true
 	case "int":
 		if len(node.Arguments) < 1 || len(node.Arguments) > 2 {
-			return nil, false
+			return nil, nil, false
 		}
 		first := evalNode(ctx, node.Arguments[0], env)
 		if object.IsError(first) {
-			return first, true
+			return first, nil, true
 		}
 		if len(node.Arguments) == 1 {
-			return fastIntBuiltin(first, nil), true
+			return fastIntBuiltin(first, nil), nil, true
 		}
 		second := evalNode(ctx, node.Arguments[1], env)
 		if object.IsError(second) {
-			return second, true
+			return second, nil, true
 		}
-		return fastIntBuiltin(first, second), true
+		return fastIntBuiltin(first, second), nil, true
 	case "float":
 		if len(node.Arguments) != 1 {
-			return nil, false
+			return nil, nil, false
 		}
 		arg := evalNode(ctx, node.Arguments[0], env)
 		if object.IsError(arg) {
-			return arg, true
+			return arg, nil, true
 		}
-		return fastFloatBuiltin(arg), true
+		return fastFloatBuiltin(arg), nil, true
 	case "range":
 		if len(node.Arguments) < 1 || len(node.Arguments) > 3 {
-			return nil, false
+			return nil, nil, false
 		}
 		args := make([]object.Object, len(node.Arguments))
 		for i, expr := range node.Arguments {
 			arg := evalNode(ctx, expr, env)
 			if object.IsError(arg) {
-				return arg, true
+				return arg, nil, true
 			}
 			args[i] = arg
 		}
-		return fastRangeBuiltin(args), true
+		return fastRangeBuiltin(args), nil, true
 	case "append":
 		if len(node.Arguments) != 2 {
-			return nil, false
+			return nil, nil, false
 		}
 		listObj := evalNode(ctx, node.Arguments[0], env)
 		if object.IsError(listObj) {
-			return listObj, true
+			return listObj, nil, true
 		}
 		list, ok := listObj.(*object.List)
 		if !ok {
-			return nil, false
+			return nil, nil, false
 		}
 		value := evalNode(ctx, node.Arguments[1], env)
 		if object.IsError(value) {
-			return value, true
+			return value, nil, true
 		}
 		list.Elements = append(list.Elements, value)
-		return NULL, true
+		return NULL, nil, true
 	default:
-		return nil, false
+		return nil, nil, false
 	}
 }
 

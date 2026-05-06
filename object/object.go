@@ -57,6 +57,12 @@ func DictKey(obj Object) string {
 	}
 }
 
+// DictStringKey returns the canonical dict key for a string key without
+// requiring a temporary String object allocation.
+func DictStringKey(name string) string {
+	return "s:" + name
+}
+
 // IsHashable reports whether obj can be used as a set element or dict key.
 // Matches Python semantics: int, float, bool, string, None, and tuples of
 // hashable elements are hashable; lists, dicts, sets, and instances are not
@@ -792,6 +798,29 @@ func (e *Environment) Get(name string) (Object, bool) {
 	return nil, false
 }
 
+// GetSlotByIndex returns the value at the given slot index.
+// Returns (value, true) if the slot has a value, (nil, false) otherwise.
+func (e *Environment) GetSlotByIndex(idx int) (Object, bool) {
+	if idx >= 0 && idx < len(e.slots) && e.slots[idx] != nil {
+		return e.slots[idx], true
+	}
+	return nil, false
+}
+
+// GetSlotIndex returns the slot index for the given variable name in this
+// environment's local scope only. Returns (index, true) if found, (0, false)
+// if not a local slot.
+func (e *Environment) GetSlotIndex(name string) (int, bool) {
+	if e.slotIndex == nil {
+		return 0, false
+	}
+	idx, ok := e.slotIndex[name]
+	if ok && idx >= 0 && idx < len(e.slots) {
+		return idx, true
+	}
+	return 0, false
+}
+
 func (e *Environment) Set(name string, val Object) Object {
 	// Check if this variable is marked as global
 	if e.globals != nil && e.globals[name] {
@@ -1257,24 +1286,24 @@ func (d *Dict) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
 
 // GetByString retrieves a pair using a string key (convenience for attribute-style access).
 func (d *Dict) GetByString(name string) (DictPair, bool) {
-	pair, ok := d.Pairs[DictKey(&String{Value: name})]
+	pair, ok := d.Pairs[DictStringKey(name)]
 	return pair, ok
 }
 
 // SetByString sets a pair using a string key (convenience for attribute-style access).
 func (d *Dict) SetByString(name string, value Object) {
-	d.Pairs[DictKey(&String{Value: name})] = DictPair{Key: &String{Value: name}, Value: value}
+	d.Pairs[DictStringKey(name)] = DictPair{Key: &String{Value: name}, Value: value}
 }
 
 // HasByString checks if a string key exists in the dict.
 func (d *Dict) HasByString(name string) bool {
-	_, ok := d.Pairs[DictKey(&String{Value: name})]
+	_, ok := d.Pairs[DictStringKey(name)]
 	return ok
 }
 
 // DeleteByString deletes a string key from the dict. Returns true if key existed.
 func (d *Dict) DeleteByString(name string) bool {
-	k := DictKey(&String{Value: name})
+	k := DictStringKey(name)
 	_, ok := d.Pairs[k]
 	if ok {
 		delete(d.Pairs, k)

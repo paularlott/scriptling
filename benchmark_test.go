@@ -172,6 +172,14 @@ func BenchmarkRuntime_DictKeys(b *testing.B) {
 	}
 }
 
+func BenchmarkRuntime_DictGetMethod(b *testing.B) {
+	p := New()
+	p.Eval(`x = {"a": 1, "b": 2, "c": 3}`)
+	for i := 0; i < b.N; i++ {
+		p.Eval(`y = x.get("b", 0)`)
+	}
+}
+
 // === RUNTIME - Control Flow ===
 func BenchmarkRuntime_IfStatement(b *testing.B) {
 	p := New()
