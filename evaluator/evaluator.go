@@ -6,7 +6,6 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 
 	"github.com/paularlott/scriptling/ast"
@@ -19,27 +18,6 @@ var (
 	TRUE  = object.NewBoolean(true)
 	FALSE = object.NewBoolean(false)
 )
-
-// Pool for strings.Builder to reduce allocations in string operations
-var builderPool = sync.Pool{
-	New: func() any {
-		b := &strings.Builder{}
-		// Pre-allocate a reasonable capacity to reduce reallocations
-		b.Grow(64)
-		return b
-	},
-}
-
-// getStringBuilder retrieves a builder from the pool
-func getStringBuilder() *strings.Builder {
-	return builderPool.Get().(*strings.Builder)
-}
-
-// putStringBuilder returns a builder to the pool after resetting it
-func putStringBuilder(b *strings.Builder) {
-	b.Reset()
-	builderPool.Put(b)
-}
 
 // envContextKey is used to store environment in context
 const envContextKey = "scriptling-env"
@@ -1014,24 +992,7 @@ func evalStringInfixExpression(operator string, leftVal, rightVal string) object
 		if len(rightVal) == 0 {
 			return &object.String{Value: leftVal}
 		}
-		// For small strings, use direct builder allocation (faster than pooling)
-		// For large strings, use pooling to reduce allocations
-		totalLen := len(leftVal) + len(rightVal)
-		if totalLen < 128 { // Threshold for small strings
-			var builder strings.Builder
-			builder.Grow(totalLen)
-			builder.WriteString(leftVal)
-			builder.WriteString(rightVal)
-			return &object.String{Value: builder.String()}
-		}
-		// Use pooled strings.Builder for larger concatenations
-		builder := getStringBuilder()
-		builder.Grow(totalLen)
-		builder.WriteString(leftVal)
-		builder.WriteString(rightVal)
-		result := builder.String()
-		putStringBuilder(builder)
-		return &object.String{Value: result}
+		return &object.String{Value: leftVal + rightVal}
 	case "==":
 		return nativeBoolToBooleanObject(leftVal == rightVal)
 	case "!=":
