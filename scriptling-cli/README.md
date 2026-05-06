@@ -370,15 +370,21 @@ description = "Number of times to repeat the greeting"
 
 **Parameter Types:**
 
-| Type | Aliases | Description |
-|------|---------|-------------|
-| `string` | | Text values |
-| `int` | `integer` | Integer numbers |
-| `float` | `number` | Floating point numbers |
-| `bool` | `boolean` | True/false values |
-| `array:string` | | Array of strings |
-| `array:number` | `array:int`, `array:integer`, `array:float` | Array of numbers |
-| `array:bool` | `array:boolean` | Array of booleans |
+Each type emits a valid JSON Schema type in the tool definition sent to the LLM.
+
+| Type | Aliases | JSON Schema emitted | Description |
+|------|---------|---------------------|-------------|
+| `string` | | `string` | Text values |
+| `integer` | `int` | `integer` | Whole numbers |
+| `number` | `float` | `number` | Integer or float |
+| `boolean` | `bool` | `boolean` | True/false values |
+| `array:string` | | `array` of `string` | Array of strings |
+| `array:integer` | `array:int` | `array` of `integer` | Array of whole numbers |
+| `array:number` | `array:float` | `array` of `number` | Array of numbers |
+| `array:boolean` | `array:bool` | `array` of `boolean` | Array of booleans |
+
+Unknown type strings cause the tool to fail to register at server startup with
+a clear error message.
 
 **Parameter Fields:**
 

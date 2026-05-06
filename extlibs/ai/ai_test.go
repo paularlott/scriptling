@@ -947,6 +947,72 @@ response.choices[0].message.content
 	}
 }
 
+func TestResponseCreateExtraBodyMerged(t *testing.T) {
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("failed reading request body: %v", err)
+		}
+		if err := json.Unmarshal(bodyBytes, &gotBody); err != nil {
+			t.Fatalf("failed decoding request body: %v\n%s", err, string(bodyBytes))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":      "chatcmpl-test",
+			"object":  "chat.completion",
+			"created": 1,
+			"model":   "test-model",
+			"choices": []map[string]any{{
+				"index":         0,
+				"finish_reason": "stop",
+				"message": map[string]any{
+					"role":    "assistant",
+					"content": "ok",
+				},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	p := scriptlib.New()
+	stdlib.RegisterAll(p)
+	Register(p)
+	if err := p.SetVar("server_url", server.URL); err != nil {
+		t.Fatalf("SetVar(server_url): %v", err)
+	}
+
+	result, err := p.Eval(`
+import scriptling.ai as ai
+
+client = ai.Client(server_url + "/v1", provider=ai.OPENAI)
+response = client.response_create("test-model", "hello", extra_body={
+    "thinking": {"type": "enabled", "clear_thinking": False}
+})
+response.output[0].content[0].text
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	str, ok := result.(*object.String)
+	if !ok {
+		t.Fatalf("expected String, got %T", result)
+	}
+	if str.Value != "ok" {
+		t.Fatalf("expected response text ok, got %q", str.Value)
+	}
+	if _, ok := gotBody["extra_body"]; ok {
+		t.Fatalf("extra_body should not be sent literally: %#v", gotBody)
+	}
+	thinking, ok := gotBody["thinking"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected merged thinking body, got %#v", gotBody)
+	}
+	if thinking["type"] != "enabled" || thinking["clear_thinking"] != false {
+		t.Fatalf("unexpected thinking body: %#v", thinking)
+	}
+}
+
 func TestExtractToolCallsFromGo(t *testing.T) {
 	response, err := toolArgsMockClient{}.ChatCompletion(context.Background(), mcpai.ChatCompletionRequest{})
 	if err != nil {

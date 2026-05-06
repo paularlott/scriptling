@@ -1991,6 +1991,15 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 	numParams := len(fp.parameters)
 	numArgs := len(args)
 
+	// Fast path for the common case: exact positional arguments with no defaults,
+	// variadics, kwargs, or keyword arguments.
+	if len(keywords) == 0 && fp.variadic == nil && fp.kwargs == nil && len(fp.defaultValues) == 0 && numArgs == numParams {
+		for paramIdx := 0; paramIdx < numParams; paramIdx++ {
+			env.Set(fp.parameters[paramIdx].Value, args[paramIdx])
+		}
+		return env, nil
+	}
+
 	// Set provided positional arguments
 	for paramIdx := 0; paramIdx < numParams && paramIdx < numArgs; paramIdx++ {
 		env.Set(fp.parameters[paramIdx].Value, args[paramIdx])

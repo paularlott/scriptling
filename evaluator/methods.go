@@ -20,6 +20,18 @@ func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression
 		return obj
 	}
 
+	// Fast path for the most common string method calls in hot loops.
+	if len(mce.Arguments) == 0 && len(mce.Keywords) == 0 && len(mce.ArgsUnpack) == 0 && mce.KwargsUnpack == nil {
+		if str, ok := obj.(*object.String); ok {
+			switch mce.Method.Value {
+			case "upper":
+				return &object.String{Value: fastStringUpper(str.Value)}
+			case "lower":
+				return &object.String{Value: fastStringLower(str.Value)}
+			}
+		}
+	}
+
 	args := evalExpressionsWithContext(ctx, mce.Arguments, env)
 	if len(args) == 1 && object.IsError(args[0]) {
 		return args[0]
@@ -74,6 +86,66 @@ func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression
 	}
 
 	return callStringMethodWithKeywords(ctx, obj, mce.Method.Value, args, keywords, env)
+}
+
+func fastStringUpper(s string) string {
+	// First pass: check for any non-ASCII byte. If present, defer to the
+	// Unicode-aware implementation so characters like "é" are uppercased
+	// correctly even when they appear after an ASCII lowercase letter.
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return strings.ToUpper(s)
+		}
+	}
+	// Pure ASCII fast path.
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if 'a' <= c && c <= 'z' {
+			buf := make([]byte, len(s))
+			copy(buf, s[:i])
+			buf[i] = c - ('a' - 'A')
+			for j := i + 1; j < len(s); j++ {
+				c = s[j]
+				if 'a' <= c && c <= 'z' {
+					buf[j] = c - ('a' - 'A')
+				} else {
+					buf[j] = c
+				}
+			}
+			return string(buf)
+		}
+	}
+	return s
+}
+
+func fastStringLower(s string) string {
+	// First pass: check for any non-ASCII byte. If present, defer to the
+	// Unicode-aware implementation so characters like "É" are lowercased
+	// correctly even when they appear after an ASCII uppercase letter.
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return strings.ToLower(s)
+		}
+	}
+	// Pure ASCII fast path.
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if 'A' <= c && c <= 'Z' {
+			buf := make([]byte, len(s))
+			copy(buf, s[:i])
+			buf[i] = c + ('a' - 'A')
+			for j := i + 1; j < len(s); j++ {
+				c = s[j]
+				if 'A' <= c && c <= 'Z' {
+					buf[j] = c + ('a' - 'A')
+				} else {
+					buf[j] = c
+				}
+			}
+			return string(buf)
+		}
+	}
+	return s
 }
 
 func callStringMethodWithKeywords(ctx context.Context, obj object.Object, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
@@ -647,12 +719,12 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
 		}
-		return &object.String{Value: strings.ToUpper(str.Value)}
+		return &object.String{Value: fastStringUpper(str.Value)}
 	case "lower":
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
 		}
-		return &object.String{Value: strings.ToLower(str.Value)}
+		return &object.String{Value: fastStringLower(str.Value)}
 	case "split":
 		if err := errors.MaxArgs(args, 2); err != nil {
 			return err

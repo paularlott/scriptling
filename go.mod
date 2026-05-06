@@ -10,7 +10,7 @@ require (
 	github.com/paularlott/cli v0.8.4
 	github.com/paularlott/gossip v0.12.4
 	github.com/paularlott/logger v0.3.0
-	github.com/paularlott/mcp v0.15.7
+	github.com/paularlott/mcp v0.16.0
 	github.com/paularlott/snapshotkv v0.3.0
 	github.com/shirou/gopsutil/v3 v3.24.5
 	golang.org/x/net v0.53.0

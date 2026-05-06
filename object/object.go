@@ -747,7 +747,6 @@ func NewEnvironment() *Environment {
 
 func NewEnclosedEnvironment(outer *Environment) *Environment {
 	env := &Environment{
-		store: make(map[string]Object, 4),
 		outer: outer,
 	}
 	if outer != nil {
@@ -809,6 +808,9 @@ func (e *Environment) Set(name string, val Object) Object {
 		delete(e.importedBindings, name)
 		return val
 	}
+	if e.store == nil {
+		e.store = make(map[string]Object, 4)
+	}
 	e.store[name] = val
 	delete(e.importedBindings, name)
 	return val
@@ -826,6 +828,9 @@ func (e *Environment) Delete(name string) {
 // SetGlobal sets a variable in the global (outermost) environment
 func (e *Environment) SetGlobal(name string, val Object) Object {
 	root := e.root
+	if root.store == nil {
+		root.store = make(map[string]Object, 4)
+	}
 	root.store[name] = val
 	delete(root.importedBindings, name)
 	return val
