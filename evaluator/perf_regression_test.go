@@ -74,3 +74,19 @@ demo()
 		t.Fatalf("wrong second value. got=%q want=%q", second.Value, "inner")
 	}
 }
+
+func TestClosureCaptureWorksWhenCallEnvReuseIsDisabled(t *testing.T) {
+	input := `
+def make_adder(x):
+    def add(y):
+        return x + y
+    return add
+
+add_five = make_adder(5)
+result = add_five(3)
+result
+`
+
+	evaluated := testEval(input)
+	testIntegerObject(t, evaluated, 8)
+}
