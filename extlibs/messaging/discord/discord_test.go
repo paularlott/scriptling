@@ -3,7 +3,7 @@ package discord
 import (
 	"testing"
 
-	"github.com/paularlott/scriptling/extlibs/messaging/shared"
+	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -172,11 +172,11 @@ func TestNormalise_CommandParsed(t *testing.T) {
 	}
 }
 
-func TestObjectToNative(t *testing.T) {
+func TestConversionToGo(t *testing.T) {
 	d := &object.Dict{Pairs: make(map[string]object.DictPair)}
 	d.SetByString("label", &object.String{Value: "Click"})
 	d.SetByString("style", object.NewInteger(1))
-	native := shared.ObjectToNative(d)
+	native := conversion.ToGo(d)
 	m, ok := native.(map[string]interface{})
 	if !ok {
 		t.Fatalf("expected map, got %T", native)

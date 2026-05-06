@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/paularlott/scriptling"
+	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/scriptling/scriptling-cli/setup"
@@ -343,7 +344,7 @@ func (s *Server) writeResponse(w http.ResponseWriter, resp *object.Dict) {
 		if strVal, err := bodyObj.Value.AsString(); err == nil {
 			bodyBytes = []byte(strVal)
 		} else {
-			jsonBytes, err := json.Marshal(objectToInterface(bodyObj.Value))
+			jsonBytes, err := json.Marshal(conversion.ToGo(bodyObj.Value))
 			if err != nil {
 				Log.Error("Failed to encode JSON response", "error", err)
 				bodyBytes = []byte(`{"error": "JSON encoding failed"}`)
@@ -358,36 +359,6 @@ func (s *Server) writeResponse(w http.ResponseWriter, resp *object.Dict) {
 
 	w.WriteHeader(int(status))
 	w.Write(bodyBytes)
-}
-
-// objectToInterface converts a scriptling Object to a Go interface{}
-func objectToInterface(obj object.Object) interface{} {
-	switch v := obj.(type) {
-	case *object.String:
-		return v.Value
-	case *object.Integer:
-		return v.Value
-	case *object.Float:
-		return v.Value
-	case *object.Boolean:
-		return v.Value
-	case *object.Null:
-		return nil
-	case *object.List:
-		result := make([]interface{}, len(v.Elements))
-		for i, elem := range v.Elements {
-			result[i] = objectToInterface(elem)
-		}
-		return result
-	case *object.Dict:
-		result := make(map[string]interface{})
-		for _, pair := range v.Pairs {
-			result[pair.StringKey()] = objectToInterface(pair.Value)
-		}
-		return result
-	default:
-		return nil
-	}
 }
 
 // bearerTokenMiddleware creates authentication middleware for all endpoints
