@@ -208,6 +208,14 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		if node.Operator == "and" || node.Operator == "or" {
 			return evalShortCircuitInfixExpression(ctx, node, env)
 		}
+		// String concat chain: flatten a+b+c+... into a single allocation
+		if node.Operator == "+" {
+			if left, ok := node.Left.(*ast.InfixExpression); ok && left.Operator == "+" {
+				if result, ok := tryEvalStringConcatChain(ctx, node, env); ok {
+					return result
+				}
+			}
+		}
 		// Fast path: Identifier op Identifier where both resolve to Integer
 		switch node.Operator {
 		case "+", "-", "*", "//", "%", "<", ">", "<=", ">=", "==", "!=", "&", "|", "^", "<<", ">>":
@@ -981,6 +989,41 @@ func numericFloatValue(obj object.Object) (float64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+func tryEvalStringConcatChain(ctx context.Context, expr *ast.InfixExpression, env *object.Environment) (object.Object, bool) {
+	var parts []string
+	if !collectStringConcatParts(ctx, expr, env, &parts) {
+		return nil, false
+	}
+	total := 0
+	for _, p := range parts {
+		total += len(p)
+	}
+	var b strings.Builder
+	b.Grow(total)
+	for _, p := range parts {
+		b.WriteString(p)
+	}
+	return &object.String{Value: b.String()}, true
+}
+
+func collectStringConcatParts(ctx context.Context, expr ast.Expression, env *object.Environment, parts *[]string) bool {
+	infix, ok := expr.(*ast.InfixExpression)
+	if ok && infix.Operator == "+" {
+		return collectStringConcatParts(ctx, infix.Left, env, parts) &&
+			collectStringConcatParts(ctx, infix.Right, env, parts)
+	}
+	val := evalNode(ctx, expr, env)
+	if object.IsError(val) {
+		return false
+	}
+	s, ok := val.(*object.String)
+	if !ok {
+		return false
+	}
+	*parts = append(*parts, s.Value)
+	return true
 }
 
 func evalStringInfixExpression(operator string, leftVal, rightVal string) object.Object {
@@ -2430,6 +2473,22 @@ func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.Augm
 	newVal := evalNode(ctx, node.Value, env)
 	if object.IsError(newVal) {
 		return newVal
+	}
+
+	// Fast path: string += string, int += int
+	if node.Operator == "+=" {
+		if cur, ok := currentVal.(*object.String); ok {
+			if r, ok := newVal.(*object.String); ok {
+				env.Set(node.Name.Value, &object.String{Value: cur.Value + r.Value})
+				return NULL
+			}
+		}
+		if cur, ok := currentVal.(*object.Integer); ok {
+			if r, ok := newVal.(*object.Integer); ok {
+				env.Set(node.Name.Value, object.NewInteger(cur.Value + r.Value))
+				return NULL
+			}
+		}
 	}
 
 	var operator string
