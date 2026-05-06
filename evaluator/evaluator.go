@@ -992,37 +992,53 @@ func numericFloatValue(obj object.Object) (float64, bool) {
 }
 
 func tryEvalStringConcatChain(ctx context.Context, expr *ast.InfixExpression, env *object.Environment) (object.Object, bool) {
-	var parts []string
-	if !collectStringConcatParts(ctx, expr, env, &parts) {
+	var leaves []ast.Expression
+	if !collectStringConcatLeaves(expr, &leaves) {
 		return nil, false
 	}
+
+	values := make([]object.Object, len(leaves))
+	allStrings := true
 	total := 0
-	for _, p := range parts {
-		total += len(p)
+	for i, leaf := range leaves {
+		val := evalNode(ctx, leaf, env)
+		if object.IsError(val) {
+			return val, true
+		}
+		values[i] = val
+		if s, ok := val.(*object.String); ok {
+			total += len(s.Value)
+		} else {
+			allStrings = false
+		}
 	}
-	var b strings.Builder
-	b.Grow(total)
-	for _, p := range parts {
-		b.WriteString(p)
+
+	if allStrings {
+		var b strings.Builder
+		b.Grow(total)
+		for _, val := range values {
+			b.WriteString(val.(*object.String).Value)
+		}
+		return &object.String{Value: b.String()}, true
 	}
-	return &object.String{Value: b.String()}, true
+
+	result := values[0]
+	for i := 1; i < len(values); i++ {
+		result = evalInfixExpression(ctx, "+", result, values[i], env)
+		if object.IsError(result) {
+			return result, true
+		}
+	}
+	return result, true
 }
 
-func collectStringConcatParts(ctx context.Context, expr ast.Expression, env *object.Environment, parts *[]string) bool {
+func collectStringConcatLeaves(expr ast.Expression, leaves *[]ast.Expression) bool {
 	infix, ok := expr.(*ast.InfixExpression)
 	if ok && infix.Operator == "+" {
-		return collectStringConcatParts(ctx, infix.Left, env, parts) &&
-			collectStringConcatParts(ctx, infix.Right, env, parts)
+		return collectStringConcatLeaves(infix.Left, leaves) &&
+			collectStringConcatLeaves(infix.Right, leaves)
 	}
-	val := evalNode(ctx, expr, env)
-	if object.IsError(val) {
-		return false
-	}
-	s, ok := val.(*object.String)
-	if !ok {
-		return false
-	}
-	*parts = append(*parts, s.Value)
+	*leaves = append(*leaves, expr)
 	return true
 }
 
@@ -1353,7 +1369,9 @@ func evalIdentifier(node *ast.Identifier, env *object.Environment) object.Object
 	if val, ok := env.Get(node.Value); ok {
 		// Cache the slot index if this variable is in the local scope's slots.
 		if idx, ok := env.GetSlotIndex(node.Value); ok {
-			node.SlotCache.Store(int32(idx + 1))
+			if slotVal, slotOK := env.GetSlotByIndex(idx); slotOK && slotVal == val {
+				node.SlotCache.Store(int32(idx + 1))
+			}
 		} else if node.SlotCache.Load() == 0 {
 			node.SlotCache.Store(-1) // not a local slot
 		}
@@ -2485,7 +2503,7 @@ func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.Augm
 		}
 		if cur, ok := currentVal.(*object.Integer); ok {
 			if r, ok := newVal.(*object.Integer); ok {
-				env.Set(node.Name.Value, object.NewInteger(cur.Value + r.Value))
+				env.Set(node.Name.Value, object.NewInteger(cur.Value+r.Value))
 				return NULL
 			}
 		}
