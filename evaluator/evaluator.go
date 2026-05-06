@@ -6,6 +6,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/paularlott/scriptling/ast"
@@ -18,6 +19,25 @@ var (
 	TRUE  = object.NewBoolean(true)
 	FALSE = object.NewBoolean(false)
 )
+
+var returnValuePool sync.Pool
+
+func acquireReturnValue(val object.Object) *object.ReturnValue {
+	if pooled := returnValuePool.Get(); pooled != nil {
+		rv := pooled.(*object.ReturnValue)
+		rv.Value = val
+		return rv
+	}
+	return &object.ReturnValue{Value: val}
+}
+
+func releaseReturnValue(rv *object.ReturnValue) {
+	if rv == nil {
+		return
+	}
+	rv.Value = nil
+	returnValuePool.Put(rv)
+}
 
 // envContextKey is used to store environment in context
 const envContextKey = "scriptling-env"
@@ -261,7 +281,7 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 				return val
 			}
 		}
-		return &object.ReturnValue{Value: val}
+		return acquireReturnValue(val)
 	case *ast.BreakStatement:
 		return object.BREAK
 	case *ast.ContinueStatement:
@@ -401,7 +421,9 @@ func evalProgram(ctx context.Context, program *ast.Program, env *object.Environm
 
 		switch result := result.(type) {
 		case *object.ReturnValue:
-			return result.Value
+			val := result.Value
+			releaseReturnValue(result)
+			return val
 		case *object.Error:
 			if result.Line == 0 {
 				result.Line = statement.Line()
@@ -1385,16 +1407,19 @@ func evalIdentifier(node *ast.Identifier, env *object.Environment) object.Object
 
 func evalFunctionStatement(ctx context.Context, stmt *ast.FunctionStatement, env *object.Environment) object.Object {
 	localSlots, localSlotNames := analyzeFunctionLocals(stmt)
+	paramSlotIndexes := parameterSlotIndexes(stmt.Function.Parameters, localSlots)
 	fn := &object.Function{
-		Name:           stmt.Name.Value,
-		Parameters:     stmt.Function.Parameters,
-		DefaultValues:  stmt.Function.DefaultValues,
-		Variadic:       stmt.Function.Variadic,
-		Kwargs:         stmt.Function.Kwargs,
-		Body:           stmt.Function.Body,
-		Env:            env,
-		LocalSlots:     localSlots,
-		LocalSlotNames: localSlotNames,
+		Name:             stmt.Name.Value,
+		Parameters:       stmt.Function.Parameters,
+		DefaultValues:    stmt.Function.DefaultValues,
+		Variadic:         stmt.Function.Variadic,
+		Kwargs:           stmt.Function.Kwargs,
+		Body:             stmt.Function.Body,
+		Env:              env,
+		LocalSlots:       localSlots,
+		LocalSlotNames:   localSlotNames,
+		ParamSlotIndexes: paramSlotIndexes,
+		ReuseCallEnv:     !stmt.Function.HasNestedFunc,
 	}
 	var result object.Object = fn
 	// Apply decorators right-to-left (innermost first)
@@ -1957,6 +1982,7 @@ func applyUserFunction(ctx context.Context, fn *object.Function, args []object.O
 	if err != nil {
 		return err
 	}
+	defer object.ReleaseCallEnvironment(extendedEnv)
 
 	evaluated := evalWithContext(ctx, fn.Body, extendedEnv)
 	if err, ok := evaluated.(*object.Error); ok {
@@ -2021,6 +2047,7 @@ func applyLambdaFunctionWithContext(ctx context.Context, fn *object.LambdaFuncti
 	if err != nil {
 		return err
 	}
+	defer object.ReleaseCallEnvironment(extendedEnv)
 
 	evaluated := evalWithContext(ctx, fn.Body, extendedEnv)
 	return evaluated // No unwrapping needed for lambda expressions
@@ -2028,18 +2055,25 @@ func applyLambdaFunctionWithContext(ctx context.Context, fn *object.LambdaFuncti
 
 // funcParams abstracts the common parts of Function and LambdaFunction for parameter handling
 type funcParams struct {
-	parameters     []*ast.Identifier
-	defaultValues  map[string]ast.Expression
-	variadic       *ast.Identifier
-	kwargs         *ast.Identifier
-	parentEnv      *object.Environment
-	localSlots     map[string]int
-	localSlotNames []string
+	parameters       []*ast.Identifier
+	defaultValues    map[string]ast.Expression
+	variadic         *ast.Identifier
+	kwargs           *ast.Identifier
+	parentEnv        *object.Environment
+	localSlots       map[string]int
+	localSlotNames   []string
+	paramSlotIndexes []int
+	reuseCallEnv     bool
 }
 
 // extendEnvWithParams handles the common logic for extending environments with function arguments
 func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[string]object.Object) (*object.Environment, object.Object) {
-	env := object.NewEnclosedEnvironmentWithSlots(fp.parentEnv, fp.localSlots, fp.localSlotNames)
+	var env *object.Environment
+	if fp.reuseCallEnv {
+		env = object.AcquireCallEnvironment(fp.parentEnv, fp.localSlots, fp.localSlotNames)
+	} else {
+		env = object.NewEnclosedEnvironmentWithSlots(fp.parentEnv, fp.localSlots, fp.localSlotNames)
+	}
 
 	numParams := len(fp.parameters)
 	numArgs := len(args)
@@ -2047,8 +2081,16 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 	// Fast path for the common case: exact positional arguments with no defaults,
 	// variadics, kwargs, or keyword arguments.
 	if len(keywords) == 0 && fp.variadic == nil && fp.kwargs == nil && len(fp.defaultValues) == 0 && numArgs == numParams {
-		for paramIdx := 0; paramIdx < numParams; paramIdx++ {
-			env.Set(fp.parameters[paramIdx].Value, args[paramIdx])
+		if len(fp.paramSlotIndexes) == numParams {
+			for paramIdx, slotIdx := range fp.paramSlotIndexes {
+				if !env.SetSlotByIndex(slotIdx, args[paramIdx]) {
+					env.Set(fp.parameters[paramIdx].Value, args[paramIdx])
+				}
+			}
+		} else {
+			for paramIdx := 0; paramIdx < numParams; paramIdx++ {
+				env.Set(fp.parameters[paramIdx].Value, args[paramIdx])
+			}
 		}
 		return env, nil
 	}
@@ -2186,25 +2228,28 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 
 func extendFunctionEnv(fn *object.Function, args []object.Object, keywords map[string]object.Object) (*object.Environment, object.Object) {
 	return extendEnvWithParams(funcParams{
-		parameters:     fn.Parameters,
-		defaultValues:  fn.DefaultValues,
-		variadic:       fn.Variadic,
-		kwargs:         fn.Kwargs,
-		parentEnv:      fn.Env,
-		localSlots:     fn.LocalSlots,
-		localSlotNames: fn.LocalSlotNames,
+		parameters:       fn.Parameters,
+		defaultValues:    fn.DefaultValues,
+		variadic:         fn.Variadic,
+		kwargs:           fn.Kwargs,
+		parentEnv:        fn.Env,
+		localSlots:       fn.LocalSlots,
+		localSlotNames:   fn.LocalSlotNames,
+		paramSlotIndexes: fn.ParamSlotIndexes,
+		reuseCallEnv:     fn.ReuseCallEnv,
 	}, args, keywords)
 }
 
 func extendLambdaEnv(fn *object.LambdaFunction, args []object.Object, keywords map[string]object.Object) (*object.Environment, object.Object) {
 	return extendEnvWithParams(funcParams{
-		parameters:     fn.Parameters,
-		defaultValues:  fn.DefaultValues,
-		variadic:       fn.Variadic,
-		kwargs:         fn.Kwargs,
-		parentEnv:      fn.Env,
-		localSlots:     fn.LocalSlots,
-		localSlotNames: fn.LocalSlotNames,
+		parameters:       fn.Parameters,
+		defaultValues:    fn.DefaultValues,
+		variadic:         fn.Variadic,
+		kwargs:           fn.Kwargs,
+		parentEnv:        fn.Env,
+		localSlots:       fn.LocalSlots,
+		localSlotNames:   fn.LocalSlotNames,
+		paramSlotIndexes: fn.ParamSlotIndexes,
 	}, args, keywords)
 }
 
@@ -2271,6 +2316,21 @@ func analyzeLambdaLocals(lambda *ast.Lambda) (map[string]int, []string) {
 		uniq = append(uniq, name)
 	}
 	return slots, uniq
+}
+
+func parameterSlotIndexes(parameters []*ast.Identifier, slotIndex map[string]int) []int {
+	if len(parameters) == 0 || len(slotIndex) == 0 {
+		return nil
+	}
+	indexes := make([]int, len(parameters))
+	for i, param := range parameters {
+		idx, ok := slotIndex[param.Value]
+		if !ok {
+			return nil
+		}
+		indexes[i] = idx
+	}
+	return indexes
 }
 
 func collectScopeDirectives(block *ast.BlockStatement) (map[string]bool, map[string]bool) {
@@ -2405,7 +2465,9 @@ func collectAssignedNamesFromExpression(expr ast.Expression, addName func(string
 
 func unwrapReturnValue(obj object.Object) object.Object {
 	if returnValue, ok := obj.(*object.ReturnValue); ok {
-		return returnValue.Value
+		val := returnValue.Value
+		releaseReturnValue(returnValue)
+		return val
 	}
 	return obj
 }
@@ -3064,7 +3126,11 @@ func evalTryStatementWithContext(ctx context.Context, ts *ast.TryStatement, env 
 		if exc, ok := result.(*object.Exception); ok && (exc.IsSystemExit() || exc.IsPermissionError()) {
 			// Execute finally block before propagating
 			if ts.Finally != nil {
-				evalWithContext(ctx, ts.Finally, env)
+				if finallyResult := evalWithContext(ctx, ts.Finally, env); finallyResult != nil {
+					if rv, ok := finallyResult.(*object.ReturnValue); ok {
+						result = unwrapReturnValue(rv)
+					}
+				}
 			}
 			return result // always propagates
 		}
@@ -3142,8 +3208,13 @@ func evalTryStatementWithContext(ctx context.Context, ts *ast.TryStatement, env 
 	}
 
 	// Always execute finally block if present
+	// Per Python semantics, return in finally overrides the result.
 	if ts.Finally != nil {
-		evalWithContext(ctx, ts.Finally, env)
+		if finallyResult := evalWithContext(ctx, ts.Finally, env); finallyResult != nil {
+			if rv, ok := finallyResult.(*object.ReturnValue); ok {
+				result = unwrapReturnValue(rv)
+			}
+		}
 	}
 
 	return result
@@ -4498,15 +4569,17 @@ func evalSetComprehension(ctx context.Context, sc *ast.SetComprehension, env *ob
 
 func evalLambda(lambda *ast.Lambda, env *object.Environment) object.Object {
 	localSlots, localSlotNames := analyzeLambdaLocals(lambda)
+	paramSlotIndexes := parameterSlotIndexes(lambda.Parameters, localSlots)
 	return &object.LambdaFunction{
-		Parameters:     lambda.Parameters,
-		DefaultValues:  lambda.DefaultValues,
-		Variadic:       lambda.Variadic,
-		Kwargs:         lambda.Kwargs,
-		Body:           lambda.Body,
-		Env:            env,
-		LocalSlots:     localSlots,
-		LocalSlotNames: localSlotNames,
+		Parameters:       lambda.Parameters,
+		DefaultValues:    lambda.DefaultValues,
+		Variadic:         lambda.Variadic,
+		Kwargs:           lambda.Kwargs,
+		Body:             lambda.Body,
+		Env:              env,
+		LocalSlots:       localSlots,
+		LocalSlotNames:   localSlotNames,
+		ParamSlotIndexes: paramSlotIndexes,
 	}
 }
 

@@ -226,6 +226,7 @@ type FunctionLiteral struct {
 	Variadic      *Identifier           // *args parameter (optional)
 	Kwargs        *Identifier           // **kwargs parameter (optional)
 	Body          *BlockStatement
+	HasNestedFunc bool // set by parser: true if body contains any nested function/lambda/class
 }
 
 func (fl *FunctionLiteral) expressionNode()      {}

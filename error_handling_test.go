@@ -777,3 +777,142 @@ assert False, "script should have stopped at sys.exit(42)"
 		t.Error("Expected final_var variable to not exist (script stopped at sys.exit)")
 	}
 }
+
+func TestReturnInFinallyOverridesTryReturn(t *testing.T) {
+	p := New()
+	_, err := p.Eval(`
+def foo():
+    try:
+        return "from try"
+    finally:
+        return "from finally"
+
+result = foo()
+`)
+	if err != nil {
+		t.Fatalf("Error: %v", err)
+	}
+
+	result, objErr := p.GetVar("result")
+	if objErr != nil {
+		t.Fatalf("Failed to get result: %v", objErr)
+	}
+	if result != "from finally" {
+		t.Errorf("result = %v, want 'from finally'", result)
+	}
+}
+
+func TestReturnInFinallyWithoutTryReturn(t *testing.T) {
+	p := New()
+	_, err := p.Eval(`
+def foo():
+    try:
+        x = 1
+    finally:
+        return "from finally"
+
+result = foo()
+`)
+	if err != nil {
+		t.Fatalf("Error: %v", err)
+	}
+
+	result, objErr := p.GetVar("result")
+	if objErr != nil {
+		t.Fatalf("Failed to get result: %v", objErr)
+	}
+	if result != "from finally" {
+		t.Errorf("result = %v, want 'from finally'", result)
+	}
+}
+
+func TestReturnInFinallyOverridesExceptReturn(t *testing.T) {
+	p := New()
+	_, err := p.Eval(`
+def foo():
+    try:
+        raise Exception("boom")
+    except:
+        return "from except"
+    finally:
+        return "from finally"
+
+result = foo()
+`)
+	if err != nil {
+		t.Fatalf("Error: %v", err)
+	}
+
+	result, objErr := p.GetVar("result")
+	if objErr != nil {
+		t.Fatalf("Failed to get result: %v", objErr)
+	}
+	if result != "from finally" {
+		t.Errorf("result = %v, want 'from finally'", result)
+	}
+}
+
+func TestFinallyWithoutReturnPreservesTryReturn(t *testing.T) {
+	p := New()
+	_, err := p.Eval(`
+def foo():
+    try:
+        return "from try"
+    finally:
+        x = 1
+
+result = foo()
+`)
+	if err != nil {
+		t.Fatalf("Error: %v", err)
+	}
+
+	result, objErr := p.GetVar("result")
+	if objErr != nil {
+		t.Fatalf("Failed to get result: %v", objErr)
+	}
+	if result != "from try" {
+		t.Errorf("result = %v, want 'from try'", result)
+	}
+}
+
+func TestReturnValuePoolNoLeakFromFinally(t *testing.T) {
+	// Run many iterations to surface pool leaks — if ReturnValues from
+	// finally blocks are not released back to the pool, repeated calls
+	// will allocate unbounded objects instead of reusing pooled ones.
+	p := New()
+	_, err := p.Eval(`
+def foo():
+    count = 0
+    for i in range(1000):
+        try:
+            return "try_val"
+        finally:
+            count = i
+    return count
+
+results = []
+for i in range(100):
+    results.append(foo())
+`)
+	if err != nil {
+		t.Fatalf("Error: %v", err)
+	}
+
+	results, objErr := p.GetVar("results")
+	if objErr != nil {
+		t.Fatalf("Failed to get results: %v", objErr)
+	}
+	list, ok := results.([]interface{})
+	if !ok {
+		t.Fatalf("results is not a slice: %T", results)
+	}
+	if len(list) != 100 {
+		t.Errorf("len(results) = %d, want 100", len(list))
+	}
+	for i, elem := range list {
+		if elem != "try_val" {
+			t.Errorf("results[%d] = %v, want 'try_val'", i, elem)
+		}
+	}
+}

@@ -504,15 +504,17 @@ func (c *Continue) CoerceInt() (int64, Object)     { return 0, errMustBeInteger 
 func (c *Continue) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
 
 type Function struct {
-	Name           string
-	Parameters     []*ast.Identifier
-	DefaultValues  map[string]ast.Expression
-	Variadic       *ast.Identifier // *args parameter
-	Kwargs         *ast.Identifier // **kwargs parameter
-	Body           *ast.BlockStatement
-	Env            *Environment
-	LocalSlots     map[string]int
-	LocalSlotNames []string
+	Name             string
+	Parameters       []*ast.Identifier
+	DefaultValues    map[string]ast.Expression
+	Variadic         *ast.Identifier // *args parameter
+	Kwargs           *ast.Identifier // **kwargs parameter
+	Body             *ast.BlockStatement
+	Env              *Environment
+	LocalSlots       map[string]int
+	LocalSlotNames   []string
+	ParamSlotIndexes []int
+	ReuseCallEnv     bool
 }
 
 func (f *Function) Type() ObjectType { return FUNCTION_OBJ }
@@ -530,14 +532,15 @@ func (f *Function) CoerceInt() (int64, Object)     { return 0, errMustBeInteger 
 func (f *Function) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
 
 type LambdaFunction struct {
-	Parameters     []*ast.Identifier
-	DefaultValues  map[string]ast.Expression
-	Variadic       *ast.Identifier // *args parameter
-	Kwargs         *ast.Identifier // **kwargs parameter
-	Body           ast.Expression
-	Env            *Environment
-	LocalSlots     map[string]int
-	LocalSlotNames []string
+	Parameters       []*ast.Identifier
+	DefaultValues    map[string]ast.Expression
+	Variadic         *ast.Identifier // *args parameter
+	Kwargs           *ast.Identifier // **kwargs parameter
+	Body             ast.Expression
+	Env              *Environment
+	LocalSlots       map[string]int
+	LocalSlotNames   []string
+	ParamSlotIndexes []int
 }
 
 func (lf *LambdaFunction) Type() ObjectType { return LAMBDA_OBJ }
@@ -724,6 +727,7 @@ type Environment struct {
 	slotIndex                  map[string]int
 	slotNames                  []string
 	slots                      []Object
+	callPoolSlots              uint8
 	outer                      *Environment
 	root                       *Environment
 	globals                    map[string]bool
@@ -783,6 +787,75 @@ func NewEnclosedEnvironmentWithSlots(outer *Environment, slotIndex map[string]in
 	return env
 }
 
+const maxPooledCallEnvSlots = 16
+
+var callEnvPools [maxPooledCallEnvSlots + 1]sync.Pool
+
+// AcquireCallEnvironment returns a function-call environment, reusing a pooled
+// frame for small slot counts when possible.
+func AcquireCallEnvironment(outer *Environment, slotIndex map[string]int, slotNames []string) *Environment {
+	slotCount := len(slotNames)
+	if slotCount > 0 && slotCount <= maxPooledCallEnvSlots {
+		if pooled := callEnvPools[slotCount].Get(); pooled != nil {
+			env := pooled.(*Environment)
+			env.slotIndex = slotIndex
+			env.slotNames = slotNames
+			env.callPoolSlots = uint8(slotCount)
+			env.outer = outer
+			if outer != nil {
+				env.root = outer.root
+				env.output = outer.output
+				env.input = outer.input
+				env.importCallback = outer.importCallback
+				env.availableLibrariesCallback = outer.availableLibrariesCallback
+				env.currentModule = outer.currentModule
+			} else {
+				env.root = env
+			}
+			return env
+		}
+		env := NewEnclosedEnvironmentWithSlots(outer, slotIndex, slotNames)
+		env.callPoolSlots = uint8(slotCount)
+		return env
+	}
+	return NewEnclosedEnvironmentWithSlots(outer, slotIndex, slotNames)
+}
+
+// ReleaseCallEnvironment clears and returns a pooled call environment back to
+// the pool. Non-pooled environments are ignored.
+func ReleaseCallEnvironment(env *Environment) {
+	if env == nil || env.callPoolSlots == 0 {
+		return
+	}
+	for i := range env.slots {
+		env.slots[i] = nil
+	}
+	if env.store != nil {
+		clear(env.store)
+	}
+	if env.globals != nil {
+		clear(env.globals)
+	}
+	if env.nonlocals != nil {
+		clear(env.nonlocals)
+	}
+	if env.importedBindings != nil {
+		clear(env.importedBindings)
+	}
+	slotCount := env.callPoolSlots
+	env.callPoolSlots = 0
+	env.outer = nil
+	env.root = nil
+	env.slotIndex = nil
+	env.slotNames = nil
+	env.output = nil
+	env.input = nil
+	env.importCallback = nil
+	env.availableLibrariesCallback = nil
+	env.currentModule = ""
+	callEnvPools[slotCount].Put(env)
+}
+
 func (e *Environment) Get(name string) (Object, bool) {
 	for env := e; env != nil; env = env.outer {
 		if idx, ok := env.slotIndex[name]; ok {
@@ -819,6 +892,15 @@ func (e *Environment) GetSlotIndex(name string) (int, bool) {
 		return idx, true
 	}
 	return 0, false
+}
+
+// SetSlotByIndex stores val in the given local slot index when valid.
+func (e *Environment) SetSlotByIndex(idx int, val Object) bool {
+	if idx >= 0 && idx < len(e.slots) {
+		e.slots[idx] = val
+		return true
+	}
+	return false
 }
 
 func (e *Environment) Set(name string, val Object) Object {
@@ -1032,27 +1114,30 @@ func (e *Environment) SnapshotCallables() *CallableSnapshot {
 func (s *CallableSnapshot) ApplySnapshot(target *Environment) {
 	for name, v := range s.functions {
 		target.store[name] = &Function{
-			Name:           v.Name,
-			Parameters:     v.Parameters,
-			DefaultValues:  v.DefaultValues,
-			Variadic:       v.Variadic,
-			Kwargs:         v.Kwargs,
-			Body:           v.Body,
-			Env:            target,
-			LocalSlots:     v.LocalSlots,
-			LocalSlotNames: v.LocalSlotNames,
+			Name:             v.Name,
+			Parameters:       v.Parameters,
+			DefaultValues:    v.DefaultValues,
+			Variadic:         v.Variadic,
+			Kwargs:           v.Kwargs,
+			Body:             v.Body,
+			Env:              target,
+			LocalSlots:       v.LocalSlots,
+			LocalSlotNames:   v.LocalSlotNames,
+			ParamSlotIndexes: v.ParamSlotIndexes,
+			ReuseCallEnv:     v.ReuseCallEnv,
 		}
 	}
 	for name, v := range s.lambdas {
 		target.store[name] = &LambdaFunction{
-			Parameters:     v.Parameters,
-			DefaultValues:  v.DefaultValues,
-			Variadic:       v.Variadic,
-			Kwargs:         v.Kwargs,
-			Body:           v.Body,
-			Env:            target,
-			LocalSlots:     v.LocalSlots,
-			LocalSlotNames: v.LocalSlotNames,
+			Parameters:       v.Parameters,
+			DefaultValues:    v.DefaultValues,
+			Variadic:         v.Variadic,
+			Kwargs:           v.Kwargs,
+			Body:             v.Body,
+			Env:              target,
+			LocalSlots:       v.LocalSlots,
+			LocalSlotNames:   v.LocalSlotNames,
+			ParamSlotIndexes: v.ParamSlotIndexes,
 		}
 	}
 	for name, v := range s.dicts {
