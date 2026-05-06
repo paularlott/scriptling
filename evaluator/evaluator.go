@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/errors"
@@ -61,18 +60,18 @@ func NewCallDepth(maxDepth int) *CallDepth {
 
 // Enter increments call depth and returns true if within limits
 func (cd *CallDepth) Enter() bool {
-	v := atomic.AddInt32(&cd.current, 1)
-	return v <= cd.max
+	cd.current++
+	return cd.current <= cd.max
 }
 
 // Exit decrements call depth
 func (cd *CallDepth) Exit() {
-	atomic.AddInt32(&cd.current, -1)
+	cd.current--
 }
 
 // Depth returns current call depth
 func (cd *CallDepth) Depth() int {
-	return int(atomic.LoadInt32(&cd.current))
+	return int(cd.current)
 }
 
 // SetEnvInContext stores environment in context for builtin functions
@@ -201,28 +200,8 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 	// Check for cancellation - batched via context checker in the top-level EvalWithContext
 	// For leaf nodes, we skip the check to reduce overhead
 	switch node := node.(type) {
-	case *ast.Program:
-		return evalProgram(ctx, node, env)
 	case *ast.ExpressionStatement:
 		return evalWithContext(ctx, node.Expression, env)
-	case *ast.IntegerLiteral:
-		return object.NewInteger(node.Value)
-	case *ast.FloatLiteral:
-		return &object.Float{Value: node.Value}
-	case *ast.StringLiteral:
-		return &object.String{Value: node.Value}
-	case *ast.FStringLiteral:
-		return evalFStringLiteral(ctx, node, env)
-	case *ast.Boolean:
-		return nativeBoolToBooleanObject(node.Value)
-	case *ast.None:
-		return NULL
-	case *ast.PrefixExpression:
-		right := evalNode(ctx, node.Right, env)
-		if object.IsError(right) {
-			return right
-		}
-		return evalPrefixExpression(node.Operator, right)
 	case *ast.InfixExpression:
 		// Handle short-circuit operators (and, or) specially
 		if node.Operator == "and" || node.Operator == "or" {
@@ -263,16 +242,6 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 			return right
 		}
 		return evalInfixExpression(ctx, node.Operator, left, right, env)
-	case *ast.ConditionalExpression:
-		return evalConditionalExpression(ctx, node, env)
-	case *ast.BlockStatement:
-		return evalBlockStatementWithContext(ctx, node, env)
-	case *ast.IfStatement:
-		return evalIfStatementWithContext(ctx, node, env)
-	case *ast.MatchStatement:
-		return evalMatchStatementWithContext(ctx, node, env)
-	case *ast.WhileStatement:
-		return evalWhileStatementWithContext(ctx, node, env)
 	case *ast.ReturnStatement:
 		val := object.Object(NULL)
 		if node.ReturnValue != nil {
@@ -282,6 +251,40 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 			}
 		}
 		return acquireReturnValue(val)
+	case *ast.CallExpression:
+		return evalCallExpression(ctx, node, env)
+	case *ast.Identifier:
+		return evalIdentifier(node, env)
+	case *ast.IntegerLiteral:
+		return object.NewInteger(node.Value)
+	case *ast.IfStatement:
+		return evalIfStatementWithContext(ctx, node, env)
+	case *ast.BlockStatement:
+		return evalBlockStatementWithContext(ctx, node, env)
+	case *ast.Program:
+		return evalProgram(ctx, node, env)
+	case *ast.FloatLiteral:
+		return &object.Float{Value: node.Value}
+	case *ast.StringLiteral:
+		return &object.String{Value: node.Value}
+	case *ast.FStringLiteral:
+		return evalFStringLiteral(ctx, node, env)
+	case *ast.Boolean:
+		return nativeBoolToBooleanObject(node.Value)
+	case *ast.None:
+		return NULL
+	case *ast.PrefixExpression:
+		right := evalNode(ctx, node.Right, env)
+		if object.IsError(right) {
+			return right
+		}
+		return evalPrefixExpression(node.Operator, right)
+	case *ast.ConditionalExpression:
+		return evalConditionalExpression(ctx, node, env)
+	case *ast.MatchStatement:
+		return evalMatchStatementWithContext(ctx, node, env)
+	case *ast.WhileStatement:
+		return evalWhileStatementWithContext(ctx, node, env)
 	case *ast.BreakStatement:
 		return object.BREAK
 	case *ast.ContinueStatement:
@@ -333,14 +336,10 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		return evalAugmentedAssignStatementWithContext(ctx, node, env)
 	case *ast.MultipleAssignStatement:
 		return evalMultipleAssignStatementWithContext(ctx, node, env)
-	case *ast.Identifier:
-		return evalIdentifier(node, env)
 	case *ast.FunctionStatement:
 		return evalFunctionStatement(ctx, node, env)
 	case *ast.ClassStatement:
 		return evalClassStatement(ctx, node, env)
-	case *ast.CallExpression:
-		return evalCallExpression(ctx, node, env)
 	case *ast.ListLiteral:
 		elements := evalExpressionsWithContext(ctx, node.Elements, env)
 		if len(elements) == 1 && object.IsError(elements[0]) {
@@ -455,24 +454,34 @@ func evalBlockStatementWithContext(ctx context.Context, block *ast.BlockStatemen
 
 		result = evalNode(ctx, statement, env)
 
-		if result != nil {
-			switch r := result.(type) {
-			case *object.Error:
-				if r.Line == 0 {
-					r.Line = statement.Line()
-				}
-				if r.File == "" {
-					r.File = srcFile
-				}
-				return r
-			default:
-				rt := r.Type()
-				if rt == object.RETURN_OBJ || rt == object.BREAK_OBJ || rt == object.CONTINUE_OBJ {
-					return result
-				}
-				if rt == object.EXCEPTION_OBJ {
-					return result
-				}
+		// Fast path: most statements return NULL, a value, or a simple type.
+		// Avoid the type switch overhead for the common case.
+		switch r := result.(type) {
+		case *object.Null:
+			// Most common: statement returns NULL, continue
+		case *object.Integer, *object.String, *object.Float, *object.Boolean,
+			*object.List, *object.Dict, *object.Tuple, *object.Set,
+			*object.Function, *object.LambdaFunction, *object.Builtin,
+			*object.Instance, *object.Class, *object.BoundMethod,
+			*object.FloatArray:
+			// Normal value, continue
+		case *object.ReturnValue:
+			return result
+		case *object.Error:
+			if r.Line == 0 {
+				r.Line = statement.Line()
+			}
+			if r.File == "" {
+				r.File = srcFile
+			}
+			return r
+		case nil:
+			// nil result, continue
+		default:
+			// Handle BREAK, CONTINUE, EXCEPTION via type method
+			rt := r.Type()
+			if rt == object.RETURN_OBJ || rt == object.BREAK_OBJ || rt == object.CONTINUE_OBJ || rt == object.EXCEPTION_OBJ {
+				return result
 			}
 		}
 	}
@@ -1313,7 +1322,7 @@ func evalIfStatementWithContext(ctx context.Context, ie *ast.IfStatement, env *o
 	}
 
 	if isTruthy(condition) {
-		return evalWithContext(ctx, ie.Consequence, env)
+		return evalBlockStatementWithContext(ctx, ie.Consequence, env)
 	}
 
 	// Check elif clauses
@@ -1323,13 +1332,13 @@ func evalIfStatementWithContext(ctx context.Context, ie *ast.IfStatement, env *o
 			return condition
 		}
 		if isTruthy(condition) {
-			return evalWithContext(ctx, elifClause.Consequence, env)
+			return evalBlockStatementWithContext(ctx, elifClause.Consequence, env)
 		}
 	}
 
 	// Check else clause
 	if ie.Alternative != nil {
-		return evalWithContext(ctx, ie.Alternative, env)
+		return evalBlockStatementWithContext(ctx, ie.Alternative, env)
 	}
 
 	return NULL
@@ -1577,21 +1586,79 @@ func unpackArgsFromIterable(argsVal object.Object) ([]object.Object, object.Obje
 }
 
 func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *object.Environment) object.Object {
-	// Try fast builtin path; if the function was found in the environment
-	// (shadowed), resolvedFn holds the value so we skip a redundant lookup.
-	fastResult, resolvedFn, isFastBuiltin := tryEvalFastBuiltinCall(ctx, node, env)
-	if isFastBuiltin {
-		return fastResult
+	// Fast path for simple function calls: ident(args) with no keywords/kwargs/variadic unpack.
+	if len(node.Keywords) == 0 && node.KwargsUnpack == nil && len(node.ArgsUnpack) == 0 {
+		if ident, ok := node.Function.(*ast.Identifier); ok {
+			if val, found := env.Get(ident.Value); found {
+				switch fn := val.(type) {
+				case *object.Function:
+					// Fast paths for common arg counts: avoid slice allocation
+					nargs := len(node.Arguments)
+					nparams := len(fn.Parameters)
+					if fn.Variadic == nil && fn.Kwargs == nil && len(fn.DefaultValues) == 0 && nargs == nparams && nargs <= 3 {
+						switch nargs {
+						case 1:
+							a0 := evalNode(ctx, node.Arguments[0], env)
+							if object.IsError(a0) {
+								return a0
+							}
+							return applyUserFunctionDirect(ctx, fn, a0)
+						case 2:
+							a0 := evalNode(ctx, node.Arguments[0], env)
+							if object.IsError(a0) {
+								return a0
+							}
+							a1 := evalNode(ctx, node.Arguments[1], env)
+							if object.IsError(a1) {
+								return a1
+							}
+							return applyUserFunction2(ctx, fn, a0, a1)
+						case 3:
+							a0 := evalNode(ctx, node.Arguments[0], env)
+							if object.IsError(a0) {
+								return a0
+							}
+							a1 := evalNode(ctx, node.Arguments[1], env)
+							if object.IsError(a1) {
+								return a1
+							}
+							a2 := evalNode(ctx, node.Arguments[2], env)
+							if object.IsError(a2) {
+								return a2
+							}
+							return applyUserFunctionN(ctx, fn, a0, a1, a2)
+						}
+					}
+					args := evalArgsFast(ctx, node.Arguments, env)
+					if len(args) == 1 && object.IsError(args[0]) {
+						return args[0]
+					}
+					return applyUserFunction(ctx, fn, args, nil, env)
+				case *object.Builtin:
+					// Use the existing fast builtin path
+					return applyBuiltinFast(ctx, node, env, fn)
+				case *object.LambdaFunction:
+					args := evalArgsFast(ctx, node.Arguments, env)
+					if len(args) == 1 && object.IsError(args[0]) {
+						return args[0]
+					}
+					return applyLambdaFunctionWithContext(ctx, fn, args, nil, env)
+				}
+				// Class or other callable - fall through to general path
+				return applyFunctionWithContext(ctx, val,
+					evalExpressionsWithContext(ctx, node.Arguments, env), nil, env)
+			}
+			// Not in env - try fast builtins by name
+			if builtin, ok := builtins[ident.Value]; ok {
+				return applyBuiltinFast(ctx, node, env, builtin)
+			}
+		}
 	}
 
-	var function object.Object
-	if resolvedFn != nil {
-		function = resolvedFn
-	} else {
-		function = evalNode(ctx, node.Function, env)
-		if object.IsError(function) {
-			return function
-		}
+	// General path for complex call expressions
+	function := evalNode(ctx, node.Function, env)
+	if object.IsError(function) {
+		return function
 	}
 
 	args := evalExpressionsWithContext(ctx, node.Arguments, env)
@@ -1611,7 +1678,6 @@ func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *obje
 		}
 	}
 
-	// Handle *args unpacking (supports multiple)
 	for _, argsUnpackExpr := range node.ArgsUnpack {
 		argsVal := evalNode(ctx, argsUnpackExpr, env)
 		if object.IsError(argsVal) {
@@ -1624,7 +1690,6 @@ func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *obje
 		args = append(args, unpacked...)
 	}
 
-	// Handle **kwargs unpacking
 	if node.KwargsUnpack != nil {
 		kwargsVal := evalNode(ctx, node.KwargsUnpack, env)
 		if object.IsError(kwargsVal) {
@@ -1635,7 +1700,6 @@ func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *obje
 				keywords = make(map[string]object.Object, len(dict.Pairs))
 			}
 			for _, pair := range dict.Pairs {
-				// Use the original string key, not the DictKey-formatted map key
 				keywords[pair.StringKey()] = pair.Value
 			}
 		} else {
@@ -1646,113 +1710,46 @@ func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *obje
 	return applyFunctionWithContext(ctx, function, args, keywords, env)
 }
 
+// evalArgsFast evaluates call arguments with reduced allocation overhead.
+func evalArgsFast(ctx context.Context, exps []ast.Expression, env *object.Environment) []object.Object {
+	n := len(exps)
+	if n == 0 {
+		return nil
+	}
+	// For single-arg calls (the most common case for recursive functions),
+	// avoid the slice allocation by using a stack-allocated array.
+	if n == 1 {
+		result := evalNode(ctx, exps[0], env)
+		// Use a fixed-size array to avoid heap allocation for the slice
+		return []object.Object{result}
+	}
+	result := make([]object.Object, n)
+	for i, e := range exps {
+		evaluated := evalNode(ctx, e, env)
+		if object.IsError(evaluated) {
+			return []object.Object{evaluated}
+		}
+		result[i] = evaluated
+	}
+	return result
+}
+
+// applyBuiltinFast dispatches builtin calls, matching the fast builtin path.
+func applyBuiltinFast(ctx context.Context, node *ast.CallExpression, env *object.Environment, fn *object.Builtin) object.Object {
+	args := evalExpressionsWithContext(ctx, node.Arguments, env)
+	if len(args) == 1 && object.IsError(args[0]) {
+		return args[0]
+	}
+	ctxWithEnv := SetEnvInContext(ctx, env)
+	return fn.Fn(ctxWithEnv, object.Kwargs{}, args...)
+}
+
 // tryEvalFastBuiltinCall handles fast-path builtin calls (len, type, str, etc.).
 // Returns (result, envFn, ok):
 //   - ok=true:   result is the builtin's return value, envFn is nil.
 //   - ok=false, envFn!=nil: name was found in the environment (not a builtin),
 //     envFn holds the resolved value so the caller can skip a redundant lookup.
 //   - ok=false, envFn==nil: not applicable, caller should use normal resolution.
-func tryEvalFastBuiltinCall(ctx context.Context, node *ast.CallExpression, env *object.Environment) (result object.Object, envFn object.Object, ok bool) {
-	if len(node.Keywords) > 0 || node.KwargsUnpack != nil || len(node.ArgsUnpack) > 0 {
-		return nil, nil, false
-	}
-
-	ident, ok := node.Function.(*ast.Identifier)
-	if !ok {
-		return nil, nil, false
-	}
-	if val, found := env.Get(ident.Value); found {
-		return nil, val, false
-	}
-
-	switch ident.Value {
-	case "len":
-		if len(node.Arguments) != 1 {
-			return nil, nil, false
-		}
-		arg := evalNode(ctx, node.Arguments[0], env)
-		if object.IsError(arg) {
-			return arg, nil, true
-		}
-		return fastLenBuiltin(ctx, env, arg), nil, true
-	case "type":
-		if len(node.Arguments) != 1 {
-			return nil, nil, false
-		}
-		arg := evalNode(ctx, node.Arguments[0], env)
-		if object.IsError(arg) {
-			return arg, nil, true
-		}
-		return fastTypeBuiltin(arg), nil, true
-	case "str":
-		if len(node.Arguments) != 1 {
-			return nil, nil, false
-		}
-		arg := evalNode(ctx, node.Arguments[0], env)
-		if object.IsError(arg) {
-			return arg, nil, true
-		}
-		return fastStrBuiltin(ctx, env, arg), nil, true
-	case "int":
-		if len(node.Arguments) < 1 || len(node.Arguments) > 2 {
-			return nil, nil, false
-		}
-		first := evalNode(ctx, node.Arguments[0], env)
-		if object.IsError(first) {
-			return first, nil, true
-		}
-		if len(node.Arguments) == 1 {
-			return fastIntBuiltin(first, nil), nil, true
-		}
-		second := evalNode(ctx, node.Arguments[1], env)
-		if object.IsError(second) {
-			return second, nil, true
-		}
-		return fastIntBuiltin(first, second), nil, true
-	case "float":
-		if len(node.Arguments) != 1 {
-			return nil, nil, false
-		}
-		arg := evalNode(ctx, node.Arguments[0], env)
-		if object.IsError(arg) {
-			return arg, nil, true
-		}
-		return fastFloatBuiltin(arg), nil, true
-	case "range":
-		if len(node.Arguments) < 1 || len(node.Arguments) > 3 {
-			return nil, nil, false
-		}
-		args := make([]object.Object, len(node.Arguments))
-		for i, expr := range node.Arguments {
-			arg := evalNode(ctx, expr, env)
-			if object.IsError(arg) {
-				return arg, nil, true
-			}
-			args[i] = arg
-		}
-		return fastRangeBuiltin(args), nil, true
-	case "append":
-		if len(node.Arguments) != 2 {
-			return nil, nil, false
-		}
-		listObj := evalNode(ctx, node.Arguments[0], env)
-		if object.IsError(listObj) {
-			return listObj, nil, true
-		}
-		list, ok := listObj.(*object.List)
-		if !ok {
-			return nil, nil, false
-		}
-		value := evalNode(ctx, node.Arguments[1], env)
-		if object.IsError(value) {
-			return value, nil, true
-		}
-		list.Elements = append(list.Elements, value)
-		return NULL, nil, true
-	default:
-		return nil, nil, false
-	}
-}
 
 func fastLenBuiltin(ctx context.Context, env *object.Environment, arg object.Object) object.Object {
 	switch v := arg.(type) {
@@ -1967,6 +1964,114 @@ func evalExpressionsWithContext(ctx context.Context, exps []ast.Expression, env 
 	}
 
 	return result
+}
+
+// applyUserFunctionDirect is a fast path for calling a 1-parameter function with
+// a single argument, bypassing slice allocation and the generic params path.
+func applyUserFunctionDirect(ctx context.Context, fn *object.Function, arg object.Object) object.Object {
+	if cd := GetCallDepthFromContext(ctx); cd != nil {
+		if !cd.Enter() {
+			return errors.NewCallDepthExceededError(int(cd.max))
+		}
+		defer cd.Exit()
+	}
+
+	var extendedEnv *object.Environment
+	if fn.ReuseCallEnv {
+		extendedEnv = object.AcquireCallEnvironment(fn.Env, fn.LocalSlots, fn.LocalSlotNames)
+	} else {
+		extendedEnv = object.NewEnclosedEnvironmentWithSlots(fn.Env, fn.LocalSlots, fn.LocalSlotNames)
+	}
+	defer object.ReleaseCallEnvironment(extendedEnv)
+
+	// Set the single argument directly into its slot
+	if len(fn.ParamSlotIndexes) == 1 {
+		extendedEnv.SetSlotByIndex(fn.ParamSlotIndexes[0], arg)
+	} else {
+		extendedEnv.Set(fn.Parameters[0].Value, arg)
+	}
+
+	// Call evalBlockStatementWithContext directly, skipping evalWithContext/evalNode overhead
+	// since fn.Body is always a *ast.BlockStatement and block already handles errors.
+	evaluated := evalBlockStatementWithContext(ctx, fn.Body, extendedEnv)
+	if err, ok := evaluated.(*object.Error); ok {
+		if err.Function == "" {
+			err.Function = fn.Name
+		}
+	}
+	return unwrapReturnValue(evaluated)
+}
+
+// applyUserFunction2 is a fast path for 2-parameter calls, avoiding slice allocation.
+func applyUserFunction2(ctx context.Context, fn *object.Function, a0, a1 object.Object) object.Object {
+	if cd := GetCallDepthFromContext(ctx); cd != nil {
+		if !cd.Enter() {
+			return errors.NewCallDepthExceededError(int(cd.max))
+		}
+		defer cd.Exit()
+	}
+
+	var extendedEnv *object.Environment
+	if fn.ReuseCallEnv {
+		extendedEnv = object.AcquireCallEnvironment(fn.Env, fn.LocalSlots, fn.LocalSlotNames)
+	} else {
+		extendedEnv = object.NewEnclosedEnvironmentWithSlots(fn.Env, fn.LocalSlots, fn.LocalSlotNames)
+	}
+	defer object.ReleaseCallEnvironment(extendedEnv)
+
+	// Set arguments directly into slots
+	if len(fn.ParamSlotIndexes) == 2 {
+		extendedEnv.SetSlotByIndex(fn.ParamSlotIndexes[0], a0)
+		extendedEnv.SetSlotByIndex(fn.ParamSlotIndexes[1], a1)
+	} else {
+		extendedEnv.Set(fn.Parameters[0].Value, a0)
+		extendedEnv.Set(fn.Parameters[1].Value, a1)
+	}
+
+	evaluated := evalBlockStatementWithContext(ctx, fn.Body, extendedEnv)
+	if err, ok := evaluated.(*object.Error); ok {
+		if err.Function == "" {
+			err.Function = fn.Name
+		}
+	}
+	return unwrapReturnValue(evaluated)
+}
+
+// applyUserFunctionN is a fast path for N-parameter calls (N <= 3), using stack-allocated args.
+func applyUserFunctionN(ctx context.Context, fn *object.Function, args ...object.Object) object.Object {
+	if cd := GetCallDepthFromContext(ctx); cd != nil {
+		if !cd.Enter() {
+			return errors.NewCallDepthExceededError(int(cd.max))
+		}
+		defer cd.Exit()
+	}
+
+	var extendedEnv *object.Environment
+	if fn.ReuseCallEnv {
+		extendedEnv = object.AcquireCallEnvironment(fn.Env, fn.LocalSlots, fn.LocalSlotNames)
+	} else {
+		extendedEnv = object.NewEnclosedEnvironmentWithSlots(fn.Env, fn.LocalSlots, fn.LocalSlotNames)
+	}
+	defer object.ReleaseCallEnvironment(extendedEnv)
+
+	// Set arguments directly into slots
+	if len(fn.ParamSlotIndexes) == len(args) {
+		for i, slotIdx := range fn.ParamSlotIndexes {
+			extendedEnv.SetSlotByIndex(slotIdx, args[i])
+		}
+	} else {
+		for i := range args {
+			extendedEnv.Set(fn.Parameters[i].Value, args[i])
+		}
+	}
+
+	evaluated := evalBlockStatementWithContext(ctx, fn.Body, extendedEnv)
+	if err, ok := evaluated.(*object.Error); ok {
+		if err.Function == "" {
+			err.Function = fn.Name
+		}
+	}
+	return unwrapReturnValue(evaluated)
 }
 
 func applyUserFunction(ctx context.Context, fn *object.Function, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
