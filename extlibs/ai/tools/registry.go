@@ -3,8 +3,9 @@ package tools
 import (
 	"context"
 	"fmt"
-	"github.com/paularlott/scriptling/conversion"
 	"strings"
+
+	"github.com/paularlott/scriptling/conversion"
 
 	"github.com/paularlott/scriptling/object"
 )
@@ -24,6 +25,29 @@ func buildLibrary() *object.Library {
 	return builder.Build()
 }
 
+// typeAliases maps user-friendly type names to valid JSON Schema types.
+// Keys are the accepted input strings (before stripping the optional "?" suffix).
+// Values are the JSON Schema type names emitted in the tool schema.
+var typeAliases = map[string]string{
+	// Canonical JSON Schema types (pass through unchanged)
+	"string":  "string",
+	"integer": "integer",
+	"number":  "number",
+	"boolean": "boolean",
+	"array":   "array",
+	"object":  "object",
+	// Python-style aliases
+	"int":   "integer",
+	"float": "number",
+	"str":   "string",
+	"bool":  "boolean",
+	"dict":  "object",
+	"list":  "array",
+}
+
+// validTypeList is the sorted list of accepted type names for error messages.
+var validTypeList = "array, bool, boolean, dict, float, int, integer, list, number, object, str, string"
+
 // GetRegistryClass returns the Registry class
 func GetRegistryClass() *object.Class {
 	return object.NewClassBuilder("Registry").
@@ -33,11 +57,15 @@ func GetRegistryClass() *object.Class {
 Parameters:
   name (str): Tool name
   description (str): Tool description
-  params (dict): Parameter definitions (e.g., {"path": "string", "limit": "integer?"})
+  params (dict): Parameter definitions, mapping parameter name to a type string.
+                 Accepted types: string, integer, number, boolean, array, object.
+                 Aliases: int -> integer, float -> number, str -> string,
+                 bool -> boolean, dict -> object, list -> array.
+                 Append "?" to mark the parameter as optional (e.g. "string?").
   handler (callable): Function to execute when tool is called
 
 Example:
-  registry.add("read_file", "Read a file", {"path": "string"}, read_func)`).
+  registry.add("read_file", "Read a file", {"path": "string", "limit": "int?"}, read_func)`).
 		MethodWithHelp("build", registryBuildMethod, `build() - Build OpenAI-compatible tool schemas
 
 Returns:
@@ -131,6 +159,17 @@ func registryAddMethod(self *object.Instance, ctx context.Context, name string, 
 		return err
 	}
 
+	// Validate parameter types up front so the caller gets a clear error
+	// at the point of registration rather than at build() time.
+	for paramName, paramType := range params {
+		baseType := strings.TrimSuffix(paramType, "?")
+		if _, ok := typeAliases[baseType]; !ok {
+			return &object.Error{Message: fmt.Sprintf(
+				"Registry.add: unknown type %q for parameter %q in tool %q. Valid types: %s (append \"?\" for optional)",
+				paramType, paramName, name, validTypeList)}
+		}
+	}
+
 	data.tools = append(data.tools, toolDef{
 		name:        name,
 		description: description,
@@ -156,11 +195,14 @@ func registryBuildMethod(self *object.Instance, ctx context.Context) object.Obje
 			isOptional := strings.HasSuffix(paramType, "?")
 			baseType := strings.TrimSuffix(paramType, "?")
 
-			// Map types
-			jsonType := baseType
-			switch baseType {
-			case "number":
-				jsonType = "integer"
+			// Map aliases to canonical JSON Schema types. Unknown types are
+			// rejected at add() time, so anything missing here indicates a
+			// programmer error rather than user input.
+			jsonType, ok := typeAliases[baseType]
+			if !ok {
+				return &object.Error{Message: fmt.Sprintf(
+					"Registry.build: unknown type %q for parameter %q in tool %q",
+					paramType, paramName, tool.name)}
 			}
 
 			properties[paramName] = map[string]any{"type": jsonType}

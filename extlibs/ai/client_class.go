@@ -130,6 +130,7 @@ Parameters:
   input (str or list): Either a string (user message content) or a list of input items (messages)
   system_prompt (str, optional): System prompt to use when input is a string
   background (bool, optional): If true, runs asynchronously and returns immediately with in_progress status
+  extra_body (dict, optional): Provider-specific fields to merge into the request body
 
 Returns:
   dict: Response object with id, status, output, usage, etc.
@@ -155,7 +156,19 @@ Examples:
   response = client.response_create("gpt-4o", [
     {"type": "message", "role": "user", "content": "Hello!"}
   ])
-  print(response.output)`).
+  print(response.output)
+
+  # Provider-specific request body fields
+  response = client.response_create(
+    "glm-4.7",
+    "Think through this task",
+    extra_body={
+        "thinking": {
+            "type": "enabled",
+            "clear_thinking": False
+        }
+    }
+  )`).
 		MethodWithHelp("response_get", responseGetMethod, `response_get(id) - Get a response by ID
 
 Retrieves a previously created response by its ID.
@@ -201,6 +214,7 @@ Parameters:
   model (str): Model identifier (e.g., "gpt-4o", "gpt-4")
   input (str or list): Either a string (user message content) or a list of input items (messages)
   system_prompt (str, optional): System prompt to use when input is a string
+  extra_body (dict, optional): Provider-specific fields to merge into the request body
 
 Returns:
   ResponseStream: A stream object with a next() method that yields ResponseStreamEvent dicts
@@ -742,6 +756,12 @@ func responseCreateMethod(self *object.Instance, ctx context.Context, kwargs obj
 		req.Background = kwargs.MustGetBool("background", false)
 	}
 
+	extraBody, extraBodyErr := extraBodyFromKwargs(kwargs, "response_create")
+	if extraBodyErr != nil {
+		return extraBodyErr
+	}
+	req.ExtraBody = extraBody
+
 	resp, err := ci.client.CreateResponse(ctx, req)
 	if err != nil {
 		return &object.Error{Message: "failed to create response: " + err.Error()}
@@ -944,10 +964,17 @@ func responseStreamMethod(self *object.Instance, ctx context.Context, kwargs obj
 		return &object.Error{Message: "response_stream: no client configured"}
 	}
 
-	stream := ci.client.StreamResponse(ctx, ai.CreateResponseRequest{
+	req := ai.CreateResponseRequest{
 		Model: model,
 		Input: inputList,
-	})
+	}
+	extraBody, extraBodyErr := extraBodyFromKwargs(kwargs, "response_stream")
+	if extraBodyErr != nil {
+		return extraBodyErr
+	}
+	req.ExtraBody = extraBody
+
+	stream := ci.client.StreamResponse(ctx, req)
 
 	return &object.Instance{
 		Class: GetResponseStreamClass(),

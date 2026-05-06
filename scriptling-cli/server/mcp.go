@@ -66,7 +66,10 @@ func (s *Server) createMCPServer() (*mcp_lib.Server, error) {
 
 		for toolName, meta := range tools {
 			scriptPath := filepath.Join(s.config.MCPToolsDir, toolName+".py")
-			tool := toolmetadata.BuildMCPTool(toolName, meta)
+			tool, err := toolmetadata.BuildMCPTool(toolName, meta)
+			if err != nil {
+				return nil, fmt.Errorf("failed to build tool %s: %w", toolName, err)
+			}
 			handler, err := createMCPToolHandler(scriptPath, s.config.LibDirs, s.config.AllowedPaths, s.config.DisabledLibs, s.config.SecretRegistry, s.packLoader)
 			if err != nil {
 				return nil, fmt.Errorf("failed to load tool %s: %w", toolName, err)
