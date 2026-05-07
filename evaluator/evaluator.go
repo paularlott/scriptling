@@ -3658,7 +3658,19 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 func assignToExpression(ctx context.Context, expr ast.Expression, value object.Object, env *object.Environment) error {
 	switch left := expr.(type) {
 	case *ast.Identifier:
+		// Fast path: use cached slot index to skip the slotIndex map lookup.
+		if cached := left.SlotCache.Load(); cached > 0 {
+			if env.SetSlotByIndex(int(cached-1), value) {
+				return nil
+			}
+		}
 		env.Set(left.Value, value)
+		// Cache the slot index for future writes.
+		if left.SlotCache.Load() == 0 {
+			if idx, ok := env.GetSlotIndex(left.Value); ok {
+				left.SlotCache.Store(int32(idx + 1))
+			}
+		}
 		return nil
 	case *ast.IndexExpression:
 		if err := assignToNestedFloatArrayIndex(ctx, left, value, env); err != nil {
