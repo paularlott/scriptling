@@ -894,10 +894,59 @@ func (e *Environment) GetSlotIndex(name string) (int, bool) {
 	return 0, false
 }
 
+// HasSlots returns whether this environment has slot-based variable access configured.
+func (e *Environment) HasSlots() bool {
+	return e.slotIndex != nil
+}
+
+// SetupSlots configures slot-based variable access on this environment.
+func (e *Environment) SetupSlots(slotIndex map[string]int, slotNames []string) {
+	e.slotIndex = slotIndex
+	e.slotNames = slotNames
+	e.slots = make([]Object, len(slotNames))
+}
+
+// ExtendSlots adds new variables to the existing slot layout. Variables
+// already present keep their existing indices. New variables are appended.
+func (e *Environment) ExtendSlots(slotIndex map[string]int, slotNames []string) {
+	for _, name := range slotNames {
+		if _, exists := e.slotIndex[name]; !exists {
+			idx := len(e.slotNames)
+			e.slotIndex[name] = idx
+			e.slotNames = append(e.slotNames, name)
+			e.slots = append(e.slots, nil)
+		}
+	}
+}
+
 // SetSlotByIndex stores val in the given local slot index when valid.
 func (e *Environment) SetSlotByIndex(idx int, val Object) bool {
 	if idx >= 0 && idx < len(e.slots) {
 		e.slots[idx] = val
+		return true
+	}
+	return false
+}
+
+// GetCachedSlot returns the value at the given slot index after validating
+// that the slot name matches. This prevents stale cached indices (from
+// shared AST via the parse cache) from reading the wrong variable.
+func (e *Environment) GetCachedSlot(idx int, name string) (Object, bool) {
+	if idx >= 0 && idx < len(e.slots) && idx < len(e.slotNames) && e.slotNames[idx] == name {
+		if e.slots[idx] != nil {
+			return e.slots[idx], true
+		}
+	}
+	return nil, false
+}
+
+// SetCachedSlot stores val at the given slot index after validating
+// that the slot name matches. Returns false if the cache is stale,
+// falling through to the full Set path.
+func (e *Environment) SetCachedSlot(idx int, name string, val Object) bool {
+	if idx >= 0 && idx < len(e.slots) && idx < len(e.slotNames) && e.slotNames[idx] == name {
+		e.slots[idx] = val
+		delete(e.importedBindings, name)
 		return true
 	}
 	return false

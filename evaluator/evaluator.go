@@ -407,6 +407,15 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 }
 
 func evalProgram(ctx context.Context, program *ast.Program, env *object.Environment) object.Object {
+	// Set up slots for top-level variables to enable fast slot-based access.
+	if slotIndex, slotNames := analyzeTopLevelLocals(program); slotIndex != nil {
+		if !env.HasSlots() {
+			env.SetupSlots(slotIndex, slotNames)
+		} else {
+			env.ExtendSlots(slotIndex, slotNames)
+		}
+	}
+
 	var result object.Object = NULL
 	cc := newContextChecker(ctx)
 	srcFile := GetSourceFileFromContext(ctx)
@@ -1390,10 +1399,10 @@ func evalIdentifier(node *ast.Identifier, env *object.Environment) object.Object
 	// Fast path: use cached slot index to skip the slotIndex map lookup.
 	// SlotCache encoding: 0=uncached, -1=not a local slot, >0=slot index+1.
 	if cached := node.SlotCache.Load(); cached > 0 {
-		if val, ok := env.GetSlotByIndex(int(cached - 1)); ok {
+		if val, ok := env.GetCachedSlot(int(cached-1), node.Value); ok {
 			return val
 		}
-		// Cache miss (wrong scope), fall through to full lookup.
+		// Cache miss (wrong scope or stale index), fall through to full lookup.
 		node.SlotCache.Store(0)
 	}
 
@@ -2225,6 +2234,54 @@ func analyzeFunctionLocals(stmt *ast.FunctionStatement) (map[string]int, []strin
 
 	globals, nonlocals := collectScopeDirectives(stmt.Function.Body)
 	collectAssignedNamesFromBlock(stmt.Function.Body, globals, nonlocals, addName)
+
+	slots := make(map[string]int, len(names))
+	for idx, name := range names {
+		slots[name] = idx
+	}
+	return slots, names
+}
+
+// analyzeTopLevelLocals finds all assigned variables in a top-level program
+// and returns slot index mapping and ordered names.
+func analyzeTopLevelLocals(program *ast.Program) (map[string]int, []string) {
+	names := make([]string, 0, 8)
+	seen := make(map[string]struct{}, 8)
+
+	addName := func(name string) {
+		if name == "" {
+			return
+		}
+		if _, ok := seen[name]; ok {
+			return
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+
+	globals := make(map[string]bool)
+	nonlocals := make(map[string]bool)
+
+	for _, stmt := range program.Statements {
+		switch s := stmt.(type) {
+		case *ast.GlobalStatement:
+			for _, name := range s.Names {
+				globals[name.Value] = true
+			}
+		case *ast.NonlocalStatement:
+			for _, name := range s.Names {
+				nonlocals[name.Value] = true
+			}
+		}
+	}
+
+	for _, stmt := range program.Statements {
+		collectAssignedNamesFromStatement(stmt, globals, nonlocals, addName)
+	}
+
+	if len(names) == 0 {
+		return nil, nil
+	}
 
 	slots := make(map[string]int, len(names))
 	for idx, name := range names {
@@ -3658,9 +3715,9 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 func assignToExpression(ctx context.Context, expr ast.Expression, value object.Object, env *object.Environment) error {
 	switch left := expr.(type) {
 	case *ast.Identifier:
-		// Fast path: use cached slot index to skip the slotIndex map lookup.
+		// Fast path: use cached slot index with name validation.
 		if cached := left.SlotCache.Load(); cached > 0 {
-			if env.SetSlotByIndex(int(cached-1), value) {
+			if env.SetCachedSlot(int(cached-1), left.Value, value) {
 				return nil
 			}
 		}
