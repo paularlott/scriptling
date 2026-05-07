@@ -939,6 +939,14 @@ func (e *Environment) Delete(name string) {
 // SetGlobal sets a variable in the global (outermost) environment
 func (e *Environment) SetGlobal(name string, val Object) Object {
 	root := e.root
+	// Check if the root environment has a slot for this variable
+	if root.slotIndex != nil {
+		if idx, ok := root.slotIndex[name]; ok && idx >= 0 && idx < len(root.slots) {
+			root.slots[idx] = val
+			delete(root.importedBindings, name)
+			return val
+		}
+	}
 	if root.store == nil {
 		root.store = make(map[string]Object, 4)
 	}
