@@ -3974,7 +3974,7 @@ func setForVariables(variables []ast.Expression, value object.Object, env *objec
 func setForVariable(varExpr ast.Expression, value object.Object, env *object.Environment) error {
 	switch target := varExpr.(type) {
 	case *ast.Identifier:
-		env.Set(target.Value, value)
+		setIdentifierFast(target, value, env)
 		return nil
 	case *ast.TupleLiteral:
 		return setForVariables(target.Elements, value, env)
@@ -3982,6 +3982,20 @@ func setForVariable(varExpr ast.Expression, value object.Object, env *object.Env
 		return setForVariables(target.Elements, value, env)
 	default:
 		return fmt.Errorf("for loop variables must be identifiers")
+	}
+}
+
+func setIdentifierFast(target *ast.Identifier, value object.Object, env *object.Environment) {
+	if cached := target.SlotCache.Load(); cached > 0 {
+		if env.SetCachedSlot(int(cached-1), target.Value, value) {
+			return
+		}
+	}
+	env.Set(target.Value, value)
+	if target.SlotCache.Load() == 0 {
+		if idx, ok := env.GetSlotIndex(target.Value); ok {
+			target.SlotCache.Store(int32(idx + 1))
+		}
 	}
 }
 
@@ -4004,6 +4018,10 @@ func instanceToIterator(ctx context.Context, inst *object.Instance, env *object.
 }
 
 func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env *object.Environment) object.Object {
+	if result, ok := evalFastRangeForStatement(ctx, fs, env); ok {
+		return result
+	}
+
 	iterable := evalNode(ctx, fs.Iterable, env)
 	if object.IsError(iterable) {
 		return iterable
@@ -4210,6 +4228,99 @@ forDone:
 		return evalBlockStatementWithContext(ctx, fs.Else, env)
 	}
 	return result
+}
+
+func evalFastRangeForStatement(ctx context.Context, fs *ast.ForStatement, env *object.Environment) (object.Object, bool) {
+	if len(fs.Variables) != 1 || fs.Else != nil {
+		return nil, false
+	}
+	target, ok := fs.Variables[0].(*ast.Identifier)
+	if !ok {
+		return nil, false
+	}
+	call, ok := fs.Iterable.(*ast.CallExpression)
+	if !ok || len(call.Keywords) != 0 || len(call.ArgsUnpack) != 0 || call.KwargsUnpack != nil {
+		return nil, false
+	}
+	fnIdent, ok := call.Function.(*ast.Identifier)
+	if !ok || fnIdent.Value != "range" {
+		return nil, false
+	}
+	// If range is shadowed in the environment, preserve the normal call path.
+	if _, shadowed := env.Get("range"); shadowed {
+		return nil, false
+	}
+
+	start, stop, step, errObj, ok := evalRangeArgs(ctx, call.Arguments, env)
+	if !ok {
+		return nil, false
+	}
+	if errObj != nil {
+		return errObj, true
+	}
+
+	var result object.Object = NULL
+	cc := newContextChecker(ctx)
+	for i := start; ; i += step {
+		if step > 0 {
+			if i >= stop {
+				break
+			}
+		} else if i <= stop {
+			break
+		}
+
+		if err := cc.check(); err != nil {
+			return err, true
+		}
+
+		setIdentifierFast(target, object.NewInteger(i), env)
+		result = evalBlockStatementWithContext(ctx, fs.Body, env)
+		if result != nil {
+			switch result.Type() {
+			case object.ERROR_OBJ, object.RETURN_OBJ:
+				return result, true
+			case object.BREAK_OBJ:
+				return NULL, true
+			case object.CONTINUE_OBJ:
+				result = NULL
+				continue
+			}
+		}
+	}
+	return result, true
+}
+
+func evalRangeArgs(ctx context.Context, args []ast.Expression, env *object.Environment) (start, stop, step int64, errObj object.Object, ok bool) {
+	if len(args) < 1 || len(args) > 3 {
+		return 0, 0, 0, nil, false
+	}
+
+	values := [3]int64{}
+	for i, arg := range args {
+		evaluated := evalNode(ctx, arg, env)
+		if object.IsError(evaluated) {
+			return 0, 0, 0, evaluated, true
+		}
+		intObj, isInt := evaluated.(*object.Integer)
+		if !isInt {
+			return 0, 0, 0, nil, false
+		}
+		values[i] = intObj.Value
+	}
+
+	switch len(args) {
+	case 1:
+		start, stop, step = 0, values[0], 1
+	case 2:
+		start, stop, step = values[0], values[1], 1
+	case 3:
+		start, stop, step = values[0], values[1], values[2]
+		if step == 0 {
+			return 0, 0, 0, errors.NewError("range step cannot be zero"), true
+		}
+	}
+	return start, stop, step, nil, true
 }
 
 // evalMethodCallExpression is in methods.go
