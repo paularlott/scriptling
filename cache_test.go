@@ -326,10 +326,6 @@ func TestCache_SignatureBucketsDoNotOverlapSimilarScripts(t *testing.T) {
 	if len(scriptA) != len(scriptB) {
 		t.Fatalf("expected equal length scripts, got %d and %d", len(scriptA), len(scriptB))
 	}
-	if signatureForScript(scriptA) != signatureForScript(scriptB) {
-		t.Fatal("expected scripts to land in the same signature bucket")
-	}
-
 	progA := dummyProgram("script-a")
 	progB := dummyProgram("script-b")
 

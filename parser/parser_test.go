@@ -702,13 +702,13 @@ func TestMethodCallExpression(t *testing.T) {
 			program.Statements[0])
 	}
 
-	exp, ok := stmt.Expression.(*ast.MethodCallExpression)
+	exp, ok := stmt.Expression.(*ast.CallExpression)
 	if !ok {
-		t.Fatalf("stmt.Expression is not ast.MethodCallExpression. got=%T", stmt.Expression)
+		t.Fatalf("stmt.Expression is not ast.CallExpression. got=%T", stmt.Expression)
 	}
 
-	if exp.Object == nil {
-		t.Error("method call Object is nil")
+	if exp.Receiver == nil {
+		t.Error("method call Receiver is nil")
 	}
 
 	if exp.Method == nil {

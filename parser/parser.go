@@ -422,7 +422,6 @@ func (p *Parser) parseMultipleAssignStatement() ast.Statement {
 		}
 		// Create a tuple literal from the values
 		value := &ast.TupleLiteral{
-			Token:    names[0].Token,
 			Elements: values,
 		}
 		return &ast.MultipleAssignStatement{
@@ -706,7 +705,6 @@ func (p *Parser) parseExpression(precedence int) ast.Expression {
 // parseConditionalExpression parses conditional expressions (x if cond else y)
 // Called as an infix parser when IF is seen after an expression
 func (p *Parser) parseConditionalExpression(trueExpr ast.Expression) ast.Expression {
-	ifToken := p.nodeLine()
 	p.nextToken() // move to condition
 	condition := p.parseExpression(LOWEST)
 
@@ -717,7 +715,6 @@ func (p *Parser) parseConditionalExpression(trueExpr ast.Expression) ast.Express
 	// Parse false expression with CONDITIONAL precedence to handle nested conditionals
 	falseExpr := p.parseExpression(CONDITIONAL)
 	return &ast.ConditionalExpression{
-		Token:     ifToken,
 		TrueExpr:  trueExpr,
 		Condition: condition,
 		FalseExpr: falseExpr,
@@ -747,7 +744,7 @@ func (p *Parser) parseTuplePackingTail(tok ast.LineInfo, first ast.Expression) a
 		p.nextToken()
 		elements = append(elements, p.parseExpressionWithConditional())
 	}
-	return &ast.TupleLiteral{Token: tok, Elements: elements}
+	return &ast.TupleLiteral{Elements: elements}
 }
 
 func (p *Parser) noPrefixParseFnError(t token.TokenType) {
@@ -760,7 +757,7 @@ func (p *Parser) parseIdentifier() ast.Expression {
 }
 
 func (p *Parser) parseIntegerLiteral() ast.Expression {
-	lit := &ast.IntegerLiteral{Token: p.nodeToken()}
+	lit := &ast.IntegerLiteral{}
 	if value, ok := parseFastIntegerLiteral(p.curToken.Literal); ok {
 		lit.Value = value
 		return lit
@@ -795,7 +792,7 @@ func parseFastIntegerLiteral(s string) (int64, bool) {
 }
 
 func (p *Parser) parseFloatLiteral() ast.Expression {
-	lit := &ast.FloatLiteral{Token: p.nodeToken()}
+	lit := &ast.FloatLiteral{}
 	value, err := strconv.ParseFloat(p.curToken.Literal, 64)
 	if err != nil {
 		msg := fmt.Sprintf("line %d: could not parse %q as float", p.curToken.Line, p.curToken.Literal)
@@ -807,17 +804,17 @@ func (p *Parser) parseFloatLiteral() ast.Expression {
 }
 
 func (p *Parser) parseStringLiteral() ast.Expression {
-	return p.parseAdjacentStrings(&ast.StringLiteral{Token: p.nodeToken(), Value: p.curToken.Literal})
+	return p.parseAdjacentStrings(&ast.StringLiteral{Value: strings.Clone(p.curToken.Literal)})
 }
 
 func (p *Parser) parseFStringLiteral() ast.Expression {
-	fstr := &ast.FStringLiteral{Token: p.nodeToken(), Value: p.curToken.Literal}
+	fstr := &ast.FStringLiteral{Value: strings.Clone(p.curToken.Literal)}
 	fstr.Parts, fstr.Expressions, fstr.FormatSpecs = p.parseFStringContent(p.curToken.Literal, false)
 	return p.parseAdjacentStrings(fstr)
 }
 
 func (p *Parser) parseRawFStringLiteral() ast.Expression {
-	fstr := &ast.FStringLiteral{Token: p.nodeToken(), Value: p.curToken.Literal}
+	fstr := &ast.FStringLiteral{Value: strings.Clone(p.curToken.Literal)}
 	fstr.Parts, fstr.Expressions, fstr.FormatSpecs = p.parseFStringContent(p.curToken.Literal, true)
 	return p.parseAdjacentStrings(fstr)
 }
@@ -846,20 +843,18 @@ func (p *Parser) parseAdjacentStrings(left ast.Expression) ast.Expression {
 	}
 
 	for (p.parenDepth > 0 || !p.skippedNewline) && (p.peekTokenIs(token.STRING) || p.peekTokenIs(token.F_STRING) || p.peekTokenIs(token.RF_STRING)) {
-		tok := ast.NewLineInfo(p.curToken)
 		p.nextToken()
 
 		var right ast.Expression
 		if p.curTokenIs(token.STRING) {
-			right = &ast.StringLiteral{Token: p.nodeToken(), Value: p.curToken.Literal}
+			right = &ast.StringLiteral{Value: strings.Clone(p.curToken.Literal)}
 		} else {
-			fstr := &ast.FStringLiteral{Token: p.nodeToken(), Value: p.curToken.Literal}
+			fstr := &ast.FStringLiteral{Value: strings.Clone(p.curToken.Literal)}
 			fstr.Parts, fstr.Expressions, fstr.FormatSpecs = p.parseFStringContent(p.curToken.Literal, p.curTokenIs(token.RF_STRING))
 			right = fstr
 		}
 
 		left = &ast.InfixExpression{
-			Token:    tok,
 			Operator: "+",
 			Left:     left,
 			Right:    right,
@@ -962,16 +957,15 @@ func parseExpressionString(input string) ast.Expression {
 }
 
 func (p *Parser) parseBoolean() ast.Expression {
-	return &ast.Boolean{Token: p.nodeLine(), Value: p.curTokenIs(token.TRUE)}
+	return &ast.Boolean{Value: p.curTokenIs(token.TRUE)}
 }
 
 func (p *Parser) parseNone() ast.Expression {
-	return &ast.None{Token: p.nodeLine()}
+	return &ast.None{}
 }
 
 func (p *Parser) parsePrefixExpression() ast.Expression {
 	expression := &ast.PrefixExpression{
-		Token:    p.nodeLine(),
 		Operator: p.curToken.Literal,
 	}
 	p.nextToken()
@@ -981,7 +975,6 @@ func (p *Parser) parsePrefixExpression() ast.Expression {
 
 func (p *Parser) parseInfixExpression(left ast.Expression) ast.Expression {
 	expression := &ast.InfixExpression{
-		Token:    p.nodeLine(),
 		Operator: p.curToken.Literal,
 		Left:     left,
 	}
@@ -1003,7 +996,6 @@ func (p *Parser) parseInfixExpression(left ast.Expression) ast.Expression {
 			p.nextToken() // consume comparison operator
 			nextOp := p.curToken.Literal
 			nextComp := &ast.InfixExpression{
-				Token:    p.nodeLine(),
 				Operator: nextOp,
 				Left:     expression.Right, // Use previous right as new left
 			}
@@ -1019,7 +1011,6 @@ func (p *Parser) parseInfixExpression(left ast.Expression) ast.Expression {
 			result := ast.Expression(comparisons[0])
 			for i := 1; i < len(comparisons); i++ {
 				result = &ast.InfixExpression{
-					Token:    comparisons[0].Token, // Use first comparison token
 					Operator: "and",
 					Left:     result,
 					Right:    comparisons[i],
@@ -1041,7 +1032,7 @@ func (p *Parser) parseGroupedExpression() ast.Expression {
 
 	// Check for empty tuple
 	if p.curTokenIs(token.RPAREN) {
-		return &ast.TupleLiteral{Token: p.nodeLine(), Elements: nil}
+		return &ast.TupleLiteral{Elements: nil}
 	}
 
 	firstExp := p.parseExpression(LOWEST_PRECEDENCE)
@@ -1070,7 +1061,7 @@ func (p *Parser) parseGroupedExpression() ast.Expression {
 			return nil
 		}
 
-		return &ast.TupleLiteral{Token: p.nodeLine(), Elements: elements}
+		return &ast.TupleLiteral{Elements: elements}
 	}
 
 	// Regular grouped expression
@@ -1081,7 +1072,7 @@ func (p *Parser) parseGroupedExpression() ast.Expression {
 }
 
 func (p *Parser) parseCallExpression(function ast.Expression) ast.Expression {
-	exp := &ast.CallExpression{Token: p.nodeLine(), Function: function}
+	exp := &ast.CallExpression{Function: function}
 	exp.Arguments, exp.Keywords, exp.ArgsUnpack, exp.KwargsUnpack = p.parseCallArguments()
 	return exp
 }
@@ -1327,7 +1318,7 @@ func (p *Parser) parseFunctionStatement() *ast.FunctionStatement {
 		return nil
 	}
 
-	stmt.Function = &ast.FunctionLiteral{Token: stmt.Token}
+	stmt.Function = &ast.FunctionLiteral{}
 	stmt.Function.Parameters, stmt.Function.DefaultValues, stmt.Function.Variadic, stmt.Function.Kwargs = p.parseFunctionParameters()
 
 	if !p.expectPeek(token.COLON) {
@@ -1536,7 +1527,7 @@ func (p *Parser) parseForStatement() *ast.ForStatement {
 }
 
 func (p *Parser) parseListLiteral() ast.Expression {
-	list := &ast.ListLiteral{Token: p.nodeLine()}
+	list := &ast.ListLiteral{}
 
 	// Check for empty list
 	if p.peekTokenIs(token.RBRACKET) {
@@ -1621,7 +1612,6 @@ func (p *Parser) parseAdditionalClauses() []ast.ComprehensionClause {
 // parseComprehensionCore is the unified implementation for list comprehensions and generator expressions
 func (p *Parser) parseComprehensionCore(expr ast.Expression, endToken token.TokenType) ast.Expression {
 	comp := &ast.ListComprehension{
-		Token:      p.nodeLine(),
 		Expression: expr,
 	}
 
@@ -1661,7 +1651,7 @@ func (p *Parser) parseComprehensionCore(expr ast.Expression, endToken token.Toke
 func (p *Parser) parseLambda() ast.Expression {
 	p.markNestedFunc() // lambda is a nested func, mark parent
 
-	lambda := &ast.Lambda{Token: p.nodeLine()}
+	lambda := &ast.Lambda{}
 
 	// Parse parameters (optional)
 	if !p.peekTokenIs(token.COLON) {
@@ -1786,7 +1776,7 @@ func (p *Parser) skipWhitespace() {
 
 func (p *Parser) parseDictLiteral() ast.Expression {
 	tok := p.nodeLine()
-	dict := &ast.DictLiteral{Token: tok}
+	dict := &ast.DictLiteral{}
 
 	p.skipWhitespace()
 	if p.peekTokenIs(token.RBRACE) {
@@ -1863,9 +1853,8 @@ func (p *Parser) parseDictLiteral() ast.Expression {
 	return dict
 }
 
-func (p *Parser) parseDictComprehension(tok ast.LineInfo, keyExpr, valueExpr ast.Expression) ast.Expression {
+func (p *Parser) parseDictComprehension(_ ast.LineInfo, keyExpr, valueExpr ast.Expression) ast.Expression {
 	comp := &ast.DictComprehension{
-		Token: tok,
 		Key:   keyExpr,
 		Value: valueExpr,
 	}
@@ -1903,9 +1892,8 @@ func (p *Parser) parseDictComprehension(tok ast.LineInfo, keyExpr, valueExpr ast
 	return comp
 }
 
-func (p *Parser) parseSetComprehension(tok ast.LineInfo, expr ast.Expression) ast.Expression {
+func (p *Parser) parseSetComprehension(_ ast.LineInfo, expr ast.Expression) ast.Expression {
 	comp := &ast.SetComprehension{
-		Token:      tok,
 		Expression: expr,
 	}
 
@@ -1942,8 +1930,8 @@ func (p *Parser) parseSetComprehension(tok ast.LineInfo, expr ast.Expression) as
 	return comp
 }
 
-func (p *Parser) parseSetLiteralFrom(tok ast.LineInfo, first ast.Expression) ast.Expression {
-	set := &ast.SetLiteral{Token: tok, Elements: make([]ast.Expression, 1, 4)}
+func (p *Parser) parseSetLiteralFrom(_ ast.LineInfo, first ast.Expression) ast.Expression {
+	set := &ast.SetLiteral{Elements: make([]ast.Expression, 1, 4)}
 	set.Elements[0] = first
 
 	for p.peekTokenIs(token.COMMA) {
@@ -2162,10 +2150,9 @@ func (p *Parser) parseIndexExpression(left ast.Expression) ast.Expression {
 		// Check if this is a method call (followed by parentheses)
 		if p.peekTokenIs(token.LPAREN) {
 			p.nextToken() // consume LPAREN
-			methodCall := &ast.MethodCallExpression{
-				Token:  p.nodeLine(),
-				Object: left,
-				Method: methodName,
+			methodCall := &ast.CallExpression{
+				Receiver: left,
+				Method:   methodName,
 			}
 			methodCall.Arguments, methodCall.Keywords, methodCall.ArgsUnpack, methodCall.KwargsUnpack = p.parseCallArguments()
 			return methodCall
@@ -2173,7 +2160,7 @@ func (p *Parser) parseIndexExpression(left ast.Expression) ast.Expression {
 
 		// Regular member access: obj.member
 		exp := &ast.IndexExpression{Token: p.nodeLine(), Left: left, IsDotAccess: true}
-		exp.Index = &ast.StringLiteral{Token: p.nodeToken(), Value: p.curToken.Literal}
+		exp.Index = &ast.StringLiteral{Value: strings.Clone(p.curToken.Literal)}
 		return exp
 	}
 
@@ -2184,7 +2171,7 @@ func (p *Parser) parseIndexExpression(left ast.Expression) ast.Expression {
 	// Check for slice notation
 	if p.curTokenIs(token.COLON) {
 		// Slice with no start: [:end] or [:end:step]
-		slice := &ast.SliceExpression{Token: tok, Left: left, Start: nil}
+		slice := &ast.SliceExpression{Left: left, Start: nil}
 		if !p.peekTokenIs(token.RBRACKET) && !p.peekTokenIs(token.COLON) {
 			p.nextToken()
 			slice.End = p.parseExpression(LOWEST)
@@ -2208,7 +2195,7 @@ func (p *Parser) parseIndexExpression(left ast.Expression) ast.Expression {
 	if p.peekTokenIs(token.COLON) {
 		// Slice notation: [start:end] or [start:end:step]
 		p.nextToken() // consume colon
-		slice := &ast.SliceExpression{Token: tok, Left: left, Start: start}
+		slice := &ast.SliceExpression{Left: left, Start: start}
 		if !p.peekTokenIs(token.RBRACKET) && !p.peekTokenIs(token.COLON) {
 			p.nextToken()
 			slice.End = p.parseExpression(LOWEST)
@@ -2339,7 +2326,7 @@ func (p *Parser) parseCasePattern() ast.Expression {
 			p.nextToken() // move to next pattern
 			patterns = append(patterns, p.parseExpression(BIT_OR))
 		}
-		return &ast.OrPattern{Token: p.nodeLine(), Patterns: patterns}
+		return &ast.OrPattern{Patterns: patterns}
 	}
 	return first
 }
