@@ -324,16 +324,16 @@ func TestCallExpression(t *testing.T) {
 }
 
 func TestMethodCallExpression(t *testing.T) {
-	expr := &MethodCallExpression{
-		Object: testIdentifier("obj"),
-		Method: testIdentifier("method"),
+	expr := &CallExpression{
+		Receiver: testIdentifier("obj"),
+		Method:   testIdentifier("method"),
 		Arguments: []Expression{
 			&IntegerLiteral{Value: 1},
 		},
 		Keywords: map[string]Expression{},
 	}
 
-	if expr.Object == nil || expr.Method == nil {
+	if expr.Receiver == nil || expr.Method == nil {
 		t.Error("Method call expression parts should not be nil")
 	}
 }
@@ -756,7 +756,7 @@ func TestExpressionString(t *testing.T) {
 		},
 		{
 			name:     "MethodCallExpression",
-			expr:     &MethodCallExpression{Object: testIdentifier("obj"), Method: testIdentifier("method")},
+			expr:     &CallExpression{Receiver: testIdentifier("obj"), Method: testIdentifier("method")},
 			contains: "",
 		},
 		{
@@ -863,7 +863,7 @@ func TestExpressionTokenLiteral(t *testing.T) {
 		{name: "IndexExpression", expr: &IndexExpression{}},
 		{name: "SliceExpression", expr: &SliceExpression{}},
 		{name: "CallExpression", expr: &CallExpression{}},
-		{name: "MethodCallExpression", expr: &MethodCallExpression{}},
+		{name: "MethodCallExpression", expr: &CallExpression{Method: testIdentifier("method")}},
 		{name: "Lambda", expr: &Lambda{}},
 		{name: "ListComprehension", expr: &ListComprehension{}},
 		{name: "TupleLiteral", expr: &TupleLiteral{}},

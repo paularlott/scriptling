@@ -46,7 +46,6 @@ var (
 	sizeOfGlobalStatement         = int(unsafe.Sizeof(GlobalStatement{}))
 	sizeOfNonlocalStatement       = int(unsafe.Sizeof(NonlocalStatement{}))
 	sizeOfAssertStatement         = int(unsafe.Sizeof(AssertStatement{}))
-	sizeOfMethodCallExpression    = int(unsafe.Sizeof(MethodCallExpression{}))
 	sizeOfComprehensionClause     = int(unsafe.Sizeof(ComprehensionClause{}))
 	sizeOfListComprehension       = int(unsafe.Sizeof(ListComprehension{}))
 	sizeOfDictComprehension       = int(unsafe.Sizeof(DictComprehension{}))
@@ -387,48 +386,44 @@ func (e *estimator) walkExpression(expr Expression) {
 	case *Identifier:
 		e.walkIdentifier(n)
 	case *IntegerLiteral:
-		if n != nil && e.mark(uintptr(unsafe.Pointer(n)), sizeOfIntegerLiteral) {
-			e.addToken(n.Token)
+		if n != nil {
+			e.mark(uintptr(unsafe.Pointer(n)), sizeOfIntegerLiteral)
 		}
 	case *FloatLiteral:
-		if n != nil && e.mark(uintptr(unsafe.Pointer(n)), sizeOfFloatLiteral) {
-			e.addToken(n.Token)
+		if n != nil {
+			e.mark(uintptr(unsafe.Pointer(n)), sizeOfFloatLiteral)
 		}
 	case *StringLiteral:
 		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfStringLiteral) {
 			return
 		}
-		e.addToken(n.Token)
 		e.addString(n.Value)
 	case *FStringLiteral:
 		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfFStringLiteral) {
 			return
 		}
-		e.addToken(n.Token)
 		e.addString(n.Value)
 		e.addExpressionSlice(n.Expressions)
 		e.addStringSlice(n.Parts)
 		e.addStringSlice(n.FormatSpecs)
 	case *Boolean:
-		if n != nil && e.mark(uintptr(unsafe.Pointer(n)), sizeOfBoolean) {
-			e.addToken(n.Token)
+		if n != nil {
+			e.mark(uintptr(unsafe.Pointer(n)), sizeOfBoolean)
 		}
 	case *None:
-		if n != nil && e.mark(uintptr(unsafe.Pointer(n)), sizeOfNone) {
-			e.addToken(n.Token)
+		if n != nil {
+			e.mark(uintptr(unsafe.Pointer(n)), sizeOfNone)
 		}
 	case *PrefixExpression:
 		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfPrefixExpression) {
 			return
 		}
-		e.addToken(n.Token)
 		e.addString(n.Operator)
 		e.walkExpression(n.Right)
 	case *InfixExpression:
 		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfInfixExpression) {
 			return
 		}
-		e.addToken(n.Token)
 		e.walkExpression(n.Left)
 		e.addString(n.Operator)
 		e.walkExpression(n.Right)
@@ -436,7 +431,6 @@ func (e *estimator) walkExpression(expr Expression) {
 		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfConditionalExpression) {
 			return
 		}
-		e.addToken(n.Token)
 		e.walkExpression(n.TrueExpr)
 		e.walkExpression(n.Condition)
 		e.walkExpression(n.FalseExpr)
@@ -446,8 +440,9 @@ func (e *estimator) walkExpression(expr Expression) {
 		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfCallExpression) {
 			return
 		}
-		e.addToken(n.Token)
 		e.walkExpression(n.Function)
+		e.walkExpression(n.Receiver)
+		e.walkIdentifier(n.Method)
 		e.addExpressionSlice(n.Arguments)
 		e.addKeywordMap(n.Keywords)
 		e.addExpressionSlice(n.ArgsUnpack)
@@ -456,13 +451,11 @@ func (e *estimator) walkExpression(expr Expression) {
 		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfListLiteral) {
 			return
 		}
-		e.addToken(n.Token)
 		e.addExpressionSlice(n.Elements)
 	case *DictLiteral:
 		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfDictLiteral) {
 			return
 		}
-		e.addToken(n.Token)
 		e.total += cap(n.Pairs) * sizeOfDictPairSliceElem
 		for _, pair := range n.Pairs {
 			e.walkExpression(pair.Key)
@@ -472,7 +465,6 @@ func (e *estimator) walkExpression(expr Expression) {
 		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfSetLiteral) {
 			return
 		}
-		e.addToken(n.Token)
 		e.addExpressionSlice(n.Elements)
 	case *IndexExpression:
 		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfIndexExpression) {
@@ -485,27 +477,14 @@ func (e *estimator) walkExpression(expr Expression) {
 		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfSliceExpression) {
 			return
 		}
-		e.addToken(n.Token)
 		e.walkExpression(n.Left)
 		e.walkExpression(n.Start)
 		e.walkExpression(n.End)
 		e.walkExpression(n.Step)
-	case *MethodCallExpression:
-		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfMethodCallExpression) {
-			return
-		}
-		e.addToken(n.Token)
-		e.walkExpression(n.Object)
-		e.walkIdentifier(n.Method)
-		e.addExpressionSlice(n.Arguments)
-		e.addKeywordMap(n.Keywords)
-		e.addExpressionSlice(n.ArgsUnpack)
-		e.walkExpression(n.KwargsUnpack)
 	case *ListComprehension:
 		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfListComprehension) {
 			return
 		}
-		e.addToken(n.Token)
 		e.walkExpression(n.Expression)
 		e.addExpressionSlice(n.Variables)
 		e.walkExpression(n.Iterable)
@@ -518,7 +497,6 @@ func (e *estimator) walkExpression(expr Expression) {
 		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfDictComprehension) {
 			return
 		}
-		e.addToken(n.Token)
 		e.walkExpression(n.Key)
 		e.walkExpression(n.Value)
 		e.addExpressionSlice(n.Variables)
@@ -532,7 +510,6 @@ func (e *estimator) walkExpression(expr Expression) {
 		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfSetComprehension) {
 			return
 		}
-		e.addToken(n.Token)
 		e.walkExpression(n.Expression)
 		e.addExpressionSlice(n.Variables)
 		e.walkExpression(n.Iterable)
@@ -545,7 +522,6 @@ func (e *estimator) walkExpression(expr Expression) {
 		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfLambda) {
 			return
 		}
-		e.addToken(n.Token)
 		e.addIdentifierSlice(n.Parameters)
 		e.addDefaultsMap(n.DefaultValues)
 		e.walkIdentifier(n.Variadic)
@@ -555,13 +531,11 @@ func (e *estimator) walkExpression(expr Expression) {
 		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfTupleLiteral) {
 			return
 		}
-		e.addToken(n.Token)
 		e.addExpressionSlice(n.Elements)
 	case *OrPattern:
 		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfOrPattern) {
 			return
 		}
-		e.addToken(n.Token)
 		e.addExpressionSlice(n.Patterns)
 	}
 }
@@ -578,7 +552,6 @@ func (e *estimator) walkFunctionLiteral(fn *FunctionLiteral) {
 	if fn == nil || !e.mark(uintptr(unsafe.Pointer(fn)), sizeOfFunctionLiteral) {
 		return
 	}
-	e.addToken(fn.Token)
 	e.addIdentifierSlice(fn.Parameters)
 	e.addDefaultsMap(fn.DefaultValues)
 	e.walkIdentifier(fn.Variadic)

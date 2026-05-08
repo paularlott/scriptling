@@ -1,6 +1,7 @@
 package ast
 
 import (
+	"strings"
 	"sync/atomic"
 
 	"github.com/paularlott/scriptling/token"
@@ -24,7 +25,7 @@ type TokenInfo struct {
 
 func NewTokenInfo(tok token.Token) TokenInfo {
 	return TokenInfo{
-		Literal: tok.Literal,
+		Literal: strings.Clone(tok.Literal),
 		Line:    int32(tok.Line),
 	}
 }
@@ -56,6 +57,7 @@ func (st *SymbolTable) Intern(name string) uint32 {
 		}
 	}
 	id := uint32(len(st.names) + 1)
+	name = strings.Clone(name)
 	st.names = append(st.names, name)
 	if st.ids != nil {
 		st.ids[name] = id
@@ -115,6 +117,52 @@ func (p *Program) Line() int {
 	return 0
 }
 
+func lineOfNode(node Node) int {
+	if node == nil {
+		return 0
+	}
+	return node.Line()
+}
+
+func lineOfExpr(expr Expression) int {
+	if expr == nil {
+		return 0
+	}
+	return expr.Line()
+}
+
+func lineOfStatement(stmt Statement) int {
+	if stmt == nil {
+		return 0
+	}
+	return stmt.Line()
+}
+
+func lineOfIdentifier(ident *Identifier) int {
+	if ident == nil {
+		return 0
+	}
+	return ident.Line()
+}
+
+func lineOfExprSlice(exprs []Expression) int {
+	for _, expr := range exprs {
+		if line := lineOfExpr(expr); line != 0 {
+			return line
+		}
+	}
+	return 0
+}
+
+func lineOfIdentifierSlice(idents []*Identifier) int {
+	for _, ident := range idents {
+		if line := lineOfIdentifier(ident); line != 0 {
+			return line
+		}
+	}
+	return 0
+}
+
 type Identifier struct {
 	Token   LineInfo
 	Symbols *SymbolTable
@@ -138,34 +186,30 @@ func (i *Identifier) Line() int            { return int(i.Token.Line) }
 func (i *Identifier) Value() string        { return i.Symbols.Resolve(i.Name) }
 
 type IntegerLiteral struct {
-	Token TokenInfo
 	Value int64
 }
 
 func (il *IntegerLiteral) expressionNode()      {}
-func (il *IntegerLiteral) TokenLiteral() string { return il.Token.Literal }
-func (il *IntegerLiteral) Line() int            { return int(il.Token.Line) }
+func (il *IntegerLiteral) TokenLiteral() string { return "" }
+func (il *IntegerLiteral) Line() int            { return 0 }
 
 type FloatLiteral struct {
-	Token TokenInfo
 	Value float64
 }
 
 func (fl *FloatLiteral) expressionNode()      {}
-func (fl *FloatLiteral) TokenLiteral() string { return fl.Token.Literal }
-func (fl *FloatLiteral) Line() int            { return int(fl.Token.Line) }
+func (fl *FloatLiteral) TokenLiteral() string { return "" }
+func (fl *FloatLiteral) Line() int            { return 0 }
 
 type StringLiteral struct {
-	Token TokenInfo
 	Value string
 }
 
 func (sl *StringLiteral) expressionNode()      {}
-func (sl *StringLiteral) TokenLiteral() string { return sl.Token.Literal }
-func (sl *StringLiteral) Line() int            { return int(sl.Token.Line) }
+func (sl *StringLiteral) TokenLiteral() string { return sl.Value }
+func (sl *StringLiteral) Line() int            { return 0 }
 
 type FStringLiteral struct {
-	Token       TokenInfo
 	Value       string
 	Expressions []Expression // expressions inside {}
 	Parts       []string     // string parts between expressions
@@ -173,11 +217,10 @@ type FStringLiteral struct {
 }
 
 func (fsl *FStringLiteral) expressionNode()      {}
-func (fsl *FStringLiteral) TokenLiteral() string { return fsl.Token.Literal }
-func (fsl *FStringLiteral) Line() int            { return int(fsl.Token.Line) }
+func (fsl *FStringLiteral) TokenLiteral() string { return fsl.Value }
+func (fsl *FStringLiteral) Line() int            { return 0 }
 
 type Boolean struct {
-	Token LineInfo
 	Value bool
 }
 
@@ -188,28 +231,25 @@ func (b *Boolean) TokenLiteral() string {
 	}
 	return "False"
 }
-func (b *Boolean) Line() int { return int(b.Token.Line) }
+func (b *Boolean) Line() int { return 0 }
 
 type None struct {
-	Token LineInfo
 }
 
 func (n *None) expressionNode()      {}
 func (n *None) TokenLiteral() string { return "None" }
-func (n *None) Line() int            { return int(n.Token.Line) }
+func (n *None) Line() int            { return 0 }
 
 type PrefixExpression struct {
-	Token    LineInfo
 	Operator string
 	Right    Expression
 }
 
 func (pe *PrefixExpression) expressionNode()      {}
 func (pe *PrefixExpression) TokenLiteral() string { return pe.Operator }
-func (pe *PrefixExpression) Line() int            { return int(pe.Token.Line) }
+func (pe *PrefixExpression) Line() int            { return lineOfExpr(pe.Right) }
 
 type InfixExpression struct {
-	Token    LineInfo
 	Left     Expression
 	Operator string
 	Right    Expression
@@ -217,10 +257,14 @@ type InfixExpression struct {
 
 func (ie *InfixExpression) expressionNode()      {}
 func (ie *InfixExpression) TokenLiteral() string { return ie.Operator }
-func (ie *InfixExpression) Line() int            { return int(ie.Token.Line) }
+func (ie *InfixExpression) Line() int {
+	if line := lineOfExpr(ie.Left); line != 0 {
+		return line
+	}
+	return lineOfExpr(ie.Right)
+}
 
 type ConditionalExpression struct {
-	Token     LineInfo
 	TrueExpr  Expression
 	Condition Expression
 	FalseExpr Expression
@@ -228,7 +272,15 @@ type ConditionalExpression struct {
 
 func (ce *ConditionalExpression) expressionNode()      {}
 func (ce *ConditionalExpression) TokenLiteral() string { return "if" }
-func (ce *ConditionalExpression) Line() int            { return int(ce.Token.Line) }
+func (ce *ConditionalExpression) Line() int {
+	if line := lineOfExpr(ce.Condition); line != 0 {
+		return line
+	}
+	if line := lineOfExpr(ce.TrueExpr); line != 0 {
+		return line
+	}
+	return lineOfExpr(ce.FalseExpr)
+}
 
 type AssignStatement struct {
 	Token   LineInfo
@@ -331,7 +383,6 @@ func (ws *WhileStatement) TokenLiteral() string { return "while" }
 func (ws *WhileStatement) Line() int            { return int(ws.Token.Line) }
 
 type FunctionLiteral struct {
-	Token         LineInfo
 	Parameters    []*Identifier
 	DefaultValues map[string]Expression // parameter name -> default value
 	Variadic      *Identifier           // *args parameter (optional)
@@ -342,7 +393,18 @@ type FunctionLiteral struct {
 
 func (fl *FunctionLiteral) expressionNode()      {}
 func (fl *FunctionLiteral) TokenLiteral() string { return "def" }
-func (fl *FunctionLiteral) Line() int            { return int(fl.Token.Line) }
+func (fl *FunctionLiteral) Line() int {
+	if line := lineOfIdentifierSlice(fl.Parameters); line != 0 {
+		return line
+	}
+	if line := lineOfIdentifier(fl.Variadic); line != 0 {
+		return line
+	}
+	if line := lineOfIdentifier(fl.Kwargs); line != 0 {
+		return line
+	}
+	return lineOfStatement(fl.Body)
+}
 
 type FunctionStatement struct {
 	Token      LineInfo
@@ -368,8 +430,9 @@ func (cs *ClassStatement) TokenLiteral() string { return "class" }
 func (cs *ClassStatement) Line() int            { return int(cs.Token.Line) }
 
 type CallExpression struct {
-	Token        LineInfo
 	Function     Expression
+	Receiver     Expression
+	Method       *Identifier
 	Arguments    []Expression
 	Keywords     map[string]Expression
 	ArgsUnpack   []Expression // For *args unpacking (supports multiple)
@@ -378,7 +441,29 @@ type CallExpression struct {
 
 func (ce *CallExpression) expressionNode()      {}
 func (ce *CallExpression) TokenLiteral() string { return "(" }
-func (ce *CallExpression) Line() int            { return int(ce.Token.Line) }
+func (ce *CallExpression) Line() int {
+	if line := lineOfExpr(ce.Function); line != 0 {
+		return line
+	}
+	if line := lineOfExpr(ce.Receiver); line != 0 {
+		return line
+	}
+	if line := lineOfIdentifier(ce.Method); line != 0 {
+		return line
+	}
+	if line := lineOfExprSlice(ce.Arguments); line != 0 {
+		return line
+	}
+	for _, expr := range ce.Keywords {
+		if line := lineOfExpr(expr); line != 0 {
+			return line
+		}
+	}
+	if line := lineOfExprSlice(ce.ArgsUnpack); line != 0 {
+		return line
+	}
+	return lineOfExpr(ce.KwargsUnpack)
+}
 
 type ReturnStatement struct {
 	Token       LineInfo
@@ -466,22 +551,30 @@ func (fs *ForStatement) TokenLiteral() string { return "for" }
 func (fs *ForStatement) Line() int            { return int(fs.Token.Line) }
 
 type ListLiteral struct {
-	Token    LineInfo
 	Elements []Expression
 }
 
 func (ll *ListLiteral) expressionNode()      {}
 func (ll *ListLiteral) TokenLiteral() string { return "[" }
-func (ll *ListLiteral) Line() int            { return int(ll.Token.Line) }
+func (ll *ListLiteral) Line() int            { return lineOfExprSlice(ll.Elements) }
 
 type DictLiteral struct {
-	Token LineInfo
 	Pairs []DictPairLiteral
 }
 
 func (dl *DictLiteral) expressionNode()      {}
 func (dl *DictLiteral) TokenLiteral() string { return "{" }
-func (dl *DictLiteral) Line() int            { return int(dl.Token.Line) }
+func (dl *DictLiteral) Line() int {
+	for _, pair := range dl.Pairs {
+		if line := lineOfExpr(pair.Key); line != 0 {
+			return line
+		}
+		if line := lineOfExpr(pair.Value); line != 0 {
+			return line
+		}
+	}
+	return 0
+}
 
 type DictPairLiteral struct {
 	Key   Expression
@@ -489,13 +582,12 @@ type DictPairLiteral struct {
 }
 
 type SetLiteral struct {
-	Token    LineInfo
 	Elements []Expression
 }
 
 func (sl *SetLiteral) expressionNode()      {}
 func (sl *SetLiteral) TokenLiteral() string { return "{" }
-func (sl *SetLiteral) Line() int            { return int(sl.Token.Line) }
+func (sl *SetLiteral) Line() int            { return lineOfExprSlice(sl.Elements) }
 
 type IndexExpression struct {
 	Token       LineInfo
@@ -514,7 +606,6 @@ func (ie *IndexExpression) TokenLiteral() string {
 func (ie *IndexExpression) Line() int { return int(ie.Token.Line) }
 
 type SliceExpression struct {
-	Token LineInfo
 	Left  Expression
 	Start Expression
 	End   Expression
@@ -523,7 +614,18 @@ type SliceExpression struct {
 
 func (se *SliceExpression) expressionNode()      {}
 func (se *SliceExpression) TokenLiteral() string { return "[" }
-func (se *SliceExpression) Line() int            { return int(se.Token.Line) }
+func (se *SliceExpression) Line() int {
+	if line := lineOfExpr(se.Left); line != 0 {
+		return line
+	}
+	if line := lineOfExpr(se.Start); line != 0 {
+		return line
+	}
+	if line := lineOfExpr(se.End); line != 0 {
+		return line
+	}
+	return lineOfExpr(se.Step)
+}
 
 type ExceptClause struct {
 	Token      LineInfo
@@ -581,20 +683,6 @@ func (as *AssertStatement) statementNode()       {}
 func (as *AssertStatement) TokenLiteral() string { return "assert" }
 func (as *AssertStatement) Line() int            { return int(as.Token.Line) }
 
-type MethodCallExpression struct {
-	Token        LineInfo
-	Object       Expression
-	Method       *Identifier
-	Arguments    []Expression
-	Keywords     map[string]Expression
-	ArgsUnpack   []Expression // For *args unpacking (supports multiple)
-	KwargsUnpack Expression   // For **kwargs unpacking
-}
-
-func (mce *MethodCallExpression) expressionNode()      {}
-func (mce *MethodCallExpression) TokenLiteral() string { return "(" }
-func (mce *MethodCallExpression) Line() int            { return int(mce.Token.Line) }
-
 // ComprehensionClause represents an additional `for var in iterable [if cond]` clause
 type ComprehensionClause struct {
 	Variables []Expression
@@ -603,7 +691,6 @@ type ComprehensionClause struct {
 }
 
 type ListComprehension struct {
-	Token             LineInfo
 	Expression        Expression
 	Variables         []Expression // supports tuple unpacking like: for h, t in ...
 	Iterable          Expression
@@ -613,10 +700,20 @@ type ListComprehension struct {
 
 func (lc *ListComprehension) expressionNode()      {}
 func (lc *ListComprehension) TokenLiteral() string { return "[" }
-func (lc *ListComprehension) Line() int            { return int(lc.Token.Line) }
+func (lc *ListComprehension) Line() int {
+	if line := lineOfExpr(lc.Expression); line != 0 {
+		return line
+	}
+	if line := lineOfExprSlice(lc.Variables); line != 0 {
+		return line
+	}
+	if line := lineOfExpr(lc.Iterable); line != 0 {
+		return line
+	}
+	return lineOfExpr(lc.Condition)
+}
 
 type DictComprehension struct {
-	Token             LineInfo
 	Key               Expression
 	Value             Expression
 	Variables         []Expression
@@ -627,10 +724,23 @@ type DictComprehension struct {
 
 func (dc *DictComprehension) expressionNode()      {}
 func (dc *DictComprehension) TokenLiteral() string { return "{" }
-func (dc *DictComprehension) Line() int            { return int(dc.Token.Line) }
+func (dc *DictComprehension) Line() int {
+	if line := lineOfExpr(dc.Key); line != 0 {
+		return line
+	}
+	if line := lineOfExpr(dc.Value); line != 0 {
+		return line
+	}
+	if line := lineOfExprSlice(dc.Variables); line != 0 {
+		return line
+	}
+	if line := lineOfExpr(dc.Iterable); line != 0 {
+		return line
+	}
+	return lineOfExpr(dc.Condition)
+}
 
 type SetComprehension struct {
-	Token             LineInfo
 	Expression        Expression
 	Variables         []Expression
 	Iterable          Expression
@@ -640,10 +750,20 @@ type SetComprehension struct {
 
 func (sc *SetComprehension) expressionNode()      {}
 func (sc *SetComprehension) TokenLiteral() string { return "{" }
-func (sc *SetComprehension) Line() int            { return int(sc.Token.Line) }
+func (sc *SetComprehension) Line() int {
+	if line := lineOfExpr(sc.Expression); line != 0 {
+		return line
+	}
+	if line := lineOfExprSlice(sc.Variables); line != 0 {
+		return line
+	}
+	if line := lineOfExpr(sc.Iterable); line != 0 {
+		return line
+	}
+	return lineOfExpr(sc.Condition)
+}
 
 type Lambda struct {
-	Token         LineInfo
 	Parameters    []*Identifier
 	DefaultValues map[string]Expression
 	Variadic      *Identifier // *args parameter (optional)
@@ -653,16 +773,26 @@ type Lambda struct {
 
 func (l *Lambda) expressionNode()      {}
 func (l *Lambda) TokenLiteral() string { return "lambda" }
-func (l *Lambda) Line() int            { return int(l.Token.Line) }
+func (l *Lambda) Line() int {
+	if line := lineOfIdentifierSlice(l.Parameters); line != 0 {
+		return line
+	}
+	if line := lineOfIdentifier(l.Variadic); line != 0 {
+		return line
+	}
+	if line := lineOfIdentifier(l.Kwargs); line != 0 {
+		return line
+	}
+	return lineOfExpr(l.Body)
+}
 
 type TupleLiteral struct {
-	Token    LineInfo
 	Elements []Expression
 }
 
 func (tl *TupleLiteral) expressionNode()      {}
 func (tl *TupleLiteral) TokenLiteral() string { return "(" }
-func (tl *TupleLiteral) Line() int            { return int(tl.Token.Line) }
+func (tl *TupleLiteral) Line() int            { return lineOfExprSlice(tl.Elements) }
 
 type WithStatement struct {
 	Token       LineInfo
@@ -697,10 +827,9 @@ type CaseClause struct {
 
 // OrPattern represents a pattern like `case 1 | 2 | 3:`
 type OrPattern struct {
-	Token    LineInfo
 	Patterns []Expression
 }
 
 func (op *OrPattern) expressionNode()      {}
 func (op *OrPattern) TokenLiteral() string { return "|" }
-func (op *OrPattern) Line() int            { return int(op.Token.Line) }
+func (op *OrPattern) Line() int            { return lineOfExprSlice(op.Patterns) }
