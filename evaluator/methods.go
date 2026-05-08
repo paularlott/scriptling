@@ -20,6 +20,21 @@ func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression
 		return obj
 	}
 
+	// Fast path for the hottest production payload access pattern:
+	// dict.get(key) and dict.get(key, default) without kwargs or unpacking.
+	if dict, ok := obj.(*object.Dict); ok && mce.Method.Value == "get" &&
+		!dictCallableMethodExists(dict, "get") &&
+		len(mce.Keywords) == 0 && len(mce.ArgsUnpack) == 0 && mce.KwargsUnpack == nil &&
+		(len(mce.Arguments) == 1 || len(mce.Arguments) == 2) {
+		return evalFastDictGet(ctx, dict, mce.Arguments, env)
+	}
+
+	if dict, ok := obj.(*object.Dict); ok &&
+		len(mce.Keywords) == 0 && len(mce.ArgsUnpack) == 0 && mce.KwargsUnpack == nil &&
+		dictCallableMethodExists(dict, mce.Method.Value) {
+		return evalFastDictCallableMethod(ctx, dict, mce.Method.Value, mce.Arguments, env)
+	}
+
 	// Fast path for the most common string method calls in hot loops.
 	if len(mce.Arguments) == 0 && len(mce.Keywords) == 0 && len(mce.ArgsUnpack) == 0 && mce.KwargsUnpack == nil {
 		if str, ok := obj.(*object.String); ok {
@@ -86,6 +101,73 @@ func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression
 	}
 
 	return callStringMethodWithKeywords(ctx, obj, mce.Method.Value, args, keywords, env)
+}
+
+func evalFastDictGet(ctx context.Context, dict *object.Dict, arguments []ast.Expression, env *object.Environment) object.Object {
+	keyObj := evalNode(ctx, arguments[0], env)
+	if object.IsError(keyObj) {
+		return keyObj
+	}
+
+	var defaultObj object.Object = NULL
+	if len(arguments) == 2 {
+		defaultObj = evalNode(ctx, arguments[1], env)
+		if object.IsError(defaultObj) {
+			return defaultObj
+		}
+	}
+
+	if keyStr, ok := keyObj.(*object.String); ok {
+		if pair, exists := dict.Pairs[object.DictStringKey(keyStr.Value)]; exists {
+			return pair.Value
+		}
+		return defaultObj
+	}
+
+	if pair, exists := dict.Pairs[evalHashKey(ctx, keyObj)]; exists {
+		return pair.Value
+	}
+	return defaultObj
+}
+
+func dictCallableMethodExists(dict *object.Dict, method string) bool {
+	pair, ok := dict.GetByString(method)
+	if !ok {
+		return false
+	}
+
+	switch pair.Value.(type) {
+	case *object.Builtin, *object.Function, *object.LambdaFunction, *object.Class:
+		return true
+	default:
+		return false
+	}
+}
+
+func evalFastDictCallableMethod(ctx context.Context, dict *object.Dict, method string, arguments []ast.Expression, env *object.Environment) object.Object {
+	pair, ok := dict.GetByString(method)
+	if !ok {
+		return errors.NewError("%s: method %s not found in library", errors.ErrIdentifierNotFound, method)
+	}
+
+	args := evalExpressionsWithContext(ctx, arguments, env)
+	if len(args) == 1 && object.IsError(args[0]) {
+		return args[0]
+	}
+
+	switch fn := pair.Value.(type) {
+	case *object.Builtin:
+		ctxWithEnv := SetEnvInContext(ctx, env)
+		return fn.Fn(ctxWithEnv, object.NewKwargs(nil), args...)
+	case *object.Function:
+		return applyFunctionWithContext(ctx, fn, args, nil, env)
+	case *object.LambdaFunction:
+		return applyFunctionWithContext(ctx, fn, args, nil, env)
+	case *object.Class:
+		return applyFunctionWithContext(ctx, fn, args, nil, env)
+	default:
+		return errors.NewError("%s: %s is not callable", errors.ErrIdentifierNotFound, method)
+	}
 }
 
 func fastStringUpper(s string) string {

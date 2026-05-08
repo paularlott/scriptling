@@ -57,6 +57,12 @@ func DictKey(obj Object) string {
 	}
 }
 
+// DictStringKey returns the canonical dict key for a string key without
+// requiring a temporary String object allocation.
+func DictStringKey(name string) string {
+	return "s:" + name
+}
+
 // IsHashable reports whether obj can be used as a set element or dict key.
 // Matches Python semantics: int, float, bool, string, None, and tuples of
 // hashable elements are hashable; lists, dicts, sets, and instances are not
@@ -498,15 +504,17 @@ func (c *Continue) CoerceInt() (int64, Object)     { return 0, errMustBeInteger 
 func (c *Continue) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
 
 type Function struct {
-	Name           string
-	Parameters     []*ast.Identifier
-	DefaultValues  map[string]ast.Expression
-	Variadic       *ast.Identifier // *args parameter
-	Kwargs         *ast.Identifier // **kwargs parameter
-	Body           *ast.BlockStatement
-	Env            *Environment
-	LocalSlots     map[string]int
-	LocalSlotNames []string
+	Name             string
+	Parameters       []*ast.Identifier
+	DefaultValues    map[string]ast.Expression
+	Variadic         *ast.Identifier // *args parameter
+	Kwargs           *ast.Identifier // **kwargs parameter
+	Body             *ast.BlockStatement
+	Env              *Environment
+	LocalSlots       map[string]int
+	LocalSlotNames   []string
+	ParamSlotIndexes []int
+	ReuseCallEnv     bool
 }
 
 func (f *Function) Type() ObjectType { return FUNCTION_OBJ }
@@ -524,14 +532,15 @@ func (f *Function) CoerceInt() (int64, Object)     { return 0, errMustBeInteger 
 func (f *Function) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
 
 type LambdaFunction struct {
-	Parameters     []*ast.Identifier
-	DefaultValues  map[string]ast.Expression
-	Variadic       *ast.Identifier // *args parameter
-	Kwargs         *ast.Identifier // **kwargs parameter
-	Body           ast.Expression
-	Env            *Environment
-	LocalSlots     map[string]int
-	LocalSlotNames []string
+	Parameters       []*ast.Identifier
+	DefaultValues    map[string]ast.Expression
+	Variadic         *ast.Identifier // *args parameter
+	Kwargs           *ast.Identifier // **kwargs parameter
+	Body             ast.Expression
+	Env              *Environment
+	LocalSlots       map[string]int
+	LocalSlotNames   []string
+	ParamSlotIndexes []int
 }
 
 func (lf *LambdaFunction) Type() ObjectType { return LAMBDA_OBJ }
@@ -718,6 +727,7 @@ type Environment struct {
 	slotIndex                  map[string]int
 	slotNames                  []string
 	slots                      []Object
+	callPoolSlots              uint8
 	outer                      *Environment
 	root                       *Environment
 	globals                    map[string]bool
@@ -777,6 +787,75 @@ func NewEnclosedEnvironmentWithSlots(outer *Environment, slotIndex map[string]in
 	return env
 }
 
+const maxPooledCallEnvSlots = 16
+
+var callEnvPools [maxPooledCallEnvSlots + 1]sync.Pool
+
+// AcquireCallEnvironment returns a function-call environment, reusing a pooled
+// frame for small slot counts when possible.
+func AcquireCallEnvironment(outer *Environment, slotIndex map[string]int, slotNames []string) *Environment {
+	slotCount := len(slotNames)
+	if slotCount > 0 && slotCount <= maxPooledCallEnvSlots {
+		if pooled := callEnvPools[slotCount].Get(); pooled != nil {
+			env := pooled.(*Environment)
+			env.slotIndex = slotIndex
+			env.slotNames = slotNames
+			env.callPoolSlots = uint8(slotCount)
+			env.outer = outer
+			if outer != nil {
+				env.root = outer.root
+				env.output = outer.output
+				env.input = outer.input
+				env.importCallback = outer.importCallback
+				env.availableLibrariesCallback = outer.availableLibrariesCallback
+				env.currentModule = outer.currentModule
+			} else {
+				env.root = env
+			}
+			return env
+		}
+		env := NewEnclosedEnvironmentWithSlots(outer, slotIndex, slotNames)
+		env.callPoolSlots = uint8(slotCount)
+		return env
+	}
+	return NewEnclosedEnvironmentWithSlots(outer, slotIndex, slotNames)
+}
+
+// ReleaseCallEnvironment clears and returns a pooled call environment back to
+// the pool. Non-pooled environments are ignored.
+func ReleaseCallEnvironment(env *Environment) {
+	if env == nil || env.callPoolSlots == 0 {
+		return
+	}
+	for i := range env.slots {
+		env.slots[i] = nil
+	}
+	if env.store != nil {
+		clear(env.store)
+	}
+	if env.globals != nil {
+		clear(env.globals)
+	}
+	if env.nonlocals != nil {
+		clear(env.nonlocals)
+	}
+	if env.importedBindings != nil {
+		clear(env.importedBindings)
+	}
+	slotCount := env.callPoolSlots
+	env.callPoolSlots = 0
+	env.outer = nil
+	env.root = nil
+	env.slotIndex = nil
+	env.slotNames = nil
+	env.output = nil
+	env.input = nil
+	env.importCallback = nil
+	env.availableLibrariesCallback = nil
+	env.currentModule = ""
+	callEnvPools[slotCount].Put(env)
+}
+
 func (e *Environment) Get(name string) (Object, bool) {
 	for env := e; env != nil; env = env.outer {
 		if idx, ok := env.slotIndex[name]; ok {
@@ -790,6 +869,87 @@ func (e *Environment) Get(name string) (Object, bool) {
 		}
 	}
 	return nil, false
+}
+
+// GetSlotByIndex returns the value at the given slot index.
+// Returns (value, true) if the slot has a value, (nil, false) otherwise.
+func (e *Environment) GetSlotByIndex(idx int) (Object, bool) {
+	if idx >= 0 && idx < len(e.slots) && e.slots[idx] != nil {
+		return e.slots[idx], true
+	}
+	return nil, false
+}
+
+// GetSlotIndex returns the slot index for the given variable name in this
+// environment's local scope only. Returns (index, true) if found, (0, false)
+// if not a local slot.
+func (e *Environment) GetSlotIndex(name string) (int, bool) {
+	if e.slotIndex == nil {
+		return 0, false
+	}
+	idx, ok := e.slotIndex[name]
+	if ok && idx >= 0 && idx < len(e.slots) {
+		return idx, true
+	}
+	return 0, false
+}
+
+// HasSlots returns whether this environment has slot-based variable access configured.
+func (e *Environment) HasSlots() bool {
+	return e.slotIndex != nil
+}
+
+// SetupSlots configures slot-based variable access on this environment.
+func (e *Environment) SetupSlots(slotIndex map[string]int, slotNames []string) {
+	e.slotIndex = slotIndex
+	e.slotNames = slotNames
+	e.slots = make([]Object, len(slotNames))
+}
+
+// ExtendSlots adds new variables to the existing slot layout. Variables
+// already present keep their existing indices. New variables are appended.
+func (e *Environment) ExtendSlots(slotIndex map[string]int, slotNames []string) {
+	for _, name := range slotNames {
+		if _, exists := e.slotIndex[name]; !exists {
+			idx := len(e.slotNames)
+			e.slotIndex[name] = idx
+			e.slotNames = append(e.slotNames, name)
+			e.slots = append(e.slots, nil)
+		}
+	}
+}
+
+// SetSlotByIndex stores val in the given local slot index when valid.
+func (e *Environment) SetSlotByIndex(idx int, val Object) bool {
+	if idx >= 0 && idx < len(e.slots) {
+		e.slots[idx] = val
+		return true
+	}
+	return false
+}
+
+// GetCachedSlot returns the value at the given slot index after validating
+// that the slot name matches. This prevents stale cached indices (from
+// shared AST via the parse cache) from reading the wrong variable.
+func (e *Environment) GetCachedSlot(idx int, name string) (Object, bool) {
+	if idx >= 0 && idx < len(e.slots) && idx < len(e.slotNames) && e.slotNames[idx] == name {
+		if e.slots[idx] != nil {
+			return e.slots[idx], true
+		}
+	}
+	return nil, false
+}
+
+// SetCachedSlot stores val at the given slot index after validating
+// that the slot name matches. Returns false if the cache is stale,
+// falling through to the full Set path.
+func (e *Environment) SetCachedSlot(idx int, name string, val Object) bool {
+	if idx >= 0 && idx < len(e.slots) && idx < len(e.slotNames) && e.slotNames[idx] == name {
+		e.slots[idx] = val
+		delete(e.importedBindings, name)
+		return true
+	}
+	return false
 }
 
 func (e *Environment) Set(name string, val Object) Object {
@@ -828,6 +988,14 @@ func (e *Environment) Delete(name string) {
 // SetGlobal sets a variable in the global (outermost) environment
 func (e *Environment) SetGlobal(name string, val Object) Object {
 	root := e.root
+	// Check if the root environment has a slot for this variable
+	if root.slotIndex != nil {
+		if idx, ok := root.slotIndex[name]; ok && idx >= 0 && idx < len(root.slots) {
+			root.slots[idx] = val
+			delete(root.importedBindings, name)
+			return val
+		}
+	}
 	if root.store == nil {
 		root.store = make(map[string]Object, 4)
 	}
@@ -1003,27 +1171,30 @@ func (e *Environment) SnapshotCallables() *CallableSnapshot {
 func (s *CallableSnapshot) ApplySnapshot(target *Environment) {
 	for name, v := range s.functions {
 		target.store[name] = &Function{
-			Name:           v.Name,
-			Parameters:     v.Parameters,
-			DefaultValues:  v.DefaultValues,
-			Variadic:       v.Variadic,
-			Kwargs:         v.Kwargs,
-			Body:           v.Body,
-			Env:            target,
-			LocalSlots:     v.LocalSlots,
-			LocalSlotNames: v.LocalSlotNames,
+			Name:             v.Name,
+			Parameters:       v.Parameters,
+			DefaultValues:    v.DefaultValues,
+			Variadic:         v.Variadic,
+			Kwargs:           v.Kwargs,
+			Body:             v.Body,
+			Env:              target,
+			LocalSlots:       v.LocalSlots,
+			LocalSlotNames:   v.LocalSlotNames,
+			ParamSlotIndexes: v.ParamSlotIndexes,
+			ReuseCallEnv:     v.ReuseCallEnv,
 		}
 	}
 	for name, v := range s.lambdas {
 		target.store[name] = &LambdaFunction{
-			Parameters:     v.Parameters,
-			DefaultValues:  v.DefaultValues,
-			Variadic:       v.Variadic,
-			Kwargs:         v.Kwargs,
-			Body:           v.Body,
-			Env:            target,
-			LocalSlots:     v.LocalSlots,
-			LocalSlotNames: v.LocalSlotNames,
+			Parameters:       v.Parameters,
+			DefaultValues:    v.DefaultValues,
+			Variadic:         v.Variadic,
+			Kwargs:           v.Kwargs,
+			Body:             v.Body,
+			Env:              target,
+			LocalSlots:       v.LocalSlots,
+			LocalSlotNames:   v.LocalSlotNames,
+			ParamSlotIndexes: v.ParamSlotIndexes,
 		}
 	}
 	for name, v := range s.dicts {
@@ -1257,24 +1428,24 @@ func (d *Dict) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
 
 // GetByString retrieves a pair using a string key (convenience for attribute-style access).
 func (d *Dict) GetByString(name string) (DictPair, bool) {
-	pair, ok := d.Pairs[DictKey(&String{Value: name})]
+	pair, ok := d.Pairs[DictStringKey(name)]
 	return pair, ok
 }
 
 // SetByString sets a pair using a string key (convenience for attribute-style access).
 func (d *Dict) SetByString(name string, value Object) {
-	d.Pairs[DictKey(&String{Value: name})] = DictPair{Key: &String{Value: name}, Value: value}
+	d.Pairs[DictStringKey(name)] = DictPair{Key: &String{Value: name}, Value: value}
 }
 
 // HasByString checks if a string key exists in the dict.
 func (d *Dict) HasByString(name string) bool {
-	_, ok := d.Pairs[DictKey(&String{Value: name})]
+	_, ok := d.Pairs[DictStringKey(name)]
 	return ok
 }
 
 // DeleteByString deletes a string key from the dict. Returns true if key existed.
 func (d *Dict) DeleteByString(name string) bool {
-	k := DictKey(&String{Value: name})
+	k := DictStringKey(name)
 	_, ok := d.Pairs[k]
 	if ok {
 		delete(d.Pairs, k)

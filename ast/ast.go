@@ -1,6 +1,10 @@
 package ast
 
-import "github.com/paularlott/scriptling/token"
+import (
+	"sync/atomic"
+
+	"github.com/paularlott/scriptling/token"
+)
 
 type Node interface {
 	TokenLiteral() string
@@ -38,6 +42,9 @@ func (p *Program) Line() int {
 type Identifier struct {
 	Token token.Token
 	Value string
+	// Slot cache for fast local variable access.
+	// 0 = uncached (zero value), -1 = not a local slot, >0 = slot index + 1.
+	SlotCache atomic.Int32
 }
 
 func (i *Identifier) expressionNode()      {}
@@ -219,6 +226,7 @@ type FunctionLiteral struct {
 	Variadic      *Identifier           // *args parameter (optional)
 	Kwargs        *Identifier           // **kwargs parameter (optional)
 	Body          *BlockStatement
+	HasNestedFunc bool // set by parser: true if body contains any nested function/lambda/class
 }
 
 func (fl *FunctionLiteral) expressionNode()      {}

@@ -96,10 +96,5 @@ func DictToMap(dict *object.Dict) map[string]interface{} {
 	if dict == nil {
 		return nil
 	}
-
-	result := make(map[string]interface{}, len(dict.Pairs))
-	for _, pair := range dict.Pairs {
-		result[pair.StringKey()] = conversion.ToGo(pair.Value)
-	}
-	return result
+	return conversion.ToGo(dict).(map[string]interface{})
 }
