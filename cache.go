@@ -54,7 +54,7 @@ const (
 	defaultCacheMaxEntries = 1000
 	defaultCacheMaxCap     = 4000
 	defaultCacheMaxBytes   = 64 << 20
-	smallScriptThreshold   = 32
+	smallScriptThreshold   = 64
 )
 
 func newProgramCache(maxSize int) *programCache {
@@ -101,8 +101,8 @@ func Set(script string, program *ast.Program) {
 
 // SetWithKey stores a program in the cache using a previously computed key.
 // This path is kept for compatibility; the normal parser path now uses Set().
-func SetWithKey(key cacheKey, program *ast.Program) {
-	globalCache.setWithKey(key, program)
+func SetWithKey(key cacheKey, script string, program *ast.Program) {
+	globalCache.setWithKey(key, script, program)
 }
 
 func (c *programCache) get(script string) (*ast.Program, bool) {
@@ -192,7 +192,7 @@ func (c *programCache) set(script string, program *ast.Program) {
 			c.usedBytes -= entry.sizeBytes
 			entry.script = script
 			entry.program = program
-			entry.sizeBytes = estimateCacheEntrySize(script)
+			entry.sizeBytes = estimateCacheEntrySize(script, program)
 			entry.hashOnly = false
 			c.usedBytes += entry.sizeBytes
 			c.lru.MoveToFront(elem)
@@ -207,7 +207,7 @@ func (c *programCache) set(script string, program *ast.Program) {
 			key:       key,
 			script:    script,
 			program:   program,
-			sizeBytes: estimateCacheEntrySize(script),
+			sizeBytes: estimateCacheEntrySize(script, program),
 		}
 		c.maybeGrowLocked(entry.sizeBytes)
 		elem := c.lru.PushFront(entry)
@@ -235,7 +235,7 @@ func (c *programCache) set(script string, program *ast.Program) {
 		entry.script = script
 		entry.signature = sig
 		entry.program = program
-		entry.sizeBytes = estimateCacheEntrySize(script)
+		entry.sizeBytes = estimateCacheEntrySize(script, program)
 		entry.hashOnly = false
 		c.usedBytes += entry.sizeBytes
 		c.lru.MoveToFront(elem)
@@ -252,7 +252,7 @@ func (c *programCache) set(script string, program *ast.Program) {
 		signature: sig,
 		script:    script,
 		program:   program,
-		sizeBytes: estimateCacheEntrySize(script),
+		sizeBytes: estimateCacheEntrySize(script, program),
 	}
 	c.maybeGrowLocked(entry.sizeBytes)
 	elem := c.lru.PushFront(entry)
@@ -262,28 +262,64 @@ func (c *programCache) set(script string, program *ast.Program) {
 	c.evictIfNeededLocked()
 }
 
-func (c *programCache) setWithKey(key cacheKey, program *ast.Program) {
+func (c *programCache) setWithKey(key cacheKey, script string, program *ast.Program) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	isSmall := len(script) <= smallScriptThreshold
+
 	if elem, ok := c.entries[key]; ok {
 		entry := elem.Value.(*cacheEntry)
+		wasHashOnly := entry.hashOnly
+		oldSig := entry.signature
+		c.usedBytes -= entry.sizeBytes
+		entry.script = script
+		entry.signature = cacheSignature{}
 		entry.program = program
+		entry.sizeBytes = estimateCacheEntrySize(script, program)
+		entry.hashOnly = isSmall
+		if !isSmall {
+			entry.signature = signatureForScript(script)
+		} else {
+			entry.script = ""
+		}
+		c.usedBytes += entry.sizeBytes
+		if !wasHashOnly {
+			c.removeBucketElem(oldSig, elem)
+		}
+		if !entry.hashOnly {
+			c.addBucketElem(entry.signature, elem)
+		}
 		c.lru.MoveToFront(elem)
+		if wasHashOnly && c.hashOnlyEntries > 0 {
+			c.hashOnlyEntries--
+		}
+		if entry.hashOnly {
+			c.hashOnlyEntries++
+		}
+		c.evictIfNeededLocked()
 		return
 	}
 
 	entry := &cacheEntry{
 		key:       key,
 		program:   program,
-		sizeBytes: 128,
-		hashOnly:  true,
+		sizeBytes: estimateCacheEntrySize(script, program),
+		hashOnly:  isSmall,
+	}
+	if !isSmall {
+		entry.signature = signatureForScript(script)
+		entry.script = script
 	}
 	c.maybeGrowLocked(entry.sizeBytes)
 	elem := c.lru.PushFront(entry)
 	c.entries[key] = elem
+	if !entry.hashOnly {
+		c.addBucketElem(entry.signature, elem)
+	} else {
+		c.hashOnlyEntries++
+	}
 	c.usedBytes += entry.sizeBytes
-	c.hashOnlyEntries++
 	c.evictIfNeededLocked()
 }
 
@@ -382,8 +418,12 @@ func packedEdgeBytes(script string, start int) uint64 {
 	return out
 }
 
-func estimateCacheEntrySize(script string) int {
-	return len(script) + 128
+func estimateCacheEntrySize(script string, program *ast.Program) int {
+	const entryOverhead = 128
+	if len(script) <= smallScriptThreshold {
+		return len(script) + entryOverhead
+	}
+	return len(script) + ast.EstimateRetainedBytes(program, script) + entryOverhead
 }
 
 func (c *programCache) evictOldest() bool {
