@@ -437,7 +437,7 @@ func parseProgramCached(input string) (*ast.Program, error) {
 	}
 
 	if key != (cacheKey{}) {
-		SetWithKey(key, program)
+		SetWithKey(key, input, program)
 	} else {
 		Set(input, program)
 	}

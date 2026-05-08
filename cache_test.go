@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/paularlott/scriptling/ast"
-	"github.com/paularlott/scriptling/token"
 )
 
 // helper to create a small cache for testing
@@ -21,7 +20,7 @@ func dummyProgram(label string) *ast.Program {
 	return &ast.Program{
 		Statements: []ast.Statement{
 			&ast.ExpressionStatement{
-				Token: token.Token{Literal: label},
+				Token: ast.TokenInfo{Literal: label},
 			},
 		},
 	}
