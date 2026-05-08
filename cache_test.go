@@ -17,12 +17,41 @@ func newTestCache(maxSize int) *programCache {
 
 // helper to create a dummy program distinguishable by a label
 func dummyProgram(label string) *ast.Program {
+	symbols := ast.NewSymbolTable()
+	symbols.Intern(label)
+	symbols.Freeze()
 	return &ast.Program{
+		Symbols: symbols,
 		Statements: []ast.Statement{
 			&ast.ExpressionStatement{
-				Token: ast.TokenInfo{Literal: label},
+				Token: ast.LineInfo{},
 			},
 		},
+	}
+}
+
+func TestCache_EvictedProgramDropsItsSymbolTableReference(t *testing.T) {
+	c := newTestCache(1)
+	first := dummyProgram("first")
+	second := dummyProgram("second")
+
+	c.set("first", first)
+	c.set("second", second)
+
+	if _, ok := c.get("first"); ok {
+		t.Fatal("expected first program to be evicted")
+	}
+	if got, ok := c.get("second"); !ok || got != second {
+		t.Fatal("expected second program to remain in cache")
+	}
+	for _, elem := range c.entries {
+		entry := elem.Value.(*cacheEntry)
+		if entry.program == first {
+			t.Fatal("evicted program is still retained by the cache")
+		}
+		if entry.program != nil && entry.program.Symbols == first.Symbols {
+			t.Fatal("evicted program symbol table is still retained by the cache")
+		}
 	}
 }
 

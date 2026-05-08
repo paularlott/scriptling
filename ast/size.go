@@ -141,8 +141,13 @@ func (e *estimator) addString(s string) {
 	e.total += len(s)
 }
 
-func (e *estimator) addToken(tok TokenInfo) {
-	e.addString(tok.Literal)
+func (e *estimator) addToken(tok any) {
+	switch t := tok.(type) {
+	case TokenInfo:
+		e.addString(t.Literal)
+	case LineInfo:
+		return
+	}
 }
 
 func (e *estimator) addStatementSlice(items []Statement) {
@@ -566,7 +571,7 @@ func (e *estimator) walkIdentifier(ident *Identifier) {
 		return
 	}
 	e.addToken(ident.Token)
-	e.addString(ident.Value)
+	e.addString(ident.Value())
 }
 
 func (e *estimator) walkFunctionLiteral(fn *FunctionLiteral) {

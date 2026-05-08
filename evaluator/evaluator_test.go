@@ -176,8 +176,8 @@ func TestFunctionObject(t *testing.T) {
 			fn.Parameters)
 	}
 
-	if fn.Parameters[0].Value != "x" {
-		t.Fatalf("parameter is not 'x'. got=%q", fn.Parameters[0].Value)
+	if fn.Parameters[0].Value() != "x" {
+		t.Fatalf("parameter is not 'x'. got=%q", fn.Parameters[0].Value())
 	}
 }
 

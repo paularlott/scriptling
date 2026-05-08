@@ -2,12 +2,16 @@ package ast
 
 import "testing"
 
+func testIdentifier(name string) *Identifier {
+	return NewIdentifierWithLine(LineInfo{}, NewSymbolTable(), name)
+}
+
 func TestProgram(t *testing.T) {
 	program := &Program{
 		Statements: []Statement{
 			&AssignStatement{
-				Left:  &Identifier{Value: "myVar"},
-				Value: &Identifier{Value: "anotherVar"},
+				Left:  testIdentifier("myVar"),
+				Value: testIdentifier("anotherVar"),
 			},
 		},
 	}
@@ -18,10 +22,10 @@ func TestProgram(t *testing.T) {
 }
 
 func TestIdentifier(t *testing.T) {
-	ident := &Identifier{Value: "foobar"}
+	ident := testIdentifier("foobar")
 
-	if ident.Value != "foobar" {
-		t.Errorf("ident.Value = %q, want %q", ident.Value, "foobar")
+	if ident.Value() != "foobar" {
+		t.Errorf("ident.Value = %q, want %q", ident.Value(), "foobar")
 	}
 }
 
@@ -73,7 +77,7 @@ func TestNone(t *testing.T) {
 func TestFStringLiteral(t *testing.T) {
 	fstr := &FStringLiteral{
 		Value:       "Hello {name}",
-		Expressions: []Expression{&Identifier{Value: "name"}},
+		Expressions: []Expression{testIdentifier("name")},
 		Parts:       []string{"Hello ", ""},
 		FormatSpecs: []string{""},
 	}
@@ -136,7 +140,7 @@ func TestConditionalExpression(t *testing.T) {
 
 func TestAssignStatement(t *testing.T) {
 	stmt := &AssignStatement{
-		Left:  &Identifier{Value: "x"},
+		Left:  testIdentifier("x"),
 		Value: &IntegerLiteral{Value: 5},
 	}
 
@@ -147,7 +151,7 @@ func TestAssignStatement(t *testing.T) {
 
 func TestAugmentedAssignStatement(t *testing.T) {
 	stmt := &AugmentedAssignStatement{
-		Name:     &Identifier{Value: "x"},
+		Name:     testIdentifier("x"),
 		Operator: "+=",
 		Value:    &IntegerLiteral{Value: 5},
 	}
@@ -164,8 +168,8 @@ func TestAugmentedAssignStatement(t *testing.T) {
 func TestMultipleAssignStatement(t *testing.T) {
 	stmt := &MultipleAssignStatement{
 		Names: []*Identifier{
-			{Value: "x"},
-			{Value: "y"},
+			testIdentifier("x"),
+			testIdentifier("y"),
 		},
 		Value: &ListLiteral{
 			Elements: []Expression{
@@ -237,8 +241,8 @@ func TestWhileStatement(t *testing.T) {
 
 func TestForStatement(t *testing.T) {
 	stmt := &ForStatement{
-		Variables: []Expression{&Identifier{Value: "x"}},
-		Iterable:  &Identifier{Value: "items"},
+		Variables: []Expression{testIdentifier("x")},
+		Iterable:  testIdentifier("items"),
 		Body:      &BlockStatement{},
 	}
 
@@ -254,13 +258,13 @@ func TestForStatement(t *testing.T) {
 func TestFunctionLiteral(t *testing.T) {
 	fn := &FunctionLiteral{
 		Parameters: []*Identifier{
-			{Value: "x"},
-			{Value: "y"},
+			testIdentifier("x"),
+			testIdentifier("y"),
 		},
 		DefaultValues: map[string]Expression{
 			"y": &IntegerLiteral{Value: 5},
 		},
-		Variadic: &Identifier{Value: "args"},
+		Variadic: testIdentifier("args"),
 		Body:     &BlockStatement{},
 	}
 
@@ -275,9 +279,9 @@ func TestFunctionLiteral(t *testing.T) {
 
 func TestFunctionStatement(t *testing.T) {
 	stmt := &FunctionStatement{
-		Name: &Identifier{Value: "myFunc"},
+		Name: testIdentifier("myFunc"),
 		Function: &FunctionLiteral{
-			Parameters: []*Identifier{{Value: "x"}},
+			Parameters: []*Identifier{testIdentifier("x")},
 			Body:       &BlockStatement{},
 		},
 	}
@@ -289,8 +293,8 @@ func TestFunctionStatement(t *testing.T) {
 
 func TestClassStatement(t *testing.T) {
 	stmt := &ClassStatement{
-		Name:      &Identifier{Value: "MyClass"},
-		BaseClass: &Identifier{Value: "BaseClass"},
+		Name:      testIdentifier("MyClass"),
+		BaseClass: testIdentifier("BaseClass"),
 		Body:      &BlockStatement{},
 	}
 
@@ -301,7 +305,7 @@ func TestClassStatement(t *testing.T) {
 
 func TestCallExpression(t *testing.T) {
 	expr := &CallExpression{
-		Function: &Identifier{Value: "print"},
+		Function: testIdentifier("print"),
 		Arguments: []Expression{
 			&StringLiteral{Value: "hello"},
 		},
@@ -321,8 +325,8 @@ func TestCallExpression(t *testing.T) {
 
 func TestMethodCallExpression(t *testing.T) {
 	expr := &MethodCallExpression{
-		Object: &Identifier{Value: "obj"},
-		Method: &Identifier{Value: "method"},
+		Object: testIdentifier("obj"),
+		Method: testIdentifier("method"),
 		Arguments: []Expression{
 			&IntegerLiteral{Value: 1},
 		},
@@ -373,7 +377,7 @@ func TestPassStatement(t *testing.T) {
 
 func TestImportStatement(t *testing.T) {
 	stmt := &ImportStatement{
-		Name: &Identifier{Value: "os"},
+		Name: testIdentifier("os"),
 	}
 
 	if stmt.Name == nil {
@@ -386,8 +390,8 @@ func TestImportStatement(t *testing.T) {
 
 	// Test with alias
 	stmt2 := &ImportStatement{
-		Name:  &Identifier{Value: "os"},
-		Alias: &Identifier{Value: "operating_system"},
+		Name:  testIdentifier("os"),
+		Alias: testIdentifier("operating_system"),
 	}
 
 	if stmt2.Alias == nil {
@@ -396,10 +400,10 @@ func TestImportStatement(t *testing.T) {
 
 	// Test with multiple imports
 	stmt3 := &ImportStatement{
-		Name: &Identifier{Value: "os"},
+		Name: testIdentifier("os"),
 		AdditionalNames: []*Identifier{
-			{Value: "sys"},
-			{Value: "json"},
+			testIdentifier("sys"),
+			testIdentifier("json"),
 		},
 	}
 
@@ -410,12 +414,12 @@ func TestImportStatement(t *testing.T) {
 
 func TestFromImportStatement(t *testing.T) {
 	stmt := &FromImportStatement{
-		Module: &Identifier{Value: "bs4"},
+		Module: testIdentifier("bs4"),
 		Names: []*Identifier{
-			{Value: "BeautifulSoup"},
+			testIdentifier("BeautifulSoup"),
 		},
 		Aliases: []*Identifier{
-			{Value: "BS"},
+			testIdentifier("BS"),
 		},
 	}
 
@@ -457,7 +461,7 @@ func TestDictLiteral(t *testing.T) {
 
 func TestIndexExpression(t *testing.T) {
 	expr := &IndexExpression{
-		Left:  &Identifier{Value: "arr"},
+		Left:  testIdentifier("arr"),
 		Index: &IntegerLiteral{Value: 0},
 	}
 
@@ -468,7 +472,7 @@ func TestIndexExpression(t *testing.T) {
 
 func TestSliceExpression(t *testing.T) {
 	expr := &SliceExpression{
-		Left:  &Identifier{Value: "arr"},
+		Left:  testIdentifier("arr"),
 		Start: &IntegerLiteral{Value: 0},
 		End:   &IntegerLiteral{Value: 10},
 		Step:  nil,
@@ -485,7 +489,7 @@ func TestTryStatement(t *testing.T) {
 		ExceptClauses: []*ExceptClause{
 			{
 				Body:      &BlockStatement{},
-				ExceptVar: &Identifier{Value: "e"},
+				ExceptVar: testIdentifier("e"),
 			},
 		},
 		Finally: &BlockStatement{},
@@ -509,8 +513,8 @@ func TestRaiseStatement(t *testing.T) {
 func TestGlobalStatement(t *testing.T) {
 	stmt := &GlobalStatement{
 		Names: []*Identifier{
-			{Value: "x"},
-			{Value: "y"},
+			testIdentifier("x"),
+			testIdentifier("y"),
 		},
 	}
 
@@ -522,7 +526,7 @@ func TestGlobalStatement(t *testing.T) {
 func TestNonlocalStatement(t *testing.T) {
 	stmt := &NonlocalStatement{
 		Names: []*Identifier{
-			{Value: "count"},
+			testIdentifier("count"),
 		},
 	}
 
@@ -544,9 +548,9 @@ func TestAssertStatement(t *testing.T) {
 
 func TestListComprehension(t *testing.T) {
 	lc := &ListComprehension{
-		Expression: &Identifier{Value: "x"},
-		Variables:  []Expression{&Identifier{Value: "x"}},
-		Iterable:   &Identifier{Value: "items"},
+		Expression: testIdentifier("x"),
+		Variables:  []Expression{testIdentifier("x")},
+		Iterable:   testIdentifier("items"),
 		Condition:  &Boolean{Value: true},
 	}
 
@@ -562,7 +566,7 @@ func TestListComprehension(t *testing.T) {
 func TestLambda(t *testing.T) {
 	lambda := &Lambda{
 		Parameters: []*Identifier{
-			{Value: "x"},
+			testIdentifier("x"),
 		},
 		DefaultValues: map[string]Expression{},
 		Variadic:      nil,
@@ -593,7 +597,7 @@ func TestTupleLiteral(t *testing.T) {
 
 func TestMatchStatement(t *testing.T) {
 	stmt := &MatchStatement{
-		Subject: &Identifier{Value: "value"},
+		Subject: testIdentifier("value"),
 		Cases: []*CaseClause{
 			{
 				Pattern: &IntegerLiteral{Value: 1},
@@ -620,7 +624,7 @@ func TestCaseClause(t *testing.T) {
 		Pattern:   &IntegerLiteral{Value: 1},
 		Guard:     &Boolean{Value: true},
 		Body:      &BlockStatement{},
-		CaptureAs: &Identifier{Value: "x"},
+		CaptureAs: testIdentifier("x"),
 	}
 
 	if clause.Pattern == nil || clause.Body == nil {
@@ -642,7 +646,7 @@ func TestNodeMethods(t *testing.T) {
 		},
 		{
 			name:     "Identifier",
-			node:     &Identifier{Value: "x"},
+			node:     testIdentifier("x"),
 			expected: "",
 		},
 		{
@@ -682,7 +686,7 @@ func TestExpressionString(t *testing.T) {
 	}{
 		{
 			name:     "Identifier",
-			expr:     &Identifier{Value: "myVar"},
+			expr:     testIdentifier("myVar"),
 			contains: "",
 		},
 		{
@@ -737,32 +741,32 @@ func TestExpressionString(t *testing.T) {
 		},
 		{
 			name:     "IndexExpression",
-			expr:     &IndexExpression{Left: &Identifier{Value: "arr"}, Index: &IntegerLiteral{Value: 0}},
+			expr:     &IndexExpression{Left: testIdentifier("arr"), Index: &IntegerLiteral{Value: 0}},
 			contains: "",
 		},
 		{
 			name:     "SliceExpression",
-			expr:     &SliceExpression{Left: &Identifier{Value: "arr"}, Start: &IntegerLiteral{Value: 0}, End: &IntegerLiteral{Value: 10}},
+			expr:     &SliceExpression{Left: testIdentifier("arr"), Start: &IntegerLiteral{Value: 0}, End: &IntegerLiteral{Value: 10}},
 			contains: "",
 		},
 		{
 			name:     "CallExpression",
-			expr:     &CallExpression{Function: &Identifier{Value: "print"}},
+			expr:     &CallExpression{Function: testIdentifier("print")},
 			contains: "",
 		},
 		{
 			name:     "MethodCallExpression",
-			expr:     &MethodCallExpression{Object: &Identifier{Value: "obj"}, Method: &Identifier{Value: "method"}},
+			expr:     &MethodCallExpression{Object: testIdentifier("obj"), Method: testIdentifier("method")},
 			contains: "",
 		},
 		{
 			name:     "Lambda",
-			expr:     &Lambda{Parameters: []*Identifier{{Value: "x"}}, Body: &Identifier{Value: "x"}},
+			expr:     &Lambda{Parameters: []*Identifier{testIdentifier("x")}, Body: testIdentifier("x")},
 			contains: "",
 		},
 		{
 			name:     "ListComprehension",
-			expr:     &ListComprehension{Expression: &Identifier{Value: "x"}, Variables: []Expression{&Identifier{Value: "x"}}, Iterable: &Identifier{Value: "items"}},
+			expr:     &ListComprehension{Expression: testIdentifier("x"), Variables: []Expression{testIdentifier("x")}, Iterable: testIdentifier("items")},
 			contains: "",
 		},
 		{
@@ -789,28 +793,28 @@ func TestStatementString(t *testing.T) {
 		name string
 		stmt Statement
 	}{
-		{name: "AssignStatement", stmt: &AssignStatement{Left: &Identifier{Value: "x"}, Value: &IntegerLiteral{Value: 1}}},
-		{name: "AugmentedAssignStatement", stmt: &AugmentedAssignStatement{Name: &Identifier{Value: "x"}, Operator: "+=", Value: &IntegerLiteral{Value: 1}}},
-		{name: "MultipleAssignStatement", stmt: &MultipleAssignStatement{Names: []*Identifier{{Value: "x"}}, Value: &ListLiteral{}}},
+		{name: "AssignStatement", stmt: &AssignStatement{Left: testIdentifier("x"), Value: &IntegerLiteral{Value: 1}}},
+		{name: "AugmentedAssignStatement", stmt: &AugmentedAssignStatement{Name: testIdentifier("x"), Operator: "+=", Value: &IntegerLiteral{Value: 1}}},
+		{name: "MultipleAssignStatement", stmt: &MultipleAssignStatement{Names: []*Identifier{testIdentifier("x")}, Value: &ListLiteral{}}},
 		{name: "ExpressionStatement", stmt: &ExpressionStatement{Expression: &IntegerLiteral{Value: 42}}},
 		{name: "BlockStatement", stmt: &BlockStatement{Statements: []Statement{}}},
 		{name: "IfStatement", stmt: &IfStatement{Condition: &Boolean{}, Consequence: &BlockStatement{}}},
 		{name: "WhileStatement", stmt: &WhileStatement{Condition: &Boolean{}, Body: &BlockStatement{}}},
-		{name: "ForStatement", stmt: &ForStatement{Variables: []Expression{&Identifier{Value: "x"}}, Iterable: &Identifier{Value: "items"}, Body: &BlockStatement{}}},
-		{name: "FunctionStatement", stmt: &FunctionStatement{Name: &Identifier{Value: "foo"}, Function: &FunctionLiteral{}}},
-		{name: "ClassStatement", stmt: &ClassStatement{Name: &Identifier{Value: "Foo"}, Body: &BlockStatement{}}},
+		{name: "ForStatement", stmt: &ForStatement{Variables: []Expression{testIdentifier("x")}, Iterable: testIdentifier("items"), Body: &BlockStatement{}}},
+		{name: "FunctionStatement", stmt: &FunctionStatement{Name: testIdentifier("foo"), Function: &FunctionLiteral{}}},
+		{name: "ClassStatement", stmt: &ClassStatement{Name: testIdentifier("Foo"), Body: &BlockStatement{}}},
 		{name: "ReturnStatement", stmt: &ReturnStatement{ReturnValue: &IntegerLiteral{Value: 42}}},
 		{name: "BreakStatement", stmt: &BreakStatement{}},
 		{name: "ContinueStatement", stmt: &ContinueStatement{}},
 		{name: "PassStatement", stmt: &PassStatement{}},
-		{name: "ImportStatement", stmt: &ImportStatement{Name: &Identifier{Value: "os"}}},
-		{name: "FromImportStatement", stmt: &FromImportStatement{Module: &Identifier{Value: "os"}, Names: []*Identifier{{Value: "path"}}}},
+		{name: "ImportStatement", stmt: &ImportStatement{Name: testIdentifier("os")}},
+		{name: "FromImportStatement", stmt: &FromImportStatement{Module: testIdentifier("os"), Names: []*Identifier{testIdentifier("path")}}},
 		{name: "TryStatement", stmt: &TryStatement{Body: &BlockStatement{}, ExceptClauses: []*ExceptClause{{Body: &BlockStatement{}}}}},
 		{name: "RaiseStatement", stmt: &RaiseStatement{Message: &StringLiteral{Value: "error"}}},
-		{name: "GlobalStatement", stmt: &GlobalStatement{Names: []*Identifier{{Value: "x"}}}},
-		{name: "NonlocalStatement", stmt: &NonlocalStatement{Names: []*Identifier{{Value: "y"}}}},
+		{name: "GlobalStatement", stmt: &GlobalStatement{Names: []*Identifier{testIdentifier("x")}}},
+		{name: "NonlocalStatement", stmt: &NonlocalStatement{Names: []*Identifier{testIdentifier("y")}}},
 		{name: "AssertStatement", stmt: &AssertStatement{Condition: &Boolean{}}},
-		{name: "MatchStatement", stmt: &MatchStatement{Subject: &Identifier{Value: "x"}, Cases: []*CaseClause{{Pattern: &IntegerLiteral{Value: 1}, Body: &BlockStatement{}}}}},
+		{name: "MatchStatement", stmt: &MatchStatement{Subject: testIdentifier("x"), Cases: []*CaseClause{{Pattern: &IntegerLiteral{Value: 1}, Body: &BlockStatement{}}}}},
 	}
 
 	for _, tt := range tests {
@@ -827,8 +831,8 @@ func TestStatementString(t *testing.T) {
 func TestProgramTokenLiteral(t *testing.T) {
 	program := &Program{
 		Statements: []Statement{
-			&AssignStatement{Left: &Identifier{Value: "x"}, Value: &IntegerLiteral{Value: 1}},
-			&AssignStatement{Left: &Identifier{Value: "y"}, Value: &IntegerLiteral{Value: 2}},
+			&AssignStatement{Left: testIdentifier("x"), Value: &IntegerLiteral{Value: 1}},
+			&AssignStatement{Left: testIdentifier("y"), Value: &IntegerLiteral{Value: 2}},
 		},
 	}
 
