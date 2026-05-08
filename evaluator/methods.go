@@ -22,7 +22,7 @@ func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression
 
 	// Fast path for the hottest production payload access pattern:
 	// dict.get(key) and dict.get(key, default) without kwargs or unpacking.
-	if dict, ok := obj.(*object.Dict); ok && mce.Method.Value == "get" &&
+	if dict, ok := obj.(*object.Dict); ok && mce.Method.Value() == "get" &&
 		!dictCallableMethodExists(dict, "get") &&
 		len(mce.Keywords) == 0 && len(mce.ArgsUnpack) == 0 && mce.KwargsUnpack == nil &&
 		(len(mce.Arguments) == 1 || len(mce.Arguments) == 2) {
@@ -31,14 +31,14 @@ func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression
 
 	if dict, ok := obj.(*object.Dict); ok &&
 		len(mce.Keywords) == 0 && len(mce.ArgsUnpack) == 0 && mce.KwargsUnpack == nil &&
-		dictCallableMethodExists(dict, mce.Method.Value) {
-		return evalFastDictCallableMethod(ctx, dict, mce.Method.Value, mce.Arguments, env)
+		dictCallableMethodExists(dict, mce.Method.Value()) {
+		return evalFastDictCallableMethod(ctx, dict, mce.Method.Value(), mce.Arguments, env)
 	}
 
 	// Fast path for the most common string method calls in hot loops.
 	if len(mce.Arguments) == 0 && len(mce.Keywords) == 0 && len(mce.ArgsUnpack) == 0 && mce.KwargsUnpack == nil {
 		if str, ok := obj.(*object.String); ok {
-			switch mce.Method.Value {
+			switch mce.Method.Value() {
 			case "upper":
 				return &object.String{Value: fastStringUpper(str.Value)}
 			case "lower":
@@ -100,7 +100,7 @@ func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression
 		}
 	}
 
-	return callStringMethodWithKeywords(ctx, obj, mce.Method.Value, args, keywords, env)
+	return callStringMethodWithKeywords(ctx, obj, mce.Method.Value(), args, keywords, env)
 }
 
 func evalFastDictGet(ctx context.Context, dict *object.Dict, arguments []ast.Expression, env *object.Environment) object.Object {

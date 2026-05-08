@@ -189,8 +189,8 @@ func TestFunctionStatement(t *testing.T) {
 			program.Statements[0])
 	}
 
-	if stmt.Name.Value != "add" {
-		t.Fatalf("function name is not 'add'. got=%s", stmt.Name.Value)
+	if stmt.Name.Value() != "add" {
+		t.Fatalf("function name is not 'add'. got=%s", stmt.Name.Value())
 	}
 
 	if len(stmt.Function.Parameters) != 2 {
@@ -296,8 +296,8 @@ func testAssignStatement(t *testing.T, s ast.Statement, name string) bool {
 		return false
 	}
 
-	if ident.Value != name {
-		t.Errorf("assignStmt.Left.Value not '%s'. got=%s", name, ident.Value)
+	if ident.Value() != name {
+		t.Errorf("assignStmt.Left.Value not '%s'. got=%s", name, ident.Value())
 		return false
 	}
 
@@ -935,16 +935,16 @@ func TestImportStatementWithAlias(t *testing.T) {
 			program.Statements[0])
 	}
 
-	if stmt.Name.Value != "os" {
-		t.Errorf("stmt.Name.Value = %q, want %q", stmt.Name.Value, "os")
+	if stmt.Name.Value() != "os" {
+		t.Errorf("stmt.Name.Value = %q, want %q", stmt.Name.Value(), "os")
 	}
 
 	if stmt.Alias == nil {
 		t.Fatal("stmt.Alias is nil")
 	}
 
-	if stmt.Alias.Value != "operating_system" {
-		t.Errorf("stmt.Alias.Value = %q, want %q", stmt.Alias.Value, "operating_system")
+	if stmt.Alias.Value() != "operating_system" {
+		t.Errorf("stmt.Alias.Value = %q, want %q", stmt.Alias.Value(), "operating_system")
 	}
 }
 
@@ -999,8 +999,8 @@ func TestImportStatementMultiple(t *testing.T) {
 					program.Statements[0])
 			}
 
-			if stmt.Name.Value != tt.expectedNames[0] {
-				t.Errorf("stmt.Name.Value = %q, want %q", stmt.Name.Value, tt.expectedNames[0])
+			if stmt.Name.Value() != tt.expectedNames[0] {
+				t.Errorf("stmt.Name.Value = %q, want %q", stmt.Name.Value(), tt.expectedNames[0])
 			}
 
 			if len(stmt.AdditionalNames) != len(tt.expectedNames)-1 {
@@ -1010,9 +1010,9 @@ func TestImportStatementMultiple(t *testing.T) {
 
 			for i, name := range stmt.AdditionalNames {
 				expectedName := tt.expectedNames[i+1]
-				if name.Value != expectedName {
+				if name.Value() != expectedName {
 					t.Errorf("stmt.AdditionalNames[%d].Value = %q, want %q",
-						i, name.Value, expectedName)
+						i, name.Value(), expectedName)
 				}
 			}
 
@@ -1026,15 +1026,15 @@ func TestImportStatementMultiple(t *testing.T) {
 				if expectedAlias == "" {
 					if alias != nil {
 						t.Errorf("stmt.AdditionalAliases[%d] should be nil, got %q",
-							i, alias.Value)
+							i, alias.Value())
 					}
 				} else {
 					if alias == nil {
 						t.Errorf("stmt.AdditionalAliases[%d] is nil, want %q",
 							i, expectedAlias)
-					} else if alias.Value != expectedAlias {
+					} else if alias.Value() != expectedAlias {
 						t.Errorf("stmt.AdditionalAliases[%d].Value = %q, want %q",
-							i, alias.Value, expectedAlias)
+							i, alias.Value(), expectedAlias)
 					}
 				}
 			}
@@ -1132,7 +1132,7 @@ except (TypeError, ValueError) as e:
 		t.Fatalf("except type is not ast.TupleLiteral. got=%T", stmt.ExceptClauses[0].ExceptType)
 	}
 
-	if stmt.ExceptClauses[0].ExceptVar == nil || stmt.ExceptClauses[0].ExceptVar.Value != "e" {
+	if stmt.ExceptClauses[0].ExceptVar == nil || stmt.ExceptClauses[0].ExceptVar.Value() != "e" {
 		t.Fatalf("except variable not parsed correctly: %#v", stmt.ExceptClauses[0].ExceptVar)
 	}
 }

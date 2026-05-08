@@ -106,13 +106,13 @@ func TestParseRelativeImport(t *testing.T) {
 
 			if tt.expectedModule == "" {
 				if fis.Module != nil {
-					t.Errorf("expected nil module, got %s", fis.Module.Value)
+					t.Errorf("expected nil module, got %s", fis.Module.Value())
 				}
 			} else {
 				if fis.Module == nil {
 					t.Errorf("expected module %s, got nil", tt.expectedModule)
-				} else if fis.Module.Value != tt.expectedModule {
-					t.Errorf("expected module %s, got %s", tt.expectedModule, fis.Module.Value)
+				} else if fis.Module.Value() != tt.expectedModule {
+					t.Errorf("expected module %s, got %s", tt.expectedModule, fis.Module.Value())
 				}
 			}
 
@@ -120,8 +120,8 @@ func TestParseRelativeImport(t *testing.T) {
 				t.Errorf("expected %d names, got %d", len(tt.expectedNames), len(fis.Names))
 			} else {
 				for i, name := range tt.expectedNames {
-					if fis.Names[i].Value != name {
-						t.Errorf("expected name %d to be %s, got %s", i, name, fis.Names[i].Value)
+					if fis.Names[i].Value() != name {
+						t.Errorf("expected name %d to be %s, got %s", i, name, fis.Names[i].Value())
 					}
 				}
 			}
@@ -131,12 +131,12 @@ func TestParseRelativeImport(t *testing.T) {
 
 func TestRelativeImportResolution(t *testing.T) {
 	tests := []struct {
-		name            string
-		currentModule   string
-		relativeLevel   int
-		module          string // empty means nil
-		expectedImport  string
-		expectError     bool
+		name           string
+		currentModule  string
+		relativeLevel  int
+		module         string // empty means nil
+		expectedImport string
+		expectError    bool
 	}{
 		{
 			name:           "single dot from child module",

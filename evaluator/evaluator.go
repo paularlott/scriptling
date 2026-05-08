@@ -220,9 +220,9 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		case "+", "-", "*", "//", "%", "<", ">", "<=", ">=", "==", "!=", "&", "|", "^", "<<", ">>":
 			if lid, ok := node.Left.(*ast.Identifier); ok {
 				if rid, ok := node.Right.(*ast.Identifier); ok {
-					if lv, ok := env.Get(lid.Value); ok {
+					if lv, ok := env.Get(lid.Value()); ok {
 						if li, ok := lv.(*object.Integer); ok {
-							if rv, ok := env.Get(rid.Value); ok {
+							if rv, ok := env.Get(rid.Value()); ok {
 								if ri, ok := rv.(*object.Integer); ok {
 									return evalIntegerInfixExpression(node.Operator, li.Value, ri.Value)
 								}
@@ -1399,16 +1399,16 @@ func evalIdentifier(node *ast.Identifier, env *object.Environment) object.Object
 	// Fast path: use cached slot index to skip the slotIndex map lookup.
 	// SlotCache encoding: 0=uncached, -1=not a local slot, >0=slot index+1.
 	if cached := node.SlotCache.Load(); cached > 0 {
-		if val, ok := env.GetCachedSlot(int(cached-1), node.Value); ok {
+		if val, ok := env.GetCachedSlot(int(cached-1), node.Value()); ok {
 			return val
 		}
 		// Cache miss (wrong scope or stale index), fall through to full lookup.
 		node.SlotCache.Store(0)
 	}
 
-	if val, ok := env.Get(node.Value); ok {
+	if val, ok := env.Get(node.Value()); ok {
 		// Cache the slot index if this variable is in the local scope's slots.
-		if idx, ok := env.GetSlotIndex(node.Value); ok {
+		if idx, ok := env.GetSlotIndex(node.Value()); ok {
 			if slotVal, slotOK := env.GetSlotByIndex(idx); slotOK && slotVal == val {
 				node.SlotCache.Store(int32(idx + 1))
 			}
@@ -1417,17 +1417,17 @@ func evalIdentifier(node *ast.Identifier, env *object.Environment) object.Object
 		}
 		return val
 	}
-	if builtin, ok := builtins[node.Value]; ok {
+	if builtin, ok := builtins[node.Value()]; ok {
 		return builtin
 	}
-	return errors.NewIdentifierError(node.Value)
+	return errors.NewIdentifierError(node.Value())
 }
 
 func evalFunctionStatement(ctx context.Context, stmt *ast.FunctionStatement, env *object.Environment) object.Object {
 	localSlots, localSlotNames := analyzeFunctionLocals(stmt)
 	paramSlotIndexes := parameterSlotIndexes(stmt.Function.Parameters, localSlots)
 	fn := &object.Function{
-		Name:             stmt.Name.Value,
+		Name:             stmt.Name.Value(),
 		Parameters:       stmt.Function.Parameters,
 		DefaultValues:    stmt.Function.DefaultValues,
 		Variadic:         stmt.Function.Variadic,
@@ -1456,13 +1456,13 @@ func evalFunctionStatement(ctx context.Context, stmt *ast.FunctionStatement, env
 			wrapped.Name = fn.Name
 		}
 	}
-	env.Set(stmt.Name.Value, result)
+	env.Set(stmt.Name.Value(), result)
 	return result
 }
 
 func evalClassStatement(ctx context.Context, stmt *ast.ClassStatement, env *object.Environment) object.Object {
 	class := &object.Class{
-		Name:    stmt.Name.Value,
+		Name:    stmt.Name.Value(),
 		Methods: make(map[string]object.Object),
 		Env:     env,
 	}
@@ -1498,22 +1498,22 @@ func evalClassStatement(ctx context.Context, stmt *ast.ClassStatement, env *obje
 			case *object.Function:
 				class.Methods[m.Name] = m
 			case *object.Property:
-				class.Methods[fnStmt.Name.Value] = m
+				class.Methods[fnStmt.Name.Value()] = m
 			case *object.StaticMethod:
-				class.Methods[fnStmt.Name.Value] = m
+				class.Methods[fnStmt.Name.Value()] = m
 			case *object.ClassMethod:
-				class.Methods[fnStmt.Name.Value] = m
+				class.Methods[fnStmt.Name.Value()] = m
 			default:
 				// Decorator returned something other than a bare Function
 				// (e.g. a wrapper closure). Store under the original method name.
 				if obj != nil && !object.IsError(obj) {
-					class.Methods[fnStmt.Name.Value] = obj
+					class.Methods[fnStmt.Name.Value()] = obj
 				}
 			}
 		}
 	}
 
-	env.Set(stmt.Name.Value, class)
+	env.Set(stmt.Name.Value(), class)
 	var result object.Object = class
 	// Apply decorators right-to-left (innermost first)
 	for i := len(stmt.Decorators) - 1; i >= 0; i-- {
@@ -1527,7 +1527,7 @@ func evalClassStatement(ctx context.Context, stmt *ast.ClassStatement, env *obje
 		}
 	}
 	if result != class {
-		env.Set(stmt.Name.Value, result)
+		env.Set(stmt.Name.Value(), result)
 	}
 	return result
 }
@@ -1598,7 +1598,7 @@ func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *obje
 	// Fast path for simple function calls: ident(args) with no keywords/kwargs/variadic unpack.
 	if len(node.Keywords) == 0 && node.KwargsUnpack == nil && len(node.ArgsUnpack) == 0 {
 		if ident, ok := node.Function.(*ast.Identifier); ok {
-			if val, found := env.Get(ident.Value); found {
+			if val, found := env.Get(ident.Value()); found {
 				switch fn := val.(type) {
 				case *object.Function:
 					// Fast paths for common arg counts: avoid slice allocation
@@ -1658,7 +1658,7 @@ func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *obje
 					evalExpressionsWithContext(ctx, node.Arguments, env), nil, env)
 			}
 			// Not in env - try fast builtins by name
-			if builtin, ok := builtins[ident.Value]; ok {
+			if builtin, ok := builtins[ident.Value()]; ok {
 				return applyBuiltinFast(ctx, node, env, builtin)
 			}
 		}
@@ -1836,7 +1836,7 @@ func applyUserFunctionDirect(ctx context.Context, fn *object.Function, arg objec
 	if len(fn.ParamSlotIndexes) == 1 {
 		extendedEnv.SetSlotByIndex(fn.ParamSlotIndexes[0], arg)
 	} else {
-		extendedEnv.Set(fn.Parameters[0].Value, arg)
+		extendedEnv.Set(fn.Parameters[0].Value(), arg)
 	}
 
 	// Call evalBlockStatementWithContext directly, skipping evalWithContext/evalNode overhead
@@ -1872,8 +1872,8 @@ func applyUserFunction2(ctx context.Context, fn *object.Function, a0, a1 object.
 		extendedEnv.SetSlotByIndex(fn.ParamSlotIndexes[0], a0)
 		extendedEnv.SetSlotByIndex(fn.ParamSlotIndexes[1], a1)
 	} else {
-		extendedEnv.Set(fn.Parameters[0].Value, a0)
-		extendedEnv.Set(fn.Parameters[1].Value, a1)
+		extendedEnv.Set(fn.Parameters[0].Value(), a0)
+		extendedEnv.Set(fn.Parameters[1].Value(), a1)
 	}
 
 	evaluated := evalBlockStatementWithContext(ctx, fn.Body, extendedEnv)
@@ -1909,7 +1909,7 @@ func applyUserFunctionN(ctx context.Context, fn *object.Function, args ...object
 		}
 	} else {
 		for i := range args {
-			extendedEnv.Set(fn.Parameters[i].Value, args[i])
+			extendedEnv.Set(fn.Parameters[i].Value(), args[i])
 		}
 	}
 
@@ -2037,12 +2037,12 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 		if len(fp.paramSlotIndexes) == numParams {
 			for paramIdx, slotIdx := range fp.paramSlotIndexes {
 				if !env.SetSlotByIndex(slotIdx, args[paramIdx]) {
-					env.Set(fp.parameters[paramIdx].Value, args[paramIdx])
+					env.Set(fp.parameters[paramIdx].Value(), args[paramIdx])
 				}
 			}
 		} else {
 			for paramIdx := 0; paramIdx < numParams; paramIdx++ {
-				env.Set(fp.parameters[paramIdx].Value, args[paramIdx])
+				env.Set(fp.parameters[paramIdx].Value(), args[paramIdx])
 			}
 		}
 		return env, nil
@@ -2050,7 +2050,7 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 
 	// Set provided positional arguments
 	for paramIdx := 0; paramIdx < numParams && paramIdx < numArgs; paramIdx++ {
-		env.Set(fp.parameters[paramIdx].Value, args[paramIdx])
+		env.Set(fp.parameters[paramIdx].Value(), args[paramIdx])
 	}
 
 	// Check for extra positional arguments
@@ -2058,14 +2058,14 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 		if fp.variadic != nil {
 			// Collect extra arguments into a list
 			list := &object.List{Elements: args[numParams:]}
-			env.Set(fp.variadic.Value, list)
+			env.Set(fp.variadic.Value(), list)
 		} else {
 			minArgs := numParams - len(fp.defaultValues)
 			return nil, errors.NewArgumentError(numArgs, minArgs)
 		}
 	} else if fp.variadic != nil {
 		// No extra arguments, set variadic to empty list
-		env.Set(fp.variadic.Value, &object.List{Elements: []object.Object{}})
+		env.Set(fp.variadic.Value(), &object.List{Elements: []object.Object{}})
 	}
 
 	// Handle keyword arguments if present
@@ -2081,7 +2081,7 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 		} else {
 			setParams = make(map[string]bool, numParams)
 			for i := 0; i < numParams && i < numArgs; i++ {
-				setParams[fp.parameters[i].Value] = true
+				setParams[fp.parameters[i].Value()] = true
 			}
 		}
 
@@ -2105,7 +2105,7 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 			// Check if parameter exists
 			paramIdx := -1
 			for pi, param := range fp.parameters {
-				if param.Value == key {
+				if param.Value() == key {
 					paramIdx = pi
 					break
 				}
@@ -2140,15 +2140,15 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 					Value: value,
 				}
 			}
-			env.Set(fp.kwargs.Value, kwargsDict)
+			env.Set(fp.kwargs.Value(), kwargsDict)
 		}
 
 		// Check for missing arguments and apply defaults
 		for pi, param := range fp.parameters {
-			if !isParamSet(pi, param.Value) {
-				if defaultExpr, ok := fp.defaultValues[param.Value]; ok {
+			if !isParamSet(pi, param.Value()) {
+				if defaultExpr, ok := fp.defaultValues[param.Value()]; ok {
 					defaultVal := Eval(defaultExpr, fp.parentEnv)
-					env.Set(param.Value, defaultVal)
+					env.Set(param.Value(), defaultVal)
 				} else {
 					minArgs := numParams - len(fp.defaultValues)
 					return nil, errors.NewArgumentError(numArgs, minArgs)
@@ -2158,16 +2158,16 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 	} else {
 		// No keywords - set empty **kwargs dict if defined
 		if fp.kwargs != nil {
-			env.Set(fp.kwargs.Value, &object.Dict{Pairs: make(map[string]object.DictPair)})
+			env.Set(fp.kwargs.Value(), &object.Dict{Pairs: make(map[string]object.DictPair)})
 		}
 
 		if numArgs < numParams {
 			// No keywords - check for missing required arguments
 			for i := numArgs; i < numParams; i++ {
 				param := fp.parameters[i]
-				if defaultExpr, ok := fp.defaultValues[param.Value]; ok {
+				if defaultExpr, ok := fp.defaultValues[param.Value()]; ok {
 					defaultVal := Eval(defaultExpr, fp.parentEnv)
-					env.Set(param.Value, defaultVal)
+					env.Set(param.Value(), defaultVal)
 				} else {
 					minArgs := numParams - len(fp.defaultValues)
 					return nil, errors.NewArgumentError(numArgs, minArgs)
@@ -2221,15 +2221,15 @@ func analyzeFunctionLocals(stmt *ast.FunctionStatement) (map[string]int, []strin
 		names = append(names, name)
 	}
 
-	addName(stmt.Name.Value)
+	addName(stmt.Name.Value())
 	for _, param := range stmt.Function.Parameters {
-		addName(param.Value)
+		addName(param.Value())
 	}
 	if stmt.Function.Variadic != nil {
-		addName(stmt.Function.Variadic.Value)
+		addName(stmt.Function.Variadic.Value())
 	}
 	if stmt.Function.Kwargs != nil {
-		addName(stmt.Function.Kwargs.Value)
+		addName(stmt.Function.Kwargs.Value())
 	}
 
 	globals, nonlocals := collectScopeDirectives(stmt.Function.Body)
@@ -2266,11 +2266,11 @@ func analyzeTopLevelLocals(program *ast.Program) (map[string]int, []string) {
 		switch s := stmt.(type) {
 		case *ast.GlobalStatement:
 			for _, name := range s.Names {
-				globals[name.Value] = true
+				globals[name.Value()] = true
 			}
 		case *ast.NonlocalStatement:
 			for _, name := range s.Names {
-				nonlocals[name.Value] = true
+				nonlocals[name.Value()] = true
 			}
 		}
 	}
@@ -2293,13 +2293,13 @@ func analyzeTopLevelLocals(program *ast.Program) (map[string]int, []string) {
 func analyzeLambdaLocals(lambda *ast.Lambda) (map[string]int, []string) {
 	names := make([]string, 0, len(lambda.Parameters)+2)
 	for _, param := range lambda.Parameters {
-		names = append(names, param.Value)
+		names = append(names, param.Value())
 	}
 	if lambda.Variadic != nil {
-		names = append(names, lambda.Variadic.Value)
+		names = append(names, lambda.Variadic.Value())
 	}
 	if lambda.Kwargs != nil {
-		names = append(names, lambda.Kwargs.Value)
+		names = append(names, lambda.Kwargs.Value())
 	}
 	if len(names) == 0 {
 		return nil, nil
@@ -2325,7 +2325,7 @@ func parameterSlotIndexes(parameters []*ast.Identifier, slotIndex map[string]int
 	}
 	indexes := make([]int, len(parameters))
 	for i, param := range parameters {
-		idx, ok := slotIndex[param.Value]
+		idx, ok := slotIndex[param.Value()]
 		if !ok {
 			return nil
 		}
@@ -2344,11 +2344,11 @@ func collectScopeDirectives(block *ast.BlockStatement) (map[string]bool, map[str
 		switch s := stmt.(type) {
 		case *ast.GlobalStatement:
 			for _, name := range s.Names {
-				globals[name.Value] = true
+				globals[name.Value()] = true
 			}
 		case *ast.NonlocalStatement:
 			for _, name := range s.Names {
-				nonlocals[name.Value] = true
+				nonlocals[name.Value()] = true
 			}
 		}
 	}
@@ -2379,15 +2379,15 @@ func collectAssignedNamesFromStatement(stmt ast.Statement, globals map[string]bo
 			collectAssignedNamesFromStatement(s.Chained, globals, nonlocals, addName)
 		}
 	case *ast.AugmentedAssignStatement:
-		addLocal(s.Name.Value)
+		addLocal(s.Name.Value())
 	case *ast.MultipleAssignStatement:
 		for _, name := range s.Names {
-			addLocal(name.Value)
+			addLocal(name.Value())
 		}
 	case *ast.FunctionStatement:
-		addLocal(s.Name.Value)
+		addLocal(s.Name.Value())
 	case *ast.ClassStatement:
-		addLocal(s.Name.Value)
+		addLocal(s.Name.Value())
 	case *ast.ForStatement:
 		for _, variable := range s.Variables {
 			collectAssignedNamesFromExpression(variable, addLocal)
@@ -2407,7 +2407,7 @@ func collectAssignedNamesFromStatement(stmt ast.Statement, globals map[string]bo
 		collectAssignedNamesFromBlock(s.Body, globals, nonlocals, addName)
 		for _, clause := range s.ExceptClauses {
 			if clause.ExceptVar != nil {
-				addLocal(clause.ExceptVar.Value)
+				addLocal(clause.ExceptVar.Value())
 			}
 			collectAssignedNamesFromBlock(clause.Body, globals, nonlocals, addName)
 		}
@@ -2415,34 +2415,34 @@ func collectAssignedNamesFromStatement(stmt ast.Statement, globals map[string]bo
 		collectAssignedNamesFromBlock(s.Finally, globals, nonlocals, addName)
 	case *ast.WithStatement:
 		if s.Target != nil {
-			addLocal(s.Target.Value)
+			addLocal(s.Target.Value())
 		}
 		collectAssignedNamesFromBlock(s.Body, globals, nonlocals, addName)
 	case *ast.ImportStatement:
 		if s.Alias != nil {
-			addLocal(s.Alias.Value)
+			addLocal(s.Alias.Value())
 		} else if s.Name != nil {
-			addLocal(strings.Split(s.Name.Value, ".")[0])
+			addLocal(strings.Split(s.Name.Value(), ".")[0])
 		}
 		for i, name := range s.AdditionalNames {
 			if i < len(s.AdditionalAliases) && s.AdditionalAliases[i] != nil {
-				addLocal(s.AdditionalAliases[i].Value)
+				addLocal(s.AdditionalAliases[i].Value())
 			} else if name != nil {
-				addLocal(strings.Split(name.Value, ".")[0])
+				addLocal(strings.Split(name.Value(), ".")[0])
 			}
 		}
 	case *ast.FromImportStatement:
 		for i, name := range s.Names {
 			if i < len(s.Aliases) && s.Aliases[i] != nil {
-				addLocal(s.Aliases[i].Value)
+				addLocal(s.Aliases[i].Value())
 			} else if name != nil {
-				addLocal(name.Value)
+				addLocal(name.Value())
 			}
 		}
 	case *ast.MatchStatement:
 		for _, caseClause := range s.Cases {
 			if caseClause.CaptureAs != nil {
-				addLocal(caseClause.CaptureAs.Value)
+				addLocal(caseClause.CaptureAs.Value())
 			}
 			collectAssignedNamesFromBlock(caseClause.Body, globals, nonlocals, addName)
 		}
@@ -2452,7 +2452,7 @@ func collectAssignedNamesFromStatement(stmt ast.Statement, globals map[string]bo
 func collectAssignedNamesFromExpression(expr ast.Expression, addName func(string)) {
 	switch e := expr.(type) {
 	case *ast.Identifier:
-		addName(e.Value)
+		addName(e.Value())
 	case *ast.TupleLiteral:
 		for _, elem := range e.Elements {
 			collectAssignedNamesFromExpression(elem, addName)
@@ -2546,9 +2546,9 @@ func init() {
 // evalRegexIndexExpression is in data_structures.go
 
 func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.AugmentedAssignStatement, env *object.Environment) object.Object {
-	currentVal, ok := env.Get(node.Name.Value)
+	currentVal, ok := env.Get(node.Name.Value())
 	if !ok {
-		return errors.NewIdentifierError(node.Name.Value)
+		return errors.NewIdentifierError(node.Name.Value())
 	}
 
 	newVal := evalNode(ctx, node.Value, env)
@@ -2560,13 +2560,13 @@ func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.Augm
 	if node.Operator == "+=" {
 		if cur, ok := currentVal.(*object.String); ok {
 			if r, ok := newVal.(*object.String); ok {
-				env.Set(node.Name.Value, &object.String{Value: cur.Value + r.Value})
+				env.Set(node.Name.Value(), &object.String{Value: cur.Value + r.Value})
 				return NULL
 			}
 		}
 		if cur, ok := currentVal.(*object.Integer); ok {
 			if r, ok := newVal.(*object.Integer); ok {
-				env.Set(node.Name.Value, object.NewInteger(cur.Value+r.Value))
+				env.Set(node.Name.Value(), object.NewInteger(cur.Value+r.Value))
 				return NULL
 			}
 		}
@@ -2607,7 +2607,7 @@ func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.Augm
 		return result
 	}
 
-	env.Set(node.Name.Value, result)
+	env.Set(node.Name.Value(), result)
 	return NULL
 }
 
@@ -2620,35 +2620,35 @@ func evalImportStatement(is *ast.ImportStatement, env *object.Environment) objec
 	if importCallback == nil {
 		return errors.NewError("%s at line %d", errors.ErrImportError, is.Token.Line)
 	}
-	err := importCallback(is.Name.Value)
+	err := importCallback(is.Name.Value())
 	if err != nil {
 		return errors.NewError("%s at line %d: %s", errors.ErrImportError, is.Token.Line, err.Error())
 	}
 
 	// Handle alias if present
 	if is.Alias != nil {
-		moduleObj := getModuleByPath(env, is.Name.Value)
+		moduleObj := getModuleByPath(env, is.Name.Value())
 		if moduleObj != nil {
-			env.Set(is.Alias.Value, moduleObj)
+			env.Set(is.Alias.Value(), moduleObj)
 			if _, ok := moduleObj.(*object.Dict); ok {
-				env.MarkImportedBinding(is.Alias.Value)
+				env.MarkImportedBinding(is.Alias.Value())
 			}
 		}
 	}
 
 	// Import additional libraries if any
 	for i, name := range is.AdditionalNames {
-		if err := importCallback(name.Value); err != nil {
+		if err := importCallback(name.Value()); err != nil {
 			return errors.NewError("%s: %s", errors.ErrImportError, err.Error())
 		}
 
 		// Handle alias for this additional import if present
 		if i < len(is.AdditionalAliases) && is.AdditionalAliases[i] != nil {
-			moduleObj := getModuleByPath(env, name.Value)
+			moduleObj := getModuleByPath(env, name.Value())
 			if moduleObj != nil {
-				env.Set(is.AdditionalAliases[i].Value, moduleObj)
+				env.Set(is.AdditionalAliases[i].Value(), moduleObj)
 				if _, ok := moduleObj.(*object.Dict); ok {
-					env.MarkImportedBinding(is.AdditionalAliases[i].Value)
+					env.MarkImportedBinding(is.AdditionalAliases[i].Value())
 				}
 			}
 		}
@@ -2725,7 +2725,7 @@ func evalFromImportStatement(fis *ast.FromImportStatement, env *object.Environme
 		// Build the resolved base module name
 		if fis.Module != nil {
 			// from .module import X or from ..module import X
-			baseModuleName = strings.Join(resolvedParts, ".") + "." + fis.Module.Value
+			baseModuleName = strings.Join(resolvedParts, ".") + "." + fis.Module.Value()
 		} else {
 			// from . import X or from .. import X (no additional module)
 			// In this case, each name to import is a submodule of the parent
@@ -2740,7 +2740,7 @@ func evalFromImportStatement(fis *ast.FromImportStatement, env *object.Environme
 		if fis.Module == nil {
 			return errors.NewError("%s: missing module name in from-import", errors.ErrImportError)
 		}
-		baseModuleName = fis.Module.Value
+		baseModuleName = fis.Module.Value()
 	}
 
 	// For "from . import X" (no module specified), we need to import each name as a submodule
@@ -2758,7 +2758,7 @@ func evalFromImportStatement(fis *ast.FromImportStatement, env *object.Environme
 func evalFromImportMultipleSubmodules(fis *ast.FromImportStatement, baseModule string, env *object.Environment, importCallback func(string) error) object.Object {
 	for i, name := range fis.Names {
 		// Build the full module name: base + "." + name
-		fullModuleName := baseModule + "." + name.Value
+		fullModuleName := baseModule + "." + name.Value()
 
 		// Import the submodule
 		err := importCallback(fullModuleName)
@@ -2774,21 +2774,21 @@ func evalFromImportMultipleSubmodules(fis *ast.FromImportStatement, baseModule s
 			if parentOk {
 				switch p := parentObj.(type) {
 				case *object.Dict:
-					if pair, exists := p.GetByString(name.Value); exists {
+					if pair, exists := p.GetByString(name.Value()); exists {
 						moduleObj = pair.Value
 						ok = true
 					}
 				}
 			}
 			if !ok {
-				return errors.NewError("%s: cannot import name '%s' from '%s'", errors.ErrImportError, name.Value, baseModule)
+				return errors.NewError("%s: cannot import name '%s' from '%s'", errors.ErrImportError, name.Value(), baseModule)
 			}
 		}
 
 		// Use alias if provided, otherwise use the original name
-		bindName := name.Value
+		bindName := name.Value()
 		if fis.Aliases[i] != nil {
-			bindName = fis.Aliases[i].Value
+			bindName = fis.Aliases[i].Value()
 		}
 
 		env.Set(bindName, moduleObj)
@@ -2843,14 +2843,14 @@ func evalFromImportStandard(fis *ast.FromImportStatement, moduleName string, env
 
 		switch m := moduleObj.(type) {
 		case *object.Dict:
-			if pair, exists := m.GetByString(name.Value); exists {
+			if pair, exists := m.GetByString(name.Value()); exists {
 				value = pair.Value
 				found = true
 			}
 		case *object.Library:
 			// Check functions first
 			if funcs := m.Functions(); funcs != nil {
-				if fn, exists := funcs[name.Value]; exists {
+				if fn, exists := funcs[name.Value()]; exists {
 					value = fn
 					found = true
 				}
@@ -2858,27 +2858,27 @@ func evalFromImportStandard(fis *ast.FromImportStatement, moduleName string, env
 			// Check constants
 			if !found {
 				if consts := m.Constants(); consts != nil {
-					if c, exists := consts[name.Value]; exists {
+					if c, exists := consts[name.Value()]; exists {
 						value = c
 						found = true
 					}
 				}
 			}
 		case *object.Instance:
-			if field, exists := m.Fields[name.Value]; exists {
+			if field, exists := m.Fields[name.Value()]; exists {
 				value = field
 				found = true
 			}
 		}
 
 		if !found {
-			return errors.NewError("%s: cannot import name '%s' from '%s'", errors.ErrImportError, name.Value, moduleName)
+			return errors.NewError("%s: cannot import name '%s' from '%s'", errors.ErrImportError, name.Value(), moduleName)
 		}
 
 		// Use alias if provided, otherwise use the original name
-		bindName := name.Value
+		bindName := name.Value()
 		if fis.Aliases[i] != nil {
-			bindName = fis.Aliases[i].Value
+			bindName = fis.Aliases[i].Value()
 		}
 
 		env.Set(bindName, value)
@@ -2897,9 +2897,9 @@ func evalFromImportStandard(fis *ast.FromImportStatement, moduleName string, env
 	if !wasPresent {
 		shouldDelete := true
 		for i, name := range fis.Names {
-			bindName := name.Value
+			bindName := name.Value()
 			if fis.Aliases[i] != nil {
-				bindName = fis.Aliases[i].Value
+				bindName = fis.Aliases[i].Value()
 			}
 			if bindName == moduleName {
 				shouldDelete = false
@@ -3079,7 +3079,7 @@ func evalMultipleAssignStatementWithContext(ctx context.Context, node *ast.Multi
 
 		// Assign elements before the starred variable
 		for i := 0; i < node.StarredIndex; i++ {
-			env.Set(node.Names[i].Value, elements[i])
+			env.Set(node.Names[i].Value(), elements[i])
 		}
 
 		// Calculate how many elements go to the starred variable
@@ -3089,13 +3089,13 @@ func evalMultipleAssignStatementWithContext(ctx context.Context, node *ast.Multi
 
 		// Assign starred variable (as a list)
 		starredElements := elements[starStart:starEnd]
-		env.Set(node.Names[node.StarredIndex].Value, &object.List{Elements: starredElements})
+		env.Set(node.Names[node.StarredIndex].Value(), &object.List{Elements: starredElements})
 
 		// Assign elements after the starred variable
 		for i := 0; i < elementsAfterStar; i++ {
 			nameIdx := node.StarredIndex + 1 + i
 			elemIdx := starEnd + i
-			env.Set(node.Names[nameIdx].Value, elements[elemIdx])
+			env.Set(node.Names[nameIdx].Value(), elements[elemIdx])
 		}
 	} else {
 		// No starred unpacking - exact length match required
@@ -3105,7 +3105,7 @@ func evalMultipleAssignStatementWithContext(ctx context.Context, node *ast.Multi
 
 		// Assign each value
 		for i, name := range node.Names {
-			env.Set(name.Value, elements[i])
+			env.Set(name.Value(), elements[i])
 		}
 	}
 
@@ -3172,7 +3172,7 @@ func evalTryStatementWithContext(ctx context.Context, ts *ast.TryStatement, env 
 
 			// Bind exception to variable if specified
 			if exceptClause.ExceptVar != nil {
-				env.Set(exceptClause.ExceptVar.Value, exceptionObj)
+				env.Set(exceptClause.ExceptVar.Value(), exceptionObj)
 			}
 
 			// Execute except block in the same environment so variables are accessible
@@ -3290,7 +3290,7 @@ func evalWithStatementWithContext(ctx context.Context, ws *ast.WithStatement, en
 
 	// Bind 'as' target if present
 	if ws.Target != nil {
-		env.Set(ws.Target.Value, enterResult)
+		env.Set(ws.Target.Value(), enterResult)
 	}
 
 	// Execute body
@@ -3357,7 +3357,7 @@ func matchesExceptionType(exception object.Object, exceptTypeExpr ast.Expression
 func matchesExceptionTypeExpr(exceptionType string, exceptTypeExpr ast.Expression) bool {
 	switch expr := exceptTypeExpr.(type) {
 	case *ast.Identifier:
-		return matchesNamedExceptionType(exceptionType, expr.Value)
+		return matchesNamedExceptionType(exceptionType, expr.Value())
 	case *ast.IndexExpression:
 		// Handle dotted names like requests.HTTPError — match on the last component
 		dotted := buildDottedName(expr)
@@ -3405,7 +3405,7 @@ func buildDottedName(expr *ast.IndexExpression) string {
 			current = idx.Left
 		} else if ident, ok := current.(*ast.Identifier); ok {
 			// Base identifier
-			parts = append([]string{ident.Value}, parts...)
+			parts = append([]string{ident.Value()}, parts...)
 			break
 		} else {
 			break
@@ -3569,10 +3569,10 @@ func deleteListIndices(listObj *object.List, indices []int64) {
 func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.Environment) error {
 	switch target := expr.(type) {
 	case *ast.Identifier:
-		if _, ok := env.Get(target.Value); !ok {
-			return fmt.Errorf("%s", errors.NewIdentifierError(target.Value).Message)
+		if _, ok := env.Get(target.Value()); !ok {
+			return fmt.Errorf("%s", errors.NewIdentifierError(target.Value()).Message)
 		}
-		env.Delete(target.Value)
+		env.Delete(target.Value())
 		return nil
 	case *ast.IndexExpression:
 		obj := evalNode(ctx, target.Left, env)
@@ -3717,14 +3717,14 @@ func assignToExpression(ctx context.Context, expr ast.Expression, value object.O
 	case *ast.Identifier:
 		// Fast path: use cached slot index with name validation.
 		if cached := left.SlotCache.Load(); cached > 0 {
-			if env.SetCachedSlot(int(cached-1), left.Value, value) {
+			if env.SetCachedSlot(int(cached-1), left.Value(), value) {
 				return nil
 			}
 		}
-		env.Set(left.Value, value)
+		env.Set(left.Value(), value)
 		// Cache the slot index for future writes.
 		if left.SlotCache.Load() == 0 {
-			if idx, ok := env.GetSlotIndex(left.Value); ok {
+			if idx, ok := env.GetSlotIndex(left.Value()); ok {
 				left.SlotCache.Store(int32(idx + 1))
 			}
 		}
@@ -3987,13 +3987,13 @@ func setForVariable(varExpr ast.Expression, value object.Object, env *object.Env
 
 func setIdentifierFast(target *ast.Identifier, value object.Object, env *object.Environment) {
 	if cached := target.SlotCache.Load(); cached > 0 {
-		if env.SetCachedSlot(int(cached-1), target.Value, value) {
+		if env.SetCachedSlot(int(cached-1), target.Value(), value) {
 			return
 		}
 	}
-	env.Set(target.Value, value)
+	env.Set(target.Value(), value)
 	if target.SlotCache.Load() == 0 {
-		if idx, ok := env.GetSlotIndex(target.Value); ok {
+		if idx, ok := env.GetSlotIndex(target.Value()); ok {
 			target.SlotCache.Store(int32(idx + 1))
 		}
 	}
@@ -4243,7 +4243,7 @@ func evalFastRangeForStatement(ctx context.Context, fs *ast.ForStatement, env *o
 		return nil, false
 	}
 	fnIdent, ok := call.Function.(*ast.Identifier)
-	if !ok || fnIdent.Value != "range" {
+	if !ok || fnIdent.Value() != "range" {
 		return nil, false
 	}
 	// If range is shadowed in the environment, preserve the normal call path.
@@ -4532,7 +4532,7 @@ func tryEvalFastListComprehension(ctx context.Context, lc *ast.ListComprehension
 	compEnv := object.NewEnclosedEnvironment(env)
 	result := make([]object.Object, 0)
 	runElement := func(element object.Object) object.Object {
-		compEnv.Set(ident.Value, element)
+		compEnv.Set(ident.Value(), element)
 		if lc.Condition != nil {
 			cond := evalNode(ctx, lc.Condition, compEnv)
 			if object.IsError(cond) {
@@ -5137,7 +5137,7 @@ func evalMatchStatementWithContext(ctx context.Context, ms *ast.MatchStatement, 
 
 			// Bind explicit capture variable if present
 			if caseClause.CaptureAs != nil {
-				env.Set(caseClause.CaptureAs.Value, capturedValue)
+				env.Set(caseClause.CaptureAs.Value(), capturedValue)
 			}
 
 			// Execute body in the environment (with captures)
@@ -5164,13 +5164,13 @@ func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expres
 
 	case *ast.Identifier:
 		// Wildcard pattern
-		if p.Value == "_" {
+		if p.Value() == "_" {
 			return TRUE, subject
 		}
 
 		// All other identifiers are capture variables (always match)
 		// Bind the captured value to the identifier name
-		capturedVars[p.Value] = subject
+		capturedVars[p.Value()] = subject
 		return TRUE, subject
 
 	case *ast.CallExpression:
@@ -5178,7 +5178,7 @@ func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expres
 		if ident, ok := p.Function.(*ast.Identifier); ok {
 			// Check if it's a type constructor with no arguments
 			if len(p.Arguments) == 0 && len(p.Keywords) == 0 {
-				typeName := ident.Value
+				typeName := ident.Value()
 				subjectType := getTypeName(subject)
 				if typeName == subjectType {
 					return TRUE, subject
@@ -5247,9 +5247,9 @@ func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expres
 			}
 
 			// If pattern value is an identifier (not _), it's a capture variable
-			if ident, ok := patternPair.Value.(*ast.Identifier); ok && ident.Value != "_" {
+			if ident, ok := patternPair.Value.(*ast.Identifier); ok && ident.Value() != "_" {
 				// Store the captured value
-				capturedVars[ident.Value] = dictPair.Value
+				capturedVars[ident.Value()] = dictPair.Value
 			} else {
 				// Otherwise, it must match exactly
 				matched, _ := matchPattern(ctx, dictPair.Value, patternPair.Value, capturedVars)

@@ -743,7 +743,7 @@ Works with both integers and floats.`,
 With a single iterable argument, returns its smallest item.
 With multiple arguments, returns the smallest argument.`,
 	},
-		"max": {
+	"max": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) == 0 {
 				return errors.NewError("max() requires at least 1 argument")
@@ -2659,9 +2659,9 @@ func printFunctionHelp(writer io.Writer, name string, fn *object.Function) {
 		if i > 0 {
 			fmt.Fprint(writer, ", ")
 		}
-		fmt.Fprint(writer, param.Value)
+		fmt.Fprint(writer, param.Value())
 		if fn.DefaultValues != nil {
-			if _, hasDefault := fn.DefaultValues[param.Value]; hasDefault {
+			if _, hasDefault := fn.DefaultValues[param.Value()]; hasDefault {
 				fmt.Fprint(writer, "=...")
 			}
 		}
@@ -2670,7 +2670,7 @@ func printFunctionHelp(writer io.Writer, name string, fn *object.Function) {
 		if len(fn.Parameters) > 0 {
 			fmt.Fprint(writer, ", ")
 		}
-		fmt.Fprintf(writer, "*%s", fn.Variadic.Value)
+		fmt.Fprintf(writer, "*%s", fn.Variadic.Value())
 	}
 	fmt.Fprint(writer, ")")
 

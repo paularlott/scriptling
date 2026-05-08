@@ -7,6 +7,10 @@ import (
 	"github.com/paularlott/scriptling/ast"
 )
 
+func testASTIdentifier(name string) *ast.Identifier {
+	return ast.NewIdentifierWithLine(ast.LineInfo{}, ast.NewSymbolTable(), name)
+}
+
 func TestObjectTypes(t *testing.T) {
 	tests := []struct {
 		obj      Object
@@ -422,8 +426,8 @@ func TestReturnValue(t *testing.T) {
 func TestFunction(t *testing.T) {
 	// Create a simple function object
 	params := []*ast.Identifier{
-		{Value: "x"},
-		{Value: "y"},
+		testASTIdentifier("x"),
+		testASTIdentifier("y"),
 	}
 	body := &ast.BlockStatement{}
 	env := NewEnvironment()
