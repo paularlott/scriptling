@@ -71,6 +71,8 @@ type Parser struct {
 	peekToken      token.Token
 	skippedNewline bool // true if a NEWLINE was skipped between curToken and peekToken
 	parenDepth     int  // track parenthesis depth for multiline support
+
+	nestedFuncStack []bool // stack: one bool per active function parse, true if body contains nested func/lambda/class
 }
 
 type (
@@ -1273,8 +1275,29 @@ func (p *Parser) parseBlockStatement() *ast.BlockStatement {
 	return block
 }
 
+// markNestedFunc flags the current function (if any) as containing a nested
+// function, lambda, or class — which means its call env cannot be reused.
+func (p *Parser) markNestedFunc() {
+	if len(p.nestedFuncStack) > 0 {
+		p.nestedFuncStack[len(p.nestedFuncStack)-1] = true
+	}
+}
+
 func (p *Parser) parseFunctionStatement() *ast.FunctionStatement {
 	stmt := &ast.FunctionStatement{Token: p.curToken}
+
+	// Mark parent function as containing a nested func
+	p.markNestedFunc()
+
+	// Push tracking flag for this function's body
+	p.nestedFuncStack = append(p.nestedFuncStack, false)
+	defer func() {
+		hasNested := p.nestedFuncStack[len(p.nestedFuncStack)-1]
+		p.nestedFuncStack = p.nestedFuncStack[:len(p.nestedFuncStack)-1]
+		if stmt.Function != nil {
+			stmt.Function.HasNestedFunc = hasNested
+		}
+	}()
 
 	if !p.expectPeek(token.IDENT) {
 		return nil
@@ -1300,6 +1323,8 @@ func (p *Parser) parseFunctionStatement() *ast.FunctionStatement {
 
 func (p *Parser) parseClassStatement() *ast.ClassStatement {
 	stmt := &ast.ClassStatement{Token: p.curToken}
+
+	p.markNestedFunc() // class body contains __init__ etc., mark parent
 
 	if !p.expectPeek(token.IDENT) {
 		return nil
@@ -1616,6 +1641,8 @@ func (p *Parser) parseComprehensionCore(expr ast.Expression, endToken token.Toke
 }
 
 func (p *Parser) parseLambda() ast.Expression {
+	p.markNestedFunc() // lambda is a nested func, mark parent
+
 	lambda := &ast.Lambda{Token: p.curToken}
 
 	// Parse parameters (optional)

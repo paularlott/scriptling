@@ -83,9 +83,9 @@ func FromGo(v interface{}) object.Object {
 		}
 		return &object.List{Elements: elements}
 	case map[string]interface{}:
-		pairs := make(map[string]object.DictPair)
+		pairs := make(map[string]object.DictPair, len(v))
 		for key, val := range v {
-			pairs[object.DictKey(&object.String{Value: key})] = object.DictPair{
+			pairs[object.DictStringKey(key)] = object.DictPair{
 				Key:   &object.String{Value: key},
 				Value: FromGo(val),
 			}
@@ -93,7 +93,7 @@ func FromGo(v interface{}) object.Object {
 		return &object.Dict{Pairs: pairs}
 	case map[interface{}]interface{}:
 		// Handle YAML-specific map[interface{}]interface{} type
-		pairs := make(map[string]object.DictPair)
+		pairs := make(map[string]object.DictPair, len(v))
 		for key, val := range v {
 			keyStr := ""
 			switch k := key.(type) {
@@ -102,7 +102,7 @@ func FromGo(v interface{}) object.Object {
 			default:
 				keyStr = fmt.Sprintf("%v", k)
 			}
-			pairs[object.DictKey(&object.String{Value: keyStr})] = object.DictPair{
+			pairs[object.DictStringKey(keyStr)] = object.DictPair{
 				Key:   &object.String{Value: keyStr},
 				Value: FromGo(val),
 			}
