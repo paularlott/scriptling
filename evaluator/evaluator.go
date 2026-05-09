@@ -213,10 +213,7 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 				}
 			}
 		}
-		switch node.Operator {
-		case ast.OpAdd, ast.OpSub, ast.OpMul, ast.OpFloorDiv, ast.OpMod,
-			ast.OpLt, ast.OpGt, ast.OpLte, ast.OpGte, ast.OpEq, ast.OpNeq,
-			ast.OpBitAnd, ast.OpBitOr, ast.OpBitXor, ast.OpLShift, ast.OpRShift:
+		if node.Operator >= ast.OpAdd && node.Operator <= ast.OpNeq {
 			if lid, ok := node.Left.(*ast.Identifier); ok {
 				if rid, ok := node.Right.(*ast.Identifier); ok {
 					if lv, ok := env.Get(lid.Value()); ok {
@@ -813,9 +810,7 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 	}
 
 	if rb, ok := right.(*object.Boolean); ok {
-		switch operator {
-		case ast.OpAdd, ast.OpSub, ast.OpMul, ast.OpDiv, ast.OpFloorDiv, ast.OpMod, ast.OpPow,
-			ast.OpLt, ast.OpGt, ast.OpLte, ast.OpGte, ast.OpEq, ast.OpNeq:
+		if operator >= ast.OpAdd && operator <= ast.OpNeq {
 			return evalInfixExpression(ctx, operator, left, coerceBool(rb), env)
 		}
 	}

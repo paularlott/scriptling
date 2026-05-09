@@ -12,14 +12,21 @@ type Op byte
 const (
 	OpNil Op = iota
 
+	// Arithmetic group (1-12): OpAdd..OpDiv
 	OpAdd
 	OpSub
 	OpMul
-	OpDiv
 	OpFloorDiv
 	OpMod
 	OpPow
+	OpBitAnd
+	OpBitOr
+	OpBitXor
+	OpLShift
+	OpRShift
+	OpDiv
 
+	// Comparison group (13-18): OpLt..OpNeq
 	OpLt
 	OpGt
 	OpLte
@@ -27,28 +34,25 @@ const (
 	OpEq
 	OpNeq
 
+	// Short-circuit logical
 	OpAnd
 	OpOr
 
+	// Membership/Identity
 	OpIn
 	OpNotIn
 	OpIs
 	OpIsNot
 
-	OpBitAnd
-	OpBitOr
-	OpBitXor
-	OpLShift
-	OpRShift
-
+	// Prefix
 	OpNot
 	OpBitNot
 	OpPos
 
+	// Augmented assignment: base op + opAugOffset
 	OpAddEq
 	OpSubEq
 	OpMulEq
-	OpDivEq
 	OpFloorDivEq
 	OpModEq
 	OpPowEq
@@ -57,17 +61,25 @@ const (
 	OpBitXorEq
 	OpLShiftEq
 	OpRShiftEq
+	OpDivEq
 )
+
+const opAugOffset = OpAddEq - OpAdd
 
 var opStrings = [...]string{
 	OpNil:        "",
 	OpAdd:        "+",
 	OpSub:        "-",
 	OpMul:        "*",
-	OpDiv:        "/",
 	OpFloorDiv:   "//",
 	OpMod:        "%",
 	OpPow:        "**",
+	OpBitAnd:     "&",
+	OpBitOr:      "|",
+	OpBitXor:     "^",
+	OpLShift:     "<<",
+	OpRShift:     ">>",
+	OpDiv:        "/",
 	OpLt:         "<",
 	OpGt:         ">",
 	OpLte:        "<=",
@@ -80,18 +92,12 @@ var opStrings = [...]string{
 	OpNotIn:      "not in",
 	OpIs:         "is",
 	OpIsNot:      "is not",
-	OpBitAnd:     "&",
-	OpBitOr:      "|",
-	OpBitXor:     "^",
-	OpLShift:     "<<",
-	OpRShift:     ">>",
 	OpNot:        "not",
 	OpBitNot:     "~",
 	OpPos:        "+",
 	OpAddEq:      "+=",
 	OpSubEq:      "-=",
 	OpMulEq:      "*=",
-	OpDivEq:      "/=",
 	OpFloorDivEq: "//=",
 	OpModEq:      "%=",
 	OpPowEq:      "**=",
@@ -100,6 +106,7 @@ var opStrings = [...]string{
 	OpBitXorEq:   "^=",
 	OpLShiftEq:   "<<=",
 	OpRShiftEq:   ">>=",
+	OpDivEq:      "/=",
 }
 
 func (op Op) String() string {
@@ -158,42 +165,18 @@ func ParseOp(s string) Op {
 }
 
 func (op Op) IsComparison() bool {
-	return op == OpLt || op == OpGt || op == OpLte || op == OpGte || op == OpEq || op == OpNeq
+	return op >= OpLt && op <= OpNeq
 }
 
 func (op Op) IsArithmetic() bool {
-	return op == OpAdd || op == OpSub || op == OpMul || op == OpDiv || op == OpFloorDiv || op == OpMod || op == OpPow
+	return op >= OpAdd && op <= OpDiv
 }
 
 func (op Op) BaseOp() Op {
-	switch op {
-	case OpAddEq:
-		return OpAdd
-	case OpSubEq:
-		return OpSub
-	case OpMulEq:
-		return OpMul
-	case OpDivEq:
-		return OpDiv
-	case OpFloorDivEq:
-		return OpFloorDiv
-	case OpModEq:
-		return OpMod
-	case OpPowEq:
-		return OpPow
-	case OpBitAndEq:
-		return OpBitAnd
-	case OpBitOrEq:
-		return OpBitOr
-	case OpBitXorEq:
-		return OpBitXor
-	case OpLShiftEq:
-		return OpLShift
-	case OpRShiftEq:
-		return OpRShift
-	default:
-		return op
+	if op >= OpAddEq && op <= OpDivEq {
+		return op - opAugOffset
 	}
+	return op
 }
 
 type LineInfo struct {
