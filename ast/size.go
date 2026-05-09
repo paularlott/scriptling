@@ -198,6 +198,10 @@ func (e *estimator) walkProgram(program *Program) {
 		return
 	}
 	e.addStatementSlice(program.Statements)
+	if program.LocalSlots != nil {
+		e.total += len(program.LocalSlots) * (int(unsafe.Sizeof("")) + 8)
+	}
+	e.addStringSlice(program.LocalSlotNames)
 }
 
 func (e *estimator) walkStatement(stmt Statement) {
@@ -563,6 +567,10 @@ func (e *estimator) walkFunctionLiteral(fn *FunctionLiteral) {
 	e.walkIdentifier(fn.Variadic)
 	e.walkIdentifier(fn.Kwargs)
 	e.walkStatement(fn.Body)
+	if fn.LocalSlots != nil {
+		e.total += len(fn.LocalSlots) * (int(unsafe.Sizeof("")) + 8)
+	}
+	e.addStringSlice(fn.LocalSlotNames)
 }
 
 func (e *estimator) walkElifClause(clause *ElifClause) {

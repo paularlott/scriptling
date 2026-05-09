@@ -1411,7 +1411,6 @@ func evalIdentifier(node *ast.Identifier, env *object.Environment) object.Object
 
 func evalFunctionStatement(ctx context.Context, stmt *ast.FunctionStatement, env *object.Environment) object.Object {
 	localSlots, localSlotNames := analyzeFunctionLocals(stmt)
-	paramSlotIndexes := parameterSlotIndexes(stmt.Function.Parameters, localSlots)
 	fn := &object.Function{
 		Name:             stmt.Name.Value(),
 		Parameters:       stmt.Function.Parameters,
@@ -1422,7 +1421,7 @@ func evalFunctionStatement(ctx context.Context, stmt *ast.FunctionStatement, env
 		Env:              env,
 		LocalSlots:       localSlots,
 		LocalSlotNames:   localSlotNames,
-		ParamSlotIndexes: paramSlotIndexes,
+		ParamSlotIndexes: stmt.Function.ParamSlotIndexes,
 		ReuseCallEnv:     !stmt.Function.HasNestedFunc,
 	}
 	var result object.Object = fn
@@ -2192,261 +2191,20 @@ func extendLambdaEnv(fn *object.LambdaFunction, args []object.Object, keywords m
 }
 
 func analyzeFunctionLocals(stmt *ast.FunctionStatement) (map[string]int, []string) {
-	names := make([]string, 0, len(stmt.Function.Parameters)+4)
-	seen := make(map[string]struct{}, len(stmt.Function.Parameters)+4)
-
-	addName := func(name string) {
-		if name == "" {
-			return
-		}
-		if _, ok := seen[name]; ok {
-			return
-		}
-		seen[name] = struct{}{}
-		names = append(names, name)
+	if stmt.Function.LocalSlots != nil {
+		return stmt.Function.LocalSlots, stmt.Function.LocalSlotNames
 	}
-
-	addName(stmt.Name.Value())
-	for _, param := range stmt.Function.Parameters {
-		addName(param.Value())
-	}
-	if stmt.Function.Variadic != nil {
-		addName(stmt.Function.Variadic.Value())
-	}
-	if stmt.Function.Kwargs != nil {
-		addName(stmt.Function.Kwargs.Value())
-	}
-
-	globals, nonlocals := collectScopeDirectives(stmt.Function.Body)
-	collectAssignedNamesFromBlock(stmt.Function.Body, globals, nonlocals, addName)
-
-	slots := make(map[string]int, len(names))
-	for idx, name := range names {
-		slots[name] = idx
-	}
-	return slots, names
+	return nil, nil
 }
 
 // analyzeTopLevelLocals finds all assigned variables in a top-level program
 // and returns slot index mapping and ordered names.
 func analyzeTopLevelLocals(program *ast.Program) (map[string]int, []string) {
-	names := make([]string, 0, 8)
-	seen := make(map[string]struct{}, 8)
-
-	addName := func(name string) {
-		if name == "" {
-			return
-		}
-		if _, ok := seen[name]; ok {
-			return
-		}
-		seen[name] = struct{}{}
-		names = append(names, name)
-	}
-
-	globals := make(map[string]bool)
-	nonlocals := make(map[string]bool)
-
-	for _, stmt := range program.Statements {
-		switch s := stmt.(type) {
-		case *ast.GlobalStatement:
-			for _, name := range s.Names {
-				globals[name.Value()] = true
-			}
-		case *ast.NonlocalStatement:
-			for _, name := range s.Names {
-				nonlocals[name.Value()] = true
-			}
-		}
-	}
-
-	for _, stmt := range program.Statements {
-		collectAssignedNamesFromStatement(stmt, globals, nonlocals, addName)
-	}
-
-	if len(names) == 0 {
-		return nil, nil
-	}
-
-	slots := make(map[string]int, len(names))
-	for idx, name := range names {
-		slots[name] = idx
-	}
-	return slots, names
+	return program.LocalSlots, program.LocalSlotNames
 }
 
 func analyzeLambdaLocals(lambda *ast.Lambda) (map[string]int, []string) {
-	names := make([]string, 0, len(lambda.Parameters)+2)
-	for _, param := range lambda.Parameters {
-		names = append(names, param.Value())
-	}
-	if lambda.Variadic != nil {
-		names = append(names, lambda.Variadic.Value())
-	}
-	if lambda.Kwargs != nil {
-		names = append(names, lambda.Kwargs.Value())
-	}
-	if len(names) == 0 {
-		return nil, nil
-	}
-	slots := make(map[string]int, len(names))
-	uniq := names[:0]
-	for _, name := range names {
-		if name == "" {
-			continue
-		}
-		if _, ok := slots[name]; ok {
-			continue
-		}
-		slots[name] = len(uniq)
-		uniq = append(uniq, name)
-	}
-	return slots, uniq
-}
-
-func parameterSlotIndexes(parameters []*ast.Identifier, slotIndex map[string]int) []int {
-	if len(parameters) == 0 || len(slotIndex) == 0 {
-		return nil
-	}
-	indexes := make([]int, len(parameters))
-	for i, param := range parameters {
-		idx, ok := slotIndex[param.Value()]
-		if !ok {
-			return nil
-		}
-		indexes[i] = idx
-	}
-	return indexes
-}
-
-func collectScopeDirectives(block *ast.BlockStatement) (map[string]bool, map[string]bool) {
-	globals := make(map[string]bool)
-	nonlocals := make(map[string]bool)
-	if block == nil {
-		return globals, nonlocals
-	}
-	for _, stmt := range block.Statements {
-		switch s := stmt.(type) {
-		case *ast.GlobalStatement:
-			for _, name := range s.Names {
-				globals[name.Value()] = true
-			}
-		case *ast.NonlocalStatement:
-			for _, name := range s.Names {
-				nonlocals[name.Value()] = true
-			}
-		}
-	}
-	return globals, nonlocals
-}
-
-func collectAssignedNamesFromBlock(block *ast.BlockStatement, globals map[string]bool, nonlocals map[string]bool, addName func(string)) {
-	if block == nil {
-		return
-	}
-	for _, stmt := range block.Statements {
-		collectAssignedNamesFromStatement(stmt, globals, nonlocals, addName)
-	}
-}
-
-func collectAssignedNamesFromStatement(stmt ast.Statement, globals map[string]bool, nonlocals map[string]bool, addName func(string)) {
-	addLocal := func(name string) {
-		if name == "" || globals[name] || nonlocals[name] {
-			return
-		}
-		addName(name)
-	}
-
-	switch s := stmt.(type) {
-	case *ast.AssignStatement:
-		collectAssignedNamesFromExpression(s.Left, addLocal)
-		if s.Chained != nil {
-			collectAssignedNamesFromStatement(s.Chained, globals, nonlocals, addName)
-		}
-	case *ast.AugmentedAssignStatement:
-		addLocal(s.Name.Value())
-	case *ast.MultipleAssignStatement:
-		for _, name := range s.Names {
-			addLocal(name.Value())
-		}
-	case *ast.FunctionStatement:
-		addLocal(s.Name.Value())
-	case *ast.ClassStatement:
-		addLocal(s.Name.Value())
-	case *ast.ForStatement:
-		for _, variable := range s.Variables {
-			collectAssignedNamesFromExpression(variable, addLocal)
-		}
-		collectAssignedNamesFromBlock(s.Body, globals, nonlocals, addName)
-		collectAssignedNamesFromBlock(s.Else, globals, nonlocals, addName)
-	case *ast.IfStatement:
-		collectAssignedNamesFromBlock(s.Consequence, globals, nonlocals, addName)
-		for _, clause := range s.ElifClauses {
-			collectAssignedNamesFromBlock(clause.Consequence, globals, nonlocals, addName)
-		}
-		collectAssignedNamesFromBlock(s.Alternative, globals, nonlocals, addName)
-	case *ast.WhileStatement:
-		collectAssignedNamesFromBlock(s.Body, globals, nonlocals, addName)
-		collectAssignedNamesFromBlock(s.Else, globals, nonlocals, addName)
-	case *ast.TryStatement:
-		collectAssignedNamesFromBlock(s.Body, globals, nonlocals, addName)
-		for _, clause := range s.ExceptClauses {
-			if clause.ExceptVar != nil {
-				addLocal(clause.ExceptVar.Value())
-			}
-			collectAssignedNamesFromBlock(clause.Body, globals, nonlocals, addName)
-		}
-		collectAssignedNamesFromBlock(s.Else, globals, nonlocals, addName)
-		collectAssignedNamesFromBlock(s.Finally, globals, nonlocals, addName)
-	case *ast.WithStatement:
-		if s.Target != nil {
-			addLocal(s.Target.Value())
-		}
-		collectAssignedNamesFromBlock(s.Body, globals, nonlocals, addName)
-	case *ast.ImportStatement:
-		if s.Alias != nil {
-			addLocal(s.Alias.Value())
-		} else if s.Name != nil {
-			addLocal(strings.Split(s.Name.Value(), ".")[0])
-		}
-		for i, name := range s.AdditionalNames {
-			if i < len(s.AdditionalAliases) && s.AdditionalAliases[i] != nil {
-				addLocal(s.AdditionalAliases[i].Value())
-			} else if name != nil {
-				addLocal(strings.Split(name.Value(), ".")[0])
-			}
-		}
-	case *ast.FromImportStatement:
-		for i, name := range s.Names {
-			if i < len(s.Aliases) && s.Aliases[i] != nil {
-				addLocal(s.Aliases[i].Value())
-			} else if name != nil {
-				addLocal(name.Value())
-			}
-		}
-	case *ast.MatchStatement:
-		for _, caseClause := range s.Cases {
-			if caseClause.CaptureAs != nil {
-				addLocal(caseClause.CaptureAs.Value())
-			}
-			collectAssignedNamesFromBlock(caseClause.Body, globals, nonlocals, addName)
-		}
-	}
-}
-
-func collectAssignedNamesFromExpression(expr ast.Expression, addName func(string)) {
-	switch e := expr.(type) {
-	case *ast.Identifier:
-		addName(e.Value())
-	case *ast.TupleLiteral:
-		for _, elem := range e.Elements {
-			collectAssignedNamesFromExpression(elem, addName)
-		}
-	case *ast.ListLiteral:
-		for _, elem := range e.Elements {
-			collectAssignedNamesFromExpression(elem, addName)
-		}
-	}
+	return lambda.LocalSlots, lambda.LocalSlotNames
 }
 
 func unwrapReturnValue(obj object.Object) object.Object {
@@ -4654,7 +4412,6 @@ func evalSetComprehension(ctx context.Context, sc *ast.SetComprehension, env *ob
 
 func evalLambda(lambda *ast.Lambda, env *object.Environment) object.Object {
 	localSlots, localSlotNames := analyzeLambdaLocals(lambda)
-	paramSlotIndexes := parameterSlotIndexes(lambda.Parameters, localSlots)
 	return &object.LambdaFunction{
 		Parameters:       lambda.Parameters,
 		DefaultValues:    lambda.DefaultValues,
@@ -4664,7 +4421,7 @@ func evalLambda(lambda *ast.Lambda, env *object.Environment) object.Object {
 		Env:              env,
 		LocalSlots:       localSlots,
 		LocalSlotNames:   localSlotNames,
-		ParamSlotIndexes: paramSlotIndexes,
+		ParamSlotIndexes: lambda.ParamSlotIndexes,
 	}
 }
 
