@@ -214,7 +214,6 @@ func (e *estimator) walkStatement(stmt Statement) {
 			return
 		}
 		e.addToken(n.Token)
-		e.addString(n.Operator)
 		e.walkIdentifier(n.Name)
 		e.walkExpression(n.Value)
 	case *MultipleAssignStatement:
@@ -418,14 +417,12 @@ func (e *estimator) walkExpression(expr Expression) {
 		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfPrefixExpression) {
 			return
 		}
-		e.addString(n.Operator)
 		e.walkExpression(n.Right)
 	case *InfixExpression:
 		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfInfixExpression) {
 			return
 		}
 		e.walkExpression(n.Left)
-		e.addString(n.Operator)
 		e.walkExpression(n.Right)
 	case *ConditionalExpression:
 		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfConditionalExpression) {

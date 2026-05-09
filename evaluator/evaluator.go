@@ -203,21 +203,20 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 	case *ast.ExpressionStatement:
 		return evalWithContext(ctx, node.Expression, env)
 	case *ast.InfixExpression:
-		// Handle short-circuit operators (and, or) specially
-		if node.Operator == "and" || node.Operator == "or" {
+		if node.Operator == ast.OpAnd || node.Operator == ast.OpOr {
 			return evalShortCircuitInfixExpression(ctx, node, env)
 		}
-		// String concat chain: flatten a+b+c+... into a single allocation
-		if node.Operator == "+" {
-			if left, ok := node.Left.(*ast.InfixExpression); ok && left.Operator == "+" {
+		if node.Operator == ast.OpAdd {
+			if left, ok := node.Left.(*ast.InfixExpression); ok && left.Operator == ast.OpAdd {
 				if result, ok := tryEvalStringConcatChain(ctx, node, env); ok {
 					return result
 				}
 			}
 		}
-		// Fast path: Identifier op Identifier where both resolve to Integer
 		switch node.Operator {
-		case "+", "-", "*", "//", "%", "<", ">", "<=", ">=", "==", "!=", "&", "|", "^", "<<", ">>":
+		case ast.OpAdd, ast.OpSub, ast.OpMul, ast.OpFloorDiv, ast.OpMod,
+			ast.OpLt, ast.OpGt, ast.OpLte, ast.OpGte, ast.OpEq, ast.OpNeq,
+			ast.OpBitAnd, ast.OpBitOr, ast.OpBitXor, ast.OpLShift, ast.OpRShift:
 			if lid, ok := node.Left.(*ast.Identifier); ok {
 				if rid, ok := node.Right.(*ast.Identifier); ok {
 					if lv, ok := env.Get(lid.Value()); ok {
@@ -582,13 +581,13 @@ func objectsDeepEqual(a, b object.Object) bool {
 	}
 }
 
-func evalPrefixExpression(operator string, right object.Object) object.Object {
+func evalPrefixExpression(operator ast.Op, right object.Object) object.Object {
 	switch operator {
-	case "not":
+	case ast.OpNot:
 		return evalNotOperatorExpression(right)
-	case "-":
+	case ast.OpSub:
 		return evalMinusPrefixOperatorExpression(right)
-	case "~":
+	case ast.OpBitNot:
 		return evalBitwiseNotOperatorExpression(right)
 	default:
 		return errors.NewError("%s: %s%s", errors.ErrUnknownOperator, operator, right.Type())
@@ -630,12 +629,12 @@ func evalShortCircuitInfixExpression(ctx context.Context, node *ast.InfixExpress
 	}
 
 	switch node.Operator {
-	case "and":
+	case ast.OpAnd:
 		if !isTruthy(left) {
 			return left
 		}
 		return evalNode(ctx, node.Right, env)
-	case "or":
+	case ast.OpOr:
 		if isTruthy(left) {
 			return left
 		}
@@ -645,21 +644,20 @@ func evalShortCircuitInfixExpression(ctx context.Context, node *ast.InfixExpress
 	}
 }
 
-func evalInfixExpression(ctx context.Context, operator string, left, right object.Object, env *object.Environment) object.Object {
+func evalInfixExpression(ctx context.Context, operator ast.Op, left, right object.Object, env *object.Environment) object.Object {
 
-	// Handle membership operators
 	switch operator {
-	case "in":
+	case ast.OpIn:
 		return evalInOperator(ctx, left, right)
-	case "not in":
+	case ast.OpNotIn:
 		result := evalInOperator(ctx, left, right)
 		if result == TRUE {
 			return FALSE
 		}
 		return TRUE
-	case "is":
+	case ast.OpIs:
 		return evalIsOperator(left, right)
-	case "is not":
+	case ast.OpIsNot:
 		result := evalIsOperator(left, right)
 		if result == TRUE {
 			return FALSE
@@ -688,7 +686,8 @@ func evalInfixExpression(ctx context.Context, operator string, left, right objec
 	// Only use coerced values for arithmetic/comparison, not identity
 	if coercedLeft != left || coercedRight != right {
 		switch operator {
-		case "+", "-", "*", "/", "//", "%", "**", "<", ">", "<=", ">=", "==", "!=":
+		case ast.OpAdd, ast.OpSub, ast.OpMul, ast.OpDiv, ast.OpFloorDiv, ast.OpMod, ast.OpPow,
+			ast.OpLt, ast.OpGt, ast.OpLte, ast.OpGte, ast.OpEq, ast.OpNeq:
 			return evalInfixExpression(ctx, operator, coercedLeft, coercedRight, env)
 		}
 	}
@@ -701,12 +700,10 @@ func evalInfixExpression(ctx context.Context, operator string, left, right objec
 		if r, ok := right.(*object.Float); ok {
 			return evalFloatInfixValues(operator, float64(l.Value), r.Value)
 		}
-		// Handle int * string
-		if r, ok := right.(*object.String); ok && operator == "*" {
+		if r, ok := right.(*object.String); ok && operator == ast.OpMul {
 			return evalStringMultiplication(r.Value, l.Value)
 		}
-		// Handle int * list
-		if r, ok := right.(*object.List); ok && operator == "*" {
+		if r, ok := right.(*object.List); ok && operator == ast.OpMul {
 			if l.Value <= 0 {
 				return &object.List{Elements: []object.Object{}}
 			}
@@ -716,8 +713,7 @@ func evalInfixExpression(ctx context.Context, operator string, left, right objec
 			}
 			return &object.List{Elements: result}
 		}
-		// Handle int * tuple
-		if r, ok := right.(*object.Tuple); ok && operator == "*" {
+		if r, ok := right.(*object.Tuple); ok && operator == ast.OpMul {
 			if l.Value <= 0 {
 				return &object.Tuple{Elements: []object.Object{}}
 			}
@@ -738,19 +734,17 @@ func evalInfixExpression(ctx context.Context, operator string, left, right objec
 			return evalFloatInfixExpression(operator, left, right)
 		}
 	case *object.String:
-		// Handle string % value (Python-style formatting)
-		if operator == "%" {
+		if operator == ast.OpMod {
 			return evalStringPercentFormat(l.Value, right)
 		}
 		if r, ok := right.(*object.String); ok {
 			return evalStringInfixExpression(operator, l.Value, r.Value)
 		}
-		// Handle string * int
-		if r, ok := right.(*object.Integer); ok && operator == "*" {
+		if r, ok := right.(*object.Integer); ok && operator == ast.OpMul {
 			return evalStringMultiplication(l.Value, r.Value)
 		}
 	case *object.FloatArray:
-		if operator == "+" {
+		if operator == ast.OpAdd {
 			if r, ok := right.(*object.FloatArray); ok {
 				newData := make([]float64, len(l.Data)+len(r.Data))
 				copy(newData, l.Data)
@@ -769,7 +763,7 @@ func evalInfixExpression(ctx context.Context, operator string, left, right objec
 		}
 	case *object.Tuple:
 		switch operator {
-		case "+":
+		case ast.OpAdd:
 			if r, ok := right.(*object.Tuple); ok {
 				result := make([]object.Object, len(l.Elements)+len(r.Elements))
 				copy(result, l.Elements)
@@ -777,7 +771,7 @@ func evalInfixExpression(ctx context.Context, operator string, left, right objec
 				return &object.Tuple{Elements: result}
 			}
 			return errors.NewTypeError("tuple", right.Type().String())
-		case "*":
+		case ast.OpMul:
 			if r, ok := right.(*object.Integer); ok {
 				if r.Value <= 0 {
 					return &object.Tuple{Elements: []object.Object{}}
@@ -789,14 +783,14 @@ func evalInfixExpression(ctx context.Context, operator string, left, right objec
 				return &object.Tuple{Elements: result}
 			}
 			return errors.NewTypeError("int", right.Type().String())
-		case "==":
+		case ast.OpEq:
 			return nativeBoolToBooleanObject(objectsDeepEqual(left, right))
-		case "!=":
+		case ast.OpNeq:
 			return nativeBoolToBooleanObject(!objectsDeepEqual(left, right))
 		}
 	case *object.List:
 		switch operator {
-		case "+":
+		case ast.OpAdd:
 			// Accept any list/tuple on the right
 			var rightElems []object.Object
 			switch r := right.(type) {
@@ -811,7 +805,7 @@ func evalInfixExpression(ctx context.Context, operator string, left, right objec
 			copy(result, l.Elements)
 			copy(result[len(l.Elements):], rightElems)
 			return &object.List{Elements: result}
-		case "*":
+		case ast.OpMul:
 			if r, ok := right.(*object.Integer); ok {
 				if r.Value <= 0 {
 					return &object.List{Elements: []object.Object{}}
@@ -827,7 +821,7 @@ func evalInfixExpression(ctx context.Context, operator string, left, right objec
 	}
 
 	switch operator {
-	case "==":
+	case ast.OpEq:
 		if la, ok := left.(*object.FloatArray); ok {
 			if ra, ok := right.(*object.FloatArray); ok {
 				return nativeBoolToBooleanObject(floatArraysEqual(la, ra))
@@ -835,7 +829,7 @@ func evalInfixExpression(ctx context.Context, operator string, left, right objec
 			return FALSE
 		}
 		return nativeBoolToBooleanObject(objectsDeepEqual(left, right))
-	case "!=":
+	case ast.OpNeq:
 		if la, ok := left.(*object.FloatArray); ok {
 			if ra, ok := right.(*object.FloatArray); ok {
 				return nativeBoolToBooleanObject(!floatArraysEqual(la, ra))
@@ -881,36 +875,29 @@ func evalConditionalExpression(ctx context.Context, node *ast.ConditionalExpress
 	}
 }
 
-func evalIntegerInfixExpression(operator string, leftVal, rightVal int64) object.Object {
+func evalIntegerInfixExpression(operator ast.Op, leftVal, rightVal int64) object.Object {
 	switch operator {
-	case "+":
+	case ast.OpAdd:
 		return object.NewInteger(leftVal + rightVal)
-	case "-":
+	case ast.OpSub:
 		return object.NewInteger(leftVal - rightVal)
-	case "*":
+	case ast.OpMul:
 		return object.NewInteger(leftVal * rightVal)
-	case "/":
+	case ast.OpDiv:
 		if rightVal == 0 {
 			return errors.NewError(errors.ErrDivisionByZero)
 		}
-		// True division: always return float
 		return &object.Float{Value: float64(leftVal) / float64(rightVal)}
-	case "//":
+	case ast.OpFloorDiv:
 		if rightVal == 0 {
 			return errors.NewError(errors.ErrDivisionByZero)
 		}
-		// Floor division: return integer for integers
 		return object.NewInteger(leftVal / rightVal)
-	case "**":
-		// Power operator - use float for negative exponents
+	case ast.OpPow:
 		if rightVal < 0 {
-			return evalFloatInfixValues("**", float64(leftVal), float64(rightVal))
+			return evalFloatInfixValues(ast.OpPow, float64(leftVal), float64(rightVal))
 		}
-		// Integer exponentiation with overflow detection.
-		// Unlike Python 3 which has arbitrary precision integers, scriptling uses
-		// int64. If the result would overflow, we fall back to float64.
 		if rightVal > 63 || (leftVal > 1 && rightVal > 40) || (leftVal < -1 && rightVal > 40) {
-			// Definitely overflows int64, use float
 			return &object.Float{Value: math.Pow(float64(leftVal), float64(rightVal))}
 		}
 		result := int64(1)
@@ -924,56 +911,55 @@ func evalIntegerInfixExpression(operator string, leftVal, rightVal int64) object
 			exp /= 2
 		}
 		return object.NewInteger(result)
-	case "%":
+	case ast.OpMod:
 		if rightVal == 0 {
 			return errors.NewError(errors.ErrDivisionByZero)
 		}
 		return object.NewInteger(leftVal % rightVal)
-	case "&":
+	case ast.OpBitAnd:
 		return object.NewInteger(leftVal & rightVal)
-	case "|":
+	case ast.OpBitOr:
 		return object.NewInteger(leftVal | rightVal)
-	case "^":
+	case ast.OpBitXor:
 		return object.NewInteger(leftVal ^ rightVal)
-	case "<<":
+	case ast.OpLShift:
 		if rightVal < 0 {
 			return errors.NewError("negative shift count")
 		}
 		return object.NewInteger(leftVal << uint64(rightVal))
-	case ">>":
+	case ast.OpRShift:
 		if rightVal < 0 {
 			return errors.NewError("negative shift count")
 		}
 		return object.NewInteger(leftVal >> uint64(rightVal))
-	case "<":
+	case ast.OpLt:
 		return nativeBoolToBooleanObject(leftVal < rightVal)
-	case ">":
+	case ast.OpGt:
 		return nativeBoolToBooleanObject(leftVal > rightVal)
-	case "<=":
+	case ast.OpLte:
 		return nativeBoolToBooleanObject(leftVal <= rightVal)
-	case ">=":
+	case ast.OpGte:
 		return nativeBoolToBooleanObject(leftVal >= rightVal)
-	case "==":
+	case ast.OpEq:
 		return nativeBoolToBooleanObject(leftVal == rightVal)
-	case "!=":
+	case ast.OpNeq:
 		return nativeBoolToBooleanObject(leftVal != rightVal)
 	default:
 		return errors.NewError("unknown operator: INTEGER %s INTEGER", operator)
 	}
 }
 
-func evalFloatInfixExpression(operator string, left, right object.Object) object.Object {
+func evalFloatInfixExpression(operator ast.Op, left, right object.Object) object.Object {
 	leftVal, ok := numericFloatValue(left)
 	if !ok {
 		return errors.NewTypeError("NUMBER", left.Type().String())
 	}
 	rightVal, ok := numericFloatValue(right)
 	if !ok {
-		// For == and != with non-numeric types, different types are never equal (Python behavior)
 		switch operator {
-		case "==":
+		case ast.OpEq:
 			return FALSE
-		case "!=":
+		case ast.OpNeq:
 			return TRUE
 		}
 		return errors.NewTypeError("NUMBER", right.Type().String())
@@ -981,37 +967,37 @@ func evalFloatInfixExpression(operator string, left, right object.Object) object
 	return evalFloatInfixValues(operator, leftVal, rightVal)
 }
 
-func evalFloatInfixValues(operator string, leftVal, rightVal float64) object.Object {
+func evalFloatInfixValues(operator ast.Op, leftVal, rightVal float64) object.Object {
 	switch operator {
-	case "+":
+	case ast.OpAdd:
 		return &object.Float{Value: leftVal + rightVal}
-	case "-":
+	case ast.OpSub:
 		return &object.Float{Value: leftVal - rightVal}
-	case "*":
+	case ast.OpMul:
 		return &object.Float{Value: leftVal * rightVal}
-	case "/":
+	case ast.OpDiv:
 		if rightVal == 0 {
 			return errors.NewError(errors.ErrDivisionByZero)
 		}
 		return &object.Float{Value: leftVal / rightVal}
-	case "//":
+	case ast.OpFloorDiv:
 		if rightVal == 0 {
 			return errors.NewError(errors.ErrDivisionByZero)
 		}
 		return &object.Float{Value: math.Floor(leftVal / rightVal)}
-	case "**":
+	case ast.OpPow:
 		return &object.Float{Value: math.Pow(leftVal, rightVal)}
-	case "<":
+	case ast.OpLt:
 		return nativeBoolToBooleanObject(leftVal < rightVal)
-	case ">":
+	case ast.OpGt:
 		return nativeBoolToBooleanObject(leftVal > rightVal)
-	case "<=":
+	case ast.OpLte:
 		return nativeBoolToBooleanObject(leftVal <= rightVal)
-	case ">=":
+	case ast.OpGte:
 		return nativeBoolToBooleanObject(leftVal >= rightVal)
-	case "==":
+	case ast.OpEq:
 		return nativeBoolToBooleanObject(leftVal == rightVal)
-	case "!=":
+	case ast.OpNeq:
 		return nativeBoolToBooleanObject(leftVal != rightVal)
 	default:
 		return errors.NewError("unknown operator: FLOAT %s FLOAT", operator)
@@ -1062,7 +1048,7 @@ func tryEvalStringConcatChain(ctx context.Context, expr *ast.InfixExpression, en
 
 	result := values[0]
 	for i := 1; i < len(values); i++ {
-		result = evalInfixExpression(ctx, "+", result, values[i], env)
+		result = evalInfixExpression(ctx, ast.OpAdd, result, values[i], env)
 		if object.IsError(result) {
 			return result, true
 		}
@@ -1072,7 +1058,7 @@ func tryEvalStringConcatChain(ctx context.Context, expr *ast.InfixExpression, en
 
 func collectStringConcatLeaves(expr ast.Expression, leaves *[]ast.Expression) bool {
 	infix, ok := expr.(*ast.InfixExpression)
-	if ok && infix.Operator == "+" {
+	if ok && infix.Operator == ast.OpAdd {
 		return collectStringConcatLeaves(infix.Left, leaves) &&
 			collectStringConcatLeaves(infix.Right, leaves)
 	}
@@ -1080,9 +1066,9 @@ func collectStringConcatLeaves(expr ast.Expression, leaves *[]ast.Expression) bo
 	return true
 }
 
-func evalStringInfixExpression(operator string, leftVal, rightVal string) object.Object {
+func evalStringInfixExpression(operator ast.Op, leftVal, rightVal string) object.Object {
 	switch operator {
-	case "+":
+	case ast.OpAdd:
 		if len(leftVal) == 0 {
 			return &object.String{Value: rightVal}
 		}
@@ -1090,17 +1076,17 @@ func evalStringInfixExpression(operator string, leftVal, rightVal string) object
 			return &object.String{Value: leftVal}
 		}
 		return &object.String{Value: leftVal + rightVal}
-	case "==":
+	case ast.OpEq:
 		return nativeBoolToBooleanObject(leftVal == rightVal)
-	case "!=":
+	case ast.OpNeq:
 		return nativeBoolToBooleanObject(leftVal != rightVal)
-	case "<":
+	case ast.OpLt:
 		return nativeBoolToBooleanObject(leftVal < rightVal)
-	case ">":
+	case ast.OpGt:
 		return nativeBoolToBooleanObject(leftVal > rightVal)
-	case "<=":
+	case ast.OpLte:
 		return nativeBoolToBooleanObject(leftVal <= rightVal)
-	case ">=":
+	case ast.OpGte:
 		return nativeBoolToBooleanObject(leftVal >= rightVal)
 	default:
 		return errors.NewError("%s: STRING %s STRING", errors.ErrUnknownOperator, operator)
@@ -1288,24 +1274,24 @@ func callDunderMethod(ctx context.Context, inst *object.Instance, method string,
 }
 
 // operatorToDunderMethod maps operators to their corresponding dunder method names
-var operatorToDunderMethod = map[string]string{
-	"<":  "__lt__",
-	">":  "__gt__",
-	"<=": "__le__",
-	">=": "__ge__",
-	"==": "__eq__",
-	"!=": "__ne__",
-	"+":  "__add__",
-	"-":  "__sub__",
-	"*":  "__mul__",
-	"/":  "__truediv__",
-	"//": "__floordiv__",
-	"%":  "__mod__",
+var operatorToDunderMethod = map[ast.Op]string{
+	ast.OpLt:        "__lt__",
+	ast.OpGt:        "__gt__",
+	ast.OpLte:       "__le__",
+	ast.OpGte:       "__ge__",
+	ast.OpEq:        "__eq__",
+	ast.OpNeq:       "__ne__",
+	ast.OpAdd:       "__add__",
+	ast.OpSub:       "__sub__",
+	ast.OpMul:       "__mul__",
+	ast.OpDiv:       "__truediv__",
+	ast.OpFloorDiv:  "__floordiv__",
+	ast.OpMod:       "__mod__",
 }
 
 // evalInstanceInfixExpression handles operators on instances by calling dunder methods
 // Returns nil if no dunder method is found (falls through to default handling)
-func evalInstanceInfixExpression(ctx context.Context, operator string, left *object.Instance, right object.Object, env *object.Environment) object.Object {
+func evalInstanceInfixExpression(ctx context.Context, operator ast.Op, left *object.Instance, right object.Object, env *object.Environment) object.Object {
 	methodName, ok := operatorToDunderMethod[operator]
 	if !ok {
 		return nil // No dunder method for this operator
@@ -2559,7 +2545,7 @@ func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.Augm
 	}
 
 	// Fast path: string += string, int += int
-	if node.Operator == "+=" {
+	if node.Operator == ast.OpAddEq {
 		if cur, ok := currentVal.(*object.String); ok {
 			if r, ok := newVal.(*object.String); ok {
 				env.Set(node.Name.Value(), &object.String{Value: cur.Value + r.Value})
@@ -2574,33 +2560,8 @@ func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.Augm
 		}
 	}
 
-	var operator string
-	switch node.Operator {
-	case "+=":
-		operator = "+"
-	case "-=":
-		operator = "-"
-	case "*=":
-		operator = "*"
-	case "/=":
-		operator = "/"
-	case "//=":
-		operator = "//"
-	case "%=":
-		operator = "%"
-	case "**=":
-		operator = "**"
-	case "&=":
-		operator = "&"
-	case "|=":
-		operator = "|"
-	case "^=":
-		operator = "^"
-	case "<<=":
-		operator = "<<"
-	case ">>=":
-		operator = ">>"
-	default:
+	operator := node.Operator.BaseOp()
+	if operator == node.Operator {
 		return errors.NewError("unknown augmented assignment operator: %s", node.Operator)
 	}
 

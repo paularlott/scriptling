@@ -446,7 +446,7 @@ func (p *Parser) parseAugmentedAssignStatement() *ast.AugmentedAssignStatement {
 	stmt.Name = p.ident(p.curToken.Literal)
 
 	p.nextToken()
-	stmt.Operator = p.curToken.Literal
+	stmt.Operator = ast.ParseOp(p.curToken.Literal)
 
 	p.nextToken()
 	stmt.Value = p.parseExpression(LOWEST)
@@ -855,7 +855,7 @@ func (p *Parser) parseAdjacentStrings(left ast.Expression) ast.Expression {
 		}
 
 		left = &ast.InfixExpression{
-			Operator: "+",
+			Operator: ast.OpAdd,
 			Left:     left,
 			Right:    right,
 		}
@@ -966,7 +966,7 @@ func (p *Parser) parseNone() ast.Expression {
 
 func (p *Parser) parsePrefixExpression() ast.Expression {
 	expression := &ast.PrefixExpression{
-		Operator: p.curToken.Literal,
+		Operator: ast.ParseOp(p.curToken.Literal),
 	}
 	p.nextToken()
 	expression.Right = p.parseExpression(PREFIX)
@@ -975,7 +975,7 @@ func (p *Parser) parsePrefixExpression() ast.Expression {
 
 func (p *Parser) parseInfixExpression(left ast.Expression) ast.Expression {
 	expression := &ast.InfixExpression{
-		Operator: p.curToken.Literal,
+		Operator: ast.ParseOp(p.curToken.Literal),
 		Left:     left,
 	}
 	precedence := p.curPrecedence()
@@ -993,11 +993,11 @@ func (p *Parser) parseInfixExpression(left ast.Expression) ast.Expression {
 		for isComparisonOp(currentOp) && (p.peekTokenIs(token.LT) || p.peekTokenIs(token.GT) ||
 			p.peekTokenIs(token.LTE) || p.peekTokenIs(token.GTE) ||
 			p.peekTokenIs(token.EQ) || p.peekTokenIs(token.NOT_EQ)) {
-			p.nextToken() // consume comparison operator
+			p.nextToken()
 			nextOp := p.curToken.Literal
 			nextComp := &ast.InfixExpression{
-				Operator: nextOp,
-				Left:     expression.Right, // Use previous right as new left
+				Operator: ast.ParseOp(nextOp),
+				Left:     expression.Right,
 			}
 			p.nextToken()
 			nextComp.Right = p.parseExpression(precedence)
@@ -1006,12 +1006,11 @@ func (p *Parser) parseInfixExpression(left ast.Expression) ast.Expression {
 			currentOp = nextOp
 		}
 
-		// Build the and chain: comp1 and comp2 and comp3...
 		if len(comparisons) > 1 {
 			result := ast.Expression(comparisons[0])
 			for i := 1; i < len(comparisons); i++ {
 				result = &ast.InfixExpression{
-					Operator: "and",
+					Operator: ast.OpAnd,
 					Left:     result,
 					Right:    comparisons[i],
 				}
