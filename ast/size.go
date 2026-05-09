@@ -25,7 +25,8 @@ var (
 	sizeOfFunctionLiteral         = int(unsafe.Sizeof(FunctionLiteral{}))
 	sizeOfFunctionStatement       = int(unsafe.Sizeof(FunctionStatement{}))
 	sizeOfClassStatement          = int(unsafe.Sizeof(ClassStatement{}))
-	sizeOfCallExpression          = int(unsafe.Sizeof(CallExpression{}))
+	sizeOfCallExpression       = int(unsafe.Sizeof(CallExpression{}))
+	sizeOfMethodCallExpression = int(unsafe.Sizeof(MethodCallExpression{}))
 	sizeOfReturnStatement         = int(unsafe.Sizeof(ReturnStatement{}))
 	sizeOfBreakStatement          = int(unsafe.Sizeof(BreakStatement{}))
 	sizeOfContinueStatement       = int(unsafe.Sizeof(ContinueStatement{}))
@@ -438,6 +439,14 @@ func (e *estimator) walkExpression(expr Expression) {
 			return
 		}
 		e.walkExpression(n.Function)
+		e.addExpressionSlice(n.Arguments)
+		e.addKeywordMap(n.Keywords)
+		e.addExpressionSlice(n.ArgsUnpack)
+		e.walkExpression(n.KwargsUnpack)
+	case *MethodCallExpression:
+		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfMethodCallExpression) {
+			return
+		}
 		e.walkExpression(n.Receiver)
 		e.walkIdentifier(n.Method)
 		e.addExpressionSlice(n.Arguments)

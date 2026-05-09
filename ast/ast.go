@@ -620,24 +620,16 @@ func (cs *ClassStatement) Line() int            { return int(cs.Token.Line) }
 
 type CallExpression struct {
 	Function     Expression
-	Receiver     Expression
-	Method       *Identifier
 	Arguments    []Expression
 	Keywords     map[string]Expression
-	ArgsUnpack   []Expression // For *args unpacking (supports multiple)
-	KwargsUnpack Expression   // For **kwargs unpacking
+	ArgsUnpack   []Expression
+	KwargsUnpack Expression
 }
 
 func (ce *CallExpression) expressionNode()      {}
 func (ce *CallExpression) TokenLiteral() string { return "(" }
 func (ce *CallExpression) Line() int {
 	if line := lineOfExpr(ce.Function); line != 0 {
-		return line
-	}
-	if line := lineOfExpr(ce.Receiver); line != 0 {
-		return line
-	}
-	if line := lineOfIdentifier(ce.Method); line != 0 {
 		return line
 	}
 	if line := lineOfExprSlice(ce.Arguments); line != 0 {
@@ -652,6 +644,38 @@ func (ce *CallExpression) Line() int {
 		return line
 	}
 	return lineOfExpr(ce.KwargsUnpack)
+}
+
+type MethodCallExpression struct {
+	Receiver     Expression
+	Method       *Identifier
+	Arguments    []Expression
+	Keywords     map[string]Expression
+	ArgsUnpack   []Expression
+	KwargsUnpack Expression
+}
+
+func (mce *MethodCallExpression) expressionNode()      {}
+func (mce *MethodCallExpression) TokenLiteral() string { return "(" }
+func (mce *MethodCallExpression) Line() int {
+	if line := lineOfExpr(mce.Receiver); line != 0 {
+		return line
+	}
+	if line := lineOfIdentifier(mce.Method); line != 0 {
+		return line
+	}
+	if line := lineOfExprSlice(mce.Arguments); line != 0 {
+		return line
+	}
+	for _, expr := range mce.Keywords {
+		if line := lineOfExpr(expr); line != 0 {
+			return line
+		}
+	}
+	if line := lineOfExprSlice(mce.ArgsUnpack); line != 0 {
+		return line
+	}
+	return lineOfExpr(mce.KwargsUnpack)
 }
 
 type ReturnStatement struct {

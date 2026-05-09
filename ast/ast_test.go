@@ -324,7 +324,7 @@ func TestCallExpression(t *testing.T) {
 }
 
 func TestMethodCallExpression(t *testing.T) {
-	expr := &CallExpression{
+	expr := &MethodCallExpression{
 		Receiver: testIdentifier("obj"),
 		Method:   testIdentifier("method"),
 		Arguments: []Expression{
@@ -756,7 +756,7 @@ func TestExpressionString(t *testing.T) {
 		},
 		{
 			name:     "MethodCallExpression",
-			expr:     &CallExpression{Receiver: testIdentifier("obj"), Method: testIdentifier("method")},
+			expr:     &MethodCallExpression{Receiver: testIdentifier("obj"), Method: testIdentifier("method")},
 			contains: "",
 		},
 		{
@@ -863,7 +863,7 @@ func TestExpressionTokenLiteral(t *testing.T) {
 		{name: "IndexExpression", expr: &IndexExpression{}},
 		{name: "SliceExpression", expr: &SliceExpression{}},
 		{name: "CallExpression", expr: &CallExpression{}},
-		{name: "MethodCallExpression", expr: &CallExpression{Method: testIdentifier("method")}},
+		{name: "MethodCallExpression", expr: &MethodCallExpression{Method: testIdentifier("method")}},
 		{name: "Lambda", expr: &Lambda{}},
 		{name: "ListComprehension", expr: &ListComprehension{}},
 		{name: "TupleLiteral", expr: &TupleLiteral{}},

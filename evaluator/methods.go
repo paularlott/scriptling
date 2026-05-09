@@ -14,7 +14,7 @@ import (
 	"golang.org/x/text/language"
 )
 
-func evalMethodCallExpression(ctx context.Context, mce *ast.CallExpression, env *object.Environment) object.Object {
+func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression, env *object.Environment) object.Object {
 	obj := evalNode(ctx, mce.Receiver, env)
 	if object.IsError(obj) {
 		return obj
