@@ -290,6 +290,9 @@ type Expression interface {
 type Program struct {
 	Statements []Statement
 	Symbols    *SymbolTable
+
+	LocalSlots     map[string]int
+	LocalSlotNames []string
 }
 
 func (p *Program) TokenLiteral() string {
@@ -573,11 +576,15 @@ func (ws *WhileStatement) Line() int            { return int(ws.Token.Line) }
 
 type FunctionLiteral struct {
 	Parameters    []*Identifier
-	DefaultValues map[string]Expression // parameter name -> default value
-	Variadic      *Identifier           // *args parameter (optional)
-	Kwargs        *Identifier           // **kwargs parameter (optional)
+	DefaultValues map[string]Expression
+	Variadic      *Identifier
+	Kwargs        *Identifier
 	Body          *BlockStatement
-	HasNestedFunc bool // set by parser: true if body contains any nested function/lambda/class
+	HasNestedFunc bool
+
+	LocalSlots       map[string]int
+	LocalSlotNames   []string
+	ParamSlotIndexes []int
 }
 
 func (fl *FunctionLiteral) expressionNode()      {}
@@ -979,9 +986,13 @@ func (sc *SetComprehension) Line() int {
 type Lambda struct {
 	Parameters    []*Identifier
 	DefaultValues map[string]Expression
-	Variadic      *Identifier // *args parameter (optional)
-	Kwargs        *Identifier // **kwargs parameter (optional)
-	Body          Expression  // single expression, not block
+	Variadic      *Identifier
+	Kwargs        *Identifier
+	Body          Expression
+
+	LocalSlots       map[string]int
+	LocalSlotNames   []string
+	ParamSlotIndexes []int
 }
 
 func (l *Lambda) expressionNode()      {}

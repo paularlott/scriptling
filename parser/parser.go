@@ -254,6 +254,11 @@ func (p *Parser) ParseProgram() *ast.Program {
 	if program.Symbols != nil {
 		program.Symbols.Freeze()
 	}
+
+	if len(p.errors) == 0 {
+		ast.AnalyzeTopLevelLocals(program)
+	}
+
 	return program
 }
 
@@ -1326,6 +1331,10 @@ func (p *Parser) parseFunctionStatement() *ast.FunctionStatement {
 
 	stmt.Function.Body = p.parseBlockStatement()
 
+	if stmt.Function.Body != nil {
+		ast.AnalyzeFunctionLocals(stmt.Function)
+	}
+
 	return stmt
 }
 
@@ -1663,6 +1672,10 @@ func (p *Parser) parseLambda() ast.Expression {
 
 	p.nextToken()
 	lambda.Body = p.parseExpression(LOWEST)
+
+	if len(lambda.Parameters) > 0 || lambda.Variadic != nil || lambda.Kwargs != nil {
+		ast.AnalyzeLambdaLocals(lambda)
+	}
 
 	return lambda
 }
