@@ -504,7 +504,13 @@ func nativeBoolToBooleanObject(input bool) *object.Boolean {
 	return FALSE
 }
 
-// objectsEqual checks if two objects are equal
+func coerceBool(b *object.Boolean) *object.Integer {
+	if b.Value {
+		return object.NewInteger(1)
+	}
+	return object.NewInteger(0)
+}
+
 func objectsEqual(a, b object.Object) bool {
 	if a.Type() != b.Type() {
 		return false
@@ -667,63 +673,41 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 		return TRUE
 	}
 
-	// Type switch is faster than Type() method calls
-	// Coerce booleans to integers for arithmetic (Python: bool is a subclass of int)
-	coercedLeft := left
-	coercedRight := right
-	if b, ok := left.(*object.Boolean); ok {
-		if b.Value {
-			coercedLeft = object.NewInteger(1)
-		} else {
-			coercedLeft = object.NewInteger(0)
-		}
-	}
-	if b, ok := right.(*object.Boolean); ok {
-		if b.Value {
-			coercedRight = object.NewInteger(1)
-		} else {
-			coercedRight = object.NewInteger(0)
-		}
-	}
-	// Only use coerced values for arithmetic/comparison, not identity
-	if coercedLeft != left || coercedRight != right {
-		switch operator {
-		case ast.OpAdd, ast.OpSub, ast.OpMul, ast.OpDiv, ast.OpFloorDiv, ast.OpMod, ast.OpPow,
-			ast.OpLt, ast.OpGt, ast.OpLte, ast.OpGte, ast.OpEq, ast.OpNeq:
-			return evalInfixExpression(ctx, operator, coercedLeft, coercedRight, env)
-		}
-	}
-
 	switch l := left.(type) {
 	case *object.Integer:
-		if r, ok := right.(*object.Integer); ok {
+		switch r := right.(type) {
+		case *object.Integer:
 			return evalIntegerInfixExpression(operator, l.Value, r.Value)
-		}
-		if r, ok := right.(*object.Float); ok {
+		case *object.Float:
 			return evalFloatInfixValues(operator, float64(l.Value), r.Value)
-		}
-		if r, ok := right.(*object.String); ok && operator == ast.OpMul {
-			return evalStringMultiplication(r.Value, l.Value)
-		}
-		if r, ok := right.(*object.List); ok && operator == ast.OpMul {
-			if l.Value <= 0 {
-				return &object.List{Elements: []object.Object{}}
+		case *object.Boolean:
+			return evalInfixExpression(ctx, operator, left, coerceBool(r), env)
+		case *object.String:
+			if operator == ast.OpMul {
+				return evalStringMultiplication(r.Value, l.Value)
 			}
-			result := make([]object.Object, int(l.Value)*len(r.Elements))
-			for i := range int(l.Value) {
-				copy(result[i*len(r.Elements):], r.Elements)
+		case *object.List:
+			if operator == ast.OpMul {
+				if l.Value <= 0 {
+					return &object.List{Elements: []object.Object{}}
+				}
+				result := make([]object.Object, int(l.Value)*len(r.Elements))
+				for i := range int(l.Value) {
+					copy(result[i*len(r.Elements):], r.Elements)
+				}
+				return &object.List{Elements: result}
 			}
-			return &object.List{Elements: result}
-		}
-		if r, ok := right.(*object.Tuple); ok && operator == ast.OpMul {
-			if l.Value <= 0 {
-				return &object.Tuple{Elements: []object.Object{}}
+		case *object.Tuple:
+			if operator == ast.OpMul {
+				if l.Value <= 0 {
+					return &object.Tuple{Elements: []object.Object{}}
+				}
+				result := make([]object.Object, int(l.Value)*len(r.Elements))
+				for i := range int(l.Value) {
+					copy(result[i*len(r.Elements):], r.Elements)
+				}
+				return &object.Tuple{Elements: result}
 			}
-			result := make([]object.Object, int(l.Value)*len(r.Elements))
-			for i := range int(l.Value) {
-				copy(result[i*len(r.Elements):], r.Elements)
-			}
-			return &object.Tuple{Elements: result}
 		}
 		return evalFloatInfixExpression(operator, left, right)
 	case *object.Float:
@@ -732,9 +716,17 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 			return evalFloatInfixValues(operator, l.Value, r.Value)
 		case *object.Integer:
 			return evalFloatInfixValues(operator, l.Value, float64(r.Value))
+		case *object.Boolean:
+			return evalInfixExpression(ctx, operator, left, coerceBool(r), env)
 		default:
 			return evalFloatInfixExpression(operator, left, right)
 		}
+	case *object.Boolean:
+		cl := coerceBool(l)
+		if rb, ok := right.(*object.Boolean); ok {
+			return evalInfixExpression(ctx, operator, cl, coerceBool(rb), env)
+		}
+		return evalInfixExpression(ctx, operator, cl, right, env)
 	case *object.String:
 		if operator == ast.OpMod {
 			return evalStringPercentFormat(l.Value, right)
@@ -759,7 +751,6 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 			return errors.NewTypeError("FLOAT_ARRAY", right.Type().String())
 		}
 	case *object.Instance:
-		// Handle instance operators via dunder methods (__lt__, __gt__, __eq__, __sub__, __add__, etc.)
 		if result := evalInstanceInfixExpression(ctx, operator, l, right, env); result != nil {
 			return result
 		}
@@ -793,7 +784,6 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 	case *object.List:
 		switch operator {
 		case ast.OpAdd:
-			// Accept any list/tuple on the right
 			var rightElems []object.Object
 			switch r := right.(type) {
 			case *object.List:
@@ -819,6 +809,14 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 				return &object.List{Elements: result}
 			}
 			return errors.NewTypeError("int", right.Type().String())
+		}
+	}
+
+	if rb, ok := right.(*object.Boolean); ok {
+		switch operator {
+		case ast.OpAdd, ast.OpSub, ast.OpMul, ast.OpDiv, ast.OpFloorDiv, ast.OpMod, ast.OpPow,
+			ast.OpLt, ast.OpGt, ast.OpLte, ast.OpGte, ast.OpEq, ast.OpNeq:
+			return evalInfixExpression(ctx, operator, left, coerceBool(rb), env)
 		}
 	}
 
