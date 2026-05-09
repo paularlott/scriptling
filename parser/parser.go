@@ -2148,8 +2148,8 @@ func (p *Parser) parseIndexExpression(left ast.Expression) ast.Expression {
 
 		// Check if this is a method call (followed by parentheses)
 		if p.peekTokenIs(token.LPAREN) {
-			p.nextToken() // consume LPAREN
-			methodCall := &ast.CallExpression{
+			p.nextToken()
+			methodCall := &ast.MethodCallExpression{
 				Receiver: left,
 				Method:   methodName,
 			}

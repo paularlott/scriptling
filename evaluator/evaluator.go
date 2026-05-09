@@ -252,6 +252,8 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		return acquireReturnValue(val)
 	case *ast.CallExpression:
 		return evalCallExpression(ctx, node, env)
+	case *ast.MethodCallExpression:
+		return evalMethodCallExpression(ctx, node, env)
 	case *ast.Identifier:
 		return evalIdentifier(node, env)
 	case *ast.IntegerLiteral:
@@ -1579,11 +1581,6 @@ func unpackArgsFromIterable(argsVal object.Object) ([]object.Object, object.Obje
 }
 
 func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *object.Environment) object.Object {
-	if node.Method != nil {
-		return evalMethodCallExpression(ctx, node, env)
-	}
-
-	// Fast path for simple function calls: ident(args) with no keywords/kwargs/variadic unpack.
 	if len(node.Keywords) == 0 && node.KwargsUnpack == nil && len(node.ArgsUnpack) == 0 {
 		if ident, ok := node.Function.(*ast.Identifier); ok {
 			if val, found := env.Get(ident.Value()); found {
