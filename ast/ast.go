@@ -7,6 +7,195 @@ import (
 	"github.com/paularlott/scriptling/token"
 )
 
+type Op byte
+
+const (
+	OpNil Op = iota
+
+	OpAdd
+	OpSub
+	OpMul
+	OpDiv
+	OpFloorDiv
+	OpMod
+	OpPow
+
+	OpLt
+	OpGt
+	OpLte
+	OpGte
+	OpEq
+	OpNeq
+
+	OpAnd
+	OpOr
+
+	OpIn
+	OpNotIn
+	OpIs
+	OpIsNot
+
+	OpBitAnd
+	OpBitOr
+	OpBitXor
+	OpLShift
+	OpRShift
+
+	OpNot
+	OpBitNot
+	OpPos
+
+	OpAddEq
+	OpSubEq
+	OpMulEq
+	OpDivEq
+	OpFloorDivEq
+	OpModEq
+	OpPowEq
+	OpBitAndEq
+	OpBitOrEq
+	OpBitXorEq
+	OpLShiftEq
+	OpRShiftEq
+)
+
+var opStrings = [...]string{
+	OpNil:        "",
+	OpAdd:        "+",
+	OpSub:        "-",
+	OpMul:        "*",
+	OpDiv:        "/",
+	OpFloorDiv:   "//",
+	OpMod:        "%",
+	OpPow:        "**",
+	OpLt:         "<",
+	OpGt:         ">",
+	OpLte:        "<=",
+	OpGte:        ">=",
+	OpEq:         "==",
+	OpNeq:        "!=",
+	OpAnd:        "and",
+	OpOr:         "or",
+	OpIn:         "in",
+	OpNotIn:      "not in",
+	OpIs:         "is",
+	OpIsNot:      "is not",
+	OpBitAnd:     "&",
+	OpBitOr:      "|",
+	OpBitXor:     "^",
+	OpLShift:     "<<",
+	OpRShift:     ">>",
+	OpNot:        "not",
+	OpBitNot:     "~",
+	OpPos:        "+",
+	OpAddEq:      "+=",
+	OpSubEq:      "-=",
+	OpMulEq:      "*=",
+	OpDivEq:      "/=",
+	OpFloorDivEq: "//=",
+	OpModEq:      "%=",
+	OpPowEq:      "**=",
+	OpBitAndEq:   "&=",
+	OpBitOrEq:    "|=",
+	OpBitXorEq:   "^=",
+	OpLShiftEq:   "<<=",
+	OpRShiftEq:   ">>=",
+}
+
+func (op Op) String() string {
+	if int(op) < len(opStrings) {
+		return opStrings[op]
+	}
+	return ""
+}
+
+var opLookup = map[string]Op{
+	"+":    OpAdd,
+	"-":    OpSub,
+	"*":    OpMul,
+	"/":    OpDiv,
+	"//":   OpFloorDiv,
+	"%":    OpMod,
+	"**":   OpPow,
+	"<":    OpLt,
+	">":    OpGt,
+	"<=":   OpLte,
+	">=":   OpGte,
+	"==":   OpEq,
+	"!=":   OpNeq,
+	"and":  OpAnd,
+	"or":   OpOr,
+	"in":       OpIn,
+	"not in":   OpNotIn,
+	"is":       OpIs,
+	"is not":   OpIsNot,
+	"&":    OpBitAnd,
+	"|":    OpBitOr,
+	"^":    OpBitXor,
+	"<<":   OpLShift,
+	">>":   OpRShift,
+	"not":  OpNot,
+	"~":    OpBitNot,
+	"+=":   OpAddEq,
+	"-=":   OpSubEq,
+	"*=":   OpMulEq,
+	"/=":   OpDivEq,
+	"//=":  OpFloorDivEq,
+	"%=":   OpModEq,
+	"**=":  OpPowEq,
+	"&=":   OpBitAndEq,
+	"|=":   OpBitOrEq,
+	"^=":   OpBitXorEq,
+	"<<=":  OpLShiftEq,
+	">>=":  OpRShiftEq,
+}
+
+func ParseOp(s string) Op {
+	if op, ok := opLookup[s]; ok {
+		return op
+	}
+	return OpNil
+}
+
+func (op Op) IsComparison() bool {
+	return op == OpLt || op == OpGt || op == OpLte || op == OpGte || op == OpEq || op == OpNeq
+}
+
+func (op Op) IsArithmetic() bool {
+	return op == OpAdd || op == OpSub || op == OpMul || op == OpDiv || op == OpFloorDiv || op == OpMod || op == OpPow
+}
+
+func (op Op) BaseOp() Op {
+	switch op {
+	case OpAddEq:
+		return OpAdd
+	case OpSubEq:
+		return OpSub
+	case OpMulEq:
+		return OpMul
+	case OpDivEq:
+		return OpDiv
+	case OpFloorDivEq:
+		return OpFloorDiv
+	case OpModEq:
+		return OpMod
+	case OpPowEq:
+		return OpPow
+	case OpBitAndEq:
+		return OpBitAnd
+	case OpBitOrEq:
+		return OpBitOr
+	case OpBitXorEq:
+		return OpBitXor
+	case OpLShiftEq:
+		return OpLShift
+	case OpRShiftEq:
+		return OpRShift
+	default:
+		return op
+	}
+}
+
 type LineInfo struct {
 	Line int32
 }
@@ -241,22 +430,22 @@ func (n *None) TokenLiteral() string { return "None" }
 func (n *None) Line() int            { return 0 }
 
 type PrefixExpression struct {
-	Operator string
+	Operator Op
 	Right    Expression
 }
 
 func (pe *PrefixExpression) expressionNode()      {}
-func (pe *PrefixExpression) TokenLiteral() string { return pe.Operator }
+func (pe *PrefixExpression) TokenLiteral() string { return pe.Operator.String() }
 func (pe *PrefixExpression) Line() int            { return lineOfExpr(pe.Right) }
 
 type InfixExpression struct {
 	Left     Expression
-	Operator string
+	Operator Op
 	Right    Expression
 }
 
 func (ie *InfixExpression) expressionNode()      {}
-func (ie *InfixExpression) TokenLiteral() string { return ie.Operator }
+func (ie *InfixExpression) TokenLiteral() string { return ie.Operator.String() }
 func (ie *InfixExpression) Line() int {
 	if line := lineOfExpr(ie.Left); line != 0 {
 		return line
@@ -301,12 +490,12 @@ func (as *AssignStatement) Line() int { return int(as.Token.Line) }
 type AugmentedAssignStatement struct {
 	Token    LineInfo
 	Name     *Identifier
-	Operator string
+	Operator Op
 	Value    Expression
 }
 
 func (aas *AugmentedAssignStatement) statementNode()       {}
-func (aas *AugmentedAssignStatement) TokenLiteral() string { return aas.Operator }
+func (aas *AugmentedAssignStatement) TokenLiteral() string { return aas.Operator.String() }
 func (aas *AugmentedAssignStatement) Line() int            { return int(aas.Token.Line) }
 
 type MultipleAssignStatement struct {

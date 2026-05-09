@@ -91,8 +91,8 @@ func TestPrefixExpressions(t *testing.T) {
 		if !ok {
 			t.Fatalf("stmt is not ast.PrefixExpression. got=%T", stmt.Expression)
 		}
-		if exp.Operator != tt.operator {
-			t.Fatalf("exp.Operator is not '%s'. got=%s",
+		if exp.Operator != ast.ParseOp(tt.operator) {
+			t.Fatalf("exp.Operator is not '%s'. got=%v",
 				tt.operator, exp.Operator)
 		}
 	}
@@ -137,8 +137,8 @@ func TestInfixExpressions(t *testing.T) {
 			t.Fatalf("exp is not ast.InfixExpression. got=%T", stmt.Expression)
 		}
 
-		if exp.Operator != tt.operator {
-			t.Fatalf("exp.Operator is not '%s'. got=%s",
+		if exp.Operator != ast.ParseOp(tt.operator) {
+			t.Fatalf("exp.Operator is not '%s'. got=%v",
 				tt.operator, exp.Operator)
 		}
 	}
@@ -616,8 +616,8 @@ func TestAugmentedAssignStatement(t *testing.T) {
 			program.Statements[0])
 	}
 
-	if stmt.Operator != "+=" {
-		t.Errorf("augmented assign operator = %s, want +=", stmt.Operator)
+	if stmt.Operator != ast.OpAddEq {
+		t.Errorf("augmented assign operator = %v, want +=", stmt.Operator)
 	}
 }
 

@@ -97,12 +97,12 @@ func TestFStringLiteral(t *testing.T) {
 
 func TestPrefixExpression(t *testing.T) {
 	expr := &PrefixExpression{
-		Operator: "-",
+		Operator: OpSub,
 		Right:    &IntegerLiteral{Value: 5},
 	}
 
-	if expr.Operator != "-" {
-		t.Errorf("expr.Operator = %q, want %q", expr.Operator, "-")
+	if expr.Operator != OpSub {
+		t.Errorf("expr.Operator = %v, want %v", expr.Operator, OpSub)
 	}
 
 	if expr.Right == nil {
@@ -113,12 +113,12 @@ func TestPrefixExpression(t *testing.T) {
 func TestInfixExpression(t *testing.T) {
 	expr := &InfixExpression{
 		Left:     &IntegerLiteral{Value: 5},
-		Operator: "+",
+		Operator: OpAdd,
 		Right:    &IntegerLiteral{Value: 10},
 	}
 
-	if expr.Operator != "+" {
-		t.Errorf("expr.Operator = %q, want %q", expr.Operator, "+")
+	if expr.Operator != OpAdd {
+		t.Errorf("expr.Operator = %v, want %v", expr.Operator, OpAdd)
 	}
 
 	if expr.Left == nil || expr.Right == nil {
@@ -152,12 +152,12 @@ func TestAssignStatement(t *testing.T) {
 func TestAugmentedAssignStatement(t *testing.T) {
 	stmt := &AugmentedAssignStatement{
 		Name:     testIdentifier("x"),
-		Operator: "+=",
+		Operator: OpAddEq,
 		Value:    &IntegerLiteral{Value: 5},
 	}
 
-	if stmt.Operator != "+=" {
-		t.Errorf("stmt.Operator = %q, want %q", stmt.Operator, "+=")
+	if stmt.Operator != OpAddEq {
+		t.Errorf("stmt.Operator = %v, want %v", stmt.Operator, OpAddEq)
 	}
 
 	if stmt.Name == nil || stmt.Value == nil {
@@ -570,7 +570,7 @@ func TestLambda(t *testing.T) {
 		},
 		DefaultValues: map[string]Expression{},
 		Variadic:      nil,
-		Body:          &InfixExpression{Operator: "+"},
+		Body:          &InfixExpression{Operator: OpAdd},
 	}
 
 	if len(lambda.Parameters) != 1 {
@@ -716,12 +716,12 @@ func TestExpressionString(t *testing.T) {
 		},
 		{
 			name:     "PrefixExpression",
-			expr:     &PrefixExpression{Operator: "-", Right: &IntegerLiteral{Value: 5}},
+			expr:     &PrefixExpression{Operator: OpSub, Right: &IntegerLiteral{Value: 5}},
 			contains: "",
 		},
 		{
 			name:     "InfixExpression",
-			expr:     &InfixExpression{Operator: "+", Left: &IntegerLiteral{Value: 1}, Right: &IntegerLiteral{Value: 2}},
+			expr:     &InfixExpression{Operator: OpAdd, Left: &IntegerLiteral{Value: 1}, Right: &IntegerLiteral{Value: 2}},
 			contains: "",
 		},
 		{
@@ -794,7 +794,7 @@ func TestStatementString(t *testing.T) {
 		stmt Statement
 	}{
 		{name: "AssignStatement", stmt: &AssignStatement{Left: testIdentifier("x"), Value: &IntegerLiteral{Value: 1}}},
-		{name: "AugmentedAssignStatement", stmt: &AugmentedAssignStatement{Name: testIdentifier("x"), Operator: "+=", Value: &IntegerLiteral{Value: 1}}},
+		{name: "AugmentedAssignStatement", stmt: &AugmentedAssignStatement{Name: testIdentifier("x"), Operator: OpAddEq, Value: &IntegerLiteral{Value: 1}}},
 		{name: "MultipleAssignStatement", stmt: &MultipleAssignStatement{Names: []*Identifier{testIdentifier("x")}, Value: &ListLiteral{}}},
 		{name: "ExpressionStatement", stmt: &ExpressionStatement{Expression: &IntegerLiteral{Value: 42}}},
 		{name: "BlockStatement", stmt: &BlockStatement{Statements: []Statement{}}},
