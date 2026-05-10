@@ -49,7 +49,7 @@ func TestYAMLFunctions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := yamlLoadFunc(ctx, object.NewKwargs(nil), &object.String{Value: tt.yamlStr})
+			result := yamlLoadFunc(ctx, object.NewKwargs(nil), object.NewString(tt.yamlStr))
 			if err, ok := result.(*object.Error); ok {
 				t.Fatalf("unexpected error: %s", err.Message)
 			}
@@ -91,22 +91,22 @@ func checkResult(t *testing.T, obj object.Object, expected interface{}) {
 		}
 	case string:
 		str, ok := obj.(*object.String)
-		if !ok || str.Value != exp {
+		if !ok || str.StringValue() != exp {
 			t.Errorf("expected string %q, got %v", exp, obj)
 		}
 	case int64:
 		i, ok := obj.(*object.Integer)
-		if !ok || i.Value != exp {
+		if !ok || i.IntValue() != exp {
 			t.Errorf("expected int64 %d, got %v", exp, obj)
 		}
 	case float64:
 		f, ok := obj.(*object.Float)
-		if !ok || f.Value != exp {
+		if !ok || f.FloatValue() != exp {
 			t.Errorf("expected float64 %f, got %v", exp, obj)
 		}
 	case bool:
 		b, ok := obj.(*object.Boolean)
-		if !ok || b.Value != exp {
+		if !ok || b.BoolValue() != exp {
 			t.Errorf("expected bool %t, got %v", exp, obj)
 		}
 	case nil:
@@ -122,25 +122,25 @@ func TestYAMLConversionRoundTrip(t *testing.T) {
 	// Create a dict to test round-trip
 	original := &object.Dict{
 		Pairs: map[string]object.DictPair{
-			object.DictKey(&object.String{Value: "name"}): {
-				Key:   &object.String{Value: "name"},
-				Value: &object.String{Value: "Test"},
+			object.DictKey(object.NewString("name")): {
+				Key:   object.NewString("name"),
+				Value: object.NewString("Test"),
 			},
-			object.DictKey(&object.String{Value: "count"}): {
-				Key:   &object.String{Value: "count"},
-				Value: &object.Integer{Value: 123},
+			object.DictKey(object.NewString("count")): {
+				Key:   object.NewString("count"),
+				Value: object.NewInteger(123),
 			},
-			object.DictKey(&object.String{Value: "active"}): {
-				Key:   &object.String{Value: "active"},
+			object.DictKey(object.NewString("active")): {
+				Key:   object.NewString("active"),
 				Value: object.NewBoolean(true),
 			},
-			object.DictKey(&object.String{Value: "items"}): {
-				Key: &object.String{Value: "items"},
+			object.DictKey(object.NewString("items")): {
+				Key: object.NewString("items"),
 				Value: &object.List{
 					Elements: []object.Object{
-						&object.String{Value: "a"},
-						&object.String{Value: "b"},
-						&object.String{Value: "c"},
+						object.NewString("a"),
+						object.NewString("b"),
+						object.NewString("c"),
 					},
 				},
 			},
@@ -170,14 +170,14 @@ func TestYAMLConversionRoundTrip(t *testing.T) {
 	namePair, exists := loadedDict.GetByString("name")
 	if !exists {
 		t.Error("missing name key")
-	} else if str, ok := namePair.Value.(*object.String); !ok || str.Value != "Test" {
+	} else if str, ok := namePair.Value.(*object.String); !ok || str.StringValue() != "Test" {
 		t.Errorf("expected name 'Test', got %v", namePair.Value)
 	}
 
 	countPair, exists := loadedDict.GetByString("count")
 	if !exists {
 		t.Error("missing count key")
-	} else if i, ok := countPair.Value.(*object.Integer); !ok || i.Value != 123 {
+	} else if i, ok := countPair.Value.(*object.Integer); !ok || i.IntValue() != 123 {
 		t.Errorf("expected count 123, got %v", countPair.Value)
 	}
 }
@@ -192,12 +192,12 @@ func TestYAMLErrors(t *testing.T) {
 	}{
 		{
 			name:        "load invalid yaml",
-			input:       &object.String{Value: "invalid: yaml: content"},
+			input:       object.NewString("invalid: yaml: content"),
 			expectError: true,
 		},
 		{
 			name:        "load wrong type",
-			input:       &object.Integer{Value: 42},
+			input:       object.NewInteger(42),
 			expectError: true,
 		},
 		{

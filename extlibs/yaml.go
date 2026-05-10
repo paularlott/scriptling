@@ -97,5 +97,5 @@ func yamlDumpFunc(ctx context.Context, kwargs object.Kwargs, args ...object.Obje
 		return errors.NewError("yaml dump error: %s", marshalErr.Error())
 	}
 
-	return &object.String{Value: string(yamlBytes)}
+	return object.NewString(string(yamlBytes))
 }

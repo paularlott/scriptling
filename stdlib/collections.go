@@ -33,7 +33,7 @@ var CounterClass = &object.Class{
 				countKey := func(key string) {
 					if countObj, exists := counter.Fields[key]; exists {
 						if count, ok := countObj.(*object.Integer); ok {
-							counter.Fields[key] = object.NewInteger(count.Value + 1)
+							counter.Fields[key] = object.NewInteger(count.IntValue() + 1)
 						}
 					} else {
 						counter.Fields[key] = object.NewInteger(1)
@@ -51,7 +51,7 @@ var CounterClass = &object.Class{
 						countKey(elem.Inspect())
 					}
 				case *object.String:
-					for _, ch := range arg.Value {
+					for _, ch := range arg.StringValue() {
 						countKey(string(ch))
 					}
 				case *object.Dict:
@@ -82,7 +82,7 @@ var CounterClass = &object.Class{
 					return count
 				}
 				// Return 0 for missing keys (like Python Counter)
-				return &object.Integer{Value: 0}
+				return object.NewInteger(0)
 			},
 			HelpText: `__getitem__(key) - Get count for key (supports c[key] syntax)`,
 		},
@@ -94,7 +94,7 @@ var CounterClass = &object.Class{
 				n := len(counter.Fields)
 				if len(args) == 2 {
 					if nArg, ok := args[1].(*object.Integer); ok {
-						n = int(nArg.Value)
+						n = int(nArg.IntValue())
 					} else {
 						return errors.NewTypeError("INTEGER", args[1].Type().String())
 					}
@@ -108,7 +108,7 @@ var CounterClass = &object.Class{
 				pairs := make([]pair, 0, len(counter.Fields))
 				for key, countObj := range counter.Fields {
 					if count, ok := countObj.(*object.Integer); ok {
-						pairs = append(pairs, pair{key: key, count: count.Value})
+						pairs = append(pairs, pair{key: key, count: count.IntValue()})
 					}
 				}
 
@@ -132,7 +132,7 @@ var CounterClass = &object.Class{
 						}}
 					} else {
 						result[i] = &object.Tuple{Elements: []object.Object{
-							&object.String{Value: key},
+							object.NewString(key),
 							object.NewInteger(pairs[i].count),
 						}}
 					}
@@ -154,8 +154,8 @@ If n is omitted, returns all elements.`,
 				var result []object.Object
 				for key, countObj := range counter.Fields {
 					if count, ok := countObj.(*object.Integer); ok {
-						for i := int64(0); i < count.Value; i++ {
-							result = append(result, &object.String{Value: key})
+						for i := int64(0); i < count.IntValue(); i++ {
+							result = append(result, object.NewString(key))
 						}
 					}
 				}
@@ -219,19 +219,19 @@ var DefaultDictClass = &object.Class{
 					}
 				case *object.String:
 					// Type name as string (for backward compatibility)
-					switch f.Value {
+					switch f.StringValue() {
 					case "int":
 						defaultValue = object.NewInteger(0)
 					case "float":
-						defaultValue = &object.Float{Value: 0}
+						defaultValue = object.NewFloat(0)
 					case "str":
-						defaultValue = &object.String{Value: ""}
+						defaultValue = object.NewString("")
 					case "list":
 						defaultValue = &object.List{Elements: []object.Object{}}
 					case "dict":
 						defaultValue = &object.Dict{Pairs: make(map[string]object.DictPair)}
 					default:
-						return errors.NewError("unknown default factory type: %s", f.Value)
+						return errors.NewError("unknown default factory type: %s", f.StringValue())
 					}
 				default:
 					return errors.NewError("default_factory must be a builtin function or type name")
@@ -285,7 +285,7 @@ var CollectionsLibrary = object.NewLibrary(CollectionsLibraryName, map[string]*o
 					key := elem.Inspect()
 					if countObj, exists := counter.Fields[key]; exists {
 						if count, ok := countObj.(*object.Integer); ok {
-							counter.Fields[key] = object.NewInteger(count.Value + 1)
+							counter.Fields[key] = object.NewInteger(count.IntValue() + 1)
 						}
 					} else {
 						counter.Fields[key] = object.NewInteger(1)
@@ -296,18 +296,18 @@ var CollectionsLibrary = object.NewLibrary(CollectionsLibraryName, map[string]*o
 					key := elem.Inspect()
 					if countObj, exists := counter.Fields[key]; exists {
 						if count, ok := countObj.(*object.Integer); ok {
-							counter.Fields[key] = object.NewInteger(count.Value + 1)
+							counter.Fields[key] = object.NewInteger(count.IntValue() + 1)
 						}
 					} else {
 						counter.Fields[key] = object.NewInteger(1)
 					}
 				}
 			case *object.String:
-				for _, ch := range arg.Value {
+				for _, ch := range arg.StringValue() {
 					key := string(ch)
 					if countObj, exists := counter.Fields[key]; exists {
 						if count, ok := countObj.(*object.Integer); ok {
-							counter.Fields[key] = object.NewInteger(count.Value + 1)
+							counter.Fields[key] = object.NewInteger(count.IntValue() + 1)
 						}
 					} else {
 						counter.Fields[key] = object.NewInteger(1)
@@ -352,7 +352,7 @@ Example:
 			n := len(counter.Fields)
 			if len(args) == 2 {
 				if nArg, ok := args[1].(*object.Integer); ok {
-					n = int(nArg.Value)
+					n = int(nArg.IntValue())
 				} else {
 					return errors.NewTypeError("INTEGER", args[1].Type().String())
 				}
@@ -366,7 +366,7 @@ Example:
 			pairs := make([]pair, 0, len(counter.Fields))
 			for key, countObj := range counter.Fields {
 				if count, ok := countObj.(*object.Integer); ok {
-					pairs = append(pairs, pair{key: key, count: count.Value})
+					pairs = append(pairs, pair{key: key, count: count.IntValue()})
 				}
 			}
 
@@ -390,7 +390,7 @@ Example:
 					}}
 				} else {
 					result[i] = &object.Tuple{Elements: []object.Object{
-						&object.String{Value: key},
+						object.NewString(key),
 						object.NewInteger(pairs[i].count),
 					}}
 				}
@@ -464,8 +464,8 @@ Example:
 					elements = make([]object.Object, len(arg.Elements))
 					copy(elements, arg.Elements)
 				case *object.String:
-					for _, ch := range arg.Value {
-						elements = append(elements, &object.String{Value: string(ch)})
+					for _, ch := range arg.StringValue() {
+						elements = append(elements, object.NewString(string(ch)))
 					}
 				default:
 					return errors.NewTypeError("iterable", args[0].Type().String())
@@ -476,7 +476,7 @@ Example:
 			maxlen := int64(-1)
 			if len(args) >= 2 {
 				if ml, ok := args[1].(*object.Integer); ok {
-					maxlen = ml.Value
+					maxlen = ml.IntValue()
 					if maxlen >= 0 && int64(len(elements)) > maxlen {
 						// Trim from left
 						elements = elements[len(elements)-int(maxlen):]
@@ -597,7 +597,7 @@ Example:
 			}
 
 			// Normalize rotation
-			steps := int(n.Value) % len(deque.Elements)
+			steps := int(n.IntValue()) % len(deque.Elements)
 			if steps < 0 {
 				steps += len(deque.Elements)
 			}
@@ -636,7 +636,7 @@ Example:
 			case *object.List:
 				for _, elem := range fn.Elements {
 					if s, ok := elem.(*object.String); ok {
-						fieldNames = append(fieldNames, s.Value)
+						fieldNames = append(fieldNames, s.StringValue())
 					} else {
 						return errors.NewError("field names must be strings")
 					}
@@ -644,14 +644,14 @@ Example:
 			case *object.Tuple:
 				for _, elem := range fn.Elements {
 					if s, ok := elem.(*object.String); ok {
-						fieldNames = append(fieldNames, s.Value)
+						fieldNames = append(fieldNames, s.StringValue())
 					} else {
 						return errors.NewError("field names must be strings")
 					}
 				}
 			case *object.String:
 				// Space or comma separated
-				fields := strings.FieldsFunc(fn.Value, func(r rune) bool {
+				fields := strings.FieldsFunc(fn.StringValue(), func(r rune) bool {
 					return r == ' ' || r == ','
 				})
 				for _, f := range fields {
@@ -682,7 +682,7 @@ Example:
 					// Store field names for reference
 					fieldNameObjs := make([]object.Object, len(fieldNames))
 					for i, name := range fieldNames {
-						fieldNameObjs[i] = &object.String{Value: name}
+						fieldNameObjs[i] = object.NewString(name)
 					}
 					nt.Fields["__fields__"] = &object.Tuple{Elements: fieldNameObjs}
 					return &object.Null{}
@@ -708,7 +708,7 @@ Example:
 			}
 
 			ntClass := &object.Class{
-				Name:    typename.Value,
+				Name:    typename.StringValue(),
 				Methods: methods,
 			}
 

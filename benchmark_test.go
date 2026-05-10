@@ -444,13 +444,13 @@ func BenchmarkScenario_ConfigLogic(b *testing.B) {
 
 func BenchmarkAccessorOverhead(b *testing.B) {
 	// Create test objects
-	str := &object.String{Value: "test"}
-	intObj := &object.Integer{Value: 42}
+	str := object.NewString("test")
+	intObj := object.NewInteger(42)
 
 	b.Run("DirectAccess", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			_ = str.Value
-			_ = intObj.Value
+			_ = str.StringValue()
+			_ = intObj.IntValue()
 		}
 	})
 

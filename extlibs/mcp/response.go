@@ -86,7 +86,7 @@ func decodeTextContent(text string) object.Object {
 		return conversion.FromGo(jsonValue)
 	}
 	// Return as plain string
-	return &object.String{Value: text}
+	return object.NewString(text)
 }
 
 // DictToMap converts a scriptling Dict to a Go map[string]interface{}.

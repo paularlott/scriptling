@@ -41,7 +41,7 @@ func newInputBuiltinFromReader(r *bufio.Reader) *object.Builtin {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			line, err := r.ReadString('\n')
 			if err != nil && line == "" {
-				return &object.String{Value: ""}
+				return object.NewString("")
 			}
 			if len(line) > 0 && line[len(line)-1] == '\n' {
 				line = line[:len(line)-1]
@@ -49,7 +49,7 @@ func newInputBuiltinFromReader(r *bufio.Reader) *object.Builtin {
 					line = line[:len(line)-1]
 				}
 			}
-			return &object.String{Value: line}
+			return object.NewString(line)
 		},
 		HelpText: `input([prompt]) - Read a line from stdin, stripping the trailing newline`,
 	}
@@ -68,22 +68,22 @@ func newSysLibraryWithReader(argv []string, stdin *bufio.Reader) *object.Library
 	// Create argv list
 	argvElements := make([]object.Object, len(argv))
 	for i, arg := range argv {
-		argvElements[i] = &object.String{Value: arg}
+		argvElements[i] = object.NewString(arg)
 	}
 
 	// Constants map
 	constants := map[string]object.Object{
 		// Platform identifier
-		"platform": &object.String{Value: getPlatform()},
+		"platform": object.NewString(getPlatform()),
 
 		// Version info
-		"version": &object.String{Value: "Scriptling " + build.Version},
+		"version": object.NewString("Scriptling " + build.Version),
 
 		// Maximum integer value
 		"maxsize": object.NewInteger(9223372036854775807), // max int64
 
 		// Path separator
-		"path_sep": &object.String{Value: string(os.PathSeparator)},
+		"path_sep": object.NewString(string(os.PathSeparator)),
 
 		// argv
 		"argv": &object.List{Elements: argvElements},
@@ -103,10 +103,9 @@ func newSysLibraryWithReader(argv []string, stdin *bufio.Reader) *object.Library
 				if len(args) > 0 {
 					switch arg := args[0].(type) {
 					case *object.Integer:
-						code = int(arg.Value)
+						code = int(arg.IntValue())
 					case *object.String:
-						// Return an exception with the custom message and exit code 1
-						return object.NewSystemExit(1, arg.Value)
+						return object.NewSystemExit(1, arg.StringValue())
 					default:
 						code = 1
 					}
@@ -202,7 +201,7 @@ var stdinClass = &object.Class{
 					return &object.Error{Message: "read(): invalid stdin"}
 				}
 				data, _ := io.ReadAll(r)
-				return &object.String{Value: string(data)}
+				return object.NewString(string(data))
 			},
 			HelpText: `read() - Read all remaining data from stdin`,
 		},
@@ -221,9 +220,9 @@ var stdinClass = &object.Class{
 				}
 				line, err := r.ReadString('\n')
 				if err != nil && line == "" {
-					return &object.String{Value: ""}
+					return object.NewString("")
 				}
-				return &object.String{Value: line}
+				return object.NewString(line)
 			},
 			HelpText: `readline() - Read one line from stdin (includes newline)`,
 		},
@@ -245,7 +244,7 @@ var stdinClass = &object.Class{
 					if err != nil && line == "" {
 						return nil, false
 					}
-					return &object.String{Value: line}, true
+					return object.NewString(line), true
 				})
 			},
 		},

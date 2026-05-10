@@ -24,7 +24,7 @@ var StatisticsLibrary = object.NewLibrary(StatisticsLibraryName, map[string]*obj
 			for _, v := range values {
 				sum += v
 			}
-			return &object.Float{Value: sum / float64(len(values))}
+			return object.NewFloat(sum / float64(len(values)))
 		},
 		HelpText: `mean(data) - Return the arithmetic mean of data
 
@@ -51,7 +51,7 @@ Example:
 			for _, v := range values {
 				sum += v
 			}
-			return &object.Float{Value: sum / float64(len(values))}
+			return object.NewFloat(sum / float64(len(values)))
 		},
 		HelpText: `fmean(data) - Return the arithmetic mean of data (faster float version)
 
@@ -82,7 +82,7 @@ Example:
 				}
 				logSum += math.Log(v)
 			}
-			return &object.Float{Value: math.Exp(logSum / float64(len(values)))}
+			return object.NewFloat(math.Exp(logSum / float64(len(values))))
 		},
 		HelpText: `geometric_mean(data) - Return the geometric mean of data
 
@@ -112,7 +112,7 @@ Example:
 				}
 				reciprocalSum += 1.0 / v
 			}
-			return &object.Float{Value: float64(len(values)) / reciprocalSum}
+			return object.NewFloat(float64(len(values)) / reciprocalSum)
 		},
 		HelpText: `harmonic_mean(data) - Return the harmonic mean of data
 
@@ -140,9 +140,9 @@ Example:
 			sort.Float64s(sorted)
 			n := len(sorted)
 			if n%2 == 0 {
-				return &object.Float{Value: (sorted[n/2-1] + sorted[n/2]) / 2}
+				return object.NewFloat((sorted[n/2-1] + sorted[n/2]) / 2)
 			}
-			return &object.Float{Value: sorted[n/2]}
+			return object.NewFloat(sorted[n/2])
 		},
 		HelpText: `median(data) - Return the median (middle value) of data
 
@@ -208,7 +208,7 @@ Example:
 				return errors.NewError("stdev requires at least two data points")
 			}
 			variance := sampleVariance(values)
-			return &object.Float{Value: math.Sqrt(variance)}
+			return object.NewFloat(math.Sqrt(variance))
 		},
 		HelpText: `stdev(data) - Return the sample standard deviation of data
 
@@ -232,7 +232,7 @@ Example:
 				return errors.NewError("pstdev requires at least one data point")
 			}
 			variance := populationVariance(values)
-			return &object.Float{Value: math.Sqrt(variance)}
+			return object.NewFloat(math.Sqrt(variance))
 		},
 		HelpText: `pstdev(data) - Return the population standard deviation of data
 
@@ -255,7 +255,7 @@ Example:
 			if len(values) < 2 {
 				return errors.NewError("variance requires at least two data points")
 			}
-			return &object.Float{Value: sampleVariance(values)}
+			return object.NewFloat(sampleVariance(values))
 		},
 		HelpText: `variance(data) - Return the sample variance of data
 
@@ -278,7 +278,7 @@ Example:
 			if len(values) < 1 {
 				return errors.NewError("pvariance requires at least one data point")
 			}
-			return &object.Float{Value: populationVariance(values)}
+			return object.NewFloat(populationVariance(values))
 		},
 		HelpText: `pvariance(data) - Return the population variance of data
 
@@ -304,9 +304,9 @@ func extractNumbers(obj object.Object) ([]float64, object.Object) {
 	for _, elem := range list.Elements {
 		switch v := elem.(type) {
 		case *object.Integer:
-			values = append(values, float64(v.Value))
+			values = append(values, float64(v.IntValue()))
 		case *object.Float:
-			values = append(values, v.Value)
+			values = append(values, v.FloatValue())
 		default:
 			return nil, errors.NewTypeError("INTEGER or FLOAT", elem.Type().String())
 		}

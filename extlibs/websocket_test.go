@@ -125,8 +125,8 @@ msg
 		t.Fatalf("Expected string result, got %T", result)
 	}
 
-	if str.Value != "Hello, WebSocket!" {
-		t.Errorf("Expected 'Hello, WebSocket!', got '%s'", str.Value)
+	if str.StringValue() != "Hello, WebSocket!" {
+		t.Errorf("Expected 'Hello, WebSocket!', got '%s'", str.StringValue())
 	}
 }
 
@@ -179,8 +179,8 @@ msg
 	}
 
 	// Check it's valid JSON with the expected content
-	if !strings.Contains(str.Value, `"type"`) || !strings.Contains(str.Value, `"test"`) {
-		t.Errorf("Expected JSON with type:test, got '%s'", str.Value)
+	if !strings.Contains(str.StringValue(), `"type"`) || !strings.Contains(str.StringValue(), `"test"`) {
+		t.Errorf("Expected JSON with type:test, got '%s'", str.StringValue())
 	}
 }
 

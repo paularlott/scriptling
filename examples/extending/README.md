@@ -53,7 +53,7 @@ Scriptling objects include:
 ### Error Handling
 Return error messages as strings:
 ```go
-return &object.String{Value: "Error: invalid argument"}
+return object.NewString("Error: invalid argument")
 ```
 
 ### Registration

@@ -68,24 +68,24 @@ func createResponseInstance(statusCode int, headers map[string]string, body []by
 	// Convert headers to object.Dict
 	headerDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
 	for k, v := range headers {
-		headerDict.SetByString(k, &object.String{Value: v})
+		headerDict.SetByString(k, object.NewString(v))
 	}
 
 	return &object.Instance{
 		Class: ResponseClass,
 		Fields: map[string]object.Object{
-			"status_code": &object.Integer{Value: int64(statusCode)},
-			"text":        &object.String{Value: string(body)},
+			"status_code": object.NewInteger(int64(statusCode)),
+			"text":        object.NewString(string(body)),
 			"headers":     headerDict,
-			"body":        &object.String{Value: string(body)},
-			"url":         &object.String{Value: url},
+			"body":        object.NewString(string(body)),
+			"url":         object.NewString(url),
 		},
 	}
 }
 
 // Exception types for requests library
-var requestExceptionType = &object.String{Value: "RequestException"}
-var httpErrorType = &object.String{Value: "HTTPError"}
+var requestExceptionType = object.NewString("RequestException")
+var httpErrorType = object.NewString("HTTPError")
 
 // Create exceptions namespace dict
 var exceptionsNamespace = object.NewStringDict(map[string]object.Object{
@@ -204,7 +204,7 @@ func extractRequestArgs(kwargs object.Kwargs, args []object.Object, hasData bool
 			// Set Content-Type header if not already set
 			if _, hasHeaders := options["headers"]; !hasHeaders {
 				contentTypeDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
-				contentTypeDict.SetByString("Content-Type", &object.String{Value: "application/json"})
+				contentTypeDict.SetByString("Content-Type", object.NewString("application/json"))
 				options["headers"] = contentTypeDict
 			}
 		} else {

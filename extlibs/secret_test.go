@@ -37,25 +37,25 @@ func TestSecretLibraryGet(t *testing.T) {
 
 	lib := NewSecretLibrary(registry)
 	result := lib.Functions()["get"].Fn(context.Background(), object.NewKwargs(nil),
-		&object.String{Value: "prod_vault"},
-		&object.String{Value: "secret/data/app"},
-		&object.String{Value: "password"},
+		object.NewString("prod_vault"),
+		object.NewString("secret/data/app"),
+		object.NewString("password"),
 	)
 
 	str, ok := result.(*object.String)
 	if !ok {
 		t.Fatalf("result type = %T, want *object.String", result)
 	}
-	if str.Value != "resolved:secret/data/app:password" {
-		t.Fatalf("result = %q, want resolved secret", str.Value)
+	if str.StringValue() != "resolved:secret/data/app:password" {
+		t.Fatalf("result = %q, want resolved secret", str.StringValue())
 	}
 }
 
 func TestSecretLibraryGetUnknownAlias(t *testing.T) {
 	lib := NewSecretLibrary(secretprovider.NewRegistry())
 	result := lib.Functions()["get"].Fn(context.Background(), object.NewKwargs(nil),
-		&object.String{Value: "missing"},
-		&object.String{Value: "secret/data/app"},
+		object.NewString("missing"),
+		object.NewString("secret/data/app"),
 	)
 
 	if _, ok := result.(*object.Error); !ok {
@@ -71,8 +71,8 @@ func TestSecretLibraryList(t *testing.T) {
 
 	lib := NewSecretLibrary(registry)
 	result := lib.Functions()["list"].Fn(context.Background(), object.NewKwargs(nil),
-		&object.String{Value: "prod_vault"},
-		&object.String{Value: "secret/data/app"},
+		object.NewString("prod_vault"),
+		object.NewString("secret/data/app"),
 	)
 
 	list, ok := result.(*object.List)
@@ -91,8 +91,8 @@ func TestSecretLibraryList(t *testing.T) {
 func TestSecretLibraryListUnknownAlias(t *testing.T) {
 	lib := NewSecretLibrary(secretprovider.NewRegistry())
 	result := lib.Functions()["list"].Fn(context.Background(), object.NewKwargs(nil),
-		&object.String{Value: "missing"},
-		&object.String{Value: "secret/data/app"},
+		object.NewString("missing"),
+		object.NewString("secret/data/app"),
 	)
 
 	if _, ok := result.(*object.Error); !ok {

@@ -149,10 +149,10 @@ Returns:
 				}
 
 				if s1 == "" || s2 == "" {
-					return &object.Float{Value: 0.0}
+					return object.NewFloat(0.0)
 				}
 
-				return &object.Float{Value: clifuzzy.Score(s1, s2)}
+				return object.NewFloat(clifuzzy.Score(s1, s2))
 			},
 			HelpText: `score(s1, s2) - Calculate fuzzy similarity between two strings
 
@@ -224,7 +224,7 @@ Returns:
 					return &object.Error{Message: "b must be a list of integers"}
 				}
 
-				return &object.Float{Value: minHashSimilarity(left, right)}
+				return object.NewFloat(minHashSimilarity(left, right))
 			},
 			HelpText: `minhash_similarity(a, b) - Compare two MinHash signatures
 
@@ -252,7 +252,7 @@ func parseSearchArgs(kwargs object.Kwargs, args []object.Object) (string, *objec
 		if !ok {
 			return "", nil, fmt.Errorf("query must be a string")
 		}
-		query = str.Value
+		query = str.StringValue()
 	} else {
 		query = kwargs.MustGetString("query", "")
 		if query == "" {
@@ -290,7 +290,7 @@ func toNamedItems(itemsList *object.List, keyField string) []clifuzzy.NamedItem 
 func convertToNamedItem(obj object.Object, index int, keyField string) clifuzzy.NamedItem {
 	switch v := obj.(type) {
 	case *object.String:
-		return namedItemWrapper{id: index, name: v.Value}
+		return namedItemWrapper{id: index, name: v.StringValue()}
 	case *object.Dict:
 		id := index
 		if idPair, hasID := v.GetByString("id"); hasID {
@@ -300,7 +300,7 @@ func convertToNamedItem(obj object.Object, index int, keyField string) clifuzzy.
 		}
 		if namePair, hasName := v.GetByString(keyField); hasName {
 			if nameStr, ok := namePair.Value.(*object.String); ok {
-				return namedItemWrapper{id: id, name: nameStr.Value}
+				return namedItemWrapper{id: id, name: nameStr.StringValue()}
 			}
 		}
 	}

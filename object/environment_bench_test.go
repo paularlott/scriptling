@@ -11,11 +11,11 @@ import (
 func BenchmarkEnvironmentGet(b *testing.B) {
 	env := NewEnvironment()
 	// Pre-populate with some variables
-	env.Set("x", &Integer{Value: 1})
-	env.Set("y", &Integer{Value: 2})
-	env.Set("z", &Integer{Value: 3})
-	env.Set("name", &String{Value: "test"})
-	env.Set("flag", &Boolean{Value: true})
+	env.Set("x", NewInteger(1))
+	env.Set("y", NewInteger(2))
+	env.Set("z", NewInteger(3))
+	env.Set("name", NewString("test"))
+	env.Set("flag", NewBoolean(true))
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -32,21 +32,21 @@ func BenchmarkEnvironmentSet(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		env.Set("x", &Integer{Value: int64(i)})
-		env.Set("y", &Integer{Value: int64(i + 1)})
-		env.Set("z", &Integer{Value: int64(i + 2)})
+		env.Set("x", NewInteger(int64(i)))
+		env.Set("y", NewInteger(int64(i + 1)))
+		env.Set("z", NewInteger(int64(i + 2)))
 	}
 }
 
 func BenchmarkEnvironmentGetSet(b *testing.B) {
 	env := NewEnvironment()
-	env.Set("counter", &Integer{Value: 0})
+	env.Set("counter", NewInteger(0))
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		val, _ := env.Get("counter")
 		if intVal, ok := val.(*Integer); ok {
-			env.Set("counter", &Integer{Value: intVal.Value + 1})
+			env.Set("counter", NewInteger(intVal.IntValue()+1))
 		}
 	}
 }
@@ -54,13 +54,13 @@ func BenchmarkEnvironmentGetSet(b *testing.B) {
 // Benchmark with nested environments (simulating function scopes)
 func BenchmarkEnvironmentNestedGet(b *testing.B) {
 	global := NewEnvironment()
-	global.Set("global_var", &Integer{Value: 100})
+	global.Set("global_var", NewInteger(100))
 
 	outer := NewEnclosedEnvironment(global)
-	outer.Set("outer_var", &Integer{Value: 50})
+	outer.Set("outer_var", NewInteger(50))
 
 	inner := NewEnclosedEnvironment(outer)
-	inner.Set("inner_var", &Integer{Value: 25})
+	inner.Set("inner_var", NewInteger(25))
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -76,9 +76,9 @@ func BenchmarkEnvironmentSlotGet(b *testing.B) {
 		"y":    1,
 		"name": 2,
 	}, []string{"x", "y", "name"})
-	env.Set("x", &Integer{Value: 1})
-	env.Set("y", &Integer{Value: 2})
-	env.Set("name", &String{Value: "test"})
+	env.Set("x", NewInteger(1))
+	env.Set("y", NewInteger(2))
+	env.Set("name", NewString("test"))
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -97,9 +97,9 @@ func BenchmarkEnvironmentSlotSet(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		env.Set("x", &Integer{Value: int64(i)})
-		env.Set("y", &Integer{Value: int64(i + 1)})
-		env.Set("z", &Integer{Value: int64(i + 2)})
+		env.Set("x", NewInteger(int64(i)))
+		env.Set("y", NewInteger(int64(i + 1)))
+		env.Set("z", NewInteger(int64(i + 2)))
 	}
 }
 
@@ -176,9 +176,9 @@ func BenchmarkInstanceGetBoundMethodCold(b *testing.B) {
 // Benchmark concurrent access (simulating goroutines)
 func BenchmarkEnvironmentConcurrent(b *testing.B) {
 	env := NewEnvironment()
-	env.Set("x", &Integer{Value: 1})
-	env.Set("y", &Integer{Value: 2})
-	env.Set("z", &Integer{Value: 3})
+	env.Set("x", NewInteger(1))
+	env.Set("y", NewInteger(2))
+	env.Set("z", NewInteger(3))
 
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
@@ -195,7 +195,7 @@ func BenchmarkEnvironmentManyVars(b *testing.B) {
 	env := NewEnvironment()
 	// Create 100 variables
 	for i := 0; i < 100; i++ {
-		env.Set(string(rune('a'+i%26)), &Integer{Value: int64(i)})
+		env.Set(string(rune('a'+i%26)), NewInteger(int64(i)))
 	}
 
 	b.ResetTimer()

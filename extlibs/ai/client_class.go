@@ -891,7 +891,7 @@ func extractTextFromResponse(resp object.Object) object.Object {
 	respGo := conversion.ToGo(resp)
 	responseMap, ok := respGo.(map[string]any)
 	if !ok {
-		return &object.String{Value: ""}
+		return object.NewString("")
 	}
 
 	// Extract content from response.choices[0].message.content
@@ -910,7 +910,7 @@ func extractTextFromResponse(resp object.Object) object.Object {
 		}
 	}
 
-	return &object.String{Value: content}
+	return object.NewString(content)
 }
 
 // createClientInstance creates a new scriptling Instance wrapping an AI client
@@ -1263,7 +1263,7 @@ func errStreamMethod(self *object.Instance, ctx context.Context) object.Object {
 		if suppressCancelError && err == context.Canceled {
 			return &object.Null{}
 		}
-		return &object.String{Value: err.Error()}
+		return object.NewString(err.Error())
 	}
 	return &object.Null{}
 }

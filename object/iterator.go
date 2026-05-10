@@ -18,9 +18,9 @@ func IterableToSlice(obj Object) ([]Object, bool) {
 	case *Tuple:
 		return iter.Elements, true
 	case *String:
-		elements := make([]Object, 0, len(iter.Value))
-		for _, ch := range iter.Value {
-			elements = append(elements, &String{Value: string(ch)})
+		elements := make([]Object, 0, len(iter.value))
+		for _, ch := range iter.value {
+			elements = append(elements, &String{value: string(ch)})
 		}
 		return elements, true
 	case *Iterator:
@@ -79,7 +79,7 @@ func IterableToSlice(obj Object) ([]Object, bool) {
 		}
 		elements := make([]Object, len(iter.Data))
 		for i, v := range iter.Data {
-			elements[i] = &Float{Value: v}
+			elements[i] = &Float{value: v}
 		}
 		return elements, true
 	default:
@@ -245,7 +245,7 @@ func NewReversedIterator(iterable Object) *Iterator {
 				if index < 0 {
 					return nil, false
 				}
-				val := &Float{Value: fa.Data[index]}
+				val := &Float{value: fa.Data[index]}
 				index--
 				return val, true
 			},

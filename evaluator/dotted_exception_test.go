@@ -83,7 +83,7 @@ result
 			env := object.NewEnvironment()
 			// Register a minimal requests namespace with HTTPError constant
 			requestsDict := object.NewStringDict(map[string]object.Object{
-				"HTTPError": &object.String{Value: "HTTPError"},
+				"HTTPError": object.NewString("HTTPError"),
 			})
 			env.Set("requests", requestsDict)
 			// Register HTTPError as a callable that raises an exception

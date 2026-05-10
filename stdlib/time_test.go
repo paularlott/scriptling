@@ -16,7 +16,7 @@ func TestTimeNow(t *testing.T) {
 		t.Fatalf("expected STRING_OBJ, got %v", result.Type())
 	}
 
-	str := result.(*object.String).Value
+	str := result.(*object.String).StringValue()
 
 	// Should be in ISO 8601 format: YYYY-MM-DDTHH:MM:SS.ffffff
 	if !strings.Contains(str, "T") {
@@ -47,7 +47,7 @@ func TestTimeTime(t *testing.T) {
 		t.Fatalf("expected FLOAT_OBJ, got %v", result.Type())
 	}
 
-	ts := result.(*object.Float).Value
+	ts := result.(*object.Float).FloatValue()
 	if ts <= 0 {
 		t.Errorf("time() returned %f, expected positive Unix timestamp", ts)
 	}

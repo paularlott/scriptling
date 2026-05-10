@@ -43,7 +43,7 @@ func buildToonLibrary() *object.Library {
 					return &object.Error{Message: err.Error()}
 				}
 
-				return &object.String{Value: encoded}
+				return object.NewString(encoded)
 			},
 			HelpText: `encode(data) - Encode data to TOON format
 
@@ -114,7 +114,7 @@ Example:
 					return &object.Error{Message: encodeErr.Error()}
 				}
 
-				return &object.String{Value: encoded}
+				return object.NewString(encoded)
 			},
 			HelpText: `encode_options(data, indent, delimiter) - Encode data to TOON format with custom options
 

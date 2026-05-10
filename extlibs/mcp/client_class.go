@@ -330,9 +330,9 @@ func parallelResultsToList(results []mcplib.ParallelToolResult) *object.List {
 			errStr = ""
 		}
 		elements[i] = object.NewStringDict(map[string]object.Object{
-			"name":   &object.String{Value: r.Name},
+			"name":   object.NewString(r.Name),
 			"result": resultObj,
-			"error":  &object.String{Value: errStr},
+			"error":  object.NewString(errStr),
 		})
 	}
 	return &object.List{Elements: elements}
@@ -375,8 +375,8 @@ func convertToolsToList(tools []mcplib.MCPTool) object.Object {
 	toolList := make([]object.Object, 0, len(tools))
 	for _, tool := range tools {
 		toolDict := object.NewStringDict(map[string]object.Object{
-			"name":        &object.String{Value: tool.Name},
-			"description": &object.String{Value: tool.Description},
+			"name":        object.NewString(tool.Name),
+			"description": object.NewString(tool.Description),
 		})
 		if tool.InputSchema != nil {
 			toolDict.SetByString("input_schema", conversion.FromGo(tool.InputSchema))

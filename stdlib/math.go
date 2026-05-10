@@ -78,7 +78,7 @@ func floatMatrixToObject(m [][]float64) object.Object {
 	for i, r := range m {
 		elems := make([]object.Object, len(r))
 		for j, v := range r {
-			elems[j] = &object.Float{Value: v}
+			elems[j] = object.NewFloat(v)
 		}
 		rows[i] = &object.List{Elements: elems}
 	}
@@ -115,7 +115,7 @@ func oneFloatFunc(f func(float64) float64) func(context.Context, object.Kwargs, 
 		if err != nil {
 			return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
 		}
-		return &object.Float{Value: f(x)}
+		return object.NewFloat(f(x))
 	}
 }
 
@@ -133,7 +133,7 @@ func twoFloatFunc(f func(float64, float64) float64) func(context.Context, object
 		if err != nil {
 			return err
 		}
-		return &object.Float{Value: f(x, y)}
+		return object.NewFloat(f(x, y))
 	}
 }
 
@@ -180,7 +180,7 @@ Always returns a float.`,
 	"floor": {
 		Fn: oneIntOrFloatFunc(
 			func(i *object.Integer) object.Object { return i },
-			func(f *object.Float) object.Object { return &object.Integer{Value: int64(math.Floor(f.Value))} },
+			func(f *object.Float) object.Object { return object.NewInteger(int64(math.Floor(f.FloatValue()))) },
 		),
 		HelpText: `floor(x) - Return the floor of x
 
@@ -190,7 +190,7 @@ Returns the largest integer less than or equal to x.`,
 	"ceil": {
 		Fn: oneIntOrFloatFunc(
 			func(i *object.Integer) object.Object { return i },
-			func(f *object.Float) object.Object { return &object.Integer{Value: int64(math.Ceil(f.Value))} },
+			func(f *object.Float) object.Object { return object.NewInteger(int64(math.Ceil(f.FloatValue()))) },
 		),
 		HelpText: `ceil(x) - Return the ceiling of x
 
@@ -231,7 +231,7 @@ Returns a float.`,
 			if x <= 0 {
 				return errors.NewError("log: domain error")
 			}
-			return &object.Float{Value: math.Log(x)}
+			return object.NewFloat(math.Log(x))
 		},
 		HelpText: `log(x) - Return the natural logarithm of x
 
@@ -275,7 +275,7 @@ Returns a float in radians.`,
 			if y == 0 {
 				return errors.NewError("fmod: division by zero")
 			}
-			return &object.Float{Value: math.Mod(x, y)}
+			return object.NewFloat(math.Mod(x, y))
 		},
 		HelpText: `fmod(x, y) - Return the floating-point remainder of x/y
 
@@ -295,7 +295,7 @@ y must not be zero. Returns a float.`,
 			if err != nil {
 				return errors.NewTypeError("INTEGER", args[1].Type().String())
 			}
-			return &object.Integer{Value: gcd(a, b)}
+			return object.NewInteger(gcd(a, b))
 		},
 		HelpText: `gcd(a, b) - Return the greatest common divisor of a and b
 
@@ -321,7 +321,7 @@ Returns an integer.`,
 			for i := int64(2); i <= n; i++ {
 				result *= i
 			}
-			return &object.Integer{Value: result}
+			return object.NewInteger(result)
 		},
 		HelpText: `factorial(n) - Return n!
 
@@ -331,7 +331,7 @@ Returns an integer.`,
 	"isnan": {
 		Fn: oneIntOrFloatFunc(
 			func(i *object.Integer) object.Object { return object.NewBoolean(false) },
-			func(f *object.Float) object.Object { return object.NewBoolean(math.IsNaN(f.Value)) },
+			func(f *object.Float) object.Object { return object.NewBoolean(math.IsNaN(f.FloatValue())) },
 		),
 		HelpText: `isnan(x) - Check if x is NaN (Not a Number)
 
@@ -340,7 +340,7 @@ Returns True if x is NaN, False otherwise.`,
 	"isinf": {
 		Fn: oneIntOrFloatFunc(
 			func(i *object.Integer) object.Object { return object.NewBoolean(false) },
-			func(f *object.Float) object.Object { return object.NewBoolean(math.IsInf(f.Value, 0)) },
+			func(f *object.Float) object.Object { return object.NewBoolean(math.IsInf(f.FloatValue(), 0)) },
 		),
 		HelpText: `isinf(x) - Check if x is infinite
 
@@ -350,7 +350,7 @@ Returns True if x is positive or negative infinity.`,
 		Fn: oneIntOrFloatFunc(
 			func(i *object.Integer) object.Object { return object.NewBoolean(true) },
 			func(f *object.Float) object.Object {
-				return object.NewBoolean(!math.IsNaN(f.Value) && !math.IsInf(f.Value, 0))
+				return object.NewBoolean(!math.IsNaN(f.FloatValue()) && !math.IsInf(f.FloatValue(), 0))
 			},
 		),
 		HelpText: `isfinite(x) - Check if x is finite
@@ -366,7 +366,7 @@ Returns a float with magnitude of x and sign of y.`,
 	"trunc": {
 		Fn: oneIntOrFloatFunc(
 			func(i *object.Integer) object.Object { return i },
-			func(f *object.Float) object.Object { return &object.Integer{Value: int64(math.Trunc(f.Value))} },
+			func(f *object.Float) object.Object { return object.NewInteger(int64(math.Trunc(f.FloatValue()))) },
 		),
 		HelpText: `trunc(x) - Truncate x to the nearest integer toward zero
 
@@ -476,7 +476,7 @@ Returns a float in the range [-1, 1].`,
 			}
 			out := make([]object.Object, len(result))
 			for i, v := range result {
-				out[i] = &object.Float{Value: v}
+				out[i] = object.NewFloat(v)
 			}
 			return &object.List{Elements: out}
 		},
@@ -533,7 +533,7 @@ Returns a FloatArray probability distribution summing to 1.0.`,
 			for i := range aData {
 				sum += aData[i] * bData[i]
 			}
-			return &object.Float{Value: sum}
+			return object.NewFloat(sum)
 		},
 		HelpText: `dot(a, b) - Return the dot product of two vectors
 
@@ -676,7 +676,7 @@ Returns a float.`,
 			}
 			val, sign := math.Lgamma(x)
 			return &object.List{Elements: []object.Object{
-				&object.Float{Value: val},
+				object.NewFloat(val),
 				object.NewInteger(int64(sign)),
 			}}
 		},
@@ -809,7 +809,7 @@ n and k must be non-negative integers. If k is omitted, returns n!.`,
 					}
 					result *= v
 				}
-				return &object.Float{Value: result}
+				return object.NewFloat(result)
 			}
 			var intResult int64 = 1
 			allInt := true
@@ -823,11 +823,10 @@ n and k must be non-negative integers. If k is omitted, returns n!.`,
 				if overflow || intResult == 0 {
 					continue
 				}
-				if vInt.Value != 0 && intResult > math.MaxInt64/vInt.Value {
-					overflow = true
-					continue
-				}
-				intResult *= vInt.Value
+			if vInt.IntValue() != 0 && intResult > math.MaxInt64/vInt.IntValue() {
+				return errors.NewError("integer overflow in product")
+			}
+			intResult *= vInt.IntValue()
 			}
 			if allInt && !overflow {
 				return object.NewInteger(intResult)
@@ -840,7 +839,7 @@ n and k must be non-negative integers. If k is omitted, returns n!.`,
 				}
 				result *= v
 			}
-			return &object.Float{Value: result}
+			return object.NewFloat(result)
 		},
 		HelpText: `prod(iterable, start=1) - Return the product of all elements
 
@@ -876,7 +875,7 @@ Returns an integer for all-integer inputs, float otherwise.`,
 				d := p - q
 				sum += d * d
 			}
-			return &object.Float{Value: math.Sqrt(sum)}
+			return object.NewFloat(math.Sqrt(sum))
 		},
 		HelpText: `dist(p, q) - Return the Euclidean distance between two points
 
@@ -968,9 +967,9 @@ Returns a FloatArray that avoids per-element boxing overhead.`,
 		HelpText: `shape(a) - Return the shape of a FloatArray as a list of ints`,
 	},
 }, map[string]object.Object{
-	"pi":  &object.Float{Value: math.Pi},
-	"e":   &object.Float{Value: math.E},
-	"inf": &object.Float{Value: math.Inf(1)},
-	"nan": &object.Float{Value: math.NaN()},
-	"tau": &object.Float{Value: 2 * math.Pi},
+	"pi":  object.NewFloat(math.Pi),
+	"e":   object.NewFloat(math.E),
+	"inf": object.NewFloat(math.Inf(1)),
+	"nan": object.NewFloat(math.NaN()),
+	"tau": object.NewFloat(2 * math.Pi),
 }, "Mathematical functions library")

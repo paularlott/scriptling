@@ -27,14 +27,14 @@ var TextwrapLibrary = object.NewLibrary(TextwrapLibraryName, map[string]*object.
 			// If second positional arg provided, use it as width
 			if len(args) >= 2 {
 				if intVal, ok := args[1].(*object.Integer); ok {
-					widthInt = int(intVal.Value)
+					widthInt = int(intVal.IntValue())
 				}
 			}
 
-			lines := wrapText(text.Value, widthInt)
+			lines := wrapText(text.StringValue(), widthInt)
 			elements := make([]object.Object, len(lines))
 			for i, line := range lines {
-				elements[i] = &object.String{Value: line}
+				elements[i] = object.NewString(line)
 			}
 			return &object.List{Elements: elements}
 		},
@@ -67,12 +67,12 @@ Example:
 
 			if len(args) >= 2 {
 				if intVal, ok := args[1].(*object.Integer); ok {
-					widthInt = int(intVal.Value)
+					widthInt = int(intVal.IntValue())
 				}
 			}
 
-			lines := wrapText(text.Value, widthInt)
-			return &object.String{Value: strings.Join(lines, "\n")}
+			lines := wrapText(text.StringValue(), widthInt)
+			return object.NewString(strings.Join(lines, "\n"))
 		},
 		HelpText: `fill(text, width=70) - Wrap text and return a single string
 
@@ -98,7 +98,7 @@ Example:
 				return errors.NewTypeError("STRING", args[0].Type().String())
 			}
 
-			return &object.String{Value: dedentText(text.Value)}
+			return object.NewString(dedentText(text.StringValue()))
 		},
 		HelpText: `dedent(text) - Remove common leading whitespace from all lines
 
@@ -132,17 +132,17 @@ Example:
 				return errors.NewTypeError("STRING", args[1].Type().String())
 			}
 
-			lines := strings.Split(text.Value, "\n")
+			lines := strings.Split(text.StringValue(), "\n")
 			result := make([]string, len(lines))
 			for i, line := range lines {
 				// Only indent non-empty lines by default
 				if len(strings.TrimSpace(line)) > 0 {
-					result[i] = prefix.Value + line
+					result[i] = prefix.StringValue() + line
 				} else {
 					result[i] = line
 				}
 			}
-			return &object.String{Value: strings.Join(result, "\n")}
+			return object.NewString(strings.Join(result, "\n"))
 		},
 		HelpText: `indent(text, prefix) - Add prefix to non-empty lines
 
@@ -174,17 +174,17 @@ Example:
 			if !ok {
 				return errors.NewTypeError("INTEGER", args[1].Type().String())
 			}
-			width := int(widthObj.Value)
+			width := int(widthObj.IntValue())
 
 			// Collapse whitespace and truncate
-			collapsed := collapseWhitespace(text.Value)
+			collapsed := collapseWhitespace(text.StringValue())
 			if len(collapsed) <= width {
-				return &object.String{Value: collapsed}
+				return object.NewString(collapsed)
 			}
 
 			// Truncate to fit with placeholder
 			if width <= len(placeholder) {
-				return &object.String{Value: placeholder[:width]}
+				return object.NewString(placeholder[:width])
 			}
 
 			// Find word boundary
@@ -197,7 +197,7 @@ Example:
 				truncated = truncated[:lastSpace]
 			}
 
-			return &object.String{Value: strings.TrimSpace(truncated) + placeholder}
+			return object.NewString(strings.TrimSpace(truncated) + placeholder)
 		},
 		HelpText: `shorten(text, width, placeholder="[...]") - Truncate text to fit width
 

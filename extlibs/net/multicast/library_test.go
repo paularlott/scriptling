@@ -312,7 +312,7 @@ msg["data"] if msg else ""
 	if !ok {
 		t.Fatalf("expected string result, got %T", result)
 	}
-	if str.Value != "script test" {
-		t.Errorf("expected 'script test', got %q", str.Value)
+	if str.StringValue() != "script test" {
+		t.Errorf("expected 'script test', got %q", str.StringValue())
 	}
 }

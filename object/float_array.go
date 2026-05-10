@@ -72,7 +72,7 @@ func (fa *FloatArray) ToList() *List {
 	if len(fa.Shape) < 2 {
 		elems := make([]Object, len(fa.Data))
 		for i, v := range fa.Data {
-			elems[i] = &Float{Value: v}
+			elems[i] = &Float{value: v}
 		}
 		return &List{Elements: elems}
 	}
@@ -82,7 +82,7 @@ func (fa *FloatArray) ToList() *List {
 	for i := 0; i < rows; i++ {
 		elems := make([]Object, cols)
 		for j := 0; j < cols; j++ {
-			elems[j] = &Float{Value: fa.Data[i*cols+j]}
+			elems[j] = &Float{value: fa.Data[i*cols+j]}
 		}
 		rowList[i] = &List{Elements: elems}
 	}

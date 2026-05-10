@@ -173,16 +173,16 @@ result
 				if !ok {
 					t.Fatalf("expected Integer, got %T", result)
 				}
-				if intResult.Value != expected {
-					t.Errorf("expected %d, got %d", expected, intResult.Value)
+				if intResult.IntValue() != expected {
+					t.Errorf("expected %d, got %d", expected, intResult.IntValue())
 				}
 			case string:
 				strResult, ok := result.(*object.String)
 				if !ok {
 					t.Fatalf("expected String, got %T", result)
 				}
-				if strResult.Value != expected {
-					t.Errorf("expected %s, got %s", expected, strResult.Value)
+				if strResult.StringValue() != expected {
+					t.Errorf("expected %s, got %s", expected, strResult.StringValue())
 				}
 			}
 		})

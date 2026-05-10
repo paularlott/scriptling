@@ -220,7 +220,7 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 						if li, ok := lv.(*object.Integer); ok {
 							if rv, ok := env.Get(rid.Value()); ok {
 								if ri, ok := rv.(*object.Integer); ok {
-									return evalIntegerInfixExpression(node.Operator, li.Value, ri.Value)
+									return evalIntegerInfixExpression(node.Operator, li.IntValue(), ri.IntValue())
 								}
 							}
 						}
@@ -262,9 +262,9 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 	case *ast.Program:
 		return evalProgram(ctx, node, env)
 	case *ast.FloatLiteral:
-		return &object.Float{Value: node.Value}
+		return object.NewFloat(node.Value)
 	case *ast.StringLiteral:
-		return &object.String{Value: node.Value}
+		return object.NewString(node.Value)
 	case *ast.FStringLiteral:
 		return evalFStringLiteral(ctx, node, env)
 	case *ast.Boolean:
@@ -502,7 +502,7 @@ func nativeBoolToBooleanObject(input bool) *object.Boolean {
 }
 
 func coerceBool(b *object.Boolean) *object.Integer {
-	if b.Value {
+	if b.BoolValue() {
 		return object.NewInteger(1)
 	}
 	return object.NewInteger(0)
@@ -514,13 +514,13 @@ func objectsEqual(a, b object.Object) bool {
 	}
 	switch av := a.(type) {
 	case *object.Integer:
-		return av.Value == b.(*object.Integer).Value
+		return av.IntValue() == b.(*object.Integer).IntValue()
 	case *object.Float:
-		return av.Value == b.(*object.Float).Value
+		return av.FloatValue() == b.(*object.Float).FloatValue()
 	case *object.String:
-		return av.Value == b.(*object.String).Value
+		return av.StringValue() == b.(*object.String).StringValue()
 	case *object.Boolean:
-		return av.Value == b.(*object.Boolean).Value
+		return av.BoolValue() == b.(*object.Boolean).BoolValue()
 	case *object.Null:
 		return true
 	default:
@@ -535,13 +535,13 @@ func objectsDeepEqual(a, b object.Object) bool {
 	}
 	switch av := a.(type) {
 	case *object.Integer:
-		return av.Value == b.(*object.Integer).Value
+		return av.IntValue() == b.(*object.Integer).IntValue()
 	case *object.Float:
-		return av.Value == b.(*object.Float).Value
+		return av.FloatValue() == b.(*object.Float).FloatValue()
 	case *object.String:
-		return av.Value == b.(*object.String).Value
+		return av.StringValue() == b.(*object.String).StringValue()
 	case *object.Boolean:
-		return av.Value == b.(*object.Boolean).Value
+		return av.BoolValue() == b.(*object.Boolean).BoolValue()
 	case *object.Null:
 		return true
 	case *object.List:
@@ -609,9 +609,9 @@ func evalNotOperatorExpression(right object.Object) object.Object {
 func evalMinusPrefixOperatorExpression(right object.Object) object.Object {
 	switch right := right.(type) {
 	case *object.Integer:
-		return object.NewInteger(-right.Value)
+		return object.NewInteger(-right.IntValue())
 	case *object.Float:
-		return &object.Float{Value: -right.Value}
+		return object.NewFloat(-right.FloatValue())
 	default:
 		return errors.NewError("%s: -%s", errors.ErrUnknownOperator, right.Type())
 	}
@@ -620,7 +620,7 @@ func evalMinusPrefixOperatorExpression(right object.Object) object.Object {
 func evalBitwiseNotOperatorExpression(right object.Object) object.Object {
 	switch right := right.(type) {
 	case *object.Integer:
-		return object.NewInteger(^right.Value)
+		return object.NewInteger(^right.IntValue())
 	default:
 		return errors.NewError("%s: ~%s", errors.ErrUnknownOperator, right.Type())
 	}
@@ -674,33 +674,33 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 	case *object.Integer:
 		switch r := right.(type) {
 		case *object.Integer:
-			return evalIntegerInfixExpression(operator, l.Value, r.Value)
+			return evalIntegerInfixExpression(operator, l.IntValue(), r.IntValue())
 		case *object.Float:
-			return evalFloatInfixValues(operator, float64(l.Value), r.Value)
+			return evalFloatInfixValues(operator, float64(l.IntValue()), r.FloatValue())
 		case *object.Boolean:
 			return evalInfixExpression(ctx, operator, left, coerceBool(r), env)
 		case *object.String:
 			if operator == ast.OpMul {
-				return evalStringMultiplication(r.Value, l.Value)
+				return evalStringMultiplication(r.StringValue(), l.IntValue())
 			}
 		case *object.List:
 			if operator == ast.OpMul {
-				if l.Value <= 0 {
+				if l.IntValue() <= 0 {
 					return &object.List{Elements: []object.Object{}}
 				}
-				result := make([]object.Object, int(l.Value)*len(r.Elements))
-				for i := range int(l.Value) {
+				result := make([]object.Object, int(l.IntValue())*len(r.Elements))
+				for i := range int(l.IntValue()) {
 					copy(result[i*len(r.Elements):], r.Elements)
 				}
 				return &object.List{Elements: result}
 			}
 		case *object.Tuple:
 			if operator == ast.OpMul {
-				if l.Value <= 0 {
+				if l.IntValue() <= 0 {
 					return &object.Tuple{Elements: []object.Object{}}
 				}
-				result := make([]object.Object, int(l.Value)*len(r.Elements))
-				for i := range int(l.Value) {
+				result := make([]object.Object, int(l.IntValue())*len(r.Elements))
+				for i := range int(l.IntValue()) {
 					copy(result[i*len(r.Elements):], r.Elements)
 				}
 				return &object.Tuple{Elements: result}
@@ -710,9 +710,9 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 	case *object.Float:
 		switch r := right.(type) {
 		case *object.Float:
-			return evalFloatInfixValues(operator, l.Value, r.Value)
+			return evalFloatInfixValues(operator, l.FloatValue(), r.FloatValue())
 		case *object.Integer:
-			return evalFloatInfixValues(operator, l.Value, float64(r.Value))
+			return evalFloatInfixValues(operator, l.FloatValue(), float64(r.IntValue()))
 		case *object.Boolean:
 			return evalInfixExpression(ctx, operator, left, coerceBool(r), env)
 		default:
@@ -726,13 +726,13 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 		return evalInfixExpression(ctx, operator, cl, right, env)
 	case *object.String:
 		if operator == ast.OpMod {
-			return evalStringPercentFormat(l.Value, right)
-		}
-		if r, ok := right.(*object.String); ok {
-			return evalStringInfixExpression(operator, l.Value, r.Value)
-		}
-		if r, ok := right.(*object.Integer); ok && operator == ast.OpMul {
-			return evalStringMultiplication(l.Value, r.Value)
+		return evalStringPercentFormat(l.StringValue(), right)
+	}
+	if r, ok := right.(*object.String); ok {
+		return evalStringInfixExpression(operator, l.StringValue(), r.StringValue())
+	}
+	if r, ok := right.(*object.Integer); ok && operator == ast.OpMul {
+		return evalStringMultiplication(l.StringValue(), r.IntValue())
 		}
 	case *object.FloatArray:
 		if operator == ast.OpAdd {
@@ -763,11 +763,11 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 			return errors.NewTypeError("tuple", right.Type().String())
 		case ast.OpMul:
 			if r, ok := right.(*object.Integer); ok {
-				if r.Value <= 0 {
+				if r.IntValue() <= 0 {
 					return &object.Tuple{Elements: []object.Object{}}
 				}
-				result := make([]object.Object, int(r.Value)*len(l.Elements))
-				for i := range int(r.Value) {
+				result := make([]object.Object, int(r.IntValue())*len(l.Elements))
+				for i := range int(r.IntValue()) {
 					copy(result[i*len(l.Elements):], l.Elements)
 				}
 				return &object.Tuple{Elements: result}
@@ -796,11 +796,11 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 			return &object.List{Elements: result}
 		case ast.OpMul:
 			if r, ok := right.(*object.Integer); ok {
-				if r.Value <= 0 {
+				if r.IntValue() <= 0 {
 					return &object.List{Elements: []object.Object{}}
 				}
-				result := make([]object.Object, int(r.Value)*len(l.Elements))
-				for i := range int(r.Value) {
+				result := make([]object.Object, int(r.IntValue())*len(l.Elements))
+				for i := range int(r.IntValue()) {
 					copy(result[i*len(l.Elements):], l.Elements)
 				}
 				return &object.List{Elements: result}
@@ -882,7 +882,7 @@ func evalIntegerInfixExpression(operator ast.Op, leftVal, rightVal int64) object
 		if rightVal == 0 {
 			return errors.NewError(errors.ErrDivisionByZero)
 		}
-		return &object.Float{Value: float64(leftVal) / float64(rightVal)}
+		return object.NewFloat(float64(leftVal) / float64(rightVal))
 	case ast.OpFloorDiv:
 		if rightVal == 0 {
 			return errors.NewError(errors.ErrDivisionByZero)
@@ -893,7 +893,7 @@ func evalIntegerInfixExpression(operator ast.Op, leftVal, rightVal int64) object
 			return evalFloatInfixValues(ast.OpPow, float64(leftVal), float64(rightVal))
 		}
 		if rightVal > 63 || (leftVal > 1 && rightVal > 40) || (leftVal < -1 && rightVal > 40) {
-			return &object.Float{Value: math.Pow(float64(leftVal), float64(rightVal))}
+			return object.NewFloat(math.Pow(float64(leftVal), float64(rightVal)))
 		}
 		result := int64(1)
 		base := leftVal
@@ -965,23 +965,23 @@ func evalFloatInfixExpression(operator ast.Op, left, right object.Object) object
 func evalFloatInfixValues(operator ast.Op, leftVal, rightVal float64) object.Object {
 	switch operator {
 	case ast.OpAdd:
-		return &object.Float{Value: leftVal + rightVal}
+		return object.NewFloat(leftVal + rightVal)
 	case ast.OpSub:
-		return &object.Float{Value: leftVal - rightVal}
+		return object.NewFloat(leftVal - rightVal)
 	case ast.OpMul:
-		return &object.Float{Value: leftVal * rightVal}
+		return object.NewFloat(leftVal * rightVal)
 	case ast.OpDiv:
 		if rightVal == 0 {
 			return errors.NewError(errors.ErrDivisionByZero)
 		}
-		return &object.Float{Value: leftVal / rightVal}
+		return object.NewFloat(leftVal / rightVal)
 	case ast.OpFloorDiv:
 		if rightVal == 0 {
 			return errors.NewError(errors.ErrDivisionByZero)
 		}
-		return &object.Float{Value: math.Floor(leftVal / rightVal)}
+		return object.NewFloat(math.Floor(leftVal / rightVal))
 	case ast.OpPow:
-		return &object.Float{Value: math.Pow(leftVal, rightVal)}
+		return object.NewFloat(math.Pow(leftVal, rightVal))
 	case ast.OpLt:
 		return nativeBoolToBooleanObject(leftVal < rightVal)
 	case ast.OpGt:
@@ -1002,9 +1002,9 @@ func evalFloatInfixValues(operator ast.Op, leftVal, rightVal float64) object.Obj
 func numericFloatValue(obj object.Object) (float64, bool) {
 	switch v := obj.(type) {
 	case *object.Float:
-		return v.Value, true
+		return v.FloatValue(), true
 	case *object.Integer:
-		return float64(v.Value), true
+		return float64(v.IntValue()), true
 	default:
 		return 0, false
 	}
@@ -1026,7 +1026,7 @@ func tryEvalStringConcatChain(ctx context.Context, expr *ast.InfixExpression, en
 		}
 		values[i] = val
 		if s, ok := val.(*object.String); ok {
-			total += len(s.Value)
+			total += len(s.StringValue())
 		} else {
 			allStrings = false
 		}
@@ -1036,9 +1036,9 @@ func tryEvalStringConcatChain(ctx context.Context, expr *ast.InfixExpression, en
 		var b strings.Builder
 		b.Grow(total)
 		for _, val := range values {
-			b.WriteString(val.(*object.String).Value)
+			b.WriteString(val.(*object.String).StringValue())
 		}
-		return &object.String{Value: b.String()}, true
+		return object.NewString(b.String()), true
 	}
 
 	result := values[0]
@@ -1065,12 +1065,12 @@ func evalStringInfixExpression(operator ast.Op, leftVal, rightVal string) object
 	switch operator {
 	case ast.OpAdd:
 		if len(leftVal) == 0 {
-			return &object.String{Value: rightVal}
+			return object.NewString(rightVal)
 		}
 		if len(rightVal) == 0 {
-			return &object.String{Value: leftVal}
+			return object.NewString(leftVal)
 		}
-		return &object.String{Value: leftVal + rightVal}
+		return object.NewString(leftVal + rightVal)
 	case ast.OpEq:
 		return nativeBoolToBooleanObject(leftVal == rightVal)
 	case ast.OpNeq:
@@ -1166,7 +1166,7 @@ func evalStringPercentFormat(format string, right object.Object) object.Object {
 		return errors.NewError("not all arguments converted during string formatting")
 	}
 
-	return &object.String{Value: result.String()}
+	return object.NewString(result.String())
 }
 
 // formatPercentValue formats a single value according to a Python % format specifier.
@@ -1180,11 +1180,11 @@ func formatPercentValue(spec string, conversion byte, val object.Object) (string
 		var intVal int64
 		switch v := val.(type) {
 		case *object.Integer:
-			intVal = v.Value
+			intVal = v.IntValue()
 		case *object.Float:
-			intVal = int64(v.Value)
+			intVal = int64(v.FloatValue())
 		case *object.Boolean:
-			if v.Value {
+			if v.BoolValue() {
 				intVal = 1
 			}
 		default:
@@ -1230,15 +1230,15 @@ func formatPercentValue(spec string, conversion byte, val object.Object) (string
 	case 'c':
 		switch v := val.(type) {
 		case *object.Integer:
-			if v.Value < 0 || v.Value > 0x10ffff {
+			if v.IntValue() < 0 || v.IntValue() > 0x10ffff {
 				return "", errors.NewError("%%c: ordinal out of range")
 			}
-			return string(rune(v.Value)), nil
+			return string(rune(v.IntValue())), nil
 		case *object.String:
-			if len(v.Value) != 1 {
+			if len(v.StringValue()) != 1 {
 				return "", errors.NewError("%%c requires int or char")
 			}
-			return v.Value, nil
+			return v.StringValue(), nil
 		default:
 			return "", errors.NewError("%%c requires int or char")
 		}
@@ -1249,9 +1249,9 @@ func formatPercentValue(spec string, conversion byte, val object.Object) (string
 
 func evalStringMultiplication(str string, multiplier int64) object.Object {
 	if multiplier < 0 {
-		return &object.String{Value: ""}
+		return object.NewString("")
 	}
-	return &object.String{Value: strings.Repeat(str, int(multiplier))}
+	return object.NewString(strings.Repeat(str, int(multiplier)))
 }
 
 // callDunderMethod calls a dunder method on an instance, returning nil if not defined.
@@ -1519,8 +1519,8 @@ func unpackArgsFromIterable(argsVal object.Object) ([]object.Object, object.Obje
 	case *object.Tuple:
 		unpacked = val.Elements
 	case *object.String:
-		for _, r := range val.Value {
-			unpacked = append(unpacked, &object.String{Value: string(r)})
+		for _, r := range val.StringValue() {
+			unpacked = append(unpacked, object.NewString(string(r)))
 		}
 	case *object.Iterator:
 		for {
@@ -2112,8 +2112,8 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 		if fp.kwargs != nil {
 			kwargsDict := &object.Dict{Pairs: make(map[string]object.DictPair, len(extraKwargs))}
 			for key, value := range extraKwargs {
-				kwargsDict.Pairs[object.DictKey(&object.String{Value: key})] = object.DictPair{
-					Key:   &object.String{Value: key},
+				kwargsDict.Pairs[object.DictKey(object.NewString(key))] = object.DictPair{
+					Key:   object.NewString(key),
 					Value: value,
 				}
 			}
@@ -2221,13 +2221,13 @@ func isTruthy(obj object.Object) bool {
 		// Check for Python-style falsy values
 		switch v := obj.(type) {
 		case *object.Boolean:
-			return v.Value
+			return v.BoolValue()
 		case *object.Integer:
-			return v.Value != 0
+			return v.IntValue() != 0
 		case *object.Float:
-			return v.Value != 0.0
+			return v.FloatValue() != 0.0
 		case *object.String:
-			return v.Value != ""
+			return v.StringValue() != ""
 		case *object.List:
 			return len(v.Elements) > 0
 		case *object.Dict:
@@ -2259,13 +2259,13 @@ func init() {
 		if fn, ok := findDunderMethod(inst, "__bool__"); ok {
 			result := applyFunctionWithContext(context.Background(), fn, prependSelf(inst, nil), nil, inst.Class.Env)
 			if b, ok := result.(*object.Boolean); ok {
-				return b.Value
+				return b.BoolValue()
 			}
 		}
 		if fn, ok := findDunderMethod(inst, "__len__"); ok {
 			result := applyFunctionWithContext(context.Background(), fn, prependSelf(inst, nil), nil, inst.Class.Env)
 			if i, ok := result.(*object.Integer); ok {
-				return i.Value != 0
+				return i.IntValue() != 0
 			}
 		}
 		return true
@@ -2296,13 +2296,13 @@ func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.Augm
 	if node.Operator == ast.OpAddEq {
 		if cur, ok := currentVal.(*object.String); ok {
 			if r, ok := newVal.(*object.String); ok {
-				env.Set(node.Name.Value(), &object.String{Value: cur.Value + r.Value})
+				env.Set(node.Name.Value(), object.NewString(cur.StringValue()+r.StringValue()))
 				return NULL
 			}
 		}
 		if cur, ok := currentVal.(*object.Integer); ok {
 			if r, ok := newVal.(*object.Integer); ok {
-				env.Set(node.Name.Value(), object.NewInteger(cur.Value+r.Value))
+				env.Set(node.Name.Value(), object.NewInteger(cur.IntValue()+r.IntValue()))
 				return NULL
 			}
 		}
@@ -2647,7 +2647,7 @@ func evalInOperator(ctx context.Context, left, right object.Object) object.Objec
 		return nativeBoolToBooleanObject(ok)
 	case *object.String:
 		if needle, ok := left.(*object.String); ok {
-			return nativeBoolToBooleanObject(strings.Contains(container.Value, needle.Value))
+			return nativeBoolToBooleanObject(strings.Contains(container.StringValue(), needle.StringValue()))
 		}
 		return errors.NewTypeError("STRING", "non-string type")
 	case *object.DictKeys:
@@ -2728,7 +2728,7 @@ func evalIsOperator(left, right object.Object) object.Object {
 	// Booleans: compare by value (like Python, True is always True)
 	if l, ok := left.(*object.Boolean); ok {
 		if r, ok := right.(*object.Boolean); ok {
-			return nativeBoolToBooleanObject(l.Value == r.Value)
+			return nativeBoolToBooleanObject(l.BoolValue() == r.BoolValue())
 		}
 		return FALSE
 	}
@@ -2739,7 +2739,7 @@ func evalIsOperator(left, right object.Object) object.Object {
 	case *object.Integer:
 		if r, ok := right.(*object.Integer); ok {
 			// Python caches small integers (-5 to 256)
-			if l.Value >= -5 && l.Value <= 256 && l.Value == r.Value {
+			if l.IntValue() >= -5 && l.IntValue() <= 256 && l.IntValue() == r.IntValue() {
 				return TRUE
 			}
 			// Otherwise check pointer equality
@@ -2749,7 +2749,7 @@ func evalIsOperator(left, right object.Object) object.Object {
 	case *object.String:
 		if r, ok := right.(*object.String); ok {
 			// Python interns short strings
-			if len(l.Value) <= 20 && l.Value == r.Value {
+			if len(l.StringValue()) <= 20 && l.StringValue() == r.StringValue() {
 				return TRUE
 			}
 			return nativeBoolToBooleanObject(left == right)
@@ -3015,11 +3015,11 @@ func evalWithStatementWithContext(ctx context.Context, ws *ast.WithStatement, en
 	var excVal object.Object = NULL
 	if isException(result) || object.IsError(result) {
 		if exc, ok := result.(*object.Exception); ok {
-			excType = &object.String{Value: exc.ExceptionType}
-			excVal = &object.String{Value: exc.Message}
+			excType = object.NewString(exc.ExceptionType)
+			excVal = object.NewString(exc.Message)
 		} else if err, ok := result.(*object.Error); ok {
-			excType = &object.String{Value: "Exception"}
-			excVal = &object.String{Value: err.Message}
+			excType = object.NewString("Exception")
+			excVal = object.NewString(err.Message)
 		}
 	}
 	exitArgs := []object.Object{excType, excVal, NULL}
@@ -3308,7 +3308,7 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 			if !ok {
 				return fmt.Errorf("list index must be integer")
 			}
-			i := idx.Value
+			i := idx.IntValue()
 			length := int64(len(o.Elements))
 			if i < 0 {
 				i += length
@@ -3343,24 +3343,24 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 			if !ok {
 				return fmt.Errorf("instance attribute must be string")
 			}
-			if _, exists := o.Fields[key.Value]; exists {
-				delete(o.Fields, key.Value)
-				o.InvalidateBoundMethod(key.Value)
+			if _, exists := o.Fields[key.StringValue()]; exists {
+				delete(o.Fields, key.StringValue())
+				o.InvalidateBoundMethod(key.StringValue())
 				return nil
 			}
-			if findPropertyInClass(key.Value, o.Class) != nil {
-				return exceptionDeleteError(object.ExceptionTypeAttributeError, fmt.Sprintf("can't delete attribute '%s'", key.Value))
+			if findPropertyInClass(key.StringValue(), o.Class) != nil {
+				return exceptionDeleteError(object.ExceptionTypeAttributeError, fmt.Sprintf("can't delete attribute '%s'", key.StringValue()))
 			}
-			return exceptionDeleteError(object.ExceptionTypeAttributeError, fmt.Sprintf("'%s' object has no attribute '%s'", o.Class.Name, key.Value))
+			return exceptionDeleteError(object.ExceptionTypeAttributeError, fmt.Sprintf("'%s' object has no attribute '%s'", o.Class.Name, key.StringValue()))
 		case *object.Class:
 			key, ok := index.(*object.String)
 			if !ok {
 				return fmt.Errorf("class attribute must be string")
 			}
-			if _, exists := o.Methods[key.Value]; !exists {
-				return exceptionDeleteError(object.ExceptionTypeAttributeError, fmt.Sprintf("type object '%s' has no attribute '%s'", o.Name, key.Value))
+			if _, exists := o.Methods[key.StringValue()]; !exists {
+				return exceptionDeleteError(object.ExceptionTypeAttributeError, fmt.Sprintf("type object '%s' has no attribute '%s'", o.Name, key.StringValue()))
 			}
-			delete(o.Methods, key.Value)
+			delete(o.Methods, key.StringValue())
 			o.InvalidateLookupCache()
 			return nil
 		default:
@@ -3393,13 +3393,13 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 			hasEnd := sliceObj.End != nil
 			hasStep := sliceObj.Step != nil
 			if hasStart {
-				start = sliceObj.Start.Value
+				start = sliceObj.Start.IntValue()
 			}
 			if hasEnd {
-				end = sliceObj.End.Value
+				end = sliceObj.End.IntValue()
 			}
 			if hasStep {
-				step = sliceObj.Step.Value
+				step = sliceObj.Step.IntValue()
 			}
 			deleteListIndices(o, sliceDeleteIndices(int64(len(o.Elements)), start, end, step, hasStart, hasEnd, hasStep))
 			return nil
@@ -3461,7 +3461,7 @@ func assignToExpression(ctx context.Context, expr ast.Expression, value object.O
 		switch o := obj.(type) {
 		case *object.List:
 			if idx, ok := index.(*object.Integer); ok {
-				i := idx.Value
+				i := idx.IntValue()
 				length := int64(len(o.Elements))
 				// Handle negative indices
 				if i < 0 {
@@ -3493,9 +3493,9 @@ func assignToExpression(ctx context.Context, expr ast.Expression, value object.O
 			}
 			if key, ok := index.(*object.String); ok {
 				// Check class hierarchy for a property descriptor before writing to Fields
-				if p := findPropertyInClass(key.Value, o.Class); p != nil {
+				if p := findPropertyInClass(key.StringValue(), o.Class); p != nil {
 					if p.Setter == nil {
-						return fmt.Errorf("can't set attribute '%s': property is read-only", key.Value)
+						return fmt.Errorf("can't set attribute '%s': property is read-only", key.StringValue())
 					}
 					result := applyFunctionWithContext(ctx, p.Setter, []object.Object{o, value}, nil, nil)
 					if object.IsError(result) {
@@ -3506,14 +3506,14 @@ func assignToExpression(ctx context.Context, expr ast.Expression, value object.O
 					}
 					return nil
 				}
-				o.Fields[key.Value] = value
-				o.InvalidateBoundMethod(key.Value)
+				o.Fields[key.StringValue()] = value
+				o.InvalidateBoundMethod(key.StringValue())
 				return nil
 			}
 			return fmt.Errorf("instance attribute must be string")
 		case *object.Class:
 			if key, ok := index.(*object.String); ok {
-				o.Methods[key.Value] = value
+				o.Methods[key.StringValue()] = value
 				o.InvalidateLookupCache()
 				return nil
 			}
@@ -3523,7 +3523,7 @@ func assignToExpression(ctx context.Context, expr ast.Expression, value object.O
 			if !ok {
 				return fmt.Errorf("float_array index must be integer")
 			}
-			i := idx.Value
+			i := idx.IntValue()
 			if o.Is2D() {
 				rows := int64(o.Rows())
 				if i < 0 {
@@ -3616,7 +3616,7 @@ func assignToNestedFloatArrayIndex(ctx context.Context, expr *ast.IndexExpressio
 		return fmt.Errorf("float_array index must be integer")
 	}
 
-	row := rowIndex.Value
+	row := rowIndex.IntValue()
 	rows := int64(fa.Rows())
 	if row < 0 {
 		row += rows
@@ -3625,7 +3625,7 @@ func assignToNestedFloatArrayIndex(ctx context.Context, expr *ast.IndexExpressio
 		return fmt.Errorf("index out of range")
 	}
 
-	col := colIndex.Value
+	col := colIndex.IntValue()
 	cols := int64(fa.Cols())
 	if col < 0 {
 		col += cols
@@ -3853,7 +3853,7 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 				if err := cc.check(); err != nil {
 					return err
 				}
-				element := &object.Float{Value: v}
+				element := object.NewFloat(v)
 				if err := setForVariables(fs.Variables, element, env); err != nil {
 					return errors.NewError("%s", err.Error())
 				}
@@ -3876,12 +3876,12 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 		case *object.String:
 			// Iterate over string runes lazily to avoid pre-allocating all characters
 			cc := newContextChecker(ctx)
-			for _, char := range o.Value {
+			for _, char := range o.StringValue() {
 				if err := cc.check(); err != nil {
 					return err
 				}
 
-				element := &object.String{Value: string(char)}
+				element := object.NewString(string(char))
 				if err := setForVariables(fs.Variables, element, env); err != nil {
 					return errors.NewError("%s", err.Error())
 				}
@@ -4017,7 +4017,7 @@ func evalRangeArgs(ctx context.Context, args []ast.Expression, env *object.Envir
 		if !isInt {
 			return 0, 0, 0, nil, false
 		}
-		values[i] = intObj.Value
+		values[i] = intObj.IntValue()
 	}
 
 	switch len(args) {
@@ -4132,8 +4132,8 @@ func iterateObject(ctx context.Context, obj object.Object, fn func(object.Object
 			}
 		}
 	case *object.String:
-		for _, ch := range o.Value {
-			if err := fn(&object.String{Value: string(ch)}); err != nil {
+		for _, ch := range o.StringValue() {
+			if err := fn(object.NewString(string(ch))); err != nil {
 				return err
 			}
 		}
@@ -4152,7 +4152,7 @@ func iterateObject(ctx context.Context, obj object.Object, fn func(object.Object
 			}
 		} else {
 			for _, v := range o.Data {
-				if err := fn(&object.Float{Value: v}); err != nil {
+				if err := fn(object.NewFloat(v)); err != nil {
 					return err
 				}
 			}
@@ -4310,7 +4310,7 @@ func tryEvalFastListComprehension(ctx context.Context, lc *ast.ListComprehension
 		} else {
 			result = make([]object.Object, 0, len(it.Data))
 			for _, v := range it.Data {
-				if out := runElement(&object.Float{Value: v}); out != nil {
+				if out := runElement(object.NewFloat(v)); out != nil {
 					return out, true
 				}
 			}
@@ -4449,20 +4449,19 @@ func evalFStringLiteral(ctx context.Context, fstr *ast.FStringLiteral, env *obje
 		}
 	}
 
-	return &object.String{Value: builder.String()}
+	return object.NewString(builder.String())
 }
 
 func formatWithSpec(obj object.Object, spec string) string {
 	if spec == "" {
 		switch v := obj.(type) {
 		case *object.Integer:
-			return strconv.FormatInt(v.Value, 10)
+			return strconv.FormatInt(v.IntValue(), 10)
 		case *object.Float:
-			// Check if it's a whole number
-			if v.Value == float64(int64(v.Value)) {
-				return strconv.FormatFloat(v.Value, 'f', 1, 64)
+			if v.FloatValue() == float64(int64(v.FloatValue())) {
+				return strconv.FormatFloat(v.FloatValue(), 'f', 1, 64)
 			}
-			return strconv.FormatFloat(v.Value, 'g', -1, 64)
+			return strconv.FormatFloat(v.FloatValue(), 'g', -1, 64)
 		}
 		return obj.Inspect()
 	}
@@ -4900,7 +4899,7 @@ func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expres
 
 	case *ast.IntegerLiteral:
 		if intObj, ok := subject.(*object.Integer); ok {
-			if intObj.Value == p.Value {
+			if intObj.IntValue() == p.Value {
 				return TRUE, subject
 			}
 		}
@@ -4908,7 +4907,7 @@ func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expres
 
 	case *ast.FloatLiteral:
 		if floatObj, ok := subject.(*object.Float); ok {
-			if floatObj.Value == p.Value {
+			if floatObj.FloatValue() == p.Value {
 				return TRUE, subject
 			}
 		}
@@ -4916,7 +4915,7 @@ func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expres
 
 	case *ast.StringLiteral:
 		if strObj, ok := subject.(*object.String); ok {
-			if strObj.Value == p.Value {
+			if strObj.StringValue() == p.Value {
 				return TRUE, subject
 			}
 		}
@@ -4924,7 +4923,7 @@ func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expres
 
 	case *ast.Boolean:
 		if boolObj, ok := subject.(*object.Boolean); ok {
-			if boolObj.Value == p.Value {
+			if boolObj.BoolValue() == p.Value {
 				return TRUE, subject
 			}
 		}

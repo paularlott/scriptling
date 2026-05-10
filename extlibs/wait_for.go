@@ -204,11 +204,11 @@ Returns:
 				var port int
 				switch v := args[1].(type) {
 				case *object.Integer:
-					port = int(v.Value)
+					port = int(v.IntValue())
 				case *object.String:
-					p, err := strconv.Atoi(v.Value)
+					p, err := strconv.Atoi(v.StringValue())
 					if err != nil {
-						return errors.NewError("invalid port number: %s", v.Value)
+						return errors.NewError("invalid port number: %s", v.StringValue())
 					}
 					port = p
 				default:

@@ -89,18 +89,18 @@ func (p *PathlibLibraryInstance) createPathObject(pathStr string) object.Object 
 	}
 	partObjs := make([]object.Object, len(parts))
 	for i, part := range parts {
-		partObjs[i] = &object.String{Value: part}
+		partObjs[i] = object.NewString(part)
 	}
 
 	return &object.Instance{
 		Class: p.PathClass,
 		Fields: map[string]object.Object{
-			"name":    &object.String{Value: base},
-			"stem":    &object.String{Value: stem},
-			"suffix":  &object.String{Value: ext},
-			"parent":  &object.String{Value: filepath.Dir(cleanPath)},
+			"name":    object.NewString(base),
+			"stem":    object.NewString(stem),
+			"suffix":  object.NewString(ext),
+			"parent":  object.NewString(filepath.Dir(cleanPath)),
 			"parts":   &object.Tuple{Elements: partObjs},
-			"__str__": &object.String{Value: cleanPath},
+			"__str__": object.NewString(cleanPath),
 		},
 		NativeData: &pathNativeData{path: cleanPath},
 	}
@@ -302,7 +302,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					if err != nil {
 						return errors.NewError("cannot read file: %s", err.Error())
 					}
-					return &object.String{Value: string(content)}
+					return object.NewString(string(content))
 				},
 				HelpText: "read_text() - Read the contents of the file as a string",
 			},

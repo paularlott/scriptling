@@ -86,7 +86,7 @@ func (o *osLibraryInstance) createOSLibrary() *object.Library {
 	for _, env := range os.Environ() {
 		parts := strings.SplitN(env, "=", 2)
 		if len(parts) == 2 {
-			environDict.SetByString(parts[0], &object.String{Value: parts[1]})
+			environDict.SetByString(parts[0], object.NewString(parts[1]))
 		}
 	}
 
@@ -107,7 +107,7 @@ func (o *osLibraryInstance) createOSLibrary() *object.Library {
 					}
 					return &object.Null{}
 				}
-				return &object.String{Value: value}
+				return object.NewString(value)
 			},
 			HelpText: `getenv(key[, default]) - Get environment variable
 
@@ -122,7 +122,7 @@ Returns the value of the environment variable key if it exists, None if not set 
 				if err != nil {
 					return errors.NewError("cannot get current directory: %s", err.Error())
 				}
-				return &object.String{Value: cwd}
+				return object.NewString(cwd)
 			},
 			HelpText: `getcwd() - Get current working directory`,
 		},
@@ -152,7 +152,7 @@ Returns the value of the environment variable key if it exists, None if not set 
 
 				elements := make([]object.Object, len(entries))
 				for i, entry := range entries {
-					elements[i] = &object.String{Value: entry.Name()}
+					elements[i] = object.NewString(entry.Name())
 				}
 				return &object.List{Elements: elements}
 			},
@@ -179,7 +179,7 @@ Returns a list of the names of the entries in the given directory.`,
 				if fsErr != nil {
 					return errors.NewError("cannot read file: %s", fsErr.Error())
 				}
-				return &object.String{Value: string(content)}
+				return object.NewString(string(content))
 			},
 			HelpText: `read_file(path) - Read entire file contents as string
 
@@ -367,10 +367,10 @@ Removes the specified empty directory.`,
 Renames the file or directory from old to new.`,
 		},
 	}, map[string]object.Object{
-		"sep":      &object.String{Value: string(os.PathSeparator)},
-		"linesep":  &object.String{Value: getLineSep()},
-		"name":     &object.String{Value: getOSName()},
-		"platform": &object.String{Value: runtime.GOOS},
+		"sep":      object.NewString(string(os.PathSeparator)),
+		"linesep":  object.NewString(getLineSep()),
+		"name":     object.NewString(getOSName()),
+		"platform": object.NewString(runtime.GOOS),
 		"environ":  environDict,
 	}, "Operating system interface")
 }
@@ -380,7 +380,7 @@ func (o *osLibraryInstance) createOSPathLibrary() *object.Library {
 		"join": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) == 0 {
-					return &object.String{Value: ""}
+					return object.NewString("")
 				}
 				parts := make([]string, len(args))
 				for i, arg := range args {
@@ -390,7 +390,7 @@ func (o *osLibraryInstance) createOSPathLibrary() *object.Library {
 					}
 					parts[i] = s
 				}
-				return &object.String{Value: filepath.Join(parts...)}
+				return object.NewString(filepath.Join(parts...))
 			},
 			HelpText: `join(*paths) - Join path components
 
@@ -469,7 +469,7 @@ Returns True if the path is a directory, False otherwise.`,
 				if err != nil {
 					return err
 				}
-				return &object.String{Value: filepath.Base(path)}
+				return object.NewString(filepath.Base(path))
 			},
 			HelpText: `basename(path) - Get the base name of a path
 
@@ -482,7 +482,7 @@ Returns the final component of a pathname.`,
 				if err != nil {
 					return err
 				}
-				return &object.String{Value: filepath.Dir(path)}
+				return object.NewString(filepath.Dir(path))
 			},
 			HelpText: `dirname(path) - Get the directory name of a path
 
@@ -501,8 +501,8 @@ Returns the directory component of a pathname.`,
 					dir = dir[:len(dir)-1]
 				}
 				return &object.Tuple{Elements: []object.Object{
-					&object.String{Value: dir},
-					&object.String{Value: file},
+					object.NewString(dir),
+					object.NewString(file),
 				}}
 			},
 			HelpText: `split(path) - Split path into (directory, filename) tuple`,
@@ -517,8 +517,8 @@ Returns the directory component of a pathname.`,
 				ext := filepath.Ext(path)
 				root := path[:len(path)-len(ext)]
 				return &object.Tuple{Elements: []object.Object{
-					&object.String{Value: root},
-					&object.String{Value: ext},
+					object.NewString(root),
+					object.NewString(ext),
 				}}
 			},
 			HelpText: `splitext(path) - Split path into (root, extension) tuple`,
@@ -534,7 +534,7 @@ Returns the directory component of a pathname.`,
 				if fsErr != nil {
 					return errors.NewError("cannot get absolute path: %s", fsErr.Error())
 				}
-				return &object.String{Value: absPath}
+				return object.NewString(absPath)
 			},
 			HelpText: `abspath(path) - Get absolute path`,
 		},
@@ -545,7 +545,7 @@ Returns the directory component of a pathname.`,
 				if err != nil {
 					return err
 				}
-				return &object.String{Value: filepath.Clean(path)}
+				return object.NewString(filepath.Clean(path))
 			},
 			HelpText: `normpath(path) - Normalize path
 
@@ -571,7 +571,7 @@ Normalizes path by collapsing redundant separators and up-level references.`,
 				if fsErr != nil {
 					return errors.NewError("cannot get relative path: %s", fsErr.Error())
 				}
-				return &object.String{Value: relPath}
+				return object.NewString(relPath)
 			},
 			HelpText: `relpath(path[, start]) - Get relative path
 
@@ -630,7 +630,7 @@ Returns the size in bytes of the specified file.`,
 				if fsErr != nil {
 					return errors.NewError("cannot get file mtime: %s", fsErr.Error())
 				}
-				return &object.Float{Value: float64(info.ModTime().Unix())}
+				return object.NewFloat(float64(info.ModTime().Unix()))
 			},
 			HelpText: `getmtime(path) - Get file modification time
 

@@ -67,11 +67,11 @@ demo()
 	if !ok {
 		t.Fatalf("second element is not String. got=%T", list.Elements[1])
 	}
-	if first.Value != "outer" {
-		t.Fatalf("wrong first value. got=%q want=%q", first.Value, "outer")
+	if first.StringValue() != "outer" {
+		t.Fatalf("wrong first value. got=%q want=%q", first.StringValue(), "outer")
 	}
-	if second.Value != "inner" {
-		t.Fatalf("wrong second value. got=%q want=%q", second.Value, "inner")
+	if second.StringValue() != "inner" {
+		t.Fatalf("wrong second value. got=%q want=%q", second.StringValue(), "inner")
 	}
 }
 

@@ -249,7 +249,7 @@ Example:
 			responseGo := conversion.ToGo(responseObj)
 			responseMap, ok := responseGo.(map[string]any)
 			if !ok {
-				return &object.String{Value: ""}, nil
+				return object.NewString(""), nil
 			}
 
 			// Extract content from response.choices[0].message.content
@@ -268,7 +268,7 @@ Example:
 				}
 			}
 
-			return &object.String{Value: content}, nil
+			return object.NewString(content), nil
 		}, `text(response) - Get text content from response (without thinking blocks)
 
 Extracts the text content from a completion response, automatically removing any thinking blocks.
@@ -314,7 +314,7 @@ Example:
 			if thinkingList, ok := thinkingBlocks.([]any); ok {
 				for _, block := range thinkingList {
 					if blockStr, ok := block.(string); ok {
-						list = append(list, &object.String{Value: blockStr})
+						list = append(list, object.NewString(blockStr))
 					}
 				}
 			}
@@ -1008,7 +1008,7 @@ func collectStream(ctx context.Context, stream *object.Instance, chunkTimeoutSec
 				return nil, errObj
 			}
 			if errString, ok := errValue.(*object.String); ok {
-				return nil, &object.Error{Message: errString.Value}
+				return nil, &object.Error{Message: errString.StringValue()}
 			}
 		}
 	}
