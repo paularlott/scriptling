@@ -9,8 +9,8 @@ import (
 
 func BenchmarkRegexFind(b *testing.B) {
 	// Test regex performance with caching
-	pattern := &object.String{Value: "[0-9]+"}
-	text := &object.String{Value: "abc123def456ghi789"}
+	pattern := object.NewString("[0-9]+")
+	text := object.NewString("abc123def456ghi789")
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -23,8 +23,8 @@ func BenchmarkRegexFind(b *testing.B) {
 
 func BenchmarkRegexFindall(b *testing.B) {
 	// Test regex performance with caching
-	pattern := &object.String{Value: "[0-9]+"}
-	text := &object.String{Value: "abc123def456ghi789"}
+	pattern := object.NewString("[0-9]+")
+	text := object.NewString("abc123def456ghi789")
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

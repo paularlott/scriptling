@@ -151,8 +151,8 @@ Parameters:
 					}
 
 					return object.NewStringDict(map[string]object.Object{
-						"data":   &object.String{Value: string(data)},
-						"source": &object.String{Value: src.String()},
+						"data":   object.NewString(string(data)),
+						"source": object.NewString(src.String()),
 					})
 				},
 				HelpText: `receive(timeout=30) - Receive a message from the multicast group
@@ -170,9 +170,9 @@ Returns:
 				},
 				HelpText: `close() - Leave the multicast group and close the connection`,
 			},
-			"group_addr": &object.String{Value: g.groupAddr},
+			"group_addr": object.NewString(g.groupAddr),
 			"port":       object.NewInteger(int64(g.port)),
-			"local_addr": &object.String{Value: g.localAddr},
+			"local_addr": object.NewString(g.localAddr),
 		},
 		HelpText: "Multicast group object",
 	}

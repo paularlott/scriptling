@@ -33,10 +33,10 @@ func TestNewClientErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			kwargs := object.NewKwargs(map[string]object.Object{
-				"provider": &object.String{Value: tt.service},
+				"provider": object.NewString(tt.service),
 			})
 
-			result := newClientFunc.Fn(context.Background(), kwargs, &object.String{Value: ""})
+			result := newClientFunc.Fn(context.Background(), kwargs, object.NewString(""))
 
 			if tt.wantErr == "" {
 				if errObj, ok := result.(*object.Error); ok {
@@ -87,8 +87,8 @@ func TestProviderConstants(t *testing.T) {
 				return
 			}
 
-			if str.Value != tt.expected {
-				t.Errorf("Constant %s = %q, want %q", tt.name, str.Value, tt.expected)
+			if str.StringValue() != tt.expected {
+				t.Errorf("Constant %s = %q, want %q", tt.name, str.StringValue(), tt.expected)
 			}
 		})
 	}

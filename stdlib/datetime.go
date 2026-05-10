@@ -43,7 +43,7 @@ var (
 func getTimeFromInstance(instance *object.Instance) (time.Time, object.Object) {
 	if val, ok := instance.Fields["_time"]; ok {
 		if ns, ok := val.(*object.Integer); ok {
-			return time.Unix(0, ns.Value), nil
+			return time.Unix(0, ns.IntValue()), nil
 		}
 	}
 	return time.Time{}, &object.Error{Message: "invalid datetime instance"}
@@ -54,8 +54,8 @@ func createDatetimeInstance(t time.Time) *object.Instance {
 	return &object.Instance{
 		Class: DatetimeClass,
 		Fields: map[string]object.Object{
-			"_time":        &object.Integer{Value: t.UnixNano()},
-			"__str_repr__": &object.String{Value: t.Format("2006-01-02 15:04:05")},
+			"_time":        object.NewInteger(t.UnixNano()),
+			"__str_repr__": object.NewString(t.Format("2006-01-02 15:04:05")),
 		},
 	}
 }
@@ -67,8 +67,8 @@ func createDateInstance(t time.Time) *object.Instance {
 	return &object.Instance{
 		Class: DateClass,
 		Fields: map[string]object.Object{
-			"_time":        &object.Integer{Value: t.UnixNano()},
-			"__str_repr__": &object.String{Value: t.Format("2006-01-02")},
+			"_time":        object.NewInteger(t.UnixNano()),
+			"__str_repr__": object.NewString(t.Format("2006-01-02")),
 		},
 	}
 }
@@ -106,7 +106,7 @@ func init() {
 					if err != nil {
 						return err
 					}
-					return &object.String{Value: t.Format("2006-01-02 15:04:05")}
+					return object.NewString(t.Format("2006-01-02 15:04:05"))
 				},
 				HelpText: "__str__() - Return string representation of datetime",
 			},
@@ -127,7 +127,7 @@ func init() {
 						return err
 					}
 					goFormat := PythonToGoDateFormat(format)
-					return &object.String{Value: t.Format(goFormat)}
+					return object.NewString(t.Format(goFormat))
 				},
 				HelpText: "strftime(format) - Format datetime as string",
 			},
@@ -142,7 +142,7 @@ func init() {
 					if err != nil {
 						return err
 					}
-					return &object.Float{Value: float64(t.Unix())}
+					return object.NewFloat(float64(t.Unix()))
 				},
 				HelpText: "timestamp() - Return POSIX timestamp",
 			},
@@ -289,7 +289,7 @@ func init() {
 					if err != nil {
 						return err
 					}
-					return &object.String{Value: t.Format("2006-01-02T15:04:05")}
+					return object.NewString(t.Format("2006-01-02T15:04:05"))
 				},
 				HelpText: "isoformat() - Return ISO 8601 formatted string",
 			},
@@ -316,19 +316,19 @@ func init() {
 						}
 						switch key {
 						case "year":
-							year = int(intVal.Value)
+							year = int(intVal.IntValue())
 						case "month":
-							month = time.Month(intVal.Value)
+							month = time.Month(intVal.IntValue())
 						case "day":
-							day = int(intVal.Value)
+							day = int(intVal.IntValue())
 						case "hour":
-							hour = int(intVal.Value)
+							hour = int(intVal.IntValue())
 						case "minute":
-							minute = int(intVal.Value)
+							minute = int(intVal.IntValue())
 						case "second":
-							second = int(intVal.Value)
+							second = int(intVal.IntValue())
 						case "microsecond":
-							nsec = int(intVal.Value) * 1000
+							nsec = int(intVal.IntValue()) * 1000
 						default:
 							return errors.NewError("replace() unexpected keyword argument: %s", key)
 						}
@@ -492,7 +492,7 @@ func init() {
 						return err
 					}
 					// Return difference in seconds as float
-					return &object.Float{Value: lt.Sub(rt).Seconds()}
+					return object.NewFloat(lt.Sub(rt).Seconds())
 				},
 			},
 			"__add__": &object.Builtin{
@@ -510,9 +510,9 @@ func init() {
 					var seconds float64
 					switch v := args[1].(type) {
 					case *object.Float:
-						seconds = v.Value
+						seconds = v.FloatValue()
 					case *object.Integer:
-						seconds = float64(v.Value)
+						seconds = float64(v.IntValue())
 					default:
 						return errors.NewTypeError("number", args[1].Type().String())
 					}
@@ -538,7 +538,7 @@ func init() {
 					if err != nil {
 						return err
 					}
-					return &object.String{Value: t.Format("2006-01-02")}
+					return object.NewString(t.Format("2006-01-02"))
 				},
 				HelpText: "__str__() - Return string representation of date",
 			},
@@ -559,7 +559,7 @@ func init() {
 					if err != nil {
 						return err
 					}
-					return &object.String{Value: t.Format("2006-01-02")}
+					return object.NewString(t.Format("2006-01-02"))
 				},
 				HelpText: "isoformat() - Return ISO 8601 formatted date string",
 			},
@@ -584,11 +584,11 @@ func init() {
 						}
 						switch key {
 						case "year":
-							year = int(intVal.Value)
+							year = int(intVal.IntValue())
 						case "month":
-							month = time.Month(intVal.Value)
+							month = time.Month(intVal.IntValue())
 						case "day":
-							day = int(intVal.Value)
+							day = int(intVal.IntValue())
 						default:
 							return errors.NewError("replace() unexpected keyword argument: %s", key)
 						}
@@ -645,10 +645,10 @@ func init() {
 					var days int
 					switch v := args[1].(type) {
 					case *object.Integer:
-						days = int(v.Value)
+						days = int(v.IntValue())
 					case *object.Float:
 						// timedelta returns seconds, convert to days
-						days = int(v.Value / 86400) // 86400 seconds per day
+						days = int(v.FloatValue() / 86400) // 86400 seconds per day
 					default:
 						return errors.NewTypeError("integer or float", args[1].Type().String())
 					}
@@ -683,35 +683,35 @@ var datetimeConstructorBuiltin = &object.Builtin{
 			return errors.NewTypeError("INTEGER", args[2].Type().String())
 		}
 
-		year := int(yearObj.Value)
-		month := time.Month(monthObj.Value)
-		day := int(dayObj.Value)
+		year := int(yearObj.IntValue())
+		month := time.Month(monthObj.IntValue())
+		day := int(dayObj.IntValue())
 		hour, minute, second, nsec := 0, 0, 0, 0
 
 		if len(args) > 3 {
 			if h, ok := args[3].(*object.Integer); ok {
-				hour = int(h.Value)
+				hour = int(h.IntValue())
 			} else {
 				return errors.NewTypeError("INTEGER", args[3].Type().String())
 			}
 		}
 		if len(args) > 4 {
 			if m, ok := args[4].(*object.Integer); ok {
-				minute = int(m.Value)
+				minute = int(m.IntValue())
 			} else {
 				return errors.NewTypeError("INTEGER", args[4].Type().String())
 			}
 		}
 		if len(args) > 5 {
 			if s, ok := args[5].(*object.Integer); ok {
-				second = int(s.Value)
+				second = int(s.IntValue())
 			} else {
 				return errors.NewTypeError("INTEGER", args[5].Type().String())
 			}
 		}
 		if len(args) > 6 {
 			if us, ok := args[6].(*object.Integer); ok {
-				nsec = int(us.Value) * 1000
+				nsec = int(us.IntValue()) * 1000
 			} else {
 				return errors.NewTypeError("INTEGER", args[6].Type().String())
 			}
@@ -724,13 +724,13 @@ var datetimeConstructorBuiltin = &object.Builtin{
 			}
 			switch key {
 			case "hour":
-				hour = int(intVal.Value)
+				hour = int(intVal.IntValue())
 			case "minute":
-				minute = int(intVal.Value)
+				minute = int(intVal.IntValue())
 			case "second":
-				second = int(intVal.Value)
+				second = int(intVal.IntValue())
 			case "microsecond":
-				nsec = int(intVal.Value) * 1000
+				nsec = int(intVal.IntValue()) * 1000
 			default:
 				return errors.NewError("datetime() unexpected keyword argument: %s", key)
 			}
@@ -765,9 +765,9 @@ Creates a datetime instance for the specified date and time.`,
 				var t time.Time
 				switch ts := args[1].(type) {
 				case *object.Integer:
-					t = time.Unix(ts.Value, 0)
+					t = time.Unix(ts.IntValue(), 0)
 				case *object.Float:
-					t = time.Unix(int64(ts.Value), 0)
+					t = time.Unix(int64(ts.FloatValue()), 0)
 				case *object.Instance:
 					dt, err := getTimeFromInstance(ts)
 					if err != nil {
@@ -778,7 +778,7 @@ Creates a datetime instance for the specified date and time.`,
 					return errors.NewTypeError("INTEGER, FLOAT, or datetime instance", args[1].Type().String())
 				}
 				goFormat := PythonToGoDateFormat(format)
-				return &object.String{Value: t.Format(goFormat)}
+				return object.NewString(t.Format(goFormat))
 			},
 			HelpText: "strftime(format, timestamp_or_datetime) - Format timestamp or datetime as string",
 		},
@@ -808,9 +808,9 @@ Creates a datetime instance for the specified date and time.`,
 				var timestamp float64
 				switch t := args[0].(type) {
 				case *object.Integer:
-					timestamp = float64(t.Value)
+					timestamp = float64(t.IntValue())
 				case *object.Float:
-					timestamp = t.Value
+					timestamp = t.FloatValue()
 				default:
 					return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
 				}
@@ -841,9 +841,9 @@ var dateConstructorBuiltin = &object.Builtin{
 			return errors.NewTypeError("INTEGER", args[2].Type().String())
 		}
 
-		year := int(yearObj.Value)
-		month := time.Month(monthObj.Value)
-		day := int(dayObj.Value)
+		year := int(yearObj.IntValue())
+		month := time.Month(monthObj.IntValue())
+		day := int(dayObj.IntValue())
 
 		t := time.Date(year, month, day, 0, 0, 0, 0, time.Local)
 		return createDateInstance(t)
@@ -874,9 +874,9 @@ var timedeltaBuiltinNew = &object.Builtin{
 		extractNum := func(obj object.Object) (float64, object.Object) {
 			switch v := obj.(type) {
 			case *object.Integer:
-				return float64(v.Value), nil
+				return float64(v.IntValue()), nil
 			case *object.Float:
-				return v.Value, nil
+				return v.FloatValue(), nil
 			default:
 				return 0, errors.NewTypeError("INTEGER or FLOAT", obj.Type().String())
 			}
@@ -915,7 +915,7 @@ var timedeltaBuiltinNew = &object.Builtin{
 			milliseconds/1000 +
 			microseconds/1000000
 
-		return &object.Float{Value: totalSeconds}
+		return object.NewFloat(totalSeconds)
 	},
 	HelpText: `timedelta(days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0, hours=0, weeks=0)
 

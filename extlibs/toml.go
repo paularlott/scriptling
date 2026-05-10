@@ -77,5 +77,5 @@ func tomlDumpsFunc(ctx context.Context, kwargs object.Kwargs, args ...object.Obj
 		return errors.NewError("toml dump error: %s", marshalErr.Error())
 	}
 
-	return &object.String{Value: string(buf)}
+	return object.NewString(string(buf))
 }

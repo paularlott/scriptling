@@ -43,8 +43,8 @@ var CompletedProcessClass = &object.Class{
 				if err := errors.ExactArgs(args, 1); err != nil { return err }
 				if instance, ok := args[0].(*object.Instance); ok {
 					if returncode, ok := instance.Fields["returncode"].(*object.Integer); ok {
-						if returncode.Value != 0 {
-							return errors.NewError("Command returned non-zero exit status %d", returncode.Value)
+					if returncode.IntValue() != 0 {
+						return errors.NewError("Command returned non-zero exit status %d", returncode.IntValue())
 						}
 						return args[0]
 					}
@@ -72,7 +72,7 @@ var SubprocessLibrary = object.NewLibrary(SubprocessLibraryName, map[string]*obj
 				shell := false
 				if sh, exists := kwargs.Kwargs["shell"]; exists {
 					if b, ok := sh.(*object.Boolean); ok {
-						shell = b.Value
+						shell = b.BoolValue()
 					}
 				}
 				if shell {
@@ -110,51 +110,51 @@ var SubprocessLibrary = object.NewLibrary(SubprocessLibraryName, map[string]*obj
 			// Parse kwargs (Python-style keyword arguments)
 			if capture, exists := kwargs.Kwargs["capture_output"]; exists {
 				if b, ok := capture.(*object.Boolean); ok {
-					captureOutput = b.Value
+					captureOutput = b.BoolValue()
 				}
 			}
 			if sh, exists := kwargs.Kwargs["shell"]; exists {
 				if b, ok := sh.(*object.Boolean); ok {
-					shell = b.Value
+					shell = b.BoolValue()
 				}
 			}
 			if wd, exists := kwargs.Kwargs["cwd"]; exists {
 				if s, ok := wd.(*object.String); ok {
-					cwd = s.Value
+					cwd = s.StringValue()
 				}
 			}
 			if to, exists := kwargs.Kwargs["timeout"]; exists {
 				if f, ok := to.(*object.Float); ok {
-					timeout = f.Value
+					timeout = f.FloatValue()
 				} else if i, ok := to.(*object.Integer); ok {
-					timeout = float64(i.Value)
+					timeout = float64(i.IntValue())
 				}
 			}
 			if ch, exists := kwargs.Kwargs["check"]; exists {
 				if b, ok := ch.(*object.Boolean); ok {
-					check = b.Value
+					check = b.BoolValue()
 				}
 			}
 			if txt, exists := kwargs.Kwargs["text"]; exists {
 				if b, ok := txt.(*object.Boolean); ok {
-					text = b.Value
+					text = b.BoolValue()
 				}
 			}
 			if enc, exists := kwargs.Kwargs["encoding"]; exists {
 				if s, ok := enc.(*object.String); ok {
-					encoding = s.Value
+					encoding = s.StringValue()
 				}
 			}
 			if inp, exists := kwargs.Kwargs["input"]; exists {
 				if s, ok := inp.(*object.String); ok {
-					inputData = s.Value
+					inputData = s.StringValue()
 				}
 			}
 			if envDict, exists := kwargs.Kwargs["env"]; exists {
 				if d, ok := envDict.(*object.Dict); ok {
 					for _, pair := range d.Pairs {
 						if valStr, ok := pair.Value.(*object.String); ok {
-							env[pair.StringKey()] = valStr.Value
+							env[pair.StringKey()] = valStr.StringValue()
 						}
 					}
 				}
@@ -243,13 +243,13 @@ var SubprocessLibrary = object.NewLibrary(SubprocessLibraryName, map[string]*obj
 				Class: CompletedProcessClass,
 				Fields: map[string]object.Object{
 					"args":       &object.List{Elements: make([]object.Object, len(cmdArgs))},
-					"returncode": &object.Integer{Value: int64(returncode)},
-					"stdout":     &object.String{Value: stdoutStr},
-					"stderr":     &object.String{Value: stderrStr},
+					"returncode": object.NewInteger(int64(returncode)),
+					"stdout":     object.NewString(stdoutStr),
+					"stderr":     object.NewString(stderrStr),
 				},
 			} // Fill args list
 			for i, arg := range cmdArgs {
-				instance.Fields["args"].(*object.List).Elements[i] = &object.String{Value: arg}
+				instance.Fields["args"].(*object.List).Elements[i] = object.NewString(arg)
 			}
 
 			if check && returncode != 0 {

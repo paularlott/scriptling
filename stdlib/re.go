@@ -34,7 +34,7 @@ var RegexClass = &object.Class{
 					return errors.NewTypeError("STRING", args[1].Type().String())
 				}
 				regex := args[0].(*object.Instance)
-				pattern := regex.Fields["pattern"].(*object.String).Value
+				pattern := regex.Fields["pattern"].(*object.String).StringValue()
 				text, _ := args[1].AsString()
 
 				re, err := GetCompiledRegex(pattern)
@@ -63,7 +63,7 @@ Returns a Match object if the pattern matches at the beginning, or None if no ma
 					return errors.NewTypeError("STRING", args[1].Type().String())
 				}
 				regex := args[0].(*object.Instance)
-				pattern := regex.Fields["pattern"].(*object.String).Value
+				pattern := regex.Fields["pattern"].(*object.String).StringValue()
 				text, _ := args[1].AsString()
 
 				re, err := GetCompiledRegex(pattern)
@@ -91,7 +91,7 @@ Returns a Match object for the first match, or None if no match found.`,
 					return errors.NewTypeError("STRING", args[1].Type().String())
 				}
 				regex := args[0].(*object.Instance)
-				pattern := regex.Fields["pattern"].(*object.String).Value
+				pattern := regex.Fields["pattern"].(*object.String).StringValue()
 				text, _ := args[1].AsString()
 
 				re, err := GetCompiledRegex(pattern)
@@ -105,7 +105,7 @@ Returns a Match object for the first match, or None if no match found.`,
 					matches := re.FindAllString(text, -1)
 					elements := make([]object.Object, len(matches))
 					for i, match := range matches {
-						elements[i] = &object.String{Value: match}
+						elements[i] = object.NewString(match)
 					}
 					return &object.List{Elements: elements}
 				}
@@ -116,9 +116,9 @@ Returns a Match object for the first match, or None if no match found.`,
 					if numGroups == 1 {
 						start, end := match[2], match[3]
 						if start >= 0 && end >= 0 {
-							elements[i] = &object.String{Value: text[start:end]}
+							elements[i] = object.NewString(text[start:end])
 						} else {
-							elements[i] = &object.String{Value: ""}
+							elements[i] = object.NewString("")
 						}
 						continue
 					}
@@ -127,9 +127,9 @@ Returns a Match object for the first match, or None if no match found.`,
 					for j := 0; j < numGroups; j++ {
 						start, end := match[(j+1)*2], match[(j+1)*2+1]
 						if start >= 0 && end >= 0 {
-							groupElements[j] = &object.String{Value: text[start:end]}
+							groupElements[j] = object.NewString(text[start:end])
 						} else {
-							groupElements[j] = &object.String{Value: ""}
+							groupElements[j] = object.NewString("")
 						}
 					}
 					elements[i] = &object.Tuple{Elements: groupElements}
@@ -152,7 +152,7 @@ If there are no capturing groups, returns a list of strings for the full matches
 					return errors.NewTypeError("STRING", args[1].Type().String())
 				}
 				regex := args[0].(*object.Instance)
-				pattern := regex.Fields["pattern"].(*object.String).Value
+				pattern := regex.Fields["pattern"].(*object.String).StringValue()
 				text, _ := args[1].AsString()
 
 				re, err := GetCompiledRegex(pattern)
@@ -301,8 +301,8 @@ func createRegexInstance(pattern string, flags int64) *object.Instance {
 	return &object.Instance{
 		Class: RegexClass,
 		Fields: map[string]object.Object{
-			"pattern": &object.String{Value: pattern},
-			"flags":   &object.Integer{Value: flags},
+			"pattern": object.NewString(pattern),
+			"flags":   object.NewInteger(flags),
 		},
 	}
 }
@@ -311,14 +311,14 @@ func createRegexInstance(pattern string, flags int64) *object.Instance {
 func createMatchInstance(groups []string, start, end int) *object.Instance {
 	groupObjects := make([]object.Object, len(groups))
 	for i, group := range groups {
-		groupObjects[i] = &object.String{Value: group}
+		groupObjects[i] = object.NewString(group)
 	}
 	return &object.Instance{
 		Class: MatchClass,
 		Fields: map[string]object.Object{
 			"groups": &object.List{Elements: groupObjects},
-			"start":  &object.Integer{Value: int64(start)},
-			"end":    &object.Integer{Value: int64(end)},
+			"start":  object.NewInteger(int64(start)),
+			"end":    object.NewInteger(int64(end)),
 		},
 	}
 }
@@ -598,13 +598,13 @@ Flags:
 			numGroups := re.NumSubexp()
 			for i, match := range matches {
 				if numGroups == 0 {
-					elements[i] = &object.String{Value: match[0]}
+					elements[i] = object.NewString(match[0])
 				} else if numGroups == 1 {
-					elements[i] = &object.String{Value: match[1]}
+					elements[i] = object.NewString(match[1])
 				} else {
 					groupElements := make([]object.Object, numGroups)
 					for j := 1; j <= numGroups; j++ {
-						groupElements[j-1] = &object.String{Value: match[j]}
+						groupElements[j-1] = object.NewString(match[j])
 					}
 					elements[i] = &object.Tuple{Elements: groupElements}
 				}
@@ -721,7 +721,7 @@ Flags:
 				allMatches := re.FindAllStringSubmatchIndex(text, -1)
 
 				if len(allMatches) == 0 {
-					return &object.String{Value: text}
+					return object.NewString(text)
 				}
 
 				// Build result by replacing matches
@@ -788,7 +788,7 @@ Flags:
 					return match
 				})
 			}
-			return &object.String{Value: result}
+			return object.NewString(result)
 		},
 		HelpText: `sub(pattern, repl, string, count=0, flags=0) - Replace matches
 
@@ -841,7 +841,7 @@ Flags:
 			parts := re.Split(text, maxsplit)
 			elements := make([]object.Object, len(parts))
 			for i, part := range parts {
-				elements[i] = &object.String{Value: part}
+				elements[i] = object.NewString(part)
 			}
 			return &object.List{Elements: elements}
 		},
@@ -901,7 +901,7 @@ Flags:
 			text, _ := args[0].AsString()
 
 			escaped := regexp.QuoteMeta(text)
-			return &object.String{Value: escaped}
+			return object.NewString(escaped)
 		},
 		HelpText: `escape(pattern) - Escape special regex characters
 
@@ -958,10 +958,10 @@ Flags:
 	},
 }, map[string]object.Object{
 	// Flag constants - matching Python's re module values
-	"IGNORECASE": &object.Integer{Value: RE_IGNORECASE},
-	"I":          &object.Integer{Value: RE_IGNORECASE},
-	"MULTILINE":  &object.Integer{Value: RE_MULTILINE},
-	"M":          &object.Integer{Value: RE_MULTILINE},
-	"DOTALL":     &object.Integer{Value: RE_DOTALL},
-	"S":          &object.Integer{Value: RE_DOTALL},
+	"IGNORECASE": object.NewInteger(RE_IGNORECASE),
+	"I":          object.NewInteger(RE_IGNORECASE),
+	"MULTILINE":  object.NewInteger(RE_MULTILINE),
+	"M":          object.NewInteger(RE_MULTILINE),
+	"DOTALL":     object.NewInteger(RE_DOTALL),
+	"S":          object.NewInteger(RE_DOTALL),
 }, "Regular expression library")

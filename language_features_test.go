@@ -1011,7 +1011,7 @@ func TestRegressionCallFunctionWithContextStillWorks(t *testing.T) {
 	p.RegisterFunc("add", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 		a, _ := args[0].AsInt()
 		b, _ := args[1].AsInt()
-		return &object.Integer{Value: a + b}
+		return object.NewInteger(a + b)
 	})
 
 	result, err := p.CallFunction("add", 10, 20)
@@ -1668,7 +1668,7 @@ func TestClassBuilderProperty(t *testing.T) {
 
 	cb := object.NewClassBuilder("Circle")
 	cb.MethodWithHelp("__init__", func(self *object.Instance, r float64) {
-		self.Fields["radius"] = &object.Float{Value: r}
+		self.Fields["radius"] = object.NewFloat(r)
 	}, "")
 	cb.Property("radius", func(self *object.Instance) float64 {
 		v, _ := self.Fields["radius"].AsFloat()
@@ -1738,7 +1738,7 @@ func TestClassBuilderPropertyInheritance(t *testing.T) {
 
 	base := object.NewClassBuilder("Base")
 	base.MethodWithHelp("__init__", func(self *object.Instance, name string) {
-		self.Fields["name"] = &object.String{Value: name}
+		self.Fields["name"] = object.NewString(name)
 	}, "")
 	base.Property("name", func(self *object.Instance) string {
 		v, _ := self.Fields["name"].AsString()
@@ -1750,7 +1750,7 @@ func TestClassBuilderPropertyInheritance(t *testing.T) {
 	child.BaseClass(baseClass)
 	// Child needs its own __init__ to set fields (inherited __init__ is not auto-called)
 	child.Method("__init__", func(self *object.Instance, name string) {
-		self.Fields["name"] = &object.String{Value: name}
+		self.Fields["name"] = object.NewString(name)
 	})
 	p.SetObjectVar("Base", baseClass)
 	p.SetObjectVar("Child", child.Build())

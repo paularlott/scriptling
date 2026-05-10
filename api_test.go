@@ -21,8 +21,8 @@ func TestRegisterFunc(t *testing.T) {
 		if len(args) != 1 {
 			return &object.Error{Message: "need 1 argument"}
 		}
-		val := args[0].(*object.Integer).Value
-		return &object.Integer{Value: val * 2}
+		val := args[0].(*object.Integer).IntValue()
+		return object.NewInteger(val * 2)
 	})
 
 	_, err := p.Eval("result = double(5)")
@@ -41,7 +41,7 @@ func TestRegisterLibrary(t *testing.T) {
 	myLib := object.NewLibrary("mylib", map[string]*object.Builtin{
 		"greet": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				return &object.String{Value: "Hello!"}
+				return object.NewString("Hello!")
 			},
 		},
 	}, nil, "")
@@ -66,7 +66,7 @@ func TestImport(t *testing.T) {
 	myLib := object.NewLibrary("mylib", map[string]*object.Builtin{
 		"greet": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				return &object.String{Value: "Hello!"}
+				return object.NewString("Hello!")
 			},
 		},
 	}, nil, "")
@@ -125,10 +125,10 @@ func TestRegisterLibraryWithClass(t *testing.T) {
 					start := int64(0)
 					if len(args) > 1 {
 						if intObj, ok := args[1].(*object.Integer); ok {
-							start = intObj.Value
+							start = intObj.IntValue()
 						}
 					}
-					self.Fields["value"] = &object.Integer{Value: start}
+					self.Fields["value"] = object.NewInteger(start)
 					return &object.Null{}
 				},
 			},
@@ -136,9 +136,9 @@ func TestRegisterLibraryWithClass(t *testing.T) {
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					self := args[0].(*object.Instance)
 					if val, ok := self.Fields["value"].(*object.Integer); ok {
-						newVal := val.Value + 1
-						self.Fields["value"] = &object.Integer{Value: newVal}
-						return &object.Integer{Value: newVal}
+						newVal := val.IntValue() + 1
+						self.Fields["value"] = object.NewInteger(newVal)
+						return object.NewInteger(newVal)
 					}
 					return &object.Null{}
 				},
@@ -148,7 +148,7 @@ func TestRegisterLibraryWithClass(t *testing.T) {
 					self := args[0].(*object.Instance)
 					// Return a copy to avoid mutation issues
 					if val, ok := self.Fields["value"].(*object.Integer); ok {
-						return &object.Integer{Value: val.Value}
+						return object.NewInteger(val.IntValue())
 					}
 					return self.Fields["value"]
 				},
@@ -161,13 +161,13 @@ func TestRegisterLibraryWithClass(t *testing.T) {
 		map[string]*object.Builtin{
 			"helper": {
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					return &object.String{Value: "helper called"}
+					return object.NewString("helper called")
 				},
 			},
 		},
 		map[string]object.Object{
 			"Counter": counterClass,
-			"VERSION": &object.String{Value: "1.0.0"},
+			"VERSION": object.NewString("1.0.0"),
 		},
 		"Counter utilities library",
 	)
@@ -364,21 +364,21 @@ func TestHelpSystem(t *testing.T) {
 
 	// Register a Go function with help text
 	p.RegisterFunc("custom_func", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-		return &object.String{Value: "custom result"}
+		return object.NewString("custom result")
 	})
 
 	// Register a library with functions that have help text
 	myLib := object.NewLibrary("testlib", map[string]*object.Builtin{
 		"lib_func": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				return &object.String{Value: "lib result"}
+				return object.NewString("lib result")
 			},
 			HelpText: `lib_func() - A library function
 
 This is a test library function with help text.`,
 		},
 	}, map[string]object.Object{
-		"LIB_CONSTANT": &object.String{Value: "1.0.0"},
+		"LIB_CONSTANT": object.NewString("1.0.0"),
 	}, "Test library for help system")
 
 	p.RegisterLibrary(myLib)
@@ -499,13 +499,13 @@ help("scriptlib")
 			Methods: map[string]object.Object{
 				"method1": &object.Builtin{
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-						return &object.String{Value: "method1"}
+						return object.NewString("method1")
 					},
 					HelpText: "method1() - First test method",
 				},
 				"method2": &object.Builtin{
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-						return &object.String{Value: "method2"}
+						return object.NewString("method2")
 					},
 				},
 			},
@@ -645,7 +645,7 @@ func TestCallFunction(t *testing.T) {
 		p.RegisterFunc("concat", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			a, _ := args[0].AsString()
 			b, _ := args[1].AsString()
-			return &object.String{Value: a + b}
+			return object.NewString(a + b)
 		})
 
 		result, err := p.CallFunction("concat", "Hello, ", "World")
@@ -668,7 +668,7 @@ func TestCallFunction(t *testing.T) {
 		p.RegisterFunc("divide", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			a, _ := args[0].AsFloat()
 			b, _ := args[1].AsFloat()
-			return &object.Float{Value: a / b}
+			return object.NewFloat(a / b)
 		})
 
 		result, err := p.CallFunction("divide", 10.0, 4.0)
@@ -742,7 +742,7 @@ func TestCallFunction(t *testing.T) {
 			case <-ctx.Done():
 				return &object.Error{Message: "timeout"}
 			default:
-				return &object.String{Value: "completed"}
+				return object.NewString("completed")
 			}
 		})
 
@@ -770,7 +770,7 @@ func TestCallFunction(t *testing.T) {
 		// Register a function that accepts kwargs
 		p.RegisterFunc("format", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			text, _ := args[0].AsString()
-			return &object.String{Value: text}
+			return object.NewString(text)
 		})
 
 		// Call with empty kwargs map
@@ -796,7 +796,7 @@ func TestCallFunction(t *testing.T) {
 			text, _ := args[0].AsString()
 			prefix := kwargs.MustGetString("prefix", "")
 			suffix := kwargs.MustGetString("suffix", "")
-			return &object.String{Value: prefix + text + suffix}
+			return object.NewString(prefix + text + suffix)
 		})
 
 		// Call with kwargs
@@ -825,7 +825,7 @@ func TestCallFunction(t *testing.T) {
 		p.RegisterFunc("greet", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			name, _ := args[0].AsString()
 			prefix := kwargs.MustGetString("prefix", "Hello")
-			return &object.String{Value: prefix + ", " + name}
+			return object.NewString(prefix + ", " + name)
 		})
 
 		// Call with only prefix kwarg
@@ -857,7 +857,7 @@ func TestCallFunction(t *testing.T) {
 			return object.NewStringDict(map[string]object.Object{
 				"enabled": object.NewBoolean(enabled),
 				"count":   object.NewInteger(count),
-				"rate":    &object.Float{Value: rate},
+				"rate":    object.NewFloat(rate),
 			})
 		})
 
@@ -999,7 +999,7 @@ func TestCallFunction(t *testing.T) {
 		p.RegisterFunc("config", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			enabled := kwargs.MustGetBool("enabled", false)
 			name := kwargs.MustGetString("name", "default")
-			return &object.String{Value: fmt.Sprintf("enabled=%v,name=%s", enabled, name)}
+			return object.NewString(fmt.Sprintf("enabled=%v,name=%s", enabled, name))
 		})
 
 		// Call with ONLY kwargs - no positional args (pass nil as positional placeholder)
@@ -1032,7 +1032,7 @@ func TestCallFunction(t *testing.T) {
 			// Keyword args
 			prefix := kwargs.MustGetString("prefix", "")
 			suffix := kwargs.MustGetString("suffix", "")
-			return &object.String{Value: prefix + text + ":" + fmt.Sprint(count) + suffix}
+			return object.NewString(prefix + text + ":" + fmt.Sprint(count) + suffix)
 		})
 
 		// Call with 2 positional args + kwargs

@@ -16,12 +16,12 @@ func TestObjectTypes(t *testing.T) {
 		obj      Object
 		expected ObjectType
 	}{
-		{&Integer{Value: 42}, INTEGER_OBJ},
-		{&Float{Value: 3.14}, FLOAT_OBJ},
-		{&Boolean{Value: true}, BOOLEAN_OBJ},
-		{&String{Value: "hello"}, STRING_OBJ},
+		{NewInteger(42), INTEGER_OBJ},
+		{NewFloat(3.14), FLOAT_OBJ},
+		{NewBoolean(true), BOOLEAN_OBJ},
+		{NewString("hello"), STRING_OBJ},
 		{&Null{}, NULL_OBJ},
-		{&ReturnValue{Value: &Integer{Value: 1}}, RETURN_OBJ},
+		{&ReturnValue{Value: NewInteger(1)}, RETURN_OBJ},
 		{&Break{}, BREAK_OBJ},
 		{&Continue{}, CONTINUE_OBJ},
 		{&Function{}, FUNCTION_OBJ},
@@ -44,11 +44,11 @@ func TestObjectInspect(t *testing.T) {
 		obj      Object
 		expected string
 	}{
-		{&Integer{Value: 42}, "42"},
-		{&Float{Value: 3.14}, "3.14"},
-		{&Boolean{Value: true}, "true"},
-		{&Boolean{Value: false}, "false"},
-		{&String{Value: "hello"}, "hello"},
+		{NewInteger(42), "42"},
+		{NewFloat(3.14), "3.14"},
+		{NewBoolean(true), "true"},
+		{NewBoolean(false), "false"},
+		{NewString("hello"), "hello"},
 		{&Null{}, "None"},
 		{&Break{}, "break"},
 		{&Continue{}, "continue"},
@@ -68,9 +68,9 @@ func TestObjectInspect(t *testing.T) {
 func TestListInspect(t *testing.T) {
 	list := &List{
 		Elements: []Object{
-			&Integer{Value: 1},
-			&String{Value: "hello"},
-			&Boolean{Value: true},
+			NewInteger(1),
+			NewString("hello"),
+			NewBoolean(true),
 		},
 	}
 	expected := "[1, hello, true]"
@@ -82,8 +82,8 @@ func TestListInspect(t *testing.T) {
 func TestDictInspect(t *testing.T) {
 	dict := &Dict{
 		Pairs: map[string]DictPair{
-			"name": {Key: &String{Value: "name"}, Value: &String{Value: "Alice"}},
-			"age":  {Key: &String{Value: "age"}, Value: &Integer{Value: 30}},
+			"name": {Key: NewString("name"), Value: NewString("Alice")},
+			"age":  {Key: NewString("age"), Value: NewInteger(30)},
 		},
 	}
 	result := dict.Inspect()
@@ -97,7 +97,7 @@ func TestEnvironment(t *testing.T) {
 	env := NewEnvironment()
 
 	// Test Set and Get
-	val := &Integer{Value: 42}
+	val := NewInteger(42)
 	env.Set("x", val)
 
 	result, ok := env.Get("x")
@@ -115,8 +115,8 @@ func TestEnvironmentWithSlots(t *testing.T) {
 		"y": 1,
 	}, []string{"x", "y"})
 
-	xVal := &Integer{Value: 42}
-	yVal := &String{Value: "slot"}
+	xVal := NewInteger(42)
+	yVal := NewString("slot")
 	env.Set("x", xVal)
 	env.Set("y", yVal)
 
@@ -149,20 +149,20 @@ func TestEnvironmentCopyCallableBindingsTo(t *testing.T) {
 	lambda := &LambdaFunction{Env: source}
 	source.Set("work", fn)
 	source.Set("helper", lambda)
-	sourceVal := &Integer{Value: 42}
+	sourceVal := NewInteger(42)
 	source.Set("value", sourceVal)
 	module := &Dict{Pairs: map[string]DictPair{
-		DictKey(&String{Value: "answer"}): {
-			Key:   &String{Value: "answer"},
-			Value: &Integer{Value: 42},
+		DictKey(NewString("answer")): {
+			Key:   NewString("answer"),
+			Value: NewInteger(42),
 		},
 	}}
 	source.Set("module", module)
 	source.MarkImportedBinding("module")
 	userDict := &Dict{Pairs: map[string]DictPair{
-		DictKey(&String{Value: "secret"}): {
-			Key:   &String{Value: "secret"},
-			Value: &String{Value: "do-not-copy"},
+		DictKey(NewString("secret")): {
+			Key:   NewString("secret"),
+			Value: NewString("do-not-copy"),
 		},
 	}}
 	source.Set("user_data", userDict)
@@ -283,18 +283,18 @@ func TestEnvironmentSetClearsImportedBindingMark(t *testing.T) {
 
 func TestEnclosedEnvironment(t *testing.T) {
 	outer := NewEnvironment()
-	outer.Set("x", &Integer{Value: 10})
+	outer.Set("x", NewInteger(10))
 
 	inner := NewEnclosedEnvironment(outer)
-	inner.Set("y", &Integer{Value: 20})
+	inner.Set("y", NewInteger(20))
 
 	// Inner should see outer variables
 	x, ok := inner.Get("x")
 	if !ok {
 		t.Fatal("expected to find variable x from outer scope")
 	}
-	if x.(*Integer).Value != 10 {
-		t.Errorf("x = %d, want 10", x.(*Integer).Value)
+	if x.(*Integer).IntValue() != 10 {
+		t.Errorf("x = %d, want 10", x.(*Integer).IntValue())
 	}
 
 	// Inner should see its own variables
@@ -302,8 +302,8 @@ func TestEnclosedEnvironment(t *testing.T) {
 	if !ok {
 		t.Fatal("expected to find variable y")
 	}
-	if y.(*Integer).Value != 20 {
-		t.Errorf("y = %d, want 20", y.(*Integer).Value)
+	if y.(*Integer).IntValue() != 20 {
+		t.Errorf("y = %d, want 20", y.(*Integer).IntValue())
 	}
 
 	// Outer should not see inner variables
@@ -321,15 +321,15 @@ func TestGlobalVariables(t *testing.T) {
 	inner.MarkGlobal("global_var")
 
 	// Set global variable from inner scope
-	inner.Set("global_var", &Integer{Value: 42})
+	inner.Set("global_var", NewInteger(42))
 
 	// Should be set in outer (global) scope
 	result, ok := outer.Get("global_var")
 	if !ok {
 		t.Fatal("expected global variable to be set in outer scope")
 	}
-	if result.(*Integer).Value != 42 {
-		t.Errorf("global_var = %d, want 42", result.(*Integer).Value)
+	if result.(*Integer).IntValue() != 42 {
+		t.Errorf("global_var = %d, want 42", result.(*Integer).IntValue())
 	}
 
 	// Check IsGlobal
@@ -340,21 +340,21 @@ func TestGlobalVariables(t *testing.T) {
 
 func TestNonlocalVariables(t *testing.T) {
 	outer := NewEnvironment()
-	outer.Set("nonlocal_var", &Integer{Value: 10})
+	outer.Set("nonlocal_var", NewInteger(10))
 
 	inner := NewEnclosedEnvironment(outer)
 	inner.MarkNonlocal("nonlocal_var")
 
 	// Modify nonlocal variable from inner scope
-	inner.Set("nonlocal_var", &Integer{Value: 20})
+	inner.Set("nonlocal_var", NewInteger(20))
 
 	// Should be modified in outer scope
 	result, ok := outer.Get("nonlocal_var")
 	if !ok {
 		t.Fatal("expected nonlocal variable to exist in outer scope")
 	}
-	if result.(*Integer).Value != 20 {
-		t.Errorf("nonlocal_var = %d, want 20", result.(*Integer).Value)
+	if result.(*Integer).IntValue() != 20 {
+		t.Errorf("nonlocal_var = %d, want 20", result.(*Integer).IntValue())
 	}
 
 	// Check IsNonlocal
@@ -367,18 +367,18 @@ func TestNonlocalVariablesWithSlots(t *testing.T) {
 	outer := NewEnclosedEnvironmentWithSlots(NewEnvironment(), map[string]int{
 		"shared": 0,
 	}, []string{"shared"})
-	outer.Set("shared", &Integer{Value: 10})
+	outer.Set("shared", NewInteger(10))
 
 	inner := NewEnclosedEnvironment(outer)
 	inner.MarkNonlocal("shared")
-	inner.Set("shared", &Integer{Value: 20})
+	inner.Set("shared", NewInteger(20))
 
 	result, ok := outer.Get("shared")
 	if !ok {
 		t.Fatal("expected slotted nonlocal variable to exist in outer scope")
 	}
-	if result.(*Integer).Value != 20 {
-		t.Errorf("shared = %d, want 20", result.(*Integer).Value)
+	if result.(*Integer).IntValue() != 20 {
+		t.Errorf("shared = %d, want 20", result.(*Integer).IntValue())
 	}
 }
 
@@ -387,10 +387,10 @@ func TestEnvironmentResetStoreWithSlots(t *testing.T) {
 		"keep_slot": 0,
 		"drop_slot": 1,
 	}, []string{"keep_slot", "drop_slot"})
-	env.Set("keep_slot", &Integer{Value: 1})
-	env.Set("drop_slot", &Integer{Value: 2})
-	env.Set("keep_map", &Integer{Value: 3})
-	env.Set("drop_map", &Integer{Value: 4})
+	env.Set("keep_slot", NewInteger(1))
+	env.Set("drop_slot", NewInteger(2))
+	env.Set("keep_map", NewInteger(3))
+	env.Set("drop_map", NewInteger(4))
 
 	env.ResetStore(map[string]bool{
 		"keep_slot": true,
@@ -412,7 +412,7 @@ func TestEnvironmentResetStoreWithSlots(t *testing.T) {
 }
 
 func TestReturnValue(t *testing.T) {
-	val := &Integer{Value: 42}
+	val := NewInteger(42)
 	ret := &ReturnValue{Value: val}
 
 	if ret.Type() != RETURN_OBJ {
@@ -516,7 +516,7 @@ func TestInstanceBoundMethodCacheReuseAndInvalidate(t *testing.T) {
 func TestBuiltinFunction(t *testing.T) {
 	builtin := &Builtin{
 		Fn: func(ctx context.Context, kwargs Kwargs, args ...Object) Object {
-			return &Integer{Value: 42}
+			return NewInteger(42)
 		},
 	}
 
@@ -529,18 +529,18 @@ func TestBuiltinFunction(t *testing.T) {
 
 	// Test function call
 	result := builtin.Fn(context.Background(), NewKwargs(nil))
-	if result.(*Integer).Value != 42 {
-		t.Errorf("builtin function result = %d, want 42", result.(*Integer).Value)
+	if result.(*Integer).IntValue() != 42 {
+		t.Errorf("builtin function result = %d, want 42", result.(*Integer).IntValue())
 	}
 }
 
 func TestKwargs(t *testing.T) {
 	kwargs := map[string]Object{
-		"string": &String{Value: "hello"},
-		"int":    &Integer{Value: 42},
-		"float":  &Float{Value: 3.14},
-		"bool":   &Boolean{Value: true},
-		"list":   &List{Elements: []Object{&Integer{Value: 1}}},
+		"string": NewString("hello"),
+		"int":    NewInteger(42),
+		"float":  NewFloat(3.14),
+		"bool":   NewBoolean(true),
+		"list":   &List{Elements: []Object{NewInteger(1)}},
 	}
 
 	k := NewKwargs(kwargs)
@@ -575,8 +575,8 @@ func TestKwargs(t *testing.T) {
 
 func TestKwargsGetString(t *testing.T) {
 	kwargs := map[string]Object{
-		"valid":   &String{Value: "hello"},
-		"invalid": &Integer{Value: 42},
+		"valid":   NewString("hello"),
+		"invalid": NewInteger(42),
 	}
 
 	k := NewKwargs(kwargs)
@@ -611,8 +611,8 @@ func TestKwargsGetString(t *testing.T) {
 
 func TestKwargsGetInt(t *testing.T) {
 	kwargs := map[string]Object{
-		"valid":   &Integer{Value: 42},
-		"invalid": &String{Value: "hello"},
+		"valid":   NewInteger(42),
+		"invalid": NewString("hello"),
 	}
 
 	k := NewKwargs(kwargs)
@@ -633,7 +633,7 @@ func TestKwargsGetInt(t *testing.T) {
 
 func TestKwargsGetFloat(t *testing.T) {
 	kwargs := map[string]Object{
-		"valid": &Float{Value: 3.14},
+		"valid": NewFloat(3.14),
 	}
 
 	k := NewKwargs(kwargs)
@@ -649,7 +649,7 @@ func TestKwargsGetFloat(t *testing.T) {
 
 func TestKwargsGetBool(t *testing.T) {
 	kwargs := map[string]Object{
-		"valid": &Boolean{Value: true},
+		"valid": NewBoolean(true),
 	}
 
 	k := NewKwargs(kwargs)
@@ -665,7 +665,7 @@ func TestKwargsGetBool(t *testing.T) {
 
 func TestKwargsGetList(t *testing.T) {
 	kwargs := map[string]Object{
-		"valid": &List{Elements: []Object{&Integer{Value: 1}}},
+		"valid": &List{Elements: []Object{NewInteger(1)}},
 	}
 
 	k := NewKwargs(kwargs)
@@ -681,8 +681,8 @@ func TestKwargsGetList(t *testing.T) {
 
 func TestKwargsMustMethods(t *testing.T) {
 	kwargs := map[string]Object{
-		"string": &String{Value: "hello"},
-		"int":    &Integer{Value: 42},
+		"string": NewString("hello"),
+		"int":    NewInteger(42),
 	}
 
 	k := NewKwargs(kwargs)
@@ -715,26 +715,26 @@ func TestSet(t *testing.T) {
 	}
 
 	// Test Add and Contains
-	s.add(&String{Value: "hello"})
-	s.add(&Integer{Value: 42})
+	s.add(NewString("hello"))
+	s.add(NewInteger(42))
 
-	if !s.contains(&String{Value: "hello"}) {
+	if !s.contains(NewString("hello")) {
 		t.Error("Set should contain added element")
 	}
 
 	// Test Remove
-	if !s.remove(&String{Value: "hello"}) {
+	if !s.remove(NewString("hello")) {
 		t.Error("Remove() should return true for existing element")
 	}
-	if s.remove(&String{Value: "nonexistent"}) {
+	if s.remove(NewString("nonexistent")) {
 		t.Error("Remove() should return false for non-existent element")
 	}
 
 	// Test Inspect
 	s = NewSet()
-	s.add(&Integer{Value: 3})
-	s.add(&Integer{Value: 1})
-	s.add(&Integer{Value: 2})
+	s.add(NewInteger(3))
+	s.add(NewInteger(1))
+	s.add(NewInteger(2))
 
 	inspect := s.Inspect()
 	if inspect[0] != '{' || inspect[len(inspect)-1] != '}' {
@@ -751,46 +751,46 @@ func newTestSet(elements ...Object) *Set {
 }
 
 func TestSetUnion(t *testing.T) {
-	s1 := newTestSet(&Integer{Value: 1}, &Integer{Value: 2})
-	s2 := newTestSet(&Integer{Value: 2}, &Integer{Value: 3})
+	s1 := newTestSet(NewInteger(1), NewInteger(2))
+	s2 := newTestSet(NewInteger(2), NewInteger(3))
 
 	result := s1.Union(s2)
-	if result.contains(&Integer{Value: 1}) == false ||
-		result.contains(&Integer{Value: 2}) == false ||
-		result.contains(&Integer{Value: 3}) == false {
+	if result.contains(NewInteger(1)) == false ||
+		result.contains(NewInteger(2)) == false ||
+		result.contains(NewInteger(3)) == false {
 		t.Error("Union() should contain all elements from both sets")
 	}
 }
 
 func TestSetIntersection(t *testing.T) {
-	s1 := newTestSet(&Integer{Value: 1}, &Integer{Value: 2})
-	s2 := newTestSet(&Integer{Value: 2}, &Integer{Value: 3})
+	s1 := newTestSet(NewInteger(1), NewInteger(2))
+	s2 := newTestSet(NewInteger(2), NewInteger(3))
 
 	result := s1.Intersection(s2)
-	if !result.contains(&Integer{Value: 2}) {
+	if !result.contains(NewInteger(2)) {
 		t.Error("Intersection() should contain common element")
 	}
-	if result.contains(&Integer{Value: 1}) || result.contains(&Integer{Value: 3}) {
+	if result.contains(NewInteger(1)) || result.contains(NewInteger(3)) {
 		t.Error("Intersection() should not contain unique elements")
 	}
 }
 
 func TestSetDifference(t *testing.T) {
-	s1 := newTestSet(&Integer{Value: 1}, &Integer{Value: 2})
-	s2 := newTestSet(&Integer{Value: 2}, &Integer{Value: 3})
+	s1 := newTestSet(NewInteger(1), NewInteger(2))
+	s2 := newTestSet(NewInteger(2), NewInteger(3))
 
 	result := s1.Difference(s2)
-	if !result.contains(&Integer{Value: 1}) {
+	if !result.contains(NewInteger(1)) {
 		t.Error("Difference() should contain element only in s1")
 	}
-	if result.contains(&Integer{Value: 2}) {
+	if result.contains(NewInteger(2)) {
 		t.Error("Difference() should not contain common element")
 	}
 }
 
 func TestSetIsSubset(t *testing.T) {
-	s1 := newTestSet(&Integer{Value: 1})
-	s2 := newTestSet(&Integer{Value: 1}, &Integer{Value: 2})
+	s1 := newTestSet(NewInteger(1))
+	s2 := newTestSet(NewInteger(1), NewInteger(2))
 
 	if !s1.IsSubset(s2) {
 		t.Error("s1 should be a subset of s2")
@@ -801,16 +801,16 @@ func TestSetIsSubset(t *testing.T) {
 }
 
 func TestSetCopy(t *testing.T) {
-	s1 := newTestSet(&Integer{Value: 1})
+	s1 := newTestSet(NewInteger(1))
 	s2 := s1.Copy()
 
-	if !s2.contains(&Integer{Value: 1}) {
+	if !s2.contains(NewInteger(1)) {
 		t.Error("Copy() should contain all elements")
 	}
 
 	// Modify original
-	s1.add(&Integer{Value: 2})
-	if s2.contains(&Integer{Value: 2}) {
+	s1.add(NewInteger(2))
+	if s2.contains(NewInteger(2)) {
 		t.Error("Copy() should be independent")
 	}
 }
@@ -822,7 +822,7 @@ func TestSetAsBool(t *testing.T) {
 		t.Errorf("Empty set AsBool() = %t, want false", boolVal)
 	}
 
-	s1.add(&Integer{Value: 1})
+	s1.add(NewInteger(1))
 	boolVal, _ = s1.AsBool()
 	if boolVal != true {
 		t.Errorf("Non-empty set AsBool() = %t, want true", boolVal)
@@ -836,7 +836,7 @@ func TestIterator(t *testing.T) {
 		if count >= 3 {
 			return nil, false
 		}
-		val := &Integer{Value: int64(count)}
+		val := NewInteger(int64(count))
 		count++
 		return val, true
 	})
@@ -870,8 +870,8 @@ func TestRangeIterator(t *testing.T) {
 		if !hasNext {
 			t.Error("RangeIterator should have more elements")
 		}
-		if val.(*Integer).Value != exp {
-			t.Errorf("RangeIterator value = %d, want %d", val.(*Integer).Value, exp)
+		if val.(*Integer).IntValue() != exp {
+			t.Errorf("RangeIterator value = %d, want %d", val.(*Integer).IntValue(), exp)
 		}
 	}
 
@@ -890,20 +890,20 @@ func TestRangeIteratorDescending(t *testing.T) {
 		if !hasNext {
 			t.Error("RangeIterator should have more elements")
 		}
-		if val.(*Integer).Value != exp {
-			t.Errorf("RangeIterator value = %d, want %d", val.(*Integer).Value, exp)
+		if val.(*Integer).IntValue() != exp {
+			t.Errorf("RangeIterator value = %d, want %d", val.(*Integer).IntValue(), exp)
 		}
 	}
 }
 
 func TestZipIterator(t *testing.T) {
 	list1 := &List{Elements: []Object{
-		&Integer{Value: 1},
-		&Integer{Value: 2},
+		NewInteger(1),
+		NewInteger(2),
 	}}
 	list2 := &List{Elements: []Object{
-		&String{Value: "a"},
-		&String{Value: "b"},
+		NewString("a"),
+		NewString("b"),
 	}}
 
 	it := NewZipIterator([]Object{list1, list2})
@@ -921,9 +921,9 @@ func TestZipIterator(t *testing.T) {
 
 func TestReversedIterator(t *testing.T) {
 	list := &List{Elements: []Object{
-		&Integer{Value: 1},
-		&Integer{Value: 2},
-		&Integer{Value: 3},
+		NewInteger(1),
+		NewInteger(2),
+		NewInteger(3),
 	}}
 
 	it := NewReversedIterator(list)
@@ -934,16 +934,16 @@ func TestReversedIterator(t *testing.T) {
 		if !hasNext {
 			t.Error("ReversedIterator should have more elements")
 		}
-		if val.(*Integer).Value != exp {
-			t.Errorf("ReversedIterator value = %d, want %d", val.(*Integer).Value, exp)
+		if val.(*Integer).IntValue() != exp {
+			t.Errorf("ReversedIterator value = %d, want %d", val.(*Integer).IntValue(), exp)
 		}
 	}
 }
 
 func TestEnumerateIterator(t *testing.T) {
 	list := &List{Elements: []Object{
-		&String{Value: "a"},
-		&String{Value: "b"},
+		NewString("a"),
+		NewString("b"),
 	}}
 
 	it := NewEnumerateIterator(list, 0)
@@ -959,7 +959,7 @@ func TestEnumerateIterator(t *testing.T) {
 			t.Error("EnumerateIterator should return (index, value) tuples")
 		}
 
-		index := tuple.Elements[0].(*Integer).Value
+		index := tuple.Elements[0].(*Integer).IntValue()
 		if index != int64(i) {
 			t.Errorf("EnumerateIterator index = %d, want %d", index, i)
 		}
@@ -968,14 +968,14 @@ func TestEnumerateIterator(t *testing.T) {
 
 func TestIterableToSlice(t *testing.T) {
 	// Test List
-	list := &List{Elements: []Object{&Integer{Value: 1}, &Integer{Value: 2}}}
+	list := &List{Elements: []Object{NewInteger(1), NewInteger(2)}}
 	slice, ok := IterableToSlice(list)
 	if !ok || len(slice) != 2 {
 		t.Error("IterableToSlice(List) should work")
 	}
 
 	// Test String
-	str := &String{Value: "ab"}
+	str := NewString("ab")
 	slice, ok = IterableToSlice(str)
 	if !ok || len(slice) != 2 {
 		t.Error("IterableToSlice(String) should work")
@@ -983,7 +983,7 @@ func TestIterableToSlice(t *testing.T) {
 
 	// Test Dict
 	dict := &Dict{Pairs: map[string]DictPair{
-		"a": {Key: &String{Value: "a"}, Value: &Integer{Value: 1}},
+		"a": {Key: NewString("a"), Value: NewInteger(1)},
 	}}
 	slice, ok = IterableToSlice(dict)
 	if !ok || len(slice) != 1 {
@@ -991,7 +991,7 @@ func TestIterableToSlice(t *testing.T) {
 	}
 
 	// Test invalid type
-	invalid := &Integer{Value: 42}
+	invalid := NewInteger(42)
 	_, ok = IterableToSlice(invalid)
 	if ok {
 		t.Error("IterableToSlice(Integer) should fail")
@@ -1000,8 +1000,8 @@ func TestIterableToSlice(t *testing.T) {
 
 func TestDictKeys(t *testing.T) {
 	dict := &Dict{Pairs: map[string]DictPair{
-		"a": {Key: &String{Value: "a"}, Value: &Integer{Value: 1}},
-		"b": {Key: &String{Value: "b"}, Value: &Integer{Value: 2}},
+		"a": {Key: NewString("a"), Value: NewInteger(1)},
+		"b": {Key: NewString("b"), Value: NewInteger(2)},
 	}}
 
 	keys := &DictKeys{Dict: dict}
@@ -1028,7 +1028,7 @@ func TestDictKeys(t *testing.T) {
 
 func TestDictValues(t *testing.T) {
 	dict := &Dict{Pairs: map[string]DictPair{
-		"a": {Key: &String{Value: "a"}, Value: &Integer{Value: 1}},
+		"a": {Key: NewString("a"), Value: NewInteger(1)},
 	}}
 
 	values := &DictValues{Dict: dict}
@@ -1047,7 +1047,7 @@ func TestDictValues(t *testing.T) {
 
 func TestDictItems(t *testing.T) {
 	dict := &Dict{Pairs: map[string]DictPair{
-		"a": {Key: &String{Value: "a"}, Value: &Integer{Value: 1}},
+		"a": {Key: NewString("a"), Value: NewInteger(1)},
 	}}
 
 	items := &DictItems{Dict: dict}
@@ -1075,7 +1075,7 @@ func TestIsError(t *testing.T) {
 		t.Error("IsError(Error) should return true")
 	}
 
-	if IsError(&Integer{Value: 42}) {
+	if IsError(NewInteger(42)) {
 		t.Error("IsError(Integer) should return false")
 	}
 
@@ -1130,7 +1130,7 @@ func TestLibraryBuilderHasConstant(t *testing.T) {
 		t.Error("HasConstant should return false for non-existent constant")
 	}
 
-	builder.Constant("PI", &Float{Value: 3.14})
+	builder.Constant("PI", NewFloat(3.14))
 
 	if !builder.HasConstant("PI") {
 		t.Error("HasConstant should return true for existing constant")
@@ -1154,7 +1154,7 @@ func TestLibraryBuilderRemoveFunction(t *testing.T) {
 
 func TestLibraryBuilderRemoveConstant(t *testing.T) {
 	builder := NewLibraryBuilder("test", "Test library")
-	builder.Constant("PI", &Float{Value: 3.14})
+	builder.Constant("PI", NewFloat(3.14))
 
 	if !builder.HasConstant("PI") {
 		t.Error("Constant should exist")
@@ -1189,8 +1189,8 @@ func TestLibraryBuilderConstantCount(t *testing.T) {
 		t.Errorf("ConstantCount = %d, want 0", builder.ConstantCount())
 	}
 
-	builder.Constant("PI", &Float{Value: 3.14})
-	builder.Constant("E", &Float{Value: 2.71})
+	builder.Constant("PI", NewFloat(3.14))
+	builder.Constant("E", NewFloat(2.71))
 
 	if builder.ConstantCount() != 2 {
 		t.Errorf("ConstantCount = %d, want 2", builder.ConstantCount())
@@ -1200,7 +1200,7 @@ func TestLibraryBuilderConstantCount(t *testing.T) {
 func TestLibraryBuilderClear(t *testing.T) {
 	builder := NewLibraryBuilder("test", "Test library")
 	builder.Function("foo", func() int { return 42 })
-	builder.Constant("PI", &Float{Value: 3.14})
+	builder.Constant("PI", NewFloat(3.14))
 
 	if builder.FunctionCount() != 1 {
 		t.Error("Function should exist")
@@ -1222,11 +1222,11 @@ func TestLibraryBuilderClear(t *testing.T) {
 func TestLibraryBuilderMerge(t *testing.T) {
 	builder1 := NewLibraryBuilder("lib1", "Library 1")
 	builder1.Function("foo", func() int { return 42 })
-	builder1.Constant("PI", &Float{Value: 3.14})
+	builder1.Constant("PI", NewFloat(3.14))
 
 	builder2 := NewLibraryBuilder("lib2", "Library 2")
 	builder2.Function("bar", func() int { return 43 })
-	builder2.Constant("E", &Float{Value: 2.71})
+	builder2.Constant("E", NewFloat(2.71))
 
 	builder1.Merge(builder2)
 
@@ -1265,8 +1265,8 @@ func TestLibraryBuilderSubLibrary(t *testing.T) {
 
 func TestLibraryBuilderConstant(t *testing.T) {
 	builder := NewLibraryBuilder("test", "Test library")
-	builder.Constant("PI", &Float{Value: 3.14})
-	builder.Constant("E", &Float{Value: 2.71})
+	builder.Constant("PI", NewFloat(3.14))
+	builder.Constant("E", NewFloat(2.71))
 
 	lib := builder.Build()
 	constants := lib.Constants()
@@ -1279,8 +1279,8 @@ func TestLibraryBuilderConstant(t *testing.T) {
 	if !ok {
 		t.Error("PI should be a Float")
 	}
-	if pi.Value != 3.14 {
-		t.Errorf("PI = %f, want 3.14", pi.Value)
+	if pi.FloatValue() != 3.14 {
+		t.Errorf("PI = %f, want 3.14", pi.FloatValue())
 	}
 }
 
@@ -1322,8 +1322,8 @@ func TestLibraryBuilderFunctionFromVariadic(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *Integer, got %T", result)
 	}
-	if intObj.Value != 6 {
-		t.Fatalf("expected 6, got %d", intObj.Value)
+	if intObj.IntValue() != 6 {
+		t.Fatalf("expected 6, got %d", intObj.IntValue())
 	}
 }
 
@@ -1338,8 +1338,8 @@ func TestLibraryBuilderFunctionFromVariadicZeroArgs(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *Integer, got %T", result)
 	}
-	if intObj.Value != 0 {
-		t.Fatalf("expected 0, got %d", intObj.Value)
+	if intObj.IntValue() != 0 {
+		t.Fatalf("expected 0, got %d", intObj.IntValue())
 	}
 }
 
@@ -1413,7 +1413,7 @@ func TestNewKwargs(t *testing.T) {
 
 	// Test with values
 	kwargs = NewKwargs(map[string]Object{
-		"foo": &String{Value: "bar"},
+		"foo": NewString("bar"),
 	})
 	if len(kwargs.Kwargs) != 1 {
 		t.Errorf("len(kwargs.Kwargs) = %d, want 1", len(kwargs.Kwargs))
@@ -1431,7 +1431,7 @@ func TestKwargsMustGetString(t *testing.T) {
 		{
 			name: "key exists",
 			kwargs: Kwargs{Kwargs: map[string]Object{
-				"foo": &String{Value: "bar"},
+		"foo": NewString("bar"),
 			}},
 			key:      "foo",
 			default_: "",
@@ -1466,8 +1466,8 @@ func TestKwargsMustGetString(t *testing.T) {
 func TestResetStore(t *testing.T) {
 	t.Run("removes_all_keys_when_keep_is_empty", func(t *testing.T) {
 		env := NewEnvironment()
-		env.Set("a", &Integer{Value: 1})
-		env.Set("b", &Integer{Value: 2})
+		env.Set("a", NewInteger(1))
+		env.Set("b", NewInteger(2))
 
 		env.ResetStore(map[string]bool{})
 
@@ -1481,8 +1481,8 @@ func TestResetStore(t *testing.T) {
 
 	t.Run("keeps_specified_keys", func(t *testing.T) {
 		env := NewEnvironment()
-		env.Set("keep", &Integer{Value: 1})
-		env.Set("remove", &Integer{Value: 2})
+		env.Set("keep", NewInteger(1))
+		env.Set("remove", NewInteger(2))
 
 		env.ResetStore(map[string]bool{"keep": true})
 
@@ -1496,7 +1496,7 @@ func TestResetStore(t *testing.T) {
 
 	t.Run("nil_keep_removes_all", func(t *testing.T) {
 		env := NewEnvironment()
-		env.Set("x", &Integer{Value: 42})
+		env.Set("x", NewInteger(42))
 
 		env.ResetStore(nil)
 
@@ -1507,9 +1507,9 @@ func TestResetStore(t *testing.T) {
 
 	t.Run("does_not_affect_outer_scope", func(t *testing.T) {
 		outer := NewEnvironment()
-		outer.Set("outer_var", &Integer{Value: 99})
+		outer.Set("outer_var", NewInteger(99))
 		inner := NewEnclosedEnvironment(outer)
-		inner.Set("inner_var", &Integer{Value: 1})
+		inner.Set("inner_var", NewInteger(1))
 
 		inner.ResetStore(map[string]bool{})
 
@@ -1530,7 +1530,7 @@ func TestGetClientField(t *testing.T) {
 		Fields: map[string]Object{
 			"_client": &ClientWrapper{
 				TypeName: "TestClient",
-				Client:   &String{Value: "test"},
+				Client:   NewString("test"),
 			},
 		},
 	}
@@ -1550,7 +1550,7 @@ func TestGetClientField(t *testing.T) {
 	}
 
 	// Test non-ClientWrapper field
-	instance.Fields["foo"] = &String{Value: "bar"}
+	instance.Fields["foo"] = NewString("bar")
 	_, ok = GetClientField(instance, "foo")
 	if ok {
 		t.Error("GetClientField should return false for non-ClientWrapper field")
@@ -1559,10 +1559,10 @@ func TestGetClientField(t *testing.T) {
 
 func TestCloneObjectDropsInstanceNativeData(t *testing.T) {
 	class := &Class{Name: "NativeBacked", Methods: map[string]Object{}}
-	native := &String{Value: "native"}
+	native := NewString("native")
 	instance := &Instance{
 		Class:      class,
-		Fields:     map[string]Object{"items": &List{Elements: []Object{&String{Value: "value"}}}},
+		Fields:     map[string]Object{"items": &List{Elements: []Object{NewString("value")}}},
 		NativeData: native,
 	}
 
@@ -1604,7 +1604,7 @@ func TestGetFloatMatrix(t *testing.T) {
 		t.Fatal("expected ok=false for 1D FloatArray")
 	}
 
-	list := &List{Elements: []Object{&Float{Value: 1.0}}}
+	list := &List{Elements: []Object{NewFloat(1.0)}}
 	_, _, _, ok = GetFloatMatrix(list)
 	if ok {
 		t.Fatal("expected ok=false for List")

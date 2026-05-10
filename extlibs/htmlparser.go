@@ -40,20 +40,20 @@ var htmlParserMethods = map[string]object.Object{
 			}
 
 			// Initialize parser state
-			instance.Fields["_data"] = &object.String{Value: ""}
+			instance.Fields["_data"] = object.NewString("")
 			instance.Fields["_pos"] = object.NewInteger(0)
 			instance.Fields["_line"] = object.NewInteger(1)
 			instance.Fields["_offset"] = object.NewInteger(0)
-			instance.Fields["_lasttag"] = &object.String{Value: ""}
-			instance.Fields["_rawdata"] = &object.String{Value: ""}
+			instance.Fields["_lasttag"] = object.NewString("")
+			instance.Fields["_rawdata"] = object.NewString("")
 
 			// Check for convert_charrefs kwarg (default True)
 			convertCharrefs := true
 			if val, ok := kwargs.Kwargs["convert_charrefs"]; ok {
 				if boolVal, ok := val.(*object.Boolean); ok {
-					convertCharrefs = boolVal.Value
-				}
+				convertCharrefs = boolVal.BoolValue()
 			}
+		}
 			instance.Fields["convert_charrefs"] = object.NewBoolean(convertCharrefs)
 
 			return &object.Null{}
@@ -78,7 +78,7 @@ Parameters:
 			}
 
 			// Parse the HTML data
-			return parseHTML(ctx, instance, dataStr.Value)
+			return parseHTML(ctx, instance, dataStr.StringValue())
 		},
 		HelpText: `feed(data) - Feed HTML data to the parser
 
@@ -102,12 +102,12 @@ Parses the HTML data and calls handler methods for each element.`,
 			}
 
 			// Reset parser state
-			instance.Fields["_data"] = &object.String{Value: ""}
+			instance.Fields["_data"] = object.NewString("")
 			instance.Fields["_pos"] = object.NewInteger(0)
 			instance.Fields["_line"] = object.NewInteger(1)
 			instance.Fields["_offset"] = object.NewInteger(0)
-			instance.Fields["_lasttag"] = &object.String{Value: ""}
-			instance.Fields["_rawdata"] = &object.String{Value: ""}
+			instance.Fields["_lasttag"] = object.NewString("")
+			instance.Fields["_rawdata"] = object.NewString("")
 
 			return &object.Null{}
 		},
@@ -272,7 +272,7 @@ func parseHTML(ctx context.Context, instance *object.Instance, data string) obje
 	convertCharrefs := true
 	if val, ok := instance.Fields["convert_charrefs"]; ok {
 		if boolVal, ok := val.(*object.Boolean); ok {
-			convertCharrefs = boolVal.Value
+			convertCharrefs = boolVal.BoolValue()
 		}
 	}
 
@@ -289,7 +289,7 @@ func parseHTML(ctx context.Context, instance *object.Instance, data string) obje
 						end := strings.Index(data[i:], "-->")
 						if end != -1 {
 							comment := data[i+4 : i+end]
-							callHandler(ctx, instance, "handle_comment", &object.String{Value: comment})
+							callHandler(ctx, instance, "handle_comment", object.NewString(comment))
 							i = i + end + 3
 							continue
 						}
@@ -298,7 +298,7 @@ func parseHTML(ctx context.Context, instance *object.Instance, data string) obje
 						end := strings.Index(data[i:], ">")
 						if end != -1 {
 							decl := data[i+2 : i+end]
-							callHandler(ctx, instance, "handle_decl", &object.String{Value: decl})
+							callHandler(ctx, instance, "handle_decl", object.NewString(decl))
 							i = i + end + 1
 							continue
 						}
@@ -307,7 +307,7 @@ func parseHTML(ctx context.Context, instance *object.Instance, data string) obje
 						end := strings.Index(data[i:], "]]>")
 						if end != -1 {
 							cdata := data[i+9 : i+end]
-							callHandler(ctx, instance, "handle_data", &object.String{Value: cdata})
+							callHandler(ctx, instance, "handle_data", object.NewString(cdata))
 							i = i + end + 3
 							continue
 						}
@@ -317,7 +317,7 @@ func parseHTML(ctx context.Context, instance *object.Instance, data string) obje
 					end := strings.Index(data[i:], "?>")
 					if end != -1 {
 						pi := data[i+2 : i+end]
-						callHandler(ctx, instance, "handle_pi", &object.String{Value: pi})
+						callHandler(ctx, instance, "handle_pi", object.NewString(pi))
 						i = i + end + 2
 						continue
 					}
@@ -326,7 +326,7 @@ func parseHTML(ctx context.Context, instance *object.Instance, data string) obje
 					end := strings.Index(data[i:], ">")
 					if end != -1 {
 						tag := strings.TrimSpace(strings.ToLower(data[i+2 : i+end]))
-						callHandler(ctx, instance, "handle_endtag", &object.String{Value: tag})
+						callHandler(ctx, instance, "handle_endtag", object.NewString(tag))
 						i = i + end + 1
 						continue
 					}
@@ -344,21 +344,21 @@ func parseHTML(ctx context.Context, instance *object.Instance, data string) obje
 						tag = strings.ToLower(tag)
 
 						// Store the last start tag text
-						instance.Fields["_lasttag"] = &object.String{Value: data[i : i+end+1]}
+						instance.Fields["_lasttag"] = object.NewString(data[i : i+end+1])
 
 						// Convert attrs to list of tuples
 						attrsList := &object.List{Elements: make([]object.Object, len(attrs))}
 						for j, attr := range attrs {
 							attrsList.Elements[j] = &object.Tuple{Elements: []object.Object{
-								&object.String{Value: attr[0]},
-								&object.String{Value: attr[1]},
+								object.NewString(attr[0]),
+								object.NewString(attr[1]),
 							}}
 						}
 
 						if selfClosing {
-							callHandler(ctx, instance, "handle_startendtag", &object.String{Value: tag}, attrsList)
+							callHandler(ctx, instance, "handle_startendtag", object.NewString(tag), attrsList)
 						} else {
-							callHandler(ctx, instance, "handle_starttag", &object.String{Value: tag}, attrsList)
+							callHandler(ctx, instance, "handle_starttag", object.NewString(tag), attrsList)
 						}
 						i = i + end + 1
 						continue
@@ -387,7 +387,7 @@ func parseHTML(ctx context.Context, instance *object.Instance, data string) obje
 					textData = processCharRefs(ctx, instance, textData)
 				}
 				if len(strings.TrimSpace(textData)) > 0 || len(textData) > 0 {
-					callHandler(ctx, instance, "handle_data", &object.String{Value: textData})
+					callHandler(ctx, instance, "handle_data", object.NewString(textData))
 				}
 			}
 		}
@@ -460,12 +460,12 @@ func processCharRefs(ctx context.Context, instance *object.Instance, data string
 				ref := data[i+1 : i+end]
 				if ref[0] == '#' {
 					// Numeric character reference
-					callHandler(ctx, instance, "handle_charref", &object.String{Value: ref[1:]})
+					callHandler(ctx, instance, "handle_charref", object.NewString(ref[1:]))
 					i = i + end + 1
 					continue
 				} else {
 					// Named character reference
-					callHandler(ctx, instance, "handle_entityref", &object.String{Value: ref})
+					callHandler(ctx, instance, "handle_entityref", object.NewString(ref))
 					i = i + end + 1
 					continue
 				}

@@ -20,8 +20,8 @@ var ItertoolsLibrary = object.NewLibrary(ItertoolsLibraryName, map[string]*objec
 				case *object.Tuple:
 					result = append(result, a.Elements...)
 				case *object.String:
-					for _, ch := range a.Value {
-						result = append(result, &object.String{Value: string(ch)})
+					for _, ch := range a.StringValue() {
+						result = append(result, object.NewString(string(ch)))
 					}
 				default:
 					return errors.NewTypeError("iterable", arg.Type().String())
@@ -47,7 +47,7 @@ Example:
 			times := int64(1)
 			if len(args) == 2 {
 				if n, ok := args[1].(*object.Integer); ok {
-					times = n.Value
+					times = n.IntValue()
 				} else {
 					return errors.NewTypeError("INTEGER", args[1].Type().String())
 				}
@@ -82,8 +82,8 @@ Example:
 			case *object.Tuple:
 				elements = a.Elements
 			case *object.String:
-				for _, ch := range a.Value {
-					elements = append(elements, &object.String{Value: string(ch)})
+				for _, ch := range a.StringValue() {
+					elements = append(elements, object.NewString(string(ch)))
 				}
 			default:
 				return errors.NewTypeError("iterable", args[0].Type().String())
@@ -92,11 +92,11 @@ Example:
 			if !ok {
 				return errors.NewTypeError("INTEGER", args[1].Type().String())
 			}
-			if len(elements) == 0 || n.Value <= 0 {
+			if len(elements) == 0 || n.IntValue() <= 0 {
 				return &object.List{Elements: []object.Object{}}
 			}
-			result := make([]object.Object, 0, len(elements)*int(n.Value))
-			for i := int64(0); i < n.Value; i++ {
+			result := make([]object.Object, 0, len(elements)*int(n.IntValue()))
+			for i := int64(0); i < n.IntValue(); i++ {
 				result = append(result, elements...)
 			}
 			return &object.List{Elements: result}
@@ -126,7 +126,7 @@ Example:
 			step := int64(1)
 			if len(args) == 3 {
 				if s, ok := args[2].(*object.Integer); ok {
-					step = s.Value
+					step = s.IntValue()
 				} else {
 					return errors.NewTypeError("INTEGER", args[2].Type().String())
 				}
@@ -136,11 +136,11 @@ Example:
 			}
 			result := []object.Object{}
 			if step > 0 {
-				for i := start.Value; i < stop.Value; i += step {
+				for i := start.IntValue(); i < stop.IntValue(); i += step {
 					result = append(result, object.NewInteger(i))
 				}
 			} else {
-				for i := start.Value; i > stop.Value; i += step {
+				for i := start.IntValue(); i > stop.IntValue(); i += step {
 					result = append(result, object.NewInteger(i))
 				}
 			}
@@ -168,8 +168,8 @@ Example:
 			case *object.Tuple:
 				elements = a.Elements
 			case *object.String:
-				for _, ch := range a.Value {
-					elements = append(elements, &object.String{Value: string(ch)})
+				for _, ch := range a.StringValue() {
+					elements = append(elements, object.NewString(string(ch)))
 				}
 			default:
 				return errors.NewTypeError("iterable", args[0].Type().String())
@@ -179,25 +179,25 @@ Example:
 			if len(args) == 2 {
 				// islice(iterable, stop)
 				if s, ok := args[1].(*object.Integer); ok {
-					stop = s.Value
+					stop = s.IntValue()
 				} else {
 					return errors.NewTypeError("INTEGER", args[1].Type().String())
 				}
 			} else {
 				// islice(iterable, start, stop[, step])
 				if s, ok := args[1].(*object.Integer); ok {
-					start = s.Value
+					start = s.IntValue()
 				} else {
 					return errors.NewTypeError("INTEGER", args[1].Type().String())
 				}
 				if s, ok := args[2].(*object.Integer); ok {
-					stop = s.Value
+					stop = s.IntValue()
 				} else {
 					return errors.NewTypeError("INTEGER", args[2].Type().String())
 				}
 				if len(args) == 4 {
 					if s, ok := args[3].(*object.Integer); ok {
-						step = s.Value
+						step = s.IntValue()
 					} else {
 						return errors.NewTypeError("INTEGER", args[3].Type().String())
 					}
@@ -337,8 +337,8 @@ Example:
 					iterables[i] = a.Elements
 				case *object.String:
 					chars := []object.Object{}
-					for _, ch := range a.Value {
-						chars = append(chars, &object.String{Value: string(ch)})
+					for _, ch := range a.StringValue() {
+						chars = append(chars, object.NewString(string(ch)))
 					}
 					iterables[i] = chars
 				default:
@@ -388,8 +388,8 @@ Example:
 					iterables[i] = a.Elements
 				case *object.String:
 					chars := []object.Object{}
-					for _, ch := range a.Value {
-						chars = append(chars, &object.String{Value: string(ch)})
+					for _, ch := range a.StringValue() {
+						chars = append(chars, object.NewString(string(ch)))
 					}
 					iterables[i] = chars
 				default:
@@ -453,8 +453,8 @@ Example:
 			case *object.Tuple:
 				elements = a.Elements
 			case *object.String:
-				for _, ch := range a.Value {
-					elements = append(elements, &object.String{Value: string(ch)})
+				for _, ch := range a.StringValue() {
+					elements = append(elements, object.NewString(string(ch)))
 				}
 			default:
 				return errors.NewTypeError("iterable", args[0].Type().String())
@@ -463,7 +463,7 @@ Example:
 			r := len(elements)
 			if len(args) == 2 {
 				if rArg, ok := args[1].(*object.Integer); ok {
-					r = int(rArg.Value)
+					r = int(rArg.IntValue())
 				} else {
 					return errors.NewTypeError("INTEGER", args[1].Type().String())
 				}
@@ -500,8 +500,8 @@ Example:
 			case *object.Tuple:
 				elements = a.Elements
 			case *object.String:
-				for _, ch := range a.Value {
-					elements = append(elements, &object.String{Value: string(ch)})
+				for _, ch := range a.StringValue() {
+					elements = append(elements, object.NewString(string(ch)))
 				}
 			default:
 				return errors.NewTypeError("iterable", args[0].Type().String())
@@ -511,7 +511,7 @@ Example:
 			if !ok {
 				return errors.NewTypeError("INTEGER", args[1].Type().String())
 			}
-			r := int(rArg.Value)
+			r := int(rArg.IntValue())
 
 			if r < 0 || r > len(elements) {
 				return &object.List{Elements: []object.Object{}}
@@ -543,8 +543,8 @@ Example:
 			case *object.Tuple:
 				elements = a.Elements
 			case *object.String:
-				for _, ch := range a.Value {
-					elements = append(elements, &object.String{Value: string(ch)})
+				for _, ch := range a.StringValue() {
+					elements = append(elements, object.NewString(string(ch)))
 				}
 			default:
 				return errors.NewTypeError("iterable", args[0].Type().String())
@@ -554,7 +554,7 @@ Example:
 			if !ok {
 				return errors.NewTypeError("INTEGER", args[1].Type().String())
 			}
-			r := int(rArg.Value)
+			r := int(rArg.IntValue())
 
 			if r < 0 {
 				return &object.List{Elements: []object.Object{}}
@@ -853,8 +853,8 @@ Example:
 			case *object.Tuple:
 				elements = a.Elements
 			case *object.String:
-				for _, ch := range a.Value {
-					elements = append(elements, &object.String{Value: string(ch)})
+				for _, ch := range a.StringValue() {
+					elements = append(elements, object.NewString(string(ch)))
 				}
 			default:
 				return errors.NewTypeError("iterable", args[0].Type().String())
@@ -891,8 +891,8 @@ Example:
 			case *object.Tuple:
 				elements = a.Elements
 			case *object.String:
-				for _, ch := range a.Value {
-					elements = append(elements, &object.String{Value: string(ch)})
+				for _, ch := range a.StringValue() {
+					elements = append(elements, object.NewString(string(ch)))
 				}
 			default:
 				return errors.NewTypeError("iterable", args[0].Type().String())
@@ -902,11 +902,11 @@ Example:
 			if !ok {
 				return errors.NewTypeError("INTEGER", args[1].Type().String())
 			}
-			if n.Value <= 0 {
+			if n.IntValue() <= 0 {
 				return errors.NewError("n must be positive")
 			}
 
-			batchSize := int(n.Value)
+			batchSize := int(n.IntValue())
 			result := []object.Object{}
 			for i := 0; i < len(elements); i += batchSize {
 				end := i + batchSize
@@ -985,19 +985,19 @@ func objectsEqual(a, b object.Object) bool {
 	switch av := a.(type) {
 	case *object.Integer:
 		if bv, ok := b.(*object.Integer); ok {
-			return av.Value == bv.Value
+			return av.IntValue() == bv.IntValue()
 		}
 	case *object.Float:
 		if bv, ok := b.(*object.Float); ok {
-			return av.Value == bv.Value
+			return av.FloatValue() == bv.FloatValue()
 		}
 	case *object.String:
 		if bv, ok := b.(*object.String); ok {
-			return av.Value == bv.Value
+			return av.StringValue() == bv.StringValue()
 		}
 	case *object.Boolean:
 		if bv, ok := b.(*object.Boolean); ok {
-			return av.Value == bv.Value
+			return av.BoolValue() == bv.BoolValue()
 		}
 	case *object.Null:
 		_, ok := b.(*object.Null)
@@ -1012,20 +1012,20 @@ func addObjects(a, b object.Object) object.Object {
 	case *object.Integer:
 		switch bv := b.(type) {
 		case *object.Integer:
-			return object.NewInteger(av.Value + bv.Value)
+			return object.NewInteger(av.IntValue() + bv.IntValue())
 		case *object.Float:
-			return &object.Float{Value: float64(av.Value) + bv.Value}
+			return object.NewFloat(float64(av.IntValue()) + bv.FloatValue())
 		}
 	case *object.Float:
 		switch bv := b.(type) {
 		case *object.Integer:
-			return &object.Float{Value: av.Value + float64(bv.Value)}
+			return object.NewFloat(av.FloatValue() + float64(bv.IntValue()))
 		case *object.Float:
-			return &object.Float{Value: av.Value + bv.Value}
+			return object.NewFloat(av.FloatValue() + bv.FloatValue())
 		}
 	case *object.String:
 		if bv, ok := b.(*object.String); ok {
-			return &object.String{Value: av.Value + bv.Value}
+			return object.NewString(av.StringValue() + bv.StringValue())
 		}
 	case *object.List:
 		if bv, ok := b.(*object.List); ok {
@@ -1043,13 +1043,13 @@ func isTruthy(obj object.Object) bool {
 	case *object.Null:
 		return false
 	case *object.Boolean:
-		return v.Value
+		return v.BoolValue()
 	case *object.Integer:
-		return v.Value != 0
+		return v.IntValue() != 0
 	case *object.Float:
-		return v.Value != 0
+		return v.FloatValue() != 0
 	case *object.String:
-		return len(v.Value) > 0
+		return len(v.StringValue()) > 0
 	case *object.List:
 		return len(v.Elements) > 0
 	case *object.Dict:

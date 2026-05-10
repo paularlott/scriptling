@@ -12,9 +12,9 @@ func TestBuiltinLen(t *testing.T) {
 		input    object.Object
 		expected int64
 	}{
-		{&object.String{Value: "hello"}, 5},
-		{&object.String{Value: ""}, 0},
-		{&object.List{Elements: []object.Object{&object.Integer{Value: 1}, &object.Integer{Value: 2}}}, 2},
+		{object.NewString("hello"), 5},
+		{object.NewString(""), 0},
+		{&object.List{Elements: []object.Object{object.NewInteger(1), object.NewInteger(2)}}, 2},
 		{&object.List{Elements: []object.Object{}}, 0},
 	}
 
@@ -25,14 +25,14 @@ func TestBuiltinLen(t *testing.T) {
 			t.Errorf("object is not Integer. got=%T (%+v)", result, result)
 			continue
 		}
-		if integer.Value != tt.expected {
-			t.Errorf("wrong value. got=%d, want=%d", integer.Value, tt.expected)
+		if integer.IntValue() != tt.expected {
+			t.Errorf("wrong value. got=%d, want=%d", integer.IntValue(), tt.expected)
 		}
 	}
 }
 
 func TestBuiltinLenError(t *testing.T) {
-	result := builtins["len"].Fn(context.Background(), object.NewKwargs(nil), &object.Integer{Value: 1})
+	result := builtins["len"].Fn(context.Background(), object.NewKwargs(nil), object.NewInteger(1))
 	if !object.IsError(result) {
 		t.Errorf("expected error for len(1), got %T", result)
 	}
@@ -40,11 +40,11 @@ func TestBuiltinLenError(t *testing.T) {
 
 func TestBuiltinCopyInstanceDropsNativeData(t *testing.T) {
 	class := &object.Class{Name: "NativeBacked", Methods: map[string]object.Object{}}
-	sharedField := &object.List{Elements: []object.Object{&object.String{Value: "value"}}}
+	sharedField := &object.List{Elements: []object.Object{object.NewString("value")}}
 	instance := &object.Instance{
 		Class:      class,
 		Fields:     map[string]object.Object{"items": sharedField},
-		NativeData: &object.String{Value: "native"},
+		NativeData: object.NewString("native"),
 	}
 
 	result := builtins["copy"].Fn(context.Background(), object.NewKwargs(nil), instance)
@@ -68,9 +68,9 @@ func TestBuiltinStr(t *testing.T) {
 		input    object.Object
 		expected string
 	}{
-		{&object.Integer{Value: 42}, "42"},
-		{&object.Float{Value: 3.14}, "3.14"},
-		{&object.String{Value: "hello"}, "hello"},
+		{object.NewInteger(42), "42"},
+		{object.NewFloat(3.14), "3.14"},
+		{object.NewString("hello"), "hello"},
 		{object.NewBoolean(true), "true"},
 	}
 
@@ -81,8 +81,8 @@ func TestBuiltinStr(t *testing.T) {
 			t.Errorf("object is not String. got=%T (%+v)", result, result)
 			continue
 		}
-		if str.Value != tt.expected {
-			t.Errorf("wrong value. got=%q, want=%q", str.Value, tt.expected)
+		if str.StringValue() != tt.expected {
+			t.Errorf("wrong value. got=%q, want=%q", str.StringValue(), tt.expected)
 		}
 	}
 }
@@ -92,9 +92,9 @@ func TestBuiltinInt(t *testing.T) {
 		input    object.Object
 		expected int64
 	}{
-		{&object.Integer{Value: 42}, 42},
-		{&object.Float{Value: 3.14}, 3},
-		{&object.String{Value: "123"}, 123},
+		{object.NewInteger(42), 42},
+		{object.NewFloat(3.14), 3},
+		{object.NewString("123"), 123},
 	}
 
 	for _, tt := range tests {
@@ -104,8 +104,8 @@ func TestBuiltinInt(t *testing.T) {
 			t.Errorf("object is not Integer. got=%T (%+v)", result, result)
 			continue
 		}
-		if integer.Value != tt.expected {
-			t.Errorf("wrong value. got=%d, want=%d", integer.Value, tt.expected)
+		if integer.IntValue() != tt.expected {
+			t.Errorf("wrong value. got=%d, want=%d", integer.IntValue(), tt.expected)
 		}
 	}
 }
@@ -115,9 +115,9 @@ func TestBuiltinFloat(t *testing.T) {
 		input    object.Object
 		expected float64
 	}{
-		{&object.Float{Value: 3.14}, 3.14},
-		{&object.Integer{Value: 42}, 42.0},
-		{&object.String{Value: "3.14"}, 3.14},
+		{object.NewFloat(3.14), 3.14},
+		{object.NewInteger(42), 42.0},
+		{object.NewString("3.14"), 3.14},
 	}
 
 	for _, tt := range tests {
@@ -127,8 +127,8 @@ func TestBuiltinFloat(t *testing.T) {
 			t.Errorf("object is not Float. got=%T (%+v)", result, result)
 			continue
 		}
-		if float.Value != tt.expected {
-			t.Errorf("wrong value. got=%f, want=%f", float.Value, tt.expected)
+		if float.FloatValue() != tt.expected {
+			t.Errorf("wrong value. got=%f, want=%f", float.FloatValue(), tt.expected)
 		}
 	}
 }
@@ -138,9 +138,9 @@ func TestBuiltinType(t *testing.T) {
 		input    object.Object
 		expected string
 	}{
-		{&object.Integer{Value: 42}, "INTEGER"},
-		{&object.Float{Value: 3.14}, "FLOAT"},
-		{&object.String{Value: "hello"}, "STRING"},
+		{object.NewInteger(42), "INTEGER"},
+		{object.NewFloat(3.14), "FLOAT"},
+		{object.NewString("hello"), "STRING"},
 		{object.NewBoolean(true), "BOOLEAN"},
 		{&object.List{Elements: []object.Object{}}, "LIST"},
 		{&object.Dict{Pairs: make(map[string]object.DictPair)}, "DICT"},
@@ -153,8 +153,8 @@ func TestBuiltinType(t *testing.T) {
 			t.Errorf("object is not String. got=%T (%+v)", result, result)
 			continue
 		}
-		if str.Value != tt.expected {
-			t.Errorf("wrong value. got=%q, want=%q", str.Value, tt.expected)
+		if str.StringValue() != tt.expected {
+			t.Errorf("wrong value. got=%q, want=%q", str.StringValue(), tt.expected)
 		}
 	}
 }

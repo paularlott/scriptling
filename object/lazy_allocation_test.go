@@ -17,7 +17,7 @@ func TestLazyMapAllocation(t *testing.T) {
 		}
 		
 		// Setting a regular variable shouldn't allocate maps
-		env.Set("x", &Integer{Value: 42})
+		env.Set("x", NewInteger(42))
 		if env.globals != nil {
 			t.Error("globals map should still be nil after Set")
 		}
@@ -88,7 +88,7 @@ func TestLazyMapAllocation(t *testing.T) {
 		env := NewEnvironment()
 		
 		// Should work without panicking
-		result := env.Set("x", &Integer{Value: 42})
+		result := env.Set("x", NewInteger(42))
 		if result == nil {
 			t.Error("Set should return a value")
 		}
@@ -97,7 +97,7 @@ func TestLazyMapAllocation(t *testing.T) {
 		if !ok {
 			t.Error("Variable should be set")
 		}
-		if intVal, ok := val.(*Integer); !ok || intVal.Value != 42 {
+		if intVal, ok := val.(*Integer); !ok || intVal.IntValue() != 42 {
 			t.Error("Variable should have correct value")
 		}
 	})
@@ -107,22 +107,22 @@ func TestGlobalVariableBehavior(t *testing.T) {
 	t.Run("Global variable modification", func(t *testing.T) {
 		// Create root environment
 		root := NewEnvironment()
-		root.Set("x", &Integer{Value: 10})
+		root.Set("x", NewInteger(10))
 		
 		// Create nested environment
 		nested := NewEnclosedEnvironment(root)
 		nested.MarkGlobal("x")
 		
 		// Modify global variable from nested scope
-		nested.Set("x", &Integer{Value: 20})
+		nested.Set("x", NewInteger(20))
 		
 		// Check that root was modified
 		val, ok := root.Get("x")
 		if !ok {
 			t.Fatal("Global variable should exist in root")
 		}
-		if intVal, ok := val.(*Integer); !ok || intVal.Value != 20 {
-			t.Errorf("Global variable should be 20, got %v", intVal.Value)
+		if intVal, ok := val.(*Integer); !ok || intVal.IntValue() != 20 {
+			t.Errorf("Global variable should be 20, got %v", intVal.IntValue())
 		}
 	})
 }
@@ -134,22 +134,22 @@ func TestNonlocalVariableBehavior(t *testing.T) {
 		
 		// Create middle environment
 		middle := NewEnclosedEnvironment(root)
-		middle.Set("x", &Integer{Value: 10})
+		middle.Set("x", NewInteger(10))
 		
 		// Create nested environment
 		nested := NewEnclosedEnvironment(middle)
 		nested.MarkNonlocal("x")
 		
 		// Modify nonlocal variable
-		nested.Set("x", &Integer{Value: 20})
+		nested.Set("x", NewInteger(20))
 		
 		// Check that middle was modified, not nested
 		val, ok := middle.Get("x")
 		if !ok {
 			t.Fatal("Nonlocal variable should exist in middle")
 		}
-		if intVal, ok := val.(*Integer); !ok || intVal.Value != 20 {
-			t.Errorf("Nonlocal variable should be 20, got %v", intVal.Value)
+		if intVal, ok := val.(*Integer); !ok || intVal.IntValue() != 20 {
+			t.Errorf("Nonlocal variable should be 20, got %v", intVal.IntValue())
 		}
 		
 		// Check that nested doesn't have it locally
@@ -163,8 +163,8 @@ func BenchmarkEnvironmentAllocation(b *testing.B) {
 	b.Run("Without global/nonlocal", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			env := NewEnvironment()
-			env.Set("x", &Integer{Value: 42})
-			env.Set("y", &Integer{Value: 43})
+			env.Set("x", NewInteger(42))
+			env.Set("y", NewInteger(43))
 		}
 	})
 	
@@ -172,7 +172,7 @@ func BenchmarkEnvironmentAllocation(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			env := NewEnvironment()
 			env.MarkGlobal("x")
-			env.Set("x", &Integer{Value: 42})
+			env.Set("x", NewInteger(42))
 		}
 	})
 	
@@ -180,7 +180,7 @@ func BenchmarkEnvironmentAllocation(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			env := NewEnvironment()
 			env.MarkNonlocal("x")
-			env.Set("x", &Integer{Value: 42})
+			env.Set("x", NewInteger(42))
 		}
 	})
 }

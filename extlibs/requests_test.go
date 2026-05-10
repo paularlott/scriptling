@@ -137,9 +137,9 @@ func TestBuildURLWithParams(t *testing.T) {
 
 func TestExtractParams(t *testing.T) {
 	dict := map[string]object.Object{
-		"string": &object.String{Value: "hello"},
-		"int":    &object.Integer{Value: 42},
-		"float":  &object.Float{Value: 3.14},
+		"string": object.NewString("hello"),
+		"int":    object.NewInteger(42),
+		"float":  object.NewFloat(3.14),
 		"bool":   object.NewBoolean(true),
 	}
 

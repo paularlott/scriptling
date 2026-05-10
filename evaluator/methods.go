@@ -40,9 +40,9 @@ func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression
 		if str, ok := obj.(*object.String); ok {
 			switch mce.Method.Value() {
 			case "upper":
-				return &object.String{Value: fastStringUpper(str.Value)}
+				return object.NewString(fastStringUpper(str.StringValue()))
 			case "lower":
-				return &object.String{Value: fastStringLower(str.Value)}
+				return object.NewString(fastStringLower(str.StringValue()))
 			}
 		}
 	}
@@ -90,7 +90,7 @@ func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression
 			}
 			for _, pair := range dict.Pairs {
 				if str, ok := pair.Key.(*object.String); ok {
-					keywords[str.Value] = pair.Value
+					keywords[str.StringValue()] = pair.Value
 				} else {
 					return errors.NewError("keywords must be strings, not %s", pair.Key.Type())
 				}
@@ -118,7 +118,7 @@ func evalFastDictGet(ctx context.Context, dict *object.Dict, arguments []ast.Exp
 	}
 
 	if keyStr, ok := keyObj.(*object.String); ok {
-		if pair, exists := dict.Pairs[object.DictStringKey(keyStr.Value)]; exists {
+		if pair, exists := dict.Pairs[object.DictStringKey(keyStr.StringValue())]; exists {
 			return pair.Value
 		}
 		return defaultObj
@@ -240,7 +240,7 @@ func callStringMethodWithKeywords(ctx context.Context, obj object.Object, method
 		if len(keywords) > 0 {
 			return errors.NewError("type() does not accept keyword arguments")
 		}
-		return &object.String{Value: obj.Type().String()}
+		return object.NewString(obj.Type().String())
 	}
 
 	// Handle library method calls (dictionaries)
@@ -555,10 +555,10 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 				newPairs[key] = object.DictPair{Key: elem, Value: defaultVal}
 			}
 		case *object.String:
-			for _, ch := range iter.Value {
+			for _, ch := range iter.StringValue() {
 				s := string(ch)
-				key := object.DictKey(&object.String{Value: s})
-				newPairs[key] = object.DictPair{Key: &object.String{Value: s}, Value: defaultVal}
+				key := object.DictKey(object.NewString(s))
+				newPairs[key] = object.DictPair{Key: object.NewString(s), Value: defaultVal}
 			}
 		default:
 			return errors.NewTypeError("iterable (LIST, TUPLE, STRING)", args[0].Type().String())
@@ -567,7 +567,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 	}
 
 	// Check for non-callable dict values (for accessing dict attributes)
-	dictKey := object.DictKey(&object.String{Value: method})
+	dictKey := object.DictKey(object.NewString(method))
 	if pair, ok := dict.Pairs[dictKey]; ok {
 		// If it's not a callable, just return the value
 		if len(args) == 0 && len(keywords) == 0 {
@@ -801,22 +801,22 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
 		}
-		return &object.String{Value: fastStringUpper(str.Value)}
+		return object.NewString(fastStringUpper(str.StringValue()))
 	case "lower":
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
 		}
-		return &object.String{Value: fastStringLower(str.Value)}
+		return object.NewString(fastStringLower(str.StringValue()))
 	case "split":
 		if err := errors.MaxArgs(args, 2); err != nil {
 			return err
 		}
 		// If no argument, split on whitespace
 		if len(args) == 0 {
-			parts := strings.Fields(str.Value)
+			parts := strings.Fields(str.StringValue())
 			elements := make([]object.Object, len(parts))
 			for i, part := range parts {
-				elements[i] = &object.String{Value: part}
+				elements[i] = object.NewString(part)
 			}
 			return &object.List{Elements: elements}
 		}
@@ -828,27 +828,23 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 
 		var parts []string
 		if len(args) == 1 {
-			// No maxsplit specified, use Split (splits all occurrences)
-			parts = strings.Split(str.Value, sep)
+			parts = strings.Split(str.StringValue(), sep)
 		} else {
-			// maxsplit specified - convert from scriptling Object to int
 			maxsplitObj := args[1]
 			maxsplit, err := maxsplitObj.AsInt()
 			if err != nil {
 				return errors.ParameterError("maxsplit", err)
 			}
-			// strings.SplitN takes n as max number of parts (maxsplit + 1 in Python terms)
-			// If maxsplit is -1 (Python's default for unlimited), use -1
 			n := int(maxsplit + 1)
 			if maxsplit < 0 {
 				n = -1
 			}
-			parts = strings.SplitN(str.Value, sep, n)
+			parts = strings.SplitN(str.StringValue(), sep, n)
 		}
 
 		elements := make([]object.Object, len(parts))
 		for i, part := range parts {
-			elements[i] = &object.String{Value: part}
+			elements[i] = object.NewString(part)
 		}
 		return &object.List{Elements: elements}
 	case "replace":
@@ -863,7 +859,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if err != nil {
 			return err
 		}
-		return &object.String{Value: strings.ReplaceAll(str.Value, old, newVal)}
+		return object.NewString(strings.ReplaceAll(str.StringValue(), old, newVal))
 	case "join":
 		if err := errors.ExactArgs(args, 1); err != nil {
 			return err
@@ -885,15 +881,15 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 				parts[i] = elem.Inspect()
 			}
 		}
-		return &object.String{Value: strings.Join(parts, str.Value)}
+		return object.NewString(strings.Join(parts, str.StringValue()))
 	case "capitalize":
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
 		}
-		if len(str.Value) == 0 {
+		if len(str.StringValue()) == 0 {
 			return str
 		}
-		runes := []rune(str.Value)
+		runes := []rune(str.StringValue())
 		// Use strings.Builder for efficient string building
 		var builder strings.Builder
 		builder.Grow(len(runes))
@@ -901,12 +897,12 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		for _, r := range runes[1:] {
 			builder.WriteRune(unicode.ToLower(r))
 		}
-		return &object.String{Value: builder.String()}
+		return object.NewString(builder.String())
 	case "title":
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
 		}
-		return &object.String{Value: cases.Title(language.Und).String(str.Value)}
+		return object.NewString(cases.Title(language.Und).String(str.StringValue()))
 	case "strip":
 		if len(args) > 1 {
 			return errors.NewError("strip() takes at most 1 argument (%d given)", len(args))
@@ -916,9 +912,9 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			if errObj != nil {
 				return errors.ParameterError("chars", errObj)
 			}
-			return &object.String{Value: strings.Trim(str.Value, chars)}
+			return object.NewString(strings.Trim(str.StringValue(), chars))
 		}
-		return &object.String{Value: strings.TrimSpace(str.Value)}
+		return object.NewString(strings.TrimSpace(str.StringValue()))
 	case "lstrip":
 		if len(args) > 1 {
 			return errors.NewError("lstrip() takes at most 1 argument (%d given)", len(args))
@@ -928,9 +924,9 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			if errObj != nil {
 				return errors.ParameterError("chars", errObj)
 			}
-			return &object.String{Value: strings.TrimLeft(str.Value, chars)}
+			return object.NewString(strings.TrimLeft(str.StringValue(), chars))
 		}
-		return &object.String{Value: strings.TrimLeft(str.Value, " \t\n\r\v\f")}
+		return object.NewString(strings.TrimLeft(str.StringValue(), " \t\n\r\v\f"))
 	case "rstrip":
 		if len(args) > 1 {
 			return errors.NewError("rstrip() takes at most 1 argument (%d given)", len(args))
@@ -940,9 +936,9 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			if errObj != nil {
 				return errors.ParameterError("chars", errObj)
 			}
-			return &object.String{Value: strings.TrimRight(str.Value, chars)}
+			return object.NewString(strings.TrimRight(str.StringValue(), chars))
 		}
-		return &object.String{Value: strings.TrimRight(str.Value, " \t\n\r\v\f")}
+		return object.NewString(strings.TrimRight(str.StringValue(), " \t\n\r\v\f"))
 	case "startswith":
 		if err := errors.ExactArgs(args, 1); err != nil {
 			return err
@@ -951,7 +947,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if errObj != nil {
 			return errors.ParameterError("prefix", errObj)
 		}
-		return nativeBoolToBooleanObject(strings.HasPrefix(str.Value, prefix))
+		return nativeBoolToBooleanObject(strings.HasPrefix(str.StringValue(), prefix))
 	case "endswith":
 		if err := errors.ExactArgs(args, 1); err != nil {
 			return err
@@ -960,7 +956,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if errObj != nil {
 			return errors.ParameterError("suffix", errObj)
 		}
-		return nativeBoolToBooleanObject(strings.HasSuffix(str.Value, suffix))
+		return nativeBoolToBooleanObject(strings.HasSuffix(str.StringValue(), suffix))
 	case "find":
 		if len(args) < 1 || len(args) > 3 {
 			return errors.NewError("find() takes 1-3 arguments (%d given)", len(args))
@@ -970,7 +966,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return errors.ParameterError("sub", errObj)
 		}
 		start := 0
-		end := len(str.Value)
+		end := len(str.StringValue())
 		if len(args) >= 2 {
 			s, errObj2 := args[1].AsInt()
 			if errObj2 != nil {
@@ -978,7 +974,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			}
 			start = int(s)
 			if start < 0 {
-				start = len(str.Value) + start
+				start = len(str.StringValue()) + start
 				if start < 0 {
 					start = 0
 				}
@@ -991,19 +987,19 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			}
 			end = int(e)
 			if end < 0 {
-				end = len(str.Value) + end
+				end = len(str.StringValue()) + end
 			}
 		}
-		if start > len(str.Value) {
-			start = len(str.Value)
+		if start > len(str.StringValue()) {
+			start = len(str.StringValue())
 		}
-		if end > len(str.Value) {
-			end = len(str.Value)
+		if end > len(str.StringValue()) {
+			end = len(str.StringValue())
 		}
 		if start > end {
 			return object.NewInteger(-1)
 		}
-		searchStr := str.Value[start:end]
+		searchStr := str.StringValue()[start:end]
 		idx := strings.Index(searchStr, substr)
 		if idx == -1 {
 			return object.NewInteger(-1)
@@ -1018,7 +1014,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return errors.ParameterError("sub", errObj)
 		}
 		start := 0
-		end := len(str.Value)
+		end := len(str.StringValue())
 		if len(args) >= 2 {
 			s, errObj2 := args[1].AsInt()
 			if errObj2 != nil {
@@ -1026,7 +1022,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			}
 			start = int(s)
 			if start < 0 {
-				start = len(str.Value) + start
+				start = len(str.StringValue()) + start
 				if start < 0 {
 					start = 0
 				}
@@ -1039,19 +1035,19 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			}
 			end = int(e)
 			if end < 0 {
-				end = len(str.Value) + end
+				end = len(str.StringValue()) + end
 			}
 		}
-		if start > len(str.Value) {
-			start = len(str.Value)
+		if start > len(str.StringValue()) {
+			start = len(str.StringValue())
 		}
-		if end > len(str.Value) {
-			end = len(str.Value)
+		if end > len(str.StringValue()) {
+			end = len(str.StringValue())
 		}
 		if start > end {
 			return object.NewInteger(-1)
 		}
-		searchStr := str.Value[start:end]
+		searchStr := str.StringValue()[start:end]
 		idx := strings.LastIndex(searchStr, substr)
 		if idx == -1 {
 			return object.NewInteger(-1)
@@ -1066,7 +1062,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return errors.ParameterError("sub", errObj)
 		}
 		start := 0
-		end := len(str.Value)
+		end := len(str.StringValue())
 		if len(args) >= 2 {
 			s, errObj2 := args[1].AsInt()
 			if errObj2 != nil {
@@ -1074,7 +1070,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			}
 			start = int(s)
 			if start < 0 {
-				start = len(str.Value) + start
+				start = len(str.StringValue()) + start
 				if start < 0 {
 					start = 0
 				}
@@ -1087,19 +1083,19 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			}
 			end = int(e)
 			if end < 0 {
-				end = len(str.Value) + end
+				end = len(str.StringValue()) + end
 			}
 		}
-		if start > len(str.Value) {
-			start = len(str.Value)
+		if start > len(str.StringValue()) {
+			start = len(str.StringValue())
 		}
-		if end > len(str.Value) {
-			end = len(str.Value)
+		if end > len(str.StringValue()) {
+			end = len(str.StringValue())
 		}
 		if start > end {
 			return errors.NewError("substring not found")
 		}
-		searchStr := str.Value[start:end]
+		searchStr := str.StringValue()[start:end]
 		idx := strings.LastIndex(searchStr, substr)
 		if idx == -1 {
 			return errors.NewError("substring not found")
@@ -1114,7 +1110,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return errors.ParameterError("sub", errObj)
 		}
 		start := 0
-		end := len(str.Value)
+		end := len(str.StringValue())
 		if len(args) >= 2 {
 			s, errObj2 := args[1].AsInt()
 			if errObj2 != nil {
@@ -1122,7 +1118,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			}
 			start = int(s)
 			if start < 0 {
-				start = len(str.Value) + start
+				start = len(str.StringValue()) + start
 				if start < 0 {
 					start = 0
 				}
@@ -1135,19 +1131,19 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			}
 			end = int(e)
 			if end < 0 {
-				end = len(str.Value) + end
+				end = len(str.StringValue()) + end
 			}
 		}
-		if start > len(str.Value) {
-			start = len(str.Value)
+		if start > len(str.StringValue()) {
+			start = len(str.StringValue())
 		}
-		if end > len(str.Value) {
-			end = len(str.Value)
+		if end > len(str.StringValue()) {
+			end = len(str.StringValue())
 		}
 		if start > end {
 			return errors.NewError("substring not found")
 		}
-		searchStr := str.Value[start:end]
+		searchStr := str.StringValue()[start:end]
 		idx := strings.Index(searchStr, substr)
 		if idx == -1 {
 			return errors.NewError("substring not found")
@@ -1162,7 +1158,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return errors.ParameterError("sub", errObj)
 		}
 		start := 0
-		end := len(str.Value)
+		end := len(str.StringValue())
 		if len(args) >= 2 {
 			s, errObj2 := args[1].AsInt()
 			if errObj2 != nil {
@@ -1170,7 +1166,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			}
 			start = int(s)
 			if start < 0 {
-				start = len(str.Value) + start
+				start = len(str.StringValue()) + start
 				if start < 0 {
 					start = 0
 				}
@@ -1183,38 +1179,38 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			}
 			end = int(e)
 			if end < 0 {
-				end = len(str.Value) + end
+				end = len(str.StringValue()) + end
 			}
 		}
-		if start > len(str.Value) {
-			start = len(str.Value)
+		if start > len(str.StringValue()) {
+			start = len(str.StringValue())
 		}
-		if end > len(str.Value) {
-			end = len(str.Value)
+		if end > len(str.StringValue()) {
+			end = len(str.StringValue())
 		}
 		if start > end {
 			return object.NewInteger(0)
 		}
-		searchStr := str.Value[start:end]
+		searchStr := str.StringValue()[start:end]
 		return object.NewInteger(int64(strings.Count(searchStr, substr)))
 	case "format":
 		// Simple positional formatting: "{} {}".format("hello", "world")
-		result := str.Value
+		result := str.StringValue()
 		for i, arg := range args {
 			placeholder := fmt.Sprintf("{%d}", i)
 			result = strings.Replace(result, placeholder, arg.Inspect(), 1)
 			// Also support {} for positional
 			result = strings.Replace(result, "{}", arg.Inspect(), 1)
 		}
-		return &object.String{Value: result}
+		return object.NewString(result)
 	case "isdigit":
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
 		}
-		if len(str.Value) == 0 {
+		if len(str.StringValue()) == 0 {
 			return FALSE
 		}
-		for _, ch := range str.Value {
+		for _, ch := range str.StringValue() {
 			if ch < '0' || ch > '9' {
 				return FALSE
 			}
@@ -1224,10 +1220,10 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
 		}
-		if len(str.Value) == 0 {
+		if len(str.StringValue()) == 0 {
 			return FALSE
 		}
-		for _, ch := range str.Value {
+		for _, ch := range str.StringValue() {
 			if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')) {
 				return FALSE
 			}
@@ -1237,10 +1233,10 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
 		}
-		if len(str.Value) == 0 {
+		if len(str.StringValue()) == 0 {
 			return FALSE
 		}
-		for _, ch := range str.Value {
+		for _, ch := range str.StringValue() {
 			if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')) {
 				return FALSE
 			}
@@ -1250,10 +1246,10 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
 		}
-		if len(str.Value) == 0 {
+		if len(str.StringValue()) == 0 {
 			return FALSE
 		}
-		for _, ch := range str.Value {
+		for _, ch := range str.StringValue() {
 			if ch != ' ' && ch != '\t' && ch != '\n' && ch != '\r' && ch != '\v' && ch != '\f' {
 				return FALSE
 			}
@@ -1264,7 +1260,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return err
 		}
 		hasUpper := false
-		for _, ch := range str.Value {
+		for _, ch := range str.StringValue() {
 			if ch >= 'a' && ch <= 'z' {
 				return FALSE
 			}
@@ -1281,7 +1277,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return err
 		}
 		hasLower := false
-		for _, ch := range str.Value {
+		for _, ch := range str.StringValue() {
 			if ch >= 'A' && ch <= 'Z' {
 				return FALSE
 			}
@@ -1302,24 +1298,23 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return errors.ParameterError("width", errObj)
 		}
 		w := int(width)
-		if w <= len(str.Value) {
+		if w <= len(str.StringValue()) {
 			return str
 		}
 		// Handle negative sign
-		if len(str.Value) > 0 && (str.Value[0] == '-' || str.Value[0] == '+') {
+		if len(str.StringValue()) > 0 && (str.StringValue()[0] == '-' || str.StringValue()[0] == '+') {
 			var builder strings.Builder
 			builder.Grow(w)
-			builder.WriteByte(str.Value[0])
-			builder.WriteString(strings.Repeat("0", w-len(str.Value)))
-			builder.WriteString(str.Value[1:])
-			return &object.String{Value: builder.String()}
+			builder.WriteByte(str.StringValue()[0])
+			builder.WriteString(strings.Repeat("0", w-len(str.StringValue())))
+			builder.WriteString(str.StringValue()[1:])
+			return object.NewString(builder.String())
 		}
-		// Simple case - just pad with zeros
 		var builder strings.Builder
 		builder.Grow(w)
-		builder.WriteString(strings.Repeat("0", w-len(str.Value)))
-		builder.WriteString(str.Value)
-		return &object.String{Value: builder.String()}
+		builder.WriteString(strings.Repeat("0", w-len(str.StringValue())))
+		builder.WriteString(str.StringValue())
+		return object.NewString(builder.String())
 	case "center":
 		if len(args) < 1 || len(args) > 2 {
 			return errors.NewError("center() takes 1-2 arguments (%d given)", len(args))
@@ -1329,7 +1324,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return errors.ParameterError("width", errObj)
 		}
 		w := int(width)
-		if w <= len(str.Value) {
+		if w <= len(str.StringValue()) {
 			return str
 		}
 		fillChar := " "
@@ -1343,16 +1338,16 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			}
 			fillChar = fill
 		}
-		padding := w - len(str.Value)
+		padding := w - len(str.StringValue())
 		leftPad := padding / 2
 		rightPad := padding - leftPad
 		// Use strings.Builder for efficient concatenation
 		var builder strings.Builder
 		builder.Grow(w)
 		builder.WriteString(strings.Repeat(fillChar, leftPad))
-		builder.WriteString(str.Value)
+		builder.WriteString(str.StringValue())
 		builder.WriteString(strings.Repeat(fillChar, rightPad))
-		return &object.String{Value: builder.String()}
+		return object.NewString(builder.String())
 	case "ljust":
 		if len(args) < 1 || len(args) > 2 {
 			return errors.NewError("ljust() takes 1-2 arguments (%d given)", len(args))
@@ -1362,7 +1357,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return errors.ParameterError("width", errObj)
 		}
 		w := int(width)
-		if w <= len(str.Value) {
+		if w <= len(str.StringValue()) {
 			return str
 		}
 		fillChar := " "
@@ -1379,9 +1374,9 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		// Use strings.Builder for efficient concatenation
 		var builder strings.Builder
 		builder.Grow(w)
-		builder.WriteString(str.Value)
-		builder.WriteString(strings.Repeat(fillChar, w-len(str.Value)))
-		return &object.String{Value: builder.String()}
+		builder.WriteString(str.StringValue())
+		builder.WriteString(strings.Repeat(fillChar, w-len(str.StringValue())))
+		return object.NewString(builder.String())
 	case "rjust":
 		if len(args) < 1 || len(args) > 2 {
 			return errors.NewError("rjust() takes 1-2 arguments (%d given)", len(args))
@@ -1391,7 +1386,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return errors.ParameterError("width", errObj)
 		}
 		w := int(width)
-		if w <= len(str.Value) {
+		if w <= len(str.StringValue()) {
 			return str
 		}
 		fillChar := " "
@@ -1408,9 +1403,9 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		// Use strings.Builder for efficient concatenation
 		var builder strings.Builder
 		builder.Grow(w)
-		builder.WriteString(strings.Repeat(fillChar, w-len(str.Value)))
-		builder.WriteString(str.Value)
-		return &object.String{Value: builder.String()}
+		builder.WriteString(strings.Repeat(fillChar, w-len(str.StringValue())))
+		builder.WriteString(str.StringValue())
+		return object.NewString(builder.String())
 	case "splitlines":
 		keepends := false
 		if len(args) > 1 {
@@ -1424,14 +1419,14 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			keepends = b
 		}
 		lines := []object.Object{}
-		text := str.Value
+		text := str.StringValue()
 		start := 0
 		for i := 0; i < len(text); i++ {
 			if text[i] == '\n' {
 				if keepends {
-					lines = append(lines, &object.String{Value: text[start : i+1]})
+					lines = append(lines, object.NewString(text[start:i+1]))
 				} else {
-					lines = append(lines, &object.String{Value: text[start:i]})
+					lines = append(lines, object.NewString(text[start:i]))
 				}
 				start = i + 1
 			} else if text[i] == '\r' {
@@ -1440,23 +1435,23 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 					i++
 				}
 				if keepends {
-					lines = append(lines, &object.String{Value: text[start : i+1]})
+					lines = append(lines, object.NewString(text[start:i+1]))
 				} else {
-					lines = append(lines, &object.String{Value: text[start:end]})
+					lines = append(lines, object.NewString(text[start:end]))
 				}
 				start = i + 1
 			}
 		}
 		if start < len(text) {
-			lines = append(lines, &object.String{Value: text[start:]})
+			lines = append(lines, object.NewString(text[start:]))
 		}
 		return &object.List{Elements: lines}
 	case "swapcase":
 		if len(args) != 0 {
 			return errors.NewError("swapcase() takes no arguments (%d given)", len(args))
 		}
-		result := make([]rune, len(str.Value))
-		for i, r := range str.Value {
+		result := make([]rune, len(str.StringValue()))
+		for i, r := range str.StringValue() {
 			if r >= 'A' && r <= 'Z' {
 				result[i] = r + 32
 			} else if r >= 'a' && r <= 'z' {
@@ -1465,7 +1460,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 				result[i] = r
 			}
 		}
-		return &object.String{Value: string(result)}
+		return object.NewString(string(result))
 	case "partition":
 		if err := errors.ExactArgs(args, 1); err != nil {
 			return err
@@ -1474,18 +1469,18 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if err != nil {
 			return err
 		}
-		idx := strings.Index(str.Value, sep)
+		idx := strings.Index(str.StringValue(), sep)
 		if idx < 0 {
 			return &object.Tuple{Elements: []object.Object{
 				str,
-				&object.String{Value: ""},
-				&object.String{Value: ""},
+				object.NewString(""),
+				object.NewString(""),
 			}}
 		}
 		return &object.Tuple{Elements: []object.Object{
-			&object.String{Value: str.Value[:idx]},
-			&object.String{Value: sep},
-			&object.String{Value: str.Value[idx+len(sep):]},
+			object.NewString(str.StringValue()[:idx]),
+			object.NewString(sep),
+			object.NewString(str.StringValue()[idx+len(sep):]),
 		}}
 	case "rpartition":
 		if err := errors.ExactArgs(args, 1); err != nil {
@@ -1495,18 +1490,18 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if err != nil {
 			return err
 		}
-		idx := strings.LastIndex(str.Value, sep)
+		idx := strings.LastIndex(str.StringValue(), sep)
 		if idx < 0 {
 			return &object.Tuple{Elements: []object.Object{
-				&object.String{Value: ""},
-				&object.String{Value: ""},
+				object.NewString(""),
+				object.NewString(""),
 				str,
 			}}
 		}
 		return &object.Tuple{Elements: []object.Object{
-			&object.String{Value: str.Value[:idx]},
-			&object.String{Value: sep},
-			&object.String{Value: str.Value[idx+len(sep):]},
+			object.NewString(str.StringValue()[:idx]),
+			object.NewString(sep),
+			object.NewString(str.StringValue()[idx+len(sep):]),
 		}}
 	case "removeprefix":
 		if err := errors.ExactArgs(args, 1); err != nil {
@@ -1516,8 +1511,8 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if err != nil {
 			return err
 		}
-		if strings.HasPrefix(str.Value, prefix) {
-			return &object.String{Value: str.Value[len(prefix):]}
+		if strings.HasPrefix(str.StringValue(), prefix) {
+			return object.NewString(str.StringValue()[len(prefix):])
 		}
 		return str
 	case "removesuffix":
@@ -1528,8 +1523,8 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if err != nil {
 			return err
 		}
-		if strings.HasSuffix(str.Value, suffix) {
-			return &object.String{Value: str.Value[:len(str.Value)-len(suffix)]}
+		if strings.HasSuffix(str.StringValue(), suffix) {
+			return object.NewString(str.StringValue()[:len(str.StringValue())-len(suffix)])
 		}
 		return str
 	case "encode":
@@ -1539,7 +1534,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		// In Scriptling, encode just returns a list of byte values
 		// as we don't have a bytes type
 		bytes := []object.Object{}
-		for _, b := range []byte(str.Value) {
+		for _, b := range []byte(str.StringValue()) {
 			bytes = append(bytes, object.NewInteger(int64(b)))
 		}
 		return &object.List{Elements: bytes}
@@ -1557,7 +1552,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		}
 		var result strings.Builder
 		col := 0
-		for _, ch := range str.Value {
+		for _, ch := range str.StringValue() {
 			if ch == '\t' {
 				spaces := tabsize - (col % tabsize)
 				result.WriteString(strings.Repeat(" ", spaces))
@@ -1570,14 +1565,14 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 				col++
 			}
 		}
-		return &object.String{Value: result.String()}
+		return object.NewString(result.String())
 	case "casefold":
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
 		}
 		// casefold is more aggressive than lower() for Unicode
 		// For ASCII, it's equivalent to lower()
-		return &object.String{Value: strings.ToLower(str.Value)}
+		return object.NewString(strings.ToLower(str.StringValue()))
 	case "maketrans":
 		if len(args) < 1 || len(args) > 3 {
 			return errors.NewError("maketrans() takes 1, 2, or 3 arguments (%d given)", len(args))
@@ -1590,7 +1585,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 				return errors.ParameterError("table", err)
 			}
 			for k, v := range d {
-				transMap.Pairs[object.DictKey(&object.String{Value: k})] = object.DictPair{Key: &object.String{Value: k}, Value: v}
+				transMap.Pairs[object.DictKey(object.NewString(k))] = object.DictPair{Key: object.NewString(k), Value: v}
 			}
 			return transMap
 		}
@@ -1609,10 +1604,10 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return errors.NewError("maketrans() arguments must have equal length")
 		}
 		for i, ch := range fromRunes {
-			key := object.DictKey(&object.String{Value: string(ch)})
+			key := object.DictKey(object.NewString(string(ch)))
 			transMap.Pairs[key] = object.DictPair{
-				Key:   &object.String{Value: string(ch)},
-				Value: &object.String{Value: string(toRunes[i])},
+				Key:   object.NewString(string(ch)),
+				Value: object.NewString(string(toRunes[i])),
 			}
 		}
 		// Third argument: characters to delete
@@ -1622,9 +1617,9 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 				return errors.ParameterError("deletechars", errDel)
 			}
 			for _, ch := range del {
-				key := object.DictKey(&object.String{Value: string(ch)})
+				key := object.DictKey(object.NewString(string(ch)))
 				transMap.Pairs[key] = object.DictPair{
-					Key:   &object.String{Value: string(ch)},
+					Key:   object.NewString(string(ch)),
 					Value: NULL,
 				}
 			}
@@ -1639,8 +1634,8 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return errors.NewTypeError("DICT", args[0].Type().String())
 		}
 		var result strings.Builder
-		for _, ch := range str.Value {
-			key := object.DictKey(&object.String{Value: string(ch)})
+		for _, ch := range str.StringValue() {
+			key := object.DictKey(object.NewString(string(ch)))
 			if pair, exists := transMap.Pairs[key]; exists {
 				if pair.Value == NULL || pair.Value.Type() == object.NULL_OBJ {
 					// Delete character
@@ -1655,17 +1650,17 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 				result.WriteRune(ch)
 			}
 		}
-		return &object.String{Value: result.String()}
+		return object.NewString(result.String())
 	case "isnumeric":
 		// Returns True if all characters are numeric (0-9, superscripts, fractions, etc.)
 		// For simplicity, we check for Unicode numeric characters
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
 		}
-		if len(str.Value) == 0 {
+		if len(str.StringValue()) == 0 {
 			return FALSE
 		}
-		for _, ch := range str.Value {
+		for _, ch := range str.StringValue() {
 			// Check if character is in Unicode numeric categories
 			if !unicode.IsNumber(ch) {
 				return FALSE
@@ -1677,10 +1672,10 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
 		}
-		if len(str.Value) == 0 {
+		if len(str.StringValue()) == 0 {
 			return FALSE
 		}
-		for _, ch := range str.Value {
+		for _, ch := range str.StringValue() {
 			if ch < '0' || ch > '9' {
 				return FALSE
 			}
@@ -1691,13 +1686,13 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
 		}
-		if len(str.Value) == 0 {
+		if len(str.StringValue()) == 0 {
 			return FALSE
 		}
 		// Title case: first char of each word is uppercase, rest are lowercase
 		prevCased := false
 		hasCased := false
-		for _, ch := range str.Value {
+		for _, ch := range str.StringValue() {
 			isUpper := ch >= 'A' && ch <= 'Z'
 			isLower := ch >= 'a' && ch <= 'z'
 			isCased := isUpper || isLower
@@ -1726,10 +1721,10 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
 		}
-		if len(str.Value) == 0 {
+		if len(str.StringValue()) == 0 {
 			return FALSE
 		}
-		for i, ch := range str.Value {
+		for i, ch := range str.StringValue() {
 			if i == 0 {
 				// First character must be letter or underscore
 				if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_') {
@@ -1749,7 +1744,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return err
 		}
 		// Empty string is considered printable
-		for _, ch := range str.Value {
+		for _, ch := range str.StringValue() {
 			if !unicode.IsPrint(ch) && ch != ' ' {
 				return FALSE
 			}

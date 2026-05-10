@@ -103,7 +103,7 @@ func (f *fsLibraryInstance) createFSLibrary() *object.Library {
 				if fsErr != nil && n == 0 {
 					return errors.NewError("read_bytes: cannot read file: %s", fsErr.Error())
 				}
-				return &object.String{Value: string(buf[:n])}
+				return object.NewString(string(buf[:n]))
 			},
 			HelpText: `read_bytes(path, offset, length) - Read a range of bytes from a file
 
@@ -263,7 +263,7 @@ Unlike the builtin len(), this counts bytes, not Unicode code points.`,
 				if start > end {
 					start = end
 				}
-				return &object.String{Value: string(raw[start:end])}
+				return object.NewString(string(raw[start:end]))
 			},
 			HelpText: `slice(data, start[, end]) - Byte-safe slicing of binary data
 
@@ -399,11 +399,11 @@ func unpackBinary(format string, data []byte) object.Object {
 				}
 				result = append(result, object.NewInteger(int64(u)))
 			case 'f':
-				result = append(result, &object.Float{Value: float64(math.Float32frombits(bo.Uint32(sl)))})
+				result = append(result, object.NewFloat(float64(math.Float32frombits(bo.Uint32(sl)))))
 			case 'd':
-				result = append(result, &object.Float{Value: math.Float64frombits(bo.Uint64(sl))})
+				result = append(result, object.NewFloat(math.Float64frombits(bo.Uint64(sl))))
 			case 'e':
-				result = append(result, &object.Float{Value: float16ToFloat64(bo.Uint16(sl))})
+				result = append(result, object.NewFloat(float16ToFloat64(bo.Uint16(sl))))
 			}
 			offset += sz
 		}
@@ -542,7 +542,7 @@ func packBinary(format string, values []object.Object) object.Object {
 			valIdx++
 		}
 	}
-	return &object.String{Value: string(buf)}
+	return object.NewString(string(buf))
 }
 
 func packIntValue(obj object.Object, ch byte) (int64, object.Object) {

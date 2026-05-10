@@ -336,12 +336,12 @@ func extractToList(results []extractResult) object.Object {
 	elements := make([]object.Object, len(results))
 	for i, r := range results {
 		d := &object.Dict{Pairs: make(map[string]object.DictPair)}
-		d.SetByString("file", &object.String{Value: r.File})
+		d.SetByString("file", object.NewString(r.File))
 		d.SetByString("line", object.NewInteger(int64(r.Line)))
-		d.SetByString("text", &object.String{Value: r.Text})
+		d.SetByString("text", object.NewString(r.Text))
 		groupElems := make([]object.Object, len(r.Groups))
 		for j, g := range r.Groups {
-			groupElems[j] = &object.String{Value: g}
+			groupElems[j] = object.NewString(g)
 		}
 		d.SetByString("groups", &object.List{Elements: groupElems})
 		elements[i] = d

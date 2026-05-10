@@ -98,7 +98,7 @@ func (cb *ClassBuilder) Property(name string, fn interface{}) *ClassBuilder {
 //
 //	cb.PropertyWithSetter("radius",
 //	    func(self *Instance) float64 { r, _ := self.Fields["r"].AsFloat(); return r },
-//	    func(self *Instance, v float64) { self.Fields["r"] = &Float{Value: v} },
+//	    func(self *Instance, v float64) { self.Fields["r"] = NewFloat(v) },
 //	)
 func (cb *ClassBuilder) PropertyWithSetter(name string, getter interface{}, setter interface{}) *ClassBuilder {
 	if cb.properties == nil {
@@ -214,7 +214,7 @@ func createFastMethodWrapper(fn interface{}, helpText string) (*Builtin, bool) {
 				if !ok {
 					return newError("first argument must be an instance, got %T", args[0])
 				}
-				return &String{Value: typed(self)}
+				return &String{value: typed(self)}
 			},
 			HelpText: helpText,
 		}, true
@@ -292,7 +292,7 @@ func createFastMethodWrapper(fn interface{}, helpText string) (*Builtin, bool) {
 				if err != nil {
 					return err
 				}
-				return &String{Value: typed(self, s)}
+				return &String{value: typed(self, s)}
 			},
 			HelpText: helpText,
 		}, true

@@ -256,7 +256,7 @@ func TestRegisterScriptFuncWithGoFunc(t *testing.T) {
 		if !ok {
 			return &object.Error{Message: "second argument must be integer"}
 		}
-		return &object.Integer{Value: a.Value * b.Value}
+		return object.NewInteger(a.IntValue() * b.IntValue())
 	})
 
 	// Register a Scriptling function that uses the Go function
@@ -293,7 +293,7 @@ func TestRegisterScriptLibraryWithGoLibrary(t *testing.T) {
 				if !ok {
 					return &object.Error{Message: "argument must be integer"}
 				}
-				return &object.Integer{Value: i.Value * 2}
+				return object.NewInteger(i.IntValue() * 2)
 			},
 		},
 	}, nil, ""))

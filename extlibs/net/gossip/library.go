@@ -50,19 +50,19 @@ func nodeToObject(n *gossip.Node) *object.Dict {
 	md := n.Metadata.GetAllAsString()
 	mdPairs := make(map[string]object.Object, len(md))
 	for k, v := range md {
-		mdPairs[k] = &object.String{Value: v}
+		mdPairs[k] = object.NewString(v)
 	}
 
 	tags := n.GetTags()
 	tagElems := make([]object.Object, len(tags))
 	for i, t := range tags {
-		tagElems[i] = &object.String{Value: t}
+		tagElems[i] = object.NewString(t)
 	}
 
 	return object.NewStringDict(map[string]object.Object{
-		"id":       &object.String{Value: n.ID.String()},
-		"addr":     &object.String{Value: n.AdvertisedAddr()},
-		"state":    &object.String{Value: state},
+		"id":       object.NewString(n.ID.String()),
+		"addr":     object.NewString(n.AdvertisedAddr()),
+		"state":    object.NewString(state),
 		"metadata": object.NewStringDict(mdPairs),
 		"tags":     &object.List{Elements: tagElems},
 	})
@@ -89,9 +89,9 @@ func extractStringMap(raw object.Object) (map[string]string, error) {
 		key := pair.Key.Inspect()
 		val, ok := pair.Value.(*object.String)
 		if !ok {
-			val = &object.String{Value: pair.Value.Inspect()}
+			val = object.NewString(pair.Value.Inspect())
 		}
-		result[key] = val.Value
+		result[key] = val.StringValue()
 	}
 	return result, nil
 }
@@ -119,9 +119,9 @@ Returns:
 					}
 					node := c.GetNodeByIDString(nodeIDStr)
 					if node == nil {
-						return &object.Boolean{Value: false}
+						return object.NewBoolean(false)
 					}
-					return &object.Boolean{Value: ng.Contains(node.ID)}
+					return object.NewBoolean(ng.Contains(node.ID))
 				},
 				HelpText: `contains(node_id) - Check if a node is in this group
 
@@ -210,7 +210,7 @@ func buildLeaderElectionObject(le *leader.LeaderElection, eval evaliface.Evaluat
 			},
 			"is_leader": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					return &object.Boolean{Value: le.IsLeader()}
+					return object.NewBoolean(le.IsLeader())
 				},
 				HelpText: `is_leader() - Check if this node is the leader
 
@@ -219,7 +219,7 @@ Returns:
 			},
 			"has_leader": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					return &object.Boolean{Value: le.HasLeader()}
+					return object.NewBoolean(le.HasLeader())
 				},
 				HelpText: `has_leader() - Check if a leader is currently elected
 
@@ -231,7 +231,7 @@ Returns:
 					if !le.HasLeader() {
 						return &object.Null{}
 					}
-					return &object.String{Value: le.GetLeaderID().String()}
+					return object.NewString(le.GetLeaderID().String())
 				},
 				HelpText: `get_leader_id() - Get the current leader's node ID
 
@@ -307,8 +307,8 @@ Parameters:
 					handlerFn := args[1]
 					le.HandleEventFunc(eventType, func(et leader.EventType, nodeID gossip.NodeID) {
 						eval.CallObjectFunction(ctx, handlerFn, []object.Object{
-							&object.String{Value: eventTypeStr},
-							&object.String{Value: nodeID.String()},
+							object.NewString(eventTypeStr),
+							object.NewString(nodeID.String()),
 						}, nil, env)
 					})
 					return &object.Null{}
@@ -543,7 +543,7 @@ Parameters:
 
 						var payloadObj object.Object
 						if str, ok := payload.(string); ok {
-							payloadObj = &object.String{Value: str}
+							payloadObj = object.NewString(str)
 						} else if payload != nil {
 							payloadObj = conversion.FromGo(payload)
 						} else {
@@ -607,7 +607,7 @@ The handler receives a dict with:
 
 						var payloadObj object.Object
 						if str, ok := payload.(string); ok {
-							payloadObj = &object.String{Value: str}
+							payloadObj = object.NewString(str)
 						} else if payload != nil {
 							payloadObj = conversion.FromGo(payload)
 						} else {
@@ -698,7 +698,7 @@ Returns:
 					if msgType < 128 {
 						return errors.NewError("message_type must be >= 128 (user messages)")
 					}
-					return &object.Boolean{Value: c.UnregisterMessageType(gossip.MessageType(msgType))}
+					return object.NewBoolean(c.UnregisterMessageType(gossip.MessageType(msgType)))
 				},
 				HelpText: `unhandle(message_type) - Remove a previously registered message handler
 
@@ -731,8 +731,8 @@ Returns:
 							stateStr = "leaving"
 						}
 						eval.CallObjectFunction(ctx, handlerFn, []object.Object{
-							&object.String{Value: node.ID.String()},
-							&object.String{Value: stateStr},
+							object.NewString(node.ID.String()),
+							object.NewString(stateStr),
 						}, nil, env)
 					})
 					return &object.Null{}
@@ -986,9 +986,9 @@ Returns:
 					}
 					node := c.GetNodeByIDString(nodeIDStr)
 					if node == nil {
-						return &object.Boolean{Value: false}
+						return object.NewBoolean(false)
 					}
-					return &object.Boolean{Value: c.NodeIsLocal(node)}
+					return object.NewBoolean(c.NodeIsLocal(node))
 				},
 				HelpText: `is_local(node_id) - Check if a node ID refers to the local node
 
@@ -1020,13 +1020,13 @@ Returns:
 					md := c.LocalMetadata()
 					switch v := args[1].(type) {
 					case *object.String:
-						md.SetString(key, v.Value)
+						md.SetString(key, v.StringValue())
 					case *object.Integer:
-						md.SetInt64(key, v.Value)
+						md.SetInt64(key, v.IntValue())
 					case *object.Float:
-						md.SetFloat64(key, v.Value)
+						md.SetFloat64(key, v.FloatValue())
 					case *object.Boolean:
-						md.SetBool(key, v.Value)
+						md.SetBool(key, v.BoolValue())
 					default:
 						strVal, coerceErr := args[1].CoerceString()
 						if coerceErr != nil {
@@ -1057,7 +1057,7 @@ Metadata is automatically gossiped to other nodes.`,
 					if !md.Exists(key) {
 						return &object.Null{}
 					}
-					return &object.String{Value: md.GetString(key)}
+					return object.NewString(md.GetString(key))
 				},
 				HelpText: `get_metadata(key) - Get local node metadata value
 
@@ -1072,7 +1072,7 @@ Returns:
 					md := c.LocalMetadata().GetAllAsString()
 					pairs := make(map[string]object.Object, len(md))
 					for k, v := range md {
-						pairs[k] = &object.String{Value: v}
+						pairs[k] = object.NewString(v)
 					}
 					return object.NewStringDict(pairs)
 				},
@@ -1100,7 +1100,7 @@ Parameters:
 			},
 			"node_id": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					return &object.String{Value: c.LocalNode().ID.String()}
+					return object.NewString(c.LocalNode().ID.String())
 				},
 				HelpText: `node_id() - Get the local node's unique ID`,
 			},

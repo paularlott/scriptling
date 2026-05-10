@@ -714,7 +714,7 @@ func TestCompletionMethodTimeoutKwarg(t *testing.T) {
 	}
 
 	kwargs := object.NewKwargs(map[string]object.Object{
-		"timeout": &object.Integer{Value: 10},
+		"timeout": object.NewInteger(10),
 	})
 	result := completionMethod(instance, ctx, kwargs, "gpt-4", []map[string]any{{"role": "user", "content": "Hello"}})
 	if result.Type() != object.ERROR_OBJ {
@@ -801,8 +801,8 @@ func TestNextTimeoutCancelsStreamOnCallerCancellation(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected String error after caller cancellation, got %T", errResult)
 	}
-	if errStr.Value != context.Canceled.Error() {
-		t.Fatalf("expected %q, got %q", context.Canceled.Error(), errStr.Value)
+	if errStr.StringValue() != context.Canceled.Error() {
+		t.Fatalf("expected %q, got %q", context.Canceled.Error(), errStr.StringValue())
 	}
 }
 
@@ -868,8 +868,8 @@ tool_calls[0].function.arguments.get("message", "missing")
 	if !ok {
 		t.Fatalf("expected String, got %T", result)
 	}
-	if str.Value != "hello from tool test" {
-		t.Fatalf("expected %q, got %q", "hello from tool test", str.Value)
+	if str.StringValue() != "hello from tool test" {
+		t.Fatalf("expected %q, got %q", "hello from tool test", str.StringValue())
 	}
 }
 
@@ -929,8 +929,8 @@ response.choices[0].message.content
 	if !ok {
 		t.Fatalf("expected String, got %T", result)
 	}
-	if str.Value != "ok" {
-		t.Fatalf("expected response content ok, got %q", str.Value)
+	if str.StringValue() != "ok" {
+		t.Fatalf("expected response content ok, got %q", str.StringValue())
 	}
 	if gotHeader != "custom-value" {
 		t.Fatalf("expected custom header, got %q", gotHeader)
@@ -998,8 +998,8 @@ response.output[0].content[0].text
 	if !ok {
 		t.Fatalf("expected String, got %T", result)
 	}
-	if str.Value != "ok" {
-		t.Fatalf("expected response text ok, got %q", str.Value)
+	if str.StringValue() != "ok" {
+		t.Fatalf("expected response text ok, got %q", str.StringValue())
 	}
 	if _, ok := gotBody["extra_body"]; ok {
 		t.Fatalf("extra_body should not be sent literally: %#v", gotBody)
@@ -1133,8 +1133,8 @@ round["tool_results"][0]["content"]
 		if !ok {
 			t.Fatalf("expected String, got %T", result)
 		}
-		if str.Value != "handled:hello from tool test" {
-			t.Fatalf("expected tool result, got %q", str.Value)
+		if str.StringValue() != "handled:hello from tool test" {
+			t.Fatalf("expected tool result, got %q", str.StringValue())
 		}
 	})
 
@@ -1164,8 +1164,8 @@ round["reasoning"] + "|" + round["tool_results"][0]["content"]
 		if !ok {
 			t.Fatalf("expected String, got %T", result)
 		}
-		if str.Value != "Thinking about tools.|streamed:hello from streaming helper" {
-			t.Fatalf("unexpected streaming tool round output: %q", str.Value)
+		if str.StringValue() != "Thinking about tools.|streamed:hello from streaming helper" {
+			t.Fatalf("unexpected streaming tool round output: %q", str.StringValue())
 		}
 	})
 }
@@ -1398,7 +1398,7 @@ func TestCompletionMethodStringShorthand(t *testing.T) {
 			name:     "string with system_prompt",
 			messages: "What is 2+2?",
 			kwargs: object.NewKwargs(map[string]object.Object{
-				"system_prompt": &object.String{Value: "You are a helpful math tutor"},
+				"system_prompt": object.NewString("You are a helpful math tutor"),
 			}),
 			expectedError: "no client configured",
 		},
@@ -1412,7 +1412,7 @@ func TestCompletionMethodStringShorthand(t *testing.T) {
 			name:     "system_prompt with array should error",
 			messages: []map[string]any{{"role": "user", "content": "Hello!"}},
 			kwargs: object.NewKwargs(map[string]object.Object{
-				"system_prompt": &object.String{Value: "You are helpful"},
+				"system_prompt": object.NewString("You are helpful"),
 			}),
 			expectedError: "system_prompt kwarg is only valid when passing a string",
 		},
@@ -1471,7 +1471,7 @@ func TestCompletionStreamMethodStringShorthand(t *testing.T) {
 			name:     "string with system_prompt",
 			messages: "Explain quantum physics",
 			kwargs: object.NewKwargs(map[string]object.Object{
-				"system_prompt": &object.String{Value: "You are a physics professor"},
+				"system_prompt": object.NewString("You are a physics professor"),
 			}),
 			expectedError: "no client configured",
 		},
@@ -1485,7 +1485,7 @@ func TestCompletionStreamMethodStringShorthand(t *testing.T) {
 			name:     "system_prompt with array should error",
 			messages: []map[string]any{{"role": "user", "content": "Hello!"}},
 			kwargs: object.NewKwargs(map[string]object.Object{
-				"system_prompt": &object.String{Value: "You are helpful"},
+				"system_prompt": object.NewString("You are helpful"),
 			}),
 			expectedError: "system_prompt kwarg is only valid when passing a string",
 		},
@@ -1544,7 +1544,7 @@ func TestResponseCreateMethodStringShorthand(t *testing.T) {
 			name:  "string with system_prompt",
 			input: "What is AI?",
 			kwargs: object.NewKwargs(map[string]object.Object{
-				"system_prompt": &object.String{Value: "You are a helpful assistant"},
+				"system_prompt": object.NewString("You are a helpful assistant"),
 			}),
 			expectedError: "no client configured",
 		},
@@ -1558,7 +1558,7 @@ func TestResponseCreateMethodStringShorthand(t *testing.T) {
 			name:  "system_prompt with array should error",
 			input: []any{map[string]any{"type": "message", "role": "user", "content": "Hello!"}},
 			kwargs: object.NewKwargs(map[string]object.Object{
-				"system_prompt": &object.String{Value: "You are helpful"},
+				"system_prompt": object.NewString("You are helpful"),
 			}),
 			expectedError: "system_prompt kwarg is only valid when passing a string",
 		},

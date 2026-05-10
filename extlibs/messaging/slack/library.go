@@ -90,7 +90,7 @@ func NewLibrary(log logger.Logger) *object.Library {
 			if err != nil {
 				return errors.NewError("open_dm: %s", err.Error())
 			}
-			return &object.String{Value: channelID}
+			return object.NewString(channelID)
 		},
 		HelpText: `open_dm(client, user_id) - Open or retrieve a DM channel with a user, returns channel ID`,
 	}

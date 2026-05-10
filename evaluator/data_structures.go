@@ -17,7 +17,7 @@ func evalHashKey(ctx context.Context, obj object.Object) string {
 		if _, hasHash := inst.Class.Methods["__hash__"]; hasHash && hashInstanceFn != nil {
 			result := hashInstanceFn(ctx, inst)
 			if n, ok := result.(*object.Integer); ok {
-				return fmt.Sprintf("h:%d", n.Value)
+				return fmt.Sprintf("h:%d", n.IntValue())
 			}
 		}
 	}
@@ -95,7 +95,7 @@ func evalIndexExpression(ctx context.Context, left, index object.Object, isDotAc
 		fn := left.(*object.Function)
 		switch attr {
 		case "__name__", "name":
-			return &object.String{Value: fn.Name}
+			return object.NewString(fn.Name)
 		}
 		return errors.NewError("function has no attribute '%s'", attr)
 	case left.Type() == object.LAMBDA_OBJ:
@@ -105,7 +105,7 @@ func evalIndexExpression(ctx context.Context, left, index object.Object, isDotAc
 		attr, _ := index.AsString()
 		switch attr {
 		case "__name__", "name":
-			return &object.String{Value: "<lambda>"}
+			return object.NewString("<lambda>")
 		}
 		return errors.NewError("lambda has no attribute '%s'", attr)
 	default:
@@ -182,7 +182,7 @@ func evalFloatArrayIndexExpression(faObj, index object.Object) object.Object {
 	if idx < 0 || idx >= length {
 		return NULL
 	}
-	return &object.Float{Value: fa.Data[idx]}
+	return object.NewFloat(fa.Data[idx])
 }
 
 func evalFloatArraySliceExpression(faObj, sliceObj object.Object) object.Object {
@@ -197,7 +197,7 @@ func evalFloatArraySliceExpression(faObj, sliceObj object.Object) object.Object 
 		step := int64(1)
 
 		if slice.Start != nil {
-			start = slice.Start.Value
+			start = slice.Start.IntValue()
 			if start < 0 {
 				start += rows
 			}
@@ -209,7 +209,7 @@ func evalFloatArraySliceExpression(faObj, sliceObj object.Object) object.Object 
 			}
 		}
 		if slice.End != nil {
-			end = slice.End.Value
+			end = slice.End.IntValue()
 			if end < 0 {
 				end += rows
 			}
@@ -221,7 +221,7 @@ func evalFloatArraySliceExpression(faObj, sliceObj object.Object) object.Object 
 			}
 		}
 		if slice.Step != nil {
-			step = slice.Step.Value
+			step = slice.Step.IntValue()
 		}
 		if step <= 0 {
 			return errors.NewError("slice step cannot be zero or negative")
@@ -245,7 +245,7 @@ func evalFloatArraySliceExpression(faObj, sliceObj object.Object) object.Object 
 	step := int64(1)
 
 	if slice.Start != nil {
-		start = slice.Start.Value
+		start = slice.Start.IntValue()
 		if start < 0 {
 			start += length
 		}
@@ -257,7 +257,7 @@ func evalFloatArraySliceExpression(faObj, sliceObj object.Object) object.Object 
 		}
 	}
 	if slice.End != nil {
-		end = slice.End.Value
+		end = slice.End.IntValue()
 		if end < 0 {
 			end += length
 		}
@@ -269,7 +269,7 @@ func evalFloatArraySliceExpression(faObj, sliceObj object.Object) object.Object 
 		}
 	}
 	if slice.Step != nil {
-		step = slice.Step.Value
+		step = slice.Step.IntValue()
 	}
 	if step <= 0 {
 		return errors.NewError("slice step cannot be zero or negative")
@@ -332,19 +332,18 @@ func evalStringIndexExpression(str, index object.Object) object.Object {
 	}
 
 	// ASCII fast-path: avoid []rune conversion
-	if isASCII(strObject.Value) {
-		length := int64(len(strObject.Value))
+	if isASCII(strObject.StringValue()) {
+		length := int64(len(strObject.StringValue()))
 		if idx < 0 {
 			idx += length
 		}
 		if idx < 0 || idx >= length {
 			return NULL
 		}
-		return &object.String{Value: strObject.Value[idx : idx+1]}
+		return object.NewString(strObject.StringValue()[idx : idx+1])
 	}
 
-	// Non-ASCII: fall back to rune conversion
-	runes := []rune(strObject.Value)
+	runes := []rune(strObject.StringValue())
 	length := int64(len(runes))
 	if idx < 0 {
 		idx += length
@@ -352,7 +351,7 @@ func evalStringIndexExpression(str, index object.Object) object.Object {
 	if idx < 0 || idx >= length {
 		return NULL
 	}
-	return &object.String{Value: string(runes[idx])}
+	return object.NewString(string(runes[idx]))
 }
 
 func evalInstanceIndexExpression(ctx context.Context, instance, index object.Object, isDotAccess bool) object.Object {
@@ -517,8 +516,8 @@ func evalSliceExpressionWithContext(ctx context.Context, node *ast.SliceExpressi
 		}
 		return result
 	case *object.String:
-		elements := sliceString(obj.Value, start, end, step, hasStart, hasEnd, hasStep)
-		return &object.String{Value: elements}
+		elements := sliceString(obj.StringValue(), start, end, step, hasStart, hasEnd, hasStep)
+		return object.NewString(elements)
 	case *object.FloatArray:
 		return sliceFloatArray(obj, start, end, step, hasStart, hasEnd, hasStep)
 	default:
@@ -804,13 +803,13 @@ func evalListSliceExpression(list, index object.Object) object.Object {
 	hasStep = sliceObj.Step != nil
 
 	if hasStart {
-		start = sliceObj.Start.Value
+		start = sliceObj.Start.IntValue()
 	}
 	if hasEnd {
-		end = sliceObj.End.Value
+		end = sliceObj.End.IntValue()
 	}
 	if hasStep {
-		step = sliceObj.Step.Value
+		step = sliceObj.Step.IntValue()
 		if step == 0 {
 			return errors.NewError("slice step cannot be zero")
 		}
@@ -835,13 +834,13 @@ func evalTupleSliceExpression(tuple, index object.Object) object.Object {
 	hasStep = sliceObj.Step != nil
 
 	if hasStart {
-		start = sliceObj.Start.Value
+		start = sliceObj.Start.IntValue()
 	}
 	if hasEnd {
-		end = sliceObj.End.Value
+		end = sliceObj.End.IntValue()
 	}
 	if hasStep {
-		step = sliceObj.Step.Value
+		step = sliceObj.Step.IntValue()
 		if step == 0 {
 			return errors.NewError("slice step cannot be zero")
 		}
@@ -871,18 +870,18 @@ func evalStringSliceExpression(str, index object.Object) object.Object {
 	hasStep = sliceObj.Step != nil
 
 	if hasStart {
-		start = sliceObj.Start.Value
+		start = sliceObj.Start.IntValue()
 	}
 	if hasEnd {
-		end = sliceObj.End.Value
+		end = sliceObj.End.IntValue()
 	}
 	if hasStep {
-		step = sliceObj.Step.Value
+		step = sliceObj.Step.IntValue()
 		if step == 0 {
 			return errors.NewError("slice step cannot be zero")
 		}
 	}
 
-	slicedStr := sliceString(strObj.Value, start, end, step, hasStart, hasEnd, hasStep)
-	return &object.String{Value: slicedStr}
+	slicedStr := sliceString(strObj.StringValue(), start, end, step, hasStart, hasEnd, hasStep)
+	return object.NewString(slicedStr)
 }

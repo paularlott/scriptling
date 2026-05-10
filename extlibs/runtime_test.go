@@ -449,12 +449,12 @@ s2 = queue.size()
 
 	// Test that putting after close returns an error
 	ctx := context.Background()
-	queueName := &object.String{Value: "test_close_queue"}
+	queueName := object.NewString("test_close_queue")
 	queueFn := SyncSubLibrary.Functions()["Queue"]
 	queueObj := queueFn.Fn(ctx, object.Kwargs{}, queueName)
 	putFn := queueObj.(*object.Builtin).Attributes["put"].(*object.Builtin)
 
-	putResult := putFn.Fn(ctx, object.Kwargs{}, &object.String{Value: "item3"})
+	putResult := putFn.Fn(ctx, object.Kwargs{}, object.NewString("item3"))
 	if _, ok := putResult.(*object.Error); !ok {
 		t.Errorf("Expected error when putting to closed queue, got %T", putResult)
 	}
@@ -902,8 +902,8 @@ func BenchmarkRuntimeKVSet(b *testing.B) {
 	RegisterRuntimeLibraryAll(p, nil)
 
 	ctx := context.Background()
-	key := &object.String{Value: "bench_key"}
-	value := &object.String{Value: "bench_value"}
+	key := object.NewString("bench_key")
+	value := object.NewString("bench_value")
 
 	store := newKVStoreObject(RuntimeState.KVDB, "")
 	setFn := store.Attributes["set"].(*object.Builtin)
@@ -920,8 +920,8 @@ func BenchmarkRuntimeKVGet(b *testing.B) {
 	RegisterRuntimeLibraryAll(p, nil)
 
 	ctx := context.Background()
-	key := &object.String{Value: "bench_key"}
-	value := &object.String{Value: "bench_value"}
+	key := object.NewString("bench_key")
+	value := object.NewString("bench_value")
 
 	store := newKVStoreObject(RuntimeState.KVDB, "")
 	setFn := store.Attributes["set"].(*object.Builtin)
@@ -941,7 +941,7 @@ func BenchmarkRuntimeAtomicAdd(b *testing.B) {
 	RegisterRuntimeLibraryAll(p, nil)
 
 	ctx := context.Background()
-	name := &object.String{Value: "bench_counter"}
+	name := object.NewString("bench_counter")
 
 	atomicFn := SyncSubLibrary.Functions()["Atomic"]
 	atomic := atomicFn.Fn(ctx, object.Kwargs{}, name)

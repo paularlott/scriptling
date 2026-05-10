@@ -32,14 +32,14 @@ func kvCallKw(store *object.Builtin, method string, kwargs map[string]object.Obj
 }
 
 func kvOpen(name string) *object.Builtin {
-	result := kvOpenBuiltin.Fn(context.Background(), object.Kwargs{}, &object.String{Value: name})
+	result := kvOpenBuiltin.Fn(context.Background(), object.Kwargs{}, object.NewString(name))
 	return result.(*object.Builtin)
 }
 
 func assertString(t *testing.T, result object.Object, expected string) {
 	t.Helper()
 	s, ok := result.(*object.String)
-	if !ok || s.Value != expected {
+	if !ok || s.StringValue() != expected {
 		t.Errorf("Expected string %q, got %v (%T)", expected, result, result)
 	}
 }
@@ -47,7 +47,7 @@ func assertString(t *testing.T, result object.Object, expected string) {
 func assertInt(t *testing.T, result object.Object, expected int64) {
 	t.Helper()
 	i, ok := result.(*object.Integer)
-	if !ok || i.Value != expected {
+	if !ok || i.IntValue() != expected {
 		t.Errorf("Expected int %d, got %v (%T)", expected, result, result)
 	}
 }
@@ -55,7 +55,7 @@ func assertInt(t *testing.T, result object.Object, expected int64) {
 func assertBool(t *testing.T, result object.Object, expected bool) {
 	t.Helper()
 	b, ok := result.(*object.Boolean)
-	if !ok || b.Value != expected {
+	if !ok || b.BoolValue() != expected {
 		t.Errorf("Expected bool %v, got %v (%T)", expected, result, result)
 	}
 }
@@ -88,108 +88,108 @@ func TestKVDefaultMemory(t *testing.T) {
 	store := kvStore()
 
 	t.Run("SetAndGet_String", func(t *testing.T) {
-		kvCall(store, "set", &object.String{Value: "k"}, &object.String{Value: "v"})
-		assertString(t, kvCall(store, "get", &object.String{Value: "k"}), "v")
+		kvCall(store, "set", object.NewString("k"), object.NewString("v"))
+		assertString(t, kvCall(store, "get", object.NewString("k")), "v")
 	})
 
 	t.Run("SetAndGet_Int", func(t *testing.T) {
-		kvCall(store, "set", &object.String{Value: "n"}, object.NewInteger(99))
-		assertInt(t, kvCall(store, "get", &object.String{Value: "n"}), 99)
+		kvCall(store, "set", object.NewString("n"), object.NewInteger(99))
+		assertInt(t, kvCall(store, "get", object.NewString("n")), 99)
 	})
 
 	t.Run("SetAndGet_Float", func(t *testing.T) {
-		kvCall(store, "set", &object.String{Value: "f"}, &object.Float{Value: 3.14})
-		r := kvCall(store, "get", &object.String{Value: "f"})
-		if fl, ok := r.(*object.Float); !ok || fl.Value != 3.14 {
+		kvCall(store, "set", object.NewString("f"), object.NewFloat(3.14))
+		r := kvCall(store, "get", object.NewString("f"))
+		if fl, ok := r.(*object.Float); !ok || fl.FloatValue() != 3.14 {
 			t.Errorf("Expected float 3.14, got %v", r)
 		}
 	})
 
 	t.Run("SetAndGet_Bool", func(t *testing.T) {
-		kvCall(store, "set", &object.String{Value: "b"}, object.NewBoolean(true))
-		assertBool(t, kvCall(store, "get", &object.String{Value: "b"}), true)
+		kvCall(store, "set", object.NewString("b"), object.NewBoolean(true))
+		assertBool(t, kvCall(store, "get", object.NewString("b")), true)
 	})
 
 	t.Run("SetAndGet_List", func(t *testing.T) {
-		kvCall(store, "set", &object.String{Value: "l"},
+		kvCall(store, "set", object.NewString("l"),
 			&object.List{Elements: []object.Object{object.NewInteger(1), object.NewInteger(2)}})
-		r := kvCall(store, "get", &object.String{Value: "l"})
+		r := kvCall(store, "get", object.NewString("l"))
 		assertListLen(t, r, 2)
 	})
 
 	t.Run("Get_DefaultKwarg", func(t *testing.T) {
 		assertString(t,
-			kvCallKw(store, "get", map[string]object.Object{"default": &object.String{Value: "fallback"}},
-				&object.String{Value: "missing"}),
+			kvCallKw(store, "get", map[string]object.Object{"default": object.NewString("fallback")},
+				object.NewString("missing")),
 			"fallback")
 	})
 
 	t.Run("Get_DefaultPositional", func(t *testing.T) {
 		assertString(t,
-			kvCall(store, "get", &object.String{Value: "missing2"}, &object.String{Value: "pos_fallback"}),
+			kvCall(store, "get", object.NewString("missing2"), object.NewString("pos_fallback")),
 			"pos_fallback")
 	})
 
 	t.Run("Get_MissingReturnsNull", func(t *testing.T) {
-		assertNull(t, kvCall(store, "get", &object.String{Value: "no_such_key"}))
+		assertNull(t, kvCall(store, "get", object.NewString("no_such_key")))
 	})
 
 	t.Run("Exists", func(t *testing.T) {
-		kvCall(store, "set", &object.String{Value: "ex"}, &object.String{Value: "yes"})
-		assertBool(t, kvCall(store, "exists", &object.String{Value: "ex"}), true)
-		assertBool(t, kvCall(store, "exists", &object.String{Value: "no_such"}), false)
+		kvCall(store, "set", object.NewString("ex"), object.NewString("yes"))
+		assertBool(t, kvCall(store, "exists", object.NewString("ex")), true)
+		assertBool(t, kvCall(store, "exists", object.NewString("no_such")), false)
 	})
 
 	t.Run("Delete", func(t *testing.T) {
-		kvCall(store, "set", &object.String{Value: "del"}, &object.String{Value: "x"})
-		kvCall(store, "delete", &object.String{Value: "del"})
-		assertBool(t, kvCall(store, "exists", &object.String{Value: "del"}), false)
+		kvCall(store, "set", object.NewString("del"), object.NewString("x"))
+		kvCall(store, "delete", object.NewString("del"))
+		assertBool(t, kvCall(store, "exists", object.NewString("del")), false)
 	})
 
 	t.Run("TTL_Permanent", func(t *testing.T) {
-		kvCall(store, "set", &object.String{Value: "perm"}, &object.String{Value: "v"})
-		assertInt(t, kvCall(store, "ttl", &object.String{Value: "perm"}), -1)
+		kvCall(store, "set", object.NewString("perm"), object.NewString("v"))
+		assertInt(t, kvCall(store, "ttl", object.NewString("perm")), -1)
 	})
 
 	t.Run("TTL_WithKwarg", func(t *testing.T) {
 		kvCallKw(store, "set",
 			map[string]object.Object{"ttl": object.NewInteger(60)},
-			&object.String{Value: "ttlkw"}, &object.String{Value: "v"})
-		r := kvCall(store, "ttl", &object.String{Value: "ttlkw"})
-		if i, ok := r.(*object.Integer); !ok || i.Value <= 0 || i.Value > 60 {
+			object.NewString("ttlkw"), object.NewString("v"))
+		r := kvCall(store, "ttl", object.NewString("ttlkw"))
+		if i, ok := r.(*object.Integer); !ok || i.IntValue() <= 0 || i.IntValue() > 60 {
 			t.Errorf("Expected TTL ~60s, got %v", r)
 		}
 	})
 
 	t.Run("TTL_WithPositional", func(t *testing.T) {
 		kvCall(store, "set",
-			&object.String{Value: "ttlpos"}, &object.String{Value: "v"}, object.NewInteger(30))
-		r := kvCall(store, "ttl", &object.String{Value: "ttlpos"})
-		if i, ok := r.(*object.Integer); !ok || i.Value <= 0 || i.Value > 30 {
+			object.NewString("ttlpos"), object.NewString("v"), object.NewInteger(30))
+		r := kvCall(store, "ttl", object.NewString("ttlpos"))
+		if i, ok := r.(*object.Integer); !ok || i.IntValue() <= 0 || i.IntValue() > 30 {
 			t.Errorf("Expected TTL ~30s, got %v", r)
 		}
 	})
 
 	t.Run("TTL_Missing", func(t *testing.T) {
-		assertInt(t, kvCall(store, "ttl", &object.String{Value: "no_such_ttl"}), -2)
+		assertInt(t, kvCall(store, "ttl", object.NewString("no_such_ttl")), -2)
 	})
 
 	t.Run("Keys_All", func(t *testing.T) {
 		kvCall(store, "clear")
-		kvCall(store, "set", &object.String{Value: "a:1"}, &object.String{Value: "v"})
-		kvCall(store, "set", &object.String{Value: "a:2"}, &object.String{Value: "v"})
-		kvCall(store, "set", &object.String{Value: "b:1"}, &object.String{Value: "v"})
+		kvCall(store, "set", object.NewString("a:1"), object.NewString("v"))
+		kvCall(store, "set", object.NewString("a:2"), object.NewString("v"))
+		kvCall(store, "set", object.NewString("b:1"), object.NewString("v"))
 		assertListLen(t, kvCall(store, "keys"), 3)
 	})
 
 	t.Run("Keys_PatternKwarg", func(t *testing.T) {
 		assertListLen(t,
-			kvCallKw(store, "keys", map[string]object.Object{"pattern": &object.String{Value: "a:*"}}),
+			kvCallKw(store, "keys", map[string]object.Object{"pattern": object.NewString("a:*")}),
 			2)
 	})
 
 	t.Run("Keys_PatternPositional", func(t *testing.T) {
-		assertListLen(t, kvCall(store, "keys", &object.String{Value: "b:*"}), 1)
+		assertListLen(t, kvCall(store, "keys", object.NewString("b:*")), 1)
 	})
 
 	t.Run("Clear", func(t *testing.T) {
@@ -203,8 +203,8 @@ func TestKVDefaultMemory(t *testing.T) {
 			t.Error("Default store close should be a no-op — KVDB should still be set")
 		}
 		// Store should still be usable
-		kvCall(store, "set", &object.String{Value: "after_close"}, &object.String{Value: "ok"})
-		assertString(t, kvCall(store, "get", &object.String{Value: "after_close"}), "ok")
+		kvCall(store, "set", object.NewString("after_close"), object.NewString("ok"))
+		assertString(t, kvCall(store, "get", object.NewString("after_close")), "ok")
 	})
 }
 
@@ -225,9 +225,9 @@ func TestKVDefaultPersistence(t *testing.T) {
 			t.Fatalf("InitKVStore: %v", err)
 		}
 		store := kvStore()
-		kvCall(store, "set", &object.String{Value: "str"}, &object.String{Value: "hello"})
-		kvCall(store, "set", &object.String{Value: "num"}, object.NewInteger(42))
-		kvCall(store, "set", &object.String{Value: "flag"}, object.NewBoolean(true))
+		kvCall(store, "set", object.NewString("str"), object.NewString("hello"))
+		kvCall(store, "set", object.NewString("num"), object.NewInteger(42))
+		kvCall(store, "set", object.NewString("flag"), object.NewBoolean(true))
 		if err := RuntimeState.KVDB.Save(); err != nil {
 			t.Fatalf("Save: %v", err)
 		}
@@ -240,9 +240,9 @@ func TestKVDefaultPersistence(t *testing.T) {
 		}
 		defer CloseKVStore()
 		store := kvStore()
-		assertString(t, kvCall(store, "get", &object.String{Value: "str"}), "hello")
-		assertInt(t, kvCall(store, "get", &object.String{Value: "num"}), 42)
-		assertBool(t, kvCall(store, "get", &object.String{Value: "flag"}), true)
+		assertString(t, kvCall(store, "get", object.NewString("str")), "hello")
+		assertInt(t, kvCall(store, "get", object.NewString("num")), 42)
+		assertBool(t, kvCall(store, "get", object.NewString("flag")), true)
 	})
 }
 
@@ -263,22 +263,22 @@ func TestKVDefaultTTLExpiry(t *testing.T) {
 
 	// Use the underlying DB for sub-second TTL since the store object works in whole seconds
 	RuntimeState.KVDB.SetEx("ttl:short", "expires", 100*time.Millisecond)
-	assertBool(t, kvCall(store, "exists", &object.String{Value: "ttl:short"}), true)
+	assertBool(t, kvCall(store, "exists", object.NewString("ttl:short")), true)
 
 	time.Sleep(200 * time.Millisecond)
 	RuntimeState.KVDB.Delete("ttl:short") // force eviction of expired key
-	assertBool(t, kvCall(store, "exists", &object.String{Value: "ttl:short"}), false)
+	assertBool(t, kvCall(store, "exists", object.NewString("ttl:short")), false)
 
 	// 1-second TTL via store object
-	kvCall(store, "set", &object.String{Value: "ttl:1s"}, &object.String{Value: "v"}, object.NewInteger(1))
-	assertBool(t, kvCall(store, "exists", &object.String{Value: "ttl:1s"}), true)
+	kvCall(store, "set", object.NewString("ttl:1s"), object.NewString("v"), object.NewInteger(1))
+	assertBool(t, kvCall(store, "exists", object.NewString("ttl:1s")), true)
 	time.Sleep(1100 * time.Millisecond)
-	assertBool(t, kvCall(store, "exists", &object.String{Value: "ttl:1s"}), false)
+	assertBool(t, kvCall(store, "exists", object.NewString("ttl:1s")), false)
 
 	// Permanent key survives
-	kvCall(store, "set", &object.String{Value: "ttl:perm"}, &object.String{Value: "v"})
+	kvCall(store, "set", object.NewString("ttl:perm"), object.NewString("v"))
 	time.Sleep(200 * time.Millisecond)
-	assertBool(t, kvCall(store, "exists", &object.String{Value: "ttl:perm"}), true)
+	assertBool(t, kvCall(store, "exists", object.NewString("ttl:perm")), true)
 }
 
 // ---------------------------------------------------------------------------
@@ -296,19 +296,19 @@ func TestKVNamedMemoryStore(t *testing.T) {
 		store := kvOpen(":memory:basic")
 		defer kvCall(store, "close")
 
-		kvCall(store, "set", &object.String{Value: "x"}, object.NewInteger(1))
-		assertInt(t, kvCall(store, "get", &object.String{Value: "x"}), 1)
-		assertBool(t, kvCall(store, "exists", &object.String{Value: "x"}), true)
-		kvCall(store, "delete", &object.String{Value: "x"})
-		assertBool(t, kvCall(store, "exists", &object.String{Value: "x"}), false)
+		kvCall(store, "set", object.NewString("x"), object.NewInteger(1))
+		assertInt(t, kvCall(store, "get", object.NewString("x")), 1)
+		assertBool(t, kvCall(store, "exists", object.NewString("x")), true)
+		kvCall(store, "delete", object.NewString("x"))
+		assertBool(t, kvCall(store, "exists", object.NewString("x")), false)
 	})
 
 	t.Run("SharedAcrossWrappers", func(t *testing.T) {
 		s1 := kvOpen(":memory:shared")
 		s2 := kvOpen(":memory:shared")
 
-		kvCall(s1, "set", &object.String{Value: "msg"}, &object.String{Value: "hello"})
-		assertString(t, kvCall(s2, "get", &object.String{Value: "msg"}), "hello")
+		kvCall(s1, "set", object.NewString("msg"), object.NewString("hello"))
+		assertString(t, kvCall(s2, "get", object.NewString("msg")), "hello")
 
 		kvCall(s1, "close")
 		kvCall(s2, "close")
@@ -319,11 +319,11 @@ func TestKVNamedMemoryStore(t *testing.T) {
 		named := kvOpen(":memory:isolated")
 		defer kvCall(named, "close")
 
-		kvCall(def, "set", &object.String{Value: "iso"}, &object.String{Value: "default"})
-		kvCall(named, "set", &object.String{Value: "iso"}, &object.String{Value: "named"})
+		kvCall(def, "set", object.NewString("iso"), object.NewString("default"))
+		kvCall(named, "set", object.NewString("iso"), object.NewString("named"))
 
-		assertString(t, kvCall(def, "get", &object.String{Value: "iso"}), "default")
-		assertString(t, kvCall(named, "get", &object.String{Value: "iso"}), "named")
+		assertString(t, kvCall(def, "get", object.NewString("iso")), "default")
+		assertString(t, kvCall(named, "get", object.NewString("iso")), "named")
 	})
 
 	t.Run("IsolatedFromOtherNamed", func(t *testing.T) {
@@ -332,13 +332,13 @@ func TestKVNamedMemoryStore(t *testing.T) {
 		defer kvCall(a, "close")
 		defer kvCall(b, "close")
 
-		kvCall(a, "set", &object.String{Value: "k"}, &object.String{Value: "from_a"})
-		assertNull(t, kvCall(b, "get", &object.String{Value: "k"}))
+		kvCall(a, "set", object.NewString("k"), object.NewString("from_a"))
+		assertNull(t, kvCall(b, "get", object.NewString("k")))
 	})
 
 	t.Run("CloseRemovesFromRegistry", func(t *testing.T) {
 		s1 := kvOpen(":memory:closeme")
-		kvCall(s1, "set", &object.String{Value: "alive"}, &object.String{Value: "yes"})
+		kvCall(s1, "set", object.NewString("alive"), object.NewString("yes"))
 		kvCall(s1, "close") // immediately closes and removes from registry
 
 		kvRegistry.Lock()
@@ -351,13 +351,13 @@ func TestKVNamedMemoryStore(t *testing.T) {
 
 	t.Run("ReopenAfterClose", func(t *testing.T) {
 		s1 := kvOpen(":memory:reopen")
-		kvCall(s1, "set", &object.String{Value: "k"}, &object.String{Value: "v1"})
+		kvCall(s1, "set", object.NewString("k"), object.NewString("v1"))
 		kvCall(s1, "close")
 
 		// After full close, reopening creates a fresh in-memory store
 		s2 := kvOpen(":memory:reopen")
 		defer kvCall(s2, "close")
-		assertNull(t, kvCall(s2, "get", &object.String{Value: "k"}))
+		assertNull(t, kvCall(s2, "get", object.NewString("k")))
 	})
 }
 
@@ -381,8 +381,8 @@ func TestKVNamedPersistentStore(t *testing.T) {
 
 	t.Run("WriteAndClose", func(t *testing.T) {
 		store := kvOpen(path)
-		kvCall(store, "set", &object.String{Value: "persist"}, &object.String{Value: "data"})
-		kvCall(store, "set", &object.String{Value: "num"}, object.NewInteger(777))
+		kvCall(store, "set", object.NewString("persist"), object.NewString("data"))
+		kvCall(store, "set", object.NewString("num"), object.NewInteger(777))
 
 		// Access underlying DB to force save
 		kvRegistry.Lock()
@@ -397,8 +397,8 @@ func TestKVNamedPersistentStore(t *testing.T) {
 	t.Run("ReadAfterReopen", func(t *testing.T) {
 		store := kvOpen(path)
 		defer kvCall(store, "close")
-		assertString(t, kvCall(store, "get", &object.String{Value: "persist"}), "data")
-		assertInt(t, kvCall(store, "get", &object.String{Value: "num"}), 777)
+		assertString(t, kvCall(store, "get", object.NewString("persist")), "data")
+		assertInt(t, kvCall(store, "get", object.NewString("num")), 777)
 	})
 
 	t.Run("SharedWritesThenPersist", func(t *testing.T) {
@@ -406,8 +406,8 @@ func TestKVNamedPersistentStore(t *testing.T) {
 		s1 := kvOpen(path2)
 		s2 := kvOpen(path2)
 
-		kvCall(s1, "set", &object.String{Value: "from_s1"}, &object.String{Value: "yes"})
-		assertString(t, kvCall(s2, "get", &object.String{Value: "from_s1"}), "yes")
+		kvCall(s1, "set", object.NewString("from_s1"), object.NewString("yes"))
+		assertString(t, kvCall(s2, "get", object.NewString("from_s1")), "yes")
 
 		kvRegistry.Lock()
 		entry := kvRegistry.stores[path2]
@@ -420,7 +420,7 @@ func TestKVNamedPersistentStore(t *testing.T) {
 		// Reopen and verify persistence
 		s3 := kvOpen(path2)
 		defer kvCall(s3, "close")
-		assertString(t, kvCall(s3, "get", &object.String{Value: "from_s1"}), "yes")
+		assertString(t, kvCall(s3, "get", object.NewString("from_s1")), "yes")
 	})
 }
 
@@ -445,7 +445,7 @@ func TestKVDefaultConcurrent(t *testing.T) {
 			defer wg.Done()
 			store := kvStore()
 			for k := 0; k < keysPerGoroutine; k++ {
-				key := &object.String{Value: fmt.Sprintf("g%d:k%d", id, k)}
+				key := object.NewString(fmt.Sprintf("g%d:k%d", id, k))
 				val := object.NewInteger(int64(id*1000 + k))
 				kvCall(store, "set", key, val)
 				kvCall(store, "get", key)
@@ -489,7 +489,7 @@ func TestKVNamedMemoryConcurrent(t *testing.T) {
 			defer wg.Done()
 			store := kvOpen(":memory:concurrent") // returns same DB
 			for k := 0; k < keysPerGoroutine; k++ {
-				key := &object.String{Value: fmt.Sprintf("g%d:k%d", id, k)}
+				key := object.NewString(fmt.Sprintf("g%d:k%d", id, k))
 				val := object.NewInteger(int64(id*1000 + k))
 				kvCall(store, "set", key, val)
 				kvCall(store, "get", key)
@@ -527,8 +527,8 @@ func TestKVRegistryConcurrentOpenClose(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			store := kvOpen(":memory:race")
-			kvCall(store, "set", &object.String{Value: "k"}, &object.String{Value: "v"})
-			kvCall(store, "get", &object.String{Value: "k"})
+			kvCall(store, "set", object.NewString("k"), object.NewString("v"))
+			kvCall(store, "get", object.NewString("k"))
 			// No close — store persists in registry across calls
 		}()
 	}
@@ -554,7 +554,7 @@ func TestKVRegistryCleanupOnReset(t *testing.T) {
 
 	// Open a named store to populate the registry
 	store := kvOpen(":memory:cleanup_test")
-	kvCall(store, "set", &object.String{Value: "k"}, &object.String{Value: "v"})
+	kvCall(store, "set", object.NewString("k"), object.NewString("v"))
 
 	// Register cleanup (normally done by NewKVSubLibrary)
 	RegisterCleanup(closeKVRegistry)
@@ -584,7 +584,7 @@ func TestKVOpenErrors(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("EmptyName", func(t *testing.T) {
-		result := kvOpenBuiltin.Fn(ctx, object.Kwargs{}, &object.String{Value: ""})
+		result := kvOpenBuiltin.Fn(ctx, object.Kwargs{}, object.NewString(""))
 		if _, ok := result.(*object.Error); !ok {
 			t.Error("Expected error for empty store name")
 		}
@@ -600,7 +600,7 @@ func TestKVOpenErrors(t *testing.T) {
 	t.Run("SetMissingArgs", func(t *testing.T) {
 		store := kvOpen(":memory:err_test")
 		defer kvCall(store, "close")
-		result := kvCall(store, "set", &object.String{Value: "k"}) // missing value
+		result := kvCall(store, "set", object.NewString("k")) // missing value
 		if _, ok := result.(*object.Error); !ok {
 			t.Error("Expected error for set with missing value arg")
 		}
@@ -626,9 +626,9 @@ func TestKVConversion(t *testing.T) {
 		input    object.Object
 		expected interface{}
 	}{
-		{"string", &object.String{Value: "hello"}, "hello"},
+		{"string", object.NewString("hello"), "hello"},
 		{"int", object.NewInteger(42), int64(42)},
-		{"float", &object.Float{Value: 3.14}, 3.14},
+		{"float", object.NewFloat(3.14), 3.14},
 		{"bool true", object.NewBoolean(true), true},
 		{"bool false", object.NewBoolean(false), false},
 		{"null", &object.Null{}, nil},
@@ -656,7 +656,7 @@ func kvOpenWithSecurity(allowedPaths []string, name string) object.Object {
 	dict := lib.GetDict()
 	pair, _ := dict.GetByString("open")
 	fn := pair.Value.(*object.Builtin)
-	return fn.Fn(context.Background(), object.Kwargs{}, &object.String{Value: name})
+	return fn.Fn(context.Background(), object.Kwargs{}, object.NewString(name))
 }
 
 func TestKVPathSecurity(t *testing.T) {

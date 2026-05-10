@@ -300,7 +300,7 @@ func (s *Server) runHandler(handlerRef string, reqObj *object.Instance) *object.
 		return object.NewStringDict(map[string]object.Object{
 			"status":  object.NewInteger(500),
 			"headers": &object.Dict{Pairs: map[string]object.DictPair{}},
-			"body":    &object.String{Value: fmt.Sprintf(`{"error": "%s"}`, err.Error())},
+			"body":    object.NewString(fmt.Sprintf(`{"error": "%s"}`, err.Error())),
 		})
 	}
 

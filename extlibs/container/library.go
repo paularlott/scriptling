@@ -276,8 +276,8 @@ Example:
 		opts := execOptsFromKwargs(kwargs)
 		fn := func(stream, line string) {
 			eval.CallObjectFunction(ctx, callback, []object.Object{
-				&object.String{Value: stream},
-				&object.String{Value: line},
+				object.NewString(stream),
+				object.NewString(line),
 			}, nil, nil)
 		}
 		res, goErr := ci.driver.ExecStream(ctx, nameOrID, command, opts, fn)
@@ -348,8 +348,8 @@ Example:
 		opts := execOptsFromKwargs(kwargs)
 		fn := func(stream, line string) {
 			eval.CallObjectFunction(ctx, callback, []object.Object{
-				&object.String{Value: stream},
-				&object.String{Value: line},
+				object.NewString(stream),
+				object.NewString(line),
 			}, nil, nil)
 		}
 		res, goErr := ci.driver.ExecStream(ctx, nameOrID, command, opts, fn)
@@ -392,9 +392,9 @@ Example:
 		elements := make([]object.Object, len(images))
 		for i, img := range images {
 			elements[i] = object.NewStringDict(map[string]object.Object{
-				"id":        &object.String{Value: img.ID},
-				"reference": &object.String{Value: img.Reference},
-				"digest":    &object.String{Value: img.Digest},
+				"id":        object.NewString(img.ID),
+				"reference": object.NewString(img.Reference),
+				"digest":    object.NewString(img.Digest),
 				"size":      object.NewInteger(img.Size),
 			})
 		}
@@ -480,7 +480,7 @@ Example:
 		if goErr != nil {
 			return &object.Error{Message: goErr.Error()}
 		}
-		return &object.String{Value: id}
+		return object.NewString(id)
 	}, `run(image, **kwargs) - Create and start a container
 
 Parameters:
@@ -627,7 +627,7 @@ Example:
 		}
 		elements := make([]object.Object, len(names))
 		for i, n := range names {
-			elements[i] = &object.String{Value: n}
+			elements[i] = object.NewString(n)
 		}
 		return &object.List{Elements: elements}
 	}, `volume_list() - List named volumes
@@ -657,18 +657,18 @@ func execOptsFromKwargs(kwargs object.Kwargs) ExecOptions {
 
 func execResultToDict(res *ExecResult) *object.Dict {
 	return object.NewStringDict(map[string]object.Object{
-		"stdout":    &object.String{Value: res.Stdout},
-		"stderr":    &object.String{Value: res.Stderr},
+		"stdout":    object.NewString(res.Stdout),
+		"stderr":    object.NewString(res.Stderr),
 		"exit_code": object.NewInteger(int64(res.ExitCode)),
 	})
 }
 
 func containerInfoToDict(info *ContainerInfo) *object.Dict {
 	return object.NewStringDict(map[string]object.Object{
-		"id":      &object.String{Value: info.ID},
-		"name":    &object.String{Value: info.Name},
-		"status":  &object.String{Value: info.Status},
-		"image":   &object.String{Value: info.Image},
+		"id":      object.NewString(info.ID),
+		"name":    object.NewString(info.Name),
+		"status":  object.NewString(info.Status),
+		"image":   object.NewString(info.Image),
 		"running": object.NewBoolean(info.Running),
 	})
 }

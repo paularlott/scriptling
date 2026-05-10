@@ -124,7 +124,7 @@ Example:
 				if execErr != nil {
 					return errors.NewError("template render error: %s", execErr.Error())
 				}
-				return &object.String{Value: result}
+				return object.NewString(result)
 			},
 			HelpText: `render(data) or render(name, data) - Render a template from the set
 

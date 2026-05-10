@@ -26,9 +26,9 @@ func TestFromGo_Primitives(t *testing.T) {
 		{"uint8", uint8(8), object.NewInteger(8)},
 		{"uint16", uint16(16), object.NewInteger(16)},
 		{"uint32", uint32(32), object.NewInteger(32)},
-		{"float32", float32(3.14), &object.Float{Value: float64(float32(3.14))}},
-		{"float64", 3.14159, &object.Float{Value: 3.14159}},
-		{"string", "hello", &object.String{Value: "hello"}},
+		{"float32", float32(3.14), object.NewFloat(float64(float32(3.14)))},
+		{"float64", 3.14159, object.NewFloat(3.14159)},
+		{"string", "hello", object.NewString("hello")},
 	}
 
 	for _, tt := range tests {
@@ -102,8 +102,8 @@ func TestToGo_AllTypes(t *testing.T) {
 		{"bool true", object.NewBoolean(true), true},
 		{"bool false", object.NewBoolean(false), false},
 		{"integer", object.NewInteger(42), int64(42)},
-		{"float", &object.Float{Value: 3.14}, 3.14},
-		{"string", &object.String{Value: "hello"}, "hello"},
+		{"float", object.NewFloat(3.14), 3.14},
+		{"string", object.NewString("hello"), "hello"},
 	}
 
 	for _, tt := range tests {
@@ -119,7 +119,7 @@ func TestToGo_AllTypes(t *testing.T) {
 func TestToGo_List(t *testing.T) {
 	input := &object.List{
 		Elements: []object.Object{
-			&object.String{Value: "one"},
+			object.NewString("one"),
 			object.NewInteger(2),
 			object.NewBoolean(true),
 		},
@@ -138,7 +138,7 @@ func TestToGo_List(t *testing.T) {
 
 func TestToGo_Dict(t *testing.T) {
 	input := object.NewStringDict(map[string]object.Object{
-		"key1": &object.String{Value: "value1"},
+		"key1": object.NewString("value1"),
 		"key2": object.NewInteger(42),
 	})
 

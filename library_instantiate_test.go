@@ -17,7 +17,7 @@ func TestLibraryInstantiateBasic(t *testing.T) {
 	builder := object.NewLibraryBuilder("testlib", "Test library with instance data")
 	
 	builder.Function("get_value", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-		return &object.String{Value: "template"}
+		return object.NewString("template")
 	})
 	
 	template := builder.Build()
@@ -65,10 +65,10 @@ func TestLibraryInstantiateFunctionAccessesInstanceData(t *testing.T) {
 		// Access instance data from context (injected by Instantiate)
 		instanceData := object.InstanceDataFromContext(ctx)
 		if instanceData == nil {
-			return &object.String{Value: "no-config"}
+			return object.NewString("no-config")
 		}
 		config := instanceData.(testConfig)
-		return &object.String{Value: config.Value}
+		return object.NewString(config.Value)
 	})
 	
 	template := builder.Build()
@@ -123,10 +123,10 @@ func TestLibraryInstantiateNoDataCrossover(t *testing.T) {
 	builder.Function("get_data", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 		instanceData := object.InstanceDataFromContext(ctx)
 		if instanceData == nil {
-			return &object.String{Value: "no-data"}
+			return object.NewString("no-data")
 		}
 		config := instanceData.(testConfig)
-		return &object.String{Value: config.Value}
+		return object.NewString(config.Value)
 	})
 	
 	template := builder.Build()
@@ -205,10 +205,10 @@ func TestLibraryInstantiateConcurrent(t *testing.T) {
 	builder.Function("get_data", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 		instanceData := object.InstanceDataFromContext(ctx)
 		if instanceData == nil {
-			return &object.String{Value: "no-data"}
+			return object.NewString("no-data")
 		}
 		config := instanceData.(testConfig)
-		return &object.String{Value: config.Value}
+		return object.NewString(config.Value)
 	})
 	
 	template := builder.Build()

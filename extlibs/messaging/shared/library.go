@@ -105,7 +105,7 @@ func wrapScriptHandler(eval evaliface.Evaluator, fn object.Object, inst *object.
 		}
 		if isAuth {
 			// auth handler: False return → deny
-			if b, ok := result.(*object.Boolean); ok && !b.Value {
+			if b, ok := result.(*object.Boolean); ok && !b.BoolValue() {
 				return errDenied
 			}
 		}
@@ -120,36 +120,36 @@ var errDenied = fmt.Errorf("denied")
 func BuildCtxDict(c *Ctx) *object.Dict {
 	u := c.Update
 	d := &object.Dict{Pairs: make(map[string]object.DictPair)}
-	d.SetByString("dest", &object.String{Value: u.Dest})
-	d.SetByString("message_id", &object.String{Value: u.MessageID})
-	d.SetByString("text", &object.String{Value: u.Text})
-	d.SetByString("command", &object.String{Value: u.Command})
+	d.SetByString("dest", object.NewString(u.Dest))
+	d.SetByString("message_id", object.NewString(u.MessageID))
+	d.SetByString("text", object.NewString(u.Text))
+	d.SetByString("command", object.NewString(u.Command))
 	d.SetByString("is_callback", object.NewBoolean(u.IsCallback))
-	d.SetByString("callback_id", &object.String{Value: u.CallbackID})
-	d.SetByString("callback_token", &object.String{Value: u.CallbackToken})
-	d.SetByString("callback_data", &object.String{Value: u.CallbackData})
+	d.SetByString("callback_id", object.NewString(u.CallbackID))
+	d.SetByString("callback_token", object.NewString(u.CallbackToken))
+	d.SetByString("callback_data", object.NewString(u.CallbackData))
 
 	// args list
 	args := make([]object.Object, len(u.Args))
 	for i, a := range u.Args {
-		args[i] = &object.String{Value: a}
+		args[i] = object.NewString(a)
 	}
 	d.SetByString("args", &object.List{Elements: args})
 
 	// user dict
 	user := &object.Dict{Pairs: make(map[string]object.DictPair)}
-	user.SetByString("id", &object.String{Value: u.UserID})
-	user.SetByString("name", &object.String{Value: u.UserName})
-	user.SetByString("platform", &object.String{Value: c.Sender.Platform()})
+	user.SetByString("id", object.NewString(u.UserID))
+	user.SetByString("name", object.NewString(u.UserName))
+	user.SetByString("platform", object.NewString(c.Sender.Platform()))
 	d.SetByString("user", user)
 
 	if u.File != nil {
 		fd := &object.Dict{Pairs: make(map[string]object.DictPair)}
-		fd.SetByString("id", &object.String{Value: u.File.ID})
-		fd.SetByString("name", &object.String{Value: u.File.Name})
-		fd.SetByString("mime", &object.String{Value: u.File.MimeType})
+		fd.SetByString("id", object.NewString(u.File.ID))
+		fd.SetByString("name", object.NewString(u.File.Name))
+		fd.SetByString("mime", object.NewString(u.File.MimeType))
 		fd.SetByString("size", object.NewInteger(u.File.Size))
-		fd.SetByString("url", &object.String{Value: u.File.URL})
+		fd.SetByString("url", object.NewString(u.File.URL))
 		d.SetByString("file", fd)
 	} else {
 		d.SetByString("file", &object.Null{})
@@ -210,7 +210,7 @@ func BuildCtxDict(c *Ctx) *object.Dict {
 			if data == nil {
 				return &object.Null{}
 			}
-			return &object.String{Value: EncodeBase64(data)}
+			return object.NewString(EncodeBase64(data))
 		},
 		HelpText: `ctx.download() - download the file/photo in this update, returns base64 string`,
 	})
@@ -220,7 +220,7 @@ func BuildCtxDict(c *Ctx) *object.Dict {
 			caps := c.Sender.Capabilities()
 			elems := make([]object.Object, len(caps))
 			for i, s := range caps {
-				elems[i] = &object.String{Value: s}
+				elems[i] = object.NewString(s)
 			}
 			return &object.List{Elements: elems}
 		},
@@ -292,7 +292,7 @@ func SharedBuiltins() map[string]*object.Builtin {
 				caps := s.Capabilities()
 				elems := make([]object.Object, len(caps))
 				for i, c := range caps {
-					elems[i] = &object.String{Value: c}
+					elems[i] = object.NewString(c)
 				}
 				return &object.List{Elements: elems}
 			},
@@ -617,7 +617,7 @@ func SharedBuiltins() map[string]*object.Builtin {
 				if err != nil {
 					return errors.NewError("download: %s", err.Error())
 				}
-				return &object.String{Value: EncodeBase64(data)}
+				return object.NewString(EncodeBase64(data))
 			},
 			HelpText: `download(client, ref) - Download a file by ID or URL, returns base64 string`,
 		},

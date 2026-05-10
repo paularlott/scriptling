@@ -36,7 +36,7 @@ os.read_file("` + allowedFile + `")
 	if err != nil {
 		t.Fatalf("Failed to read allowed file: %v", err)
 	}
-	if str, _ := result.(*object.String); str == nil || str.Value != "allowed content" {
+	if str, _ := result.(*object.String); str == nil || str.StringValue() != "allowed content" {
 		t.Errorf("Expected 'allowed content', got %v", result)
 	}
 
@@ -281,7 +281,7 @@ os.read_file("` + file1 + `")
 	if err != nil {
 		t.Fatalf("Script error: %v", err)
 	}
-	if str, _ := result.(*object.String); str == nil || str.Value != "1" {
+	if str, _ := result.(*object.String); str == nil || str.StringValue() != "1" {
 		t.Errorf("Expected '1', got %v", result)
 	}
 
@@ -292,7 +292,7 @@ os.read_file("` + file2 + `")
 	if err != nil {
 		t.Fatalf("Script error: %v", err)
 	}
-	if str, _ := result.(*object.String); str == nil || str.Value != "2" {
+	if str, _ := result.(*object.String); str == nil || str.StringValue() != "2" {
 		t.Errorf("Expected '2', got %v", result)
 	}
 
@@ -328,7 +328,7 @@ os.path.exists("` + allowedFile + `")
 	if err != nil {
 		t.Fatalf("Script error: %v", err)
 	}
-	if b, _ := result.(*object.Boolean); b == nil || !b.Value {
+	if b, _ := result.(*object.Boolean); b == nil || !b.BoolValue() {
 		t.Errorf("Expected True for existing allowed file, got %v", result)
 	}
 
@@ -360,7 +360,7 @@ os.path.getsize("` + allowedFile + `")
 	if err != nil {
 		t.Fatalf("Script error: %v", err)
 	}
-	if i, _ := result.(*object.Integer); i == nil || i.Value != 5 {
+	if i, _ := result.(*object.Integer); i == nil || i.IntValue() != 5 {
 		t.Errorf("Expected 5, got %v", result)
 	}
 
@@ -397,7 +397,7 @@ p.read_text()
 	if err != nil {
 		t.Fatalf("Script error: %v", err)
 	}
-	if str, _ := result.(*object.String); str == nil || str.Value != "allowed content" {
+	if str, _ := result.(*object.String); str == nil || str.StringValue() != "allowed content" {
 		t.Errorf("Expected 'allowed content', got %v", result)
 	}
 
@@ -536,7 +536,7 @@ p.exists()
 	if err != nil {
 		t.Fatalf("Script error: %v", err)
 	}
-	if b, _ := result.(*object.Boolean); b == nil || !b.Value {
+	if b, _ := result.(*object.Boolean); b == nil || !b.BoolValue() {
 		t.Errorf("Expected True for allowed file, got %v", result)
 	}
 
@@ -624,8 +624,8 @@ glob.glob("**/*.txt", "` + allowedDir + `")
 	// Verify all results are within allowed path
 	for _, elem := range list.Elements {
 		if str, ok := elem.(*object.String); ok {
-			if !strings.HasPrefix(str.Value, allowedDir) {
-				t.Errorf("Glob result outside allowed path: %s", str.Value)
+			if !strings.HasPrefix(str.StringValue(), allowedDir) {
+				t.Errorf("Glob result outside allowed path: %s", str.StringValue())
 			}
 		}
 	}
@@ -651,7 +651,7 @@ len(results)
 	if err != nil {
 		t.Fatalf("Script error: %v", err)
 	}
-	if i, _ := result.(*object.Integer); i == nil || i.Value != 1 {
+	if i, _ := result.(*object.Integer); i == nil || i.IntValue() != 1 {
 		t.Errorf("Expected 1 file from iglob, got %v", result)
 	}
 
@@ -768,7 +768,7 @@ os.read_file("` + testFile + `")
 	if err != nil {
 		t.Fatalf("Script error: %v", err)
 	}
-	if str, _ := result.(*object.String); str == nil || str.Value != "content" {
+	if str, _ := result.(*object.String); str == nil || str.StringValue() != "content" {
 		t.Errorf("Expected 'content', got %v", result)
 	}
 }
@@ -789,7 +789,7 @@ p.read_text()
 	if err != nil {
 		t.Fatalf("Script error: %v", err)
 	}
-	if str, _ := result.(*object.String); str == nil || str.Value != "content" {
+	if str, _ := result.(*object.String); str == nil || str.StringValue() != "content" {
 		t.Errorf("Expected 'content', got %v", result)
 	}
 }
@@ -835,7 +835,7 @@ os.read_file("` + nestedFile + `")
 	if err != nil {
 		t.Fatalf("Script error: %v", err)
 	}
-	if str, _ := result.(*object.String); str == nil || str.Value != "nested content" {
+	if str, _ := result.(*object.String); str == nil || str.StringValue() != "nested content" {
 		t.Errorf("Expected 'nested content', got %v", result)
 	}
 }
@@ -860,7 +860,7 @@ p.read_text()
 	if err != nil {
 		t.Fatalf("Script error: %v", err)
 	}
-	if str, _ := result.(*object.String); str == nil || str.Value != "nested content" {
+	if str, _ := result.(*object.String); str == nil || str.StringValue() != "nested content" {
 		t.Errorf("Expected 'nested content', got %v", result)
 	}
 }
@@ -895,7 +895,7 @@ os.read_file("./testing/file.txt")
 	if err != nil {
 		t.Fatalf("Failed to read from relative path: %v", err)
 	}
-	if str, _ := result.(*object.String); str == nil || str.Value != "test content" {
+	if str, _ := result.(*object.String); str == nil || str.StringValue() != "test content" {
 		t.Errorf("Expected 'test content', got %v", result)
 	}
 
@@ -906,7 +906,7 @@ os.read_file("./scripts/script.py")
 	if err != nil {
 		t.Fatalf("Failed to read from second relative path: %v", err)
 	}
-	if str, _ := result.(*object.String); str == nil || str.Value != "# script" {
+	if str, _ := result.(*object.String); str == nil || str.StringValue() != "# script" {
 		t.Errorf("Expected '# script', got %v", result)
 	}
 
@@ -954,7 +954,7 @@ os.read_file("../../../allowed/file.txt")
 	if err != nil {
 		t.Fatalf("Failed to read from relative traversal path: %v", err)
 	}
-	if str, _ := result.(*object.String); str == nil || str.Value != "allowed" {
+	if str, _ := result.(*object.String); str == nil || str.StringValue() != "allowed" {
 		t.Errorf("Expected 'allowed', got %v", result)
 	}
 
@@ -1000,7 +1000,7 @@ os.read_file("../testing/a.txt")
 	if err != nil {
 		t.Fatalf("Failed to read from ../testing: %v", err)
 	}
-	if str, _ := result.(*object.String); str.Value != "testing" {
+	if str, _ := result.(*object.String); str.StringValue() != "testing" {
 		t.Errorf("Expected 'testing', got %v", result)
 	}
 
@@ -1010,7 +1010,7 @@ os.read_file("../scripts/b.txt")
 	if err != nil {
 		t.Fatalf("Failed to read from ../scripts: %v", err)
 	}
-	if str, _ := result.(*object.String); str.Value != "scripts" {
+	if str, _ := result.(*object.String); str.StringValue() != "scripts" {
 		t.Errorf("Expected 'scripts', got %v", result)
 	}
 
@@ -1020,7 +1020,7 @@ os.read_file("../tools/c.txt")
 	if err != nil {
 		t.Fatalf("Failed to read from ../tools: %v", err)
 	}
-	if str, _ := result.(*object.String); str.Value != "tools" {
+	if str, _ := result.(*object.String); str.StringValue() != "tools" {
 		t.Errorf("Expected 'tools', got %v", result)
 	}
 
@@ -1054,7 +1054,7 @@ p.read_text()
 	if err != nil {
 		t.Fatalf("Failed to read with pathlib relative: %v", err)
 	}
-	if str, _ := result.(*object.String); str.Value != "relative content" {
+	if str, _ := result.(*object.String); str.StringValue() != "relative content" {
 		t.Errorf("Expected 'relative content', got %v", result)
 	}
 
@@ -1148,7 +1148,7 @@ env.get("result")
 	if err != nil {
 		t.Fatalf("Script error: %v", err)
 	}
-	if str, _ := result.(*object.String); str.Value != "from allowed" {
+	if str, _ := result.(*object.String); str.StringValue() != "from allowed" {
 		t.Errorf("Expected 'from allowed', got %v", result)
 	}
 
@@ -1164,7 +1164,7 @@ env.exit_code()
 	if err != nil {
 		t.Fatalf("Script error: %v", err)
 	}
-	if i, _ := result.(*object.Integer); i.Value != 1 {
-		t.Errorf("Expected exit code 1 for denied relative path, got %d", i.Value)
+	if i, _ := result.(*object.Integer); i.IntValue() != 1 {
+		t.Errorf("Expected exit code 1 for denied relative path, got %d", i.IntValue())
 	}
 }

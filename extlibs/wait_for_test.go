@@ -66,7 +66,7 @@ func TestParseWaitOptions(t *testing.T) {
 		},
 		{
 			name: "positional timeout",
-			args: []object.Object{&object.String{Value: "test"}, &object.Integer{Value: 60}},
+			args: []object.Object{object.NewString("test"), object.NewInteger(60)},
 			kwargs: map[string]object.Object{},
 			wantTimeout: 60,
 			wantPollRate: 1.0,
@@ -74,9 +74,9 @@ func TestParseWaitOptions(t *testing.T) {
 		},
 		{
 			name: "keyword timeout",
-			args: []object.Object{&object.String{Value: "test"}},
+			args: []object.Object{object.NewString("test")},
 			kwargs: map[string]object.Object{
-				"timeout": &object.Integer{Value: 120},
+				"timeout": object.NewInteger(120),
 			},
 			wantTimeout: 120,
 			wantPollRate: 1.0,
@@ -84,9 +84,9 @@ func TestParseWaitOptions(t *testing.T) {
 		},
 		{
 			name: "keyword poll_rate float",
-			args: []object.Object{&object.String{Value: "test"}},
+			args: []object.Object{object.NewString("test")},
 			kwargs: map[string]object.Object{
-				"poll_rate": &object.Float{Value: 0.5},
+				"poll_rate": object.NewFloat(0.5),
 			},
 			wantTimeout: 30,
 			wantPollRate: 0.5,
@@ -94,9 +94,9 @@ func TestParseWaitOptions(t *testing.T) {
 		},
 		{
 			name: "keyword poll_rate int",
-			args: []object.Object{&object.String{Value: "test"}},
+			args: []object.Object{object.NewString("test")},
 			kwargs: map[string]object.Object{
-				"poll_rate": &object.Integer{Value: 2},
+				"poll_rate": object.NewInteger(2),
 			},
 			wantTimeout: 30,
 			wantPollRate: 2.0,
@@ -104,10 +104,10 @@ func TestParseWaitOptions(t *testing.T) {
 		},
 		{
 			name: "both options",
-			args: []object.Object{&object.String{Value: "test"}},
+			args: []object.Object{object.NewString("test")},
 			kwargs: map[string]object.Object{
-				"timeout": &object.Integer{Value: 45},
-				"poll_rate": &object.Float{Value: 0.2},
+				"timeout": object.NewInteger(45),
+				"poll_rate": object.NewFloat(0.2),
 			},
 			wantTimeout: 45,
 			wantPollRate: 0.2,
@@ -141,28 +141,28 @@ func TestWaitForFile(t *testing.T) {
 		filePath := createTempFile(t, "test content")
 
 		result := WaitForLibrary.Functions()["file"].Fn(ctx, object.NewKwargs(map[string]object.Object{
-			"timeout": &object.Integer{Value: 1},
-		}), &object.String{Value: filePath})
+			"timeout": object.NewInteger(1),
+		}), object.NewString(filePath))
 
 		b, ok := result.(*object.Boolean)
 		if !ok {
 			t.Fatalf("expected Boolean, got %T", result)
 		}
-		if !b.Value {
+		if !b.BoolValue() {
 			t.Errorf("expected true, got false")
 		}
 	})
 
 	t.Run("non-existing file with timeout", func(t *testing.T) {
 		result := WaitForLibrary.Functions()["file"].Fn(ctx, object.NewKwargs(map[string]object.Object{
-			"timeout": &object.Integer{Value: 1},
-		}), &object.String{Value: "/tmp/nonexistent_file_12345"})
+			"timeout": object.NewInteger(1),
+		}), object.NewString("/tmp/nonexistent_file_12345"))
 
 		b, ok := result.(*object.Boolean)
 		if !ok {
 			t.Fatalf("expected Boolean, got %T", result)
 		}
-		if b.Value {
+		if b.BoolValue() {
 			t.Errorf("expected false, got true")
 		}
 	})
@@ -178,14 +178,14 @@ func TestWaitForFile(t *testing.T) {
 		}()
 
 		result := WaitForLibrary.Functions()["file"].Fn(ctx, object.NewKwargs(map[string]object.Object{
-			"timeout": &object.Integer{Value: 2},
-		}), &object.String{Value: filePath})
+			"timeout": object.NewInteger(2),
+		}), object.NewString(filePath))
 
 		b, ok := result.(*object.Boolean)
 		if !ok {
 			t.Fatalf("expected Boolean, got %T", result)
 		}
-		if !b.Value {
+		if !b.BoolValue() {
 			t.Errorf("expected true, got false")
 		}
 	})
@@ -198,14 +198,14 @@ func TestWaitForDir(t *testing.T) {
 		dir := t.TempDir()
 
 		result := WaitForLibrary.Functions()["dir"].Fn(ctx, object.NewKwargs(map[string]object.Object{
-			"timeout": &object.Integer{Value: 1},
-		}), &object.String{Value: dir})
+			"timeout": object.NewInteger(1),
+		}), object.NewString(dir))
 
 		b, ok := result.(*object.Boolean)
 		if !ok {
 			t.Fatalf("expected Boolean, got %T", result)
 		}
-		if !b.Value {
+		if !b.BoolValue() {
 			t.Errorf("expected true, got false")
 		}
 	})
@@ -214,14 +214,14 @@ func TestWaitForDir(t *testing.T) {
 		filePath := createTempFile(t, "test")
 
 		result := WaitForLibrary.Functions()["dir"].Fn(ctx, object.NewKwargs(map[string]object.Object{
-			"timeout": &object.Integer{Value: 1},
-		}), &object.String{Value: filePath})
+			"timeout": object.NewInteger(1),
+		}), object.NewString(filePath))
 
 		b, ok := result.(*object.Boolean)
 		if !ok {
 			t.Fatalf("expected Boolean, got %T", result)
 		}
-		if b.Value {
+		if b.BoolValue() {
 			t.Errorf("expected false (file is not a directory), got true")
 		}
 	})
@@ -236,14 +236,14 @@ func TestWaitForDir(t *testing.T) {
 		}()
 
 		result := WaitForLibrary.Functions()["dir"].Fn(ctx, object.NewKwargs(map[string]object.Object{
-			"timeout": &object.Integer{Value: 2},
-		}), &object.String{Value: dirPath})
+			"timeout": object.NewInteger(2),
+		}), object.NewString(dirPath))
 
 		b, ok := result.(*object.Boolean)
 		if !ok {
 			t.Fatalf("expected Boolean, got %T", result)
 		}
-		if !b.Value {
+		if !b.BoolValue() {
 			t.Errorf("expected true, got false")
 		}
 	})
@@ -265,14 +265,14 @@ func TestWaitForPort(t *testing.T) {
 		port = addr.Port
 
 		result := WaitForLibrary.Functions()["port"].Fn(ctx, object.NewKwargs(map[string]object.Object{
-			"timeout": &object.Integer{Value: 1},
-		}), &object.String{Value: "127.0.0.1"}, &object.Integer{Value: int64(port)})
+			"timeout": object.NewInteger(1),
+		}), object.NewString("127.0.0.1"), object.NewInteger(int64(port)))
 
 		b, ok := result.(*object.Boolean)
 		if !ok {
 			t.Fatalf("expected Boolean, got %T", result)
 		}
-		if !b.Value {
+		if !b.BoolValue() {
 			t.Errorf("expected true, got false")
 		}
 	})
@@ -299,14 +299,14 @@ func TestWaitForPort(t *testing.T) {
 		}
 
 		result := WaitForLibrary.Functions()["port"].Fn(ctx, object.NewKwargs(map[string]object.Object{
-			"timeout": &object.Integer{Value: 1},
-		}), &object.String{Value: "127.0.0.1"}, &object.Integer{Value: int64(testPort)})
+			"timeout": object.NewInteger(1),
+		}), object.NewString("127.0.0.1"), object.NewInteger(int64(testPort)))
 
 		b, ok := result.(*object.Boolean)
 		if !ok {
 			t.Fatalf("expected Boolean, got %T", result)
 		}
-		if b.Value {
+		if b.BoolValue() {
 			t.Errorf("expected false for port %d, got true", testPort)
 		}
 	})
@@ -323,8 +323,8 @@ func TestWaitForPort(t *testing.T) {
 		port = addr.Port
 
 		result := WaitForLibrary.Functions()["port"].Fn(ctx, object.NewKwargs(map[string]object.Object{
-			"timeout": &object.Integer{Value: 1},
-		}), &object.String{Value: "127.0.0.1"}, &object.String{Value: string(rune('0' + port))})
+			"timeout": object.NewInteger(1),
+		}), object.NewString("127.0.0.1"), object.NewString(string(rune('0' + port))))
 
 		// This test might not work perfectly with string conversion, so we just check it doesn't crash
 		_ = result
@@ -339,14 +339,14 @@ func TestWaitForHTTP(t *testing.T) {
 		defer server.Close()
 
 		result := WaitForLibrary.Functions()["http"].Fn(ctx, object.NewKwargs(map[string]object.Object{
-			"timeout": &object.Integer{Value: 5},
-		}), &object.String{Value: server.URL})
+			"timeout": object.NewInteger(5),
+		}), object.NewString(server.URL))
 
 		b, ok := result.(*object.Boolean)
 		if !ok {
 			t.Fatalf("expected Boolean, got %T", result)
 		}
-		if !b.Value {
+		if !b.BoolValue() {
 			t.Errorf("expected true, got false")
 		}
 	})
@@ -356,15 +356,15 @@ func TestWaitForHTTP(t *testing.T) {
 		defer server.Close()
 
 		result := WaitForLibrary.Functions()["http"].Fn(ctx, object.NewKwargs(map[string]object.Object{
-			"timeout": &object.Integer{Value: 5},
-			"status_code": &object.Integer{Value: 201},
-		}), &object.String{Value: server.URL})
+			"timeout": object.NewInteger(5),
+			"status_code": object.NewInteger(201),
+		}), object.NewString(server.URL))
 
 		b, ok := result.(*object.Boolean)
 		if !ok {
 			t.Fatalf("expected Boolean, got %T", result)
 		}
-		if !b.Value {
+		if !b.BoolValue() {
 			t.Errorf("expected true, got false")
 		}
 	})
@@ -374,28 +374,28 @@ func TestWaitForHTTP(t *testing.T) {
 		defer server.Close()
 
 		result := WaitForLibrary.Functions()["http"].Fn(ctx, object.NewKwargs(map[string]object.Object{
-			"timeout": &object.Integer{Value: 2},
-		}), &object.String{Value: server.URL})
+			"timeout": object.NewInteger(2),
+		}), object.NewString(server.URL))
 
 		b, ok := result.(*object.Boolean)
 		if !ok {
 			t.Fatalf("expected Boolean, got %T", result)
 		}
-		if b.Value {
+		if b.BoolValue() {
 			t.Errorf("expected false, got true")
 		}
 	})
 
 	t.Run("non-existent URL", func(t *testing.T) {
 		result := WaitForLibrary.Functions()["http"].Fn(ctx, object.NewKwargs(map[string]object.Object{
-			"timeout": &object.Integer{Value: 1},
-		}), &object.String{Value: "http://localhost:9999/nonexistent"})
+			"timeout": object.NewInteger(1),
+		}), object.NewString("http://localhost:9999/nonexistent"))
 
 		b, ok := result.(*object.Boolean)
 		if !ok {
 			t.Fatalf("expected Boolean, got %T", result)
 		}
-		if b.Value {
+		if b.BoolValue() {
 			t.Errorf("expected false, got true")
 		}
 	})
@@ -408,14 +408,14 @@ func TestWaitForFileContent(t *testing.T) {
 		filePath := createTempFile(t, "hello world")
 
 		result := WaitForLibrary.Functions()["file_content"].Fn(ctx, object.NewKwargs(map[string]object.Object{
-			"timeout": &object.Integer{Value: 1},
-		}), &object.String{Value: filePath}, &object.String{Value: "world"})
+			"timeout": object.NewInteger(1),
+		}), object.NewString(filePath), object.NewString("world"))
 
 		b, ok := result.(*object.Boolean)
 		if !ok {
 			t.Fatalf("expected Boolean, got %T", result)
 		}
-		if !b.Value {
+		if !b.BoolValue() {
 			t.Errorf("expected true, got false")
 		}
 	})
@@ -424,14 +424,14 @@ func TestWaitForFileContent(t *testing.T) {
 		filePath := createTempFile(t, "hello world")
 
 		result := WaitForLibrary.Functions()["file_content"].Fn(ctx, object.NewKwargs(map[string]object.Object{
-			"timeout": &object.Integer{Value: 1},
-		}), &object.String{Value: filePath}, &object.String{Value: "goodbye"})
+			"timeout": object.NewInteger(1),
+		}), object.NewString(filePath), object.NewString("goodbye"))
 
 		b, ok := result.(*object.Boolean)
 		if !ok {
 			t.Fatalf("expected Boolean, got %T", result)
 		}
-		if b.Value {
+		if b.BoolValue() {
 			t.Errorf("expected false, got true")
 		}
 	})
@@ -447,14 +447,14 @@ func TestWaitForFileContent(t *testing.T) {
 		}()
 
 		result := WaitForLibrary.Functions()["file_content"].Fn(ctx, object.NewKwargs(map[string]object.Object{
-			"timeout": &object.Integer{Value: 2},
-		}), &object.String{Value: filePath}, &object.String{Value: "target_content"})
+			"timeout": object.NewInteger(2),
+		}), object.NewString(filePath), object.NewString("target_content"))
 
 		b, ok := result.(*object.Boolean)
 		if !ok {
 			t.Fatalf("expected Boolean, got %T", result)
 		}
-		if !b.Value {
+		if !b.BoolValue() {
 			t.Errorf("expected true, got false")
 		}
 	})

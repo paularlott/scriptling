@@ -207,8 +207,8 @@ func TestStringLiteral(t *testing.T) {
 		t.Fatalf("object is not String. got=%T (%+v)", evaluated, evaluated)
 	}
 
-	if str.Value != "Hello World" {
-		t.Errorf("String has wrong value. got=%q", str.Value)
+	if str.StringValue() != "Hello World" {
+		t.Errorf("String has wrong value. got=%q", str.StringValue())
 	}
 }
 
@@ -221,8 +221,8 @@ func TestStringConcatenation(t *testing.T) {
 		t.Fatalf("object is not String. got=%T (%+v)", evaluated, evaluated)
 	}
 
-	if str.Value != "Hello World" {
-		t.Errorf("String has wrong value. got=%q", str.Value)
+	if str.StringValue() != "Hello World" {
+		t.Errorf("String has wrong value. got=%q", str.StringValue())
 	}
 }
 
@@ -348,8 +348,8 @@ caught
 				if !ok {
 					t.Fatalf("object is not String. got=%T (%+v)", evaluated, evaluated)
 				}
-				if str.Value != expected {
-					t.Fatalf("wrong string value. got=%q want=%q", str.Value, expected)
+				if str.StringValue() != expected {
+					t.Fatalf("wrong string value. got=%q want=%q", str.StringValue(), expected)
 				}
 			}
 		})
@@ -371,9 +371,9 @@ func testIntegerObject(t *testing.T, obj object.Object, expected int64) bool {
 		t.Errorf("object is not Integer. got=%T (%+v)", obj, obj)
 		return false
 	}
-	if result.Value != expected {
+	if result.IntValue() != expected {
 		t.Errorf("object has wrong value. got=%d, want=%d",
-			result.Value, expected)
+			result.IntValue(), expected)
 		return false
 	}
 	return true
@@ -385,9 +385,9 @@ func testFloatObject(t *testing.T, obj object.Object, expected float64) bool {
 		t.Errorf("object is not Float. got=%T (%+v)", obj, obj)
 		return false
 	}
-	if result.Value != expected {
+	if result.FloatValue() != expected {
 		t.Errorf("object has wrong value. got=%f, want=%f",
-			result.Value, expected)
+			result.FloatValue(), expected)
 		return false
 	}
 	return true
@@ -399,9 +399,9 @@ func testBooleanObject(t *testing.T, obj object.Object, expected bool) bool {
 		t.Errorf("object is not Boolean. got=%T (%+v)", obj, obj)
 		return false
 	}
-	if result.Value != expected {
+	if result.BoolValue() != expected {
 		t.Errorf("object has wrong value. got=%t, want=%t",
-			result.Value, expected)
+			result.BoolValue(), expected)
 		return false
 	}
 	return true
@@ -421,9 +421,9 @@ func testStringObject(t *testing.T, obj object.Object, expected string) bool {
 		t.Errorf("object is not String. got=%T (%+v)", obj, obj)
 		return false
 	}
-	if result.Value != expected {
+	if result.StringValue() != expected {
 		t.Errorf("object has wrong value. got=%q, want=%q",
-			result.Value, expected)
+			result.StringValue(), expected)
 		return false
 	}
 	return true
