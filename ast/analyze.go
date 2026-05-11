@@ -50,14 +50,11 @@ func AnalyzeTopLevelLocals(program *Program) {
 	}
 
 	slots := make(map[string]int, len(names))
-	nameIDs := make([]uint32, len(names))
 	for idx, name := range names {
 		slots[name] = idx
-		nameIDs[idx] = program.Symbols.Intern(name)
 	}
 	program.LocalSlots = slots
 	program.LocalSlotNames = names
-	program.LocalSlotNameIDs = nameIDs
 }
 
 func AnalyzeFunctionLocals(fn *FunctionLiteral) {
@@ -89,22 +86,11 @@ func AnalyzeFunctionLocals(fn *FunctionLiteral) {
 	collectAssignedNamesFromBlock(fn.Body, globals, nonlocals, addName)
 
 	slots := make(map[string]int, len(names))
-	nameIDs := make([]uint32, len(names))
-	var symbols *SymbolTable
-	if len(fn.Parameters) > 0 {
-		symbols = fn.Parameters[0].Symbols
-	}
 	for idx, name := range names {
 		slots[name] = idx
-		if symbols != nil {
-			nameIDs[idx] = symbols.Intern(name)
-		}
 	}
 	fn.LocalSlots = slots
 	fn.LocalSlotNames = names
-	if symbols != nil {
-		fn.LocalSlotNameIDs = nameIDs
-	}
 	fn.ParamSlotIndexes = computeParamSlotIndexes(fn.Parameters, slots)
 }
 
@@ -124,11 +110,6 @@ func AnalyzeLambdaLocals(lambda *Lambda) {
 	}
 	slots := make(map[string]int, len(names))
 	uniq := names[:0]
-	uniqIDs := make([]uint32, 0, len(names))
-	var symbols *SymbolTable
-	if len(lambda.Parameters) > 0 {
-		symbols = lambda.Parameters[0].Symbols
-	}
 	for _, name := range names {
 		if name == "" {
 			continue
@@ -137,18 +118,10 @@ func AnalyzeLambdaLocals(lambda *Lambda) {
 			continue
 		}
 		slots[name] = len(uniq)
-		var id uint32
-		if symbols != nil {
-			id = symbols.Intern(name)
-		}
 		uniq = append(uniq, name)
-		uniqIDs = append(uniqIDs, id)
 	}
 	lambda.LocalSlots = slots
 	lambda.LocalSlotNames = uniq
-	if symbols != nil {
-		lambda.LocalSlotNameIDs = uniqIDs
-	}
 	lambda.ParamSlotIndexes = computeParamSlotIndexes(lambda.Parameters, slots)
 }
 
