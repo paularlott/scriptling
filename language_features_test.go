@@ -31,13 +31,13 @@ func TestImplicitStringConcatenation(t *testing.T) {
 			expected: "abc",
 		},
 		{
-			name:     "adjacent strings in parentheses across lines",
+			name: "adjacent strings in parentheses across lines",
 			code: `result = ("hello"
     " world")`,
 			expected: "hello world",
 		},
 		{
-			name:     "multiline concatenation in parens",
+			name: "multiline concatenation in parens",
 			code: `result = (
     "line one"
     " line two"
@@ -46,7 +46,7 @@ func TestImplicitStringConcatenation(t *testing.T) {
 			expected: "line one line two line three",
 		},
 		{
-			name:     "adjacent strings in function call",
+			name: "adjacent strings in function call",
 			code: `
 def concat(s):
     return s
@@ -65,7 +65,7 @@ result = concat("hello" " world")`,
 			expected: "hello",
 		},
 		{
-			name:     "no concatenation across newlines outside parens",
+			name: "no concatenation across newlines outside parens",
 			code: `x = "hello"
 result = x`,
 			expected: "hello",
@@ -679,12 +679,7 @@ result = json_helper.parse_name('{"name": "Alice", "age": 30}')
 	}
 }
 
-// ============================================================================
-// Integration Tests - Real-world patterns from fortix dev libraries
-// ============================================================================
-
-func TestFortixStyleParamFiltering(t *testing.T) {
-	// Pattern from fortix_dev.py: filtering params with mixed types
+func TestRealStyleParamFiltering(t *testing.T) {
 	p := New()
 	_, err := p.Eval(`
 params = {"page": 1, "limit": 500, "search": "", "active": True}
@@ -706,8 +701,7 @@ count = len(filtered)
 	}
 }
 
-func TestFortixStyleIsinstanceChecks(t *testing.T) {
-	// Pattern from fortix library: checking response types
+func TestRealStyleIsinstanceChecks(t *testing.T) {
 	p := New()
 	_, err := p.Eval(`
 response = {"records": [{"id": 1}, {"id": 2}]}
@@ -744,7 +738,7 @@ is_not_str = isinstance(first_record, str)
 	}
 }
 
-func TestFortixStyleMultilineStrings(t *testing.T) {
+func TestRealStyleMultilineStrings(t *testing.T) {
 	// Pattern: building URLs with implicit concatenation
 	p := New()
 	_, err := p.Eval(`
