@@ -495,7 +495,6 @@ r2 = env.get("result2")
 
 func TestSandboxMCPPattern(t *testing.T) {
 	// Test the MCP script execution pattern: set __mcp_params, exec script,
-	// read __mcp_response — this is how fortix.mcp.call_script works
 	p := setupSandboxTest(t)
 
 	tmpDir := t.TempDir()
