@@ -111,7 +111,7 @@ var stringIOClass = &object.Class{
 				if errObj != nil {
 					return errObj
 				}
-				return &object.String{Value: data.buf.String()}
+				return object.NewString(data.buf.String())
 			},
 			HelpText: `getvalue() - Return the entire buffer contents as a string`,
 		},
@@ -123,7 +123,7 @@ var stringIOClass = &object.Class{
 				}
 				content := data.buf.String()
 				if data.pos >= len(content) {
-					return &object.String{Value: ""}
+					return object.NewString("")
 				}
 				if len(args) >= 2 {
 					n, err := args[1].AsInt()
@@ -136,11 +136,11 @@ var stringIOClass = &object.Class{
 					}
 					result := content[data.pos:end]
 					data.pos = end
-					return &object.String{Value: result}
+					return object.NewString(result)
 				}
 				result := content[data.pos:]
 				data.pos = len(content)
-				return &object.String{Value: result}
+				return object.NewString(result)
 			},
 			HelpText: `read([n]) - Read up to n characters from current position; reads all if n omitted`,
 		},
@@ -152,17 +152,17 @@ var stringIOClass = &object.Class{
 				}
 				content := data.buf.String()
 				if data.pos >= len(content) {
-					return &object.String{Value: ""}
+					return object.NewString("")
 				}
 				rest := content[data.pos:]
 				idx := strings.Index(rest, "\n")
 				if idx == -1 {
 					data.pos = len(content)
-					return &object.String{Value: rest}
+					return object.NewString(rest)
 				}
 				line := rest[:idx+1]
 				data.pos += idx + 1
-				return &object.String{Value: line}
+				return object.NewString(line)
 			},
 			HelpText: `readline() - Read one line (including newline) from current position`,
 		},

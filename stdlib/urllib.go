@@ -27,19 +27,19 @@ var ParseResultClass = &object.Class{
 				query, _ := result.Fields["query"].(*object.String)
 				fragment, _ := result.Fields["fragment"].(*object.String)
 
-				url := scheme.Value + "://"
-				if netloc.Value != "" {
-					url += netloc.Value
+				url := scheme.StringValue() + "://"
+				if netloc.StringValue() != "" {
+					url += netloc.StringValue()
 				}
-				url += path.Value
-				if query.Value != "" {
-					url += "?" + query.Value
+				url += path.StringValue()
+				if query.StringValue() != "" {
+					url += "?" + query.StringValue()
 				}
-				if fragment.Value != "" {
-					url += "#" + fragment.Value
+				if fragment.StringValue() != "" {
+					url += "#" + fragment.StringValue()
 				}
 
-				return &object.String{Value: url}
+				return object.NewString(url)
 			},
 			HelpText: `geturl() - Reconstruct URL from parsed components`,
 		},
@@ -51,12 +51,12 @@ func createParseResultInstance(scheme, netloc, path, params, query, fragment str
 	return &object.Instance{
 		Class: ParseResultClass,
 		Fields: map[string]object.Object{
-			"scheme":   &object.String{Value: scheme},
-			"netloc":   &object.String{Value: netloc},
-			"path":     &object.String{Value: path},
-			"params":   &object.String{Value: params},
-			"query":    &object.String{Value: query},
-			"fragment": &object.String{Value: fragment},
+			"scheme":   object.NewString(scheme),
+			"netloc":   object.NewString(netloc),
+			"path":     object.NewString(path),
+			"params":   object.NewString(params),
+			"query":    object.NewString(query),
+			"fragment": object.NewString(fragment),
 		},
 	}
 }
@@ -84,7 +84,7 @@ var URLParseLibrary = object.NewLibrary(URLParseLibraryName, map[string]*object.
 			}
 
 			encoded := urlQuote(str, safe)
-			return &object.String{Value: encoded}
+			return object.NewString(encoded)
 		},
 		HelpText: `quote(string, safe='') - URL encode string
 
@@ -113,7 +113,7 @@ Returns a URL-encoded version of the string. Characters in 'safe' are not encode
 			// quote_plus replaces spaces with + and encodes other chars
 			encoded := urlQuote(str, safe)
 			encoded = strings.ReplaceAll(encoded, "%20", "+")
-			return &object.String{Value: encoded}
+			return object.NewString(encoded)
 		},
 		HelpText: `quote_plus(string, safe='') - URL encode string with + for spaces
 
@@ -132,7 +132,7 @@ Like quote(), but also replaces spaces with plus signs.`,
 			if urlErr != nil {
 				return errors.NewError("unquote() invalid URL encoding")
 			}
-			return &object.String{Value: decoded}
+			return object.NewString(decoded)
 		},
 		HelpText: `unquote(string) - URL decode string
 
@@ -153,7 +153,7 @@ Returns a URL-decoded version of the string.`,
 			if urlErr != nil {
 				return errors.NewError("unquote_plus() invalid URL encoding")
 			}
-			return &object.String{Value: decoded}
+			return object.NewString(decoded)
 		},
 		HelpText: `unquote_plus(string) - URL decode string with + as spaces
 
@@ -226,7 +226,7 @@ Access components as attributes: result.scheme, result.netloc, etc. Use result.g
 							u.Fragment = str
 						}
 					}
-					return &object.String{Value: u.String()}
+					return object.NewString(u.String())
 				}
 				return errors.NewTypeError("DICT, LIST, TUPLE, or ParseResult", args[0].Type().String())
 
@@ -257,7 +257,7 @@ Access components as attributes: result.scheme, result.netloc, etc. Use result.g
 						u.Fragment = str
 					}
 				}
-				return &object.String{Value: u.String()}
+				return object.NewString(u.String())
 
 			case *object.List:
 				if len(arg.Elements) != 6 {
@@ -278,7 +278,7 @@ Access components as attributes: result.scheme, result.netloc, etc. Use result.g
 					RawQuery: components[4],
 					Fragment: components[5],
 				}
-				return &object.String{Value: u.String()}
+				return object.NewString(u.String())
 
 			case *object.Tuple:
 				if len(arg.Elements) != 6 {
@@ -299,7 +299,7 @@ Access components as attributes: result.scheme, result.netloc, etc. Use result.g
 					RawQuery: components[4],
 					Fragment: components[5],
 				}
-				return &object.String{Value: u.String()}
+				return object.NewString(u.String())
 
 			default:
 				return errors.NewTypeError("DICT, LIST, TUPLE, or ParseResult", args[0].Type().String())
@@ -334,7 +334,7 @@ Constructs a URL string from a 6-tuple or dict of URL components.`,
 			}
 
 			joined := baseURL.ResolveReference(refURL)
-			return &object.String{Value: joined.String()}
+			return object.NewString(joined.String())
 		},
 		HelpText: `urljoin(base, url) - Join base URL with reference
 
@@ -366,11 +366,11 @@ Joins a base URL with a reference URL, resolving relative references.`,
 
 			// Return tuple-like list with URL components (scheme, netloc, path, query, fragment)
 			elements := []object.Object{
-				&object.String{Value: u.Scheme},
-				&object.String{Value: netloc},
-				&object.String{Value: u.Path},
-				&object.String{Value: u.RawQuery},
-				&object.String{Value: u.Fragment},
+				object.NewString(u.Scheme),
+				object.NewString(netloc),
+				object.NewString(u.Path),
+				object.NewString(u.RawQuery),
+				object.NewString(u.Fragment),
 			}
 
 			return &object.List{Elements: elements}
@@ -409,7 +409,7 @@ Returns a 5-tuple: (scheme, netloc, path, query, fragment).`,
 				Fragment: components[4],
 			}
 
-			return &object.String{Value: u.String()}
+			return object.NewString(u.String())
 		},
 		HelpText: `urlunsplit(components) - Construct URL from component tuple
 
@@ -436,9 +436,9 @@ Constructs a URL string from a 5-tuple of URL components.`,
 			for key, vals := range values {
 				elements := make([]object.Object, len(vals))
 				for i, val := range vals {
-					elements[i] = &object.String{Value: val}
+					elements[i] = object.NewString(val)
 				}
-				keyObj := &object.String{Value: key}
+				keyObj := object.NewString(key)
 				pairs[object.DictKey(keyObj)] = object.DictPair{
 					Key:   keyObj,
 					Value: &object.List{Elements: elements},
@@ -473,8 +473,8 @@ Parses a URL query string and returns a dictionary where values are lists.`,
 				for _, val := range vals {
 					tuple := &object.Tuple{
 						Elements: []object.Object{
-							&object.String{Value: key},
-							&object.String{Value: val},
+							object.NewString(key),
+							object.NewString(val),
 						},
 					}
 					result = append(result, tuple)
@@ -504,7 +504,7 @@ Parses a URL query string and returns a list of (key, value) tuples.`,
 					}
 					switch val := pair.Value.(type) {
 					case *object.String:
-						values[keyStr] = []string{val.Value}
+						values[keyStr] = []string{val.StringValue()}
 					case *object.List:
 						strVals := make([]string, len(val.Elements))
 						for i, elem := range val.Elements {
@@ -530,7 +530,7 @@ Parses a URL query string and returns a list of (key, value) tuples.`,
 				return errors.NewTypeError("DICT or LIST", args[0].Type().String())
 			}
 
-			return &object.String{Value: values.Encode()}
+			return object.NewString(values.Encode())
 		},
 		HelpText: `urlencode(query, doseq=False) - Encode dictionary as query string
 

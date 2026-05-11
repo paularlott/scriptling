@@ -46,8 +46,8 @@ reply["data"]
 	if !ok {
 		t.Fatalf("expected string, got %T: %v", result, result)
 	}
-	if str.Value != "hello world" {
-		t.Errorf("expected 'hello world', got '%s'", str.Value)
+	if str.StringValue() != "hello world" {
+		t.Errorf("expected 'hello world', got '%s'", str.StringValue())
 	}
 }
 
@@ -118,8 +118,8 @@ reply["data"]
 	if !ok {
 		t.Fatalf("expected string, got %T: %v", result, result)
 	}
-	if str.Value != "pong" {
-		t.Errorf("expected 'pong', got '%s'", str.Value)
+	if str.StringValue() != "pong" {
+		t.Errorf("expected 'pong', got '%s'", str.StringValue())
 	}
 }
 
@@ -268,7 +268,7 @@ raw["data"]
 	if !ok {
 		t.Fatalf("expected string, got %T", result)
 	}
-	if str.Value == "" {
+	if str.StringValue() == "" {
 		t.Error("expected non-empty JSON string")
 	}
 }

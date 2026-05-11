@@ -105,7 +105,7 @@ func createLoggingLibrary(defaultLogger logger.Logger) *object.Library {
 
 					if len(args) > 0 {
 						if name, ok := args[0].(*object.String); ok {
-							loggerName = name.Value
+							loggerName = name.StringValue()
 						} else {
 							return errors.NewError("logger name must be a string")
 						}
@@ -221,6 +221,6 @@ func logWithLogger(ctx context.Context, args []object.Object, logFunc func(msg s
 		return errors.NewError("log message must be a string")
 	}
 
-	logFunc(msg.Value)
+	logFunc(msg.StringValue())
 	return object.NewBoolean(true)
 }

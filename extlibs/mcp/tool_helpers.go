@@ -59,7 +59,7 @@ func setResponseAndExit(ctx context.Context, response string, exitCode int) obje
 	}
 
 	// Set __mcp_response
-	env.Set(MCPResponseVarName, &object.String{Value: response})
+	env.Set(MCPResponseVarName, object.NewString(response))
 
 	// Exit with specified code
 	return object.NewSystemExit(exitCode, "")
@@ -134,15 +134,15 @@ Example:
 
 				paramValue := getParamValue(ctx, name)
 				if paramValue == nil {
-					return &object.Float{Value: defaultVal}
+					return object.NewFloat(defaultVal)
 				}
 
 				val, err := paramValue.CoerceFloat()
 				if err != nil {
-					return &object.Float{Value: defaultVal}
+					return object.NewFloat(defaultVal)
 				}
 
-				return &object.Float{Value: val}
+				return object.NewFloat(val)
 			},
 			HelpText: `get_float(name, default=0.0) - Get a parameter as float
 
@@ -178,20 +178,20 @@ Example:
 
 				paramValue := getParamValue(ctx, name)
 				if paramValue == nil {
-					return &object.String{Value: defaultVal}
+					return object.NewString(defaultVal)
 				}
 
 				val, err := paramValue.CoerceString()
 				if err != nil {
-					return &object.String{Value: defaultVal}
+					return object.NewString(defaultVal)
 				}
 
 				val = strings.TrimSpace(val)
 				if val == "" {
-					return &object.String{Value: defaultVal}
+					return object.NewString(defaultVal)
 				}
 
-				return &object.String{Value: val}
+				return object.NewString(val)
 			},
 			HelpText: `get_string(name, default="") - Get a parameter as string
 
@@ -231,7 +231,7 @@ Example:
 				}
 
 				if strVal, ok := paramValue.(*object.String); ok {
-					lower := strings.ToLower(strings.TrimSpace(strVal.Value))
+					lower := strings.ToLower(strings.TrimSpace(strVal.StringValue()))
 					if lower == "true" || lower == "1" {
 						return object.NewBoolean(true)
 					}
@@ -294,7 +294,7 @@ Example:
 				}
 
 				if strVal, ok := paramValue.(*object.String); ok {
-					val := strings.TrimSpace(strVal.Value)
+					val := strings.TrimSpace(strVal.StringValue())
 					if val == "" {
 						return defaultVal
 					}
@@ -303,7 +303,7 @@ Example:
 					for _, part := range parts {
 						trimmed := strings.TrimSpace(part)
 						if trimmed != "" {
-							elements = append(elements, &object.String{Value: trimmed})
+							elements = append(elements, object.NewString(trimmed))
 						}
 					}
 					return &object.List{Elements: elements}
@@ -650,7 +650,7 @@ func RunToolScript(ctx context.Context, sl *scriptling.Scriptling, script string
 	responseObj, getErr := sl.GetVarAsObject(MCPResponseVarName)
 	if getErr == nil {
 		if strObj, ok := responseObj.(*object.String); ok {
-			response = strObj.Value
+			response = strObj.StringValue()
 		}
 	}
 

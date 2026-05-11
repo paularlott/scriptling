@@ -14,7 +14,7 @@ var startTime = time.Now()
 var TimeLibrary = object.NewLibrary(TimeLibraryName, map[string]*object.Builtin{
 	"now": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			return &object.String{Value: time.Now().Format("2006-01-02T15:04:05.999999")}
+			return object.NewString(time.Now().Format("2006-01-02T15:04:05.999999"))
 		},
 		HelpText: `now() - Return current date and time
 
@@ -22,7 +22,7 @@ Returns the current date and time as an ISO 8601 formatted string (YYYY-MM-DDTHH
 	},
 	"time": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			return &object.Float{Value: float64(time.Now().UnixNano()) / 1e9}
+			return object.NewFloat(float64(time.Now().UnixNano()) / 1e9)
 		},
 		HelpText: `time() - Return current time in seconds
 
@@ -30,7 +30,7 @@ Returns the current time as a floating point number of seconds since the Unix ep
 	},
 	"perf_counter": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			return &object.Float{Value: time.Since(startTime).Seconds()}
+			return object.NewFloat(time.Since(startTime).Seconds())
 		},
 		HelpText: `perf_counter() - Return performance counter
 
@@ -146,7 +146,7 @@ Returns a time tuple in UTC. If timestamp/datetime is omitted, uses current time
 			second, _ := tuple[5].AsInt()
 
 			t := time.Date(int(year), time.Month(month), int(day), int(hour), int(minute), int(second), 0, time.Local)
-			return &object.Float{Value: float64(t.Unix())}
+			return object.NewFloat(float64(t.Unix()))
 		},
 		HelpText: `mktime(tuple) - Convert time tuple to timestamp
 
@@ -186,7 +186,7 @@ Converts a time tuple (9 elements) to a Unix timestamp.`,
 				t = time.Date(int(year), time.Month(month), int(day), int(hour), int(minute), int(second), 0, time.Local)
 			}
 
-			return &object.String{Value: t.Format(pythonToGoFormat(format))}
+			return object.NewString(t.Format(pythonToGoFormat(format)))
 		},
 		HelpText: `strftime(format[, tuple]) - Format time as string
 
@@ -246,7 +246,7 @@ Parses a time string according to the given format and returns a time tuple.`,
 				}
 			}
 
-			return &object.String{Value: t.Format("Mon Jan 2 15:04:05 2006")}
+			return object.NewString(t.Format("Mon Jan 2 15:04:05 2006"))
 		},
 		HelpText: `asctime([tuple]) - Convert time tuple to string
 
@@ -269,7 +269,7 @@ Converts a time tuple to a string in the format 'Mon Jan 2 15:04:05 2006'. If tu
 				}
 			}
 
-			return &object.String{Value: t.Format("Mon Jan 2 15:04:05 2006")}
+			return object.NewString(t.Format("Mon Jan 2 15:04:05 2006"))
 		},
 		HelpText: `ctime([timestamp]) - Convert timestamp to string
 
@@ -291,15 +291,15 @@ func timeToTuple(t time.Time, utc bool) *object.List {
 	dst := 0
 
 	elements = []object.Object{
-		&object.Integer{Value: int64(year)},
-		&object.Integer{Value: int64(month)},
-		&object.Integer{Value: int64(day)},
-		&object.Integer{Value: int64(hour)},
-		&object.Integer{Value: int64(minute)},
-		&object.Integer{Value: int64(second)},
-		&object.Integer{Value: int64(weekday)},
-		&object.Integer{Value: int64(yearday)},
-		&object.Integer{Value: int64(dst)},
+		object.NewInteger(int64(year)),
+		object.NewInteger(int64(month)),
+		object.NewInteger(int64(day)),
+		object.NewInteger(int64(hour)),
+		object.NewInteger(int64(minute)),
+		object.NewInteger(int64(second)),
+		object.NewInteger(int64(weekday)),
+		object.NewInteger(int64(yearday)),
+		object.NewInteger(int64(dst)),
 	}
 
 	return &object.List{Elements: elements}

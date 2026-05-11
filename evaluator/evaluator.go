@@ -203,28 +203,24 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 	case *ast.ExpressionStatement:
 		return evalWithContext(ctx, node.Expression, env)
 	case *ast.InfixExpression:
-		// Handle short-circuit operators (and, or) specially
-		if node.Operator == "and" || node.Operator == "or" {
+		if node.Operator == ast.OpAnd || node.Operator == ast.OpOr {
 			return evalShortCircuitInfixExpression(ctx, node, env)
 		}
-		// String concat chain: flatten a+b+c+... into a single allocation
-		if node.Operator == "+" {
-			if left, ok := node.Left.(*ast.InfixExpression); ok && left.Operator == "+" {
+		if node.Operator == ast.OpAdd {
+			if left, ok := node.Left.(*ast.InfixExpression); ok && left.Operator == ast.OpAdd {
 				if result, ok := tryEvalStringConcatChain(ctx, node, env); ok {
 					return result
 				}
 			}
 		}
-		// Fast path: Identifier op Identifier where both resolve to Integer
-		switch node.Operator {
-		case "+", "-", "*", "//", "%", "<", ">", "<=", ">=", "==", "!=", "&", "|", "^", "<<", ">>":
+		if node.Operator >= ast.OpAdd && node.Operator <= ast.OpNeq {
 			if lid, ok := node.Left.(*ast.Identifier); ok {
 				if rid, ok := node.Right.(*ast.Identifier); ok {
-					if lv, ok := env.Get(lid.Value); ok {
+					if lv, ok := env.Get(lid.Value()); ok {
 						if li, ok := lv.(*object.Integer); ok {
-							if rv, ok := env.Get(rid.Value); ok {
+							if rv, ok := env.Get(rid.Value()); ok {
 								if ri, ok := rv.(*object.Integer); ok {
-									return evalIntegerInfixExpression(node.Operator, li.Value, ri.Value)
+									return evalIntegerInfixExpression(node.Operator, li.IntValue(), ri.IntValue())
 								}
 							}
 						}
@@ -253,6 +249,8 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		return acquireReturnValue(val)
 	case *ast.CallExpression:
 		return evalCallExpression(ctx, node, env)
+	case *ast.MethodCallExpression:
+		return evalMethodCallExpression(ctx, node, env)
 	case *ast.Identifier:
 		return evalIdentifier(node, env)
 	case *ast.IntegerLiteral:
@@ -264,9 +262,9 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 	case *ast.Program:
 		return evalProgram(ctx, node, env)
 	case *ast.FloatLiteral:
-		return &object.Float{Value: node.Value}
+		return object.NewFloat(node.Value)
 	case *ast.StringLiteral:
-		return &object.String{Value: node.Value}
+		return object.NewString(node.Value)
 	case *ast.FStringLiteral:
 		return evalFStringLiteral(ctx, node, env)
 	case *ast.Boolean:
@@ -386,8 +384,6 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		return evalAssertStatementWithContext(ctx, node, env)
 	case *ast.WithStatement:
 		return evalWithStatementWithContext(ctx, node, env)
-	case *ast.MethodCallExpression:
-		return evalMethodCallExpression(ctx, node, env)
 	case *ast.ListComprehension:
 		return evalListComprehension(ctx, node, env)
 	case *ast.DictComprehension:
@@ -505,20 +501,19 @@ func nativeBoolToBooleanObject(input bool) *object.Boolean {
 	return FALSE
 }
 
-// objectsEqual checks if two objects are equal
 func objectsEqual(a, b object.Object) bool {
 	if a.Type() != b.Type() {
 		return false
 	}
 	switch av := a.(type) {
 	case *object.Integer:
-		return av.Value == b.(*object.Integer).Value
+		return av.IntValue() == b.(*object.Integer).IntValue()
 	case *object.Float:
-		return av.Value == b.(*object.Float).Value
+		return av.FloatValue() == b.(*object.Float).FloatValue()
 	case *object.String:
-		return av.Value == b.(*object.String).Value
+		return av.StringValue() == b.(*object.String).StringValue()
 	case *object.Boolean:
-		return av.Value == b.(*object.Boolean).Value
+		return av.BoolValue() == b.(*object.Boolean).BoolValue()
 	case *object.Null:
 		return true
 	default:
@@ -533,13 +528,13 @@ func objectsDeepEqual(a, b object.Object) bool {
 	}
 	switch av := a.(type) {
 	case *object.Integer:
-		return av.Value == b.(*object.Integer).Value
+		return av.IntValue() == b.(*object.Integer).IntValue()
 	case *object.Float:
-		return av.Value == b.(*object.Float).Value
+		return av.FloatValue() == b.(*object.Float).FloatValue()
 	case *object.String:
-		return av.Value == b.(*object.String).Value
+		return av.StringValue() == b.(*object.String).StringValue()
 	case *object.Boolean:
-		return av.Value == b.(*object.Boolean).Value
+		return av.BoolValue() == b.(*object.Boolean).BoolValue()
 	case *object.Null:
 		return true
 	case *object.List:
@@ -584,13 +579,13 @@ func objectsDeepEqual(a, b object.Object) bool {
 	}
 }
 
-func evalPrefixExpression(operator string, right object.Object) object.Object {
+func evalPrefixExpression(operator ast.Op, right object.Object) object.Object {
 	switch operator {
-	case "not":
+	case ast.OpNot:
 		return evalNotOperatorExpression(right)
-	case "-":
+	case ast.OpSub:
 		return evalMinusPrefixOperatorExpression(right)
-	case "~":
+	case ast.OpBitNot:
 		return evalBitwiseNotOperatorExpression(right)
 	default:
 		return errors.NewError("%s: %s%s", errors.ErrUnknownOperator, operator, right.Type())
@@ -607,9 +602,9 @@ func evalNotOperatorExpression(right object.Object) object.Object {
 func evalMinusPrefixOperatorExpression(right object.Object) object.Object {
 	switch right := right.(type) {
 	case *object.Integer:
-		return object.NewInteger(-right.Value)
+		return object.NewInteger(-right.IntValue())
 	case *object.Float:
-		return &object.Float{Value: -right.Value}
+		return object.NewFloat(-right.FloatValue())
 	default:
 		return errors.NewError("%s: -%s", errors.ErrUnknownOperator, right.Type())
 	}
@@ -618,7 +613,7 @@ func evalMinusPrefixOperatorExpression(right object.Object) object.Object {
 func evalBitwiseNotOperatorExpression(right object.Object) object.Object {
 	switch right := right.(type) {
 	case *object.Integer:
-		return object.NewInteger(^right.Value)
+		return object.NewInteger(^right.IntValue())
 	default:
 		return errors.NewError("%s: ~%s", errors.ErrUnknownOperator, right.Type())
 	}
@@ -632,12 +627,12 @@ func evalShortCircuitInfixExpression(ctx context.Context, node *ast.InfixExpress
 	}
 
 	switch node.Operator {
-	case "and":
+	case ast.OpAnd:
 		if !isTruthy(left) {
 			return left
 		}
 		return evalNode(ctx, node.Right, env)
-	case "or":
+	case ast.OpOr:
 		if isTruthy(left) {
 			return left
 		}
@@ -647,21 +642,20 @@ func evalShortCircuitInfixExpression(ctx context.Context, node *ast.InfixExpress
 	}
 }
 
-func evalInfixExpression(ctx context.Context, operator string, left, right object.Object, env *object.Environment) object.Object {
+func evalInfixExpression(ctx context.Context, operator ast.Op, left, right object.Object, env *object.Environment) object.Object {
 
-	// Handle membership operators
 	switch operator {
-	case "in":
+	case ast.OpIn:
 		return evalInOperator(ctx, left, right)
-	case "not in":
+	case ast.OpNotIn:
 		result := evalInOperator(ctx, left, right)
 		if result == TRUE {
 			return FALSE
 		}
 		return TRUE
-	case "is":
+	case ast.OpIs:
 		return evalIsOperator(left, right)
-	case "is not":
+	case ast.OpIsNot:
 		result := evalIsOperator(left, right)
 		if result == TRUE {
 			return FALSE
@@ -669,90 +663,87 @@ func evalInfixExpression(ctx context.Context, operator string, left, right objec
 		return TRUE
 	}
 
-	// Type switch is faster than Type() method calls
-	// Coerce booleans to integers for arithmetic (Python: bool is a subclass of int)
-	coercedLeft := left
-	coercedRight := right
-	if b, ok := left.(*object.Boolean); ok {
-		if b.Value {
-			coercedLeft = object.NewInteger(1)
-		} else {
-			coercedLeft = object.NewInteger(0)
-		}
-	}
-	if b, ok := right.(*object.Boolean); ok {
-		if b.Value {
-			coercedRight = object.NewInteger(1)
-		} else {
-			coercedRight = object.NewInteger(0)
-		}
-	}
-	// Only use coerced values for arithmetic/comparison, not identity
-	if coercedLeft != left || coercedRight != right {
-		switch operator {
-		case "+", "-", "*", "/", "//", "%", "**", "<", ">", "<=", ">=", "==", "!=":
-			return evalInfixExpression(ctx, operator, coercedLeft, coercedRight, env)
-		}
-	}
-
 	switch l := left.(type) {
 	case *object.Integer:
-		if r, ok := right.(*object.Integer); ok {
-			return evalIntegerInfixExpression(operator, l.Value, r.Value)
-		}
-		if r, ok := right.(*object.Float); ok {
-			return evalFloatInfixValues(operator, float64(l.Value), r.Value)
-		}
-		// Handle int * string
-		if r, ok := right.(*object.String); ok && operator == "*" {
-			return evalStringMultiplication(r.Value, l.Value)
-		}
-		// Handle int * list
-		if r, ok := right.(*object.List); ok && operator == "*" {
-			if l.Value <= 0 {
-				return &object.List{Elements: []object.Object{}}
+		switch r := right.(type) {
+		case *object.Integer:
+			return evalIntegerInfixExpression(operator, l.IntValue(), r.IntValue())
+		case *object.Float:
+			return evalFloatInfixValues(operator, float64(l.IntValue()), r.FloatValue())
+		case *object.Boolean:
+			rv := int64(0)
+			if r.BoolValue() {
+				rv = 1
 			}
-			result := make([]object.Object, int(l.Value)*len(r.Elements))
-			for i := range int(l.Value) {
-				copy(result[i*len(r.Elements):], r.Elements)
+			return evalIntegerInfixExpression(operator, l.IntValue(), rv)
+		case *object.String:
+			if operator == ast.OpMul {
+				return evalStringMultiplication(r.StringValue(), l.IntValue())
 			}
-			return &object.List{Elements: result}
-		}
-		// Handle int * tuple
-		if r, ok := right.(*object.Tuple); ok && operator == "*" {
-			if l.Value <= 0 {
-				return &object.Tuple{Elements: []object.Object{}}
+		case *object.List:
+			if operator == ast.OpMul {
+				if l.IntValue() <= 0 {
+					return &object.List{Elements: []object.Object{}}
+				}
+				result := make([]object.Object, int(l.IntValue())*len(r.Elements))
+				for i := range int(l.IntValue()) {
+					copy(result[i*len(r.Elements):], r.Elements)
+				}
+				return &object.List{Elements: result}
 			}
-			result := make([]object.Object, int(l.Value)*len(r.Elements))
-			for i := range int(l.Value) {
-				copy(result[i*len(r.Elements):], r.Elements)
+		case *object.Tuple:
+			if operator == ast.OpMul {
+				if l.IntValue() <= 0 {
+					return &object.Tuple{Elements: []object.Object{}}
+				}
+				result := make([]object.Object, int(l.IntValue())*len(r.Elements))
+				for i := range int(l.IntValue()) {
+					copy(result[i*len(r.Elements):], r.Elements)
+				}
+				return &object.Tuple{Elements: result}
 			}
-			return &object.Tuple{Elements: result}
 		}
 		return evalFloatInfixExpression(operator, left, right)
 	case *object.Float:
 		switch r := right.(type) {
 		case *object.Float:
-			return evalFloatInfixValues(operator, l.Value, r.Value)
+			return evalFloatInfixValues(operator, l.FloatValue(), r.FloatValue())
 		case *object.Integer:
-			return evalFloatInfixValues(operator, l.Value, float64(r.Value))
+			return evalFloatInfixValues(operator, l.FloatValue(), float64(r.IntValue()))
+		case *object.Boolean:
+			rv := float64(0)
+			if r.BoolValue() {
+				rv = 1
+			}
+			return evalFloatInfixValues(operator, l.FloatValue(), rv)
 		default:
 			return evalFloatInfixExpression(operator, left, right)
 		}
+	case *object.Boolean:
+		lv := int64(0)
+		if l.BoolValue() {
+			lv = 1
+		}
+		if rb, ok := right.(*object.Boolean); ok {
+			rv := int64(0)
+			if rb.BoolValue() {
+				rv = 1
+			}
+			return evalIntegerInfixExpression(operator, lv, rv)
+		}
+		return evalInfixExpression(ctx, operator, object.NewInteger(lv), right, env)
 	case *object.String:
-		// Handle string % value (Python-style formatting)
-		if operator == "%" {
-			return evalStringPercentFormat(l.Value, right)
-		}
-		if r, ok := right.(*object.String); ok {
-			return evalStringInfixExpression(operator, l.Value, r.Value)
-		}
-		// Handle string * int
-		if r, ok := right.(*object.Integer); ok && operator == "*" {
-			return evalStringMultiplication(l.Value, r.Value)
+		if operator == ast.OpMod {
+		return evalStringPercentFormat(l.StringValue(), right)
+	}
+	if r, ok := right.(*object.String); ok {
+		return evalStringInfixExpression(operator, l.StringValue(), r.StringValue())
+	}
+	if r, ok := right.(*object.Integer); ok && operator == ast.OpMul {
+		return evalStringMultiplication(l.StringValue(), r.IntValue())
 		}
 	case *object.FloatArray:
-		if operator == "+" {
+		if operator == ast.OpAdd {
 			if r, ok := right.(*object.FloatArray); ok {
 				newData := make([]float64, len(l.Data)+len(r.Data))
 				copy(newData, l.Data)
@@ -765,13 +756,12 @@ func evalInfixExpression(ctx context.Context, operator string, left, right objec
 			return errors.NewTypeError("FLOAT_ARRAY", right.Type().String())
 		}
 	case *object.Instance:
-		// Handle instance operators via dunder methods (__lt__, __gt__, __eq__, __sub__, __add__, etc.)
 		if result := evalInstanceInfixExpression(ctx, operator, l, right, env); result != nil {
 			return result
 		}
 	case *object.Tuple:
 		switch operator {
-		case "+":
+		case ast.OpAdd:
 			if r, ok := right.(*object.Tuple); ok {
 				result := make([]object.Object, len(l.Elements)+len(r.Elements))
 				copy(result, l.Elements)
@@ -779,27 +769,26 @@ func evalInfixExpression(ctx context.Context, operator string, left, right objec
 				return &object.Tuple{Elements: result}
 			}
 			return errors.NewTypeError("tuple", right.Type().String())
-		case "*":
+		case ast.OpMul:
 			if r, ok := right.(*object.Integer); ok {
-				if r.Value <= 0 {
+				if r.IntValue() <= 0 {
 					return &object.Tuple{Elements: []object.Object{}}
 				}
-				result := make([]object.Object, int(r.Value)*len(l.Elements))
-				for i := range int(r.Value) {
+				result := make([]object.Object, int(r.IntValue())*len(l.Elements))
+				for i := range int(r.IntValue()) {
 					copy(result[i*len(l.Elements):], l.Elements)
 				}
 				return &object.Tuple{Elements: result}
 			}
 			return errors.NewTypeError("int", right.Type().String())
-		case "==":
+		case ast.OpEq:
 			return nativeBoolToBooleanObject(objectsDeepEqual(left, right))
-		case "!=":
+		case ast.OpNeq:
 			return nativeBoolToBooleanObject(!objectsDeepEqual(left, right))
 		}
 	case *object.List:
 		switch operator {
-		case "+":
-			// Accept any list/tuple on the right
+		case ast.OpAdd:
 			var rightElems []object.Object
 			switch r := right.(type) {
 			case *object.List:
@@ -813,13 +802,13 @@ func evalInfixExpression(ctx context.Context, operator string, left, right objec
 			copy(result, l.Elements)
 			copy(result[len(l.Elements):], rightElems)
 			return &object.List{Elements: result}
-		case "*":
+		case ast.OpMul:
 			if r, ok := right.(*object.Integer); ok {
-				if r.Value <= 0 {
+				if r.IntValue() <= 0 {
 					return &object.List{Elements: []object.Object{}}
 				}
-				result := make([]object.Object, int(r.Value)*len(l.Elements))
-				for i := range int(r.Value) {
+				result := make([]object.Object, int(r.IntValue())*len(l.Elements))
+				for i := range int(r.IntValue()) {
 					copy(result[i*len(l.Elements):], l.Elements)
 				}
 				return &object.List{Elements: result}
@@ -828,8 +817,18 @@ func evalInfixExpression(ctx context.Context, operator string, left, right objec
 		}
 	}
 
+	if rb, ok := right.(*object.Boolean); ok {
+		if operator >= ast.OpAdd && operator <= ast.OpNeq {
+			rv := int64(0)
+			if rb.BoolValue() {
+				rv = 1
+			}
+			return evalInfixExpression(ctx, operator, left, object.NewInteger(rv), env)
+		}
+	}
+
 	switch operator {
-	case "==":
+	case ast.OpEq:
 		if la, ok := left.(*object.FloatArray); ok {
 			if ra, ok := right.(*object.FloatArray); ok {
 				return nativeBoolToBooleanObject(floatArraysEqual(la, ra))
@@ -837,7 +836,7 @@ func evalInfixExpression(ctx context.Context, operator string, left, right objec
 			return FALSE
 		}
 		return nativeBoolToBooleanObject(objectsDeepEqual(left, right))
-	case "!=":
+	case ast.OpNeq:
 		if la, ok := left.(*object.FloatArray); ok {
 			if ra, ok := right.(*object.FloatArray); ok {
 				return nativeBoolToBooleanObject(!floatArraysEqual(la, ra))
@@ -883,37 +882,30 @@ func evalConditionalExpression(ctx context.Context, node *ast.ConditionalExpress
 	}
 }
 
-func evalIntegerInfixExpression(operator string, leftVal, rightVal int64) object.Object {
+func evalIntegerInfixExpression(operator ast.Op, leftVal, rightVal int64) object.Object {
 	switch operator {
-	case "+":
+	case ast.OpAdd:
 		return object.NewInteger(leftVal + rightVal)
-	case "-":
+	case ast.OpSub:
 		return object.NewInteger(leftVal - rightVal)
-	case "*":
+	case ast.OpMul:
 		return object.NewInteger(leftVal * rightVal)
-	case "/":
+	case ast.OpDiv:
 		if rightVal == 0 {
 			return errors.NewError(errors.ErrDivisionByZero)
 		}
-		// True division: always return float
-		return &object.Float{Value: float64(leftVal) / float64(rightVal)}
-	case "//":
+		return object.NewFloat(float64(leftVal) / float64(rightVal))
+	case ast.OpFloorDiv:
 		if rightVal == 0 {
 			return errors.NewError(errors.ErrDivisionByZero)
 		}
-		// Floor division: return integer for integers
 		return object.NewInteger(leftVal / rightVal)
-	case "**":
-		// Power operator - use float for negative exponents
+	case ast.OpPow:
 		if rightVal < 0 {
-			return evalFloatInfixValues("**", float64(leftVal), float64(rightVal))
+			return evalFloatInfixValues(ast.OpPow, float64(leftVal), float64(rightVal))
 		}
-		// Integer exponentiation with overflow detection.
-		// Unlike Python 3 which has arbitrary precision integers, scriptling uses
-		// int64. If the result would overflow, we fall back to float64.
 		if rightVal > 63 || (leftVal > 1 && rightVal > 40) || (leftVal < -1 && rightVal > 40) {
-			// Definitely overflows int64, use float
-			return &object.Float{Value: math.Pow(float64(leftVal), float64(rightVal))}
+			return object.NewFloat(math.Pow(float64(leftVal), float64(rightVal)))
 		}
 		result := int64(1)
 		base := leftVal
@@ -926,56 +918,55 @@ func evalIntegerInfixExpression(operator string, leftVal, rightVal int64) object
 			exp /= 2
 		}
 		return object.NewInteger(result)
-	case "%":
+	case ast.OpMod:
 		if rightVal == 0 {
 			return errors.NewError(errors.ErrDivisionByZero)
 		}
 		return object.NewInteger(leftVal % rightVal)
-	case "&":
+	case ast.OpBitAnd:
 		return object.NewInteger(leftVal & rightVal)
-	case "|":
+	case ast.OpBitOr:
 		return object.NewInteger(leftVal | rightVal)
-	case "^":
+	case ast.OpBitXor:
 		return object.NewInteger(leftVal ^ rightVal)
-	case "<<":
+	case ast.OpLShift:
 		if rightVal < 0 {
 			return errors.NewError("negative shift count")
 		}
 		return object.NewInteger(leftVal << uint64(rightVal))
-	case ">>":
+	case ast.OpRShift:
 		if rightVal < 0 {
 			return errors.NewError("negative shift count")
 		}
 		return object.NewInteger(leftVal >> uint64(rightVal))
-	case "<":
+	case ast.OpLt:
 		return nativeBoolToBooleanObject(leftVal < rightVal)
-	case ">":
+	case ast.OpGt:
 		return nativeBoolToBooleanObject(leftVal > rightVal)
-	case "<=":
+	case ast.OpLte:
 		return nativeBoolToBooleanObject(leftVal <= rightVal)
-	case ">=":
+	case ast.OpGte:
 		return nativeBoolToBooleanObject(leftVal >= rightVal)
-	case "==":
+	case ast.OpEq:
 		return nativeBoolToBooleanObject(leftVal == rightVal)
-	case "!=":
+	case ast.OpNeq:
 		return nativeBoolToBooleanObject(leftVal != rightVal)
 	default:
 		return errors.NewError("unknown operator: INTEGER %s INTEGER", operator)
 	}
 }
 
-func evalFloatInfixExpression(operator string, left, right object.Object) object.Object {
+func evalFloatInfixExpression(operator ast.Op, left, right object.Object) object.Object {
 	leftVal, ok := numericFloatValue(left)
 	if !ok {
 		return errors.NewTypeError("NUMBER", left.Type().String())
 	}
 	rightVal, ok := numericFloatValue(right)
 	if !ok {
-		// For == and != with non-numeric types, different types are never equal (Python behavior)
 		switch operator {
-		case "==":
+		case ast.OpEq:
 			return FALSE
-		case "!=":
+		case ast.OpNeq:
 			return TRUE
 		}
 		return errors.NewTypeError("NUMBER", right.Type().String())
@@ -983,37 +974,37 @@ func evalFloatInfixExpression(operator string, left, right object.Object) object
 	return evalFloatInfixValues(operator, leftVal, rightVal)
 }
 
-func evalFloatInfixValues(operator string, leftVal, rightVal float64) object.Object {
+func evalFloatInfixValues(operator ast.Op, leftVal, rightVal float64) object.Object {
 	switch operator {
-	case "+":
-		return &object.Float{Value: leftVal + rightVal}
-	case "-":
-		return &object.Float{Value: leftVal - rightVal}
-	case "*":
-		return &object.Float{Value: leftVal * rightVal}
-	case "/":
+	case ast.OpAdd:
+		return object.NewFloat(leftVal + rightVal)
+	case ast.OpSub:
+		return object.NewFloat(leftVal - rightVal)
+	case ast.OpMul:
+		return object.NewFloat(leftVal * rightVal)
+	case ast.OpDiv:
 		if rightVal == 0 {
 			return errors.NewError(errors.ErrDivisionByZero)
 		}
-		return &object.Float{Value: leftVal / rightVal}
-	case "//":
+		return object.NewFloat(leftVal / rightVal)
+	case ast.OpFloorDiv:
 		if rightVal == 0 {
 			return errors.NewError(errors.ErrDivisionByZero)
 		}
-		return &object.Float{Value: math.Floor(leftVal / rightVal)}
-	case "**":
-		return &object.Float{Value: math.Pow(leftVal, rightVal)}
-	case "<":
+		return object.NewFloat(math.Floor(leftVal / rightVal))
+	case ast.OpPow:
+		return object.NewFloat(math.Pow(leftVal, rightVal))
+	case ast.OpLt:
 		return nativeBoolToBooleanObject(leftVal < rightVal)
-	case ">":
+	case ast.OpGt:
 		return nativeBoolToBooleanObject(leftVal > rightVal)
-	case "<=":
+	case ast.OpLte:
 		return nativeBoolToBooleanObject(leftVal <= rightVal)
-	case ">=":
+	case ast.OpGte:
 		return nativeBoolToBooleanObject(leftVal >= rightVal)
-	case "==":
+	case ast.OpEq:
 		return nativeBoolToBooleanObject(leftVal == rightVal)
-	case "!=":
+	case ast.OpNeq:
 		return nativeBoolToBooleanObject(leftVal != rightVal)
 	default:
 		return errors.NewError("unknown operator: FLOAT %s FLOAT", operator)
@@ -1023,9 +1014,9 @@ func evalFloatInfixValues(operator string, leftVal, rightVal float64) object.Obj
 func numericFloatValue(obj object.Object) (float64, bool) {
 	switch v := obj.(type) {
 	case *object.Float:
-		return v.Value, true
+		return v.FloatValue(), true
 	case *object.Integer:
-		return float64(v.Value), true
+		return float64(v.IntValue()), true
 	default:
 		return 0, false
 	}
@@ -1047,7 +1038,7 @@ func tryEvalStringConcatChain(ctx context.Context, expr *ast.InfixExpression, en
 		}
 		values[i] = val
 		if s, ok := val.(*object.String); ok {
-			total += len(s.Value)
+			total += len(s.StringValue())
 		} else {
 			allStrings = false
 		}
@@ -1057,14 +1048,14 @@ func tryEvalStringConcatChain(ctx context.Context, expr *ast.InfixExpression, en
 		var b strings.Builder
 		b.Grow(total)
 		for _, val := range values {
-			b.WriteString(val.(*object.String).Value)
+			b.WriteString(val.(*object.String).StringValue())
 		}
-		return &object.String{Value: b.String()}, true
+		return object.NewString(b.String()), true
 	}
 
 	result := values[0]
 	for i := 1; i < len(values); i++ {
-		result = evalInfixExpression(ctx, "+", result, values[i], env)
+		result = evalInfixExpression(ctx, ast.OpAdd, result, values[i], env)
 		if object.IsError(result) {
 			return result, true
 		}
@@ -1074,7 +1065,7 @@ func tryEvalStringConcatChain(ctx context.Context, expr *ast.InfixExpression, en
 
 func collectStringConcatLeaves(expr ast.Expression, leaves *[]ast.Expression) bool {
 	infix, ok := expr.(*ast.InfixExpression)
-	if ok && infix.Operator == "+" {
+	if ok && infix.Operator == ast.OpAdd {
 		return collectStringConcatLeaves(infix.Left, leaves) &&
 			collectStringConcatLeaves(infix.Right, leaves)
 	}
@@ -1082,27 +1073,27 @@ func collectStringConcatLeaves(expr ast.Expression, leaves *[]ast.Expression) bo
 	return true
 }
 
-func evalStringInfixExpression(operator string, leftVal, rightVal string) object.Object {
+func evalStringInfixExpression(operator ast.Op, leftVal, rightVal string) object.Object {
 	switch operator {
-	case "+":
+	case ast.OpAdd:
 		if len(leftVal) == 0 {
-			return &object.String{Value: rightVal}
+			return object.NewString(rightVal)
 		}
 		if len(rightVal) == 0 {
-			return &object.String{Value: leftVal}
+			return object.NewString(leftVal)
 		}
-		return &object.String{Value: leftVal + rightVal}
-	case "==":
+		return object.NewString(leftVal + rightVal)
+	case ast.OpEq:
 		return nativeBoolToBooleanObject(leftVal == rightVal)
-	case "!=":
+	case ast.OpNeq:
 		return nativeBoolToBooleanObject(leftVal != rightVal)
-	case "<":
+	case ast.OpLt:
 		return nativeBoolToBooleanObject(leftVal < rightVal)
-	case ">":
+	case ast.OpGt:
 		return nativeBoolToBooleanObject(leftVal > rightVal)
-	case "<=":
+	case ast.OpLte:
 		return nativeBoolToBooleanObject(leftVal <= rightVal)
-	case ">=":
+	case ast.OpGte:
 		return nativeBoolToBooleanObject(leftVal >= rightVal)
 	default:
 		return errors.NewError("%s: STRING %s STRING", errors.ErrUnknownOperator, operator)
@@ -1187,7 +1178,7 @@ func evalStringPercentFormat(format string, right object.Object) object.Object {
 		return errors.NewError("not all arguments converted during string formatting")
 	}
 
-	return &object.String{Value: result.String()}
+	return object.NewString(result.String())
 }
 
 // formatPercentValue formats a single value according to a Python % format specifier.
@@ -1201,11 +1192,11 @@ func formatPercentValue(spec string, conversion byte, val object.Object) (string
 		var intVal int64
 		switch v := val.(type) {
 		case *object.Integer:
-			intVal = v.Value
+			intVal = v.IntValue()
 		case *object.Float:
-			intVal = int64(v.Value)
+			intVal = int64(v.FloatValue())
 		case *object.Boolean:
-			if v.Value {
+			if v.BoolValue() {
 				intVal = 1
 			}
 		default:
@@ -1251,15 +1242,15 @@ func formatPercentValue(spec string, conversion byte, val object.Object) (string
 	case 'c':
 		switch v := val.(type) {
 		case *object.Integer:
-			if v.Value < 0 || v.Value > 0x10ffff {
+			if v.IntValue() < 0 || v.IntValue() > 0x10ffff {
 				return "", errors.NewError("%%c: ordinal out of range")
 			}
-			return string(rune(v.Value)), nil
+			return string(rune(v.IntValue())), nil
 		case *object.String:
-			if len(v.Value) != 1 {
+			if len(v.StringValue()) != 1 {
 				return "", errors.NewError("%%c requires int or char")
 			}
-			return v.Value, nil
+			return v.StringValue(), nil
 		default:
 			return "", errors.NewError("%%c requires int or char")
 		}
@@ -1270,9 +1261,9 @@ func formatPercentValue(spec string, conversion byte, val object.Object) (string
 
 func evalStringMultiplication(str string, multiplier int64) object.Object {
 	if multiplier < 0 {
-		return &object.String{Value: ""}
+		return object.NewString("")
 	}
-	return &object.String{Value: strings.Repeat(str, int(multiplier))}
+	return object.NewString(strings.Repeat(str, int(multiplier)))
 }
 
 // callDunderMethod calls a dunder method on an instance, returning nil if not defined.
@@ -1290,24 +1281,24 @@ func callDunderMethod(ctx context.Context, inst *object.Instance, method string,
 }
 
 // operatorToDunderMethod maps operators to their corresponding dunder method names
-var operatorToDunderMethod = map[string]string{
-	"<":  "__lt__",
-	">":  "__gt__",
-	"<=": "__le__",
-	">=": "__ge__",
-	"==": "__eq__",
-	"!=": "__ne__",
-	"+":  "__add__",
-	"-":  "__sub__",
-	"*":  "__mul__",
-	"/":  "__truediv__",
-	"//": "__floordiv__",
-	"%":  "__mod__",
+var operatorToDunderMethod = map[ast.Op]string{
+	ast.OpLt:        "__lt__",
+	ast.OpGt:        "__gt__",
+	ast.OpLte:       "__le__",
+	ast.OpGte:       "__ge__",
+	ast.OpEq:        "__eq__",
+	ast.OpNeq:       "__ne__",
+	ast.OpAdd:       "__add__",
+	ast.OpSub:       "__sub__",
+	ast.OpMul:       "__mul__",
+	ast.OpDiv:       "__truediv__",
+	ast.OpFloorDiv:  "__floordiv__",
+	ast.OpMod:       "__mod__",
 }
 
 // evalInstanceInfixExpression handles operators on instances by calling dunder methods
 // Returns nil if no dunder method is found (falls through to default handling)
-func evalInstanceInfixExpression(ctx context.Context, operator string, left *object.Instance, right object.Object, env *object.Environment) object.Object {
+func evalInstanceInfixExpression(ctx context.Context, operator ast.Op, left *object.Instance, right object.Object, env *object.Environment) object.Object {
 	methodName, ok := operatorToDunderMethod[operator]
 	if !ok {
 		return nil // No dunder method for this operator
@@ -1399,16 +1390,16 @@ func evalIdentifier(node *ast.Identifier, env *object.Environment) object.Object
 	// Fast path: use cached slot index to skip the slotIndex map lookup.
 	// SlotCache encoding: 0=uncached, -1=not a local slot, >0=slot index+1.
 	if cached := node.SlotCache.Load(); cached > 0 {
-		if val, ok := env.GetCachedSlot(int(cached-1), node.Value); ok {
+		if val, ok := env.GetCachedSlot(int(cached-1), node.Value()); ok {
 			return val
 		}
 		// Cache miss (wrong scope or stale index), fall through to full lookup.
 		node.SlotCache.Store(0)
 	}
 
-	if val, ok := env.Get(node.Value); ok {
+	if val, ok := env.Get(node.Value()); ok {
 		// Cache the slot index if this variable is in the local scope's slots.
-		if idx, ok := env.GetSlotIndex(node.Value); ok {
+		if idx, ok := env.GetSlotIndex(node.Value()); ok {
 			if slotVal, slotOK := env.GetSlotByIndex(idx); slotOK && slotVal == val {
 				node.SlotCache.Store(int32(idx + 1))
 			}
@@ -1417,32 +1408,30 @@ func evalIdentifier(node *ast.Identifier, env *object.Environment) object.Object
 		}
 		return val
 	}
-	if builtin, ok := builtins[node.Value]; ok {
+	if builtin, ok := builtins[node.Value()]; ok {
 		return builtin
 	}
-	return errors.NewIdentifierError(node.Value)
+	return errors.NewIdentifierError(node.Value())
 }
 
 func evalFunctionStatement(ctx context.Context, stmt *ast.FunctionStatement, env *object.Environment) object.Object {
 	localSlots, localSlotNames := analyzeFunctionLocals(stmt)
-	paramSlotIndexes := parameterSlotIndexes(stmt.Function.Parameters, localSlots)
 	fn := &object.Function{
-		Name:             stmt.Name.Value,
+		Name:             stmt.Name.Value(),
 		Parameters:       stmt.Function.Parameters,
-		DefaultValues:    stmt.Function.DefaultValues,
-		Variadic:         stmt.Function.Variadic,
-		Kwargs:           stmt.Function.Kwargs,
+		DefaultValues:    stmt.Function.GetDefaultValues(),
+		Variadic:         stmt.Function.GetVariadic(),
+		Kwargs:           stmt.Function.GetKwargs(),
 		Body:             stmt.Function.Body,
 		Env:              env,
 		LocalSlots:       localSlots,
 		LocalSlotNames:   localSlotNames,
-		ParamSlotIndexes: paramSlotIndexes,
+		ParamSlotIndexes: stmt.Function.ParamSlotIndexes,
 		ReuseCallEnv:     !stmt.Function.HasNestedFunc,
 	}
 	var result object.Object = fn
-	// Apply decorators right-to-left (innermost first)
-	for i := len(stmt.Decorators) - 1; i >= 0; i-- {
-		dec := evalNode(ctx, stmt.Decorators[i], env)
+	for i := len(stmt.GetDecorators()) - 1; i >= 0; i-- {
+		dec := evalNode(ctx, stmt.GetDecorators()[i], env)
 		if object.IsError(dec) {
 			return dec
 		}
@@ -1456,13 +1445,13 @@ func evalFunctionStatement(ctx context.Context, stmt *ast.FunctionStatement, env
 			wrapped.Name = fn.Name
 		}
 	}
-	env.Set(stmt.Name.Value, result)
+	env.Set(stmt.Name.Value(), result)
 	return result
 }
 
 func evalClassStatement(ctx context.Context, stmt *ast.ClassStatement, env *object.Environment) object.Object {
 	class := &object.Class{
-		Name:    stmt.Name.Value,
+		Name:    stmt.Name.Value(),
 		Methods: make(map[string]object.Object),
 		Env:     env,
 	}
@@ -1498,26 +1487,25 @@ func evalClassStatement(ctx context.Context, stmt *ast.ClassStatement, env *obje
 			case *object.Function:
 				class.Methods[m.Name] = m
 			case *object.Property:
-				class.Methods[fnStmt.Name.Value] = m
+				class.Methods[fnStmt.Name.Value()] = m
 			case *object.StaticMethod:
-				class.Methods[fnStmt.Name.Value] = m
+				class.Methods[fnStmt.Name.Value()] = m
 			case *object.ClassMethod:
-				class.Methods[fnStmt.Name.Value] = m
+				class.Methods[fnStmt.Name.Value()] = m
 			default:
 				// Decorator returned something other than a bare Function
 				// (e.g. a wrapper closure). Store under the original method name.
 				if obj != nil && !object.IsError(obj) {
-					class.Methods[fnStmt.Name.Value] = obj
+					class.Methods[fnStmt.Name.Value()] = obj
 				}
 			}
 		}
 	}
 
-	env.Set(stmt.Name.Value, class)
+	env.Set(stmt.Name.Value(), class)
 	var result object.Object = class
-	// Apply decorators right-to-left (innermost first)
-	for i := len(stmt.Decorators) - 1; i >= 0; i-- {
-		dec := evalNode(ctx, stmt.Decorators[i], env)
+	for i := len(stmt.GetDecorators()) - 1; i >= 0; i-- {
+		dec := evalNode(ctx, stmt.GetDecorators()[i], env)
 		if object.IsError(dec) {
 			return dec
 		}
@@ -1527,7 +1515,7 @@ func evalClassStatement(ctx context.Context, stmt *ast.ClassStatement, env *obje
 		}
 	}
 	if result != class {
-		env.Set(stmt.Name.Value, result)
+		env.Set(stmt.Name.Value(), result)
 	}
 	return result
 }
@@ -1541,8 +1529,8 @@ func unpackArgsFromIterable(argsVal object.Object) ([]object.Object, object.Obje
 	case *object.Tuple:
 		unpacked = val.Elements
 	case *object.String:
-		for _, r := range val.Value {
-			unpacked = append(unpacked, &object.String{Value: string(r)})
+		for _, r := range val.StringValue() {
+			unpacked = append(unpacked, object.NewString(string(r)))
 		}
 	case *object.Iterator:
 		for {
@@ -1595,10 +1583,9 @@ func unpackArgsFromIterable(argsVal object.Object) ([]object.Object, object.Obje
 }
 
 func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *object.Environment) object.Object {
-	// Fast path for simple function calls: ident(args) with no keywords/kwargs/variadic unpack.
-	if len(node.Keywords) == 0 && node.KwargsUnpack == nil && len(node.ArgsUnpack) == 0 {
+	if !node.HasOverflow() {
 		if ident, ok := node.Function.(*ast.Identifier); ok {
-			if val, found := env.Get(ident.Value); found {
+			if val, found := env.Get(ident.Value()); found {
 				switch fn := val.(type) {
 				case *object.Function:
 					// Fast paths for common arg counts: avoid slice allocation
@@ -1658,7 +1645,7 @@ func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *obje
 					evalExpressionsWithContext(ctx, node.Arguments, env), nil, env)
 			}
 			// Not in env - try fast builtins by name
-			if builtin, ok := builtins[ident.Value]; ok {
+			if builtin, ok := builtins[ident.Value()]; ok {
 				return applyBuiltinFast(ctx, node, env, builtin)
 			}
 		}
@@ -1676,9 +1663,10 @@ func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *obje
 	}
 
 	var keywords map[string]object.Object
-	if len(node.Keywords) > 0 {
-		keywords = make(map[string]object.Object, len(node.Keywords))
-		for k, v := range node.Keywords {
+	keywordsMap := node.GetKeywords()
+	if len(keywordsMap) > 0 {
+		keywords = make(map[string]object.Object, len(keywordsMap))
+		for k, v := range keywordsMap {
 			val := evalNode(ctx, v, env)
 			if object.IsError(val) {
 				return val
@@ -1687,7 +1675,7 @@ func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *obje
 		}
 	}
 
-	for _, argsUnpackExpr := range node.ArgsUnpack {
+	for _, argsUnpackExpr := range node.GetArgsUnpack() {
 		argsVal := evalNode(ctx, argsUnpackExpr, env)
 		if object.IsError(argsVal) {
 			return argsVal
@@ -1699,8 +1687,9 @@ func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *obje
 		args = append(args, unpacked...)
 	}
 
-	if node.KwargsUnpack != nil {
-		kwargsVal := evalNode(ctx, node.KwargsUnpack, env)
+	kwargsUnpack := node.GetKwargsUnpack()
+	if kwargsUnpack != nil {
+		kwargsVal := evalNode(ctx, kwargsUnpack, env)
 		if object.IsError(kwargsVal) {
 			return kwargsVal
 		}
@@ -1836,7 +1825,7 @@ func applyUserFunctionDirect(ctx context.Context, fn *object.Function, arg objec
 	if len(fn.ParamSlotIndexes) == 1 {
 		extendedEnv.SetSlotByIndex(fn.ParamSlotIndexes[0], arg)
 	} else {
-		extendedEnv.Set(fn.Parameters[0].Value, arg)
+		extendedEnv.Set(fn.Parameters[0].Value(), arg)
 	}
 
 	// Call evalBlockStatementWithContext directly, skipping evalWithContext/evalNode overhead
@@ -1872,8 +1861,8 @@ func applyUserFunction2(ctx context.Context, fn *object.Function, a0, a1 object.
 		extendedEnv.SetSlotByIndex(fn.ParamSlotIndexes[0], a0)
 		extendedEnv.SetSlotByIndex(fn.ParamSlotIndexes[1], a1)
 	} else {
-		extendedEnv.Set(fn.Parameters[0].Value, a0)
-		extendedEnv.Set(fn.Parameters[1].Value, a1)
+		extendedEnv.Set(fn.Parameters[0].Value(), a0)
+		extendedEnv.Set(fn.Parameters[1].Value(), a1)
 	}
 
 	evaluated := evalBlockStatementWithContext(ctx, fn.Body, extendedEnv)
@@ -1909,7 +1898,7 @@ func applyUserFunctionN(ctx context.Context, fn *object.Function, args ...object
 		}
 	} else {
 		for i := range args {
-			extendedEnv.Set(fn.Parameters[i].Value, args[i])
+			extendedEnv.Set(fn.Parameters[i].Value(), args[i])
 		}
 	}
 
@@ -2037,12 +2026,12 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 		if len(fp.paramSlotIndexes) == numParams {
 			for paramIdx, slotIdx := range fp.paramSlotIndexes {
 				if !env.SetSlotByIndex(slotIdx, args[paramIdx]) {
-					env.Set(fp.parameters[paramIdx].Value, args[paramIdx])
+					env.Set(fp.parameters[paramIdx].Value(), args[paramIdx])
 				}
 			}
 		} else {
 			for paramIdx := 0; paramIdx < numParams; paramIdx++ {
-				env.Set(fp.parameters[paramIdx].Value, args[paramIdx])
+				env.Set(fp.parameters[paramIdx].Value(), args[paramIdx])
 			}
 		}
 		return env, nil
@@ -2050,7 +2039,7 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 
 	// Set provided positional arguments
 	for paramIdx := 0; paramIdx < numParams && paramIdx < numArgs; paramIdx++ {
-		env.Set(fp.parameters[paramIdx].Value, args[paramIdx])
+		env.Set(fp.parameters[paramIdx].Value(), args[paramIdx])
 	}
 
 	// Check for extra positional arguments
@@ -2058,14 +2047,14 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 		if fp.variadic != nil {
 			// Collect extra arguments into a list
 			list := &object.List{Elements: args[numParams:]}
-			env.Set(fp.variadic.Value, list)
+			env.Set(fp.variadic.Value(), list)
 		} else {
 			minArgs := numParams - len(fp.defaultValues)
 			return nil, errors.NewArgumentError(numArgs, minArgs)
 		}
 	} else if fp.variadic != nil {
 		// No extra arguments, set variadic to empty list
-		env.Set(fp.variadic.Value, &object.List{Elements: []object.Object{}})
+		env.Set(fp.variadic.Value(), &object.List{Elements: []object.Object{}})
 	}
 
 	// Handle keyword arguments if present
@@ -2081,7 +2070,7 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 		} else {
 			setParams = make(map[string]bool, numParams)
 			for i := 0; i < numParams && i < numArgs; i++ {
-				setParams[fp.parameters[i].Value] = true
+				setParams[fp.parameters[i].Value()] = true
 			}
 		}
 
@@ -2105,7 +2094,7 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 			// Check if parameter exists
 			paramIdx := -1
 			for pi, param := range fp.parameters {
-				if param.Value == key {
+				if param.Value() == key {
 					paramIdx = pi
 					break
 				}
@@ -2135,20 +2124,20 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 		if fp.kwargs != nil {
 			kwargsDict := &object.Dict{Pairs: make(map[string]object.DictPair, len(extraKwargs))}
 			for key, value := range extraKwargs {
-				kwargsDict.Pairs[object.DictKey(&object.String{Value: key})] = object.DictPair{
-					Key:   &object.String{Value: key},
+				kwargsDict.Pairs[object.DictKey(object.NewString(key))] = object.DictPair{
+					Key:   object.NewString(key),
 					Value: value,
 				}
 			}
-			env.Set(fp.kwargs.Value, kwargsDict)
+			env.Set(fp.kwargs.Value(), kwargsDict)
 		}
 
 		// Check for missing arguments and apply defaults
 		for pi, param := range fp.parameters {
-			if !isParamSet(pi, param.Value) {
-				if defaultExpr, ok := fp.defaultValues[param.Value]; ok {
+			if !isParamSet(pi, param.Value()) {
+				if defaultExpr, ok := fp.defaultValues[param.Value()]; ok {
 					defaultVal := Eval(defaultExpr, fp.parentEnv)
-					env.Set(param.Value, defaultVal)
+					env.Set(param.Value(), defaultVal)
 				} else {
 					minArgs := numParams - len(fp.defaultValues)
 					return nil, errors.NewArgumentError(numArgs, minArgs)
@@ -2158,16 +2147,16 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 	} else {
 		// No keywords - set empty **kwargs dict if defined
 		if fp.kwargs != nil {
-			env.Set(fp.kwargs.Value, &object.Dict{Pairs: make(map[string]object.DictPair)})
+			env.Set(fp.kwargs.Value(), &object.Dict{Pairs: make(map[string]object.DictPair)})
 		}
 
 		if numArgs < numParams {
 			// No keywords - check for missing required arguments
 			for i := numArgs; i < numParams; i++ {
 				param := fp.parameters[i]
-				if defaultExpr, ok := fp.defaultValues[param.Value]; ok {
+				if defaultExpr, ok := fp.defaultValues[param.Value()]; ok {
 					defaultVal := Eval(defaultExpr, fp.parentEnv)
-					env.Set(param.Value, defaultVal)
+					env.Set(param.Value(), defaultVal)
 				} else {
 					minArgs := numParams - len(fp.defaultValues)
 					return nil, errors.NewArgumentError(numArgs, minArgs)
@@ -2203,265 +2192,25 @@ func extendLambdaEnv(fn *object.LambdaFunction, args []object.Object, keywords m
 		localSlots:       fn.LocalSlots,
 		localSlotNames:   fn.LocalSlotNames,
 		paramSlotIndexes: fn.ParamSlotIndexes,
+		reuseCallEnv:     true,
 	}, args, keywords)
 }
 
 func analyzeFunctionLocals(stmt *ast.FunctionStatement) (map[string]int, []string) {
-	names := make([]string, 0, len(stmt.Function.Parameters)+4)
-	seen := make(map[string]struct{}, len(stmt.Function.Parameters)+4)
-
-	addName := func(name string) {
-		if name == "" {
-			return
-		}
-		if _, ok := seen[name]; ok {
-			return
-		}
-		seen[name] = struct{}{}
-		names = append(names, name)
+	if stmt.Function.LocalSlots != nil {
+		return stmt.Function.LocalSlots, stmt.Function.LocalSlotNames
 	}
-
-	addName(stmt.Name.Value)
-	for _, param := range stmt.Function.Parameters {
-		addName(param.Value)
-	}
-	if stmt.Function.Variadic != nil {
-		addName(stmt.Function.Variadic.Value)
-	}
-	if stmt.Function.Kwargs != nil {
-		addName(stmt.Function.Kwargs.Value)
-	}
-
-	globals, nonlocals := collectScopeDirectives(stmt.Function.Body)
-	collectAssignedNamesFromBlock(stmt.Function.Body, globals, nonlocals, addName)
-
-	slots := make(map[string]int, len(names))
-	for idx, name := range names {
-		slots[name] = idx
-	}
-	return slots, names
+	return nil, nil
 }
 
 // analyzeTopLevelLocals finds all assigned variables in a top-level program
 // and returns slot index mapping and ordered names.
 func analyzeTopLevelLocals(program *ast.Program) (map[string]int, []string) {
-	names := make([]string, 0, 8)
-	seen := make(map[string]struct{}, 8)
-
-	addName := func(name string) {
-		if name == "" {
-			return
-		}
-		if _, ok := seen[name]; ok {
-			return
-		}
-		seen[name] = struct{}{}
-		names = append(names, name)
-	}
-
-	globals := make(map[string]bool)
-	nonlocals := make(map[string]bool)
-
-	for _, stmt := range program.Statements {
-		switch s := stmt.(type) {
-		case *ast.GlobalStatement:
-			for _, name := range s.Names {
-				globals[name.Value] = true
-			}
-		case *ast.NonlocalStatement:
-			for _, name := range s.Names {
-				nonlocals[name.Value] = true
-			}
-		}
-	}
-
-	for _, stmt := range program.Statements {
-		collectAssignedNamesFromStatement(stmt, globals, nonlocals, addName)
-	}
-
-	if len(names) == 0 {
-		return nil, nil
-	}
-
-	slots := make(map[string]int, len(names))
-	for idx, name := range names {
-		slots[name] = idx
-	}
-	return slots, names
+	return program.LocalSlots, program.LocalSlotNames
 }
 
 func analyzeLambdaLocals(lambda *ast.Lambda) (map[string]int, []string) {
-	names := make([]string, 0, len(lambda.Parameters)+2)
-	for _, param := range lambda.Parameters {
-		names = append(names, param.Value)
-	}
-	if lambda.Variadic != nil {
-		names = append(names, lambda.Variadic.Value)
-	}
-	if lambda.Kwargs != nil {
-		names = append(names, lambda.Kwargs.Value)
-	}
-	if len(names) == 0 {
-		return nil, nil
-	}
-	slots := make(map[string]int, len(names))
-	uniq := names[:0]
-	for _, name := range names {
-		if name == "" {
-			continue
-		}
-		if _, ok := slots[name]; ok {
-			continue
-		}
-		slots[name] = len(uniq)
-		uniq = append(uniq, name)
-	}
-	return slots, uniq
-}
-
-func parameterSlotIndexes(parameters []*ast.Identifier, slotIndex map[string]int) []int {
-	if len(parameters) == 0 || len(slotIndex) == 0 {
-		return nil
-	}
-	indexes := make([]int, len(parameters))
-	for i, param := range parameters {
-		idx, ok := slotIndex[param.Value]
-		if !ok {
-			return nil
-		}
-		indexes[i] = idx
-	}
-	return indexes
-}
-
-func collectScopeDirectives(block *ast.BlockStatement) (map[string]bool, map[string]bool) {
-	globals := make(map[string]bool)
-	nonlocals := make(map[string]bool)
-	if block == nil {
-		return globals, nonlocals
-	}
-	for _, stmt := range block.Statements {
-		switch s := stmt.(type) {
-		case *ast.GlobalStatement:
-			for _, name := range s.Names {
-				globals[name.Value] = true
-			}
-		case *ast.NonlocalStatement:
-			for _, name := range s.Names {
-				nonlocals[name.Value] = true
-			}
-		}
-	}
-	return globals, nonlocals
-}
-
-func collectAssignedNamesFromBlock(block *ast.BlockStatement, globals map[string]bool, nonlocals map[string]bool, addName func(string)) {
-	if block == nil {
-		return
-	}
-	for _, stmt := range block.Statements {
-		collectAssignedNamesFromStatement(stmt, globals, nonlocals, addName)
-	}
-}
-
-func collectAssignedNamesFromStatement(stmt ast.Statement, globals map[string]bool, nonlocals map[string]bool, addName func(string)) {
-	addLocal := func(name string) {
-		if name == "" || globals[name] || nonlocals[name] {
-			return
-		}
-		addName(name)
-	}
-
-	switch s := stmt.(type) {
-	case *ast.AssignStatement:
-		collectAssignedNamesFromExpression(s.Left, addLocal)
-		if s.Chained != nil {
-			collectAssignedNamesFromStatement(s.Chained, globals, nonlocals, addName)
-		}
-	case *ast.AugmentedAssignStatement:
-		addLocal(s.Name.Value)
-	case *ast.MultipleAssignStatement:
-		for _, name := range s.Names {
-			addLocal(name.Value)
-		}
-	case *ast.FunctionStatement:
-		addLocal(s.Name.Value)
-	case *ast.ClassStatement:
-		addLocal(s.Name.Value)
-	case *ast.ForStatement:
-		for _, variable := range s.Variables {
-			collectAssignedNamesFromExpression(variable, addLocal)
-		}
-		collectAssignedNamesFromBlock(s.Body, globals, nonlocals, addName)
-		collectAssignedNamesFromBlock(s.Else, globals, nonlocals, addName)
-	case *ast.IfStatement:
-		collectAssignedNamesFromBlock(s.Consequence, globals, nonlocals, addName)
-		for _, clause := range s.ElifClauses {
-			collectAssignedNamesFromBlock(clause.Consequence, globals, nonlocals, addName)
-		}
-		collectAssignedNamesFromBlock(s.Alternative, globals, nonlocals, addName)
-	case *ast.WhileStatement:
-		collectAssignedNamesFromBlock(s.Body, globals, nonlocals, addName)
-		collectAssignedNamesFromBlock(s.Else, globals, nonlocals, addName)
-	case *ast.TryStatement:
-		collectAssignedNamesFromBlock(s.Body, globals, nonlocals, addName)
-		for _, clause := range s.ExceptClauses {
-			if clause.ExceptVar != nil {
-				addLocal(clause.ExceptVar.Value)
-			}
-			collectAssignedNamesFromBlock(clause.Body, globals, nonlocals, addName)
-		}
-		collectAssignedNamesFromBlock(s.Else, globals, nonlocals, addName)
-		collectAssignedNamesFromBlock(s.Finally, globals, nonlocals, addName)
-	case *ast.WithStatement:
-		if s.Target != nil {
-			addLocal(s.Target.Value)
-		}
-		collectAssignedNamesFromBlock(s.Body, globals, nonlocals, addName)
-	case *ast.ImportStatement:
-		if s.Alias != nil {
-			addLocal(s.Alias.Value)
-		} else if s.Name != nil {
-			addLocal(strings.Split(s.Name.Value, ".")[0])
-		}
-		for i, name := range s.AdditionalNames {
-			if i < len(s.AdditionalAliases) && s.AdditionalAliases[i] != nil {
-				addLocal(s.AdditionalAliases[i].Value)
-			} else if name != nil {
-				addLocal(strings.Split(name.Value, ".")[0])
-			}
-		}
-	case *ast.FromImportStatement:
-		for i, name := range s.Names {
-			if i < len(s.Aliases) && s.Aliases[i] != nil {
-				addLocal(s.Aliases[i].Value)
-			} else if name != nil {
-				addLocal(name.Value)
-			}
-		}
-	case *ast.MatchStatement:
-		for _, caseClause := range s.Cases {
-			if caseClause.CaptureAs != nil {
-				addLocal(caseClause.CaptureAs.Value)
-			}
-			collectAssignedNamesFromBlock(caseClause.Body, globals, nonlocals, addName)
-		}
-	}
-}
-
-func collectAssignedNamesFromExpression(expr ast.Expression, addName func(string)) {
-	switch e := expr.(type) {
-	case *ast.Identifier:
-		addName(e.Value)
-	case *ast.TupleLiteral:
-		for _, elem := range e.Elements {
-			collectAssignedNamesFromExpression(elem, addName)
-		}
-	case *ast.ListLiteral:
-		for _, elem := range e.Elements {
-			collectAssignedNamesFromExpression(elem, addName)
-		}
-	}
+	return lambda.LocalSlots, lambda.LocalSlotNames
 }
 
 func unwrapReturnValue(obj object.Object) object.Object {
@@ -2485,13 +2234,13 @@ func isTruthy(obj object.Object) bool {
 		// Check for Python-style falsy values
 		switch v := obj.(type) {
 		case *object.Boolean:
-			return v.Value
+			return v.BoolValue()
 		case *object.Integer:
-			return v.Value != 0
+			return v.IntValue() != 0
 		case *object.Float:
-			return v.Value != 0.0
+			return v.FloatValue() != 0.0
 		case *object.String:
-			return v.Value != ""
+			return v.StringValue() != ""
 		case *object.List:
 			return len(v.Elements) > 0
 		case *object.Dict:
@@ -2523,13 +2272,13 @@ func init() {
 		if fn, ok := findDunderMethod(inst, "__bool__"); ok {
 			result := applyFunctionWithContext(context.Background(), fn, prependSelf(inst, nil), nil, inst.Class.Env)
 			if b, ok := result.(*object.Boolean); ok {
-				return b.Value
+				return b.BoolValue()
 			}
 		}
 		if fn, ok := findDunderMethod(inst, "__len__"); ok {
 			result := applyFunctionWithContext(context.Background(), fn, prependSelf(inst, nil), nil, inst.Class.Env)
 			if i, ok := result.(*object.Integer); ok {
-				return i.Value != 0
+				return i.IntValue() != 0
 			}
 		}
 		return true
@@ -2546,9 +2295,9 @@ func init() {
 // evalRegexIndexExpression is in data_structures.go
 
 func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.AugmentedAssignStatement, env *object.Environment) object.Object {
-	currentVal, ok := env.Get(node.Name.Value)
+	currentVal, ok := env.Get(node.Name.Value())
 	if !ok {
-		return errors.NewIdentifierError(node.Name.Value)
+		return errors.NewIdentifierError(node.Name.Value())
 	}
 
 	newVal := evalNode(ctx, node.Value, env)
@@ -2557,48 +2306,23 @@ func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.Augm
 	}
 
 	// Fast path: string += string, int += int
-	if node.Operator == "+=" {
+	if node.Operator == ast.OpAddEq {
 		if cur, ok := currentVal.(*object.String); ok {
 			if r, ok := newVal.(*object.String); ok {
-				env.Set(node.Name.Value, &object.String{Value: cur.Value + r.Value})
+				env.Set(node.Name.Value(), object.NewString(cur.StringValue()+r.StringValue()))
 				return NULL
 			}
 		}
 		if cur, ok := currentVal.(*object.Integer); ok {
 			if r, ok := newVal.(*object.Integer); ok {
-				env.Set(node.Name.Value, object.NewInteger(cur.Value+r.Value))
+				env.Set(node.Name.Value(), object.NewInteger(cur.IntValue()+r.IntValue()))
 				return NULL
 			}
 		}
 	}
 
-	var operator string
-	switch node.Operator {
-	case "+=":
-		operator = "+"
-	case "-=":
-		operator = "-"
-	case "*=":
-		operator = "*"
-	case "/=":
-		operator = "/"
-	case "//=":
-		operator = "//"
-	case "%=":
-		operator = "%"
-	case "**=":
-		operator = "**"
-	case "&=":
-		operator = "&"
-	case "|=":
-		operator = "|"
-	case "^=":
-		operator = "^"
-	case "<<=":
-		operator = "<<"
-	case ">>=":
-		operator = ">>"
-	default:
+	operator := node.Operator.BaseOp()
+	if operator == node.Operator {
 		return errors.NewError("unknown augmented assignment operator: %s", node.Operator)
 	}
 
@@ -2607,7 +2331,7 @@ func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.Augm
 		return result
 	}
 
-	env.Set(node.Name.Value, result)
+	env.Set(node.Name.Value(), result)
 	return NULL
 }
 
@@ -2620,35 +2344,33 @@ func evalImportStatement(is *ast.ImportStatement, env *object.Environment) objec
 	if importCallback == nil {
 		return errors.NewError("%s at line %d", errors.ErrImportError, is.Token.Line)
 	}
-	err := importCallback(is.Name.Value)
+	err := importCallback(is.Name.Value())
 	if err != nil {
 		return errors.NewError("%s at line %d: %s", errors.ErrImportError, is.Token.Line, err.Error())
 	}
 
 	// Handle alias if present
-	if is.Alias != nil {
-		moduleObj := getModuleByPath(env, is.Name.Value)
+	if is.GetAlias() != nil {
+		moduleObj := getModuleByPath(env, is.Name.Value())
 		if moduleObj != nil {
-			env.Set(is.Alias.Value, moduleObj)
+			env.Set(is.GetAlias().Value(), moduleObj)
 			if _, ok := moduleObj.(*object.Dict); ok {
-				env.MarkImportedBinding(is.Alias.Value)
+				env.MarkImportedBinding(is.GetAlias().Value())
 			}
 		}
 	}
 
-	// Import additional libraries if any
-	for i, name := range is.AdditionalNames {
-		if err := importCallback(name.Value); err != nil {
+	for i, name := range is.GetAdditionalNames() {
+		if err := importCallback(name.Value()); err != nil {
 			return errors.NewError("%s: %s", errors.ErrImportError, err.Error())
 		}
 
-		// Handle alias for this additional import if present
-		if i < len(is.AdditionalAliases) && is.AdditionalAliases[i] != nil {
-			moduleObj := getModuleByPath(env, name.Value)
+		if i < len(is.GetAdditionalAliases()) && is.GetAdditionalAliases()[i] != nil {
+			moduleObj := getModuleByPath(env, name.Value())
 			if moduleObj != nil {
-				env.Set(is.AdditionalAliases[i].Value, moduleObj)
+				env.Set(is.GetAdditionalAliases()[i].Value(), moduleObj)
 				if _, ok := moduleObj.(*object.Dict); ok {
-					env.MarkImportedBinding(is.AdditionalAliases[i].Value)
+					env.MarkImportedBinding(is.GetAdditionalAliases()[i].Value())
 				}
 			}
 		}
@@ -2725,7 +2447,7 @@ func evalFromImportStatement(fis *ast.FromImportStatement, env *object.Environme
 		// Build the resolved base module name
 		if fis.Module != nil {
 			// from .module import X or from ..module import X
-			baseModuleName = strings.Join(resolvedParts, ".") + "." + fis.Module.Value
+			baseModuleName = strings.Join(resolvedParts, ".") + "." + fis.Module.Value()
 		} else {
 			// from . import X or from .. import X (no additional module)
 			// In this case, each name to import is a submodule of the parent
@@ -2740,7 +2462,7 @@ func evalFromImportStatement(fis *ast.FromImportStatement, env *object.Environme
 		if fis.Module == nil {
 			return errors.NewError("%s: missing module name in from-import", errors.ErrImportError)
 		}
-		baseModuleName = fis.Module.Value
+		baseModuleName = fis.Module.Value()
 	}
 
 	// For "from . import X" (no module specified), we need to import each name as a submodule
@@ -2758,7 +2480,7 @@ func evalFromImportStatement(fis *ast.FromImportStatement, env *object.Environme
 func evalFromImportMultipleSubmodules(fis *ast.FromImportStatement, baseModule string, env *object.Environment, importCallback func(string) error) object.Object {
 	for i, name := range fis.Names {
 		// Build the full module name: base + "." + name
-		fullModuleName := baseModule + "." + name.Value
+		fullModuleName := baseModule + "." + name.Value()
 
 		// Import the submodule
 		err := importCallback(fullModuleName)
@@ -2774,21 +2496,21 @@ func evalFromImportMultipleSubmodules(fis *ast.FromImportStatement, baseModule s
 			if parentOk {
 				switch p := parentObj.(type) {
 				case *object.Dict:
-					if pair, exists := p.GetByString(name.Value); exists {
+					if pair, exists := p.GetByString(name.Value()); exists {
 						moduleObj = pair.Value
 						ok = true
 					}
 				}
 			}
 			if !ok {
-				return errors.NewError("%s: cannot import name '%s' from '%s'", errors.ErrImportError, name.Value, baseModule)
+				return errors.NewError("%s: cannot import name '%s' from '%s'", errors.ErrImportError, name.Value(), baseModule)
 			}
 		}
 
 		// Use alias if provided, otherwise use the original name
-		bindName := name.Value
+		bindName := name.Value()
 		if fis.Aliases[i] != nil {
-			bindName = fis.Aliases[i].Value
+			bindName = fis.Aliases[i].Value()
 		}
 
 		env.Set(bindName, moduleObj)
@@ -2843,14 +2565,14 @@ func evalFromImportStandard(fis *ast.FromImportStatement, moduleName string, env
 
 		switch m := moduleObj.(type) {
 		case *object.Dict:
-			if pair, exists := m.GetByString(name.Value); exists {
+			if pair, exists := m.GetByString(name.Value()); exists {
 				value = pair.Value
 				found = true
 			}
 		case *object.Library:
 			// Check functions first
 			if funcs := m.Functions(); funcs != nil {
-				if fn, exists := funcs[name.Value]; exists {
+				if fn, exists := funcs[name.Value()]; exists {
 					value = fn
 					found = true
 				}
@@ -2858,27 +2580,27 @@ func evalFromImportStandard(fis *ast.FromImportStatement, moduleName string, env
 			// Check constants
 			if !found {
 				if consts := m.Constants(); consts != nil {
-					if c, exists := consts[name.Value]; exists {
+					if c, exists := consts[name.Value()]; exists {
 						value = c
 						found = true
 					}
 				}
 			}
 		case *object.Instance:
-			if field, exists := m.Fields[name.Value]; exists {
+			if field, exists := m.Fields[name.Value()]; exists {
 				value = field
 				found = true
 			}
 		}
 
 		if !found {
-			return errors.NewError("%s: cannot import name '%s' from '%s'", errors.ErrImportError, name.Value, moduleName)
+			return errors.NewError("%s: cannot import name '%s' from '%s'", errors.ErrImportError, name.Value(), moduleName)
 		}
 
 		// Use alias if provided, otherwise use the original name
-		bindName := name.Value
+		bindName := name.Value()
 		if fis.Aliases[i] != nil {
-			bindName = fis.Aliases[i].Value
+			bindName = fis.Aliases[i].Value()
 		}
 
 		env.Set(bindName, value)
@@ -2897,9 +2619,9 @@ func evalFromImportStandard(fis *ast.FromImportStatement, moduleName string, env
 	if !wasPresent {
 		shouldDelete := true
 		for i, name := range fis.Names {
-			bindName := name.Value
+			bindName := name.Value()
 			if fis.Aliases[i] != nil {
-				bindName = fis.Aliases[i].Value
+				bindName = fis.Aliases[i].Value()
 			}
 			if bindName == moduleName {
 				shouldDelete = false
@@ -2936,7 +2658,7 @@ func evalInOperator(ctx context.Context, left, right object.Object) object.Objec
 		return nativeBoolToBooleanObject(ok)
 	case *object.String:
 		if needle, ok := left.(*object.String); ok {
-			return nativeBoolToBooleanObject(strings.Contains(container.Value, needle.Value))
+			return nativeBoolToBooleanObject(strings.Contains(container.StringValue(), needle.StringValue()))
 		}
 		return errors.NewTypeError("STRING", "non-string type")
 	case *object.DictKeys:
@@ -3017,7 +2739,7 @@ func evalIsOperator(left, right object.Object) object.Object {
 	// Booleans: compare by value (like Python, True is always True)
 	if l, ok := left.(*object.Boolean); ok {
 		if r, ok := right.(*object.Boolean); ok {
-			return nativeBoolToBooleanObject(l.Value == r.Value)
+			return nativeBoolToBooleanObject(l.BoolValue() == r.BoolValue())
 		}
 		return FALSE
 	}
@@ -3028,7 +2750,7 @@ func evalIsOperator(left, right object.Object) object.Object {
 	case *object.Integer:
 		if r, ok := right.(*object.Integer); ok {
 			// Python caches small integers (-5 to 256)
-			if l.Value >= -5 && l.Value <= 256 && l.Value == r.Value {
+			if l.IntValue() >= -5 && l.IntValue() <= 256 && l.IntValue() == r.IntValue() {
 				return TRUE
 			}
 			// Otherwise check pointer equality
@@ -3038,7 +2760,7 @@ func evalIsOperator(left, right object.Object) object.Object {
 	case *object.String:
 		if r, ok := right.(*object.String); ok {
 			// Python interns short strings
-			if len(l.Value) <= 20 && l.Value == r.Value {
+			if len(l.StringValue()) <= 20 && l.StringValue() == r.StringValue() {
 				return TRUE
 			}
 			return nativeBoolToBooleanObject(left == right)
@@ -3079,7 +2801,7 @@ func evalMultipleAssignStatementWithContext(ctx context.Context, node *ast.Multi
 
 		// Assign elements before the starred variable
 		for i := 0; i < node.StarredIndex; i++ {
-			env.Set(node.Names[i].Value, elements[i])
+			env.Set(node.Names[i].Value(), elements[i])
 		}
 
 		// Calculate how many elements go to the starred variable
@@ -3089,13 +2811,13 @@ func evalMultipleAssignStatementWithContext(ctx context.Context, node *ast.Multi
 
 		// Assign starred variable (as a list)
 		starredElements := elements[starStart:starEnd]
-		env.Set(node.Names[node.StarredIndex].Value, &object.List{Elements: starredElements})
+		env.Set(node.Names[node.StarredIndex].Value(), &object.List{Elements: starredElements})
 
 		// Assign elements after the starred variable
 		for i := 0; i < elementsAfterStar; i++ {
 			nameIdx := node.StarredIndex + 1 + i
 			elemIdx := starEnd + i
-			env.Set(node.Names[nameIdx].Value, elements[elemIdx])
+			env.Set(node.Names[nameIdx].Value(), elements[elemIdx])
 		}
 	} else {
 		// No starred unpacking - exact length match required
@@ -3105,7 +2827,7 @@ func evalMultipleAssignStatementWithContext(ctx context.Context, node *ast.Multi
 
 		// Assign each value
 		for i, name := range node.Names {
-			env.Set(name.Value, elements[i])
+			env.Set(name.Value(), elements[i])
 		}
 	}
 
@@ -3172,7 +2894,7 @@ func evalTryStatementWithContext(ctx context.Context, ts *ast.TryStatement, env 
 
 			// Bind exception to variable if specified
 			if exceptClause.ExceptVar != nil {
-				env.Set(exceptClause.ExceptVar.Value, exceptionObj)
+				env.Set(exceptClause.ExceptVar.Value(), exceptionObj)
 			}
 
 			// Execute except block in the same environment so variables are accessible
@@ -3290,7 +3012,7 @@ func evalWithStatementWithContext(ctx context.Context, ws *ast.WithStatement, en
 
 	// Bind 'as' target if present
 	if ws.Target != nil {
-		env.Set(ws.Target.Value, enterResult)
+		env.Set(ws.Target.Value(), enterResult)
 	}
 
 	// Execute body
@@ -3304,11 +3026,11 @@ func evalWithStatementWithContext(ctx context.Context, ws *ast.WithStatement, en
 	var excVal object.Object = NULL
 	if isException(result) || object.IsError(result) {
 		if exc, ok := result.(*object.Exception); ok {
-			excType = &object.String{Value: exc.ExceptionType}
-			excVal = &object.String{Value: exc.Message}
+			excType = object.NewString(exc.ExceptionType)
+			excVal = object.NewString(exc.Message)
 		} else if err, ok := result.(*object.Error); ok {
-			excType = &object.String{Value: "Exception"}
-			excVal = &object.String{Value: err.Message}
+			excType = object.NewString("Exception")
+			excVal = object.NewString(err.Message)
 		}
 	}
 	exitArgs := []object.Object{excType, excVal, NULL}
@@ -3357,7 +3079,7 @@ func matchesExceptionType(exception object.Object, exceptTypeExpr ast.Expression
 func matchesExceptionTypeExpr(exceptionType string, exceptTypeExpr ast.Expression) bool {
 	switch expr := exceptTypeExpr.(type) {
 	case *ast.Identifier:
-		return matchesNamedExceptionType(exceptionType, expr.Value)
+		return matchesNamedExceptionType(exceptionType, expr.Value())
 	case *ast.IndexExpression:
 		// Handle dotted names like requests.HTTPError — match on the last component
 		dotted := buildDottedName(expr)
@@ -3405,7 +3127,7 @@ func buildDottedName(expr *ast.IndexExpression) string {
 			current = idx.Left
 		} else if ident, ok := current.(*ast.Identifier); ok {
 			// Base identifier
-			parts = append([]string{ident.Value}, parts...)
+			parts = append([]string{ident.Value()}, parts...)
 			break
 		} else {
 			break
@@ -3457,8 +3179,8 @@ func evalSliceObjectWithContext(ctx context.Context, node *ast.SliceExpression, 
 		sliceObj.End = object.NewInteger(end)
 	}
 
-	if node.Step != nil {
-		stepObj := evalNode(ctx, node.Step, env)
+	if node.GetStep() != nil {
+		stepObj := evalNode(ctx, node.GetStep(), env)
 		if object.IsError(stepObj) || isException(stepObj) {
 			return nil, stepObj
 		}
@@ -3569,10 +3291,10 @@ func deleteListIndices(listObj *object.List, indices []int64) {
 func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.Environment) error {
 	switch target := expr.(type) {
 	case *ast.Identifier:
-		if _, ok := env.Get(target.Value); !ok {
-			return fmt.Errorf("%s", errors.NewIdentifierError(target.Value).Message)
+		if _, ok := env.Get(target.Value()); !ok {
+			return fmt.Errorf("%s", errors.NewIdentifierError(target.Value()).Message)
 		}
-		env.Delete(target.Value)
+		env.Delete(target.Value())
 		return nil
 	case *ast.IndexExpression:
 		obj := evalNode(ctx, target.Left, env)
@@ -3597,7 +3319,7 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 			if !ok {
 				return fmt.Errorf("list index must be integer")
 			}
-			i := idx.Value
+			i := idx.IntValue()
 			length := int64(len(o.Elements))
 			if i < 0 {
 				i += length
@@ -3632,24 +3354,24 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 			if !ok {
 				return fmt.Errorf("instance attribute must be string")
 			}
-			if _, exists := o.Fields[key.Value]; exists {
-				delete(o.Fields, key.Value)
-				o.InvalidateBoundMethod(key.Value)
+			if _, exists := o.Fields[key.StringValue()]; exists {
+				delete(o.Fields, key.StringValue())
+				o.InvalidateBoundMethod(key.StringValue())
 				return nil
 			}
-			if findPropertyInClass(key.Value, o.Class) != nil {
-				return exceptionDeleteError(object.ExceptionTypeAttributeError, fmt.Sprintf("can't delete attribute '%s'", key.Value))
+			if findPropertyInClass(key.StringValue(), o.Class) != nil {
+				return exceptionDeleteError(object.ExceptionTypeAttributeError, fmt.Sprintf("can't delete attribute '%s'", key.StringValue()))
 			}
-			return exceptionDeleteError(object.ExceptionTypeAttributeError, fmt.Sprintf("'%s' object has no attribute '%s'", o.Class.Name, key.Value))
+			return exceptionDeleteError(object.ExceptionTypeAttributeError, fmt.Sprintf("'%s' object has no attribute '%s'", o.Class.Name, key.StringValue()))
 		case *object.Class:
 			key, ok := index.(*object.String)
 			if !ok {
 				return fmt.Errorf("class attribute must be string")
 			}
-			if _, exists := o.Methods[key.Value]; !exists {
-				return exceptionDeleteError(object.ExceptionTypeAttributeError, fmt.Sprintf("type object '%s' has no attribute '%s'", o.Name, key.Value))
+			if _, exists := o.Methods[key.StringValue()]; !exists {
+				return exceptionDeleteError(object.ExceptionTypeAttributeError, fmt.Sprintf("type object '%s' has no attribute '%s'", o.Name, key.StringValue()))
 			}
-			delete(o.Methods, key.Value)
+			delete(o.Methods, key.StringValue())
 			o.InvalidateLookupCache()
 			return nil
 		default:
@@ -3682,13 +3404,13 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 			hasEnd := sliceObj.End != nil
 			hasStep := sliceObj.Step != nil
 			if hasStart {
-				start = sliceObj.Start.Value
+				start = sliceObj.Start.IntValue()
 			}
 			if hasEnd {
-				end = sliceObj.End.Value
+				end = sliceObj.End.IntValue()
 			}
 			if hasStep {
-				step = sliceObj.Step.Value
+				step = sliceObj.Step.IntValue()
 			}
 			deleteListIndices(o, sliceDeleteIndices(int64(len(o.Elements)), start, end, step, hasStart, hasEnd, hasStep))
 			return nil
@@ -3717,14 +3439,14 @@ func assignToExpression(ctx context.Context, expr ast.Expression, value object.O
 	case *ast.Identifier:
 		// Fast path: use cached slot index with name validation.
 		if cached := left.SlotCache.Load(); cached > 0 {
-			if env.SetCachedSlot(int(cached-1), left.Value, value) {
+			if env.SetCachedSlot(int(cached-1), left.Value(), value) {
 				return nil
 			}
 		}
-		env.Set(left.Value, value)
+		env.Set(left.Value(), value)
 		// Cache the slot index for future writes.
 		if left.SlotCache.Load() == 0 {
-			if idx, ok := env.GetSlotIndex(left.Value); ok {
+			if idx, ok := env.GetSlotIndex(left.Value()); ok {
 				left.SlotCache.Store(int32(idx + 1))
 			}
 		}
@@ -3750,7 +3472,7 @@ func assignToExpression(ctx context.Context, expr ast.Expression, value object.O
 		switch o := obj.(type) {
 		case *object.List:
 			if idx, ok := index.(*object.Integer); ok {
-				i := idx.Value
+				i := idx.IntValue()
 				length := int64(len(o.Elements))
 				// Handle negative indices
 				if i < 0 {
@@ -3782,9 +3504,9 @@ func assignToExpression(ctx context.Context, expr ast.Expression, value object.O
 			}
 			if key, ok := index.(*object.String); ok {
 				// Check class hierarchy for a property descriptor before writing to Fields
-				if p := findPropertyInClass(key.Value, o.Class); p != nil {
+				if p := findPropertyInClass(key.StringValue(), o.Class); p != nil {
 					if p.Setter == nil {
-						return fmt.Errorf("can't set attribute '%s': property is read-only", key.Value)
+						return fmt.Errorf("can't set attribute '%s': property is read-only", key.StringValue())
 					}
 					result := applyFunctionWithContext(ctx, p.Setter, []object.Object{o, value}, nil, nil)
 					if object.IsError(result) {
@@ -3795,14 +3517,14 @@ func assignToExpression(ctx context.Context, expr ast.Expression, value object.O
 					}
 					return nil
 				}
-				o.Fields[key.Value] = value
-				o.InvalidateBoundMethod(key.Value)
+				o.Fields[key.StringValue()] = value
+				o.InvalidateBoundMethod(key.StringValue())
 				return nil
 			}
 			return fmt.Errorf("instance attribute must be string")
 		case *object.Class:
 			if key, ok := index.(*object.String); ok {
-				o.Methods[key.Value] = value
+				o.Methods[key.StringValue()] = value
 				o.InvalidateLookupCache()
 				return nil
 			}
@@ -3812,7 +3534,7 @@ func assignToExpression(ctx context.Context, expr ast.Expression, value object.O
 			if !ok {
 				return fmt.Errorf("float_array index must be integer")
 			}
-			i := idx.Value
+			i := idx.IntValue()
 			if o.Is2D() {
 				rows := int64(o.Rows())
 				if i < 0 {
@@ -3905,7 +3627,7 @@ func assignToNestedFloatArrayIndex(ctx context.Context, expr *ast.IndexExpressio
 		return fmt.Errorf("float_array index must be integer")
 	}
 
-	row := rowIndex.Value
+	row := rowIndex.IntValue()
 	rows := int64(fa.Rows())
 	if row < 0 {
 		row += rows
@@ -3914,7 +3636,7 @@ func assignToNestedFloatArrayIndex(ctx context.Context, expr *ast.IndexExpressio
 		return fmt.Errorf("index out of range")
 	}
 
-	col := colIndex.Value
+	col := colIndex.IntValue()
 	cols := int64(fa.Cols())
 	if col < 0 {
 		col += cols
@@ -3987,13 +3709,13 @@ func setForVariable(varExpr ast.Expression, value object.Object, env *object.Env
 
 func setIdentifierFast(target *ast.Identifier, value object.Object, env *object.Environment) {
 	if cached := target.SlotCache.Load(); cached > 0 {
-		if env.SetCachedSlot(int(cached-1), target.Value, value) {
+		if env.SetCachedSlot(int(cached-1), target.Value(), value) {
 			return
 		}
 	}
-	env.Set(target.Value, value)
+	env.Set(target.Value(), value)
 	if target.SlotCache.Load() == 0 {
-		if idx, ok := env.GetSlotIndex(target.Value); ok {
+		if idx, ok := env.GetSlotIndex(target.Value()); ok {
 			target.SlotCache.Store(int32(idx + 1))
 		}
 	}
@@ -4142,7 +3864,7 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 				if err := cc.check(); err != nil {
 					return err
 				}
-				element := &object.Float{Value: v}
+				element := object.NewFloat(v)
 				if err := setForVariables(fs.Variables, element, env); err != nil {
 					return errors.NewError("%s", err.Error())
 				}
@@ -4165,12 +3887,12 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 		case *object.String:
 			// Iterate over string runes lazily to avoid pre-allocating all characters
 			cc := newContextChecker(ctx)
-			for _, char := range o.Value {
+			for _, char := range o.StringValue() {
 				if err := cc.check(); err != nil {
 					return err
 				}
 
-				element := &object.String{Value: string(char)}
+				element := object.NewString(string(char))
 				if err := setForVariables(fs.Variables, element, env); err != nil {
 					return errors.NewError("%s", err.Error())
 				}
@@ -4239,11 +3961,11 @@ func evalFastRangeForStatement(ctx context.Context, fs *ast.ForStatement, env *o
 		return nil, false
 	}
 	call, ok := fs.Iterable.(*ast.CallExpression)
-	if !ok || len(call.Keywords) != 0 || len(call.ArgsUnpack) != 0 || call.KwargsUnpack != nil {
+	if !ok || call.HasOverflow() {
 		return nil, false
 	}
 	fnIdent, ok := call.Function.(*ast.Identifier)
-	if !ok || fnIdent.Value != "range" {
+	if !ok || fnIdent.Value() != "range" {
 		return nil, false
 	}
 	// If range is shadowed in the environment, preserve the normal call path.
@@ -4306,7 +4028,7 @@ func evalRangeArgs(ctx context.Context, args []ast.Expression, env *object.Envir
 		if !isInt {
 			return 0, 0, 0, nil, false
 		}
-		values[i] = intObj.Value
+		values[i] = intObj.IntValue()
 	}
 
 	switch len(args) {
@@ -4421,8 +4143,8 @@ func iterateObject(ctx context.Context, obj object.Object, fn func(object.Object
 			}
 		}
 	case *object.String:
-		for _, ch := range o.Value {
-			if err := fn(&object.String{Value: string(ch)}); err != nil {
+		for _, ch := range o.StringValue() {
+			if err := fn(object.NewString(string(ch))); err != nil {
 				return err
 			}
 		}
@@ -4441,7 +4163,7 @@ func iterateObject(ctx context.Context, obj object.Object, fn func(object.Object
 			}
 		} else {
 			for _, v := range o.Data {
-				if err := fn(&object.Float{Value: v}); err != nil {
+				if err := fn(object.NewFloat(v)); err != nil {
 					return err
 				}
 			}
@@ -4532,7 +4254,7 @@ func tryEvalFastListComprehension(ctx context.Context, lc *ast.ListComprehension
 	compEnv := object.NewEnclosedEnvironment(env)
 	result := make([]object.Object, 0)
 	runElement := func(element object.Object) object.Object {
-		compEnv.Set(ident.Value, element)
+		compEnv.Set(ident.Value(), element)
 		if lc.Condition != nil {
 			cond := evalNode(ctx, lc.Condition, compEnv)
 			if object.IsError(cond) {
@@ -4599,7 +4321,7 @@ func tryEvalFastListComprehension(ctx context.Context, lc *ast.ListComprehension
 		} else {
 			result = make([]object.Object, 0, len(it.Data))
 			for _, v := range it.Data {
-				if out := runElement(&object.Float{Value: v}); out != nil {
+				if out := runElement(object.NewFloat(v)); out != nil {
 					return out, true
 				}
 			}
@@ -4694,17 +4416,16 @@ func evalSetComprehension(ctx context.Context, sc *ast.SetComprehension, env *ob
 
 func evalLambda(lambda *ast.Lambda, env *object.Environment) object.Object {
 	localSlots, localSlotNames := analyzeLambdaLocals(lambda)
-	paramSlotIndexes := parameterSlotIndexes(lambda.Parameters, localSlots)
 	return &object.LambdaFunction{
 		Parameters:       lambda.Parameters,
-		DefaultValues:    lambda.DefaultValues,
-		Variadic:         lambda.Variadic,
-		Kwargs:           lambda.Kwargs,
+		DefaultValues:    lambda.GetDefaultValues(),
+		Variadic:         lambda.GetVariadic(),
+		Kwargs:           lambda.GetKwargs(),
 		Body:             lambda.Body,
 		Env:              env,
 		LocalSlots:       localSlots,
 		LocalSlotNames:   localSlotNames,
-		ParamSlotIndexes: paramSlotIndexes,
+		ParamSlotIndexes: lambda.ParamSlotIndexes,
 	}
 }
 
@@ -4729,30 +4450,35 @@ func evalFStringLiteral(ctx context.Context, fstr *ast.FStringLiteral, env *obje
 				return exprResult
 			}
 			// Call __str__ on instances for f-string formatting
-			if inst, ok := exprResult.(*object.Instance); ok && fstr.FormatSpecs[i] == "" {
+			specs := fstr.GetFormatSpecs()
+			specEmpty := specs == nil || specs[i] == ""
+			if inst, ok := exprResult.(*object.Instance); ok && specEmpty {
 				if result := callDunderMethod(ctx, inst, "__str__", nil, env); result != nil {
 					exprResult = result
 				}
 			}
-			formatted := formatWithSpec(exprResult, fstr.FormatSpecs[i])
+			spec := ""
+			if specs != nil {
+				spec = specs[i]
+			}
+			formatted := formatWithSpec(exprResult, spec)
 			builder.WriteString(formatted)
 		}
 	}
 
-	return &object.String{Value: builder.String()}
+	return object.NewString(builder.String())
 }
 
 func formatWithSpec(obj object.Object, spec string) string {
 	if spec == "" {
 		switch v := obj.(type) {
 		case *object.Integer:
-			return strconv.FormatInt(v.Value, 10)
+			return strconv.FormatInt(v.IntValue(), 10)
 		case *object.Float:
-			// Check if it's a whole number
-			if v.Value == float64(int64(v.Value)) {
-				return strconv.FormatFloat(v.Value, 'f', 1, 64)
+			if v.FloatValue() == float64(int64(v.FloatValue())) {
+				return strconv.FormatFloat(v.FloatValue(), 'f', 1, 64)
 			}
-			return strconv.FormatFloat(v.Value, 'g', -1, 64)
+			return strconv.FormatFloat(v.FloatValue(), 'g', -1, 64)
 		}
 		return obj.Inspect()
 	}
@@ -5137,7 +4863,7 @@ func evalMatchStatementWithContext(ctx context.Context, ms *ast.MatchStatement, 
 
 			// Bind explicit capture variable if present
 			if caseClause.CaptureAs != nil {
-				env.Set(caseClause.CaptureAs.Value, capturedValue)
+				env.Set(caseClause.CaptureAs.Value(), capturedValue)
 			}
 
 			// Execute body in the environment (with captures)
@@ -5164,21 +4890,21 @@ func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expres
 
 	case *ast.Identifier:
 		// Wildcard pattern
-		if p.Value == "_" {
+		if p.Value() == "_" {
 			return TRUE, subject
 		}
 
 		// All other identifiers are capture variables (always match)
 		// Bind the captured value to the identifier name
-		capturedVars[p.Value] = subject
+		capturedVars[p.Value()] = subject
 		return TRUE, subject
 
 	case *ast.CallExpression:
 		// Handle type patterns like int(), str(), list(), dict()
 		if ident, ok := p.Function.(*ast.Identifier); ok {
 			// Check if it's a type constructor with no arguments
-			if len(p.Arguments) == 0 && len(p.Keywords) == 0 {
-				typeName := ident.Value
+			if len(p.Arguments) == 0 && !p.HasOverflow() {
+				typeName := ident.Value()
 				subjectType := getTypeName(subject)
 				if typeName == subjectType {
 					return TRUE, subject
@@ -5190,7 +4916,7 @@ func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expres
 
 	case *ast.IntegerLiteral:
 		if intObj, ok := subject.(*object.Integer); ok {
-			if intObj.Value == p.Value {
+			if intObj.IntValue() == p.Value {
 				return TRUE, subject
 			}
 		}
@@ -5198,7 +4924,7 @@ func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expres
 
 	case *ast.FloatLiteral:
 		if floatObj, ok := subject.(*object.Float); ok {
-			if floatObj.Value == p.Value {
+			if floatObj.FloatValue() == p.Value {
 				return TRUE, subject
 			}
 		}
@@ -5206,7 +4932,7 @@ func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expres
 
 	case *ast.StringLiteral:
 		if strObj, ok := subject.(*object.String); ok {
-			if strObj.Value == p.Value {
+			if strObj.StringValue() == p.Value {
 				return TRUE, subject
 			}
 		}
@@ -5214,7 +4940,7 @@ func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expres
 
 	case *ast.Boolean:
 		if boolObj, ok := subject.(*object.Boolean); ok {
-			if boolObj.Value == p.Value {
+			if boolObj.BoolValue() == p.Value {
 				return TRUE, subject
 			}
 		}
@@ -5247,9 +4973,9 @@ func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expres
 			}
 
 			// If pattern value is an identifier (not _), it's a capture variable
-			if ident, ok := patternPair.Value.(*ast.Identifier); ok && ident.Value != "_" {
+			if ident, ok := patternPair.Value.(*ast.Identifier); ok && ident.Value() != "_" {
 				// Store the captured value
-				capturedVars[ident.Value] = dictPair.Value
+				capturedVars[ident.Value()] = dictPair.Value
 			} else {
 				// Otherwise, it must match exactly
 				matched, _ := matchPattern(ctx, dictPair.Value, patternPair.Value, capturedVars)

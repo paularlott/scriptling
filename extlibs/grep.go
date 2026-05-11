@@ -178,9 +178,9 @@ func matchesToList(matches []matchResult) object.Object {
 	elements := make([]object.Object, len(matches))
 	for i, m := range matches {
 		d := &object.Dict{Pairs: make(map[string]object.DictPair)}
-		d.SetByString("file", &object.String{Value: m.File})
+		d.SetByString("file", object.NewString(m.File))
 		d.SetByString("line", object.NewInteger(int64(m.Line)))
-		d.SetByString("text", &object.String{Value: m.Text})
+		d.SetByString("text", object.NewString(m.Text))
 		elements[i] = d
 	}
 	return &object.List{Elements: elements}

@@ -116,8 +116,8 @@ func TestDecodeToolResponse_SingleTextContent(t *testing.T) {
 	result := DecodeToolResponse(response)
 
 	if str, ok := result.(*object.String); ok {
-		if str.Value != "plain text" {
-			t.Errorf("String value = %q, want %q", str.Value, "plain text")
+		if str.StringValue() != "plain text" {
+			t.Errorf("String value = %q, want %q", str.StringValue(), "plain text")
 		}
 	} else {
 		t.Errorf("DecodeToolResponse() should return String, got %T", result)
@@ -309,14 +309,14 @@ func TestDictToMap(t *testing.T) {
 		{
 			name: "simple dict",
 			dict: object.NewStringDict(map[string]object.Object{
-				"key": &object.String{Value: "value"},
+				"key": object.NewString("value"),
 			}),
 		},
 		{
 			name: "multiple keys",
 			dict: object.NewStringDict(map[string]object.Object{
-				"key1": &object.String{Value: "value1"},
-				"key2": &object.Integer{Value: 42},
+				"key1": object.NewString("value1"),
+				"key2": object.NewInteger(42),
 			}),
 		},
 	}

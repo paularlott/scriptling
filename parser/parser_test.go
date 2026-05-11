@@ -91,8 +91,8 @@ func TestPrefixExpressions(t *testing.T) {
 		if !ok {
 			t.Fatalf("stmt is not ast.PrefixExpression. got=%T", stmt.Expression)
 		}
-		if exp.Operator != tt.operator {
-			t.Fatalf("exp.Operator is not '%s'. got=%s",
+		if exp.Operator != ast.ParseOp(tt.operator) {
+			t.Fatalf("exp.Operator is not '%s'. got=%v",
 				tt.operator, exp.Operator)
 		}
 	}
@@ -137,8 +137,8 @@ func TestInfixExpressions(t *testing.T) {
 			t.Fatalf("exp is not ast.InfixExpression. got=%T", stmt.Expression)
 		}
 
-		if exp.Operator != tt.operator {
-			t.Fatalf("exp.Operator is not '%s'. got=%s",
+		if exp.Operator != ast.ParseOp(tt.operator) {
+			t.Fatalf("exp.Operator is not '%s'. got=%v",
 				tt.operator, exp.Operator)
 		}
 	}
@@ -189,8 +189,8 @@ func TestFunctionStatement(t *testing.T) {
 			program.Statements[0])
 	}
 
-	if stmt.Name.Value != "add" {
-		t.Fatalf("function name is not 'add'. got=%s", stmt.Name.Value)
+	if stmt.Name.Value() != "add" {
+		t.Fatalf("function name is not 'add'. got=%s", stmt.Name.Value())
 	}
 
 	if len(stmt.Function.Parameters) != 2 {
@@ -296,8 +296,8 @@ func testAssignStatement(t *testing.T, s ast.Statement, name string) bool {
 		return false
 	}
 
-	if ident.Value != name {
-		t.Errorf("assignStmt.Left.Value not '%s'. got=%s", name, ident.Value)
+	if ident.Value() != name {
+		t.Errorf("assignStmt.Left.Value not '%s'. got=%s", name, ident.Value())
 		return false
 	}
 
@@ -616,8 +616,8 @@ func TestAugmentedAssignStatement(t *testing.T) {
 			program.Statements[0])
 	}
 
-	if stmt.Operator != "+=" {
-		t.Errorf("augmented assign operator = %s, want +=", stmt.Operator)
+	if stmt.Operator != ast.OpAddEq {
+		t.Errorf("augmented assign operator = %v, want +=", stmt.Operator)
 	}
 }
 
@@ -707,8 +707,8 @@ func TestMethodCallExpression(t *testing.T) {
 		t.Fatalf("stmt.Expression is not ast.MethodCallExpression. got=%T", stmt.Expression)
 	}
 
-	if exp.Object == nil {
-		t.Error("method call Object is nil")
+	if exp.Receiver == nil {
+		t.Error("method call Receiver is nil")
 	}
 
 	if exp.Method == nil {
@@ -935,16 +935,16 @@ func TestImportStatementWithAlias(t *testing.T) {
 			program.Statements[0])
 	}
 
-	if stmt.Name.Value != "os" {
-		t.Errorf("stmt.Name.Value = %q, want %q", stmt.Name.Value, "os")
+	if stmt.Name.Value() != "os" {
+		t.Errorf("stmt.Name.Value = %q, want %q", stmt.Name.Value(), "os")
 	}
 
-	if stmt.Alias == nil {
+	if stmt.GetAlias() == nil {
 		t.Fatal("stmt.Alias is nil")
 	}
 
-	if stmt.Alias.Value != "operating_system" {
-		t.Errorf("stmt.Alias.Value = %q, want %q", stmt.Alias.Value, "operating_system")
+	if stmt.GetAlias().Value() != "operating_system" {
+		t.Errorf("stmt.Alias.Value = %q, want %q", stmt.GetAlias().Value(), "operating_system")
 	}
 }
 
@@ -999,42 +999,42 @@ func TestImportStatementMultiple(t *testing.T) {
 					program.Statements[0])
 			}
 
-			if stmt.Name.Value != tt.expectedNames[0] {
-				t.Errorf("stmt.Name.Value = %q, want %q", stmt.Name.Value, tt.expectedNames[0])
+			if stmt.Name.Value() != tt.expectedNames[0] {
+				t.Errorf("stmt.Name.Value = %q, want %q", stmt.Name.Value(), tt.expectedNames[0])
 			}
 
-			if len(stmt.AdditionalNames) != len(tt.expectedNames)-1 {
+			if len(stmt.GetAdditionalNames()) != len(tt.expectedNames)-1 {
 				t.Fatalf("stmt.AdditionalNames length = %d, want %d",
-					len(stmt.AdditionalNames), len(tt.expectedNames)-1)
+					len(stmt.GetAdditionalNames()), len(tt.expectedNames)-1)
 			}
 
-			for i, name := range stmt.AdditionalNames {
+			for i, name := range stmt.GetAdditionalNames() {
 				expectedName := tt.expectedNames[i+1]
-				if name.Value != expectedName {
+				if name.Value() != expectedName {
 					t.Errorf("stmt.AdditionalNames[%d].Value = %q, want %q",
-						i, name.Value, expectedName)
+						i, name.Value(), expectedName)
 				}
 			}
 
-			if len(stmt.AdditionalAliases) != len(tt.expectedAliases)-1 {
+			if len(stmt.GetAdditionalAliases()) != len(tt.expectedAliases)-1 {
 				t.Fatalf("stmt.AdditionalAliases length = %d, want %d",
-					len(stmt.AdditionalAliases), len(tt.expectedAliases)-1)
+					len(stmt.GetAdditionalAliases()), len(tt.expectedAliases)-1)
 			}
 
-			for i, alias := range stmt.AdditionalAliases {
+			for i, alias := range stmt.GetAdditionalAliases() {
 				expectedAlias := tt.expectedAliases[i+1]
 				if expectedAlias == "" {
 					if alias != nil {
 						t.Errorf("stmt.AdditionalAliases[%d] should be nil, got %q",
-							i, alias.Value)
+							i, alias.Value())
 					}
 				} else {
 					if alias == nil {
 						t.Errorf("stmt.AdditionalAliases[%d] is nil, want %q",
 							i, expectedAlias)
-					} else if alias.Value != expectedAlias {
+					} else if alias.Value() != expectedAlias {
 						t.Errorf("stmt.AdditionalAliases[%d].Value = %q, want %q",
-							i, alias.Value, expectedAlias)
+							i, alias.Value(), expectedAlias)
 					}
 				}
 			}
@@ -1132,7 +1132,7 @@ except (TypeError, ValueError) as e:
 		t.Fatalf("except type is not ast.TupleLiteral. got=%T", stmt.ExceptClauses[0].ExceptType)
 	}
 
-	if stmt.ExceptClauses[0].ExceptVar == nil || stmt.ExceptClauses[0].ExceptVar.Value != "e" {
+	if stmt.ExceptClauses[0].ExceptVar == nil || stmt.ExceptClauses[0].ExceptVar.Value() != "e" {
 		t.Fatalf("except variable not parsed correctly: %#v", stmt.ExceptClauses[0].ExceptVar)
 	}
 }

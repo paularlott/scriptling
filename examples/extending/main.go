@@ -20,22 +20,22 @@ func CreateExampleLibrary() *object.Library {
 			"__init__": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) != 3 {
-						return &object.String{Value: "Error: __init__ requires 3 arguments (self, name, age)"}
+						return object.NewString("Error: __init__ requires 3 arguments (self, name, age)")
 					}
 					person := args[0].(*object.Instance)
 					nameObj, ok := args[1].(*object.String)
 					if !ok {
-						return &object.String{Value: "Error: name must be string"}
+						return object.NewString("Error: name must be string")
 					}
 					ageObj, ok := toInteger(args[2])
 					if !ok {
-						return &object.String{Value: "Error: age must be integer"}
+						return object.NewString("Error: age must be integer")
 					}
 
 					// Set instance fields
 					person.Fields["name"] = nameObj
 					person.Fields["age"] = ageObj
-					person.Fields["type"] = &object.String{Value: "person"}
+					person.Fields["type"] = object.NewString("person")
 
 					return &object.Null{}
 				},
@@ -43,12 +43,12 @@ func CreateExampleLibrary() *object.Library {
 			"__str__": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) != 1 {
-						return &object.String{Value: "Error: __str__ requires 1 argument (self)"}
+						return object.NewString("Error: __str__ requires 1 argument (self)")
 					}
 					person := args[0].(*object.Instance)
-					name := person.Fields["name"].(*object.String).Value
-					age := person.Fields["age"].(*object.Integer).Value
-					return &object.String{Value: fmt.Sprintf("Person(name='%s', age=%d)", name, age)}
+					name := person.Fields["name"].(*object.String).StringValue()
+					age := person.Fields["age"].(*object.Integer).IntValue()
+					return object.NewString(fmt.Sprintf("Person(name='%s', age=%d)", name, age))
 				},
 			},
 		},
@@ -58,87 +58,87 @@ func CreateExampleLibrary() *object.Library {
 		"power": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 2 {
-					return &object.String{Value: "Error: power requires 2 arguments"}
+					return object.NewString("Error: power requires 2 arguments")
 				}
 
 				// Type casting: convert to float64
 				base, ok := toFloat64(args[0])
 				if !ok {
-					return &object.String{Value: "Error: base must be number"}
+					return object.NewString("Error: base must be number")
 				}
 
 				exp, ok := toFloat64(args[1])
 				if !ok {
-					return &object.String{Value: "Error: exponent must be number"}
+					return object.NewString("Error: exponent must be number")
 				}
 
 				result := math.Pow(base, exp)
-				return &object.Float{Value: result}
+				return object.NewFloat(result)
 			},
 		},
 		"sum_array": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 1 {
-					return &object.String{Value: "Error: sum_array requires 1 argument"}
+					return object.NewString("Error: sum_array requires 1 argument")
 				}
 
 				// Handle arrays/lists
 				listObj, ok := args[0].(*object.List)
 				if !ok {
-					return &object.String{Value: "Error: argument must be array"}
+					return object.NewString("Error: argument must be array")
 				}
 
 				sum := 0.0
 				for _, item := range listObj.Elements {
 					val, ok := toFloat64(item)
 					if !ok {
-						return &object.String{Value: "Error: all array elements must be numbers"}
+						return object.NewString("Error: all array elements must be numbers")
 					}
 					sum += val
 				}
 
-				return &object.Float{Value: sum}
+				return object.NewFloat(sum)
 			},
 		},
 		"get_map_value": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 2 {
-					return &object.String{Value: "Error: get_map_value requires 2 arguments"}
+					return object.NewString("Error: get_map_value requires 2 arguments")
 				}
 
 				// Handle maps/dictionaries
 				mapObj, ok := args[0].(*object.Dict)
 				if !ok {
-					return &object.String{Value: "Error: first argument must be map"}
+					return object.NewString("Error: first argument must be map")
 				}
 
 				keyObj, ok := args[1].(*object.String)
 				if !ok {
-					return &object.String{Value: "Error: second argument must be string key"}
+					return object.NewString("Error: second argument must be string key")
 				}
 
 				// Look up value in map
-				if pair, exists := mapObj.GetByString(keyObj.Value); exists {
+				if pair, exists := mapObj.GetByString(keyObj.StringValue()); exists {
 					return pair.Value
 				}
 
-				return &object.String{Value: "key not found"}
+				return object.NewString("key not found")
 			},
 		},
 		"create_person": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 2 {
-					return &object.String{Value: "Error: create_person requires 2 arguments"}
+					return object.NewString("Error: create_person requires 2 arguments")
 				}
 
 				nameObj, ok := args[0].(*object.String)
 				if !ok {
-					return &object.String{Value: "Error: name must be string"}
+					return object.NewString("Error: name must be string")
 				}
 
 				ageObj, ok := toInteger(args[1])
 				if !ok {
-					return &object.String{Value: "Error: age must be integer"}
+					return object.NewString("Error: age must be integer")
 				}
 
 				// Create and return a Person instance
@@ -163,9 +163,9 @@ func CreateExampleLibrary() *object.Library {
 func toFloat64(obj object.Object) (float64, bool) {
 	switch o := obj.(type) {
 	case *object.Float:
-		return o.Value, true
+		return o.FloatValue(), true
 	case *object.Integer:
-		return float64(o.Value), true
+		return float64(o.IntValue()), true
 	default:
 		return 0, false
 	}
@@ -177,7 +177,7 @@ func toInteger(obj object.Object) (*object.Integer, bool) {
 	case *object.Integer:
 		return o, true
 	case *object.Float:
-		return &object.Integer{Value: int64(o.Value)}, true
+		return object.NewInteger(int64(o.FloatValue())), true
 	default:
 		return nil, false
 	}
@@ -196,35 +196,35 @@ func runGoExtensionExample() {
 	// Register a simple custom function
 	p.RegisterFunc("greet", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 		if len(args) != 1 {
-			return &object.String{Value: "Error: greet requires 1 argument"}
+			return object.NewString("Error: greet requires 1 argument")
 		}
 
 		nameObj, ok := args[0].(*object.String)
 		if !ok {
-			return &object.String{Value: "Error: name must be string"}
+			return object.NewString("Error: name must be string")
 		}
 
-		return &object.String{Value: fmt.Sprintf("Hello, %s!", nameObj.Value)}
+		return object.NewString(fmt.Sprintf("Hello, %s!", nameObj.StringValue()))
 	})
 
 	// Register a function that processes arrays
 	p.RegisterFunc("process_numbers", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 		if len(args) != 1 {
-			return &object.String{Value: "Error: process_numbers requires 1 argument"}
+			return object.NewString("Error: process_numbers requires 1 argument")
 		}
 
 		listObj, ok := args[0].(*object.List)
 		if !ok {
-			return &object.String{Value: "Error: argument must be array"}
+			return object.NewString("Error: argument must be array")
 		}
 
 		// Process each number: multiply by 2 and convert to string
 		results := make([]object.Object, len(listObj.Elements))
 		for i, item := range listObj.Elements {
 			if num, ok := toFloat64(item); ok {
-				results[i] = &object.String{Value: strconv.FormatFloat(num*2, 'f', 2, 64)}
+				results[i] = object.NewString(strconv.FormatFloat(num*2, 'f', 2, 64))
 			} else {
-				results[i] = &object.String{Value: "not a number"}
+				results[i] = object.NewString("not a number")
 			}
 		}
 

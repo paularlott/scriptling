@@ -256,11 +256,11 @@ func newKVStoreObject(db *snapshotkv.DB, registryName string) *object.Builtin {
 					var keys []object.Object
 					for _, key := range allKeys {
 						if pattern == "*" {
-							keys = append(keys, &object.String{Value: key})
+							keys = append(keys, object.NewString(key))
 						} else {
 							matched, _ := filepath.Match(pattern, key)
 							if matched {
-								keys = append(keys, &object.String{Value: key})
+								keys = append(keys, object.NewString(key))
 							}
 						}
 					}

@@ -199,8 +199,8 @@ func BenchmarkBuilderComplexFunction(b *testing.B) {
 	fn := lib.Functions()["complex"]
 
 	ctx := context.Background()
-	kwargs := NewKwargs(map[string]Object{"prefix": &String{Value: ">>"}})
-	arg1 := &String{Value: "test"}
+	kwargs := NewKwargs(map[string]Object{"prefix": NewString(">>")})
+	arg1 := NewString("test")
 	arg2 := NewInteger(5)
 
 	b.ResetTimer()
@@ -246,7 +246,7 @@ func BenchmarkTypeConversion(b *testing.B) {
 	})
 
 	b.Run("string_conversion", func(b *testing.B) {
-		obj := &String{Value: "test"}
+		obj := NewString("test")
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			convertObjectToValue(obj, strType)
@@ -254,7 +254,7 @@ func BenchmarkTypeConversion(b *testing.B) {
 	})
 
 	b.Run("float_conversion", func(b *testing.B) {
-		obj := &Float{Value: 3.14}
+		obj := NewFloat(3.14)
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			convertObjectToValue(obj, floatType)
@@ -366,12 +366,12 @@ func BenchmarkMultipleFunctionTypes(b *testing.B) {
 		{
 			name: "string_concat",
 			fn:   func(a, b string) string { return a + b },
-			args: []Object{&String{Value: "hello"}, &String{Value: "world"}},
+			args: []Object{NewString("hello"), NewString("world")},
 		},
 		{
 			name: "mixed_types",
 			fn:   func(s string, i int, f float64) string { return s },
-			args: []Object{&String{Value: "test"}, NewInteger(42), &Float{Value: 3.14}},
+			args: []Object{NewString("test"), NewInteger(42), NewFloat(3.14)},
 		},
 	}
 
@@ -419,7 +419,7 @@ func TestReflectionOnlyAtBuildTime(t *testing.T) {
 
 	for i := 0; i < 100; i++ {
 		result := builtFn.Fn(ctx, kwargs, NewInteger(5), NewInteger(3))
-		if intResult, ok := result.(*Integer); !ok || intResult.Value != 8 {
+		if intResult, ok := result.(*Integer); !ok || intResult.IntValue() != 8 {
 			t.Errorf("expected 8, got %v", result)
 		}
 	}
@@ -483,7 +483,7 @@ func BenchmarkClassBuilderMethodStringArg(b *testing.B) {
 	instance := &Instance{Class: class, Fields: map[string]Object{}}
 	ctx := context.Background()
 	kwargs := NewKwargs(nil)
-	arg := &String{Value: "alice"}
+	arg := NewString("alice")
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

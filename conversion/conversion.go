@@ -62,20 +62,20 @@ func FromGo(v interface{}) object.Object {
 		// Note: May overflow for very large uint64 values
 		return object.NewInteger(int64(v))
 	case float32:
-		return &object.Float{Value: float64(v)}
+		return object.NewFloat(float64(v))
 	case float64:
-		return &object.Float{Value: v}
+		return object.NewFloat(v)
 	case json.Number:
 		// Try to parse as integer first, then fall back to float
 		if intVal, err := v.Int64(); err == nil {
 			return object.NewInteger(intVal)
 		}
 		if floatVal, err := v.Float64(); err == nil {
-			return &object.Float{Value: floatVal}
+			return object.NewFloat(floatVal)
 		}
-		return &object.String{Value: string(v)}
+		return object.NewString(string(v))
 	case string:
-		return &object.String{Value: v}
+		return object.NewString(v)
 	case []interface{}:
 		elements := make([]object.Object, len(v))
 		for i, item := range v {
@@ -86,13 +86,12 @@ func FromGo(v interface{}) object.Object {
 		pairs := make(map[string]object.DictPair, len(v))
 		for key, val := range v {
 			pairs[object.DictStringKey(key)] = object.DictPair{
-				Key:   &object.String{Value: key},
+				Key:   object.NewString(key),
 				Value: FromGo(val),
 			}
 		}
 		return &object.Dict{Pairs: pairs}
 	case map[interface{}]interface{}:
-		// Handle YAML-specific map[interface{}]interface{} type
 		pairs := make(map[string]object.DictPair, len(v))
 		for key, val := range v {
 			keyStr := ""
@@ -103,7 +102,7 @@ func FromGo(v interface{}) object.Object {
 				keyStr = fmt.Sprintf("%v", k)
 			}
 			pairs[object.DictStringKey(keyStr)] = object.DictPair{
-				Key:   &object.String{Value: keyStr},
+				Key:   object.NewString(keyStr),
 				Value: FromGo(val),
 			}
 		}
@@ -112,11 +111,11 @@ func FromGo(v interface{}) object.Object {
 		// For unknown types, try to convert to JSON then parse
 		jsonBytes, err := json.Marshal(v)
 		if err != nil {
-			return &object.String{Value: fmt.Sprintf("%v", v)}
+			return object.NewString(fmt.Sprintf("%v", v))
 		}
 		var result interface{}
 		if err := json.Unmarshal(jsonBytes, &result); err != nil {
-			return &object.String{Value: fmt.Sprintf("%v", v)}
+			return object.NewString(fmt.Sprintf("%v", v))
 		}
 		return FromGo(result)
 	}
@@ -133,13 +132,13 @@ func ToGo(obj object.Object) interface{} {
 	case *object.Null:
 		return nil
 	case *object.Boolean:
-		return o.Value
+		return o.BoolValue()
 	case *object.Integer:
-		return o.Value
+		return o.IntValue()
 	case *object.Float:
-		return o.Value
+		return o.FloatValue()
 	case *object.String:
-		return o.Value
+		return o.StringValue()
 	case *object.List:
 		result := make([]interface{}, len(o.Elements))
 		for i, elem := range o.Elements {
@@ -211,13 +210,13 @@ func ToGoError(obj object.Object) error {
 func ToGoWithError(obj object.Object) (interface{}, *object.Error) {
 	switch v := obj.(type) {
 	case *object.String:
-		return v.Value, nil
+		return v.StringValue(), nil
 	case *object.Integer:
-		return v.Value, nil
+		return v.IntValue(), nil
 	case *object.Float:
-		return v.Value, nil
+		return v.FloatValue(), nil
 	case *object.Boolean:
-		return v.Value, nil
+		return v.BoolValue(), nil
 	case *object.Null:
 		return nil, nil
 	case *object.List:

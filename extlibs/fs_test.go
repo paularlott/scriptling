@@ -40,7 +40,7 @@ fs.read_bytes("` + testFile + `", 0, 4)`)
 	if !ok {
 		t.Fatalf("expected String, got %T", result)
 	}
-	raw := []byte(str.Value)
+	raw := []byte(str.StringValue())
 	if len(raw) != 4 {
 		t.Fatalf("expected 4 bytes, got %d", len(raw))
 	}
@@ -69,7 +69,7 @@ fs.read_bytes("` + testFile + `", 4, 3)`)
 	if !ok {
 		t.Fatalf("expected String, got %T", result)
 	}
-	raw := []byte(str.Value)
+	raw := []byte(str.StringValue())
 	if len(raw) != 3 {
 		t.Fatalf("expected 3 bytes, got %d", len(raw))
 	}
@@ -83,7 +83,7 @@ func TestFSReadBytesRejectsHugeLength(t *testing.T) {
 	ctx := context.Background()
 	kwargs := object.NewKwargs(nil)
 
-	result := fn.Fn(ctx, kwargs, &object.String{Value: "unused.bin"}, object.NewInteger(0), object.NewInteger(fsMaxReadBytes+1))
+	result := fn.Fn(ctx, kwargs, object.NewString("unused.bin"), object.NewInteger(0), object.NewInteger(fsMaxReadBytes+1))
 	if _, ok := result.(*object.Error); !ok {
 		t.Errorf("expected error for huge read length, got %T", result)
 	}
@@ -112,7 +112,7 @@ func TestFSUnpackLittleEndian(t *testing.T) {
 	data := make([]byte, 4)
 	binary.LittleEndian.PutUint32(data, 0x01020304)
 
-	result := fn.Fn(ctx, kwargs, &object.String{Value: "<I"}, &object.String{Value: string(data)})
+	result := fn.Fn(ctx, kwargs, object.NewString("<I"), object.NewString(string(data)))
 	list, ok := result.(*object.List)
 	if !ok {
 		t.Fatalf("expected List, got %T", result)
@@ -124,8 +124,8 @@ func TestFSUnpackLittleEndian(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Integer, got %T", list.Elements[0])
 	}
-	if i.Value != 0x01020304 {
-		t.Errorf("expected %d, got %d", 0x01020304, i.Value)
+	if i.IntValue() != 0x01020304 {
+		t.Errorf("expected %d, got %d", 0x01020304, i.IntValue())
 	}
 }
 
@@ -137,7 +137,7 @@ func TestFSUnpackBigEndian(t *testing.T) {
 	data := make([]byte, 4)
 	binary.BigEndian.PutUint32(data, 0x01020304)
 
-	result := fn.Fn(ctx, kwargs, &object.String{Value: ">I"}, &object.String{Value: string(data)})
+	result := fn.Fn(ctx, kwargs, object.NewString(">I"), object.NewString(string(data)))
 	list, ok := result.(*object.List)
 	if !ok {
 		t.Fatalf("expected List, got %T", result)
@@ -146,8 +146,8 @@ func TestFSUnpackBigEndian(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Integer, got %T", list.Elements[0])
 	}
-	if i.Value != 0x01020304 {
-		t.Errorf("expected %d, got %d", 0x01020304, i.Value)
+	if i.IntValue() != 0x01020304 {
+		t.Errorf("expected %d, got %d", 0x01020304, i.IntValue())
 	}
 }
 
@@ -156,7 +156,7 @@ func TestFSUnpackInt8(t *testing.T) {
 	ctx := context.Background()
 	kwargs := object.NewKwargs(nil)
 
-	result := fn.Fn(ctx, kwargs, &object.String{Value: "<b"}, &object.String{Value: string([]byte{0xFF})})
+	result := fn.Fn(ctx, kwargs, object.NewString("<b"), object.NewString(string([]byte{0xFF})))
 	list, ok := result.(*object.List)
 	if !ok {
 		t.Fatalf("expected List, got %T", result)
@@ -165,8 +165,8 @@ func TestFSUnpackInt8(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Integer, got %T", list.Elements[0])
 	}
-	if i.Value != -1 {
-		t.Errorf("expected -1, got %d", i.Value)
+	if i.IntValue() != -1 {
+		t.Errorf("expected -1, got %d", i.IntValue())
 	}
 }
 
@@ -175,7 +175,7 @@ func TestFSUnpackUint8(t *testing.T) {
 	ctx := context.Background()
 	kwargs := object.NewKwargs(nil)
 
-	result := fn.Fn(ctx, kwargs, &object.String{Value: "<B"}, &object.String{Value: string([]byte{0xFF})})
+	result := fn.Fn(ctx, kwargs, object.NewString("<B"), object.NewString(string([]byte{0xFF})))
 	list, ok := result.(*object.List)
 	if !ok {
 		t.Fatalf("expected List, got %T", result)
@@ -184,8 +184,8 @@ func TestFSUnpackUint8(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Integer, got %T", list.Elements[0])
 	}
-	if i.Value != 255 {
-		t.Errorf("expected 255, got %d", i.Value)
+	if i.IntValue() != 255 {
+		t.Errorf("expected 255, got %d", i.IntValue())
 	}
 }
 
@@ -197,7 +197,7 @@ func TestFSUnpackInt16(t *testing.T) {
 	data := make([]byte, 2)
 	binary.LittleEndian.PutUint16(data, 0xFFFF)
 
-	result := fn.Fn(ctx, kwargs, &object.String{Value: "<h"}, &object.String{Value: string(data)})
+	result := fn.Fn(ctx, kwargs, object.NewString("<h"), object.NewString(string(data)))
 	list, ok := result.(*object.List)
 	if !ok {
 		t.Fatalf("expected List, got %T", result)
@@ -206,8 +206,8 @@ func TestFSUnpackInt16(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Integer, got %T", list.Elements[0])
 	}
-	if i.Value != -1 {
-		t.Errorf("expected -1 (int16), got %d", i.Value)
+	if i.IntValue() != -1 {
+		t.Errorf("expected -1 (int16), got %d", i.IntValue())
 	}
 }
 
@@ -219,7 +219,7 @@ func TestFSUnpackUint16(t *testing.T) {
 	data := make([]byte, 2)
 	binary.LittleEndian.PutUint16(data, 65535)
 
-	result := fn.Fn(ctx, kwargs, &object.String{Value: "<H"}, &object.String{Value: string(data)})
+	result := fn.Fn(ctx, kwargs, object.NewString("<H"), object.NewString(string(data)))
 	list, ok := result.(*object.List)
 	if !ok {
 		t.Fatalf("expected List, got %T", result)
@@ -228,8 +228,8 @@ func TestFSUnpackUint16(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Integer, got %T", list.Elements[0])
 	}
-	if i.Value != 65535 {
-		t.Errorf("expected 65535, got %d", i.Value)
+	if i.IntValue() != 65535 {
+		t.Errorf("expected 65535, got %d", i.IntValue())
 	}
 }
 
@@ -241,7 +241,7 @@ func TestFSUnpackFloat32(t *testing.T) {
 	data := make([]byte, 4)
 	binary.LittleEndian.PutUint32(data, math.Float32bits(3.14))
 
-	result := fn.Fn(ctx, kwargs, &object.String{Value: "<f"}, &object.String{Value: string(data)})
+	result := fn.Fn(ctx, kwargs, object.NewString("<f"), object.NewString(string(data)))
 	list, ok := result.(*object.List)
 	if !ok {
 		t.Fatalf("expected List, got %T", result)
@@ -250,8 +250,8 @@ func TestFSUnpackFloat32(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Float, got %T", list.Elements[0])
 	}
-	if math.Abs(f.Value-3.14) > 0.001 {
-		t.Errorf("expected ~3.14, got %v", f.Value)
+	if math.Abs(f.FloatValue()-3.14) > 0.001 {
+		t.Errorf("expected ~3.14, got %v", f.FloatValue())
 	}
 }
 
@@ -263,7 +263,7 @@ func TestFSUnpackFloat64(t *testing.T) {
 	data := make([]byte, 8)
 	binary.LittleEndian.PutUint64(data, math.Float64bits(3.14159265358979))
 
-	result := fn.Fn(ctx, kwargs, &object.String{Value: "<d"}, &object.String{Value: string(data)})
+	result := fn.Fn(ctx, kwargs, object.NewString("<d"), object.NewString(string(data)))
 	list, ok := result.(*object.List)
 	if !ok {
 		t.Fatalf("expected List, got %T", result)
@@ -272,8 +272,8 @@ func TestFSUnpackFloat64(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Float, got %T", list.Elements[0])
 	}
-	if math.Abs(f.Value-3.14159265358979) > 1e-10 {
-		t.Errorf("expected ~3.14159265358979, got %v", f.Value)
+	if math.Abs(f.FloatValue()-3.14159265358979) > 1e-10 {
+		t.Errorf("expected ~3.14159265358979, got %v", f.FloatValue())
 	}
 }
 
@@ -282,7 +282,7 @@ func TestFSUnpackFloat16(t *testing.T) {
 	ctx := context.Background()
 	kwargs := object.NewKwargs(nil)
 
-	result := fn.Fn(ctx, kwargs, &object.String{Value: "<e"}, &object.String{Value: string([]byte{0x00, 0x3C})})
+	result := fn.Fn(ctx, kwargs, object.NewString("<e"), object.NewString(string([]byte{0x00, 0x3C})))
 	list, ok := result.(*object.List)
 	if !ok {
 		t.Fatalf("expected List, got %T", result)
@@ -291,8 +291,8 @@ func TestFSUnpackFloat16(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Float, got %T", list.Elements[0])
 	}
-	if math.Abs(f.Value-1.0) > 0.001 {
-		t.Errorf("expected ~1.0, got %v", f.Value)
+	if math.Abs(f.FloatValue()-1.0) > 0.001 {
+		t.Errorf("expected ~1.0, got %v", f.FloatValue())
 	}
 }
 
@@ -305,7 +305,7 @@ func TestFSUnpackRepeatCount(t *testing.T) {
 	binary.LittleEndian.PutUint64(data[0:8], 42)
 	binary.LittleEndian.PutUint64(data[8:16], 84)
 
-	result := fn.Fn(ctx, kwargs, &object.String{Value: "<2Q"}, &object.String{Value: string(data)})
+	result := fn.Fn(ctx, kwargs, object.NewString("<2Q"), object.NewString(string(data)))
 	list, ok := result.(*object.List)
 	if !ok {
 		t.Fatalf("expected List, got %T", result)
@@ -313,11 +313,11 @@ func TestFSUnpackRepeatCount(t *testing.T) {
 	if len(list.Elements) != 2 {
 		t.Fatalf("expected 2 elements, got %d", len(list.Elements))
 	}
-	if list.Elements[0].(*object.Integer).Value != 42 {
-		t.Errorf("expected 42, got %d", list.Elements[0].(*object.Integer).Value)
+	if list.Elements[0].(*object.Integer).IntValue() != 42 {
+		t.Errorf("expected 42, got %d", list.Elements[0].(*object.Integer).IntValue())
 	}
-	if list.Elements[1].(*object.Integer).Value != 84 {
-		t.Errorf("expected 84, got %d", list.Elements[1].(*object.Integer).Value)
+	if list.Elements[1].(*object.Integer).IntValue() != 84 {
+		t.Errorf("expected 84, got %d", list.Elements[1].(*object.Integer).IntValue())
 	}
 }
 
@@ -329,7 +329,7 @@ func TestFSUnpackUint64Overflow(t *testing.T) {
 	data := make([]byte, 8)
 	binary.LittleEndian.PutUint64(data, uint64(maxInt64Value)+1)
 
-	result := fn.Fn(ctx, kwargs, &object.String{Value: "<Q"}, &object.String{Value: string(data)})
+	result := fn.Fn(ctx, kwargs, object.NewString("<Q"), object.NewString(string(data)))
 	if _, ok := result.(*object.Error); !ok {
 		t.Errorf("expected error for uint64 overflow, got %T", result)
 	}
@@ -351,7 +351,7 @@ func TestFSUnpackMixedFormats(t *testing.T) {
 	binary.LittleEndian.PutUint16(data[1:3], 1000)
 	binary.LittleEndian.PutUint32(data[3:7], 99999)
 
-	result := fn.Fn(ctx, kwargs, &object.String{Value: "<BHi"}, &object.String{Value: string(data)})
+	result := fn.Fn(ctx, kwargs, object.NewString("<BHi"), object.NewString(string(data)))
 	list, ok := result.(*object.List)
 	if !ok {
 		t.Fatalf("expected List, got %T", result)
@@ -359,14 +359,14 @@ func TestFSUnpackMixedFormats(t *testing.T) {
 	if len(list.Elements) != 3 {
 		t.Fatalf("expected 3 elements, got %d", len(list.Elements))
 	}
-	if list.Elements[0].(*object.Integer).Value != 0x61 {
-		t.Errorf("expected 0x61, got %d", list.Elements[0].(*object.Integer).Value)
+	if list.Elements[0].(*object.Integer).IntValue() != 0x61 {
+		t.Errorf("expected 0x61, got %d", list.Elements[0].(*object.Integer).IntValue())
 	}
-	if list.Elements[1].(*object.Integer).Value != 1000 {
-		t.Errorf("expected 1000, got %d", list.Elements[1].(*object.Integer).Value)
+	if list.Elements[1].(*object.Integer).IntValue() != 1000 {
+		t.Errorf("expected 1000, got %d", list.Elements[1].(*object.Integer).IntValue())
 	}
-	if list.Elements[2].(*object.Integer).Value != 99999 {
-		t.Errorf("expected 99999, got %d", list.Elements[2].(*object.Integer).Value)
+	if list.Elements[2].(*object.Integer).IntValue() != 99999 {
+		t.Errorf("expected 99999, got %d", list.Elements[2].(*object.Integer).IntValue())
 	}
 }
 
@@ -375,7 +375,7 @@ func TestFSUnpackInsufficientData(t *testing.T) {
 	ctx := context.Background()
 	kwargs := object.NewKwargs(nil)
 
-	result := fn.Fn(ctx, kwargs, &object.String{Value: "<I"}, &object.String{Value: string([]byte{0x01, 0x02})})
+	result := fn.Fn(ctx, kwargs, object.NewString("<I"), object.NewString(string([]byte{0x01, 0x02})))
 	if _, ok := result.(*object.Error); !ok {
 		t.Errorf("expected error for insufficient data, got %T", result)
 	}
@@ -386,7 +386,7 @@ func TestFSUnpackUnsupportedFormat(t *testing.T) {
 	ctx := context.Background()
 	kwargs := object.NewKwargs(nil)
 
-	result := fn.Fn(ctx, kwargs, &object.String{Value: "<z"}, &object.String{Value: string([]byte{0x01})})
+	result := fn.Fn(ctx, kwargs, object.NewString("<z"), object.NewString(string([]byte{0x01})))
 	if _, ok := result.(*object.Error); !ok {
 		t.Errorf("expected error for unsupported format, got %T", result)
 	}
@@ -399,18 +399,18 @@ func TestFSByteAt(t *testing.T) {
 
 	data := []byte{0x00, 0x01, 0x7F, 0x80, 0xFE, 0xFF}
 
-	result := fn.Fn(ctx, kwargs, &object.String{Value: string(data)}, object.NewInteger(0))
-	if i, ok := result.(*object.Integer); !ok || i.Value != 0 {
+	result := fn.Fn(ctx, kwargs, object.NewString(string(data)), object.NewInteger(0))
+	if i, ok := result.(*object.Integer); !ok || i.IntValue() != 0 {
 		t.Errorf("expected 0, got %v", result)
 	}
 
-	result = fn.Fn(ctx, kwargs, &object.String{Value: string(data)}, object.NewInteger(2))
-	if i, ok := result.(*object.Integer); !ok || i.Value != 127 {
+	result = fn.Fn(ctx, kwargs, object.NewString(string(data)), object.NewInteger(2))
+	if i, ok := result.(*object.Integer); !ok || i.IntValue() != 127 {
 		t.Errorf("expected 127, got %v", result)
 	}
 
-	result = fn.Fn(ctx, kwargs, &object.String{Value: string(data)}, object.NewInteger(5))
-	if i, ok := result.(*object.Integer); !ok || i.Value != 255 {
+	result = fn.Fn(ctx, kwargs, object.NewString(string(data)), object.NewInteger(5))
+	if i, ok := result.(*object.Integer); !ok || i.IntValue() != 255 {
 		t.Errorf("expected 255, got %v", result)
 	}
 }
@@ -422,12 +422,12 @@ func TestFSByteAtOutOfRange(t *testing.T) {
 
 	data := []byte{0x00, 0x01, 0x02}
 
-	result := fn.Fn(ctx, kwargs, &object.String{Value: string(data)}, object.NewInteger(3))
+	result := fn.Fn(ctx, kwargs, object.NewString(string(data)), object.NewInteger(3))
 	if _, ok := result.(*object.Error); !ok {
 		t.Errorf("expected error for out-of-range index, got %T", result)
 	}
 
-	result = fn.Fn(ctx, kwargs, &object.String{Value: string(data)}, object.NewInteger(-1))
+	result = fn.Fn(ctx, kwargs, object.NewString(string(data)), object.NewInteger(-1))
 	if _, ok := result.(*object.Error); !ok {
 		t.Errorf("expected error for negative index, got %T", result)
 	}
@@ -451,7 +451,7 @@ len(vals)`)
 	if err != nil {
 		t.Fatalf("Eval failed: %v", err)
 	}
-	if i, ok := result.(*object.Integer); !ok || i.Value != 2 {
+	if i, ok := result.(*object.Integer); !ok || i.IntValue() != 2 {
 		t.Errorf("expected 2 unpacked values, got %v", result)
 	}
 }
@@ -464,14 +464,14 @@ func TestFSUnpackDefaultEndian(t *testing.T) {
 	data := make([]byte, 4)
 	binary.LittleEndian.PutUint32(data, 42)
 
-	result := fn.Fn(ctx, kwargs, &object.String{Value: "I"}, &object.String{Value: string(data)})
+	result := fn.Fn(ctx, kwargs, object.NewString("I"), object.NewString(string(data)))
 	list, ok := result.(*object.List)
 	if !ok {
 		t.Fatalf("expected List, got %T", result)
 	}
 	i := list.Elements[0].(*object.Integer)
-	if i.Value != 42 {
-		t.Errorf("default endian should be little-endian; expected 42, got %d", i.Value)
+	if i.IntValue() != 42 {
+		t.Errorf("default endian should be little-endian; expected 42, got %d", i.IntValue())
 	}
 }
 
@@ -502,14 +502,14 @@ func TestFSPackUint32(t *testing.T) {
 	ctx := context.Background()
 	kwargs := object.NewKwargs(nil)
 
-	result := fn.Fn(ctx, kwargs, &object.String{Value: "<I"}, &object.List{Elements: []object.Object{
+	result := fn.Fn(ctx, kwargs, object.NewString("<I"), &object.List{Elements: []object.Object{
 		object.NewInteger(0x01020304),
 	}})
 	str, ok := result.(*object.String)
 	if !ok {
 		t.Fatalf("expected String, got %T", result)
 	}
-	raw := []byte(str.Value)
+	raw := []byte(str.StringValue())
 	if len(raw) != 4 {
 		t.Fatalf("expected 4 bytes, got %d", len(raw))
 	}
@@ -523,10 +523,10 @@ func TestFSPackBigEndian(t *testing.T) {
 	ctx := context.Background()
 	kwargs := object.NewKwargs(nil)
 
-	result := fn.Fn(ctx, kwargs, &object.String{Value: ">I"}, &object.List{Elements: []object.Object{
+	result := fn.Fn(ctx, kwargs, object.NewString(">I"), &object.List{Elements: []object.Object{
 		object.NewInteger(0x01020304),
 	}})
-	raw := []byte(result.(*object.String).Value)
+	raw := []byte(result.(*object.String).StringValue())
 	if raw[0] != 0x01 || raw[1] != 0x02 || raw[2] != 0x03 || raw[3] != 0x04 {
 		t.Errorf("big-endian pack = %x, want [01 02 03 04]", raw)
 	}
@@ -537,10 +537,10 @@ func TestFSPackFloat64(t *testing.T) {
 	ctx := context.Background()
 	kwargs := object.NewKwargs(nil)
 
-	result := fn.Fn(ctx, kwargs, &object.String{Value: "<d"}, &object.List{Elements: []object.Object{
-		&object.Float{Value: 3.14},
+	result := fn.Fn(ctx, kwargs, object.NewString("<d"), &object.List{Elements: []object.Object{
+		object.NewFloat(3.14),
 	}})
-	raw := []byte(result.(*object.String).Value)
+	raw := []byte(result.(*object.String).StringValue())
 	if len(raw) != 8 {
 		t.Fatalf("expected 8 bytes, got %d", len(raw))
 	}
@@ -555,11 +555,11 @@ func TestFSPackMultipleValues(t *testing.T) {
 	ctx := context.Background()
 	kwargs := object.NewKwargs(nil)
 
-	result := fn.Fn(ctx, kwargs, &object.String{Value: "<BH"}, &object.List{Elements: []object.Object{
+	result := fn.Fn(ctx, kwargs, object.NewString("<BH"), &object.List{Elements: []object.Object{
 		object.NewInteger(0x42),
 		object.NewInteger(1000),
 	}})
-	raw := []byte(result.(*object.String).Value)
+	raw := []byte(result.(*object.String).StringValue())
 	if len(raw) != 3 {
 		t.Fatalf("expected 3 bytes, got %d", len(raw))
 	}
@@ -577,18 +577,18 @@ func TestFSPackUnpackRoundtrip(t *testing.T) {
 	ctx := context.Background()
 	kwargs := object.NewKwargs(nil)
 
-	original := []object.Object{object.NewInteger(42), &object.Float{Value: 3.14}, object.NewInteger(-1)}
-	packed := packFn.Fn(ctx, kwargs, &object.String{Value: "<Idb"}, &object.List{Elements: original})
-	unpacked := unpackFn.Fn(ctx, kwargs, &object.String{Value: "<Idb"}, packed.(*object.String))
+	original := []object.Object{object.NewInteger(42), object.NewFloat(3.14), object.NewInteger(-1)}
+	packed := packFn.Fn(ctx, kwargs, object.NewString("<Idb"), &object.List{Elements: original})
+	unpacked := unpackFn.Fn(ctx, kwargs, object.NewString("<Idb"), packed.(*object.String))
 	list := unpacked.(*object.List).Elements
 
-	if list[0].(*object.Integer).Value != 42 {
+	if list[0].(*object.Integer).IntValue() != 42 {
 		t.Errorf("roundtrip int = %v, want 42", list[0])
 	}
-	if math.Abs(list[1].(*object.Float).Value-3.14) > 1e-10 {
+	if math.Abs(list[1].(*object.Float).FloatValue()-3.14) > 1e-10 {
 		t.Errorf("roundtrip float = %v, want 3.14", list[1])
 	}
-	if list[2].(*object.Integer).Value != -1 {
+	if list[2].(*object.Integer).IntValue() != -1 {
 		t.Errorf("roundtrip int8 = %v, want -1", list[2])
 	}
 }
@@ -598,7 +598,7 @@ func TestFSPackWrongValueCount(t *testing.T) {
 	ctx := context.Background()
 	kwargs := object.NewKwargs(nil)
 
-	result := fn.Fn(ctx, kwargs, &object.String{Value: "<II"}, &object.List{Elements: []object.Object{
+	result := fn.Fn(ctx, kwargs, object.NewString("<II"), &object.List{Elements: []object.Object{
 		object.NewInteger(1),
 	}})
 	if _, ok := result.(*object.Error); !ok {
@@ -632,7 +632,7 @@ func TestFSPackIntegerRangeChecks(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.format, func(t *testing.T) {
-			result := fn.Fn(ctx, kwargs, &object.String{Value: tt.format}, &object.List{Elements: []object.Object{
+			result := fn.Fn(ctx, kwargs, object.NewString(tt.format), &object.List{Elements: []object.Object{
 				object.NewInteger(tt.value),
 			}})
 			if _, ok := result.(*object.Error); !ok {
@@ -689,13 +689,13 @@ func TestFSLen(t *testing.T) {
 	ctx := context.Background()
 	kwargs := object.NewKwargs(nil)
 
-	result := fn.Fn(ctx, kwargs, &object.String{Value: string([]byte{0x00, 0x01, 0x02, 0x03})})
-	if i, ok := result.(*object.Integer); !ok || i.Value != 4 {
+	result := fn.Fn(ctx, kwargs, object.NewString(string([]byte{0x00, 0x01, 0x02, 0x03})))
+	if i, ok := result.(*object.Integer); !ok || i.IntValue() != 4 {
 		t.Errorf("fs.len of 4 bytes = %v, want 4", result)
 	}
 
-	result = fn.Fn(ctx, kwargs, &object.String{Value: "hello"})
-	if i, ok := result.(*object.Integer); !ok || i.Value != 5 {
+	result = fn.Fn(ctx, kwargs, object.NewString("hello"))
+	if i, ok := result.(*object.Integer); !ok || i.IntValue() != 5 {
 		t.Errorf("fs.len('hello') = %v, want 5", result)
 	}
 }
@@ -707,18 +707,18 @@ func TestFSSlice(t *testing.T) {
 
 	data := string([]byte{0x00, 0x01, 0x02, 0x03, 0x04, 0x05})
 
-	result := fn.Fn(ctx, kwargs, &object.String{Value: data}, object.NewInteger(2), object.NewInteger(5))
+	result := fn.Fn(ctx, kwargs, object.NewString(data), object.NewInteger(2), object.NewInteger(5))
 	str, ok := result.(*object.String)
 	if !ok {
 		t.Fatalf("expected String, got %T", result)
 	}
-	raw := []byte(str.Value)
+	raw := []byte(str.StringValue())
 	if len(raw) != 3 || raw[0] != 0x02 || raw[1] != 0x03 || raw[2] != 0x04 {
 		t.Errorf("slice(2,5) = %x, want [02 03 04]", raw)
 	}
 
-	result = fn.Fn(ctx, kwargs, &object.String{Value: data}, object.NewInteger(3))
-	raw = []byte(result.(*object.String).Value)
+	result = fn.Fn(ctx, kwargs, object.NewString(data), object.NewInteger(3))
+	raw = []byte(result.(*object.String).StringValue())
 	if len(raw) != 3 || raw[0] != 0x03 || raw[1] != 0x04 || raw[2] != 0x05 {
 		t.Errorf("slice(3) = %x, want [03 04 05]", raw)
 	}

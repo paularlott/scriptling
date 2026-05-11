@@ -245,8 +245,8 @@ Returns:
 					before := store.Count()
 					remaining := store.Compact()
 					return &object.Dict{Pairs: map[string]object.DictPair{
-						"removed":   {Key: &object.String{Value: "removed"}, Value: object.NewInteger(int64(before - remaining))},
-						"remaining": {Key: &object.String{Value: "remaining"}, Value: object.NewInteger(int64(remaining))},
+				"removed":   {Key: object.NewString("removed"), Value: object.NewInteger(int64(before - remaining))},
+					"remaining": {Key: object.NewString("remaining"), Value: object.NewInteger(int64(remaining))},
 					}}
 				},
 				HelpText: `compact() - Manually trigger compaction; returns removed and remaining counts`,
@@ -260,10 +260,10 @@ Returns:
 // memoryToDict converts a Memory to a Scriptling dict.
 func memoryToDict(m *Memory) *object.Dict {
 	d := &object.Dict{Pairs: make(map[string]object.DictPair)}
-	d.SetByString("id", &object.String{Value: m.ID})
-	d.SetByString("content", &object.String{Value: m.Content})
-	d.SetByString("type", &object.String{Value: m.Type})
-	d.SetByString("importance", &object.Float{Value: m.Importance})
+	d.SetByString("id", object.NewString(m.ID))
+	d.SetByString("content", object.NewString(m.Content))
+	d.SetByString("type", object.NewString(m.Type))
+	d.SetByString("importance", object.NewFloat(m.Importance))
 	d.SetByString("created_at", conversion.FromGo(m.CreatedAt.Format(time.RFC3339)))
 	d.SetByString("accessed_at", conversion.FromGo(m.AccessedAt.Format(time.RFC3339)))
 	return d

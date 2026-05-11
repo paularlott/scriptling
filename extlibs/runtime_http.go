@@ -20,7 +20,7 @@ import (
 func httpResponse(statusCode int64, headers map[string]string, body object.Object) object.Object {
 	headerDict := make(map[string]object.Object, len(headers))
 	for k, v := range headers {
-		headerDict[k] = &object.String{Value: v}
+		headerDict[k] = object.NewString(v)
 	}
 
 	return object.NewStringDict(map[string]object.Object{
@@ -183,20 +183,20 @@ func CreateRequestInstance(method, path, body string, headers map[string]string,
 	headerDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
 	for k, v := range headers {
 		lk := strings.ToLower(k)
-		headerDict.SetByString(lk, &object.String{Value: v})
+		headerDict.SetByString(lk, object.NewString(v))
 	}
 
 	queryDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
 	for k, v := range query {
-		queryDict.SetByString(k, &object.String{Value: v})
+		queryDict.SetByString(k, object.NewString(v))
 	}
 
 	return &object.Instance{
 		Class: RequestClass,
 		Fields: map[string]object.Object{
-			"method":  &object.String{Value: method},
-			"path":    &object.String{Value: path},
-			"body":    &object.String{Value: body},
+			"method":  object.NewString(method),
+			"path":    object.NewString(path),
+			"body":    object.NewString(body),
 			"headers": headerDict,
 			"query":   queryDict,
 		},
@@ -255,12 +255,12 @@ Returns True if connected, False otherwise.`,
 				}
 
 				if msgType == websocket.TextMessage {
-					return &object.String{Value: string(data)}
+					return object.NewString(string(data))
 				}
 				// Binary message - return as list of bytes
 				elements := make([]object.Object, len(data))
 				for i, b := range data {
-					elements[i] = &object.Integer{Value: int64(b)}
+					elements[i] = object.NewInteger(int64(b))
 				}
 				return &object.List{Elements: elements}
 			},
@@ -293,7 +293,7 @@ Returns:
 					}
 					data = jsonData
 				} else if str, ok := msg.(*object.String); ok {
-					data = []byte(str.Value)
+					data = []byte(str.StringValue())
 				} else {
 					strVal, coerceErr := msg.CoerceString()
 					if coerceErr != nil {
@@ -388,7 +388,7 @@ func CreateWebSocketClientInstance(conn *WebSocketServerConn) *object.Instance {
 	return &object.Instance{
 		Class: WebSocketClientClass,
 		Fields: map[string]object.Object{
-			"remote_addr": &object.String{Value: conn.RemoteAddr()},
+			"remote_addr": object.NewString(conn.RemoteAddr()),
 		},
 		NativeData: conn,
 	}
@@ -720,7 +720,7 @@ Example:
 
 			return httpResponse(statusCode, map[string]string{
 				"Location": location,
-			}, &object.String{Value: ""})
+			}, object.NewString(""))
 		},
 		HelpText: `redirect(location, status=302) - Create a redirect response
 
@@ -743,7 +743,7 @@ Example:
 			}
 
 			statusCode := int64(200)
-			var htmlContent object.Object = &object.String{Value: ""}
+			var htmlContent object.Object = object.NewString("")
 
 			if len(args) >= 2 {
 				if code, err := args[0].AsInt(); err == nil {
@@ -784,7 +784,7 @@ Example:
 			}
 
 			statusCode := int64(200)
-			var textContent object.Object = &object.String{Value: ""}
+			var textContent object.Object = object.NewString("")
 
 			if len(args) >= 2 {
 				if code, err := args[0].AsInt(); err == nil {
@@ -836,17 +836,17 @@ Example:
 
 			pairs := make(map[string]object.DictPair)
 			for key, vals := range values {
-				keyObj := &object.String{Value: key}
+				keyObj := object.NewString(key)
 				dk := object.DictKey(keyObj)
 				if len(vals) == 1 {
 					pairs[dk] = object.DictPair{
 						Key:   keyObj,
-						Value: &object.String{Value: vals[0]},
+						Value: object.NewString(vals[0]),
 					}
 				} else {
 					elements := make([]object.Object, len(vals))
 					for i, v := range vals {
-						elements[i] = &object.String{Value: v}
+						elements[i] = object.NewString(v)
 					}
 					pairs[dk] = object.DictPair{
 						Key:   keyObj,

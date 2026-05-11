@@ -2,11 +2,11 @@ package scriptling
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/paularlott/scriptling/ast"
-	"github.com/paularlott/scriptling/token"
 )
 
 // helper to create a small cache for testing
@@ -18,12 +18,41 @@ func newTestCache(maxSize int) *programCache {
 
 // helper to create a dummy program distinguishable by a label
 func dummyProgram(label string) *ast.Program {
+	symbols := ast.NewSymbolTable()
+	symbols.Intern(label)
+	symbols.Freeze()
 	return &ast.Program{
+		Symbols: symbols,
 		Statements: []ast.Statement{
 			&ast.ExpressionStatement{
-				Token: token.Token{Literal: label},
+				Token: ast.LineInfo{},
 			},
 		},
+	}
+}
+
+func TestCache_EvictedProgramDropsItsSymbolTableReference(t *testing.T) {
+	c := newTestCache(1)
+	first := dummyProgram("first")
+	second := dummyProgram("second")
+
+	c.set("first", first)
+	c.set("second", second)
+
+	if _, ok := c.get("first"); ok {
+		t.Fatal("expected first program to be evicted")
+	}
+	if got, ok := c.get("second"); !ok || got != second {
+		t.Fatal("expected second program to remain in cache")
+	}
+	for _, elem := range c.entries {
+		entry := elem.Value.(*cacheEntry)
+		if entry.program == first {
+			t.Fatal("evicted program is still retained by the cache")
+		}
+		if entry.program != nil && entry.program.Symbols == first.Symbols {
+			t.Fatal("evicted program symbol table is still retained by the cache")
+		}
 	}
 }
 
@@ -287,6 +316,40 @@ func TestCache_DifferentScriptsDifferentHashes(t *testing.T) {
 	}
 }
 
+func TestCache_LongScriptsDifferingOutsideWindows(t *testing.T) {
+	c := newTestCache(10)
+
+	prefix := strings.Repeat("a", 64)
+	suffix := strings.Repeat("z", 64)
+	middle := strings.Repeat("x", 64)
+
+	scriptA := prefix + "AAAA" + middle + "BBBB" + suffix
+	scriptB := prefix + "CCCC" + middle + "DDDD" + suffix
+
+	if len(scriptA) != len(scriptB) {
+		t.Fatalf("expected equal length scripts, got %d and %d", len(scriptA), len(scriptB))
+	}
+	if scriptA == scriptB {
+		t.Fatal("scripts should differ")
+	}
+
+	progA := dummyProgram("script-a")
+	progB := dummyProgram("script-b")
+
+	c.set(scriptA, progA)
+	c.set(scriptB, progB)
+
+	gotA, ok := c.get(scriptA)
+	if !ok || gotA != progA {
+		t.Fatal("expected scriptA to retrieve its own cached program, not scriptB's")
+	}
+
+	gotB, ok := c.get(scriptB)
+	if !ok || gotB != progB {
+		t.Fatal("expected scriptB to retrieve its own cached program, not scriptA's")
+	}
+}
+
 func TestCache_SignatureBucketsDoNotOverlapSimilarScripts(t *testing.T) {
 	c := newTestCache(10)
 	header := "############################\n# Copyright 2026 Paul     #\n############################\n"
@@ -298,10 +361,6 @@ func TestCache_SignatureBucketsDoNotOverlapSimilarScripts(t *testing.T) {
 	if len(scriptA) != len(scriptB) {
 		t.Fatalf("expected equal length scripts, got %d and %d", len(scriptA), len(scriptB))
 	}
-	if signatureForScript(scriptA) != signatureForScript(scriptB) {
-		t.Fatal("expected scripts to land in the same signature bucket")
-	}
-
 	progA := dummyProgram("script-a")
 	progB := dummyProgram("script-b")
 

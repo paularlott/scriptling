@@ -49,7 +49,7 @@ func NewSecretLibrary(registry *secretprovider.Registry) *object.Library {
 					return errors.NewError("%s", err)
 				}
 
-				return &object.String{Value: value}
+				return object.NewString(value)
 			},
 			HelpText: `get(alias, path, field="") - Resolve a secret through a host-configured provider
 
@@ -93,7 +93,7 @@ Examples:
 
 				elements := make([]object.Object, 0, len(keys))
 				for _, key := range keys {
-					elements = append(elements, &object.String{Value: key})
+					elements = append(elements, object.NewString(key))
 				}
 
 				return &object.List{Elements: elements}

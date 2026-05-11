@@ -110,7 +110,7 @@ func New() *Scriptling {
 	p.env.Set("import", evaluator.GetImportBuiltin())
 
 	// Set __name__ to "__main__" by default (overridden when importing modules)
-	p.env.Set("__name__", &object.String{Value: "__main__"})
+	p.env.Set("__name__", object.NewString("__main__"))
 
 	// Set import callback on environment
 	p.env.SetImportCallback(func(libName string) error {
@@ -437,7 +437,7 @@ func parseProgramCached(input string) (*ast.Program, error) {
 	}
 
 	if key != (cacheKey{}) {
-		SetWithKey(key, program)
+		SetWithKey(key, input, program)
 	} else {
 		Set(input, program)
 	}
@@ -580,8 +580,8 @@ func (p *Scriptling) EvalFile(path string) (object.Object, error) {
 	prevFile, hasPrevFile := p.env.Get("__file__")
 	prevName, hasPrevName := p.env.Get("__name__")
 	p.sourceFile = path
-	p.env.Set("__file__", &object.String{Value: path})
-	p.env.Set("__name__", &object.String{Value: "__main__"})
+	p.env.Set("__file__", object.NewString(path))
+	p.env.Set("__name__", object.NewString("__main__"))
 	result, evalErr := p.Eval(string(data))
 	p.sourceFile = prev
 	if hasPrevFile {
@@ -859,7 +859,7 @@ func (p *Scriptling) Import(names interface{}) error {
 		// Scriptling list of strings
 		for _, elem := range v.Elements {
 			if str, ok := elem.(*object.String); ok {
-				if err := p.loadLibrary(str.Value); err != nil {
+				if err := p.loadLibrary(str.StringValue()); err != nil {
 					return err
 				}
 			} else {
@@ -963,8 +963,8 @@ func (p *Scriptling) LoadLibraryIntoEnv(name string, env *object.Environment) er
 func (p *Scriptling) SetSourceFile(name string) {
 	p.sourceFile = name
 	if name != "" {
-		p.env.Set("__file__", &object.String{Value: name})
-		p.env.Set("__name__", &object.String{Value: "__main__"})
+		p.env.Set("__file__", object.NewString(name))
+		p.env.Set("__name__", object.NewString("__main__"))
 	}
 }
 
@@ -984,8 +984,8 @@ func (p *Scriptling) loadLibraryIntoEnv(name string, env *object.Environment) (b
 		}
 		pairs := make(map[string]object.DictPair, len(lib.store))
 		for fname, obj := range lib.store {
-			pairs[object.DictKey(&object.String{Value: fname})] = object.DictPair{
-				Key:   &object.String{Value: fname},
+			pairs[object.DictKey(object.NewString(fname))] = object.DictPair{
+				Key:   object.NewString(fname),
 				Value: obj,
 			}
 		}
@@ -1090,7 +1090,7 @@ func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[stri
 	libEnv.SetCurrentModule(name)
 
 	// Set __name__ to the library/module name (not "__main__")
-	libEnv.Set("__name__", &object.String{Value: name})
+	libEnv.Set("__name__", object.NewString(name))
 
 	// Parse and evaluate the script in the library environment
 	program, err := parseProgramCached(script)
@@ -1103,7 +1103,7 @@ func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[stri
 	if program != nil && len(program.Statements) > 0 {
 		if exprStmt, ok := program.Statements[0].(*ast.ExpressionStatement); ok {
 			if strLit, ok := exprStmt.Expression.(*ast.StringLiteral); ok {
-				moduleDocstring = &object.String{Value: strLit.Value}
+				moduleDocstring = object.NewString(strLit.Value)
 			}
 		}
 	}
@@ -1159,8 +1159,8 @@ func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[stri
 func (p *Scriptling) registerScriptLibrary(name string, store map[string]object.Object) {
 	lib := make(map[string]object.DictPair, len(store))
 	for fname, obj := range store {
-		lib[object.DictKey(&object.String{Value: fname})] = object.DictPair{
-			Key:   &object.String{Value: fname},
+		lib[object.DictKey(object.NewString(fname))] = object.DictPair{
+			Key:   object.NewString(fname),
 			Value: obj,
 		}
 	}

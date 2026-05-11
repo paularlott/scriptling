@@ -16,7 +16,7 @@ var UUIDLibrary = object.NewLibrary(UUIDLibraryName, map[string]*object.Builtin{
 			if err != nil {
 				return errors.NewError("failed to generate UUID v1: %s", err.Error())
 			}
-			return &object.String{Value: id.String()}
+			return object.NewString(id.String())
 		},
 		HelpText: `uuid1() - Generate a UUID version 1 (time-based)
 
@@ -31,7 +31,7 @@ Example:
 	"uuid4": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if err := errors.ExactArgs(args, 0); err != nil { return err }
-			return &object.String{Value: uuid.New().String()}
+			return object.NewString(uuid.New().String())
 		},
 		HelpText: `uuid4() - Generate a UUID version 4 (random)
 
@@ -50,7 +50,7 @@ Example:
 			if err != nil {
 				return errors.NewError("failed to generate UUID v7: %s", err.Error())
 			}
-			return &object.String{Value: id.String()}
+			return object.NewString(id.String())
 		},
 		HelpText: `uuid7() - Generate a UUID version 7 (Unix timestamp-based, sortable)
 

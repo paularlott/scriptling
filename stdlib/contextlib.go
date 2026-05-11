@@ -14,7 +14,7 @@ const suppressKey = "__suppress_types__"
 func resolveExcTypeName(ctx context.Context, obj object.Object) string {
 	switch v := obj.(type) {
 	case *object.String:
-		return v.Value
+		return v.StringValue()
 	case *object.Class:
 		return v.Name
 	case *object.Builtin:

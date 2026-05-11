@@ -17,38 +17,38 @@ func TestObjectsEqual(t *testing.T) {
 	}{
 		{
 			name: "equal integers",
-			a:    &object.Integer{Value: 42},
-			b:    &object.Integer{Value: 42},
+			a:    object.NewInteger(42),
+			b:    object.NewInteger(42),
 			want: true,
 		},
 		{
 			name: "unequal integers",
-			a:    &object.Integer{Value: 42},
-			b:    &object.Integer{Value: 43},
+			a:    object.NewInteger(42),
+			b:    object.NewInteger(43),
 			want: false,
 		},
 		{
 			name: "equal floats",
-			a:    &object.Float{Value: 3.14},
-			b:    &object.Float{Value: 3.14},
+			a:    object.NewFloat(3.14),
+			b:    object.NewFloat(3.14),
 			want: true,
 		},
 		{
 			name: "unequal floats",
-			a:    &object.Float{Value: 3.14},
-			b:    &object.Float{Value: 2.71},
+			a:    object.NewFloat(3.14),
+			b:    object.NewFloat(2.71),
 			want: false,
 		},
 		{
 			name: "equal strings",
-			a:    &object.String{Value: "hello"},
-			b:    &object.String{Value: "hello"},
+			a:    object.NewString("hello"),
+			b:    object.NewString("hello"),
 			want: true,
 		},
 		{
 			name: "unequal strings",
-			a:    &object.String{Value: "hello"},
-			b:    &object.String{Value: "world"},
+			a:    object.NewString("hello"),
+			b:    object.NewString("world"),
 			want: false,
 		},
 		{
@@ -71,8 +71,8 @@ func TestObjectsEqual(t *testing.T) {
 		},
 		{
 			name: "different types",
-			a:    &object.Integer{Value: 42},
-			b:    &object.String{Value: "42"},
+			a:    object.NewInteger(42),
+			b:    object.NewString("42"),
 			want: false,
 		},
 	}
@@ -97,50 +97,50 @@ func TestObjectsDeepEqual(t *testing.T) {
 	}{
 		{
 			name: "equal integers",
-			a:    &object.Integer{Value: 42},
-			b:    &object.Integer{Value: 42},
+			a:    object.NewInteger(42),
+			b:    object.NewInteger(42),
 			want: true,
 		},
 		{
 			name: "equal floats",
-			a:    &object.Float{Value: 3.14},
-			b:    &object.Float{Value: 3.14},
+			a:    object.NewFloat(3.14),
+			b:    object.NewFloat(3.14),
 			want: true,
 		},
 		{
 			name: "equal strings",
-			a:    &object.String{Value: "hello"},
-			b:    &object.String{Value: "hello"},
+			a:    object.NewString("hello"),
+			b:    object.NewString("hello"),
 			want: true,
 		},
 		{
 			name: "equal lists",
-			a:    &object.List{Elements: []object.Object{&object.Integer{Value: 1}, &object.Integer{Value: 2}}},
-			b:    &object.List{Elements: []object.Object{&object.Integer{Value: 1}, &object.Integer{Value: 2}}},
+			a:    &object.List{Elements: []object.Object{object.NewInteger(1), object.NewInteger(2)}},
+			b:    &object.List{Elements: []object.Object{object.NewInteger(1), object.NewInteger(2)}},
 			want: true,
 		},
 		{
 			name: "unequal lists different length",
-			a:    &object.List{Elements: []object.Object{&object.Integer{Value: 1}}},
-			b:    &object.List{Elements: []object.Object{&object.Integer{Value: 1}, &object.Integer{Value: 2}}},
+			a:    &object.List{Elements: []object.Object{object.NewInteger(1)}},
+			b:    &object.List{Elements: []object.Object{object.NewInteger(1), object.NewInteger(2)}},
 			want: false,
 		},
 		{
 			name: "unequal lists different elements",
-			a:    &object.List{Elements: []object.Object{&object.Integer{Value: 1}, &object.Integer{Value: 2}}},
-			b:    &object.List{Elements: []object.Object{&object.Integer{Value: 1}, &object.Integer{Value: 3}}},
+			a:    &object.List{Elements: []object.Object{object.NewInteger(1), object.NewInteger(2)}},
+			b:    &object.List{Elements: []object.Object{object.NewInteger(1), object.NewInteger(3)}},
 			want: false,
 		},
 		{
 			name: "nested lists equal",
-			a:    &object.List{Elements: []object.Object{&object.List{Elements: []object.Object{&object.Integer{Value: 1}}}}},
-			b:    &object.List{Elements: []object.Object{&object.List{Elements: []object.Object{&object.Integer{Value: 1}}}}},
+			a:    &object.List{Elements: []object.Object{&object.List{Elements: []object.Object{object.NewInteger(1)}}}},
+			b:    &object.List{Elements: []object.Object{&object.List{Elements: []object.Object{object.NewInteger(1)}}}},
 			want: true,
 		},
 		{
 			name: "equal tuples",
-			a:    &object.Tuple{Elements: []object.Object{&object.Integer{Value: 1}, &object.String{Value: "a"}}},
-			b:    &object.Tuple{Elements: []object.Object{&object.Integer{Value: 1}, &object.String{Value: "a"}}},
+			a:    &object.Tuple{Elements: []object.Object{object.NewInteger(1), object.NewString("a")}},
+			b:    &object.Tuple{Elements: []object.Object{object.NewInteger(1), object.NewString("a")}},
 			want: true,
 		},
 		{
@@ -152,27 +152,27 @@ func TestObjectsDeepEqual(t *testing.T) {
 		{
 			name: "equal dicts",
 			a:    object.NewStringDict(map[string]object.Object{
-				"a": &object.Integer{Value: 1},
+				"a": object.NewInteger(1),
 			}),
 			b:    object.NewStringDict(map[string]object.Object{
-				"a": &object.Integer{Value: 1},
+				"a": object.NewInteger(1),
 			}),
 			want: true,
 		},
 		{
 			name: "unequal dicts different keys",
 			a:    object.NewStringDict(map[string]object.Object{
-				"a": &object.Integer{Value: 1},
+				"a": object.NewInteger(1),
 			}),
 			b:    object.NewStringDict(map[string]object.Object{
-				"b": &object.Integer{Value: 2},
+				"b": object.NewInteger(2),
 			}),
 			want: false,
 		},
 		{
 			name: "different types",
-			a:    &object.Integer{Value: 42},
-			b:    &object.String{Value: "42"},
+			a:    object.NewInteger(42),
+			b:    object.NewString("42"),
 			want: false,
 		},
 	}
@@ -280,37 +280,33 @@ func TestNativeBoolToBooleanObject(t *testing.T) {
 // Test evalIndexExpression helper functions
 func TestEvalListIndexExpression(t *testing.T) {
 	list := &object.List{Elements: []object.Object{
-		&object.Integer{Value: 1},
-		&object.Integer{Value: 2},
-		&object.Integer{Value: 3},
+		object.NewInteger(1),
+		object.NewInteger(2),
+		object.NewInteger(3),
 	}}
 
-	// Test positive index
-	result := evalListIndexExpression(list, &object.Integer{Value: 1})
+	result := evalListIndexExpression(list, object.NewInteger(1))
 	if result.Type() != object.INTEGER_OBJ {
 		t.Errorf("expected INTEGER_OBJ, got %v", result.Type())
 	}
-	if result.(*object.Integer).Value != 2 {
-		t.Errorf("expected 2, got %d", result.(*object.Integer).Value)
+	if result.(*object.Integer).IntValue() != 2 {
+		t.Errorf("expected 2, got %d", result.(*object.Integer).IntValue())
 	}
 
-	// Test negative index
-	result = evalListIndexExpression(list, &object.Integer{Value: -1})
+	result = evalListIndexExpression(list, object.NewInteger(-1))
 	if result.Type() != object.INTEGER_OBJ {
 		t.Errorf("expected INTEGER_OBJ, got %v", result.Type())
 	}
-	if result.(*object.Integer).Value != 3 {
-		t.Errorf("expected 3, got %d", result.(*object.Integer).Value)
+	if result.(*object.Integer).IntValue() != 3 {
+		t.Errorf("expected 3, got %d", result.(*object.Integer).IntValue())
 	}
 
-	// Test out of bounds positive index (returns NULL for Python-like behavior)
-	result = evalListIndexExpression(list, &object.Integer{Value: 10})
+	result = evalListIndexExpression(list, object.NewInteger(10))
 	if result.Type() != object.NULL_OBJ {
 		t.Errorf("expected NULL_OBJ for out of bounds, got %v", result.Type())
 	}
 
-	// Test out of bounds negative index (returns NULL for Python-like behavior)
-	result = evalListIndexExpression(list, &object.Integer{Value: -10})
+	result = evalListIndexExpression(list, object.NewInteger(-10))
 	if result.Type() != object.NULL_OBJ {
 		t.Errorf("expected NULL_OBJ for out of bounds, got %v", result.Type())
 	}
@@ -318,28 +314,25 @@ func TestEvalListIndexExpression(t *testing.T) {
 
 // Test evalStringIndexExpression
 func TestEvalStringIndexExpression(t *testing.T) {
-	str := &object.String{Value: "hello"}
+	str := object.NewString("hello")
 
-	// Test positive index
-	result := evalStringIndexExpression(str, &object.Integer{Value: 1})
+	result := evalStringIndexExpression(str, object.NewInteger(1))
 	if result.Type() != object.STRING_OBJ {
 		t.Errorf("expected STRING_OBJ, got %v", result.Type())
 	}
-	if result.(*object.String).Value != "e" {
-		t.Errorf("expected 'e', got %q", result.(*object.String).Value)
+	if result.(*object.String).StringValue() != "e" {
+		t.Errorf("expected 'e', got %q", result.(*object.String).StringValue())
 	}
 
-	// Test negative index
-	result = evalStringIndexExpression(str, &object.Integer{Value: -1})
+	result = evalStringIndexExpression(str, object.NewInteger(-1))
 	if result.Type() != object.STRING_OBJ {
 		t.Errorf("expected STRING_OBJ, got %v", result.Type())
 	}
-	if result.(*object.String).Value != "o" {
-		t.Errorf("expected 'o', got %q", result.(*object.String).Value)
+	if result.(*object.String).StringValue() != "o" {
+		t.Errorf("expected 'o', got %q", result.(*object.String).StringValue())
 	}
 
-	// Test out of bounds (returns NULL for Python-like behavior)
-	result = evalStringIndexExpression(str, &object.Integer{Value: 10})
+	result = evalStringIndexExpression(str, object.NewInteger(10))
 	if result.Type() != object.NULL_OBJ {
 		t.Errorf("expected NULL_OBJ for out of bounds, got %v", result.Type())
 	}
@@ -348,24 +341,21 @@ func TestEvalStringIndexExpression(t *testing.T) {
 // Test evalTupleIndexExpression
 func TestEvalTupleIndexExpression(t *testing.T) {
 	tuple := &object.Tuple{Elements: []object.Object{
-		&object.Integer{Value: 1},
-		&object.String{Value: "a"},
+		object.NewInteger(1),
+		object.NewString("a"),
 	}}
 
-	// Test positive index
-	result := evalTupleIndexExpression(tuple, &object.Integer{Value: 0})
+	result := evalTupleIndexExpression(tuple, object.NewInteger(0))
 	if result.Type() != object.INTEGER_OBJ {
 		t.Errorf("expected INTEGER_OBJ, got %v", result.Type())
 	}
 
-	// Test negative index
-	result = evalTupleIndexExpression(tuple, &object.Integer{Value: -1})
+	result = evalTupleIndexExpression(tuple, object.NewInteger(-1))
 	if result.Type() != object.STRING_OBJ {
 		t.Errorf("expected STRING_OBJ, got %v", result.Type())
 	}
 
-	// Test out of bounds (returns NULL for Python-like behavior)
-	result = evalTupleIndexExpression(tuple, &object.Integer{Value: 10})
+	result = evalTupleIndexExpression(tuple, object.NewInteger(10))
 	if result.Type() != object.NULL_OBJ {
 		t.Errorf("expected NULL_OBJ for out of bounds, got %v", result.Type())
 	}
@@ -374,11 +364,11 @@ func TestEvalTupleIndexExpression(t *testing.T) {
 // Test evalListSliceExpression
 func TestEvalListSliceExpression(t *testing.T) {
 	list := &object.List{Elements: []object.Object{
-		&object.Integer{Value: 1},
-		&object.Integer{Value: 2},
-		&object.Integer{Value: 3},
-		&object.Integer{Value: 4},
-		&object.Integer{Value: 5},
+		object.NewInteger(1),
+		object.NewInteger(2),
+		object.NewInteger(3),
+		object.NewInteger(4),
+		object.NewInteger(5),
 	}}
 
 	tests := []struct {
@@ -390,8 +380,8 @@ func TestEvalListSliceExpression(t *testing.T) {
 		{
 			name: "1:3",
 			slice: &object.Slice{
-				Start: &object.Integer{Value: 1},
-				End:   &object.Integer{Value: 3},
+				Start: object.NewInteger(1),
+				End:   object.NewInteger(3),
 			},
 			wantLen:   2,
 			wantFirst: 2,
@@ -400,7 +390,7 @@ func TestEvalListSliceExpression(t *testing.T) {
 			name: ":3",
 			slice: &object.Slice{
 				Start: nil,
-				End:   &object.Integer{Value: 3},
+				End:   object.NewInteger(3),
 			},
 			wantLen:   3,
 			wantFirst: 1,
@@ -408,7 +398,7 @@ func TestEvalListSliceExpression(t *testing.T) {
 		{
 			name: "2:",
 			slice: &object.Slice{
-				Start: &object.Integer{Value: 2},
+				Start: object.NewInteger(2),
 				End:   nil,
 			},
 			wantLen:   3,
@@ -437,7 +427,7 @@ func TestEvalListSliceExpression(t *testing.T) {
 				t.Errorf("length = %d, want %d", len(gotList.Elements), tt.wantLen)
 			}
 			if len(gotList.Elements) > 0 {
-				first := gotList.Elements[0].(*object.Integer).Value
+				first := gotList.Elements[0].(*object.Integer).IntValue()
 				if first != tt.wantFirst {
 					t.Errorf("first element = %d, want %d", first, tt.wantFirst)
 				}
@@ -449,14 +439,14 @@ func TestEvalListSliceExpression(t *testing.T) {
 // Test evalTupleSliceExpression
 func TestEvalTupleSliceExpression(t *testing.T) {
 	tuple := &object.Tuple{Elements: []object.Object{
-		&object.Integer{Value: 1},
-		&object.Integer{Value: 2},
-		&object.Integer{Value: 3},
+		object.NewInteger(1),
+		object.NewInteger(2),
+		object.NewInteger(3),
 	}}
 
 	slice := &object.Slice{
-		Start: &object.Integer{Value: 1},
-		End:   &object.Integer{Value: 2},
+		Start: object.NewInteger(1),
+		End:   object.NewInteger(2),
 	}
 
 	result := evalTupleSliceExpression(tuple, slice)
@@ -471,7 +461,7 @@ func TestEvalTupleSliceExpression(t *testing.T) {
 
 // Test evalStringSliceExpression
 func TestEvalStringSliceExpression(t *testing.T) {
-	str := &object.String{Value: "hello"}
+	str := object.NewString("hello")
 
 	tests := []struct {
 		name      string
@@ -481,8 +471,8 @@ func TestEvalStringSliceExpression(t *testing.T) {
 		{
 			name: "1:4",
 			slice: &object.Slice{
-				Start: &object.Integer{Value: 1},
-				End:   &object.Integer{Value: 4},
+				Start: object.NewInteger(1),
+				End:   object.NewInteger(4),
 			},
 			wantValue: "ell",
 		},
@@ -490,14 +480,14 @@ func TestEvalStringSliceExpression(t *testing.T) {
 			name: ":3",
 			slice: &object.Slice{
 				Start: nil,
-				End:   &object.Integer{Value: 3},
+				End:   object.NewInteger(3),
 			},
 			wantValue: "hel",
 		},
 		{
 			name: "2:",
 			slice: &object.Slice{
-				Start: &object.Integer{Value: 2},
+				Start: object.NewInteger(2),
 				End:   nil,
 			},
 			wantValue: "llo",
@@ -511,7 +501,7 @@ func TestEvalStringSliceExpression(t *testing.T) {
 				t.Errorf("expected STRING_OBJ, got %v", result.Type())
 				return
 			}
-			gotStr := result.(*object.String).Value
+			gotStr := result.(*object.String).StringValue()
 			if gotStr != tt.wantValue {
 				t.Errorf("got %q, want %q", gotStr, tt.wantValue)
 			}

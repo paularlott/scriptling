@@ -66,7 +66,7 @@ return &object.Error{Message: "expected 2 arguments"}
 			// Return prefix + value from dict
 			if val, ok := dict["key"]; ok {
 				valStr, _ := val.AsString()
-				return &object.String{Value: prefix + valStr}
+				return object.NewString(prefix + valStr)
 			}
 			return &object.Error{Message: "key not found"}
 		})
@@ -112,7 +112,7 @@ return &object.Error{Message: "expected 3 arguments"}
 			// Return combined result
 			if val, ok := dict["key"]; ok {
 				valStr, _ := val.AsString()
-				return &object.String{Value: prefix + valStr + string(rune('0'+num))}
+				return object.NewString(prefix + valStr + string(rune('0'+num)))
 			}
 			return &object.Error{Message: "key not found"}
 		})
