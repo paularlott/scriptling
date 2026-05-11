@@ -11,12 +11,12 @@ func TestDictKeyFormat(t *testing.T) {
 		obj      Object
 		expected string
 	}{
-		{"string key", &String{Value: "hello"}, "s:hello"},
-		{"empty string", &String{Value: ""}, "s:"},
-		{"integer key", &Integer{Value: 42}, "n:42"},
-		{"float key", &Float{Value: 3.14}, "f:3.14"},
-		{"boolean true", &Boolean{Value: true}, "n:1"},
-		{"boolean false", &Boolean{Value: false}, "n:0"},
+		{"string key", NewString("hello"), "s:hello"},
+		{"empty string", NewString(""), "s:"},
+		{"integer key", NewInteger(42), "n:42"},
+		{"float key", NewFloat(3.14), "f:3.14"},
+		{"boolean true", NewBoolean(true), "n:1"},
+		{"boolean false", NewBoolean(false), "n:0"},
 		{"null key", &Null{}, "null:"},
 	}
 
@@ -33,17 +33,17 @@ func TestDictKeyFormat(t *testing.T) {
 func TestNewStringDict(t *testing.T) {
 	// Test that NewStringDict creates properly keyed dict
 	d := NewStringDict(map[string]Object{
-		"name": &String{Value: "test"},
-		"age":  &Integer{Value: 30},
+		"name": NewString("test"),
+		"age":  NewInteger(30),
 	})
 
 	// Verify keys are stored with DictKey format
-	nameKey := DictKey(&String{Value: "name"})
+	nameKey := DictKey(NewString("name"))
 	if _, ok := d.Pairs[nameKey]; !ok {
 		t.Errorf("Expected key %q in Pairs map", nameKey)
 	}
 
-	ageKey := DictKey(&String{Value: "age"})
+	ageKey := DictKey(NewString("age"))
 	if _, ok := d.Pairs[ageKey]; !ok {
 		t.Errorf("Expected key %q in Pairs map", ageKey)
 	}
@@ -51,7 +51,7 @@ func TestNewStringDict(t *testing.T) {
 	// Test GetByString
 	if pair, ok := d.GetByString("name"); !ok {
 		t.Error("GetByString('name') should find the key")
-	} else if str, ok := pair.Value.(*String); !ok || str.Value != "test" {
+	} else if str, ok := pair.Value.(*String); !ok || str.StringValue() != "test" {
 		t.Errorf("Expected 'test', got %v", pair.Value)
 	}
 
@@ -64,7 +64,7 @@ func TestNewStringDict(t *testing.T) {
 	}
 
 	// Test SetByString
-	d.SetByString("email", &String{Value: "test@example.com"})
+	d.SetByString("email", NewString("test@example.com"))
 	if !d.HasByString("email") {
 		t.Error("Should have 'email' after SetByString")
 	}
@@ -79,8 +79,8 @@ func TestNewStringDict(t *testing.T) {
 func TestDictAsDict(t *testing.T) {
 	// Test that AsDict returns human-readable keys (not DictKey format)
 	d := NewStringDict(map[string]Object{
-		"hello": &String{Value: "world"},
-		"count": &Integer{Value: 5},
+		"hello": NewString("world"),
+		"count": NewInteger(5),
 	})
 
 	result, err := d.AsDict()
@@ -105,7 +105,7 @@ func TestDictAsDict(t *testing.T) {
 
 func TestDictInspectNoDictKeyLeak(t *testing.T) {
 	d := NewStringDict(map[string]Object{
-		"key": &String{Value: "val"},
+		"key": NewString("val"),
 	})
 
 	inspect := d.Inspect()
@@ -126,8 +126,8 @@ func contains(s, substr string) bool {
 
 func TestDictIterators(t *testing.T) {
 	d := NewStringDict(map[string]Object{
-		"a": &Integer{Value: 1},
-		"b": &Integer{Value: 2},
+		"a": NewInteger(1),
+		"b": NewInteger(2),
 	})
 
 	t.Run("DictKeys iterator", func(t *testing.T) {
@@ -143,10 +143,10 @@ func TestDictIterators(t *testing.T) {
 				t.Fatalf("DictKeys iterator should return String, got %T", obj)
 			}
 			// Should NOT have DictKey prefix
-			if len(str.Value) > 2 && str.Value[1] == ':' {
-				t.Errorf("DictKeys iterator returned DictKey-formatted key: %q", str.Value)
+			if len(str.StringValue()) > 2 && str.StringValue()[1] == ':' {
+				t.Errorf("DictKeys iterator returned DictKey-formatted key: %q", str.StringValue())
 			}
-			keys = append(keys, str.Value)
+			keys = append(keys, str.StringValue())
 		}
 		if len(keys) != 2 {
 			t.Errorf("Expected 2 keys, got %d", len(keys))
@@ -169,8 +169,8 @@ func TestDictIterators(t *testing.T) {
 			if !ok {
 				t.Fatalf("Item key should be String, got %T", tuple.Elements[0])
 			}
-			if len(key.Value) > 2 && key.Value[1] == ':' {
-				t.Errorf("DictItems iterator returned DictKey-formatted key: %q", key.Value)
+			if len(key.StringValue()) > 2 && key.StringValue()[1] == ':' {
+				t.Errorf("DictItems iterator returned DictKey-formatted key: %q", key.StringValue())
 			}
 			count++
 		}
@@ -183,7 +183,7 @@ func TestDictIterators(t *testing.T) {
 func TestEnvironmentConcurrentSafety(t *testing.T) {
 	// Test that Environment operations are safe with RWMutex
 	env := NewEnvironment()
-	env.Set("x", &Integer{Value: 1})
+	env.Set("x", NewInteger(1))
 
 	// Concurrent reads should not panic
 	done := make(chan bool, 10)
@@ -203,7 +203,7 @@ func TestEnvironmentConcurrentSafety(t *testing.T) {
 	if !ok {
 		t.Error("Expected to find 'x'")
 	}
-	if integer, ok := val.(*Integer); !ok || integer.Value != 1 {
+	if integer, ok := val.(*Integer); !ok || integer.IntValue() != 1 {
 		t.Errorf("Expected Integer(1), got %v", val)
 	}
 }
@@ -211,9 +211,9 @@ func TestEnvironmentConcurrentSafety(t *testing.T) {
 func TestListAsList(t *testing.T) {
 	// Test that AsList returns a copy, not the original slice
 	original := &List{Elements: []Object{
-		&Integer{Value: 1},
-		&Integer{Value: 2},
-		&Integer{Value: 3},
+		NewInteger(1),
+		NewInteger(2),
+		NewInteger(3),
 	}}
 
 	copy, err := original.AsList()
@@ -222,7 +222,7 @@ func TestListAsList(t *testing.T) {
 	}
 
 	// Modify the copy
-	copy = append(copy, &Integer{Value: 4})
+	copy = append(copy, NewInteger(4))
 
 	// Original should be unchanged
 	if len(original.Elements) != 3 {
@@ -233,8 +233,8 @@ func TestListAsList(t *testing.T) {
 func TestTupleAsList(t *testing.T) {
 	// Test that Tuple.AsList returns a copy
 	original := &Tuple{Elements: []Object{
-		&Integer{Value: 1},
-		&Integer{Value: 2},
+		NewInteger(1),
+		NewInteger(2),
 	}}
 
 	copy, err := original.AsList()
@@ -243,7 +243,7 @@ func TestTupleAsList(t *testing.T) {
 	}
 
 	// Modify the copy
-	copy = append(copy, &Integer{Value: 3})
+	copy = append(copy, NewInteger(3))
 
 	// Original should be unchanged
 	if len(original.Elements) != 2 {
@@ -255,24 +255,24 @@ func TestSetOperationsWithDictKey(t *testing.T) {
 	s := &Set{Elements: make(map[string]Object)}
 
 	// Add various types
-	s.add(&String{Value: "hello"})
-	s.add(&Integer{Value: 42})
-	s.add(&Boolean{Value: true})
+	s.add(NewString("hello"))
+	s.add(NewInteger(42))
+	s.add(NewBoolean(true))
 
 	// Check contains
-	if !s.contains(&String{Value: "hello"}) {
+	if !s.contains(NewString("hello")) {
 		t.Error("Set should contain 'hello'")
 	}
-	if !s.contains(&Integer{Value: 42}) {
+	if !s.contains(NewInteger(42)) {
 		t.Error("Set should contain 42")
 	}
-	if s.contains(&String{Value: "missing"}) {
+	if s.contains(NewString("missing")) {
 		t.Error("Set should not contain 'missing'")
 	}
 
 	// Remove
-	s.remove(&String{Value: "hello"})
-	if s.contains(&String{Value: "hello"}) {
+	s.remove(NewString("hello"))
+	if s.contains(NewString("hello")) {
 		t.Error("Set should not contain 'hello' after remove")
 	}
 }
@@ -283,7 +283,7 @@ func TestLibraryGetDict(t *testing.T) {
 			Fn: nil,
 		},
 	}, map[string]Object{
-		"PI": &Float{Value: 3.14},
+		"PI": NewFloat(3.14),
 	}, "test library")
 
 	dict := lib.GetDict()
@@ -291,7 +291,7 @@ func TestLibraryGetDict(t *testing.T) {
 	// All keys should use DictKey format in the Pairs map
 	for mapKey, pair := range dict.Pairs {
 		keyStr, _ := pair.Key.AsString()
-		expectedMapKey := DictKey(&String{Value: keyStr})
+		expectedMapKey := DictKey(NewString(keyStr))
 		if mapKey != expectedMapKey {
 			t.Errorf("Map key %q does not match expected DictKey %q for key %q", mapKey, expectedMapKey, keyStr)
 		}

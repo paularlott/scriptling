@@ -57,13 +57,13 @@ results
 
 	// Check result
 	str, ok := list.Elements[0].(*object.String)
-	if !ok || str.Value != "handled" {
+	if !ok || str.StringValue() != "handled" {
 		t.Errorf("Expected 'handled', got %v", list.Elements[0].Inspect())
 	}
 
 	// Check called flag
 	called, ok := list.Elements[1].(*object.Boolean)
-	if !ok || !called.Value {
+	if !ok || !called.BoolValue() {
 		t.Errorf("Expected called=true, got %v", list.Elements[1].Inspect())
 	}
 
@@ -116,8 +116,8 @@ result
 	}
 
 	expected := "BOT: bot_obj update_obj"
-	if str.Value != expected {
-		t.Errorf("Expected %q, got %q", expected, str.Value)
+	if str.StringValue() != expected {
+		t.Errorf("Expected %q, got %q", expected, str.StringValue())
 	}
 }
 
@@ -175,13 +175,13 @@ results
 		t.Fatalf("Expected strings, got %T and %T", list.Elements[0], list.Elements[1])
 	}
 
-	if str1.Value != str2.Value {
-		t.Errorf("Bound method and lambda should produce same result:\n  bound: %q\n  lambda: %q", str1.Value, str2.Value)
+	if str1.StringValue() != str2.StringValue() {
+		t.Errorf("Bound method and lambda should produce same result:\n  bound: %q\n  lambda: %q", str1.StringValue(), str2.StringValue())
 	}
 
 	// Check equality
 	equal, ok := list.Elements[2].(*object.Boolean)
-	if !ok || !equal.Value {
+	if !ok || !equal.BoolValue() {
 		t.Errorf("Results should be equal")
 	}
 }

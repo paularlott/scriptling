@@ -31,13 +31,13 @@ func TestImplicitStringConcatenation(t *testing.T) {
 			expected: "abc",
 		},
 		{
-			name:     "adjacent strings in parentheses across lines",
+			name: "adjacent strings in parentheses across lines",
 			code: `result = ("hello"
     " world")`,
 			expected: "hello world",
 		},
 		{
-			name:     "multiline concatenation in parens",
+			name: "multiline concatenation in parens",
 			code: `result = (
     "line one"
     " line two"
@@ -46,7 +46,7 @@ func TestImplicitStringConcatenation(t *testing.T) {
 			expected: "line one line two line three",
 		},
 		{
-			name:     "adjacent strings in function call",
+			name: "adjacent strings in function call",
 			code: `
 def concat(s):
     return s
@@ -65,7 +65,7 @@ result = concat("hello" " world")`,
 			expected: "hello",
 		},
 		{
-			name:     "no concatenation across newlines outside parens",
+			name: "no concatenation across newlines outside parens",
 			code: `x = "hello"
 result = x`,
 			expected: "hello",
@@ -679,12 +679,7 @@ result = json_helper.parse_name('{"name": "Alice", "age": 30}')
 	}
 }
 
-// ============================================================================
-// Integration Tests - Real-world patterns from fortix dev libraries
-// ============================================================================
-
-func TestFortixStyleParamFiltering(t *testing.T) {
-	// Pattern from fortix_dev.py: filtering params with mixed types
+func TestRealStyleParamFiltering(t *testing.T) {
 	p := New()
 	_, err := p.Eval(`
 params = {"page": 1, "limit": 500, "search": "", "active": True}
@@ -706,8 +701,7 @@ count = len(filtered)
 	}
 }
 
-func TestFortixStyleIsinstanceChecks(t *testing.T) {
-	// Pattern from fortix library: checking response types
+func TestRealStyleIsinstanceChecks(t *testing.T) {
 	p := New()
 	_, err := p.Eval(`
 response = {"records": [{"id": 1}, {"id": 2}]}
@@ -744,7 +738,7 @@ is_not_str = isinstance(first_record, str)
 	}
 }
 
-func TestFortixStyleMultilineStrings(t *testing.T) {
+func TestRealStyleMultilineStrings(t *testing.T) {
 	// Pattern: building URLs with implicit concatenation
 	p := New()
 	_, err := p.Eval(`
@@ -1011,7 +1005,7 @@ func TestRegressionCallFunctionWithContextStillWorks(t *testing.T) {
 	p.RegisterFunc("add", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 		a, _ := args[0].AsInt()
 		b, _ := args[1].AsInt()
-		return &object.Integer{Value: a + b}
+		return object.NewInteger(a + b)
 	})
 
 	result, err := p.CallFunction("add", 10, 20)
@@ -1668,7 +1662,7 @@ func TestClassBuilderProperty(t *testing.T) {
 
 	cb := object.NewClassBuilder("Circle")
 	cb.MethodWithHelp("__init__", func(self *object.Instance, r float64) {
-		self.Fields["radius"] = &object.Float{Value: r}
+		self.Fields["radius"] = object.NewFloat(r)
 	}, "")
 	cb.Property("radius", func(self *object.Instance) float64 {
 		v, _ := self.Fields["radius"].AsFloat()
@@ -1738,7 +1732,7 @@ func TestClassBuilderPropertyInheritance(t *testing.T) {
 
 	base := object.NewClassBuilder("Base")
 	base.MethodWithHelp("__init__", func(self *object.Instance, name string) {
-		self.Fields["name"] = &object.String{Value: name}
+		self.Fields["name"] = object.NewString(name)
 	}, "")
 	base.Property("name", func(self *object.Instance) string {
 		v, _ := self.Fields["name"].AsString()
@@ -1750,7 +1744,7 @@ func TestClassBuilderPropertyInheritance(t *testing.T) {
 	child.BaseClass(baseClass)
 	// Child needs its own __init__ to set fields (inherited __init__ is not auto-called)
 	child.Method("__init__", func(self *object.Instance, name string) {
-		self.Fields["name"] = &object.String{Value: name}
+		self.Fields["name"] = object.NewString(name)
 	})
 	p.SetObjectVar("Base", baseClass)
 	p.SetObjectVar("Child", child.Build())

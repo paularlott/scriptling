@@ -23,7 +23,7 @@ func TestPlatformLibrary(t *testing.T) {
 	if result.Type() != object.STRING_OBJ {
 		t.Errorf("system() returned %v, want string", result.Type())
 	}
-	systemName := result.(*object.String).Value
+	systemName := result.(*object.String).StringValue()
 	validSystems := []string{"Darwin", "Linux", "Windows", "FreeBSD"}
 	valid := false
 	for _, s := range validSystems {
@@ -57,7 +57,7 @@ func TestPlatformLibrary(t *testing.T) {
 	if result.Type() != object.STRING_OBJ {
 		t.Errorf("platform() returned %v, want string", result.Type())
 	}
-	platformStr := result.(*object.String).Value
+	platformStr := result.(*object.String).StringValue()
 	if !strings.Contains(platformStr, "-") {
 		t.Errorf("platform() should contain '-', got %q", platformStr)
 	}
@@ -103,7 +103,7 @@ func TestPlatformLibrary(t *testing.T) {
 	}
 
 	// Test with args (should error)
-	result = PlatformLibrary.Functions()["system"].Fn(ctx, object.NewKwargs(nil), &object.Integer{Value: 1})
+	result = PlatformLibrary.Functions()["system"].Fn(ctx, object.NewKwargs(nil), object.NewInteger(1))
 	if result.Type() != object.ERROR_OBJ {
 		t.Errorf("system() with arg should return error, got %v", result.Type())
 	}
@@ -118,7 +118,7 @@ func TestUUIDLibrary(t *testing.T) {
 	if result.Type() != object.STRING_OBJ {
 		t.Errorf("uuid4() returned %v, want string", result.Type())
 	}
-	uuidStr := result.(*object.String).Value
+	uuidStr := result.(*object.String).StringValue()
 	if !uuidRegex.MatchString(uuidStr) {
 		t.Errorf("uuid4() returned invalid UUID: %q", uuidStr)
 	}
@@ -131,7 +131,7 @@ func TestUUIDLibrary(t *testing.T) {
 	if result.Type() != object.STRING_OBJ {
 		t.Errorf("uuid1() returned %v, want string", result.Type())
 	}
-	uuidStr = result.(*object.String).Value
+	uuidStr = result.(*object.String).StringValue()
 	if !uuidRegex.MatchString(uuidStr) {
 		t.Errorf("uuid1() returned invalid UUID: %q", uuidStr)
 	}
@@ -144,7 +144,7 @@ func TestUUIDLibrary(t *testing.T) {
 	if result.Type() != object.STRING_OBJ {
 		t.Errorf("uuid7() returned %v, want string", result.Type())
 	}
-	uuidStr = result.(*object.String).Value
+	uuidStr = result.(*object.String).StringValue()
 	if !uuidRegex.MatchString(uuidStr) {
 		t.Errorf("uuid7() returned invalid UUID: %q", uuidStr)
 	}
@@ -153,7 +153,7 @@ func TestUUIDLibrary(t *testing.T) {
 	}
 
 	// Test with args (should error)
-	result = UUIDLibrary.Functions()["uuid4"].Fn(ctx, object.NewKwargs(nil), &object.Integer{Value: 1})
+	result = UUIDLibrary.Functions()["uuid4"].Fn(ctx, object.NewKwargs(nil), object.NewInteger(1))
 	if result.Type() != object.ERROR_OBJ {
 		t.Errorf("uuid4() with arg should return error, got %v", result.Type())
 	}
@@ -164,11 +164,11 @@ func TestHashlibLibrary(t *testing.T) {
 	hexRegex := regexp.MustCompile(`^[0-9a-f]+$`)
 
 	// Test sha256
-	result := HashlibLibrary.Functions()["sha256"].Fn(ctx, object.NewKwargs(nil), &object.String{Value: "hello"})
+	result := HashlibLibrary.Functions()["sha256"].Fn(ctx, object.NewKwargs(nil), object.NewString("hello"))
 	if result.Type() != object.STRING_OBJ {
 		t.Errorf("sha256() returned %v, want string", result.Type())
 	}
-	hashStr := result.(*object.String).Value
+	hashStr := result.(*object.String).StringValue()
 	if !hexRegex.MatchString(hashStr) {
 		t.Errorf("sha256() returned invalid hex: %q", hashStr)
 	}
@@ -177,11 +177,11 @@ func TestHashlibLibrary(t *testing.T) {
 	}
 
 	// Test sha1
-	result = HashlibLibrary.Functions()["sha1"].Fn(ctx, object.NewKwargs(nil), &object.String{Value: "hello"})
+	result = HashlibLibrary.Functions()["sha1"].Fn(ctx, object.NewKwargs(nil), object.NewString("hello"))
 	if result.Type() != object.STRING_OBJ {
 		t.Errorf("sha1() returned %v, want string", result.Type())
 	}
-	hashStr = result.(*object.String).Value
+	hashStr = result.(*object.String).StringValue()
 	if !hexRegex.MatchString(hashStr) {
 		t.Errorf("sha1() returned invalid hex: %q", hashStr)
 	}
@@ -190,11 +190,11 @@ func TestHashlibLibrary(t *testing.T) {
 	}
 
 	// Test md5
-	result = HashlibLibrary.Functions()["md5"].Fn(ctx, object.NewKwargs(nil), &object.String{Value: "hello"})
+	result = HashlibLibrary.Functions()["md5"].Fn(ctx, object.NewKwargs(nil), object.NewString("hello"))
 	if result.Type() != object.STRING_OBJ {
 		t.Errorf("md5() returned %v, want string", result.Type())
 	}
-	hashStr = result.(*object.String).Value
+	hashStr = result.(*object.String).StringValue()
 	if !hexRegex.MatchString(hashStr) {
 		t.Errorf("md5() returned invalid hex: %q", hashStr)
 	}
@@ -203,16 +203,16 @@ func TestHashlibLibrary(t *testing.T) {
 	}
 
 	// Test known values
-	result = HashlibLibrary.Functions()["sha256"].Fn(ctx, object.NewKwargs(nil), &object.String{Value: ""})
+	result = HashlibLibrary.Functions()["sha256"].Fn(ctx, object.NewKwargs(nil), object.NewString(""))
 	expectedSHA256 := "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-	if result.(*object.String).Value != expectedSHA256 {
-		t.Errorf("sha256('') = %q, want %q", result.(*object.String).Value, expectedSHA256)
+	if result.(*object.String).StringValue() != expectedSHA256 {
+		t.Errorf("sha256('') = %q, want %q", result.(*object.String).StringValue(), expectedSHA256)
 	}
 
-	result = HashlibLibrary.Functions()["md5"].Fn(ctx, object.NewKwargs(nil), &object.String{Value: ""})
+	result = HashlibLibrary.Functions()["md5"].Fn(ctx, object.NewKwargs(nil), object.NewString(""))
 	expectedMD5 := "d41d8cd98f00b204e9800998ecf8427e"
-	if result.(*object.String).Value != expectedMD5 {
-		t.Errorf("md5('') = %q, want %q", result.(*object.String).Value, expectedMD5)
+	if result.(*object.String).StringValue() != expectedMD5 {
+		t.Errorf("md5('') = %q, want %q", result.(*object.String).StringValue(), expectedMD5)
 	}
 
 	// Test with invalid args (should error)
@@ -221,7 +221,7 @@ func TestHashlibLibrary(t *testing.T) {
 		t.Errorf("sha256() without args should return error, got %v", result.Type())
 	}
 
-	result = HashlibLibrary.Functions()["sha256"].Fn(ctx, object.NewKwargs(nil), &object.Integer{Value: 42})
+	result = HashlibLibrary.Functions()["sha256"].Fn(ctx, object.NewKwargs(nil), object.NewInteger(42))
 	if result.Type() != object.ERROR_OBJ {
 		t.Errorf("sha256() with int should return error, got %v", result.Type())
 	}

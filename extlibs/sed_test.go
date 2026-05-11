@@ -47,8 +47,8 @@ sed.replace("world", "earth", "` + path + `")`)
 		t.Fatal(err)
 	}
 
-	if result.(*object.Integer).Value != 1 {
-		t.Errorf("expected 1 file modified, got %v", result.(*object.Integer).Value)
+	if result.(*object.Integer).IntValue() != 1 {
+		t.Errorf("expected 1 file modified, got %v", result.(*object.Integer).IntValue())
 	}
 	got := readFile(t, path)
 	if got != "hello earth\nfoo bar\n" {
@@ -67,8 +67,8 @@ sed.replace("notfound", "x", "` + path + `")`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.(*object.Integer).Value != 0 {
-		t.Errorf("expected 0 files modified, got %v", result.(*object.Integer).Value)
+	if result.(*object.Integer).IntValue() != 0 {
+		t.Errorf("expected 0 files modified, got %v", result.(*object.Integer).IntValue())
 	}
 	if got := readFile(t, path); got != "hello world\n" {
 		t.Errorf("file should be unchanged, got %q", got)
@@ -103,7 +103,7 @@ sed.replace("hello", "hi", "` + path + `", ignore_case=True)`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.(*object.Integer).Value != 1 {
+	if result.(*object.Integer).IntValue() != 1 {
 		t.Errorf("expected 1 file modified")
 	}
 	got := readFile(t, path)
@@ -123,7 +123,7 @@ sed.replace_pattern("old_(\\w+)", "new_${1}", "` + path + `")`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.(*object.Integer).Value != 1 {
+	if result.(*object.Integer).IntValue() != 1 {
 		t.Errorf("expected 1 file modified")
 	}
 	got := readFile(t, path)
@@ -144,8 +144,8 @@ sed.replace("hello", "hi", "` + dir + `")`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.(*object.Integer).Value != 2 {
-		t.Errorf("expected 2 files modified, got %v", result.(*object.Integer).Value)
+	if result.(*object.Integer).IntValue() != 2 {
+		t.Errorf("expected 2 files modified, got %v", result.(*object.Integer).IntValue())
 	}
 	if got := readFile(t, filepath.Join(dir, "sub/c.txt")); got != "hello world\n" {
 		t.Errorf("sub file should be unchanged, got %q", got)
@@ -163,8 +163,8 @@ sed.replace("hello", "hi", "` + dir + `", recursive=True)`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.(*object.Integer).Value != 2 {
-		t.Errorf("expected 2 files modified, got %v", result.(*object.Integer).Value)
+	if result.(*object.Integer).IntValue() != 2 {
+		t.Errorf("expected 2 files modified, got %v", result.(*object.Integer).IntValue())
 	}
 	if got := readFile(t, filepath.Join(dir, "sub/b.txt")); got != "hi world\n" {
 		t.Errorf("unexpected sub file content: %q", got)
@@ -182,8 +182,8 @@ sed.replace("hello", "hi", "` + dir + `", glob="*.py")`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.(*object.Integer).Value != 1 {
-		t.Errorf("expected 1 file modified, got %v", result.(*object.Integer).Value)
+	if result.(*object.Integer).IntValue() != 1 {
+		t.Errorf("expected 1 file modified, got %v", result.(*object.Integer).IntValue())
 	}
 	if got := readFile(t, filepath.Join(dir, "b.txt")); got != "hello world\n" {
 		t.Errorf("txt file should be unchanged, got %q", got)
@@ -201,7 +201,7 @@ sed.replace("hello", "hi", "` + path + `")`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.(*object.Integer).Value != 0 {
+	if result.(*object.Integer).IntValue() != 0 {
 		t.Errorf("expected binary file to be skipped")
 	}
 }
@@ -217,7 +217,7 @@ sed.replace("hello", "hi", "` + path + `", max_size=10)`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.(*object.Integer).Value != 0 {
+	if result.(*object.Integer).IntValue() != 0 {
 		t.Errorf("expected file to be skipped due to max_size")
 	}
 }
@@ -245,7 +245,7 @@ sed.replace("hello", "hi", "` + dir + `")`)
 	if err != nil {
 		t.Fatalf("expected success within allowed path: %v", err)
 	}
-	if result.(*object.Integer).Value != 1 {
+	if result.(*object.Integer).IntValue() != 1 {
 		t.Errorf("expected 1 file modified")
 	}
 }
@@ -291,8 +291,8 @@ sed.extract(r"def (\w+)\(", "` + path + `")`)
 	if len(groups.Elements) != 1 {
 		t.Fatalf("expected 1 capture group, got %d", len(groups.Elements))
 	}
-	if groups.Elements[0].(*object.String).Value != "get_user" {
-		t.Errorf("expected 'get_user', got %q", groups.Elements[0].(*object.String).Value)
+	if groups.Elements[0].(*object.String).StringValue() != "get_user" {
+		t.Errorf("expected 'get_user', got %q", groups.Elements[0].(*object.String).StringValue())
 	}
 }
 
@@ -318,11 +318,11 @@ sed.extract(r"(\w+)=(\w+)", "` + path + `")`)
 	if len(groups.Elements) != 2 {
 		t.Fatalf("expected 2 capture groups, got %d", len(groups.Elements))
 	}
-	if groups.Elements[0].(*object.String).Value != "key" {
-		t.Errorf("expected group[0]='key', got %q", groups.Elements[0].(*object.String).Value)
+	if groups.Elements[0].(*object.String).StringValue() != "key" {
+		t.Errorf("expected group[0]='key', got %q", groups.Elements[0].(*object.String).StringValue())
 	}
-	if groups.Elements[1].(*object.String).Value != "value" {
-		t.Errorf("expected group[1]='value', got %q", groups.Elements[1].(*object.String).Value)
+	if groups.Elements[1].(*object.String).StringValue() != "value" {
+		t.Errorf("expected group[1]='value', got %q", groups.Elements[1].(*object.String).StringValue())
 	}
 }
 

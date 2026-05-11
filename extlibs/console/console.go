@@ -256,7 +256,7 @@ var moduleBuiltins = map[string]*object.Builtin{
 	"styled": &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 2 {
-				return &object.String{Value: ""}
+				return object.NewString("")
 			}
 			color, err := args[0].AsString()
 			if err != nil {
@@ -266,7 +266,7 @@ var moduleBuiltins = map[string]*object.Builtin{
 			if err != nil {
 				return err
 			}
-			return &object.String{Value: applyStyle(TUI(), color, text)}
+			return object.NewString(applyStyle(TUI(), color, text))
 		},
 		HelpText: "styled(color, text) — apply theme color to text",
 	},
@@ -355,7 +355,7 @@ var moduleBuiltins = map[string]*object.Builtin{
 				Handler: func(cmdArgs string) {
 					if eval != nil {
 						eval.CallObjectFunction(context.Background(), fn,
-							[]object.Object{&object.String{Value: cmdArgs}}, nil, env)
+							[]object.Object{object.NewString(cmdArgs)}, nil, env)
 					}
 				},
 			})
@@ -387,7 +387,7 @@ var moduleBuiltins = map[string]*object.Builtin{
 			consoleW.submitCb = func(submitCtx context.Context, text string) {
 				if eval != nil {
 					eval.CallObjectFunction(submitCtx, fn,
-						[]object.Object{&object.String{Value: text}}, nil, env)
+					[]object.Object{object.NewString(text)}, nil, env)
 				}
 			}
 			consoleW.mu.Unlock()
@@ -559,7 +559,7 @@ func newPanelInstance(nativePanel *tui.Panel, t *tui.TUI) *object.Instance {
 	name := nativePanel.Name()
 	return &object.Instance{
 		Class:      panelClass,
-		Fields:     map[string]object.Object{"__str_repr__": &object.String{Value: "<Panel: " + name + ">"}},
+		Fields:     map[string]object.Object{"__str_repr__": object.NewString("<Panel: " + name + ">")},
 		NativeData: pw,
 	}
 }
@@ -568,7 +568,7 @@ func newMainPanelInstance(t *tui.TUI) *object.Instance {
 	pw := &panelWrapper{p: nil, t: t}
 	return &object.Instance{
 		Class:      panelClass,
-		Fields:     map[string]object.Object{"__str_repr__": &object.String{Value: "<Panel: main>"}},
+		Fields:     map[string]object.Object{"__str_repr__": object.NewString("<Panel: main>")},
 		NativeData: pw,
 	}
 }
@@ -684,7 +684,7 @@ var panelClass = &object.Class{
 				}
 				if len(args) > 1 {
 					if b, ok := args[1].(*object.Boolean); ok {
-						pw.p.SetScrollable(b.Value)
+						pw.p.SetScrollable(b.BoolValue())
 					}
 				}
 				return &object.Null{}
@@ -784,15 +784,15 @@ var panelClass = &object.Class{
 					w, h := pw.p.Size()
 					return &object.List{
 						Elements: []object.Object{
-							&object.Integer{Value: int64(w)},
-							&object.Integer{Value: int64(h)},
+							object.NewInteger(int64(w)),
+							object.NewInteger(int64(h)),
 						},
 					}
 				}
 				return &object.List{
 					Elements: []object.Object{
-						&object.Integer{Value: 0},
-						&object.Integer{Value: 0},
+						object.NewInteger(0),
+						object.NewInteger(0),
 					},
 				}
 			},
@@ -805,7 +805,7 @@ var panelClass = &object.Class{
 					return errObj
 				}
 				if len(args) < 3 {
-					return &object.String{Value: ""}
+					return object.NewString("")
 				}
 				color, err := args[1].AsString()
 				if err != nil {
@@ -815,7 +815,7 @@ var panelClass = &object.Class{
 				if err != nil {
 					return err
 				}
-				return &object.String{Value: applyStyle(pw.t, color, text)}
+				return object.NewString(applyStyle(pw.t, color, text))
 			},
 			HelpText: "styled(color, text) — apply theme color to text",
 		},
@@ -917,9 +917,9 @@ var panelClass = &object.Class{
 					return errObj
 				}
 				if pw.p != nil {
-					return &object.String{Value: pw.p.Name()}
+					return object.NewString(pw.p.Name())
 				}
-				return &object.String{Value: "main"}
+				return object.NewString("main")
 			},
 			HelpText: "__name__() — return the panel name",
 		},
@@ -930,9 +930,9 @@ var panelClass = &object.Class{
 					return errObj
 				}
 				if pw.p != nil {
-					return &object.String{Value: "<Panel: " + pw.p.Name() + ">"}
+					return object.NewString("<Panel: " + pw.p.Name() + ">")
 				}
-				return &object.String{Value: "<Panel: main>"}
+				return object.NewString("<Panel: main>")
 			},
 			HelpText: "__str_repr__() — return string representation",
 		},
@@ -968,12 +968,12 @@ func colorFromName(t *tui.TUI, name string) tui.Color {
 func NewLibrary() *object.Library {
 	return object.NewLibrary(LibraryName, moduleBuiltins, map[string]object.Object{
 		"Panel":     panelClass,
-		"PRIMARY":   &object.String{Value: "primary"},
-		"SECONDARY": &object.String{Value: "secondary"},
-		"ERROR":     &object.String{Value: "error"},
-		"DIM":       &object.String{Value: "dim"},
-		"USER":      &object.String{Value: "user"},
-		"TEXT":      &object.String{Value: "text"},
+		"PRIMARY":   object.NewString("primary"),
+		"SECONDARY": object.NewString("secondary"),
+		"ERROR":     object.NewString("error"),
+		"DIM":       object.NewString("dim"),
+		"USER":      object.NewString("user"),
+		"TEXT":      object.NewString("text"),
 	}, "Console I/O with TUI backend")
 }
 

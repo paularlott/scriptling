@@ -147,7 +147,7 @@ value, objErr := p.GetVarAsString("name")
 
 // Register Go functions
 p.RegisterFunc("custom", func(ctx context.Context, kwargs map[string]object.Object, args ...object.Object) object.Object {
-    return &object.String{Value: "result"}
+    return object.NewString("result")
 })
 
 // Register Scriptling functions

@@ -61,7 +61,7 @@ grep.pattern("hello", "` + filepath.Join(dir, "a.txt") + `")`)
 	}
 	d := list.Elements[0].(*object.Dict)
 	lineVal, _ := d.GetByString("line")
-	if lineVal.Value.(*object.Integer).Value != 1 {
+	if lineVal.Value.(*object.Integer).IntValue() != 1 {
 		t.Errorf("expected line 1, got %v", lineVal.Value)
 	}
 }

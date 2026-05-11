@@ -320,7 +320,7 @@ func createFastFunctionWrapper(fn interface{}, helpText string) (*Builtin, bool)
 				if err != nil {
 					return err
 				}
-				return &String{Value: typed(s)}
+				return NewString(typed(s))
 			},
 			HelpText: helpText,
 		}, true
@@ -338,7 +338,7 @@ func createFastFunctionWrapper(fn interface{}, helpText string) (*Builtin, bool)
 				if err != nil {
 					return err
 				}
-				return &String{Value: typed(a, b)}
+				return NewString(typed(a, b))
 			},
 			HelpText: helpText,
 		}, true
@@ -356,7 +356,7 @@ func createFastFunctionWrapper(fn interface{}, helpText string) (*Builtin, bool)
 				if err != nil {
 					return err
 				}
-				return &String{Value: typed(ctx, kwargs, s, int(i))}
+				return NewString(typed(ctx, kwargs, s, int(i)))
 			},
 			HelpText: helpText,
 		}, true
@@ -378,7 +378,7 @@ func createFastFunctionWrapper(fn interface{}, helpText string) (*Builtin, bool)
 				if err != nil {
 					return err
 				}
-				return &String{Value: typed(s, int(i), f)}
+				return NewString(typed(s, int(i), f))
 			},
 			HelpText: helpText,
 		}, true
@@ -573,13 +573,13 @@ func convertObjectToValue(obj Object, targetType reflect.Type) (reflect.Value, O
 		// For interface{}, return the underlying value
 		switch v := obj.(type) {
 		case *String:
-			return reflect.ValueOf(v.Value), nil
+			return reflect.ValueOf(v.value), nil
 		case *Integer:
-			return reflect.ValueOf(v.Value), nil
+			return reflect.ValueOf(v.value), nil
 		case *Float:
-			return reflect.ValueOf(v.Value), nil
+			return reflect.ValueOf(v.value), nil
 		case *Boolean:
-			return reflect.ValueOf(v.Value), nil
+			return reflect.ValueOf(v.value), nil
 		case *Null:
 			return reflect.ValueOf(nil), nil
 		case *List:
@@ -657,13 +657,13 @@ func convertReturnValue(v reflect.Value) Object {
 
 	switch v.Kind() {
 	case reflect.String:
-		return &String{Value: v.String()}
+		return NewString(v.String())
 	case reflect.Int, reflect.Int32, reflect.Int64:
 		return NewInteger(v.Int())
 	case reflect.Float32, reflect.Float64:
-		return &Float{Value: v.Float()}
+		return NewFloat(v.Float())
 	case reflect.Bool:
-		return &Boolean{Value: v.Bool()}
+		return NewBoolean(v.Bool())
 	case reflect.Interface:
 		// For interface{}, convert the underlying value
 		return convertValueToObject(v.Interface())
@@ -683,13 +683,13 @@ func convertValueToObject(v interface{}) Object {
 
 	switch val := v.(type) {
 	case string:
-		return &String{Value: val}
+		return NewString(val)
 	case int, int32, int64:
 		return NewInteger(reflect.ValueOf(v).Int())
 	case float32, float64:
-		return &Float{Value: reflect.ValueOf(v).Float()}
+		return NewFloat(reflect.ValueOf(v).Float())
 	case bool:
-		return &Boolean{Value: val}
+		return NewBoolean(val)
 	case Object:
 		return val
 	case []interface{}:
@@ -701,8 +701,8 @@ func convertValueToObject(v interface{}) Object {
 	case map[string]interface{}:
 		pairs := make(map[string]DictPair)
 		for key, item := range val {
-			pairs[DictKey(&String{Value: key})] = DictPair{
-				Key:   &String{Value: key},
+		pairs[DictKey(NewString(key))] = DictPair{
+			Key:   NewString(key),
 				Value: convertValueToObject(item),
 			}
 		}
@@ -716,13 +716,13 @@ func convertValueToObject(v interface{}) Object {
 func objectToAny(obj Object) interface{} {
 	switch v := obj.(type) {
 	case *String:
-		return v.Value
+		return v.value
 	case *Integer:
-		return v.Value
+		return v.value
 	case *Float:
-		return v.Value
+		return v.value
 	case *Boolean:
-		return v.Value
+		return v.value
 	case *Null:
 		return nil
 	case *List:

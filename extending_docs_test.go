@@ -21,7 +21,7 @@ func TestExtendingFunctionsDocs(t *testing.T) {
 				return &object.Error{Message: "double requires 1 argument"}
 			}
 			if intObj, ok := args[0].(*object.Integer); ok {
-				return &object.Integer{Value: intObj.Value * 2}
+				return object.NewInteger(intObj.IntValue() * 2)
 			}
 			return &object.Error{Message: "argument must be integer"}
 		})
@@ -49,7 +49,7 @@ func TestExtendingFunctionsDocs(t *testing.T) {
 			seconds, _ := kwargs.GetFloat("seconds", 0.0)
 
 			totalSeconds := hours*3600 + minutes*60 + seconds
-			return &object.Float{Value: totalSeconds}
+			return object.NewFloat(totalSeconds)
 		})
 
 		_, err := p.Eval("duration = make_duration(hours=2, minutes=30)")
@@ -78,7 +78,7 @@ func TestExtendingFunctionsDocs(t *testing.T) {
 			prefix, _ := kwargs.GetString("prefix", "Hello")
 			suffix, _ := kwargs.GetString("suffix", "!")
 
-			return &object.String{Value: prefix + ", " + name + suffix}
+			return object.NewString(prefix + ", " + name + suffix)
 		})
 
 		tests := []struct {
@@ -110,10 +110,10 @@ func TestExtendingFunctionsDocs(t *testing.T) {
 			total := int64(0)
 			for _, arg := range args {
 				if intObj, ok := arg.(*object.Integer); ok {
-					total += intObj.Value
+					total += intObj.IntValue()
 				}
 			}
-			return &object.Integer{Value: total}
+			return object.NewInteger(total)
 		})
 
 		_, err := p.Eval("result = sum_all(1, 2, 3, 4, 5)")
@@ -145,7 +145,7 @@ func TestExtendingFunctionsDocs(t *testing.T) {
 			}
 
 			result := price * (1 + rate)
-			return &object.Float{Value: result}
+			return object.NewFloat(result)
 		})
 
 		_, err := p.Eval("result = add_tax(100.0, 0.1)")
@@ -162,7 +162,7 @@ func TestExtendingFunctionsDocs(t *testing.T) {
 	t.Run("NativeAPI_WithHelpText", func(t *testing.T) {
 		p := New()
 		p.RegisterFunc("calculate", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			return &object.Integer{Value: 42}
+			return object.NewInteger(42)
 		}, `calculate(x, y) - Perform calculation
 
   Parameters:
@@ -340,7 +340,7 @@ func TestExtendingLibrariesDocs(t *testing.T) {
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					a, _ := args[0].(*object.Integer)
 					b, _ := args[1].(*object.Integer)
-					return &object.Integer{Value: a.Value + b.Value}
+					return object.NewInteger(a.IntValue() + b.IntValue())
 				},
 				HelpText: "add(a, b) - Adds two numbers",
 			},
@@ -348,7 +348,7 @@ func TestExtendingLibrariesDocs(t *testing.T) {
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					a, _ := args[0].(*object.Integer)
 					b, _ := args[1].(*object.Integer)
-					return &object.Integer{Value: a.Value * b.Value}
+					return object.NewInteger(a.IntValue() * b.IntValue())
 				},
 				HelpText: "multiply(a, b) - Multiplies two numbers",
 			},
@@ -375,14 +375,14 @@ result = mylib.add(5, 3)
 			map[string]*object.Builtin{
 				"add": {
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-						return &object.Integer{Value: 0}
+						return object.NewInteger(0)
 					},
 					HelpText: "add(a, b) - Adds two numbers",
 				},
 			},
 			map[string]object.Object{
-				"VERSION":   &object.String{Value: "1.0.0"},
-				"MAX_VALUE": &object.Integer{Value: 1000},
+				"VERSION":   object.NewString("1.0.0"),
+				"MAX_VALUE": object.NewInteger(1000),
 				"DEBUG":     object.NewBoolean(false),
 			},
 			"My custom math library",
@@ -419,14 +419,14 @@ debug = mylib.DEBUG
 				"quote": {
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 						s, _ := args[0].AsString()
-						return &object.String{Value: "ENCODED+" + s}
+						return object.NewString("ENCODED+" + s)
 					},
 					HelpText: "quote(s) - URL encode a string",
 				},
 				"unquote": {
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 						s, _ := args[0].AsString()
-						return &object.String{Value: "DECODED-" + s}
+						return object.NewString("DECODED-" + s)
 					},
 					HelpText: "unquote(s) - URL decode a string",
 				},
@@ -442,7 +442,7 @@ debug = mylib.DEBUG
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 						base, _ := args[0].AsString()
 						path, _ := args[1].AsString()
-						return &object.String{Value: strings.TrimSuffix(base, "/") + "/" + strings.TrimPrefix(path, "/")}
+						return object.NewString(strings.TrimSuffix(base, "/") + "/" + strings.TrimPrefix(path, "/"))
 					},
 					HelpText: "join(base, path) - Join URL path segments",
 				},
@@ -495,15 +495,15 @@ quoted = url_parse.quote("hello")
 				"set_level": {
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 						// Note: This is a simplified version - real implementation would capture logger instance
-						return &object.String{Value: "Level set"}
+						return object.NewString("Level set")
 					},
 					HelpText: "set_level(level) - Set the logging level",
 				},
 				"get_messages": {
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 						return &object.List{Elements: []object.Object{
-							&object.String{Value: "msg1"},
-							&object.String{Value: "msg2"},
+							object.NewString("msg1"),
+							object.NewString("msg2"),
 						}}
 					},
 					HelpText: "get_messages() - Get all logged messages",
@@ -659,10 +659,10 @@ func TestExtendingClassesDocs(t *testing.T) {
 						start := int64(0)
 						if len(args) > 1 {
 							if intObj, ok := args[1].(*object.Integer); ok {
-								start = intObj.Value
+								start = intObj.IntValue()
 							}
 						}
-						instance.Fields["count"] = &object.Integer{Value: start}
+						instance.Fields["count"] = object.NewInteger(start)
 						return &object.Null{}
 					},
 					HelpText: "__init__(self, start=0) - Initialize counter",
@@ -671,9 +671,9 @@ func TestExtendingClassesDocs(t *testing.T) {
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 						instance := args[0].(*object.Instance)
 						count, _ := instance.Fields["count"].(*object.Integer)
-						newCount := count.Value + 1
-						instance.Fields["count"] = &object.Integer{Value: newCount}
-						return &object.Integer{Value: newCount}
+						newCount := count.IntValue() + 1
+						instance.Fields["count"] = object.NewInteger(newCount)
+						return object.NewInteger(newCount)
 					},
 					HelpText: "increment() - Increment and return new value",
 				},
@@ -722,7 +722,7 @@ after = c.increment()
 				"__init__": &object.Builtin{
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 						instance := args[0].(*object.Instance)
-						instance.Fields["count"] = &object.Integer{Value: 0}
+						instance.Fields["count"] = object.NewInteger(0)
 						return &object.Null{}
 					},
 					HelpText: "__init__(self) - Initialize counter",
@@ -731,9 +731,9 @@ after = c.increment()
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 						instance := args[0].(*object.Instance)
 						count, _ := instance.Fields["count"].(*object.Integer)
-						newVal := count.Value + 1
-						instance.Fields["count"] = &object.Integer{Value: newVal}
-						return &object.Integer{Value: newVal}
+						newVal := count.IntValue() + 1
+						instance.Fields["count"] = object.NewInteger(newVal)
+						return object.NewInteger(newVal)
 					},
 					HelpText: "increment() - Increment counter",
 				},
@@ -793,7 +793,7 @@ count = c.increment()
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 						instance := args[0].(*object.Instance)
 						name, _ := args[1].AsString()
-						instance.Fields["name"] = &object.String{Value: name}
+						instance.Fields["name"] = object.NewString(name)
 						return &object.Null{}
 					},
 					HelpText: "__init__(self, name) - Initialize animal",
@@ -802,7 +802,7 @@ count = c.increment()
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 						instance := args[0].(*object.Instance)
 						name, _ := instance.Fields["name"].AsString()
-						return &object.String{Value: name + " makes a sound"}
+						return object.NewString(name + " makes a sound")
 					},
 					HelpText: "speak() - Make a sound",
 				},
@@ -821,9 +821,9 @@ count = c.increment()
 
 						// Call parent __init__
 						parentInit := animalClass.Methods["__init__"].(*object.Builtin)
-						parentInit.Fn(ctx, object.NewKwargs(nil), instance, &object.String{Value: name})
+						parentInit.Fn(ctx, object.NewKwargs(nil), instance, object.NewString(name))
 
-						instance.Fields["breed"] = &object.String{Value: "Unknown"}
+						instance.Fields["breed"] = object.NewString("Unknown")
 						return &object.Null{}
 					},
 					HelpText: "__init__(self, name) - Initialize dog",
@@ -832,7 +832,7 @@ count = c.increment()
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 						instance := args[0].(*object.Instance)
 						name, _ := instance.Fields["name"].AsString()
-						return &object.String{Value: name + " says Woof!"}
+						return object.NewString(name + " says Woof!")
 					},
 					HelpText: "bark() - Make the dog bark",
 				},
@@ -872,8 +872,8 @@ bark = dog.bark()
 		cb := object.NewClassBuilder("Person")
 
 		cb.Method("__init__", func(self *object.Instance, name string, age int) {
-			self.Fields["name"] = &object.String{Value: name}
-			self.Fields["age"] = &object.Integer{Value: int64(age)}
+			self.Fields["name"] = object.NewString(name)
+			self.Fields["age"] = object.NewInteger(int64(age))
 		})
 
 		cb.Method("greet", func(self *object.Instance) string {
@@ -883,7 +883,7 @@ bark = dog.bark()
 
 		cb.Method("have_birthday", func(self *object.Instance) {
 			age, _ := self.Fields["age"].AsInt()
-			self.Fields["age"] = &object.Integer{Value: age + 1}
+			self.Fields["age"] = object.NewInteger(age + 1)
 		})
 
 		personClass := cb.Build()
@@ -927,8 +927,8 @@ new_age = p.age
 						instance := args[0].(*object.Instance)
 						name, _ := args[1].AsString()
 						age, _ := args[2].AsInt()
-						instance.Fields["name"] = &object.String{Value: name}
-						instance.Fields["age"] = &object.Integer{Value: age}
+						instance.Fields["name"] = object.NewString(name)
+						instance.Fields["age"] = object.NewInteger(age)
 						return &object.Null{}
 					},
 					HelpText: "__init__(self, name, age) - Initialize Person",
@@ -937,7 +937,7 @@ new_age = p.age
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 						instance := args[0].(*object.Instance)
 						name, _ := instance.Fields["name"].AsString()
-						return &object.String{Value: "Hello, I'm " + name}
+						return object.NewString("Hello, I'm " + name)
 					},
 					HelpText: "greet() - Return a greeting",
 				},
@@ -950,9 +950,9 @@ new_age = p.age
 		cb.Method("__init__", func(self *object.Instance, name string, age int, department string) {
 			// Call parent __init__ using native API
 			parentInit := personClass.Methods["__init__"].(*object.Builtin)
-			parentInit.Fn(nil, object.NewKwargs(nil), self, &object.String{Value: name}, &object.Integer{Value: int64(age)})
+			parentInit.Fn(nil, object.NewKwargs(nil), self, object.NewString(name), object.NewInteger(int64(age)))
 			// Add employee-specific field
-			self.Fields["department"] = &object.String{Value: department}
+			self.Fields["department"] = object.NewString(department)
 		})
 
 		cb.Method("get_info", func(self *object.Instance) string {
@@ -996,7 +996,7 @@ info = emp.get_info()
 		// Builder base class (Animal)
 		cb := object.NewClassBuilder("Animal")
 		cb.Method("__init__", func(self *object.Instance, name string) {
-			self.Fields["name"] = &object.String{Value: name}
+			self.Fields["name"] = object.NewString(name)
 		})
 		cb.Method("speak", func(self *object.Instance) string {
 			name, _ := self.Fields["name"].AsString()
@@ -1016,9 +1016,9 @@ info = emp.get_info()
 
 						// Call parent __init__ (from builder class)
 						parentInit := animalClass.Methods["__init__"].(*object.Builtin)
-						parentInit.Fn(ctx, object.NewKwargs(nil), instance, &object.String{Value: name})
+						parentInit.Fn(ctx, object.NewKwargs(nil), instance, object.NewString(name))
 
-						instance.Fields["breed"] = &object.String{Value: "Unknown"}
+						instance.Fields["breed"] = object.NewString("Unknown")
 						return &object.Null{}
 					},
 					HelpText: "__init__(self, name) - Initialize Dog",
@@ -1027,7 +1027,7 @@ info = emp.get_info()
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 						instance := args[0].(*object.Instance)
 						name, _ := instance.Fields["name"].AsString()
-						return &object.String{Value: name + " says Woof!"}
+						return object.NewString(name + " says Woof!")
 					},
 					HelpText: "bark() - Make the dog bark",
 				},
@@ -1069,8 +1069,8 @@ bark = dog.bark()
 		// Builder base class (Vehicle)
 		vehicleBuilder := object.NewClassBuilder("Vehicle")
 		vehicleBuilder.Method("__init__", func(self *object.Instance, make string, model string) {
-			self.Fields["make"] = &object.String{Value: make}
-			self.Fields["model"] = &object.String{Value: model}
+			self.Fields["make"] = object.NewString(make)
+			self.Fields["model"] = object.NewString(model)
 		})
 		vehicleBuilder.Method("get_info", func(self *object.Instance) string {
 			make, _ := self.Fields["make"].AsString()
@@ -1085,8 +1085,8 @@ bark = dog.bark()
 		carBuilder.Method("__init__", func(self *object.Instance, make string, model string, doors int) {
 			// Call parent __init__ using parent's built method
 			parentInit := vehicleClass.Methods["__init__"].(*object.Builtin)
-			parentInit.Fn(nil, object.NewKwargs(nil), self, &object.String{Value: make}, &object.String{Value: model})
-			self.Fields["doors"] = &object.Integer{Value: int64(doors)}
+			parentInit.Fn(nil, object.NewKwargs(nil), self, object.NewString(make), object.NewString(model))
+			self.Fields["doors"] = object.NewInteger(int64(doors))
 		})
 
 		carBuilder.Method("honk", func(self *object.Instance) string {
@@ -1394,7 +1394,7 @@ dist = geometry_advanced.distance_from_origin(3, 4)
 						return &object.Error{Message: "sqrt requires 1 argument"}
 					}
 					if num, ok := args[0].(*object.Float); ok {
-						return &object.Float{Value: math.Sqrt(num.Value)}
+						return object.NewFloat(math.Sqrt(num.FloatValue()))
 					}
 					return &object.Error{Message: "argument must be float"}
 				},
@@ -1484,7 +1484,7 @@ func TestKwargsHelpers(t *testing.T) {
 			if errObj != nil {
 				return errObj
 			}
-			return &object.String{Value: val}
+			return object.NewString(val)
 		})
 
 		// Test with default
@@ -1515,7 +1515,7 @@ func TestKwargsHelpers(t *testing.T) {
 			if errObj != nil {
 				return errObj
 			}
-			return &object.Integer{Value: val}
+			return object.NewInteger(val)
 		})
 
 		_, err := p.Eval("result = test()")
@@ -1544,7 +1544,7 @@ func TestKwargsHelpers(t *testing.T) {
 			if errObj != nil {
 				return errObj
 			}
-			return &object.Float{Value: val}
+			return object.NewFloat(val)
 		})
 
 		_, err := p.Eval("result = test()")
@@ -1619,7 +1619,7 @@ func TestKwargsHelpers(t *testing.T) {
 			keys := kwargs.Keys()
 			elements := make([]object.Object, len(keys))
 			for i, key := range keys {
-				elements[i] = &object.String{Value: key}
+				elements[i] = object.NewString(key)
 			}
 			return &object.List{Elements: elements}
 		})
@@ -1638,7 +1638,7 @@ func TestKwargsHelpers(t *testing.T) {
 	t.Run("LenHelper", func(t *testing.T) {
 		p := New()
 		p.RegisterFunc("test", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			return &object.Integer{Value: int64(kwargs.Len())}
+			return object.NewInteger(int64(kwargs.Len()))
 		})
 
 		_, err := p.Eval(`result = test(a="1", b="2", c="3")`)
@@ -1656,7 +1656,7 @@ func TestKwargsHelpers(t *testing.T) {
 		p.RegisterFunc("test", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			s := kwargs.MustGetString("str", "default")
 			i := kwargs.MustGetInt("int", 42)
-			return &object.String{Value: fmt.Sprintf("%s:%d", s, i)}
+			return object.NewString(fmt.Sprintf("%s:%d", s, i))
 		})
 
 		_, err := p.Eval(`result = test(str="hello", int=100)`)
@@ -1692,7 +1692,7 @@ func TestTypeSafeAccessors(t *testing.T) {
 			if errObj != nil {
 				return errObj
 			}
-			return &object.String{Value: "got: " + val}
+			return object.NewString("got: " + val)
 		})
 
 		_, err := p.Eval(`result = test("hello")`)
@@ -1721,7 +1721,7 @@ func TestTypeSafeAccessors(t *testing.T) {
 			if errObj != nil {
 				return errObj
 			}
-			return &object.Integer{Value: val + 1}
+			return object.NewInteger(val + 1)
 		})
 
 		// Integer should work
@@ -1752,7 +1752,7 @@ func TestTypeSafeAccessors(t *testing.T) {
 			if errObj != nil {
 				return errObj
 			}
-			return &object.Float{Value: val * 2}
+			return object.NewFloat(val * 2)
 		})
 
 		// Float should work
@@ -1813,7 +1813,7 @@ func TestTypeSafeAccessors(t *testing.T) {
 			if errObj != nil {
 				return errObj
 			}
-			return &object.Integer{Value: int64(len(val))}
+			return object.NewInteger(int64(len(val)))
 		})
 
 		_, err := p.Eval("result = test([1, 2, 3])")
@@ -1833,7 +1833,7 @@ func TestTypeSafeAccessors(t *testing.T) {
 			if errObj != nil {
 				return errObj
 			}
-			return &object.Integer{Value: int64(len(val))}
+			return object.NewInteger(int64(len(val)))
 		})
 
 		_, err := p.Eval(`result = test({"a": 1, "b": 2})`)
@@ -2037,8 +2037,8 @@ e_val = mymath.E
 		cb := object.NewClassBuilder("Person")
 
 		cb.Method("__init__", func(self *object.Instance, name string, age int) {
-			self.Fields["name"] = &object.String{Value: name}
-			self.Fields["age"] = &object.Integer{Value: int64(age)}
+			self.Fields["name"] = object.NewString(name)
+			self.Fields["age"] = object.NewInteger(int64(age))
 		})
 
 		cb.Method("greet", func(self *object.Instance) string {
@@ -2048,7 +2048,7 @@ e_val = mymath.E
 
 		cb.Method("have_birthday", func(self *object.Instance) {
 			age, _ := self.Fields["age"].AsInt()
-			self.Fields["age"] = &object.Integer{Value: age + 1}
+			self.Fields["age"] = object.NewInteger(age + 1)
 		})
 
 		personClass := cb.Build()
@@ -2176,7 +2176,7 @@ help("mylib")
 		// Build a class with methods
 		classBuilder := object.NewClassBuilder("MyClass")
 		classBuilder.Method("__init__", func(self *object.Instance, name string) {
-			self.Fields["name"] = &object.String{Value: name}
+			self.Fields["name"] = object.NewString(name)
 		})
 		classBuilder.Method("get_data", func(self *object.Instance) string {
 			name, _ := self.Fields["name"].AsString()
@@ -2333,7 +2333,7 @@ help("builtins")
 		lib := object.NewLibrary("custom", nil, map[string]object.Object{
 			"custom_func": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					return &object.String{Value: "result"}
+					return object.NewString("result")
 				},
 				HelpText: `custom_func(arg) - Custom function description`,
 			},

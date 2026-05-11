@@ -22,20 +22,19 @@ import (
 func DictKey(obj Object) string {
 	switch o := obj.(type) {
 	case *Integer:
-		return "n:" + strconv.FormatInt(o.Value, 10)
+		return "n:" + strconv.FormatInt(o.value, 10)
 	case *Float:
-		// If float is exactly representable as int64, use integer key (Python: hash(1.0) == hash(1))
-		if !math.IsInf(o.Value, 0) && !math.IsNaN(o.Value) && o.Value == math.Trunc(o.Value) && o.Value >= math.MinInt64 && o.Value <= math.MaxInt64 {
-			return "n:" + strconv.FormatInt(int64(o.Value), 10)
+		if !math.IsInf(o.value, 0) && !math.IsNaN(o.value) && o.value == math.Trunc(o.value) && o.value >= math.MinInt64 && o.value <= math.MaxInt64 {
+			return "n:" + strconv.FormatInt(int64(o.value), 10)
 		}
-		return "f:" + strconv.FormatFloat(o.Value, 'g', -1, 64)
+		return "f:" + strconv.FormatFloat(o.value, 'g', -1, 64)
 	case *Boolean:
-		if o.Value {
-			return "n:1" // True == 1
+		if o.value {
+			return "n:1"
 		}
-		return "n:0" // False == 0
+		return "n:0"
 	case *String:
-		return "s:" + o.Value
+		return "s:" + o.value
 	case *Null:
 		return "null:"
 	case *Tuple:
@@ -59,8 +58,24 @@ func DictKey(obj Object) string {
 
 // DictStringKey returns the canonical dict key for a string key without
 // requiring a temporary String object allocation.
+var (
+	dictStringKeyCache sync.Map
+	dictStringKeyCount atomic.Int64
+)
+
+const maxDictStringKeys = 10000
+
 func DictStringKey(name string) string {
-	return "s:" + name
+	if v, ok := dictStringKeyCache.Load(name); ok {
+		return v.(string)
+	}
+	key := "s:" + name
+	dictStringKeyCache.Store(name, key)
+	if dictStringKeyCount.Add(1) > maxDictStringKeys {
+		dictStringKeyCache = sync.Map{}
+		dictStringKeyCount.Store(0)
+	}
+	return key
 }
 
 // IsHashable reports whether obj can be used as a set element or dict key.
@@ -145,7 +160,7 @@ var (
 func init() {
 	// Initialize small integer cache
 	for i := smallIntMin; i <= smallIntMax; i++ {
-		smallIntegers[i-smallIntMin] = &Integer{Value: int64(i)}
+		smallIntegers[i-smallIntMin] = &Integer{value: int64(i)}
 	}
 }
 
@@ -154,7 +169,7 @@ func NewInteger(val int64) *Integer {
 	if val >= smallIntMin && val <= smallIntMax {
 		return smallIntegers[val-smallIntMin]
 	}
-	return &Integer{Value: val}
+	return &Integer{value: val}
 }
 
 type ObjectType int
@@ -290,47 +305,50 @@ type Object interface {
 }
 
 type Integer struct {
-	Value int64
+	value int64
 }
 
+func (i *Integer) IntValue() int64 { return i.value }
+
 func (i *Integer) Type() ObjectType { return INTEGER_OBJ }
-func (i *Integer) Inspect() string  { return fmt.Sprintf("%d", i.Value) }
+func (i *Integer) Inspect() string  { return fmt.Sprintf("%d", i.value) }
 
 func (i *Integer) AsString() (string, Object)          { return "", errMustBeString }
-func (i *Integer) AsInt() (int64, Object)              { return i.Value, nil }
-func (i *Integer) AsFloat() (float64, Object)          { return float64(i.Value), nil }
-func (i *Integer) AsBool() (bool, Object)              { return i.Value != 0, nil }
+func (i *Integer) AsInt() (int64, Object)              { return i.value, nil }
+func (i *Integer) AsFloat() (float64, Object)          { return float64(i.value), nil }
+func (i *Integer) AsBool() (bool, Object)              { return i.value != 0, nil }
 func (i *Integer) AsList() ([]Object, Object)          { return nil, errMustBeList }
 func (i *Integer) AsDict() (map[string]Object, Object) { return nil, errMustBeDict }
 
 func (i *Integer) CoerceString() (string, Object) { return i.Inspect(), nil }
-func (i *Integer) CoerceInt() (int64, Object)     { return i.Value, nil }
-func (i *Integer) CoerceFloat() (float64, Object) { return float64(i.Value), nil }
+func (i *Integer) CoerceInt() (int64, Object)     { return i.value, nil }
+func (i *Integer) CoerceFloat() (float64, Object) { return float64(i.value), nil }
 
 type Float struct {
-	Value float64
+	value float64
 }
 
+func (f *Float) FloatValue() float64 { return f.value }
+
 func (f *Float) Type() ObjectType { return FLOAT_OBJ }
-func (f *Float) Inspect() string  { return fmt.Sprintf("%g", f.Value) }
+func (f *Float) Inspect() string  { return fmt.Sprintf("%g", f.value) }
 
 func (f *Float) AsString() (string, Object)          { return "", errMustBeString }
-func (f *Float) AsInt() (int64, Object)              { return int64(f.Value), nil }
-func (f *Float) AsFloat() (float64, Object)          { return f.Value, nil }
-func (f *Float) AsBool() (bool, Object)              { return f.Value != 0, nil }
+func (f *Float) AsInt() (int64, Object)              { return int64(f.value), nil }
+func (f *Float) AsFloat() (float64, Object)          { return f.value, nil }
+func (f *Float) AsBool() (bool, Object)              { return f.value != 0, nil }
 func (f *Float) AsList() ([]Object, Object)          { return nil, errMustBeList }
 func (f *Float) AsDict() (map[string]Object, Object) { return nil, errMustBeDict }
 
 func (f *Float) CoerceString() (string, Object) { return f.Inspect(), nil }
-func (f *Float) CoerceInt() (int64, Object)     { return int64(f.Value), nil }
-func (f *Float) CoerceFloat() (float64, Object) { return f.Value, nil }
+func (f *Float) CoerceInt() (int64, Object)     { return int64(f.value), nil }
+func (f *Float) CoerceFloat() (float64, Object) { return f.value, nil }
 
 var (
-	boolTrue  = &Boolean{Value: true}
-	boolFalse = &Boolean{Value: false}
+	boolTrue  = &Boolean{value: true}
+	boolFalse = &Boolean{value: false}
 )
 
-// NewBoolean returns a singleton Boolean object, avoiding heap allocations.
 func NewBoolean(v bool) *Boolean {
 	if v {
 		return boolTrue
@@ -338,60 +356,72 @@ func NewBoolean(v bool) *Boolean {
 	return boolFalse
 }
 
-type Boolean struct {
-	Value bool
+func NewFloat(v float64) *Float {
+	return &Float{value: v}
 }
 
+func NewString(v string) *String {
+	return &String{value: v}
+}
+
+type Boolean struct {
+	value bool
+}
+
+func (b *Boolean) BoolValue() bool { return b.value }
+
 func (b *Boolean) Type() ObjectType { return BOOLEAN_OBJ }
-func (b *Boolean) Inspect() string  { return fmt.Sprintf("%t", b.Value) }
+func (b *Boolean) Inspect() string  { return fmt.Sprintf("%t", b.value) }
 
 func (b *Boolean) AsString() (string, Object)          { return "", errMustBeString }
 func (b *Boolean) AsInt() (int64, Object)              { return 0, errMustBeInteger }
 func (b *Boolean) AsFloat() (float64, Object)          { return 0, errMustBeNumber }
-func (b *Boolean) AsBool() (bool, Object)              { return b.Value, nil }
+func (b *Boolean) AsBool() (bool, Object)              { return b.value, nil }
 func (b *Boolean) AsList() ([]Object, Object)          { return nil, errMustBeList }
 func (b *Boolean) AsDict() (map[string]Object, Object) { return nil, errMustBeDict }
 
 func (b *Boolean) CoerceString() (string, Object) { return b.Inspect(), nil }
 func (b *Boolean) CoerceInt() (int64, Object) {
-	if b.Value {
+	if b.value {
 		return 1, nil
 	}
 	return 0, nil
 }
 func (b *Boolean) CoerceFloat() (float64, Object) {
-	if b.Value {
+	if b.value {
 		return 1, nil
 	}
 	return 0, nil
 }
 
 type String struct {
-	Value string
+	value string
 }
 
-func (s *String) Type() ObjectType { return STRING_OBJ }
-func (s *String) Inspect() string  { return s.Value }
+func (s *String) StringValue() string { return s.value }
 
-func (s *String) AsString() (string, Object)          { return s.Value, nil }
+func (s *String) Type() ObjectType { return STRING_OBJ }
+func (s *String) Inspect() string  { return s.value }
+
+func (s *String) AsString() (string, Object)          { return s.value, nil }
 func (s *String) AsInt() (int64, Object)              { return 0, errMustBeInteger }
 func (s *String) AsFloat() (float64, Object)          { return 0, errMustBeNumber }
-func (s *String) AsBool() (bool, Object)              { return s.Value != "", nil }
+func (s *String) AsBool() (bool, Object)              { return s.value != "", nil }
 func (s *String) AsList() ([]Object, Object)          { return nil, errMustBeList }
 func (s *String) AsDict() (map[string]Object, Object) { return nil, errMustBeDict }
 
-func (s *String) CoerceString() (string, Object) { return s.Value, nil }
+func (s *String) CoerceString() (string, Object) { return s.value, nil }
 func (s *String) CoerceInt() (int64, Object) {
-	val, err := strconv.ParseInt(strings.TrimSpace(s.Value), 10, 64)
+	val, err := strconv.ParseInt(strings.TrimSpace(s.value), 10, 64)
 	if err != nil {
-		return 0, &Error{Message: fmt.Sprintf("cannot convert %s to int", s.Value)}
+		return 0, &Error{Message: fmt.Sprintf("cannot convert %s to int", s.value)}
 	}
 	return val, nil
 }
 func (s *String) CoerceFloat() (float64, Object) {
-	val, err := strconv.ParseFloat(strings.TrimSpace(s.Value), 64)
+	val, err := strconv.ParseFloat(strings.TrimSpace(s.value), 64)
 	if err != nil {
-		return 0, &Error{Message: fmt.Sprintf("cannot convert %s to float", s.Value)}
+		return 0, &Error{Message: fmt.Sprintf("cannot convert %s to float", s.value)}
 	}
 	return val, nil
 }
@@ -417,7 +447,7 @@ func (s *Slice) Inspect() string {
 		parts = append(parts, "")
 	}
 
-	if s.Step != nil && s.Step.Value != 1 {
+	if s.Step != nil && s.Step.value != 1 {
 		parts = append(parts, s.Step.Inspect())
 	}
 
@@ -636,23 +666,23 @@ func (l *Library) GetDict() *Dict {
 	dict := make(map[string]DictPair, len(l.functions)+len(l.constants))
 
 	for fname, fn := range l.functions {
-		dict[DictKey(&String{Value: fname})] = DictPair{
-			Key:   &String{Value: fname},
+		dict[DictKey(&String{value: fname})] = DictPair{
+			Key:   &String{value: fname},
 			Value: fn,
 		}
 	}
 
 	for cname, val := range l.constants {
-		dict[DictKey(&String{Value: cname})] = DictPair{
-			Key:   &String{Value: cname},
+		dict[DictKey(&String{value: cname})] = DictPair{
+			Key:   &String{value: cname},
 			Value: val,
 		}
 	}
 
 	if l.description != "" {
-		dict[DictKey(&String{Value: "__doc__"})] = DictPair{
-			Key:   &String{Value: "__doc__"},
-			Value: &String{Value: l.description},
+		dict[DictKey(&String{value: "__doc__"})] = DictPair{
+			Key:   &String{value: "__doc__"},
+			Value: &String{value: l.description},
 		}
 	}
 
@@ -1376,7 +1406,7 @@ type DictPair struct {
 // This is the canonical way to extract a human-readable key from a DictPair.
 func (p DictPair) StringKey() string {
 	if s, ok := p.Key.(*String); ok {
-		return s.Value
+		return s.value
 	}
 	return p.Key.Inspect()
 }
@@ -1386,7 +1416,7 @@ func (p DictPair) StringKey() string {
 func NewStringDict(entries map[string]Object) *Dict {
 	pairs := make(map[string]DictPair, len(entries))
 	for k, v := range entries {
-		pairs[DictKey(&String{Value: k})] = DictPair{Key: &String{Value: k}, Value: v}
+		pairs[DictKey(&String{value: k})] = DictPair{Key: &String{value: k}, Value: v}
 	}
 	return &Dict{Pairs: pairs}
 }
@@ -1434,7 +1464,7 @@ func (d *Dict) GetByString(name string) (DictPair, bool) {
 
 // SetByString sets a pair using a string key (convenience for attribute-style access).
 func (d *Dict) SetByString(name string, value Object) {
-	d.Pairs[DictStringKey(name)] = DictPair{Key: &String{Value: name}, Value: value}
+	d.Pairs[DictStringKey(name)] = DictPair{Key: &String{value: name}, Value: value}
 }
 
 // HasByString checks if a string key exists in the dict.
@@ -1599,7 +1629,7 @@ func (i *Instance) Inspect() string {
 	// Check for __str_repr__ field (used by libraries to provide custom string representation)
 	if strRepr, ok := i.Fields["__str_repr__"]; ok {
 		if s, ok := strRepr.(*String); ok {
-			return s.Value
+			return s.value
 		}
 	}
 	return fmt.Sprintf("<%s object at %p>", i.Class.Name, i)

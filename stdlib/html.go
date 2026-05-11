@@ -17,7 +17,7 @@ var HTMLLibrary = object.NewLibrary(HTMLLibraryName, map[string]*object.Builtin{
 			if !ok {
 				return errors.NewTypeError("STRING", args[0].Type().String())
 			}
-			return &object.String{Value: html.EscapeString(str.Value)}
+			return object.NewString(html.EscapeString(str.StringValue()))
 		},
 		HelpText: `escape(s) - Escape HTML special characters
 
@@ -41,10 +41,10 @@ Example:
 				return errors.NewTypeError("STRING", args[0].Type().String())
 			}
 			// html.UnescapeString handles standard HTML entities
-			result := html.UnescapeString(str.Value)
+			result := html.UnescapeString(str.StringValue())
 			// Also handle numeric entities that Python handles
 			result = unescapeNumericEntities(result)
-			return &object.String{Value: result}
+			return object.NewString(result)
 		},
 		HelpText: `unescape(s) - Unescape HTML entities
 

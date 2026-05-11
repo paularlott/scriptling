@@ -352,7 +352,7 @@ var DifflibLibrary = object.NewLibrary(DifflibLibraryName, map[string]*object.Bu
 			fromFile := kwargs.MustGetString("fromfile", "")
 			toFile := kwargs.MustGetString("tofile", "")
 			n := int(kwargs.MustGetInt("n", 3))
-			return &object.String{Value: unifiedDiff(splitLines(aStr), splitLines(bStr), fromFile, toFile, n)}
+			return object.NewString(unifiedDiff(splitLines(aStr), splitLines(bStr), fromFile, toFile, n))
 		},
 		HelpText: `unified_diff(a, b, fromfile="", tofile="", n=3) - Return a unified format diff string`,
 	},
@@ -370,7 +370,7 @@ var DifflibLibrary = object.NewLibrary(DifflibLibraryName, map[string]*object.Bu
 				return errors.NewTypeError("STRING", args[1].Type().String())
 			}
 			r := sequenceRatio(charSplit(aStr), charSplit(bStr))
-			return &object.Float{Value: math.Round(r*100) / 100}
+			return object.NewFloat(math.Round(r*100) / 100)
 		},
 		HelpText: `ratio(a, b) - Return a similarity ratio between 0.0 and 1.0`,
 	},
@@ -391,7 +391,7 @@ var DifflibLibrary = object.NewLibrary(DifflibLibraryName, map[string]*object.Bu
 			result := make([]object.Object, len(ops))
 			for i, op := range ops {
 				result[i] = &object.Tuple{Elements: []object.Object{
-					&object.String{Value: string(op.tag)},
+					object.NewString(string(op.tag)),
 					object.NewInteger(int64(op.i1)),
 					object.NewInteger(int64(op.i2)),
 					object.NewInteger(int64(op.j1)),
@@ -436,7 +436,7 @@ var DifflibLibrary = object.NewLibrary(DifflibLibraryName, map[string]*object.Bu
 			matches := getCloseMatches(word, poss, n, cutoff)
 			elems := make([]object.Object, len(matches))
 			for i, m := range matches {
-				elems[i] = &object.String{Value: m}
+				elems[i] = object.NewString(m)
 			}
 			return &object.List{Elements: elems}
 		},

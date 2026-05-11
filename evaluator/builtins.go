@@ -165,10 +165,10 @@ Examples:
 			switch arg := args[0].(type) {
 			case *object.String:
 				// ASCII fast-path: avoid []rune conversion for pure-ASCII strings
-				if isASCII(arg.Value) {
-					return object.NewInteger(int64(len(arg.Value)))
+				if isASCII(arg.StringValue()) {
+					return object.NewInteger(int64(len(arg.StringValue())))
 				}
-				return object.NewInteger(int64(len([]rune(arg.Value))))
+				return object.NewInteger(int64(len([]rune(arg.StringValue()))))
 			case *object.List:
 				return object.NewInteger(int64(len(arg.Elements)))
 			case *object.Dict:
@@ -210,9 +210,9 @@ Returns the number of items in a string, list, dict, or tuple.`,
 			}
 			obj := args[0]
 			if instance, ok := obj.(*object.Instance); ok {
-				return &object.String{Value: instance.Class.Name}
+				return object.NewString(instance.Class.Name)
 			}
-			return &object.String{Value: obj.Type().String()}
+			return object.NewString(obj.Type().String())
 		},
 		HelpText: `type(obj) - Return the type of an object
 
@@ -225,7 +225,7 @@ Returns a string representing the type of the object.`,
 			}
 			// For exceptions, return just the message (like Python)
 			if exc, ok := args[0].(*object.Exception); ok {
-				return &object.String{Value: exc.Message}
+				return object.NewString(exc.Message)
 			}
 			// Call __str__ dunder method on instances
 			if inst, ok := args[0].(*object.Instance); ok {
@@ -234,7 +234,7 @@ Returns a string representing the type of the object.`,
 					return result
 				}
 			}
-			return &object.String{Value: args[0].Inspect()}
+			return object.NewString(args[0].Inspect())
 		},
 		HelpText: `str(obj) - Convert an object to a string
 
@@ -252,7 +252,7 @@ For exceptions, returns just the exception message.`,
 				if !ok {
 					return errors.NewTypeError("INTEGER", args[1].Type().String())
 				}
-				base = int(b.Value)
+				base = int(b.IntValue())
 				if base < 2 || base > 36 {
 					return errors.NewError("int() base must be >= 2 and <= 36")
 				}
@@ -264,9 +264,9 @@ For exceptions, returns just the exception message.`,
 				if len(args) == 2 {
 					return errors.NewTypeError("STRING", arg.Type().String())
 				}
-				return object.NewInteger(int64(arg.Value))
+				return object.NewInteger(int64(arg.FloatValue()))
 			case *object.String:
-				s := strings.TrimSpace(arg.Value)
+				s := strings.TrimSpace(arg.StringValue())
 				if len(args) == 2 {
 					switch {
 					case base == 16 && (strings.HasPrefix(s, "0x") || strings.HasPrefix(s, "0X")):
@@ -279,7 +279,7 @@ For exceptions, returns just the exception message.`,
 				}
 				val, err := strconv.ParseInt(s, base, 64)
 				if err != nil {
-					return errors.NewError("cannot convert %q to int with base %d", arg.Value, base)
+					return errors.NewError("cannot convert %q to int with base %d", arg.StringValue(), base)
 				}
 				return object.NewInteger(val)
 			default:
@@ -302,14 +302,14 @@ Examples: int("ff", 16) == 255, int("0b1010", 2) == 10, int("77", 8) == 63`,
 			case *object.Float:
 				return arg
 			case *object.Integer:
-				return &object.Float{Value: float64(arg.Value)}
+				return object.NewFloat(float64(arg.IntValue()))
 			case *object.String:
 				var val float64
-				_, err := fmt.Sscanf(arg.Value, "%f", &val)
+				_, err := fmt.Sscanf(arg.StringValue(), "%f", &val)
 				if err != nil {
-					return errors.NewError("cannot convert %s to float", arg.Value)
+					return errors.NewError("cannot convert %s to float", arg.StringValue())
 				}
-				return &object.Float{Value: val}
+				return object.NewFloat(val)
 			default:
 				return errors.NewTypeError("INTEGER, FLOAT, or STRING", arg.Type().String())
 			}
@@ -336,7 +336,7 @@ Converts an integer, string, or float to a float.`,
 				for _, v := range arg.Data {
 					sum += v
 				}
-				return &object.Float{Value: sum}
+				return object.NewFloat(sum)
 			default:
 				return errors.NewTypeError("LIST, TUPLE, or FLOAT_ARRAY", args[0].Type().String())
 			}
@@ -350,24 +350,23 @@ Converts an integer, string, or float to a float.`,
 				switch v := elem.(type) {
 				case *object.Integer:
 					if hasFloat {
-						floatSum += float64(v.Value)
+						floatSum += float64(v.IntValue())
 					} else {
-						intSum += v.Value
+						intSum += v.IntValue()
 					}
 				case *object.Float:
 					if !hasFloat {
-						// Convert accumulated int sum to float
 						floatSum = float64(intSum)
 						hasFloat = true
 					}
-					floatSum += v.Value
+					floatSum += v.FloatValue()
 				default:
 					return errors.NewError("unsupported operand type for sum(): %s", elem.Type())
 				}
 			}
 
 			if hasFloat {
-				return &object.Float{Value: floatSum}
+				return object.NewFloat(floatSum)
 			}
 			return object.NewInteger(intSum)
 		},
@@ -681,13 +680,13 @@ With no argument, returns False.`,
 			}
 			switch num := args[0].(type) {
 			case *object.Integer:
-				if num.Value < 0 {
-					return object.NewInteger(-num.Value)
+				if num.IntValue() < 0 {
+					return object.NewInteger(-num.IntValue())
 				}
 				return num
 			case *object.Float:
-				if num.Value < 0 {
-					return &object.Float{Value: -num.Value}
+				if num.FloatValue() < 0 {
+					return object.NewFloat(-num.FloatValue())
 				}
 				return num
 			default:
@@ -726,7 +725,7 @@ Works with both integers and floats.`,
 							minVal = v
 						}
 					}
-					return &object.Float{Value: minVal}
+					return object.NewFloat(minVal)
 				}
 			}
 			minVal := args[0]
@@ -743,7 +742,7 @@ Works with both integers and floats.`,
 With a single iterable argument, returns its smallest item.
 With multiple arguments, returns the smallest argument.`,
 	},
-		"max": {
+	"max": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) == 0 {
 				return errors.NewError("max() requires at least 1 argument")
@@ -771,7 +770,7 @@ With multiple arguments, returns the smallest argument.`,
 							maxVal = v
 						}
 					}
-					return &object.Float{Value: maxVal}
+					return object.NewFloat(maxVal)
 				}
 			}
 			maxVal := args[0]
@@ -807,9 +806,9 @@ With multiple arguments, returns the largest argument.`,
 				if ndigits >= 0 {
 					return num
 				}
-				value = float64(num.Value)
+				value = float64(num.IntValue())
 			case *object.Float:
-				value = num.Value
+				value = num.FloatValue()
 			default:
 				return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
 			}
@@ -821,7 +820,7 @@ With multiple arguments, returns the largest argument.`,
 			if ndigits < 0 {
 				return object.NewInteger(int64(rounded))
 			}
-			return &object.Float{Value: rounded}
+			return object.NewFloat(rounded)
 		},
 		HelpText: `round(number[, ndigits]) - Round a number to given precision
 
@@ -838,9 +837,9 @@ Returns an integer if ndigits is omitted or 0.`,
 				return errors.ParameterError("x", err)
 			}
 			if num >= 0 {
-				return &object.String{Value: fmt.Sprintf("0x%x", num)}
+				return object.NewString(fmt.Sprintf("0x%x", num))
 			}
-			return &object.String{Value: fmt.Sprintf("-0x%x", -num)}
+			return object.NewString(fmt.Sprintf("-0x%x", -num))
 		},
 		HelpText: `hex(x) - Convert an integer to a lowercase hexadecimal string prefixed with "0x"`,
 	},
@@ -854,9 +853,9 @@ Returns an integer if ndigits is omitted or 0.`,
 				return errors.ParameterError("x", err)
 			}
 			if num >= 0 {
-				return &object.String{Value: fmt.Sprintf("0b%b", num)}
+				return object.NewString(fmt.Sprintf("0b%b", num))
 			}
-			return &object.String{Value: fmt.Sprintf("-0b%b", -num)}
+			return object.NewString(fmt.Sprintf("-0b%b", -num))
 		},
 		HelpText: `bin(x) - Convert an integer to a binary string prefixed with "0b"`,
 	},
@@ -870,9 +869,9 @@ Returns an integer if ndigits is omitted or 0.`,
 				return errors.ParameterError("x", err)
 			}
 			if num >= 0 {
-				return &object.String{Value: fmt.Sprintf("0o%o", num)}
+				return object.NewString(fmt.Sprintf("0o%o", num))
 			}
-			return &object.String{Value: fmt.Sprintf("-0o%o", -num)}
+			return object.NewString(fmt.Sprintf("-0o%o", -num))
 		},
 		HelpText: `oct(x) - Convert an integer to an octal string prefixed with "0o"`,
 	},
@@ -884,17 +883,17 @@ Returns an integer if ndigits is omitted or 0.`,
 			var base, exp float64
 			switch b := args[0].(type) {
 			case *object.Integer:
-				base = float64(b.Value)
+				base = float64(b.IntValue())
 			case *object.Float:
-				base = b.Value
+				base = b.FloatValue()
 			default:
 				return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
 			}
 			switch e := args[1].(type) {
 			case *object.Integer:
-				exp = float64(e.Value)
+				exp = float64(e.IntValue())
 			case *object.Float:
-				exp = e.Value
+				exp = e.FloatValue()
 			default:
 				return errors.NewTypeError("INTEGER or FLOAT", args[1].Type().String())
 			}
@@ -904,9 +903,9 @@ Returns an integer if ndigits is omitted or 0.`,
 				var mod float64
 				switch m := args[2].(type) {
 				case *object.Integer:
-					mod = float64(m.Value)
+					mod = float64(m.IntValue())
 				case *object.Float:
-					mod = m.Value
+					mod = m.FloatValue()
 				default:
 					return errors.NewTypeError("INTEGER or FLOAT", args[2].Type().String())
 				}
@@ -919,7 +918,7 @@ Returns an integer if ndigits is omitted or 0.`,
 			if result == math.Trunc(result) && result >= math.MinInt64 && result <= math.MaxInt64 {
 				return object.NewInteger(int64(result))
 			}
-			return &object.Float{Value: result}
+			return object.NewFloat(result)
 		},
 		HelpText: `pow(base, exp[, mod]) - Return base to the power exp; optionally modulo mod
 
@@ -934,18 +933,18 @@ Equivalent to base**exp or base**exp % mod if mod is given.`,
 			var bothInts bool = true
 			switch n := args[0].(type) {
 			case *object.Integer:
-				a = float64(n.Value)
+				a = float64(n.IntValue())
 			case *object.Float:
-				a = n.Value
+				a = n.FloatValue()
 				bothInts = false
 			default:
 				return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
 			}
 			switch n := args[1].(type) {
 			case *object.Integer:
-				b = float64(n.Value)
+				b = float64(n.IntValue())
 			case *object.Float:
-				b = n.Value
+				b = n.FloatValue()
 				bothInts = false
 			default:
 				return errors.NewTypeError("INTEGER or FLOAT", args[1].Type().String())
@@ -962,8 +961,8 @@ Equivalent to base**exp or base**exp % mod if mod is given.`,
 				}}
 			}
 			return &object.Tuple{Elements: []object.Object{
-				&object.Float{Value: quotient},
-				&object.Float{Value: remainder},
+				object.NewFloat(quotient),
+				object.NewFloat(remainder),
 			}}
 		},
 		HelpText: `divmod(a, b) - Return the tuple (a // b, a % b)
@@ -1112,7 +1111,7 @@ Also works with class types: isinstance(obj, MyClass)`,
 			if num < 0 || num > 0x10FFFF {
 				return errors.NewError("chr() arg not in range(0x110000)")
 			}
-			return &object.String{Value: string(rune(num))}
+			return object.NewString(string(rune(num)))
 		},
 		HelpText: `chr(i) - Return a string of one character from Unicode code point
 
@@ -1199,8 +1198,8 @@ Otherwise, returns a list containing the items of the iterable.`,
 			// Handle kwargs
 			for _, key := range kwargs.Keys() {
 				val := kwargs.Get(key)
-				result.Pairs[object.DictKey(&object.String{Value: key})] = object.DictPair{
-					Key:   &object.String{Value: key},
+				result.Pairs[object.DictKey(object.NewString(key))] = object.DictPair{
+					Key:   object.NewString(key),
 					Value: val,
 				}
 			}
@@ -1311,7 +1310,7 @@ Otherwise, returns a set containing unique items from the iterable.`,
 			switch obj := args[0].(type) {
 			case *object.String:
 				// Add quotes around strings
-				return &object.String{Value: fmt.Sprintf("'%s'", obj.Value)}
+				return object.NewString(fmt.Sprintf("'%s'", obj.StringValue()))
 			case *object.Instance:
 				// Call __repr__ first, then __str__, then fallback
 				env := GetEnvFromContext(ctx)
@@ -1321,9 +1320,9 @@ Otherwise, returns a set containing unique items from the iterable.`,
 				if result := callDunderMethodFn(ctx, obj, "__str__", nil, env); result != nil {
 					return result
 				}
-				return &object.String{Value: obj.Inspect()}
+				return object.NewString(obj.Inspect())
 			default:
-				return &object.String{Value: obj.Inspect()}
+				return object.NewString(obj.Inspect())
 			}
 		},
 		HelpText: `repr(object) - Return a string representation
@@ -1392,81 +1391,78 @@ Returns a unique integer identifier for the object.`,
 			}
 			// Handle format specifiers
 			if formatSpec == "" {
-				return &object.String{Value: value.Inspect()}
+				return object.NewString(value.Inspect())
 			}
 			// Parse format spec and apply formatting inline to avoid initialization cycle
 			switch v := value.(type) {
 			case *object.Integer:
-				// Format integer
 				if len(formatSpec) > 0 {
 					switch formatSpec[len(formatSpec)-1] {
 					case 'd':
-						return &object.String{Value: fmt.Sprintf("%d", v.Value)}
+						return object.NewString(fmt.Sprintf("%d", v.IntValue()))
 					case 'x':
-						return &object.String{Value: fmt.Sprintf("%x", v.Value)}
+						return object.NewString(fmt.Sprintf("%x", v.IntValue()))
 					case 'X':
-						return &object.String{Value: fmt.Sprintf("%X", v.Value)}
+						return object.NewString(fmt.Sprintf("%X", v.IntValue()))
 					case 'o':
-						return &object.String{Value: fmt.Sprintf("%o", v.Value)}
+						return object.NewString(fmt.Sprintf("%o", v.IntValue()))
 					case 'b':
-						return &object.String{Value: fmt.Sprintf("%b", v.Value)}
+						return object.NewString(fmt.Sprintf("%b", v.IntValue()))
 					}
 				}
 				var width int
 				fmt.Sscanf(formatSpec, "%d", &width)
 				if width > 0 {
-					return &object.String{Value: fmt.Sprintf("%*d", width, v.Value)}
+					return object.NewString(fmt.Sprintf("%*d", width, v.IntValue()))
 				}
-				return &object.String{Value: fmt.Sprintf("%d", v.Value)}
+				return object.NewString(fmt.Sprintf("%d", v.IntValue()))
 			case *object.Float:
-				// Format float
 				if len(formatSpec) > 0 {
 					switch formatSpec[len(formatSpec)-1] {
 					case 'f', 'F':
 						if idx := strings.Index(formatSpec, "."); idx >= 0 {
 							var prec int
 							fmt.Sscanf(formatSpec[idx+1:len(formatSpec)-1], "%d", &prec)
-							return &object.String{Value: fmt.Sprintf("%.*f", prec, v.Value)}
+							return object.NewString(fmt.Sprintf("%.*f", prec, v.FloatValue()))
 						}
-						return &object.String{Value: fmt.Sprintf("%f", v.Value)}
+						return object.NewString(fmt.Sprintf("%f", v.FloatValue()))
 					case 'e':
-						return &object.String{Value: fmt.Sprintf("%e", v.Value)}
+						return object.NewString(fmt.Sprintf("%e", v.FloatValue()))
 					case 'E':
-						return &object.String{Value: fmt.Sprintf("%E", v.Value)}
+						return object.NewString(fmt.Sprintf("%E", v.FloatValue()))
 					case '%':
-						return &object.String{Value: fmt.Sprintf("%.2f%%", v.Value*100)}
+						return object.NewString(fmt.Sprintf("%.2f%%", v.FloatValue()*100))
 					}
 				}
-				return &object.String{Value: fmt.Sprintf("%g", v.Value)}
+				return object.NewString(fmt.Sprintf("%g", v.FloatValue()))
 			case *object.String:
-				// Format string
 				if formatSpec == "" {
-					return &object.String{Value: v.Value}
+					return object.NewString(v.StringValue())
 				}
 				var width int
-				align := '<' // default left align for strings
+				align := '<'
 				spec := formatSpec
 				if len(spec) > 0 && (spec[0] == '<' || spec[0] == '>' || spec[0] == '^') {
 					align = rune(spec[0])
 					spec = spec[1:]
 				}
 				fmt.Sscanf(spec, "%d", &width)
-				if width <= len(v.Value) {
-					return &object.String{Value: v.Value}
+				if width <= len(v.StringValue()) {
+					return object.NewString(v.StringValue())
 				}
-				padding := width - len(v.Value)
+				padding := width - len(v.StringValue())
 				switch align {
 				case '>':
-					return &object.String{Value: strings.Repeat(" ", padding) + v.Value}
+					return object.NewString(strings.Repeat(" ", padding) + v.StringValue())
 				case '^':
 					left := padding / 2
 					right := padding - left
-					return &object.String{Value: strings.Repeat(" ", left) + v.Value + strings.Repeat(" ", right)}
-				default: // '<'
-					return &object.String{Value: v.Value + strings.Repeat(" ", padding)}
+					return object.NewString(strings.Repeat(" ", left) + v.StringValue() + strings.Repeat(" ", right))
+				default:
+					return object.NewString(v.StringValue() + strings.Repeat(" ", padding))
 				}
 			default:
-				return &object.String{Value: value.Inspect()}
+				return object.NewString(value.Inspect())
 			}
 		},
 		HelpText: `format(value[, format_spec]) - Format a value
@@ -1494,7 +1490,7 @@ Supports width, alignment, and type specifiers.`,
 				}
 				return FALSE
 			case *object.Dict:
-				_, exists := obj.Pairs[object.DictKey(&object.String{Value: name})]
+				_, exists := obj.Pairs[object.DictKey(object.NewString(name))]
 				return nativeBoolToBooleanObject(exists)
 			default:
 				return FALSE
@@ -1523,7 +1519,7 @@ Returns True if the object has the named attribute.`,
 					return method
 				}
 			case *object.Dict:
-				if pair, exists := obj.Pairs[object.DictKey(&object.String{Value: name})]; exists {
+				if pair, exists := obj.Pairs[object.DictKey(object.NewString(name))]; exists {
 					return pair.Value
 				}
 			}
@@ -1554,8 +1550,8 @@ If default is provided, returns it when attribute doesn't exist.`,
 				obj.InvalidateBoundMethod(name)
 				return NULL
 			case *object.Dict:
-				obj.Pairs[object.DictKey(&object.String{Value: name})] = object.DictPair{
-					Key:   &object.String{Value: name},
+				obj.Pairs[object.DictKey(object.NewString(name))] = object.DictPair{
+					Key:   object.NewString(name),
 					Value: args[2],
 				}
 				return NULL
@@ -1587,7 +1583,7 @@ Only works on dict-like objects.`,
 				}
 				return errors.NewError("'%s' object has no attribute '%s'", obj.Class.Name, name)
 			case *object.Dict:
-				dictKey := object.DictKey(&object.String{Value: name})
+				dictKey := object.DictKey(object.NewString(name))
 				if _, ok := obj.Pairs[dictKey]; ok {
 					delete(obj.Pairs, dictKey)
 					return NULL
@@ -1669,7 +1665,7 @@ Deletes the named attribute from the given object.`,
 				}
 
 				// Check for zero step
-				if step != nil && step.Value == 0 {
+				if step != nil && step.IntValue() == 0 {
 					return errors.NewError("slice step cannot be zero")
 				}
 			}
@@ -1977,17 +1973,17 @@ func compareObjects(a, b object.Object) int {
 	case *object.Integer:
 		switch bv := b.(type) {
 		case *object.Integer:
-			if av.Value < bv.Value {
+			if av.IntValue() < bv.IntValue() {
 				return -1
-			} else if av.Value > bv.Value {
+			} else if av.IntValue() > bv.IntValue() {
 				return 1
 			}
 			return 0
 		case *object.Float:
-			af := float64(av.Value)
-			if af < bv.Value {
+			af := float64(av.IntValue())
+			if af < bv.FloatValue() {
 				return -1
-			} else if af > bv.Value {
+			} else if af > bv.FloatValue() {
 				return 1
 			}
 			return 0
@@ -1995,26 +1991,26 @@ func compareObjects(a, b object.Object) int {
 	case *object.Float:
 		switch bv := b.(type) {
 		case *object.Float:
-			if av.Value < bv.Value {
+			if av.FloatValue() < bv.FloatValue() {
 				return -1
-			} else if av.Value > bv.Value {
+			} else if av.FloatValue() > bv.FloatValue() {
 				return 1
 			}
 			return 0
 		case *object.Integer:
-			bf := float64(bv.Value)
-			if av.Value < bf {
+			bf := float64(bv.IntValue())
+			if av.FloatValue() < bf {
 				return -1
-			} else if av.Value > bf {
+			} else if av.FloatValue() > bf {
 				return 1
 			}
 			return 0
 		}
 	case *object.String:
 		if bv, ok := b.(*object.String); ok {
-			if av.Value < bv.Value {
+			if av.StringValue() < bv.StringValue() {
 				return -1
-			} else if av.Value > bv.Value {
+			} else if av.StringValue() > bv.StringValue() {
 				return 1
 			}
 			return 0
@@ -2141,16 +2137,16 @@ func sortedFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 			switch l := left.(type) {
 			case *object.Integer:
 				if r, ok := right.(*object.Integer); ok {
-					if l.Value < r.Value {
+					if l.IntValue() < r.IntValue() {
 						cmp = -1
-					} else if l.Value > r.Value {
+					} else if l.IntValue() > r.IntValue() {
 						cmp = 1
 					}
 				} else if r, ok := right.(*object.Float); ok {
-					lf := float64(l.Value)
-					if lf < r.Value {
+					lf := float64(l.IntValue())
+					if lf < r.FloatValue() {
 						cmp = -1
-					} else if lf > r.Value {
+					} else if lf > r.FloatValue() {
 						cmp = 1
 					}
 				} else {
@@ -2158,16 +2154,16 @@ func sortedFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 				}
 			case *object.Float:
 				if r, ok := right.(*object.Float); ok {
-					if l.Value < r.Value {
+					if l.FloatValue() < r.FloatValue() {
 						cmp = -1
-					} else if l.Value > r.Value {
+					} else if l.FloatValue() > r.FloatValue() {
 						cmp = 1
 					}
 				} else if r, ok := right.(*object.Integer); ok {
-					rf := float64(r.Value)
-					if l.Value < rf {
+					rf := float64(r.IntValue())
+					if l.FloatValue() < rf {
 						cmp = -1
-					} else if l.Value > rf {
+					} else if l.FloatValue() > rf {
 						cmp = 1
 					}
 				} else {
@@ -2175,9 +2171,9 @@ func sortedFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 				}
 			case *object.String:
 				if r, ok := right.(*object.String); ok {
-					if l.Value < r.Value {
+					if l.StringValue() < r.StringValue() {
 						cmp = -1
-					} else if l.Value > r.Value {
+					} else if l.StringValue() > r.StringValue() {
 						cmp = 1
 					}
 				} else {
@@ -2188,12 +2184,11 @@ func sortedFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 				if result := callDunderMethodFn(ctx, l, "__lt__", []object.Object{right}, GetEnvFromContext(ctx)); result != nil {
 					if object.IsError(result) {
 						sortErr = result
-					} else if b, ok := result.(*object.Boolean); ok && b.Value {
-						cmp = -1
+				} else if b, ok := result.(*object.Boolean); ok && b.BoolValue() {
+					cmp = -1
 					} else {
-						// Check __eq__ for cmp == 0
 						if eqResult := callDunderMethodFn(ctx, l, "__eq__", []object.Object{right}, GetEnvFromContext(ctx)); eqResult != nil {
-							if b2, ok := eqResult.(*object.Boolean); ok && b2.Value {
+							if b2, ok := eqResult.(*object.Boolean); ok && b2.BoolValue() {
 								cmp = 0
 							} else {
 								cmp = 1
@@ -2345,7 +2340,7 @@ func helpFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.
 
 	// Handle string arguments
 	if strObj, ok := args[0].(*object.String); ok {
-		topic := strObj.Value
+		topic := strObj.StringValue()
 
 		// Special topic: modules
 		if topic == "modules" {
@@ -2471,7 +2466,7 @@ func helpFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.
 			// Try to get the library from environment
 			if libObj, ok := env.Get(libName); ok {
 				if dict, ok := libObj.(*object.Dict); ok {
-					if pair, ok := dict.Pairs[object.DictKey(&object.String{Value: funcName})]; ok {
+					if pair, ok := dict.Pairs[object.DictKey(object.NewString(funcName))]; ok {
 						// Sub-library (nested dict) — treat topic as a library name
 						if subDict, ok := pair.Value.(*object.Dict); ok {
 							printLibraryHelp(writer, fmt.Sprintf("%s.%s", libName, funcName), subDict)
@@ -2625,11 +2620,11 @@ func helpFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.
 // Helper to extract and print docstrings from functions
 func printLibraryHelp(writer io.Writer, name string, dict *object.Dict) {
 	fmt.Fprintf(writer, "%s functions:\n", name)
-	if docPair, ok := dict.Pairs[object.DictKey(&object.String{Value: "__doc__"})]; ok {
+	if docPair, ok := dict.Pairs[object.DictKey(object.NewString("__doc__"))]; ok {
 		if docStr, ok := docPair.Value.(*object.String); ok {
 			fmt.Fprintln(writer, "")
 			fmt.Fprintln(writer, "Description:")
-			for _, line := range strings.Split(docStr.Value, "\n") {
+			for _, line := range strings.Split(docStr.StringValue(), "\n") {
 				fmt.Fprintf(writer, "  %s\n", line)
 			}
 			fmt.Fprintln(writer, "")
@@ -2637,7 +2632,7 @@ func printLibraryHelp(writer io.Writer, name string, dict *object.Dict) {
 	}
 	fmt.Fprintln(writer, "Available functions:")
 	var names []string
-	docKey := object.DictKey(&object.String{Value: "__doc__"})
+	docKey := object.DictKey(object.NewString("__doc__"))
 	for k, pair := range dict.Pairs {
 		if k != docKey {
 			keyStr, _ := pair.Key.AsString()
@@ -2659,9 +2654,9 @@ func printFunctionHelp(writer io.Writer, name string, fn *object.Function) {
 		if i > 0 {
 			fmt.Fprint(writer, ", ")
 		}
-		fmt.Fprint(writer, param.Value)
+		fmt.Fprint(writer, param.Value())
 		if fn.DefaultValues != nil {
-			if _, hasDefault := fn.DefaultValues[param.Value]; hasDefault {
+			if _, hasDefault := fn.DefaultValues[param.Value()]; hasDefault {
 				fmt.Fprint(writer, "=...")
 			}
 		}
@@ -2670,7 +2665,7 @@ func printFunctionHelp(writer io.Writer, name string, fn *object.Function) {
 		if len(fn.Parameters) > 0 {
 			fmt.Fprint(writer, ", ")
 		}
-		fmt.Fprintf(writer, "*%s", fn.Variadic.Value)
+		fmt.Fprintf(writer, "*%s", fn.Variadic.Value())
 	}
 	fmt.Fprint(writer, ")")
 
@@ -2809,7 +2804,7 @@ func dirFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.O
 	sort.Strings(names)
 	elems := make([]object.Object, len(names))
 	for i, n := range names {
-		elems[i] = &object.String{Value: n}
+		elems[i] = object.NewString(n)
 	}
 	return &object.List{Elements: elems}
 }

@@ -42,13 +42,13 @@ func TestRandomRandint(t *testing.T) {
 		if !ok {
 			t.Fatalf("randint() returned %T, want Integer", result)
 		}
-		if n.Value < 1 || n.Value > 10 {
-			t.Errorf("randint(1,10) = %d, out of range", n.Value)
+		if n.IntValue() < 1 || n.IntValue() > 10 {
+			t.Errorf("randint(1,10) = %d, out of range", n.IntValue())
 		}
 	}
 
 	result := fn2.Fn(ctx, kwargs, object.NewInteger(5), object.NewInteger(5))
-	if n, ok := result.(*object.Integer); !ok || n.Value != 5 {
+	if n, ok := result.(*object.Integer); !ok || n.IntValue() != 5 {
 		t.Errorf("randint(5,5) = %v, want 5", result)
 	}
 
@@ -69,8 +69,8 @@ func TestRandomRandom(t *testing.T) {
 		if !ok {
 			t.Fatalf("random() returned %T, want Float", result)
 		}
-		if f.Value < 0.0 || f.Value >= 1.0 {
-			t.Errorf("random() = %v, out of [0,1)", f.Value)
+		if f.FloatValue() < 0.0 || f.FloatValue() >= 1.0 {
+			t.Errorf("random() = %v, out of [0,1)", f.FloatValue())
 		}
 	}
 }
@@ -81,9 +81,9 @@ func TestRandomChoiceList(t *testing.T) {
 	kwargs := object.NewKwargs(nil)
 
 	items := &object.List{Elements: []object.Object{
-		&object.String{Value: "a"},
-		&object.String{Value: "b"},
-		&object.String{Value: "c"},
+		object.NewString("a"),
+		object.NewString("b"),
+		object.NewString("c"),
 	}}
 
 	for i := 0; i < 50; i++ {
@@ -92,8 +92,8 @@ func TestRandomChoiceList(t *testing.T) {
 		if !ok {
 			t.Fatalf("choice() returned %T, want String", result)
 		}
-		if s.Value != "a" && s.Value != "b" && s.Value != "c" {
-			t.Errorf("choice() = %q, not in list", s.Value)
+		if s.StringValue() != "a" && s.StringValue() != "b" && s.StringValue() != "c" {
+			t.Errorf("choice() = %q, not in list", s.StringValue())
 		}
 	}
 }
@@ -103,13 +103,13 @@ func TestRandomChoiceString(t *testing.T) {
 	ctx := context.Background()
 	kwargs := object.NewKwargs(nil)
 
-	result := fn.Fn(ctx, kwargs, &object.String{Value: "hello"})
+	result := fn.Fn(ctx, kwargs, object.NewString("hello"))
 	s, ok := result.(*object.String)
 	if !ok {
 		t.Fatalf("choice() on string returned %T, want String", result)
 	}
-	if len(s.Value) != 1 {
-		t.Errorf("choice() on string returned %q, want 1 char", s.Value)
+	if len(s.StringValue()) != 1 {
+		t.Errorf("choice() on string returned %q, want 1 char", s.StringValue())
 	}
 }
 
@@ -143,13 +143,13 @@ func TestRandomShuffle(t *testing.T) {
 
 	seen := make(map[int64]bool)
 	for _, el := range list.Elements {
-		seen[el.(*object.Integer).Value] = true
+		seen[el.(*object.Integer).IntValue()] = true
 	}
 	if len(seen) != 5 {
 		t.Errorf("shuffle() lost or duplicated elements")
 	}
 
-	result = fn.Fn(ctx, kwargs, &object.Integer{Value: 5})
+	result = fn.Fn(ctx, kwargs, object.NewInteger(5))
 	if _, ok := result.(*object.Error); !ok {
 		t.Errorf("shuffle() with non-list should return error, got %T", result)
 	}
@@ -161,13 +161,13 @@ func TestRandomUniform(t *testing.T) {
 	kwargs := object.NewKwargs(nil)
 
 	for i := 0; i < 100; i++ {
-		result := fn.Fn(ctx, kwargs, &object.Float{Value: -10.0}, &object.Float{Value: 10.0})
+		result := fn.Fn(ctx, kwargs, object.NewFloat(-10.0), object.NewFloat(10.0))
 		f, ok := result.(*object.Float)
 		if !ok {
 			t.Fatalf("uniform() returned %T, want Float", result)
 		}
-		if f.Value < -10.0 || f.Value > 10.0 {
-			t.Errorf("uniform(-10, 10) = %v, out of range", f.Value)
+		if f.FloatValue() < -10.0 || f.FloatValue() > 10.0 {
+			t.Errorf("uniform(-10, 10) = %v, out of range", f.FloatValue())
 		}
 	}
 }
@@ -193,7 +193,7 @@ func TestRandomSample(t *testing.T) {
 
 	seen := make(map[int64]bool)
 	for _, el := range sample.Elements {
-		v := el.(*object.Integer).Value
+		v := el.(*object.Integer).IntValue()
 		if seen[v] {
 			t.Errorf("sample() returned duplicate %d", v)
 		}
@@ -222,8 +222,8 @@ func TestRandomRandrange(t *testing.T) {
 		if !ok {
 			t.Fatalf("randrange(10) returned %T", result)
 		}
-		if n.Value < 0 || n.Value >= 10 {
-			t.Errorf("randrange(10) = %d, out of [0,10)", n.Value)
+		if n.IntValue() < 0 || n.IntValue() >= 10 {
+			t.Errorf("randrange(10) = %d, out of [0,10)", n.IntValue())
 		}
 	}
 
@@ -233,8 +233,8 @@ func TestRandomRandrange(t *testing.T) {
 		if !ok {
 			t.Fatalf("randrange(5,15) returned %T", result)
 		}
-		if n.Value < 5 || n.Value >= 15 {
-			t.Errorf("randrange(5,15) = %d, out of [5,15)", n.Value)
+		if n.IntValue() < 5 || n.IntValue() >= 15 {
+			t.Errorf("randrange(5,15) = %d, out of [5,15)", n.IntValue())
 		}
 	}
 
@@ -244,8 +244,8 @@ func TestRandomRandrange(t *testing.T) {
 		if !ok {
 			t.Fatalf("randrange(0,10,2) returned %T", result)
 		}
-		if n.Value < 0 || n.Value >= 10 || n.Value%2 != 0 {
-			t.Errorf("randrange(0,10,2) = %d, invalid", n.Value)
+		if n.IntValue() < 0 || n.IntValue() >= 10 || n.IntValue()%2 != 0 {
+			t.Errorf("randrange(0,10,2) = %d, invalid", n.IntValue())
 		}
 	}
 }
@@ -255,7 +255,7 @@ func TestRandomGauss(t *testing.T) {
 	ctx := context.Background()
 	kwargs := object.NewKwargs(nil)
 
-	result := fn.Fn(ctx, kwargs, &object.Float{Value: 0.0}, &object.Float{Value: 1.0})
+	result := fn.Fn(ctx, kwargs, object.NewFloat(0.0), object.NewFloat(1.0))
 	if _, ok := result.(*object.Float); !ok {
 		t.Errorf("gauss(0,1) returned %T, want Float", result)
 	}
@@ -268,10 +268,10 @@ func TestRandomSeedReproducibility(t *testing.T) {
 	kwargs := object.NewKwargs(nil)
 
 	seed.Fn(ctx, kwargs, object.NewInteger(12345))
-	a := randFn.Fn(ctx, kwargs).(*object.Float).Value
+	a := randFn.Fn(ctx, kwargs).(*object.Float).FloatValue()
 
 	seed.Fn(ctx, kwargs, object.NewInteger(12345))
-	b := randFn.Fn(ctx, kwargs).(*object.Float).Value
+	b := randFn.Fn(ctx, kwargs).(*object.Float).FloatValue()
 
 	if a != b {
 		t.Errorf("seeded random not reproducible: %v != %v", a, b)
@@ -283,14 +283,14 @@ func TestRandomChoices(t *testing.T) {
 	ctx := context.Background()
 
 	pop := &object.List{Elements: []object.Object{
-		&object.String{Value: "a"},
-		&object.String{Value: "b"},
-		&object.String{Value: "c"},
+		object.NewString("a"),
+		object.NewString("b"),
+		object.NewString("c"),
 	}}
 
 	result := fn.Fn(ctx, object.NewKwargs(map[string]object.Object{
 		"weights": &object.List{Elements: []object.Object{
-			&object.Float{Value: 5.0}, &object.Float{Value: 3.0}, &object.Float{Value: 1.0},
+			object.NewFloat(5.0), object.NewFloat(3.0), object.NewFloat(1.0),
 		}},
 		"k": object.NewInteger(10),
 	}), pop)
@@ -302,7 +302,7 @@ func TestRandomChoices(t *testing.T) {
 		t.Errorf("choices(k=10) returned %d elements", len(list.Elements))
 	}
 	for _, el := range list.Elements {
-		s := el.(*object.String).Value
+		s := el.(*object.String).StringValue()
 		if s != "a" && s != "b" && s != "c" {
 			t.Errorf("choices() returned %q, not in population", s)
 		}
@@ -330,9 +330,9 @@ func TestRandomChoicesPositionalWeightsAndK(t *testing.T) {
 	ctx := context.Background()
 
 	pop := &object.List{Elements: []object.Object{
-		&object.String{Value: "a"},
-		&object.String{Value: "b"},
-		&object.String{Value: "c"},
+		object.NewString("a"),
+		object.NewString("b"),
+		object.NewString("c"),
 	}}
 	weights := &object.List{Elements: []object.Object{
 		object.NewInteger(0),
@@ -349,7 +349,7 @@ func TestRandomChoicesPositionalWeightsAndK(t *testing.T) {
 		t.Fatalf("choices() returned %d elements, want 10", len(list.Elements))
 	}
 	for _, el := range list.Elements {
-		if s := el.(*object.String).Value; s != "c" {
+		if s := el.(*object.String).StringValue(); s != "c" {
 			t.Errorf("choices() with zero weights returned %q, want c", s)
 		}
 	}
@@ -360,8 +360,8 @@ func TestRandomChoicesInvalidArgsAndWeights(t *testing.T) {
 	ctx := context.Background()
 
 	pop := &object.List{Elements: []object.Object{
-		&object.String{Value: "a"},
-		&object.String{Value: "b"},
+		object.NewString("a"),
+		object.NewString("b"),
 	}}
 
 	tests := []struct {
@@ -402,7 +402,7 @@ func TestRandomChoicesInvalidArgsAndWeights(t *testing.T) {
 			kwargs: object.NewKwargs(nil),
 			args: []object.Object{
 				pop,
-				&object.List{Elements: []object.Object{&object.Float{Value: math.NaN()}, object.NewInteger(1)}},
+				&object.List{Elements: []object.Object{object.NewFloat(math.NaN()), object.NewInteger(1)}},
 			},
 		},
 		{
@@ -431,17 +431,17 @@ func TestRandomExpovariate(t *testing.T) {
 	kwargs := object.NewKwargs(nil)
 
 	for i := 0; i < 50; i++ {
-		result := fn.Fn(ctx, kwargs, &object.Float{Value: 1.0})
+		result := fn.Fn(ctx, kwargs, object.NewFloat(1.0))
 		f, ok := result.(*object.Float)
 		if !ok {
 			t.Fatalf("expovariate() returned %T, want Float", result)
 		}
-		if f.Value < 0 {
-			t.Errorf("expovariate(1) = %v, should be >= 0", f.Value)
+		if f.FloatValue() < 0 {
+			t.Errorf("expovariate(1) = %v, should be >= 0", f.FloatValue())
 		}
 	}
 
-	result := fn.Fn(ctx, kwargs, &object.Float{Value: 0.0})
+	result := fn.Fn(ctx, kwargs, object.NewFloat(0.0))
 	if _, ok := result.(*object.Error); !ok {
 		t.Errorf("expovariate(0) should return error, got %T", result)
 	}
@@ -453,17 +453,17 @@ func TestRandomBetavariate(t *testing.T) {
 	kwargs := object.NewKwargs(nil)
 
 	for i := 0; i < 50; i++ {
-		result := fn.Fn(ctx, kwargs, &object.Float{Value: 2.0}, &object.Float{Value: 5.0})
+		result := fn.Fn(ctx, kwargs, object.NewFloat(2.0), object.NewFloat(5.0))
 		f, ok := result.(*object.Float)
 		if !ok {
 			t.Fatalf("betavariate() returned %T, want Float", result)
 		}
-		if f.Value < 0 || f.Value > 1 {
-			t.Errorf("betavariate(2,5) = %v, should be in [0,1]", f.Value)
+		if f.FloatValue() < 0 || f.FloatValue() > 1 {
+			t.Errorf("betavariate(2,5) = %v, should be in [0,1]", f.FloatValue())
 		}
 	}
 
-	result := fn.Fn(ctx, kwargs, &object.Float{Value: 0}, &object.Float{Value: 1})
+	result := fn.Fn(ctx, kwargs, object.NewFloat(0), object.NewFloat(1))
 	if _, ok := result.(*object.Error); !ok {
 		t.Errorf("betavariate(0,1) should return error, got %T", result)
 	}
@@ -475,17 +475,17 @@ func TestRandomGammavariate(t *testing.T) {
 	kwargs := object.NewKwargs(nil)
 
 	for i := 0; i < 50; i++ {
-		result := fn.Fn(ctx, kwargs, &object.Float{Value: 2.0}, &object.Float{Value: 1.0})
+		result := fn.Fn(ctx, kwargs, object.NewFloat(2.0), object.NewFloat(1.0))
 		f, ok := result.(*object.Float)
 		if !ok {
 			t.Fatalf("gammavariate() returned %T, want Float", result)
 		}
-		if f.Value < 0 {
-			t.Errorf("gammavariate(2,1) = %v, should be >= 0", f.Value)
+		if f.FloatValue() < 0 {
+			t.Errorf("gammavariate(2,1) = %v, should be >= 0", f.FloatValue())
 		}
 	}
 
-	result := fn.Fn(ctx, kwargs, &object.Float{Value: -1}, &object.Float{Value: 1})
+	result := fn.Fn(ctx, kwargs, object.NewFloat(-1), object.NewFloat(1))
 	if _, ok := result.(*object.Error); !ok {
 		t.Errorf("gammavariate(-1,1) should return error, got %T", result)
 	}
@@ -497,31 +497,31 @@ func TestRandomTriangular(t *testing.T) {
 	kwargs := object.NewKwargs(nil)
 
 	for i := 0; i < 50; i++ {
-		result := fn.Fn(ctx, kwargs, &object.Float{Value: 0.0}, &object.Float{Value: 10.0})
+		result := fn.Fn(ctx, kwargs, object.NewFloat(0.0), object.NewFloat(10.0))
 		f, ok := result.(*object.Float)
 		if !ok {
 			t.Fatalf("triangular() returned %T, want Float", result)
 		}
-		if f.Value < 0 || f.Value > 10 {
-			t.Errorf("triangular(0,10) = %v, out of range", f.Value)
+		if f.FloatValue() < 0 || f.FloatValue() > 10 {
+			t.Errorf("triangular(0,10) = %v, out of range", f.FloatValue())
 		}
 	}
 
 	for i := 0; i < 50; i++ {
-		result := fn.Fn(ctx, kwargs, &object.Float{Value: 0.0}, &object.Float{Value: 10.0}, &object.Float{Value: 5.0})
+		result := fn.Fn(ctx, kwargs, object.NewFloat(0.0), object.NewFloat(10.0), object.NewFloat(5.0))
 		f, ok := result.(*object.Float)
 		if !ok {
 			t.Fatalf("triangular() with mode returned %T", result)
 		}
-		if f.Value < 0 || f.Value > 10 {
-			t.Errorf("triangular(0,10,5) = %v, out of range", f.Value)
+		if f.FloatValue() < 0 || f.FloatValue() > 10 {
+			t.Errorf("triangular(0,10,5) = %v, out of range", f.FloatValue())
 		}
 	}
 
-	result := fn.Fn(ctx, kwargs, &object.Float{Value: 5.0}, &object.Float{Value: 5.0})
+	result := fn.Fn(ctx, kwargs, object.NewFloat(5.0), object.NewFloat(5.0))
 	f, _ := result.(*object.Float)
-	if math.Abs(f.Value-5.0) > 1e-10 {
-		t.Errorf("triangular(5,5) = %v, want 5.0", f.Value)
+	if math.Abs(f.FloatValue()-5.0) > 1e-10 {
+		t.Errorf("triangular(5,5) = %v, want 5.0", f.FloatValue())
 	}
 }
 
@@ -531,17 +531,17 @@ func TestRandomParetovariate(t *testing.T) {
 	kwargs := object.NewKwargs(nil)
 
 	for i := 0; i < 50; i++ {
-		result := fn.Fn(ctx, kwargs, &object.Float{Value: 1.5})
+		result := fn.Fn(ctx, kwargs, object.NewFloat(1.5))
 		f, ok := result.(*object.Float)
 		if !ok {
 			t.Fatalf("paretovariate() returned %T, want Float", result)
 		}
-		if f.Value < 1.0 {
-			t.Errorf("paretovariate(1.5) = %v, should be >= 1.0", f.Value)
+		if f.FloatValue() < 1.0 {
+			t.Errorf("paretovariate(1.5) = %v, should be >= 1.0", f.FloatValue())
 		}
 	}
 
-	result := fn.Fn(ctx, kwargs, &object.Float{Value: 0})
+	result := fn.Fn(ctx, kwargs, object.NewFloat(0))
 	if _, ok := result.(*object.Error); !ok {
 		t.Errorf("paretovariate(0) should return error, got %T", result)
 	}
@@ -553,17 +553,17 @@ func TestRandomWeibullvariate(t *testing.T) {
 	kwargs := object.NewKwargs(nil)
 
 	for i := 0; i < 50; i++ {
-		result := fn.Fn(ctx, kwargs, &object.Float{Value: 1.0}, &object.Float{Value: 1.5})
+		result := fn.Fn(ctx, kwargs, object.NewFloat(1.0), object.NewFloat(1.5))
 		f, ok := result.(*object.Float)
 		if !ok {
 			t.Fatalf("weibullvariate() returned %T, want Float", result)
 		}
-		if f.Value < 0 {
-			t.Errorf("weibullvariate(1,1.5) = %v, should be >= 0", f.Value)
+		if f.FloatValue() < 0 {
+			t.Errorf("weibullvariate(1,1.5) = %v, should be >= 0", f.FloatValue())
 		}
 	}
 
-	result := fn.Fn(ctx, kwargs, &object.Float{Value: 0}, &object.Float{Value: 1})
+	result := fn.Fn(ctx, kwargs, object.NewFloat(0), object.NewFloat(1))
 	if _, ok := result.(*object.Error); !ok {
 		t.Errorf("weibullvariate(0,1) should return error, got %T", result)
 	}

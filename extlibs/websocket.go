@@ -188,7 +188,7 @@ var WebSocketLibrary = object.NewLibrary(WebSocketLibraryName, map[string]*objec
 								}
 								data = jsonData
 							} else if str, ok := msg.(*object.String); ok {
-								data = []byte(str.Value)
+								data = []byte(str.StringValue())
 							} else {
 								// Try to coerce to string
 								strVal, err := msg.CoerceString()
@@ -260,12 +260,12 @@ Parameters:
 							}
 
 							if msgType == websocket.TextMessage {
-								return &object.String{Value: string(data)}
+								return object.NewString(string(data))
 							}
 							// Binary message - return as list of bytes
 							elements := make([]object.Object, len(data))
 							for i, b := range data {
-								elements[i] = &object.Integer{Value: int64(b)}
+								elements[i] = object.NewInteger(int64(b))
 							}
 							return &object.List{Elements: elements}
 						},
@@ -295,7 +295,7 @@ Returns:
 						},
 						HelpText: `close() - Close the WebSocket connection`,
 					},
-					"remote_addr": &object.String{Value: wsConn.RemoteAddr()},
+					"remote_addr": object.NewString(wsConn.RemoteAddr()),
 				},
 				HelpText: "WebSocket connection object",
 			}

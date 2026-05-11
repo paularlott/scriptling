@@ -94,7 +94,7 @@ func (g *GlobLibraryInstance) createGlobLibrary() *object.Library {
 
 				elements := make([]object.Object, len(matches))
 				for i, match := range matches {
-					elements[i] = &object.String{Value: match}
+					elements[i] = object.NewString(match)
 				}
 				return &object.List{Elements: elements}
 			},
@@ -144,7 +144,7 @@ Optional root_dir specifies the directory to search from (default: current direc
 					if index >= len(filteredMatches) {
 						return nil, false
 					}
-					result := &object.String{Value: filteredMatches[index]}
+					result := object.NewString(filteredMatches[index])
 					index++
 					return result, true
 				})
@@ -180,7 +180,7 @@ efficient for large result sets. See glob() for pattern syntax details.`,
 					}
 				}
 
-				return &object.String{Value: result.String()}
+				return object.NewString(result.String())
 			},
 			HelpText: `escape(pattern) - Escape special characters in a pattern
 

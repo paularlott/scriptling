@@ -19,7 +19,7 @@ var Base64Library = object.NewLibrary(Base64LibraryName, map[string]*object.Buil
 				return err
 			}
 			encoded := base64.StdEncoding.EncodeToString([]byte(str))
-			return &object.String{Value: encoded}
+			return object.NewString(encoded)
 		},
 		HelpText: `b64encode(s) - Encode bytes-like object to Base64
 
@@ -38,7 +38,7 @@ Returns a Base64-encoded version of the input string.`,
 			if decodeErr != nil {
 				return errors.NewError("base64 decode error: %s", decodeErr.Error())
 			}
-			return &object.String{Value: string(decoded)}
+			return object.NewString(string(decoded))
 		},
 		HelpText: `b64decode(s) - Decode a Base64 encoded string
 

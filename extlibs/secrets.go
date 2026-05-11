@@ -25,7 +25,7 @@ var SecretsLibrary = object.NewLibrary(SecretsLibraryName, map[string]*object.Bu
 			nbytes := 32 // Default
 			if len(args) > 0 {
 				if intVal, ok := args[0].(*object.Integer); ok {
-					nbytes = int(intVal.Value)
+					nbytes = int(intVal.IntValue())
 				}
 			}
 
@@ -63,7 +63,7 @@ Example:
 			nbytes := 32 // Default
 			if len(args) > 0 {
 				if intVal, ok := args[0].(*object.Integer); ok {
-					nbytes = int(intVal.Value)
+					nbytes = int(intVal.IntValue())
 				}
 			}
 
@@ -77,7 +77,7 @@ Example:
 				return errors.NewError("failed to generate random bytes: %s", err.Error())
 			}
 
-			return &object.String{Value: hex.EncodeToString(bytes)}
+			return object.NewString(hex.EncodeToString(bytes))
 		},
 		HelpText: `token_hex([nbytes]) - Generate random text in hexadecimal
 
@@ -96,7 +96,7 @@ Example:
 			nbytes := 32 // Default
 			if len(args) > 0 {
 				if intVal, ok := args[0].(*object.Integer); ok {
-					nbytes = int(intVal.Value)
+					nbytes = int(intVal.IntValue())
 				}
 			}
 
@@ -114,7 +114,7 @@ Example:
 			encoded := base64.URLEncoding.EncodeToString(bytes)
 			// Remove padding
 			encoded = strings.TrimRight(encoded, "=")
-			return &object.String{Value: encoded}
+			return object.NewString(encoded)
 		},
 		HelpText: `token_urlsafe([nbytes]) - Generate URL-safe random text
 
@@ -139,11 +139,11 @@ Example:
 				return errors.NewTypeError("INTEGER", args[0].Type().String())
 			}
 
-			if n.Value <= 0 {
+			if n.IntValue() <= 0 {
 				return errors.NewError("randbelow requires a positive upper bound")
 			}
 
-			result, err := rand.Int(rand.Reader, big.NewInt(n.Value))
+			result, err := rand.Int(rand.Reader, big.NewInt(n.IntValue()))
 			if err != nil {
 				return errors.NewError("failed to generate random number: %s", err.Error())
 			}
@@ -173,12 +173,12 @@ Example:
 				return errors.NewTypeError("INTEGER", args[0].Type().String())
 			}
 
-			if k.Value < 1 {
+			if k.IntValue() < 1 {
 				return errors.NewError("randbits requires a positive number of bits")
 			}
 
 			// Generate a random big integer with exactly k bits
-			result, err := rand.Int(rand.Reader, big.NewInt(0).Lsh(big.NewInt(1), uint(k.Value)))
+			result, err := rand.Int(rand.Reader, big.NewInt(0).Lsh(big.NewInt(1), uint(k.IntValue())))
 			if err != nil {
 				return errors.NewError("failed to generate random bits: %s", err.Error())
 			}
@@ -205,14 +205,14 @@ Example:
 
 			// Handle string sequences (like Python)
 			if str, ok := args[0].(*object.String); ok {
-				if len(str.Value) == 0 {
+				if len(str.StringValue()) == 0 {
 					return errors.NewError("cannot choose from empty sequence")
 				}
-				idx, err := rand.Int(rand.Reader, big.NewInt(int64(len(str.Value))))
+				idx, err := rand.Int(rand.Reader, big.NewInt(int64(len(str.StringValue()))))
 				if err != nil {
 					return errors.NewError("failed to generate random index: %s", err.Error())
 				}
-				return &object.String{Value: string(str.Value[idx.Int64()])}
+				return object.NewString(string(str.StringValue()[idx.Int64()]))
 			}
 
 			// Handle list sequences
@@ -258,7 +258,7 @@ Example:
 			}
 
 			// Use crypto/subtle for constant-time comparison to prevent timing attacks
-			if subtle.ConstantTimeCompare([]byte(a.Value), []byte(b.Value)) == 1 {
+			if subtle.ConstantTimeCompare([]byte(a.StringValue()), []byte(b.StringValue())) == 1 {
 				return object.NewBoolean(true)
 			}
 			return object.NewBoolean(false)

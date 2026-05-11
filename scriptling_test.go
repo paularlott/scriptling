@@ -67,18 +67,18 @@ func TestGoFunctionRegistration(t *testing.T) {
 
 		var a, b int64
 		if intA, ok := args[0].(*object.Integer); ok {
-			a = intA.Value
+			a = intA.IntValue()
 		} else {
 			return &object.Error{Message: "first argument must be an integer"}
 		}
 
 		if intB, ok := args[1].(*object.Integer); ok {
-			b = intB.Value
+			b = intB.IntValue()
 		} else {
 			return &object.Error{Message: "second argument must be an integer"}
 		}
 
-		return &object.Integer{Value: a * b}
+		return object.NewInteger(a * b)
 	})
 
 	_, err := p.Eval("result = multiply(6, 7)")

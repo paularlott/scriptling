@@ -19,7 +19,7 @@ func MsgToBytes(msg object.Object) ([]byte, object.Object) {
 		return jsonData, nil
 	}
 	if str, ok := msg.(*object.String); ok {
-		return []byte(str.Value), nil
+		return []byte(str.StringValue()), nil
 	}
 	strVal, coerceErr := msg.CoerceString()
 	if coerceErr != nil {

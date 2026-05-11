@@ -30,8 +30,8 @@ os.getenv("TEST_OS_VAR")`,
 				if !ok {
 					t.Fatalf("expected String, got %T", result)
 				}
-				if str.Value != "test_value" {
-					t.Errorf("expected %q, got %q", "test_value", str.Value)
+				if str.StringValue() != "test_value" {
+					t.Errorf("expected %q, got %q", "test_value", str.StringValue())
 				}
 			},
 		},
@@ -54,8 +54,8 @@ os.getenv("TEST_MISSING_VAR", "fallback")`,
 				if !ok {
 					t.Fatalf("expected String, got %T", result)
 				}
-				if str.Value != "fallback" {
-					t.Errorf("expected %q, got %q", "fallback", str.Value)
+				if str.StringValue() != "fallback" {
+					t.Errorf("expected %q, got %q", "fallback", str.StringValue())
 				}
 			},
 		},
@@ -68,8 +68,8 @@ os.getenv("TEST_OS_VAR", "fallback")`,
 				if !ok {
 					t.Fatalf("expected String, got %T", result)
 				}
-				if str.Value != "test_value" {
-					t.Errorf("expected %q, got %q", "test_value", str.Value)
+				if str.StringValue() != "test_value" {
+					t.Errorf("expected %q, got %q", "test_value", str.StringValue())
 				}
 			},
 		},
@@ -85,8 +85,8 @@ val`,
 				if !ok {
 					t.Fatalf("expected String, got %T", result)
 				}
-				if str.Value != "default_applied" {
-					t.Errorf("expected %q, got %q", "default_applied", str.Value)
+				if str.StringValue() != "default_applied" {
+					t.Errorf("expected %q, got %q", "default_applied", str.StringValue())
 				}
 			},
 		},
@@ -131,8 +131,8 @@ os.getenv("TEST_EMPTY_VAR")`)
 	if !ok {
 		t.Fatalf("expected String for empty-string var, got %T", result)
 	}
-	if str.Value != "" {
-		t.Errorf("expected empty string, got %q", str.Value)
+	if str.StringValue() != "" {
+		t.Errorf("expected empty string, got %q", str.StringValue())
 	}
 }
 
@@ -153,7 +153,7 @@ len(result) > 0`)
 		t.Fatalf("Expected Boolean, got %T", result)
 	}
 
-	if !boolean.Value {
+	if !boolean.BoolValue() {
 		t.Error("Expected os.environ.get() to work like a dict")
 	}
 }
@@ -182,7 +182,7 @@ found`)
 		t.Fatalf("Expected Boolean, got %T", result)
 	}
 
-	if !boolean.Value {
+	if !boolean.BoolValue() {
 		t.Error("Expected to find TEST_ITER_VAR in os.environ.items()")
 	}
 }

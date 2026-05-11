@@ -86,8 +86,8 @@ func TestStringPercentFormat(t *testing.T) {
 			if !ok {
 				t.Fatalf("expected String, got %T: %v", evaluated, evaluated)
 			}
-			if str.Value != tt.expected {
-				t.Errorf("got %q, want %q", str.Value, tt.expected)
+			if str.StringValue() != tt.expected {
+				t.Errorf("got %q, want %q", str.StringValue(), tt.expected)
 			}
 		})
 	}

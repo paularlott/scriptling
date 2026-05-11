@@ -41,7 +41,7 @@ func jsonDumps(ctx context.Context, kwargs object.Kwargs, args ...object.Object)
 	if err != nil {
 		return errors.NewError("json serialize error: %s", err.Error())
 	}
-	return &object.String{Value: string(bytes)}
+	return object.NewString(string(bytes))
 }
 
 var JSONLibrary = object.NewLibrary(JSONLibraryName, map[string]*object.Builtin{
@@ -76,13 +76,13 @@ Optional indent parameter for pretty-printing.`,
 func objectToJSON(obj object.Object) interface{} {
 	switch obj := obj.(type) {
 	case *object.Integer:
-		return obj.Value
+		return obj.IntValue()
 	case *object.Float:
-		return obj.Value
+		return obj.FloatValue()
 	case *object.String:
-		return obj.Value
+		return obj.StringValue()
 	case *object.Boolean:
-		return obj.Value
+		return obj.BoolValue()
 	case *object.List:
 		arr := make([]interface{}, len(obj.Elements))
 		for i, el := range obj.Elements {

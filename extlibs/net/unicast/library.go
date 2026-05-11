@@ -187,8 +187,8 @@ Parameters:
 						return &object.Null{}
 					}
 					return object.NewStringDict(map[string]object.Object{
-						"data":   &object.String{Value: string(data)},
-						"source": &object.String{Value: c.remoteAddr},
+						"data":   object.NewString(string(data)),
+						"source": object.NewString(c.remoteAddr),
 					})
 				},
 				HelpText: `receive(timeout=30) - Receive a message
@@ -216,8 +216,8 @@ Note: TCP messages are limited to 64KB.`,
 				},
 				HelpText: `connected() - Check if connection is still open`,
 			},
-			"local_addr":  &object.String{Value: c.localAddr},
-			"remote_addr": &object.String{Value: c.remoteAddr},
+			"local_addr":  object.NewString(c.localAddr),
+			"remote_addr": object.NewString(c.remoteAddr),
 		},
 		HelpText: helpText,
 	}
@@ -307,8 +307,8 @@ func buildUDPListenerObject(l *udpListener) *object.Builtin {
 						return &object.Null{}
 					}
 					return object.NewStringDict(map[string]object.Object{
-						"data":   &object.String{Value: string(data)},
-						"source": &object.String{Value: src.String()},
+						"data":   object.NewString(string(data)),
+						"source": object.NewString(src.String()),
 					})
 				},
 				HelpText: `receive(timeout=30) - Receive a message from any sender
@@ -351,7 +351,7 @@ Parameters:
 				},
 				HelpText: `close() - Close the listener`,
 			},
-			"addr": &object.String{Value: l.localAddr},
+			"addr": object.NewString(l.localAddr),
 		},
 		HelpText: "UDP listener object",
 	}
@@ -433,7 +433,7 @@ Returns:
 				},
 				HelpText: `close() - Close the listener`,
 			},
-			"addr": &object.String{Value: l.listenerAddr},
+			"addr": object.NewString(l.listenerAddr),
 		},
 		HelpText: "TCP listener object",
 	}

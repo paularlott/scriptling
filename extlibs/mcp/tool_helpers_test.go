@@ -689,12 +689,12 @@ return_toon({"status": "success", "items": [1, 2, 3]})
 		t.Fatalf("Expected String object, got %T", responseObj)
 	}
 
-	if strObj.Value == "" {
+	if strObj.StringValue() == "" {
 		t.Errorf("Expected TOON response, got empty string")
 	}
 
-	if !strings.Contains(strObj.Value, "status") || !strings.Contains(strObj.Value, "success") {
-		t.Errorf("Expected TOON to contain status and success, got %q", strObj.Value)
+	if !strings.Contains(strObj.StringValue(), "status") || !strings.Contains(strObj.StringValue(), "success") {
+		t.Errorf("Expected TOON to contain status and success, got %q", strObj.StringValue())
 	}
 }
 
@@ -741,8 +741,8 @@ raise Exception("Should not reach here")
 		t.Fatalf("Expected String object, got %T", responseObj)
 	}
 
-	if strObj.Value != "Success!" {
-		t.Errorf("Expected response='Success!', got %q", strObj.Value)
+	if strObj.StringValue() != "Success!" {
+		t.Errorf("Expected response='Success!', got %q", strObj.StringValue())
 	}
 }
 
@@ -788,7 +788,7 @@ return_object({"status": "success", "count": 42})
 	}
 
 	// Should be valid JSON
-	jsonStr := strObj.Value
+	jsonStr := strObj.StringValue()
 	if jsonStr == "" {
 		t.Errorf("Expected JSON response, got empty string")
 	}
@@ -851,7 +851,7 @@ return_error("Something went wrong")
 	}
 
 	// Should contain error JSON
-	jsonStr := strObj.Value
+	jsonStr := strObj.StringValue()
 	if jsonStr == "" {
 		t.Errorf("Expected error response, got empty string")
 	}

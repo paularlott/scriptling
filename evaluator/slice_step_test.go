@@ -50,8 +50,8 @@ func TestSliceWithStep(t *testing.T) {
 				t.Errorf("object is not String. got=%T (%+v)", evaluated, evaluated)
 				continue
 			}
-			if str.Value != expected {
-				t.Errorf("wrong string value. got=%q, want=%q", str.Value, expected)
+			if str.StringValue() != expected {
+				t.Errorf("wrong string value. got=%q, want=%q", str.StringValue(), expected)
 			}
 		}
 	}

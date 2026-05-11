@@ -52,23 +52,23 @@ func gaussianRandom(ctx context.Context, kwargs object.Kwargs, args ...object.Ob
 	var mu, sigma float64
 	switch arg := args[0].(type) {
 	case *object.Integer:
-		mu = float64(arg.Value)
+		mu = float64(arg.IntValue())
 	case *object.Float:
-		mu = arg.Value
+		mu = arg.FloatValue()
 	default:
 		return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
 	}
 	switch arg := args[1].(type) {
 	case *object.Integer:
-		sigma = float64(arg.Value)
+		sigma = float64(arg.IntValue())
 	case *object.Float:
-		sigma = arg.Value
+		sigma = arg.FloatValue()
 	default:
 		return errors.NewTypeError("INTEGER or FLOAT", args[1].Type().String())
 	}
 	// Box-Muller transform
 	val := rng.NormFloat64()*sigma + mu
-	return &object.Float{Value: val}
+	return object.NewFloat(val)
 }
 
 var RandomLibrary = object.NewLibrary(RandomLibraryName, map[string]*object.Builtin{
@@ -83,9 +83,9 @@ var RandomLibrary = object.NewLibrary(RandomLibraryName, map[string]*object.Buil
 			} else {
 				switch arg := args[0].(type) {
 				case *object.Integer:
-					seedVal = arg.Value
+					seedVal = arg.IntValue()
 				case *object.Float:
-					seedVal = int64(arg.Value)
+					seedVal = int64(arg.FloatValue())
 				default:
 					return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
 				}
@@ -105,13 +105,13 @@ If a is omitted, current time is used. Otherwise, a is used as the seed.`,
 			var min, max int64
 			switch arg := args[0].(type) {
 			case *object.Integer:
-				min = arg.Value
+				min = arg.IntValue()
 			default:
 				return errors.NewTypeError("INTEGER", args[0].Type().String())
 			}
 			switch arg := args[1].(type) {
 			case *object.Integer:
-				max = arg.Value
+				max = arg.IntValue()
 			default:
 				return errors.NewTypeError("INTEGER", args[1].Type().String())
 			}
@@ -119,7 +119,7 @@ If a is omitted, current time is used. Otherwise, a is used as the seed.`,
 				return errors.NewError("randint() min must be <= max")
 			}
 			val := min + rng.Int63n(max-min+1)
-			return &object.Integer{Value: val}
+			return object.NewInteger(val)
 		},
 		HelpText: `randint(min, max) - Return random integer
 
@@ -130,7 +130,7 @@ Returns a random integer N such that min <= N <= max.`,
 			if err := errors.ExactArgs(args, 0); err != nil {
 				return err
 			}
-			return &object.Float{Value: rng.Float64()}
+			return object.NewFloat(rng.Float64())
 		},
 		HelpText: `random() - Return random float
 
@@ -142,11 +142,11 @@ Returns a random float in the range [0.0, 1.0).`,
 				return err
 			}
 			if str, ok := args[0].(*object.String); ok {
-				if len(str.Value) == 0 {
+				if len(str.StringValue()) == 0 {
 					return errors.NewError("choice() string cannot be empty")
 				}
-				idx := rng.Intn(len(str.Value))
-				return &object.String{Value: string(str.Value[idx])}
+				idx := rng.Intn(len(str.StringValue()))
+				return object.NewString(string(str.StringValue()[idx]))
 			}
 			if list, ok := args[0].(*object.List); ok {
 				if len(list.Elements) == 0 {
@@ -188,23 +188,23 @@ Randomly shuffles the elements of the list in place using the Fisher-Yates algor
 			var a, b float64
 			switch arg := args[0].(type) {
 			case *object.Integer:
-				a = float64(arg.Value)
+				a = float64(arg.IntValue())
 			case *object.Float:
-				a = arg.Value
+				a = arg.FloatValue()
 			default:
 				return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
 			}
 			switch arg := args[1].(type) {
 			case *object.Integer:
-				b = float64(arg.Value)
+				b = float64(arg.IntValue())
 			case *object.Float:
-				b = arg.Value
+				b = arg.FloatValue()
 			default:
 				return errors.NewTypeError("INTEGER or FLOAT", args[1].Type().String())
 			}
 			// Generate random float in range [a, b]
 			val := a + rng.Float64()*(b-a)
-			return &object.Float{Value: val}
+			return object.NewFloat(val)
 		},
 		HelpText: `uniform(a, b) - Return random float N such that a <= N <= b
 
@@ -224,7 +224,7 @@ Returns a random floating-point number N such that a <= N <= b.`,
 				return errors.NewTypeError("INTEGER", args[1].Type().String())
 			}
 			n := len(list)
-			if k.Value < 0 || k.Value > int64(n) {
+			if k.IntValue() < 0 || k.IntValue() > int64(n) {
 				return errors.NewError("sample larger than population or is negative")
 			}
 			// Fisher-Yates shuffle for sampling
@@ -234,13 +234,13 @@ Returns a random floating-point number N such that a <= N <= b.`,
 				indices[i] = i
 			}
 			// Shuffle first k elements
-			for i := 0; i < int(k.Value); i++ {
+			for i := 0; i < int(k.IntValue()); i++ {
 				j := i + rng.Intn(n-i)
 				indices[i], indices[j] = indices[j], indices[i]
 			}
 			// Build result
-			result := make([]object.Object, k.Value)
-			for i := 0; i < int(k.Value); i++ {
+			result := make([]object.Object, k.IntValue())
+			for i := 0; i < int(k.IntValue()); i++ {
 				result[i] = list[indices[i]]
 			}
 			return &object.List{Elements: result}
@@ -262,36 +262,36 @@ Used for random sampling without replacement.`,
 				// randrange(stop) - from 0 to stop-1
 				start = 0
 				if i, ok := args[0].(*object.Integer); ok {
-					stop = i.Value
+					stop = i.IntValue()
 				} else {
 					return errors.NewTypeError("INTEGER", args[0].Type().String())
 				}
 			case 2:
 				// randrange(start, stop) - from start to stop-1
 				if i, ok := args[0].(*object.Integer); ok {
-					start = i.Value
+					start = i.IntValue()
 				} else {
 					return errors.NewTypeError("INTEGER", args[0].Type().String())
 				}
 				if i, ok := args[1].(*object.Integer); ok {
-					stop = i.Value
+					stop = i.IntValue()
 				} else {
 					return errors.NewTypeError("INTEGER", args[1].Type().String())
 				}
 			case 3:
 				// randrange(start, stop, step)
 				if i, ok := args[0].(*object.Integer); ok {
-					start = i.Value
+					start = i.IntValue()
 				} else {
 					return errors.NewTypeError("INTEGER", args[0].Type().String())
 				}
 				if i, ok := args[1].(*object.Integer); ok {
-					stop = i.Value
+					stop = i.IntValue()
 				} else {
 					return errors.NewTypeError("INTEGER", args[1].Type().String())
 				}
 				if i, ok := args[2].(*object.Integer); ok {
-					step = i.Value
+					step = i.IntValue()
 				} else {
 					return errors.NewTypeError("INTEGER", args[2].Type().String())
 				}
@@ -308,7 +308,7 @@ Used for random sampling without replacement.`,
 			if n <= 0 {
 				return errors.NewError("randrange() empty range")
 			}
-			return &object.Integer{Value: start + step*rng.Int63n(n)}
+			return object.NewInteger(start + step*rng.Int63n(n))
 		},
 		HelpText: `randrange(stop) or randrange(start, stop[, step]) - Return random integer from range
 
@@ -336,9 +336,9 @@ Same as gauss() but provided for compatibility.`,
 			var lambd float64
 			switch arg := args[0].(type) {
 			case *object.Integer:
-				lambd = float64(arg.Value)
+				lambd = float64(arg.IntValue())
 			case *object.Float:
-				lambd = arg.Value
+				lambd = arg.FloatValue()
 			default:
 				return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
 			}
@@ -347,7 +347,7 @@ Same as gauss() but provided for compatibility.`,
 			}
 			// Exponential distribution: -ln(U) / lambda
 			val := -math.Log(1.0-rng.Float64()) / lambd
-			return &object.Float{Value: val}
+			return object.NewFloat(val)
 		},
 		HelpText: `expovariate(lambd) - Return random number from exponential distribution
 
@@ -471,9 +471,9 @@ Returns a list of k selected items.`,
 			x := sampleGamma(alpha)
 			y := sampleGamma(beta)
 			if x+y == 0 {
-				return &object.Float{Value: 0}
+				return object.NewFloat(0)
 			}
-			return &object.Float{Value: x / (x + y)}
+			return object.NewFloat(x / (x + y))
 		},
 		HelpText: `betavariate(alpha, beta) - Return random number from beta distribution
 
@@ -495,7 +495,7 @@ alpha and beta must be positive. Returns a float in [0, 1].`,
 			if alpha <= 0 || beta <= 0 {
 				return errors.NewError("gammavariate: alpha and beta must be positive")
 			}
-			return &object.Float{Value: sampleGamma(alpha) * beta}
+			return object.NewFloat(sampleGamma(alpha) * beta)
 		},
 		HelpText: `gammavariate(alpha, beta) - Return random number from gamma distribution
 
@@ -522,7 +522,7 @@ alpha (shape) and beta (scale) must be positive.`,
 				}
 			}
 			if low == high {
-				return &object.Float{Value: low}
+				return object.NewFloat(low)
 			}
 			u := rng.Float64()
 			c := (mode - low) / (high - low)
@@ -532,7 +532,7 @@ alpha (shape) and beta (scale) must be positive.`,
 			} else {
 				val = high - math.Sqrt((1-u)*(high-low)*(high-mode))
 			}
-			return &object.Float{Value: val}
+			return object.NewFloat(val)
 		},
 		HelpText: `triangular(low, high[, mode]) - Return random number from triangular distribution
 
@@ -555,7 +555,7 @@ low is the minimum, high is the maximum, mode is the peak (defaults to midpoint)
 			if u == 0 {
 				u = math.SmallestNonzeroFloat64
 			}
-			return &object.Float{Value: 1.0 / math.Pow(u, 1.0/alpha)}
+			return object.NewFloat(1.0 / math.Pow(u, 1.0/alpha))
 		},
 		HelpText: `paretovariate(alpha) - Return random number from Pareto distribution
 
@@ -582,7 +582,7 @@ alpha is the shape parameter, must be positive.`,
 			if u == 0 {
 				u = math.SmallestNonzeroFloat64
 			}
-			return &object.Float{Value: alpha * math.Pow(-math.Log(u), 1.0/beta)}
+			return object.NewFloat(alpha * math.Pow(-math.Log(u), 1.0/beta))
 		},
 		HelpText: `weibullvariate(alpha, beta) - Return random number from Weibull distribution
 

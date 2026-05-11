@@ -138,8 +138,8 @@ result
 				t.Errorf("object is not String. got=%T", evaluated)
 				return
 			}
-			if str.Value != expected {
-				t.Errorf("String has wrong value. got=%q, want=%q", str.Value, expected)
+			if str.StringValue() != expected {
+				t.Errorf("String has wrong value. got=%q, want=%q", str.StringValue(), expected)
 			}
 		}
 	}

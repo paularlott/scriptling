@@ -69,8 +69,8 @@ func TestSliceNotation(t *testing.T) {
 				t.Errorf("object is not String. got=%T (%+v)", evaluated, evaluated)
 				continue
 			}
-			if str.Value != expected {
-				t.Errorf("wrong string value. got=%q, want=%q", str.Value, expected)
+			if str.StringValue() != expected {
+				t.Errorf("wrong string value. got=%q, want=%q", str.StringValue(), expected)
 			}
 		}
 	}
@@ -132,8 +132,8 @@ func TestMethodCalls(t *testing.T) {
 			t.Errorf("object is not String. got=%T (%+v)", evaluated, evaluated)
 			continue
 		}
-		if str.Value != tt.expected {
-			t.Errorf("wrong value for %s. got=%q, want=%q", tt.input, str.Value, tt.expected)
+		if str.StringValue() != tt.expected {
+			t.Errorf("wrong value for %s. got=%q, want=%q", tt.input, str.StringValue(), tt.expected)
 		}
 	}
 }
@@ -261,8 +261,8 @@ f()
 	if !ok {
 		t.Fatalf("element is not String. got=%T", list.Elements[0])
 	}
-	if str.Value != "a" {
-		t.Fatalf("element value = %q, want %q", str.Value, "a")
+	if str.StringValue() != "a" {
+		t.Fatalf("element value = %q, want %q", str.StringValue(), "a")
 	}
 }
 

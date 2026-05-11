@@ -358,7 +358,7 @@ func TestGoIntegration_CallFunction(t *testing.T) {
 		p.RegisterFunc("multiply", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			a, _ := args[0].AsInt()
 			b, _ := args[1].AsInt()
-			return &object.Integer{Value: a * b}
+			return object.NewInteger(a * b)
 		})
 
 		// Call with Go arguments
@@ -461,7 +461,7 @@ def greet(name):
 			case <-ctx.Done():
 				return &object.Error{Message: "cancelled"}
 			case <-time.After(10 * time.Millisecond):
-				return &object.String{Value: "completed"}
+				return object.NewString("completed")
 			}
 		})
 
@@ -487,7 +487,7 @@ def greet(name):
 			text, _ := args[0].AsString()
 			prefix := kwargs.MustGetString("prefix", "")
 			suffix := kwargs.MustGetString("suffix", "")
-			return &object.String{Value: prefix + text + suffix}
+			return object.NewString(prefix + text + suffix)
 		})
 
 		// Call with keyword arguments
@@ -573,30 +573,30 @@ result = math.sqrt(16)
 // TestGoIntegration_ObjectTypes validates object type handling examples
 func TestGoIntegration_ObjectTypes(t *testing.T) {
 	t.Run("StringObjects", func(t *testing.T) {
-		strObj := &object.String{Value: "hello"}
-		if strObj.Value != "hello" {
-			t.Errorf("expected 'hello', got %s", strObj.Value)
+		strObj := object.NewString("hello")
+		if strObj.StringValue() != "hello" {
+			t.Errorf("expected 'hello', got %s", strObj.StringValue())
 		}
 	})
 
 	t.Run("IntegerObjects", func(t *testing.T) {
-		intObj := &object.Integer{Value: 42}
-		if intObj.Value != 42 {
-			t.Errorf("expected 42, got %d", intObj.Value)
+		intObj := object.NewInteger(42)
+		if intObj.IntValue() != 42 {
+			t.Errorf("expected 42, got %d", intObj.IntValue())
 		}
 	})
 
 	t.Run("BooleanObjects", func(t *testing.T) {
 		boolObj := object.NewBoolean(true)
-		if boolObj.Value != true {
-			t.Errorf("expected true, got %t", boolObj.Value)
+		if boolObj.BoolValue() != true {
+			t.Errorf("expected true, got %t", boolObj.BoolValue())
 		}
 	})
 
 	t.Run("FloatObjects", func(t *testing.T) {
-		floatObj := &object.Float{Value: 3.14}
-		if floatObj.Value != 3.14 {
-			t.Errorf("expected 3.14, got %f", floatObj.Value)
+		floatObj := object.NewFloat(3.14)
+		if floatObj.FloatValue() != 3.14 {
+			t.Errorf("expected 3.14, got %f", floatObj.FloatValue())
 		}
 	})
 }
