@@ -962,11 +962,14 @@ func parseExpressionString(input string) ast.Expression {
 }
 
 func (p *Parser) parseBoolean() ast.Expression {
-	return &ast.Boolean{Value: p.curTokenIs(token.TRUE)}
+	if p.curTokenIs(token.TRUE) {
+		return ast.BoolTrue
+	}
+	return ast.BoolFalse
 }
 
 func (p *Parser) parseNone() ast.Expression {
-	return &ast.None{}
+	return ast.NoneLiteral
 }
 
 func (p *Parser) parsePrefixExpression() ast.Expression {
@@ -1077,7 +1080,9 @@ func (p *Parser) parseGroupedExpression() ast.Expression {
 
 func (p *Parser) parseCallExpression(function ast.Expression) ast.Expression {
 	exp := &ast.CallExpression{Function: function}
-	exp.Arguments, exp.Keywords, exp.ArgsUnpack, exp.KwargsUnpack = p.parseCallArguments()
+	args, keywords, argsUnpack, kwargsUnpack := p.parseCallArguments()
+	exp.Arguments = args
+	exp.SetOverflow(keywords, argsUnpack, kwargsUnpack)
 	return exp
 }
 
@@ -2166,7 +2171,9 @@ func (p *Parser) parseIndexExpression(left ast.Expression) ast.Expression {
 				Receiver: left,
 				Method:   methodName,
 			}
-			methodCall.Arguments, methodCall.Keywords, methodCall.ArgsUnpack, methodCall.KwargsUnpack = p.parseCallArguments()
+			args, keywords, argsUnpack, kwargsUnpack := p.parseCallArguments()
+			methodCall.Arguments = args
+			methodCall.SetOverflow(keywords, argsUnpack, kwargsUnpack)
 			return methodCall
 		}
 

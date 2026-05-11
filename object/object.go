@@ -58,8 +58,15 @@ func DictKey(obj Object) string {
 
 // DictStringKey returns the canonical dict key for a string key without
 // requiring a temporary String object allocation.
+var dictStringKeyCache sync.Map
+
 func DictStringKey(name string) string {
-	return "s:" + name
+	if v, ok := dictStringKeyCache.Load(name); ok {
+		return v.(string)
+	}
+	key := "s:" + name
+	dictStringKeyCache.Store(name, key)
+	return key
 }
 
 // IsHashable reports whether obj can be used as a set element or dict key.
