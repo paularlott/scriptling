@@ -501,13 +501,6 @@ func nativeBoolToBooleanObject(input bool) *object.Boolean {
 	return FALSE
 }
 
-func coerceBool(b *object.Boolean) *object.Integer {
-	if b.BoolValue() {
-		return object.NewInteger(1)
-	}
-	return object.NewInteger(0)
-}
-
 func objectsEqual(a, b object.Object) bool {
 	if a.Type() != b.Type() {
 		return false
@@ -678,7 +671,11 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 		case *object.Float:
 			return evalFloatInfixValues(operator, float64(l.IntValue()), r.FloatValue())
 		case *object.Boolean:
-			return evalInfixExpression(ctx, operator, left, coerceBool(r), env)
+			rv := int64(0)
+			if r.BoolValue() {
+				rv = 1
+			}
+			return evalIntegerInfixExpression(operator, l.IntValue(), rv)
 		case *object.String:
 			if operator == ast.OpMul {
 				return evalStringMultiplication(r.StringValue(), l.IntValue())
@@ -714,16 +711,27 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 		case *object.Integer:
 			return evalFloatInfixValues(operator, l.FloatValue(), float64(r.IntValue()))
 		case *object.Boolean:
-			return evalInfixExpression(ctx, operator, left, coerceBool(r), env)
+			rv := float64(0)
+			if r.BoolValue() {
+				rv = 1
+			}
+			return evalFloatInfixValues(operator, l.FloatValue(), rv)
 		default:
 			return evalFloatInfixExpression(operator, left, right)
 		}
 	case *object.Boolean:
-		cl := coerceBool(l)
-		if rb, ok := right.(*object.Boolean); ok {
-			return evalInfixExpression(ctx, operator, cl, coerceBool(rb), env)
+		lv := int64(0)
+		if l.BoolValue() {
+			lv = 1
 		}
-		return evalInfixExpression(ctx, operator, cl, right, env)
+		if rb, ok := right.(*object.Boolean); ok {
+			rv := int64(0)
+			if rb.BoolValue() {
+				rv = 1
+			}
+			return evalIntegerInfixExpression(operator, lv, rv)
+		}
+		return evalInfixExpression(ctx, operator, object.NewInteger(lv), right, env)
 	case *object.String:
 		if operator == ast.OpMod {
 		return evalStringPercentFormat(l.StringValue(), right)
@@ -811,7 +819,11 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 
 	if rb, ok := right.(*object.Boolean); ok {
 		if operator >= ast.OpAdd && operator <= ast.OpNeq {
-			return evalInfixExpression(ctx, operator, left, coerceBool(rb), env)
+			rv := int64(0)
+			if rb.BoolValue() {
+				rv = 1
+			}
+			return evalInfixExpression(ctx, operator, left, object.NewInteger(rv), env)
 		}
 	}
 
@@ -1573,7 +1585,7 @@ func unpackArgsFromIterable(argsVal object.Object) ([]object.Object, object.Obje
 }
 
 func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *object.Environment) object.Object {
-	if len(node.Keywords) == 0 && node.KwargsUnpack == nil && len(node.ArgsUnpack) == 0 {
+	if !node.HasOverflow() {
 		if ident, ok := node.Function.(*ast.Identifier); ok {
 			if val, found := env.Get(ident.Value()); found {
 				switch fn := val.(type) {
@@ -1653,9 +1665,10 @@ func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *obje
 	}
 
 	var keywords map[string]object.Object
-	if len(node.Keywords) > 0 {
-		keywords = make(map[string]object.Object, len(node.Keywords))
-		for k, v := range node.Keywords {
+	keywordsMap := node.GetKeywords()
+	if len(keywordsMap) > 0 {
+		keywords = make(map[string]object.Object, len(keywordsMap))
+		for k, v := range keywordsMap {
 			val := evalNode(ctx, v, env)
 			if object.IsError(val) {
 				return val
@@ -1664,7 +1677,7 @@ func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *obje
 		}
 	}
 
-	for _, argsUnpackExpr := range node.ArgsUnpack {
+	for _, argsUnpackExpr := range node.GetArgsUnpack() {
 		argsVal := evalNode(ctx, argsUnpackExpr, env)
 		if object.IsError(argsVal) {
 			return argsVal
@@ -1676,8 +1689,9 @@ func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *obje
 		args = append(args, unpacked...)
 	}
 
-	if node.KwargsUnpack != nil {
-		kwargsVal := evalNode(ctx, node.KwargsUnpack, env)
+	kwargsUnpack := node.GetKwargsUnpack()
+	if kwargsUnpack != nil {
+		kwargsVal := evalNode(ctx, kwargsUnpack, env)
 		if object.IsError(kwargsVal) {
 			return kwargsVal
 		}
@@ -3950,7 +3964,7 @@ func evalFastRangeForStatement(ctx context.Context, fs *ast.ForStatement, env *o
 		return nil, false
 	}
 	call, ok := fs.Iterable.(*ast.CallExpression)
-	if !ok || len(call.Keywords) != 0 || len(call.ArgsUnpack) != 0 || call.KwargsUnpack != nil {
+	if !ok || call.HasOverflow() {
 		return nil, false
 	}
 	fnIdent, ok := call.Function.(*ast.Identifier)
@@ -4886,7 +4900,7 @@ func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expres
 		// Handle type patterns like int(), str(), list(), dict()
 		if ident, ok := p.Function.(*ast.Identifier); ok {
 			// Check if it's a type constructor with no arguments
-			if len(p.Arguments) == 0 && len(p.Keywords) == 0 {
+			if len(p.Arguments) == 0 && !p.HasOverflow() {
 				typeName := ident.Value()
 				subjectType := getTypeName(subject)
 				if typeName == subjectType {

@@ -444,9 +444,11 @@ func (e *estimator) walkExpression(expr Expression) {
 		}
 		e.walkExpression(n.Function)
 		e.addExpressionSlice(n.Arguments)
-		e.addKeywordMap(n.Keywords)
-		e.addExpressionSlice(n.ArgsUnpack)
-		e.walkExpression(n.KwargsUnpack)
+		if n.HasOverflow() {
+			e.addKeywordMap(n.GetKeywords())
+			e.addExpressionSlice(n.GetArgsUnpack())
+			e.walkExpression(n.GetKwargsUnpack())
+		}
 	case *MethodCallExpression:
 		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfMethodCallExpression) {
 			return
@@ -454,9 +456,11 @@ func (e *estimator) walkExpression(expr Expression) {
 		e.walkExpression(n.Receiver)
 		e.walkIdentifier(n.Method)
 		e.addExpressionSlice(n.Arguments)
-		e.addKeywordMap(n.Keywords)
-		e.addExpressionSlice(n.ArgsUnpack)
-		e.walkExpression(n.KwargsUnpack)
+		if n.HasOverflow() {
+			e.addKeywordMap(n.GetKeywords())
+			e.addExpressionSlice(n.GetArgsUnpack())
+			e.walkExpression(n.GetKwargsUnpack())
+		}
 	case *ListLiteral:
 		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfListLiteral) {
 			return

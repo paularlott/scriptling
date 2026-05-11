@@ -395,6 +395,12 @@ func (fsl *FStringLiteral) expressionNode()      {}
 func (fsl *FStringLiteral) TokenLiteral() string { return fsl.Value }
 func (fsl *FStringLiteral) Line() int            { return 0 }
 
+var (
+	BoolTrue  = &Boolean{Value: true}
+	BoolFalse = &Boolean{Value: false}
+	NoneLiteral = &None{}
+)
+
 type Boolean struct {
 	Value bool
 }
@@ -608,12 +614,52 @@ func (cs *ClassStatement) statementNode()       {}
 func (cs *ClassStatement) TokenLiteral() string { return "class" }
 func (cs *ClassStatement) Line() int            { return int(cs.Token.Line) }
 
-type CallExpression struct {
-	Function     Expression
-	Arguments    []Expression
+type CallOverflow struct {
 	Keywords     map[string]Expression
 	ArgsUnpack   []Expression
 	KwargsUnpack Expression
+}
+
+type CallExpression struct {
+	Function  Expression
+	Arguments []Expression
+	overflow  *CallOverflow
+}
+
+func (ce *CallExpression) GetKeywords() map[string]Expression {
+	if ce.overflow == nil {
+		return nil
+	}
+	return ce.overflow.Keywords
+}
+
+func (ce *CallExpression) GetArgsUnpack() []Expression {
+	if ce.overflow == nil {
+		return nil
+	}
+	return ce.overflow.ArgsUnpack
+}
+
+func (ce *CallExpression) GetKwargsUnpack() Expression {
+	if ce.overflow == nil {
+		return nil
+	}
+	return ce.overflow.KwargsUnpack
+}
+
+func (ce *CallExpression) SetOverflow(keywords map[string]Expression, argsUnpack []Expression, kwargsUnpack Expression) {
+	if keywords == nil && argsUnpack == nil && kwargsUnpack == nil {
+		return
+	}
+	ce.overflow = &CallOverflow{
+		Keywords:     keywords,
+		ArgsUnpack:   argsUnpack,
+		KwargsUnpack: kwargsUnpack,
+	}
+}
+
+func (ce *CallExpression) HasOverflow() bool {
+	return ce.overflow != nil
 }
 
 func (ce *CallExpression) expressionNode()      {}
@@ -625,24 +671,61 @@ func (ce *CallExpression) Line() int {
 	if line := lineOfExprSlice(ce.Arguments); line != 0 {
 		return line
 	}
-	for _, expr := range ce.Keywords {
-		if line := lineOfExpr(expr); line != 0 {
+	if ce.overflow != nil {
+		for _, expr := range ce.overflow.Keywords {
+			if line := lineOfExpr(expr); line != 0 {
+				return line
+			}
+		}
+		if line := lineOfExprSlice(ce.overflow.ArgsUnpack); line != 0 {
 			return line
 		}
+		return lineOfExpr(ce.overflow.KwargsUnpack)
 	}
-	if line := lineOfExprSlice(ce.ArgsUnpack); line != 0 {
-		return line
-	}
-	return lineOfExpr(ce.KwargsUnpack)
+	return 0
 }
 
 type MethodCallExpression struct {
-	Receiver     Expression
-	Method       *Identifier
-	Arguments    []Expression
-	Keywords     map[string]Expression
-	ArgsUnpack   []Expression
-	KwargsUnpack Expression
+	Receiver  Expression
+	Method    *Identifier
+	Arguments []Expression
+	overflow  *CallOverflow
+}
+
+func (mce *MethodCallExpression) GetKeywords() map[string]Expression {
+	if mce.overflow == nil {
+		return nil
+	}
+	return mce.overflow.Keywords
+}
+
+func (mce *MethodCallExpression) GetArgsUnpack() []Expression {
+	if mce.overflow == nil {
+		return nil
+	}
+	return mce.overflow.ArgsUnpack
+}
+
+func (mce *MethodCallExpression) GetKwargsUnpack() Expression {
+	if mce.overflow == nil {
+		return nil
+	}
+	return mce.overflow.KwargsUnpack
+}
+
+func (mce *MethodCallExpression) SetOverflow(keywords map[string]Expression, argsUnpack []Expression, kwargsUnpack Expression) {
+	if keywords == nil && argsUnpack == nil && kwargsUnpack == nil {
+		return
+	}
+	mce.overflow = &CallOverflow{
+		Keywords:     keywords,
+		ArgsUnpack:   argsUnpack,
+		KwargsUnpack: kwargsUnpack,
+	}
+}
+
+func (mce *MethodCallExpression) HasOverflow() bool {
+	return mce.overflow != nil
 }
 
 func (mce *MethodCallExpression) expressionNode()      {}
@@ -657,15 +740,18 @@ func (mce *MethodCallExpression) Line() int {
 	if line := lineOfExprSlice(mce.Arguments); line != 0 {
 		return line
 	}
-	for _, expr := range mce.Keywords {
-		if line := lineOfExpr(expr); line != 0 {
+	if mce.overflow != nil {
+		for _, expr := range mce.overflow.Keywords {
+			if line := lineOfExpr(expr); line != 0 {
+				return line
+			}
+		}
+		if line := lineOfExprSlice(mce.overflow.ArgsUnpack); line != 0 {
 			return line
 		}
+		return lineOfExpr(mce.overflow.KwargsUnpack)
 	}
-	if line := lineOfExprSlice(mce.ArgsUnpack); line != 0 {
-		return line
-	}
-	return lineOfExpr(mce.KwargsUnpack)
+	return 0
 }
 
 type ReturnStatement struct {

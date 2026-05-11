@@ -309,17 +309,17 @@ func TestCallExpression(t *testing.T) {
 		Arguments: []Expression{
 			&StringLiteral{Value: "hello"},
 		},
-		Keywords: map[string]Expression{
-			"sep": &StringLiteral{Value: ", "},
-		},
 	}
+	expr.SetOverflow(map[string]Expression{
+		"sep": &StringLiteral{Value: ", "},
+	}, nil, nil)
 
 	if len(expr.Arguments) != 1 {
 		t.Errorf("expr.Arguments length = %d, want 1", len(expr.Arguments))
 	}
 
-	if len(expr.Keywords) != 1 {
-		t.Errorf("expr.Keywords length = %d, want 1", len(expr.Keywords))
+	if len(expr.GetKeywords()) != 1 {
+		t.Errorf("expr.Keywords length = %d, want 1", len(expr.GetKeywords()))
 	}
 }
 
@@ -330,8 +330,8 @@ func TestMethodCallExpression(t *testing.T) {
 		Arguments: []Expression{
 			&IntegerLiteral{Value: 1},
 		},
-		Keywords: map[string]Expression{},
 	}
+	expr.SetOverflow(map[string]Expression{}, nil, nil)
 
 	if expr.Receiver == nil || expr.Method == nil {
 		t.Error("Method call expression parts should not be nil")

@@ -24,19 +24,19 @@ func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression
 	// dict.get(key) and dict.get(key, default) without kwargs or unpacking.
 	if dict, ok := obj.(*object.Dict); ok && mce.Method.Value() == "get" &&
 		!dictCallableMethodExists(dict, "get") &&
-		len(mce.Keywords) == 0 && len(mce.ArgsUnpack) == 0 && mce.KwargsUnpack == nil &&
+		!mce.HasOverflow() &&
 		(len(mce.Arguments) == 1 || len(mce.Arguments) == 2) {
 		return evalFastDictGet(ctx, dict, mce.Arguments, env)
 	}
 
 	if dict, ok := obj.(*object.Dict); ok &&
-		len(mce.Keywords) == 0 && len(mce.ArgsUnpack) == 0 && mce.KwargsUnpack == nil &&
+		!mce.HasOverflow() &&
 		dictCallableMethodExists(dict, mce.Method.Value()) {
 		return evalFastDictCallableMethod(ctx, dict, mce.Method.Value(), mce.Arguments, env)
 	}
 
 	// Fast path for the most common string method calls in hot loops.
-	if len(mce.Arguments) == 0 && len(mce.Keywords) == 0 && len(mce.ArgsUnpack) == 0 && mce.KwargsUnpack == nil {
+	if len(mce.Arguments) == 0 && !mce.HasOverflow() {
 		if str, ok := obj.(*object.String); ok {
 			switch mce.Method.Value() {
 			case "upper":
@@ -54,9 +54,10 @@ func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression
 
 	// Evaluate keyword arguments
 	var keywords map[string]object.Object
-	if len(mce.Keywords) > 0 {
-		keywords = make(map[string]object.Object, len(mce.Keywords))
-		for k, v := range mce.Keywords {
+	mceKeywords := mce.GetKeywords()
+	if len(mceKeywords) > 0 {
+		keywords = make(map[string]object.Object, len(mceKeywords))
+		for k, v := range mceKeywords {
 			val := evalNode(ctx, v, env)
 			if object.IsError(val) {
 				return val
@@ -66,7 +67,7 @@ func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression
 	}
 
 	// Handle *args unpacking (supports multiple)
-	for _, argsUnpackExpr := range mce.ArgsUnpack {
+	for _, argsUnpackExpr := range mce.GetArgsUnpack() {
 		argsVal := evalNode(ctx, argsUnpackExpr, env)
 		if object.IsError(argsVal) {
 			return argsVal
@@ -79,8 +80,9 @@ func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression
 	}
 
 	// Handle **kwargs unpacking
-	if mce.KwargsUnpack != nil {
-		kwargsVal := evalNode(ctx, mce.KwargsUnpack, env)
+	mceKwargsUnpack := mce.GetKwargsUnpack()
+	if mceKwargsUnpack != nil {
+		kwargsVal := evalNode(ctx, mceKwargsUnpack, env)
 		if object.IsError(kwargsVal) {
 			return kwargsVal
 		}
