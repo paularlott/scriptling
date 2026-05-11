@@ -534,6 +534,7 @@ type Function struct {
 	Env              *Environment
 	LocalSlots       map[string]int
 	LocalSlotNames   []string
+	LocalSlotNameIDs []uint32
 	ParamSlotIndexes []int
 	ReuseCallEnv     bool
 }
@@ -561,6 +562,7 @@ type LambdaFunction struct {
 	Env              *Environment
 	LocalSlots       map[string]int
 	LocalSlotNames   []string
+	LocalSlotNameIDs []uint32
 	ParamSlotIndexes []int
 }
 
@@ -747,6 +749,7 @@ type Environment struct {
 	store                      map[string]Object
 	slotIndex                  map[string]int
 	slotNames                  []string
+	slotNameIDs                []uint32
 	slots                      []Object
 	callPoolSlots              uint8
 	outer                      *Environment
@@ -798,11 +801,12 @@ func NewEnclosedEnvironment(outer *Environment) *Environment {
 	return env
 }
 
-func NewEnclosedEnvironmentWithSlots(outer *Environment, slotIndex map[string]int, slotNames []string) *Environment {
+func NewEnclosedEnvironmentWithSlots(outer *Environment, slotIndex map[string]int, slotNames []string, slotNameIDs []uint32) *Environment {
 	env := NewEnclosedEnvironment(outer)
 	if len(slotIndex) > 0 {
 		env.slotIndex = slotIndex
 		env.slotNames = slotNames
+		env.slotNameIDs = slotNameIDs
 		env.slots = make([]Object, len(slotNames))
 	}
 	return env
@@ -814,13 +818,14 @@ var callEnvPools [maxPooledCallEnvSlots + 1]sync.Pool
 
 // AcquireCallEnvironment returns a function-call environment, reusing a pooled
 // frame for small slot counts when possible.
-func AcquireCallEnvironment(outer *Environment, slotIndex map[string]int, slotNames []string) *Environment {
+func AcquireCallEnvironment(outer *Environment, slotIndex map[string]int, slotNames []string, slotNameIDs []uint32) *Environment {
 	slotCount := len(slotNames)
 	if slotCount > 0 && slotCount <= maxPooledCallEnvSlots {
 		if pooled := callEnvPools[slotCount].Get(); pooled != nil {
 			env := pooled.(*Environment)
 			env.slotIndex = slotIndex
 			env.slotNames = slotNames
+			env.slotNameIDs = slotNameIDs
 			env.callPoolSlots = uint8(slotCount)
 			env.outer = outer
 			if outer != nil {
@@ -835,11 +840,11 @@ func AcquireCallEnvironment(outer *Environment, slotIndex map[string]int, slotNa
 			}
 			return env
 		}
-		env := NewEnclosedEnvironmentWithSlots(outer, slotIndex, slotNames)
+		env := NewEnclosedEnvironmentWithSlots(outer, slotIndex, slotNames, slotNameIDs)
 		env.callPoolSlots = uint8(slotCount)
 		return env
 	}
-	return NewEnclosedEnvironmentWithSlots(outer, slotIndex, slotNames)
+	return NewEnclosedEnvironmentWithSlots(outer, slotIndex, slotNames, slotNameIDs)
 }
 
 // ReleaseCallEnvironment clears and returns a pooled call environment back to
@@ -921,20 +926,24 @@ func (e *Environment) HasSlots() bool {
 }
 
 // SetupSlots configures slot-based variable access on this environment.
-func (e *Environment) SetupSlots(slotIndex map[string]int, slotNames []string) {
+func (e *Environment) SetupSlots(slotIndex map[string]int, slotNames []string, slotNameIDs []uint32) {
 	e.slotIndex = slotIndex
 	e.slotNames = slotNames
+	e.slotNameIDs = slotNameIDs
 	e.slots = make([]Object, len(slotNames))
 }
 
 // ExtendSlots adds new variables to the existing slot layout. Variables
 // already present keep their existing indices. New variables are appended.
-func (e *Environment) ExtendSlots(slotIndex map[string]int, slotNames []string) {
-	for _, name := range slotNames {
+func (e *Environment) ExtendSlots(slotIndex map[string]int, slotNames []string, slotNameIDs []uint32) {
+	for i, name := range slotNames {
 		if _, exists := e.slotIndex[name]; !exists {
 			idx := len(e.slotNames)
 			e.slotIndex[name] = idx
 			e.slotNames = append(e.slotNames, name)
+			if i < len(slotNameIDs) {
+				e.slotNameIDs = append(e.slotNameIDs, slotNameIDs[i])
+			}
 			e.slots = append(e.slots, nil)
 		}
 	}
@@ -961,6 +970,15 @@ func (e *Environment) GetCachedSlot(idx int, name string) (Object, bool) {
 	return nil, false
 }
 
+func (e *Environment) GetCachedSlotByID(idx int, nameID uint32) (Object, bool) {
+	if idx >= 0 && idx < len(e.slots) && idx < len(e.slotNameIDs) && e.slotNameIDs[idx] == nameID {
+		if e.slots[idx] != nil {
+			return e.slots[idx], true
+		}
+	}
+	return nil, false
+}
+
 // SetCachedSlot stores val at the given slot index after validating
 // that the slot name matches. Returns false if the cache is stale,
 // falling through to the full Set path.
@@ -968,6 +986,14 @@ func (e *Environment) SetCachedSlot(idx int, name string, val Object) bool {
 	if idx >= 0 && idx < len(e.slots) && idx < len(e.slotNames) && e.slotNames[idx] == name {
 		e.slots[idx] = val
 		delete(e.importedBindings, name)
+		return true
+	}
+	return false
+}
+
+func (e *Environment) SetCachedSlotByID(idx int, nameID uint32, val Object) bool {
+	if idx >= 0 && idx < len(e.slots) && idx < len(e.slotNameIDs) && e.slotNameIDs[idx] == nameID {
+		e.slots[idx] = val
 		return true
 	}
 	return false
@@ -1201,6 +1227,7 @@ func (s *CallableSnapshot) ApplySnapshot(target *Environment) {
 			Env:              target,
 			LocalSlots:       v.LocalSlots,
 			LocalSlotNames:   v.LocalSlotNames,
+			LocalSlotNameIDs: v.LocalSlotNameIDs,
 			ParamSlotIndexes: v.ParamSlotIndexes,
 			ReuseCallEnv:     v.ReuseCallEnv,
 		}
@@ -1215,6 +1242,7 @@ func (s *CallableSnapshot) ApplySnapshot(target *Environment) {
 			Env:              target,
 			LocalSlots:       v.LocalSlots,
 			LocalSlotNames:   v.LocalSlotNames,
+			LocalSlotNameIDs: v.LocalSlotNameIDs,
 			ParamSlotIndexes: v.ParamSlotIndexes,
 		}
 	}

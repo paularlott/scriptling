@@ -404,11 +404,11 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 
 func evalProgram(ctx context.Context, program *ast.Program, env *object.Environment) object.Object {
 	// Set up slots for top-level variables to enable fast slot-based access.
-	if slotIndex, slotNames := analyzeTopLevelLocals(program); slotIndex != nil {
+	if slotIndex, slotNames, slotNameIDs := analyzeTopLevelLocals(program); slotIndex != nil {
 		if !env.HasSlots() {
-			env.SetupSlots(slotIndex, slotNames)
+			env.SetupSlots(slotIndex, slotNames, slotNameIDs)
 		} else {
-			env.ExtendSlots(slotIndex, slotNames)
+			env.ExtendSlots(slotIndex, slotNames, slotNameIDs)
 		}
 	}
 
@@ -1390,7 +1390,7 @@ func evalIdentifier(node *ast.Identifier, env *object.Environment) object.Object
 	// Fast path: use cached slot index to skip the slotIndex map lookup.
 	// SlotCache encoding: 0=uncached, -1=not a local slot, >0=slot index+1.
 	if cached := node.SlotCache.Load(); cached > 0 {
-		if val, ok := env.GetCachedSlot(int(cached-1), node.Value()); ok {
+		if val, ok := env.GetCachedSlotByID(int(cached-1), node.Name); ok {
 			return val
 		}
 		// Cache miss (wrong scope or stale index), fall through to full lookup.
@@ -1415,7 +1415,7 @@ func evalIdentifier(node *ast.Identifier, env *object.Environment) object.Object
 }
 
 func evalFunctionStatement(ctx context.Context, stmt *ast.FunctionStatement, env *object.Environment) object.Object {
-	localSlots, localSlotNames := analyzeFunctionLocals(stmt)
+	localSlots, localSlotNames, localSlotNameIDs := analyzeFunctionLocals(stmt)
 	fn := &object.Function{
 		Name:             stmt.Name.Value(),
 		Parameters:       stmt.Function.Parameters,
@@ -1426,6 +1426,7 @@ func evalFunctionStatement(ctx context.Context, stmt *ast.FunctionStatement, env
 		Env:              env,
 		LocalSlots:       localSlots,
 		LocalSlotNames:   localSlotNames,
+		LocalSlotNameIDs: localSlotNameIDs,
 		ParamSlotIndexes: stmt.Function.ParamSlotIndexes,
 		ReuseCallEnv:     !stmt.Function.HasNestedFunc,
 	}
@@ -1815,9 +1816,9 @@ func applyUserFunctionDirect(ctx context.Context, fn *object.Function, arg objec
 
 	var extendedEnv *object.Environment
 	if fn.ReuseCallEnv {
-		extendedEnv = object.AcquireCallEnvironment(fn.Env, fn.LocalSlots, fn.LocalSlotNames)
+		extendedEnv = object.AcquireCallEnvironment(fn.Env, fn.LocalSlots, fn.LocalSlotNames, fn.LocalSlotNameIDs)
 	} else {
-		extendedEnv = object.NewEnclosedEnvironmentWithSlots(fn.Env, fn.LocalSlots, fn.LocalSlotNames)
+		extendedEnv = object.NewEnclosedEnvironmentWithSlots(fn.Env, fn.LocalSlots, fn.LocalSlotNames, fn.LocalSlotNameIDs)
 	}
 	defer object.ReleaseCallEnvironment(extendedEnv)
 
@@ -1850,9 +1851,9 @@ func applyUserFunction2(ctx context.Context, fn *object.Function, a0, a1 object.
 
 	var extendedEnv *object.Environment
 	if fn.ReuseCallEnv {
-		extendedEnv = object.AcquireCallEnvironment(fn.Env, fn.LocalSlots, fn.LocalSlotNames)
+		extendedEnv = object.AcquireCallEnvironment(fn.Env, fn.LocalSlots, fn.LocalSlotNames, fn.LocalSlotNameIDs)
 	} else {
-		extendedEnv = object.NewEnclosedEnvironmentWithSlots(fn.Env, fn.LocalSlots, fn.LocalSlotNames)
+		extendedEnv = object.NewEnclosedEnvironmentWithSlots(fn.Env, fn.LocalSlots, fn.LocalSlotNames, fn.LocalSlotNameIDs)
 	}
 	defer object.ReleaseCallEnvironment(extendedEnv)
 
@@ -1885,9 +1886,9 @@ func applyUserFunctionN(ctx context.Context, fn *object.Function, args ...object
 
 	var extendedEnv *object.Environment
 	if fn.ReuseCallEnv {
-		extendedEnv = object.AcquireCallEnvironment(fn.Env, fn.LocalSlots, fn.LocalSlotNames)
+		extendedEnv = object.AcquireCallEnvironment(fn.Env, fn.LocalSlots, fn.LocalSlotNames, fn.LocalSlotNameIDs)
 	} else {
-		extendedEnv = object.NewEnclosedEnvironmentWithSlots(fn.Env, fn.LocalSlots, fn.LocalSlotNames)
+		extendedEnv = object.NewEnclosedEnvironmentWithSlots(fn.Env, fn.LocalSlots, fn.LocalSlotNames, fn.LocalSlotNameIDs)
 	}
 	defer object.ReleaseCallEnvironment(extendedEnv)
 
@@ -2004,6 +2005,7 @@ type funcParams struct {
 	parentEnv        *object.Environment
 	localSlots       map[string]int
 	localSlotNames   []string
+	localSlotNameIDs []uint32
 	paramSlotIndexes []int
 	reuseCallEnv     bool
 }
@@ -2012,9 +2014,9 @@ type funcParams struct {
 func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[string]object.Object) (*object.Environment, object.Object) {
 	var env *object.Environment
 	if fp.reuseCallEnv {
-		env = object.AcquireCallEnvironment(fp.parentEnv, fp.localSlots, fp.localSlotNames)
+		env = object.AcquireCallEnvironment(fp.parentEnv, fp.localSlots, fp.localSlotNames, fp.localSlotNameIDs)
 	} else {
-		env = object.NewEnclosedEnvironmentWithSlots(fp.parentEnv, fp.localSlots, fp.localSlotNames)
+		env = object.NewEnclosedEnvironmentWithSlots(fp.parentEnv, fp.localSlots, fp.localSlotNames, fp.localSlotNameIDs)
 	}
 
 	numParams := len(fp.parameters)
@@ -2177,6 +2179,7 @@ func extendFunctionEnv(fn *object.Function, args []object.Object, keywords map[s
 		parentEnv:        fn.Env,
 		localSlots:       fn.LocalSlots,
 		localSlotNames:   fn.LocalSlotNames,
+		localSlotNameIDs: fn.LocalSlotNameIDs,
 		paramSlotIndexes: fn.ParamSlotIndexes,
 		reuseCallEnv:     fn.ReuseCallEnv,
 	}, args, keywords)
@@ -2191,25 +2194,26 @@ func extendLambdaEnv(fn *object.LambdaFunction, args []object.Object, keywords m
 		parentEnv:        fn.Env,
 		localSlots:       fn.LocalSlots,
 		localSlotNames:   fn.LocalSlotNames,
+		localSlotNameIDs: fn.LocalSlotNameIDs,
 		paramSlotIndexes: fn.ParamSlotIndexes,
 	}, args, keywords)
 }
 
-func analyzeFunctionLocals(stmt *ast.FunctionStatement) (map[string]int, []string) {
+func analyzeFunctionLocals(stmt *ast.FunctionStatement) (map[string]int, []string, []uint32) {
 	if stmt.Function.LocalSlots != nil {
-		return stmt.Function.LocalSlots, stmt.Function.LocalSlotNames
+		return stmt.Function.LocalSlots, stmt.Function.LocalSlotNames, stmt.Function.LocalSlotNameIDs
 	}
-	return nil, nil
+	return nil, nil, nil
 }
 
 // analyzeTopLevelLocals finds all assigned variables in a top-level program
 // and returns slot index mapping and ordered names.
-func analyzeTopLevelLocals(program *ast.Program) (map[string]int, []string) {
-	return program.LocalSlots, program.LocalSlotNames
+func analyzeTopLevelLocals(program *ast.Program) (map[string]int, []string, []uint32) {
+	return program.LocalSlots, program.LocalSlotNames, program.LocalSlotNameIDs
 }
 
-func analyzeLambdaLocals(lambda *ast.Lambda) (map[string]int, []string) {
-	return lambda.LocalSlots, lambda.LocalSlotNames
+func analyzeLambdaLocals(lambda *ast.Lambda) (map[string]int, []string, []uint32) {
+	return lambda.LocalSlots, lambda.LocalSlotNames, lambda.LocalSlotNameIDs
 }
 
 func unwrapReturnValue(obj object.Object) object.Object {
@@ -3438,7 +3442,7 @@ func assignToExpression(ctx context.Context, expr ast.Expression, value object.O
 	case *ast.Identifier:
 		// Fast path: use cached slot index with name validation.
 		if cached := left.SlotCache.Load(); cached > 0 {
-			if env.SetCachedSlot(int(cached-1), left.Value(), value) {
+			if env.SetCachedSlotByID(int(cached-1), left.Name, value) {
 				return nil
 			}
 		}
@@ -3708,7 +3712,7 @@ func setForVariable(varExpr ast.Expression, value object.Object, env *object.Env
 
 func setIdentifierFast(target *ast.Identifier, value object.Object, env *object.Environment) {
 	if cached := target.SlotCache.Load(); cached > 0 {
-		if env.SetCachedSlot(int(cached-1), target.Value(), value) {
+		if env.SetCachedSlotByID(int(cached-1), target.Name, value) {
 			return
 		}
 	}
@@ -4414,7 +4418,7 @@ func evalSetComprehension(ctx context.Context, sc *ast.SetComprehension, env *ob
 }
 
 func evalLambda(lambda *ast.Lambda, env *object.Environment) object.Object {
-	localSlots, localSlotNames := analyzeLambdaLocals(lambda)
+	localSlots, localSlotNames, localSlotNameIDs := analyzeLambdaLocals(lambda)
 	return &object.LambdaFunction{
 		Parameters:       lambda.Parameters,
 		DefaultValues:    lambda.GetDefaultValues(),
@@ -4424,6 +4428,7 @@ func evalLambda(lambda *ast.Lambda, env *object.Environment) object.Object {
 		Env:              env,
 		LocalSlots:       localSlots,
 		LocalSlotNames:   localSlotNames,
+		LocalSlotNameIDs: localSlotNameIDs,
 		ParamSlotIndexes: lambda.ParamSlotIndexes,
 	}
 }

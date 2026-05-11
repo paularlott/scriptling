@@ -75,7 +75,7 @@ func BenchmarkEnvironmentSlotGet(b *testing.B) {
 		"x":    0,
 		"y":    1,
 		"name": 2,
-	}, []string{"x", "y", "name"})
+	}, []string{"x", "y", "name"}, nil)
 	env.Set("x", NewInteger(1))
 	env.Set("y", NewInteger(2))
 	env.Set("name", NewString("test"))
@@ -93,7 +93,7 @@ func BenchmarkEnvironmentSlotSet(b *testing.B) {
 		"x": 0,
 		"y": 1,
 		"z": 2,
-	}, []string{"x", "y", "z"})
+	}, []string{"x", "y", "z"}, nil)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
