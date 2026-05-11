@@ -2,6 +2,7 @@ package scriptling
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -312,6 +313,40 @@ func TestCache_DifferentScriptsDifferentHashes(t *testing.T) {
 	h2 := hashScript("script_b")
 	if h1 == h2 {
 		t.Fatal("different scripts produced the same dual hash (astronomically unlikely)")
+	}
+}
+
+func TestCache_LongScriptsDifferingOutsideWindows(t *testing.T) {
+	c := newTestCache(10)
+
+	prefix := strings.Repeat("a", 64)
+	suffix := strings.Repeat("z", 64)
+	middle := strings.Repeat("x", 64)
+
+	scriptA := prefix + "AAAA" + middle + "BBBB" + suffix
+	scriptB := prefix + "CCCC" + middle + "DDDD" + suffix
+
+	if len(scriptA) != len(scriptB) {
+		t.Fatalf("expected equal length scripts, got %d and %d", len(scriptA), len(scriptB))
+	}
+	if scriptA == scriptB {
+		t.Fatal("scripts should differ")
+	}
+
+	progA := dummyProgram("script-a")
+	progB := dummyProgram("script-b")
+
+	c.set(scriptA, progA)
+	c.set(scriptB, progB)
+
+	gotA, ok := c.get(scriptA)
+	if !ok || gotA != progA {
+		t.Fatal("expected scriptA to retrieve its own cached program, not scriptB's")
+	}
+
+	gotB, ok := c.get(scriptB)
+	if !ok || gotB != progB {
+		t.Fatal("expected scriptB to retrieve its own cached program, not scriptA's")
 	}
 }
 
