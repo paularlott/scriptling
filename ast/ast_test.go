@@ -261,18 +261,21 @@ func TestFunctionLiteral(t *testing.T) {
 			testIdentifier("x"),
 			testIdentifier("y"),
 		},
-		DefaultValues: map[string]Expression{
+		Body: &BlockStatement{},
+	}
+	fn.SetFuncOverflow(
+		map[string]Expression{
 			"y": &IntegerLiteral{Value: 5},
 		},
-		Variadic: testIdentifier("args"),
-		Body:     &BlockStatement{},
-	}
+		testIdentifier("args"),
+		nil,
+	)
 
 	if len(fn.Parameters) != 2 {
 		t.Errorf("fn.Parameters length = %d, want 2", len(fn.Parameters))
 	}
 
-	if fn.Variadic == nil || fn.Body == nil {
+	if fn.GetVariadic() == nil || fn.Body == nil {
 		t.Error("Function literal parts should not be nil")
 	}
 }
@@ -568,9 +571,7 @@ func TestLambda(t *testing.T) {
 		Parameters: []*Identifier{
 			testIdentifier("x"),
 		},
-		DefaultValues: map[string]Expression{},
-		Variadic:      nil,
-		Body:          &InfixExpression{Operator: OpAdd},
+		Body: &InfixExpression{Operator: OpAdd},
 	}
 
 	if len(lambda.Parameters) != 1 {

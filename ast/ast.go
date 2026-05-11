@@ -563,11 +563,15 @@ func (ws *WhileStatement) statementNode()       {}
 func (ws *WhileStatement) TokenLiteral() string { return "while" }
 func (ws *WhileStatement) Line() int            { return int(ws.Token.Line) }
 
-type FunctionLiteral struct {
-	Parameters    []*Identifier
+type FuncOverflow struct {
 	DefaultValues map[string]Expression
 	Variadic      *Identifier
 	Kwargs        *Identifier
+}
+
+type FunctionLiteral struct {
+	Parameters    []*Identifier
+	overflow      *FuncOverflow
 	Body          *BlockStatement
 	HasNestedFunc bool
 
@@ -576,26 +580,76 @@ type FunctionLiteral struct {
 	ParamSlotIndexes []int
 }
 
+func (fl *FunctionLiteral) GetDefaultValues() map[string]Expression {
+	if fl.overflow == nil {
+		return nil
+	}
+	return fl.overflow.DefaultValues
+}
+
+func (fl *FunctionLiteral) GetVariadic() *Identifier {
+	if fl.overflow == nil {
+		return nil
+	}
+	return fl.overflow.Variadic
+}
+
+func (fl *FunctionLiteral) GetKwargs() *Identifier {
+	if fl.overflow == nil {
+		return nil
+	}
+	return fl.overflow.Kwargs
+}
+
+func (fl *FunctionLiteral) SetFuncOverflow(dv map[string]Expression, variadic, kwargs *Identifier) {
+	if dv == nil && variadic == nil && kwargs == nil {
+		return
+	}
+	fl.overflow = &FuncOverflow{
+		DefaultValues: dv,
+		Variadic:      variadic,
+		Kwargs:        kwargs,
+	}
+}
+
 func (fl *FunctionLiteral) expressionNode()      {}
 func (fl *FunctionLiteral) TokenLiteral() string { return "def" }
 func (fl *FunctionLiteral) Line() int {
 	if line := lineOfIdentifierSlice(fl.Parameters); line != 0 {
 		return line
 	}
-	if line := lineOfIdentifier(fl.Variadic); line != 0 {
+	if line := lineOfIdentifier(fl.GetVariadic()); line != 0 {
 		return line
 	}
-	if line := lineOfIdentifier(fl.Kwargs); line != 0 {
+	if line := lineOfIdentifier(fl.GetKwargs()); line != 0 {
 		return line
 	}
 	return lineOfStatement(fl.Body)
 }
 
+type DecoratorsOverflow struct {
+	Decorators []Expression
+}
+
 type FunctionStatement struct {
-	Token      LineInfo
-	Name       *Identifier
-	Function   *FunctionLiteral
-	Decorators []Expression // @decorator expressions, outermost first
+	Token    LineInfo
+	Name     *Identifier
+	Function *FunctionLiteral
+	overflow *DecoratorsOverflow
+}
+
+func (fs *FunctionStatement) GetDecorators() []Expression {
+	if fs.overflow == nil {
+		return nil
+	}
+	return fs.overflow.Decorators
+}
+
+func (fs *FunctionStatement) SetDecorators(decorators []Expression) {
+	if decorators == nil {
+		return
+	}
+	fs.overflow = &DecoratorsOverflow{Decorators: decorators}
 }
 
 func (fs *FunctionStatement) statementNode()       {}
@@ -603,11 +657,25 @@ func (fs *FunctionStatement) TokenLiteral() string { return "def" }
 func (fs *FunctionStatement) Line() int            { return int(fs.Token.Line) }
 
 type ClassStatement struct {
-	Token      LineInfo
-	Name       *Identifier
-	BaseClass  Expression // optional base class for inheritance (can be dotted like html.parser.HTMLParser)
-	Body       *BlockStatement
-	Decorators []Expression // @decorator expressions, outermost first
+	Token     LineInfo
+	Name      *Identifier
+	BaseClass Expression
+	Body      *BlockStatement
+	overflow  *DecoratorsOverflow
+}
+
+func (cs *ClassStatement) GetDecorators() []Expression {
+	if cs.overflow == nil {
+		return nil
+	}
+	return cs.overflow.Decorators
+}
+
+func (cs *ClassStatement) SetDecorators(decorators []Expression) {
+	if decorators == nil {
+		return
+	}
+	cs.overflow = &DecoratorsOverflow{Decorators: decorators}
 }
 
 func (cs *ClassStatement) statementNode()       {}
@@ -1053,15 +1121,45 @@ func (sc *SetComprehension) Line() int {
 }
 
 type Lambda struct {
-	Parameters    []*Identifier
-	DefaultValues map[string]Expression
-	Variadic      *Identifier
-	Kwargs        *Identifier
-	Body          Expression
+	Parameters []*Identifier
+	overflow   *FuncOverflow
+	Body       Expression
 
 	LocalSlots       map[string]int
 	LocalSlotNames   []string
 	ParamSlotIndexes []int
+}
+
+func (l *Lambda) GetDefaultValues() map[string]Expression {
+	if l.overflow == nil {
+		return nil
+	}
+	return l.overflow.DefaultValues
+}
+
+func (l *Lambda) GetVariadic() *Identifier {
+	if l.overflow == nil {
+		return nil
+	}
+	return l.overflow.Variadic
+}
+
+func (l *Lambda) GetKwargs() *Identifier {
+	if l.overflow == nil {
+		return nil
+	}
+	return l.overflow.Kwargs
+}
+
+func (l *Lambda) SetFuncOverflow(dv map[string]Expression, variadic, kwargs *Identifier) {
+	if dv == nil && variadic == nil && kwargs == nil {
+		return
+	}
+	l.overflow = &FuncOverflow{
+		DefaultValues: dv,
+		Variadic:      variadic,
+		Kwargs:        kwargs,
+	}
 }
 
 func (l *Lambda) expressionNode()      {}
@@ -1070,10 +1168,10 @@ func (l *Lambda) Line() int {
 	if line := lineOfIdentifierSlice(l.Parameters); line != 0 {
 		return line
 	}
-	if line := lineOfIdentifier(l.Variadic); line != 0 {
+	if line := lineOfIdentifier(l.GetVariadic()); line != 0 {
 		return line
 	}
-	if line := lineOfIdentifier(l.Kwargs); line != 0 {
+	if line := lineOfIdentifier(l.GetKwargs()); line != 0 {
 		return line
 	}
 	return lineOfExpr(l.Body)

@@ -75,11 +75,11 @@ func AnalyzeFunctionLocals(fn *FunctionLiteral) {
 	for _, param := range fn.Parameters {
 		addName(param.Value())
 	}
-	if fn.Variadic != nil {
-		addName(fn.Variadic.Value())
+	if fn.GetVariadic() != nil {
+		addName(fn.GetVariadic().Value())
 	}
-	if fn.Kwargs != nil {
-		addName(fn.Kwargs.Value())
+	if fn.GetKwargs() != nil {
+		addName(fn.GetKwargs().Value())
 	}
 
 	globals, nonlocals := collectScopeDirectives(fn.Body)
@@ -99,11 +99,11 @@ func AnalyzeLambdaLocals(lambda *Lambda) {
 	for _, param := range lambda.Parameters {
 		names = append(names, param.Value())
 	}
-	if lambda.Variadic != nil {
-		names = append(names, lambda.Variadic.Value())
+	if lambda.GetVariadic() != nil {
+		names = append(names, lambda.GetVariadic().Value())
 	}
-	if lambda.Kwargs != nil {
-		names = append(names, lambda.Kwargs.Value())
+	if lambda.GetKwargs() != nil {
+		names = append(names, lambda.GetKwargs().Value())
 	}
 	if len(names) == 0 {
 		return
