@@ -2349,29 +2349,27 @@ func evalImportStatement(is *ast.ImportStatement, env *object.Environment) objec
 	}
 
 	// Handle alias if present
-	if is.Alias != nil {
+	if is.GetAlias() != nil {
 		moduleObj := getModuleByPath(env, is.Name.Value())
 		if moduleObj != nil {
-			env.Set(is.Alias.Value(), moduleObj)
+			env.Set(is.GetAlias().Value(), moduleObj)
 			if _, ok := moduleObj.(*object.Dict); ok {
-				env.MarkImportedBinding(is.Alias.Value())
+				env.MarkImportedBinding(is.GetAlias().Value())
 			}
 		}
 	}
 
-	// Import additional libraries if any
-	for i, name := range is.AdditionalNames {
+	for i, name := range is.GetAdditionalNames() {
 		if err := importCallback(name.Value()); err != nil {
 			return errors.NewError("%s: %s", errors.ErrImportError, err.Error())
 		}
 
-		// Handle alias for this additional import if present
-		if i < len(is.AdditionalAliases) && is.AdditionalAliases[i] != nil {
+		if i < len(is.GetAdditionalAliases()) && is.GetAdditionalAliases()[i] != nil {
 			moduleObj := getModuleByPath(env, name.Value())
 			if moduleObj != nil {
-				env.Set(is.AdditionalAliases[i].Value(), moduleObj)
+				env.Set(is.GetAdditionalAliases()[i].Value(), moduleObj)
 				if _, ok := moduleObj.(*object.Dict); ok {
-					env.MarkImportedBinding(is.AdditionalAliases[i].Value())
+					env.MarkImportedBinding(is.GetAdditionalAliases()[i].Value())
 				}
 			}
 		}
@@ -3180,8 +3178,8 @@ func evalSliceObjectWithContext(ctx context.Context, node *ast.SliceExpression, 
 		sliceObj.End = object.NewInteger(end)
 	}
 
-	if node.Step != nil {
-		stepObj := evalNode(ctx, node.Step, env)
+	if node.GetStep() != nil {
+		stepObj := evalNode(ctx, node.GetStep(), env)
 		if object.IsError(stepObj) || isException(stepObj) {
 			return nil, stepObj
 		}
@@ -4451,12 +4449,18 @@ func evalFStringLiteral(ctx context.Context, fstr *ast.FStringLiteral, env *obje
 				return exprResult
 			}
 			// Call __str__ on instances for f-string formatting
-			if inst, ok := exprResult.(*object.Instance); ok && fstr.FormatSpecs[i] == "" {
+			specs := fstr.GetFormatSpecs()
+			specEmpty := specs == nil || specs[i] == ""
+			if inst, ok := exprResult.(*object.Instance); ok && specEmpty {
 				if result := callDunderMethod(ctx, inst, "__str__", nil, env); result != nil {
 					exprResult = result
 				}
 			}
-			formatted := formatWithSpec(exprResult, fstr.FormatSpecs[i])
+			spec := ""
+			if specs != nil {
+				spec = specs[i]
+			}
+			formatted := formatWithSpec(exprResult, spec)
 			builder.WriteString(formatted)
 		}
 	}

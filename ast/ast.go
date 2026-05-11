@@ -384,11 +384,36 @@ func (sl *StringLiteral) expressionNode()      {}
 func (sl *StringLiteral) TokenLiteral() string { return sl.Value }
 func (sl *StringLiteral) Line() int            { return 0 }
 
+type FStringOverflow struct {
+	FormatSpecs []string
+}
+
 type FStringLiteral struct {
 	Value       string
-	Expressions []Expression // expressions inside {}
-	Parts       []string     // string parts between expressions
-	FormatSpecs []string     // format specifiers for each expression (e.g., "2d" from {day:2d})
+	Expressions []Expression
+	Parts       []string
+	overflow    *FStringOverflow
+}
+
+func (fsl *FStringLiteral) GetFormatSpecs() []string {
+	if fsl.overflow == nil {
+		return nil
+	}
+	return fsl.overflow.FormatSpecs
+}
+
+func (fsl *FStringLiteral) SetFormatSpecs(specs []string) {
+	hasNonEmpty := false
+	for _, s := range specs {
+		if s != "" {
+			hasNonEmpty = true
+			break
+		}
+	}
+	if !hasNonEmpty {
+		return
+	}
+	fsl.overflow = &FStringOverflow{FormatSpecs: specs}
 }
 
 func (fsl *FStringLiteral) expressionNode()      {}
@@ -864,17 +889,73 @@ func (ds *DelStatement) statementNode()       {}
 func (ds *DelStatement) TokenLiteral() string { return "del" }
 func (ds *DelStatement) Line() int            { return int(ds.Token.Line) }
 
+type ImportOverflow struct {
+	Alias             *Identifier
+	AdditionalNames   []*Identifier
+	AdditionalAliases []*Identifier
+}
+
 type ImportStatement struct {
-	Token             LineInfo
-	Name              *Identifier   // The full dotted name stored as single identifier (e.g., "urllib.parse")
-	Alias             *Identifier   // Optional alias for 'import X as Y'
-	AdditionalNames   []*Identifier // For import lib1, lib2, lib3
-	AdditionalAliases []*Identifier // Optional aliases for additional imports (for "import lib1 as alias1, lib2 as alias2")
+	Token   LineInfo
+	Name    *Identifier
+	overflow *ImportOverflow
 }
 
 func (is *ImportStatement) statementNode()       {}
 func (is *ImportStatement) TokenLiteral() string { return "import" }
 func (is *ImportStatement) Line() int            { return int(is.Token.Line) }
+
+func (is *ImportStatement) GetAlias() *Identifier {
+	if is.overflow == nil {
+		return nil
+	}
+	return is.overflow.Alias
+}
+
+func (is *ImportStatement) GetAdditionalNames() []*Identifier {
+	if is.overflow == nil {
+		return nil
+	}
+	return is.overflow.AdditionalNames
+}
+
+func (is *ImportStatement) GetAdditionalAliases() []*Identifier {
+	if is.overflow == nil {
+		return nil
+	}
+	return is.overflow.AdditionalAliases
+}
+
+func (is *ImportStatement) SetImportOverflow(alias *Identifier, names, aliases []*Identifier) {
+	if alias == nil && names == nil && aliases == nil {
+		return
+	}
+	is.overflow = &ImportOverflow{
+		Alias:             alias,
+		AdditionalNames:   names,
+		AdditionalAliases: aliases,
+	}
+}
+
+func (is *ImportStatement) AppendAdditionalName(name *Identifier) {
+	if is.overflow == nil {
+		is.overflow = &ImportOverflow{}
+	}
+	if is.overflow.AdditionalNames == nil {
+		is.overflow.AdditionalNames = make([]*Identifier, 0, 2)
+	}
+	is.overflow.AdditionalNames = append(is.overflow.AdditionalNames, name)
+}
+
+func (is *ImportStatement) AppendAdditionalAlias(alias *Identifier) {
+	if is.overflow == nil {
+		is.overflow = &ImportOverflow{}
+	}
+	if is.overflow.AdditionalAliases == nil {
+		is.overflow.AdditionalAliases = make([]*Identifier, 0, 2)
+	}
+	is.overflow.AdditionalAliases = append(is.overflow.AdditionalAliases, alias)
+}
 
 // FullName returns the complete import name (handles dotted imports like urllib.parse)
 func (is *ImportStatement) FullName() string {
@@ -962,11 +1043,29 @@ func (ie *IndexExpression) TokenLiteral() string {
 }
 func (ie *IndexExpression) Line() int { return int(ie.Token.Line) }
 
+type SliceOverflow struct {
+	Step Expression
+}
+
 type SliceExpression struct {
 	Left  Expression
 	Start Expression
 	End   Expression
-	Step  Expression
+	overflow *SliceOverflow
+}
+
+func (se *SliceExpression) GetStep() Expression {
+	if se.overflow == nil {
+		return nil
+	}
+	return se.overflow.Step
+}
+
+func (se *SliceExpression) SetStep(step Expression) {
+	if step == nil {
+		return
+	}
+	se.overflow = &SliceOverflow{Step: step}
 }
 
 func (se *SliceExpression) expressionNode()      {}
@@ -981,7 +1080,7 @@ func (se *SliceExpression) Line() int {
 	if line := lineOfExpr(se.End); line != 0 {
 		return line
 	}
-	return lineOfExpr(se.Step)
+	return lineOfExpr(se.GetStep())
 }
 
 type ExceptClause struct {

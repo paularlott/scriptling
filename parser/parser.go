@@ -474,20 +474,17 @@ func (p *Parser) parseImportStatement() *ast.ImportStatement {
 
 	// Check for alias (as)
 	if p.peekTokenIs(token.AS) {
-		p.nextToken() // consume 'as'
+		p.nextToken()
 		if !p.expectPeek(token.IDENT) {
 			return nil
 		}
-		stmt.Alias = p.ident(p.curToken.Literal)
+		alias := p.ident(p.curToken.Literal)
+		stmt.SetImportOverflow(alias, nil, nil)
 	}
 
 	// Check for additional imports separated by commas
 	for p.peekTokenIs(token.COMMA) {
-		if stmt.AdditionalNames == nil {
-			stmt.AdditionalNames = make([]*ast.Identifier, 0, 2)
-			stmt.AdditionalAliases = make([]*ast.Identifier, 0, 2)
-		}
-		p.nextToken() // consume comma
+		p.nextToken()
 		if !p.expectPeek(token.IDENT) {
 			return nil
 		}
@@ -495,18 +492,17 @@ func (p *Parser) parseImportStatement() *ast.ImportStatement {
 		if !ok {
 			return nil
 		}
-		stmt.AdditionalNames = append(stmt.AdditionalNames, p.identWithLine(tok, addName))
+		stmt.AppendAdditionalName(p.identWithLine(tok, addName))
 
-		// Check for alias on this additional import
 		var addAlias *ast.Identifier
 		if p.peekTokenIs(token.AS) {
-			p.nextToken() // consume 'as'
+			p.nextToken()
 			if !p.expectPeek(token.IDENT) {
 				return nil
 			}
 			addAlias = p.ident(p.curToken.Literal)
 		}
-		stmt.AdditionalAliases = append(stmt.AdditionalAliases, addAlias)
+		stmt.AppendAdditionalAlias(addAlias)
 	}
 
 	return stmt
@@ -814,13 +810,17 @@ func (p *Parser) parseStringLiteral() ast.Expression {
 
 func (p *Parser) parseFStringLiteral() ast.Expression {
 	fstr := &ast.FStringLiteral{Value: strings.Clone(p.curToken.Literal)}
-	fstr.Parts, fstr.Expressions, fstr.FormatSpecs = p.parseFStringContent(p.curToken.Literal, false)
+	var specs []string
+	fstr.Parts, fstr.Expressions, specs = p.parseFStringContent(p.curToken.Literal, false)
+	fstr.SetFormatSpecs(specs)
 	return p.parseAdjacentStrings(fstr)
 }
 
 func (p *Parser) parseRawFStringLiteral() ast.Expression {
 	fstr := &ast.FStringLiteral{Value: strings.Clone(p.curToken.Literal)}
-	fstr.Parts, fstr.Expressions, fstr.FormatSpecs = p.parseFStringContent(p.curToken.Literal, true)
+	var specs []string
+	fstr.Parts, fstr.Expressions, specs = p.parseFStringContent(p.curToken.Literal, true)
+	fstr.SetFormatSpecs(specs)
 	return p.parseAdjacentStrings(fstr)
 }
 
@@ -855,7 +855,9 @@ func (p *Parser) parseAdjacentStrings(left ast.Expression) ast.Expression {
 			right = &ast.StringLiteral{Value: strings.Clone(p.curToken.Literal)}
 		} else {
 			fstr := &ast.FStringLiteral{Value: strings.Clone(p.curToken.Literal)}
-			fstr.Parts, fstr.Expressions, fstr.FormatSpecs = p.parseFStringContent(p.curToken.Literal, p.curTokenIs(token.RF_STRING))
+			var specs []string
+			fstr.Parts, fstr.Expressions, specs = p.parseFStringContent(p.curToken.Literal, p.curTokenIs(token.RF_STRING))
+			fstr.SetFormatSpecs(specs)
 			right = fstr
 		}
 
@@ -2203,7 +2205,7 @@ func (p *Parser) parseIndexExpression(left ast.Expression) ast.Expression {
 			p.nextToken() // consume second colon
 			if !p.peekTokenIs(token.RBRACKET) {
 				p.nextToken()
-				slice.Step = p.parseExpression(LOWEST)
+				slice.SetStep(p.parseExpression(LOWEST))
 			}
 		}
 		if !p.expectPeek(token.RBRACKET) {
@@ -2227,7 +2229,7 @@ func (p *Parser) parseIndexExpression(left ast.Expression) ast.Expression {
 			p.nextToken() // consume second colon
 			if !p.peekTokenIs(token.RBRACKET) {
 				p.nextToken()
-				slice.Step = p.parseExpression(LOWEST)
+				slice.SetStep(p.parseExpression(LOWEST))
 			}
 		}
 		if !p.expectPeek(token.RBRACKET) {

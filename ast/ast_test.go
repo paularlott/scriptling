@@ -79,7 +79,6 @@ func TestFStringLiteral(t *testing.T) {
 		Value:       "Hello {name}",
 		Expressions: []Expression{testIdentifier("name")},
 		Parts:       []string{"Hello ", ""},
-		FormatSpecs: []string{""},
 	}
 
 	if fstr.Value != "Hello {name}" {
@@ -393,25 +392,25 @@ func TestImportStatement(t *testing.T) {
 
 	// Test with alias
 	stmt2 := &ImportStatement{
-		Name:  testIdentifier("os"),
-		Alias: testIdentifier("operating_system"),
+		Name: testIdentifier("os"),
 	}
+	stmt2.SetImportOverflow(testIdentifier("operating_system"), nil, nil)
 
-	if stmt2.Alias == nil {
+	if stmt2.GetAlias() == nil {
 		t.Error("Import statement alias should not be nil")
 	}
 
 	// Test with multiple imports
 	stmt3 := &ImportStatement{
 		Name: testIdentifier("os"),
-		AdditionalNames: []*Identifier{
-			testIdentifier("sys"),
-			testIdentifier("json"),
-		},
 	}
+	stmt3.SetImportOverflow(nil, []*Identifier{
+		testIdentifier("sys"),
+		testIdentifier("json"),
+	}, nil)
 
-	if len(stmt3.AdditionalNames) != 2 {
-		t.Errorf("stmt3.AdditionalNames length = %d, want 2", len(stmt3.AdditionalNames))
+	if len(stmt3.GetAdditionalNames()) != 2 {
+		t.Errorf("stmt3.AdditionalNames length = %d, want 2", len(stmt3.GetAdditionalNames()))
 	}
 }
 
@@ -478,7 +477,6 @@ func TestSliceExpression(t *testing.T) {
 		Left:  testIdentifier("arr"),
 		Start: &IntegerLiteral{Value: 0},
 		End:   &IntegerLiteral{Value: 10},
-		Step:  nil,
 	}
 
 	if expr.Left == nil || expr.Start == nil || expr.End == nil {

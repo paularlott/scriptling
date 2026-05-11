@@ -311,9 +311,11 @@ func (e *estimator) walkStatement(stmt Statement) {
 		}
 		e.addToken(n.Token)
 		e.walkIdentifier(n.Name)
-		e.walkIdentifier(n.Alias)
-		e.addIdentifierSlice(n.AdditionalNames)
-		e.addIdentifierSlice(n.AdditionalAliases)
+		if n.overflow != nil {
+			e.walkIdentifier(n.overflow.Alias)
+			e.addIdentifierSlice(n.overflow.AdditionalNames)
+			e.addIdentifierSlice(n.overflow.AdditionalAliases)
+		}
 	case *FromImportStatement:
 		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfFromImportStatement) {
 			return
@@ -413,7 +415,9 @@ func (e *estimator) walkExpression(expr Expression) {
 		e.addString(n.Value)
 		e.addExpressionSlice(n.Expressions)
 		e.addStringSlice(n.Parts)
-		e.addStringSlice(n.FormatSpecs)
+		if n.overflow != nil {
+			e.addStringSlice(n.overflow.FormatSpecs)
+		}
 	case *Boolean:
 		if n != nil {
 			e.mark(uintptr(unsafe.Pointer(n)), sizeOfBoolean)
@@ -498,7 +502,9 @@ func (e *estimator) walkExpression(expr Expression) {
 		e.walkExpression(n.Left)
 		e.walkExpression(n.Start)
 		e.walkExpression(n.End)
-		e.walkExpression(n.Step)
+		if n.overflow != nil {
+			e.walkExpression(n.overflow.Step)
+		}
 	case *ListComprehension:
 		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfListComprehension) {
 			return

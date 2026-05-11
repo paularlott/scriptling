@@ -490,8 +490,8 @@ func evalSliceExpressionWithContext(ctx context.Context, node *ast.SliceExpressi
 		hasEnd = true
 	}
 
-	if node.Step != nil {
-		stepObj := evalNode(ctx, node.Step, env)
+	if node.GetStep() != nil {
+		stepObj := evalNode(ctx, node.GetStep(), env)
 		if object.IsError(stepObj) {
 			return stepObj
 		}
