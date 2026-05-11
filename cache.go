@@ -9,12 +9,13 @@ import (
 	"github.com/paularlott/scriptling/ast"
 )
 
-// cacheKey is a dual-hash key providing 128-bit collision resistance.
-// Two independent maphash seeds produce two 64-bit hashes; a false match
-// requires both to collide simultaneously (probability ~2^-128).
+// cacheKey provides collision resistance via script length + dual 64-bit hash.
+// Different-length scripts never share a key; same-length scripts need both
+// hashes to collide simultaneously (probability ~2^-128).
 type cacheKey struct {
-	h1 uint64
-	h2 uint64
+	length int
+	h1     uint64
+	h2     uint64
 }
 
 type cacheEntry struct {
@@ -208,39 +209,10 @@ var (
 func hashScript(script string) cacheKey {
 	var h1, h2 maphash.Hash
 	h1.SetSeed(hashSeed1)
+	h1.WriteString(script)
 	h2.SetSeed(hashSeed2)
-	writeCacheKeyMaterial(&h1, script)
-	writeCacheKeyMaterial(&h2, script)
-	return cacheKey{h1: h1.Sum64(), h2: h2.Sum64()}
-}
-
-func writeCacheKeyMaterial(h *maphash.Hash, script string) {
-	const sampleSize = 64
-	const fullHashThreshold = sampleSize * 3
-
-	var lenBuf [8]byte
-	n := len(script)
-	for i := range lenBuf {
-		lenBuf[i] = byte(n >> (i * 8))
-	}
-	_, _ = h.Write(lenBuf[:])
-
-	if n <= fullHashThreshold {
-		h.WriteString(script)
-		return
-	}
-
-	h.WriteString(script[:sampleSize])
-
-	midStart := n/2 - sampleSize/2
-	if midStart < sampleSize {
-		midStart = sampleSize
-	}
-	if midStart+sampleSize > n-sampleSize {
-		midStart = n - (sampleSize * 2)
-	}
-	h.WriteString(script[midStart : midStart+sampleSize])
-	h.WriteString(script[n-sampleSize:])
+	h2.WriteString(script)
+	return cacheKey{length: len(script), h1: h1.Sum64(), h2: h2.Sum64()}
 }
 
 func estimateCacheEntrySize(script string, program *ast.Program) int {
