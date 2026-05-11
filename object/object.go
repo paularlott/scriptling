@@ -58,7 +58,12 @@ func DictKey(obj Object) string {
 
 // DictStringKey returns the canonical dict key for a string key without
 // requiring a temporary String object allocation.
-var dictStringKeyCache sync.Map
+var (
+	dictStringKeyCache sync.Map
+	dictStringKeyCount atomic.Int64
+)
+
+const maxDictStringKeys = 10000
 
 func DictStringKey(name string) string {
 	if v, ok := dictStringKeyCache.Load(name); ok {
@@ -66,6 +71,10 @@ func DictStringKey(name string) string {
 	}
 	key := "s:" + name
 	dictStringKeyCache.Store(name, key)
+	if dictStringKeyCount.Add(1) > maxDictStringKeys {
+		dictStringKeyCache = sync.Map{}
+		dictStringKeyCount.Store(0)
+	}
 	return key
 }
 

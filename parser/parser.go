@@ -220,10 +220,6 @@ func (p *Parser) curPrecedence() int {
 	return precedenceFor(p.curToken.Type)
 }
 
-func (p *Parser) nodeToken() ast.TokenInfo {
-	return ast.NewTokenInfo(p.curToken)
-}
-
 func (p *Parser) nodeLine() ast.LineInfo {
 	return ast.NewLineInfo(p.curToken)
 }

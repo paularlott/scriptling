@@ -142,9 +142,7 @@ func (e *estimator) addString(s string) {
 }
 
 func (e *estimator) addToken(tok any) {
-	switch t := tok.(type) {
-	case TokenInfo:
-		e.addString(t.Literal)
+	switch tok.(type) {
 	case LineInfo:
 		return
 	}

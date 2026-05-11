@@ -2192,6 +2192,7 @@ func extendLambdaEnv(fn *object.LambdaFunction, args []object.Object, keywords m
 		localSlots:       fn.LocalSlots,
 		localSlotNames:   fn.LocalSlotNames,
 		paramSlotIndexes: fn.ParamSlotIndexes,
+		reuseCallEnv:     true,
 	}, args, keywords)
 }
 
