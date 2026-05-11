@@ -274,8 +274,9 @@ type Program struct {
 	Statements []Statement
 	Symbols    *SymbolTable
 
-	LocalSlots     map[string]int
-	LocalSlotNames []string
+	LocalSlots       map[string]int
+	LocalSlotNames   []string
+	LocalSlotNameIDs []uint32
 }
 
 func (p *Program) TokenLiteral() string {
@@ -602,6 +603,7 @@ type FunctionLiteral struct {
 
 	LocalSlots       map[string]int
 	LocalSlotNames   []string
+	LocalSlotNameIDs []uint32
 	ParamSlotIndexes []int
 }
 
@@ -1226,6 +1228,7 @@ type Lambda struct {
 
 	LocalSlots       map[string]int
 	LocalSlotNames   []string
+	LocalSlotNameIDs []uint32
 	ParamSlotIndexes []int
 }
 

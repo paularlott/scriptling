@@ -113,7 +113,7 @@ func TestEnvironmentWithSlots(t *testing.T) {
 	env := NewEnclosedEnvironmentWithSlots(NewEnvironment(), map[string]int{
 		"x": 0,
 		"y": 1,
-	}, []string{"x", "y"})
+	}, []string{"x", "y"}, nil)
 
 	xVal := NewInteger(42)
 	yVal := NewString("slot")
@@ -226,7 +226,7 @@ func TestEnvironmentCopyCallableBindingsToWithSlots(t *testing.T) {
 	source := NewEnclosedEnvironmentWithSlots(NewEnvironment(), map[string]int{
 		"work":   0,
 		"helper": 1,
-	}, []string{"work", "helper"})
+	}, []string{"work", "helper"}, nil)
 	target := NewEnvironment()
 
 	fn := &Function{
@@ -366,7 +366,7 @@ func TestNonlocalVariables(t *testing.T) {
 func TestNonlocalVariablesWithSlots(t *testing.T) {
 	outer := NewEnclosedEnvironmentWithSlots(NewEnvironment(), map[string]int{
 		"shared": 0,
-	}, []string{"shared"})
+	}, []string{"shared"}, nil)
 	outer.Set("shared", NewInteger(10))
 
 	inner := NewEnclosedEnvironment(outer)
@@ -386,7 +386,7 @@ func TestEnvironmentResetStoreWithSlots(t *testing.T) {
 	env := NewEnclosedEnvironmentWithSlots(NewEnvironment(), map[string]int{
 		"keep_slot": 0,
 		"drop_slot": 1,
-	}, []string{"keep_slot", "drop_slot"})
+	}, []string{"keep_slot", "drop_slot"}, nil)
 	env.Set("keep_slot", NewInteger(1))
 	env.Set("drop_slot", NewInteger(2))
 	env.Set("keep_map", NewInteger(3))
