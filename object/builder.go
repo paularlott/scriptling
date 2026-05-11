@@ -320,7 +320,7 @@ func createFastFunctionWrapper(fn interface{}, helpText string) (*Builtin, bool)
 				if err != nil {
 					return err
 				}
-				return &String{value: typed(s)}
+				return NewString(typed(s))
 			},
 			HelpText: helpText,
 		}, true
@@ -338,7 +338,7 @@ func createFastFunctionWrapper(fn interface{}, helpText string) (*Builtin, bool)
 				if err != nil {
 					return err
 				}
-				return &String{value: typed(a, b)}
+				return NewString(typed(a, b))
 			},
 			HelpText: helpText,
 		}, true
@@ -356,7 +356,7 @@ func createFastFunctionWrapper(fn interface{}, helpText string) (*Builtin, bool)
 				if err != nil {
 					return err
 				}
-				return &String{value: typed(ctx, kwargs, s, int(i))}
+				return NewString(typed(ctx, kwargs, s, int(i)))
 			},
 			HelpText: helpText,
 		}, true
@@ -378,7 +378,7 @@ func createFastFunctionWrapper(fn interface{}, helpText string) (*Builtin, bool)
 				if err != nil {
 					return err
 				}
-				return &String{value: typed(s, int(i), f)}
+				return NewString(typed(s, int(i), f))
 			},
 			HelpText: helpText,
 		}, true
@@ -657,11 +657,11 @@ func convertReturnValue(v reflect.Value) Object {
 
 	switch v.Kind() {
 	case reflect.String:
-		return &String{value: v.String()}
+		return NewString(v.String())
 	case reflect.Int, reflect.Int32, reflect.Int64:
 		return NewInteger(v.Int())
 	case reflect.Float32, reflect.Float64:
-		return &Float{value: v.Float()}
+		return NewFloat(v.Float())
 	case reflect.Bool:
 		return NewBoolean(v.Bool())
 	case reflect.Interface:
@@ -683,11 +683,11 @@ func convertValueToObject(v interface{}) Object {
 
 	switch val := v.(type) {
 	case string:
-		return &String{value: val}
+		return NewString(val)
 	case int, int32, int64:
 		return NewInteger(reflect.ValueOf(v).Int())
 	case float32, float64:
-		return &Float{value: reflect.ValueOf(v).Float()}
+		return NewFloat(reflect.ValueOf(v).Float())
 	case bool:
 		return NewBoolean(val)
 	case Object:
@@ -701,8 +701,8 @@ func convertValueToObject(v interface{}) Object {
 	case map[string]interface{}:
 		pairs := make(map[string]DictPair)
 		for key, item := range val {
-		pairs[DictKey(&String{value: key})] = DictPair{
-			Key:   &String{value: key},
+		pairs[DictKey(NewString(key))] = DictPair{
+			Key:   NewString(key),
 				Value: convertValueToObject(item),
 			}
 		}
