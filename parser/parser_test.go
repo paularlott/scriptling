@@ -939,12 +939,12 @@ func TestImportStatementWithAlias(t *testing.T) {
 		t.Errorf("stmt.Name.Value = %q, want %q", stmt.Name.Value(), "os")
 	}
 
-	if stmt.Alias == nil {
+	if stmt.GetAlias() == nil {
 		t.Fatal("stmt.Alias is nil")
 	}
 
-	if stmt.Alias.Value() != "operating_system" {
-		t.Errorf("stmt.Alias.Value = %q, want %q", stmt.Alias.Value(), "operating_system")
+	if stmt.GetAlias().Value() != "operating_system" {
+		t.Errorf("stmt.Alias.Value = %q, want %q", stmt.GetAlias().Value(), "operating_system")
 	}
 }
 
@@ -1003,12 +1003,12 @@ func TestImportStatementMultiple(t *testing.T) {
 				t.Errorf("stmt.Name.Value = %q, want %q", stmt.Name.Value(), tt.expectedNames[0])
 			}
 
-			if len(stmt.AdditionalNames) != len(tt.expectedNames)-1 {
+			if len(stmt.GetAdditionalNames()) != len(tt.expectedNames)-1 {
 				t.Fatalf("stmt.AdditionalNames length = %d, want %d",
-					len(stmt.AdditionalNames), len(tt.expectedNames)-1)
+					len(stmt.GetAdditionalNames()), len(tt.expectedNames)-1)
 			}
 
-			for i, name := range stmt.AdditionalNames {
+			for i, name := range stmt.GetAdditionalNames() {
 				expectedName := tt.expectedNames[i+1]
 				if name.Value() != expectedName {
 					t.Errorf("stmt.AdditionalNames[%d].Value = %q, want %q",
@@ -1016,12 +1016,12 @@ func TestImportStatementMultiple(t *testing.T) {
 				}
 			}
 
-			if len(stmt.AdditionalAliases) != len(tt.expectedAliases)-1 {
+			if len(stmt.GetAdditionalAliases()) != len(tt.expectedAliases)-1 {
 				t.Fatalf("stmt.AdditionalAliases length = %d, want %d",
-					len(stmt.AdditionalAliases), len(tt.expectedAliases)-1)
+					len(stmt.GetAdditionalAliases()), len(tt.expectedAliases)-1)
 			}
 
-			for i, alias := range stmt.AdditionalAliases {
+			for i, alias := range stmt.GetAdditionalAliases() {
 				expectedAlias := tt.expectedAliases[i+1]
 				if expectedAlias == "" {
 					if alias != nil {

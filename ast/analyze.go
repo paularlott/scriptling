@@ -229,14 +229,14 @@ func collectAssignedNamesFromStatement(stmt Statement, globals map[string]bool, 
 		}
 		collectAssignedNamesFromBlock(s.Body, globals, nonlocals, addName)
 	case *ImportStatement:
-		if s.Alias != nil {
-			addLocal(s.Alias.Value())
+		if s.GetAlias() != nil {
+			addLocal(s.GetAlias().Value())
 		} else if s.Name != nil {
 			addLocal(strings.Split(s.Name.Value(), ".")[0])
 		}
-		for i, name := range s.AdditionalNames {
-			if i < len(s.AdditionalAliases) && s.AdditionalAliases[i] != nil {
-				addLocal(s.AdditionalAliases[i].Value())
+		for i, name := range s.GetAdditionalNames() {
+			if i < len(s.GetAdditionalAliases()) && s.GetAdditionalAliases()[i] != nil {
+				addLocal(s.GetAdditionalAliases()[i].Value())
 			} else if name != nil {
 				addLocal(strings.Split(name.Value(), ".")[0])
 			}
