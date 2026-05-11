@@ -187,21 +187,6 @@ func NewLineInfo(tok token.Token) LineInfo {
 	return LineInfo{Line: int32(tok.Line)}
 }
 
-// TokenInfo stores just the AST metadata we retain after parsing.
-// The parser still uses full lexer tokens; cached AST nodes only need
-// the original token literal and source line.
-type TokenInfo struct {
-	Literal string
-	Line    int32
-}
-
-func NewTokenInfo(tok token.Token) TokenInfo {
-	return TokenInfo{
-		Literal: strings.Clone(tok.Literal),
-		Line:    int32(tok.Line),
-	}
-}
-
 type SymbolTable struct {
 	names []string
 	ids   map[string]uint32
