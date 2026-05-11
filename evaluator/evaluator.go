@@ -1419,9 +1419,9 @@ func evalFunctionStatement(ctx context.Context, stmt *ast.FunctionStatement, env
 	fn := &object.Function{
 		Name:             stmt.Name.Value(),
 		Parameters:       stmt.Function.Parameters,
-		DefaultValues:    stmt.Function.DefaultValues,
-		Variadic:         stmt.Function.Variadic,
-		Kwargs:           stmt.Function.Kwargs,
+		DefaultValues:    stmt.Function.GetDefaultValues(),
+		Variadic:         stmt.Function.GetVariadic(),
+		Kwargs:           stmt.Function.GetKwargs(),
 		Body:             stmt.Function.Body,
 		Env:              env,
 		LocalSlots:       localSlots,
@@ -1430,9 +1430,8 @@ func evalFunctionStatement(ctx context.Context, stmt *ast.FunctionStatement, env
 		ReuseCallEnv:     !stmt.Function.HasNestedFunc,
 	}
 	var result object.Object = fn
-	// Apply decorators right-to-left (innermost first)
-	for i := len(stmt.Decorators) - 1; i >= 0; i-- {
-		dec := evalNode(ctx, stmt.Decorators[i], env)
+	for i := len(stmt.GetDecorators()) - 1; i >= 0; i-- {
+		dec := evalNode(ctx, stmt.GetDecorators()[i], env)
 		if object.IsError(dec) {
 			return dec
 		}
@@ -1505,9 +1504,8 @@ func evalClassStatement(ctx context.Context, stmt *ast.ClassStatement, env *obje
 
 	env.Set(stmt.Name.Value(), class)
 	var result object.Object = class
-	// Apply decorators right-to-left (innermost first)
-	for i := len(stmt.Decorators) - 1; i >= 0; i-- {
-		dec := evalNode(ctx, stmt.Decorators[i], env)
+	for i := len(stmt.GetDecorators()) - 1; i >= 0; i-- {
+		dec := evalNode(ctx, stmt.GetDecorators()[i], env)
 		if object.IsError(dec) {
 			return dec
 		}
@@ -4421,9 +4419,9 @@ func evalLambda(lambda *ast.Lambda, env *object.Environment) object.Object {
 	localSlots, localSlotNames := analyzeLambdaLocals(lambda)
 	return &object.LambdaFunction{
 		Parameters:       lambda.Parameters,
-		DefaultValues:    lambda.DefaultValues,
-		Variadic:         lambda.Variadic,
-		Kwargs:           lambda.Kwargs,
+		DefaultValues:    lambda.GetDefaultValues(),
+		Variadic:         lambda.GetVariadic(),
+		Kwargs:           lambda.GetKwargs(),
 		Body:             lambda.Body,
 		Env:              env,
 		LocalSlots:       localSlots,

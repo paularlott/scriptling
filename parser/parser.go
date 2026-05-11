@@ -1328,7 +1328,9 @@ func (p *Parser) parseFunctionStatement() *ast.FunctionStatement {
 	}
 
 	stmt.Function = &ast.FunctionLiteral{}
-	stmt.Function.Parameters, stmt.Function.DefaultValues, stmt.Function.Variadic, stmt.Function.Kwargs = p.parseFunctionParameters()
+	params, defaults, variadic, kwargs := p.parseFunctionParameters()
+	stmt.Function.Parameters = params
+	stmt.Function.SetFuncOverflow(defaults, variadic, kwargs)
 
 	if !p.expectPeek(token.COLON) {
 		return nil
@@ -1666,9 +1668,10 @@ func (p *Parser) parseLambda() ast.Expression {
 
 	lambda := &ast.Lambda{}
 
-	// Parse parameters (optional)
 	if !p.peekTokenIs(token.COLON) {
-		lambda.Parameters, lambda.DefaultValues, lambda.Variadic, lambda.Kwargs = p.parseLambdaParameters()
+		params, defaults, variadic, kwargs := p.parseLambdaParameters()
+		lambda.Parameters = params
+		lambda.SetFuncOverflow(defaults, variadic, kwargs)
 	}
 
 	if !p.expectPeek(token.COLON) {
@@ -1678,7 +1681,7 @@ func (p *Parser) parseLambda() ast.Expression {
 	p.nextToken()
 	lambda.Body = p.parseExpression(LOWEST)
 
-	if len(lambda.Parameters) > 0 || lambda.Variadic != nil || lambda.Kwargs != nil {
+	if len(lambda.Parameters) > 0 || lambda.GetVariadic() != nil || lambda.GetKwargs() != nil {
 		ast.AnalyzeLambdaLocals(lambda)
 	}
 
@@ -2103,13 +2106,13 @@ func (p *Parser) parseDecoratedStatement() ast.Statement {
 	case token.DEF:
 		stmt := p.parseFunctionStatement()
 		if stmt != nil {
-			stmt.Decorators = decorators
+			stmt.SetDecorators(decorators)
 		}
 		return stmt
 	case token.CLASS:
 		stmt := p.parseClassStatement()
 		if stmt != nil {
-			stmt.Decorators = decorators
+			stmt.SetDecorators(decorators)
 		}
 		return stmt
 	default:

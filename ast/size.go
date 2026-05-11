@@ -267,7 +267,9 @@ func (e *estimator) walkStatement(stmt Statement) {
 		e.addToken(n.Token)
 		e.walkIdentifier(n.Name)
 		e.walkFunctionLiteral(n.Function)
-		e.addExpressionSlice(n.Decorators)
+		if n.overflow != nil {
+			e.addExpressionSlice(n.overflow.Decorators)
+		}
 	case *ClassStatement:
 		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfClassStatement) {
 			return
@@ -276,7 +278,9 @@ func (e *estimator) walkStatement(stmt Statement) {
 		e.walkIdentifier(n.Name)
 		e.walkExpression(n.BaseClass)
 		e.walkStatement(n.Body)
-		e.addExpressionSlice(n.Decorators)
+		if n.overflow != nil {
+			e.addExpressionSlice(n.overflow.Decorators)
+		}
 	case *ReturnStatement:
 		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfReturnStatement) {
 			return
@@ -537,9 +541,9 @@ func (e *estimator) walkExpression(expr Expression) {
 			return
 		}
 		e.addIdentifierSlice(n.Parameters)
-		e.addDefaultsMap(n.DefaultValues)
-		e.walkIdentifier(n.Variadic)
-		e.walkIdentifier(n.Kwargs)
+		e.addDefaultsMap(n.GetDefaultValues())
+		e.walkIdentifier(n.GetVariadic())
+		e.walkIdentifier(n.GetKwargs())
 		e.walkExpression(n.Body)
 	case *TupleLiteral:
 		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfTupleLiteral) {
@@ -567,9 +571,9 @@ func (e *estimator) walkFunctionLiteral(fn *FunctionLiteral) {
 		return
 	}
 	e.addIdentifierSlice(fn.Parameters)
-	e.addDefaultsMap(fn.DefaultValues)
-	e.walkIdentifier(fn.Variadic)
-	e.walkIdentifier(fn.Kwargs)
+	e.addDefaultsMap(fn.GetDefaultValues())
+	e.walkIdentifier(fn.GetVariadic())
+	e.walkIdentifier(fn.GetKwargs())
 	e.walkStatement(fn.Body)
 	if fn.LocalSlots != nil {
 		e.total += len(fn.LocalSlots) * (int(unsafe.Sizeof("")) + 8)
