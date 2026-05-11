@@ -663,7 +663,7 @@ func convertReturnValue(v reflect.Value) Object {
 	case reflect.Float32, reflect.Float64:
 		return &Float{value: v.Float()}
 	case reflect.Bool:
-		return &Boolean{value: v.Bool()}
+		return NewBoolean(v.Bool())
 	case reflect.Interface:
 		// For interface{}, convert the underlying value
 		return convertValueToObject(v.Interface())
@@ -689,7 +689,7 @@ func convertValueToObject(v interface{}) Object {
 	case float32, float64:
 		return &Float{value: reflect.ValueOf(v).Float()}
 	case bool:
-		return &Boolean{value: val}
+		return NewBoolean(val)
 	case Object:
 		return val
 	case []interface{}:
