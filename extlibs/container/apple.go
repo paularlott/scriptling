@@ -234,17 +234,27 @@ type appleListItem struct {
 
 type appleInspect = appleListItem
 
+func parseAppleInspectOutput(out string) (*appleInspect, error) {
+	var items []appleInspect
+	if err := json.Unmarshal([]byte(out), &items); err != nil {
+		return nil, fmt.Errorf("container inspect: failed to parse output")
+	}
+	if len(items) == 0 {
+		return nil, fmt.Errorf("container inspect: not found")
+	}
+	return &items[0], nil
+}
+
 // Inspect implements ContainerDriver.
 func (c *appleClient) Inspect(ctx context.Context, nameOrID string) (*ContainerInfo, error) {
 	out, err := c.run(ctx, "inspect", nameOrID)
 	if err != nil {
 		return nil, fmt.Errorf("container inspect: %s", out)
 	}
-	var items []appleInspect
-	if err := json.Unmarshal([]byte(out), &items); err != nil || len(items) == 0 {
-		return nil, fmt.Errorf("container inspect: failed to parse output")
+	item, err := parseAppleInspectOutput(out)
+	if err != nil {
+		return nil, err
 	}
-	item := items[0]
 	return &ContainerInfo{
 		ID:      item.Configuration.ID,
 		Name:    item.Configuration.ID,
