@@ -41,3 +41,25 @@ func TestNormalizeContainerReference(t *testing.T) {
 		})
 	}
 }
+
+func TestParseAppleInspectOutput(t *testing.T) {
+	t.Run("not found", func(t *testing.T) {
+		item, err := parseAppleInspectOutput("[]")
+		if err == nil || err.Error() != "container inspect: not found" {
+			t.Fatalf("expected not found error, got item=%v err=%v", item, err)
+		}
+	})
+
+	t.Run("valid item", func(t *testing.T) {
+		item, err := parseAppleInspectOutput(`[{"status":"running","configuration":{"id":"paul-mtest","image":{"reference":"alpine:latest"}}}]`)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if item.Configuration.ID != "paul-mtest" {
+			t.Fatalf("expected id paul-mtest, got %q", item.Configuration.ID)
+		}
+		if item.Status != "running" {
+			t.Fatalf("expected status running, got %q", item.Status)
+		}
+	})
+}
