@@ -20,6 +20,21 @@ func newAppleDriver() (ContainerDriver, error) {
 	return &appleClient{}, nil
 }
 
+func normalizeContainerReference(ref string) string {
+	ref = strings.ReplaceAll(ref, "\r\n", "\n")
+	ref = strings.ReplaceAll(ref, "\r", "\n")
+
+	lines := strings.Split(ref, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line != "" {
+			return line
+		}
+	}
+
+	return ""
+}
+
 func (c *appleClient) run(ctx context.Context, args ...string) (string, error) {
 	out, err := exec.CommandContext(ctx, "container", args...).CombinedOutput()
 	return strings.TrimSpace(string(out)), err
@@ -127,7 +142,7 @@ func (c *appleClient) ImageList(ctx context.Context) ([]ImageInfo, error) {
 		return nil, fmt.Errorf("image list: %s", out)
 	}
 	var raw []struct {
-		Reference string `json:"reference"`
+		Reference  string `json:"reference"`
 		Descriptor struct {
 			Digest string `json:"digest"`
 			Size   int64  `json:"size"`
@@ -181,6 +196,10 @@ func (c *appleClient) Run(ctx context.Context, image string, opts RunOptions) (s
 	out, err := c.run(ctx, args...)
 	if err != nil {
 		return "", fmt.Errorf("container run: %s", out)
+	}
+	out = normalizeContainerReference(out)
+	if out == "" {
+		return "", fmt.Errorf("container run: empty container reference")
 	}
 	return out, nil
 }
