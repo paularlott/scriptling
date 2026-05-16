@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"strings"
 	"sync"
-	"time"
 )
 
 // dockerClient talks to the Docker/Podman REST API over a Unix socket or TCP.
@@ -24,8 +23,8 @@ type dockerClient struct {
 }
 
 type dockerAuthConfig struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Username      string `json:"username"`
+	Password      string `json:"password"`
 	ServerAddress string `json:"serveraddress"`
 }
 
@@ -52,7 +51,8 @@ func newDockerClient(endpoint string) *dockerClient {
 			},
 		}
 		return &dockerClient{
-			httpClient: &http.Client{Transport: transport, Timeout: 30 * time.Second},
+			// Let the caller's context control long-running pulls and starts.
+			httpClient: &http.Client{Transport: transport, Timeout: 0},
 			baseURL:    "http://localhost",
 			creds:      map[string]dockerAuthConfig{},
 		}
@@ -69,7 +69,8 @@ func newDockerClient(endpoint string) *dockerClient {
 	}
 
 	return &dockerClient{
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		// Let the caller's context control long-running pulls and starts.
+		httpClient: &http.Client{Timeout: 0},
 		baseURL:    baseURL,
 		creds:      map[string]dockerAuthConfig{},
 	}
@@ -315,10 +316,10 @@ type dockerCreateRequest struct {
 }
 
 type dockerHostConfig struct {
-	Binds        []string                 `json:"Binds,omitempty"`
-	PortBindings map[string][]portBinding `json:"PortBindings,omitempty"`
-	Privileged   bool                     `json:"Privileged,omitempty"`
-	NetworkMode  string                   `json:"NetworkMode,omitempty"`
+	Binds         []string                 `json:"Binds,omitempty"`
+	PortBindings  map[string][]portBinding `json:"PortBindings,omitempty"`
+	Privileged    bool                     `json:"Privileged,omitempty"`
+	NetworkMode   string                   `json:"NetworkMode,omitempty"`
 	RestartPolicy struct {
 		Name string `json:"Name"`
 	} `json:"RestartPolicy"`
@@ -417,8 +418,8 @@ func (c *dockerClient) Remove(ctx context.Context, nameOrID string) error {
 // Inspect implements ContainerDriver.
 func (c *dockerClient) Inspect(ctx context.Context, nameOrID string) (*ContainerInfo, error) {
 	var raw struct {
-		ID   string `json:"Id"`
-		Name string `json:"Name"`
+		ID     string `json:"Id"`
+		Name   string `json:"Name"`
 		Config struct {
 			Image string `json:"Image"`
 		} `json:"Config"`
@@ -521,7 +522,7 @@ func (c *dockerClient) registryAuthHeader(image string) string {
 	host := "index.docker.io"
 	if idx := strings.Index(image, "/"); idx != -1 {
 		prefix := image[:idx]
-		if strings.ContainsAny(prefix, ".:" ) {
+		if strings.ContainsAny(prefix, ".:") {
 			host = prefix
 		}
 	}
