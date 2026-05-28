@@ -300,6 +300,54 @@ Examples:
   # Full messages array
   answer = client.ask("gpt-4", [{"role": "user", "content": "Hello!"}])
   print(answer)`).
+		MethodWithHelp("completion_parallel", completionParallelMethod, `completion_parallel(model, messages_list, **kwargs) - Run multiple chat completions in parallel
+
+Runs multiple chat completions concurrently and returns a list of responses in the same
+order as the input messages_list. Each element of messages_list is passed to completion().
+
+Parameters:
+  model (str): Model identifier (e.g., "gpt-4", "gpt-3.5-turbo")
+  messages_list (list): List of messages, where each element is a string or list of message dicts
+  max_parallel (int, optional): Maximum number of concurrent requests. Default: 1
+  system_prompt (str, optional): System prompt to use when messages is a string
+  tools (list, optional): List of tool schema dicts from ToolRegistry.build()
+  temperature (float, optional): Sampling temperature (0.0-2.0)
+  top_p (float, optional): Nucleus sampling threshold (0.0-1.0)
+  max_tokens (int, optional): Maximum tokens to generate
+  extra_body (dict, optional): Provider-specific fields to merge into the request body
+  timeout (int, optional): Request timeout in seconds
+
+Returns:
+  list: List of response dicts in the same order as messages_list
+
+Example:
+  questions = ["What is 2+2?", "What is the capital of France?", "Explain gravity"]
+  results = client.completion_parallel("gpt-4", questions, max_parallel=3)
+  for result in results:
+      print(result.choices[0].message.content)`).
+		MethodWithHelp("ask_parallel", askParallelMethod, `ask_parallel(model, messages_list, **kwargs) - Run multiple ask completions in parallel
+
+Runs multiple chat completions concurrently and returns a list of text responses in the
+same order as the input messages_list. Thinking blocks are automatically removed.
+
+Parameters:
+  model (str): Model identifier (e.g., "gpt-4", "gpt-3.5-turbo")
+  messages_list (list): List of messages, where each element is a string or list of message dicts
+  max_parallel (int, optional): Maximum number of concurrent requests. Default: 1
+  system_prompt (str, optional): System prompt to use when messages is a string
+  tools (list, optional): List of tool schema dicts from ToolRegistry.build()
+  temperature (float, optional): Sampling temperature (0.0-2.0)
+  top_p (float, optional): Nucleus sampling threshold (0.0-1.0)
+  max_tokens (int, optional): Maximum tokens to generate
+
+Returns:
+  list: List of response text strings in the same order as messages_list
+
+Example:
+  questions = ["What is 2+2?", "What is the capital of France?", "Explain gravity"]
+  answers = client.ask_parallel("gpt-4", questions, max_parallel=3)
+  for answer in answers:
+      print(answer)`).
 		Build()
 }
 
@@ -911,6 +959,130 @@ func extractTextFromResponse(resp object.Object) object.Object {
 	}
 
 	return object.NewString(content)
+}
+
+func completionParallelMethod(self *object.Instance, ctx context.Context, kwargs object.Kwargs, model string, messagesList any) object.Object {
+	maxParallel := int(kwargs.MustGetInt("max_parallel", 1))
+	if maxParallel < 1 {
+		maxParallel = 1
+	}
+
+	items, err := toSlice(messagesList)
+	if err != nil {
+		return &object.Error{Message: "completion_parallel: " + err.Error()}
+	}
+	if len(items) == 0 {
+		return &object.List{Elements: []object.Object{}}
+	}
+
+	type indexedResult struct {
+		index  int
+		result object.Object
+	}
+
+	completionKwargs := filterParallelKwargs(kwargs)
+
+	if maxParallel == 1 || len(items) == 1 {
+		results := make([]object.Object, len(items))
+		for i, msg := range items {
+			results[i] = completionMethod(self, ctx, completionKwargs, model, msg)
+		}
+		return &object.List{Elements: results}
+	}
+
+	sem := make(chan struct{}, maxParallel)
+	ch := make(chan indexedResult, len(items))
+
+	for i, msg := range items {
+		sem <- struct{}{}
+		go func(idx int, m any) {
+			defer func() { <-sem }()
+			ch <- indexedResult{index: idx, result: completionMethod(self, ctx, completionKwargs, model, m)}
+		}(i, msg)
+	}
+
+	results := make([]object.Object, len(items))
+	for i := 0; i < len(items); i++ {
+		res := <-ch
+		results[res.index] = res.result
+	}
+
+	return &object.List{Elements: results}
+}
+
+func askParallelMethod(self *object.Instance, ctx context.Context, kwargs object.Kwargs, model string, messagesList any) object.Object {
+	maxParallel := int(kwargs.MustGetInt("max_parallel", 1))
+	if maxParallel < 1 {
+		maxParallel = 1
+	}
+
+	items, err := toSlice(messagesList)
+	if err != nil {
+		return &object.Error{Message: "ask_parallel: " + err.Error()}
+	}
+	if len(items) == 0 {
+		return &object.List{Elements: []object.Object{}}
+	}
+
+	type indexedResult struct {
+		index  int
+		result object.Object
+	}
+
+	askKwargs := filterParallelKwargs(kwargs)
+
+	if maxParallel == 1 || len(items) == 1 {
+		results := make([]object.Object, len(items))
+		for i, msg := range items {
+			results[i] = askMethod(self, ctx, askKwargs, model, msg)
+		}
+		return &object.List{Elements: results}
+	}
+
+	sem := make(chan struct{}, maxParallel)
+	ch := make(chan indexedResult, len(items))
+
+	for i, msg := range items {
+		sem <- struct{}{}
+		go func(idx int, m any) {
+			defer func() { <-sem }()
+			ch <- indexedResult{index: idx, result: askMethod(self, ctx, askKwargs, model, m)}
+		}(i, msg)
+	}
+
+	results := make([]object.Object, len(items))
+	for i := 0; i < len(items); i++ {
+		res := <-ch
+		results[res.index] = res.result
+	}
+
+	return &object.List{Elements: results}
+}
+
+func toSlice(input any) ([]any, error) {
+	switch v := input.(type) {
+	case []any:
+		return v, nil
+	case object.Object:
+		goVal := conversion.ToGo(v)
+		if slice, ok := goVal.([]any); ok {
+			return slice, nil
+		}
+		return nil, fmt.Errorf("messages_list must be a list")
+	default:
+		return nil, fmt.Errorf("messages_list must be a list")
+	}
+}
+
+func filterParallelKwargs(kwargs object.Kwargs) object.Kwargs {
+	filtered := object.NewKwargs(map[string]object.Object{})
+	for key, value := range kwargs.Kwargs {
+		if key == "max_parallel" {
+			continue
+		}
+		filtered.Kwargs[key] = value
+	}
+	return filtered
 }
 
 // createClientInstance creates a new scriptling Instance wrapping an AI client
