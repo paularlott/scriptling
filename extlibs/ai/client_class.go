@@ -962,10 +962,7 @@ func extractTextFromResponse(resp object.Object) object.Object {
 }
 
 func completionParallelMethod(self *object.Instance, ctx context.Context, kwargs object.Kwargs, model string, messagesList any) object.Object {
-	maxParallel := int(kwargs.MustGetInt("max_parallel", 1))
-	if maxParallel < 1 {
-		maxParallel = 1
-	}
+	maxParallel := max(1, int(kwargs.MustGetInt("max_parallel", 1)))
 
 	items, err := toSlice(messagesList)
 	if err != nil {
@@ -981,14 +978,6 @@ func completionParallelMethod(self *object.Instance, ctx context.Context, kwargs
 	}
 
 	completionKwargs := filterParallelKwargs(kwargs)
-
-	if maxParallel == 1 || len(items) == 1 {
-		results := make([]object.Object, len(items))
-		for i, msg := range items {
-			results[i] = completionMethod(self, ctx, completionKwargs, model, msg)
-		}
-		return &object.List{Elements: results}
-	}
 
 	sem := make(chan struct{}, maxParallel)
 	ch := make(chan indexedResult, len(items))
@@ -1011,10 +1000,7 @@ func completionParallelMethod(self *object.Instance, ctx context.Context, kwargs
 }
 
 func askParallelMethod(self *object.Instance, ctx context.Context, kwargs object.Kwargs, model string, messagesList any) object.Object {
-	maxParallel := int(kwargs.MustGetInt("max_parallel", 1))
-	if maxParallel < 1 {
-		maxParallel = 1
-	}
+	maxParallel := max(1, int(kwargs.MustGetInt("max_parallel", 1)))
 
 	items, err := toSlice(messagesList)
 	if err != nil {
@@ -1030,14 +1016,6 @@ func askParallelMethod(self *object.Instance, ctx context.Context, kwargs object
 	}
 
 	askKwargs := filterParallelKwargs(kwargs)
-
-	if maxParallel == 1 || len(items) == 1 {
-		results := make([]object.Object, len(items))
-		for i, msg := range items {
-			results[i] = askMethod(self, ctx, askKwargs, model, msg)
-		}
-		return &object.List{Elements: results}
-	}
 
 	sem := make(chan struct{}, maxParallel)
 	ch := make(chan indexedResult, len(items))
