@@ -1035,6 +1035,494 @@ func TestExtractToolCallsFromGo(t *testing.T) {
 	}
 }
 
+func TestNormalizeToolArguments(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    any
+		expected any
+	}{
+		{"nil returns empty map", nil, map[string]any{}},
+		{"empty string returns empty map", "", map[string]any{}},
+		{"whitespace string returns empty map", "  ", map[string]any{}},
+		{"valid JSON string parses to map", `{"key":"value"}`, map[string]any{"key": "value"}},
+		{"invalid JSON string returns raw string", "not json", "not json"},
+		{"map passes through", map[string]any{"a": 1}, map[string]any{"a": 1}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := normalizeToolArguments(tt.input)
+			if !deepEqualAny(result, tt.expected) {
+				t.Fatalf("normalizeToolArguments(%#v) = %#v, want %#v", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestNormalizeToolCalls(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    any
+		expected []map[string]any
+	}{
+		{
+			"nil returns empty",
+			nil,
+			[]map[string]any{},
+		},
+		{
+			"standard tool call with JSON string arguments",
+			[]any{
+				map[string]any{
+					"id":   "call_abc",
+					"type": "function",
+					"function": map[string]any{
+						"name":      "read_file",
+						"arguments": `{"path":"/test.txt"}`,
+					},
+				},
+			},
+			[]map[string]any{
+				{
+					"id":   "call_abc",
+					"type": "function",
+					"function": map[string]any{
+						"name":      "read_file",
+						"arguments": map[string]any{"path": "/test.txt"},
+					},
+				},
+			},
+		},
+		{
+			"tool call with dict arguments passes through",
+			[]any{
+				map[string]any{
+					"id":   "call_1",
+					"type": "function",
+					"function": map[string]any{
+						"name":      "greet",
+						"arguments": map[string]any{"name": "Paul"},
+					},
+				},
+			},
+			[]map[string]any{
+				{
+					"id":   "call_1",
+					"type": "function",
+					"function": map[string]any{
+						"name":      "greet",
+						"arguments": map[string]any{"name": "Paul"},
+					},
+				},
+			},
+		},
+		{
+			"nil arguments becomes empty map",
+			[]any{
+				map[string]any{
+					"id":   "call_2",
+					"type": "function",
+					"function": map[string]any{
+						"name":      "get_time",
+						"arguments": nil,
+					},
+				},
+			},
+			[]map[string]any{
+				{
+					"id":   "call_2",
+					"type": "function",
+					"function": map[string]any{
+						"name":      "get_time",
+						"arguments": map[string]any{},
+					},
+				},
+			},
+		},
+		{
+			"missing id defaults to empty string",
+			[]any{
+				map[string]any{
+					"type": "function",
+					"function": map[string]any{
+						"name":      "tool",
+						"arguments": "{}",
+					},
+				},
+			},
+			[]map[string]any{
+				{
+					"id":   "",
+					"type": "function",
+					"function": map[string]any{
+						"name":      "tool",
+						"arguments": map[string]any{},
+					},
+				},
+			},
+		},
+		{
+			"missing type defaults to function",
+			[]any{
+				map[string]any{
+					"id": "call_3",
+					"function": map[string]any{
+						"name":      "tool",
+						"arguments": "{}",
+					},
+				},
+			},
+			[]map[string]any{
+				{
+					"id":   "call_3",
+					"type": "function",
+					"function": map[string]any{
+						"name":      "tool",
+						"arguments": map[string]any{},
+					},
+				},
+			},
+		},
+		{
+			"top-level name fallback when function.name missing",
+			[]any{
+				map[string]any{
+					"id":   "call_4",
+					"type": "function",
+					"name": "fallback_tool",
+					"function": map[string]any{
+						"arguments": "{}",
+					},
+				},
+			},
+			[]map[string]any{
+				{
+					"id":   "call_4",
+					"type": "function",
+					"function": map[string]any{
+						"name":      "fallback_tool",
+						"arguments": map[string]any{},
+					},
+				},
+			},
+		},
+		{
+			"top-level arguments fallback when function.arguments missing",
+			[]any{
+				map[string]any{
+					"id":   "call_5",
+					"type": "function",
+					"function": map[string]any{
+						"name": "tool",
+					},
+					"arguments": `{"key":"val"}`,
+				},
+			},
+			[]map[string]any{
+				{
+					"id":   "call_5",
+					"type": "function",
+					"function": map[string]any{
+						"name":      "tool",
+						"arguments": map[string]any{"key": "val"},
+					},
+				},
+			},
+		},
+		{
+			"index field preserved",
+			[]any{
+				map[string]any{
+					"id":    "call_6",
+					"type":  "function",
+					"index": int64(0),
+					"function": map[string]any{
+						"name":      "tool",
+						"arguments": "{}",
+					},
+				},
+			},
+			[]map[string]any{
+				{
+					"id":    "call_6",
+					"type":  "function",
+					"index": int64(0),
+					"function": map[string]any{
+						"name":      "tool",
+						"arguments": map[string]any{},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := normalizeToolCalls(tt.input)
+			if len(result) != len(tt.expected) {
+				t.Fatalf("normalizeToolCalls returned %d items, want %d", len(result), len(tt.expected))
+			}
+			for i, got := range result {
+				want := tt.expected[i]
+				if !deepEqualAny(got, want) {
+					t.Fatalf("item %d:\ngot:  %#v\nwant: %#v", i, got, want)
+				}
+			}
+		})
+	}
+}
+
+func TestExtractToolCallsFromGoFormats(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    any
+		expected int
+	}{
+		{"nil input returns empty", nil, 0},
+		{"full response with choices[0].message.tool_calls", map[string]any{
+			"choices": []any{
+				map[string]any{
+					"message": map[string]any{
+						"tool_calls": []any{
+							map[string]any{
+								"id":   "call_1",
+								"type": "function",
+								"function": map[string]any{
+									"name":      "test",
+									"arguments": "{}",
+								},
+							},
+						},
+					},
+				},
+			},
+		}, 1},
+		{"message dict with tool_calls key", map[string]any{
+			"tool_calls": []any{
+				map[string]any{
+					"id":   "call_1",
+					"type": "function",
+					"function": map[string]any{
+						"name":      "test",
+						"arguments": "{}",
+					},
+				},
+			},
+		}, 1},
+		{"delta dict with tool_calls", map[string]any{
+			"choices": []any{
+				map[string]any{
+					"delta": map[string]any{
+						"tool_calls": []any{
+							map[string]any{
+								"id":   "call_1",
+								"type": "function",
+								"function": map[string]any{
+									"name":      "test",
+									"arguments": "{}",
+								},
+							},
+						},
+					},
+				},
+			},
+		}, 1},
+		{"raw list of tool calls", []any{
+			map[string]any{
+				"id":   "call_1",
+				"type": "function",
+				"function": map[string]any{
+					"name":      "test",
+					"arguments": "{}",
+				},
+			},
+		}, 1},
+		{"[]map[string]any input", []map[string]any{
+			{
+				"id":   "call_1",
+				"type": "function",
+				"function": map[string]any{
+					"name":      "test",
+					"arguments": "{}",
+				},
+			},
+		}, 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := extractToolCallsFromGo(tt.input)
+			if len(result) != tt.expected {
+				t.Fatalf("extractToolCallsFromGo returned %d items, want %d", len(result), tt.expected)
+			}
+		})
+	}
+}
+
+func TestExecuteToolCallsViaScript(t *testing.T) {
+	tests := []struct {
+		name        string
+		script      string
+		expectError bool
+		check       func(t *testing.T, result string)
+	}{
+		{
+			"plain tool name",
+			`
+import scriptling.ai as ai
+tools = ai.ToolRegistry()
+tools.add("echo", "Echo", {"msg": "string"}, lambda args: "got:" + args["msg"])
+tool_calls = [{"id": "c1", "type": "function", "function": {"name": "echo", "arguments": {"msg": "hi"}}}]
+results = ai.execute_tool_calls(tools, tool_calls)
+results[0]["content"]
+`,
+			false,
+			func(t *testing.T, result string) {
+				if result != "got:hi" {
+					t.Fatalf("expected 'got:hi', got %q", result)
+				}
+			},
+		},
+		{
+			"{namespace:name} wrapper stripped",
+			`
+import scriptling.ai as ai
+tools = ai.ToolRegistry()
+tools.add("echo", "Echo", {"msg": "string"}, lambda args: "ok")
+tool_calls = [{"id": "c1", "type": "function", "function": {"name": "{mcp:echo}", "arguments": {}}}]
+results = ai.execute_tool_calls(tools, tool_calls)
+results[0]["content"]
+`,
+			false,
+			func(t *testing.T, result string) {
+				if result != "ok" {
+					t.Fatalf("expected 'ok', got %q", result)
+				}
+			},
+		},
+		{
+			"function_name_ prefix stripped",
+			`
+import scriptling.ai as ai
+tools = ai.ToolRegistry()
+tools.add("echo", "Echo", {"msg": "string"}, lambda args: "ok")
+tool_calls = [{"id": "c1", "type": "function", "function": {"name": "function_name_echo", "arguments": {}}}]
+results = ai.execute_tool_calls(tools, tool_calls)
+results[0]["content"]
+`,
+			false,
+			func(t *testing.T, result string) {
+				if result != "ok" {
+					t.Fatalf("expected 'ok', got %q", result)
+				}
+			},
+		},
+		{
+			"{key} wrappers on argument keys stripped",
+			`
+import scriptling.ai as ai
+tools = ai.ToolRegistry()
+tools.add("echo", "Echo", {"msg": "string"}, lambda args: "got:" + args["msg"])
+tool_calls = [{"id": "c1", "type": "function", "function": {"name": "echo", "arguments": {"{msg}": "hello"}}}]
+results = ai.execute_tool_calls(tools, tool_calls)
+results[0]["content"]
+`,
+			false,
+			func(t *testing.T, result string) {
+				if result != "got:hello" {
+					t.Fatalf("expected 'got:hello', got %q", result)
+				}
+			},
+		},
+		{
+			"unknown tool returns error",
+			`
+import scriptling.ai as ai
+tools = ai.ToolRegistry()
+tools.add("echo", "Echo", {"msg": "string"}, lambda args: "ok")
+tool_calls = [{"id": "c1", "type": "function", "function": {"name": "unknown", "arguments": {}}}]
+results = ai.execute_tool_calls(tools, tool_calls)
+results[0]["content"]
+`,
+			true,
+			nil,
+		},
+		{
+			"tool_call_id preserved in result",
+			`
+import scriptling.ai as ai
+tools = ai.ToolRegistry()
+tools.add("echo", "Echo", {}, lambda args: "ok")
+tool_calls = [{"id": "call_xyz", "type": "function", "function": {"name": "echo", "arguments": {}}}]
+results = ai.execute_tool_calls(tools, tool_calls)
+results[0]["tool_call_id"]
+`,
+			false,
+			func(t *testing.T, result string) {
+				if result != "call_xyz" {
+					t.Fatalf("expected 'call_xyz', got %q", result)
+				}
+			},
+		},
+		{
+			"ai.tool_calls extracts from response then executes",
+			`
+import scriptling.ai as ai
+tools = ai.ToolRegistry()
+tools.add("echo", "Echo", {"msg": "string"}, lambda args: "got:" + args["msg"])
+response = {"choices": [{"message": {"tool_calls": [{"id": "c1", "type": "function", "function": {"name": "echo", "arguments": "{\"msg\": \"world\"}"}}], "content": ""}, "finish_reason": "tool_calls"}]}
+calls = ai.tool_calls(response)
+results = ai.execute_tool_calls(tools, calls)
+results[0]["content"]
+`,
+			false,
+			func(t *testing.T, result string) {
+				if result != "got:world" {
+					t.Fatalf("expected 'got:world', got %q", result)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := scriptlib.New()
+			stdlib.RegisterAll(p)
+			Register(p)
+
+			result, err := p.Eval(tt.script)
+			if tt.expectError {
+				if err == nil {
+					if _, ok := result.(*object.Error); !ok {
+						t.Fatal("expected error, got success")
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Eval failed: %v", err)
+			}
+			if errObj, ok := result.(*object.Error); ok {
+				t.Fatalf("Eval returned error: %s", errObj.Message)
+			}
+			str, ok := result.(*object.String)
+			if !ok {
+				t.Fatalf("expected String, got %T: %#v", result, result)
+			}
+			tt.check(t, str.StringValue())
+		})
+	}
+}
+
+func deepEqualAny(a, b any) bool {
+	aJSON, errA := json.Marshal(a)
+	bJSON, errB := json.Marshal(b)
+	if errA != nil || errB != nil {
+		return false
+	}
+	return string(aJSON) == string(bJSON)
+}
+
 func TestCollectStreamAggregatesToolCalls(t *testing.T) {
 	stream := toolStreamMockClient{}.StreamChatCompletion(context.Background(), mcpai.ChatCompletionRequest{})
 	instance := &object.Instance{
