@@ -1106,70 +1106,6 @@ func TestCollectStreamExtractsThinkingTagsFromContentDeltas(t *testing.T) {
 	}
 }
 
-func TestAIToolHelperScriptAPI(t *testing.T) {
-	t.Run("tool_round executes non-streaming tool calls", func(t *testing.T) {
-		p := scriptlib.New()
-		stdlib.RegisterAll(p)
-		Register(p)
-
-		if err := p.SetObjectVar("ai_client", WrapClient(toolArgsMockClient{})); err != nil {
-			t.Fatalf("SetObjectVar(ai_client): %v", err)
-		}
-
-		result, err := p.Eval(`
-import scriptling.ai as ai
-
-tools = ai.ToolRegistry()
-tools.add("echo_tool", "Echo a message", {"message": "string"}, lambda args: "handled:" + args.get("message", "missing"))
-
-round = ai.tool_round(ai_client, "gpt-4", "hello", tools)
-round["tool_results"][0]["content"]
-`)
-		if err != nil {
-			t.Fatalf("Eval failed: %v", err)
-		}
-
-		str, ok := result.(*object.String)
-		if !ok {
-			t.Fatalf("expected String, got %T", result)
-		}
-		if str.StringValue() != "handled:hello from tool test" {
-			t.Fatalf("expected tool result, got %q", str.StringValue())
-		}
-	})
-
-	t.Run("tool_round executes streaming tool calls", func(t *testing.T) {
-		p := scriptlib.New()
-		stdlib.RegisterAll(p)
-		Register(p)
-
-		if err := p.SetObjectVar("ai_client", WrapClient(toolStreamMockClient{})); err != nil {
-			t.Fatalf("SetObjectVar(ai_client): %v", err)
-		}
-
-		result, err := p.Eval(`
-import scriptling.ai as ai
-
-tools = ai.ToolRegistry()
-tools.add("echo_tool", "Echo a message", {"message": "string"}, lambda args: "streamed:" + args.get("message", "missing"))
-
-round = ai.tool_round(ai_client, "gpt-4", "hello", tools, stream=True, chunk_timeout=0)
-round["reasoning"] + "|" + round["tool_results"][0]["content"]
-`)
-		if err != nil {
-			t.Fatalf("Eval failed: %v", err)
-		}
-
-		str, ok := result.(*object.String)
-		if !ok {
-			t.Fatalf("expected String, got %T", result)
-		}
-		if str.StringValue() != "Thinking about tools.|streamed:hello from streaming helper" {
-			t.Fatalf("unexpected streaming tool round output: %q", str.StringValue())
-		}
-	})
-}
-
 // Test createClientInstance creates a valid instance
 func TestCreateClientInstance(t *testing.T) {
 	instance := createClientInstance(nil)
@@ -1236,7 +1172,7 @@ func TestBuildLibrary(t *testing.T) {
 	}
 
 	// Check that expected functions exist (only library-level functions)
-	expectedFuncs := []string{"Client", "extract_thinking", "text", "thinking", "tool_calls", "execute_tool_calls", "collect_stream", "tool_round", "estimate_tokens"}
+	expectedFuncs := []string{"Client", "extract_thinking", "text", "thinking", "tool_calls", "execute_tool_calls", "collect_stream", "estimate_tokens"}
 	for _, name := range expectedFuncs {
 		if _, ok := lib.Functions()[name]; !ok {
 			t.Errorf("library missing function %q", name)
