@@ -457,6 +457,106 @@ Example:
       messages.append(result["assistant_message"])
       for tool_result in result["tool_results"]:
           messages.append(tool_result)`).
+		FunctionWithHelp("tool_round_parallel", func(ctx context.Context, kwargs object.Kwargs, clientObj object.Object, model string, messagesListObj object.Object, registryObj object.Object) (object.Object, error) {
+			client, ok := clientObj.(*object.Instance)
+			if !ok {
+				return &object.Error{Message: "tool_round_parallel: client must be an OpenAIClient"}, nil
+			}
+			registry, ok := registryObj.(*object.Instance)
+			if !ok {
+				return &object.Error{Message: "tool_round_parallel: registry must be a ToolRegistry"}, nil
+			}
+
+			messagesListGo := conversion.ToGo(messagesListObj)
+			messagesList, ok := messagesListGo.([]any)
+			if !ok {
+				return &object.Error{Message: "tool_round_parallel: messages_list must be a list"}, nil
+			}
+			if len(messagesList) == 0 {
+				return conversion.FromGo([]map[string]any{}), nil
+			}
+
+			maxParallel := int(kwargs.MustGetInt("max_parallel", 1))
+			if maxParallel < 1 {
+				maxParallel = 1
+			}
+
+			roundKwargs := filterParallelRoundKwargs(kwargs)
+
+			type indexedResult struct {
+				index  int
+				result map[string]any
+				err    *object.Error
+			}
+
+			if maxParallel == 1 || len(messagesList) == 1 {
+				results := make([]map[string]any, len(messagesList))
+				for i, msgs := range messagesList {
+					result, errObj := runToolRound(ctx, roundKwargs, client, model, conversion.FromGo(msgs), registry)
+					if errObj != nil {
+						return errObj, nil
+					}
+					results[i] = result
+				}
+				return conversion.FromGo(results), nil
+			}
+
+			sem := make(chan struct{}, maxParallel)
+			ch := make(chan indexedResult, len(messagesList))
+
+			for i, msgs := range messagesList {
+				sem <- struct{}{}
+				go func(idx int, m any) {
+					defer func() { <-sem }()
+					result, errObj := runToolRound(ctx, roundKwargs, client, model, conversion.FromGo(m), registry)
+					if errObj != nil {
+						ch <- indexedResult{index: idx, err: errObj}
+						return
+					}
+					ch <- indexedResult{index: idx, result: result}
+				}(i, msgs)
+			}
+
+			results := make([]map[string]any, len(messagesList))
+			for i := 0; i < len(messagesList); i++ {
+				res := <-ch
+				if res.err != nil {
+					return res.err, nil
+				}
+				results[res.index] = res.result
+			}
+
+			return conversion.FromGo(results), nil
+		}, `tool_round_parallel(client, model, messages_list, registry, **kwargs) - Run multiple tool rounds in parallel
+
+Runs multiple tool-enabled completion rounds concurrently. Each element of messages_list
+is processed independently. Tool execution within each round remains sequential.
+Returns a list of round results in the same order as messages_list.
+
+Parameters:
+  client (OpenAIClient): AI client instance
+  model (str): Model identifier
+  messages_list (list): List of messages, where each element is a string or message list
+  registry (ToolRegistry): Tool registry containing schemas and handlers
+  max_parallel (int, optional): Maximum number of concurrent rounds. Default: 1
+  stream (bool, optional): Use completion_stream() instead of completion(). Default: False
+  chunk_timeout (int, optional): Per-chunk timeout in seconds for streaming mode. Default: 0
+  on_event (callable, optional): Streaming callback that receives event dicts
+  system_prompt (str, optional): System prompt when messages is a string
+  temperature (float, optional): Sampling temperature
+  top_p (float, optional): Nucleus sampling threshold
+  max_tokens (int, optional): Maximum tokens to generate
+  timeout (int, optional): Overall request timeout in seconds
+
+Returns:
+  list: List of round result dicts in the same order as messages_list
+
+Example:
+  questions = ["What is the weather?", "Search for AI news", "Calculate 2+2"]
+  results = ai.tool_round_parallel(client, "gpt-4", questions, tools, max_parallel=3)
+  for result in results:
+      if len(result["tool_calls"]) > 0:
+          print(result["tool_calls"])`).
 
 		// estimate_tokens(request, response=None) - Estimate token counts for request and/or response
 		FunctionWithHelp("estimate_tokens", func(ctx context.Context, args ...object.Object) (object.Object, error) {
@@ -1303,6 +1403,19 @@ func filterCompletionKwargs(kwargs object.Kwargs) object.Kwargs {
 	for key, value := range kwargs.Kwargs {
 		switch key {
 		case "stream", "chunk_timeout", "on_event":
+			continue
+		default:
+			filtered.Kwargs[key] = value
+		}
+	}
+	return filtered
+}
+
+func filterParallelRoundKwargs(kwargs object.Kwargs) object.Kwargs {
+	filtered := object.NewKwargs(map[string]object.Object{})
+	for key, value := range kwargs.Kwargs {
+		switch key {
+		case "max_parallel":
 			continue
 		default:
 			filtered.Kwargs[key] = value
