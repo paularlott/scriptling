@@ -3,10 +3,12 @@ package ai
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -2420,4 +2422,548 @@ func TestEstimateTokens(t *testing.T) {
 			}
 		}
 	})
+}
+
+// ---------------------------------------------------------------------------
+// Parallel helpers
+// ---------------------------------------------------------------------------
+
+// echoMockClient returns a completion whose content is the user message text.
+type echoMockClient struct{}
+
+func (echoMockClient) Provider() string                                         { return "mock" }
+func (echoMockClient) SupportsCapability(string) bool                           { return false }
+func (echoMockClient) GetModels(context.Context) (*mcpai.ModelsResponse, error) { return nil, nil }
+func (echoMockClient) ChatCompletion(_ context.Context, req mcpai.ChatCompletionRequest) (*mcpai.ChatCompletionResponse, error) {
+	content := ""
+	for _, msg := range req.Messages {
+		if msg.Role == "user" {
+			if s, ok := msg.Content.(string); ok {
+				content = s
+			}
+		}
+	}
+	return &mcpai.ChatCompletionResponse{
+		Choices: []openaiapi.Choice{
+			{Message: openaiapi.Message{Role: "assistant", Content: content}},
+		},
+	}, nil
+}
+func (echoMockClient) StreamChatCompletion(ctx context.Context, _ mcpai.ChatCompletionRequest) *mcpai.ChatStream {
+	ch := make(chan openaiapi.ChatCompletionResponse)
+	ec := make(chan error)
+	close(ch)
+	close(ec)
+	return openaiapi.NewChatStream(ctx, ch, ec)
+}
+func (echoMockClient) CreateEmbedding(context.Context, mcpai.EmbeddingRequest) (*mcpai.EmbeddingResponse, error) {
+	return nil, nil
+}
+func (echoMockClient) CreateResponse(context.Context, mcpai.CreateResponseRequest) (*mcpai.ResponseObject, error) {
+	return nil, nil
+}
+func (echoMockClient) StreamResponse(context.Context, mcpai.CreateResponseRequest) *mcpai.ResponseStream {
+	return nil
+}
+func (echoMockClient) GetResponse(context.Context, string) (*mcpai.ResponseObject, error) {
+	return nil, nil
+}
+func (echoMockClient) CancelResponse(context.Context, string) (*mcpai.ResponseObject, error) {
+	return nil, nil
+}
+func (echoMockClient) DeleteResponse(context.Context, string) error { return nil }
+func (echoMockClient) CompactResponse(context.Context, string) (*mcpai.ResponseObject, error) {
+	return nil, nil
+}
+func (echoMockClient) Close() error { return nil }
+
+// rateLimitMockClient returns a rate-limit retry response for the first call,
+// then a normal echo response for all subsequent calls.
+type rateLimitMockClient struct {
+	called int32
+}
+
+func (r *rateLimitMockClient) Provider() string                                         { return "mock" }
+func (r *rateLimitMockClient) SupportsCapability(string) bool                           { return false }
+func (r *rateLimitMockClient) GetModels(context.Context) (*mcpai.ModelsResponse, error) { return nil, nil }
+func (r *rateLimitMockClient) ChatCompletion(_ context.Context, req mcpai.ChatCompletionRequest) (*mcpai.ChatCompletionResponse, error) {
+	content := ""
+	for _, msg := range req.Messages {
+		if msg.Role == "user" {
+			if s, ok := msg.Content.(string); ok {
+				content = s
+			}
+		}
+	}
+	resp := &mcpai.ChatCompletionResponse{
+		Choices: []openaiapi.Choice{
+			{Message: openaiapi.Message{Role: "assistant", Content: content}},
+		},
+	}
+	// First call signals a rate limit so adaptive backoff kicks in.
+	if atomic.AddInt32(&r.called, 1) == 1 {
+		resp.Retry = &openaiapi.RetryMetadata{
+			Attempts:     1,
+			RateLimitHit: true,
+			TotalBackoff: 0,
+		}
+	}
+	return resp, nil
+}
+func (r *rateLimitMockClient) StreamChatCompletion(ctx context.Context, _ mcpai.ChatCompletionRequest) *mcpai.ChatStream {
+	ch := make(chan openaiapi.ChatCompletionResponse)
+	ec := make(chan error)
+	close(ch)
+	close(ec)
+	return openaiapi.NewChatStream(ctx, ch, ec)
+}
+func (r *rateLimitMockClient) CreateEmbedding(context.Context, mcpai.EmbeddingRequest) (*mcpai.EmbeddingResponse, error) {
+	return nil, nil
+}
+func (r *rateLimitMockClient) CreateResponse(context.Context, mcpai.CreateResponseRequest) (*mcpai.ResponseObject, error) {
+	return nil, nil
+}
+func (r *rateLimitMockClient) StreamResponse(context.Context, mcpai.CreateResponseRequest) *mcpai.ResponseStream {
+	return nil
+}
+func (r *rateLimitMockClient) GetResponse(context.Context, string) (*mcpai.ResponseObject, error) {
+	return nil, nil
+}
+func (r *rateLimitMockClient) CancelResponse(context.Context, string) (*mcpai.ResponseObject, error) {
+	return nil, nil
+}
+func (r *rateLimitMockClient) DeleteResponse(context.Context, string) error { return nil }
+func (r *rateLimitMockClient) CompactResponse(context.Context, string) (*mcpai.ResponseObject, error) {
+	return nil, nil
+}
+func (r *rateLimitMockClient) Close() error { return nil }
+
+func newParallelInstance(client mcpai.Client) *object.Instance {
+	return createClientInstance(client)
+}
+
+// ---------------------------------------------------------------------------
+// completion_parallel tests
+// ---------------------------------------------------------------------------
+
+func TestCompletionParallelEmpty(t *testing.T) {
+	inst := newParallelInstance(echoMockClient{})
+	ctx := context.Background()
+	kwargs := object.NewKwargs(map[string]object.Object{"max_parallel": object.NewInteger(3)})
+
+	result := completionParallelMethod(inst, ctx, kwargs, "gpt-4", &object.List{Elements: []object.Object{}})
+	list, ok := result.(*object.List)
+	if !ok {
+		t.Fatalf("expected List, got %T", result)
+	}
+	if len(list.Elements) != 0 {
+		t.Errorf("expected empty list, got %d elements", len(list.Elements))
+	}
+}
+
+func TestCompletionParallelInvalidInput(t *testing.T) {
+	inst := newParallelInstance(echoMockClient{})
+	ctx := context.Background()
+	kwargs := object.NewKwargs(nil)
+
+	result := completionParallelMethod(inst, ctx, kwargs, "gpt-4", 42)
+	if result.Type() != object.ERROR_OBJ {
+		t.Fatalf("expected error, got %T", result)
+	}
+	if !contains(result.(*object.Error).Message, "completion_parallel") {
+		t.Errorf("error should mention completion_parallel, got: %s", result.(*object.Error).Message)
+	}
+}
+
+func TestCompletionParallelPreservesOrder(t *testing.T) {
+	inst := newParallelInstance(echoMockClient{})
+	ctx := context.Background()
+	questions := []string{"alpha", "beta", "gamma", "delta", "epsilon"}
+
+	items := make([]object.Object, len(questions))
+	for i, q := range questions {
+		items[i] = object.NewString(q)
+	}
+	kwargs := object.NewKwargs(map[string]object.Object{"max_parallel": object.NewInteger(3)})
+
+	result := completionParallelMethod(inst, ctx, kwargs, "gpt-4",
+		&object.List{Elements: items})
+
+	list, ok := result.(*object.List)
+	if !ok {
+		t.Fatalf("expected List, got %T", result)
+	}
+	if len(list.Elements) != len(questions) {
+		t.Fatalf("expected %d results, got %d", len(questions), len(list.Elements))
+	}
+	for i, q := range questions {
+		respGo := conversion.ToGo(list.Elements[i])
+		respMap, ok := respGo.(map[string]any)
+		if !ok {
+			t.Errorf("[%d] result is not a map", i)
+			continue
+		}
+		choices, _ := respMap["choices"].([]any)
+		if len(choices) == 0 {
+			t.Errorf("[%d] no choices", i)
+			continue
+		}
+		msg, _ := choices[0].(map[string]any)["message"].(map[string]any)
+		if msg["content"] != q {
+			t.Errorf("[%d] expected content %q, got %q", i, q, msg["content"])
+		}
+	}
+}
+
+func TestCompletionParallelContextCancelled(t *testing.T) {
+	// Use a mock that blocks until the context is done so that the cancellation
+	// path in acquireSlot is actually exercised.
+	inst := newParallelInstance(timeoutMockClient{})
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	items := []object.Object{
+		object.NewString("q1"),
+		object.NewString("q2"),
+		object.NewString("q3"),
+	}
+	kwargs := object.NewKwargs(map[string]object.Object{"max_parallel": object.NewInteger(1)})
+
+	// Should not hang; returns when context is cancelled.
+	result := completionParallelMethod(inst, ctx, kwargs, "gpt-4",
+		&object.List{Elements: items})
+
+	if result.Type() == object.ERROR_OBJ {
+		// Top-level error is fine (e.g. from the first item timing out)
+		return
+	}
+	list, ok := result.(*object.List)
+	if !ok {
+		t.Fatalf("expected List, got %T", result)
+	}
+	// All results should be present (some may be errors from cancellation).
+	if len(list.Elements) != len(items) {
+		t.Errorf("expected %d results, got %d", len(items), len(list.Elements))
+	}
+}
+
+func TestCompletionParallelRateLimitAdaptive(t *testing.T) {
+	// rateLimitMockClient reports a rate-limit on the first call.
+	// runParallel should halve the slot count and apply a backoff, but still
+	// complete all items successfully.
+	rl := &rateLimitMockClient{}
+	inst := newParallelInstance(rl)
+	ctx := context.Background()
+
+	n := 4
+	items := make([]object.Object, n)
+	for i := range items {
+		items[i] = object.NewString(fmt.Sprintf("item%d", i))
+	}
+	kwargs := object.NewKwargs(map[string]object.Object{"max_parallel": object.NewInteger(2)})
+
+	result := completionParallelMethod(inst, ctx, kwargs, "gpt-4",
+		&object.List{Elements: items})
+
+	list, ok := result.(*object.List)
+	if !ok {
+		t.Fatalf("expected List, got %T", result)
+	}
+	if len(list.Elements) != n {
+		t.Fatalf("expected %d results, got %d", n, len(list.Elements))
+	}
+	// All results should be non-nil and non-error.
+	for i, elem := range list.Elements {
+		if elem == nil || elem.Type() == object.ERROR_OBJ {
+			t.Errorf("[%d] unexpected nil or error result", i)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ask_parallel tests
+// ---------------------------------------------------------------------------
+
+func TestAskParallelEmpty(t *testing.T) {
+	inst := newParallelInstance(echoMockClient{})
+	ctx := context.Background()
+	kwargs := object.NewKwargs(nil)
+
+	result := askParallelMethod(inst, ctx, kwargs, "gpt-4", &object.List{Elements: []object.Object{}})
+	list, ok := result.(*object.List)
+	if !ok {
+		t.Fatalf("expected List, got %T", result)
+	}
+	if len(list.Elements) != 0 {
+		t.Errorf("expected empty list, got %d elements", len(list.Elements))
+	}
+}
+
+func TestAskParallelReturnsTextNotMap(t *testing.T) {
+	inst := newParallelInstance(echoMockClient{})
+	ctx := context.Background()
+	questions := []string{"hello", "world"}
+
+	items := make([]object.Object, len(questions))
+	for i, q := range questions {
+		items[i] = object.NewString(q)
+	}
+	kwargs := object.NewKwargs(map[string]object.Object{"max_parallel": object.NewInteger(2)})
+
+	result := askParallelMethod(inst, ctx, kwargs, "gpt-4",
+		&object.List{Elements: items})
+
+	list, ok := result.(*object.List)
+	if !ok {
+		t.Fatalf("expected List, got %T", result)
+	}
+	if len(list.Elements) != len(questions) {
+		t.Fatalf("expected %d results, got %d", len(questions), len(list.Elements))
+	}
+	for i, q := range questions {
+		str, ok := list.Elements[i].(*object.String)
+		if !ok {
+			t.Errorf("[%d] expected *object.String, got %T", i, list.Elements[i])
+			continue
+		}
+		if str.Inspect() != q {
+			t.Errorf("[%d] expected %q, got %q", i, q, str.Inspect())
+		}
+	}
+}
+
+func TestAskParallelPreservesOrderUnderConcurrency(t *testing.T) {
+	inst := newParallelInstance(echoMockClient{})
+	ctx := context.Background()
+
+	n := 20
+	items := make([]object.Object, n)
+	expected := make([]string, n)
+	for i := range items {
+		expected[i] = fmt.Sprintf("question-%d", i)
+		items[i] = object.NewString(expected[i])
+	}
+	kwargs := object.NewKwargs(map[string]object.Object{"max_parallel": object.NewInteger(10)})
+
+	result := askParallelMethod(inst, ctx, kwargs, "gpt-4",
+		&object.List{Elements: items})
+
+	list, ok := result.(*object.List)
+	if !ok {
+		t.Fatalf("expected List, got %T", result)
+	}
+	for i, want := range expected {
+		str, ok := list.Elements[i].(*object.String)
+		if !ok {
+			t.Errorf("[%d] expected *object.String, got %T", i, list.Elements[i])
+			continue
+		}
+		if str.Inspect() != want {
+			t.Errorf("[%d] expected %q, got %q", i, want, str.Inspect())
+		}
+	}
+}
+
+func TestAskParallelAdaptiveBackoffPreservesRetryMetadata(t *testing.T) {
+	// ask_parallel must surface rate-limit retry info to runParallel so that
+	// adaptive backoff can fire. Verify all items complete (not that the limit
+	// was halved, which is an internal detail) and results are strings.
+	rl := &rateLimitMockClient{}
+	inst := newParallelInstance(rl)
+	ctx := context.Background()
+
+	n := 4
+	items := make([]object.Object, n)
+	for i := range items {
+		items[i] = object.NewString(fmt.Sprintf("q%d", i))
+	}
+	kwargs := object.NewKwargs(map[string]object.Object{"max_parallel": object.NewInteger(2)})
+
+	result := askParallelMethod(inst, ctx, kwargs, "gpt-4",
+		&object.List{Elements: items})
+
+	list, ok := result.(*object.List)
+	if !ok {
+		t.Fatalf("expected List, got %T", result)
+	}
+	if len(list.Elements) != n {
+		t.Fatalf("expected %d results, got %d", n, len(list.Elements))
+	}
+	for i, elem := range list.Elements {
+		if _, ok := elem.(*object.String); !ok {
+			t.Errorf("[%d] expected *object.String (text), got %T", i, elem)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline tests
+// ---------------------------------------------------------------------------
+
+func newPipelineClientInstance(client mcpai.Client) *object.Instance {
+	return createClientInstance(client)
+}
+
+func TestPipelineCompleteEmpty(t *testing.T) {
+	inst := newPipelineClientInstance(echoMockClient{})
+	ctx := context.Background()
+	kwargs := object.NewKwargs(map[string]object.Object{"max_parallel": object.NewInteger(2)})
+
+	pipe := pipelineMethod(inst, ctx, kwargs, "gpt-4")
+	if pipe.Type() == object.ERROR_OBJ {
+		t.Fatalf("pipelineMethod returned error: %v", pipe.(*object.Error).Message)
+	}
+
+	result := completeMethod(pipe.(*object.Instance), ctx)
+	list, ok := result.(*object.List)
+	if !ok {
+		t.Fatalf("expected List, got %T", result)
+	}
+	if len(list.Elements) != 0 {
+		t.Errorf("expected empty list, got %d elements", len(list.Elements))
+	}
+}
+
+func TestPipelineCompleteTwiceErrors(t *testing.T) {
+	inst := newPipelineClientInstance(echoMockClient{})
+	ctx := context.Background()
+	kwargs := object.NewKwargs(nil)
+
+	pipe := pipelineMethod(inst, ctx, kwargs, "gpt-4").(*object.Instance)
+	completeMethod(pipe, ctx) // first call
+	result := completeMethod(pipe, ctx)
+	if result.Type() != object.ERROR_OBJ {
+		t.Fatalf("expected error on second complete(), got %T", result)
+	}
+}
+
+func TestPipelineAddAfterCompleteErrors(t *testing.T) {
+	inst := newPipelineClientInstance(echoMockClient{})
+	ctx := context.Background()
+	kwargs := object.NewKwargs(nil)
+
+	pipe := pipelineMethod(inst, ctx, kwargs, "gpt-4").(*object.Instance)
+	completeMethod(pipe, ctx)
+	result := addMethod(pipe, ctx, "late message")
+	if result.Type() != object.ERROR_OBJ {
+		t.Fatalf("expected error on add() after complete(), got %T", result)
+	}
+}
+
+func TestPipelinePreservesOrder(t *testing.T) {
+	inst := newPipelineClientInstance(echoMockClient{})
+	ctx := context.Background()
+	kwargs := object.NewKwargs(map[string]object.Object{"max_parallel": object.NewInteger(4)})
+
+	questions := []string{"alpha", "beta", "gamma", "delta", "epsilon"}
+	pipe := pipelineMethod(inst, ctx, kwargs, "gpt-4").(*object.Instance)
+	for _, q := range questions {
+		if r := addMethod(pipe, ctx, q); r.Type() == object.ERROR_OBJ {
+			t.Fatalf("add() returned error: %v", r.(*object.Error).Message)
+		}
+	}
+	result := completeMethod(pipe, ctx)
+	list, ok := result.(*object.List)
+	if !ok {
+		t.Fatalf("expected List, got %T", result)
+	}
+	if len(list.Elements) != len(questions) {
+		t.Fatalf("expected %d results, got %d", len(questions), len(list.Elements))
+	}
+	for i, q := range questions {
+		respGo := conversion.ToGo(list.Elements[i])
+		respMap, ok := respGo.(map[string]any)
+		if !ok {
+			t.Errorf("[%d] result is not a map", i)
+			continue
+		}
+		choices, _ := respMap["choices"].([]any)
+		if len(choices) == 0 {
+			t.Errorf("[%d] no choices", i)
+			continue
+		}
+		msg, _ := choices[0].(map[string]any)["message"].(map[string]any)
+		if msg["content"] != q {
+			t.Errorf("[%d] expected %q, got %q", i, q, msg["content"])
+		}
+	}
+}
+
+func TestPipelineAskModeReturnsStrings(t *testing.T) {
+	inst := newPipelineClientInstance(echoMockClient{})
+	ctx := context.Background()
+	kwargs := object.NewKwargs(map[string]object.Object{
+		"max_parallel": object.NewInteger(3),
+		"ask":          object.NewBoolean(true),
+	})
+
+	questions := []string{"hello", "world", "foo"}
+	pipe := pipelineMethod(inst, ctx, kwargs, "gpt-4").(*object.Instance)
+	for _, q := range questions {
+		addMethod(pipe, ctx, q)
+	}
+	result := completeMethod(pipe, ctx)
+	list, ok := result.(*object.List)
+	if !ok {
+		t.Fatalf("expected List, got %T", result)
+	}
+	for i, q := range questions {
+		s, ok := list.Elements[i].(*object.String)
+		if !ok {
+			t.Errorf("[%d] expected *object.String, got %T", i, list.Elements[i])
+			continue
+		}
+		if s.Inspect() != q {
+			t.Errorf("[%d] expected %q, got %q", i, q, s.Inspect())
+		}
+	}
+}
+
+func TestPipelineContextCancellation(t *testing.T) {
+	inst := newPipelineClientInstance(timeoutMockClient{})
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	kwargs := object.NewKwargs(map[string]object.Object{"max_parallel": object.NewInteger(1)})
+	pipe := pipelineMethod(inst, ctx, kwargs, "gpt-4").(*object.Instance)
+	for i := 0; i < 3; i++ {
+		addMethod(pipe, ctx, fmt.Sprintf("q%d", i))
+	}
+
+	result := completeMethod(pipe, ctx)
+	if result.Type() == object.ERROR_OBJ {
+		return // top-level error is acceptable
+	}
+	list, ok := result.(*object.List)
+	if !ok {
+		t.Fatalf("expected List, got %T", result)
+	}
+	if len(list.Elements) != 3 {
+		t.Errorf("expected 3 results, got %d", len(list.Elements))
+	}
+}
+
+func TestPipelineRateLimitAdaptive(t *testing.T) {
+	rl := &rateLimitMockClient{}
+	inst := newPipelineClientInstance(rl)
+	ctx := context.Background()
+	kwargs := object.NewKwargs(map[string]object.Object{"max_parallel": object.NewInteger(2)})
+
+	pipe := pipelineMethod(inst, ctx, kwargs, "gpt-4").(*object.Instance)
+	for i := 0; i < 4; i++ {
+		addMethod(pipe, ctx, fmt.Sprintf("item%d", i))
+	}
+	result := completeMethod(pipe, ctx)
+	list, ok := result.(*object.List)
+	if !ok {
+		t.Fatalf("expected List, got %T", result)
+	}
+	if len(list.Elements) != 4 {
+		t.Fatalf("expected 4 results, got %d", len(list.Elements))
+	}
+	for i, elem := range list.Elements {
+		if elem == nil || elem.Type() == object.ERROR_OBJ {
+			t.Errorf("[%d] unexpected nil or error result", i)
+		}
+	}
 }

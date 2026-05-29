@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/paularlott/mcp"
 	"github.com/paularlott/mcp/ai"
@@ -77,6 +78,28 @@ func buildLibrary() *object.Library {
 			if kwargs.Has("top_p") {
 				v := kwargs.MustGetFloat("top_p", 0)
 				topP = &v
+			}
+
+			// Retry configuration
+			var maxRetries *int
+			if kwargs.Has("max_retries") {
+				v := int(kwargs.MustGetInt("max_retries", 3))
+				maxRetries = &v
+			}
+			var retryBackoff *float64
+			if kwargs.Has("retry_backoff") {
+				v := kwargs.MustGetFloat("retry_backoff", 1)
+				retryBackoff = &v
+			}
+			var retryOnRateLimit *bool
+			if kwargs.Has("retry_on_rate_limit") {
+				v := kwargs.MustGetBool("retry_on_rate_limit", true)
+				retryOnRateLimit = &v
+			}
+			var retryOnServerError *bool
+			if kwargs.Has("retry_on_server_error") {
+				v := kwargs.MustGetBool("retry_on_server_error", true)
+				retryOnServerError = &v
 			}
 
 			extraHeaders := http.Header{}
@@ -157,17 +180,36 @@ func buildLibrary() *object.Library {
 				return nil, fmt.Errorf("unsupported provider: %s", provider)
 			}
 
+			var retryBackoffDur time.Duration
+			if retryBackoff != nil {
+				retryBackoffDur = time.Duration(*retryBackoff * float64(time.Second))
+			}
+
+			openaiConfig := openai.Config{
+				APIKey:              apiKey,
+				BaseURL:             baseURL,
+				RemoteServerConfigs: remoteServerConfigs,
+				MaxTokens:           maxTokens,
+				Temperature:         temperature,
+				TopP:                topP,
+				ExtraHeaders:        extraHeaders,
+			}
+			if maxRetries != nil {
+				openaiConfig.MaxRetries = *maxRetries
+			}
+			if retryBackoffDur > 0 {
+				openaiConfig.RetryBackoff = retryBackoffDur
+			}
+			if retryOnRateLimit != nil {
+				openaiConfig.RetryOnRateLimit = retryOnRateLimit
+			}
+			if retryOnServerError != nil {
+				openaiConfig.RetryOnServerError = retryOnServerError
+			}
+
 			client, err := ai.NewClient(ai.Config{
 				Provider: providerType,
-				Config: openai.Config{
-					APIKey:              apiKey,
-					BaseURL:             baseURL,
-					RemoteServerConfigs: remoteServerConfigs,
-					MaxTokens:           maxTokens,
-					Temperature:         temperature,
-					TopP:                topP,
-					ExtraHeaders:        extraHeaders,
-				},
+				Config:   openaiConfig,
 			})
 			if err != nil {
 				return nil, err
@@ -190,6 +232,10 @@ Parameters:
     - base_url (str, required): URL of the MCP server
     - namespace (str, optional): Namespace prefix for tools
     - bearer_token (str, optional): Bearer token for authentication
+  max_retries (int, optional): Max retries for retryable errors (429, 5xx). Default: 3. Set -1 to disable.
+  retry_backoff (float, optional): Base backoff in seconds between retries. Default: 1.0
+  retry_on_rate_limit (bool, optional): Retry on 429 errors. Default: True
+  retry_on_server_error (bool, optional): Retry on 5xx errors. Default: True
 
 Returns:
   AIClient: A client instance with methods for API calls

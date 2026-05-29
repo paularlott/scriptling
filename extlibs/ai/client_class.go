@@ -348,6 +348,38 @@ Example:
   answers = client.ask_parallel("gpt-4", questions, max_parallel=3)
   for answer in answers:
       print(answer)`).
+		MethodWithHelp("Pipeline", pipelineMethod, `Pipeline(model, **kwargs) - Create a streaming completion pipeline
+
+Creates a Pipeline that starts processing requests immediately as they are added
+via add(), up to max_parallel concurrent requests at a time. Call complete() to
+wait for all results. This allows prompt generation and inference to overlap.
+
+Parameters:
+  model (str): Model identifier (e.g., "gpt-4", "gpt-3.5-turbo")
+  max_parallel (int, optional): Maximum concurrent requests. Default: 1
+  ask (bool, optional): If True, return plain text strings instead of response dicts. Default: False
+  system_prompt (str, optional): System prompt applied to each string message
+  tools (list, optional): List of tool schema dicts from ToolRegistry.build()
+  temperature (float, optional): Sampling temperature (0.0-2.0)
+  top_p (float, optional): Nucleus sampling threshold (0.0-1.0)
+  max_tokens (int, optional): Maximum tokens to generate
+  extra_body (dict, optional): Provider-specific fields merged into every request body
+  timeout (int, optional): Request timeout in seconds
+
+Returns:
+  Pipeline: Pipeline instance with add() and complete() methods
+
+Example:
+  pipe = client.Pipeline("gpt-4", max_parallel=4)
+  for row in dataset:
+      pipe.add(build_prompt(row))   # starts firing immediately
+  results = pipe.complete()         # ordered list of response dicts
+
+  # Ask mode — get plain text back
+  pipe = client.Pipeline("gpt-4", max_parallel=4, ask=True)
+  for q in questions:
+      pipe.add(q)
+  answers = pipe.complete()         # ordered list of strings`).
 		Build()
 }
 
@@ -465,6 +497,14 @@ func chatCompletionResponseToGoMap(resp *ai.ChatCompletionResponse) map[string]a
 			"prompt_tokens":     resp.Usage.PromptTokens,
 			"completion_tokens": resp.Usage.CompletionTokens,
 			"total_tokens":      resp.Usage.TotalTokens,
+		}
+	}
+
+	if resp.Retry != nil {
+		result["retry"] = map[string]any{
+			"attempts":       resp.Retry.Attempts,
+			"rate_limit_hit": resp.Retry.RateLimitHit,
+			"total_backoff":  resp.Retry.TotalBackoff.Seconds(),
 		}
 	}
 
@@ -972,31 +1012,11 @@ func completionParallelMethod(self *object.Instance, ctx context.Context, kwargs
 		return &object.List{Elements: []object.Object{}}
 	}
 
-	type indexedResult struct {
-		index  int
-		result object.Object
+	pi := newPipelineInstance(self, ctx, filterParallelKwargs(kwargs), model, false, maxParallel)
+	for _, item := range items {
+		pi.enqueue(item)
 	}
-
-	completionKwargs := filterParallelKwargs(kwargs)
-
-	sem := make(chan struct{}, maxParallel)
-	ch := make(chan indexedResult, len(items))
-
-	for i, msg := range items {
-		sem <- struct{}{}
-		go func(idx int, m any) {
-			defer func() { <-sem }()
-			ch <- indexedResult{index: idx, result: completionMethod(self, ctx, completionKwargs, model, m)}
-		}(i, msg)
-	}
-
-	results := make([]object.Object, len(items))
-	for i := 0; i < len(items); i++ {
-		res := <-ch
-		results[res.index] = res.result
-	}
-
-	return &object.List{Elements: results}
+	return pi.flush()
 }
 
 func askParallelMethod(self *object.Instance, ctx context.Context, kwargs object.Kwargs, model string, messagesList any) object.Object {
@@ -1010,31 +1030,41 @@ func askParallelMethod(self *object.Instance, ctx context.Context, kwargs object
 		return &object.List{Elements: []object.Object{}}
 	}
 
-	type indexedResult struct {
-		index  int
-		result object.Object
+	pi := newPipelineInstance(self, ctx, filterParallelKwargs(kwargs), model, true, maxParallel)
+	for _, item := range items {
+		pi.enqueue(item)
 	}
+	return pi.flush()
+}
 
-	askKwargs := filterParallelKwargs(kwargs)
+// pipelineMethod implements client.Pipeline(model, **kwargs) for scripts.
+func pipelineMethod(self *object.Instance, ctx context.Context, kwargs object.Kwargs, model string) object.Object {
+	maxParallel := max(1, int(kwargs.MustGetInt("max_parallel", 1)))
+	ask := kwargs.MustGetBool("ask", false)
+	pi := newPipelineInstance(self, ctx, filterPipelineKwargs(kwargs), model, ask, maxParallel)
+	return createPipelineInstance(pi)
+}
 
-	sem := make(chan struct{}, maxParallel)
-	ch := make(chan indexedResult, len(items))
-
-	for i, msg := range items {
-		sem <- struct{}{}
-		go func(idx int, m any) {
-			defer func() { <-sem }()
-			ch <- indexedResult{index: idx, result: askMethod(self, ctx, askKwargs, model, m)}
-		}(i, msg)
+// filterPipelineKwargs strips pipeline-control keys, leaving only completion kwargs.
+func filterPipelineKwargs(kwargs object.Kwargs) object.Kwargs {
+	filtered := object.NewKwargs(map[string]object.Object{})
+	for key, value := range kwargs.Kwargs {
+		switch key {
+		case "max_parallel", "ask":
+			continue
+		}
+		filtered.Kwargs[key] = value
 	}
+	return filtered
+}
 
-	results := make([]object.Object, len(items))
-	for i := 0; i < len(items); i++ {
-		res := <-ch
-		results[res.index] = res.result
+func resultAsMap(obj object.Object) (map[string]any, bool) {
+	if obj == nil {
+		return nil, false
 	}
-
-	return &object.List{Elements: results}
+	goVal := conversion.ToGo(obj)
+	m, ok := goVal.(map[string]any)
+	return m, ok
 }
 
 func toSlice(input any) ([]any, error) {
@@ -1303,6 +1333,13 @@ A context.Canceled error indicates the stream was cancelled (e.g. user pressed E
 
 Returns:
   str: Error message, or None if no error`).
+		MethodWithHelp("retry", retryStreamMethod, `retry() - Get retry metadata for the stream
+
+Returns retry metadata if the connection was retried before streaming began,
+or None if no retries occurred. Blocks until retry metadata is available.
+
+Returns:
+  dict: Retry metadata with attempts, rate_limit_hit, and total_backoff keys, or None`).
 		Build()
 }
 
@@ -1416,6 +1453,29 @@ func errStreamMethod(self *object.Instance, ctx context.Context) object.Object {
 		return object.NewString(err.Error())
 	}
 	return &object.Null{}
+}
+
+// retryStreamMethod returns retry metadata for the stream, blocking until available.
+func retryStreamMethod(self *object.Instance, ctx context.Context) object.Object {
+	si, cerr := getStreamInstance(self)
+	if cerr != nil {
+		return cerr
+	}
+
+	if si.stream == nil {
+		return &object.Null{}
+	}
+
+	meta := si.stream.Retry()
+	if meta == nil {
+		return &object.Null{}
+	}
+
+	return conversion.FromGo(map[string]any{
+		"attempts":      meta.Attempts,
+		"rate_limit_hit": meta.RateLimitHit,
+		"total_backoff":  meta.TotalBackoff.Seconds(),
+	})
 }
 
 // completion_stream method implementation
