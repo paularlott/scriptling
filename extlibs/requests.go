@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/paularlott/scriptling/conversion"
@@ -392,6 +393,81 @@ Note: Use either 'data' or 'json', not both.
 Returns:
   Response object with status_code, text, headers, body, url, and json() method`,
 	},
+	"parallel": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if len(args) < 1 {
+				return errors.NewArgumentError(1, 0)
+			}
+			requestList, err := args[0].AsList()
+			if err != nil {
+				return errors.NewTypeError("LIST", args[0].Type().String())
+			}
+			if len(requestList) == 0 {
+				return &object.List{Elements: []object.Object{}}
+			}
+
+			maxParallel := int64(4)
+			if mp, mpErr := kwargs.GetInt("max_parallel", 4); mpErr == nil {
+				maxParallel = mp
+			}
+			if maxParallel < 1 {
+				maxParallel = 1
+			}
+
+			results := make([]object.Object, len(requestList))
+			sem := make(chan struct{}, maxParallel)
+			var wg sync.WaitGroup
+
+			for i, reqObj := range requestList {
+				reqDict, dictErr := reqObj.AsDict()
+				if dictErr != nil {
+					results[i] = errors.NewTypeError("DICT", reqObj.Type().String())
+					continue
+				}
+
+				wg.Add(1)
+				go func(idx int, rd map[string]object.Object) {
+					defer wg.Done()
+					sem <- struct{}{}
+					defer func() { <-sem }()
+
+					results[idx] = executeParallelRequest(ctx, rd)
+				}(i, reqDict)
+			}
+
+			wg.Wait()
+			return &object.List{Elements: results}
+		},
+		HelpText: `parallel(requests, max_parallel=4) - Execute multiple HTTP requests in parallel
+
+Sends multiple HTTP requests concurrently with a configurable concurrency limit.
+Results are returned in the same order as the input requests.
+
+Parameters:
+  requests (list): List of request dicts, each with:
+    - method (string): HTTP method ("GET", "POST", "PUT", "DELETE", "PATCH")
+    - url (string): The URL to send the request to
+    - data (string, optional): Request body as string
+    - json (dict/list, optional): Data to JSON-encode as body
+    - headers (dict, optional): HTTP headers
+    - params (dict, optional): Query parameters
+    - auth (list/tuple, optional): [username, password] for basic auth
+    - timeout (int, optional): Timeout in seconds (default: 30)
+  max_parallel (int): Maximum concurrent requests (default: 4)
+
+Returns:
+  list: List of Response objects in the same order as input requests.
+        Failed requests return a Response with status_code=0 and the error in body.
+
+Example:
+  results = requests.parallel([
+      {"method": "GET", "url": "https://api.example.com/item/1"},
+      {"method": "POST", "url": "https://api.example.com/item/2", "json": {"key": "val"}},
+  ], max_parallel=4)
+  for resp in results:
+      if resp.status_code == 200:
+          data = resp.json()`,
+	},
 }, map[string]object.Object{
 	// Exception types as constants (for except clause matching)
 	"RequestException": requestExceptionType,
@@ -464,4 +540,82 @@ func httpRequestWithContext(parentCtx context.Context, method, url, body string,
 	}
 
 	return createResponseInstance(resp.StatusCode, respHeaders, respBody, url)
+}
+
+// executeParallelRequest executes a single request from a parallel batch spec dict.
+func executeParallelRequest(ctx context.Context, spec map[string]object.Object) object.Object {
+	// Extract method
+	method := "GET"
+	if methodObj, ok := spec["method"]; ok {
+		if m, err := methodObj.AsString(); err == nil {
+			method = strings.ToUpper(m)
+		}
+	}
+
+	// Extract URL
+	urlStr := ""
+	if urlObj, ok := spec["url"]; ok {
+		if u, err := urlObj.AsString(); err == nil {
+			urlStr = u
+		}
+	}
+	if urlStr == "" {
+		return createResponseInstance(0, nil, []byte("parallel request missing 'url'"), "")
+	}
+
+	// Extract timeout (default 30s for parallel — longer than individual default)
+	timeout := 30
+	if timeoutObj, ok := spec["timeout"]; ok {
+		if t, err := timeoutObj.AsInt(); err == nil {
+			timeout = int(t)
+		}
+	}
+
+	// Extract headers
+	headers := make(map[string]string)
+	if headersObj, ok := spec["headers"]; ok {
+		if d, err := headersObj.AsDict(); err == nil {
+			headers = extractHeaders(d)
+		}
+	}
+
+	// Extract query params
+	if paramsObj, ok := spec["params"]; ok {
+		if d, err := paramsObj.AsDict(); err == nil {
+			params := extractParams(d)
+			urlStr = buildURLWithParams(urlStr, params)
+		}
+	}
+
+	// Extract auth
+	user, pass := "", ""
+	if authObj, ok := spec["auth"]; ok {
+		if authList, err := authObj.AsList(); err == nil && len(authList) == 2 {
+			if u, err := authList[0].AsString(); err == nil {
+				user = u
+			}
+			if p, err := authList[1].AsString(); err == nil {
+				pass = p
+			}
+		}
+	}
+
+	// Extract body — either 'data' (string) or 'json' (dict/list to encode)
+	body := ""
+	if jsonObj, ok := spec["json"]; ok {
+		jsonBytes, err := json.Marshal(conversion.ToGo(jsonObj))
+		if err != nil {
+			return createResponseInstance(0, nil, []byte(fmt.Sprintf("failed to encode json: %s", err.Error())), urlStr)
+		}
+		body = string(jsonBytes)
+		if _, hasContentType := headers["Content-Type"]; !hasContentType {
+			headers["Content-Type"] = "application/json"
+		}
+	} else if dataObj, ok := spec["data"]; ok {
+		if d, err := dataObj.AsString(); err == nil {
+			body = d
+		}
+	}
+
+	return httpRequestWithContext(ctx, method, urlStr, body, timeout, headers, user, pass)
 }
