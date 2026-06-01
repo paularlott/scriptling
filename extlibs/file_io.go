@@ -152,6 +152,46 @@ func chmodPath(config fssecurity.Config, path string, mode os.FileMode) object.O
 	return &object.Null{}
 }
 
+func removePath(config fssecurity.Config, path string, target string, missingOk bool) object.Object {
+	if err := checkPathSecurity(config, path); err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil {
+		if missingOk && os.IsNotExist(err) {
+			return &object.Null{}
+		}
+		return errors.NewError("cannot remove %s: %s", target, err.Error())
+	}
+	return &object.Null{}
+}
+
+func renamePath(config fssecurity.Config, oldPath string, newPath string) object.Object {
+	if err := checkPathSecurity(config, oldPath); err != nil {
+		return err
+	}
+	if err := checkPathSecurity(config, newPath); err != nil {
+		return err
+	}
+	if err := os.Rename(oldPath, newPath); err != nil {
+		return errors.NewError("cannot rename: %s", err.Error())
+	}
+	return &object.Null{}
+}
+
+func statPath(config fssecurity.Config, path string, action string) (os.FileInfo, object.Object) {
+	if err := checkPathSecurity(config, path); err != nil {
+		return nil, err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		if action == "" {
+			return nil, nil
+		}
+		return nil, errors.NewError("%s: %s", action, err.Error())
+	}
+	return info, nil
+}
+
 func mkdirPath(config fssecurity.Config, path string, mode os.FileMode, parents bool, existOk bool) object.Object {
 	if err := checkPathSecurity(config, path); err != nil {
 		return err
