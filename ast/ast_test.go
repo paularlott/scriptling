@@ -268,6 +268,7 @@ func TestFunctionLiteral(t *testing.T) {
 		},
 		testIdentifier("args"),
 		nil,
+		-1,
 	)
 
 	if len(fn.Parameters) != 2 {

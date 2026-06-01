@@ -734,13 +734,13 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 		return evalInfixExpression(ctx, operator, object.NewInteger(lv), right, env)
 	case *object.String:
 		if operator == ast.OpMod {
-		return evalStringPercentFormat(l.StringValue(), right)
-	}
-	if r, ok := right.(*object.String); ok {
-		return evalStringInfixExpression(operator, l.StringValue(), r.StringValue())
-	}
-	if r, ok := right.(*object.Integer); ok && operator == ast.OpMul {
-		return evalStringMultiplication(l.StringValue(), r.IntValue())
+			return evalStringPercentFormat(l.StringValue(), right)
+		}
+		if r, ok := right.(*object.String); ok {
+			return evalStringInfixExpression(operator, l.StringValue(), r.StringValue())
+		}
+		if r, ok := right.(*object.Integer); ok && operator == ast.OpMul {
+			return evalStringMultiplication(l.StringValue(), r.IntValue())
 		}
 	case *object.FloatArray:
 		if operator == ast.OpAdd {
@@ -1282,18 +1282,18 @@ func callDunderMethod(ctx context.Context, inst *object.Instance, method string,
 
 // operatorToDunderMethod maps operators to their corresponding dunder method names
 var operatorToDunderMethod = map[ast.Op]string{
-	ast.OpLt:        "__lt__",
-	ast.OpGt:        "__gt__",
-	ast.OpLte:       "__le__",
-	ast.OpGte:       "__ge__",
-	ast.OpEq:        "__eq__",
-	ast.OpNeq:       "__ne__",
-	ast.OpAdd:       "__add__",
-	ast.OpSub:       "__sub__",
-	ast.OpMul:       "__mul__",
-	ast.OpDiv:       "__truediv__",
-	ast.OpFloorDiv:  "__floordiv__",
-	ast.OpMod:       "__mod__",
+	ast.OpLt:       "__lt__",
+	ast.OpGt:       "__gt__",
+	ast.OpLte:      "__le__",
+	ast.OpGte:      "__ge__",
+	ast.OpEq:       "__eq__",
+	ast.OpNeq:      "__ne__",
+	ast.OpAdd:      "__add__",
+	ast.OpSub:      "__sub__",
+	ast.OpMul:      "__mul__",
+	ast.OpDiv:      "__truediv__",
+	ast.OpFloorDiv: "__floordiv__",
+	ast.OpMod:      "__mod__",
 }
 
 // evalInstanceInfixExpression handles operators on instances by calling dunder methods
@@ -1422,6 +1422,7 @@ func evalFunctionStatement(ctx context.Context, stmt *ast.FunctionStatement, env
 		DefaultValues:    stmt.Function.GetDefaultValues(),
 		Variadic:         stmt.Function.GetVariadic(),
 		Kwargs:           stmt.Function.GetKwargs(),
+		KeywordOnlyStart: stmt.Function.GetKeywordOnlyStart() + 1,
 		Body:             stmt.Function.Body,
 		Env:              env,
 		LocalSlots:       localSlots,
@@ -2001,6 +2002,7 @@ type funcParams struct {
 	defaultValues    map[string]ast.Expression
 	variadic         *ast.Identifier
 	kwargs           *ast.Identifier
+	keywordOnlyStart int
 	parentEnv        *object.Environment
 	localSlots       map[string]int
 	localSlotNames   []string
@@ -2019,10 +2021,14 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 
 	numParams := len(fp.parameters)
 	numArgs := len(args)
+	positionalLimit := numParams
+	if fp.keywordOnlyStart > 0 && fp.keywordOnlyStart-1 < positionalLimit {
+		positionalLimit = fp.keywordOnlyStart - 1
+	}
 
 	// Fast path for the common case: exact positional arguments with no defaults,
 	// variadics, kwargs, or keyword arguments.
-	if len(keywords) == 0 && fp.variadic == nil && fp.kwargs == nil && len(fp.defaultValues) == 0 && numArgs == numParams {
+	if len(keywords) == 0 && fp.keywordOnlyStart == 0 && fp.variadic == nil && fp.kwargs == nil && len(fp.defaultValues) == 0 && numArgs == numParams {
 		if len(fp.paramSlotIndexes) == numParams {
 			for paramIdx, slotIdx := range fp.paramSlotIndexes {
 				if !env.SetSlotByIndex(slotIdx, args[paramIdx]) {
@@ -2038,18 +2044,18 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 	}
 
 	// Set provided positional arguments
-	for paramIdx := 0; paramIdx < numParams && paramIdx < numArgs; paramIdx++ {
+	for paramIdx := 0; paramIdx < positionalLimit && paramIdx < numArgs; paramIdx++ {
 		env.Set(fp.parameters[paramIdx].Value(), args[paramIdx])
 	}
 
 	// Check for extra positional arguments
-	if numArgs > numParams {
+	if numArgs > positionalLimit {
 		if fp.variadic != nil {
 			// Collect extra arguments into a list
-			list := &object.List{Elements: args[numParams:]}
+			list := &object.List{Elements: args[positionalLimit:]}
 			env.Set(fp.variadic.Value(), list)
 		} else {
-			minArgs := numParams - len(fp.defaultValues)
+			minArgs := positionalLimit
 			return nil, errors.NewArgumentError(numArgs, minArgs)
 		}
 	} else if fp.variadic != nil {
@@ -2064,12 +2070,12 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 		var setParams map[string]bool
 		if numParams <= 8 {
 			// Mark positional args as set via index
-			for i := 0; i < numParams && i < numArgs; i++ {
+			for i := 0; i < positionalLimit && i < numArgs; i++ {
 				setSmall[i] = true
 			}
 		} else {
 			setParams = make(map[string]bool, numParams)
-			for i := 0; i < numParams && i < numArgs; i++ {
+			for i := 0; i < positionalLimit && i < numArgs; i++ {
 				setParams[fp.parameters[i].Value()] = true
 			}
 		}
@@ -2174,6 +2180,7 @@ func extendFunctionEnv(fn *object.Function, args []object.Object, keywords map[s
 		defaultValues:    fn.DefaultValues,
 		variadic:         fn.Variadic,
 		kwargs:           fn.Kwargs,
+		keywordOnlyStart: fn.KeywordOnlyStart,
 		parentEnv:        fn.Env,
 		localSlots:       fn.LocalSlots,
 		localSlotNames:   fn.LocalSlotNames,
@@ -2188,6 +2195,7 @@ func extendLambdaEnv(fn *object.LambdaFunction, args []object.Object, keywords m
 		defaultValues:    fn.DefaultValues,
 		variadic:         fn.Variadic,
 		kwargs:           fn.Kwargs,
+		keywordOnlyStart: fn.KeywordOnlyStart,
 		parentEnv:        fn.Env,
 		localSlots:       fn.LocalSlots,
 		localSlotNames:   fn.LocalSlotNames,
@@ -4421,6 +4429,7 @@ func evalLambda(lambda *ast.Lambda, env *object.Environment) object.Object {
 		DefaultValues:    lambda.GetDefaultValues(),
 		Variadic:         lambda.GetVariadic(),
 		Kwargs:           lambda.GetKwargs(),
+		KeywordOnlyStart: lambda.GetKeywordOnlyStart() + 1,
 		Body:             lambda.Body,
 		Env:              env,
 		LocalSlots:       localSlots,
