@@ -3,7 +3,6 @@ package extlibs
 
 import (
 	"context"
-	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -19,78 +18,9 @@ type osLibraryInstance struct {
 	config fssecurity.Config
 }
 
-func parseFileMode(args []object.Object, kwargs object.Kwargs, index int, defaultMode os.FileMode) (os.FileMode, object.Object) {
-	mode := int64(defaultMode)
-	if len(args) > index {
-		if kwargs.Has("mode") {
-			return 0, errors.NewError("mode specified both positionally and by keyword")
-		}
-		var err object.Object
-		mode, err = args[index].AsInt()
-		if err != nil {
-			return 0, errors.NewTypeError("INTEGER", args[index].Type().String())
-		}
-	} else if val := kwargs.Get("mode"); val != nil {
-		var err object.Object
-		mode, err = val.AsInt()
-		if err != nil {
-			return 0, errors.NewTypeError("INTEGER", val.Type().String())
-		}
-	}
-	if mode < 0 {
-		return 0, errors.NewError("mode must be non-negative")
-	}
-	return os.FileMode(mode), nil
-}
-
 // checkPathSecurity validates a path and returns an error if access is denied
 func (o *osLibraryInstance) checkPathSecurity(path string) object.Object {
-	if !o.config.IsPathAllowed(path) {
-		return errors.NewPermissionError("access denied: path '%s' is outside allowed directories", path)
-	}
-	return nil
-}
-
-func (o *osLibraryInstance) removeDirs(path string) object.Object {
-	if err := o.checkPathSecurity(path); err != nil {
-		return err
-	}
-	if err := os.Remove(path); err != nil {
-		return errors.NewError("cannot remove directory: %s", err.Error())
-	}
-
-	parent := filepath.Dir(filepath.Clean(path))
-	for parent != "." && parent != string(os.PathSeparator) {
-		if o.isAllowedRoot(parent) {
-			break
-		}
-		if !o.config.IsPathAllowed(parent) {
-			break
-		}
-		if err := os.Remove(parent); err != nil {
-			break
-		}
-		next := filepath.Dir(parent)
-		if next == parent {
-			break
-		}
-		parent = next
-	}
-
-	return &object.Null{}
-}
-
-func (o *osLibraryInstance) isAllowedRoot(path string) bool {
-	if o.config.AllowedPaths == nil {
-		return false
-	}
-	cleanPath := filepath.Clean(path)
-	for _, allowedPath := range o.config.AllowedPaths {
-		if cleanPath == filepath.Clean(allowedPath) {
-			return true
-		}
-	}
-	return false
+	return checkPathSecurity(o.config, path)
 }
 
 // RegisterOSLibrary registers the os and os.path libraries with a Scriptling instance.
@@ -125,17 +55,7 @@ func RegisterOSLibrary(registrar object.LibraryRegistrar, allowedPaths []string)
 func NewOSLibrary(config fssecurity.Config) (*object.Library, *object.Library) {
 	// Normalize and validate allowed paths
 	// IMPORTANT: nil means no restrictions, empty slice means deny all
-	if config.AllowedPaths != nil {
-		normalizedPaths := make([]string, 0, len(config.AllowedPaths))
-		for _, p := range config.AllowedPaths {
-			absPath, err := filepath.Abs(p)
-			if err != nil {
-				continue
-			}
-			normalizedPaths = append(normalizedPaths, filepath.Clean(absPath))
-		}
-		config.AllowedPaths = normalizedPaths
-	}
+	config = normalizeFileIOAllowedPaths(config)
 
 	instance := &osLibraryInstance{config: config}
 
@@ -236,14 +156,9 @@ Returns a list of the names of the entries in the given directory.`,
 					return err
 				}
 
-				// Security check
-				if err := o.checkPathSecurity(path); err != nil {
-					return err
-				}
-
-				content, fsErr := os.ReadFile(path)
-				if fsErr != nil {
-					return errors.NewError("cannot read file: %s", fsErr.Error())
+				content, errObj := readFileBytes(o.config, path)
+				if errObj != nil {
+					return errObj
 				}
 				return object.NewString(string(content))
 			},
@@ -269,16 +184,7 @@ Returns the contents of the file as a string.`,
 					return errObj
 				}
 
-				// Security check
-				if err := o.checkPathSecurity(path); err != nil {
-					return err
-				}
-
-				fsErr := os.WriteFile(path, []byte(content), mode)
-				if fsErr != nil {
-					return errors.NewError("cannot write file: %s", fsErr.Error())
-				}
-				return &object.Null{}
+				return writeFileBytes(o.config, path, []byte(content), mode)
 			},
 			HelpText: `write_file(path, content[, mode]) - Write content to file
 
@@ -298,21 +204,7 @@ Writes the string content to the file, creating or overwriting it.`,
 					return errors.NewTypeError("STRING", args[1].Type().String())
 				}
 
-				// Security check
-				if err := o.checkPathSecurity(path); err != nil {
-					return err
-				}
-
-				f, fsErr := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-				if fsErr != nil {
-					return errors.NewError("cannot open file for append: %s", fsErr.Error())
-				}
-				defer f.Close()
-
-				if _, err := io.WriteString(f, content); err != nil {
-					return errors.NewError("cannot append to file: %s", err.Error())
-				}
-				return &object.Null{}
+				return appendFileBytes(o.config, path, []byte(content), 0644)
 			},
 			HelpText: `append_file(path, content) - Append content to file
 
@@ -360,16 +252,7 @@ Removes the specified file.`,
 					return errObj
 				}
 
-				// Security check
-				if err := o.checkPathSecurity(path); err != nil {
-					return err
-				}
-
-				fsErr := os.Chmod(path, mode)
-				if fsErr != nil {
-					return errors.NewError("cannot change mode: %s", fsErr.Error())
-				}
-				return &object.Null{}
+				return chmodPath(o.config, path, mode)
 			},
 			HelpText: `chmod(path, mode) - Change file or directory mode
 
@@ -389,16 +272,7 @@ Changes the permissions of the specified file or directory.`,
 					return errObj
 				}
 
-				// Security check
-				if err := o.checkPathSecurity(path); err != nil {
-					return err
-				}
-
-				fsErr := os.Mkdir(path, mode)
-				if fsErr != nil {
-					return errors.NewError("cannot create directory: %s", fsErr.Error())
-				}
-				return &object.Null{}
+				return mkdirPath(o.config, path, mode, false, false)
 			},
 			HelpText: `mkdir(path[, mode]) - Create a directory
 
@@ -422,22 +296,7 @@ Creates a new directory with the specified path.`,
 					return errObj
 				}
 
-				// Security check
-				if err := o.checkPathSecurity(path); err != nil {
-					return err
-				}
-
-				if !existOk {
-					if _, err := os.Stat(path); err == nil {
-						return errors.NewError("cannot create directories: file exists")
-					}
-				}
-
-				fsErr := os.MkdirAll(path, mode)
-				if fsErr != nil {
-					return errors.NewError("cannot create directories: %s", fsErr.Error())
-				}
-				return &object.Null{}
+				return mkdirPath(o.config, path, mode, true, existOk)
 			},
 			HelpText: `makedirs(path[, mode], exist_ok=False) - Create directories recursively
 
@@ -477,7 +336,7 @@ Removes the specified empty directory.`,
 				if err != nil {
 					return err
 				}
-				return o.removeDirs(path)
+				return removeDirs(o.config, path)
 			},
 			HelpText: `removedirs(name) - Remove empty directory and empty parent directories
 
