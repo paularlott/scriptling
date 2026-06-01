@@ -25,8 +25,8 @@ var (
 	sizeOfFunctionLiteral         = int(unsafe.Sizeof(FunctionLiteral{}))
 	sizeOfFunctionStatement       = int(unsafe.Sizeof(FunctionStatement{}))
 	sizeOfClassStatement          = int(unsafe.Sizeof(ClassStatement{}))
-	sizeOfCallExpression       = int(unsafe.Sizeof(CallExpression{}))
-	sizeOfMethodCallExpression = int(unsafe.Sizeof(MethodCallExpression{}))
+	sizeOfCallExpression          = int(unsafe.Sizeof(CallExpression{}))
+	sizeOfMethodCallExpression    = int(unsafe.Sizeof(MethodCallExpression{}))
 	sizeOfReturnStatement         = int(unsafe.Sizeof(ReturnStatement{}))
 	sizeOfBreakStatement          = int(unsafe.Sizeof(BreakStatement{}))
 	sizeOfContinueStatement       = int(unsafe.Sizeof(ContinueStatement{}))
@@ -218,6 +218,7 @@ func (e *estimator) walkStatement(stmt Statement) {
 		}
 		e.addToken(n.Token)
 		e.walkIdentifier(n.Name)
+		e.walkExpression(n.Left)
 		e.walkExpression(n.Value)
 	case *MultipleAssignStatement:
 		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfMultipleAssign) {
