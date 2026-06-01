@@ -48,27 +48,14 @@ func RegisterPathlibLibrary(registrar object.LibraryRegistrar, allowedPaths []st
 
 // NewPathlibLibrary creates a new Pathlib library with the given configuration.
 func NewPathlibLibrary(config fssecurity.Config) *object.Library {
-	if config.AllowedPaths != nil {
-		normalizedPaths := make([]string, 0, len(config.AllowedPaths))
-		for _, p := range config.AllowedPaths {
-			absPath, err := filepath.Abs(p)
-			if err != nil {
-				continue
-			}
-			normalizedPaths = append(normalizedPaths, filepath.Clean(absPath))
-		}
-		config.AllowedPaths = normalizedPaths
-	}
+	config = normalizeFileIOAllowedPaths(config)
 
 	instance := &PathlibLibraryInstance{config: config}
 	return instance.createPathlibLibrary()
 }
 
 func (p *PathlibLibraryInstance) checkPathSecurity(path string) object.Object {
-	if !p.config.IsPathAllowed(path) {
-		return errors.NewPermissionError("access denied: path '%s' is outside allowed directories", path)
-	}
-	return nil
+	return checkPathSecurity(p.config, path)
 }
 
 func (p *PathlibLibraryInstance) createPathObject(pathStr string) object.Object {
@@ -220,9 +207,6 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					if errObj != nil {
 						return errObj
 					}
-					if err := p.checkPathSecurity(cleanPath); err != nil {
-						return err
-					}
 					parents, errObj := kwargs.GetBool("parents", false)
 					if errObj != nil {
 						return errObj
@@ -231,26 +215,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					if errObj != nil {
 						return errObj
 					}
-					var err error
-					if parents {
-						if !existOk {
-							if _, statErr := os.Stat(cleanPath); statErr == nil {
-								return errors.NewError("cannot create directory: file exists")
-							}
-						}
-						err = os.MkdirAll(cleanPath, mode)
-					} else {
-						err = os.Mkdir(cleanPath, mode)
-						if existOk && os.IsExist(err) {
-							if info, statErr := os.Stat(cleanPath); statErr == nil && info.IsDir() {
-								return &object.Null{}
-							}
-						}
-					}
-					if err != nil {
-						return errors.NewError("cannot create directory: %s", err.Error())
-					}
-					return &object.Null{}
+					return mkdirPath(p.config, cleanPath, mode, parents, existOk)
 				},
 				HelpText: "mkdir(mode=0o777, parents=False, exist_ok=False) - Create a new directory at this given path",
 			},
@@ -270,13 +235,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					if errObj != nil {
 						return errObj
 					}
-					if err := p.checkPathSecurity(cleanPath); err != nil {
-						return err
-					}
-					if err := os.Chmod(cleanPath, mode); err != nil {
-						return errors.NewError("cannot change mode: %s", err.Error())
-					}
-					return &object.Null{}
+					return chmodPath(p.config, cleanPath, mode)
 				},
 				HelpText: "chmod(mode) - Change file or directory mode",
 			},
@@ -337,12 +296,9 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					if errObj != nil {
 						return errObj
 					}
-					if err := p.checkPathSecurity(cleanPath); err != nil {
-						return err
-					}
-					content, err := os.ReadFile(cleanPath)
-					if err != nil {
-						return errors.NewError("cannot read file: %s", err.Error())
+					content, errObj := readFileBytes(p.config, cleanPath)
+					if errObj != nil {
+						return errObj
 					}
 					return object.NewString(string(content))
 				},
@@ -357,12 +313,9 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					if errObj != nil {
 						return errObj
 					}
-					if err := p.checkPathSecurity(cleanPath); err != nil {
-						return err
-					}
-					content, err := os.ReadFile(cleanPath)
-					if err != nil {
-						return errors.NewError("cannot read file: %s", err.Error())
+					content, errObj := readFileBytes(p.config, cleanPath)
+					if errObj != nil {
+						return errObj
 					}
 					return object.NewString(string(content))
 				},
@@ -381,13 +334,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					if err != nil {
 						return err
 					}
-					if err := p.checkPathSecurity(cleanPath); err != nil {
-						return err
-					}
-					if err := os.WriteFile(cleanPath, []byte(content), 0644); err != nil {
-						return errors.NewError("cannot write file: %s", err.Error())
-					}
-					return &object.Null{}
+					return writeFileBytes(p.config, cleanPath, []byte(content), 0644)
 				},
 				HelpText: "write_text(data) - Write the string data to the file",
 			},
@@ -404,13 +351,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					if err != nil {
 						return err
 					}
-					if err := p.checkPathSecurity(cleanPath); err != nil {
-						return err
-					}
-					if err := os.WriteFile(cleanPath, []byte(content), 0644); err != nil {
-						return errors.NewError("cannot write file: %s", err.Error())
-					}
-					return &object.Null{}
+					return writeFileBytes(p.config, cleanPath, []byte(content), 0644)
 				},
 				HelpText: "write_bytes(data) - Write bytes to the file",
 			},

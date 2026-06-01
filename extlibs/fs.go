@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/binary"
 	"math"
-	"os"
-	"path/filepath"
 	"strconv"
 
 	"github.com/paularlott/scriptling/errors"
@@ -36,25 +34,12 @@ const (
 )
 
 func (f *fsLibraryInstance) checkPathSecurity(path string) object.Object {
-	if !f.config.IsPathAllowed(path) {
-		return errors.NewPermissionError("access denied: path '%s' is outside allowed directories", path)
-	}
-	return nil
+	return checkPathSecurity(f.config, path)
 }
 
 func RegisterFSLibrary(registrar object.LibraryRegistrar, allowedPaths []string) {
 	config := fssecurity.Config{AllowedPaths: allowedPaths}
-	if config.AllowedPaths != nil {
-		normalizedPaths := make([]string, 0, len(config.AllowedPaths))
-		for _, p := range config.AllowedPaths {
-			absPath, err := filepath.Abs(p)
-			if err != nil {
-				continue
-			}
-			normalizedPaths = append(normalizedPaths, filepath.Clean(absPath))
-		}
-		config.AllowedPaths = normalizedPaths
-	}
+	config = normalizeFileIOAllowedPaths(config)
 	instance := &fsLibraryInstance{config: config}
 	registrar.RegisterLibrary(instance.createFSLibrary())
 }
@@ -78,32 +63,11 @@ func (f *fsLibraryInstance) createFSLibrary() *object.Library {
 				if err != nil {
 					return err
 				}
-				if offset < 0 {
-					return errors.NewError("read_bytes: offset must be non-negative")
+				content, errObj := readFileBytesAt(f.config, path, offset, length, fsMaxReadBytes)
+				if errObj != nil {
+					return errObj
 				}
-				if length < 0 {
-					return errors.NewError("read_bytes: length must be non-negative")
-				}
-				if length > fsMaxReadBytes {
-					return errors.NewError("read_bytes: length exceeds maximum of %d bytes", fsMaxReadBytes)
-				}
-
-				if err := f.checkPathSecurity(path); err != nil {
-					return err
-				}
-
-				file, fsErr := os.Open(path)
-				if fsErr != nil {
-					return errors.NewError("read_bytes: cannot open file: %s", fsErr.Error())
-				}
-				defer file.Close()
-
-				buf := make([]byte, length)
-				n, fsErr := file.ReadAt(buf, offset)
-				if fsErr != nil && n == 0 {
-					return errors.NewError("read_bytes: cannot read file: %s", fsErr.Error())
-				}
-				return object.NewString(string(buf[:n]))
+				return object.NewString(string(content))
 			},
 			HelpText: `read_bytes(path, offset, length) - Read a range of bytes from a file
 
@@ -192,25 +156,7 @@ Format is the same as unpack(). Returns a binary string.`,
 				if errObj != nil {
 					return errObj
 				}
-				if offset < 0 {
-					return errors.NewError("write_bytes: offset must be non-negative")
-				}
-
-				if err := f.checkPathSecurity(path); err != nil {
-					return err
-				}
-
-				file, fsErr := os.OpenFile(path, os.O_CREATE|os.O_RDWR, mode)
-				if fsErr != nil {
-					return errors.NewError("write_bytes: cannot open file: %s", fsErr.Error())
-				}
-				defer file.Close()
-
-				_, fsErr = file.WriteAt([]byte(data), offset)
-				if fsErr != nil {
-					return errors.NewError("write_bytes: cannot write to file: %s", fsErr.Error())
-				}
-				return &object.Null{}
+				return writeFileBytesAt(f.config, path, offset, []byte(data), mode)
 			},
 			HelpText: `write_bytes(path, offset, data[, mode]) - Write raw bytes at an offset
 
