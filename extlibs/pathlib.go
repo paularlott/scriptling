@@ -146,11 +146,11 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					if errObj != nil {
 						return errObj
 					}
-					if err := p.checkPathSecurity(cleanPath); err != nil {
-						return err
+					info, errObj := statPath(p.config, cleanPath, "")
+					if errObj != nil {
+						return errObj
 					}
-					_, err := os.Stat(cleanPath)
-					return object.NewBoolean(err == nil)
+					return object.NewBoolean(info != nil)
 				},
 				HelpText: "exists() - Check if the path exists",
 			},
@@ -163,11 +163,11 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					if errObj != nil {
 						return errObj
 					}
-					if err := p.checkPathSecurity(cleanPath); err != nil {
+					info, errObj := statPath(p.config, cleanPath, "")
+					if errObj != nil {
 						return object.NewBoolean(false)
 					}
-					info, err := os.Stat(cleanPath)
-					if err != nil {
+					if info == nil {
 						return object.NewBoolean(false)
 					}
 					return object.NewBoolean(!info.IsDir())
@@ -183,11 +183,11 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					if errObj != nil {
 						return errObj
 					}
-					if err := p.checkPathSecurity(cleanPath); err != nil {
+					info, errObj := statPath(p.config, cleanPath, "")
+					if errObj != nil {
 						return object.NewBoolean(false)
 					}
-					info, err := os.Stat(cleanPath)
-					if err != nil {
+					if info == nil {
 						return object.NewBoolean(false)
 					}
 					return object.NewBoolean(info.IsDir())
@@ -248,13 +248,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					if errObj != nil {
 						return errObj
 					}
-					if err := p.checkPathSecurity(cleanPath); err != nil {
-						return err
-					}
-					if err := os.Remove(cleanPath); err != nil {
-						return errors.NewError("cannot remove directory: %s", err.Error())
-					}
-					return &object.Null{}
+					return removePath(p.config, cleanPath, "directory", false)
 				},
 				HelpText: "rmdir() - Remove the empty directory",
 			},
@@ -273,17 +267,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 							missingOk = b
 						}
 					}
-					if err := p.checkPathSecurity(cleanPath); err != nil {
-						return err
-					}
-					err := os.Remove(cleanPath)
-					if err != nil {
-						if missingOk && os.IsNotExist(err) {
-							return &object.Null{}
-						}
-						return errors.NewError("cannot remove file: %s", err.Error())
-					}
-					return &object.Null{}
+					return removePath(p.config, cleanPath, "file", missingOk)
 				},
 				HelpText: "unlink(missing_ok=False) - Remove this file or symbolic link",
 			},

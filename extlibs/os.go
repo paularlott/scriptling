@@ -220,16 +220,7 @@ Appends the string content to the file, creating it if it doesn't exist.`,
 					return err
 				}
 
-				// Security check
-				if err := o.checkPathSecurity(path); err != nil {
-					return err
-				}
-
-				fsErr := os.Remove(path)
-				if fsErr != nil {
-					return errors.NewError("cannot remove file: %s", fsErr.Error())
-				}
-				return &object.Null{}
+				return removePath(o.config, path, "file", false)
 			},
 			HelpText: `remove(path) - Remove a file
 
@@ -312,16 +303,7 @@ Creates a directory and all parent directories as needed.`,
 					return err
 				}
 
-				// Security check
-				if err := o.checkPathSecurity(path); err != nil {
-					return err
-				}
-
-				fsErr := os.Remove(path)
-				if fsErr != nil {
-					return errors.NewError("cannot remove directory: %s", fsErr.Error())
-				}
-				return &object.Null{}
+				return removePath(o.config, path, "directory", false)
 			},
 			HelpText: `rmdir(path) - Remove a directory
 
@@ -356,19 +338,7 @@ Removes the leaf directory, then removes empty parent directories until a parent
 					return err
 				}
 
-				// Security check both paths
-				if err := o.checkPathSecurity(oldPath); err != nil {
-					return err
-				}
-				if err := o.checkPathSecurity(newPath); err != nil {
-					return err
-				}
-
-				fsErr := os.Rename(oldPath, newPath)
-				if fsErr != nil {
-					return errors.NewError("cannot rename: %s", fsErr.Error())
-				}
-				return &object.Null{}
+				return renamePath(o.config, oldPath, newPath)
 			},
 			HelpText: `rename(old, new) - Rename a file or directory
 
@@ -414,13 +384,11 @@ Joins path components using the appropriate separator for the OS.`,
 					return err
 				}
 
-				// Security check
-				if err := o.checkPathSecurity(path); err != nil {
-					return err
+				info, errObj := statPath(o.config, path, "")
+				if errObj != nil {
+					return errObj
 				}
-
-				_, statErr := os.Stat(path)
-				return object.NewBoolean(statErr == nil)
+				return object.NewBoolean(info != nil)
 			},
 			HelpText: `exists(path) - Check if path exists
 
@@ -436,13 +404,11 @@ Returns True if the path exists, False otherwise.`,
 					return err
 				}
 
-				// Security check
-				if err := o.checkPathSecurity(path); err != nil {
-					return err
+				info, errObj := statPath(o.config, path, "")
+				if errObj != nil {
+					return errObj
 				}
-
-				info, statErr := os.Stat(path)
-				if statErr != nil {
+				if info == nil {
 					return object.NewBoolean(false)
 				}
 				return object.NewBoolean(!info.IsDir())
@@ -461,13 +427,11 @@ Returns True if the path is a regular file, False otherwise.`,
 					return err
 				}
 
-				// Security check
-				if err := o.checkPathSecurity(path); err != nil {
-					return err
+				info, errObj := statPath(o.config, path, "")
+				if errObj != nil {
+					return errObj
 				}
-
-				info, statErr := os.Stat(path)
-				if statErr != nil {
+				if info == nil {
 					return object.NewBoolean(false)
 				}
 				return object.NewBoolean(info.IsDir())
@@ -628,14 +592,9 @@ Returns True if the path is an absolute pathname.`,
 					return err
 				}
 
-				// Security check
-				if err := o.checkPathSecurity(path); err != nil {
-					return err
-				}
-
-				info, fsErr := os.Stat(path)
-				if fsErr != nil {
-					return errors.NewError("cannot get file size: %s", fsErr.Error())
+				info, errObj := statPath(o.config, path, "cannot get file size")
+				if errObj != nil {
+					return errObj
 				}
 				return object.NewInteger(info.Size())
 			},
@@ -653,14 +612,9 @@ Returns the size in bytes of the specified file.`,
 					return err
 				}
 
-				// Security check
-				if err := o.checkPathSecurity(path); err != nil {
-					return err
-				}
-
-				info, fsErr := os.Stat(path)
-				if fsErr != nil {
-					return errors.NewError("cannot get file mtime: %s", fsErr.Error())
+				info, errObj := statPath(o.config, path, "cannot get file mtime")
+				if errObj != nil {
+					return errObj
 				}
 				return object.NewFloat(float64(info.ModTime().Unix()))
 			},
