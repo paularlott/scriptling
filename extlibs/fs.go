@@ -173,7 +173,7 @@ Format is the same as unpack(). Returns a binary string.`,
 		},
 		"write_bytes": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if err := errors.ExactArgs(args, 3); err != nil {
+				if err := errors.RangeArgs(args, 3, 4); err != nil {
 					return err
 				}
 				path, err := args[0].AsString()
@@ -188,6 +188,10 @@ Format is the same as unpack(). Returns a binary string.`,
 				if err != nil {
 					return err
 				}
+				mode, errObj := parseFileMode(args, kwargs, 3, 0644)
+				if errObj != nil {
+					return errObj
+				}
 				if offset < 0 {
 					return errors.NewError("write_bytes: offset must be non-negative")
 				}
@@ -196,7 +200,7 @@ Format is the same as unpack(). Returns a binary string.`,
 					return err
 				}
 
-				file, fsErr := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0644)
+				file, fsErr := os.OpenFile(path, os.O_CREATE|os.O_RDWR, mode)
 				if fsErr != nil {
 					return errors.NewError("write_bytes: cannot open file: %s", fsErr.Error())
 				}
@@ -208,7 +212,7 @@ Format is the same as unpack(). Returns a binary string.`,
 				}
 				return &object.Null{}
 			},
-			HelpText: `write_bytes(path, offset, data) - Write raw bytes at an offset
+			HelpText: `write_bytes(path, offset, data[, mode]) - Write raw bytes at an offset
 
 Creates the file if it does not exist. offset is 0-based byte position.`,
 		},

@@ -663,6 +663,36 @@ fs.write_bytes("` + testFile + `", 0, "hello")`)
 	}
 }
 
+func TestFSWriteBytesMode(t *testing.T) {
+	tmpDir := t.TempDir()
+	positionalFile := filepath.Join(tmpDir, "positional.bin")
+	kwargFile := filepath.Join(tmpDir, "kwarg.bin")
+
+	p := newFSInterpreter(t, []string{tmpDir})
+
+	_, err := p.Eval(`import fs
+fs.write_bytes("` + positionalFile + `", 0, "hello", 0o600)
+fs.write_bytes("` + kwargFile + `", 0, "hello", mode=0o640)`)
+	if err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+
+	positionalInfo, err := os.Stat(positionalFile)
+	if err != nil {
+		t.Fatalf("stat positional file: %v", err)
+	}
+	if got := positionalInfo.Mode().Perm(); got != 0600 {
+		t.Fatalf("positional file mode = %o, want 0600", got)
+	}
+	kwargInfo, err := os.Stat(kwargFile)
+	if err != nil {
+		t.Fatalf("stat kwarg file: %v", err)
+	}
+	if got := kwargInfo.Mode().Perm(); got != 0640 {
+		t.Fatalf("kwarg file mode = %o, want 0640", got)
+	}
+}
+
 func TestFSWriteBytesAtOffset(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "patch.bin")

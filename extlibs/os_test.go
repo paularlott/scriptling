@@ -2,6 +2,7 @@ package extlibs
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/paularlott/scriptling"
@@ -17,9 +18,9 @@ func TestOSGetenv(t *testing.T) {
 	RegisterOSLibrary(p, nil)
 
 	tests := []struct {
-		name     string
-		code     string
-		check    func(t *testing.T, result object.Object)
+		name  string
+		code  string
+		check func(t *testing.T, result object.Object)
 	}{
 		{
 			name: "existing var returns value",
@@ -184,5 +185,122 @@ found`)
 
 	if !boolean.BoolValue() {
 		t.Error("Expected to find TEST_ITER_VAR in os.environ.items()")
+	}
+}
+
+func TestOSChmodAndMkdirMode(t *testing.T) {
+	tmp := t.TempDir()
+	allowedTmp, err := filepath.EvalSymlinks(tmp)
+	if err != nil {
+		t.Fatalf("eval temp dir: %v", err)
+	}
+	tmp = allowedTmp
+	dir := filepath.Join(tmp, "mode-dir")
+	nested := filepath.Join(tmp, "nested", "child")
+	file := filepath.Join(tmp, "file.txt")
+
+	p := scriptling.New()
+	RegisterOSLibrary(p, []string{allowedTmp})
+
+	code := `import os
+os.mkdir("` + dir + `", 0o700)
+os.makedirs("` + nested + `", mode=0o755)
+os.makedirs("` + nested + `", exist_ok=True)
+os.write_file("` + file + `", "content")
+os.chmod("` + file + `", mode=0o600)
+os.chmod("` + dir + `", 0o711)
+True`
+	result, err := p.Eval(code)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	if boolean, ok := result.(*object.Boolean); !ok || !boolean.BoolValue() {
+		t.Fatalf("expected True, got %T %v", result, result)
+	}
+
+	fileInfo, err := os.Stat(file)
+	if err != nil {
+		t.Fatalf("stat file: %v", err)
+	}
+	if got := fileInfo.Mode().Perm(); got != 0600 {
+		t.Fatalf("file mode = %o, want 0600", got)
+	}
+	dirInfo, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat dir: %v", err)
+	}
+	if got := dirInfo.Mode().Perm(); got != 0711 {
+		t.Fatalf("dir mode = %o, want 0711", got)
+	}
+}
+
+func TestOSWriteFileMode(t *testing.T) {
+	tmp := t.TempDir()
+	allowedTmp, err := filepath.EvalSymlinks(tmp)
+	if err != nil {
+		t.Fatalf("eval temp dir: %v", err)
+	}
+	positionalFile := filepath.Join(allowedTmp, "positional.txt")
+	kwargFile := filepath.Join(allowedTmp, "kwarg.txt")
+
+	p := scriptling.New()
+	RegisterOSLibrary(p, []string{allowedTmp})
+
+	code := `import os
+os.write_file("` + positionalFile + `", "content", 0o600)
+os.write_file("` + kwargFile + `", "content", mode=0o640)
+True`
+	result, err := p.Eval(code)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	if boolean, ok := result.(*object.Boolean); !ok || !boolean.BoolValue() {
+		t.Fatalf("expected True, got %T %v", result, result)
+	}
+
+	positionalInfo, err := os.Stat(positionalFile)
+	if err != nil {
+		t.Fatalf("stat positional file: %v", err)
+	}
+	if got := positionalInfo.Mode().Perm(); got != 0600 {
+		t.Fatalf("positional file mode = %o, want 0600", got)
+	}
+	kwargInfo, err := os.Stat(kwargFile)
+	if err != nil {
+		t.Fatalf("stat kwarg file: %v", err)
+	}
+	if got := kwargInfo.Mode().Perm(); got != 0640 {
+		t.Fatalf("kwarg file mode = %o, want 0640", got)
+	}
+}
+
+func TestOSRemovedirs(t *testing.T) {
+	tmp := t.TempDir()
+	allowedTmp, err := filepath.EvalSymlinks(tmp)
+	if err != nil {
+		t.Fatalf("eval temp dir: %v", err)
+	}
+	tmp = allowedTmp
+	leaf := filepath.Join(tmp, "a", "b", "c")
+
+	p := scriptling.New()
+	RegisterOSLibrary(p, []string{tmp})
+
+	code := `import os
+os.makedirs("` + leaf + `")
+os.removedirs("` + leaf + `")
+True`
+	result, err := p.Eval(code)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	if boolean, ok := result.(*object.Boolean); !ok || !boolean.BoolValue() {
+		t.Fatalf("expected True, got %T %v", result, result)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, "a")); !os.IsNotExist(err) {
+		t.Fatalf("expected removedirs to prune empty parents, stat err = %v", err)
+	}
+	if _, err := os.Stat(tmp); err != nil {
+		t.Fatalf("allowed root should remain: %v", err)
 	}
 }
