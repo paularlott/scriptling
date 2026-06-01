@@ -322,11 +322,15 @@ func (p *Parser) parseStatement() ast.Statement {
 }
 
 func (p *Parser) isAugmentedAssign() bool {
-	return p.peekTokenIs(token.PLUS_EQ) || p.peekTokenIs(token.MINUS_EQ) ||
-		p.peekTokenIs(token.MUL_EQ) || p.peekTokenIs(token.DIV_EQ) || p.peekTokenIs(token.FLOORDIV_EQ) ||
-		p.peekTokenIs(token.MOD_EQ) || p.peekTokenIs(token.POW_EQ) ||
-		p.peekTokenIs(token.AND_EQ) || p.peekTokenIs(token.OR_EQ) || p.peekTokenIs(token.XOR_EQ) ||
-		p.peekTokenIs(token.LSHIFT_EQ) || p.peekTokenIs(token.RSHIFT_EQ)
+	return isAugmentedAssignToken(p.peekToken.Type)
+}
+
+func isAugmentedAssignToken(t token.TokenType) bool {
+	return t == token.PLUS_EQ || t == token.MINUS_EQ ||
+		t == token.MUL_EQ || t == token.DIV_EQ || t == token.FLOORDIV_EQ ||
+		t == token.MOD_EQ || t == token.POW_EQ ||
+		t == token.AND_EQ || t == token.OR_EQ || t == token.XOR_EQ ||
+		t == token.LSHIFT_EQ || t == token.RSHIFT_EQ
 }
 
 func (p *Parser) parseAssignStatement() *ast.AssignStatement {
@@ -445,6 +449,7 @@ func (p *Parser) parseMultipleAssignStatement() ast.Statement {
 func (p *Parser) parseAugmentedAssignStatement() *ast.AugmentedAssignStatement {
 	stmt := &ast.AugmentedAssignStatement{Token: p.nodeLine()}
 	stmt.Name = p.ident(p.curToken.Literal)
+	stmt.Left = stmt.Name
 
 	p.nextToken()
 	stmt.Operator = ast.ParseOp(p.curToken.Literal)
@@ -654,6 +659,17 @@ func (p *Parser) parseExpressionStatement() ast.Statement {
 		p.nextToken() // move to value
 		first := p.parseExpressionWithConditional()
 		stmt.Value = p.parseTuplePackingTail(p.nodeLine(), first)
+		return stmt
+	}
+	if isAugmentedAssignToken(p.peekToken.Type) {
+		stmt := &ast.AugmentedAssignStatement{Token: p.nodeLine(), Left: expr}
+		if ident, ok := expr.(*ast.Identifier); ok {
+			stmt.Name = ident
+		}
+		p.nextToken() // consume operator
+		stmt.Operator = ast.ParseOp(p.curToken.Literal)
+		p.nextToken() // move to value
+		stmt.Value = p.parseExpressionWithConditional()
 		return stmt
 	}
 	expr = p.parseTuplePackingTail(p.nodeLine(), expr)

@@ -492,6 +492,7 @@ func (as *AssignStatement) Line() int { return int(as.Token.Line) }
 type AugmentedAssignStatement struct {
 	Token    LineInfo
 	Name     *Identifier
+	Left     Expression
 	Operator Op
 	Value    Expression
 }

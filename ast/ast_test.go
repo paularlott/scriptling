@@ -151,6 +151,7 @@ func TestAssignStatement(t *testing.T) {
 func TestAugmentedAssignStatement(t *testing.T) {
 	stmt := &AugmentedAssignStatement{
 		Name:     testIdentifier("x"),
+		Left:     testIdentifier("x"),
 		Operator: OpAddEq,
 		Value:    &IntegerLiteral{Value: 5},
 	}
@@ -159,7 +160,7 @@ func TestAugmentedAssignStatement(t *testing.T) {
 		t.Errorf("stmt.Operator = %v, want %v", stmt.Operator, OpAddEq)
 	}
 
-	if stmt.Name == nil || stmt.Value == nil {
+	if stmt.Name == nil || stmt.Left == nil || stmt.Value == nil {
 		t.Error("Augmented assign statement parts should not be nil")
 	}
 }

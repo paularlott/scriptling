@@ -189,7 +189,11 @@ func collectAssignedNamesFromStatement(stmt Statement, globals map[string]bool, 
 			collectAssignedNamesFromStatement(s.Chained, globals, nonlocals, addName)
 		}
 	case *AugmentedAssignStatement:
-		addLocal(s.Name.Value())
+		if ident, ok := s.Left.(*Identifier); ok {
+			addLocal(ident.Value())
+		} else if s.Left == nil && s.Name != nil {
+			addLocal(s.Name.Value())
+		}
 	case *MultipleAssignStatement:
 		for _, name := range s.Names {
 			addLocal(name.Value())

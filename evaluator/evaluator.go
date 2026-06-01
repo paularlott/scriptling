@@ -2303,13 +2303,21 @@ func init() {
 // evalRegexIndexExpression is in data_structures.go
 
 func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.AugmentedAssignStatement, env *object.Environment) object.Object {
-	currentVal, ok := env.Get(node.Name.Value())
-	if !ok {
-		return errors.NewIdentifierError(node.Name.Value())
+	left := node.Left
+	if left == nil {
+		left = node.Name
+	}
+	if left == nil {
+		return errors.NewError("invalid augmented assignment target")
+	}
+
+	currentVal := evalNode(ctx, left, env)
+	if object.IsError(currentVal) || isException(currentVal) {
+		return currentVal
 	}
 
 	newVal := evalNode(ctx, node.Value, env)
-	if object.IsError(newVal) {
+	if object.IsError(newVal) || isException(newVal) {
 		return newVal
 	}
 
@@ -2317,13 +2325,23 @@ func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.Augm
 	if node.Operator == ast.OpAddEq {
 		if cur, ok := currentVal.(*object.String); ok {
 			if r, ok := newVal.(*object.String); ok {
-				env.Set(node.Name.Value(), object.NewString(cur.StringValue()+r.StringValue()))
+				if err := assignToExpression(ctx, left, object.NewString(cur.StringValue()+r.StringValue()), env); err != nil {
+					if ae, ok := err.(*assignmentExceptionError); ok {
+						return ae.ex
+					}
+					return errors.NewError("%s", err.Error())
+				}
 				return NULL
 			}
 		}
 		if cur, ok := currentVal.(*object.Integer); ok {
 			if r, ok := newVal.(*object.Integer); ok {
-				env.Set(node.Name.Value(), object.NewInteger(cur.IntValue()+r.IntValue()))
+				if err := assignToExpression(ctx, left, object.NewInteger(cur.IntValue()+r.IntValue()), env); err != nil {
+					if ae, ok := err.(*assignmentExceptionError); ok {
+						return ae.ex
+					}
+					return errors.NewError("%s", err.Error())
+				}
 				return NULL
 			}
 		}
@@ -2339,7 +2357,12 @@ func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.Augm
 		return result
 	}
 
-	env.Set(node.Name.Value(), result)
+	if err := assignToExpression(ctx, left, result, env); err != nil {
+		if ae, ok := err.(*assignmentExceptionError); ok {
+			return ae.ex
+		}
+		return errors.NewError("%s", err.Error())
+	}
 	return NULL
 }
 

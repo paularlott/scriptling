@@ -661,26 +661,45 @@ func TestListComprehension(t *testing.T) {
 }
 
 func TestAugmentedAssignStatement(t *testing.T) {
-	input := "x += 1"
-
-	l := lexer.New(input)
-	p := New(l)
-	program := p.ParseProgram()
-	checkParserErrors(t, p)
-
-	if len(program.Statements) != 1 {
-		t.Fatalf("program.Statements does not contain %d statements. got=%d",
-			1, len(program.Statements))
+	tests := []struct {
+		input      string
+		targetType any
+	}{
+		{"x += 1", (*ast.Identifier)(nil)},
+		{"obj.value += 1", (*ast.IndexExpression)(nil)},
+		{"items[0] += 1", (*ast.IndexExpression)(nil)},
 	}
 
-	stmt, ok := program.Statements[0].(*ast.AugmentedAssignStatement)
-	if !ok {
-		t.Fatalf("program.Statements[0] is not ast.AugmentedAssignStatement. got=%T",
-			program.Statements[0])
-	}
+	for _, tt := range tests {
+		l := lexer.New(tt.input)
+		p := New(l)
+		program := p.ParseProgram()
+		checkParserErrors(t, p)
 
-	if stmt.Operator != ast.OpAddEq {
-		t.Errorf("augmented assign operator = %v, want +=", stmt.Operator)
+		if len(program.Statements) != 1 {
+			t.Fatalf("program.Statements does not contain %d statements. got=%d",
+				1, len(program.Statements))
+		}
+
+		stmt, ok := program.Statements[0].(*ast.AugmentedAssignStatement)
+		if !ok {
+			t.Fatalf("program.Statements[0] is not ast.AugmentedAssignStatement. got=%T",
+				program.Statements[0])
+		}
+
+		if stmt.Operator != ast.OpAddEq {
+			t.Errorf("augmented assign operator = %v, want +=", stmt.Operator)
+		}
+		switch tt.targetType.(type) {
+		case *ast.Identifier:
+			if _, ok := stmt.Left.(*ast.Identifier); !ok {
+				t.Fatalf("stmt.Left is not ast.Identifier. got=%T", stmt.Left)
+			}
+		case *ast.IndexExpression:
+			if _, ok := stmt.Left.(*ast.IndexExpression); !ok {
+				t.Fatalf("stmt.Left is not ast.IndexExpression. got=%T", stmt.Left)
+			}
+		}
 	}
 }
 
