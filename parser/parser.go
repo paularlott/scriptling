@@ -1326,9 +1326,9 @@ func (p *Parser) parseFunctionStatement() *ast.FunctionStatement {
 	}
 
 	stmt.Function = &ast.FunctionLiteral{}
-	params, defaults, variadic, kwargs := p.parseFunctionParameters()
+	params, defaults, variadic, kwargs, keywordOnlyStart := p.parseFunctionParameters()
 	stmt.Function.Parameters = params
-	stmt.Function.SetFuncOverflow(defaults, variadic, kwargs)
+	stmt.Function.SetFuncOverflow(defaults, variadic, kwargs, keywordOnlyStart)
 
 	if !p.expectPeek(token.COLON) {
 		return nil
@@ -1374,130 +1374,78 @@ func (p *Parser) parseClassStatement() *ast.ClassStatement {
 	return stmt
 }
 
-func (p *Parser) parseFunctionParameters() ([]*ast.Identifier, map[string]ast.Expression, *ast.Identifier, *ast.Identifier) {
+func (p *Parser) parseFunctionParameters() ([]*ast.Identifier, map[string]ast.Expression, *ast.Identifier, *ast.Identifier, int) {
 	var identifiers []*ast.Identifier
 	var defaults map[string]ast.Expression
 	var variadic *ast.Identifier
 	var kwargs *ast.Identifier
+	keywordOnlyStart := -1
 
 	if p.peekTokenIs(token.RPAREN) {
 		p.nextToken()
-		return identifiers, defaults, nil, nil
+		return identifiers, defaults, nil, nil, keywordOnlyStart
 	}
 
 	p.nextToken()
 
-	// Check for *args
-	if p.curTokenIs(token.ASTERISK) {
-		// *args
-		if !p.expectPeek(token.IDENT) {
-			return nil, nil, nil, nil
-		}
-		variadic = p.ident(p.curToken.Literal)
-		// Check for **kwargs after *args
-		if p.peekTokenIs(token.COMMA) {
-			p.nextToken() // consume comma
-			if p.peekTokenIs(token.POW) {
-				p.nextToken() // consume POW (**)
-				if !p.expectPeek(token.IDENT) {
-					return nil, nil, nil, nil
-				}
-				kwargs = p.ident(p.curToken.Literal)
-			}
-		}
-		if !p.expectPeek(token.RPAREN) {
-			return nil, nil, nil, nil
-		}
-		return identifiers, defaults, variadic, kwargs
-	}
-
-	// Check for **kwargs at start
-	if p.curTokenIs(token.POW) {
-		if !p.expectPeek(token.IDENT) {
-			return nil, nil, nil, nil
-		}
-		kwargs = p.ident(p.curToken.Literal)
-		if !p.expectPeek(token.RPAREN) {
-			return nil, nil, nil, nil
-		}
-		return identifiers, defaults, variadic, kwargs
-	}
-
-	ident := p.ident(p.curToken.Literal)
-	identifiers = append(identifiers, ident)
-
-	// Check for default value
-	if p.peekTokenIs(token.ASSIGN) {
-		if defaults == nil {
-			defaults = make(map[string]ast.Expression, 2)
-		}
-		p.nextToken() // consume =
-		p.nextToken()
-		defaults[ident.Value()] = p.parseExpression(LOWEST)
-	}
-
-	for p.peekTokenIs(token.COMMA) {
-		p.nextToken()
-		if p.peekTokenIs(token.RPAREN) {
-			break
-		}
-		p.nextToken()
-
-		// Check for *args
+	for {
 		if p.curTokenIs(token.ASTERISK) {
-			// *args
-			if !p.expectPeek(token.IDENT) {
-				return nil, nil, nil, nil
+			if keywordOnlyStart == -1 {
+				keywordOnlyStart = len(identifiers)
 			}
-			variadic = p.ident(p.curToken.Literal)
-			// Check for **kwargs after *args
-			if p.peekTokenIs(token.COMMA) {
-				p.nextToken() // consume comma
-				if p.peekTokenIs(token.POW) {
-					p.nextToken() // consume POW (**)
-					if !p.expectPeek(token.IDENT) {
-						return nil, nil, nil, nil
-					}
-					kwargs = p.ident(p.curToken.Literal)
+
+			if p.peekTokenIs(token.IDENT) {
+				p.nextToken()
+				variadic = p.ident(p.curToken.Literal)
+			} else if p.peekTokenIs(token.COMMA) {
+				// Bare * marks following parameters as keyword-only.
+			} else {
+				if !p.expectPeek(token.IDENT) {
+					return nil, nil, nil, nil, keywordOnlyStart
 				}
 			}
-			if !p.expectPeek(token.RPAREN) {
-				return nil, nil, nil, nil
-			}
-			return identifiers, defaults, variadic, kwargs
-		}
-
-		// Check for **kwargs
-		if p.curTokenIs(token.POW) {
+		} else if p.curTokenIs(token.POW) {
 			if !p.expectPeek(token.IDENT) {
-				return nil, nil, nil, nil
+				return nil, nil, nil, nil, keywordOnlyStart
 			}
 			kwargs = p.ident(p.curToken.Literal)
+			if p.peekTokenIs(token.COMMA) {
+				p.nextToken()
+			}
 			if !p.expectPeek(token.RPAREN) {
-				return nil, nil, nil, nil
+				return nil, nil, nil, nil, keywordOnlyStart
 			}
-			return identifiers, defaults, variadic, kwargs
+			return identifiers, defaults, variadic, kwargs, keywordOnlyStart
+		} else {
+			ident := p.ident(p.curToken.Literal)
+			identifiers = append(identifiers, ident)
+
+			// Check for default value
+			if p.peekTokenIs(token.ASSIGN) {
+				if defaults == nil {
+					defaults = make(map[string]ast.Expression, 2)
+				}
+				p.nextToken() // consume =
+				p.nextToken()
+				defaults[ident.Value()] = p.parseExpression(LOWEST)
+			}
 		}
 
-		ident := p.ident(p.curToken.Literal)
-		identifiers = append(identifiers, ident)
-
-		// Check for default value
-		if p.peekTokenIs(token.ASSIGN) {
-			if defaults == nil {
-				defaults = make(map[string]ast.Expression, 2)
-			}
-			p.nextToken() // consume =
+		if p.peekTokenIs(token.COMMA) {
 			p.nextToken()
-			defaults[ident.Value()] = p.parseExpression(LOWEST)
+			if p.peekTokenIs(token.RPAREN) {
+				p.nextToken()
+				return identifiers, defaults, variadic, kwargs, keywordOnlyStart
+			}
+			p.nextToken()
+			continue
 		}
-	}
 
-	if !p.expectPeek(token.RPAREN) {
-		return nil, nil, nil, nil
+		if !p.expectPeek(token.RPAREN) {
+			return nil, nil, nil, nil, keywordOnlyStart
+		}
+		return identifiers, defaults, variadic, kwargs, keywordOnlyStart
 	}
-
-	return identifiers, defaults, variadic, kwargs
 }
 
 func (p *Parser) parseForStatement() *ast.ForStatement {
@@ -1667,9 +1615,9 @@ func (p *Parser) parseLambda() ast.Expression {
 	lambda := &ast.Lambda{}
 
 	if !p.peekTokenIs(token.COLON) {
-		params, defaults, variadic, kwargs := p.parseLambdaParameters()
+		params, defaults, variadic, kwargs, keywordOnlyStart := p.parseLambdaParameters()
 		lambda.Parameters = params
-		lambda.SetFuncOverflow(defaults, variadic, kwargs)
+		lambda.SetFuncOverflow(defaults, variadic, kwargs, keywordOnlyStart)
 	}
 
 	if !p.expectPeek(token.COLON) {
@@ -1686,104 +1634,70 @@ func (p *Parser) parseLambda() ast.Expression {
 	return lambda
 }
 
-func (p *Parser) parseLambdaParameters() ([]*ast.Identifier, map[string]ast.Expression, *ast.Identifier, *ast.Identifier) {
+func (p *Parser) parseLambdaParameters() ([]*ast.Identifier, map[string]ast.Expression, *ast.Identifier, *ast.Identifier, int) {
 	var identifiers []*ast.Identifier
 	var defaults map[string]ast.Expression
 	var variadic *ast.Identifier
 	var kwargs *ast.Identifier
+	keywordOnlyStart := -1
 
 	p.nextToken()
 
 	if p.curTokenIs(token.COLON) {
-		return identifiers, defaults, nil, nil
+		return identifiers, defaults, nil, nil, keywordOnlyStart
 	}
 
-	// Check for *args or **kwargs
-	if p.curTokenIs(token.ASTERISK) {
-		p.nextToken()
-		variadic = p.ident(p.curToken.Literal)
-		// Check for **kwargs after *args
-		if p.peekTokenIs(token.COMMA) {
-			p.nextToken() // consume comma
-			if p.peekTokenIs(token.POW) {
-				p.nextToken() // consume POW (**)
-				if !p.expectPeek(token.IDENT) {
-					return nil, nil, nil, nil
-				}
-				kwargs = p.ident(p.curToken.Literal)
-			}
-		}
-		return identifiers, defaults, variadic, kwargs
-	}
-
-	// Check for **kwargs at start
-	if p.curTokenIs(token.POW) {
-		if !p.expectPeek(token.IDENT) {
-			return nil, nil, nil, nil
-		}
-		kwargs = p.ident(p.curToken.Literal)
-		return identifiers, defaults, variadic, kwargs
-	}
-
-	ident := p.ident(p.curToken.Literal)
-	identifiers = append(identifiers, ident)
-
-	// Check for default value
-	if p.peekTokenIs(token.ASSIGN) {
-		if defaults == nil {
-			defaults = make(map[string]ast.Expression, 2)
-		}
-		p.nextToken() // consume =
-		p.nextToken()
-		defaults[ident.Value()] = p.parseExpression(LOWEST)
-	}
-
-	for p.peekTokenIs(token.COMMA) {
-		p.nextToken()
-		p.nextToken()
-
-		// Check for *args or **kwargs
+	for {
 		if p.curTokenIs(token.ASTERISK) {
-			p.nextToken()
-			variadic = p.ident(p.curToken.Literal)
-			// Check for **kwargs after *args
-			if p.peekTokenIs(token.COMMA) {
-				p.nextToken() // consume comma
-				if p.peekTokenIs(token.POW) {
-					p.nextToken() // consume POW (**)
-					if !p.expectPeek(token.IDENT) {
-						return nil, nil, nil, nil
-					}
-					kwargs = p.ident(p.curToken.Literal)
+			if keywordOnlyStart == -1 {
+				keywordOnlyStart = len(identifiers)
+			}
+
+			if p.peekTokenIs(token.IDENT) {
+				p.nextToken()
+				variadic = p.ident(p.curToken.Literal)
+			} else if p.peekTokenIs(token.COMMA) {
+				// Bare * marks following parameters as keyword-only.
+			} else {
+				if !p.expectPeek(token.IDENT) {
+					return nil, nil, nil, nil, keywordOnlyStart
 				}
 			}
-			return identifiers, defaults, variadic, kwargs
-		}
-
-		// Check for **kwargs
-		if p.curTokenIs(token.POW) {
+		} else if p.curTokenIs(token.POW) {
 			if !p.expectPeek(token.IDENT) {
-				return nil, nil, nil, nil
+				return nil, nil, nil, nil, keywordOnlyStart
 			}
 			kwargs = p.ident(p.curToken.Literal)
-			return identifiers, defaults, variadic, kwargs
-		}
-
-		ident := p.ident(p.curToken.Literal)
-		identifiers = append(identifiers, ident)
-
-		// Check for default value
-		if p.peekTokenIs(token.ASSIGN) {
-			if defaults == nil {
-				defaults = make(map[string]ast.Expression, 2)
+			if p.peekTokenIs(token.COMMA) {
+				p.nextToken()
 			}
-			p.nextToken() // consume =
-			p.nextToken()
-			defaults[ident.Value()] = p.parseExpression(LOWEST)
-		}
-	}
+			return identifiers, defaults, variadic, kwargs, keywordOnlyStart
+		} else {
+			ident := p.ident(p.curToken.Literal)
+			identifiers = append(identifiers, ident)
 
-	return identifiers, defaults, variadic, kwargs
+			// Check for default value
+			if p.peekTokenIs(token.ASSIGN) {
+				if defaults == nil {
+					defaults = make(map[string]ast.Expression, 2)
+				}
+				p.nextToken() // consume =
+				p.nextToken()
+				defaults[ident.Value()] = p.parseExpression(LOWEST)
+			}
+		}
+
+		if p.peekTokenIs(token.COMMA) {
+			p.nextToken()
+			if p.peekTokenIs(token.COLON) {
+				return identifiers, defaults, variadic, kwargs, keywordOnlyStart
+			}
+			p.nextToken()
+			continue
+		}
+
+		return identifiers, defaults, variadic, kwargs, keywordOnlyStart
+	}
 }
 
 func (p *Parser) skipWhitespace() {

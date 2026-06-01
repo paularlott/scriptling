@@ -539,6 +539,7 @@ type Function struct {
 	DefaultValues    map[string]ast.Expression
 	Variadic         *ast.Identifier // *args parameter
 	Kwargs           *ast.Identifier // **kwargs parameter
+	KeywordOnlyStart int             // 1-based index where keyword-only params start; 0 means none
 	Body             *ast.BlockStatement
 	Env              *Environment
 	LocalSlots       map[string]int
@@ -566,6 +567,7 @@ type LambdaFunction struct {
 	DefaultValues    map[string]ast.Expression
 	Variadic         *ast.Identifier // *args parameter
 	Kwargs           *ast.Identifier // **kwargs parameter
+	KeywordOnlyStart int             // 1-based index where keyword-only params start; 0 means none
 	Body             ast.Expression
 	Env              *Environment
 	LocalSlots       map[string]int
@@ -1206,6 +1208,7 @@ func (s *CallableSnapshot) ApplySnapshot(target *Environment) {
 			DefaultValues:    v.DefaultValues,
 			Variadic:         v.Variadic,
 			Kwargs:           v.Kwargs,
+			KeywordOnlyStart: v.KeywordOnlyStart,
 			Body:             v.Body,
 			Env:              target,
 			LocalSlots:       v.LocalSlots,
@@ -1220,6 +1223,7 @@ func (s *CallableSnapshot) ApplySnapshot(target *Environment) {
 			DefaultValues:    v.DefaultValues,
 			Variadic:         v.Variadic,
 			Kwargs:           v.Kwargs,
+			KeywordOnlyStart: v.KeywordOnlyStart,
 			Body:             v.Body,
 			Env:              target,
 			LocalSlots:       v.LocalSlots,

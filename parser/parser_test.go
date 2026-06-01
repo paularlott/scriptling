@@ -199,6 +199,38 @@ func TestFunctionStatement(t *testing.T) {
 	}
 }
 
+func TestFunctionKeywordOnlyParameters(t *testing.T) {
+	input := `def resize(image, *, width, height=0):
+    return width + height`
+
+	l := lexer.New(input)
+	p := New(l)
+	program := p.ParseProgram()
+	checkParserErrors(t, p)
+
+	stmt, ok := program.Statements[0].(*ast.FunctionStatement)
+	if !ok {
+		t.Fatalf("program.Statements[0] is not ast.FunctionStatement. got=%T",
+			program.Statements[0])
+	}
+
+	if len(stmt.Function.Parameters) != 3 {
+		t.Fatalf("function parameters wrong. want 3, got=%d",
+			len(stmt.Function.Parameters))
+	}
+	if stmt.Function.GetKeywordOnlyStart() != 1 {
+		t.Fatalf("keyword-only start wrong. want 1, got=%d",
+			stmt.Function.GetKeywordOnlyStart())
+	}
+	if stmt.Function.Parameters[1].Value() != "width" || stmt.Function.Parameters[2].Value() != "height" {
+		t.Fatalf("keyword-only parameter names wrong. got=%s, %s",
+			stmt.Function.Parameters[1].Value(), stmt.Function.Parameters[2].Value())
+	}
+	if _, ok := stmt.Function.GetDefaultValues()["height"]; !ok {
+		t.Fatalf("keyword-only default was not parsed")
+	}
+}
+
 func TestCallExpression(t *testing.T) {
 	input := "add(1, 2 + 3)"
 
@@ -561,6 +593,37 @@ func TestLambdaExpression(t *testing.T) {
 
 	if len(lambda.Parameters) != 1 {
 		t.Errorf("lambda parameters length = %d, want 1", len(lambda.Parameters))
+	}
+}
+
+func TestLambdaKeywordOnlyParameters(t *testing.T) {
+	input := "lambda x, *, scale=1: x * scale"
+
+	l := lexer.New(input)
+	p := New(l)
+	program := p.ParseProgram()
+	checkParserErrors(t, p)
+
+	stmt, ok := program.Statements[0].(*ast.ExpressionStatement)
+	if !ok {
+		t.Fatalf("program.Statements[0] is not ast.ExpressionStatement. got=%T",
+			program.Statements[0])
+	}
+
+	lambda, ok := stmt.Expression.(*ast.Lambda)
+	if !ok {
+		t.Fatalf("stmt.Expression is not ast.Lambda. got=%T", stmt.Expression)
+	}
+
+	if len(lambda.Parameters) != 2 {
+		t.Fatalf("lambda parameters length = %d, want 2", len(lambda.Parameters))
+	}
+	if lambda.GetKeywordOnlyStart() != 1 {
+		t.Fatalf("keyword-only start wrong. want 1, got=%d",
+			lambda.GetKeywordOnlyStart())
+	}
+	if _, ok := lambda.GetDefaultValues()["scale"]; !ok {
+		t.Fatalf("keyword-only lambda default was not parsed")
 	}
 }
 

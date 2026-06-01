@@ -117,44 +117,44 @@ func (op Op) String() string {
 }
 
 var opLookup = map[string]Op{
-	"+":    OpAdd,
-	"-":    OpSub,
-	"*":    OpMul,
-	"/":    OpDiv,
-	"//":   OpFloorDiv,
-	"%":    OpMod,
-	"**":   OpPow,
-	"<":    OpLt,
-	">":    OpGt,
-	"<=":   OpLte,
-	">=":   OpGte,
-	"==":   OpEq,
-	"!=":   OpNeq,
-	"and":  OpAnd,
-	"or":   OpOr,
-	"in":       OpIn,
-	"not in":   OpNotIn,
-	"is":       OpIs,
-	"is not":   OpIsNot,
-	"&":    OpBitAnd,
-	"|":    OpBitOr,
-	"^":    OpBitXor,
-	"<<":   OpLShift,
-	">>":   OpRShift,
-	"not":  OpNot,
-	"~":    OpBitNot,
-	"+=":   OpAddEq,
-	"-=":   OpSubEq,
-	"*=":   OpMulEq,
-	"/=":   OpDivEq,
-	"//=":  OpFloorDivEq,
-	"%=":   OpModEq,
-	"**=":  OpPowEq,
-	"&=":   OpBitAndEq,
-	"|=":   OpBitOrEq,
-	"^=":   OpBitXorEq,
-	"<<=":  OpLShiftEq,
-	">>=":  OpRShiftEq,
+	"+":      OpAdd,
+	"-":      OpSub,
+	"*":      OpMul,
+	"/":      OpDiv,
+	"//":     OpFloorDiv,
+	"%":      OpMod,
+	"**":     OpPow,
+	"<":      OpLt,
+	">":      OpGt,
+	"<=":     OpLte,
+	">=":     OpGte,
+	"==":     OpEq,
+	"!=":     OpNeq,
+	"and":    OpAnd,
+	"or":     OpOr,
+	"in":     OpIn,
+	"not in": OpNotIn,
+	"is":     OpIs,
+	"is not": OpIsNot,
+	"&":      OpBitAnd,
+	"|":      OpBitOr,
+	"^":      OpBitXor,
+	"<<":     OpLShift,
+	">>":     OpRShift,
+	"not":    OpNot,
+	"~":      OpBitNot,
+	"+=":     OpAddEq,
+	"-=":     OpSubEq,
+	"*=":     OpMulEq,
+	"/=":     OpDivEq,
+	"//=":    OpFloorDivEq,
+	"%=":     OpModEq,
+	"**=":    OpPowEq,
+	"&=":     OpBitAndEq,
+	"|=":     OpBitOrEq,
+	"^=":     OpBitXorEq,
+	"<<=":    OpLShiftEq,
+	">>=":    OpRShiftEq,
 }
 
 func ParseOp(s string) Op {
@@ -406,8 +406,8 @@ func (fsl *FStringLiteral) TokenLiteral() string { return fsl.Value }
 func (fsl *FStringLiteral) Line() int            { return 0 }
 
 var (
-	BoolTrue  = &Boolean{Value: true}
-	BoolFalse = &Boolean{Value: false}
+	BoolTrue    = &Boolean{Value: true}
+	BoolFalse   = &Boolean{Value: false}
 	NoneLiteral = &None{}
 )
 
@@ -574,9 +574,10 @@ func (ws *WhileStatement) TokenLiteral() string { return "while" }
 func (ws *WhileStatement) Line() int            { return int(ws.Token.Line) }
 
 type FuncOverflow struct {
-	DefaultValues map[string]Expression
-	Variadic      *Identifier
-	Kwargs        *Identifier
+	DefaultValues    map[string]Expression
+	Variadic         *Identifier
+	Kwargs           *Identifier
+	KeywordOnlyStart int
 }
 
 type FunctionLiteral struct {
@@ -611,14 +612,22 @@ func (fl *FunctionLiteral) GetKwargs() *Identifier {
 	return fl.overflow.Kwargs
 }
 
-func (fl *FunctionLiteral) SetFuncOverflow(dv map[string]Expression, variadic, kwargs *Identifier) {
-	if dv == nil && variadic == nil && kwargs == nil {
+func (fl *FunctionLiteral) GetKeywordOnlyStart() int {
+	if fl.overflow == nil {
+		return -1
+	}
+	return fl.overflow.KeywordOnlyStart
+}
+
+func (fl *FunctionLiteral) SetFuncOverflow(dv map[string]Expression, variadic, kwargs *Identifier, keywordOnlyStart int) {
+	if dv == nil && variadic == nil && kwargs == nil && keywordOnlyStart == -1 {
 		return
 	}
 	fl.overflow = &FuncOverflow{
-		DefaultValues: dv,
-		Variadic:      variadic,
-		Kwargs:        kwargs,
+		DefaultValues:    dv,
+		Variadic:         variadic,
+		Kwargs:           kwargs,
+		KeywordOnlyStart: keywordOnlyStart,
 	}
 }
 
@@ -881,8 +890,8 @@ type ImportOverflow struct {
 }
 
 type ImportStatement struct {
-	Token   LineInfo
-	Name    *Identifier
+	Token    LineInfo
+	Name     *Identifier
 	overflow *ImportOverflow
 }
 
@@ -1033,9 +1042,9 @@ type SliceOverflow struct {
 }
 
 type SliceExpression struct {
-	Left  Expression
-	Start Expression
-	End   Expression
+	Left     Expression
+	Start    Expression
+	End      Expression
 	overflow *SliceOverflow
 }
 
@@ -1235,14 +1244,22 @@ func (l *Lambda) GetKwargs() *Identifier {
 	return l.overflow.Kwargs
 }
 
-func (l *Lambda) SetFuncOverflow(dv map[string]Expression, variadic, kwargs *Identifier) {
-	if dv == nil && variadic == nil && kwargs == nil {
+func (l *Lambda) GetKeywordOnlyStart() int {
+	if l.overflow == nil {
+		return -1
+	}
+	return l.overflow.KeywordOnlyStart
+}
+
+func (l *Lambda) SetFuncOverflow(dv map[string]Expression, variadic, kwargs *Identifier, keywordOnlyStart int) {
+	if dv == nil && variadic == nil && kwargs == nil && keywordOnlyStart == -1 {
 		return
 	}
 	l.overflow = &FuncOverflow{
-		DefaultValues: dv,
-		Variadic:      variadic,
-		Kwargs:        kwargs,
+		DefaultValues:    dv,
+		Variadic:         variadic,
+		Kwargs:           kwargs,
+		KeywordOnlyStart: keywordOnlyStart,
 	}
 }
 
