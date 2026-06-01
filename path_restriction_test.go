@@ -49,6 +49,14 @@ func TestPathRestrictionEmbedded(t *testing.T) {
 			script: "import os\nos.write_file(\"" + deniedDir + "/out.txt\", \"data\")",
 		},
 		{
+			name:   "os.removedirs denied path returns error",
+			script: "import os\nos.removedirs(\"" + deniedDir + "/a/b\")",
+		},
+		{
+			name:   "os.chmod denied path returns error",
+			script: "import os\nos.chmod(\"" + deniedDir + "/secret.txt\", 0o600)",
+		},
+		{
 			name:   "os.path.exists denied path returns error",
 			script: "import os.path\nos.path.exists(\"" + deniedDir + "/file.txt\")",
 		},
@@ -57,8 +65,20 @@ func TestPathRestrictionEmbedded(t *testing.T) {
 			script: "import pathlib\npathlib.Path(\"" + deniedDir + "/file.txt\").read_text()",
 		},
 		{
+			name:   "pathlib.Path.read_bytes denied path returns error",
+			script: "import pathlib\npathlib.Path(\"" + deniedDir + "/file.txt\").read_bytes()",
+		},
+		{
+			name:   "pathlib.Path.write_bytes denied path returns error",
+			script: "import pathlib\npathlib.Path(\"" + deniedDir + "/file.txt\").write_bytes(\"data\")",
+		},
+		{
 			name:   "pathlib.Path.exists denied path returns error",
 			script: "import pathlib\npathlib.Path(\"" + deniedDir + "/file.txt\").exists()",
+		},
+		{
+			name:   "pathlib.Path.chmod denied path returns error",
+			script: "import pathlib\npathlib.Path(\"" + deniedDir + "/file.txt\").chmod(0o600)",
 		},
 	}
 

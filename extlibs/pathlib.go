@@ -209,34 +209,76 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 			},
 			"mkdir": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if err := errors.ExactArgs(args, 1); err != nil {
+					if err := errors.RangeArgs(args, 1, 2); err != nil {
 						return err
 					}
 					cleanPath, errObj := pathArg(args)
 					if errObj != nil {
 						return errObj
 					}
+					mode, errObj := parseFileMode(args, kwargs, 1, 0777)
+					if errObj != nil {
+						return errObj
+					}
 					if err := p.checkPathSecurity(cleanPath); err != nil {
 						return err
 					}
-					parents := false
-					if val, ok := kwargs.Kwargs["parents"]; ok {
-						if b, err := val.AsBool(); err == nil {
-							parents = b
-						}
+					parents, errObj := kwargs.GetBool("parents", false)
+					if errObj != nil {
+						return errObj
+					}
+					existOk, errObj := kwargs.GetBool("exist_ok", false)
+					if errObj != nil {
+						return errObj
 					}
 					var err error
 					if parents {
-						err = os.MkdirAll(cleanPath, 0755)
+						if !existOk {
+							if _, statErr := os.Stat(cleanPath); statErr == nil {
+								return errors.NewError("cannot create directory: file exists")
+							}
+						}
+						err = os.MkdirAll(cleanPath, mode)
 					} else {
-						err = os.Mkdir(cleanPath, 0755)
+						err = os.Mkdir(cleanPath, mode)
+						if existOk && os.IsExist(err) {
+							if info, statErr := os.Stat(cleanPath); statErr == nil && info.IsDir() {
+								return &object.Null{}
+							}
+						}
 					}
 					if err != nil {
 						return errors.NewError("cannot create directory: %s", err.Error())
 					}
 					return &object.Null{}
 				},
-				HelpText: "mkdir(parents=False) - Create a new directory at this given path",
+				HelpText: "mkdir(mode=0o777, parents=False, exist_ok=False) - Create a new directory at this given path",
+			},
+			"chmod": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.RangeArgs(args, 1, 2); err != nil {
+						return err
+					}
+					cleanPath, errObj := pathArg(args)
+					if errObj != nil {
+						return errObj
+					}
+					if len(args) == 1 && !kwargs.Has("mode") {
+						return errors.NewError("chmod() missing required argument: mode")
+					}
+					mode, errObj := parseFileMode(args, kwargs, 1, 0)
+					if errObj != nil {
+						return errObj
+					}
+					if err := p.checkPathSecurity(cleanPath); err != nil {
+						return err
+					}
+					if err := os.Chmod(cleanPath, mode); err != nil {
+						return errors.NewError("cannot change mode: %s", err.Error())
+					}
+					return &object.Null{}
+				},
+				HelpText: "chmod(mode) - Change file or directory mode",
 			},
 			"rmdir": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -306,6 +348,26 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 				},
 				HelpText: "read_text() - Read the contents of the file as a string",
 			},
+			"read_bytes": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.ExactArgs(args, 1); err != nil {
+						return err
+					}
+					cleanPath, errObj := pathArg(args)
+					if errObj != nil {
+						return errObj
+					}
+					if err := p.checkPathSecurity(cleanPath); err != nil {
+						return err
+					}
+					content, err := os.ReadFile(cleanPath)
+					if err != nil {
+						return errors.NewError("cannot read file: %s", err.Error())
+					}
+					return object.NewString(string(content))
+				},
+				HelpText: "read_bytes() - Read the contents of the file as bytes",
+			},
 			"write_text": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if err := errors.ExactArgs(args, 2); err != nil {
@@ -329,6 +391,29 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 				},
 				HelpText: "write_text(data) - Write the string data to the file",
 			},
+			"write_bytes": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.ExactArgs(args, 2); err != nil {
+						return err
+					}
+					cleanPath, errObj := pathArg(args)
+					if errObj != nil {
+						return errObj
+					}
+					content, err := args[1].AsString()
+					if err != nil {
+						return err
+					}
+					if err := p.checkPathSecurity(cleanPath); err != nil {
+						return err
+					}
+					if err := os.WriteFile(cleanPath, []byte(content), 0644); err != nil {
+						return errors.NewError("cannot write file: %s", err.Error())
+					}
+					return &object.Null{}
+				},
+				HelpText: "write_bytes(data) - Write bytes to the file",
+			},
 		},
 	}
 
@@ -345,11 +430,14 @@ Path instances have the following methods:
   - exists() - Check if the path exists
   - is_file() - Check if the path is a regular file
   - is_dir() - Check if the path is a directory
-  - mkdir(parents=False) - Create a new directory at this given path
+  - mkdir(mode=0o777, parents=False, exist_ok=False) - Create a new directory at this given path
+  - chmod(mode) - Change file or directory mode
   - rmdir() - Remove the empty directory
   - unlink(missing_ok=False) - Remove this file or symbolic link
   - read_text() - Read the contents of the file as a string
   - write_text(data) - Write the string data to the file
+  - read_bytes() - Read the contents of the file as bytes
+  - write_bytes(data) - Write bytes to the file
 
 Path instances have the following properties (accessible via indexing):
   - name - The final path component
