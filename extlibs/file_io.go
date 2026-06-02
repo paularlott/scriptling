@@ -1,8 +1,10 @@
 package extlibs
 
 import (
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/extlibs/fssecurity"
@@ -165,6 +167,76 @@ func removePath(config fssecurity.Config, path string, target string, missingOk 
 	return &object.Null{}
 }
 
+func copyPath(config fssecurity.Config, src string, dst string) object.Object {
+	if err := checkPathSecurity(config, src); err != nil {
+		return err
+	}
+	if err := checkPathSecurity(config, dst); err != nil {
+		return err
+	}
+
+	info, err := os.Stat(src)
+	if err != nil {
+		return errors.NewError("cannot copy: %s", err.Error())
+	}
+
+	if info.IsDir() {
+		return copyDir(config, src, dst, info.Mode())
+	}
+	return copyFile(src, dst, info.Mode())
+}
+
+func copyFile(src string, dst string, mode os.FileMode) object.Object {
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return errors.NewError("cannot copy: %s", err.Error())
+	}
+	defer srcFile.Close()
+
+	dstFile, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	if err != nil {
+		return errors.NewError("cannot copy: %s", err.Error())
+	}
+	defer dstFile.Close()
+
+	if _, err := io.Copy(dstFile, srcFile); err != nil {
+		return errors.NewError("cannot copy: %s", err.Error())
+	}
+	return nil
+}
+
+func copyDir(config fssecurity.Config, src string, dst string, mode os.FileMode) object.Object {
+	if err := os.MkdirAll(dst, mode); err != nil {
+		return errors.NewError("cannot copy directory: %s", err.Error())
+	}
+
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return errors.NewError("cannot copy directory: %s", err.Error())
+	}
+
+	for _, entry := range entries {
+		srcPath := filepath.Join(src, entry.Name())
+		dstPath := filepath.Join(dst, entry.Name())
+
+		info, err := entry.Info()
+		if err != nil {
+			return errors.NewError("cannot copy directory: %s", err.Error())
+		}
+
+		if entry.IsDir() {
+			if result := copyDir(config, srcPath, dstPath, info.Mode()); result != nil {
+				return result
+			}
+		} else {
+			if result := copyFile(srcPath, dstPath, info.Mode()); result != nil {
+				return result
+			}
+		}
+	}
+	return nil
+}
+
 func renamePath(config fssecurity.Config, oldPath string, newPath string) object.Object {
 	if err := checkPathSecurity(config, oldPath); err != nil {
 		return err
@@ -259,4 +331,66 @@ func isAllowedRoot(config fssecurity.Config, path string) bool {
 		}
 	}
 	return false
+}
+
+func globMatches(config fssecurity.Config, pattern, rootDir string) []string {
+	var matches []string
+	if strings.Contains(pattern, "**") {
+		matches = doubleStarGlob(pattern, rootDir)
+	} else {
+		fullPattern := filepath.Join(rootDir, pattern)
+		matches, _ = filepath.Glob(fullPattern)
+	}
+
+	filtered := make([]string, 0, len(matches))
+	for _, match := range matches {
+		if config.IsPathAllowed(match) {
+			filtered = append(filtered, match)
+		}
+	}
+	return filtered
+}
+
+func doubleStarGlob(pattern, rootDir string) []string {
+	parts := strings.Split(pattern, "**")
+	if len(parts) != 2 {
+		fullPattern := filepath.Join(rootDir, pattern)
+		matches, _ := filepath.Glob(fullPattern)
+		return matches
+	}
+
+	prefix := strings.TrimSuffix(filepath.Join(rootDir, parts[0]), string(filepath.Separator))
+	suffix := strings.TrimPrefix(parts[1], string(filepath.Separator))
+
+	prefixMatches, _ := filepath.Glob(prefix)
+	if len(prefixMatches) == 0 {
+		prefixMatches = []string{prefix}
+	}
+
+	var results []string
+	for _, base := range prefixMatches {
+		results = append(results, walkAndMatch(base, suffix)...)
+	}
+	return results
+}
+
+func walkAndMatch(base, suffix string) []string {
+	var results []string
+
+	directPath := filepath.Join(base, suffix)
+	matches, _ := filepath.Glob(directPath)
+	results = append(results, matches...)
+
+	entries, _ := filepath.Glob(filepath.Join(base, "*"))
+	for _, entry := range entries {
+		info, err := os.Stat(entry)
+		if err != nil {
+			continue
+		}
+		if info.IsDir() {
+			results = append(results, walkAndMatch(entry, suffix)...)
+		}
+	}
+
+	return results
 }
