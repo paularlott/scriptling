@@ -3,7 +3,6 @@ package extlibs
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -192,83 +191,13 @@ are treated as literal characters rather than wildcards.`,
 
 // glob returns all files matching pattern
 func (g *GlobLibraryInstance) glob(pattern, rootDir string, recursive bool) ([]string, object.Object) {
-	matches := g.globMatches(pattern, rootDir)
-
-	// Filter results through security check
-	filtered := make([]string, 0, len(matches))
-	for _, match := range matches {
-		if g.config.IsPathAllowed(match) {
-			filtered = append(filtered, match)
-		}
-	}
-
-	return filtered, nil
+	matches := globMatches(g.config, pattern, rootDir)
+	return matches, nil
 }
 
 // globMatches performs the actual glob matching without security filtering
 func (g *GlobLibraryInstance) globMatches(pattern, rootDir string) []string {
-	// Handle recursive glob pattern **
-	var matches []string
-	if strings.Contains(pattern, "**") {
-		matches = g.doubleStarGlob(pattern, rootDir)
-	} else {
-		fullPattern := filepath.Join(rootDir, pattern)
-		matches, _ = filepath.Glob(fullPattern)
-	}
-	return matches
-}
-
-// doubleStarGlob handles the ** recursive pattern
-func (g *GlobLibraryInstance) doubleStarGlob(pattern, rootDir string) []string {
-	var results []string
-
-	// Split pattern by **
-	parts := strings.Split(pattern, "**")
-	if len(parts) != 2 {
-		// Fall back to regular glob for malformed patterns
-		fullPattern := filepath.Join(rootDir, pattern)
-		matches, _ := filepath.Glob(fullPattern)
-		return matches
-	}
-
-	prefix := strings.TrimSuffix(filepath.Join(rootDir, parts[0]), string(filepath.Separator))
-	suffix := strings.TrimPrefix(parts[1], string(filepath.Separator))
-
-	// Find all directories matching prefix
-	prefixMatches, _ := filepath.Glob(prefix)
-	if len(prefixMatches) == 0 {
-		prefixMatches = []string{prefix}
-	}
-
-	for _, base := range prefixMatches {
-		results = append(results, g.walkAndMatch(base, suffix)...)
-	}
-
-	return results
-}
-
-// walkAndMatch recursively walks directories and matches suffix pattern
-func (g *GlobLibraryInstance) walkAndMatch(base, suffix string) []string {
-	var results []string
-
-	// Try direct match (no recursion needed)
-	directPath := filepath.Join(base, suffix)
-	matches, _ := filepath.Glob(directPath)
-	results = append(results, matches...)
-
-	// Recurse into subdirectories
-	entries, _ := filepath.Glob(filepath.Join(base, "*"))
-	for _, entry := range entries {
-		info, err := os.Stat(entry)
-		if err != nil {
-			continue
-		}
-		if info.IsDir() {
-			results = append(results, g.walkAndMatch(entry, suffix)...)
-		}
-	}
-
-	return results
+	return globMatches(g.config, pattern, rootDir)
 }
 
 // checkPathSecurity validates a path and returns an error if access is denied

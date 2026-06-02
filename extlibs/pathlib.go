@@ -16,6 +16,14 @@ type pathNativeData struct {
 	path string
 }
 
+func isObjectError(obj object.Object) bool {
+	switch obj.(type) {
+	case *object.Error, *object.Exception:
+		return true
+	}
+	return false
+}
+
 func pathFrom(inst *object.Instance) (string, object.Object) {
 	if nd, ok := inst.NativeData.(*pathNativeData); ok {
 		return nd.path, nil
@@ -339,6 +347,97 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 				},
 				HelpText: "write_bytes(data) - Write bytes to the file",
 			},
+			"copy": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.ExactArgs(args, 2); err != nil {
+						return err
+					}
+					cleanPath, errObj := pathArg(args)
+					if errObj != nil {
+						return errObj
+					}
+					target, err := args[1].AsString()
+					if err != nil {
+						return err
+					}
+					result := copyPath(p.config, cleanPath, target)
+					if isObjectError(result) {
+						return result
+					}
+					return p.createPathObject(target)
+				},
+				HelpText: "copy(target) - Copy this file or directory to the target path, returning a new Path",
+			},
+			"rename": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.ExactArgs(args, 2); err != nil {
+						return err
+					}
+					cleanPath, errObj := pathArg(args)
+					if errObj != nil {
+						return errObj
+					}
+					target, err := args[1].AsString()
+					if err != nil {
+						return err
+					}
+					result := renamePath(p.config, cleanPath, target)
+					if isObjectError(result) {
+						return result
+					}
+					return p.createPathObject(target)
+				},
+				HelpText: "rename(target) - Rename this file or directory to the target path, returning a new Path",
+			},
+			"iterdir": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.ExactArgs(args, 1); err != nil {
+						return err
+					}
+					cleanPath, errObj := pathArg(args)
+					if errObj != nil {
+						return errObj
+					}
+					if err := p.checkPathSecurity(cleanPath); err != nil {
+						return err
+					}
+					entries, err := os.ReadDir(cleanPath)
+					if err != nil {
+						return errors.NewError("cannot read directory: %s", err.Error())
+					}
+					pathObjs := make([]object.Object, len(entries))
+					for i, entry := range entries {
+						pathObjs[i] = p.createPathObject(filepath.Join(cleanPath, entry.Name()))
+					}
+					return &object.List{Elements: pathObjs}
+				},
+				HelpText: "iterdir() - Return a list of Path objects for the directory contents",
+			},
+			"glob": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.ExactArgs(args, 2); err != nil {
+						return err
+					}
+					cleanPath, errObj := pathArg(args)
+					if errObj != nil {
+						return errObj
+					}
+					pattern, err := args[1].AsString()
+					if err != nil {
+						return err
+					}
+					if err := p.checkPathSecurity(cleanPath); err != nil {
+						return err
+					}
+					matches := globMatches(p.config, pattern, cleanPath)
+					pathObjs := make([]object.Object, len(matches))
+					for i, match := range matches {
+						pathObjs[i] = p.createPathObject(match)
+					}
+					return &object.List{Elements: pathObjs}
+				},
+				HelpText: "glob(pattern) - Return a list of Path objects matching the pattern in this directory",
+			},
 		},
 	}
 
@@ -363,6 +462,10 @@ Path instances have the following methods:
   - write_text(data) - Write the string data to the file
   - read_bytes() - Read the contents of the file as bytes
   - write_bytes(data) - Write bytes to the file
+  - copy(target) - Copy this file or directory to the target path
+  - rename(target) - Rename this file or directory to the target path
+  - iterdir() - Return a list of Path objects for the directory contents
+  - glob(pattern) - Return a list of Path objects matching the pattern
 
 Path instances have the following properties (accessible via indexing):
   - name - The final path component
