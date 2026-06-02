@@ -463,6 +463,7 @@ func parseProgramUncached(input string) (*ast.Program, error) {
 	if err != nil {
 		return nil, err
 	}
+	ast.FoldConstants(program)
 	return program, nil
 }
 

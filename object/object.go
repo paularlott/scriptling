@@ -311,7 +311,7 @@ type Integer struct {
 func (i *Integer) IntValue() int64 { return i.value }
 
 func (i *Integer) Type() ObjectType { return INTEGER_OBJ }
-func (i *Integer) Inspect() string  { return fmt.Sprintf("%d", i.value) }
+func (i *Integer) Inspect() string  { return strconv.FormatInt(i.value, 10) }
 
 func (i *Integer) AsString() (string, Object)          { return "", errMustBeString }
 func (i *Integer) AsInt() (int64, Object)              { return i.value, nil }
@@ -331,7 +331,7 @@ type Float struct {
 func (f *Float) FloatValue() float64 { return f.value }
 
 func (f *Float) Type() ObjectType { return FLOAT_OBJ }
-func (f *Float) Inspect() string  { return fmt.Sprintf("%g", f.value) }
+func (f *Float) Inspect() string  { return strconv.FormatFloat(f.value, 'g', -1, 64) }
 
 func (f *Float) AsString() (string, Object)          { return "", errMustBeString }
 func (f *Float) AsInt() (int64, Object)              { return int64(f.value), nil }
@@ -371,7 +371,7 @@ type Boolean struct {
 func (b *Boolean) BoolValue() bool { return b.value }
 
 func (b *Boolean) Type() ObjectType { return BOOLEAN_OBJ }
-func (b *Boolean) Inspect() string  { return fmt.Sprintf("%t", b.value) }
+func (b *Boolean) Inspect() string  { return strconv.FormatBool(b.value) }
 
 func (b *Boolean) AsString() (string, Object)          { return "", errMustBeString }
 func (b *Boolean) AsInt() (int64, Object)              { return 0, errMustBeInteger }
