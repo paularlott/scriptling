@@ -1399,15 +1399,15 @@ Returns a unique integer identifier for the object.`,
 				if len(formatSpec) > 0 {
 					switch formatSpec[len(formatSpec)-1] {
 					case 'd':
-						return object.NewString(fmt.Sprintf("%d", v.IntValue()))
+						return object.NewString(strconv.FormatInt(v.IntValue(), 10))
 					case 'x':
-						return object.NewString(fmt.Sprintf("%x", v.IntValue()))
+						return object.NewString(strconv.FormatInt(v.IntValue(), 16))
 					case 'X':
-						return object.NewString(fmt.Sprintf("%X", v.IntValue()))
+						return object.NewString(strings.ToUpper(strconv.FormatInt(v.IntValue(), 16)))
 					case 'o':
-						return object.NewString(fmt.Sprintf("%o", v.IntValue()))
+						return object.NewString(strconv.FormatInt(v.IntValue(), 8))
 					case 'b':
-						return object.NewString(fmt.Sprintf("%b", v.IntValue()))
+						return object.NewString(strconv.FormatInt(v.IntValue(), 2))
 					}
 				}
 				var width int
@@ -1415,7 +1415,7 @@ Returns a unique integer identifier for the object.`,
 				if width > 0 {
 					return object.NewString(fmt.Sprintf("%*d", width, v.IntValue()))
 				}
-				return object.NewString(fmt.Sprintf("%d", v.IntValue()))
+				return object.NewString(strconv.FormatInt(v.IntValue(), 10))
 			case *object.Float:
 				if len(formatSpec) > 0 {
 					switch formatSpec[len(formatSpec)-1] {
@@ -1427,14 +1427,14 @@ Returns a unique integer identifier for the object.`,
 						}
 						return object.NewString(fmt.Sprintf("%f", v.FloatValue()))
 					case 'e':
-						return object.NewString(fmt.Sprintf("%e", v.FloatValue()))
+						return object.NewString(strconv.FormatFloat(v.FloatValue(), 'e', -1, 64))
 					case 'E':
-						return object.NewString(fmt.Sprintf("%E", v.FloatValue()))
+						return object.NewString(strconv.FormatFloat(v.FloatValue(), 'E', -1, 64))
 					case '%':
 						return object.NewString(fmt.Sprintf("%.2f%%", v.FloatValue()*100))
 					}
 				}
-				return object.NewString(fmt.Sprintf("%g", v.FloatValue()))
+				return object.NewString(strconv.FormatFloat(v.FloatValue(), 'g', -1, 64))
 			case *object.String:
 				if formatSpec == "" {
 					return object.NewString(v.StringValue())

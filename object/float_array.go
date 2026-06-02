@@ -1,7 +1,7 @@
 package object
 
 import (
-	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -97,7 +97,7 @@ func (fa *FloatArray) PrettyPrint() string {
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			b.WriteString(fmt.Sprintf("%g", v))
+			b.WriteString(strconv.FormatFloat(v, 'g', -1, 64))
 		}
 		b.WriteString("]")
 		return b.String()
@@ -115,7 +115,7 @@ func (fa *FloatArray) PrettyPrint() string {
 			if j > 0 {
 				b.WriteString(", ")
 			}
-			b.WriteString(fmt.Sprintf("%g", fa.Data[i*cols+j]))
+			b.WriteString(strconv.FormatFloat(fa.Data[i*cols+j], 'g', -1, 64))
 		}
 		b.WriteString("]")
 	}
