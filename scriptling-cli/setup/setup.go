@@ -1,6 +1,8 @@
 package setup
 
 import (
+	"time"
+
 	"github.com/paularlott/logger"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs"
@@ -16,6 +18,7 @@ import (
 	"github.com/paularlott/scriptling/extlibs/messaging/telegram"
 	scriptlinggossip "github.com/paularlott/scriptling/extlibs/net/gossip"
 	scriptlingmulticast "github.com/paularlott/scriptling/extlibs/net/multicast"
+	scriptlingresolve "github.com/paularlott/scriptling/extlibs/net/resolve"
 	scriptlingunicast "github.com/paularlott/scriptling/extlibs/net/unicast"
 	"github.com/paularlott/scriptling/extlibs/secretprovider"
 	scriptlingsimilarity "github.com/paularlott/scriptling/extlibs/similarity"
@@ -72,6 +75,7 @@ func AllLibraryNames() []string {
 		extlibs.MulticastLibraryName,
 		extlibs.UnicastLibraryName,
 		extlibs.GossipLibraryName,
+		extlibs.ResolveLibraryName,
 		extlibs.AILibraryName,
 		extlibs.AgentLibraryName,
 		extlibs.SimilarityLibraryName,
@@ -155,6 +159,7 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 	reg(extlibs.MulticastLibraryName, func() { scriptlingmulticast.Register(p) })
 	reg(extlibs.UnicastLibraryName, func() { scriptlingunicast.Register(p) })
 	reg(extlibs.GossipLibraryName, func() { scriptlinggossip.Register(p, log) })
+	reg(extlibs.ResolveLibraryName, func() { scriptlingresolve.Register(p, stdlibResolver{timeout: 2 * time.Second}) })
 
 	reg(extlibs.AILibraryName, func() { ai.Register(p) })
 	reg(aimemory.MemoryLibraryName, func() { aimemory.Register(p, log) })
