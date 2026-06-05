@@ -83,6 +83,8 @@ func (s *Server) runWebSocketHandler(handlerRef string, clientObj *object.Instan
 		return
 	}
 
+	Log.Trace("WebSocket handler starting", "id", connID, "path", path, "handler", handlerRef)
+
 	// Create fresh scriptling environment
 	p := scriptling.New()
 	setup.Scriptling(p, s.config.LibDirs, false, s.config.AllowedPaths, s.config.DisabledLibs, s.config.SecretRegistry, Log, s.config.DockerSock, s.config.PodmanSock)
@@ -98,5 +100,7 @@ func (s *Server) runWebSocketHandler(handlerRef string, clientObj *object.Instan
 	_, err := p.CallFunction(handlerRef, clientObj)
 	if err != nil {
 		Log.Error("WebSocket handler error", "path", path, "id", connID, "error", err)
+	} else {
+		Log.Trace("WebSocket handler completed", "id", connID, "path", path)
 	}
 }

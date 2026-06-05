@@ -14,7 +14,7 @@ import (
 	"github.com/paularlott/scriptling/scriptling-cli/pack"
 )
 
-var Log logger.Logger
+var Log logger.Logger = logger.NewNullLogger()
 
 // ServerConfig holds the configuration for the HTTP server
 type ServerConfig struct {
@@ -45,6 +45,7 @@ type reloadableMCPHandler struct {
 }
 
 func (h *reloadableMCPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	Log.Trace("MCP request", "method", r.Method, "path", r.URL.Path, "remote", r.RemoteAddr)
 	server := h.server.Load()
 	if server == nil {
 		http.Error(w, "Server not ready", http.StatusServiceUnavailable)
