@@ -121,14 +121,30 @@ RETURNING RESULTS:
 		),
 		func(ctx context.Context, req *mcp_lib.ToolRequest) (*mcp_lib.ToolResponse, error) {
 			code, _ := req.String("code")
+			Log.Trace("MCP execute_script invoked", "code_len", len(code))
 			p := scriptling.New()
 			setup.Scriptling(p, s.config.LibDirs, false, s.config.AllowedPaths, s.config.DisabledLibs, s.config.SecretRegistry, Log, s.config.DockerSock, s.config.PodmanSock)
 
 			response, exitCode, err := mcp.RunToolScript(ctx, p, code, map[string]interface{}{})
-			if err != nil && exitCode != 0 {
+
+			// If the script produced an explicit response (via return_error, return_string, etc.),
+			// return it to the client. return_error sets a response AND exits non-zero, so check
+			// for a response before treating non-zero exit as a failure.
+			if response != "" {
+				if exitCode != 0 {
+					Log.Debug("MCP execute_script returned error response", "exit_code", exitCode)
+					return nil, mcp_lib.NewToolErrorInternal(response)
+				}
+				Log.Trace("MCP execute_script completed", "exit_code", exitCode, "response_len", len(response))
+				return mcp_lib.NewToolResponseText(response), nil
+			}
+
+			if err != nil {
+				Log.Debug("MCP execute_script failed", "exit_code", exitCode, "error", err)
 				return nil, fmt.Errorf("execution error: %w", err)
 			}
-			return mcp_lib.NewToolResponseText(response), nil
+
+			return mcp_lib.NewToolResponseText(""), nil
 		},
 	)
 	Log.Info("Registered MCP tool", "name", "execute_script", "params", 1, "mode", "native")
@@ -159,21 +175,37 @@ func createMCPToolHandler(scriptPath string, libDirs []string, allowedPaths []st
 	toolLibDirs := append([]string{scriptDir}, libDirs...)
 
 	handler := func(ctx context.Context, req *mcp_lib.ToolRequest) (*mcp_lib.ToolResponse, error) {
+		params := req.Args()
+		Log.Trace("MCP tool invoked", "script", filepath.Base(scriptPath), "params", params)
 		p := scriptling.New()
 		setup.Scriptling(p, toolLibDirs, false, allowedPaths, disabledLibs, secretRegistry, Log, "", "")
 		bootstrap.ApplyPackLoader(p, packLoader)
 
-		params := req.Args()
 		response, exitCode, err := mcp.RunToolScript(ctx, p, string(script), params)
+
+		// If the script produced an explicit response (via return_error, return_string, etc.),
+		// return it to the client. return_error sets a response AND exits non-zero, so check
+		// for a response before treating non-zero exit as a failure.
+		if response != "" {
+			if exitCode != 0 {
+				Log.Debug("MCP tool returned error response", "script", filepath.Base(scriptPath), "exit_code", exitCode)
+				return nil, mcp_lib.NewToolErrorInternal(response)
+			}
+			Log.Trace("MCP tool completed", "script", filepath.Base(scriptPath), "response_len", len(response))
+			return mcp_lib.NewToolResponseText(response), nil
+		}
+
 		if err != nil {
+			Log.Debug("MCP tool failed", "script", filepath.Base(scriptPath), "error", err)
 			return nil, fmt.Errorf("script execution failed: %w", err)
 		}
 
 		if exitCode != 0 {
-			return nil, fmt.Errorf("script exited with code %d: %s", exitCode, response)
+			Log.Debug("MCP tool exited non-zero", "script", filepath.Base(scriptPath), "exit_code", exitCode)
+			return nil, fmt.Errorf("script exited with code %d", exitCode)
 		}
 
-		return mcp_lib.NewToolResponseText(response), nil
+		return mcp_lib.NewToolResponseText(""), nil
 	}
 	return handler, nil
 }

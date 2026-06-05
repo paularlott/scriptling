@@ -75,6 +75,7 @@ func (s *Server) runSetupScript() error {
 	setup.Scriptling(p, s.config.LibDirs, false, s.config.AllowedPaths, s.config.DisabledLibs, s.config.SecretRegistry, Log, s.config.DockerSock, s.config.PodmanSock)
 
 	if s.config.ScriptFile != "" {
+		Log.Debug("Running setup script", "file", s.config.ScriptFile)
 		content, err := os.ReadFile(s.config.ScriptFile)
 		if err != nil {
 			return fmt.Errorf("failed to read setup script: %w", err)
@@ -85,6 +86,7 @@ func (s *Server) runSetupScript() error {
 
 	if s.packLoader != nil {
 		if mod, fn, ok := s.packLoader.GetMainEntry(); ok {
+			Log.Debug("Running setup from package", "module", mod, "entry", fn)
 			_, err := p.Eval(fmt.Sprintf("import %s\n%s.%s()", mod, mod, fn))
 			return err
 		}

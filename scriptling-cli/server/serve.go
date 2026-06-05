@@ -12,6 +12,7 @@ import (
 
 // RunServer is the main entry point for running the server
 func RunServer(ctx context.Context, config ServerConfig) error {
+	Log.Debug("Starting server", "address", config.Address, "tls", config.TLSGenerate || (config.TLSCert != "" && config.TLSKey != ""), "mcp_tools", config.MCPToolsDir != "", "mcp_exec", config.MCPExecTool, "web_root", config.WebRoot)
 	server, err := NewServer(config)
 	if err != nil {
 		return err

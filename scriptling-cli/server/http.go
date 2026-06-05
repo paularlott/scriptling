@@ -124,12 +124,14 @@ func (s *Server) Stop(ctx context.Context) error {
 
 // handleHealth handles health check requests
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	Log.Trace("HTTP request", "method", r.Method, "path", r.URL.Path, "remote", r.RemoteAddr)
 	io.WriteString(w, "OK")
 }
 
 // handleScriptRequest handles requests to script handlers
 func (s *Server) handleScriptRequest(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
+	Log.Trace("HTTP request", "method", r.Method, "path", path, "remote", r.RemoteAddr)
 
 	if isWebSocketRequest(r) {
 		s.mu.RLock()
@@ -152,6 +154,7 @@ func (s *Server) handleScriptRequest(w http.ResponseWriter, r *http.Request) {
 	s.mu.RUnlock()
 
 	if !ok {
+		Log.Trace("No matching route", "method", r.Method, "path", path)
 		s.serveNotFound(w, r)
 		return
 	}
@@ -159,12 +162,14 @@ func (s *Server) handleScriptRequest(w http.ResponseWriter, r *http.Request) {
 	reqObj := s.createRequestObject(r)
 
 	if s.middleware != "" {
+		Log.Trace("Running middleware", "handler", s.middleware)
 		if resp := s.runHandler(s.middleware, reqObj); resp != nil {
 			s.writeResponse(w, resp)
 			return
 		}
 	}
 
+	Log.Trace("Dispatching to handler", "handler", handlerRef)
 	if resp := s.runHandler(handlerRef, reqObj); resp != nil {
 		s.writeResponse(w, resp)
 	} else {
@@ -174,6 +179,7 @@ func (s *Server) handleScriptRequest(w http.ResponseWriter, r *http.Request) {
 
 // handleFallback serves files from WebRoot (directory or zip) or calls the not_found handler
 func (s *Server) handleFallback(w http.ResponseWriter, r *http.Request) {
+	Log.Trace("HTTP fallback request", "method", r.Method, "path", r.URL.Path, "remote", r.RemoteAddr)
 	if s.config.WebRoot != "" {
 		if s.webRootZip != nil {
 			s.serveFromZip(w, r)
@@ -189,6 +195,7 @@ func (s *Server) handleFallback(w http.ResponseWriter, r *http.Request) {
 func (s *Server) serveFromDir(w http.ResponseWriter, r *http.Request) {
 	webRoot, err := filepath.Abs(s.config.WebRoot)
 	if err != nil {
+		Log.Debug("Web root resolve failed", "web_root", s.config.WebRoot, "error", err)
 		s.serveNotFound(w, r)
 		return
 	}
@@ -196,16 +203,19 @@ func (s *Server) serveFromDir(w http.ResponseWriter, r *http.Request) {
 	urlPath := filepath.FromSlash(r.URL.Path)
 	candidate, err := filepath.Abs(filepath.Join(webRoot, urlPath))
 	if err != nil || !strings.HasPrefix(candidate, webRoot+string(filepath.Separator)) && candidate != webRoot {
+		Log.Debug("Web root path traversal blocked", "web_root", webRoot, "candidate", candidate)
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 
 	for _, p := range []string{candidate, filepath.Join(candidate, "index.html")} {
 		if info, err := os.Stat(p); err == nil && !info.IsDir() {
+			Log.Trace("Serving file from web root", "file", p)
 			http.ServeFile(w, r, p)
 			return
 		}
 	}
+	Log.Trace("Web root file not found", "web_root", webRoot, "path", urlPath)
 	s.serveNotFound(w, r)
 }
 
@@ -225,6 +235,7 @@ func (s *Server) serveFromZip(w http.ResponseWriter, r *http.Request) {
 	for _, candidate := range candidates {
 		for _, f := range s.webRootZip.File {
 			if f.Name == candidate && !f.FileInfo().IsDir() {
+				Log.Trace("Serving file from web root zip", "file", f.Name)
 				rc, err := f.Open()
 				if err != nil {
 					http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -237,18 +248,21 @@ func (s *Server) serveFromZip(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	Log.Trace("Web root zip entry not found", "path", urlPath)
 	s.serveNotFound(w, r)
 }
 
 // serveNotFound calls the not_found handler or returns a plain 404
 func (s *Server) serveNotFound(w http.ResponseWriter, r *http.Request) {
 	if s.notFoundHandler != "" {
+		Log.Trace("Handling 404 via not_found handler", "handler", s.notFoundHandler, "path", r.URL.Path)
 		reqObj := s.createRequestObject(r)
 		if resp := s.runHandler(s.notFoundHandler, reqObj); resp != nil {
 			s.writeResponse(w, resp)
 			return
 		}
 	}
+	Log.Trace("Returning 404", "method", r.Method, "path", r.URL.Path)
 	http.Error(w, "Not Found", http.StatusNotFound)
 }
 
@@ -357,6 +371,7 @@ func (s *Server) writeResponse(w http.ResponseWriter, resp *object.Dict) {
 		}
 	}
 
+	Log.Trace("HTTP response", "status", status, "bytes", len(bodyBytes))
 	w.WriteHeader(int(status))
 	w.Write(bodyBytes)
 }
