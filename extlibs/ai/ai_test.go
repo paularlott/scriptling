@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -2965,5 +2966,114 @@ func TestPipelineRateLimitAdaptive(t *testing.T) {
 		if elem == nil || elem.Type() == object.ERROR_OBJ {
 			t.Errorf("[%d] unexpected nil or error result", i)
 		}
+	}
+}
+
+func TestCosineSimilarity(t *testing.T) {
+	lib := buildLibrary()
+	fn, ok := lib.Functions()["cosine_similarity"]
+	if !ok {
+		t.Fatal("cosine_similarity function not found in library")
+	}
+
+	tests := []struct {
+		name      string
+		a         object.Object
+		b         object.Object
+		want      float64
+		wantError bool
+		errMsg    string
+	}{
+		{
+			name: "identical vectors",
+			a:    conversion.FromGo([]any{1.0, 2.0, 3.0}),
+			b:    conversion.FromGo([]any{1.0, 2.0, 3.0}),
+			want: 1.0,
+		},
+		{
+			name: "opposite vectors",
+			a:    conversion.FromGo([]any{1.0, 0.0, 0.0}),
+			b:    conversion.FromGo([]any{-1.0, 0.0, 0.0}),
+			want: -1.0,
+		},
+		{
+			name: "orthogonal vectors",
+			a:    conversion.FromGo([]any{1.0, 0.0}),
+			b:    conversion.FromGo([]any{0.0, 1.0}),
+			want: 0.0,
+		},
+		{
+			name: "similar vectors",
+			a:    conversion.FromGo([]any{1.0, 2.0, 3.0}),
+			b:    conversion.FromGo([]any{1.1, 2.1, 2.9}),
+			want: 0.999,
+		},
+		{
+			name: "zero vector returns zero",
+			a:    conversion.FromGo([]any{0.0, 0.0, 0.0}),
+			b:    conversion.FromGo([]any{1.0, 2.0, 3.0}),
+			want: 0.0,
+		},
+		{
+			name: "single element",
+			a:    conversion.FromGo([]any{5.0}),
+			b:    conversion.FromGo([]any{5.0}),
+			want: 1.0,
+		},
+		{
+			name: "integer lists",
+			a:    conversion.FromGo([]any{1, 0, 0}),
+			b:    conversion.FromGo([]any{0, 1, 0}),
+			want: 0.0,
+		},
+		{
+			name:      "mismatched lengths",
+			a:         conversion.FromGo([]any{1.0, 2.0}),
+			b:         conversion.FromGo([]any{1.0}),
+			wantError: true,
+			errMsg:    "same length",
+		},
+		{
+			name:      "empty vectors",
+			a:         conversion.FromGo([]any{}),
+			b:         conversion.FromGo([]any{}),
+			wantError: true,
+			errMsg:    "empty",
+		},
+		{
+			name:      "non-list argument",
+			a:         object.NewString("hello"),
+			b:         conversion.FromGo([]any{1.0}),
+			wantError: true,
+			errMsg:    "expected a list",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := fn.Fn(context.Background(), object.NewKwargs(nil), tt.a, tt.b)
+
+			if tt.wantError {
+				if errObj, ok := result.(*object.Error); ok {
+					if tt.errMsg != "" && !strings.Contains(errObj.Message, tt.errMsg) {
+						t.Errorf("error message %q does not contain %q", errObj.Message, tt.errMsg)
+					}
+					return
+				}
+				t.Fatalf("expected error, got %T: %v", result, result)
+			}
+
+			if errObj, ok := result.(*object.Error); ok {
+				t.Fatalf("unexpected error: %s", errObj.Message)
+			}
+
+			f, ok := result.(*object.Float)
+			if !ok {
+				t.Fatalf("expected Float, got %T", result)
+			}
+			if math.Abs(f.FloatValue()-tt.want) > 0.001 {
+				t.Errorf("cosine_similarity = %f, want %f", f.FloatValue(), tt.want)
+			}
+		})
 	}
 }
