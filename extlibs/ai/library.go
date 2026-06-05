@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"regexp"
 	"strings"
@@ -544,7 +545,67 @@ Example:
 	  # Also works with string shorthand
 	  response = client.completion("gpt-4", "What is 2+2?")
 	  usage = ai.estimate_tokens("What is 2+2?", response)
-	  print(f"Total: {usage.total_tokens} tokens")`)
+	  print(f"Total: {usage.total_tokens} tokens")`).
+		// cosine_similarity(a, b) - Compute cosine similarity between two vectors
+		FunctionWithHelp("cosine_similarity", func(ctx context.Context, args ...object.Object) (object.Object, error) {
+			if len(args) != 2 {
+				return nil, fmt.Errorf("cosine_similarity expected 2 arguments, got %d", len(args))
+			}
+
+			a, err := toFloat64Slice(args[0])
+			if err != nil {
+				return &object.Error{Message: "cosine_similarity: " + err.Error()}, nil
+			}
+			b, err := toFloat64Slice(args[1])
+			if err != nil {
+				return &object.Error{Message: "cosine_similarity: " + err.Error()}, nil
+			}
+
+			if len(a) != len(b) {
+				return &object.Error{Message: fmt.Sprintf("cosine_similarity: vectors must have the same length, got %d and %d", len(a), len(b))}, nil
+			}
+			if len(a) == 0 {
+				return &object.Error{Message: "cosine_similarity: vectors must not be empty"}, nil
+			}
+
+			var dot, magA, magB float64
+			for i := range a {
+				dot += a[i] * b[i]
+				magA += a[i] * a[i]
+				magB += b[i] * b[i]
+			}
+
+			if magA == 0 || magB == 0 {
+				return object.NewFloat(0.0), nil
+			}
+
+			return object.NewFloat(dot / (math.Sqrt(magA) * math.Sqrt(magB))), nil
+		}, `cosine_similarity(a, b) - Compute cosine similarity between two vectors
+
+Returns the cosine of the angle between two vectors, ranging from -1.0 (opposite)
+to 1.0 (identical direction). 0.0 means orthogonal (no similarity).
+
+Primarily used to compare embedding vectors from client.embedding() to find
+semantically similar texts.
+
+Parameters:
+  a (list): First vector (list of numbers)
+  b (list): Second vector (list of numbers, same length as a)
+
+Returns:
+  float: Cosine similarity score from -1.0 to 1.0
+
+Example:
+  client = ai.Client("", api_key="sk-...")
+  emb1 = client.embedding("text-embedding-3-small", "Hello world")
+  emb2 = client.embedding("text-embedding-3-small", "Hi world")
+  emb3 = client.embedding("text-embedding-3-small", "Goodbye")
+
+  score = ai.cosine_similarity(emb1.data[0].embedding, emb2.data[0].embedding)
+  print(score)  # High similarity (~0.9+)
+
+  score = ai.cosine_similarity(emb1.data[0].embedding, emb3.data[0].embedding)
+  print(score)  # Lower similarity`)
 
 	return builder.Build()
 }
@@ -1237,4 +1298,24 @@ func copyMap(input map[string]any) map[string]any {
 		out[key] = value
 	}
 	return out
+}
+
+// toFloat64Slice converts a scriptling list or FloatArray to a []float64.
+func toFloat64Slice(obj object.Object) ([]float64, error) {
+	switch v := obj.(type) {
+	case *object.FloatArray:
+		return v.Data, nil
+	case *object.List:
+		result := make([]float64, len(v.Elements))
+		for i, item := range v.Elements {
+			f, err := item.AsFloat()
+			if err != nil {
+				return nil, fmt.Errorf("vector element %d is not a number", i)
+			}
+			result[i] = f
+		}
+		return result, nil
+	default:
+		return nil, fmt.Errorf("expected a list of numbers, got %s", obj.Type())
+	}
 }
