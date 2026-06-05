@@ -48,7 +48,8 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 					if !ok {
 						return
 					}
-					if filepath.Ext(event.Name) == ".toml" {
+					ext := filepath.Ext(event.Name)
+					if ext == ".toml" || ext == ".py" {
 						if server.reloadDebounce != nil {
 							server.reloadDebounce.Stop()
 						}
