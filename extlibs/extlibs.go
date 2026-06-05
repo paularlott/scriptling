@@ -37,4 +37,5 @@ const (
 	ContainerLibraryName      = "scriptling.container"
 	TemplateHTMLLibraryName   = "scriptling.template.html"
 	TemplateTextLibraryName   = "scriptling.template.text"
+	FileProvisionLibraryName  = "scriptling.provision.file"
 )

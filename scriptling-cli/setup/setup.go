@@ -20,6 +20,7 @@ import (
 	scriptlingmulticast "github.com/paularlott/scriptling/extlibs/net/multicast"
 	scriptlingresolve "github.com/paularlott/scriptling/extlibs/net/resolve"
 	scriptlingunicast "github.com/paularlott/scriptling/extlibs/net/unicast"
+	provisionfile "github.com/paularlott/scriptling/extlibs/provision/file"
 	"github.com/paularlott/scriptling/extlibs/secretprovider"
 	scriptlingsimilarity "github.com/paularlott/scriptling/extlibs/similarity"
 	"github.com/paularlott/scriptling/libloader"
@@ -76,6 +77,7 @@ func AllLibraryNames() []string {
 		extlibs.UnicastLibraryName,
 		extlibs.GossipLibraryName,
 		extlibs.ResolveLibraryName,
+		extlibs.FileProvisionLibraryName,
 		extlibs.AILibraryName,
 		extlibs.AgentLibraryName,
 		extlibs.SimilarityLibraryName,
@@ -160,6 +162,7 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 	reg(extlibs.UnicastLibraryName, func() { scriptlingunicast.Register(p) })
 	reg(extlibs.GossipLibraryName, func() { scriptlinggossip.Register(p, log) })
 	reg(extlibs.ResolveLibraryName, func() { scriptlingresolve.Register(p, stdlibResolver{timeout: 2 * time.Second}) })
+	reg(extlibs.FileProvisionLibraryName, func() { provisionfile.Register(p) })
 
 	reg(extlibs.AILibraryName, func() { ai.Register(p) })
 	reg(aimemory.MemoryLibraryName, func() { aimemory.Register(p, log) })
