@@ -1306,3 +1306,276 @@ func TestTypedReceiverExplicitInitOverrides(t *testing.T) {
 		t.Errorf("expected 'yes', got %v", result)
 	}
 }
+
+func TestConstructorWithContext(t *testing.T) {
+	var gotCtx context.Context
+	cb := object.NewClassBuilder("CtxCon")
+	cb.Constructor(func(ctx context.Context, name string) *trConfig {
+		gotCtx = ctx
+		return &trConfig{values: map[string]string{"name": name}}
+	})
+	cb.Method("get", func(self *trConfig, key string) string {
+		return self.values[key]
+	})
+	class := cb.Build()
+
+	initMethod := class.Methods["__init__"].(*object.Builtin)
+	instance := &object.Instance{Class: class, Fields: map[string]object.Object{}}
+	initMethod.Fn(context.Background(), object.NewKwargs(nil), instance, object.NewString("ctx-test"))
+
+	if gotCtx == nil {
+		t.Fatal("expected context to be passed to constructor")
+	}
+	getMethod := class.Methods["get"].(*object.Builtin)
+	result := getMethod.Fn(context.Background(), object.NewKwargs(nil), instance, object.NewString("name"))
+	if s, ok := result.(*object.String); !ok || s.StringValue() != "ctx-test" {
+		t.Errorf("expected 'ctx-test', got %v", result)
+	}
+}
+
+func TestConstructorWithKwargs(t *testing.T) {
+	cb := object.NewClassBuilder("KwCon")
+	cb.Constructor(func(kwargs object.Kwargs, name string) *trConfig {
+		extra, _ := kwargs.GetString("extra", "")
+		return &trConfig{values: map[string]string{"name": name, "extra": extra}}
+	})
+	cb.Method("get", func(self *trConfig, key string) string {
+		return self.values[key]
+	})
+	class := cb.Build()
+
+	initMethod := class.Methods["__init__"].(*object.Builtin)
+	instance := &object.Instance{Class: class, Fields: map[string]object.Object{}}
+	kw := object.NewKwargs(map[string]object.Object{"extra": object.NewString("bonus")})
+	initMethod.Fn(context.Background(), kw, instance, object.NewString("test"))
+
+	getMethod := class.Methods["get"].(*object.Builtin)
+	result := getMethod.Fn(context.Background(), object.NewKwargs(nil), instance, object.NewString("extra"))
+	if s, ok := result.(*object.String); !ok || s.StringValue() != "bonus" {
+		t.Errorf("expected 'bonus', got %v", result)
+	}
+}
+
+func TestConstructorWithContextAndKwargs(t *testing.T) {
+	var gotCtx context.Context
+	cb := object.NewClassBuilder("CtxKwCon")
+	cb.Constructor(func(ctx context.Context, kwargs object.Kwargs, name string) *trConfig {
+		gotCtx = ctx
+		tag, _ := kwargs.GetString("tag", "")
+		return &trConfig{values: map[string]string{"name": name, "tag": tag}}
+	})
+	cb.Method("get", func(self *trConfig, key string) string {
+		return self.values[key]
+	})
+	class := cb.Build()
+
+	initMethod := class.Methods["__init__"].(*object.Builtin)
+	instance := &object.Instance{Class: class, Fields: map[string]object.Object{}}
+	kw := object.NewKwargs(map[string]object.Object{"tag": object.NewString("v1")})
+	initMethod.Fn(context.Background(), kw, instance, object.NewString("full"))
+
+	if gotCtx == nil {
+		t.Fatal("expected context")
+	}
+	getMethod := class.Methods["get"].(*object.Builtin)
+	r1 := getMethod.Fn(context.Background(), object.NewKwargs(nil), instance, object.NewString("name"))
+	if s, ok := r1.(*object.String); !ok || s.StringValue() != "full" {
+		t.Errorf("expected 'full', got %v", r1)
+	}
+	r2 := getMethod.Fn(context.Background(), object.NewKwargs(nil), instance, object.NewString("tag"))
+	if s, ok := r2.(*object.String); !ok || s.StringValue() != "v1" {
+		t.Errorf("expected 'v1', got %v", r2)
+	}
+}
+
+func TestConstructorVariadic(t *testing.T) {
+	cb := object.NewClassBuilder("VarCon")
+	cb.Constructor(func(prefix string, nums ...int) *trConfig {
+		total := 0
+		for _, n := range nums {
+			total += n
+		}
+		return &trConfig{values: map[string]string{"prefix": prefix, "sum": fmt.Sprintf("%d", total)}}
+	})
+	cb.Method("get", func(self *trConfig, key string) string {
+		return self.values[key]
+	})
+	class := cb.Build()
+
+	initMethod := class.Methods["__init__"].(*object.Builtin)
+	instance := &object.Instance{Class: class, Fields: map[string]object.Object{}}
+	initMethod.Fn(context.Background(), object.NewKwargs(nil), instance,
+		object.NewString("total"), object.NewInteger(10), object.NewInteger(20), object.NewInteger(30))
+
+	getMethod := class.Methods["get"].(*object.Builtin)
+	r1 := getMethod.Fn(context.Background(), object.NewKwargs(nil), instance, object.NewString("prefix"))
+	if s, ok := r1.(*object.String); !ok || s.StringValue() != "total" {
+		t.Errorf("expected 'total', got %v", r1)
+	}
+	r2 := getMethod.Fn(context.Background(), object.NewKwargs(nil), instance, object.NewString("sum"))
+	if s, ok := r2.(*object.String); !ok || s.StringValue() != "60" {
+		t.Errorf("expected '60', got %v", r2)
+	}
+}
+
+func TestConstructorReturnsNil(t *testing.T) {
+	cb := object.NewClassBuilder("NilCon")
+	cb.Constructor(func() *trConfig {
+		return nil
+	})
+	class := cb.Build()
+
+	initMethod := class.Methods["__init__"].(*object.Builtin)
+	instance := &object.Instance{Class: class, Fields: map[string]object.Object{}}
+	result := initMethod.Fn(context.Background(), object.NewKwargs(nil), instance)
+	if errObj, ok := result.(*object.Error); !ok {
+		t.Errorf("expected Error for nil constructor return, got %T", result)
+	} else if errObj.Message != "constructor returned nil" {
+		t.Errorf("expected 'constructor returned nil', got %q", errObj.Message)
+	}
+}
+
+func TestConstructorErrorReturn(t *testing.T) {
+	cb := object.NewClassBuilder("ErrCon")
+	cb.Constructor(func(shouldFail bool) (*trConfig, error) {
+		if shouldFail {
+			return nil, fmt.Errorf("construction failed")
+		}
+		return &trConfig{values: map[string]string{}}, nil
+	})
+	class := cb.Build()
+
+	initMethod := class.Methods["__init__"].(*object.Builtin)
+
+	inst1 := &object.Instance{Class: class, Fields: map[string]object.Object{}}
+	result := initMethod.Fn(context.Background(), object.NewKwargs(nil), inst1, object.NewBoolean(false))
+	if _, ok := result.(*object.Null); !ok {
+		t.Errorf("expected Null for success, got %T", result)
+	}
+
+	inst2 := &object.Instance{Class: class, Fields: map[string]object.Object{}}
+	result = initMethod.Fn(context.Background(), object.NewKwargs(nil), inst2, object.NewBoolean(true))
+	if errObj, ok := result.(*object.Error); !ok {
+		t.Errorf("expected Error for failure, got %T", result)
+	} else if errObj.Message != "construction failed" {
+		t.Errorf("expected 'construction failed', got %q", errObj.Message)
+	}
+}
+
+func TestTypedReceiverMethodKwargsOnly(t *testing.T) {
+	cb := object.NewClassBuilder("KwMethod")
+	cb.Constructor(func() *trConfig {
+		return &trConfig{values: map[string]string{}}
+	})
+	cb.Method("set_kwargs", func(self *trConfig, kwargs object.Kwargs, key string, val string) {
+		if len(kwargs.Kwargs) == 0 && kwargs.Get("nonexistent") == nil {
+		}
+		self.values[key] = val
+	})
+	class := cb.Build()
+
+	initMethod := class.Methods["__init__"].(*object.Builtin)
+	instance := &object.Instance{Class: class, Fields: map[string]object.Object{}}
+	initMethod.Fn(context.Background(), object.NewKwargs(nil), instance)
+
+	method := class.Methods["set_kwargs"].(*object.Builtin)
+	result := method.Fn(context.Background(), object.NewKwargs(nil), instance,
+		object.NewString("k"), object.NewString("v"))
+	if _, ok := result.(*object.Null); !ok {
+		t.Errorf("expected Null, got %T", result)
+	}
+
+	cfg := instance.Fields["_receiver"].(*object.ClientWrapper).Client.(*trConfig)
+	if cfg.values["k"] != "v" {
+		t.Errorf("expected values['k'] = 'v', got %q", cfg.values["k"])
+	}
+}
+
+func TestTypedReceiverMethodVariadic(t *testing.T) {
+	cb := object.NewClassBuilder("VarMethod")
+	cb.Constructor(func() *trCounter {
+		return &trCounter{value: 0}
+	})
+	cb.Method("add_all", func(self *trCounter, nums ...int) int {
+		for _, n := range nums {
+			self.value += int64(n)
+		}
+		return int(self.value)
+	})
+	class := cb.Build()
+
+	initMethod := class.Methods["__init__"].(*object.Builtin)
+	instance := &object.Instance{Class: class, Fields: map[string]object.Object{}}
+	initMethod.Fn(context.Background(), object.NewKwargs(nil), instance)
+
+	method := class.Methods["add_all"].(*object.Builtin)
+	result := method.Fn(context.Background(), object.NewKwargs(nil), instance,
+		object.NewInteger(10), object.NewInteger(20), object.NewInteger(30))
+	if i, ok := result.(*object.Integer); !ok || i.IntValue() != 60 {
+		t.Errorf("expected 60, got %v", result)
+	}
+}
+
+func TestClassBuilderPanicNonFunction(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Error("expected panic for non-function argument")
+		}
+	}()
+	cb := object.NewClassBuilder("Bad")
+	cb.Constructor(42)
+}
+
+func TestClassBuilderPanicNoReturn(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Error("expected panic for constructor with no return")
+		}
+	}()
+	cb := object.NewClassBuilder("Bad")
+	cb.Constructor(func() {})
+}
+
+func TestClassBuilderPanicNonPointerReturn(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Error("expected panic for non-pointer return")
+		}
+	}()
+	cb := object.NewClassBuilder("Bad")
+	cb.Constructor(func() int { return 0 })
+}
+
+func TestClassBuilderPanicMethodNonFunction(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Error("expected panic for non-function method")
+		}
+	}()
+	cb := object.NewClassBuilder("Bad")
+	cb.Method("test", 42)
+}
+
+func TestTypedReceiverNoReceiverField(t *testing.T) {
+	cb := object.NewClassBuilder("NoRecv")
+	cb.Constructor(func() *trConfig {
+		return &trConfig{values: map[string]string{}}
+	})
+	cb.Method("get", func(self *trConfig, key string) string {
+		return self.values[key]
+	})
+	class := cb.Build()
+
+	instance := &object.Instance{Class: class, Fields: map[string]object.Object{}}
+	method := class.Methods["get"].(*object.Builtin)
+	result := method.Fn(context.Background(), object.NewKwargs(nil), instance, object.NewString("key"))
+	if errObj, ok := result.(*object.Error); !ok {
+		t.Errorf("expected Error for missing receiver, got %T", result)
+	} else if errObj.Message != "instance has no typed receiver" {
+		t.Errorf("expected 'instance has no typed receiver', got %q", errObj.Message)
+	}
+}
