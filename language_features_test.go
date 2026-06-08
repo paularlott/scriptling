@@ -2,8 +2,11 @@ package scriptling
 
 import (
 	"context"
+	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/paularlott/scriptling/libloader"
 	"github.com/paularlott/scriptling/object"
@@ -2044,8 +2047,8 @@ func TestTypedReceiverWithDestructorEndToEnd(t *testing.T) {
 	p := New()
 
 	type resource struct {
-		name    string
-		closed  bool
+		name   string
+		closed bool
 	}
 
 	cb := object.NewClassBuilder("Resource")
@@ -2070,6 +2073,109 @@ n = r.name()
 	n, _ := p.GetVar("n")
 	if n != "db" {
 		t.Errorf("expected 'db', got %v", n)
+	}
+}
+
+func TestDelExplicitCallOnTypedReceiver(t *testing.T) {
+	var delCount atomic.Int32
+
+	p := New()
+
+	type handle struct {
+		path string
+	}
+
+	cb := object.NewClassBuilder("Handle")
+	cb.Constructor(func(path string) *handle {
+		return &handle{path: path}
+	})
+	cb.Method("path", func(self *handle) string {
+		return self.path
+	})
+	cb.Method("__del__", func(self *handle) {
+		delCount.Add(1)
+	})
+	p.SetObjectVar("Handle", cb.Build())
+
+	_, err := p.Eval(`
+h = Handle("/tmp/data")
+p = h.path()
+h.__del__()
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+
+	path, _ := p.GetVar("p")
+	if path != "/tmp/data" {
+		t.Errorf("expected '/tmp/data', got %v", path)
+	}
+	if got := delCount.Load(); got != 1 {
+		t.Errorf("expected __del__ called once, got %d", got)
+	}
+}
+
+func TestDelExplicitCallOnInstanceStyle(t *testing.T) {
+	var delCount atomic.Int32
+
+	p := New()
+
+	class := object.NewClassBuilder("Conn").
+		Method("__init__", func(self *object.Instance, host string) {
+			self.Fields["host"] = object.NewString(host)
+		}).
+		Method("get_host", func(self *object.Instance) string {
+			return self.Fields["host"].(*object.String).StringValue()
+		}).
+		Method("__del__", func(self *object.Instance) {
+			delCount.Add(1)
+		})
+
+	p.SetObjectVar("Conn", class.Build())
+
+	_, err := p.Eval(`
+c = Conn("localhost")
+h = c.get_host()
+c.__del__()
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+
+	host, _ := p.GetVar("h")
+	if host != "localhost" {
+		t.Errorf("expected 'localhost', got %v", host)
+	}
+	if got := delCount.Load(); got != 1 {
+		t.Errorf("expected __del__ called once, got %d", got)
+	}
+}
+
+func TestDelCallableMultipleTimes(t *testing.T) {
+	var delCount atomic.Int32
+
+	p := New()
+
+	type conn struct{}
+
+	cb := object.NewClassBuilder("Conn")
+	cb.Constructor(func() *conn { return &conn{} })
+	cb.Method("__del__", func(self *conn) {
+		delCount.Add(1)
+	})
+	p.SetObjectVar("Conn", cb.Build())
+
+	_, err := p.Eval(`
+c = Conn()
+c.__del__()
+c.__del__()
+c.__del__()
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	if got := delCount.Load(); got != 3 {
+		t.Errorf("expected __del__ called 3 times when invoked explicitly, got %d", got)
 	}
 }
 
@@ -2837,4 +2943,282 @@ raw_name = p.Name
 			t.Errorf("expected raw struct field Name to be None, got %v", rawName)
 		}
 	})
+}
+
+func TestGCTriggersDelOnTypedReceiver(t *testing.T) {
+	var delCount atomic.Int32
+
+	p := New()
+
+	type handle struct {
+		path string
+	}
+
+	cb := object.NewClassBuilder("Handle")
+	cb.Constructor(func(path string) *handle {
+		return &handle{path: path}
+	})
+	cb.Method("path", func(self *handle) string {
+		return self.path
+	})
+	cb.Method("__del__", func(self *handle) {
+		delCount.Add(1)
+	})
+	p.SetObjectVar("Handle", cb.Build())
+
+	_, err := p.Eval(`
+for i in range(10):
+    h = Handle("/tmp/" + str(i))
+    # h goes out of scope each iteration
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+
+	deadline := time.After(3 * time.Second)
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+
+	for {
+		runtime.GC()
+		if delCount.Load() == 10 {
+			return
+		}
+		select {
+		case <-tick.C:
+		case <-deadline:
+			t.Fatalf("expected __del__ called 10 times, got %d", delCount.Load())
+		}
+	}
+}
+
+func TestGCTriggersDelOnInstanceStyle(t *testing.T) {
+	var delCount atomic.Int32
+
+	p := New()
+
+	class := object.NewClassBuilder("Conn").
+		Method("__init__", func(self *object.Instance, host string) {
+			self.Fields["host"] = object.NewString(host)
+		}).
+		Method("__del__", func(self *object.Instance) {
+			delCount.Add(1)
+		})
+
+	p.SetObjectVar("Conn", class.Build())
+
+	_, err := p.Eval(`
+for i in range(5):
+    c = Conn("host-" + str(i))
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+
+	deadline := time.After(3 * time.Second)
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+
+	for {
+		runtime.GC()
+		if delCount.Load() == 5 {
+			return
+		}
+		select {
+		case <-tick.C:
+		case <-deadline:
+			t.Fatalf("expected __del__ called 5 times, got %d", delCount.Load())
+		}
+	}
+}
+
+func TestGCDelCalledOncePerObject(t *testing.T) {
+	var delCount atomic.Int32
+
+	p := New()
+
+	type res struct{}
+
+	cb := object.NewClassBuilder("Res")
+	cb.Constructor(func() *res { return &res{} })
+	cb.Method("__del__", func(self *res) {
+		delCount.Add(1)
+	})
+	p.SetObjectVar("Res", cb.Build())
+
+	_, err := p.Eval(`
+a = Res()
+b = Res()
+c = a  # alias — same object as a
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+
+	_, err = p.Eval(`
+del a
+del b
+`)
+	if err != nil {
+		t.Fatalf("del failed: %v", err)
+	}
+
+	deadline := time.After(3 * time.Second)
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+
+	for {
+		runtime.GC()
+		if delCount.Load() >= 1 {
+			break
+		}
+		select {
+		case <-tick.C:
+		case <-deadline:
+			t.Fatalf("expected at least 1 __del__, got %d", delCount.Load())
+		}
+	}
+	beforeC := delCount.Load()
+
+	_, err = p.Eval(`del c`)
+	if err != nil {
+		t.Fatalf("del c failed: %v", err)
+	}
+
+	for {
+		runtime.GC()
+		if delCount.Load() == 2 {
+			return
+		}
+		select {
+		case <-tick.C:
+		case <-deadline:
+			t.Fatalf("expected 2 __del__ total, got %d (before c: %d)", delCount.Load(), beforeC)
+		}
+	}
+}
+
+func TestGCTriggersDelOnPureScriptlingClass(t *testing.T) {
+	var delCount atomic.Int32
+
+	p := New()
+	p.SetObjectVar("_mark_deleted", &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+		delCount.Add(1)
+		return &object.Null{}
+	}})
+
+	_, err := p.Eval(`
+class FileHandle:
+    def __init__(self, path):
+        self.path = path
+
+    def __del__(self):
+        _mark_deleted()
+
+handles = []
+for i in range(8):
+    handles.append(FileHandle("/tmp/" + str(i)))
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+
+	_, err = p.Eval(`
+del handles
+`)
+	if err != nil {
+		t.Fatalf("del failed: %v", err)
+	}
+
+	deadline := time.After(3 * time.Second)
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+
+	for {
+		runtime.GC()
+		if delCount.Load() == 8 {
+			return
+		}
+		select {
+		case <-tick.C:
+		case <-deadline:
+			t.Fatalf("expected __del__ called 8 times, got %d", delCount.Load())
+		}
+	}
+}
+
+func TestDelExplicitOnPureScriptlingClass(t *testing.T) {
+	var delCount atomic.Int32
+
+	p := New()
+	p.SetObjectVar("_mark_deleted", &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+		delCount.Add(1)
+		return &object.Null{}
+	}})
+
+	_, err := p.Eval(`
+class Conn:
+    def __init__(self, host):
+        self.host = host
+
+    def __del__(self):
+        _mark_deleted()
+
+c = Conn("localhost")
+c.__del__()
+c.__del__()
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	if got := delCount.Load(); got != 2 {
+		t.Errorf("expected __del__ called 2 times, got %d", got)
+	}
+}
+
+func TestGCTriggersDelOnInheritedScriptlingClass(t *testing.T) {
+	var delCount atomic.Int32
+
+	p := New()
+	p.SetObjectVar("_mark_deleted", &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+		delCount.Add(1)
+		return &object.Null{}
+	}})
+
+	_, err := p.Eval(`
+class Base:
+    def __init__(self, name):
+        self.name = name
+
+    def __del__(self):
+        _mark_deleted()
+
+class Child(Base):
+    def __init__(self, name, extra):
+        super().__init__(name)
+        self.extra = extra
+
+for i in range(6):
+    c = Child("item-" + str(i), i)
+del c
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+
+	deadline := time.After(3 * time.Second)
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+
+	for {
+		runtime.GC()
+		if delCount.Load() == 6 {
+			return
+		}
+		select {
+		case <-tick.C:
+		case <-deadline:
+			t.Fatalf("expected __del__ called 6 times, got %d", delCount.Load())
+		}
+	}
 }
