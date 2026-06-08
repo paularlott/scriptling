@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -1782,6 +1783,14 @@ func createInstance(ctx context.Context, class *object.Class, args []object.Obje
 		if object.IsError(result) {
 			return result
 		}
+	}
+
+	// Install GC finalizer for __del__ if the class defines one
+	if del, ok := class.LookupMember("__del__"); ok {
+		delMethod := del
+		runtime.SetFinalizer(instance, func(inst *object.Instance) {
+			ApplyFunction(context.Background(), delMethod, []object.Object{inst}, nil, object.NewEnvironment())
+		})
 	}
 
 	return instance
