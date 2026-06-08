@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -42,6 +43,14 @@ type serverObject struct {
 	class    *object.Class
 	instance *object.Instance
 	mu       sync.Mutex
+}
+
+type serverRuntime struct {
+	encoder *json.Encoder
+	writeMu sync.Mutex
+	nextID  atomic.Int64
+	pending map[int64]chan rpcResponse
+	mu      sync.Mutex
 }
 
 func NewServer(name, version, description string) *Server {
@@ -105,40 +114,104 @@ func (s *Server) Run() error {
 
 func (s *Server) RunIO(input io.Reader, output io.Writer) error {
 	decoder := json.NewDecoder(bufio.NewReader(input))
-	encoder := json.NewEncoder(output)
-	var writeMu sync.Mutex
+	runtime := &serverRuntime{
+		encoder: json.NewEncoder(output),
+		pending: make(map[int64]chan rpcResponse),
+	}
 	var wg sync.WaitGroup
 
 	for {
-		var req rpcRequest
-		if err := decoder.Decode(&req); err != nil {
+		var msg rpcMessage
+		if err := decoder.Decode(&msg); err != nil {
 			if err == io.EOF {
 				wg.Wait()
 				return nil
 			}
 			return err
 		}
+		if msg.Method == "" {
+			runtime.deliverResponse(rpcResponse{
+				JSONRPC: msg.JSONRPC,
+				ID:      msg.ID,
+				Result:  msg.Result,
+				Error:   msg.Error,
+			})
+			continue
+		}
+		req := rpcRequest{JSONRPC: msg.JSONRPC, ID: msg.ID, Method: msg.Method, Params: msg.Params}
 		if req.Method == "plugin.shutdown" {
-			resp := s.handleRequest(req)
-			writeMu.Lock()
-			err := encoder.Encode(resp)
-			writeMu.Unlock()
+			resp := s.handleRequest(context.Background(), req)
+			runtime.writeMu.Lock()
+			err := runtime.encoder.Encode(resp)
+			runtime.writeMu.Unlock()
 			wg.Wait()
 			return err
 		}
 		wg.Add(1)
 		go func(req rpcRequest) {
 			defer wg.Done()
-			resp := s.handleRequest(req)
-			writeMu.Lock()
-			encoder.Encode(resp)
-			writeMu.Unlock()
+			ctx := context.WithValue(context.Background(), callbackRuntimeKey{}, runtime)
+			resp := s.handleRequest(ctx, req)
+			runtime.writeMu.Lock()
+			runtime.encoder.Encode(resp)
+			runtime.writeMu.Unlock()
 		}(req)
 	}
 }
 
-func (s *Server) handleRequest(req rpcRequest) rpcResponse {
-	result, err := s.dispatch(req.Method, req.Params)
+func (r *serverRuntime) callCallback(ctx context.Context, params callbackCallParams) (Value, error) {
+	id := r.nextID.Add(1)
+	ch := make(chan rpcResponse, 1)
+	r.mu.Lock()
+	r.pending[id] = ch
+	r.mu.Unlock()
+
+	req := rpcRequest{JSONRPC: "2.0", ID: id, Method: "callback.call", Params: params}
+	r.writeMu.Lock()
+	err := r.encoder.Encode(req)
+	r.writeMu.Unlock()
+	if err != nil {
+		r.removePending(id)
+		return Value{}, err
+	}
+
+	select {
+	case resp := <-ch:
+		if resp.Error != nil {
+			return Value{}, resp.Error
+		}
+		if len(resp.Result) == 0 {
+			return Value{Type: valueNull}, nil
+		}
+		var result Value
+		if err := json.Unmarshal(resp.Result, &result); err != nil {
+			return Value{}, err
+		}
+		return result, nil
+	case <-ctx.Done():
+		r.removePending(id)
+		return Value{}, ctx.Err()
+	}
+}
+
+func (r *serverRuntime) deliverResponse(resp rpcResponse) {
+	r.mu.Lock()
+	ch := r.pending[resp.ID]
+	delete(r.pending, resp.ID)
+	r.mu.Unlock()
+	if ch != nil {
+		ch <- resp
+	}
+}
+
+func (r *serverRuntime) removePending(id int64) {
+	r.mu.Lock()
+	delete(r.pending, id)
+	r.mu.Unlock()
+}
+
+func (s *Server) handleRequest(ctx context.Context, req rpcRequest) rpcResponse {
+	result, err := s.dispatch(ctx, req.Method, req.Params)
 	resp := rpcResponse{JSONRPC: "2.0", ID: req.ID}
 	if err != nil {
 		resp.Error = &RPCError{Code: -32000, Message: err.Error()}
@@ -155,7 +228,7 @@ func (s *Server) handleRequest(req rpcRequest) rpcResponse {
 	return resp
 }
 
-func (s *Server) dispatch(method string, params any) (any, error) {
+func (s *Server) dispatch(ctx context.Context, method string, params any) (any, error) {
 	switch method {
 	case "scriptling.handshake":
 		return handshakeResult{
@@ -176,19 +249,19 @@ func (s *Server) dispatch(method string, params any) (any, error) {
 		if err := decodeParams(params, &p); err != nil {
 			return nil, err
 		}
-		return s.callFunction(p)
+		return s.callFunction(ctx, p)
 	case "object.new":
 		var p objectNewParams
 		if err := decodeParams(params, &p); err != nil {
 			return nil, err
 		}
-		return s.newObject(p)
+		return s.newObject(ctx, p)
 	case "object.call_method":
 		var p methodCallParams
 		if err := decodeParams(params, &p); err != nil {
 			return nil, err
 		}
-		return s.callMethod(p)
+		return s.callMethod(ctx, p)
 	case "object.destroy":
 		var p objectDestroyParams
 		if err := decodeParams(params, &p); err != nil {
@@ -237,7 +310,7 @@ func (s *Server) schema() Schema {
 	return Schema{Functions: functions, Classes: classes, Constants: constants}
 }
 
-func (s *Server) callFunction(params functionCallParams) (Value, error) {
+func (s *Server) callFunction(ctx context.Context, params functionCallParams) (Value, error) {
 	entry, ok := s.functions[params.Name]
 	if !ok || entry.builtin == nil {
 		return Value{}, fmt.Errorf("unknown function %s", params.Name)
@@ -250,11 +323,14 @@ func (s *Server) callFunction(params functionCallParams) (Value, error) {
 	if err != nil {
 		return Value{}, err
 	}
-	result := entry.builtin.Fn(context.Background(), object.NewKwargs(kwargs), args...)
+	result := entry.builtin.Fn(ctx, object.NewKwargs(kwargs), args...)
+	if errObj, ok := result.(*object.Error); ok {
+		return Value{}, errors.New(errObj.Message)
+	}
 	return objectToValue(result)
 }
 
-func (s *Server) newObject(params objectNewParams) (*RemoteRef, error) {
+func (s *Server) newObject(ctx context.Context, params objectNewParams) (*RemoteRef, error) {
 	entry, ok := s.classes[params.Class]
 	if !ok || entry.class == nil {
 		return nil, fmt.Errorf("unknown class %s", params.Class)
@@ -271,7 +347,7 @@ func (s *Server) newObject(params objectNewParams) (*RemoteRef, error) {
 			return nil, err
 		}
 		callArgs := append([]object.Object{instance}, objArgs...)
-		result := evaluator.ApplyFunction(context.Background(), init, callArgs, objKwargs, object.NewEnvironment())
+		result := evaluator.ApplyFunction(ctx, init, callArgs, objKwargs, object.NewEnvironment())
 		if errObj, ok := result.(*object.Error); ok {
 			return nil, errors.New(errObj.Message)
 		}
@@ -290,7 +366,7 @@ func (s *Server) newObject(params objectNewParams) (*RemoteRef, error) {
 	}, nil
 }
 
-func (s *Server) callMethod(params methodCallParams) (Value, error) {
+func (s *Server) callMethod(ctx context.Context, params methodCallParams) (Value, error) {
 	remoteObject := s.loadObject(params.ObjectID)
 	if remoteObject == nil {
 		return Value{}, fmt.Errorf("unknown object %s", params.ObjectID)
@@ -315,7 +391,7 @@ func (s *Server) callMethod(params methodCallParams) (Value, error) {
 		return Value{}, err
 	}
 	callArgs := append([]object.Object{instance}, objArgs...)
-	result := evaluator.ApplyFunction(context.Background(), methodObj, callArgs, objKwargs, object.NewEnvironment())
+	result := evaluator.ApplyFunction(ctx, methodObj, callArgs, objKwargs, object.NewEnvironment())
 	if errObj, ok := result.(*object.Error); ok {
 		return Value{}, errors.New(errObj.Message)
 	}
@@ -414,6 +490,76 @@ func goValueToTransport(value any) Value {
 		}
 		return Value{Type: valueDict, Entries: entries}
 	default:
+		return goReflectValueToTransport(reflect.ValueOf(value))
+	}
+}
+
+func goReflectValueToTransport(value reflect.Value) Value {
+	if !value.IsValid() {
+		return Value{Type: valueNull}
+	}
+	for value.Kind() == reflect.Interface || value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			return Value{Type: valueNull}
+		}
+		value = value.Elem()
+	}
+	switch value.Kind() {
+	case reflect.Bool:
+		return Value{Type: valueBool, Value: value.Bool()}
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return Value{Type: valueInt, Value: value.Int()}
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		return Value{Type: valueInt, Value: int64(value.Uint())}
+	case reflect.Float32, reflect.Float64:
+		return Value{Type: valueFloat, Value: value.Float()}
+	case reflect.String:
+		return Value{Type: valueString, Value: value.String()}
+	case reflect.Slice, reflect.Array:
+		items := make([]Value, 0, value.Len())
+		for i := 0; i < value.Len(); i++ {
+			items = append(items, goReflectValueToTransport(value.Index(i)))
+		}
+		return Value{Type: valueList, Items: items}
+	case reflect.Map:
+		if value.Type().Key().Kind() != reflect.String {
+			return Value{Type: valueString, Value: fmt.Sprint(value.Interface())}
+		}
+		entries := make(map[string]Value, value.Len())
+		for _, key := range value.MapKeys() {
+			entries[key.String()] = goReflectValueToTransport(value.MapIndex(key))
+		}
+		return Value{Type: valueDict, Entries: entries}
+	case reflect.Struct:
+		entries := make(map[string]Value, value.NumField())
+		valueType := value.Type()
+		for i := 0; i < value.NumField(); i++ {
+			field := valueType.Field(i)
+			if field.PkgPath != "" {
+				continue
+			}
+			name := field.Name
+			if tag := field.Tag.Get("json"); tag != "" {
+				if tag == "-" {
+					continue
+				}
+				for idx, ch := range tag {
+					if ch == ',' {
+						tag = tag[:idx]
+						break
+					}
+				}
+				if tag != "" {
+					name = tag
+				}
+			}
+			entries[name] = goReflectValueToTransport(value.Field(i))
+		}
+		return Value{Type: valueDict, Entries: entries}
+	default:
+		if value.CanInterface() {
+			return Value{Type: valueString, Value: fmt.Sprint(value.Interface())}
+		}
 		return Value{Type: valueString, Value: fmt.Sprint(value)}
 	}
 }

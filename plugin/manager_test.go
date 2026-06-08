@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -424,6 +425,70 @@ name
 		}
 	})
 
+	t.Run("FunctionCallbacks", func(t *testing.T) {
+		manager := NewManager()
+		manager.AddDir(dir)
+		if err := manager.Load(context.Background()); err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		defer manager.Close()
+
+		p := scriptling.New()
+		RegisterLibraries(p, manager)
+
+		result, err := p.Eval(`
+import plugin.comprehensive
+
+events = []
+
+def on_event(event):
+    events.append(event)
+    return "ack"
+
+status = plugin.comprehensive.stream_events(on_event)
+events[0] + ":" + events[1][1] + ":" + events[2]["token"] + ":" + str(events[2]["index"]) + ":" + events[3]["nested"]["kind"] + ":" + status
+`)
+		if err != nil {
+			t.Fatalf("callback eval: %v", err)
+		}
+		str, ok := result.(*object.String)
+		if !ok {
+			t.Fatalf("expected string result, got %#v", result)
+		}
+		want := "start:two:done:3:map:complete"
+		if str.StringValue() != want {
+			t.Fatalf("expected %q, got %q", want, str.StringValue())
+		}
+	})
+
+	t.Run("CallbacksExpireAfterOuterCall", func(t *testing.T) {
+		manager := NewManager()
+		manager.AddDir(dir)
+		if err := manager.Load(context.Background()); err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		defer manager.Close()
+
+		p := scriptling.New()
+		RegisterLibraries(p, manager)
+
+		_, err := p.Eval(`
+import plugin.comprehensive
+
+def on_event(event):
+    return "ack"
+
+plugin.comprehensive.save_callback(on_event)
+plugin.comprehensive.fire_saved_callback()
+`)
+		if err == nil {
+			t.Fatal("expected expired callback to fail")
+		}
+		if !strings.Contains(err.Error(), "unknown callback") {
+			t.Fatalf("expected unknown callback error, got %v", err)
+		}
+	})
+
 	t.Run("ParallelSeparateEnvs", func(t *testing.T) {
 		manager := NewManager()
 		manager.AddDir(dir)
@@ -568,6 +633,7 @@ func writeComprehensivePluginHelper(t *testing.T, path string) {
 
 func runComprehensivePluginHelper() {
 	var destroyCount atomic.Int64
+	var savedCallback Callback
 
 	type counter struct {
 		value int64
@@ -645,6 +711,47 @@ func runComprehensivePluginHelper() {
 	strictFn := object.NewFunctionBuilder()
 	strictFn.Function(func(s string) string { return "got:" + s })
 
+	type streamEvent struct {
+		Token string `json:"token"`
+		Index int    `json:"index"`
+	}
+
+	streamEventsFn := object.NewFunctionBuilder()
+	streamEventsFn.Function(func(ctx context.Context, callback Callback) (string, error) {
+		if _, err := callback.Call(ctx, "start"); err != nil {
+			return "", err
+		}
+		if _, err := callback.Call(ctx, []any{"one", "two", 3}); err != nil {
+			return "", err
+		}
+		if _, err := callback.Call(ctx, streamEvent{Token: "done", Index: 3}); err != nil {
+			return "", err
+		}
+		if _, err := callback.Call(ctx, map[string]any{
+			"nested": map[string]any{"kind": "map"},
+		}); err != nil {
+			return "", err
+		}
+		return "complete", nil
+	})
+
+	saveCallbackFn := object.NewFunctionBuilder()
+	saveCallbackFn.Function(func(callback Callback) string {
+		savedCallback = callback
+		return "saved"
+	})
+
+	fireSavedCallbackFn := object.NewFunctionBuilder()
+	fireSavedCallbackFn.Function(func(ctx context.Context) (string, error) {
+		if savedCallback == nil {
+			return "", fmt.Errorf("no saved callback")
+		}
+		if _, err := savedCallback.Call(ctx, "late"); err != nil {
+			return "", err
+		}
+		return "called", nil
+	})
+
 	delayedEchoFn := object.NewFunctionBuilder()
 	delayedEchoFn.Function(func(value int) int {
 		time.Sleep(time.Duration(15-value%10) * 10 * time.Millisecond)
@@ -682,6 +789,9 @@ func runComprehensivePluginHelper() {
 	server.RegisterFunc("fail", failFn)
 	server.RegisterFunc("destroyed_count", destroyedCountFn)
 	server.RegisterFunc("strict", strictFn)
+	server.RegisterFunc("stream_events", streamEventsFn)
+	server.RegisterFunc("save_callback", saveCallbackFn)
+	server.RegisterFunc("fire_saved_callback", fireSavedCallbackFn)
 	server.RegisterFunc("delayed_echo", delayedEchoFn)
 	server.RegisterClass(counterClass)
 	server.RegisterClass(resourceClass)

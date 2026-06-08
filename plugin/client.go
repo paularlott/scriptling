@@ -140,11 +140,25 @@ type Client struct {
 	encoder  *json.Encoder
 	metadata Metadata
 
-	nextID  atomic.Int64
-	pending map[int64]chan rpcResponse
-	mu      sync.Mutex
-	writeMu sync.Mutex
-	done    chan struct{}
+	nextID         atomic.Int64
+	pending        map[int64]*pendingCall
+	callbackOwners map[string]*pendingCall
+	mu             sync.Mutex
+	writeMu        sync.Mutex
+	done           chan struct{}
+}
+
+type pendingCall struct {
+	id        int64
+	response  chan rpcResponse
+	callbacks chan callbackInbound
+	set       *callbackSet
+	done      chan struct{}
+}
+
+type callbackInbound struct {
+	request  rpcRequest
+	response chan rpcResponse
 }
 
 func startClient(ctx context.Context, path string) (*Client, error) {
@@ -163,13 +177,14 @@ func startClient(ctx context.Context, path string) (*Client, error) {
 	}
 
 	client := &Client{
-		path:    path,
-		cmd:     cmd,
-		stdin:   stdin,
-		stdout:  stdout,
-		encoder: json.NewEncoder(stdin),
-		pending: make(map[int64]chan rpcResponse),
-		done:    make(chan struct{}),
+		path:           path,
+		cmd:            cmd,
+		stdin:          stdin,
+		stdout:         stdout,
+		encoder:        json.NewEncoder(stdin),
+		pending:        make(map[int64]*pendingCall),
+		callbackOwners: make(map[string]*pendingCall),
+		done:           make(chan struct{}),
 	}
 	go client.readLoop()
 
@@ -183,7 +198,7 @@ func startClient(ctx context.Context, path string) (*Client, error) {
 		HostVersion:  "dev",
 		Transports:   []string{"json"},
 		Capabilities: []string{"remote_objects"},
-	}, &result)
+	}, nil, &result)
 	if err != nil {
 		_ = client.Close()
 		return nil, err
@@ -214,7 +229,7 @@ func (c *Client) Metadata() Metadata {
 func (c *Client) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	_ = c.call(ctx, "plugin.shutdown", nil, nil)
+	_ = c.call(ctx, "plugin.shutdown", nil, nil, nil)
 	if c.stdin != nil {
 		_ = c.stdin.Close()
 	}
@@ -230,7 +245,17 @@ func (c *Client) CallFunction(ctx context.Context, name string, args []Value, kw
 		Name:   name,
 		Args:   args,
 		Kwargs: kwargs,
-	}, &result)
+	}, nil, &result)
+	return result, err
+}
+
+func (c *Client) CallFunctionWithCallbacks(ctx context.Context, name string, args []Value, kwargs map[string]Value, callbacks *callbackSet) (Value, error) {
+	var result Value
+	err := c.call(ctx, "function.call", functionCallParams{
+		Name:   name,
+		Args:   args,
+		Kwargs: kwargs,
+	}, callbacks, &result)
 	return result, err
 }
 
@@ -240,7 +265,17 @@ func (c *Client) NewObject(ctx context.Context, class string, args []Value, kwar
 		Class:  class,
 		Args:   args,
 		Kwargs: kwargs,
-	}, &result)
+	}, nil, &result)
+	return &result, err
+}
+
+func (c *Client) NewObjectWithCallbacks(ctx context.Context, class string, args []Value, kwargs map[string]Value, callbacks *callbackSet) (*RemoteRef, error) {
+	var result RemoteRef
+	err := c.call(ctx, "object.new", objectNewParams{
+		Class:  class,
+		Args:   args,
+		Kwargs: kwargs,
+	}, callbacks, &result)
 	return &result, err
 }
 
@@ -251,73 +286,165 @@ func (c *Client) CallMethod(ctx context.Context, objectID, method string, args [
 		Method:   method,
 		Args:     args,
 		Kwargs:   kwargs,
-	}, &result)
+	}, nil, &result)
+	return result, err
+}
+
+func (c *Client) CallMethodWithCallbacks(ctx context.Context, objectID, method string, args []Value, kwargs map[string]Value, callbacks *callbackSet) (Value, error) {
+	var result Value
+	err := c.call(ctx, "object.call_method", methodCallParams{
+		ObjectID: objectID,
+		Method:   method,
+		Args:     args,
+		Kwargs:   kwargs,
+	}, callbacks, &result)
 	return result, err
 }
 
 func (c *Client) DestroyObject(ctx context.Context, objectID string) error {
 	return c.call(ctx, "object.destroy", objectDestroyParams{
 		ObjectID: objectID,
-	}, nil)
+	}, nil, nil)
 }
 
-func (c *Client) call(ctx context.Context, method string, params any, result any) error {
+func (c *Client) call(ctx context.Context, method string, params any, callbacks *callbackSet, result any) error {
 	id := c.nextID.Add(1)
-	ch := make(chan rpcResponse, 1)
+	call := &pendingCall{
+		id:       id,
+		response: make(chan rpcResponse, 1),
+		set:      callbacks,
+		done:     make(chan struct{}),
+	}
+	if callbacks != nil {
+		call.callbacks = make(chan callbackInbound)
+	}
 
 	c.mu.Lock()
-	c.pending[id] = ch
+	c.pending[id] = call
+	if callbacks != nil {
+		for callbackID := range callbacks.callbacks {
+			c.callbackOwners[callbackID] = call
+		}
+	}
 	c.mu.Unlock()
+	defer c.removeCall(call)
 
 	req := rpcRequest{JSONRPC: "2.0", ID: id, Method: method, Params: params}
 	c.writeMu.Lock()
 	err := c.encoder.Encode(req)
 	c.writeMu.Unlock()
 	if err != nil {
-		c.removePending(id)
 		return err
 	}
 
-	select {
-	case resp := <-ch:
-		if resp.Error != nil {
-			return resp.Error
-		}
-		if result != nil && len(resp.Result) > 0 {
-			if err := json.Unmarshal(resp.Result, result); err != nil {
-				return err
+	for {
+		select {
+		case resp := <-call.response:
+			if resp.Error != nil {
+				return resp.Error
 			}
+			if result != nil && len(resp.Result) > 0 {
+				if err := json.Unmarshal(resp.Result, result); err != nil {
+					return err
+				}
+			}
+			return nil
+		case inbound := <-call.callbacks:
+			resp := c.handleCallback(ctx, call, inbound.request)
+			inbound.response <- resp
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-c.done:
+			return fmt.Errorf("plugin process exited")
 		}
-		return nil
-	case <-ctx.Done():
-		c.removePending(id)
-		return ctx.Err()
-	case <-c.done:
-		c.removePending(id)
-		return fmt.Errorf("plugin process exited")
 	}
 }
 
-func (c *Client) removePending(id int64) {
+func (c *Client) handleCallback(ctx context.Context, call *pendingCall, req rpcRequest) rpcResponse {
+	var params callbackCallParams
+	if err := decodeParams(req.Params, &params); err != nil {
+		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &RPCError{Code: -32000, Message: err.Error()}}
+	}
+	result, err := callHostCallback(ctx, call.set, params)
+	resp := rpcResponse{JSONRPC: "2.0", ID: req.ID}
+	if err != nil {
+		resp.Error = &RPCError{Code: -32000, Message: err.Error()}
+		return resp
+	}
+	raw, err := json.Marshal(result)
+	if err != nil {
+		resp.Error = &RPCError{Code: -32000, Message: err.Error()}
+		return resp
+	}
+	resp.Result = raw
+	return resp
+}
+
+func (c *Client) removeCall(call *pendingCall) {
 	c.mu.Lock()
-	delete(c.pending, id)
+	delete(c.pending, call.id)
+	if call.set != nil {
+		for callbackID := range call.set.callbacks {
+			delete(c.callbackOwners, callbackID)
+		}
+	}
 	c.mu.Unlock()
+	close(call.done)
 }
 
 func (c *Client) readLoop() {
 	defer close(c.done)
 	decoder := json.NewDecoder(bufio.NewReader(c.stdout))
 	for {
-		var resp rpcResponse
-		if err := decoder.Decode(&resp); err != nil {
+		var msg rpcMessage
+		if err := decoder.Decode(&msg); err != nil {
 			return
 		}
-		c.mu.Lock()
-		ch := c.pending[resp.ID]
-		delete(c.pending, resp.ID)
-		c.mu.Unlock()
-		if ch != nil {
-			ch <- resp
+		if msg.Method != "" {
+			req := rpcRequest{JSONRPC: msg.JSONRPC, ID: msg.ID, Method: msg.Method, Params: msg.Params}
+			resp := c.routeRequest(req)
+			c.writeMu.Lock()
+			_ = c.encoder.Encode(resp)
+			c.writeMu.Unlock()
+			continue
 		}
+		c.mu.Lock()
+		call := c.pending[msg.ID]
+		c.mu.Unlock()
+		if call != nil {
+			call.response <- rpcResponse{JSONRPC: msg.JSONRPC, ID: msg.ID, Result: msg.Result, Error: msg.Error}
+		}
+	}
+}
+
+func (c *Client) routeRequest(req rpcRequest) rpcResponse {
+	if req.Method != "callback.call" {
+		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &RPCError{Code: -32000, Message: "unknown method " + req.Method}}
+	}
+	var params callbackCallParams
+	if err := decodeParams(req.Params, &params); err != nil {
+		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &RPCError{Code: -32000, Message: err.Error()}}
+	}
+	c.mu.Lock()
+	call := c.callbackOwners[params.ID]
+	c.mu.Unlock()
+	if call == nil || call.callbacks == nil {
+		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &RPCError{Code: -32000, Message: "unknown callback " + params.ID}}
+	}
+	inbound := callbackInbound{request: req, response: make(chan rpcResponse, 1)}
+	select {
+	case call.callbacks <- inbound:
+		select {
+		case resp := <-inbound.response:
+			return resp
+		case <-call.done:
+			return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &RPCError{Code: -32000, Message: "callback call ended"}}
+		case <-c.done:
+			return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &RPCError{Code: -32000, Message: "plugin process exited"}}
+		}
+	case <-call.done:
+		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &RPCError{Code: -32000, Message: "callback call ended"}}
+	case <-c.done:
+		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &RPCError{Code: -32000, Message: "plugin process exited"}}
 	}
 }

@@ -657,12 +657,15 @@ func TestServerMethodError(t *testing.T) {
 	})
 
 	t.Run("failure", func(t *testing.T) {
-		result := sendServerRequest[Value](t, server, "function.call", functionCallParams{
+		rpcErr := sendServerRequestExpectError(t, server, "function.call", functionCallParams{
 			Name: "maybe_fail",
 			Args: []Value{{Type: valueString, Value: "fail"}},
 		})
-		if result.Type != valueString || result.Value != "method error" {
-			t.Fatalf("expected error string 'method error', got %#v", result)
+		if rpcErr == nil {
+			t.Fatal("expected RPC error")
+		}
+		if rpcErr.Message != "method error" {
+			t.Fatalf("expected method error, got %v", rpcErr)
 		}
 	})
 }

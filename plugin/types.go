@@ -8,14 +8,15 @@ const (
 	ProtocolVersion = "1.0"
 	NamespacePrefix = "plugin."
 
-	valueNull   = "null"
-	valueBool   = "bool"
-	valueInt    = "int"
-	valueFloat  = "float"
-	valueString = "string"
-	valueList   = "list"
-	valueDict   = "dict"
-	valueRemote = "remote"
+	valueNull     = "null"
+	valueBool     = "bool"
+	valueInt      = "int"
+	valueFloat    = "float"
+	valueString   = "string"
+	valueList     = "list"
+	valueDict     = "dict"
+	valueRemote   = "remote"
+	valueCallback = "callback"
 )
 
 func declaredLibraryName(name string) string {
@@ -60,11 +61,12 @@ type ConstantSchema struct {
 }
 
 type Value struct {
-	Type    string           `json:"type"`
-	Value   any              `json:"value,omitempty"`
-	Items   []Value          `json:"items,omitempty"`
-	Entries map[string]Value `json:"entries,omitempty"`
-	Remote  *RemoteRef       `json:"remote,omitempty"`
+	Type     string           `json:"type"`
+	Value    any              `json:"value,omitempty"`
+	Items    []Value          `json:"items,omitempty"`
+	Entries  map[string]Value `json:"entries,omitempty"`
+	Remote   *RemoteRef       `json:"remote,omitempty"`
+	Callback *CallbackRef     `json:"callback,omitempty"`
 }
 
 type RemoteRef struct {
@@ -73,11 +75,24 @@ type RemoteRef struct {
 	ID      string `json:"id"`
 }
 
+type CallbackRef struct {
+	ID string `json:"id"`
+}
+
 type rpcRequest struct {
 	JSONRPC string `json:"jsonrpc"`
 	ID      int64  `json:"id,omitempty"`
 	Method  string `json:"method"`
 	Params  any    `json:"params,omitempty"`
+}
+
+type rpcMessage struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      int64           `json:"id,omitempty"`
+	Method  string          `json:"method,omitempty"`
+	Params  json.RawMessage `json:"params,omitempty"`
+	Result  json.RawMessage `json:"result,omitempty"`
+	Error   *RPCError       `json:"error,omitempty"`
 }
 
 type rpcResponse struct {
@@ -142,4 +157,10 @@ type methodCallParams struct {
 
 type objectDestroyParams struct {
 	ObjectID string `json:"object_id"`
+}
+
+type callbackCallParams struct {
+	ID     string           `json:"id"`
+	Args   []Value          `json:"args,omitempty"`
+	Kwargs map[string]Value `json:"kwargs,omitempty"`
 }
