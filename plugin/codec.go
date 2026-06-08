@@ -1,8 +1,13 @@
 package plugin
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"strconv"
+	"sync/atomic"
 
+	"github.com/paularlott/scriptling/evaliface"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -16,7 +21,31 @@ type remoteObject struct {
 	Released bool
 }
 
+type callbackSet struct {
+	next      atomic.Int64
+	callbacks map[string]object.Object
+}
+
+func newCallbackSet() *callbackSet {
+	return &callbackSet{callbacks: make(map[string]object.Object)}
+}
+
+func (s *callbackSet) add(fn object.Object) string {
+	id := "cb-" + strconv.FormatInt(s.next.Add(1), 10)
+	s.callbacks[id] = fn
+	return id
+}
+
+func (s *callbackSet) get(id string) (object.Object, bool) {
+	fn, ok := s.callbacks[id]
+	return fn, ok
+}
+
 func objectToValue(obj object.Object) (Value, error) {
+	return objectToValueWithCallbacks(obj, nil)
+}
+
+func objectToValueWithCallbacks(obj object.Object, callbacks *callbackSet) (Value, error) {
 	switch v := obj.(type) {
 	case nil, *object.Null:
 		return Value{Type: valueNull}, nil
@@ -32,7 +61,7 @@ func objectToValue(obj object.Object) (Value, error) {
 	case *object.List:
 		items := make([]Value, 0, len(v.Elements))
 		for _, item := range v.Elements {
-			encoded, err := objectToValue(item)
+			encoded, err := objectToValueWithCallbacks(item, callbacks)
 			if err != nil {
 				return Value{}, err
 			}
@@ -42,7 +71,7 @@ func objectToValue(obj object.Object) (Value, error) {
 	case *object.Tuple:
 		items := make([]Value, 0, len(v.Elements))
 		for _, item := range v.Elements {
-			encoded, err := objectToValue(item)
+			encoded, err := objectToValueWithCallbacks(item, callbacks)
 			if err != nil {
 				return Value{}, err
 			}
@@ -56,7 +85,7 @@ func objectToValue(obj object.Object) (Value, error) {
 			if !ok {
 				return Value{}, fmt.Errorf("plugin transport only supports dicts with string keys")
 			}
-			encoded, err := objectToValue(pair.Value)
+			encoded, err := objectToValueWithCallbacks(pair.Value, callbacks)
 			if err != nil {
 				return Value{}, err
 			}
@@ -75,6 +104,16 @@ func objectToValue(obj object.Object) (Value, error) {
 			}, nil
 		}
 		return Value{}, fmt.Errorf("cannot pass non-plugin instance %s to plugin", v.Class.Name)
+	case *object.Function, *object.LambdaFunction, *object.Builtin:
+		if callbacks == nil {
+			return Value{}, fmt.Errorf("callbacks can only be passed during plugin calls")
+		}
+		return Value{
+			Type: valueCallback,
+			Callback: &CallbackRef{
+				ID: callbacks.add(v),
+			},
+		}, nil
 	case *object.Error:
 		return Value{Type: valueString, Value: v.Message}, nil
 	default:
@@ -122,15 +161,27 @@ func valueToObject(value Value) (object.Object, error) {
 		return object.NewStringDict(entries), nil
 	case valueRemote:
 		return nil, fmt.Errorf("remote values require a plugin client")
+	case valueCallback:
+		if value.Callback == nil || value.Callback.ID == "" {
+			return nil, fmt.Errorf("invalid callback transport value")
+		}
+		return &object.ClientWrapper{
+			TypeName: "PluginCallback",
+			Client:   &callbackHandle{id: value.Callback.ID},
+		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported plugin transport value type %q", value.Type)
 	}
 }
 
 func valuesFromObjects(args []object.Object) ([]Value, error) {
+	return valuesFromObjectsWithCallbacks(args, nil)
+}
+
+func valuesFromObjectsWithCallbacks(args []object.Object, callbacks *callbackSet) ([]Value, error) {
 	values := make([]Value, 0, len(args))
 	for _, arg := range args {
-		encoded, err := objectToValue(arg)
+		encoded, err := objectToValueWithCallbacks(arg, callbacks)
 		if err != nil {
 			return nil, err
 		}
@@ -140,12 +191,16 @@ func valuesFromObjects(args []object.Object) ([]Value, error) {
 }
 
 func valuesFromKwargs(kwargs object.Kwargs) (map[string]Value, error) {
+	return valuesFromKwargsWithCallbacks(kwargs, nil)
+}
+
+func valuesFromKwargsWithCallbacks(kwargs object.Kwargs, callbacks *callbackSet) (map[string]Value, error) {
 	if len(kwargs.Kwargs) == 0 {
 		return nil, nil
 	}
 	values := make(map[string]Value, len(kwargs.Kwargs))
 	for key, arg := range kwargs.Kwargs {
-		encoded, err := objectToValue(arg)
+		encoded, err := objectToValueWithCallbacks(arg, callbacks)
 		if err != nil {
 			return nil, err
 		}
@@ -164,6 +219,33 @@ func remoteFromInstance(instance *object.Instance) (*remoteObject, bool) {
 	}
 	remote, ok := wrapper.Client.(*remoteObject)
 	return remote, ok
+}
+
+func callHostCallback(ctx context.Context, callbacks *callbackSet, params callbackCallParams) (Value, error) {
+	if callbacks == nil {
+		return Value{}, fmt.Errorf("callback %s is not active", params.ID)
+	}
+	fn, ok := callbacks.get(params.ID)
+	if !ok {
+		return Value{}, fmt.Errorf("unknown callback %s", params.ID)
+	}
+	args, err := transportValuesToObjects(params.Args)
+	if err != nil {
+		return Value{}, err
+	}
+	kwargs, err := transportKwargsToObjects(params.Kwargs)
+	if err != nil {
+		return Value{}, err
+	}
+	eval := evaliface.FromContext(ctx)
+	if eval == nil {
+		return Value{}, fmt.Errorf("callback execution requires evaluator in context")
+	}
+	result := eval.CallObjectFunction(ctx, fn, args, kwargs, nil)
+	if errObj, ok := result.(*object.Error); ok {
+		return Value{}, errors.New(errObj.Message)
+	}
+	return objectToValue(result)
 }
 
 func numberToInt64(value any) int64 {

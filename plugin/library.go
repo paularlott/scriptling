@@ -190,15 +190,16 @@ func buildProxyClass(client *Client, library string, schema ClassSchema) *object
 }
 
 func callPluginFunction(ctx context.Context, client *Client, name string, kwargs object.Kwargs, args ...object.Object) object.Object {
-	encodedArgs, err := valuesFromObjects(args)
+	callbacks := newCallbackSet()
+	encodedArgs, err := valuesFromObjectsWithCallbacks(args, callbacks)
 	if err != nil {
 		return pluginErr(err.Error())
 	}
-	encodedKwargs, err := valuesFromKwargs(kwargs)
+	encodedKwargs, err := valuesFromKwargsWithCallbacks(kwargs, callbacks)
 	if err != nil {
 		return pluginErr(err.Error())
 	}
-	result, err := client.CallFunction(ctx, name, encodedArgs, encodedKwargs)
+	result, err := client.CallFunctionWithCallbacks(ctx, name, encodedArgs, encodedKwargs, callbacks)
 	if err != nil {
 		return pluginErr(err.Error())
 	}
@@ -221,15 +222,16 @@ func newPluginObject(ctx context.Context, client *Client, library, className str
 }
 
 func initPluginObject(ctx context.Context, instance *object.Instance, client *Client, library, className string, kwargs object.Kwargs, args ...object.Object) error {
-	encodedArgs, err := valuesFromObjects(args)
+	callbacks := newCallbackSet()
+	encodedArgs, err := valuesFromObjectsWithCallbacks(args, callbacks)
 	if err != nil {
 		return err
 	}
-	encodedKwargs, err := valuesFromKwargs(kwargs)
+	encodedKwargs, err := valuesFromKwargsWithCallbacks(kwargs, callbacks)
 	if err != nil {
 		return err
 	}
-	ref, err := client.NewObject(ctx, className, encodedArgs, encodedKwargs)
+	ref, err := client.NewObjectWithCallbacks(ctx, className, encodedArgs, encodedKwargs, callbacks)
 	if err != nil {
 		return err
 	}
@@ -251,15 +253,16 @@ func callPluginMethod(ctx context.Context, remote *remoteObject, name string, kw
 	if remote.Released {
 		return pluginErr("plugin object has been released")
 	}
-	encodedArgs, err := valuesFromObjects(args)
+	callbacks := newCallbackSet()
+	encodedArgs, err := valuesFromObjectsWithCallbacks(args, callbacks)
 	if err != nil {
 		return pluginErr(err.Error())
 	}
-	encodedKwargs, err := valuesFromKwargs(kwargs)
+	encodedKwargs, err := valuesFromKwargsWithCallbacks(kwargs, callbacks)
 	if err != nil {
 		return pluginErr(err.Error())
 	}
-	result, err := remote.Client.CallMethod(ctx, remote.ID, name, encodedArgs, encodedKwargs)
+	result, err := remote.Client.CallMethodWithCallbacks(ctx, remote.ID, name, encodedArgs, encodedKwargs, callbacks)
 	if err != nil {
 		return pluginErr(err.Error())
 	}

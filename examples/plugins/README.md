@@ -48,3 +48,23 @@ cp examples/plugins/bash/hello-plugin.sh /tmp/scriptling-plugins/hello-plugin
 chmod +x /tmp/scriptling-plugins/hello-plugin
 scriptling --plugin-dir /tmp/scriptling-plugins -c 'import plugin.hello; print(plugin.hello.greet("Ada"))'
 ```
+
+## Callback Plugin
+
+`callback` demonstrates passing a Scriptling function into a Go plugin. The
+plugin invokes it several times while the outer function is still running.
+
+```bash
+go build -o /tmp/scriptling-plugins/callback ./examples/plugins/callback
+cat > /tmp/callback-demo.sl <<'EOF'
+import plugin.callback
+events = []
+
+def on_event(e):
+    events.append(e)
+
+print(plugin.callback.stream(on_event))
+print(events)
+EOF
+scriptling --plugin-dir /tmp/scriptling-plugins /tmp/callback-demo.sl
+```
