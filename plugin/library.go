@@ -137,6 +137,14 @@ func buildProxyLibrary(client *Client) *object.Library {
 	return object.NewLibrary(metadata.Name, functions, constants, metadata.Description)
 }
 
+func pluginErr(msg string) *object.Error {
+	return &object.Error{Message: msg}
+}
+
+func pluginErrf(format string, args ...any) *object.Error {
+	return &object.Error{Message: fmt.Sprintf(format, args...)}
+}
+
 func buildProxyClass(client *Client, library string, schema ClassSchema) *object.Class {
 	methods := make(map[string]object.Object)
 	className := schema.Name
@@ -144,14 +152,14 @@ func buildProxyClass(client *Client, library string, schema ClassSchema) *object
 	methods["__init__"] = &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) == 0 {
-				return object.NewString("plugin class initialization requires self")
+				return pluginErr("plugin class initialization requires self")
 			}
 			self, ok := args[0].(*object.Instance)
 			if !ok {
-				return object.NewString("plugin class initialization requires instance self")
+				return pluginErr("plugin class initialization requires instance self")
 			}
 			if err := initPluginObject(ctx, self, client, library, className, kwargs, args[1:]...); err != nil {
-				return object.NewString(err.Error())
+				return pluginErr(err.Error())
 			}
 			return &object.Null{}
 		},
@@ -162,15 +170,15 @@ func buildProxyClass(client *Client, library string, schema ClassSchema) *object
 		methods[methodName] = &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) == 0 {
-					return object.NewString("plugin method requires self")
+					return pluginErr("plugin method requires self")
 				}
 				self, ok := args[0].(*object.Instance)
 				if !ok {
-					return object.NewString("plugin method requires instance self")
+					return pluginErr("plugin method requires instance self")
 				}
 				remote, ok := remoteFromInstance(self)
 				if !ok {
-					return object.NewString("plugin method called on non-plugin instance")
+					return pluginErr("plugin method called on non-plugin instance")
 				}
 				return callPluginMethod(ctx, remote, methodName, kwargs, args[1:]...)
 			},
@@ -184,19 +192,19 @@ func buildProxyClass(client *Client, library string, schema ClassSchema) *object
 func callPluginFunction(ctx context.Context, client *Client, name string, kwargs object.Kwargs, args ...object.Object) object.Object {
 	encodedArgs, err := valuesFromObjects(args)
 	if err != nil {
-		return object.NewString(err.Error())
+		return pluginErr(err.Error())
 	}
 	encodedKwargs, err := valuesFromKwargs(kwargs)
 	if err != nil {
-		return object.NewString(err.Error())
+		return pluginErr(err.Error())
 	}
 	result, err := client.CallFunction(ctx, name, encodedArgs, encodedKwargs)
 	if err != nil {
-		return object.NewString(err.Error())
+		return pluginErr(err.Error())
 	}
 	obj, err := valueToObject(result)
 	if err != nil {
-		return object.NewString(err.Error())
+		return pluginErr(err.Error())
 	}
 	return obj
 }
@@ -207,7 +215,7 @@ func newPluginObject(ctx context.Context, client *Client, library, className str
 		Fields: make(map[string]object.Object),
 	}
 	if err := initPluginObject(ctx, instance, client, library, className, kwargs, args...); err != nil {
-		return object.NewString(err.Error())
+		return pluginErr(err.Error())
 	}
 	return instance
 }
@@ -241,23 +249,23 @@ func initPluginObject(ctx context.Context, instance *object.Instance, client *Cl
 
 func callPluginMethod(ctx context.Context, remote *remoteObject, name string, kwargs object.Kwargs, args ...object.Object) object.Object {
 	if remote.Released {
-		return object.NewString("plugin object has been released")
+		return pluginErr("plugin object has been released")
 	}
 	encodedArgs, err := valuesFromObjects(args)
 	if err != nil {
-		return object.NewString(err.Error())
+		return pluginErr(err.Error())
 	}
 	encodedKwargs, err := valuesFromKwargs(kwargs)
 	if err != nil {
-		return object.NewString(err.Error())
+		return pluginErr(err.Error())
 	}
 	result, err := remote.Client.CallMethod(ctx, remote.ID, name, encodedArgs, encodedKwargs)
 	if err != nil {
-		return object.NewString(err.Error())
+		return pluginErr(err.Error())
 	}
 	obj, err := valueToObject(result)
 	if err != nil {
-		return object.NewString(err.Error())
+		return pluginErr(err.Error())
 	}
 	return obj
 }

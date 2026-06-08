@@ -24,7 +24,7 @@ func NewControlLibrary(manager *Manager) *object.Library {
 		"describe": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 1 {
-					return object.NewString("describe() requires plugin library name")
+					return pluginErr("describe() requires plugin library name")
 				}
 				name, errObj := args[0].AsString()
 				if errObj != nil {
@@ -32,7 +32,7 @@ func NewControlLibrary(manager *Manager) *object.Library {
 				}
 				client, ok := manager.Get(name)
 				if !ok {
-					return object.NewString("plugin not found: " + name)
+					return pluginErr("plugin not found: " + name)
 				}
 				return metadataToDict(client.Metadata())
 			},
@@ -41,7 +41,7 @@ func NewControlLibrary(manager *Manager) *object.Library {
 		"call_function": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) < 2 {
-					return object.NewString("call_function() requires library and function name")
+					return pluginErr("call_function() requires library and function name")
 				}
 				library, errObj := args[0].AsString()
 				if errObj != nil {
@@ -53,7 +53,7 @@ func NewControlLibrary(manager *Manager) *object.Library {
 				}
 				client, ok := manager.Get(library)
 				if !ok {
-					return object.NewString("plugin not found: " + library)
+					return pluginErr("plugin not found: " + library)
 				}
 				return callPluginFunction(ctx, client, name, kwargs, args[2:]...)
 			},
@@ -62,7 +62,7 @@ func NewControlLibrary(manager *Manager) *object.Library {
 		"call_method": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) < 2 {
-					return object.NewString("call_method() requires object and method name")
+					return pluginErr("call_method() requires object and method name")
 				}
 				methodName, errObj := args[1].AsString()
 				if errObj != nil {
@@ -70,11 +70,11 @@ func NewControlLibrary(manager *Manager) *object.Library {
 				}
 				instance, ok := args[0].(*object.Instance)
 				if !ok {
-					return object.NewString("call_method() requires a plugin object")
+					return pluginErr("call_method() requires a plugin object")
 				}
 				remote, ok := remoteFromInstance(instance)
 				if !ok {
-					return object.NewString("call_method() requires a plugin object")
+					return pluginErr("call_method() requires a plugin object")
 				}
 				return callPluginMethod(ctx, remote, methodName, kwargs, args[2:]...)
 			},
@@ -83,7 +83,7 @@ func NewControlLibrary(manager *Manager) *object.Library {
 		"_new_object": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) < 2 {
-					return object.NewString("_new_object() requires library and class name")
+					return pluginErr("_new_object() requires library and class name")
 				}
 				library, errObj := args[0].AsString()
 				if errObj != nil {
@@ -95,7 +95,7 @@ func NewControlLibrary(manager *Manager) *object.Library {
 				}
 				client, ok := manager.Get(library)
 				if !ok {
-					return object.NewString("plugin not found: " + library)
+					return pluginErr("plugin not found: " + library)
 				}
 				return newPluginObject(ctx, client, library, className, kwargs, args[2:]...)
 			},
@@ -104,10 +104,10 @@ func NewControlLibrary(manager *Manager) *object.Library {
 		"release": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 1 {
-					return object.NewString("release() requires one plugin object")
+					return pluginErr("release() requires one plugin object")
 				}
 				if err := Release(args[0]); err != nil {
-					return object.NewString(err.Error())
+					return pluginErr(err.Error())
 				}
 				return &object.Null{}
 			},
