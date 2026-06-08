@@ -25,18 +25,21 @@ type Manager struct {
 	mu           sync.RWMutex
 }
 
+// NewManager creates an empty plugin manager.
 func NewManager() *Manager {
 	return &Manager{
 		clients: make(map[string]*Client),
 	}
 }
 
+// AddDir adds a directory whose executable files should be loaded as plugins.
 func (m *Manager) AddDir(dir string) {
 	if dir != "" {
 		m.dirs = append(m.dirs, dir)
 	}
 }
 
+// Load eagerly starts all executable plugins in configured plugin directories.
 func (m *Manager) Load(ctx context.Context) error {
 	for _, dir := range m.dirs {
 		entries, err := os.ReadDir(dir)
@@ -78,6 +81,7 @@ func (m *Manager) Load(ctx context.Context) error {
 	return nil
 }
 
+// Close shuts down all loaded plugin processes.
 func (m *Manager) Close() error {
 	m.mu.RLock()
 	clients := make([]*Client, 0, len(m.clients))
@@ -95,6 +99,7 @@ func (m *Manager) Close() error {
 	return first
 }
 
+// Warnings returns non-fatal plugin load warnings collected by the manager.
 func (m *Manager) Warnings() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -103,6 +108,7 @@ func (m *Manager) Warnings() []string {
 	return out
 }
 
+// List returns metadata for all loaded plugins sorted by library name.
 func (m *Manager) List() []Metadata {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -114,6 +120,7 @@ func (m *Manager) List() []Metadata {
 	return out
 }
 
+// Health returns loaded plugins whose process or stdio transport is unhealthy.
 func (m *Manager) Health() map[string]error {
 	m.mu.RLock()
 	clients := make(map[string]*Client, len(m.clients))
@@ -131,6 +138,8 @@ func (m *Manager) Health() map[string]error {
 	return unhealthy
 }
 
+// SetCrashHandler installs a callback for loaded plugin processes that exit
+// unexpectedly. The handler is not called for normal manager shutdown.
 func (m *Manager) SetCrashHandler(handler func(name string, err error)) {
 	m.mu.Lock()
 	m.crashHandler = handler
@@ -145,6 +154,7 @@ func (m *Manager) SetCrashHandler(handler func(name string, err error)) {
 	}
 }
 
+// Get returns a loaded plugin client by short or fully-qualified library name.
 func (m *Manager) Get(name string) (*Client, bool) {
 	normalized := NormalizeLibraryName(name)
 	m.mu.RLock()
@@ -173,6 +183,7 @@ func (m *Manager) installCrashHandler(name string, client *Client) {
 	})
 }
 
+// NormalizeLibraryName returns name in the host-owned plugin namespace.
 func NormalizeLibraryName(name string) string {
 	if strings.HasPrefix(name, NamespacePrefix) {
 		return name
@@ -283,6 +294,7 @@ func (c *Client) Metadata() Metadata {
 	return c.metadata
 }
 
+// Close shuts down this plugin process.
 func (c *Client) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -307,6 +319,7 @@ func (c *Client) Close() error {
 	return first
 }
 
+// Health reports whether this plugin process and stdio transport are healthy.
 func (c *Client) Health() error {
 	select {
 	case <-c.waitDone:
@@ -591,6 +604,8 @@ func (c *Client) routeRequest(req rpcRequest) rpcResponse {
 		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &RPCError{Code: -32000, Message: "unknown callback " + params.ID}}
 	}
 	inbound := callbackInbound{request: req, response: make(chan rpcResponse, 1)}
+	// call.callbacks is intentionally never closed; call.done signals expiry.
+	// This lets routeRequest safely race with removeCall without send-on-closed panics.
 	select {
 	case call.callbacks <- inbound:
 		select {

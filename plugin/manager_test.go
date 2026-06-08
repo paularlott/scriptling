@@ -537,6 +537,54 @@ plugin.comprehensive.fire_saved_callback()
 		}
 	})
 
+	t.Run("ParallelCallbacks", func(t *testing.T) {
+		manager := NewManager()
+		manager.AddDir(dir)
+		if err := manager.Load(context.Background()); err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		defer manager.Close()
+
+		var wg sync.WaitGroup
+		var errors atomic.Int64
+
+		for i := 0; i < 12; i++ {
+			wg.Add(1)
+			go func(id int) {
+				defer wg.Done()
+				p := scriptling.New()
+				RegisterLibraries(p, manager)
+
+				code := fmt.Sprintf(`
+import plugin.comprehensive
+
+events = []
+
+def on_event(value):
+    events.append(value)
+
+plugin.comprehensive.delayed_callback(%d, on_event)
+events[0]
+`, id)
+				result, err := p.Eval(code)
+				if err != nil {
+					t.Logf("parallel callback %d error: %v", id, err)
+					errors.Add(1)
+					return
+				}
+				if got, ok := result.(*object.Integer); !ok || got.IntValue() != int64(id) {
+					t.Logf("parallel callback %d: expected %d, got %#v", id, id, result)
+					errors.Add(1)
+				}
+			}(i)
+		}
+		wg.Wait()
+
+		if e := errors.Load(); e > 0 {
+			t.Fatalf("%d parallel callback goroutines failed", e)
+		}
+	})
+
 	t.Run("ParallelSeparateEnvs", func(t *testing.T) {
 		manager := NewManager()
 		manager.AddDir(dir)
@@ -800,6 +848,15 @@ func runComprehensivePluginHelper() {
 		return "called", nil
 	})
 
+	delayedCallbackFn := object.NewFunctionBuilder()
+	delayedCallbackFn.Function(func(ctx context.Context, value int, callback Callback) (string, error) {
+		time.Sleep(time.Duration(20-value%10) * 5 * time.Millisecond)
+		if _, err := callback.Call(ctx, value); err != nil {
+			return "", err
+		}
+		return "ok", nil
+	})
+
 	delayedEchoFn := object.NewFunctionBuilder()
 	delayedEchoFn.Function(func(value int) int {
 		time.Sleep(time.Duration(15-value%10) * 10 * time.Millisecond)
@@ -840,6 +897,7 @@ func runComprehensivePluginHelper() {
 	server.RegisterFunc("stream_events", streamEventsFn)
 	server.RegisterFunc("save_callback", saveCallbackFn)
 	server.RegisterFunc("fire_saved_callback", fireSavedCallbackFn)
+	server.RegisterFunc("delayed_callback", delayedCallbackFn)
 	server.RegisterFunc("delayed_echo", delayedEchoFn)
 	server.RegisterClass(counterClass)
 	server.RegisterClass(resourceClass)
