@@ -591,7 +591,11 @@ func convertObjectToValue(obj Object, targetType reflect.Type) (reflect.Value, O
 		case *Boolean:
 			return reflect.ValueOf(v.value), nil
 		case *Null:
-			return reflect.ValueOf(nil), nil
+			if targetType.Kind() == reflect.Interface {
+				nilVal := reflect.New(targetType).Elem()
+				return nilVal, nil
+			}
+			return reflect.Value{}, nil
 		case *List:
 			// Convert to []any
 			items := make([]interface{}, len(v.Elements))
