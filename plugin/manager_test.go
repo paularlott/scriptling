@@ -30,6 +30,14 @@ func TestManagerLoadsExecutableAndRegistersProxyLibraries(t *testing.T) {
 		runCrashPluginTestHelper()
 		return
 	}
+	if os.Getenv("SCRIPTLING_PLUGIN_BAD_PROTOCOL_HELPER") == "1" {
+		runBadProtocolPluginTestHelper()
+		return
+	}
+	if os.Getenv("SCRIPTLING_PLUGIN_PREFIXED_HELPER") == "1" {
+		runPrefixedPluginTestHelper()
+		return
+	}
 
 	dir := t.TempDir()
 	helper := filepath.Join(dir, "hello-plugin")
@@ -142,18 +150,33 @@ func writeWrapperPluginHelper(t *testing.T, path string) {
 
 func writeCrashPluginHelper(t *testing.T, path string) {
 	t.Helper()
+	writeEnvPluginHelper(t, path, "SCRIPTLING_PLUGIN_CRASH_HELPER")
+}
+
+func writeBadProtocolPluginHelper(t *testing.T, path string) {
+	t.Helper()
+	writeEnvPluginHelper(t, path, "SCRIPTLING_PLUGIN_BAD_PROTOCOL_HELPER")
+}
+
+func writePrefixedPluginHelper(t *testing.T, path string) {
+	t.Helper()
+	writeEnvPluginHelper(t, path, "SCRIPTLING_PLUGIN_PREFIXED_HELPER")
+}
+
+func writeEnvPluginHelper(t *testing.T, path string, envName string) {
+	t.Helper()
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatalf("os.Executable: %v", err)
 	}
 	var script string
 	if runtime.GOOS == "windows" {
-		script = "@echo off\r\nset SCRIPTLING_PLUGIN_CRASH_HELPER=1\r\n\"" + exe + "\" -test.run=TestManagerLoadsExecutableAndRegistersProxyLibraries --\r\n"
+		script = "@echo off\r\nset " + envName + "=1\r\n\"" + exe + "\" -test.run=TestManagerLoadsExecutableAndRegistersProxyLibraries --\r\n"
 	} else {
-		script = "#!/bin/sh\nSCRIPTLING_PLUGIN_CRASH_HELPER=1 exec \"" + exe + "\" -test.run=TestManagerLoadsExecutableAndRegistersProxyLibraries --\n"
+		script = "#!/bin/sh\n" + envName + "=1 exec \"" + exe + "\" -test.run=TestManagerLoadsExecutableAndRegistersProxyLibraries --\n"
 	}
 	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
-		t.Fatalf("write crash helper: %v", err)
+		t.Fatalf("write helper: %v", err)
 	}
 }
 
@@ -197,6 +220,18 @@ def greet(name):
 }
 
 func runCrashPluginTestHelper() {
+	writeRawHandshakeAndExit("crash", ProtocolVersion, 2)
+}
+
+func runBadProtocolPluginTestHelper() {
+	writeRawHandshakeAndExit("badproto", "2.0", 0)
+}
+
+func runPrefixedPluginTestHelper() {
+	writeRawHandshakeAndExit("plugin.hello", ProtocolVersion, 0)
+}
+
+func writeRawHandshakeAndExit(name, protocol string, code int) {
 	decoder := json.NewDecoder(os.Stdin)
 	var req rpcRequest
 	if err := decoder.Decode(&req); err != nil {
@@ -204,12 +239,12 @@ func runCrashPluginTestHelper() {
 	}
 	resp := rpcResponse{JSONRPC: "2.0", ID: req.ID}
 	result := handshakeResult{
-		Protocol:  ProtocolVersion,
+		Protocol:  protocol,
 		Transport: "json",
 		Library: libraryInfo{
-			Name:        "crash",
+			Name:        name,
 			Version:     "1.0.0",
-			Description: "crashing test plugin",
+			Description: "raw test plugin",
 		},
 		Capabilities: []string{"remote_objects"},
 		Schema:       Schema{},
@@ -220,7 +255,7 @@ func runCrashPluginTestHelper() {
 	}
 	resp.Result = raw
 	_ = json.NewEncoder(os.Stdout).Encode(resp)
-	os.Exit(2)
+	os.Exit(code)
 }
 
 func mustRawJSON(value any) json.RawMessage {
@@ -926,6 +961,58 @@ func TestManagerEdgeCases(t *testing.T) {
 		}
 		if len(m.Warnings()) == 0 {
 			t.Error("expected warning for nonexistent dir")
+		}
+	})
+
+	t.Run("LoadRejectsProtocolMismatch", func(t *testing.T) {
+		dir := t.TempDir()
+		helper := filepath.Join(dir, "bad-protocol-plugin")
+		if runtime.GOOS == "windows" {
+			helper += ".bat"
+		}
+		writeBadProtocolPluginHelper(t, helper)
+
+		m := NewManager()
+		m.AddDir(dir)
+		if err := m.Load(context.Background()); err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		defer m.Close()
+
+		if plugins := m.List(); len(plugins) != 0 {
+			t.Fatalf("expected no loaded plugins, got %#v", plugins)
+		}
+		warnings := m.Warnings()
+		if len(warnings) != 1 || !strings.Contains(warnings[0], "unsupported protocol") {
+			t.Fatalf("expected unsupported protocol warning, got %#v", warnings)
+		}
+	})
+
+	t.Run("LoadRejectsNormalizedNamespaceCollision", func(t *testing.T) {
+		dir := t.TempDir()
+		hello := filepath.Join(dir, "a-hello")
+		prefixed := filepath.Join(dir, "b-prefixed")
+		if runtime.GOOS == "windows" {
+			hello += ".bat"
+			prefixed += ".bat"
+		}
+		writePluginHelper(t, hello)
+		writePrefixedPluginHelper(t, prefixed)
+
+		m := NewManager()
+		m.AddDir(dir)
+		if err := m.Load(context.Background()); err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		defer m.Close()
+
+		plugins := m.List()
+		if len(plugins) != 1 || plugins[0].Name != "plugin.hello" {
+			t.Fatalf("expected one plugin.hello, got %#v", plugins)
+		}
+		warnings := m.Warnings()
+		if len(warnings) != 1 || !strings.Contains(warnings[0], "duplicate library plugin.hello") {
+			t.Fatalf("expected duplicate warning, got %#v", warnings)
 		}
 	})
 
