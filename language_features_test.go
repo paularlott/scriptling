@@ -2446,6 +2446,255 @@ result = buf.getvalue()
 	}
 }
 
+func TestTypedReceiverInheritanceWithSuper(t *testing.T) {
+	p := New()
+
+	type counter struct {
+		n int64
+	}
+
+	counterClass := object.NewClassBuilder("Counter")
+	counterClass.Constructor(func(start int) *counter {
+		return &counter{n: int64(start)}
+	})
+	counterClass.Method("inc", func(self *counter, delta int) int {
+		self.n += int64(delta)
+		return int(self.n)
+	})
+	counterClass.Method("get", func(self *counter) int {
+		return int(self.n)
+	})
+	counterClass.Method("label", func(self *counter) string {
+		return "Counter"
+	})
+	counterBuilt := counterClass.Build()
+	p.SetObjectVar("Counter", counterBuilt)
+
+	t.Run("child calls super init and inherited methods work", func(t *testing.T) {
+		_, err := p.Eval(`
+class BetterCounter(Counter):
+    def __init__(self, start, label):
+        super().__init__(start)
+        self.label_name = label
+
+    def label(self):
+        return self.label_name
+
+bc = BetterCounter(10, "mycounter")
+v1 = bc.get()
+v2 = bc.inc(5)
+v3 = bc.get()
+lbl = bc.label()
+`)
+		if err != nil {
+			t.Fatalf("Eval failed: %v", err)
+		}
+		v1, _ := p.GetVar("v1")
+		if v1 != int64(10) {
+			t.Errorf("expected v1=10, got %v", v1)
+		}
+		v2, _ := p.GetVar("v2")
+		if v2 != int64(15) {
+			t.Errorf("expected v2=15, got %v", v2)
+		}
+		v3, _ := p.GetVar("v3")
+		if v3 != int64(15) {
+			t.Errorf("expected v3=15, got %v", v3)
+		}
+		lbl, _ := p.GetVarAsString("lbl")
+		if lbl != "mycounter" {
+			t.Errorf("expected label='mycounter', got %q", lbl)
+		}
+	})
+}
+
+func TestTypedReceiverInheritanceWithoutSuper(t *testing.T) {
+	p := New()
+
+	type counter struct {
+		n int64
+	}
+
+	counterClass := object.NewClassBuilder("Counter")
+	counterClass.Constructor(func(start int) *counter {
+		return &counter{n: int64(start)}
+	})
+	counterClass.Method("inc", func(self *counter, delta int) int {
+		self.n += int64(delta)
+		return int(self.n)
+	})
+	counterClass.Method("get", func(self *counter) int {
+		return int(self.n)
+	})
+	counterBuilt := counterClass.Build()
+	p.SetObjectVar("Counter", counterBuilt)
+
+	t.Run("child without super().__init__() fails on typed receiver methods", func(t *testing.T) {
+		_, err := p.Eval(`
+class BrokenCounter(Counter):
+    def __init__(self, start):
+        pass
+
+bc = BrokenCounter(10)
+v = bc.get()
+`)
+		if err == nil {
+			t.Fatal("expected error when calling typed receiver method without super().__init__()")
+		}
+	})
+}
+
+func TestTypedReceiverInheritanceFieldsShared(t *testing.T) {
+	p := New()
+
+	type state struct {
+		val int64
+	}
+
+	baseClass := object.NewClassBuilder("Stateful")
+	baseClass.Constructor(func(v int) *state {
+		return &state{val: int64(v)}
+	})
+	baseClass.Method("get_val", func(self *state) int {
+		return int(self.val)
+	})
+	baseClass.Method("set_val", func(self *state, v int) {
+		self.val = int64(v)
+	})
+	baseBuilt := baseClass.Build()
+	p.SetObjectVar("Stateful", baseBuilt)
+
+	_, err := p.Eval(`
+class Derived(Stateful):
+    def __init__(self, v, name):
+        super().__init__(v)
+        self.name = name
+
+    def greet(self):
+        return self.name + "=" + str(self.get_val())
+
+d = Derived(42, "answer")
+g = d.greet()
+d.set_val(99)
+g2 = d.greet()
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	g, _ := p.GetVarAsString("g")
+	if g != "answer=42" {
+		t.Errorf("expected 'answer=42', got %q", g)
+	}
+	g2, _ := p.GetVarAsString("g2")
+	if g2 != "answer=99" {
+		t.Errorf("expected 'answer=99', got %q", g2)
+	}
+}
+
+func TestTypedReceiverInheritanceGoFieldsNotExposed(t *testing.T) {
+	p := New()
+
+	type playerData struct {
+		Name  string
+		Score int
+	}
+
+	playerClass := object.NewClassBuilder("Player")
+	playerClass.Constructor(func(name string) *playerData {
+		return &playerData{Name: name, Score: 0}
+	})
+	playerClass.Method("add_score", func(self *playerData, n int) int {
+		self.Score += n
+		return self.Score
+	})
+	playerClass.Method("get_name", func(self *playerData) string {
+		return self.Name
+	})
+	playerBuilt := playerClass.Build()
+	p.SetObjectVar("Player", playerBuilt)
+
+	t.Run("go struct fields not accessible from scriptling", func(t *testing.T) {
+		result, err := p.Eval(`
+p = Player("Ada")
+name_attr = p.Name
+score_attr = p.Score
+`)
+		if err != nil {
+			t.Fatalf("Eval failed: %v", err)
+		}
+		_ = result
+		nameAttr, _ := p.GetVar("name_attr")
+		if nameAttr != nil {
+			n, ok := nameAttr.(*object.Null)
+			if !ok {
+				t.Errorf("expected Name to be None (Go struct fields not exposed), got %v", nameAttr)
+			}
+			_ = n
+		}
+		scoreAttr, _ := p.GetVar("score_attr")
+		if scoreAttr != nil {
+			n, ok := scoreAttr.(*object.Null)
+			if !ok {
+				t.Errorf("expected Score to be None (Go struct fields not exposed), got %v", scoreAttr)
+			}
+			_ = n
+		}
+	})
+
+	t.Run("expose via methods instead", func(t *testing.T) {
+		result, err := p.Eval(`
+p = Player("Bob")
+p.add_score(10)
+name = p.get_name()
+`)
+		if err != nil {
+			t.Fatalf("Eval failed: %v", err)
+		}
+		_ = result
+		name, _ := p.GetVarAsString("name")
+		if name != "Bob" {
+			t.Errorf("expected 'Bob', got %q", name)
+		}
+	})
+
+	t.Run("child class methods work but go fields still not exposed", func(t *testing.T) {
+		result, err := p.Eval(`
+class BetterPlayer(Player):
+    def __init__(self, name):
+        super().__init__(name)
+
+    def bonus(self, n):
+        return self.add_score(n * 2)
+
+    def try_name(self):
+        return self.Name
+
+bp = BetterPlayer("Eve")
+score = bp.bonus(5)
+name_via_attr = bp.try_name()
+name_via_method = bp.get_name()
+`)
+		if err != nil {
+			t.Fatalf("Eval failed: %v", err)
+		}
+		_ = result
+		score, _ := p.GetVar("score")
+		if score != int64(10) {
+			t.Errorf("expected score=10, got %v", score)
+		}
+		nameViaAttr, _ := p.GetVar("name_via_attr")
+		if nameViaAttr != nil {
+			if _, ok := nameViaAttr.(*object.Null); !ok {
+				t.Errorf("expected try_name() to return None, got %v", nameViaAttr)
+			}
+		}
+		nameViaMethod, _ := p.GetVarAsString("name_via_method")
+		if nameViaMethod != "Eve" {
+			t.Errorf("expected 'Eve', got %q", nameViaMethod)
+		}
+	})
+}
+
 func TestCopyBuiltin(t *testing.T) {
 	p := New()
 	_, err := p.Eval(`
