@@ -90,9 +90,6 @@ func buildLibrarySource(metadata Metadata) string {
 			builder.WriteString(", ")
 			builder.WriteString(strconv.Quote(cls.Name))
 			builder.WriteString(", *args, **kwargs)\n")
-			if len(cls.Methods) == 0 {
-				builder.WriteString("        pass\n")
-			}
 			for _, method := range cls.Methods {
 				builder.WriteString("    def ")
 				builder.WriteString(method.Name)
@@ -101,6 +98,8 @@ func buildLibrarySource(metadata Metadata) string {
 				builder.WriteString(strconv.Quote(method.Name))
 				builder.WriteString(", *args, **kwargs)\n")
 			}
+			builder.WriteString("    def __del__(self):\n")
+			builder.WriteString("        scriptling.plugin.release(self._plugin_remote)\n")
 			builder.WriteString("\n")
 		}
 	}
