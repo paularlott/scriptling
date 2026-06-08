@@ -8,6 +8,7 @@ import (
 
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs"
+	scriptlingplugin "github.com/paularlott/scriptling/plugin"
 	"github.com/paularlott/scriptling/scriptling-cli/bootstrap"
 	"github.com/paularlott/scriptling/scriptling-cli/setup"
 )
@@ -72,7 +73,7 @@ func NewServer(config ServerConfig) (*Server, error) {
 // runSetupScript runs the setup script once to register routes
 func (s *Server) runSetupScript() error {
 	p := scriptling.New()
-	setup.Scriptling(p, s.config.LibDirs, false, s.config.AllowedPaths, s.config.DisabledLibs, s.config.SecretRegistry, Log, s.config.DockerSock, s.config.PodmanSock)
+	s.setupScriptling(p)
 
 	if s.config.ScriptFile != "" {
 		Log.Debug("Running setup script", "file", s.config.ScriptFile)
@@ -97,6 +98,13 @@ func (s *Server) runSetupScript() error {
 // applyPackLoader sets the pack loader (if any) as the outermost loader on a scriptling instance.
 func (s *Server) applyPackLoader(p *scriptling.Scriptling) {
 	bootstrap.ApplyPackLoader(p, s.packLoader)
+}
+
+func (s *Server) setupScriptling(p *scriptling.Scriptling) {
+	setup.Scriptling(p, s.config.LibDirs, false, s.config.AllowedPaths, s.config.DisabledLibs, s.config.SecretRegistry, Log, s.config.DockerSock, s.config.PodmanSock)
+	if s.config.PluginManager != nil {
+		scriptlingplugin.RegisterLibraries(p, s.config.PluginManager)
+	}
 }
 
 // collectRoutes collects registered routes from the scriptling.runtime library

@@ -2,8 +2,11 @@ package scriptling
 
 import (
 	"context"
+	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/paularlott/scriptling/libloader"
 	"github.com/paularlott/scriptling/object"
@@ -1955,8 +1958,263 @@ r2 = b.value
 }
 
 // ============================================================================
-// Builtin: next(), iter(), dir(), issubclass(), copy()
+// Typed Receiver ClassBuilder Tests
 // ============================================================================
+
+func TestTypedReceiverEndToEnd(t *testing.T) {
+	p := New()
+
+	type configFile struct {
+		data map[string]string
+	}
+
+	cb := object.NewClassBuilder("Config")
+	cb.Constructor(func() *configFile {
+		return &configFile{data: make(map[string]string)}
+	})
+	cb.Method("set", func(self *configFile, key, val string) {
+		self.data[key] = val
+	})
+	cb.Method("get", func(self *configFile, key string) string {
+		return self.data[key]
+	})
+	p.SetObjectVar("Config", cb.Build())
+
+	_, err := p.Eval(`
+c = Config()
+c.set("host", "localhost")
+c.set("port", "8080")
+h = c.get("host")
+p = c.get("port")
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	h, _ := p.GetVar("h")
+	if h != "localhost" {
+		t.Errorf("expected 'localhost', got %v", h)
+	}
+	port, _ := p.GetVar("p")
+	if port != "8080" {
+		t.Errorf("expected '8080', got %v", port)
+	}
+}
+
+func TestTypedReceiverWithArgsEndToEnd(t *testing.T) {
+	p := New()
+
+	type accum struct {
+		total int64
+	}
+
+	cb := object.NewClassBuilder("Accum")
+	cb.Constructor(func(start int) *accum {
+		return &accum{total: int64(start)}
+	})
+	cb.Method("add", func(self *accum, n int) int {
+		self.total += int64(n)
+		return int(self.total)
+	})
+	cb.Method("total", func(self *accum) int {
+		return int(self.total)
+	})
+	p.SetObjectVar("Accum", cb.Build())
+
+	_, err := p.Eval(`
+a = Accum(100)
+r1 = a.add(5)
+r2 = a.add(10)
+r3 = a.total()
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	r1, _ := p.GetVar("r1")
+	if r1 != int64(105) {
+		t.Errorf("expected 105, got %v", r1)
+	}
+	r2, _ := p.GetVar("r2")
+	if r2 != int64(115) {
+		t.Errorf("expected 115, got %v", r2)
+	}
+	r3, _ := p.GetVar("r3")
+	if r3 != int64(115) {
+		t.Errorf("expected 115, got %v", r3)
+	}
+}
+
+func TestTypedReceiverWithDestructorEndToEnd(t *testing.T) {
+	p := New()
+
+	type resource struct {
+		name   string
+		closed bool
+	}
+
+	cb := object.NewClassBuilder("Resource")
+	cb.Constructor(func(name string) *resource {
+		return &resource{name: name}
+	})
+	cb.Method("name", func(self *resource) string {
+		return self.name
+	})
+	cb.Method("__del__", func(self *resource) {
+		self.closed = true
+	})
+	p.SetObjectVar("Resource", cb.Build())
+
+	_, err := p.Eval(`
+r = Resource("db")
+n = r.name()
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	n, _ := p.GetVar("n")
+	if n != "db" {
+		t.Errorf("expected 'db', got %v", n)
+	}
+}
+
+func TestDelExplicitCallOnTypedReceiver(t *testing.T) {
+	var delCount atomic.Int32
+
+	p := New()
+
+	type handle struct {
+		path string
+	}
+
+	cb := object.NewClassBuilder("Handle")
+	cb.Constructor(func(path string) *handle {
+		return &handle{path: path}
+	})
+	cb.Method("path", func(self *handle) string {
+		return self.path
+	})
+	cb.Method("__del__", func(self *handle) {
+		delCount.Add(1)
+	})
+	p.SetObjectVar("Handle", cb.Build())
+
+	_, err := p.Eval(`
+h = Handle("/tmp/data")
+p = h.path()
+h.__del__()
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+
+	path, _ := p.GetVar("p")
+	if path != "/tmp/data" {
+		t.Errorf("expected '/tmp/data', got %v", path)
+	}
+	if got := delCount.Load(); got != 1 {
+		t.Errorf("expected __del__ called once, got %d", got)
+	}
+}
+
+func TestDelExplicitCallOnInstanceStyle(t *testing.T) {
+	var delCount atomic.Int32
+
+	p := New()
+
+	class := object.NewClassBuilder("Conn").
+		Method("__init__", func(self *object.Instance, host string) {
+			self.Fields["host"] = object.NewString(host)
+		}).
+		Method("get_host", func(self *object.Instance) string {
+			return self.Fields["host"].(*object.String).StringValue()
+		}).
+		Method("__del__", func(self *object.Instance) {
+			delCount.Add(1)
+		})
+
+	p.SetObjectVar("Conn", class.Build())
+
+	_, err := p.Eval(`
+c = Conn("localhost")
+h = c.get_host()
+c.__del__()
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+
+	host, _ := p.GetVar("h")
+	if host != "localhost" {
+		t.Errorf("expected 'localhost', got %v", host)
+	}
+	if got := delCount.Load(); got != 1 {
+		t.Errorf("expected __del__ called once, got %d", got)
+	}
+}
+
+func TestDelCallableMultipleTimes(t *testing.T) {
+	var delCount atomic.Int32
+
+	p := New()
+
+	type conn struct{}
+
+	cb := object.NewClassBuilder("Conn")
+	cb.Constructor(func() *conn { return &conn{} })
+	cb.Method("__del__", func(self *conn) {
+		delCount.Add(1)
+	})
+	p.SetObjectVar("Conn", cb.Build())
+
+	_, err := p.Eval(`
+c = Conn()
+c.__del__()
+c.__del__()
+c.__del__()
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	if got := delCount.Load(); got != 3 {
+		t.Errorf("expected __del__ called 3 times when invoked explicitly, got %d", got)
+	}
+}
+
+func TestTypedReceiverMixedWithStaticMethod(t *testing.T) {
+	p := New()
+
+	type widget struct {
+		label string
+	}
+
+	cb := object.NewClassBuilder("Widget")
+	cb.Constructor(func(label string) *widget {
+		return &widget{label: label}
+	})
+	cb.Method("label", func(self *widget) string {
+		return self.label
+	})
+	cb.StaticMethod("default_label", func() string {
+		return "unnamed"
+	})
+	p.SetObjectVar("Widget", cb.Build())
+
+	_, err := p.Eval(`
+w = Widget("save")
+l = w.label()
+d = Widget.default_label()
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	l, _ := p.GetVar("l")
+	if l != "save" {
+		t.Errorf("expected 'save', got %v", l)
+	}
+	d, _ := p.GetVar("d")
+	if d != "unnamed" {
+		t.Errorf("expected 'unnamed', got %v", d)
+	}
+}
 
 func TestNextBasic(t *testing.T) {
 	p := New()
@@ -2294,6 +2552,255 @@ result = buf.getvalue()
 	}
 }
 
+func TestTypedReceiverInheritanceWithSuper(t *testing.T) {
+	p := New()
+
+	type counter struct {
+		n int64
+	}
+
+	counterClass := object.NewClassBuilder("Counter")
+	counterClass.Constructor(func(start int) *counter {
+		return &counter{n: int64(start)}
+	})
+	counterClass.Method("inc", func(self *counter, delta int) int {
+		self.n += int64(delta)
+		return int(self.n)
+	})
+	counterClass.Method("get", func(self *counter) int {
+		return int(self.n)
+	})
+	counterClass.Method("label", func(self *counter) string {
+		return "Counter"
+	})
+	counterBuilt := counterClass.Build()
+	p.SetObjectVar("Counter", counterBuilt)
+
+	t.Run("child calls super init and inherited methods work", func(t *testing.T) {
+		_, err := p.Eval(`
+class BetterCounter(Counter):
+    def __init__(self, start, label):
+        super().__init__(start)
+        self.label_name = label
+
+    def label(self):
+        return self.label_name
+
+bc = BetterCounter(10, "mycounter")
+v1 = bc.get()
+v2 = bc.inc(5)
+v3 = bc.get()
+lbl = bc.label()
+`)
+		if err != nil {
+			t.Fatalf("Eval failed: %v", err)
+		}
+		v1, _ := p.GetVar("v1")
+		if v1 != int64(10) {
+			t.Errorf("expected v1=10, got %v", v1)
+		}
+		v2, _ := p.GetVar("v2")
+		if v2 != int64(15) {
+			t.Errorf("expected v2=15, got %v", v2)
+		}
+		v3, _ := p.GetVar("v3")
+		if v3 != int64(15) {
+			t.Errorf("expected v3=15, got %v", v3)
+		}
+		lbl, _ := p.GetVarAsString("lbl")
+		if lbl != "mycounter" {
+			t.Errorf("expected label='mycounter', got %q", lbl)
+		}
+	})
+}
+
+func TestTypedReceiverInheritanceWithoutSuper(t *testing.T) {
+	p := New()
+
+	type counter struct {
+		n int64
+	}
+
+	counterClass := object.NewClassBuilder("Counter")
+	counterClass.Constructor(func(start int) *counter {
+		return &counter{n: int64(start)}
+	})
+	counterClass.Method("inc", func(self *counter, delta int) int {
+		self.n += int64(delta)
+		return int(self.n)
+	})
+	counterClass.Method("get", func(self *counter) int {
+		return int(self.n)
+	})
+	counterBuilt := counterClass.Build()
+	p.SetObjectVar("Counter", counterBuilt)
+
+	t.Run("child without super().__init__() fails on typed receiver methods", func(t *testing.T) {
+		_, err := p.Eval(`
+class BrokenCounter(Counter):
+    def __init__(self, start):
+        pass
+
+bc = BrokenCounter(10)
+v = bc.get()
+`)
+		if err == nil {
+			t.Fatal("expected error when calling typed receiver method without super().__init__()")
+		}
+	})
+}
+
+func TestTypedReceiverInheritanceFieldsShared(t *testing.T) {
+	p := New()
+
+	type state struct {
+		val int64
+	}
+
+	baseClass := object.NewClassBuilder("Stateful")
+	baseClass.Constructor(func(v int) *state {
+		return &state{val: int64(v)}
+	})
+	baseClass.Method("get_val", func(self *state) int {
+		return int(self.val)
+	})
+	baseClass.Method("set_val", func(self *state, v int) {
+		self.val = int64(v)
+	})
+	baseBuilt := baseClass.Build()
+	p.SetObjectVar("Stateful", baseBuilt)
+
+	_, err := p.Eval(`
+class Derived(Stateful):
+    def __init__(self, v, name):
+        super().__init__(v)
+        self.name = name
+
+    def greet(self):
+        return self.name + "=" + str(self.get_val())
+
+d = Derived(42, "answer")
+g = d.greet()
+d.set_val(99)
+g2 = d.greet()
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	g, _ := p.GetVarAsString("g")
+	if g != "answer=42" {
+		t.Errorf("expected 'answer=42', got %q", g)
+	}
+	g2, _ := p.GetVarAsString("g2")
+	if g2 != "answer=99" {
+		t.Errorf("expected 'answer=99', got %q", g2)
+	}
+}
+
+func TestTypedReceiverInheritanceGoFieldsNotExposed(t *testing.T) {
+	p := New()
+
+	type playerData struct {
+		Name  string
+		Score int
+	}
+
+	playerClass := object.NewClassBuilder("Player")
+	playerClass.Constructor(func(name string) *playerData {
+		return &playerData{Name: name, Score: 0}
+	})
+	playerClass.Method("add_score", func(self *playerData, n int) int {
+		self.Score += n
+		return self.Score
+	})
+	playerClass.Method("get_name", func(self *playerData) string {
+		return self.Name
+	})
+	playerBuilt := playerClass.Build()
+	p.SetObjectVar("Player", playerBuilt)
+
+	t.Run("go struct fields not accessible from scriptling", func(t *testing.T) {
+		result, err := p.Eval(`
+p = Player("Ada")
+name_attr = p.Name
+score_attr = p.Score
+`)
+		if err != nil {
+			t.Fatalf("Eval failed: %v", err)
+		}
+		_ = result
+		nameAttr, _ := p.GetVar("name_attr")
+		if nameAttr != nil {
+			n, ok := nameAttr.(*object.Null)
+			if !ok {
+				t.Errorf("expected Name to be None (Go struct fields not exposed), got %v", nameAttr)
+			}
+			_ = n
+		}
+		scoreAttr, _ := p.GetVar("score_attr")
+		if scoreAttr != nil {
+			n, ok := scoreAttr.(*object.Null)
+			if !ok {
+				t.Errorf("expected Score to be None (Go struct fields not exposed), got %v", scoreAttr)
+			}
+			_ = n
+		}
+	})
+
+	t.Run("expose via methods instead", func(t *testing.T) {
+		result, err := p.Eval(`
+p = Player("Bob")
+p.add_score(10)
+name = p.get_name()
+`)
+		if err != nil {
+			t.Fatalf("Eval failed: %v", err)
+		}
+		_ = result
+		name, _ := p.GetVarAsString("name")
+		if name != "Bob" {
+			t.Errorf("expected 'Bob', got %q", name)
+		}
+	})
+
+	t.Run("child class methods work but go fields still not exposed", func(t *testing.T) {
+		result, err := p.Eval(`
+class BetterPlayer(Player):
+    def __init__(self, name):
+        super().__init__(name)
+
+    def bonus(self, n):
+        return self.add_score(n * 2)
+
+    def try_name(self):
+        return self.Name
+
+bp = BetterPlayer("Eve")
+score = bp.bonus(5)
+name_via_attr = bp.try_name()
+name_via_method = bp.get_name()
+`)
+		if err != nil {
+			t.Fatalf("Eval failed: %v", err)
+		}
+		_ = result
+		score, _ := p.GetVar("score")
+		if score != int64(10) {
+			t.Errorf("expected score=10, got %v", score)
+		}
+		nameViaAttr, _ := p.GetVar("name_via_attr")
+		if nameViaAttr != nil {
+			if _, ok := nameViaAttr.(*object.Null); !ok {
+				t.Errorf("expected try_name() to return None, got %v", nameViaAttr)
+			}
+		}
+		nameViaMethod, _ := p.GetVarAsString("name_via_method")
+		if nameViaMethod != "Eve" {
+			t.Errorf("expected 'Eve', got %q", nameViaMethod)
+		}
+	})
+}
+
 func TestCopyBuiltin(t *testing.T) {
 	p := New()
 	_, err := p.Eval(`
@@ -2321,5 +2828,397 @@ dc_len = len(dc.keys())
 	}
 	if dLen != int64(1) || dcLen != int64(2) {
 		t.Errorf("copy dict: d=%v dc=%v", dLen, dcLen)
+	}
+}
+
+func TestTypedReceiverPropertyExposesStructFields(t *testing.T) {
+	p := New()
+
+	type playerData struct {
+		Name  string
+		Score int
+	}
+
+	cb := object.NewClassBuilder("Player")
+	cb.Constructor(func(name string, score int) *playerData {
+		return &playerData{Name: name, Score: score}
+	})
+	cb.Property("name", func(self *playerData) string {
+		return self.Name
+	})
+	cb.Property("score", func(self *playerData) int {
+		return self.Score
+	})
+	cb.PropertyWithSetter("score",
+		func(self *playerData) int {
+			return self.Score
+		},
+		func(self *playerData, v int) {
+			self.Score = v
+		},
+	)
+	cb.Method("add_score", func(self *playerData, n int) int {
+		self.Score += n
+		return self.Score
+	})
+	p.SetObjectVar("Player", cb.Build())
+
+	t.Run("read-only property exposes struct field", func(t *testing.T) {
+		result, err := p.Eval(`
+p = Player("Ada", 10)
+n = p.name
+s = p.score
+`)
+		if err != nil {
+			t.Fatalf("Eval failed: %v", err)
+		}
+		_ = result
+		name, _ := p.GetVarAsString("n")
+		if name != "Ada" {
+			t.Errorf("name: expected 'Ada', got %q", name)
+		}
+		score, _ := p.GetVar("s")
+		if score != int64(10) {
+			t.Errorf("score: expected 10, got %v", score)
+		}
+	})
+
+	t.Run("read-only property rejects assignment", func(t *testing.T) {
+		_, err := p.Eval(`
+p = Player("Ada", 10)
+p.name = "Bob"
+`)
+		if err == nil {
+			t.Fatal("expected error assigning to read-only property")
+		}
+	})
+
+	t.Run("property setter writes to struct field", func(t *testing.T) {
+		result, err := p.Eval(`
+p = Player("Ada", 10)
+p.score = 50
+s = p.score
+`)
+		if err != nil {
+			t.Fatalf("Eval failed: %v", err)
+		}
+		_ = result
+		score, _ := p.GetVar("s")
+		if score != int64(50) {
+			t.Errorf("score after setter: expected 50, got %v", score)
+		}
+	})
+
+	t.Run("setter and method both mutate same field", func(t *testing.T) {
+		result, err := p.Eval(`
+p = Player("Ada", 0)
+p.score = 10
+p.add_score(5)
+s = p.score
+`)
+		if err != nil {
+			t.Fatalf("Eval failed: %v", err)
+		}
+		_ = result
+		score, _ := p.GetVar("s")
+		if score != int64(15) {
+			t.Errorf("score after setter+method: expected 15, got %v", score)
+		}
+	})
+
+	t.Run("struct fields still not directly accessible", func(t *testing.T) {
+		result, err := p.Eval(`
+p = Player("Ada", 10)
+raw_name = p.Name
+`)
+		if err != nil {
+			t.Fatalf("Eval failed: %v", err)
+		}
+		_ = result
+		rawName, _ := p.GetVar("raw_name")
+		if rawName == nil {
+			return
+		}
+		if _, ok := rawName.(*object.Null); !ok {
+			t.Errorf("expected raw struct field Name to be None, got %v", rawName)
+		}
+	})
+}
+
+func TestGCTriggersDelOnTypedReceiver(t *testing.T) {
+	var delCount atomic.Int32
+
+	p := New()
+
+	type handle struct {
+		path string
+	}
+
+	cb := object.NewClassBuilder("Handle")
+	cb.Constructor(func(path string) *handle {
+		return &handle{path: path}
+	})
+	cb.Method("path", func(self *handle) string {
+		return self.path
+	})
+	cb.Method("__del__", func(self *handle) {
+		delCount.Add(1)
+	})
+	p.SetObjectVar("Handle", cb.Build())
+
+	_, err := p.Eval(`
+for i in range(10):
+    h = Handle("/tmp/" + str(i))
+    # h goes out of scope each iteration
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+
+	deadline := time.After(3 * time.Second)
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+
+	for {
+		runtime.GC()
+		if delCount.Load() == 10 {
+			return
+		}
+		select {
+		case <-tick.C:
+		case <-deadline:
+			t.Fatalf("expected __del__ called 10 times, got %d", delCount.Load())
+		}
+	}
+}
+
+func TestGCTriggersDelOnInstanceStyle(t *testing.T) {
+	var delCount atomic.Int32
+
+	p := New()
+
+	class := object.NewClassBuilder("Conn").
+		Method("__init__", func(self *object.Instance, host string) {
+			self.Fields["host"] = object.NewString(host)
+		}).
+		Method("__del__", func(self *object.Instance) {
+			delCount.Add(1)
+		})
+
+	p.SetObjectVar("Conn", class.Build())
+
+	_, err := p.Eval(`
+for i in range(5):
+    c = Conn("host-" + str(i))
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+
+	deadline := time.After(3 * time.Second)
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+
+	for {
+		runtime.GC()
+		if delCount.Load() == 5 {
+			return
+		}
+		select {
+		case <-tick.C:
+		case <-deadline:
+			t.Fatalf("expected __del__ called 5 times, got %d", delCount.Load())
+		}
+	}
+}
+
+func TestGCDelCalledOncePerObject(t *testing.T) {
+	var delCount atomic.Int32
+
+	p := New()
+
+	type res struct{}
+
+	cb := object.NewClassBuilder("Res")
+	cb.Constructor(func() *res { return &res{} })
+	cb.Method("__del__", func(self *res) {
+		delCount.Add(1)
+	})
+	p.SetObjectVar("Res", cb.Build())
+
+	_, err := p.Eval(`
+a = Res()
+b = Res()
+c = a  # alias — same object as a
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+
+	_, err = p.Eval(`
+del a
+del b
+`)
+	if err != nil {
+		t.Fatalf("del failed: %v", err)
+	}
+
+	deadline := time.After(3 * time.Second)
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+
+	for {
+		runtime.GC()
+		if delCount.Load() >= 1 {
+			break
+		}
+		select {
+		case <-tick.C:
+		case <-deadline:
+			t.Fatalf("expected at least 1 __del__, got %d", delCount.Load())
+		}
+	}
+	beforeC := delCount.Load()
+
+	_, err = p.Eval(`del c`)
+	if err != nil {
+		t.Fatalf("del c failed: %v", err)
+	}
+
+	for {
+		runtime.GC()
+		if delCount.Load() == 2 {
+			return
+		}
+		select {
+		case <-tick.C:
+		case <-deadline:
+			t.Fatalf("expected 2 __del__ total, got %d (before c: %d)", delCount.Load(), beforeC)
+		}
+	}
+}
+
+func TestGCTriggersDelOnPureScriptlingClass(t *testing.T) {
+	var delCount atomic.Int32
+
+	p := New()
+	p.SetObjectVar("_mark_deleted", &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+		delCount.Add(1)
+		return &object.Null{}
+	}})
+
+	_, err := p.Eval(`
+class FileHandle:
+    def __init__(self, path):
+        self.path = path
+
+    def __del__(self):
+        _mark_deleted()
+
+handles = []
+for i in range(8):
+    handles.append(FileHandle("/tmp/" + str(i)))
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+
+	_, err = p.Eval(`
+del handles
+`)
+	if err != nil {
+		t.Fatalf("del failed: %v", err)
+	}
+
+	deadline := time.After(3 * time.Second)
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+
+	for {
+		runtime.GC()
+		if delCount.Load() == 8 {
+			return
+		}
+		select {
+		case <-tick.C:
+		case <-deadline:
+			t.Fatalf("expected __del__ called 8 times, got %d", delCount.Load())
+		}
+	}
+}
+
+func TestDelExplicitOnPureScriptlingClass(t *testing.T) {
+	var delCount atomic.Int32
+
+	p := New()
+	p.SetObjectVar("_mark_deleted", &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+		delCount.Add(1)
+		return &object.Null{}
+	}})
+
+	_, err := p.Eval(`
+class Conn:
+    def __init__(self, host):
+        self.host = host
+
+    def __del__(self):
+        _mark_deleted()
+
+c = Conn("localhost")
+c.__del__()
+c.__del__()
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	if got := delCount.Load(); got != 2 {
+		t.Errorf("expected __del__ called 2 times, got %d", got)
+	}
+}
+
+func TestGCTriggersDelOnInheritedScriptlingClass(t *testing.T) {
+	var delCount atomic.Int32
+
+	p := New()
+	p.SetObjectVar("_mark_deleted", &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+		delCount.Add(1)
+		return &object.Null{}
+	}})
+
+	_, err := p.Eval(`
+class Base:
+    def __init__(self, name):
+        self.name = name
+
+    def __del__(self):
+        _mark_deleted()
+
+class Child(Base):
+    def __init__(self, name, extra):
+        super().__init__(name)
+        self.extra = extra
+
+for i in range(6):
+    c = Child("item-" + str(i), i)
+del c
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+
+	deadline := time.After(3 * time.Second)
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+
+	for {
+		runtime.GC()
+		if delCount.Load() == 6 {
+			return
+		}
+		select {
+		case <-tick.C:
+		case <-deadline:
+			t.Fatalf("expected __del__ called 6 times, got %d", delCount.Load())
+		}
 	}
 }
