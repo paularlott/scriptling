@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"testing"
 
 	"github.com/paularlott/scriptling"
@@ -857,6 +858,27 @@ func TestServerConcurrentSlowCallDoesNotBlock(t *testing.T) {
 	}
 	if v, ok := intResult(results, 2); !ok || v != 8 {
 		t.Errorf("fast call (ID 2): expected 8, got results=%v", results)
+	}
+}
+
+type errWriter struct{}
+
+func (errWriter) Write([]byte) (int, error) {
+	return 0, io.ErrClosedPipe
+}
+
+func TestServerRunIOReturnsWorkerWriteError(t *testing.T) {
+	fb := object.NewFunctionBuilder()
+	fb.Function(func() string { return "ok" })
+
+	server := NewServer("writeerr", "1.0.0", "test").RegisterFunc("ok", fb)
+
+	var input bytes.Buffer
+	enc := json.NewEncoder(&input)
+	enc.Encode(rpcRequest{JSONRPC: "2.0", ID: 1, Method: "function.call", Params: functionCallParams{Name: "ok"}})
+
+	if err := server.RunIO(&input, errWriter{}); err == nil {
+		t.Fatal("expected write error")
 	}
 }
 
