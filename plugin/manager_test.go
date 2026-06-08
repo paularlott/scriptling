@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -19,10 +18,6 @@ import (
 func TestManagerLoadsExecutableAndRegistersProxyLibraries(t *testing.T) {
 	if os.Getenv("SCRIPTLING_PLUGIN_TEST_HELPER") == "1" {
 		runPluginTestHelper()
-		return
-	}
-	if os.Getenv("SCRIPTLING_PLUGIN_CALLBACK_HELPER") == "1" {
-		runCallbackPluginTestHelper()
 		return
 	}
 	if os.Getenv("SCRIPTLING_PLUGIN_WRAPPER_HELPER") == "1" {
@@ -105,48 +100,6 @@ plugin.wrap.greet("Ada")
 	}
 }
 
-func TestCallbackArgumentDuringRunningPluginCall(t *testing.T) {
-	if os.Getenv("SCRIPTLING_PLUGIN_CALLBACK_HELPER") == "1" {
-		runCallbackPluginTestHelper()
-		return
-	}
-
-	dir := t.TempDir()
-	helper := filepath.Join(dir, "stream-plugin")
-	if runtime.GOOS == "windows" {
-		helper += ".bat"
-	}
-	writeCallbackPluginHelper(t, helper)
-
-	manager := NewManager()
-	manager.AddDir(dir)
-	if err := manager.Load(context.Background()); err != nil {
-		t.Fatalf("Load returned error: %v", err)
-	}
-	defer manager.Close()
-
-	p := scriptling.New()
-	RegisterLibraries(p, manager)
-
-	result, err := p.Eval(`
-import plugin.stream
-
-chunks = []
-def on_chunk(text):
-    append(chunks, text)
-
-plugin.stream.complete("ignored", on_chunk)
-"".join(chunks)
-`)
-	if err != nil {
-		t.Fatalf("Eval returned error: %v", err)
-	}
-	str, ok := result.(*object.String)
-	if !ok || str.StringValue() != "hello stream" {
-		t.Fatalf("unexpected callback result: %#v", result)
-	}
-}
-
 func writePluginHelper(t *testing.T, path string) {
 	t.Helper()
 	exe, err := os.Executable()
@@ -161,23 +114,6 @@ func writePluginHelper(t *testing.T, path string) {
 	}
 	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
 		t.Fatalf("write helper: %v", err)
-	}
-}
-
-func writeCallbackPluginHelper(t *testing.T, path string) {
-	t.Helper()
-	exe, err := os.Executable()
-	if err != nil {
-		t.Fatalf("os.Executable: %v", err)
-	}
-	var script string
-	if runtime.GOOS == "windows" {
-		script = "@echo off\r\nset SCRIPTLING_PLUGIN_CALLBACK_HELPER=1\r\n\"" + exe + "\" -test.run=TestCallbackArgumentDuringRunningPluginCall --\r\n"
-	} else {
-		script = "#!/bin/sh\nSCRIPTLING_PLUGIN_CALLBACK_HELPER=1 exec \"" + exe + "\" -test.run=TestCallbackArgumentDuringRunningPluginCall --\n"
-	}
-	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
-		t.Fatalf("write callback helper: %v", err)
 	}
 }
 
@@ -217,72 +153,6 @@ func runPluginTestHelper() {
 	server.RegisterClass(configBuilder)
 	_ = server.Run()
 	os.Exit(0)
-}
-
-func runCallbackPluginTestHelper() {
-	decoder := json.NewDecoder(os.Stdin)
-	encoder := json.NewEncoder(os.Stdout)
-	for {
-		var req rpcRequest
-		if err := decoder.Decode(&req); err != nil {
-			if err == io.EOF {
-				return
-			}
-			os.Exit(1)
-		}
-		switch req.Method {
-		case "scriptling.handshake":
-			_ = encoder.Encode(rpcResponse{
-				JSONRPC: "2.0",
-				ID:      req.ID,
-				Result: mustRawJSON(handshakeResult{
-					Protocol:  ProtocolVersion,
-					Transport: "json",
-					Library: libraryInfo{
-						Name:        "plugin.stream",
-						Version:     "1.0.0",
-						Description: "stream callback test plugin",
-					},
-					Capabilities: []string{"callbacks"},
-					Schema: Schema{
-						Functions: []FunctionSchema{{Name: "complete", Mode: ModeRPC}},
-					},
-				}),
-			})
-		case "function.call":
-			var params functionCallParams
-			raw, _ := json.Marshal(req.Params)
-			_ = json.Unmarshal(raw, &params)
-			callbackID, _ := params.Args[1].Value.(string)
-			for i, chunk := range []string{"hello ", "stream"} {
-				_ = encoder.Encode(rpcRequest{
-					JSONRPC: "2.0",
-					ID:      int64(500 + i),
-					Method:  "callback.call",
-					Params: callbackCallParams{
-						CallbackID: callbackID,
-						Args:       []Value{{Type: valueString, Value: chunk}},
-					},
-				})
-				var callbackResp rpcResponse
-				_ = decoder.Decode(&callbackResp)
-			}
-			_ = encoder.Encode(rpcResponse{
-				JSONRPC: "2.0",
-				ID:      req.ID,
-				Result:  mustRawJSON(Value{Type: valueString, Value: "done"}),
-			})
-		case "plugin.shutdown":
-			_ = encoder.Encode(rpcResponse{JSONRPC: "2.0", ID: req.ID})
-			return
-		default:
-			_ = encoder.Encode(rpcResponse{
-				JSONRPC: "2.0",
-				ID:      req.ID,
-				Error:   &RPCError{Code: -32601, Message: "unknown method"},
-			})
-		}
-	}
 }
 
 func runWrapperPluginTestHelper() {

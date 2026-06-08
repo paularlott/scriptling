@@ -40,12 +40,12 @@ func RegisterLibraries(registrar Registrar, manager *Manager) {
 
 func needsScriptRegistration(metadata Metadata) bool {
 	for _, fn := range metadata.Schema.Functions {
-		if fn.Mode == ModeWrapper || fn.Mode == ModeScript {
+		if fn.Source != "" {
 			return true
 		}
 	}
 	for _, cls := range metadata.Schema.Classes {
-		if cls.Mode == ModeWrapper || cls.Mode == ModeScript {
+		if cls.Source != "" {
 			return true
 		}
 	}
@@ -56,8 +56,13 @@ func buildLibrarySource(metadata Metadata) string {
 	var builder strings.Builder
 	builder.WriteString("import scriptling.plugin\n\n")
 	for _, fn := range metadata.Schema.Functions {
-		switch fn.Mode {
-		case ModeRPC:
+		if fn.Source != "" {
+			builder.WriteString(fn.Source)
+			if fn.Source[len(fn.Source)-1] != '\n' {
+				builder.WriteByte('\n')
+			}
+			builder.WriteByte('\n')
+		} else {
 			builder.WriteString("def ")
 			builder.WriteString(fn.Name)
 			builder.WriteString("(*args, **kwargs):\n")
@@ -66,17 +71,16 @@ func buildLibrarySource(metadata Metadata) string {
 			builder.WriteString(", ")
 			builder.WriteString(strconv.Quote(fn.Name))
 			builder.WriteString(", *args, **kwargs)\n\n")
-		case ModeWrapper, ModeScript:
-			builder.WriteString(fn.Source)
-			if fn.Source != "" && fn.Source[len(fn.Source)-1] != '\n' {
-				builder.WriteByte('\n')
-			}
-			builder.WriteByte('\n')
 		}
 	}
 	for _, cls := range metadata.Schema.Classes {
-		switch cls.Mode {
-		case ModeRPC:
+		if cls.Source != "" {
+			builder.WriteString(cls.Source)
+			if cls.Source[len(cls.Source)-1] != '\n' {
+				builder.WriteByte('\n')
+			}
+			builder.WriteByte('\n')
+		} else {
 			builder.WriteString("class ")
 			builder.WriteString(cls.Name)
 			builder.WriteString(":\n")
@@ -98,12 +102,6 @@ func buildLibrarySource(metadata Metadata) string {
 				builder.WriteString(", *args, **kwargs)\n")
 			}
 			builder.WriteString("\n")
-		case ModeWrapper, ModeScript:
-			builder.WriteString(cls.Source)
-			if cls.Source != "" && cls.Source[len(cls.Source)-1] != '\n' {
-				builder.WriteByte('\n')
-			}
-			builder.WriteByte('\n')
 		}
 	}
 	return builder.String()
@@ -185,11 +183,10 @@ func buildProxyClass(client *Client, library string, schema ClassSchema) *object
 }
 
 func callPluginFunction(ctx context.Context, client *Client, name string, kwargs object.Kwargs, args ...object.Object) object.Object {
-	encodedArgs, callbacks, err := valuesFromObjectsForCall(ctx, client, args)
+	encodedArgs, err := valuesFromObjects(args)
 	if err != nil {
 		return object.NewString(err.Error())
 	}
-	defer unregisterCallbacks(client, callbacks)
 	encodedKwargs, err := valuesFromKwargs(kwargs)
 	if err != nil {
 		return object.NewString(err.Error())
@@ -217,11 +214,10 @@ func newPluginObject(ctx context.Context, client *Client, library, className str
 }
 
 func initPluginObject(ctx context.Context, instance *object.Instance, client *Client, library, className string, kwargs object.Kwargs, args ...object.Object) error {
-	encodedArgs, callbacks, err := valuesFromObjectsForCall(ctx, client, args)
+	encodedArgs, err := valuesFromObjects(args)
 	if err != nil {
 		return err
 	}
-	defer unregisterCallbacks(client, callbacks)
 	encodedKwargs, err := valuesFromKwargs(kwargs)
 	if err != nil {
 		return err
@@ -248,11 +244,10 @@ func callPluginMethod(ctx context.Context, remote *remoteObject, name string, kw
 	if remote.Released {
 		return object.NewString("plugin object has been released")
 	}
-	encodedArgs, callbacks, err := valuesFromObjectsForCall(ctx, remote.Client, args)
+	encodedArgs, err := valuesFromObjects(args)
 	if err != nil {
 		return object.NewString(err.Error())
 	}
-	defer unregisterCallbacks(remote.Client, callbacks)
 	encodedKwargs, err := valuesFromKwargs(kwargs)
 	if err != nil {
 		return object.NewString(err.Error())
@@ -298,10 +293,4 @@ func installRemoteFinalizer(instance *object.Instance, remote *remoteObject) {
 	_ = object.SetGCReleaseHook(instance, func() {
 		_ = releaseRemote(remote, nil)
 	})
-}
-
-func unregisterCallbacks(client *Client, callbackIDs []string) {
-	for _, callbackID := range callbackIDs {
-		client.UnregisterCallback(callbackID)
-	}
 }

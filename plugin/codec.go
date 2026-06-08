@@ -1,10 +1,8 @@
 package plugin
 
 import (
-	"context"
 	"fmt"
 
-	"github.com/paularlott/scriptling/evaluator"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -84,16 +82,6 @@ func objectToValue(obj object.Object) (Value, error) {
 	}
 }
 
-func objectToValueForCall(client *Client, env *object.Environment, obj object.Object) (Value, error) {
-	switch obj.(type) {
-	case *object.Function, *object.LambdaFunction, *object.Builtin:
-		callbackID := client.RegisterCallback(obj, env)
-		return Value{Type: valueCallback, Value: callbackID}, nil
-	default:
-		return objectToValue(obj)
-	}
-}
-
 func valueToObject(value Value) (object.Object, error) {
 	switch value.Type {
 	case "", valueNull:
@@ -149,28 +137,6 @@ func valuesFromObjects(args []object.Object) ([]Value, error) {
 		values = append(values, encoded)
 	}
 	return values, nil
-}
-
-func valuesFromObjectsForCall(ctx context.Context, client *Client, args []object.Object) ([]Value, []string, error) {
-	env := evaluator.GetEnvFromContext(ctx)
-	values := make([]Value, 0, len(args))
-	callbacks := make([]string, 0)
-	for _, arg := range args {
-		encoded, err := objectToValueForCall(client, env, arg)
-		if err != nil {
-			for _, callbackID := range callbacks {
-				client.UnregisterCallback(callbackID)
-			}
-			return nil, nil, err
-		}
-		if encoded.Type == valueCallback {
-			if id, ok := encoded.Value.(string); ok {
-				callbacks = append(callbacks, id)
-			}
-		}
-		values = append(values, encoded)
-	}
-	return values, callbacks, nil
 }
 
 func valuesFromKwargs(kwargs object.Kwargs) (map[string]Value, error) {
