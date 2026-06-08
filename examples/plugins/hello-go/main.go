@@ -1,31 +1,52 @@
 package main
 
-import "github.com/paularlott/scriptling/plugin"
-
-type Config struct {
-	values map[string]any
-}
+import (
+	"github.com/paularlott/scriptling/object"
+	"github.com/paularlott/scriptling/plugin"
+)
 
 func main() {
 	server := plugin.NewServer("hello", "1.0.0", "Hello plugin example")
 
-	server.Function("greet", func(name string) string {
+	greetBuilder := object.NewFunctionBuilder()
+	greetBuilder.Function(func(name string) string {
 		return "Hello, " + name
 	})
+	server.RegisterFunc("greet", greetBuilder)
 
-	server.Class("Config").
-		Constructor(func(values map[string]any) *Config {
-			return &Config{values: values}
+	labelBuilder := object.NewFunctionBuilder()
+	labelBuilder.Function(func(name string) string {
+		return "built:" + name
+	})
+	server.RegisterFunc("label", labelBuilder)
+
+	configBuilder := object.NewClassBuilder("Config").
+		Method("__init__", func(self *object.Instance, name string) {
+			self.Fields["name"] = object.NewString(name)
 		}).
-		Method("get", func(c *Config, key string) any {
-			return c.values[key]
-		}).
-		Destructor(func(c *Config) {
-			c.values = nil
+		Method("get", func(self *object.Instance, key string) string {
+			return self.Fields["name"].(*object.String).StringValue()
 		})
+	server.RegisterClass(configBuilder)
+
+	counter := object.NewClassBuilder("Counter").
+		Method("__init__", func(self *object.Instance, start int) {
+			self.Fields["value"] = object.NewInteger(int64(start))
+		}).
+		Method("inc", func(self *object.Instance, amount int) int {
+			current := self.Fields["value"].(*object.Integer).IntValue()
+			next := current + int64(amount)
+			self.Fields["value"] = object.NewInteger(next)
+			return int(next)
+		}).
+		Method("get", func(self *object.Instance) int {
+			return int(self.Fields["value"].(*object.Integer).IntValue())
+		})
+	server.RegisterClass(counter)
+
+	server.Constant("default_name", "World")
 
 	if err := server.Run(); err != nil {
 		panic(err)
 	}
 }
-
