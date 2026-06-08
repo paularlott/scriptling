@@ -301,8 +301,8 @@ def greet(name):
 		t.Fatalf("expected 1 function, got %d", len(result.Schema.Functions))
 	}
 	fn := result.Schema.Functions[0]
-	if fn.Name != "greet" || fn.Mode != ModeWrapper {
-		t.Fatalf("expected wrapper mode, got name=%s mode=%s", fn.Name, fn.Mode)
+	if fn.Name != "greet" {
+		t.Fatalf("expected name=greet, got name=%s", fn.Name)
 	}
 	if fn.Source == "" {
 		t.Fatal("expected wrapper source in schema")
@@ -326,8 +326,11 @@ def helper(x):
 		t.Fatalf("expected 1 function, got %d", len(result.Schema.Functions))
 	}
 	fn := result.Schema.Functions[0]
-	if fn.Name != "helper" || fn.Mode != ModeScript {
-		t.Fatalf("expected script mode, got name=%s mode=%s", fn.Name, fn.Mode)
+	if fn.Name != "helper" {
+		t.Fatalf("expected name=helper, got name=%s", fn.Name)
+	}
+	if fn.Source == "" {
+		t.Fatal("expected script source in schema")
 	}
 }
 
@@ -350,8 +353,11 @@ class Pair:
 		t.Fatalf("expected 1 class, got %d", len(result.Schema.Classes))
 	}
 	cls := result.Schema.Classes[0]
-	if cls.Name != "Pair" || cls.Mode != ModeScript {
-		t.Fatalf("expected script mode, got name=%s mode=%s", cls.Name, cls.Mode)
+	if cls.Name != "Pair" {
+		t.Fatalf("expected name=Pair, got name=%s", cls.Name)
+	}
+	if cls.Source == "" {
+		t.Fatal("expected script source in schema")
 	}
 }
 
@@ -678,7 +684,7 @@ func TestServerSchemaCompleteness(t *testing.T) {
 	if len(result.Schema.Functions) != 1 {
 		t.Fatalf("expected 1 function, got %d", len(result.Schema.Functions))
 	}
-	if result.Schema.Functions[0].Name != "greet" || result.Schema.Functions[0].Mode != ModeRPC {
+	if result.Schema.Functions[0].Name != "greet" {
 		t.Fatalf("unexpected function schema: %+v", result.Schema.Functions[0])
 	}
 
@@ -686,10 +692,10 @@ func TestServerSchemaCompleteness(t *testing.T) {
 		t.Fatalf("expected 1 class, got %d", len(result.Schema.Classes))
 	}
 	cls := result.Schema.Classes[0]
-	if cls.Name != "Resource" || cls.Mode != ModeRPC {
+	if cls.Name != "Resource" {
 		t.Fatalf("unexpected class schema: %+v", cls)
 	}
-	if cls.Constructor.Name != "Resource" || cls.Constructor.Mode != ModeRPC {
+	if cls.Constructor.Name != "Resource" {
 		t.Fatalf("unexpected constructor schema: %+v", cls.Constructor)
 	}
 	methodNames := make(map[string]bool)
@@ -725,9 +731,6 @@ func TestServerSchemaClassWrapper(t *testing.T) {
 		t.Fatalf("expected 1 class, got %d", len(result.Schema.Classes))
 	}
 	cls := result.Schema.Classes[0]
-	if cls.Mode != ModeWrapper {
-		t.Errorf("expected wrapper mode, got %q", cls.Mode)
-	}
 	if cls.Source == "" {
 		t.Error("expected wrapper source")
 	}
@@ -917,8 +920,11 @@ func TestServerWrapperUnknownName(t *testing.T) {
 	result := sendServerRequest[handshakeResult](t, server, "scriptling.handshake", handshakeParams{
 		Protocol: ProtocolVersion, Transports: []string{"json"},
 	})
-	if len(result.Schema.Functions) != 1 || result.Schema.Functions[0].Mode != ModeRPC {
+	if len(result.Schema.Functions) != 1 {
 		t.Fatalf("wrapper on nonexistent name should be no-op")
+	}
+	if result.Schema.Functions[0].Name != "greet" {
+		t.Fatalf("expected greet, got %s", result.Schema.Functions[0].Name)
 	}
 }
 

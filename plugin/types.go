@@ -2,27 +2,20 @@ package plugin
 
 import (
 	"encoding/json"
-
-	"github.com/paularlott/scriptling/object"
 )
 
 const (
 	ProtocolVersion = "1.0"
 	NamespacePrefix = "plugin."
 
-	valueNull     = "null"
-	valueBool     = "bool"
-	valueInt      = "int"
-	valueFloat    = "float"
-	valueString   = "string"
-	valueList     = "list"
-	valueDict     = "dict"
-	valueRemote   = "remote"
-	valueCallback = "callback"
-
-	ModeRPC     = "rpc"
-	ModeWrapper = "wrapper"
-	ModeScript  = "script"
+	valueNull   = "null"
+	valueBool   = "bool"
+	valueInt    = "int"
+	valueFloat  = "float"
+	valueString = "string"
+	valueList   = "list"
+	valueDict   = "dict"
+	valueRemote = "remote"
 )
 
 func declaredLibraryName(name string) string {
@@ -49,14 +42,12 @@ type Schema struct {
 
 type FunctionSchema struct {
 	Name        string `json:"name"`
-	Mode        string `json:"mode"`
 	Description string `json:"description,omitempty"`
 	Source      string `json:"source,omitempty"`
 }
 
 type ClassSchema struct {
 	Name        string           `json:"name"`
-	Mode        string           `json:"mode"`
 	Description string           `json:"description,omitempty"`
 	Constructor FunctionSchema   `json:"constructor,omitempty"`
 	Methods     []FunctionSchema `json:"methods,omitempty"`
@@ -151,15 +142,4 @@ type methodCallParams struct {
 
 type objectDestroyParams struct {
 	ObjectID string `json:"object_id"`
-}
-
-type callbackCallParams struct {
-	CallbackID string           `json:"callback_id"`
-	Args       []Value          `json:"args,omitempty"`
-	Kwargs     map[string]Value `json:"kwargs,omitempty"`
-}
-
-type callbackRef struct {
-	fn  object.Object
-	env *object.Environment
 }

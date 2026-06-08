@@ -27,13 +27,11 @@ type Server struct {
 
 type funcEntry struct {
 	builtin *object.Builtin
-	mode    string
 	source  string
 }
 
 type classEntry struct {
-	class *object.Class
-	mode  string
+	class  *object.Class
 	source string
 }
 
@@ -59,7 +57,6 @@ func NewServer(name, version, description string) *Server {
 func (s *Server) RegisterFunc(name string, builder *object.FunctionBuilder) *Server {
 	s.functions[name] = &funcEntry{
 		builtin: &object.Builtin{Fn: builder.Build()},
-		mode:    ModeRPC,
 	}
 	return s
 }
@@ -68,17 +65,14 @@ func (s *Server) RegisterClass(builder *object.ClassBuilder) *Server {
 	class := builder.Build()
 	s.classes[class.Name] = &classEntry{
 		class: class,
-		mode:  ModeRPC,
 	}
 	return s
 }
 
 func (s *Server) Wrapper(name string, source string) *Server {
 	if entry, ok := s.functions[name]; ok {
-		entry.mode = ModeWrapper
 		entry.source = source
 	} else if entry, ok := s.classes[name]; ok {
-		entry.mode = ModeWrapper
 		entry.source = source
 	}
 	return s
@@ -86,7 +80,6 @@ func (s *Server) Wrapper(name string, source string) *Server {
 
 func (s *Server) RegisterScriptFunc(name string, source string) *Server {
 	s.functions[name] = &funcEntry{
-		mode:   ModeScript,
 		source: source,
 	}
 	return s
@@ -94,7 +87,6 @@ func (s *Server) RegisterScriptFunc(name string, source string) *Server {
 
 func (s *Server) RegisterScriptClass(name string, source string) *Server {
 	s.classes[name] = &classEntry{
-		mode:   ModeScript,
 		source: source,
 	}
 	return s
@@ -201,7 +193,7 @@ func (s *Server) dispatch(method string, params any) (any, error) {
 func (s *Server) schema() Schema {
 	functions := make([]FunctionSchema, 0, len(s.functions))
 	for name, entry := range s.functions {
-		fs := FunctionSchema{Name: name, Mode: entry.mode}
+		fs := FunctionSchema{Name: name}
 		if entry.source != "" {
 			fs.Source = entry.source
 		}
@@ -211,19 +203,18 @@ func (s *Server) schema() Schema {
 	for name, entry := range s.classes {
 		cs := ClassSchema{
 			Name: name,
-			Mode: entry.mode,
 		}
 		if entry.source != "" {
 			cs.Source = entry.source
 		}
-		if entry.mode == ModeRPC && entry.class != nil {
-			cs.Constructor = FunctionSchema{Name: name, Mode: ModeRPC}
+		if entry.class != nil {
+			cs.Constructor = FunctionSchema{Name: name}
 			methods := make([]FunctionSchema, 0, len(entry.class.Methods))
 			for mname := range entry.class.Methods {
 				if mname == "__init__" || mname == "__del__" {
 					continue
 				}
-				methods = append(methods, FunctionSchema{Name: mname, Mode: ModeRPC})
+				methods = append(methods, FunctionSchema{Name: mname})
 			}
 			cs.Methods = methods
 		}

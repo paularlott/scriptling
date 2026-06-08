@@ -14,9 +14,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/paularlott/scriptling/evaluator"
-	"github.com/paularlott/scriptling/object"
 )
 
 type Manager struct {
@@ -143,13 +140,11 @@ type Client struct {
 	encoder  *json.Encoder
 	metadata Metadata
 
-	nextID         atomic.Int64
-	nextCallbackID atomic.Int64
-	pending        map[int64]chan rpcResponse
-	callbacks      map[string]callbackRef
-	mu             sync.Mutex
-	writeMu        sync.Mutex
-	done           chan struct{}
+	nextID  atomic.Int64
+	pending map[int64]chan rpcResponse
+	mu      sync.Mutex
+	writeMu sync.Mutex
+	done    chan struct{}
 }
 
 func startClient(ctx context.Context, path string) (*Client, error) {
@@ -168,14 +163,13 @@ func startClient(ctx context.Context, path string) (*Client, error) {
 	}
 
 	client := &Client{
-		path:      path,
-		cmd:       cmd,
-		stdin:     stdin,
-		stdout:    stdout,
-		encoder:   json.NewEncoder(stdin),
-		pending:   make(map[int64]chan rpcResponse),
-		callbacks: make(map[string]callbackRef),
-		done:      make(chan struct{}),
+		path:    path,
+		cmd:     cmd,
+		stdin:   stdin,
+		stdout:  stdout,
+		encoder: json.NewEncoder(stdin),
+		pending: make(map[int64]chan rpcResponse),
+		done:    make(chan struct{}),
 	}
 	go client.readLoop()
 
@@ -188,7 +182,7 @@ func startClient(ctx context.Context, path string) (*Client, error) {
 		Host:         "scriptling",
 		HostVersion:  "dev",
 		Transports:   []string{"json"},
-		Capabilities: []string{"remote_objects", "callbacks"},
+		Capabilities: []string{"remote_objects"},
 	}, &result)
 	if err != nil {
 		_ = client.Close()
@@ -267,20 +261,6 @@ func (c *Client) DestroyObject(ctx context.Context, objectID string) error {
 	}, nil)
 }
 
-func (c *Client) RegisterCallback(fn object.Object, env *object.Environment) string {
-	id := fmt.Sprintf("cb-%d", c.nextCallbackID.Add(1))
-	c.mu.Lock()
-	c.callbacks[id] = callbackRef{fn: fn, env: env}
-	c.mu.Unlock()
-	return id
-}
-
-func (c *Client) UnregisterCallback(id string) {
-	c.mu.Lock()
-	delete(c.callbacks, id)
-	c.mu.Unlock()
-}
-
 func (c *Client) call(ctx context.Context, method string, params any, result any) error {
 	id := c.nextID.Add(1)
 	ch := make(chan rpcResponse, 1)
@@ -328,24 +308,9 @@ func (c *Client) readLoop() {
 	defer close(c.done)
 	decoder := json.NewDecoder(bufio.NewReader(c.stdout))
 	for {
-		var raw json.RawMessage
-		if err := decoder.Decode(&raw); err != nil {
-			return
-		}
-		var probe struct {
-			ID     int64  `json:"id"`
-			Method string `json:"method"`
-		}
-		if err := json.Unmarshal(raw, &probe); err != nil {
-			continue
-		}
-		if probe.Method != "" {
-			c.handleHostRequest(probe.ID, probe.Method, raw)
-			continue
-		}
 		var resp rpcResponse
-		if err := json.Unmarshal(raw, &resp); err != nil {
-			continue
+		if err := decoder.Decode(&resp); err != nil {
+			return
 		}
 		c.mu.Lock()
 		ch := c.pending[resp.ID]
@@ -355,71 +320,4 @@ func (c *Client) readLoop() {
 			ch <- resp
 		}
 	}
-}
-
-func (c *Client) handleHostRequest(id int64, method string, raw json.RawMessage) {
-	switch method {
-	case "callback.call":
-		var req struct {
-			Params callbackCallParams `json:"params"`
-		}
-		if err := json.Unmarshal(raw, &req); err != nil {
-			c.respondError(id, -32602, err.Error())
-			return
-		}
-		result, err := c.callCallback(req.Params)
-		if err != nil {
-			c.respondError(id, -32000, err.Error())
-			return
-		}
-		c.respondResult(id, result)
-	default:
-		c.respondError(id, -32601, "unknown host method "+method)
-	}
-}
-
-func (c *Client) callCallback(params callbackCallParams) (Value, error) {
-	c.mu.Lock()
-	ref, ok := c.callbacks[params.CallbackID]
-	c.mu.Unlock()
-	if !ok {
-		return Value{}, fmt.Errorf("unknown callback %s", params.CallbackID)
-	}
-	args, err := transportValuesToObjects(params.Args)
-	if err != nil {
-		return Value{}, err
-	}
-	kwargs, err := transportKwargsToObjects(params.Kwargs)
-	if err != nil {
-		return Value{}, err
-	}
-	result := evaluator.ApplyFunction(context.Background(), ref.fn, args, kwargs, ref.env)
-	return objectToValue(result)
-}
-
-func (c *Client) respondResult(id int64, result any) {
-	raw, err := json.Marshal(result)
-	resp := rpcResponse{
-		JSONRPC: "2.0",
-		ID:      id,
-		Result:  raw,
-	}
-	if err != nil {
-		resp.Result = nil
-		resp.Error = &RPCError{Code: -32000, Message: err.Error()}
-	}
-	c.writeMu.Lock()
-	_ = c.encoder.Encode(resp)
-	c.writeMu.Unlock()
-}
-
-func (c *Client) respondError(id int64, code int, message string) {
-	resp := rpcResponse{
-		JSONRPC: "2.0",
-		ID:      id,
-		Error:   &RPCError{Code: code, Message: message},
-	}
-	c.writeMu.Lock()
-	_ = c.encoder.Encode(resp)
-	c.writeMu.Unlock()
 }
