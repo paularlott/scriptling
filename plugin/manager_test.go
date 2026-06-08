@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/object"
@@ -210,26 +211,38 @@ func TestComprehensivePlugin(t *testing.T) {
 		RegisterLibraries(p, manager)
 
 		for _, tc := range []struct {
-			code string
+			code  string
 			check func(t *testing.T, result object.Object)
 		}{
 			{`import plugin.comprehensive; plugin.comprehensive.echo_int(42)`, func(t *testing.T, r object.Object) {
-				if i, ok := r.(*object.Integer); !ok || i.IntValue() != 42 { t.Fatalf("expected 42, got %v", r) }
+				if i, ok := r.(*object.Integer); !ok || i.IntValue() != 42 {
+					t.Fatalf("expected 42, got %v", r)
+				}
 			}},
 			{`import plugin.comprehensive; plugin.comprehensive.echo_float(3.14)`, func(t *testing.T, r object.Object) {
-				if f, ok := r.(*object.Float); !ok || f.FloatValue() != 3.14 { t.Fatalf("expected 3.14, got %v", r) }
+				if f, ok := r.(*object.Float); !ok || f.FloatValue() != 3.14 {
+					t.Fatalf("expected 3.14, got %v", r)
+				}
 			}},
 			{`import plugin.comprehensive; plugin.comprehensive.echo_string("test")`, func(t *testing.T, r object.Object) {
-				if s, ok := r.(*object.String); !ok || s.StringValue() != "test" { t.Fatalf("expected 'test', got %v", r) }
+				if s, ok := r.(*object.String); !ok || s.StringValue() != "test" {
+					t.Fatalf("expected 'test', got %v", r)
+				}
 			}},
 			{`import plugin.comprehensive; plugin.comprehensive.echo_bool(True)`, func(t *testing.T, r object.Object) {
-				if b, ok := r.(*object.Boolean); !ok || !b.BoolValue() { t.Fatalf("expected true, got %v", r) }
+				if b, ok := r.(*object.Boolean); !ok || !b.BoolValue() {
+					t.Fatalf("expected true, got %v", r)
+				}
 			}},
 			{`import plugin.comprehensive; plugin.comprehensive.echo_list([1, "two", True])`, func(t *testing.T, r object.Object) {
-				if l, ok := r.(*object.List); !ok || len(l.Elements) != 3 { t.Fatalf("expected 3 elements, got %v", r) }
+				if l, ok := r.(*object.List); !ok || len(l.Elements) != 3 {
+					t.Fatalf("expected 3 elements, got %v", r)
+				}
 			}},
 			{`import plugin.comprehensive; plugin.comprehensive.echo_dict({"a": 1, "b": "two"})`, func(t *testing.T, r object.Object) {
-				if d, ok := r.(*object.Dict); !ok || len(d.Pairs) != 2 { t.Fatalf("expected 2 pairs, got %v", r) }
+				if d, ok := r.(*object.Dict); !ok || len(d.Pairs) != 2 {
+					t.Fatalf("expected 2 pairs, got %v", r)
+				}
 			}},
 		} {
 			result, err := p.Eval(tc.code)
@@ -450,8 +463,6 @@ name
 	})
 
 	t.Run("ParallelObjectCreation", func(t *testing.T) {
-		t.Skip("TODO: serverClasses global uses per-serverClass ID sequences causing ID collisions across concurrent objects")
-
 		manager := NewManager()
 		manager.AddDir(dir)
 		if err := manager.Load(context.Background()); err != nil {
@@ -494,7 +505,7 @@ counter.get()
 		}
 	})
 
-	t.Run("ParallelSharedEnv", func(t *testing.T) {
+	t.Run("OverlappingClientIO", func(t *testing.T) {
 		manager := NewManager()
 		manager.AddDir(dir)
 		if err := manager.Load(context.Background()); err != nil {
@@ -502,30 +513,30 @@ counter.get()
 		}
 		defer manager.Close()
 
-		p := scriptling.New()
-		RegisterLibraries(p, manager)
-
-		_, err := p.Eval(`import plugin.comprehensive`)
-		if err != nil {
-			t.Fatalf("import: %v", err)
+		client, ok := manager.Get("plugin.comprehensive")
+		if !ok {
+			t.Fatal("missing comprehensive plugin")
 		}
 
+		const calls = 12
 		var wg sync.WaitGroup
 		var errors atomic.Int64
 
-		for i := 0; i < 10; i++ {
+		for i := 0; i < calls; i++ {
 			wg.Add(1)
 			go func(id int) {
 				defer wg.Done()
-				code := fmt.Sprintf(`plugin.comprehensive.echo_int(%d)`, id)
-				result, err := p.Eval(code)
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+
+				got, err := client.CallFunction(ctx, "delayed_echo", []Value{{Type: valueInt, Value: int64(id)}}, nil)
 				if err != nil {
-					t.Logf("shared goroutine %d error: %v", id, err)
+					t.Logf("call %d error: %v", id, err)
 					errors.Add(1)
 					return
 				}
-				if i, ok := result.(*object.Integer); !ok || i.IntValue() != int64(id) {
-					t.Logf("shared goroutine %d: expected %d, got %v", id, id, result)
+				if got.Type != valueInt || numberToInt64(got.Value) != int64(id) {
+					t.Logf("call %d: expected %d, got %#v", id, id, got)
 					errors.Add(1)
 				}
 			}(i)
@@ -533,7 +544,7 @@ counter.get()
 		wg.Wait()
 
 		if e := errors.Load(); e > 0 {
-			t.Fatalf("%d shared-env goroutines failed", e)
+			t.Fatalf("%d overlapping client calls failed", e)
 		}
 	})
 }
@@ -634,6 +645,12 @@ func runComprehensivePluginHelper() {
 	strictFn := object.NewFunctionBuilder()
 	strictFn.Function(func(s string) string { return "got:" + s })
 
+	delayedEchoFn := object.NewFunctionBuilder()
+	delayedEchoFn.Function(func(value int) int {
+		time.Sleep(time.Duration(15-value%10) * 10 * time.Millisecond)
+		return value
+	})
+
 	kvClass := object.NewClassBuilder("KVStore").
 		Method("__init__", func(self *object.Instance) {
 			self.Fields["data"] = object.NewStringDict(map[string]object.Object{})
@@ -665,6 +682,7 @@ func runComprehensivePluginHelper() {
 	server.RegisterFunc("fail", failFn)
 	server.RegisterFunc("destroyed_count", destroyedCountFn)
 	server.RegisterFunc("strict", strictFn)
+	server.RegisterFunc("delayed_echo", delayedEchoFn)
 	server.RegisterClass(counterClass)
 	server.RegisterClass(resourceClass)
 	server.RegisterClass(kvClass)

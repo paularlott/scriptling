@@ -20,14 +20,22 @@ It exposes:
 - `plugin.hello.Counter(start).inc(amount)` — class via `RegisterClass`
 - `plugin.hello.default_name` — constant
 
-## Wrapper Plugin
+## Mixed Wrapper Plugin
 
-`mixed-wrapper` shows a registered function with a custom Scriptling wrapper:
+`mixed-wrapper` shows generated proxies and custom Scriptling wrappers in the
+same plugin:
 
 ```bash
 go build -o /tmp/scriptling-plugins/wrap ./examples/plugins/mixed-wrapper
 scriptling --plugin-dir /tmp/scriptling-plugins -c 'import plugin.wrap; print(plugin.wrap.greet("Ada"))'
 ```
+
+It exposes:
+
+- `plugin.wrap.generated(name)` — auto-generated function proxy
+- `plugin.wrap.greet(name)` — custom function wrapper
+- `plugin.wrap.Settings(name)` — auto-generated class proxy
+- `plugin.wrap.Config(name)` — custom class wrapper with a defaulted `get`
 
 ## Bash Plugin
 

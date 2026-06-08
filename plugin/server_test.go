@@ -5,24 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/object"
 )
 
-func TestMain(m *testing.M) {
-	os.Exit(m.Run())
-}
-
-func resetGlobals(t *testing.T) {
-	t.Helper()
-	t.Cleanup(func() { serverClasses.Clear() })
-}
-
 func TestServerFunctionCall(t *testing.T) {
-	resetGlobals(t)
 	fb := object.NewFunctionBuilder()
 	fb.Function(func(a int, b int) int {
 		return a + b
@@ -45,7 +34,6 @@ func TestServerFunctionCall(t *testing.T) {
 }
 
 func TestServerClassLifecycle(t *testing.T) {
-	resetGlobals(t)
 	destroyed := false
 	class := object.NewClassBuilder("Config").
 		Method("__init__", func(self *object.Instance, name string) {
@@ -87,7 +75,6 @@ func TestServerClassLifecycle(t *testing.T) {
 }
 
 func TestServerHandshakeSchema(t *testing.T) {
-	resetGlobals(t)
 	fb := object.NewFunctionBuilder()
 	fb.Function(func(name string) string { return "hello " + name })
 
@@ -115,7 +102,6 @@ func TestServerHandshakeSchema(t *testing.T) {
 }
 
 func TestServerRegisterClass(t *testing.T) {
-	resetGlobals(t)
 	class := object.NewClassBuilder("Counter").
 		Method("__init__", func(self *object.Instance, start int) {
 			self.Fields["value"] = object.NewInteger(int64(start))
@@ -157,7 +143,6 @@ func TestServerRegisterClass(t *testing.T) {
 }
 
 func TestServerTypedReceiverClass(t *testing.T) {
-	resetGlobals(t)
 	type serverCfg struct {
 		values map[string]string
 	}
@@ -219,7 +204,6 @@ func TestServerTypedReceiverClass(t *testing.T) {
 }
 
 func TestServerNativeObjectAPI(t *testing.T) {
-	resetGlobals(t)
 	fb := object.NewFunctionBuilder()
 	fb.FunctionWithHelp(func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 		name, err := args[0].AsString()
@@ -243,7 +227,6 @@ func TestServerNativeObjectAPI(t *testing.T) {
 }
 
 func TestServerEmbeddedScriptlingFunction(t *testing.T) {
-	resetGlobals(t)
 	p := scriptling.New()
 	if err := p.RegisterScriptFunc("decorate", `
 def decorate(name):
@@ -279,7 +262,6 @@ def decorate(name):
 }
 
 func TestServerWrapperMode(t *testing.T) {
-	resetGlobals(t)
 	fb := object.NewFunctionBuilder()
 	fb.Function(func(name string) string {
 		return "Hello, " + name
@@ -310,7 +292,6 @@ def greet(name):
 }
 
 func TestServerScriptFunction(t *testing.T) {
-	resetGlobals(t)
 	server := NewServer("scripted", "1.0.0", "script function test").
 		RegisterScriptFunc("helper", `
 def helper(x):
@@ -335,7 +316,6 @@ def helper(x):
 }
 
 func TestServerScriptClass(t *testing.T) {
-	resetGlobals(t)
 	server := NewServer("scripted", "1.0.0", "script class test").
 		RegisterScriptClass("Pair", `
 class Pair:
@@ -442,7 +422,6 @@ func intResult(results map[int64]rpcResponse, id int64) (int64, bool) {
 }
 
 func TestServerDataTypeRoundtrips(t *testing.T) {
-	resetGlobals(t)
 	echoInt := object.NewFunctionBuilder()
 	echoInt.Function(func(v int) int { return v })
 	echoFloat := object.NewFunctionBuilder()
@@ -531,7 +510,6 @@ func TestServerDataTypeRoundtrips(t *testing.T) {
 }
 
 func TestServerErrorPaths(t *testing.T) {
-	resetGlobals(t)
 	server := NewServer("test", "1.0.0", "test")
 
 	t.Run("unknown function", func(t *testing.T) {
@@ -561,7 +539,6 @@ func TestServerErrorPaths(t *testing.T) {
 }
 
 func TestServerErrorPathsOnObjects(t *testing.T) {
-	resetGlobals(t)
 	class := object.NewClassBuilder("Item").
 		Method("__init__", func(self *object.Instance) {}).
 		Method("get", func(self *object.Instance) string { return "ok" })
@@ -603,7 +580,6 @@ func TestServerErrorPathsOnObjects(t *testing.T) {
 }
 
 func TestServerClassWithoutInit(t *testing.T) {
-	resetGlobals(t)
 	class := object.NewClassBuilder("Plain").
 		Method("describe", func(self *object.Instance) string { return "plain" })
 
@@ -626,7 +602,6 @@ func TestServerClassWithoutInit(t *testing.T) {
 }
 
 func TestServerConstructorError(t *testing.T) {
-	resetGlobals(t)
 	type fragile struct{}
 
 	class := object.NewClassBuilder("Fragile").
@@ -661,7 +636,6 @@ func TestServerConstructorError(t *testing.T) {
 }
 
 func TestServerMethodError(t *testing.T) {
-	resetGlobals(t)
 	fb := object.NewFunctionBuilder()
 	fb.Function(func(s string) (string, error) {
 		if s == "fail" {
@@ -694,7 +668,6 @@ func TestServerMethodError(t *testing.T) {
 }
 
 func TestServerSchemaCompleteness(t *testing.T) {
-	resetGlobals(t)
 	type res struct{ name string }
 
 	class := object.NewClassBuilder("Resource").
@@ -749,7 +722,6 @@ func TestServerSchemaCompleteness(t *testing.T) {
 }
 
 func TestServerSchemaClassWrapper(t *testing.T) {
-	resetGlobals(t)
 	class := object.NewClassBuilder("W").
 		Constructor(func() *struct{} { return &struct{}{} }).
 		Method("do", func(self *struct{}) string { return "done" })
@@ -771,7 +743,6 @@ func TestServerSchemaClassWrapper(t *testing.T) {
 }
 
 func TestServerNamespacePrefix(t *testing.T) {
-	resetGlobals(t)
 	server := NewServer("plugin.mylib", "1.0.0", "test")
 	result := sendServerRequest[handshakeResult](t, server, "scriptling.handshake", handshakeParams{
 		Protocol: ProtocolVersion, Transports: []string{"json"},
@@ -782,7 +753,6 @@ func TestServerNamespacePrefix(t *testing.T) {
 }
 
 func TestServerConstantsAllTypes(t *testing.T) {
-	resetGlobals(t)
 	fb := object.NewFunctionBuilder()
 	fb.Function(func() string { return "noop" })
 
@@ -805,7 +775,6 @@ func TestServerConstantsAllTypes(t *testing.T) {
 }
 
 func TestServerMultipleRequests(t *testing.T) {
-	resetGlobals(t)
 	fb := object.NewFunctionBuilder()
 	fb.Function(func(x int) int { return x * 2 })
 
@@ -839,7 +808,6 @@ func TestServerMultipleRequests(t *testing.T) {
 }
 
 func TestServerConcurrentSlowCallDoesNotBlock(t *testing.T) {
-	resetGlobals(t)
 
 	slowDone := make(chan struct{})
 	slowFB := object.NewFunctionBuilder()
@@ -894,7 +862,6 @@ type echoData struct {
 }
 
 func TestServerConcurrentMethodCalls(t *testing.T) {
-	resetGlobals(t)
 
 	class := object.NewClassBuilder("Echo").
 		Constructor(func(prefix string) *echoData {
@@ -918,7 +885,7 @@ func TestServerConcurrentMethodCalls(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		enc.Encode(rpcRequest{JSONRPC: "2.0", ID: int64(i + 1), Method: "object.call_method", Params: methodCallParams{
 			ObjectID: ref.ID, Method: "echo",
-			Args:     []Value{{Type: valueString, Value: fmt.Sprintf("msg%d", i)}},
+			Args: []Value{{Type: valueString, Value: fmt.Sprintf("msg%d", i)}},
 		}})
 	}
 	enc.Encode(rpcRequest{JSONRPC: "2.0", ID: 99, Method: "plugin.shutdown", Params: nil})
@@ -953,7 +920,6 @@ func TestServerConcurrentMethodCalls(t *testing.T) {
 }
 
 func TestServerEnvironmentMethods(t *testing.T) {
-	resetGlobals(t)
 	server := NewServer("env", "1.0.0", "test")
 
 	for _, method := range []string{"environment.open", "environment.close"} {
@@ -965,7 +931,6 @@ func TestServerEnvironmentMethods(t *testing.T) {
 }
 
 func TestServerShutdown(t *testing.T) {
-	resetGlobals(t)
 	server := NewServer("shut", "1.0.0", "test")
 
 	var input bytes.Buffer
@@ -979,7 +944,6 @@ func TestServerShutdown(t *testing.T) {
 }
 
 func TestServerDoubleDestroy(t *testing.T) {
-	resetGlobals(t)
 	destroyed := 0
 	class := object.NewClassBuilder("D").
 		Method("__init__", func(self *object.Instance) {}).
@@ -998,7 +962,6 @@ func TestServerDoubleDestroy(t *testing.T) {
 }
 
 func TestServerClassWithKwargs(t *testing.T) {
-	resetGlobals(t)
 	class := object.NewClassBuilder("Opts").
 		Method("__init__", func(self *object.Instance, kwargs object.Kwargs) {
 			self.Fields["mode"] = object.NewString(kwargs.MustGetString("mode", "default"))
@@ -1024,7 +987,6 @@ func TestServerClassWithKwargs(t *testing.T) {
 }
 
 func TestServerMethodWithKwargs(t *testing.T) {
-	resetGlobals(t)
 	class := object.NewClassBuilder("KV").
 		Method("__init__", func(self *object.Instance) {
 			self.Fields["data"] = object.NewStringDict(map[string]object.Object{})
@@ -1051,7 +1013,6 @@ func TestServerMethodWithKwargs(t *testing.T) {
 }
 
 func TestServerWrapperUnknownName(t *testing.T) {
-	resetGlobals(t)
 	fb := object.NewFunctionBuilder()
 	fb.Function(func() string { return "hi" })
 
@@ -1071,7 +1032,6 @@ func TestServerWrapperUnknownName(t *testing.T) {
 }
 
 func TestServerEmptySchema(t *testing.T) {
-	resetGlobals(t)
 	server := NewServer("empty", "1.0.0", "test")
 	result := sendServerRequest[handshakeResult](t, server, "scriptling.handshake", handshakeParams{
 		Protocol: ProtocolVersion, Transports: []string{"json"},
