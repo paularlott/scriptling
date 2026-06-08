@@ -11,12 +11,11 @@ import (
 const remoteFieldName = "__plugin_remote"
 
 type remoteObject struct {
-	Client        *Client
-	Library       string
-	Class         string
-	EnvironmentID string
-	ID            string
-	Released      bool
+	Client   *Client
+	Library  string
+	Class    string
+	ID       string
+	Released bool
 }
 
 func objectToValue(obj object.Object) (Value, error) {
@@ -71,14 +70,15 @@ func objectToValue(obj object.Object) (Value, error) {
 			return Value{
 				Type: valueRemote,
 				Remote: &RemoteRef{
-					Library:       remote.Library,
-					Class:         remote.Class,
-					EnvironmentID: remote.EnvironmentID,
-					ID:            remote.ID,
+					Library: remote.Library,
+					Class:   remote.Class,
+					ID:      remote.ID,
 				},
 			}, nil
 		}
 		return Value{}, fmt.Errorf("cannot pass non-plugin instance %s to plugin", v.Class.Name)
+	case *object.Error:
+		return Value{Type: valueString, Value: v.Message}, nil
 	default:
 		return Value{}, fmt.Errorf("unsupported plugin value type %s", obj.Type())
 	}

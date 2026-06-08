@@ -1955,8 +1955,160 @@ r2 = b.value
 }
 
 // ============================================================================
-// Builtin: next(), iter(), dir(), issubclass(), copy()
+// Typed Receiver ClassBuilder Tests
 // ============================================================================
+
+func TestTypedReceiverEndToEnd(t *testing.T) {
+	p := New()
+
+	type configFile struct {
+		data map[string]string
+	}
+
+	cb := object.NewClassBuilder("Config")
+	cb.Constructor(func() *configFile {
+		return &configFile{data: make(map[string]string)}
+	})
+	cb.Method("set", func(self *configFile, key, val string) {
+		self.data[key] = val
+	})
+	cb.Method("get", func(self *configFile, key string) string {
+		return self.data[key]
+	})
+	p.SetObjectVar("Config", cb.Build())
+
+	_, err := p.Eval(`
+c = Config()
+c.set("host", "localhost")
+c.set("port", "8080")
+h = c.get("host")
+p = c.get("port")
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	h, _ := p.GetVar("h")
+	if h != "localhost" {
+		t.Errorf("expected 'localhost', got %v", h)
+	}
+	port, _ := p.GetVar("p")
+	if port != "8080" {
+		t.Errorf("expected '8080', got %v", port)
+	}
+}
+
+func TestTypedReceiverWithArgsEndToEnd(t *testing.T) {
+	p := New()
+
+	type accum struct {
+		total int64
+	}
+
+	cb := object.NewClassBuilder("Accum")
+	cb.Constructor(func(start int) *accum {
+		return &accum{total: int64(start)}
+	})
+	cb.Method("add", func(self *accum, n int) int {
+		self.total += int64(n)
+		return int(self.total)
+	})
+	cb.Method("total", func(self *accum) int {
+		return int(self.total)
+	})
+	p.SetObjectVar("Accum", cb.Build())
+
+	_, err := p.Eval(`
+a = Accum(100)
+r1 = a.add(5)
+r2 = a.add(10)
+r3 = a.total()
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	r1, _ := p.GetVar("r1")
+	if r1 != int64(105) {
+		t.Errorf("expected 105, got %v", r1)
+	}
+	r2, _ := p.GetVar("r2")
+	if r2 != int64(115) {
+		t.Errorf("expected 115, got %v", r2)
+	}
+	r3, _ := p.GetVar("r3")
+	if r3 != int64(115) {
+		t.Errorf("expected 115, got %v", r3)
+	}
+}
+
+func TestTypedReceiverWithDestructorEndToEnd(t *testing.T) {
+	p := New()
+
+	type resource struct {
+		name    string
+		closed  bool
+	}
+
+	cb := object.NewClassBuilder("Resource")
+	cb.Constructor(func(name string) *resource {
+		return &resource{name: name}
+	})
+	cb.Method("name", func(self *resource) string {
+		return self.name
+	})
+	cb.Method("__del__", func(self *resource) {
+		self.closed = true
+	})
+	p.SetObjectVar("Resource", cb.Build())
+
+	_, err := p.Eval(`
+r = Resource("db")
+n = r.name()
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	n, _ := p.GetVar("n")
+	if n != "db" {
+		t.Errorf("expected 'db', got %v", n)
+	}
+}
+
+func TestTypedReceiverMixedWithStaticMethod(t *testing.T) {
+	p := New()
+
+	type widget struct {
+		label string
+	}
+
+	cb := object.NewClassBuilder("Widget")
+	cb.Constructor(func(label string) *widget {
+		return &widget{label: label}
+	})
+	cb.Method("label", func(self *widget) string {
+		return self.label
+	})
+	cb.StaticMethod("default_label", func() string {
+		return "unnamed"
+	})
+	p.SetObjectVar("Widget", cb.Build())
+
+	_, err := p.Eval(`
+w = Widget("save")
+l = w.label()
+d = Widget.default_label()
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	l, _ := p.GetVar("l")
+	if l != "save" {
+		t.Errorf("expected 'save', got %v", l)
+	}
+	d, _ := p.GetVar("d")
+	if d != "unnamed" {
+		t.Errorf("expected 'unnamed', got %v", d)
+	}
+}
 
 func TestNextBasic(t *testing.T) {
 	p := New()

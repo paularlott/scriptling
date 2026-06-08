@@ -6,6 +6,8 @@ import (
 	"reflect"
 )
 
+const receiverField = "_receiver"
+
 var (
 	instanceType = reflect.TypeOf((*Instance)(nil))
 )
@@ -14,21 +16,45 @@ var (
 // It allows registering typed Go methods that are automatically wrapped
 // to handle conversion between Go types and scriptling Objects.
 //
-// Example usage:
+// Two styles are supported:
+//
+// 1. *Instance methods — manually manage Fields:
 //
 //	cb := NewClassBuilder("Person")
-//	cb.Method("greet", func(self *Instance, name string) string {
-//	    return "Hello, " + name
+//	cb.Method("__init__", func(self *Instance, name string) {
+//	    self.Fields["name"] = NewString(name)
 //	})
-//	class := cb.Build()
+//	cb.Method("greet", func(self *Instance) string {
+//	    return self.Fields["name"].(*String).StringValue()
+//	})
+//
+// 2. Typed receiver methods — Go struct is auto-managed:
+//
+//	type Config struct { values map[string]any }
+//
+//	cb := NewClassBuilder("Config")
+//	cb.Constructor(func(name string) *Config {
+//	    return &Config{values: map[string]any{"name": name}}
+//	})
+//	cb.Method("get", func(self *Config, key string) any {
+//	    return self.values[key]
+//	})
+//
+// When Constructor is used, the returned Go struct is automatically wrapped
+// in a ClientWrapper and stored on the Instance. Methods whose first parameter
+// matches the constructor's return type receive the unwrapped struct directly.
 type ClassBuilder struct {
-	name       string
-	baseClass  *Class
-	methods    map[string]*Builtin
-	properties map[string]*Builtin
-	setters    map[string]*Builtin
-	statics    map[string]*Builtin
-	env        *Environment
+	name          string
+	baseClass     *Class
+	methods       map[string]*Builtin
+	properties    map[string]*Builtin
+	setters       map[string]*Builtin
+	statics       map[string]*Builtin
+	env           *Environment
+	receiverType  reflect.Type
+	constructor   *Builtin
+	constructorFn reflect.Value
+	constructorSig *FunctionSignature
 }
 
 // NewClassBuilder creates a new ClassBuilder with the given class name.
@@ -45,15 +71,69 @@ func (cb *ClassBuilder) BaseClass(base *Class) *ClassBuilder {
 	return cb
 }
 
-// Method registers a typed Go method with the class.
-// The method must be a Go function with typed parameters.
-// The first parameter should be *Instance (the 'self' parameter).
-// Supported signatures are the same as LibraryBuilder.Function().
+// Constructor registers a constructor function for typed receiver classes.
+// The function must return a pointer type (e.g., *Config) which becomes the
+// receiver type for subsequent Method calls. The returned struct is automatically
+// wrapped in a ClientWrapper and stored on the Instance.
 //
 // Example:
 //
+//	type Config struct { values map[string]any }
+//
+//	cb := NewClassBuilder("Config")
+//	cb.Constructor(func(name string) *Config {
+//	    return &Config{values: map[string]any{"name": name}}
+//	})
+//	cb.Method("get", func(self *Config, key string) any {
+//	    return self.values[key]
+//	})
+func (cb *ClassBuilder) Constructor(fn interface{}) *ClassBuilder {
+	fnValue := reflect.ValueOf(fn)
+	fnType := fnValue.Type()
+
+	if fnType.Kind() != reflect.Func {
+		panic(fmt.Sprintf("ClassBuilder.Constructor: must be a function, got %T", fn))
+	}
+	if fnType.NumOut() == 0 {
+		panic("ClassBuilder.Constructor: function must return a pointer type")
+	}
+
+	retType := fnType.Out(0)
+	if retType.Kind() != reflect.Ptr {
+		panic(fmt.Sprintf("ClassBuilder.Constructor: must return a pointer type, got %v", retType))
+	}
+
+	if cb.receiverType != nil && cb.receiverType != retType {
+		panic(fmt.Sprintf("ClassBuilder.Constructor: receiver type mismatch: already have %v, got %v", cb.receiverType, retType))
+	}
+
+	cb.receiverType = retType
+	cb.constructorFn = fnValue
+	cb.constructorSig = analyzeConstructorSignature(fnType)
+
+	cb.constructor = &Builtin{
+		Fn: func(ctx context.Context, kwargs Kwargs, args ...Object) Object {
+			return cb.callConstructor(fnValue, cb.constructorSig, ctx, kwargs, args)
+		},
+	}
+
+	return cb
+}
+
+// Method registers a typed Go method with the class.
+// The first parameter is the receiver: either *Instance (manual Fields)
+// or the typed pointer set by Constructor (e.g., *Config).
+//
+// Example with *Instance:
+//
 //	cb.Method("greet", func(self *Instance, name string) string {
 //	    return "Hello, " + name
+//	})
+//
+// Example with typed receiver:
+//
+//	cb.Method("get", func(self *Config, key string) any {
+//	    return self.values[key]
 //	})
 func (cb *ClassBuilder) Method(name string, fn interface{}) *ClassBuilder {
 	cb.MethodWithHelp(name, fn, "")
@@ -62,12 +142,6 @@ func (cb *ClassBuilder) Method(name string, fn interface{}) *ClassBuilder {
 
 // MethodWithHelp registers a method with help text.
 // Help text is displayed when users call help() on the method.
-//
-// Example:
-//
-//	cb.MethodWithHelp("sqrt", func(self *Instance, x float64) float64 {
-//	    return math.Sqrt(x)
-//	}, "sqrt(x) - Return the square root of x")
 func (cb *ClassBuilder) MethodWithHelp(name string, fn interface{}, helpText string) *ClassBuilder {
 	wrapper := cb.createWrapper(fn, helpText)
 	cb.methods[name] = wrapper
@@ -138,11 +212,21 @@ func (cb *ClassBuilder) Environment(env *Environment) *ClassBuilder {
 }
 
 // Build creates and returns the Class from this builder.
+// If a Constructor was registered, an __init__ method is auto-generated
+// that calls the constructor and stores the result as a ClientWrapper.
 func (cb *ClassBuilder) Build() *Class {
+	methods := cb.convertMethodsToObjects()
+
+	if cb.constructor != nil {
+		if _, exists := methods["__init__"]; !exists {
+			methods["__init__"] = cb.constructor
+		}
+	}
+
 	return &Class{
 		Name:      cb.name,
 		BaseClass: cb.baseClass,
-		Methods:   cb.convertMethodsToObjects(),
+		Methods:   methods,
 		Env:       cb.env,
 	}
 }
@@ -169,18 +253,19 @@ func (cb *ClassBuilder) convertMethodsToObjects() map[string]Object {
 }
 
 // createWrapper creates a Builtin wrapper for a typed Go method.
-// This is adapted from LibraryBuilder.createWrapper for methods.
 func (cb *ClassBuilder) createWrapper(fn interface{}, helpText string) *Builtin {
 	fnValue := reflect.ValueOf(fn)
 	fnType := fnValue.Type()
 
-	// Validate that it's a function
 	if fnType.Kind() != reflect.Func {
 		panic(fmt.Sprintf("ClassBuilder: must be a function, got %T", fnValue.Interface()))
 	}
 
-	// Analyze function signature once (cached)
-	sig := analyzeClassMethodSignature(fnType)
+	sig := analyzeClassMethodSignature(fnType, cb.receiverType)
+
+	if sig.typedReceiver {
+		return cb.createTypedReceiverWrapper(fnValue, sig, helpText)
+	}
 
 	if wrapper, ok := createFastMethodWrapper(fn, helpText); ok {
 		return wrapper
@@ -370,48 +455,37 @@ func createFastMethodWrapper(fn interface{}, helpText string) (*Builtin, bool) {
 	}
 }
 
-// callTypedMethod calls a typed Go method with cached signature info.
-// For class methods, self is ALWAYS first, then: [context], [kwargs], ...args
-func (cb *ClassBuilder) callTypedMethod(fnValue reflect.Value, sig *FunctionSignature, ctx context.Context, kwargs Kwargs, args []Object) (result Object) {
+// callConstructor calls the constructor function and wraps the result.
+func (cb *ClassBuilder) callConstructor(fnValue reflect.Value, sig *FunctionSignature, ctx context.Context, kwargs Kwargs, args []Object) (result Object) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = newError("panic in constructor: %v", r)
+		}
+	}()
+
 	if len(args) == 0 {
-		return newError("method call requires at least one argument (instance)")
+		return newError("constructor requires at least one argument (instance)")
 	}
 
-	// The first argument is always the instance
 	instance, ok := args[0].(*Instance)
 	if !ok {
 		return newError("first argument must be an instance, got %T", args[0])
 	}
 	methodArgs := args[1:]
 
-	// Get pooled slice for arguments
-	argValuesPtr := getArgValueSlice(sig.numIn)
+	argValuesPtr := getArgValueSlice(sig.numIn + 1)
 	argValues := *argValuesPtr
 	defer func() {
-		putArgValueSlice(argValuesPtr, sig.numIn)
-		if r := recover(); r != nil {
-			result = newError("panic in method: %v", r)
-		}
+		putArgValueSlice(argValuesPtr, sig.numIn+1)
 	}()
 
-	// Build arguments in the order the Go function expects:
-	// self, [ctx], [kwargs], ...args
-
-	// Add the instance parameter (always first)
-	argValues = append(argValues, reflect.ValueOf(instance))
-
-	// Add context parameter if present (second)
 	if sig.hasContext {
 		argValues = append(argValues, reflect.ValueOf(ctx))
 	}
-
-	// Add kwargs parameter if present (third)
 	if sig.hasKwargs {
 		argValues = append(argValues, reflect.ValueOf(kwargs))
 	}
 
-	// Now add the method arguments
-	// sig.maxPosArgs already accounts for self, context, and kwargs offset
 	argIndex := 0
 	expectedArgs := sig.maxPosArgs
 
@@ -419,7 +493,6 @@ func (cb *ClassBuilder) callTypedMethod(fnValue reflect.Value, sig *FunctionSign
 		fnParamIndex := i + sig.paramOffset
 
 		if sig.isVariadic && fnParamIndex == sig.variadicIndex {
-			// Variadic parameters - collect remaining args
 			elemType := sig.paramTypes[fnParamIndex].Elem()
 			for j := argIndex; j < len(methodArgs); j++ {
 				val, convErr := convertObjectToValue(methodArgs[j], elemType)
@@ -435,7 +508,6 @@ func (cb *ClassBuilder) callTypedMethod(fnValue reflect.Value, sig *FunctionSign
 			return newArgumentError(len(methodArgs), expectedArgs)
 		}
 
-		// Use cached parameter type
 		val, convErr := convertObjectToValue(methodArgs[argIndex], sig.paramTypes[fnParamIndex])
 		if convErr != nil {
 			return convErr
@@ -444,22 +516,140 @@ func (cb *ClassBuilder) callTypedMethod(fnValue reflect.Value, sig *FunctionSign
 		argIndex++
 	}
 
-	// Check if we have extra positional arguments
 	if argIndex < len(methodArgs) && !sig.isVariadic {
 		return newArgumentError(len(methodArgs), expectedArgs)
 	}
 
-	// Call the method
 	results := fnValue.Call(argValues)
 
-	// Handle return values with cached info
+	switch sig.numOut {
+	case 0:
+		return &Null{}
+	case 1:
+		receiverPtr := results[0]
+		if !receiverPtr.IsValid() || receiverPtr.IsNil() {
+			return newError("constructor returned nil")
+		}
+		instance.Fields[receiverField] = &ClientWrapper{
+			TypeName: cb.name,
+			Client:   receiverPtr.Interface(),
+		}
+		return &Null{}
+	case 2:
+		if sig.returnIsError && !results[1].IsNil() {
+			err, _ := results[1].Interface().(error)
+			return newError("%s", err.Error())
+		}
+		receiverPtr := results[0]
+		if !receiverPtr.IsValid() || receiverPtr.IsNil() {
+			return newError("constructor returned nil")
+		}
+		instance.Fields[receiverField] = &ClientWrapper{
+			TypeName: cb.name,
+			Client:   receiverPtr.Interface(),
+		}
+		return &Null{}
+	default:
+		return newError("constructor can return at most 2 values")
+	}
+}
+
+// createTypedReceiverWrapper creates a wrapper for methods with a typed receiver.
+func (cb *ClassBuilder) createTypedReceiverWrapper(fnValue reflect.Value, sig *FunctionSignature, helpText string) *Builtin {
+	return &Builtin{
+		Fn: func(ctx context.Context, kwargs Kwargs, args ...Object) (result Object) {
+			return cb.callTypedReceiverMethod(fnValue, sig, ctx, kwargs, args)
+		},
+		HelpText: helpText,
+	}
+}
+
+// callTypedReceiverMethod calls a method with a typed receiver (e.g., *Config).
+func (cb *ClassBuilder) callTypedReceiverMethod(fnValue reflect.Value, sig *FunctionSignature, ctx context.Context, kwargs Kwargs, args []Object) (result Object) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = newError("panic in method: %v", r)
+		}
+	}()
+
+	if len(args) == 0 {
+		return newError("method call requires at least one argument (instance)")
+	}
+
+	instance, ok := args[0].(*Instance)
+	if !ok {
+		return newError("first argument must be an instance, got %T", args[0])
+	}
+
+	wrapper, ok := instance.Fields[receiverField].(*ClientWrapper)
+	if !ok {
+		return newError("instance has no typed receiver")
+	}
+
+	receiverValue := reflect.ValueOf(wrapper.Client)
+	if receiverValue.Type() != cb.receiverType {
+		return newError("receiver type mismatch: expected %v, got %v", cb.receiverType, receiverValue.Type())
+	}
+
+	methodArgs := args[1:]
+
+	argValuesPtr := getArgValueSlice(sig.numIn)
+	argValues := *argValuesPtr
+	defer func() {
+		putArgValueSlice(argValuesPtr, sig.numIn)
+	}()
+
+	argValues = append(argValues, receiverValue)
+
+	if sig.hasContext {
+		argValues = append(argValues, reflect.ValueOf(ctx))
+	}
+	if sig.hasKwargs {
+		argValues = append(argValues, reflect.ValueOf(kwargs))
+	}
+
+	argIndex := 0
+	expectedArgs := sig.maxPosArgs
+
+	for i := 0; i < expectedArgs; i++ {
+		fnParamIndex := i + sig.paramOffset
+
+		if sig.isVariadic && fnParamIndex == sig.variadicIndex {
+			elemType := sig.paramTypes[fnParamIndex].Elem()
+			for j := argIndex; j < len(methodArgs); j++ {
+				val, convErr := convertObjectToValue(methodArgs[j], elemType)
+				if convErr != nil {
+					return convErr
+				}
+				argValues = append(argValues, val)
+			}
+			break
+		}
+
+		if argIndex >= len(methodArgs) {
+			return newArgumentError(len(methodArgs), expectedArgs)
+		}
+
+		val, convErr := convertObjectToValue(methodArgs[argIndex], sig.paramTypes[fnParamIndex])
+		if convErr != nil {
+			return convErr
+		}
+		argValues = append(argValues, val)
+		argIndex++
+	}
+
+	if argIndex < len(methodArgs) && !sig.isVariadic {
+		return newArgumentError(len(methodArgs), expectedArgs)
+	}
+
+	results := fnValue.Call(argValues)
+
 	switch sig.numOut {
 	case 0:
 		return &Null{}
 	case 1:
 		return convertReturnValue(results[0])
 	case 2:
-		// Use cached error check
 		if sig.returnIsError && !results[1].IsNil() {
 			err, _ := results[1].Interface().(error)
 			return newError("%s", err.Error())
@@ -470,19 +660,93 @@ func (cb *ClassBuilder) callTypedMethod(fnValue reflect.Value, sig *FunctionSign
 	}
 }
 
-// analyzeClassMethodSignature analyzes a function signature for class methods.
-// For class methods: self (required), [context], [kwargs], ...args
-// Valid signatures:
-//   - func(self *Instance, ...args)
-//   - func(self *Instance, ctx context.Context, ...args)
-//   - func(self *Instance, kwargs Kwargs, ...args)
-//   - func(self *Instance, ctx context.Context, kwargs Kwargs, ...args)
-func analyzeClassMethodSignature(fnType reflect.Type) *FunctionSignature {
-	// Check cache first
-	if cached, ok := signatureCache.Load(fnType); ok {
-		return cached.(*FunctionSignature)
+// callTypedMethod calls a typed Go method with cached signature info.
+// For class methods, self is ALWAYS first, then: [context], [kwargs], ...args
+func (cb *ClassBuilder) callTypedMethod(fnValue reflect.Value, sig *FunctionSignature, ctx context.Context, kwargs Kwargs, args []Object) (result Object) {
+	if len(args) == 0 {
+		return newError("method call requires at least one argument (instance)")
 	}
 
+	instance, ok := args[0].(*Instance)
+	if !ok {
+		return newError("first argument must be an instance, got %T", args[0])
+	}
+	methodArgs := args[1:]
+
+	argValuesPtr := getArgValueSlice(sig.numIn)
+	argValues := *argValuesPtr
+	defer func() {
+		putArgValueSlice(argValuesPtr, sig.numIn)
+		if r := recover(); r != nil {
+			result = newError("panic in method: %v", r)
+		}
+	}()
+
+	argValues = append(argValues, reflect.ValueOf(instance))
+
+	if sig.hasContext {
+		argValues = append(argValues, reflect.ValueOf(ctx))
+	}
+
+	if sig.hasKwargs {
+		argValues = append(argValues, reflect.ValueOf(kwargs))
+	}
+
+	argIndex := 0
+	expectedArgs := sig.maxPosArgs
+
+	for i := 0; i < expectedArgs; i++ {
+		fnParamIndex := i + sig.paramOffset
+
+		if sig.isVariadic && fnParamIndex == sig.variadicIndex {
+			elemType := sig.paramTypes[fnParamIndex].Elem()
+			for j := argIndex; j < len(methodArgs); j++ {
+				val, convErr := convertObjectToValue(methodArgs[j], elemType)
+				if convErr != nil {
+					return convErr
+				}
+				argValues = append(argValues, val)
+			}
+			break
+		}
+
+		if argIndex >= len(methodArgs) {
+			return newArgumentError(len(methodArgs), expectedArgs)
+		}
+
+		val, convErr := convertObjectToValue(methodArgs[argIndex], sig.paramTypes[fnParamIndex])
+		if convErr != nil {
+			return convErr
+		}
+		argValues = append(argValues, val)
+		argIndex++
+	}
+
+	if argIndex < len(methodArgs) && !sig.isVariadic {
+		return newArgumentError(len(methodArgs), expectedArgs)
+	}
+
+	results := fnValue.Call(argValues)
+
+	switch sig.numOut {
+	case 0:
+		return &Null{}
+	case 1:
+		return convertReturnValue(results[0])
+	case 2:
+		if sig.returnIsError && !results[1].IsNil() {
+			err, _ := results[1].Interface().(error)
+			return newError("%s", err.Error())
+		}
+		return convertReturnValue(results[0])
+	default:
+		return newError("method can return at most 2 values")
+	}
+}
+
+// analyzeConstructorSignature analyzes a constructor function signature.
+// Constructors take: [context], [kwargs], ...args and return a pointer type.
+func analyzeConstructorSignature(fnType reflect.Type) *FunctionSignature {
 	numIn := fnType.NumIn()
 	numOut := fnType.NumOut()
 	isVariadic := fnType.IsVariadic()
@@ -491,31 +755,22 @@ func analyzeClassMethodSignature(fnType reflect.Type) *FunctionSignature {
 		variadicIndex = numIn - 1
 	}
 
-	// For class methods: self is REQUIRED as first parameter
-	if numIn == 0 || fnType.In(0) != instanceType {
-		panic(fmt.Sprintf("class method must have *Instance as first parameter, got %v", fnType))
-	}
-	paramOffset := 1 // Skip self
-
-	// After self: [context], [kwargs], ...args (all optional)
+	paramOffset := 0
 	hasContext := numIn > paramOffset && fnType.In(paramOffset) == contextType
 	if hasContext {
 		paramOffset++
 	}
-
 	hasKwargs := numIn > paramOffset && fnType.In(paramOffset) == kwargsType
 	if hasKwargs {
 		paramOffset++
 	}
 	maxPosArgs := numIn - paramOffset
 
-	// Pre-cache parameter types
 	paramTypes := make([]reflect.Type, numIn)
 	for i := 0; i < numIn; i++ {
 		paramTypes[i] = fnType.In(i)
 	}
 
-	// Check if second return is error
 	returnIsError := numOut == 2 && fnType.Out(1).Implements(errorType)
 
 	sig := &FunctionSignature{
@@ -531,7 +786,82 @@ func analyzeClassMethodSignature(fnType reflect.Type) *FunctionSignature {
 		returnIsError: returnIsError,
 	}
 
-	// Cache for future use
+	return sig
+}
+
+// analyzeClassMethodSignature analyzes a function signature for class methods.
+// For class methods: self (required), [context], [kwargs], ...args
+// Valid signatures:
+//   - func(self *Instance, ...args)        — manual Fields management
+//   - func(self *Instance, ctx context.Context, ...args)
+//   - func(self *Instance, kwargs Kwargs, ...args)
+//   - func(self *Instance, ctx context.Context, kwargs Kwargs, ...args)
+//   - func(self *T, ...args)              — typed receiver (T must match Constructor return)
+//   - func(self *T, ctx context.Context, ...args)
+//   - func(self *T, kwargs Kwargs, ...args)
+//   - func(self *T, ctx context.Context, kwargs Kwargs, ...args)
+func analyzeClassMethodSignature(fnType reflect.Type, receiverType reflect.Type) *FunctionSignature {
+	if cached, ok := signatureCache.Load(fnType); ok {
+		return cached.(*FunctionSignature)
+	}
+
+	numIn := fnType.NumIn()
+	numOut := fnType.NumOut()
+	isVariadic := fnType.IsVariadic()
+	variadicIndex := -1
+	if isVariadic {
+		variadicIndex = numIn - 1
+	}
+
+	if numIn == 0 {
+		panic("class method must have at least one parameter (receiver)")
+	}
+
+	firstParam := fnType.In(0)
+	typedReceiver := firstParam != instanceType
+
+	if !typedReceiver && firstParam != instanceType {
+		panic(fmt.Sprintf("class method must have *Instance or typed pointer as first parameter, got %v", firstParam))
+	}
+
+	if typedReceiver && receiverType != nil && firstParam != receiverType {
+		panic(fmt.Sprintf("typed receiver mismatch: constructor uses %v but method uses %v", receiverType, firstParam))
+	}
+
+	paramOffset := 1
+
+	hasContext := numIn > paramOffset && fnType.In(paramOffset) == contextType
+	if hasContext {
+		paramOffset++
+	}
+
+	hasKwargs := numIn > paramOffset && fnType.In(paramOffset) == kwargsType
+	if hasKwargs {
+		paramOffset++
+	}
+	maxPosArgs := numIn - paramOffset
+
+	paramTypes := make([]reflect.Type, numIn)
+	for i := 0; i < numIn; i++ {
+		paramTypes[i] = fnType.In(i)
+	}
+
+	returnIsError := numOut == 2 && fnType.Out(1).Implements(errorType)
+
+	sig := &FunctionSignature{
+		numIn:          numIn,
+		numOut:         numOut,
+		isVariadic:     isVariadic,
+		variadicIndex:  variadicIndex,
+		hasContext:     hasContext,
+		hasKwargs:      hasKwargs,
+		paramOffset:    paramOffset,
+		maxPosArgs:     maxPosArgs,
+		paramTypes:     paramTypes,
+		returnIsError:  returnIsError,
+		typedReceiver:  typedReceiver,
+	}
+
 	signatureCache.Store(fnType, sig)
 	return sig
 }

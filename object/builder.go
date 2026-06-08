@@ -32,15 +32,16 @@ var (
 
 // FunctionSignature holds pre-computed function analysis
 type FunctionSignature struct {
-	numIn, numOut int
-	isVariadic    bool
-	variadicIndex int
-	hasContext    bool
-	hasKwargs     bool
-	paramOffset   int
-	maxPosArgs    int
-	paramTypes    []reflect.Type // Cache parameter types
-	returnIsError bool           // Cache if second return is error
+	numIn, numOut  int
+	isVariadic     bool
+	variadicIndex  int
+	hasContext     bool
+	hasKwargs      bool
+	paramOffset    int
+	maxPosArgs     int
+	paramTypes     []reflect.Type // Cache parameter types
+	returnIsError  bool           // Cache if second return is error
+	typedReceiver  bool           // True if first param is a custom type (not *Instance)
 }
 
 // LibraryBuilder provides a fluent API for creating scriptling libraries.

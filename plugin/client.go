@@ -230,44 +230,40 @@ func (c *Client) Close() error {
 	return nil
 }
 
-func (c *Client) CallFunction(ctx context.Context, environmentID, name string, args []Value, kwargs map[string]Value) (Value, error) {
+func (c *Client) CallFunction(ctx context.Context, name string, args []Value, kwargs map[string]Value) (Value, error) {
 	var result Value
 	err := c.call(ctx, "function.call", functionCallParams{
-		EnvironmentID: environmentID,
-		Name:          name,
-		Args:          args,
-		Kwargs:        kwargs,
+		Name:   name,
+		Args:   args,
+		Kwargs: kwargs,
 	}, &result)
 	return result, err
 }
 
-func (c *Client) NewObject(ctx context.Context, environmentID, class string, args []Value, kwargs map[string]Value) (*RemoteRef, error) {
+func (c *Client) NewObject(ctx context.Context, class string, args []Value, kwargs map[string]Value) (*RemoteRef, error) {
 	var result RemoteRef
 	err := c.call(ctx, "object.new", objectNewParams{
-		EnvironmentID: environmentID,
-		Class:         class,
-		Args:          args,
-		Kwargs:        kwargs,
+		Class:  class,
+		Args:   args,
+		Kwargs: kwargs,
 	}, &result)
 	return &result, err
 }
 
-func (c *Client) CallMethod(ctx context.Context, environmentID, objectID, method string, args []Value, kwargs map[string]Value) (Value, error) {
+func (c *Client) CallMethod(ctx context.Context, objectID, method string, args []Value, kwargs map[string]Value) (Value, error) {
 	var result Value
 	err := c.call(ctx, "object.call_method", methodCallParams{
-		EnvironmentID: environmentID,
-		ObjectID:      objectID,
-		Method:        method,
-		Args:          args,
-		Kwargs:        kwargs,
+		ObjectID: objectID,
+		Method:   method,
+		Args:     args,
+		Kwargs:   kwargs,
 	}, &result)
 	return result, err
 }
 
-func (c *Client) DestroyObject(ctx context.Context, environmentID, objectID string) error {
+func (c *Client) DestroyObject(ctx context.Context, objectID string) error {
 	return c.call(ctx, "object.destroy", objectDestroyParams{
-		EnvironmentID: environmentID,
-		ObjectID:      objectID,
+		ObjectID: objectID,
 	}, nil)
 }
 

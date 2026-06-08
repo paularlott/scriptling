@@ -19,6 +19,10 @@ const (
 	valueDict     = "dict"
 	valueRemote   = "remote"
 	valueCallback = "callback"
+
+	ModeRPC     = "rpc"
+	ModeWrapper = "wrapper"
+	ModeScript  = "script"
 )
 
 func declaredLibraryName(name string) string {
@@ -41,32 +45,27 @@ type Schema struct {
 	Functions []FunctionSchema `json:"functions"`
 	Classes   []ClassSchema    `json:"classes"`
 	Constants []ConstantSchema `json:"constants"`
-	Wrappers  []WrapperSchema  `json:"wrappers,omitempty"`
 }
 
 type FunctionSchema struct {
-	Name        string   `json:"name"`
-	Args        []string `json:"args,omitempty"`
-	Description string   `json:"description,omitempty"`
-	Wrapper     string   `json:"wrapper,omitempty"`
-	Hidden      bool     `json:"hidden,omitempty"`
+	Name        string `json:"name"`
+	Mode        string `json:"mode"`
+	Description string `json:"description,omitempty"`
+	Source      string `json:"source,omitempty"`
 }
 
 type ClassSchema struct {
 	Name        string           `json:"name"`
+	Mode        string           `json:"mode"`
 	Description string           `json:"description,omitempty"`
 	Constructor FunctionSchema   `json:"constructor,omitempty"`
 	Methods     []FunctionSchema `json:"methods,omitempty"`
+	Source      string           `json:"source,omitempty"`
 }
 
 type ConstantSchema struct {
 	Name  string `json:"name"`
 	Value Value  `json:"value"`
-}
-
-type WrapperSchema struct {
-	Name   string `json:"name"`
-	Source string `json:"source"`
 }
 
 type Value struct {
@@ -78,10 +77,9 @@ type Value struct {
 }
 
 type RemoteRef struct {
-	Library       string `json:"library"`
-	Class         string `json:"class"`
-	EnvironmentID string `json:"environment_id"`
-	ID            string `json:"id"`
+	Library string `json:"library"`
+	Class   string `json:"class"`
+	ID      string `json:"id"`
 }
 
 type rpcRequest struct {
@@ -133,37 +131,32 @@ type libraryInfo struct {
 }
 
 type functionCallParams struct {
-	EnvironmentID string           `json:"environment_id,omitempty"`
-	Name          string           `json:"name"`
-	Args          []Value          `json:"args,omitempty"`
-	Kwargs        map[string]Value `json:"kwargs,omitempty"`
+	Name   string           `json:"name"`
+	Args   []Value          `json:"args,omitempty"`
+	Kwargs map[string]Value `json:"kwargs,omitempty"`
 }
 
 type objectNewParams struct {
-	EnvironmentID string           `json:"environment_id,omitempty"`
-	Class         string           `json:"class"`
-	Args          []Value          `json:"args,omitempty"`
-	Kwargs        map[string]Value `json:"kwargs,omitempty"`
+	Class  string           `json:"class"`
+	Args   []Value          `json:"args,omitempty"`
+	Kwargs map[string]Value `json:"kwargs,omitempty"`
 }
 
 type methodCallParams struct {
-	EnvironmentID string           `json:"environment_id,omitempty"`
-	ObjectID      string           `json:"object_id"`
-	Method        string           `json:"method"`
-	Args          []Value          `json:"args,omitempty"`
-	Kwargs        map[string]Value `json:"kwargs,omitempty"`
+	ObjectID string           `json:"object_id"`
+	Method   string           `json:"method"`
+	Args     []Value          `json:"args,omitempty"`
+	Kwargs   map[string]Value `json:"kwargs,omitempty"`
 }
 
 type objectDestroyParams struct {
-	EnvironmentID string `json:"environment_id,omitempty"`
-	ObjectID      string `json:"object_id"`
+	ObjectID string `json:"object_id"`
 }
 
 type callbackCallParams struct {
-	EnvironmentID string           `json:"environment_id,omitempty"`
-	CallbackID    string           `json:"callback_id"`
-	Args          []Value          `json:"args,omitempty"`
-	Kwargs        map[string]Value `json:"kwargs,omitempty"`
+	CallbackID string           `json:"callback_id"`
+	Args       []Value          `json:"args,omitempty"`
+	Kwargs     map[string]Value `json:"kwargs,omitempty"`
 }
 
 type callbackRef struct {

@@ -5,7 +5,7 @@ These examples demonstrate Scriptling plugins loaded from executable files with
 
 ## Go Plugin
 
-`hello-go` uses typed Go functions and native resource classes:
+`hello-go` demonstrates all registration styles in one plugin:
 
 ```bash
 go build -o /tmp/scriptling-plugins/hello-go ./examples/plugins/hello-go
@@ -14,31 +14,20 @@ scriptling --plugin-dir /tmp/scriptling-plugins -c 'import plugin.hello; print(p
 
 It exposes:
 
-- `plugin.hello.greet(name)`
-- `plugin.hello.Config(values).get(key)`
+- `plugin.hello.greet(name)` — function via `RegisterFunc`
+- `plugin.hello.label(name)` — function via `RegisterFunc`
+- `plugin.hello.Config(name).get(key)` — class via `RegisterClass`
+- `plugin.hello.Counter(start).inc(amount)` — class via `RegisterClass`
+- `plugin.hello.default_name` — constant
 
-## Builder Plugin
+## Wrapper Plugin
 
-`builder` shows the environment-style builder path:
+`mixed-wrapper` shows a registered function with a custom Scriptling wrapper:
 
-```go
-fb := object.NewFunctionBuilder()
-fb.Function(func(name string) string { return "built:" + name })
-server.RegisterFunc("label", fb.Build())
-
-cb := object.NewClassBuilder("Counter")
-server.RegisterClass(cb.Build())
+```bash
+go build -o /tmp/scriptling-plugins/wrap ./examples/plugins/mixed-wrapper
+scriptling --plugin-dir /tmp/scriptling-plugins -c 'import plugin.wrap; print(plugin.wrap.greet("Ada"))'
 ```
-
-## Embedded Scriptling Plugin
-
-`embedded-scriptling` registers Scriptling-authored behavior that is embedded in
-the plugin executable at startup.
-
-## Mixed Wrapper Plugin
-
-`mixed-wrapper` exposes one generated function and one plugin-supplied wrapper
-that calls a hidden RPC helper with `scriptling.plugin.call_function`.
 
 ## Bash Plugin
 
