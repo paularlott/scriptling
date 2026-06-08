@@ -619,6 +619,21 @@ func runComprehensivePluginHelper() {
 			self.cleaned = true
 		})
 
+	type fragile struct{}
+	fragileClass := object.NewClassBuilder("Fragile").
+		Constructor(func(shouldFail bool) (*fragile, error) {
+			if shouldFail {
+				return nil, fmt.Errorf("construction failed")
+			}
+			return &fragile{}, nil
+		}).
+		Method("ok", func(self *fragile) string {
+			return "yes"
+		})
+
+	strictFn := object.NewFunctionBuilder()
+	strictFn.Function(func(s string) string { return "got:" + s })
+
 	kvClass := object.NewClassBuilder("KVStore").
 		Method("__init__", func(self *object.Instance) {
 			self.Fields["data"] = object.NewStringDict(map[string]object.Object{})
@@ -649,9 +664,11 @@ func runComprehensivePluginHelper() {
 	server.RegisterFunc("echo_dict", echoDict)
 	server.RegisterFunc("fail", failFn)
 	server.RegisterFunc("destroyed_count", destroyedCountFn)
+	server.RegisterFunc("strict", strictFn)
 	server.RegisterClass(counterClass)
 	server.RegisterClass(resourceClass)
 	server.RegisterClass(kvClass)
+	server.RegisterClass(fragileClass)
 	server.Constant("VERSION", "1.0.0")
 	server.Constant("MAX_SIZE", 100)
 	_ = server.Run()
@@ -800,6 +817,104 @@ func TestReleaseExplicit(t *testing.T) {
 		err := Release(inst)
 		if err == nil {
 			t.Error("expected error for non-plugin instance")
+		}
+	})
+}
+
+func TestProxyErrorPropagation(t *testing.T) {
+	if os.Getenv("SCRIPTLING_PLUGIN_COMPREHENSIVE_HELPER") == "1" {
+		runComprehensivePluginHelper()
+		return
+	}
+
+	dir := t.TempDir()
+	helper := filepath.Join(dir, "comprehensive")
+	if runtime.GOOS == "windows" {
+		helper += ".bat"
+	}
+	writeComprehensivePluginHelper(t, helper)
+
+	manager := NewManager()
+	manager.AddDir(dir)
+	if err := manager.Load(context.Background()); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	defer manager.Close()
+
+	p := scriptling.New()
+	RegisterLibraries(p, manager)
+
+	t.Run("constructor fail propagates as error", func(t *testing.T) {
+		result, err := p.Eval(`import plugin.comprehensive
+plugin.comprehensive.Fragile(true)
+`)
+		if err == nil {
+			t.Fatal("expected error from failed constructor")
+		}
+		if _, ok := result.(*object.Error); !ok {
+			t.Fatalf("expected *object.Error result, got %T: %v", result, result)
+		}
+	})
+
+	t.Run("constructor fail prevents method call", func(t *testing.T) {
+		_, err := p.Eval(`import plugin.comprehensive
+f = plugin.comprehensive.Fragile(true)
+f.ok()
+`)
+		if err == nil {
+			t.Fatal("expected error — constructor fail should stop execution")
+		}
+	})
+
+	t.Run("constructor success allows method call", func(t *testing.T) {
+		result, err := p.Eval(`import plugin.comprehensive
+f = plugin.comprehensive.Fragile(0)
+f.ok()
+`)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		s, ok := result.(*object.String)
+		if !ok || s.StringValue() != "yes" {
+			t.Fatalf("expected 'yes', got %v", result)
+		}
+	})
+
+	t.Run("wrong arg types to constructor propagates as error", func(t *testing.T) {
+		result, err := p.Eval(`import plugin.comprehensive
+plugin.comprehensive.Fragile("not a bool")
+`)
+		if err == nil {
+			t.Fatal("expected error from wrong argument type to constructor")
+		}
+		if _, ok := result.(*object.Error); !ok {
+			t.Fatalf("expected *object.Error result, got %T: %v", result, result)
+		}
+	})
+
+	t.Run("method call on released object", func(t *testing.T) {
+		result, err := p.Eval(`import plugin.comprehensive
+r = plugin.comprehensive.Resource("test")
+scriptling.plugin.release(r)
+r.name()
+`)
+		if err == nil {
+			t.Fatal("expected error from method call on released object")
+		}
+		if _, ok := result.(*object.Error); !ok {
+			t.Fatalf("expected *object.Error result, got %T: %v", result, result)
+		}
+	})
+
+	t.Run("call_function unknown propagates as error", func(t *testing.T) {
+		result, err := p.Eval(`import plugin.comprehensive
+scriptling.plugin.call_function("plugin.comprehensive", "nonexistent")
+`)
+		if err == nil {
+			t.Fatal("expected error from unknown function")
+		}
+		if _, ok := result.(*object.Error); !ok {
+			t.Fatalf("expected *object.Error result, got %T: %v", result, result)
 		}
 	})
 }

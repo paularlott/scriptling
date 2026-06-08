@@ -2724,3 +2724,117 @@ dc_len = len(dc.keys())
 		t.Errorf("copy dict: d=%v dc=%v", dLen, dcLen)
 	}
 }
+
+func TestTypedReceiverPropertyExposesStructFields(t *testing.T) {
+	p := New()
+
+	type playerData struct {
+		Name  string
+		Score int
+	}
+
+	cb := object.NewClassBuilder("Player")
+	cb.Constructor(func(name string, score int) *playerData {
+		return &playerData{Name: name, Score: score}
+	})
+	cb.Property("name", func(self *playerData) string {
+		return self.Name
+	})
+	cb.Property("score", func(self *playerData) int {
+		return self.Score
+	})
+	cb.PropertyWithSetter("score",
+		func(self *playerData) int {
+			return self.Score
+		},
+		func(self *playerData, v int) {
+			self.Score = v
+		},
+	)
+	cb.Method("add_score", func(self *playerData, n int) int {
+		self.Score += n
+		return self.Score
+	})
+	p.SetObjectVar("Player", cb.Build())
+
+	t.Run("read-only property exposes struct field", func(t *testing.T) {
+		result, err := p.Eval(`
+p = Player("Ada", 10)
+n = p.name
+s = p.score
+`)
+		if err != nil {
+			t.Fatalf("Eval failed: %v", err)
+		}
+		_ = result
+		name, _ := p.GetVarAsString("n")
+		if name != "Ada" {
+			t.Errorf("name: expected 'Ada', got %q", name)
+		}
+		score, _ := p.GetVar("s")
+		if score != int64(10) {
+			t.Errorf("score: expected 10, got %v", score)
+		}
+	})
+
+	t.Run("read-only property rejects assignment", func(t *testing.T) {
+		_, err := p.Eval(`
+p = Player("Ada", 10)
+p.name = "Bob"
+`)
+		if err == nil {
+			t.Fatal("expected error assigning to read-only property")
+		}
+	})
+
+	t.Run("property setter writes to struct field", func(t *testing.T) {
+		result, err := p.Eval(`
+p = Player("Ada", 10)
+p.score = 50
+s = p.score
+`)
+		if err != nil {
+			t.Fatalf("Eval failed: %v", err)
+		}
+		_ = result
+		score, _ := p.GetVar("s")
+		if score != int64(50) {
+			t.Errorf("score after setter: expected 50, got %v", score)
+		}
+	})
+
+	t.Run("setter and method both mutate same field", func(t *testing.T) {
+		result, err := p.Eval(`
+p = Player("Ada", 0)
+p.score = 10
+p.add_score(5)
+s = p.score
+`)
+		if err != nil {
+			t.Fatalf("Eval failed: %v", err)
+		}
+		_ = result
+		score, _ := p.GetVar("s")
+		if score != int64(15) {
+			t.Errorf("score after setter+method: expected 15, got %v", score)
+		}
+	})
+
+	t.Run("struct fields still not directly accessible", func(t *testing.T) {
+		result, err := p.Eval(`
+p = Player("Ada", 10)
+raw_name = p.Name
+`)
+		if err != nil {
+			t.Fatalf("Eval failed: %v", err)
+		}
+		_ = result
+		rawName, _ := p.GetVar("raw_name")
+		if rawName == nil {
+			return
+		}
+		if _, ok := rawName.(*object.Null); !ok {
+			t.Errorf("expected raw struct field Name to be None, got %v", rawName)
+		}
+	})
+}
