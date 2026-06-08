@@ -407,6 +407,40 @@ func sendServerRequestExpectError(t *testing.T, server *Server, method string, p
 	return resp.Error
 }
 
+func decodeResponses(t *testing.T, buf *bytes.Buffer) []rpcResponse {
+	t.Helper()
+	var responses []rpcResponse
+	dec := json.NewDecoder(buf)
+	for {
+		var resp rpcResponse
+		if err := dec.Decode(&resp); err != nil {
+			break
+		}
+		responses = append(responses, resp)
+	}
+	return responses
+}
+
+func mapByID(responses []rpcResponse) map[int64]rpcResponse {
+	m := make(map[int64]rpcResponse, len(responses))
+	for _, r := range responses {
+		m[r.ID] = r
+	}
+	return m
+}
+
+func intResult(results map[int64]rpcResponse, id int64) (int64, bool) {
+	r, ok := results[id]
+	if !ok || r.Error != nil {
+		return 0, false
+	}
+	var v Value
+	if err := json.Unmarshal(r.Result, &v); err != nil {
+		return 0, false
+	}
+	return numberToInt64(v.Value), true
+}
+
 func TestServerDataTypeRoundtrips(t *testing.T) {
 	resetGlobals(t)
 	echoInt := object.NewFunctionBuilder()
@@ -793,20 +827,128 @@ func TestServerMultipleRequests(t *testing.T) {
 		t.Fatalf("RunIO: %v", err)
 	}
 
-	dec := json.NewDecoder(&output)
-	var r1, r2 rpcResponse
-	dec.Decode(&r1)
-	dec.Decode(&r2)
+	responses := decodeResponses(t, &output)
+	results := mapByID(responses)
 
-	var v1, v2 Value
-	json.Unmarshal(r1.Result, &v1)
-	json.Unmarshal(r2.Result, &v2)
-
-	if numberToInt64(v1.Value) != 10 {
-		t.Errorf("first call: expected 10, got %v", v1)
+	if v, ok := intResult(results, 1); !ok || v != 10 {
+		t.Errorf("ID 1: expected 10, got results=%v", results)
 	}
-	if numberToInt64(v2.Value) != 20 {
-		t.Errorf("second call: expected 20, got %v", v2)
+	if v, ok := intResult(results, 2); !ok || v != 20 {
+		t.Errorf("ID 2: expected 20, got results=%v", results)
+	}
+}
+
+func TestServerConcurrentSlowCallDoesNotBlock(t *testing.T) {
+	resetGlobals(t)
+
+	slowDone := make(chan struct{})
+	slowFB := object.NewFunctionBuilder()
+	slowFB.Function(func(x int) int {
+		<-slowDone
+		return x * 10
+	})
+
+	fastFB := object.NewFunctionBuilder()
+	fastFB.Function(func(x int) int { return x + 1 })
+
+	server := NewServer("concurrent", "1.0.0", "test").
+		RegisterFunc("slow", slowFB).
+		RegisterFunc("fast", fastFB)
+
+	var input bytes.Buffer
+	var output bytes.Buffer
+	enc := json.NewEncoder(&input)
+
+	enc.Encode(rpcRequest{JSONRPC: "2.0", ID: 1, Method: "function.call", Params: functionCallParams{
+		Name: "slow", Args: []Value{{Type: valueInt, Value: int64(5)}},
+	}})
+	enc.Encode(rpcRequest{JSONRPC: "2.0", ID: 2, Method: "function.call", Params: functionCallParams{
+		Name: "fast", Args: []Value{{Type: valueInt, Value: int64(7)}},
+	}})
+	enc.Encode(rpcRequest{JSONRPC: "2.0", ID: 3, Method: "plugin.shutdown", Params: nil})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- server.RunIO(&input, &output)
+	}()
+
+	close(slowDone)
+
+	if err := <-done; err != nil {
+		t.Fatalf("RunIO: %v", err)
+	}
+
+	responses := decodeResponses(t, &output)
+	results := mapByID(responses)
+
+	if v, ok := intResult(results, 1); !ok || v != 50 {
+		t.Errorf("slow call (ID 1): expected 50, got results=%v", results)
+	}
+	if v, ok := intResult(results, 2); !ok || v != 8 {
+		t.Errorf("fast call (ID 2): expected 8, got results=%v", results)
+	}
+}
+
+type echoData struct {
+	prefix string
+}
+
+func TestServerConcurrentMethodCalls(t *testing.T) {
+	resetGlobals(t)
+
+	class := object.NewClassBuilder("Echo").
+		Constructor(func(prefix string) *echoData {
+			return &echoData{prefix: prefix}
+		}).
+		Method("echo", func(self *echoData, msg string) string {
+			return self.prefix + ":" + msg
+		})
+
+	server := NewServer("echo", "1.0.0", "test").RegisterClass(class)
+
+	ref := sendServerRequest[RemoteRef](t, server, "object.new", objectNewParams{
+		Class: "Echo",
+		Args:  []Value{{Type: valueString, Value: "test"}},
+	})
+
+	var input bytes.Buffer
+	var output bytes.Buffer
+	enc := json.NewEncoder(&input)
+
+	for i := 0; i < 5; i++ {
+		enc.Encode(rpcRequest{JSONRPC: "2.0", ID: int64(i + 1), Method: "object.call_method", Params: methodCallParams{
+			ObjectID: ref.ID, Method: "echo",
+			Args:     []Value{{Type: valueString, Value: fmt.Sprintf("msg%d", i)}},
+		}})
+	}
+	enc.Encode(rpcRequest{JSONRPC: "2.0", ID: 99, Method: "plugin.shutdown", Params: nil})
+
+	if err := server.RunIO(&input, &output); err != nil {
+		t.Fatalf("RunIO: %v", err)
+	}
+
+	responses := decodeResponses(t, &output)
+	results := mapByID(responses)
+
+	for i := 0; i < 5; i++ {
+		r, ok := results[int64(i+1)]
+		if !ok {
+			t.Errorf("missing response for ID %d", i+1)
+			continue
+		}
+		if r.Error != nil {
+			t.Errorf("ID %d: unexpected error: %v", i+1, r.Error)
+			continue
+		}
+		var v Value
+		if err := json.Unmarshal(r.Result, &v); err != nil {
+			t.Errorf("ID %d: decode: %v", i+1, err)
+			continue
+		}
+		expected := fmt.Sprintf("test:msg%d", i)
+		if v.Value != expected {
+			t.Errorf("ID %d: expected %q, got %q", i+1, expected, v.Value)
+		}
 	}
 }
 
