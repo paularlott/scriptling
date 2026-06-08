@@ -23,6 +23,9 @@ type Server struct {
 	functions   map[string]*funcEntry
 	classes     map[string]*classEntry
 	constants   map[string]Value
+	objects     map[string]*serverObject
+	objectsMu   sync.RWMutex
+	nextObject  atomic.Int64
 }
 
 type funcEntry struct {
@@ -35,12 +38,10 @@ type classEntry struct {
 	source string
 }
 
-type serverClass struct {
-	name        string
-	objectClass *object.Class
-	objects     map[string]*object.Instance
-	nextID      atomic.Int64
-	mu          sync.Mutex
+type serverObject struct {
+	class    *object.Class
+	instance *object.Instance
+	mu       sync.Mutex
 }
 
 func NewServer(name, version, description string) *Server {
@@ -51,6 +52,7 @@ func NewServer(name, version, description string) *Server {
 		functions:   make(map[string]*funcEntry),
 		classes:     make(map[string]*classEntry),
 		constants:   make(map[string]Value),
+		objects:     make(map[string]*serverObject),
 	}
 }
 
@@ -258,11 +260,6 @@ func (s *Server) newObject(params objectNewParams) (*RemoteRef, error) {
 		return nil, fmt.Errorf("unknown class %s", params.Class)
 	}
 	class := entry.class
-	sc := &serverClass{
-		name:        class.Name,
-		objectClass: class,
-		objects:     make(map[string]*object.Instance),
-	}
 	instance := &object.Instance{Class: class, Fields: make(map[string]object.Object)}
 	if init, ok := class.LookupMember("__init__"); ok {
 		objArgs, err := transportValuesToObjects(params.Args)
@@ -279,9 +276,13 @@ func (s *Server) newObject(params objectNewParams) (*RemoteRef, error) {
 			return nil, errors.New(errObj.Message)
 		}
 	}
-	id := strconv.FormatInt(sc.nextID.Add(1), 10)
-	sc.objects[id] = instance
-	s.storeClass(sc)
+	id := strconv.FormatInt(s.nextObject.Add(1), 10)
+	s.objectsMu.Lock()
+	s.objects[id] = &serverObject{
+		class:    class,
+		instance: instance,
+	}
+	s.objectsMu.Unlock()
 	return &RemoteRef{
 		Library: s.name,
 		Class:   class.Name,
@@ -290,17 +291,18 @@ func (s *Server) newObject(params objectNewParams) (*RemoteRef, error) {
 }
 
 func (s *Server) callMethod(params methodCallParams) (Value, error) {
-	sc := s.loadClass(params.ObjectID)
-	if sc == nil {
+	remoteObject := s.loadObject(params.ObjectID)
+	if remoteObject == nil {
 		return Value{}, fmt.Errorf("unknown object %s", params.ObjectID)
 	}
-	sc.mu.Lock()
-	instance, ok := sc.objects[params.ObjectID]
-	sc.mu.Unlock()
-	if !ok {
+	remoteObject.mu.Lock()
+	defer remoteObject.mu.Unlock()
+	instance := remoteObject.instance
+	class := remoteObject.class
+	if instance == nil || class == nil {
 		return Value{}, fmt.Errorf("unknown object %s", params.ObjectID)
 	}
-	methodObj, ok := sc.objectClass.LookupMember(params.Method)
+	methodObj, ok := class.LookupMember(params.Method)
 	if !ok {
 		return Value{}, fmt.Errorf("unknown method %s", params.Method)
 	}
@@ -321,49 +323,27 @@ func (s *Server) callMethod(params methodCallParams) (Value, error) {
 }
 
 func (s *Server) destroyObject(params objectDestroyParams) error {
-	sc := s.loadClass(params.ObjectID)
-	if sc == nil {
-		return nil
-	}
-	sc.mu.Lock()
-	instance, ok := sc.objects[params.ObjectID]
+	s.objectsMu.Lock()
+	remoteObject, ok := s.objects[params.ObjectID]
 	if ok {
-		delete(sc.objects, params.ObjectID)
+		delete(s.objects, params.ObjectID)
 	}
-	sc.mu.Unlock()
-	if !ok {
+	s.objectsMu.Unlock()
+	if !ok || remoteObject == nil {
 		return nil
 	}
-	if del, exists := sc.objectClass.LookupMember("__del__"); exists {
-		evaluator.ApplyFunction(context.Background(), del, []object.Object{instance}, nil, object.NewEnvironment())
+	remoteObject.mu.Lock()
+	defer remoteObject.mu.Unlock()
+	if del, exists := remoteObject.class.LookupMember("__del__"); exists {
+		evaluator.ApplyFunction(context.Background(), del, []object.Object{remoteObject.instance}, nil, object.NewEnvironment())
 	}
 	return nil
 }
 
-var serverClasses sync.Map
-
-type classRef struct {
-	sc *serverClass
-}
-
-func (s *Server) storeClass(sc *serverClass) {
-	serverClasses.Store(sc, &classRef{sc: sc})
-}
-
-func (s *Server) loadClass(objectID string) *serverClass {
-	var found *serverClass
-	serverClasses.Range(func(key, value any) bool {
-		sc := key.(*serverClass)
-		sc.mu.Lock()
-		_, ok := sc.objects[objectID]
-		sc.mu.Unlock()
-		if ok {
-			found = sc
-			return false
-		}
-		return true
-	})
-	return found
+func (s *Server) loadObject(objectID string) *serverObject {
+	s.objectsMu.RLock()
+	defer s.objectsMu.RUnlock()
+	return s.objects[objectID]
 }
 
 func decodeParams(params any, target any) error {
