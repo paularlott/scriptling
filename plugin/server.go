@@ -104,26 +104,34 @@ func (s *Server) Run() error {
 func (s *Server) RunIO(input io.Reader, output io.Writer) error {
 	decoder := json.NewDecoder(bufio.NewReader(input))
 	encoder := json.NewEncoder(output)
-	writeMu := sync.Mutex{}
+	var writeMu sync.Mutex
+	var wg sync.WaitGroup
 
 	for {
 		var req rpcRequest
 		if err := decoder.Decode(&req); err != nil {
 			if err == io.EOF {
+				wg.Wait()
 				return nil
 			}
 			return err
 		}
-		resp := s.handleRequest(req)
-		writeMu.Lock()
-		err := encoder.Encode(resp)
-		writeMu.Unlock()
-		if err != nil {
+		if req.Method == "plugin.shutdown" {
+			resp := s.handleRequest(req)
+			writeMu.Lock()
+			err := encoder.Encode(resp)
+			writeMu.Unlock()
+			wg.Wait()
 			return err
 		}
-		if req.Method == "plugin.shutdown" {
-			return nil
-		}
+		wg.Add(1)
+		go func(req rpcRequest) {
+			defer wg.Done()
+			resp := s.handleRequest(req)
+			writeMu.Lock()
+			encoder.Encode(resp)
+			writeMu.Unlock()
+		}(req)
 	}
 }
 
