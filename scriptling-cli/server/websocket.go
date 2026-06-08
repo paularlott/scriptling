@@ -10,7 +10,6 @@ import (
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/object"
-	"github.com/paularlott/scriptling/scriptling-cli/setup"
 )
 
 // websocketUpgrader upgrades HTTP connections to WebSocket
@@ -87,7 +86,7 @@ func (s *Server) runWebSocketHandler(handlerRef string, clientObj *object.Instan
 
 	// Create fresh scriptling environment
 	p := scriptling.New()
-	setup.Scriptling(p, s.config.LibDirs, false, s.config.AllowedPaths, s.config.DisabledLibs, s.config.SecretRegistry, Log, s.config.DockerSock, s.config.PodmanSock)
+	s.setupScriptling(p)
 	s.applyPackLoader(p)
 
 	// Import the library

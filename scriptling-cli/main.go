@@ -20,6 +20,7 @@ import (
 	scriptlingcontainer "github.com/paularlott/scriptling/extlibs/container"
 	"github.com/paularlott/scriptling/extlibs/secretprovider"
 	"github.com/paularlott/scriptling/object"
+	scriptlingplugin "github.com/paularlott/scriptling/plugin"
 	"github.com/paularlott/scriptling/scriptling-cli/bootstrap"
 
 	"github.com/paularlott/scriptling/scriptling-cli/pack"
@@ -105,6 +106,13 @@ func main() {
 				Global:     true,
 				EnvVars:    []string{"SCRIPTLING_LIBPATH"},
 				ConfigPath: []string{"libpath"},
+			},
+			&cli.StringSliceFlag{
+				Name:       "plugin-dir",
+				Usage:      "Directory containing plugin executables (can be repeated)",
+				Global:     true,
+				EnvVars:    []string{"SCRIPTLING_PLUGIN_DIR"},
+				ConfigPath: []string{"plugins", "dirs"},
 			},
 			&cli.StringFlag{
 				Name:         "log-level",
@@ -312,6 +320,14 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	libDirs := bootstrap.BuildLibDirs(baseDir, cmd.GetStringSlice("libpath"))
 	setup.Factories(libDirs, allowedPaths, disabledLibs, secretRegistry, globalLogger, cmd.GetString("docker-host"), cmd.GetString("podman-host"))
 	setup.Scriptling(p, libDirs, true, allowedPaths, disabledLibs, secretRegistry, globalLogger, cmd.GetString("docker-host"), cmd.GetString("podman-host"))
+	pluginManager, err := loadPluginManager(ctx, cmd.GetStringSlice("plugin-dir"))
+	if err != nil {
+		return err
+	}
+	if pluginManager != nil {
+		defer pluginManager.Close()
+		scriptlingplugin.RegisterLibraries(p, pluginManager)
+	}
 
 	packages := cmd.GetStringSlice("package")
 	insecure := cmd.GetBool("insecure")
@@ -367,6 +383,13 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 	if err != nil {
 		return err
 	}
+	pluginManager, err := loadPluginManager(ctx, cmd.GetStringSlice("plugin-dir"))
+	if err != nil {
+		return err
+	}
+	if pluginManager != nil {
+		defer pluginManager.Close()
+	}
 	return server.RunServer(ctx, server.ServerConfig{
 		Address:        address,
 		ScriptFile:     file,
@@ -377,6 +400,8 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 		BearerToken:    cmd.GetString("bearer-token"),
 		AllowedPaths:   bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths")),
 		DisabledLibs:   cmd.GetStringSlice("disable-lib"),
+		PluginDirs:     cmd.GetStringSlice("plugin-dir"),
+		PluginManager:  pluginManager,
 		MCPToolsDir:    cmd.GetString("mcp-tools"),
 		MCPExecTool:    cmd.GetBool("mcp-exec-script"),
 		KVStoragePath:  cmd.GetString("kv-storage"),
@@ -388,6 +413,27 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 		TLSKey:         cmd.GetString("tls-key"),
 		TLSGenerate:    cmd.GetBool("tls-generate"),
 	})
+}
+
+func loadPluginManager(ctx context.Context, dirs []string) (*scriptlingplugin.Manager, error) {
+	if len(dirs) == 0 {
+		return nil, nil
+	}
+	manager := scriptlingplugin.NewManager()
+	for _, dir := range dirs {
+		manager.AddDir(dir)
+	}
+	if err := manager.Load(ctx); err != nil {
+		return nil, err
+	}
+	for _, warning := range manager.Warnings() {
+		if globalLogger != nil {
+			globalLogger.Warn("Plugin load warning", "warning", warning)
+		} else {
+			fmt.Fprintf(os.Stderr, "Plugin warning: %s\n", warning)
+		}
+	}
+	return manager, nil
 }
 
 func loadSecretRegistry(path string) (*secretprovider.Registry, error) {
