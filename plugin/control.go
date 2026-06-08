@@ -106,7 +106,7 @@ func NewControlLibrary(manager *Manager) *object.Library {
 				if len(args) != 1 {
 					return pluginErr("release() requires one plugin object")
 				}
-				if err := Release(args[0]); err != nil {
+				if err := ReleaseWithContext(ctx, args[0]); err != nil {
 					return pluginErr(err.Error())
 				}
 				return &object.Null{}

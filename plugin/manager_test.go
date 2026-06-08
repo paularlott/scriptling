@@ -26,6 +26,10 @@ func TestManagerLoadsExecutableAndRegistersProxyLibraries(t *testing.T) {
 		runWrapperPluginTestHelper()
 		return
 	}
+	if os.Getenv("SCRIPTLING_PLUGIN_CRASH_HELPER") == "1" {
+		runCrashPluginTestHelper()
+		return
+	}
 
 	dir := t.TempDir()
 	helper := filepath.Join(dir, "hello-plugin")
@@ -136,6 +140,23 @@ func writeWrapperPluginHelper(t *testing.T, path string) {
 	}
 }
 
+func writeCrashPluginHelper(t *testing.T, path string) {
+	t.Helper()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+	var script string
+	if runtime.GOOS == "windows" {
+		script = "@echo off\r\nset SCRIPTLING_PLUGIN_CRASH_HELPER=1\r\n\"" + exe + "\" -test.run=TestManagerLoadsExecutableAndRegistersProxyLibraries --\r\n"
+	} else {
+		script = "#!/bin/sh\nSCRIPTLING_PLUGIN_CRASH_HELPER=1 exec \"" + exe + "\" -test.run=TestManagerLoadsExecutableAndRegistersProxyLibraries --\n"
+	}
+	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
+		t.Fatalf("write crash helper: %v", err)
+	}
+}
+
 func runPluginTestHelper() {
 	configBuilder := object.NewClassBuilder("Config").
 		Method("__init__", func(self *object.Instance, name string) {
@@ -173,6 +194,33 @@ def greet(name):
 `)
 	_ = server.Run()
 	os.Exit(0)
+}
+
+func runCrashPluginTestHelper() {
+	decoder := json.NewDecoder(os.Stdin)
+	var req rpcRequest
+	if err := decoder.Decode(&req); err != nil {
+		os.Exit(2)
+	}
+	resp := rpcResponse{JSONRPC: "2.0", ID: req.ID}
+	result := handshakeResult{
+		Protocol:  ProtocolVersion,
+		Transport: "json",
+		Library: libraryInfo{
+			Name:        "crash",
+			Version:     "1.0.0",
+			Description: "crashing test plugin",
+		},
+		Capabilities: []string{"remote_objects"},
+		Schema:       Schema{},
+	}
+	raw, err := json.Marshal(result)
+	if err != nil {
+		os.Exit(2)
+	}
+	resp.Result = raw
+	_ = json.NewEncoder(os.Stdout).Encode(resp)
+	os.Exit(2)
 }
 
 func mustRawJSON(value any) json.RawMessage {
@@ -854,6 +902,71 @@ func TestManagerEdgeCases(t *testing.T) {
 		w := m.Warnings()
 		if len(w) != 1 || w[0] != "test warning" {
 			t.Fatalf("expected ['test warning'], got %v", w)
+		}
+	})
+
+	t.Run("ManagerHealthReportsExitedPlugin", func(t *testing.T) {
+		dir := t.TempDir()
+		helper := filepath.Join(dir, "crash-plugin")
+		if runtime.GOOS == "windows" {
+			helper += ".bat"
+		}
+		writeCrashPluginHelper(t, helper)
+
+		m := NewManager()
+		m.AddDir(dir)
+		if err := m.Load(context.Background()); err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		defer m.Close()
+
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			health := m.Health()
+			if err := health["plugin.crash"]; err != nil {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("expected plugin.crash to become unhealthy, health=%v", health)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	})
+
+	t.Run("ManagerCrashHandlerReportsExitedPlugin", func(t *testing.T) {
+		dir := t.TempDir()
+		helper := filepath.Join(dir, "crash-plugin")
+		if runtime.GOOS == "windows" {
+			helper += ".bat"
+		}
+		writeCrashPluginHelper(t, helper)
+
+		type crashEvent struct {
+			name string
+			err  error
+		}
+		events := make(chan crashEvent, 1)
+
+		m := NewManager()
+		m.SetCrashHandler(func(name string, err error) {
+			events <- crashEvent{name: name, err: err}
+		})
+		m.AddDir(dir)
+		if err := m.Load(context.Background()); err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		defer m.Close()
+
+		select {
+		case event := <-events:
+			if event.name != "plugin.crash" {
+				t.Fatalf("expected plugin.crash, got %q", event.name)
+			}
+			if event.err == nil {
+				t.Fatal("expected crash error")
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("expected crash handler event")
 		}
 	})
 }

@@ -119,13 +119,30 @@ func (s *Server) RunIO(input io.Reader, output io.Writer) error {
 		pending: make(map[int64]chan rpcResponse),
 	}
 	var wg sync.WaitGroup
+	var firstErr error
+	var firstErrMu sync.Mutex
+	recordErr := func(err error) {
+		if err == nil {
+			return
+		}
+		firstErrMu.Lock()
+		if firstErr == nil {
+			firstErr = err
+		}
+		firstErrMu.Unlock()
+	}
+	getErr := func() error {
+		firstErrMu.Lock()
+		defer firstErrMu.Unlock()
+		return firstErr
+	}
 
 	for {
 		var msg rpcMessage
 		if err := decoder.Decode(&msg); err != nil {
 			if err == io.EOF {
 				wg.Wait()
-				return nil
+				return getErr()
 			}
 			return err
 		}
@@ -144,8 +161,9 @@ func (s *Server) RunIO(input io.Reader, output io.Writer) error {
 			runtime.writeMu.Lock()
 			err := runtime.encoder.Encode(resp)
 			runtime.writeMu.Unlock()
+			recordErr(err)
 			wg.Wait()
-			return err
+			return getErr()
 		}
 		wg.Add(1)
 		go func(req rpcRequest) {
@@ -153,8 +171,9 @@ func (s *Server) RunIO(input io.Reader, output io.Writer) error {
 			ctx := context.WithValue(context.Background(), callbackRuntimeKey{}, runtime)
 			resp := s.handleRequest(ctx, req)
 			runtime.writeMu.Lock()
-			runtime.encoder.Encode(resp)
+			err := runtime.encoder.Encode(resp)
 			runtime.writeMu.Unlock()
+			recordErr(err)
 		}(req)
 	}
 }

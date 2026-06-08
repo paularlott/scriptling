@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -17,10 +18,11 @@ import (
 )
 
 type Manager struct {
-	dirs     []string
-	clients  map[string]*Client
-	warnings []string
-	mu       sync.RWMutex
+	dirs         []string
+	clients      map[string]*Client
+	warnings     []string
+	crashHandler func(name string, err error)
+	mu           sync.RWMutex
 }
 
 func NewManager() *Manager {
@@ -70,6 +72,7 @@ func (m *Manager) Load(ctx context.Context) error {
 			}
 			m.clients[name] = client
 			m.mu.Unlock()
+			m.installCrashHandler(name, client)
 		}
 	}
 	return nil
@@ -111,6 +114,37 @@ func (m *Manager) List() []Metadata {
 	return out
 }
 
+func (m *Manager) Health() map[string]error {
+	m.mu.RLock()
+	clients := make(map[string]*Client, len(m.clients))
+	for name, client := range m.clients {
+		clients[name] = client
+	}
+	m.mu.RUnlock()
+
+	unhealthy := make(map[string]error)
+	for name, client := range clients {
+		if err := client.Health(); err != nil {
+			unhealthy[name] = err
+		}
+	}
+	return unhealthy
+}
+
+func (m *Manager) SetCrashHandler(handler func(name string, err error)) {
+	m.mu.Lock()
+	m.crashHandler = handler
+	clients := make(map[string]*Client, len(m.clients))
+	for name, client := range m.clients {
+		clients[name] = client
+	}
+	m.mu.Unlock()
+
+	for name, client := range clients {
+		m.installCrashHandler(name, client)
+	}
+}
+
 func (m *Manager) Get(name string) (*Client, bool) {
 	normalized := NormalizeLibraryName(name)
 	m.mu.RLock()
@@ -123,6 +157,20 @@ func (m *Manager) addWarning(format string, args ...any) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.warnings = append(m.warnings, fmt.Sprintf(format, args...))
+}
+
+func (m *Manager) installCrashHandler(name string, client *Client) {
+	if client == nil {
+		return
+	}
+	client.setExitHandler(func(err error) {
+		m.mu.RLock()
+		handler := m.crashHandler
+		m.mu.RUnlock()
+		if handler != nil {
+			handler(name, err)
+		}
+	})
 }
 
 func NormalizeLibraryName(name string) string {
@@ -146,6 +194,13 @@ type Client struct {
 	mu             sync.Mutex
 	writeMu        sync.Mutex
 	done           chan struct{}
+	waitDone       chan struct{}
+	stateMu        sync.Mutex
+	readErr        error
+	waitErr        error
+	closing        atomic.Bool
+	exitNotified   atomic.Bool
+	exitHandler    func(error)
 }
 
 type pendingCall struct {
@@ -185,8 +240,10 @@ func startClient(ctx context.Context, path string) (*Client, error) {
 		pending:        make(map[int64]*pendingCall),
 		callbackOwners: make(map[string]*pendingCall),
 		done:           make(chan struct{}),
+		waitDone:       make(chan struct{}),
 	}
 	go client.readLoop()
+	go client.waitLoop()
 
 	handshakeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -229,14 +286,45 @@ func (c *Client) Metadata() Metadata {
 func (c *Client) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	_ = c.call(ctx, "plugin.shutdown", nil, nil, nil)
+	c.closing.Store(true)
+	var first error
+	if err := c.call(ctx, "plugin.shutdown", nil, nil, nil); err != nil {
+		first = err
+	}
 	if c.stdin != nil {
 		_ = c.stdin.Close()
 	}
-	if c.cmd != nil && c.cmd.Process != nil {
-		_ = c.cmd.Wait()
+	select {
+	case <-c.waitDone:
+		if err := c.waitError(); err != nil && first == nil {
+			first = err
+		}
+	case <-ctx.Done():
+		if first == nil {
+			first = ctx.Err()
+		}
 	}
-	return nil
+	return first
+}
+
+func (c *Client) Health() error {
+	select {
+	case <-c.waitDone:
+		if err := c.waitError(); err != nil {
+			return err
+		}
+		return errors.New("plugin process exited")
+	default:
+	}
+	select {
+	case <-c.done:
+		if err := c.readError(); err != nil {
+			return err
+		}
+		return errors.New("plugin stdio closed")
+	default:
+		return nil
+	}
 }
 
 func (c *Client) CallFunction(ctx context.Context, name string, args []Value, kwargs map[string]Value) (Value, error) {
@@ -398,6 +486,9 @@ func (c *Client) readLoop() {
 	for {
 		var msg rpcMessage
 		if err := decoder.Decode(&msg); err != nil {
+			if err != io.EOF {
+				c.setReadErr(err)
+			}
 			return
 		}
 		if msg.Method != "" {
@@ -415,6 +506,74 @@ func (c *Client) readLoop() {
 			call.response <- rpcResponse{JSONRPC: msg.JSONRPC, ID: msg.ID, Result: msg.Result, Error: msg.Error}
 		}
 	}
+}
+
+func (c *Client) waitLoop() {
+	defer close(c.waitDone)
+	if c.cmd == nil {
+		return
+	}
+	err := c.cmd.Wait()
+	if err != nil {
+		c.setWaitErr(err)
+	}
+	c.notifyExit()
+}
+
+func (c *Client) setReadErr(err error) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	c.readErr = err
+}
+
+func (c *Client) readError() error {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	return c.readErr
+}
+
+func (c *Client) setWaitErr(err error) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	c.waitErr = err
+}
+
+func (c *Client) waitError() error {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	return c.waitErr
+}
+
+func (c *Client) setExitHandler(handler func(error)) {
+	c.stateMu.Lock()
+	c.exitHandler = handler
+	c.stateMu.Unlock()
+
+	select {
+	case <-c.waitDone:
+		c.notifyExit()
+	default:
+	}
+}
+
+func (c *Client) notifyExit() {
+	if c.closing.Load() {
+		return
+	}
+	c.stateMu.Lock()
+	handler := c.exitHandler
+	err := c.waitErr
+	c.stateMu.Unlock()
+	if handler == nil {
+		return
+	}
+	if !c.exitNotified.CompareAndSwap(false, true) {
+		return
+	}
+	if err == nil {
+		err = errors.New("plugin process exited")
+	}
+	handler(err)
 }
 
 func (c *Client) routeRequest(req rpcRequest) rpcResponse {

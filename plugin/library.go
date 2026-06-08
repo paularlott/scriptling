@@ -274,6 +274,12 @@ func callPluginMethod(ctx context.Context, remote *remoteObject, name string, kw
 }
 
 func Release(obj object.Object) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	return ReleaseWithContext(ctx, obj)
+}
+
+func ReleaseWithContext(ctx context.Context, obj object.Object) error {
 	instance, ok := obj.(*object.Instance)
 	if !ok {
 		return fmt.Errorf("expected plugin instance")
@@ -282,10 +288,10 @@ func Release(obj object.Object) error {
 	if !ok {
 		return fmt.Errorf("expected plugin instance")
 	}
-	return releaseRemote(remote, instance)
+	return releaseRemote(ctx, remote, instance)
 }
 
-func releaseRemote(remote *remoteObject, instance *object.Instance) error {
+func releaseRemote(ctx context.Context, remote *remoteObject, instance *object.Instance) error {
 	if remote.Released {
 		return nil
 	}
@@ -294,13 +300,13 @@ func releaseRemote(remote *remoteObject, instance *object.Instance) error {
 		_ = object.ClearGCReleaseHook(instance)
 		delete(instance.Fields, remoteFieldName)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
 	return remote.Client.DestroyObject(ctx, remote.ID)
 }
 
 func installRemoteFinalizer(instance *object.Instance, remote *remoteObject) {
 	_ = object.SetGCReleaseHook(instance, func() {
-		_ = releaseRemote(remote, nil)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = releaseRemote(ctx, remote, nil)
 	})
 }
