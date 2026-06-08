@@ -41,6 +41,7 @@ type FunctionSignature struct {
 	maxPosArgs    int
 	paramTypes    []reflect.Type // Cache parameter types
 	returnIsError bool           // Cache if second return is error
+	typedReceiver bool           // True if first param is a custom type (not *Instance)
 }
 
 // LibraryBuilder provides a fluent API for creating scriptling libraries.
@@ -566,6 +567,15 @@ func convertObjectToValue(obj Object, targetType reflect.Type) (reflect.Value, O
 		return reflect.Value{}, err
 
 	case reflect.Interface:
+		if wrapper, ok := obj.(*ClientWrapper); ok && wrapper.Client != nil {
+			clientValue := reflect.ValueOf(wrapper.Client)
+			if clientValue.Type().AssignableTo(targetType) {
+				return clientValue, nil
+			}
+			if clientValue.Type().Implements(targetType) {
+				return clientValue, nil
+			}
+		}
 		// If the target type is object.Object, return the object as-is
 		if targetType.Implements(objectType) {
 			return reflect.ValueOf(obj), nil
@@ -581,7 +591,11 @@ func convertObjectToValue(obj Object, targetType reflect.Type) (reflect.Value, O
 		case *Boolean:
 			return reflect.ValueOf(v.value), nil
 		case *Null:
-			return reflect.ValueOf(nil), nil
+			if targetType.Kind() == reflect.Interface {
+				nilVal := reflect.New(targetType).Elem()
+				return nilVal, nil
+			}
+			return reflect.Value{}, nil
 		case *List:
 			// Convert to []any
 			items := make([]interface{}, len(v.Elements))
@@ -635,6 +649,15 @@ func convertObjectToValue(obj Object, targetType reflect.Type) (reflect.Value, O
 			return resultMap, nil
 		}
 		return reflect.Value{}, newTypeError("DICT", obj.Type().String())
+
+	case reflect.Pointer:
+		if wrapper, ok := obj.(*ClientWrapper); ok && wrapper.Client != nil {
+			clientValue := reflect.ValueOf(wrapper.Client)
+			if clientValue.Type().AssignableTo(targetType) {
+				return clientValue, nil
+			}
+		}
+		return reflect.Value{}, newTypeError(targetType.String(), obj.Type().String())
 
 	default:
 		return reflect.Value{}, newTypeError("supported type", targetType.String())
@@ -701,8 +724,8 @@ func convertValueToObject(v interface{}) Object {
 	case map[string]interface{}:
 		pairs := make(map[string]DictPair)
 		for key, item := range val {
-		pairs[DictKey(NewString(key))] = DictPair{
-			Key:   NewString(key),
+			pairs[DictKey(NewString(key))] = DictPair{
+				Key:   NewString(key),
 				Value: convertValueToObject(item),
 			}
 		}

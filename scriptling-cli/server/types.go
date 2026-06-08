@@ -11,6 +11,7 @@ import (
 	"github.com/paularlott/logger"
 	mcp_lib "github.com/paularlott/mcp"
 	"github.com/paularlott/scriptling/extlibs/secretprovider"
+	scriptlingplugin "github.com/paularlott/scriptling/plugin"
 	"github.com/paularlott/scriptling/scriptling-cli/pack"
 )
 
@@ -27,10 +28,12 @@ type ServerConfig struct {
 	BearerToken    string
 	AllowedPaths   []string // Filesystem path restrictions (empty = no restrictions)
 	DisabledLibs   []string // Built-in libraries to disable (empty = all enabled)
-	MCPToolsDir    string   // Empty means MCP disabled
-	MCPExecTool    bool     // Enable code execution tool
-	KVStoragePath  string   // Empty means in-memory KV store
-	WebRoot        string   // Directory to serve static files from (empty = disabled)
+	PluginDirs     []string
+	PluginManager  *scriptlingplugin.Manager
+	MCPToolsDir    string // Empty means MCP disabled
+	MCPExecTool    bool   // Enable code execution tool
+	KVStoragePath  string // Empty means in-memory KV store
+	WebRoot        string // Directory to serve static files from (empty = disabled)
 	SecretRegistry *secretprovider.Registry
 	DockerSock     string
 	PodmanSock     string
@@ -64,7 +67,7 @@ type Server struct {
 	middleware       string
 	notFoundHandler  string
 	staticRoutes     map[string]string
-	webRootZip       *zip.ReadCloser  // non-nil when WebRoot is a .zip file
+	webRootZip       *zip.ReadCloser // non-nil when WebRoot is a .zip file
 	mu               sync.RWMutex
 	watcher          *fsnotify.Watcher
 	reloadDebounce   *time.Timer
