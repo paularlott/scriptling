@@ -5,7 +5,9 @@ import (
 )
 
 const (
+	// ProtocolVersion is the JSON-RPC plugin protocol version supported by this host.
 	ProtocolVersion = "1.0"
+	// NamespacePrefix is the host-owned namespace for discovered plugin libraries.
 	NamespacePrefix = "plugin."
 
 	valueNull     = "null"
@@ -26,6 +28,7 @@ func declaredLibraryName(name string) string {
 	return name
 }
 
+// Metadata describes a loaded plugin library.
 type Metadata struct {
 	Name         string   `json:"name"`
 	Version      string   `json:"version"`
@@ -35,18 +38,21 @@ type Metadata struct {
 	Schema       Schema   `json:"schema"`
 }
 
+// Schema describes functions, classes, and constants exposed by a plugin.
 type Schema struct {
 	Functions []FunctionSchema `json:"functions"`
 	Classes   []ClassSchema    `json:"classes"`
 	Constants []ConstantSchema `json:"constants"`
 }
 
+// FunctionSchema describes a plugin function or supplied wrapper source.
 type FunctionSchema struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	Source      string `json:"source,omitempty"`
 }
 
+// ClassSchema describes a plugin class and its methods.
 type ClassSchema struct {
 	Name        string           `json:"name"`
 	Description string           `json:"description,omitempty"`
@@ -55,11 +61,13 @@ type ClassSchema struct {
 	Source      string           `json:"source,omitempty"`
 }
 
+// ConstantSchema describes a plugin constant.
 type ConstantSchema struct {
 	Name  string `json:"name"`
 	Value Value  `json:"value"`
 }
 
+// Value is the JSON-RPC transport representation of Scriptling values.
 type Value struct {
 	Type     string           `json:"type"`
 	Value    any              `json:"value,omitempty"`
@@ -69,12 +77,14 @@ type Value struct {
 	Callback *CallbackRef     `json:"callback,omitempty"`
 }
 
+// RemoteRef identifies an object stored in a plugin process.
 type RemoteRef struct {
 	Library string `json:"library"`
 	Class   string `json:"class"`
 	ID      string `json:"id"`
 }
 
+// CallbackRef identifies a callback valid during one outer plugin call.
 type CallbackRef struct {
 	ID string `json:"id"`
 }

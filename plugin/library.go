@@ -18,6 +18,10 @@ type ScriptLibraryRegistrar interface {
 	RegisterScriptLibrary(name string, script string) error
 }
 
+// DefaultReleaseTimeout is used by Release and GC finalizers when no caller
+// context is available. Use ReleaseWithContext for request-scoped cleanup.
+const DefaultReleaseTimeout = 2 * time.Second
+
 func RegisterLibraries(registrar Registrar, manager *Manager) {
 	if manager == nil {
 		return
@@ -274,11 +278,12 @@ func callPluginMethod(ctx context.Context, remote *remoteObject, name string, kw
 }
 
 func Release(obj object.Object) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), DefaultReleaseTimeout)
 	defer cancel()
 	return ReleaseWithContext(ctx, obj)
 }
 
+// ReleaseWithContext explicitly releases a remote plugin object using ctx.
 func ReleaseWithContext(ctx context.Context, obj object.Object) error {
 	instance, ok := obj.(*object.Instance)
 	if !ok {
@@ -305,7 +310,7 @@ func releaseRemote(ctx context.Context, remote *remoteObject, instance *object.I
 
 func installRemoteFinalizer(instance *object.Instance, remote *remoteObject) {
 	_ = object.SetGCReleaseHook(instance, func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), DefaultReleaseTimeout)
 		defer cancel()
 		_ = releaseRemote(ctx, remote, nil)
 	})

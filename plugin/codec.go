@@ -22,16 +22,17 @@ type remoteObject struct {
 }
 
 type callbackSet struct {
-	next      atomic.Int64
 	callbacks map[string]object.Object
 }
+
+var nextCallbackID atomic.Int64
 
 func newCallbackSet() *callbackSet {
 	return &callbackSet{callbacks: make(map[string]object.Object)}
 }
 
 func (s *callbackSet) add(fn object.Object) string {
-	id := "cb-" + strconv.FormatInt(s.next.Add(1), 10)
+	id := "cb-" + strconv.FormatInt(nextCallbackID.Add(1), 10)
 	s.callbacks[id] = fn
 	return id
 }

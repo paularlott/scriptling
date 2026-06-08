@@ -5,6 +5,8 @@ import (
 	"fmt"
 )
 
+// Callback is a host callback passed into a plugin call. It is valid only
+// until the outer plugin function, constructor, or method returns.
 type Callback interface {
 	Call(ctx context.Context, args ...any) (Value, error)
 }

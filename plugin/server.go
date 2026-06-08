@@ -9,7 +9,9 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -163,7 +165,13 @@ func (s *Server) RunIO(input io.Reader, output io.Writer) error {
 			runtime.writeMu.Unlock()
 			recordErr(err)
 			wg.Wait()
-			return getErr()
+			if err := getErr(); err != nil {
+				return err
+			}
+			if resp.Error != nil {
+				return resp.Error
+			}
+			return nil
 		}
 		wg.Add(1)
 		go func(req rpcRequest) {
@@ -332,7 +340,7 @@ func (s *Server) schema() Schema {
 func (s *Server) callFunction(ctx context.Context, params functionCallParams) (Value, error) {
 	entry, ok := s.functions[params.Name]
 	if !ok || entry.builtin == nil {
-		return Value{}, fmt.Errorf("unknown function %s", params.Name)
+		return Value{}, fmt.Errorf("unknown function %s (available: %s)", params.Name, availableMapKeys(s.functions))
 	}
 	args, err := transportValuesToObjects(params.Args)
 	if err != nil {
@@ -352,7 +360,7 @@ func (s *Server) callFunction(ctx context.Context, params functionCallParams) (V
 func (s *Server) newObject(ctx context.Context, params objectNewParams) (*RemoteRef, error) {
 	entry, ok := s.classes[params.Class]
 	if !ok || entry.class == nil {
-		return nil, fmt.Errorf("unknown class %s", params.Class)
+		return nil, fmt.Errorf("unknown class %s (available: %s)", params.Class, availableMapKeys(s.classes))
 	}
 	class := entry.class
 	instance := &object.Instance{Class: class, Fields: make(map[string]object.Object)}
@@ -399,7 +407,7 @@ func (s *Server) callMethod(ctx context.Context, params methodCallParams) (Value
 	}
 	methodObj, ok := class.LookupMember(params.Method)
 	if !ok {
-		return Value{}, fmt.Errorf("unknown method %s", params.Method)
+		return Value{}, fmt.Errorf("unknown method %s on %s (available: %s)", params.Method, class.Name, availableObjectMapKeys(class.Methods))
 	}
 	objArgs, err := transportValuesToObjects(params.Args)
 	if err != nil {
@@ -415,6 +423,36 @@ func (s *Server) callMethod(ctx context.Context, params methodCallParams) (Value
 		return Value{}, errors.New(errObj.Message)
 	}
 	return objectToValue(result)
+}
+
+func availableMapKeys[T any](items map[string]T) string {
+	if len(items) == 0 {
+		return "none"
+	}
+	names := make([]string, 0, len(items))
+	for name := range items {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
+}
+
+func availableObjectMapKeys(items map[string]object.Object) string {
+	if len(items) == 0 {
+		return "none"
+	}
+	names := make([]string, 0, len(items))
+	for name := range items {
+		if name == "__init__" || name == "__del__" {
+			continue
+		}
+		names = append(names, name)
+	}
+	if len(names) == 0 {
+		return "none"
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
 }
 
 func (s *Server) destroyObject(params objectDestroyParams) error {
