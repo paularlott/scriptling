@@ -1,13 +1,70 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/paularlott/logger"
 	"github.com/paularlott/scriptling/lint"
 	"github.com/paularlott/scriptling/scriptling-cli/bootstrap"
 )
+
+type cliLogEntry struct {
+	level string
+	msg   string
+	args  []any
+}
+
+type cliCaptureLogger struct {
+	mu      sync.Mutex
+	entries []cliLogEntry
+}
+
+func (l *cliCaptureLogger) Trace(msg string, keysAndValues ...any) {
+	l.record("trace", msg, keysAndValues...)
+}
+func (l *cliCaptureLogger) Debug(msg string, keysAndValues ...any) {
+	l.record("debug", msg, keysAndValues...)
+}
+func (l *cliCaptureLogger) Info(msg string, keysAndValues ...any) {
+	l.record("info", msg, keysAndValues...)
+}
+func (l *cliCaptureLogger) Warn(msg string, keysAndValues ...any) {
+	l.record("warn", msg, keysAndValues...)
+}
+func (l *cliCaptureLogger) Error(msg string, keysAndValues ...any) {
+	l.record("error", msg, keysAndValues...)
+}
+func (l *cliCaptureLogger) Fatal(msg string, keysAndValues ...any) {
+	l.record("fatal", msg, keysAndValues...)
+}
+func (l *cliCaptureLogger) With(key string, value any) logger.Logger {
+	return l
+}
+func (l *cliCaptureLogger) WithError(err error) logger.Logger { return l }
+func (l *cliCaptureLogger) WithGroup(group string) logger.Logger {
+	return l
+}
+func (l *cliCaptureLogger) record(level, msg string, keysAndValues ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	args := append([]any(nil), keysAndValues...)
+	l.entries = append(l.entries, cliLogEntry{level: level, msg: msg, args: args})
+}
+func (l *cliCaptureLogger) snapshot() []cliLogEntry {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := make([]cliLogEntry, len(l.entries))
+	copy(out, l.entries)
+	return out
+}
 
 func TestBuildLibDirs(t *testing.T) {
 	t.Run("base dir only when no extras", func(t *testing.T) {
@@ -66,6 +123,60 @@ func TestBuildLibDirs(t *testing.T) {
 			t.Errorf("expected empty slice, got %v", dirs)
 		}
 	})
+}
+
+func TestLoadPluginManagerLogsPluginCrash(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell plugin helper is unix-only")
+	}
+
+	dir := t.TempDir()
+	helper := filepath.Join(dir, "cli-crash-plugin")
+	script := `#!/bin/sh
+read req
+echo '{"jsonrpc":"2.0","id":1,"result":{"protocol":"1.0","transport":"json","library":{"name":"cli-crash","version":"1.0.0","description":"crash test"},"capabilities":[],"schema":{"functions":[],"classes":[],"constants":[]}}}'
+sleep 0.05
+exit 2
+`
+	if err := os.WriteFile(helper, []byte(script), 0755); err != nil {
+		t.Fatalf("write helper: %v", err)
+	}
+
+	previousLogger := globalLogger
+	logs := &cliCaptureLogger{}
+	globalLogger = logs
+	defer func() {
+		globalLogger = previousLogger
+	}()
+
+	manager, err := loadPluginManager(context.Background(), []string{dir})
+	if err != nil {
+		t.Fatalf("loadPluginManager: %v", err)
+	}
+	if manager == nil {
+		t.Fatal("expected plugin manager")
+	}
+	defer manager.Close()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, entry := range logs.snapshot() {
+			if entry.level == "error" && entry.msg == "Plugin process exited" && containsLogPair(entry.args, "plugin", "plugin.cli-crash") {
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("expected crash log entry, got %#v", logs.snapshot())
+}
+
+func containsLogPair(args []any, key string, value any) bool {
+	for i := 0; i+1 < len(args); i += 2 {
+		if args[i] == key && args[i+1] == value {
+			return true
+		}
+	}
+	return false
 }
 
 func TestParseAllowedPaths(t *testing.T) {

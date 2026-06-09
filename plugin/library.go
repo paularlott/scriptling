@@ -102,6 +102,26 @@ func buildLibrarySource(metadata Metadata) string {
 				builder.WriteString(strconv.Quote(method.Name))
 				builder.WriteString(", *args, **kwargs)\n")
 			}
+			for _, property := range cls.Properties {
+				builder.WriteString("    @property\n")
+				builder.WriteString("    def ")
+				builder.WriteString(property.Name)
+				builder.WriteString("(self):\n")
+				builder.WriteString("        return scriptling.plugin.call_method(self._plugin_remote, ")
+				builder.WriteString(strconv.Quote(property.Name))
+				builder.WriteString(")\n")
+				if property.Settable {
+					builder.WriteString("    @")
+					builder.WriteString(property.Name)
+					builder.WriteString(".setter\n")
+					builder.WriteString("    def ")
+					builder.WriteString(property.Name)
+					builder.WriteString("(self, value):\n")
+					builder.WriteString("        return scriptling.plugin.call_method(self._plugin_remote, ")
+					builder.WriteString(strconv.Quote(property.Name))
+					builder.WriteString(", value)\n")
+				}
+			}
 			builder.WriteString("    def __del__(self):\n")
 			builder.WriteString("        scriptling.plugin.release(self._plugin_remote)\n")
 			builder.WriteString("\n")
@@ -188,6 +208,48 @@ func buildProxyClass(client *Client, library string, schema ClassSchema) *object
 			},
 			HelpText: methodSchema.Description,
 		}
+	}
+	for _, propertySchema := range schema.Properties {
+		propertyName := propertySchema.Name
+		property := &object.Property{
+			Getter: &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if len(args) == 0 {
+						return pluginErr("plugin property requires self")
+					}
+					self, ok := args[0].(*object.Instance)
+					if !ok {
+						return pluginErr("plugin property requires instance self")
+					}
+					remote, ok := remoteFromInstance(self)
+					if !ok {
+						return pluginErr("plugin property called on non-plugin instance")
+					}
+					return callPluginMethod(ctx, remote, propertyName, object.Kwargs{}, args[1:]...)
+				},
+				HelpText: propertySchema.Description,
+			},
+		}
+		if propertySchema.Settable {
+			property.Setter = &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if len(args) == 0 {
+						return pluginErr("plugin property setter requires self")
+					}
+					self, ok := args[0].(*object.Instance)
+					if !ok {
+						return pluginErr("plugin property setter requires instance self")
+					}
+					remote, ok := remoteFromInstance(self)
+					if !ok {
+						return pluginErr("plugin property setter called on non-plugin instance")
+					}
+					return callPluginMethod(ctx, remote, propertyName, kwargs, args[1:]...)
+				},
+				HelpText: propertySchema.Description,
+			}
+		}
+		methods[propertyName] = property
 	}
 
 	return &object.Class{Name: className, Methods: methods}

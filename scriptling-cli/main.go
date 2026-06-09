@@ -419,7 +419,14 @@ func loadPluginManager(ctx context.Context, dirs []string) (*scriptlingplugin.Ma
 	if len(dirs) == 0 {
 		return nil, nil
 	}
-	manager := scriptlingplugin.NewManager()
+	manager := scriptlingplugin.NewManager(globalLogger)
+	manager.SetCrashHandler(func(name string, err error) {
+		if globalLogger != nil {
+			globalLogger.Error("Plugin process exited", "plugin", name, "error", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "Plugin crashed: %s: %v\n", name, err)
+		}
+	})
 	for _, dir := range dirs {
 		manager.AddDir(dir)
 	}

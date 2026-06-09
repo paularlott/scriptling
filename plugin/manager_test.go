@@ -13,9 +13,98 @@ import (
 	"testing"
 	"time"
 
+	"github.com/paularlott/logger"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/object"
 )
+
+type capturedLog struct {
+	level string
+	msg   string
+	args  []any
+}
+
+type captureLogger struct {
+	mu   sync.Mutex
+	logs []capturedLog
+}
+
+func (l *captureLogger) Trace(msg string, keysAndValues ...any) {
+	l.record("trace", msg, keysAndValues...)
+}
+func (l *captureLogger) Debug(msg string, keysAndValues ...any) {
+	l.record("debug", msg, keysAndValues...)
+}
+func (l *captureLogger) Info(msg string, keysAndValues ...any) {
+	l.record("info", msg, keysAndValues...)
+}
+func (l *captureLogger) Warn(msg string, keysAndValues ...any) {
+	l.record("warn", msg, keysAndValues...)
+}
+func (l *captureLogger) Error(msg string, keysAndValues ...any) {
+	l.record("error", msg, keysAndValues...)
+}
+func (l *captureLogger) Fatal(msg string, keysAndValues ...any) {
+	l.record("fatal", msg, keysAndValues...)
+}
+func (l *captureLogger) With(key string, value any) logger.Logger {
+	return &captureLoggerWith{parent: l, prefix: []any{key, value}}
+}
+func (l *captureLogger) WithError(err error) logger.Logger { return l.With("error", err) }
+func (l *captureLogger) WithGroup(group string) logger.Logger {
+	return l.With("group", group)
+}
+func (l *captureLogger) record(level, msg string, keysAndValues ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	args := append([]any(nil), keysAndValues...)
+	l.logs = append(l.logs, capturedLog{level: level, msg: msg, args: args})
+}
+func (l *captureLogger) entries() []capturedLog {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := make([]capturedLog, len(l.logs))
+	copy(out, l.logs)
+	return out
+}
+
+type captureLoggerWith struct {
+	parent *captureLogger
+	prefix []any
+}
+
+func (l *captureLoggerWith) Trace(msg string, keysAndValues ...any) {
+	l.record("trace", msg, keysAndValues...)
+}
+func (l *captureLoggerWith) Debug(msg string, keysAndValues ...any) {
+	l.record("debug", msg, keysAndValues...)
+}
+func (l *captureLoggerWith) Info(msg string, keysAndValues ...any) {
+	l.record("info", msg, keysAndValues...)
+}
+func (l *captureLoggerWith) Warn(msg string, keysAndValues ...any) {
+	l.record("warn", msg, keysAndValues...)
+}
+func (l *captureLoggerWith) Error(msg string, keysAndValues ...any) {
+	l.record("error", msg, keysAndValues...)
+}
+func (l *captureLoggerWith) Fatal(msg string, keysAndValues ...any) {
+	l.record("fatal", msg, keysAndValues...)
+}
+func (l *captureLoggerWith) With(key string, value any) logger.Logger {
+	next := append([]any(nil), l.prefix...)
+	next = append(next, key, value)
+	return &captureLoggerWith{parent: l.parent, prefix: next}
+}
+func (l *captureLoggerWith) WithError(err error) logger.Logger { return l.With("error", err) }
+func (l *captureLoggerWith) WithGroup(group string) logger.Logger {
+	return l.With("group", group)
+}
+func (l *captureLoggerWith) record(level, msg string, keysAndValues ...any) {
+	args := append([]any(nil), l.prefix...)
+	args = append(args, keysAndValues...)
+	l.parent.record(level, msg, args...)
+}
 
 func TestManagerLoadsExecutableAndRegistersProxyLibraries(t *testing.T) {
 	if os.Getenv("SCRIPTLING_PLUGIN_TEST_HELPER") == "1" {
@@ -112,6 +201,20 @@ plugin.wrap.greet("Ada")
 	if !ok || str.StringValue() != "Hello, Ada!" {
 		t.Fatalf("unexpected wrapper result: %#v", result)
 	}
+
+	result, err = p.Eval(`
+import plugin.wrap
+c = plugin.wrap.Config("Ada")
+c.name = "Grace"
+c.name + ":" + c.label
+`)
+	if err != nil {
+		t.Fatalf("property wrapper eval returned error: %v", err)
+	}
+	str, ok = result.(*object.String)
+	if !ok || str.StringValue() != "Grace:cfg:Grace" {
+		t.Fatalf("unexpected property wrapper result: %#v", result)
+	}
 }
 
 func writePluginHelper(t *testing.T, path string) {
@@ -207,8 +310,28 @@ func runWrapperPluginTestHelper() {
 		return "Hello, " + name
 	})
 
+	type config struct {
+		name string
+	}
+	configBuilder := object.NewClassBuilder("Config").
+		Constructor(func(name string) *config {
+			return &config{name: name}
+		}).
+		PropertyWithSetter("name",
+			func(self *config) string {
+				return self.name
+			},
+			func(self *config, name string) {
+				self.name = name
+			},
+		).
+		Property("label", func(self *config) string {
+			return "cfg:" + self.name
+		})
+
 	server := NewServer("wrap", "1.0.0", "wrapper test plugin")
 	server.RegisterFunc("greet", greetBuilder)
+	server.RegisterClass(configBuilder)
 	server.Wrapper("greet", `
 import scriptling.plugin
 
@@ -380,14 +503,72 @@ func TestComprehensivePlugin(t *testing.T) {
 import plugin.comprehensive
 counter = plugin.comprehensive.Counter(10)
 counter.add(5)
-counter.add(3)
-counter.get()
+counter.value = counter.value + 3
+counter.get() + counter.value + len(counter.label)
 `)
 		if err != nil {
 			t.Fatalf("Counter: %v", err)
 		}
-		if i, ok := result.(*object.Integer); !ok || i.IntValue() != 18 {
-			t.Fatalf("Counter: expected 18, got %v", result)
+		if i, ok := result.(*object.Integer); !ok || i.IntValue() != 46 {
+			t.Fatalf("Counter: expected 46, got %v", result)
+		}
+
+		_, err = p.Eval(`
+import plugin.comprehensive
+counter = plugin.comprehensive.Counter(1)
+counter.label = "nope"
+`)
+		if err == nil {
+			t.Fatal("expected read-only property assignment to fail")
+		}
+	})
+
+	t.Run("PluginLogger", func(t *testing.T) {
+		logs := &captureLogger{}
+		manager := NewManager(logs)
+		manager.AddDir(dir)
+		if err := manager.Load(context.Background()); err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		defer manager.Close()
+
+		p := scriptling.New()
+		RegisterLibraries(p, manager)
+
+		result, err := p.Eval(`
+import plugin.comprehensive
+plugin.comprehensive.log_event({"kind": "demo"}, ["a", 2, True])
+`)
+		if err != nil {
+			t.Fatalf("log_event: %v", err)
+		}
+		if s, ok := result.(*object.String); !ok || s.StringValue() != "logged" {
+			t.Fatalf("log_event result: %#v", result)
+		}
+		entries := logs.entries()
+		if len(entries) != 1 {
+			t.Fatalf("expected one log entry, got %#v", entries)
+		}
+		entry := entries[0]
+		if entry.level != "info" || entry.msg != "plugin event" {
+			t.Fatalf("unexpected log entry: %#v", entry)
+		}
+		if len(entry.args) != 8 {
+			t.Fatalf("unexpected log args: %#v", entry.args)
+		}
+		if entry.args[0] != "source" || entry.args[1] != "plugin" || entry.args[2] != "payload" || entry.args[4] != "values" || entry.args[6] != "count" {
+			t.Fatalf("unexpected log keys: %#v", entry.args)
+		}
+		payload, ok := entry.args[3].(map[string]any)
+		if !ok || payload["kind"] != "demo" {
+			t.Fatalf("unexpected payload arg: %#v", entry.args[3])
+		}
+		values, ok := entry.args[5].([]any)
+		if !ok || len(values) != 3 || values[0] != "a" || values[1] != int64(2) || values[2] != true {
+			t.Fatalf("unexpected values arg: %#v", entry.args[5])
+		}
+		if entry.args[7] != int64(4) {
+			t.Fatalf("unexpected count arg: %#v", entry.args[7])
 		}
 	})
 
@@ -813,6 +994,17 @@ func runComprehensivePluginHelper() {
 		}).
 		Method("get", func(self *counter) int {
 			return int(self.value)
+		}).
+		PropertyWithSetter("value",
+			func(self *counter) int {
+				return int(self.value)
+			},
+			func(self *counter, value int) {
+				self.value = int64(value)
+			},
+		).
+		Property("label", func(self *counter) string {
+			return fmt.Sprintf("counter:%d", self.value)
 		})
 
 	resourceClass := object.NewClassBuilder("Resource").
@@ -898,6 +1090,16 @@ func runComprehensivePluginHelper() {
 		return value
 	})
 
+	logEventFn := object.NewFunctionBuilder()
+	logEventFn.Function(func(ctx context.Context, payload map[string]any, values []any) string {
+		Logger(ctx).With("source", "plugin").Info("plugin event",
+			"payload", payload,
+			"values", values,
+			"count", len(payload)+len(values),
+		)
+		return "logged"
+	})
+
 	kvClass := object.NewClassBuilder("KVStore").
 		Method("__init__", func(self *object.Instance) {
 			self.Fields["data"] = object.NewStringDict(map[string]object.Object{})
@@ -934,6 +1136,7 @@ func runComprehensivePluginHelper() {
 	server.RegisterFunc("fire_saved_callback", fireSavedCallbackFn)
 	server.RegisterFunc("delayed_callback", delayedCallbackFn)
 	server.RegisterFunc("delayed_echo", delayedEchoFn)
+	server.RegisterFunc("log_event", logEventFn)
 	server.RegisterClass(counterClass)
 	server.RegisterClass(resourceClass)
 	server.RegisterClass(kvClass)

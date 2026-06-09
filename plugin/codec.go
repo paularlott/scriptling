@@ -175,6 +175,33 @@ func valueToObject(value Value) (object.Object, error) {
 	}
 }
 
+func transportValueToAny(value Value) any {
+	switch value.Type {
+	case "", valueNull:
+		return nil
+	case valueBool, valueString:
+		return value.Value
+	case valueInt:
+		return numberToInt64(value.Value)
+	case valueFloat:
+		return numberToFloat64(value.Value)
+	case valueList:
+		items := make([]any, 0, len(value.Items))
+		for _, item := range value.Items {
+			items = append(items, transportValueToAny(item))
+		}
+		return items
+	case valueDict:
+		entries := make(map[string]any, len(value.Entries))
+		for key, item := range value.Entries {
+			entries[key] = transportValueToAny(item)
+		}
+		return entries
+	default:
+		return value.Value
+	}
+}
+
 func valuesFromObjects(args []object.Object) ([]Value, error) {
 	return valuesFromObjectsWithCallbacks(args, nil)
 }

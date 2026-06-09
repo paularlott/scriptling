@@ -320,13 +320,22 @@ func (s *Server) schema() Schema {
 		if entry.class != nil {
 			cs.Constructor = FunctionSchema{Name: name}
 			methods := make([]FunctionSchema, 0, len(entry.class.Methods))
-			for mname := range entry.class.Methods {
+			properties := make([]PropertySchema, 0)
+			for mname, member := range entry.class.Methods {
 				if mname == "__init__" || mname == "__del__" {
+					continue
+				}
+				if property, ok := member.(*object.Property); ok {
+					properties = append(properties, PropertySchema{
+						Name:     mname,
+						Settable: property.Setter != nil,
+					})
 					continue
 				}
 				methods = append(methods, FunctionSchema{Name: mname})
 			}
 			cs.Methods = methods
+			cs.Properties = properties
 		}
 		classes = append(classes, cs)
 	}
@@ -409,6 +418,9 @@ func (s *Server) callMethod(ctx context.Context, params methodCallParams) (Value
 	if !ok {
 		return Value{}, fmt.Errorf("unknown method %s on %s (available: %s)", params.Method, class.Name, availableObjectMapKeys(class.Methods))
 	}
+	if property, ok := methodObj.(*object.Property); ok {
+		return s.callProperty(ctx, property, instance, params)
+	}
 	objArgs, err := transportValuesToObjects(params.Args)
 	if err != nil {
 		return Value{}, err
@@ -419,6 +431,43 @@ func (s *Server) callMethod(ctx context.Context, params methodCallParams) (Value
 	}
 	callArgs := append([]object.Object{instance}, objArgs...)
 	result := evaluator.ApplyFunction(ctx, methodObj, callArgs, objKwargs, object.NewEnvironment())
+	if errObj, ok := result.(*object.Error); ok {
+		return Value{}, errors.New(errObj.Message)
+	}
+	return objectToValue(result)
+}
+
+func (s *Server) callProperty(ctx context.Context, property *object.Property, instance *object.Instance, params methodCallParams) (Value, error) {
+	objArgs, err := transportValuesToObjects(params.Args)
+	if err != nil {
+		return Value{}, err
+	}
+	objKwargs, err := transportKwargsToObjects(params.Kwargs)
+	if err != nil {
+		return Value{}, err
+	}
+	var target object.Object
+	var callArgs []object.Object
+	switch len(objArgs) {
+	case 0:
+		if len(objKwargs) != 0 {
+			return Value{}, fmt.Errorf("property %s getter does not accept keyword arguments", params.Method)
+		}
+		if property.Getter == nil {
+			return Value{}, fmt.Errorf("property %s is write-only", params.Method)
+		}
+		target = property.Getter
+		callArgs = []object.Object{instance}
+	case 1:
+		if property.Setter == nil {
+			return Value{}, fmt.Errorf("can't set attribute '%s': property is read-only", params.Method)
+		}
+		target = property.Setter
+		callArgs = []object.Object{instance, objArgs[0]}
+	default:
+		return Value{}, fmt.Errorf("property %s expects zero arguments for get or one argument for set", params.Method)
+	}
+	result := evaluator.ApplyFunction(ctx, target, callArgs, objKwargs, object.NewEnvironment())
 	if errObj, ok := result.(*object.Error); ok {
 		return Value{}, errors.New(errObj.Message)
 	}
@@ -518,6 +567,8 @@ func goValueToTransport(value any) Value {
 	switch v := value.(type) {
 	case nil:
 		return Value{Type: valueNull}
+	case error:
+		return Value{Type: valueString, Value: v.Error()}
 	case object.Object:
 		encoded, err := objectToValue(v)
 		if err == nil {

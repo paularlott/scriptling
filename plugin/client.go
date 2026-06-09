@@ -15,6 +15,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/paularlott/logger"
 )
 
 type Manager struct {
@@ -22,14 +24,20 @@ type Manager struct {
 	clients      map[string]*Client
 	warnings     []string
 	crashHandler func(name string, err error)
+	logger       logger.Logger
 	mu           sync.RWMutex
 }
 
-// NewManager creates an empty plugin manager.
-func NewManager() *Manager {
-	return &Manager{
+// NewManager creates an empty plugin manager. If log is provided, plugin log
+// records emitted through Logger(ctx) are forwarded to it.
+func NewManager(log ...logger.Logger) *Manager {
+	manager := &Manager{
 		clients: make(map[string]*Client),
 	}
+	if len(log) > 0 {
+		manager.logger = log[0]
+	}
+	return manager
 }
 
 // AddDir adds a directory whose executable files should be loaded as plugins.
@@ -65,6 +73,9 @@ func (m *Manager) Load(ctx context.Context) error {
 				m.addWarning("plugin %s failed to load: %v", path, err)
 				continue
 			}
+			m.mu.RLock()
+			client.setLogger(m.logger)
+			m.mu.RUnlock()
 			name := client.Metadata().Name
 			m.mu.Lock()
 			if _, exists := m.clients[name]; exists {
@@ -154,6 +165,21 @@ func (m *Manager) SetCrashHandler(handler func(name string, err error)) {
 	}
 }
 
+// SetLogger installs the host logger used for log records emitted by plugins.
+func (m *Manager) SetLogger(log logger.Logger) {
+	m.mu.Lock()
+	m.logger = log
+	clients := make([]*Client, 0, len(m.clients))
+	for _, client := range m.clients {
+		clients = append(clients, client)
+	}
+	m.mu.Unlock()
+
+	for _, client := range clients {
+		client.setLogger(log)
+	}
+}
+
 // Get returns a loaded plugin client by short or fully-qualified library name.
 func (m *Manager) Get(name string) (*Client, bool) {
 	normalized := NormalizeLibraryName(name)
@@ -212,6 +238,7 @@ type Client struct {
 	closing        atomic.Bool
 	exitNotified   atomic.Bool
 	exitHandler    func(error)
+	logger         logger.Logger
 }
 
 type pendingCall struct {
@@ -569,6 +596,18 @@ func (c *Client) setExitHandler(handler func(error)) {
 	}
 }
 
+func (c *Client) setLogger(log logger.Logger) {
+	c.stateMu.Lock()
+	c.logger = log
+	c.stateMu.Unlock()
+}
+
+func (c *Client) getLogger() logger.Logger {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	return c.logger
+}
+
 func (c *Client) notifyExit() {
 	if c.closing.Load() {
 		return
@@ -590,9 +629,47 @@ func (c *Client) notifyExit() {
 }
 
 func (c *Client) routeRequest(req rpcRequest) rpcResponse {
-	if req.Method != "callback.call" {
+	switch req.Method {
+	case "callback.call":
+		return c.routeCallbackRequest(req)
+	case "host.log":
+		return c.routeLogRequest(req)
+	default:
 		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &RPCError{Code: -32000, Message: "unknown method " + req.Method}}
 	}
+}
+
+func (c *Client) routeLogRequest(req rpcRequest) rpcResponse {
+	var params logParams
+	if err := decodeParams(req.Params, &params); err != nil {
+		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &RPCError{Code: -32000, Message: err.Error()}}
+	}
+	log := c.getLogger()
+	if log != nil {
+		args := make([]any, 0, len(params.Args))
+		for _, arg := range params.Args {
+			args = append(args, transportValueToAny(arg))
+		}
+		switch strings.ToLower(params.Level) {
+		case "trace":
+			log.Trace(params.Message, args...)
+		case "debug":
+			log.Debug(params.Message, args...)
+		case "warn", "warning":
+			log.Warn(params.Message, args...)
+		case "error":
+			log.Error(params.Message, args...)
+		case "fatal":
+			log.Fatal(params.Message, args...)
+		default:
+			log.Info(params.Message, args...)
+		}
+	}
+	raw, _ := json.Marshal(Value{Type: valueNull})
+	return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: raw}
+}
+
+func (c *Client) routeCallbackRequest(req rpcRequest) rpcResponse {
 	var params callbackCallParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &RPCError{Code: -32000, Message: err.Error()}}
