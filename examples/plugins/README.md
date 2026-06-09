@@ -3,6 +3,33 @@
 These examples demonstrate Scriptling plugins loaded from executable files with
 `--plugin-dir`.
 
+## C Plugin
+
+`hello-c` is a feature-complete C plugin built with the Scriptling C Plugin SDK
+(`scriptling_plugin.h` / `scriptling_plugin.c`). It demonstrates functions,
+classes with constructors and destructors, read/write properties, constants,
+and callbacks.
+
+```bash
+make -C examples/plugins/hello-c
+mkdir -p /tmp/scriptling-plugins
+cp examples/plugins/hello-c/hello-c /tmp/scriptling-plugins/
+scriptling --plugin-dir /tmp/scriptling-plugins -c 'import plugin.hello; print(plugin.hello.greet("Ada"))'
+```
+
+It exposes:
+
+- `plugin.hello.greet(name)` — function
+- `plugin.hello.label(name)` — function
+- `plugin.hello.stream(callback)` — function that invokes a callback
+- `plugin.hello.Config(name).get()` — class with method
+- `plugin.hello.Counter(start).inc(amount)`, `.get()` — class with mutable state
+- `plugin.hello.Counter.value` — read/write property
+- `plugin.hello.Counter.label` — read-only property
+- `plugin.hello.default_name` — constant
+
+See `hello-c/README.md` for the full SDK documentation.
+
 ## Go Plugin
 
 `hello-go` demonstrates all registration styles in one plugin:
