@@ -58,7 +58,15 @@ type ClassSchema struct {
 	Description string           `json:"description,omitempty"`
 	Constructor FunctionSchema   `json:"constructor,omitempty"`
 	Methods     []FunctionSchema `json:"methods,omitempty"`
+	Properties  []PropertySchema `json:"properties,omitempty"`
 	Source      string           `json:"source,omitempty"`
+}
+
+// PropertySchema describes a plugin class property.
+type PropertySchema struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Settable    bool   `json:"settable,omitempty"`
 }
 
 // ConstantSchema describes a plugin constant.
@@ -173,4 +181,10 @@ type callbackCallParams struct {
 	ID     string           `json:"id"`
 	Args   []Value          `json:"args,omitempty"`
 	Kwargs map[string]Value `json:"kwargs,omitempty"`
+}
+
+type logParams struct {
+	Level   string  `json:"level"`
+	Message string  `json:"message"`
+	Args    []Value `json:"args,omitempty"`
 }

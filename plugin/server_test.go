@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/paularlott/scriptling"
@@ -72,6 +73,77 @@ func TestServerClassLifecycle(t *testing.T) {
 	})
 	if !destroyed {
 		t.Fatal("expected __del__ to run")
+	}
+}
+
+func TestServerClassProperties(t *testing.T) {
+	type counter struct {
+		value int
+	}
+	class := object.NewClassBuilder("Counter").
+		Constructor(func(start int) *counter {
+			return &counter{value: start}
+		}).
+		PropertyWithSetter("value",
+			func(self *counter) int {
+				return self.value
+			},
+			func(self *counter, value int) {
+				self.value = value
+			},
+		).
+		Property("label", func(self *counter) string {
+			return fmt.Sprintf("counter:%d", self.value)
+		})
+
+	server := NewServer("props", "1.0.0", "property test").
+		RegisterClass(class)
+
+	handshake := sendServerRequest[handshakeResult](t, server, "scriptling.handshake", handshakeParams{
+		Protocol:   ProtocolVersion,
+		Transports: []string{"json"},
+	})
+	if len(handshake.Schema.Classes) != 1 || len(handshake.Schema.Classes[0].Properties) != 2 {
+		t.Fatalf("unexpected property schema: %#v", handshake.Schema.Classes)
+	}
+
+	ref := sendServerRequest[RemoteRef](t, server, "object.new", objectNewParams{
+		Class: "Counter",
+		Args:  []Value{{Type: valueInt, Value: int64(4)}},
+	})
+
+	got := sendServerRequest[Value](t, server, "object.call_method", methodCallParams{
+		ObjectID: ref.ID,
+		Method:   "value",
+	})
+	if got.Type != valueInt || numberToInt64(got.Value) != 4 {
+		t.Fatalf("expected value 4, got %#v", got)
+	}
+
+	got = sendServerRequest[Value](t, server, "object.call_method", methodCallParams{
+		ObjectID: ref.ID,
+		Method:   "value",
+		Args:     []Value{{Type: valueInt, Value: int64(9)}},
+	})
+	if got.Type != valueNull {
+		t.Fatalf("expected null setter result, got %#v", got)
+	}
+
+	got = sendServerRequest[Value](t, server, "object.call_method", methodCallParams{
+		ObjectID: ref.ID,
+		Method:   "label",
+	})
+	if got.Type != valueString || got.Value != "counter:9" {
+		t.Fatalf("expected label counter:9, got %#v", got)
+	}
+
+	rpcErr := sendServerRequestExpectError(t, server, "object.call_method", methodCallParams{
+		ObjectID: ref.ID,
+		Method:   "label",
+		Args:     []Value{{Type: valueString, Value: "x"}},
+	})
+	if !strings.Contains(rpcErr.Message, "read-only") {
+		t.Fatalf("expected read-only property error, got %#v", rpcErr)
 	}
 }
 

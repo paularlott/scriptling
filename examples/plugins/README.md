@@ -68,3 +68,29 @@ print(events)
 EOF
 scriptling --plugin-dir /tmp/scriptling-plugins /tmp/callback-demo.sl
 ```
+
+## Property Plugin
+
+`properties` demonstrates read-only and read/write properties on a plugin class.
+
+```bash
+go build -o /tmp/scriptling-plugins/properties ./examples/plugins/properties
+cat > /tmp/properties-demo.sl <<'EOF'
+import plugin.properties
+
+c = plugin.properties.Counter(10)
+c.value = c.value + 5
+print(c.value)
+print(c.label)
+EOF
+scriptling --plugin-dir /tmp/scriptling-plugins /tmp/properties-demo.sl
+```
+
+## Logger Plugin
+
+`logger` demonstrates writing plugin logs through the host logger.
+
+```bash
+go build -o /tmp/scriptling-plugins/logger ./examples/plugins/logger
+scriptling --plugin-dir /tmp/scriptling-plugins -c 'import plugin.logger; print(plugin.logger.work("Ada", ["demo", 1]))'
+```
