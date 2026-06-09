@@ -28,14 +28,16 @@ type Manager struct {
 	mu           sync.RWMutex
 }
 
-// NewManager creates an empty plugin manager. If log is provided, plugin log
-// records emitted through Logger(ctx) are forwarded to it.
-func NewManager(log ...logger.Logger) *Manager {
+// NewManager creates an empty plugin manager. If log is not nil, plugin log
+// records emitted through Logger(ctx) are forwarded to it. If crashHandler is
+// provided, it is called when a loaded plugin process exits unexpectedly.
+func NewManager(log logger.Logger, crashHandler ...func(name string, err error)) *Manager {
 	manager := &Manager{
 		clients: make(map[string]*Client),
+		logger:  log,
 	}
-	if len(log) > 0 {
-		manager.logger = log[0]
+	if len(crashHandler) > 0 {
+		manager.crashHandler = crashHandler[0]
 	}
 	return manager
 }
