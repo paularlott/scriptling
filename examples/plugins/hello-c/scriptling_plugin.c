@@ -5,6 +5,8 @@
 #include <string.h>
 #include <stdarg.h>
 #include <math.h>
+#include <pthread.h>
+#include <stdatomic.h>
 
 /* ================================================================== */
 /*  Thread-local server pointer (for callbacks and logging)           */
@@ -552,12 +554,21 @@ struct sl_class {
 typedef struct {
     void     *data;
     sl_class *cls;
+    pthread_mutex_t mu;
 } sl_object;
 
 typedef struct {
     char     *name;
     sl_value *value;
 } sl_const_entry;
+
+/* Pending RPC call — worker threads wait on these for callback/log responses. */
+typedef struct {
+    char            *response;
+    pthread_mutex_t  mu;
+    pthread_cond_t   cv;
+    bool             done;
+} sl_pending;
 
 struct sl_server {
     char *name, *version, *desc;
@@ -567,21 +578,43 @@ struct sl_server {
     sl_class     **classes; size_t class_count, class_cap;
     sl_const_entry *consts; size_t const_count, const_cap;
 
+    /* Object store — protected by obj_rwlock. */
     sl_object   **objects;  size_t object_count, object_cap;
     int64_t       next_id;
-    int64_t       next_rpc_id;
+    pthread_rwlock_t obj_rwlock;
+
+    /* Stdout write mutex — ensures atomic JSON line writes. */
+    pthread_mutex_t write_mu;
+
+    /* Pending RPC map — worker threads register here when calling
+     * callback.call or host.log, then wait for the reader thread to
+     * deliver the response. */
+    sl_pending   **pending; size_t pending_count, pending_cap;
+    pthread_mutex_t pending_mu;
+
+    /* Atomic RPC ID counter (safe across threads). */
+    atomic_int_fast64_t next_rpc_id;
+
+    /* In-flight request counter for shutdown synchronisation. */
+    atomic_int_fast64_t in_flight;
+    pthread_mutex_t shutdown_mu;
+    pthread_cond_t  shutdown_cv;
+    bool shutting_down;
 };
 
 /* ================================================================== */
-/*  I/O helpers                                                       */
+/*  Thread-safe I/O                                                   */
 /* ================================================================== */
 
-static void send_line(const char *line) {
+static void send_line_ts(sl_server *srv, const char *line) {
+    pthread_mutex_lock(&srv->write_mu);
     fputs(line, stdout);
     fputc('\n', stdout);
     fflush(stdout);
+    pthread_mutex_unlock(&srv->write_mu);
 }
 
+/* Read one line from stdin. Only called from the reader thread. */
 static char *read_line(void) {
     sbuf buf; sb_init(&buf);
     int ch;
@@ -594,24 +627,24 @@ static char *read_line(void) {
     return buf.b;
 }
 
-static void send_error(int64_t id, const char *msg) {
+static void send_error(sl_server *srv, int64_t id, const char *msg) {
     sbuf s; sb_init(&s);
     sb_printf(&s, "{\"jsonrpc\":\"2.0\",\"id\":%lld,\"error\":{\"code\":-32000,\"message\":", (long long)id);
     sb_json_str(&s, msg, strlen(msg));
     sb_puts(&s, "}}");
-    send_line(s.b); sb_free(&s);
+    send_line_ts(srv, s.b); sb_free(&s);
 }
 
-static void send_result_null(int64_t id) {
+static void send_result_null(sl_server *srv, int64_t id) {
     sbuf s; sb_init(&s);
     sb_printf(&s, "{\"jsonrpc\":\"2.0\",\"id\":%lld,\"result\":null}", (long long)id);
-    send_line(s.b); sb_free(&s);
+    send_line_ts(srv, s.b); sb_free(&s);
 }
 
-static void send_result_json(int64_t id, const char *json) {
+static void send_result_json(sl_server *srv, int64_t id, const char *json) {
     sbuf s; sb_init(&s);
     sb_printf(&s, "{\"jsonrpc\":\"2.0\",\"id\":%lld,\"result\":%s}", (long long)id, json);
-    send_line(s.b); sb_free(&s);
+    send_line_ts(srv, s.b); sb_free(&s);
 }
 
 /* ================================================================== */
@@ -637,10 +670,11 @@ static void free_args(sl_value **args, int count) {
 }
 
 /* ================================================================== */
-/*  Object store                                                      */
+/*  Object store (thread-safe)                                        */
 /* ================================================================== */
 
-static void store_object(sl_server *srv, sl_class *cls, void *data) {
+static int64_t store_object(sl_server *srv, sl_class *cls, void *data) {
+    pthread_rwlock_wrlock(&srv->obj_rwlock);
     if (srv->object_count >= srv->object_cap) {
         srv->object_cap = srv->object_cap ? srv->object_cap * 2 : 16;
         srv->objects = realloc(srv->objects, srv->object_cap * sizeof(*srv->objects));
@@ -648,85 +682,143 @@ static void store_object(sl_server *srv, sl_class *cls, void *data) {
     sl_object *obj = calloc(1, sizeof(*obj));
     obj->cls = cls;
     obj->data = data;
-    srv->objects[srv->object_count++] = obj;
+    pthread_mutex_init(&obj->mu, NULL);
+    srv->objects[srv->object_count] = obj;
+    int64_t obj_id = (int64_t)(srv->object_count + 1);
+    srv->object_count++;
+    pthread_rwlock_unlock(&srv->obj_rwlock);
+    return obj_id;
 }
 
-static sl_object *get_object(sl_server *srv, const char *id_str) {
+static sl_object *lock_object(sl_server *srv, const char *id_str) {
     if (!id_str) return NULL;
     int64_t id = atoll(id_str);
-    if (id <= 0 || (size_t)id > srv->object_count) return NULL;
-    return srv->objects[(size_t)id - 1];
+    if (id <= 0) return NULL;
+    pthread_rwlock_rdlock(&srv->obj_rwlock);
+    if ((size_t)id > srv->object_count || !srv->objects[(size_t)id - 1]) {
+        pthread_rwlock_unlock(&srv->obj_rwlock);
+        return NULL;
+    }
+    sl_object *obj = srv->objects[(size_t)id - 1];
+    pthread_mutex_lock(&obj->mu);
+    pthread_rwlock_unlock(&srv->obj_rwlock);
+    return obj;
+}
+
+static void unlock_object(sl_object *obj) {
+    if (obj) pthread_mutex_unlock(&obj->mu);
 }
 
 static void destroy_object(sl_server *srv, const char *id_str) {
-    sl_object *obj = get_object(srv, id_str);
-    if (!obj) return;
-    size_t idx = (size_t)(atoll(id_str) - 1);
+    if (!id_str) return;
+    int64_t id = atoll(id_str);
+    if (id <= 0) return;
+    size_t idx = (size_t)(id - 1);
+    pthread_rwlock_wrlock(&srv->obj_rwlock);
+    if (idx >= srv->object_count || !srv->objects[idx]) {
+        pthread_rwlock_unlock(&srv->obj_rwlock);
+        return;
+    }
+    sl_object *obj = srv->objects[idx];
     if (obj->cls->dtor) obj->cls->dtor(obj->data);
+    pthread_mutex_destroy(&obj->mu);
     free(obj);
     srv->objects[idx] = NULL;
+    pthread_rwlock_unlock(&srv->obj_rwlock);
 }
 
 /* ================================================================== */
-/*  Forward declarations for dispatch                                 */
+/*  Pending RPC map                                                   */
 /* ================================================================== */
 
-static void dispatch_request(sl_server *srv, const char *method, const jval *params, int64_t id);
+static void pending_register(sl_server *srv, int64_t rpc_id, sl_pending *p) {
+    pthread_mutex_lock(&srv->pending_mu);
+    if ((size_t)rpc_id >= srv->pending_cap) {
+        size_t new_cap = srv->pending_cap ? srv->pending_cap : 256;
+        while (new_cap <= (size_t)rpc_id) new_cap *= 2;
+        srv->pending = realloc(srv->pending, new_cap * sizeof(*srv->pending));
+        memset(srv->pending + srv->pending_cap, 0,
+               (new_cap - srv->pending_cap) * sizeof(*srv->pending));
+        srv->pending_cap = new_cap;
+    }
+    srv->pending[rpc_id] = p;
+    pthread_mutex_unlock(&srv->pending_mu);
+}
+
+static sl_pending *pending_remove(sl_server *srv, int64_t rpc_id) {
+    pthread_mutex_lock(&srv->pending_mu);
+    sl_pending *p = NULL;
+    if ((size_t)rpc_id < srv->pending_cap) {
+        p = srv->pending[rpc_id];
+        srv->pending[rpc_id] = NULL;
+    }
+    pthread_mutex_unlock(&srv->pending_mu);
+    return p;
+}
 
 /* ================================================================== */
-/*  RPC call with nested request handling (for callbacks/logging)     */
+/*  In-flight tracking for shutdown                                   */
+/* ================================================================== */
+
+static void flight_enter(sl_server *srv) {
+    atomic_fetch_add(&srv->in_flight, 1);
+}
+
+static void flight_leave(sl_server *srv) {
+    if (atomic_fetch_sub(&srv->in_flight, 1) == 1) {
+        pthread_mutex_lock(&srv->shutdown_mu);
+        pthread_cond_broadcast(&srv->shutdown_cv);
+        pthread_mutex_unlock(&srv->shutdown_mu);
+    }
+}
+
+static void flight_wait_all(sl_server *srv) {
+    pthread_mutex_lock(&srv->shutdown_mu);
+    while (atomic_load(&srv->in_flight) > 0)
+        pthread_cond_wait(&srv->shutdown_cv, &srv->shutdown_mu);
+    pthread_mutex_unlock(&srv->shutdown_mu);
+}
+
+/* ================================================================== */
+/*  Forward declarations                                              */
+/* ================================================================== */
+
+static void dispatch_request(sl_server *srv, const char *method,
+                             const jval *params, int64_t id);
+
+/* ================================================================== */
+/*  RPC call — send request and block until reader delivers response  */
 /* ================================================================== */
 
 static char *do_rpc_call(sl_server *srv, const char *method, const char *params_json) {
-    int64_t id = ++srv->next_rpc_id;
+    int64_t id = atomic_fetch_add(&srv->next_rpc_id, 1) + 1;
+
+    sl_pending p;
+    pthread_mutex_init(&p.mu, NULL);
+    pthread_cond_init(&p.cv, NULL);
+    p.response = NULL;
+    p.done = false;
+    pending_register(srv, id, &p);
+
     {
         sbuf s; sb_init(&s);
         sb_printf(&s, "{\"jsonrpc\":\"2.0\",\"id\":%lld,\"method\":", (long long)id);
         sb_json_str(&s, method, strlen(method));
         if (params_json) { sb_puts(&s, ",\"params\":"); sb_puts(&s, params_json); }
         sb_putc(&s, '}');
-        send_line(s.b); sb_free(&s);
+        send_line_ts(srv, s.b); sb_free(&s);
     }
 
-    for (;;) {
-        char *line = read_line();
-        if (!line) return NULL;
-        jval *msg = json_parse(line);
-        if (!msg || msg->t != JT_OBJ) { jfree(msg); free(line); continue; }
+    pthread_mutex_lock(&p.mu);
+    while (!p.done)
+        pthread_cond_wait(&p.cv, &p.mu);
+    char *result = p.response;
+    pthread_mutex_unlock(&p.mu);
 
-        /* If the host sends us a request while we're waiting (shouldn't
-         * happen in single-threaded mode, but handle gracefully), respond. */
-        const char *m = jget_str(msg, "method");
-        if (m) {
-            int64_t rid = jget_int(msg, "id", -1);
-            const jval *p = jget(msg, "params");
-            dispatch_request(srv, m, p ? p : jnew(JT_NULL), rid);
-            jfree(msg); free(line);
-            continue;
-        }
-
-        int64_t rid = jget_int(msg, "id", -1);
-        if (rid == id) {
-            const jval *err = jget(msg, "error");
-            if (err) {
-                const char *emsg = jget_str(err, "message");
-                sbuf s; sb_init(&s);
-                sb_puts(&s, "{\"__rpc_error\":");
-                sb_json_str(&s, emsg ? emsg : "unknown", emsg ? strlen(emsg) : 7);
-                sb_putc(&s, '}');
-                char *result = s.b;
-                jfree(msg); free(line);
-                return result;
-            }
-            const jval *res = jget(msg, "result");
-            sbuf s; sb_init(&s);
-            json_write_val(&s, res ? res : jnew(JT_NULL));
-            char *result = s.b;
-            jfree(msg); free(line);
-            return result;
-        }
-        jfree(msg); free(line);
-    }
+    pending_remove(srv, id);
+    pthread_mutex_destroy(&p.mu);
+    pthread_cond_destroy(&p.cv);
+    return result;
 }
 
 /* ================================================================== */
@@ -739,7 +831,13 @@ sl_server *sl_server_new(const char *name, const char *version, const char *desc
     srv->version = strdup(version);
     srv->desc = strdup(description);
     srv->next_id = 1;
-    srv->next_rpc_id = 100000;
+    atomic_store(&srv->next_rpc_id, 100000);
+    atomic_store(&srv->in_flight, 0);
+    pthread_rwlock_init(&srv->obj_rwlock, NULL);
+    pthread_mutex_init(&srv->write_mu, NULL);
+    pthread_mutex_init(&srv->pending_mu, NULL);
+    pthread_mutex_init(&srv->shutdown_mu, NULL);
+    pthread_cond_init(&srv->shutdown_cv, NULL);
     return srv;
 }
 
@@ -752,10 +850,22 @@ void sl_server_free(sl_server *srv) {
     free(srv->classes);
     for (size_t i = 0; i < srv->const_count; i++) { free(srv->consts[i].name); sl_value_free(srv->consts[i].value); }
     free(srv->consts);
+    pthread_rwlock_wrlock(&srv->obj_rwlock);
     for (size_t i = 0; i < srv->object_count; i++) {
-        if (srv->objects[i]) { if (srv->objects[i]->cls->dtor) srv->objects[i]->cls->dtor(srv->objects[i]->data); free(srv->objects[i]); }
+        if (srv->objects[i]) {
+            if (srv->objects[i]->cls->dtor) srv->objects[i]->cls->dtor(srv->objects[i]->data);
+            pthread_mutex_destroy(&srv->objects[i]->mu);
+            free(srv->objects[i]);
+        }
     }
     free(srv->objects);
+    pthread_rwlock_unlock(&srv->obj_rwlock);
+    pthread_rwlock_destroy(&srv->obj_rwlock);
+    pthread_mutex_destroy(&srv->write_mu);
+    pthread_mutex_destroy(&srv->pending_mu);
+    pthread_mutex_destroy(&srv->shutdown_mu);
+    pthread_cond_destroy(&srv->shutdown_cv);
+    free(srv->pending);
     free(srv);
 }
 
@@ -906,7 +1016,7 @@ static void handle_handshake(sl_server *srv, int64_t id) {
     }
     sb_puts(&s, "]}}}");
 
-    send_line(s.b); sb_free(&s);
+    send_line_ts(srv, s.b); sb_free(&s);
 }
 
 /* ================================================================== */
@@ -920,24 +1030,18 @@ static void dispatch_request(sl_server *srv, const char *method,
         return;
     }
     if (strcmp(method, "environment.open") == 0 || strcmp(method, "environment.close") == 0) {
-        send_result_null(id);
+        send_result_null(srv, id);
         return;
     }
     if (strcmp(method, "plugin.shutdown") == 0) {
-        send_result_null(id);
-        for (size_t i = 0; i < srv->object_count; i++) {
-            if (srv->objects[i]) {
-                if (srv->objects[i]->cls->dtor) srv->objects[i]->cls->dtor(srv->objects[i]->data);
-                free(srv->objects[i]);
-            }
-        }
-        srv->object_count = 0;
+        send_result_null(srv, id);
+        srv->shutting_down = true;
         return;
     }
 
     if (strcmp(method, "function.call") == 0) {
         const char *fname = params ? jget_str(params, "name") : NULL;
-        if (!fname) { send_error(id, "missing function name"); return; }
+        if (!fname) { send_error(srv, id, "missing function name"); return; }
 
         sl_func_entry *fe = NULL;
         for (size_t i = 0; i < srv->func_count; i++) {
@@ -945,7 +1049,7 @@ static void dispatch_request(sl_server *srv, const char *method,
         }
         if (!fe || !fe->handler) {
             sbuf e; sb_init(&e); sb_printf(&e, "unknown function %s", fname);
-            send_error(id, e.b); sb_free(&e);
+            send_error(srv, id, e.b); sb_free(&e);
             return;
         }
 
@@ -956,16 +1060,16 @@ static void dispatch_request(sl_server *srv, const char *method,
 
         if (result) {
             sbuf s; sb_init(&s); val_to_json(&s, result);
-            send_result_json(id, s.b); sb_free(&s); sl_value_free(result);
+            send_result_json(srv, id, s.b); sb_free(&s); sl_value_free(result);
         } else {
-            send_result_null(id);
+            send_result_null(srv, id);
         }
         return;
     }
 
     if (strcmp(method, "object.new") == 0) {
         const char *cls_name = params ? jget_str(params, "class") : NULL;
-        if (!cls_name) { send_error(id, "missing class name"); return; }
+        if (!cls_name) { send_error(srv, id, "missing class name"); return; }
 
         sl_class *cls = NULL;
         for (size_t i = 0; i < srv->class_count; i++) {
@@ -973,7 +1077,7 @@ static void dispatch_request(sl_server *srv, const char *method,
         }
         if (!cls) {
             sbuf e; sb_init(&e); sb_printf(&e, "unknown class %s", cls_name);
-            send_error(id, e.b); sb_free(&e);
+            send_error(srv, id, e.b); sb_free(&e);
             return;
         }
 
@@ -982,14 +1086,13 @@ static void dispatch_request(sl_server *srv, const char *method,
         void *data = cls->ctor ? cls->ctor(argc, args, srv->user_ctx) : NULL;
         free_args(args, argc);
 
-        store_object(srv, cls, data);
-        int64_t obj_id = (int64_t)srv->object_count;
+        int64_t obj_id = store_object(srv, cls, data);
 
         sbuf ref; sb_init(&ref);
         sb_puts(&ref, "{\"library\":"); sb_json_str(&ref, srv->name, strlen(srv->name));
         sb_puts(&ref, ",\"class\":"); sb_json_str(&ref, cls->name, strlen(cls->name));
         sb_printf(&ref, ",\"id\":\"%lld\"}", (long long)obj_id);
-        send_result_json(id, ref.b); sb_free(&ref);
+        send_result_json(srv, id, ref.b); sb_free(&ref);
         return;
     }
 
@@ -997,8 +1100,8 @@ static void dispatch_request(sl_server *srv, const char *method,
         const char *obj_id_str = params ? jget_str(params, "object_id") : NULL;
         const char *mname = params ? jget_str(params, "method") : NULL;
 
-        sl_object *obj = get_object(srv, obj_id_str);
-        if (!obj) { send_error(id, "unknown object"); return; }
+        sl_object *obj = lock_object(srv, obj_id_str);
+        if (!obj) { send_error(srv, id, "unknown object"); return; }
 
         int argc = 0;
         sl_value **args = extract_args(params, &argc);
@@ -1012,17 +1115,19 @@ static void dispatch_request(sl_server *srv, const char *method,
                     obj->cls->props.setters[i](obj->data, args[0], srv->user_ctx);
                     result = sl_null();
                 } else if (argc == 0) {
-                    send_error(id, "property is write-only");
-                    free_args(args, argc); return;
+                    free_args(args, argc); unlock_object(obj);
+                    send_error(srv, id, "property is write-only");
+                    return;
                 } else {
-                    send_error(id, "property is read-only");
-                    free_args(args, argc); return;
+                    free_args(args, argc); unlock_object(obj);
+                    send_error(srv, id, "property is read-only");
+                    return;
                 }
-                free_args(args, argc);
+                free_args(args, argc); unlock_object(obj);
                 if (result) {
                     sbuf s; sb_init(&s); val_to_json(&s, result);
-                    send_result_json(id, s.b); sb_free(&s); sl_value_free(result);
-                } else { send_result_null(id); }
+                    send_result_json(srv, id, s.b); sb_free(&s); sl_value_free(result);
+                } else { send_result_null(srv, id); }
                 return;
             }
         }
@@ -1033,33 +1138,69 @@ static void dispatch_request(sl_server *srv, const char *method,
         }
         if (!fn) {
             sbuf e; sb_init(&e); sb_printf(&e, "unknown method %s on %s", mname ? mname : "(null)", obj->cls->name);
-            send_error(id, e.b); sb_free(&e); free_args(args, argc);
+            free_args(args, argc); unlock_object(obj);
+            send_error(srv, id, e.b); sb_free(&e);
             return;
         }
 
         sl_value *result = fn(obj->data, argc, args, srv->user_ctx);
-        free_args(args, argc);
+        free_args(args, argc); unlock_object(obj);
 
         if (result) {
             sbuf s; sb_init(&s); val_to_json(&s, result);
-            send_result_json(id, s.b); sb_free(&s); sl_value_free(result);
-        } else { send_result_null(id); }
+            send_result_json(srv, id, s.b); sb_free(&s); sl_value_free(result);
+        } else { send_result_null(srv, id); }
         return;
     }
 
     if (strcmp(method, "object.destroy") == 0) {
         const char *obj_id_str = params ? jget_str(params, "object_id") : NULL;
         if (obj_id_str) destroy_object(srv, obj_id_str);
-        send_result_null(id);
+        send_result_null(srv, id);
         return;
     }
 
     sbuf e; sb_init(&e); sb_printf(&e, "unknown method %s", method ? method : "(null)");
-    send_error(id, e.b); sb_free(&e);
+    send_error(srv, id, e.b); sb_free(&e);
 }
 
 /* ================================================================== */
-/*  Run loop                                                          */
+/*  Worker thread                                                     */
+/* ================================================================== */
+
+typedef struct {
+    sl_server *srv;
+    char      *line;
+} sl_work_item;
+
+static void *worker_thread(void *arg) {
+    sl_work_item *item = arg;
+    sl_server *srv = item->srv;
+    char *line = item->line;
+    free(item);
+
+    tl_server = srv;
+
+    jval *root = json_parse(line);
+    free(line);
+    if (!root || root->t != JT_OBJ) { jfree(root); flight_leave(srv); return NULL; }
+
+    const char *method = jget_str(root, "method");
+    int64_t id = jget_int(root, "id", -1);
+    const jval *params = jget(root, "params");
+
+    if (method) {
+        dispatch_request(srv, method, params ? params : jnew(JT_NULL), id);
+    }
+    jfree(root);
+
+    tl_server = NULL;
+    flight_leave(srv);
+    return NULL;
+}
+
+/* ================================================================== */
+/*  Run loop (reader thread)                                          */
 /* ================================================================== */
 
 int sl_server_run(sl_server *srv) {
@@ -1069,18 +1210,67 @@ int sl_server_run(sl_server *srv) {
         if (!line) break;
 
         jval *root = json_parse(line);
-        free(line);
-        if (!root || root->t != JT_OBJ) { jfree(root); continue; }
+        if (!root || root->t != JT_OBJ) { jfree(root); free(line); continue; }
 
         const char *method = jget_str(root, "method");
         int64_t id = jget_int(root, "id", -1);
-        const jval *params = jget(root, "params");
 
         if (method) {
-            dispatch_request(srv, method, params ? params : jnew(JT_NULL), id);
-            if (strcmp(method, "plugin.shutdown") == 0) { jfree(root); break; }
+            jfree(root);
+
+            if (strcmp(method, "plugin.shutdown") == 0) {
+                dispatch_request(srv, method, NULL, id);
+                flight_wait_all(srv);
+                pthread_rwlock_wrlock(&srv->obj_rwlock);
+                for (size_t i = 0; i < srv->object_count; i++) {
+                    if (srv->objects[i]) {
+                        if (srv->objects[i]->cls->dtor) srv->objects[i]->cls->dtor(srv->objects[i]->data);
+                        pthread_mutex_destroy(&srv->objects[i]->mu);
+                        free(srv->objects[i]);
+                    }
+                }
+                srv->object_count = 0;
+                pthread_rwlock_unlock(&srv->obj_rwlock);
+                free(line);
+                break;
+            }
+
+            /* Dispatch to a worker thread. */
+            flight_enter(srv);
+            sl_work_item *item = malloc(sizeof(*item));
+            item->srv = srv;
+            item->line = line;
+
+            pthread_t tid;
+            pthread_attr_t attr;
+            pthread_attr_init(&attr);
+            pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+            pthread_create(&tid, &attr, worker_thread, item);
+            pthread_attr_destroy(&attr);
+        } else {
+            /* This is a response — route to the pending RPC call. */
+            sl_pending *p = pending_remove(srv, id);
+            if (p) {
+                sbuf s; sb_init(&s);
+                const jval *err = jget(root, "error");
+                if (err) {
+                    const char *emsg = jget_str(err, "message");
+                    sb_puts(&s, "{\"__rpc_error\":");
+                    sb_json_str(&s, emsg ? emsg : "unknown", emsg ? strlen(emsg) : 7);
+                    sb_putc(&s, '}');
+                } else {
+                    const jval *res = jget(root, "result");
+                    json_write_val(&s, res ? res : jnew(JT_NULL));
+                }
+                pthread_mutex_lock(&p->mu);
+                p->response = s.b;
+                p->done = true;
+                pthread_cond_signal(&p->cv);
+                pthread_mutex_unlock(&p->mu);
+            }
+            jfree(root);
+            free(line);
         }
-        jfree(root);
     }
     tl_server = NULL;
     return 0;

@@ -1,6 +1,6 @@
 CC      ?= gcc
 CFLAGS  += -std=c11 -Wall -Wextra -O2
-LDFLAGS += -lm
+LDFLAGS += -lm -lpthread
 
 TARGET  := hello-c
 SRCS    := main.c scriptling_plugin.c
