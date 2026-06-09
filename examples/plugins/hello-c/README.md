@@ -1,9 +1,13 @@
 # Scriptling C Plugin SDK
 
-A single-threaded C library for building Scriptling plugins. Add
+A multi-threaded C library for building Scriptling plugins. Add
 `scriptling_plugin.h` and `scriptling_plugin.c` to your project, write
 a `main()`, and compile a standalone executable that Scriptling loads via
 `--plugin-dir`.
+
+Each incoming request is handled in its own thread, matching the
+concurrency model of the Go plugin server. The object store, stdout writes,
+and callback routing are all thread-safe.
 
 ## Quick Start
 
@@ -40,7 +44,9 @@ scriptling --plugin-dir /tmp/plugins -c 'import plugin.hello; print(plugin.hello
 - **Callbacks** — call back into Scriptling from within handlers via `sl_callback_call()`
 - **Logging** — route logs through the host logger via `sl_log_info()` etc.
 - **Custom wrappers** — `sl_register_script_func()`, `sl_register_script_class()`, `sl_wrapper()`
-- Single-threaded event loop, no external dependencies beyond the C standard library
+- Multi-threaded — each request runs in its own thread
+- Thread-safe object store with per-object locking
+- No external dependencies beyond the C standard library and pthreads
 
 ## Reference
 
@@ -219,7 +225,7 @@ your-plugin/
 ## Compilation
 
 ```bash
-gcc -std=c11 -Wall -Wextra -O2 -o myplugin main.c scriptling_plugin.c -lm
+gcc -std=c11 -Wall -Wextra -O2 -o myplugin main.c scriptling_plugin.c -lm -lpthread
 ```
 
-Requires a C11 compiler. No external dependencies.
+Requires a C11 compiler and pthreads. No other external dependencies.

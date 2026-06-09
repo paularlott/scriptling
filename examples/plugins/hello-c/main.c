@@ -49,6 +49,16 @@ static sl_value *stream(int argc, sl_value **args, void *ctx) {
     return sl_string("Hello, Ada");
 }
 
+static sl_value *work(int argc, sl_value **args, void *ctx) {
+    (void)ctx;
+    const char *name = (argc > 0) ? sl_as_string(args[0]) : "anonymous";
+    sl_log_info("work started for %s", name);
+    sl_log_debug("args received: %d", argc);
+    char buf[256];
+    snprintf(buf, sizeof(buf), "done:%s", name);
+    return sl_string(buf);
+}
+
 /* ------------------------------------------------------------------ */
 /*  Config class                                                      */
 /* ------------------------------------------------------------------ */
@@ -141,6 +151,7 @@ int main(void) {
     sl_register_func_help(srv, "greet", greet, "greet(name) - Return a greeting string");
     sl_register_func(srv, "label", label);
     sl_register_func_help(srv, "stream", stream, "stream(callback) - Stream tokens to a callback function");
+    sl_register_func_help(srv, "work", work, "work(name) - Log a message and return done");
 
     sl_class *cfg = sl_class_new("Config");
     sl_class_set_constructor(cfg, config_ctor);

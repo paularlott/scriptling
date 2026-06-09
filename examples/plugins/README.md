@@ -6,9 +6,9 @@ These examples demonstrate Scriptling plugins loaded from executable files with
 ## C Plugin
 
 `hello-c` is a feature-complete C plugin built with the Scriptling C Plugin SDK
-(`scriptling_plugin.h` / `scriptling_plugin.c`). It demonstrates functions,
-classes with constructors and destructors, read/write properties, constants,
-and callbacks.
+(`scriptling_plugin.h` / `scriptling_plugin.c`). It handles requests concurrently
+with one thread per request and demonstrates functions, classes with constructors
+and destructors, read/write properties, constants, and callbacks.
 
 ```bash
 make -C examples/plugins/hello-c
