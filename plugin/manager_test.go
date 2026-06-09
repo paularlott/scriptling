@@ -135,7 +135,7 @@ func TestManagerLoadsExecutableAndRegistersProxyLibraries(t *testing.T) {
 	}
 	writePluginHelper(t, helper)
 
-	manager := NewManager()
+	manager := NewManager(nil)
 	manager.AddDir(dir)
 	if err := manager.Load(context.Background()); err != nil {
 		t.Fatalf("Load returned error: %v", err)
@@ -180,7 +180,7 @@ func TestPluginSuppliedWrapperSource(t *testing.T) {
 	}
 	writeWrapperPluginHelper(t, helper)
 
-	manager := NewManager()
+	manager := NewManager(nil)
 	manager.AddDir(dir)
 	if err := manager.Load(context.Background()); err != nil {
 		t.Fatalf("Load returned error: %v", err)
@@ -407,7 +407,7 @@ func TestComprehensivePlugin(t *testing.T) {
 	writeComprehensivePluginHelper(t, helper)
 
 	t.Run("DataTypes", func(t *testing.T) {
-		manager := NewManager()
+		manager := NewManager(nil)
 		manager.AddDir(dir)
 		if err := manager.Load(context.Background()); err != nil {
 			t.Fatalf("Load: %v", err)
@@ -461,7 +461,7 @@ func TestComprehensivePlugin(t *testing.T) {
 	})
 
 	t.Run("Constants", func(t *testing.T) {
-		manager := NewManager()
+		manager := NewManager(nil)
 		manager.AddDir(dir)
 		if err := manager.Load(context.Background()); err != nil {
 			t.Fatalf("Load: %v", err)
@@ -489,7 +489,7 @@ func TestComprehensivePlugin(t *testing.T) {
 	})
 
 	t.Run("TypedReceiverClass", func(t *testing.T) {
-		manager := NewManager()
+		manager := NewManager(nil)
 		manager.AddDir(dir)
 		if err := manager.Load(context.Background()); err != nil {
 			t.Fatalf("Load: %v", err)
@@ -573,7 +573,7 @@ plugin.comprehensive.log_event({"kind": "demo"}, ["a", 2, True])
 	})
 
 	t.Run("InstanceClass", func(t *testing.T) {
-		manager := NewManager()
+		manager := NewManager(nil)
 		manager.AddDir(dir)
 		if err := manager.Load(context.Background()); err != nil {
 			t.Fatalf("Load: %v", err)
@@ -599,7 +599,7 @@ kv.get("host")
 	})
 
 	t.Run("CleanupOnDestroy", func(t *testing.T) {
-		manager := NewManager()
+		manager := NewManager(nil)
 		manager.AddDir(dir)
 		if err := manager.Load(context.Background()); err != nil {
 			t.Fatalf("Load: %v", err)
@@ -635,7 +635,7 @@ name
 	})
 
 	t.Run("MethodError", func(t *testing.T) {
-		manager := NewManager()
+		manager := NewManager(nil)
 		manager.AddDir(dir)
 		if err := manager.Load(context.Background()); err != nil {
 			t.Fatalf("Load: %v", err)
@@ -654,7 +654,7 @@ name
 	})
 
 	t.Run("ControlLibrary", func(t *testing.T) {
-		manager := NewManager()
+		manager := NewManager(nil)
 		manager.AddDir(dir)
 		if err := manager.Load(context.Background()); err != nil {
 			t.Fatalf("Load: %v", err)
@@ -690,7 +690,7 @@ name
 	})
 
 	t.Run("FunctionCallbacks", func(t *testing.T) {
-		manager := NewManager()
+		manager := NewManager(nil)
 		manager.AddDir(dir)
 		if err := manager.Load(context.Background()); err != nil {
 			t.Fatalf("Load: %v", err)
@@ -726,7 +726,7 @@ events[0] + ":" + events[1][1] + ":" + events[2]["token"] + ":" + str(events[2][
 	})
 
 	t.Run("CallbacksExpireAfterOuterCall", func(t *testing.T) {
-		manager := NewManager()
+		manager := NewManager(nil)
 		manager.AddDir(dir)
 		if err := manager.Load(context.Background()); err != nil {
 			t.Fatalf("Load: %v", err)
@@ -754,7 +754,7 @@ plugin.comprehensive.fire_saved_callback()
 	})
 
 	t.Run("ParallelCallbacks", func(t *testing.T) {
-		manager := NewManager()
+		manager := NewManager(nil)
 		manager.AddDir(dir)
 		if err := manager.Load(context.Background()); err != nil {
 			t.Fatalf("Load: %v", err)
@@ -802,7 +802,7 @@ events[0]
 	})
 
 	t.Run("ParallelSeparateEnvs", func(t *testing.T) {
-		manager := NewManager()
+		manager := NewManager(nil)
 		manager.AddDir(dir)
 		if err := manager.Load(context.Background()); err != nil {
 			t.Fatalf("Load: %v", err)
@@ -840,7 +840,7 @@ events[0]
 	})
 
 	t.Run("ParallelObjectCreation", func(t *testing.T) {
-		manager := NewManager()
+		manager := NewManager(nil)
 		manager.AddDir(dir)
 		if err := manager.Load(context.Background()); err != nil {
 			t.Fatalf("Load: %v", err)
@@ -883,7 +883,7 @@ counter.get()
 	})
 
 	t.Run("OverlappingClientIO", func(t *testing.T) {
-		manager := NewManager()
+		manager := NewManager(nil)
 		manager.AddDir(dir)
 		if err := manager.Load(context.Background()); err != nil {
 			t.Fatalf("Load: %v", err)
@@ -1149,7 +1149,7 @@ func runComprehensivePluginHelper() {
 
 func TestManagerEdgeCases(t *testing.T) {
 	t.Run("AddDirEmpty", func(t *testing.T) {
-		m := NewManager()
+		m := NewManager(nil)
 		m.AddDir("")
 		if len(m.dirs) != 0 {
 			t.Error("empty dir should be ignored")
@@ -1157,7 +1157,7 @@ func TestManagerEdgeCases(t *testing.T) {
 	})
 
 	t.Run("LoadNonexistentDir", func(t *testing.T) {
-		m := NewManager()
+		m := NewManager(nil)
 		m.AddDir("/nonexistent/path/that/does/not/exist")
 		if err := m.Load(context.Background()); err != nil {
 			t.Fatalf("Load should not error on missing dirs: %v", err)
@@ -1175,7 +1175,7 @@ func TestManagerEdgeCases(t *testing.T) {
 		}
 		writeBadProtocolPluginHelper(t, helper)
 
-		m := NewManager()
+		m := NewManager(nil)
 		m.AddDir(dir)
 		if err := m.Load(context.Background()); err != nil {
 			t.Fatalf("Load: %v", err)
@@ -1202,7 +1202,7 @@ func TestManagerEdgeCases(t *testing.T) {
 		writePluginHelper(t, hello)
 		writePrefixedPluginHelper(t, prefixed)
 
-		m := NewManager()
+		m := NewManager(nil)
 		m.AddDir(dir)
 		if err := m.Load(context.Background()); err != nil {
 			t.Fatalf("Load: %v", err)
@@ -1237,7 +1237,7 @@ func TestManagerEdgeCases(t *testing.T) {
 	})
 
 	t.Run("ManagerGetNotFound", func(t *testing.T) {
-		m := NewManager()
+		m := NewManager(nil)
 		_, ok := m.Get("nonexistent")
 		if ok {
 			t.Error("expected false for nonexistent plugin")
@@ -1245,7 +1245,7 @@ func TestManagerEdgeCases(t *testing.T) {
 	})
 
 	t.Run("ManagerWarnings", func(t *testing.T) {
-		m := NewManager()
+		m := NewManager(nil)
 		m.addWarning("test warning")
 		w := m.Warnings()
 		if len(w) != 1 || w[0] != "test warning" {
@@ -1261,7 +1261,7 @@ func TestManagerEdgeCases(t *testing.T) {
 		}
 		writeCrashPluginHelper(t, helper)
 
-		m := NewManager()
+		m := NewManager(nil)
 		m.AddDir(dir)
 		if err := m.Load(context.Background()); err != nil {
 			t.Fatalf("Load: %v", err)
@@ -1295,8 +1295,7 @@ func TestManagerEdgeCases(t *testing.T) {
 		}
 		events := make(chan crashEvent, 1)
 
-		m := NewManager()
-		m.SetCrashHandler(func(name string, err error) {
+		m := NewManager(nil, func(name string, err error) {
 			events <- crashEvent{name: name, err: err}
 		})
 		m.AddDir(dir)
@@ -1332,7 +1331,7 @@ func TestGCReleaseHook(t *testing.T) {
 	}
 	writeComprehensivePluginHelper(t, helper)
 
-	manager := NewManager()
+	manager := NewManager(nil)
 	manager.AddDir(dir)
 	if err := manager.Load(context.Background()); err != nil {
 		t.Fatalf("Load: %v", err)
@@ -1384,7 +1383,7 @@ func TestReleaseExplicit(t *testing.T) {
 	}
 	writeComprehensivePluginHelper(t, helper)
 
-	manager := NewManager()
+	manager := NewManager(nil)
 	manager.AddDir(dir)
 	if err := manager.Load(context.Background()); err != nil {
 		t.Fatalf("Load: %v", err)
@@ -1423,7 +1422,7 @@ func TestProxyErrorPropagation(t *testing.T) {
 	}
 	writeComprehensivePluginHelper(t, helper)
 
-	manager := NewManager()
+	manager := NewManager(nil)
 	manager.AddDir(dir)
 	if err := manager.Load(context.Background()); err != nil {
 		t.Fatalf("Load: %v", err)
