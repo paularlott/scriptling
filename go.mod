@@ -10,11 +10,11 @@ require (
 	github.com/paularlott/cli v0.8.4
 	github.com/paularlott/gossip v0.12.6
 	github.com/paularlott/logger v0.3.0
-	github.com/paularlott/mcp v0.16.2
+	github.com/paularlott/mcp v0.17.0
 	github.com/paularlott/snapshotkv v0.3.0
 	github.com/shirou/gopsutil/v3 v3.24.5
 	golang.org/x/net v0.55.0
-	golang.org/x/text v0.37.0
+	golang.org/x/text v0.38.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -34,6 +34,6 @@ require (
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
-	golang.org/x/sys v0.45.0 // indirect
-	golang.org/x/term v0.43.0 // indirect
+	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/term v0.44.0 // indirect
 )
