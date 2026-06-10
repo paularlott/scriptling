@@ -67,6 +67,12 @@ func (s *Server) createMCPServer() (*mcp_lib.Server, error) {
 
 		for toolName, meta := range tools {
 			scriptPath := filepath.Join(s.config.MCPToolsDir, toolName+".py")
+
+			if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
+				Log.Warn("Skipping tool with missing script", "tool", toolName, "expected", scriptPath)
+				continue
+			}
+
 			tool, err := toolmetadata.BuildMCPTool(toolName, meta)
 			if err != nil {
 				return nil, fmt.Errorf("failed to build tool %s: %w", toolName, err)
