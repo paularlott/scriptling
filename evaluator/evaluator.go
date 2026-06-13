@@ -2910,6 +2910,8 @@ func evalTryStatementWithContext(ctx context.Context, ts *ast.TryStatement, env 
 				exceptionType = object.ExceptionTypeValueError
 			} else if strings.Contains(msg, "identifier not found") || strings.Contains(msg, "name") && strings.Contains(msg, "not defined") {
 				exceptionType = object.ExceptionTypeNameError
+			} else if strings.HasPrefix(msg, errors.ErrImportError) {
+				exceptionType = object.ExceptionTypeImportError
 			}
 			exceptionObj = &object.Exception{
 				Message:       msg,

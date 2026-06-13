@@ -139,6 +139,7 @@ const (
 	ExceptionTypeValueError        = "ValueError"
 	ExceptionTypeTypeError         = "TypeError"
 	ExceptionTypeNameError         = "NameError"
+	ExceptionTypeImportError       = "ImportError"
 	ExceptionTypeStopIteration     = "StopIteration"
 	ExceptionTypeRuntimeError      = "RuntimeError"
 	ExceptionTypeZeroDivisionError = "ZeroDivisionError"

@@ -1862,6 +1862,26 @@ Use with: raise TypeError("wrong type")`,
 Raised when a local or global name is not found.
 Use with: raise NameError("name not defined")`,
 	},
+	"ImportError": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			message := ""
+			if len(args) > 0 {
+				if str, err := args[0].AsString(); err == nil {
+					message = str
+				} else {
+					message = args[0].Inspect()
+				}
+			}
+			return &object.Exception{
+				Message:       message,
+				ExceptionType: object.ExceptionTypeImportError,
+			}
+		},
+		HelpText: `ImportError([message]) - Create an import error exception
+
+Raised when a library or imported name cannot be imported.
+Use with: raise ImportError("module not found")`,
+	},
 	"StopIteration": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			message := ""
@@ -2184,8 +2204,8 @@ func sortedFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 				if result := callDunderMethodFn(ctx, l, "__lt__", []object.Object{right}, GetEnvFromContext(ctx)); result != nil {
 					if object.IsError(result) {
 						sortErr = result
-				} else if b, ok := result.(*object.Boolean); ok && b.BoolValue() {
-					cmp = -1
+					} else if b, ok := result.(*object.Boolean); ok && b.BoolValue() {
+						cmp = -1
 					} else {
 						if eqResult := callDunderMethodFn(ctx, l, "__eq__", []object.Object{right}, GetEnvFromContext(ctx)); eqResult != nil {
 							if b2, ok := eqResult.(*object.Boolean); ok && b2.BoolValue() {
