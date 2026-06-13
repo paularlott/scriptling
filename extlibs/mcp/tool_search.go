@@ -11,7 +11,7 @@ import (
 )
 
 // ParseToolSearchResults extracts tool list from tool_search response.
-// Returns a scriptling List containing tool dicts with name, description, input_schema.
+// Returns a scriptling List containing tool dicts with name, description, inputSchema.
 // The tool_search response is expected to be a ToolResponse with JSON text content
 // containing an array of tool definitions.
 func ParseToolSearchResults(response *mcplib.ToolResponse) (*object.List, error) {
@@ -82,6 +82,12 @@ func parseToolSearchJSON(toolsJSON string) (*object.List, error) {
 	// Convert to scriptling objects, same format as list_tools
 	toolList := make([]object.Object, 0, len(tools))
 	for _, tool := range tools {
+		if _, hasInputSchema := tool["inputSchema"]; !hasInputSchema {
+			if schema, ok := tool["input_schema"]; ok {
+				tool["inputSchema"] = schema
+			}
+		}
+		delete(tool, "input_schema")
 		toolDict := &object.Dict{
 			Pairs: map[string]object.DictPair{},
 		}

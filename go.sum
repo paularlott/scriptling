@@ -34,6 +34,8 @@ github.com/paularlott/mcp v0.16.2 h1:tsCJpzjdzq7wb4Ir31Lzx0xpDuh/gl2I2ilA+kO7muQ
 github.com/paularlott/mcp v0.16.2/go.mod h1:ii8GUsjmU7Z950w8CVrjin3juzLdM4noXYZxGjkzV18=
 github.com/paularlott/mcp v0.17.0 h1:a3Zm9oXtyPOzOPnMdt5uMRkS25I9H/d1mzt8sqR8Cvk=
 github.com/paularlott/mcp v0.17.0/go.mod h1:ii8GUsjmU7Z950w8CVrjin3juzLdM4noXYZxGjkzV18=
+github.com/paularlott/mcp v0.18.1 h1:z+JIM6RCQ1bKd6G/I5kwtx+LCI138MMIwdTFHVEOtJg=
+github.com/paularlott/mcp v0.18.1/go.mod h1:ii8GUsjmU7Z950w8CVrjin3juzLdM4noXYZxGjkzV18=
 github.com/paularlott/snapshotkv v0.3.0 h1:FUxebbnUJJtnJwjd+W8obyD78WX/opvZkSvY6Cc+5xg=
 github.com/paularlott/snapshotkv v0.3.0/go.mod h1:X2ONJRnGTRUV2j8tIdO187y0QLm4n7bnCbdnV/mTWUQ=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
@@ -64,6 +66,8 @@ github.com/yusufpapurcu/wmi v1.2.4 h1:zFUKzehAFReQwLys1b/iSMl+JQGSCSjtVqQn9bBrPo
 github.com/yusufpapurcu/wmi v1.2.4/go.mod h1:SBZ9tNy3G9/m5Oi98Zks0QjeHVDvuK0qfxQmPyzfmi0=
 golang.org/x/net v0.55.0 h1:bcvxaJn3e1U6InsFWt1JUq1aSjnRxLzT2rtD2KfkDF8=
 golang.org/x/net v0.55.0/go.mod h1:L5U2KuzuOe1lY7Z+aWVIKK6qEeJXnXV9yzGA+WCHJww=
+golang.org/x/net v0.56.0 h1:Rw8j/hFzGvJUZwNBXnAtf5sVDVt+65SK2C7IxCxZt5o=
+golang.org/x/net v0.56.0/go.mod h1:D3Ku6r+V6JROoZK144D2XfMHFcMq/0zSfLelVTCFKec=
 golang.org/x/oauth2 v0.36.0 h1:peZ/1z27fi9hUOFCAZaHyrpWG5lwe0RJEEEeH0ThlIs=
 golang.org/x/oauth2 v0.36.0/go.mod h1:YDBUJMTkDnJS+A4BP4eZBjCqtokkg1hODuPjwiGPO7Q=
 golang.org/x/sys v0.0.0-20190916202348-b4ddaad3f8a3/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=

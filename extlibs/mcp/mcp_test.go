@@ -159,6 +159,24 @@ func TestDecodeToolResponse_MultipleContent(t *testing.T) {
 	}
 }
 
+func TestParseToolSearchResultsNormalizesInputSchema(t *testing.T) {
+	results, err := ParseToolSearchResultsFromText(`[{"name":"create_space","input_schema":{"type":"object"}}]`)
+	if err != nil {
+		t.Fatalf("ParseToolSearchResultsFromText() failed: %v", err)
+	}
+	if len(results.Elements) != 1 {
+		t.Fatalf("len(results.Elements) = %d, want 1", len(results.Elements))
+	}
+
+	tool, ok := results.Elements[0].(*object.Dict)
+	if !ok {
+		t.Fatalf("result type = %T, want *object.Dict", results.Elements[0])
+	}
+	if _, ok := tool.Pairs[object.DictKey(object.NewString("inputSchema"))]; !ok {
+		t.Fatalf("legacy input_schema was not normalized: %+v", tool.Pairs)
+	}
+}
+
 func TestDecodeToolContent_Image(t *testing.T) {
 	content := mcp.ToolContent{
 		Type:     "image",
@@ -304,7 +322,7 @@ func TestDictToMap(t *testing.T) {
 		},
 		{
 			name: "empty dict",
-			dict:  &object.Dict{Pairs: map[string]object.DictPair{}},
+			dict: &object.Dict{Pairs: map[string]object.DictPair{}},
 		},
 		{
 			name: "simple dict",
