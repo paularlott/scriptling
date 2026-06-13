@@ -37,19 +37,17 @@ func GetMCPClientClass() *object.Class {
 // buildMCPClientClass builds the MCP Client class
 func buildMCPClientClass() *object.Class {
 	return object.NewClassBuilder("MCPClient").
-
 		MethodWithHelp("tools", toolsMethod, `tools() - List available tools
 
 Lists all tools available from this MCP server.
 
 Returns:
-  list: List of tool dicts with name, description, input_schema
+  list: List of tool dicts with name, description, inputSchema
 
 Example:
   tools = client.tools()
   for tool in tools:
     print(tool.name + ": " + tool.description)`).
-
 		MethodWithHelp("call_tool", callToolMethod, `call_tool(name, arguments) - Execute a tool
 
 Executes a tool by name with the provided arguments.
@@ -64,7 +62,6 @@ Returns:
 Example:
   result = client.call_tool("search", {"query": "golang"})
   print(result)`).
-
 		MethodWithHelp("refresh_tools", refreshToolsMethod, `refresh_tools() - Refresh the tool cache
 
 Explicitly refreshes the cached list of tools from the server.
@@ -74,7 +71,6 @@ Returns:
 
 Example:
   client.refresh_tools()`).
-
 		MethodWithHelp("tool_search", toolSearchMethod, `tool_search(query, **kwargs) - Search for tools
 
 Searches for tools using the tool_search MCP tool. This is useful when the
@@ -93,7 +89,6 @@ Example:
 
   # Get up to 5 database tools
   results = client.tool_search("database", max_results=5)`).
-
 		MethodWithHelp("execute_discovered", executeDiscoveredMethod, `execute_discovered(name, arguments) - Execute a discovered tool
 
 Executes a tool by name using the execute_tool MCP tool. This is the only way
@@ -108,7 +103,6 @@ Returns:
 
 Example:
   result = client.execute_discovered("custom_tool", {"param": "value"})`).
-
 		MethodWithHelp("call_tools_parallel", callToolsParallelMethod, `call_tools_parallel(calls) - Execute multiple tools concurrently
 
 Executes multiple tools in parallel and returns results in the same order as the input.
@@ -129,7 +123,6 @@ Example:
       print("Error:", r.error)
     else:
       print(r.name, r.result)`).
-
 		MethodWithHelp("execute_discovered_parallel", executeDiscoveredParallelMethod, `execute_discovered_parallel(calls) - Execute multiple discovered tools concurrently
 
 Executes multiple discovered tools in parallel and returns results in the same order as the input.
@@ -150,7 +143,6 @@ Example:
       print("Error:", r.error)
     else:
       print(r.name, r.result)`).
-
 		Build()
 }
 
@@ -379,7 +371,7 @@ func convertToolsToList(tools []mcplib.MCPTool) object.Object {
 			"description": object.NewString(tool.Description),
 		})
 		if tool.InputSchema != nil {
-			toolDict.SetByString("input_schema", conversion.FromGo(tool.InputSchema))
+			toolDict.SetByString("inputSchema", conversion.FromGo(tool.InputSchema))
 		}
 		if tool.OutputSchema != nil {
 			toolDict.SetByString("output_schema", conversion.FromGo(tool.OutputSchema))
