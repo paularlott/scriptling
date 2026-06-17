@@ -73,6 +73,7 @@ func AllLibraryNames() []string {
 		extlibs.WebSocketLibraryName,
 		extlibs.TemplateHTMLLibraryName,
 		extlibs.TemplateTextLibraryName,
+		extlibs.MarkdownLibraryName,
 		extlibs.MulticastLibraryName,
 		extlibs.UnicastLibraryName,
 		extlibs.GossipLibraryName,
@@ -157,6 +158,7 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 	reg(extlibs.WebSocketLibraryName, func() { extlibs.RegisterWebSocketLibrary(p) })
 	reg(extlibs.TemplateHTMLLibraryName, func() { extlibs.RegisterTemplateHTMLLibrary(p) })
 	reg(extlibs.TemplateTextLibraryName, func() { extlibs.RegisterTemplateTextLibrary(p) })
+	reg(extlibs.MarkdownLibraryName, func() { extlibs.RegisterMarkdownLibrary(p) })
 
 	reg(extlibs.MulticastLibraryName, func() { scriptlingmulticast.Register(p) })
 	reg(extlibs.UnicastLibraryName, func() { scriptlingunicast.Register(p) })
