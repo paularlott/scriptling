@@ -17,6 +17,7 @@ const (
 	RuntimeKVLibraryName      = "scriptling.runtime.kv"
 	RuntimeSyncLibraryName    = "scriptling.runtime.sync"
 	RuntimeSandboxLibraryName = "scriptling.runtime.sandbox"
+	RuntimeJSONRPCLibraryName = "scriptling.runtime.jsonrpc"
 	AILibraryName             = "scriptling.ai"
 	MCPLibraryName            = "scriptling.mcp"
 	ToonLibraryName           = "scriptling.toon"
