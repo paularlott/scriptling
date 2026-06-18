@@ -23,6 +23,10 @@ var RuntimeState = struct {
 	Middleware      string
 	NotFoundHandler string
 
+	// JSON-RPC stdio methods and notifications (name -> "library.function")
+	JSONRPCMethods       map[string]string
+	JSONRPCNotifications map[string]string
+
 	// WebSocket routes and connections
 	WebSocketRoutes      map[string]*WebSocketRouteInfo
 	WebSocketConnections map[string]*WebSocketServerConn
@@ -51,6 +55,8 @@ var RuntimeState = struct {
 }{
 	Routes:               make(map[string]*RouteInfo),
 	NotFoundHandler:      "",
+	JSONRPCMethods:       make(map[string]string),
+	JSONRPCNotifications: make(map[string]string),
 	WebSocketRoutes:      make(map[string]*WebSocketRouteInfo),
 	WebSocketConnections: make(map[string]*WebSocketServerConn),
 	Backgrounds:          make(map[string]string),
@@ -94,6 +100,9 @@ func ResetRuntime() {
 	RuntimeState.Routes = make(map[string]*RouteInfo)
 	RuntimeState.Middleware = ""
 	RuntimeState.NotFoundHandler = ""
+
+	RuntimeState.JSONRPCMethods = make(map[string]string)
+	RuntimeState.JSONRPCNotifications = make(map[string]string)
 
 	// Close all WebSocket connections
 	for _, conn := range RuntimeState.WebSocketConnections {
@@ -185,12 +194,14 @@ func RegisterRuntimeLibraryAll(registrar interface{ RegisterLibrary(*object.Libr
 	kvLib := NewKVSubLibrary()
 	syncLib := SyncSubLibrary
 	sandboxLib := NewSandboxLibrary(allowedPaths)
+	jsonrpcLib := JSONRPCSubLibrary
 
 	// Register each sub-library independently under its full name
 	registrar.RegisterLibrary(httpLib)
 	registrar.RegisterLibrary(kvLib)
 	registrar.RegisterLibrary(syncLib)
 	registrar.RegisterLibrary(sandboxLib)
+	registrar.RegisterLibrary(jsonrpcLib)
 
 	// Register the parent with sub-library dicts as constants so
 	// `import scriptling.runtime as rt; rt.kv.open(...)` keeps working.
@@ -200,13 +211,19 @@ func RegisterRuntimeLibraryAll(registrar interface{ RegisterLibrary(*object.Libr
 			"kv":      kvLib.GetDict(),
 			"sync":    syncLib.GetDict(),
 			"sandbox": sandboxLib.GetDict(),
+			"jsonrpc": jsonrpcLib.GetDict(),
 		},
-		"Runtime library for HTTP, KV store, concurrency primitives, and sandboxed execution")
+		"Runtime library for HTTP, JSON-RPC, KV store, concurrency primitives, and sandboxed execution")
 	registrar.RegisterLibrary(parent)
 }
 
 func RegisterRuntimeHTTPLibrary(registrar interface{ RegisterLibrary(*object.Library) }) {
 	registrar.RegisterLibrary(HTTPSubLibrary)
+}
+
+// RegisterRuntimeJSONRPCLibrary registers only the jsonrpc sub-library.
+func RegisterRuntimeJSONRPCLibrary(registrar interface{ RegisterLibrary(*object.Library) }) {
+	registrar.RegisterLibrary(JSONRPCSubLibrary)
 }
 
 func RegisterRuntimeKVLibrary(registrar interface{ RegisterLibrary(*object.Library) }) {

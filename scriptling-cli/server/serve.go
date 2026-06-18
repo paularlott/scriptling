@@ -102,3 +102,26 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 	Log.Info("Server stopped")
 	return nil
 }
+
+// RunJSONRPCServer runs the stdio JSON-RPC 2.0 server. It performs the same
+// bootstrap as RunServer (setup script registers handlers via
+// runtime.jsonrpc.method/notification), then serves requests from stdin until
+// stdin closes or a terminating signal arrives.
+func RunJSONRPCServer(ctx context.Context, config ServerConfig) error {
+	Log.Debug("Starting JSON-RPC stdio server")
+	server, err := NewServer(config)
+	if err != nil {
+		return err
+	}
+
+	if len(server.jsonrpcMethods) == 0 && len(server.jsonrpcNotifications) == 0 {
+		Log.Warn("JSON-RPC server started with no methods or notifications registered")
+	}
+
+	if err := server.RunJSONRPCStdio(ctx); err != nil {
+		return fmt.Errorf("json-rpc server failed: %w", err)
+	}
+
+	Log.Info("JSON-RPC server stopped")
+	return nil
+}

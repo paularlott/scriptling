@@ -16,11 +16,13 @@ import (
 // NewServer creates a new HTTP server
 func NewServer(config ServerConfig) (*Server, error) {
 	s := &Server{
-		config:         config,
-		handlers:       make(map[string]string),
-		wsHandlers:     make(map[string]string),
-		staticRoutes:   make(map[string]string),
-		bearerExpected: "Bearer " + config.BearerToken,
+		config:               config,
+		handlers:             make(map[string]string),
+		wsHandlers:           make(map[string]string),
+		jsonrpcMethods:       make(map[string]string),
+		jsonrpcNotifications: make(map[string]string),
+		staticRoutes:         make(map[string]string),
+		bearerExpected:       "Bearer " + config.BearerToken,
 	}
 
 	packLoader, err := bootstrap.NewPackLoader(config.Packages, config.Insecure, config.CacheDir)
@@ -56,6 +58,7 @@ func NewServer(config ServerConfig) (*Server, error) {
 	}
 
 	s.collectRoutes()
+	s.collectJSONRPCMethods()
 	extlibs.ReleaseBackgroundTasks()
 
 	// Open zip web root if configured

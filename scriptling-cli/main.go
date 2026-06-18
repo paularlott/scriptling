@@ -138,6 +138,11 @@ func main() {
 				EnvVars:      []string{"SCRIPTLING_SERVER"},
 				ConfigPath:   []string{"server.address"},
 			},
+			&cli.BoolFlag{
+				Name:    "jsonrpc",
+				Usage:   "Enable stdio JSON-RPC 2.0 server mode (reads stdin, writes stdout)",
+				EnvVars: []string{"SCRIPTLING_JSONRPC"},
+			},
 			&cli.StringFlag{
 				Name:         "mcp-tools",
 				Usage:        "Enable MCP server with tools from directory",
@@ -249,10 +254,16 @@ func main() {
 			},
 		},
 		PreRun: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
+			// JSON-RPC stdio mode uses stdout as the protocol stream, so logs
+			// must go to stderr to avoid corrupting responses.
+			logWriter := os.Stdout
+			if cmd.GetBool("jsonrpc") {
+				logWriter = os.Stderr
+			}
 			globalLogger = logslog.New(logslog.Config{
 				Level:  cmd.GetString("log-level"),
 				Format: cmd.GetString("log-format"),
-				Writer: os.Stdout,
+				Writer: logWriter,
 			})
 			server.Log = globalLogger
 			return ctx, nil
@@ -275,6 +286,10 @@ func main() {
 func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	if serverAddr := cmd.GetString("server"); serverAddr != "" {
 		return runServer(ctx, cmd, serverAddr)
+	}
+
+	if cmd.GetBool("jsonrpc") {
+		return runJSONRPCServer(ctx, cmd)
 	}
 
 	if cmd.GetBool("lint") {
@@ -412,6 +427,40 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 		TLSCert:        cmd.GetString("tls-cert"),
 		TLSKey:         cmd.GetString("tls-key"),
 		TLSGenerate:    cmd.GetBool("tls-generate"),
+	})
+}
+
+func runJSONRPCServer(ctx context.Context, cmd *cli.Command) error {
+	file := cmd.GetStringArg("file")
+	baseDir, err := bootstrap.BaseDir(file)
+	if err != nil {
+		return err
+	}
+	secretRegistry, err := loadSecretRegistry(cmd.GetString("secret-config"))
+	if err != nil {
+		return err
+	}
+	pluginManager, err := loadPluginManager(ctx, cmd.GetStringSlice("plugin-dir"))
+	if err != nil {
+		return err
+	}
+	if pluginManager != nil {
+		defer pluginManager.Close()
+	}
+	return server.RunJSONRPCServer(ctx, server.ServerConfig{
+		ScriptFile:     file,
+		LibDirs:        bootstrap.BuildLibDirs(baseDir, cmd.GetStringSlice("libpath")),
+		Packages:       cmd.GetStringSlice("package"),
+		Insecure:       cmd.GetBool("insecure"),
+		CacheDir:       cmd.GetString("cache-dir"),
+		AllowedPaths:   bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths")),
+		DisabledLibs:   cmd.GetStringSlice("disable-lib"),
+		PluginDirs:     cmd.GetStringSlice("plugin-dir"),
+		PluginManager:  pluginManager,
+		KVStoragePath:  cmd.GetString("kv-storage"),
+		SecretRegistry: secretRegistry,
+		DockerSock:     cmd.GetString("docker-host"),
+		PodmanSock:     cmd.GetString("podman-host"),
 	})
 }
 
