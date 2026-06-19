@@ -139,7 +139,7 @@ func main() {
 				ConfigPath:   []string{"server.address"},
 			},
 			&cli.BoolFlag{
-				Name:    "jsonrpc",
+				Name:    "json-rpc",
 				Usage:   "Enable stdio JSON-RPC 2.0 server mode (reads stdin, writes stdout)",
 				EnvVars: []string{"SCRIPTLING_JSONRPC"},
 			},
@@ -257,7 +257,7 @@ func main() {
 			// JSON-RPC stdio mode uses stdout as the protocol stream, so logs
 			// must go to stderr to avoid corrupting responses.
 			logWriter := os.Stdout
-			if cmd.GetBool("jsonrpc") {
+			if cmd.GetBool("json-rpc") {
 				logWriter = os.Stderr
 			}
 			globalLogger = logslog.New(logslog.Config{
@@ -288,7 +288,7 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 		return runServer(ctx, cmd, serverAddr)
 	}
 
-	if cmd.GetBool("jsonrpc") {
+	if cmd.GetBool("json-rpc") {
 		return runJSONRPCServer(ctx, cmd)
 	}
 
