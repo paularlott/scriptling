@@ -24,7 +24,7 @@ stdin/stdout using the `scriptling.runtime.jsonrpc` library.
 Start the stdio server from the project root:
 
 ```bash
-scriptling --jsonrpc examples/jsonrpc-server/setup.py
+scriptling --json-rpc examples/jsonrpc-server/setup.py
 ```
 
 The server reads newline-delimited JSON-RPC 2.0 messages from stdin and writes
@@ -37,23 +37,23 @@ Pipe requests in on stdin:
 ```bash
 # A simple request
 echo '{"jsonrpc":"2.0","method":"echo","params":{"hello":"world"},"id":1}' \
-  | scriptling --jsonrpc examples/jsonrpc-server/setup.py
+  | scriptling --json-rpc examples/jsonrpc-server/setup.py
 # {"jsonrpc":"2.0","result":{"hello":"world"},"id":1}
 
 # Two requests in one batch (returned as a single JSON array)
 echo '[{"jsonrpc":"2.0","method":"add","params":{"a":2,"b":3},"id":1},
        {"jsonrpc":"2.0","method":"add","params":{"a":10,"b":5},"id":2}]' \
-  | scriptling --jsonrpc examples/jsonrpc-server/setup.py
+  | scriptling --json-rpc examples/jsonrpc-server/setup.py
 # [{"jsonrpc":"2.0","result":5,"id":1},{"jsonrpc":"2.0","result":15,"id":2}]
 
 # A structured error from runtime.jsonrpc.error()
 echo '{"jsonrpc":"2.0","method":"divide","params":{"a":1,"b":0},"id":3}' \
-  | scriptling --jsonrpc examples/jsonrpc-server/setup.py
+  | scriptling --json-rpc examples/jsonrpc-server/setup.py
 # {"jsonrpc":"2.0","error":{"code":-32602,"message":"division by zero","data":{"field":"b"}},"id":3}
 
 # A notification (no id) produces no response at all
 echo '{"jsonrpc":"2.0","method":"progress","params":{"done":3,"total":10}}' \
-  | scriptling --jsonrpc examples/jsonrpc-server/setup.py
+  | scriptling --json-rpc examples/jsonrpc-server/setup.py
 # (no output)
 ```
 
