@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -140,50 +141,119 @@ func (s *Server) RunIO(input io.Reader, output io.Writer) error {
 	}
 
 	for {
-		var msg rpcMessage
-		if err := decoder.Decode(&msg); err != nil {
+		var raw json.RawMessage
+		if err := decoder.Decode(&raw); err != nil {
 			if err == io.EOF {
 				wg.Wait()
 				return getErr()
 			}
 			return err
 		}
-		if msg.Method == "" {
-			runtime.deliverResponse(rpcResponse{
-				JSONRPC: msg.JSONRPC,
-				ID:      msg.ID,
-				Result:  msg.Result,
-				Error:   msg.Error,
-			})
+		raw = bytes.TrimSpace(raw)
+		if len(raw) == 0 {
 			continue
 		}
-		req := rpcRequest{JSONRPC: msg.JSONRPC, ID: msg.ID, Method: msg.Method, Params: msg.Params}
-		if req.Method == "plugin.shutdown" {
-			resp := s.handleRequest(context.Background(), req)
+		if raw[0] == '[' {
+			var batch []rpcMessage
+			if err := json.Unmarshal(raw, &batch); err != nil {
+				return err
+			}
+			var responses []rpcResponse
+			var shutdownResp *rpcResponse
+			for _, msg := range batch {
+				resp, shutdown := s.handleBatchMessage(context.Background(), runtime, msg)
+				if resp != nil {
+					responses = append(responses, *resp)
+				}
+				if shutdown {
+					shutdownResp = resp
+					break
+				}
+			}
+			if len(responses) > 0 {
+				runtime.writeMu.Lock()
+				err := runtime.encoder.Encode(responses)
+				runtime.writeMu.Unlock()
+				recordErr(err)
+			}
+			if shutdownResp != nil {
+				wg.Wait()
+				if err := getErr(); err != nil {
+					return err
+				}
+				if shutdownResp.Error != nil {
+					return shutdownResp.Error
+				}
+				return nil
+			}
+			continue
+		}
+		var msg rpcMessage
+		if err := json.Unmarshal(raw, &msg); err != nil {
+			return err
+		}
+		resp, shutdown := s.handleInboundMessage(context.Background(), runtime, &wg, recordErr, msg)
+		if resp != nil {
 			runtime.writeMu.Lock()
 			err := runtime.encoder.Encode(resp)
 			runtime.writeMu.Unlock()
 			recordErr(err)
+		}
+		if shutdown {
 			wg.Wait()
 			if err := getErr(); err != nil {
 				return err
 			}
-			if resp.Error != nil {
+			if resp != nil && resp.Error != nil {
 				return resp.Error
 			}
 			return nil
 		}
-		wg.Add(1)
-		go func(req rpcRequest) {
-			defer wg.Done()
-			ctx := context.WithValue(context.Background(), callbackRuntimeKey{}, runtime)
-			resp := s.handleRequest(ctx, req)
-			runtime.writeMu.Lock()
-			err := runtime.encoder.Encode(resp)
-			runtime.writeMu.Unlock()
-			recordErr(err)
-		}(req)
 	}
+}
+
+func (s *Server) handleBatchMessage(ctx context.Context, runtime *serverRuntime, msg rpcMessage) (*rpcResponse, bool) {
+	if msg.Method == "" {
+		runtime.deliverResponse(rpcResponse{
+			JSONRPC: msg.JSONRPC,
+			ID:      msg.ID,
+			Result:  msg.Result,
+			Error:   msg.Error,
+		})
+		return nil, false
+	}
+	req := rpcRequest{JSONRPC: msg.JSONRPC, ID: msg.ID, Method: msg.Method, Params: msg.Params}
+	ctx = context.WithValue(ctx, callbackRuntimeKey{}, runtime)
+	resp := s.handleRequest(ctx, req)
+	return &resp, req.Method == "plugin.shutdown"
+}
+
+func (s *Server) handleInboundMessage(ctx context.Context, runtime *serverRuntime, wg *sync.WaitGroup, recordErr func(error), msg rpcMessage) (*rpcResponse, bool) {
+	if msg.Method == "" {
+		runtime.deliverResponse(rpcResponse{
+			JSONRPC: msg.JSONRPC,
+			ID:      msg.ID,
+			Result:  msg.Result,
+			Error:   msg.Error,
+		})
+		return nil, false
+	}
+	req := rpcRequest{JSONRPC: msg.JSONRPC, ID: msg.ID, Method: msg.Method, Params: msg.Params}
+	if req.Method == "plugin.shutdown" {
+		resp := s.handleRequest(ctx, req)
+		return &resp, true
+	}
+	wg.Add(1)
+	go func(req rpcRequest) {
+		defer wg.Done()
+		ctx := context.WithValue(context.Background(), callbackRuntimeKey{}, runtime)
+		resp := s.handleRequest(ctx, req)
+		runtime.writeMu.Lock()
+		err := runtime.encoder.Encode(resp)
+		runtime.writeMu.Unlock()
+		recordErr(err)
+	}(req)
+	return nil, false
 }
 
 func (r *serverRuntime) callCallback(ctx context.Context, params callbackCallParams) (Value, error) {

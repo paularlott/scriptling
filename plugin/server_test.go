@@ -35,6 +35,57 @@ func TestServerFunctionCall(t *testing.T) {
 	}
 }
 
+func TestServerBatchFunctionCall(t *testing.T) {
+	fb := object.NewFunctionBuilder()
+	fb.Function(func(a int, b int) int {
+		return a + b
+	})
+
+	server := NewServer("mathy", "1.0.0", "test math").
+		RegisterFunc("add", fb)
+
+	var input bytes.Buffer
+	var output bytes.Buffer
+	requests := []rpcRequest{
+		{
+			JSONRPC: "2.0",
+			ID:      1,
+			Method:  "function.call",
+			Params: functionCallParams{
+				Name: "add",
+				Args: []Value{{Type: valueInt, Value: int64(2)}, {Type: valueInt, Value: int64(3)}},
+			},
+		},
+		{
+			JSONRPC: "2.0",
+			ID:      2,
+			Method:  "function.call",
+			Params: functionCallParams{
+				Name: "add",
+				Args: []Value{{Type: valueInt, Value: int64(8)}, {Type: valueInt, Value: int64(13)}},
+			},
+		},
+	}
+	if err := json.NewEncoder(&input).Encode(requests); err != nil {
+		t.Fatalf("encode batch: %v", err)
+	}
+	if err := server.RunIO(&input, &output); err != nil {
+		t.Fatalf("RunIO: %v", err)
+	}
+
+	var responses []rpcResponse
+	if err := json.NewDecoder(&output).Decode(&responses); err != nil {
+		t.Fatalf("decode batch response: %v", err)
+	}
+	results := mapByID(responses)
+	if got, ok := intResult(results, 1); !ok || got != 5 {
+		t.Fatalf("expected id=1 result 5, got %d ok=%v responses=%#v", got, ok, responses)
+	}
+	if got, ok := intResult(results, 2); !ok || got != 21 {
+		t.Fatalf("expected id=2 result 21, got %d ok=%v responses=%#v", got, ok, responses)
+	}
+}
+
 func TestServerClassLifecycle(t *testing.T) {
 	destroyed := false
 	class := object.NewClassBuilder("Config").

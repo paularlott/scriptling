@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -70,7 +71,7 @@ func (m *Manager) Load(ctx context.Context) error {
 			if info.Mode()&0111 == 0 {
 				continue
 			}
-			client, err := startClient(ctx, path)
+			client, err := startClient(ctx, path, nil)
 			if err != nil {
 				m.addWarning("plugin %s failed to load: %v", path, err)
 				continue
@@ -92,6 +93,120 @@ func (m *Manager) Load(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// LoadPath starts a single executable and registers it under name. Identity
+// is by absolute path: calling LoadPath twice with the same path AND the same
+// name returns the existing client without respawning. A second LoadPath of
+// an already-loaded path with a different name is rejected, as is any
+// LoadPath that would register a name already in use by a different path.
+//
+// If scriptling is true, the plugin protocol handshake is performed and the
+// client can be driven through CallFunction / CallMethod / call_function /
+// call_method. If scriptling is false, the handshake is skipped and
+// call_function sends the function name directly as the JSON-RPC method.
+//
+// args, if non-empty, are passed as command-line arguments to the executable
+// (e.g. ["--json-rpc", "./setup.py"] when spawning `scriptling` itself).
+//
+// name is normalised into the plugin.* namespace (e.g. "widgets" becomes
+// "plugin.widgets"); the returned client's Metadata().Name reflects that.
+func (m *Manager) LoadPath(ctx context.Context, name, path string, scriptling bool, args []string) (*Client, error) {
+	normalisedName := NormalizeLibraryName(name)
+	absPath, err := resolveExecutablePath(path)
+	if err != nil {
+		return nil, err
+	}
+
+	m.mu.Lock()
+	for _, existing := range m.clients {
+		if existing.Path() == absPath {
+			if existing.Metadata().Name == normalisedName {
+				m.mu.Unlock()
+				return existing, nil
+			}
+			m.mu.Unlock()
+			return nil, fmt.Errorf("plugin %s already loaded as %s", absPath, existing.Metadata().Name)
+		}
+	}
+	if _, exists := m.clients[normalisedName]; exists {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("plugin name %s already in use", normalisedName)
+	}
+	m.mu.Unlock()
+
+	var client *Client
+	if scriptling {
+		client, err = startClient(ctx, absPath, args)
+	} else {
+		client, err = spawnClient(ctx, absPath, args)
+	}
+	if err != nil {
+		return nil, err
+	}
+	m.mu.RLock()
+	client.setLogger(m.logger)
+	m.mu.RUnlock()
+	client.SetName(normalisedName)
+
+	m.mu.Lock()
+	// Re-check under the write lock: a concurrent LoadPath may have won the race.
+	for _, existing := range m.clients {
+		if existing.Path() == absPath {
+			m.mu.Unlock()
+			_ = client.Close()
+			if existing.Metadata().Name == normalisedName {
+				return existing, nil
+			}
+			return nil, fmt.Errorf("plugin %s already loaded as %s", absPath, existing.Metadata().Name)
+		}
+	}
+	if _, exists := m.clients[normalisedName]; exists {
+		m.mu.Unlock()
+		_ = client.Close()
+		return nil, fmt.Errorf("plugin name %s already in use", normalisedName)
+	}
+	m.clients[normalisedName] = client
+	m.mu.Unlock()
+	m.installCrashHandler(normalisedName, client)
+	return client, nil
+}
+
+// Unload closes a client registered via LoadPath and removes it from the
+// manager. It is intended for runtime-loaded executables; calling Unload on a
+// plugin discovered via Load also works but the plugin will not be restarted.
+// Returns an error if no client is registered under name (after normalisation).
+func (m *Manager) Unload(name string) error {
+	normalized := NormalizeLibraryName(name)
+	m.mu.Lock()
+	client, ok := m.clients[normalized]
+	if ok {
+		delete(m.clients, normalized)
+	}
+	m.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("plugin not found: %s", name)
+	}
+	return client.Close()
+}
+
+func resolveExecutablePath(path string) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("plugin path is required")
+	}
+	resolved := path
+	if !filepath.IsAbs(path) && !strings.Contains(path, string(filepath.Separator)) {
+		found, err := exec.LookPath(path)
+		if err != nil {
+			return "", err
+		}
+		resolved = found
+	}
+	absPath, err := filepath.Abs(resolved)
+	if err != nil {
+		return "", err
+	}
+	return absPath, nil
 }
 
 // Close shuts down all loaded plugin processes.
@@ -227,6 +342,8 @@ type Client struct {
 	encoder  *json.Encoder
 	metadata Metadata
 
+	handshakeDone bool
+
 	nextID         atomic.Int64
 	pending        map[int64]*pendingCall
 	callbackOwners map[string]*pendingCall
@@ -256,8 +373,29 @@ type callbackInbound struct {
 	response chan rpcResponse
 }
 
-func startClient(ctx context.Context, path string) (*Client, error) {
-	cmd := exec.CommandContext(ctx, path)
+func startClient(ctx context.Context, path string, args []string) (*Client, error) {
+	client, err := spawnClient(ctx, path, args)
+	if err != nil {
+		return nil, err
+	}
+	if err := client.handshake(ctx); err != nil {
+		_ = client.Close()
+		return nil, err
+	}
+	return client, nil
+}
+
+// spawnClient starts an executable as a subprocess wired up for JSON-RPC over
+// stdio, but does not perform the plugin handshake. Callers that want the
+// plugin protocol handshake should use LoadClient (or call handshake next);
+// callers that want to skip the handshake may use the returned client directly.
+// args, if non-empty, are passed as command-line arguments to the executable.
+func spawnClient(ctx context.Context, path string, args []string) (*Client, error) {
+	// The subprocess must outlive any single request context — the evaluation
+	// context that reaches load() may be cancelled after the builtin returns.
+	// The process lifecycle is managed by the client's Close() (stdin close +
+	// process wait) and the manager's Close()/Unload(), not by a context.
+	cmd := exec.Command(path, args...)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -284,31 +422,47 @@ func startClient(ctx context.Context, path string) (*Client, error) {
 	}
 	go client.readLoop()
 	go client.waitLoop()
+	return client, nil
+}
 
+// LoadClient spawns an executable and performs the plugin protocol handshake.
+// The returned client has Metadata populated from the handshake result.
+// args, if non-empty, are passed as command-line arguments to the executable.
+func LoadClient(ctx context.Context, path string, args []string) (*Client, error) {
+	return startClient(ctx, path, args)
+}
+
+// SpawnClient spawns an executable without performing the plugin handshake.
+// The caller is responsible for any handshake exchange via Call.
+// args, if non-empty, are passed as command-line arguments to the executable.
+func SpawnClient(ctx context.Context, path string, args []string) (*Client, error) {
+	return spawnClient(ctx, path, args)
+}
+
+// handshake performs the scriptling plugin protocol handshake and populates the
+// client metadata from the result. It is a no-op if the protocol/transport are
+// already negotiated.
+func (c *Client) handshake(ctx context.Context) error {
 	handshakeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	var result handshakeResult
-	err = client.call(handshakeCtx, "scriptling.handshake", handshakeParams{
+	if err := c.call(handshakeCtx, "scriptling.handshake", handshakeParams{
 		Protocol:     ProtocolVersion,
 		Host:         "scriptling",
 		HostVersion:  "dev",
 		Transports:   []string{"json"},
 		Capabilities: []string{"remote_objects"},
-	}, nil, &result)
-	if err != nil {
-		_ = client.Close()
-		return nil, err
+	}, nil, &result); err != nil {
+		return err
 	}
 	if result.Protocol != ProtocolVersion {
-		_ = client.Close()
-		return nil, fmt.Errorf("unsupported protocol %q", result.Protocol)
+		return fmt.Errorf("unsupported protocol %q", result.Protocol)
 	}
 	if result.Transport != "json" {
-		_ = client.Close()
-		return nil, fmt.Errorf("unsupported transport %q", result.Transport)
+		return fmt.Errorf("unsupported transport %q", result.Transport)
 	}
-	client.metadata = Metadata{
+	c.metadata = Metadata{
 		Name:         NormalizeLibraryName(result.Library.Name),
 		Version:      result.Library.Version,
 		Description:  result.Library.Description,
@@ -316,24 +470,115 @@ func startClient(ctx context.Context, path string) (*Client, error) {
 		Capabilities: result.Capabilities,
 		Schema:       result.Schema,
 	}
-	return client, nil
+	c.handshakeDone = true
+	return nil
 }
 
 func (c *Client) Metadata() Metadata {
 	return c.metadata
 }
 
-// Close shuts down this plugin process.
+// Path returns the filesystem path of the executable this client runs.
+func (c *Client) Path() string {
+	return c.path
+}
+
+// HandshakeDone reports whether the plugin protocol handshake was completed.
+// call_function uses this to route automatically: handshook clients use the
+// typed plugin transport (function.call), non-handshook clients send the
+// method name directly as a raw JSON-RPC request.
+func (c *Client) HandshakeDone() bool {
+	return c.handshakeDone
+}
+
+// SetName overrides the library name used to register this client. It is only
+// meaningful before the client is added to a Manager and is intended for raw
+// (non-plugin-handshake) clients whose name would otherwise be empty.
+func (c *Client) SetName(name string) {
+	c.metadata.Name = NormalizeLibraryName(name)
+	if c.metadata.Transport == "" {
+		c.metadata.Transport = "json"
+	}
+}
+
+// Call sends a raw JSON-RPC request to the executable and unmarshals the result
+// into out (which may be nil to ignore the result). params may be any
+// JSON-marshalable value (struct, map, slice, scalar). It is the low-level
+// building block for non-plugin JSON-RPC peers; plugin callers should prefer
+// CallFunction / NewObject / CallMethod which use the plugin method names.
+func (c *Client) Call(ctx context.Context, method string, params any, out any) error {
+	return c.call(ctx, method, params, nil, out)
+}
+
+// Batch sends multiple raw JSON-RPC requests in one batch frame and returns
+// results in the same order as requests. Batch does not support host callbacks.
+func (c *Client) Batch(ctx context.Context, requests []batchRequest) ([]json.RawMessage, error) {
+	if len(requests) == 0 {
+		return nil, nil
+	}
+	calls := make([]*pendingCall, len(requests))
+	wire := make([]rpcRequest, len(requests))
+
+	c.mu.Lock()
+	for i, req := range requests {
+		id := c.nextID.Add(1)
+		call := &pendingCall{
+			id:       id,
+			response: make(chan rpcResponse, 1),
+			done:     make(chan struct{}),
+		}
+		c.pending[id] = call
+		calls[i] = call
+		wire[i] = rpcRequest{JSONRPC: "2.0", ID: id, Method: req.Method, Params: req.Params}
+	}
+	c.mu.Unlock()
+	defer func() {
+		for _, call := range calls {
+			c.removeCall(call)
+		}
+	}()
+
+	c.writeMu.Lock()
+	err := c.encoder.Encode(wire)
+	c.writeMu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]json.RawMessage, len(calls))
+	for i, call := range calls {
+		select {
+		case resp := <-call.response:
+			if resp.Error != nil {
+				return nil, fmt.Errorf("batch call %d (%s): %w", i, requests[i].Method, resp.Error)
+			}
+			results[i] = resp.Result
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-c.done:
+			return nil, fmt.Errorf("plugin process exited")
+		}
+	}
+	return results, nil
+}
+
+// Close shuts down this plugin process. The plugin.shutdown notification is
+// best-effort: peers that do not implement the plugin protocol (e.g. raw
+// JSON-RPC executables loaded via LoadPath(scriptling=false)) will return a
+// method-not-found error which is intentionally ignored. Handshaken Scriptling
+// plugins still report shutdown RPC errors. Real failures — the process not
+// exiting, or exiting with a non-zero status — are also reported.
 func (c *Client) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	c.closing.Store(true)
-	var first error
-	if err := c.call(ctx, "plugin.shutdown", nil, nil, nil); err != nil {
-		first = err
-	}
+	shutdownErr := c.call(ctx, "plugin.shutdown", nil, nil, nil)
 	if c.stdin != nil {
 		_ = c.stdin.Close()
+	}
+	var first error
+	if shutdownErr != nil && c.HandshakeDone() {
+		first = shutdownErr
 	}
 	select {
 	case <-c.waitDone:
@@ -526,28 +771,61 @@ func (c *Client) readLoop() {
 	defer close(c.done)
 	decoder := json.NewDecoder(bufio.NewReader(c.stdout))
 	for {
-		var msg rpcMessage
-		if err := decoder.Decode(&msg); err != nil {
+		var raw json.RawMessage
+		if err := decoder.Decode(&raw); err != nil {
 			if err != io.EOF {
 				c.setReadErr(err)
 			}
 			return
 		}
-		if msg.Method != "" {
-			req := rpcRequest{JSONRPC: msg.JSONRPC, ID: msg.ID, Method: msg.Method, Params: msg.Params}
-			resp := c.routeRequest(req)
+		if len(bytes.TrimSpace(raw)) == 0 {
+			continue
+		}
+		if bytes.TrimSpace(raw)[0] == '[' {
+			var batch []rpcMessage
+			if err := json.Unmarshal(raw, &batch); err != nil {
+				c.setReadErr(err)
+				return
+			}
+			var responses []rpcResponse
+			for _, msg := range batch {
+				if resp, ok := c.handleInboundMessage(msg); ok {
+					responses = append(responses, resp)
+				}
+			}
+			if len(responses) > 0 {
+				c.writeMu.Lock()
+				_ = c.encoder.Encode(responses)
+				c.writeMu.Unlock()
+			}
+			continue
+		}
+		var msg rpcMessage
+		if err := json.Unmarshal(raw, &msg); err != nil {
+			c.setReadErr(err)
+			return
+		}
+		if resp, ok := c.handleInboundMessage(msg); ok {
 			c.writeMu.Lock()
 			_ = c.encoder.Encode(resp)
 			c.writeMu.Unlock()
-			continue
-		}
-		c.mu.Lock()
-		call := c.pending[msg.ID]
-		c.mu.Unlock()
-		if call != nil {
-			call.response <- rpcResponse{JSONRPC: msg.JSONRPC, ID: msg.ID, Result: msg.Result, Error: msg.Error}
 		}
 	}
+}
+
+func (c *Client) handleInboundMessage(msg rpcMessage) (rpcResponse, bool) {
+	if msg.Method != "" {
+		req := rpcRequest{JSONRPC: msg.JSONRPC, ID: msg.ID, Method: msg.Method, Params: msg.Params}
+		resp := c.routeRequest(req)
+		return resp, true
+	}
+	c.mu.Lock()
+	call := c.pending[msg.ID]
+	c.mu.Unlock()
+	if call != nil {
+		call.response <- rpcResponse{JSONRPC: msg.JSONRPC, ID: msg.ID, Result: msg.Result, Error: msg.Error}
+	}
+	return rpcResponse{}, false
 }
 
 func (c *Client) waitLoop() {

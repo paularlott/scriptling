@@ -339,10 +339,8 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
-	if pluginManager != nil {
-		defer pluginManager.Close()
-		scriptlingplugin.RegisterLibraries(p, pluginManager)
-	}
+	defer pluginManager.Close()
+	scriptlingplugin.RegisterLibraries(p, pluginManager)
 
 	packages := cmd.GetStringSlice("package")
 	insecure := cmd.GetBool("insecure")
@@ -402,9 +400,7 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 	if err != nil {
 		return err
 	}
-	if pluginManager != nil {
-		defer pluginManager.Close()
-	}
+	defer pluginManager.Close()
 	return server.RunServer(ctx, server.ServerConfig{
 		Address:        address,
 		ScriptFile:     file,
@@ -444,9 +440,7 @@ func runJSONRPCServer(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
-	if pluginManager != nil {
-		defer pluginManager.Close()
-	}
+	defer pluginManager.Close()
 	return server.RunJSONRPCServer(ctx, server.ServerConfig{
 		ScriptFile:     file,
 		LibDirs:        bootstrap.BuildLibDirs(baseDir, cmd.GetStringSlice("libpath")),
@@ -465,9 +459,6 @@ func runJSONRPCServer(ctx context.Context, cmd *cli.Command) error {
 }
 
 func loadPluginManager(ctx context.Context, dirs []string) (*scriptlingplugin.Manager, error) {
-	if len(dirs) == 0 {
-		return nil, nil
-	}
 	manager := scriptlingplugin.NewManager(globalLogger, func(name string, err error) {
 		if globalLogger != nil {
 			globalLogger.Error("Plugin process exited", "plugin", name, "error", err)

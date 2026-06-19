@@ -59,6 +59,42 @@ func NewControlLibrary(manager *Manager) *object.Library {
 			},
 			HelpText: "call_function(library, name, *args, **kwargs) - Call a plugin function.",
 		},
+		"batch_call": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if len(kwargs.Kwargs) != 0 {
+					return pluginErr("batch_call() does not accept keyword arguments")
+				}
+				if len(args) != 2 {
+					return pluginErr("batch_call() requires library and calls")
+				}
+				library, errObj := args[0].AsString()
+				if errObj != nil {
+					return errObj
+				}
+				rawCalls, errObj := args[1].AsList()
+				if errObj != nil {
+					return pluginErr("batch_call() calls must be a list")
+				}
+				client, ok := manager.Get(library)
+				if !ok {
+					return pluginErr("plugin not found: " + library)
+				}
+				calls, errObj := parseBatchCallSpecs(rawCalls)
+				if errObj != nil {
+					return errObj
+				}
+				return batchCallPluginFunctions(ctx, client, calls)
+			},
+			HelpText: `batch_call(library, calls) - Call multiple functions on one plugin process in a JSON-RPC batch.
+
+calls must be a list of dictionaries:
+  {"name": "method", "args": [1, 2], "kwargs": {"flag": True}}
+
+For scriptling=False clients, each name is sent directly as the raw JSON-RPC
+method. For scriptling=True clients, each item is sent as a function.call
+request. Results are returned in the same order as calls. Callback arguments
+are not supported in batch_call.`,
+		},
 		"call_method": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) < 2 {
@@ -113,8 +149,137 @@ func NewControlLibrary(manager *Manager) *object.Library {
 			},
 			HelpText: "release(obj) - Explicitly release a remote plugin object.",
 		},
+		"load": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if len(args) < 2 {
+					return pluginErr("load() requires name and path")
+				}
+				name, errObj := args[0].AsString()
+				if errObj != nil {
+					return errObj
+				}
+				path, errObj := args[1].AsString()
+				if errObj != nil {
+					return errObj
+				}
+				scriptling, kwErr := kwargs.GetBool("scriptling", false)
+				if kwErr != nil {
+					return kwErr
+				}
+				var execArgs []string
+				if kwargs.Has("args") {
+					rawArgs := kwargs.Get("args")
+					list, ok := rawArgs.(*object.List)
+					if !ok {
+						return pluginErr("load() args must be a list of strings")
+					}
+					for _, elem := range list.Elements {
+						s, errObj := elem.AsString()
+						if errObj != nil {
+							return errObj
+						}
+						execArgs = append(execArgs, s)
+					}
+				}
+				client, err := manager.LoadPath(ctx, name, path, scriptling, execArgs)
+				if err != nil {
+					return pluginErr(err.Error())
+				}
+				return object.NewString(client.Metadata().Name)
+			},
+			HelpText: `load(name, path, scriptling=False, args=None) - Spawn an executable and register it under name.
+
+When scriptling=False, call_function sends the requested function name directly
+as the JSON-RPC method. When scriptling=True, the executable must implement the
+Scriptling plugin handshake and function.call dispatch method. The loaded
+client is reachable via call_function, describe, and list; no proxy library is
+generated.
+
+Parameters:
+  name (str): Library name to register the executable under. Normalised into
+    the plugin.* namespace (e.g. "widgets" becomes "plugin.widgets"). Must
+    not collide with an existing plugin library name.
+  path (str): Filesystem path to the executable.
+  scriptling (bool, optional): If True, perform the plugin protocol handshake
+    so describe()/list() report version and schema from the executable. If
+    False (default), the handshake is skipped.
+  args (list[str], optional): Command-line arguments passed to the executable
+    (e.g. ["--json-rpc", "./setup.py"]).
+
+Identity is by absolute path. A second load() of the same path with the same
+name is a no-op (returns the existing client, ignoring scriptling/args).
+Loading an already-loaded path under a different name, or loading a new path
+under a name already in use, raises an error.
+
+Returns the normalised library name (e.g. "plugin.widgets"); the short form
+("widgets") may be used with call_function, describe, and unload.`,
+		},
+		"unload": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if len(args) != 1 {
+					return pluginErr("unload() requires a library name")
+				}
+				name, errObj := args[0].AsString()
+				if errObj != nil {
+					return errObj
+				}
+				if err := manager.Unload(name); err != nil {
+					return pluginErr(err.Error())
+				}
+				return &object.Null{}
+			},
+			HelpText: "unload(name) - Close a loaded executable and remove it from the registry.",
+		},
 	}
 	return object.NewLibrary(ControlLibraryName, functions, nil, "Plugin control library")
+}
+
+func parseBatchCallSpecs(items []object.Object) ([]batchCallSpec, object.Object) {
+	calls := make([]batchCallSpec, len(items))
+	for i, item := range items {
+		dict, ok := item.(*object.Dict)
+		if !ok {
+			return nil, pluginErrf("batch_call() call %d must be a dict", i)
+		}
+		namePair, ok := dict.GetByString("name")
+		if !ok {
+			return nil, pluginErrf("batch_call() call %d missing name", i)
+		}
+		name, errObj := namePair.Value.AsString()
+		if errObj != nil {
+			return nil, pluginErrf("batch_call() call %d name must be a string", i)
+		}
+
+		var callArgs []object.Object
+		if argsPair, ok := dict.GetByString("args"); ok {
+			callArgs, errObj = argsPair.Value.AsList()
+			if errObj != nil {
+				return nil, pluginErrf("batch_call() call %d args must be a list or tuple", i)
+			}
+		}
+
+		callKwargs := map[string]object.Object{}
+		if kwargsPair, ok := dict.GetByString("kwargs"); ok {
+			kwargsDict, ok := kwargsPair.Value.(*object.Dict)
+			if !ok {
+				return nil, pluginErrf("batch_call() call %d kwargs must be a dict", i)
+			}
+			for _, pair := range kwargsDict.Pairs {
+				key, ok := pair.Key.(*object.String)
+				if !ok {
+					return nil, pluginErrf("batch_call() call %d kwargs keys must be strings", i)
+				}
+				callKwargs[key.StringValue()] = pair.Value
+			}
+		}
+
+		calls[i] = batchCallSpec{
+			Name:   name,
+			Args:   callArgs,
+			Kwargs: object.NewKwargs(callKwargs),
+		}
+	}
+	return calls, nil
 }
 
 func metadataToDict(meta Metadata) *object.Dict {

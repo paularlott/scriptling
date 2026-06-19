@@ -2,11 +2,13 @@ package plugin
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -256,6 +258,9 @@ func buildProxyClass(client *Client, library string, schema ClassSchema) *object
 }
 
 func callPluginFunction(ctx context.Context, client *Client, name string, kwargs object.Kwargs, args ...object.Object) object.Object {
+	if !client.HandshakeDone() {
+		return callRawFunction(ctx, client, name, kwargs, args...)
+	}
 	callbacks := newCallbackSet()
 	encodedArgs, err := valuesFromObjectsWithCallbacks(args, callbacks)
 	if err != nil {
@@ -274,6 +279,160 @@ func callPluginFunction(ctx context.Context, client *Client, name string, kwargs
 		return pluginErr(err.Error())
 	}
 	return obj
+}
+
+type batchCallSpec struct {
+	Name   string
+	Args   []object.Object
+	Kwargs object.Kwargs
+}
+
+func batchCallPluginFunctions(ctx context.Context, client *Client, calls []batchCallSpec) object.Object {
+	if len(calls) == 0 {
+		return &object.List{}
+	}
+	requests := make([]batchRequest, len(calls))
+	for i, call := range calls {
+		if err := rejectBatchCallbacks(call.Args, call.Kwargs); err != nil {
+			return pluginErrf("batch call %d (%s): %v", i, call.Name, err)
+		}
+		if client.HandshakeDone() {
+			encodedArgs, err := valuesFromObjects(call.Args)
+			if err != nil {
+				return pluginErrf("batch call %d (%s): %v", i, call.Name, err)
+			}
+			encodedKwargs, err := valuesFromKwargs(call.Kwargs)
+			if err != nil {
+				return pluginErrf("batch call %d (%s): %v", i, call.Name, err)
+			}
+			requests[i] = batchRequest{
+				Method: "function.call",
+				Params: functionCallParams{
+					Name:   call.Name,
+					Args:   encodedArgs,
+					Kwargs: encodedKwargs,
+				},
+			}
+			continue
+		}
+		params := rawParamsFromObjects(call.Kwargs, call.Args...)
+		requests[i] = batchRequest{Method: call.Name, Params: params}
+	}
+
+	results, err := client.Batch(ctx, requests)
+	if err != nil {
+		return pluginErr(err.Error())
+	}
+	items := make([]object.Object, len(results))
+	for i, raw := range results {
+		if len(raw) == 0 {
+			items[i] = &object.Null{}
+			continue
+		}
+		if client.HandshakeDone() {
+			var value Value
+			if err := json.Unmarshal(raw, &value); err != nil {
+				return pluginErrf("batch call %d (%s): failed to decode result: %v", i, calls[i].Name, err)
+			}
+			obj, err := valueToObject(value)
+			if err != nil {
+				return pluginErrf("batch call %d (%s): %v", i, calls[i].Name, err)
+			}
+			items[i] = obj
+			continue
+		}
+		var decoded any
+		if err := json.Unmarshal(raw, &decoded); err != nil {
+			return pluginErrf("batch call %d (%s): failed to decode result: %v", i, calls[i].Name, err)
+		}
+		items[i] = conversion.FromGo(decoded)
+	}
+	return &object.List{Elements: items}
+}
+
+// callRawFunction sends a raw JSON-RPC request for a client that did not
+// perform the plugin handshake. The function name goes directly on the wire
+// as the JSON-RPC method (no function.call wrapper). Params are mapped from
+// the Scriptling args/kwargs:
+//   - kwargs present → params is a JSON object
+//   - single positional arg, no kwargs → params is that value
+//   - multiple positional args, no kwargs → params is a JSON array
+//   - nothing → params omitted
+func callRawFunction(ctx context.Context, client *Client, name string, kwargs object.Kwargs, args ...object.Object) object.Object {
+	params := rawParamsFromObjects(kwargs, args...)
+	var raw json.RawMessage
+	if err := client.Call(ctx, name, params, &raw); err != nil {
+		return pluginErr(err.Error())
+	}
+	if len(raw) == 0 {
+		return &object.Null{}
+	}
+	var decoded any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return pluginErrf("failed to decode result: %v", err)
+	}
+	return conversion.FromGo(decoded)
+}
+
+func rawParamsFromObjects(kwargs object.Kwargs, args ...object.Object) any {
+	switch {
+	case len(kwargs.Kwargs) > 0:
+		m := make(map[string]any, len(kwargs.Kwargs))
+		for k, v := range kwargs.Kwargs {
+			m[k] = conversion.ToGo(v)
+		}
+		return m
+	case len(args) == 1:
+		return conversion.ToGo(args[0])
+	case len(args) > 1:
+		arr := make([]any, len(args))
+		for i, a := range args {
+			arr[i] = conversion.ToGo(a)
+		}
+		return arr
+	default:
+		return nil
+	}
+}
+
+func rejectBatchCallbacks(args []object.Object, kwargs object.Kwargs) error {
+	for _, arg := range args {
+		if containsCallable(arg) {
+			return fmt.Errorf("batch_call does not support callback arguments")
+		}
+	}
+	for _, arg := range kwargs.Kwargs {
+		if containsCallable(arg) {
+			return fmt.Errorf("batch_call does not support callback arguments")
+		}
+	}
+	return nil
+}
+
+func containsCallable(obj object.Object) bool {
+	switch v := obj.(type) {
+	case *object.Function, *object.LambdaFunction, *object.Builtin:
+		return true
+	case *object.List:
+		for _, item := range v.Elements {
+			if containsCallable(item) {
+				return true
+			}
+		}
+	case *object.Tuple:
+		for _, item := range v.Elements {
+			if containsCallable(item) {
+				return true
+			}
+		}
+	case *object.Dict:
+		for _, pair := range v.Pairs {
+			if containsCallable(pair.Value) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func newPluginObject(ctx context.Context, client *Client, library, className string, kwargs object.Kwargs, args ...object.Object) object.Object {
