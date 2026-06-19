@@ -179,6 +179,83 @@ if status != file.UNCHANGED:
 	}
 }
 
+func TestEnsureCreateOnlySkipsExisting(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.txt")
+	os.WriteFile(path, []byte("original"), 0o644)
+
+	p := scriptling.New()
+	Register(p)
+
+	_, err := p.Eval(`
+import scriptling.provision.file as file
+status = file.ensure("` + path + `", "different", create_only=True)
+if status != file.UNCHANGED:
+    raise Exception("expected UNCHANGED")
+`)
+	if err != nil {
+		t.Fatalf("Failed to run ensure with create_only: %v", err)
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("Failed to read file: %v", err)
+	}
+	if string(content) != "original" {
+		t.Errorf("create_only should not modify existing file, got %s", string(content))
+	}
+}
+
+func TestEnsureCreateOnlyCreatesNew(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "subdir", "test.txt")
+
+	p := scriptling.New()
+	Register(p)
+
+	_, err := p.Eval(`
+import scriptling.provision.file as file
+status = file.ensure("` + path + `", "fresh", create_only=True)
+if status != file.CREATED:
+    raise Exception("expected CREATED")
+`)
+	if err != nil {
+		t.Fatalf("Failed to run ensure with create_only: %v", err)
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("Failed to read file: %v", err)
+	}
+	if string(content) != "fresh" {
+		t.Errorf("Expected 'fresh', got %s", string(content))
+	}
+}
+
+func TestEnsureCreateOnlyFalseUpdates(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.txt")
+	os.WriteFile(path, []byte("old"), 0o644)
+
+	p := scriptling.New()
+	Register(p)
+
+	_, err := p.Eval(`
+import scriptling.provision.file as file
+status = file.ensure("` + path + `", "new", create_only=False)
+if status != file.UPDATED:
+    raise Exception("expected UPDATED")
+`)
+	if err != nil {
+		t.Fatalf("Failed to run ensure: %v", err)
+	}
+
+	content, _ := os.ReadFile(path)
+	if string(content) != "new" {
+		t.Errorf("Expected 'new', got %s", string(content))
+	}
+}
+
 func TestAbsentRemoves(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.txt")
