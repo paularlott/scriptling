@@ -58,16 +58,21 @@ func buildLibrary() *object.Library {
 					return &object.Error{Message: "ensure: content must be a string"}
 				}
 
-				mode := int(kwargs.MustGetInt("mode", defaultFileMode))
+			mode := int(kwargs.MustGetInt("mode", defaultFileMode))
+			createOnly := kwargs.MustGetBool("create_only", false)
 
-				path = expandPath(path)
+			path = expandPath(path)
 
-				existing, err := os.ReadFile(path)
+			existing, err := os.ReadFile(path)
 			if err == nil && bytes.Equal(existing, []byte(content)) {
 				return object.NewString(StatusUnchanged)
 			}
 
-				fileExisted := err == nil
+			if err == nil && createOnly {
+				return object.NewString(StatusUnchanged)
+			}
+
+			fileExisted := err == nil
 
 				dir := filepath.Dir(path)
 				if dir != "" && dir != "." {
@@ -89,25 +94,31 @@ func buildLibrary() *object.Library {
 			}
 			return object.NewString(StatusCreated)
 			},
-			HelpText: `ensure(path, content, mode=0o644) - Ensure a file exists with the given content
+			HelpText: `ensure(path, content, mode=0o644, create_only=False) - Ensure a file exists with the given content
 
 Creates parent directories if needed. If the file already exists with the
 same content, it is left unchanged. Otherwise the file is written with the
 specified mode.
 
+When create_only is True, an existing file is never modified: the call
+returns "unchanged" without writing, even if the content differs. New files
+are still written normally.
+
 Parameters:
   path (str): Path to the file (supports ~ expansion)
   content (str): File contents
   mode (int): File permission mode (default 0o644)
+  create_only (bool): If True, never modify an existing file (default False)
 
 Returns:
   str: "created" if the file was newly written,
        "updated" if the file existed but content differed,
-       "unchanged" if the file existed with identical content
+       "unchanged" if the file existed with identical content,
+       or if the file existed and create_only is True
 
 Example:
   import scriptling.provision.file as file
-  status = file.ensure("~/.gitconfig", "[user]\\nname = Jane\\n", mode=0o600)
+  status = file.ensure("~/.gitconfig", "[user]\nname = Jane\n", mode=0o600)
   if status == file.CREATED:
       print("File created")
   elif status == file.UPDATED:
