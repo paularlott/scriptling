@@ -104,6 +104,11 @@ type rpcRequest struct {
 	Params  any    `json:"params,omitempty"`
 }
 
+type batchRequest struct {
+	Method string
+	Params any
+}
+
 type rpcMessage struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      int64           `json:"id,omitempty"`
