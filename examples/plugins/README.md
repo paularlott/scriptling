@@ -9,6 +9,8 @@ These examples demonstrate Scriptling plugins loaded from executable files with
 (`scriptling_plugin.h` / `scriptling_plugin.c`). It handles requests concurrently
 with one thread per request and demonstrates functions, classes with constructors
 and destructors, read/write properties, constants, and callbacks.
+The SDK accepts JSON-RPC single requests, batched requests, and notifications
+without ids; mixed batches return only the entries that require responses.
 
 ```bash
 make -C examples/plugins/hello-c

@@ -40,8 +40,10 @@ echo '{"jsonrpc":"2.0","method":"echo","params":{"hello":"world"},"id":1}' \
   | scriptling --json-rpc examples/jsonrpc-server/setup.py
 # {"jsonrpc":"2.0","result":{"hello":"world"},"id":1}
 
-# Two requests in one batch (returned as a single JSON array)
+# A mixed batch: request responses are returned as one array; notifications
+# in the batch are handled but omitted from the response.
 echo '[{"jsonrpc":"2.0","method":"add","params":{"a":2,"b":3},"id":1},
+       {"jsonrpc":"2.0","method":"progress","params":{"done":1,"total":2}},
        {"jsonrpc":"2.0","method":"add","params":{"a":10,"b":5},"id":2}]' \
   | scriptling --json-rpc examples/jsonrpc-server/setup.py
 # [{"jsonrpc":"2.0","result":5,"id":1},{"jsonrpc":"2.0","result":15,"id":2}]
@@ -53,6 +55,12 @@ echo '{"jsonrpc":"2.0","method":"divide","params":{"a":1,"b":0},"id":3}' \
 
 # A notification (no id) produces no response at all
 echo '{"jsonrpc":"2.0","method":"progress","params":{"done":3,"total":10}}' \
+  | scriptling --json-rpc examples/jsonrpc-server/setup.py
+# (no output)
+
+# An all-notification batch also produces no response
+echo '[{"jsonrpc":"2.0","method":"progress","params":{"done":1}},
+       {"jsonrpc":"2.0","method":"progress","params":{"done":2}}]' \
   | scriptling --json-rpc examples/jsonrpc-server/setup.py
 # (no output)
 ```
@@ -69,6 +77,10 @@ instead.
 
 - Handlers are referenced as `"library.function"` strings, not closures, so the
   server can spin up an isolated evaluator per request.
+- A single JSON-RPC object is handled as one call; a JSON-RPC array is handled
+  as a batch and replies with one array containing only request responses.
+- Notifications are requests without an `id`. They run their registered handler
+  and never produce a response, including inside batches.
 - Response logging must target stderr; stdout is the protocol stream.
 - Unknown methods return `-32601`; handler exceptions return `-32000`.
 - `runtime.jsonrpc.error()` lets a handler emit any JSON-RPC error code/data.
