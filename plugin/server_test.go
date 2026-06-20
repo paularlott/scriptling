@@ -86,6 +86,105 @@ func TestServerBatchFunctionCall(t *testing.T) {
 	}
 }
 
+func TestServerNotificationNoResponse(t *testing.T) {
+	called := false
+	fb := object.NewFunctionBuilder()
+	fb.Function(func() {
+		called = true
+	})
+
+	server := NewServer("notify", "1.0.0", "notification test").
+		RegisterFunc("mark", fb)
+
+	var input bytes.Buffer
+	var output bytes.Buffer
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		Method:  "function.call",
+		Params:  functionCallParams{Name: "mark"},
+	}
+	if err := json.NewEncoder(&input).Encode(req); err != nil {
+		t.Fatalf("encode notification: %v", err)
+	}
+	if err := server.RunIO(&input, &output); err != nil {
+		t.Fatalf("RunIO: %v", err)
+	}
+	if !called {
+		t.Fatal("expected notification handler to run")
+	}
+	if output.Len() != 0 {
+		t.Fatalf("expected no response for notification, got %q", output.String())
+	}
+}
+
+func TestServerBatchMixedRequestsAndNotifications(t *testing.T) {
+	calls := 0
+	add := object.NewFunctionBuilder()
+	add.Function(func(a int, b int) int {
+		return a + b
+	})
+	mark := object.NewFunctionBuilder()
+	mark.Function(func() {
+		calls++
+	})
+
+	server := NewServer("mathy", "1.0.0", "test math").
+		RegisterFunc("add", add).
+		RegisterFunc("mark", mark)
+
+	var input bytes.Buffer
+	var output bytes.Buffer
+	requests := []rpcRequest{
+		{
+			JSONRPC: "2.0",
+			ID:      1,
+			Method:  "function.call",
+			Params: functionCallParams{
+				Name: "add",
+				Args: []Value{{Type: valueInt, Value: int64(2)}, {Type: valueInt, Value: int64(3)}},
+			},
+		},
+		{
+			JSONRPC: "2.0",
+			Method:  "function.call",
+			Params:  functionCallParams{Name: "mark"},
+		},
+		{
+			JSONRPC: "2.0",
+			ID:      2,
+			Method:  "function.call",
+			Params: functionCallParams{
+				Name: "add",
+				Args: []Value{{Type: valueInt, Value: int64(8)}, {Type: valueInt, Value: int64(13)}},
+			},
+		},
+	}
+	if err := json.NewEncoder(&input).Encode(requests); err != nil {
+		t.Fatalf("encode batch: %v", err)
+	}
+	if err := server.RunIO(&input, &output); err != nil {
+		t.Fatalf("RunIO: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("expected one notification call, got %d", calls)
+	}
+
+	var responses []rpcResponse
+	if err := json.NewDecoder(&output).Decode(&responses); err != nil {
+		t.Fatalf("decode batch response: %v", err)
+	}
+	if len(responses) != 2 {
+		t.Fatalf("expected 2 request responses and no notification response, got %d: %#v", len(responses), responses)
+	}
+	results := mapByID(responses)
+	if got, ok := intResult(results, 1); !ok || got != 5 {
+		t.Fatalf("expected id=1 result 5, got %d ok=%v responses=%#v", got, ok, responses)
+	}
+	if got, ok := intResult(results, 2); !ok || got != 21 {
+		t.Fatalf("expected id=2 result 21, got %d ok=%v responses=%#v", got, ok, responses)
+	}
+}
+
 func TestServerClassLifecycle(t *testing.T) {
 	destroyed := false
 	class := object.NewClassBuilder("Config").

@@ -268,6 +268,44 @@ func TestJSONRPCBatchAllNotificationsNoResponse(t *testing.T) {
 	}
 }
 
+func TestJSONRPCBatchMixedRequestsAndNotifications(t *testing.T) {
+	src := `def echo(params):
+    return params
+
+def on_event(params):
+    return None
+`
+	s, _ := jsonrpcTestServer(t, src,
+		map[string]string{"echo": "rpcmod.echo"},
+		map[string]string{"event": "rpcmod.on_event"},
+	)
+
+	input := `[
+		{"jsonrpc":"2.0","method":"echo","params":{"n":1},"id":1},
+		{"jsonrpc":"2.0","method":"event","params":{"x":99}},
+		{"jsonrpc":"2.0","method":"echo","params":{"n":2},"id":2}
+	]`
+	var out bytes.Buffer
+	if err := s.runJSONRPC(context.Background(), strings.NewReader(input), &out); err != nil {
+		t.Fatalf("runJSONRPC failed: %v", err)
+	}
+
+	var arr []map[string]interface{}
+	if err := json.Unmarshal(out.Bytes(), &arr); err != nil {
+		t.Fatalf("expected batch array, got parse error: %v (output: %q)", err, out.String())
+	}
+	if len(arr) != 2 {
+		t.Fatalf("expected 2 request responses and no notification response, got %d: %#v", len(arr), arr)
+	}
+	ids := map[int]bool{}
+	for _, r := range arr {
+		ids[asInt(r["id"])] = true
+	}
+	if !ids[1] || !ids[2] {
+		t.Errorf("expected ids 1 and 2 in mixed batch responses, got %v", ids)
+	}
+}
+
 // TestJSONRPCConcurrent verifies that handlers run concurrently: two slow
 // handlers (each ~150ms) must finish in roughly one handler's time, not the sum.
 func TestJSONRPCConcurrent(t *testing.T) {

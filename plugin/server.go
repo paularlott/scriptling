@@ -225,6 +225,9 @@ func (s *Server) handleBatchMessage(ctx context.Context, runtime *serverRuntime,
 	req := rpcRequest{JSONRPC: msg.JSONRPC, ID: msg.ID, Method: msg.Method, Params: msg.Params}
 	ctx = context.WithValue(ctx, callbackRuntimeKey{}, runtime)
 	resp := s.handleRequest(ctx, req)
+	if msg.ID == 0 {
+		return nil, req.Method == "plugin.shutdown"
+	}
 	return &resp, req.Method == "plugin.shutdown"
 }
 
@@ -241,6 +244,9 @@ func (s *Server) handleInboundMessage(ctx context.Context, runtime *serverRuntim
 	req := rpcRequest{JSONRPC: msg.JSONRPC, ID: msg.ID, Method: msg.Method, Params: msg.Params}
 	if req.Method == "plugin.shutdown" {
 		resp := s.handleRequest(ctx, req)
+		if msg.ID == 0 {
+			return nil, true
+		}
 		return &resp, true
 	}
 	wg.Add(1)
@@ -248,6 +254,9 @@ func (s *Server) handleInboundMessage(ctx context.Context, runtime *serverRuntim
 		defer wg.Done()
 		ctx := context.WithValue(context.Background(), callbackRuntimeKey{}, runtime)
 		resp := s.handleRequest(ctx, req)
+		if req.ID == 0 {
+			return
+		}
 		runtime.writeMu.Lock()
 		err := runtime.encoder.Encode(resp)
 		runtime.writeMu.Unlock()

@@ -12,21 +12,25 @@
 /*  Thread-local server pointer (for callbacks and logging)           */
 /* ================================================================== */
 
+typedef struct sbuf sbuf;
+
 #ifdef _WIN32
 static __declspec(thread) sl_server *tl_server = NULL;
+static __declspec(thread) sbuf *tl_response_capture = NULL;
 #else
 static __thread sl_server *tl_server = NULL;
+static __thread sbuf *tl_response_capture = NULL;
 #endif
 
 /* ================================================================== */
 /*  Internal string buffer                                            */
 /* ================================================================== */
 
-typedef struct {
+struct sbuf {
     char  *b;
     size_t n;
     size_t c;
-} sbuf;
+};
 
 static void sb_init(sbuf *s) {
     s->c = 256;
@@ -275,6 +279,10 @@ static const jval *jget(const jval *obj, const char *key) {
     for (size_t i = 0; i < obj->u.obj.n; i++)
         if (strcmp(obj->u.obj.k[i], key) == 0) return obj->u.obj.v[i];
     return NULL;
+}
+
+static bool jhas(const jval *obj, const char *key) {
+    return jget(obj, key) != NULL;
 }
 
 static const char *jget_str(const jval *obj, const char *key) {
@@ -614,6 +622,15 @@ static void send_line_ts(sl_server *srv, const char *line) {
     pthread_mutex_unlock(&srv->write_mu);
 }
 
+static void emit_response(sl_server *srv, const char *line) {
+    if (tl_response_capture) {
+        if (tl_response_capture->n > 1) sb_putc(tl_response_capture, ',');
+        sb_puts(tl_response_capture, line);
+        return;
+    }
+    send_line_ts(srv, line);
+}
+
 /* Read one line from stdin. Only called from the reader thread. */
 static char *read_line(void) {
     sbuf buf; sb_init(&buf);
@@ -628,23 +645,26 @@ static char *read_line(void) {
 }
 
 static void send_error(sl_server *srv, int64_t id, const char *msg) {
+    if (id < 0) return;
     sbuf s; sb_init(&s);
     sb_printf(&s, "{\"jsonrpc\":\"2.0\",\"id\":%lld,\"error\":{\"code\":-32000,\"message\":", (long long)id);
     sb_json_str(&s, msg, strlen(msg));
     sb_puts(&s, "}}");
-    send_line_ts(srv, s.b); sb_free(&s);
+    emit_response(srv, s.b); sb_free(&s);
 }
 
 static void send_result_null(sl_server *srv, int64_t id) {
+    if (id < 0) return;
     sbuf s; sb_init(&s);
     sb_printf(&s, "{\"jsonrpc\":\"2.0\",\"id\":%lld,\"result\":null}", (long long)id);
-    send_line_ts(srv, s.b); sb_free(&s);
+    emit_response(srv, s.b); sb_free(&s);
 }
 
 static void send_result_json(sl_server *srv, int64_t id, const char *json) {
+    if (id < 0) return;
     sbuf s; sb_init(&s);
     sb_printf(&s, "{\"jsonrpc\":\"2.0\",\"id\":%lld,\"result\":%s}", (long long)id, json);
-    send_line_ts(srv, s.b); sb_free(&s);
+    emit_response(srv, s.b); sb_free(&s);
 }
 
 /* ================================================================== */
@@ -1173,6 +1193,44 @@ typedef struct {
     char      *line;
 } sl_work_item;
 
+static void dispatch_jsonrpc_object(sl_server *srv, const jval *root) {
+    if (!root || root->t != JT_OBJ) return;
+    const char *method = jget_str(root, "method");
+    if (!method) return;
+    int64_t id = jhas(root, "id") ? jget_int(root, "id", -1) : -1;
+    const jval *params = jget(root, "params");
+    dispatch_request(srv, method, params ? params : jnew(JT_NULL), id);
+}
+
+static bool jsonrpc_object_is_shutdown(const jval *root) {
+    const char *method = jget_str(root, "method");
+    return method && strcmp(method, "plugin.shutdown") == 0;
+}
+
+static void dispatch_jsonrpc_batch(sl_server *srv, const jval *root) {
+    if (!root || root->t != JT_ARR) return;
+
+    sbuf responses;
+    sb_init(&responses);
+    sb_putc(&responses, '[');
+
+    sbuf *prev_capture = tl_response_capture;
+    tl_response_capture = &responses;
+    for (size_t i = 0; i < root->u.arr.n; i++) {
+        const jval *item = root->u.arr.a[i];
+        if (!item || item->t != JT_OBJ) continue;
+        dispatch_jsonrpc_object(srv, item);
+        if (jsonrpc_object_is_shutdown(item)) break;
+    }
+    tl_response_capture = prev_capture;
+
+    if (responses.n > 1) {
+        sb_putc(&responses, ']');
+        send_line_ts(srv, responses.b);
+    }
+    sb_free(&responses);
+}
+
 static void *worker_thread(void *arg) {
     sl_work_item *item = arg;
     sl_server *srv = item->srv;
@@ -1183,14 +1241,12 @@ static void *worker_thread(void *arg) {
 
     jval *root = json_parse(line);
     free(line);
-    if (!root || root->t != JT_OBJ) { jfree(root); flight_leave(srv); return NULL; }
+    if (!root) { flight_leave(srv); return NULL; }
 
-    const char *method = jget_str(root, "method");
-    int64_t id = jget_int(root, "id", -1);
-    const jval *params = jget(root, "params");
-
-    if (method) {
-        dispatch_request(srv, method, params ? params : jnew(JT_NULL), id);
+    if (root->t == JT_ARR) {
+        dispatch_jsonrpc_batch(srv, root);
+    } else if (root->t == JT_OBJ) {
+        dispatch_jsonrpc_object(srv, root);
     }
     jfree(root);
 
@@ -1207,13 +1263,35 @@ int sl_server_run(sl_server *srv) {
     tl_server = srv;
     for (;;) {
         char *line = read_line();
-        if (!line) break;
+        if (!line) {
+            flight_wait_all(srv);
+            break;
+        }
 
         jval *root = json_parse(line);
-        if (!root || root->t != JT_OBJ) { jfree(root); free(line); continue; }
+        if (!root || (root->t != JT_OBJ && root->t != JT_ARR)) { jfree(root); free(line); continue; }
+
+        if (root->t == JT_ARR) {
+            jfree(root);
+
+            /* Dispatch a request batch to one worker. The worker emits one
+             * JSON array response and omits notification entries. */
+            flight_enter(srv);
+            sl_work_item *item = malloc(sizeof(*item));
+            item->srv = srv;
+            item->line = line;
+
+            pthread_t tid;
+            pthread_attr_t attr;
+            pthread_attr_init(&attr);
+            pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+            pthread_create(&tid, &attr, worker_thread, item);
+            pthread_attr_destroy(&attr);
+            continue;
+        }
 
         const char *method = jget_str(root, "method");
-        int64_t id = jget_int(root, "id", -1);
+        int64_t id = jhas(root, "id") ? jget_int(root, "id", -1) : -1;
 
         if (method) {
             jfree(root);

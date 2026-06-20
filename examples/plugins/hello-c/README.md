@@ -9,6 +9,15 @@ Each incoming request is handled in its own thread, matching the
 concurrency model of the Go plugin server. The object store, stdout writes,
 and callback routing are all thread-safe.
 
+The SDK speaks newline-delimited JSON-RPC 2.0 over stdin/stdout. It accepts:
+
+- A single request object and writes one response object.
+- A batch array and writes one response array containing only calls that had an
+  `id`.
+- Notifications, which are request objects without an `id`; their handlers run
+  and no response is written. A batch containing only notifications writes no
+  response.
+
 ## Quick Start
 
 ```c
@@ -49,6 +58,33 @@ scriptling --plugin-dir /tmp/plugins -c 'import plugin.hello; print(plugin.hello
 - No external dependencies beyond the C standard library and pthreads
 
 ## Reference
+
+### JSON-RPC Transport
+
+Plugin hosts send standard JSON-RPC 2.0 frames. Normal plugin calls are request
+objects:
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"function.call","params":{"name":"greet","args":[{"type":"string","value":"Ada"}]}}
+```
+
+Batched calls are sent as one JSON array and receive one JSON array response:
+
+```json
+[
+  {"jsonrpc":"2.0","id":1,"method":"function.call","params":{"name":"greet","args":[{"type":"string","value":"Ada"}]}},
+  {"jsonrpc":"2.0","id":2,"method":"function.call","params":{"name":"label","args":[{"type":"string","value":"Ada"}]}}
+]
+```
+
+Notifications omit `id` and do not produce responses:
+
+```json
+{"jsonrpc":"2.0","method":"host.log","params":{"level":"info","message":"started"}}
+```
+
+Inside a mixed batch, notification entries run but are omitted from the response
+array.
 
 ### Values
 
