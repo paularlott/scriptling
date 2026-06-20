@@ -64,11 +64,15 @@ func buildLibrary() *object.Library {
 				insecure := kwargs.MustGetBool("insecure", false)
 				unpackZip := kwargs.MustGetBool("unpack_zip", false)
 				timeoutSecs := int(kwargs.MustGetInt("timeout", defaultTimeout))
+				maxBytes := kwargs.MustGetInt("max_bytes", 0)
 				mode := int(kwargs.MustGetInt("mode", defaultFileMode))
 				dirMode := int(kwargs.MustGetInt("dir_mode", defaultDirMode))
 
 				if timeoutSecs <= 0 {
 					return &object.Error{Message: "file: timeout must be greater than zero"}
+				}
+				if maxBytes < 0 {
+					return &object.Error{Message: "file: max_bytes must be non-negative"}
 				}
 				if mode < 0 {
 					return &object.Error{Message: "file: mode must be non-negative"}
@@ -77,7 +81,7 @@ func buildLibrary() *object.Library {
 					return &object.Error{Message: "file: dir_mode must be non-negative"}
 				}
 
-				data, err := fetchURL(ctx, src, insecure, time.Duration(timeoutSecs)*time.Second)
+				data, err := fetchURL(ctx, src, insecure, time.Duration(timeoutSecs)*time.Second, maxBytes)
 				if err != nil {
 					return &object.Error{Message: "file: " + err.Error()}
 				}
@@ -98,7 +102,7 @@ func buildLibrary() *object.Library {
 				result.Unpacked = unpackZip
 				return conversion.FromGo(result.toMap())
 			},
-			HelpText: `file(url, dest, insecure=False, unpack_zip=False, timeout=30, mode=0o644, dir_mode=0o755) - Fetch a file over HTTP/HTTPS
+			HelpText: `file(url, dest, insecure=False, unpack_zip=False, timeout=30, max_bytes=0, mode=0o644, dir_mode=0o755) - Fetch a file over HTTP/HTTPS
 
 Downloads url to dest. Parent directories are created automatically. When
 unpack_zip is True, dest is treated as a destination directory and the fetched
@@ -113,6 +117,7 @@ Parameters:
   insecure (bool): If True, skip HTTPS certificate verification (default False)
   unpack_zip (bool): If True, unpack the response body as a zip archive (default False)
   timeout (int): Request timeout in seconds (default 30)
+  max_bytes (int): Maximum response size in bytes, or 0 for no cap (default 0)
   mode (int): File permission mode for written files (default 0o644)
   dir_mode (int): Directory permission mode for created directories (default 0o755)
 
@@ -157,7 +162,7 @@ func (r fetchResult) toMap() map[string]interface{} {
 	}
 }
 
-func fetchURL(ctx context.Context, rawURL string, insecure bool, timeout time.Duration) ([]byte, error) {
+func fetchURL(ctx context.Context, rawURL string, insecure bool, timeout time.Duration, maxBytes int64) ([]byte, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid URL: %w", err)
@@ -169,10 +174,7 @@ func fetchURL(ctx context.Context, rawURL string, insecure bool, timeout time.Du
 		return nil, fmt.Errorf("URL host is required")
 	}
 
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	if insecure {
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-	}
+	transport := defaultTransport(insecure)
 	client := &http.Client{
 		Timeout:   timeout,
 		Transport: transport,
@@ -191,7 +193,34 @@ func fetchURL(ctx context.Context, rawURL string, insecure bool, timeout time.Du
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("HTTP %d fetching %s", resp.StatusCode, rawURL)
 	}
-	return io.ReadAll(resp.Body)
+	if maxBytes > 0 && resp.ContentLength > maxBytes {
+		return nil, fmt.Errorf("response exceeds max_bytes (%d > %d)", resp.ContentLength, maxBytes)
+	}
+	if maxBytes <= 0 {
+		return io.ReadAll(resp.Body)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("response exceeds max_bytes (%d)", maxBytes)
+	}
+	return data, nil
+}
+
+func defaultTransport(insecure bool) http.RoundTripper {
+	if base, ok := http.DefaultTransport.(*http.Transport); ok {
+		transport := base.Clone()
+		if insecure {
+			transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+		}
+		return transport
+	}
+	if insecure {
+		return &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+	}
+	return http.DefaultTransport
 }
 
 func writeFetchedFile(data []byte, dest string, mode, dirMode os.FileMode) (fetchResult, error) {
@@ -263,6 +292,9 @@ func unpackZipBytes(data []byte, dest string, mode, dirMode os.FileMode) (fetchR
 			}
 			continue
 		}
+		if !f.FileInfo().Mode().IsRegular() {
+			return fetchResult{}, fmt.Errorf("zip entry %q is not a regular file", f.Name)
+		}
 
 		rc, err := f.Open()
 		if err != nil {
@@ -281,9 +313,10 @@ func unpackZipBytes(data []byte, dest string, mode, dirMode os.FileMode) (fetchR
 			return fetchResult{}, fmt.Errorf("failed to create directory %s: %w", filepath.Dir(target), err)
 		}
 
+		fileMode := zipFileMode(f, mode)
 		existing, err := os.ReadFile(target)
 		if err == nil && bytes.Equal(existing, content) {
-			if err := os.Chmod(target, mode); err != nil {
+			if err := os.Chmod(target, fileMode); err != nil {
 				return fetchResult{}, fmt.Errorf("failed to set mode on %s: %w", target, err)
 			}
 			files = append(files, target)
@@ -299,16 +332,20 @@ func unpackZipBytes(data []byte, dest string, mode, dirMode os.FileMode) (fetchR
 			return fetchResult{}, fmt.Errorf("failed to read existing %s: %w", target, err)
 		}
 
-		if err := os.WriteFile(target, content, mode); err != nil {
+		if err := os.WriteFile(target, content, fileMode); err != nil {
 			return fetchResult{}, fmt.Errorf("failed to write %s: %w", target, err)
 		}
-		if err := os.Chmod(target, mode); err != nil {
+		if err := os.Chmod(target, fileMode); err != nil {
 			return fetchResult{}, fmt.Errorf("failed to set mode on %s: %w", target, err)
 		}
 		files = append(files, target)
 	}
 
 	return fetchResult{Status: status, Files: files}, nil
+}
+
+func zipFileMode(f *zip.File, mode os.FileMode) os.FileMode {
+	return mode | (f.Mode() & 0o111)
 }
 
 func safeZipTarget(dest, name string) (string, error) {
