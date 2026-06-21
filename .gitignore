@@ -12,3 +12,4 @@ __pycache__/
 /memory-db
 /examples/sample-package.zip
 /.claude/settings.local.json
+/examples/plugins/hello-c/hello-c
