@@ -4,10 +4,12 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -95,11 +97,9 @@ func (m *Manager) Load(ctx context.Context) error {
 	return nil
 }
 
-// LoadPath starts a single executable and registers it under name. Identity
-// is by absolute path: calling LoadPath twice with the same path AND the same
-// name returns the existing client without respawning. A second LoadPath of
-// an already-loaded path with a different name is rejected, as is any
-// LoadPath that would register a name already in use by a different path.
+// LoadPath starts a single executable, or connects to an http(s) JSON-RPC
+// endpoint, and registers it under name. Executable identity is by absolute
+// path; HTTP identity is by URL.
 //
 // If scriptling is true, the plugin protocol handshake is performed and the
 // client can be driven through CallFunction / CallMethod / call_function /
@@ -113,20 +113,25 @@ func (m *Manager) Load(ctx context.Context) error {
 // "plugin.widgets"); the returned client's Metadata().Name reflects that.
 func (m *Manager) LoadPath(ctx context.Context, name, path string, scriptling bool, args []string) (*Client, error) {
 	normalisedName := NormalizeLibraryName(name)
-	absPath, err := resolveExecutablePath(path)
-	if err != nil {
-		return nil, err
+	resolvedPath := path
+	isHTTP := isHTTPURL(path)
+	var err error
+	if !isHTTP {
+		resolvedPath, err = resolveExecutablePath(path)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	m.mu.Lock()
 	for _, existing := range m.clients {
-		if existing.Path() == absPath {
+		if existing.Path() == resolvedPath {
 			if existing.Metadata().Name == normalisedName {
 				m.mu.Unlock()
 				return existing, nil
 			}
 			m.mu.Unlock()
-			return nil, fmt.Errorf("plugin %s already loaded as %s", absPath, existing.Metadata().Name)
+			return nil, fmt.Errorf("plugin %s already loaded as %s", resolvedPath, existing.Metadata().Name)
 		}
 	}
 	if _, exists := m.clients[normalisedName]; exists {
@@ -136,10 +141,12 @@ func (m *Manager) LoadPath(ctx context.Context, name, path string, scriptling bo
 	m.mu.Unlock()
 
 	var client *Client
-	if scriptling {
-		client, err = startClient(ctx, absPath, args)
+	if isHTTP {
+		client, err = newHTTPClient(ctx, resolvedPath, false, scriptling)
+	} else if scriptling {
+		client, err = startClient(ctx, resolvedPath, args)
 	} else {
-		client, err = spawnClient(ctx, absPath, args)
+		client, err = spawnClient(ctx, resolvedPath, args)
 	}
 	if err != nil {
 		return nil, err
@@ -152,13 +159,13 @@ func (m *Manager) LoadPath(ctx context.Context, name, path string, scriptling bo
 	m.mu.Lock()
 	// Re-check under the write lock: a concurrent LoadPath may have won the race.
 	for _, existing := range m.clients {
-		if existing.Path() == absPath {
+		if existing.Path() == resolvedPath {
 			m.mu.Unlock()
 			_ = client.Close()
 			if existing.Metadata().Name == normalisedName {
 				return existing, nil
 			}
-			return nil, fmt.Errorf("plugin %s already loaded as %s", absPath, existing.Metadata().Name)
+			return nil, fmt.Errorf("plugin %s already loaded as %s", resolvedPath, existing.Metadata().Name)
 		}
 	}
 	if _, exists := m.clients[normalisedName]; exists {
@@ -169,6 +176,63 @@ func (m *Manager) LoadPath(ctx context.Context, name, path string, scriptling bo
 	m.clients[normalisedName] = client
 	m.mu.Unlock()
 	m.installCrashHandler(normalisedName, client)
+	return client, nil
+}
+
+// LoadURL connects to an HTTP(S) JSON-RPC endpoint and registers it under name.
+// If scriptling is true, the plugin protocol handshake is performed. If
+// insecureSkipTLS is true, HTTPS certificate verification is skipped. Optional
+// headers are sent with every HTTP request.
+func (m *Manager) LoadURL(ctx context.Context, name, rawURL string, scriptling, insecureSkipTLS bool, headers ...map[string]string) (*Client, error) {
+	if !isHTTPURL(rawURL) {
+		return nil, fmt.Errorf("plugin URL must use http or https")
+	}
+	normalisedName := NormalizeLibraryName(name)
+
+	m.mu.Lock()
+	for _, existing := range m.clients {
+		if existing.Path() == rawURL {
+			if existing.Metadata().Name == normalisedName {
+				m.mu.Unlock()
+				return existing, nil
+			}
+			m.mu.Unlock()
+			return nil, fmt.Errorf("plugin %s already loaded as %s", rawURL, existing.Metadata().Name)
+		}
+	}
+	if _, exists := m.clients[normalisedName]; exists {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("plugin name %s already in use", normalisedName)
+	}
+	m.mu.Unlock()
+
+	client, err := newHTTPClient(ctx, rawURL, insecureSkipTLS, scriptling, firstHeaderMap(headers))
+	if err != nil {
+		return nil, err
+	}
+	m.mu.RLock()
+	client.setLogger(m.logger)
+	m.mu.RUnlock()
+	client.SetName(normalisedName)
+
+	m.mu.Lock()
+	for _, existing := range m.clients {
+		if existing.Path() == rawURL {
+			m.mu.Unlock()
+			_ = client.Close()
+			if existing.Metadata().Name == normalisedName {
+				return existing, nil
+			}
+			return nil, fmt.Errorf("plugin %s already loaded as %s", rawURL, existing.Metadata().Name)
+		}
+	}
+	if _, exists := m.clients[normalisedName]; exists {
+		m.mu.Unlock()
+		_ = client.Close()
+		return nil, fmt.Errorf("plugin name %s already in use", normalisedName)
+	}
+	m.clients[normalisedName] = client
+	m.mu.Unlock()
 	return client, nil
 }
 
@@ -207,6 +271,10 @@ func resolveExecutablePath(path string) (string, error) {
 		return "", err
 	}
 	return absPath, nil
+}
+
+func isHTTPURL(ref string) bool {
+	return strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://")
 }
 
 // Close shuts down all loaded plugin processes.
@@ -340,6 +408,8 @@ type Client struct {
 	stdin    io.WriteCloser
 	stdout   io.ReadCloser
 	encoder  *json.Encoder
+	http     *http.Client
+	headers  map[string]string
 	metadata Metadata
 
 	handshakeDone bool
@@ -350,6 +420,7 @@ type Client struct {
 	mu             sync.Mutex
 	writeMu        sync.Mutex
 	done           chan struct{}
+	doneClose      sync.Once
 	waitDone       chan struct{}
 	stateMu        sync.Mutex
 	readErr        error
@@ -383,6 +454,54 @@ func startClient(ctx context.Context, path string, args []string) (*Client, erro
 		return nil, err
 	}
 	return client, nil
+}
+
+func newHTTPClient(ctx context.Context, rawURL string, insecureSkipTLS bool, handshake bool, headers ...map[string]string) (*Client, error) {
+	transport := http.DefaultTransport
+	if insecureSkipTLS {
+		if base, ok := http.DefaultTransport.(*http.Transport); ok {
+			clone := base.Clone()
+			clone.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+			transport = clone
+		} else {
+			transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+		}
+	}
+	client := &Client{
+		path:           rawURL,
+		http:           &http.Client{Transport: transport},
+		headers:        cloneHeaders(firstHeaderMap(headers)),
+		pending:        make(map[int64]*pendingCall),
+		callbackOwners: make(map[string]*pendingCall),
+		done:           make(chan struct{}),
+		waitDone:       make(chan struct{}),
+	}
+	close(client.waitDone)
+	if handshake {
+		if err := client.handshake(ctx); err != nil {
+			_ = client.Close()
+			return nil, err
+		}
+	}
+	return client, nil
+}
+
+func firstHeaderMap(headers []map[string]string) map[string]string {
+	if len(headers) == 0 {
+		return nil
+	}
+	return headers[0]
+}
+
+func cloneHeaders(headers map[string]string) map[string]string {
+	if len(headers) == 0 {
+		return nil
+	}
+	clone := make(map[string]string, len(headers))
+	for key, value := range headers {
+		clone[key] = value
+	}
+	return clone
 }
 
 // spawnClient starts an executable as a subprocess wired up for JSON-RPC over
@@ -516,6 +635,9 @@ func (c *Client) Batch(ctx context.Context, requests []batchRequest) ([]json.Raw
 	if len(requests) == 0 {
 		return nil, nil
 	}
+	if c.http != nil {
+		return c.httpBatch(ctx, requests)
+	}
 	calls := make([]*pendingCall, len(requests))
 	wire := make([]rpcRequest, len(requests))
 
@@ -573,6 +695,13 @@ func (c *Client) Close() error {
 	defer cancel()
 	c.closing.Store(true)
 	shutdownErr := c.call(ctx, "plugin.shutdown", nil, nil, nil)
+	if c.http != nil {
+		c.doneClose.Do(func() { close(c.done) })
+		if shutdownErr != nil && c.HandshakeDone() {
+			return shutdownErr
+		}
+		return nil
+	}
 	if c.stdin != nil {
 		_ = c.stdin.Close()
 	}
@@ -595,6 +724,14 @@ func (c *Client) Close() error {
 
 // Health reports whether this plugin process and stdio transport are healthy.
 func (c *Client) Health() error {
+	if c.http != nil {
+		select {
+		case <-c.done:
+			return errors.New("plugin http client closed")
+		default:
+			return nil
+		}
+	}
 	select {
 	case <-c.waitDone:
 		if err := c.waitError(); err != nil {
@@ -683,6 +820,9 @@ func (c *Client) DestroyObject(ctx context.Context, objectID string) error {
 }
 
 func (c *Client) call(ctx context.Context, method string, params any, callbacks *callbackSet, result any) error {
+	if c.http != nil {
+		return c.httpCall(ctx, method, params, callbacks, result)
+	}
 	id := c.nextID.Add(1)
 	call := &pendingCall{
 		id:       id,
@@ -735,6 +875,98 @@ func (c *Client) call(ctx context.Context, method string, params any, callbacks 
 	}
 }
 
+func (c *Client) httpCall(ctx context.Context, method string, params any, callbacks *callbackSet, result any) error {
+	if callbacks != nil && len(callbacks.callbacks) > 0 {
+		return fmt.Errorf("callbacks are not supported over http json-rpc transport")
+	}
+	select {
+	case <-c.done:
+		return fmt.Errorf("plugin http client closed")
+	default:
+	}
+	id := c.nextID.Add(1)
+	req := rpcRequest{JSONRPC: "2.0", ID: id, Method: method, Params: params}
+	var resp rpcResponse
+	if err := c.doHTTPJSONRPC(ctx, req, &resp); err != nil {
+		return err
+	}
+	if resp.Error != nil {
+		return resp.Error
+	}
+	if result != nil && len(resp.Result) > 0 {
+		if err := json.Unmarshal(resp.Result, result); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *Client) httpBatch(ctx context.Context, requests []batchRequest) ([]json.RawMessage, error) {
+	wire := make([]rpcRequest, len(requests))
+	ids := make(map[int64]int, len(requests))
+	for i, req := range requests {
+		id := c.nextID.Add(1)
+		ids[id] = i
+		wire[i] = rpcRequest{JSONRPC: "2.0", ID: id, Method: req.Method, Params: req.Params}
+	}
+	var responses []rpcResponse
+	if err := c.doHTTPJSONRPC(ctx, wire, &responses); err != nil {
+		return nil, err
+	}
+	results := make([]json.RawMessage, len(requests))
+	seen := make([]bool, len(requests))
+	for _, resp := range responses {
+		i, ok := ids[resp.ID]
+		if !ok {
+			continue
+		}
+		if resp.Error != nil {
+			return nil, fmt.Errorf("batch call %d (%s): %w", i, requests[i].Method, resp.Error)
+		}
+		results[i] = resp.Result
+		seen[i] = true
+	}
+	for i, ok := range seen {
+		if !ok {
+			return nil, fmt.Errorf("batch call %d (%s): missing response", i, requests[i].Method)
+		}
+	}
+	return results, nil
+}
+
+func (c *Client) doHTTPJSONRPC(ctx context.Context, payload any, out any) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.path, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	for key, value := range c.headers {
+		req.Header.Set(key, value)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNoContent {
+		return fmt.Errorf("json-rpc http endpoint returned no response")
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("json-rpc http endpoint returned %s: %s", resp.Status, strings.TrimSpace(string(bodyBytes)))
+	}
+	dec := json.NewDecoder(resp.Body)
+	if err := dec.Decode(out); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (c *Client) handleCallback(ctx context.Context, call *pendingCall, req rpcRequest) rpcResponse {
 	var params callbackCallParams
 	if err := decodeParams(req.Params, &params); err != nil {
@@ -768,7 +1000,7 @@ func (c *Client) removeCall(call *pendingCall) {
 }
 
 func (c *Client) readLoop() {
-	defer close(c.done)
+	defer c.doneClose.Do(func() { close(c.done) })
 	decoder := json.NewDecoder(bufio.NewReader(c.stdout))
 	for {
 		var raw json.RawMessage

@@ -27,6 +27,9 @@ func (s *Server) Start() error {
 	if s.mcpHandler != nil {
 		mux.Handle("/mcp", s.mcpHandler)
 	}
+	if s.config.JSONRPC {
+		mux.HandleFunc("/json-rpc", s.handleJSONRPCHTTP)
+	}
 
 	mux.HandleFunc("GET /health", s.handleHealth)
 
@@ -53,7 +56,7 @@ func (s *Server) Start() error {
 		if s.middleware == "" {
 			handler = s.bearerTokenMiddleware(mux)
 		} else {
-			handler = s.bearerTokenMCPOnlyMiddleware(mux)
+			handler = s.bearerTokenProtocolMiddleware(mux)
 		}
 	}
 
@@ -386,10 +389,11 @@ func (s *Server) bearerTokenMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// bearerTokenMCPOnlyMiddleware creates authentication middleware for MCP only
-func (s *Server) bearerTokenMCPOnlyMiddleware(next http.Handler) http.Handler {
+// bearerTokenProtocolMiddleware creates authentication middleware for protocol
+// endpoints when script middleware owns normal HTTP route authentication.
+func (s *Server) bearerTokenProtocolMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/mcp" && r.Header.Get("Authorization") != s.bearerExpected {
+		if (r.URL.Path == "/mcp" || r.URL.Path == "/json-rpc") && r.Header.Get("Authorization") != s.bearerExpected {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}

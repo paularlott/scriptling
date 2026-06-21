@@ -140,7 +140,7 @@ func main() {
 			},
 			&cli.BoolFlag{
 				Name:    "json-rpc",
-				Usage:   "Enable stdio JSON-RPC 2.0 server mode (reads stdin, writes stdout)",
+				Usage:   "Enable JSON-RPC 2.0 server mode (stdio by default, HTTP /json-rpc with --server)",
 				EnvVars: []string{"SCRIPTLING_JSONRPC"},
 			},
 			&cli.StringFlag{
@@ -415,6 +415,7 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 		PluginManager:  pluginManager,
 		MCPToolsDir:    cmd.GetString("mcp-tools"),
 		MCPExecTool:    cmd.GetBool("mcp-exec-script"),
+		JSONRPC:        cmd.GetBool("json-rpc"),
 		KVStoragePath:  cmd.GetString("kv-storage"),
 		WebRoot:        cmd.GetString("web-root"),
 		SecretRegistry: secretRegistry,

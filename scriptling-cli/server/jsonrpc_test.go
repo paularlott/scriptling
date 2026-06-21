@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,6 +49,118 @@ func jsonrpcTestServer(t *testing.T, handlerSrc string, methods, notifications m
 		s.jsonrpcNotifications[name] = ref
 	}
 	return s, libDir
+}
+
+func TestJSONRPCHTTPSingleRequest(t *testing.T) {
+	src := `def echo(params):
+    return params
+`
+	s, _ := jsonrpcTestServer(t, src, map[string]string{"echo": "rpcmod.echo"}, nil)
+	httpSrv := httptest.NewServer(http.HandlerFunc(s.handleJSONRPCHTTP))
+	defer httpSrv.Close()
+
+	resp, err := http.Post(httpSrv.URL, "application/json", strings.NewReader(`{"jsonrpc":"2.0","method":"echo","params":{"hello":"world"},"id":1}`))
+	if err != nil {
+		t.Fatalf("POST /json-rpc: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Fatalf("expected json content type, got %q", ct)
+	}
+	var body map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	result, ok := body["result"].(map[string]interface{})
+	if !ok || result["hello"] != "world" {
+		t.Fatalf("unexpected result: %#v", body)
+	}
+}
+
+func TestJSONRPCHTTPBatch(t *testing.T) {
+	src := `def echo(params):
+    return params
+
+def on_event(params):
+    return None
+`
+	s, _ := jsonrpcTestServer(t, src,
+		map[string]string{"echo": "rpcmod.echo"},
+		map[string]string{"event": "rpcmod.on_event"},
+	)
+	httpSrv := httptest.NewServer(http.HandlerFunc(s.handleJSONRPCHTTP))
+	defer httpSrv.Close()
+
+	body := `[
+		{"jsonrpc":"2.0","method":"echo","params":{"n":1},"id":1},
+		{"jsonrpc":"2.0","method":"event","params":{"x":99}},
+		{"jsonrpc":"2.0","method":"echo","params":{"n":2},"id":2}
+	]`
+	resp, err := http.Post(httpSrv.URL, "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /json-rpc: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var arr []map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&arr); err != nil {
+		t.Fatalf("decode batch: %v", err)
+	}
+	if len(arr) != 2 {
+		t.Fatalf("expected 2 request responses, got %d: %#v", len(arr), arr)
+	}
+	ids := map[int]bool{}
+	for _, r := range arr {
+		ids[asInt(r["id"])] = true
+	}
+	if !ids[1] || !ids[2] {
+		t.Fatalf("expected ids 1 and 2, got %v", ids)
+	}
+}
+
+func TestJSONRPCHTTPNotificationNoContent(t *testing.T) {
+	src := `def on_note(params):
+    return None
+`
+	s, _ := jsonrpcTestServer(t, src, nil, map[string]string{"noted": "rpcmod.on_note"})
+	httpSrv := httptest.NewServer(http.HandlerFunc(s.handleJSONRPCHTTP))
+	defer httpSrv.Close()
+
+	resp, err := http.Post(httpSrv.URL, "application/json", strings.NewReader(`{"jsonrpc":"2.0","method":"noted","params":{"x":1}}`))
+	if err != nil {
+		t.Fatalf("POST /json-rpc: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if len(body) != 0 {
+		t.Fatalf("expected empty body, got %q", string(body))
+	}
+}
+
+func TestJSONRPCHTTPRejectsNonPOST(t *testing.T) {
+	s, _ := jsonrpcTestServer(t, "def noop(params):\n    return None\n", nil, nil)
+	req := httptest.NewRequest(http.MethodGet, "/json-rpc", nil)
+	rec := httptest.NewRecorder()
+
+	s.handleJSONRPCHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rec.Code)
+	}
+	if allow := rec.Header().Get("Allow"); allow != http.MethodPost {
+		t.Fatalf("expected Allow POST, got %q", allow)
+	}
 }
 
 // readJSONRPCLines splits NDJSON output into decoded response objects. It uses

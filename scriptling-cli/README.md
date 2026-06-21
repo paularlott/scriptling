@@ -78,6 +78,7 @@ The linter exits with code 0 if no errors are found, and code 1 if any errors ex
 | `--log-level` | `SCRIPTLING_LOG_LEVEL` | Log level (trace/debug/info/warn/error) | info |
 | `--log-format` | `SCRIPTLING_LOG_FORMAT` | Log format (console/json) | console |
 | `-S`, `--server` | `SCRIPTLING_SERVER` | HTTP server address (host:port) | (disabled) |
+| `--json-rpc` | `SCRIPTLING_JSONRPC` | Enable JSON-RPC 2.0 server mode: stdio by default, HTTP `/json-rpc` with `--server` | false |
 | `--mcp-tools` | `SCRIPTLING_MCP_TOOLS` | Directory containing MCP tools | (disabled) |
 | `--bearer-token` | `SCRIPTLING_BEARER_TOKEN` | Bearer token for authentication | none |
 | `--allowed-paths` | `SCRIPTLING_ALLOWED_PATHS` | Comma-separated allowed filesystem paths | (no restriction) |
@@ -102,6 +103,7 @@ SCRIPTLING_LIBPATH=/shared/libs
 
 # Server configuration
 SCRIPTLING_SERVER=:8000
+SCRIPTLING_JSONRPC=true
 SCRIPTLING_MCP_TOOLS=./tools
 SCRIPTLING_BEARER_TOKEN=your-secret-token
 
@@ -254,6 +256,12 @@ scriptling --server :8443 --tls-generate setup.py
 # With MCP tools from directory
 scriptling --server :8000 --mcp-tools ./tools setup.py
 
+# With JSON-RPC over HTTP at /json-rpc
+scriptling --server :8000 --json-rpc setup.py
+
+# With MCP tools and JSON-RPC on the same HTTP server
+scriptling --server :8000 --mcp-tools ./tools --json-rpc setup.py
+
 # With MCP script execution tool
 scriptling --server :8000 --mcp-exec-script setup.py
 
@@ -265,6 +273,40 @@ scriptling --server :8000 --bearer-token my-secret-token setup.py
 
 # With filesystem restrictions
 scriptling --server :8000 --allowed-paths "/var/www,./uploads" setup.py
+```
+
+#### JSON-RPC Server Mode
+
+`--json-rpc` supports one transport at a time:
+
+```bash
+# Stdio JSON-RPC: reads stdin and writes stdout
+scriptling --json-rpc setup.py
+
+# HTTP JSON-RPC: mounts POST /json-rpc on the HTTP server
+scriptling --server :8000 --json-rpc setup.py
+
+# HTTP JSON-RPC can run alongside MCP tools and normal HTTP routes
+scriptling --server :8000 --json-rpc --mcp-tools ./tools setup.py
+```
+
+Register handlers from the setup script exactly as you do for stdio:
+
+```python
+import scriptling.runtime as runtime
+
+runtime.jsonrpc.method("echo", "handlers.echo")
+runtime.jsonrpc.notification("progress", "handlers.progress")
+```
+
+HTTP clients send a single JSON-RPC object or a batch array to `/json-rpc`.
+Requests receive `200 application/json`; notifications and all-notification
+batches receive `204 No Content`.
+
+```bash
+curl -X POST http://127.0.0.1:8000/json-rpc \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"echo","params":{"hello":"world"},"id":1}'
 ```
 
 #### MCP Script Execution Tool

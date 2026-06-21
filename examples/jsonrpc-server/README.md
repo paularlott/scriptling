@@ -1,7 +1,8 @@
-# JSON-RPC stdio Server Example
+# JSON-RPC Server Example
 
-This example demonstrates how to build a concurrent JSON-RPC 2.0 server over
-stdin/stdout using the `scriptling.runtime.jsonrpc` library.
+This example demonstrates how to build a concurrent JSON-RPC 2.0 server using
+the `scriptling.runtime.jsonrpc` library. The same handler registration works
+over stdio or over HTTP.
 
 ## What It Shows
 
@@ -30,7 +31,20 @@ scriptling --json-rpc examples/jsonrpc-server/setup.py
 The server reads newline-delimited JSON-RPC 2.0 messages from stdin and writes
 one response per line to stdout. Logs go to stderr and never corrupt the stream.
 
-## Talking to the Server
+Start the HTTP server instead:
+
+```bash
+scriptling --server :8000 --json-rpc examples/jsonrpc-server/setup.py
+```
+
+HTTP JSON-RPC is served at `POST /json-rpc`. It can run alongside normal
+`runtime.http` routes and MCP tools, for example:
+
+```bash
+scriptling --server :8000 --json-rpc --mcp-tools examples/mcp-tools/tools examples/jsonrpc-server/setup.py
+```
+
+## Talking to the Stdio Server
 
 Pipe requests in on stdin:
 
@@ -65,6 +79,29 @@ echo '[{"jsonrpc":"2.0","method":"progress","params":{"done":1}},
 # (no output)
 ```
 
+## Talking to the HTTP Server
+
+Send the same JSON-RPC objects to `/json-rpc`:
+
+```bash
+curl -X POST http://127.0.0.1:8000/json-rpc \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"echo","params":{"hello":"world"},"id":1}'
+# {"jsonrpc":"2.0","result":{"hello":"world"},"id":1}
+
+curl -X POST http://127.0.0.1:8000/json-rpc \
+  -H "Content-Type: application/json" \
+  -d '[{"jsonrpc":"2.0","method":"add","params":{"a":2,"b":3},"id":1},
+       {"jsonrpc":"2.0","method":"progress","params":{"done":1,"total":2}},
+       {"jsonrpc":"2.0","method":"add","params":{"a":10,"b":5},"id":2}]'
+# [{"jsonrpc":"2.0","result":5,"id":1},{"jsonrpc":"2.0","result":15,"id":2}]
+
+curl -i -X POST http://127.0.0.1:8000/json-rpc \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"progress","params":{"done":3,"total":10}}'
+# HTTP/1.1 204 No Content
+```
+
 ## Concurrency Model
 
 Each request is dispatched on its own goroutine with a fresh Scriptling
@@ -80,7 +117,8 @@ instead.
 - A single JSON-RPC object is handled as one call; a JSON-RPC array is handled
   as a batch and replies with one array containing only request responses.
 - Notifications are requests without an `id`. They run their registered handler
-  and never produce a response, including inside batches.
+  and never produce a response, including inside batches. HTTP notifications
+  return `204 No Content`.
 - Response logging must target stderr; stdout is the protocol stream.
 - Unknown methods return `-32601`; handler exceptions return `-32000`.
 - `runtime.jsonrpc.error()` lets a handler emit any JSON-RPC error code/data.

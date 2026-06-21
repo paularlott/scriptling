@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -222,10 +223,103 @@ func (s *Server) runJSONRPC(ctx context.Context, in io.Reader, out io.Writer) er
 	}
 }
 
+// handleJSONRPCHTTP serves JSON-RPC 2.0 over HTTP. Requests use POST with a
+// single JSON-RPC object or batch array. Notifications produce 204 No Content.
+func (s *Server) handleJSONRPCHTTP(w http.ResponseWriter, r *http.Request) {
+	Log.Trace("JSON-RPC HTTP request", "method", r.Method, "path", r.URL.Path, "remote", r.RemoteAddr)
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+	resp, hasBody := s.processJSONRPCHTTP(r.Context(), body)
+	if !hasBody {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(resp)
+}
+
+func (s *Server) processJSONRPCHTTP(ctx context.Context, raw []byte) ([]byte, bool) {
+	trimmed := bytes.TrimLeft(raw, " \t\r\n")
+	if len(trimmed) == 0 {
+		resp := jsonrpcResponseOut{
+			JSONRPC: jsonrpcVersion,
+			Error:   &jsonrpcErrorOut{Code: jsonrpcParseError, Message: "parse error: empty request body"},
+			ID:      json.RawMessage("null"),
+		}
+		out, _ := json.Marshal(resp)
+		return out, true
+	}
+
+	if trimmed[0] == '[' {
+		var frames []jsonrpcFrame
+		if err := json.Unmarshal(raw, &frames); err != nil {
+			resp := jsonrpcResponseOut{
+				JSONRPC: jsonrpcVersion,
+				Error:   &jsonrpcErrorOut{Code: jsonrpcParseError, Message: "parse error: " + err.Error()},
+				ID:      json.RawMessage("null"),
+			}
+			out, _ := json.Marshal(resp)
+			return out, true
+		}
+		if len(frames) == 0 {
+			resp := jsonrpcResponseOut{
+				JSONRPC: jsonrpcVersion,
+				Error:   &jsonrpcErrorOut{Code: jsonrpcInvalidRequest, Message: "invalid request: empty batch"},
+				ID:      json.RawMessage("null"),
+			}
+			out, _ := json.Marshal(resp)
+			return out, true
+		}
+		responses := s.collectJSONRPCBatchResponses(ctx, frames)
+		if len(responses) == 0 {
+			return nil, false
+		}
+		out, _ := json.Marshal(responses)
+		return out, true
+	}
+
+	var frame jsonrpcFrame
+	if err := json.Unmarshal(raw, &frame); err != nil {
+		resp := jsonrpcResponseOut{
+			JSONRPC: jsonrpcVersion,
+			Error:   &jsonrpcErrorOut{Code: jsonrpcParseError, Message: "parse error: " + err.Error()},
+			ID:      json.RawMessage("null"),
+		}
+		out, _ := json.Marshal(resp)
+		return out, true
+	}
+	if frame.isNotification() {
+		s.dispatchJSONRPCNotification(ctx, frame)
+		return nil, false
+	}
+	resp, _ := s.dispatchJSONRPCRequest(ctx, frame)
+	out, _ := json.Marshal(resp)
+	return out, true
+}
+
 // processJSONRPCBatch fans a batch of frames out concurrently, then writes the
 // collected responses as a single JSON array. Notifications contribute no
 // response and an all-notification batch writes nothing at all.
 func (s *Server) processJSONRPCBatch(ctx context.Context, frames []jsonrpcFrame, encoder *json.Encoder, writeMu *sync.Mutex) {
+	responses := s.collectJSONRPCBatchResponses(ctx, frames)
+	if len(responses) == 0 {
+		return
+	}
+	writeMu.Lock()
+	encoder.Encode(responses)
+	writeMu.Unlock()
+}
+
+func (s *Server) collectJSONRPCBatchResponses(ctx context.Context, frames []jsonrpcFrame) []jsonrpcResponseOut {
 	var responses []jsonrpcResponseOut
 	var respMu sync.Mutex
 	var batchWg sync.WaitGroup
@@ -252,13 +346,7 @@ func (s *Server) processJSONRPCBatch(ctx context.Context, frames []jsonrpcFrame,
 		}()
 	}
 	batchWg.Wait()
-
-	if len(responses) == 0 {
-		return
-	}
-	writeMu.Lock()
-	encoder.Encode(responses)
-	writeMu.Unlock()
+	return responses
 }
 
 // dispatchJSONRPCRequest resolves and invokes the handler for a request frame
