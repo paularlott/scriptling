@@ -67,6 +67,14 @@ func buildLibrary() *object.Library {
 				maxBytes := kwargs.MustGetInt("max_bytes", 0)
 				mode := int(kwargs.MustGetInt("mode", defaultFileMode))
 				dirMode := int(kwargs.MustGetInt("dir_mode", defaultDirMode))
+				providesObjs := kwargs.MustGetList("provides", nil)
+				var provides []string
+				for _, p := range providesObjs {
+					s, _ := p.CoerceString()
+					if s != "" {
+						provides = append(provides, s)
+					}
+				}
 
 				if timeoutSecs <= 0 {
 					return &object.Error{Message: "file: timeout must be greater than zero"}
@@ -79,6 +87,27 @@ func buildLibrary() *object.Library {
 				}
 				if dirMode < 0 {
 					return &object.Error{Message: "file: dir_mode must be non-negative"}
+				}
+
+				if len(provides) > 0 {
+					allExist := true
+					for _, p := range provides {
+						expanded := expandPath(p)
+						if _, err := os.Stat(expanded); os.IsNotExist(err) {
+							allExist = false
+							break
+						}
+					}
+					if allExist {
+						return conversion.FromGo(map[string]interface{}{
+							"status":   StatusUnchanged,
+							"url":      src,
+							"path":     "",
+							"bytes":    int64(0),
+							"unpacked": unpackZip,
+							"files":    []string{},
+						})
+					}
 				}
 
 				data, err := fetchURL(ctx, src, insecure, time.Duration(timeoutSecs)*time.Second, maxBytes)
@@ -102,7 +131,7 @@ func buildLibrary() *object.Library {
 				result.Unpacked = unpackZip
 				return conversion.FromGo(result.toMap())
 			},
-			HelpText: `file(url, dest, insecure=False, unpack_zip=False, timeout=30, max_bytes=0, mode=0o644, dir_mode=0o755) - Fetch a file over HTTP/HTTPS
+			HelpText: `file(url, dest, insecure=False, unpack_zip=False, timeout=30, max_bytes=0, mode=0o644, dir_mode=0o755, provides=None) - Fetch a file over HTTP/HTTPS
 
 Downloads url to dest. Parent directories are created automatically. When
 unpack_zip is True, dest is treated as a destination directory and the fetched
@@ -120,6 +149,8 @@ Parameters:
   max_bytes (int): Maximum response size in bytes, or 0 for no cap (default 0)
   mode (int): File permission mode for written files (default 0o644)
   dir_mode (int): Directory permission mode for created directories (default 0o755)
+  provides (list[str]): List of file paths to check before fetching. If all paths
+    exist, returns UNCHANGED without downloading or extracting.
 
 Returns:
   dict: {"status": "created|updated|unchanged", "url": url, "path": dest,
