@@ -20,6 +20,11 @@ type ScriptLibraryRegistrar interface {
 	RegisterScriptLibrary(name string, script string) error
 }
 
+type LibraryUnregistrar interface {
+	UnregisterLibrary(name string)
+	UnregisterScriptLibrary(name string)
+}
+
 // DefaultReleaseTimeout is used by Release and GC finalizers when no caller
 // context is available. Use ReleaseWithContext for request-scoped cleanup.
 const DefaultReleaseTimeout = 2 * time.Second
@@ -28,20 +33,42 @@ func RegisterLibraries(registrar Registrar, manager *Manager) {
 	if manager == nil {
 		return
 	}
-	registrar.RegisterLibrary(NewControlLibrary(manager))
+	var scriptRegistrar ScriptLibraryRegistrar
+	if r, ok := registrar.(ScriptLibraryRegistrar); ok {
+		scriptRegistrar = r
+	}
+	var unregistrar LibraryUnregistrar
+	if r, ok := registrar.(LibraryUnregistrar); ok {
+		unregistrar = r
+	}
+	registrar.RegisterLibrary(NewControlLibrary(manager, registrar, scriptRegistrar, unregistrar))
 	for _, metadata := range manager.List() {
 		client, ok := manager.Get(metadata.Name)
 		if !ok {
 			continue
 		}
-		if needsScriptRegistration(metadata) {
-			if scriptRegistrar, ok := registrar.(ScriptLibraryRegistrar); ok {
-				_ = scriptRegistrar.RegisterScriptLibrary(metadata.Name, buildLibrarySource(metadata))
-				continue
-			}
-		}
-		registrar.RegisterLibrary(buildProxyLibrary(client))
+		registerClientLibrary(registrar, scriptRegistrar, client)
 	}
+}
+
+func registerClientLibrary(registrar Registrar, scriptRegistrar ScriptLibraryRegistrar, client *Client) {
+	if registrar == nil || client == nil || !client.HandshakeDone() {
+		return
+	}
+	metadata := client.Metadata()
+	if needsScriptRegistration(metadata) && scriptRegistrar != nil {
+		_ = scriptRegistrar.RegisterScriptLibrary(metadata.Name, buildLibrarySource(metadata))
+		return
+	}
+	registrar.RegisterLibrary(buildProxyLibrary(client))
+}
+
+func unregisterClientLibrary(unregistrar LibraryUnregistrar, name string) {
+	if unregistrar == nil || name == "" {
+		return
+	}
+	unregistrar.UnregisterLibrary(name)
+	unregistrar.UnregisterScriptLibrary(name)
 }
 
 func needsScriptRegistration(metadata Metadata) bool {

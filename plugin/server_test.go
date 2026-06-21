@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -32,6 +34,173 @@ func TestServerFunctionCall(t *testing.T) {
 
 	if result.Type != valueInt || numberToInt64(result.Value) != 5 {
 		t.Fatalf("expected int 5, got %#v", result)
+	}
+}
+
+func TestHTTPPluginClientHandshakeAndFunctionCall(t *testing.T) {
+	fb := object.NewFunctionBuilder()
+	fb.Function(func(name string) string {
+		return "Hello, " + name
+	})
+
+	server := NewServer("hello-http", "1.0.0", "HTTP plugin test").
+		RegisterFunc("greet", fb)
+	httpServer := httptest.NewServer(server)
+	defer httpServer.Close()
+
+	manager := NewManager(nil)
+	client, err := manager.LoadURL(context.Background(), "hello-http", httpServer.URL, true, false)
+	if err != nil {
+		t.Fatalf("LoadURL: %v", err)
+	}
+	defer manager.Close()
+
+	if got := client.Metadata().Name; got != "plugin.hello-http" {
+		t.Fatalf("expected plugin.hello-http metadata name, got %q", got)
+	}
+	if got := client.Metadata().Version; got != "1.0.0" {
+		t.Fatalf("expected version 1.0.0, got %q", got)
+	}
+
+	result, err := client.CallFunction(context.Background(), "greet", []Value{{Type: valueString, Value: "Ada"}}, nil)
+	if err != nil {
+		t.Fatalf("CallFunction: %v", err)
+	}
+	if result.Type != valueString || result.Value != "Hello, Ada" {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+}
+
+func TestHTTPPluginBatchAndNotification(t *testing.T) {
+	calls := 0
+	add := object.NewFunctionBuilder()
+	add.Function(func(a int, b int) int {
+		return a + b
+	})
+	mark := object.NewFunctionBuilder()
+	mark.Function(func() {
+		calls++
+	})
+
+	server := NewServer("batch-http", "1.0.0", "HTTP plugin batch test").
+		RegisterFunc("add", add).
+		RegisterFunc("mark", mark)
+
+	requests := []rpcRequest{
+		{
+			JSONRPC: "2.0",
+			ID:      1,
+			Method:  "function.call",
+			Params: functionCallParams{
+				Name: "add",
+				Args: []Value{{Type: valueInt, Value: int64(2)}, {Type: valueInt, Value: int64(3)}},
+			},
+		},
+		{
+			JSONRPC: "2.0",
+			Method:  "function.call",
+			Params:  functionCallParams{Name: "mark"},
+		},
+		{
+			JSONRPC: "2.0",
+			ID:      2,
+			Method:  "function.call",
+			Params: functionCallParams{
+				Name: "add",
+				Args: []Value{{Type: valueInt, Value: int64(8)}, {Type: valueInt, Value: int64(13)}},
+			},
+		},
+	}
+	body, err := json.Marshal(requests)
+	if err != nil {
+		t.Fatalf("marshal batch: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/json-rpc", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if calls != 1 {
+		t.Fatalf("expected notification to run once, got %d", calls)
+	}
+
+	var responses []rpcResponse
+	if err := json.NewDecoder(rec.Body).Decode(&responses); err != nil {
+		t.Fatalf("decode responses: %v", err)
+	}
+	if len(responses) != 2 {
+		t.Fatalf("expected 2 responses, got %d: %#v", len(responses), responses)
+	}
+	results := mapByID(responses)
+	if got, ok := intResult(results, 1); !ok || got != 5 {
+		t.Fatalf("expected id=1 result 5, got %d ok=%v responses=%#v", got, ok, responses)
+	}
+	if got, ok := intResult(results, 2); !ok || got != 21 {
+		t.Fatalf("expected id=2 result 21, got %d ok=%v responses=%#v", got, ok, responses)
+	}
+}
+
+func TestHTTPPluginRequestIDZeroReturnsResponse(t *testing.T) {
+	add := object.NewFunctionBuilder()
+	add.Function(func(a int, b int) int {
+		return a + b
+	})
+	server := NewServer("zero-id-http", "1.0.0", "HTTP plugin zero id test").
+		RegisterFunc("add", add)
+
+	params, err := json.Marshal(functionCallParams{
+		Name: "add",
+		Args: []Value{{Type: valueInt, Value: int64(2)}, {Type: valueInt, Value: int64(3)}},
+	})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	body := []byte(`{"jsonrpc":"2.0","id":0,"method":"function.call","params":` + string(params) + `}`)
+	req := httptest.NewRequest(http.MethodPost, "/json-rpc", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp rpcResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.ID != 0 {
+		t.Fatalf("expected id 0 response, got %d", resp.ID)
+	}
+	if resp.Error != nil {
+		t.Fatalf("unexpected error: %v", resp.Error)
+	}
+	if got, ok := intResult(mapByID([]rpcResponse{resp}), 0); !ok || got != 5 {
+		t.Fatalf("expected id=0 result 5, got %d ok=%v response=%#v", got, ok, resp)
+	}
+}
+
+func TestHTTPPluginMissingMethodWithIDReturnsInvalidRequest(t *testing.T) {
+	server := NewServer("invalid-http", "1.0.0", "HTTP plugin invalid request test")
+	req := httptest.NewRequest(http.MethodPost, "/json-rpc", bytes.NewReader([]byte(`{"jsonrpc":"2.0","id":7}`)))
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp rpcResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.ID != 7 {
+		t.Fatalf("expected id 7 response, got %d", resp.ID)
+	}
+	if resp.Error == nil || resp.Error.Code != -32600 {
+		t.Fatalf("expected invalid request error, got %#v", resp.Error)
 	}
 }
 

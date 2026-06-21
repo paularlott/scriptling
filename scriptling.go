@@ -209,6 +209,38 @@ func setNestedDictPath(env *object.Environment, name string, libDict *object.Dic
 	env.MarkImportedBinding(name)
 }
 
+// unsetNestedDictPath removes a previously imported dotted library binding from
+// env. It removes both the full alias (e.g. plugin.foo) and the child entry
+// under the parent dict (e.g. plugin["foo"]).
+func unsetNestedDictPath(env *object.Environment, name string) {
+	parts := strings.Split(name, ".")
+	env.Delete(name)
+	if len(parts) == 1 {
+		return
+	}
+
+	rootObj, ok := env.Get(parts[0])
+	if !ok {
+		return
+	}
+	current, ok := rootObj.(*object.Dict)
+	if !ok {
+		return
+	}
+	for i := 1; i < len(parts)-1; i++ {
+		pair, ok := current.GetByString(parts[i])
+		if !ok {
+			return
+		}
+		next, ok := pair.Value.(*object.Dict)
+		if !ok {
+			return
+		}
+		current = next
+	}
+	current.DeleteByString(parts[len(parts)-1])
+}
+
 // traverseDictPath navigates a dotted path through Dict objects
 func traverseDictPath(root object.Object, parts []string, maxDepth int) (object.Object, error) {
 	if len(parts) > maxDepth {
@@ -845,6 +877,13 @@ func (p *Scriptling) RegisterLibrary(lib *object.Library) {
 	p.registeredLibraries[lib.Name()] = lib
 }
 
+// UnregisterLibrary removes a registered Go library and any imported binding
+// from the current environment.
+func (p *Scriptling) UnregisterLibrary(name string) {
+	delete(p.registeredLibraries, name)
+	unsetNestedDictPath(p.env, name)
+}
+
 // Import imports a library into the current environment, making it available for use without needing an import statement in scripts
 func (p *Scriptling) Import(names interface{}) error {
 	switch v := names.(type) {
@@ -905,6 +944,13 @@ func (p *Scriptling) RegisterScriptLibrary(name string, script string) error {
 		source: script,
 	}
 	return nil
+}
+
+// UnregisterScriptLibrary removes a registered Scriptling library and any
+// imported binding from the current environment.
+func (p *Scriptling) UnregisterScriptLibrary(name string) {
+	delete(p.scriptLibraries, name)
+	unsetNestedDictPath(p.env, name)
 }
 
 // GetLibraryLoader returns the current library loader, or nil if none is set.

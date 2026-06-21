@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"reflect"
 	"sort"
@@ -113,6 +114,123 @@ func (s *Server) Constant(name string, value any) *Server {
 
 func (s *Server) Run() error {
 	return s.RunIO(os.Stdin, os.Stdout)
+}
+
+// ServeHTTP serves the Scriptling plugin JSON-RPC protocol over HTTP. Mount it
+// at a path such as /json-rpc and load it with plugin.Manager.LoadURL or
+// scriptling.plugin.load(..., scriptling=True).
+//
+// HTTP plugin transport supports normal plugin calls, object lifecycle, and
+// batches. Host callbacks and plugin.Logger(ctx) require the bidirectional
+// stdio transport and are not available over HTTP.
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+	resp, hasBody := s.processHTTPJSONRPC(r.Context(), body)
+	if !hasBody {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(resp)
+}
+
+func (s *Server) processHTTPJSONRPC(ctx context.Context, raw []byte) ([]byte, bool) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		out, _ := json.Marshal(rpcResponse{
+			JSONRPC: "2.0",
+			ID:      0,
+			Error:   &RPCError{Code: -32700, Message: "parse error: empty request body"},
+		})
+		return out, true
+	}
+	if trimmed[0] == '[' {
+		var messages []httpRPCMessage
+		if err := json.Unmarshal(raw, &messages); err != nil {
+			out, _ := json.Marshal(rpcResponse{
+				JSONRPC: "2.0",
+				ID:      0,
+				Error:   &RPCError{Code: -32700, Message: "parse error: " + err.Error()},
+			})
+			return out, true
+		}
+		if len(messages) == 0 {
+			out, _ := json.Marshal(rpcResponse{
+				JSONRPC: "2.0",
+				ID:      0,
+				Error:   &RPCError{Code: -32600, Message: "invalid request: empty batch"},
+			})
+			return out, true
+		}
+		responses := make([]rpcResponse, 0, len(messages))
+		for _, msg := range messages {
+			if resp, ok := s.handleHTTPMessage(ctx, msg); ok {
+				responses = append(responses, resp)
+			}
+		}
+		if len(responses) == 0 {
+			return nil, false
+		}
+		out, _ := json.Marshal(responses)
+		return out, true
+	}
+	var msg httpRPCMessage
+	if err := json.Unmarshal(raw, &msg); err != nil {
+		out, _ := json.Marshal(rpcResponse{
+			JSONRPC: "2.0",
+			ID:      0,
+			Error:   &RPCError{Code: -32700, Message: "parse error: " + err.Error()},
+		})
+		return out, true
+	}
+	resp, ok := s.handleHTTPMessage(ctx, msg)
+	if !ok {
+		return nil, false
+	}
+	out, _ := json.Marshal(resp)
+	return out, true
+}
+
+type httpRPCMessage struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      *int64          `json:"id,omitempty"`
+	Method  string          `json:"method,omitempty"`
+	Params  json.RawMessage `json:"params,omitempty"`
+	Result  json.RawMessage `json:"result,omitempty"`
+	Error   *RPCError       `json:"error,omitempty"`
+}
+
+func (s *Server) handleHTTPMessage(ctx context.Context, msg httpRPCMessage) (rpcResponse, bool) {
+	if msg.Method == "" {
+		if msg.ID == nil {
+			return rpcResponse{}, false
+		}
+		return rpcResponse{
+			JSONRPC: "2.0",
+			ID:      *msg.ID,
+			Error:   &RPCError{Code: -32600, Message: "invalid request: method is required"},
+		}, true
+	}
+	id := int64(0)
+	if msg.ID != nil {
+		id = *msg.ID
+	}
+	req := rpcRequest{JSONRPC: msg.JSONRPC, ID: id, Method: msg.Method, Params: msg.Params}
+	resp := s.handleRequest(ctx, req)
+	if msg.ID == nil {
+		return rpcResponse{}, false
+	}
+	return resp, true
 }
 
 func (s *Server) RunIO(input io.Reader, output io.Writer) error {

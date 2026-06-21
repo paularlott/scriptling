@@ -32,6 +32,7 @@ type ServerConfig struct {
 	PluginManager  *scriptlingplugin.Manager
 	MCPToolsDir    string // Empty means MCP disabled
 	MCPExecTool    bool   // Enable code execution tool
+	JSONRPC        bool   // Mount JSON-RPC over HTTP at /json-rpc
 	KVStoragePath  string // Empty means in-memory KV store
 	WebRoot        string // Directory to serve static files from (empty = disabled)
 	SecretRegistry *secretprovider.Registry

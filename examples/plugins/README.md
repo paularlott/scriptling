@@ -49,6 +49,28 @@ It exposes:
 - `plugin.hello.Counter(start).inc(amount)` — class via `RegisterClass`
 - `plugin.hello.default_name` — constant
 
+## HTTP Go Plugin
+
+`http-go` exposes the same Scriptling plugin protocol over HTTP. It is loaded
+with `scriptling.plugin.load(url, scriptling=True)` instead of `--plugin-dir`,
+then imported through the generated `plugin.hello_http` proxy.
+
+```bash
+go run ./examples/plugins/http-go
+scriptling examples/plugins/http-go/client.py
+```
+
+It exposes:
+
+- `greet(name)` — function via `RegisterFunc`
+- `Counter(start).inc(amount)` — class via `RegisterClass`
+- `default_name` — constant
+
+HTTP plugin transport is request/response only: it supports handshakes,
+generated `import plugin.*` proxies, function calls, object lifecycle, and
+batches, but the server cannot initiate callbacks back to the client. Host
+callbacks and `plugin.Logger(ctx)` require stdio plugins.
+
 ## Mixed Wrapper Plugin
 
 `mixed-wrapper` shows generated proxies and custom Scriptling wrappers in the

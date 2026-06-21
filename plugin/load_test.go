@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -505,6 +507,64 @@ scriptling.plugin.describe("loaded")["version"]
 	})
 }
 
+func TestControlLibraryScriptlingModeRegistersAndUnregistersProxy(t *testing.T) {
+	dir := t.TempDir()
+	helper := filepath.Join(dir, "loader")
+	if runtime.GOOS == "windows" {
+		helper += ".bat"
+	}
+	writeScriptlingHelper(t, helper)
+
+	manager := NewManager(nil)
+	defer manager.Close()
+
+	p := scriptling.New()
+	RegisterLibraries(p, manager)
+
+	result, err := p.Eval(`
+import scriptling.plugin
+name = scriptling.plugin.load("dyn", ` + strconv.Quote(helper) + `, scriptling=True)
+
+import plugin.dyn
+before = plugin.dyn.echo("hello")
+
+scriptling.plugin.unload(name)
+
+missing_import = False
+try:
+    import plugin.dyn
+except ImportError:
+    missing_import = True
+
+missing_proxy = False
+try:
+    plugin.dyn.echo("again")
+except Exception:
+    missing_proxy = True
+
+[before, missing_import, missing_proxy, scriptling.plugin.list()]
+`)
+	if err != nil {
+		t.Fatalf("Eval: %v", err)
+	}
+	list, ok := result.(*object.List)
+	if !ok || len(list.Elements) != 4 {
+		t.Fatalf("expected 4-item list, got %#v", result)
+	}
+	if s, ok := list.Elements[0].(*object.String); !ok || s.StringValue() != "hello" {
+		t.Fatalf("expected proxy call result hello, got %#v", list.Elements[0])
+	}
+	if b, ok := list.Elements[1].(*object.Boolean); !ok || !b.BoolValue() {
+		t.Fatalf("expected import to fail after unload, got %#v", list.Elements[1])
+	}
+	if b, ok := list.Elements[2].(*object.Boolean); !ok || !b.BoolValue() {
+		t.Fatalf("expected proxy binding to be removed after unload, got %#v", list.Elements[2])
+	}
+	if loaded, ok := list.Elements[3].(*object.List); !ok || len(loaded.Elements) != 0 {
+		t.Fatalf("expected plugin list to be empty after unload, got %#v", list.Elements[3])
+	}
+}
+
 func TestControlLibraryDescribeWithoutHandshake(t *testing.T) {
 	dir := t.TempDir()
 	helper := filepath.Join(dir, "loader")
@@ -629,6 +689,101 @@ scriptling.plugin.call_function(name, "echo", "x")
 	}
 	if !strings.Contains(err.Error(), "plugin not found") {
 		t.Fatalf("expected 'plugin not found' error, got %v", err)
+	}
+}
+
+func TestControlLibraryLoadURLScriptlingMode(t *testing.T) {
+	echoFn := object.NewFunctionBuilder()
+	echoFn.Function(func(v any) any { return v })
+
+	server := NewServer("httpdeclared", "2.3.4", "http load test plugin")
+	server.RegisterFunc("echo", echoFn)
+	httpServer := httptest.NewServer(server)
+	defer httpServer.Close()
+
+	manager := NewManager(nil)
+	defer manager.Close()
+
+	p := scriptling.New()
+	RegisterLibraries(p, manager)
+
+	result, err := p.Eval(`
+import scriptling.plugin
+name = scriptling.plugin.load("httppeer", ` + strconv.Quote(httpServer.URL) + `, scriptling=True)
+import plugin.httppeer
+value = plugin.httppeer.echo("http")
+scriptling.plugin.unload(name)
+
+missing_import = False
+try:
+    import plugin.httppeer
+except ImportError:
+    missing_import = True
+
+[value, missing_import]
+`)
+	if err != nil {
+		t.Fatalf("Eval: %v", err)
+	}
+	list, ok := result.(*object.List)
+	if !ok || len(list.Elements) != 2 {
+		t.Fatalf("expected 2-item result, got %#v", result)
+	}
+	if s, ok := list.Elements[0].(*object.String); !ok || s.StringValue() != "http" {
+		t.Fatalf("expected http result, got %#v", list.Elements[0])
+	}
+	if b, ok := list.Elements[1].(*object.Boolean); !ok || !b.BoolValue() {
+		t.Fatalf("expected HTTP proxy import to fail after unload, got %#v", list.Elements[1])
+	}
+}
+
+func TestControlLibraryLoadURLHeaders(t *testing.T) {
+	const token = "Bearer plugin-load-test"
+
+	echoFn := object.NewFunctionBuilder()
+	echoFn.Function(func(v any) any { return v })
+
+	server := NewServer("httpheaders", "2.3.4", "http headers test plugin")
+	server.RegisterFunc("echo", echoFn)
+
+	var requests int
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if got := r.Header.Get("Authorization"); got != token {
+			t.Errorf("expected Authorization header %q, got %q", token, got)
+		}
+		if got := r.Header.Get("X-Scriptling-Test"); got != "headers" {
+			t.Errorf("expected X-Scriptling-Test header headers, got %q", got)
+		}
+		server.ServeHTTP(w, r)
+	}))
+	defer httpServer.Close()
+
+	manager := NewManager(nil)
+	defer manager.Close()
+
+	p := scriptling.New()
+	RegisterLibraries(p, manager)
+
+	result, err := p.Eval(`
+import scriptling.plugin
+name = scriptling.plugin.load(
+    "httpheaders",
+    ` + strconv.Quote(httpServer.URL) + `,
+    scriptling=True,
+    headers={"Authorization": ` + strconv.Quote(token) + `, "X-Scriptling-Test": "headers"},
+)
+import plugin.httpheaders
+plugin.httpheaders.echo("ok")
+`)
+	if err != nil {
+		t.Fatalf("Eval: %v", err)
+	}
+	if s, ok := result.(*object.String); !ok || s.StringValue() != "ok" {
+		t.Fatalf("expected ok result, got %#v", result)
+	}
+	if requests < 2 {
+		t.Fatalf("expected headers on handshake and call requests, got %d request(s)", requests)
 	}
 }
 

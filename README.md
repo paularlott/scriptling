@@ -102,9 +102,9 @@ echo 'print("Hello")' | ./bin/scriptling
 task build-all
 ```
 
-### HTTP & MCP Server
+### HTTP, MCP, and JSON-RPC Server
 
-The CLI can also run as an HTTP server with MCP (Model Context Protocol) support for LLM integration:
+The CLI can also run as an HTTP server with MCP (Model Context Protocol) and JSON-RPC support:
 
 ```bash
 # Start HTTP server on port 8000
@@ -112,6 +112,12 @@ The CLI can also run as an HTTP server with MCP (Model Context Protocol) support
 
 # With MCP tools for LLM integration
 ./bin/scriptling --server :8000 --mcp-tools ./tools script.py
+
+# With JSON-RPC over HTTP at /json-rpc
+./bin/scriptling --server :8000 --json-rpc script.py
+
+# MCP and JSON-RPC can run side by side
+./bin/scriptling --server :8000 --mcp-tools ./tools --json-rpc script.py
 
 # With TLS and authentication
 ./bin/scriptling --server :8443 --tls-generate --bearer-token secret script.py

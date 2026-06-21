@@ -8,7 +8,7 @@ import (
 
 const ControlLibraryName = "scriptling.plugin"
 
-func NewControlLibrary(manager *Manager) *object.Library {
+func NewControlLibrary(manager *Manager, registrar Registrar, scriptRegistrar ScriptLibraryRegistrar, unregistrar LibraryUnregistrar) *object.Library {
 	functions := map[string]*object.Builtin{
 		"list": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -181,34 +181,64 @@ are not supported in batch_call.`,
 						execArgs = append(execArgs, s)
 					}
 				}
-				client, err := manager.LoadPath(ctx, name, path, scriptling, execArgs)
+				insecureSkipTLS, kwErr := kwargs.GetBool("insecure_skip_tls", false)
+				if kwErr != nil {
+					return kwErr
+				}
+				headers, errObj := parseHeaderKwarg(kwargs)
+				if errObj != nil {
+					return errObj
+				}
+				var client *Client
+				var err error
+				if isHTTPURL(path) {
+					client, err = manager.LoadURL(ctx, name, path, scriptling, insecureSkipTLS, headers)
+				} else {
+					if len(headers) > 0 {
+						return pluginErr("load() headers are only supported for HTTP(S) endpoints")
+					}
+					client, err = manager.LoadPath(ctx, name, path, scriptling, execArgs)
+				}
 				if err != nil {
 					return pluginErr(err.Error())
 				}
+				if client.HandshakeDone() {
+					registerClientLibrary(registrar, scriptRegistrar, client)
+				}
 				return object.NewString(client.Metadata().Name)
 			},
-			HelpText: `load(name, path, scriptling=False, args=None) - Spawn an executable and register it under name.
+			HelpText: `load(name, path, scriptling=False, args=None, insecure_skip_tls=False, headers=None) - Register a JSON-RPC peer.
+
+path may be a filesystem executable path, or an http:// / https:// JSON-RPC
+endpoint. Executable peers use newline-delimited JSON-RPC over stdio; HTTP
+peers send one JSON-RPC object or batch per POST.
 
 When scriptling=False, call_function sends the requested function name directly
 as the JSON-RPC method. When scriptling=True, the executable must implement the
 Scriptling plugin handshake and function.call dispatch method. The loaded
-client is reachable via call_function, describe, and list; no proxy library is
-generated.
+client is reachable via call_function, describe, and list. Handshaken
+scriptling=True peers also register an importable plugin.* proxy library, which
+unload() removes.
 
 Parameters:
   name (str): Library name to register the executable under. Normalised into
     the plugin.* namespace (e.g. "widgets" becomes "plugin.widgets"). Must
     not collide with an existing plugin library name.
-  path (str): Filesystem path to the executable.
+  path (str): Filesystem path to the executable, or http(s) JSON-RPC endpoint.
   scriptling (bool, optional): If True, perform the plugin protocol handshake
     so describe()/list() report version and schema from the executable. If
     False (default), the handshake is skipped.
   args (list[str], optional): Command-line arguments passed to the executable
-    (e.g. ["--json-rpc", "./setup.py"]).
+    (e.g. ["--json-rpc", "./setup.py"]). Ignored for HTTP endpoints.
+  insecure_skip_tls (bool, optional): Skip HTTPS certificate verification for
+    HTTP endpoints. Intended for local/self-signed development servers.
+  headers (dict[str, str], optional): Additional HTTP headers sent with every
+    HTTP(S) JSON-RPC request, including handshake, calls, and batches.
 
-Identity is by absolute path. A second load() of the same path with the same
-name is a no-op (returns the existing client, ignoring scriptling/args).
-Loading an already-loaded path under a different name, or loading a new path
+Identity is by absolute path for executables and by URL for HTTP endpoints. A
+second load() of the same path or URL with the same name is a no-op (returns
+the existing client, ignoring scriptling/args/insecure_skip_tls/headers).
+Loading an already-loaded peer under a different name, or loading a new peer
 under a name already in use, raises an error.
 
 Returns the normalised library name (e.g. "plugin.widgets"); the short form
@@ -226,12 +256,36 @@ Returns the normalised library name (e.g. "plugin.widgets"); the short form
 				if err := manager.Unload(name); err != nil {
 					return pluginErr(err.Error())
 				}
+				unregisterClientLibrary(unregistrar, NormalizeLibraryName(name))
 				return &object.Null{}
 			},
 			HelpText: "unload(name) - Close a loaded executable and remove it from the registry.",
 		},
 	}
 	return object.NewLibrary(ControlLibraryName, functions, nil, "Plugin control library")
+}
+
+func parseHeaderKwarg(kwargs object.Kwargs) (map[string]string, object.Object) {
+	if !kwargs.Has("headers") {
+		return nil, nil
+	}
+	rawHeaders := kwargs.Get("headers")
+	if _, ok := rawHeaders.(*object.Null); ok {
+		return nil, nil
+	}
+	dict, ok := rawHeaders.(*object.Dict)
+	if !ok {
+		return nil, pluginErr("load() headers must be a dict of strings")
+	}
+	headers := make(map[string]string, len(dict.Pairs))
+	for _, pair := range dict.Pairs {
+		value, errObj := pair.Value.AsString()
+		if errObj != nil {
+			return nil, pluginErr("load() headers must be a dict of strings")
+		}
+		headers[pair.StringKey()] = value
+	}
+	return headers, nil
 }
 
 func parseBatchCallSpecs(items []object.Object) ([]batchCallSpec, object.Object) {
