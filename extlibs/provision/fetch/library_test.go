@@ -618,3 +618,115 @@ func assertPerm(t *testing.T, path string, want os.FileMode) {
 		t.Fatalf("%s mode = %#o, want %#o", path, got, want)
 	}
 }
+
+
+func TestFetchProvidesSkipWhenAllExist(t *testing.T) {
+	tmp := t.TempDir()
+	file1 := filepath.Join(tmp, "file1.txt")
+	file2 := filepath.Join(tmp, "file2.txt")
+	if err := os.WriteFile(file1, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file2, []byte("world"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	p := scriptling.New()
+	Register(p)
+	_, err := p.Eval(`
+import scriptling.provision.fetch as fetch
+result = fetch.file(
+    "https://example.com/test.zip",
+    "` + tmp + `/dest",
+    unpack_zip=True,
+    provides=["` + file1 + `", "` + file2 + `"],
+)
+`)
+	if err != nil {
+		t.Fatalf("eval: %v", err)
+	}
+
+	// Verify no dest directory was created (fetch was skipped)
+	destDir := filepath.Join(tmp, "dest")
+	if _, err := os.Stat(destDir); !os.IsNotExist(err) {
+		t.Fatal("expected dest directory to not exist when provides are all present")
+	}
+}
+
+func TestFetchProvidesSkipsWhenOneMissing(t *testing.T) {
+	tmp := t.TempDir()
+	file1 := filepath.Join(tmp, "file1.txt")
+	if err := os.WriteFile(file1, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(tmp, "missing.txt")
+
+	// Create a valid zip archive
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	f, err := zw.Create("test.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Write([]byte("test content"))
+	zw.Close()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/zip")
+		w.Write(buf.Bytes())
+	}))
+	defer server.Close()
+
+	p := scriptling.New()
+	Register(p)
+	_, err = p.Eval(`
+import scriptling.provision.fetch as fetch
+result = fetch.file(
+    "` + server.URL + `",
+    "` + tmp + `/dest",
+    unpack_zip=True,
+    provides=["` + file1 + `", "` + missing + `"],
+)
+`)
+	if err != nil {
+		t.Fatalf("eval: %v", err)
+	}
+
+	// Verify dest directory was created (fetch proceeded because provides had missing file)
+	destDir := filepath.Join(tmp, "dest")
+	if _, err := os.Stat(destDir); os.IsNotExist(err) {
+		t.Fatal("expected dest directory to exist when provides has missing files")
+	}
+}
+
+func TestFetchProvidesEmptyList(t *testing.T) {
+	tmp := t.TempDir()
+	response := "hello provides"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(response))
+	}))
+	defer server.Close()
+
+	p := scriptling.New()
+	Register(p)
+	_, err := p.Eval(`
+import scriptling.provision.fetch as fetch
+result = fetch.file(
+    "` + server.URL + `",
+    "` + tmp + `/file.txt",
+    provides=[],
+)
+`)
+	if err != nil {
+		t.Fatalf("eval: %v", err)
+	}
+
+	path := filepath.Join(tmp, "file.txt")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read fetched file: %v", err)
+	}
+	if string(content) != "hello provides" {
+		t.Fatalf("unexpected content: %q", string(content))
+	}
+}
