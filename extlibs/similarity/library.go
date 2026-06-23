@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"hash/fnv"
+	"math"
 	"strings"
 	"sync"
 
@@ -317,6 +318,9 @@ func objectListToUint32s(obj object.Object) ([]uint32, error) {
 		v, objErr := elem.CoerceInt()
 		if objErr != nil {
 			return nil, fmt.Errorf("element is not an integer")
+		}
+		if v < 0 || v > math.MaxUint32 {
+			return nil, fmt.Errorf("element %d is out of range for uint32", v)
 		}
 		out = append(out, uint32(v))
 	}

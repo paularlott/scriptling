@@ -10,7 +10,7 @@ require (
 	github.com/paularlott/cli v0.8.5
 	github.com/paularlott/gossip v0.12.6
 	github.com/paularlott/logger v0.3.0
-	github.com/paularlott/mcp v0.18.1
+	github.com/paularlott/mcp v0.19.0
 	github.com/paularlott/snapshotkv v0.3.0
 	github.com/shirou/gopsutil/v3 v3.24.5
 	github.com/yuin/goldmark v1.8.2
