@@ -26,7 +26,7 @@ func TestHTTPClientCall(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client, err := newHTTPClient(context.Background(), srv.URL, false, false)
+	client, err := newHTTPClient(context.Background(), srv.URL, false, false, nil)
 	if err != nil {
 		t.Fatalf("newHTTPClient: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestHTTPClientHeaders(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client, err := newHTTPClient(context.Background(), srv.URL, false, false, map[string]string{
+	client, err := newHTTPClient(context.Background(), srv.URL, false, false, nil, map[string]string{
 		"Authorization":     token,
 		"X-Scriptling-Test": "yes",
 		"X-Original-Header": "original",
@@ -109,7 +109,7 @@ func TestHTTPClientBatch(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client, err := newHTTPClient(context.Background(), srv.URL, false, false)
+	client, err := newHTTPClient(context.Background(), srv.URL, false, false, nil)
 	if err != nil {
 		t.Fatalf("newHTTPClient: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestHTTPClientInsecureSkipTLS(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	secureClient, err := newHTTPClient(context.Background(), srv.URL, false, false)
+	secureClient, err := newHTTPClient(context.Background(), srv.URL, false, false, nil)
 	if err != nil {
 		t.Fatalf("new secure HTTP client: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestHTTPClientInsecureSkipTLS(t *testing.T) {
 	}
 	secureClient.doneClose.Do(func() { close(secureClient.done) })
 
-	insecureClient, err := newHTTPClient(context.Background(), srv.URL, true, false)
+	insecureClient, err := newHTTPClient(context.Background(), srv.URL, false, false, newSharedHTTPTransport(true))
 	if err != nil {
 		t.Fatalf("new insecure HTTP client: %v", err)
 	}
@@ -167,6 +167,51 @@ func TestHTTPClientInsecureSkipTLS(t *testing.T) {
 	}
 	if result != "ok" {
 		t.Fatalf("expected ok, got %q", result)
+	}
+}
+
+// TestHTTPClientSharedTransport verifies that a Manager's shared transport is
+// used when creating HTTP clients, enabling connection pooling across calls.
+func TestHTTPClientSharedTransport(t *testing.T) {
+	var requests int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var req rpcRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode request: %v", err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: mustHTTPRawJSON(t, `"pooled"`)})
+	}))
+	defer srv.Close()
+
+	shared := newSharedHTTPTransport(false)
+
+	// Both clients share the same transport — connections are pooled.
+	c1, err := newHTTPClient(context.Background(), srv.URL, false, false, shared)
+	if err != nil {
+		t.Fatalf("c1: %v", err)
+	}
+	defer c1.doneClose.Do(func() { close(c1.done) })
+
+	c2, err := newHTTPClient(context.Background(), srv.URL, false, false, shared)
+	if err != nil {
+		t.Fatalf("c2: %v", err)
+	}
+	defer c2.doneClose.Do(func() { close(c2.done) })
+
+	for _, c := range []*Client{c1, c2} {
+		var result string
+		if err := c.Call(context.Background(), "ping", nil, &result); err != nil {
+			t.Fatalf("Call: %v", err)
+		}
+		if result != "pooled" {
+			t.Fatalf("expected pooled, got %q", result)
+		}
+	}
+	if requests != 2 {
+		t.Fatalf("expected 2 requests, got %d", requests)
 	}
 }
 

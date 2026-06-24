@@ -14,8 +14,10 @@ import (
 
 // md is a shared goldmark instance configured for safe HTML output.
 // Auto-links, strikethrough, and tables are enabled as they are common in
-// LLM-generated Markdown. Raw HTML is blocked so untrusted content cannot
-// inject script tags or event handlers.
+// LLM-generated Markdown. Raw HTML is intentionally NOT enabled: goldmark's
+// default renderer drops raw HTML blocks and inline HTML so untrusted content
+// (e.g. LLM output) cannot inject script tags, event handlers, or other
+// dangerous markup. This is the safe default for converting LLM output.
 var md = goldmark.New(
 	goldmark.WithExtensions(
 		extension.GFM,
@@ -25,7 +27,6 @@ var md = goldmark.New(
 	),
 	goldmark.WithRendererOptions(
 		html.WithHardWraps(),
-		html.WithUnsafe(), // goldmark blocks raw HTML by default; keep unsafe=true so deliberate HTML passes through
 	),
 )
 

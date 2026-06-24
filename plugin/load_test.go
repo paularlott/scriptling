@@ -1115,3 +1115,288 @@ scriptling.plugin.call_function(name, "echo", %d)
 		t.Fatalf("expected exactly one client after concurrent loads, got %d", len(clients))
 	}
 }
+
+// ============================================================================
+// Scope control-library tests
+// ============================================================================
+
+// TestScopeControlLibraryTransportRestriction verifies that scriptling.plugin.load
+// respects the scope's transport restriction and returns a clear error when the
+// requested transport is not permitted.
+func TestScopeControlLibraryTransportRestriction(t *testing.T) {
+	dir := t.TempDir()
+	helper := filepath.Join(dir, "loader")
+	if runtime.GOOS == "windows" {
+		helper += ".bat"
+	}
+	writeScriptlingHelper(t, helper)
+
+	echoFn := object.NewFunctionBuilder()
+	echoFn.Function(func(v any) any { return v })
+	httpSrv := httptest.NewServer(NewServer("remote", "1.0.0", "remote").RegisterFunc("echo", echoFn))
+	defer httpSrv.Close()
+
+	t.Run("http_only_rejects_exe", func(t *testing.T) {
+		parent := NewManager(nil)
+		defer parent.Close()
+
+		scope := parent.NewScope(WithTransport(TransportHTTP))
+		defer scope.Close()
+
+		p := scriptling.New()
+		RegisterLibraries(p, scope)
+
+		_, err := p.Eval(fmt.Sprintf(`
+import scriptling.plugin
+scriptling.plugin.load("exe", %q, scriptling=True)
+`, helper))
+		if err == nil {
+			t.Fatal("expected error loading exe in HTTP-only scope")
+		}
+		if !strings.Contains(err.Error(), "not permitted") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("stdio_only_rejects_url", func(t *testing.T) {
+		parent := NewManager(nil)
+		defer parent.Close()
+
+		scope := parent.NewScope(WithTransport(TransportStdio))
+		defer scope.Close()
+
+		p := scriptling.New()
+		RegisterLibraries(p, scope)
+
+		_, err := p.Eval(fmt.Sprintf(`
+import scriptling.plugin
+scriptling.plugin.load("remote", %q, scriptling=True)
+`, httpSrv.URL))
+		if err == nil {
+			t.Fatal("expected error loading URL in stdio-only scope")
+		}
+		if !strings.Contains(err.Error(), "not permitted") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("http_only_allows_url", func(t *testing.T) {
+		parent := NewManager(nil)
+		defer parent.Close()
+
+		scope := parent.NewScope(WithTransport(TransportHTTP))
+		defer scope.Close()
+
+		p := scriptling.New()
+		RegisterLibraries(p, scope)
+
+		result, err := p.Eval(fmt.Sprintf(`
+import scriptling.plugin
+name = scriptling.plugin.load("remote", %q, scriptling=True)
+scriptling.plugin.call_function(name, "echo", "http-ok")
+`, httpSrv.URL))
+		if err != nil {
+			t.Fatalf("Eval: %v", err)
+		}
+		if s, ok := result.(*object.String); !ok || s.StringValue() != "http-ok" {
+			t.Fatalf("expected http-ok, got %#v", result)
+		}
+	})
+}
+
+// TestScopeControlLibraryListMergesParent verifies that scriptling.plugin.list()
+// executed inside a scope returns both parent and scope-local plugins.
+func TestScopeControlLibraryListMergesParent(t *testing.T) {
+	dir := t.TempDir()
+	helper := filepath.Join(dir, "loader")
+	if runtime.GOOS == "windows" {
+		helper += ".bat"
+	}
+	writeScriptlingHelper(t, helper)
+
+	echoFn := object.NewFunctionBuilder()
+	echoFn.Function(func(v any) any { return v })
+	httpSrv := httptest.NewServer(NewServer("http", "1.0.0", "http test").RegisterFunc("echo", echoFn))
+	defer httpSrv.Close()
+
+	parent := NewManager(nil)
+	defer parent.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Load a plugin into the parent.
+	if _, err := parent.LoadPath(ctx, "base", helper, true, nil); err != nil {
+		t.Fatalf("parent LoadPath: %v", err)
+	}
+
+	scope := parent.NewScope()
+	defer scope.Close()
+
+	p := scriptling.New()
+	RegisterLibraries(p, scope)
+
+	result, err := p.Eval(fmt.Sprintf(`
+import scriptling.plugin
+
+# Load an HTTP plugin into the scope.
+scriptling.plugin.load("http", %q, scriptling=True)
+
+names = [m["name"] for m in scriptling.plugin.list()]
+has_base = "plugin.base" in names
+has_http = "plugin.http" in names
+[has_base, has_http, len(names)]
+`, httpSrv.URL))
+	if err != nil {
+		t.Fatalf("Eval: %v", err)
+	}
+	list, ok := result.(*object.List)
+	if !ok || len(list.Elements) != 3 {
+		t.Fatalf("expected 3-item list, got %#v", result)
+	}
+	if b, ok := list.Elements[0].(*object.Boolean); !ok || !b.BoolValue() {
+		t.Fatalf("expected parent plugin.base in list, got %#v", list.Elements[0])
+	}
+	if b, ok := list.Elements[1].(*object.Boolean); !ok || !b.BoolValue() {
+		t.Fatalf("expected scope plugin.http in list, got %#v", list.Elements[1])
+	}
+	if n, ok := list.Elements[2].(*object.Integer); !ok || n.IntValue() != 2 {
+		t.Fatalf("expected 2 total plugins, got %#v", list.Elements[2])
+	}
+}
+
+// TestScopeLoadAndClose verifies that scope.Close shuts down all locally
+// loaded plugins (stdio and HTTP) without affecting the parent.
+func TestScopeLoadAndClose(t *testing.T) {
+	dir := t.TempDir()
+	helper := filepath.Join(dir, "loader")
+	if runtime.GOOS == "windows" {
+		helper += ".bat"
+	}
+	writeScriptlingHelper(t, helper)
+
+	echoFn := object.NewFunctionBuilder()
+	echoFn.Function(func(v any) any { return v })
+	httpSrv := httptest.NewServer(NewServer("http", "1.0.0", "http").RegisterFunc("echo", echoFn))
+	defer httpSrv.Close()
+
+	parent := NewManager(nil)
+	defer parent.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if _, err := parent.LoadPath(ctx, "base", helper, true, nil); err != nil {
+		t.Fatalf("parent LoadPath: %v", err)
+	}
+
+	scope := parent.NewScope()
+	if _, err := scope.LoadPath(ctx, "scoped-exe", helper, true, nil); err != nil {
+		t.Fatalf("scope LoadPath: %v", err)
+	}
+	if _, err := scope.LoadURL(ctx, "scoped-http", httpSrv.URL, true, false); err != nil {
+		t.Fatalf("scope LoadURL: %v", err)
+	}
+
+	// Scope should see 3 plugins: 2 local + 1 from parent.
+	if n := len(scope.List()); n != 3 {
+		t.Fatalf("expected 3 plugins before close, got %d", n)
+	}
+
+	if err := scope.Close(); err != nil {
+		t.Fatalf("scope.Close: %v", err)
+	}
+
+	// Scope local map is now empty.
+	scope.mu.RLock()
+	localCount := len(scope.clients)
+	scope.mu.RUnlock()
+	if localCount != 0 {
+		t.Fatalf("expected empty local map after close, got %d entries", localCount)
+	}
+
+	// Parent still healthy.
+	if _, ok := parent.Get("plugin.base"); !ok {
+		t.Fatal("parent plugin disappeared after scope close")
+	}
+	parentClient, _ := parent.Get("plugin.base")
+	result, err := parentClient.CallFunction(ctx, "echo",
+		[]Value{{Type: valueString, Value: "parent-ok"}}, nil)
+	if err != nil {
+		t.Fatalf("parent call after scope close: %v", err)
+	}
+	if result.Type != valueString || result.Value != "parent-ok" {
+		t.Fatalf("unexpected parent result: %#v", result)
+	}
+}
+
+// TestScopeUnloadLocalOnly verifies that unload() in a script only removes the
+// scope-local plugin; attempting to unload a parent plugin from a scope fails.
+func TestScopeUnloadLocalOnly(t *testing.T) {
+	dir := t.TempDir()
+	helper := filepath.Join(dir, "loader")
+	if runtime.GOOS == "windows" {
+		helper += ".bat"
+	}
+	writeScriptlingHelper(t, helper)
+
+	parent := NewManager(nil)
+	defer parent.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if _, err := parent.LoadPath(ctx, "base", helper, true, nil); err != nil {
+		t.Fatalf("parent LoadPath: %v", err)
+	}
+
+	scope := parent.NewScope()
+	defer scope.Close()
+
+	p := scriptling.New()
+	RegisterLibraries(p, scope)
+
+	// Load a local plugin in the scope and immediately unload it.
+	result, err := p.Eval(fmt.Sprintf(`
+import scriptling.plugin
+name = scriptling.plugin.load("local", %q, scriptling=True)
+scriptling.plugin.unload(name)
+
+# Should not be able to call the unloaded plugin.
+err_unload = False
+try:
+    scriptling.plugin.call_function(name, "echo", "x")
+except Exception:
+    err_unload = True
+
+# Parent plugin is still reachable.
+parent_ok = scriptling.plugin.call_function("base", "echo", "parent") == "parent"
+
+[err_unload, parent_ok]
+`, helper))
+	if err != nil {
+		t.Fatalf("Eval: %v", err)
+	}
+	list, ok := result.(*object.List)
+	if !ok || len(list.Elements) != 2 {
+		t.Fatalf("expected 2-item list, got %#v", result)
+	}
+	if b, ok := list.Elements[0].(*object.Boolean); !ok || !b.BoolValue() {
+		t.Fatalf("expected call after unload to fail, got %#v", list.Elements[0])
+	}
+	if b, ok := list.Elements[1].(*object.Boolean); !ok || !b.BoolValue() {
+		t.Fatalf("expected parent plugin still callable, got %#v", list.Elements[1])
+	}
+
+	// Trying to unload the parent's plugin from the scope should fail.
+	_, err = p.Eval(`
+import scriptling.plugin
+scriptling.plugin.unload("base")
+`)
+	if err == nil {
+		t.Fatal("expected error unloading parent plugin from scope")
+	}
+	if !strings.Contains(err.Error(), "plugin not found") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
