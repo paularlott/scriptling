@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -22,7 +23,28 @@ import (
 	"github.com/paularlott/logger"
 )
 
+// TransportMode restricts which plugin transport protocols a Manager or scope
+// will accept when LoadPath or LoadURL is called.
+type TransportMode int
+
+const (
+	// TransportAll permits both stdio/executable and HTTP(S) plugins (default).
+	TransportAll TransportMode = iota
+	// TransportHTTP permits only HTTP(S) endpoints; loading executables fails.
+	TransportHTTP
+	// TransportStdio permits only stdio executables; loading HTTP URLs fails.
+	TransportStdio
+)
+
+// ScopeOption configures a scoped Manager created by NewScope.
+type ScopeOption func(*Manager)
+
 type Manager struct {
+	parent                *Manager
+	transportMode         TransportMode
+	httpTransport         *http.Transport // shared pooled TLS-verified transport
+	httpInsecureTransport *http.Transport // shared pooled TLS-skip-verify transport
+
 	dirs         []string
 	clients      map[string]*Client
 	warnings     []string
@@ -36,13 +58,80 @@ type Manager struct {
 // provided, it is called when a loaded plugin process exits unexpectedly.
 func NewManager(log logger.Logger, crashHandler ...func(name string, err error)) *Manager {
 	manager := &Manager{
-		clients: make(map[string]*Client),
-		logger:  log,
+		clients:               make(map[string]*Client),
+		logger:                log,
+		httpTransport:         newSharedHTTPTransport(false),
+		httpInsecureTransport: newSharedHTTPTransport(true),
 	}
 	if len(crashHandler) > 0 {
 		manager.crashHandler = crashHandler[0]
 	}
 	return manager
+}
+
+// newSharedHTTPTransport returns a pooled, HTTP/2-capable transport. When
+// insecureSkipVerify is true the transport skips TLS certificate validation —
+// intended for development against self-signed certificates only.
+func newSharedHTTPTransport(insecureSkipVerify bool) *http.Transport {
+	tlsCfg := &tls.Config{
+		InsecureSkipVerify: insecureSkipVerify, //nolint:gosec // intentional when insecureSkipVerify=true
+	}
+	if !insecureSkipVerify {
+		tlsCfg.MinVersion = tls.VersionTLS12
+	}
+	return &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		TLSClientConfig:       tlsCfg,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   20,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+}
+
+// WithTransport sets the transport restriction for a scoped Manager. Use
+// TransportHTTP to permit only HTTP(S) plugins, TransportStdio for only
+// stdio executables, or TransportAll (default) to allow both.
+func WithTransport(mode TransportMode) ScopeOption {
+	return func(m *Manager) { m.transportMode = mode }
+}
+
+// NewScope creates a child Manager that inherits the logger and shared HTTP
+// transports from this Manager. Plugins loaded into the scope are invisible to
+// the parent and to other scopes. When the scope is closed, only its locally
+// loaded plugins are unloaded; the parent's plugins are unaffected.
+//
+// Calling Get or List on the scope chains to the parent for fallback: the
+// scope sees its own plugins first and parent plugins where there is no clash.
+//
+// The scope does not inherit the parent's dirs or crash handler.
+func (m *Manager) NewScope(opts ...ScopeOption) *Manager {
+	scope := &Manager{
+		parent:                m,
+		clients:               make(map[string]*Client),
+		logger:                m.logger,
+		httpTransport:         m.httpTransport,         // shared — connections pooled with parent
+		httpInsecureTransport: m.httpInsecureTransport, // shared — connections pooled with parent
+	}
+	for _, opt := range opts {
+		opt(scope)
+	}
+	return scope
+}
+
+// httpTransportFor returns the appropriate shared transport for the given TLS
+// skip-verify preference. Both transports are pooled and shared with child
+// scopes so connections are reused across executions.
+func (m *Manager) httpTransportFor(insecureSkipTLS bool) *http.Transport {
+	if insecureSkipTLS {
+		return m.httpInsecureTransport
+	}
+	return m.httpTransport
 }
 
 // AddDir adds a directory whose executable files should be loaded as plugins.
@@ -123,6 +212,32 @@ func (m *Manager) LoadPath(ctx context.Context, name, path string, scriptling bo
 		}
 	}
 
+	// Enforce transport restriction for this scope.
+	switch m.transportMode {
+	case TransportHTTP:
+		if !isHTTP {
+			return nil, fmt.Errorf("stdio/executable plugins are not permitted in this scope (http/https only)")
+		}
+	case TransportStdio:
+		if isHTTP {
+			return nil, fmt.Errorf("http/https plugins are not permitted in this scope (stdio only)")
+		}
+	}
+
+	// Parent-chain check: a child scope may not shadow a name that already
+	// exists in any ancestor. Loading the exact same path under the same name
+	// is idempotent and returns the parent's client unchanged. Loading a
+	// different path under an already-taken name is an error — the parent's
+	// plugin remains the canonical binding for that name.
+	if m.parent != nil {
+		if parentClient, ok := m.parent.Get(normalisedName); ok {
+			if parentClient.Path() == resolvedPath {
+				return parentClient, nil // same endpoint — idempotent via parent
+			}
+			return nil, fmt.Errorf("plugin name %s is already loaded in a parent scope; child scopes cannot shadow parent plugins", normalisedName)
+		}
+	}
+
 	m.mu.Lock()
 	for _, existing := range m.clients {
 		if existing.Path() == resolvedPath {
@@ -142,7 +257,7 @@ func (m *Manager) LoadPath(ctx context.Context, name, path string, scriptling bo
 
 	var client *Client
 	if isHTTP {
-		client, err = newHTTPClient(ctx, resolvedPath, false, scriptling)
+		client, err = newHTTPClient(ctx, resolvedPath, false, scriptling, m.httpTransport)
 	} else if scriptling {
 		client, err = startClient(ctx, resolvedPath, args)
 	} else {
@@ -187,7 +302,23 @@ func (m *Manager) LoadURL(ctx context.Context, name, rawURL string, scriptling, 
 	if !isHTTPURL(rawURL) {
 		return nil, fmt.Errorf("plugin URL must use http or https")
 	}
+	// Enforce transport restriction: stdio-only scopes may not load HTTP plugins.
+	if m.transportMode == TransportStdio {
+		return nil, fmt.Errorf("http/https plugins are not permitted in this scope (stdio only)")
+	}
 	normalisedName := NormalizeLibraryName(name)
+
+	// Parent-chain check: same rule as LoadPath — a child scope may not shadow
+	// a name that already exists in any ancestor. Same URL under same name is
+	// idempotent; different URL under same name is an error.
+	if m.parent != nil {
+		if parentClient, ok := m.parent.Get(normalisedName); ok {
+			if parentClient.Path() == rawURL {
+				return parentClient, nil // same endpoint — idempotent via parent
+			}
+			return nil, fmt.Errorf("plugin name %s is already loaded in a parent scope; child scopes cannot shadow parent plugins", normalisedName)
+		}
+	}
 
 	m.mu.Lock()
 	for _, existing := range m.clients {
@@ -206,7 +337,7 @@ func (m *Manager) LoadURL(ctx context.Context, name, rawURL string, scriptling, 
 	}
 	m.mu.Unlock()
 
-	client, err := newHTTPClient(ctx, rawURL, insecureSkipTLS, scriptling, firstHeaderMap(headers))
+	client, err := newHTTPClient(ctx, rawURL, insecureSkipTLS, scriptling, m.httpTransportFor(insecureSkipTLS), firstHeaderMap(headers))
 	if err != nil {
 		return nil, err
 	}
@@ -277,14 +408,19 @@ func isHTTPURL(ref string) bool {
 	return strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://")
 }
 
-// Close shuts down all loaded plugin processes.
+// Close shuts down all loaded plugin processes and clears the local client map.
+// For scoped managers this fully releases all locally loaded plugins without
+// touching the parent's plugins. Close is safe to call more than once.
 func (m *Manager) Close() error {
-	m.mu.RLock()
+	m.mu.Lock()
 	clients := make([]*Client, 0, len(m.clients))
 	for _, client := range m.clients {
 		clients = append(clients, client)
 	}
-	m.mu.RUnlock()
+	// Clear the local map immediately so concurrent Get/List calls see an empty
+	// scope even while individual client shutdowns are still in progress.
+	m.clients = make(map[string]*Client)
+	m.mu.Unlock()
 
 	var first error
 	for _, client := range clients {
@@ -305,13 +441,30 @@ func (m *Manager) Warnings() []string {
 }
 
 // List returns metadata for all loaded plugins sorted by library name.
+// If this Manager is a scope, parent plugins are included in the result.
+// A child scope cannot load a name that an ancestor already owns, so name
+// collisions between local and parent are not possible; the seen-map guard
+// is kept as a safety net in case of direct manager manipulation.
 func (m *Manager) List() []Metadata {
+	// Collect local entries first so we can track which names they cover.
 	m.mu.RLock()
-	defer m.mu.RUnlock()
 	out := make([]Metadata, 0, len(m.clients))
-	for _, client := range m.clients {
+	seen := make(map[string]bool, len(m.clients))
+	for name, client := range m.clients {
 		out = append(out, client.Metadata())
+		seen[name] = true
 	}
+	m.mu.RUnlock()
+
+	// Merge parent entries that are not shadowed by a local entry.
+	if m.parent != nil {
+		for _, meta := range m.parent.List() {
+			if !seen[meta.Name] {
+				out = append(out, meta)
+			}
+		}
+	}
+
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
@@ -366,12 +519,20 @@ func (m *Manager) SetLogger(log logger.Logger) {
 }
 
 // Get returns a loaded plugin client by short or fully-qualified library name.
+// It checks the local map first; if not found and this is a scope with a parent,
+// it falls back to the parent (and so on up the chain). Local always wins.
 func (m *Manager) Get(name string) (*Client, bool) {
 	normalized := NormalizeLibraryName(name)
 	m.mu.RLock()
-	defer m.mu.RUnlock()
 	client, ok := m.clients[normalized]
-	return client, ok
+	m.mu.RUnlock()
+	if ok {
+		return client, true
+	}
+	if m.parent != nil {
+		return m.parent.Get(name)
+	}
+	return nil, false
 }
 
 func (m *Manager) addWarning(format string, args ...any) {
@@ -456,20 +617,19 @@ func startClient(ctx context.Context, path string, args []string) (*Client, erro
 	return client, nil
 }
 
-func newHTTPClient(ctx context.Context, rawURL string, insecureSkipTLS bool, handshake bool, headers ...map[string]string) (*Client, error) {
-	transport := http.DefaultTransport
-	if insecureSkipTLS {
-		if base, ok := http.DefaultTransport.(*http.Transport); ok {
-			clone := base.Clone()
-			clone.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-			transport = clone
-		} else {
-			transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
-		}
+// newHTTPClient creates an HTTP plugin client. The caller is responsible for
+// passing the appropriate transport (see Manager.httpTransportFor); no TLS
+// policy decisions are made here. Pass nil to fall back to http.DefaultTransport.
+func newHTTPClient(ctx context.Context, rawURL string, insecureSkipTLS bool, handshake bool, transport *http.Transport, headers ...map[string]string) (*Client, error) {
+	var rt http.RoundTripper
+	if transport != nil {
+		rt = transport
+	} else {
+		rt = http.DefaultTransport
 	}
 	client := &Client{
 		path:           rawURL,
-		http:           &http.Client{Transport: transport},
+		http:           &http.Client{Transport: rt},
 		headers:        cloneHeaders(firstHeaderMap(headers)),
 		pending:        make(map[int64]*pendingCall),
 		callbackOwners: make(map[string]*pendingCall),

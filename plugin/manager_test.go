@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -1505,4 +1506,1001 @@ scriptling.plugin.call_function("plugin.comprehensive", "nonexistent")
 			t.Fatalf("expected *object.Error result, got %T: %v", result, result)
 		}
 	})
+}
+
+// ============================================================================
+// Scope Tests
+// ============================================================================
+
+// TestScopeGetChainsToParent verifies that Get on a scope falls back to the
+// parent manager when a name is not found locally.
+func TestScopeGetChainsToParent(t *testing.T) {
+	if os.Getenv("SCRIPTLING_PLUGIN_COMPREHENSIVE_HELPER") == "1" {
+		runComprehensivePluginHelper()
+		return
+	}
+
+	dir := t.TempDir()
+	helper := filepath.Join(dir, "comprehensive")
+	if runtime.GOOS == "windows" {
+		helper += ".bat"
+	}
+	writeComprehensivePluginHelper(t, helper)
+
+	parent := NewManager(nil)
+	parent.AddDir(dir)
+	if err := parent.Load(context.Background()); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	defer parent.Close()
+
+	scope := parent.NewScope()
+	defer scope.Close()
+
+	// scope has no local plugins, but should see the parent's plugin via Get.
+	client, ok := scope.Get("plugin.comprehensive")
+	if !ok {
+		t.Fatal("expected Get to chain to parent")
+	}
+	if client.Metadata().Name != "plugin.comprehensive" {
+		t.Fatalf("unexpected name: %s", client.Metadata().Name)
+	}
+}
+
+// TestScopeListMergesParentLocalWins verifies that List returns both parent and
+// local plugins, and that a local plugin with the same name shadows the parent.
+func TestScopeListMergesParentLocalWins(t *testing.T) {
+	if os.Getenv("SCRIPTLING_PLUGIN_COMPREHENSIVE_HELPER") == "1" {
+		runComprehensivePluginHelper()
+		return
+	}
+
+	dir := t.TempDir()
+	helper := filepath.Join(dir, "comprehensive")
+	if runtime.GOOS == "windows" {
+		helper += ".bat"
+	}
+	writeComprehensivePluginHelper(t, helper)
+
+	echoFn := object.NewFunctionBuilder()
+	echoFn.Function(func(v any) any { return v })
+	httpSrv := newPluginHTTPServer(t, "comprehensive", echoFn)
+	defer httpSrv.Close()
+
+	parent := NewManager(nil)
+	parent.AddDir(dir)
+	if err := parent.Load(context.Background()); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	defer parent.Close()
+
+	// Confirm parent has exactly one plugin.
+	if n := len(parent.List()); n != 1 {
+		t.Fatalf("expected 1 parent plugin, got %d", n)
+	}
+
+	scope := parent.NewScope()
+	defer scope.Close()
+
+	// Load a plugin that has a DIFFERENT name in the scope — both must appear.
+	ctx := context.Background()
+	if _, err := scope.LoadURL(ctx, "extra", httpSrv.URL, true, false); err != nil {
+		t.Fatalf("LoadURL: %v", err)
+	}
+
+	list := scope.List()
+	names := make(map[string]bool)
+	for _, m := range list {
+		names[m.Name] = true
+	}
+	if !names["plugin.comprehensive"] {
+		t.Error("expected parent plugin in scope List")
+	}
+	if !names["plugin.extra"] {
+		t.Error("expected local scope plugin in scope List")
+	}
+
+	// Attempting to load the SAME name as the parent (different URL) is blocked.
+	scope2 := parent.NewScope()
+	defer scope2.Close()
+	if _, err := scope2.LoadURL(ctx, "comprehensive", httpSrv.URL, true, false); err == nil {
+		t.Fatal("expected error: child must not shadow parent's plugin.comprehensive")
+	}
+}
+
+// TestScopeCloseReleasesLocalOnly verifies that closing a scope terminates its
+// locally loaded processes/connections without touching the parent's plugins.
+func TestScopeCloseReleasesLocalOnly(t *testing.T) {
+	if os.Getenv("SCRIPTLING_PLUGIN_COMPREHENSIVE_HELPER") == "1" {
+		runComprehensivePluginHelper()
+		return
+	}
+
+	dir := t.TempDir()
+	helper := filepath.Join(dir, "comprehensive")
+	if runtime.GOOS == "windows" {
+		helper += ".bat"
+	}
+	writeComprehensivePluginHelper(t, helper)
+
+	echoFn := object.NewFunctionBuilder()
+	echoFn.Function(func(v any) any { return v })
+	httpSrv := newPluginHTTPServer(t, "scoped", echoFn)
+	defer httpSrv.Close()
+
+	parent := NewManager(nil)
+	parent.AddDir(dir)
+	if err := parent.Load(context.Background()); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	defer parent.Close()
+
+	scope := parent.NewScope()
+	ctx := context.Background()
+	if _, err := scope.LoadURL(ctx, "scoped", httpSrv.URL, true, false); err != nil {
+		t.Fatalf("LoadURL: %v", err)
+	}
+
+	// Both visible before close.
+	if _, ok := scope.Get("plugin.scoped"); !ok {
+		t.Fatal("scope plugin not found before close")
+	}
+	if _, ok := scope.Get("plugin.comprehensive"); !ok {
+		t.Fatal("parent plugin not found via scope before close")
+	}
+
+	// Close the scope.
+	if err := scope.Close(); err != nil {
+		t.Fatalf("scope.Close: %v", err)
+	}
+
+	// Parent plugin is unaffected — still callable.
+	parentClient, ok := parent.Get("plugin.comprehensive")
+	if !ok {
+		t.Fatal("parent plugin disappeared after scope.Close")
+	}
+	result, err := parentClient.CallFunction(ctx, "echo_string",
+		[]Value{{Type: valueString, Value: "still-alive"}}, nil)
+	if err != nil {
+		t.Fatalf("CallFunction after scope close: %v", err)
+	}
+	if result.Type != valueString || result.Value != "still-alive" {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+}
+
+// TestScopeTransportHTTPOnly verifies that a scope with TransportHTTP refuses
+// to load executable (stdio) plugins.
+func TestScopeTransportHTTPOnly(t *testing.T) {
+	if os.Getenv("SCRIPTLING_PLUGIN_COMPREHENSIVE_HELPER") == "1" {
+		runComprehensivePluginHelper()
+		return
+	}
+
+	dir := t.TempDir()
+	helper := filepath.Join(dir, "comprehensive")
+	if runtime.GOOS == "windows" {
+		helper += ".bat"
+	}
+	writeComprehensivePluginHelper(t, helper)
+
+	parent := NewManager(nil)
+	defer parent.Close()
+
+	scope := parent.NewScope(WithTransport(TransportHTTP))
+	defer scope.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := scope.LoadPath(ctx, "exe", helper, true, nil)
+	if err == nil {
+		t.Fatal("expected error loading executable in HTTP-only scope")
+	}
+	if !strings.Contains(err.Error(), "stdio/executable plugins are not permitted") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestScopeTransportStdioOnly verifies that a scope with TransportStdio refuses
+// to load HTTP(S) plugins.
+func TestScopeTransportStdioOnly(t *testing.T) {
+	echoFn := object.NewFunctionBuilder()
+	echoFn.Function(func(v any) any { return v })
+	httpSrv := newPluginHTTPServer(t, "remote", echoFn)
+	defer httpSrv.Close()
+
+	parent := NewManager(nil)
+	defer parent.Close()
+
+	scope := parent.NewScope(WithTransport(TransportStdio))
+	defer scope.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := scope.LoadURL(ctx, "remote", httpSrv.URL, true, false)
+	if err == nil {
+		t.Fatal("expected error loading HTTP URL in stdio-only scope")
+	}
+	if !strings.Contains(err.Error(), "http/https plugins are not permitted") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// LoadPath with an HTTP URL should also be rejected.
+	_, err = scope.LoadPath(ctx, "remote2", httpSrv.URL, true, nil)
+	if err == nil {
+		t.Fatal("expected error loading HTTP URL via LoadPath in stdio-only scope")
+	}
+	if !strings.Contains(err.Error(), "http/https plugins are not permitted") {
+		t.Fatalf("unexpected LoadPath error: %v", err)
+	}
+}
+
+// TestScopeTransportAll verifies that a scope with the default TransportAll
+// mode accepts both stdio and HTTP plugins.
+func TestScopeTransportAll(t *testing.T) {
+	if os.Getenv("SCRIPTLING_PLUGIN_COMPREHENSIVE_HELPER") == "1" {
+		runComprehensivePluginHelper()
+		return
+	}
+
+	dir := t.TempDir()
+	helper := filepath.Join(dir, "comprehensive")
+	if runtime.GOOS == "windows" {
+		helper += ".bat"
+	}
+	writeComprehensivePluginHelper(t, helper)
+
+	echoFn := object.NewFunctionBuilder()
+	echoFn.Function(func(v any) any { return v })
+	httpSrv := newPluginHTTPServer(t, "remote", echoFn)
+	defer httpSrv.Close()
+
+	parent := NewManager(nil)
+	defer parent.Close()
+
+	// Default scope (TransportAll) accepts both.
+	scope := parent.NewScope()
+	defer scope.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if _, err := scope.LoadPath(ctx, "exe", helper, true, nil); err != nil {
+		t.Fatalf("LoadPath in TransportAll scope: %v", err)
+	}
+	if _, err := scope.LoadURL(ctx, "remote", httpSrv.URL, true, false); err != nil {
+		t.Fatalf("LoadURL in TransportAll scope: %v", err)
+	}
+	if n := len(scope.List()); n != 2 {
+		t.Fatalf("expected 2 local plugins, got %d", n)
+	}
+}
+
+// TestScopeParallelIsolation verifies that two concurrent scopes loading the
+// same plugin name are fully independent and don't interfere with each other.
+func TestScopeParallelIsolation(t *testing.T) {
+	echoFn := object.NewFunctionBuilder()
+	echoFn.Function(func(v string) string { return v })
+	httpSrv := newPluginHTTPServer(t, "echo", echoFn)
+	defer httpSrv.Close()
+
+	parent := NewManager(nil)
+	defer parent.Close()
+
+	var wg sync.WaitGroup
+	var errors atomic.Int64
+
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+
+			scope := parent.NewScope(WithTransport(TransportHTTP))
+			defer scope.Close()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			// Each scope loads the same URL under the same name — completely isolated.
+			client, err := scope.LoadURL(ctx, "echo", httpSrv.URL, true, false)
+			if err != nil {
+				t.Logf("scope %d LoadURL: %v", id, err)
+				errors.Add(1)
+				return
+			}
+
+			payload := fmt.Sprintf("hello-%d", id)
+			result, err := client.CallFunction(ctx, "echo",
+				[]Value{{Type: valueString, Value: payload}}, nil)
+			if err != nil {
+				t.Logf("scope %d CallFunction: %v", id, err)
+				errors.Add(1)
+				return
+			}
+			if result.Type != valueString || result.Value != payload {
+				t.Logf("scope %d: expected %q, got %#v", id, payload, result)
+				errors.Add(1)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	if e := errors.Load(); e > 0 {
+		t.Fatalf("%d parallel scope goroutines failed", e)
+	}
+}
+
+// newPluginHTTPServer starts a minimal scriptling plugin HTTP server and returns
+// its httptest.Server. The server exports the provided function builder under
+// the given name, responding to the scriptling plugin handshake.
+func newPluginHTTPServer(t *testing.T, name string, fn *object.FunctionBuilder) *httptest.Server {
+	t.Helper()
+	server := NewServer(name, "1.0.0", name+" test server")
+	server.RegisterFunc("echo", fn)
+	return httptest.NewServer(server)
+}
+
+// TestScopeInsecureTransportIsShared verifies that a Manager and its scopes
+// share the same insecure transport instance, meaning connections made with
+// insecure_skip_tls are pooled across the scope hierarchy.
+func TestScopeInsecureTransportIsShared(t *testing.T) {
+	parent := NewManager(nil)
+	defer parent.Close()
+
+	scope1 := parent.NewScope(WithTransport(TransportHTTP))
+	defer scope1.Close()
+
+	scope2 := parent.NewScope(WithTransport(TransportHTTP))
+	defer scope2.Close()
+
+	// Both scopes should hold the exact same insecure transport pointer as parent.
+	if parent.httpInsecureTransport == nil {
+		t.Fatal("parent insecure transport is nil")
+	}
+	if scope1.httpInsecureTransport != parent.httpInsecureTransport {
+		t.Error("scope1 insecure transport is not shared with parent")
+	}
+	if scope2.httpInsecureTransport != parent.httpInsecureTransport {
+		t.Error("scope2 insecure transport is not shared with parent")
+	}
+	// Same for the verified transport.
+	if scope1.httpTransport != parent.httpTransport {
+		t.Error("scope1 secure transport is not shared with parent")
+	}
+}
+
+// TestManagerLoadURLInsecureSkipTLS verifies that LoadURL with insecureSkipTLS=true
+// succeeds against a TLS server with a self-signed certificate.
+func TestManagerLoadURLInsecureSkipTLS(t *testing.T) {
+	echoFn := object.NewFunctionBuilder()
+	echoFn.Function(func(v any) any { return v })
+	server := NewServer("tlsecho", "1.0.0", "tls echo").RegisterFunc("echo", echoFn)
+
+	tlsSrv := httptest.NewTLSServer(server)
+	defer tlsSrv.Close()
+
+	manager := NewManager(nil)
+	defer manager.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Secure (default) should fail — self-signed cert.
+	_, err := manager.LoadURL(ctx, "tlsfail", tlsSrv.URL, true, false)
+	if err == nil {
+		t.Fatal("expected TLS error without insecure_skip_tls")
+	}
+
+	// Insecure should succeed.
+	client, err := manager.LoadURL(ctx, "tlsok", tlsSrv.URL, true, true)
+	if err != nil {
+		t.Fatalf("LoadURL insecure: %v", err)
+	}
+
+	result, err := client.CallFunction(ctx, "echo",
+		[]Value{{Type: valueString, Value: "skip-verify"}}, nil)
+	if err != nil {
+		t.Fatalf("CallFunction: %v", err)
+	}
+	if result.Type != valueString || result.Value != "skip-verify" {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+}
+
+// TestScopeLoadURLInsecureSkipTLS verifies that a scope inherits the insecure
+// transport and can load TLS-skip-verify plugins.
+func TestScopeLoadURLInsecureSkipTLS(t *testing.T) {
+	echoFn := object.NewFunctionBuilder()
+	echoFn.Function(func(v any) any { return v })
+	server := NewServer("scopetls", "1.0.0", "scope tls echo").RegisterFunc("echo", echoFn)
+
+	tlsSrv := httptest.NewTLSServer(server)
+	defer tlsSrv.Close()
+
+	parent := NewManager(nil)
+	defer parent.Close()
+
+	scope := parent.NewScope(WithTransport(TransportHTTP))
+	defer scope.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	client, err := scope.LoadURL(ctx, "scopetls", tlsSrv.URL, true, true)
+	if err != nil {
+		t.Fatalf("scope LoadURL insecure: %v", err)
+	}
+
+	result, err := client.CallFunction(ctx, "echo",
+		[]Value{{Type: valueString, Value: "scope-ok"}}, nil)
+	if err != nil {
+		t.Fatalf("CallFunction: %v", err)
+	}
+	if result.Type != valueString || result.Value != "scope-ok" {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+}
+
+// ============================================================================
+// Deep-stack (multi-level scope) tests
+// ============================================================================
+
+// TestDeepStackGetChains verifies that Get traverses an arbitrarily deep chain:
+// global → scope1 → scope2. Each level should see all plugins above it.
+// Since shadowing is blocked, a child scope attempting to load a parent-owned
+// name gets an error; attempting with the same URL is idempotent.
+func TestDeepStackGetChains(t *testing.T) {
+	echoFn := object.NewFunctionBuilder()
+	echoFn.Function(func(v any) any { return v })
+
+	srv0 := newPluginHTTPServer(t, "global", echoFn)
+	defer srv0.Close()
+	srv1 := newPluginHTTPServer(t, "scope1", echoFn)
+	defer srv1.Close()
+	srv2 := newPluginHTTPServer(t, "scope2", echoFn)
+	defer srv2.Close()
+
+	ctx := context.Background()
+
+	global := NewManager(nil)
+	defer global.Close()
+	if _, err := global.LoadURL(ctx, "global", srv0.URL, true, false); err != nil {
+		t.Fatalf("global LoadURL: %v", err)
+	}
+
+	scope1 := global.NewScope()
+	defer scope1.Close()
+	if _, err := scope1.LoadURL(ctx, "scope1", srv1.URL, true, false); err != nil {
+		t.Fatalf("scope1 LoadURL: %v", err)
+	}
+
+	scope2 := scope1.NewScope()
+	defer scope2.Close()
+	if _, err := scope2.LoadURL(ctx, "scope2", srv2.URL, true, false); err != nil {
+		t.Fatalf("scope2 LoadURL: %v", err)
+	}
+
+	// scope2 can see all three levels via chain.
+	for _, name := range []string{"plugin.global", "plugin.scope1", "plugin.scope2"} {
+		if _, ok := scope2.Get(name); !ok {
+			t.Errorf("scope2.Get(%q) returned false, want true", name)
+		}
+	}
+	// scope1 sees global + scope1, but not scope2.
+	if _, ok := scope1.Get("plugin.scope2"); ok {
+		t.Error("scope1.Get(plugin.scope2) returned true — child must not be visible to parent")
+	}
+	// global sees only itself.
+	if _, ok := global.Get("plugin.scope1"); ok {
+		t.Error("global.Get(plugin.scope1) returned true — child must not be visible")
+	}
+
+	// Attempting to shadow a parent name from scope1 is blocked.
+	srvOther := newPluginHTTPServer(t, "other", echoFn)
+	defer srvOther.Close()
+	_, err := scope1.LoadURL(ctx, "global", srvOther.URL, true, false)
+	if err == nil {
+		t.Fatal("expected error when scope1 tries to shadow parent plugin.global")
+	}
+	if !strings.Contains(err.Error(), "already loaded in a parent scope") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Loading the SAME URL under the same name is idempotent — returns parent's client.
+	client, err := scope1.LoadURL(ctx, "global", srv0.URL, true, false)
+	if err != nil {
+		t.Fatalf("idempotent LoadURL for parent plugin: %v", err)
+	}
+	globalClient, _ := global.Get("plugin.global")
+	if client != globalClient {
+		t.Error("idempotent load should return the parent's client")
+	}
+}
+
+// TestDeepStackListMerges verifies that List at each level returns the correct
+// merged view of all plugins visible in that scope's chain, with no duplicates.
+// Since shadowing is now blocked, each level only adds NEW plugin names.
+func TestDeepStackListMerges(t *testing.T) {
+	echoFn := object.NewFunctionBuilder()
+	echoFn.Function(func(v any) any { return v })
+
+	srvA := newPluginHTTPServer(t, "a", echoFn)
+	defer srvA.Close()
+	srvB := newPluginHTTPServer(t, "b", echoFn)
+	defer srvB.Close()
+	srvC := newPluginHTTPServer(t, "c", echoFn)
+	defer srvC.Close()
+	srvD := newPluginHTTPServer(t, "d", echoFn)
+	defer srvD.Close()
+
+	ctx := context.Background()
+
+	global := NewManager(nil)
+	defer global.Close()
+	if _, err := global.LoadURL(ctx, "a", srvA.URL, true, false); err != nil {
+		t.Fatalf("global a: %v", err)
+	}
+	if _, err := global.LoadURL(ctx, "b", srvB.URL, true, false); err != nil {
+		t.Fatalf("global b: %v", err)
+	}
+
+	scope1 := global.NewScope()
+	defer scope1.Close()
+	if _, err := scope1.LoadURL(ctx, "c", srvC.URL, true, false); err != nil {
+		t.Fatalf("scope1 c: %v", err)
+	}
+	// Attempting to load a parent-owned name is blocked.
+	srvOther := newPluginHTTPServer(t, "b", echoFn)
+	defer srvOther.Close()
+	if _, err := scope1.LoadURL(ctx, "b", srvOther.URL, true, false); err == nil {
+		t.Fatal("expected error when scope1 tries to shadow parent plugin.b")
+	}
+
+	scope2 := scope1.NewScope()
+	defer scope2.Close()
+	if _, err := scope2.LoadURL(ctx, "d", srvD.URL, true, false); err != nil {
+		t.Fatalf("scope2 d: %v", err)
+	}
+
+	// scope2 sees a, b (from global), c (from scope1), d (local) — 4 total.
+	list2 := scope2.List()
+	if len(list2) != 4 {
+		names := make([]string, len(list2))
+		for i, m := range list2 {
+			names[i] = m.Name
+		}
+		t.Fatalf("scope2 list: expected 4 entries, got %d: %v", len(list2), names)
+	}
+	// "b" is global's — verify client identity.
+	bClient, ok := scope2.Get("plugin.b")
+	if !ok {
+		t.Fatal("scope2.Get(plugin.b) returned false")
+	}
+	if bClient.Path() != srvB.URL {
+		t.Errorf("expected global's plugin.b, got path %q", bClient.Path())
+	}
+
+	// scope1 sees a, b (from global), c (local) — 3 entries.
+	list1 := scope1.List()
+	if len(list1) != 3 {
+		t.Fatalf("scope1 list: expected 3 entries, got %d", len(list1))
+	}
+
+	// global sees a, b — 2 entries.
+	listG := global.List()
+	if len(listG) != 2 {
+		t.Fatalf("global list: expected 2 entries, got %d", len(listG))
+	}
+}
+
+// TestDeepStackTransportInherited verifies that a scope-of-a-scope shares the
+// same transport instances as the root manager.
+func TestDeepStackTransportInherited(t *testing.T) {
+	root := NewManager(nil)
+	defer root.Close()
+
+	scope1 := root.NewScope()
+	defer scope1.Close()
+
+	scope2 := scope1.NewScope()
+	defer scope2.Close()
+
+	scope3 := scope2.NewScope()
+	defer scope3.Close()
+
+	if scope1.httpTransport != root.httpTransport {
+		t.Error("scope1 secure transport not shared with root")
+	}
+	if scope2.httpTransport != root.httpTransport {
+		t.Error("scope2 secure transport not shared with root")
+	}
+	if scope3.httpTransport != root.httpTransport {
+		t.Error("scope3 secure transport not shared with root")
+	}
+	if scope1.httpInsecureTransport != root.httpInsecureTransport {
+		t.Error("scope1 insecure transport not shared with root")
+	}
+	if scope2.httpInsecureTransport != root.httpInsecureTransport {
+		t.Error("scope2 insecure transport not shared with root")
+	}
+	if scope3.httpInsecureTransport != root.httpInsecureTransport {
+		t.Error("scope3 insecure transport not shared with root")
+	}
+}
+
+// TestDeepStackCloseDoesNotAffectSiblings verifies that closing one scope at
+// depth does not affect sibling scopes at the same level.
+func TestDeepStackCloseDoesNotAffectSiblings(t *testing.T) {
+	echoFn := object.NewFunctionBuilder()
+	echoFn.Function(func(v any) any { return v })
+
+	srv := newPluginHTTPServer(t, "echo", echoFn)
+	defer srv.Close()
+
+	ctx := context.Background()
+
+	root := NewManager(nil)
+	defer root.Close()
+
+	scopeA := root.NewScope()
+	scopeB := root.NewScope()
+	defer scopeB.Close()
+
+	if _, err := scopeA.LoadURL(ctx, "a", srv.URL, true, false); err != nil {
+		t.Fatalf("scopeA LoadURL: %v", err)
+	}
+	if _, err := scopeB.LoadURL(ctx, "b", srv.URL, true, false); err != nil {
+		t.Fatalf("scopeB LoadURL: %v", err)
+	}
+
+	// Close scopeA — scopeB should be unaffected.
+	if err := scopeA.Close(); err != nil {
+		t.Fatalf("scopeA.Close: %v", err)
+	}
+
+	// scopeB still sees its own plugin and root is unaffected.
+	if _, ok := scopeB.Get("plugin.b"); !ok {
+		t.Error("scopeB.Get(plugin.b) returned false after sibling close")
+	}
+	// scopeA's plugin is gone from scopeA.
+	if _, ok := scopeA.Get("plugin.a"); ok {
+		t.Error("scopeA.Get(plugin.a) returned true after close, expected false for local")
+	}
+
+	// scopeB can still call its plugin.
+	bClient, _ := scopeB.Get("plugin.b")
+	ctxT, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	result, err := bClient.CallFunction(ctxT, "echo",
+		[]Value{{Type: valueString, Value: "sibling-ok"}}, nil)
+	if err != nil {
+		t.Fatalf("bClient.CallFunction after sibling close: %v", err)
+	}
+	if result.Type != valueString || result.Value != "sibling-ok" {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+}
+
+// ============================================================================
+// Proxy library registration with stacked managers
+// ============================================================================
+
+// TestScopeProxyLibrariesBothVisible verifies the two-lib case: parent has
+// plugin.base, child scope has plugin.extra. RegisterLibraries on the scope
+// must register proxies for BOTH so scripts can import and call either.
+func TestScopeProxyLibrariesBothVisible(t *testing.T) {
+	// plugin.base lives in the parent — registered before the scope exists.
+	baseFn := object.NewFunctionBuilder()
+	baseFn.Function(func(name string) string { return "hello-" + name })
+	baseSrv := httptest.NewServer(
+		NewServer("base", "1.0.0", "base test").RegisterFunc("greet", baseFn),
+	)
+	defer baseSrv.Close()
+
+	// plugin.extra lives only in the child scope.
+	extraFn := object.NewFunctionBuilder()
+	extraFn.Function(func(name string) string { return "extra-" + name })
+	extraSrv := httptest.NewServer(
+		NewServer("extra", "1.0.0", "extra test").RegisterFunc("shout", extraFn),
+	)
+	defer extraSrv.Close()
+
+	ctx := context.Background()
+
+	parent := NewManager(nil)
+	defer parent.Close()
+	if _, err := parent.LoadURL(ctx, "base", baseSrv.URL, true, false); err != nil {
+		t.Fatalf("parent LoadURL: %v", err)
+	}
+
+	scope := parent.NewScope()
+	defer scope.Close()
+	if _, err := scope.LoadURL(ctx, "extra", extraSrv.URL, true, false); err != nil {
+		t.Fatalf("scope LoadURL: %v", err)
+	}
+
+	// RegisterLibraries walks scope.List() which returns both plugin.base
+	// (via parent chain) and plugin.extra (local). Both proxies must be
+	// registered so the script can import and call either.
+	p := scriptling.New()
+	RegisterLibraries(p, scope)
+
+	result, err := p.Eval(`
+import plugin.base
+import plugin.extra
+plugin.base.greet("Ada") + ":" + plugin.extra.shout("World")
+`)
+	if err != nil {
+		t.Fatalf("Eval: %v", err)
+	}
+	s, ok := result.(*object.String)
+	if !ok {
+		t.Fatalf("expected string, got %T: %v", result, result)
+	}
+	if s.StringValue() != "hello-Ada:extra-World" {
+		t.Fatalf("expected hello-Ada:extra-World, got %q", s.StringValue())
+	}
+}
+
+// TestScopeChildBlockedFromShadowingParentPlugin verifies that a child scope
+// cannot load a plugin under a name that already exists in the parent chain.
+// Loading the SAME endpoint under the same name is idempotent (allowed).
+func TestScopeChildBlockedFromShadowingParentPlugin(t *testing.T) {
+	parentFn := object.NewFunctionBuilder()
+	parentFn.Function(func() string { return "from-parent" })
+	parentSrv := httptest.NewServer(
+		NewServer("shared", "1.0.0", "parent shared").RegisterFunc("which", parentFn),
+	)
+	defer parentSrv.Close()
+
+	otherFn := object.NewFunctionBuilder()
+	otherFn.Function(func() string { return "from-other" })
+	otherSrv := httptest.NewServer(
+		NewServer("shared", "1.0.0", "other shared").RegisterFunc("which", otherFn),
+	)
+	defer otherSrv.Close()
+
+	ctx := context.Background()
+
+	parent := NewManager(nil)
+	defer parent.Close()
+	if _, err := parent.LoadURL(ctx, "shared", parentSrv.URL, true, false); err != nil {
+		t.Fatalf("parent LoadURL: %v", err)
+	}
+
+	scope := parent.NewScope()
+	defer scope.Close()
+
+	// Different endpoint under same name → blocked.
+	_, err := scope.LoadURL(ctx, "shared", otherSrv.URL, true, false)
+	if err == nil {
+		t.Fatal("expected error when child tries to shadow parent plugin with different endpoint")
+	}
+	if !strings.Contains(err.Error(), "already loaded in a parent scope") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Same endpoint under same name → idempotent, returns parent's client.
+	client, err := scope.LoadURL(ctx, "shared", parentSrv.URL, true, false)
+	if err != nil {
+		t.Fatalf("idempotent load: %v", err)
+	}
+	parentClient, _ := parent.Get("plugin.shared")
+	if client != parentClient {
+		t.Error("idempotent load should return the parent's client")
+	}
+
+	// Script using parent's proxy still works correctly.
+	p := scriptling.New()
+	RegisterLibraries(p, scope)
+	result, err := p.Eval(`import plugin.shared; plugin.shared.which()`)
+	if err != nil {
+		t.Fatalf("Eval: %v", err)
+	}
+	if s, ok := result.(*object.String); !ok || s.StringValue() != "from-parent" {
+		t.Fatalf("expected from-parent, got %#v", result)
+	}
+}
+
+// TestScopeSiblingsDontAffectEachOther confirms that two sibling scopes are
+// fully independent: each sees the parent's plugins plus only its own local
+// plugins, and neither can shadow the parent or each other.
+func TestScopeSiblingsDontAffectEachOther(t *testing.T) {
+	parentFn := object.NewFunctionBuilder()
+	parentFn.Function(func() string { return "from-parent" })
+	parentSrv := httptest.NewServer(
+		NewServer("shared", "1.0.0", "parent shared").RegisterFunc("which", parentFn),
+	)
+	defer parentSrv.Close()
+
+	aFn := object.NewFunctionBuilder()
+	aFn.Function(func() string { return "scope-a" })
+	aSrv := httptest.NewServer(
+		NewServer("scopea", "1.0.0", "scope A plugin").RegisterFunc("id", aFn),
+	)
+	defer aSrv.Close()
+
+	bFn := object.NewFunctionBuilder()
+	bFn.Function(func() string { return "scope-b" })
+	bSrv := httptest.NewServer(
+		NewServer("scopeb", "1.0.0", "scope B plugin").RegisterFunc("id", bFn),
+	)
+	defer bSrv.Close()
+
+	ctx := context.Background()
+
+	parent := NewManager(nil)
+	defer parent.Close()
+	if _, err := parent.LoadURL(ctx, "shared", parentSrv.URL, true, false); err != nil {
+		t.Fatalf("parent LoadURL: %v", err)
+	}
+
+	// scopeA loads its own unique plugin.
+	scopeA := parent.NewScope()
+	defer scopeA.Close()
+	if _, err := scopeA.LoadURL(ctx, "scopea", aSrv.URL, true, false); err != nil {
+		t.Fatalf("scopeA LoadURL: %v", err)
+	}
+
+	// scopeB loads its own unique plugin.
+	scopeB := parent.NewScope()
+	defer scopeB.Close()
+	if _, err := scopeB.LoadURL(ctx, "scopeb", bSrv.URL, true, false); err != nil {
+		t.Fatalf("scopeB LoadURL: %v", err)
+	}
+
+	pA := scriptling.New()
+	RegisterLibraries(pA, scopeA)
+	pB := scriptling.New()
+	RegisterLibraries(pB, scopeB)
+
+	// Both see the parent's plugin.shared with the same (parent's) implementation.
+	resultA, err := pA.Eval(`import plugin.shared; plugin.shared.which()`)
+	if err != nil {
+		t.Fatalf("pA shared: %v", err)
+	}
+	resultB, err := pB.Eval(`import plugin.shared; plugin.shared.which()`)
+	if err != nil {
+		t.Fatalf("pB shared: %v", err)
+	}
+	if s, ok := resultA.(*object.String); !ok || s.StringValue() != "from-parent" {
+		t.Fatalf("scopeA: expected from-parent, got %#v", resultA)
+	}
+	if s, ok := resultB.(*object.String); !ok || s.StringValue() != "from-parent" {
+		t.Fatalf("scopeB: expected from-parent, got %#v", resultB)
+	}
+
+	// scopeA cannot see scopeB's plugin and vice-versa.
+	if _, ok := scopeA.Get("plugin.scopeb"); ok {
+		t.Error("scopeA.Get(plugin.scopeb) should return false — siblings are not visible to each other")
+	}
+	if _, ok := scopeB.Get("plugin.scopea"); ok {
+		t.Error("scopeB.Get(plugin.scopea) should return false — siblings are not visible to each other")
+	}
+
+	// Neither scope can shadow the parent's plugin.
+	otherFn := object.NewFunctionBuilder()
+	otherFn.Function(func() string { return "impostor" })
+	otherSrv := httptest.NewServer(
+		NewServer("shared", "1.0.0", "impostor").RegisterFunc("which", otherFn),
+	)
+	defer otherSrv.Close()
+	if _, err := scopeA.LoadURL(ctx, "shared", otherSrv.URL, true, false); err == nil {
+		t.Fatal("expected scopeA to be blocked from shadowing parent's plugin.shared")
+	}
+	if _, err := scopeB.LoadURL(ctx, "shared", otherSrv.URL, true, false); err == nil {
+		t.Fatal("expected scopeB to be blocked from shadowing parent's plugin.shared")
+	}
+}
+
+// ============================================================================
+// Remote object lifecycle with dynamic shadowing
+
+// TestScopeExistingInstanceSurvivesDynamicShadow covers the critical edge case
+// where a parent scope has plugin.testing already loaded and a child scope
+// tries to load the same name.
+//
+// Rules verified:
+//  1. Child loading a DIFFERENT endpoint under an already-taken parent name is BLOCKED.
+//  2. Child loading the SAME endpoint under the same name is idempotent (returns parent's client).
+//  3. Existing remote objects created from the parent's plugin continue to work
+//     regardless of child scope activity (remote.Client is immutable on the object).
+func TestScopeExistingInstanceSurvivesDynamicShadow(t *testing.T) {
+	aFn := object.NewFunctionBuilder()
+	aFn.Function(func() string { return "from-A" })
+	srvA := httptest.NewServer(
+		NewServer("testing", "1.0.0", "A").
+			RegisterFunc("which", aFn).
+			RegisterClass(object.NewClassBuilder("Widget").
+				Constructor(func(id string) *struct{ id string } { return &struct{ id string }{id} }).
+				Method("id", func(self *struct{ id string }) string { return self.id }),
+			),
+	)
+	defer srvA.Close()
+
+	bFn := object.NewFunctionBuilder()
+	bFn.Function(func() string { return "from-B" })
+	srvB := httptest.NewServer(
+		NewServer("testing", "1.0.0", "B").RegisterFunc("which", bFn),
+	)
+	defer srvB.Close()
+
+	ctx := context.Background()
+	parent := NewManager(nil)
+	defer parent.Close()
+	if _, err := parent.LoadURL(ctx, "testing", srvA.URL, true, false); err != nil {
+		t.Fatalf("parent LoadURL A: %v", err)
+	}
+
+	scope := parent.NewScope()
+	defer scope.Close()
+	p := scriptling.New()
+	RegisterLibraries(p, scope)
+
+	// Phase 1: create an object from the parent's plugin.
+	result, err := p.Eval(`
+import plugin.testing
+obj = plugin.testing.Widget("original")
+obj.id()
+`)
+	if err != nil {
+		t.Fatalf("phase 1: %v", err)
+	}
+	if s, ok := result.(*object.String); !ok || s.StringValue() != "original" {
+		t.Fatalf("phase 1: expected original, got %#v", result)
+	}
+
+	// Phase 2: child tries to load a DIFFERENT endpoint under the same name — must be blocked.
+	_, err = p.Eval(fmt.Sprintf(`
+import scriptling.plugin
+scriptling.plugin.load("testing", %q, scriptling=True)
+`, srvB.URL))
+	if err == nil {
+		t.Fatal("expected error when child shadows parent plugin name with different endpoint; got nil")
+	}
+	if !strings.Contains(err.Error(), "already loaded in a parent scope") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Phase 3: loading the SAME endpoint under the same name is idempotent — returns parent's client.
+	result, err = p.Eval(fmt.Sprintf(`
+import scriptling.plugin
+scriptling.plugin.load("testing", %q, scriptling=True)
+`, srvA.URL))
+	if err != nil {
+		t.Fatalf("phase 3 idempotent load: %v", err)
+	}
+	if s, ok := result.(*object.String); !ok || s.StringValue() != "plugin.testing" {
+		t.Fatalf("phase 3: expected plugin.testing, got %#v", result)
+	}
+
+	// Phase 4: the original object still works (remote.Client stored directly — immutable).
+	result, err = p.Eval(`obj.id()`)
+	if err != nil {
+		t.Fatalf("phase 4 obj.id(): %v", err)
+	}
+	if s, ok := result.(*object.String); !ok || s.StringValue() != "original" {
+		t.Fatalf("phase 4: expected original (server A), got %#v", result)
+	}
+
+	// Phase 5: Go-level block also applies — scope.LoadURL with different endpoint errors.
+	_, err = scope.LoadURL(ctx, "testing", srvB.URL, true, false)
+	if err == nil {
+		t.Fatal("expected LoadURL to block child from shadowing parent plugin")
+	}
+	if !strings.Contains(err.Error(), "already loaded in a parent scope") {
+		t.Fatalf("unexpected LoadURL error: %v", err)
+	}
+
+	// Phase 6: Go-level idempotent via parent — same URL returns parent's client.
+	client, err := scope.LoadURL(ctx, "testing", srvA.URL, true, false)
+	if err != nil {
+		t.Fatalf("phase 6 idempotent LoadURL: %v", err)
+	}
+	parentClient, _ := parent.Get("plugin.testing")
+	if client != parentClient {
+		t.Fatal("phase 6: expected idempotent load to return parent's client instance")
+	}
 }
