@@ -163,12 +163,31 @@ func TestHashlibLibrary(t *testing.T) {
 	ctx := context.Background()
 	hexRegex := regexp.MustCompile(`^[0-9a-f]+$`)
 
+	// hexdigest calls the .hexdigest() method on a Hash instance result.
+	hexdigest := func(t *testing.T, result object.Object) string {
+		t.Helper()
+		inst, ok := result.(*object.Instance)
+		if !ok {
+			t.Fatalf("expected Hash instance, got %v", result.Type())
+		}
+		fn, ok := inst.Class.LookupMember("hexdigest")
+		if !ok {
+			t.Fatalf("Hash instance has no hexdigest method")
+		}
+		res := fn.(*object.Builtin).Fn(ctx, object.NewKwargs(nil), inst)
+		str, ok := res.(*object.String)
+		if !ok {
+			t.Fatalf("hexdigest() returned %v, want string", res.Type())
+		}
+		return str.StringValue()
+	}
+
 	// Test sha256
 	result := HashlibLibrary.Functions()["sha256"].Fn(ctx, object.NewKwargs(nil), object.NewString("hello"))
-	if result.Type() != object.STRING_OBJ {
-		t.Errorf("sha256() returned %v, want string", result.Type())
+	if result.Type() != object.INSTANCE_OBJ {
+		t.Errorf("sha256() returned %v, want instance", result.Type())
 	}
-	hashStr := result.(*object.String).StringValue()
+	hashStr := hexdigest(t, result)
 	if !hexRegex.MatchString(hashStr) {
 		t.Errorf("sha256() returned invalid hex: %q", hashStr)
 	}
@@ -178,10 +197,10 @@ func TestHashlibLibrary(t *testing.T) {
 
 	// Test sha1
 	result = HashlibLibrary.Functions()["sha1"].Fn(ctx, object.NewKwargs(nil), object.NewString("hello"))
-	if result.Type() != object.STRING_OBJ {
-		t.Errorf("sha1() returned %v, want string", result.Type())
+	if result.Type() != object.INSTANCE_OBJ {
+		t.Errorf("sha1() returned %v, want instance", result.Type())
 	}
-	hashStr = result.(*object.String).StringValue()
+	hashStr = hexdigest(t, result)
 	if !hexRegex.MatchString(hashStr) {
 		t.Errorf("sha1() returned invalid hex: %q", hashStr)
 	}
@@ -191,10 +210,10 @@ func TestHashlibLibrary(t *testing.T) {
 
 	// Test md5
 	result = HashlibLibrary.Functions()["md5"].Fn(ctx, object.NewKwargs(nil), object.NewString("hello"))
-	if result.Type() != object.STRING_OBJ {
-		t.Errorf("md5() returned %v, want string", result.Type())
+	if result.Type() != object.INSTANCE_OBJ {
+		t.Errorf("md5() returned %v, want instance", result.Type())
 	}
-	hashStr = result.(*object.String).StringValue()
+	hashStr = hexdigest(t, result)
 	if !hexRegex.MatchString(hashStr) {
 		t.Errorf("md5() returned invalid hex: %q", hashStr)
 	}
@@ -205,24 +224,99 @@ func TestHashlibLibrary(t *testing.T) {
 	// Test known values
 	result = HashlibLibrary.Functions()["sha256"].Fn(ctx, object.NewKwargs(nil), object.NewString(""))
 	expectedSHA256 := "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-	if result.(*object.String).StringValue() != expectedSHA256 {
-		t.Errorf("sha256('') = %q, want %q", result.(*object.String).StringValue(), expectedSHA256)
+	if hexdigest(t, result) != expectedSHA256 {
+		t.Errorf("sha256('') = %q, want %q", hexdigest(t, result), expectedSHA256)
 	}
 
 	result = HashlibLibrary.Functions()["md5"].Fn(ctx, object.NewKwargs(nil), object.NewString(""))
 	expectedMD5 := "d41d8cd98f00b204e9800998ecf8427e"
-	if result.(*object.String).StringValue() != expectedMD5 {
-		t.Errorf("md5('') = %q, want %q", result.(*object.String).StringValue(), expectedMD5)
+	if hexdigest(t, result) != expectedMD5 {
+		t.Errorf("md5('') = %q, want %q", hexdigest(t, result), expectedMD5)
+	}
+
+	// Constructors with no argument return an empty hash object (no error).
+	result = HashlibLibrary.Functions()["sha256"].Fn(ctx, object.NewKwargs(nil))
+	if result.Type() != object.INSTANCE_OBJ {
+		t.Errorf("sha256() without args should return empty hash, got %v", result.Type())
+	}
+
+	// Test instance attributes
+	inst := result.(*object.Instance)
+	if name := inst.Fields["name"].(*object.String).StringValue(); name != "sha256" {
+		t.Errorf("sha256().name = %q, want sha256", name)
+	}
+	if inst.Fields["digest_size"].(*object.Integer).IntValue() != 32 {
+		t.Errorf("sha256().digest_size = %d, want 32", inst.Fields["digest_size"].(*object.Integer).IntValue())
+	}
+	if inst.Fields["block_size"].(*object.Integer).IntValue() != 64 {
+		t.Errorf("sha256().block_size = %d, want 64", inst.Fields["block_size"].(*object.Integer).IntValue())
 	}
 
 	// Test with invalid args (should error)
-	result = HashlibLibrary.Functions()["sha256"].Fn(ctx, object.NewKwargs(nil))
-	if result.Type() != object.ERROR_OBJ {
-		t.Errorf("sha256() without args should return error, got %v", result.Type())
-	}
-
 	result = HashlibLibrary.Functions()["sha256"].Fn(ctx, object.NewKwargs(nil), object.NewInteger(42))
 	if result.Type() != object.ERROR_OBJ {
 		t.Errorf("sha256() with int should return error, got %v", result.Type())
+	}
+}
+
+func TestHmacLibrary(t *testing.T) {
+	ctx := context.Background()
+
+	// Known SHA-256 HMAC: key="key", msg="The quick brown fox jumps over the lazy dog"
+	known := "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8"
+
+	hexdigest := func(result object.Object) string {
+		inst := result.(*object.Instance)
+		fn, _ := inst.Class.LookupMember("hexdigest")
+		return fn.(*object.Builtin).Fn(ctx, object.NewKwargs(nil), inst).(*object.String).StringValue()
+	}
+
+	// hmac.new with string digestmod
+	result := HmacLibrary.Functions()["new"].Fn(ctx, object.NewKwargs(nil),
+		object.NewString("key"), object.NewString("The quick brown fox jumps over the lazy dog"), object.NewString("sha256"))
+	if hexdigest(result) != known {
+		t.Errorf("hmac.new sha256 = %q, want %q", hexdigest(result), known)
+	}
+
+	// hmac.new passing the hashlib.sha256 constructor reference as digestmod
+	result2 := HmacLibrary.Functions()["new"].Fn(ctx, object.NewKwargs(nil),
+		object.NewString("key"), object.NewString("msg"), HashlibSHA256Builtin)
+	if hexdigest(result2) != hexdigest(HmacLibrary.Functions()["new"].Fn(ctx, object.NewKwargs(nil),
+		object.NewString("key"), object.NewString("msg"), object.NewString("sha256"))) {
+		t.Errorf("hashlib.sha256 as digestmod should match \"sha256\"")
+	}
+
+	// Default digestmod (omitted) is sha256
+	result3 := HmacLibrary.Functions()["new"].Fn(ctx, object.NewKwargs(nil),
+		object.NewString("key"), object.NewString("msg"))
+	if hexdigest(result3) != hexdigest(HmacLibrary.Functions()["new"].Fn(ctx, object.NewKwargs(nil),
+		object.NewString("key"), object.NewString("msg"), object.NewString("sha256"))) {
+		t.Errorf("omitted digestmod should default to sha256")
+	}
+
+	// compare_digest
+	r := HmacLibrary.Functions()["compare_digest"].Fn(ctx, object.NewKwargs(nil),
+		object.NewString("abc"), object.NewString("abc"))
+	if !r.(*object.Boolean).BoolValue() {
+		t.Errorf("compare_digest('abc','abc') should be true")
+	}
+	r = HmacLibrary.Functions()["compare_digest"].Fn(ctx, object.NewKwargs(nil),
+		object.NewString("abc"), object.NewString("abd"))
+	if r.(*object.Boolean).BoolValue() {
+		t.Errorf("compare_digest('abc','abd') should be false")
+	}
+
+	// compare_digest requires strings
+	r = HmacLibrary.Functions()["compare_digest"].Fn(ctx, object.NewKwargs(nil),
+		object.NewInteger(1), object.NewInteger(1))
+	if r.Type() != object.ERROR_OBJ {
+		t.Errorf("compare_digest with ints should error, got %v", r.Type())
+	}
+
+	// Unsupported digestmod errors
+	r = HmacLibrary.Functions()["new"].Fn(ctx, object.NewKwargs(nil),
+		object.NewString("k"), object.NewString("m"), object.NewString("nonsense"))
+	if r.Type() != object.ERROR_OBJ {
+		t.Errorf("hmac.new with unknown algorithm should error, got %v", r.Type())
 	}
 }

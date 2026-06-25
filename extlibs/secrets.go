@@ -3,7 +3,6 @@ package extlibs
 import (
 	"context"
 	"crypto/rand"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"math/big"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
+	"github.com/paularlott/scriptling/stdlib"
 )
 
 func RegisterSecretsLibrary(registrar interface{ RegisterLibrary(*object.Library) }) {
@@ -257,11 +257,8 @@ Example:
 				return errors.NewError("compare_digest() requires two string arguments")
 			}
 
-			// Use crypto/subtle for constant-time comparison to prevent timing attacks
-			if subtle.ConstantTimeCompare([]byte(a.StringValue()), []byte(b.StringValue())) == 1 {
-				return object.NewBoolean(true)
-			}
-			return object.NewBoolean(false)
+			// Delegate to the shared constant-time comparison used by hmac.
+			return object.NewBoolean(stdlib.CompareDigest(a.StringValue(), b.StringValue()))
 		},
 		HelpText: `compare_digest(a, b) - Compare two strings using constant-time comparison
 
