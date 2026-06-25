@@ -14,6 +14,7 @@ const (
 	MathLibraryName        = "math"
 	Base64LibraryName      = "base64"
 	HashlibLibraryName     = "hashlib"
+	HmacLibraryName        = "hmac"
 	RandomLibraryName      = "random"
 	URLLibLibraryName      = "urllib"
 	URLParseLibraryName    = "urllib.parse"
@@ -37,6 +38,7 @@ func RegisterAll(p interface{ RegisterLibrary(*object.Library) }) {
 	p.RegisterLibrary(MathLibrary)
 	p.RegisterLibrary(Base64Library)
 	p.RegisterLibrary(HashlibLibrary)
+	p.RegisterLibrary(HmacLibrary)
 	p.RegisterLibrary(RandomLibrary)
 	p.RegisterLibrary(URLLibLibrary)
 	p.RegisterLibrary(URLParseLibrary)

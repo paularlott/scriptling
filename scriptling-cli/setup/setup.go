@@ -38,6 +38,7 @@ func AllLibraryNames() []string {
 		stdlib.MathLibraryName,
 		stdlib.Base64LibraryName,
 		stdlib.HashlibLibraryName,
+		stdlib.HmacLibraryName,
 		stdlib.RandomLibraryName,
 		stdlib.URLLibLibraryName,
 		stdlib.URLParseLibraryName,
@@ -122,6 +123,7 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 		reg(stdlib.MathLibraryName, func() { p.RegisterLibrary(stdlib.MathLibrary) })
 		reg(stdlib.Base64LibraryName, func() { p.RegisterLibrary(stdlib.Base64Library) })
 		reg(stdlib.HashlibLibraryName, func() { p.RegisterLibrary(stdlib.HashlibLibrary) })
+		reg(stdlib.HmacLibraryName, func() { p.RegisterLibrary(stdlib.HmacLibrary) })
 		reg(stdlib.RandomLibraryName, func() { p.RegisterLibrary(stdlib.RandomLibrary) })
 		reg(stdlib.URLLibLibraryName, func() { p.RegisterLibrary(stdlib.URLLibLibrary) })
 		reg(stdlib.URLParseLibraryName, func() { p.RegisterLibrary(stdlib.URLParseLibrary) })

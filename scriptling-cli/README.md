@@ -171,7 +171,7 @@ except Exception as e:
 
 **Available libraries:**
 
-- Standard libraries: `json`, `math`, `random`, `re`, `time`, `base64`, `hashlib`, `urllib`
+- Standard libraries: `json`, `math`, `random`, `re`, `time`, `base64`, `hashlib`, `hmac`, `urllib`
 - `datetime` - Date and time operations
 - `yaml`, `toml` - YAML and TOML parsing
 - `html.parser` - HTML parsing
@@ -600,7 +600,7 @@ task install
 
 The CLI includes all standard libraries plus external libraries:
 
-- `datetime`, `json`, `math`, `random`, `re`, `time`, `base64`, `hashlib`, `urllib`
+- `datetime`, `json`, `math`, `random`, `re`, `time`, `base64`, `hashlib`, `hmac`, `urllib`
 - `requests` - HTTP client library
 - `scriptling.net.websocket` - WebSocket client
 - `scriptling.net.multicast` - UDP multicast group messaging
