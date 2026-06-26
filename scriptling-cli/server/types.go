@@ -10,6 +10,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/paularlott/logger"
 	mcp_lib "github.com/paularlott/mcp"
+	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs/secretprovider"
 	scriptlingplugin "github.com/paularlott/scriptling/plugin"
 	"github.com/paularlott/scriptling/scriptling-cli/pack"
@@ -41,6 +42,12 @@ type ServerConfig struct {
 	TLSCert        string
 	TLSKey         string
 	TLSGenerate    bool
+
+	// ExtraLibs, if set, registers additional libraries on every evaluator
+	// after the standard library set — the setup script and every json-rpc,
+	// http, mcp and websocket request handler. Host applications use this to
+	// expose their own libraries to served scripts.
+	ExtraLibs func(*scriptling.Scriptling)
 }
 
 // reloadableMCPHandler wraps an MCP server pointer to allow hot-reloading of tools

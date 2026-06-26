@@ -108,6 +108,9 @@ func (s *Server) setupScriptling(p *scriptling.Scriptling) {
 	if s.config.PluginManager != nil {
 		scriptlingplugin.RegisterLibraries(p, s.config.PluginManager)
 	}
+	if s.config.ExtraLibs != nil {
+		s.config.ExtraLibs(p)
+	}
 }
 
 // collectRoutes collects registered routes from the scriptling.runtime library
