@@ -840,6 +840,49 @@ events[0]
 		}
 	})
 
+	t.Run("SharedEnvConcurrentPluginCall", func(t *testing.T) {
+		// All goroutines share ONE scriptling instance (one environment, one GIL).
+		// Each call acquires the GIL, runs the plugin RPC with the lock released,
+		// then re-acquires it — proving plugin calls are safe on a shared
+		// environment under the interpreter lock (the shared-state model the GIL
+		// enables). Complementary to ParallelSeparateEnvs above.
+		manager := NewManager(nil)
+		manager.AddDir(dir)
+		if err := manager.Load(context.Background()); err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		defer manager.Close()
+
+		p := scriptling.New()
+		RegisterLibraries(p, manager)
+
+		var wg sync.WaitGroup
+		var errors atomic.Int64
+
+		for i := 0; i < 12; i++ {
+			wg.Add(1)
+			go func(id int) {
+				defer wg.Done()
+				code := fmt.Sprintf(`import plugin.comprehensive; plugin.comprehensive.echo_int(%d)`, id)
+				result, err := p.Eval(code)
+				if err != nil {
+					t.Logf("shared-env goroutine %d error: %v", id, err)
+					errors.Add(1)
+					return
+				}
+				if got, ok := result.(*object.Integer); !ok || got.IntValue() != int64(id) {
+					t.Logf("shared-env goroutine %d: expected %d, got %v", id, id, result)
+					errors.Add(1)
+				}
+			}(i)
+		}
+		wg.Wait()
+
+		if e := errors.Load(); e > 0 {
+			t.Fatalf("%d shared-env concurrent plugin calls failed", e)
+		}
+	})
+
 	t.Run("ParallelObjectCreation", func(t *testing.T) {
 		manager := NewManager(nil)
 		manager.AddDir(dir)

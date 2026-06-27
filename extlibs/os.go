@@ -156,7 +156,7 @@ Returns a list of the names of the entries in the given directory.`,
 					return err
 				}
 
-				content, errObj := readFileBytes(o.config, path)
+				content, errObj := readFileBytes(ctx, o.config, path)
 				if errObj != nil {
 					return errObj
 				}
@@ -184,7 +184,7 @@ Returns the contents of the file as a string.`,
 					return errObj
 				}
 
-				return writeFileBytes(o.config, path, []byte(content), mode)
+				return writeFileBytes(ctx, o.config, path, []byte(content), mode)
 			},
 			HelpText: `write_file(path, content[, mode]) - Write content to file
 
@@ -204,7 +204,7 @@ Writes the string content to the file, creating or overwriting it.`,
 					return errors.NewTypeError("STRING", args[1].Type().String())
 				}
 
-				return appendFileBytes(o.config, path, []byte(content), 0644)
+				return appendFileBytes(ctx, o.config, path, []byte(content), 0644)
 			},
 			HelpText: `append_file(path, content) - Append content to file
 

@@ -145,11 +145,13 @@ func (t *sedLibraryInstance) replaceDir(ctx context.Context, root string, re *re
 	go walkFiles(ctx, root, opts, t.config, jobs)
 
 	var count int64
-	for modified := range resultsCh {
-		if modified {
-			count++
+	object.RunBlocking(ctx, func() {
+		for modified := range resultsCh {
+			if modified {
+				count++
+			}
 		}
-	}
+	})
 	return count
 }
 
@@ -295,9 +297,11 @@ func (t *sedLibraryInstance) extractDir(ctx context.Context, root string, re *re
 	go walkFiles(ctx, root, opts, t.config, jobs)
 
 	var all []extractResult
-	for r := range resultsCh {
-		all = append(all, r...)
-	}
+	object.RunBlocking(ctx, func() {
+		for r := range resultsCh {
+			all = append(all, r...)
+		}
+	})
 	return all
 }
 

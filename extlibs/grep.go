@@ -142,9 +142,11 @@ func (g *grepLibraryInstance) searchDir(ctx context.Context, root string, re *re
 	go walkFiles(ctx, root, opts, g.config, jobs)
 
 	var all []matchResult
-	for r := range resultsCh {
-		all = append(all, r...)
-	}
+	object.RunBlocking(ctx, func() {
+		for r := range resultsCh {
+			all = append(all, r...)
+		}
+	})
 	return all
 }
 

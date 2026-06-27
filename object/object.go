@@ -6,6 +6,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -772,10 +773,41 @@ type Environment struct {
 	availableLibrariesCallback func() []LibraryInfo
 	currentModule              string // Current module path for relative import resolution
 	// freeFrames is a free-list of reusable call-frame environments, populated
-	// lazily and only on root environments. It is accessed WITHOUT locking and
-	// relies on the interpreter invariant that an Environment tree is only ever
-	// touched by a single goroutine at a time (see callFrameFreeList).
+	// lazily and only on root environments. It is accessed without locking; the
+	// interpreter lock (gil) guarantees only one goroutine runs script code in a
+	// tree at a time, so the free-list never sees concurrent access.
 	freeFrames *callFrameFreeList
+	// gil is the per-tree interpreter lock, allocated only on the root. The
+	// evaluator acquires it at every Go->script boundary so that any number of
+	// goroutines may call into one Environment tree, but only one runs script at
+	// a time. nil on non-root environments — always reach it via root.gil.
+	gil *gilLock
+}
+
+// gilLock is the interpreter lock for one environment tree. It tracks the
+// owning goroutine so that re-entrant acquisitions (a builtin calling back into
+// script on the same goroutine) are detected, and so that RunUnlocked only
+// releases the lock for the goroutine that actually holds it.
+type gilLock struct {
+	mu    sync.Mutex
+	owner atomic.Int64 // goroutine id of the current holder, 0 when free
+}
+
+// goid returns the current goroutine's id by parsing the runtime stack header.
+// Used only on lock boundaries and blocking operations, never on the hot
+// internal call path.
+func goid() int64 {
+	var buf [32]byte
+	n := runtime.Stack(buf[:], false)
+	b := buf[len("goroutine "):n]
+	var id int64
+	for _, c := range b {
+		if c < '0' || c > '9' {
+			break
+		}
+		id = id*10 + int64(c-'0')
+	}
+	return id
 }
 
 const maxPooledCallEnvSlots = 16
@@ -789,12 +821,13 @@ const maxFreeFramesPerBucket = 256
 // count. It lives on the root Environment of an evaluation tree and is accessed
 // without synchronization.
 //
-// SAFETY: this is sound only because of the interpreter's core concurrency rule
-// — any given Environment (and therefore the whole tree rooted at it) is touched
-// by exactly one goroutine. Goroutines that run script code concurrently each
-// build their own tree with its own root (e.g. extlibs background tasks create a
-// fresh NewEnvironment and snapshot bindings into it), so their free-lists never
-// alias. Do NOT share an Environment across goroutines.
+// SAFETY: sound because the per-environment interpreter lock (GIL) serializes
+// script execution on a tree — only one goroutine runs script code at a time,
+// so the free-list never sees concurrent access. Multiple goroutines may share
+// the environment (shared-env threads via runtime.background(shared=True),
+// concurrent callers), and that is fine: they serialize on the GIL, never on
+// the free-list concurrently. Independent environment trees have independent
+// GILs and independent free-lists.
 type callFrameFreeList struct {
 	buckets [maxPooledCallEnvSlots + 1][]*Environment
 }
@@ -811,6 +844,7 @@ func NewEnvironment() *Environment {
 		// globals and nonlocals are nil by default - allocated on demand
 	}
 	env.root = env
+	env.gil = &gilLock{}
 	return env
 }
 
@@ -822,6 +856,7 @@ func NewEnclosedEnvironment(outer *Environment) *Environment {
 		env.root = outer.root
 	} else {
 		env.root = env
+		env.gil = &gilLock{}
 	}
 
 	if outer != nil {
@@ -844,6 +879,80 @@ func NewEnclosedEnvironmentWithSlots(outer *Environment, slotIndex map[string]in
 		env.slots = make([]Object, len(slotNames))
 	}
 	return env
+}
+
+// Root returns the root environment of this tree.
+func (e *Environment) Root() *Environment { return e.root }
+
+// envContextValueKey is the context key under which the evaluator stores the
+// current environment for builtins. Kept in sync with the evaluator package so
+// blocking builtins can release the interpreter lock via RunBlocking.
+const envContextValueKey = "scriptling-env"
+
+// RunBlocking runs fn (a blocking operation such as sleep or a socket read) with
+// the interpreter lock released, so other goroutines can run script code in the
+// same tree while this one is blocked. If no environment is available on the
+// context it simply runs fn. Builtins that block should wrap the blocking call
+// in RunBlocking.
+func RunBlocking(ctx interface{ Value(any) any }, fn func()) {
+	if env, ok := ctx.Value(envContextValueKey).(*Environment); ok && env != nil {
+		env.RunUnlocked(fn)
+		return
+	}
+	fn()
+}
+
+// EnterGIL acquires this tree's interpreter lock for the calling goroutine,
+// unless this goroutine already holds it (a re-entrant call). It returns true if
+// it actually acquired the lock (the caller must pair it with ExitGIL) and false
+// if the call was re-entrant (caller does nothing on exit).
+func (e *Environment) EnterGIL() bool {
+	if e.root == nil || e.root.gil == nil {
+		return false
+	}
+	g := e.root.gil
+	id := goid()
+	if g.owner.Load() == id {
+		return false // re-entrant: already held by this goroutine
+	}
+	g.mu.Lock()
+	g.owner.Store(id)
+	return true
+}
+
+// ExitGIL releases the interpreter lock previously acquired by EnterGIL.
+func (e *Environment) ExitGIL() {
+	if e.root == nil || e.root.gil == nil {
+		return
+	}
+	g := e.root.gil
+	g.owner.Store(0)
+	g.mu.Unlock()
+}
+
+// RunUnlocked releases the interpreter lock, runs fn (typically a blocking call
+// such as sleep or a socket read), then re-acquires it — but only if the calling
+// goroutine actually holds the lock. Goroutines that do not hold it (e.g. raw
+// worker goroutines doing pure-Go I/O) simply run fn. This lets other goroutines
+// run script code in the same tree while the holder is blocked.
+func (e *Environment) RunUnlocked(fn func()) {
+	if e.root == nil || e.root.gil == nil {
+		fn()
+		return
+	}
+	g := e.root.gil
+	id := goid()
+	if g.owner.Load() != id {
+		fn() // not the holder — must not touch the lock
+		return
+	}
+	g.owner.Store(0)
+	g.mu.Unlock()
+	defer func() {
+		g.mu.Lock()
+		g.owner.Store(id)
+	}()
+	fn()
 }
 
 // AcquireCallEnvironment returns a function-call environment, reusing an idle

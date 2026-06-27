@@ -8,6 +8,7 @@ import (
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/evaliface"
+	"github.com/paularlott/scriptling/evaluator"
 	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/snapshotkv"
 )
@@ -266,6 +267,30 @@ var RuntimeLibraryFunctions = map[string]*object.Builtin{
 				return err
 			}
 
+			env := getEnvFromContext(ctx)
+			eval := evaliface.FromContext(ctx)
+
+			// shared=True runs the handler in the caller's own environment (live
+			// shared state, GIL-protected) instead of an isolated copy.
+			shared := false
+			if v := kwargs.Get("shared"); v != nil {
+				if b, e := v.AsBool(); e == nil {
+					shared = b
+				}
+			}
+			if shared {
+				// Pass args/kwargs live; the GIL serializes access. Strip the
+				// "shared" control kwarg so it is not forwarded to the handler.
+				sharedKwargs := make(map[string]object.Object, len(kwargs.Kwargs))
+				for k, v := range kwargs.Kwargs {
+					if k == "shared" {
+						continue
+					}
+					sharedKwargs[k] = v
+				}
+				return startSharedTask(ctx, handler, args[2:], sharedKwargs, env, eval)
+			}
+
 			// Validate that all args/kwargs are transferable types
 			// (scalars and recursively safe containers only).
 			for i, a := range args[2:] {
@@ -288,8 +313,6 @@ var RuntimeLibraryFunctions = map[string]*object.Builtin{
 			for k, v := range kwargs.Kwargs {
 				fnKwargs[k] = object.CloneObject(v)
 			}
-			env := getEnvFromContext(ctx)
-			eval := evaliface.FromContext(ctx)
 
 			RuntimeState.Lock()
 			backgroundReady := RuntimeState.BackgroundReady
@@ -351,6 +374,19 @@ Returns:
 
 // RuntimeLibraryCore is the runtime library without sub-libraries
 var RuntimeLibraryCore = object.NewLibrary(RuntimeLibraryName, RuntimeLibraryFunctions, nil, "Runtime library for background tasks")
+
+// taskContext builds a fresh per-goroutine evaluation context for a background
+// task. It gives the goroutine its own call-depth tracker (so concurrent tasks
+// don't race the parent's recursion counter) and pins the task's environment on
+// the context (so blocking builtins release the correct interpreter lock).
+// Other parent-context values (evaluator, cancellation) are preserved.
+func taskContext(ctx context.Context, env *object.Environment) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx = evaluator.SetEnvInContext(ctx, env)
+	return evaluator.SetCallDepthInContext(ctx, evaluator.NewCallDepth(evaluator.DefaultMaxCallDepth))
+}
 
 // startBackgroundTask starts a background task in a goroutine and returns a Promise.
 func startBackgroundTask(handler string, fnArgs []object.Object, fnKwargs map[string]object.Object, env *object.Environment, eval evaliface.Evaluator, factory SandboxFactory, ctx context.Context) object.Object {
@@ -427,7 +463,7 @@ func startBackgroundTask(handler string, fnArgs []object.Object, fnKwargs map[st
 				return
 			}
 
-			result := eval.CallObjectFunction(ctx, fn, fnArgs, fnKwargs, newEnv)
+			result := eval.CallObjectFunction(taskContext(ctx, newEnv), fn, fnArgs, fnKwargs, newEnv)
 			if errObj, ok := result.(*object.Error); ok {
 				promise.set(nil, fmt.Errorf("%s", errObj.Message))
 			} else {
@@ -464,7 +500,7 @@ func startBackgroundTask(handler string, fnArgs []object.Object, fnKwargs map[st
 				return
 			}
 
-			result := eval.CallObjectFunction(ctx, fn, fnArgs, fnKwargs, newEnv)
+			result := eval.CallObjectFunction(taskContext(ctx, newEnv), fn, fnArgs, fnKwargs, newEnv)
 			if errObj, ok := result.(*object.Error); ok {
 				promise.set(nil, fmt.Errorf("%s", errObj.Message))
 			} else {
@@ -473,11 +509,20 @@ func startBackgroundTask(handler string, fnArgs []object.Object, fnKwargs map[st
 		}
 	}()
 
+	return promiseObject(promise)
+}
+
+// promiseObject wraps a Promise as a script object exposing get()/wait().
+func promiseObject(promise *Promise) object.Object {
 	return &object.Builtin{
 		Attributes: map[string]object.Object{
 			"get": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					result, err := promise.get()
+					// Release the interpreter lock while waiting so the task (and
+					// any shared-env threads) can run.
+					var result object.Object
+					var err error
+					object.RunBlocking(ctx, func() { result, err = promise.get() })
 					if err != nil {
 						return errors.NewError("async error: %v", err)
 					}
@@ -490,7 +535,8 @@ func startBackgroundTask(handler string, fnArgs []object.Object, fnKwargs map[st
 			},
 			"wait": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					_, err := promise.get()
+					var err error
+					object.RunBlocking(ctx, func() { _, err = promise.get() })
 					if err != nil {
 						return errors.NewError("async error: %v", err)
 					}
@@ -501,6 +547,43 @@ func startBackgroundTask(handler string, fnArgs []object.Object, fnKwargs map[st
 		},
 		HelpText: "Promise - call .get() to retrieve result or .wait() to wait without result",
 	}
+}
+
+// startSharedTask runs handler on a new goroutine in the CALLER's environment,
+// sharing its live state. The interpreter lock (GIL) serializes access, so this
+// is memory-safe despite the sharing. Unlike background(), args are passed live
+// (no transferable restriction, no cloning). A fresh context is used so the
+// goroutine acquires the lock instead of inheriting the caller's hold.
+func startSharedTask(ctx context.Context, handler string, fnArgs []object.Object, fnKwargs map[string]object.Object, env *object.Environment, eval evaliface.Evaluator) object.Object {
+	if env == nil || eval == nil {
+		return &object.Null{}
+	}
+	fn, _ := env.Get(handler)
+	if fn == nil {
+		return errors.NewError("function not found: %s", handler)
+	}
+	switch fn.(type) {
+	case *object.Function, *object.LambdaFunction:
+		// ok
+	default:
+		return errors.NewError("handler is not a function: %s (%T)", handler, fn)
+	}
+
+	promise := newPromise()
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				promise.set(nil, fmt.Errorf("panic: %v", r))
+			}
+		}()
+		result := eval.CallObjectFunction(taskContext(ctx, env), fn, fnArgs, fnKwargs, env)
+		if errObj, ok := result.(*object.Error); ok {
+			promise.set(nil, fmt.Errorf("%s", errObj.Message))
+		} else {
+			promise.set(result, nil)
+		}
+	}()
+	return promiseObject(promise)
 }
 
 // ReleaseBackgroundTasks sets BackgroundReady=true and starts all queued tasks

@@ -506,8 +506,16 @@ var moduleBuiltins = map[string]*object.Builtin{
 	},
 	"run": &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := TUI().Run(context.Background()); err != nil {
-				return errors.NewError("console.run: %s", err.Error())
+			// Release the interpreter lock while the event loop blocks, so the
+			// handler goroutine can acquire it to run on_submit/on_escape/command
+			// callbacks. Without this the loop would hold the lock and deadlock
+			// against its own handlers.
+			var runErr error
+			envFromCtx(ctx).RunUnlocked(func() {
+				runErr = TUI().Run(context.Background())
+			})
+			if runErr != nil {
+				return errors.NewError("console.run: %s", runErr.Error())
 			}
 			return &object.Null{}
 		},

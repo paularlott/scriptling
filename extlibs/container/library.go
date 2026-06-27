@@ -111,6 +111,22 @@ func isAvailable(driver string) bool {
 	return cmd.Run() == nil
 }
 
+// runDriverErr runs a container-driver call with the interpreter lock released
+// so shared-env threads can run while we wait on the container daemon/CLI.
+func runDriverErr(ctx context.Context, fn func() error) error {
+	var err error
+	object.RunBlocking(ctx, func() { err = fn() })
+	return err
+}
+
+// runDriverVal is the value-returning variant of runDriverErr.
+func runDriverVal[T any](ctx context.Context, fn func() (T, error)) (T, error) {
+	var v T
+	var err error
+	object.RunBlocking(ctx, func() { v, err = fn() })
+	return v, err
+}
+
 // dockerSocket returns the Docker endpoint: flag override > default.
 func dockerSocket() string {
 	if overrideDockerSocket != "" {
@@ -204,7 +220,7 @@ func buildClientClass() *object.Class {
 		if err != nil {
 			return err
 		}
-		if goErr := ci.driver.Login(ctx, server, username, password); goErr != nil {
+		if goErr := runDriverErr(ctx, func() error { return ci.driver.Login(ctx, server, username, password) }); goErr != nil {
 			return &object.Error{Message: goErr.Error()}
 		}
 		return &object.Null{}
@@ -242,7 +258,9 @@ Returns:
 			return err
 		}
 		opts := execOptsFromKwargs(kwargs)
-		res, goErr := ci.driver.Exec(ctx, nameOrID, command, opts)
+		var res *ExecResult
+		var goErr error
+		object.RunBlocking(ctx, func() { res, goErr = ci.driver.Exec(ctx, nameOrID, command, opts) })
 		if goErr != nil {
 			return &object.Error{Message: goErr.Error()}
 		}
@@ -280,7 +298,9 @@ Example:
 				object.NewString(line),
 			}, nil, nil)
 		}
-		res, goErr := ci.driver.ExecStream(ctx, nameOrID, command, opts, fn)
+		var res *ExecResult
+		var goErr error
+		object.RunBlocking(ctx, func() { res, goErr = ci.driver.ExecStream(ctx, nameOrID, command, opts, fn) })
 		if goErr != nil {
 			return &object.Error{Message: goErr.Error()}
 		}
@@ -314,7 +334,9 @@ Example:
 			return err
 		}
 		opts := execOptsFromKwargs(kwargs)
-		res, goErr := ci.driver.Exec(ctx, nameOrID, command, opts)
+		var res *ExecResult
+		var goErr error
+		object.RunBlocking(ctx, func() { res, goErr = ci.driver.Exec(ctx, nameOrID, command, opts) })
 		if goErr != nil {
 			return &object.Error{Message: goErr.Error()}
 		}
@@ -352,7 +374,9 @@ Example:
 				object.NewString(line),
 			}, nil, nil)
 		}
-		res, goErr := ci.driver.ExecStream(ctx, nameOrID, command, opts, fn)
+		var res *ExecResult
+		var goErr error
+		object.RunBlocking(ctx, func() { res, goErr = ci.driver.ExecStream(ctx, nameOrID, command, opts, fn) })
 		if goErr != nil {
 			return &object.Error{Message: goErr.Error()}
 		}
@@ -385,7 +409,7 @@ Example:
 		if err != nil {
 			return err
 		}
-		images, goErr := ci.driver.ImageList(ctx)
+		images, goErr := runDriverVal(ctx, func() ([]ImageInfo, error) { return ci.driver.ImageList(ctx) })
 		if goErr != nil {
 			return &object.Error{Message: goErr.Error()}
 		}
@@ -417,7 +441,7 @@ Example:
 		if err != nil {
 			return err
 		}
-		if goErr := ci.driver.Pull(ctx, image); goErr != nil {
+		if goErr := runDriverErr(ctx, func() error { return ci.driver.Pull(ctx, image) }); goErr != nil {
 			return &object.Error{Message: goErr.Error()}
 		}
 		return &object.Null{}
@@ -434,7 +458,7 @@ Example:
 		if err != nil {
 			return err
 		}
-		if goErr := ci.driver.ImageRemove(ctx, image); goErr != nil {
+		if goErr := runDriverErr(ctx, func() error { return ci.driver.ImageRemove(ctx, image) }); goErr != nil {
 			return &object.Error{Message: goErr.Error()}
 		}
 		return &object.Null{}
@@ -476,7 +500,7 @@ Example:
 				opts.Command = append(opts.Command, s)
 			}
 		}
-		id, goErr := ci.driver.Run(ctx, image, opts)
+		id, goErr := runDriverVal(ctx, func() (string, error) { return ci.driver.Run(ctx, image, opts) })
 		if goErr != nil {
 			return &object.Error{Message: goErr.Error()}
 		}
@@ -504,7 +528,7 @@ Example:
 		if err != nil {
 			return err
 		}
-		if goErr := ci.driver.Stop(ctx, nameOrID); goErr != nil {
+		if goErr := runDriverErr(ctx, func() error { return ci.driver.Stop(ctx, nameOrID) }); goErr != nil {
 			return &object.Error{Message: goErr.Error()}
 		}
 		return &object.Null{}
@@ -521,7 +545,7 @@ Example:
 		if err != nil {
 			return err
 		}
-		if goErr := ci.driver.Remove(ctx, nameOrID); goErr != nil {
+		if goErr := runDriverErr(ctx, func() error { return ci.driver.Remove(ctx, nameOrID) }); goErr != nil {
 			return &object.Error{Message: goErr.Error()}
 		}
 		return &object.Null{}
@@ -538,7 +562,7 @@ Example:
 		if err != nil {
 			return err
 		}
-		info, goErr := ci.driver.Inspect(ctx, nameOrID)
+		info, goErr := runDriverVal(ctx, func() (*ContainerInfo, error) { return ci.driver.Inspect(ctx, nameOrID) })
 		if goErr != nil {
 			return &object.Error{Message: goErr.Error()}
 		}
@@ -560,7 +584,7 @@ Example:
 		if err != nil {
 			return err
 		}
-		items, goErr := ci.driver.List(ctx)
+		items, goErr := runDriverVal(ctx, func() ([]ContainerInfo, error) { return ci.driver.List(ctx) })
 		if goErr != nil {
 			return &object.Error{Message: goErr.Error()}
 		}
@@ -584,7 +608,7 @@ Example:
 			return err
 		}
 		size := kwargs.MustGetString("size", "")
-		if goErr := ci.driver.VolumeCreate(ctx, name, size); goErr != nil {
+		if goErr := runDriverErr(ctx, func() error { return ci.driver.VolumeCreate(ctx, name, size) }); goErr != nil {
 			return &object.Error{Message: goErr.Error()}
 		}
 		return &object.Null{}
@@ -604,7 +628,7 @@ Example:
 		if err != nil {
 			return err
 		}
-		if goErr := ci.driver.VolumeRemove(ctx, name); goErr != nil {
+		if goErr := runDriverErr(ctx, func() error { return ci.driver.VolumeRemove(ctx, name) }); goErr != nil {
 			return &object.Error{Message: goErr.Error()}
 		}
 		return &object.Null{}
@@ -621,7 +645,7 @@ Example:
 		if err != nil {
 			return err
 		}
-		names, goErr := ci.driver.VolumeList(ctx)
+		names, goErr := runDriverVal(ctx, func() ([]string, error) { return ci.driver.VolumeList(ctx) })
 		if goErr != nil {
 			return &object.Error{Message: goErr.Error()}
 		}

@@ -78,12 +78,16 @@ func waitForNextPoll(ctx context.Context, timer *time.Timer, pollInterval time.D
 	stopTimer(timer)
 	timer.Reset(pollInterval)
 
-	select {
-	case <-ctx.Done():
-		return false
-	case <-timer.C:
-		return true
-	}
+	var ok bool
+	object.RunBlocking(ctx, func() {
+		select {
+		case <-ctx.Done():
+			ok = false
+		case <-timer.C:
+			ok = true
+		}
+	})
+	return ok
 }
 
 var WaitForLibrary = object.NewLibrary(WaitForLibraryName,
@@ -322,16 +326,17 @@ Returns:
 						return errors.NewError("http request error: %s", httpErr.Error())
 					}
 
-					resp, httpErr := client.Do(req)
-					if httpErr == nil {
-						statusMatch := int64(resp.StatusCode) == expectedStatus
-						resp.Body.Close()
-						if statusMatch {
-							return object.NewBoolean(true)
-						}
+				var resp *http.Response
+				object.RunBlocking(ctx, func() { resp, httpErr = client.Do(req) })
+				if httpErr == nil {
+					statusMatch := int64(resp.StatusCode) == expectedStatus
+					resp.Body.Close()
+					if statusMatch {
+						return object.NewBoolean(true)
 					}
+				}
 
-					if !waitForNextPoll(ctx, timer, pollInterval) {
+				if !waitForNextPoll(ctx, timer, pollInterval) {
 						return object.NewBoolean(false)
 					}
 				}
@@ -341,13 +346,15 @@ Returns:
 				if httpErr != nil {
 					return object.NewBoolean(false)
 				}
-				if resp, httpErr := client.Do(req); httpErr == nil {
-					statusMatch := int64(resp.StatusCode) == expectedStatus
-					resp.Body.Close()
-					if statusMatch {
-						return object.NewBoolean(true)
-					}
+			var resp *http.Response
+			object.RunBlocking(ctx, func() { resp, httpErr = client.Do(req) })
+			if httpErr == nil {
+				statusMatch := int64(resp.StatusCode) == expectedStatus
+				resp.Body.Close()
+				if statusMatch {
+					return object.NewBoolean(true)
 				}
+			}
 				return object.NewBoolean(false)
 			},
 			HelpText: `http(url, timeout=30, poll_rate=1, status_code=200) - Wait for HTTP endpoint

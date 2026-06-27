@@ -87,9 +87,7 @@ print("\nRegistered metadata change handler")
 # Trigger a metadata change on node B
 nodeB.set_metadata("version", "2.0")
 print("Node B updated metadata (version=2.0)")
-# Pump Node A's handlers: the on_metadata_change callback runs here, on the
-# script thread, as the change propagates (up to 2s).
-cluster.wait(2)
+time.sleep(2)
 
 if metadata_changes.size() > 0:
     change = metadata_changes.get()

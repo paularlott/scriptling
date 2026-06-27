@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	goruntime "runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -51,6 +52,21 @@ var builtins = map[string]*object.Builtin{
   help("function_name"): Show help for a builtin function
   help("library.function"): Show help for a library function
   help("library_name"): List functions in a library`,
+	},
+	"yield_now": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			// Release the interpreter lock and yield the OS thread so other
+			// goroutines (shared-env threads, handlers) can run. Useful inside a
+			// CPU-bound loop that never hits a naturally-blocking call. The lock
+			// is released by RunBlocking; Gosched yields the OS thread for fairness.
+			object.RunBlocking(ctx, func() { goruntime.Gosched() })
+			return &object.Null{}
+		},
+		HelpText: `yield_now() - Briefly release the interpreter lock so other threads can run
+
+Call inside a long compute loop to let shared-env threads (runtime.background
+with shared=True) and registered handlers make progress. Blocking calls such as
+sleep, socket reads, file I/O and Queue operations release the lock on their own.`,
 	},
 	"map": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {

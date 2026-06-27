@@ -88,6 +88,18 @@ func GetEnvFromContext(ctx context.Context) *object.Environment {
 	return object.NewEnvironment() // fallback
 }
 
+// enterScript acquires the interpreter lock for env's tree at a Go->script
+// boundary, unless the calling goroutine already holds it (a re-entrant call,
+// e.g. a builtin invoking a script callback). Ownership is tracked by goroutine
+// id, so re-entrancy and "am I the holder?" checks are exact regardless of how
+// the context was derived. Returns a release function (a no-op when re-entrant).
+func enterScript(ctx context.Context, env *object.Environment) (context.Context, func()) {
+	if env != nil && env.EnterGIL() {
+		return ctx, env.ExitGIL
+	}
+	return ctx, func() {}
+}
+
 // SetCallDepthInContext stores call depth tracker in context
 func SetCallDepthInContext(ctx context.Context, cd *CallDepth) context.Context {
 	return context.WithValue(ctx, callDepthKey{}, cd)
@@ -140,6 +152,10 @@ func EvalWithContext(ctx context.Context, node ast.Node, env *object.Environment
 	}
 
 	ctx = WithEvaluator(ctx)
+	// Acquire the interpreter lock for the duration of this top-level run so the
+	// whole tree is touched by one goroutine at a time.
+	ctx, release := enterScript(ctx, env)
+	defer release()
 	return evalWithContext(ctx, node, env)
 }
 
@@ -1818,7 +1834,7 @@ func createInstance(ctx context.Context, class *object.Class, args []object.Obje
 	if del, ok := class.LookupMember("__del__"); ok {
 		delMethod := del
 		runtime.SetFinalizer(instance, func(inst *object.Instance) {
-			ApplyFunction(context.Background(), delMethod, []object.Object{inst}, nil, object.NewEnvironment())
+			applyFunction(context.Background(), delMethod, []object.Object{inst}, nil, object.NewEnvironment())
 		})
 	}
 
@@ -1959,7 +1975,7 @@ func applyUserFunction(ctx context.Context, fn *object.Function, args []object.O
 		defer cd.Exit()
 	}
 
-	extendedEnv, err := extendFunctionEnv(fn, args, keywords)
+	extendedEnv, err := extendFunctionEnv(ctx, fn, args, keywords)
 	if err != nil {
 		return err
 	}
@@ -1974,9 +1990,26 @@ func applyUserFunction(ctx context.Context, fn *object.Function, args []object.O
 	return unwrapReturnValue(evaluated)
 }
 
-// ApplyFunction calls a function object with arguments and keyword arguments.
-// This is exported for use by other packages that need to call script functions directly.
-func ApplyFunction(ctx context.Context, fn object.Object, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+// applyFunction calls a function object with arguments and keyword arguments.
+//
+// It is unexported because it does NOT acquire the interpreter lock: it is the
+// internal dispatch used while the lock is already held (dunder-method dispatch,
+// recursion, etc.). The locking boundaries are EvalWithContext, ApplyFunctionGIL,
+// and the evaliface adapter (CallFunction/CallObjectFunction/CallMethod). Go
+// callers outside the evaluator package must use ApplyFunctionGIL.
+//
+// ApplyFunctionGIL acquires the environment's interpreter lock (reentrant via
+// goroutine-id ownership, so nested calls from the same goroutine don't
+// deadlock) and then dispatches via applyFunction. Host code that calls script
+// functions — especially concurrently against a shared environment — must use
+// this rather than the unexported applyFunction, which assumes the lock is held.
+func ApplyFunctionGIL(ctx context.Context, fn object.Object, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+	ctx, release := enterScript(ctx, env)
+	defer release()
+	return applyFunction(ctx, fn, args, keywords, env)
+}
+
+func applyFunction(ctx context.Context, fn object.Object, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
 	switch fn := fn.(type) {
 	case *object.Function:
 		return applyUserFunction(ctx, fn, args, keywords, env)
@@ -1996,7 +2029,7 @@ func applyFunctionWithContext(ctx context.Context, fn object.Object, args []obje
 	// Handle BoundMethod - prepend self to args
 	if bm, ok := fn.(*object.BoundMethod); ok {
 		if len(args) == 0 {
-			return ApplyFunction(ctx, bm.Method, bm.SelfArgs(), keywords, env)
+			return applyFunction(ctx, bm.Method, bm.SelfArgs(), keywords, env)
 		}
 		n := len(args) + 1
 		var newArgs []object.Object
@@ -2010,9 +2043,9 @@ func applyFunctionWithContext(ctx context.Context, fn object.Object, args []obje
 			newArgs[0] = bm.Instance
 			copy(newArgs[1:], args)
 		}
-		return ApplyFunction(ctx, bm.Method, newArgs, keywords, env)
+		return applyFunction(ctx, bm.Method, newArgs, keywords, env)
 	}
-	return ApplyFunction(ctx, fn, args, keywords, env)
+	return applyFunction(ctx, fn, args, keywords, env)
 }
 
 func applyLambdaFunctionWithContext(ctx context.Context, fn *object.LambdaFunction, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
@@ -2024,7 +2057,7 @@ func applyLambdaFunctionWithContext(ctx context.Context, fn *object.LambdaFuncti
 		defer cd.Exit()
 	}
 
-	extendedEnv, err := extendLambdaEnv(fn, args, keywords)
+	extendedEnv, err := extendLambdaEnv(ctx, fn, args, keywords)
 	if err != nil {
 		return err
 	}
@@ -2049,7 +2082,7 @@ type funcParams struct {
 }
 
 // extendEnvWithParams handles the common logic for extending environments with function arguments
-func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[string]object.Object) (*object.Environment, object.Object) {
+func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Object, keywords map[string]object.Object) (*object.Environment, object.Object) {
 	var env *object.Environment
 	if fp.reuseCallEnv {
 		env = object.AcquireCallEnvironment(fp.parentEnv, fp.localSlots, fp.localSlotNames)
@@ -2180,7 +2213,7 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 		for pi, param := range fp.parameters {
 			if !isParamSet(pi, param.Value()) {
 				if defaultExpr, ok := fp.defaultValues[param.Value()]; ok {
-					defaultVal := Eval(defaultExpr, fp.parentEnv)
+					defaultVal := evalNode(ctx, defaultExpr, fp.parentEnv)
 					env.Set(param.Value(), defaultVal)
 				} else {
 					minArgs := numParams - len(fp.defaultValues)
@@ -2199,7 +2232,7 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 			for i := numArgs; i < numParams; i++ {
 				param := fp.parameters[i]
 				if defaultExpr, ok := fp.defaultValues[param.Value()]; ok {
-					defaultVal := Eval(defaultExpr, fp.parentEnv)
+					defaultVal := evalNode(ctx, defaultExpr, fp.parentEnv)
 					env.Set(param.Value(), defaultVal)
 				} else {
 					minArgs := numParams - len(fp.defaultValues)
@@ -2212,8 +2245,8 @@ func extendEnvWithParams(fp funcParams, args []object.Object, keywords map[strin
 	return env, nil
 }
 
-func extendFunctionEnv(fn *object.Function, args []object.Object, keywords map[string]object.Object) (*object.Environment, object.Object) {
-	return extendEnvWithParams(funcParams{
+func extendFunctionEnv(ctx context.Context, fn *object.Function, args []object.Object, keywords map[string]object.Object) (*object.Environment, object.Object) {
+	return extendEnvWithParams(ctx, funcParams{
 		parameters:       fn.Parameters,
 		defaultValues:    fn.DefaultValues,
 		variadic:         fn.Variadic,
@@ -2227,8 +2260,8 @@ func extendFunctionEnv(fn *object.Function, args []object.Object, keywords map[s
 	}, args, keywords)
 }
 
-func extendLambdaEnv(fn *object.LambdaFunction, args []object.Object, keywords map[string]object.Object) (*object.Environment, object.Object) {
-	return extendEnvWithParams(funcParams{
+func extendLambdaEnv(ctx context.Context, fn *object.LambdaFunction, args []object.Object, keywords map[string]object.Object) (*object.Environment, object.Object) {
+	return extendEnvWithParams(ctx, funcParams{
 		parameters:       fn.Parameters,
 		defaultValues:    fn.DefaultValues,
 		variadic:         fn.Variadic,

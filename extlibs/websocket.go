@@ -159,7 +159,9 @@ var WebSocketLibrary = object.NewLibrary(WebSocketLibraryName, map[string]*objec
 			dialCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 			defer cancel()
 
-			conn, _, dialErr := websocket.DefaultDialer.DialContext(dialCtx, url, header)
+			var conn *websocket.Conn
+			var dialErr error
+			object.RunBlocking(ctx, func() { conn, _, dialErr = websocket.DefaultDialer.DialContext(dialCtx, url, header) })
 			if dialErr != nil {
 				return errors.NewError("websocket connect failed: %s", dialErr.Error())
 			}
@@ -198,9 +200,11 @@ var WebSocketLibrary = object.NewLibrary(WebSocketLibraryName, map[string]*objec
 								data = []byte(strVal)
 							}
 
-							if err := wsConn.WriteMessage(msgType, data); err != nil {
-								return errors.NewError("send failed: %s", err.Error())
-							}
+						var sendErr error
+						object.RunBlocking(ctx, func() { sendErr = wsConn.WriteMessage(msgType, data) })
+						if sendErr != nil {
+							return errors.NewError("send failed: %s", sendErr.Error())
+						}
 							return &object.Null{}
 						},
 						HelpText: `send(message) - Send a text message
@@ -230,9 +234,11 @@ Parameters:
 								return errors.NewError("send_binary requires a list of bytes")
 							}
 
-							if err := wsConn.WriteMessage(websocket.BinaryMessage, data); err != nil {
-								return errors.NewError("send_binary failed: %s", err.Error())
-							}
+						var sendErr error
+						object.RunBlocking(ctx, func() { sendErr = wsConn.WriteMessage(websocket.BinaryMessage, data) })
+						if sendErr != nil {
+							return errors.NewError("send_binary failed: %s", sendErr.Error())
+						}
 							return &object.Null{}
 						},
 						HelpText: `send_binary(data) - Send binary data
@@ -249,7 +255,12 @@ Parameters:
 								}
 							}
 
-							msgType, data, err := wsConn.ReadWithTimeout(time.Duration(timeout) * time.Second)
+							var msgType int
+							var data []byte
+							var err error
+							object.RunBlocking(ctx, func() {
+								msgType, data, err = wsConn.ReadWithTimeout(time.Duration(timeout) * time.Second)
+							})
 							if err != nil {
 								// Connection error - return None
 								return &object.Null{}

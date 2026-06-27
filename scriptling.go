@@ -776,7 +776,7 @@ func (p *Scriptling) CallFunctionWithContext(ctx context.Context, name string, a
 
 	// 3. Call the function using evaluator
 	ctx = evaluator.WithEvaluator(ctx)
-	result := evaluator.ApplyFunction(ctx, fn, objArgs, objKwargs, p.env)
+	result := evaluator.ApplyFunctionGIL(ctx, fn, objArgs, objKwargs, p.env)
 	return p.handleResult(result, fmt.Sprintf("function '%s'", name))
 }
 
@@ -822,7 +822,7 @@ func (p *Scriptling) CreateInstanceWithContext(ctx context.Context, className st
 
 	// Create the instance using evaluator
 	ctx = evaluator.WithEvaluator(ctx)
-	instance := evaluator.ApplyFunction(ctx, class, objArgs, objKwargs, p.env)
+	instance := evaluator.ApplyFunctionGIL(ctx, class, objArgs, objKwargs, p.env)
 	return p.handleResult(instance, fmt.Sprintf("class '%s'", className))
 }
 
@@ -867,7 +867,7 @@ func (p *Scriptling) CallMethodWithContext(ctx context.Context, obj object.Objec
 
 	// Call the method using evaluator
 	ctx = evaluator.WithEvaluator(ctx)
-	result := evaluator.ApplyFunction(ctx, method, objArgs, objKwargs, p.env)
+	result := evaluator.ApplyFunctionGIL(ctx, method, objArgs, objKwargs, p.env)
 	return p.handleResult(result, fmt.Sprintf("method '%s' on class '%s'", methodName, instance.Class.Name))
 }
 

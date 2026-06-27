@@ -761,7 +761,9 @@ func completionMethod(self *object.Instance, ctx context.Context, kwargs object.
 		req.Tools = tools
 	}
 
-	chatResp, chatErr := ci.client.ChatCompletion(ctx, req)
+	var chatResp *ai.ChatCompletionResponse
+	var chatErr error
+	object.RunBlocking(ctx, func() { chatResp, chatErr = ci.client.ChatCompletion(ctx, req) })
 	if chatErr != nil {
 		return &object.Error{Message: "chat completion failed: " + chatErr.Error()}
 	}
@@ -780,7 +782,9 @@ func modelsMethod(self *object.Instance, ctx context.Context) object.Object {
 		return &object.Error{Message: "models: no client configured"}
 	}
 
-	models, err := ci.client.GetModels(ctx)
+	var models *ai.ModelsResponse
+	var err error
+	object.RunBlocking(ctx, func() { models, err = ci.client.GetModels(ctx) })
 	if err != nil {
 		return &object.Error{Message: "failed to get models: " + err.Error()}
 	}
@@ -850,7 +854,9 @@ func responseCreateMethod(self *object.Instance, ctx context.Context, kwargs obj
 	}
 	req.ExtraBody = extraBody
 
-	resp, err := ci.client.CreateResponse(ctx, req)
+	var resp *ai.ResponseObject
+	var err error
+	object.RunBlocking(ctx, func() { resp, err = ci.client.CreateResponse(ctx, req) })
 	if err != nil {
 		return &object.Error{Message: "failed to create response: " + err.Error()}
 	}
@@ -869,7 +875,9 @@ func responseGetMethod(self *object.Instance, ctx context.Context, id string) ob
 		return &object.Error{Message: "response_get: no client configured"}
 	}
 
-	resp, err := ci.client.GetResponse(ctx, id)
+	var resp *ai.ResponseObject
+	var err error
+	object.RunBlocking(ctx, func() { resp, err = ci.client.GetResponse(ctx, id) })
 	if err != nil {
 		return &object.Error{Message: "failed to get response: " + err.Error()}
 	}
@@ -888,7 +896,9 @@ func responseCancelMethod(self *object.Instance, ctx context.Context, id string)
 		return &object.Error{Message: "response_cancel: no client configured"}
 	}
 
-	resp, err := ci.client.CancelResponse(ctx, id)
+	var resp *ai.ResponseObject
+	var err error
+	object.RunBlocking(ctx, func() { resp, err = ci.client.CancelResponse(ctx, id) })
 	if err != nil {
 		return &object.Error{Message: "failed to cancel response: " + err.Error()}
 	}
@@ -907,7 +917,8 @@ func responseDeleteMethod(self *object.Instance, ctx context.Context, id string)
 		return &object.Error{Message: "response_delete: no client configured"}
 	}
 
-	err := ci.client.DeleteResponse(ctx, id)
+	var err error
+	object.RunBlocking(ctx, func() { err = ci.client.DeleteResponse(ctx, id) })
 	if err != nil {
 		return &object.Error{Message: "failed to delete response: " + err.Error()}
 	}
@@ -926,7 +937,9 @@ func responseCompactMethod(self *object.Instance, ctx context.Context, id string
 		return &object.Error{Message: "response_compact: no client configured"}
 	}
 
-	resp, err := ci.client.CompactResponse(ctx, id)
+	var resp *ai.ResponseObject
+	var err error
+	object.RunBlocking(ctx, func() { resp, err = ci.client.CompactResponse(ctx, id) })
 	if err != nil {
 		return &object.Error{Message: "failed to compact response: " + err.Error()}
 	}
@@ -950,7 +963,9 @@ func embeddingMethod(self *object.Instance, ctx context.Context, model string, i
 		Input: input,
 	}
 
-	resp, err := ci.client.CreateEmbedding(ctx, req)
+	var resp *ai.EmbeddingResponse
+	var err error
+	object.RunBlocking(ctx, func() { resp, err = ci.client.CreateEmbedding(ctx, req) })
 	if err != nil {
 		return &object.Error{Message: "failed to create embedding: " + err.Error()}
 	}
@@ -1016,7 +1031,7 @@ func completionParallelMethod(self *object.Instance, ctx context.Context, kwargs
 	for _, item := range items {
 		pi.enqueue(item)
 	}
-	return pi.flush()
+	return pi.flush(ctx)
 }
 
 func askParallelMethod(self *object.Instance, ctx context.Context, kwargs object.Kwargs, model string, messagesList any) object.Object {
@@ -1034,7 +1049,7 @@ func askParallelMethod(self *object.Instance, ctx context.Context, kwargs object
 	for _, item := range items {
 		pi.enqueue(item)
 	}
-	return pi.flush()
+	return pi.flush(ctx)
 }
 
 // pipelineMethod implements client.Pipeline(model, **kwargs) for scripts.
@@ -1154,7 +1169,8 @@ func responseStreamMethod(self *object.Instance, ctx context.Context, kwargs obj
 	}
 	req.ExtraBody = extraBody
 
-	stream := ci.client.StreamResponse(ctx, req)
+	var stream *ai.ResponseStream
+	object.RunBlocking(ctx, func() { stream = ci.client.StreamResponse(ctx, req) })
 
 	return &object.Instance{
 		Class: GetResponseStreamClass(),
@@ -1236,7 +1252,9 @@ func nextResponseStreamMethod(self *object.Instance, ctx context.Context) object
 		return &object.Error{Message: "next: stream is nil"}
 	}
 
-	if !si.stream.Next() {
+	var nextOK bool
+	object.RunBlocking(ctx, func() { nextOK = si.stream.Next() })
+	if !nextOK {
 		if err := si.stream.Err(); err != nil {
 			return &object.Error{Message: "stream error: " + err.Error()}
 		}
@@ -1374,7 +1392,9 @@ func nextStreamMethod(self *object.Instance, ctx context.Context) object.Object 
 	defer si.streamMu.Unlock()
 
 	// Advance to next chunk
-	if !si.stream.Next() {
+	var nextOK bool
+	object.RunBlocking(ctx, func() { nextOK = si.stream.Next() })
+	if !nextOK {
 		return &object.Null{}
 	}
 
@@ -1416,18 +1436,29 @@ func nextTimeoutStreamMethod(self *object.Instance, ctx context.Context, timeout
 		done <- result
 	}()
 
-	select {
-	case result := <-done:
-		if !result.ok {
-			return &object.Null{}
+	var got nextResult
+	var timedOut, canceled bool
+	object.RunBlocking(ctx, func() {
+		select {
+		case r := <-done:
+			got = r
+		case <-time.After(time.Duration(timeoutSec) * time.Second):
+			timedOut = true
+		case <-ctx.Done():
+			canceled = true
 		}
-		return conversion.FromGo(chatCompletionResponseToGoMap(&result.current))
-	case <-time.After(time.Duration(timeoutSec) * time.Second):
+	})
+	switch {
+	case timedOut:
 		si.cancelStream(true)
 		return conversion.FromGo(map[string]any{"timed_out": true})
-	case <-ctx.Done():
+	case canceled:
 		si.cancelStream(false)
 		return &object.Null{}
+	case !got.ok:
+		return &object.Null{}
+	default:
+		return conversion.FromGo(chatCompletionResponseToGoMap(&got.current))
 	}
 }
 
@@ -1710,7 +1741,8 @@ func completionStreamMethod(self *object.Instance, ctx context.Context, kwargs o
 	}
 
 	streamCtx, cancel := context.WithCancel(ctx)
-	stream := ci.client.StreamChatCompletion(streamCtx, streamReq)
+	var stream *ai.ChatStream
+	object.RunBlocking(ctx, func() { stream = ci.client.StreamChatCompletion(streamCtx, streamReq) })
 
 	finalCancel := cancel
 	if streamCancel != nil {

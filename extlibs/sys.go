@@ -39,7 +39,9 @@ func NewInputBuiltin(stdin io.Reader) *object.Builtin {
 func newInputBuiltinFromReader(r *bufio.Reader) *object.Builtin {
 	return &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			line, err := r.ReadString('\n')
+			var line string
+			var err error
+			object.RunBlocking(ctx, func() { line, err = r.ReadString('\n') })
 			if err != nil && line == "" {
 				return object.NewString("")
 			}
@@ -200,7 +202,8 @@ var stdinClass = &object.Class{
 				if !ok {
 					return &object.Error{Message: "read(): invalid stdin"}
 				}
-				data, _ := io.ReadAll(r)
+				var data []byte
+				object.RunBlocking(ctx, func() { data, _ = io.ReadAll(r) })
 				return object.NewString(string(data))
 			},
 			HelpText: `read() - Read all remaining data from stdin`,
@@ -218,7 +221,9 @@ var stdinClass = &object.Class{
 				if !ok {
 					return &object.Error{Message: "readline(): invalid stdin"}
 				}
-				line, err := r.ReadString('\n')
+				var line string
+				var err error
+				object.RunBlocking(ctx, func() { line, err = r.ReadString('\n') })
 				if err != nil && line == "" {
 					return object.NewString("")
 				}
@@ -240,7 +245,9 @@ var stdinClass = &object.Class{
 					return &object.Error{Message: "__iter__(): invalid stdin"}
 				}
 				return object.NewIterator(func() (object.Object, bool) {
-					line, err := r.ReadString('\n')
+					var line string
+					var err error
+					object.RunBlocking(ctx, func() { line, err = r.ReadString('\n') })
 					if err != nil && line == "" {
 						return nil, false
 					}

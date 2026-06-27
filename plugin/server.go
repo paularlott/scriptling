@@ -580,7 +580,7 @@ func (s *Server) newObject(ctx context.Context, params objectNewParams) (*Remote
 			return nil, err
 		}
 		callArgs := append([]object.Object{instance}, objArgs...)
-		result := evaluator.ApplyFunction(ctx, init, callArgs, objKwargs, object.NewEnvironment())
+		result := evaluator.ApplyFunctionGIL(ctx, init, callArgs, objKwargs, object.NewEnvironment())
 		if errObj, ok := result.(*object.Error); ok {
 			return nil, errors.New(errObj.Message)
 		}
@@ -627,7 +627,7 @@ func (s *Server) callMethod(ctx context.Context, params methodCallParams) (Value
 		return Value{}, err
 	}
 	callArgs := append([]object.Object{instance}, objArgs...)
-	result := evaluator.ApplyFunction(ctx, methodObj, callArgs, objKwargs, object.NewEnvironment())
+	result := evaluator.ApplyFunctionGIL(ctx, methodObj, callArgs, objKwargs, object.NewEnvironment())
 	if errObj, ok := result.(*object.Error); ok {
 		return Value{}, errors.New(errObj.Message)
 	}
@@ -664,7 +664,7 @@ func (s *Server) callProperty(ctx context.Context, property *object.Property, in
 	default:
 		return Value{}, fmt.Errorf("property %s expects zero arguments for get or one argument for set", params.Method)
 	}
-	result := evaluator.ApplyFunction(ctx, target, callArgs, objKwargs, object.NewEnvironment())
+	result := evaluator.ApplyFunctionGIL(ctx, target, callArgs, objKwargs, object.NewEnvironment())
 	if errObj, ok := result.(*object.Error); ok {
 		return Value{}, errors.New(errObj.Message)
 	}
@@ -714,7 +714,7 @@ func (s *Server) destroyObject(params objectDestroyParams) error {
 	remoteObject.mu.Lock()
 	defer remoteObject.mu.Unlock()
 	if del, exists := remoteObject.class.LookupMember("__del__"); exists {
-		evaluator.ApplyFunction(context.Background(), del, []object.Object{remoteObject.instance}, nil, object.NewEnvironment())
+		evaluator.ApplyFunctionGIL(context.Background(), del, []object.Object{remoteObject.instance}, nil, object.NewEnvironment())
 	}
 	return nil
 }

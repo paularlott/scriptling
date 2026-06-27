@@ -297,7 +297,8 @@ func callPluginFunction(ctx context.Context, client *Client, name string, kwargs
 	if err != nil {
 		return pluginErr(err.Error())
 	}
-	result, err := client.CallFunctionWithCallbacks(ctx, name, encodedArgs, encodedKwargs, callbacks)
+	var result Value
+	object.RunBlocking(ctx, func() { result, err = client.CallFunctionWithCallbacks(ctx, name, encodedArgs, encodedKwargs, callbacks) })
 	if err != nil {
 		return pluginErr(err.Error())
 	}
@@ -388,8 +389,10 @@ func batchCallPluginFunctions(ctx context.Context, client *Client, calls []batch
 func callRawFunction(ctx context.Context, client *Client, name string, kwargs object.Kwargs, args ...object.Object) object.Object {
 	params := rawParamsFromObjects(kwargs, args...)
 	var raw json.RawMessage
-	if err := client.Call(ctx, name, params, &raw); err != nil {
-		return pluginErr(err.Error())
+	var callErr error
+	object.RunBlocking(ctx, func() { callErr = client.Call(ctx, name, params, &raw) })
+	if callErr != nil {
+		return pluginErr(callErr.Error())
 	}
 	if len(raw) == 0 {
 		return &object.Null{}
@@ -483,7 +486,8 @@ func initPluginObject(ctx context.Context, instance *object.Instance, client *Cl
 	if err != nil {
 		return err
 	}
-	ref, err := client.NewObjectWithCallbacks(ctx, className, encodedArgs, encodedKwargs, callbacks)
+	var ref *RemoteRef
+	object.RunBlocking(ctx, func() { ref, err = client.NewObjectWithCallbacks(ctx, className, encodedArgs, encodedKwargs, callbacks) })
 	if err != nil {
 		return err
 	}
@@ -514,7 +518,8 @@ func callPluginMethod(ctx context.Context, remote *remoteObject, name string, kw
 	if err != nil {
 		return pluginErr(err.Error())
 	}
-	result, err := remote.Client.CallMethodWithCallbacks(ctx, remote.ID, name, encodedArgs, encodedKwargs, callbacks)
+	var result Value
+	object.RunBlocking(ctx, func() { result, err = remote.Client.CallMethodWithCallbacks(ctx, remote.ID, name, encodedArgs, encodedKwargs, callbacks) })
 	if err != nil {
 		return pluginErr(err.Error())
 	}
@@ -553,7 +558,9 @@ func releaseRemote(ctx context.Context, remote *remoteObject, instance *object.I
 		_ = object.ClearGCReleaseHook(instance)
 		delete(instance.Fields, remoteFieldName)
 	}
-	return remote.Client.DestroyObject(ctx, remote.ID)
+	var dErr error
+	object.RunBlocking(ctx, func() { dErr = remote.Client.DestroyObject(ctx, remote.ID) })
+	return dErr
 }
 
 func installRemoteFinalizer(instance *object.Instance, remote *remoteObject) {

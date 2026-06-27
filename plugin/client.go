@@ -851,7 +851,7 @@ func (c *Client) Batch(ctx context.Context, requests []batchRequest) ([]json.Raw
 // plugins still report shutdown RPC errors. Real failures — the process not
 // exiting, or exiting with a non-zero status — are also reported.
 func (c *Client) Close() error {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	c.closing.Store(true)
 	shutdownErr := c.call(ctx, "plugin.shutdown", nil, nil, nil)

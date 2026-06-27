@@ -209,14 +209,17 @@ var SubprocessLibrary = object.NewLibrary(SubprocessLibraryName, map[string]*obj
 			var stdout, stderr []byte
 			var err error
 
-			if captureOutput {
-				stdout, err = cmd.Output()
-				if exitErr, ok := err.(*exec.ExitError); ok {
-					stderr = exitErr.Stderr
+			// Release the interpreter lock while the child process runs.
+			object.RunBlocking(ctx, func() {
+				if captureOutput {
+					stdout, err = cmd.Output()
+					if exitErr, ok := err.(*exec.ExitError); ok {
+						stderr = exitErr.Stderr
+					}
+				} else {
+					err = cmd.Run()
 				}
-			} else {
-				err = cmd.Run()
-			}
+			})
 
 			returncode := 0
 			if err != nil {
