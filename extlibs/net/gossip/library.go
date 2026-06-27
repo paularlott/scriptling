@@ -24,13 +24,20 @@ const (
 	LibraryDesc = "Gossip protocol cluster membership and messaging"
 )
 
+// clusterEntry tracks a live cluster together with the dispatcher that
+// serializes its handler callbacks, so teardown can release both.
+type clusterEntry struct {
+	cluster *gossip.Cluster
+	disp    *dispatcher
+}
+
 var (
 	library     *object.Library
 	libraryOnce sync.Once
 	clusters    = struct {
 		sync.RWMutex
-		m map[string]*gossip.Cluster
-	}{m: make(map[string]*gossip.Cluster)}
+		m map[string]clusterEntry
+	}{m: make(map[string]clusterEntry)}
 	log logger.Logger
 )
 
@@ -191,7 +198,7 @@ Parameters:
 	}
 }
 
-func buildLeaderElectionObject(le *leader.LeaderElection, eval evaliface.Evaluator, env *object.Environment) *object.Builtin {
+func buildLeaderElectionObject(le *leader.LeaderElection, eval evaliface.Evaluator, env *object.Environment, disp *dispatcher) *object.Builtin {
 	return &object.Builtin{
 		Attributes: map[string]object.Object{
 			"start": &object.Builtin{
@@ -306,10 +313,12 @@ Parameters:
 
 					handlerFn := args[1]
 					le.HandleEventFunc(eventType, func(et leader.EventType, nodeID gossip.NodeID) {
-						eval.CallObjectFunction(ctx, handlerFn, []object.Object{
-							object.NewString(eventTypeStr),
-							object.NewString(nodeID.String()),
-						}, nil, env)
+						disp.post(func() {
+							eval.CallObjectFunction(ctx, handlerFn, []object.Object{
+								object.NewString(eventTypeStr),
+								object.NewString(nodeID.String()),
+							}, nil, env)
+						})
 					})
 					return &object.Null{}
 				},
@@ -324,7 +333,12 @@ Parameters:
 	}
 }
 
-func buildClusterObject(c *gossip.Cluster, clusterID string, eval evaliface.Evaluator, env *object.Environment) *object.Builtin {
+// buildClusterObject builds the script-facing cluster object. disp serializes
+// all registered handler callbacks (messages, state/metadata changes, gossip
+// interval, node groups, leader election) onto the script goroutine; scripts
+// must drive it by calling cluster.wait() so script code is never executed
+// concurrently on gossip's internal goroutines.
+func buildClusterObject(c *gossip.Cluster, clusterID string, eval evaliface.Evaluator, env *object.Environment, disp *dispatcher) *object.Builtin {
 	return &object.Builtin{
 		Attributes: map[string]object.Object{
 			"start": &object.Builtin{
@@ -335,6 +349,44 @@ func buildClusterObject(c *gossip.Cluster, clusterID string, eval evaliface.Eval
 				HelpText: `start() - Start the cluster node
 
 Starts transport, health monitoring, and gossip routines.`,
+			},
+			"wait": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					// timeout policy: omitted -> block until an event (or stop);
+					// 0 -> poll (run queued events, return immediately);
+					// >0 -> wait up to that many seconds for the first event.
+					timeout := time.Duration(-1)
+					if len(args) > 0 {
+						if _, isNull := args[0].(*object.Null); !isNull {
+							secs, e := args[0].AsFloat()
+							if e != nil {
+								return errors.NewError("timeout must be a number of seconds")
+							}
+							if secs < 0 {
+								secs = 0
+							}
+							timeout = time.Duration(secs * float64(time.Second))
+						}
+					}
+					return object.NewInteger(int64(disp.pump(timeout)))
+				},
+				HelpText: `wait(timeout=None) - Process pending handler callbacks on the script
+
+Runs any queued message/event handlers on the calling (script) thread, so
+handlers never run concurrently with the rest of the script.
+
+Parameters:
+  timeout (number, optional): seconds to wait for an event.
+    - omitted/None: block until an event arrives (or the cluster stops)
+    - 0: process whatever is already queued and return immediately (poll)
+    - >0: if nothing is queued, wait up to this many seconds for the first event
+
+Returns:
+  int - the number of handler callbacks processed
+
+Typical use:
+  while running:
+      cluster.wait(1)   # serve events, ~1s ticks`,
 			},
 			"join": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -375,6 +427,7 @@ Parameters:
 			"stop": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					c.Stop()
+					disp.close()
 					clusters.Lock()
 					delete(clusters.m, clusterID)
 					clusters.Unlock()
@@ -557,7 +610,9 @@ Parameters:
 							"payload": payloadObj,
 						})
 
-						result := eval.CallObjectFunction(ctx, handlerFn, []object.Object{msgObj}, nil, env)
+						result := disp.call(func() object.Object {
+							return eval.CallObjectFunction(ctx, handlerFn, []object.Object{msgObj}, nil, env)
+						})
 						if errObj, ok := result.(*object.Error); ok {
 							return fmt.Errorf("handler error: %s", errObj.Message)
 						}
@@ -621,7 +676,9 @@ The handler receives a dict with:
 							"payload": payloadObj,
 						})
 
-						result := eval.CallObjectFunction(ctx, handlerFn, []object.Object{msgObj}, nil, env)
+						result := disp.call(func() object.Object {
+							return eval.CallObjectFunction(ctx, handlerFn, []object.Object{msgObj}, nil, env)
+						})
 						if errObj, ok := result.(*object.Error); ok {
 							return nil, fmt.Errorf("handler error: %s", errObj.Message)
 						}
@@ -730,10 +787,12 @@ Returns:
 						case gossip.NodeLeaving:
 							stateStr = "leaving"
 						}
-						eval.CallObjectFunction(ctx, handlerFn, []object.Object{
-							object.NewString(node.ID.String()),
-							object.NewString(stateStr),
-						}, nil, env)
+						disp.post(func() {
+							eval.CallObjectFunction(ctx, handlerFn, []object.Object{
+								object.NewString(node.ID.String()),
+								object.NewString(stateStr),
+							}, nil, env)
+						})
 					})
 					return &object.Null{}
 				},
@@ -753,9 +812,11 @@ Parameters:
 					handlerFn := args[0]
 
 					c.HandleNodeMetadataChangeFunc(func(node *gossip.Node) {
-						eval.CallObjectFunction(ctx, handlerFn, []object.Object{
-							nodeToObject(node),
-						}, nil, env)
+						disp.post(func() {
+							eval.CallObjectFunction(ctx, handlerFn, []object.Object{
+								nodeToObject(node),
+							}, nil, env)
+						})
 					})
 					return &object.Null{}
 				},
@@ -775,7 +836,9 @@ Parameters:
 					handlerFn := args[0]
 
 					c.HandleGossipFunc(func() {
-						eval.CallObjectFunction(ctx, handlerFn, nil, nil, env)
+						disp.post(func() {
+							eval.CallObjectFunction(ctx, handlerFn, nil, nil, env)
+						})
 					})
 					return &object.Null{}
 				},
@@ -802,13 +865,17 @@ Parameters:
 					if onAddedFn := kwargs.Get("on_node_added"); onAddedFn != nil {
 						addedFn := onAddedFn
 						opts.OnNodeAdded = func(node *gossip.Node) {
-							eval.CallObjectFunction(ctx, addedFn, []object.Object{nodeToObject(node)}, nil, env)
+							disp.post(func() {
+								eval.CallObjectFunction(ctx, addedFn, []object.Object{nodeToObject(node)}, nil, env)
+							})
 						}
 					}
 					if onRemovedFn := kwargs.Get("on_node_removed"); onRemovedFn != nil {
 						removedFn := onRemovedFn
 						opts.OnNodeRemoved = func(node *gossip.Node) {
-							eval.CallObjectFunction(ctx, removedFn, []object.Object{nodeToObject(node)}, nil, env)
+							disp.post(func() {
+								eval.CallObjectFunction(ctx, removedFn, []object.Object{nodeToObject(node)}, nil, env)
+							})
 						}
 					}
 
@@ -868,7 +935,7 @@ Returns:
 					}
 
 					le := leader.NewLeaderElection(c, leaderCfg)
-					return buildLeaderElectionObject(le, eval, env)
+					return buildLeaderElectionObject(le, eval, env, disp)
 				},
 				HelpText: `create_leader_election(check_interval="1s", leader_timeout="3s", heartbeat_msg_type=65, quorum_percentage=60, metadata_criteria=None) - Create a leader election manager
 
@@ -1337,11 +1404,12 @@ func buildLibrary() *object.Library {
 				}
 
 				clusterID := cluster.LocalNode().ID.String()
+				disp := newDispatcher()
 				clusters.Lock()
-				clusters.m[clusterID] = cluster
+				clusters.m[clusterID] = clusterEntry{cluster: cluster, disp: disp}
 				clusters.Unlock()
 
-				return buildClusterObject(cluster, clusterID, eval, env)
+				return buildClusterObject(cluster, clusterID, eval, env, disp)
 			},
 			HelpText: `create(bind_addr="127.0.0.1:8000", node_id="", advertise_addr="", encryption_key="", tags=[], compression=False, bearer_token="", app_version="", transport="socket", ...) - Create a gossip cluster node
 
@@ -1401,8 +1469,9 @@ func Register(registrar interface{ RegisterLibrary(*object.Library) }, loggerIns
 		library = buildLibrary()
 		extlibs.RegisterCleanup(func() {
 			clusters.Lock()
-			for id, c := range clusters.m {
-				c.Stop()
+			for id, e := range clusters.m {
+				e.cluster.Stop()
+				e.disp.close()
 				delete(clusters.m, id)
 			}
 			clusters.Unlock()

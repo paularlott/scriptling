@@ -54,7 +54,9 @@ election.on_event("lost", on_election_event)
 
 print("\nStarting leader election...")
 election.start()
-time.sleep(1)
+# Pump Node A's handlers while the election settles: on_event callbacks run here,
+# on the script thread, filling the events queue (up to 2s).
+nodeA.wait(2)
 
 # Check leader state
 print(f"\nHas leader: {election.has_leader()}")

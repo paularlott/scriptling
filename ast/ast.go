@@ -712,6 +712,31 @@ type CallExpression struct {
 	Function  Expression
 	Arguments []Expression
 	overflow  *CallOverflow
+	// calleeCache caches the resolved location of an identifier callee in the
+	// environment chain, avoiding repeated map lookups for the common case of
+	// calling a function defined in an enclosing scope (e.g. recursion, helpers).
+	// Encoding: 0 = uncached, -1 = uncacheable (callee lives in a store map or is
+	// a builtin), >0 = (hops << 32) | (slotIndex + 1). The cached value is a
+	// *location*, so callee reassignment is reflected automatically; a name guard
+	// at read time catches stale layouts from AST shared via the parse cache.
+	calleeCache atomic.Int64
+}
+
+// CalleeCache returns the raw cached callee location (see calleeCache encoding).
+func (ce *CallExpression) CalleeCache() int64 { return ce.calleeCache.Load() }
+
+// SetCalleeCache stores a resolved callee location.
+func (ce *CallExpression) SetCalleeCache(v int64) { ce.calleeCache.Store(v) }
+
+// EncodeCalleeLocation packs an environment-chain location into the calleeCache
+// representation (always > 0 since slotIdx >= 0).
+func EncodeCalleeLocation(hops, slotIdx int) int64 {
+	return int64(hops)<<32 | int64(slotIdx+1)
+}
+
+// DecodeCalleeLocation unpacks a packed location into hops and slot index.
+func DecodeCalleeLocation(v int64) (hops, slotIdx int) {
+	return int(v >> 32), int(v&0xffffffff) - 1
 }
 
 func (ce *CallExpression) GetKeywords() map[string]Expression {
