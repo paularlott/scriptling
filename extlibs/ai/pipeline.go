@@ -214,12 +214,12 @@ func (p *PipelineInstance) enqueue(message any) {
 }
 
 // flush is the internal (Go-side) complete used by completion_parallel / ask_parallel.
-func (p *PipelineInstance) flush() object.Object {
+func (p *PipelineInstance) flush(ctx context.Context) object.Object {
 	p.mu.Lock()
 	p.closed = true
 	p.mu.Unlock()
 	close(p.queue)
-	p.wg.Wait()
+	object.RunBlocking(ctx, func() { p.wg.Wait() })
 	p.mu.Lock()
 	results := p.results
 	p.mu.Unlock()
@@ -253,7 +253,7 @@ func addMethod(self *object.Instance, _ context.Context, message any) object.Obj
 }
 
 // completeMethod implements Pipeline.complete() for scripts.
-func completeMethod(self *object.Instance, _ context.Context) object.Object {
+func completeMethod(self *object.Instance, ctx context.Context) object.Object {
 	p, err := getPipelineInstance(self)
 	if err != nil {
 		return err
@@ -268,7 +268,7 @@ func completeMethod(self *object.Instance, _ context.Context) object.Object {
 	p.mu.Unlock()
 
 	close(p.queue)
-	p.wg.Wait()
+	object.RunBlocking(ctx, func() { p.wg.Wait() })
 
 	p.mu.Lock()
 	results := p.results

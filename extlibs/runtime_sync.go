@@ -66,12 +66,19 @@ func (q *RuntimeQueue) put(ctx context.Context, item object.Object) error {
 		}
 		q.mu.Unlock()
 
-		// Wait for space or context cancellation
-		select {
-		case <-ctx.Done():
+		// Wait for space or context cancellation (releasing the interpreter lock
+		// so shared-env threads and producers can run while we block).
+		var canceled bool
+		object.RunBlocking(ctx, func() {
+			select {
+			case <-ctx.Done():
+				canceled = true
+			case <-q.putCh:
+				// Space may be available, retry
+			}
+		})
+		if canceled {
 			return ctx.Err()
-		case <-q.putCh:
-			// Space may be available, retry
 		}
 	}
 }
@@ -92,12 +99,19 @@ func (q *RuntimeQueue) get(ctx context.Context) (object.Object, error) {
 		}
 		q.mu.Unlock()
 
-		// Wait for items or context cancellation
-		select {
-		case <-ctx.Done():
+		// Wait for items or context cancellation (releasing the interpreter lock
+		// so shared-env threads and consumers can run while we block).
+		var canceled bool
+		object.RunBlocking(ctx, func() {
+			select {
+			case <-ctx.Done():
+				canceled = true
+			case <-q.getCh:
+				// Items may be available, retry
+			}
+		})
+		if canceled {
 			return nil, ctx.Err()
-		case <-q.getCh:
-			// Items may be available, retry
 		}
 	}
 }
@@ -207,7 +221,9 @@ var SyncSubLibrary = object.NewLibrary(RuntimeSyncLibraryName, map[string]*objec
 					},
 					"wait": &object.Builtin{
 						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-							wg.wg.Wait()
+							// Release the interpreter lock while blocked so the
+							// goroutines we're waiting on can run script code.
+							object.RunBlocking(ctx, func() { wg.wg.Wait() })
 							return &object.Null{}
 						},
 						HelpText: "wait() - Block until counter reaches zero",

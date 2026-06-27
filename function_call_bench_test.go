@@ -28,7 +28,7 @@ def simple_func(x):
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		result := evaluator.ApplyFunction(context.Background(), fn, []object.Object{arg}, nil, p.env)
+		result := evaluator.ApplyFunctionGIL(context.Background(), fn, []object.Object{arg}, nil, p.env)
 		if object.IsError(result) {
 			b.Fatal(result.Inspect())
 		}
@@ -57,7 +57,7 @@ def fib(n):
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		result := evaluator.ApplyFunction(context.Background(), fn, []object.Object{arg}, nil, p.env)
+		result := evaluator.ApplyFunctionGIL(context.Background(), fn, []object.Object{arg}, nil, p.env)
 		if object.IsError(result) {
 			b.Fatal(result.Inspect())
 		}

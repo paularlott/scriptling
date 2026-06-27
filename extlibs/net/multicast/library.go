@@ -123,9 +123,11 @@ func buildGroupObject(g *multicastGroup) *object.Builtin {
 					if dataErr != nil {
 						return dataErr
 					}
-					if sendErr := g.send(data); sendErr != nil {
-						return errors.NewError("send failed: %s", sendErr.Error())
-					}
+				var sendErr error
+				object.RunBlocking(ctx, func() { sendErr = g.send(data) })
+				if sendErr != nil {
+					return errors.NewError("send failed: %s", sendErr.Error())
+				}
 					return &object.Null{}
 				},
 				HelpText: `send(message) - Send a message to the multicast group
@@ -142,7 +144,12 @@ Parameters:
 						}
 					}
 
-					data, src, err := g.receive(time.Duration(timeout * float64(time.Second)))
+					var data []byte
+					var src *net.UDPAddr
+					var err error
+					object.RunBlocking(ctx, func() {
+						data, src, err = g.receive(time.Duration(timeout * float64(time.Second)))
+					})
 					if err != nil {
 						return errors.NewError("receive failed: %s", err.Error())
 					}

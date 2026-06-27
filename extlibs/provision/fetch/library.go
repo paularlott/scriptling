@@ -215,7 +215,8 @@ func fetchURL(ctx context.Context, rawURL string, insecure bool, timeout time.Du
 	if err != nil {
 		return nil, err
 	}
-	resp, err := client.Do(req)
+	var resp *http.Response
+	object.RunBlocking(ctx, func() { resp, err = client.Do(req) })
 	if err != nil {
 		return nil, err
 	}
@@ -227,10 +228,15 @@ func fetchURL(ctx context.Context, rawURL string, insecure bool, timeout time.Du
 	if maxBytes > 0 && resp.ContentLength > maxBytes {
 		return nil, fmt.Errorf("response exceeds max_bytes (%d > %d)", resp.ContentLength, maxBytes)
 	}
+	var data []byte
 	if maxBytes <= 0 {
-		return io.ReadAll(resp.Body)
+		object.RunBlocking(ctx, func() { data, err = io.ReadAll(resp.Body) })
+		if err != nil {
+			return nil, err
+		}
+		return data, nil
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	object.RunBlocking(ctx, func() { data, err = io.ReadAll(io.LimitReader(resp.Body, maxBytes+1)) })
 	if err != nil {
 		return nil, err
 	}

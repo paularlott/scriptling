@@ -288,7 +288,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					if errObj != nil {
 						return errObj
 					}
-					content, errObj := readFileBytes(p.config, cleanPath)
+					content, errObj := readFileBytes(ctx, p.config, cleanPath)
 					if errObj != nil {
 						return errObj
 					}
@@ -305,7 +305,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					if errObj != nil {
 						return errObj
 					}
-					content, errObj := readFileBytes(p.config, cleanPath)
+					content, errObj := readFileBytes(ctx, p.config, cleanPath)
 					if errObj != nil {
 						return errObj
 					}
@@ -326,7 +326,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					if err != nil {
 						return err
 					}
-					return writeFileBytes(p.config, cleanPath, []byte(content), 0644)
+					return writeFileBytes(ctx, p.config, cleanPath, []byte(content), 0644)
 				},
 				HelpText: "write_text(data) - Write the string data to the file",
 			},
@@ -343,7 +343,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					if err != nil {
 						return err
 					}
-					return writeFileBytes(p.config, cleanPath, []byte(content), 0644)
+					return writeFileBytes(ctx, p.config, cleanPath, []byte(content), 0644)
 				},
 				HelpText: "write_bytes(data) - Write bytes to the file",
 			},
