@@ -579,8 +579,9 @@ count >= 1
 
 func TestGossipCleanupNoPanic(t *testing.T) {
 	clusters.Lock()
-	for id, c := range clusters.m {
-		c.Stop()
+	for id, e := range clusters.m {
+		e.cluster.Stop()
+		e.disp.close()
 		delete(clusters.m, id)
 	}
 	clusters.Unlock()

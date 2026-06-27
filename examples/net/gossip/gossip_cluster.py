@@ -50,8 +50,9 @@ print("\nRegistered handler on Node B")
 # Broadcast from A
 print("\nNode A broadcasting...")
 nodeA.send(gossip.MSG_USER, "Hello from Node A!")
-# Sleep allows gossip propagation before we check the queue
-time.sleep(2)
+# wait() runs Node B's handler on this thread as the message arrives (up to 2s).
+# Handlers never run on a background thread - you pump them with wait().
+nodeB.wait(2)
 
 if messages.size() > 0:
     msg = messages.get()
@@ -62,7 +63,7 @@ else:
 
 # Send a dict payload
 nodeA.send(gossip.MSG_USER, {"event": "test", "value": 42})
-time.sleep(2)
+nodeB.wait(2)
 
 if messages.size() > 0:
     msg = messages.get()

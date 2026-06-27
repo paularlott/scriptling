@@ -8,7 +8,7 @@ Examples demonstrating cluster membership, metadata, and messaging with `scriptl
 - `gossip_cluster.py` - Two-node cluster with broadcast messaging and handler registration
 - `gossip_nodegroups.py` - Three-node cluster demonstrating metadata-criteria-based node groups
 - `gossip_leader.py` - Three-node cluster with leader election and failover
-- `gossip_request_reply.py` - Two-node request/reply messaging pattern
+- `gossip_request_reply_server.py` / `gossip_request_reply_client.py` - Request/reply across two processes; the server shows the `wait()` serve loop
 - `gossip_advanced.py` - Advanced config, event handlers, node queries, and metadata change tracking
 
 ## Running
@@ -29,12 +29,41 @@ task build
 # Leader election and failover
 ./bin/scriptling examples/net/gossip/gossip_leader.py
 
-# Request/reply messaging
-./bin/scriptling examples/net/gossip/gossip_request_reply.py
+# Request/reply messaging (run the server, then the client in another terminal)
+./bin/scriptling examples/net/gossip/gossip_request_reply_server.py   # terminal 1
+./bin/scriptling examples/net/gossip/gossip_request_reply_client.py   # terminal 2
 
 # Advanced features (events, queries, config)
 ./bin/scriptling examples/net/gossip/gossip_advanced.py
 ```
+
+## Handlers run on the script thread (call `wait()`)
+
+Registered callbacks - `handle`, `handle_with_reply`, `on_state_change`,
+`on_metadata_change`, `on_gossip_interval`, node-group `on_node_added` /
+`on_node_removed`, and leader-election `on_event` - do **not** run on a
+background thread. They are queued as messages and events arrive and run on your
+script's thread when you call `cluster.wait()`. This keeps your handlers free of
+concurrency: they never run while the rest of your script is running.
+
+A long-running node serves events in a loop:
+
+```python
+cluster.handle(gossip.MSG_USER, on_message)
+while True:
+    cluster.wait(1)   # run queued handlers, blocking up to ~1s per tick
+```
+
+`wait(timeout)`:
+- omitted / `None` - block until an event arrives (or the cluster stops)
+- `0` - run whatever is already queued and return immediately (poll)
+- `> 0` - if nothing is queued, wait up to that many seconds for the first event
+
+It returns the number of handler callbacks processed.
+
+> Because handlers run on the script thread, a single script cannot both block
+> in `send_request()` and serve its own responder - run each node as its own
+> process (see the request/reply server and client examples).
 
 ## API Overview
 
@@ -92,6 +121,7 @@ cluster.start()
 **Lifecycle:**
 - `start()` - Start the cluster node
 - `join(peers)` - Join existing cluster (string or list of addresses)
+- `wait(timeout=None)` - Run queued handler callbacks on the script thread; returns the count processed (`None`=block until an event, `0`=poll, `>0`=wait up to N seconds)
 - `leave()` - Gracefully leave the cluster
 - `stop()` - Stop and clean up
 
@@ -208,13 +238,19 @@ election.stop()
 Send a message and wait for a response from a specific node:
 
 ```python
-# Register a reply handler on the responder
+# --- Responder process ---
 cluster.handle_with_reply(200, lambda msg: {"echo": msg["payload"]})
+while True:
+    cluster.wait(1)   # serve requests on the script thread
 
-# Send request and get response
+# --- Requester process ---
 reply = cluster.send_request(target_node_id, 200, "hello")
 # reply == {"echo": "hello"}
 ```
+
+The responder must run its own `wait()` loop (typically in its own process). A
+single script cannot both block in `send_request()` and serve the matching
+`handle_with_reply()` handler, because both need the one script thread.
 
 ### Message Types
 

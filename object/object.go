@@ -771,6 +771,32 @@ type Environment struct {
 	importCallback             func(string) error
 	availableLibrariesCallback func() []LibraryInfo
 	currentModule              string // Current module path for relative import resolution
+	// freeFrames is a free-list of reusable call-frame environments, populated
+	// lazily and only on root environments. It is accessed WITHOUT locking and
+	// relies on the interpreter invariant that an Environment tree is only ever
+	// touched by a single goroutine at a time (see callFrameFreeList).
+	freeFrames *callFrameFreeList
+}
+
+const maxPooledCallEnvSlots = 16
+
+// maxFreeFramesPerBucket caps how many idle frames a tree retains per slot-count
+// bucket, bounding memory after deep recursion while still amortising the common
+// depth across repeated calls.
+const maxFreeFramesPerBucket = 256
+
+// callFrameFreeList holds reusable call-frame environments bucketed by slot
+// count. It lives on the root Environment of an evaluation tree and is accessed
+// without synchronization.
+//
+// SAFETY: this is sound only because of the interpreter's core concurrency rule
+// — any given Environment (and therefore the whole tree rooted at it) is touched
+// by exactly one goroutine. Goroutines that run script code concurrently each
+// build their own tree with its own root (e.g. extlibs background tasks create a
+// fresh NewEnvironment and snapshot bindings into it), so their free-lists never
+// alias. Do NOT share an Environment across goroutines.
+type callFrameFreeList struct {
+	buckets [maxPooledCallEnvSlots + 1][]*Environment
 }
 
 // LibraryInfo contains information about available libraries
@@ -820,32 +846,36 @@ func NewEnclosedEnvironmentWithSlots(outer *Environment, slotIndex map[string]in
 	return env
 }
 
-const maxPooledCallEnvSlots = 16
-
-var callEnvPools [maxPooledCallEnvSlots + 1]sync.Pool
-
-// AcquireCallEnvironment returns a function-call environment, reusing a pooled
-// frame for small slot counts when possible.
+// AcquireCallEnvironment returns a function-call environment, reusing an idle
+// frame from the tree's per-root free-list when one is available.
+//
+// The free-list lives on the root environment and is accessed without locking;
+// this is safe because an environment tree is only ever used by a single
+// goroutine (see callFrameFreeList). Frames acquired here must be returned via
+// ReleaseCallEnvironment.
 func AcquireCallEnvironment(outer *Environment, slotIndex map[string]int, slotNames []string) *Environment {
 	slotCount := len(slotNames)
-	if slotCount > 0 && slotCount <= maxPooledCallEnvSlots {
-		if pooled := callEnvPools[slotCount].Get(); pooled != nil {
-			env := pooled.(*Environment)
-			env.slotIndex = slotIndex
-			env.slotNames = slotNames
-			env.callPoolSlots = uint8(slotCount)
-			env.outer = outer
-			if outer != nil {
-				env.root = outer.root
-				env.output = outer.output
-				env.input = outer.input
-				env.importCallback = outer.importCallback
-				env.availableLibrariesCallback = outer.availableLibrariesCallback
-				env.currentModule = outer.currentModule
-			} else {
-				env.root = env
+	if slotCount > 0 && slotCount <= maxPooledCallEnvSlots && outer != nil {
+		if root := outer.root; root != nil {
+			if fl := root.freeFrames; fl != nil {
+				if bucket := fl.buckets[slotCount]; len(bucket) > 0 {
+					n := len(bucket) - 1
+					env := bucket[n]
+					bucket[n] = nil
+					fl.buckets[slotCount] = bucket[:n]
+					env.slotIndex = slotIndex
+					env.slotNames = slotNames
+					env.callPoolSlots = uint8(slotCount)
+					env.outer = outer
+					env.root = root
+					env.output = outer.output
+					env.input = outer.input
+					env.importCallback = outer.importCallback
+					env.availableLibrariesCallback = outer.availableLibrariesCallback
+					env.currentModule = outer.currentModule
+					return env
+				}
 			}
-			return env
 		}
 		env := NewEnclosedEnvironmentWithSlots(outer, slotIndex, slotNames)
 		env.callPoolSlots = uint8(slotCount)
@@ -854,12 +884,15 @@ func AcquireCallEnvironment(outer *Environment, slotIndex map[string]int, slotNa
 	return NewEnclosedEnvironmentWithSlots(outer, slotIndex, slotNames)
 }
 
-// ReleaseCallEnvironment clears and returns a pooled call environment back to
-// the pool. Non-pooled environments are ignored.
+// ReleaseCallEnvironment clears a call frame and returns it to its tree's
+// per-root free-list for reuse. Non-pooled environments are ignored. See
+// AcquireCallEnvironment for the no-lock concurrency contract.
 func ReleaseCallEnvironment(env *Environment) {
 	if env == nil || env.callPoolSlots == 0 {
 		return
 	}
+	root := env.root
+	slotCount := env.callPoolSlots
 	for i := range env.slots {
 		env.slots[i] = nil
 	}
@@ -875,7 +908,6 @@ func ReleaseCallEnvironment(env *Environment) {
 	if env.importedBindings != nil {
 		clear(env.importedBindings)
 	}
-	slotCount := env.callPoolSlots
 	env.callPoolSlots = 0
 	env.outer = nil
 	env.root = nil
@@ -886,7 +918,18 @@ func ReleaseCallEnvironment(env *Environment) {
 	env.importCallback = nil
 	env.availableLibrariesCallback = nil
 	env.currentModule = ""
-	callEnvPools[slotCount].Put(env)
+
+	if root == nil {
+		return
+	}
+	fl := root.freeFrames
+	if fl == nil {
+		fl = &callFrameFreeList{}
+		root.freeFrames = fl
+	}
+	if len(fl.buckets[slotCount]) < maxFreeFramesPerBucket {
+		fl.buckets[slotCount] = append(fl.buckets[slotCount], env)
+	}
 }
 
 func (e *Environment) Get(name string) (Object, bool) {
@@ -899,6 +942,50 @@ func (e *Environment) Get(name string) (Object, bool) {
 		obj, ok := env.store[name]
 		if ok {
 			return obj, true
+		}
+	}
+	return nil, false
+}
+
+// GetWithLocation resolves name like Get, additionally reporting where it was
+// found in the environment chain: hops is the number of outer links traversed
+// and slotIdx is the slot index if the value lives in a slot, or -1 if it came
+// from a store map (not a stable, cacheable location). Used to seed call-site
+// callee caches.
+func (e *Environment) GetWithLocation(name string) (val Object, hops int, slotIdx int, ok bool) {
+	hops = 0
+	for env := e; env != nil; env = env.outer {
+		if idx, found := env.slotIndex[name]; found {
+			if idx >= 0 && idx < len(env.slots) && env.slots[idx] != nil {
+				return env.slots[idx], hops, idx, true
+			}
+		}
+		if obj, found := env.store[name]; found {
+			return obj, hops, -1, true
+		}
+		hops++
+	}
+	return nil, 0, -1, false
+}
+
+// GetAtLocation reads the value at a cached (hops, slotIdx) location, validating
+// that the slot still holds the expected name. Returns false if the cache is
+// stale (chain too short or slot layout changed), so the caller can fall back to
+// a full lookup.
+func (e *Environment) GetAtLocation(hops, slotIdx int, name string) (Object, bool) {
+	env := e
+	for i := 0; i < hops; i++ {
+		if env == nil {
+			return nil, false
+		}
+		env = env.outer
+	}
+	if env == nil {
+		return nil, false
+	}
+	if slotIdx >= 0 && slotIdx < len(env.slots) && slotIdx < len(env.slotNames) && env.slotNames[slotIdx] == name {
+		if v := env.slots[slotIdx]; v != nil {
+			return v, true
 		}
 	}
 	return nil, false

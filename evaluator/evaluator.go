@@ -1584,10 +1584,39 @@ func unpackArgsFromIterable(argsVal object.Object) ([]object.Object, object.Obje
 	return unpacked, nil
 }
 
+// resolveCallee resolves an identifier callee using the call node's location
+// cache to skip the environment-chain map lookups on repeat calls. The cache
+// stores a location (hops + slot index), not a value, so callee reassignment is
+// reflected automatically; GetAtLocation revalidates the slot name to guard
+// against stale layouts from AST shared across instances via the parse cache.
+func resolveCallee(node *ast.CallExpression, name string, env *object.Environment) (object.Object, bool) {
+	if c := node.CalleeCache(); c > 0 {
+		hops, slotIdx := ast.DecodeCalleeLocation(c)
+		if val, ok := env.GetAtLocation(hops, slotIdx, name); ok {
+			return val, true
+		}
+		// Stale layout - fall through to re-resolve and re-cache.
+	} else if c < 0 {
+		// Known-uncacheable callee (lives in a store map / resolved via builtins).
+		return env.Get(name)
+	}
+	val, hops, slotIdx, ok := env.GetWithLocation(name)
+	if !ok {
+		return nil, false
+	}
+	if slotIdx >= 0 {
+		node.SetCalleeCache(ast.EncodeCalleeLocation(hops, slotIdx))
+	} else {
+		node.SetCalleeCache(-1)
+	}
+	return val, true
+}
+
 func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *object.Environment) object.Object {
 	if !node.HasOverflow() {
 		if ident, ok := node.Function.(*ast.Identifier); ok {
-			if val, found := env.Get(ident.Value()); found {
+			name := ident.Value()
+			if val, found := resolveCallee(node, name, env); found {
 				switch fn := val.(type) {
 				case *object.Function:
 					// Fast paths for common arg counts: avoid slice allocation
@@ -1647,7 +1676,7 @@ func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *obje
 					evalExpressionsWithContext(ctx, node.Arguments, env), nil, env)
 			}
 			// Not in env - try fast builtins by name
-			if builtin, ok := builtins[ident.Value()]; ok {
+			if builtin, ok := builtins[name]; ok {
 				return applyBuiltinFast(ctx, node, env, builtin)
 			}
 		}
