@@ -1303,6 +1303,14 @@ while runtime.server_running():
 	if got := s.pluginServer.ObjectCount(); got != 2 {
 		t.Errorf("after two new: count = %d, want 2", got)
 	}
+
+	// Closing the manager sends plugin.shutdown → server must call dtors and
+	// clear its object store.
+	manager.Close()
+	cancel()
+	if got := s.pluginServer.ObjectCount(); got != 0 {
+		t.Errorf("after client close (plugin.shutdown): count = %d, want 0", got)
+	}
 }
 
 func TestPluginServerHTTPParallel(t *testing.T) {

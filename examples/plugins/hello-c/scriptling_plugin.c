@@ -734,17 +734,28 @@ static void destroy_object(sl_server *srv, const char *id_str) {
     int64_t id = atoll(id_str);
     if (id <= 0) return;
     size_t idx = (size_t)(id - 1);
+
+    /* Remove from the map under the write lock so no new method calls can
+     * retrieve this object.  Do NOT call the dtor or free memory here —
+     * lock_object may still hold obj->mu on another thread. */
     pthread_rwlock_wrlock(&srv->obj_rwlock);
     if (idx >= srv->object_count || !srv->objects[idx]) {
         pthread_rwlock_unlock(&srv->obj_rwlock);
         return;
     }
     sl_object *obj = srv->objects[idx];
-    if (obj->cls->dtor) obj->cls->dtor(obj->data);
-    pthread_mutex_destroy(&obj->mu);
-    free(obj);
     srv->objects[idx] = NULL;
     pthread_rwlock_unlock(&srv->obj_rwlock);
+
+    /* Now acquire obj->mu.  Any in-progress method call on this object will
+     * complete first; after that, no new caller can reach obj (it is gone
+     * from the map), so this lock is uncontested from here on. */
+    pthread_mutex_lock(&obj->mu);
+    if (obj->cls->dtor) obj->cls->dtor(obj->data);
+    pthread_mutex_unlock(&obj->mu);
+
+    pthread_mutex_destroy(&obj->mu);
+    free(obj);
 }
 
 /* ================================================================== */

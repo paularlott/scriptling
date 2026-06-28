@@ -191,10 +191,18 @@ func (s *Server) processHTTPJSONRPC(ctx context.Context, raw []byte) ([]byte, bo
 			return out, true
 		}
 		responses := make([]rpcResponse, 0, len(messages))
+		shutdown := false
 		for _, msg := range messages {
 			if resp, ok := s.handleHTTPMessage(ctx, msg); ok {
 				responses = append(responses, resp)
 			}
+			if msg.Method == "plugin.shutdown" {
+				shutdown = true
+				break
+			}
+		}
+		if shutdown {
+			s.destroyAllObjects()
 		}
 		if len(responses) == 0 {
 			return nil, false
@@ -212,6 +220,9 @@ func (s *Server) processHTTPJSONRPC(ctx context.Context, raw []byte) ([]byte, bo
 		return out, true
 	}
 	resp, ok := s.handleHTTPMessage(ctx, msg)
+	if msg.Method == "plugin.shutdown" {
+		s.destroyAllObjects()
+	}
 	if !ok {
 		return nil, false
 	}
@@ -748,6 +759,8 @@ func (s *Server) destroyAllObjects() {
 			if del, ok := obj.class.LookupMember("__del__"); ok {
 				evaluator.ApplyFunctionGIL(context.Background(), del, []object.Object{obj.instance}, nil, object.NewEnvironment())
 			}
+			obj.instance = nil
+			obj.class = nil
 		}
 		obj.mu.Unlock()
 	}
@@ -765,8 +778,12 @@ func (s *Server) destroyObject(params objectDestroyParams) error {
 	}
 	remoteObject.mu.Lock()
 	defer remoteObject.mu.Unlock()
-	if del, exists := remoteObject.class.LookupMember("__del__"); exists {
-		evaluator.ApplyFunctionGIL(context.Background(), del, []object.Object{remoteObject.instance}, nil, object.NewEnvironment())
+	if remoteObject.instance != nil && remoteObject.class != nil {
+		if del, exists := remoteObject.class.LookupMember("__del__"); exists {
+			evaluator.ApplyFunctionGIL(context.Background(), del, []object.Object{remoteObject.instance}, nil, object.NewEnvironment())
+		}
+		remoteObject.instance = nil
+		remoteObject.class = nil
 	}
 	return nil
 }
