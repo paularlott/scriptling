@@ -7,7 +7,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/errors"
@@ -20,23 +19,12 @@ var (
 	FALSE = object.NewBoolean(false)
 )
 
-var returnValuePool sync.Pool
-
-func acquireReturnValue(val object.Object) *object.ReturnValue {
-	if pooled := returnValuePool.Get(); pooled != nil {
-		rv := pooled.(*object.ReturnValue)
-		rv.Value = val
-		return rv
-	}
-	return &object.ReturnValue{Value: val}
+func acquireReturnValue(env *object.Environment, val object.Object) *object.ReturnValue {
+	return object.AcquireReturnValue(env, val)
 }
 
 func releaseReturnValue(rv *object.ReturnValue) {
-	if rv == nil {
-		return
-	}
-	rv.Value = nil
-	returnValuePool.Put(rv)
+	object.ReleaseReturnValue(rv)
 }
 
 // envContextKey is used to store environment in context
@@ -263,7 +251,7 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 				return val
 			}
 		}
-		return acquireReturnValue(val)
+		return acquireReturnValue(env, val)
 	case *ast.CallExpression:
 		return evalCallExpression(ctx, node, env)
 	case *ast.MethodCallExpression:
@@ -431,7 +419,6 @@ func evalProgram(ctx context.Context, program *ast.Program, env *object.Environm
 
 	var result object.Object = NULL
 	cc := newContextChecker(ctx)
-	srcFile := GetSourceFileFromContext(ctx)
 
 	for _, statement := range program.Statements {
 		if err := cc.check(); err != nil {
@@ -450,7 +437,7 @@ func evalProgram(ctx context.Context, program *ast.Program, env *object.Environm
 				result.Line = statement.Line()
 			}
 			if result.File == "" {
-				result.File = srcFile
+				result.File = GetSourceFileFromContext(ctx)
 			}
 			return result
 		case *object.Exception:
@@ -467,7 +454,6 @@ func evalProgram(ctx context.Context, program *ast.Program, env *object.Environm
 func evalBlockStatementWithContext(ctx context.Context, block *ast.BlockStatement, env *object.Environment) object.Object {
 	var result object.Object = NULL
 	cc := newContextChecker(ctx)
-	srcFile := GetSourceFileFromContext(ctx)
 
 	for _, statement := range block.Statements {
 		if err := cc.check(); err != nil {
@@ -494,7 +480,7 @@ func evalBlockStatementWithContext(ctx context.Context, block *ast.BlockStatemen
 				r.Line = statement.Line()
 			}
 			if r.File == "" {
-				r.File = srcFile
+				r.File = GetSourceFileFromContext(ctx)
 			}
 			return r
 		case nil:
@@ -3153,10 +3139,10 @@ func evalWithStatementWithContext(ctx context.Context, ws *ast.WithStatement, en
 }
 
 func isException(obj object.Object) bool {
-	if obj == nil {
-		return false
-	}
-	return obj.Type() == object.EXCEPTION_OBJ
+	// Concrete type assertion avoids a non-inlinable interface method call
+	// (obj.Type()) on this hot path; only *object.Exception has EXCEPTION_OBJ.
+	_, ok := obj.(*object.Exception)
+	return ok
 }
 
 // matchesExceptionType checks if an exception matches the specified exception type

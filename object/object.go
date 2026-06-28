@@ -485,6 +485,11 @@ func (n *Null) CoerceFloat() (float64, Object) { return 0, nil }
 
 type ReturnValue struct {
 	Value Object
+	// root points at the environment tree this frame was acquired from, so
+	// ReleaseReturnValue can return it to the correct per-root free-list
+	// without the caller threading the environment through. nil for values
+	// constructed outside AcquireReturnValue (those are simply left to GC).
+	root *Environment
 }
 
 func (rv *ReturnValue) Type() ObjectType { return RETURN_OBJ }
@@ -777,6 +782,12 @@ type Environment struct {
 	// interpreter lock (gil) guarantees only one goroutine runs script code in a
 	// tree at a time, so the free-list never sees concurrent access.
 	freeFrames *callFrameFreeList
+	// freeReturns is a free-list of reusable *ReturnValue wrappers, populated
+	// lazily and only on root environments. Like freeFrames it is accessed
+	// without locking — the interpreter lock (gil) serializes script execution
+	// on a tree, so the free-list never sees concurrent access. This avoids the
+	// per-call pin()/Get() overhead of a global sync.Pool on the return path.
+	freeReturns []*ReturnValue
 	// gil is the per-tree interpreter lock, allocated only on the root. The
 	// evaluator acquires it at every Go->script boundary so that any number of
 	// goroutines may call into one Environment tree, but only one runs script at
@@ -1038,6 +1049,49 @@ func ReleaseCallEnvironment(env *Environment) {
 	}
 	if len(fl.buckets[slotCount]) < maxFreeFramesPerBucket {
 		fl.buckets[slotCount] = append(fl.buckets[slotCount], env)
+	}
+}
+
+// maxFreeReturns caps how many idle *ReturnValue wrappers a tree retains,
+// bounding memory after deep recursion.
+const maxFreeReturns = 256
+
+// AcquireReturnValue returns a *ReturnValue wrapping val, reusing one from the
+// tree's per-root free-list when available. The wrapper remembers its root so
+// ReleaseReturnValue can return it without the caller passing the environment.
+// Uses the same lock-free, GIL-serialized contract as AcquireCallEnvironment.
+func AcquireReturnValue(env *Environment, val Object) *ReturnValue {
+	if env != nil {
+		if root := env.root; root != nil {
+			if n := len(root.freeReturns); n > 0 {
+				rv := root.freeReturns[n-1]
+				root.freeReturns[n-1] = nil
+				root.freeReturns = root.freeReturns[:n-1]
+				rv.Value = val
+				rv.root = root
+				return rv
+			}
+			return &ReturnValue{Value: val, root: root}
+		}
+	}
+	return &ReturnValue{Value: val}
+}
+
+// ReleaseReturnValue clears rv and returns it to its tree's free-list for reuse.
+// Wrappers with no associated root (constructed outside AcquireReturnValue) are
+// left for the garbage collector.
+func ReleaseReturnValue(rv *ReturnValue) {
+	if rv == nil {
+		return
+	}
+	root := rv.root
+	rv.Value = nil
+	rv.root = nil
+	if root == nil {
+		return
+	}
+	if len(root.freeReturns) < maxFreeReturns {
+		root.freeReturns = append(root.freeReturns, rv)
 	}
 }
 
