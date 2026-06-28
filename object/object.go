@@ -23,10 +23,10 @@ import (
 func DictKey(obj Object) string {
 	switch o := obj.(type) {
 	case *Integer:
-		return "n:" + strconv.FormatInt(o.value, 10)
+		return intDictKey(o.value)
 	case *Float:
 		if !math.IsInf(o.value, 0) && !math.IsNaN(o.value) && o.value == math.Trunc(o.value) && o.value >= math.MinInt64 && o.value <= math.MaxInt64 {
-			return "n:" + strconv.FormatInt(int64(o.value), 10)
+			return intDictKey(int64(o.value))
 		}
 		return "f:" + strconv.FormatFloat(o.value, 'g', -1, 64)
 	case *Boolean:
@@ -164,6 +164,31 @@ func init() {
 	for i := smallIntMin; i <= smallIntMax; i++ {
 		smallIntegers[i-smallIntMin] = &Integer{value: int64(i)}
 	}
+	// Initialize the small integer dict-key cache ("n:0".."n:N").
+	for i := range smallDictKeys {
+		smallDictKeys[i] = "n:" + strconv.Itoa(i)
+	}
+}
+
+// Small integer dict-key cache. Integer (and integral float) dict keys are
+// extremely common (loop indices, ids); caching the canonical "n:N" string for
+// small non-negative values makes those keys allocation-free, and AppendInt
+// handles the rest in a single allocation instead of two.
+const smallDictKeyMax = 1024
+
+var smallDictKeys [smallDictKeyMax]string
+
+// intDictKey returns the canonical dict key string for an integer value,
+// equivalent to "n:" + strconv.FormatInt(v, 10) but allocation-free for small
+// non-negative values and a single allocation otherwise.
+func intDictKey(v int64) string {
+	if v >= 0 && v < smallDictKeyMax {
+		return smallDictKeys[v]
+	}
+	var buf [24]byte
+	b := append(buf[:0], 'n', ':')
+	b = strconv.AppendInt(b, v, 10)
+	return string(b)
 }
 
 // NewInteger returns a cached integer for small values, or a new Integer for larger values

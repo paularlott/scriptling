@@ -427,11 +427,10 @@ func (p *Scriptling) EvalWithTimeout(timeout time.Duration, input string) (objec
 // This method is safe against deep recursion (via call depth tracking) and
 // recovers from panics during script execution.
 func (p *Scriptling) EvalWithContext(ctx context.Context, input string) (result object.Object, err error) {
-	// Add call depth tracking to prevent stack overflow from deep recursion
-	// Only add if not already present (allows callers to customize max depth)
-	if evaluator.GetCallDepthFromContext(ctx) == nil {
-		ctx = evaluator.ContextWithCallDepth(ctx, evaluator.DefaultMaxCallDepth)
-	}
+	// Call-depth tracking (stack-overflow guard) is added by
+	// evaluator.EvalWithContext when absent, placed outermost so the per-call
+	// lookup on the hot path is O(1). Callers may still supply a custom depth
+	// before calling — it is preserved.
 
 	// Try global cache first
 	program, err := parseProgramCached(input)
