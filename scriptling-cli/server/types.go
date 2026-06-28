@@ -84,4 +84,5 @@ type Server struct {
 	debounceDuration     time.Duration
 	packLoader           *pack.Loader // nil if no packages configured
 	bearerExpected       string       // precomputed "Bearer <token>"
+	scriptDone           chan struct{} // closed when setup script goroutine exits
 }

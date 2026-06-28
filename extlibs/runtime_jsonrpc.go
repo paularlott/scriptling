@@ -2,6 +2,8 @@ package extlibs
 
 import (
 	"context"
+	"fmt"
+	"os"
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
@@ -57,6 +59,9 @@ var JSONRPCSubLibrary = object.NewLibrary(RuntimeJSONRPCLibraryName, map[string]
 			}
 
 			RuntimeState.Lock()
+			if RuntimeState.ServerStarted {
+				fmt.Fprintf(os.Stderr, "warning: runtime.jsonrpc.method %q registered after start_server() — method will not be served\n", name)
+			}
 			RuntimeState.JSONRPCMethods[name] = handler
 			RuntimeState.Unlock()
 
@@ -95,6 +100,9 @@ Example:
 			}
 
 			RuntimeState.Lock()
+			if RuntimeState.ServerStarted {
+				fmt.Fprintf(os.Stderr, "warning: runtime.jsonrpc.notification %q registered after start_server() — notification will not be served\n", name)
+			}
 			RuntimeState.JSONRPCNotifications[name] = handler
 			RuntimeState.Unlock()
 

@@ -51,6 +51,11 @@ var RuntimeState = struct {
 	Atomics    map[string]*RuntimeAtomic
 	Shareds    map[string]*RuntimeShared
 
+	// Server lifecycle channels (nil in script mode)
+	ServerStartCh  chan struct{} // closed by start_server() to signal server is ready
+	ServerRunningCh chan struct{} // closed by server on shutdown
+	ServerStarted  bool         // prevents double-close of ServerStartCh
+
 	// Cleanup functions registered by libraries
 	cleanupFuncs []func()
 }{
@@ -73,6 +78,9 @@ var RuntimeState = struct {
 	Queues:               make(map[string]*RuntimeQueue),
 	Atomics:              make(map[string]*RuntimeAtomic),
 	Shareds:              make(map[string]*RuntimeShared),
+	ServerStartCh:        nil,
+	ServerRunningCh:      nil,
+	ServerStarted:        false,
 }
 
 // RegisterCleanup registers a function to be called during ResetRuntime.
@@ -135,6 +143,10 @@ func ResetRuntime() {
 	RuntimeState.Atomics = make(map[string]*RuntimeAtomic)
 	RuntimeState.Shareds = make(map[string]*RuntimeShared)
 	RuntimeState.cleanupFuncs = nil
+
+	RuntimeState.ServerStartCh = nil
+	RuntimeState.ServerRunningCh = nil
+	RuntimeState.ServerStarted = false
 }
 
 // Promise represents an async operation result
@@ -367,6 +379,90 @@ Returns:
   Background tasks are fire-and-forget. For coordination between
   tasks use runtime.sync primitives (Shared, Atomic, Queue, WaitGroup).
   Access panels via console.Console().panel("name") from background tasks.
+
+`,
+	},
+
+	"start_server": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			wait := true
+			if v := kwargs.Get("wait"); v != nil {
+				if b, e := v.AsBool(); e == nil {
+					wait = b
+				}
+			}
+
+			// Close the start channel once to signal the server to build its mux.
+			RuntimeState.Lock()
+			if !RuntimeState.ServerStarted && RuntimeState.ServerStartCh != nil {
+				RuntimeState.ServerStarted = true
+				close(RuntimeState.ServerStartCh)
+			}
+			RuntimeState.Unlock()
+
+			if wait {
+				object.RunBlocking(ctx, func() {
+					RuntimeState.RLock()
+					ch := RuntimeState.ServerRunningCh
+					RuntimeState.RUnlock()
+					if ch != nil {
+						<-ch
+					}
+				})
+			}
+			return &object.Null{}
+		},
+		HelpText: `start_server(wait=True) - Signal the server to start accepting requests
+
+Signals the server to collect registered routes/methods and begin
+listening for requests. Call this after all routes are registered.
+
+Parameters:
+  wait (bool, default True): If True, blocks until the server shuts
+    down. If False, returns immediately so the script can continue
+    running (e.g. to maintain gossip state or run a polling loop).
+
+When wait=True the call blocks until the server receives a shutdown
+signal (SIGTERM / Ctrl-C). Use wait=False combined with a
+server_running() loop to stay alive while performing other work:
+
+  runtime.start_server(wait=False)
+  while runtime.server_running():
+      yield_now()
+
+Backward compatibility: scripts that exit without calling
+start_server() continue to work — the server starts automatically
+after the setup script finishes.
+
+`,
+	},
+
+	"server_running": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			RuntimeState.RLock()
+			ch := RuntimeState.ServerRunningCh
+			RuntimeState.RUnlock()
+			if ch == nil {
+				return object.NewBoolean(false)
+			}
+			select {
+			case <-ch:
+				return object.NewBoolean(false)
+			default:
+				return object.NewBoolean(true)
+			}
+		},
+		HelpText: `server_running() - Returns True while the server is running
+
+Returns True as long as the server has not received a shutdown signal.
+Returns False once the server is shutting down or if called outside
+of server mode.
+
+Typical usage with start_server(wait=False):
+
+  runtime.start_server(wait=False)
+  while runtime.server_running():
+      yield_now()       # release GIL on each iteration
 
 `,
 	},
