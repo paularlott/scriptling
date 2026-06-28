@@ -71,12 +71,12 @@ Example:
   import scriptling.runtime.plugin as plugin_srv
 
   plugin_srv.serve("calculator", "1.0", "Basic arithmetic operations")
-  plugin_srv.function("add", "handlers.add")
+  plugin_srv.register_function("add", "handlers.add")
   import scriptling.runtime as runtime
   runtime.start_server()`,
 	},
 
-	"function": {
+	"register_function": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if err := errors.MinArgs(args, 2); err != nil {
 				return err
@@ -94,14 +94,14 @@ Example:
 
 			RuntimeState.Lock()
 			if RuntimeState.ServerStarted {
-				fmt.Fprintf(os.Stderr, "warning: runtime.plugin.function %q registered after start_server() — function will not be served\n", name)
+				fmt.Fprintf(os.Stderr, "warning: runtime.plugin.register_function %q registered after start_server() — function will not be served\n", name)
 			}
 			RuntimeState.PluginFunctions[name] = handler
 			RuntimeState.Unlock()
 
 			return &object.Null{}
 		},
-		HelpText: `function(name, handler) - Register a function for the plugin server
+		HelpText: `register_function(name, handler) - Register a function for the plugin server
 
 Parameters:
   name (str):    Function name exposed to plugin clients.
@@ -114,10 +114,10 @@ response on the client side.
 Example:
   import scriptling.runtime.plugin as plugin_srv
 
-  plugin_srv.function("greet", "handlers.greet")`,
+  plugin_srv.register_function("greet", "handlers.greet")`,
 	},
 
-	"constant": {
+	"register_constant": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if err := errors.MinArgs(args, 2); err != nil {
 				return err
@@ -130,14 +130,14 @@ Example:
 
 			RuntimeState.Lock()
 			if RuntimeState.ServerStarted {
-				fmt.Fprintf(os.Stderr, "warning: runtime.plugin.constant %q registered after start_server() — constant will not be served\n", name)
+				fmt.Fprintf(os.Stderr, "warning: runtime.plugin.register_constant %q registered after start_server() — constant will not be served\n", name)
 			}
 			RuntimeState.PluginConstants[name] = args[1]
 			RuntimeState.Unlock()
 
 			return &object.Null{}
 		},
-		HelpText: `constant(name, value) - Register a constant exported by the plugin server
+		HelpText: `register_constant(name, value) - Register a constant exported by the plugin server
 
 Parameters:
   name (str):  Constant name exposed to plugin clients.
@@ -150,11 +150,11 @@ directly as attributes of the plugin library.
 Example:
   import scriptling.runtime.plugin as plugin_srv
 
-  plugin_srv.constant("VERSION", "1.0.0")
-  plugin_srv.constant("MAX_RETRIES", 5)`,
+  plugin_srv.register_constant("VERSION", "1.0.0")
+  plugin_srv.register_constant("MAX_RETRIES", 5)`,
 	},
 
-	"class": {
+	"register_class": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if err := errors.MinArgs(args, 1); err != nil {
 				return err
@@ -168,25 +168,23 @@ Example:
 			// Derive the exposed class name from the last segment of the handler ref.
 			// "mymodule.Config" → "Config"
 			name := handler
-			if idx := len(handler) - 1; idx >= 0 {
-				for i := len(handler) - 1; i >= 0; i-- {
-					if handler[i] == '.' {
-						name = handler[i+1:]
-						break
-					}
+			for i := len(handler) - 1; i >= 0; i-- {
+				if handler[i] == '.' {
+					name = handler[i+1:]
+					break
 				}
 			}
 
 			RuntimeState.Lock()
 			if RuntimeState.ServerStarted {
-				fmt.Fprintf(os.Stderr, "warning: runtime.plugin.class %q registered after start_server() — class will not be served\n", name)
+				fmt.Fprintf(os.Stderr, "warning: runtime.plugin.register_class %q registered after start_server() — class will not be served\n", name)
 			}
 			RuntimeState.PluginClasses[name] = handler
 			RuntimeState.Unlock()
 
 			return &object.Null{}
 		},
-		HelpText: `class(handler) - Register a class exported by the plugin server
+		HelpText: `register_class(handler) - Register a class exported by the plugin server
 
 Parameters:
   handler (str): Class as "library.ClassName" string. The exposed class name is
@@ -200,7 +198,7 @@ handle that behaves like a local object.
 Example:
   import scriptling.runtime.plugin as plugin_srv
 
-  plugin_srv.class("handlers.Config")`,
+  plugin_srv.register_class("handlers.Config")`,
 	},
 }, nil, "Scriptling plugin server — declare this script as a plugin peer with full handshake support")
 

@@ -206,7 +206,7 @@ func TestPluginServerHandshakeAndCall(t *testing.T) {
 import scriptling.runtime.plugin as rp
 import scriptling.runtime as runtime
 rp.serve("testplugin", "1.0", "Test plugin")
-rp.function("add", "plugmod.add")
+rp.register_function("add", "plugmod.add")
 runtime.start_server(wait=False)
 while runtime.server_running():
     yield_now()
@@ -308,7 +308,7 @@ func TestPluginServerHTTP(t *testing.T) {
 import scriptling.runtime.plugin as rp
 import scriptling.runtime as runtime
 rp.serve("testplugin", "1.0", "Test plugin")
-rp.function("add", "plugmod.add")
+rp.register_function("add", "plugmod.add")
 runtime.start_server(wait=False)
 while runtime.server_running():
     yield_now()
@@ -370,7 +370,7 @@ func TestPluginServerStdioCallback(t *testing.T) {
 import scriptling.runtime.plugin as rp
 import scriptling.runtime as runtime
 rp.serve("cbplugin", "1.0", "Callback test plugin")
-rp.function("apply", "cbmod.apply")
+rp.register_function("apply", "cbmod.apply")
 runtime.start_server(wait=False)
 while runtime.server_running():
     yield_now()
@@ -460,10 +460,10 @@ func TestPluginServerHTTPConstantsAndClasses(t *testing.T) {
 import scriptling.runtime.plugin as rp
 import scriptling.runtime as runtime
 rp.serve("testplugin", "1.0", "Test plugin")
-rp.function("add", "plugmod.add")
-rp.constant("VERSION", "1.0.0")
-rp.constant("LIMIT", 100)
-rp.class("plugmod.Config")
+rp.register_function("add", "plugmod.add")
+rp.register_constant("VERSION", "1.0.0")
+rp.register_constant("LIMIT", 100)
+rp.register_class("plugmod.Config")
 runtime.start_server(wait=False)
 while runtime.server_running():
     yield_now()
@@ -537,7 +537,7 @@ func TestPluginServerHTTPParallel(t *testing.T) {
 import scriptling.runtime.plugin as rp
 import scriptling.runtime as runtime
 rp.serve("pplugin", "1.0", "Parallel test plugin")
-rp.function("add", "plugmod.add")
+rp.register_function("add", "plugmod.add")
 runtime.start_server(wait=False)
 while runtime.server_running():
     yield_now()
@@ -606,7 +606,7 @@ func TestPluginServerStdioParallel(t *testing.T) {
 import scriptling.runtime.plugin as rp
 import scriptling.runtime as runtime
 rp.serve("splugin", "1.0", "Stdio parallel test plugin")
-rp.function("add", "plugmod.add")
+rp.register_function("add", "plugmod.add")
 runtime.start_server(wait=False)
 while runtime.server_running():
     yield_now()
