@@ -161,7 +161,9 @@ func buildConnObject(c *netConn, helpText string) *object.Builtin {
 					if dataErr != nil {
 						return dataErr
 					}
-					if sendErr := c.send(data); sendErr != nil {
+					var sendErr error
+					object.RunBlocking(ctx, func() { sendErr = c.send(data) })
+					if sendErr != nil {
 						return errors.NewError("send failed: %s", sendErr.Error())
 					}
 					return &object.Null{}
@@ -179,7 +181,11 @@ Parameters:
 							timeout = timeoutFloat
 						}
 					}
-					data, err := c.receive(time.Duration(timeout * float64(time.Second)))
+					var data []byte
+					var err error
+					object.RunBlocking(ctx, func() {
+						data, err = c.receive(time.Duration(timeout * float64(time.Second)))
+					})
 					if err != nil {
 						return errors.NewError("receive failed: %s", err.Error())
 					}
@@ -299,7 +305,12 @@ func buildUDPListenerObject(l *udpListener) *object.Builtin {
 							timeout = timeoutFloat
 						}
 					}
-					data, src, err := l.receive(time.Duration(timeout * float64(time.Second)))
+					var data []byte
+					var src *net.UDPAddr
+					var err error
+					object.RunBlocking(ctx, func() {
+						data, src, err = l.receive(time.Duration(timeout * float64(time.Second)))
+					})
 					if err != nil {
 						return errors.NewError("receive failed: %s", err.Error())
 					}
@@ -333,9 +344,11 @@ Returns:
 					if resolveErr != nil {
 						return errors.NewError("invalid address: %s", resolveErr.Error())
 					}
-					if err := l.sendTo(raddr, data); err != nil {
-						return errors.NewError("send failed: %s", err.Error())
-					}
+				var sendErr error
+				object.RunBlocking(ctx, func() { sendErr = l.sendTo(raddr, data) })
+				if sendErr != nil {
+					return errors.NewError("send failed: %s", sendErr.Error())
+				}
 					return &object.Null{}
 				},
 				HelpText: `send_to(address, message) - Send a message to a specific address
@@ -403,7 +416,11 @@ func buildTCPListenerObject(l *tcpListener) *object.Builtin {
 							timeout = timeoutFloat
 						}
 					}
-					conn, acceptErr := l.accept(time.Duration(timeout * float64(time.Second)))
+					var conn net.Conn
+					var acceptErr error
+					object.RunBlocking(ctx, func() {
+						conn, acceptErr = l.accept(time.Duration(timeout * float64(time.Second)))
+					})
 					if acceptErr != nil {
 						if netErr, ok := acceptErr.(net.Error); ok && netErr.Timeout() {
 							return &object.Null{}
@@ -474,12 +491,14 @@ func buildLibrary() *object.Library {
 				addr := fmt.Sprintf("%s:%d", host, port)
 
 				switch protocol {
-				case "udp":
-					dialer := &net.Dialer{Timeout: time.Duration(timeout * float64(time.Second))}
-					conn, dialErr := dialer.DialContext(ctx, "udp", addr)
-					if dialErr != nil {
-						return errors.NewError("connect failed: %s", dialErr.Error())
-					}
+			case "udp":
+				dialer := &net.Dialer{Timeout: time.Duration(timeout * float64(time.Second))}
+				var conn net.Conn
+				var dialErr error
+				object.RunBlocking(ctx, func() { conn, dialErr = dialer.DialContext(ctx, "udp", addr) })
+				if dialErr != nil {
+					return errors.NewError("connect failed: %s", dialErr.Error())
+				}
 					c := &netConn{
 						conn:       conn,
 						localAddr:  conn.LocalAddr().String(),
@@ -487,12 +506,14 @@ func buildLibrary() *object.Library {
 					}
 					return buildConnObject(c, "UDP connection object")
 
-				case "tcp":
-					dialer := &net.Dialer{Timeout: time.Duration(timeout * float64(time.Second))}
-					conn, dialErr := dialer.DialContext(ctx, "tcp", addr)
-					if dialErr != nil {
-						return errors.NewError("connect failed: %s", dialErr.Error())
-					}
+			case "tcp":
+				dialer := &net.Dialer{Timeout: time.Duration(timeout * float64(time.Second))}
+				var conn net.Conn
+				var dialErr error
+				object.RunBlocking(ctx, func() { conn, dialErr = dialer.DialContext(ctx, "tcp", addr) })
+				if dialErr != nil {
+					return errors.NewError("connect failed: %s", dialErr.Error())
+				}
 					c := &netConn{
 						conn:       conn,
 						tcp:        true,

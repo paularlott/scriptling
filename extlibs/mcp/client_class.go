@@ -351,15 +351,12 @@ func executeDiscoveredMethod(self *object.Instance, ctx context.Context, name st
 
 // createClientInstance creates a new scriptling Instance wrapping an MCP client
 func createClientInstance(client *mcplib.Client) *object.Instance {
-	return &object.Instance{
-		Class: GetMCPClientClass(),
-		Fields: map[string]object.Object{
-			"_client": &object.ClientWrapper{
-				TypeName: "MCPClient",
-				Client:   &ClientInstance{client: client},
-			},
+	return object.NewInstanceWithFields(GetMCPClientClass(), map[string]object.Object{
+		"_client": &object.ClientWrapper{
+			TypeName: "MCPClient",
+			Client:   &ClientInstance{client: client},
 		},
-	}
+	})
 }
 
 // convertToolsToList converts a slice of MCP tools to a scriptling List

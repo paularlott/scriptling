@@ -31,7 +31,7 @@ var ResponseClass = &object.Class{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if err := errors.ExactArgs(args, 1); err != nil { return err }
 				if instance, ok := args[0].(*object.Instance); ok {
-					if body, err := instance.Fields["body"].AsString(); err == nil {
+					if body, err := instance.Field("body").AsString(); err == nil {
 						return conversion.MustParseJSON(body)
 					}
 				}
@@ -43,7 +43,7 @@ var ResponseClass = &object.Class{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if err := errors.ExactArgs(args, 1); err != nil { return err }
 				if instance, ok := args[0].(*object.Instance); ok {
-					if statusCode, err := instance.Fields["status_code"].AsInt(); err == nil {
+					if statusCode, err := instance.Field("status_code").AsInt(); err == nil {
 						if statusCode >= 400 {
 							kind := "Client"
 							if statusCode >= 500 {
@@ -72,16 +72,13 @@ func createResponseInstance(statusCode int, headers map[string]string, body []by
 		headerDict.SetByString(k, object.NewString(v))
 	}
 
-	return &object.Instance{
-		Class: ResponseClass,
-		Fields: map[string]object.Object{
+	return object.NewInstanceWithFields(ResponseClass, map[string]object.Object{
 			"status_code": object.NewInteger(int64(statusCode)),
 			"text":        object.NewString(string(body)),
 			"headers":     headerDict,
 			"body":        object.NewString(string(body)),
 			"url":         object.NewString(url),
-		},
-	}
+		})
 }
 
 // Exception types for requests library
@@ -418,24 +415,33 @@ Returns:
 			sem := make(chan struct{}, maxParallel)
 			var wg sync.WaitGroup
 
-			for i, reqObj := range requestList {
-				reqDict, dictErr := reqObj.AsDict()
-				if dictErr != nil {
-					results[i] = errors.NewTypeError("DICT", reqObj.Type().String())
-					continue
+			// Workers do pure-Go HTTP, not script — detach the environment from
+			// their context so the blocking HTTP call inside executeRequest does
+			// not try to release an interpreter lock the worker doesn't hold.
+			workerCtx := context.WithValue(ctx, "scriptling-env", (*object.Environment)(nil))
+
+			// Release this goroutine's interpreter lock while the parallel batch
+			// runs, so other script goroutines can proceed meanwhile.
+			object.RunBlocking(ctx, func() {
+				for i, reqObj := range requestList {
+					reqDict, dictErr := reqObj.AsDict()
+					if dictErr != nil {
+						results[i] = errors.NewTypeError("DICT", reqObj.Type().String())
+						continue
+					}
+
+					wg.Add(1)
+					go func(idx int, rd map[string]object.Object) {
+						defer wg.Done()
+						sem <- struct{}{}
+						defer func() { <-sem }()
+
+						results[idx] = executeParallelRequest(workerCtx, rd)
+					}(i, reqDict)
 				}
 
-				wg.Add(1)
-				go func(idx int, rd map[string]object.Object) {
-					defer wg.Done()
-					sem <- struct{}{}
-					defer func() { <-sem }()
-
-					results[idx] = executeParallelRequest(ctx, rd)
-				}(i, reqDict)
-			}
-
-			wg.Wait()
+				wg.Wait()
+			})
 			return &object.List{Elements: results}
 		},
 		HelpText: `parallel(requests, max_parallel=4) - Execute multiple HTTP requests in parallel
@@ -518,7 +524,8 @@ func httpRequestWithContext(parentCtx context.Context, method, url, body string,
 		req.SetBasicAuth(user, pass)
 	}
 
-	resp, err := pool.GetHTTPClient().Do(req)
+	var resp *http.Response
+	object.RunBlocking(ctx, func() { resp, err = pool.GetHTTPClient().Do(req) })
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			return errors.NewError("http timeout after %d seconds", timeoutSecs)

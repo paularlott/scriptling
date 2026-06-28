@@ -1,6 +1,9 @@
 package resolve
 
-import "net"
+import (
+	"net"
+	"sync"
+)
 
 // Resolver defines the interface for DNS resolution.
 // Each consumer must provide its own implementation when calling Register.
@@ -18,16 +21,26 @@ type Resolver interface {
 
 // globalResolver is the resolver used by the scriptling library functions.
 // It is set by Register and must not be nil when library functions are called.
-var globalResolver Resolver
+// It is guarded by resolverMu because the servers call Register once per
+// request from many goroutines (setupScriptling runs per connection).
+var (
+	resolverMu    sync.RWMutex
+	globalResolver Resolver
+)
 
 // SetResolver replaces the global resolver.
 func SetResolver(r Resolver) {
 	if r != nil {
+		resolverMu.Lock()
 		globalResolver = r
+		resolverMu.Unlock()
 	}
 }
 
-// GetResolver returns the current global resolver.
+// GetResolver returns a snapshot of the current global resolver.
 func GetResolver() Resolver {
-	return globalResolver
+	resolverMu.RLock()
+	r := globalResolver
+	resolverMu.RUnlock()
+	return r
 }

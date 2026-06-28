@@ -48,15 +48,21 @@ Returns the value of a performance counter in fractional seconds.`,
 			timer := time.NewTimer(time.Duration(seconds * float64(time.Second)))
 			defer timer.Stop()
 
-			select {
-			case <-ctx.Done():
-				if ctx.Err() == context.DeadlineExceeded {
-					return errors.NewTimeoutError()
+			// Release the interpreter lock while blocked so other goroutines
+			// (e.g. runtime.background shared threads) can run script code.
+			var result object.Object = &object.Null{}
+			object.RunBlocking(ctx, func() {
+				select {
+				case <-ctx.Done():
+					if ctx.Err() == context.DeadlineExceeded {
+						result = errors.NewTimeoutError()
+					} else {
+						result = errors.NewCancelledError()
+					}
+				case <-timer.C:
 				}
-				return errors.NewCancelledError()
-			case <-timer.C:
-				return &object.Null{}
-			}
+			})
+			return result
 		},
 		HelpText: `sleep(seconds) - Sleep for specified seconds
 

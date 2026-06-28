@@ -136,10 +136,7 @@ func TestObjectToValueErrors(t *testing.T) {
 	})
 
 	t.Run("non-plugin instance", func(t *testing.T) {
-		inst := &object.Instance{
-			Class:  &object.Class{Name: "Local"},
-			Fields: map[string]object.Object{},
-		}
+		inst := object.NewInstanceWithFields(&object.Class{Name: "Local"}, nil)
 		_, err := objectToValue(inst)
 		if err == nil {
 			t.Fatal("expected error for non-plugin instance")
@@ -166,14 +163,11 @@ func TestObjectToValueErrors(t *testing.T) {
 }
 
 func TestObjectToValueRemoteInstance(t *testing.T) {
-	inst := &object.Instance{
-		Class:  &object.Class{Name: "Config"},
-		Fields: map[string]object.Object{},
-	}
-	inst.Fields[remoteFieldName] = &object.ClientWrapper{
+	inst := object.NewInstanceWithFields(&object.Class{Name: "Config"}, nil)
+	inst.SetField(remoteFieldName, &object.ClientWrapper{
 		TypeName: "Config",
 		Client:   &remoteObject{Library: "plugin.test", Class: "Config", ID: "42"},
-	}
+	})
 
 	v, err := objectToValue(inst)
 	if err != nil {
@@ -384,16 +378,16 @@ func TestRemoteFromInstance(t *testing.T) {
 		}
 	})
 	t.Run("no remote field", func(t *testing.T) {
-		inst := &object.Instance{Fields: map[string]object.Object{}}
+		inst := object.NewInstanceWithFields(nil, nil)
 		_, ok := remoteFromInstance(inst)
 		if ok {
 			t.Error("expected false for missing field")
 		}
 	})
 	t.Run("wrong wrapper type", func(t *testing.T) {
-		inst := &object.Instance{Fields: map[string]object.Object{
+		inst := object.NewInstanceWithFields(nil, map[string]object.Object{
 			remoteFieldName: &object.ClientWrapper{TypeName: "X", Client: "not a remoteObject"},
-		}}
+		})
 		_, ok := remoteFromInstance(inst)
 		if ok {
 			t.Error("expected false for wrong wrapper client type")
@@ -401,9 +395,9 @@ func TestRemoteFromInstance(t *testing.T) {
 	})
 	t.Run("success", func(t *testing.T) {
 		remote := &remoteObject{Library: "test", Class: "C", ID: "1"}
-		inst := &object.Instance{Fields: map[string]object.Object{
+		inst := object.NewInstanceWithFields(nil, map[string]object.Object{
 			remoteFieldName: &object.ClientWrapper{TypeName: "C", Client: remote},
-		}}
+		})
 		got, ok := remoteFromInstance(inst)
 		if !ok {
 			t.Fatal("expected true")

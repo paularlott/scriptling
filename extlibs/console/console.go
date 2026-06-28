@@ -23,18 +23,29 @@ var (
 
 // tuiWrapper holds the *tui.TUI and its callbacks.
 // Internal only — not exposed to the scripting language.
+//
+// All script handlers (submit, escape, slash commands) are executed on a single
+// dedicated goroutine drained by runLoop, fed through enqueue. The TUI's own
+// input goroutine only enqueues jobs, so script code — and the interpreter
+// environment it touches — is never run on more than one goroutine at a time.
 type tuiWrapper struct {
 	t        *tui.TUI
 	escapeCb func()
 	submitCb func(context.Context, string)
 	mu       sync.Mutex
 	cancel   context.CancelFunc
-	prevDone chan struct{}
+	gen      uint64 // bumped per submit/escape; guards stale cancel clears
+	jobs     chan func()
+	quit     chan struct{}
+	quitOnce sync.Once
 }
 
 func newTUIWrapper() *tuiWrapper {
-	w := &tuiWrapper{prevDone: make(chan struct{})}
-	close(w.prevDone)
+	w := &tuiWrapper{
+		jobs: make(chan func(), 64),
+		quit: make(chan struct{}),
+	}
+	go w.runLoop()
 
 	var t *tui.TUI
 	t = tui.New(tui.Config{
@@ -46,11 +57,13 @@ func newTUIWrapper() *tuiWrapper {
 			w.mu.Lock()
 			if w.cancel != nil {
 				w.cancel()
+				w.cancel = nil
 			}
+			w.gen++
 			cb := w.escapeCb
 			w.mu.Unlock()
 			if cb != nil {
-				go cb()
+				w.enqueue(cb)
 			}
 		},
 		OnSubmit: func(line string) {
@@ -58,38 +71,62 @@ func newTUIWrapper() *tuiWrapper {
 			w.mu.Lock()
 			scb := w.submitCb
 			ecb := w.escapeCb
+			// Interrupt a still-running handler and notify it via on_escape.
 			if w.cancel != nil {
 				w.cancel()
+				w.cancel = nil
 				if ecb != nil {
-					go ecb()
+					w.enqueue(ecb)
 				}
 			}
+			w.gen++
+			myGen := w.gen
 			ctx, c := context.WithCancel(context.Background())
 			w.cancel = c
-			waitFor := w.prevDone
-			nextDone := make(chan struct{})
-			w.prevDone = nextDone
 			w.mu.Unlock()
 			if scb == nil {
 				c()
-				close(nextDone)
 				return
 			}
-			go func() {
-				defer func() {
-					w.mu.Lock()
-					w.cancel = nil
-					w.mu.Unlock()
-					c()
-					close(nextDone)
-				}()
-				<-waitFor
+			w.enqueue(func() {
 				scb(ctx, line)
-			}()
+				c()
+				w.mu.Lock()
+				if w.gen == myGen {
+					w.cancel = nil
+				}
+				w.mu.Unlock()
+			})
 		},
 	})
 	w.t = t
 	return w
+}
+
+// runLoop executes queued script handlers one at a time on a single goroutine.
+func (w *tuiWrapper) runLoop() {
+	for {
+		select {
+		case fn := <-w.jobs:
+			fn()
+		case <-w.quit:
+			return
+		}
+	}
+}
+
+// enqueue schedules fn to run on the handler goroutine. Returns without running
+// fn if the wrapper has been stopped. Safe to call from the TUI input goroutine.
+func (w *tuiWrapper) enqueue(fn func()) {
+	select {
+	case w.jobs <- fn:
+	case <-w.quit:
+	}
+}
+
+// stop terminates the handler goroutine. Idempotent.
+func (w *tuiWrapper) stop() {
+	w.quitOnce.Do(func() { close(w.quit) })
 }
 
 // TUI returns the shared singleton TUI instance.
@@ -112,6 +149,9 @@ func SetSubmit(fn func(ctx context.Context, text string)) {
 
 // ResetConsole resets the singleton for testing.
 func ResetConsole() {
+	if consoleW != nil {
+		consoleW.stop()
+	}
 	consoleOnce = sync.Once{}
 	consoleTUI = nil
 	consoleW = nil
@@ -353,10 +393,15 @@ var moduleBuiltins = map[string]*object.Builtin{
 				Name:        name,
 				Description: desc,
 				Handler: func(cmdArgs string) {
-					if eval != nil {
+					if eval == nil {
+						return
+					}
+					// Run on the single handler goroutine so command handlers
+					// never run concurrently with submit/escape handlers.
+					consoleW.enqueue(func() {
 						eval.CallObjectFunction(context.Background(), fn,
 							[]object.Object{object.NewString(cmdArgs)}, nil, env)
-					}
+					})
 				},
 			})
 			return &object.Null{}
@@ -461,8 +506,16 @@ var moduleBuiltins = map[string]*object.Builtin{
 	},
 	"run": &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := TUI().Run(context.Background()); err != nil {
-				return errors.NewError("console.run: %s", err.Error())
+			// Release the interpreter lock while the event loop blocks, so the
+			// handler goroutine can acquire it to run on_submit/on_escape/command
+			// callbacks. Without this the loop would hold the lock and deadlock
+			// against its own handlers.
+			var runErr error
+			envFromCtx(ctx).RunUnlocked(func() {
+				runErr = TUI().Run(context.Background())
+			})
+			if runErr != nil {
+				return errors.NewError("console.run: %s", runErr.Error())
 			}
 			return &object.Null{}
 		},
@@ -557,20 +610,12 @@ func (pw *panelWrapper) panelClear() {
 func newPanelInstance(nativePanel *tui.Panel, t *tui.TUI) *object.Instance {
 	pw := &panelWrapper{p: nativePanel, t: t}
 	name := nativePanel.Name()
-	return &object.Instance{
-		Class:      panelClass,
-		Fields:     map[string]object.Object{"__str_repr__": object.NewString("<Panel: " + name + ">")},
-		NativeData: pw,
-	}
+	return object.NewInstanceWithData(panelClass, map[string]object.Object{"__str_repr__": object.NewString("<Panel: " + name + ">")}, pw)
 }
 
 func newMainPanelInstance(t *tui.TUI) *object.Instance {
 	pw := &panelWrapper{p: nil, t: t}
-	return &object.Instance{
-		Class:      panelClass,
-		Fields:     map[string]object.Object{"__str_repr__": object.NewString("<Panel: main>")},
-		NativeData: pw,
-	}
+	return object.NewInstanceWithData(panelClass, map[string]object.Object{"__str_repr__": object.NewString("<Panel: main>")}, pw)
 }
 
 func panelWrapperFrom(args []object.Object) (*panelWrapper, object.Object) {

@@ -1,6 +1,7 @@
 package extlibs
 
 import (
+	"context"
 	"io"
 	"os"
 	"path/filepath"
@@ -59,44 +60,52 @@ func checkPathSecurity(config fssecurity.Config, path string) object.Object {
 	return nil
 }
 
-func readFileBytes(config fssecurity.Config, path string) ([]byte, object.Object) {
+func readFileBytes(ctx context.Context, config fssecurity.Config, path string) ([]byte, object.Object) {
 	if err := checkPathSecurity(config, path); err != nil {
 		return nil, err
 	}
-	content, err := os.ReadFile(path)
+	var content []byte
+	var err error
+	object.RunBlocking(ctx, func() { content, err = os.ReadFile(path) })
 	if err != nil {
 		return nil, errors.NewError("cannot read file: %s", err.Error())
 	}
 	return content, nil
 }
 
-func writeFileBytes(config fssecurity.Config, path string, data []byte, mode os.FileMode) object.Object {
+func writeFileBytes(ctx context.Context, config fssecurity.Config, path string, data []byte, mode os.FileMode) object.Object {
 	if err := checkPathSecurity(config, path); err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, data, mode); err != nil {
+	var err error
+	object.RunBlocking(ctx, func() { err = os.WriteFile(path, data, mode) })
+	if err != nil {
 		return errors.NewError("cannot write file: %s", err.Error())
 	}
 	return &object.Null{}
 }
 
-func appendFileBytes(config fssecurity.Config, path string, data []byte, mode os.FileMode) object.Object {
+func appendFileBytes(ctx context.Context, config fssecurity.Config, path string, data []byte, mode os.FileMode) object.Object {
 	if err := checkPathSecurity(config, path); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, mode)
+	var err error
+	object.RunBlocking(ctx, func() {
+		var f *os.File
+		f, err = os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, mode)
+		if err != nil {
+			return
+		}
+		defer f.Close()
+		_, err = f.Write(data)
+	})
 	if err != nil {
-		return errors.NewError("cannot open file for append: %s", err.Error())
-	}
-	defer f.Close()
-
-	if _, err := f.Write(data); err != nil {
 		return errors.NewError("cannot append to file: %s", err.Error())
 	}
 	return &object.Null{}
 }
 
-func readFileBytesAt(config fssecurity.Config, path string, offset, length, maxLength int64) ([]byte, object.Object) {
+func readFileBytesAt(ctx context.Context, config fssecurity.Config, path string, offset, length, maxLength int64) ([]byte, object.Object) {
 	if offset < 0 {
 		return nil, errors.NewError("read_bytes: offset must be non-negative")
 	}
@@ -110,21 +119,26 @@ func readFileBytesAt(config fssecurity.Config, path string, offset, length, maxL
 		return nil, err
 	}
 
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, errors.NewError("read_bytes: cannot open file: %s", err.Error())
-	}
-	defer file.Close()
-
-	buf := make([]byte, length)
-	n, err := file.ReadAt(buf, offset)
+	var buf []byte
+	var n int
+	var err error
+	object.RunBlocking(ctx, func() {
+		var file *os.File
+		file, err = os.Open(path)
+		if err != nil {
+			return
+		}
+		defer file.Close()
+		buf = make([]byte, length)
+		n, err = file.ReadAt(buf, offset)
+	})
 	if err != nil && n == 0 {
 		return nil, errors.NewError("read_bytes: cannot read file: %s", err.Error())
 	}
 	return buf[:n], nil
 }
 
-func writeFileBytesAt(config fssecurity.Config, path string, offset int64, data []byte, mode os.FileMode) object.Object {
+func writeFileBytesAt(ctx context.Context, config fssecurity.Config, path string, offset int64, data []byte, mode os.FileMode) object.Object {
 	if offset < 0 {
 		return errors.NewError("write_bytes: offset must be non-negative")
 	}
@@ -132,13 +146,17 @@ func writeFileBytesAt(config fssecurity.Config, path string, offset int64, data 
 		return err
 	}
 
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, mode)
+	var err error
+	object.RunBlocking(ctx, func() {
+		var file *os.File
+		file, err = os.OpenFile(path, os.O_CREATE|os.O_RDWR, mode)
+		if err != nil {
+			return
+		}
+		defer file.Close()
+		_, err = file.WriteAt(data, offset)
+	})
 	if err != nil {
-		return errors.NewError("write_bytes: cannot open file: %s", err.Error())
-	}
-	defer file.Close()
-
-	if _, err := file.WriteAt(data, offset); err != nil {
 		return errors.NewError("write_bytes: cannot write to file: %s", err.Error())
 	}
 	return &object.Null{}

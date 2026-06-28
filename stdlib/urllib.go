@@ -21,11 +21,11 @@ var ParseResultClass = &object.Class{
 				result := args[0].(*object.Instance)
 
 				// Reconstruct URL from components
-				scheme, _ := result.Fields["scheme"].(*object.String)
-				netloc, _ := result.Fields["netloc"].(*object.String)
-				path, _ := result.Fields["path"].(*object.String)
-				query, _ := result.Fields["query"].(*object.String)
-				fragment, _ := result.Fields["fragment"].(*object.String)
+				scheme, _ := result.Field("scheme").(*object.String)
+				netloc, _ := result.Field("netloc").(*object.String)
+				path, _ := result.Field("path").(*object.String)
+				query, _ := result.Field("query").(*object.String)
+				fragment, _ := result.Field("fragment").(*object.String)
 
 				url := scheme.StringValue() + "://"
 				if netloc.StringValue() != "" {
@@ -48,17 +48,14 @@ var ParseResultClass = &object.Class{
 
 // createParseResultInstance creates a new ParseResult instance
 func createParseResultInstance(scheme, netloc, path, params, query, fragment string) *object.Instance {
-	return &object.Instance{
-		Class: ParseResultClass,
-		Fields: map[string]object.Object{
+	return object.NewInstanceWithFields(ParseResultClass, map[string]object.Object{
 			"scheme":   object.NewString(scheme),
 			"netloc":   object.NewString(netloc),
 			"path":     object.NewString(path),
 			"params":   object.NewString(params),
 			"query":    object.NewString(query),
 			"fragment": object.NewString(fragment),
-		},
-	}
+		})
 }
 
 // URLParseLibrary implements Python's urllib.parse module
@@ -201,27 +198,27 @@ Access components as attributes: result.scheme, result.netloc, etc. Use result.g
 				// Handle ParseResult instance
 				if arg.Class == ParseResultClass {
 					u := &url.URL{}
-					if value, ok := arg.Fields["scheme"]; ok {
+					if value, ok := arg.GetField("scheme"); ok {
 						if str, err := value.AsString(); err == nil {
 							u.Scheme = str
 						}
 					}
-					if value, ok := arg.Fields["netloc"]; ok {
+					if value, ok := arg.GetField("netloc"); ok {
 						if str, err := value.AsString(); err == nil {
 							u.Host = str
 						}
 					}
-					if value, ok := arg.Fields["path"]; ok {
+					if value, ok := arg.GetField("path"); ok {
 						if str, err := value.AsString(); err == nil {
 							u.Path = str
 						}
 					}
-					if value, ok := arg.Fields["query"]; ok {
+					if value, ok := arg.GetField("query"); ok {
 						if str, err := value.AsString(); err == nil {
 							u.RawQuery = str
 						}
 					}
-					if value, ok := arg.Fields["fragment"]; ok {
+					if value, ok := arg.GetField("fragment"); ok {
 						if str, err := value.AsString(); err == nil {
 							u.Fragment = str
 						}

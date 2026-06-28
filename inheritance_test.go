@@ -23,7 +23,7 @@ func TestInheritance_ChainLookup(t *testing.T) {
 						self := args[0].(*object.Instance)
 						if len(args) > 1 {
 							name, _ := args[1].AsString()
-							self.Fields["name"] = object.NewString(name)
+							self.SetField("name", object.NewString(name))
 						}
 						return &object.Null{}
 					},
@@ -32,7 +32,7 @@ func TestInheritance_ChainLookup(t *testing.T) {
 				"speak": &object.Builtin{
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 						self := args[0].(*object.Instance)
-						name, _ := self.Fields["name"].AsString()
+						name, _ := self.Field("name").AsString()
 						return object.NewString(name + " makes a sound")
 					},
 					HelpText: "speak() - Make the animal speak",
@@ -40,7 +40,7 @@ func TestInheritance_ChainLookup(t *testing.T) {
 				"sleep": &object.Builtin{
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 						self := args[0].(*object.Instance)
-						name, _ := self.Fields["name"].AsString()
+						name, _ := self.Field("name").AsString()
 						return object.NewString(name + " is sleeping")
 					},
 					HelpText: "sleep() - Make the animal sleep",
@@ -59,7 +59,7 @@ func TestInheritance_ChainLookup(t *testing.T) {
 						self := args[0].(*object.Instance)
 						if len(args) > 1 {
 							name, _ := args[1].AsString()
-							self.Fields["name"] = object.NewString(name)
+							self.SetField("name", object.NewString(name))
 						}
 						return &object.Null{}
 					},
@@ -68,7 +68,7 @@ func TestInheritance_ChainLookup(t *testing.T) {
 				"bark": &object.Builtin{
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 						self := args[0].(*object.Instance)
-						name, _ := self.Fields["name"].AsString()
+						name, _ := self.Field("name").AsString()
 						return object.NewString(name + " barks loudly")
 					},
 					HelpText: "bark() - Make the dog bark",
@@ -86,7 +86,7 @@ func TestInheritance_ChainLookup(t *testing.T) {
 						self := args[0].(*object.Instance)
 						if len(args) > 1 {
 							name, _ := args[1].AsString()
-							self.Fields["name"] = object.NewString(name)
+							self.SetField("name", object.NewString(name))
 						}
 						return &object.Null{}
 					},
@@ -95,7 +95,7 @@ func TestInheritance_ChainLookup(t *testing.T) {
 				"whimper": &object.Builtin{
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 						self := args[0].(*object.Instance)
-						name, _ := self.Fields["name"].AsString()
+						name, _ := self.Field("name").AsString()
 						return object.NewString(name + " whines softly")
 					},
 					HelpText: "whimper() - Make the puppy whine",
@@ -374,10 +374,10 @@ func TestInheritance_BuilderAPI(t *testing.T) {
 		// Create parent class using Builder API
 		parentBuilder := object.NewClassBuilder("Animal")
 		parentBuilder.Method("__init__", func(self *object.Instance, name string) {
-			self.Fields["name"] = object.NewString(name)
+			self.SetField("name", object.NewString(name))
 		})
 		parentBuilder.Method("speak", func(self *object.Instance) string {
-			name, _ := self.Fields["name"].AsString()
+			name, _ := self.Field("name").AsString()
 			return name + " makes a sound"
 		})
 		parentClass := parentBuilder.Build()
@@ -386,10 +386,10 @@ func TestInheritance_BuilderAPI(t *testing.T) {
 		childBuilder := object.NewClassBuilder("Dog")
 		childBuilder.BaseClass(parentClass)
 		childBuilder.Method("__init__", func(self *object.Instance, name string) {
-			self.Fields["name"] = object.NewString(name)
+			self.SetField("name", object.NewString(name))
 		})
 		childBuilder.Method("bark", func(self *object.Instance) string {
-			name, _ := self.Fields["name"].AsString()
+			name, _ := self.Field("name").AsString()
 			return name + " barks loudly"
 		})
 		childClass := childBuilder.Build()
@@ -494,14 +494,14 @@ func TestInheritance_Super(t *testing.T) {
 				"__init__": &object.Builtin{
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 						self := args[0].(*object.Instance)
-						self.Fields["value"] = object.NewInteger(10)
+						self.SetField("value", object.NewInteger(10))
 						return &object.Null{}
 					},
 				},
 				"get_value": &object.Builtin{
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 						self := args[0].(*object.Instance)
-						return self.Fields["value"]
+						return self.Field("value")
 					},
 				},
 			},
@@ -598,10 +598,10 @@ result = obj.greet()
 		// Create parent class using Builder API
 		parentBuilder := object.NewClassBuilder("Parent")
 		parentBuilder.Method("__init__", func(self *object.Instance) {
-			self.Fields["base"] = object.NewInteger(100)
+			self.SetField("base", object.NewInteger(100))
 		})
 		parentBuilder.Method("get_base", func(self *object.Instance) int64 {
-			val, _ := self.Fields["base"].AsInt()
+			val, _ := self.Field("base").AsInt()
 			return val
 		})
 		parentClass := parentBuilder.Build()
@@ -646,7 +646,7 @@ func TestInheritance_ScriptInheritsFromGo(t *testing.T) {
 						self := args[0].(*object.Instance)
 						if len(args) > 1 {
 							name, _ := args[1].AsString()
-							self.Fields["name"] = object.NewString(name)
+							self.SetField("name", object.NewString(name))
 						}
 						return &object.Null{}
 					},
@@ -654,7 +654,7 @@ func TestInheritance_ScriptInheritsFromGo(t *testing.T) {
 				"speak": &object.Builtin{
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 						self := args[0].(*object.Instance)
-						name, _ := self.Fields["name"].AsString()
+						name, _ := self.Field("name").AsString()
 						return object.NewString(name + " makes a sound")
 					},
 				},
@@ -736,19 +736,19 @@ bark_result = dog.bark()
 		// Create a Go-defined class using Builder API
 		builder := object.NewClassBuilder("GoVehicle")
 		builder.Method("__init__", func(self *object.Instance, make string, model string) {
-			self.Fields["make"] = object.NewString(make)
-			self.Fields["model"] = object.NewString(model)
-			self.Fields["speed"] = object.NewInteger(0)
+			self.SetField("make", object.NewString(make))
+			self.SetField("model", object.NewString(model))
+			self.SetField("speed", object.NewInteger(0))
 		})
 		builder.Method("accelerate", func(self *object.Instance, amount int64) string {
-			speed, _ := self.Fields["speed"].AsInt()
-			self.Fields["speed"] = object.NewInteger(speed + amount)
-			make, _ := self.Fields["make"].AsString()
-			model, _ := self.Fields["model"].AsString()
+			speed, _ := self.Field("speed").AsInt()
+			self.SetField("speed", object.NewInteger(speed+amount))
+			make, _ := self.Field("make").AsString()
+			model, _ := self.Field("model").AsString()
 			return make + " " + model + " accelerated to " + string(rune(speed+amount)) + " mph"
 		})
 		builder.Method("get_speed", func(self *object.Instance) int64 {
-			speed, _ := self.Fields["speed"].AsInt()
+			speed, _ := self.Field("speed").AsInt()
 			return speed
 		})
 		goVehicle := builder.Build()

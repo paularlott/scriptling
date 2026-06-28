@@ -35,7 +35,7 @@ class Counter:
 		}
 
 		// Check the initial value
-		valueObj := inst.Fields["value"]
+		valueObj := inst.Field("value")
 		value, objErr := valueObj.AsInt()
 		if objErr != nil || value != 10 {
 			t.Errorf("expected value=10, got %v", value)
@@ -82,13 +82,13 @@ class Person:
 		}
 
 		inst := instance.(*object.Instance)
-		nameObj := inst.Fields["name"]
+		nameObj := inst.Field("name")
 		name, _ := nameObj.AsString()
 		if name != "Alice" {
 			t.Errorf("expected name=Alice, got %s", name)
 		}
 
-		ageObj := inst.Fields["age"]
+		ageObj := inst.Field("age")
 		age, _ := ageObj.AsInt()
 		if age != 30 {
 			t.Errorf("expected age=30, got %d", age)
@@ -116,7 +116,7 @@ class Simple:
 		}
 
 		inst := instance.(*object.Instance)
-		valueObj := inst.Fields["value"]
+		valueObj := inst.Field("value")
 		value, _ := valueObj.AsInt()
 		if value != 42 {
 			t.Errorf("expected value=42, got %d", value)

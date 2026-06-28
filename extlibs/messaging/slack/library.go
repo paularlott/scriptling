@@ -16,11 +16,7 @@ var slackClientClass = &object.Class{
 }
 
 func newClientInstance(c *slackClient, builtins map[string]*object.Builtin) *object.Instance {
-	inst := &object.Instance{
-		Class:      slackClientClass,
-		Fields:     map[string]object.Object{},
-		NativeData: c,
-	}
+	inst := object.NewInstanceWithData(slackClientClass, nil, c)
 	shared.BindToInstance(inst, builtins)
 	return inst
 }

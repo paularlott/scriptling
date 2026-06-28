@@ -141,13 +141,10 @@ func BenchmarkClassLookupMemberCold(b *testing.B) {
 
 func BenchmarkInstanceGetBoundMethodHot(b *testing.B) {
 	method := &Builtin{}
-	instance := &Instance{
-		Class: &Class{
+	instance := NewInstanceWithFields(&Class{
 			Name:    "Worker",
 			Methods: map[string]Object{"work": method},
-		},
-		Fields: map[string]Object{},
-	}
+		}, nil)
 	instance.GetBoundMethod("work", method)
 
 	b.ResetTimer()
@@ -158,13 +155,10 @@ func BenchmarkInstanceGetBoundMethodHot(b *testing.B) {
 
 func BenchmarkInstanceGetBoundMethodCold(b *testing.B) {
 	method := &Builtin{}
-	instance := &Instance{
-		Class: &Class{
+	instance := NewInstanceWithFields(&Class{
 			Name:    "Worker",
 			Methods: map[string]Object{"work": method},
-		},
-		Fields: map[string]Object{},
-	}
+		}, nil)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

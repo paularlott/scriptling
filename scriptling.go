@@ -427,11 +427,10 @@ func (p *Scriptling) EvalWithTimeout(timeout time.Duration, input string) (objec
 // This method is safe against deep recursion (via call depth tracking) and
 // recovers from panics during script execution.
 func (p *Scriptling) EvalWithContext(ctx context.Context, input string) (result object.Object, err error) {
-	// Add call depth tracking to prevent stack overflow from deep recursion
-	// Only add if not already present (allows callers to customize max depth)
-	if evaluator.GetCallDepthFromContext(ctx) == nil {
-		ctx = evaluator.ContextWithCallDepth(ctx, evaluator.DefaultMaxCallDepth)
-	}
+	// Call-depth tracking (stack-overflow guard) is added by
+	// evaluator.EvalWithContext when absent, placed outermost so the per-call
+	// lookup on the hot path is O(1). Callers may still supply a custom depth
+	// before calling — it is preserved.
 
 	// Try global cache first
 	program, err := parseProgramCached(input)
@@ -776,7 +775,7 @@ func (p *Scriptling) CallFunctionWithContext(ctx context.Context, name string, a
 
 	// 3. Call the function using evaluator
 	ctx = evaluator.WithEvaluator(ctx)
-	result := evaluator.ApplyFunction(ctx, fn, objArgs, objKwargs, p.env)
+	result := evaluator.ApplyFunctionGIL(ctx, fn, objArgs, objKwargs, p.env)
 	return p.handleResult(result, fmt.Sprintf("function '%s'", name))
 }
 
@@ -822,7 +821,7 @@ func (p *Scriptling) CreateInstanceWithContext(ctx context.Context, className st
 
 	// Create the instance using evaluator
 	ctx = evaluator.WithEvaluator(ctx)
-	instance := evaluator.ApplyFunction(ctx, class, objArgs, objKwargs, p.env)
+	instance := evaluator.ApplyFunctionGIL(ctx, class, objArgs, objKwargs, p.env)
 	return p.handleResult(instance, fmt.Sprintf("class '%s'", className))
 }
 
@@ -867,7 +866,7 @@ func (p *Scriptling) CallMethodWithContext(ctx context.Context, obj object.Objec
 
 	// Call the method using evaluator
 	ctx = evaluator.WithEvaluator(ctx)
-	result := evaluator.ApplyFunction(ctx, method, objArgs, objKwargs, p.env)
+	result := evaluator.ApplyFunctionGIL(ctx, method, objArgs, objKwargs, p.env)
 	return p.handleResult(result, fmt.Sprintf("method '%s' on class '%s'", methodName, instance.Class.Name))
 }
 

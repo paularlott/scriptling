@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
+
+	"github.com/paularlott/scriptling/extlibs"
 )
 
 // RunServer is the main entry point for running the server
@@ -91,7 +93,24 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 		server.reloadDebounce.Stop()
 	}
 
-	// Graceful shutdown
+	// Signal the setup script that the server is shutting down.
+	extlibs.RuntimeState.Lock()
+	if extlibs.RuntimeState.ServerRunningCh != nil {
+		close(extlibs.RuntimeState.ServerRunningCh)
+		extlibs.RuntimeState.ServerRunningCh = nil
+	}
+	extlibs.RuntimeState.Unlock()
+
+	// Wait for the setup script goroutine to finish (with a timeout).
+	if server.scriptDone != nil {
+		select {
+		case <-server.scriptDone:
+		case <-time.After(5 * time.Second):
+			Log.Warn("Setup script did not exit within shutdown timeout")
+		}
+	}
+
+	// Graceful HTTP shutdown
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -105,8 +124,13 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 
 // RunJSONRPCServer runs the stdio JSON-RPC 2.0 server. It performs the same
 // bootstrap as RunServer (setup script registers handlers via
-// runtime.jsonrpc.method/notification), then serves requests from stdin until
-// stdin closes or a terminating signal arrives.
+// runtime.jsonrpc.method/notification or runtime.plugin.serve/function), then
+// serves requests from stdin until stdin closes or a terminating signal arrives.
+//
+// When the setup script calls runtime.plugin.serve(), the server switches to
+// the full Scriptling plugin protocol (scriptling.handshake, function.call,
+// etc.) so that clients can load it with scriptling=True and receive
+// auto-generated proxy libraries. Otherwise the plain JSON-RPC 2.0 loop runs.
 func RunJSONRPCServer(ctx context.Context, config ServerConfig) error {
 	Log.Debug("Starting JSON-RPC stdio server")
 	server, err := NewServer(config)
@@ -114,14 +138,40 @@ func RunJSONRPCServer(ctx context.Context, config ServerConfig) error {
 		return err
 	}
 
-	if len(server.jsonrpcMethods) == 0 && len(server.jsonrpcNotifications) == 0 {
-		Log.Warn("JSON-RPC server started with no methods or notifications registered")
+	if server.pluginServer != nil {
+		if err := server.RunPluginServerStdio(ctx); err != nil {
+			return fmt.Errorf("plugin server failed: %w", err)
+		}
+	} else {
+		if len(server.jsonrpcMethods) == 0 && len(server.jsonrpcNotifications) == 0 {
+			Log.Warn("JSON-RPC server started with no methods or notifications registered")
+		}
+		if err := server.RunJSONRPCStdio(ctx); err != nil {
+			return fmt.Errorf("json-rpc server failed: %w", err)
+		}
 	}
 
-	if err := server.RunJSONRPCStdio(ctx); err != nil {
-		return fmt.Errorf("json-rpc server failed: %w", err)
+	// Signal the setup script that the server is shutting down.
+	extlibs.RuntimeState.Lock()
+	if extlibs.RuntimeState.ServerRunningCh != nil {
+		close(extlibs.RuntimeState.ServerRunningCh)
+		extlibs.RuntimeState.ServerRunningCh = nil
+	}
+	extlibs.RuntimeState.Unlock()
+
+	// Wait for the setup script goroutine to finish.
+	if server.scriptDone != nil {
+		select {
+		case <-server.scriptDone:
+		case <-time.After(5 * time.Second):
+			Log.Warn("Setup script did not exit within shutdown timeout")
+		}
 	}
 
-	Log.Info("JSON-RPC server stopped")
+	if server.pluginServer != nil {
+		Log.Info("Plugin server stopped")
+	} else {
+		Log.Info("JSON-RPC server stopped")
+	}
 	return nil
 }
