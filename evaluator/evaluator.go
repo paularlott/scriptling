@@ -140,6 +140,12 @@ func EvalWithContext(ctx context.Context, node ast.Node, env *object.Environment
 	}
 
 	ctx = WithEvaluator(ctx)
+	// Add the default call-depth tracker last (outermost) when a caller hasn't
+	// supplied one, so the per-call GetCallDepthFromContext lookup on the hot
+	// path is O(1) rather than walking past the evaluator/source-file wrappers.
+	if GetCallDepthFromContext(ctx) == nil {
+		ctx = ContextWithCallDepth(ctx, DefaultMaxCallDepth)
+	}
 	// Acquire the interpreter lock for the duration of this top-level run so the
 	// whole tree is touched by one goroutine at a time.
 	ctx, release := enterScript(ctx, env)
