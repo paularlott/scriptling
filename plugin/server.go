@@ -76,11 +76,29 @@ func (s *Server) RegisterFunc(name string, builder *object.FunctionBuilder) *Ser
 	return s
 }
 
+// RegisterBuiltin registers a raw builtin function directly, bypassing the
+// FunctionBuilder reflection layer. Use this when the function is already an
+// object.BuiltinFunction (e.g. a closure that wraps a script handler).
+func (s *Server) RegisterBuiltin(name string, fn object.BuiltinFunction) *Server {
+	s.functions[name] = &funcEntry{
+		builtin: &object.Builtin{Fn: fn},
+	}
+	return s
+}
+
 func (s *Server) RegisterClass(builder *object.ClassBuilder) *Server {
 	class := builder.Build()
 	s.classes[class.Name] = &classEntry{
 		class: class,
 	}
+	return s
+}
+
+// RegisterBuiltinClass registers a scriptling *object.Class directly, bypassing
+// the ClassBuilder. Use this when the class was loaded from a scriptling module
+// (e.g. via Scriptling.Eval) rather than built from Go code.
+func (s *Server) RegisterBuiltinClass(name string, class *object.Class) *Server {
+	s.classes[name] = &classEntry{class: class}
 	return s
 }
 

@@ -57,6 +57,14 @@ var RuntimeState = struct {
 	ServerStarted   bool         // prevents double-close of ServerStartCh
 	ServerCollect   func()       // set by NewServer; called inside start_server() to snapshot routes atomically
 
+	// Plugin server registration (set via runtime.plugin, agent variant only)
+	PluginName        string
+	PluginVersion     string
+	PluginDescription string
+	PluginFunctions   map[string]string        // function name → "library.function" handler
+	PluginConstants   map[string]object.Object // constant name → value
+	PluginClasses     map[string]string        // exposed class name → "library.ClassName" handler
+
 	// Cleanup functions registered by libraries
 	cleanupFuncs []func()
 }{
@@ -82,6 +90,9 @@ var RuntimeState = struct {
 	ServerStartCh:        nil,
 	ServerRunningCh:      nil,
 	ServerStarted:        false,
+	PluginFunctions:      make(map[string]string),
+	PluginConstants:      make(map[string]object.Object),
+	PluginClasses:        make(map[string]string),
 }
 
 // RegisterCleanup registers a function to be called during ResetRuntime.
@@ -149,6 +160,13 @@ func ResetRuntime() {
 	RuntimeState.ServerRunningCh = nil
 	RuntimeState.ServerStarted = false
 	RuntimeState.ServerCollect = nil
+
+	RuntimeState.PluginName = ""
+	RuntimeState.PluginVersion = ""
+	RuntimeState.PluginDescription = ""
+	RuntimeState.PluginFunctions = make(map[string]string)
+	RuntimeState.PluginConstants = make(map[string]object.Object)
+	RuntimeState.PluginClasses = make(map[string]string)
 }
 
 // Promise represents an async operation result
@@ -194,6 +212,15 @@ func SetBackgroundFactory(factory SandboxFactory) {
 	RuntimeState.Unlock()
 }
 
+// runtimeParentLibraries maps each registrar (one per evaluator) to the parent
+// runtime library it created. RegisterRuntimePluginLibrary uses this to inject
+// "plugin" into the per-evaluator runtime dict so that
+// `import scriptling.runtime as rt; rt.plugin.*` works.
+// sync.Map is used because multiple handler evaluators may call
+// RegisterRuntimeLibraryAll concurrently. Each entry is removed by
+// RegisterRuntimePluginLibrary (LoadAndDelete), so there is no leak.
+var runtimeParentLibraries sync.Map // key: registrar interface value → *object.Library
+
 // RegisterRuntimeLibrary registers only the core runtime library (background function).
 // Sub-libraries (http, kv, sync) must be registered separately if needed.
 func RegisterRuntimeLibrary(registrar interface{ RegisterLibrary(*object.Library) }) {
@@ -229,6 +256,7 @@ func RegisterRuntimeLibraryAll(registrar interface{ RegisterLibrary(*object.Libr
 			"jsonrpc": jsonrpcLib.GetDict(),
 		},
 		"Runtime library for HTTP, JSON-RPC, KV store, concurrency primitives, and sandboxed execution")
+	runtimeParentLibraries.Store(registrar, parent)
 	registrar.RegisterLibrary(parent)
 }
 
