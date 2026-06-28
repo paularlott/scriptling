@@ -276,11 +276,15 @@ func (s *Server) RunIO(input io.Reader, output io.Writer) error {
 		return firstErr
 	}
 
+	hadHandshake := false
 	for {
 		var raw json.RawMessage
 		if err := decoder.Decode(&raw); err != nil {
 			if err == io.EOF {
 				wg.Wait()
+				if hadHandshake {
+					s.destroyAllObjects()
+				}
 				return getErr()
 			}
 			return err
@@ -328,6 +332,9 @@ func (s *Server) RunIO(input io.Reader, output io.Writer) error {
 		if err := json.Unmarshal(raw, &msg); err != nil {
 			return err
 		}
+		if msg.Method == "scriptling.handshake" {
+			hadHandshake = true
+		}
 		resp, shutdown := s.handleInboundMessage(context.Background(), runtime, &wg, recordErr, msg)
 		if resp != nil {
 			runtime.writeMu.Lock()
@@ -337,6 +344,7 @@ func (s *Server) RunIO(input io.Reader, output io.Writer) error {
 		}
 		if shutdown {
 			wg.Wait()
+			s.destroyAllObjects()
 			if err := getErr(); err != nil {
 				return err
 			}
@@ -717,6 +725,32 @@ func availableObjectMapKeys(items map[string]object.Object) string {
 	}
 	sort.Strings(names)
 	return strings.Join(names, ", ")
+}
+
+// ObjectCount returns the number of live server-side objects. Useful in tests.
+func (s *Server) ObjectCount() int {
+	s.objectsMu.RLock()
+	defer s.objectsMu.RUnlock()
+	return len(s.objects)
+}
+
+// destroyAllObjects calls __del__ on every remaining server-side object and
+// empties the map. Called when a stdio connection closes or plugin.shutdown is
+// received so that instances are not silently leaked.
+func (s *Server) destroyAllObjects() {
+	s.objectsMu.Lock()
+	remaining := s.objects
+	s.objects = make(map[string]*serverObject)
+	s.objectsMu.Unlock()
+	for _, obj := range remaining {
+		obj.mu.Lock()
+		if obj.instance != nil && obj.class != nil {
+			if del, ok := obj.class.LookupMember("__del__"); ok {
+				evaluator.ApplyFunctionGIL(context.Background(), del, []object.Object{obj.instance}, nil, object.NewEnvironment())
+			}
+		}
+		obj.mu.Unlock()
+	}
 }
 
 func (s *Server) destroyObject(params objectDestroyParams) error {

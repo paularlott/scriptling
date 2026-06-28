@@ -170,5 +170,7 @@ int main(void) {
 
     sl_constant(srv, "default_name", sl_string("World"));
 
-    return sl_server_run(srv);
+    int rc = sl_server_run(srv);
+    sl_server_free(srv);
+    return rc;
 }
