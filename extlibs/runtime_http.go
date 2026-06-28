@@ -3,8 +3,10 @@ package extlibs
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -412,6 +414,9 @@ var HTTPSubLibrary = object.NewLibrary(RuntimeHTTPLibraryName, map[string]*objec
 			}
 
 			RuntimeState.Lock()
+			if RuntimeState.ServerStarted {
+				fmt.Fprintf(os.Stderr, "warning: runtime.http.get %q registered after start_server() — route will not be served\n", path)
+			}
 			RuntimeState.Routes["GET "+path] = &RouteInfo{
 				Methods: []string{"GET"},
 				Handler: handler,
@@ -447,6 +452,9 @@ Example:
 			}
 
 			RuntimeState.Lock()
+			if RuntimeState.ServerStarted {
+				fmt.Fprintf(os.Stderr, "warning: runtime.http.post %q registered after start_server() — route will not be served\n", path)
+			}
 			RuntimeState.Routes["POST "+path] = &RouteInfo{
 				Methods: []string{"POST"},
 				Handler: handler,
@@ -482,6 +490,9 @@ Example:
 			}
 
 			RuntimeState.Lock()
+			if RuntimeState.ServerStarted {
+				fmt.Fprintf(os.Stderr, "warning: runtime.http.put %q registered after start_server() — route will not be served\n", path)
+			}
 			RuntimeState.Routes["PUT "+path] = &RouteInfo{
 				Methods: []string{"PUT"},
 				Handler: handler,
@@ -517,6 +528,9 @@ Example:
 			}
 
 			RuntimeState.Lock()
+			if RuntimeState.ServerStarted {
+				fmt.Fprintf(os.Stderr, "warning: runtime.http.delete %q registered after start_server() — route will not be served\n", path)
+			}
 			RuntimeState.Routes["DELETE "+path] = &RouteInfo{
 				Methods: []string{"DELETE"},
 				Handler: handler,
@@ -566,6 +580,9 @@ Example:
 			}
 
 			RuntimeState.Lock()
+			if RuntimeState.ServerStarted {
+				fmt.Fprintf(os.Stderr, "warning: runtime.http.route %q registered after start_server() — route will not be served\n", path)
+			}
 			for _, method := range methods {
 				RuntimeState.Routes[method+" "+path] = &RouteInfo{
 					Methods: []string{method},
@@ -599,6 +616,9 @@ Example:
 			}
 
 			RuntimeState.Lock()
+			if RuntimeState.ServerStarted {
+				fmt.Fprintf(os.Stderr, "warning: runtime.http.middleware registered after start_server() — will not be applied\n")
+			}
 			RuntimeState.Middleware = handler
 			RuntimeState.Unlock()
 
@@ -634,6 +654,9 @@ Example:
 			}
 
 			RuntimeState.Lock()
+			if RuntimeState.ServerStarted {
+				fmt.Fprintf(os.Stderr, "warning: runtime.http.static %q registered after start_server() — route will not be served\n", path)
+			}
 			RuntimeState.Routes["GET "+path] = &RouteInfo{
 				Methods:   []string{"GET"},
 				Static:    true,
@@ -881,6 +904,9 @@ Example:
 			}
 
 			RuntimeState.Lock()
+			if RuntimeState.ServerStarted {
+				fmt.Fprintf(os.Stderr, "warning: runtime.http.not_found registered after start_server() — will not be applied\n")
+			}
 			RuntimeState.NotFoundHandler = handler
 			RuntimeState.Unlock()
 
@@ -916,6 +942,9 @@ Example:
 			}
 
 			RuntimeState.Lock()
+			if RuntimeState.ServerStarted {
+				fmt.Fprintf(os.Stderr, "warning: runtime.http.websocket %q registered after start_server() — route will not be served\n", path)
+			}
 			RuntimeState.WebSocketRoutes[path] = &WebSocketRouteInfo{
 				Handler: handler,
 			}

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
+
+	"github.com/paularlott/scriptling/extlibs"
 )
 
 // RunServer is the main entry point for running the server
@@ -91,7 +93,24 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 		server.reloadDebounce.Stop()
 	}
 
-	// Graceful shutdown
+	// Signal the setup script that the server is shutting down.
+	extlibs.RuntimeState.Lock()
+	if extlibs.RuntimeState.ServerRunningCh != nil {
+		close(extlibs.RuntimeState.ServerRunningCh)
+		extlibs.RuntimeState.ServerRunningCh = nil
+	}
+	extlibs.RuntimeState.Unlock()
+
+	// Wait for the setup script goroutine to finish (with a timeout).
+	if server.scriptDone != nil {
+		select {
+		case <-server.scriptDone:
+		case <-time.After(5 * time.Second):
+			Log.Warn("Setup script did not exit within shutdown timeout")
+		}
+	}
+
+	// Graceful HTTP shutdown
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -120,6 +139,23 @@ func RunJSONRPCServer(ctx context.Context, config ServerConfig) error {
 
 	if err := server.RunJSONRPCStdio(ctx); err != nil {
 		return fmt.Errorf("json-rpc server failed: %w", err)
+	}
+
+	// Signal the setup script that the server is shutting down.
+	extlibs.RuntimeState.Lock()
+	if extlibs.RuntimeState.ServerRunningCh != nil {
+		close(extlibs.RuntimeState.ServerRunningCh)
+		extlibs.RuntimeState.ServerRunningCh = nil
+	}
+	extlibs.RuntimeState.Unlock()
+
+	// Wait for the setup script goroutine to finish.
+	if server.scriptDone != nil {
+		select {
+		case <-server.scriptDone:
+		case <-time.After(5 * time.Second):
+			Log.Warn("Setup script did not exit within shutdown timeout")
+		}
 	}
 
 	Log.Info("JSON-RPC server stopped")
