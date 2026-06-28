@@ -99,6 +99,10 @@ func NewServer(config ServerConfig) (*Server, error) {
 	default:
 	}
 
+	// Build the plugin server if the setup script called runtime.plugin.serve().
+	// Must happen before buildMux so the HTTP /json-rpc handler can use it.
+	s.buildPluginServer()
+
 	if config.MCPToolsDir != "" || config.MCPExecTool {
 		if err := s.setupMCP(); err != nil {
 			return nil, fmt.Errorf("MCP setup failed: %w", err)

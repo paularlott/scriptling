@@ -2009,6 +2009,11 @@ func applyFunction(ctx context.Context, fn object.Object, args []object.Object, 
 		return fn.Fn(ctxWithEnv, object.NewKwargs(keywords), args...)
 	case *object.Class:
 		return createInstance(ctx, fn, args, keywords, env)
+	case *object.ClientWrapper:
+		if callable, ok := fn.Client.(object.ScriptCallable); ok {
+			return callable.ScriptCall(ctx, args, keywords)
+		}
+		return errors.NewError("cannot call %s: not callable", fn.Inspect())
 	default:
 		return errors.NewError("not a function or class: %s", fn.Type())
 	}

@@ -711,6 +711,30 @@ func LoadClient(ctx context.Context, path string, args []string) (*Client, error
 	return startClient(ctx, path, args)
 }
 
+// LoadClientFromIO connects to a plugin server over an existing bidirectional
+// stream and performs the plugin protocol handshake. Use this when the server
+// is already running and accessible via in-process pipes (e.g. tests, embedded
+// servers). The caller is responsible for closing in/out when done.
+func LoadClientFromIO(ctx context.Context, in io.ReadCloser, out io.WriteCloser) (*Client, error) {
+	client := &Client{
+		path:           "<pipe>",
+		stdin:          out,
+		stdout:         in,
+		encoder:        json.NewEncoder(out),
+		pending:        make(map[int64]*pendingCall),
+		callbackOwners: make(map[string]*pendingCall),
+		done:           make(chan struct{}),
+		waitDone:       make(chan struct{}),
+	}
+	close(client.waitDone) // no subprocess to wait on
+	go client.readLoop()
+	if err := client.handshake(ctx); err != nil {
+		_ = client.Close()
+		return nil, err
+	}
+	return client, nil
+}
+
 // SpawnClient spawns an executable without performing the plugin handshake.
 // The caller is responsible for any handshake exchange via Call.
 // args, if non-empty, are passed as command-line arguments to the executable.

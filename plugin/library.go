@@ -51,6 +51,17 @@ func RegisterLibraries(registrar Registrar, manager *Manager) {
 	}
 }
 
+// RegisterClientLibrary registers the proxy library for a single already-handshaked
+// client. Useful when you have a Client obtained via LoadClientFromIO or
+// similar and want to expose it without a full Manager.
+func RegisterClientLibrary(registrar Registrar, client *Client) {
+	var scriptRegistrar ScriptLibraryRegistrar
+	if r, ok := registrar.(ScriptLibraryRegistrar); ok {
+		scriptRegistrar = r
+	}
+	registerClientLibrary(registrar, scriptRegistrar, client)
+}
+
 func registerClientLibrary(registrar Registrar, scriptRegistrar ScriptLibraryRegistrar, client *Client) {
 	if registrar == nil || client == nil || !client.HandshakeDone() {
 		return

@@ -1,5 +1,15 @@
 package object
 
+import "context"
+
+// ScriptCallable is implemented by Go types stored inside a ClientWrapper whose
+// instances should be callable from scriptling code (e.g. plugin callbacks).
+// When the evaluator encounters a ClientWrapper whose Client implements this
+// interface, it delegates the call to ScriptCall instead of returning an error.
+type ScriptCallable interface {
+	ScriptCall(ctx context.Context, args []Object, kwargs map[string]Object) Object
+}
+
 // ClientWrapper is a generic wrapper for storing Go client pointers in object.Instance fields.
 // The underlying client is stored as an opaque pointer and accessed via type assertion.
 //
