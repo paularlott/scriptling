@@ -87,18 +87,14 @@ func (p *PathlibLibraryInstance) createPathObject(pathStr string) object.Object 
 		partObjs[i] = object.NewString(part)
 	}
 
-	return &object.Instance{
-		Class: p.PathClass,
-		Fields: map[string]object.Object{
-			"name":    object.NewString(base),
-			"stem":    object.NewString(stem),
-			"suffix":  object.NewString(ext),
-			"parent":  object.NewString(filepath.Dir(cleanPath)),
-			"parts":   &object.Tuple{Elements: partObjs},
-			"__str__": object.NewString(cleanPath),
-		},
-		NativeData: &pathNativeData{path: cleanPath},
-	}
+	return object.NewInstanceWithData(p.PathClass, map[string]object.Object{
+		"name":    object.NewString(base),
+		"stem":    object.NewString(stem),
+		"suffix":  object.NewString(ext),
+		"parent":  object.NewString(filepath.Dir(cleanPath)),
+		"parts":   &object.Tuple{Elements: partObjs},
+		"__str__": object.NewString(cleanPath),
+	}, &pathNativeData{path: cleanPath})
 }
 
 func (p *PathlibLibraryInstance) pathConstructor(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {

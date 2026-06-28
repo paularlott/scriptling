@@ -25,10 +25,7 @@ func CreateJSONRPCErrorInstance(code int64, message string, data object.Object) 
 	if data != nil {
 		fields["data"] = data
 	}
-	return &object.Instance{
-		Class:  JSONRPCErrorClass,
-		Fields: fields,
-	}
+	return object.NewInstanceWithFields(JSONRPCErrorClass, fields)
 }
 
 // IsJSONRPCError reports whether obj is a JSONRPCError instance.

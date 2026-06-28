@@ -34,7 +34,7 @@ func (h *stringIOHolder) CoerceFloat() (float64, object.Object)          { retur
 const sioKey = "__sio__"
 
 func sioGet(inst *object.Instance) (*stringIOData, bool) {
-	h, ok := inst.Fields[sioKey]
+	h, ok := inst.GetField(sioKey)
 	if !ok {
 		return nil, false
 	}
@@ -83,7 +83,7 @@ var stringIOClass = &object.Class{
 					}
 					data.buf.WriteString(s)
 				}
-				inst.Fields[sioKey] = &stringIOHolder{data: data}
+				inst.SetField(sioKey, &stringIOHolder{data: data})
 				return &object.Null{}
 			},
 		},
@@ -276,10 +276,7 @@ var stringIOClass = &object.Class{
 
 // stringIONew creates a new StringIO instance (called as io.StringIO(...)).
 func stringIONew(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-	inst := &object.Instance{
-		Class:  stringIOClass,
-		Fields: map[string]object.Object{},
-	}
+	inst := object.NewInstanceWithFields(stringIOClass, nil)
 	data := &stringIOData{}
 	if len(args) >= 1 {
 		s, err := args[0].AsString()
@@ -288,7 +285,7 @@ func stringIONew(ctx context.Context, kwargs object.Kwargs, args ...object.Objec
 		}
 		data.buf.WriteString(s)
 	}
-	inst.Fields[sioKey] = &stringIOHolder{data: data}
+	inst.SetField(sioKey, &stringIOHolder{data: data})
 	return inst
 }
 

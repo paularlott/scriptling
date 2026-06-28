@@ -162,7 +162,7 @@ var RequestClass = &object.Class{
 					return errors.NewError("json() called on non-Request object")
 				}
 
-				body, err := instance.Fields["body"].AsString()
+				body, err := instance.Field("body").AsString()
 				if err != nil {
 					return err
 				}
@@ -193,16 +193,13 @@ func CreateRequestInstance(method, path, body string, headers map[string]string,
 		queryDict.SetByString(k, object.NewString(v))
 	}
 
-	return &object.Instance{
-		Class: RequestClass,
-		Fields: map[string]object.Object{
+	return object.NewInstanceWithFields(RequestClass, map[string]object.Object{
 			"method":  object.NewString(method),
 			"path":    object.NewString(path),
 			"body":    object.NewString(body),
 			"headers": headerDict,
 			"query":   queryDict,
-		},
-	}
+		})
 }
 
 // WebSocketClientClass is the class for WebSocket client objects passed to handlers
@@ -387,13 +384,9 @@ func getWSConnFromInstance(instance *object.Instance) *WebSocketServerConn {
 
 // CreateWebSocketClientInstance creates a new WebSocketClient instance
 func CreateWebSocketClientInstance(conn *WebSocketServerConn) *object.Instance {
-	return &object.Instance{
-		Class: WebSocketClientClass,
-		Fields: map[string]object.Object{
+	return object.NewInstanceWithData(WebSocketClientClass, map[string]object.Object{
 			"remote_addr": object.NewString(conn.RemoteAddr()),
-		},
-		NativeData: conn,
-	}
+		}, conn)
 }
 
 var HTTPSubLibrary = object.NewLibrary(RuntimeHTTPLibraryName, map[string]*object.Builtin{

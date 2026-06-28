@@ -40,12 +40,12 @@ var htmlParserMethods = map[string]object.Object{
 			}
 
 			// Initialize parser state
-			instance.Fields["_data"] = object.NewString("")
-			instance.Fields["_pos"] = object.NewInteger(0)
-			instance.Fields["_line"] = object.NewInteger(1)
-			instance.Fields["_offset"] = object.NewInteger(0)
-			instance.Fields["_lasttag"] = object.NewString("")
-			instance.Fields["_rawdata"] = object.NewString("")
+			instance.SetField("_data", object.NewString(""))
+			instance.SetField("_pos", object.NewInteger(0))
+			instance.SetField("_line", object.NewInteger(1))
+			instance.SetField("_offset", object.NewInteger(0))
+			instance.SetField("_lasttag", object.NewString(""))
+			instance.SetField("_rawdata", object.NewString(""))
 
 			// Check for convert_charrefs kwarg (default True)
 			convertCharrefs := true
@@ -54,7 +54,7 @@ var htmlParserMethods = map[string]object.Object{
 				convertCharrefs = boolVal.BoolValue()
 			}
 		}
-			instance.Fields["convert_charrefs"] = object.NewBoolean(convertCharrefs)
+			instance.SetField("convert_charrefs", object.NewBoolean(convertCharrefs))
 
 			return &object.Null{}
 		},
@@ -102,12 +102,12 @@ Parses the HTML data and calls handler methods for each element.`,
 			}
 
 			// Reset parser state
-			instance.Fields["_data"] = object.NewString("")
-			instance.Fields["_pos"] = object.NewInteger(0)
-			instance.Fields["_line"] = object.NewInteger(1)
-			instance.Fields["_offset"] = object.NewInteger(0)
-			instance.Fields["_lasttag"] = object.NewString("")
-			instance.Fields["_rawdata"] = object.NewString("")
+			instance.SetField("_data", object.NewString(""))
+			instance.SetField("_pos", object.NewInteger(0))
+			instance.SetField("_line", object.NewInteger(1))
+			instance.SetField("_offset", object.NewInteger(0))
+			instance.SetField("_lasttag", object.NewString(""))
+			instance.SetField("_rawdata", object.NewString(""))
 
 			return &object.Null{}
 		},
@@ -123,8 +123,8 @@ Parses the HTML data and calls handler methods for each element.`,
 				return errors.NewError("getpos() requires instance as first argument")
 			}
 
-			line := instance.Fields["_line"]
-			offset := instance.Fields["_offset"]
+			line := instance.Field("_line")
+			offset := instance.Field("_offset")
 			if line == nil {
 				line = object.NewInteger(1)
 			}
@@ -146,7 +146,7 @@ Parses the HTML data and calls handler methods for each element.`,
 				return errors.NewError("get_starttag_text() requires instance as first argument")
 			}
 
-			lasttag := instance.Fields["_lasttag"]
+			lasttag := instance.Field("_lasttag")
 			if lasttag == nil {
 				return &object.Null{}
 			}
@@ -270,7 +270,7 @@ func callMethod(ctx context.Context, fn *object.Function, instance *object.Insta
 func parseHTML(ctx context.Context, instance *object.Instance, data string) object.Object {
 	// Get convert_charrefs setting
 	convertCharrefs := true
-	if val, ok := instance.Fields["convert_charrefs"]; ok {
+	if val, ok := instance.GetField("convert_charrefs"); ok {
 		if boolVal, ok := val.(*object.Boolean); ok {
 			convertCharrefs = boolVal.BoolValue()
 		}
@@ -344,7 +344,7 @@ func parseHTML(ctx context.Context, instance *object.Instance, data string) obje
 						tag = strings.ToLower(tag)
 
 						// Store the last start tag text
-						instance.Fields["_lasttag"] = object.NewString(data[i : i+end+1])
+						instance.SetField("_lasttag", object.NewString(data[i : i+end+1]))
 
 						// Convert attrs to list of tuples
 						attrsList := &object.List{Elements: make([]object.Object, len(attrs))}

@@ -13,12 +13,12 @@ func TestRegexMatch(t *testing.T) {
 
 	result := match.Fn(context.Background(), object.NewKwargs(nil), object.NewString("[0-9]+"), object.NewString("123abc"))
 	if m, ok := result.(*object.Instance); ok && m.Class == MatchClass {
-		groups := m.Fields["groups"].(*object.List).Elements
+		groups := m.Field("groups").(*object.List).Elements
 		if len(groups) == 0 || groups[0].(*object.String).StringValue() != "123" {
 			t.Errorf("match('[0-9]+', '123abc').group(0) = %v, want '123'", groups[0])
 		}
-		start := m.Fields["start"].(*object.Integer).IntValue()
-		end := m.Fields["end"].(*object.Integer).IntValue()
+		start := m.Field("start").(*object.Integer).IntValue()
+		end := m.Field("end").(*object.Integer).IntValue()
 		if start != 0 || end != 3 {
 			t.Errorf("match span = (%d, %d), want (0, 3)", start, end)
 		}
@@ -38,7 +38,7 @@ func TestRegexMatchWithFlags(t *testing.T) {
 
 	result := match.Fn(context.Background(), object.NewKwargs(nil), object.NewString("hello"), object.NewString("HELLO world"), object.NewInteger(RE_IGNORECASE))
 	if m, ok := result.(*object.Instance); ok && m.Class == MatchClass {
-		groups := m.Fields["groups"].(*object.List).Elements
+		groups := m.Field("groups").(*object.List).Elements
 		if groups[0].(*object.String).StringValue() != "HELLO" {
 			t.Errorf("match('hello', 'HELLO world', re.I).group(0) = %v, want 'HELLO'", groups[0])
 		}
@@ -58,12 +58,12 @@ func TestRegexSearch(t *testing.T) {
 
 	result := search.Fn(context.Background(), object.NewKwargs(nil), object.NewString("[0-9]+"), object.NewString("abc123def"))
 	if m, ok := result.(*object.Instance); ok && m.Class == MatchClass {
-		groups := m.Fields["groups"].(*object.List).Elements
+		groups := m.Field("groups").(*object.List).Elements
 		if groups[0].(*object.String).StringValue() != "123" {
 			t.Errorf("search('[0-9]+', 'abc123def').group(0) = %v, want '123'", groups[0])
 		}
-		start := m.Fields["start"].(*object.Integer).IntValue()
-		end := m.Fields["end"].(*object.Integer).IntValue()
+		start := m.Field("start").(*object.Integer).IntValue()
+		end := m.Field("end").(*object.Integer).IntValue()
 		if start != 3 || end != 6 {
 			t.Errorf("search span = (%d, %d), want (3, 6)", start, end)
 		}
@@ -83,7 +83,7 @@ func TestRegexSearchWithFlags(t *testing.T) {
 
 	result := search.Fn(context.Background(), object.NewKwargs(nil), object.NewString("world"), object.NewString("Hello WORLD"), object.NewInteger(RE_IGNORECASE))
 	if m, ok := result.(*object.Instance); ok && m.Class == MatchClass {
-		groups := m.Fields["groups"].(*object.List).Elements
+		groups := m.Field("groups").(*object.List).Elements
 		if groups[0].(*object.String).StringValue() != "WORLD" {
 			t.Errorf("search('world', 'Hello WORLD', re.I).group(0) = %v, want 'WORLD'", groups[0])
 		}
@@ -98,7 +98,7 @@ func TestRegexSearchWithGroups(t *testing.T) {
 
 	result := search.Fn(context.Background(), object.NewKwargs(nil), object.NewString(`(\w+)@(\w+)\.(\w+)`), object.NewString("Email: user@example.com"))
 	if m, ok := result.(*object.Instance); ok && m.Class == MatchClass {
-		groups := m.Fields["groups"].(*object.List).Elements
+		groups := m.Field("groups").(*object.List).Elements
 		if groups[0].(*object.String).StringValue() != "user@example.com" {
 			t.Errorf("search().group(0) = %v, want 'user@example.com'", groups[0])
 		}
@@ -254,7 +254,7 @@ func TestRegexCompile(t *testing.T) {
 
 	result := compile.Fn(context.Background(), object.NewKwargs(nil), object.NewString("[0-9]+"))
 	if r, ok := result.(*object.Instance); ok && r.Class == RegexClass {
-		pattern := r.Fields["pattern"].(*object.String).StringValue()
+		pattern := r.Field("pattern").(*object.String).StringValue()
 		if pattern != "[0-9]+" {
 			t.Errorf("compile() = %v, want '[0-9]+'", pattern)
 		}
@@ -274,7 +274,7 @@ func TestRegexCompileWithFlags(t *testing.T) {
 
 	result := compile.Fn(context.Background(), object.NewKwargs(nil), object.NewString("hello"), object.NewInteger(RE_IGNORECASE))
 	if r, ok := result.(*object.Instance); ok && r.Class == RegexClass {
-		pattern := r.Fields["pattern"].(*object.String).StringValue()
+		pattern := r.Field("pattern").(*object.String).StringValue()
 		if pattern != "(?i)hello" {
 			t.Errorf("compile() with flag = %v, want '(?i)hello'", pattern)
 		}
@@ -318,7 +318,7 @@ func TestRegexFullmatch(t *testing.T) {
 
 	result = fullmatch.Fn(context.Background(), object.NewKwargs(nil), object.NewString("(\\d+)-(\\d+)"), object.NewString("123-456"))
 	if match, ok := result.(*object.Instance); ok {
-		groups := match.Fields["groups"].(*object.List)
+		groups := match.Field("groups").(*object.List)
 		if len(groups.Elements) != 3 {
 			t.Errorf("fullmatch groups should have 3 elements (full match + 2 groups), got %d", len(groups.Elements))
 		}

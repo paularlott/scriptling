@@ -41,7 +41,7 @@ var (
 
 // Helper to get time.Time from an instance's _time field (stored as Unix nanoseconds)
 func getTimeFromInstance(instance *object.Instance) (time.Time, object.Object) {
-	if val, ok := instance.Fields["_time"]; ok {
+	if val, ok := instance.GetField("_time"); ok {
 		if ns, ok := val.(*object.Integer); ok {
 			return time.Unix(0, ns.IntValue()), nil
 		}
@@ -51,26 +51,20 @@ func getTimeFromInstance(instance *object.Instance) (time.Time, object.Object) {
 
 // Helper to create a datetime instance (stores time as Unix nanoseconds)
 func createDatetimeInstance(t time.Time) *object.Instance {
-	return &object.Instance{
-		Class: DatetimeClass,
-		Fields: map[string]object.Object{
+	return object.NewInstanceWithFields(DatetimeClass, map[string]object.Object{
 			"_time":        object.NewInteger(t.UnixNano()),
 			"__str_repr__": object.NewString(t.Format("2006-01-02 15:04:05")),
-		},
-	}
+		})
 }
 
 // Helper to create a date instance (stores time as Unix nanoseconds)
 func createDateInstance(t time.Time) *object.Instance {
 	// Normalize to midnight for date
 	t = time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
-	return &object.Instance{
-		Class: DateClass,
-		Fields: map[string]object.Object{
+	return object.NewInstanceWithFields(DateClass, map[string]object.Object{
 			"_time":        object.NewInteger(t.UnixNano()),
 			"__str_repr__": object.NewString(t.Format("2006-01-02")),
-		},
-	}
+		})
 }
 
 // isDatetimeInstance checks if an object is a datetime or date instance

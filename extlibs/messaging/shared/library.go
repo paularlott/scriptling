@@ -276,7 +276,7 @@ func ClientFrom(args []object.Object) (ScriptSender, *object.Instance, bool) {
 func BindToInstance(inst *object.Instance, builtins map[string]*object.Builtin) {
 	for name, b := range builtins {
 		fn := b // capture
-		inst.Fields[name] = &object.Builtin{
+		inst.SetField(name, &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				newArgs := make([]object.Object, len(args)+1)
 				newArgs[0] = inst
@@ -284,7 +284,7 @@ func BindToInstance(inst *object.Instance, builtins map[string]*object.Builtin) 
 				return fn.Fn(ctx, kwargs, newArgs...)
 			},
 			HelpText: fn.HelpText,
-		}
+		})
 	}
 }
 

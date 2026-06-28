@@ -569,7 +569,7 @@ func (s *Server) newObject(ctx context.Context, params objectNewParams) (*Remote
 		return nil, fmt.Errorf("unknown class %s (available: %s)", params.Class, availableMapKeys(s.classes))
 	}
 	class := entry.class
-	instance := &object.Instance{Class: class, Fields: make(map[string]object.Object)}
+	instance := object.NewInstance(class)
 	if init, ok := class.LookupMember("__init__"); ok {
 		objArgs, err := transportValuesToObjects(params.Args)
 		if err != nil {

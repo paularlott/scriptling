@@ -20,10 +20,7 @@ func TestPathMethodsRejectMissingNativeData(t *testing.T) {
 		t.Fatalf("expected PathClass constant, got %T", pathClassObj)
 	}
 
-	path := &object.Instance{
-		Class:  pathClass,
-		Fields: map[string]object.Object{},
-	}
+	path := object.NewInstanceWithFields(pathClass, nil)
 
 	for _, name := range []string{"joinpath", "exists"} {
 		method, ok := pathClass.Methods[name].(*object.Builtin)

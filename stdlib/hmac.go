@@ -139,15 +139,11 @@ Example:
 				copy(newKey, state.key)
 				newData := make([]byte, len(state.data))
 				copy(newData, state.data)
-				return &object.Instance{
-					Class:      inst.Class,
-					NativeData: &hmacState{key: newKey, data: newData, alg: state.alg},
-					Fields: map[string]object.Object{
-						"name":        object.NewString("hmac-" + state.alg),
-						"digest_size": object.NewInteger(int64(hashDigestSize(state.alg))),
-						"block_size":  object.NewInteger(int64(hashBlockSize(state.alg))),
-					},
-				}
+				return object.NewInstanceWithData(inst.Class, map[string]object.Object{
+					"name":        object.NewString("hmac-" + state.alg),
+					"digest_size": object.NewInteger(int64(hashDigestSize(state.alg))),
+					"block_size":  object.NewInteger(int64(hashBlockSize(state.alg))),
+				}, &hmacState{key: newKey, data: newData, alg: state.alg})
 			},
 			HelpText: `copy() - Return a copy of the HMAC object`,
 		},
@@ -158,15 +154,11 @@ Example:
 // var, which is safe because HMACClass's initializer never references this
 // function (so there is no initialization cycle).
 func newHmacInstance(alg string, key, data []byte) *object.Instance {
-	return &object.Instance{
-		Class:      HMACClass,
-		NativeData: &hmacState{key: key, data: data, alg: alg},
-		Fields: map[string]object.Object{
-			"name":        object.NewString("hmac-" + alg),
-			"digest_size": object.NewInteger(int64(hashDigestSize(alg))),
-			"block_size":  object.NewInteger(int64(hashBlockSize(alg))),
-		},
-	}
+	return object.NewInstanceWithData(HMACClass, map[string]object.Object{
+		"name":        object.NewString("hmac-" + alg),
+		"digest_size": object.NewInteger(int64(hashDigestSize(alg))),
+		"block_size":  object.NewInteger(int64(hashBlockSize(alg))),
+	}, &hmacState{key: key, data: data, alg: alg})
 }
 
 // CompareDigest performs a constant-time comparison of two strings. It is the

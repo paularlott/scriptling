@@ -465,7 +465,7 @@ func BenchmarkClassBuilderMethodNoArgs(b *testing.B) {
 		Method("greet", func(self *Instance) string { return "hello" }).
 		Build()
 	method := class.Methods["greet"].(*Builtin)
-	instance := &Instance{Class: class, Fields: map[string]Object{}}
+	instance := NewInstanceWithFields(class, nil)
 	ctx := context.Background()
 	kwargs := NewKwargs(nil)
 
@@ -480,7 +480,7 @@ func BenchmarkClassBuilderMethodStringArg(b *testing.B) {
 		Method("greet", func(self *Instance, name string) string { return "hello " + name }).
 		Build()
 	method := class.Methods["greet"].(*Builtin)
-	instance := &Instance{Class: class, Fields: map[string]Object{}}
+	instance := NewInstanceWithFields(class, nil)
 	ctx := context.Background()
 	kwargs := NewKwargs(nil)
 	arg := NewString("alice")

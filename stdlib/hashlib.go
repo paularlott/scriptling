@@ -182,15 +182,11 @@ Example:
 				copy(newData, state.data)
 				// Build from inst.Class (a parameter) rather than the HashClass
 				// package var to avoid a package initialization cycle.
-				return &object.Instance{
-					Class:      inst.Class,
-					NativeData: &hashState{data: newData, alg: state.alg},
-					Fields: map[string]object.Object{
-						"name":        object.NewString(state.alg),
-						"digest_size": object.NewInteger(int64(hashDigestSize(state.alg))),
-						"block_size":  object.NewInteger(int64(hashBlockSize(state.alg))),
-					},
-				}
+				return object.NewInstanceWithData(inst.Class, map[string]object.Object{
+					"name":        object.NewString(state.alg),
+					"digest_size": object.NewInteger(int64(hashDigestSize(state.alg))),
+					"block_size":  object.NewInteger(int64(hashBlockSize(state.alg))),
+				}, &hashState{data: newData, alg: state.alg})
 			},
 			HelpText: `copy() - Return a copy of the hash object
 
@@ -202,15 +198,11 @@ Updates to one object do not affect the other.`,
 
 // newHashInstance builds a Hash instance wrapping the given algorithm and data.
 func newHashInstance(alg string, data []byte) *object.Instance {
-	return &object.Instance{
-		Class:      HashClass,
-		NativeData: &hashState{data: data, alg: alg},
-		Fields: map[string]object.Object{
-			"name":        object.NewString(alg),
-			"digest_size": object.NewInteger(int64(hashDigestSize(alg))),
-			"block_size":  object.NewInteger(int64(hashBlockSize(alg))),
-		},
-	}
+	return object.NewInstanceWithData(HashClass, map[string]object.Object{
+		"name":        object.NewString(alg),
+		"digest_size": object.NewInteger(int64(hashDigestSize(alg))),
+		"block_size":  object.NewInteger(int64(hashBlockSize(alg))),
+	}, &hashState{data: data, alg: alg})
 }
 
 // makeHashBuiltin builds a hashlib constructor builtin for the given algorithm.

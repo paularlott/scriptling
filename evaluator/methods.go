@@ -342,7 +342,7 @@ func prependSelf(self object.Object, args []object.Object) []object.Object {
 
 func callInstanceMethod(ctx context.Context, instance *object.Instance, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
 	// First check if it's an instance field (which might be a callable)
-	if val, ok := instance.Fields[method]; ok {
+	if val, ok := instance.GetField(method); ok {
 		// If it's callable, call it without prepending self
 		switch fn := val.(type) {
 		case *object.Function, *object.LambdaFunction, *object.Builtin, *object.BoundMethod:

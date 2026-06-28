@@ -24,12 +24,12 @@ func main() {
 
 	counter := object.NewClassBuilder("Counter").
 		Method("__init__", func(self *object.Instance, start int) {
-			self.Fields["value"] = object.NewInteger(int64(start))
+			self.SetField("value", object.NewInteger(int64(start)))
 		}).
 		Method("inc", func(self *object.Instance, amount int) int {
-			current := self.Fields["value"].(*object.Integer).IntValue()
+			current := self.Field("value").(*object.Integer).IntValue()
 			next := current + int64(amount)
-			self.Fields["value"] = object.NewInteger(next)
+			self.SetField("value", object.NewInteger(next))
 			return int(next)
 		})
 	server.RegisterClass(counter)

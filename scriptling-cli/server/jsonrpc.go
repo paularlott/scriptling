@@ -402,10 +402,10 @@ func (s *Server) dispatchJSONRPCRequest(ctx context.Context, frame jsonrpcFrame)
 
 	// Handler returned an explicit JSON-RPC error object.
 	if extlibs.IsJSONRPCError(result) {
-		code, _ := result.(*object.Instance).Fields["code"].AsInt()
-		message, _ := result.(*object.Instance).Fields["message"].AsString()
+		code, _ := result.(*object.Instance).Field("code").AsInt()
+		message, _ := result.(*object.Instance).Field("message").AsString()
 		errOut := &jsonrpcErrorOut{Code: int(code), Message: message}
-		if data, present := result.(*object.Instance).Fields["data"]; present {
+		if data, present := result.(*object.Instance).GetField("data"); present {
 			if _, isNull := data.(*object.Null); !isNull {
 				errOut.Data = conversion.ToGo(data)
 			}

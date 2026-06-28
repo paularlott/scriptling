@@ -1665,14 +1665,14 @@ func TestClassBuilderProperty(t *testing.T) {
 
 	cb := object.NewClassBuilder("Circle")
 	cb.MethodWithHelp("__init__", func(self *object.Instance, r float64) {
-		self.Fields["radius"] = object.NewFloat(r)
+		self.SetField("radius", object.NewFloat(r))
 	}, "")
 	cb.Property("radius", func(self *object.Instance) float64 {
-		v, _ := self.Fields["radius"].AsFloat()
+		v, _ := self.Field("radius").AsFloat()
 		return v
 	})
 	cb.Property("diameter", func(self *object.Instance) float64 {
-		v, _ := self.Fields["radius"].AsFloat()
+		v, _ := self.Field("radius").AsFloat()
 		return v * 2
 	})
 	p.SetObjectVar("Circle", cb.Build())
@@ -1735,10 +1735,10 @@ func TestClassBuilderPropertyInheritance(t *testing.T) {
 
 	base := object.NewClassBuilder("Base")
 	base.MethodWithHelp("__init__", func(self *object.Instance, name string) {
-		self.Fields["name"] = object.NewString(name)
+		self.SetField("name", object.NewString(name))
 	}, "")
 	base.Property("name", func(self *object.Instance) string {
-		v, _ := self.Fields["name"].AsString()
+		v, _ := self.Field("name").AsString()
 		return v
 	})
 	baseClass := base.Build()
@@ -1747,7 +1747,7 @@ func TestClassBuilderPropertyInheritance(t *testing.T) {
 	child.BaseClass(baseClass)
 	// Child needs its own __init__ to set fields (inherited __init__ is not auto-called)
 	child.Method("__init__", func(self *object.Instance, name string) {
-		self.Fields["name"] = object.NewString(name)
+		self.SetField("name", object.NewString(name))
 	})
 	p.SetObjectVar("Base", baseClass)
 	p.SetObjectVar("Child", child.Build())
@@ -1772,7 +1772,7 @@ func TestClassBuilderNativePropertyAndStaticMethod(t *testing.T) {
 
 	getterFn := func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 		inst := args[0].(*object.Instance)
-		v, _ := inst.Fields["val"].AsInt()
+		v, _ := inst.Field("val").AsInt()
 		return object.NewInteger(v * 2)
 	}
 	staticFn := func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -1787,7 +1787,7 @@ func TestClassBuilderNativePropertyAndStaticMethod(t *testing.T) {
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					inst := args[0].(*object.Instance)
 					n, _ := args[1].AsInt()
-					inst.Fields["val"] = object.NewInteger(n)
+					inst.SetField("val", object.NewInteger(n))
 					return &object.Null{}
 				},
 			},
@@ -1925,15 +1925,15 @@ func TestClassBuilderPropertySetter(t *testing.T) {
 
 	cb := object.NewClassBuilder("Box")
 	cb.MethodWithHelp("__init__", func(self *object.Instance, v int) {
-		self.Fields["_v"] = object.NewInteger(int64(v))
+		self.SetField("_v", object.NewInteger(int64(v)))
 	}, "")
 	cb.PropertyWithSetter("value",
 		func(self *object.Instance) int {
-			v, _ := self.Fields["_v"].AsInt()
+			v, _ := self.Field("_v").AsInt()
 			return int(v)
 		},
 		func(self *object.Instance, v int) {
-			self.Fields["_v"] = object.NewInteger(int64(v))
+			self.SetField("_v", object.NewInteger(int64(v)))
 		},
 	)
 	p.SetObjectVar("Box", cb.Build())
@@ -2122,10 +2122,10 @@ func TestDelExplicitCallOnInstanceStyle(t *testing.T) {
 
 	class := object.NewClassBuilder("Conn").
 		Method("__init__", func(self *object.Instance, host string) {
-			self.Fields["host"] = object.NewString(host)
+			self.SetField("host", object.NewString(host))
 		}).
 		Method("get_host", func(self *object.Instance) string {
-			return self.Fields["host"].(*object.String).StringValue()
+			return self.Field("host").(*object.String).StringValue()
 		}).
 		Method("__del__", func(self *object.Instance) {
 			delCount.Add(1)
@@ -2999,7 +2999,7 @@ func TestGCTriggersDelOnInstanceStyle(t *testing.T) {
 
 	class := object.NewClassBuilder("Conn").
 		Method("__init__", func(self *object.Instance, host string) {
-			self.Fields["host"] = object.NewString(host)
+			self.SetField("host", object.NewString(host))
 		}).
 		Method("__del__", func(self *object.Instance) {
 			delCount.Add(1)

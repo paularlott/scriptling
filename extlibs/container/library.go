@@ -189,15 +189,12 @@ func getContainerClientClass() *object.Class {
 }
 
 func newClientInstance(driverName string, d ContainerDriver) *object.Instance {
-	return &object.Instance{
-		Class: getContainerClientClass(),
-		Fields: map[string]object.Object{
+	return object.NewInstanceWithFields(getContainerClientClass(), map[string]object.Object{
 			"_client": &object.ClientWrapper{
 				TypeName: "ContainerClient",
 				Client:   &clientInstance{driver: d, driverName: driverName},
 			},
-		},
-	}
+		})
 }
 
 func getClientInstance(self *object.Instance) (*clientInstance, *object.Error) {

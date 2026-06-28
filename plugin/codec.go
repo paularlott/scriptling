@@ -238,7 +238,7 @@ func valuesFromKwargsWithCallbacks(kwargs object.Kwargs, callbacks *callbackSet)
 }
 
 func remoteFromInstance(instance *object.Instance) (*remoteObject, bool) {
-	if instance == nil || instance.Fields == nil {
+	if instance == nil {
 		return nil, false
 	}
 	wrapper, ok := object.GetClientField(instance, remoteFieldName)

@@ -392,30 +392,21 @@ func TestGetClientInstanceErrors(t *testing.T) {
 		},
 		{
 			name: "missing _client field",
-			instance: &object.Instance{
-				Class:  GetOpenAIClientClass(),
-				Fields: map[string]object.Object{},
-			},
+			instance: object.NewInstanceWithFields(GetOpenAIClientClass(), nil),
 			wantError: "missing internal client reference",
 		},
 		{
 			name: "nil client",
-			instance: &object.Instance{
-				Class: GetOpenAIClientClass(),
-				Fields: map[string]object.Object{
+			instance: object.NewInstanceWithFields(GetOpenAIClientClass(), map[string]object.Object{
 					"_client": &object.ClientWrapper{Client: nil},
-				},
-			},
+				}),
 			wantError: "client is nil",
 		},
 		{
 			name: "invalid client type",
-			instance: &object.Instance{
-				Class: GetOpenAIClientClass(),
-				Fields: map[string]object.Object{
+			instance: object.NewInstanceWithFields(GetOpenAIClientClass(), map[string]object.Object{
 					"_client": &object.ClientWrapper{Client: "not a ClientInstance"},
-				},
-			},
+				}),
 			wantError: "invalid internal client reference",
 		},
 	}
@@ -452,12 +443,9 @@ func TestCompletionMethodErrors(t *testing.T) {
 	}{
 		{
 			name: "nil client",
-			instance: &object.Instance{
-				Class: GetOpenAIClientClass(),
-				Fields: map[string]object.Object{
+			instance: object.NewInstanceWithFields(GetOpenAIClientClass(), map[string]object.Object{
 					"_client": &object.ClientWrapper{Client: nil},
-				},
-			},
+				}),
 			model:     "gpt-4",
 			messages:  []map[string]any{{"role": "user", "content": "Hello"}},
 			wantError: "client is nil",
@@ -479,14 +467,11 @@ func TestCompletionMethodMessageValidation(t *testing.T) {
 	ctx := context.Background()
 
 	// Create an instance with a valid ClientInstance structure but nil client
-	instance := &object.Instance{
-		Class: GetOpenAIClientClass(),
-		Fields: map[string]object.Object{
+	instance := object.NewInstanceWithFields(GetOpenAIClientClass(), map[string]object.Object{
 			"_client": &object.ClientWrapper{
 				Client: &ClientInstance{client: nil},
 			},
-		},
-	}
+		})
 
 	tests := []struct {
 		name      string
@@ -528,14 +513,11 @@ func TestCompletionMethodMessageValidation(t *testing.T) {
 func TestModelsMethodErrors(t *testing.T) {
 	ctx := context.Background()
 
-	instance := &object.Instance{
-		Class: GetOpenAIClientClass(),
-		Fields: map[string]object.Object{
+	instance := object.NewInstanceWithFields(GetOpenAIClientClass(), map[string]object.Object{
 			"_client": &object.ClientWrapper{
 				Client: &ClientInstance{client: nil},
 			},
-		},
-	}
+		})
 
 	result := modelsMethod(instance, ctx)
 	if result.Type() != object.ERROR_OBJ {
@@ -547,14 +529,11 @@ func TestModelsMethodErrors(t *testing.T) {
 func TestResponseMethodsErrors(t *testing.T) {
 	ctx := context.Background()
 
-	instance := &object.Instance{
-		Class: GetOpenAIClientClass(),
-		Fields: map[string]object.Object{
+	instance := object.NewInstanceWithFields(GetOpenAIClientClass(), map[string]object.Object{
 			"_client": &object.ClientWrapper{
 				Client: &ClientInstance{client: nil},
 			},
-		},
-	}
+		})
 
 	t.Run("response_create with nil client", func(t *testing.T) {
 		result := responseCreateMethod(instance, ctx, object.Kwargs{}, "gpt-4", []any{"test"})
@@ -587,30 +566,21 @@ func TestGetStreamInstanceErrors(t *testing.T) {
 	}{
 		{
 			name: "missing _stream field",
-			instance: &object.Instance{
-				Class:  GetChatStreamClass(),
-				Fields: map[string]object.Object{},
-			},
+			instance: object.NewInstanceWithFields(GetChatStreamClass(), nil),
 			wantError: "missing internal stream reference",
 		},
 		{
 			name: "nil stream",
-			instance: &object.Instance{
-				Class: GetChatStreamClass(),
-				Fields: map[string]object.Object{
+			instance: object.NewInstanceWithFields(GetChatStreamClass(), map[string]object.Object{
 					"_stream": &object.ClientWrapper{Client: nil},
-				},
-			},
+				}),
 			wantError: "stream is nil",
 		},
 		{
 			name: "invalid stream type",
-			instance: &object.Instance{
-				Class: GetChatStreamClass(),
-				Fields: map[string]object.Object{
+			instance: object.NewInstanceWithFields(GetChatStreamClass(), map[string]object.Object{
 					"_stream": &object.ClientWrapper{Client: "not a ChatStreamInstance"},
-				},
-			},
+				}),
 			wantError: "invalid internal stream reference",
 		},
 	}
@@ -633,14 +603,11 @@ func TestGetStreamInstanceErrors(t *testing.T) {
 func TestNextStreamMethodErrors(t *testing.T) {
 	ctx := context.Background()
 
-	instance := &object.Instance{
-		Class: GetChatStreamClass(),
-		Fields: map[string]object.Object{
+	instance := object.NewInstanceWithFields(GetChatStreamClass(), map[string]object.Object{
 			"_stream": &object.ClientWrapper{
 				Client: &ChatStreamInstance{stream: nil},
 			},
-		},
-	}
+		})
 
 	result := nextStreamMethod(instance, ctx)
 	if result.Type() != object.ERROR_OBJ {
@@ -652,14 +619,11 @@ func TestNextStreamMethodErrors(t *testing.T) {
 func TestCompletionStreamMethodMessageValidation(t *testing.T) {
 	ctx := context.Background()
 
-	instance := &object.Instance{
-		Class: GetOpenAIClientClass(),
-		Fields: map[string]object.Object{
+	instance := object.NewInstanceWithFields(GetOpenAIClientClass(), map[string]object.Object{
 			"_client": &object.ClientWrapper{
 				Client: &ClientInstance{client: nil},
 			},
-		},
-	}
+		})
 
 	tests := []struct {
 		name      string
@@ -692,12 +656,9 @@ func TestCompletionStreamMethodMessageValidation(t *testing.T) {
 func TestCompletionStreamMethodNilClient(t *testing.T) {
 	ctx := context.Background()
 
-	instance := &object.Instance{
-		Class: GetOpenAIClientClass(),
-		Fields: map[string]object.Object{
+	instance := object.NewInstanceWithFields(GetOpenAIClientClass(), map[string]object.Object{
 			"_client": &object.ClientWrapper{Client: nil},
-		},
-	}
+		})
 
 	result := completionStreamMethod(instance, ctx, object.Kwargs{}, "gpt-4", []map[string]any{{"role": "user", "content": "Hello"}})
 	if result.Type() != object.ERROR_OBJ {
@@ -707,14 +668,11 @@ func TestCompletionStreamMethodNilClient(t *testing.T) {
 
 func TestCompletionMethodTimeoutKwarg(t *testing.T) {
 	ctx := context.Background()
-	instance := &object.Instance{
-		Class: GetOpenAIClientClass(),
-		Fields: map[string]object.Object{
+	instance := object.NewInstanceWithFields(GetOpenAIClientClass(), map[string]object.Object{
 			"_client": &object.ClientWrapper{
 				Client: &ClientInstance{client: timeoutMockClient{}},
 			},
-		},
-	}
+		})
 
 	kwargs := object.NewKwargs(map[string]object.Object{
 		"timeout": object.NewInteger(10),
@@ -740,17 +698,14 @@ func TestNextTimeoutSuppressesFallbackCancelError(t *testing.T) {
 		close(responseChan)
 	}()
 
-	instance := &object.Instance{
-		Class: GetChatStreamClass(),
-		Fields: map[string]object.Object{
+	instance := object.NewInstanceWithFields(GetChatStreamClass(), map[string]object.Object{
 			"_stream": &object.ClientWrapper{
 				Client: &ChatStreamInstance{
 					stream: openaiapi.NewChatStream(streamCtx, responseChan, errorChan),
 					cancel: cancel,
 				},
 			},
-		},
-	}
+		})
 
 	result := nextTimeoutStreamMethod(instance, ctx, 5)
 	if result.Type() != object.DICT_OBJ {
@@ -780,17 +735,14 @@ func TestNextTimeoutCancelsStreamOnCallerCancellation(t *testing.T) {
 	callCtx, callCancel := context.WithCancel(parentCtx)
 	callCancel()
 
-	instance := &object.Instance{
-		Class: GetChatStreamClass(),
-		Fields: map[string]object.Object{
+	instance := object.NewInstanceWithFields(GetChatStreamClass(), map[string]object.Object{
 			"_stream": &object.ClientWrapper{
 				Client: &ChatStreamInstance{
 					stream: openaiapi.NewChatStream(streamCtx, responseChan, errorChan),
 					cancel: cancel,
 				},
 			},
-		},
-	}
+		})
 
 	result := nextTimeoutStreamMethod(instance, callCtx, 100)
 	if result.Type() != object.NULL_OBJ {
@@ -824,17 +776,14 @@ func TestNextTimeoutCallerCancellationDoesNotWedgeSubsequentNext(t *testing.T) {
 	callCtx, callCancel := context.WithCancel(parentCtx)
 	callCancel()
 
-	instance := &object.Instance{
-		Class: GetChatStreamClass(),
-		Fields: map[string]object.Object{
+	instance := object.NewInstanceWithFields(GetChatStreamClass(), map[string]object.Object{
 			"_stream": &object.ClientWrapper{
 				Client: &ChatStreamInstance{
 					stream: openaiapi.NewChatStream(streamCtx, responseChan, errorChan),
 					cancel: cancel,
 				},
 			},
-		},
-	}
+		})
 
 	result := nextTimeoutStreamMethod(instance, callCtx, 100)
 	if result.Type() != object.NULL_OBJ {
@@ -1528,17 +1477,14 @@ func deepEqualAny(a, b any) bool {
 
 func TestCollectStreamAggregatesToolCalls(t *testing.T) {
 	stream := toolStreamMockClient{}.StreamChatCompletion(context.Background(), mcpai.ChatCompletionRequest{})
-	instance := &object.Instance{
-		Class: GetChatStreamClass(),
-		Fields: map[string]object.Object{
+	instance := object.NewInstanceWithFields(GetChatStreamClass(), map[string]object.Object{
 			"_stream": &object.ClientWrapper{
 				TypeName: "ChatStream",
 				Client: &ChatStreamInstance{
 					stream: stream,
 				},
 			},
-		},
-	}
+		})
 
 	result, errObj := collectStream(context.Background(), instance, 100, 0, nil)
 	if errObj != nil {
@@ -1565,17 +1511,14 @@ func TestCollectStreamAggregatesToolCalls(t *testing.T) {
 
 func TestCollectStreamExtractsThinkingTagsFromContentDeltas(t *testing.T) {
 	stream := thinkingTagStreamMockClient{}.StreamChatCompletion(context.Background(), mcpai.ChatCompletionRequest{})
-	instance := &object.Instance{
-		Class: GetChatStreamClass(),
-		Fields: map[string]object.Object{
+	instance := object.NewInstanceWithFields(GetChatStreamClass(), map[string]object.Object{
 			"_stream": &object.ClientWrapper{
 				TypeName: "ChatStream",
 				Client: &ChatStreamInstance{
 					stream: stream,
 				},
 			},
-		},
-	}
+		})
 
 	result, errObj := collectStream(context.Background(), instance, 100, 0, nil)
 	if errObj != nil {
@@ -1609,11 +1552,11 @@ func TestCreateClientInstance(t *testing.T) {
 		t.Errorf("instance.Class = %v, want %v", instance.Class, GetOpenAIClientClass())
 	}
 
-	if len(instance.Fields) != 1 {
-		t.Errorf("instance.Fields length = %d, want 1", len(instance.Fields))
+	if instance.FieldCount() != 1 {
+		t.Errorf("instance.Fields length = %d, want 1", instance.FieldCount())
 	}
 
-	clientWrapper, ok := instance.Fields["_client"].(*object.ClientWrapper)
+	clientWrapper, ok := instance.Field("_client").(*object.ClientWrapper)
 	if !ok {
 		t.Error("_client field is not a ClientWrapper")
 	}
@@ -1746,15 +1689,12 @@ func TestChatStreamClassMethods(t *testing.T) {
 
 // Test getClientInstance with valid client instance
 func TestGetClientInstanceValid(t *testing.T) {
-	instance := &object.Instance{
-		Class: GetOpenAIClientClass(),
-		Fields: map[string]object.Object{
+	instance := object.NewInstanceWithFields(GetOpenAIClientClass(), map[string]object.Object{
 			"_client": &object.ClientWrapper{
 				TypeName: "OpenAIClient",
 				Client:   &ClientInstance{client: nil},
 			},
-		},
-	}
+		})
 
 	ci, err := getClientInstance(instance)
 	if err != nil {
@@ -1772,15 +1712,12 @@ func TestGetClientInstanceValid(t *testing.T) {
 
 // Test getStreamInstance with valid stream instance
 func TestGetStreamInstanceValid(t *testing.T) {
-	instance := &object.Instance{
-		Class: GetChatStreamClass(),
-		Fields: map[string]object.Object{
+	instance := object.NewInstanceWithFields(GetChatStreamClass(), map[string]object.Object{
 			"_stream": &object.ClientWrapper{
 				TypeName: "ChatStream",
 				Client:   &ChatStreamInstance{stream: nil},
 			},
-		},
-	}
+		})
 
 	si, err := getStreamInstance(instance)
 	if err != nil {
@@ -1800,14 +1737,11 @@ func TestGetStreamInstanceValid(t *testing.T) {
 func TestCompletionMethodStringShorthand(t *testing.T) {
 	ctx := context.Background()
 
-	instance := &object.Instance{
-		Class: GetOpenAIClientClass(),
-		Fields: map[string]object.Object{
+	instance := object.NewInstanceWithFields(GetOpenAIClientClass(), map[string]object.Object{
 			"_client": &object.ClientWrapper{
 				Client: &ClientInstance{client: nil},
 			},
-		},
-	}
+		})
 
 	tests := []struct {
 		name          string
@@ -1873,14 +1807,11 @@ func TestCompletionMethodStringShorthand(t *testing.T) {
 func TestCompletionStreamMethodStringShorthand(t *testing.T) {
 	ctx := context.Background()
 
-	instance := &object.Instance{
-		Class: GetOpenAIClientClass(),
-		Fields: map[string]object.Object{
+	instance := object.NewInstanceWithFields(GetOpenAIClientClass(), map[string]object.Object{
 			"_client": &object.ClientWrapper{
 				Client: &ClientInstance{client: nil},
 			},
-		},
-	}
+		})
 
 	tests := []struct {
 		name          string
@@ -1946,14 +1877,11 @@ func TestCompletionStreamMethodStringShorthand(t *testing.T) {
 func TestResponseCreateMethodStringShorthand(t *testing.T) {
 	ctx := context.Background()
 
-	instance := &object.Instance{
-		Class: GetOpenAIClientClass(),
-		Fields: map[string]object.Object{
+	instance := object.NewInstanceWithFields(GetOpenAIClientClass(), map[string]object.Object{
 			"_client": &object.ClientWrapper{
 				Client: &ClientInstance{client: nil},
 			},
-		},
-	}
+		})
 
 	tests := []struct {
 		name          string

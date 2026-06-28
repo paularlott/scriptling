@@ -287,10 +287,10 @@ func writeEnvPluginHelper(t *testing.T, path string, envName string) {
 func runPluginTestHelper() {
 	configBuilder := object.NewClassBuilder("Config").
 		Method("__init__", func(self *object.Instance, name string) {
-			self.Fields["name"] = object.NewString(name)
+			self.SetField("name", object.NewString(name))
 		}).
 		Method("get", func(self *object.Instance, key string) string {
-			return self.Fields["name"].(*object.String).StringValue()
+			return self.Field("name").(*object.String).StringValue()
 		})
 
 	greetBuilder := object.NewFunctionBuilder()
@@ -1146,17 +1146,17 @@ func runComprehensivePluginHelper() {
 
 	kvClass := object.NewClassBuilder("KVStore").
 		Method("__init__", func(self *object.Instance) {
-			self.Fields["data"] = object.NewStringDict(map[string]object.Object{})
+			self.SetField("data", object.NewStringDict(map[string]object.Object{}))
 		}).
 		Method("set", func(self *object.Instance, key, val string) {
-			dict := self.Fields["data"].(*object.Dict)
+			dict := self.Field("data").(*object.Dict)
 			dict.Pairs[object.DictKey(object.NewString(key))] = object.DictPair{
 				Key:   object.NewString(key),
 				Value: object.NewString(val),
 			}
 		}).
 		Method("get", func(self *object.Instance, key string) string {
-			dict := self.Fields["data"].(*object.Dict)
+			dict := self.Field("data").(*object.Dict)
 			k := object.DictKey(object.NewString(key))
 			if pair, ok := dict.Pairs[k]; ok {
 				s, _ := pair.Value.AsString()
@@ -1442,10 +1442,7 @@ func TestReleaseExplicit(t *testing.T) {
 	})
 
 	t.Run("non-plugin instance", func(t *testing.T) {
-		inst := &object.Instance{
-			Class:  &object.Class{Name: "Local"},
-			Fields: map[string]object.Object{},
-		}
+		inst := object.NewInstanceWithFields(&object.Class{Name: "Local"}, nil)
 		err := Release(inst)
 		if err == nil {
 			t.Error("expected error for non-plugin instance")

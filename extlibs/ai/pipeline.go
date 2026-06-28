@@ -291,15 +291,12 @@ func getPipelineInstance(self *object.Instance) (*PipelineInstance, *object.Erro
 
 // createPipelineInstance wraps a *PipelineInstance in a scriptling object.Instance.
 func createPipelineInstance(pi *PipelineInstance) *object.Instance {
-	return &object.Instance{
-		Class: GetPipelineClass(),
-		Fields: map[string]object.Object{
-			"_pipeline": &object.ClientWrapper{
-				TypeName: "Pipeline",
-				Client:   pi,
-			},
+	return object.NewInstanceWithFields(GetPipelineClass(), map[string]object.Object{
+		"_pipeline": &object.ClientWrapper{
+			TypeName: "Pipeline",
+			Client:   pi,
 		},
-	}
+	})
 }
 
 func buildPipelineClass() *object.Class {

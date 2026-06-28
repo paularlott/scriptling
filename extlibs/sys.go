@@ -175,7 +175,7 @@ func (h *stdinHolder) CoerceFloat() (float64, object.Object)             { retur
 const stdinKey = "__stdin__"
 
 func getStdinReader(inst *object.Instance) (*bufio.Reader, bool) {
-	h, ok := inst.Fields[stdinKey]
+	h, ok := inst.GetField(stdinKey)
 	if !ok {
 		return nil, false
 	}
@@ -259,10 +259,7 @@ var stdinClass = &object.Class{
 }
 
 func newStdinObject(r *bufio.Reader) *object.Instance {
-	return &object.Instance{
-		Class:  stdinClass,
-		Fields: map[string]object.Object{stdinKey: &stdinHolder{r: r}},
-	}
+	return object.NewInstanceWithFields(stdinClass, map[string]object.Object{stdinKey: &stdinHolder{r: r}})
 }
 
 func getPlatform() string {
