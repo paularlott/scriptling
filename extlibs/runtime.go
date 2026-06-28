@@ -52,9 +52,10 @@ var RuntimeState = struct {
 	Shareds    map[string]*RuntimeShared
 
 	// Server lifecycle channels (nil in script mode)
-	ServerStartCh  chan struct{} // closed by start_server() to signal server is ready
+	ServerStartCh   chan struct{} // closed by start_server() to signal server is ready
 	ServerRunningCh chan struct{} // closed by server on shutdown
-	ServerStarted  bool         // prevents double-close of ServerStartCh
+	ServerStarted   bool         // prevents double-close of ServerStartCh
+	ServerCollect   func()       // set by NewServer; called inside start_server() to snapshot routes atomically
 
 	// Cleanup functions registered by libraries
 	cleanupFuncs []func()
@@ -147,6 +148,7 @@ func ResetRuntime() {
 	RuntimeState.ServerStartCh = nil
 	RuntimeState.ServerRunningCh = nil
 	RuntimeState.ServerStarted = false
+	RuntimeState.ServerCollect = nil
 }
 
 // Promise represents an async operation result
@@ -392,10 +394,17 @@ Returns:
 				}
 			}
 
-			// Close the start channel once to signal the server to build its mux.
+			// Snapshot routes and close the start channel atomically so that
+			// anything registered after start_server() returns is definitively
+			// excluded. ServerCollect runs while the lock is held — collectRoutes
+			// and collectJSONRPCMethods read RuntimeState fields directly without
+			// re-acquiring the lock, so this is safe.
 			RuntimeState.Lock()
 			if !RuntimeState.ServerStarted && RuntimeState.ServerStartCh != nil {
 				RuntimeState.ServerStarted = true
+				if RuntimeState.ServerCollect != nil {
+					RuntimeState.ServerCollect()
+				}
 				close(RuntimeState.ServerStartCh)
 			}
 			RuntimeState.Unlock()

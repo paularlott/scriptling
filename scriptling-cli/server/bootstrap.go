@@ -40,10 +40,18 @@ func NewServer(config ServerConfig) (*Server, error) {
 
 	setup.Factories(config.LibDirs, config.AllowedPaths, config.DisabledLibs, config.SecretRegistry, Log, config.DockerSock, config.PodmanSock)
 
-	// Initialize server lifecycle channels after ResetRuntime.
+	// Initialize server lifecycle channels and the collection callback after
+	// ResetRuntime. ServerCollect is called inside start_server() (and the
+	// backward-compat goroutine exit path) while the RuntimeState lock is held,
+	// so the route snapshot is atomic with the ServerStarted flag — anything
+	// registered after start_server() returns is definitively excluded.
 	extlibs.RuntimeState.Lock()
 	extlibs.RuntimeState.ServerStartCh = make(chan struct{})
 	extlibs.RuntimeState.ServerRunningCh = make(chan struct{})
+	extlibs.RuntimeState.ServerCollect = func() {
+		s.collectRoutes()
+		s.collectJSONRPCMethods()
+	}
 	extlibs.RuntimeState.Unlock()
 
 	hasScript := config.ScriptFile != "" || s.packLoader != nil
@@ -59,11 +67,15 @@ func NewServer(config ServerConfig) (*Server, error) {
 			runErr = s.runSetupScript()
 		}
 
-		// If start_server() was not called, signal start now (backward compat).
+		// If start_server() was not called, collect routes and signal start now
+		// (backward compat). Mirrors the collection done inside start_server().
 		extlibs.RuntimeState.Lock()
 		alreadyStarted := extlibs.RuntimeState.ServerStarted
 		if !alreadyStarted {
 			extlibs.RuntimeState.ServerStarted = true
+			if extlibs.RuntimeState.ServerCollect != nil {
+				extlibs.RuntimeState.ServerCollect()
+			}
 			close(extlibs.RuntimeState.ServerStartCh)
 			if runErr != nil {
 				startErrCh <- runErr
@@ -74,7 +86,7 @@ func NewServer(config ServerConfig) (*Server, error) {
 		extlibs.RuntimeState.Unlock()
 	}()
 
-	// Wait until start_server() is called or the script exits.
+	// Wait until routes are collected and the start signal is sent.
 	<-extlibs.RuntimeState.ServerStartCh
 
 	// Check for a pre-start error (non-blocking — buffered channel).
@@ -99,8 +111,8 @@ func NewServer(config ServerConfig) (*Server, error) {
 		}
 	}
 
-	s.collectRoutes()
-	s.collectJSONRPCMethods()
+	// Routes and JSON-RPC methods were already collected inside start_server()
+	// (or the backward-compat goroutine exit). Only background tasks remain.
 	extlibs.ReleaseBackgroundTasks()
 
 	// Open zip web root if configured
