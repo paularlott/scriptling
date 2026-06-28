@@ -16,11 +16,7 @@ var discordClientClass = &object.Class{
 }
 
 func newClientInstance(c *discordClient, builtins map[string]*object.Builtin) *object.Instance {
-	inst := &object.Instance{
-		Class:      discordClientClass,
-		Fields:     map[string]object.Object{},
-		NativeData: c,
-	}
+	inst := object.NewInstanceWithData(discordClientClass, nil, c)
 	shared.BindToInstance(inst, builtins)
 	return inst
 }

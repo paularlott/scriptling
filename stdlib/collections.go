@@ -31,12 +31,12 @@ var CounterClass = &object.Class{
 
 				// Helper to increment counter for a key
 				countKey := func(key string) {
-					if countObj, exists := counter.Fields[key]; exists {
+					if countObj, exists := counter.GetField(key); exists {
 						if count, ok := countObj.(*object.Integer); ok {
-							counter.Fields[key] = object.NewInteger(count.IntValue() + 1)
+							counter.SetField(key, object.NewInteger(count.IntValue() + 1))
 						}
 					} else {
-						counter.Fields[key] = object.NewInteger(1)
+						counter.SetField(key, object.NewInteger(1))
 					}
 				}
 
@@ -59,7 +59,7 @@ var CounterClass = &object.Class{
 					for _, v := range arg.Pairs {
 						if count, ok := v.Value.(*object.Integer); ok {
 							keyStr, _ := v.Key.AsString()
-							counter.Fields[keyStr] = count
+							counter.SetField(keyStr, count)
 						}
 					}
 				default:
@@ -78,7 +78,7 @@ var CounterClass = &object.Class{
 				counter := args[0].(*object.Instance)
 				key := args[1].Inspect()
 
-				if count, ok := counter.Fields[key]; ok {
+				if count, ok := counter.GetField(key); ok {
 					return count
 				}
 				// Return 0 for missing keys (like Python Counter)
@@ -91,7 +91,7 @@ var CounterClass = &object.Class{
 				// most_common([n]) - Return n most common elements
 				counter := args[0].(*object.Instance)
 
-				n := len(counter.Fields)
+				n := counter.FieldCount()
 				if len(args) == 2 {
 					if nArg, ok := args[1].(*object.Integer); ok {
 						n = int(nArg.IntValue())
@@ -105,12 +105,13 @@ var CounterClass = &object.Class{
 					key   string
 					count int64
 				}
-				pairs := make([]pair, 0, len(counter.Fields))
-				for key, countObj := range counter.Fields {
+				pairs := make([]pair, 0, counter.FieldCount())
+				counter.RangeFields(func(key string, countObj object.Object) bool {
 					if count, ok := countObj.(*object.Integer); ok {
 						pairs = append(pairs, pair{key: key, count: count.IntValue()})
 					}
-				}
+						return true
+				})
 
 				// Sort by count descending
 				sort.Slice(pairs, func(i, j int) bool {
@@ -152,13 +153,14 @@ If n is omitted, returns all elements.`,
 				counter := args[0].(*object.Instance)
 
 				var result []object.Object
-				for key, countObj := range counter.Fields {
+				counter.RangeFields(func(key string, countObj object.Object) bool {
 					if count, ok := countObj.(*object.Integer); ok {
 						for i := int64(0); i < count.IntValue(); i++ {
 							result = append(result, object.NewString(key))
 						}
 					}
-				}
+						return true
+				})
 				return &object.List{Elements: result}
 			},
 			HelpText: `elements() - Return iterator over elements
@@ -180,7 +182,7 @@ var DefaultDictClass = &object.Class{
 				factory := args[1]
 
 				// Store factory
-				dd.Fields["__default_factory__"] = factory
+				dd.SetField("__default_factory__", factory)
 				return &object.Null{}
 			},
 		},
@@ -192,12 +194,12 @@ var DefaultDictClass = &object.Class{
 				key := args[1].Inspect()
 
 				// Check if key exists
-				if value, exists := dd.Fields[key]; exists {
+				if value, exists := dd.GetField(key); exists {
 					return value
 				}
 
 				// Get factory
-				factory, hasFactory := dd.Fields["__default_factory__"]
+				factory, hasFactory := dd.GetField("__default_factory__")
 				if !hasFactory {
 					return &object.Null{}
 				}
@@ -238,7 +240,7 @@ var DefaultDictClass = &object.Class{
 				}
 
 				// Store and return
-				dd.Fields[key] = defaultValue
+				dd.SetField(key, defaultValue)
 				return defaultValue
 			},
 			HelpText: `__getitem__(key) - Get value with default creation (supports d[key] syntax)`,
@@ -251,7 +253,7 @@ var DefaultDictClass = &object.Class{
 				key := args[1].Inspect()
 				value := args[2]
 
-				dd.Fields[key] = value
+				dd.SetField(key, value)
 				return &object.Null{}
 			},
 			HelpText: `__setitem__(key, value) - Set value (supports d[key] = value syntax)`,
@@ -261,10 +263,7 @@ var DefaultDictClass = &object.Class{
 
 // createCounterInstance creates a new Counter instance
 func createCounterInstance() *object.Instance {
-	return &object.Instance{
-		Class:  CounterClass,
-		Fields: make(map[string]object.Object),
-	}
+	return object.NewInstanceWithFields(CounterClass, make(map[string]object.Object))
 }
 
 // CollectionsLibrary provides Python-like collections functions
@@ -283,34 +282,34 @@ var CollectionsLibrary = object.NewLibrary(CollectionsLibraryName, map[string]*o
 			case *object.List:
 				for _, elem := range arg.Elements {
 					key := elem.Inspect()
-					if countObj, exists := counter.Fields[key]; exists {
+					if countObj, exists := counter.GetField(key); exists {
 						if count, ok := countObj.(*object.Integer); ok {
-							counter.Fields[key] = object.NewInteger(count.IntValue() + 1)
+							counter.SetField(key, object.NewInteger(count.IntValue() + 1))
 						}
 					} else {
-						counter.Fields[key] = object.NewInteger(1)
+						counter.SetField(key, object.NewInteger(1))
 					}
 				}
 			case *object.Tuple:
 				for _, elem := range arg.Elements {
 					key := elem.Inspect()
-					if countObj, exists := counter.Fields[key]; exists {
+					if countObj, exists := counter.GetField(key); exists {
 						if count, ok := countObj.(*object.Integer); ok {
-							counter.Fields[key] = object.NewInteger(count.IntValue() + 1)
+							counter.SetField(key, object.NewInteger(count.IntValue() + 1))
 						}
 					} else {
-						counter.Fields[key] = object.NewInteger(1)
+						counter.SetField(key, object.NewInteger(1))
 					}
 				}
 			case *object.String:
 				for _, ch := range arg.StringValue() {
 					key := string(ch)
-					if countObj, exists := counter.Fields[key]; exists {
+					if countObj, exists := counter.GetField(key); exists {
 						if count, ok := countObj.(*object.Integer); ok {
-							counter.Fields[key] = object.NewInteger(count.IntValue() + 1)
+							counter.SetField(key, object.NewInteger(count.IntValue() + 1))
 						}
 					} else {
-						counter.Fields[key] = object.NewInteger(1)
+						counter.SetField(key, object.NewInteger(1))
 					}
 				}
 			case *object.Dict:
@@ -318,7 +317,7 @@ var CollectionsLibrary = object.NewLibrary(CollectionsLibraryName, map[string]*o
 				for _, v := range arg.Pairs {
 					if count, ok := v.Value.(*object.Integer); ok {
 						keyStr, _ := v.Key.AsString()
-						counter.Fields[keyStr] = count
+						counter.SetField(keyStr, count)
 					}
 				}
 			default:
@@ -349,7 +348,7 @@ Example:
 				return errors.NewTypeError("Counter", args[0].Type().String())
 			}
 
-			n := len(counter.Fields)
+			n := counter.FieldCount()
 			if len(args) == 2 {
 				if nArg, ok := args[1].(*object.Integer); ok {
 					n = int(nArg.IntValue())
@@ -363,12 +362,13 @@ Example:
 				key   string
 				count int64
 			}
-			pairs := make([]pair, 0, len(counter.Fields))
-			for key, countObj := range counter.Fields {
+			pairs := make([]pair, 0, counter.FieldCount())
+			counter.RangeFields(func(key string, countObj object.Object) bool {
 				if count, ok := countObj.(*object.Integer); ok {
 					pairs = append(pairs, pair{key: key, count: count.IntValue()})
 				}
-			}
+					return true
+			})
 
 			// Sort by count descending
 			sort.Slice(pairs, func(i, j int) bool {
@@ -676,15 +676,15 @@ Example:
 					nt := args[0].(*object.Instance)
 					// Store field values directly as instance fields
 					for i, name := range fieldNames {
-						nt.Fields[name] = args[i+1]
+						nt.SetField(name, args[i+1])
 					}
-					nt.Fields["__typename__"] = typename
+					nt.SetField("__typename__", typename)
 					// Store field names for reference
 					fieldNameObjs := make([]object.Object, len(fieldNames))
 					for i, name := range fieldNames {
 						fieldNameObjs[i] = object.NewString(name)
 					}
-					nt.Fields["__fields__"] = &object.Tuple{Elements: fieldNameObjs}
+					nt.SetField("__fields__", &object.Tuple{Elements: fieldNameObjs})
 					return &object.Null{}
 				},
 			}
@@ -699,7 +699,7 @@ Example:
 					if key == "__typename__" || key == "__fields__" {
 						return &object.Null{}
 					}
-					if value, exists := nt.Fields[key]; exists {
+					if value, exists := nt.GetField(key); exists {
 						return value
 					}
 					return &object.Null{}

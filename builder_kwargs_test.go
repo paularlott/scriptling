@@ -562,10 +562,7 @@ func TestClassBuilderSimple(t *testing.T) {
 	}
 
 	// Create a test instance
-	instance := &object.Instance{
-		Class:  class,
-		Fields: map[string]object.Object{},
-	}
+	instance := object.NewInstanceWithFields(class, nil)
 
 	// Call the method
 	result := builtin.Fn(context.Background(), object.NewKwargs(nil), instance, object.NewString("World"))
@@ -601,10 +598,7 @@ func TestClassBuilderMultipleMethods(t *testing.T) {
 		t.Errorf("expected 2 methods, got %d", len(class.Methods))
 	}
 
-	instance := &object.Instance{
-		Class:  class,
-		Fields: map[string]object.Object{},
-	}
+	instance := object.NewInstanceWithFields(class, nil)
 
 	// Test add method
 	addMethod := class.Methods["add"].(*object.Builtin)
@@ -653,10 +647,7 @@ func TestClassBuilderMethodWithError(t *testing.T) {
 	})
 	class := cb.Build()
 
-	instance := &object.Instance{
-		Class:  class,
-		Fields: map[string]object.Object{},
-	}
+	instance := object.NewInstanceWithFields(class, nil)
 
 	method := class.Methods["divide"].(*object.Builtin)
 
@@ -683,10 +674,7 @@ func TestClassBuilderKwargsOnly(t *testing.T) {
 	})
 	class := cb.Build()
 
-	instance := &object.Instance{
-		Class:  class,
-		Fields: map[string]object.Object{},
-	}
+	instance := object.NewInstanceWithFields(class, nil)
 
 	method := class.Methods["connect"].(*object.Builtin)
 
@@ -719,10 +707,7 @@ func TestClassBuilderContextKwargs(t *testing.T) {
 	})
 	class := cb.Build()
 
-	instance := &object.Instance{
-		Class:  class,
-		Fields: map[string]object.Object{},
-	}
+	instance := object.NewInstanceWithFields(class, nil)
 
 	method := class.Methods["connect"].(*object.Builtin)
 
@@ -745,10 +730,7 @@ func TestClassBuilderMixedKwargsPositional(t *testing.T) {
 	})
 	class := cb.Build()
 
-	instance := &object.Instance{
-		Class:  class,
-		Fields: map[string]object.Object{},
-	}
+	instance := object.NewInstanceWithFields(class, nil)
 
 	method := class.Methods["format"].(*object.Builtin)
 
@@ -781,10 +763,7 @@ func TestClassBuilderContextKwargsPositional(t *testing.T) {
 	})
 	class := cb.Build()
 
-	instance := &object.Instance{
-		Class:  class,
-		Fields: map[string]object.Object{},
-	}
+	instance := object.NewInstanceWithFields(class, nil)
 
 	method := class.Methods["format"].(*object.Builtin)
 
@@ -807,10 +786,7 @@ func TestClassBuilderMustHelpers(t *testing.T) {
 	})
 	class := cb.Build()
 
-	instance := &object.Instance{
-		Class:  class,
-		Fields: map[string]object.Object{},
-	}
+	instance := object.NewInstanceWithFields(class, nil)
 
 	method := class.Methods["get_info"].(*object.Builtin)
 
@@ -831,10 +807,7 @@ func TestClassBuilderNoArgs(t *testing.T) {
 	})
 	class := cb.Build()
 
-	instance := &object.Instance{
-		Class:  class,
-		Fields: map[string]object.Object{},
-	}
+	instance := object.NewInstanceWithFields(class, nil)
 
 	method := class.Methods["get_value"].(*object.Builtin)
 
@@ -855,10 +828,7 @@ func TestClassBuilderContextOnly(t *testing.T) {
 	})
 	class := cb.Build()
 
-	instance := &object.Instance{
-		Class:  class,
-		Fields: map[string]object.Object{},
-	}
+	instance := object.NewInstanceWithFields(class, nil)
 
 	method := class.Methods["check_context"].(*object.Builtin)
 
@@ -880,10 +850,7 @@ func TestClassBuilderAllTypes(t *testing.T) {
 	})
 	class := cb.Build()
 
-	instance := &object.Instance{
-		Class:  class,
-		Fields: map[string]object.Object{},
-	}
+	instance := object.NewInstanceWithFields(class, nil)
 
 	method := class.Methods["process"].(*object.Builtin)
 
@@ -911,10 +878,7 @@ func TestClassBuilderVariadic(t *testing.T) {
 	})
 	class := cb.Build()
 
-	instance := &object.Instance{
-		Class:  class,
-		Fields: map[string]object.Object{},
-	}
+	instance := object.NewInstanceWithFields(class, nil)
 
 	method := class.Methods["sum_all"].(*object.Builtin)
 
@@ -940,10 +904,7 @@ func TestClassBuilderContextVariadic(t *testing.T) {
 	})
 	class := cb.Build()
 
-	instance := &object.Instance{
-		Class:  class,
-		Fields: map[string]object.Object{},
-	}
+	instance := object.NewInstanceWithFields(class, nil)
 
 	method := class.Methods["sum_with_ctx"].(*object.Builtin)
 
@@ -980,14 +941,14 @@ func TestTypedReceiverBasic(t *testing.T) {
 	class := cb.Build()
 
 	initMethod := class.Methods["__init__"].(*object.Builtin)
-	instance := &object.Instance{Class: class, Fields: map[string]object.Object{}}
+	instance := object.NewInstanceWithFields(class, nil)
 
 	result := initMethod.Fn(context.Background(), object.NewKwargs(nil), instance)
 	if _, ok := result.(*object.Null); !ok {
 		t.Fatalf("expected Null from __init__, got %T", result)
 	}
 
-	wrapper, ok := instance.Fields["_receiver"].(*object.ClientWrapper)
+	wrapper, ok := instance.Field("_receiver").(*object.ClientWrapper)
 	if !ok {
 		t.Fatal("expected _receiver field to be a ClientWrapper")
 	}
@@ -1029,7 +990,7 @@ func TestTypedReceiverConstructorArgs(t *testing.T) {
 	class := cb.Build()
 
 	initMethod := class.Methods["__init__"].(*object.Builtin)
-	instance := &object.Instance{Class: class, Fields: map[string]object.Object{}}
+	instance := object.NewInstanceWithFields(class, nil)
 
 	result := initMethod.Fn(context.Background(), object.NewKwargs(nil), instance,
 		object.NewInteger(10))
@@ -1037,7 +998,7 @@ func TestTypedReceiverConstructorArgs(t *testing.T) {
 		t.Fatalf("expected Null from __init__, got %T", result)
 	}
 
-	counter := instance.Fields["_receiver"].(*object.ClientWrapper).Client.(*trCounter)
+	counter := instance.Field("_receiver").(*object.ClientWrapper).Client.(*trCounter)
 	if counter.value != 10 {
 		t.Errorf("expected initial value 10, got %d", counter.value)
 	}
@@ -1073,7 +1034,7 @@ func TestTypedReceiverDestructor(t *testing.T) {
 	class := cb.Build()
 
 	initMethod := class.Methods["__init__"].(*object.Builtin)
-	instance := &object.Instance{Class: class, Fields: map[string]object.Object{}}
+	instance := object.NewInstanceWithFields(class, nil)
 	initMethod.Fn(context.Background(), object.NewKwargs(nil), instance, object.NewString("db"))
 
 	getMethod := class.Methods["get"].(*object.Builtin)
@@ -1100,7 +1061,7 @@ func TestTypedReceiverNoArgs(t *testing.T) {
 	class := cb.Build()
 
 	initMethod := class.Methods["__init__"].(*object.Builtin)
-	instance := &object.Instance{Class: class, Fields: map[string]object.Object{}}
+	instance := object.NewInstanceWithFields(class, nil)
 	initMethod.Fn(context.Background(), object.NewKwargs(nil), instance)
 
 	method := class.Methods["greet"].(*object.Builtin)
@@ -1131,7 +1092,7 @@ func TestTypedReceiverReturnTypes(t *testing.T) {
 	class := cb.Build()
 
 	initMethod := class.Methods["__init__"].(*object.Builtin)
-	instance := &object.Instance{Class: class, Fields: map[string]object.Object{}}
+	instance := object.NewInstanceWithFields(class, nil)
 	initMethod.Fn(context.Background(), object.NewKwargs(nil), instance)
 
 	strMethod := class.Methods["get_string"].(*object.Builtin)
@@ -1173,7 +1134,7 @@ func TestTypedReceiverContextKwargs(t *testing.T) {
 	class := cb.Build()
 
 	initMethod := class.Methods["__init__"].(*object.Builtin)
-	instance := &object.Instance{Class: class, Fields: map[string]object.Object{}}
+	instance := object.NewInstanceWithFields(class, nil)
 	initMethod.Fn(context.Background(), object.NewKwargs(nil), instance)
 
 	method := class.Methods["set_kwargs"].(*object.Builtin)
@@ -1183,7 +1144,7 @@ func TestTypedReceiverContextKwargs(t *testing.T) {
 		t.Errorf("expected Null, got %T", result)
 	}
 
-	cfg := instance.Fields["_receiver"].(*object.ClientWrapper).Client.(*trConfig)
+	cfg := instance.Field("_receiver").(*object.ClientWrapper).Client.(*trConfig)
 	if cfg.values["k"] != "v" {
 		t.Errorf("expected values['k'] = 'v', got %q", cfg.values["k"])
 	}
@@ -1203,7 +1164,7 @@ func TestTypedReceiverErrorReturn(t *testing.T) {
 	class := cb.Build()
 
 	initMethod := class.Methods["__init__"].(*object.Builtin)
-	instance := &object.Instance{Class: class, Fields: map[string]object.Object{}}
+	instance := object.NewInstanceWithFields(class, nil)
 	initMethod.Fn(context.Background(), object.NewKwargs(nil), instance)
 
 	method := class.Methods["maybe_fail"].(*object.Builtin)
@@ -1255,10 +1216,10 @@ func TestTypedReceiverMultipleInstances(t *testing.T) {
 
 	initMethod := class.Methods["__init__"].(*object.Builtin)
 
-	inst1 := &object.Instance{Class: class, Fields: map[string]object.Object{}}
+	inst1 := object.NewInstanceWithFields(class, nil)
 	initMethod.Fn(context.Background(), object.NewKwargs(nil), inst1, object.NewString("first"))
 
-	inst2 := &object.Instance{Class: class, Fields: map[string]object.Object{}}
+	inst2 := object.NewInstanceWithFields(class, nil)
 	initMethod.Fn(context.Background(), object.NewKwargs(nil), inst2, object.NewString("second"))
 
 	getMethod := class.Methods["get"].(*object.Builtin)
@@ -1282,10 +1243,10 @@ func TestTypedReceiverExplicitInitOverrides(t *testing.T) {
 	})
 	cb.Method("__init__", func(self *object.Instance) {
 		called = true
-		self.Fields["_receiver"] = &object.ClientWrapper{
+		self.SetField("_receiver", &object.ClientWrapper{
 			TypeName: "ExplicitInit",
 			Client:   &trConfig{values: map[string]string{"explicit": "yes"}},
-		}
+		})
 	})
 	cb.Method("get", func(self *trConfig, key string) string {
 		return self.values[key]
@@ -1293,7 +1254,7 @@ func TestTypedReceiverExplicitInitOverrides(t *testing.T) {
 	class := cb.Build()
 
 	initMethod := class.Methods["__init__"].(*object.Builtin)
-	instance := &object.Instance{Class: class, Fields: map[string]object.Object{}}
+	instance := object.NewInstanceWithFields(class, nil)
 	initMethod.Fn(context.Background(), object.NewKwargs(nil), instance)
 
 	if !called {
@@ -1320,7 +1281,7 @@ func TestConstructorWithContext(t *testing.T) {
 	class := cb.Build()
 
 	initMethod := class.Methods["__init__"].(*object.Builtin)
-	instance := &object.Instance{Class: class, Fields: map[string]object.Object{}}
+	instance := object.NewInstanceWithFields(class, nil)
 	initMethod.Fn(context.Background(), object.NewKwargs(nil), instance, object.NewString("ctx-test"))
 
 	if gotCtx == nil {
@@ -1345,7 +1306,7 @@ func TestConstructorWithKwargs(t *testing.T) {
 	class := cb.Build()
 
 	initMethod := class.Methods["__init__"].(*object.Builtin)
-	instance := &object.Instance{Class: class, Fields: map[string]object.Object{}}
+	instance := object.NewInstanceWithFields(class, nil)
 	kw := object.NewKwargs(map[string]object.Object{"extra": object.NewString("bonus")})
 	initMethod.Fn(context.Background(), kw, instance, object.NewString("test"))
 
@@ -1370,7 +1331,7 @@ func TestConstructorWithContextAndKwargs(t *testing.T) {
 	class := cb.Build()
 
 	initMethod := class.Methods["__init__"].(*object.Builtin)
-	instance := &object.Instance{Class: class, Fields: map[string]object.Object{}}
+	instance := object.NewInstanceWithFields(class, nil)
 	kw := object.NewKwargs(map[string]object.Object{"tag": object.NewString("v1")})
 	initMethod.Fn(context.Background(), kw, instance, object.NewString("full"))
 
@@ -1403,7 +1364,7 @@ func TestConstructorVariadic(t *testing.T) {
 	class := cb.Build()
 
 	initMethod := class.Methods["__init__"].(*object.Builtin)
-	instance := &object.Instance{Class: class, Fields: map[string]object.Object{}}
+	instance := object.NewInstanceWithFields(class, nil)
 	initMethod.Fn(context.Background(), object.NewKwargs(nil), instance,
 		object.NewString("total"), object.NewInteger(10), object.NewInteger(20), object.NewInteger(30))
 
@@ -1426,7 +1387,7 @@ func TestConstructorReturnsNil(t *testing.T) {
 	class := cb.Build()
 
 	initMethod := class.Methods["__init__"].(*object.Builtin)
-	instance := &object.Instance{Class: class, Fields: map[string]object.Object{}}
+	instance := object.NewInstanceWithFields(class, nil)
 	result := initMethod.Fn(context.Background(), object.NewKwargs(nil), instance)
 	if errObj, ok := result.(*object.Error); !ok {
 		t.Errorf("expected Error for nil constructor return, got %T", result)
@@ -1447,13 +1408,13 @@ func TestConstructorErrorReturn(t *testing.T) {
 
 	initMethod := class.Methods["__init__"].(*object.Builtin)
 
-	inst1 := &object.Instance{Class: class, Fields: map[string]object.Object{}}
+	inst1 := object.NewInstanceWithFields(class, nil)
 	result := initMethod.Fn(context.Background(), object.NewKwargs(nil), inst1, object.NewBoolean(false))
 	if _, ok := result.(*object.Null); !ok {
 		t.Errorf("expected Null for success, got %T", result)
 	}
 
-	inst2 := &object.Instance{Class: class, Fields: map[string]object.Object{}}
+	inst2 := object.NewInstanceWithFields(class, nil)
 	result = initMethod.Fn(context.Background(), object.NewKwargs(nil), inst2, object.NewBoolean(true))
 	if errObj, ok := result.(*object.Error); !ok {
 		t.Errorf("expected Error for failure, got %T", result)
@@ -1475,7 +1436,7 @@ func TestTypedReceiverMethodKwargsOnly(t *testing.T) {
 	class := cb.Build()
 
 	initMethod := class.Methods["__init__"].(*object.Builtin)
-	instance := &object.Instance{Class: class, Fields: map[string]object.Object{}}
+	instance := object.NewInstanceWithFields(class, nil)
 	initMethod.Fn(context.Background(), object.NewKwargs(nil), instance)
 
 	method := class.Methods["set_kwargs"].(*object.Builtin)
@@ -1485,7 +1446,7 @@ func TestTypedReceiverMethodKwargsOnly(t *testing.T) {
 		t.Errorf("expected Null, got %T", result)
 	}
 
-	cfg := instance.Fields["_receiver"].(*object.ClientWrapper).Client.(*trConfig)
+	cfg := instance.Field("_receiver").(*object.ClientWrapper).Client.(*trConfig)
 	if cfg.values["k"] != "v" {
 		t.Errorf("expected values['k'] = 'v', got %q", cfg.values["k"])
 	}
@@ -1505,7 +1466,7 @@ func TestTypedReceiverMethodVariadic(t *testing.T) {
 	class := cb.Build()
 
 	initMethod := class.Methods["__init__"].(*object.Builtin)
-	instance := &object.Instance{Class: class, Fields: map[string]object.Object{}}
+	instance := object.NewInstanceWithFields(class, nil)
 	initMethod.Fn(context.Background(), object.NewKwargs(nil), instance)
 
 	method := class.Methods["add_all"].(*object.Builtin)
@@ -1570,7 +1531,7 @@ func TestTypedReceiverNoReceiverField(t *testing.T) {
 	})
 	class := cb.Build()
 
-	instance := &object.Instance{Class: class, Fields: map[string]object.Object{}}
+	instance := object.NewInstanceWithFields(class, nil)
 	method := class.Methods["get"].(*object.Builtin)
 	result := method.Fn(context.Background(), object.NewKwargs(nil), instance, object.NewString("key"))
 	if errObj, ok := result.(*object.Error); !ok {

@@ -76,11 +76,29 @@ func (s *Server) RegisterFunc(name string, builder *object.FunctionBuilder) *Ser
 	return s
 }
 
+// RegisterBuiltin registers a raw builtin function directly, bypassing the
+// FunctionBuilder reflection layer. Use this when the function is already an
+// object.BuiltinFunction (e.g. a closure that wraps a script handler).
+func (s *Server) RegisterBuiltin(name string, fn object.BuiltinFunction) *Server {
+	s.functions[name] = &funcEntry{
+		builtin: &object.Builtin{Fn: fn},
+	}
+	return s
+}
+
 func (s *Server) RegisterClass(builder *object.ClassBuilder) *Server {
 	class := builder.Build()
 	s.classes[class.Name] = &classEntry{
 		class: class,
 	}
+	return s
+}
+
+// RegisterBuiltinClass registers a scriptling *object.Class directly, bypassing
+// the ClassBuilder. Use this when the class was loaded from a scriptling module
+// (e.g. via Scriptling.Eval) rather than built from Go code.
+func (s *Server) RegisterBuiltinClass(name string, class *object.Class) *Server {
+	s.classes[name] = &classEntry{class: class}
 	return s
 }
 
@@ -173,10 +191,18 @@ func (s *Server) processHTTPJSONRPC(ctx context.Context, raw []byte) ([]byte, bo
 			return out, true
 		}
 		responses := make([]rpcResponse, 0, len(messages))
+		shutdown := false
 		for _, msg := range messages {
 			if resp, ok := s.handleHTTPMessage(ctx, msg); ok {
 				responses = append(responses, resp)
 			}
+			if msg.Method == "plugin.shutdown" {
+				shutdown = true
+				break
+			}
+		}
+		if shutdown {
+			s.destroyAllObjects()
 		}
 		if len(responses) == 0 {
 			return nil, false
@@ -194,6 +220,9 @@ func (s *Server) processHTTPJSONRPC(ctx context.Context, raw []byte) ([]byte, bo
 		return out, true
 	}
 	resp, ok := s.handleHTTPMessage(ctx, msg)
+	if msg.Method == "plugin.shutdown" {
+		s.destroyAllObjects()
+	}
 	if !ok {
 		return nil, false
 	}
@@ -258,11 +287,15 @@ func (s *Server) RunIO(input io.Reader, output io.Writer) error {
 		return firstErr
 	}
 
+	hadHandshake := false
 	for {
 		var raw json.RawMessage
 		if err := decoder.Decode(&raw); err != nil {
 			if err == io.EOF {
 				wg.Wait()
+				if hadHandshake {
+					s.destroyAllObjects()
+				}
 				return getErr()
 			}
 			return err
@@ -310,6 +343,9 @@ func (s *Server) RunIO(input io.Reader, output io.Writer) error {
 		if err := json.Unmarshal(raw, &msg); err != nil {
 			return err
 		}
+		if msg.Method == "scriptling.handshake" {
+			hadHandshake = true
+		}
 		resp, shutdown := s.handleInboundMessage(context.Background(), runtime, &wg, recordErr, msg)
 		if resp != nil {
 			runtime.writeMu.Lock()
@@ -319,6 +355,7 @@ func (s *Server) RunIO(input io.Reader, output io.Writer) error {
 		}
 		if shutdown {
 			wg.Wait()
+			s.destroyAllObjects()
 			if err := getErr(); err != nil {
 				return err
 			}
@@ -569,7 +606,7 @@ func (s *Server) newObject(ctx context.Context, params objectNewParams) (*Remote
 		return nil, fmt.Errorf("unknown class %s (available: %s)", params.Class, availableMapKeys(s.classes))
 	}
 	class := entry.class
-	instance := &object.Instance{Class: class, Fields: make(map[string]object.Object)}
+	instance := object.NewInstance(class)
 	if init, ok := class.LookupMember("__init__"); ok {
 		objArgs, err := transportValuesToObjects(params.Args)
 		if err != nil {
@@ -580,7 +617,7 @@ func (s *Server) newObject(ctx context.Context, params objectNewParams) (*Remote
 			return nil, err
 		}
 		callArgs := append([]object.Object{instance}, objArgs...)
-		result := evaluator.ApplyFunction(ctx, init, callArgs, objKwargs, object.NewEnvironment())
+		result := evaluator.ApplyFunctionGIL(ctx, init, callArgs, objKwargs, object.NewEnvironment())
 		if errObj, ok := result.(*object.Error); ok {
 			return nil, errors.New(errObj.Message)
 		}
@@ -627,7 +664,7 @@ func (s *Server) callMethod(ctx context.Context, params methodCallParams) (Value
 		return Value{}, err
 	}
 	callArgs := append([]object.Object{instance}, objArgs...)
-	result := evaluator.ApplyFunction(ctx, methodObj, callArgs, objKwargs, object.NewEnvironment())
+	result := evaluator.ApplyFunctionGIL(ctx, methodObj, callArgs, objKwargs, object.NewEnvironment())
 	if errObj, ok := result.(*object.Error); ok {
 		return Value{}, errors.New(errObj.Message)
 	}
@@ -664,7 +701,7 @@ func (s *Server) callProperty(ctx context.Context, property *object.Property, in
 	default:
 		return Value{}, fmt.Errorf("property %s expects zero arguments for get or one argument for set", params.Method)
 	}
-	result := evaluator.ApplyFunction(ctx, target, callArgs, objKwargs, object.NewEnvironment())
+	result := evaluator.ApplyFunctionGIL(ctx, target, callArgs, objKwargs, object.NewEnvironment())
 	if errObj, ok := result.(*object.Error); ok {
 		return Value{}, errors.New(errObj.Message)
 	}
@@ -701,6 +738,34 @@ func availableObjectMapKeys(items map[string]object.Object) string {
 	return strings.Join(names, ", ")
 }
 
+// ObjectCount returns the number of live server-side objects. Useful in tests.
+func (s *Server) ObjectCount() int {
+	s.objectsMu.RLock()
+	defer s.objectsMu.RUnlock()
+	return len(s.objects)
+}
+
+// destroyAllObjects calls __del__ on every remaining server-side object and
+// empties the map. Called when a stdio connection closes or plugin.shutdown is
+// received so that instances are not silently leaked.
+func (s *Server) destroyAllObjects() {
+	s.objectsMu.Lock()
+	remaining := s.objects
+	s.objects = make(map[string]*serverObject)
+	s.objectsMu.Unlock()
+	for _, obj := range remaining {
+		obj.mu.Lock()
+		if obj.instance != nil && obj.class != nil {
+			if del, ok := obj.class.LookupMember("__del__"); ok {
+				evaluator.ApplyFunctionGIL(context.Background(), del, []object.Object{obj.instance}, nil, object.NewEnvironment())
+			}
+			obj.instance = nil
+			obj.class = nil
+		}
+		obj.mu.Unlock()
+	}
+}
+
 func (s *Server) destroyObject(params objectDestroyParams) error {
 	s.objectsMu.Lock()
 	remoteObject, ok := s.objects[params.ObjectID]
@@ -713,8 +778,12 @@ func (s *Server) destroyObject(params objectDestroyParams) error {
 	}
 	remoteObject.mu.Lock()
 	defer remoteObject.mu.Unlock()
-	if del, exists := remoteObject.class.LookupMember("__del__"); exists {
-		evaluator.ApplyFunction(context.Background(), del, []object.Object{remoteObject.instance}, nil, object.NewEnvironment())
+	if remoteObject.instance != nil && remoteObject.class != nil {
+		if del, exists := remoteObject.class.LookupMember("__del__"); exists {
+			evaluator.ApplyFunctionGIL(context.Background(), del, []object.Object{remoteObject.instance}, nil, object.NewEnvironment())
+		}
+		remoteObject.instance = nil
+		remoteObject.class = nil
 	}
 	return nil
 }

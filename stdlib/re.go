@@ -34,7 +34,7 @@ var RegexClass = &object.Class{
 					return errors.NewTypeError("STRING", args[1].Type().String())
 				}
 				regex := args[0].(*object.Instance)
-				pattern := regex.Fields["pattern"].(*object.String).StringValue()
+				pattern := regex.Field("pattern").(*object.String).StringValue()
 				text, _ := args[1].AsString()
 
 				re, err := GetCompiledRegex(pattern)
@@ -63,7 +63,7 @@ Returns a Match object if the pattern matches at the beginning, or None if no ma
 					return errors.NewTypeError("STRING", args[1].Type().String())
 				}
 				regex := args[0].(*object.Instance)
-				pattern := regex.Fields["pattern"].(*object.String).StringValue()
+				pattern := regex.Field("pattern").(*object.String).StringValue()
 				text, _ := args[1].AsString()
 
 				re, err := GetCompiledRegex(pattern)
@@ -91,7 +91,7 @@ Returns a Match object for the first match, or None if no match found.`,
 					return errors.NewTypeError("STRING", args[1].Type().String())
 				}
 				regex := args[0].(*object.Instance)
-				pattern := regex.Fields["pattern"].(*object.String).StringValue()
+				pattern := regex.Field("pattern").(*object.String).StringValue()
 				text, _ := args[1].AsString()
 
 				re, err := GetCompiledRegex(pattern)
@@ -152,7 +152,7 @@ If there are no capturing groups, returns a list of strings for the full matches
 					return errors.NewTypeError("STRING", args[1].Type().String())
 				}
 				regex := args[0].(*object.Instance)
-				pattern := regex.Fields["pattern"].(*object.String).StringValue()
+				pattern := regex.Field("pattern").(*object.String).StringValue()
 				text, _ := args[1].AsString()
 
 				re, err := GetCompiledRegex(pattern)
@@ -193,7 +193,7 @@ var MatchClass = &object.Class{
 					return errors.NewError("group() takes at most 1 argument (%d given)", len(args))
 				}
 				match := args[0].(*object.Instance)
-				groups := match.Fields["groups"].(*object.List).Elements
+				groups := match.Field("groups").(*object.List).Elements
 				groupNum := 0
 				if len(args) == 2 {
 					if args[1].Type() != object.INTEGER_OBJ {
@@ -215,7 +215,7 @@ var MatchClass = &object.Class{
 					return err
 				}
 				match := args[0].(*object.Instance)
-				groups := match.Fields["groups"].(*object.List).Elements
+				groups := match.Field("groups").(*object.List).Elements
 				if len(groups) <= 1 {
 					return &object.Tuple{Elements: []object.Object{}}
 				}
@@ -244,7 +244,7 @@ var MatchClass = &object.Class{
 				if groupNum != 0 {
 					return errors.NewError("start() only supports group 0")
 				}
-				return match.Fields["start"]
+				return match.Field("start")
 			},
 			HelpText: `start(n=0) - Return start position of nth group`,
 		},
@@ -265,7 +265,7 @@ var MatchClass = &object.Class{
 				if groupNum != 0 {
 					return errors.NewError("end() only supports group 0")
 				}
-				return match.Fields["end"]
+				return match.Field("end")
 			},
 			HelpText: `end(n=0) - Return end position of nth group`,
 		},
@@ -287,8 +287,8 @@ var MatchClass = &object.Class{
 					return errors.NewError("span() only supports group 0")
 				}
 				return &object.Tuple{Elements: []object.Object{
-					match.Fields["start"],
-					match.Fields["end"],
+					match.Field("start"),
+					match.Field("end"),
 				}}
 			},
 			HelpText: `span(n=0) - Return (start, end) tuple for nth group`,
@@ -298,13 +298,10 @@ var MatchClass = &object.Class{
 
 // Helper function to create a Regex instance
 func createRegexInstance(pattern string, flags int64) *object.Instance {
-	return &object.Instance{
-		Class: RegexClass,
-		Fields: map[string]object.Object{
-			"pattern": object.NewString(pattern),
-			"flags":   object.NewInteger(flags),
-		},
-	}
+	return object.NewInstanceWithFields(RegexClass, map[string]object.Object{
+		"pattern": object.NewString(pattern),
+		"flags":   object.NewInteger(flags),
+	})
 }
 
 // Helper function to create a Match instance
@@ -313,14 +310,11 @@ func createMatchInstance(groups []string, start, end int) *object.Instance {
 	for i, group := range groups {
 		groupObjects[i] = object.NewString(group)
 	}
-	return &object.Instance{
-		Class: MatchClass,
-		Fields: map[string]object.Object{
-			"groups": &object.List{Elements: groupObjects},
-			"start":  object.NewInteger(int64(start)),
-			"end":    object.NewInteger(int64(end)),
-		},
-	}
+	return object.NewInstanceWithFields(MatchClass, map[string]object.Object{
+		"groups": &object.List{Elements: groupObjects},
+		"start":  object.NewInteger(int64(start)),
+		"end":    object.NewInteger(int64(end)),
+	})
 }
 
 type regexEntry struct {

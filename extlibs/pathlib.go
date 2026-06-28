@@ -87,18 +87,14 @@ func (p *PathlibLibraryInstance) createPathObject(pathStr string) object.Object 
 		partObjs[i] = object.NewString(part)
 	}
 
-	return &object.Instance{
-		Class: p.PathClass,
-		Fields: map[string]object.Object{
-			"name":    object.NewString(base),
-			"stem":    object.NewString(stem),
-			"suffix":  object.NewString(ext),
-			"parent":  object.NewString(filepath.Dir(cleanPath)),
-			"parts":   &object.Tuple{Elements: partObjs},
-			"__str__": object.NewString(cleanPath),
-		},
-		NativeData: &pathNativeData{path: cleanPath},
-	}
+	return object.NewInstanceWithData(p.PathClass, map[string]object.Object{
+		"name":    object.NewString(base),
+		"stem":    object.NewString(stem),
+		"suffix":  object.NewString(ext),
+		"parent":  object.NewString(filepath.Dir(cleanPath)),
+		"parts":   &object.Tuple{Elements: partObjs},
+		"__str__": object.NewString(cleanPath),
+	}, &pathNativeData{path: cleanPath})
 }
 
 func (p *PathlibLibraryInstance) pathConstructor(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -288,7 +284,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					if errObj != nil {
 						return errObj
 					}
-					content, errObj := readFileBytes(p.config, cleanPath)
+					content, errObj := readFileBytes(ctx, p.config, cleanPath)
 					if errObj != nil {
 						return errObj
 					}
@@ -305,7 +301,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					if errObj != nil {
 						return errObj
 					}
-					content, errObj := readFileBytes(p.config, cleanPath)
+					content, errObj := readFileBytes(ctx, p.config, cleanPath)
 					if errObj != nil {
 						return errObj
 					}
@@ -326,7 +322,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					if err != nil {
 						return err
 					}
-					return writeFileBytes(p.config, cleanPath, []byte(content), 0644)
+					return writeFileBytes(ctx, p.config, cleanPath, []byte(content), 0644)
 				},
 				HelpText: "write_text(data) - Write the string data to the file",
 			},
@@ -343,7 +339,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					if err != nil {
 						return err
 					}
-					return writeFileBytes(p.config, cleanPath, []byte(content), 0644)
+					return writeFileBytes(ctx, p.config, cleanPath, []byte(content), 0644)
 				},
 				HelpText: "write_bytes(data) - Write bytes to the file",
 			},

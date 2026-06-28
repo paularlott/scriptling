@@ -8,6 +8,7 @@ import (
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/evaliface"
+	"github.com/paularlott/scriptling/evaluator"
 	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/snapshotkv"
 )
@@ -50,6 +51,20 @@ var RuntimeState = struct {
 	Atomics    map[string]*RuntimeAtomic
 	Shareds    map[string]*RuntimeShared
 
+	// Server lifecycle channels (nil in script mode)
+	ServerStartCh   chan struct{} // closed by start_server() to signal server is ready
+	ServerRunningCh chan struct{} // closed by server on shutdown
+	ServerStarted   bool         // prevents double-close of ServerStartCh
+	ServerCollect   func()       // set by NewServer; called inside start_server() to snapshot routes atomically
+
+	// Plugin server registration (set via runtime.plugin, agent variant only)
+	PluginName        string
+	PluginVersion     string
+	PluginDescription string
+	PluginFunctions   map[string]string        // function name → "library.function" handler
+	PluginConstants   map[string]object.Object // constant name → value
+	PluginClasses     map[string]string        // exposed class name → "library.ClassName" handler
+
 	// Cleanup functions registered by libraries
 	cleanupFuncs []func()
 }{
@@ -72,6 +87,12 @@ var RuntimeState = struct {
 	Queues:               make(map[string]*RuntimeQueue),
 	Atomics:              make(map[string]*RuntimeAtomic),
 	Shareds:              make(map[string]*RuntimeShared),
+	ServerStartCh:        nil,
+	ServerRunningCh:      nil,
+	ServerStarted:        false,
+	PluginFunctions:      make(map[string]string),
+	PluginConstants:      make(map[string]object.Object),
+	PluginClasses:        make(map[string]string),
 }
 
 // RegisterCleanup registers a function to be called during ResetRuntime.
@@ -134,6 +155,18 @@ func ResetRuntime() {
 	RuntimeState.Atomics = make(map[string]*RuntimeAtomic)
 	RuntimeState.Shareds = make(map[string]*RuntimeShared)
 	RuntimeState.cleanupFuncs = nil
+
+	RuntimeState.ServerStartCh = nil
+	RuntimeState.ServerRunningCh = nil
+	RuntimeState.ServerStarted = false
+	RuntimeState.ServerCollect = nil
+
+	RuntimeState.PluginName = ""
+	RuntimeState.PluginVersion = ""
+	RuntimeState.PluginDescription = ""
+	RuntimeState.PluginFunctions = make(map[string]string)
+	RuntimeState.PluginConstants = make(map[string]object.Object)
+	RuntimeState.PluginClasses = make(map[string]string)
 }
 
 // Promise represents an async operation result
@@ -179,6 +212,15 @@ func SetBackgroundFactory(factory SandboxFactory) {
 	RuntimeState.Unlock()
 }
 
+// runtimeParentLibraries maps each registrar (one per evaluator) to the parent
+// runtime library it created. RegisterRuntimePluginLibrary uses this to inject
+// "plugin" into the per-evaluator runtime dict so that
+// `import scriptling.runtime as rt; rt.plugin.*` works.
+// sync.Map is used because multiple handler evaluators may call
+// RegisterRuntimeLibraryAll concurrently. Each entry is removed by
+// RegisterRuntimePluginLibrary (LoadAndDelete), so there is no leak.
+var runtimeParentLibraries sync.Map // key: registrar interface value → *object.Library
+
 // RegisterRuntimeLibrary registers only the core runtime library (background function).
 // Sub-libraries (http, kv, sync) must be registered separately if needed.
 func RegisterRuntimeLibrary(registrar interface{ RegisterLibrary(*object.Library) }) {
@@ -214,6 +256,7 @@ func RegisterRuntimeLibraryAll(registrar interface{ RegisterLibrary(*object.Libr
 			"jsonrpc": jsonrpcLib.GetDict(),
 		},
 		"Runtime library for HTTP, JSON-RPC, KV store, concurrency primitives, and sandboxed execution")
+	runtimeParentLibraries.Store(registrar, parent)
 	registrar.RegisterLibrary(parent)
 }
 
@@ -266,6 +309,30 @@ var RuntimeLibraryFunctions = map[string]*object.Builtin{
 				return err
 			}
 
+			env := getEnvFromContext(ctx)
+			eval := evaliface.FromContext(ctx)
+
+			// shared=True runs the handler in the caller's own environment (live
+			// shared state, GIL-protected) instead of an isolated copy.
+			shared := false
+			if v := kwargs.Get("shared"); v != nil {
+				if b, e := v.AsBool(); e == nil {
+					shared = b
+				}
+			}
+			if shared {
+				// Pass args/kwargs live; the GIL serializes access. Strip the
+				// "shared" control kwarg so it is not forwarded to the handler.
+				sharedKwargs := make(map[string]object.Object, len(kwargs.Kwargs))
+				for k, v := range kwargs.Kwargs {
+					if k == "shared" {
+						continue
+					}
+					sharedKwargs[k] = v
+				}
+				return startSharedTask(ctx, handler, args[2:], sharedKwargs, env, eval)
+			}
+
 			// Validate that all args/kwargs are transferable types
 			// (scalars and recursively safe containers only).
 			for i, a := range args[2:] {
@@ -288,8 +355,6 @@ var RuntimeLibraryFunctions = map[string]*object.Builtin{
 			for k, v := range kwargs.Kwargs {
 				fnKwargs[k] = object.CloneObject(v)
 			}
-			env := getEnvFromContext(ctx)
-			eval := evaliface.FromContext(ctx)
 
 			RuntimeState.Lock()
 			backgroundReady := RuntimeState.BackgroundReady
@@ -347,10 +412,114 @@ Returns:
 
 `,
 	},
+
+	"start_server": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			wait := true
+			if v := kwargs.Get("wait"); v != nil {
+				if b, e := v.AsBool(); e == nil {
+					wait = b
+				}
+			}
+
+			// Snapshot routes and close the start channel atomically so that
+			// anything registered after start_server() returns is definitively
+			// excluded. ServerCollect runs while the lock is held — collectRoutes
+			// and collectJSONRPCMethods read RuntimeState fields directly without
+			// re-acquiring the lock, so this is safe.
+			RuntimeState.Lock()
+			if !RuntimeState.ServerStarted && RuntimeState.ServerStartCh != nil {
+				RuntimeState.ServerStarted = true
+				if RuntimeState.ServerCollect != nil {
+					RuntimeState.ServerCollect()
+				}
+				close(RuntimeState.ServerStartCh)
+			}
+			RuntimeState.Unlock()
+
+			if wait {
+				object.RunBlocking(ctx, func() {
+					RuntimeState.RLock()
+					ch := RuntimeState.ServerRunningCh
+					RuntimeState.RUnlock()
+					if ch != nil {
+						<-ch
+					}
+				})
+			}
+			return &object.Null{}
+		},
+		HelpText: `start_server(wait=True) - Signal the server to start accepting requests
+
+Signals the server to collect registered routes/methods and begin
+listening for requests. Call this after all routes are registered.
+
+Parameters:
+  wait (bool, default True): If True, blocks until the server shuts
+    down. If False, returns immediately so the script can continue
+    running (e.g. to maintain gossip state or run a polling loop).
+
+When wait=True the call blocks until the server receives a shutdown
+signal (SIGTERM / Ctrl-C). Use wait=False combined with a
+server_running() loop to stay alive while performing other work:
+
+  runtime.start_server(wait=False)
+  while runtime.server_running():
+      yield_now()
+
+Backward compatibility: scripts that exit without calling
+start_server() continue to work — the server starts automatically
+after the setup script finishes.
+
+`,
+	},
+
+	"server_running": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			RuntimeState.RLock()
+			ch := RuntimeState.ServerRunningCh
+			RuntimeState.RUnlock()
+			if ch == nil {
+				return object.NewBoolean(false)
+			}
+			select {
+			case <-ch:
+				return object.NewBoolean(false)
+			default:
+				return object.NewBoolean(true)
+			}
+		},
+		HelpText: `server_running() - Returns True while the server is running
+
+Returns True as long as the server has not received a shutdown signal.
+Returns False once the server is shutting down or if called outside
+of server mode.
+
+Typical usage with start_server(wait=False):
+
+  runtime.start_server(wait=False)
+  while runtime.server_running():
+      yield_now()       # release GIL on each iteration
+
+`,
+	},
 }
 
 // RuntimeLibraryCore is the runtime library without sub-libraries
 var RuntimeLibraryCore = object.NewLibrary(RuntimeLibraryName, RuntimeLibraryFunctions, nil, "Runtime library for background tasks")
+
+// taskContext builds a fresh per-goroutine evaluation context for a background
+// task. It gives the goroutine its own call-depth tracker (so concurrent tasks
+// don't race the parent's recursion counter) and pins the task's environment on
+// the context (so blocking builtins release the correct interpreter lock).
+// Other parent-context values (evaluator, cancellation) are preserved.
+func taskContext(ctx context.Context, env *object.Environment) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx = evaluator.SetEnvInContext(ctx, env)
+	return evaluator.SetCallDepthInContext(ctx, evaluator.NewCallDepth(evaluator.DefaultMaxCallDepth))
+}
 
 // startBackgroundTask starts a background task in a goroutine and returns a Promise.
 func startBackgroundTask(handler string, fnArgs []object.Object, fnKwargs map[string]object.Object, env *object.Environment, eval evaliface.Evaluator, factory SandboxFactory, ctx context.Context) object.Object {
@@ -427,7 +596,7 @@ func startBackgroundTask(handler string, fnArgs []object.Object, fnKwargs map[st
 				return
 			}
 
-			result := eval.CallObjectFunction(ctx, fn, fnArgs, fnKwargs, newEnv)
+			result := eval.CallObjectFunction(taskContext(ctx, newEnv), fn, fnArgs, fnKwargs, newEnv)
 			if errObj, ok := result.(*object.Error); ok {
 				promise.set(nil, fmt.Errorf("%s", errObj.Message))
 			} else {
@@ -464,7 +633,7 @@ func startBackgroundTask(handler string, fnArgs []object.Object, fnKwargs map[st
 				return
 			}
 
-			result := eval.CallObjectFunction(ctx, fn, fnArgs, fnKwargs, newEnv)
+			result := eval.CallObjectFunction(taskContext(ctx, newEnv), fn, fnArgs, fnKwargs, newEnv)
 			if errObj, ok := result.(*object.Error); ok {
 				promise.set(nil, fmt.Errorf("%s", errObj.Message))
 			} else {
@@ -473,11 +642,20 @@ func startBackgroundTask(handler string, fnArgs []object.Object, fnKwargs map[st
 		}
 	}()
 
+	return promiseObject(promise)
+}
+
+// promiseObject wraps a Promise as a script object exposing get()/wait().
+func promiseObject(promise *Promise) object.Object {
 	return &object.Builtin{
 		Attributes: map[string]object.Object{
 			"get": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					result, err := promise.get()
+					// Release the interpreter lock while waiting so the task (and
+					// any shared-env threads) can run.
+					var result object.Object
+					var err error
+					object.RunBlocking(ctx, func() { result, err = promise.get() })
 					if err != nil {
 						return errors.NewError("async error: %v", err)
 					}
@@ -490,7 +668,8 @@ func startBackgroundTask(handler string, fnArgs []object.Object, fnKwargs map[st
 			},
 			"wait": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					_, err := promise.get()
+					var err error
+					object.RunBlocking(ctx, func() { _, err = promise.get() })
 					if err != nil {
 						return errors.NewError("async error: %v", err)
 					}
@@ -501,6 +680,43 @@ func startBackgroundTask(handler string, fnArgs []object.Object, fnKwargs map[st
 		},
 		HelpText: "Promise - call .get() to retrieve result or .wait() to wait without result",
 	}
+}
+
+// startSharedTask runs handler on a new goroutine in the CALLER's environment,
+// sharing its live state. The interpreter lock (GIL) serializes access, so this
+// is memory-safe despite the sharing. Unlike background(), args are passed live
+// (no transferable restriction, no cloning). A fresh context is used so the
+// goroutine acquires the lock instead of inheriting the caller's hold.
+func startSharedTask(ctx context.Context, handler string, fnArgs []object.Object, fnKwargs map[string]object.Object, env *object.Environment, eval evaliface.Evaluator) object.Object {
+	if env == nil || eval == nil {
+		return &object.Null{}
+	}
+	fn, _ := env.Get(handler)
+	if fn == nil {
+		return errors.NewError("function not found: %s", handler)
+	}
+	switch fn.(type) {
+	case *object.Function, *object.LambdaFunction:
+		// ok
+	default:
+		return errors.NewError("handler is not a function: %s (%T)", handler, fn)
+	}
+
+	promise := newPromise()
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				promise.set(nil, fmt.Errorf("panic: %v", r))
+			}
+		}()
+		result := eval.CallObjectFunction(taskContext(ctx, env), fn, fnArgs, fnKwargs, env)
+		if errObj, ok := result.(*object.Error); ok {
+			promise.set(nil, fmt.Errorf("%s", errObj.Message))
+		} else {
+			promise.set(result, nil)
+		}
+	}()
+	return promiseObject(promise)
 }
 
 // ReleaseBackgroundTasks sets BackgroundReady=true and starts all queued tasks

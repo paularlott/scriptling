@@ -63,8 +63,9 @@ type jsonrpcErrorOut struct {
 
 // collectJSONRPCMethods copies registered methods/notifications out of
 // RuntimeState into the Server so dispatch is lock-free during serving.
+// Caller must hold RuntimeState.Lock() (write lock) — no additional locking
+// is done here, matching collectRoutes which reads fields the same way.
 func (s *Server) collectJSONRPCMethods() {
-	extlibs.RuntimeState.RLock()
 	s.jsonrpcMethods = make(map[string]string, len(extlibs.RuntimeState.JSONRPCMethods))
 	for name, handler := range extlibs.RuntimeState.JSONRPCMethods {
 		s.jsonrpcMethods[name] = handler
@@ -73,7 +74,6 @@ func (s *Server) collectJSONRPCMethods() {
 	for name, handler := range extlibs.RuntimeState.JSONRPCNotifications {
 		s.jsonrpcNotifications[name] = handler
 	}
-	extlibs.RuntimeState.RUnlock()
 
 	for name, handler := range s.jsonrpcMethods {
 		Log.Info("Registered JSON-RPC method", "method", name, "handler", handler)
@@ -402,10 +402,10 @@ func (s *Server) dispatchJSONRPCRequest(ctx context.Context, frame jsonrpcFrame)
 
 	// Handler returned an explicit JSON-RPC error object.
 	if extlibs.IsJSONRPCError(result) {
-		code, _ := result.(*object.Instance).Fields["code"].AsInt()
-		message, _ := result.(*object.Instance).Fields["message"].AsString()
+		code, _ := result.(*object.Instance).Field("code").AsInt()
+		message, _ := result.(*object.Instance).Field("message").AsString()
 		errOut := &jsonrpcErrorOut{Code: int(code), Message: message}
-		if data, present := result.(*object.Instance).Fields["data"]; present {
+		if data, present := result.(*object.Instance).GetField("data"); present {
 			if _, isNull := data.(*object.Null); !isNull {
 				errOut.Data = conversion.ToGo(data)
 			}

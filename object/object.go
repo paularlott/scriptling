@@ -6,6 +6,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,10 +23,10 @@ import (
 func DictKey(obj Object) string {
 	switch o := obj.(type) {
 	case *Integer:
-		return "n:" + strconv.FormatInt(o.value, 10)
+		return intDictKey(o.value)
 	case *Float:
 		if !math.IsInf(o.value, 0) && !math.IsNaN(o.value) && o.value == math.Trunc(o.value) && o.value >= math.MinInt64 && o.value <= math.MaxInt64 {
-			return "n:" + strconv.FormatInt(int64(o.value), 10)
+			return intDictKey(int64(o.value))
 		}
 		return "f:" + strconv.FormatFloat(o.value, 'g', -1, 64)
 	case *Boolean:
@@ -163,6 +164,31 @@ func init() {
 	for i := smallIntMin; i <= smallIntMax; i++ {
 		smallIntegers[i-smallIntMin] = &Integer{value: int64(i)}
 	}
+	// Initialize the small integer dict-key cache ("n:0".."n:N").
+	for i := range smallDictKeys {
+		smallDictKeys[i] = "n:" + strconv.Itoa(i)
+	}
+}
+
+// Small integer dict-key cache. Integer (and integral float) dict keys are
+// extremely common (loop indices, ids); caching the canonical "n:N" string for
+// small non-negative values makes those keys allocation-free, and AppendInt
+// handles the rest in a single allocation instead of two.
+const smallDictKeyMax = 1024
+
+var smallDictKeys [smallDictKeyMax]string
+
+// intDictKey returns the canonical dict key string for an integer value,
+// equivalent to "n:" + strconv.FormatInt(v, 10) but allocation-free for small
+// non-negative values and a single allocation otherwise.
+func intDictKey(v int64) string {
+	if v >= 0 && v < smallDictKeyMax {
+		return smallDictKeys[v]
+	}
+	var buf [24]byte
+	b := append(buf[:0], 'n', ':')
+	b = strconv.AppendInt(b, v, 10)
+	return string(b)
 }
 
 // NewInteger returns a cached integer for small values, or a new Integer for larger values
@@ -484,6 +510,11 @@ func (n *Null) CoerceFloat() (float64, Object) { return 0, nil }
 
 type ReturnValue struct {
 	Value Object
+	// root points at the environment tree this frame was acquired from, so
+	// ReleaseReturnValue can return it to the correct per-root free-list
+	// without the caller threading the environment through. nil for values
+	// constructed outside AcquireReturnValue (those are simply left to GC).
+	root *Environment
 }
 
 func (rv *ReturnValue) Type() ObjectType { return RETURN_OBJ }
@@ -771,6 +802,70 @@ type Environment struct {
 	importCallback             func(string) error
 	availableLibrariesCallback func() []LibraryInfo
 	currentModule              string // Current module path for relative import resolution
+	// freeFrames is a free-list of reusable call-frame environments, populated
+	// lazily and only on root environments. It is accessed without locking; the
+	// interpreter lock (gil) guarantees only one goroutine runs script code in a
+	// tree at a time, so the free-list never sees concurrent access.
+	freeFrames *callFrameFreeList
+	// freeReturns is a free-list of reusable *ReturnValue wrappers, populated
+	// lazily and only on root environments. Like freeFrames it is accessed
+	// without locking — the interpreter lock (gil) serializes script execution
+	// on a tree, so the free-list never sees concurrent access. This avoids the
+	// per-call pin()/Get() overhead of a global sync.Pool on the return path.
+	freeReturns []*ReturnValue
+	// gil is the per-tree interpreter lock, allocated only on the root. The
+	// evaluator acquires it at every Go->script boundary so that any number of
+	// goroutines may call into one Environment tree, but only one runs script at
+	// a time. nil on non-root environments — always reach it via root.gil.
+	gil *gilLock
+}
+
+// gilLock is the interpreter lock for one environment tree. It tracks the
+// owning goroutine so that re-entrant acquisitions (a builtin calling back into
+// script on the same goroutine) are detected, and so that RunUnlocked only
+// releases the lock for the goroutine that actually holds it.
+type gilLock struct {
+	mu    sync.Mutex
+	owner atomic.Int64 // goroutine id of the current holder, 0 when free
+}
+
+// goid returns the current goroutine's id by parsing the runtime stack header.
+// Used only on lock boundaries and blocking operations, never on the hot
+// internal call path.
+func goid() int64 {
+	var buf [32]byte
+	n := runtime.Stack(buf[:], false)
+	b := buf[len("goroutine "):n]
+	var id int64
+	for _, c := range b {
+		if c < '0' || c > '9' {
+			break
+		}
+		id = id*10 + int64(c-'0')
+	}
+	return id
+}
+
+const maxPooledCallEnvSlots = 16
+
+// maxFreeFramesPerBucket caps how many idle frames a tree retains per slot-count
+// bucket, bounding memory after deep recursion while still amortising the common
+// depth across repeated calls.
+const maxFreeFramesPerBucket = 256
+
+// callFrameFreeList holds reusable call-frame environments bucketed by slot
+// count. It lives on the root Environment of an evaluation tree and is accessed
+// without synchronization.
+//
+// SAFETY: sound because the per-environment interpreter lock (GIL) serializes
+// script execution on a tree — only one goroutine runs script code at a time,
+// so the free-list never sees concurrent access. Multiple goroutines may share
+// the environment (shared-env threads via runtime.background(shared=True),
+// concurrent callers), and that is fine: they serialize on the GIL, never on
+// the free-list concurrently. Independent environment trees have independent
+// GILs and independent free-lists.
+type callFrameFreeList struct {
+	buckets [maxPooledCallEnvSlots + 1][]*Environment
 }
 
 // LibraryInfo contains information about available libraries
@@ -785,6 +880,7 @@ func NewEnvironment() *Environment {
 		// globals and nonlocals are nil by default - allocated on demand
 	}
 	env.root = env
+	env.gil = &gilLock{}
 	return env
 }
 
@@ -796,6 +892,7 @@ func NewEnclosedEnvironment(outer *Environment) *Environment {
 		env.root = outer.root
 	} else {
 		env.root = env
+		env.gil = &gilLock{}
 	}
 
 	if outer != nil {
@@ -820,32 +917,110 @@ func NewEnclosedEnvironmentWithSlots(outer *Environment, slotIndex map[string]in
 	return env
 }
 
-const maxPooledCallEnvSlots = 16
+// Root returns the root environment of this tree.
+func (e *Environment) Root() *Environment { return e.root }
 
-var callEnvPools [maxPooledCallEnvSlots + 1]sync.Pool
+// envContextValueKey is the context key under which the evaluator stores the
+// current environment for builtins. Kept in sync with the evaluator package so
+// blocking builtins can release the interpreter lock via RunBlocking.
+const envContextValueKey = "scriptling-env"
 
-// AcquireCallEnvironment returns a function-call environment, reusing a pooled
-// frame for small slot counts when possible.
+// RunBlocking runs fn (a blocking operation such as sleep or a socket read) with
+// the interpreter lock released, so other goroutines can run script code in the
+// same tree while this one is blocked. If no environment is available on the
+// context it simply runs fn. Builtins that block should wrap the blocking call
+// in RunBlocking.
+func RunBlocking(ctx interface{ Value(any) any }, fn func()) {
+	if env, ok := ctx.Value(envContextValueKey).(*Environment); ok && env != nil {
+		env.RunUnlocked(fn)
+		return
+	}
+	fn()
+}
+
+// EnterGIL acquires this tree's interpreter lock for the calling goroutine,
+// unless this goroutine already holds it (a re-entrant call). It returns true if
+// it actually acquired the lock (the caller must pair it with ExitGIL) and false
+// if the call was re-entrant (caller does nothing on exit).
+func (e *Environment) EnterGIL() bool {
+	if e.root == nil || e.root.gil == nil {
+		return false
+	}
+	g := e.root.gil
+	id := goid()
+	if g.owner.Load() == id {
+		return false // re-entrant: already held by this goroutine
+	}
+	g.mu.Lock()
+	g.owner.Store(id)
+	return true
+}
+
+// ExitGIL releases the interpreter lock previously acquired by EnterGIL.
+func (e *Environment) ExitGIL() {
+	if e.root == nil || e.root.gil == nil {
+		return
+	}
+	g := e.root.gil
+	g.owner.Store(0)
+	g.mu.Unlock()
+}
+
+// RunUnlocked releases the interpreter lock, runs fn (typically a blocking call
+// such as sleep or a socket read), then re-acquires it — but only if the calling
+// goroutine actually holds the lock. Goroutines that do not hold it (e.g. raw
+// worker goroutines doing pure-Go I/O) simply run fn. This lets other goroutines
+// run script code in the same tree while the holder is blocked.
+func (e *Environment) RunUnlocked(fn func()) {
+	if e.root == nil || e.root.gil == nil {
+		fn()
+		return
+	}
+	g := e.root.gil
+	id := goid()
+	if g.owner.Load() != id {
+		fn() // not the holder — must not touch the lock
+		return
+	}
+	g.owner.Store(0)
+	g.mu.Unlock()
+	defer func() {
+		g.mu.Lock()
+		g.owner.Store(id)
+	}()
+	fn()
+}
+
+// AcquireCallEnvironment returns a function-call environment, reusing an idle
+// frame from the tree's per-root free-list when one is available.
+//
+// The free-list lives on the root environment and is accessed without locking;
+// this is safe because an environment tree is only ever used by a single
+// goroutine (see callFrameFreeList). Frames acquired here must be returned via
+// ReleaseCallEnvironment.
 func AcquireCallEnvironment(outer *Environment, slotIndex map[string]int, slotNames []string) *Environment {
 	slotCount := len(slotNames)
-	if slotCount > 0 && slotCount <= maxPooledCallEnvSlots {
-		if pooled := callEnvPools[slotCount].Get(); pooled != nil {
-			env := pooled.(*Environment)
-			env.slotIndex = slotIndex
-			env.slotNames = slotNames
-			env.callPoolSlots = uint8(slotCount)
-			env.outer = outer
-			if outer != nil {
-				env.root = outer.root
-				env.output = outer.output
-				env.input = outer.input
-				env.importCallback = outer.importCallback
-				env.availableLibrariesCallback = outer.availableLibrariesCallback
-				env.currentModule = outer.currentModule
-			} else {
-				env.root = env
+	if slotCount > 0 && slotCount <= maxPooledCallEnvSlots && outer != nil {
+		if root := outer.root; root != nil {
+			if fl := root.freeFrames; fl != nil {
+				if bucket := fl.buckets[slotCount]; len(bucket) > 0 {
+					n := len(bucket) - 1
+					env := bucket[n]
+					bucket[n] = nil
+					fl.buckets[slotCount] = bucket[:n]
+					env.slotIndex = slotIndex
+					env.slotNames = slotNames
+					env.callPoolSlots = uint8(slotCount)
+					env.outer = outer
+					env.root = root
+					env.output = outer.output
+					env.input = outer.input
+					env.importCallback = outer.importCallback
+					env.availableLibrariesCallback = outer.availableLibrariesCallback
+					env.currentModule = outer.currentModule
+					return env
+				}
 			}
-			return env
 		}
 		env := NewEnclosedEnvironmentWithSlots(outer, slotIndex, slotNames)
 		env.callPoolSlots = uint8(slotCount)
@@ -854,12 +1029,15 @@ func AcquireCallEnvironment(outer *Environment, slotIndex map[string]int, slotNa
 	return NewEnclosedEnvironmentWithSlots(outer, slotIndex, slotNames)
 }
 
-// ReleaseCallEnvironment clears and returns a pooled call environment back to
-// the pool. Non-pooled environments are ignored.
+// ReleaseCallEnvironment clears a call frame and returns it to its tree's
+// per-root free-list for reuse. Non-pooled environments are ignored. See
+// AcquireCallEnvironment for the no-lock concurrency contract.
 func ReleaseCallEnvironment(env *Environment) {
 	if env == nil || env.callPoolSlots == 0 {
 		return
 	}
+	root := env.root
+	slotCount := env.callPoolSlots
 	for i := range env.slots {
 		env.slots[i] = nil
 	}
@@ -875,7 +1053,6 @@ func ReleaseCallEnvironment(env *Environment) {
 	if env.importedBindings != nil {
 		clear(env.importedBindings)
 	}
-	slotCount := env.callPoolSlots
 	env.callPoolSlots = 0
 	env.outer = nil
 	env.root = nil
@@ -886,7 +1063,61 @@ func ReleaseCallEnvironment(env *Environment) {
 	env.importCallback = nil
 	env.availableLibrariesCallback = nil
 	env.currentModule = ""
-	callEnvPools[slotCount].Put(env)
+
+	if root == nil {
+		return
+	}
+	fl := root.freeFrames
+	if fl == nil {
+		fl = &callFrameFreeList{}
+		root.freeFrames = fl
+	}
+	if len(fl.buckets[slotCount]) < maxFreeFramesPerBucket {
+		fl.buckets[slotCount] = append(fl.buckets[slotCount], env)
+	}
+}
+
+// maxFreeReturns caps how many idle *ReturnValue wrappers a tree retains,
+// bounding memory after deep recursion.
+const maxFreeReturns = 256
+
+// AcquireReturnValue returns a *ReturnValue wrapping val, reusing one from the
+// tree's per-root free-list when available. The wrapper remembers its root so
+// ReleaseReturnValue can return it without the caller passing the environment.
+// Uses the same lock-free, GIL-serialized contract as AcquireCallEnvironment.
+func AcquireReturnValue(env *Environment, val Object) *ReturnValue {
+	if env != nil {
+		if root := env.root; root != nil {
+			if n := len(root.freeReturns); n > 0 {
+				rv := root.freeReturns[n-1]
+				root.freeReturns[n-1] = nil
+				root.freeReturns = root.freeReturns[:n-1]
+				rv.Value = val
+				rv.root = root
+				return rv
+			}
+			return &ReturnValue{Value: val, root: root}
+		}
+	}
+	return &ReturnValue{Value: val}
+}
+
+// ReleaseReturnValue clears rv and returns it to its tree's free-list for reuse.
+// Wrappers with no associated root (constructed outside AcquireReturnValue) are
+// left for the garbage collector.
+func ReleaseReturnValue(rv *ReturnValue) {
+	if rv == nil {
+		return
+	}
+	root := rv.root
+	rv.Value = nil
+	rv.root = nil
+	if root == nil {
+		return
+	}
+	if len(root.freeReturns) < maxFreeReturns {
+		root.freeReturns = append(root.freeReturns, rv)
+	}
 }
 
 func (e *Environment) Get(name string) (Object, bool) {
@@ -899,6 +1130,50 @@ func (e *Environment) Get(name string) (Object, bool) {
 		obj, ok := env.store[name]
 		if ok {
 			return obj, true
+		}
+	}
+	return nil, false
+}
+
+// GetWithLocation resolves name like Get, additionally reporting where it was
+// found in the environment chain: hops is the number of outer links traversed
+// and slotIdx is the slot index if the value lives in a slot, or -1 if it came
+// from a store map (not a stable, cacheable location). Used to seed call-site
+// callee caches.
+func (e *Environment) GetWithLocation(name string) (val Object, hops int, slotIdx int, ok bool) {
+	hops = 0
+	for env := e; env != nil; env = env.outer {
+		if idx, found := env.slotIndex[name]; found {
+			if idx >= 0 && idx < len(env.slots) && env.slots[idx] != nil {
+				return env.slots[idx], hops, idx, true
+			}
+		}
+		if obj, found := env.store[name]; found {
+			return obj, hops, -1, true
+		}
+		hops++
+	}
+	return nil, 0, -1, false
+}
+
+// GetAtLocation reads the value at a cached (hops, slotIdx) location, validating
+// that the slot still holds the expected name. Returns false if the cache is
+// stale (chain too short or slot layout changed), so the caller can fall back to
+// a full lookup.
+func (e *Environment) GetAtLocation(hops, slotIdx int, name string) (Object, bool) {
+	env := e
+	for i := 0; i < hops; i++ {
+		if env == nil {
+			return nil, false
+		}
+		env = env.outer
+	}
+	if env == nil {
+		return nil, false
+	}
+	if slotIdx >= 0 && slotIdx < len(env.slots) && slotIdx < len(env.slotNames) && env.slotNames[slotIdx] == name {
+		if v := env.slots[slotIdx]; v != nil {
+			return v, true
 		}
 	}
 	return nil, false
@@ -1622,17 +1897,55 @@ func (c *Class) InvalidateLookupCache() {
 	c.cacheMu.Unlock()
 }
 
+// inlineFieldCap is how many fields an Instance stores inline before spilling to
+// the overflow map. Most instances have only a handful of fields, so this keeps
+// the common case allocation-free (no map allocated at all).
+const inlineFieldCap = 4
+
 type Instance struct {
-	Class            *Class
-	Fields           map[string]Object
+	Class *Class
+	// Field storage. The first inlineFieldCap fields live in the inline arrays
+	// (no heap map); additional fields spill into overflow, which is allocated
+	// lazily. Access only through the field accessor methods — never touch these
+	// directly so the representation can keep evolving.
+	inlineKeys [inlineFieldCap]string
+	inlineVals [inlineFieldCap]Object
+	inlineLen  int
+	overflow   map[string]Object
+
 	NativeData       any
 	boundMethodCache map[string]boundMethodCacheEntry
+}
+
+// NewInstance creates an empty instance of the given class. Use the field
+// accessor methods (SetField, GetField, …) to populate it.
+func NewInstance(class *Class) *Instance {
+	return &Instance{Class: class}
+}
+
+// NewInstanceWithFields creates an instance of the given class pre-populated
+// with the supplied fields. The map is consumed (copied into the instance's
+// storage); a nil map yields an empty instance.
+func NewInstanceWithFields(class *Class, fields map[string]Object) *Instance {
+	i := &Instance{Class: class}
+	for k, v := range fields {
+		i.SetField(k, v)
+	}
+	return i
+}
+
+// NewInstanceWithData is like NewInstanceWithFields but also attaches an opaque
+// native-data value to the instance.
+func NewInstanceWithData(class *Class, fields map[string]Object, nativeData any) *Instance {
+	i := NewInstanceWithFields(class, fields)
+	i.NativeData = nativeData
+	return i
 }
 
 func (i *Instance) Type() ObjectType { return INSTANCE_OBJ }
 func (i *Instance) Inspect() string {
 	// Check for __str_repr__ field (used by libraries to provide custom string representation)
-	if strRepr, ok := i.Fields["__str_repr__"]; ok {
+	if strRepr, ok := i.GetField("__str_repr__"); ok {
 		if s, ok := strRepr.(*String); ok {
 			return s.value
 		}
@@ -1640,12 +1953,128 @@ func (i *Instance) Inspect() string {
 	return fmt.Sprintf("<%s object at %p>", i.Class.Name, i)
 }
 
+// --- Instance field accessors ---
+//
+// These methods are the supported API for reading and writing instance fields.
+// They exist so the underlying storage can change without affecting callers;
+// do not access the backing store directly. Field access is single-goroutine
+// per environment tree (serialized by the interpreter lock), so no locking is
+// required here.
+
+// GetField returns the value of the named field and whether it was set.
+func (i *Instance) GetField(name string) (Object, bool) {
+	for n := 0; n < i.inlineLen; n++ {
+		if i.inlineKeys[n] == name {
+			return i.inlineVals[n], true
+		}
+	}
+	if i.overflow != nil {
+		v, ok := i.overflow[name]
+		return v, ok
+	}
+	return nil, false
+}
+
+// Field returns the value of the named field, or nil if it is not set. It is a
+// convenience for callers that immediately type-assert or coerce a field known
+// to exist; use GetField when you need to distinguish "absent" from "nil".
+func (i *Instance) Field(name string) Object {
+	v, _ := i.GetField(name)
+	return v
+}
+
+// SetField sets the named field, allocating backing storage on first use.
+func (i *Instance) SetField(name string, val Object) {
+	for n := 0; n < i.inlineLen; n++ {
+		if i.inlineKeys[n] == name {
+			i.inlineVals[n] = val
+			return
+		}
+	}
+	if i.overflow != nil {
+		if _, ok := i.overflow[name]; ok {
+			i.overflow[name] = val
+			return
+		}
+	}
+	if i.inlineLen < inlineFieldCap {
+		i.inlineKeys[i.inlineLen] = name
+		i.inlineVals[i.inlineLen] = val
+		i.inlineLen++
+		return
+	}
+	if i.overflow == nil {
+		i.overflow = make(map[string]Object)
+	}
+	i.overflow[name] = val
+}
+
+// DeleteField removes the named field if present.
+func (i *Instance) DeleteField(name string) {
+	for n := 0; n < i.inlineLen; n++ {
+		if i.inlineKeys[n] == name {
+			// Swap-remove: move the last inline entry into the gap. Field order
+			// is unspecified, so this is fine and avoids shifting.
+			last := i.inlineLen - 1
+			i.inlineKeys[n] = i.inlineKeys[last]
+			i.inlineVals[n] = i.inlineVals[last]
+			i.inlineKeys[last] = ""
+			i.inlineVals[last] = nil
+			i.inlineLen--
+			return
+		}
+	}
+	if i.overflow != nil {
+		delete(i.overflow, name)
+	}
+}
+
+// HasField reports whether the named field is set.
+func (i *Instance) HasField(name string) bool {
+	_, ok := i.GetField(name)
+	return ok
+}
+
+// FieldCount returns the number of set fields.
+func (i *Instance) FieldCount() int {
+	return i.inlineLen + len(i.overflow)
+}
+
+// RangeFields calls fn for each set field. Iteration order is unspecified and
+// stops early if fn returns false.
+func (i *Instance) RangeFields(fn func(name string, val Object) bool) {
+	for n := 0; n < i.inlineLen; n++ {
+		if !fn(i.inlineKeys[n], i.inlineVals[n]) {
+			return
+		}
+	}
+	for k, v := range i.overflow {
+		if !fn(k, v) {
+			return
+		}
+	}
+}
+
+// FieldsSnapshot returns a new map containing a copy of all set fields. Use it
+// where a standalone map is needed (serialization, AsDict); mutating the result
+// does not affect the instance.
+func (i *Instance) FieldsSnapshot() map[string]Object {
+	m := make(map[string]Object, i.FieldCount())
+	for n := 0; n < i.inlineLen; n++ {
+		m[i.inlineKeys[n]] = i.inlineVals[n]
+	}
+	for k, v := range i.overflow {
+		m[k] = v
+	}
+	return m
+}
+
 func (i *Instance) AsString() (string, Object)          { return i.Inspect(), nil }
 func (i *Instance) AsInt() (int64, Object)              { return 0, errMustBeInteger }
 func (i *Instance) AsFloat() (float64, Object)          { return 0, errMustBeNumber }
 func (i *Instance) AsBool() (bool, Object)              { return true, nil }
 func (i *Instance) AsList() ([]Object, Object)          { return nil, errMustBeList }
-func (i *Instance) AsDict() (map[string]Object, Object) { return i.Fields, nil }
+func (i *Instance) AsDict() (map[string]Object, Object) { return i.FieldsSnapshot(), nil }
 
 func (i *Instance) CoerceString() (string, Object) { return i.Inspect(), nil }
 func (i *Instance) CoerceInt() (int64, Object)     { return 0, errMustBeInteger }
@@ -1876,11 +2305,12 @@ func CloneObject(obj Object) Object {
 		}
 		return &Set{Elements: elements}
 	case *Instance:
-		fields := make(map[string]Object, len(v.Fields))
-		for k, val := range v.Fields {
-			fields[k] = CloneObject(val)
-		}
-		return &Instance{Class: v.Class, Fields: fields}
+		clone := &Instance{Class: v.Class}
+		v.RangeFields(func(k string, val Object) bool {
+			clone.SetField(k, CloneObject(val))
+			return true
+		})
+		return clone
 	default:
 		// Builtins, Functions, Classes, Errors, etc. — immutable or singleton
 		return obj

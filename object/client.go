@@ -1,5 +1,15 @@
 package object
 
+import "context"
+
+// ScriptCallable is implemented by Go types stored inside a ClientWrapper whose
+// instances should be callable from scriptling code (e.g. plugin callbacks).
+// When the evaluator encounters a ClientWrapper whose Client implements this
+// interface, it delegates the call to ScriptCall instead of returning an error.
+type ScriptCallable interface {
+	ScriptCall(ctx context.Context, args []Object, kwargs map[string]Object) Object
+}
+
 // ClientWrapper is a generic wrapper for storing Go client pointers in object.Instance fields.
 // The underlying client is stored as an opaque pointer and accessed via type assertion.
 //
@@ -14,10 +24,10 @@ package object
 //	// ... implement other Object methods ...
 //
 //	// Store in instance:
-//	instance.Fields["_client"] = &MyClientWrapper{instance: &MyClientInstance{...}}
+//	instance.SetField("_client", &MyClientWrapper{instance: &MyClientInstance{...}})
 //
 //	// Extract from instance:
-//	wrapper, _ := instance.Fields["_client"].(*MyClientWrapper)
+//	wrapper, _ := instance.Field("_client").(*MyClientWrapper)
 //	client := wrapper.instance
 //
 // For convenience, use NewClientWrapper to create a wrapper with a custom type name.
@@ -79,7 +89,7 @@ func GetClientField(instance *Instance, fieldName string) (*ClientWrapper, bool)
 	if instance == nil {
 		return nil, false
 	}
-	obj, ok := instance.Fields[fieldName]
+	obj, ok := instance.GetField(fieldName)
 	if !ok {
 		return nil, false
 	}

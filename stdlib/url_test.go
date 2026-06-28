@@ -52,7 +52,7 @@ func TestURLLibrary(t *testing.T) {
 				"fragment": "fragment",
 			}
 			for key, expectedVal := range expected {
-				if value, exists := instance.Fields[key]; exists {
+				if value, exists := instance.GetField(key); exists {
 					if str, ok := value.(*object.String); ok {
 						if str.StringValue() != expectedVal {
 							t.Errorf("Expected %s=%q, got %q", key, expectedVal, str.StringValue())

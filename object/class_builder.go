@@ -18,14 +18,14 @@ var (
 //
 // Two styles are supported:
 //
-// 1. *Instance methods — manually manage Fields:
+// 1. *Instance methods — manage fields via SetField/Field:
 //
 //	cb := NewClassBuilder("Person")
 //	cb.Method("__init__", func(self *Instance, name string) {
-//	    self.Fields["name"] = NewString(name)
+//	    self.SetField("name", NewString(name))
 //	})
 //	cb.Method("greet", func(self *Instance) string {
-//	    return self.Fields["name"].(*String).StringValue()
+//	    return self.Field("name").(*String).StringValue()
 //	})
 //
 // 2. Typed receiver methods — Go struct is auto-managed:
@@ -154,7 +154,7 @@ func (cb *ClassBuilder) MethodWithHelp(name string, fn interface{}, helpText str
 // Example:
 //
 //	cb.Property("area", func(self *Instance) float64 {
-//	    r, _ := self.Fields["radius"].AsFloat()
+//	    r, _ := self.Field("radius").AsFloat()
 //	    return math.Pi * r * r
 //	})
 func (cb *ClassBuilder) Property(name string, fn interface{}) *ClassBuilder {
@@ -171,8 +171,8 @@ func (cb *ClassBuilder) Property(name string, fn interface{}) *ClassBuilder {
 // Example:
 //
 //	cb.PropertyWithSetter("radius",
-//	    func(self *Instance) float64 { r, _ := self.Fields["r"].AsFloat(); return r },
-//	    func(self *Instance, v float64) { self.Fields["r"] = NewFloat(v) },
+//	    func(self *Instance) float64 { r, _ := self.Field("r").AsFloat(); return r },
+//	    func(self *Instance, v float64) { self.SetField("r", NewFloat(v)) },
 //	)
 func (cb *ClassBuilder) PropertyWithSetter(name string, getter interface{}, setter interface{}) *ClassBuilder {
 	if cb.properties == nil {
@@ -530,10 +530,10 @@ func (cb *ClassBuilder) callConstructor(fnValue reflect.Value, sig *FunctionSign
 		if !receiverPtr.IsValid() || receiverPtr.IsNil() {
 			return newError("constructor returned nil")
 		}
-		instance.Fields[receiverField] = &ClientWrapper{
+		instance.SetField(receiverField, &ClientWrapper{
 			TypeName: cb.name,
 			Client:   receiverPtr.Interface(),
-		}
+		})
 		return &Null{}
 	case 2:
 		if sig.returnIsError && !results[1].IsNil() {
@@ -544,10 +544,10 @@ func (cb *ClassBuilder) callConstructor(fnValue reflect.Value, sig *FunctionSign
 		if !receiverPtr.IsValid() || receiverPtr.IsNil() {
 			return newError("constructor returned nil")
 		}
-		instance.Fields[receiverField] = &ClientWrapper{
+		instance.SetField(receiverField, &ClientWrapper{
 			TypeName: cb.name,
 			Client:   receiverPtr.Interface(),
-		}
+		})
 		return &Null{}
 	default:
 		return newError("constructor can return at most 2 values")
@@ -581,7 +581,7 @@ func (cb *ClassBuilder) callTypedReceiverMethod(fnValue reflect.Value, sig *Func
 		return newError("first argument must be an instance, got %T", args[0])
 	}
 
-	wrapper, ok := instance.Fields[receiverField].(*ClientWrapper)
+	wrapper, ok := instance.Field(receiverField).(*ClientWrapper)
 	if !ok {
 		return newError("instance has no typed receiver")
 	}

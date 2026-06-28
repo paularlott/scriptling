@@ -662,7 +662,7 @@ func TestExtendingClassesDocs(t *testing.T) {
 								start = intObj.IntValue()
 							}
 						}
-						instance.Fields["count"] = object.NewInteger(start)
+						instance.SetField("count", object.NewInteger(start))
 						return &object.Null{}
 					},
 					HelpText: "__init__(self, start=0) - Initialize counter",
@@ -670,9 +670,9 @@ func TestExtendingClassesDocs(t *testing.T) {
 				"increment": &object.Builtin{
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 						instance := args[0].(*object.Instance)
-						count, _ := instance.Fields["count"].(*object.Integer)
+						count, _ := instance.Field("count").(*object.Integer)
 						newCount := count.IntValue() + 1
-						instance.Fields["count"] = object.NewInteger(newCount)
+						instance.SetField("count", object.NewInteger(newCount))
 						return object.NewInteger(newCount)
 					},
 					HelpText: "increment() - Increment and return new value",
@@ -680,7 +680,7 @@ func TestExtendingClassesDocs(t *testing.T) {
 				"get": &object.Builtin{
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 						instance := args[0].(*object.Instance)
-						return instance.Fields["count"]
+						return instance.Field("count")
 					},
 					HelpText: "get() - Get current count",
 				},
@@ -722,7 +722,7 @@ after = c.increment()
 				"__init__": &object.Builtin{
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 						instance := args[0].(*object.Instance)
-						instance.Fields["count"] = object.NewInteger(0)
+						instance.SetField("count", object.NewInteger(0))
 						return &object.Null{}
 					},
 					HelpText: "__init__(self) - Initialize counter",
@@ -730,9 +730,9 @@ after = c.increment()
 				"increment": &object.Builtin{
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 						instance := args[0].(*object.Instance)
-						count, _ := instance.Fields["count"].(*object.Integer)
+						count, _ := instance.Field("count").(*object.Integer)
 						newVal := count.IntValue() + 1
-						instance.Fields["count"] = object.NewInteger(newVal)
+						instance.SetField("count", object.NewInteger(newVal))
 						return object.NewInteger(newVal)
 					},
 					HelpText: "increment() - Increment counter",
@@ -745,10 +745,7 @@ after = c.increment()
 				"create_counter": {
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 						// Create a new instance
-						instance := &object.Instance{
-							Class:  counterClass,
-							Fields: map[string]object.Object{},
-						}
+						instance := object.NewInstanceWithFields(counterClass, nil)
 						// Call __init__
 						initMethod := counterClass.Methods["__init__"].(*object.Builtin)
 						initMethod.Fn(ctx, object.NewKwargs(nil), instance)
@@ -793,7 +790,7 @@ count = c.increment()
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 						instance := args[0].(*object.Instance)
 						name, _ := args[1].AsString()
-						instance.Fields["name"] = object.NewString(name)
+						instance.SetField("name", object.NewString(name))
 						return &object.Null{}
 					},
 					HelpText: "__init__(self, name) - Initialize animal",
@@ -801,7 +798,7 @@ count = c.increment()
 				"speak": &object.Builtin{
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 						instance := args[0].(*object.Instance)
-						name, _ := instance.Fields["name"].AsString()
+						name, _ := instance.Field("name").AsString()
 						return object.NewString(name + " makes a sound")
 					},
 					HelpText: "speak() - Make a sound",
@@ -823,7 +820,7 @@ count = c.increment()
 						parentInit := animalClass.Methods["__init__"].(*object.Builtin)
 						parentInit.Fn(ctx, object.NewKwargs(nil), instance, object.NewString(name))
 
-						instance.Fields["breed"] = object.NewString("Unknown")
+						instance.SetField("breed", object.NewString("Unknown"))
 						return &object.Null{}
 					},
 					HelpText: "__init__(self, name) - Initialize dog",
@@ -831,7 +828,7 @@ count = c.increment()
 				"bark": &object.Builtin{
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 						instance := args[0].(*object.Instance)
-						name, _ := instance.Fields["name"].AsString()
+						name, _ := instance.Field("name").AsString()
 						return object.NewString(name + " says Woof!")
 					},
 					HelpText: "bark() - Make the dog bark",
@@ -872,18 +869,18 @@ bark = dog.bark()
 		cb := object.NewClassBuilder("Person")
 
 		cb.Method("__init__", func(self *object.Instance, name string, age int) {
-			self.Fields["name"] = object.NewString(name)
-			self.Fields["age"] = object.NewInteger(int64(age))
+			self.SetField("name", object.NewString(name))
+			self.SetField("age", object.NewInteger(int64(age)))
 		})
 
 		cb.Method("greet", func(self *object.Instance) string {
-			name, _ := self.Fields["name"].AsString()
+			name, _ := self.Field("name").AsString()
 			return "Hello, I'm " + name
 		})
 
 		cb.Method("have_birthday", func(self *object.Instance) {
-			age, _ := self.Fields["age"].AsInt()
-			self.Fields["age"] = object.NewInteger(age + 1)
+			age, _ := self.Field("age").AsInt()
+			self.SetField("age", object.NewInteger(age + 1))
 		})
 
 		personClass := cb.Build()
@@ -927,8 +924,8 @@ new_age = p.age
 						instance := args[0].(*object.Instance)
 						name, _ := args[1].AsString()
 						age, _ := args[2].AsInt()
-						instance.Fields["name"] = object.NewString(name)
-						instance.Fields["age"] = object.NewInteger(age)
+						instance.SetField("name", object.NewString(name))
+						instance.SetField("age", object.NewInteger(age))
 						return &object.Null{}
 					},
 					HelpText: "__init__(self, name, age) - Initialize Person",
@@ -936,7 +933,7 @@ new_age = p.age
 				"greet": &object.Builtin{
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 						instance := args[0].(*object.Instance)
-						name, _ := instance.Fields["name"].AsString()
+						name, _ := instance.Field("name").AsString()
 						return object.NewString("Hello, I'm " + name)
 					},
 					HelpText: "greet() - Return a greeting",
@@ -952,12 +949,12 @@ new_age = p.age
 			parentInit := personClass.Methods["__init__"].(*object.Builtin)
 			parentInit.Fn(nil, object.NewKwargs(nil), self, object.NewString(name), object.NewInteger(int64(age)))
 			// Add employee-specific field
-			self.Fields["department"] = object.NewString(department)
+			self.SetField("department", object.NewString(department))
 		})
 
 		cb.Method("get_info", func(self *object.Instance) string {
-			dept, _ := self.Fields["department"].AsString()
-			age, _ := self.Fields["age"].AsInt()
+			dept, _ := self.Field("department").AsString()
+			age, _ := self.Field("age").AsInt()
 			return fmt.Sprintf("Dept: %s, Age: %d", dept, age)
 		})
 
@@ -996,10 +993,10 @@ info = emp.get_info()
 		// Builder base class (Animal)
 		cb := object.NewClassBuilder("Animal")
 		cb.Method("__init__", func(self *object.Instance, name string) {
-			self.Fields["name"] = object.NewString(name)
+			self.SetField("name", object.NewString(name))
 		})
 		cb.Method("speak", func(self *object.Instance) string {
-			name, _ := self.Fields["name"].AsString()
+			name, _ := self.Field("name").AsString()
 			return name + " makes a sound"
 		})
 		animalClass := cb.Build()
@@ -1018,7 +1015,7 @@ info = emp.get_info()
 						parentInit := animalClass.Methods["__init__"].(*object.Builtin)
 						parentInit.Fn(ctx, object.NewKwargs(nil), instance, object.NewString(name))
 
-						instance.Fields["breed"] = object.NewString("Unknown")
+						instance.SetField("breed", object.NewString("Unknown"))
 						return &object.Null{}
 					},
 					HelpText: "__init__(self, name) - Initialize Dog",
@@ -1026,7 +1023,7 @@ info = emp.get_info()
 				"bark": &object.Builtin{
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 						instance := args[0].(*object.Instance)
-						name, _ := instance.Fields["name"].AsString()
+						name, _ := instance.Field("name").AsString()
 						return object.NewString(name + " says Woof!")
 					},
 					HelpText: "bark() - Make the dog bark",
@@ -1069,12 +1066,12 @@ bark = dog.bark()
 		// Builder base class (Vehicle)
 		vehicleBuilder := object.NewClassBuilder("Vehicle")
 		vehicleBuilder.Method("__init__", func(self *object.Instance, make string, model string) {
-			self.Fields["make"] = object.NewString(make)
-			self.Fields["model"] = object.NewString(model)
+			self.SetField("make", object.NewString(make))
+			self.SetField("model", object.NewString(model))
 		})
 		vehicleBuilder.Method("get_info", func(self *object.Instance) string {
-			make, _ := self.Fields["make"].AsString()
-			model, _ := self.Fields["model"].AsString()
+			make, _ := self.Field("make").AsString()
+			model, _ := self.Field("model").AsString()
 			return make + " " + model
 		})
 		vehicleClass := vehicleBuilder.Build()
@@ -1086,11 +1083,11 @@ bark = dog.bark()
 			// Call parent __init__ using parent's built method
 			parentInit := vehicleClass.Methods["__init__"].(*object.Builtin)
 			parentInit.Fn(nil, object.NewKwargs(nil), self, object.NewString(make), object.NewString(model))
-			self.Fields["doors"] = object.NewInteger(int64(doors))
+			self.SetField("doors", object.NewInteger(int64(doors)))
 		})
 
 		carBuilder.Method("honk", func(self *object.Instance) string {
-			make, _ := self.Fields["make"].AsString()
+			make, _ := self.Field("make").AsString()
 			return make + " goes beep beep!"
 		})
 
@@ -2037,18 +2034,18 @@ e_val = mymath.E
 		cb := object.NewClassBuilder("Person")
 
 		cb.Method("__init__", func(self *object.Instance, name string, age int) {
-			self.Fields["name"] = object.NewString(name)
-			self.Fields["age"] = object.NewInteger(int64(age))
+			self.SetField("name", object.NewString(name))
+			self.SetField("age", object.NewInteger(int64(age)))
 		})
 
 		cb.Method("greet", func(self *object.Instance) string {
-			name, _ := self.Fields["name"].AsString()
+			name, _ := self.Field("name").AsString()
 			return "Hello, I'm " + name
 		})
 
 		cb.Method("have_birthday", func(self *object.Instance) {
-			age, _ := self.Fields["age"].AsInt()
-			self.Fields["age"] = object.NewInteger(age + 1)
+			age, _ := self.Field("age").AsInt()
+			self.SetField("age", object.NewInteger(age + 1))
 		})
 
 		personClass := cb.Build()
@@ -2176,10 +2173,10 @@ help("mylib")
 		// Build a class with methods
 		classBuilder := object.NewClassBuilder("MyClass")
 		classBuilder.Method("__init__", func(self *object.Instance, name string) {
-			self.Fields["name"] = object.NewString(name)
+			self.SetField("name", object.NewString(name))
 		})
 		classBuilder.Method("get_data", func(self *object.Instance) string {
-			name, _ := self.Fields["name"].AsString()
+			name, _ := self.Field("name").AsString()
 			return "data for " + name
 		})
 		myClass := classBuilder.Build()

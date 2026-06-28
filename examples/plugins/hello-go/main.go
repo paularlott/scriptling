@@ -22,25 +22,25 @@ func main() {
 
 	configBuilder := object.NewClassBuilder("Config").
 		Method("__init__", func(self *object.Instance, name string) {
-			self.Fields["name"] = object.NewString(name)
+			self.SetField("name", object.NewString(name))
 		}).
 		Method("get", func(self *object.Instance, key string) string {
-			return self.Fields["name"].(*object.String).StringValue()
+			return self.Field("name").(*object.String).StringValue()
 		})
 	server.RegisterClass(configBuilder)
 
 	counter := object.NewClassBuilder("Counter").
 		Method("__init__", func(self *object.Instance, start int) {
-			self.Fields["value"] = object.NewInteger(int64(start))
+			self.SetField("value", object.NewInteger(int64(start)))
 		}).
 		Method("inc", func(self *object.Instance, amount int) int {
-			current := self.Fields["value"].(*object.Integer).IntValue()
+			current := self.Field("value").(*object.Integer).IntValue()
 			next := current + int64(amount)
-			self.Fields["value"] = object.NewInteger(next)
+			self.SetField("value", object.NewInteger(next))
 			return int(next)
 		}).
 		Method("get", func(self *object.Instance) int {
-			return int(self.Fields["value"].(*object.Integer).IntValue())
+			return int(self.Field("value").(*object.Integer).IntValue())
 		})
 	server.RegisterClass(counter)
 

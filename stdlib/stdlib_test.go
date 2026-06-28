@@ -242,14 +242,14 @@ func TestHashlibLibrary(t *testing.T) {
 
 	// Test instance attributes
 	inst := result.(*object.Instance)
-	if name := inst.Fields["name"].(*object.String).StringValue(); name != "sha256" {
+	if name := inst.Field("name").(*object.String).StringValue(); name != "sha256" {
 		t.Errorf("sha256().name = %q, want sha256", name)
 	}
-	if inst.Fields["digest_size"].(*object.Integer).IntValue() != 32 {
-		t.Errorf("sha256().digest_size = %d, want 32", inst.Fields["digest_size"].(*object.Integer).IntValue())
+	if inst.Field("digest_size").(*object.Integer).IntValue() != 32 {
+		t.Errorf("sha256().digest_size = %d, want 32", inst.Field("digest_size").(*object.Integer).IntValue())
 	}
-	if inst.Fields["block_size"].(*object.Integer).IntValue() != 64 {
-		t.Errorf("sha256().block_size = %d, want 64", inst.Fields["block_size"].(*object.Integer).IntValue())
+	if inst.Field("block_size").(*object.Integer).IntValue() != 64 {
+		t.Errorf("sha256().block_size = %d, want 64", inst.Field("block_size").(*object.Integer).IntValue())
 	}
 
 	// Test with invalid args (should error)

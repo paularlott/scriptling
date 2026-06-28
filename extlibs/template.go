@@ -41,11 +41,7 @@ func renderTemplateSet(pt *parsedTemplateSet, name string, data interface{}) (st
 }
 
 func newSetInstance(pt *parsedTemplateSet) *object.Instance {
-	return &object.Instance{
-		Class:      TemplateSetClass,
-		Fields:     map[string]object.Object{},
-		NativeData: pt,
-	}
+	return object.NewInstanceWithData(TemplateSetClass, nil, pt)
 }
 
 // TemplateSetClass is the class for Set objects

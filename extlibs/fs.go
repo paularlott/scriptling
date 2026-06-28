@@ -63,7 +63,7 @@ func (f *fsLibraryInstance) createFSLibrary() *object.Library {
 				if err != nil {
 					return err
 				}
-				content, errObj := readFileBytesAt(f.config, path, offset, length, fsMaxReadBytes)
+				content, errObj := readFileBytesAt(ctx, f.config, path, offset, length, fsMaxReadBytes)
 				if errObj != nil {
 					return errObj
 				}
@@ -156,7 +156,7 @@ Format is the same as unpack(). Returns a binary string.`,
 				if errObj != nil {
 					return errObj
 				}
-				return writeFileBytesAt(f.config, path, offset, []byte(data), mode)
+				return writeFileBytesAt(ctx, f.config, path, offset, []byte(data), mode)
 			},
 			HelpText: `write_bytes(path, offset, data[, mode]) - Write raw bytes at an offset
 

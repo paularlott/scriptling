@@ -28,7 +28,11 @@ func (s *Server) Start() error {
 		mux.Handle("/mcp", s.mcpHandler)
 	}
 	if s.config.JSONRPC {
-		mux.HandleFunc("/json-rpc", s.handleJSONRPCHTTP)
+		if s.pluginServer != nil {
+			mux.Handle("/json-rpc", s.pluginServer)
+		} else {
+			mux.HandleFunc("/json-rpc", s.handleJSONRPCHTTP)
+		}
 	}
 
 	mux.HandleFunc("GET /health", s.handleHealth)

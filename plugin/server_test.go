@@ -358,10 +358,10 @@ func TestServerClassLifecycle(t *testing.T) {
 	destroyed := false
 	class := object.NewClassBuilder("Config").
 		Method("__init__", func(self *object.Instance, name string) {
-			self.Fields["name"] = object.NewString(name)
+			self.SetField("name", object.NewString(name))
 		}).
 		Method("get", func(self *object.Instance) string {
-			return self.Fields["name"].(*object.String).StringValue()
+			return self.Field("name").(*object.String).StringValue()
 		}).
 		Method("__del__", func(self *object.Instance) {
 			destroyed = true
@@ -496,16 +496,16 @@ func TestServerHandshakeSchema(t *testing.T) {
 func TestServerRegisterClass(t *testing.T) {
 	class := object.NewClassBuilder("Counter").
 		Method("__init__", func(self *object.Instance, start int) {
-			self.Fields["value"] = object.NewInteger(int64(start))
+			self.SetField("value", object.NewInteger(int64(start)))
 		}).
 		Method("inc", func(self *object.Instance, amount int) int {
-			current := self.Fields["value"].(*object.Integer).IntValue()
+			current := self.Field("value").(*object.Integer).IntValue()
 			next := current + int64(amount)
-			self.Fields["value"] = object.NewInteger(next)
+			self.SetField("value", object.NewInteger(next))
 			return int(next)
 		}).
 		Method("get", func(self *object.Instance) int {
-			return int(self.Fields["value"].(*object.Integer).IntValue())
+			return int(self.Field("value").(*object.Integer).IntValue())
 		})
 
 	server := NewServer("builderclass", "1.0.0", "builder class").
@@ -1380,10 +1380,10 @@ func TestServerDoubleDestroy(t *testing.T) {
 func TestServerClassWithKwargs(t *testing.T) {
 	class := object.NewClassBuilder("Opts").
 		Method("__init__", func(self *object.Instance, kwargs object.Kwargs) {
-			self.Fields["mode"] = object.NewString(kwargs.MustGetString("mode", "default"))
+			self.SetField("mode", object.NewString(kwargs.MustGetString("mode", "default")))
 		}).
 		Method("get_mode", func(self *object.Instance) string {
-			return self.Fields["mode"].(*object.String).StringValue()
+			return self.Field("mode").(*object.String).StringValue()
 		})
 
 	server := NewServer("kwargs", "1.0.0", "test").RegisterClass(class)
@@ -1405,10 +1405,10 @@ func TestServerClassWithKwargs(t *testing.T) {
 func TestServerMethodWithKwargs(t *testing.T) {
 	class := object.NewClassBuilder("KV").
 		Method("__init__", func(self *object.Instance) {
-			self.Fields["data"] = object.NewStringDict(map[string]object.Object{})
+			self.SetField("data", object.NewStringDict(map[string]object.Object{}))
 		}).
 		Method("set_kwargs", func(self *object.Instance, kwargs object.Kwargs) {
-			dict := self.Fields["data"].(*object.Dict)
+			dict := self.Field("data").(*object.Dict)
 			for k, v := range kwargs.Kwargs {
 				dict.Pairs[k] = object.DictPair{Key: object.NewString(k), Value: v}
 			}

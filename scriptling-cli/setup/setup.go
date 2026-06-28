@@ -174,6 +174,7 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 	reg(extlibs.AILibraryName, func() { ai.Register(p) })
 	reg(aimemory.MemoryLibraryName, func() { aimemory.Register(p, log) })
 	reg(extlibs.AgentLibraryName, func() { agent.Register(p) })
+	reg(extlibs.RuntimePluginLibraryName, func() { extlibs.RegisterRuntimePluginLibrary(p) })
 	reg(extlibs.SimilarityLibraryName, func() { scriptlingsimilarity.Register(p) })
 	reg(scriptlingconsole.LibraryName, func() { scriptlingconsole.Register(p) })
 	if registerInteract && !disabled[extlibs.InteractLibraryName] {

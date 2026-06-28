@@ -70,10 +70,11 @@ type Server struct {
 	config               ServerConfig
 	httpServer           *http.Server
 	mcpHandler           *reloadableMCPHandler
-	handlers             map[string]string // path -> "library.function"
-	wsHandlers           map[string]string // path -> "library.function" for WebSocket
-	jsonrpcMethods       map[string]string // JSON-RPC method name -> "library.function"
-	jsonrpcNotifications map[string]string // JSON-RPC notification name -> "library.function"
+	pluginServer         *scriptlingplugin.Server // non-nil when plugin mode is active
+	handlers             map[string]string         // path -> "library.function"
+	wsHandlers           map[string]string         // path -> "library.function" for WebSocket
+	jsonrpcMethods       map[string]string         // JSON-RPC method name -> "library.function"
+	jsonrpcNotifications map[string]string         // JSON-RPC notification name -> "library.function"
 	middleware           string
 	notFoundHandler      string
 	staticRoutes         map[string]string
@@ -84,4 +85,5 @@ type Server struct {
 	debounceDuration     time.Duration
 	packLoader           *pack.Loader // nil if no packages configured
 	bearerExpected       string       // precomputed "Bearer <token>"
+	scriptDone           chan struct{} // closed when setup script goroutine exits
 }

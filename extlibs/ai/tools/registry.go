@@ -108,21 +108,18 @@ type toolDef struct {
 }
 
 func registryConstructor(self *object.Instance, ctx context.Context) object.Object {
-	if self.Fields == nil {
-		self.Fields = make(map[string]object.Object)
-	}
-	self.Fields["_data"] = &object.ClientWrapper{
+	self.SetField("_data", &object.ClientWrapper{
 		TypeName: "RegistryData",
 		Client: &registryData{
 			tools:    []toolDef{},
 			handlers: make(map[string]object.Object),
 		},
-	}
+	})
 	return &object.Null{}
 }
 
 func getRegistryData(self *object.Instance) (*registryData, *object.Error) {
-	wrapper, ok := self.Fields["_data"].(*object.ClientWrapper)
+	wrapper, ok := self.Field("_data").(*object.ClientWrapper)
 	if !ok {
 		return nil, &object.Error{Message: "Registry: missing internal data"}
 	}

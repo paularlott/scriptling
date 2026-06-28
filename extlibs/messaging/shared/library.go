@@ -87,13 +87,25 @@ func envFromContext(ctx context.Context) *object.Environment {
 	return object.NewEnvironment()
 }
 
+// runBlockingErr runs fn (a network call to a messaging backend) with the
+// interpreter lock released so shared-env threads and handlers can run while we
+// wait on the network. Messaging calls (API POSTs, uploads, downloads) can take
+// noticeable time.
+func runBlockingErr(ctx context.Context, fn func() error) error {
+	var err error
+	object.RunBlocking(ctx, func() { err = fn() })
+	return err
+}
+
 // wrapScriptHandler wraps a Scriptling callable as a shared.Handler.
 // The handler is called as fn(ctx_dict) where ctx_dict exposes the update fields.
 // Returns non-nil error only for script errors; auth handlers return error to deny.
 func wrapScriptHandler(eval evaliface.Evaluator, fn object.Object, inst *object.Instance, env *object.Environment, isAuth bool) Handler {
 	return func(goCtx context.Context, c *Ctx) error {
 		d := BuildCtxDict(c)
-		result := eval.CallObjectFunction(goCtx, fn, []object.Object{d}, nil, env)
+		// Use a fresh context so the interpreter lock is acquired for this
+		// dispatch (the bot loop runs with the lock released — see run()).
+		result := eval.CallObjectFunction(context.Background(), fn, []object.Object{d}, nil, env)
 		if result == nil {
 			return nil
 		}
@@ -264,7 +276,7 @@ func ClientFrom(args []object.Object) (ScriptSender, *object.Instance, bool) {
 func BindToInstance(inst *object.Instance, builtins map[string]*object.Builtin) {
 	for name, b := range builtins {
 		fn := b // capture
-		inst.Fields[name] = &object.Builtin{
+		inst.SetField(name, &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				newArgs := make([]object.Object, len(args)+1)
 				newArgs[0] = inst
@@ -272,7 +284,7 @@ func BindToInstance(inst *object.Instance, builtins map[string]*object.Builtin) 
 				return fn.Fn(ctx, kwargs, newArgs...)
 			},
 			HelpText: fn.HelpText,
-		}
+		})
 	}
 }
 
@@ -425,8 +437,13 @@ func SharedBuiltins() map[string]*object.Builtin {
 				if !ok {
 					return errors.NewError("run: invalid client")
 				}
-				if err := s.BotRun(ctx); err != nil {
-					return errors.NewError("run: %s", err.Error())
+				// Release the interpreter lock for the bot's lifetime; each
+				// handler dispatch re-acquires it (wrapScriptHandler), so
+				// handlers stay serialized while other goroutines can run.
+				var runErr error
+				envFromContext(ctx).RunUnlocked(func() { runErr = s.BotRun(ctx) })
+				if runErr != nil {
+					return errors.NewError("run: %s", runErr.Error())
 				}
 				return &object.Null{}
 			},
@@ -448,7 +465,7 @@ func SharedBuiltins() map[string]*object.Builtin {
 				}
 				// Accept string or dict (rich message)
 				if d, ok := args[2].(*object.Dict); ok {
-					if err := s.SendRichMessage(ctx, dest, richMessageFromDict(d)); err != nil {
+					if err := runBlockingErr(ctx, func() error { return s.SendRichMessage(ctx, dest, richMessageFromDict(d)) }); err != nil {
 						return errors.NewError("send_message: %s", err.Error())
 					}
 					return &object.Null{}
@@ -463,7 +480,7 @@ func SharedBuiltins() map[string]*object.Builtin {
 				if kb := kwargs.Get("keyboard"); kb != nil {
 					opts.Keyboard = keyboardFromObject(kb)
 				}
-				if err := s.SendMessage(ctx, dest, text, opts); err != nil {
+				if err := runBlockingErr(ctx, func() error { return s.SendMessage(ctx, dest, text, opts) }); err != nil {
 					return errors.NewError("send_message: %s", err.Error())
 				}
 				return &object.Null{}
@@ -488,7 +505,7 @@ func SharedBuiltins() map[string]*object.Builtin {
 				if !ok {
 					return errors.NewTypeError("DICT", args[2].Type().String())
 				}
-				if err := s.SendRichMessage(ctx, dest, richMessageFromDict(d)); err != nil {
+				if err := runBlockingErr(ctx, func() error { return s.SendRichMessage(ctx, dest, richMessageFromDict(d)) }); err != nil {
 					return errors.NewError("send_rich_message: %s", err.Error())
 				}
 				return &object.Null{}
@@ -508,7 +525,7 @@ func SharedBuiltins() map[string]*object.Builtin {
 				dest, _ := args[1].AsString()
 				msgID, _ := args[2].AsString()
 				text, _ := args[3].AsString()
-				if err := s.EditMessage(ctx, dest, msgID, text); err != nil {
+				if err := runBlockingErr(ctx, func() error { return s.EditMessage(ctx, dest, msgID, text) }); err != nil {
 					return errors.NewError("edit_message: %s", err.Error())
 				}
 				return &object.Null{}
@@ -527,7 +544,7 @@ func SharedBuiltins() map[string]*object.Builtin {
 				}
 				dest, _ := args[1].AsString()
 				msgID, _ := args[2].AsString()
-				if err := s.DeleteMessage(ctx, dest, msgID); err != nil {
+				if err := runBlockingErr(ctx, func() error { return s.DeleteMessage(ctx, dest, msgID) }); err != nil {
 					return errors.NewError("delete_message: %s", err.Error())
 				}
 				return &object.Null{}
@@ -549,7 +566,7 @@ func SharedBuiltins() map[string]*object.Builtin {
 				fileName := kwargs.MustGetString("filename", "")
 				caption := kwargs.MustGetString("caption", "")
 				isB64 := kwargs.MustGetBool("base64", false)
-				if err := s.SendFile(ctx, dest, source, fileName, caption, isB64); err != nil {
+				if err := runBlockingErr(ctx, func() error { return s.SendFile(ctx, dest, source, fileName, caption, isB64) }); err != nil {
 					return errors.NewError("send_file: %s", err.Error())
 				}
 				return &object.Null{}
@@ -567,7 +584,7 @@ func SharedBuiltins() map[string]*object.Builtin {
 					return errors.NewError("typing: invalid client")
 				}
 				dest, _ := args[1].AsString()
-				if err := s.SendTyping(ctx, dest); err != nil {
+				if err := runBlockingErr(ctx, func() error { return s.SendTyping(ctx, dest) }); err != nil {
 					return errors.NewError("typing: %s", err.Error())
 				}
 				return &object.Null{}
@@ -595,7 +612,7 @@ func SharedBuiltins() map[string]*object.Builtin {
 					token, _ = args[2].AsString()
 					text, _ = args[3].AsString()
 				}
-				if err := s.AckCallback(ctx, id, token, text); err != nil {
+				if err := runBlockingErr(ctx, func() error { return s.AckCallback(ctx, id, token, text) }); err != nil {
 					return errors.NewError("answer_callback: %s", err.Error())
 				}
 				return &object.Null{}
@@ -613,9 +630,11 @@ func SharedBuiltins() map[string]*object.Builtin {
 					return errors.NewError("download: invalid client")
 				}
 				ref, _ := args[1].AsString()
-				data, err := s.Download(ctx, ref)
-				if err != nil {
-					return errors.NewError("download: %s", err.Error())
+				var data []byte
+				var dlErr error
+				object.RunBlocking(ctx, func() { data, dlErr = s.Download(ctx, ref) })
+				if dlErr != nil {
+					return errors.NewError("download: %s", dlErr.Error())
 				}
 				return object.NewString(EncodeBase64(data))
 			},

@@ -128,16 +128,16 @@ func TestRegisterLibraryWithClass(t *testing.T) {
 							start = intObj.IntValue()
 						}
 					}
-					self.Fields["value"] = object.NewInteger(start)
+					self.SetField("value", object.NewInteger(start))
 					return &object.Null{}
 				},
 			},
 			"increment": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					self := args[0].(*object.Instance)
-					if val, ok := self.Fields["value"].(*object.Integer); ok {
+					if val, ok := self.Field("value").(*object.Integer); ok {
 						newVal := val.IntValue() + 1
-						self.Fields["value"] = object.NewInteger(newVal)
+						self.SetField("value", object.NewInteger(newVal))
 						return object.NewInteger(newVal)
 					}
 					return &object.Null{}
@@ -147,10 +147,10 @@ func TestRegisterLibraryWithClass(t *testing.T) {
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					self := args[0].(*object.Instance)
 					// Return a copy to avoid mutation issues
-					if val, ok := self.Fields["value"].(*object.Integer); ok {
+					if val, ok := self.Field("value").(*object.Integer); ok {
 						return object.NewInteger(val.IntValue())
 					}
-					return self.Fields["value"]
+					return self.Field("value")
 				},
 			},
 		},

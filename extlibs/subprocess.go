@@ -42,7 +42,7 @@ var CompletedProcessClass = &object.Class{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if err := errors.ExactArgs(args, 1); err != nil { return err }
 				if instance, ok := args[0].(*object.Instance); ok {
-					if returncode, ok := instance.Fields["returncode"].(*object.Integer); ok {
+					if returncode, ok := instance.Field("returncode").(*object.Integer); ok {
 					if returncode.IntValue() != 0 {
 						return errors.NewError("Command returned non-zero exit status %d", returncode.IntValue())
 						}
@@ -209,14 +209,17 @@ var SubprocessLibrary = object.NewLibrary(SubprocessLibraryName, map[string]*obj
 			var stdout, stderr []byte
 			var err error
 
-			if captureOutput {
-				stdout, err = cmd.Output()
-				if exitErr, ok := err.(*exec.ExitError); ok {
-					stderr = exitErr.Stderr
+			// Release the interpreter lock while the child process runs.
+			object.RunBlocking(ctx, func() {
+				if captureOutput {
+					stdout, err = cmd.Output()
+					if exitErr, ok := err.(*exec.ExitError); ok {
+						stderr = exitErr.Stderr
+					}
+				} else {
+					err = cmd.Run()
 				}
-			} else {
-				err = cmd.Run()
-			}
+			})
 
 			returncode := 0
 			if err != nil {
@@ -239,17 +242,14 @@ var SubprocessLibrary = object.NewLibrary(SubprocessLibraryName, map[string]*obj
 				stdoutStr = string(stdout)
 				stderrStr = string(stderr)
 			} // Create CompletedProcess instance
-			instance := &object.Instance{
-				Class: CompletedProcessClass,
-				Fields: map[string]object.Object{
+			instance := object.NewInstanceWithFields(CompletedProcessClass, map[string]object.Object{
 					"args":       &object.List{Elements: make([]object.Object, len(cmdArgs))},
 					"returncode": object.NewInteger(int64(returncode)),
 					"stdout":     object.NewString(stdoutStr),
 					"stderr":     object.NewString(stderrStr),
-				},
-			} // Fill args list
+				}) // Fill args list
 			for i, arg := range cmdArgs {
-				instance.Fields["args"].(*object.List).Elements[i] = object.NewString(arg)
+				instance.Field("args").(*object.List).Elements[i] = object.NewString(arg)
 			}
 
 			if check && returncode != 0 {

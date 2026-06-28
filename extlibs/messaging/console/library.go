@@ -15,11 +15,7 @@ var consoleClientClass = &object.Class{
 }
 
 func newClientInstance(c *consoleClient, builtins map[string]*object.Builtin) *object.Instance {
-	inst := &object.Instance{
-		Class:      consoleClientClass,
-		Fields:     map[string]object.Object{},
-		NativeData: c,
-	}
+	inst := object.NewInstanceWithData(consoleClientClass, nil, c)
 	shared.BindToInstance(inst, builtins)
 	return inst
 }
