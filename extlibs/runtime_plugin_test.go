@@ -84,8 +84,8 @@ func TestPluginFunctionRegistersHandler(t *testing.T) {
 	_, err := p.Eval(`
 import scriptling.runtime.plugin as rp
 rp.serve("calc", "1.0", "Calculator")
-rp.function("add", "handlers.add")
-rp.function("mul", "handlers.mul")
+rp.register_function("add", "handlers.add")
+rp.register_function("mul", "handlers.mul")
 `)
 	if err != nil {
 		t.Fatalf("plugin.function: %v", err)
@@ -142,7 +142,7 @@ func TestPluginResetClearsState(t *testing.T) {
 	_, err := p.Eval(`
 import scriptling.runtime.plugin as rp
 rp.serve("myservice", "1.0", "desc")
-rp.function("greet", "handlers.greet")
+rp.register_function("greet", "handlers.greet")
 `)
 	if err != nil {
 		t.Fatalf("setup: %v", err)
@@ -190,7 +190,7 @@ func TestPluginFunctionRequiresBothArgs(t *testing.T) {
 
 	_, err := p.Eval(`
 import scriptling.runtime.plugin as rp
-rp.function("greet")
+rp.register_function("greet")
 `)
 	if err == nil {
 		t.Fatal("plugin.function() with one arg should have failed")
@@ -208,8 +208,8 @@ func TestPluginConstantRegistersValue(t *testing.T) {
 	_, err := p.Eval(`
 import scriptling.runtime.plugin as rp
 rp.serve("svc", "1.0", "Service")
-rp.constant("VERSION", "2.5.0")
-rp.constant("MAX_RETRIES", 5)
+rp.register_constant("VERSION", "2.5.0")
+rp.register_constant("MAX_RETRIES", 5)
 `)
 	if err != nil {
 		t.Fatalf("plugin.constant: %v", err)
@@ -249,8 +249,8 @@ func TestPluginClassRegistersHandler(t *testing.T) {
 	_, err := p.Eval(`
 import scriptling.runtime.plugin as rp
 rp.serve("svc", "1.0", "Service")
-rp.class("handlers.Config")
-rp.class("handlers.Widget")
+rp.register_class("handlers.Config")
+rp.register_class("handlers.Widget")
 `)
 	if err != nil {
 		t.Fatalf("plugin.class: %v", err)
@@ -281,7 +281,7 @@ func TestPluginClassRequiresArg(t *testing.T) {
 
 	_, err := p.Eval(`
 import scriptling.runtime.plugin as rp
-rp.class()
+rp.register_class()
 `)
 	if err == nil {
 		t.Fatal("plugin.class() with no args should have failed")
@@ -298,8 +298,8 @@ func TestPluginResetClearsConstantsAndClasses(t *testing.T) {
 	_, err := p.Eval(`
 import scriptling.runtime.plugin as rp
 rp.serve("svc", "1.0", "Service")
-rp.constant("X", 42)
-rp.class("mod.MyClass")
+rp.register_constant("X", 42)
+rp.register_class("mod.MyClass")
 `)
 	if err != nil {
 		t.Fatalf("setup: %v", err)
