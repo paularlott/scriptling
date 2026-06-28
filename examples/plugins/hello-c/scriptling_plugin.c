@@ -1265,6 +1265,17 @@ int sl_server_run(sl_server *srv) {
         char *line = read_line();
         if (!line) {
             flight_wait_all(srv);
+            pthread_rwlock_wrlock(&srv->obj_rwlock);
+            for (size_t i = 0; i < srv->object_count; i++) {
+                if (srv->objects[i]) {
+                    if (srv->objects[i]->cls->dtor) srv->objects[i]->cls->dtor(srv->objects[i]->data);
+                    pthread_mutex_destroy(&srv->objects[i]->mu);
+                    free(srv->objects[i]);
+                    srv->objects[i] = NULL;
+                }
+            }
+            srv->object_count = 0;
+            pthread_rwlock_unlock(&srv->obj_rwlock);
             break;
         }
 

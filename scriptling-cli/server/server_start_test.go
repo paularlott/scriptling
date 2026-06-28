@@ -17,6 +17,7 @@ import (
 
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/object"
 	scriptlingplugin "github.com/paularlott/scriptling/plugin"
 )
 
@@ -184,12 +185,24 @@ func writePluginHandlerLib(t *testing.T) string {
 def add(a, b):
     return a + b
 
+def greet(name, greeting="Hello"):
+    return greeting + ", " + name + "!"
+
+def fail(msg):
+    raise Exception(msg)
+
+def apply_two(f, g, x):
+    return f(g(x))
+
 class Config:
     def __init__(self, prefix):
         self.prefix = prefix
 
     def greeting(self, name):
         return self.prefix + name
+
+    def transform(self, fn, value):
+        return fn(value)
 `
 	if err := os.WriteFile(filepath.Join(dir, "plugmod.py"), []byte(src), 0644); err != nil {
 		t.Fatalf("write plugmod.py: %v", err)
@@ -528,6 +541,770 @@ cfg.greeting("world")
 // Plugin server HTTP parallel load: fires N concurrent callers against the HTTP
 // plugin server to surface races in handler dispatch, evaluator reuse, or the
 // plugin.Server mux.
+// Constants over stdio: verifies that constants are included in the handshake
+// and accessible to a client connected via the stdio transport.
+func TestPluginServerStdioConstants(t *testing.T) {
+	libDir := writePluginHandlerLib(t)
+	script := writeSetup(t, `
+import scriptling.runtime.plugin as rp
+import scriptling.runtime as runtime
+rp.serve("constplugin", "1.0", "Constants over stdio")
+rp.register_constant("GREETING", "hello")
+rp.register_constant("COUNT", 42)
+rp.register_constant("FLAG", True)
+rp.register_constant("RATIO", 3.14)
+rp.register_constant("TAGS", ["a", "b"])
+rp.register_constant("META", {"k": "v"})
+rp.register_constant("NOTHING", None)
+runtime.start_server(wait=False)
+while runtime.server_running():
+    yield_now()
+`)
+
+	s, err := NewServer(ServerConfig{ScriptFile: script, LibDirs: []string{libDir}})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	defer signalShutdown(t, s)
+
+	serverConn, clientConn, err := pipeConn()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	serverDone := make(chan error, 1)
+	go func() { serverDone <- s.runPluginServer(ctx, serverConn, serverConn) }()
+
+	client, err := scriptlingplugin.LoadClientFromIO(ctx, clientConn, clientConn)
+	if err != nil {
+		clientConn.Close()
+		t.Fatalf("LoadClientFromIO: %v", err)
+	}
+
+	p := scriptling.New()
+	scriptlingplugin.RegisterClientLibrary(p, client)
+
+	p.Eval(`import plugin.constplugin`)
+
+	// string constant
+	if r, err := p.Eval(`plugin.constplugin.GREETING`); err != nil {
+		t.Errorf("GREETING: %v", err)
+	} else if got, _ := r.AsString(); got != "hello" {
+		t.Errorf("GREETING = %q, want %q", got, "hello")
+	}
+
+	// int constant
+	if r, err := p.Eval(`plugin.constplugin.COUNT`); err != nil {
+		t.Errorf("COUNT: %v", err)
+	} else if got, _ := r.AsInt(); got != 42 {
+		t.Errorf("COUNT = %d, want 42", got)
+	}
+
+	// bool constant
+	if r, err := p.Eval(`plugin.constplugin.FLAG`); err != nil {
+		t.Errorf("FLAG: %v", err)
+	} else if got, _ := r.AsBool(); !got {
+		t.Errorf("FLAG = false, want true")
+	}
+
+	// float constant
+	if r, err := p.Eval(`plugin.constplugin.RATIO`); err != nil {
+		t.Errorf("RATIO: %v", err)
+	} else if got, _ := r.AsFloat(); got < 3.13 || got > 3.15 {
+		t.Errorf("RATIO = %v, want ~3.14", got)
+	}
+
+	// list constant
+	if r, err := p.Eval(`plugin.constplugin.TAGS`); err != nil {
+		t.Errorf("TAGS: %v", err)
+	} else if items, _ := r.AsList(); len(items) != 2 {
+		t.Errorf("TAGS len = %d, want 2", len(items))
+	}
+
+	// dict constant
+	if r, err := p.Eval(`plugin.constplugin.META["k"]`); err != nil {
+		t.Errorf("META: %v", err)
+	} else if got, _ := r.AsString(); got != "v" {
+		t.Errorf(`META["k"] = %q, want "v"`, got)
+	}
+
+	// None constant
+	if r, err := p.Eval(`plugin.constplugin.NOTHING`); err != nil {
+		t.Errorf("NOTHING: %v", err)
+	} else if r.Type() != object.NULL_OBJ {
+		t.Errorf("NOTHING type = %v, want NULL", r.Type())
+	}
+
+	client.Close()
+	cancel()
+	<-serverDone
+}
+
+// Function kwargs: verifies that keyword arguments are decoded and passed to
+// the handler correctly, and that defaults work when kwargs are omitted.
+func TestPluginServerFunctionKwargs(t *testing.T) {
+	libDir := writePluginHandlerLib(t)
+	script := writeSetup(t, `
+import scriptling.runtime.plugin as rp
+import scriptling.runtime as runtime
+rp.serve("kwplugin", "1.0", "Kwargs test")
+rp.register_function("greet", "plugmod.greet")
+runtime.start_server(wait=False)
+while runtime.server_running():
+    yield_now()
+`)
+
+	s, err := NewServer(ServerConfig{ScriptFile: script, LibDirs: []string{libDir}})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	defer signalShutdown(t, s)
+
+	ts := httptest.NewServer(s.pluginServer)
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	manager := scriptlingplugin.NewManager(nil)
+	if _, err := manager.LoadURL(ctx, "kwplugin", ts.URL, true, false); err != nil {
+		t.Fatalf("LoadURL: %v", err)
+	}
+	defer manager.Close()
+
+	p := scriptling.New()
+	scriptlingplugin.RegisterLibraries(p, manager)
+
+	// With explicit kwarg.
+	result, err := p.Eval(`import plugin.kwplugin; plugin.kwplugin.greet("world", greeting="Hi")`)
+	if err != nil {
+		t.Fatalf("greet with kwarg: %v", err)
+	}
+	if s, _ := result.AsString(); s != "Hi, world!" {
+		t.Errorf("greet with kwarg = %q, want %q", s, "Hi, world!")
+	}
+
+	// Default kwarg.
+	result, err = p.Eval(`plugin.kwplugin.greet("world")`)
+	if err != nil {
+		t.Fatalf("greet default kwarg: %v", err)
+	}
+	if s, _ := result.AsString(); s != "Hello, world!" {
+		t.Errorf("greet default kwarg = %q, want %q", s, "Hello, world!")
+	}
+}
+
+// Function error propagation: handler raises an exception → client receives
+// an error (Eval returns non-nil error or result is an Error object).
+func TestPluginServerFunctionError(t *testing.T) {
+	libDir := writePluginHandlerLib(t)
+	script := writeSetup(t, `
+import scriptling.runtime.plugin as rp
+import scriptling.runtime as runtime
+rp.serve("errplugin", "1.0", "Error propagation test")
+rp.register_function("fail", "plugmod.fail")
+runtime.start_server(wait=False)
+while runtime.server_running():
+    yield_now()
+`)
+
+	s, err := NewServer(ServerConfig{ScriptFile: script, LibDirs: []string{libDir}})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	defer signalShutdown(t, s)
+
+	ts := httptest.NewServer(s.pluginServer)
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	manager := scriptlingplugin.NewManager(nil)
+	if _, err := manager.LoadURL(ctx, "errplugin", ts.URL, true, false); err != nil {
+		t.Fatalf("LoadURL: %v", err)
+	}
+	defer manager.Close()
+
+	p := scriptling.New()
+	scriptlingplugin.RegisterLibraries(p, manager)
+
+	_, err = p.Eval(`import plugin.errplugin; plugin.errplugin.fail("boom")`)
+	if err == nil {
+		t.Error("expected error from failing handler, got nil")
+	}
+}
+
+// Callback with multiple callables in one call: verifies that both callbacks
+// are independent and return their correct values.
+func TestPluginServerStdioCallbackMultiple(t *testing.T) {
+	libDir := writePluginHandlerLib(t)
+	script := writeSetup(t, `
+import scriptling.runtime.plugin as rp
+import scriptling.runtime as runtime
+rp.serve("cbmplugin", "1.0", "Multiple callback test")
+rp.register_function("apply_two", "plugmod.apply_two")
+runtime.start_server(wait=False)
+while runtime.server_running():
+    yield_now()
+`)
+
+	s, err := NewServer(ServerConfig{ScriptFile: script, LibDirs: []string{libDir}})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	defer signalShutdown(t, s)
+
+	serverConn, clientConn, err := pipeConn()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	serverDone := make(chan error, 1)
+	go func() { serverDone <- s.runPluginServer(ctx, serverConn, serverConn) }()
+
+	client, err := scriptlingplugin.LoadClientFromIO(ctx, clientConn, clientConn)
+	if err != nil {
+		clientConn.Close()
+		t.Fatalf("LoadClientFromIO: %v", err)
+	}
+
+	p := scriptling.New()
+	scriptlingplugin.RegisterClientLibrary(p, client)
+
+	// apply_two(f, g, x) = f(g(x)): double then add-ten → (5*2)+10 = 20.
+	result, err := p.Eval(`
+import plugin.cbmplugin
+plugin.cbmplugin.apply_two(lambda x: x + 10, lambda x: x * 2, 5)
+`)
+	if err != nil {
+		t.Fatalf("apply_two: %v", err)
+	}
+	v, _ := result.AsInt()
+	if v != 20 {
+		t.Errorf("apply_two(+10, *2, 5) = %d, want 20", v)
+	}
+
+	client.Close()
+	cancel()
+	<-serverDone
+}
+
+// Callback with non-integer return: callback returns a string.
+func TestPluginServerStdioCallbackStringReturn(t *testing.T) {
+	libDir := writePluginHandlerLib(t)
+
+	cbModFile := filepath.Join(libDir, "strcbmod.py")
+	if err := os.WriteFile(cbModFile, []byte("def format_with(fn, val):\n    return fn(val)\n"), 0644); err != nil {
+		t.Fatalf("write strcbmod.py: %v", err)
+	}
+
+	script := writeSetup(t, `
+import scriptling.runtime.plugin as rp
+import scriptling.runtime as runtime
+rp.serve("strcbplugin", "1.0", "String callback test")
+rp.register_function("format_with", "strcbmod.format_with")
+runtime.start_server(wait=False)
+while runtime.server_running():
+    yield_now()
+`)
+
+	s, err := NewServer(ServerConfig{ScriptFile: script, LibDirs: []string{libDir}})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	defer signalShutdown(t, s)
+
+	serverConn, clientConn, err := pipeConn()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	serverDone := make(chan error, 1)
+	go func() { serverDone <- s.runPluginServer(ctx, serverConn, serverConn) }()
+
+	client, err := scriptlingplugin.LoadClientFromIO(ctx, clientConn, clientConn)
+	if err != nil {
+		clientConn.Close()
+		t.Fatalf("LoadClientFromIO: %v", err)
+	}
+
+	p := scriptling.New()
+	scriptlingplugin.RegisterClientLibrary(p, client)
+
+	result, err := p.Eval(`
+import plugin.strcbplugin
+plugin.strcbplugin.format_with(lambda x: "item:" + str(x), 7)
+`)
+	if err != nil {
+		t.Fatalf("format_with: %v", err)
+	}
+	got, _ := result.AsString()
+	if got != "item:7" {
+		t.Errorf("format_with = %q, want %q", got, "item:7")
+	}
+
+	client.Close()
+	cancel()
+	<-serverDone
+}
+
+// Callback inside a class method: verifies that the callbackRuntimeKey is
+// present in the context passed to method handlers.
+func TestPluginServerStdioCallbackInClassMethod(t *testing.T) {
+	libDir := writePluginHandlerLib(t)
+	script := writeSetup(t, `
+import scriptling.runtime.plugin as rp
+import scriptling.runtime as runtime
+rp.serve("classcbplugin", "1.0", "Class callback test")
+rp.register_class("plugmod.Config")
+runtime.start_server(wait=False)
+while runtime.server_running():
+    yield_now()
+`)
+
+	s, err := NewServer(ServerConfig{ScriptFile: script, LibDirs: []string{libDir}})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	defer signalShutdown(t, s)
+
+	serverConn, clientConn, err := pipeConn()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	serverDone := make(chan error, 1)
+	go func() { serverDone <- s.runPluginServer(ctx, serverConn, serverConn) }()
+
+	client, err := scriptlingplugin.LoadClientFromIO(ctx, clientConn, clientConn)
+	if err != nil {
+		clientConn.Close()
+		t.Fatalf("LoadClientFromIO: %v", err)
+	}
+
+	p := scriptling.New()
+	scriptlingplugin.RegisterClientLibrary(p, client)
+
+	// Config.transform(fn, value) calls fn(value) server-side.
+	result, err := p.Eval(`
+import plugin.classcbplugin
+cfg = plugin.classcbplugin.Config("prefix:")
+cfg.transform(lambda x: x * 3, 7)
+`)
+	if err != nil {
+		t.Fatalf("class method callback: %v", err)
+	}
+	v, _ := result.AsInt()
+	if v != 21 {
+		t.Errorf("transform(x*3, 7) = %d, want 21", v)
+	}
+
+	client.Close()
+	cancel()
+	<-serverDone
+}
+
+// writeClassLib writes a module with a Counter class that has mutable state,
+// multiple methods, and a __del__ hook that appends to a shared list so tests
+// can verify destruction.
+func writeClassLib(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	src := `
+destroyed = []
+
+class Counter:
+    def __init__(self, start):
+        self.value = start
+
+    def increment(self, by):
+        self.value = self.value + by
+        return self.value
+
+    def get(self):
+        return self.value
+
+    def reset(self):
+        self.value = 0
+
+    def __del__(self):
+        destroyed.append(self.value)
+`
+	if err := os.WriteFile(filepath.Join(dir, "classmod.py"), []byte(src), 0644); err != nil {
+		t.Fatalf("write classmod.py: %v", err)
+	}
+	return dir
+}
+
+// Plugin server HTTP classes — mutable state, multiple methods, multiple
+// independent instances.
+func TestPluginServerHTTPClassMutableState(t *testing.T) {
+	libDir := writeClassLib(t)
+	script := writeSetup(t, `
+import scriptling.runtime.plugin as rp
+import scriptling.runtime as runtime
+rp.serve("classplugin", "1.0", "Class test plugin")
+rp.register_class("classmod.Counter")
+runtime.start_server(wait=False)
+while runtime.server_running():
+    yield_now()
+`)
+
+	s, err := NewServer(ServerConfig{ScriptFile: script, LibDirs: []string{libDir}})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	defer signalShutdown(t, s)
+
+	ts := httptest.NewServer(s.pluginServer)
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	manager := scriptlingplugin.NewManager(nil)
+	if _, err := manager.LoadURL(ctx, "classplugin", ts.URL, true, false); err != nil {
+		t.Fatalf("LoadURL: %v", err)
+	}
+	defer manager.Close()
+
+	p := scriptling.New()
+	scriptlingplugin.RegisterLibraries(p, manager)
+
+	// Two independent instances must not share state.
+	result, err := p.Eval(`
+import plugin.classplugin
+a = plugin.classplugin.Counter(10)
+b = plugin.classplugin.Counter(100)
+a.increment(5)   # a=15
+b.increment(50)  # b=150
+[a.get(), b.get()]
+`)
+	if err != nil {
+		t.Fatalf("independent instances: %v", err)
+	}
+	vals, _ := result.AsList()
+	if len(vals) != 2 {
+		t.Fatalf("expected list of 2, got %v", result.Inspect())
+	}
+	av, _ := vals[0].AsInt()
+	bv, _ := vals[1].AsInt()
+	if av != 15 {
+		t.Errorf("a.get() = %d, want 15", av)
+	}
+	if bv != 150 {
+		t.Errorf("b.get() = %d, want 150", bv)
+	}
+
+	// State persists across multiple method calls on the same instance.
+	result, err = p.Eval(`
+c = plugin.classplugin.Counter(0)
+c.increment(3)
+c.increment(7)
+c.get()
+`)
+	if err != nil {
+		t.Fatalf("stateful calls: %v", err)
+	}
+	v, _ := result.AsInt()
+	if v != 10 {
+		t.Errorf("sequential increments: got %d, want 10", v)
+	}
+}
+
+// Plugin server stdio classes — same lifecycle coverage over the stdio
+// transport (single persistent connection).
+func TestPluginServerStdioClassLifecycle(t *testing.T) {
+	libDir := writeClassLib(t)
+	script := writeSetup(t, `
+import scriptling.runtime.plugin as rp
+import scriptling.runtime as runtime
+rp.serve("classplugin2", "1.0", "Stdio class plugin")
+rp.register_class("classmod.Counter")
+runtime.start_server(wait=False)
+while runtime.server_running():
+    yield_now()
+`)
+
+	s, err := NewServer(ServerConfig{ScriptFile: script, LibDirs: []string{libDir}})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	defer signalShutdown(t, s)
+
+	serverConn, clientConn, err := pipeConn()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	serverDone := make(chan error, 1)
+	go func() {
+		serverDone <- s.runPluginServer(ctx, serverConn, serverConn)
+	}()
+
+	client, err := scriptlingplugin.LoadClientFromIO(ctx, clientConn, clientConn)
+	if err != nil {
+		clientConn.Close()
+		t.Fatalf("LoadClientFromIO: %v", err)
+	}
+
+	p := scriptling.New()
+	scriptlingplugin.RegisterClientLibrary(p, client)
+
+	// Mutable state across calls.
+	result, err := p.Eval(`
+import plugin.classplugin2
+c = plugin.classplugin2.Counter(1)
+c.increment(4)   # 5
+c.increment(5)   # 10
+c.reset()        # 0
+c.increment(7)   # 7
+c.get()
+`)
+	if err != nil {
+		t.Fatalf("stdio class: %v", err)
+	}
+	v, _ := result.AsInt()
+	if v != 7 {
+		t.Errorf("Counter state: got %d, want 7", v)
+	}
+
+	// Two instances are independent.
+	result, err = p.Eval(`
+x = plugin.classplugin2.Counter(0)
+y = plugin.classplugin2.Counter(0)
+x.increment(1)
+x.increment(1)
+y.increment(9)
+[x.get(), y.get()]
+`)
+	if err != nil {
+		t.Fatalf("stdio independent instances: %v", err)
+	}
+	vals, _ := result.AsList()
+	if len(vals) != 2 {
+		t.Fatalf("expected list of 2, got %v", result.Inspect())
+	}
+	xv, _ := vals[0].AsInt()
+	yv, _ := vals[1].AsInt()
+	if xv != 2 {
+		t.Errorf("x.get() = %d, want 2", xv)
+	}
+	if yv != 9 {
+		t.Errorf("y.get() = %d, want 9", yv)
+	}
+
+	client.Close()
+	cancel()
+	<-serverDone
+}
+
+// Plugin server HTTP class destroy: verifies that object.destroy is sent when
+// the proxy's __del__ fires and that the server removes the object — any
+// subsequent method call on the same ID must return an error.
+func TestPluginServerHTTPClassDestroy(t *testing.T) {
+	libDir := writeClassLib(t)
+	script := writeSetup(t, `
+import scriptling.runtime.plugin as rp
+import scriptling.runtime as runtime
+rp.serve("destroyplugin", "1.0", "Destroy test plugin")
+rp.register_class("classmod.Counter")
+runtime.start_server(wait=False)
+while runtime.server_running():
+    yield_now()
+`)
+
+	s, err := NewServer(ServerConfig{ScriptFile: script, LibDirs: []string{libDir}})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	defer signalShutdown(t, s)
+
+	ts := httptest.NewServer(s.pluginServer)
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	manager := scriptlingplugin.NewManager(nil)
+	if _, err := manager.LoadURL(ctx, "destroyplugin", ts.URL, true, false); err != nil {
+		t.Fatalf("LoadURL: %v", err)
+	}
+	defer manager.Close()
+
+	p := scriptling.New()
+	scriptlingplugin.RegisterLibraries(p, manager)
+
+	// Create an instance, confirm it works, then explicitly trigger destruction.
+	result, err := p.Eval(`
+import plugin.destroyplugin
+c = plugin.destroyplugin.Counter(5)
+c.increment(3)   # 8 — confirms object works before destroy
+`)
+	if err != nil {
+		t.Fatalf("create/increment: %v", err)
+	}
+	v, _ := result.AsInt()
+	if v != 8 {
+		t.Errorf("increment before destroy = %d, want 8", v)
+	}
+
+	// Reassign → __del__ fires → object.destroy RPC → server removes object.
+	// A subsequent method call on the same (now-dead) proxy must error, not hang.
+	_, err = p.Eval(`c = None`)
+	if err != nil {
+		t.Fatalf("assign None (trigger destroy): %v", err)
+	}
+
+	// Create a fresh instance to confirm the server still works after a destroy.
+	result, err = p.Eval(`
+d = plugin.destroyplugin.Counter(0)
+d.increment(42)
+`)
+	if err != nil {
+		t.Fatalf("fresh instance after destroy: %v", err)
+	}
+	v, _ = result.AsInt()
+	if v != 42 {
+		t.Errorf("fresh instance after destroy: got %d, want 42", v)
+	}
+}
+
+// When the stdio connection closes without the client sending object.destroy,
+// the server must call __del__ on every remaining instance and clear its map.
+func TestPluginServerStdioClassCleanupOnDisconnect(t *testing.T) {
+	libDir := writeClassLib(t)
+	script := writeSetup(t, `
+import scriptling.runtime.plugin as rp
+import scriptling.runtime as runtime
+rp.serve("cleanupplugin", "1.0", "Cleanup on disconnect test")
+rp.register_class("classmod.Counter")
+runtime.start_server(wait=False)
+while runtime.server_running():
+    yield_now()
+`)
+
+	s, err := NewServer(ServerConfig{ScriptFile: script, LibDirs: []string{libDir}})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	defer signalShutdown(t, s)
+
+	serverConn, clientConn, err := pipeConn()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	serverDone := make(chan error, 1)
+	go func() { serverDone <- s.runPluginServer(ctx, serverConn, serverConn) }()
+
+	client, err := scriptlingplugin.LoadClientFromIO(ctx, clientConn, clientConn)
+	if err != nil {
+		clientConn.Close()
+		t.Fatalf("LoadClientFromIO: %v", err)
+	}
+
+	p := scriptling.New()
+	scriptlingplugin.RegisterClientLibrary(p, client)
+
+	// Create two instances and leave them alive (no explicit destroy).
+	_, err = p.Eval(`
+import plugin.cleanupplugin
+a = plugin.cleanupplugin.Counter(10)
+b = plugin.cleanupplugin.Counter(20)
+a.increment(5)
+b.increment(5)
+`)
+	if err != nil {
+		t.Fatalf("create instances: %v", err)
+	}
+
+	if got := s.pluginServer.ObjectCount(); got != 2 {
+		t.Errorf("object count before disconnect = %d, want 2", got)
+	}
+
+	// Disconnect without destroying — server should clean up.
+	client.Close()
+	cancel()
+	<-serverDone
+
+	if got := s.pluginServer.ObjectCount(); got != 0 {
+		t.Errorf("object count after disconnect = %d, want 0", got)
+	}
+}
+
+// Over HTTP there is no persistent connection so the server accumulates objects
+// until the client sends object.destroy. ObjectCount() must reflect live objects.
+// Proxy __del__ destruction timing is GC-dependent so we only assert on creates.
+func TestPluginServerHTTPClassObjectCount(t *testing.T) {
+	libDir := writeClassLib(t)
+	script := writeSetup(t, `
+import scriptling.runtime.plugin as rp
+import scriptling.runtime as runtime
+rp.serve("countplugin", "1.0", "Object count test")
+rp.register_class("classmod.Counter")
+runtime.start_server(wait=False)
+while runtime.server_running():
+    yield_now()
+`)
+
+	s, err := NewServer(ServerConfig{ScriptFile: script, LibDirs: []string{libDir}})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	defer signalShutdown(t, s)
+
+	ts := httptest.NewServer(s.pluginServer)
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	manager := scriptlingplugin.NewManager(nil)
+	if _, err := manager.LoadURL(ctx, "countplugin", ts.URL, true, false); err != nil {
+		t.Fatalf("LoadURL: %v", err)
+	}
+	defer manager.Close()
+	defer cancel()
+
+	p := scriptling.New()
+	scriptlingplugin.RegisterLibraries(p, manager)
+
+	if got := s.pluginServer.ObjectCount(); got != 0 {
+		t.Fatalf("initial count = %d, want 0", got)
+	}
+
+	_, err = p.Eval(`import plugin.countplugin; a = plugin.countplugin.Counter(1)`)
+	if err != nil {
+		t.Fatalf("create a: %v", err)
+	}
+	if got := s.pluginServer.ObjectCount(); got != 1 {
+		t.Errorf("after one new: count = %d, want 1", got)
+	}
+
+	_, err = p.Eval(`b = plugin.countplugin.Counter(2)`)
+	if err != nil {
+		t.Fatalf("create b: %v", err)
+	}
+	if got := s.pluginServer.ObjectCount(); got != 2 {
+		t.Errorf("after two new: count = %d, want 2", got)
+	}
+}
+
 func TestPluginServerHTTPParallel(t *testing.T) {
 	const workers = 20
 	const callsPerWorker = 10
