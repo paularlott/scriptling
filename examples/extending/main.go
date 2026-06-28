@@ -33,9 +33,9 @@ func CreateExampleLibrary() *object.Library {
 					}
 
 					// Set instance fields
-					person.Fields["name"] = nameObj
-					person.Fields["age"] = ageObj
-					person.Fields["type"] = object.NewString("person")
+					person.SetField("name", nameObj)
+					person.SetField("age", ageObj)
+					person.SetField("type", object.NewString("person"))
 
 					return &object.Null{}
 				},
@@ -46,8 +46,8 @@ func CreateExampleLibrary() *object.Library {
 						return object.NewString("Error: __str__ requires 1 argument (self)")
 					}
 					person := args[0].(*object.Instance)
-					name := person.Fields["name"].(*object.String).StringValue()
-					age := person.Fields["age"].(*object.Integer).IntValue()
+					name := person.Field("name").(*object.String).StringValue()
+					age := person.Field("age").(*object.Integer).IntValue()
 					return object.NewString(fmt.Sprintf("Person(name='%s', age=%d)", name, age))
 				},
 			},
@@ -142,10 +142,7 @@ func CreateExampleLibrary() *object.Library {
 				}
 
 				// Create and return a Person instance
-				personInstance := &object.Instance{
-					Class:  personClass,
-					Fields: make(map[string]object.Object),
-				}
+				personInstance := object.NewInstanceWithFields(personClass, make(map[string]object.Object))
 
 				// Initialize the person
 				initMethod := personClass.Methods["__init__"]

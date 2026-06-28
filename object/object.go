@@ -1897,17 +1897,55 @@ func (c *Class) InvalidateLookupCache() {
 	c.cacheMu.Unlock()
 }
 
+// inlineFieldCap is how many fields an Instance stores inline before spilling to
+// the overflow map. Most instances have only a handful of fields, so this keeps
+// the common case allocation-free (no map allocated at all).
+const inlineFieldCap = 4
+
 type Instance struct {
-	Class            *Class
-	Fields           map[string]Object
+	Class *Class
+	// Field storage. The first inlineFieldCap fields live in the inline arrays
+	// (no heap map); additional fields spill into overflow, which is allocated
+	// lazily. Access only through the field accessor methods — never touch these
+	// directly so the representation can keep evolving.
+	inlineKeys [inlineFieldCap]string
+	inlineVals [inlineFieldCap]Object
+	inlineLen  int
+	overflow   map[string]Object
+
 	NativeData       any
 	boundMethodCache map[string]boundMethodCacheEntry
+}
+
+// NewInstance creates an empty instance of the given class. Use the field
+// accessor methods (SetField, GetField, …) to populate it.
+func NewInstance(class *Class) *Instance {
+	return &Instance{Class: class}
+}
+
+// NewInstanceWithFields creates an instance of the given class pre-populated
+// with the supplied fields. The map is consumed (copied into the instance's
+// storage); a nil map yields an empty instance.
+func NewInstanceWithFields(class *Class, fields map[string]Object) *Instance {
+	i := &Instance{Class: class}
+	for k, v := range fields {
+		i.SetField(k, v)
+	}
+	return i
+}
+
+// NewInstanceWithData is like NewInstanceWithFields but also attaches an opaque
+// native-data value to the instance.
+func NewInstanceWithData(class *Class, fields map[string]Object, nativeData any) *Instance {
+	i := NewInstanceWithFields(class, fields)
+	i.NativeData = nativeData
+	return i
 }
 
 func (i *Instance) Type() ObjectType { return INSTANCE_OBJ }
 func (i *Instance) Inspect() string {
 	// Check for __str_repr__ field (used by libraries to provide custom string representation)
-	if strRepr, ok := i.Fields["__str_repr__"]; ok {
+	if strRepr, ok := i.GetField("__str_repr__"); ok {
 		if s, ok := strRepr.(*String); ok {
 			return s.value
 		}
@@ -1915,12 +1953,128 @@ func (i *Instance) Inspect() string {
 	return fmt.Sprintf("<%s object at %p>", i.Class.Name, i)
 }
 
+// --- Instance field accessors ---
+//
+// These methods are the supported API for reading and writing instance fields.
+// They exist so the underlying storage can change without affecting callers;
+// do not access the backing store directly. Field access is single-goroutine
+// per environment tree (serialized by the interpreter lock), so no locking is
+// required here.
+
+// GetField returns the value of the named field and whether it was set.
+func (i *Instance) GetField(name string) (Object, bool) {
+	for n := 0; n < i.inlineLen; n++ {
+		if i.inlineKeys[n] == name {
+			return i.inlineVals[n], true
+		}
+	}
+	if i.overflow != nil {
+		v, ok := i.overflow[name]
+		return v, ok
+	}
+	return nil, false
+}
+
+// Field returns the value of the named field, or nil if it is not set. It is a
+// convenience for callers that immediately type-assert or coerce a field known
+// to exist; use GetField when you need to distinguish "absent" from "nil".
+func (i *Instance) Field(name string) Object {
+	v, _ := i.GetField(name)
+	return v
+}
+
+// SetField sets the named field, allocating backing storage on first use.
+func (i *Instance) SetField(name string, val Object) {
+	for n := 0; n < i.inlineLen; n++ {
+		if i.inlineKeys[n] == name {
+			i.inlineVals[n] = val
+			return
+		}
+	}
+	if i.overflow != nil {
+		if _, ok := i.overflow[name]; ok {
+			i.overflow[name] = val
+			return
+		}
+	}
+	if i.inlineLen < inlineFieldCap {
+		i.inlineKeys[i.inlineLen] = name
+		i.inlineVals[i.inlineLen] = val
+		i.inlineLen++
+		return
+	}
+	if i.overflow == nil {
+		i.overflow = make(map[string]Object)
+	}
+	i.overflow[name] = val
+}
+
+// DeleteField removes the named field if present.
+func (i *Instance) DeleteField(name string) {
+	for n := 0; n < i.inlineLen; n++ {
+		if i.inlineKeys[n] == name {
+			// Swap-remove: move the last inline entry into the gap. Field order
+			// is unspecified, so this is fine and avoids shifting.
+			last := i.inlineLen - 1
+			i.inlineKeys[n] = i.inlineKeys[last]
+			i.inlineVals[n] = i.inlineVals[last]
+			i.inlineKeys[last] = ""
+			i.inlineVals[last] = nil
+			i.inlineLen--
+			return
+		}
+	}
+	if i.overflow != nil {
+		delete(i.overflow, name)
+	}
+}
+
+// HasField reports whether the named field is set.
+func (i *Instance) HasField(name string) bool {
+	_, ok := i.GetField(name)
+	return ok
+}
+
+// FieldCount returns the number of set fields.
+func (i *Instance) FieldCount() int {
+	return i.inlineLen + len(i.overflow)
+}
+
+// RangeFields calls fn for each set field. Iteration order is unspecified and
+// stops early if fn returns false.
+func (i *Instance) RangeFields(fn func(name string, val Object) bool) {
+	for n := 0; n < i.inlineLen; n++ {
+		if !fn(i.inlineKeys[n], i.inlineVals[n]) {
+			return
+		}
+	}
+	for k, v := range i.overflow {
+		if !fn(k, v) {
+			return
+		}
+	}
+}
+
+// FieldsSnapshot returns a new map containing a copy of all set fields. Use it
+// where a standalone map is needed (serialization, AsDict); mutating the result
+// does not affect the instance.
+func (i *Instance) FieldsSnapshot() map[string]Object {
+	m := make(map[string]Object, i.FieldCount())
+	for n := 0; n < i.inlineLen; n++ {
+		m[i.inlineKeys[n]] = i.inlineVals[n]
+	}
+	for k, v := range i.overflow {
+		m[k] = v
+	}
+	return m
+}
+
 func (i *Instance) AsString() (string, Object)          { return i.Inspect(), nil }
 func (i *Instance) AsInt() (int64, Object)              { return 0, errMustBeInteger }
 func (i *Instance) AsFloat() (float64, Object)          { return 0, errMustBeNumber }
 func (i *Instance) AsBool() (bool, Object)              { return true, nil }
 func (i *Instance) AsList() ([]Object, Object)          { return nil, errMustBeList }
-func (i *Instance) AsDict() (map[string]Object, Object) { return i.Fields, nil }
+func (i *Instance) AsDict() (map[string]Object, Object) { return i.FieldsSnapshot(), nil }
 
 func (i *Instance) CoerceString() (string, Object) { return i.Inspect(), nil }
 func (i *Instance) CoerceInt() (int64, Object)     { return 0, errMustBeInteger }
@@ -2151,11 +2305,12 @@ func CloneObject(obj Object) Object {
 		}
 		return &Set{Elements: elements}
 	case *Instance:
-		fields := make(map[string]Object, len(v.Fields))
-		for k, val := range v.Fields {
-			fields[k] = CloneObject(val)
-		}
-		return &Instance{Class: v.Class, Fields: fields}
+		clone := &Instance{Class: v.Class}
+		v.RangeFields(func(k string, val Object) bool {
+			clone.SetField(k, CloneObject(val))
+			return true
+		})
+		return clone
 	default:
 		// Builtins, Functions, Classes, Errors, etc. — immutable or singleton
 		return obj

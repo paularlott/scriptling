@@ -14,10 +14,10 @@ package object
 //	// ... implement other Object methods ...
 //
 //	// Store in instance:
-//	instance.Fields["_client"] = &MyClientWrapper{instance: &MyClientInstance{...}}
+//	instance.SetField("_client", &MyClientWrapper{instance: &MyClientInstance{...}})
 //
 //	// Extract from instance:
-//	wrapper, _ := instance.Fields["_client"].(*MyClientWrapper)
+//	wrapper, _ := instance.Field("_client").(*MyClientWrapper)
 //	client := wrapper.instance
 //
 // For convenience, use NewClientWrapper to create a wrapper with a custom type name.
@@ -79,7 +79,7 @@ func GetClientField(instance *Instance, fieldName string) (*ClientWrapper, bool)
 	if instance == nil {
 		return nil, false
 	}
-	obj, ok := instance.Fields[fieldName]
+	obj, ok := instance.GetField(fieldName)
 	if !ok {
 		return nil, false
 	}

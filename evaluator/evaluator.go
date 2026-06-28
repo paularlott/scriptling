@@ -1789,10 +1789,7 @@ func applyBuiltinFast(ctx context.Context, node *ast.CallExpression, env *object
 //   - ok=false, envFn==nil: not applicable, caller should use normal resolution.
 
 func createInstance(ctx context.Context, class *object.Class, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
-	instance := &object.Instance{
-		Class:  class,
-		Fields: make(map[string]object.Object),
-	}
+	instance := object.NewInstanceWithFields(class, make(map[string]object.Object))
 
 	// Call __init__ if it exists, walking the base class chain
 	var initMethod object.Object
@@ -2681,7 +2678,7 @@ func evalFromImportStandard(fis *ast.FromImportStatement, moduleName string, env
 				}
 			}
 		case *object.Instance:
-			if field, exists := m.Fields[name.Value()]; exists {
+			if field, exists := m.GetField(name.Value()); exists {
 				value = field
 				found = true
 			}
@@ -3450,8 +3447,8 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 			if !ok {
 				return fmt.Errorf("instance attribute must be string")
 			}
-			if _, exists := o.Fields[key.StringValue()]; exists {
-				delete(o.Fields, key.StringValue())
+			if _, exists := o.GetField(key.StringValue()); exists {
+				o.DeleteField(key.StringValue())
 				o.InvalidateBoundMethod(key.StringValue())
 				return nil
 			}
@@ -3613,7 +3610,7 @@ func assignToExpression(ctx context.Context, expr ast.Expression, value object.O
 					}
 					return nil
 				}
-				o.Fields[key.StringValue()] = value
+				o.SetField(key.StringValue(), value)
 				o.InvalidateBoundMethod(key.StringValue())
 				return nil
 			}

@@ -41,11 +41,7 @@ func TestBuiltinLenError(t *testing.T) {
 func TestBuiltinCopyInstanceDropsNativeData(t *testing.T) {
 	class := &object.Class{Name: "NativeBacked", Methods: map[string]object.Object{}}
 	sharedField := &object.List{Elements: []object.Object{object.NewString("value")}}
-	instance := &object.Instance{
-		Class:      class,
-		Fields:     map[string]object.Object{"items": sharedField},
-		NativeData: object.NewString("native"),
-	}
+	instance := object.NewInstanceWithData(class, map[string]object.Object{"items": sharedField}, object.NewString("native"))
 
 	result := builtins["copy"].Fn(context.Background(), object.NewKwargs(nil), instance)
 	copied, ok := result.(*object.Instance)
@@ -58,7 +54,7 @@ func TestBuiltinCopyInstanceDropsNativeData(t *testing.T) {
 	if copied.NativeData != nil {
 		t.Fatal("expected copied instance to drop NativeData")
 	}
-	if copied.Fields["items"] != sharedField {
+	if copied.Field("items") != sharedField {
 		t.Fatal("expected shallow copy to share field values")
 	}
 }

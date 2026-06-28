@@ -374,7 +374,7 @@ func evalInstanceIndexExpression(ctx context.Context, instance, index object.Obj
 		return err
 	}
 	// Check instance fields first
-	if val, ok := inst.Fields[field]; ok {
+	if val, ok := inst.GetField(field); ok {
 		// If it's a property descriptor, call the getter
 		if prop, ok := val.(*object.Property); ok {
 			return applyFunctionWithContext(ctx, prop.Getter, []object.Object{instance}, nil, nil)

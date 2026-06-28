@@ -485,13 +485,10 @@ func TestClassLookupMemberCachesAndInvalidates(t *testing.T) {
 func TestInstanceBoundMethodCacheReuseAndInvalidate(t *testing.T) {
 	methodA := &Builtin{}
 	methodB := &Builtin{}
-	instance := &Instance{
-		Class: &Class{
+	instance := NewInstanceWithFields(&Class{
 			Name:    "Worker",
 			Methods: map[string]Object{"work": methodA},
-		},
-		Fields: map[string]Object{},
-	}
+		}, nil)
 
 	bound1 := instance.GetBoundMethod("work", methodA)
 	bound2 := instance.GetBoundMethod("work", methodA)
@@ -1387,7 +1384,7 @@ func TestClassBuilderRecoversPanics(t *testing.T) {
 		t.Fatalf("expected *Builtin, got %T", class.Methods["explode"])
 	}
 
-	instance := &Instance{Class: class, Fields: map[string]Object{}}
+	instance := NewInstanceWithFields(class, nil)
 	result := method.Fn(context.Background(), NewKwargs(nil), instance)
 	errObj, ok := result.(*Error)
 	if !ok {
@@ -1526,14 +1523,12 @@ func TestResetStore(t *testing.T) {
 }
 
 func TestGetClientField(t *testing.T) {
-	instance := &Instance{
-		Fields: map[string]Object{
+	instance := NewInstanceWithFields(nil, map[string]Object{
 			"_client": &ClientWrapper{
 				TypeName: "TestClient",
 				Client:   NewString("test"),
 			},
-		},
-	}
+		})
 
 	wrapper, ok := GetClientField(instance, "_client")
 	if !ok {
@@ -1550,7 +1545,7 @@ func TestGetClientField(t *testing.T) {
 	}
 
 	// Test non-ClientWrapper field
-	instance.Fields["foo"] = NewString("bar")
+	instance.SetField("foo", NewString("bar"))
 	_, ok = GetClientField(instance, "foo")
 	if ok {
 		t.Error("GetClientField should return false for non-ClientWrapper field")
@@ -1560,11 +1555,7 @@ func TestGetClientField(t *testing.T) {
 func TestCloneObjectDropsInstanceNativeData(t *testing.T) {
 	class := &Class{Name: "NativeBacked", Methods: map[string]Object{}}
 	native := NewString("native")
-	instance := &Instance{
-		Class:      class,
-		Fields:     map[string]Object{"items": &List{Elements: []Object{NewString("value")}}},
-		NativeData: native,
-	}
+	instance := NewInstanceWithData(class, map[string]Object{"items": &List{Elements: []Object{NewString("value")}}}, native)
 
 	clonedObj := CloneObject(instance)
 	cloned, ok := clonedObj.(*Instance)
@@ -1577,7 +1568,7 @@ func TestCloneObjectDropsInstanceNativeData(t *testing.T) {
 	if cloned.NativeData != nil {
 		t.Fatal("expected cloned instance to drop NativeData")
 	}
-	if cloned.Fields["items"] == instance.Fields["items"] {
+	if cloned.Field("items") == instance.Field("items") {
 		t.Fatal("expected instance fields to be deep-cloned")
 	}
 }

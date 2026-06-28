@@ -466,10 +466,7 @@ func containsCallable(obj object.Object) bool {
 }
 
 func newPluginObject(ctx context.Context, client *Client, library, className string, kwargs object.Kwargs, args ...object.Object) object.Object {
-	instance := &object.Instance{
-		Class:  &object.Class{Name: className, Methods: map[string]object.Object{}},
-		Fields: make(map[string]object.Object),
-	}
+	instance := object.NewInstanceWithFields(&object.Class{Name: className, Methods: map[string]object.Object{}}, make(map[string]object.Object))
 	if err := initPluginObject(ctx, instance, client, library, className, kwargs, args...); err != nil {
 		return pluginErr(err.Error())
 	}
@@ -497,10 +494,7 @@ func initPluginObject(ctx context.Context, instance *object.Instance, client *Cl
 		Class:   className,
 		ID:      ref.ID,
 	}
-	if instance.Fields == nil {
-		instance.Fields = make(map[string]object.Object)
-	}
-	instance.Fields[remoteFieldName] = &object.ClientWrapper{TypeName: className, Client: remote}
+	instance.SetField(remoteFieldName, &object.ClientWrapper{TypeName: className, Client: remote})
 	installRemoteFinalizer(instance, remote)
 	return nil
 }
@@ -556,7 +550,7 @@ func releaseRemote(ctx context.Context, remote *remoteObject, instance *object.I
 	remote.Released = true
 	if instance != nil {
 		_ = object.ClearGCReleaseHook(instance)
-		delete(instance.Fields, remoteFieldName)
+		instance.DeleteField(remoteFieldName)
 	}
 	var dErr error
 	object.RunBlocking(ctx, func() { dErr = remote.Client.DestroyObject(ctx, remote.ID) })

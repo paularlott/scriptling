@@ -118,8 +118,7 @@ func createLoggingLibrary(defaultLogger logger.Logger) *object.Library {
 					}
 
 					// Wrap as Python object
-					return &object.Instance{
-						Class: &object.Class{
+					return object.NewInstanceWithFields(&object.Class{
 							Name: "Logger",
 							Methods: map[string]object.Object{
 								"debug": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -160,11 +159,9 @@ func createLoggingLibrary(defaultLogger logger.Logger) *object.Library {
 									return wrapper.CallMethod("critical")
 								}},
 							},
-						},
-						Fields: map[string]object.Object{
+						}, map[string]object.Object{
 							"_internal": wrapper,
-						},
-					}
+						})
 				},
 			},
 			"debug": {

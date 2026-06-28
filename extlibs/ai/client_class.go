@@ -1110,15 +1110,12 @@ func filterParallelKwargs(kwargs object.Kwargs) object.Kwargs {
 
 // createClientInstance creates a new scriptling Instance wrapping an AI client
 func createClientInstance(client ai.Client) *object.Instance {
-	return &object.Instance{
-		Class: GetOpenAIClientClass(),
-		Fields: map[string]object.Object{
+	return object.NewInstanceWithFields(GetOpenAIClientClass(), map[string]object.Object{
 			"_client": &object.ClientWrapper{
 				TypeName: "OpenAIClient",
 				Client:   &ClientInstance{client: client},
 			},
-		},
-	}
+		})
 }
 
 // response_stream method implementation
@@ -1172,15 +1169,12 @@ func responseStreamMethod(self *object.Instance, ctx context.Context, kwargs obj
 	var stream *ai.ResponseStream
 	object.RunBlocking(ctx, func() { stream = ci.client.StreamResponse(ctx, req) })
 
-	return &object.Instance{
-		Class: GetResponseStreamClass(),
-		Fields: map[string]object.Object{
+	return object.NewInstanceWithFields(GetResponseStreamClass(), map[string]object.Object{
 			"_stream": &object.ClientWrapper{
 				TypeName: "ResponseStream",
 				Client:   &ResponseStreamInstance{stream: stream},
 			},
-		},
-	}
+		})
 }
 
 // ResponseStreamInstance wraps an AI response stream for use in scriptling
@@ -1754,13 +1748,10 @@ func completionStreamMethod(self *object.Instance, ctx context.Context, kwargs o
 	}
 
 	// Wrap stream in instance
-	return &object.Instance{
-		Class: GetChatStreamClass(),
-		Fields: map[string]object.Object{
+	return object.NewInstanceWithFields(GetChatStreamClass(), map[string]object.Object{
 			"_stream": &object.ClientWrapper{
 				TypeName: "ChatStream",
 				Client:   &ChatStreamInstance{stream: stream, cancel: finalCancel},
 			},
-		},
-	}
+		})
 }

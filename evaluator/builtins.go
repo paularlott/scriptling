@@ -1498,7 +1498,7 @@ Supports width, alignment, and type specifiers.`,
 			// Check if object has the attribute/method
 			switch obj := args[0].(type) {
 			case *object.Instance:
-				if _, ok := obj.Fields[name]; ok {
+				if _, ok := obj.GetField(name); ok {
 					return TRUE
 				}
 				if _, ok := obj.Class.LookupMember(name); ok {
@@ -1528,7 +1528,7 @@ Returns True if the object has the named attribute.`,
 			// Get attribute from object
 			switch obj := args[0].(type) {
 			case *object.Instance:
-				if val, ok := obj.Fields[name]; ok {
+				if val, ok := obj.GetField(name); ok {
 					return val
 				}
 				if method, ok := obj.Class.LookupMember(name); ok {
@@ -1562,7 +1562,7 @@ If default is provided, returns it when attribute doesn't exist.`,
 			// Set attribute on object
 			switch obj := args[0].(type) {
 			case *object.Instance:
-				obj.Fields[name] = args[2]
+				obj.SetField(name, args[2])
 				obj.InvalidateBoundMethod(name)
 				return NULL
 			case *object.Dict:
@@ -1592,8 +1592,8 @@ Only works on dict-like objects.`,
 			// Delete attribute from object
 			switch obj := args[0].(type) {
 			case *object.Instance:
-				if _, ok := obj.Fields[name]; ok {
-					delete(obj.Fields, name)
+				if _, ok := obj.GetField(name); ok {
+					obj.DeleteField(name)
 					obj.InvalidateBoundMethod(name)
 					return NULL
 				}
@@ -1783,11 +1783,12 @@ Checks the full inheritance chain. issubclass(C, C) is True.`,
 			case *object.Tuple:
 				return o // immutable, safe to return same object
 			case *object.Instance:
-				newFields := make(map[string]object.Object, len(o.Fields))
-				for k, v := range o.Fields {
-					newFields[k] = v
-				}
-				return &object.Instance{Class: o.Class, Fields: newFields}
+				clone := &object.Instance{Class: o.Class}
+				o.RangeFields(func(k string, v object.Object) bool {
+					clone.SetField(k, v)
+					return true
+				})
+				return clone
 			default:
 				return args[0] // scalars are immutable
 			}
@@ -2641,9 +2642,10 @@ func helpFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.
 		}
 		fmt.Fprintln(writer, "")
 		fmt.Fprintln(writer, "Available fields:")
-		for name := range obj.Fields {
+		obj.RangeFields(func(name string, _ object.Object) bool {
 			fmt.Fprintf(writer, "  - %s\n", name)
-		}
+			return true
+		})
 		return NULL
 	default:
 		fmt.Fprintf(writer, "Help for %s:\n", obj.Type())
@@ -2809,12 +2811,13 @@ func dirFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.O
 		switch o := args[0].(type) {
 		case *object.Instance:
 			seen := map[string]bool{}
-			for name := range o.Fields {
+			o.RangeFields(func(name string, _ object.Object) bool {
 				if !seen[name] {
 					names = append(names, name)
 					seen[name] = true
 				}
-			}
+				return true
+			})
 			for c := o.Class; c != nil; c = c.BaseClass {
 				for name := range c.Methods {
 					if !seen[name] {

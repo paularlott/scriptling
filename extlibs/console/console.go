@@ -610,20 +610,12 @@ func (pw *panelWrapper) panelClear() {
 func newPanelInstance(nativePanel *tui.Panel, t *tui.TUI) *object.Instance {
 	pw := &panelWrapper{p: nativePanel, t: t}
 	name := nativePanel.Name()
-	return &object.Instance{
-		Class:      panelClass,
-		Fields:     map[string]object.Object{"__str_repr__": object.NewString("<Panel: " + name + ">")},
-		NativeData: pw,
-	}
+	return object.NewInstanceWithData(panelClass, map[string]object.Object{"__str_repr__": object.NewString("<Panel: " + name + ">")}, pw)
 }
 
 func newMainPanelInstance(t *tui.TUI) *object.Instance {
 	pw := &panelWrapper{p: nil, t: t}
-	return &object.Instance{
-		Class:      panelClass,
-		Fields:     map[string]object.Object{"__str_repr__": object.NewString("<Panel: main>")},
-		NativeData: pw,
-	}
+	return object.NewInstanceWithData(panelClass, map[string]object.Object{"__str_repr__": object.NewString("<Panel: main>")}, pw)
 }
 
 func panelWrapperFrom(args []object.Object) (*panelWrapper, object.Object) {

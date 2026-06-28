@@ -38,7 +38,7 @@ var suppressClass = &object.Class{
 				if !ok {
 					return errors.NewError("suppress.__init__: self must be an instance")
 				}
-				inst.Fields[suppressKey] = &object.List{Elements: args[1:]}
+				inst.SetField(suppressKey, &object.List{Elements: args[1:]})
 				return &object.Null{}
 			},
 		},
@@ -64,7 +64,7 @@ var suppressClass = &object.Class{
 				if excType == nil || excType.Type() == object.NULL_OBJ {
 					return object.NewBoolean(false)
 				}
-				typesObj, ok := inst.Fields[suppressKey]
+				typesObj, ok := inst.GetField(suppressKey)
 				if !ok {
 					return object.NewBoolean(false)
 				}
@@ -89,11 +89,8 @@ var suppressClass = &object.Class{
 }
 
 func suppressNew(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-	inst := &object.Instance{
-		Class:  suppressClass,
-		Fields: map[string]object.Object{},
-	}
-	inst.Fields[suppressKey] = &object.List{Elements: args}
+	inst := object.NewInstanceWithFields(suppressClass, nil)
+	inst.SetField(suppressKey, &object.List{Elements: args})
 	return inst
 }
 

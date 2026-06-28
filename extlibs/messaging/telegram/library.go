@@ -16,11 +16,7 @@ var telegramClientClass = &object.Class{
 }
 
 func newClientInstance(c *telegramClient, builtins map[string]*object.Builtin) *object.Instance {
-	inst := &object.Instance{
-		Class:      telegramClientClass,
-		Fields:     map[string]object.Object{},
-		NativeData: c,
-	}
+	inst := object.NewInstanceWithData(telegramClientClass, nil, c)
 	shared.BindToInstance(inst, builtins)
 	return inst
 }

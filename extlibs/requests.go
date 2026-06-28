@@ -31,7 +31,7 @@ var ResponseClass = &object.Class{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if err := errors.ExactArgs(args, 1); err != nil { return err }
 				if instance, ok := args[0].(*object.Instance); ok {
-					if body, err := instance.Fields["body"].AsString(); err == nil {
+					if body, err := instance.Field("body").AsString(); err == nil {
 						return conversion.MustParseJSON(body)
 					}
 				}
@@ -43,7 +43,7 @@ var ResponseClass = &object.Class{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if err := errors.ExactArgs(args, 1); err != nil { return err }
 				if instance, ok := args[0].(*object.Instance); ok {
-					if statusCode, err := instance.Fields["status_code"].AsInt(); err == nil {
+					if statusCode, err := instance.Field("status_code").AsInt(); err == nil {
 						if statusCode >= 400 {
 							kind := "Client"
 							if statusCode >= 500 {
@@ -72,16 +72,13 @@ func createResponseInstance(statusCode int, headers map[string]string, body []by
 		headerDict.SetByString(k, object.NewString(v))
 	}
 
-	return &object.Instance{
-		Class: ResponseClass,
-		Fields: map[string]object.Object{
+	return object.NewInstanceWithFields(ResponseClass, map[string]object.Object{
 			"status_code": object.NewInteger(int64(statusCode)),
 			"text":        object.NewString(string(body)),
 			"headers":     headerDict,
 			"body":        object.NewString(string(body)),
 			"url":         object.NewString(url),
-		},
-	}
+		})
 }
 
 // Exception types for requests library
