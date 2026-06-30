@@ -294,20 +294,24 @@ func newKVStoreObject(db *snapshotkv.DB, registryName string) *object.Builtin {
 							delta = d
 						}
 					}
-					var current int64
-					if val, err := db.Get(key); err == nil {
-						switch v := val.(type) {
+					newVal, goErr := db.Update(key, func(old any) any {
+						var current int64
+						switch v := old.(type) {
 						case int64:
 							current = v
 						case float64:
 							current = int64(v)
 						}
-					}
-					newVal := current + delta
-					if goErr := db.Set(key, newVal); goErr != nil {
+						return current + delta
+					})
+					if goErr != nil {
 						return errors.NewError("kv.incr: %v", goErr)
 					}
-					return object.NewInteger(newVal)
+					n, ok := newVal.(int64)
+					if !ok {
+						return errors.NewError("kv.incr: unexpected stored type %T", newVal)
+					}
+					return object.NewInteger(n)
 				},
 				HelpText: `incr(key, delta=1) - Atomically increment an integer value, returns new value`,
 			},

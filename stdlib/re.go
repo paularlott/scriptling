@@ -692,6 +692,9 @@ Flags:
 				}
 				val, _ := args[3].AsInt()
 				count = int(val)
+				if count == 0 {
+					count = -1 // 0 means replace all (Python semantics), same as omitting it
+				}
 			}
 
 			// flags parameter (optional, position 4)
@@ -707,9 +710,7 @@ Flags:
 			}
 
 			var result string
-			if count == 0 {
-				result = text
-			} else if isFunc {
+			if isFunc {
 				// Function replacement - find all matches in the original text
 				replaced := 0
 				allMatches := re.FindAllStringSubmatchIndex(text, -1)

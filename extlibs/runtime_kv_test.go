@@ -507,6 +507,36 @@ func TestKVNamedMemoryConcurrent(t *testing.T) {
 	}
 }
 
+// TestKVIncrConcurrent verifies that concurrent incr calls are atomic and do
+// not lose updates.
+func TestKVIncrConcurrent(t *testing.T) {
+	if err := InitKVStore(""); err != nil {
+		t.Fatalf("InitKVStore: %v", err)
+	}
+	defer CloseKVStore()
+	defer closeKVRegistry()
+
+	store := kvOpen(":memory:incr")
+	defer kvCall(store, "close")
+
+	const goroutines = 50
+	const increments = 100
+
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for g := 0; g < goroutines; g++ {
+		go func() {
+			defer wg.Done()
+			for i := 0; i < increments; i++ {
+				kvCall(store, "incr", object.NewString("counter"))
+			}
+		}()
+	}
+	wg.Wait()
+
+	assertInt(t, kvCall(store, "get", object.NewString("counter")), int64(goroutines*increments))
+}
+
 // ---------------------------------------------------------------------------
 // Concurrent registry open/close
 // ---------------------------------------------------------------------------
