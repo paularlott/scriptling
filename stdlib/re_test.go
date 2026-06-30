@@ -210,6 +210,16 @@ func TestRegexSubWithCount(t *testing.T) {
 	} else {
 		t.Errorf("sub() returned %T, want String", result)
 	}
+
+	// count=0 means "replace all" (Python semantics), matching the default.
+	result = sub.Fn(context.Background(), object.NewKwargs(nil), object.NewString("[0-9]+"), object.NewString("X"), object.NewString("a1b2c3"), object.NewInteger(0))
+	if s, ok := result.(*object.String); ok {
+		if s.StringValue() != "aXbXcX" {
+			t.Errorf("sub() with count=0 = %v, want 'aXbXcX' (replace all)", s.StringValue())
+		}
+	} else {
+		t.Errorf("sub() returned %T, want String", result)
+	}
 }
 
 func TestRegexSplit(t *testing.T) {
