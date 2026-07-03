@@ -1,8 +1,6 @@
 package plugin
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -20,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/paularlott/jsonrpc"
 	"github.com/paularlott/logger"
 )
 
@@ -84,12 +83,12 @@ func newSharedHTTPTransport(insecureSkipVerify bool) *http.Transport {
 			Timeout:   30 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
-		TLSClientConfig:       tlsCfg,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          100,
-		MaxIdleConnsPerHost:   20,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
+		TLSClientConfig:     tlsCfg,
+		ForceAttemptHTTP2:   true,
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 20,
+		IdleConnTimeout:     90 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 	}
 }
@@ -563,46 +562,49 @@ func NormalizeLibraryName(name string) string {
 	return NamespacePrefix + name
 }
 
+// Client is a connection to a loaded plugin. Over stdio it is a bidirectional
+// JSON-RPC peer (built on [jsonrpc.Peer]) — outbound calls to the plugin and
+// inbound host callbacks (callback.call, host.log) share one stream. Over HTTP
+// it is a unidirectional JSON-RPC client (built on [jsonrpc.HTTPTransport]);
+// callbacks are not available over HTTP.
 type Client struct {
 	path     string
-	cmd      *exec.Cmd
-	stdin    io.WriteCloser
-	stdout   io.ReadCloser
-	encoder  *json.Encoder
-	http     *http.Client
-	headers  map[string]string
 	metadata Metadata
 
 	handshakeDone bool
 
-	nextID         atomic.Int64
-	pending        map[int64]*pendingCall
-	callbackOwners map[string]*pendingCall
+	// Exactly one transport is set: peer for stdio plugins, rpc for HTTP.
+	peer *jsonrpc.Peer // bidirectional stdio transport (outbound + inbound callbacks)
+	rpc  *jsonrpc.Client // unidirectional HTTP transport
+
+	// callbackOwners routes an inbound "callback.call" to the in-flight plugin
+	// call that registered the callback (stdio only). nil for HTTP clients.
+	callbackOwners map[string]*callbackOwner
 	mu             sync.Mutex
-	writeMu        sync.Mutex
-	done           chan struct{}
-	doneClose      sync.Once
-	waitDone       chan struct{}
-	stateMu        sync.Mutex
-	readErr        error
-	waitErr        error
-	closing        atomic.Bool
-	exitNotified   atomic.Bool
-	exitHandler    func(error)
-	logger         logger.Logger
+
+	// done is closed when the client is closed or the stdio process/transport
+	// has gone away, so calls and Health fail fast.
+	done     chan struct{}
+	doneClose sync.Once
+
+	closing atomic.Bool
+
+	// Exit/crash handling. waitErr holds the subprocess exit error (stdio);
+	// exitHandler is the manager-installed crash callback, fired once when the
+	// process dies on its own (not during a normal Close).
+	stateMu     sync.Mutex
+	logger      logger.Logger
+	waitErr     error
+	exitHandler func(error)
+	exitFired   atomic.Bool
 }
 
-type pendingCall struct {
-	id        int64
-	response  chan rpcResponse
-	callbacks chan callbackInbound
-	set       *callbackSet
-	done      chan struct{}
-}
-
-type callbackInbound struct {
-	request  rpcRequest
-	response chan rpcResponse
+// callbackOwner ties a registered host callback id to the plugin call that
+// registered it, so an inbound callback.call is dispatched to the right
+// callbackSet with the right (evaluator-bearing) context.
+type callbackOwner struct {
+	set *callbackSet
+	ctx context.Context
 }
 
 func startClient(ctx context.Context, path string, args []string) (*Client, error) {
@@ -621,22 +623,15 @@ func startClient(ctx context.Context, path string, args []string) (*Client, erro
 // passing the appropriate transport (see Manager.httpTransportFor); no TLS
 // policy decisions are made here. Pass nil to fall back to http.DefaultTransport.
 func newHTTPClient(ctx context.Context, rawURL string, insecureSkipTLS bool, handshake bool, transport *http.Transport, headers ...map[string]string) (*Client, error) {
-	var rt http.RoundTripper
-	if transport != nil {
-		rt = transport
-	} else {
-		rt = http.DefaultTransport
+	opts := []jsonrpc.HTTPOption{jsonrpc.WithHTTPClient(&http.Client{Transport: transportOrDefault(transport)})}
+	for key, value := range firstHeaderMap(headers) {
+		opts = append(opts, jsonrpc.WithHeader(key, value))
 	}
 	client := &Client{
-		path:           rawURL,
-		http:           &http.Client{Transport: rt},
-		headers:        cloneHeaders(firstHeaderMap(headers)),
-		pending:        make(map[int64]*pendingCall),
-		callbackOwners: make(map[string]*pendingCall),
-		done:           make(chan struct{}),
-		waitDone:       make(chan struct{}),
+		path: rawURL,
+		rpc:  jsonrpc.NewClient(jsonrpc.NewHTTPTransport(rawURL, opts...)),
+		done: make(chan struct{}),
 	}
-	close(client.waitDone)
 	if handshake {
 		if err := client.handshake(ctx); err != nil {
 			_ = client.Close()
@@ -646,6 +641,13 @@ func newHTTPClient(ctx context.Context, rawURL string, insecureSkipTLS bool, han
 	return client, nil
 }
 
+func transportOrDefault(t *http.Transport) http.RoundTripper {
+	if t != nil {
+		return t
+	}
+	return http.DefaultTransport
+}
+
 func firstHeaderMap(headers []map[string]string) map[string]string {
 	if len(headers) == 0 {
 		return nil
@@ -653,54 +655,31 @@ func firstHeaderMap(headers []map[string]string) map[string]string {
 	return headers[0]
 }
 
-func cloneHeaders(headers map[string]string) map[string]string {
-	if len(headers) == 0 {
-		return nil
-	}
-	clone := make(map[string]string, len(headers))
-	for key, value := range headers {
-		clone[key] = value
-	}
-	return clone
-}
-
-// spawnClient starts an executable as a subprocess wired up for JSON-RPC over
-// stdio, but does not perform the plugin handshake. Callers that want the
-// plugin protocol handshake should use LoadClient (or call handshake next);
-// callers that want to skip the handshake may use the returned client directly.
-// args, if non-empty, are passed as command-line arguments to the executable.
+// spawnClient starts an executable as a subprocess wired up as a bidirectional
+// JSON-RPC peer over stdio, but does not perform the plugin handshake. Callers
+// that want the plugin protocol handshake should use LoadClient (or call
+// handshake next); callers that want to skip the handshake may use the returned
+// client directly. args, if non-empty, are passed as command-line arguments to
+// the executable.
 func spawnClient(ctx context.Context, path string, args []string) (*Client, error) {
 	// The subprocess must outlive any single request context — the evaluation
 	// context that reaches load() may be cancelled after the builtin returns.
-	// The process lifecycle is managed by the client's Close() (stdin close +
-	// process wait) and the manager's Close()/Unload(), not by a context.
-	cmd := exec.Command(path, args...)
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return nil, err
-	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
-	cmd.Stderr = os.Stderr
-	if err := cmd.Start(); err != nil {
-		return nil, err
-	}
-
+	// The process lifecycle is managed by the client's Close() (via the peer's
+	// close function) and the manager's Close()/Unload(), not by a context.
 	client := &Client{
 		path:           path,
-		cmd:            cmd,
-		stdin:          stdin,
-		stdout:         stdout,
-		encoder:        json.NewEncoder(stdin),
-		pending:        make(map[int64]*pendingCall),
-		callbackOwners: make(map[string]*pendingCall),
+		callbackOwners: make(map[string]*callbackOwner),
 		done:           make(chan struct{}),
-		waitDone:       make(chan struct{}),
 	}
-	go client.readLoop()
-	go client.waitLoop()
+	server := newPluginPeerServer(client)
+	peer, err := jsonrpc.NewProcessPeer(path, args, server,
+		jsonrpc.WithStderr(os.Stderr),
+		jsonrpc.WithOnExit(client.onProcessExit),
+	)
+	if err != nil {
+		return nil, err
+	}
+	client.peer = peer
 	return client, nil
 }
 
@@ -718,16 +697,20 @@ func LoadClient(ctx context.Context, path string, args []string) (*Client, error
 func LoadClientFromIO(ctx context.Context, in io.ReadCloser, out io.WriteCloser) (*Client, error) {
 	client := &Client{
 		path:           "<pipe>",
-		stdin:          out,
-		stdout:         in,
-		encoder:        json.NewEncoder(out),
-		pending:        make(map[int64]*pendingCall),
-		callbackOwners: make(map[string]*pendingCall),
+		callbackOwners: make(map[string]*callbackOwner),
 		done:           make(chan struct{}),
-		waitDone:       make(chan struct{}),
 	}
-	close(client.waitDone) // no subprocess to wait on
-	go client.readLoop()
+	client.peer = jsonrpc.NewPeer(in, out, newPluginPeerServer(client), jsonrpc.WithPeerCloseFunc(func() error {
+		// Closing the write end signals EOF to the server's reader (the original
+		// client closed stdin here), so a stdio server's RunIO returns.
+		return out.Close()
+	}))
+	go func() { _ = client.peer.Serve() }()
+	// No subprocess to reap: treat reader EOF as the end of the client.
+	go func() {
+		<-client.peer.Done()
+		client.markDone()
+	}()
 	if err := client.handshake(ctx); err != nil {
 		_ = client.Close()
 		return nil, err
@@ -795,7 +778,7 @@ func (c *Client) HandshakeDone() bool {
 }
 
 // SetName overrides the library name used to register this client. It is only
-// meaningful before the client is added to a Manager and is intended for raw
+// meaningful before a client is added to a Manager and is intended for raw
 // (non-plugin-handshake) clients whose name would otherwise be empty.
 func (c *Client) SetName(name string) {
 	c.metadata.Name = NormalizeLibraryName(name)
@@ -819,53 +802,23 @@ func (c *Client) Batch(ctx context.Context, requests []batchRequest) ([]json.Raw
 	if len(requests) == 0 {
 		return nil, nil
 	}
-	if c.http != nil {
-		return c.httpBatch(ctx, requests)
+	client := c.rpc
+	if client == nil {
+		client = c.peer.Client()
 	}
-	calls := make([]*pendingCall, len(requests))
-	wire := make([]rpcRequest, len(requests))
-
-	c.mu.Lock()
+	calls := make([]jsonrpc.BatchCall, len(requests))
 	for i, req := range requests {
-		id := c.nextID.Add(1)
-		call := &pendingCall{
-			id:       id,
-			response: make(chan rpcResponse, 1),
-			done:     make(chan struct{}),
-		}
-		c.pending[id] = call
-		calls[i] = call
-		wire[i] = rpcRequest{JSONRPC: "2.0", ID: id, Method: req.Method, Params: req.Params}
+		calls[i] = jsonrpc.BatchCall{Method: req.Method, Params: req.Params}
 	}
-	c.mu.Unlock()
-	defer func() {
-		for _, call := range calls {
-			c.removeCall(call)
+	results := client.CallBatch(ctx, calls)
+	out := make([]json.RawMessage, len(results))
+	for i, r := range results {
+		if r.Err != nil {
+			return nil, fmt.Errorf("batch call %d (%s): %w", i, requests[i].Method, mapRPCError(r.Err))
 		}
-	}()
-
-	c.writeMu.Lock()
-	err := c.encoder.Encode(wire)
-	c.writeMu.Unlock()
-	if err != nil {
-		return nil, err
+		out[i] = r.Result
 	}
-
-	results := make([]json.RawMessage, len(calls))
-	for i, call := range calls {
-		select {
-		case resp := <-call.response:
-			if resp.Error != nil {
-				return nil, fmt.Errorf("batch call %d (%s): %w", i, requests[i].Method, resp.Error)
-			}
-			results[i] = resp.Result
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-c.done:
-			return nil, fmt.Errorf("plugin process exited")
-		}
-	}
-	return results, nil
+	return out, nil
 }
 
 // Close shuts down this plugin process. The plugin.shutdown notification is
@@ -879,36 +832,29 @@ func (c *Client) Close() error {
 	defer cancel()
 	c.closing.Store(true)
 	shutdownErr := c.call(ctx, "plugin.shutdown", nil, nil, nil)
-	if c.http != nil {
+	if c.rpc != nil {
 		c.doneClose.Do(func() { close(c.done) })
 		if shutdownErr != nil && c.HandshakeDone() {
 			return shutdownErr
 		}
 		return nil
 	}
-	if c.stdin != nil {
-		_ = c.stdin.Close()
-	}
+	// stdio: closing the Peer closes the child's stdin, waits for it to exit
+	// (up to the shutdown timeout), reaps it, and fires onProcessExit.
 	var first error
 	if shutdownErr != nil && c.HandshakeDone() {
 		first = shutdownErr
 	}
-	select {
-	case <-c.waitDone:
-		if err := c.waitError(); err != nil && first == nil {
-			first = err
-		}
-	case <-ctx.Done():
-		if first == nil {
-			first = ctx.Err()
-		}
+	if err := c.peer.Close(); err != nil && first == nil {
+		first = err
 	}
+	c.doneClose.Do(func() { close(c.done) })
 	return first
 }
 
 // Health reports whether this plugin process and stdio transport are healthy.
 func (c *Client) Health() error {
-	if c.http != nil {
+	if c.rpc != nil {
 		select {
 		case <-c.done:
 			return errors.New("plugin http client closed")
@@ -917,19 +863,11 @@ func (c *Client) Health() error {
 		}
 	}
 	select {
-	case <-c.waitDone:
+	case <-c.done:
 		if err := c.waitError(); err != nil {
 			return err
 		}
 		return errors.New("plugin process exited")
-	default:
-	}
-	select {
-	case <-c.done:
-		if err := c.readError(); err != nil {
-			return err
-		}
-		return errors.New("plugin stdio closed")
 	default:
 		return nil
 	}
@@ -1003,60 +941,30 @@ func (c *Client) DestroyObject(ctx context.Context, objectID string) error {
 	}, nil, nil)
 }
 
+// call sends a plugin method call. For stdio clients it registers any host
+// callbacks for the call's lifetime so inbound callback.call requests can be
+// routed back to this call while it is in flight. For HTTP clients callbacks
+// are rejected (the transport is not bidirectional).
 func (c *Client) call(ctx context.Context, method string, params any, callbacks *callbackSet, result any) error {
-	if c.http != nil {
+	if c.rpc != nil {
 		return c.httpCall(ctx, method, params, callbacks, result)
 	}
-	id := c.nextID.Add(1)
-	call := &pendingCall{
-		id:       id,
-		response: make(chan rpcResponse, 1),
-		set:      callbacks,
-		done:     make(chan struct{}),
-	}
 	if callbacks != nil {
-		call.callbacks = make(chan callbackInbound)
-	}
-
-	c.mu.Lock()
-	c.pending[id] = call
-	if callbacks != nil {
+		owner := &callbackOwner{set: callbacks, ctx: ctx}
+		c.mu.Lock()
 		for callbackID := range callbacks.callbacks {
-			c.callbackOwners[callbackID] = call
+			c.callbackOwners[callbackID] = owner
 		}
-	}
-	c.mu.Unlock()
-	defer c.removeCall(call)
-
-	req := rpcRequest{JSONRPC: "2.0", ID: id, Method: method, Params: params}
-	c.writeMu.Lock()
-	err := c.encoder.Encode(req)
-	c.writeMu.Unlock()
-	if err != nil {
-		return err
-	}
-
-	for {
-		select {
-		case resp := <-call.response:
-			if resp.Error != nil {
-				return resp.Error
+		c.mu.Unlock()
+		defer func() {
+			c.mu.Lock()
+			for callbackID := range callbacks.callbacks {
+				delete(c.callbackOwners, callbackID)
 			}
-			if result != nil && len(resp.Result) > 0 {
-				if err := json.Unmarshal(resp.Result, result); err != nil {
-					return err
-				}
-			}
-			return nil
-		case inbound := <-call.callbacks:
-			resp := c.handleCallback(ctx, call, inbound.request)
-			inbound.response <- resp
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-c.done:
-			return fmt.Errorf("plugin process exited")
-		}
+			c.mu.Unlock()
+		}()
 	}
+	return mapRPCError(c.peer.Client().Call(ctx, method, params, result))
 }
 
 func (c *Client) httpCall(ctx context.Context, method string, params any, callbacks *callbackSet, result any) error {
@@ -1068,227 +976,80 @@ func (c *Client) httpCall(ctx context.Context, method string, params any, callba
 		return fmt.Errorf("plugin http client closed")
 	default:
 	}
-	id := c.nextID.Add(1)
-	req := rpcRequest{JSONRPC: "2.0", ID: id, Method: method, Params: params}
-	var resp rpcResponse
-	if err := c.doHTTPJSONRPC(ctx, req, &resp); err != nil {
-		return err
-	}
-	if resp.Error != nil {
-		return resp.Error
-	}
-	if result != nil && len(resp.Result) > 0 {
-		if err := json.Unmarshal(resp.Result, result); err != nil {
-			return err
-		}
-	}
-	return nil
+	return mapRPCError(c.rpc.Call(ctx, method, params, result))
 }
 
-func (c *Client) httpBatch(ctx context.Context, requests []batchRequest) ([]json.RawMessage, error) {
-	wire := make([]rpcRequest, len(requests))
-	ids := make(map[int64]int, len(requests))
-	for i, req := range requests {
-		id := c.nextID.Add(1)
-		ids[id] = i
-		wire[i] = rpcRequest{JSONRPC: "2.0", ID: id, Method: req.Method, Params: req.Params}
+// mapRPCError converts a jsonrpc error into the plugin-protocol RPCError so the
+// existing error contract (message text, *RPCError type) is preserved. Other
+// errors (transport, context) pass through unchanged.
+func mapRPCError(err error) error {
+	if err == nil {
+		return nil
 	}
-	var responses []rpcResponse
-	if err := c.doHTTPJSONRPC(ctx, wire, &responses); err != nil {
-		return nil, err
+	var rpcErr *jsonrpc.Error
+	if errors.As(err, &rpcErr) {
+		return &RPCError{Code: rpcErr.Code, Message: rpcErr.Message}
 	}
-	results := make([]json.RawMessage, len(requests))
-	seen := make([]bool, len(requests))
-	for _, resp := range responses {
-		i, ok := ids[resp.ID]
-		if !ok {
-			continue
-		}
-		if resp.Error != nil {
-			return nil, fmt.Errorf("batch call %d (%s): %w", i, requests[i].Method, resp.Error)
-		}
-		results[i] = resp.Result
-		seen[i] = true
-	}
-	for i, ok := range seen {
-		if !ok {
-			return nil, fmt.Errorf("batch call %d (%s): missing response", i, requests[i].Method)
-		}
-	}
-	return results, nil
+	return err
 }
 
-func (c *Client) doHTTPJSONRPC(ctx context.Context, payload any, out any) error {
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.path, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	for key, value := range c.headers {
-		req.Header.Set(key, value)
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNoContent {
-		return fmt.Errorf("json-rpc http endpoint returned no response")
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("json-rpc http endpoint returned %s: %s", resp.Status, strings.TrimSpace(string(bodyBytes)))
-	}
-	dec := json.NewDecoder(resp.Body)
-	if err := dec.Decode(out); err != nil {
-		return err
-	}
-	return nil
+// newPluginPeerServer builds the inbound method registry for a stdio peer: it
+// routes the plugin protocol's reverse-direction requests (callback.call and
+// host.log) back to the host. The server closes over the client, so it must be
+// constructed before the peer starts reading.
+func newPluginPeerServer(c *Client) *jsonrpc.Server {
+	srv := jsonrpc.NewServer()
+	srv.Handle("callback.call", func(ctx context.Context, params json.RawMessage) (any, error) {
+		var p callbackCallParams
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, jsonrpc.NewError(-32000, err.Error(), nil)
+		}
+		c.mu.Lock()
+		owner := c.callbackOwners[p.ID]
+		c.mu.Unlock()
+		if owner == nil {
+			return nil, jsonrpc.NewError(-32000, "unknown callback "+p.ID, nil)
+		}
+		result, err := callHostCallback(owner.ctx, owner.set, p)
+		if err != nil {
+			return nil, jsonrpc.NewError(-32000, err.Error(), nil)
+		}
+		return result, nil
+	})
+	srv.Handle("host.log", func(ctx context.Context, params json.RawMessage) (any, error) {
+		var p logParams
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, jsonrpc.NewError(-32000, err.Error(), nil)
+		}
+		c.routeLog(p)
+		return Value{Type: valueNull}, nil
+	})
+	return srv
 }
 
-func (c *Client) handleCallback(ctx context.Context, call *pendingCall, req rpcRequest) rpcResponse {
-	var params callbackCallParams
-	if err := decodeParams(req.Params, &params); err != nil {
-		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &RPCError{Code: -32000, Message: err.Error()}}
-	}
-	result, err := callHostCallback(ctx, call.set, params)
-	resp := rpcResponse{JSONRPC: "2.0", ID: req.ID}
-	if err != nil {
-		resp.Error = &RPCError{Code: -32000, Message: err.Error()}
-		return resp
-	}
-	raw, err := json.Marshal(result)
-	if err != nil {
-		resp.Error = &RPCError{Code: -32000, Message: err.Error()}
-		return resp
-	}
-	resp.Result = raw
-	return resp
-}
-
-func (c *Client) removeCall(call *pendingCall) {
-	c.mu.Lock()
-	delete(c.pending, call.id)
-	if call.set != nil {
-		for callbackID := range call.set.callbacks {
-			delete(c.callbackOwners, callbackID)
-		}
-	}
-	c.mu.Unlock()
-	close(call.done)
-}
-
-func (c *Client) readLoop() {
-	defer c.doneClose.Do(func() { close(c.done) })
-	decoder := json.NewDecoder(bufio.NewReader(c.stdout))
-	for {
-		var raw json.RawMessage
-		if err := decoder.Decode(&raw); err != nil {
-			if err != io.EOF {
-				c.setReadErr(err)
-			}
-			return
-		}
-		if len(bytes.TrimSpace(raw)) == 0 {
-			continue
-		}
-		if bytes.TrimSpace(raw)[0] == '[' {
-			var batch []rpcMessage
-			if err := json.Unmarshal(raw, &batch); err != nil {
-				c.setReadErr(err)
-				return
-			}
-			var responses []rpcResponse
-			for _, msg := range batch {
-				if resp, ok := c.handleInboundMessage(msg); ok {
-					responses = append(responses, resp)
-				}
-			}
-			if len(responses) > 0 {
-				c.writeMu.Lock()
-				_ = c.encoder.Encode(responses)
-				c.writeMu.Unlock()
-			}
-			continue
-		}
-		var msg rpcMessage
-		if err := json.Unmarshal(raw, &msg); err != nil {
-			c.setReadErr(err)
-			return
-		}
-		if resp, ok := c.handleInboundMessage(msg); ok {
-			c.writeMu.Lock()
-			_ = c.encoder.Encode(resp)
-			c.writeMu.Unlock()
-		}
-	}
-}
-
-func (c *Client) handleInboundMessage(msg rpcMessage) (rpcResponse, bool) {
-	if msg.Method != "" {
-		req := rpcRequest{JSONRPC: msg.JSONRPC, ID: msg.ID, Method: msg.Method, Params: msg.Params}
-		resp := c.routeRequest(req)
-		return resp, true
-	}
-	c.mu.Lock()
-	call := c.pending[msg.ID]
-	c.mu.Unlock()
-	if call != nil {
-		call.response <- rpcResponse{JSONRPC: msg.JSONRPC, ID: msg.ID, Result: msg.Result, Error: msg.Error}
-	}
-	return rpcResponse{}, false
-}
-
-func (c *Client) waitLoop() {
-	defer close(c.waitDone)
-	if c.cmd == nil {
+// routeLog forwards a plugin log record to the host logger, if one is set.
+func (c *Client) routeLog(params logParams) {
+	log := c.getLogger()
+	if log == nil {
 		return
 	}
-	err := c.cmd.Wait()
-	if err != nil {
-		c.setWaitErr(err)
+	args := make([]any, 0, len(params.Args))
+	for _, arg := range params.Args {
+		args = append(args, transportValueToAny(arg))
 	}
-	c.notifyExit()
-}
-
-func (c *Client) setReadErr(err error) {
-	c.stateMu.Lock()
-	defer c.stateMu.Unlock()
-	c.readErr = err
-}
-
-func (c *Client) readError() error {
-	c.stateMu.Lock()
-	defer c.stateMu.Unlock()
-	return c.readErr
-}
-
-func (c *Client) setWaitErr(err error) {
-	c.stateMu.Lock()
-	defer c.stateMu.Unlock()
-	c.waitErr = err
-}
-
-func (c *Client) waitError() error {
-	c.stateMu.Lock()
-	defer c.stateMu.Unlock()
-	return c.waitErr
-}
-
-func (c *Client) setExitHandler(handler func(error)) {
-	c.stateMu.Lock()
-	c.exitHandler = handler
-	c.stateMu.Unlock()
-
-	select {
-	case <-c.waitDone:
-		c.notifyExit()
+	switch strings.ToLower(params.Level) {
+	case "trace":
+		log.Trace(params.Message, args...)
+	case "debug":
+		log.Debug(params.Message, args...)
+	case "warn", "warning":
+		log.Warn(params.Message, args...)
+	case "error":
+		log.Error(params.Message, args...)
+	case "fatal":
+		log.Fatal(params.Message, args...)
 	default:
+		log.Info(params.Message, args...)
 	}
 }
 
@@ -1304,6 +1065,43 @@ func (c *Client) getLogger() logger.Logger {
 	return c.logger
 }
 
+// onProcessExit is the jsonrpc WithOnExit callback: it records the subprocess
+// exit status, signals done, and fires the crash handler when the process died
+// on its own (not during a normal Close).
+func (c *Client) onProcessExit(waitErr error) {
+	c.stateMu.Lock()
+	c.waitErr = waitErr
+	c.stateMu.Unlock()
+	c.markDone()
+}
+
+// markDone closes the done channel (idempotent) and notifies any crash handler.
+func (c *Client) markDone() {
+	c.doneClose.Do(func() { close(c.done) })
+	c.notifyExit()
+}
+
+func (c *Client) waitError() error {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	return c.waitErr
+}
+
+func (c *Client) setExitHandler(handler func(error)) {
+	c.stateMu.Lock()
+	c.exitHandler = handler
+	c.stateMu.Unlock()
+	// If the process already exited before the handler was installed, fire it.
+	select {
+	case <-c.done:
+		c.notifyExit()
+	default:
+	}
+}
+
+// notifyExit fires the crash handler once, unless this is a normal Close
+// (closing is set) or no handler is installed. A nil waitErr is reported as
+// "plugin process exited".
 func (c *Client) notifyExit() {
 	if c.closing.Load() {
 		return
@@ -1315,83 +1113,11 @@ func (c *Client) notifyExit() {
 	if handler == nil {
 		return
 	}
-	if !c.exitNotified.CompareAndSwap(false, true) {
+	if !c.exitFired.CompareAndSwap(false, true) {
 		return
 	}
 	if err == nil {
 		err = errors.New("plugin process exited")
 	}
 	handler(err)
-}
-
-func (c *Client) routeRequest(req rpcRequest) rpcResponse {
-	switch req.Method {
-	case "callback.call":
-		return c.routeCallbackRequest(req)
-	case "host.log":
-		return c.routeLogRequest(req)
-	default:
-		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &RPCError{Code: -32000, Message: "unknown method " + req.Method}}
-	}
-}
-
-func (c *Client) routeLogRequest(req rpcRequest) rpcResponse {
-	var params logParams
-	if err := decodeParams(req.Params, &params); err != nil {
-		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &RPCError{Code: -32000, Message: err.Error()}}
-	}
-	log := c.getLogger()
-	if log != nil {
-		args := make([]any, 0, len(params.Args))
-		for _, arg := range params.Args {
-			args = append(args, transportValueToAny(arg))
-		}
-		switch strings.ToLower(params.Level) {
-		case "trace":
-			log.Trace(params.Message, args...)
-		case "debug":
-			log.Debug(params.Message, args...)
-		case "warn", "warning":
-			log.Warn(params.Message, args...)
-		case "error":
-			log.Error(params.Message, args...)
-		case "fatal":
-			log.Fatal(params.Message, args...)
-		default:
-			log.Info(params.Message, args...)
-		}
-	}
-	raw, _ := json.Marshal(Value{Type: valueNull})
-	return rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: raw}
-}
-
-func (c *Client) routeCallbackRequest(req rpcRequest) rpcResponse {
-	var params callbackCallParams
-	if err := decodeParams(req.Params, &params); err != nil {
-		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &RPCError{Code: -32000, Message: err.Error()}}
-	}
-	c.mu.Lock()
-	call := c.callbackOwners[params.ID]
-	c.mu.Unlock()
-	if call == nil || call.callbacks == nil {
-		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &RPCError{Code: -32000, Message: "unknown callback " + params.ID}}
-	}
-	inbound := callbackInbound{request: req, response: make(chan rpcResponse, 1)}
-	// call.callbacks is intentionally never closed; call.done signals expiry.
-	// This lets routeRequest safely race with removeCall without send-on-closed panics.
-	select {
-	case call.callbacks <- inbound:
-		select {
-		case resp := <-inbound.response:
-			return resp
-		case <-call.done:
-			return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &RPCError{Code: -32000, Message: "callback call ended"}}
-		case <-c.done:
-			return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &RPCError{Code: -32000, Message: "plugin process exited"}}
-		}
-	case <-call.done:
-		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &RPCError{Code: -32000, Message: "callback call ended"}}
-	case <-c.done:
-		return rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &RPCError{Code: -32000, Message: "plugin process exited"}}
-	}
 }

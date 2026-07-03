@@ -175,3 +175,77 @@ func RunJSONRPCServer(ctx context.Context, config ServerConfig) error {
 	}
 	return nil
 }
+
+// RunMCPStdioServer runs the MCP server over stdio (newline-delimited JSON-RPC
+// 2.0 on stdin/stdout). It performs the same bootstrap as RunServer — the setup
+// script may register libraries or keep itself alive via runtime.start_server()
+// — then builds the MCP server from --mcp-tools / --mcp-exec-script and serves
+// it until stdin closes or a terminating signal arrives.
+//
+// Logs must go to stderr in this mode (the CLI arranges this) so the stdout
+// protocol stream stays pure.
+func RunMCPStdioServer(ctx context.Context, config ServerConfig) error {
+	Log.Debug("Starting MCP stdio server", "mcp_tools", config.MCPToolsDir != "", "mcp_exec", config.MCPExecTool)
+
+	if config.MCPToolsDir == "" && !config.MCPExecTool {
+		return fmt.Errorf("MCP server requires --mcp-tools <dir> and/or --mcp-exec-script")
+	}
+
+	server, err := NewServer(config)
+	if err != nil {
+		return err
+	}
+
+	if server.mcpHandler == nil {
+		return fmt.Errorf("MCP server was not configured")
+	}
+	mcpServer := server.mcpHandler.server.Load()
+	if mcpServer == nil {
+		return fmt.Errorf("MCP server is not ready")
+	}
+
+	// Cancel in-flight work on a terminating signal.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigChan)
+	go func() {
+		select {
+		case <-sigChan:
+			Log.Info("MCP server received signal, shutting down")
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	Log.Info("MCP stdio server ready")
+	serveErr := mcpServer.ServeStdio(ctx)
+
+	// Signal the setup script that the server is shutting down.
+	extlibs.RuntimeState.Lock()
+	if extlibs.RuntimeState.ServerRunningCh != nil {
+		close(extlibs.RuntimeState.ServerRunningCh)
+		extlibs.RuntimeState.ServerRunningCh = nil
+	}
+	extlibs.RuntimeState.Unlock()
+
+	// Wait for the setup script goroutine to finish (with a timeout).
+	if server.scriptDone != nil {
+		select {
+		case <-server.scriptDone:
+		case <-time.After(5 * time.Second):
+			Log.Warn("Setup script did not exit within shutdown timeout")
+		}
+	}
+
+	if server.watcher != nil {
+		server.watcher.Close()
+	}
+
+	if serveErr != nil {
+		return fmt.Errorf("mcp server failed: %w", serveErr)
+	}
+	Log.Info("MCP stdio server stopped")
+	return nil
+}

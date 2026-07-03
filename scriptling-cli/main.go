@@ -145,14 +145,14 @@ func main() {
 			},
 			&cli.StringFlag{
 				Name:         "mcp-tools",
-				Usage:        "Enable MCP server with tools from directory",
+				Usage:        "Run an MCP server exposing tools from this directory (stdio by default, HTTP /mcp with --server)",
 				DefaultValue: "",
 				EnvVars:      []string{"SCRIPTLING_MCP_TOOLS"},
 				ConfigPath:   []string{"mcp.tools"},
 			},
 			&cli.BoolFlag{
 				Name:       "mcp-exec-script",
-				Usage:      "Enable MCP server with script execution tool",
+				Usage:      "Run an MCP server exposing the script execution tool (stdio by default, HTTP /mcp with --server)",
 				EnvVars:    []string{"SCRIPTLING_MCP_EXEC_SCRIPT"},
 				ConfigPath: []string{"mcp.exec_script"},
 			},
@@ -256,8 +256,12 @@ func main() {
 		PreRun: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
 			// JSON-RPC stdio mode uses stdout as the protocol stream, so logs
 			// must go to stderr to avoid corrupting responses.
+			// Stdio protocol modes (JSON-RPC, or MCP without --server) use stdout
+			// as the protocol stream, so logs must go to stderr to avoid
+			// corrupting responses.
 			logWriter := os.Stdout
-			if cmd.GetBool("json-rpc") {
+			mcpStdio := (cmd.GetString("mcp-tools") != "" || cmd.GetBool("mcp-exec-script")) && cmd.GetString("server") == ""
+			if cmd.GetBool("json-rpc") || mcpStdio {
 				logWriter = os.Stderr
 			}
 			globalLogger = logslog.New(logslog.Config{
@@ -290,6 +294,11 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 
 	if cmd.GetBool("json-rpc") {
 		return runJSONRPCServer(ctx, cmd)
+	}
+
+	// MCP over stdio: enabled by the MCP tool flags when no HTTP --server is set.
+	if cmd.GetString("mcp-tools") != "" || cmd.GetBool("mcp-exec-script") {
+		return runMCPStdioServer(ctx, cmd)
 	}
 
 	if cmd.GetBool("lint") {
@@ -452,6 +461,40 @@ func runJSONRPCServer(ctx context.Context, cmd *cli.Command) error {
 		DisabledLibs:   cmd.GetStringSlice("disable-lib"),
 		PluginDirs:     cmd.GetStringSlice("plugin-dir"),
 		PluginManager:  pluginManager,
+		KVStoragePath:  cmd.GetString("kv-storage"),
+		SecretRegistry: secretRegistry,
+		DockerSock:     cmd.GetString("docker-host"),
+		PodmanSock:     cmd.GetString("podman-host"),
+	})
+}
+
+func runMCPStdioServer(ctx context.Context, cmd *cli.Command) error {
+	file := cmd.GetStringArg("file")
+	baseDir, err := bootstrap.BaseDir(file)
+	if err != nil {
+		return err
+	}
+	secretRegistry, err := loadSecretRegistry(cmd.GetString("secret-config"))
+	if err != nil {
+		return err
+	}
+	pluginManager, err := loadPluginManager(ctx, cmd.GetStringSlice("plugin-dir"))
+	if err != nil {
+		return err
+	}
+	defer pluginManager.Close()
+	return server.RunMCPStdioServer(ctx, server.ServerConfig{
+		ScriptFile:     file,
+		LibDirs:        bootstrap.BuildLibDirs(baseDir, cmd.GetStringSlice("libpath")),
+		Packages:       cmd.GetStringSlice("package"),
+		Insecure:       cmd.GetBool("insecure"),
+		CacheDir:       cmd.GetString("cache-dir"),
+		AllowedPaths:   bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths")),
+		DisabledLibs:   cmd.GetStringSlice("disable-lib"),
+		PluginDirs:     cmd.GetStringSlice("plugin-dir"),
+		PluginManager:  pluginManager,
+		MCPToolsDir:    cmd.GetString("mcp-tools"),
+		MCPExecTool:    cmd.GetBool("mcp-exec-script"),
 		KVStoragePath:  cmd.GetString("kv-storage"),
 		SecretRegistry: secretRegistry,
 		DockerSock:     cmd.GetString("docker-host"),

@@ -89,6 +89,16 @@ Example:
 
   # Get up to 5 database tools
   results = client.tool_search("database", max_results=5)`).
+		MethodWithHelp("close", closeMethod, `close() - Close the client and release its transport
+
+For a stdio client this shuts down the launched server subprocess; for an HTTP
+client it is a no-op. Safe to call more than once.
+
+Returns:
+  null
+
+Example:
+  client.close()`).
 		MethodWithHelp("execute_discovered", executeDiscoveredMethod, `execute_discovered(name, arguments) - Execute a discovered tool
 
 Executes a tool by name using the execute_tool MCP tool. This is the only way
@@ -347,6 +357,21 @@ func executeDiscoveredMethod(self *object.Instance, ctx context.Context, name st
 	}
 
 	return DecodeToolResponse(response)
+}
+
+// close method implementation
+func closeMethod(self *object.Instance, ctx context.Context) object.Object {
+	ci, cerr := getMCPClientInstance(self)
+	if cerr != nil {
+		return cerr
+	}
+	if ci.client == nil {
+		return &object.Null{}
+	}
+	if err := ci.client.Close(); err != nil {
+		return &object.Error{Message: "close failed: " + err.Error()}
+	}
+	return &object.Null{}
 }
 
 // createClientInstance creates a new scriptling Instance wrapping an MCP client

@@ -1,8 +1,6 @@
 package plugin
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,6 +15,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/paularlott/jsonrpc"
 	"github.com/paularlott/scriptling/evaluator"
 	"github.com/paularlott/scriptling/object"
 )
@@ -31,6 +30,9 @@ type Server struct {
 	objects     map[string]*serverObject
 	objectsMu   sync.RWMutex
 	nextObject  atomic.Int64
+
+	jsonrpcServer *jsonrpc.Server // inbound registry for HTTP (no callback runtime)
+	srvOnce       sync.Once
 }
 
 type funcEntry struct {
@@ -49,12 +51,20 @@ type serverObject struct {
 	mu       sync.Mutex
 }
 
+// serverRuntime carries the per-connection state a plugin handler needs to make
+// reverse-direction requests back to the host (host callbacks and log records)
+// over the bidirectional stdio peer. It is attached to handler contexts via
+// callbackRuntimeKey; HTTP requests have no runtime (callbacks are unavailable).
 type serverRuntime struct {
-	encoder *json.Encoder
-	writeMu sync.Mutex
-	nextID  atomic.Int64
-	pending map[int64]chan rpcResponse
-	mu      sync.Mutex
+	peer *jsonrpc.Peer
+
+	// hadHandshake tracks whether this connection handshook, and shuttingDown
+	// whether plugin.shutdown was received. RunIO finalises objects only at the
+	// end of a real session (not between the many short RunIO calls tests make
+	// against a long-lived server), and only after in-flight handlers have
+	// flushed — so plugin.shutdown cannot race a concurrent method call.
+	hadHandshake atomic.Bool
+	shuttingDown atomic.Bool
 }
 
 func NewServer(name, version, description string) *Server {
@@ -140,355 +150,109 @@ func (s *Server) Run() error {
 //
 // HTTP plugin transport supports normal plugin calls, object lifecycle, and
 // batches. Host callbacks and plugin.Logger(ctx) require the bidirectional
-// stdio transport and are not available over HTTP.
+// stdio transport and are not available over HTTP. Framing (POST handling,
+// batches, notifications, error responses, 204 on no-response) is provided by
+// jsonrpc.Server.ServeHTTP; this server only supplies the plugin methods.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", http.MethodPost)
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "Bad Request", http.StatusBadRequest)
-		return
-	}
-	resp, hasBody := s.processHTTPJSONRPC(r.Context(), body)
-	if !hasBody {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(resp)
+	s.httpServer().ServeHTTP(w, r)
 }
 
-func (s *Server) processHTTPJSONRPC(ctx context.Context, raw []byte) ([]byte, bool) {
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 {
-		out, _ := json.Marshal(rpcResponse{
-			JSONRPC: "2.0",
-			ID:      0,
-			Error:   &RPCError{Code: -32700, Message: "parse error: empty request body"},
-		})
-		return out, true
-	}
-	if trimmed[0] == '[' {
-		var messages []httpRPCMessage
-		if err := json.Unmarshal(raw, &messages); err != nil {
-			out, _ := json.Marshal(rpcResponse{
-				JSONRPC: "2.0",
-				ID:      0,
-				Error:   &RPCError{Code: -32700, Message: "parse error: " + err.Error()},
-			})
-			return out, true
-		}
-		if len(messages) == 0 {
-			out, _ := json.Marshal(rpcResponse{
-				JSONRPC: "2.0",
-				ID:      0,
-				Error:   &RPCError{Code: -32600, Message: "invalid request: empty batch"},
-			})
-			return out, true
-		}
-		responses := make([]rpcResponse, 0, len(messages))
-		shutdown := false
-		for _, msg := range messages {
-			if resp, ok := s.handleHTTPMessage(ctx, msg); ok {
-				responses = append(responses, resp)
+// httpServer returns the jsonrpc.Server used for HTTP, built once and reused.
+// It carries no callback runtime since HTTP is unidirectional.
+func (s *Server) httpServer() *jsonrpc.Server {
+	s.srvOnce.Do(func() { s.jsonrpcServer = s.buildServer(nil) })
+	return s.jsonrpcServer
+}
+
+// buildServer returns a jsonrpc.Server whose handlers dispatch the plugin
+// protocol methods via [Server.dispatch]. When runtime is non-nil it is attached
+// to each handler's context so plugin code can make host callbacks
+// (callback.call) and emit log records (host.log) over the bidirectional stdio
+// transport; nil runtime (HTTP) disables those (callbacks/logger error out).
+func (s *Server) buildServer(runtime *serverRuntime) *jsonrpc.Server {
+	srv := jsonrpc.NewServer()
+	for _, method := range pluginMethods {
+		m := method
+		srv.Handle(m, func(ctx context.Context, params json.RawMessage) (any, error) {
+			if runtime != nil {
+				ctx = context.WithValue(ctx, callbackRuntimeKey{}, runtime)
+				if m == "scriptling.handshake" {
+					runtime.hadHandshake.Store(true)
+				}
+				if m == "plugin.shutdown" {
+					runtime.shuttingDown.Store(true)
+				}
 			}
-			if msg.Method == "plugin.shutdown" {
-				shutdown = true
-				break
+			result, err := s.dispatch(ctx, m, params)
+			// HTTP has no session-end hook (each request is independent), so
+			// finalise objects inline on shutdown. stdio defers destruction to
+			// RunIO after all in-flight handlers have flushed, avoiding a race
+			// between plugin.shutdown and concurrent method calls.
+			if runtime == nil && m == "plugin.shutdown" && err == nil {
+				s.destroyAllObjects()
 			}
-		}
-		if shutdown {
-			s.destroyAllObjects()
-		}
-		if len(responses) == 0 {
-			return nil, false
-		}
-		out, _ := json.Marshal(responses)
-		return out, true
-	}
-	var msg httpRPCMessage
-	if err := json.Unmarshal(raw, &msg); err != nil {
-		out, _ := json.Marshal(rpcResponse{
-			JSONRPC: "2.0",
-			ID:      0,
-			Error:   &RPCError{Code: -32700, Message: "parse error: " + err.Error()},
+			return result, err
 		})
-		return out, true
 	}
-	resp, ok := s.handleHTTPMessage(ctx, msg)
-	if msg.Method == "plugin.shutdown" {
+	return srv
+}
+
+// pluginMethods are the JSON-RPC methods every plugin server dispatches.
+var pluginMethods = []string{
+	"scriptling.handshake",
+	"environment.open",
+	"environment.close",
+	"plugin.shutdown",
+	"function.call",
+	"object.new",
+	"object.call_method",
+	"object.destroy",
+}
+
+// RunIO serves the plugin protocol over a bidirectional stream (stdio). The
+// jsonrpc.Peer handles framing, batch dispatch, notification detection and
+// response correlation in both directions; dispatch runs in the peer's server.
+//
+// RunIO blocks until the input reaches EOF — normally because the host closed
+// the child's stdin after plugin.shutdown (which destroys objects and returns a
+// response). The server need not force-exit on shutdown: the response is
+// written before the host closes stdin, so there is no flush-before-exit race.
+// Object finalizers run on plugin.shutdown and again on EOF (idempotent).
+func (s *Server) RunIO(input io.Reader, output io.Writer) error {
+	runtime := &serverRuntime{}
+	peer := jsonrpc.NewPeer(input, output, s.buildServer(runtime))
+	runtime.peer = peer
+	_ = peer.Serve()
+	peer.Wait() // let in-flight handlers flush; a handler write error lands in peer.Err()
+	// Finalise objects only at the end of a real session (one that handshook or
+	// received plugin.shutdown), and only after handlers are quiesced. Tests
+	// drive a long-lived server through many short RunIO calls and rely on
+	// objects surviving between them.
+	if runtime.hadHandshake.Load() || runtime.shuttingDown.Load() {
 		s.destroyAllObjects()
 	}
-	if !ok {
-		return nil, false
+	if err := peer.Err(); err != nil && !errors.Is(err, io.EOF) {
+		return err
 	}
-	out, _ := json.Marshal(resp)
-	return out, true
+	return nil
 }
 
-type httpRPCMessage struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      *int64          `json:"id,omitempty"`
-	Method  string          `json:"method,omitempty"`
-	Params  json.RawMessage `json:"params,omitempty"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *RPCError       `json:"error,omitempty"`
-}
-
-func (s *Server) handleHTTPMessage(ctx context.Context, msg httpRPCMessage) (rpcResponse, bool) {
-	if msg.Method == "" {
-		if msg.ID == nil {
-			return rpcResponse{}, false
-		}
-		return rpcResponse{
-			JSONRPC: "2.0",
-			ID:      *msg.ID,
-			Error:   &RPCError{Code: -32600, Message: "invalid request: method is required"},
-		}, true
-	}
-	id := int64(0)
-	if msg.ID != nil {
-		id = *msg.ID
-	}
-	req := rpcRequest{JSONRPC: msg.JSONRPC, ID: id, Method: msg.Method, Params: msg.Params}
-	resp := s.handleRequest(ctx, req)
-	if msg.ID == nil {
-		return rpcResponse{}, false
-	}
-	return resp, true
-}
-
-func (s *Server) RunIO(input io.Reader, output io.Writer) error {
-	decoder := json.NewDecoder(bufio.NewReader(input))
-	runtime := &serverRuntime{
-		encoder: json.NewEncoder(output),
-		pending: make(map[int64]chan rpcResponse),
-	}
-	var wg sync.WaitGroup
-	var firstErr error
-	var firstErrMu sync.Mutex
-	recordErr := func(err error) {
-		if err == nil {
-			return
-		}
-		firstErrMu.Lock()
-		if firstErr == nil {
-			firstErr = err
-		}
-		firstErrMu.Unlock()
-	}
-	getErr := func() error {
-		firstErrMu.Lock()
-		defer firstErrMu.Unlock()
-		return firstErr
-	}
-
-	hadHandshake := false
-	for {
-		var raw json.RawMessage
-		if err := decoder.Decode(&raw); err != nil {
-			if err == io.EOF {
-				wg.Wait()
-				if hadHandshake {
-					s.destroyAllObjects()
-				}
-				return getErr()
-			}
-			return err
-		}
-		raw = bytes.TrimSpace(raw)
-		if len(raw) == 0 {
-			continue
-		}
-		if raw[0] == '[' {
-			var batch []rpcMessage
-			if err := json.Unmarshal(raw, &batch); err != nil {
-				return err
-			}
-			var responses []rpcResponse
-			var shutdownResp *rpcResponse
-			for _, msg := range batch {
-				resp, shutdown := s.handleBatchMessage(context.Background(), runtime, msg)
-				if resp != nil {
-					responses = append(responses, *resp)
-				}
-				if shutdown {
-					shutdownResp = resp
-					break
-				}
-			}
-			if len(responses) > 0 {
-				runtime.writeMu.Lock()
-				err := runtime.encoder.Encode(responses)
-				runtime.writeMu.Unlock()
-				recordErr(err)
-			}
-			if shutdownResp != nil {
-				wg.Wait()
-				if err := getErr(); err != nil {
-					return err
-				}
-				if shutdownResp.Error != nil {
-					return shutdownResp.Error
-				}
-				return nil
-			}
-			continue
-		}
-		var msg rpcMessage
-		if err := json.Unmarshal(raw, &msg); err != nil {
-			return err
-		}
-		if msg.Method == "scriptling.handshake" {
-			hadHandshake = true
-		}
-		resp, shutdown := s.handleInboundMessage(context.Background(), runtime, &wg, recordErr, msg)
-		if resp != nil {
-			runtime.writeMu.Lock()
-			err := runtime.encoder.Encode(resp)
-			runtime.writeMu.Unlock()
-			recordErr(err)
-		}
-		if shutdown {
-			wg.Wait()
-			s.destroyAllObjects()
-			if err := getErr(); err != nil {
-				return err
-			}
-			if resp != nil && resp.Error != nil {
-				return resp.Error
-			}
-			return nil
-		}
-	}
-}
-
-func (s *Server) handleBatchMessage(ctx context.Context, runtime *serverRuntime, msg rpcMessage) (*rpcResponse, bool) {
-	if msg.Method == "" {
-		runtime.deliverResponse(rpcResponse{
-			JSONRPC: msg.JSONRPC,
-			ID:      msg.ID,
-			Result:  msg.Result,
-			Error:   msg.Error,
-		})
-		return nil, false
-	}
-	req := rpcRequest{JSONRPC: msg.JSONRPC, ID: msg.ID, Method: msg.Method, Params: msg.Params}
-	ctx = context.WithValue(ctx, callbackRuntimeKey{}, runtime)
-	resp := s.handleRequest(ctx, req)
-	if msg.ID == 0 {
-		return nil, req.Method == "plugin.shutdown"
-	}
-	return &resp, req.Method == "plugin.shutdown"
-}
-
-func (s *Server) handleInboundMessage(ctx context.Context, runtime *serverRuntime, wg *sync.WaitGroup, recordErr func(error), msg rpcMessage) (*rpcResponse, bool) {
-	if msg.Method == "" {
-		runtime.deliverResponse(rpcResponse{
-			JSONRPC: msg.JSONRPC,
-			ID:      msg.ID,
-			Result:  msg.Result,
-			Error:   msg.Error,
-		})
-		return nil, false
-	}
-	req := rpcRequest{JSONRPC: msg.JSONRPC, ID: msg.ID, Method: msg.Method, Params: msg.Params}
-	if req.Method == "plugin.shutdown" {
-		resp := s.handleRequest(ctx, req)
-		if msg.ID == 0 {
-			return nil, true
-		}
-		return &resp, true
-	}
-	wg.Add(1)
-	go func(req rpcRequest) {
-		defer wg.Done()
-		ctx := context.WithValue(context.Background(), callbackRuntimeKey{}, runtime)
-		resp := s.handleRequest(ctx, req)
-		if req.ID == 0 {
-			return
-		}
-		runtime.writeMu.Lock()
-		err := runtime.encoder.Encode(resp)
-		runtime.writeMu.Unlock()
-		recordErr(err)
-	}(req)
-	return nil, false
-}
-
+// callCallback invokes a host callback by id over the stdio peer. It blocks
+// until the host responds; the plugin protocol issues callbacks synchronously,
+// so at most one callback per outer call is in flight.
 func (r *serverRuntime) callCallback(ctx context.Context, params callbackCallParams) (Value, error) {
-	id := r.nextID.Add(1)
-	ch := make(chan rpcResponse, 1)
-	r.mu.Lock()
-	r.pending[id] = ch
-	r.mu.Unlock()
-
-	req := rpcRequest{JSONRPC: "2.0", ID: id, Method: "callback.call", Params: params}
-	r.writeMu.Lock()
-	err := r.encoder.Encode(req)
-	r.writeMu.Unlock()
-	if err != nil {
-		r.removePending(id)
+	if r.peer == nil {
+		return Value{}, fmt.Errorf("callbacks require the stdio transport")
+	}
+	var result Value
+	if err := r.peer.Client().Call(ctx, "callback.call", params, &result); err != nil {
 		return Value{}, err
 	}
-
-	select {
-	case resp := <-ch:
-		if resp.Error != nil {
-			return Value{}, resp.Error
-		}
-		if len(resp.Result) == 0 {
-			return Value{Type: valueNull}, nil
-		}
-		var result Value
-		if err := json.Unmarshal(resp.Result, &result); err != nil {
-			return Value{}, err
-		}
-		return result, nil
-	case <-ctx.Done():
-		r.removePending(id)
-		return Value{}, ctx.Err()
-	}
+	return result, nil
 }
 
-func (r *serverRuntime) deliverResponse(resp rpcResponse) {
-	r.mu.Lock()
-	ch := r.pending[resp.ID]
-	delete(r.pending, resp.ID)
-	r.mu.Unlock()
-	if ch != nil {
-		ch <- resp
-	}
-}
-
-func (r *serverRuntime) removePending(id int64) {
-	r.mu.Lock()
-	delete(r.pending, id)
-	r.mu.Unlock()
-}
-
-func (s *Server) handleRequest(ctx context.Context, req rpcRequest) rpcResponse {
-	result, err := s.dispatch(ctx, req.Method, req.Params)
-	resp := rpcResponse{JSONRPC: "2.0", ID: req.ID}
-	if err != nil {
-		resp.Error = &RPCError{Code: -32000, Message: err.Error()}
-		return resp
-	}
-	if result != nil {
-		raw, marshalErr := json.Marshal(result)
-		if marshalErr != nil {
-			resp.Error = &RPCError{Code: -32000, Message: marshalErr.Error()}
-			return resp
-		}
-		resp.Result = raw
-	}
-	return resp
-}
-
+// dispatch routes a plugin protocol method to its handler. It is the single
+// entry point invoked by the jsonrpc handlers registered in buildServer.
 func (s *Server) dispatch(ctx context.Context, method string, params any) (any, error) {
 	switch method {
 	case "scriptling.handshake":
@@ -503,7 +267,11 @@ func (s *Server) dispatch(ctx context.Context, method string, params any) (any, 
 			Capabilities: []string{"remote_objects"},
 			Schema:       s.schema(),
 		}, nil
-	case "environment.open", "environment.close", "plugin.shutdown":
+	case "environment.open", "environment.close":
+		return nil, nil
+	case "plugin.shutdown":
+		// Object finalisation is deferred to RunIO (stdio) or the handler
+		// wrapper (HTTP) so it cannot race concurrent calls.
 		return nil, nil
 	case "function.call":
 		var p functionCallParams
