@@ -2,7 +2,6 @@ package plugin
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"time"
 
@@ -88,33 +87,10 @@ func (l *runtimeLogger) log(level, msg string, keysAndValues ...any) {
 }
 
 func (r *serverRuntime) callHostLog(ctx context.Context, params logParams) error {
-	id := r.nextID.Add(1)
-	ch := make(chan rpcResponse, 1)
-	r.mu.Lock()
-	r.pending[id] = ch
-	r.mu.Unlock()
-
-	req := rpcRequest{JSONRPC: "2.0", ID: id, Method: "host.log", Params: params}
-	r.writeMu.Lock()
-	err := r.encoder.Encode(req)
-	r.writeMu.Unlock()
-	if err != nil {
-		r.removePending(id)
-		return err
-	}
-
-	select {
-	case resp := <-ch:
-		if resp.Error != nil {
-			return resp.Error
-		}
-		if len(resp.Result) > 0 {
-			var ignored Value
-			_ = json.Unmarshal(resp.Result, &ignored)
-		}
+	if r.peer == nil {
 		return nil
-	case <-ctx.Done():
-		r.removePending(id)
-		return ctx.Err()
 	}
+	// Host log records are sent as JSON-RPC requests (the host responds with a
+	// null result), matching the original synchronous behaviour.
+	return r.peer.Client().Call(ctx, "host.log", params, nil)
 }

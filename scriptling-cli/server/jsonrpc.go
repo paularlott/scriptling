@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -11,55 +10,25 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"sync"
 	"syscall"
 
+	"github.com/paularlott/jsonrpc"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/object"
 )
 
-// JSON-RPC 2.0 error codes (per spec).
+// JSON-RPC 2.0 error codes (per spec). These mirror the codes exported by the
+// jsonrpc package and are retained here for readability at the call sites.
 const (
-	jsonrpcParseError     = -32700
-	jsonrpcInvalidRequest = -32600
-	jsonrpcMethodNotFound = -32601
-	jsonrpcInvalidParams  = -32602
-	jsonrpcInternalError  = -32603
-	jsonrpcServerError    = -32000
+	jsonrpcParseError     = jsonrpc.CodeParseError
+	jsonrpcInvalidRequest = jsonrpc.CodeInvalidRequest
+	jsonrpcMethodNotFound = jsonrpc.CodeMethodNotFound
+	jsonrpcInvalidParams  = jsonrpc.CodeInvalidParams
+	jsonrpcInternalError  = jsonrpc.CodeInternalError
+	jsonrpcServerError    = jsonrpc.CodeServerError
 )
-
-// jsonrpcVersion is the protocol version emitted on every response.
-const jsonrpcVersion = "2.0"
-
-// jsonrpcFrame is a single inbound request/notification. ID is kept as raw
-// bytes so absent id (notification) is distinguishable from explicit null, and
-// so the original id shape round-trips into the response unchanged.
-type jsonrpcFrame struct {
-	JSONRPC json.RawMessage `json:"jsonrpc"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params,omitempty"`
-	ID      json.RawMessage `json:"id,omitempty"`
-}
-
-func (f *jsonrpcFrame) isNotification() bool {
-	return len(f.ID) == 0
-}
-
-// jsonrpcResponseOut is the wire shape of an outbound response.
-type jsonrpcResponseOut struct {
-	JSONRPC string           `json:"jsonrpc"`
-	Result  interface{}      `json:"result,omitempty"`
-	Error   *jsonrpcErrorOut `json:"error,omitempty"`
-	ID      json.RawMessage  `json:"id"`
-}
-
-type jsonrpcErrorOut struct {
-	Code    int         `json:"code"`
-	Message string      `json:"message"`
-	Data    interface{} `json:"data,omitempty"`
-}
 
 // collectJSONRPCMethods copies registered methods/notifications out of
 // RuntimeState into the Server so dispatch is lock-free during serving.
@@ -83,34 +52,112 @@ func (s *Server) collectJSONRPCMethods() {
 	}
 }
 
+// jsonrpcServerInstance builds (once) and returns the jsonrpc.Server that backs
+// both the stdio and HTTP transports. The framing, batching, notification and
+// error-code handling all live in the jsonrpc package; scriptling only supplies
+// the per-method handlers that run script on a fresh evaluator.
+func (s *Server) jsonrpcServerInstance() *jsonrpc.Server {
+	s.jsonrpcServerOnce.Do(func() {
+		s.jsonrpcServer = s.buildJSONRPCServer()
+	})
+	return s.jsonrpcServer
+}
+
+// buildJSONRPCServer registers a handler for every method/notification name.
+// A JSON-RPC notification is a request without an id, so both call shapes reach
+// the same handler; jsonrpc.IsNotification(ctx) distinguishes them, letting us
+// preserve scriptling's separate method/notification registration semantics:
+//
+//   - a request (has id) for a name that is only a notification -> method not found
+//   - a notification (no id) for a name that is only a method   -> ignored, handler not run
+//   - a name registered as both dispatches to the matching handler for each shape
+func (s *Server) buildJSONRPCServer() *jsonrpc.Server {
+	srv := jsonrpc.NewServer(jsonrpc.WithErrorHandler(func(method string, err error) {
+		Log.Debug("JSON-RPC handler error", "method", method, "error", err)
+	}))
+
+	names := make(map[string]struct{}, len(s.jsonrpcMethods)+len(s.jsonrpcNotifications))
+	for name := range s.jsonrpcMethods {
+		names[name] = struct{}{}
+	}
+	for name := range s.jsonrpcNotifications {
+		names[name] = struct{}{}
+	}
+
+	for name := range names {
+		methodRef, hasMethod := s.jsonrpcMethods[name]
+		notifRef, hasNotif := s.jsonrpcNotifications[name]
+		name := name
+		srv.Handle(name, func(ctx context.Context, params json.RawMessage) (any, error) {
+			if jsonrpc.IsNotification(ctx) {
+				if !hasNotif {
+					// Name is a method only: notifications for it are ignored
+					// (the handler must not run and no response is written).
+					return nil, nil
+				}
+				return s.invokeJSONRPCHandler(ctx, notifRef, params)
+			}
+			if !hasMethod {
+				return nil, jsonrpc.MethodNotFound("method not found: " + name)
+			}
+			return s.invokeJSONRPCHandler(ctx, methodRef, params)
+		})
+	}
+
+	return srv
+}
+
+// invokeJSONRPCHandler decodes params, runs the script handler on a fresh
+// evaluator, and maps the result into a jsonrpc result value or *jsonrpc.Error.
+func (s *Server) invokeJSONRPCHandler(ctx context.Context, handlerRef string, rawParams json.RawMessage) (any, error) {
+	params, perr := decodeParams(rawParams)
+	if perr != nil {
+		return nil, jsonrpc.InvalidParams("invalid params: " + perr.Error())
+	}
+
+	result := s.runJSONRPCHandler(handlerRef, params)
+
+	if ctx.Err() != nil {
+		return nil, jsonrpc.InternalError("request cancelled")
+	}
+
+	// Handler returned an explicit JSON-RPC error object.
+	if extlibs.IsJSONRPCError(result) {
+		inst := result.(*object.Instance)
+		code, _ := inst.Field("code").AsInt()
+		message, _ := inst.Field("message").AsString()
+		errOut := jsonrpc.NewError(int(code), message, nil)
+		if data, present := inst.GetField("data"); present {
+			if _, isNull := data.(*object.Null); !isNull {
+				errOut.Data = conversion.ToGo(data)
+			}
+		}
+		return nil, errOut
+	}
+
+	// Scriptling error / exception -> server error.
+	if errObj, ok := result.(*object.Error); ok {
+		return nil, jsonrpc.ServerError(errObj.Message)
+	}
+	if exObj, ok := result.(*object.Exception); ok {
+		return nil, jsonrpc.ServerError(exObj.Message)
+	}
+
+	return conversion.ToGo(result), nil
+}
+
 // RunJSONRPCStdio serves JSON-RPC 2.0 requests from stdin, writing one response
 // per line to stdout. Each request runs on a fresh Scriptling evaluator in its
-// own goroutine; writes are serialised via a mutex. The call blocks until stdin
-// closes (or returns on a fatal read/write error).
+// own goroutine. The call blocks until stdin closes (or returns on a fatal
+// read/write error).
 func (s *Server) RunJSONRPCStdio(ctx context.Context) error {
 	return s.runJSONRPC(ctx, os.Stdin, os.Stdout)
 }
 
+// runJSONRPC installs signal-driven cancellation and then delegates the
+// newline-delimited serve loop to the jsonrpc package. Cancelling on a signal
+// lets long-running handlers bail out via their context.
 func (s *Server) runJSONRPC(ctx context.Context, in io.Reader, out io.Writer) error {
-	decoder := json.NewDecoder(bufio.NewReader(in))
-	writeMu := &sync.Mutex{}
-	encoder := json.NewEncoder(out)
-
-	var wg sync.WaitGroup
-	var firstErr error
-	var firstErrMu sync.Mutex
-	recordErr := func(err error) {
-		if err == nil {
-			return
-		}
-		firstErrMu.Lock()
-		if firstErr == nil {
-			firstErr = err
-		}
-		firstErrMu.Unlock()
-	}
-
-	// Cancel inbound work on signal; lets long-running handlers bail out.
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -128,338 +175,14 @@ func (s *Server) runJSONRPC(ctx context.Context, in io.Reader, out io.Writer) er
 
 	Log.Info("JSON-RPC stdio server ready")
 
-	for {
-		var raw json.RawMessage
-		if err := decoder.Decode(&raw); err != nil {
-			if err == io.EOF {
-				wg.Wait()
-				return firstErr
-			}
-			// Unrecoverable stream corruption: emit a parse error if we can.
-			writeMu.Lock()
-			encErr := encoder.Encode(jsonrpcResponseOut{
-				JSONRPC: jsonrpcVersion,
-				Error:   &jsonrpcErrorOut{Code: jsonrpcParseError, Message: "parse error: " + err.Error()},
-				ID:      json.RawMessage("null"),
-			})
-			writeMu.Unlock()
-			recordErr(encErr)
-			wg.Wait()
-			return err
-		}
-
-		trimmed := bytes.TrimLeft(raw, " \t\r\n")
-		if len(trimmed) == 0 {
-			continue
-		}
-
-		// Batch: a JSON array of requests. Each element is dispatched
-		// concurrently on a fresh evaluator; the responses are collected and
-		// emitted as a single JSON array (per JSON-RPC 2.0). Notifications
-		// inside a batch produce no entry in the output array. An
-		// all-notification batch produces no output at all.
-		if trimmed[0] == '[' {
-			var frames []jsonrpcFrame
-			if err := json.Unmarshal(raw, &frames); err != nil {
-				writeMu.Lock()
-				encoder.Encode(jsonrpcResponseOut{
-					JSONRPC: jsonrpcVersion,
-					Error:   &jsonrpcErrorOut{Code: jsonrpcParseError, Message: "parse error: " + err.Error()},
-					ID:      json.RawMessage("null"),
-				})
-				writeMu.Unlock()
-				continue
-			}
-			if len(frames) == 0 {
-				writeMu.Lock()
-				encoder.Encode(jsonrpcResponseOut{
-					JSONRPC: jsonrpcVersion,
-					Error:   &jsonrpcErrorOut{Code: jsonrpcInvalidRequest, Message: "invalid request: empty batch"},
-					ID:      json.RawMessage("null"),
-				})
-				writeMu.Unlock()
-				continue
-			}
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				s.processJSONRPCBatch(ctx, frames, encoder, writeMu)
-			}()
-			continue
-		}
-
-		// Single request/notification.
-		var frame jsonrpcFrame
-		if err := json.Unmarshal(raw, &frame); err != nil {
-			writeMu.Lock()
-			encoder.Encode(jsonrpcResponseOut{
-				JSONRPC: jsonrpcVersion,
-				Error:   &jsonrpcErrorOut{Code: jsonrpcParseError, Message: "parse error: " + err.Error()},
-				ID:      json.RawMessage("null"),
-			})
-			writeMu.Unlock()
-			continue
-		}
-
-		if frame.isNotification() {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				s.dispatchJSONRPCNotification(ctx, frame)
-			}()
-			continue
-		}
-
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			resp, _ := s.dispatchJSONRPCRequest(ctx, frame)
-			if resp != nil {
-				writeMu.Lock()
-				recordErr(encoder.Encode(resp))
-				writeMu.Unlock()
-			}
-		}()
-	}
+	return s.jsonrpcServerInstance().ServeStream(ctx, in, out)
 }
 
 // handleJSONRPCHTTP serves JSON-RPC 2.0 over HTTP. Requests use POST with a
 // single JSON-RPC object or batch array. Notifications produce 204 No Content.
 func (s *Server) handleJSONRPCHTTP(w http.ResponseWriter, r *http.Request) {
 	Log.Trace("JSON-RPC HTTP request", "method", r.Method, "path", r.URL.Path, "remote", r.RemoteAddr)
-	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", http.MethodPost)
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "Bad Request", http.StatusBadRequest)
-		return
-	}
-	resp, hasBody := s.processJSONRPCHTTP(r.Context(), body)
-	if !hasBody {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(resp)
-}
-
-func (s *Server) processJSONRPCHTTP(ctx context.Context, raw []byte) ([]byte, bool) {
-	trimmed := bytes.TrimLeft(raw, " \t\r\n")
-	if len(trimmed) == 0 {
-		resp := jsonrpcResponseOut{
-			JSONRPC: jsonrpcVersion,
-			Error:   &jsonrpcErrorOut{Code: jsonrpcParseError, Message: "parse error: empty request body"},
-			ID:      json.RawMessage("null"),
-		}
-		out, _ := json.Marshal(resp)
-		return out, true
-	}
-
-	if trimmed[0] == '[' {
-		var frames []jsonrpcFrame
-		if err := json.Unmarshal(raw, &frames); err != nil {
-			resp := jsonrpcResponseOut{
-				JSONRPC: jsonrpcVersion,
-				Error:   &jsonrpcErrorOut{Code: jsonrpcParseError, Message: "parse error: " + err.Error()},
-				ID:      json.RawMessage("null"),
-			}
-			out, _ := json.Marshal(resp)
-			return out, true
-		}
-		if len(frames) == 0 {
-			resp := jsonrpcResponseOut{
-				JSONRPC: jsonrpcVersion,
-				Error:   &jsonrpcErrorOut{Code: jsonrpcInvalidRequest, Message: "invalid request: empty batch"},
-				ID:      json.RawMessage("null"),
-			}
-			out, _ := json.Marshal(resp)
-			return out, true
-		}
-		responses := s.collectJSONRPCBatchResponses(ctx, frames)
-		if len(responses) == 0 {
-			return nil, false
-		}
-		out, _ := json.Marshal(responses)
-		return out, true
-	}
-
-	var frame jsonrpcFrame
-	if err := json.Unmarshal(raw, &frame); err != nil {
-		resp := jsonrpcResponseOut{
-			JSONRPC: jsonrpcVersion,
-			Error:   &jsonrpcErrorOut{Code: jsonrpcParseError, Message: "parse error: " + err.Error()},
-			ID:      json.RawMessage("null"),
-		}
-		out, _ := json.Marshal(resp)
-		return out, true
-	}
-	if frame.isNotification() {
-		s.dispatchJSONRPCNotification(ctx, frame)
-		return nil, false
-	}
-	resp, _ := s.dispatchJSONRPCRequest(ctx, frame)
-	out, _ := json.Marshal(resp)
-	return out, true
-}
-
-// processJSONRPCBatch fans a batch of frames out concurrently, then writes the
-// collected responses as a single JSON array. Notifications contribute no
-// response and an all-notification batch writes nothing at all.
-func (s *Server) processJSONRPCBatch(ctx context.Context, frames []jsonrpcFrame, encoder *json.Encoder, writeMu *sync.Mutex) {
-	responses := s.collectJSONRPCBatchResponses(ctx, frames)
-	if len(responses) == 0 {
-		return
-	}
-	writeMu.Lock()
-	encoder.Encode(responses)
-	writeMu.Unlock()
-}
-
-func (s *Server) collectJSONRPCBatchResponses(ctx context.Context, frames []jsonrpcFrame) []jsonrpcResponseOut {
-	var responses []jsonrpcResponseOut
-	var respMu sync.Mutex
-	var batchWg sync.WaitGroup
-
-	for i := range frames {
-		frame := frames[i]
-		if frame.isNotification() {
-			batchWg.Add(1)
-			go func() {
-				defer batchWg.Done()
-				s.dispatchJSONRPCNotification(ctx, frame)
-			}()
-			continue
-		}
-		batchWg.Add(1)
-		go func() {
-			defer batchWg.Done()
-			resp, _ := s.dispatchJSONRPCRequest(ctx, frame)
-			if resp != nil {
-				respMu.Lock()
-				responses = append(responses, *resp)
-				respMu.Unlock()
-			}
-		}()
-	}
-	batchWg.Wait()
-	return responses
-}
-
-// dispatchJSONRPCRequest resolves and invokes the handler for a request frame
-// on a fresh evaluator, returning the outbound response (never nil) and the
-// handler reference used (for logging).
-func (s *Server) dispatchJSONRPCRequest(ctx context.Context, frame jsonrpcFrame) (*jsonrpcResponseOut, string) {
-	id := frame.ID
-	if len(id) == 0 {
-		id = json.RawMessage("null")
-	}
-
-	if frame.JSONRPC != nil && strings.TrimSpace(string(frame.JSONRPC)) != `"2.0"` && len(frame.JSONRPC) > 0 {
-		return &jsonrpcResponseOut{
-			JSONRPC: jsonrpcVersion,
-			Error:   &jsonrpcErrorOut{Code: jsonrpcInvalidRequest, Message: "invalid request: jsonrpc must be \"2.0\""},
-			ID:      id,
-		}, ""
-	}
-	if frame.Method == "" {
-		return &jsonrpcResponseOut{
-			JSONRPC: jsonrpcVersion,
-			Error:   &jsonrpcErrorOut{Code: jsonrpcInvalidRequest, Message: "invalid request: missing method"},
-			ID:      id,
-		}, ""
-	}
-
-	handlerRef, ok := s.jsonrpcMethods[frame.Method]
-	if !ok {
-		return &jsonrpcResponseOut{
-			JSONRPC: jsonrpcVersion,
-			Error:   &jsonrpcErrorOut{Code: jsonrpcMethodNotFound, Message: "method not found: " + frame.Method},
-			ID:      id,
-		}, handlerRef
-	}
-
-	params, perr := decodeParams(frame.Params)
-	if perr != nil {
-		return &jsonrpcResponseOut{
-			JSONRPC: jsonrpcVersion,
-			Error:   &jsonrpcErrorOut{Code: jsonrpcInvalidParams, Message: "invalid params: " + perr.Error()},
-			ID:      id,
-		}, handlerRef
-	}
-
-	result := s.runJSONRPCHandler(handlerRef, params)
-	if ctx.Err() != nil {
-		return &jsonrpcResponseOut{
-			JSONRPC: jsonrpcVersion,
-			Error:   &jsonrpcErrorOut{Code: jsonrpcInternalError, Message: "request cancelled"},
-			ID:      id,
-		}, handlerRef
-	}
-
-	// Handler returned an explicit JSON-RPC error object.
-	if extlibs.IsJSONRPCError(result) {
-		code, _ := result.(*object.Instance).Field("code").AsInt()
-		message, _ := result.(*object.Instance).Field("message").AsString()
-		errOut := &jsonrpcErrorOut{Code: int(code), Message: message}
-		if data, present := result.(*object.Instance).GetField("data"); present {
-			if _, isNull := data.(*object.Null); !isNull {
-				errOut.Data = conversion.ToGo(data)
-			}
-		}
-		return &jsonrpcResponseOut{
-			JSONRPC: jsonrpcVersion,
-			Error:   errOut,
-			ID:      id,
-		}, handlerRef
-	}
-
-	// Scriptling error / exception -> server error.
-	if errObj, ok := result.(*object.Error); ok {
-		return &jsonrpcResponseOut{
-			JSONRPC: jsonrpcVersion,
-			Error:   &jsonrpcErrorOut{Code: jsonrpcServerError, Message: errObj.Message},
-			ID:      id,
-		}, handlerRef
-	}
-	if exObj, ok := result.(*object.Exception); ok {
-		return &jsonrpcResponseOut{
-			JSONRPC: jsonrpcVersion,
-			Error:   &jsonrpcErrorOut{Code: jsonrpcServerError, Message: exObj.Message},
-			ID:      id,
-		}, handlerRef
-	}
-
-	return &jsonrpcResponseOut{
-		JSONRPC: jsonrpcVersion,
-		Result:  conversion.ToGo(result),
-		ID:      id,
-	}, handlerRef
-}
-
-// dispatchJSONRPCNotification resolves and invokes a notification handler on a
-// fresh evaluator. The result is discarded (no response is written).
-func (s *Server) dispatchJSONRPCNotification(ctx context.Context, frame jsonrpcFrame) {
-	handlerRef, ok := s.jsonrpcNotifications[frame.Method]
-	if !ok {
-		// Unknown notifications are silently ignored per JSON-RPC 2.0.
-		return
-	}
-	params, perr := decodeParams(frame.Params)
-	if perr != nil {
-		Log.Debug("JSON-RPC notification params decode error", "name", frame.Method, "error", perr)
-		return
-	}
-	result := s.runJSONRPCHandler(handlerRef, params)
-	if errObj, ok := result.(*object.Error); ok {
-		Log.Debug("JSON-RPC notification handler error", "name", frame.Method, "error", errObj.Message)
-	}
-	if exObj, ok := result.(*object.Exception); ok {
-		Log.Debug("JSON-RPC notification handler exception", "name", frame.Method, "error", exObj.Message)
-	}
+	s.jsonrpcServerInstance().ServeHTTP(w, r)
 }
 
 // runJSONRPCHandler imports the handler's library into a fresh evaluator and

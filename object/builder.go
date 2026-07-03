@@ -657,6 +657,13 @@ func convertObjectToValue(obj Object, targetType reflect.Type) (reflect.Value, O
 				return clientValue, nil
 			}
 		}
+		// A method parameter typed as a concrete scriptling Object pointer
+		// (e.g. *object.List, *object.Dict, *object.Instance) accepts the
+		// object directly when it already is that type — no conversion needed.
+		objValue := reflect.ValueOf(obj)
+		if objValue.Type().AssignableTo(targetType) {
+			return objValue, nil
+		}
 		return reflect.Value{}, newTypeError(targetType.String(), obj.Type().String())
 
 	default:

@@ -41,6 +41,15 @@ scriptling --server :8000 --mcp-tools examples/mcp-tools/tools --bearer-token yo
 scriptling --server :8443 --mcp-tools examples/mcp-tools/tools --tls-generate
 ```
 
+To serve the same tools over **stdio** instead of HTTP (for MCP hosts that
+launch a server as a subprocess), use `--mcp` without `--server`:
+
+```bash
+scriptling --mcp --mcp-tools examples/mcp-tools/tools
+```
+
+See [../mcp-stdio/](../mcp-stdio/) for the stdio server and client in detail.
+
 ## MCP Endpoint
 
 The MCP server is available at `/mcp`. This endpoint handles JSON-RPC 2.0 requests.

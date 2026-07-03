@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/paularlott/jsonrpc"
 	"github.com/paularlott/logger"
 	mcp_lib "github.com/paularlott/mcp"
 	"github.com/paularlott/scriptling"
@@ -71,10 +72,12 @@ type Server struct {
 	httpServer           *http.Server
 	mcpHandler           *reloadableMCPHandler
 	pluginServer         *scriptlingplugin.Server // non-nil when plugin mode is active
-	handlers             map[string]string         // path -> "library.function"
-	wsHandlers           map[string]string         // path -> "library.function" for WebSocket
-	jsonrpcMethods       map[string]string         // JSON-RPC method name -> "library.function"
-	jsonrpcNotifications map[string]string         // JSON-RPC notification name -> "library.function"
+	handlers             map[string]string        // path -> "library.function"
+	wsHandlers           map[string]string        // path -> "library.function" for WebSocket
+	jsonrpcMethods       map[string]string        // JSON-RPC method name -> "library.function"
+	jsonrpcNotifications map[string]string        // JSON-RPC notification name -> "library.function"
+	jsonrpcServer        *jsonrpc.Server          // built lazily from the maps above
+	jsonrpcServerOnce    sync.Once
 	middleware           string
 	notFoundHandler      string
 	staticRoutes         map[string]string
@@ -83,7 +86,7 @@ type Server struct {
 	watcher              *fsnotify.Watcher
 	reloadDebounce       *time.Timer
 	debounceDuration     time.Duration
-	packLoader           *pack.Loader // nil if no packages configured
-	bearerExpected       string       // precomputed "Bearer <token>"
+	packLoader           *pack.Loader  // nil if no packages configured
+	bearerExpected       string        // precomputed "Bearer <token>"
 	scriptDone           chan struct{} // closed when setup script goroutine exits
 }
