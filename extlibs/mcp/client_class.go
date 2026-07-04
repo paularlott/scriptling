@@ -153,6 +153,61 @@ Example:
       print("Error:", r.error)
     else:
       print(r.name, r.result)`).
+		MethodWithHelp("list_resources", listResourcesMethod, `list_resources() - List resources exposed by the server
+
+Returns:
+  list: List of resource dicts with uri, name, description, mimeType
+
+Example:
+  for res in client.list_resources():
+    print(res.uri, res.name)`).
+		MethodWithHelp("list_resource_templates", listResourceTemplatesMethod, `list_resource_templates() - List resource templates exposed by the server
+
+Resource templates have a {var} URI the client expands before reading.
+
+Returns:
+  list: List of dicts with uriTemplate, name, description, mimeType
+
+Example:
+  for t in client.list_resource_templates():
+    print(t.uriTemplate, t.name)`).
+		MethodWithHelp("read_resource", readResourceMethod, `read_resource(uri) - Read a resource by URI
+
+Reads a resource (static or expanded from a template) and returns its contents.
+
+Parameters:
+  uri (str): The resource URI to read
+
+Returns:
+  dict | list: A content dict (uri, mimeType, text/blob), or a list of them
+
+Example:
+  data = client.read_resource("config://app")
+  print(data.text)`).
+		MethodWithHelp("list_prompts", listPromptsMethod, `list_prompts() - List prompts exposed by the server
+
+Returns:
+  list: List of prompt dicts with name, description, arguments
+
+Example:
+  for p in client.list_prompts():
+    print(p.name, p.description)`).
+		MethodWithHelp("get_prompt", getPromptMethod, `get_prompt(name, arguments) - Render a prompt by name
+
+Renders a prompt template with the given arguments into messages for the model.
+Prompt arguments are always strings; non-string values are coerced.
+
+Parameters:
+  name (str): Prompt name
+  arguments (dict): Argument values
+
+Returns:
+  dict: {description, messages: [{role, content}]}
+
+Example:
+  out = client.get_prompt("review_code", {"language": "go", "code": "fmt.Println()"})
+  for m in out.messages:
+    print(m.role, m.content)`).
 		Build()
 }
 

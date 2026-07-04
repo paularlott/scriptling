@@ -157,6 +157,20 @@ func main() {
 				ConfigPath: []string{"mcp.exec_script"},
 			},
 			&cli.StringFlag{
+				Name:         "mcp-resources",
+				Usage:        "Expose MCP resources (and resource templates) from this directory (one .toml + .py per resource)",
+				DefaultValue: "",
+				EnvVars:      []string{"SCRIPTLING_MCP_RESOURCES"},
+				ConfigPath:   []string{"mcp.resources"},
+			},
+			&cli.StringFlag{
+				Name:         "mcp-prompts",
+				Usage:        "Expose MCP prompts from this directory (one .toml + .py per prompt)",
+				DefaultValue: "",
+				EnvVars:      []string{"SCRIPTLING_MCP_PROMPTS"},
+				ConfigPath:   []string{"mcp.prompts"},
+			},
+			&cli.StringFlag{
 				Name:         "bearer-token",
 				Usage:        "Bearer token for authentication",
 				DefaultValue: "",
@@ -260,7 +274,7 @@ func main() {
 			// as the protocol stream, so logs must go to stderr to avoid
 			// corrupting responses.
 			logWriter := os.Stdout
-			mcpStdio := (cmd.GetString("mcp-tools") != "" || cmd.GetBool("mcp-exec-script")) && cmd.GetString("server") == ""
+			mcpStdio := (cmd.GetString("mcp-tools") != "" || cmd.GetString("mcp-resources") != "" || cmd.GetString("mcp-prompts") != "" || cmd.GetBool("mcp-exec-script")) && cmd.GetString("server") == ""
 			if cmd.GetBool("json-rpc") || mcpStdio {
 				logWriter = os.Stderr
 			}
@@ -296,8 +310,8 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 		return runJSONRPCServer(ctx, cmd)
 	}
 
-	// MCP over stdio: enabled by the MCP tool flags when no HTTP --server is set.
-	if cmd.GetString("mcp-tools") != "" || cmd.GetBool("mcp-exec-script") {
+	// MCP over stdio: enabled by the MCP flags when no HTTP --server is set.
+	if cmd.GetString("mcp-tools") != "" || cmd.GetString("mcp-resources") != "" || cmd.GetString("mcp-prompts") != "" || cmd.GetBool("mcp-exec-script") {
 		return runMCPStdioServer(ctx, cmd)
 	}
 
@@ -411,28 +425,30 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 	}
 	defer pluginManager.Close()
 	return server.RunServer(ctx, server.ServerConfig{
-		Address:        address,
-		ScriptFile:     file,
-		LibDirs:        bootstrap.BuildLibDirs(baseDir, cmd.GetStringSlice("libpath")),
-		Packages:       cmd.GetStringSlice("package"),
-		Insecure:       cmd.GetBool("insecure"),
-		CacheDir:       cmd.GetString("cache-dir"),
-		BearerToken:    cmd.GetString("bearer-token"),
-		AllowedPaths:   bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths")),
-		DisabledLibs:   cmd.GetStringSlice("disable-lib"),
-		PluginDirs:     cmd.GetStringSlice("plugin-dir"),
-		PluginManager:  pluginManager,
-		MCPToolsDir:    cmd.GetString("mcp-tools"),
-		MCPExecTool:    cmd.GetBool("mcp-exec-script"),
-		JSONRPC:        cmd.GetBool("json-rpc"),
-		KVStoragePath:  cmd.GetString("kv-storage"),
-		WebRoot:        cmd.GetString("web-root"),
-		SecretRegistry: secretRegistry,
-		DockerSock:     cmd.GetString("docker-host"),
-		PodmanSock:     cmd.GetString("podman-host"),
-		TLSCert:        cmd.GetString("tls-cert"),
-		TLSKey:         cmd.GetString("tls-key"),
-		TLSGenerate:    cmd.GetBool("tls-generate"),
+		Address:         address,
+		ScriptFile:      file,
+		LibDirs:         bootstrap.BuildLibDirs(baseDir, cmd.GetStringSlice("libpath")),
+		Packages:        cmd.GetStringSlice("package"),
+		Insecure:        cmd.GetBool("insecure"),
+		CacheDir:        cmd.GetString("cache-dir"),
+		BearerToken:     cmd.GetString("bearer-token"),
+		AllowedPaths:    bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths")),
+		DisabledLibs:    cmd.GetStringSlice("disable-lib"),
+		PluginDirs:      cmd.GetStringSlice("plugin-dir"),
+		PluginManager:   pluginManager,
+		MCPToolsDir:     cmd.GetString("mcp-tools"),
+		MCPResourcesDir: cmd.GetString("mcp-resources"),
+		MCPPromptsDir:   cmd.GetString("mcp-prompts"),
+		MCPExecTool:     cmd.GetBool("mcp-exec-script"),
+		JSONRPC:         cmd.GetBool("json-rpc"),
+		KVStoragePath:   cmd.GetString("kv-storage"),
+		WebRoot:         cmd.GetString("web-root"),
+		SecretRegistry:  secretRegistry,
+		DockerSock:      cmd.GetString("docker-host"),
+		PodmanSock:      cmd.GetString("podman-host"),
+		TLSCert:         cmd.GetString("tls-cert"),
+		TLSKey:          cmd.GetString("tls-key"),
+		TLSGenerate:     cmd.GetBool("tls-generate"),
 	})
 }
 
@@ -484,21 +500,23 @@ func runMCPStdioServer(ctx context.Context, cmd *cli.Command) error {
 	}
 	defer pluginManager.Close()
 	return server.RunMCPStdioServer(ctx, server.ServerConfig{
-		ScriptFile:     file,
-		LibDirs:        bootstrap.BuildLibDirs(baseDir, cmd.GetStringSlice("libpath")),
-		Packages:       cmd.GetStringSlice("package"),
-		Insecure:       cmd.GetBool("insecure"),
-		CacheDir:       cmd.GetString("cache-dir"),
-		AllowedPaths:   bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths")),
-		DisabledLibs:   cmd.GetStringSlice("disable-lib"),
-		PluginDirs:     cmd.GetStringSlice("plugin-dir"),
-		PluginManager:  pluginManager,
-		MCPToolsDir:    cmd.GetString("mcp-tools"),
-		MCPExecTool:    cmd.GetBool("mcp-exec-script"),
-		KVStoragePath:  cmd.GetString("kv-storage"),
-		SecretRegistry: secretRegistry,
-		DockerSock:     cmd.GetString("docker-host"),
-		PodmanSock:     cmd.GetString("podman-host"),
+		ScriptFile:      file,
+		LibDirs:         bootstrap.BuildLibDirs(baseDir, cmd.GetStringSlice("libpath")),
+		Packages:        cmd.GetStringSlice("package"),
+		Insecure:        cmd.GetBool("insecure"),
+		CacheDir:        cmd.GetString("cache-dir"),
+		AllowedPaths:    bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths")),
+		DisabledLibs:    cmd.GetStringSlice("disable-lib"),
+		PluginDirs:      cmd.GetStringSlice("plugin-dir"),
+		PluginManager:   pluginManager,
+		MCPToolsDir:     cmd.GetString("mcp-tools"),
+		MCPResourcesDir: cmd.GetString("mcp-resources"),
+		MCPPromptsDir:   cmd.GetString("mcp-prompts"),
+		MCPExecTool:     cmd.GetBool("mcp-exec-script"),
+		KVStoragePath:   cmd.GetString("kv-storage"),
+		SecretRegistry:  secretRegistry,
+		DockerSock:      cmd.GetString("docker-host"),
+		PodmanSock:      cmd.GetString("podman-host"),
 	})
 }
 

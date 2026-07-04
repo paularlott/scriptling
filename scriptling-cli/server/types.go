@@ -21,28 +21,30 @@ var Log logger.Logger = logger.NewNullLogger()
 
 // ServerConfig holds the configuration for the HTTP server
 type ServerConfig struct {
-	Address        string
-	ScriptFile     string
-	LibDirs        []string
-	Packages       []string // Package (.zip) paths or URLs
-	Insecure       bool     // Allow self-signed HTTPS for package URLs
-	CacheDir       string   // Override default OS cache dir for remote packages
-	BearerToken    string
-	AllowedPaths   []string // Filesystem path restrictions (empty = no restrictions)
-	DisabledLibs   []string // Built-in libraries to disable (empty = all enabled)
-	PluginDirs     []string
-	PluginManager  *scriptlingplugin.Manager
-	MCPToolsDir    string // Empty means MCP disabled
-	MCPExecTool    bool   // Enable code execution tool
-	JSONRPC        bool   // Mount JSON-RPC over HTTP at /json-rpc
-	KVStoragePath  string // Empty means in-memory KV store
-	WebRoot        string // Directory to serve static files from (empty = disabled)
-	SecretRegistry *secretprovider.Registry
-	DockerSock     string
-	PodmanSock     string
-	TLSCert        string
-	TLSKey         string
-	TLSGenerate    bool
+	Address         string
+	ScriptFile      string
+	LibDirs         []string
+	Packages        []string // Package (.zip) paths or URLs
+	Insecure        bool     // Allow self-signed HTTPS for package URLs
+	CacheDir        string   // Override default OS cache dir for remote packages
+	BearerToken     string
+	AllowedPaths    []string // Filesystem path restrictions (empty = no restrictions)
+	DisabledLibs    []string // Built-in libraries to disable (empty = all enabled)
+	PluginDirs      []string
+	PluginManager   *scriptlingplugin.Manager
+	MCPToolsDir     string // Empty means MCP disabled
+	MCPResourcesDir string // Folder of resource .toml/.py pairs (empty = none)
+	MCPPromptsDir   string // Folder of prompt .toml/.py pairs (empty = none)
+	MCPExecTool     bool   // Enable code execution tool
+	JSONRPC         bool   // Mount JSON-RPC over HTTP at /json-rpc
+	KVStoragePath   string // Empty means in-memory KV store
+	WebRoot         string // Directory to serve static files from (empty = disabled)
+	SecretRegistry  *secretprovider.Registry
+	DockerSock      string
+	PodmanSock      string
+	TLSCert         string
+	TLSKey          string
+	TLSGenerate     bool
 
 	// ExtraLibs, if set, registers additional libraries on every evaluator
 	// after the standard library set — the setup script and every json-rpc,
@@ -68,25 +70,29 @@ func (h *reloadableMCPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 
 // Server represents the HTTP server
 type Server struct {
-	config               ServerConfig
-	httpServer           *http.Server
-	mcpHandler           *reloadableMCPHandler
-	pluginServer         *scriptlingplugin.Server // non-nil when plugin mode is active
-	handlers             map[string]string        // path -> "library.function"
-	wsHandlers           map[string]string        // path -> "library.function" for WebSocket
-	jsonrpcMethods       map[string]string        // JSON-RPC method name -> "library.function"
-	jsonrpcNotifications map[string]string        // JSON-RPC notification name -> "library.function"
-	jsonrpcServer        *jsonrpc.Server          // built lazily from the maps above
-	jsonrpcServerOnce    sync.Once
-	middleware           string
-	notFoundHandler      string
-	staticRoutes         map[string]string
-	webRootZip           *zip.ReadCloser // non-nil when WebRoot is a .zip file
-	mu                   sync.RWMutex
-	watcher              *fsnotify.Watcher
-	reloadDebounce       *time.Timer
-	debounceDuration     time.Duration
-	packLoader           *pack.Loader  // nil if no packages configured
-	bearerExpected       string        // precomputed "Bearer <token>"
-	scriptDone           chan struct{} // closed when setup script goroutine exits
+	config                ServerConfig
+	httpServer            *http.Server
+	mcpHandler            *reloadableMCPHandler
+	pluginServer          *scriptlingplugin.Server // non-nil when plugin mode is active
+	handlers              map[string]string        // path -> "library.function"
+	wsHandlers            map[string]string        // path -> "library.function" for WebSocket
+	jsonrpcMethods        map[string]string        // JSON-RPC method name -> "library.function"
+	jsonrpcNotifications  map[string]string        // JSON-RPC notification name -> "library.function"
+	jsonrpcServer         *jsonrpc.Server          // built lazily from the maps above
+	jsonrpcServerOnce     sync.Once
+	middleware            string
+	notFoundHandler       string
+	staticRoutes          map[string]string
+	webRootZip            *zip.ReadCloser // non-nil when WebRoot is a .zip file
+	mu                    sync.RWMutex
+	watcher               *fsnotify.Watcher
+	reloadDebounce        *time.Timer
+	debounceDuration      time.Duration
+	mcpFolderToolNames    []string      // folder-sourced tool names, so reload can unregister them
+	mcpFolderResourceKeys []string      // folder-sourced static resource URIs
+	mcpFolderTemplateKeys []string      // folder-sourced resource template URI templates
+	mcpFolderPromptNames  []string      // folder-sourced prompt names
+	packLoader            *pack.Loader  // nil if no packages configured
+	bearerExpected        string        // precomputed "Bearer <token>"
+	scriptDone            chan struct{} // closed when setup script goroutine exits
 }
