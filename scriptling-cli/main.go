@@ -124,7 +124,7 @@ func main() {
 			},
 			&cli.StringFlag{
 				Name:         "log-format",
-				Usage:        "Log format (console|json)",
+				Usage:        "Log format (console|json|null)",
 				DefaultValue: "console",
 				Global:       true,
 				EnvVars:      []string{"SCRIPTLING_LOG_FORMAT"},
@@ -278,11 +278,16 @@ func main() {
 			if cmd.GetBool("json-rpc") || mcpStdio {
 				logWriter = os.Stderr
 			}
-			globalLogger = logslog.New(logslog.Config{
-				Level:  cmd.GetString("log-level"),
-				Format: cmd.GetString("log-format"),
-				Writer: logWriter,
-			})
+			format := cmd.GetString("log-format")
+			if format == "null" {
+				globalLogger = logger.NewNullLogger()
+			} else {
+				globalLogger = logslog.New(logslog.Config{
+					Level:  cmd.GetString("log-level"),
+					Format: format,
+					Writer: logWriter,
+				})
+			}
 			server.Log = globalLogger
 			return ctx, nil
 		},
