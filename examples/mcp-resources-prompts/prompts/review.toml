@@ -1,0 +1,13 @@
+description = "Ask the model to review code"
+
+[[arguments]]
+name = "code"
+type = "string"
+description = "The code to review"
+required = true
+
+[[arguments]]
+name = "language"
+type = "string"
+description = "Programming language (default: auto-detect)"
+required = false

@@ -1,0 +1,8 @@
+description = "Generate a personalized greeting"
+keywords = ["hello", "greet"]
+
+[[parameters]]
+name = "name"
+type = "string"
+description = "Name to greet"
+required = true

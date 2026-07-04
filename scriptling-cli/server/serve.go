@@ -58,7 +58,7 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 						eventCopy := event
 						server.reloadDebounce = time.AfterFunc(server.debounceDuration, func() {
 							Log.Debug("Tool file changed", "event", eventCopy.Op.String(), "file", filepath.Base(eventCopy.Name))
-							server.reloadMCPTools()
+							server.reloadMCP()
 						})
 					}
 				case err, ok := <-server.watcher.Errors:
@@ -76,7 +76,7 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 	// Handle reload signals
 	if sysSig, ok := sig.(syscall.Signal); ok && isReloadSignal(sysSig) {
 		if config.MCPToolsDir != "" {
-			server.reloadMCPTools()
+			server.reloadMCP()
 		}
 		// Continue waiting for shutdown signal
 		sig = <-sigChan
