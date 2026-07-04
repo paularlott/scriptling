@@ -168,12 +168,12 @@ func (s *Server) registerFolderResources(server *mcp_lib.Server) (staticKeys, te
 	}
 	for _, e := range entries {
 		if e.Template {
-			handler, err := createMCPResourceScriptHandler(e.FilePath, s.config.LibDirs, s.config.AllowedPaths, s.config.DisabledLibs, s.config.SecretRegistry, s.packLoader, s.config.PluginManager, "")
+			handler, err := createMCPResourceScriptHandler(e.FilePath, s.config.LibDirs, s.config.AllowedPaths, s.config.DisabledLibs, s.config.SecretRegistry, s.packLoader, s.config.PluginManager, e.MimeType)
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to load resource template %s: %w", e.URI, err)
 			}
 			server.RegisterResourceTemplate(
-				mcp_lib.NewResourceTemplate(e.URI, e.Name, "", e.MimeType),
+				mcp_lib.NewResourceTemplate(e.URI, e.Name, e.Description, e.MimeType),
 				handler,
 			)
 			templateKeys = append(templateKeys, e.URI)
@@ -181,7 +181,7 @@ func (s *Server) registerFolderResources(server *mcp_lib.Server) (staticKeys, te
 		} else {
 			handler := createStaticResourceHandler(e.FilePath, e.URI, e.MimeType)
 			server.RegisterResource(
-				mcp_lib.NewResource(e.URI, e.Name, "", e.MimeType),
+				mcp_lib.NewResource(e.URI, e.Name, e.Description, e.MimeType),
 				handler,
 			)
 			staticKeys = append(staticKeys, e.URI)
@@ -404,23 +404,9 @@ func promptContentFromAny(v any) mcp_lib.PromptMessageContent {
 	}
 }
 
-// registerMCPResources exposes Scriptling-specific resources: server metadata
-// and the source of each tool script (via a template).
+// registerMCPResources exposes the source of each tool script as a resource
+// template, so clients can read tool source code by name.
 func (s *Server) registerMCPResources(server *mcp_lib.Server) {
-	// Static server info resource.
-	server.RegisterResource(
-		mcp_lib.NewResource("scriptling://server", "Scriptling Server", "Server metadata", "application/json"),
-		func(ctx context.Context, req *mcp_lib.ResourceRequest) (*mcp_lib.ResourceResponse, error) {
-			info := map[string]any{
-				"name":      "scriptling-server",
-				"version":   "1.0.0",
-				"tools_dir": s.config.MCPToolsDir,
-			}
-			data, _ := json.Marshal(info)
-			return mcp_lib.NewResourceResponseText(req.URI(), string(data), "application/json"), nil
-		},
-	)
-
 	// Tool source template: scriptling://script/{name} -> the tool's .py source.
 	if s.config.MCPToolsDir != "" {
 		server.RegisterResourceTemplate(
