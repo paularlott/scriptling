@@ -8,11 +8,17 @@ import (
 
 	mcp_lib "github.com/paularlott/mcp"
 	"github.com/paularlott/scriptling/extlibs/secretprovider"
-	"github.com/paularlott/scriptling/scriptling-cli/bootstrap"
+	mcpcli "github.com/paularlott/scriptling/scriptling-cli/mcp"
 	"github.com/paularlott/scriptling/scriptling-cli/pack"
+	"github.com/paularlott/scriptling/scriptling-cli/bootstrap"
 )
 
-func TestCreateMCPToolHandlerLoadsLocalAndPackLibraries(t *testing.T) {
+// TestBuildToolHandlerPassesThroughServerPackLoader verifies that the server's
+// handlerConfig() plumbs the pack loader (and the local tools dir on the search
+// path) into the shared BuildToolHandler factory. This is the server-package
+// regression test for the refactor that moved tool/resource/prompt handler
+// factories into scriptling-cli/mcp.
+func TestBuildToolHandlerPassesThroughServerPackLoader(t *testing.T) {
 	toolsDir := t.TempDir()
 	packSrcDir := t.TempDir()
 
@@ -53,7 +59,15 @@ tool.return_string(localmod.value() + "+" + packmod.value())
 		t.Fatal(err)
 	}
 
-	handler, err := createMCPToolHandler(scriptPath, nil, nil, nil, secretprovider.NewRegistry(), packLoader, nil)
+	s := &Server{
+		config: ServerConfig{
+			LibDirs:        nil,
+			SecretRegistry: secretprovider.NewRegistry(),
+		},
+		packLoader: packLoader,
+	}
+
+	handler, err := mcpcli.BuildToolHandler(scriptPath, s.handlerConfig())
 	if err != nil {
 		t.Fatal(err)
 	}

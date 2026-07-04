@@ -2,25 +2,18 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/fsnotify/fsnotify"
 	mcp_lib "github.com/paularlott/mcp"
 	"github.com/paularlott/mcp/toolmetadata"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs/mcp"
-	"github.com/paularlott/scriptling/extlibs/secretprovider"
-	scriptlingplugin "github.com/paularlott/scriptling/plugin"
-	"github.com/paularlott/scriptling/scriptling-cli/bootstrap"
 	mcpcli "github.com/paularlott/scriptling/scriptling-cli/mcp"
-	"github.com/paularlott/scriptling/scriptling-cli/pack"
-	"github.com/paularlott/scriptling/scriptling-cli/setup"
 )
 
 // setupMCP initializes the MCP server if configured
@@ -115,6 +108,22 @@ func (s *Server) createMCPServer() (*mcp_lib.Server, error) {
 	return server, nil
 }
 
+// handlerConfig builds the shared HandlerConfig used by every folder-sourced
+// tool/resource/prompt handler. It does NOT include ExtraLibs — those are only
+// applied to in-process handlers (execute_script, setup script, json-rpc, http,
+// websocket) via s.setupScriptling. Folder handlers run scripts in isolated
+// per-call interpreters that mirror the pre-refactor wiring.
+func (s *Server) handlerConfig() mcpcli.HandlerConfig {
+	return mcpcli.NewHandlerConfig(s.config.LibDirs,
+		mcpcli.WithAllowedPaths(s.config.AllowedPaths),
+		mcpcli.WithDisabledLibs(s.config.DisabledLibs),
+		mcpcli.WithSecrets(s.config.SecretRegistry),
+		mcpcli.WithLogger(Log),
+		mcpcli.WithPackLoader(s.packLoader),
+		mcpcli.WithPlugins(s.config.PluginManager),
+	)
+}
+
 // registerFolderTools scans the tools folder and registers every tool on
 // server, returning the registered tool names so reload can later unregister
 // them. Tools whose script is missing are skipped with a warning.
@@ -127,6 +136,7 @@ func (s *Server) registerFolderTools(server *mcp_lib.Server) ([]string, error) {
 		return nil, err
 	}
 
+	cfg := s.handlerConfig()
 	var names []string
 	for toolName, meta := range tools {
 		scriptPath := filepath.Join(s.config.MCPToolsDir, toolName+".py")
@@ -140,7 +150,7 @@ func (s *Server) registerFolderTools(server *mcp_lib.Server) ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to build tool %s: %w", toolName, err)
 		}
-		handler, err := createMCPToolHandler(scriptPath, s.config.LibDirs, s.config.AllowedPaths, s.config.DisabledLibs, s.config.SecretRegistry, s.packLoader, s.config.PluginManager)
+		handler, err := mcpcli.BuildToolHandler(scriptPath, cfg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load tool %s: %w", toolName, err)
 		}
@@ -166,9 +176,10 @@ func (s *Server) registerFolderResources(server *mcp_lib.Server) (staticKeys, te
 	if err != nil {
 		return nil, nil, err
 	}
+	cfg := s.handlerConfig()
 	for _, e := range entries {
 		if e.Template {
-			handler, err := createMCPResourceScriptHandler(e.FilePath, s.config.LibDirs, s.config.AllowedPaths, s.config.DisabledLibs, s.config.SecretRegistry, s.packLoader, s.config.PluginManager, e.MimeType)
+			handler, err := mcpcli.BuildResourceScriptHandler(e.FilePath, e.MimeType, cfg)
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to load resource template %s: %w", e.URI, err)
 			}
@@ -179,7 +190,7 @@ func (s *Server) registerFolderResources(server *mcp_lib.Server) (staticKeys, te
 			templateKeys = append(templateKeys, e.URI)
 			Log.Info("Registered MCP resource template", "uri", e.URI)
 		} else {
-			handler := createStaticResourceHandler(e.FilePath, e.URI, e.MimeType)
+			handler := mcpcli.BuildStaticResourceHandler(e.FilePath, e.URI, e.MimeType)
 			server.RegisterResource(
 				mcp_lib.NewResource(e.URI, e.Name, e.Description, e.MimeType),
 				handler,
@@ -191,30 +202,6 @@ func (s *Server) registerFolderResources(server *mcp_lib.Server) (staticKeys, te
 	return staticKeys, templateKeys, nil
 }
 
-// createStaticResourceHandler serves a file verbatim: text content for UTF-8
-// files, base64 blob otherwise. The file is read on every read so content is
-// always current.
-func createStaticResourceHandler(filePath, uri, mimeType string) mcp_lib.ResourceHandler {
-	return func(ctx context.Context, req *mcp_lib.ResourceRequest) (*mcp_lib.ResourceResponse, error) {
-		data, err := os.ReadFile(filePath)
-		if err != nil {
-			return nil, mcp_lib.NewToolErrorInternal(fmt.Sprintf("failed to read resource: %v", err))
-		}
-		if utf8.Valid(data) {
-			mime := mimeType
-			if mime == "" {
-				mime = "text/plain"
-			}
-			return mcp_lib.NewResourceResponseText(uri, string(data), mime), nil
-		}
-		mime := mimeType
-		if mime == "" {
-			mime = "application/octet-stream"
-		}
-		return mcp_lib.NewResourceResponseBlob(uri, data, mime), nil
-	}
-}
-
 // registerFolderPrompts scans the prompts folder and registers every prompt.
 // A name.toml + name.py pair is a dynamic prompt (args declared in the toml);
 // a lone name.md/name.txt is a static prompt (single user message = file
@@ -224,13 +211,14 @@ func (s *Server) registerFolderPrompts(server *mcp_lib.Server) ([]string, error)
 	if err != nil {
 		return nil, err
 	}
+	cfg := s.handlerConfig()
 	var names []string
 	for _, e := range entries {
 		var handler mcp_lib.PromptHandler
 		if e.Static {
-			handler = createStaticPromptHandler(e.FilePath)
+			handler = mcpcli.BuildStaticPromptHandler(e.FilePath)
 		} else {
-			h, err := createMCPPromptScriptHandler(e.FilePath, s.config.LibDirs, s.config.AllowedPaths, s.config.DisabledLibs, s.config.SecretRegistry, s.packLoader, s.config.PluginManager)
+			h, err := mcpcli.BuildPromptScriptHandler(e.FilePath, cfg)
 			if err != nil {
 				return nil, fmt.Errorf("failed to load prompt %s: %w", e.Name, err)
 			}
@@ -249,159 +237,6 @@ func (s *Server) registerFolderPrompts(server *mcp_lib.Server) ([]string, error)
 		Log.Info("Registered MCP prompt", "prompt", e.Name, "mode", mode, "args", len(e.Arguments))
 	}
 	return names, nil
-}
-
-// createStaticPromptHandler returns a prompt whose single user message is the
-// file's content (read fresh each call).
-func createStaticPromptHandler(filePath string) mcp_lib.PromptHandler {
-	return func(ctx context.Context, req *mcp_lib.PromptRequest) (*mcp_lib.PromptResponse, error) {
-		data, err := os.ReadFile(filePath)
-		if err != nil {
-			return nil, mcp_lib.NewToolErrorInternal(fmt.Sprintf("failed to read prompt: %v", err))
-		}
-		return mcp_lib.NewPromptResponseText(string(data)), nil
-	}
-}
-
-// createMCPResourceScriptHandler builds a ResourceHandler that runs a Scriptling
-// script. The script receives the request URI as "__uri" and any template
-// variables as parameters (read via mcp.tool.get_string), and returns the
-// resource content via mcp.tool.return_string / return_object.
-func createMCPResourceScriptHandler(scriptPath string, libDirs []string, allowedPaths []string, disabledLibs []string, secretRegistry *secretprovider.Registry, packLoader *pack.Loader, pluginManager *scriptlingplugin.Manager, mimeType string) (mcp_lib.ResourceHandler, error) {
-	script, err := os.ReadFile(scriptPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read script %s: %w", scriptPath, err)
-	}
-	scriptDir := filepath.Dir(scriptPath)
-	toolLibDirs := append([]string{scriptDir}, libDirs...)
-	return func(ctx context.Context, req *mcp_lib.ResourceRequest) (*mcp_lib.ResourceResponse, error) {
-		p := scriptling.New()
-		setup.Scriptling(p, toolLibDirs, false, allowedPaths, disabledLibs, secretRegistry, Log, "", "")
-		if pluginManager != nil {
-			scriptlingplugin.RegisterLibraries(p, pluginManager)
-		}
-		bootstrap.ApplyPackLoader(p, packLoader)
-
-		params := map[string]any{"__uri": req.URI()}
-		for k, v := range req.Vars() {
-			params[k] = v
-		}
-		response, exitCode, err := mcp.RunToolScript(ctx, p, string(script), params)
-		if response != "" {
-			if exitCode != 0 {
-				return nil, mcp_lib.NewToolErrorInternal(response)
-			}
-			return mcp_lib.NewResourceResponseText(req.URI(), response, mimeType), nil
-		}
-		if err != nil {
-			return nil, fmt.Errorf("resource script failed: %w", err)
-		}
-		return mcp_lib.NewResourceResponseText(req.URI(), "", mimeType), nil
-	}, nil
-}
-
-// createMCPPromptScriptHandler builds a PromptHandler that runs a Scriptling
-// script. The script receives the prompt arguments as parameters and returns
-// messages via mcp.tool.return_object({"messages": [{"role": ..., "content": ...}]})
-// (a bare string is treated as a single user message).
-func createMCPPromptScriptHandler(scriptPath string, libDirs []string, allowedPaths []string, disabledLibs []string, secretRegistry *secretprovider.Registry, packLoader *pack.Loader, pluginManager *scriptlingplugin.Manager) (mcp_lib.PromptHandler, error) {
-	script, err := os.ReadFile(scriptPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read script %s: %w", scriptPath, err)
-	}
-	scriptDir := filepath.Dir(scriptPath)
-	toolLibDirs := append([]string{scriptDir}, libDirs...)
-	return func(ctx context.Context, req *mcp_lib.PromptRequest) (*mcp_lib.PromptResponse, error) {
-		p := scriptling.New()
-		setup.Scriptling(p, toolLibDirs, false, allowedPaths, disabledLibs, secretRegistry, Log, "", "")
-		if pluginManager != nil {
-			scriptlingplugin.RegisterLibraries(p, pluginManager)
-		}
-		bootstrap.ApplyPackLoader(p, packLoader)
-
-		params := map[string]any{}
-		for k, v := range req.Args() {
-			params[k] = v
-		}
-		response, exitCode, err := mcp.RunToolScript(ctx, p, string(script), params)
-		if exitCode != 0 && err != nil {
-			return nil, fmt.Errorf("prompt script failed: %w", err)
-		}
-		return decodePromptScriptResponse(response), nil
-	}, nil
-}
-
-// decodePromptScriptResponse interprets a prompt script's return value into a
-// PromptResponse. Accepted shapes: a JSON object {"description":..., "messages":
-// [{"role","content"}]}, a JSON array of messages, or a plain string (single
-// user message).
-func decodePromptScriptResponse(response string) *mcp_lib.PromptResponse {
-	trimmed := strings.TrimSpace(response)
-	if trimmed == "" {
-		return mcp_lib.NewPromptResponseMessages()
-	}
-	var raw any
-	if err := json.Unmarshal([]byte(trimmed), &raw); err == nil {
-		switch v := raw.(type) {
-		case map[string]any:
-			desc, _ := v["description"].(string)
-			msgs := promptMessagesFromAny(v["messages"])
-			if msgs == nil {
-				msgs = []mcp_lib.PromptMessage{}
-			}
-			return &mcp_lib.PromptResponse{Description: desc, Messages: msgs}
-		case []any:
-			msgs := promptMessagesFromAny(v)
-			if msgs == nil {
-				msgs = []mcp_lib.PromptMessage{}
-			}
-			return &mcp_lib.PromptResponse{Messages: msgs}
-		}
-	}
-	return mcp_lib.NewPromptResponseText(response)
-}
-
-// promptMessagesFromAny converts a parsed JSON value (list of {role, content})
-// into PromptMessages. Returns nil if the value is not a message list.
-func promptMessagesFromAny(v any) []mcp_lib.PromptMessage {
-	list, ok := v.([]any)
-	if !ok {
-		return nil
-	}
-	var msgs []mcp_lib.PromptMessage
-	for _, elem := range list {
-		m, ok := elem.(map[string]any)
-		if !ok {
-			continue
-		}
-		role, _ := m["role"].(string)
-		if role == "" {
-			role = "user"
-		}
-		content := promptContentFromAny(m["content"])
-		msgs = append(msgs, mcp_lib.PromptMessage{Role: mcp_lib.PromptMessageRole(role), Content: content})
-	}
-	return msgs
-}
-
-// promptContentFromAny converts a message's "content" value into a
-// PromptMessageContent. Strings become text blocks; dicts are used as-is.
-func promptContentFromAny(v any) mcp_lib.PromptMessageContent {
-	switch c := v.(type) {
-	case string:
-		return mcp_lib.PromptMessageContent{Type: "text", Text: c}
-	case map[string]any:
-		typ, _ := c["type"].(string)
-		if typ == "" {
-			typ = "text"
-		}
-		text, _ := c["text"].(string)
-		data, _ := c["data"].(string)
-		mime, _ := c["mimeType"].(string)
-		return mcp_lib.PromptMessageContent{Type: typ, Text: text, Data: data, MimeType: mime}
-	default:
-		return mcp_lib.PromptMessageContent{Type: "text", Text: fmt.Sprintf("%v", v)}
-	}
 }
 
 // registerMCPResources exposes the source of each tool script as a resource
@@ -564,55 +399,4 @@ func (s *Server) reloadMCP() {
 	server.NotifyPromptsChanged()
 
 	Log.Info("MCP reloaded successfully")
-}
-
-// createMCPToolHandler creates a handler function for an MCP tool.
-// The script is read once at registration time; packLoader is already loaded
-// into memory at startup - no fetching happens per call.
-func createMCPToolHandler(scriptPath string, libDirs []string, allowedPaths []string, disabledLibs []string, secretRegistry *secretprovider.Registry, packLoader *pack.Loader, pluginManager *scriptlingplugin.Manager) (func(context.Context, *mcp_lib.ToolRequest) (*mcp_lib.ToolResponse, error), error) {
-	script, err := os.ReadFile(scriptPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read script %s: %w", scriptPath, err)
-	}
-
-	scriptDir := filepath.Dir(scriptPath)
-	toolLibDirs := append([]string{scriptDir}, libDirs...)
-
-	handler := func(ctx context.Context, req *mcp_lib.ToolRequest) (*mcp_lib.ToolResponse, error) {
-		params := req.Args()
-		Log.Trace("MCP tool invoked", "script", filepath.Base(scriptPath), "params", params)
-		p := scriptling.New()
-		setup.Scriptling(p, toolLibDirs, false, allowedPaths, disabledLibs, secretRegistry, Log, "", "")
-		if pluginManager != nil {
-			scriptlingplugin.RegisterLibraries(p, pluginManager)
-		}
-		bootstrap.ApplyPackLoader(p, packLoader)
-
-		response, exitCode, err := mcp.RunToolScript(ctx, p, string(script), params)
-
-		// If the script produced an explicit response (via return_error, return_string, etc.),
-		// return it to the client. return_error sets a response AND exits non-zero, so check
-		// for a response before treating non-zero exit as a failure.
-		if response != "" {
-			if exitCode != 0 {
-				Log.Debug("MCP tool returned error response", "script", filepath.Base(scriptPath), "exit_code", exitCode)
-				return nil, mcp_lib.NewToolErrorInternal(response)
-			}
-			Log.Trace("MCP tool completed", "script", filepath.Base(scriptPath), "response_len", len(response))
-			return mcp_lib.NewToolResponseText(response), nil
-		}
-
-		if err != nil {
-			Log.Debug("MCP tool failed", "script", filepath.Base(scriptPath), "error", err)
-			return nil, fmt.Errorf("script execution failed: %w", err)
-		}
-
-		if exitCode != 0 {
-			Log.Debug("MCP tool exited non-zero", "script", filepath.Base(scriptPath), "exit_code", exitCode)
-			return nil, fmt.Errorf("script exited with code %d", exitCode)
-		}
-
-		return mcp_lib.NewToolResponseText(""), nil
-	}
-	return handler, nil
 }
