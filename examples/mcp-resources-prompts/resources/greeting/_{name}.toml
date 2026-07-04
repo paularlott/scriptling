@@ -1,0 +1,3 @@
+name = "Greeting"
+description = "A personalized greeting for a name"
+mimeType = "text/plain"

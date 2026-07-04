@@ -33,12 +33,13 @@ func loadTOML(tomlPath, folder string) (*cli.ConfigFileTypedWrapper, error) {
 
 // scannedResource is one resource discovered in the resources tree.
 type scannedResource struct {
-	URI      string // full URI (static) or URI template
-	Name     string
-	MimeType string
-	Template bool
-	FilePath string // .py for templates; the content file for static
-	Vars     []string
+	URI         string // full URI (static) or URI template
+	Name        string
+	Description string
+	MimeType    string
+	Template    bool
+	FilePath    string // .py for templates; the content file for static
+	Vars        []string
 }
 
 // ScanResourcesTree walks a resources directory and returns every resource
@@ -50,9 +51,10 @@ func ScanResourcesTree(dir string) ([]scannedResource, error) {
 			return walkErr
 		}
 		if d.IsDir() {
-			if path == dir {
-				return nil
-			}
+			return nil
+		}
+		// Files starting with _ are metadata, never served as resources.
+		if strings.HasPrefix(d.Name(), "_") {
 			return nil
 		}
 		rel, err := filepath.Rel(dir, path)
@@ -85,23 +87,60 @@ func ScanResourcesTree(dir string) ([]scannedResource, error) {
 			// Template: strip the .py from the last segment to form the URI.
 			uriPath := append([]string{}, rest[:len(rest)-1]...)
 			uriPath = append(uriPath, stem)
+			uri := scheme + "://" + strings.Join(uriPath, "/")
+
+			// Load optional _{stem}.toml metadata sibling. If absent, fall back
+			// to the full URI as the name with no description.
+			name, desc, mime := uri, "", ""
+			if tomlPath := filepath.Join(filepath.Dir(path), "_"+stem+".toml"); fileExists(tomlPath) {
+				cfg, err := loadTOML(tomlPath, dir)
+				if err != nil {
+					return fmt.Errorf("failed to parse resource metadata %s: %w", tomlPath, err)
+				}
+				if v := cfg.GetString("name"); v != "" {
+					name = v
+				}
+				desc = cfg.GetString("description")
+				mime = cfg.GetString("mimeType")
+			}
+
 			out = append(out, scannedResource{
-				URI:      scheme + "://" + strings.Join(uriPath, "/"),
-				Name:     stem,
-				Template: true,
-				FilePath: path,
-				Vars:     extractTemplateVars(rest),
+				URI:         uri,
+				Name:        name,
+				Description: desc,
+				MimeType:    mime,
+				Template:    true,
+				FilePath:    path,
+				Vars:        extractTemplateVars(rest),
 			})
 		case hasVar && !isPy:
 			// A template pattern with no .py handler — nothing can serve it.
 			return nil
 		default:
 			// Static: keep the extension in the URI (e.g. readme.md).
+			uri := scheme + "://" + strings.Join(rest, "/")
+			name, desc := uri, ""
+			mime := mimeTypeForExt(ext)
+			// Load optional _{stem}.toml metadata sibling.
+			if tomlPath := filepath.Join(filepath.Dir(path), "_"+stem+".toml"); fileExists(tomlPath) {
+				cfg, err := loadTOML(tomlPath, dir)
+				if err != nil {
+					return fmt.Errorf("failed to parse resource metadata %s: %w", tomlPath, err)
+				}
+				if v := cfg.GetString("name"); v != "" {
+					name = v
+				}
+				desc = cfg.GetString("description")
+				if v := cfg.GetString("mimeType"); v != "" {
+					mime = v
+				}
+			}
 			out = append(out, scannedResource{
-				URI:      scheme + "://" + strings.Join(rest, "/"),
-				Name:     base,
-				MimeType: mimeTypeForExt(ext),
-				FilePath: path,
+				URI:         uri,
+				Name:        name,
+				Description: desc,
+				MimeType:    mime,
+				FilePath:    path,
 			})
 		}
 		return nil
@@ -119,6 +158,12 @@ func mimeTypeForExt(ext string) string {
 		return ""
 	}
 	return mime.TypeByExtension(ext)
+}
+
+// fileExists reports whether path exists and is not a directory.
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 // extractTemplateVars returns the {var} placeholder names found across the path
