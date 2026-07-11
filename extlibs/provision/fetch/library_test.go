@@ -3,15 +3,12 @@ package fetch
 import (
 	"archive/zip"
 	"bytes"
-	"context"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/paularlott/scriptling"
 )
@@ -510,33 +507,15 @@ except Exception as e:
 	}
 }
 
-func TestFetchURLWithCustomDefaultTransportDoesNotPanic(t *testing.T) {
-	oldTransport := http.DefaultTransport
-	http.DefaultTransport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
-		return &http.Response{
-			StatusCode:    http.StatusOK,
-			Status:        "200 OK",
-			Body:          io.NopCloser(strings.NewReader("custom")),
-			ContentLength: int64(len("custom")),
-			Header:        make(http.Header),
-			Request:       req,
-		}, nil
-	})
-	defer func() { http.DefaultTransport = oldTransport }()
+func TestFetchURLUsesSharedPoolTransports(t *testing.T) {
+	// insecure=false should use the shared pool's TLS-verified transport,
+	// insecure=true its separate TLS-skip-verify transport.
+	secure := fetchTransport(false)
+	insecure := fetchTransport(true)
 
-	data, err := fetchURL(context.Background(), "http://example.test/file", false, time.Second, 0)
-	if err != nil {
-		t.Fatalf("fetchURL failed: %v", err)
+	if secure == insecure {
+		t.Fatal("fetchTransport(false) and fetchTransport(true) returned the same transport")
 	}
-	if string(data) != "custom" {
-		t.Fatalf("data = %q, want custom", string(data))
-	}
-}
-
-type roundTripperFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
-	return f(req)
 }
 
 func makeZip(t *testing.T, files map[string]string) []byte {
@@ -618,7 +597,6 @@ func assertPerm(t *testing.T, path string, want os.FileMode) {
 		t.Fatalf("%s mode = %#o, want %#o", path, got, want)
 	}
 }
-
 
 func TestFetchProvidesSkipWhenAllExist(t *testing.T) {
 	tmp := t.TempDir()

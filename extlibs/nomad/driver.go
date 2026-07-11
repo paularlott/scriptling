@@ -5,7 +5,6 @@ package nomad
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/paularlott/scriptling/pool"
 )
 
 const (
@@ -33,6 +34,13 @@ type client struct {
 
 // newClient builds a client from an address, ACL token, TLS skip-verify flag,
 // and per-request timeout (0 = use DefaultTimeout).
+//
+// The underlying connection pool (transport) is shared via the scriptling
+// pool package, keeping the two entirely separate depending on
+// insecureSkipVerify: a Client() call that opts into skipping TLS
+// verification for its own Nomad cluster never affects the transport used by
+// TLS-verified clients (nomad or otherwise) elsewhere in the process. Only
+// the per-request timeout is customized per instance.
 func newClient(addr, token string, insecureSkipVerify bool, timeout time.Duration) *client {
 	if addr == "" {
 		addr = DefaultAddr
@@ -43,9 +51,11 @@ func newClient(addr, token string, insecureSkipVerify bool, timeout time.Duratio
 		timeout = DefaultTimeout
 	}
 
-	transport := &http.Transport{}
+	var transport http.RoundTripper
 	if insecureSkipVerify {
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // opt-in via kwarg
+		transport = pool.GetInsecureHTTPClient().Transport
+	} else {
+		transport = pool.GetHTTPClient().Transport
 	}
 
 	return &client{

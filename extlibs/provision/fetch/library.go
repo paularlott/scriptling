@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +16,7 @@ import (
 
 	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/object"
+	"github.com/paularlott/scriptling/pool"
 )
 
 const (
@@ -205,10 +205,9 @@ func fetchURL(ctx context.Context, rawURL string, insecure bool, timeout time.Du
 		return nil, fmt.Errorf("URL host is required")
 	}
 
-	transport := defaultTransport(insecure)
 	client := &http.Client{
 		Timeout:   timeout,
-		Transport: transport,
+		Transport: fetchTransport(insecure),
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
@@ -246,18 +245,16 @@ func fetchURL(ctx context.Context, rawURL string, insecure bool, timeout time.Du
 	return data, nil
 }
 
-func defaultTransport(insecure bool) http.RoundTripper {
-	if base, ok := http.DefaultTransport.(*http.Transport); ok {
-		transport := base.Clone()
-		if insecure {
-			transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-		}
-		return transport
-	}
+// fetchTransport returns the shared, pooled transport for this request:
+// scriptling's TLS-verified pool by default, or its entirely separate
+// TLS-skip-verify pool when insecure=True. Reusing the shared pool lets
+// repeated fetches to the same host reuse connections instead of each call
+// building its own throwaway transport.
+func fetchTransport(insecure bool) http.RoundTripper {
 	if insecure {
-		return &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+		return pool.GetInsecureHTTPClient().Transport
 	}
-	return http.DefaultTransport
+	return pool.GetHTTPClient().Transport
 }
 
 func writeFetchedFile(data []byte, dest string, mode, dirMode os.FileMode) (fetchResult, error) {
