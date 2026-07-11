@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 )
 
 // dockerClient talks to the Docker/Podman REST API over a Unix socket or TCP.
@@ -399,6 +400,40 @@ func (c *dockerClient) Stop(ctx context.Context, nameOrID string) error {
 		return nil
 	}
 	return fmt.Errorf("container stop failed (HTTP %d)", resp.StatusCode)
+}
+
+// WaitStopped implements ContainerDriver.
+func (c *dockerClient) WaitStopped(ctx context.Context, nameOrID string, timeout time.Duration) (bool, error) {
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	checkStopped := func() (stopped bool, err error) {
+		info, err := c.Inspect(ctx, nameOrID)
+		if err != nil {
+			// Container no longer exists: treat as stopped.
+			return true, nil
+		}
+		return !info.Running, nil
+	}
+
+	for {
+		stopped, err := checkStopped()
+		if err != nil {
+			return false, err
+		}
+		if stopped {
+			return true, nil
+		}
+		if time.Now().After(deadline) {
+			return false, nil
+		}
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 // Remove implements ContainerDriver.
