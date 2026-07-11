@@ -10,10 +10,6 @@ import (
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 
-	if cfg.InsecureSkipVerify {
-		t.Error("DefaultConfig() InsecureSkipVerify should be false")
-	}
-
 	if cfg.MaxIdleConns != 100 {
 		t.Errorf("DefaultConfig() MaxIdleConns = %d, want 100", cfg.MaxIdleConns)
 	}
@@ -34,10 +30,6 @@ func TestDefaultConfig(t *testing.T) {
 func TestGetConfig_Default(t *testing.T) {
 	cfg := GetConfig()
 
-	if cfg.InsecureSkipVerify {
-		t.Error("GetConfig() InsecureSkipVerify should be false by default")
-	}
-
 	if cfg.MaxIdleConns != 100 {
 		t.Errorf("GetConfig() MaxIdleConns = %d, want 100", cfg.MaxIdleConns)
 	}
@@ -49,7 +41,6 @@ func TestSetAndGetConfig(t *testing.T) {
 
 	// Set a custom config
 	customCfg := &Config{
-		InsecureSkipVerify:  true,
 		MaxIdleConns:        50,
 		MaxIdleConnsPerHost: 25,
 		IdleConnTimeout:     60 * time.Second,
@@ -59,9 +50,6 @@ func TestSetAndGetConfig(t *testing.T) {
 
 	// Verify GetConfig returns the custom config
 	gotCfg := GetConfig()
-	if gotCfg.InsecureSkipVerify != true {
-		t.Error("GetConfig() InsecureSkipVerify = false, want true")
-	}
 	if gotCfg.MaxIdleConns != 50 {
 		t.Errorf("GetConfig() MaxIdleConns = %d, want 50", gotCfg.MaxIdleConns)
 	}
@@ -81,7 +69,6 @@ func TestSetAndGetConfig(t *testing.T) {
 
 func TestGetConfig_Copy(t *testing.T) {
 	customCfg := &Config{
-		InsecureSkipVerify: false,
 		MaxIdleConns:        200,
 		MaxIdleConnsPerHost: 100,
 		IdleConnTimeout:     120 * time.Second,
@@ -115,41 +102,72 @@ func TestGetHTTPClient(t *testing.T) {
 	if client.Transport == nil {
 		t.Error("GetHTTPClient() Transport is nil")
 	}
+
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatal("GetHTTPClient() Transport is not *http.Transport")
+	}
+	if transport.TLSClientConfig != nil && transport.TLSClientConfig.InsecureSkipVerify {
+		t.Error("GetHTTPClient() should be TLS-verified, got InsecureSkipVerify=true")
+	}
 }
 
-func TestGetHTTPClient_CustomConfig(t *testing.T) {
-	// Note: Once GetHTTPClient() is called, the pool is initialized
-	// This test verifies the config is stored correctly even if pool is already initialized
+func TestGetInsecureHTTPClient(t *testing.T) {
+	client := GetInsecureHTTPClient()
 
-	// Set custom config (this updates the stored config)
-	customCfg := &Config{
-		InsecureSkipVerify: true,
-		MaxIdleConns:        50,
-		MaxIdleConnsPerHost: 25,
-		IdleConnTimeout:     60 * time.Second,
-		Timeout:             10 * time.Second,
-	}
-	SetConfig(customCfg)
-
-	// Verify config is stored
-	gotCfg := GetConfig()
-	if gotCfg.MaxIdleConns != 50 {
-		t.Errorf("GetConfig() MaxIdleConns = %d, want 50", gotCfg.MaxIdleConns)
+	if client == nil {
+		t.Fatal("GetInsecureHTTPClient() returned nil")
 	}
 
-	// Reset to default
-	SetConfig(DefaultConfig())
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatal("GetInsecureHTTPClient() Transport is not *http.Transport")
+	}
+	if transport.TLSClientConfig == nil || !transport.TLSClientConfig.InsecureSkipVerify {
+		t.Error("GetInsecureHTTPClient() should have InsecureSkipVerify=true")
+	}
+}
+
+func TestSecureAndInsecurePools_AreIsolated(t *testing.T) {
+	secure := GetHTTPClient()
+	insecure := GetInsecureHTTPClient()
+
+	if secure == insecure {
+		t.Fatal("GetHTTPClient() and GetInsecureHTTPClient() returned the same client instance")
+	}
+
+	secureTransport, ok := secure.Transport.(*http.Transport)
+	if !ok {
+		t.Fatal("secure client Transport is not *http.Transport")
+	}
+	insecureTransport, ok := insecure.Transport.(*http.Transport)
+	if !ok {
+		t.Fatal("insecure client Transport is not *http.Transport")
+	}
+
+	if secureTransport.TLSClientConfig != nil && secureTransport.TLSClientConfig.InsecureSkipVerify {
+		t.Error("secure pool's TLS config was affected by the insecure pool")
+	}
+	if insecureTransport.TLSClientConfig == nil || !insecureTransport.TLSClientConfig.InsecureSkipVerify {
+		t.Error("insecure pool did not retain InsecureSkipVerify=true")
+	}
 }
 
 func TestGetHTTPClient_Singleton(t *testing.T) {
-	// Reset pool state by setting config
-	SetConfig(DefaultConfig())
-
 	client1 := GetHTTPClient()
 	client2 := GetHTTPClient()
 
 	if client1 != client2 {
 		t.Error("GetHTTPClient() returned different instances")
+	}
+}
+
+func TestGetInsecureHTTPClient_Singleton(t *testing.T) {
+	client1 := GetInsecureHTTPClient()
+	client2 := GetInsecureHTTPClient()
+
+	if client1 != client2 {
+		t.Error("GetInsecureHTTPClient() returned different instances")
 	}
 }
 
@@ -163,6 +181,19 @@ func TestGetPool(t *testing.T) {
 	client := pool.GetHTTPClient()
 	if client == nil {
 		t.Error("GetPool().GetHTTPClient() returned nil")
+	}
+}
+
+func TestGetInsecurePool(t *testing.T) {
+	pool := GetInsecurePool()
+
+	if pool == nil {
+		t.Fatal("GetInsecurePool() returned nil")
+	}
+
+	client := pool.GetHTTPClient()
+	if client == nil {
+		t.Error("GetInsecurePool().GetHTTPClient() returned nil")
 	}
 }
 
@@ -217,16 +248,15 @@ func TestSetConfig_Concurrent(t *testing.T) {
 	_ = GetConfig()
 }
 
-func TestNewScriptlingPool(t *testing.T) {
+func TestNewScriptlingPool_Secure(t *testing.T) {
 	cfg := &Config{
-		InsecureSkipVerify: true,
 		MaxIdleConns:        50,
 		MaxIdleConnsPerHost: 25,
 		IdleConnTimeout:     60 * time.Second,
 		Timeout:             10 * time.Second,
 	}
 
-	pool := newScriptlingPool(cfg)
+	pool := newScriptlingPool(cfg, false)
 
 	if pool == nil {
 		t.Fatal("newScriptlingPool() returned nil")
@@ -240,18 +270,25 @@ func TestNewScriptlingPool(t *testing.T) {
 	if client.Timeout != 10*time.Second {
 		t.Errorf("newScriptlingPool().GetHTTPClient() Timeout = %v, want 10s", client.Timeout)
 	}
+
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatal("Client Transport is not *http.Transport")
+	}
+	if transport.TLSClientConfig != nil && transport.TLSClientConfig.InsecureSkipVerify {
+		t.Error("secure pool should not set InsecureSkipVerify")
+	}
 }
 
 func TestConfig_AllFields(t *testing.T) {
 	cfg := Config{
-		InsecureSkipVerify:  true,
 		MaxIdleConns:        200,
 		MaxIdleConnsPerHost: 100,
 		IdleConnTimeout:     120 * time.Second,
 		Timeout:             60 * time.Second,
 	}
 
-	pool := newScriptlingPool(&cfg)
+	pool := newScriptlingPool(&cfg, true)
 	client := pool.GetHTTPClient()
 
 	// Verify client uses config values
@@ -276,7 +313,7 @@ func TestConfig_AllFields(t *testing.T) {
 		t.Errorf("Config IdleConnTimeout not applied: got %v, want 120s", transport.IdleConnTimeout)
 	}
 
-	if !transport.TLSClientConfig.InsecureSkipVerify {
-		t.Error("Config InsecureSkipVerify not applied")
+	if transport.TLSClientConfig == nil || !transport.TLSClientConfig.InsecureSkipVerify {
+		t.Error("insecureSkipVerify=true was not applied")
 	}
 }
