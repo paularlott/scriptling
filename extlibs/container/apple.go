@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 )
 
 // appleClient drives Apple Containers via the `container` CLI.
@@ -211,6 +212,40 @@ func (c *appleClient) Stop(ctx context.Context, nameOrID string) error {
 		return fmt.Errorf("container stop: %s", out)
 	}
 	return nil
+}
+
+// WaitStopped implements ContainerDriver.
+func (c *appleClient) WaitStopped(ctx context.Context, nameOrID string, timeout time.Duration) (bool, error) {
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	checkStopped := func() (bool, error) {
+		info, err := c.Inspect(ctx, nameOrID)
+		if err != nil {
+			// Container no longer exists: treat as stopped.
+			return true, nil
+		}
+		return !info.Running, nil
+	}
+
+	for {
+		stopped, err := checkStopped()
+		if err != nil {
+			return false, err
+		}
+		if stopped {
+			return true, nil
+		}
+		if time.Now().After(deadline) {
+			return false, nil
+		}
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 // Remove implements ContainerDriver.

@@ -20,6 +20,7 @@ import (
 	scriptlingmulticast "github.com/paularlott/scriptling/extlibs/net/multicast"
 	scriptlingresolve "github.com/paularlott/scriptling/extlibs/net/resolve"
 	scriptlingunicast "github.com/paularlott/scriptling/extlibs/net/unicast"
+	scriptlingnomad "github.com/paularlott/scriptling/extlibs/nomad"
 	provisionfetch "github.com/paularlott/scriptling/extlibs/provision/fetch"
 	provisionfile "github.com/paularlott/scriptling/extlibs/provision/file"
 	"github.com/paularlott/scriptling/extlibs/secretprovider"
@@ -71,6 +72,7 @@ func AllLibraryNames() []string {
 		extlibs.GrepLibraryName,
 		extlibs.SedLibraryName,
 		extlibs.ContainerLibraryName,
+		extlibs.NomadLibraryName,
 		extlibs.WaitForLibraryName,
 		extlibs.WebSocketLibraryName,
 		extlibs.TemplateHTMLLibraryName,
@@ -158,6 +160,7 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 	reg(extlibs.GrepLibraryName, func() { extlibs.RegisterGrepLibrary(p, allowedPaths) })
 	reg(extlibs.SedLibraryName, func() { extlibs.RegisterSedLibrary(p, allowedPaths) })
 	reg(extlibs.ContainerLibraryName, func() { scriptlingcontainer.Register(p, dockerSock, podmanSock) })
+	reg(extlibs.NomadLibraryName, func() { scriptlingnomad.Register(p) })
 	reg(extlibs.WaitForLibraryName, func() { extlibs.RegisterWaitForLibrary(p) })
 	reg(extlibs.WebSocketLibraryName, func() { extlibs.RegisterWebSocketLibrary(p) })
 	reg(extlibs.TemplateHTMLLibraryName, func() { extlibs.RegisterTemplateHTMLLibrary(p) })

@@ -1,6 +1,9 @@
 package container
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 const (
 	DriverDocker = "docker"
@@ -75,6 +78,13 @@ type ContainerDriver interface {
 
 	// Stop stops a running container (graceful then force).
 	Stop(ctx context.Context, nameOrID string) error
+
+	// WaitStopped polls until the container is no longer running, or the
+	// timeout elapses. Returns true if the container reached a stopped
+	// state, false if the timeout was hit first. An error is returned if
+	// the container cannot be found/inspected for reasons other than "not
+	// running" (e.g. it was fully removed while waiting is treated as stopped).
+	WaitStopped(ctx context.Context, nameOrID string, timeout time.Duration) (bool, error)
 
 	// Remove removes a stopped container.
 	Remove(ctx context.Context, nameOrID string) error

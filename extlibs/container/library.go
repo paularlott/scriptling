@@ -20,9 +20,9 @@ const (
 )
 
 var (
-	library              *object.Library
-	libraryOnce          sync.Once
-	overrideDockerSocket string
+	library               *object.Library
+	libraryOnce           sync.Once
+	overrideDockerSocket  string
 	overrridePodmanSocket string
 )
 
@@ -190,11 +190,11 @@ func getContainerClientClass() *object.Class {
 
 func newClientInstance(driverName string, d ContainerDriver) *object.Instance {
 	return object.NewInstanceWithFields(getContainerClientClass(), map[string]object.Object{
-			"_client": &object.ClientWrapper{
-				TypeName: "ContainerClient",
-				Client:   &clientInstance{driver: d, driverName: driverName},
-			},
-		})
+		"_client": &object.ClientWrapper{
+			TypeName: "ContainerClient",
+			Client:   &clientInstance{driver: d, driverName: driverName},
+		},
+	})
 }
 
 func getClientInstance(self *object.Instance) (*clientInstance, *object.Error) {
@@ -536,6 +536,38 @@ Parameters:
 
 Example:
   c.stop("web")`)
+
+	cb.MethodWithHelp("wait_stopped", func(self *object.Instance, ctx context.Context, kwargs object.Kwargs, nameOrID string) object.Object {
+		ci, err := getClientInstance(self)
+		if err != nil {
+			return err
+		}
+		timeoutSecs := kwargs.MustGetInt("timeout", 30)
+		stopped, goErr := runDriverVal(ctx, func() (bool, error) {
+			return ci.driver.WaitStopped(ctx, nameOrID, time.Duration(timeoutSecs)*time.Second)
+		})
+		if goErr != nil {
+			return &object.Error{Message: goErr.Error()}
+		}
+		return object.NewBoolean(stopped)
+	}, `wait_stopped(name_or_id, **kwargs) - Wait for a container to reach a stopped state
+
+Polls the container's running state until it stops or the timeout elapses.
+Useful after stop() to confirm the container has fully stopped (or after
+issuing an out-of-band stop request), and safe to call on containers that
+no longer exist (treated as already stopped).
+
+Parameters:
+  name_or_id (str): Container name or ID
+  timeout (int, optional): Maximum time to wait in seconds (default 30)
+
+Returns:
+  bool: True if the container is stopped, False if the timeout was reached
+
+Example:
+  c.stop("web")
+  if not c.wait_stopped("web", timeout=15):
+    print("container did not stop in time")`)
 
 	cb.MethodWithHelp("remove", func(self *object.Instance, ctx context.Context, nameOrID string) object.Object {
 		ci, err := getClientInstance(self)
