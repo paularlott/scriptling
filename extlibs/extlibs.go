@@ -16,6 +16,7 @@ const (
 	ShlexLibraryName          = "shlex"
 	ZipfileLibraryName        = "zipfile"
 	TarfileLibraryName        = "tarfile"
+	CsvLibraryName            = "scriptling.csv"
 	LoggingLibraryName        = "logging"
 	WaitForLibraryName        = "scriptling.wait_for"
 	RuntimeHTTPLibraryName    = "scriptling.runtime.http"
