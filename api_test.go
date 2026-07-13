@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -1354,6 +1355,122 @@ func TestResetEnv(t *testing.T) {
 		_, objErr = p.GetVar("x")
 		if objErr == nil {
 			t.Error("x should not exist after ResetEnv")
+		}
+	})
+}
+
+func TestReset(t *testing.T) {
+	t.Run("clears_user_vars_and_functions", func(t *testing.T) {
+		p := New()
+		if _, err := p.Eval(`x = 10
+def helper():
+    return 42
+y = helper()`); err != nil {
+			t.Fatal(err)
+		}
+
+		p.Reset()
+
+		// All user globals are gone.
+		for _, name := range []string{"x", "y", "helper"} {
+			v, err := p.GetVar(name)
+			if err == nil {
+				t.Errorf("expected %q to be cleared by Reset, got %v", name, v)
+			}
+		}
+	})
+
+	t.Run("preserves_import_builtin_and_re_imports_libraries", func(t *testing.T) {
+		p := New()
+		p.RegisterLibrary(stdlib.JSONLibrary)
+
+		// First script imports and uses json.
+		if _, err := p.Eval(`import json
+data = json.dumps({"k": 1})`); err != nil {
+			t.Fatal(err)
+		}
+
+		p.Reset()
+
+		// The json binding is cleared, but the library is still registered, so a
+		// fresh import must succeed on the reused env.
+		if _, err := p.Eval(`import json
+again = json.dumps({"k": 2})`); err != nil {
+			t.Fatalf("import after Reset failed: %v", err)
+		}
+		v, err := p.GetVar("again")
+		if err != nil {
+			t.Fatalf("expected 'again' to be set after re-import, got error: %v", err)
+		}
+		if !strings.Contains(fmt.Sprintf("%v", v), `"k":2`) {
+			t.Errorf("expected again to serialise k=2, got %v", v)
+		}
+		// The pre-Reset globals must not leak across the reset boundary.
+		if _, err := p.GetVar("data"); err == nil {
+			t.Error("pre-Reset global 'data' leaked into post-Reset script")
+		}
+	})
+
+	t.Run("restores_dunder_name_and_clears_file", func(t *testing.T) {
+		p := New()
+		// Set __name__ and __file__ to non-default values to simulate the
+		// aftermath of an EvalFile or module import.
+		p.SetVar("__file__", "/some/path.py")
+		p.SetVar("__name__", "some.module")
+
+		p.Reset()
+
+		name, err := p.GetVar("__name__")
+		if err != nil {
+			t.Fatalf("__name__ should exist after Reset, got error: %v", err)
+		}
+		if name != "__main__" {
+			t.Errorf("expected __name__ restored to __main__, got %v", name)
+		}
+		if _, err := p.GetVar("__file__"); err == nil {
+			t.Error("__file__ should be absent after Reset")
+		}
+	})
+
+	t.Run("drains_captured_output", func(t *testing.T) {
+		p := New()
+		p.EnableOutputCapture()
+		if _, err := p.Eval(`print("first")`); err != nil {
+			t.Fatal(err)
+		}
+		// Note: do NOT call GetOutput — simulate a caller that forgets to drain.
+
+		p.Reset()
+
+		if _, err := p.Eval(`print("second")`); err != nil {
+			t.Fatal(err)
+		}
+		out := p.GetOutput()
+		if strings.Contains(out, "first") {
+			t.Errorf("output from before Reset leaked through: %q", out)
+		}
+		if !strings.Contains(out, "second") {
+			t.Errorf("expected post-Reset output only, got %q", out)
+		}
+	})
+
+	t.Run("env_reusable_across_many_resets", func(t *testing.T) {
+		p := New()
+		p.RegisterLibrary(stdlib.JSONLibrary)
+
+		for i := 0; i < 5; i++ {
+			p.Reset()
+			if _, err := p.Eval(`x = ` + fmt.Sprintf("%d", i)); err != nil {
+				t.Fatalf("eval %d after Reset failed: %v", i, err)
+			}
+			v, err := p.GetVarAsInt("x")
+			if err != nil || v != int64(i) {
+				t.Errorf("iter %d: expected x=%d, got %d / %v", i, i, v, err)
+			}
+		}
+		// After the loop the env only holds the last script's globals.
+		if _, err := p.GetVarAsInt("x"); err != nil {
+			t.Errorf("env should remain usable after many resets: %v", err)
 		}
 	})
 }

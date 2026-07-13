@@ -662,6 +662,40 @@ func (p *Scriptling) ResetEnv(keepKeys ...string) {
 	p.env.ResetStore(keep)
 }
 
+// Reset restores the environment to a pristine state suitable for evaluating an
+// unrelated script, with no need for the caller to enumerate which bindings to
+// keep. It is the no-argument counterpart to ResetEnv and is intended for
+// reusing a Scriptling instance across independent scripts — for example, from
+// a pool — without paying the cost of New() plus library registration again.
+//
+// What Reset preserves:
+//   - Registered libraries (both Go-registered and script-registered). They are
+//     not unregistered; the next Eval re-imports any that the script needs.
+//   - The "import" builtin and the configured library loader.
+//
+// What Reset clears:
+//   - Every global binding created by the most recent Eval: variables,
+//     functions, classes, and the dicts bound by previous imports. Libraries
+//     are re-imported on demand by the next script (import dedup is keyed on
+//     the binding store, so clearing the store re-enables import).
+//   - __file__ (set by EvalFile). __name__ is restored to "__main__".
+//   - Any output captured since the last GetOutput() call.
+//
+// Reset does NOT preserve a specific import set. If a caller needs certain
+// libraries to remain imported across resets, either re-issue the import after
+// Reset or use ResetEnv(keepKeys...) to keep named bindings.
+func (p *Scriptling) Reset() {
+	// Drain any buffered output so it cannot leak into the next evaluation.
+	_ = p.env.GetOutput()
+	// Clear everything except the import builtin; registered libraries stay in
+	// p.registeredLibraries / p.scriptLibraries and re-import on demand.
+	p.env.ResetStore(map[string]bool{"import": true})
+	// __name__ is cleared by ResetStore; restore the default. __file__ is left
+	// absent so the next Eval behaves as the first.
+	p.env.Set("__name__", object.NewString("__main__"))
+	p.env.Delete("__file__")
+}
+
 // Clone creates a new Scriptling interpreter that shares library registrations
 // (both Go and script libraries) with the parent but starts with a fresh,
 // isolated environment. Already-imported libraries are NOT copied; each clone
