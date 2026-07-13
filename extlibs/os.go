@@ -131,9 +131,13 @@ Returns the value of the environment variable key if it exists, None if not set 
 					return err
 				}
 
-				entries, err := os.ReadDir(path)
-				if err != nil {
-					return errors.NewError("cannot read directory: %s", err.Error())
+				var entries []os.DirEntry
+				var readErr error
+				object.RunBlocking(ctx, func() {
+					entries, readErr = os.ReadDir(path)
+				})
+				if readErr != nil {
+					return errors.NewError("cannot read directory: %s", readErr.Error())
 				}
 
 				elements := make([]object.Object, len(entries))

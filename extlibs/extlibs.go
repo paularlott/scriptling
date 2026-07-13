@@ -35,6 +35,7 @@ const (
 	ResolveLibraryName        = "scriptling.net.resolve"
 	FSLibraryName             = "fs"
 	GrepLibraryName           = "scriptling.grep"
+	FindLibraryName           = "scriptling.find"
 	SedLibraryName            = "scriptling.sed"
 	ContainerLibraryName      = "scriptling.container"
 	NomadLibraryName          = "scriptling.nomad"

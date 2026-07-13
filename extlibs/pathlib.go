@@ -397,9 +397,13 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					if err := p.checkPathSecurity(cleanPath); err != nil {
 						return err
 					}
-					entries, err := os.ReadDir(cleanPath)
-					if err != nil {
-						return errors.NewError("cannot read directory: %s", err.Error())
+					var entries []os.DirEntry
+					var readErr error
+					object.RunBlocking(ctx, func() {
+						entries, readErr = os.ReadDir(cleanPath)
+					})
+					if readErr != nil {
+						return errors.NewError("cannot read directory: %s", readErr.Error())
 					}
 					pathObjs := make([]object.Object, len(entries))
 					for i, entry := range entries {
@@ -422,12 +426,12 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					if err != nil {
 						return err
 					}
-				if err := p.checkPathSecurity(cleanPath); err != nil {
-					return err
-				}
-				// Pathlib already recurses on "**"; preserve its existing
-				// (include-hidden) behaviour by passing includeHidden=true.
-				matches := globMatches(ctx, p.config, pattern, cleanPath, true, true)
+					if err := p.checkPathSecurity(cleanPath); err != nil {
+						return err
+					}
+					// Pathlib already recurses on "**"; preserve its existing
+					// (include-hidden) behaviour by passing includeHidden=true.
+					matches := globMatches(ctx, p.config, pattern, cleanPath, true, true)
 					pathObjs := make([]object.Object, len(matches))
 					for i, match := range matches {
 						pathObjs[i] = p.createPathObject(match)
