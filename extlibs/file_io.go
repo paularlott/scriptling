@@ -381,12 +381,28 @@ func globMatches(ctx context.Context, config fssecurity.Config, pattern, rootDir
 		if !config.IsPathAllowed(match) {
 			continue
 		}
-		if !includeHidden && strings.HasPrefix(filepath.Base(match), ".") {
+		if !includeHidden && pathHasHiddenComponent(rootDir, match) {
 			continue
 		}
 		filtered = append(filtered, match)
 	}
 	return filtered
+}
+
+// pathHasHiddenComponent reports whether any component of match (relative to
+// rootDir) starts with ".", so that e.g. ".hidden_dir/file.txt" is filtered
+// even though the final basename is not hidden.
+func pathHasHiddenComponent(rootDir, match string) bool {
+	rel, err := filepath.Rel(rootDir, match)
+	if err != nil {
+		rel = match
+	}
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		if strings.HasPrefix(part, ".") {
+			return true
+		}
+	}
+	return false
 }
 
 // globDirMatcher matches entries within a single directory and returns the

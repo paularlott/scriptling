@@ -12,6 +12,7 @@ import (
 	"github.com/paularlott/scriptling/extlibs/agent"
 	"github.com/paularlott/scriptling/extlibs/ai"
 	"github.com/paularlott/scriptling/extlibs/console"
+	scriptlingsimilarity "github.com/paularlott/scriptling/extlibs/similarity"
 	"github.com/paularlott/scriptling/libloader"
 	"github.com/paularlott/scriptling/stdlib"
 )
@@ -32,6 +33,17 @@ func newTestInterpreter(t *testing.T) *scriptling.Scriptling {
 	extlibs.RegisterFSLibrary(p, nil)
 	console.Register(p)
 	extlibs.RegisterYAMLLibrary(p)
+	extlibs.RegisterTOMLLibrary(p)
+	extlibs.RegisterGlobLibrary(p, nil)
+	extlibs.RegisterGrepLibrary(p, nil)
+	extlibs.RegisterFindLibrary(p, nil)
+	extlibs.RegisterSedLibrary(p, nil)
+	extlibs.RegisterShlexLibrary(p)
+	extlibs.RegisterTempfileLibrary(p, nil)
+	extlibs.RegisterShutilLibrary(p, nil)
+	extlibs.RegisterZipfileLibrary(p, nil)
+	extlibs.RegisterTarfileLibrary(p, nil)
+	scriptlingsimilarity.Register(p)
 	ai.Register(p)
 	agent.Register(p)
 	agent.RegisterInteract(p)
