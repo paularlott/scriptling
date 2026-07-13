@@ -185,5 +185,11 @@ See individual example directories for more details:
 - [net/multicast/README.md](net/multicast/README.md) - UDP multicast group messaging
 - [net/gossip/README.md](net/gossip/README.md) - Gossip protocol cluster membership and messaging
 - [fs/README.md](fs/README.md) - Binary I/O: pack, unpack, read/write bytes
+- [find/example.py](find/example.py) - Find files by name, type, mtime, and size with `scriptling.find`
+- [shlex/example.py](shlex/example.py) - Shell quoting, splitting, and joining with `shlex`
+- [tempfile/example.py](tempfile/example.py) - Temporary files, directories, and atomic writes with `tempfile`
+- [shutil/example.py](shutil/example.py) - Copy, rmtree, move, and disk_usage with `shutil`
+- [zipfile/example.py](zipfile/example.py) - Create, read, and extract ZIP archives with `zipfile`
+- [tarfile/example.py](tarfile/example.py) - Create, read, and extract gzipped TAR archives with `tarfile`
 - [math/README.md](math/README.md) - Linear algebra: matmul, dot, transpose, softmax, special functions
 - [random/README.md](random/README.md) - Distributions: gauss, beta, gamma, pareto, weibull, choices
