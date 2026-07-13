@@ -43,6 +43,7 @@ func newTestInterpreter(t *testing.T) *scriptling.Scriptling {
 	extlibs.RegisterShutilLibrary(p, nil)
 	extlibs.RegisterZipfileLibrary(p, nil)
 	extlibs.RegisterTarfileLibrary(p, nil)
+	extlibs.RegisterCsvLibrary(p)
 	scriptlingsimilarity.Register(p)
 	ai.Register(p)
 	agent.Register(p)
