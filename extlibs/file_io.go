@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/extlibs/fssecurity"
@@ -351,64 +353,206 @@ func isAllowedRoot(config fssecurity.Config, path string) bool {
 	return false
 }
 
-func globMatches(config fssecurity.Config, pattern, rootDir string) []string {
-	var matches []string
-	if strings.Contains(pattern, "**") {
-		matches = doubleStarGlob(pattern, rootDir)
-	} else {
-		fullPattern := filepath.Join(rootDir, pattern)
-		matches, _ = filepath.Glob(fullPattern)
+// globMatches finds all paths matching pattern relative to rootDir.
+//
+// When recursive is true and the pattern contains "**", a bounded parallel
+// directory walk is used (the same worker-pool model as scriptling.grep).
+// When recursive is false, any "**" in the pattern is collapsed to "*" to
+// match Python's glob semantics. includeHidden controls whether entries whose
+// name starts with "." are matched; when false such entries are skipped, which
+// matches Python's default include_hidden=False behaviour.
+func globMatches(ctx context.Context, config fssecurity.Config, pattern, rootDir string, recursive, includeHidden bool) []string {
+	if recursive && strings.Contains(pattern, "**") {
+		return globRecursive(ctx, config, pattern, rootDir, includeHidden)
 	}
+
+	// Non-recursive: collapse "**" to "*" so it behaves as a single-level match.
+	effective := pattern
+	if !recursive {
+		effective = strings.ReplaceAll(pattern, "**", "*")
+	}
+	matches, _ := filepath.Glob(filepath.Join(rootDir, effective))
 
 	filtered := make([]string, 0, len(matches))
 	for _, match := range matches {
-		if config.IsPathAllowed(match) {
-			filtered = append(filtered, match)
+		if !config.IsPathAllowed(match) {
+			continue
 		}
+		if !includeHidden && strings.HasPrefix(filepath.Base(match), ".") {
+			continue
+		}
+		filtered = append(filtered, match)
 	}
 	return filtered
 }
 
-func doubleStarGlob(pattern, rootDir string) []string {
-	parts := strings.Split(pattern, "**")
-	if len(parts) != 2 {
-		fullPattern := filepath.Join(rootDir, pattern)
-		matches, _ := filepath.Glob(fullPattern)
-		return matches
+// globRecursive expands a "**" pattern against rootDir using a bounded pool of
+// goroutines so that directory reads run concurrently. The pattern is split at
+// the first "**" into a prefix (resolved literally) and a suffix (matched in
+// every visited directory). includeHidden gates descent into hidden ("."-prefixed)
+// directories and matching of hidden suffix results, mirroring Python.
+func globRecursive(ctx context.Context, config fssecurity.Config, pattern, rootDir string, includeHidden bool) []string {
+	parts := strings.SplitN(pattern, "**", 2)
+	prefixPart := parts[0]
+	suffixPart := ""
+	if len(parts) == 2 {
+		suffixPart = parts[1]
 	}
 
-	prefix := strings.TrimSuffix(filepath.Join(rootDir, parts[0]), string(filepath.Separator))
-	suffix := strings.TrimPrefix(parts[1], string(filepath.Separator))
+	prefix := strings.TrimSuffix(filepath.Join(rootDir, prefixPart), string(filepath.Separator))
+	suffix := strings.TrimPrefix(suffixPart, string(filepath.Separator))
 
 	prefixMatches, _ := filepath.Glob(prefix)
 	if len(prefixMatches) == 0 {
 		prefixMatches = []string{prefix}
 	}
 
-	var results []string
-	for _, base := range prefixMatches {
-		results = append(results, walkAndMatch(base, suffix)...)
+	// Seed with allowed prefix directories. The prefix is literal, so it is
+	// followed regardless of includeHidden.
+	roots := make([]string, 0, len(prefixMatches))
+	for _, p := range prefixMatches {
+		if config.IsPathAllowed(p) {
+			roots = append(roots, p)
+		}
 	}
-	return results
+	if len(roots) == 0 {
+		return nil
+	}
+
+	q := newDirQueue()
+	var (
+		mu      sync.Mutex
+		all     []string
+		pending int64
+	)
+	for _, r := range roots {
+		atomic.AddInt64(&pending, 1)
+		q.push(r)
+	}
+
+	// Best-effort cancellation: closing the queue wakes blocked workers.
+	doneCh := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			q.close()
+		case <-doneCh:
+		}
+	}()
+
+	var doneOnce sync.Once
+	finish := func() {
+		doneOnce.Do(func() {
+			close(doneCh)
+			q.close()
+		})
+	}
+
+	workers := workerCount()
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				base, ok := q.pop()
+				if !ok {
+					return
+				}
+
+				// Match the suffix in this directory.
+				var localMatches []string
+				directPath := filepath.Join(base, suffix)
+				matches, _ := filepath.Glob(directPath)
+				for _, m := range matches {
+					if !config.IsPathAllowed(m) {
+						continue
+					}
+					if !includeHidden && suffix != "" && strings.HasPrefix(filepath.Base(m), ".") {
+						continue
+					}
+					localMatches = append(localMatches, m)
+				}
+
+				// Discover subdirectories for the "**" expansion.
+				entries, _ := os.ReadDir(base)
+				for _, e := range entries {
+					if !e.IsDir() {
+						continue
+					}
+					name := e.Name()
+					if !includeHidden && strings.HasPrefix(name, ".") {
+						continue
+					}
+					full := filepath.Join(base, name)
+					if !config.IsPathAllowed(full) {
+						continue
+					}
+					atomic.AddInt64(&pending, 1)
+					q.push(full)
+				}
+
+				if len(localMatches) > 0 {
+					mu.Lock()
+					all = append(all, localMatches...)
+					mu.Unlock()
+				}
+
+				if atomic.AddInt64(&pending, -1) == 0 {
+					finish()
+					return
+				}
+			}
+		}()
+	}
+
+	object.RunBlocking(ctx, func() {
+		wg.Wait()
+	})
+	finish()
+	return all
 }
 
-func walkAndMatch(base, suffix string) []string {
-	var results []string
+// dirQueue is a thread-safe, unbounded FIFO of directory paths used to
+// distribute work among the globRecursive worker pool. pop blocks until an
+// item is available or the queue is closed.
+type dirQueue struct {
+	mu     sync.Mutex
+	cond   *sync.Cond
+	items  []string
+	closed bool
+}
 
-	directPath := filepath.Join(base, suffix)
-	matches, _ := filepath.Glob(directPath)
-	results = append(results, matches...)
+func newDirQueue() *dirQueue {
+	q := &dirQueue{}
+	q.cond = sync.NewCond(&q.mu)
+	return q
+}
 
-	entries, _ := filepath.Glob(filepath.Join(base, "*"))
-	for _, entry := range entries {
-		info, err := os.Stat(entry)
-		if err != nil {
-			continue
-		}
-		if info.IsDir() {
-			results = append(results, walkAndMatch(entry, suffix)...)
-		}
+func (q *dirQueue) push(s string) {
+	q.mu.Lock()
+	q.items = append(q.items, s)
+	q.cond.Signal()
+	q.mu.Unlock()
+}
+
+func (q *dirQueue) pop() (string, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for len(q.items) == 0 && !q.closed {
+		q.cond.Wait()
 	}
+	if len(q.items) == 0 {
+		return "", false
+	}
+	s := q.items[0]
+	q.items = q.items[1:]
+	return s, true
+}
 
-	return results
+func (q *dirQueue) close() {
+	q.mu.Lock()
+	q.closed = true
+	q.cond.Broadcast()
+	q.mu.Unlock()
 }

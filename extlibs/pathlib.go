@@ -422,10 +422,12 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					if err != nil {
 						return err
 					}
-					if err := p.checkPathSecurity(cleanPath); err != nil {
-						return err
-					}
-					matches := globMatches(p.config, pattern, cleanPath)
+				if err := p.checkPathSecurity(cleanPath); err != nil {
+					return err
+				}
+				// Pathlib already recurses on "**"; preserve its existing
+				// (include-hidden) behaviour by passing includeHidden=true.
+				matches := globMatches(ctx, p.config, pattern, cleanPath, true, true)
 					pathObjs := make([]object.Object, len(matches))
 					for i, match := range matches {
 						pathObjs[i] = p.createPathObject(match)
