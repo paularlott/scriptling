@@ -86,10 +86,12 @@ func (g *GlobLibraryInstance) createGlobLibrary() *object.Library {
 					return err
 				}
 
-				matches, globErr := g.glob(pattern, rootDir, false)
-				if globErr != nil {
-					return globErr
+				recursive, includeHidden, oErr := parseGlobKwargs(kwargs)
+				if oErr != nil {
+					return oErr
 				}
+
+				matches := globMatches(ctx, g.config, pattern, rootDir, recursive, includeHidden)
 
 				elements := make([]object.Object, len(matches))
 				for i, match := range matches {
@@ -97,13 +99,7 @@ func (g *GlobLibraryInstance) createGlobLibrary() *object.Library {
 				}
 				return &object.List{Elements: elements}
 			},
-			HelpText: `glob(pattern[, root_dir="."]) - Find all pathnames matching a pattern
-
-Returns a list of filenames matching the given pattern. The pattern is a shell-style
-wildcard pattern where * matches everything, ? matches any single character,
-and [seq] matches any character in seq.
-
-Optional root_dir specifies the directory to search from (default: current directory).`,
+			HelpText: globGlobHelp,
 		},
 		"iglob": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -128,30 +124,26 @@ Optional root_dir specifies the directory to search from (default: current direc
 					return err
 				}
 
-				// Pre-compute all matches
-				matches := g.globMatches(pattern, rootDir)
-				// Filter through security
-				filteredMatches := make([]string, 0, len(matches))
-				for _, match := range matches {
-					if g.config.IsPathAllowed(match) {
-						filteredMatches = append(filteredMatches, match)
-					}
+				recursive, includeHidden, oErr := parseGlobKwargs(kwargs)
+				if oErr != nil {
+					return oErr
 				}
+
+				// Pre-compute all matches so the iterator is a thin cursor; the
+				// recursive path already runs a bounded parallel walk internally.
+				matches := globMatches(ctx, g.config, pattern, rootDir, recursive, includeHidden)
 
 				index := 0
 				return object.NewIterator(func() (object.Object, bool) {
-					if index >= len(filteredMatches) {
+					if index >= len(matches) {
 						return nil, false
 					}
-					result := object.NewString(filteredMatches[index])
+					result := object.NewString(matches[index])
 					index++
 					return result, true
 				})
 			},
-			HelpText: `iglob(pattern[, root_dir="."]) - Find all pathnames matching a pattern (returns iterator)
-
-Returns an iterator over the filenames matching the given pattern. This is memory
-efficient for large result sets. See glob() for pattern syntax details.`,
+			HelpText: iglobHelp,
 		},
 		"escape": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -181,24 +173,62 @@ efficient for large result sets. See glob() for pattern syntax details.`,
 
 				return object.NewString(result.String())
 			},
-			HelpText: `escape(pattern) - Escape special characters in a pattern
-
-Returns a string with all special characters (*, ?, [, ]) escaped so they
-are treated as literal characters rather than wildcards.`,
+			HelpText: escapeHelp,
 		},
 	}, nil, "Unix shell-style wildcards")
 }
 
-// glob returns all files matching pattern
-func (g *GlobLibraryInstance) glob(pattern, rootDir string, recursive bool) ([]string, object.Object) {
-	matches := globMatches(g.config, pattern, rootDir)
-	return matches, nil
+// parseGlobKwargs reads the keyword-only options shared by glob and iglob.
+func parseGlobKwargs(kwargs object.Kwargs) (recursive bool, includeHidden bool, errObj object.Object) {
+	if v := kwargs.Get("recursive"); v != nil {
+		b, err := v.AsBool()
+		if err != nil {
+			return false, false, err
+		}
+		recursive = b
+	}
+	if v := kwargs.Get("include_hidden"); v != nil {
+		b, err := v.AsBool()
+		if err != nil {
+			return false, false, err
+		}
+		includeHidden = b
+	}
+	return recursive, includeHidden, nil
 }
 
-// globMatches performs the actual glob matching without security filtering
-func (g *GlobLibraryInstance) globMatches(pattern, rootDir string) []string {
-	return globMatches(g.config, pattern, rootDir)
-}
+const globGlobHelp = `glob(pattern[, root_dir="."], *, recursive=False, include_hidden=False) -> list
+
+Find all pathnames matching a shell-style wildcard pattern.
+
+Returns a list of filenames matching the given pattern. The pattern is a
+shell-style wildcard pattern where * matches everything except a path
+separator, ? matches any single character, [seq] matches any character in
+seq, and [!seq] matches any character not in seq. Results are returned in
+arbitrary order; an empty list is returned when there are no matches.
+
+Parameters:
+  pattern        Shell-style wildcard pattern to match.
+  root_dir       Directory to search from (default: current directory).
+  recursive      When True, ** matches files and directories recursively,
+                 descending into every subdirectory (default: False). When
+                 False, ** is treated as *.
+  include_hidden When True, entries whose name starts with "." are matched;
+                 when False (the default) they are skipped.
+
+Recursive searches use a bounded parallel directory walk, the same worker
+model as scriptling.grep.`
+
+const iglobHelp = `iglob(pattern[, root_dir="."], *, recursive=False, include_hidden=False) -> iterator
+
+Find all pathnames matching a shell-style wildcard pattern, returned as an
+iterator instead of a list. This is memory efficient for large result sets.
+See glob() for pattern syntax and parameter details.`
+
+const escapeHelp = `escape(pattern) - Escape special characters in a pattern
+
+Returns a string with all special characters (*, ?, [, ]) escaped so they
+are treated as literal characters rather than wildcards.`
 
 // checkPathSecurity validates a path and returns an error if access is denied
 func (g *GlobLibraryInstance) checkPathSecurity(path string) object.Object {
