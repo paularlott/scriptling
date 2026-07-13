@@ -363,6 +363,9 @@ func isAllowedRoot(config fssecurity.Config, path string) bool {
 // matches Python's default include_hidden=False behaviour.
 func globMatches(ctx context.Context, config fssecurity.Config, pattern, rootDir string, recursive, includeHidden bool) []string {
 	if recursive && strings.Contains(pattern, "**") {
+		if strings.Count(pattern, "**") > 1 {
+			return globRecursiveMulti(ctx, config, pattern, rootDir, includeHidden)
+		}
 		return globRecursive(ctx, config, pattern, rootDir, includeHidden)
 	}
 
@@ -386,39 +389,17 @@ func globMatches(ctx context.Context, config fssecurity.Config, pattern, rootDir
 	return filtered
 }
 
-// globRecursive expands a "**" pattern against rootDir using a bounded pool of
-// goroutines so that directory reads run concurrently. The pattern is split at
-// the first "**" into a prefix (resolved literally) and a suffix (matched in
-// every visited directory). includeHidden gates descent into hidden ("."-prefixed)
-// directories and matching of hidden suffix results, mirroring Python.
-func globRecursive(ctx context.Context, config fssecurity.Config, pattern, rootDir string, includeHidden bool) []string {
-	parts := strings.SplitN(pattern, "**", 2)
-	prefixPart := parts[0]
-	suffixPart := ""
-	if len(parts) == 2 {
-		suffixPart = parts[1]
-	}
+// globDirMatcher matches entries within a single directory and returns the
+// matching full paths. Hidden/security filtering for matches is the matcher's
+// responsibility; subdir discovery for descent is handled by parallelGlobWalk.
+type globDirMatcher func(base string, entries []os.DirEntry) []string
 
-	prefix := strings.TrimSuffix(filepath.Join(rootDir, prefixPart), string(filepath.Separator))
-	suffix := strings.TrimPrefix(suffixPart, string(filepath.Separator))
-
-	prefixMatches, _ := filepath.Glob(prefix)
-	if len(prefixMatches) == 0 {
-		prefixMatches = []string{prefix}
-	}
-
-	// Seed with allowed prefix directories. The prefix is literal, so it is
-	// followed regardless of includeHidden.
-	roots := make([]string, 0, len(prefixMatches))
-	for _, p := range prefixMatches {
-		if config.IsPathAllowed(p) {
-			roots = append(roots, p)
-		}
-	}
-	if len(roots) == 0 {
-		return nil
-	}
-
+// parallelGlobWalk seeds a bounded worker pool with roots and walks the tree
+// using a dirQueue. Each worker reads a directory, calls matchFn to collect
+// matches, and pushes subdirectories (after hidden/security filtering) back
+// onto the queue. This is the shared engine for globRecursive (single "**")
+// and globRecursiveMulti (multiple "**").
+func parallelGlobWalk(ctx context.Context, config fssecurity.Config, roots []string, includeHidden bool, matchFn globDirMatcher) []string {
 	q := newDirQueue()
 	var (
 		mu      sync.Mutex
@@ -426,8 +407,13 @@ func globRecursive(ctx context.Context, config fssecurity.Config, pattern, rootD
 		pending int64
 	)
 	for _, r := range roots {
-		atomic.AddInt64(&pending, 1)
-		q.push(r)
+		if config.IsPathAllowed(r) {
+			atomic.AddInt64(&pending, 1)
+			q.push(r)
+		}
+	}
+	if atomic.LoadInt64(&pending) == 0 {
+		return nil
 	}
 
 	// Best-effort cancellation: closing the queue wakes blocked workers.
@@ -460,22 +446,10 @@ func globRecursive(ctx context.Context, config fssecurity.Config, pattern, rootD
 					return
 				}
 
-				// Match the suffix in this directory.
-				var localMatches []string
-				directPath := filepath.Join(base, suffix)
-				matches, _ := filepath.Glob(directPath)
-				for _, m := range matches {
-					if !config.IsPathAllowed(m) {
-						continue
-					}
-					if !includeHidden && suffix != "" && strings.HasPrefix(filepath.Base(m), ".") {
-						continue
-					}
-					localMatches = append(localMatches, m)
-				}
-
-				// Discover subdirectories for the "**" expansion.
 				entries, _ := os.ReadDir(base)
+				localMatches := matchFn(base, entries)
+
+				// Discover subdirectories for the "**" expansion (same entries).
 				for _, e := range entries {
 					if !e.IsDir() {
 						continue
@@ -511,6 +485,174 @@ func globRecursive(ctx context.Context, config fssecurity.Config, pattern, rootD
 	})
 	finish()
 	return all
+}
+
+// globRecursive expands a pattern containing exactly one "**" against rootDir.
+// The pattern is split at the "**" into a prefix (resolved literally) and a
+// suffix (matched in every visited directory).
+func globRecursive(ctx context.Context, config fssecurity.Config, pattern, rootDir string, includeHidden bool) []string {
+	parts := strings.SplitN(pattern, "**", 2)
+	prefixPart := parts[0]
+	suffixPart := ""
+	if len(parts) == 2 {
+		suffixPart = parts[1]
+	}
+
+	prefix := strings.TrimSuffix(filepath.Join(rootDir, prefixPart), string(filepath.Separator))
+	suffix := strings.TrimPrefix(suffixPart, string(filepath.Separator))
+
+	prefixMatches, _ := filepath.Glob(prefix)
+	if len(prefixMatches) == 0 {
+		prefixMatches = []string{prefix}
+	}
+
+	roots := make([]string, 0, len(prefixMatches))
+	for _, p := range prefixMatches {
+		if config.IsPathAllowed(p) {
+			roots = append(roots, p)
+		}
+	}
+	if len(roots) == 0 {
+		return nil
+	}
+
+	matchFn := func(base string, entries []os.DirEntry) []string {
+		var matches []string
+		switch {
+		case suffix == "":
+			matches = append(matches, base)
+		case strings.Contains(suffix, string(filepath.Separator)):
+			for _, m := range globOrEmpty(filepath.Join(base, suffix)) {
+				if !config.IsPathAllowed(m) {
+					continue
+				}
+				if !includeHidden && strings.HasPrefix(filepath.Base(m), ".") {
+					continue
+				}
+				matches = append(matches, m)
+			}
+		default:
+			for _, e := range entries {
+				name := e.Name()
+				if !includeHidden && strings.HasPrefix(name, ".") {
+					continue
+				}
+				matched, _ := filepath.Match(suffix, name)
+				if !matched {
+					continue
+				}
+				full := filepath.Join(base, name)
+				if !config.IsPathAllowed(full) {
+					continue
+				}
+				matches = append(matches, full)
+			}
+		}
+		return matches
+	}
+
+	return parallelGlobWalk(ctx, config, roots, includeHidden, matchFn)
+}
+
+// globRecursiveMulti expands a pattern containing two or more "**" segments.
+// It walks the tree and matches each entry's path relative to rootDir against
+// the pattern using a recursive segment matcher that treats "**" as matching
+// zero or more path components. The literal prefix before the first "**" is
+// still resolved to limit the starting directories.
+func globRecursiveMulti(ctx context.Context, config fssecurity.Config, pattern, rootDir string, includeHidden bool) []string {
+	patSegs := strings.Split(pattern, "/")
+
+	// Resolve literal prefix (segments before the first "**") for pruning.
+	firstStar := -1
+	for i, seg := range patSegs {
+		if seg == "**" {
+			firstStar = i
+			break
+		}
+	}
+
+	var roots []string
+	if firstStar <= 0 {
+		roots = []string{rootDir}
+	} else {
+		prefixPath := filepath.Join(rootDir, filepath.Join(patSegs[:firstStar]...))
+		prefixMatches, _ := filepath.Glob(prefixPath)
+		if len(prefixMatches) == 0 {
+			prefixMatches = []string{prefixPath}
+		}
+		for _, p := range prefixMatches {
+			if config.IsPathAllowed(p) {
+				roots = append(roots, p)
+			}
+		}
+	}
+	if len(roots) == 0 {
+		return nil
+	}
+
+	matchFn := func(base string, entries []os.DirEntry) []string {
+		var matches []string
+		for _, e := range entries {
+			name := e.Name()
+			if !includeHidden && strings.HasPrefix(name, ".") {
+				continue
+			}
+			full := filepath.Join(base, name)
+			if !config.IsPathAllowed(full) {
+				continue
+			}
+			rel, _ := filepath.Rel(rootDir, full)
+			relSegs := strings.Split(rel, string(filepath.Separator))
+			if matchGlobSegments(patSegs, relSegs) {
+				matches = append(matches, full)
+			}
+		}
+		return matches
+	}
+
+	return parallelGlobWalk(ctx, config, roots, includeHidden, matchFn)
+}
+
+// matchGlobSegments matches a glob pattern (split on the path separator) against
+// a path (similarly split). It handles "**" (matches zero or more path segments)
+// in addition to the single-segment wildcards *, ?, and []. Pattern segments
+// other than "**" are matched against a single path segment with filepath.Match.
+func matchGlobSegments(patSegs, pathSegs []string) bool {
+	pi, si := 0, 0
+	for pi < len(patSegs) {
+		if patSegs[pi] == "**" {
+			// Collapse consecutive "**" segments.
+			for pi < len(patSegs) && patSegs[pi] == "**" {
+				pi++
+			}
+			if pi >= len(patSegs) {
+				return true // "**" at the end matches all remaining segments.
+			}
+			// Try the rest of the pattern at every remaining position.
+			for ; si <= len(pathSegs); si++ {
+				if matchGlobSegments(patSegs[pi:], pathSegs[si:]) {
+					return true
+				}
+			}
+			return false
+		}
+		if si >= len(pathSegs) {
+			return false
+		}
+		matched, _ := filepath.Match(patSegs[pi], pathSegs[si])
+		if !matched {
+			return false
+		}
+		pi++
+		si++
+	}
+	return si == len(pathSegs)
+}
+
+// globOrEmpty wraps filepath.Glob, returning an empty slice on error.
+func globOrEmpty(pattern string) []string {
+	matches, _ := filepath.Glob(pattern)
+	return matches
 }
 
 // dirQueue is a thread-safe, unbounded FIFO of directory paths used to

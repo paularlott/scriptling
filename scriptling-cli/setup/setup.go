@@ -158,6 +158,7 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 	reg(extlibs.GlobLibraryName, func() { extlibs.RegisterGlobLibrary(p, allowedPaths) })
 	reg(extlibs.FSLibraryName, func() { extlibs.RegisterFSLibrary(p, allowedPaths) })
 	reg(extlibs.GrepLibraryName, func() { extlibs.RegisterGrepLibrary(p, allowedPaths) })
+	reg(extlibs.FindLibraryName, func() { extlibs.RegisterFindLibrary(p, allowedPaths) })
 	reg(extlibs.SedLibraryName, func() { extlibs.RegisterSedLibrary(p, allowedPaths) })
 	reg(extlibs.ContainerLibraryName, func() { scriptlingcontainer.Register(p, dockerSock, podmanSock) })
 	reg(extlibs.NomadLibraryName, func() { scriptlingnomad.Register(p) })
