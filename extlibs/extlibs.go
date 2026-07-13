@@ -17,6 +17,7 @@ const (
 	ZipfileLibraryName        = "zipfile"
 	TarfileLibraryName        = "tarfile"
 	CsvLibraryName            = "scriptling.csv"
+	XmlLibraryName            = "scriptling.xml"
 	LoggingLibraryName        = "logging"
 	WaitForLibraryName        = "scriptling.wait_for"
 	RuntimeHTTPLibraryName    = "scriptling.runtime.http"

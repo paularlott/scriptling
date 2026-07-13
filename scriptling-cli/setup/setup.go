@@ -162,6 +162,7 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 	reg(extlibs.ZipfileLibraryName, func() { extlibs.RegisterZipfileLibrary(p, allowedPaths) })
 	reg(extlibs.TarfileLibraryName, func() { extlibs.RegisterTarfileLibrary(p, allowedPaths) })
 	reg(extlibs.CsvLibraryName, func() { extlibs.RegisterCsvLibrary(p) })
+	reg(extlibs.XmlLibraryName, func() { extlibs.RegisterXmlLibrary(p) })
 	reg(extlibs.FSLibraryName, func() { extlibs.RegisterFSLibrary(p, allowedPaths) })
 	reg(extlibs.GrepLibraryName, func() { extlibs.RegisterGrepLibrary(p, allowedPaths) })
 	reg(extlibs.FindLibraryName, func() { extlibs.RegisterFindLibrary(p, allowedPaths) })

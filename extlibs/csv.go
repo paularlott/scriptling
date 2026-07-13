@@ -19,7 +19,7 @@ func RegisterCsvLibrary(registrar object.LibraryRegistrar) {
 
 func NewCsvLibrary() *object.Library {
 	return object.NewLibrary(CsvLibraryName, map[string]*object.Builtin{
-		"parse": {
+		"loads": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if err := errors.ExactArgs(args, 1); err != nil {
 					return err
@@ -36,7 +36,7 @@ func NewCsvLibrary() *object.Library {
 
 				records, e := reader.ReadAll()
 				if e != nil {
-					return errors.NewError("csv.parse: %s", e.Error())
+					return errors.NewError("csv.loads: %s", e.Error())
 				}
 
 				elements := make([]object.Object, len(records))
@@ -61,7 +61,7 @@ Parameters:
 Returns:
   list[list[str]] - Rows of string values`,
 		},
-		"parse_dict": {
+		"loads_dict": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if err := errors.ExactArgs(args, 1); err != nil {
 					return err
@@ -78,7 +78,7 @@ Returns:
 
 				records, e := reader.ReadAll()
 				if e != nil {
-					return errors.NewError("csv.parse_dict: %s", e.Error())
+					return errors.NewError("csv.loads_dict: %s", e.Error())
 				}
 				if len(records) == 0 {
 					return &object.List{Elements: []object.Object{}}
@@ -111,7 +111,7 @@ Parameters:
 Returns:
   list[dict] - List of dicts keyed by header names`,
 		},
-		"format": {
+		"dumps": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if err := errors.ExactArgs(args, 1); err != nil {
 					return err
@@ -126,13 +126,13 @@ Returns:
 				for i, row := range list {
 					rowList, ok := row.(*object.List)
 					if !ok {
-						return errors.NewError("csv.format: row %d is not a list", i)
+						return errors.NewError("csv.dumps: row %d is not a list", i)
 					}
 					strs := make([]string, len(rowList.Elements))
 					for j, cell := range rowList.Elements {
 						s, e := cell.AsString()
 						if e != nil {
-							return errors.NewError("csv.format: cell [%d][%d] is not a string", i, j)
+							return errors.NewError("csv.dumps: cell [%d][%d] is not a string", i, j)
 						}
 						strs[j] = s
 					}
@@ -144,7 +144,7 @@ Returns:
 				w.Comma = delimiter
 				for _, record := range records {
 					if e := w.Write(record); e != nil {
-						return errors.NewError("csv.format: %s", e.Error())
+						return errors.NewError("csv.dumps: %s", e.Error())
 					}
 				}
 				w.Flush()
@@ -159,7 +159,7 @@ Parameters:
 Returns:
   str - CSV-formatted text`,
 		},
-		"format_dict": {
+		"dumps_dict": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if err := errors.ExactArgs(args, 1); err != nil {
 					return err
@@ -177,19 +177,19 @@ Returns:
 				// Collect header order from the first dict.
 				first, ok := list[0].(*object.Dict)
 				if !ok {
-					return errors.NewError("csv.format_dict: expected a list of dicts")
+					return errors.NewError("csv.dumps_dict: expected a list of dicts")
 				}
 				// Collect header order: explicit columns kwarg, or sorted keys.
 				var headers []string
 				if v := kwargs.Get("columns"); v != nil {
 					colList, ok := v.(*object.List)
 					if !ok {
-						return errors.NewError("csv.format_dict: columns must be a list of strings")
+						return errors.NewError("csv.dumps_dict: columns must be a list of strings")
 					}
 					for _, c := range colList.Elements {
 						s, e := c.AsString()
 						if e != nil {
-							return errors.NewError("csv.format_dict: column name is not a string")
+							return errors.NewError("csv.dumps_dict: column name is not a string")
 						}
 						headers = append(headers, s)
 					}
@@ -210,7 +210,7 @@ Returns:
 				for _, item := range list {
 					d, ok := item.(*object.Dict)
 					if !ok {
-						return errors.NewError("csv.format_dict: row is not a dict")
+						return errors.NewError("csv.dumps_dict: row is not a dict")
 					}
 					row := make([]string, len(headers))
 					for i, h := range headers {
