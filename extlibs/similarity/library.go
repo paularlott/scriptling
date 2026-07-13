@@ -235,6 +235,104 @@ estimate of Jaccard similarity.
 Returns:
   float: Similarity score between 0.0 and 1.0`,
 		},
+		"cosine_similarity": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if len(args) != 2 {
+					return &object.Error{Message: fmt.Sprintf("cosine_similarity expected 2 arguments, got %d", len(args))}
+				}
+				a, e := ToFloat64Slice(args[0])
+				if e != nil {
+					return &object.Error{Message: "cosine_similarity: " + e.Error()}
+				}
+				b, e := ToFloat64Slice(args[1])
+				if e != nil {
+					return &object.Error{Message: "cosine_similarity: " + e.Error()}
+				}
+				score, e := CosineSimilarity(a, b)
+				if e != nil {
+					return &object.Error{Message: "cosine_similarity: " + e.Error()}
+				}
+				return object.NewFloat(score)
+			},
+			HelpText: `cosine_similarity(a, b) - Compare two numeric vectors
+
+Returns the cosine of the angle between two vectors, from -1.0 (opposite) to
+1.0 (identical). Works with embedding vectors from ai.client.embedding() or
+with vectors produced by vectorize().`,
+		},
+		"most_similar": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if len(args) < 2 || len(args) > 3 {
+					return &object.Error{Message: "most_similar expected 2 or 3 arguments"}
+				}
+				query, e := ToFloat64Slice(args[0])
+				if e != nil {
+					return &object.Error{Message: "most_similar: query: " + e.Error()}
+				}
+				vecList, ok := args[1].(*object.List)
+				if !ok {
+					return &object.Error{Message: "most_similar: second argument must be a list of vectors"}
+				}
+				vectors := make([][]float64, len(vecList.Elements))
+				for i, elem := range vecList.Elements {
+					v, e := ToFloat64Slice(elem)
+					if e != nil {
+						return &object.Error{Message: fmt.Sprintf("most_similar: vector %d: %s", i, e.Error())}
+					}
+					vectors[i] = v
+				}
+				topK := int(kwargs.MustGetInt("top_k", 5))
+				if len(args) == 3 {
+					n, err := args[2].AsInt()
+					if err != nil {
+						return err
+					}
+					topK = int(n)
+				}
+
+				results := MostSimilar(query, vectors, topK)
+				elements := make([]object.Object, len(results))
+				for i, r := range results {
+					d := &object.Dict{Pairs: make(map[string]object.DictPair)}
+					d.SetByString("index", object.NewInteger(int64(r.Index)))
+					d.SetByString("score", object.NewFloat(r.Score))
+					elements[i] = d
+				}
+				return &object.List{Elements: elements}
+			},
+			HelpText: `most_similar(query, vectors, top_k=5) - Rank vectors by similarity to query
+
+Computes cosine similarity between query and each vector in vectors, returning
+the top_k results sorted by descending score.
+
+Returns:
+  list of dicts: [{"index": int, "score": float}, ...]`,
+		},
+		"vectorize": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if len(args) != 1 {
+					return &object.Error{Message: fmt.Sprintf("vectorize expected 1 argument, got %d", len(args))}
+				}
+				text, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
+				dims := int(kwargs.MustGetInt("dims", 256))
+
+				vec := VectorFromText(text, dims)
+				elements := make([]object.Object, len(vec))
+				for i, v := range vec {
+					elements[i] = object.NewFloat(v)
+				}
+				return &object.List{Elements: elements}
+			},
+			HelpText: `vectorize(text, dims=256) - Generate a vector from text (CPU-only)
+
+Produces a fixed-dimensional vector from text using the feature-hashing trick.
+Each word is hashed to a dimension with a +1/-1 sign, then L2-normalised. This
+is fast, deterministic, and captures lexical overlap — no model or API call
+required. Pair with cosine_similarity() or most_similar() for text matching.`,
+		},
 	}, nil, LibraryDesc)
 }
 

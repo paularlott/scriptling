@@ -519,8 +519,22 @@ func (t *tarfileLibraryInstance) fnIsTarfile(ctx context.Context, kwargs object.
 			return
 		}
 		defer f.Close()
+		// Try plain tar first.
 		tr := tar.NewReader(f)
-		_, err = tr.Next()
+		if _, err := tr.Next(); err == nil {
+			valid = true
+			return
+		}
+		// Try gzipped tar.
+		f.Seek(0, io.SeekStart)
+		gz, err := gzip.NewReader(f)
+		if err != nil {
+			valid = false
+			return
+		}
+		defer gz.Close()
+		gzTr := tar.NewReader(gz)
+		_, err = gzTr.Next()
 		valid = err == nil
 	})
 	return object.NewBoolean(valid)

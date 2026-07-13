@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
 	"net/http"
 	"regexp"
 	"strings"
@@ -17,6 +16,7 @@ import (
 	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/evaliface"
 	"github.com/paularlott/scriptling/extlibs/ai/tools"
+	"github.com/paularlott/scriptling/extlibs/similarity"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -552,34 +552,20 @@ Example:
 				return nil, fmt.Errorf("cosine_similarity expected 2 arguments, got %d", len(args))
 			}
 
-			a, err := toFloat64Slice(args[0])
+			a, err := similarity.ToFloat64Slice(args[0])
 			if err != nil {
 				return &object.Error{Message: "cosine_similarity: " + err.Error()}, nil
 			}
-			b, err := toFloat64Slice(args[1])
+			b, err := similarity.ToFloat64Slice(args[1])
 			if err != nil {
 				return &object.Error{Message: "cosine_similarity: " + err.Error()}, nil
 			}
 
-			if len(a) != len(b) {
-				return &object.Error{Message: fmt.Sprintf("cosine_similarity: vectors must have the same length, got %d and %d", len(a), len(b))}, nil
+			score, err := similarity.CosineSimilarity(a, b)
+			if err != nil {
+				return &object.Error{Message: "cosine_similarity: " + err.Error()}, nil
 			}
-			if len(a) == 0 {
-				return &object.Error{Message: "cosine_similarity: vectors must not be empty"}, nil
-			}
-
-			var dot, magA, magB float64
-			for i := range a {
-				dot += a[i] * b[i]
-				magA += a[i] * a[i]
-				magB += b[i] * b[i]
-			}
-
-			if magA == 0 || magB == 0 {
-				return object.NewFloat(0.0), nil
-			}
-
-			return object.NewFloat(dot / (math.Sqrt(magA) * math.Sqrt(magB))), nil
+			return object.NewFloat(score), nil
 		}, `cosine_similarity(a, b) - Compute cosine similarity between two vectors
 
 Returns the cosine of the angle between two vectors, ranging from -1.0 (opposite)
@@ -1298,24 +1284,4 @@ func copyMap(input map[string]any) map[string]any {
 		out[key] = value
 	}
 	return out
-}
-
-// toFloat64Slice converts a scriptling list or FloatArray to a []float64.
-func toFloat64Slice(obj object.Object) ([]float64, error) {
-	switch v := obj.(type) {
-	case *object.FloatArray:
-		return v.Data, nil
-	case *object.List:
-		result := make([]float64, len(v.Elements))
-		for i, item := range v.Elements {
-			f, err := item.AsFloat()
-			if err != nil {
-				return nil, fmt.Errorf("vector element %d is not a number", i)
-			}
-			result[i] = f
-		}
-		return result, nil
-	default:
-		return nil, fmt.Errorf("expected a list of numbers, got %s", obj.Type())
-	}
 }
