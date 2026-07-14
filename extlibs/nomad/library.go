@@ -214,6 +214,42 @@ Example:
     "AttachmentMode": "file-system",
   })`)
 
+	cb.MethodWithHelp("csi_volume_create", func(self *object.Instance, ctx context.Context, kwargs object.Kwargs, id string, volume object.Object) object.Object {
+		ci, errObj := getClientInstance(self)
+		if errObj != nil {
+			return errObj
+		}
+		namespace := kwargs.MustGetString("namespace", "")
+		volMap, ok := conversion.ToGo(volume).(map[string]any)
+		if !ok {
+			return &object.Error{Message: "csi_volume_create: volume must be a dict"}
+		}
+		if err := runBlockingErr(ctx, func() error { return ci.c.CSIVolumeCreate(ctx, id, namespace, volMap) }); err != nil {
+			return &object.Error{Message: err.Error()}
+		}
+		return &object.Null{}
+	}, `csi_volume_create(id, volume, **kwargs) - Create a CSI volume and provision backing storage
+
+Instructs the CSI controller plugin to provision new backing storage (e.g. a
+Ceph RBD image) and registers the volume in Nomad. Use csi_volume_register
+instead if the backing storage already exists.
+
+Parameters:
+  id (str): Volume ID
+  volume (dict): Volume specification in Nomad's CSI volume JSON format
+  namespace (str, optional): Namespace. Default: "" (Nomad default namespace)
+
+Returns:
+  None
+
+Example:
+  c.csi_volume_create("qaprod-data-01", {
+    "Name": "qaprod-data-01",
+    "PluginID": "ceph-csi",
+    "RequestedCapacityMin": 10 * 1024 * 1024 * 1024,
+    "RequestedCapabilities": [{"AccessMode": "single-node-writer", "AttachmentMode": "file-system"}],
+  }, namespace="fortixqa")`)
+
 	cb.MethodWithHelp("csi_volume_deregister", func(self *object.Instance, ctx context.Context, kwargs object.Kwargs, id string) object.Object {
 		ci, errObj := getClientInstance(self)
 		if errObj != nil {
@@ -237,6 +273,204 @@ Returns:
 
 Example:
   c.csi_volume_deregister("qaprod-orphaned-01", force=True)`)
+
+	cb.MethodWithHelp("csi_volume_delete", func(self *object.Instance, ctx context.Context, kwargs object.Kwargs, id string) object.Object {
+		ci, errObj := getClientInstance(self)
+		if errObj != nil {
+			return errObj
+		}
+		namespace := kwargs.MustGetString("namespace", "")
+		if err := runBlockingErr(ctx, func() error { return ci.c.CSIVolumeDelete(ctx, id, namespace) }); err != nil {
+			return &object.Error{Message: err.Error()}
+		}
+		return &object.Null{}
+	}, `csi_volume_delete(id, **kwargs) - Delete a CSI volume and its backing storage
+
+Instructs the CSI controller plugin to destroy the backing storage (e.g. Ceph
+RBD image) and then deregisters the volume from Nomad. Unlike csi_volume_deregister
+which only removes Nomad's record, this permanently removes the data.
+
+Parameters:
+  id (str): Volume ID
+  namespace (str, optional): Namespace. Default: "" (Nomad default namespace)
+
+Returns:
+  None
+
+Example:
+  c.csi_volume_delete("qaprod-orphaned-01", namespace="fortixqa")`)
+
+	// ── Dynamic Host Volumes ─────────────────────────────────────────────────
+
+	cb.MethodWithHelp("host_volumes_list", func(self *object.Instance, ctx context.Context, kwargs object.Kwargs) object.Object {
+		ci, errObj := getClientInstance(self)
+		if errObj != nil {
+			return errObj
+		}
+		namespace := kwargs.MustGetString("namespace", "*")
+		nodeID := kwargs.MustGetString("node_id", "")
+		nodePool := kwargs.MustGetString("node_pool", "")
+		pluginID := kwargs.MustGetString("plugin_id", "")
+		vols, err := runBlockingVal(ctx, func() ([]HostVolumeListEntry, error) {
+			return ci.c.HostVolumesList(ctx, namespace, nodeID, nodePool, pluginID)
+		})
+		if err != nil {
+			return &object.Error{Message: err.Error()}
+		}
+		elements := make([]object.Object, len(vols))
+		for i, v := range vols {
+			elements[i] = object.NewStringDict(map[string]object.Object{
+				"id":        object.NewString(v.ID),
+				"name":      object.NewString(v.Name),
+				"namespace": object.NewString(v.Namespace),
+				"plugin_id": object.NewString(v.PluginID),
+				"node_id":   object.NewString(v.NodeID),
+				"node_pool": object.NewString(v.NodePool),
+				"state":     object.NewString(v.State),
+			})
+		}
+		return &object.List{Elements: elements}
+	}, `host_volumes_list(**kwargs) - List dynamic host volumes
+
+Parameters:
+  namespace (str, optional): Namespace to list, "*" for all namespaces. Default: "*"
+  node_id (str, optional): Filter by node ID. Default: "" (no filter)
+  node_pool (str, optional): Filter by node pool. Default: "" (no filter)
+  plugin_id (str, optional): Filter by host volume plugin ID. Default: "" (no filter)
+
+Returns:
+  list: List of dicts with {id, name, namespace, plugin_id, node_id, node_pool, state}
+
+Example:
+  for v in c.host_volumes_list():
+    print(v["name"], v["node_id"], v["state"])`)
+
+	cb.MethodWithHelp("host_volume_get", func(self *object.Instance, ctx context.Context, kwargs object.Kwargs, id string) object.Object {
+		ci, errObj := getClientInstance(self)
+		if errObj != nil {
+			return errObj
+		}
+		namespace := kwargs.MustGetString("namespace", "")
+		vol, err := runBlockingVal(ctx, func() (map[string]any, error) {
+			return ci.c.HostVolumeGet(ctx, id, namespace)
+		})
+		if err != nil {
+			return &object.Error{Message: err.Error()}
+		}
+		return conversion.FromGo(vol)
+	}, `host_volume_get(id, **kwargs) - Get details for a dynamic host volume
+
+Parameters:
+  id (str): Volume ID
+  namespace (str, optional): Namespace. Default: "" (Nomad default namespace)
+
+Returns:
+  dict: Full volume specification and status, as returned by the Nomad API
+
+Example:
+  vol = c.host_volume_get("abc123-def456")
+  print(vol["Name"], vol["HostPath"], vol["State"])`)
+
+	cb.MethodWithHelp("host_volume_register", func(self *object.Instance, ctx context.Context, kwargs object.Kwargs, id string, volume object.Object) object.Object {
+		ci, errObj := getClientInstance(self)
+		if errObj != nil {
+			return errObj
+		}
+		namespace := kwargs.MustGetString("namespace", "")
+		volMap, ok := conversion.ToGo(volume).(map[string]any)
+		if !ok {
+			return &object.Error{Message: "host_volume_register: volume must be a dict"}
+		}
+		if err := runBlockingErr(ctx, func() error { return ci.c.HostVolumeRegister(ctx, id, namespace, volMap) }); err != nil {
+			return &object.Error{Message: err.Error()}
+		}
+		return &object.Null{}
+	}, `host_volume_register(id, volume, **kwargs) - Register a pre-existing dynamic host volume
+
+Registers a host volume that already exists on the node (e.g. a pre-mounted
+NFS or CephFS path) without invoking a host volume plugin. Use host_volume_create
+instead if you want Nomad to provision the backing storage via a plugin.
+
+Parameters:
+  id (str): Volume ID
+  volume (dict): Volume specification in Nomad's host volume JSON format
+  namespace (str, optional): Namespace. Default: "" (Nomad default namespace)
+
+Returns:
+  None
+
+Example:
+  c.host_volume_register("vol-abc123", {
+    "Name": "cephfs-code",
+    "PluginID": "mkdir",
+    "NodeID": "node-1",
+    "HostPath": "/cephfs/sys-code/Freedom3",
+    "Capacity": 100 * 1024 * 1024 * 1024,
+    "RequestedCapabilities": [{"AccessMode": "single-node-writer", "AttachmentMode": "file-system"}],
+  })`)
+
+	cb.MethodWithHelp("host_volume_create", func(self *object.Instance, ctx context.Context, kwargs object.Kwargs, id string, volume object.Object) object.Object {
+		ci, errObj := getClientInstance(self)
+		if errObj != nil {
+			return errObj
+		}
+		namespace := kwargs.MustGetString("namespace", "")
+		volMap, ok := conversion.ToGo(volume).(map[string]any)
+		if !ok {
+			return &object.Error{Message: "host_volume_create: volume must be a dict"}
+		}
+		if err := runBlockingErr(ctx, func() error { return ci.c.HostVolumeCreate(ctx, id, namespace, volMap) }); err != nil {
+			return &object.Error{Message: err.Error()}
+		}
+		return &object.Null{}
+	}, `host_volume_create(id, volume, **kwargs) - Create a dynamic host volume via a plugin
+
+Instructs the host volume plugin to provision storage on the target node and
+registers the resulting volume in Nomad. Use host_volume_register instead if
+the backing storage already exists and you only need to tell Nomad about it.
+
+Parameters:
+  id (str): Volume ID
+  volume (dict): Volume specification in Nomad's host volume JSON format
+  namespace (str, optional): Namespace. Default: "" (Nomad default namespace)
+
+Returns:
+  None
+
+Example:
+  c.host_volume_create("vol-new-01", {
+    "Name": "app-data",
+    "PluginID": "mkdir",
+    "NodePool": "production",
+    "RequestedCapacityMinBytes": 50 * 1024 * 1024 * 1024,
+    "RequestedCapabilities": [{"AccessMode": "single-node-writer", "AttachmentMode": "file-system"}],
+    "Parameters": {"path": "/opt/volumes/app-data"},
+  })`)
+
+	cb.MethodWithHelp("host_volume_delete", func(self *object.Instance, ctx context.Context, kwargs object.Kwargs, id string) object.Object {
+		ci, errObj := getClientInstance(self)
+		if errObj != nil {
+			return errObj
+		}
+		namespace := kwargs.MustGetString("namespace", "")
+		if err := runBlockingErr(ctx, func() error { return ci.c.HostVolumeDelete(ctx, id, namespace) }); err != nil {
+			return &object.Error{Message: err.Error()}
+		}
+		return &object.Null{}
+	}, `host_volume_delete(id, **kwargs) - Delete a dynamic host volume
+
+Instructs the host volume plugin to destroy the backing storage on the node
+and deregisters the volume from Nomad.
+
+Parameters:
+  id (str): Volume ID
+  namespace (str, optional): Namespace. Default: "" (Nomad default namespace)
+
+Returns:
+  None
+
+Example:
+  c.host_volume_delete("vol-abc123", namespace="production")`)
 
 	// ── Jobs ─────────────────────────────────────────────────────────────────
 
