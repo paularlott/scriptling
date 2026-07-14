@@ -172,6 +172,9 @@ func (s *Server) registerFolderTools(server *mcp_lib.Server) ([]string, error) {
 // is a static resource served verbatim. Returns the static URIs and template
 // URI templates so reload can unregister them.
 func (s *Server) registerFolderResources(server *mcp_lib.Server) (staticKeys, templateKeys []string, err error) {
+	if s.config.MCPResourcesDir == "" {
+		return nil, nil, nil
+	}
 	entries, err := mcpcli.ScanResourcesTree(s.config.MCPResourcesDir)
 	if err != nil {
 		return nil, nil, err
@@ -207,6 +210,9 @@ func (s *Server) registerFolderResources(server *mcp_lib.Server) (staticKeys, te
 // a lone name.md/name.txt is a static prompt (single user message = file
 // content). If both exist for a name, the dynamic one wins.
 func (s *Server) registerFolderPrompts(server *mcp_lib.Server) ([]string, error) {
+	if s.config.MCPPromptsDir == "" {
+		return nil, nil
+	}
 	entries, err := mcpcli.ScanPromptsFolder(s.config.MCPPromptsDir)
 	if err != nil {
 		return nil, err
