@@ -185,6 +185,17 @@ func (c *client) CSIVolumeRegister(ctx context.Context, id, namespace string, vo
 	return c.doJSON(ctx, http.MethodPut, "/v1/volume/csi/"+id, query, body, nil)
 }
 
+// CSIVolumeCreate creates a CSI volume via the CSI controller plugin, provisioning
+// the backing storage (e.g. Ceph RBD image) and registering it in Nomad.
+func (c *client) CSIVolumeCreate(ctx context.Context, id, namespace string, volume map[string]any) error {
+	body := map[string]any{"Volumes": []map[string]any{volume}}
+	query := map[string]string{}
+	if namespace != "" {
+		query["namespace"] = namespace
+	}
+	return c.doJSON(ctx, http.MethodPut, "/v1/volume/csi/"+id+"/create", query, body, nil)
+}
+
 // CSIVolumeDeregister deregisters (deletes) a CSI volume. force detaches any
 // remaining claims first.
 func (c *client) CSIVolumeDeregister(ctx context.Context, id, namespace string, force bool) error {
@@ -196,6 +207,94 @@ func (c *client) CSIVolumeDeregister(ctx context.Context, id, namespace string, 
 		query["force"] = "true"
 	}
 	return c.doJSON(ctx, http.MethodDelete, "/v1/volume/csi/"+id, query, nil, nil)
+}
+
+// CSIVolumeDelete deletes a CSI volume via the CSI controller plugin, removing
+// the backing storage (e.g. Ceph RBD image) and deregistering it from Nomad.
+func (c *client) CSIVolumeDelete(ctx context.Context, id, namespace string) error {
+	query := map[string]string{}
+	if namespace != "" {
+		query["namespace"] = namespace
+	}
+	return c.doJSON(ctx, http.MethodDelete, "/v1/volume/csi/"+id+"/delete", query, nil, nil)
+}
+
+// ── Dynamic Host Volumes ─────────────────────────────────────────────────────
+
+// HostVolumeListEntry is a summary entry as returned by the host volume list endpoint.
+type HostVolumeListEntry struct {
+	ID        string `json:"ID"`
+	Name      string `json:"Name"`
+	Namespace string `json:"Namespace"`
+	PluginID  string `json:"PluginID"`
+	NodeID    string `json:"NodeID"`
+	NodePool  string `json:"NodePool"`
+	State     string `json:"State"`
+}
+
+// HostVolumesList lists dynamic host volumes, optionally filtered by namespace,
+// node ID, node pool, or plugin ID.
+func (c *client) HostVolumesList(ctx context.Context, namespace, nodeID, nodePool, pluginID string) ([]HostVolumeListEntry, error) {
+	query := map[string]string{"type": "host"}
+	if namespace != "" {
+		query["namespace"] = namespace
+	}
+	if nodeID != "" {
+		query["node_id"] = nodeID
+	}
+	if nodePool != "" {
+		query["node_pool"] = nodePool
+	}
+	if pluginID != "" {
+		query["plugin_id"] = pluginID
+	}
+	var out []HostVolumeListEntry
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/volumes", query, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// HostVolumeGet fetches full details for a single dynamic host volume.
+func (c *client) HostVolumeGet(ctx context.Context, id, namespace string) (map[string]any, error) {
+	query := map[string]string{}
+	if namespace != "" {
+		query["namespace"] = namespace
+	}
+	var out map[string]any
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/volume/host/"+id, query, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// HostVolumeRegister registers a pre-existing dynamic host volume with Nomad.
+func (c *client) HostVolumeRegister(ctx context.Context, id, namespace string, volume map[string]any) error {
+	query := map[string]string{}
+	if namespace != "" {
+		query["namespace"] = namespace
+	}
+	return c.doJSON(ctx, http.MethodPut, "/v1/volume/host/"+id, query, volume, nil)
+}
+
+// HostVolumeCreate creates a dynamic host volume via a host volume plugin and
+// registers it with Nomad.
+func (c *client) HostVolumeCreate(ctx context.Context, id, namespace string, volume map[string]any) error {
+	query := map[string]string{}
+	if namespace != "" {
+		query["namespace"] = namespace
+	}
+	return c.doJSON(ctx, http.MethodPut, "/v1/volume/host/"+id+"/create", query, volume, nil)
+}
+
+// HostVolumeDelete deletes a dynamic host volume, destroying its backing
+// storage via the plugin and deregistering it from Nomad.
+func (c *client) HostVolumeDelete(ctx context.Context, id, namespace string) error {
+	query := map[string]string{}
+	if namespace != "" {
+		query["namespace"] = namespace
+	}
+	return c.doJSON(ctx, http.MethodDelete, "/v1/volume/host/"+id, query, nil, nil)
 }
 
 // ── Jobs ─────────────────────────────────────────────────────────────────────
