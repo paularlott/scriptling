@@ -2052,8 +2052,37 @@ func compareObjects(a, b object.Object) int {
 			}
 			return 0
 		}
+	case *object.Tuple:
+		if bv, ok := b.(*object.Tuple); ok {
+			return compareElements(av.Elements, bv.Elements)
+		}
+	case *object.List:
+		if bv, ok := b.(*object.List); ok {
+			return compareElements(av.Elements, bv.Elements)
+		}
 	}
 	// For incomparable types, return 0 (no swap)
+	return 0
+}
+
+// compareElements compares two element slices lexicographically, mirroring
+// Python's tuple/list ordering. Used by compareObjects for Tuple and List.
+func compareElements(a, b []object.Object) int {
+	n := len(a)
+	if len(b) < n {
+		n = len(b)
+	}
+	for i := 0; i < n; i++ {
+		if c := compareObjects(a[i], b[i]); c != 0 {
+			return c
+		}
+	}
+	if len(a) < len(b) {
+		return -1
+	}
+	if len(a) > len(b) {
+		return 1
+	}
 	return 0
 }
 
@@ -2237,10 +2266,21 @@ func sortedFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 				} else {
 					sortErr = errors.NewError("unsupported type for sorting: %s (no __lt__)", left.Type())
 				}
+			case *object.Tuple:
+				if r, ok := right.(*object.Tuple); ok {
+					cmp = compareElements(l.Elements, r.Elements)
+				} else {
+					sortErr = errors.NewError("cannot compare %s with %s", left.Type(), right.Type())
+				}
+			case *object.List:
+				if r, ok := right.(*object.List); ok {
+					cmp = compareElements(l.Elements, r.Elements)
+				} else {
+					sortErr = errors.NewError("cannot compare %s with %s", left.Type(), right.Type())
+				}
 			default:
 				sortErr = errors.NewError("unsupported type for sorting: %s", left.Type())
 			}
-
 			if reverse {
 				return cmp > 0
 			}

@@ -196,3 +196,49 @@ func TestBuiltinSortedWithLambda(t *testing.T) {
 		})
 	}
 }
+
+func TestBuiltinSortedTuplesAndLists(t *testing.T) {
+	tests := []struct {
+		name     string
+		script   string
+		expected string
+	}{
+		{
+			name:     "sorted tuples by first element",
+			script:   `sorted([(3, "c"), (1, "a"), (2, "b")])`,
+			expected: `[(1, a), (2, b), (3, c)]`,
+		},
+		{
+			name:     "sorted tuples reverse",
+			script:   `sorted([(3, "c"), (1, "a"), (2, "b")], reverse=True)`,
+			expected: `[(3, c), (2, b), (1, a)]`,
+		},
+		{
+			name:     "sorted tuples tiebreak on second element",
+			script:   `sorted([(1, 9), (1, 3), (1, 7)])`,
+			expected: `[(1, 3), (1, 7), (1, 9)]`,
+		},
+		{
+			name:     "sorted lists of lists",
+			script:   `sorted([[3], [1], [2]])`,
+			expected: `[[1], [2], [3]]`,
+		},
+		{
+			name:     "list.sort mutates tuples in place",
+			script:   `x = [(3, "c"), (1, "a"), (2, "b")]; x.sort(); x`,
+			expected: `[(1, a), (2, b), (3, c)]`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := testEval(tt.script)
+			if object.IsError(result) {
+				t.Fatalf("eval error: %s", result.Inspect())
+			}
+			if result.Inspect() != tt.expected {
+				t.Errorf("wrong result. got=%s, want=%s", result.Inspect(), tt.expected)
+			}
+		})
+	}
+}
