@@ -39,6 +39,28 @@ mcp.Client("https://example.com/mcp", args=["--x"])
 	}
 }
 
+func TestClientURLWithEnvRejected(t *testing.T) {
+	p := newMCPScriptling(t)
+	// env is stdio-only: passing it with an HTTP URL must error.
+	_, err := p.Eval(`import scriptling.mcp as mcp
+mcp.Client("https://example.com/mcp", env=["KEY=value"])
+`)
+	if err == nil || !strings.Contains(err.Error(), "env") {
+		t.Fatalf("expected an 'env' rejection error, got: %v", err)
+	}
+}
+
+func TestClientStdioEnvNotList(t *testing.T) {
+	p := newMCPScriptling(t)
+	// env must be a list of strings; a scalar must be rejected before launch.
+	_, err := p.Eval(`import scriptling.mcp as mcp
+mcp.Client("/nonexistent/scriptling-mcp-binary-xyz", env="KEY=value")
+`)
+	if err == nil || !strings.Contains(err.Error(), "env") {
+		t.Fatalf("expected an 'env' type error, got: %v", err)
+	}
+}
+
 func TestClientCommandWithBearerRejected(t *testing.T) {
 	p := newMCPScriptling(t)
 	_, err := p.Eval(`import scriptling.mcp as mcp

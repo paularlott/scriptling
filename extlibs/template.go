@@ -148,9 +148,22 @@ var TemplateHTMLLibrary = object.NewLibrary(TemplateHTMLLibraryName, map[string]
 			if err := errors.ExactArgs(args, 0); err != nil {
 				return err
 			}
-			return newSetInstance(&parsedTemplateSet{html: htmltemplate.New("")})
+			left, errObj := kwargs.GetString("left", "")
+			if errObj != nil {
+				return errObj
+			}
+			right, errObj := kwargs.GetString("right", "")
+			if errObj != nil {
+				return errObj
+			}
+			t := htmltemplate.New("").Delims(left, right)
+			return newSetInstance(&parsedTemplateSet{html: t})
 		},
-		HelpText: `Set() - Create a new HTML template set (uses html/template with auto-escaping)
+		HelpText: `Set(left="", right="") - Create a new HTML template set (uses html/template with auto-escaping)
+
+Parameters:
+  left (str, optional): Left action delimiter, default "{{"
+  right (str, optional): Right action delimiter, default "}}"
 
 Returns:
   Set: A template set with add(source) and render([name,] data) methods
@@ -167,7 +180,11 @@ Example:
   tmpl = html.Set()
   tmpl.add('{{define "header"}}<h1>{{.Title}}</h1>{{end}}')
   tmpl.add('{{define "page"}}{{template "header" .}}<p>{{.Body}}</p>{{end}}')
-  print(tmpl.render("page", {"Title": "Home", "Body": "Welcome"}))`,
+  print(tmpl.render("page", {"Title": "Home", "Body": "Welcome"}))
+
+  # Custom delimiters, e.g. {% %} to avoid clashing with literal {{ }}
+  tmpl = html.Set(left="{%", right="%}")
+  tmpl.add("<p>{%.Name%}</p>")`,
 	},
 }, map[string]object.Object{}, "Go html/template rendering with automatic HTML escaping")
 
@@ -178,9 +195,22 @@ var TemplateTextLibrary = object.NewLibrary(TemplateTextLibraryName, map[string]
 			if err := errors.ExactArgs(args, 0); err != nil {
 				return err
 			}
-			return newSetInstance(&parsedTemplateSet{text: texttemplate.New("")})
+			left, errObj := kwargs.GetString("left", "")
+			if errObj != nil {
+				return errObj
+			}
+			right, errObj := kwargs.GetString("right", "")
+			if errObj != nil {
+				return errObj
+			}
+			t := texttemplate.New("").Delims(left, right)
+			return newSetInstance(&parsedTemplateSet{text: t})
 		},
-		HelpText: `Set() - Create a new text template set (uses text/template, no HTML escaping)
+		HelpText: `Set(left="", right="") - Create a new text template set (uses text/template, no HTML escaping)
+
+Parameters:
+  left (str, optional): Left action delimiter, default "{{"
+  right (str, optional): Right action delimiter, default "}}"
 
 Returns:
   Set: A template set with add(source) and render([name,] data) methods
@@ -197,7 +227,11 @@ Example:
   tmpl = text.Set()
   tmpl.add('{{define "greeting"}}Hello, {{.Name}}!{{end}}')
   tmpl.add('{{define "email"}}{{template "greeting" .}}\n\nYour order is ready.{{end}}')
-  print(tmpl.render("email", {"Name": "Alice"}))`,
+  print(tmpl.render("email", {"Name": "Alice"}))
+
+  # Custom delimiters, e.g. {% %} to avoid clashing with literal {{ }}
+  tmpl = text.Set(left="{%", right="%}")
+  tmpl.add("Hello, {%.Name%}!")`,
 	},
 }, map[string]object.Object{}, "Go text/template rendering with no escaping")
 

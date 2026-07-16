@@ -49,6 +49,11 @@ tmpl = text.Set()
 tmpl.add(os.read_file("examples/template/email.txt"))
 print(tmpl.render({"Name": "Dave", "Product": "Scriptling Pro", "ExpiryDays": 3}))
 
+# Custom delimiters — use {% %} so literal {{ }} survives into the output
+tmpl = text.Set(left="{%", right="%}")
+tmpl.add("Hello, {%.Name%}! Upstream var: {{ service.tag }}")
+print(tmpl.render({"Name": "Eve"}))
+
 # ── HTML templates ────────────────────────────────────────────────────────────
 
 print("\n=== HTML Templates ===\n")
@@ -89,3 +94,8 @@ print(tmpl.render({
     "Body": "Scriptling makes scripting in Go easy.",
     "Tags": ["go", "scripting", "templates"],
 }))
+
+# Custom delimiters — keep Vue/Handlebars-style {{ }} in the output untouched
+tmpl = html.Set(left="[[", right="]]")
+tmpl.add("<p>Hello [[.Name]]! Your settings: {{ user.prefs }}</p>")
+print(tmpl.render({"Name": "Frank"}))
