@@ -583,6 +583,19 @@ func objectsDeepEqual(a, b object.Object) bool {
 			}
 		}
 		return true
+	case *object.Set:
+		// Sets are keyed by DictKey (identity hash), so equal key sets means
+		// equal sets regardless of insertion/iteration order.
+		bv := b.(*object.Set)
+		if len(av.Elements) != len(bv.Elements) {
+			return false
+		}
+		for key := range av.Elements {
+			if _, ok := bv.Elements[key]; !ok {
+				return false
+			}
+		}
+		return true
 	default:
 		return a == b // Reference equality for other types
 	}
@@ -823,6 +836,31 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 				return &object.List{Elements: result}
 			}
 			return errors.NewTypeError("int", right.Type().String())
+		}
+	case *object.Set:
+		// Set algebra operators. Both operands must be sets (matching Python);
+		// for iterable operands use the .intersection()/.union()/etc. methods.
+		switch operator {
+		case ast.OpBitAnd:
+			if r, ok := right.(*object.Set); ok {
+				return l.Intersection(r)
+			}
+			return errors.NewTypeError("set", right.Type().String())
+		case ast.OpBitOr:
+			if r, ok := right.(*object.Set); ok {
+				return l.Union(r)
+			}
+			return errors.NewTypeError("set", right.Type().String())
+		case ast.OpSub:
+			if r, ok := right.(*object.Set); ok {
+				return l.Difference(r)
+			}
+			return errors.NewTypeError("set", right.Type().String())
+		case ast.OpBitXor:
+			if r, ok := right.(*object.Set); ok {
+				return l.SymmetricDifference(r)
+			}
+			return errors.NewTypeError("set", right.Type().String())
 		}
 	}
 
@@ -2316,8 +2354,18 @@ func isTruthy(obj object.Object) bool {
 			return v.StringValue() != ""
 		case *object.List:
 			return len(v.Elements) > 0
+		case *object.Tuple:
+			return len(v.Elements) > 0
 		case *object.Dict:
 			return len(v.Pairs) > 0
+		case *object.Set:
+			return len(v.Elements) > 0
+		case *object.DictKeys:
+			return len(v.Dict.Pairs) > 0
+		case *object.DictValues:
+			return len(v.Dict.Pairs) > 0
+		case *object.DictItems:
+			return len(v.Dict.Pairs) > 0
 		case *object.FloatArray:
 			return len(v.Data) > 0
 		case *object.Instance:

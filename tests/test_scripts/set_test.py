@@ -86,6 +86,67 @@ assert 3 not in sym_diff
 assert s1.issubset(u)
 assert u.issuperset(s1)
 
+# Set algebra operators (& | - ^) — both operands must be sets
+a = set([1, 2, 3])
+b = set([2, 3, 4])
+assert (a & b) == set([2, 3])
+assert (a | b) == set([1, 2, 3, 4])
+assert (a - b) == set([1])
+assert (a ^ b) == set([1, 4])
+
+# Operators return new sets; originals are unchanged
+assert a == set([1, 2, 3])
+assert b == set([2, 3, 4])
+
+# Operators agree with the method forms
+assert (a & b) == a.intersection(b)
+assert (a | b) == a.union(b)
+assert (a - b) == a.difference(b)
+assert (a ^ b) == a.symmetric_difference(b)
+
+# Value equality is order-independent
+assert set([1, 2, 3]) == set([3, 2, 1])
+assert set([1, 2, 3]) != set([1, 2])
+assert set([]) == set([])
+# cross-type equality is False, not an error
+assert (set([1, 2]) == [1, 2]) == False
+
+# Mixing a set with a non-set operand is a type error (matches Python)
+try:
+    _ = a & [1, 2]
+    assert False, "expected type error for set & list"
+except Exception:
+    pass
+
+# Augmented assignment (&= |= -= ^=) works too — rebinds to a new set
+s = set([1, 2, 3])
+s &= set([2, 3, 4])
+assert s == set([2, 3])
+s = set([1, 2, 3])
+s |= set([5])
+assert s == set([1, 2, 3, 5])
+s = set([1, 2, 3])
+s -= set([1])
+assert s == set([2, 3])
+s = set([1, 2, 3])
+s ^= set([1])
+assert s == set([2, 3])
+
+# Truthiness: empty containers are falsy (previously empty set/tuple were truthy)
+assert bool(set()) == False
+assert bool(set([1])) == True
+assert bool(()) == False
+assert bool((1,)) == True
+assert bool({}.keys()) == False
+assert bool({1: 1}.items()) == True
+# falsy empty set short-circuits `and` without evaluating the RHS
+assert (set() and "x") == set()
+assert (set([1]) and "x") == "x"
+ran = False
+if set():
+    ran = True
+assert ran == False
+
 print("Set tests passed!")
 
 # Set comprehensions
