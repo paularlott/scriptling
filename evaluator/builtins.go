@@ -718,29 +718,29 @@ Works with both integers and floats.`,
 			if len(args) == 0 {
 				return errors.NewError("min() requires at least 1 argument")
 			}
-		// If single argument, treat as iterable
-		if len(args) == 1 {
-			// Fast path for FloatArray.
-			if fa, ok := args[0].(*object.FloatArray); ok {
-				if len(fa.Data) == 0 {
-					return errors.NewError("min() arg is an empty sequence")
-				}
-				minVal := fa.Data[0]
-				for _, v := range fa.Data[1:] {
-					if v < minVal {
-						minVal = v
+			// If single argument, treat as iterable
+			if len(args) == 1 {
+				// Fast path for FloatArray.
+				if fa, ok := args[0].(*object.FloatArray); ok {
+					if len(fa.Data) == 0 {
+						return errors.NewError("min() arg is an empty sequence")
 					}
+					minVal := fa.Data[0]
+					for _, v := range fa.Data[1:] {
+						if v < minVal {
+							minVal = v
+						}
+					}
+					return object.NewFloat(minVal)
 				}
-				return object.NewFloat(minVal)
-			}
-			// Any other iterable: list, tuple, string, set, dict, dict views, iterator.
-			if elements, ok := object.IterableToSlice(args[0]); ok {
-				if len(elements) == 0 {
-					return errors.NewError("min() arg is an empty sequence")
+				// Any other iterable: list, tuple, string, set, dict, dict views, iterator.
+				if elements, ok := object.IterableToSlice(args[0]); ok {
+					if len(elements) == 0 {
+						return errors.NewError("min() arg is an empty sequence")
+					}
+					args = elements
 				}
-				args = elements
 			}
-		}
 			minVal := args[0]
 			for _, arg := range args[1:] {
 				cmp := compareObjects(minVal, arg)
@@ -760,29 +760,29 @@ With multiple arguments, returns the smallest argument.`,
 			if len(args) == 0 {
 				return errors.NewError("max() requires at least 1 argument")
 			}
-		// If single argument, treat as iterable
-		if len(args) == 1 {
-			// Fast path for FloatArray.
-			if fa, ok := args[0].(*object.FloatArray); ok {
-				if len(fa.Data) == 0 {
-					return errors.NewError("max() arg is an empty sequence")
-				}
-				maxVal := fa.Data[0]
-				for _, v := range fa.Data[1:] {
-					if v > maxVal {
-						maxVal = v
+			// If single argument, treat as iterable
+			if len(args) == 1 {
+				// Fast path for FloatArray.
+				if fa, ok := args[0].(*object.FloatArray); ok {
+					if len(fa.Data) == 0 {
+						return errors.NewError("max() arg is an empty sequence")
 					}
+					maxVal := fa.Data[0]
+					for _, v := range fa.Data[1:] {
+						if v > maxVal {
+							maxVal = v
+						}
+					}
+					return object.NewFloat(maxVal)
 				}
-				return object.NewFloat(maxVal)
-			}
-			// Any other iterable: list, tuple, string, set, dict, dict views, iterator.
-			if elements, ok := object.IterableToSlice(args[0]); ok {
-				if len(elements) == 0 {
-					return errors.NewError("max() arg is an empty sequence")
+				// Any other iterable: list, tuple, string, set, dict, dict views, iterator.
+				if elements, ok := object.IterableToSlice(args[0]); ok {
+					if len(elements) == 0 {
+						return errors.NewError("max() arg is an empty sequence")
+					}
+					args = elements
 				}
-				args = elements
 			}
-		}
 			maxVal := args[0]
 			for _, arg := range args[1:] {
 				cmp := compareObjects(maxVal, arg)

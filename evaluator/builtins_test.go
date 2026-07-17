@@ -287,3 +287,128 @@ func TestBuiltinIterablesOnDictViewsSetsStrings(t *testing.T) {
 		})
 	}
 }
+
+// TestSetOperators covers the & | - ^ set-algebra operators and value equality.
+func TestSetOperators(t *testing.T) {
+	tests := []struct {
+		name     string
+		script   string
+		expected string
+	}{
+		{name: "intersection", script: `set([1,2,3]) & set([2,3,4])`, expected: `{2, 3}`},
+		{name: "union", script: `set([1,2,3]) | set([2,3,4])`, expected: `{1, 2, 3, 4}`},
+		{name: "difference", script: `set([1,2,3]) - set([2,3,4])`, expected: `{1}`},
+		{name: "symmetric difference", script: `set([1,2,3]) ^ set([2,3,4])`, expected: `{1, 4}`},
+		{name: "operator matches method", script: `(set([1,2,3]) & set([2,3,4])) == set([1,2,3]).intersection(set([2,3,4]))`, expected: `true`},
+		{name: "operands not mutated", script: `a=set([1,2,3]); b=set([2,3,4]); a & b; a`, expected: `{1, 2, 3}`},
+		{name: "value equality order-independent", script: `set([1,2,3]) == set([3,2,1])`, expected: `true`},
+		{name: "value inequality", script: `set([1,2,3]) != set([1,2])`, expected: `true`},
+		{name: "empty set equality", script: `set([]) == set([])`, expected: `true`},
+		{name: "cross-type equality false", script: `set([1,2]) == [1,2]`, expected: `false`},
+		{name: "chained with equality", script: `(set([1,2,3]) & set([2,3,4])) == set([2,3])`, expected: `true`},
+		// empty-set edge cases
+		{name: "empty intersection", script: `set([]) & set([1])`, expected: `{}`},
+		{name: "empty union", script: `set([]) | set([1])`, expected: `{1}`},
+		{name: "difference from empty", script: `set([1]) - set([])`, expected: `{1}`},
+		{name: "empty symmetric difference", script: `set([]) ^ set([1])`, expected: `{1}`},
+		{name: "two empties intersection", script: `set([]) & set([])`, expected: `{}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := testEval(tt.script)
+			if object.IsError(result) {
+				t.Fatalf("eval error: %s", result.Inspect())
+			}
+			if result.Inspect() != tt.expected {
+				t.Errorf("wrong result. got=%s, want=%s", result.Inspect(), tt.expected)
+			}
+		})
+	}
+
+	// A non-set right operand must produce a type error (matches Python).
+	errResult := testEval(`set([1,2]) & [1,2]`)
+	if !object.IsError(errResult) {
+		t.Errorf("expected type error for set & list, got %s", errResult.Inspect())
+	}
+
+	// Augmented assignment (&= |= -= ^=) delegates through the infix operators,
+	// so it works on sets too — rebinds the name to a new set.
+	for _, tt := range []struct{ name, script, expected string }{
+		{"&=", `s=set([1,2,3]); s &= set([2,3,4]); s`, `{2, 3}`},
+		{"|=", `s=set([1,2,3]); s |= set([5]); s`, `{1, 2, 3, 5}`},
+		{"-=", `s=set([1,2,3]); s -= set([1]); s`, `{2, 3}`},
+		{"^=", `s=set([1,2,3]); s ^= set([1]); s`, `{2, 3}`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			result := testEval(tt.script)
+			if object.IsError(result) {
+				t.Fatalf("eval error: %s", result.Inspect())
+			}
+			if result.Inspect() != tt.expected {
+				t.Errorf("wrong result. got=%s, want=%s", result.Inspect(), tt.expected)
+			}
+		})
+	}
+
+	// Integer bitwise operators are unaffected by the new Set case.
+	for _, tt := range []struct{ name, script, expected string }{
+		{"int and", `0xFF & 0x0F`, `15`},
+		{"int or", `0xF0 | 0x0F`, `255`},
+		{"int xor", `0xFF ^ 0x0F`, `240`},
+		{"int sub", `5 - 2`, `3`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			result := testEval(tt.script)
+			if object.IsError(result) {
+				t.Fatalf("eval error: %s", result.Inspect())
+			}
+			if result.Inspect() != tt.expected {
+				t.Errorf("wrong result. got=%s, want=%s", result.Inspect(), tt.expected)
+			}
+		})
+	}
+}
+
+// TestTruthyCollections covers Python-style truthiness for collection types:
+// empty Tuple/Set/dict-views are falsy (previously they were all truthy).
+func TestTruthyCollections(t *testing.T) {
+	tests := []struct {
+		name     string
+		script   string
+		expected string
+	}{
+		{name: "empty set falsy", script: `bool(set())`, expected: `false`},
+		{name: "nonempty set truthy", script: `bool(set([1]))`, expected: `true`},
+		{name: "empty tuple falsy", script: `bool(())`, expected: `false`},
+		{name: "nonempty tuple truthy", script: `bool((1,))`, expected: `true`},
+		{name: "empty dict_keys falsy", script: `bool({}.keys())`, expected: `false`},
+		{name: "nonempty dict_values truthy", script: `bool({1: 1}.values())`, expected: `true`},
+		{name: "empty dict_items falsy", script: `bool({}.items())`, expected: `false`},
+		// short-circuit: empty set is falsy so `and` returns it without evaluating RHS
+		{name: "empty set short-circuits and", script: `set() and "RHS"`, expected: `{}`},
+		{name: "nonempty set and evaluates RHS", script: `set([1]) and "RHS"`, expected: `RHS`},
+		{name: "empty tuple short-circuits and", script: `() and "RHS"`, expected: `()`},
+		// if-condition uses the same isTruthy path
+		{name: "if rejects empty set", script: `r = 0
+if set():
+    r = 1
+r`, expected: `0`},
+		{name: "if accepts nonempty set", script: `r = 0
+if set([1]):
+    r = 1
+r`, expected: `1`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := testEval(tt.script)
+			if object.IsError(result) {
+				t.Fatalf("eval error: %s", result.Inspect())
+			}
+			if result.Inspect() != tt.expected {
+				t.Errorf("wrong result. got=%s, want=%s", result.Inspect(), tt.expected)
+			}
+		})
+	}
+}
