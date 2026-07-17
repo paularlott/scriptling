@@ -866,14 +866,11 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if err := errors.ExactArgs(args, 1); err != nil {
 			return err
 		}
-		var elements []object.Object
-		switch iter := args[0].(type) {
-		case *object.List:
-			elements = iter.Elements
-		case *object.Tuple:
-			elements = iter.Elements
-		default:
-			return errors.NewTypeError("LIST or TUPLE", args[0].Type().String())
+		// Accept any iterable of strings (list, tuple, set, dict, dict views,
+		// string, iterator) — matching Python's str.join.
+		elements, ok := object.IterableToSlice(args[0])
+		if !ok {
+			return errors.NewTypeError("iterable", args[0].Type().String())
 		}
 		parts := make([]string, len(elements))
 		for i, elem := range elements {

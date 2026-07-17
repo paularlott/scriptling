@@ -242,3 +242,48 @@ func TestBuiltinSortedTuplesAndLists(t *testing.T) {
 		})
 	}
 }
+
+// TestBuiltinIterablesOnDictViewsSetsStrings covers sorted/sum/min/max accepting
+// any iterable (dict views, sets, strings, dicts), not just lists/tuples.
+func TestBuiltinIterablesOnDictViewsSetsStrings(t *testing.T) {
+	tests := []struct {
+		name     string
+		script   string
+		expected string
+	}{
+		// sorted
+		{name: "sorted dict_keys", script: `d = {"b": 2, "a": 1, "c": 3}; sorted(d.keys())`, expected: `[a, b, c]`},
+		{name: "sorted dict_values", script: `d = {"b": 2, "a": 1, "c": 3}; sorted(d.values())`, expected: `[1, 2, 3]`},
+		{name: "sorted dict_items by value", script: `d = {"a": 3, "c": 1, "b": 2}; sorted(d.items(), key=lambda x: x[1])`, expected: `[(c, 1), (b, 2), (a, 3)]`},
+		{name: "sorted set", script: `sorted(set([3, 1, 2]))`, expected: `[1, 2, 3]`},
+		{name: "sorted string", script: `sorted("cab")`, expected: `[a, b, c]`},
+		{name: "sorted dict yields keys", script: `d = {"b": 2, "a": 1}; sorted(d)`, expected: `[a, b]`},
+		{name: "sorted does not mutate input list", script: `o = [3, 1, 2]; sorted(o); o`, expected: `[3, 1, 2]`},
+		// sum
+		{name: "sum dict_values", script: `d = {"a": 1, "b": 2, "c": 3}; sum(d.values())`, expected: `6`},
+		{name: "sum set", script: `sum(set([1, 2, 3]))`, expected: `6`},
+		{name: "sum tuple", script: `sum((10, 20, 30))`, expected: `60`},
+		// min / max
+		{name: "min dict_keys", script: `d = {"b": 2, "a": 1, "c": 3}; min(d.keys())`, expected: `a`},
+		{name: "max dict_keys", script: `d = {"b": 2, "a": 1, "c": 3}; max(d.keys())`, expected: `c`},
+		{name: "min dict_values", script: `d = {"a": 3, "c": 1, "b": 2}; min(d.values())`, expected: `1`},
+		{name: "max set", script: `max(set([5, 2, 8]))`, expected: `8`},
+		{name: "min string", script: `min("cab")`, expected: `a`},
+		{name: "max string", script: `max("cab")`, expected: `c`},
+		// multi-arg form still works (regression guard)
+		{name: "min multi-arg", script: `min(5, 2, 8)`, expected: `2`},
+		{name: "max multi-arg", script: `max(5, 2, 8)`, expected: `8`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := testEval(tt.script)
+			if object.IsError(result) {
+				t.Fatalf("eval error: %s", result.Inspect())
+			}
+			if result.Inspect() != tt.expected {
+				t.Errorf("wrong result. got=%s, want=%s", result.Inspect(), tt.expected)
+			}
+		})
+	}
+}
