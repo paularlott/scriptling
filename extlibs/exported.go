@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/paularlott/scriptling/extlibs/fssecurity"
 )
@@ -99,6 +100,17 @@ type FindOptions struct {
 	AllowedPaths  []string
 }
 
+// FindEntry is a single matching entry returned by FindEntries, carrying the
+// metadata required to decide whether the entry has changed without re-reading
+// it. Callers comparing two trees (e.g. a sync tool diffing local and remote)
+// can rely on Size+Mtime alone for the common case.
+type FindEntry struct {
+	Path  string
+	Size  int64
+	Mtime time.Time
+	IsDir bool
+}
+
 // resolveMaxSize normalises a caller-supplied MaxSize to the internal convention
 // (0 = unlimited). The caller's zero value means "use the 1 MiB default".
 func resolveMaxSize(n int64) int64 {
@@ -176,18 +188,11 @@ func Grep(ctx context.Context, needle, path string, opts GrepOptions) ([]GrepMat
 	return out, nil
 }
 
-// Find returns the paths under root that match the given filters. It uses the
-// same concurrent walker as scriptling.find. Paths are returned in arbitrary
-// order. The root itself is never included in the result.
-func Find(ctx context.Context, root string, opts FindOptions) ([]string, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	config := fssecurity.Config{AllowedPaths: normalizeAllowed(opts.AllowedPaths)}
-	if err := checkAllowed(config, root); err != nil {
-		return nil, err
-	}
-
+// toFindOptions translates the public FindOptions into the internal
+// findOptions used by the find library. Recursive defaults to true (matching
+// the scriptling default); opts.Recursive overrides it when non-nil. An error
+// is returned when opts.Type is not one of "", "any", "file", or "dir".
+func toFindOptions(opts FindOptions) (findOptions, error) {
 	fopts := findOptions{
 		recursive:     true, // scriptling default
 		entryType:     "any",
@@ -205,7 +210,7 @@ func Find(ctx context.Context, root string, opts FindOptions) ([]string, error) 
 	case "file", "dir":
 		fopts.entryType = opts.Type
 	default:
-		return nil, fmt.Errorf("find: type must be 'any', 'file', or 'dir', got %q", opts.Type)
+		return fopts, fmt.Errorf("find: type must be 'any', 'file', or 'dir', got %q", opts.Type)
 	}
 	if opts.MtimeMin != nil {
 		fopts.mtimeMin = *opts.MtimeMin
@@ -223,9 +228,53 @@ func Find(ctx context.Context, root string, opts FindOptions) ([]string, error) 
 		fopts.sizeMax = *opts.SizeMax
 		fopts.hasSizeMax = true
 	}
+	return fopts, nil
+}
+
+// Find returns the paths under root that match the given filters. It uses the
+// same concurrent walker as scriptling.find. Paths are returned in arbitrary
+// order. The root itself is never included in the result.
+func Find(ctx context.Context, root string, opts FindOptions) ([]string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	config := fssecurity.Config{AllowedPaths: normalizeAllowed(opts.AllowedPaths)}
+	if err := checkAllowed(config, root); err != nil {
+		return nil, err
+	}
+
+	fopts, err := toFindOptions(opts)
+	if err != nil {
+		return nil, err
+	}
 
 	inst := &findLibraryInstance{config: config}
 	return inst.findPaths(ctx, root, fopts), nil
+}
+
+// FindEntries is like Find but returns FindEntry records with size, mtime, and
+// type per match. Every matching entry is stat'd so the caller can compare
+// trees without re-reading the bytes. Use Find instead when only the path
+// strings are needed — Find skips the stat in the no-filter common case.
+//
+// Like Find, the root itself is never included in the result, and paths are
+// returned in arbitrary order.
+func FindEntries(ctx context.Context, root string, opts FindOptions) ([]FindEntry, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	config := fssecurity.Config{AllowedPaths: normalizeAllowed(opts.AllowedPaths)}
+	if err := checkAllowed(config, root); err != nil {
+		return nil, err
+	}
+
+	fopts, err := toFindOptions(opts)
+	if err != nil {
+		return nil, err
+	}
+
+	inst := &findLibraryInstance{config: config}
+	return inst.findEntries(ctx, root, fopts), nil
 }
 
 // SedReplace replaces every occurrence of old with replacement in the file (or

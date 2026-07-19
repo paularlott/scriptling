@@ -281,6 +281,322 @@ func equalStringSlices(a, b []string) bool {
 	return true
 }
 
+// --- FindEntries (rich) tests ------------------------------------------------
+
+func runFindEntries(t *testing.T, root string, opts FindOptions) []FindEntry {
+	t.Helper()
+	got, err := FindEntries(context.Background(), root, opts)
+	if err != nil {
+		t.Fatalf("FindEntries error: %v", err)
+	}
+	return got
+}
+
+func TestFindEntriesReturnsMetadata(t *testing.T) {
+	root := buildFindTree(t)
+	got := runFindEntries(t, root, FindOptions{Recursive: ptrBool(true), Type: "file", Name: "big.bin"})
+	if len(got) != 1 {
+		t.Fatalf("expected 1 entry, got %d: %+v", len(got), got)
+	}
+	e := got[0]
+	if filepath.Base(e.Path) != "big.bin" {
+		t.Errorf("path: got %q, want big.bin", e.Path)
+	}
+	if e.Size != 5000 {
+		t.Errorf("size: got %d, want 5000", e.Size)
+	}
+	if e.IsDir {
+		t.Errorf("is_dir: got true, want false")
+	}
+	// mtime should be ~48h ago, within a generous tolerance.
+	age := time.Since(e.Mtime).Hours()
+	if age < 47 || age > 49 {
+		t.Errorf("mtime: got age %.1fh, want ~48h", age)
+	}
+}
+
+func TestFindEntriesMarksDirectories(t *testing.T) {
+	root := buildFindTree(t)
+	got := runFindEntries(t, root, FindOptions{Recursive: ptrBool(true), Type: "dir"})
+	paths := make(map[string]bool)
+	for _, e := range got {
+		if !e.IsDir {
+			t.Errorf("type=dir returned non-dir entry: %+v", e)
+		}
+		paths[filepath.Base(e.Path)] = true
+	}
+	if !paths["sub"] || !paths["deep"] {
+		t.Errorf("expected sub and deep dirs, got %v", paths)
+	}
+}
+
+func TestFindEntriesRootIsSingleFile(t *testing.T) {
+	root := buildFindTree(t)
+	target := filepath.Join(root, "a.txt")
+	got := runFindEntries(t, target, FindOptions{Recursive: ptrBool(true), Type: "any", Name: "*.txt"})
+	if len(got) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(got))
+	}
+	if got[0].Path != target {
+		t.Errorf("path: got %q, want %q", got[0].Path, target)
+	}
+	if got[0].Size != 5 { // "small"
+		t.Errorf("size: got %d, want 5", got[0].Size)
+	}
+}
+
+func TestFindEntriesMatchesFindPathSet(t *testing.T) {
+	// Find and FindEntries should agree on which paths match.
+	root := buildFindTree(t)
+	opts := FindOptions{Recursive: ptrBool(true), Type: "any"}
+
+	rich, err := FindEntries(context.Background(), root, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := Find(context.Background(), root, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	richPaths := make([]string, len(rich))
+	for i, e := range rich {
+		richPaths[i] = e.Path
+	}
+	sort.Strings(richPaths)
+	sort.Strings(plain)
+
+	if !equalStringSlices(richPaths, plain) {
+		t.Errorf("Find/FindEntries disagree:\n rich %v\n plain %v", richPaths, plain)
+	}
+}
+
+func TestFindEntriesRejectsBadType(t *testing.T) {
+	root := buildFindTree(t)
+	_, err := FindEntries(context.Background(), root, FindOptions{Type: "block"})
+	if err == nil {
+		t.Fatalf("expected error for bad type")
+	}
+}
+
+func TestFindEntriesAppliesSizeFilter(t *testing.T) {
+	root := buildFindTree(t)
+	min := int64(1000)
+	got := runFindEntries(t, root, FindOptions{Recursive: ptrBool(true), Type: "file", SizeMin: &min})
+	for _, e := range got {
+		if e.Size < 1000 {
+			t.Errorf("size_min leak: %+v", e)
+		}
+	}
+	// Only big.bin should survive.
+	if len(got) != 1 || filepath.Base(got[0].Path) != "big.bin" {
+		t.Errorf("expected just big.bin, got %d entries", len(got))
+	}
+}
+
+func ptrBool(b bool) *bool { return &b }
+
+// --- find.entries builtin tests ----------------------------------------------
+
+// callEntriesBuiltin invokes the registered "entries" builtin with one
+// positional arg (the path) and the given kwargs, returning the result list.
+func callEntriesBuiltin(t *testing.T, searchPath string, kwargs map[string]object.Object) *object.List {
+	t.Helper()
+	inst := &findLibraryInstance{config: fssecurity.Config{AllowedPaths: nil}}
+	lib := inst.createLibrary()
+	entriesBuiltin := lib.Functions()["entries"]
+	if entriesBuiltin == nil {
+		t.Fatal("entries builtin not registered in library")
+	}
+	res := entriesBuiltin.Fn(context.Background(), object.NewKwargs(kwargs), object.NewString(searchPath))
+	if err, ok := res.(*object.Error); ok {
+		t.Fatalf("entries builtin returned error: %s", err.Inspect())
+	}
+	list, ok := res.(*object.List)
+	if !ok {
+		t.Fatalf("entries builtin returned %T, want *List", res)
+	}
+	return list
+}
+
+func TestFindEntriesBuiltinReturnsListOfDicts(t *testing.T) {
+	root := buildFindTree(t)
+	got := callEntriesBuiltin(t, root, map[string]object.Object{
+		"type": object.NewString("file"),
+		"name": object.NewString("big.bin"),
+	})
+	if len(got.Elements) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(got.Elements))
+	}
+	d, ok := got.Elements[0].(*object.Dict)
+	if !ok {
+		t.Fatalf("entry is %T, want *Dict", got.Elements[0])
+	}
+	for _, key := range []string{"path", "size", "mtime", "is_dir"} {
+		if !d.HasByString(key) {
+			t.Errorf("entry dict missing key %q: %s", key, d.Inspect())
+		}
+	}
+	sizePair, _ := d.GetByString("size")
+	if sizeInt, _ := sizePair.Value.AsInt(); sizeInt != 5000 {
+		t.Errorf("size: got %d, want 5000", sizeInt)
+	}
+	isDirPair, _ := d.GetByString("is_dir")
+	if dir, _ := isDirPair.Value.AsBool(); dir {
+		t.Errorf("is_dir: got true, want false for big.bin")
+	}
+}
+
+func TestFindEntriesBuiltinMarksDirectories(t *testing.T) {
+	root := buildFindTree(t)
+	got := callEntriesBuiltin(t, root, map[string]object.Object{
+		"type": object.NewString("dir"),
+	})
+	if len(got.Elements) == 0 {
+		t.Fatal("expected at least one directory entry")
+	}
+	for _, el := range got.Elements {
+		d, ok := el.(*object.Dict)
+		if !ok {
+			t.Fatalf("entry is %T, want *Dict", el)
+		}
+		isDirPair, _ := d.GetByString("is_dir")
+		dir, _ := isDirPair.Value.AsBool()
+		if !dir {
+			t.Errorf("type=dir returned non-dir entry: %s", d.Inspect())
+		}
+	}
+}
+
+func TestFindEntriesBuiltinMtimeIsFloatSeconds(t *testing.T) {
+	root := buildFindTree(t)
+	got := callEntriesBuiltin(t, root, map[string]object.Object{
+		"type": object.NewString("file"),
+		"name": object.NewString("big.bin"),
+	})
+	d := got.Elements[0].(*object.Dict)
+	mtimePair, _ := d.GetByString("mtime")
+	mtime, err := mtimePair.Value.AsFloat()
+	if err != nil {
+		t.Fatalf("mtime not a float: %v", err)
+	}
+	// big.bin was written ~48h ago. The float should be a recent epoch seconds
+	// value (~1.7e9) and correspond to ~48h back, within a generous tolerance.
+	if mtime < 1e9 {
+		t.Errorf("mtime %v does not look like epoch seconds", mtime)
+	}
+	ageHours := time.Since(time.Unix(int64(mtime), 0)).Hours()
+	if ageHours < 47 || ageHours > 49 {
+		t.Errorf("mtime age: got %.1fh, want ~48h", ageHours)
+	}
+}
+
+func TestFindEntriesBuiltinMatchesPathBuiltin(t *testing.T) {
+	root := buildFindTree(t)
+	inst := &findLibraryInstance{config: fssecurity.Config{AllowedPaths: nil}}
+	lib := inst.createLibrary()
+	pathBuiltin := lib.Functions()["path"]
+	entriesBuiltin := lib.Functions()["entries"]
+
+	kwargsAny := map[string]object.Object{"type": object.NewString("any")}
+	pathRes := pathBuiltin.Fn(context.Background(), object.NewKwargs(kwargsAny), object.NewString(root))
+	entriesRes := entriesBuiltin.Fn(context.Background(), object.NewKwargs(kwargsAny), object.NewString(root))
+
+	pathList := pathRes.(*object.List)
+	entriesList := entriesRes.(*object.List)
+
+	if len(pathList.Elements) != len(entriesList.Elements) {
+		t.Fatalf("path/entries disagree on count: path=%d entries=%d",
+			len(pathList.Elements), len(entriesList.Elements))
+	}
+
+	pathSet := make(map[string]bool, len(pathList.Elements))
+	for _, el := range pathList.Elements {
+		s, _ := el.AsString()
+		pathSet[s] = true
+	}
+	for _, el := range entriesList.Elements {
+		d := el.(*object.Dict)
+		pathPair, _ := d.GetByString("path")
+		s, _ := pathPair.Value.AsString()
+		if !pathSet[s] {
+			t.Errorf("entries returned path not in path() result: %s", s)
+		}
+	}
+}
+
+func TestFindEntriesBuiltinRejectsBadType(t *testing.T) {
+	root := buildFindTree(t)
+	inst := &findLibraryInstance{config: fssecurity.Config{AllowedPaths: nil}}
+	entriesBuiltin := inst.createLibrary().Functions()["entries"]
+
+	res := entriesBuiltin.Fn(context.Background(),
+		object.NewKwargs(map[string]object.Object{"type": object.NewString("block")}),
+		object.NewString(root))
+	if _, ok := res.(*object.Error); !ok {
+		t.Errorf("expected Error for bad type, got %T: %s", res, res.Inspect())
+	}
+}
+
+func TestFindEntriesBuiltinPermissionDenied(t *testing.T) {
+	root := buildFindTree(t)
+	allowed := filepath.Join(root, "sub")
+	inst := &findLibraryInstance{config: fssecurity.Config{AllowedPaths: []string{allowed}}}
+	entriesBuiltin := inst.createLibrary().Functions()["entries"]
+
+	// Search from root which is outside the allowed dir.
+	res := entriesBuiltin.Fn(context.Background(), object.NewKwargs(nil), object.NewString(root))
+	// NewPermissionError returns *Exception; either Error or Exception is fine.
+	inspect := res.Inspect()
+	if !strings.Contains(inspect, "access denied") {
+		t.Errorf("expected 'access denied' in error, got %T: %s", res, inspect)
+	}
+}
+
+func TestFindEntriesBuiltinRootIsSingleFile(t *testing.T) {
+	root := buildFindTree(t)
+	target := filepath.Join(root, "a.txt")
+	got := callEntriesBuiltin(t, target, map[string]object.Object{
+		"type": object.NewString("any"),
+		"name": object.NewString("*.txt"),
+	})
+	if len(got.Elements) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(got.Elements))
+	}
+	d := got.Elements[0].(*object.Dict)
+	pathPair, _ := d.GetByString("path")
+	if s, _ := pathPair.Value.AsString(); s != target {
+		t.Errorf("path: got %q, want %q", s, target)
+	}
+	sizePair, _ := d.GetByString("size")
+	if size, _ := sizePair.Value.AsInt(); size != 5 { // "small"
+		t.Errorf("size: got %d, want 5", size)
+	}
+}
+
+func TestFindEntryToDictShape(t *testing.T) {
+	mtime := time.Unix(1700000000, 0)
+	e := FindEntry{Path: "/x/y.txt", Size: 42, Mtime: mtime, IsDir: false}
+	d := findEntryToDict(e)
+
+	pathPair, _ := d.GetByString("path")
+	if s, _ := pathPair.Value.AsString(); s != "/x/y.txt" {
+		t.Errorf("path: got %q", s)
+	}
+	sizePair, _ := d.GetByString("size")
+	if size, _ := sizePair.Value.AsInt(); size != 42 {
+		t.Errorf("size: got %d", size)
+	}
+	mtimePair, _ := d.GetByString("mtime")
+	if m, _ := mtimePair.Value.AsFloat(); m != 1700000000.0 {
+		t.Errorf("mtime: got %v, want 1700000000.0", m)
+	}
+	isDirPair, _ := d.GetByString("is_dir")
+	if b, _ := isDirPair.Value.AsBool(); b {
+		t.Errorf("is_dir: got true, want false")
+	}
+}
+
 // --- Security (allowedPaths) tests ---
 
 func TestFindSecurityRestrictsToAllowedDir(t *testing.T) {
