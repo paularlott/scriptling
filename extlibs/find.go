@@ -91,6 +91,34 @@ func (f *findLibraryInstance) createLibrary() *object.Library {
 			},
 			HelpText: findPathHelp,
 		},
+		"entries": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.ExactArgs(args, 1); err != nil {
+					return err
+				}
+				searchPath, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
+				if !f.config.IsPathAllowed(searchPath) {
+					return errors.NewPermissionError("access denied: path '%s' is outside allowed directories", searchPath)
+				}
+
+				opts, oErr := parseFindKwargs(kwargs)
+				if oErr != nil {
+					return oErr
+				}
+
+				matches := f.findEntries(ctx, searchPath, opts)
+
+				elements := make([]object.Object, len(matches))
+				for i, e := range matches {
+					elements[i] = findEntryToDict(e)
+				}
+				return &object.List{Elements: elements}
+			},
+			HelpText: findEntriesHelp,
+		},
 	}, nil, "Find files and directories by name, type, mtime, and size")
 }
 
@@ -245,6 +273,70 @@ func (f *findLibraryInstance) findPaths(ctx context.Context, searchPath string, 
 	return all
 }
 
+// findEntries is the rich variant of findPaths: same walker, same filters, but
+// each surviving entry is stat'd and returned as a FindEntry with its size,
+// mtime, and is-dir flag. Use this when the caller needs the metadata to
+// compare trees without re-reading the bytes (e.g. differential sync).
+func (f *findLibraryInstance) findEntries(ctx context.Context, searchPath string, opts findOptions) []FindEntry {
+	info, err := os.Stat(searchPath)
+	if err != nil {
+		return nil
+	}
+
+	// Single-file root: check it directly against the filters.
+	if !info.IsDir() {
+		if opts.name != "" {
+			matched, mErr := filepath.Match(opts.name, filepath.Base(searchPath))
+			if mErr != nil || !matched {
+				return nil
+			}
+		}
+		switch opts.entryType {
+		case "dir":
+			return nil
+		case "file":
+			if !info.Mode().IsRegular() {
+				return nil
+			}
+		}
+		if matchSizeMtime(info, opts) {
+			return []FindEntry{{Path: searchPath, Size: info.Size(), Mtime: info.ModTime(), IsDir: info.IsDir()}}
+		}
+		return nil
+	}
+
+	jobs := make(chan string, 64)
+	resultsCh := make(chan []FindEntry, 64)
+
+	var wg sync.WaitGroup
+	for i := 0; i < workerCount(); i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for path := range jobs {
+				if e := filterEntryRich(path, opts); e != nil {
+					resultsCh <- e
+				}
+			}
+		}()
+	}
+
+	go func() {
+		wg.Wait()
+		close(resultsCh)
+	}()
+
+	go walkEntries(ctx, searchPath, opts, f.config, jobs)
+
+	var all []FindEntry
+	object.RunBlocking(ctx, func() {
+		for batch := range resultsCh {
+			all = append(all, batch...)
+		}
+	})
+	return all
+}
+
 // filterEntry applies the remaining size/mtime filters to an entry that has
 // already passed the name and type checks in the walker. When no size/mtime
 // filter is active, no stat is performed at all.
@@ -260,6 +352,21 @@ func filterEntry(path string, opts findOptions) []string {
 		return []string{path}
 	}
 	return nil
+}
+
+// filterEntryRich is the rich variant of filterEntry: every entry is stat'd
+// (the caller wants the metadata regardless), and surviving entries are
+// returned as FindEntry records. Returns nil when the stat fails or the
+// size/mtime filters reject the entry.
+func filterEntryRich(path string, opts findOptions) []FindEntry {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil
+	}
+	if !matchSizeMtime(info, opts) {
+		return nil
+	}
+	return []FindEntry{{Path: path, Size: info.Size(), Mtime: info.ModTime(), IsDir: info.IsDir()}}
 }
 
 // matchSizeMtime checks the size and mtime filters against an already-statted
@@ -417,3 +524,34 @@ Parameters:
 
 Recursive searches stat and filter entries concurrently using a bounded worker
 pool, the same model as scriptling.grep.`
+
+const findEntriesHelp = `entries(path, *, recursive=True, type="any", name="", mtime_min=None, mtime_max=None, size_min=None, size_max=None, include_hidden=False, follow_links=False, max_depth=None) -> list
+
+Find files and directories under a path by name, type, modification time, and
+size, returning a list of dicts carrying each match's path, size, mtime, and
+is_dir flag. Use this when you need the metadata to compare trees without
+re-reading bytes; use path() when only the strings are needed, as path() skips
+the stat in the no-filter common case.
+
+Each entry dict has the keys:
+  path    str   - the matching entry's path
+  size    int   - size in bytes (0 for directories)
+  mtime   float - modification time as epoch seconds
+  is_dir  bool  - True when the entry is a directory
+
+Parameters are the same as path(). Paths are returned in arbitrary order.
+
+Recursive searches stat and filter entries concurrently using a bounded worker
+pool, the same model as scriptling.grep.`
+
+// findEntryToDict converts a FindEntry to a scriptling dict with path, size,
+// mtime (epoch seconds), and is_dir keys. Intended for the entries() builtin;
+// the Go-level API returns FindEntry structs directly.
+func findEntryToDict(e FindEntry) *object.Dict {
+	return object.NewStringDict(map[string]object.Object{
+		"path":   object.NewString(e.Path),
+		"size":   object.NewInteger(e.Size),
+		"mtime":  object.NewFloat(float64(e.Mtime.UnixNano()) / 1e9),
+		"is_dir": object.NewBoolean(e.IsDir),
+	})
+}
