@@ -25,6 +25,7 @@ func TestOSGetenv(t *testing.T) {
 		{
 			name: "existing var returns value",
 			code: `import os
+import os.path
 os.getenv("TEST_OS_VAR")`,
 			check: func(t *testing.T, result object.Object) {
 				str, ok := result.(*object.String)
@@ -39,6 +40,7 @@ os.getenv("TEST_OS_VAR")`,
 		{
 			name: "missing var without default returns None",
 			code: `import os
+import os.path
 os.getenv("TEST_MISSING_VAR")`,
 			check: func(t *testing.T, result object.Object) {
 				if _, ok := result.(*object.Null); !ok {
@@ -49,6 +51,7 @@ os.getenv("TEST_MISSING_VAR")`,
 		{
 			name: "missing var with default returns default",
 			code: `import os
+import os.path
 os.getenv("TEST_MISSING_VAR", "fallback")`,
 			check: func(t *testing.T, result object.Object) {
 				str, ok := result.(*object.String)
@@ -63,6 +66,7 @@ os.getenv("TEST_MISSING_VAR", "fallback")`,
 		{
 			name: "existing var with default returns value not default",
 			code: `import os
+import os.path
 os.getenv("TEST_OS_VAR", "fallback")`,
 			check: func(t *testing.T, result object.Object) {
 				str, ok := result.(*object.String)
@@ -77,6 +81,7 @@ os.getenv("TEST_OS_VAR", "fallback")`,
 		{
 			name: "missing var returns None so 'if not' pattern works",
 			code: `import os
+import os.path
 val = os.getenv("TEST_MISSING_VAR")
 if not val:
     val = "default_applied"
@@ -94,6 +99,7 @@ val`,
 		{
 			name: "var set to empty string returns empty string not None",
 			code: `import os
+import os.path
 os.getenv("TEST_OS_VAR")`,
 			check: func(t *testing.T, result object.Object) {
 				// TEST_OS_VAR is set to "test_value", not empty — just confirm it's a String
@@ -124,6 +130,7 @@ func TestOSGetenvEmptyStringVar(t *testing.T) {
 	RegisterOSLibrary(p, nil)
 
 	result, err := p.Eval(`import os
+import os.path
 os.getenv("TEST_EMPTY_VAR")`)
 	if err != nil {
 		t.Fatalf("Eval failed: %v", err)
@@ -143,6 +150,7 @@ func TestOSEnvironIsDict(t *testing.T) {
 
 	// Test that os.environ behaves like a dict by using .get() method
 	result, err := p.Eval(`import os
+import os.path
 result = os.environ.get("PATH", "default")
 len(result) > 0`)
 	if err != nil {
@@ -168,6 +176,7 @@ func TestOSEnvironItems(t *testing.T) {
 
 	// Test that we can iterate over os.environ
 	result, err := p.Eval(`import os
+import os.path
 found = False
 for key, value in os.environ.items():
     if key == "TEST_ITER_VAR" and value == "iter_value":
@@ -203,6 +212,7 @@ func TestOSChmodAndMkdirMode(t *testing.T) {
 	RegisterOSLibrary(p, []string{allowedTmp})
 
 	code := `import os
+import os.path
 os.mkdir("` + dir + `", 0o700)
 os.makedirs("` + nested + `", mode=0o755)
 os.makedirs("` + nested + `", exist_ok=True)
@@ -247,6 +257,7 @@ func TestOSWriteFileMode(t *testing.T) {
 	RegisterOSLibrary(p, []string{allowedTmp})
 
 	code := `import os
+import os.path
 os.write_file("` + positionalFile + `", "content", 0o600)
 os.write_file("` + kwargFile + `", "content", mode=0o640)
 True`
@@ -287,6 +298,7 @@ func TestOSRemovedirs(t *testing.T) {
 	RegisterOSLibrary(p, []string{tmp})
 
 	code := `import os
+import os.path
 os.makedirs("` + leaf + `")
 os.removedirs("` + leaf + `")
 True`
@@ -302,5 +314,62 @@ True`
 	}
 	if _, err := os.Stat(tmp); err != nil {
 		t.Fatalf("allowed root should remain: %v", err)
+	}
+}
+
+func TestOSSymlinkAndIslink(t *testing.T) {
+	tmp := t.TempDir()
+	allowedTmp, err := filepath.EvalSymlinks(tmp)
+	if err != nil {
+		t.Fatalf("eval temp dir: %v", err)
+	}
+	tmp = allowedTmp
+
+	// Create a target file first.
+	target := filepath.Join(tmp, "target.txt")
+	if err := os.WriteFile(target, []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(tmp, "link.txt")
+
+	p := scriptling.New()
+	RegisterOSLibrary(p, []string{tmp})
+
+	// Create symlink via scriptling, then verify with islink.
+	code := `import os
+import os.path
+import os.path
+os.symlink("` + target + `", "` + link + `")
+os.path.islink("` + link + `")`
+	result, err := p.Eval(code)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	if boolean, ok := result.(*object.Boolean); !ok || !boolean.BoolValue() {
+		t.Fatalf("expected islink=True, got %T %v", result, result)
+	}
+
+	// islink on a regular file should be False.
+	code = `import os
+import os.path
+os.path.islink("` + target + `")`
+	result, err = p.Eval(code)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	if boolean, ok := result.(*object.Boolean); !ok || boolean.BoolValue() {
+		t.Fatalf("expected islink=False for regular file, got %T %v", result, result)
+	}
+
+	// islink on a nonexistent path should be False.
+	code = `import os
+import os.path
+os.path.islink("` + filepath.Join(tmp, "nope") + `")`
+	result, err = p.Eval(code)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	if boolean, ok := result.(*object.Boolean); !ok || boolean.BoolValue() {
+		t.Fatalf("expected islink=False for missing path, got %T %v", result, result)
 	}
 }

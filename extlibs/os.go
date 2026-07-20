@@ -297,6 +297,33 @@ Creates a new directory with the specified path.`,
 
 Creates a directory and all parent directories as needed.`,
 		},
+		"symlink": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.ExactArgs(args, 2); err != nil {
+					return err
+				}
+				src, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
+				dst, err := args[1].AsString()
+				if err != nil {
+					return err
+				}
+				if errObj := checkPathSecurity(o.config, dst); errObj != nil {
+					return errObj
+				}
+				absDst, _ := filepath.Abs(dst)
+				if err := os.Symlink(src, absDst); err != nil {
+					return errors.NewError("symlink: %s", err.Error())
+				}
+				return &object.Null{}
+			},
+			HelpText: `symlink(src, dst) - Create a symbolic link
+
+Creates a symbolic link named dst that points to src. If dst already exists,
+an error is raised.`,
+		},
 		"rmdir": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if err := errors.ExactArgs(args, 1); err != nil {
@@ -443,6 +470,30 @@ Returns True if the path is a regular file, False otherwise.`,
 			HelpText: `isdir(path) - Check if path is a directory
 
 Returns True if the path is a directory, False otherwise.`,
+		},
+		"islink": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.ExactArgs(args, 1); err != nil {
+					return err
+				}
+				path, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
+				if errObj := checkPathSecurity(o.config, path); errObj != nil {
+					return errObj
+				}
+				absPath, _ := filepath.Abs(path)
+				li, lerr := os.Lstat(absPath)
+				if lerr != nil {
+					return object.NewBoolean(false)
+				}
+				return object.NewBoolean(li.Mode()&os.ModeSymlink != 0)
+			},
+			HelpText: `islink(path) - Check if path is a symbolic link
+
+Returns True if the path is a symbolic link, False otherwise. Uses Lstat so
+the link itself is checked, not the target it points to.`,
 		},
 		"basename": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {

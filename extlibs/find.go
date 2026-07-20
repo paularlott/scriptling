@@ -3,6 +3,9 @@ package extlibs
 
 import (
 	"context"
+	"fmt"
+	"hash/crc64"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -45,20 +48,50 @@ func NewFindLibrary(config fssecurity.Config) *object.Library {
 
 // findOptions holds the parsed filters shared by the find functions.
 type findOptions struct {
-	recursive     bool
-	entryType     string // "any", "file", "dir"
-	name          string // shell-style glob matched against the base name
-	mtimeMin      float64
-	mtimeMax      float64
-	hasMtimeMin   bool
-	hasMtimeMax   bool
-	sizeMin       int64
-	sizeMax       int64
-	hasSizeMin    bool
-	hasSizeMax    bool
-	includeHidden bool
-	followLinks   bool
-	maxDepth      int // 0 = unlimited
+	recursive       bool
+	entryType       string // "any", "file", "dir"
+	name            string // shell-style glob matched against the base name
+	mtimeMin        float64
+	mtimeMax        float64
+	hasMtimeMin     bool
+	hasMtimeMax     bool
+	sizeMin         int64
+	sizeMax         int64
+	hasSizeMin      bool
+	hasSizeMax      bool
+	includeHidden   bool
+	followLinks     bool
+	maxDepth        int // 0 = unlimited
+	includeHash     bool // when true, every file entry is crc64-hashed
+	includeSymlinks bool // when true, symlink entries are yielded with their target
+	includeMetadata bool // when true, file_perm is populated
+}
+
+// crc64Table is the ISO-polynomial table used by hashFile. Package-level so
+// we don't rebuild the table on every call.
+var crc64Table = crc64.MakeTable(crc64.ISO)
+
+// hashFile computes crc64-ISO of the file at path. Returns 0 on error (the
+// caller treats 0 as "unknown hash" — which forces a re-upload/verify).
+func hashFile(path string) uint64 {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+	h := crc64.New(crc64Table)
+	if _, err := io.Copy(h, f); err != nil {
+		return 0
+	}
+	return h.Sum64()
+}
+
+// fillEntryMetadata populates FilePerm on a FindEntry from a FileInfo when
+// opts.includeMetadata is set.
+func fillEntryMetadata(e *FindEntry, info os.FileInfo, opts findOptions) {
+	if opts.includeMetadata {
+		e.FilePerm = int(info.Mode().Perm())
+	}
 }
 
 func (f *findLibraryInstance) createLibrary() *object.Library {
@@ -208,6 +241,27 @@ func parseFindKwargs(kwargs object.Kwargs) (findOptions, object.Object) {
 		opts.sizeMax = n
 		opts.hasSizeMax = true
 	}
+	if v := kwargs.Get("include_hash"); v != nil {
+		b, err := v.AsBool()
+		if err != nil {
+			return opts, err
+		}
+		opts.includeHash = b
+	}
+	if v := kwargs.Get("include_symlinks"); v != nil {
+		b, err := v.AsBool()
+		if err != nil {
+			return opts, err
+		}
+		opts.includeSymlinks = b
+	}
+	if v := kwargs.Get("include_metadata"); v != nil {
+		b, err := v.AsBool()
+		if err != nil {
+			return opts, err
+		}
+		opts.includeMetadata = b
+	}
 
 	return opts, nil
 }
@@ -300,7 +354,12 @@ func (f *findLibraryInstance) findEntries(ctx context.Context, searchPath string
 			}
 		}
 		if matchSizeMtime(info, opts) {
-			return []FindEntry{{Path: searchPath, Size: info.Size(), Mtime: info.ModTime(), IsDir: info.IsDir()}}
+			entry := FindEntry{Path: searchPath, Size: info.Size(), Mtime: info.ModTime(), IsDir: info.IsDir()}
+			fillEntryMetadata(&entry, info, opts)
+			if opts.includeHash && !info.IsDir() {
+				entry.Hash = hashFile(searchPath)
+			}
+			return []FindEntry{entry}
 		}
 		return nil
 	}
@@ -358,15 +417,55 @@ func filterEntry(path string, opts findOptions) []string {
 // (the caller wants the metadata regardless), and surviving entries are
 // returned as FindEntry records. Returns nil when the stat fails or the
 // size/mtime filters reject the entry.
+//
+// When opts.followLinks is set, os.Stat is used so the symlink's target
+// metadata (size, mtime, IsDir) drives filtering and is reported; the entry's
+// Hash is also computed against the target's content when IncludeHash is set.
+// When followLinks is false, os.Lstat is used: a symlink is reported as-is
+// with its LinkTarget (and is not hashed), unless includeSymlinks is also
+// false, in which case the walker would not have yielded it at all.
 func filterEntryRich(path string, opts findOptions) []FindEntry {
-	info, err := os.Stat(path)
+	if opts.followLinks {
+		info, err := os.Stat(path)
+		if err != nil {
+			return nil
+		}
+		if !matchSizeMtime(info, opts) {
+			return nil
+		}
+		entry := FindEntry{Path: path, Size: info.Size(), Mtime: info.ModTime(), IsDir: info.IsDir()}
+		fillEntryMetadata(&entry, info, opts)
+		if opts.includeHash && !info.IsDir() {
+			entry.Hash = hashFile(path)
+		}
+		return []FindEntry{entry}
+	}
+
+	info, err := os.Lstat(path)
 	if err != nil {
 		return nil
+	}
+	// Symlink: read target, return entry with LinkTarget. Don't hash
+	// (symlinks have no content) and don't apply size/mtime filters
+	// (those apply to the target, not the link itself).
+	if info.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(path)
+		if err != nil {
+			return nil
+		}
+		e := FindEntry{Path: path, Size: info.Size(), Mtime: info.ModTime(), IsDir: false, LinkTarget: target}
+		fillEntryMetadata(&e, info, opts)
+		return []FindEntry{e}
 	}
 	if !matchSizeMtime(info, opts) {
 		return nil
 	}
-	return []FindEntry{{Path: path, Size: info.Size(), Mtime: info.ModTime(), IsDir: info.IsDir()}}
+	entry := FindEntry{Path: path, Size: info.Size(), Mtime: info.ModTime(), IsDir: info.IsDir()}
+	fillEntryMetadata(&entry, info, opts)
+	if opts.includeHash && !info.IsDir() {
+		entry.Hash = hashFile(path)
+	}
+	return []FindEntry{entry}
 }
 
 // matchSizeMtime checks the size and mtime filters against an already-statted
@@ -442,17 +541,25 @@ func walkEntries(ctx context.Context, root string, opts findOptions, config fsse
 			return nil
 		}
 
-		// Symlink handling: WalkDir does not follow symlinks, so a symlinked
-		// entry is yielded for the worker to stat (and thus follow) when
-		// follow_links is set; otherwise it is skipped.
+		// Symlink handling: WalkDir does not follow symlinks. When
+		// follow_links is set, the symlink's target is permission-checked
+		// via EvalSymlinks and the symlink path is yielded; the worker's
+		// filterEntryRich then runs os.Stat which follows the link so the
+		// target's metadata/hash drives the result. When include_symlinks
+		// is set (and follow_links is not), the symlink itself is yielded
+		// as-is with its target in LinkTarget. Otherwise the symlink is
+		// skipped.
 		if d.Type()&os.ModeSymlink != 0 {
-			if !opts.followLinks {
+			if opts.followLinks {
+				real, e := filepath.EvalSymlinks(path)
+				if e != nil || !config.IsPathAllowed(real) {
+					return nil
+				}
+			} else if !opts.includeSymlinks {
 				return nil
 			}
-			real, e := filepath.EvalSymlinks(path)
-			if e != nil || !config.IsPathAllowed(real) {
-				return nil
-			}
+			// includeSymlinks && !followLinks: fall through — yield
+			// the symlink as-is. filterEntryRich will Lstat + Readlink.
 		} else if !config.IsPathAllowed(path) {
 			if d.IsDir() {
 				return filepath.SkipDir
@@ -525,7 +632,7 @@ Parameters:
 Recursive searches stat and filter entries concurrently using a bounded worker
 pool, the same model as scriptling.grep.`
 
-const findEntriesHelp = `entries(path, *, recursive=True, type="any", name="", mtime_min=None, mtime_max=None, size_min=None, size_max=None, include_hidden=False, follow_links=False, max_depth=None) -> list
+const findEntriesHelp = `entries(path, *, recursive=True, type="any", name="", mtime_min=None, mtime_max=None, size_min=None, size_max=None, include_hidden=False, follow_links=False, max_depth=None, include_hash=False, include_symlinks=False, include_metadata=False) -> list
 
 Find files and directories under a path by name, type, modification time, and
 size, returning a list of dicts carrying each match's path, size, mtime, and
@@ -534,24 +641,44 @@ re-reading bytes; use path() when only the strings are needed, as path() skips
 the stat in the no-filter common case.
 
 Each entry dict has the keys:
-  path    str   - the matching entry's path
-  size    int   - size in bytes (0 for directories)
-  mtime   float - modification time as epoch seconds
-  is_dir  bool  - True when the entry is a directory
+  path         str   - the matching entry's path
+  size         int   - size in bytes (0 for directories)
+  mtime        float - modification time as epoch seconds
+  is_dir       bool  - True when the entry is a directory
+  hash         str?  - hex-encoded crc64 checksum (only when include_hash=True)
+  link_target  str?  - symlink target (only when include_symlinks=True)
+  file_perm    int?  - file permission bits (only when include_metadata=True)
 
-Parameters are the same as path(). Paths are returned in arbitrary order.
+Additional parameters (beyond those shared with path()):
+  include_hash     When True, each file is crc64-hashed and the hex checksum is
+                   returned in the hash field. Use for definitive change detection.
+  include_symlinks When True, symlink entries are yielded with their link_target
+                   instead of being followed.
+  include_metadata When True, file_perm is populated (extracted from the entry
+                   stat, no extra syscall).
 
 Recursive searches stat and filter entries concurrently using a bounded worker
 pool, the same model as scriptling.grep.`
 
 // findEntryToDict converts a FindEntry to a scriptling dict with path, size,
-// mtime (epoch seconds), and is_dir keys. Intended for the entries() builtin;
-// the Go-level API returns FindEntry structs directly.
+// mtime (epoch seconds), is_dir, and optionally hash, link_target, and
+// file_perm keys. Intended for the entries() builtin; the Go-level API
+// returns FindEntry structs directly.
 func findEntryToDict(e FindEntry) *object.Dict {
-	return object.NewStringDict(map[string]object.Object{
+	d := object.NewStringDict(map[string]object.Object{
 		"path":   object.NewString(e.Path),
 		"size":   object.NewInteger(e.Size),
 		"mtime":  object.NewFloat(float64(e.Mtime.UnixNano()) / 1e9),
 		"is_dir": object.NewBoolean(e.IsDir),
 	})
+	if e.Hash != 0 {
+		d.SetByString("hash", object.NewString(fmt.Sprintf("%016x", e.Hash)))
+	}
+	if e.LinkTarget != "" {
+		d.SetByString("link_target", object.NewString(e.LinkTarget))
+	}
+	if e.FilePerm != 0 {
+		d.SetByString("file_perm", object.NewInteger(int64(e.FilePerm)))
+	}
+	return d
 }

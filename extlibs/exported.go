@@ -87,17 +87,20 @@ type ExtractMatch struct {
 //
 // MaxDepth of 0 means unlimited.
 type FindOptions struct {
-	Recursive     *bool
-	Type          string
-	Name          string
-	MtimeMin      *float64
-	MtimeMax      *float64
-	SizeMin       *int64
-	SizeMax       *int64
-	IncludeHidden bool
-	FollowLinks   bool
-	MaxDepth      int
-	AllowedPaths  []string
+	Recursive       *bool
+	Type            string
+	Name            string
+	MtimeMin        *float64
+	MtimeMax        *float64
+	SizeMin         *int64
+	SizeMax         *int64
+	IncludeHidden   bool
+	FollowLinks     bool
+	MaxDepth        int
+	AllowedPaths    []string
+	IncludeHash     bool // when true, every entry's file content is crc64-hashed
+	IncludeSymlinks bool // when true, symlink entries are yielded with their target in LinkTarget
+	IncludeMetadata bool // when true, file_perm is populated
 }
 
 // FindEntry is a single matching entry returned by FindEntries, carrying the
@@ -105,10 +108,13 @@ type FindOptions struct {
 // it. Callers comparing two trees (e.g. a sync tool diffing local and remote)
 // can rely on Size+Mtime alone for the common case.
 type FindEntry struct {
-	Path  string
-	Size  int64
-	Mtime time.Time
-	IsDir bool
+	Path       string
+	Size       int64
+	Mtime      time.Time
+	IsDir      bool
+	Hash       uint64 // crc64 of file content when FindOptions.IncludeHash is set; 0 otherwise
+	LinkTarget string // symlink target when the entry is a symlink; empty for regular files/dirs
+	FilePerm   int    // file permission bits; populated when FindOptions.IncludeMetadata is set
 }
 
 // resolveMaxSize normalises a caller-supplied MaxSize to the internal convention
@@ -228,6 +234,9 @@ func toFindOptions(opts FindOptions) (findOptions, error) {
 		fopts.sizeMax = *opts.SizeMax
 		fopts.hasSizeMax = true
 	}
+	fopts.includeHash = opts.IncludeHash
+	fopts.includeSymlinks = opts.IncludeSymlinks
+	fopts.includeMetadata = opts.IncludeMetadata
 	return fopts, nil
 }
 
@@ -272,6 +281,7 @@ func FindEntries(ctx context.Context, root string, opts FindOptions) ([]FindEntr
 	if err != nil {
 		return nil, err
 	}
+	fopts.includeHash = opts.IncludeHash
 
 	inst := &findLibraryInstance{config: config}
 	return inst.findEntries(ctx, root, fopts), nil

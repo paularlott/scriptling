@@ -1730,7 +1730,7 @@ func TestScopeTransportHTTPOnly(t *testing.T) {
 	scope := parent.NewScope(WithTransport(TransportHTTP))
 	defer scope.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	_, err := scope.LoadPath(ctx, "exe", helper, true, nil)
@@ -1756,7 +1756,7 @@ func TestScopeTransportStdioOnly(t *testing.T) {
 	scope := parent.NewScope(WithTransport(TransportStdio))
 	defer scope.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	_, err := scope.LoadURL(ctx, "remote", httpSrv.URL, true, false)
@@ -1840,7 +1840,7 @@ func TestScopeParallelIsolation(t *testing.T) {
 			scope := parent.NewScope(WithTransport(TransportHTTP))
 			defer scope.Close()
 
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 
 			// Each scope loads the same URL under the same name — completely isolated.
@@ -1924,7 +1924,7 @@ func TestManagerLoadURLInsecureSkipTLS(t *testing.T) {
 	manager := NewManager(nil)
 	defer manager.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	// Secure (default) should fail — self-signed cert.
@@ -1965,7 +1965,7 @@ func TestScopeLoadURLInsecureSkipTLS(t *testing.T) {
 	scope := parent.NewScope(WithTransport(TransportHTTP))
 	defer scope.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	client, err := scope.LoadURL(ctx, "scopetls", tlsSrv.URL, true, true)
