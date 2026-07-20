@@ -195,7 +195,7 @@ func TestLoadPathScriptlingMode(t *testing.T) {
 	}
 	writeScriptlingHelper(t, helper)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	manager := NewManager(nil)
@@ -233,7 +233,7 @@ func TestLoadPathSkipHandshake(t *testing.T) {
 	}
 	writeScriptlingHelper(t, helper)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	manager := NewManager(nil)
@@ -273,7 +273,7 @@ func TestLoadPathResolvesBareExecutableWithPATH(t *testing.T) {
 	writeRawEchoHelper(t, helper)
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	manager := NewManager(nil)
@@ -303,7 +303,7 @@ func TestLoadPathIdempotent(t *testing.T) {
 	}
 	writeScriptlingHelper(t, helper)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	manager := NewManager(nil)
@@ -334,7 +334,7 @@ func TestLoadPathNameMismatchError(t *testing.T) {
 	}
 	writeScriptlingHelper(t, helper)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	manager := NewManager(nil)
@@ -364,7 +364,7 @@ func TestLoadPathNameCollision(t *testing.T) {
 	writeScriptlingHelper(t, helper1)
 	writeScriptlingHelper(t, helper2)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	manager := NewManager(nil)
@@ -391,7 +391,7 @@ func TestUnload(t *testing.T) {
 	}
 	writeScriptlingHelper(t, helper)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	manager := NewManager(nil)
@@ -428,7 +428,7 @@ func TestCloseToleratesMissingShutdown(t *testing.T) {
 	}
 	writeRawEchoHelper(t, helper)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	client, err := SpawnClient(ctx, helper, nil)

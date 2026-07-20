@@ -2,6 +2,8 @@ package extlibs
 
 import (
 	"context"
+	"fmt"
+	"hash/crc64"
 	"os"
 	"path/filepath"
 	"sort"
@@ -394,6 +396,274 @@ func TestFindEntriesAppliesSizeFilter(t *testing.T) {
 	}
 }
 
+func TestFindEntriesIncludeHash(t *testing.T) {
+	root := buildFindTree(t)
+	got := runFindEntries(t, root, FindOptions{Recursive: ptrBool(true), Type: "file", IncludeHash: true})
+
+	if len(got) == 0 {
+		t.Fatal("expected at least one file entry")
+	}
+
+	// All file entries must have non-zero hash
+	for _, e := range got {
+		if e.Hash == 0 {
+			t.Errorf("file %s has zero hash (IncludeHash=true)", e.Path)
+		}
+	}
+
+	// big.bin content is strings.Repeat("x", 5000). Verify expected hash.
+	for _, e := range got {
+		if filepath.Base(e.Path) == "big.bin" {
+			h := crc64.New(crc64.MakeTable(crc64.ISO))
+			h.Write([]byte(strings.Repeat("x", 5000)))
+			want := h.Sum64()
+			if e.Hash != want {
+				t.Errorf("big.bin hash: got %d, want %d", e.Hash, want)
+			}
+		}
+	}
+}
+
+func TestFindEntriesIncludeHashDirectoriesGetZeroHash(t *testing.T) {
+	root := buildFindTree(t)
+	got := runFindEntries(t, root, FindOptions{Recursive: ptrBool(true), Type: "dir", IncludeHash: true})
+	for _, e := range got {
+		if e.Hash != 0 {
+			t.Errorf("dir %s should have hash 0, got %d", e.Path, e.Hash)
+		}
+	}
+}
+
+func TestFindEntriesIncludeHashSingleFileRoot(t *testing.T) {
+	root := buildFindTree(t)
+	target := filepath.Join(root, "a.txt") // content "small"
+	got := runFindEntries(t, target, FindOptions{Recursive: ptrBool(true), Type: "file", IncludeHash: true})
+	if len(got) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(got))
+	}
+	if got[0].Hash == 0 {
+		t.Errorf("single-file root with IncludeHash should have non-zero hash")
+	}
+	// Verify the hash matches "small"
+	h := crc64.New(crc64.MakeTable(crc64.ISO))
+	h.Write([]byte("small"))
+	want := h.Sum64()
+	if got[0].Hash != want {
+		t.Errorf("a.txt hash: got %d, want %d", got[0].Hash, want)
+	}
+}
+
+// --- include_symlinks tests ---
+
+func buildFindTreeWithSymlink(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	writeFileAt(t, filepath.Join(root, "real.txt"), "content", time.Now())
+	link := filepath.Join(root, "link.txt")
+	if err := os.Symlink("real.txt", link); err != nil {
+		t.Skip("symlink not supported:", err)
+	}
+	return root
+}
+
+func TestFindEntriesIncludeSymlinks(t *testing.T) {
+	root := buildFindTreeWithSymlink(t)
+
+	// With IncludeSymlinks=true: the symlink should appear with its target
+	got := runFindEntries(t, root, FindOptions{Recursive: ptrBool(true), Type: "any", IncludeSymlinks: true})
+	foundLink := false
+	for _, e := range got {
+		if strings.HasSuffix(e.Path, "link.txt") {
+			foundLink = true
+			if e.LinkTarget != "real.txt" {
+				t.Errorf("link target: got %q, want 'real.txt'", e.LinkTarget)
+			}
+			if e.IsDir {
+				t.Errorf("symlink should not have IsDir=true")
+			}
+		}
+	}
+	if !foundLink {
+		t.Errorf("symlink not found when IncludeSymlinks=true; got %v", pathsOf(got))
+	}
+
+	// Without IncludeSymlinks (default): symlink should be absent
+	gotNoLink := runFindEntries(t, root, FindOptions{Recursive: ptrBool(true), Type: "any", IncludeSymlinks: false})
+	for _, e := range gotNoLink {
+		if strings.HasSuffix(e.Path, "link.txt") {
+			t.Errorf("symlink should not appear when IncludeSymlinks=false; got %v", pathsOf(gotNoLink))
+		}
+	}
+}
+
+func TestFindEntriesIncludeSymlinksRespectsTypeFile(t *testing.T) {
+	root := buildFindTreeWithSymlink(t)
+
+	// type="file" with include_symlinks should also yield symlinks (the
+	// type filter looks at the target's type).
+	got := runFindEntries(t, root, FindOptions{Recursive: ptrBool(true), Type: "file", IncludeSymlinks: true})
+	foundLink := false
+	for _, e := range got {
+		if strings.HasSuffix(e.Path, "link.txt") {
+			foundLink = true
+		}
+	}
+	if !foundLink {
+		t.Errorf("symlink should appear with type=file (target is a file)")
+	}
+}
+
+func TestFindEntriesSymlinksNoHashWhenIncludeHash(t *testing.T) {
+	root := buildFindTreeWithSymlink(t)
+
+	got := runFindEntries(t, root, FindOptions{Recursive: ptrBool(true), Type: "any", IncludeSymlinks: true, IncludeHash: true})
+	for _, e := range got {
+		if strings.HasSuffix(e.Path, "link.txt") {
+			if e.Hash != 0 {
+				t.Errorf("symlink should have hash 0 (no content), got %d", e.Hash)
+			}
+			if e.LinkTarget != "real.txt" {
+				t.Errorf("link target: got %q, want 'real.txt'", e.LinkTarget)
+			}
+		}
+	}
+}
+
+// --- follow_links tests ---
+//
+// follow_links=true is distinct from include_symlinks=true: the link is
+// resolved and the TARGET's metadata, content, and type drive the entry.
+// These tests pin that contract so the regression where filterEntryRich
+// used Lstat unconditionally (and surfaced the link as-is) doesn't return.
+
+func TestFindEntriesFollowLinksResolvesTarget(t *testing.T) {
+	root := buildFindTreeWithSymlink(t)
+
+	got := runFindEntries(t, root, FindOptions{Recursive: ptrBool(true), Type: "any", FollowLinks: true})
+
+	var linkEntry *FindEntry
+	for i := range got {
+		if strings.HasSuffix(got[i].Path, "link.txt") {
+			linkEntry = &got[i]
+			break
+		}
+	}
+	if linkEntry == nil {
+		t.Fatalf("symlink not yielded with FollowLinks=true; got %v", pathsOf(got))
+	}
+
+	// Followed means the target's metadata drives the entry, not the link's.
+	// Target content is "content" (7 bytes).
+	if linkEntry.LinkTarget != "" {
+		t.Errorf("followed symlink should have empty LinkTarget, got %q", linkEntry.LinkTarget)
+	}
+	if linkEntry.Size != int64(len("content")) {
+		t.Errorf("followed symlink size: got %d, want %d", linkEntry.Size, len("content"))
+	}
+	if linkEntry.IsDir {
+		t.Errorf("followed file-symlink should have IsDir=false")
+	}
+}
+
+func TestFindEntriesFollowLinksHashesTargetContent(t *testing.T) {
+	root := buildFindTreeWithSymlink(t)
+
+	got := runFindEntries(t, root, FindOptions{
+		Recursive:   ptrBool(true),
+		Type:        "any",
+		FollowLinks: true,
+		IncludeHash: true,
+	})
+
+	var linkEntry *FindEntry
+	for i := range got {
+		if strings.HasSuffix(got[i].Path, "link.txt") {
+			linkEntry = &got[i]
+			break
+		}
+	}
+	if linkEntry == nil {
+		t.Fatalf("symlink not yielded; got %v", pathsOf(got))
+	}
+
+	// The hash must be of the TARGET's content, not the link itself.
+	// Real.txt contains "content".
+	h := crc64.New(crc64.MakeTable(crc64.ISO))
+	h.Write([]byte("content"))
+	want := h.Sum64()
+	if linkEntry.Hash != want {
+		t.Errorf("followed symlink hash: got %d, want %d", linkEntry.Hash, want)
+	}
+}
+
+// buildFindTreeWithDirSymlink creates a tree containing a symlink that points
+// to a directory. Used to verify that follow_links propagates IsDir from the
+// target.
+func buildFindTreeWithDirSymlink(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, "realdir"), 0755)
+	writeFileAt(t, filepath.Join(root, "realdir", "inside.txt"), "x", time.Now())
+	link := filepath.Join(root, "linkdir")
+	if err := os.Symlink("realdir", link); err != nil {
+		t.Skip("symlink not supported:", err)
+	}
+	return root
+}
+
+func TestFindEntriesFollowLinksSymlinkToDir(t *testing.T) {
+	root := buildFindTreeWithDirSymlink(t)
+
+	got := runFindEntries(t, root, FindOptions{Recursive: ptrBool(true), Type: "any", FollowLinks: true})
+
+	var linkEntry *FindEntry
+	for i := range got {
+		if strings.HasSuffix(got[i].Path, "linkdir") {
+			linkEntry = &got[i]
+			break
+		}
+	}
+	if linkEntry == nil {
+		t.Fatalf("dir-symlink not yielded with FollowLinks=true; got %v", pathsOf(got))
+	}
+	if !linkEntry.IsDir {
+		t.Errorf("followed dir-symlink should have IsDir=true")
+	}
+	if linkEntry.LinkTarget != "" {
+		t.Errorf("followed dir-symlink should have empty LinkTarget, got %q", linkEntry.LinkTarget)
+	}
+}
+
+func TestFindEntriesFollowLinksAppliesSizeFilterToTarget(t *testing.T) {
+	root := buildFindTreeWithSymlink(t)
+
+	// size_min greater than the target's size ("content" = 7 bytes) should
+	// reject the followed symlink. (Before the fix, Lstat reported the link's
+	// own size, which would also have been small — but the point is that the
+	// filter must use the target's size.)
+	bigMin := int64(len("content") + 100)
+	got := runFindEntries(t, root, FindOptions{
+		Recursive:   ptrBool(true),
+		Type:        "any",
+		FollowLinks: true,
+		SizeMin:     &bigMin,
+	})
+	for _, e := range got {
+		if strings.HasSuffix(e.Path, "link.txt") {
+			t.Errorf("followed symlink should be filtered out by size_min; got %+v", e)
+		}
+	}
+}
+
+// pathsOf extracts path strings from a FindEntry slice for error messages.
+func pathsOf(entries []FindEntry) []string {
+	out := make([]string, len(entries))
+	for i, e := range entries {
+		out[i] = e.Path
+	}
+	return out
+}
+
 func ptrBool(b bool) *bool { return &b }
 
 // --- find.entries builtin tests ----------------------------------------------
@@ -550,6 +820,145 @@ func TestFindEntriesBuiltinPermissionDenied(t *testing.T) {
 	inspect := res.Inspect()
 	if !strings.Contains(inspect, "access denied") {
 		t.Errorf("expected 'access denied' in error, got %T: %s", res, inspect)
+	}
+}
+
+func TestFindEntriesBuiltinIncludeHash(t *testing.T) {
+	root := buildFindTree(t)
+	got := callEntriesBuiltin(t, root, map[string]object.Object{
+		"type":         object.NewString("file"),
+		"include_hash": object.NewBoolean(true),
+	})
+	if len(got.Elements) == 0 {
+		t.Fatal("expected at least one entry")
+	}
+	for _, el := range got.Elements {
+		d := el.(*object.Dict)
+		hashPair, hasHash := d.GetByString("hash")
+		if !hasHash {
+			t.Errorf("entry missing hash key when include_hash=True")
+			continue
+		}
+		hashStr, err := hashPair.Value.AsString()
+		if err != nil {
+			t.Errorf("hash not a string: %v", err)
+		}
+		if hashStr == "" {
+			t.Errorf("hash is empty string")
+		}
+		// Should be a 16-char hex string
+		if len(hashStr) != 16 {
+			t.Errorf("hash length: got %d, want 16 (%q)", len(hashStr), hashStr)
+		}
+	}
+}
+
+func TestFindEntriesBuiltinIncludeHashBigBin(t *testing.T) {
+	root := buildFindTree(t)
+	got := callEntriesBuiltin(t, root, map[string]object.Object{
+		"type":         object.NewString("file"),
+		"name":         object.NewString("big.bin"),
+		"include_hash": object.NewBoolean(true),
+	})
+	if len(got.Elements) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(got.Elements))
+	}
+	d := got.Elements[0].(*object.Dict)
+	hashPair, _ := d.GetByString("hash")
+	hashStr, _ := hashPair.Value.AsString()
+
+	// Compute expected hash: strings.Repeat("x", 5000)
+	h := crc64.New(crc64.MakeTable(crc64.ISO))
+	h.Write([]byte(strings.Repeat("x", 5000)))
+	want := fmt.Sprintf("%016x", h.Sum64())
+	if hashStr != want {
+		t.Errorf("big.bin hash: got %q, want %q", hashStr, want)
+	}
+}
+
+func TestFindEntriesBuiltinIncludeSymlinks(t *testing.T) {
+	root := buildFindTreeWithSymlink(t)
+	got := callEntriesBuiltin(t, root, map[string]object.Object{
+		"type":             object.NewString("any"),
+		"include_symlinks": object.NewBoolean(true),
+	})
+	foundLink := false
+	for _, el := range got.Elements {
+		d := el.(*object.Dict)
+		pathPair, _ := d.GetByString("path")
+		path, _ := pathPair.Value.AsString()
+		if strings.HasSuffix(path, "link.txt") {
+			foundLink = true
+			linkPair, hasLink := d.GetByString("link_target")
+			if !hasLink {
+				t.Error("symlink entry missing link_target key")
+			} else {
+				target, _ := linkPair.Value.AsString()
+				if target != "real.txt" {
+					t.Errorf("link_target: got %q, want 'real.txt'", target)
+				}
+			}
+		}
+	}
+	if !foundLink {
+		t.Errorf("symlink not found with include_symlinks=True")
+	}
+}
+
+func TestFindEntriesIncludeMetadata(t *testing.T) {
+	root := buildFindTree(t)
+
+	// With IncludeMetadata: file_perm should match the file's mode bits
+	got := runFindEntries(t, root, FindOptions{Recursive: ptrBool(true), Type: "file", Name: "a.txt", IncludeMetadata: true})
+	if len(got) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(got))
+	}
+	e := got[0]
+	if e.FilePerm != 0644 {
+		t.Errorf("file_perm: got 0%o, want 0644", e.FilePerm)
+	}
+	// Without IncludeMetadata: file_perm should be 0
+	gotNoMeta := runFindEntries(t, root, FindOptions{Recursive: ptrBool(true), Type: "file", Name: "a.txt", IncludeMetadata: false})
+	for _, e := range gotNoMeta {
+		if e.FilePerm != 0 {
+			t.Errorf("file_perm should be 0 without IncludeMetadata, got %d", e.FilePerm)
+		}
+	}
+}
+
+func TestFindEntriesBuiltinIncludeMetadata(t *testing.T) {
+	root := buildFindTree(t)
+	got := callEntriesBuiltin(t, root, map[string]object.Object{
+		"type":             object.NewString("file"),
+		"include_metadata": object.NewBoolean(true),
+	})
+	if len(got.Elements) == 0 {
+		t.Fatal("expected at least one entry")
+	}
+	for _, el := range got.Elements {
+		d := el.(*object.Dict)
+		permPair, hasPerm := d.GetByString("file_perm")
+		if !hasPerm {
+			t.Error("entry missing file_perm key when include_metadata=True")
+		} else {
+			perm, err := permPair.Value.AsInt()
+			if err != nil {
+				t.Errorf("file_perm not an int: %v", err)
+			} else if perm == 0 {
+				t.Errorf("file_perm is 0, expected non-zero")
+			}
+		}
+	}
+
+	// Without include_metadata: file_perm should not be present
+	gotNoMeta := callEntriesBuiltin(t, root, map[string]object.Object{
+		"type": object.NewString("file"),
+	})
+	for _, el := range gotNoMeta.Elements {
+		d := el.(*object.Dict)
+		if _, hasPerm := d.GetByString("file_perm"); hasPerm {
+			t.Error("file_perm should not be present without include_metadata")
+		}
 	}
 }
 

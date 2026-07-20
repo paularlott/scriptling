@@ -35,6 +35,13 @@ const (
 	TransportStdio
 )
 
+// DefaultHandshakeTimeout caps how long handshake() will wait for the plugin
+// protocol handshake to complete. It bounds detection of broken or
+// unresponsive plugins while still tolerating slow subprocess startup under
+// load (cold container starts, network filesystems, parallel test execution).
+// The caller's context deadline always takes precedence if it is shorter.
+const DefaultHandshakeTimeout = 15 * time.Second
+
 // ScopeOption configures a scoped Manager created by NewScope.
 type ScopeOption func(*Manager)
 
@@ -729,11 +736,16 @@ func SpawnClient(ctx context.Context, path string, args []string) (*Client, erro
 // client metadata from the result. It is a no-op if the protocol/transport are
 // already negotiated.
 func (c *Client) handshake(ctx context.Context) error {
-	handshakeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
+	// Honor the caller's deadline when it is shorter than the default; only
+	// apply DefaultHandshakeTimeout when the caller provided no bound.
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, DefaultHandshakeTimeout)
+		defer cancel()
+	}
 
 	var result handshakeResult
-	if err := c.call(handshakeCtx, "scriptling.handshake", handshakeParams{
+	if err := c.call(ctx, "scriptling.handshake", handshakeParams{
 		Protocol:     ProtocolVersion,
 		Host:         "scriptling",
 		HostVersion:  "dev",

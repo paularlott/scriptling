@@ -3,6 +3,8 @@ package plugin
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -145,6 +147,10 @@ func TestHTTPClientInsecureSkipTLS(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: mustHTTPRawJSON(t, `"ok"`)})
 	}))
 	defer srv.Close()
+	// Silence the stdlib http.Server error log: this test deliberately sends
+	// a TLS "bad certificate" alert (the secure client rejects the self-signed
+	// cert), which the server would otherwise log as noise on every run.
+	srv.Config.ErrorLog = log.New(io.Discard, "", 0)
 
 	secureClient, err := newHTTPClient(context.Background(), srv.URL, false, false, nil)
 	if err != nil {
