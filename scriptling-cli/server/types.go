@@ -107,6 +107,7 @@ type Server struct {
 	webRootZip            *zip.ReadCloser // non-nil when WebRoot is a .zip file
 	mu                    sync.RWMutex
 	watcher               *fsnotify.Watcher
+	reloadMu              sync.Mutex // guards reloadMCP and reloadDebounce
 	reloadDebounce        *time.Timer
 	debounceDuration      time.Duration
 	mcpFolderEntries mcpEntries    // folder-sourced MCP registrations (reloadable)

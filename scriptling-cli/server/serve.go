@@ -52,6 +52,7 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 					}
 					ext := filepath.Ext(event.Name)
 					if ext == ".toml" || ext == ".py" {
+						server.reloadMu.Lock()
 						if server.reloadDebounce != nil {
 							server.reloadDebounce.Stop()
 						}
@@ -60,6 +61,7 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 							Log.Debug("Tool file changed", "event", eventCopy.Op.String(), "file", filepath.Base(eventCopy.Name))
 							server.reloadMCP()
 						})
+						server.reloadMu.Unlock()
 					}
 				case err, ok := <-server.watcher.Errors:
 					if ok {
@@ -89,9 +91,12 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 		server.watcher.Close()
 		<-watcherDone
 	}
+	server.reloadMu.Lock()
 	if server.reloadDebounce != nil {
 		server.reloadDebounce.Stop()
+		server.reloadDebounce = nil
 	}
+	server.reloadMu.Unlock()
 
 	// Signal the setup script that the server is shutting down.
 	extlibs.RuntimeState.Lock()

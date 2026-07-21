@@ -36,6 +36,8 @@ type HandlerConfig struct {
 	Logger         logger.Logger                // nil = null logger
 	PackLoader     *pack.Loader                 // nil = no pack loader
 	PluginManager  *scriptlingplugin.Manager    // nil = no plugins
+	DockerSock     string                       // empty = default socket
+	PodmanSock     string                       // empty = default socket
 	SetupHook      func(*scriptling.Scriptling) // optional extra setup applied after standard libs
 }
 
@@ -77,6 +79,18 @@ func WithDisabledLibs(names []string) HandlerOption {
 	return func(c *HandlerConfig) { c.DisabledLibs = names }
 }
 
+// WithDockerSock returns an option that sets the Docker socket path used by
+// the container library inside the script interpreter.
+func WithDockerSock(sock string) HandlerOption {
+	return func(c *HandlerConfig) { c.DockerSock = sock }
+}
+
+// WithPodmanSock returns an option that sets the Podman socket path used by
+// the container library inside the script interpreter.
+func WithPodmanSock(sock string) HandlerOption {
+	return func(c *HandlerConfig) { c.PodmanSock = sock }
+}
+
 // WithSetupHook returns an option that registers a callback invoked after the
 // standard library set is registered on each fresh interpreter. Hosts use this
 // to expose their own libraries to served scripts.
@@ -113,7 +127,7 @@ func prepareScriptling(cfg HandlerConfig, extraLibDirs []string) *scriptling.Scr
 	libDirs := append(append([]string{}, cfg.LibDirs...), extraLibDirs...)
 
 	p := scriptling.New()
-	setup.Scriptling(p, libDirs, false, cfg.AllowedPaths, cfg.DisabledLibs, registry, log, "", "")
+	setup.Scriptling(p, libDirs, false, cfg.AllowedPaths, cfg.DisabledLibs, registry, log, cfg.DockerSock, cfg.PodmanSock)
 	if cfg.PluginManager != nil {
 		scriptlingplugin.RegisterLibraries(p, cfg.PluginManager)
 	}
