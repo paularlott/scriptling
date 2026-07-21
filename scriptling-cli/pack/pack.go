@@ -135,9 +135,8 @@ func Pack(srcDir, dst string, force bool) (string, []string, error) {
 		if err != nil {
 			return err
 		}
-		defer src.Close()
-
 		_, err = io.Copy(w, src)
+		src.Close()
 		return err
 	})
 	if err != nil {
