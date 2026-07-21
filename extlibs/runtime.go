@@ -141,13 +141,12 @@ func ResetRuntime() {
 	RuntimeState.BackgroundCtxs = make(map[string]context.Context)
 	RuntimeState.BackgroundReady = false
 
-	// Close and reset KV store, then reinitialize in-memory
+	// Close KV store if open. The caller is responsible for reinitializing
+	// via InitKVStore — opening an in-memory DB here only to have it
+	// immediately replaced is wasted work.
 	if RuntimeState.KVDB != nil {
 		RuntimeState.KVDB.Close()
 		RuntimeState.KVDB = nil
-	}
-	if db, err := snapshotkv.Open("", nil); err == nil {
-		RuntimeState.KVDB = db
 	}
 
 	RuntimeState.WaitGroups = make(map[string]*RuntimeWaitGroup)

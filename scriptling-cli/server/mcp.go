@@ -256,6 +256,8 @@ func (s *Server) handlerConfig() mcpcli.HandlerConfig {
 		mcpcli.WithLogger(Log),
 		mcpcli.WithPackLoader(s.packLoader),
 		mcpcli.WithPlugins(s.config.PluginManager),
+		mcpcli.WithDockerSock(s.config.DockerSock),
+		mcpcli.WithPodmanSock(s.config.PodmanSock),
 	}
 	if s.config.ExtraLibs != nil {
 		opts = append(opts, mcpcli.WithSetupHook(s.config.ExtraLibs))
@@ -396,6 +398,9 @@ RETURNING RESULTS:
 // place — rather than swapping a new server — keeps SSE/stdio notification
 // subscribers valid across reloads.
 func (s *Server) reloadMCP() {
+	s.reloadMu.Lock()
+	defer s.reloadMu.Unlock()
+
 	Log.Info("Reloading MCP tools, resources and prompts...")
 	server := s.mcpHandler.server.Load()
 	if server == nil {
