@@ -40,7 +40,10 @@ func (s *Server) buildMux() http.Handler {
 		}
 	}
 
-	mux.HandleFunc("GET /health", s.handleHealth)
+	// Built-in health check — skip if a user route already claims it.
+	if _, ok := s.handlers["GET /health"]; !ok {
+		mux.HandleFunc("GET /health", s.handleHealth)
+	}
 
 	for key := range s.handlers {
 		// "GET /" creates a subtree pattern in Go 1.22's mux that would swallow
