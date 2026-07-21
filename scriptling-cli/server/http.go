@@ -308,9 +308,9 @@ func (s *Server) serveFromZip(w http.ResponseWriter, r *http.Request) {
 					http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 					return
 				}
-				defer rc.Close()
 				w.Header().Set("Content-Type", mime.TypeByExtension(filepath.Ext(f.Name)))
 				io.Copy(w, rc)
+				rc.Close()
 				return
 			}
 		}
