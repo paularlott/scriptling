@@ -187,7 +187,7 @@ func RunJSONRPCServer(ctx context.Context, config ServerConfig) error {
 func RunMCPStdioServer(ctx context.Context, config ServerConfig) error {
 	Log.Debug("Starting MCP stdio server", "mcp_tools", config.MCPToolsDir != "", "mcp_exec", config.MCPExecTool)
 
-	if config.MCPToolsDir == "" && !config.MCPExecTool {
+	if config.MCPToolsDir == "" && !config.MCPExecTool && !config.serveSet()["mcp"] {
 		return fmt.Errorf("MCP server requires --mcp-tools <dir> and/or --mcp-exec-script")
 	}
 

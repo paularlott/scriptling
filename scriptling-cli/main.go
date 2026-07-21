@@ -278,6 +278,21 @@ func main() {
 			if cmd.GetBool("json-rpc") || mcpStdio {
 				logWriter = os.Stderr
 			}
+
+			// Open any --package sources up front: an app bundle (manifest with
+			// a serve list) in a stdio protocol mode also needs the pure stdout
+			// stream, and Run reuses the opened bundles.
+			if packages := cmd.GetStringSlice("package"); len(packages) > 0 {
+				app, libs, err := openBundles(packages, cmd.GetBool("insecure"), cmd.GetString("cache-dir"))
+				if err != nil {
+					return ctx, err
+				}
+				pendingApp = app
+				pendingLibs = libs
+				if app != nil && cmd.GetString("server") == "" {
+					logWriter = os.Stderr
+				}
+			}
 			format := cmd.GetString("log-format")
 			if format == "null" {
 				globalLogger = logger.NewNullLogger()
@@ -306,7 +321,107 @@ func main() {
 	}
 }
 
+// pendingApp and pendingLibs hold the --package sources opened in PreRun,
+// reused by Run. At most one app bundle (a bundle whose manifest declares
+// serve) is allowed; the rest are library bundles.
+var (
+	pendingApp  *pack.Bundle
+	pendingLibs []*pack.Bundle
+)
+
+// openBundles opens every --package source as a bundle (local dir, local zip,
+// or remote zip URL), splitting the single allowed app bundle from library
+// bundles.
+func openBundles(sources []string, insecure bool, cacheDir string) (app *pack.Bundle, libs []*pack.Bundle, err error) {
+	for _, src := range sources {
+		b, err := pack.FetchBundle(src, insecure, cacheDir)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to load package %s: %w", src, err)
+		}
+		if len(b.Manifest.Serve) > 0 {
+			if app != nil {
+				return nil, nil, fmt.Errorf("only one app bundle is allowed: %s and %s both declare serve", app.Source(), b.Source())
+			}
+			app = b
+		} else {
+			libs = append(libs, b)
+		}
+	}
+	return app, libs, nil
+}
+
+// bundleFlagConflicts captures the path/registration CLI flags that an app
+// bundle's manifest owns. Used by rejectBundleFlags.
+type bundleFlagConflicts struct {
+	File          string   // script file argument
+	LibPath       []string // -L
+	MCPTools      string
+	MCPResources  string
+	MCPPrompts    string
+	WebRoot       string
+	Code          string // -c
+	Interactive   bool
+}
+
+// rejectBundleFlags refuses path/registration flags that manifest.toml owns in
+// app-bundle mode.
+func rejectBundleFlags(c bundleFlagConflicts) error {
+	checks := []struct {
+		name string
+		set  bool
+	}{
+		{"file", c.File != ""},
+		{"libpath", len(c.LibPath) > 0},
+		{"mcp-tools", c.MCPTools != ""},
+		{"mcp-resources", c.MCPResources != ""},
+		{"mcp-prompts", c.MCPPrompts != ""},
+		{"web-root", c.WebRoot != ""},
+		{"code", c.Code != ""},
+		{"interactive", c.Interactive},
+	}
+	for _, c := range checks {
+		if c.set {
+			return fmt.Errorf("--%s cannot be used with an app bundle; it is configured by the bundle's manifest.toml", c.name)
+		}
+	}
+	return nil
+}
+
 func runScriptling(ctx context.Context, cmd *cli.Command) error {
+	// App bundle mode: the manifest drives what gets served; deployment flags
+	// (--server, --json-rpc, TLS, tokens) pick the transport.
+	if pendingApp != nil {
+		if err := rejectBundleFlags(bundleFlagConflicts{
+			File:         cmd.GetStringArg("file"),
+			LibPath:      cmd.GetStringSlice("libpath"),
+			MCPTools:     cmd.GetString("mcp-tools"),
+			MCPResources: cmd.GetString("mcp-resources"),
+			MCPPrompts:   cmd.GetString("mcp-prompts"),
+			WebRoot:      cmd.GetString("web-root"),
+			Code:         cmd.GetString("code"),
+			Interactive:  cmd.GetBool("interactive"),
+		}); err != nil {
+			return err
+		}
+		serve := map[string]bool{}
+		for _, s := range pendingApp.Manifest.Serve {
+			serve[s] = true
+		}
+		if serverAddr := cmd.GetString("server"); serverAddr != "" {
+			return runServer(ctx, cmd, serverAddr)
+		}
+		if cmd.GetBool("json-rpc") {
+			return runJSONRPCServer(ctx, cmd)
+		}
+		if serve["mcp"] {
+			return runMCPStdioServer(ctx, cmd)
+		}
+		if serve["json-rpc"] {
+			return runJSONRPCServer(ctx, cmd)
+		}
+		return fmt.Errorf("app bundle serves HTTP only; pass --server <addr> to start it")
+	}
+
 	if serverAddr := cmd.GetString("server"); serverAddr != "" {
 		return runServer(ctx, cmd, serverAddr)
 	}
@@ -370,13 +485,19 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	defer pluginManager.Close()
 	scriptlingplugin.RegisterLibraries(p, pluginManager)
 
-	packages := cmd.GetStringSlice("package")
-	insecure := cmd.GetBool("insecure")
-	packLoader, err := bootstrap.NewPackLoader(packages, insecure, cmd.GetString("cache-dir"))
-	if err != nil {
-		return err
-	}
-	if packLoader != nil {
+	// --package sources were opened in PreRun; build the library loader from
+	// the same bundles (works for library packs and app bundles alike). The app
+	// bundle is added last so its modules win.
+	var packLoader *pack.Loader
+	if pendingApp != nil || len(pendingLibs) > 0 {
+		packLoader = pack.NewLoader()
+		packLoader.SetCacheDir(cmd.GetString("cache-dir"))
+		for _, b := range pendingLibs {
+			packLoader.AddBundle(b)
+		}
+		if pendingApp != nil {
+			packLoader.AddBundle(pendingApp)
+		}
 		go pack.PruneCache(cmd.GetString("cache-dir"), 0) // async, best-effort
 		bootstrap.ApplyPackLoader(p, packLoader)
 	}
@@ -406,8 +527,15 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 		return runStdin(p)
 	}
 	if packLoader != nil {
-		if mod, fn, ok := packLoader.GetMainEntry(); ok {
-			return evalAndCheckExit(p, fmt.Sprintf("import %s\n%s.%s()", mod, mod, fn))
+		entry, found, err := packLoader.ResolveMain()
+		if err != nil {
+			return err
+		}
+		if found {
+			if entry.Script != nil {
+				return evalAndCheckExit(p, string(entry.Script))
+			}
+			return evalAndCheckExit(p, fmt.Sprintf("import %s\n%s.%s()", entry.Module, entry.Module, entry.Function))
 		}
 	}
 	cmd.ShowHelp()
@@ -415,6 +543,23 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 }
 
 func runServer(ctx context.Context, cmd *cli.Command, address string) error {
+	// An app bundle started with --server must declare serve=["http"] (alone
+	// or alongside mcp/json-rpc). Without it the server would start but serve
+	// nothing useful — no routes, no webroot, just 404s. MCP-over-HTTP and
+	// JSON-RPC-over-HTTP work by declaring serve=["http","mcp"] etc.
+	if pendingApp != nil {
+		hasHTTP := false
+		for _, v := range pendingApp.Manifest.Serve {
+			if v == "http" {
+				hasHTTP = true
+				break
+			}
+		}
+		if !hasHTTP {
+			return fmt.Errorf("bundle declares serve=%v but not 'http'; "+
+				"add 'http' to serve for an HTTP server, or use stdio mode without --server", pendingApp.Manifest.Serve)
+		}
+	}
 	file := cmd.GetStringArg("file")
 	baseDir, err := bootstrap.BaseDir(file)
 	if err != nil {
@@ -434,6 +579,8 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 		ScriptFile:      file,
 		LibDirs:         bootstrap.BuildLibDirs(baseDir, cmd.GetStringSlice("libpath")),
 		Packages:        cmd.GetStringSlice("package"),
+		Bundle:          pendingApp,
+		LibBundles:      pendingLibs,
 		Insecure:        cmd.GetBool("insecure"),
 		CacheDir:        cmd.GetString("cache-dir"),
 		BearerToken:     cmd.GetString("bearer-token"),
@@ -476,6 +623,8 @@ func runJSONRPCServer(ctx context.Context, cmd *cli.Command) error {
 		ScriptFile:     file,
 		LibDirs:        bootstrap.BuildLibDirs(baseDir, cmd.GetStringSlice("libpath")),
 		Packages:       cmd.GetStringSlice("package"),
+		Bundle:         pendingApp,
+		LibBundles:     pendingLibs,
 		Insecure:       cmd.GetBool("insecure"),
 		CacheDir:       cmd.GetString("cache-dir"),
 		AllowedPaths:   bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths")),
@@ -508,6 +657,8 @@ func runMCPStdioServer(ctx context.Context, cmd *cli.Command) error {
 		ScriptFile:      file,
 		LibDirs:         bootstrap.BuildLibDirs(baseDir, cmd.GetStringSlice("libpath")),
 		Packages:        cmd.GetStringSlice("package"),
+		Bundle:          pendingApp,
+		LibBundles:      pendingLibs,
 		Insecure:        cmd.GetBool("insecure"),
 		CacheDir:        cmd.GetString("cache-dir"),
 		AllowedPaths:    bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths")),

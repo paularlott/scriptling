@@ -14,10 +14,11 @@ import (
 )
 
 // TestBuildToolHandlerPassesThroughServerPackLoader verifies that the server's
-// handlerConfig() plumbs the pack loader (and the local tools dir on the search
-// path) into the shared BuildToolHandler factory. This is the server-package
-// regression test for the refactor that moved tool/resource/prompt handler
-// factories into scriptling-cli/mcp.
+// handlerConfig() plumbs the pack loader (and configured lib dirs) into the
+// shared BuildToolHandler factory. This is the server-package regression test
+// for the refactor that moved tool/resource/prompt handler factories into
+// scriptling-cli/mcp. Sibling imports require the tools dir to be configured
+// as a lib dir explicitly (the CLI's -L flag).
 func TestBuildToolHandlerPassesThroughServerPackLoader(t *testing.T) {
 	toolsDir := t.TempDir()
 	packSrcDir := t.TempDir()
@@ -34,7 +35,7 @@ func TestBuildToolHandlerPassesThroughServerPackLoader(t *testing.T) {
 	}
 
 	pkgFile := filepath.Join(t.TempDir(), "pkg.zip")
-	if _, err := pack.Pack(packSrcDir, pkgFile, false); err != nil {
+	if _, _, err := pack.Pack(packSrcDir, pkgFile, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -61,7 +62,7 @@ tool.return_string(localmod.value() + "+" + packmod.value())
 
 	s := &Server{
 		config: ServerConfig{
-			LibDirs:        nil,
+			LibDirs:        []string{toolsDir},
 			SecretRegistry: secretprovider.NewRegistry(),
 		},
 		packLoader: packLoader,

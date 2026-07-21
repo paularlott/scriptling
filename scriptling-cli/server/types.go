@@ -2,6 +2,7 @@ package server
 
 import (
 	"archive/zip"
+	"io/fs"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -25,6 +26,8 @@ type ServerConfig struct {
 	ScriptFile      string
 	LibDirs         []string
 	Packages        []string // Package (.zip) paths or URLs
+	Bundle          *pack.Bundle   // The single app bundle to serve; when set the server runs in app-bundle mode
+	LibBundles      []*pack.Bundle // Pre-opened library bundles (module providers only, no app behavior)
 	Insecure        bool     // Allow self-signed HTTPS for package URLs
 	CacheDir        string   // Override default OS cache dir for remote packages
 	BearerToken     string
@@ -51,6 +54,24 @@ type ServerConfig struct {
 	// http, mcp and websocket request handler. Host applications use this to
 	// expose their own libraries to served scripts.
 	ExtraLibs func(*scriptling.Scriptling)
+}
+
+// serveSet returns the set of protocols the app bundle declares in its
+// manifest serve list (empty when there is no app bundle).
+func (c ServerConfig) serveSet() map[string]bool {
+	set := map[string]bool{}
+	if c.Bundle != nil {
+		for _, s := range c.Bundle.Manifest.Serve {
+			set[s] = true
+		}
+	}
+	return set
+}
+
+// appMode reports whether the server is running an app bundle rather than
+// legacy flag-based configuration.
+func (c ServerConfig) appMode() bool {
+	return c.Bundle != nil
 }
 
 // reloadableMCPHandler wraps an MCP server pointer to allow hot-reloading of tools
@@ -88,11 +109,35 @@ type Server struct {
 	watcher               *fsnotify.Watcher
 	reloadDebounce        *time.Timer
 	debounceDuration      time.Duration
-	mcpFolderToolNames    []string      // folder-sourced tool names, so reload can unregister them
-	mcpFolderResourceKeys []string      // folder-sourced static resource URIs
-	mcpFolderTemplateKeys []string      // folder-sourced resource template URI templates
-	mcpFolderPromptNames  []string      // folder-sourced prompt names
-	packLoader            *pack.Loader  // nil if no packages configured
-	bearerExpected        string        // precomputed "Bearer <token>"
-	scriptDone            chan struct{} // closed when setup script goroutine exits
+	mcpFolderEntries mcpEntries    // folder-sourced MCP registrations (reloadable)
+	mcpBundleEntries mcpEntries    // bundle-sourced MCP registrations (reloadable)
+	packLoader       *pack.Loader  // nil if no packages configured
+	webRootFS        fs.FS         // non-nil when serving webroot/ from the app bundle (cached sub-FS)
+	bearerExpected   string        // precomputed "Bearer <token>"
+	scriptDone       chan struct{} // closed when setup script goroutine exits
+}
+
+// mcpEntries tracks what was registered on the MCP server from one source so
+// reload can unregister it all before re-registering.
+type mcpEntries struct {
+	tools             []string // tool names
+	staticResources   []string // static resource URIs
+	templateResources []string // resource template URI templates
+	prompts           []string // prompt names
+}
+
+// unregisterAll removes every tracked entry from the MCP server.
+func (e mcpEntries) unregisterAll(server *mcp_lib.Server) {
+	for _, name := range e.tools {
+		server.UnregisterTool(name)
+	}
+	for _, uri := range e.staticResources {
+		server.UnregisterResource(uri)
+	}
+	for _, uriTmpl := range e.templateResources {
+		server.UnregisterResourceTemplate(uriTmpl)
+	}
+	for _, name := range e.prompts {
+		server.UnregisterPrompt(name)
+	}
 }

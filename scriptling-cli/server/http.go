@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"mime"
 	"net/http"
 	"os"
@@ -20,25 +21,36 @@ import (
 	"github.com/paularlott/scriptling/util"
 )
 
-// Start starts the HTTP server
-func (s *Server) Start() error {
+// buildMux assembles the full HTTP handler stack: protocol endpoints, script
+// routes, static routes, web root fallback, and auth middleware.
+func (s *Server) buildMux() http.Handler {
 	mux := http.NewServeMux()
 
 	if s.mcpHandler != nil {
-		mux.Handle("/mcp", s.mcpHandler)
+		mux.Handle("POST /mcp", s.mcpHandler)
+		mux.Handle("GET /mcp", s.mcpHandler)
 	}
 	if s.config.JSONRPC {
 		if s.pluginServer != nil {
-			mux.Handle("/json-rpc", s.pluginServer)
+			mux.Handle("POST /json-rpc", s.pluginServer)
+			mux.Handle("GET /json-rpc", s.pluginServer)
 		} else {
-			mux.HandleFunc("/json-rpc", s.handleJSONRPCHTTP)
+			mux.HandleFunc("POST /json-rpc", s.handleJSONRPCHTTP)
+			mux.HandleFunc("GET /json-rpc", s.handleJSONRPCHTTP)
 		}
 	}
 
 	mux.HandleFunc("GET /health", s.handleHealth)
 
 	for key := range s.handlers {
-		mux.HandleFunc(key, s.handleScriptRequest)
+		// "GET /" creates a subtree pattern in Go 1.22's mux that would swallow
+		// all GET requests. Append {$} so it matches exactly "/" and lets other
+		// paths fall through to the webroot fallback.
+		if strings.HasSuffix(key, " /") {
+			mux.HandleFunc(key+"{$}", s.handleScriptRequest)
+		} else {
+			mux.HandleFunc(key, s.handleScriptRequest)
+		}
 	}
 
 	for path := range s.wsHandlers {
@@ -51,7 +63,7 @@ func (s *Server) Start() error {
 	}
 
 	// Web root: serve files not matched by any route, fall through to 404 handler
-	if s.config.WebRoot != "" || s.notFoundHandler != "" {
+	if s.config.WebRoot != "" || s.notFoundHandler != "" || s.webRootFS != nil {
 		mux.HandleFunc("/", s.handleFallback)
 	}
 
@@ -63,10 +75,14 @@ func (s *Server) Start() error {
 			handler = s.bearerTokenProtocolMiddleware(mux)
 		}
 	}
+	return handler
+}
 
+// Start starts the HTTP server
+func (s *Server) Start() error {
 	s.httpServer = &http.Server{
 		Addr:    s.config.Address,
-		Handler: handler,
+		Handler: s.buildMux(),
 	}
 
 	if s.config.TLSGenerate || (s.config.TLSCert != "" && s.config.TLSKey != "") {
@@ -183,9 +199,14 @@ func (s *Server) handleScriptRequest(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleFallback serves files from WebRoot (directory or zip) or calls the not_found handler
+// handleFallback serves files from WebRoot (directory or zip), an app bundle's
+// webroot/, or calls the not_found handler
 func (s *Server) handleFallback(w http.ResponseWriter, r *http.Request) {
 	Log.Trace("HTTP fallback request", "method", r.Method, "path", r.URL.Path, "remote", r.RemoteAddr)
+	if s.webRootFS != nil {
+		s.serveFromBundle(w, r)
+		return
+	}
 	if s.config.WebRoot != "" {
 		if s.webRootZip != nil {
 			s.serveFromZip(w, r)
@@ -194,6 +215,46 @@ func (s *Server) handleFallback(w http.ResponseWriter, r *http.Request) {
 		s.serveFromDir(w, r)
 		return
 	}
+	s.serveNotFound(w, r)
+}
+
+// serveFromBundle serves static assets from the app bundle's cached webroot/ FS.
+func (s *Server) serveFromBundle(w http.ResponseWriter, r *http.Request) {
+	if s.webRootFS == nil {
+		s.serveNotFound(w, r)
+		return
+	}
+
+	// Normalise the URL path: strip leading slash, never allow traversal.
+	urlPath := path.Clean(strings.TrimPrefix(r.URL.Path, "/"))
+	if urlPath == "." {
+		urlPath = ""
+	}
+	candidates := []string{urlPath, urlPath + "/index.html"}
+	if urlPath == "" {
+		candidates = []string{"index.html"}
+	}
+
+	for _, candidate := range candidates {
+		if !fs.ValidPath(candidate) {
+			continue
+		}
+		info, err := fs.Stat(s.webRootFS, candidate)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		data, err := fs.ReadFile(s.webRootFS, candidate)
+		if err != nil {
+			continue
+		}
+		Log.Trace("Serving file from bundle webroot", "file", candidate)
+		if ct := mime.TypeByExtension(path.Ext(candidate)); ct != "" {
+			w.Header().Set("Content-Type", ct)
+		}
+		w.Write(data)
+		return
+	}
+	Log.Trace("Bundle webroot entry not found", "path", urlPath)
 	s.serveNotFound(w, r)
 }
 

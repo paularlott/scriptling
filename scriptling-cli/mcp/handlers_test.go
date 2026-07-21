@@ -94,7 +94,7 @@ func TestBuildToolHandlerRespectsLibDirs(t *testing.T) {
 
 func TestBuildStaticResourceHandlerServesText(t *testing.T) {
 	path := writeScript(t, filepath.Join(t.TempDir(), "file.txt"), []byte("plain text"))
-	h := BuildStaticResourceHandler(path, "memo://file", "text/plain")
+	h := BuildStaticResourceHandler(FileReader(path), "memo://file", "text/plain")
 	resp, err := h(context.Background(), mcplib.NewResourceRequest("memo://file", nil))
 	if err != nil {
 		t.Fatalf("handler: %v", err)
@@ -108,7 +108,7 @@ func TestBuildStaticResourceHandlerServesBinaryAsBlob(t *testing.T) {
 	// 0xFF is invalid UTF-8 so the handler takes the blob path.
 	raw := []byte{0xFF, 0xFE, 0x00, 0x01}
 	path := writeScript(t, filepath.Join(t.TempDir(), "blob.bin"), raw)
-	h := BuildStaticResourceHandler(path, "bin://blob", "")
+	h := BuildStaticResourceHandler(FileReader(path), "bin://blob", "")
 	resp, err := h(context.Background(), mcplib.NewResourceRequest("bin://blob", nil))
 	if err != nil {
 		t.Fatalf("handler: %v", err)
@@ -148,7 +148,7 @@ func TestBuildResourceScriptHandlerRunsScriptWithVars(t *testing.T) {
 
 func TestBuildStaticPromptHandlerReturnsFileContent(t *testing.T) {
 	path := writeScript(t, filepath.Join(t.TempDir(), "p.md"), []byte("Summarise this."))
-	h := BuildStaticPromptHandler(path)
+	h := BuildStaticPromptHandler(FileReader(path))
 	resp, err := h(context.Background(), mcplib.NewPromptRequest(nil))
 	if err != nil {
 		t.Fatalf("handler: %v", err)

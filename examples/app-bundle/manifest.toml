@@ -1,0 +1,6 @@
+name = "app-bundle"
+version = "1.0.0"
+description = "Reference app bundle: HTTP routes, MCP tools and static assets in one package"
+main = "setup.py"
+libs = ["lib"]
+serve = ["http", "mcp"]

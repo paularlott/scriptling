@@ -1,0 +1,7 @@
+description = "Calculate an expression"
+
+[[parameters]]
+name = "expr"
+type = "string"
+description = "Mathematical expression to evaluate (e.g. 2+3*4)"
+required = true
