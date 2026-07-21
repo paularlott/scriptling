@@ -1,24 +1,61 @@
 package mcp
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io/fs"
 	"mime"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
-	"github.com/paularlott/cli"
-	cli_toml "github.com/paularlott/cli/toml"
+	"github.com/BurntSushi/toml"
 )
 
-// loadTOML loads a .toml file via the cli/toml config loader.
-func loadTOML(tomlPath, folder string) (*cli.ConfigFileTypedWrapper, error) {
-	baseConfig := cli_toml.NewConfigFile(&tomlPath, func() []string { return []string{folder} })
-	cfg := cli.NewTypedConfigFile(baseConfig)
-	if err := cfg.LoadData(); err != nil {
-		return nil, err
+// resourceMetaTOML mirrors the optional _{stem}.toml metadata sibling of a
+// resource file.
+type resourceMetaTOML struct {
+	Name        string `toml:"name"`
+	Description string `toml:"description"`
+	MimeType    string `toml:"mimeType"`
+}
+
+// parseResourceMetadata decodes resource metadata from TOML bytes.
+func parseResourceMetadata(data []byte) (name, description, mimeType string, err error) {
+	var m resourceMetaTOML
+	if _, err = toml.NewDecoder(bytes.NewReader(data)).Decode(&m); err != nil {
+		return "", "", "", err
 	}
-	return cfg, nil
+	return m.Name, m.Description, m.MimeType, nil
+}
+
+// promptMetaTOML mirrors a prompt's .toml metadata file.
+type promptMetaTOML struct {
+	Description string `toml:"description"`
+	Arguments   []struct {
+		Name        string `toml:"name"`
+		Description string `toml:"description"`
+		Required    bool   `toml:"required"`
+	} `toml:"arguments"`
+}
+
+// parsePromptMetadata decodes prompt metadata from TOML bytes.
+func parsePromptMetadata(data []byte) (string, []PromptArgument, error) {
+	var m promptMetaTOML
+	if _, err := toml.NewDecoder(bytes.NewReader(data)).Decode(&m); err != nil {
+		return "", nil, err
+	}
+	var args []PromptArgument
+	for _, a := range m.Arguments {
+		args = append(args, PromptArgument{
+			Name:        a.Name,
+			Description: a.Description,
+			Required:    a.Required,
+		})
+	}
+	return m.Description, args, nil
 }
 
 // =========================================================================
@@ -38,15 +75,35 @@ type scannedResource struct {
 	Description string
 	MimeType    string
 	Template    bool
-	FilePath    string // .py for templates; the content file for static
+	FilePath    string // path within the scanned FS (slash-separated)
 	Vars        []string
 }
 
-// ScanResourcesTree walks a resources directory and returns every resource
-// (static or template) it describes.
-func ScanResourcesTree(dir string) ([]scannedResource, error) {
+// readMetadataSibling reads and parses the optional _{stem}.toml metadata
+// sibling of rel. found is false when no sibling exists.
+func readMetadataSibling(fsys fs.FS, rel string) (meta resourceMetaTOML, found bool, err error) {
+	ext := path.Ext(rel)
+	stem := strings.TrimSuffix(path.Base(rel), ext)
+	sib := path.Join(path.Dir(rel), "_"+stem+".toml")
+	data, err := fs.ReadFile(fsys, sib)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return resourceMetaTOML{}, false, nil
+		}
+		return resourceMetaTOML{}, false, err
+	}
+	name, desc, mimeType, err := parseResourceMetadata(data)
+	if err != nil {
+		return resourceMetaTOML{}, false, fmt.Errorf("failed to parse resource metadata %s: %w", sib, err)
+	}
+	return resourceMetaTOML{Name: name, Description: desc, MimeType: mimeType}, true, nil
+}
+
+// ScanResourcesFS walks fsys and returns every resource (static or template)
+// it describes. FilePath in the results is the slash path within fsys.
+func ScanResourcesFS(fsys fs.FS) ([]scannedResource, error) {
 	var out []scannedResource
-	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, walkErr error) error {
+	err := fs.WalkDir(fsys, ".", func(rel string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -57,11 +114,6 @@ func ScanResourcesTree(dir string) ([]scannedResource, error) {
 		if strings.HasPrefix(d.Name(), "_") {
 			return nil
 		}
-		rel, err := filepath.Rel(dir, path)
-		if err != nil {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
 		segments := strings.Split(rel, "/")
 		if len(segments) < 2 {
 			// Root-level file has no scheme directory; skip it.
@@ -77,7 +129,7 @@ func ScanResourcesTree(dir string) ([]scannedResource, error) {
 				break
 			}
 		}
-		ext := filepath.Ext(path)
+		ext := path.Ext(rel)
 		base := rest[len(rest)-1]
 		stem := strings.TrimSuffix(base, ext)
 		isPy := ext == ".py"
@@ -91,26 +143,24 @@ func ScanResourcesTree(dir string) ([]scannedResource, error) {
 
 			// Load optional _{stem}.toml metadata sibling. If absent, fall back
 			// to the full URI as the name with no description.
-			name, desc, mime := uri, "", ""
-			if tomlPath := filepath.Join(filepath.Dir(path), "_"+stem+".toml"); fileExists(tomlPath) {
-				cfg, err := loadTOML(tomlPath, dir)
-				if err != nil {
-					return fmt.Errorf("failed to parse resource metadata %s: %w", tomlPath, err)
+			name, desc, mimeType := uri, "", ""
+			if meta, found, err := readMetadataSibling(fsys, rel); err != nil {
+				return err
+			} else if found {
+				if meta.Name != "" {
+					name = meta.Name
 				}
-				if v := cfg.GetString("name"); v != "" {
-					name = v
-				}
-				desc = cfg.GetString("description")
-				mime = cfg.GetString("mimeType")
+				desc = meta.Description
+				mimeType = meta.MimeType
 			}
 
 			out = append(out, scannedResource{
 				URI:         uri,
 				Name:        name,
 				Description: desc,
-				MimeType:    mime,
+				MimeType:    mimeType,
 				Template:    true,
-				FilePath:    path,
+				FilePath:    rel,
 				Vars:        extractTemplateVars(rest),
 			})
 		case hasVar && !isPy:
@@ -120,35 +170,46 @@ func ScanResourcesTree(dir string) ([]scannedResource, error) {
 			// Static: keep the extension in the URI (e.g. readme.md).
 			uri := scheme + "://" + strings.Join(rest, "/")
 			name, desc := uri, ""
-			mime := mimeTypeForExt(ext)
+			mimeType := mimeTypeForExt(ext)
 			// Load optional _{stem}.toml metadata sibling.
-			if tomlPath := filepath.Join(filepath.Dir(path), "_"+stem+".toml"); fileExists(tomlPath) {
-				cfg, err := loadTOML(tomlPath, dir)
-				if err != nil {
-					return fmt.Errorf("failed to parse resource metadata %s: %w", tomlPath, err)
+			if meta, found, err := readMetadataSibling(fsys, rel); err != nil {
+				return err
+			} else if found {
+				if meta.Name != "" {
+					name = meta.Name
 				}
-				if v := cfg.GetString("name"); v != "" {
-					name = v
-				}
-				desc = cfg.GetString("description")
-				if v := cfg.GetString("mimeType"); v != "" {
-					mime = v
+				desc = meta.Description
+				if meta.MimeType != "" {
+					mimeType = meta.MimeType
 				}
 			}
 			out = append(out, scannedResource{
 				URI:         uri,
 				Name:        name,
 				Description: desc,
-				MimeType:    mime,
-				FilePath:    path,
+				MimeType:    mimeType,
+				FilePath:    rel,
 			})
 		}
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to scan resources folder %s: %w", dir, err)
+		return nil, fmt.Errorf("failed to scan resources: %w", err)
 	}
 	return out, nil
+}
+
+// ScanResourcesTree walks a resources directory on disk and returns every
+// resource it describes. FilePath in the results is a disk path.
+func ScanResourcesTree(dir string) ([]scannedResource, error) {
+	res, err := ScanResourcesFS(os.DirFS(dir))
+	if err != nil {
+		return nil, err
+	}
+	for i := range res {
+		res[i].FilePath = filepath.Join(dir, filepath.FromSlash(res[i].FilePath))
+	}
+	return res, nil
 }
 
 // mimeTypeForExt returns the MIME type for an extension (e.g. ".md" -> "text/markdown"),
@@ -158,12 +219,6 @@ func mimeTypeForExt(ext string) string {
 		return ""
 	}
 	return mime.TypeByExtension(ext)
-}
-
-// fileExists reports whether path exists and is not a directory.
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
 }
 
 // extractTemplateVars returns the {var} placeholder names found across the path
@@ -214,16 +269,17 @@ type scannedPrompt struct {
 	Static      bool
 	Description string
 	Arguments   []PromptArgument // dynamic only
-	FilePath    string           // .py (dynamic) or .md/.txt (static)
+	FilePath    string           // .py (dynamic) or .md/.txt (static); path within the scanned FS
 }
 
-// ScanPromptsFolder scans a prompts folder. A prompt is dynamic when a name.toml
+// ScanPromptsFS scans fsys for prompts. A prompt is dynamic when a name.toml
 // (with sibling name.py) is present, or static when only a name.md/name.txt is
-// present. If both exist for a name, the dynamic one wins.
-func ScanPromptsFolder(dir string) ([]scannedPrompt, error) {
-	entries, err := os.ReadDir(dir)
+// present. If both exist for a name, the dynamic one wins. FilePath in the
+// results is the slash path within fsys.
+func ScanPromptsFS(fsys fs.FS) ([]scannedPrompt, error) {
+	entries, err := fs.ReadDir(fsys, ".")
 	if err != nil {
-		return nil, fmt.Errorf("failed to read prompts folder %s: %w", dir, err)
+		return nil, fmt.Errorf("failed to read prompts folder: %w", err)
 	}
 
 	// First pass: collect the stems that have a .toml (dynamic wins).
@@ -243,63 +299,71 @@ func ScanPromptsFolder(dir string) ([]scannedPrompt, error) {
 			continue
 		}
 		name := e.Name()
-		ext := filepath.Ext(name)
+		ext := path.Ext(name)
 		stem := strings.TrimSuffix(name, ext)
 
 		switch ext {
 		case ".toml":
-			scriptPath := filepath.Join(dir, stem+".py")
-			if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
+			scriptPath := stem + ".py"
+			if _, err := fs.Stat(fsys, scriptPath); errors.Is(err, fs.ErrNotExist) {
 				// Declared prompt with no handler script — skip with a warning
 				// rather than failing the whole folder.
 				continue
 			}
-			cfg, err := loadTOML(filepath.Join(dir, name), dir)
+			data, err := fs.ReadFile(fsys, name)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read %s: %w", name, err)
+			}
+			desc, args, err := parsePromptMetadata(data)
 			if err != nil {
 				return nil, fmt.Errorf("failed to parse %s: %w", name, err)
 			}
-			p := scannedPrompt{
+			out = append(out, scannedPrompt{
 				Name:        stem,
-				Description: cfg.GetString("description"),
+				Description: desc,
+				Arguments:   args,
 				FilePath:    scriptPath,
-			}
-			for _, arg := range cfg.GetObjectSlice("arguments") {
-				p.Arguments = append(p.Arguments, PromptArgument{
-					Name:        arg.GetString("name"),
-					Description: arg.GetString("description"),
-					Required:    arg.GetBool("required"),
-				})
-			}
-			out = append(out, p)
+			})
 
 		case ".md", ".txt":
 			if dynamicStems[stem] {
 				continue // dynamic version wins
 			}
-			desc, _ := firstLine(filepath.Join(dir, name))
+			data, err := fs.ReadFile(fsys, name)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read %s: %w", name, err)
+			}
 			out = append(out, scannedPrompt{
 				Name:        stem,
 				Static:      true,
-				Description: desc,
-				FilePath:    filepath.Join(dir, name),
+				Description: firstLineBytes(data),
+				FilePath:    name,
 			})
 		}
 	}
 	return out, nil
 }
 
-// firstLine returns the first non-empty line of a file (used as a static
-// prompt's description), or ("", error).
-func firstLine(path string) (string, error) {
-	data, err := os.ReadFile(path)
+// ScanPromptsFolder scans a prompts folder on disk. FilePath in the results is
+// a disk path.
+func ScanPromptsFolder(dir string) ([]scannedPrompt, error) {
+	prompts, err := ScanPromptsFS(os.DirFS(dir))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
+	for i := range prompts {
+		prompts[i].FilePath = filepath.Join(dir, filepath.FromSlash(prompts[i].FilePath))
+	}
+	return prompts, nil
+}
+
+// firstLineBytes returns the first non-empty line of data (used as a static
+// prompt's description).
+func firstLineBytes(data []byte) string {
 	for _, line := range strings.Split(string(data), "\n") {
-		l := strings.TrimSpace(line)
-		if l != "" {
-			return l, nil
+		if l := strings.TrimSpace(line); l != "" {
+			return l
 		}
 	}
-	return "", nil
+	return ""
 }

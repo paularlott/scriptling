@@ -1,21 +1,58 @@
 package mcp
 
 import (
+	"bytes"
 	"fmt"
+	"io/fs"
 	"os"
-	"path/filepath"
 	"strings"
 
-	"github.com/paularlott/cli"
-	cli_toml "github.com/paularlott/cli/toml"
+	"github.com/BurntSushi/toml"
 	"github.com/paularlott/mcp/toolmetadata"
 )
 
-// ScanToolsFolder scans the tools folder for .toml files and returns metadata
-func ScanToolsFolder(toolsFolder string) (map[string]*toolmetadata.ToolMetadata, error) {
+// toolMetaTOML mirrors the layout of a tool's .toml metadata file.
+type toolMetaTOML struct {
+	Description  string   `toml:"description"`
+	Keywords     []string `toml:"keywords"`
+	Discoverable bool     `toml:"discoverable"`
+	Parameters   []struct {
+		Name        string `toml:"name"`
+		Type        string `toml:"type"`
+		Description string `toml:"description"`
+		Required    bool   `toml:"required"`
+	} `toml:"parameters"`
+}
+
+// parseToolMetadata decodes tool metadata from TOML bytes. Unknown keys are
+// ignored so metadata files stay forward compatible.
+func parseToolMetadata(data []byte) (*toolmetadata.ToolMetadata, error) {
+	var m toolMetaTOML
+	if _, err := toml.NewDecoder(bytes.NewReader(data)).Decode(&m); err != nil {
+		return nil, err
+	}
+	meta := &toolmetadata.ToolMetadata{
+		Description:  m.Description,
+		Keywords:     m.Keywords,
+		Discoverable: m.Discoverable,
+	}
+	for _, p := range m.Parameters {
+		meta.Parameters = append(meta.Parameters, toolmetadata.ToolParameter{
+			Name:        p.Name,
+			Type:        p.Type,
+			Description: p.Description,
+			Required:    p.Required,
+		})
+	}
+	return meta, nil
+}
+
+// ScanToolsFS scans fsys (flat, root only) for .toml files and returns tool
+// metadata keyed by tool name.
+func ScanToolsFS(fsys fs.FS) (map[string]*toolmetadata.ToolMetadata, error) {
 	tools := make(map[string]*toolmetadata.ToolMetadata)
 
-	entries, err := os.ReadDir(toolsFolder)
+	entries, err := fs.ReadDir(fsys, ".")
 	if err != nil {
 		return nil, fmt.Errorf("failed to read tools folder: %w", err)
 	}
@@ -26,71 +63,24 @@ func ScanToolsFolder(toolsFolder string) (map[string]*toolmetadata.ToolMetadata,
 		}
 
 		toolName := strings.TrimSuffix(entry.Name(), ".toml")
-		tomlPath := filepath.Join(toolsFolder, entry.Name())
 
-		// Load TOML file using cli/toml
-		baseConfig := cli_toml.NewConfigFile(&tomlPath, func() []string { return []string{toolsFolder} })
-		cfg := cli.NewTypedConfigFile(baseConfig)
-		if err := cfg.LoadData(); err != nil {
-			return nil, fmt.Errorf("failed to parse %s: %w", tomlPath, err)
+		data, err := fs.ReadFile(fsys, entry.Name())
+		if err != nil {
+			return nil, fmt.Errorf("failed to read %s: %w", entry.Name(), err)
+		}
+		meta, err := parseToolMetadata(data)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse %s: %w", entry.Name(), err)
 		}
 
-		// Parse metadata
-		meta := toolmetadata.ToolMetadata{
-			Description:  cfg.GetString("description"),
-			Keywords:     cfg.GetStringSlice("keywords"),
-			Discoverable: cfg.GetBool("discoverable"),
-		}
-
-		// Parse parameters
-		paramObjs := cfg.GetObjectSlice("parameters")
-		for _, paramObj := range paramObjs {
-			param := toolmetadata.ToolParameter{
-				Name:        paramObj.GetString("name"),
-				Type:        paramObj.GetString("type"),
-				Description: paramObj.GetString("description"),
-				Required:    paramObj.GetBool("required"),
-			}
-			meta.Parameters = append(meta.Parameters, param)
-		}
-
-		tools[toolName] = &meta
+		tools[toolName] = meta
 	}
 
 	return tools, nil
 }
 
-// ValidateTool checks if a tool's metadata matches its script
-func ValidateTool(toolName string, meta *toolmetadata.ToolMetadata, scriptPath string) []string {
-	var warnings []string
-
-	// Check if script file exists
-	if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
-		warnings = append(warnings, fmt.Sprintf("script file not found: %s", scriptPath))
-		return warnings
-	}
-
-	// Read script content
-	content, err := os.ReadFile(scriptPath)
-	if err != nil {
-		warnings = append(warnings, fmt.Sprintf("failed to read script: %v", err))
-		return warnings
-	}
-
-	script := string(content)
-
-	// Check if parameters are accessed in the script
-	for _, param := range meta.Parameters {
-		// Look for mcp.tool.get_* calls with this parameter name
-		accessPattern := fmt.Sprintf(`mcp.tool.get_%s("%s"`, param.Type, param.Name)
-		if !strings.Contains(script, accessPattern) {
-			// Also check for single quotes
-			accessPattern = fmt.Sprintf(`mcp.tool.get_%s('%s'`, param.Type, param.Name)
-			if !strings.Contains(script, accessPattern) {
-				warnings = append(warnings, fmt.Sprintf("parameter '%s' not accessed in script", param.Name))
-			}
-		}
-	}
-
-	return warnings
+// ScanToolsFolder scans a tools folder on disk for .toml files and returns
+// metadata.
+func ScanToolsFolder(toolsFolder string) (map[string]*toolmetadata.ToolMetadata, error) {
+	return ScanToolsFS(os.DirFS(toolsFolder))
 }

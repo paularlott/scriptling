@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -85,7 +86,7 @@ func (s *Server) createMCPServer() (*mcp_lib.Server, error) {
 		if err != nil {
 			return nil, err
 		}
-		s.mcpFolderToolNames = names
+		s.mcpFolderEntries.tools = names
 	}
 
 	if s.config.MCPResourcesDir != "" {
@@ -93,8 +94,8 @@ func (s *Server) createMCPServer() (*mcp_lib.Server, error) {
 		if err != nil {
 			return nil, err
 		}
-		s.mcpFolderResourceKeys = staticKeys
-		s.mcpFolderTemplateKeys = templateKeys
+		s.mcpFolderEntries.staticResources = staticKeys
+		s.mcpFolderEntries.templateResources = templateKeys
 	}
 
 	if s.config.MCPPromptsDir != "" {
@@ -102,10 +103,114 @@ func (s *Server) createMCPServer() (*mcp_lib.Server, error) {
 		if err != nil {
 			return nil, err
 		}
-		s.mcpFolderPromptNames = names
+		s.mcpFolderEntries.prompts = names
+	}
+
+	if s.config.appMode() {
+		entries, err := s.registerBundleMCP(server)
+		if err != nil {
+			return nil, err
+		}
+		s.mcpBundleEntries = entries
 	}
 
 	return server, nil
+}
+
+// registerBundleMCP scans the app bundle's tools/, resources/ and prompts/
+// convention dirs and registers everything found on the MCP server. Tool and
+// prompt scripts run from in-memory source; static entries read through the
+// bundle's fs on each request. Returns the registered entries so reload can
+// unregister them.
+func (s *Server) registerBundleMCP(server *mcp_lib.Server) (mcpEntries, error) {
+	var out mcpEntries
+	cfg := s.handlerConfig()
+	b := s.config.Bundle
+
+	if toolsFS, ok := b.Sub("tools"); ok {
+		entries, scanErr := mcpcli.ScanToolsFSDual(toolsFS, cfg)
+		if scanErr != nil {
+			return out, fmt.Errorf("bundle %s: %w", b.Source(), scanErr)
+		}
+		for _, entry := range entries {
+			tool, buildErr := toolmetadata.BuildMCPTool(entry.Name, entry.Meta)
+			if buildErr != nil {
+				return out, fmt.Errorf("failed to build tool %s: %w", entry.Name, buildErr)
+			}
+
+			var handler mcp_lib.ToolHandler
+			if entry.Legacy {
+				if entry.Source == nil {
+					Log.Warn("Skipping bundle tool with missing script", "tool", entry.Name, "bundle", b.Source())
+					continue
+				}
+				handler = mcpcli.BuildToolHandlerSource(entry.Source, cfg)
+			} else {
+				handler = mcpcli.BuildToolHandlerFunc(entry.Source, entry.FuncName, cfg)
+			}
+
+			server.RegisterTool(tool, handler)
+			out.tools = append(out.tools, entry.Name)
+			Log.Info("Registered MCP tool from bundle", "name", entry.Name, "params", len(entry.Meta.Parameters), "bundle", b.Source())
+		}
+	}
+
+	if resFS, ok := b.Sub("resources"); ok {
+		entries, scanErr := mcpcli.ScanResourcesFS(resFS)
+		if scanErr != nil {
+			return out, fmt.Errorf("bundle %s: %w", b.Source(), scanErr)
+		}
+		for _, e := range entries {
+			if e.Template {
+				src, readErr := fs.ReadFile(resFS, e.FilePath)
+				if readErr != nil {
+					return out, fmt.Errorf("failed to read resource template %s: %w", e.URI, readErr)
+				}
+				server.RegisterResourceTemplate(
+					mcp_lib.NewResourceTemplate(e.URI, e.Name, e.Description, e.MimeType),
+					mcpcli.BuildResourceScriptHandlerSource(src, e.MimeType, cfg),
+				)
+				out.templateResources = append(out.templateResources, e.URI)
+				Log.Info("Registered MCP resource template from bundle", "uri", e.URI, "bundle", b.Source())
+			} else {
+				filePath := e.FilePath
+				server.RegisterResource(
+					mcp_lib.NewResource(e.URI, e.Name, e.Description, e.MimeType),
+					mcpcli.BuildStaticResourceHandler(func() ([]byte, error) { return fs.ReadFile(resFS, filePath) }, e.URI, e.MimeType),
+				)
+				out.staticResources = append(out.staticResources, e.URI)
+				Log.Info("Registered MCP resource from bundle", "uri", e.URI, "bundle", b.Source())
+			}
+		}
+	}
+
+	if promptFS, ok := b.Sub("prompts"); ok {
+		prompts, scanErr := mcpcli.ScanPromptsFS(promptFS)
+		if scanErr != nil {
+			return out, fmt.Errorf("bundle %s: %w", b.Source(), scanErr)
+		}
+		for _, e := range prompts {
+			var handler mcp_lib.PromptHandler
+			if e.Static {
+				filePath := e.FilePath
+				handler = mcpcli.BuildStaticPromptHandler(func() ([]byte, error) { return fs.ReadFile(promptFS, filePath) })
+			} else {
+				src, readErr := fs.ReadFile(promptFS, e.FilePath)
+				if readErr != nil {
+					return out, fmt.Errorf("failed to read prompt %s: %w", e.Name, readErr)
+				}
+				handler = mcpcli.BuildPromptScriptHandlerSource(src, cfg)
+			}
+			builder := mcp_lib.NewPrompt(e.Name, e.Description)
+			for _, arg := range e.Arguments {
+				builder.Argument(arg.Name, arg.Description, arg.Required)
+			}
+			server.RegisterPrompt(builder, handler)
+			out.prompts = append(out.prompts, e.Name)
+			Log.Info("Registered MCP prompt from bundle", "prompt", e.Name, "args", len(e.Arguments), "bundle", b.Source())
+		}
+	}
+	return out, nil
 }
 
 // handlerConfig builds the shared HandlerConfig used by every folder-sourced
@@ -127,41 +232,50 @@ func (s *Server) handlerConfig() mcpcli.HandlerConfig {
 // registerFolderTools scans the tools folder and registers every tool on
 // server, returning the registered tool names so reload can later unregister
 // them. Tools whose script is missing are skipped with a warning.
+// Supports both legacy (.toml+.py) and decorated (.py-only) tools.
 func (s *Server) registerFolderTools(server *mcp_lib.Server) ([]string, error) {
 	if s.config.MCPToolsDir == "" {
 		return nil, nil
 	}
-	tools, err := mcpcli.ScanToolsFolder(s.config.MCPToolsDir)
+
+	cfg := s.handlerConfig()
+	entries, err := mcpcli.ScanToolsFSDual(os.DirFS(s.config.MCPToolsDir), cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	cfg := s.handlerConfig()
 	var names []string
-	for toolName, meta := range tools {
-		scriptPath := filepath.Join(s.config.MCPToolsDir, toolName+".py")
-
-		if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
-			Log.Warn("Skipping tool with missing script", "tool", toolName, "expected", scriptPath)
-			continue
+	for _, entry := range entries {
+		tool, buildErr := toolmetadata.BuildMCPTool(entry.Name, entry.Meta)
+		if buildErr != nil {
+			return nil, fmt.Errorf("failed to build tool %s: %w", entry.Name, buildErr)
 		}
 
-		tool, err := toolmetadata.BuildMCPTool(toolName, meta)
-		if err != nil {
-			return nil, fmt.Errorf("failed to build tool %s: %w", toolName, err)
+		var handler mcp_lib.ToolHandler
+		if entry.Legacy {
+			// Legacy: source from disk, top-level script execution.
+			if entry.Source == nil {
+				Log.Warn("Skipping tool with missing script", "tool", entry.Name, "expected", entry.Name+".py")
+				continue
+			}
+			handler = mcpcli.BuildToolHandlerSource(entry.Source, cfg)
+		} else {
+			// Decorated: function-call handler.
+			handler = mcpcli.BuildToolHandlerFunc(entry.Source, entry.FuncName, cfg)
 		}
-		handler, err := mcpcli.BuildToolHandler(scriptPath, cfg)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load tool %s: %w", toolName, err)
-		}
+
 		server.RegisterTool(tool, handler)
 
 		mode := "native"
-		if meta.Discoverable {
+		if entry.Meta.Discoverable {
 			mode = "discoverable"
 		}
-		Log.Info("Registered MCP tool", "name", toolName, "params", len(meta.Parameters), "mode", mode)
-		names = append(names, toolName)
+		format := "legacy"
+		if !entry.Legacy {
+			format = "decorated"
+		}
+		Log.Info("Registered MCP tool", "name", entry.Name, "params", len(entry.Meta.Parameters), "mode", mode, "format", format)
+		names = append(names, entry.Name)
 	}
 	return names, nil
 }
@@ -193,7 +307,7 @@ func (s *Server) registerFolderResources(server *mcp_lib.Server) (staticKeys, te
 			templateKeys = append(templateKeys, e.URI)
 			Log.Info("Registered MCP resource template", "uri", e.URI)
 		} else {
-			handler := mcpcli.BuildStaticResourceHandler(e.FilePath, e.URI, e.MimeType)
+			handler := mcpcli.BuildStaticResourceHandler(mcpcli.FileReader(e.FilePath), e.URI, e.MimeType)
 			server.RegisterResource(
 				mcp_lib.NewResource(e.URI, e.Name, e.Description, e.MimeType),
 				handler,
@@ -222,7 +336,7 @@ func (s *Server) registerFolderPrompts(server *mcp_lib.Server) ([]string, error)
 	for _, e := range entries {
 		var handler mcp_lib.PromptHandler
 		if e.Static {
-			handler = mcpcli.BuildStaticPromptHandler(e.FilePath)
+			handler = mcpcli.BuildStaticPromptHandler(mcpcli.FileReader(e.FilePath))
 		} else {
 			h, err := mcpcli.BuildPromptScriptHandler(e.FilePath, cfg)
 			if err != nil {
@@ -248,6 +362,27 @@ func (s *Server) registerFolderPrompts(server *mcp_lib.Server) ([]string, error)
 // registerMCPResources exposes the source of each tool script as a resource
 // template, so clients can read tool source code by name.
 func (s *Server) registerMCPResources(server *mcp_lib.Server) {
+	// Bundle tool source: scriptling://script/{name} reads from the app
+	// bundle's tools/ dir.
+	if s.config.appMode() {
+		server.RegisterResourceTemplate(
+			mcp_lib.NewResourceTemplate("scriptling://script/{name}", "Tool Source", "Source code of a Scriptling tool by name", "text/plain"),
+			func(ctx context.Context, req *mcp_lib.ResourceRequest) (*mcp_lib.ResourceResponse, error) {
+				name := req.StringOr("name", "")
+				if name == "" || strings.ContainsAny(name, "/\\..") {
+					return nil, mcp_lib.NewToolErrorInvalidParams("invalid tool name")
+				}
+				if toolsFS, ok := s.config.Bundle.Sub("tools"); ok {
+					if src, err := fs.ReadFile(toolsFS, name+".py"); err == nil {
+						return mcp_lib.NewResourceResponseText(req.URI(), string(src), "text/plain"), nil
+					}
+				}
+				return nil, mcp_lib.NewToolErrorInvalidParams("tool script not found: " + name)
+			},
+		)
+		return
+	}
+
 	// Tool source template: scriptling://script/{name} -> the tool's .py source.
 	if s.config.MCPToolsDir != "" {
 		server.RegisterResourceTemplate(
@@ -364,45 +499,48 @@ func (s *Server) reloadMCP() {
 		return
 	}
 
-	// Tools.
-	for _, name := range s.mcpFolderToolNames {
-		server.UnregisterTool(name)
-	}
+	// Folder-sourced entries.
+	s.mcpFolderEntries.unregisterAll(server)
+
 	toolNames, err := s.registerFolderTools(server)
 	if err != nil {
 		Log.Error("Failed to reload MCP tools", "error", err)
 	} else {
-		s.mcpFolderToolNames = toolNames
+		s.mcpFolderEntries.tools = toolNames
 	}
 	server.NotifyToolsChanged()
 
-	// Resources (static + templates).
-	for _, uri := range s.mcpFolderResourceKeys {
-		server.UnregisterResource(uri)
-	}
-	for _, uriTmpl := range s.mcpFolderTemplateKeys {
-		server.UnregisterResourceTemplate(uriTmpl)
-	}
 	staticKeys, templateKeys, err := s.registerFolderResources(server)
 	if err != nil {
 		Log.Error("Failed to reload MCP resources", "error", err)
 	} else {
-		s.mcpFolderResourceKeys = staticKeys
-		s.mcpFolderTemplateKeys = templateKeys
+		s.mcpFolderEntries.staticResources = staticKeys
+		s.mcpFolderEntries.templateResources = templateKeys
 	}
 	server.NotifyResourcesChanged()
 
-	// Prompts.
-	for _, name := range s.mcpFolderPromptNames {
-		server.UnregisterPrompt(name)
-	}
 	promptNames, err := s.registerFolderPrompts(server)
 	if err != nil {
 		Log.Error("Failed to reload MCP prompts", "error", err)
 	} else {
-		s.mcpFolderPromptNames = promptNames
+		s.mcpFolderEntries.prompts = promptNames
 	}
 	server.NotifyPromptsChanged()
+
+	// Bundle-sourced entries: re-scan (dir-backed bundles pick up changes;
+	// zip-backed bundles re-register identical content).
+	if s.config.appMode() {
+		s.mcpBundleEntries.unregisterAll(server)
+		entries, err := s.registerBundleMCP(server)
+		if err != nil {
+			Log.Error("Failed to reload bundle MCP entries", "error", err)
+		} else {
+			s.mcpBundleEntries = entries
+		}
+		server.NotifyToolsChanged()
+		server.NotifyResourcesChanged()
+		server.NotifyPromptsChanged()
+	}
 
 	Log.Info("MCP reloaded successfully")
 }

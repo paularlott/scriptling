@@ -54,8 +54,8 @@ var RuntimeState = struct {
 	// Server lifecycle channels (nil in script mode)
 	ServerStartCh   chan struct{} // closed by start_server() to signal server is ready
 	ServerRunningCh chan struct{} // closed by server on shutdown
-	ServerStarted   bool         // prevents double-close of ServerStartCh
-	ServerCollect   func()       // set by NewServer; called inside start_server() to snapshot routes atomically
+	ServerStarted   bool          // prevents double-close of ServerStartCh
+	ServerCollect   func()        // set by NewServer; called inside start_server() to snapshot routes atomically
 
 	// Plugin server registration (set via runtime.plugin, agent variant only)
 	PluginName        string
@@ -237,6 +237,7 @@ func RegisterRuntimeLibraryAll(registrar interface{ RegisterLibrary(*object.Libr
 	syncLib := SyncSubLibrary
 	sandboxLib := NewSandboxLibrary(allowedPaths)
 	jsonrpcLib := JSONRPCSubLibrary
+	mcpLib := MCPSubLibrary
 
 	// Register each sub-library independently under its full name
 	registrar.RegisterLibrary(httpLib)
@@ -244,6 +245,7 @@ func RegisterRuntimeLibraryAll(registrar interface{ RegisterLibrary(*object.Libr
 	registrar.RegisterLibrary(syncLib)
 	registrar.RegisterLibrary(sandboxLib)
 	registrar.RegisterLibrary(jsonrpcLib)
+	registrar.RegisterLibrary(mcpLib)
 
 	// Register the parent with sub-library dicts as constants so
 	// `import scriptling.runtime as rt; rt.kv.open(...)` keeps working.
@@ -254,8 +256,9 @@ func RegisterRuntimeLibraryAll(registrar interface{ RegisterLibrary(*object.Libr
 			"sync":    syncLib.GetDict(),
 			"sandbox": sandboxLib.GetDict(),
 			"jsonrpc": jsonrpcLib.GetDict(),
+			"mcp":     mcpLib.GetDict(),
 		},
-		"Runtime library for HTTP, JSON-RPC, KV store, concurrency primitives, and sandboxed execution")
+		"Runtime library for HTTP, JSON-RPC, MCP, KV store, concurrency primitives, and sandboxed execution")
 	runtimeParentLibraries.Store(registrar, parent)
 	registrar.RegisterLibrary(parent)
 }
@@ -267,6 +270,11 @@ func RegisterRuntimeHTTPLibrary(registrar interface{ RegisterLibrary(*object.Lib
 // RegisterRuntimeJSONRPCLibrary registers only the jsonrpc sub-library.
 func RegisterRuntimeJSONRPCLibrary(registrar interface{ RegisterLibrary(*object.Library) }) {
 	registrar.RegisterLibrary(JSONRPCSubLibrary)
+}
+
+// RegisterRuntimeMCPLibrary registers only the runtime.mcp sub-library.
+func RegisterRuntimeMCPLibrary(registrar interface{ RegisterLibrary(*object.Library) }) {
+	registrar.RegisterLibrary(MCPSubLibrary)
 }
 
 func RegisterRuntimeKVLibrary(registrar interface{ RegisterLibrary(*object.Library) }) {

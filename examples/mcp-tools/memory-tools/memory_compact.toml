@@ -1,2 +1,0 @@
-description = "Manually trigger memory compaction to prune decayed and expired memories"
-keywords = ["memory", "compact", "prune", "cleanup", "maintenance"]

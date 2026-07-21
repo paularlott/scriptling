@@ -1,0 +1,6 @@
+name = "jsonrpc-package"
+version = "1.0.0"
+description = "JSON-RPC server shipped as a package — demo for stdio and HTTP modes"
+main = "setup.py"
+libs = ["lib"]
+serve = ["json-rpc"]

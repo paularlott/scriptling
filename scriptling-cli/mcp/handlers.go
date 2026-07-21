@@ -5,15 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/paularlott/logger"
 	mcplib "github.com/paularlott/mcp"
 	"github.com/paularlott/scriptling"
+	"github.com/paularlott/scriptling/conversion"
 	extlibsmcp "github.com/paularlott/scriptling/extlibs/mcp"
 	"github.com/paularlott/scriptling/extlibs/secretprovider"
+	"github.com/paularlott/scriptling/object"
 	scriptlingplugin "github.com/paularlott/scriptling/plugin"
 	"github.com/paularlott/scriptling/scriptling-cli/bootstrap"
 	"github.com/paularlott/scriptling/scriptling-cli/pack"
@@ -29,13 +30,13 @@ import (
 // AllowedPaths (nil means unrestricted, matching scriptling-cli/server's default).
 type HandlerConfig struct {
 	LibDirs        []string
-	AllowedPaths   []string                          // nil = unrestricted
-	DisabledLibs   []string                          // nil = all built-ins enabled
-	SecretRegistry *secretprovider.Registry          // nil = empty registry
-	Logger         logger.Logger                     // nil = null logger
-	PackLoader     *pack.Loader                      // nil = no pack loader
-	PluginManager  *scriptlingplugin.Manager         // nil = no plugins
-	SetupHook      func(*scriptling.Scriptling)      // optional extra setup applied after standard libs
+	AllowedPaths   []string                     // nil = unrestricted
+	DisabledLibs   []string                     // nil = all built-ins enabled
+	SecretRegistry *secretprovider.Registry     // nil = empty registry
+	Logger         logger.Logger                // nil = null logger
+	PackLoader     *pack.Loader                 // nil = no pack loader
+	PluginManager  *scriptlingplugin.Manager    // nil = no plugins
+	SetupHook      func(*scriptling.Scriptling) // optional extra setup applied after standard libs
 }
 
 // HandlerOption configures a HandlerConfig.
@@ -123,21 +124,35 @@ func prepareScriptling(cfg HandlerConfig, extraLibDirs []string) *scriptling.Scr
 	return p
 }
 
+// FileReader returns a read function over os.ReadFile, for use with the
+// static handler builders.
+func FileReader(path string) func() ([]byte, error) {
+	return func() ([]byte, error) { return os.ReadFile(path) }
+}
+
 // BuildToolHandler reads the script once at registration time and returns a
 // ToolHandler that runs a fresh interpreter per invocation. The script receives
 // its parameters via mcp.tool.get_* helpers and returns its result via
 // mcp.tool.return_string / return_object / return_error.
+//
+// Tool scripts resolve imports only via the configured library dirs (and pack
+// loader); pass the tools dir in cfg.LibDirs if sibling imports are needed.
 func BuildToolHandler(scriptPath string, cfg HandlerConfig) (mcplib.ToolHandler, error) {
 	script, err := os.ReadFile(scriptPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read script %s: %w", scriptPath, err)
 	}
-	scriptDir := filepath.Dir(scriptPath)
+	return BuildToolHandlerSource(script, cfg), nil
+}
+
+// BuildToolHandlerSource is BuildToolHandler for in-memory script source (e.g.
+// from a pack bundle).
+func BuildToolHandlerSource(src []byte, cfg HandlerConfig) mcplib.ToolHandler {
 	return func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
-		p := prepareScriptling(cfg, []string{scriptDir})
+		p := prepareScriptling(cfg, nil)
 		params := req.Args()
 
-		response, exitCode, err := extlibsmcp.RunToolScript(ctx, p, string(script), params)
+		response, exitCode, err := extlibsmcp.RunToolScript(ctx, p, string(src), params)
 
 		// If the script produced an explicit response (via return_error,
 		// return_string, etc.), return it to the client. return_error sets a
@@ -156,15 +171,102 @@ func BuildToolHandler(scriptPath string, cfg HandlerConfig) (mcplib.ToolHandler,
 			return nil, fmt.Errorf("script exited with code %d", exitCode)
 		}
 		return mcplib.NewToolResponseText(""), nil
-	}, nil
+	}
 }
 
-// BuildStaticResourceHandler serves a file verbatim: text content for UTF-8
-// files, base64 blob otherwise. The file is read on every read so content is
-// always current.
-func BuildStaticResourceHandler(filePath, uri, mimeType string) mcplib.ResourceHandler {
+// BuildToolHandlerFunc builds a ToolHandler for a decorated tool. Unlike
+// BuildToolHandlerSource (which runs the entire script as a top-level program),
+// this handler evaluates the source to define the function, then calls the named
+// function with the MCP request parameters mapped to keyword arguments. The
+// function's return value becomes the tool response:
+//   - string → text response
+//   - dict/list → JSON response
+//   - None/null → empty text response
+//   - exception → error response
+func BuildToolHandlerFunc(src []byte, funcName string, cfg HandlerConfig) mcplib.ToolHandler {
+	return func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
+		p := prepareScriptling(cfg, nil)
+
+		// Evaluate the source to define the decorated functions.
+		_, evalErr := p.EvalWithContext(ctx, string(src))
+		if evalErr != nil {
+			return nil, fmt.Errorf("failed to load tool source: %w", evalErr)
+		}
+
+		// Build kwargs from the MCP request params.
+		params := req.Args()
+		kwargs := scriptling.Kwargs(params)
+
+		// Call the tool function.
+		result, callErr := p.CallFunctionWithContext(ctx, funcName, kwargs)
+		if callErr != nil {
+			return nil, mcplib.NewToolErrorInternal(callErr.Error())
+		}
+
+		// Map the return value to an MCP tool response.
+		return toolResultToResponse(result)
+	}
+}
+
+// toolResultToResponse converts a scriptling return value from a decorated tool
+// function into an MCP ToolResponse.
+func toolResultToResponse(result object.Object) (*mcplib.ToolResponse, error) {
+	if result == nil {
+		return mcplib.NewToolResponseText(""), nil
+	}
+
+	switch v := result.(type) {
+	case *object.Null:
+		return mcplib.NewToolResponseText(""), nil
+
+	case *object.String:
+		return mcplib.NewToolResponseText(v.StringValue()), nil
+
+	case *object.Integer:
+		s, _ := v.CoerceString()
+		return mcplib.NewToolResponseText(s), nil
+
+	case *object.Float:
+		s, _ := v.CoerceString()
+		return mcplib.NewToolResponseText(s), nil
+
+	case *object.Boolean:
+		s, _ := v.CoerceString()
+		return mcplib.NewToolResponseText(s), nil
+
+	case *object.Dict, *object.List:
+		goVal := conversion.ToGo(result)
+		jsonBytes, err := json.Marshal(goVal)
+		if err != nil {
+			return nil, mcplib.NewToolErrorInternal(fmt.Sprintf("failed to encode response as JSON: %v", err))
+		}
+		return mcplib.NewToolResponseText(string(jsonBytes)), nil
+
+	case *object.Error:
+		return nil, mcplib.NewToolErrorInternal(v.Message)
+
+	case *object.Exception:
+		msg := v.Message
+		if msg == "" {
+			msg = "tool raised an exception"
+		}
+		return nil, mcplib.NewToolErrorInternal(msg)
+
+	default:
+		// Fallback: coerce to string.
+		if s, err := result.CoerceString(); err == nil {
+			return mcplib.NewToolResponseText(s), nil
+		}
+		return mcplib.NewToolResponseText(""), nil
+	}
+}
+
+// BuildStaticResourceHandler serves content verbatim: text for UTF-8 data,
+// base64 blob otherwise. read is called on every request so content is always
+// current (e.g. FileReader for disk, a bundle read for packs).
+func BuildStaticResourceHandler(read func() ([]byte, error), uri, mimeType string) mcplib.ResourceHandler {
 	return func(ctx context.Context, req *mcplib.ResourceRequest) (*mcplib.ResourceResponse, error) {
-		data, err := os.ReadFile(filePath)
+		data, err := read()
 		if err != nil {
 			return nil, mcplib.NewToolErrorInternal(fmt.Sprintf("failed to read resource: %v", err))
 		}
@@ -192,15 +294,20 @@ func BuildResourceScriptHandler(scriptPath, mimeType string, cfg HandlerConfig) 
 	if err != nil {
 		return nil, fmt.Errorf("failed to read script %s: %w", scriptPath, err)
 	}
-	scriptDir := filepath.Dir(scriptPath)
+	return BuildResourceScriptHandlerSource(script, mimeType, cfg), nil
+}
+
+// BuildResourceScriptHandlerSource is BuildResourceScriptHandler for in-memory
+// script source (e.g. from a pack bundle).
+func BuildResourceScriptHandlerSource(src []byte, mimeType string, cfg HandlerConfig) mcplib.ResourceHandler {
 	return func(ctx context.Context, req *mcplib.ResourceRequest) (*mcplib.ResourceResponse, error) {
-		p := prepareScriptling(cfg, []string{scriptDir})
+		p := prepareScriptling(cfg, nil)
 
 		params := map[string]any{"__uri": req.URI()}
 		for k, v := range req.Vars() {
 			params[k] = v
 		}
-		response, exitCode, err := extlibsmcp.RunToolScript(ctx, p, string(script), params)
+		response, exitCode, err := extlibsmcp.RunToolScript(ctx, p, string(src), params)
 		if response != "" {
 			if exitCode != 0 {
 				return nil, mcplib.NewToolErrorInternal(response)
@@ -211,14 +318,14 @@ func BuildResourceScriptHandler(scriptPath, mimeType string, cfg HandlerConfig) 
 			return nil, fmt.Errorf("resource script failed: %w", err)
 		}
 		return mcplib.NewResourceResponseText(req.URI(), "", mimeType), nil
-	}, nil
+	}
 }
 
 // BuildStaticPromptHandler returns a PromptHandler whose single user message is
-// the file's content (read fresh each call).
-func BuildStaticPromptHandler(filePath string) mcplib.PromptHandler {
+// the content returned by read (called fresh each time).
+func BuildStaticPromptHandler(read func() ([]byte, error)) mcplib.PromptHandler {
 	return func(ctx context.Context, req *mcplib.PromptRequest) (*mcplib.PromptResponse, error) {
-		data, err := os.ReadFile(filePath)
+		data, err := read()
 		if err != nil {
 			return nil, mcplib.NewToolErrorInternal(fmt.Sprintf("failed to read prompt: %v", err))
 		}
@@ -235,20 +342,25 @@ func BuildPromptScriptHandler(scriptPath string, cfg HandlerConfig) (mcplib.Prom
 	if err != nil {
 		return nil, fmt.Errorf("failed to read script %s: %w", scriptPath, err)
 	}
-	scriptDir := filepath.Dir(scriptPath)
+	return BuildPromptScriptHandlerSource(script, cfg), nil
+}
+
+// BuildPromptScriptHandlerSource is BuildPromptScriptHandler for in-memory
+// script source (e.g. from a pack bundle).
+func BuildPromptScriptHandlerSource(src []byte, cfg HandlerConfig) mcplib.PromptHandler {
 	return func(ctx context.Context, req *mcplib.PromptRequest) (*mcplib.PromptResponse, error) {
-		p := prepareScriptling(cfg, []string{scriptDir})
+		p := prepareScriptling(cfg, nil)
 
 		params := map[string]any{}
 		for k, v := range req.Args() {
 			params[k] = v
 		}
-		response, exitCode, err := extlibsmcp.RunToolScript(ctx, p, string(script), params)
+		response, exitCode, err := extlibsmcp.RunToolScript(ctx, p, string(src), params)
 		if exitCode != 0 && err != nil {
 			return nil, fmt.Errorf("prompt script failed: %w", err)
 		}
 		return DecodePromptScriptResponse(response), nil
-	}, nil
+	}
 }
 
 // DecodePromptScriptResponse interprets a prompt script's return value into a
