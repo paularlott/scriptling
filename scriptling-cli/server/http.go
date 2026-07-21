@@ -185,14 +185,14 @@ func (s *Server) handleScriptRequest(w http.ResponseWriter, r *http.Request) {
 
 	if s.middleware != "" {
 		Log.Trace("Running middleware", "handler", s.middleware)
-		if resp := s.runHandler(s.middleware, reqObj); resp != nil {
+		if resp := s.runHandler(r.Context(), s.middleware, reqObj); resp != nil {
 			s.writeResponse(w, resp)
 			return
 		}
 	}
 
 	Log.Trace("Dispatching to handler", "handler", handlerRef)
-	if resp := s.runHandler(handlerRef, reqObj); resp != nil {
+	if resp := s.runHandler(r.Context(), handlerRef, reqObj); resp != nil {
 		s.writeResponse(w, resp)
 	} else {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -324,7 +324,7 @@ func (s *Server) serveNotFound(w http.ResponseWriter, r *http.Request) {
 	if s.notFoundHandler != "" {
 		Log.Trace("Handling 404 via not_found handler", "handler", s.notFoundHandler, "path", r.URL.Path)
 		reqObj := s.createRequestObject(r)
-		if resp := s.runHandler(s.notFoundHandler, reqObj); resp != nil {
+		if resp := s.runHandler(r.Context(), s.notFoundHandler, reqObj); resp != nil {
 			s.writeResponse(w, resp)
 			return
 		}
@@ -359,7 +359,7 @@ func (s *Server) createRequestObject(r *http.Request) *object.Instance {
 }
 
 // runHandler runs a handler function and returns the response
-func (s *Server) runHandler(handlerRef string, reqObj *object.Instance) *object.Dict {
+func (s *Server) runHandler(ctx context.Context, handlerRef string, reqObj *object.Instance) *object.Dict {
 	libName, _, ok := strings.Cut(handlerRef, ".")
 	if !ok {
 		Log.Error("Invalid handler reference", "handler", handlerRef)
@@ -375,7 +375,7 @@ func (s *Server) runHandler(handlerRef string, reqObj *object.Instance) *object.
 		return nil
 	}
 
-	result, err := p.CallFunction(handlerRef, reqObj)
+	result, err := p.CallFunctionWithContext(ctx, handlerRef, reqObj)
 	if err != nil {
 		Log.Error("Handler error", "error", err)
 		return object.NewStringDict(map[string]object.Object{

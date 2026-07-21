@@ -92,7 +92,15 @@ func NewServer(config ServerConfig) (*Server, error) {
 
 		var runErr error
 		if hasScript {
-			runErr = s.runSetupScript()
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						runErr = fmt.Errorf("setup script panicked: %v", r)
+						Log.Error("Setup script panicked", "panic", r)
+					}
+				}()
+				runErr = s.runSetupScript()
+			}()
 		}
 
 		// If start_server() was not called, collect routes and signal start now
