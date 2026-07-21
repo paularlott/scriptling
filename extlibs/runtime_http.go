@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/errors"
+	"github.com/paularlott/scriptling/evaluator"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -389,171 +391,136 @@ func CreateWebSocketClientInstance(conn *WebSocketServerConn) *object.Instance {
 		}, conn)
 }
 
+// resolveModuleRef derives the "module.function" string for a decorated
+// function. It reads __name__ from the environment, falling back to __file__
+// when __name__ is "__main__" (as in the setup script).
+func resolveModuleRef(env *object.Environment, funcName string) string {
+	if env != nil {
+		if nameObj, ok := env.Get("__name__"); ok {
+			if name, e := nameObj.AsString(); e == nil && name != "" && name != "__main__" {
+				return name + "." + funcName
+			}
+		}
+		if fileObj, ok := env.Get("__file__"); ok {
+			if file, e := fileObj.AsString(); e == nil && file != "" {
+				base := filepath.Base(file)
+				ext := filepath.Ext(base)
+				if module := strings.TrimSuffix(base, ext); module != "" {
+					return module + "." + funcName
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// makeHTTPDecorator returns a builtin that, when applied to a function (by
+// the @decorator mechanism), resolves the "module.function" reference and
+// calls register with it. The decorated function is returned unchanged.
+func makeHTTPDecorator(ctx context.Context, register func(ref string)) object.Object {
+	env := evaluator.GetEnvFromContext(ctx)
+	return &object.Builtin{
+		Fn: func(_ context.Context, _ object.Kwargs, args ...object.Object) object.Object {
+			if len(args) == 0 {
+				return errors.NewError("decorator requires a function")
+			}
+			fn, ok := args[0].(*object.Function)
+			if !ok {
+				return errors.NewError("decorated value must be a function, got %s", args[0].Type())
+			}
+			if fn.Name == "" {
+				return errors.NewError("decorated function has no name")
+			}
+			ref := resolveModuleRef(env, fn.Name)
+			if ref == "" {
+				return errors.NewError("cannot determine module name for decorator — ensure __name__ or __file__ is set")
+			}
+			register(ref)
+			return fn
+		},
+	}
+}
+
+// registerHTTPRoute is the shared registration logic for all HTTP verbs.
+func registerHTTPRoute(method, path, handler string) {
+	RuntimeState.Lock()
+	defer RuntimeState.Unlock()
+	// Idempotent re-import: if the route already exists with the same handler,
+	// this is a decorated library being re-imported at request time — skip
+	// silently instead of warning about late registration.
+	if existing, ok := RuntimeState.Routes[method+" "+path]; ok && existing.Handler == handler {
+		return
+	}
+	if RuntimeState.ServerStarted {
+		fmt.Fprintf(os.Stderr, "warning: runtime.http route %q registered after start_server() — route will not be served\n", path)
+	}
+	RuntimeState.Routes[method+" "+path] = &RouteInfo{
+		Methods: []string{method},
+		Handler: handler,
+	}
+}
+
+// httpVerbEntry builds a builtin for a single HTTP verb that supports both
+// decorator (@http.get("/path")) and imperative (http.get("/path", "lib.func"))
+// usage.
+func httpVerbEntry(method string) *object.Builtin {
+	lower := strings.ToLower(method)
+	return &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.MinArgs(args, 1); err != nil {
+				return err
+			}
+			path, err := args[0].AsString()
+			if err != nil {
+				return err
+			}
+
+			// Decorator form: @http.get("/path")
+			if len(args) == 1 {
+				return makeHTTPDecorator(ctx, func(ref string) {
+					registerHTTPRoute(method, path, ref)
+				})
+			}
+
+			// Imperative form: http.get("/path", "lib.func")
+			handler, err := args[1].AsString()
+			if err != nil {
+				return err
+			}
+			registerHTTPRoute(method, path, handler)
+			return &object.Null{}
+		},
+		HelpText: fmt.Sprintf(`%s(path, handler=None) - Register a %s route or use as decorator
+
+Decorator form:
+  import scriptling.http as http
+
+  @http.%s("/path")
+  def handler(request):
+      return http.json(200, {"status": "ok"})
+
+Imperative form:
+  runtime.http.%s("/path", "library.function")
+
+Parameters:
+  path (string): URL path for the route
+  handler (string, imperative only): Handler function as "library.function"`, lower, method, lower, lower),
+	}
+}
+
 var HTTPSubLibrary = object.NewLibrary(RuntimeHTTPLibraryName, map[string]*object.Builtin{
-	"get": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.MinArgs(args, 2); err != nil {
-				return err
-			}
-
-			path, err := args[0].AsString()
-			if err != nil {
-				return err
-			}
-
-			handler, err := args[1].AsString()
-			if err != nil {
-				return err
-			}
-
-			RuntimeState.Lock()
-			if RuntimeState.ServerStarted {
-				fmt.Fprintf(os.Stderr, "warning: runtime.http.get %q registered after start_server() — route will not be served\n", path)
-			}
-			RuntimeState.Routes["GET "+path] = &RouteInfo{
-				Methods: []string{"GET"},
-				Handler: handler,
-			}
-			RuntimeState.Unlock()
-
-			return &object.Null{}
-		},
-		HelpText: `get(path, handler) - Register a GET route
-
-Parameters:
-  path (string): URL path for the route (e.g., "/api/users")
-  handler (string): Handler function as "library.function" string
-
-Example:
-  runtime.http.get("/health", "handlers.health_check")`,
-	},
-
-	"post": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.MinArgs(args, 2); err != nil {
-				return err
-			}
-
-			path, err := args[0].AsString()
-			if err != nil {
-				return err
-			}
-
-			handler, err := args[1].AsString()
-			if err != nil {
-				return err
-			}
-
-			RuntimeState.Lock()
-			if RuntimeState.ServerStarted {
-				fmt.Fprintf(os.Stderr, "warning: runtime.http.post %q registered after start_server() — route will not be served\n", path)
-			}
-			RuntimeState.Routes["POST "+path] = &RouteInfo{
-				Methods: []string{"POST"},
-				Handler: handler,
-			}
-			RuntimeState.Unlock()
-
-			return &object.Null{}
-		},
-		HelpText: `post(path, handler) - Register a POST route
-
-Parameters:
-  path (string): URL path for the route
-  handler (string): Handler function as "library.function" string
-
-Example:
-  runtime.http.post("/webhook", "handlers.webhook")`,
-	},
-
-	"put": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.MinArgs(args, 2); err != nil {
-				return err
-			}
-
-			path, err := args[0].AsString()
-			if err != nil {
-				return err
-			}
-
-			handler, err := args[1].AsString()
-			if err != nil {
-				return err
-			}
-
-			RuntimeState.Lock()
-			if RuntimeState.ServerStarted {
-				fmt.Fprintf(os.Stderr, "warning: runtime.http.put %q registered after start_server() — route will not be served\n", path)
-			}
-			RuntimeState.Routes["PUT "+path] = &RouteInfo{
-				Methods: []string{"PUT"},
-				Handler: handler,
-			}
-			RuntimeState.Unlock()
-
-			return &object.Null{}
-		},
-		HelpText: `put(path, handler) - Register a PUT route
-
-Parameters:
-  path (string): URL path for the route
-  handler (string): Handler function as "library.function" string
-
-Example:
-  runtime.http.put("/resource", "handlers.update_resource")`,
-	},
-
-	"delete": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.MinArgs(args, 2); err != nil {
-				return err
-			}
-
-			path, err := args[0].AsString()
-			if err != nil {
-				return err
-			}
-
-			handler, err := args[1].AsString()
-			if err != nil {
-				return err
-			}
-
-			RuntimeState.Lock()
-			if RuntimeState.ServerStarted {
-				fmt.Fprintf(os.Stderr, "warning: runtime.http.delete %q registered after start_server() — route will not be served\n", path)
-			}
-			RuntimeState.Routes["DELETE "+path] = &RouteInfo{
-				Methods: []string{"DELETE"},
-				Handler: handler,
-			}
-			RuntimeState.Unlock()
-
-			return &object.Null{}
-		},
-		HelpText: `delete(path, handler) - Register a DELETE route
-
-Parameters:
-  path (string): URL path for the route
-  handler (string): Handler function as "library.function" string
-
-Example:
-  runtime.http.delete("/resource", "handlers.delete_resource")`,
-	},
+	"get":    httpVerbEntry("GET"),
+	"post":   httpVerbEntry("POST"),
+	"put":    httpVerbEntry("PUT"),
+	"delete": httpVerbEntry("DELETE"),
 
 	"route": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.MinArgs(args, 2); err != nil {
+			if err := errors.MinArgs(args, 1); err != nil {
 				return err
 			}
 
 			path, err := args[0].AsString()
-			if err != nil {
-				return err
-			}
-
-			handler, err := args[1].AsString()
 			if err != nil {
 				return err
 			}
@@ -572,28 +539,33 @@ Example:
 				methods = []string{"GET", "POST", "PUT", "DELETE"}
 			}
 
-			RuntimeState.Lock()
-			if RuntimeState.ServerStarted {
-				fmt.Fprintf(os.Stderr, "warning: runtime.http.route %q registered after start_server() — route will not be served\n", path)
+			// Decorator form: @http.route("/path", methods=["GET","POST"])
+			if len(args) == 1 {
+				return makeHTTPDecorator(ctx, func(ref string) {
+					for _, m := range methods {
+						registerHTTPRoute(m, path, ref)
+					}
+				})
 			}
-			for _, method := range methods {
-				RuntimeState.Routes[method+" "+path] = &RouteInfo{
-					Methods: []string{method},
-					Handler: handler,
-				}
-			}
-			RuntimeState.Unlock()
 
+			// Imperative form: route("/path", "lib.func", methods=["GET","POST"])
+			handler, err := args[1].AsString()
+			if err != nil {
+				return err
+			}
+			for _, m := range methods {
+				registerHTTPRoute(m, path, handler)
+			}
 			return &object.Null{}
 		},
-		HelpText: `route(path, handler, methods=["GET", "POST", "PUT", "DELETE"]) - Register a route for multiple methods
+		HelpText: `route(path, handler=None, methods=["GET","POST","PUT","DELETE"]) - Register a route for multiple methods, or use as decorator
 
-Parameters:
-  path (string): URL path for the route
-  handler (string): Handler function as "library.function" string
-  methods (list): List of HTTP methods to accept
+Decorator form:
+  @http.route("/api", methods=["GET", "POST"])
+  def handler(request):
+      ...
 
-Example:
+Imperative form:
   runtime.http.route("/api", "handlers.api", methods=["GET", "POST"])`,
 	},
 
@@ -603,6 +575,20 @@ Example:
 				return err
 			}
 
+			// Decorator form: @http.middleware
+			if fn, ok := args[0].(*object.Function); ok {
+				env := evaluator.GetEnvFromContext(ctx)
+				ref := resolveModuleRef(env, fn.Name)
+				if ref == "" {
+					return errors.NewError("cannot determine module name for @http.middleware decorator")
+				}
+				RuntimeState.Lock()
+				RuntimeState.Middleware = ref
+				RuntimeState.Unlock()
+				return fn
+			}
+
+			// Imperative form: middleware("lib.func")
 			handler, err := args[0].AsString()
 			if err != nil {
 				return err
@@ -617,17 +603,19 @@ Example:
 
 			return &object.Null{}
 		},
-		HelpText: `middleware(handler) - Register middleware for all routes
+		HelpText: `middleware(handler) - Register middleware for all routes, or use as bare decorator
 
-Parameters:
-  handler (string): Middleware function as "library.function" string
+Decorator form:
+  @http.middleware
+  def auth(request):
+      ...
+
+Imperative form:
+  runtime.http.middleware("auth.check_request")
 
 The middleware receives the request object and should return:
   - None to continue to the handler
-  - A response dict to short-circuit (block the request)
-
-Example:
-  runtime.http.middleware("auth.check_request")`,
+  - A response dict to short-circuit (block the request)`,
 	},
 
 	"static": {
@@ -891,6 +879,20 @@ Example:
 				return err
 			}
 
+			// Decorator form: @http.not_found
+			if fn, ok := args[0].(*object.Function); ok {
+				env := evaluator.GetEnvFromContext(ctx)
+				ref := resolveModuleRef(env, fn.Name)
+				if ref == "" {
+					return errors.NewError("cannot determine module name for @http.not_found decorator")
+				}
+				RuntimeState.Lock()
+				RuntimeState.NotFoundHandler = ref
+				RuntimeState.Unlock()
+				return fn
+			}
+
+			// Imperative form: not_found("lib.func")
 			handler, err := args[0].AsString()
 			if err != nil {
 				return err
@@ -905,22 +907,24 @@ Example:
 
 			return &object.Null{}
 		},
-		HelpText: `not_found(handler) - Register a handler for 404 Not Found responses
+		HelpText: `not_found(handler) - Register a 404 handler, or use as bare decorator
 
-Parameters:
-  handler (string): Handler function as "library.function" string
+Decorator form:
+  @http.not_found
+  def handle_404(request):
+      ...
+
+Imperative form:
+  runtime.http.not_found("handlers.not_found")
 
 The handler receives the request object and should return a response.
 It is called when no route matches the request path, or when a static
-asset is not found.
-
-Example:
-  runtime.http.not_found("handlers.not_found")`,
+asset is not found.`,
 	},
 
 	"websocket": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.MinArgs(args, 2); err != nil {
+			if err := errors.MinArgs(args, 1); err != nil {
 				return err
 			}
 
@@ -929,6 +933,16 @@ Example:
 				return err
 			}
 
+			// Decorator form: @http.websocket("/ws")
+			if len(args) == 1 {
+				return makeHTTPDecorator(ctx, func(ref string) {
+					RuntimeState.Lock()
+					RuntimeState.WebSocketRoutes[path] = &WebSocketRouteInfo{Handler: ref}
+					RuntimeState.Unlock()
+				})
+			}
+
+			// Imperative form: websocket("/ws", "lib.func")
 			handler, err := args[1].AsString()
 			if err != nil {
 				return err
@@ -945,25 +959,21 @@ Example:
 
 			return &object.Null{}
 		},
-		HelpText: `websocket(path, handler) - Register a WebSocket route
+		HelpText: `websocket(path, handler=None) - Register a WebSocket route, or use as decorator
 
-Parameters:
-  path (string): URL path for the WebSocket endpoint (e.g., "/ws")
-  handler (string): Handler function as "library.function" string
-
-The handler receives a WebSocketClient object and runs for the connection lifetime.
-The handler should loop while client.connected() and use client.receive()/client.send().
-
-Example:
-  runtime.http.websocket("/chat", "handlers.chat_handler")
-
-  # In handlers.py:
+Decorator form:
+  @http.websocket("/ws")
   def chat_handler(client):
       client.send("Welcome!")
       while client.connected():
           msg = client.receive(timeout=60)
           if msg:
-              client.send(f"Echo: {msg}")`,
+              client.send("Echo: " + msg)
+
+Imperative form:
+  runtime.http.websocket("/chat", "handlers.chat_handler")
+
+The handler receives a WebSocketClient object and runs for the connection lifetime.`,
 	},
 }, map[string]object.Object{
 	"Request":        RequestClass,

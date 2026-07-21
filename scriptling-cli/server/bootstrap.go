@@ -182,6 +182,7 @@ func (s *Server) runSetupScript() error {
 		if err != nil {
 			return fmt.Errorf("failed to read setup script: %w", err)
 		}
+		p.SetSourceFile(s.config.ScriptFile)
 		_, err = p.Eval(string(content))
 		return err
 	}
