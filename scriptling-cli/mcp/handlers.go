@@ -38,6 +38,7 @@ type HandlerConfig struct {
 	PluginManager  *scriptlingplugin.Manager    // nil = no plugins
 	DockerSock     string                       // empty = default socket
 	PodmanSock     string                       // empty = default socket
+	Argv           []string                     // extra CLI args for sys.argv (nil = skip sys registration)
 	SetupHook      func(*scriptling.Scriptling) // optional extra setup applied after standard libs
 }
 
@@ -91,6 +92,12 @@ func WithPodmanSock(sock string) HandlerOption {
 	return func(c *HandlerConfig) { c.PodmanSock = sock }
 }
 
+// WithArgv returns an option that sets the extra CLI args exposed via
+// sys.argv in every handler's evaluator.
+func WithArgv(argv []string) HandlerOption {
+	return func(c *HandlerConfig) { c.Argv = argv }
+}
+
 // WithSetupHook returns an option that registers a callback invoked after the
 // standard library set is registered on each fresh interpreter. Hosts use this
 // to expose their own libraries to served scripts.
@@ -128,6 +135,7 @@ func prepareScriptling(cfg HandlerConfig, extraLibDirs []string) *scriptling.Scr
 
 	p := scriptling.New()
 	setup.Scriptling(p, libDirs, false, cfg.AllowedPaths, cfg.DisabledLibs, registry, log, cfg.DockerSock, cfg.PodmanSock)
+	setup.RegisterSys(p, cfg.Argv)
 	if cfg.PluginManager != nil {
 		scriptlingplugin.RegisterLibraries(p, cfg.PluginManager)
 	}

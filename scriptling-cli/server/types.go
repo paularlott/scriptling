@@ -54,6 +54,10 @@ type ServerConfig struct {
 	// http, mcp and websocket request handler. Host applications use this to
 	// expose their own libraries to served scripts.
 	ExtraLibs func(*scriptling.Scriptling)
+
+	// Argv holds extra CLI arguments (after --) to expose via sys.argv in
+	// every evaluator. Set from cmd.GetArgs() in the server dispatch paths.
+	Argv []string
 }
 
 // serveSet returns the set of protocols the app bundle declares in its

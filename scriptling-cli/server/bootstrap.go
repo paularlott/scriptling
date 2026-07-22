@@ -214,6 +214,7 @@ func (s *Server) applyPackLoader(p *scriptling.Scriptling) {
 
 func (s *Server) setupScriptling(p *scriptling.Scriptling) {
 	setup.Scriptling(p, s.config.LibDirs, false, s.config.AllowedPaths, s.config.DisabledLibs, s.config.SecretRegistry, Log, s.config.DockerSock, s.config.PodmanSock)
+	setup.RegisterSys(p, s.config.Argv)
 	if s.config.PluginManager != nil {
 		scriptlingplugin.RegisterLibraries(p, s.config.PluginManager)
 	}

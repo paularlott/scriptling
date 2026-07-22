@@ -259,6 +259,9 @@ func (s *Server) handlerConfig() mcpcli.HandlerConfig {
 		mcpcli.WithDockerSock(s.config.DockerSock),
 		mcpcli.WithPodmanSock(s.config.PodmanSock),
 	}
+	if s.config.Argv != nil {
+		opts = append(opts, mcpcli.WithArgv(s.config.Argv))
+	}
 	if s.config.ExtraLibs != nil {
 		opts = append(opts, mcpcli.WithSetupHook(s.config.ExtraLibs))
 	}

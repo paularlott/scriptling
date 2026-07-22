@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/paularlott/cli"
@@ -370,7 +371,7 @@ func rejectBundleFlags(c bundleFlagConflicts) error {
 		name string
 		set  bool
 	}{
-		{"file", c.File != ""},
+		{"file", c.File != "" && !strings.HasPrefix(c.File, "--")},
 		{"libpath", len(c.LibPath) > 0},
 		{"mcp-tools", c.MCPTools != ""},
 		{"mcp-resources", c.MCPResources != ""},
@@ -543,24 +544,20 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 }
 
 func runServer(ctx context.Context, cmd *cli.Command, address string) error {
-	// An app bundle started with --server must declare serve=["http"] (alone
-	// or alongside mcp/json-rpc). Without it the server would start but serve
-	// nothing useful — no routes, no webroot, just 404s. MCP-over-HTTP and
-	// JSON-RPC-over-HTTP work by declaring serve=["http","mcp"] etc.
-	if pendingApp != nil {
-		hasHTTP := false
-		for _, v := range pendingApp.Manifest.Serve {
-			if v == "http" {
-				hasHTTP = true
-				break
-			}
-		}
-		if !hasHTTP {
-			return fmt.Errorf("bundle declares serve=%v but not 'http'; "+
-				"add 'http' to serve for an HTTP server, or use stdio mode without --server", pendingApp.Manifest.Serve)
-		}
+	// An app bundle started with --server serves every declared protocol
+	// over HTTP: MCP at /mcp, JSON-RPC at /json-rpc, HTTP routes at their
+	// registered paths. Any non-empty serve list is sufficient.
+	if pendingApp != nil && len(pendingApp.Manifest.Serve) == 0 {
+		return fmt.Errorf("bundle has no serve protocols declared; add serve = [\"http\"] and/or \"mcp\", \"json-rpc\" to manifest.toml")
 	}
 	file := cmd.GetStringArg("file")
+	argv := cmd.GetArgs()
+	if file != "" {
+		argv = append([]string{file}, argv...)
+	}
+	if pendingApp != nil && strings.HasPrefix(file, "--") {
+		file = ""
+	}
 	baseDir, err := bootstrap.BaseDir(file)
 	if err != nil {
 		return err
@@ -601,11 +598,19 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 		TLSCert:         cmd.GetString("tls-cert"),
 		TLSKey:          cmd.GetString("tls-key"),
 		TLSGenerate:     cmd.GetBool("tls-generate"),
+		Argv:            argv,
 	})
 }
 
 func runJSONRPCServer(ctx context.Context, cmd *cli.Command) error {
 	file := cmd.GetStringArg("file")
+	argv := cmd.GetArgs()
+	if file != "" {
+		argv = append([]string{file}, argv...)
+	}
+	if pendingApp != nil && strings.HasPrefix(file, "--") {
+		file = ""
+	}
 	baseDir, err := bootstrap.BaseDir(file)
 	if err != nil {
 		return err
@@ -635,11 +640,19 @@ func runJSONRPCServer(ctx context.Context, cmd *cli.Command) error {
 		SecretRegistry: secretRegistry,
 		DockerSock:     cmd.GetString("docker-host"),
 		PodmanSock:     cmd.GetString("podman-host"),
+		Argv:           argv,
 	})
 }
 
 func runMCPStdioServer(ctx context.Context, cmd *cli.Command) error {
 	file := cmd.GetStringArg("file")
+	argv := cmd.GetArgs()
+	if file != "" {
+		argv = append([]string{file}, argv...)
+	}
+	if pendingApp != nil && strings.HasPrefix(file, "--") {
+		file = ""
+	}
 	baseDir, err := bootstrap.BaseDir(file)
 	if err != nil {
 		return err
@@ -673,6 +686,7 @@ func runMCPStdioServer(ctx context.Context, cmd *cli.Command) error {
 		SecretRegistry:  secretRegistry,
 		DockerSock:      cmd.GetString("docker-host"),
 		PodmanSock:      cmd.GetString("podman-host"),
+		Argv:            argv,
 	})
 }
 
