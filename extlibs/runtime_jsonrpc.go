@@ -62,6 +62,26 @@ func makeJSONRPCDecorator(ctx context.Context, register func(ref string)) object
 	}
 }
 
+// registerJSONRPCMethod is the shared registration logic for JSON-RPC methods.
+func registerJSONRPCMethod(name, handler string) {
+	RuntimeState.Lock()
+	defer RuntimeState.Unlock()
+	if existing, ok := RuntimeState.JSONRPCMethods[name]; ok && existing == handler {
+		return
+	}
+	RuntimeState.JSONRPCMethods[name] = handler
+}
+
+// registerJSONRPCNotification is the shared registration logic for JSON-RPC notifications.
+func registerJSONRPCNotification(name, handler string) {
+	RuntimeState.Lock()
+	defer RuntimeState.Unlock()
+	if existing, ok := RuntimeState.JSONRPCNotifications[name]; ok && existing == handler {
+		return
+	}
+	RuntimeState.JSONRPCNotifications[name] = handler
+}
+
 // JSONRPCSubLibrary exposes runtime.jsonrpc for registering stdio JSON-RPC 2.0
 // method and notification handlers. Handlers are referenced by string
 // ("library.function") and run on a fresh evaluator per request, matching the
@@ -81,9 +101,7 @@ var JSONRPCSubLibrary = object.NewLibrary(RuntimeJSONRPCLibraryName, map[string]
 			// Decorator form: @jsonrpc.method("echo")
 			if len(args) == 1 {
 				return makeJSONRPCDecorator(ctx, func(ref string) {
-					RuntimeState.Lock()
-					RuntimeState.JSONRPCMethods[name] = ref
-					RuntimeState.Unlock()
+					registerJSONRPCMethod(name, ref)
 				})
 			}
 
@@ -133,9 +151,7 @@ an error response.`,
 			// Decorator form: @jsonrpc.notification("updated")
 			if len(args) == 1 {
 				return makeJSONRPCDecorator(ctx, func(ref string) {
-					RuntimeState.Lock()
-					RuntimeState.JSONRPCNotifications[name] = ref
-					RuntimeState.Unlock()
+					registerJSONRPCNotification(name, ref)
 				})
 			}
 
