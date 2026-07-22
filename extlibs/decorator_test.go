@@ -333,3 +333,114 @@ runtime.jsonrpc.notification("updated", "handlers.on_updated")
 		t.Errorf("notification 'updated': expected 'handlers.on_updated', got %q", handler)
 	}
 }
+
+func TestPluginFunctionDecoratorNamed(t *testing.T) {
+	ResetRuntime()
+	p := scriptling.New()
+	RegisterRuntimeLibraryAll(p, nil)
+	RegisterRuntimePluginLibrary(p)
+	p.SetVar("__name__", "calc")
+
+	script := `
+import scriptling.runtime.plugin as plugin
+
+@plugin.register_function("add")
+def add(a, b):
+    return a + b
+`
+	_, err := p.Eval(script)
+	if err != nil {
+		t.Fatalf("Failed to execute script: %v", err)
+	}
+
+	RuntimeState.RLock()
+	defer RuntimeState.RUnlock()
+
+	if ref, ok := RuntimeState.PluginFunctions["add"]; !ok || ref != "calc.add" {
+		t.Errorf("function 'add': expected 'calc.add', got %q", ref)
+	}
+}
+
+func TestPluginFunctionDecoratorBare(t *testing.T) {
+	ResetRuntime()
+	p := scriptling.New()
+	RegisterRuntimeLibraryAll(p, nil)
+	RegisterRuntimePluginLibrary(p)
+	p.SetVar("__name__", "svc")
+
+	script := `
+import scriptling.runtime.plugin as plugin
+
+@plugin.register_function
+def greet(name):
+    return "hello " + name
+`
+	_, err := p.Eval(script)
+	if err != nil {
+		t.Fatalf("Failed to execute script: %v", err)
+	}
+
+	RuntimeState.RLock()
+	defer RuntimeState.RUnlock()
+
+	if ref, ok := RuntimeState.PluginFunctions["greet"]; !ok || ref != "svc.greet" {
+		t.Errorf("function 'greet': expected 'svc.greet', got %q", ref)
+	}
+}
+
+func TestPluginClassDecoratorBare(t *testing.T) {
+	ResetRuntime()
+	p := scriptling.New()
+	RegisterRuntimeLibraryAll(p, nil)
+	RegisterRuntimePluginLibrary(p)
+	p.SetVar("__name__", "config")
+
+	script := `
+import scriptling.runtime.plugin as plugin
+
+@plugin.register_class
+class Config:
+    def __init__(self):
+        self.version = "1.0"
+`
+	_, err := p.Eval(script)
+	if err != nil {
+		t.Fatalf("Failed to execute script: %v", err)
+	}
+
+	RuntimeState.RLock()
+	defer RuntimeState.RUnlock()
+
+	if ref, ok := RuntimeState.PluginClasses["Config"]; !ok || ref != "config.Config" {
+		t.Errorf("class 'Config': expected 'config.Config', got %q", ref)
+	}
+}
+
+func TestPluginImperativeBackwardCompat(t *testing.T) {
+	ResetRuntime()
+	p := scriptling.New()
+	RegisterRuntimeLibraryAll(p, nil)
+	RegisterRuntimePluginLibrary(p)
+
+	script := `
+import scriptling.runtime.plugin as plugin
+
+plugin.register_function("add", "handlers.add")
+plugin.register_class("handlers.Config")
+plugin.register_constant("VERSION", "1.0.0")
+`
+	_, err := p.Eval(script)
+	if err != nil {
+		t.Fatalf("Failed to execute script: %v", err)
+	}
+
+	RuntimeState.RLock()
+	defer RuntimeState.RUnlock()
+
+	if ref, ok := RuntimeState.PluginFunctions["add"]; !ok || ref != "handlers.add" {
+		t.Errorf("function 'add': expected 'handlers.add', got %q", ref)
+	}
+	if ref, ok := RuntimeState.PluginClasses["Config"]; !ok || ref != "handlers.Config" {
+		t.Errorf("class 'Config': expected 'handlers.Config', got %q", ref)
+	}
+}
