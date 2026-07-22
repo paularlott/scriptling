@@ -259,3 +259,45 @@ def double(params):
 		t.Errorf("double: response %s, want result 42", body)
 	}
 }
+
+// TestDecoratorJSONRPCInSetupScript proves @jsonrpc.method decorators work
+// when used directly in the setup script (the __file__ fallback path).
+func TestDecoratorJSONRPCInSetupScript(t *testing.T) {
+	dir := t.TempDir()
+
+	// Single-file app: setup.py has JSON-RPC decorators directly.
+	appPy := `import scriptling.runtime.jsonrpc as jsonrpc
+
+@jsonrpc.method("ping")
+def ping(params):
+    return "pong"
+`
+	if err := os.WriteFile(filepath.Join(dir, "app.py"), []byte(appPy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := NewServer(ServerConfig{
+		ScriptFile: filepath.Join(dir, "app.py"),
+		LibDirs:    []string{dir},
+		JSONRPC:    true,
+	})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(s.handleJSONRPCHTTP))
+	defer ts.Close()
+
+	resp, err := http.Post(ts.URL, "application/json",
+		strings.NewReader(`{"jsonrpc":"2.0","method":"ping","params":null,"id":1}`))
+	if err != nil {
+		t.Fatalf("ping: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	var result map[string]any
+	json.Unmarshal(body, &result)
+	if result["result"] != "pong" {
+		t.Errorf("ping: response %s, want result \"pong\"", body)
+	}
+}
