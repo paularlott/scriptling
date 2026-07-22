@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/paularlott/scriptling/errors"
+	"github.com/paularlott/scriptling/evaluator"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -78,8 +79,21 @@ Example:
 
 	"register_function": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.MinArgs(args, 2); err != nil {
+			if err := errors.MinArgs(args, 1); err != nil {
 				return err
+			}
+
+			// Bare decorator: @plugin.register_function
+			if fn, ok := args[0].(*object.Function); ok {
+				env := evaluator.GetEnvFromContext(ctx)
+				ref := resolveModuleRef(env, fn.Name)
+				if ref == "" {
+					return errors.NewError("cannot determine module name for @plugin.register_function decorator")
+				}
+				RuntimeState.Lock()
+				RuntimeState.PluginFunctions[fn.Name] = ref
+				RuntimeState.Unlock()
+				return fn
 			}
 
 			name, err := args[0].AsString()
@@ -87,6 +101,31 @@ Example:
 				return err
 			}
 
+			// Decorator factory: @plugin.register_function("add")
+			if len(args) == 1 {
+				env := evaluator.GetEnvFromContext(ctx)
+				return &object.Builtin{
+					Fn: func(_ context.Context, _ object.Kwargs, dArgs ...object.Object) object.Object {
+						if len(dArgs) == 0 {
+							return errors.NewError("decorator requires a function")
+						}
+						fn, ok := dArgs[0].(*object.Function)
+						if !ok {
+							return errors.NewError("decorated value must be a function, got %s", dArgs[0].Type())
+						}
+						ref := resolveModuleRef(env, fn.Name)
+						if ref == "" {
+							return errors.NewError("cannot determine module name for decorator")
+						}
+						RuntimeState.Lock()
+						RuntimeState.PluginFunctions[name] = ref
+						RuntimeState.Unlock()
+						return fn
+					},
+				}
+			}
+
+			// Imperative: register_function("add", "lib.func")
 			handler, err := args[1].AsString()
 			if err != nil {
 				return err
@@ -101,20 +140,22 @@ Example:
 
 			return &object.Null{}
 		},
-		HelpText: `register_function(name, handler) - Register a function for the plugin server
+		HelpText: `register_function(name, handler=None) - Register a function for the plugin server, or use as decorator
 
-Parameters:
-  name (str):    Function name exposed to plugin clients.
-  handler (str): Handler as "library.function" string.
+Decorator form:
+  import scriptling.runtime.plugin as plugin
 
-The handler receives the positional arguments decoded from the plugin transport.
-Return any JSON-serialisable value. Raise an exception to produce an error
-response on the client side.
+  @plugin.register_function("add")
+  def add(a, b):
+      return a + b
 
-Example:
-  import scriptling.runtime.plugin as plugin_srv
+  # Bare form uses the function name as the plugin name
+  @plugin.register_function
+  def greet(name):
+      return "hello " + name
 
-  plugin_srv.register_function("greet", "handlers.greet")`,
+Imperative form:
+  plugin.register_function("add", "handlers.add")`,
 	},
 
 	"register_constant": {
@@ -160,13 +201,25 @@ Example:
 				return err
 			}
 
+			// Bare decorator: @plugin.register_class
+			if cls, ok := args[0].(*object.Class); ok {
+				env := evaluator.GetEnvFromContext(ctx)
+				ref := resolveModuleRef(env, cls.Name)
+				if ref == "" {
+					return errors.NewError("cannot determine module name for @plugin.register_class decorator")
+				}
+				RuntimeState.Lock()
+				RuntimeState.PluginClasses[cls.Name] = ref
+				RuntimeState.Unlock()
+				return cls
+			}
+
 			handler, err := args[0].AsString()
 			if err != nil {
 				return err
 			}
 
 			// Derive the exposed class name from the last segment of the handler ref.
-			// "mymodule.Config" → "Config"
 			name := handler
 			for i := len(handler) - 1; i >= 0; i-- {
 				if handler[i] == '.' {
@@ -184,21 +237,21 @@ Example:
 
 			return &object.Null{}
 		},
-		HelpText: `register_class(handler) - Register a class exported by the plugin server
+		HelpText: `register_class(handler) - Register a class exported by the plugin server, or use as bare decorator
 
-Parameters:
-  handler (str): Class as "library.ClassName" string. The exposed class name is
-                 taken from the last segment (e.g. "mymodule.Config" → "Config").
+Decorator form:
+  import scriptling.runtime.plugin as plugin
 
-The class must be a normal scriptling class. The server handles object creation
-(object.new), method calls (object.call_method), and destruction (object.destroy)
-for every instance. Each instance is held server-side; clients receive a remote
-handle that behaves like a local object.
+  @plugin.register_class
+  class Config:
+      def __init__(self):
+          self.version = "1.0"
 
-Example:
-  import scriptling.runtime.plugin as plugin_srv
+Imperative form:
+  plugin.register_class("handlers.Config")
 
-  plugin_srv.register_class("handlers.Config")`,
+The exposed class name is derived from the class name (decorator) or the last
+segment of the handler ref (imperative).`,
 	},
 }, nil, "Scriptling plugin server — declare this script as a plugin peer with full handshake support")
 
