@@ -33,10 +33,14 @@ func NewServer(config ServerConfig) (*Server, error) {
 		loader := pack.NewLoader()
 		loader.SetCacheDir(config.CacheDir)
 		for _, b := range config.LibBundles {
-			loader.AddBundle(b)
+			if err := loader.AddBundle(b); err != nil {
+				return nil, err
+			}
 		}
 		if config.Bundle != nil {
-			loader.AddBundle(config.Bundle)
+			if err := loader.AddBundle(config.Bundle); err != nil {
+				return nil, err
+			}
 		}
 		s.packLoader = loader
 	} else {
@@ -217,6 +221,10 @@ func (s *Server) setupScriptling(p *scriptling.Scriptling) {
 	setup.RegisterSys(p, s.config.Argv)
 	if s.config.PluginManager != nil {
 		scriptlingplugin.RegisterLibraries(p, s.config.PluginManager)
+	}
+	s.applyPackLoader(p)
+	if s.packLoader != nil {
+		pack.RegisterPackageLibrary(p, s.packLoader)
 	}
 	if s.config.ExtraLibs != nil {
 		s.config.ExtraLibs(p)

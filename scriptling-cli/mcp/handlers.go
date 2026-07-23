@@ -140,6 +140,9 @@ func prepareScriptling(cfg HandlerConfig, extraLibDirs []string) *scriptling.Scr
 		scriptlingplugin.RegisterLibraries(p, cfg.PluginManager)
 	}
 	bootstrap.ApplyPackLoader(p, cfg.PackLoader)
+	if cfg.PackLoader != nil {
+		pack.RegisterPackageLibrary(p, cfg.PackLoader)
+	}
 	if cfg.SetupHook != nil {
 		cfg.SetupHook(p)
 	}
@@ -204,6 +207,9 @@ func BuildToolHandlerSource(src []byte, cfg HandlerConfig) mcplib.ToolHandler {
 //   - string → text response
 //   - dict/list → JSON response
 //   - None/null → empty text response
+//   - tool.return_error("msg") → MCP error response (isError: true)
+//   - tool.return_string("msg") → text response
+//   - tool.return_object(obj) → JSON response
 //   - exception → error response
 func BuildToolHandlerFunc(src []byte, funcName string, cfg HandlerConfig) mcplib.ToolHandler {
 	return func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
@@ -221,6 +227,21 @@ func BuildToolHandlerFunc(src []byte, funcName string, cfg HandlerConfig) mcplib
 
 		// Call the tool function.
 		result, callErr := p.CallFunctionWithContext(ctx, funcName, kwargs)
+
+		// Check for explicit MCP response set by tool.return_error /
+		// tool.return_string / tool.return_object. These set __mcp_response
+		// and raise SystemExit, so we read the stored response and use it.
+		if respObj, getErr := p.GetVarAsObject(extlibsmcp.MCPResponseVarName); getErr == nil {
+			if s, ok := respObj.(*object.String); ok && s.StringValue() != "" {
+				if callErr != nil {
+					// tool.return_error — return as MCP error response.
+					return nil, mcplib.NewToolErrorInternal(s.StringValue())
+				}
+				// tool.return_string / return_object — return as text response.
+				return mcplib.NewToolResponseText(s.StringValue()), nil
+			}
+		}
+
 		if callErr != nil {
 			return nil, mcplib.NewToolErrorInternal(callErr.Error())
 		}

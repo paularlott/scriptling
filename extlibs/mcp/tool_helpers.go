@@ -58,8 +58,9 @@ func setResponseAndExit(ctx context.Context, response string, exitCode int) obje
 		return &object.Error{Message: "environment not available"}
 	}
 
-	// Set __mcp_response
-	env.Set(MCPResponseVarName, object.NewString(response))
+	// Set __mcp_response in the global scope so both legacy (RunToolScript)
+	// and decorated (BuildToolHandlerFunc) handlers can read it.
+	env.SetGlobal(MCPResponseVarName, object.NewString(response))
 
 	// Exit with specified code
 	return object.NewSystemExit(exitCode, "")

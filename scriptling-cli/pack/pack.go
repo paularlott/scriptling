@@ -69,6 +69,25 @@ func Pack(srcDir, dst string, force bool) (string, []string, error) {
 		includedDirs[d] = true
 	}
 
+	// Expand additional_files: dirs (trailing /) become included top-level
+	// dirs; individual files are added to an explicit allow-set.
+	additionalFiles := map[string]bool{}
+	for _, af := range manifest.AdditionalFiles {
+		af = strings.TrimRight(filepath.ToSlash(af), "/")
+		if af == "" {
+			continue
+		}
+		info, err := os.Stat(filepath.Join(srcDir, filepath.FromSlash(af)))
+		if err != nil {
+			return "", nil, fmt.Errorf("additional_files entry %q not found in %s", af, srcDir)
+		}
+		if info.IsDir() {
+			includedDirs[af] = true
+		} else {
+			additionalFiles[af] = true
+		}
+	}
+
 	// Check destination
 	if !force {
 		if _, err := os.Stat(dst); err == nil {
@@ -121,7 +140,7 @@ func Pack(srcDir, dst string, force bool) (string, []string, error) {
 			return nil
 		}
 
-		if rel != ManifestFile && rel != mainScript && !includedDirs[top] {
+		if rel != ManifestFile && rel != mainScript && !includedDirs[top] && !additionalFiles[rel] {
 			warnings = append(warnings, fmt.Sprintf("skipping %s: not part of the bundle", rel))
 			return nil
 		}

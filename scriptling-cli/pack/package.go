@@ -32,12 +32,13 @@ var (
 
 // Manifest describes package metadata.
 type Manifest struct {
-	Name        string   `toml:"name"`
-	Version     string   `toml:"version"`
-	Description string   `toml:"description,omitempty"`
-	Main        string   `toml:"main,omitempty"`  // module.function entry point, or a .py script path within the bundle
-	Libs        []string `toml:"libs,omitempty"`  // module search dirs inside the bundle (default ["lib"])
-	Serve       []string `toml:"serve,omitempty"` // protocols to start: "http", "mcp"
+	Name            string   `toml:"name"`
+	Version         string   `toml:"version"`
+	Description     string   `toml:"description,omitempty"`
+	Main            string   `toml:"main,omitempty"`             // module.function entry point, or a .py script path within the bundle
+	Libs            []string `toml:"libs,omitempty"`             // module search dirs inside the bundle (default ["lib"])
+	Serve           []string `toml:"serve,omitempty"`            // protocols to start: "http", "mcp", "json-rpc"
+	AdditionalFiles []string `toml:"additional_files,omitempty"` // extra files/dirs to include (dir ends with /)
 }
 
 // LibDirs returns the manifest's module search dirs, defaulting to ["lib"].
