@@ -2,6 +2,8 @@
 
 Long-term memory tools for LLM agents via the Scriptling MCP server. Any MCP-compatible client (Claude Desktop, Cursor, Zed, etc.) can use these tools to persist and recall information across sessions.
 
+All four tools are defined in a single `memory.py` file using the [`@mcp.tool` decorator](https://scriptling.dev/reference/libraries/scriptling/runtime/mcp/) — metadata and implementation together, no `.toml` files needed.
+
 ## Tools
 
 | Tool               | Description                                                                                         |

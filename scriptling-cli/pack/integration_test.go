@@ -49,7 +49,7 @@ PI = 3.14159
 
 	// Pack
 	pkgFile := filepath.Join(t.TempDir(), "mathlib.zip")
-	if _, err := Pack(srcDir, pkgFile, false); err != nil {
+	if _, _, err := Pack(srcDir, pkgFile, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -135,7 +135,7 @@ def get_counter():
 	}
 
 	pkgFile := filepath.Join(t.TempDir(), "cliapp.zip")
-	if _, err := Pack(srcDir, pkgFile, false); err != nil {
+	if _, _, err := Pack(srcDir, pkgFile, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -145,16 +145,16 @@ def get_counter():
 		t.Fatal(err)
 	}
 
-	// Get main entry
-	mod, fn, found := loader.GetMainEntry()
-	if !found {
-		t.Fatal("expected main entry to be found")
+	// Resolve main entry
+	entry, found, err := loader.ResolveMain()
+	if err != nil || !found {
+		t.Fatalf("expected main entry: found=%v err=%v", found, err)
 	}
-	if mod != "app" {
-		t.Errorf("expected module 'app', got %q", mod)
+	if entry.Module != "app" {
+		t.Errorf("expected module 'app', got %q", entry.Module)
 	}
-	if fn != "main" {
-		t.Errorf("expected function 'main', got %q", fn)
+	if entry.Function != "main" {
+		t.Errorf("expected function 'main', got %q", entry.Function)
 	}
 
 	// Execute main entry
@@ -196,7 +196,7 @@ def lowercase(s):
     return s.lower()
 `), 0644)
 	pkg1File := filepath.Join(tmpDir, "stringslib.zip")
-	_, _ = Pack(pkg1Dir, pkg1File, false)
+	_, _, _ = Pack(pkg1Dir, pkg1File, false)
 
 	// Create package 2: numberslib
 	pkg2Dir := filepath.Join(tmpDir, "numberslib")
@@ -210,7 +210,7 @@ def square(n):
     return n * n
 `), 0644)
 	pkg2File := filepath.Join(tmpDir, "numberslib.zip")
-	_, _ = Pack(pkg2Dir, pkg2File, false)
+	_, _, _ = Pack(pkg2Dir, pkg2File, false)
 
 	// Load both packages
 	p := scriptling.New()
@@ -244,7 +244,7 @@ func TestIntegrationPackageOverrides(t *testing.T) {
 	os.WriteFile(filepath.Join(pkg1Dir, "manifest.toml"), []byte("name = \"pkg1\"\nversion = \"1.0.0\""), 0644)
 	os.WriteFile(filepath.Join(pkg1Dir, "lib", "utils.py"), []byte("def get_value():\n    return 'from pkg1'"), 0644)
 	pkg1File := filepath.Join(tmpDir, "pkg1.zip")
-	_, _ = Pack(pkg1Dir, pkg1File, false)
+	_, _, _ = Pack(pkg1Dir, pkg1File, false)
 
 	// Create package 2 with same utils.py
 	pkg2Dir := filepath.Join(tmpDir, "pkg2")
@@ -252,7 +252,7 @@ func TestIntegrationPackageOverrides(t *testing.T) {
 	os.WriteFile(filepath.Join(pkg2Dir, "manifest.toml"), []byte("name = \"pkg2\"\nversion = \"1.0.0\""), 0644)
 	os.WriteFile(filepath.Join(pkg2Dir, "lib", "utils.py"), []byte("def get_value():\n    return 'from pkg2'"), 0644)
 	pkg2File := filepath.Join(tmpDir, "pkg2.zip")
-	_, _ = Pack(pkg2Dir, pkg2File, false)
+	_, _, _ = Pack(pkg2Dir, pkg2File, false)
 
 	// Load both (pkg2 last = highest priority)
 	p := scriptling.New()
@@ -285,7 +285,7 @@ func TestIntegrationWithFilesystemFallback(t *testing.T) {
 	os.WriteFile(filepath.Join(pkgDir, "manifest.toml"), []byte("name = \"pkg\"\nversion = \"1.0.0\""), 0644)
 	os.WriteFile(filepath.Join(pkgDir, "lib", "pkgmod.py"), []byte("def value():\n    return 'from package'"), 0644)
 	pkgFile := filepath.Join(tmpDir, "pkg.zip")
-	_, _ = Pack(pkgDir, pkgFile, false)
+	_, _, _ = Pack(pkgDir, pkgFile, false)
 
 	// Create a local module on filesystem
 	localModDir := filepath.Join(tmpDir, "local")
@@ -352,7 +352,7 @@ def deep_func():
 `), 0644)
 
 	pkgFile := filepath.Join(t.TempDir(), "nested.zip")
-	if _, err := Pack(srcDir, pkgFile, false); err != nil {
+	if _, _, err := Pack(srcDir, pkgFile, false); err != nil {
 		t.Fatal(err)
 	}
 

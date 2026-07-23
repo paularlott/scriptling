@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"mime"
 	"net/http"
 	"os"
@@ -20,25 +21,39 @@ import (
 	"github.com/paularlott/scriptling/util"
 )
 
-// Start starts the HTTP server
-func (s *Server) Start() error {
+// buildMux assembles the full HTTP handler stack: protocol endpoints, script
+// routes, static routes, web root fallback, and auth middleware.
+func (s *Server) buildMux() http.Handler {
 	mux := http.NewServeMux()
 
 	if s.mcpHandler != nil {
-		mux.Handle("/mcp", s.mcpHandler)
+		mux.Handle("POST /mcp", s.mcpHandler)
+		mux.Handle("GET /mcp", s.mcpHandler)
 	}
 	if s.config.JSONRPC {
 		if s.pluginServer != nil {
-			mux.Handle("/json-rpc", s.pluginServer)
+			mux.Handle("POST /json-rpc", s.pluginServer)
+			mux.Handle("GET /json-rpc", s.pluginServer)
 		} else {
-			mux.HandleFunc("/json-rpc", s.handleJSONRPCHTTP)
+			mux.HandleFunc("POST /json-rpc", s.handleJSONRPCHTTP)
+			mux.HandleFunc("GET /json-rpc", s.handleJSONRPCHTTP)
 		}
 	}
 
-	mux.HandleFunc("GET /health", s.handleHealth)
+	// Built-in health check — skip if a user route already claims it.
+	if _, ok := s.handlers["GET /health"]; !ok {
+		mux.HandleFunc("GET /health", s.handleHealth)
+	}
 
 	for key := range s.handlers {
-		mux.HandleFunc(key, s.handleScriptRequest)
+		// "GET /" creates a subtree pattern in Go 1.22's mux that would swallow
+		// all GET requests. Append {$} so it matches exactly "/" and lets other
+		// paths fall through to the webroot fallback.
+		if strings.HasSuffix(key, " /") {
+			mux.HandleFunc(key+"{$}", s.handleScriptRequest)
+		} else {
+			mux.HandleFunc(key, s.handleScriptRequest)
+		}
 	}
 
 	for path := range s.wsHandlers {
@@ -51,7 +66,7 @@ func (s *Server) Start() error {
 	}
 
 	// Web root: serve files not matched by any route, fall through to 404 handler
-	if s.config.WebRoot != "" || s.notFoundHandler != "" {
+	if s.config.WebRoot != "" || s.notFoundHandler != "" || s.webRootFS != nil {
 		mux.HandleFunc("/", s.handleFallback)
 	}
 
@@ -63,10 +78,14 @@ func (s *Server) Start() error {
 			handler = s.bearerTokenProtocolMiddleware(mux)
 		}
 	}
+	return handler
+}
 
+// Start starts the HTTP server
+func (s *Server) Start() error {
 	s.httpServer = &http.Server{
 		Addr:    s.config.Address,
-		Handler: handler,
+		Handler: s.buildMux(),
 	}
 
 	if s.config.TLSGenerate || (s.config.TLSCert != "" && s.config.TLSKey != "") {
@@ -169,23 +188,28 @@ func (s *Server) handleScriptRequest(w http.ResponseWriter, r *http.Request) {
 
 	if s.middleware != "" {
 		Log.Trace("Running middleware", "handler", s.middleware)
-		if resp := s.runHandler(s.middleware, reqObj); resp != nil {
+		if resp := s.runHandler(r.Context(), s.middleware, reqObj); resp != nil {
 			s.writeResponse(w, resp)
 			return
 		}
 	}
 
 	Log.Trace("Dispatching to handler", "handler", handlerRef)
-	if resp := s.runHandler(handlerRef, reqObj); resp != nil {
+	if resp := s.runHandler(r.Context(), handlerRef, reqObj); resp != nil {
 		s.writeResponse(w, resp)
 	} else {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 	}
 }
 
-// handleFallback serves files from WebRoot (directory or zip) or calls the not_found handler
+// handleFallback serves files from WebRoot (directory or zip), an app bundle's
+// webroot/, or calls the not_found handler
 func (s *Server) handleFallback(w http.ResponseWriter, r *http.Request) {
 	Log.Trace("HTTP fallback request", "method", r.Method, "path", r.URL.Path, "remote", r.RemoteAddr)
+	if s.webRootFS != nil {
+		s.serveFromBundle(w, r)
+		return
+	}
 	if s.config.WebRoot != "" {
 		if s.webRootZip != nil {
 			s.serveFromZip(w, r)
@@ -194,6 +218,46 @@ func (s *Server) handleFallback(w http.ResponseWriter, r *http.Request) {
 		s.serveFromDir(w, r)
 		return
 	}
+	s.serveNotFound(w, r)
+}
+
+// serveFromBundle serves static assets from the app bundle's cached webroot/ FS.
+func (s *Server) serveFromBundle(w http.ResponseWriter, r *http.Request) {
+	if s.webRootFS == nil {
+		s.serveNotFound(w, r)
+		return
+	}
+
+	// Normalise the URL path: strip leading slash, never allow traversal.
+	urlPath := path.Clean(strings.TrimPrefix(r.URL.Path, "/"))
+	if urlPath == "." {
+		urlPath = ""
+	}
+	candidates := []string{urlPath, urlPath + "/index.html"}
+	if urlPath == "" {
+		candidates = []string{"index.html"}
+	}
+
+	for _, candidate := range candidates {
+		if !fs.ValidPath(candidate) {
+			continue
+		}
+		info, err := fs.Stat(s.webRootFS, candidate)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		data, err := fs.ReadFile(s.webRootFS, candidate)
+		if err != nil {
+			continue
+		}
+		Log.Trace("Serving file from bundle webroot", "file", candidate)
+		if ct := mime.TypeByExtension(path.Ext(candidate)); ct != "" {
+			w.Header().Set("Content-Type", ct)
+		}
+		w.Write(data)
+		return
+	}
+	Log.Trace("Bundle webroot entry not found", "path", urlPath)
 	s.serveNotFound(w, r)
 }
 
@@ -247,9 +311,9 @@ func (s *Server) serveFromZip(w http.ResponseWriter, r *http.Request) {
 					http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 					return
 				}
-				defer rc.Close()
 				w.Header().Set("Content-Type", mime.TypeByExtension(filepath.Ext(f.Name)))
 				io.Copy(w, rc)
+				rc.Close()
 				return
 			}
 		}
@@ -263,7 +327,7 @@ func (s *Server) serveNotFound(w http.ResponseWriter, r *http.Request) {
 	if s.notFoundHandler != "" {
 		Log.Trace("Handling 404 via not_found handler", "handler", s.notFoundHandler, "path", r.URL.Path)
 		reqObj := s.createRequestObject(r)
-		if resp := s.runHandler(s.notFoundHandler, reqObj); resp != nil {
+		if resp := s.runHandler(r.Context(), s.notFoundHandler, reqObj); resp != nil {
 			s.writeResponse(w, resp)
 			return
 		}
@@ -298,7 +362,7 @@ func (s *Server) createRequestObject(r *http.Request) *object.Instance {
 }
 
 // runHandler runs a handler function and returns the response
-func (s *Server) runHandler(handlerRef string, reqObj *object.Instance) *object.Dict {
+func (s *Server) runHandler(ctx context.Context, handlerRef string, reqObj *object.Instance) *object.Dict {
 	libName, _, ok := strings.Cut(handlerRef, ".")
 	if !ok {
 		Log.Error("Invalid handler reference", "handler", handlerRef)
@@ -314,7 +378,7 @@ func (s *Server) runHandler(handlerRef string, reqObj *object.Instance) *object.
 		return nil
 	}
 
-	result, err := p.CallFunction(handlerRef, reqObj)
+	result, err := p.CallFunctionWithContext(ctx, handlerRef, reqObj)
 	if err != nil {
 		Log.Error("Handler error", "error", err)
 		return object.NewStringDict(map[string]object.Object{

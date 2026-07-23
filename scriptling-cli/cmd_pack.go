@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/paularlott/cli"
@@ -56,9 +57,12 @@ func packCmd() *cli.Command {
 			if output == "" {
 				return fmt.Errorf("--output is required when packing")
 			}
-			hash, err := pack.Pack(cmd.GetStringArg("dir"), output, cmd.GetBool("force"))
+			hash, warnings, err := pack.Pack(cmd.GetStringArg("dir"), output, cmd.GetBool("force"))
 			if err != nil {
 				return err
+			}
+			for _, w := range warnings {
+				fmt.Fprintf(os.Stderr, "warning: %s\n", w)
 			}
 			fmt.Printf("sha256=%s\n", hash)
 			return nil

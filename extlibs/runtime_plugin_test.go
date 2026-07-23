@@ -188,12 +188,13 @@ func TestPluginFunctionRequiresBothArgs(t *testing.T) {
 	RegisterRuntimeLibraryAll(p, nil)
 	RegisterRuntimePluginLibrary(p)
 
+	// 0 args should fail; 1 arg is now the decorator factory form.
 	_, err := p.Eval(`
 import scriptling.runtime.plugin as rp
-rp.register_function("greet")
+rp.register_function()
 `)
 	if err == nil {
-		t.Fatal("plugin.function() with one arg should have failed")
+		t.Fatal("plugin.register_function() with no args should have failed")
 	}
 }
 

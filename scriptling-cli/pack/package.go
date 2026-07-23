@@ -32,10 +32,30 @@ var (
 
 // Manifest describes package metadata.
 type Manifest struct {
-	Name        string `toml:"name"`
-	Version     string `toml:"version"`
-	Description string `toml:"description,omitempty"`
-	Main        string `toml:"main,omitempty"` // module.function entry point
+	Name            string   `toml:"name"`
+	Version         string   `toml:"version"`
+	Description     string   `toml:"description,omitempty"`
+	Main            string   `toml:"main,omitempty"`             // module.function entry point, or a .py script path within the bundle
+	Libs            []string `toml:"libs,omitempty"`             // module search dirs inside the bundle (default ["lib"])
+	Serve           []string `toml:"serve,omitempty"`            // protocols to start: "http", "mcp", "json-rpc"
+	AdditionalFiles []string `toml:"additional_files,omitempty"` // extra files/dirs to include (dir ends with /)
+}
+
+// LibDirs returns the manifest's module search dirs, defaulting to ["lib"].
+func (m Manifest) LibDirs() []string {
+	if len(m.Libs) == 0 {
+		return []string{LibDir}
+	}
+	return m.Libs
+}
+
+// parseManifest decodes a manifest.toml from bytes.
+func parseManifest(data []byte) (Manifest, error) {
+	var m Manifest
+	if _, err := toml.NewDecoder(bytes.NewReader(data)).Decode(&m); err != nil {
+		return Manifest{}, ErrInvalidManifest
+	}
+	return m, nil
 }
 
 // Package represents a loaded package.
@@ -53,11 +73,7 @@ func ReadManifestFromDir(dir string) (Manifest, error) {
 	if err != nil {
 		return Manifest{}, ErrMissingManifest
 	}
-	var m Manifest
-	if _, err := toml.NewDecoder(bytes.NewReader(data)).Decode(&m); err != nil {
-		return Manifest{}, ErrInvalidManifest
-	}
-	return m, nil
+	return parseManifest(data)
 }
 
 // bytesReaderAt wraps a byte slice as an io.ReaderAt.
@@ -104,9 +120,11 @@ func Open(r io.ReaderAt, size int64) (*Package, error) {
 	if !ok {
 		return nil, ErrMissingManifest
 	}
-	if _, err := toml.NewDecoder(bytes.NewReader(manifestData)).Decode(&p.Manifest); err != nil {
-		return nil, ErrInvalidManifest
+	m, err := parseManifest(manifestData)
+	if err != nil {
+		return nil, err
 	}
+	p.Manifest = m
 
 	return p, nil
 }
