@@ -26,14 +26,40 @@ func (l *Loader) SetCacheDir(dir string) {
 	l.cacheDir = dir
 }
 
-// AddBundle adds a bundle to the loader.
-func (l *Loader) AddBundle(b *Bundle) {
+// AddBundle adds a bundle to the loader. Returns an error if a bundle with
+// the same manifest name is already loaded.
+func (l *Loader) AddBundle(b *Bundle) error {
+	for _, existing := range l.bundles {
+		if existing.Manifest.Name == b.Manifest.Name {
+			return fmt.Errorf("duplicate package name %q (from %s and %s)", b.Manifest.Name, existing.Source(), b.Source())
+		}
+	}
 	l.bundles = append(l.bundles, b)
+	return nil
 }
 
 // Bundles returns the bundles added to the loader, in add order.
 func (l *Loader) Bundles() []*Bundle {
 	return l.bundles
+}
+
+// BundleByName returns the bundle with the given manifest name, or nil.
+func (l *Loader) BundleByName(name string) *Bundle {
+	for _, b := range l.bundles {
+		if b.Manifest.Name == name {
+			return b
+		}
+	}
+	return nil
+}
+
+// BundleNames returns the manifest names of all loaded bundles.
+func (l *Loader) BundleNames() []string {
+	names := make([]string, 0, len(l.bundles))
+	for _, b := range l.bundles {
+		names = append(names, b.Manifest.Name)
+	}
+	return names
 }
 
 // AddFromPath loads a bundle from a local directory, a local .zip, or a URL.
@@ -43,8 +69,7 @@ func (l *Loader) AddFromPath(source string, insecure bool) error {
 	if err != nil {
 		return err
 	}
-	l.AddBundle(b)
-	return nil
+	return l.AddBundle(b)
 }
 
 // SetFallback sets the fallback loader used when no bundle provides the module.

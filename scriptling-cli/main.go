@@ -494,10 +494,14 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 		packLoader = pack.NewLoader()
 		packLoader.SetCacheDir(cmd.GetString("cache-dir"))
 		for _, b := range pendingLibs {
-			packLoader.AddBundle(b)
+			if err := packLoader.AddBundle(b); err != nil {
+				return err
+			}
 		}
 		if pendingApp != nil {
-			packLoader.AddBundle(pendingApp)
+			if err := packLoader.AddBundle(pendingApp); err != nil {
+				return err
+			}
 		}
 		go pack.PruneCache(cmd.GetString("cache-dir"), 0) // async, best-effort
 		bootstrap.ApplyPackLoader(p, packLoader)
