@@ -138,7 +138,7 @@ def run():
 
 	// Pack
 	dstFile := filepath.Join(t.TempDir(), "testpkg.zip")
-	if _, err := Pack(srcDir, dstFile, false); err != nil {
+	if _, _, err := Pack(srcDir, dstFile, false); err != nil {
 		t.Fatalf("Pack failed: %v", err)
 	}
 
@@ -209,7 +209,7 @@ func TestPackRequiresManifest(t *testing.T) {
 	defer os.RemoveAll(srcDir)
 
 	dstFile := filepath.Join(t.TempDir(), "test.zip")
-	_, err = Pack(srcDir, dstFile, false)
+	_, _, err = Pack(srcDir, dstFile, false)
 	if err != ErrMissingManifest {
 		t.Errorf("expected ErrMissingManifest, got %v", err)
 	}
@@ -233,17 +233,17 @@ func TestPackOverwrite(t *testing.T) {
 	dstFile := filepath.Join(t.TempDir(), "test.zip")
 
 	// First pack should succeed
-	if _, err := Pack(srcDir, dstFile, false); err != nil {
+	if _, _, err := Pack(srcDir, dstFile, false); err != nil {
 		t.Fatalf("first pack failed: %v", err)
 	}
 
 	// Second pack without force should fail
-	if _, err := Pack(srcDir, dstFile, false); err == nil {
+	if _, _, err := Pack(srcDir, dstFile, false); err == nil {
 		t.Error("expected error when packing without force to existing file")
 	}
 
 	// Pack with force should succeed
-	if _, err := Pack(srcDir, dstFile, true); err != nil {
+	if _, _, err := Pack(srcDir, dstFile, true); err != nil {
 		t.Fatalf("pack with force failed: %v", err)
 	}
 }
@@ -273,7 +273,7 @@ version = "2.0.0"
 	}
 
 	pkgFile := filepath.Join(t.TempDir(), "test.zip")
-	if _, err := Pack(srcDir, pkgFile, false); err != nil {
+	if _, _, err := Pack(srcDir, pkgFile, false); err != nil {
 		t.Fatalf("Pack failed: %v", err)
 	}
 
@@ -349,7 +349,7 @@ main = "app.main"
 	}
 
 	pkgFile := filepath.Join(t.TempDir(), "loader.zip")
-	if _, err := Pack(srcDir, pkgFile, false); err != nil {
+	if _, _, err := Pack(srcDir, pkgFile, false); err != nil {
 		t.Fatalf("Pack failed: %v", err)
 	}
 
@@ -397,17 +397,17 @@ main = "app.main"
 		}
 	})
 
-	// Test GetMainEntry
+	// Test ResolveMain
 	t.Run("main entry", func(t *testing.T) {
-		mod, fn, found := loader.GetMainEntry()
-		if !found {
-			t.Fatal("expected main entry to be found")
+		entry, found, err := loader.ResolveMain()
+		if err != nil || !found {
+			t.Fatalf("expected main entry: found=%v err=%v", found, err)
 		}
-		if mod != "app" {
-			t.Errorf("expected module 'app', got %q", mod)
+		if entry.Module != "app" {
+			t.Errorf("expected module 'app', got %q", entry.Module)
 		}
-		if fn != "main" {
-			t.Errorf("expected function 'main', got %q", fn)
+		if entry.Function != "main" {
+			t.Errorf("expected function 'main', got %q", entry.Function)
 		}
 	})
 }
@@ -422,7 +422,7 @@ func TestLoaderPriority(t *testing.T) {
 	os.WriteFile(filepath.Join(pkg1Dir, "manifest.toml"), []byte("name = \"pkg1\"\nversion = \"1.0.0\""), 0644)
 	os.WriteFile(filepath.Join(pkg1Dir, "lib", "shared.py"), []byte("value = 'from pkg1'"), 0644)
 	pkg1File := filepath.Join(tmpDir, "pkg1.zip")
-	_, _ = Pack(pkg1Dir, pkg1File, false)
+	_, _, _ = Pack(pkg1Dir, pkg1File, false)
 
 	// Second package
 	pkg2Dir := filepath.Join(tmpDir, "pkg2")
@@ -430,7 +430,7 @@ func TestLoaderPriority(t *testing.T) {
 	os.WriteFile(filepath.Join(pkg2Dir, "manifest.toml"), []byte("name = \"pkg2\"\nversion = \"1.0.0\""), 0644)
 	os.WriteFile(filepath.Join(pkg2Dir, "lib", "shared.py"), []byte("value = 'from pkg2'"), 0644)
 	pkg2File := filepath.Join(tmpDir, "pkg2.zip")
-	_, _ = Pack(pkg2Dir, pkg2File, false)
+	_, _, _ = Pack(pkg2Dir, pkg2File, false)
 
 	// Load in order: pkg1, then pkg2
 	loader := NewLoader()
@@ -463,7 +463,7 @@ func TestLoaderFallback(t *testing.T) {
 	os.WriteFile(filepath.Join(srcDir, "lib", "pkgmod.py"), []byte("# pkg module"), 0644)
 
 	pkgFile := filepath.Join(t.TempDir(), "fallback.zip")
-	_, _ = Pack(srcDir, pkgFile, false)
+	_, _, _ = Pack(srcDir, pkgFile, false)
 
 	// Create fallback loader that provides a module
 	fallback := &mockLoader{
@@ -527,7 +527,7 @@ func TestFilesystemBeforePack(t *testing.T) {
 	os.WriteFile(filepath.Join(pkgDir, "lib", "shared.py"), []byte("value = 'from pack'"), 0644)
 	os.WriteFile(filepath.Join(pkgDir, "lib", "packonly.py"), []byte("value = 'pack only'"), 0644)
 	pkgFile := filepath.Join(tmpDir, "pkg.zip")
-	_, _ = Pack(pkgDir, pkgFile, false)
+	_, _, _ = Pack(pkgDir, pkgFile, false)
 
 	// Filesystem loader also provides "shared" — should win
 	fs := &mockLoader{
@@ -596,7 +596,7 @@ func TestHashVerification(t *testing.T) {
 	os.WriteFile(filepath.Join(srcDir, "lib", "mod.py"), []byte("x = 1\n"), 0644)
 
 	pkgFile := filepath.Join(t.TempDir(), "hashtest.zip")
-	hash, err := Pack(srcDir, pkgFile, false)
+	hash, _, err := Pack(srcDir, pkgFile, false)
 	if err != nil {
 		t.Fatalf("Pack failed: %v", err)
 	}
@@ -642,8 +642,8 @@ func TestHashVerification(t *testing.T) {
 		if err := loader.AddFromPath(pkgFile+"#sha256="+hash, false); err != nil {
 			t.Fatalf("AddFromPath failed: %v", err)
 		}
-		if len(loader.packages) != 1 {
-			t.Errorf("expected 1 package loaded, got %d", len(loader.packages))
+		if len(loader.Bundles()) != 1 {
+			t.Errorf("expected 1 bundle loaded, got %d", len(loader.Bundles()))
 		}
 	})
 }
@@ -678,7 +678,7 @@ func TestPackHash(t *testing.T) {
 	os.WriteFile(filepath.Join(srcDir, "lib", "mod.py"), []byte("x = 42\n"), 0644)
 
 	pkgFile := filepath.Join(t.TempDir(), "hashpack.zip")
-	hash, err := Pack(srcDir, pkgFile, false)
+	hash, _, err := Pack(srcDir, pkgFile, false)
 	if err != nil {
 		t.Fatalf("Pack failed: %v", err)
 	}
@@ -711,7 +711,7 @@ func TestUnpackRemove(t *testing.T) {
 	os.WriteFile(filepath.Join(srcDir, "docs", "mod.md"), []byte("# mod\n"), 0644)
 
 	pkgFile := filepath.Join(tmpDir, "rm.zip")
-	if _, err := Pack(srcDir, pkgFile, false); err != nil {
+	if _, _, err := Pack(srcDir, pkgFile, false); err != nil {
 		t.Fatalf("Pack failed: %v", err)
 	}
 

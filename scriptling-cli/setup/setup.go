@@ -219,3 +219,14 @@ func Factories(libdirs []string, allowedPaths []string, disabledLibs []string, s
 	extlibs.SetSandboxFactory(factory)
 	extlibs.SetBackgroundFactory(factory)
 }
+
+// RegisterSys registers the sys library (sys.argv, sys.platform, etc.) on the
+// given Scriptling instance with the provided argv. Pass nil argv to register
+// with an empty list. This is a thin wrapper so callers in other packages
+// don't need to import extlibs directly.
+func RegisterSys(p *scriptling.Scriptling, argv []string) {
+	if argv == nil {
+		argv = []string{}
+	}
+	extlibs.RegisterSysLibrary(p, argv, nil)
+}

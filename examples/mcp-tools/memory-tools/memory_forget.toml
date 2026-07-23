@@ -1,8 +1,0 @@
-description = "Remove information from long-term memory"
-keywords = ["memory", "forget", "delete", "remove"]
-
-[[parameters]]
-name = "id"
-type = "string"
-description = "Memory ID to forget (returned by remember)"
-required = true
