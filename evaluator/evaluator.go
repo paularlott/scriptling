@@ -1,6 +1,7 @@
 package evaluator
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math"
@@ -521,6 +522,8 @@ func objectsEqual(a, b object.Object) bool {
 		return av.FloatValue() == b.(*object.Float).FloatValue()
 	case *object.String:
 		return av.StringValue() == b.(*object.String).StringValue()
+	case *object.Bytes:
+		return av.Equal(b.(*object.Bytes))
 	case *object.Boolean:
 		return av.BoolValue() == b.(*object.Boolean).BoolValue()
 	case *object.Null:
@@ -542,6 +545,8 @@ func objectsDeepEqual(a, b object.Object) bool {
 		return av.FloatValue() == b.(*object.Float).FloatValue()
 	case *object.String:
 		return av.StringValue() == b.(*object.String).StringValue()
+	case *object.Bytes:
+		return av.Equal(b.(*object.Bytes))
 	case *object.Boolean:
 		return av.BoolValue() == b.(*object.Boolean).BoolValue()
 	case *object.Null:
@@ -702,6 +707,10 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 			if operator == ast.OpMul {
 				return evalStringMultiplication(r.StringValue(), l.IntValue())
 			}
+		case *object.Bytes:
+			if operator == ast.OpMul {
+				return evalBytesMultiplication(r, l.IntValue())
+			}
 		case *object.List:
 			if operator == ast.OpMul {
 				if l.IntValue() <= 0 {
@@ -764,6 +773,8 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 		if r, ok := right.(*object.Integer); ok && operator == ast.OpMul {
 			return evalStringMultiplication(l.StringValue(), r.IntValue())
 		}
+	case *object.Bytes:
+		return evalBytesInfixExpression(operator, l, right)
 	case *object.FloatArray:
 		if operator == ast.OpAdd {
 			if r, ok := right.(*object.FloatArray); ok {
@@ -1311,6 +1322,54 @@ func evalStringMultiplication(str string, multiplier int64) object.Object {
 		return object.NewString("")
 	}
 	return object.NewString(strings.Repeat(str, int(multiplier)))
+}
+
+// evalBytesInfixExpression handles binary operators where the left operand is
+// Bytes. Supports concatenation (+), repetition (*), equality/ordering
+// comparisons against other Bytes, and int * Bytes (mirroring String * int).
+// Mixing Bytes with String raises a type error (strict mode).
+func evalBytesInfixExpression(operator ast.Op, left *object.Bytes, right object.Object) object.Object {
+	// int * bytes → repetition (so 3 * b"ab" == b"ababab")
+	if r, ok := right.(*object.Integer); ok && operator == ast.OpMul {
+		return evalBytesMultiplication(left, r.IntValue())
+	}
+	if r, ok := right.(*object.Bytes); ok {
+		switch operator {
+		case ast.OpAdd:
+			joined := make([]byte, 0, left.Len()+r.Len())
+			joined = append(joined, left.BytesValue()...)
+			joined = append(joined, r.BytesValue()...)
+			return object.NewBytes(joined)
+		case ast.OpEq:
+			return nativeBoolToBooleanObject(left.Equal(r))
+		case ast.OpNeq:
+			return nativeBoolToBooleanObject(!left.Equal(r))
+		case ast.OpLt:
+			return nativeBoolToBooleanObject(bytes.Compare(left.BytesValue(), r.BytesValue()) < 0)
+		case ast.OpGt:
+			return nativeBoolToBooleanObject(bytes.Compare(left.BytesValue(), r.BytesValue()) > 0)
+		case ast.OpLte:
+			return nativeBoolToBooleanObject(bytes.Compare(left.BytesValue(), r.BytesValue()) <= 0)
+		case ast.OpGte:
+			return nativeBoolToBooleanObject(bytes.Compare(left.BytesValue(), r.BytesValue()) >= 0)
+		}
+		return errors.NewError("%s: BYTES %s BYTES", errors.ErrUnknownOperator, operator)
+	}
+	return errors.NewTypeError("BYTES", right.Type().String())
+}
+
+// evalBytesMultiplication returns a Bytes value whose content is the input
+// repeated n times. A negative count yields empty bytes (matching String).
+func evalBytesMultiplication(b *object.Bytes, multiplier int64) object.Object {
+	if multiplier <= 0 {
+		return object.NewBytes(nil)
+	}
+	src := b.BytesValue()
+	out := make([]byte, 0, len(src)*int(multiplier))
+	for i := int64(0); i < multiplier; i++ {
+		out = append(out, src...)
+	}
+	return object.NewBytes(out)
 }
 
 // callDunderMethod calls a dunder method on an instance, returning nil if not defined.
@@ -2350,9 +2409,11 @@ func isTruthy(obj object.Object) bool {
 			return v.IntValue() != 0
 		case *object.Float:
 			return v.FloatValue() != 0.0
-		case *object.String:
-			return v.StringValue() != ""
-		case *object.List:
+	case *object.String:
+		return v.StringValue() != ""
+	case *object.Bytes:
+		return v.Len() > 0
+	case *object.List:
 			return len(v.Elements) > 0
 		case *object.Tuple:
 			return len(v.Elements) > 0
@@ -2805,6 +2866,22 @@ func evalInOperator(ctx context.Context, left, right object.Object) object.Objec
 			return nativeBoolToBooleanObject(strings.Contains(container.StringValue(), needle.StringValue()))
 		}
 		return errors.NewTypeError("STRING", "non-string type")
+	case *object.Bytes:
+		// An integer in 0-255 checks for a byte value; a Bytes needle does
+		// substring containment. Anything else is a type error.
+		switch needle := left.(type) {
+		case *object.Integer:
+			target := byte(needle.IntValue())
+			for _, b := range container.BytesValue() {
+				if b == target {
+					return TRUE
+				}
+			}
+			return FALSE
+		case *object.Bytes:
+			return nativeBoolToBooleanObject(bytes.Contains(container.BytesValue(), needle.BytesValue()))
+		}
+		return errors.NewTypeError("INTEGER or BYTES", left.Type().String())
 	case *object.DictKeys:
 		key := evalHashKey(ctx, left)
 		_, ok := container.Dict.Pairs[key]
@@ -4030,35 +4107,64 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 				}
 			}
 			goto forDone
-		case *object.String:
-			// Iterate over string runes lazily to avoid pre-allocating all characters
-			cc := newContextChecker(ctx)
-			for _, char := range o.StringValue() {
-				if err := cc.check(); err != nil {
-					return err
-				}
+	case *object.String:
+		// Iterate over string runes lazily to avoid pre-allocating all characters
+		cc := newContextChecker(ctx)
+		for _, char := range o.StringValue() {
+			if err := cc.check(); err != nil {
+				return err
+			}
 
-				element := object.NewString(string(char))
-				if err := setForVariables(fs.Variables, element, env); err != nil {
-					return errors.NewError("%s", err.Error())
-				}
+			element := object.NewString(string(char))
+			if err := setForVariables(fs.Variables, element, env); err != nil {
+				return errors.NewError("%s", err.Error())
+			}
 
-				result = evalBlockStatementWithContext(ctx, fs.Body, env)
-				if result != nil {
-					switch result.Type() {
-					case object.ERROR_OBJ, object.RETURN_OBJ:
-						return result
-					case object.BREAK_OBJ:
-						broke = true
-						result = NULL
-						goto forDone
-					case object.CONTINUE_OBJ:
-						result = NULL
-						continue
-					}
+			result = evalBlockStatementWithContext(ctx, fs.Body, env)
+			if result != nil {
+				switch result.Type() {
+				case object.ERROR_OBJ, object.RETURN_OBJ:
+					return result
+				case object.BREAK_OBJ:
+					broke = true
+					result = NULL
+					goto forDone
+				case object.CONTINUE_OBJ:
+					result = NULL
+					continue
 				}
 			}
-			goto forDone
+		}
+		goto forDone
+	case *object.Bytes:
+		// Iterate as integer byte values 0-255, matching Python's bytes iteration.
+		cc := newContextChecker(ctx)
+		for _, b := range o.BytesValue() {
+			if err := cc.check(); err != nil {
+				return err
+			}
+
+			element := object.NewInteger(int64(b))
+			if err := setForVariables(fs.Variables, element, env); err != nil {
+				return errors.NewError("%s", err.Error())
+			}
+
+			result = evalBlockStatementWithContext(ctx, fs.Body, env)
+			if result != nil {
+				switch result.Type() {
+				case object.ERROR_OBJ, object.RETURN_OBJ:
+					return result
+				case object.BREAK_OBJ:
+					broke = true
+					result = NULL
+					goto forDone
+				case object.CONTINUE_OBJ:
+					result = NULL
+					continue
+				}
+			}
+		}
+		goto forDone
 		default:
 			return errors.NewTypeError("iterable", iterable.Type().String())
 		}
@@ -4291,6 +4397,12 @@ func iterateObject(ctx context.Context, obj object.Object, fn func(object.Object
 	case *object.String:
 		for _, ch := range o.StringValue() {
 			if err := fn(object.NewString(string(ch))); err != nil {
+				return err
+			}
+		}
+	case *object.Bytes:
+		for _, b := range o.BytesValue() {
+			if err := fn(object.NewInteger(int64(b))); err != nil {
 				return err
 			}
 		}

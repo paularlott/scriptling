@@ -747,6 +747,8 @@ func objectToAny(obj Object) interface{} {
 	switch v := obj.(type) {
 	case *String:
 		return v.value
+	case *Bytes:
+		return v.value
 	case *Integer:
 		return v.value
 	case *Float:

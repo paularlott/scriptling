@@ -1,7 +1,10 @@
 package object
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"math"
@@ -36,6 +39,10 @@ func DictKey(obj Object) string {
 		return "n:0"
 	case *String:
 		return "s:" + o.value
+	case *Bytes:
+		// Equal bytes must produce equal keys regardless of pointer identity,
+		// so encode the contents with a prefix that can't collide with strings.
+		return "b:" + hex.EncodeToString(o.value)
 	case *Null:
 		return "null:"
 	case *Tuple:
@@ -80,12 +87,12 @@ func DictStringKey(name string) string {
 }
 
 // IsHashable reports whether obj can be used as a set element or dict key.
-// Matches Python semantics: int, float, bool, string, None, and tuples of
-// hashable elements are hashable; lists, dicts, sets, and instances are not
-// unless the instance defines __hash__.
+// Matches Python semantics: int, float, bool, string, bytes, None, and tuples
+// of hashable elements are hashable; lists, dicts, sets, and instances are
+// not unless the instance defines __hash__.
 func IsHashable(obj Object) bool {
 	switch o := obj.(type) {
-	case *Integer, *Float, *Boolean, *String, *Null:
+	case *Integer, *Float, *Boolean, *String, *Bytes, *Null:
 		return true
 	case *Tuple:
 		for _, e := range o.Elements {
@@ -117,6 +124,7 @@ const (
 	ErrMustBeList     = "must be a list"
 	ErrMustBeDict     = "must be a dict"
 	ErrMustBeIterable = "must be iterable"
+	ErrMustBeBytes    = "must be bytes or string"
 )
 
 var smallIntegers [smallIntMax - smallIntMin + 1]*Integer
@@ -130,6 +138,7 @@ var (
 	errMustBeBoolean = &Error{Message: ErrMustBeBoolean}
 	errMustBeList    = &Error{Message: ErrMustBeList}
 	errMustBeDict    = &Error{Message: ErrMustBeDict}
+	errMustBeBytes   = &Error{Message: ErrMustBeBytes}
 )
 
 // Exception type constants
@@ -245,6 +254,7 @@ const (
 	STATICMETHOD_OBJ
 	CLASSMETHOD_OBJ
 	FLOAT_ARRAY_OBJ
+	BYTES_OBJ
 )
 
 // String returns the string representation of the ObjectType
@@ -308,6 +318,8 @@ func (ot ObjectType) String() string {
 		return "CLASSMETHOD"
 	case FLOAT_ARRAY_OBJ:
 		return "FLOAT_ARRAY"
+	case BYTES_OBJ:
+		return "BYTES"
 	default:
 		return "UNKNOWN"
 	}
@@ -451,6 +463,98 @@ func (s *String) CoerceFloat() (float64, Object) {
 		return 0, &Error{Message: fmt.Sprintf("cannot convert %s to float", s.value)}
 	}
 	return val, nil
+}
+
+// Bytes is an immutable sequence of byte values (0-255), analogous to Python's
+// bytes type. It is the canonical representation for binary data in Scriptling.
+// Strict string operations raise a type error; use Decode() to obtain a string.
+type Bytes struct {
+	value []byte
+}
+
+// NewBytes returns a new Bytes object that owns a defensive copy of the given
+// slice, so callers may freely mutate the original after the call.
+func NewBytes(b []byte) *Bytes {
+	if b == nil {
+		b = []byte{}
+	}
+	cp := make([]byte, len(b))
+	copy(cp, b)
+	return &Bytes{value: cp}
+}
+
+// NewBytesFromString returns a Bytes object whose contents are the UTF-8
+// encoding of s. This is the equivalent of Python's str.encode("utf-8").
+func NewBytesFromString(s string) *Bytes {
+	return &Bytes{value: []byte(s)}
+}
+
+// BytesValue returns the underlying byte slice. Callers MUST NOT mutate the
+// returned slice; treat it as read-only. If mutation is required, copy it.
+func (b *Bytes) BytesValue() []byte { return b.value }
+
+// Len returns the number of bytes.
+func (b *Bytes) Len() int { return len(b.value) }
+
+func (b *Bytes) Type() ObjectType { return BYTES_OBJ }
+
+// Inspect returns a Python-style repr such as b'hello' or b'\x00\xff', suitable
+// for debugging and print(). The default print() path uses CoerceString for a
+// human-readable form; this is what shows up in the REPL and error messages.
+func (b *Bytes) Inspect() string {
+	var sb strings.Builder
+	sb.Grow(len(b.value) + 3)
+	sb.WriteString("b'")
+	for _, c := range b.value {
+		switch c {
+		case '\'':
+			sb.WriteString(`\'`)
+		case '\\':
+			sb.WriteString(`\\`)
+		case '\n':
+			sb.WriteString(`\n`)
+		case '\r':
+			sb.WriteString(`\r`)
+		case '\t':
+			sb.WriteString(`\t`)
+		default:
+			if c >= 0x20 && c < 0x7f {
+				sb.WriteByte(c)
+			} else {
+				sb.WriteString(fmt.Sprintf(`\x%02x`, c))
+			}
+		}
+	}
+	sb.WriteByte('\'')
+	return sb.String()
+}
+
+// AsString is strict: bytes are not strings. Callers that need a string must
+// call Decode() explicitly (the .decode() method on Bytes). This mirrors
+// Python's TypeError on mixing bytes and str.
+func (b *Bytes) AsString() (string, Object)          { return "", errMustBeString }
+func (b *Bytes) AsInt() (int64, Object)              { return 0, errMustBeInteger }
+func (b *Bytes) AsFloat() (float64, Object)          { return 0, errMustBeNumber }
+func (b *Bytes) AsBool() (bool, Object)              { return len(b.value) > 0, nil }
+func (b *Bytes) AsList() ([]Object, Object)          { return nil, errMustBeList }
+func (b *Bytes) AsDict() (map[string]Object, Object) { return nil, errMustBeDict }
+
+// CoerceString returns a base64-encoded representation so that Bytes values can
+// be printed, concatenated into error messages, or interpolated into f-strings
+// without raising. Explicit decoding via .decode() should be preferred for real
+// text content.
+func (b *Bytes) CoerceString() (string, Object) {
+	return base64.StdEncoding.EncodeToString(b.value), nil
+}
+
+// CoerceInt returns the length, mirroring the way Python treats bool/len
+// coercion for truthiness only; numeric coercion of bytes is not meaningful.
+func (b *Bytes) CoerceInt() (int64, Object)     { return 0, errMustBeInteger }
+func (b *Bytes) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
+
+// Equal reports whether two Bytes values have identical contents.
+func (b *Bytes) Equal(other *Bytes) bool {
+	return bytes.Equal(b.value, other.value)
 }
 
 type Slice struct {

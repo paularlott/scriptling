@@ -77,6 +77,10 @@ func evalIndexExpression(ctx context.Context, left, index object.Object, isDotAc
 		return evalStringIndexExpression(left, index)
 	case left.Type() == object.STRING_OBJ && index.Type() == object.SLICE_OBJ:
 		return evalStringSliceExpression(left, index)
+	case left.Type() == object.BYTES_OBJ && index.Type() == object.INTEGER_OBJ:
+		return evalBytesIndexExpression(left, index)
+	case left.Type() == object.BYTES_OBJ && index.Type() == object.SLICE_OBJ:
+		return evalBytesSliceExpression(left, index)
 	case left.Type() == object.INSTANCE_OBJ:
 		return evalInstanceIndexExpression(ctx, left, index, isDotAccess)
 	case left.Type() == object.CLASS_OBJ:
@@ -518,6 +522,8 @@ func evalSliceExpressionWithContext(ctx context.Context, node *ast.SliceExpressi
 	case *object.String:
 		elements := sliceString(obj.StringValue(), start, end, step, hasStart, hasEnd, hasStep)
 		return object.NewString(elements)
+	case *object.Bytes:
+		return sliceBytes(obj, start, end, step, hasStart, hasEnd, hasStep)
 	case *object.FloatArray:
 		return sliceFloatArray(obj, start, end, step, hasStart, hasEnd, hasStep)
 	default:
@@ -601,6 +607,80 @@ func sliceList(elements []object.Object, start, end, step int64, hasStart, hasEn
 		result = append(result, elements[i])
 	}
 	return &object.List{Elements: result}
+}
+
+// sliceBytes applies a [start:end:step] slice to a Bytes value, returning a new
+// Bytes. Negative steps are honoured (matching String/List semantics).
+func sliceBytes(b *object.Bytes, start, end, step int64, hasStart, hasEnd, hasStep bool) object.Object {
+	src := b.BytesValue()
+	length := int64(len(src))
+
+	// Negative step (reverse iteration) — mirror sliceList's logic.
+	if step < 0 {
+		if !hasStart {
+			start = length - 1
+		} else if start < 0 {
+			start = length + start
+		}
+		if !hasEnd {
+			end = -1
+		} else if end < 0 {
+			end = length + end
+		}
+		if start >= length {
+			start = length - 1
+		}
+		if start < 0 {
+			start = -1
+		}
+		if end >= length {
+			end = length - 1
+		}
+
+		var out []byte
+		for i := start; i > end; i += step {
+			if i >= 0 && i < length {
+				out = append(out, src[i])
+			}
+		}
+		return object.NewBytes(out)
+	}
+
+	// Positive step.
+	if !hasStart {
+		start = 0
+	} else if start < 0 {
+		start += length
+		if start < 0 {
+			start = 0
+		}
+	}
+	if !hasEnd {
+		end = length
+	} else if end < 0 {
+		end += length
+		if end < 0 {
+			end = 0
+		}
+	}
+	if start < 0 {
+		start = 0
+	}
+	if end > length {
+		end = length
+	}
+	if start > end {
+		start = end
+	}
+
+	if step == 1 {
+		return object.NewBytes(src[start:end])
+	}
+	var out []byte
+	for i := start; i < end; i += step {
+		out = append(out, src[i])
+	}
+	return object.NewBytes(out)
 }
 
 func sliceFloatArray(fa *object.FloatArray, start, end, step int64, hasStart, hasEnd, hasStep bool) object.Object {
@@ -884,4 +964,85 @@ func evalStringSliceExpression(str, index object.Object) object.Object {
 
 	slicedStr := sliceString(strObj.StringValue(), start, end, step, hasStart, hasEnd, hasStep)
 	return object.NewString(slicedStr)
+}
+
+// evalBytesIndexExpression indexes a Bytes value by an integer, returning the
+// byte value (0-255) as an Integer. Negative indices count from the end. An
+// out-of-range index returns NULL, matching the behaviour of string indexing.
+func evalBytesIndexExpression(b, index object.Object) object.Object {
+	bObj := b.(*object.Bytes)
+	idx, err := index.AsInt()
+	if err != nil {
+		return errors.NewError("bytes index must be integer")
+	}
+	length := int64(bObj.Len())
+	if idx < 0 {
+		idx += length
+	}
+	if idx < 0 || idx >= length {
+		return NULL
+	}
+	return object.NewInteger(int64(bObj.BytesValue()[idx]))
+}
+
+// evalBytesSliceExpression handles slice objects applied to Bytes. Step is
+// honoured. Returns a fresh Bytes value (immutability is preserved).
+func evalBytesSliceExpression(b, index object.Object) object.Object {
+	bObj := b.(*object.Bytes)
+	sliceObj := index.(*object.Slice)
+
+	length := int64(bObj.Len())
+	start, end, step := int64(0), length, int64(1)
+	hasStart, hasEnd := sliceObj.Start != nil, sliceObj.End != nil
+	hasStep := sliceObj.Step != nil
+	if hasStart {
+		start = sliceObj.Start.IntValue()
+	}
+	if hasEnd {
+		end = sliceObj.End.IntValue()
+	}
+	if hasStep {
+		step = sliceObj.Step.IntValue()
+		if step == 0 {
+			return errors.NewError("slice step cannot be zero")
+		}
+	}
+
+	// Normalise bounds against [0, length].
+	if start < 0 {
+		start += length
+		if start < 0 {
+			start = 0
+		}
+	} else if start > length {
+		start = length
+	}
+	if end < 0 {
+		end += length
+		if end < 0 {
+			end = 0
+		}
+	} else if end > length {
+		end = length
+	}
+
+	src := bObj.BytesValue()
+	var out []byte
+	if step > 0 {
+		if start < end {
+			out = make([]byte, 0, (end-start+step-1)/step)
+			for i := start; i < end; i += step {
+				out = append(out, src[i])
+			}
+		}
+	} else {
+		// Negative step: iterate from start down to end (exclusive).
+		if start > end {
+			out = make([]byte, 0, (start-end-step-1)/-step)
+			for i := start; i > end; i += step {
+				out = append(out, src[i])
+			}
+		}
+	}
+	return object.NewBytes(out)
 }

@@ -14,6 +14,7 @@ require (
 	github.com/paularlott/mcp v0.23.0
 	github.com/paularlott/snapshotkv v0.4.0
 	github.com/shirou/gopsutil/v3 v3.24.5
+	github.com/vmihailenco/msgpack/v5 v5.4.1
 	github.com/yuin/goldmark v1.8.4
 	golang.org/x/net v0.57.0
 	golang.org/x/sys v0.47.0
@@ -33,7 +34,6 @@ require (
 	github.com/shoenig/go-m1cpu v0.2.2 // indirect
 	github.com/tklauser/go-sysconf v0.4.0 // indirect
 	github.com/tklauser/numcpus v0.12.0 // indirect
-	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
