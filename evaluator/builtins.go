@@ -38,6 +38,7 @@ var (
 )
 
 var builtins = map[string]*object.Builtin{
+	"bytes": BytesBuiltin,
 	"help": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			return helpFunction(ctx, kwargs, args...)
@@ -185,6 +186,8 @@ Examples:
 					return object.NewInteger(int64(len(arg.StringValue())))
 				}
 				return object.NewInteger(int64(len([]rune(arg.StringValue()))))
+			case *object.Bytes:
+				return object.NewInteger(int64(arg.Len()))
 			case *object.List:
 				return object.NewInteger(int64(len(arg.Elements)))
 			case *object.Dict:
@@ -212,12 +215,12 @@ Examples:
 				}
 				return errors.NewTypeError("object with __len__", "INSTANCE")
 			default:
-				return errors.NewTypeError("STRING, LIST, DICT, TUPLE, SET, or VIEW", args[0].Type().String())
+				return errors.NewTypeError("STRING, LIST, DICT, TUPLE, SET, BYTES, or VIEW", args[0].Type().String())
 			}
 		},
 		HelpText: `len(obj) - Return the length of an object
 
-Returns the number of items in a string, list, dict, or tuple.`,
+Returns the number of items in a string, bytes, list, dict, or tuple.`,
 	},
 	"type": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -625,14 +628,9 @@ Use list(zip(...)) to get a list.`,
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
-			var iterable []object.Object
-			switch iter := args[0].(type) {
-			case *object.List:
-				iterable = iter.Elements
-			case *object.Tuple:
-				iterable = iter.Elements
-			default:
-				return errors.NewTypeError("iterable (LIST, TUPLE)", args[0].Type().String())
+			iterable, ok := object.IterableToSlice(args[0])
+			if !ok {
+				return errors.NewTypeError("iterable", args[0].Type().String())
 			}
 			for _, elem := range iterable {
 				if isTruthy(elem) {
@@ -651,14 +649,9 @@ Returns False for an empty iterable.`,
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
-			var iterable []object.Object
-			switch iter := args[0].(type) {
-			case *object.List:
-				iterable = iter.Elements
-			case *object.Tuple:
-				iterable = iter.Elements
-			default:
-				return errors.NewTypeError("iterable (LIST, TUPLE)", args[0].Type().String())
+			iterable, ok := object.IterableToSlice(args[0])
+			if !ok {
+				return errors.NewTypeError("iterable", args[0].Type().String())
 			}
 			for _, elem := range iterable {
 				if !isTruthy(elem) {

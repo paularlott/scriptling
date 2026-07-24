@@ -14,16 +14,18 @@ var Base64Library = object.NewLibrary(Base64LibraryName, map[string]*object.Buil
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
-			str, err := args[0].AsString()
-			if err != nil {
-				return err
+			// Accept Bytes (preferred) or String (encoded as UTF-8) as input.
+			data, errObj := coerceToBytes(args[0])
+			if errObj != nil {
+				return errObj
 			}
-			encoded := base64.StdEncoding.EncodeToString([]byte(str))
+			encoded := base64.StdEncoding.EncodeToString(data)
 			return object.NewString(encoded)
 		},
 		HelpText: `b64encode(s) - Encode bytes-like object to Base64
 
-Returns a Base64-encoded version of the input string.`,
+Accepts a Bytes value or a String (UTF-8 encoded) and returns the Base64
+representation as a string.`,
 	},
 	"b64decode": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -38,10 +40,11 @@ Returns a Base64-encoded version of the input string.`,
 			if decodeErr != nil {
 				return errors.NewError("base64 decode error: %s", decodeErr.Error())
 			}
-			return object.NewString(string(decoded))
+			return object.NewBytes(decoded)
 		},
 		HelpText: `b64decode(s) - Decode a Base64 encoded string
 
-Returns the decoded string from a Base64-encoded input.`,
+Returns the decoded bytes as a Bytes value. Use .decode() on the result to
+obtain a string when the underlying data is text.`,
 	},
 }, nil, "Base64 encoding and decoding library")

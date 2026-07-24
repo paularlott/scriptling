@@ -2,6 +2,8 @@ package evaluator
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"sort"
 	"strings"
@@ -308,6 +310,11 @@ func callStringMethodWithKeywords(ctx context.Context, obj object.Object, method
 	// Default to string methods if object is a string
 	if obj.Type() == object.STRING_OBJ {
 		return callStringMethod(ctx, obj.(*object.String), method, args, keywords, env)
+	}
+
+	// Bytes methods
+	if obj.Type() == object.BYTES_OBJ {
+		return callBytesMethod(ctx, obj.(*object.Bytes), method, args, keywords, env)
 	}
 
 	return errors.NewError("object %s has no method %s", obj.Type(), method)
@@ -795,6 +802,46 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 	default:
 		return errors.NewError("%s: list method %s not found", errors.ErrIdentifierNotFound, method)
 	}
+}
+
+// callBytesMethod handles method dispatch on Bytes values. The method set is
+// intentionally minimal — decode/hex/base64 cover the round-trips users
+// actually need in glue scripts.
+func callBytesMethod(ctx context.Context, b *object.Bytes, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+	switch method {
+	case "decode":
+		if err := errors.ExactArgs(args, 0); err != nil {
+			return err
+		}
+		encoding := "utf-8"
+		if keywords != nil {
+			if encObj, ok := keywords["encoding"]; ok {
+				if s, err := encObj.AsString(); err == nil {
+					encoding = s
+				}
+			}
+		}
+		if encoding != "utf-8" && encoding != "utf8" {
+			return errors.NewError("bytes.decode: unsupported encoding %q (only utf-8 is supported)", encoding)
+		}
+		return object.NewString(string(b.BytesValue()))
+	case "hex":
+		if err := errors.ExactArgs(args, 0); err != nil {
+			return err
+		}
+		return object.NewString(hex.EncodeToString(b.BytesValue()))
+	case "base64":
+		if err := errors.ExactArgs(args, 0); err != nil {
+			return err
+		}
+		return object.NewString(base64.StdEncoding.EncodeToString(b.BytesValue()))
+	case "length":
+		if err := errors.ExactArgs(args, 0); err != nil {
+			return err
+		}
+		return object.NewInteger(int64(b.Len()))
+	}
+	return errors.NewError("BYTES has no method %s", method)
 }
 
 func callStringMethod(ctx context.Context, str *object.String, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {

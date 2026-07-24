@@ -76,6 +76,8 @@ func FromGo(v interface{}) object.Object {
 		return object.NewString(string(v))
 	case string:
 		return object.NewString(v)
+	case []byte:
+		return object.NewBytes(v)
 	case []interface{}:
 		elements := make([]object.Object, len(v))
 		for i, item := range v {
@@ -139,6 +141,8 @@ func ToGo(obj object.Object) interface{} {
 		return o.FloatValue()
 	case *object.String:
 		return o.StringValue()
+	case *object.Bytes:
+		return o.BytesValue()
 	case *object.List:
 		result := make([]interface{}, len(o.Elements))
 		for i, elem := range o.Elements {
@@ -211,6 +215,8 @@ func ToGoWithError(obj object.Object) (interface{}, *object.Error) {
 	switch v := obj.(type) {
 	case *object.String:
 		return v.StringValue(), nil
+	case *object.Bytes:
+		return v.BytesValue(), nil
 	case *object.Integer:
 		return v.IntValue(), nil
 	case *object.Float:

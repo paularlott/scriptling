@@ -23,6 +23,12 @@ func IterableToSlice(obj Object) ([]Object, bool) {
 			elements = append(elements, &String{value: string(ch)})
 		}
 		return elements, true
+	case *Bytes:
+		elements := make([]Object, len(iter.value))
+		for i, b := range iter.value {
+			elements[i] = NewInteger(int64(b))
+		}
+		return elements, true
 	case *Iterator:
 		elements := make([]Object, 0)
 		for {

@@ -93,13 +93,16 @@ message being authenticated. Returns None.`,
 				if !ok {
 					return errors.NewTypeError("HMAC", args[0].Type().String())
 				}
-				state, ok := inst.NativeData.(*hmacState)
-				if !ok {
-					return errors.NewError("invalid hmac object")
-				}
-				return object.NewString(string(computeHmacDigest(state)))
-			},
-			HelpText: `digest() - Return the raw HMAC as a byte string`,
+			state, ok := inst.NativeData.(*hmacState)
+			if !ok {
+				return errors.NewError("invalid hmac object")
+			}
+			return object.NewBytes(computeHmacDigest(state))
+		},
+		HelpText: `digest() - Return the raw HMAC as a Bytes value
+
+Returns the MAC of the data passed to the hmac so far, as a Bytes object.
+Use hexdigest() for a lowercase-hex string representation.`,
 		},
 		"hexdigest": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -228,7 +231,7 @@ Example:
 			if e != nil {
 				return e
 			}
-			return object.NewString(string(computeHmacDigest(&hmacState{key: key, data: msg, alg: alg})))
+			return object.NewBytes(computeHmacDigest(&hmacState{key: key, data: msg, alg: alg}))
 		},
 		HelpText: `digest(key, msg, digestmod) - One-shot HMAC as a raw byte string`,
 	},

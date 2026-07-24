@@ -25,7 +25,7 @@ const (
 	FunctoolsLibraryName   = "functools"
 	TextwrapLibraryName    = "textwrap"
 	PlatformLibraryName    = "platform"
-	ItertoolsLibraryName   = "itertools"
+	ItertoolsLibraryName    = "itertools"
 	CollectionsLibraryName = "collections"
 )
 
@@ -54,4 +54,5 @@ func RegisterAll(p interface{ RegisterLibrary(*object.Library) }) {
 	p.RegisterLibrary(IOLibrary)
 	p.RegisterLibrary(ContextlibLibrary)
 	p.RegisterLibrary(DifflibLibrary)
+	p.RegisterLibrary(MsgpackLibrary)
 }

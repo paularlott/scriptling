@@ -55,10 +55,12 @@ func hashDigestSize(alg string) int {
 }
 
 // toByteString converts a Scriptling object representing a byte buffer into a
-// raw Go byte slice. Strings are treated as byte buffers directly; lists of
-// integers (as produced by str.encode()) are also accepted.
+// raw Go byte slice. Bytes values, Strings (treated as byte buffers directly),
+// and lists of integers (as produced by str.encode()) are all accepted.
 func toByteString(obj object.Object) ([]byte, object.Object) {
 	switch v := obj.(type) {
+	case *object.Bytes:
+		return v.BytesValue(), nil
 	case *object.String:
 		return []byte(v.StringValue()), nil
 	case *object.List:
@@ -76,7 +78,7 @@ func toByteString(obj object.Object) ([]byte, object.Object) {
 		}
 		return b, nil
 	default:
-		return nil, errors.NewTypeError("STRING or LIST", v.Type().String())
+		return nil, errors.NewTypeError("BYTES, STRING or LIST", v.Type().String())
 	}
 }
 
@@ -129,14 +131,14 @@ Example:
 				if !ok {
 					return errors.NewError("invalid hash object")
 				}
-				h := hashConstructor(state.alg)()
-				h.Write(state.data)
-				return object.NewString(string(h.Sum(nil)))
-			},
-			HelpText: `digest() - Return the raw hash as a byte string
+			h := hashConstructor(state.alg)()
+			h.Write(state.data)
+			return object.NewBytes(h.Sum(nil))
+		},
+		HelpText: `digest() - Return the raw hash as a Bytes value
 
-Returns the digest of the data passed to the hash so far, as a string of raw
-bytes (Scriptling has no dedicated bytes type).`,
+Returns the digest of the data passed to the hash so far, as a Bytes object.
+Use hexdigest() for a lowercase-hex string representation.`,
 		},
 		"hexdigest": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
