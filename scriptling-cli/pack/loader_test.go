@@ -30,9 +30,9 @@ func TestLoaderMultiLibs(t *testing.T) {
 	l.AddBundle(b)
 
 	for name, want := range map[string]string{
-		"app":       "app",
-		"dep":       "dep",
-		"nested.m":  "nested",
+		"app":        "app",
+		"dep":        "dep",
+		"nested.m":   "nested",
 		"nested/m.x": "",
 	} {
 		src, found, err := l.Load(name)
@@ -91,20 +91,20 @@ func TestLoaderCrossBundlePriority(t *testing.T) {
 
 func TestLoaderResolutionOrder(t *testing.T) {
 	b := bundleFromMap(t, "name=\"a\"\nversion=\"1\"\n", map[string]string{
-		"lib/pkg/mod.py":         "folder",
-		"lib/pkg/__init__.py":    "pkginit",
-		"lib/flat.mod.py":        "flat",
-		"lib/pkg2/__init__.py":   "pkg2init",
+		"lib/pkg/mod.py":       "folder",
+		"lib/pkg/__init__.py":  "pkginit",
+		"lib/flat.mod.py":      "flat",
+		"lib/pkg2/__init__.py": "pkg2init",
 	})
 	l := NewLoader()
 	l.AddBundle(b)
 
 	cases := map[string]string{
-		"pkg":       "pkginit",  // package __init__.py
-		"pkg.mod":   "folder",   // folder structure
-		"flat.mod":  "flat",     // flat fallback
-		"pkg2":      "pkg2init", // __init__ for single-part name
-		"pkg2.mod":  "",         // missing
+		"pkg":      "pkginit",  // package __init__.py
+		"pkg.mod":  "folder",   // folder structure
+		"flat.mod": "flat",     // flat fallback
+		"pkg2":     "pkg2init", // __init__ for single-part name
+		"pkg2.mod": "",         // missing
 	}
 	for name, want := range cases {
 		src, found, _ := l.Load(name)
@@ -130,9 +130,9 @@ func TestResolveMain(t *testing.T) {
 		wantErr    bool
 	}{
 		{
-			name:      "module.function",
-			manifest:  "name=\"a\"\nversion=\"1\"\nmain=\"demo.run\"\n",
-			files:     map[string]string{"lib/demo.py": "def run():\n    pass\n"},
+			name:       "module.function",
+			manifest:   "name=\"a\"\nversion=\"1\"\nmain=\"demo.run\"\n",
+			files:      map[string]string{"lib/demo.py": "def run():\n    pass\n"},
 			wantModule: "demo", wantFunc: "run", wantFound: true,
 		},
 		{
@@ -148,9 +148,9 @@ func TestResolveMain(t *testing.T) {
 			wantScript: "x=1\n", wantFound: true,
 		},
 		{
-			name:      "foo.py falls back to module.function",
-			manifest:  "name=\"a\"\nversion=\"1\"\nmain=\"foo.py\"\n",
-			files:     map[string]string{"lib/foo.py": "def py():\n    pass\n"},
+			name:       "foo.py falls back to module.function",
+			manifest:   "name=\"a\"\nversion=\"1\"\nmain=\"foo.py\"\n",
+			files:      map[string]string{"lib/foo.py": "def py():\n    pass\n"},
 			wantModule: "foo", wantFunc: "py", wantFound: true,
 		},
 		{

@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	DefaultMaxPackageSize int64         = 100 * 1024 * 1024 // 100MB
-	DefaultCacheTTL                     = 7 * 24 * time.Hour // 7 days
+	DefaultMaxPackageSize int64 = 100 * 1024 * 1024  // 100MB
+	DefaultCacheTTL             = 7 * 24 * time.Hour // 7 days
 )
 
 // IsURL returns true if source starts with http:// or https://.

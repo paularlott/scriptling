@@ -49,28 +49,28 @@ func startTestServer(t *testing.T, statusCode int) *httptest.Server {
 
 func TestParseWaitOptions(t *testing.T) {
 	tests := []struct {
-		name      string
-		args      []object.Object
-		kwargs    map[string]object.Object
-		wantTimeout int
+		name         string
+		args         []object.Object
+		kwargs       map[string]object.Object
+		wantTimeout  int
 		wantPollRate float64
-		wantErr   bool
+		wantErr      bool
 	}{
 		{
-			name: "defaults",
-			args: []object.Object{},
-			kwargs: map[string]object.Object{},
-			wantTimeout: 30,
+			name:         "defaults",
+			args:         []object.Object{},
+			kwargs:       map[string]object.Object{},
+			wantTimeout:  30,
 			wantPollRate: 1.0,
-			wantErr: false,
+			wantErr:      false,
 		},
 		{
-			name: "positional timeout",
-			args: []object.Object{object.NewString("test"), object.NewInteger(60)},
-			kwargs: map[string]object.Object{},
-			wantTimeout: 60,
+			name:         "positional timeout",
+			args:         []object.Object{object.NewString("test"), object.NewInteger(60)},
+			kwargs:       map[string]object.Object{},
+			wantTimeout:  60,
 			wantPollRate: 1.0,
-			wantErr: false,
+			wantErr:      false,
 		},
 		{
 			name: "keyword timeout",
@@ -78,9 +78,9 @@ func TestParseWaitOptions(t *testing.T) {
 			kwargs: map[string]object.Object{
 				"timeout": object.NewInteger(120),
 			},
-			wantTimeout: 120,
+			wantTimeout:  120,
 			wantPollRate: 1.0,
-			wantErr: false,
+			wantErr:      false,
 		},
 		{
 			name: "keyword poll_rate float",
@@ -88,9 +88,9 @@ func TestParseWaitOptions(t *testing.T) {
 			kwargs: map[string]object.Object{
 				"poll_rate": object.NewFloat(0.5),
 			},
-			wantTimeout: 30,
+			wantTimeout:  30,
 			wantPollRate: 0.5,
-			wantErr: false,
+			wantErr:      false,
 		},
 		{
 			name: "keyword poll_rate int",
@@ -98,20 +98,20 @@ func TestParseWaitOptions(t *testing.T) {
 			kwargs: map[string]object.Object{
 				"poll_rate": object.NewInteger(2),
 			},
-			wantTimeout: 30,
+			wantTimeout:  30,
 			wantPollRate: 2.0,
-			wantErr: false,
+			wantErr:      false,
 		},
 		{
 			name: "both options",
 			args: []object.Object{object.NewString("test")},
 			kwargs: map[string]object.Object{
-				"timeout": object.NewInteger(45),
+				"timeout":   object.NewInteger(45),
 				"poll_rate": object.NewFloat(0.2),
 			},
-			wantTimeout: 45,
+			wantTimeout:  45,
 			wantPollRate: 0.2,
-			wantErr: false,
+			wantErr:      false,
 		},
 	}
 
@@ -324,7 +324,7 @@ func TestWaitForPort(t *testing.T) {
 
 		result := WaitForLibrary.Functions()["port"].Fn(ctx, object.NewKwargs(map[string]object.Object{
 			"timeout": object.NewInteger(1),
-		}), object.NewString("127.0.0.1"), object.NewString(string(rune('0' + port))))
+		}), object.NewString("127.0.0.1"), object.NewString(string(rune('0'+port))))
 
 		// This test might not work perfectly with string conversion, so we just check it doesn't crash
 		_ = result
@@ -356,7 +356,7 @@ func TestWaitForHTTP(t *testing.T) {
 		defer server.Close()
 
 		result := WaitForLibrary.Functions()["http"].Fn(ctx, object.NewKwargs(map[string]object.Object{
-			"timeout": object.NewInteger(5),
+			"timeout":     object.NewInteger(5),
 			"status_code": object.NewInteger(201),
 		}), object.NewString(server.URL))
 

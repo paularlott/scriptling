@@ -160,17 +160,31 @@ Example:
 // stdinHolder wraps a *bufio.Reader so it can live in an Instance's Fields.
 type stdinHolder struct{ r *bufio.Reader }
 
-func (h *stdinHolder) Type() object.ObjectType                           { return object.BUILTIN_OBJ }
-func (h *stdinHolder) Inspect() string                                   { return "<stdin>" }
-func (h *stdinHolder) AsString() (string, object.Object)                 { return "", &object.Error{Message: object.ErrMustBeString} }
-func (h *stdinHolder) AsInt() (int64, object.Object)                     { return 0, &object.Error{Message: object.ErrMustBeInteger} }
-func (h *stdinHolder) AsFloat() (float64, object.Object)                 { return 0, &object.Error{Message: object.ErrMustBeNumber} }
-func (h *stdinHolder) AsBool() (bool, object.Object)                     { return true, nil }
-func (h *stdinHolder) AsList() ([]object.Object, object.Object)          { return nil, &object.Error{Message: object.ErrMustBeList} }
-func (h *stdinHolder) AsDict() (map[string]object.Object, object.Object) { return nil, &object.Error{Message: object.ErrMustBeDict} }
-func (h *stdinHolder) CoerceString() (string, object.Object)             { return h.Inspect(), nil }
-func (h *stdinHolder) CoerceInt() (int64, object.Object)                 { return 0, &object.Error{Message: object.ErrMustBeInteger} }
-func (h *stdinHolder) CoerceFloat() (float64, object.Object)             { return 0, &object.Error{Message: object.ErrMustBeNumber} }
+func (h *stdinHolder) Type() object.ObjectType { return object.BUILTIN_OBJ }
+func (h *stdinHolder) Inspect() string         { return "<stdin>" }
+func (h *stdinHolder) AsString() (string, object.Object) {
+	return "", &object.Error{Message: object.ErrMustBeString}
+}
+func (h *stdinHolder) AsInt() (int64, object.Object) {
+	return 0, &object.Error{Message: object.ErrMustBeInteger}
+}
+func (h *stdinHolder) AsFloat() (float64, object.Object) {
+	return 0, &object.Error{Message: object.ErrMustBeNumber}
+}
+func (h *stdinHolder) AsBool() (bool, object.Object) { return true, nil }
+func (h *stdinHolder) AsList() ([]object.Object, object.Object) {
+	return nil, &object.Error{Message: object.ErrMustBeList}
+}
+func (h *stdinHolder) AsDict() (map[string]object.Object, object.Object) {
+	return nil, &object.Error{Message: object.ErrMustBeDict}
+}
+func (h *stdinHolder) CoerceString() (string, object.Object) { return h.Inspect(), nil }
+func (h *stdinHolder) CoerceInt() (int64, object.Object) {
+	return 0, &object.Error{Message: object.ErrMustBeInteger}
+}
+func (h *stdinHolder) CoerceFloat() (float64, object.Object) {
+	return 0, &object.Error{Message: object.ErrMustBeNumber}
+}
 
 const stdinKey = "__stdin__"
 

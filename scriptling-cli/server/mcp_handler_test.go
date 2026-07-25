@@ -8,9 +8,9 @@ import (
 
 	mcp_lib "github.com/paularlott/mcp"
 	"github.com/paularlott/scriptling/extlibs/secretprovider"
+	"github.com/paularlott/scriptling/scriptling-cli/bootstrap"
 	mcpcli "github.com/paularlott/scriptling/scriptling-cli/mcp"
 	"github.com/paularlott/scriptling/scriptling-cli/pack"
-	"github.com/paularlott/scriptling/scriptling-cli/bootstrap"
 )
 
 // TestBuildToolHandlerPassesThroughServerPackLoader verifies that the server's

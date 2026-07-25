@@ -14,7 +14,6 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-
 const (
 	Extension    = ".zip"
 	ManifestFile = "manifest.toml"
@@ -98,7 +97,7 @@ func Open(r io.ReaderAt, size int64) (*Package, error) {
 		if f.FileInfo().IsDir() {
 			continue
 		}
-			// Track docs presence but skip loading — loaded on demand by the docs viewer.
+		// Track docs presence but skip loading — loaded on demand by the docs viewer.
 		if strings.HasPrefix(f.Name, DocsDir+"/") {
 			p.hasDocs = true
 			continue
@@ -186,7 +185,7 @@ type DocReader interface {
 
 // ZipDocReader reads docs from a zip package file.
 type ZipDocReader struct {
-	name string
+	name  string
 	files map[string][]byte // docs/ relative path -> content
 }
 

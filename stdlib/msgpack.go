@@ -3,10 +3,10 @@ package stdlib
 import (
 	"context"
 
+	"github.com/paularlott/gossip/codec/shamaton"
 	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
-	"github.com/vmihailenco/msgpack/v5"
 )
 
 // MsgpackLibraryName is the import name for the MessagePack library.
@@ -15,56 +15,40 @@ const MsgpackLibraryName = "msgpack"
 // MsgpackCodec is the interface a MessagePack (or binary-compatible) codec
 // must satisfy. It is structurally identical to
 // github.com/paularlott/gossip/codec.Serializer, so any gossip codec
-// (VmihailencoMsgpackCodec, ShamatonMsgpackCodec, HashicorpMsgpackCodec) can be
-// passed directly to NewMsgpackLibrary — letting a single driver instance be
-// shared between Scriptling's msgpack library and a gossip cluster so both
-// sides agree on the wire format.
+// (ShamatonMsgpackCodec, VmihailencoMsgpackCodec, HashicorpMsgpackCodec) can
+// be passed directly to NewMsgpackLibrary — letting a single driver instance
+// be shared between Scriptling's msgpack library and a gossip cluster so
+// both sides agree on the wire format.
 //
 // Example — share one codec between gossip and Scriptling:
 //
 //	import gossipcodec "github.com/paularlott/gossip/codec"
 //
-//	codec := gossipcodec.NewVmihailencoMsgpackCodec() // or Shamaton, etc.
+//	codec := gossipshamaton.New() // or Vmihailenco, etc.
 //
 //	// gossip side
-//	gossipCfg := gossip.DefaultConfig()
+//	gossipCfg := gossip.DefaultConfig() // already defaults to shamaton
 //	gossipCfg.MsgCodec = codec
 //
-//	// scriptling side (swap before stdlib.RegisterAll)
-//	stdlib.SetDefaultMsgpackCodec(codec)
+//	// scriptling side
+//	p.RegisterLibrary(stdlib.NewMsgpackLibrary(codec))
 type MsgpackCodec interface {
 	Name() string
 	Marshal(v interface{}) ([]byte, error)
 	Unmarshal(data []byte, v interface{}) error
 }
 
-// VmihailencoMsgpackCodec is the default codec, backed by
-// github.com/vmihailenco/msgpack/v5. It is structurally identical to
-// gossip's codec.VmihailencoMsgpackCodec — either may be used in its place.
-type VmihailencoMsgpackCodec struct{}
-
-// Name returns the codec identifier.
-func (VmihailencoMsgpackCodec) Name() string { return "vmihailenco-msgpack" }
-
-// Marshal encodes a Go value to MessagePack bytes.
-func (VmihailencoMsgpackCodec) Marshal(v interface{}) ([]byte, error) { return msgpack.Marshal(v) }
-
-// Unmarshal decodes MessagePack bytes into a Go value.
-func (VmihailencoMsgpackCodec) Unmarshal(data []byte, v interface{}) error {
-	return msgpack.Unmarshal(data, v)
-}
-
 // newMsgpackLibraryBuiltin returns a builtin set bound to the given codec.
 // Each builtin closes over the codec so a library and its codec are
 // inseparable after construction.
-func newMsgpackLibraryBuiltin(codec MsgpackCodec) map[string]*object.Builtin {
-	if codec == nil {
-		codec = VmihailencoMsgpackCodec{}
+func newMsgpackLibraryBuiltin(c MsgpackCodec) map[string]*object.Builtin {
+	if c == nil {
+		c = shamaton.New()
 	}
 
 	pack := func(obj object.Object) object.Object {
 		goVal := conversion.ToGo(obj)
-		out, err := codec.Marshal(goVal)
+		out, err := c.Marshal(goVal)
 		if err != nil {
 			return errors.NewError("msgpack serialize error: %s", err.Error())
 		}
@@ -73,7 +57,7 @@ func newMsgpackLibraryBuiltin(codec MsgpackCodec) map[string]*object.Builtin {
 
 	unpack := func(b *object.Bytes) object.Object {
 		var target interface{}
-		if err := codec.Unmarshal(b.BytesValue(), &target); err != nil {
+		if err := c.Unmarshal(b.BytesValue(), &target); err != nil {
 			return errors.NewError("msgpack parse error: %s", err.Error())
 		}
 		return conversion.FromGo(target)
@@ -97,51 +81,37 @@ func newMsgpackLibraryBuiltin(codec MsgpackCodec) map[string]*object.Builtin {
 		return unpack(b)
 	}
 
-	codecNameFn := func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-		if err := errors.ExactArgs(args, 0); err != nil {
-			return err
-		}
-		return object.NewString(codec.Name())
-	}
-
 	return map[string]*object.Builtin{
 		"packb":   {Fn: packFn, HelpText: packHelp},
 		"unpackb": {Fn: unpackFn, HelpText: unpackHelp},
 		// pack/unpack aliases — older Python msgpack naming.
 		"pack":   {Fn: packFn, HelpText: packHelp},
 		"unpack": {Fn: unpackFn, HelpText: unpackHelp},
-		// codec_name exposes which backing implementation is in use, so scripts
-		// can log it or branch on it (e.g. when interoperating with gossip).
-		"codec_name": {
-			Fn:       codecNameFn,
-			HelpText: `codec_name() - Return the name of the backing MessagePack codec`,
-		},
 	}
 }
 
 // NewMsgpackLibrary builds a msgpack library backed by the given codec.
-// Pass nil to use the default VmihailencoMsgpackCodec. The returned library
-// can be registered with a Scriptling instance via RegisterLibrary.
+// Pass nil to use the default (gossip's ShamatonMsgpackCodec — matching the
+// gossip DefaultConfig). The returned library can be registered with a
+// Scriptling instance via RegisterLibrary.
 //
-// To override the library used by stdlib.RegisterAll, either call
-// SetDefaultMsgpackCodec before RegisterAll, or skip RegisterAll's msgpack
-// registration and register the result of this function directly.
-func NewMsgpackLibrary(codec MsgpackCodec) *object.Library {
-	return object.NewLibrary(MsgpackLibraryName, newMsgpackLibraryBuiltin(codec), nil,
-		"MessagePack binary serialization library")
-}
-
-// MsgpackLibrary is the default library instance, backed by
-// VmihailencoMsgpackCodec. Embedders wanting a different codec should build
-// their own via NewMsgpackLibrary and register it directly:
+// Embedders wanting a different codec can build their own library directly:
 //
-//	p.RegisterLibrary(stdlib.NewMsgpackLibrary(myCodec))
+//	p.RegisterLibrary(stdlib.NewMsgpackLibrary(gossipvmihailenco.New()))
 //
 // or, to swap the default that stdlib.RegisterAll picks up, reassign before
 // calling RegisterAll:
 //
 //	stdlib.MsgpackLibrary = stdlib.NewMsgpackLibrary(myCodec)
-var MsgpackLibrary = NewMsgpackLibrary(VmihailencoMsgpackCodec{})
+func NewMsgpackLibrary(c MsgpackCodec) *object.Library {
+	return object.NewLibrary(MsgpackLibraryName, newMsgpackLibraryBuiltin(c), nil,
+		"MessagePack binary serialization library")
+}
+
+// MsgpackLibrary is the default library instance, backed by the same codec
+// as gossip's DefaultConfig (shamaton), so a fresh Scriptling instance and a
+// fresh gossip cluster agree on the wire format without any explicit wiring.
+var MsgpackLibrary = NewMsgpackLibrary(shamaton.New())
 
 const packHelp = `packb(obj) - Serialize a Scriptling value to MessagePack bytes
 

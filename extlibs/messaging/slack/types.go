@@ -13,9 +13,9 @@ type rawUpdate struct {
 	Text          string
 	MessageTS     string // Slack message timestamp — used as message ID
 	IsCallback    bool
-	CallbackID    string   // interaction payload action_id
-	CallbackToken string   // response_url or trigger_id
-	CallbackData  string   // action value
+	CallbackID    string // interaction payload action_id
+	CallbackToken string // response_url or trigger_id
+	CallbackData  string // action value
 	File          *fileInfo
 }
 

@@ -114,7 +114,7 @@ type Options struct {
 //	}
 func Lint(source string, opts *Options) *Result {
 	result := &Result{
-		Errors:      []LintError{},
+		Errors:       []LintError{},
 		FilesChecked: 1,
 	}
 
@@ -208,9 +208,9 @@ func LintFile(filename string) (*Result, error) {
 //	    result.FilesChecked, len(result.Errors))
 func LintFiles(filenames []string) (*Result, error) {
 	result := &Result{
-		Errors:      []LintError{},
+		Errors:       []LintError{},
 		FilesChecked: 0,
-		HasErrors:   false,
+		HasErrors:    false,
 	}
 
 	var readErrors []error

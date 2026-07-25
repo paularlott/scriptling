@@ -201,7 +201,7 @@ func (s *Store) Remember(content, memType string, importance float64) (*Memory, 
 
 	if bestID != "" && bestScore >= s.cfg.similarityHighThreshold {
 		// Near-exact duplicate - update in place, no new memory.
-			s.log.Debug("pre-flight merge", "score", bestScore, "existing", sanitiseLog(bestID))
+		s.log.Debug("pre-flight merge", "score", bestScore, "existing", sanitiseLog(bestID))
 		updated := s.updateExistingByID(bestID, content, importance)
 		if updated != nil {
 			return updated, nil
@@ -550,8 +550,8 @@ func (s *Store) prune() int {
 // memData is a compact struct for deduplication (avoids holding full Memory objects).
 type memData struct {
 	id, content, memType string
-	importance            float64
-	minHash               []uint32
+	importance           float64
+	minHash              []uint32
 }
 
 // deduplicateSimilar scans all memories for similar pairs and merges them.

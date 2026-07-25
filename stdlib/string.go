@@ -17,7 +17,7 @@ const (
 	printable      = digits + asciiLetters + punctuation + whitespace
 )
 
-var StringLibrary = object.NewLibrary(StringLibraryName, 
+var StringLibrary = object.NewLibrary(StringLibraryName,
 	nil, // No functions, only constants
 	map[string]object.Object{
 		"ascii_letters":   object.NewString(asciiLetters),

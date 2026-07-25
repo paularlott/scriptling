@@ -751,7 +751,7 @@ func TestMathLog1p(t *testing.T) {
 		t.Errorf("log1p(0) = %v, want 0.0", result)
 	}
 
-	result = fn.Fn(context.Background(), object.NewKwargs(nil), object.NewFloat(math.E - 1))
+	result = fn.Fn(context.Background(), object.NewKwargs(nil), object.NewFloat(math.E-1))
 	if f, ok := result.(*object.Float); !ok || math.Abs(f.FloatValue()-1.0) > 1e-10 {
 		t.Errorf("log1p(e-1) = %v, want 1.0", result)
 	}

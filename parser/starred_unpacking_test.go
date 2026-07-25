@@ -11,7 +11,7 @@ func TestStarredUnpackingAfterStatement(t *testing.T) {
 *b, c = [2, 3]`
 
 	l := lexer.New(input)
-	
+
 	// Print all tokens
 	t.Log("Tokens:")
 	for {
@@ -21,7 +21,7 @@ func TestStarredUnpackingAfterStatement(t *testing.T) {
 			break
 		}
 	}
-	
+
 	// Re-create lexer for parsing
 	l = lexer.New(input)
 	p := New(l)

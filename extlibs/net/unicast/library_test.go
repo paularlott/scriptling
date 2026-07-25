@@ -1,6 +1,7 @@
 package unicast
 
 import (
+	"bytes"
 	"io"
 	"testing"
 
@@ -29,14 +30,14 @@ sc = server.accept(timeout=5)
 conn.send("hello")
 msg = sc.receive(timeout=5)
 
-sc.send(msg["data"] + " world")
+sc.send(msg["data"].decode() + " world")
 reply = conn.receive(timeout=5)
 
 conn.close()
 sc.close()
 server.close()
 
-reply["data"]
+reply["data"].decode()
 `
 	result, err := p.Eval(script)
 	if err != nil {
@@ -108,7 +109,7 @@ reply = conn.receive(timeout=5)
 conn.close()
 server.close()
 
-reply["data"]
+reply["data"].decode()
 `
 	result, err := p.Eval(script)
 	if err != nil {
@@ -139,7 +140,7 @@ msg = server.receive(timeout=5)
 conn.close()
 server.close()
 
-[type(msg) == "DICT", "data" in msg, "source" in msg, msg["data"] == "check"]
+[type(msg) == "DICT", "data" in msg, "source" in msg, msg["data"].decode() == "check"]
 `
 	result, err := p.Eval(script)
 	if err != nil {
@@ -258,7 +259,7 @@ conn.close()
 sc.close()
 server.close()
 
-raw["data"]
+raw["data"].decode()
 `
 	result, err := p.Eval(script)
 	if err != nil {
@@ -270,6 +271,47 @@ raw["data"]
 	}
 	if str.StringValue() == "" {
 		t.Error("expected non-empty JSON string")
+	}
+}
+
+// TestUnicastUDPBytesRoundTrip verifies that a Bytes value sent over a UDP
+// socket arrives byte-for-byte identical on the receiving side. This is the
+// headline interop test for binary protocols (msgpack, protobuf, etc.) — the
+// previous behaviour base64-encoded Bytes on send, corrupting them.
+func TestUnicastUDPBytesRoundTrip(t *testing.T) {
+	p := newScriptling()
+
+	// Use bytes that would corrupt under any UTF-8 string round-trip:
+	// 0xFF is not valid UTF-8 on its own; 0x00 truncates C strings.
+	script := `
+import scriptling.net.unicast as uc
+
+server = uc.listen("127.0.0.1", 0, protocol="udp")
+port = int(server.addr.split(":")[1])
+
+client = uc.connect("127.0.0.1", port, protocol="udp", timeout=3)
+
+# Bytes containing values that would mangle under string coercion.
+payload = bytes([0xFF, 0x00, 0x80, 0x01, 0xFE])
+client.send(payload)
+got = server.receive(timeout=3)
+
+client.close()
+server.close()
+
+got["data"]
+`
+	result, err := p.Eval(script)
+	if err != nil {
+		t.Fatalf("script error: %v", err)
+	}
+	got, ok := result.(*object.Bytes)
+	if !ok {
+		t.Fatalf("expected Bytes, got %T: %v", result, result)
+	}
+	want := []byte{0xFF, 0x00, 0x80, 0x01, 0xFE}
+	if !bytes.Equal(got.BytesValue(), want) {
+		t.Errorf("bytes round-trip corrupted: got %x, want %x", got.BytesValue(), want)
 	}
 }
 

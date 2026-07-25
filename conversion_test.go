@@ -173,8 +173,8 @@ func TestRoundTrip(t *testing.T) {
 		{"string", "hello world"},
 		{"list", []interface{}{1, "two", true}},
 		{"dict", map[string]interface{}{
-			"key1": "value1",
-			"key2": 42,
+			"key1":   "value1",
+			"key2":   42,
 			"nested": []interface{}{"a", "b"},
 		}},
 	}

@@ -93,13 +93,13 @@ message being authenticated. Returns None.`,
 				if !ok {
 					return errors.NewTypeError("HMAC", args[0].Type().String())
 				}
-			state, ok := inst.NativeData.(*hmacState)
-			if !ok {
-				return errors.NewError("invalid hmac object")
-			}
-			return object.NewBytes(computeHmacDigest(state))
-		},
-		HelpText: `digest() - Return the raw HMAC as a Bytes value
+				state, ok := inst.NativeData.(*hmacState)
+				if !ok {
+					return errors.NewError("invalid hmac object")
+				}
+				return object.NewBytes(computeHmacDigest(state))
+			},
+			HelpText: `digest() - Return the raw HMAC as a Bytes value
 
 Returns the MAC of the data passed to the hmac so far, as a Bytes object.
 Use hexdigest() for a lowercase-hex string representation.`,

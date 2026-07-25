@@ -314,7 +314,7 @@ func TestLineNumbers(t *testing.T) {
 				typ  token.TokenType
 				line int
 			}{
-				{token.IDENT, 1},   // x
+				{token.IDENT, 1}, // x
 				{token.ASSIGN, 1},
 				{token.STRING, 1},  // the triple-quoted string token itself
 				{token.NEWLINE, 4}, // newline after closing """
@@ -333,7 +333,7 @@ func TestLineNumbers(t *testing.T) {
 				{token.IDENT, 1},  // a
 				{token.STRING, 1}, // triple-quoted string
 				{token.NEWLINE, 4},
-				{token.IDENT, 5},  // b
+				{token.IDENT, 5}, // b
 				{token.INT, 5},
 			},
 		},
@@ -347,7 +347,7 @@ func TestLineNumbers(t *testing.T) {
 				{token.IDENT, 1},  // a
 				{token.STRING, 1}, // raw triple-quoted string
 				{token.NEWLINE, 4},
-				{token.IDENT, 5},  // b
+				{token.IDENT, 5}, // b
 				{token.INT, 5},
 			},
 		},
@@ -359,11 +359,11 @@ func TestLineNumbers(t *testing.T) {
 				line int
 			}{
 				{token.DEF, 1},
-				{token.IDENT, 1},   // foo
-				{token.STRING, 2},  // triple-quoted string starts on line 2
-				{token.RETURN, 6},  // return is on line 6
-				{token.IDENT, 6},   // x in "return x" is on line 6
-				{token.IDENT, 8},   // y is on line 8
+				{token.IDENT, 1},  // foo
+				{token.STRING, 2}, // triple-quoted string starts on line 2
+				{token.RETURN, 6}, // return is on line 6
+				{token.IDENT, 6},  // x in "return x" is on line 6
+				{token.IDENT, 8},  // y is on line 8
 				{token.INT, 8},
 			},
 		},
@@ -380,7 +380,7 @@ func TestLineNumbers(t *testing.T) {
 				{token.IDENT, 4},  // b
 				{token.STRING, 4}, // second triple string
 				{token.NEWLINE, 7},
-				{token.IDENT, 8},  // c
+				{token.IDENT, 8}, // c
 				{token.INT, 8},
 			},
 		},

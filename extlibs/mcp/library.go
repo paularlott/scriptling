@@ -91,9 +91,9 @@ Example:
 			// An http:// or https:// target is an HTTP MCP server; anything else
 			// is treated as an executable path/command for a stdio MCP server.
 			if strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://") {
-			if kwargs.Has("args") || kwargs.Has("env") {
-				return nil, fmt.Errorf("mcp.Client: 'args' and 'env' are only valid for stdio servers, not URL %q", target)
-			}
+				if kwargs.Has("args") || kwargs.Has("env") {
+					return nil, fmt.Errorf("mcp.Client: 'args' and 'env' are only valid for stdio servers, not URL %q", target)
+				}
 
 				bearerToken := kwargs.MustGetString("bearer_token", "")
 				var authProvider mcplib.AuthProvider
@@ -105,42 +105,42 @@ Example:
 				return createClientInstance(client), nil
 			}
 
-		// stdio server: target is the command to launch.
-		if kwargs.Has("bearer_token") {
-			return nil, fmt.Errorf("mcp.Client: 'bearer_token' is only valid for HTTP servers, not command %q", target)
-		}
-
-		var args []string
-		if kwargs.Has("args") {
-			list, errObj := kwargs.GetList("args", nil)
-			if errObj != nil {
-				return nil, fmt.Errorf("mcp.Client: 'args' must be a list of strings")
+			// stdio server: target is the command to launch.
+			if kwargs.Has("bearer_token") {
+				return nil, fmt.Errorf("mcp.Client: 'bearer_token' is only valid for HTTP servers, not command %q", target)
 			}
-			for _, item := range list {
-				s, sErr := item.AsString()
-				if sErr != nil {
+
+			var args []string
+			if kwargs.Has("args") {
+				list, errObj := kwargs.GetList("args", nil)
+				if errObj != nil {
 					return nil, fmt.Errorf("mcp.Client: 'args' must be a list of strings")
 				}
-				args = append(args, s)
+				for _, item := range list {
+					s, sErr := item.AsString()
+					if sErr != nil {
+						return nil, fmt.Errorf("mcp.Client: 'args' must be a list of strings")
+					}
+					args = append(args, s)
+				}
 			}
-		}
 
-		var env []string
-		if kwargs.Has("env") {
-			list, errObj := kwargs.GetList("env", nil)
-			if errObj != nil {
-				return nil, fmt.Errorf("mcp.Client: 'env' must be a list of strings")
-			}
-			for _, item := range list {
-				s, sErr := item.AsString()
-				if sErr != nil {
+			var env []string
+			if kwargs.Has("env") {
+				list, errObj := kwargs.GetList("env", nil)
+				if errObj != nil {
 					return nil, fmt.Errorf("mcp.Client: 'env' must be a list of strings")
 				}
-				env = append(env, s)
+				for _, item := range list {
+					s, sErr := item.AsString()
+					if sErr != nil {
+						return nil, fmt.Errorf("mcp.Client: 'env' must be a list of strings")
+					}
+					env = append(env, s)
+				}
 			}
-		}
 
-		client, err := mcplib.NewStdioClient(target, args, namespace, mcplib.WithClientExtraEnv(env...))
+			client, err := mcplib.NewStdioClient(target, args, namespace, mcplib.WithClientExtraEnv(env...))
 			if err != nil {
 				return nil, fmt.Errorf("mcp.Client: failed to start stdio server %q: %w", target, err)
 			}

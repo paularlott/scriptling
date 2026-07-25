@@ -2409,11 +2409,11 @@ func isTruthy(obj object.Object) bool {
 			return v.IntValue() != 0
 		case *object.Float:
 			return v.FloatValue() != 0.0
-	case *object.String:
-		return v.StringValue() != ""
-	case *object.Bytes:
-		return v.Len() > 0
-	case *object.List:
+		case *object.String:
+			return v.StringValue() != ""
+		case *object.Bytes:
+			return v.Len() > 0
+		case *object.List:
 			return len(v.Elements) > 0
 		case *object.Tuple:
 			return len(v.Elements) > 0
@@ -4107,64 +4107,64 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 				}
 			}
 			goto forDone
-	case *object.String:
-		// Iterate over string runes lazily to avoid pre-allocating all characters
-		cc := newContextChecker(ctx)
-		for _, char := range o.StringValue() {
-			if err := cc.check(); err != nil {
-				return err
-			}
+		case *object.String:
+			// Iterate over string runes lazily to avoid pre-allocating all characters
+			cc := newContextChecker(ctx)
+			for _, char := range o.StringValue() {
+				if err := cc.check(); err != nil {
+					return err
+				}
 
-			element := object.NewString(string(char))
-			if err := setForVariables(fs.Variables, element, env); err != nil {
-				return errors.NewError("%s", err.Error())
-			}
+				element := object.NewString(string(char))
+				if err := setForVariables(fs.Variables, element, env); err != nil {
+					return errors.NewError("%s", err.Error())
+				}
 
-			result = evalBlockStatementWithContext(ctx, fs.Body, env)
-			if result != nil {
-				switch result.Type() {
-				case object.ERROR_OBJ, object.RETURN_OBJ:
-					return result
-				case object.BREAK_OBJ:
-					broke = true
-					result = NULL
-					goto forDone
-				case object.CONTINUE_OBJ:
-					result = NULL
-					continue
+				result = evalBlockStatementWithContext(ctx, fs.Body, env)
+				if result != nil {
+					switch result.Type() {
+					case object.ERROR_OBJ, object.RETURN_OBJ:
+						return result
+					case object.BREAK_OBJ:
+						broke = true
+						result = NULL
+						goto forDone
+					case object.CONTINUE_OBJ:
+						result = NULL
+						continue
+					}
 				}
 			}
-		}
-		goto forDone
-	case *object.Bytes:
-		// Iterate as integer byte values 0-255, matching Python's bytes iteration.
-		cc := newContextChecker(ctx)
-		for _, b := range o.BytesValue() {
-			if err := cc.check(); err != nil {
-				return err
-			}
+			goto forDone
+		case *object.Bytes:
+			// Iterate as integer byte values 0-255, matching Python's bytes iteration.
+			cc := newContextChecker(ctx)
+			for _, b := range o.BytesValue() {
+				if err := cc.check(); err != nil {
+					return err
+				}
 
-			element := object.NewInteger(int64(b))
-			if err := setForVariables(fs.Variables, element, env); err != nil {
-				return errors.NewError("%s", err.Error())
-			}
+				element := object.NewInteger(int64(b))
+				if err := setForVariables(fs.Variables, element, env); err != nil {
+					return errors.NewError("%s", err.Error())
+				}
 
-			result = evalBlockStatementWithContext(ctx, fs.Body, env)
-			if result != nil {
-				switch result.Type() {
-				case object.ERROR_OBJ, object.RETURN_OBJ:
-					return result
-				case object.BREAK_OBJ:
-					broke = true
-					result = NULL
-					goto forDone
-				case object.CONTINUE_OBJ:
-					result = NULL
-					continue
+				result = evalBlockStatementWithContext(ctx, fs.Body, env)
+				if result != nil {
+					switch result.Type() {
+					case object.ERROR_OBJ, object.RETURN_OBJ:
+						return result
+					case object.BREAK_OBJ:
+						broke = true
+						result = NULL
+						goto forDone
+					case object.CONTINUE_OBJ:
+						result = NULL
+						continue
+					}
 				}
 			}
-		}
-		goto forDone
+			goto forDone
 		default:
 			return errors.NewTypeError("iterable", iterable.Type().String())
 		}

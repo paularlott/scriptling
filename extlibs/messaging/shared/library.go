@@ -9,7 +9,6 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
-
 // ScriptSender is the interface the shared Scriptling library calls on the wrapped client instance.
 // It mirrors Sender but operates on the Scriptling object.Instance that scripts hold.
 type ScriptSender interface {

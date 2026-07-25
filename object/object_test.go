@@ -486,9 +486,9 @@ func TestInstanceBoundMethodCacheReuseAndInvalidate(t *testing.T) {
 	methodA := &Builtin{}
 	methodB := &Builtin{}
 	instance := NewInstanceWithFields(&Class{
-			Name:    "Worker",
-			Methods: map[string]Object{"work": methodA},
-		}, nil)
+		Name:    "Worker",
+		Methods: map[string]Object{"work": methodA},
+	}, nil)
 
 	bound1 := instance.GetBoundMethod("work", methodA)
 	bound2 := instance.GetBoundMethod("work", methodA)
@@ -1428,7 +1428,7 @@ func TestKwargsMustGetString(t *testing.T) {
 		{
 			name: "key exists",
 			kwargs: Kwargs{Kwargs: map[string]Object{
-		"foo": NewString("bar"),
+				"foo": NewString("bar"),
 			}},
 			key:      "foo",
 			default_: "",
@@ -1524,11 +1524,11 @@ func TestResetStore(t *testing.T) {
 
 func TestGetClientField(t *testing.T) {
 	instance := NewInstanceWithFields(nil, map[string]Object{
-			"_client": &ClientWrapper{
-				TypeName: "TestClient",
-				Client:   NewString("test"),
-			},
-		})
+		"_client": &ClientWrapper{
+			TypeName: "TestClient",
+			Client:   NewString("test"),
+		},
+	})
 
 	wrapper, ok := GetClientField(instance, "_client")
 	if !ok {

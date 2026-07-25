@@ -309,7 +309,9 @@ func callPluginFunction(ctx context.Context, client *Client, name string, kwargs
 		return pluginErr(err.Error())
 	}
 	var result Value
-	object.RunBlocking(ctx, func() { result, err = client.CallFunctionWithCallbacks(ctx, name, encodedArgs, encodedKwargs, callbacks) })
+	object.RunBlocking(ctx, func() {
+		result, err = client.CallFunctionWithCallbacks(ctx, name, encodedArgs, encodedKwargs, callbacks)
+	})
 	if err != nil {
 		return pluginErr(err.Error())
 	}
@@ -495,7 +497,9 @@ func initPluginObject(ctx context.Context, instance *object.Instance, client *Cl
 		return err
 	}
 	var ref *RemoteRef
-	object.RunBlocking(ctx, func() { ref, err = client.NewObjectWithCallbacks(ctx, className, encodedArgs, encodedKwargs, callbacks) })
+	object.RunBlocking(ctx, func() {
+		ref, err = client.NewObjectWithCallbacks(ctx, className, encodedArgs, encodedKwargs, callbacks)
+	})
 	if err != nil {
 		return err
 	}
@@ -524,7 +528,9 @@ func callPluginMethod(ctx context.Context, remote *remoteObject, name string, kw
 		return pluginErr(err.Error())
 	}
 	var result Value
-	object.RunBlocking(ctx, func() { result, err = remote.Client.CallMethodWithCallbacks(ctx, remote.ID, name, encodedArgs, encodedKwargs, callbacks) })
+	object.RunBlocking(ctx, func() {
+		result, err = remote.Client.CallMethodWithCallbacks(ctx, remote.ID, name, encodedArgs, encodedKwargs, callbacks)
+	})
 	if err != nil {
 		return pluginErr(err.Error())
 	}

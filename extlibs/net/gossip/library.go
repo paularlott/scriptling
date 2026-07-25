@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/paularlott/gossip"
-	"github.com/paularlott/gossip/codec"
-	"github.com/paularlott/gossip/compression"
-	"github.com/paularlott/gossip/encryption"
+	"github.com/paularlott/gossip/codec/shamaton"
+	"github.com/paularlott/gossip/compression/snappy"
+	"github.com/paularlott/gossip/encryption/aes"
 	"github.com/paularlott/gossip/leader"
 	"github.com/paularlott/logger"
 	"github.com/paularlott/scriptling/conversion"
@@ -378,7 +378,7 @@ func buildClusterObject(c *gossip.Cluster, clusterID string, eval evaliface.Eval
 
 Starts transport, health monitoring, and gossip routines.`,
 			},
-		"join": &object.Builtin{
+			"join": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if err := errors.MinArgs(args, 1); err != nil {
 						return err
@@ -416,8 +416,8 @@ Parameters:
 			},
 			"stop": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				c.Stop()
-				clusters.Lock()
+					c.Stop()
+					clusters.Lock()
 					delete(clusters.m, clusterID)
 					clusters.Unlock()
 					return &object.Null{}
@@ -711,13 +711,13 @@ The handler receives the same dict as handle() and must return the reply data.`,
 						return errors.NewError("node not found: %s", nodeIDStr)
 					}
 
-				payload := conversion.ToGo(args[2])
-				var response interface{}
-				var sendErr error
-				object.RunBlocking(ctx, func() { sendErr = c.SendToWithResponse(node, gossip.MessageType(msgType), payload, &response) })
-				if sendErr != nil {
-					return errors.NewError("send_request failed: %s", sendErr.Error())
-				}
+					payload := conversion.ToGo(args[2])
+					var response interface{}
+					var sendErr error
+					object.RunBlocking(ctx, func() { sendErr = c.SendToWithResponse(node, gossip.MessageType(msgType), payload, &response) })
+					if sendErr != nil {
+						return errors.NewError("send_request failed: %s", sendErr.Error())
+					}
 
 					if response == nil {
 						return &object.Null{}
@@ -1249,15 +1249,15 @@ func buildLibrary() *object.Library {
 				config.ApplicationVersion = appVersion
 				config.BearerToken = bearerToken
 				config.Logger = log.WithGroup("gossip")
-				config.MsgCodec = codec.NewVmihailencoMsgpackCodec()
+				config.MsgCodec = shamaton.New()
 
 				if enableCompression {
-					config.Compressor = compression.NewSnappyCompressor()
+					config.Compressor = snappy.New()
 				}
 
 				if encryptionKey != "" {
 					config.EncryptionKey = []byte(encryptionKey)
-					config.Cipher = encryption.NewAESEncryptor()
+					config.Cipher = aes.New()
 				}
 
 				if v := kwargs.Get("compress_min_size"); v != nil {
@@ -1394,12 +1394,12 @@ func buildLibrary() *object.Library {
 					return errors.NewError("failed to create cluster: %s", clusterErr.Error())
 				}
 
-			clusterID := cluster.LocalNode().ID.String()
-			clusters.Lock()
-			clusters.m[clusterID] = clusterEntry{cluster: cluster}
-			clusters.Unlock()
+				clusterID := cluster.LocalNode().ID.String()
+				clusters.Lock()
+				clusters.m[clusterID] = clusterEntry{cluster: cluster}
+				clusters.Unlock()
 
-			return buildClusterObject(cluster, clusterID, eval, env)
+				return buildClusterObject(cluster, clusterID, eval, env)
 			},
 			HelpText: `create(bind_addr="127.0.0.1:8000", node_id="", advertise_addr="", encryption_key="", tags=[], compression=False, bearer_token="", app_version="", transport="socket", ...) - Create a gossip cluster node
 
@@ -1460,8 +1460,8 @@ func Register(registrar interface{ RegisterLibrary(*object.Library) }, loggerIns
 		extlibs.RegisterCleanup(func() {
 			clusters.Lock()
 			for id, e := range clusters.m {
-			e.cluster.Stop()
-			delete(clusters.m, id)
+				e.cluster.Stop()
+				delete(clusters.m, id)
 			}
 			clusters.Unlock()
 		})

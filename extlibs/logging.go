@@ -22,16 +22,28 @@ func (l *loggerWrapper) Type() object.ObjectType { return object.INSTANCE_OBJ }
 func (l *loggerWrapper) Inspect() string { return "<logging.Logger>" }
 
 // Implementation of object.Object interface
-func (l *loggerWrapper) AsString() (string, object.Object)                 { return l.Inspect(), nil }
-func (l *loggerWrapper) AsInt() (int64, object.Object)                     { return 0, &object.Error{Message: object.ErrMustBeInteger} }
-func (l *loggerWrapper) AsFloat() (float64, object.Object)                 { return 0, &object.Error{Message: object.ErrMustBeNumber} }
-func (l *loggerWrapper) AsBool() (bool, object.Object)                     { return true, nil }
-func (l *loggerWrapper) AsList() ([]object.Object, object.Object)          { return nil, &object.Error{Message: object.ErrMustBeList} }
-func (l *loggerWrapper) AsDict() (map[string]object.Object, object.Object) { return nil, &object.Error{Message: object.ErrMustBeDict} }
+func (l *loggerWrapper) AsString() (string, object.Object) { return l.Inspect(), nil }
+func (l *loggerWrapper) AsInt() (int64, object.Object) {
+	return 0, &object.Error{Message: object.ErrMustBeInteger}
+}
+func (l *loggerWrapper) AsFloat() (float64, object.Object) {
+	return 0, &object.Error{Message: object.ErrMustBeNumber}
+}
+func (l *loggerWrapper) AsBool() (bool, object.Object) { return true, nil }
+func (l *loggerWrapper) AsList() ([]object.Object, object.Object) {
+	return nil, &object.Error{Message: object.ErrMustBeList}
+}
+func (l *loggerWrapper) AsDict() (map[string]object.Object, object.Object) {
+	return nil, &object.Error{Message: object.ErrMustBeDict}
+}
 
 func (l *loggerWrapper) CoerceString() (string, object.Object) { return l.Inspect(), nil }
-func (l *loggerWrapper) CoerceInt() (int64, object.Object)     { return 0, &object.Error{Message: object.ErrMustBeInteger} }
-func (l *loggerWrapper) CoerceFloat() (float64, object.Object) { return 0, &object.Error{Message: object.ErrMustBeNumber} }
+func (l *loggerWrapper) CoerceInt() (int64, object.Object) {
+	return 0, &object.Error{Message: object.ErrMustBeInteger}
+}
+func (l *loggerWrapper) CoerceFloat() (float64, object.Object) {
+	return 0, &object.Error{Message: object.ErrMustBeNumber}
+}
 
 // CallMethod handles method calls on logger objects
 func (l *loggerWrapper) CallMethod(method string, args ...object.Object) object.Object {
@@ -96,7 +108,7 @@ func RegisterLoggingLibraryDefault(registrar interface{ RegisterLibrary(*object.
 
 // createLoggingLibrary creates a logging library instance with the given logger
 func createLoggingLibrary(defaultLogger logger.Logger) *object.Library {
-	return object.NewLibrary(LoggingLibraryName, 
+	return object.NewLibrary(LoggingLibraryName,
 		map[string]*object.Builtin{
 			"getLogger": {
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -119,49 +131,49 @@ func createLoggingLibrary(defaultLogger logger.Logger) *object.Library {
 
 					// Wrap as Python object
 					return object.NewInstanceWithFields(&object.Class{
-							Name: "Logger",
-							Methods: map[string]object.Object{
-								"debug": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-									// Skip the first arg (self) when it's a method call
-									if len(args) > 0 {
-										return wrapper.CallMethod("debug", args[1:]...)
-									}
-									return wrapper.CallMethod("debug")
-								}},
-								"info": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-									if len(args) > 0 {
-										return wrapper.CallMethod("info", args[1:]...)
-									}
-									return wrapper.CallMethod("info")
-								}},
-								"warning": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-									if len(args) > 0 {
-										return wrapper.CallMethod("warning", args[1:]...)
-									}
-									return wrapper.CallMethod("warning")
-								}},
-								"warn": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-									if len(args) > 0 {
-										return wrapper.CallMethod("warn", args[1:]...)
-									}
-									return wrapper.CallMethod("warn")
-								}},
-								"error": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-									if len(args) > 0 {
-										return wrapper.CallMethod("error", args[1:]...)
-									}
-									return wrapper.CallMethod("error")
-								}},
-								"critical": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-									if len(args) > 0 {
-										return wrapper.CallMethod("critical", args[1:]...)
-									}
-									return wrapper.CallMethod("critical")
-								}},
-							},
-						}, map[string]object.Object{
-							"_internal": wrapper,
-						})
+						Name: "Logger",
+						Methods: map[string]object.Object{
+							"debug": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+								// Skip the first arg (self) when it's a method call
+								if len(args) > 0 {
+									return wrapper.CallMethod("debug", args[1:]...)
+								}
+								return wrapper.CallMethod("debug")
+							}},
+							"info": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+								if len(args) > 0 {
+									return wrapper.CallMethod("info", args[1:]...)
+								}
+								return wrapper.CallMethod("info")
+							}},
+							"warning": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+								if len(args) > 0 {
+									return wrapper.CallMethod("warning", args[1:]...)
+								}
+								return wrapper.CallMethod("warning")
+							}},
+							"warn": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+								if len(args) > 0 {
+									return wrapper.CallMethod("warn", args[1:]...)
+								}
+								return wrapper.CallMethod("warn")
+							}},
+							"error": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+								if len(args) > 0 {
+									return wrapper.CallMethod("error", args[1:]...)
+								}
+								return wrapper.CallMethod("error")
+							}},
+							"critical": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+								if len(args) > 0 {
+									return wrapper.CallMethod("critical", args[1:]...)
+								}
+								return wrapper.CallMethod("critical")
+							}},
+						},
+					}, map[string]object.Object{
+						"_internal": wrapper,
+					})
 				},
 			},
 			"debug": {

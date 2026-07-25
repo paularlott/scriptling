@@ -44,16 +44,16 @@ var (
 // in a ClientWrapper and stored on the Instance. Methods whose first parameter
 // matches the constructor's return type receive the unwrapped struct directly.
 type ClassBuilder struct {
-	name          string
-	baseClass     *Class
-	methods       map[string]*Builtin
-	properties    map[string]*Builtin
-	setters       map[string]*Builtin
-	statics       map[string]*Builtin
-	env           *Environment
-	receiverType  reflect.Type
-	constructor   *Builtin
-	constructorFn reflect.Value
+	name           string
+	baseClass      *Class
+	methods        map[string]*Builtin
+	properties     map[string]*Builtin
+	setters        map[string]*Builtin
+	statics        map[string]*Builtin
+	env            *Environment
+	receiverType   reflect.Type
+	constructor    *Builtin
+	constructorFn  reflect.Value
 	constructorSig *FunctionSignature
 }
 
@@ -849,17 +849,17 @@ func analyzeClassMethodSignature(fnType reflect.Type, receiverType reflect.Type)
 	returnIsError := numOut == 2 && fnType.Out(1).Implements(errorType)
 
 	sig := &FunctionSignature{
-		numIn:          numIn,
-		numOut:         numOut,
-		isVariadic:     isVariadic,
-		variadicIndex:  variadicIndex,
-		hasContext:     hasContext,
-		hasKwargs:      hasKwargs,
-		paramOffset:    paramOffset,
-		maxPosArgs:     maxPosArgs,
-		paramTypes:     paramTypes,
-		returnIsError:  returnIsError,
-		typedReceiver:  typedReceiver,
+		numIn:         numIn,
+		numOut:        numOut,
+		isVariadic:    isVariadic,
+		variadicIndex: variadicIndex,
+		hasContext:    hasContext,
+		hasKwargs:     hasKwargs,
+		paramOffset:   paramOffset,
+		maxPosArgs:    maxPosArgs,
+		paramTypes:    paramTypes,
+		returnIsError: returnIsError,
+		typedReceiver: typedReceiver,
 	}
 
 	signatureCache.Store(fnType, sig)

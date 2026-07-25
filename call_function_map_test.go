@@ -1,22 +1,22 @@
 package scriptling
 
 import (
-"context"
-"testing"
+	"context"
+	"testing"
 
-"github.com/paularlott/scriptling/object"
+	"github.com/paularlott/scriptling/object"
 )
 
 // TestCallFunctionWithMapAsArgument tests that maps passed as arguments
 // are correctly passed as dicts to the function, not treated as kwargs
 func TestCallFunctionWithMapAsArgument(t *testing.T) {
 	t.Run("map_as_single_argument", func(t *testing.T) {
-p := New()
+		p := New()
 
 		// Register a function that expects a dict as first positional argument
 		p.RegisterFunc("process_dict", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-if len(args) != 1 {
-return &object.Error{Message: "expected 1 argument"}
+			if len(args) != 1 {
+				return &object.Error{Message: "expected 1 argument"}
 			}
 			dict, err := args[0].AsDict()
 			if err != nil {
@@ -48,12 +48,12 @@ return &object.Error{Message: "expected 1 argument"}
 	})
 
 	t.Run("map_as_last_argument", func(t *testing.T) {
-p := New()
+		p := New()
 
 		// Register a function that expects a string and a dict
 		p.RegisterFunc("process_with_dict", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-if len(args) != 2 {
-return &object.Error{Message: "expected 2 arguments"}
+			if len(args) != 2 {
+				return &object.Error{Message: "expected 2 arguments"}
 			}
 			prefix, err := args[0].AsString()
 			if err != nil {
@@ -90,12 +90,12 @@ return &object.Error{Message: "expected 2 arguments"}
 	})
 
 	t.Run("map_as_middle_argument", func(t *testing.T) {
-p := New()
+		p := New()
 
 		// Register a function that expects string, dict, int
 		p.RegisterFunc("process_multi", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-if len(args) != 3 {
-return &object.Error{Message: "expected 3 arguments"}
+			if len(args) != 3 {
+				return &object.Error{Message: "expected 3 arguments"}
 			}
 			prefix, err := args[0].AsString()
 			if err != nil {

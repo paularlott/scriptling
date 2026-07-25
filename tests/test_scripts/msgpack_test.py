@@ -7,10 +7,6 @@ import base64
 payload = msgpack.packb({"name": "alice", "id": 42})
 assert type(payload) == "BYTES", f"packb should return BYTES, got {type(payload)}"
 
-# codec_name exposes the backing implementation
-assert type(msgpack.codec_name()) == "STRING"
-assert msgpack.codec_name() == "vmihailenco-msgpack"
-
 decoded = msgpack.unpackb(payload)
 assert decoded["name"] == "alice"
 assert decoded["id"] == 42

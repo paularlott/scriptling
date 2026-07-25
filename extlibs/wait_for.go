@@ -326,17 +326,17 @@ Returns:
 						return errors.NewError("http request error: %s", httpErr.Error())
 					}
 
-				var resp *http.Response
-				object.RunBlocking(ctx, func() { resp, httpErr = client.Do(req) })
-				if httpErr == nil {
-					statusMatch := int64(resp.StatusCode) == expectedStatus
-					resp.Body.Close()
-					if statusMatch {
-						return object.NewBoolean(true)
+					var resp *http.Response
+					object.RunBlocking(ctx, func() { resp, httpErr = client.Do(req) })
+					if httpErr == nil {
+						statusMatch := int64(resp.StatusCode) == expectedStatus
+						resp.Body.Close()
+						if statusMatch {
+							return object.NewBoolean(true)
+						}
 					}
-				}
 
-				if !waitForNextPoll(ctx, timer, pollInterval) {
+					if !waitForNextPoll(ctx, timer, pollInterval) {
 						return object.NewBoolean(false)
 					}
 				}
@@ -346,15 +346,15 @@ Returns:
 				if httpErr != nil {
 					return object.NewBoolean(false)
 				}
-			var resp *http.Response
-			object.RunBlocking(ctx, func() { resp, httpErr = client.Do(req) })
-			if httpErr == nil {
-				statusMatch := int64(resp.StatusCode) == expectedStatus
-				resp.Body.Close()
-				if statusMatch {
-					return object.NewBoolean(true)
+				var resp *http.Response
+				object.RunBlocking(ctx, func() { resp, httpErr = client.Do(req) })
+				if httpErr == nil {
+					statusMatch := int64(resp.StatusCode) == expectedStatus
+					resp.Body.Close()
+					if statusMatch {
+						return object.NewBoolean(true)
+					}
 				}
-			}
 				return object.NewBoolean(false)
 			},
 			HelpText: `http(url, timeout=30, poll_rate=1, status_code=200) - Wait for HTTP endpoint

@@ -200,11 +200,11 @@ var WebSocketLibrary = object.NewLibrary(WebSocketLibraryName, map[string]*objec
 								data = []byte(strVal)
 							}
 
-						var sendErr error
-						object.RunBlocking(ctx, func() { sendErr = wsConn.WriteMessage(msgType, data) })
-						if sendErr != nil {
-							return errors.NewError("send failed: %s", sendErr.Error())
-						}
+							var sendErr error
+							object.RunBlocking(ctx, func() { sendErr = wsConn.WriteMessage(msgType, data) })
+							if sendErr != nil {
+								return errors.NewError("send failed: %s", sendErr.Error())
+							}
 							return &object.Null{}
 						},
 						HelpText: `send(message) - Send a text message
@@ -234,11 +234,11 @@ Parameters:
 								return errors.NewError("send_binary requires a list of bytes")
 							}
 
-						var sendErr error
-						object.RunBlocking(ctx, func() { sendErr = wsConn.WriteMessage(websocket.BinaryMessage, data) })
-						if sendErr != nil {
-							return errors.NewError("send_binary failed: %s", sendErr.Error())
-						}
+							var sendErr error
+							object.RunBlocking(ctx, func() { sendErr = wsConn.WriteMessage(websocket.BinaryMessage, data) })
+							if sendErr != nil {
+								return errors.NewError("send_binary failed: %s", sendErr.Error())
+							}
 							return &object.Null{}
 						},
 						HelpText: `send_binary(data) - Send binary data

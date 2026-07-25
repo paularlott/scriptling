@@ -212,7 +212,7 @@ result
 
 func TestScriptLibraryWithStandardLibrary(t *testing.T) {
 	p := New()
-	p.RegisterLibrary( stdlib.JSONLibrary)
+	p.RegisterLibrary(stdlib.JSONLibrary)
 
 	// Register a library that uses a standard library
 	err := p.RegisterScriptLibrary("jsonutils", `

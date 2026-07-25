@@ -247,7 +247,7 @@ type zipOpenFile struct {
 
 func (f *zipOpenFile) Stat() (fs.FileInfo, error) { return f.info, nil }
 func (f *zipOpenFile) Read(p []byte) (int, error) { return f.rc.Read(p) }
-func (f *zipOpenFile) Close() error                { return f.rc.Close() }
+func (f *zipOpenFile) Close() error               { return f.rc.Close() }
 
 // dirHandle is a minimal fs.File for synthesized directories.
 // Implements ReadDir so fstest and fs.WalkDir work.
@@ -259,8 +259,8 @@ type dirHandle struct {
 }
 
 func (d *dirHandle) Stat() (fs.FileInfo, error) { return &dirInfo{name: path.Base(d.name)}, nil }
-func (d *dirHandle) Close() error                { return nil }
-func (d *dirHandle) Read([]byte) (int, error)    { return 0, errors.New("is a directory") }
+func (d *dirHandle) Close() error               { return nil }
+func (d *dirHandle) Read([]byte) (int, error)   { return 0, errors.New("is a directory") }
 
 func (d *dirHandle) ReadDir(count int) ([]fs.DirEntry, error) {
 	// fstest.TestFS and fs.WalkDir may call ReadDir on a directory handle.
@@ -277,19 +277,19 @@ func (d *dirHandle) ReadDir(count int) ([]fs.DirEntry, error) {
 type dirInfo struct{ name string }
 
 func (i *dirInfo) Name() string       { return i.name }
-func (i *dirInfo) Size() int64         { return 0 }
-func (i *dirInfo) IsDir() bool         { return true }
-func (i *dirInfo) ModTime() time.Time  { return time.Time{} }
-func (i *dirInfo) Sys() any            { return nil }
-func (i *dirInfo) Mode() fs.FileMode   { return fs.ModeDir | 0o555 }
+func (i *dirInfo) Size() int64        { return 0 }
+func (i *dirInfo) IsDir() bool        { return true }
+func (i *dirInfo) ModTime() time.Time { return time.Time{} }
+func (i *dirInfo) Sys() any           { return nil }
+func (i *dirInfo) Mode() fs.FileMode  { return fs.ModeDir | 0o555 }
 
 // dirEntry is an fs.DirEntry for a synthesized directory.
 type dirEntry struct{ name string }
 
 func (e *dirEntry) Name() string               { return e.name }
-func (e *dirEntry) IsDir() bool                 { return true }
-func (e *dirEntry) Type() fs.FileMode           { return fs.ModeDir }
-func (e *dirEntry) Info() (fs.FileInfo, error)  { return &dirInfo{name: e.name}, nil }
+func (e *dirEntry) IsDir() bool                { return true }
+func (e *dirEntry) Type() fs.FileMode          { return fs.ModeDir }
+func (e *dirEntry) Info() (fs.FileInfo, error) { return &dirInfo{name: e.name}, nil }
 
 // fileEntry is an fs.DirEntry wrapping a zip entry's FileInfo.
 type fileEntry struct {
@@ -298,6 +298,6 @@ type fileEntry struct {
 }
 
 func (e *fileEntry) Name() string               { return e.name }
-func (e *fileEntry) IsDir() bool                 { return false }
-func (e *fileEntry) Type() fs.FileMode           { return e.info.Mode().Type() }
-func (e *fileEntry) Info() (fs.FileInfo, error)  { return e.info, nil }
+func (e *fileEntry) IsDir() bool                { return false }
+func (e *fileEntry) Type() fs.FileMode          { return e.info.Mode().Type() }
+func (e *fileEntry) Info() (fs.FileInfo, error) { return e.info, nil }

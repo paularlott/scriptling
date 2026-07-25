@@ -6,7 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/paularlott/gossip/codec"
+	"github.com/paularlott/gossip/codec/hashicorp"
+	"github.com/paularlott/gossip/codec/shamaton"
+	"github.com/paularlott/gossip/codec/vmihailenco"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -15,9 +17,9 @@ import (
 // (it just round-trips through a sentinel byte) — the goal is to prove the
 // codec passed to NewMsgpackLibrary is the one actually used.
 type fakeCodec struct {
-	name        string
-	marshalCnt  int
-	reader      func([]byte) (interface{}, error)
+	name       string
+	marshalCnt int
+	reader     func([]byte) (interface{}, error)
 }
 
 func (f *fakeCodec) Name() string { return f.name }
@@ -49,8 +51,8 @@ func stringify(v interface{}) string {
 	return "non-string-input"
 }
 
-// TestMsgpackDefaultCodec verifies MsgpackLibrary uses VmihailencoMsgpackCodec
-// by default and produces real msgpack bytes.
+// TestMsgpackDefaultCodec verifies MsgpackLibrary uses ShamatonMsgpackCodec
+// by default (matching gossip's DefaultConfig) and produces real msgpack bytes.
 func TestMsgpackDefaultCodec(t *testing.T) {
 	lib := MsgpackLibrary
 	fn := lib.Functions()["packb"].Fn
@@ -68,12 +70,6 @@ func TestMsgpackDefaultCodec(t *testing.T) {
 	got := b.BytesValue()
 	if len(got) != 3 || got[0] != 0xa2 || got[1] != 'h' || got[2] != 'i' {
 		t.Fatalf("unexpected msgpack encoding %x", got)
-	}
-
-	// codec_name reports vmihailenco.
-	cn := lib.Functions()["codec_name"].Fn(context.Background(), object.NewKwargs(nil))
-	if s, _ := cn.AsString(); s != "vmihailenco-msgpack" {
-		t.Fatalf("codec_name = %q, want vmihailenco-msgpack", s)
 	}
 }
 
@@ -106,12 +102,6 @@ func TestMsgpackCustomCodec(t *testing.T) {
 	if codec.marshalCnt != 1 {
 		t.Fatalf("codec.Marshal called %d times, want 1", codec.marshalCnt)
 	}
-
-	// codec_name reports the custom name.
-	cn := lib.Functions()["codec_name"].Fn(context.Background(), object.NewKwargs(nil))
-	if s, _ := cn.AsString(); s != "fake-codec" {
-		t.Fatalf("codec_name = %q, want fake-codec", s)
-	}
 }
 
 // gossipShapedCodec is a minimal type whose method set matches
@@ -137,10 +127,11 @@ func TestMsgpackCodecInterfaceGossipCompatible(t *testing.T) {
 		t.Fatalf("structural-typing assignment failed: %v", c)
 	}
 
+	// Verify the codec is plumbed through by packing with it.
 	lib := NewMsgpackLibrary(c)
-	cn := lib.Functions()["codec_name"].Fn(context.Background(), object.NewKwargs(nil))
-	if s, _ := cn.AsString(); s != "gossip-shaped" {
-		t.Fatalf("gossip-shaped codec not plumbed through: got %q", s)
+	res := lib.Functions()["packb"].Fn(context.Background(), object.NewKwargs(nil), object.NewString("x"))
+	if _, ok := res.(*object.Bytes); !ok {
+		t.Fatalf("packb via gossip-shaped codec returned %T, want *Bytes", res)
 	}
 }
 
@@ -148,23 +139,97 @@ func TestMsgpackCodecInterfaceGossipCompatible(t *testing.T) {
 // request: prove that the *actual* gossip codec types satisfy scriptling's
 // MsgpackCodec interface via structural typing — no adapter, single shared
 // driver object usable by both gossip and scriptling's msgpack library.
+// TestMsgpackCodecMarshalErrorPropagates verifies that a codec whose Marshal
+// returns an error surfaces a Scriptling error (not a panic, not silent
+// corruption). This is the unhappy path that real codecs hit when given
+// unencodable values (channels, funcs, circular refs, etc).
+func TestMsgpackCodecMarshalErrorPropagates(t *testing.T) {
+	errCodec := &fakeCodec{
+		name: "always-errors-marshal",
+		reader: func([]byte) (interface{}, error) {
+			t.Fatalf("Unmarshal should not be called when Marshal fails")
+			return nil, nil
+		},
+	}
+	// Override Marshal on a per-test basis via a wrapper rather than expanding
+	// fakeCodec's API. Inline type keeps the test self-contained.
+	codec := errorOnMarshalCodec{MsgpackCodec: errCodec}
+
+	lib := NewMsgpackLibrary(codec)
+	res := lib.Functions()["packb"].Fn(
+		context.Background(), object.NewKwargs(nil), object.NewString("anything"))
+
+	if obj, ok := res.(*object.Error); !ok {
+		t.Fatalf("packb with failing codec returned %T (%v), want *object.Error", res, res)
+	} else if !strings.Contains(obj.Message, "induced marshal failure") {
+		t.Fatalf("error message lost; got %q", obj.Message)
+	}
+}
+
+// errorOnMarshalCodec wraps a MsgpackCodec and forces Marshal to fail. Used
+// only by TestMsgpackCodecMarshalErrorPropagates to verify error plumbing.
+type errorOnMarshalCodec struct{ MsgpackCodec }
+
+func (errorOnMarshalCodec) Name() string { return "always-errors-marshal" }
+func (errorOnMarshalCodec) Marshal(interface{}) ([]byte, error) {
+	return nil, errors.New("induced marshal failure")
+}
+func (c errorOnMarshalCodec) Unmarshal(data []byte, v interface{}) error {
+	return c.MsgpackCodec.Unmarshal(data, v)
+}
+
+// TestMsgpackCodecUnmarshalErrorPropagates verifies that a codec whose
+// Unmarshal returns an error surfaces a Scriptling error.
+func TestMsgpackCodecUnmarshalErrorPropagates(t *testing.T) {
+	codec := &fakeCodec{
+		name: "always-errors-unmarshal",
+		// leave reader nil so fakeCodec.Unmarshal returns its default error
+	}
+
+	lib := NewMsgpackLibrary(codec)
+	res := lib.Functions()["unpackb"].Fn(
+		context.Background(), object.NewKwargs(nil), object.NewBytes([]byte{0x01}))
+
+	if obj, ok := res.(*object.Error); !ok {
+		t.Fatalf("unpackb with failing codec returned %T (%v), want *object.Error", res, res)
+	} else if !strings.Contains(obj.Message, "no reader configured") {
+		t.Fatalf("error message lost; got %q", obj.Message)
+	}
+}
+
+// TestNewMsgpackLibraryNilCodec verifies the documented "pass nil → default"
+// behaviour of NewMsgpackLibrary, so embedders can rely on it.
+func TestNewMsgpackLibraryNilCodec(t *testing.T) {
+	lib := NewMsgpackLibrary(nil)
+	res := lib.Functions()["packb"].Fn(context.Background(), object.NewKwargs(nil), object.NewString("hi"))
+	b, ok := res.(*object.Bytes)
+	if !ok || b.Len() == 0 {
+		t.Fatalf("NewMsgpackLibrary(nil).packb returned %T, want non-empty *Bytes", res)
+	}
+}
+
 func TestMsgpackCodecAcceptsRealGossipCodecs(t *testing.T) {
 	// All three gossip msgpack codecs should satisfy our interface without
 	// any adapter — this is what lets an embedder pass one instance to both
-	// gossip.Config.MsgCodec and stdlib.NewMsgpackLibrary / SetDefaultMsgpackCodec.
-	var c MsgpackCodec = codec.NewVmihailencoMsgpackCodec()
+	// gossip.Config.MsgCodec and stdlib.NewMsgpackLibrary.
+	var c MsgpackCodec = vmihailenco.New()
 	if c.Name() != "vmihailenco-msgpack" {
 		t.Fatalf("gossip vmihailenco codec incompatible: got Name()=%q", c.Name())
 	}
 
-	c = codec.NewShamatonMsgpackCodec()
+	c = shamaton.New()
 	if c.Name() != "shamaton-msgpack" {
 		t.Fatalf("gossip shamaton codec incompatible: got Name()=%q", c.Name())
 	}
 
+	c = hashicorp.New()
+	if c.Name() != "hashicorp-msgpack" {
+		t.Fatalf("gossip hashicorp codec incompatible: got Name()=%q", c.Name())
+	}
+
 	// End-to-end: feed the real gossip vmihailenco codec through the library
 	// and verify it produces the same wire bytes as the default path.
-	lib := NewMsgpackLibrary(codec.NewVmihailencoMsgpackCodec())
+	lib := NewMsgpackLibrary(vmihailenco.New())
 	packFn := lib.Functions()["packb"].Fn
 	got := packFn(context.Background(), object.NewKwargs(nil), object.NewString("hi"))
 	b, ok := got.(*object.Bytes)
@@ -174,11 +239,5 @@ func TestMsgpackCodecAcceptsRealGossipCodecs(t *testing.T) {
 	// Real msgpack encoding of "hi" as a str: 0xa2, 'h', 'i'
 	if g := b.BytesValue(); len(g) != 3 || g[0] != 0xa2 || g[1] != 'h' || g[2] != 'i' {
 		t.Fatalf("gossip codec via scriptling produced unexpected bytes %x", g)
-	}
-
-	// codec_name reports the gossip codec's name through the scriptling library.
-	cn := lib.Functions()["codec_name"].Fn(context.Background(), object.NewKwargs(nil))
-	if s, _ := cn.AsString(); s != "vmihailenco-msgpack" {
-		t.Fatalf("codec_name via gossip codec = %q, want vmihailenco-msgpack", s)
 	}
 }

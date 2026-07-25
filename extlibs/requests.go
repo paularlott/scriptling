@@ -29,7 +29,9 @@ var ResponseClass = &object.Class{
 	Methods: map[string]object.Object{
 		"json": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if err := errors.ExactArgs(args, 1); err != nil { return err }
+				if err := errors.ExactArgs(args, 1); err != nil {
+					return err
+				}
 				if instance, ok := args[0].(*object.Instance); ok {
 					if body, err := instance.Field("body").AsString(); err == nil {
 						return conversion.MustParseJSON(body)
@@ -41,7 +43,9 @@ var ResponseClass = &object.Class{
 		},
 		"raise_for_status": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if err := errors.ExactArgs(args, 1); err != nil { return err }
+				if err := errors.ExactArgs(args, 1); err != nil {
+					return err
+				}
 				if instance, ok := args[0].(*object.Instance); ok {
 					if statusCode, err := instance.Field("status_code").AsInt(); err == nil {
 						if statusCode >= 400 {
@@ -73,12 +77,13 @@ func createResponseInstance(statusCode int, headers map[string]string, body []by
 	}
 
 	return object.NewInstanceWithFields(ResponseClass, map[string]object.Object{
-			"status_code": object.NewInteger(int64(statusCode)),
-			"text":        object.NewString(string(body)),
-			"headers":     headerDict,
-			"body":        object.NewString(string(body)),
-			"url":         object.NewString(url),
-		})
+		"status_code": object.NewInteger(int64(statusCode)),
+		"text":        object.NewString(string(body)),
+		"content":     object.NewBytes(body),
+		"headers":     headerDict,
+		"body":        object.NewString(string(body)), // deprecated alias of .text
+		"url":         object.NewString(url),
+	})
 }
 
 // Exception types for requests library
@@ -187,10 +192,16 @@ func extractRequestArgs(kwargs object.Kwargs, args []object.Object, hasData bool
 				return "", "", nil, errors.NewTypeError("STRING", v.Type().String())
 			}
 		} else if hasData && k == "data" {
+			// Accept String (UTF-8 encoded) or Bytes (raw). The body is
+			// threaded through the request pipeline as a Go string because Go
+			// strings are byte sequences — round-tripping bytes through
+			// string() is lossless for HTTP body transmission.
 			if s, err := v.AsString(); err == nil {
 				data = s
+			} else if b, ok := v.(*object.Bytes); ok {
+				data = string(b.BytesValue())
 			} else {
-				return "", "", nil, errors.NewTypeError("STRING", v.Type().String())
+				return "", "", nil, errors.NewTypeError("STRING or BYTES", v.Type().String())
 			}
 		} else if hasData && k == "json" {
 			// Handle json parameter - convert to JSON string
@@ -225,9 +236,13 @@ func extractRequestArgs(kwargs object.Kwargs, args []object.Object, hasData bool
 		if s, err := args[argIdx].AsString(); err == nil {
 			data = s
 			argIdx++
+		} else if b, ok := args[argIdx].(*object.Bytes); ok {
+			// Bytes input — preserve raw bytes via Go's byte-sequence strings.
+			data = string(b.BytesValue())
+			argIdx++
 		} else if args[argIdx].Type() != object.DICT_OBJ {
-			// Not a string and not a dict (options), error
-			return "", "", nil, errors.NewTypeError("STRING", args[argIdx].Type().String())
+			// Not a string, bytes, or dict (options), error
+			return "", "", nil, errors.NewTypeError("STRING or BYTES", args[argIdx].Type().String())
 		}
 		// If it's a dict, we'll process it as options below
 	}

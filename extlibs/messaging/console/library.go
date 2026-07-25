@@ -3,8 +3,8 @@ package console
 import (
 	"context"
 
-	scriptconsole "github.com/paularlott/scriptling/extlibs/console"
 	"github.com/paularlott/scriptling/errors"
+	scriptconsole "github.com/paularlott/scriptling/extlibs/console"
 	"github.com/paularlott/scriptling/extlibs/messaging/shared"
 	"github.com/paularlott/scriptling/object"
 )

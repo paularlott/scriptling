@@ -210,6 +210,24 @@ func ToGoError(obj object.Object) error {
 	return nil
 }
 
+// ToBytes accepts a Bytes or String input and returns the raw byte slice.
+// Used by libraries that historically took strings but now also accept Bytes
+// (file I/O, HTTP bodies, socket send, etc.). Returns a Scriptling *Error
+// object for any other type so callers can return it directly.
+//
+// Bytes are returned as-is (no copy — treat the result as read-only).
+// Strings are UTF-8 encoded into a fresh byte slice.
+func ToBytes(obj object.Object) ([]byte, object.Object) {
+	switch v := obj.(type) {
+	case *object.Bytes:
+		return v.BytesValue(), nil
+	case *object.String:
+		return []byte(v.StringValue()), nil
+	default:
+		return nil, errors.NewTypeError("BYTES or STRING", obj.Type().String())
+	}
+}
+
 // ToGoWithError converts a Scriptling object to a Go value, returning error for complex types
 func ToGoWithError(obj object.Object) (interface{}, *object.Error) {
 	switch v := obj.(type) {

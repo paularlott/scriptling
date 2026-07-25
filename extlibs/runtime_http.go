@@ -196,12 +196,12 @@ func CreateRequestInstance(method, path, body string, headers map[string]string,
 	}
 
 	return object.NewInstanceWithFields(RequestClass, map[string]object.Object{
-			"method":  object.NewString(method),
-			"path":    object.NewString(path),
-			"body":    object.NewString(body),
-			"headers": headerDict,
-			"query":   queryDict,
-		})
+		"method":  object.NewString(method),
+		"path":    object.NewString(path),
+		"body":    object.NewString(body),
+		"headers": headerDict,
+		"query":   queryDict,
+	})
 }
 
 // WebSocketClientClass is the class for WebSocket client objects passed to handlers
@@ -387,8 +387,8 @@ func getWSConnFromInstance(instance *object.Instance) *WebSocketServerConn {
 // CreateWebSocketClientInstance creates a new WebSocketClient instance
 func CreateWebSocketClientInstance(conn *WebSocketServerConn) *object.Instance {
 	return object.NewInstanceWithData(WebSocketClientClass, map[string]object.Object{
-			"remote_addr": object.NewString(conn.RemoteAddr()),
-		}, conn)
+		"remote_addr": object.NewString(conn.RemoteAddr()),
+	}, conn)
 }
 
 // resolveModuleRef derives the "module.function" string for a decorated
@@ -976,6 +976,6 @@ Imperative form:
 The handler receives a WebSocketClient object and runs for the connection lifetime.`,
 	},
 }, map[string]object.Object{
-	"Request":        RequestClass,
+	"Request":         RequestClass,
 	"WebSocketClient": WebSocketClientClass,
 }, "HTTP server route registration and response helpers")

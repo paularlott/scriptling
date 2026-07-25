@@ -1111,11 +1111,11 @@ func filterParallelKwargs(kwargs object.Kwargs) object.Kwargs {
 // createClientInstance creates a new scriptling Instance wrapping an AI client
 func createClientInstance(client ai.Client) *object.Instance {
 	return object.NewInstanceWithFields(GetOpenAIClientClass(), map[string]object.Object{
-			"_client": &object.ClientWrapper{
-				TypeName: "OpenAIClient",
-				Client:   &ClientInstance{client: client},
-			},
-		})
+		"_client": &object.ClientWrapper{
+			TypeName: "OpenAIClient",
+			Client:   &ClientInstance{client: client},
+		},
+	})
 }
 
 // response_stream method implementation
@@ -1170,11 +1170,11 @@ func responseStreamMethod(self *object.Instance, ctx context.Context, kwargs obj
 	object.RunBlocking(ctx, func() { stream = ci.client.StreamResponse(ctx, req) })
 
 	return object.NewInstanceWithFields(GetResponseStreamClass(), map[string]object.Object{
-			"_stream": &object.ClientWrapper{
-				TypeName: "ResponseStream",
-				Client:   &ResponseStreamInstance{stream: stream},
-			},
-		})
+		"_stream": &object.ClientWrapper{
+			TypeName: "ResponseStream",
+			Client:   &ResponseStreamInstance{stream: stream},
+		},
+	})
 }
 
 // ResponseStreamInstance wraps an AI response stream for use in scriptling
@@ -1497,7 +1497,7 @@ func retryStreamMethod(self *object.Instance, ctx context.Context) object.Object
 	}
 
 	return conversion.FromGo(map[string]any{
-		"attempts":      meta.Attempts,
+		"attempts":       meta.Attempts,
 		"rate_limit_hit": meta.RateLimitHit,
 		"total_backoff":  meta.TotalBackoff.Seconds(),
 	})
@@ -1749,9 +1749,9 @@ func completionStreamMethod(self *object.Instance, ctx context.Context, kwargs o
 
 	// Wrap stream in instance
 	return object.NewInstanceWithFields(GetChatStreamClass(), map[string]object.Object{
-			"_stream": &object.ClientWrapper{
-				TypeName: "ChatStream",
-				Client:   &ChatStreamInstance{stream: stream, cancel: finalCancel},
-			},
-		})
+		"_stream": &object.ClientWrapper{
+			TypeName: "ChatStream",
+			Client:   &ChatStreamInstance{stream: stream, cancel: finalCancel},
+		},
+	})
 }

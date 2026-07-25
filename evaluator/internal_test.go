@@ -151,20 +151,20 @@ func TestObjectsDeepEqual(t *testing.T) {
 		},
 		{
 			name: "equal dicts",
-			a:    object.NewStringDict(map[string]object.Object{
+			a: object.NewStringDict(map[string]object.Object{
 				"a": object.NewInteger(1),
 			}),
-			b:    object.NewStringDict(map[string]object.Object{
+			b: object.NewStringDict(map[string]object.Object{
 				"a": object.NewInteger(1),
 			}),
 			want: true,
 		},
 		{
 			name: "unequal dicts different keys",
-			a:    object.NewStringDict(map[string]object.Object{
+			a: object.NewStringDict(map[string]object.Object{
 				"a": object.NewInteger(1),
 			}),
-			b:    object.NewStringDict(map[string]object.Object{
+			b: object.NewStringDict(map[string]object.Object{
 				"b": object.NewInteger(2),
 			}),
 			want: false,
@@ -372,9 +372,9 @@ func TestEvalListSliceExpression(t *testing.T) {
 	}}
 
 	tests := []struct {
-		name     string
-		slice    *object.Slice
-		wantLen  int
+		name      string
+		slice     *object.Slice
+		wantLen   int
 		wantFirst int64
 	}{
 		{

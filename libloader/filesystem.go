@@ -14,10 +14,10 @@ import (
 //
 // The loader checks the folder structure first, then falls back to flat files.
 type FilesystemLoader struct {
-	baseDir      string
-	extension    string
-	followLinks  bool
-	description  string
+	baseDir     string
+	extension   string
+	followLinks bool
+	description string
 }
 
 // FilesystemOption configures a FilesystemLoader.
@@ -108,7 +108,7 @@ func (l *FilesystemLoader) resolvePaths(name string) []string {
 	// Priority 1: Folder structure (Python style)
 	// knot.groups -> baseDir/knot/groups.py
 	// knot.groups.sub -> baseDir/knot/groups/sub.py
-	folderPath := filepath.Join(l.baseDir, filepath.Join(parts...) + l.extension)
+	folderPath := filepath.Join(l.baseDir, filepath.Join(parts...)+l.extension)
 	paths = append(paths, folderPath)
 
 	// Priority 2: Package __init__.py (for single-part names)
@@ -122,7 +122,7 @@ func (l *FilesystemLoader) resolvePaths(name string) []string {
 	// Priority 3: Flat file (legacy support)
 	// knot.groups -> baseDir/knot.groups.py
 	if len(parts) > 1 {
-		flatPath := filepath.Join(l.baseDir, name + l.extension)
+		flatPath := filepath.Join(l.baseDir, name+l.extension)
 		if flatPath != folderPath && flatPath != initPath {
 			paths = append(paths, flatPath)
 		}

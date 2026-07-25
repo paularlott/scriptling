@@ -131,8 +131,8 @@ func TestPackBuildMissingMainScript(t *testing.T) {
 func TestPackBuildLibraryPack(t *testing.T) {
 	dir := t.TempDir()
 	files := map[string]string{
-		"manifest.toml":    "name=\"lib\"\nversion=\"1\"\nmain=\"demo.run\"\n",
-		"lib/demo.py":      "def run():\n    pass\n",
+		"manifest.toml":     "name=\"lib\"\nversion=\"1\"\nmain=\"demo.run\"\n",
+		"lib/demo.py":       "def run():\n    pass\n",
 		"docs/lib/index.md": "docs",
 	}
 	for name, content := range files {
@@ -187,9 +187,9 @@ func TestPackBuildMainScriptInSubfolder(t *testing.T) {
 		t.Fatal(err)
 	}
 	files := map[string]string{
-		"manifest.toml":     "name=\"sub\"\nversion=\"1\"\nmain=\"app/startup.py\"\nserve=[\"http\"]\n",
-		"app/startup.py":    "print('hello')\n",
-		"app/other.py":      "# not included (only main script under app/)\n",
+		"manifest.toml":  "name=\"sub\"\nversion=\"1\"\nmain=\"app/startup.py\"\nserve=[\"http\"]\n",
+		"app/startup.py": "print('hello')\n",
+		"app/other.py":   "# not included (only main script under app/)\n",
 	}
 	for name, content := range files {
 		p := filepath.Join(dir, filepath.FromSlash(name))

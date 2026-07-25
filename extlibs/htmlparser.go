@@ -51,9 +51,9 @@ var htmlParserMethods = map[string]object.Object{
 			convertCharrefs := true
 			if val, ok := kwargs.Kwargs["convert_charrefs"]; ok {
 				if boolVal, ok := val.(*object.Boolean); ok {
-				convertCharrefs = boolVal.BoolValue()
+					convertCharrefs = boolVal.BoolValue()
+				}
 			}
-		}
 			instance.SetField("convert_charrefs", object.NewBoolean(convertCharrefs))
 
 			return &object.Null{}
@@ -344,7 +344,7 @@ func parseHTML(ctx context.Context, instance *object.Instance, data string) obje
 						tag = strings.ToLower(tag)
 
 						// Store the last start tag text
-						instance.SetField("_lasttag", object.NewString(data[i : i+end+1]))
+						instance.SetField("_lasttag", object.NewString(data[i:i+end+1]))
 
 						// Convert attrs to list of tuples
 						attrsList := &object.List{Elements: make([]object.Object, len(attrs))}

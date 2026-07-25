@@ -33,7 +33,7 @@ results
 	l := lexer.New(input)
 	p := parser.New(l)
 	program := p.ParseProgram()
-	
+
 	if len(p.Errors()) > 0 {
 		t.Fatalf("Parser errors: %v", p.Errors())
 	}
@@ -97,7 +97,7 @@ result
 	l := lexer.New(input)
 	p := parser.New(l)
 	program := p.ParseProgram()
-	
+
 	if len(p.Errors()) > 0 {
 		t.Fatalf("Parser errors: %v", p.Errors())
 	}
@@ -149,7 +149,7 @@ results
 	l := lexer.New(input)
 	p := parser.New(l)
 	program := p.ParseProgram()
-	
+
 	if len(p.Errors()) > 0 {
 		t.Fatalf("Parser errors: %v", p.Errors())
 	}
@@ -170,7 +170,7 @@ results
 	// Both should produce the same result
 	str1, ok1 := list.Elements[0].(*object.String)
 	str2, ok2 := list.Elements[1].(*object.String)
-	
+
 	if !ok1 || !ok2 {
 		t.Fatalf("Expected strings, got %T and %T", list.Elements[0], list.Elements[1])
 	}

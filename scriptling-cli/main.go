@@ -354,14 +354,14 @@ func openBundles(sources []string, insecure bool, cacheDir string) (app *pack.Bu
 // bundleFlagConflicts captures the path/registration CLI flags that an app
 // bundle's manifest owns. Used by rejectBundleFlags.
 type bundleFlagConflicts struct {
-	File          string   // script file argument
-	LibPath       []string // -L
-	MCPTools      string
-	MCPResources  string
-	MCPPrompts    string
-	WebRoot       string
-	Code          string // -c
-	Interactive   bool
+	File         string   // script file argument
+	LibPath      []string // -L
+	MCPTools     string
+	MCPResources string
+	MCPPrompts   string
+	WebRoot      string
+	Code         string // -c
+	Interactive  bool
 }
 
 // rejectBundleFlags refuses path/registration flags that manifest.toml owns in

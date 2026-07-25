@@ -12,10 +12,10 @@ const (
 	ILLEGAL = "ILLEGAL"
 	EOF     = "EOF"
 
-	IDENT    = "IDENT"
-	INT      = "INT"
-	FLOAT    = "FLOAT"
-	STRING   = "STRING"
+	IDENT     = "IDENT"
+	INT       = "INT"
+	FLOAT     = "FLOAT"
+	STRING    = "STRING"
 	F_STRING  = "F_STRING"
 	RF_STRING = "RF_STRING"
 
