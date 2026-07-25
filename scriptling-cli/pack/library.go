@@ -12,16 +12,28 @@ import (
 
 const PackageLibraryName = "scriptling.package"
 
+// NewPackageLibrary builds the scriptling.package library bound to the given
+// loader. Exposed so embedders and tests can register it on a custom
+// registrar or inspect it directly.
+func NewPackageLibrary(loader *Loader) *object.Library {
+	funcs := buildPackageLibraryFuncs(loader)
+	return object.NewLibrary(PackageLibraryName, funcs, nil,
+		"Read-only access to files inside loaded packages")
+}
+
 // RegisterPackageLibrary registers the scriptling.package library on the given
-// Scriptling instance, providing read-only access to files inside loaded
-// packages (app bundles and library bundles). Every function takes the package
-// name (from manifest.toml) as its first argument.
+// Scriptling instance. Convenience wrapper around NewPackageLibrary.
 func RegisterPackageLibrary(p interface{ RegisterLibrary(*object.Library) }, loader *Loader) {
 	if loader == nil {
 		return
 	}
+	p.RegisterLibrary(NewPackageLibrary(loader))
+}
 
-	funcs := map[string]*object.Builtin{
+// buildPackageLibraryFuncs returns the function map for the scriptling.package
+// library, bound to the given loader.
+func buildPackageLibraryFuncs(loader *Loader) map[string]*object.Builtin {
+	return map[string]*object.Builtin{
 		"names": {
 			Fn: func(_ context.Context, _ object.Kwargs, _ ...object.Object) object.Object {
 				names := loader.BundleNames()
@@ -143,11 +155,49 @@ Parameters:
   path (str): File path relative to the package root
 
 Returns:
-  str: File contents as a string
+  str: File contents as a string. Use read_bytes() for binary files.
 
 Example:
   import scriptling.package as package
   spec = package.read_file("myapp", "data/spec.md")`,
+		},
+		"read_bytes": {
+			Fn: func(_ context.Context, _ object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.MinArgs(args, 2); err != nil {
+					return err
+				}
+				pkgName, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
+				filePath, err := args[1].AsString()
+				if err != nil {
+					return err
+				}
+				b := loader.BundleByName(pkgName)
+				if b == nil {
+					return errors.NewError("unknown package: %s", pkgName)
+				}
+				clean := path.Clean(strings.TrimPrefix(filePath, "/"))
+				data, readErr := fs.ReadFile(b.FS(), clean)
+				if readErr != nil {
+					return errors.NewError("file not found in package %s: %s", pkgName, clean)
+				}
+				return object.NewBytes(data)
+			},
+			HelpText: `read_bytes(name, path) - Read a file from a package as bytes
+
+Parameters:
+  name (str): Package name from manifest.toml
+  path (str): File path relative to the package root
+
+Returns:
+  bytes: File contents as a Bytes value.
+
+Example:
+  import scriptling.package as package
+  import msgpack
+  data = msgpack.unpackb(package.read_bytes("myapp", "data/payload.msgpack"))`,
 		},
 
 		"list": {
@@ -244,10 +294,6 @@ Example:
   py_files = package.glob("myapp", "**/*.py")`,
 		},
 	}
-
-	lib := object.NewLibrary(PackageLibraryName, funcs, nil,
-		"Read-only access to files inside loaded packages")
-	p.RegisterLibrary(lib)
 }
 
 // globMatch matches a glob pattern against a slash-separated path.

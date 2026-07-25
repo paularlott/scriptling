@@ -49,13 +49,13 @@ var ParseResultClass = &object.Class{
 // createParseResultInstance creates a new ParseResult instance
 func createParseResultInstance(scheme, netloc, path, params, query, fragment string) *object.Instance {
 	return object.NewInstanceWithFields(ParseResultClass, map[string]object.Object{
-			"scheme":   object.NewString(scheme),
-			"netloc":   object.NewString(netloc),
-			"path":     object.NewString(path),
-			"params":   object.NewString(params),
-			"query":    object.NewString(query),
-			"fragment": object.NewString(fragment),
-		})
+		"scheme":   object.NewString(scheme),
+		"netloc":   object.NewString(netloc),
+		"path":     object.NewString(path),
+		"params":   object.NewString(params),
+		"query":    object.NewString(query),
+		"fragment": object.NewString(fragment),
+	})
 }
 
 // URLParseLibrary implements Python's urllib.parse module
@@ -118,7 +118,9 @@ Like quote(), but also replaces spaces with plus signs.`,
 	},
 	"unquote": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 
 			str, err := args[0].AsString()
 			if err != nil {
@@ -137,7 +139,9 @@ Returns a URL-decoded version of the string.`,
 	},
 	"unquote_plus": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 
 			str, err := args[0].AsString()
 			if err != nil {
@@ -158,7 +162,9 @@ Like unquote(), but also replaces plus signs with spaces.`,
 	},
 	"urlparse": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 
 			str, err := args[0].AsString()
 			if err != nil {
@@ -190,7 +196,9 @@ Access components as attributes: result.scheme, result.netloc, etc. Use result.g
 	},
 	"urlunparse": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 
 			// Accept either dict, list/tuple, or ParseResult instance
 			switch arg := args[0].(type) {
@@ -308,7 +316,9 @@ Constructs a URL string from a 6-tuple or dict of URL components.`,
 	},
 	"urljoin": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 2); err != nil { return err }
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
+			}
 
 			base, err := args[0].AsString()
 			if err != nil {
@@ -339,7 +349,9 @@ Joins a base URL with a reference URL, resolving relative references.`,
 	},
 	"urlsplit": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 
 			str, err := args[0].AsString()
 			if err != nil {
@@ -378,7 +390,9 @@ Returns a 5-tuple: (scheme, netloc, path, query, fragment).`,
 	},
 	"urlunsplit": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 
 			elements, err := args[0].AsList()
 			if err != nil {

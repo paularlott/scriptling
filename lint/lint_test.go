@@ -311,7 +311,7 @@ func TestLintFile_DifferentFilenames(t *testing.T) {
 	for _, filename := range tests {
 		t.Run(filename, func(t *testing.T) {
 			tmpDir := t.TempDir()
-		 fullPath := filepath.Join(tmpDir, filename)
+			fullPath := filepath.Join(tmpDir, filename)
 
 			// Create parent directories if needed
 			dir := filepath.Dir(fullPath)
@@ -682,28 +682,28 @@ func TestResult_HasIssues(t *testing.T) {
 
 func TestParseParserError(t *testing.T) {
 	tests := []struct {
-		name          string
-		input         string
-		expectedLine  int
-		expectedMsg   string
+		name         string
+		input        string
+		expectedLine int
+		expectedMsg  string
 	}{
 		{
-			name:          "with line number",
-			input:         "line 5: expected token COLON",
-			expectedLine:  5,
-			expectedMsg:   "expected token COLON",
+			name:         "with line number",
+			input:        "line 5: expected token COLON",
+			expectedLine: 5,
+			expectedMsg:  "expected token COLON",
 		},
 		{
-			name:          "without line number",
-			input:         "unexpected token",
-			expectedLine:  1, // defaults to 1
-			expectedMsg:   "unexpected token",
+			name:         "without line number",
+			input:        "unexpected token",
+			expectedLine: 1, // defaults to 1
+			expectedMsg:  "unexpected token",
 		},
 		{
-			name:          "line 1",
-			input:         "line 1: some error",
-			expectedLine:  1,
-			expectedMsg:   "some error",
+			name:         "line 1",
+			input:        "line 1: some error",
+			expectedLine: 1,
+			expectedMsg:  "some error",
 		},
 	}
 

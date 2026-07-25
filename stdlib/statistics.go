@@ -12,7 +12,9 @@ import (
 var StatisticsLibrary = object.NewLibrary(StatisticsLibraryName, map[string]*object.Builtin{
 	"mean": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			values, err := extractNumbers(args[0])
 			if err != nil {
 				return err
@@ -39,7 +41,9 @@ Example:
 	},
 	"fmean": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			values, err := extractNumbers(args[0])
 			if err != nil {
 				return err
@@ -66,7 +70,9 @@ Example:
 	},
 	"geometric_mean": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			values, err := extractNumbers(args[0])
 			if err != nil {
 				return err
@@ -97,7 +103,9 @@ Example:
 	},
 	"harmonic_mean": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			values, err := extractNumbers(args[0])
 			if err != nil {
 				return err
@@ -127,7 +135,9 @@ Example:
 	},
 	"median": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			values, err := extractNumbers(args[0])
 			if err != nil {
 				return err
@@ -158,7 +168,9 @@ Example:
 	},
 	"mode": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			list, ok := args[0].(*object.List)
 			if !ok {
 				return errors.NewTypeError("LIST", args[0].Type().String())
@@ -199,7 +211,9 @@ Example:
 	},
 	"stdev": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			values, err := extractNumbers(args[0])
 			if err != nil {
 				return err
@@ -223,7 +237,9 @@ Example:
 	},
 	"pstdev": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			values, err := extractNumbers(args[0])
 			if err != nil {
 				return err
@@ -247,7 +263,9 @@ Example:
 	},
 	"variance": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			values, err := extractNumbers(args[0])
 			if err != nil {
 				return err
@@ -270,7 +288,9 @@ Example:
 	},
 	"pvariance": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			values, err := extractNumbers(args[0])
 			if err != nil {
 				return err

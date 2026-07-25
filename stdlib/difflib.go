@@ -22,7 +22,7 @@ const (
 )
 
 type opcode struct {
-	tag             opTag
+	tag            opTag
 	i1, i2, j1, j2 int
 }
 
@@ -54,7 +54,10 @@ func computeOpcodes(a, b []string) []opcode {
 	n, m := len(a), len(b)
 
 	// Walk the DP table backwards to collect raw edit steps
-	type step struct{ op opTag; ai, bi int }
+	type step struct {
+		op     opTag
+		ai, bi int
+	}
 	var steps []step
 	i, j := n, m
 	for i > 0 || j > 0 {

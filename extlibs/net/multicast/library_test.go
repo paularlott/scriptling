@@ -302,7 +302,7 @@ msg = listener.receive(timeout=3)
 sender.close()
 listener.close()
 
-msg["data"] if msg else ""
+msg["data"].decode() if msg else ""
 `)
 	if err != nil {
 		skipIfNoMulticastRoute(t, err)

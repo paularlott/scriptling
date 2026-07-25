@@ -432,7 +432,7 @@ var moduleBuiltins = map[string]*object.Builtin{
 			consoleW.submitCb = func(submitCtx context.Context, text string) {
 				if eval != nil {
 					eval.CallObjectFunction(submitCtx, fn,
-					[]object.Object{object.NewString(text)}, nil, env)
+						[]object.Object{object.NewString(text)}, nil, env)
 				}
 			}
 			consoleW.mu.Unlock()

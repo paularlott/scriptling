@@ -580,4 +580,3 @@ func safeIPow(base int64, exp int64) Expression {
 	}
 	return &IntegerLiteral{Value: result}
 }
-

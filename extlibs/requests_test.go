@@ -89,39 +89,39 @@ func findStr(s, sub string) bool {
 
 func TestBuildURLWithParams(t *testing.T) {
 	tests := []struct {
-		name     string
-		baseURL  string
-		params   map[string]string
+		name         string
+		baseURL      string
+		params       map[string]string
 		wantContains string
 	}{
 		{
-			name:     "no params",
-			baseURL:  "https://example.com/api",
-			params:   nil,
+			name:         "no params",
+			baseURL:      "https://example.com/api",
+			params:       nil,
 			wantContains: "https://example.com/api",
 		},
 		{
-			name:     "single param",
-			baseURL:  "https://example.com/api",
-			params:   map[string]string{"key": "value"},
+			name:         "single param",
+			baseURL:      "https://example.com/api",
+			params:       map[string]string{"key": "value"},
 			wantContains: "key=value",
 		},
 		{
-			name:     "multiple params",
-			baseURL:  "https://example.com/api",
-			params:   map[string]string{"name": "test", "count": "5"},
+			name:         "multiple params",
+			baseURL:      "https://example.com/api",
+			params:       map[string]string{"name": "test", "count": "5"},
 			wantContains: "name=test",
 		},
 		{
-			name:     "with existing query params",
-			baseURL:  "https://example.com/api?existing=1",
-			params:   map[string]string{"new": "2"},
+			name:         "with existing query params",
+			baseURL:      "https://example.com/api?existing=1",
+			params:       map[string]string{"new": "2"},
 			wantContains: "existing=1",
 		},
 		{
-			name:     "special characters in params",
-			baseURL:  "https://example.com/api",
-			params:   map[string]string{"city": "New York"},
+			name:         "special characters in params",
+			baseURL:      "https://example.com/api",
+			params:       map[string]string{"city": "New York"},
 			wantContains: "city=New+York",
 		},
 	}

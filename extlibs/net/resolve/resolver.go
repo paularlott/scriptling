@@ -24,7 +24,7 @@ type Resolver interface {
 // It is guarded by resolverMu because the servers call Register once per
 // request from many goroutines (setupScriptling runs per connection).
 var (
-	resolverMu    sync.RWMutex
+	resolverMu     sync.RWMutex
 	globalResolver Resolver
 )
 

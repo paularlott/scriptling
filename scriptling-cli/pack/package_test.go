@@ -568,9 +568,9 @@ func TestFilesystemBeforePack(t *testing.T) {
 
 func TestSplitHash(t *testing.T) {
 	tests := []struct {
-		input        string
-		wantSource   string
-		wantHash     string
+		input      string
+		wantSource string
+		wantHash   string
 	}{
 		{"file.zip", "file.zip", ""},
 		{"file.zip#sha256=abc123", "file.zip", "abc123"},

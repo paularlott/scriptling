@@ -101,7 +101,7 @@ func TestPathlibReadWriteBytes(t *testing.T) {
 	code := `import pathlib
 p = pathlib.Path("` + file + `")
 p.write_bytes("ABC")
-p.read_bytes() == "ABC"`
+p.read_bytes() == bytes("ABC")`
 	result, err := p.Eval(code)
 	if err != nil {
 		t.Fatalf("Eval failed: %v", err)

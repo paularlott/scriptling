@@ -155,7 +155,7 @@ result
 			l := lexer.New(tt.input)
 			p := parser.New(l)
 			program := p.ParseProgram()
-			
+
 			if len(p.Errors()) != 0 {
 				t.Fatalf("parser errors: %v", p.Errors())
 			}

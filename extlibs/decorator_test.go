@@ -227,10 +227,10 @@ runtime.http.route("/multi", "handler.multi", methods=["GET", "POST"])
 	defer RuntimeState.RUnlock()
 
 	checks := map[string]string{
-		"GET /test":          "handler.test",
-		"POST /api":          "handler.api",
-		"GET /multi":         "handler.multi",
-		"POST /multi":        "handler.multi",
+		"GET /test":   "handler.test",
+		"POST /api":   "handler.api",
+		"GET /multi":  "handler.multi",
+		"POST /multi": "handler.multi",
 	}
 	for key, want := range checks {
 		if route, ok := RuntimeState.Routes[key]; !ok || route.Handler != want {

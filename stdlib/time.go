@@ -38,7 +38,9 @@ Returns the value of a performance counter in fractional seconds.`,
 	},
 	"sleep": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			seconds, err := args[0].AsFloat()
 			if err != nil {
 				return errors.ParameterError("seconds", err)
@@ -132,7 +134,9 @@ Returns a time tuple in UTC. If timestamp/datetime is omitted, uses current time
 	},
 	"mktime": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 
 			tuple, err := args[0].AsList()
 			if err != nil {
@@ -200,7 +204,9 @@ Formats a time according to the given format string. If tuple is omitted, uses c
 	},
 	"strptime": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 2); err != nil { return err }
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
+			}
 
 			str, err := args[0].AsString()
 			if err != nil {

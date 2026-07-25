@@ -6,12 +6,12 @@ import (
 	"time"
 
 	"github.com/paularlott/logger"
-	"github.com/paularlott/snapshotkv"
-	extai "github.com/paularlott/scriptling/extlibs/ai"
 	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/extlibs"
+	extai "github.com/paularlott/scriptling/extlibs/ai"
 	"github.com/paularlott/scriptling/object"
+	"github.com/paularlott/snapshotkv"
 )
 
 const MemoryLibraryName = "scriptling.ai.memory"
@@ -245,13 +245,12 @@ Returns:
 					before := store.Count()
 					remaining := store.Compact()
 					return &object.Dict{Pairs: map[string]object.DictPair{
-				"removed":   {Key: object.NewString("removed"), Value: object.NewInteger(int64(before - remaining))},
-					"remaining": {Key: object.NewString("remaining"), Value: object.NewInteger(int64(remaining))},
+						"removed":   {Key: object.NewString("removed"), Value: object.NewInteger(int64(before - remaining))},
+						"remaining": {Key: object.NewString("remaining"), Value: object.NewInteger(int64(remaining))},
 					}}
 				},
 				HelpText: `compact() - Manually trigger compaction; returns removed and remaining counts`,
 			},
-
 		},
 		HelpText: "Memory store object — call .remember(), .recall(), .forget(), .count(), .compact()",
 	}

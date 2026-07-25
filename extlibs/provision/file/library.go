@@ -64,21 +64,21 @@ func buildLibrary() *object.Library {
 					return &object.Error{Message: "ensure: content must be a string"}
 				}
 
-			mode := int(kwargs.MustGetInt("mode", defaultFileMode))
-			createOnly := kwargs.MustGetBool("create_only", false)
+				mode := int(kwargs.MustGetInt("mode", defaultFileMode))
+				createOnly := kwargs.MustGetBool("create_only", false)
 
-			path = expandPath(path)
+				path = expandPath(path)
 
-			existing, err := os.ReadFile(path)
-			if err == nil && bytes.Equal(existing, []byte(content)) {
-				return object.NewString(StatusUnchanged)
-			}
+				existing, err := os.ReadFile(path)
+				if err == nil && bytes.Equal(existing, []byte(content)) {
+					return object.NewString(StatusUnchanged)
+				}
 
-			if err == nil && createOnly {
-				return object.NewString(StatusUnchanged)
-			}
+				if err == nil && createOnly {
+					return object.NewString(StatusUnchanged)
+				}
 
-			fileExisted := err == nil
+				fileExisted := err == nil
 
 				dir := filepath.Dir(path)
 				if dir != "" && dir != "." {
@@ -95,10 +95,10 @@ func buildLibrary() *object.Library {
 					return &object.Error{Message: fmt.Sprintf("ensure: failed to set mode on %s: %s", path, err.Error())}
 				}
 
-			if fileExisted {
-				return object.NewString(StatusUpdated)
-			}
-			return object.NewString(StatusCreated)
+				if fileExisted {
+					return object.NewString(StatusUpdated)
+				}
+				return object.NewString(StatusCreated)
 			},
 			HelpText: `ensure(path, content, mode=0o644, create_only=False) - Ensure a file exists with the given content
 

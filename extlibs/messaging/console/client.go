@@ -18,9 +18,9 @@ type commandEntry struct {
 }
 
 type consoleClient struct {
-	t        *tui.TUI
-	inst     *consoleInstance
-	commands map[string]commandEntry
+	t          *tui.TUI
+	inst       *consoleInstance
+	commands   map[string]commandEntry
 	onMessage  shared.Handler
 	onCallback shared.Handler
 }
@@ -30,7 +30,7 @@ type consoleInstance struct {
 	c *consoleClient
 }
 
-func (s *consoleInstance) Platform() string     { return "console" }
+func (s *consoleInstance) Platform() string { return "console" }
 func (s *consoleInstance) Capabilities() []string {
 	return []string{"rich_message", "rich_message.title", "rich_message.body", "rich_message.color", "typing", "keyboard", "keyboard.callback"}
 }
@@ -92,8 +92,8 @@ func parseColor(color string) tui.Color {
 	}
 	return 0
 }
-func (s *consoleInstance) EditMessage(_ context.Context, _, _, _ string) error  { return nil }
-func (s *consoleInstance) DeleteMessage(_ context.Context, _, _ string) error   { return nil }
+func (s *consoleInstance) EditMessage(_ context.Context, _, _, _ string) error { return nil }
+func (s *consoleInstance) DeleteMessage(_ context.Context, _, _ string) error  { return nil }
 func (s *consoleInstance) SendTyping(_ context.Context, _ string) error {
 	s.c.t.StartSpinner("Thinking...")
 	return nil
@@ -133,9 +133,9 @@ func (c *consoleClient) BotCommand(name, helpText string, h shared.Handler) {
 	})
 }
 func (c *consoleClient) BotOnCallback(_ string, h shared.Handler) { c.onCallback = h }
-func (c *consoleClient) BotOnMessage(h shared.Handler)             { c.onMessage = h }
-func (c *consoleClient) BotOnFile(_ shared.Handler)                {} // not applicable
-func (c *consoleClient) BotAuth(_ shared.Handler)                  {} // not applicable
+func (c *consoleClient) BotOnMessage(h shared.Handler)            { c.onMessage = h }
+func (c *consoleClient) BotOnFile(_ shared.Handler)               {} // not applicable
+func (c *consoleClient) BotAuth(_ shared.Handler)                 {} // not applicable
 
 func (c *consoleClient) SendMessage(ctx context.Context, dest, text string, opts *shared.SendOptions) error {
 	return c.inst.SendMessage(ctx, dest, text, opts)

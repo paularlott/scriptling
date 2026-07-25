@@ -3,8 +3,8 @@ package console_test
 import (
 	"testing"
 
-	"github.com/paularlott/scriptling/extlibs/console"
 	"github.com/paularlott/cli/tui"
+	"github.com/paularlott/scriptling/extlibs/console"
 )
 
 func TestPanelAccessFromBackgroundTasks(t *testing.T) {

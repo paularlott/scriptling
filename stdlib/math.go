@@ -823,10 +823,10 @@ n and k must be non-negative integers. If k is omitted, returns n!.`,
 				if overflow || intResult == 0 {
 					continue
 				}
-			if vInt.IntValue() != 0 && intResult > math.MaxInt64/vInt.IntValue() {
-				return errors.NewError("integer overflow in product")
-			}
-			intResult *= vInt.IntValue()
+				if vInt.IntValue() != 0 && intResult > math.MaxInt64/vInt.IntValue() {
+					return errors.NewError("integer overflow in product")
+				}
+				intResult *= vInt.IntValue()
 			}
 			if allInt && !overflow {
 				return object.NewInteger(intResult)

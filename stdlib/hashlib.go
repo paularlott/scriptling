@@ -131,11 +131,11 @@ Example:
 				if !ok {
 					return errors.NewError("invalid hash object")
 				}
-			h := hashConstructor(state.alg)()
-			h.Write(state.data)
-			return object.NewBytes(h.Sum(nil))
-		},
-		HelpText: `digest() - Return the raw hash as a Bytes value
+				h := hashConstructor(state.alg)()
+				h.Write(state.data)
+				return object.NewBytes(h.Sum(nil))
+			},
+			HelpText: `digest() - Return the raw hash as a Bytes value
 
 Returns the digest of the data passed to the hash so far, as a Bytes object.
 Use hexdigest() for a lowercase-hex string representation.`,

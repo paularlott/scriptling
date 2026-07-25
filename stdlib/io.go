@@ -19,17 +19,31 @@ type stringIOData struct {
 // in an Instance's Fields map without reflection or unsafe pointers.
 type stringIOHolder struct{ data *stringIOData }
 
-func (h *stringIOHolder) Type() object.ObjectType                        { return object.BUILTIN_OBJ }
-func (h *stringIOHolder) Inspect() string                                { return "<StringIO data>" }
-func (h *stringIOHolder) AsString() (string, object.Object)              { return "", &object.Error{Message: object.ErrMustBeString} }
-func (h *stringIOHolder) AsInt() (int64, object.Object)                  { return 0, &object.Error{Message: object.ErrMustBeInteger} }
-func (h *stringIOHolder) AsFloat() (float64, object.Object)              { return 0, &object.Error{Message: object.ErrMustBeNumber} }
-func (h *stringIOHolder) AsBool() (bool, object.Object)                  { return true, nil }
-func (h *stringIOHolder) AsList() ([]object.Object, object.Object)       { return nil, &object.Error{Message: object.ErrMustBeList} }
-func (h *stringIOHolder) AsDict() (map[string]object.Object, object.Object) { return nil, &object.Error{Message: object.ErrMustBeDict} }
-func (h *stringIOHolder) CoerceString() (string, object.Object)          { return h.Inspect(), nil }
-func (h *stringIOHolder) CoerceInt() (int64, object.Object)              { return 0, &object.Error{Message: object.ErrMustBeInteger} }
-func (h *stringIOHolder) CoerceFloat() (float64, object.Object)          { return 0, &object.Error{Message: object.ErrMustBeNumber} }
+func (h *stringIOHolder) Type() object.ObjectType { return object.BUILTIN_OBJ }
+func (h *stringIOHolder) Inspect() string         { return "<StringIO data>" }
+func (h *stringIOHolder) AsString() (string, object.Object) {
+	return "", &object.Error{Message: object.ErrMustBeString}
+}
+func (h *stringIOHolder) AsInt() (int64, object.Object) {
+	return 0, &object.Error{Message: object.ErrMustBeInteger}
+}
+func (h *stringIOHolder) AsFloat() (float64, object.Object) {
+	return 0, &object.Error{Message: object.ErrMustBeNumber}
+}
+func (h *stringIOHolder) AsBool() (bool, object.Object) { return true, nil }
+func (h *stringIOHolder) AsList() ([]object.Object, object.Object) {
+	return nil, &object.Error{Message: object.ErrMustBeList}
+}
+func (h *stringIOHolder) AsDict() (map[string]object.Object, object.Object) {
+	return nil, &object.Error{Message: object.ErrMustBeDict}
+}
+func (h *stringIOHolder) CoerceString() (string, object.Object) { return h.Inspect(), nil }
+func (h *stringIOHolder) CoerceInt() (int64, object.Object) {
+	return 0, &object.Error{Message: object.ErrMustBeInteger}
+}
+func (h *stringIOHolder) CoerceFloat() (float64, object.Object) {
+	return 0, &object.Error{Message: object.ErrMustBeNumber}
+}
 
 const sioKey = "__sio__"
 

@@ -1,20 +1,13 @@
 package stdlib
 
 import (
-	"github.com/paularlott/scriptling/errors"
+	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/object"
 )
 
-// coerceToBytes accepts a String or Bytes input and returns the raw byte slice.
-// Used by libraries that historically took strings but now also accept Bytes
-// (e.g. base64.b64encode).
+// coerceToBytes is retained as a thin wrapper so existing call sites inside
+// stdlib read naturally; new code outside stdlib should use conversion.ToBytes
+// directly.
 func coerceToBytes(obj object.Object) ([]byte, object.Object) {
-	switch v := obj.(type) {
-	case *object.Bytes:
-		return v.BytesValue(), nil
-	case *object.String:
-		return []byte(v.StringValue()), nil
-	default:
-		return nil, errors.NewTypeError("BYTES or STRING", obj.Type().String())
-	}
+	return conversion.ToBytes(obj)
 }

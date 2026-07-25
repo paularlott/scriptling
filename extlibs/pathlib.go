@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/extlibs/fssecurity"
 	"github.com/paularlott/scriptling/object"
@@ -292,57 +293,57 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 				},
 				HelpText: "read_text() - Read the contents of the file as a string",
 			},
-			"read_bytes": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if err := errors.ExactArgs(args, 1); err != nil {
-						return err
-					}
-					cleanPath, errObj := pathArg(args)
-					if errObj != nil {
-						return errObj
-					}
-					content, errObj := readFileBytes(ctx, p.config, cleanPath)
-					if errObj != nil {
-						return errObj
-					}
-					return object.NewString(string(content))
-				},
-				HelpText: "read_bytes() - Read the contents of the file as bytes",
+		"read_bytes": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.ExactArgs(args, 1); err != nil {
+					return err
+				}
+				cleanPath, errObj := pathArg(args)
+				if errObj != nil {
+					return errObj
+				}
+				content, errObj := readFileBytes(ctx, p.config, cleanPath)
+				if errObj != nil {
+					return errObj
+				}
+				return object.NewBytes(content)
 			},
-			"write_text": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if err := errors.ExactArgs(args, 2); err != nil {
-						return err
-					}
-					cleanPath, errObj := pathArg(args)
-					if errObj != nil {
-						return errObj
-					}
-					content, err := args[1].AsString()
-					if err != nil {
-						return err
-					}
-					return writeFileBytes(ctx, p.config, cleanPath, []byte(content), 0644)
-				},
-				HelpText: "write_text(data) - Write the string data to the file",
+			HelpText: "read_bytes() - Read the contents of the file as bytes",
+		},
+		"write_text": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.ExactArgs(args, 2); err != nil {
+					return err
+				}
+				cleanPath, errObj := pathArg(args)
+				if errObj != nil {
+					return errObj
+				}
+				content, err := args[1].AsString()
+				if err != nil {
+					return err
+				}
+				return writeFileBytes(ctx, p.config, cleanPath, []byte(content), 0644)
 			},
-			"write_bytes": &object.Builtin{
-				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if err := errors.ExactArgs(args, 2); err != nil {
-						return err
-					}
-					cleanPath, errObj := pathArg(args)
-					if errObj != nil {
-						return errObj
-					}
-					content, err := args[1].AsString()
-					if err != nil {
-						return err
-					}
-					return writeFileBytes(ctx, p.config, cleanPath, []byte(content), 0644)
-				},
-				HelpText: "write_bytes(data) - Write bytes to the file",
+			HelpText: "write_text(data) - Write the string data to the file",
+		},
+		"write_bytes": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.ExactArgs(args, 2); err != nil {
+					return err
+				}
+				cleanPath, errObj := pathArg(args)
+				if errObj != nil {
+					return errObj
+				}
+				content, errObj := conversion.ToBytes(args[1])
+				if errObj != nil {
+					return errObj
+				}
+				return writeFileBytes(ctx, p.config, cleanPath, content, 0644)
 			},
+			HelpText: "write_bytes(data) - Write bytes to the file",
+		},
 			"copy": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if err := errors.ExactArgs(args, 2); err != nil {

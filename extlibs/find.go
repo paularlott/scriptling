@@ -61,7 +61,7 @@ type findOptions struct {
 	hasSizeMax      bool
 	includeHidden   bool
 	followLinks     bool
-	maxDepth        int // 0 = unlimited
+	maxDepth        int  // 0 = unlimited
 	includeHash     bool // when true, every file entry is crc64-hashed
 	includeSymlinks bool // when true, symlink entries are yielded with their target
 	includeMetadata bool // when true, file_perm is populated

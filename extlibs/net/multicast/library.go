@@ -123,11 +123,11 @@ func buildGroupObject(g *multicastGroup) *object.Builtin {
 					if dataErr != nil {
 						return dataErr
 					}
-				var sendErr error
-				object.RunBlocking(ctx, func() { sendErr = g.send(data) })
-				if sendErr != nil {
-					return errors.NewError("send failed: %s", sendErr.Error())
-				}
+					var sendErr error
+					object.RunBlocking(ctx, func() { sendErr = g.send(data) })
+					if sendErr != nil {
+						return errors.NewError("send failed: %s", sendErr.Error())
+					}
 					return &object.Null{}
 				},
 				HelpText: `send(message) - Send a message to the multicast group
@@ -158,7 +158,7 @@ Parameters:
 					}
 
 					return object.NewStringDict(map[string]object.Object{
-						"data":   object.NewString(string(data)),
+						"data":   internal.BytesToMsg(data),
 						"source": object.NewString(src.String()),
 					})
 				},

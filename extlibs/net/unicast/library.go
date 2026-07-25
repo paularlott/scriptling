@@ -193,7 +193,7 @@ Parameters:
 						return &object.Null{}
 					}
 					return object.NewStringDict(map[string]object.Object{
-						"data":   object.NewString(string(data)),
+						"data":   internal.BytesToMsg(data),
 						"source": object.NewString(c.remoteAddr),
 					})
 				},
@@ -318,7 +318,7 @@ func buildUDPListenerObject(l *udpListener) *object.Builtin {
 						return &object.Null{}
 					}
 					return object.NewStringDict(map[string]object.Object{
-						"data":   object.NewString(string(data)),
+						"data":   internal.BytesToMsg(data),
 						"source": object.NewString(src.String()),
 					})
 				},
@@ -344,11 +344,11 @@ Returns:
 					if resolveErr != nil {
 						return errors.NewError("invalid address: %s", resolveErr.Error())
 					}
-				var sendErr error
-				object.RunBlocking(ctx, func() { sendErr = l.sendTo(raddr, data) })
-				if sendErr != nil {
-					return errors.NewError("send failed: %s", sendErr.Error())
-				}
+					var sendErr error
+					object.RunBlocking(ctx, func() { sendErr = l.sendTo(raddr, data) })
+					if sendErr != nil {
+						return errors.NewError("send failed: %s", sendErr.Error())
+					}
 					return &object.Null{}
 				},
 				HelpText: `send_to(address, message) - Send a message to a specific address
@@ -372,10 +372,10 @@ Parameters:
 
 // tcpListener wraps a *net.TCPListener with idempotent close, mirroring udpListener.
 type tcpListener struct {
-	mu         sync.Mutex
-	listener   *net.TCPListener
-	closed     bool
-	listenerID uint64
+	mu           sync.Mutex
+	listener     *net.TCPListener
+	closed       bool
+	listenerID   uint64
 	listenerAddr string
 }
 
@@ -491,14 +491,14 @@ func buildLibrary() *object.Library {
 				addr := fmt.Sprintf("%s:%d", host, port)
 
 				switch protocol {
-			case "udp":
-				dialer := &net.Dialer{Timeout: time.Duration(timeout * float64(time.Second))}
-				var conn net.Conn
-				var dialErr error
-				object.RunBlocking(ctx, func() { conn, dialErr = dialer.DialContext(ctx, "udp", addr) })
-				if dialErr != nil {
-					return errors.NewError("connect failed: %s", dialErr.Error())
-				}
+				case "udp":
+					dialer := &net.Dialer{Timeout: time.Duration(timeout * float64(time.Second))}
+					var conn net.Conn
+					var dialErr error
+					object.RunBlocking(ctx, func() { conn, dialErr = dialer.DialContext(ctx, "udp", addr) })
+					if dialErr != nil {
+						return errors.NewError("connect failed: %s", dialErr.Error())
+					}
 					c := &netConn{
 						conn:       conn,
 						localAddr:  conn.LocalAddr().String(),
@@ -506,14 +506,14 @@ func buildLibrary() *object.Library {
 					}
 					return buildConnObject(c, "UDP connection object")
 
-			case "tcp":
-				dialer := &net.Dialer{Timeout: time.Duration(timeout * float64(time.Second))}
-				var conn net.Conn
-				var dialErr error
-				object.RunBlocking(ctx, func() { conn, dialErr = dialer.DialContext(ctx, "tcp", addr) })
-				if dialErr != nil {
-					return errors.NewError("connect failed: %s", dialErr.Error())
-				}
+				case "tcp":
+					dialer := &net.Dialer{Timeout: time.Duration(timeout * float64(time.Second))}
+					var conn net.Conn
+					var dialErr error
+					object.RunBlocking(ctx, func() { conn, dialErr = dialer.DialContext(ctx, "tcp", addr) })
+					if dialErr != nil {
+						return errors.NewError("connect failed: %s", dialErr.Error())
+					}
 					c := &netConn{
 						conn:       conn,
 						tcp:        true,

@@ -90,12 +90,12 @@ func newSharedHTTPTransport(insecureSkipVerify bool) *http.Transport {
 			Timeout:   30 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
-		TLSClientConfig:     tlsCfg,
-		ForceAttemptHTTP2:   true,
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 20,
-		IdleConnTimeout:     90 * time.Second,
-		TLSHandshakeTimeout: 10 * time.Second,
+		TLSClientConfig:       tlsCfg,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   20,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 	}
 }
@@ -581,7 +581,7 @@ type Client struct {
 	handshakeDone bool
 
 	// Exactly one transport is set: peer for stdio plugins, rpc for HTTP.
-	peer *jsonrpc.Peer // bidirectional stdio transport (outbound + inbound callbacks)
+	peer *jsonrpc.Peer   // bidirectional stdio transport (outbound + inbound callbacks)
 	rpc  *jsonrpc.Client // unidirectional HTTP transport
 
 	// callbackOwners routes an inbound "callback.call" to the in-flight plugin
@@ -591,7 +591,7 @@ type Client struct {
 
 	// done is closed when the client is closed or the stdio process/transport
 	// has gone away, so calls and Health fail fast.
-	done     chan struct{}
+	done      chan struct{}
 	doneClose sync.Once
 
 	closing atomic.Bool

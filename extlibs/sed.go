@@ -221,7 +221,6 @@ func (t *sedLibraryInstance) replaceFile(path string, re *regexp.Regexp, replace
 	return true
 }
 
-
 // fnExtract implements text.extract(regex, path, **kwargs) — capture group extraction.
 func (t *sedLibraryInstance) fnExtract(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 	if err := errors.ExactArgs(args, 2); err != nil {

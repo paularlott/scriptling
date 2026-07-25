@@ -353,7 +353,7 @@ func TestExtendingLibrariesDocs(t *testing.T) {
 				HelpText: "multiply(a, b) - Multiplies two numbers",
 			},
 		}, nil, "My custom math library")
-		p.RegisterLibrary( myLib)
+		p.RegisterLibrary(myLib)
 
 		_, err := p.Eval(`
 import mylib
@@ -371,7 +371,7 @@ result = mylib.add(5, 3)
 
 	t.Run("NativeAPI_LibraryWithConstants", func(t *testing.T) {
 		p := New()
-		myLib := object.NewLibrary("mylib", 
+		myLib := object.NewLibrary("mylib",
 			map[string]*object.Builtin{
 				"add": {
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -387,7 +387,7 @@ result = mylib.add(5, 3)
 			},
 			"My custom math library",
 		)
-		p.RegisterLibrary( myLib)
+		p.RegisterLibrary(myLib)
 
 		_, err := p.Eval(`
 import mylib
@@ -414,7 +414,7 @@ debug = mylib.DEBUG
 		p := New()
 
 		// Create URL parsing sub-library
-		parseLib := object.NewLibrary("url_parse", 
+		parseLib := object.NewLibrary("url_parse",
 			map[string]*object.Builtin{
 				"quote": {
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -436,7 +436,7 @@ debug = mylib.DEBUG
 		)
 
 		// Create main URL library
-		urlLib := object.NewLibrary("url", 
+		urlLib := object.NewLibrary("url",
 			map[string]*object.Builtin{
 				"join": {
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -452,8 +452,8 @@ debug = mylib.DEBUG
 			},
 			"URL utilities",
 		)
-		p.RegisterLibrary( urlLib)
-		p.RegisterLibrary( parseLib)
+		p.RegisterLibrary(urlLib)
+		p.RegisterLibrary(parseLib)
 
 		_, err := p.Eval(`
 import url
@@ -490,7 +490,7 @@ quoted = url_parse.quote("hello")
 			messages: make([]string, 0),
 		}
 
-		loggerLib := object.NewLibrary("logger", 
+		loggerLib := object.NewLibrary("logger",
 			map[string]*object.Builtin{
 				"set_level": {
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -512,7 +512,7 @@ quoted = url_parse.quote("hello")
 			nil,
 			"Logger library",
 		)
-		p.RegisterLibrary( loggerLib)
+		p.RegisterLibrary(loggerLib)
 
 		_, err := p.Eval(`
 import logger
@@ -543,7 +543,7 @@ msgs = logger.get_messages()
 
 		// Build the library
 		myLib := builder.Build()
-		p.RegisterLibrary( myLib)
+		p.RegisterLibrary(myLib)
 
 		_, err := p.Eval(`
 import mymath
@@ -584,7 +584,7 @@ max_val = mymath.MAX_VALUE
 		})
 
 		lib := builder.Build()
-		p.RegisterLibrary( lib)
+		p.RegisterLibrary(lib)
 
 		_, err := p.Eval(`
 import net
@@ -618,8 +618,8 @@ result = net.connect(host="example.com", port=443)
 		urlBuilder.SubLibrary("parse", parseLib)
 		urlLib := urlBuilder.Build()
 
-		p.RegisterLibrary( urlLib)
-		p.RegisterLibrary( parseLib)
+		p.RegisterLibrary(urlLib)
+		p.RegisterLibrary(parseLib)
 
 		_, err := p.Eval(`
 import url
@@ -740,7 +740,7 @@ after = c.increment()
 			},
 		}
 
-		counterLib := object.NewLibrary("counters", 
+		counterLib := object.NewLibrary("counters",
 			map[string]*object.Builtin{
 				"create_counter": {
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -760,7 +760,7 @@ after = c.increment()
 			"Counter library",
 		)
 
-		p.RegisterLibrary( counterLib)
+		p.RegisterLibrary(counterLib)
 
 		_, err := p.Eval(`
 import counters
@@ -880,7 +880,7 @@ bark = dog.bark()
 
 		cb.Method("have_birthday", func(self *object.Instance) {
 			age, _ := self.Field("age").AsInt()
-			self.SetField("age", object.NewInteger(age + 1))
+			self.SetField("age", object.NewInteger(age+1))
 		})
 
 		personClass := cb.Build()
@@ -1438,7 +1438,7 @@ dist = advanced_math.distance_3d(0.0, 0.0, 0.0, 1.0, 2.0, 2.0)
 
 	t.Run("RegisterScriptLibrary_WithStandardLibrary", func(t *testing.T) {
 		p := New()
-		p.RegisterLibrary( stdlib.JSONLibrary)
+		p.RegisterLibrary(stdlib.JSONLibrary)
 
 		// Register a library that uses the json standard library
 		err := p.RegisterScriptLibrary("data_processor", `
@@ -1879,7 +1879,7 @@ Detailed documentation here.`)
     mylib.validate("test@example.com")`,
 			},
 		}, nil, "My custom data processing library")
-		p.RegisterLibrary( myLib)
+		p.RegisterLibrary(myLib)
 
 		_, err := p.Eval(`
 import mylib
@@ -1976,7 +1976,7 @@ func TestCompleteExamplesFromDocs(t *testing.T) {
 
 		// Build and register the library
 		myMath := builder.Build()
-		p.RegisterLibrary( myMath)
+		p.RegisterLibrary(myMath)
 
 		// Use the library
 		_, err := p.Eval(`
@@ -2045,7 +2045,7 @@ e_val = mymath.E
 
 		cb.Method("have_birthday", func(self *object.Instance) {
 			age, _ := self.Field("age").AsInt()
-			self.SetField("age", object.NewInteger(age + 1))
+			self.SetField("age", object.NewInteger(age+1))
 		})
 
 		personClass := cb.Build()
@@ -2156,7 +2156,7 @@ help(calculate_area)
     Processed data as string`).
 			Build()
 
-		p.RegisterLibrary( library)
+		p.RegisterLibrary(library)
 
 		_, err := p.Eval(`
 import mylib
@@ -2336,7 +2336,7 @@ help("builtins")
 			},
 		}, "My custom library")
 
-		p.RegisterLibrary( lib)
+		p.RegisterLibrary(lib)
 
 		// Test help after import
 		_, err := p.Eval(`

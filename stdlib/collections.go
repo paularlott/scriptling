@@ -33,7 +33,7 @@ var CounterClass = &object.Class{
 				countKey := func(key string) {
 					if countObj, exists := counter.GetField(key); exists {
 						if count, ok := countObj.(*object.Integer); ok {
-							counter.SetField(key, object.NewInteger(count.IntValue() + 1))
+							counter.SetField(key, object.NewInteger(count.IntValue()+1))
 						}
 					} else {
 						counter.SetField(key, object.NewInteger(1))
@@ -110,7 +110,7 @@ var CounterClass = &object.Class{
 					if count, ok := countObj.(*object.Integer); ok {
 						pairs = append(pairs, pair{key: key, count: count.IntValue()})
 					}
-						return true
+					return true
 				})
 
 				// Sort by count descending
@@ -159,7 +159,7 @@ If n is omitted, returns all elements.`,
 							result = append(result, object.NewString(key))
 						}
 					}
-						return true
+					return true
 				})
 				return &object.List{Elements: result}
 			},
@@ -177,7 +177,9 @@ var DefaultDictClass = &object.Class{
 		"__init__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				// __init__(self, default_factory) - Initialize defaultdict
-				if err := errors.ExactArgs(args, 2); err != nil { return err }
+				if err := errors.ExactArgs(args, 2); err != nil {
+					return err
+				}
 				dd := args[0].(*object.Instance)
 				factory := args[1]
 
@@ -189,7 +191,9 @@ var DefaultDictClass = &object.Class{
 		"__getitem__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				// __getitem__(self, key) - Get value with default creation
-				if err := errors.ExactArgs(args, 2); err != nil { return err }
+				if err := errors.ExactArgs(args, 2); err != nil {
+					return err
+				}
 				dd := args[0].(*object.Instance)
 				key := args[1].Inspect()
 
@@ -248,7 +252,9 @@ var DefaultDictClass = &object.Class{
 		"__setitem__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				// __setitem__(self, key, value) - Set value
-				if err := errors.ExactArgs(args, 3); err != nil { return err }
+				if err := errors.ExactArgs(args, 3); err != nil {
+					return err
+				}
 				dd := args[0].(*object.Instance)
 				key := args[1].Inspect()
 				value := args[2]
@@ -276,7 +282,9 @@ var CollectionsLibrary = object.NewLibrary(CollectionsLibraryName, map[string]*o
 			if len(args) == 0 {
 				return counter
 			}
-			if err := errors.MaxArgs(args, 1); err != nil { return err }
+			if err := errors.MaxArgs(args, 1); err != nil {
+				return err
+			}
 
 			switch arg := args[0].(type) {
 			case *object.List:
@@ -284,7 +292,7 @@ var CollectionsLibrary = object.NewLibrary(CollectionsLibraryName, map[string]*o
 					key := elem.Inspect()
 					if countObj, exists := counter.GetField(key); exists {
 						if count, ok := countObj.(*object.Integer); ok {
-							counter.SetField(key, object.NewInteger(count.IntValue() + 1))
+							counter.SetField(key, object.NewInteger(count.IntValue()+1))
 						}
 					} else {
 						counter.SetField(key, object.NewInteger(1))
@@ -295,7 +303,7 @@ var CollectionsLibrary = object.NewLibrary(CollectionsLibraryName, map[string]*o
 					key := elem.Inspect()
 					if countObj, exists := counter.GetField(key); exists {
 						if count, ok := countObj.(*object.Integer); ok {
-							counter.SetField(key, object.NewInteger(count.IntValue() + 1))
+							counter.SetField(key, object.NewInteger(count.IntValue()+1))
 						}
 					} else {
 						counter.SetField(key, object.NewInteger(1))
@@ -306,7 +314,7 @@ var CollectionsLibrary = object.NewLibrary(CollectionsLibraryName, map[string]*o
 					key := string(ch)
 					if countObj, exists := counter.GetField(key); exists {
 						if count, ok := countObj.(*object.Integer); ok {
-							counter.SetField(key, object.NewInteger(count.IntValue() + 1))
+							counter.SetField(key, object.NewInteger(count.IntValue()+1))
 						}
 					} else {
 						counter.SetField(key, object.NewInteger(1))
@@ -367,7 +375,7 @@ Example:
 				if count, ok := countObj.(*object.Integer); ok {
 					pairs = append(pairs, pair{key: key, count: count.IntValue()})
 				}
-					return true
+				return true
 			})
 
 			// Sort by count descending
@@ -416,7 +424,9 @@ Example:
 			if len(args) == 0 {
 				return od
 			}
-			if err := errors.MaxArgs(args, 1); err != nil { return err }
+			if err := errors.MaxArgs(args, 1); err != nil {
+				return err
+			}
 
 			// Initialize from list of tuples or dict
 			switch arg := args[0].(type) {
@@ -504,7 +514,9 @@ Example:
 	"deque_appendleft": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// deque_appendleft(deque, elem) - Add element to left
-			if err := errors.ExactArgs(args, 2); err != nil { return err }
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
+			}
 			deque, ok := args[0].(*object.List)
 			if !ok {
 				return errors.NewTypeError("LIST (deque)", args[0].Type().String())
@@ -526,7 +538,9 @@ Example:
 	"deque_popleft": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// deque_popleft(deque) - Remove and return element from left
-			if err := errors.ExactArgs(args, 1); err != nil { return err }
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
 			deque, ok := args[0].(*object.List)
 			if !ok {
 				return errors.NewTypeError("LIST (deque)", args[0].Type().String())
@@ -549,7 +563,9 @@ Example:
 	"deque_extendleft": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// deque_extendleft(deque, iterable) - Extend left with iterable (reversed)
-			if err := errors.ExactArgs(args, 2); err != nil { return err }
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
+			}
 			deque, ok := args[0].(*object.List)
 			if !ok {
 				return errors.NewTypeError("LIST (deque)", args[0].Type().String())
@@ -583,7 +599,9 @@ Example:
 	"deque_rotate": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// deque_rotate(deque, n) - Rotate deque n steps
-			if err := errors.ExactArgs(args, 2); err != nil { return err }
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
+			}
 			deque, ok := args[0].(*object.List)
 			if !ok {
 				return errors.NewTypeError("LIST (deque)", args[0].Type().String())
@@ -625,7 +643,9 @@ Example:
 	"namedtuple": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// namedtuple(typename, field_names) - Create a named tuple class
-			if err := errors.ExactArgs(args, 2); err != nil { return err }
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
+			}
 			typename, ok := args[0].(*object.String)
 			if !ok {
 				return errors.NewTypeError("STRING", args[0].Type().String())
@@ -692,7 +712,9 @@ Example:
 			// __getitem__ for dict-like access
 			methods["__getitem__"] = &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if err := errors.ExactArgs(args, 2); err != nil { return err }
+					if err := errors.ExactArgs(args, 2); err != nil {
+						return err
+					}
 					nt := args[0].(*object.Instance)
 					key := args[1].Inspect()
 					// Don't expose internal fields

@@ -25,7 +25,7 @@ const (
 	FunctoolsLibraryName   = "functools"
 	TextwrapLibraryName    = "textwrap"
 	PlatformLibraryName    = "platform"
-	ItertoolsLibraryName    = "itertools"
+	ItertoolsLibraryName   = "itertools"
 	CollectionsLibraryName = "collections"
 )
 

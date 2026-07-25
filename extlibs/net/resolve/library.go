@@ -45,12 +45,12 @@ func buildLibrary() *object.Library {
 					return &object.Error{Message: "lookup_ip: host must be a string"}
 				}
 
-			var ips []string
-			var lookupErr error
-			object.RunBlocking(ctx, func() { ips, lookupErr = GetResolver().LookupIP(host) })
-			if lookupErr != nil {
-				return &object.Error{Message: fmt.Sprintf("lookup_ip: %s", lookupErr.Error())}
-			}
+				var ips []string
+				var lookupErr error
+				object.RunBlocking(ctx, func() { ips, lookupErr = GetResolver().LookupIP(host) })
+				if lookupErr != nil {
+					return &object.Error{Message: fmt.Sprintf("lookup_ip: %s", lookupErr.Error())}
+				}
 
 				return conversion.FromGo(ips)
 			},
@@ -77,12 +77,12 @@ Example:
 					return &object.Error{Message: "lookup_srv: service must be a string"}
 				}
 
-			var addrs []*net.TCPAddr
-			var lookupErr error
-			object.RunBlocking(ctx, func() { addrs, lookupErr = GetResolver().LookupSRV(service) })
-			if lookupErr != nil {
-				return &object.Error{Message: fmt.Sprintf("lookup_srv: %s", lookupErr.Error())}
-			}
+				var addrs []*net.TCPAddr
+				var lookupErr error
+				object.RunBlocking(ctx, func() { addrs, lookupErr = GetResolver().LookupSRV(service) })
+				if lookupErr != nil {
+					return &object.Error{Message: fmt.Sprintf("lookup_srv: %s", lookupErr.Error())}
+				}
 
 				result := make([]any, 0, len(addrs))
 				for _, addr := range addrs {
@@ -119,9 +119,9 @@ Example:
 					return &object.Error{Message: "resolve_srv_http: uri must be a string"}
 				}
 
-			var result string
-			object.RunBlocking(ctx, func() { result = GetResolver().ResolveSRVHttp(uri) })
-			return object.NewString(result)
+				var result string
+				object.RunBlocking(ctx, func() { result = GetResolver().ResolveSRVHttp(uri) })
+				return object.NewString(result)
 			},
 			HelpText: `resolve_srv_http(uri) - Resolve a srv+http(s):// URI to a concrete URL
 

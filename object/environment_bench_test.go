@@ -33,8 +33,8 @@ func BenchmarkEnvironmentSet(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		env.Set("x", NewInteger(int64(i)))
-		env.Set("y", NewInteger(int64(i + 1)))
-		env.Set("z", NewInteger(int64(i + 2)))
+		env.Set("y", NewInteger(int64(i+1)))
+		env.Set("z", NewInteger(int64(i+2)))
 	}
 }
 
@@ -98,8 +98,8 @@ func BenchmarkEnvironmentSlotSet(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		env.Set("x", NewInteger(int64(i)))
-		env.Set("y", NewInteger(int64(i + 1)))
-		env.Set("z", NewInteger(int64(i + 2)))
+		env.Set("y", NewInteger(int64(i+1)))
+		env.Set("z", NewInteger(int64(i+2)))
 	}
 }
 
@@ -142,9 +142,9 @@ func BenchmarkClassLookupMemberCold(b *testing.B) {
 func BenchmarkInstanceGetBoundMethodHot(b *testing.B) {
 	method := &Builtin{}
 	instance := NewInstanceWithFields(&Class{
-			Name:    "Worker",
-			Methods: map[string]Object{"work": method},
-		}, nil)
+		Name:    "Worker",
+		Methods: map[string]Object{"work": method},
+	}, nil)
 	instance.GetBoundMethod("work", method)
 
 	b.ResetTimer()
@@ -156,9 +156,9 @@ func BenchmarkInstanceGetBoundMethodHot(b *testing.B) {
 func BenchmarkInstanceGetBoundMethodCold(b *testing.B) {
 	method := &Builtin{}
 	instance := NewInstanceWithFields(&Class{
-			Name:    "Worker",
-			Methods: map[string]Object{"work": method},
-		}, nil)
+		Name:    "Worker",
+		Methods: map[string]Object{"work": method},
+	}, nil)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

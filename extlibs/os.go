@@ -2,12 +2,14 @@
 package extlibs
 
 import (
+	"bufio"
 	"context"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 
+	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/extlibs/fssecurity"
 	"github.com/paularlott/scriptling/object"
@@ -168,7 +170,83 @@ Returns a list of the names of the entries in the given directory.`,
 			},
 			HelpText: `read_file(path) - Read entire file contents as string
 
-Returns the contents of the file as a string.`,
+Returns the contents of the file as a string. Use read_bytes() for binary
+files (msgpack, images, etc.) — read_file() will corrupt non-UTF-8 data.`,
+		},
+		"read_bytes": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.ExactArgs(args, 1); err != nil {
+					return err
+				}
+				path, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
+
+				content, errObj := readFileBytes(ctx, o.config, path)
+				if errObj != nil {
+					return errObj
+				}
+				return object.NewBytes(content)
+			},
+			HelpText: `read_bytes(path) - Read entire file contents as bytes
+
+Returns the raw contents of the file as a Bytes value. Scriptling convenience
+matching read_file(); the Python-canonical API is pathlib.Path.read_bytes().`,
+		},
+		"read_lines": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.ExactArgs(args, 1); err != nil {
+					return err
+				}
+				path, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
+
+				if errObj := checkPathSecurity(o.config, path); errObj != nil {
+					return errObj
+				}
+
+				var f *os.File
+				var openErr error
+				object.RunBlocking(ctx, func() { f, openErr = os.Open(path) })
+				if openErr != nil {
+					return errors.NewError("cannot open file: %s", openErr.Error())
+				}
+
+				scanner := bufio.NewScanner(f)
+				// Allow lines up to 1 MB (default 64 KB is too small for
+				// minified JSON / log lines).
+				scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+				return object.NewIterator(func() (object.Object, bool) {
+					if scanner.Scan() {
+						return object.NewString(scanner.Text()), true
+					}
+					// EOF or scan error — close the file handle. Go's os.File
+					// finalizer is the safety net if the iterator is abandoned
+					// before reaching EOF (e.g. script breaks out of the loop).
+					f.Close()
+					return nil, false
+				})
+			},
+			HelpText: `read_lines(path) - Iterate over lines in a file lazily
+
+Returns an iterator that yields one line (str, without the trailing newline)
+per call. The file is read on-demand, so memory usage is proportional to the
+longest line, not the file size. The file handle is closed when the iterator
+reaches EOF; if the loop exits early (e.g. via break) the handle is closed
+when the iterator is garbage-collected.
+
+Use this for large files where read_file().splitlines() would use too much
+memory. For small files, read_file().splitlines() is simpler and faster.
+
+Example:
+  import os
+  for line in os.read_lines("/var/log/app.log"):
+      if "ERROR" in line:
+          print(line)`,
 		},
 		"write_file": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -179,20 +257,21 @@ Returns the contents of the file as a string.`,
 				if err != nil {
 					return err
 				}
-				content, err := args[1].AsString()
-				if err != nil {
-					return errors.NewTypeError("STRING", args[1].Type().String())
+				content, errObj := conversion.ToBytes(args[1])
+				if errObj != nil {
+					return errObj
 				}
 				mode, errObj := parseFileMode(args, kwargs, 2, 0644)
 				if errObj != nil {
 					return errObj
 				}
 
-				return writeFileBytes(ctx, o.config, path, []byte(content), mode)
+				return writeFileBytes(ctx, o.config, path, content, mode)
 			},
 			HelpText: `write_file(path, content[, mode]) - Write content to file
 
-Writes the string content to the file, creating or overwriting it.`,
+Writes content (a String or Bytes value) to the file, creating or
+overwriting it.`,
 		},
 		"append_file": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -203,16 +282,17 @@ Writes the string content to the file, creating or overwriting it.`,
 				if err != nil {
 					return err
 				}
-				content, err := args[1].AsString()
-				if err != nil {
-					return errors.NewTypeError("STRING", args[1].Type().String())
+				content, errObj := conversion.ToBytes(args[1])
+				if errObj != nil {
+					return errObj
 				}
 
-				return appendFileBytes(ctx, o.config, path, []byte(content), 0644)
+				return appendFileBytes(ctx, o.config, path, content, 0644)
 			},
 			HelpText: `append_file(path, content) - Append content to file
 
-Appends the string content to the file, creating it if it doesn't exist.`,
+Appends content (a String or Bytes value) to the file, creating it if it
+doesn't exist.`,
 		},
 		"remove": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {

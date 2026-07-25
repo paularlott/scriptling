@@ -27,12 +27,16 @@ func (cp *CompletedProcess) Type() object.ObjectType { return object.INSTANCE_OB
 func (cp *CompletedProcess) Inspect() string {
 	return fmt.Sprintf("CompletedProcess(args=%v, returncode=%d)", cp.Args, cp.Returncode)
 }
-func (cp *CompletedProcess) AsBool() (bool, object.Object)                             { return true, nil }
-func (cp *CompletedProcess) AsString() (string, object.Object)                 { return cp.Inspect(), nil }
-func (cp *CompletedProcess) AsInt() (int64, object.Object)                     { return int64(cp.Returncode), nil }
-func (cp *CompletedProcess) AsFloat() (float64, object.Object)                 { return float64(cp.Returncode), nil }
-func (cp *CompletedProcess) AsDict() (map[string]object.Object, object.Object) { return nil, &object.Error{Message: object.ErrMustBeDict} }
-func (cp *CompletedProcess) AsList() ([]object.Object, object.Object)          { return nil, &object.Error{Message: object.ErrMustBeList} }
+func (cp *CompletedProcess) AsBool() (bool, object.Object)     { return true, nil }
+func (cp *CompletedProcess) AsString() (string, object.Object) { return cp.Inspect(), nil }
+func (cp *CompletedProcess) AsInt() (int64, object.Object)     { return int64(cp.Returncode), nil }
+func (cp *CompletedProcess) AsFloat() (float64, object.Object) { return float64(cp.Returncode), nil }
+func (cp *CompletedProcess) AsDict() (map[string]object.Object, object.Object) {
+	return nil, &object.Error{Message: object.ErrMustBeDict}
+}
+func (cp *CompletedProcess) AsList() ([]object.Object, object.Object) {
+	return nil, &object.Error{Message: object.ErrMustBeList}
+}
 
 // CompletedProcessClass defines the CompletedProcess class
 var CompletedProcessClass = &object.Class{
@@ -40,11 +44,13 @@ var CompletedProcessClass = &object.Class{
 	Methods: map[string]object.Object{
 		"check_returncode": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if err := errors.ExactArgs(args, 1); err != nil { return err }
+				if err := errors.ExactArgs(args, 1); err != nil {
+					return err
+				}
 				if instance, ok := args[0].(*object.Instance); ok {
 					if returncode, ok := instance.Field("returncode").(*object.Integer); ok {
-					if returncode.IntValue() != 0 {
-						return errors.NewError("Command returned non-zero exit status %d", returncode.IntValue())
+						if returncode.IntValue() != 0 {
+							return errors.NewError("Command returned non-zero exit status %d", returncode.IntValue())
 						}
 						return args[0]
 					}
@@ -61,7 +67,9 @@ Raises an exception if returncode is non-zero.`,
 var SubprocessLibrary = object.NewLibrary(SubprocessLibraryName, map[string]*object.Builtin{
 	"run": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.MinArgs(args, 1); err != nil { return err }
+			if err := errors.MinArgs(args, 1); err != nil {
+				return err
+			}
 
 			// Parse args - can be string or list
 			var cmdArgs []string
@@ -243,11 +251,11 @@ var SubprocessLibrary = object.NewLibrary(SubprocessLibraryName, map[string]*obj
 				stderrStr = string(stderr)
 			} // Create CompletedProcess instance
 			instance := object.NewInstanceWithFields(CompletedProcessClass, map[string]object.Object{
-					"args":       &object.List{Elements: make([]object.Object, len(cmdArgs))},
-					"returncode": object.NewInteger(int64(returncode)),
-					"stdout":     object.NewString(stdoutStr),
-					"stderr":     object.NewString(stderrStr),
-				}) // Fill args list
+				"args":       &object.List{Elements: make([]object.Object, len(cmdArgs))},
+				"returncode": object.NewInteger(int64(returncode)),
+				"stdout":     object.NewString(stdoutStr),
+				"stderr":     object.NewString(stderrStr),
+			}) // Fill args list
 			for i, arg := range cmdArgs {
 				instance.Field("args").(*object.List).Elements[i] = object.NewString(arg)
 			}
