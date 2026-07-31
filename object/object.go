@@ -1882,6 +1882,17 @@ type Error struct {
 	Line     int
 	File     string
 	Function string
+	// ExceptionType names the Python exception this error corresponds to, e.g.
+	// "ZeroDivisionError". It lets `except <Type>:` match a runtime error
+	// precisely instead of the try handler having to guess the type from the
+	// message text. Empty means "unclassified": the handler falls back to
+	// inferring a type, and the error is still caught by `except Exception`.
+	//
+	// Errors remain Errors rather than Exceptions on purpose — Error is the
+	// evaluator's propagation signal, recognised by the object.IsError checks
+	// threaded through expression evaluation — so setting this changes only how
+	// an except clause matches, not how the value travels.
+	ExceptionType string
 }
 
 func (e *Error) Type() ObjectType { return ERROR_OBJ }

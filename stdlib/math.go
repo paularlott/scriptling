@@ -273,7 +273,9 @@ Returns a float in radians.`,
 				return errors.NewTypeError("INTEGER or FLOAT", args[1].Type().String())
 			}
 			if y == 0 {
-				return errors.NewError("fmod: division by zero")
+				// CPython raises ValueError ("math domain error") here, not
+				// ZeroDivisionError, so this is tagged as a ValueError.
+				return errors.NewValueError("fmod: division by zero")
 			}
 			return object.NewFloat(math.Mod(x, y))
 		},
