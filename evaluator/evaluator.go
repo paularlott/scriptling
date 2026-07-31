@@ -218,25 +218,21 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		if node.Operator == ast.OpAnd || node.Operator == ast.OpOr {
 			return evalShortCircuitInfixExpression(ctx, node, env)
 		}
+		// Unboxed integer fast path: evaluates side-effect-free integer
+		// arithmetic and comparison subtrees without boxing intermediates.
+		// See intfast.go. This is tried before the string-concatenation chain
+		// below because that helper always claims the node once it matches
+		// shape, so an integer chain like `a + b + c` would otherwise never
+		// reach this path.
+		if node.IntFast != ast.IntFastNone {
+			if result, ok := tryEvalIntInfix(node, env); ok {
+				return result
+			}
+		}
 		if node.Operator == ast.OpAdd {
 			if left, ok := node.Left.(*ast.InfixExpression); ok && left.Operator == ast.OpAdd {
 				if result, ok := tryEvalStringConcatChain(ctx, node, env); ok {
 					return result
-				}
-			}
-		}
-		if node.Operator >= ast.OpAdd && node.Operator <= ast.OpNeq {
-			if lid, ok := node.Left.(*ast.Identifier); ok {
-				if rid, ok := node.Right.(*ast.Identifier); ok {
-					if lv, ok := env.Get(lid.Value()); ok {
-						if li, ok := lv.(*object.Integer); ok {
-							if rv, ok := env.Get(rid.Value()); ok {
-								if ri, ok := rv.(*object.Integer); ok {
-									return evalIntegerInfixExpression(node.Operator, li.IntValue(), ri.IntValue())
-								}
-							}
-						}
-					}
 				}
 			}
 		}
@@ -303,10 +299,7 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		return NULL
 	case *ast.DelStatement:
 		if err := deleteFromExpression(ctx, node.Target, env); err != nil {
-			if ae, ok := err.(*assignmentExceptionError); ok {
-				return ae.ex
-			}
-			return errors.NewError("%s", err.Error())
+			return assignErrorToObject(err)
 		}
 		return NULL
 	case *ast.ImportStatement:
@@ -321,25 +314,16 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		// Execute chained assignments first (a = b = 5: assign 5 to b, then to a)
 		if node.Chained != nil {
 			if err := assignToExpression(ctx, node.Chained.Left, val, env); err != nil {
-				if ae, ok := err.(*assignmentExceptionError); ok {
-					return ae.ex
-				}
-				return errors.NewError("%s", err.Error())
+				return assignErrorToObject(err)
 			}
 			for c := node.Chained.Chained; c != nil; c = c.Chained {
 				if err := assignToExpression(ctx, c.Left, val, env); err != nil {
-					if ae, ok := err.(*assignmentExceptionError); ok {
-						return ae.ex
-					}
-					return errors.NewError("%s", err.Error())
+					return assignErrorToObject(err)
 				}
 			}
 		}
 		if err := assignToExpression(ctx, node.Left, val, env); err != nil {
-			if ae, ok := err.(*assignmentExceptionError); ok {
-				return ae.ex
-			}
-			return errors.NewError("%s", err.Error())
+			return assignErrorToObject(err)
 		}
 		return NULL
 	case *ast.AugmentedAssignStatement:
@@ -502,6 +486,17 @@ func evalBlockStatementWithContext(ctx context.Context, block *ast.BlockStatemen
 	}
 
 	return result
+}
+
+// assignErrorToObject converts an assignment or deletion error into the object
+// the evaluator propagates: a script-level exception passes through as an
+// Exception so `except` clauses can catch it, anything else becomes a plain
+// Error.
+func assignErrorToObject(err error) object.Object {
+	if ae, ok := err.(*assignmentExceptionError); ok {
+		return ae.ex
+	}
+	return errors.NewError("%s", err.Error())
 }
 
 func nativeBoolToBooleanObject(input bool) *object.Boolean {
@@ -2500,10 +2495,7 @@ func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.Augm
 		if cur, ok := currentVal.(*object.String); ok {
 			if r, ok := newVal.(*object.String); ok {
 				if err := assignToExpression(ctx, left, object.NewString(cur.StringValue()+r.StringValue()), env); err != nil {
-					if ae, ok := err.(*assignmentExceptionError); ok {
-						return ae.ex
-					}
-					return errors.NewError("%s", err.Error())
+					return assignErrorToObject(err)
 				}
 				return NULL
 			}
@@ -2511,10 +2503,7 @@ func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.Augm
 		if cur, ok := currentVal.(*object.Integer); ok {
 			if r, ok := newVal.(*object.Integer); ok {
 				if err := assignToExpression(ctx, left, object.NewInteger(cur.IntValue()+r.IntValue()), env); err != nil {
-					if ae, ok := err.(*assignmentExceptionError); ok {
-						return ae.ex
-					}
-					return errors.NewError("%s", err.Error())
+					return assignErrorToObject(err)
 				}
 				return NULL
 			}
@@ -2532,10 +2521,7 @@ func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.Augm
 	}
 
 	if err := assignToExpression(ctx, left, result, env); err != nil {
-		if ae, ok := err.(*assignmentExceptionError); ok {
-			return ae.ex
-		}
-		return errors.NewError("%s", err.Error())
+		return assignErrorToObject(err)
 	}
 	return NULL
 }

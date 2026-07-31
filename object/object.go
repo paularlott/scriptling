@@ -1358,10 +1358,20 @@ func (e *Environment) GetCachedSlot(idx int, name string) (Object, bool) {
 func (e *Environment) SetCachedSlot(idx int, name string, val Object) bool {
 	if idx >= 0 && idx < len(e.slots) && idx < len(e.slotNames) && e.slotNames[idx] == name {
 		e.slots[idx] = val
-		delete(e.importedBindings, name)
+		e.clearImportedBinding(name)
 		return true
 	}
 	return false
+}
+
+// clearImportedBinding drops any import marker for name. The nil check matters:
+// importedBindings is only allocated for scopes that actually bind an import,
+// whereas this runs on every assignment, and delete() on a nil map is still a
+// function call into the runtime.
+func (e *Environment) clearImportedBinding(name string) {
+	if e.importedBindings != nil {
+		delete(e.importedBindings, name)
+	}
 }
 
 func (e *Environment) Set(name string, val Object) Object {
@@ -1377,14 +1387,14 @@ func (e *Environment) Set(name string, val Object) Object {
 	}
 	if idx, ok := e.slotIndex[name]; ok && idx >= 0 && idx < len(e.slots) {
 		e.slots[idx] = val
-		delete(e.importedBindings, name)
+		e.clearImportedBinding(name)
 		return val
 	}
 	if e.store == nil {
 		e.store = make(map[string]Object, 4)
 	}
 	e.store[name] = val
-	delete(e.importedBindings, name)
+	e.clearImportedBinding(name)
 	return val
 }
 
@@ -1394,7 +1404,7 @@ func (e *Environment) Delete(name string) {
 		e.slots[idx] = nil
 	}
 	delete(e.store, name)
-	delete(e.importedBindings, name)
+	e.clearImportedBinding(name)
 }
 
 // SetGlobal sets a variable in the global (outermost) environment
@@ -1404,7 +1414,7 @@ func (e *Environment) SetGlobal(name string, val Object) Object {
 	if root.slotIndex != nil {
 		if idx, ok := root.slotIndex[name]; ok && idx >= 0 && idx < len(root.slots) {
 			root.slots[idx] = val
-			delete(root.importedBindings, name)
+			root.clearImportedBinding(name)
 			return val
 		}
 	}
@@ -1412,7 +1422,7 @@ func (e *Environment) SetGlobal(name string, val Object) Object {
 		root.store = make(map[string]Object, 4)
 	}
 	root.store[name] = val
-	delete(root.importedBindings, name)
+	root.clearImportedBinding(name)
 	return val
 }
 
@@ -1431,7 +1441,7 @@ func (e *Environment) SetInParent(name string, val Object) bool {
 		_, ok := env.store[name]
 		if ok {
 			env.store[name] = val
-			delete(env.importedBindings, name)
+			env.clearImportedBinding(name)
 			return true
 		}
 	}

@@ -873,11 +873,13 @@ func (p *Parser) parseAdjacentStrings(left ast.Expression) ast.Expression {
 			right = fstr
 		}
 
-		left = &ast.InfixExpression{
+		concat := &ast.InfixExpression{
 			Operator: ast.OpAdd,
 			Left:     left,
 			Right:    right,
 		}
+		concat.SetIntFast()
+		left = concat
 	}
 	return left
 }
@@ -1004,6 +1006,7 @@ func (p *Parser) parseInfixExpression(left ast.Expression) ast.Expression {
 	currentOp := p.curToken.Literal
 	p.nextToken()
 	expression.Right = p.parseExpression(precedence)
+	expression.SetIntFast()
 
 	// Check for chained comparisons: a < b < c becomes a < b and b < c
 	if isComparisonOp(currentOp) && (p.peekTokenIs(token.LT) || p.peekTokenIs(token.GT) ||
@@ -1023,6 +1026,7 @@ func (p *Parser) parseInfixExpression(left ast.Expression) ast.Expression {
 			}
 			p.nextToken()
 			nextComp.Right = p.parseExpression(precedence)
+			nextComp.SetIntFast()
 			comparisons = append(comparisons, nextComp)
 			expression = nextComp
 			currentOp = nextOp
