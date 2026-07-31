@@ -363,7 +363,25 @@ func (fl *FloatLiteral) Line() int            { return 0 }
 
 type StringLiteral struct {
 	Value string
+	// boxed caches the immutable runtime value the evaluator builds for this
+	// literal. Re-evaluating a string literal is common and was allocating every
+	// time — most visibly for attribute access, since `obj.attr` desugars to an
+	// index by a string literal, so every field read boxed its own field name.
+	//
+	// Held as an atomic any for two reasons: literals are shared between
+	// goroutines via the program cache, and ast must not import the object
+	// package (object imports ast), so the concrete type is known only to the
+	// evaluator. Racing writers store equal values, which is harmless.
+	boxed atomic.Value
 }
+
+// Boxed returns the cached runtime value for this literal, or nil if unset.
+func (sl *StringLiteral) Boxed() any { return sl.boxed.Load() }
+
+// SetBoxed caches the runtime value for this literal. Callers must always pass
+// the same concrete type, and that value must be immutable — it is shared by
+// every evaluation of this literal.
+func (sl *StringLiteral) SetBoxed(v any) { sl.boxed.Store(v) }
 
 func (sl *StringLiteral) expressionNode()      {}
 func (sl *StringLiteral) TokenLiteral() string { return sl.Value }

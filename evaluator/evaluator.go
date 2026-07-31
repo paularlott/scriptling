@@ -64,9 +64,22 @@ func (cd *CallDepth) Depth() int {
 	return int(cd.current)
 }
 
-// SetEnvInContext stores environment in context for builtin functions
+// SetEnvInContext stores environment in context for builtin functions.
+//
+// Every builtin call goes through here, and context.WithValue allocates, so the
+// result is memoised on the environment: the base context is stable for the
+// duration of an evaluation, so the same derived context can be handed out
+// repeatedly instead of rebuilt per call.
 func SetEnvInContext(ctx context.Context, env *object.Environment) context.Context {
-	return context.WithValue(ctx, envContextKey, env)
+	if env == nil {
+		return context.WithValue(ctx, envContextKey, env)
+	}
+	if cached, ok := env.CachedEnvContext(ctx); ok {
+		return cached
+	}
+	derived := context.WithValue(ctx, envContextKey, env)
+	env.StoreEnvContext(ctx, derived)
+	return derived
 }
 
 // GetEnvFromContext retrieves environment from context for external functions
@@ -272,7 +285,7 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 	case *ast.FloatLiteral:
 		return object.NewFloat(node.Value)
 	case *ast.StringLiteral:
-		return object.NewString(node.Value)
+		return evalStringLiteral(node)
 	case *ast.FStringLiteral:
 		return evalFStringLiteral(ctx, node, env)
 	case *ast.Boolean:
@@ -497,6 +510,23 @@ func assignErrorToObject(err error) object.Object {
 		return ae.ex
 	}
 	return errors.NewError("%s", err.Error())
+}
+
+// evalStringLiteral returns the runtime value of a string literal, reusing the
+// one cached on the AST node.
+//
+// Strings are immutable in Scriptling — nothing mutates an *object.String in
+// place — so a single value can safely back every evaluation of a given literal.
+// This matters most for attribute access: `obj.attr` desugars to an index by a
+// string literal, so without this every field read allocated its own copy of the
+// field name.
+func evalStringLiteral(node *ast.StringLiteral) object.Object {
+	if s, ok := node.Boxed().(*object.String); ok {
+		return s
+	}
+	s := object.NewString(node.Value)
+	node.SetBoxed(s)
+	return s
 }
 
 func nativeBoolToBooleanObject(input bool) *object.Boolean {
@@ -1075,55 +1105,86 @@ func numericFloatValue(obj object.Object) (float64, bool) {
 	}
 }
 
+// tryEvalStringConcatChain evaluates an `a + b + c ...` chain of three or more
+// operands, joining a leading run of strings through a single buffer instead of
+// building an intermediate string per operator.
+//
+// It folds operands as they are evaluated rather than first collecting the chain
+// into slices. The chain shape is only a hint — whether the operands are actually
+// strings is not known until they are evaluated — and this path is taken for
+// every long `+` chain, so a chain that turns out to be numbers or lists used to
+// pay for two slices it never needed.
 func tryEvalStringConcatChain(ctx context.Context, expr *ast.InfixExpression, env *object.Environment) (object.Object, bool) {
-	var leaves []ast.Expression
-	if !collectStringConcatLeaves(expr, &leaves) {
-		return nil, false
+	f := concatFolder{ctx: ctx, env: env}
+	if !f.walk(expr) {
+		return f.failed, true
 	}
-
-	values := make([]object.Object, len(leaves))
-	allStrings := true
-	total := 0
-	for i, leaf := range leaves {
-		val := evalNode(ctx, leaf, env)
-		if object.IsError(val) {
-			return val, true
-		}
-		values[i] = val
-		if s, ok := val.(*object.String); ok {
-			total += len(s.StringValue())
-		} else {
-			allStrings = false
-		}
-	}
-
-	if allStrings {
-		var b strings.Builder
-		b.Grow(total)
-		for _, val := range values {
-			b.WriteString(val.(*object.String).StringValue())
-		}
-		return object.NewString(b.String()), true
-	}
-
-	result := values[0]
-	for i := 1; i < len(values); i++ {
-		result = evalInfixExpression(ctx, ast.OpAdd, result, values[i], env)
-		if object.IsError(result) {
-			return result, true
-		}
-	}
-	return result, true
+	return f.result(), true
 }
 
-func collectStringConcatLeaves(expr ast.Expression, leaves *[]ast.Expression) bool {
-	infix, ok := expr.(*ast.InfixExpression)
-	if ok && infix.Operator == ast.OpAdd {
-		return collectStringConcatLeaves(infix.Left, leaves) &&
-			collectStringConcatLeaves(infix.Right, leaves)
+// concatFolder folds the operands of a `+` chain in evaluation order.
+//
+// While every operand so far has been a string they are appended to buf, so a
+// run of strings costs one result allocation rather than one per operator. On the
+// first non-string operand the run is materialised and folding continues through
+// evalInfixExpression, which keeps the semantics identical to evaluating the
+// chain one operator at a time (string concatenation is associative, so grouping
+// the leading run changes nothing about the result).
+type concatFolder struct {
+	ctx    context.Context
+	env    *object.Environment
+	buf    strings.Builder
+	buffed bool          // buf holds at least one operand
+	acc    object.Object // folded result, once a non-string operand has appeared
+	failed object.Object // first error, if any
+}
+
+// walk evaluates the chain's operands left to right, flattening nested `+` nodes.
+func (f *concatFolder) walk(expr ast.Expression) bool {
+	if infix, ok := expr.(*ast.InfixExpression); ok && infix.Operator == ast.OpAdd {
+		return f.walk(infix.Left) && f.walk(infix.Right)
 	}
-	*leaves = append(*leaves, expr)
+	return f.add(evalNode(f.ctx, expr, f.env))
+}
+
+func (f *concatFolder) add(val object.Object) bool {
+	if object.IsError(val) {
+		f.failed = val
+		return false
+	}
+	if f.acc != nil {
+		return f.fold(val)
+	}
+	if s, ok := val.(*object.String); ok {
+		f.buf.WriteString(s.StringValue())
+		f.buffed = true
+		return true
+	}
+	// First non-string operand: close off the string run, then fold normally.
+	if f.buffed {
+		f.acc = object.NewString(f.buf.String())
+		f.buf.Reset()
+		f.buffed = false
+		return f.fold(val)
+	}
+	f.acc = val
 	return true
+}
+
+func (f *concatFolder) fold(val object.Object) bool {
+	f.acc = evalInfixExpression(f.ctx, ast.OpAdd, f.acc, val, f.env)
+	if object.IsError(f.acc) {
+		f.failed = f.acc
+		return false
+	}
+	return true
+}
+
+func (f *concatFolder) result() object.Object {
+	if f.acc != nil {
+		return f.acc
+	}
+	return object.NewString(f.buf.String())
 }
 
 func evalStringInfixExpression(operator ast.Op, leftVal, rightVal string) object.Object {

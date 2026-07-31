@@ -9,6 +9,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -922,6 +923,47 @@ type Environment struct {
 	// goroutines may call into one Environment tree, but only one runs script at
 	// a time. nil on non-root environments — always reach it via root.gil.
 	gil *gilLock
+	// ctxMemo caches this environment attached to a context; see
+	// CachedEnvContext. Held as an atomic pointer to an immutable value so it is
+	// safe to touch from any goroutine without relying on the interpreter lock —
+	// background tasks pin their environment on a context off the hot path.
+	ctxMemo atomic.Pointer[envContextMemo]
+}
+
+// envContextMemo records that attaching an environment to base produced derived.
+// Immutable once published.
+type envContextMemo struct {
+	base    context.Context
+	derived context.Context
+}
+
+// CachedEnvContext returns the context previously derived from base for this
+// environment, if any.
+//
+// Builtins are invoked with their environment attached to the context, and
+// deriving that context is a heap allocation. Since the base context is stable
+// for the whole of one evaluation, memoising the derived context turns a
+// per-builtin-call allocation into an atomic load and a comparison.
+func (e *Environment) CachedEnvContext(base context.Context) (context.Context, bool) {
+	if m := e.ctxMemo.Load(); m != nil && m.base == base {
+		return m.derived, true
+	}
+	return nil, false
+}
+
+// StoreEnvContext memoises derived as the result of attaching this environment
+// to base, so a later CachedEnvContext(base) can skip the allocation.
+//
+// Nothing is stored when base's dynamic type is not comparable, because the
+// lookup compares contexts with ==. That guard is what makes the comparison
+// safe: a stored base is always of a comparable type, so if an incoming context
+// has a different (possibly non-comparable) type the comparison fails on the
+// type word alone and never reaches the values.
+func (e *Environment) StoreEnvContext(base, derived context.Context) {
+	if base == nil || !reflect.TypeOf(base).Comparable() {
+		return
+	}
+	e.ctxMemo.Store(&envContextMemo{base: base, derived: derived})
 }
 
 // gilLock is the interpreter lock for one environment tree. It tracks the
