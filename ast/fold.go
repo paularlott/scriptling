@@ -157,6 +157,9 @@ func foldExpression(expr Expression) Expression {
 		if folded := tryFoldInfix(e.Operator, left, right); folded != nil {
 			return folded
 		}
+		// Recompute after folding: children may have collapsed into literals,
+		// which can make this node integer-shaped when it was not before.
+		e.SetIntFast()
 
 	case *PrefixExpression:
 		right := foldExpression(e.Right)
