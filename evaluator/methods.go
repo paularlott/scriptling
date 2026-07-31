@@ -49,6 +49,14 @@ func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression
 		}
 	}
 
+	// Fast path for plain instance method calls, which are the object-oriented
+	// equivalent of the monomorphic paths in evalCallExpression.
+	if inst, ok := obj.(*object.Instance); ok && !mce.HasOverflow() {
+		if result, handled := tryEvalInstanceMethodFast(ctx, inst, mce, env); handled {
+			return result
+		}
+	}
+
 	args := evalExpressionsWithContext(ctx, mce.Arguments, env)
 	if len(args) == 1 && object.IsError(args[0]) {
 		return args[0]
@@ -333,15 +341,93 @@ func callSuperMethod(ctx context.Context, super *object.Super, method string, ar
 }
 
 // prependSelf prepends self to args using a stack buffer for small arg lists to avoid heap allocation.
-func prependSelf(self object.Object, args []object.Object) []object.Object {
-	n := len(args) + 1
-	if n <= 8 {
-		var buf [8]object.Object
-		buf[0] = self
-		copy(buf[1:], args)
-		return buf[:n]
+// tryEvalInstanceMethodFast handles `obj.method(a, b)` where the method is an
+// ordinary function on the class and every argument is positional, passing self
+// and the arguments straight into the call frame's slots.
+//
+// The general path builds two slices for such a call — one for the arguments and
+// one to prepend self — and neither survives the call. This mirrors the
+// monomorphic fast paths in evalCallExpression, which is why a plain function
+// call was allocation-free while the equivalent method call was not.
+//
+// Returns handled=false for anything it does not fully cover (shadowing instance
+// fields, static/class methods, properties, defaults, *args/**kwargs,
+// keyword-only parameters, or more than three arguments), leaving the general
+// path to deal with it.
+func tryEvalInstanceMethodFast(ctx context.Context, inst *object.Instance, mce *ast.MethodCallExpression, env *object.Environment) (object.Object, bool) {
+	name := mce.Method.Value()
+	// An instance field of the same name shadows the class method and is called
+	// without self, so leave that to callInstanceMethod.
+	if _, shadowed := inst.GetField(name); shadowed {
+		return nil, false
 	}
-	newArgs := make([]object.Object, n)
+	member, ok := inst.Class.LookupMember(name)
+	if !ok {
+		return nil, false
+	}
+	// Only plain functions: staticmethod, classmethod, property and bound
+	// methods all bind their first argument differently.
+	fn, ok := member.(*object.Function)
+	if !ok {
+		return nil, false
+	}
+	if fn.Variadic != nil || fn.Kwargs != nil || len(fn.DefaultValues) != 0 || fn.KeywordOnlyStart != 0 {
+		return nil, false
+	}
+	nargs := len(mce.Arguments)
+	if nargs > 3 {
+		return nil, false
+	}
+	// Parameters include self, and every one must map to a slot so the argument
+	// can be written directly.
+	if len(fn.Parameters) != nargs+1 || len(fn.ParamSlotIndexes) != nargs+1 {
+		return nil, false
+	}
+
+	switch nargs {
+	case 0:
+		return applyUserFunctionDirect(ctx, fn, inst), true
+	case 1:
+		a0 := evalNode(ctx, mce.Arguments[0], env)
+		if object.IsError(a0) {
+			return a0, true
+		}
+		return applyUserFunction2(ctx, fn, inst, a0), true
+	case 2:
+		a0 := evalNode(ctx, mce.Arguments[0], env)
+		if object.IsError(a0) {
+			return a0, true
+		}
+		a1 := evalNode(ctx, mce.Arguments[1], env)
+		if object.IsError(a1) {
+			return a1, true
+		}
+		return applyUserFunctionN(ctx, fn, inst, a0, a1), true
+	default:
+		a0 := evalNode(ctx, mce.Arguments[0], env)
+		if object.IsError(a0) {
+			return a0, true
+		}
+		a1 := evalNode(ctx, mce.Arguments[1], env)
+		if object.IsError(a1) {
+			return a1, true
+		}
+		a2 := evalNode(ctx, mce.Arguments[2], env)
+		if object.IsError(a2) {
+			return a2, true
+		}
+		return applyUserFunctionN(ctx, fn, inst, a0, a1, a2), true
+	}
+}
+
+// prependSelf returns args with self inserted at the front.
+//
+// It allocates: the result is handed to applyFunction, which passes it on, so a
+// local buffer would escape anyway — and sizing it to the argument count beats
+// rounding every call up to a fixed buffer. Hot instance method calls avoid this
+// entirely via tryEvalInstanceMethodFast.
+func prependSelf(self object.Object, args []object.Object) []object.Object {
+	newArgs := make([]object.Object, len(args)+1)
 	newArgs[0] = self
 	copy(newArgs[1:], args)
 	return newArgs

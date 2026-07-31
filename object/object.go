@@ -39,7 +39,7 @@ func DictKey(obj Object) string {
 		}
 		return "n:0"
 	case *String:
-		return "s:" + o.value
+		return stringDictKey(o.value)
 	case *Bytes:
 		// Equal bytes must produce equal keys regardless of pointer identity,
 		// so encode the contents with a prefix that can't collide with strings.
@@ -66,25 +66,25 @@ func DictKey(obj Object) string {
 }
 
 // DictStringKey returns the canonical dict key for a string key without
-// requiring a temporary String object allocation.
-var (
-	dictStringKeyCache sync.Map
-	dictStringKeyCount atomic.Int64
-)
-
-const maxDictStringKeys = 10000
-
+// requiring a temporary String object allocation. It must agree with the *String
+// case of DictKey.
 func DictStringKey(name string) string {
-	if v, ok := dictStringKeyCache.Load(name); ok {
-		return v.(string)
+	return stringDictKey(name)
+}
+
+// stringDictKey encodes a string as a dict map key.
+//
+// Every other kind of key carries a type prefix, and every one of those prefixes
+// contains a colon ("n:", "f:", "b:", "t:", "null:", "LIST:0x…"). A string with
+// no colon therefore cannot be confused with any of them and is used verbatim —
+// which makes the common case (identifiers, field names, words) allocation-free.
+// A string that does contain a colon gets the "s:" prefix, and since that prefix
+// itself contains a colon it can never collide with a verbatim key either.
+func stringDictKey(s string) string {
+	if strings.IndexByte(s, ':') < 0 {
+		return s
 	}
-	key := "s:" + name
-	dictStringKeyCache.Store(name, key)
-	if dictStringKeyCount.Add(1) > maxDictStringKeys {
-		dictStringKeyCache = sync.Map{}
-		dictStringKeyCount.Store(0)
-	}
-	return key
+	return "s:" + s
 }
 
 // IsHashable reports whether obj can be used as a set element or dict key.
@@ -128,7 +128,13 @@ const (
 	ErrMustBeBytes    = "must be bytes or string"
 )
 
-var smallIntegers [smallIntMax - smallIntMin + 1]*Integer
+// smallIntegers holds the cached Integer values by value rather than by pointer.
+// Stored inline, the array is pointer-free, so it lives in BSS instead of the
+// heap: no per-entry allocation, no 80KB pointer table for the GC to rescan as a
+// root on every cycle, and consecutive integers land next to each other in
+// memory. NewInteger hands out interior pointers, which is safe because a
+// package-level array never moves and Integer is immutable.
+var smallIntegers [smallIntMax - smallIntMin + 1]Integer
 
 // Pre-allocated error singletons for type accessor methods.
 // These avoid allocating a new Error on every failed AsXxx() call.
@@ -172,7 +178,7 @@ var (
 func init() {
 	// Initialize small integer cache
 	for i := smallIntMin; i <= smallIntMax; i++ {
-		smallIntegers[i-smallIntMin] = &Integer{value: int64(i)}
+		smallIntegers[i-smallIntMin].value = int64(i)
 	}
 	// Initialize the small integer dict-key cache ("n:0".."n:N").
 	for i := range smallDictKeys {
@@ -204,7 +210,7 @@ func intDictKey(v int64) string {
 // NewInteger returns a cached integer for small values, or a new Integer for larger values
 func NewInteger(val int64) *Integer {
 	if val >= smallIntMin && val <= smallIntMax {
-		return smallIntegers[val-smallIntMin]
+		return &smallIntegers[val-smallIntMin]
 	}
 	return &Integer{value: val}
 }
