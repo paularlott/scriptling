@@ -226,10 +226,26 @@ func TestMathFmod(t *testing.T) {
 		t.Errorf("fmod() returned %T, want Float", result)
 	}
 
-	// Test error case
+	// Test error case. A zero divisor must stay an *object.Error (that is how
+	// errors propagate through the evaluator) and be tagged ValueError so
+	// `except ValueError:` matches it, mirroring CPython's "math domain error".
 	result = fmod.Fn(context.Background(), object.NewKwargs(nil), object.NewFloat(5.0), object.NewFloat(0.0))
-	if _, ok := result.(*object.Error); !ok {
-		t.Errorf("fmod(5.0, 0.0) should return error, got %T", result)
+	err, ok := result.(*object.Error)
+	if !ok {
+		t.Fatalf("fmod(5.0, 0.0) should return error, got %T", result)
+	}
+	if err.ExceptionType != object.ExceptionTypeValueError {
+		t.Errorf("fmod(5.0, 0.0) ExceptionType = %q, want %q",
+			err.ExceptionType, object.ExceptionTypeValueError)
+	}
+
+	// Integer zero divisor goes through the same check.
+	result = fmod.Fn(context.Background(), object.NewKwargs(nil), object.NewInteger(5), object.NewInteger(0))
+	if err, ok := result.(*object.Error); !ok {
+		t.Errorf("fmod(5, 0) should return error, got %T", result)
+	} else if err.ExceptionType != object.ExceptionTypeValueError {
+		t.Errorf("fmod(5, 0) ExceptionType = %q, want %q",
+			err.ExceptionType, object.ExceptionTypeValueError)
 	}
 }
 

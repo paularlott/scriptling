@@ -945,12 +945,12 @@ func evalIntegerInfixExpression(operator ast.Op, leftVal, rightVal int64) object
 		return object.NewInteger(leftVal * rightVal)
 	case ast.OpDiv:
 		if rightVal == 0 {
-			return errors.NewError(errors.ErrDivisionByZero)
+			return errors.NewZeroDivisionError()
 		}
 		return object.NewFloat(float64(leftVal) / float64(rightVal))
 	case ast.OpFloorDiv:
 		if rightVal == 0 {
-			return errors.NewError(errors.ErrDivisionByZero)
+			return errors.NewZeroDivisionError()
 		}
 		return object.NewInteger(leftVal / rightVal)
 	case ast.OpPow:
@@ -973,7 +973,7 @@ func evalIntegerInfixExpression(operator ast.Op, leftVal, rightVal int64) object
 		return object.NewInteger(result)
 	case ast.OpMod:
 		if rightVal == 0 {
-			return errors.NewError(errors.ErrDivisionByZero)
+			return errors.NewZeroDivisionError()
 		}
 		return object.NewInteger(leftVal % rightVal)
 	case ast.OpBitAnd:
@@ -1037,12 +1037,12 @@ func evalFloatInfixValues(operator ast.Op, leftVal, rightVal float64) object.Obj
 		return object.NewFloat(leftVal * rightVal)
 	case ast.OpDiv:
 		if rightVal == 0 {
-			return errors.NewError(errors.ErrDivisionByZero)
+			return errors.NewZeroDivisionError()
 		}
 		return object.NewFloat(leftVal / rightVal)
 	case ast.OpFloorDiv:
 		if rightVal == 0 {
-			return errors.NewError(errors.ErrDivisionByZero)
+			return errors.NewZeroDivisionError()
 		}
 		return object.NewFloat(math.Floor(leftVal / rightVal))
 	case ast.OpPow:
@@ -3068,21 +3068,9 @@ func evalTryStatementWithContext(ctx context.Context, ts *ast.TryStatement, env 
 		// Convert Error to Exception for consistent handling (do this once, before matching)
 		var exceptionObj object.Object = result
 		if err, ok := result.(*object.Error); ok {
-			// Try to infer exception type from error message
-			exceptionType := object.ExceptionTypeException
-			msg := err.Message
-			if strings.HasPrefix(msg, "type error:") || strings.Contains(msg, "type mismatch") {
-				exceptionType = object.ExceptionTypeTypeError
-			} else if strings.Contains(msg, "value error") || strings.Contains(msg, "invalid value") {
-				exceptionType = object.ExceptionTypeValueError
-			} else if strings.Contains(msg, "identifier not found") || strings.Contains(msg, "name") && strings.Contains(msg, "not defined") {
-				exceptionType = object.ExceptionTypeNameError
-			} else if strings.HasPrefix(msg, errors.ErrImportError) {
-				exceptionType = object.ExceptionTypeImportError
-			}
 			exceptionObj = &object.Exception{
-				Message:       msg,
-				ExceptionType: exceptionType,
+				Message:       err.Message,
+				ExceptionType: errorExceptionType(err),
 			}
 		}
 
@@ -3267,6 +3255,35 @@ func isException(obj object.Object) bool {
 // matchesExceptionType checks if an exception matches the specified exception type
 // Supports: Exception (catches all), specific types (ValueError, TypeError, etc.),
 // and dotted names (requests.HTTPError)
+// errorExceptionType determines which Python exception type an *object.Error
+// should be matched as by an except clause.
+//
+// Errors tagged at the point they were raised (see errors.NewZeroDivisionError)
+// carry their type explicitly and are used as-is. Everything else falls back to
+// inferring a type from the message text. That inference is a legacy heuristic:
+// it only exists for errors that have not been tagged yet, and the right way to
+// classify a new error is to set Error.ExceptionType where it is created rather
+// than to add another pattern here. Anything unclassified is reported as a plain
+// Exception, which `except Exception:` still catches.
+func errorExceptionType(err *object.Error) string {
+	if err.ExceptionType != "" {
+		return err.ExceptionType
+	}
+	msg := err.Message
+	switch {
+	case strings.HasPrefix(msg, "type error:"), strings.Contains(msg, "type mismatch"):
+		return object.ExceptionTypeTypeError
+	case strings.Contains(msg, "value error"), strings.Contains(msg, "invalid value"):
+		return object.ExceptionTypeValueError
+	case strings.Contains(msg, "identifier not found"),
+		strings.Contains(msg, "name") && strings.Contains(msg, "not defined"):
+		return object.ExceptionTypeNameError
+	case strings.HasPrefix(msg, errors.ErrImportError):
+		return object.ExceptionTypeImportError
+	}
+	return object.ExceptionTypeException
+}
+
 func matchesExceptionType(exception object.Object, exceptTypeExpr ast.Expression, env *object.Environment) bool {
 	// Get the exception type string
 	var exceptionType string
