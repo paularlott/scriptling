@@ -96,7 +96,10 @@ Example:
 				return errors.NewTypeError("FUNCTION", args[0].Type().String())
 			}
 
-			partialArgs := args[1:]
+			// Copy args[1:] so the returned Builtin doesn't alias the caller's
+			// buffer (the closure retains partialArgs across the call).
+			partialArgs := make([]object.Object, len(args)-1)
+			copy(partialArgs, args[1:])
 			partialKwargs := make(map[string]object.Object)
 			for k, v := range kwargs.Kwargs {
 				partialKwargs[k] = v

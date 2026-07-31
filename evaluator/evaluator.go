@@ -2278,8 +2278,11 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 	// Check for extra positional arguments
 	if numArgs > positionalLimit {
 		if fp.variadic != nil {
-			// Collect extra arguments into a list
-			list := &object.List{Elements: args[positionalLimit:]}
+			// Collect extra arguments into a list. Copy so the varargs list
+			// doesn't alias the caller's args buffer (which may be reused).
+			varArgs := make([]object.Object, numArgs-positionalLimit)
+			copy(varArgs, args[positionalLimit:])
+			list := &object.List{Elements: varArgs}
 			env.Set(fp.variadic.Value(), list)
 		} else {
 			minArgs := positionalLimit
