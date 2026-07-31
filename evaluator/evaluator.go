@@ -1703,6 +1703,15 @@ func unpackArgsFromIterable(argsVal object.Object) ([]object.Object, object.Obje
 			}
 			unpacked = append(unpacked, elem)
 		}
+	case *object.Dict:
+		iter := val.CreateIterator()
+		for {
+			elem, hasNext := iter.Next()
+			if !hasNext {
+				break
+			}
+			unpacked = append(unpacked, elem)
+		}
 	case *object.DictKeys:
 		iter := val.CreateIterator()
 		for {
@@ -4044,6 +4053,8 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 	switch o := iterable.(type) {
 	case *object.Iterator:
 		iter = o
+	case *object.Dict:
+		iter = o.CreateIterator()
 	case *object.DictKeys:
 		iter = o.CreateIterator()
 	case *object.DictValues:
@@ -4407,6 +4418,17 @@ func iterateObject(ctx context.Context, obj object.Object, fn func(object.Object
 	case *object.Iterator:
 		for {
 			el, ok := o.Next()
+			if !ok {
+				break
+			}
+			if err := fn(el); err != nil {
+				return err
+			}
+		}
+	case *object.Dict:
+		iter := o.CreateIterator()
+		for {
+			el, ok := iter.Next()
 			if !ok {
 				break
 			}
