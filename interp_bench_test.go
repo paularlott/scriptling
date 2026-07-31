@@ -131,6 +131,31 @@ for i in range(8000):
 `)
 }
 
+// Long all-string concatenation chains, which share the dispatch path with
+// integer chains and with mixed-type chains.
+func BenchmarkInterp_StringAddChain(b *testing.B) {
+	benchScript(b, `
+a = "alpha"
+bb = "beta"
+c = "gamma"
+d = "delta"
+out = ""
+for i in range(1500):
+    out = a + bb + c + d + "-" + a + bb
+`)
+}
+
+// Chains whose operands are not strings at all must not pay for the string path.
+func BenchmarkInterp_MixedAddChain(b *testing.B) {
+	benchScript(b, `
+items = [1, 2, 3, 4]
+d = {"k": 5}
+total = 0
+for i in range(3000):
+    total = total + items[0] + d["k"] + items[1]
+`)
+}
+
 // Comprehensions.
 func BenchmarkInterp_Comprehension(b *testing.B) {
 	benchScript(b, `
