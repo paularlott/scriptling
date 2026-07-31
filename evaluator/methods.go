@@ -57,10 +57,12 @@ func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression
 		}
 	}
 
-	args := evalExpressionsWithContext(ctx, mce.Arguments, env)
+	args := evalCallArgs(ctx, mce.Arguments, env)
 	if len(args) == 1 && object.IsError(args[0]) {
 		return args[0]
 	}
+	// args is borrowed from the per-root arg-buffer free-list; release on return.
+	defer object.ReleaseArgs(env, args)
 
 	// Evaluate keyword arguments
 	var keywords map[string]object.Object
@@ -162,10 +164,12 @@ func evalFastDictCallableMethod(ctx context.Context, dict *object.Dict, method s
 		return errors.NewError("%s: method %s not found in library", errors.ErrIdentifierNotFound, method)
 	}
 
-	args := evalExpressionsWithContext(ctx, arguments, env)
+	args := evalCallArgs(ctx, arguments, env)
 	if len(args) == 1 && object.IsError(args[0]) {
 		return args[0]
 	}
+	// args is borrowed from the per-root arg-buffer free-list; release on return.
+	defer object.ReleaseArgs(env, args)
 
 	switch fn := pair.Value.(type) {
 	case *object.Builtin:

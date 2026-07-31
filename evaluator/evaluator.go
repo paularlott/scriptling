@@ -1826,24 +1826,33 @@ func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *obje
 							return applyUserFunctionN(ctx, fn, a0, a1, a2)
 						}
 					}
-					args := evalArgsFast(ctx, node.Arguments, env)
-					if len(args) == 1 && object.IsError(args[0]) {
-						return args[0]
-					}
-					return applyUserFunction(ctx, fn, args, nil, env)
-				case *object.Builtin:
-					// Use the existing fast builtin path
-					return applyBuiltinFast(ctx, node, env, fn)
-				case *object.LambdaFunction:
-					args := evalArgsFast(ctx, node.Arguments, env)
-					if len(args) == 1 && object.IsError(args[0]) {
-						return args[0]
-					}
-					return applyLambdaFunctionWithContext(ctx, fn, args, nil, env)
+				args := evalCallArgs(ctx, node.Arguments, env)
+				if len(args) == 1 && object.IsError(args[0]) {
+					return args[0]
 				}
-				// Class or other callable - fall through to general path
-				return applyFunctionWithContext(ctx, val,
-					evalExpressionsWithContext(ctx, node.Arguments, env), nil, env)
+				res := applyUserFunction(ctx, fn, args, nil, env)
+				object.ReleaseArgs(env, args)
+				return res
+			case *object.Builtin:
+				// Use the existing fast builtin path
+				return applyBuiltinFast(ctx, node, env, fn)
+			case *object.LambdaFunction:
+				args := evalCallArgs(ctx, node.Arguments, env)
+				if len(args) == 1 && object.IsError(args[0]) {
+					return args[0]
+				}
+				res := applyLambdaFunctionWithContext(ctx, fn, args, nil, env)
+				object.ReleaseArgs(env, args)
+				return res
+			}
+			// Class or other callable - fall through to general path
+			args := evalCallArgs(ctx, node.Arguments, env)
+			if len(args) == 1 && object.IsError(args[0]) {
+				return args[0]
+			}
+			res := applyFunctionWithContext(ctx, val, args, nil, env)
+			object.ReleaseArgs(env, args)
+			return res
 			}
 			// Not in env - try fast builtins by name
 			if builtin, ok := builtins[name]; ok {
@@ -1858,10 +1867,15 @@ func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *obje
 		return function
 	}
 
-	args := evalExpressionsWithContext(ctx, node.Arguments, env)
+	args := evalCallArgs(ctx, node.Arguments, env)
 	if len(args) == 1 && object.IsError(args[0]) {
 		return args[0]
 	}
+	// args is borrowed from the per-root arg-buffer free-list; release it on
+	// every return path from here. (If *unpack append below grows args into a
+	// fresh backing, the original pooled buffer is still released correctly; the
+	// grown backing is simply not pooled — a rare case.)
+	defer object.ReleaseArgs(env, args)
 
 	var keywords map[string]object.Object
 	keywordsMap := node.GetKeywords()
@@ -1909,23 +1923,22 @@ func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *obje
 	return applyFunctionWithContext(ctx, function, args, keywords, env)
 }
 
-// evalArgsFast evaluates call arguments with reduced allocation overhead.
-func evalArgsFast(ctx context.Context, exps []ast.Expression, env *object.Environment) []object.Object {
+// evalCallArgs evaluates the arguments of a call expression into a pooled
+// buffer (object.AcquireArgs). The returned slice is BORROWED: the caller must
+// call object.ReleaseArgs(env, args) once the callee has returned. On
+// evaluation error the pooled buffer is released here and a fresh (non-pooled)
+// one-element slice is returned, so the caller skips release via the usual
+// `len(args)==1 && IsError` early-return.
+func evalCallArgs(ctx context.Context, exps []ast.Expression, env *object.Environment) []object.Object {
 	n := len(exps)
 	if n == 0 {
 		return nil
 	}
-	// For single-arg calls (the most common case for recursive functions),
-	// avoid the slice allocation by using a stack-allocated array.
-	if n == 1 {
-		result := evalNode(ctx, exps[0], env)
-		// Use a fixed-size array to avoid heap allocation for the slice
-		return []object.Object{result}
-	}
-	result := make([]object.Object, n)
+	result := object.AcquireArgs(env, n)
 	for i, e := range exps {
 		evaluated := evalNode(ctx, e, env)
 		if object.IsError(evaluated) {
+			object.ReleaseArgs(env, result)
 			return []object.Object{evaluated}
 		}
 		result[i] = evaluated
@@ -1935,12 +1948,14 @@ func evalArgsFast(ctx context.Context, exps []ast.Expression, env *object.Enviro
 
 // applyBuiltinFast dispatches builtin calls, matching the fast builtin path.
 func applyBuiltinFast(ctx context.Context, node *ast.CallExpression, env *object.Environment, fn *object.Builtin) object.Object {
-	args := evalExpressionsWithContext(ctx, node.Arguments, env)
+	args := evalCallArgs(ctx, node.Arguments, env)
 	if len(args) == 1 && object.IsError(args[0]) {
 		return args[0]
 	}
 	ctxWithEnv := SetEnvInContext(ctx, env)
-	return fn.Fn(ctxWithEnv, object.Kwargs{}, args...)
+	res := fn.Fn(ctxWithEnv, object.Kwargs{}, args...)
+	object.ReleaseArgs(env, args)
+	return res
 }
 
 // tryEvalFastBuiltinCall handles fast-path builtin calls (len, type, str, etc.).
