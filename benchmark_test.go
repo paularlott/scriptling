@@ -88,7 +88,9 @@ func BenchmarkRuntime_StringConcat(b *testing.B) {
 func BenchmarkRuntime_StringConcatLoop(b *testing.B) {
 	p := New()
 	for i := 0; i < b.N; i++ {
-		p.Eval(`result = ""\nfor i in range(10):\n    result = result + str(i)`)
+		p.Eval(`result = ""
+for i in range(10):
+    result = result + str(i)`)
 	}
 }
 
@@ -110,7 +112,8 @@ func BenchmarkRuntime_StringJoin(b *testing.B) {
 func BenchmarkRuntime_StringJoinLarge(b *testing.B) {
 	p := New()
 	p.Eval(`items = []`)
-	p.Eval(`for i in range(100):\n    items = append(items, str(i))`)
+	p.Eval(`for i in range(100):
+    items = append(items, str(i))`)
 	for i := 0; i < b.N; i++ {
 		p.Eval(`result = join(items, ",")`)
 	}
@@ -431,14 +434,22 @@ func BenchmarkScenario_DataProcessing(b *testing.B) {
 	p := New()
 	p.Eval("import json")
 	for i := 0; i < b.N; i++ {
-		p.Eval(`data = json.loads('{"items":[1,2,3,4,5]}')\ntotal = 0\nfor item in data["items"]:\n    total = total + item\nresult = total`)
+		p.Eval(`data = json.loads('{"items":[1,2,3,4,5]}')
+total = 0
+for item in data["items"]:
+    total = total + item
+result = total`)
 	}
 }
 
 func BenchmarkScenario_ConfigLogic(b *testing.B) {
 	p := New()
 	for i := 0; i < b.N; i++ {
-		p.Eval(`config = {"env": "prod", "timeout": 30}\nif config["env"] == "prod":\n    timeout = config["timeout"] * 2\nelse:\n    timeout = config["timeout"]`)
+		p.Eval(`config = {"env": "prod", "timeout": 30}
+if config["env"] == "prod":
+    timeout = config["timeout"] * 2
+else:
+    timeout = config["timeout"]`)
 	}
 }
 
