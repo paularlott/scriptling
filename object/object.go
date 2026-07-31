@@ -735,9 +735,18 @@ func (lf *LambdaFunction) CoerceInt() (int64, Object)     { return 0, errMustBeI
 func (lf *LambdaFunction) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
 
 // BuiltinFunction is the signature for all builtin functions
-// - ctx: Context with environment and runtime information
-// - kwargs: Keyword arguments passed to the function (wrapped with helper methods)
-// - args: Positional arguments passed to the function
+//   - ctx: Context with environment and runtime information
+//   - kwargs: Keyword arguments passed to the function (wrapped with helper methods)
+//   - args: Positional arguments passed to the function
+//
+// The args slice is BORROWED for the duration of the call: the evaluator reuses
+// the backing array across calls (a per-root free-list, see AcquireArgs). A
+// builtin must therefore not retain args — or any sub-slice such as args[1:] —
+// past the point it returns. Reading elements (args[i], ranging over args,
+// spreading args... into a synchronous call) is always safe; storing the slice
+// in a struct field/map/global, capturing it in a goroutine or returned closure,
+// or using it as a List's Elements requires copying first (make + copy). This
+// matches the convention of CPython's tp_call and Go variadic APIs.
 type BuiltinFunction func(ctx context.Context, kwargs Kwargs, args ...Object) Object
 
 type Builtin struct {
@@ -924,6 +933,11 @@ type Environment struct {
 	// on a tree, so the free-list never sees concurrent access. This avoids the
 	// per-call pin()/Get() overhead of a global sync.Pool on the return path.
 	freeReturns []*ReturnValue
+	// freeArgBufs is a free-list of reusable []Object argument buffers used by
+	// the evaluator's call-arg path. Like freeReturns it lives on the root
+	// environment and is touched without locking — the interpreter lock (gil)
+	// serializes script execution on a tree, so it never sees concurrent access.
+	freeArgBufs [][]Object
 	// gil is the per-tree interpreter lock, allocated only on the root. The
 	// evaluator acquires it at every Go->script boundary so that any number of
 	// goroutines may call into one Environment tree, but only one runs script at
@@ -1269,6 +1283,60 @@ func ReleaseReturnValue(rv *ReturnValue) {
 	}
 	if len(root.freeReturns) < maxFreeReturns {
 		root.freeReturns = append(root.freeReturns, rv)
+	}
+}
+
+// maxFreeArgBufs caps how many idle argument buffers a tree retains, bounding
+// memory after deep call nesting.
+const maxFreeArgBufs = 256
+
+// AcquireArgs returns a []Object of length n for a call's argument list,
+// reusing a buffer from the tree's per-root free-list when one of sufficient
+// capacity is available. The returned slice is BORROWED: the caller must return
+// it via ReleaseArgs once the callee has returned, and no callee may retain the
+// slice past its own call (the interpreter's builtins, user-function binding,
+// and varargs collection all satisfy this — varargs copies, params read by
+// index). Uses the same lock-free, GIL-serialized contract as AcquireCallEnvironment.
+func AcquireArgs(env *Environment, n int) []Object {
+	if n <= 0 {
+		return nil
+	}
+	if env != nil {
+		if root := env.root; root != nil {
+			if s := root.freeArgBufs; len(s) > 0 {
+				i := len(s) - 1
+				if cap(s[i]) >= n {
+					buf := s[i]
+					s[i] = nil
+					root.freeArgBufs = s[:i]
+					return buf[:n]
+				}
+				// Top buffer is too small; fall through to allocate a fresh one,
+				// leaving the small buffer pooled for a smaller call.
+			}
+		}
+	}
+	return make([]Object, n)
+}
+
+// ReleaseArgs clears args and returns its backing array to the tree's per-root
+// free-list for reuse. Safe to call with nil/empty args (no-op) and on slices
+// not obtained from AcquireArgs (they simply join the pool). The full backing
+// capacity is cleared so no Object is pinned by an idle buffer.
+func ReleaseArgs(env *Environment, args []Object) {
+	if env == nil || len(args) == 0 {
+		return
+	}
+	root := env.root
+	if root == nil {
+		return
+	}
+	full := args[:cap(args)]
+	for i := range full {
+		full[i] = nil
+	}
+	if len(root.freeArgBufs) < maxFreeArgBufs {
+		root.freeArgBufs = append(root.freeArgBufs, full)
 	}
 }
 
