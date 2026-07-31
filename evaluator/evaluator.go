@@ -94,12 +94,15 @@ func GetEnvFromContext(ctx context.Context) *object.Environment {
 // boundary, unless the calling goroutine already holds it (a re-entrant call,
 // e.g. a builtin invoking a script callback). Ownership is tracked by goroutine
 // id, so re-entrancy and "am I the holder?" checks are exact regardless of how
-// the context was derived. Returns a release function (a no-op when re-entrant).
-func enterScript(ctx context.Context, env *object.Environment) (context.Context, func()) {
+// the context was derived. Returns the env whose GIL was acquired (the caller
+// defers its ExitGIL), or nil when the call was re-entrant (caller does nothing).
+// Returning an env pointer rather than a func() avoids per-call closure
+// allocation on the hot Go->script boundary.
+func enterScript(env *object.Environment) *object.Environment {
 	if env != nil && env.EnterGIL() {
-		return ctx, env.ExitGIL
+		return env
 	}
-	return ctx, func() {}
+	return nil
 }
 
 // SetCallDepthInContext stores call depth tracker in context
@@ -162,8 +165,9 @@ func EvalWithContext(ctx context.Context, node ast.Node, env *object.Environment
 	}
 	// Acquire the interpreter lock for the duration of this top-level run so the
 	// whole tree is touched by one goroutine at a time.
-	ctx, release := enterScript(ctx, env)
-	defer release()
+	if gilEnv := enterScript(env); gilEnv != nil {
+		defer gilEnv.ExitGIL()
+	}
 	return evalWithContext(ctx, node, env)
 }
 
@@ -1528,9 +1532,7 @@ func evalWhileStatementWithContext(ctx context.Context, ws *ast.WhileStatement, 
 		result = evalWithContext(ctx, ws.Body, env)
 		if result != nil {
 			switch result.Type() {
-			case object.ERROR_OBJ:
-				return result
-			case object.RETURN_OBJ:
+			case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
 				return result
 			case object.BREAK_OBJ:
 				broke = true
@@ -2170,8 +2172,9 @@ func applyUserFunction(ctx context.Context, fn *object.Function, args []object.O
 // functions — especially concurrently against a shared environment — must use
 // this rather than the unexported applyFunction, which assumes the lock is held.
 func ApplyFunctionGIL(ctx context.Context, fn object.Object, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
-	ctx, release := enterScript(ctx, env)
-	defer release()
+	if gilEnv := enterScript(env); gilEnv != nil {
+		defer gilEnv.ExitGIL()
+	}
 	return applyFunction(ctx, fn, args, keywords, env)
 }
 
@@ -4066,6 +4069,52 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 	var result object.Object = NULL
 	broke := false
 
+	// Fast path: for k, v in d.items() — bind each pair's key/value straight
+	// into the two loop variables, skipping the per-iteration Tuple that
+	// DictItems.CreateIterator would allocate only for setForVariables to
+	// unpack and discard. Only the 2-variable form qualifies; everything else
+	// (1 var, 3+ vars, non-DictItems) falls through to the generic path.
+	if di, ok := iterable.(*object.DictItems); ok && len(fs.Variables) == 2 {
+		// Snapshot keys so body mutations (e.g. del d[k]) can't corrupt the
+		// range, matching DictItems.CreateIterator's view semantics.
+		keys := make([]string, 0, len(di.Dict.Pairs))
+		for k := range di.Dict.Pairs {
+			keys = append(keys, k)
+		}
+		cc := newContextChecker(ctx)
+		for _, key := range keys {
+			pair, ok := di.Dict.Pairs[key]
+			if !ok {
+				continue // key deleted during iteration — view skips it
+			}
+			if err := cc.check(); err != nil {
+				return err
+			}
+			if err := setForVariable(fs.Variables[0], pair.Key, env); err != nil {
+				return errors.NewError("%s", err.Error())
+			}
+			if err := setForVariable(fs.Variables[1], pair.Value, env); err != nil {
+				return errors.NewError("%s", err.Error())
+			}
+			result = evalBlockStatementWithContext(ctx, fs.Body, env)
+			if result != nil {
+				switch result.Type() {
+				case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
+					return result
+				case object.BREAK_OBJ:
+					return NULL // broke=True: skip else, return NULL
+				case object.CONTINUE_OBJ:
+					result = NULL
+					continue
+				}
+			}
+		}
+		if fs.Else != nil {
+			return evalBlockStatementWithContext(ctx, fs.Else, env)
+		}
+		return result
+	}
+
 	// Handle Iterator objects and Views
 	var iter *object.Iterator
 	switch o := iterable.(type) {
@@ -4119,7 +4168,7 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 			result = evalBlockStatementWithContext(ctx, fs.Body, env)
 			if result != nil {
 				switch result.Type() {
-				case object.ERROR_OBJ, object.RETURN_OBJ:
+				case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
 					return result
 				case object.BREAK_OBJ:
 					broke = true
@@ -4161,7 +4210,7 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 					result = evalBlockStatementWithContext(ctx, fs.Body, env)
 					if result != nil {
 						switch result.Type() {
-						case object.ERROR_OBJ, object.RETURN_OBJ:
+						case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
 							return result
 						case object.BREAK_OBJ:
 							broke = true
@@ -4187,7 +4236,7 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 				result = evalBlockStatementWithContext(ctx, fs.Body, env)
 				if result != nil {
 					switch result.Type() {
-					case object.ERROR_OBJ, object.RETURN_OBJ:
+					case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
 						return result
 					case object.BREAK_OBJ:
 						broke = true
@@ -4216,7 +4265,7 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 				result = evalBlockStatementWithContext(ctx, fs.Body, env)
 				if result != nil {
 					switch result.Type() {
-					case object.ERROR_OBJ, object.RETURN_OBJ:
+					case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
 						return result
 					case object.BREAK_OBJ:
 						broke = true
@@ -4245,7 +4294,7 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 				result = evalBlockStatementWithContext(ctx, fs.Body, env)
 				if result != nil {
 					switch result.Type() {
-					case object.ERROR_OBJ, object.RETURN_OBJ:
+					case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
 						return result
 					case object.BREAK_OBJ:
 						broke = true
@@ -4276,7 +4325,7 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 			result = evalBlockStatementWithContext(ctx, fs.Body, env)
 			if result != nil {
 				switch result.Type() {
-				case object.ERROR_OBJ, object.RETURN_OBJ:
+				case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
 					return result
 				case object.BREAK_OBJ:
 					broke = true
@@ -4345,7 +4394,7 @@ func evalFastRangeForStatement(ctx context.Context, fs *ast.ForStatement, env *o
 		result = evalBlockStatementWithContext(ctx, fs.Body, env)
 		if result != nil {
 			switch result.Type() {
-			case object.ERROR_OBJ, object.RETURN_OBJ:
+			case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
 				return result, true
 			case object.BREAK_OBJ:
 				return NULL, true
