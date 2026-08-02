@@ -35,6 +35,29 @@ func NewError(format string, args ...interface{}) *object.Error {
 	return &object.Error{Message: fmt.Sprintf(format, args...)}
 }
 
+// NewZeroDivisionError creates a division-by-zero error tagged so that
+// `except ZeroDivisionError:` matches it. It stays an *object.Error (not an
+// Exception) so it propagates through the evaluator's existing object.IsError
+// checks and keeps its file/line/function annotation.
+func NewZeroDivisionError() *object.Error {
+	return &object.Error{
+		Message:       ErrDivisionByZero,
+		ExceptionType: object.ExceptionTypeZeroDivisionError,
+	}
+}
+
+// NewValueError creates an error tagged so that `except ValueError:` matches it.
+// Use it for a value that is the right type but outside the accepted domain —
+// the maths-domain errors CPython reports as ValueError, for example. Like
+// NewZeroDivisionError it stays an *object.Error so it propagates through the
+// evaluator's object.IsError checks and keeps its file/line/function annotation.
+func NewValueError(format string, args ...interface{}) *object.Error {
+	return &object.Error{
+		Message:       fmt.Sprintf(format, args...),
+		ExceptionType: object.ExceptionTypeValueError,
+	}
+}
+
 // NewTimeoutError creates a timeout error
 func NewTimeoutError() *object.Error {
 	return &object.Error{Message: ErrTimeout}

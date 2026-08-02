@@ -4,6 +4,32 @@ import (
 	"fmt"
 )
 
+// CreateIterator returns an iterator over the dict's keys.
+// In Python, iterating a dict yields its keys (same as dict.keys()).
+func (d *Dict) CreateIterator() *Iterator {
+	// Snapshot keys at the moment iteration begins, like DictKeys does, so
+	// concurrent map writes can't corrupt the range. Deleted keys are skipped
+	// to mirror view semantics.
+	keys := make([]string, 0, len(d.Pairs))
+	for k := range d.Pairs {
+		keys = append(keys, k)
+	}
+
+	index := 0
+	return &Iterator{
+		next: func() (Object, bool) {
+			for index < len(keys) {
+				key := keys[index]
+				index++
+				if pair, ok := d.Pairs[key]; ok {
+					return pair.Key, true
+				}
+			}
+			return nil, false
+		},
+	}
+}
+
 // DictKeys represents a view of a dictionary's keys
 type DictKeys struct {
 	Dict *Dict

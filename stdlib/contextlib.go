@@ -38,8 +38,11 @@ var suppressClass = &object.Class{
 				if !ok {
 					return errors.NewError("suppress.__init__: self must be an instance")
 				}
-				inst.SetField(suppressKey, &object.List{Elements: args[1:]})
-				return &object.Null{}
+			// Copy args[1:] so the stored List doesn't alias the caller's buffer.
+			excTypes := make([]object.Object, len(args)-1)
+			copy(excTypes, args[1:])
+			inst.SetField(suppressKey, &object.List{Elements: excTypes})
+			return &object.Null{}
 			},
 		},
 		"__enter__": &object.Builtin{
@@ -90,7 +93,10 @@ var suppressClass = &object.Class{
 
 func suppressNew(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 	inst := object.NewInstanceWithFields(suppressClass, nil)
-	inst.SetField(suppressKey, &object.List{Elements: args})
+	// Copy args so the stored List doesn't alias the caller's buffer.
+	excTypes := make([]object.Object, len(args))
+	copy(excTypes, args)
+	inst.SetField(suppressKey, &object.List{Elements: excTypes})
 	return inst
 }
 

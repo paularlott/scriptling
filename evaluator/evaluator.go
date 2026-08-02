@@ -64,9 +64,22 @@ func (cd *CallDepth) Depth() int {
 	return int(cd.current)
 }
 
-// SetEnvInContext stores environment in context for builtin functions
+// SetEnvInContext stores environment in context for builtin functions.
+//
+// Every builtin call goes through here, and context.WithValue allocates, so the
+// result is memoised on the environment: the base context is stable for the
+// duration of an evaluation, so the same derived context can be handed out
+// repeatedly instead of rebuilt per call.
 func SetEnvInContext(ctx context.Context, env *object.Environment) context.Context {
-	return context.WithValue(ctx, envContextKey, env)
+	if env == nil {
+		return context.WithValue(ctx, envContextKey, env)
+	}
+	if cached, ok := env.CachedEnvContext(ctx); ok {
+		return cached
+	}
+	derived := context.WithValue(ctx, envContextKey, env)
+	env.StoreEnvContext(ctx, derived)
+	return derived
 }
 
 // GetEnvFromContext retrieves environment from context for external functions
@@ -81,12 +94,15 @@ func GetEnvFromContext(ctx context.Context) *object.Environment {
 // boundary, unless the calling goroutine already holds it (a re-entrant call,
 // e.g. a builtin invoking a script callback). Ownership is tracked by goroutine
 // id, so re-entrancy and "am I the holder?" checks are exact regardless of how
-// the context was derived. Returns a release function (a no-op when re-entrant).
-func enterScript(ctx context.Context, env *object.Environment) (context.Context, func()) {
+// the context was derived. Returns the env whose GIL was acquired (the caller
+// defers its ExitGIL), or nil when the call was re-entrant (caller does nothing).
+// Returning an env pointer rather than a func() avoids per-call closure
+// allocation on the hot Go->script boundary.
+func enterScript(env *object.Environment) *object.Environment {
 	if env != nil && env.EnterGIL() {
-		return ctx, env.ExitGIL
+		return env
 	}
-	return ctx, func() {}
+	return nil
 }
 
 // SetCallDepthInContext stores call depth tracker in context
@@ -149,8 +165,9 @@ func EvalWithContext(ctx context.Context, node ast.Node, env *object.Environment
 	}
 	// Acquire the interpreter lock for the duration of this top-level run so the
 	// whole tree is touched by one goroutine at a time.
-	ctx, release := enterScript(ctx, env)
-	defer release()
+	if gilEnv := enterScript(env); gilEnv != nil {
+		defer gilEnv.ExitGIL()
+	}
 	return evalWithContext(ctx, node, env)
 }
 
@@ -218,25 +235,21 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		if node.Operator == ast.OpAnd || node.Operator == ast.OpOr {
 			return evalShortCircuitInfixExpression(ctx, node, env)
 		}
+		// Unboxed integer fast path: evaluates side-effect-free integer
+		// arithmetic and comparison subtrees without boxing intermediates.
+		// See intfast.go. This is tried before the string-concatenation chain
+		// below because that helper always claims the node once it matches
+		// shape, so an integer chain like `a + b + c` would otherwise never
+		// reach this path.
+		if node.IntFast != ast.IntFastNone {
+			if result, ok := tryEvalIntInfix(node, env); ok {
+				return result
+			}
+		}
 		if node.Operator == ast.OpAdd {
 			if left, ok := node.Left.(*ast.InfixExpression); ok && left.Operator == ast.OpAdd {
 				if result, ok := tryEvalStringConcatChain(ctx, node, env); ok {
 					return result
-				}
-			}
-		}
-		if node.Operator >= ast.OpAdd && node.Operator <= ast.OpNeq {
-			if lid, ok := node.Left.(*ast.Identifier); ok {
-				if rid, ok := node.Right.(*ast.Identifier); ok {
-					if lv, ok := env.Get(lid.Value()); ok {
-						if li, ok := lv.(*object.Integer); ok {
-							if rv, ok := env.Get(rid.Value()); ok {
-								if ri, ok := rv.(*object.Integer); ok {
-									return evalIntegerInfixExpression(node.Operator, li.IntValue(), ri.IntValue())
-								}
-							}
-						}
-					}
 				}
 			}
 		}
@@ -276,7 +289,7 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 	case *ast.FloatLiteral:
 		return object.NewFloat(node.Value)
 	case *ast.StringLiteral:
-		return object.NewString(node.Value)
+		return evalStringLiteral(node)
 	case *ast.FStringLiteral:
 		return evalFStringLiteral(ctx, node, env)
 	case *ast.Boolean:
@@ -303,10 +316,7 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		return NULL
 	case *ast.DelStatement:
 		if err := deleteFromExpression(ctx, node.Target, env); err != nil {
-			if ae, ok := err.(*assignmentExceptionError); ok {
-				return ae.ex
-			}
-			return errors.NewError("%s", err.Error())
+			return assignErrorToObject(err)
 		}
 		return NULL
 	case *ast.ImportStatement:
@@ -321,25 +331,16 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		// Execute chained assignments first (a = b = 5: assign 5 to b, then to a)
 		if node.Chained != nil {
 			if err := assignToExpression(ctx, node.Chained.Left, val, env); err != nil {
-				if ae, ok := err.(*assignmentExceptionError); ok {
-					return ae.ex
-				}
-				return errors.NewError("%s", err.Error())
+				return assignErrorToObject(err)
 			}
 			for c := node.Chained.Chained; c != nil; c = c.Chained {
 				if err := assignToExpression(ctx, c.Left, val, env); err != nil {
-					if ae, ok := err.(*assignmentExceptionError); ok {
-						return ae.ex
-					}
-					return errors.NewError("%s", err.Error())
+					return assignErrorToObject(err)
 				}
 			}
 		}
 		if err := assignToExpression(ctx, node.Left, val, env); err != nil {
-			if ae, ok := err.(*assignmentExceptionError); ok {
-				return ae.ex
-			}
-			return errors.NewError("%s", err.Error())
+			return assignErrorToObject(err)
 		}
 		return NULL
 	case *ast.AugmentedAssignStatement:
@@ -502,6 +503,34 @@ func evalBlockStatementWithContext(ctx context.Context, block *ast.BlockStatemen
 	}
 
 	return result
+}
+
+// assignErrorToObject converts an assignment or deletion error into the object
+// the evaluator propagates: a script-level exception passes through as an
+// Exception so `except` clauses can catch it, anything else becomes a plain
+// Error.
+func assignErrorToObject(err error) object.Object {
+	if ae, ok := err.(*assignmentExceptionError); ok {
+		return ae.ex
+	}
+	return errors.NewError("%s", err.Error())
+}
+
+// evalStringLiteral returns the runtime value of a string literal, reusing the
+// one cached on the AST node.
+//
+// Strings are immutable in Scriptling — nothing mutates an *object.String in
+// place — so a single value can safely back every evaluation of a given literal.
+// This matters most for attribute access: `obj.attr` desugars to an index by a
+// string literal, so without this every field read allocated its own copy of the
+// field name.
+func evalStringLiteral(node *ast.StringLiteral) object.Object {
+	if s, ok := node.Boxed().(*object.String); ok {
+		return s
+	}
+	s := object.NewString(node.Value)
+	node.SetBoxed(s)
+	return s
 }
 
 func nativeBoolToBooleanObject(input bool) *object.Boolean {
@@ -950,12 +979,12 @@ func evalIntegerInfixExpression(operator ast.Op, leftVal, rightVal int64) object
 		return object.NewInteger(leftVal * rightVal)
 	case ast.OpDiv:
 		if rightVal == 0 {
-			return errors.NewError(errors.ErrDivisionByZero)
+			return errors.NewZeroDivisionError()
 		}
 		return object.NewFloat(float64(leftVal) / float64(rightVal))
 	case ast.OpFloorDiv:
 		if rightVal == 0 {
-			return errors.NewError(errors.ErrDivisionByZero)
+			return errors.NewZeroDivisionError()
 		}
 		return object.NewInteger(leftVal / rightVal)
 	case ast.OpPow:
@@ -978,7 +1007,7 @@ func evalIntegerInfixExpression(operator ast.Op, leftVal, rightVal int64) object
 		return object.NewInteger(result)
 	case ast.OpMod:
 		if rightVal == 0 {
-			return errors.NewError(errors.ErrDivisionByZero)
+			return errors.NewZeroDivisionError()
 		}
 		return object.NewInteger(leftVal % rightVal)
 	case ast.OpBitAnd:
@@ -1042,12 +1071,12 @@ func evalFloatInfixValues(operator ast.Op, leftVal, rightVal float64) object.Obj
 		return object.NewFloat(leftVal * rightVal)
 	case ast.OpDiv:
 		if rightVal == 0 {
-			return errors.NewError(errors.ErrDivisionByZero)
+			return errors.NewZeroDivisionError()
 		}
 		return object.NewFloat(leftVal / rightVal)
 	case ast.OpFloorDiv:
 		if rightVal == 0 {
-			return errors.NewError(errors.ErrDivisionByZero)
+			return errors.NewZeroDivisionError()
 		}
 		return object.NewFloat(math.Floor(leftVal / rightVal))
 	case ast.OpPow:
@@ -1080,55 +1109,86 @@ func numericFloatValue(obj object.Object) (float64, bool) {
 	}
 }
 
+// tryEvalStringConcatChain evaluates an `a + b + c ...` chain of three or more
+// operands, joining a leading run of strings through a single buffer instead of
+// building an intermediate string per operator.
+//
+// It folds operands as they are evaluated rather than first collecting the chain
+// into slices. The chain shape is only a hint — whether the operands are actually
+// strings is not known until they are evaluated — and this path is taken for
+// every long `+` chain, so a chain that turns out to be numbers or lists used to
+// pay for two slices it never needed.
 func tryEvalStringConcatChain(ctx context.Context, expr *ast.InfixExpression, env *object.Environment) (object.Object, bool) {
-	var leaves []ast.Expression
-	if !collectStringConcatLeaves(expr, &leaves) {
-		return nil, false
+	f := concatFolder{ctx: ctx, env: env}
+	if !f.walk(expr) {
+		return f.failed, true
 	}
-
-	values := make([]object.Object, len(leaves))
-	allStrings := true
-	total := 0
-	for i, leaf := range leaves {
-		val := evalNode(ctx, leaf, env)
-		if object.IsError(val) {
-			return val, true
-		}
-		values[i] = val
-		if s, ok := val.(*object.String); ok {
-			total += len(s.StringValue())
-		} else {
-			allStrings = false
-		}
-	}
-
-	if allStrings {
-		var b strings.Builder
-		b.Grow(total)
-		for _, val := range values {
-			b.WriteString(val.(*object.String).StringValue())
-		}
-		return object.NewString(b.String()), true
-	}
-
-	result := values[0]
-	for i := 1; i < len(values); i++ {
-		result = evalInfixExpression(ctx, ast.OpAdd, result, values[i], env)
-		if object.IsError(result) {
-			return result, true
-		}
-	}
-	return result, true
+	return f.result(), true
 }
 
-func collectStringConcatLeaves(expr ast.Expression, leaves *[]ast.Expression) bool {
-	infix, ok := expr.(*ast.InfixExpression)
-	if ok && infix.Operator == ast.OpAdd {
-		return collectStringConcatLeaves(infix.Left, leaves) &&
-			collectStringConcatLeaves(infix.Right, leaves)
+// concatFolder folds the operands of a `+` chain in evaluation order.
+//
+// While every operand so far has been a string they are appended to buf, so a
+// run of strings costs one result allocation rather than one per operator. On the
+// first non-string operand the run is materialised and folding continues through
+// evalInfixExpression, which keeps the semantics identical to evaluating the
+// chain one operator at a time (string concatenation is associative, so grouping
+// the leading run changes nothing about the result).
+type concatFolder struct {
+	ctx    context.Context
+	env    *object.Environment
+	buf    strings.Builder
+	buffed bool          // buf holds at least one operand
+	acc    object.Object // folded result, once a non-string operand has appeared
+	failed object.Object // first error, if any
+}
+
+// walk evaluates the chain's operands left to right, flattening nested `+` nodes.
+func (f *concatFolder) walk(expr ast.Expression) bool {
+	if infix, ok := expr.(*ast.InfixExpression); ok && infix.Operator == ast.OpAdd {
+		return f.walk(infix.Left) && f.walk(infix.Right)
 	}
-	*leaves = append(*leaves, expr)
+	return f.add(evalNode(f.ctx, expr, f.env))
+}
+
+func (f *concatFolder) add(val object.Object) bool {
+	if object.IsError(val) {
+		f.failed = val
+		return false
+	}
+	if f.acc != nil {
+		return f.fold(val)
+	}
+	if s, ok := val.(*object.String); ok {
+		f.buf.WriteString(s.StringValue())
+		f.buffed = true
+		return true
+	}
+	// First non-string operand: close off the string run, then fold normally.
+	if f.buffed {
+		f.acc = object.NewString(f.buf.String())
+		f.buf.Reset()
+		f.buffed = false
+		return f.fold(val)
+	}
+	f.acc = val
 	return true
+}
+
+func (f *concatFolder) fold(val object.Object) bool {
+	f.acc = evalInfixExpression(f.ctx, ast.OpAdd, f.acc, val, f.env)
+	if object.IsError(f.acc) {
+		f.failed = f.acc
+		return false
+	}
+	return true
+}
+
+func (f *concatFolder) result() object.Object {
+	if f.acc != nil {
+		return f.acc
+	}
+	return object.NewString(f.buf.String())
 }
 
 func evalStringInfixExpression(operator ast.Op, leftVal, rightVal string) object.Object {
@@ -1472,9 +1532,7 @@ func evalWhileStatementWithContext(ctx context.Context, ws *ast.WhileStatement, 
 		result = evalWithContext(ctx, ws.Body, env)
 		if result != nil {
 			switch result.Type() {
-			case object.ERROR_OBJ:
-				return result
-			case object.RETURN_OBJ:
+			case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
 				return result
 			case object.BREAK_OBJ:
 				broke = true
@@ -1647,6 +1705,15 @@ func unpackArgsFromIterable(argsVal object.Object) ([]object.Object, object.Obje
 			}
 			unpacked = append(unpacked, elem)
 		}
+	case *object.Dict:
+		iter := val.CreateIterator()
+		for {
+			elem, hasNext := iter.Next()
+			if !hasNext {
+				break
+			}
+			unpacked = append(unpacked, elem)
+		}
 	case *object.DictKeys:
 		iter := val.CreateIterator()
 		for {
@@ -1761,24 +1828,33 @@ func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *obje
 							return applyUserFunctionN(ctx, fn, a0, a1, a2)
 						}
 					}
-					args := evalArgsFast(ctx, node.Arguments, env)
-					if len(args) == 1 && object.IsError(args[0]) {
-						return args[0]
-					}
-					return applyUserFunction(ctx, fn, args, nil, env)
-				case *object.Builtin:
-					// Use the existing fast builtin path
-					return applyBuiltinFast(ctx, node, env, fn)
-				case *object.LambdaFunction:
-					args := evalArgsFast(ctx, node.Arguments, env)
-					if len(args) == 1 && object.IsError(args[0]) {
-						return args[0]
-					}
-					return applyLambdaFunctionWithContext(ctx, fn, args, nil, env)
+				args := evalCallArgs(ctx, node.Arguments, env)
+				if len(args) == 1 && object.IsError(args[0]) {
+					return args[0]
 				}
-				// Class or other callable - fall through to general path
-				return applyFunctionWithContext(ctx, val,
-					evalExpressionsWithContext(ctx, node.Arguments, env), nil, env)
+				res := applyUserFunction(ctx, fn, args, nil, env)
+				object.ReleaseArgs(env, args)
+				return res
+			case *object.Builtin:
+				// Use the existing fast builtin path
+				return applyBuiltinFast(ctx, node, env, fn)
+			case *object.LambdaFunction:
+				args := evalCallArgs(ctx, node.Arguments, env)
+				if len(args) == 1 && object.IsError(args[0]) {
+					return args[0]
+				}
+				res := applyLambdaFunctionWithContext(ctx, fn, args, nil, env)
+				object.ReleaseArgs(env, args)
+				return res
+			}
+			// Class or other callable - fall through to general path
+			args := evalCallArgs(ctx, node.Arguments, env)
+			if len(args) == 1 && object.IsError(args[0]) {
+				return args[0]
+			}
+			res := applyFunctionWithContext(ctx, val, args, nil, env)
+			object.ReleaseArgs(env, args)
+			return res
 			}
 			// Not in env - try fast builtins by name
 			if builtin, ok := builtins[name]; ok {
@@ -1793,10 +1869,15 @@ func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *obje
 		return function
 	}
 
-	args := evalExpressionsWithContext(ctx, node.Arguments, env)
+	args := evalCallArgs(ctx, node.Arguments, env)
 	if len(args) == 1 && object.IsError(args[0]) {
 		return args[0]
 	}
+	// args is borrowed from the per-root arg-buffer free-list; release it on
+	// every return path from here. (If *unpack append below grows args into a
+	// fresh backing, the original pooled buffer is still released correctly; the
+	// grown backing is simply not pooled — a rare case.)
+	defer object.ReleaseArgs(env, args)
 
 	var keywords map[string]object.Object
 	keywordsMap := node.GetKeywords()
@@ -1844,23 +1925,22 @@ func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *obje
 	return applyFunctionWithContext(ctx, function, args, keywords, env)
 }
 
-// evalArgsFast evaluates call arguments with reduced allocation overhead.
-func evalArgsFast(ctx context.Context, exps []ast.Expression, env *object.Environment) []object.Object {
+// evalCallArgs evaluates the arguments of a call expression into a pooled
+// buffer (object.AcquireArgs). The returned slice is BORROWED: the caller must
+// call object.ReleaseArgs(env, args) once the callee has returned. On
+// evaluation error the pooled buffer is released here and a fresh (non-pooled)
+// one-element slice is returned, so the caller skips release via the usual
+// `len(args)==1 && IsError` early-return.
+func evalCallArgs(ctx context.Context, exps []ast.Expression, env *object.Environment) []object.Object {
 	n := len(exps)
 	if n == 0 {
 		return nil
 	}
-	// For single-arg calls (the most common case for recursive functions),
-	// avoid the slice allocation by using a stack-allocated array.
-	if n == 1 {
-		result := evalNode(ctx, exps[0], env)
-		// Use a fixed-size array to avoid heap allocation for the slice
-		return []object.Object{result}
-	}
-	result := make([]object.Object, n)
+	result := object.AcquireArgs(env, n)
 	for i, e := range exps {
 		evaluated := evalNode(ctx, e, env)
 		if object.IsError(evaluated) {
+			object.ReleaseArgs(env, result)
 			return []object.Object{evaluated}
 		}
 		result[i] = evaluated
@@ -1870,12 +1950,14 @@ func evalArgsFast(ctx context.Context, exps []ast.Expression, env *object.Enviro
 
 // applyBuiltinFast dispatches builtin calls, matching the fast builtin path.
 func applyBuiltinFast(ctx context.Context, node *ast.CallExpression, env *object.Environment, fn *object.Builtin) object.Object {
-	args := evalExpressionsWithContext(ctx, node.Arguments, env)
+	args := evalCallArgs(ctx, node.Arguments, env)
 	if len(args) == 1 && object.IsError(args[0]) {
 		return args[0]
 	}
 	ctxWithEnv := SetEnvInContext(ctx, env)
-	return fn.Fn(ctxWithEnv, object.Kwargs{}, args...)
+	res := fn.Fn(ctxWithEnv, object.Kwargs{}, args...)
+	object.ReleaseArgs(env, args)
+	return res
 }
 
 // tryEvalFastBuiltinCall handles fast-path builtin calls (len, type, str, etc.).
@@ -2090,8 +2172,9 @@ func applyUserFunction(ctx context.Context, fn *object.Function, args []object.O
 // functions — especially concurrently against a shared environment — must use
 // this rather than the unexported applyFunction, which assumes the lock is held.
 func ApplyFunctionGIL(ctx context.Context, fn object.Object, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
-	ctx, release := enterScript(ctx, env)
-	defer release()
+	if gilEnv := enterScript(env); gilEnv != nil {
+		defer gilEnv.ExitGIL()
+	}
 	return applyFunction(ctx, fn, args, keywords, env)
 }
 
@@ -2213,8 +2296,11 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 	// Check for extra positional arguments
 	if numArgs > positionalLimit {
 		if fp.variadic != nil {
-			// Collect extra arguments into a list
-			list := &object.List{Elements: args[positionalLimit:]}
+			// Collect extra arguments into a list. Copy so the varargs list
+			// doesn't alias the caller's args buffer (which may be reused).
+			varArgs := make([]object.Object, numArgs-positionalLimit)
+			copy(varArgs, args[positionalLimit:])
+			list := &object.List{Elements: varArgs}
 			env.Set(fp.variadic.Value(), list)
 		} else {
 			minArgs := positionalLimit
@@ -2500,10 +2586,7 @@ func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.Augm
 		if cur, ok := currentVal.(*object.String); ok {
 			if r, ok := newVal.(*object.String); ok {
 				if err := assignToExpression(ctx, left, object.NewString(cur.StringValue()+r.StringValue()), env); err != nil {
-					if ae, ok := err.(*assignmentExceptionError); ok {
-						return ae.ex
-					}
-					return errors.NewError("%s", err.Error())
+					return assignErrorToObject(err)
 				}
 				return NULL
 			}
@@ -2511,10 +2594,7 @@ func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.Augm
 		if cur, ok := currentVal.(*object.Integer); ok {
 			if r, ok := newVal.(*object.Integer); ok {
 				if err := assignToExpression(ctx, left, object.NewInteger(cur.IntValue()+r.IntValue()), env); err != nil {
-					if ae, ok := err.(*assignmentExceptionError); ok {
-						return ae.ex
-					}
-					return errors.NewError("%s", err.Error())
+					return assignErrorToObject(err)
 				}
 				return NULL
 			}
@@ -2532,10 +2612,7 @@ func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.Augm
 	}
 
 	if err := assignToExpression(ctx, left, result, env); err != nil {
-		if ae, ok := err.(*assignmentExceptionError); ok {
-			return ae.ex
-		}
-		return errors.NewError("%s", err.Error())
+		return assignErrorToObject(err)
 	}
 	return NULL
 }
@@ -3082,21 +3159,9 @@ func evalTryStatementWithContext(ctx context.Context, ts *ast.TryStatement, env 
 		// Convert Error to Exception for consistent handling (do this once, before matching)
 		var exceptionObj object.Object = result
 		if err, ok := result.(*object.Error); ok {
-			// Try to infer exception type from error message
-			exceptionType := object.ExceptionTypeException
-			msg := err.Message
-			if strings.HasPrefix(msg, "type error:") || strings.Contains(msg, "type mismatch") {
-				exceptionType = object.ExceptionTypeTypeError
-			} else if strings.Contains(msg, "value error") || strings.Contains(msg, "invalid value") {
-				exceptionType = object.ExceptionTypeValueError
-			} else if strings.Contains(msg, "identifier not found") || strings.Contains(msg, "name") && strings.Contains(msg, "not defined") {
-				exceptionType = object.ExceptionTypeNameError
-			} else if strings.HasPrefix(msg, errors.ErrImportError) {
-				exceptionType = object.ExceptionTypeImportError
-			}
 			exceptionObj = &object.Exception{
-				Message:       msg,
-				ExceptionType: exceptionType,
+				Message:       err.Message,
+				ExceptionType: errorExceptionType(err),
 			}
 		}
 
@@ -3281,6 +3346,35 @@ func isException(obj object.Object) bool {
 // matchesExceptionType checks if an exception matches the specified exception type
 // Supports: Exception (catches all), specific types (ValueError, TypeError, etc.),
 // and dotted names (requests.HTTPError)
+// errorExceptionType determines which Python exception type an *object.Error
+// should be matched as by an except clause.
+//
+// Errors tagged at the point they were raised (see errors.NewZeroDivisionError)
+// carry their type explicitly and are used as-is. Everything else falls back to
+// inferring a type from the message text. That inference is a legacy heuristic:
+// it only exists for errors that have not been tagged yet, and the right way to
+// classify a new error is to set Error.ExceptionType where it is created rather
+// than to add another pattern here. Anything unclassified is reported as a plain
+// Exception, which `except Exception:` still catches.
+func errorExceptionType(err *object.Error) string {
+	if err.ExceptionType != "" {
+		return err.ExceptionType
+	}
+	msg := err.Message
+	switch {
+	case strings.HasPrefix(msg, "type error:"), strings.Contains(msg, "type mismatch"):
+		return object.ExceptionTypeTypeError
+	case strings.Contains(msg, "value error"), strings.Contains(msg, "invalid value"):
+		return object.ExceptionTypeValueError
+	case strings.Contains(msg, "identifier not found"),
+		strings.Contains(msg, "name") && strings.Contains(msg, "not defined"):
+		return object.ExceptionTypeNameError
+	case strings.HasPrefix(msg, errors.ErrImportError):
+		return object.ExceptionTypeImportError
+	}
+	return object.ExceptionTypeException
+}
+
 func matchesExceptionType(exception object.Object, exceptTypeExpr ast.Expression, env *object.Environment) bool {
 	// Get the exception type string
 	var exceptionType string
@@ -3975,11 +4069,59 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 	var result object.Object = NULL
 	broke := false
 
+	// Fast path: for k, v in d.items() — bind each pair's key/value straight
+	// into the two loop variables, skipping the per-iteration Tuple that
+	// DictItems.CreateIterator would allocate only for setForVariables to
+	// unpack and discard. Only the 2-variable form qualifies; everything else
+	// (1 var, 3+ vars, non-DictItems) falls through to the generic path.
+	if di, ok := iterable.(*object.DictItems); ok && len(fs.Variables) == 2 {
+		// Snapshot keys so body mutations (e.g. del d[k]) can't corrupt the
+		// range, matching DictItems.CreateIterator's view semantics.
+		keys := make([]string, 0, len(di.Dict.Pairs))
+		for k := range di.Dict.Pairs {
+			keys = append(keys, k)
+		}
+		cc := newContextChecker(ctx)
+		for _, key := range keys {
+			pair, ok := di.Dict.Pairs[key]
+			if !ok {
+				continue // key deleted during iteration — view skips it
+			}
+			if err := cc.check(); err != nil {
+				return err
+			}
+			if err := setForVariable(fs.Variables[0], pair.Key, env); err != nil {
+				return errors.NewError("%s", err.Error())
+			}
+			if err := setForVariable(fs.Variables[1], pair.Value, env); err != nil {
+				return errors.NewError("%s", err.Error())
+			}
+			result = evalBlockStatementWithContext(ctx, fs.Body, env)
+			if result != nil {
+				switch result.Type() {
+				case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
+					return result
+				case object.BREAK_OBJ:
+					return NULL // broke=True: skip else, return NULL
+				case object.CONTINUE_OBJ:
+					result = NULL
+					continue
+				}
+			}
+		}
+		if fs.Else != nil {
+			return evalBlockStatementWithContext(ctx, fs.Else, env)
+		}
+		return result
+	}
+
 	// Handle Iterator objects and Views
 	var iter *object.Iterator
 	switch o := iterable.(type) {
 	case *object.Iterator:
 		iter = o
+	case *object.Dict:
+		iter = o.CreateIterator()
 	case *object.DictKeys:
 		iter = o.CreateIterator()
 	case *object.DictValues:
@@ -4026,7 +4168,7 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 			result = evalBlockStatementWithContext(ctx, fs.Body, env)
 			if result != nil {
 				switch result.Type() {
-				case object.ERROR_OBJ, object.RETURN_OBJ:
+				case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
 					return result
 				case object.BREAK_OBJ:
 					broke = true
@@ -4068,7 +4210,7 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 					result = evalBlockStatementWithContext(ctx, fs.Body, env)
 					if result != nil {
 						switch result.Type() {
-						case object.ERROR_OBJ, object.RETURN_OBJ:
+						case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
 							return result
 						case object.BREAK_OBJ:
 							broke = true
@@ -4094,7 +4236,7 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 				result = evalBlockStatementWithContext(ctx, fs.Body, env)
 				if result != nil {
 					switch result.Type() {
-					case object.ERROR_OBJ, object.RETURN_OBJ:
+					case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
 						return result
 					case object.BREAK_OBJ:
 						broke = true
@@ -4123,7 +4265,7 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 				result = evalBlockStatementWithContext(ctx, fs.Body, env)
 				if result != nil {
 					switch result.Type() {
-					case object.ERROR_OBJ, object.RETURN_OBJ:
+					case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
 						return result
 					case object.BREAK_OBJ:
 						broke = true
@@ -4152,7 +4294,7 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 				result = evalBlockStatementWithContext(ctx, fs.Body, env)
 				if result != nil {
 					switch result.Type() {
-					case object.ERROR_OBJ, object.RETURN_OBJ:
+					case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
 						return result
 					case object.BREAK_OBJ:
 						broke = true
@@ -4183,7 +4325,7 @@ func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env 
 			result = evalBlockStatementWithContext(ctx, fs.Body, env)
 			if result != nil {
 				switch result.Type() {
-				case object.ERROR_OBJ, object.RETURN_OBJ:
+				case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
 					return result
 				case object.BREAK_OBJ:
 					broke = true
@@ -4252,7 +4394,7 @@ func evalFastRangeForStatement(ctx context.Context, fs *ast.ForStatement, env *o
 		result = evalBlockStatementWithContext(ctx, fs.Body, env)
 		if result != nil {
 			switch result.Type() {
-			case object.ERROR_OBJ, object.RETURN_OBJ:
+			case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
 				return result, true
 			case object.BREAK_OBJ:
 				return NULL, true
@@ -4343,6 +4485,17 @@ func iterateObject(ctx context.Context, obj object.Object, fn func(object.Object
 	case *object.Iterator:
 		for {
 			el, ok := o.Next()
+			if !ok {
+				break
+			}
+			if err := fn(el); err != nil {
+				return err
+			}
+		}
+	case *object.Dict:
+		iter := o.CreateIterator()
+		for {
+			el, ok := iter.Next()
 			if !ok {
 				break
 			}
