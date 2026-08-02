@@ -5,14 +5,15 @@ import (
 )
 
 func TestDictKeyFormat(t *testing.T) {
-	// Test that DictKey produces type-prefixed keys
+	// Non-string keys carry a type prefix. Strings are encoded by stringDictKey
+	// and are deliberately not prefixed when they cannot be confused with one of
+	// these, so they are covered by TestDictKeyNoCollisions below rather than by
+	// a literal expectation here.
 	tests := []struct {
 		name     string
 		obj      Object
 		expected string
 	}{
-		{"string key", NewString("hello"), "s:hello"},
-		{"empty string", NewString(""), "s:"},
 		{"integer key", NewInteger(42), "n:42"},
 		{"float key", NewFloat(3.14), "f:3.14"},
 		{"boolean true", NewBoolean(true), "n:1"},
@@ -27,6 +28,63 @@ func TestDictKeyFormat(t *testing.T) {
 				t.Errorf("DictKey(%s) = %q, want %q", tt.obj.Inspect(), result, tt.expected)
 			}
 		})
+	}
+}
+
+// TestDictKeyNoCollisions is the property that actually matters: two values that
+// are distinct dict keys in Python must never encode to the same map key. This
+// guards the unprefixed encoding of colon-free strings.
+func TestDictKeyNoCollisions(t *testing.T) {
+	values := []Object{
+		NewString(""), NewString("hello"), NewString("42"), NewString("3.14"),
+		NewString("true"), NewString("None"), NewString("n:42"), NewString("s:hello"),
+		NewString("f:3.14"), NewString("null:"), NewString("b:00"), NewString("t:()"),
+		NewString(":"), NewString("a:b"), NewString("s:"),
+		NewInteger(0), NewInteger(42), NewInteger(-1),
+		NewFloat(3.14), NewFloat(-0.5),
+		&Null{},
+		NewBytes([]byte{0x00}), NewBytes([]byte("hello")),
+		&Tuple{Elements: []Object{NewInteger(1)}},
+		&Tuple{Elements: []Object{NewString("1")}},
+	}
+
+	seen := make(map[string]Object, len(values))
+	for _, v := range values {
+		key := DictKey(v)
+		if prev, clash := seen[key]; clash {
+			t.Errorf("collision: %s (%s) and %s (%s) both encode to %q",
+				v.Inspect(), v.Type(), prev.Inspect(), prev.Type(), key)
+			continue
+		}
+		seen[key] = v
+	}
+
+	// Python treats 1, 1.0 and True as the same dict key; that is intentional.
+	for _, group := range [][]Object{
+		{NewInteger(1), NewFloat(1.0), NewBoolean(true)},
+		{NewInteger(0), NewFloat(0.0), NewBoolean(false)},
+	} {
+		want := DictKey(group[0])
+		for _, v := range group[1:] {
+			if got := DictKey(v); got != want {
+				t.Errorf("%s (%s) should share a key with %s: got %q want %q",
+					v.Inspect(), v.Type(), group[0].Inspect(), got, want)
+			}
+		}
+	}
+}
+
+// DictStringKey exists so string keys can be looked up without allocating a
+// String object; it must produce exactly what DictKey would.
+func TestDictStringKeyAgreesWithDictKey(t *testing.T) {
+	for _, s := range []string{
+		"", "hello", "42", "n:42", "s:hello", ":", "a:b", "null:",
+		"with space", "unicode-é", "s:", "::",
+	} {
+		want := DictKey(NewString(s))
+		if got := DictStringKey(s); got != want {
+			t.Errorf("DictStringKey(%q) = %q, DictKey = %q", s, got, want)
+		}
 	}
 }
 

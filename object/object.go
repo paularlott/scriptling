@@ -9,6 +9,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -38,7 +39,7 @@ func DictKey(obj Object) string {
 		}
 		return "n:0"
 	case *String:
-		return "s:" + o.value
+		return stringDictKey(o.value)
 	case *Bytes:
 		// Equal bytes must produce equal keys regardless of pointer identity,
 		// so encode the contents with a prefix that can't collide with strings.
@@ -65,25 +66,25 @@ func DictKey(obj Object) string {
 }
 
 // DictStringKey returns the canonical dict key for a string key without
-// requiring a temporary String object allocation.
-var (
-	dictStringKeyCache sync.Map
-	dictStringKeyCount atomic.Int64
-)
-
-const maxDictStringKeys = 10000
-
+// requiring a temporary String object allocation. It must agree with the *String
+// case of DictKey.
 func DictStringKey(name string) string {
-	if v, ok := dictStringKeyCache.Load(name); ok {
-		return v.(string)
+	return stringDictKey(name)
+}
+
+// stringDictKey encodes a string as a dict map key.
+//
+// Every other kind of key carries a type prefix, and every one of those prefixes
+// contains a colon ("n:", "f:", "b:", "t:", "null:", "LIST:0x…"). A string with
+// no colon therefore cannot be confused with any of them and is used verbatim —
+// which makes the common case (identifiers, field names, words) allocation-free.
+// A string that does contain a colon gets the "s:" prefix, and since that prefix
+// itself contains a colon it can never collide with a verbatim key either.
+func stringDictKey(s string) string {
+	if strings.IndexByte(s, ':') < 0 {
+		return s
 	}
-	key := "s:" + name
-	dictStringKeyCache.Store(name, key)
-	if dictStringKeyCount.Add(1) > maxDictStringKeys {
-		dictStringKeyCache = sync.Map{}
-		dictStringKeyCount.Store(0)
-	}
-	return key
+	return "s:" + s
 }
 
 // IsHashable reports whether obj can be used as a set element or dict key.
@@ -127,7 +128,13 @@ const (
 	ErrMustBeBytes    = "must be bytes or string"
 )
 
-var smallIntegers [smallIntMax - smallIntMin + 1]*Integer
+// smallIntegers holds the cached Integer values by value rather than by pointer.
+// Stored inline, the array is pointer-free, so it lives in BSS instead of the
+// heap: no per-entry allocation, no 80KB pointer table for the GC to rescan as a
+// root on every cycle, and consecutive integers land next to each other in
+// memory. NewInteger hands out interior pointers, which is safe because a
+// package-level array never moves and Integer is immutable.
+var smallIntegers [smallIntMax - smallIntMin + 1]Integer
 
 // Pre-allocated error singletons for type accessor methods.
 // These avoid allocating a new Error on every failed AsXxx() call.
@@ -171,7 +178,7 @@ var (
 func init() {
 	// Initialize small integer cache
 	for i := smallIntMin; i <= smallIntMax; i++ {
-		smallIntegers[i-smallIntMin] = &Integer{value: int64(i)}
+		smallIntegers[i-smallIntMin].value = int64(i)
 	}
 	// Initialize the small integer dict-key cache ("n:0".."n:N").
 	for i := range smallDictKeys {
@@ -203,7 +210,7 @@ func intDictKey(v int64) string {
 // NewInteger returns a cached integer for small values, or a new Integer for larger values
 func NewInteger(val int64) *Integer {
 	if val >= smallIntMin && val <= smallIntMax {
-		return smallIntegers[val-smallIntMin]
+		return &smallIntegers[val-smallIntMin]
 	}
 	return &Integer{value: val}
 }
@@ -728,9 +735,18 @@ func (lf *LambdaFunction) CoerceInt() (int64, Object)     { return 0, errMustBeI
 func (lf *LambdaFunction) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
 
 // BuiltinFunction is the signature for all builtin functions
-// - ctx: Context with environment and runtime information
-// - kwargs: Keyword arguments passed to the function (wrapped with helper methods)
-// - args: Positional arguments passed to the function
+//   - ctx: Context with environment and runtime information
+//   - kwargs: Keyword arguments passed to the function (wrapped with helper methods)
+//   - args: Positional arguments passed to the function
+//
+// The args slice is BORROWED for the duration of the call: the evaluator reuses
+// the backing array across calls (a per-root free-list, see AcquireArgs). A
+// builtin must therefore not retain args — or any sub-slice such as args[1:] —
+// past the point it returns. Reading elements (args[i], ranging over args,
+// spreading args... into a synchronous call) is always safe; storing the slice
+// in a struct field/map/global, capturing it in a goroutine or returned closure,
+// or using it as a List's Elements requires copying first (make + copy). This
+// matches the convention of CPython's tp_call and Go variadic APIs.
 type BuiltinFunction func(ctx context.Context, kwargs Kwargs, args ...Object) Object
 
 type Builtin struct {
@@ -917,11 +933,57 @@ type Environment struct {
 	// on a tree, so the free-list never sees concurrent access. This avoids the
 	// per-call pin()/Get() overhead of a global sync.Pool on the return path.
 	freeReturns []*ReturnValue
+	// freeArgBufs is a free-list of reusable []Object argument buffers used by
+	// the evaluator's call-arg path. Like freeReturns it lives on the root
+	// environment and is touched without locking — the interpreter lock (gil)
+	// serializes script execution on a tree, so it never sees concurrent access.
+	freeArgBufs [][]Object
 	// gil is the per-tree interpreter lock, allocated only on the root. The
 	// evaluator acquires it at every Go->script boundary so that any number of
 	// goroutines may call into one Environment tree, but only one runs script at
 	// a time. nil on non-root environments — always reach it via root.gil.
 	gil *gilLock
+	// ctxMemo caches this environment attached to a context; see
+	// CachedEnvContext. Held as an atomic pointer to an immutable value so it is
+	// safe to touch from any goroutine without relying on the interpreter lock —
+	// background tasks pin their environment on a context off the hot path.
+	ctxMemo atomic.Pointer[envContextMemo]
+}
+
+// envContextMemo records that attaching an environment to base produced derived.
+// Immutable once published.
+type envContextMemo struct {
+	base    context.Context
+	derived context.Context
+}
+
+// CachedEnvContext returns the context previously derived from base for this
+// environment, if any.
+//
+// Builtins are invoked with their environment attached to the context, and
+// deriving that context is a heap allocation. Since the base context is stable
+// for the whole of one evaluation, memoising the derived context turns a
+// per-builtin-call allocation into an atomic load and a comparison.
+func (e *Environment) CachedEnvContext(base context.Context) (context.Context, bool) {
+	if m := e.ctxMemo.Load(); m != nil && m.base == base {
+		return m.derived, true
+	}
+	return nil, false
+}
+
+// StoreEnvContext memoises derived as the result of attaching this environment
+// to base, so a later CachedEnvContext(base) can skip the allocation.
+//
+// Nothing is stored when base's dynamic type is not comparable, because the
+// lookup compares contexts with ==. That guard is what makes the comparison
+// safe: a stored base is always of a comparable type, so if an incoming context
+// has a different (possibly non-comparable) type the comparison fails on the
+// type word alone and never reaches the values.
+func (e *Environment) StoreEnvContext(base, derived context.Context) {
+	if base == nil || !reflect.TypeOf(base).Comparable() {
+		return
+	}
+	e.ctxMemo.Store(&envContextMemo{base: base, derived: derived})
 }
 
 // gilLock is the interpreter lock for one environment tree. It tracks the
@@ -1224,6 +1286,60 @@ func ReleaseReturnValue(rv *ReturnValue) {
 	}
 }
 
+// maxFreeArgBufs caps how many idle argument buffers a tree retains, bounding
+// memory after deep call nesting.
+const maxFreeArgBufs = 256
+
+// AcquireArgs returns a []Object of length n for a call's argument list,
+// reusing a buffer from the tree's per-root free-list when one of sufficient
+// capacity is available. The returned slice is BORROWED: the caller must return
+// it via ReleaseArgs once the callee has returned, and no callee may retain the
+// slice past its own call (the interpreter's builtins, user-function binding,
+// and varargs collection all satisfy this — varargs copies, params read by
+// index). Uses the same lock-free, GIL-serialized contract as AcquireCallEnvironment.
+func AcquireArgs(env *Environment, n int) []Object {
+	if n <= 0 {
+		return nil
+	}
+	if env != nil {
+		if root := env.root; root != nil {
+			if s := root.freeArgBufs; len(s) > 0 {
+				i := len(s) - 1
+				if cap(s[i]) >= n {
+					buf := s[i]
+					s[i] = nil
+					root.freeArgBufs = s[:i]
+					return buf[:n]
+				}
+				// Top buffer is too small; fall through to allocate a fresh one,
+				// leaving the small buffer pooled for a smaller call.
+			}
+		}
+	}
+	return make([]Object, n)
+}
+
+// ReleaseArgs clears args and returns its backing array to the tree's per-root
+// free-list for reuse. Safe to call with nil/empty args (no-op) and on slices
+// not obtained from AcquireArgs (they simply join the pool). The full backing
+// capacity is cleared so no Object is pinned by an idle buffer.
+func ReleaseArgs(env *Environment, args []Object) {
+	if env == nil || len(args) == 0 {
+		return
+	}
+	root := env.root
+	if root == nil {
+		return
+	}
+	full := args[:cap(args)]
+	for i := range full {
+		full[i] = nil
+	}
+	if len(root.freeArgBufs) < maxFreeArgBufs {
+		root.freeArgBufs = append(root.freeArgBufs, full)
+	}
+}
+
 func (e *Environment) Get(name string) (Object, bool) {
 	for env := e; env != nil; env = env.outer {
 		if idx, ok := env.slotIndex[name]; ok {
@@ -1358,10 +1474,20 @@ func (e *Environment) GetCachedSlot(idx int, name string) (Object, bool) {
 func (e *Environment) SetCachedSlot(idx int, name string, val Object) bool {
 	if idx >= 0 && idx < len(e.slots) && idx < len(e.slotNames) && e.slotNames[idx] == name {
 		e.slots[idx] = val
-		delete(e.importedBindings, name)
+		e.clearImportedBinding(name)
 		return true
 	}
 	return false
+}
+
+// clearImportedBinding drops any import marker for name. The nil check matters:
+// importedBindings is only allocated for scopes that actually bind an import,
+// whereas this runs on every assignment, and delete() on a nil map is still a
+// function call into the runtime.
+func (e *Environment) clearImportedBinding(name string) {
+	if e.importedBindings != nil {
+		delete(e.importedBindings, name)
+	}
 }
 
 func (e *Environment) Set(name string, val Object) Object {
@@ -1377,14 +1503,14 @@ func (e *Environment) Set(name string, val Object) Object {
 	}
 	if idx, ok := e.slotIndex[name]; ok && idx >= 0 && idx < len(e.slots) {
 		e.slots[idx] = val
-		delete(e.importedBindings, name)
+		e.clearImportedBinding(name)
 		return val
 	}
 	if e.store == nil {
 		e.store = make(map[string]Object, 4)
 	}
 	e.store[name] = val
-	delete(e.importedBindings, name)
+	e.clearImportedBinding(name)
 	return val
 }
 
@@ -1394,7 +1520,7 @@ func (e *Environment) Delete(name string) {
 		e.slots[idx] = nil
 	}
 	delete(e.store, name)
-	delete(e.importedBindings, name)
+	e.clearImportedBinding(name)
 }
 
 // SetGlobal sets a variable in the global (outermost) environment
@@ -1404,7 +1530,7 @@ func (e *Environment) SetGlobal(name string, val Object) Object {
 	if root.slotIndex != nil {
 		if idx, ok := root.slotIndex[name]; ok && idx >= 0 && idx < len(root.slots) {
 			root.slots[idx] = val
-			delete(root.importedBindings, name)
+			root.clearImportedBinding(name)
 			return val
 		}
 	}
@@ -1412,7 +1538,7 @@ func (e *Environment) SetGlobal(name string, val Object) Object {
 		root.store = make(map[string]Object, 4)
 	}
 	root.store[name] = val
-	delete(root.importedBindings, name)
+	root.clearImportedBinding(name)
 	return val
 }
 
@@ -1431,7 +1557,7 @@ func (e *Environment) SetInParent(name string, val Object) bool {
 		_, ok := env.store[name]
 		if ok {
 			env.store[name] = val
-			delete(env.importedBindings, name)
+			env.clearImportedBinding(name)
 			return true
 		}
 	}
@@ -1872,6 +1998,17 @@ type Error struct {
 	Line     int
 	File     string
 	Function string
+	// ExceptionType names the Python exception this error corresponds to, e.g.
+	// "ZeroDivisionError". It lets `except <Type>:` match a runtime error
+	// precisely instead of the try handler having to guess the type from the
+	// message text. Empty means "unclassified": the handler falls back to
+	// inferring a type, and the error is still caught by `except Exception`.
+	//
+	// Errors remain Errors rather than Exceptions on purpose — Error is the
+	// evaluator's propagation signal, recognised by the object.IsError checks
+	// threaded through expression evaluation — so setting this changes only how
+	// an except clause matches, not how the value travels.
+	ExceptionType string
 }
 
 func (e *Error) Type() ObjectType { return ERROR_OBJ }

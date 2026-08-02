@@ -363,7 +363,25 @@ func (fl *FloatLiteral) Line() int            { return 0 }
 
 type StringLiteral struct {
 	Value string
+	// boxed caches the immutable runtime value the evaluator builds for this
+	// literal. Re-evaluating a string literal is common and was allocating every
+	// time — most visibly for attribute access, since `obj.attr` desugars to an
+	// index by a string literal, so every field read boxed its own field name.
+	//
+	// Held as an atomic any for two reasons: literals are shared between
+	// goroutines via the program cache, and ast must not import the object
+	// package (object imports ast), so the concrete type is known only to the
+	// evaluator. Racing writers store equal values, which is harmless.
+	boxed atomic.Value
 }
+
+// Boxed returns the cached runtime value for this literal, or nil if unset.
+func (sl *StringLiteral) Boxed() any { return sl.boxed.Load() }
+
+// SetBoxed caches the runtime value for this literal. Callers must always pass
+// the same concrete type, and that value must be immutable — it is shared by
+// every evaluation of this literal.
+func (sl *StringLiteral) SetBoxed(v any) { sl.boxed.Store(v) }
 
 func (sl *StringLiteral) expressionNode()      {}
 func (sl *StringLiteral) TokenLiteral() string { return sl.Value }
@@ -440,10 +458,79 @@ func (pe *PrefixExpression) expressionNode()      {}
 func (pe *PrefixExpression) TokenLiteral() string { return pe.Operator.String() }
 func (pe *PrefixExpression) Line() int            { return lineOfExpr(pe.Right) }
 
+// IntFastKind classifies an infix node for the evaluator's unboxed-integer fast
+// path (see evaluator/intfast.go). It is a purely structural classification
+// computed once by the parser: it says nothing about runtime types, since a
+// variable may still turn out to hold a float. Its job is to let the evaluator
+// reject the overwhelming majority of nodes with a single byte comparison rather
+// than re-inspecting the tree on every evaluation.
+type IntFastKind uint8
+
+const (
+	// IntFastNone: not a candidate. Either an operand is not integer-shaped
+	// (a call, an attribute, a float literal, a string) or the operator does not
+	// take integer operands.
+	IntFastNone IntFastKind = iota
+	// IntFastArith: integer-shaped operands, integer result.
+	IntFastArith
+	// IntFastCompare: integer-shaped operands, boolean result.
+	IntFastCompare
+)
+
 type InfixExpression struct {
 	Left     Expression
 	Operator Op
-	Right    Expression
+	// IntFast is set by the parser; see IntFastKind. It occupies padding next to
+	// Operator, so it costs no extra memory per node.
+	IntFast IntFastKind
+	Right   Expression
+}
+
+// IsIntShaped reports whether e can evaluate to an integer using only
+// side-effect-free operations: an integer literal, an identifier read, or
+// integer arithmetic over two such subtrees.
+func IsIntShaped(e Expression) bool {
+	switch n := e.(type) {
+	case *IntegerLiteral:
+		return true
+	case *Identifier:
+		return true
+	case *InfixExpression:
+		// Only the arithmetic kind yields an integer; a comparison yields a bool.
+		return n.IntFast == IntFastArith
+	}
+	return false
+}
+
+// IsIntResultOp reports whether op yields an integer when applied to two
+// integers. OpDiv is excluded because it always produces a float, and OpPow
+// because it promotes to float for large or negative exponents.
+func IsIntResultOp(op Op) bool {
+	switch op {
+	case OpAdd, OpSub, OpMul, OpFloorDiv, OpMod,
+		OpBitAnd, OpBitOr, OpBitXor, OpLShift, OpRShift:
+		return true
+	}
+	return false
+}
+
+// SetIntFast computes and stores ie.IntFast from its operands. Callers that
+// build or rewrite an InfixExpression must call this so the evaluator's fast
+// path stays available; leaving it unset only costs performance, never
+// correctness.
+func (ie *InfixExpression) SetIntFast() {
+	if !IsIntShaped(ie.Left) || !IsIntShaped(ie.Right) {
+		ie.IntFast = IntFastNone
+		return
+	}
+	switch {
+	case IsIntResultOp(ie.Operator):
+		ie.IntFast = IntFastArith
+	case ie.Operator >= OpLt && ie.Operator <= OpNeq:
+		ie.IntFast = IntFastCompare
+	default:
+		ie.IntFast = IntFastNone
+	}
 }
 
 func (ie *InfixExpression) expressionNode()      {}
