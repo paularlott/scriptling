@@ -4,9 +4,7 @@ version: "3"
 vars:
   BIN_DIR: bin
   CLI_DIR: scriptling-cli
-  LDFLAGS: '-ldflags="-s -w -X github.com/paularlott/scriptling/build.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)"'
-  BUILT_AT:
-    sh: date +%Y%m%d.%H%M%S%z
+  LDFLAGS: '-ldflags="-s -w"'
   VERSION:
     sh: go run ./tools/getversion
 
