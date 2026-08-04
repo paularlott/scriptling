@@ -39,6 +39,14 @@ While Scriptling is inspired by Python, it has some key differences:
 
 ## Installation
 
+### CLI
+
+```bash
+brew install paularlott/tap/scriptling
+```
+
+### Go Library
+
 ```bash
 go get github.com/paularlott/scriptling
 ```
