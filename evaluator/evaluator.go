@@ -1425,7 +1425,11 @@ func evalBytesMultiplication(b *object.Bytes, multiplier int64) object.Object {
 		return object.NewBytes(nil)
 	}
 	src := b.BytesValue()
-	out := make([]byte, 0, len(src)*int(multiplier))
+	srcLen := len(src)
+	if srcLen > 0 && int64(srcLen) > math.MaxInt64/multiplier {
+		return errors.NewError("bytes repetition result too large")
+	}
+	out := make([]byte, 0, srcLen*int(multiplier))
 	for i := int64(0); i < multiplier; i++ {
 		out = append(out, src...)
 	}
