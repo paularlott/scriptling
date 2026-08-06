@@ -261,7 +261,10 @@ func (s *Server) serveFromBundle(w http.ResponseWriter, r *http.Request) {
 	s.serveNotFound(w, r)
 }
 
-// serveFromDir serves a file from the web root directory
+// serveFromDir serves a file from the web root directory. Containment is
+// provided by os.DirFS: candidate paths are validated with fs.ValidPath and
+// resolved relative to webRoot only, so ".." and absolute paths can never
+// escape it. Mirrors serveFromBundle.
 func (s *Server) serveFromDir(w http.ResponseWriter, r *http.Request) {
 	webRoot, err := filepath.Abs(s.config.WebRoot)
 	if err != nil {
@@ -269,21 +272,36 @@ func (s *Server) serveFromDir(w http.ResponseWriter, r *http.Request) {
 		s.serveNotFound(w, r)
 		return
 	}
+	rootFS := os.DirFS(webRoot)
 
-	urlPath := filepath.FromSlash(r.URL.Path)
-	candidate, err := filepath.Abs(filepath.Join(webRoot, urlPath))
-	if err != nil || !strings.HasPrefix(candidate, webRoot+string(filepath.Separator)) && candidate != webRoot {
-		Log.Debug("Web root path traversal blocked", "web_root", webRoot, "candidate", candidate)
-		http.Error(w, "Forbidden", http.StatusForbidden)
-		return
+	// Normalise the URL path: strip leading slash, never allow traversal.
+	urlPath := path.Clean(strings.TrimPrefix(r.URL.Path, "/"))
+	if urlPath == "." {
+		urlPath = ""
+	}
+	candidates := []string{urlPath, urlPath + "/index.html"}
+	if urlPath == "" {
+		candidates = []string{"index.html"}
 	}
 
-	for _, p := range []string{candidate, filepath.Join(candidate, "index.html")} {
-		if info, err := os.Stat(p); err == nil && !info.IsDir() {
-			Log.Trace("Serving file from web root", "file", p)
-			http.ServeFile(w, r, p)
-			return
+	for _, candidate := range candidates {
+		if !fs.ValidPath(candidate) {
+			continue
 		}
+		info, err := fs.Stat(rootFS, candidate)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		data, err := fs.ReadFile(rootFS, candidate)
+		if err != nil {
+			continue
+		}
+		Log.Trace("Serving file from web root", "file", candidate)
+		if ct := mime.TypeByExtension(path.Ext(candidate)); ct != "" {
+			w.Header().Set("Content-Type", ct)
+		}
+		w.Write(data)
+		return
 	}
 	Log.Trace("Web root file not found", "web_root", webRoot, "path", urlPath)
 	s.serveNotFound(w, r)
