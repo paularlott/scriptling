@@ -42,7 +42,16 @@ var (
 func getTimeFromInstance(instance *object.Instance) (time.Time, object.Object) {
 	if val, ok := instance.GetField("_time"); ok {
 		if ns, ok := val.(*object.Integer); ok {
-			return time.Unix(0, ns.IntValue()), nil
+			t := time.Unix(0, ns.IntValue())
+			// time.Unix always yields the local zone, but instances created
+			// from UTC times (utcnow, strptime) must render their fields in
+			// UTC, so restore the zone recorded at creation.
+			if flag, ok := instance.GetField("_utc"); ok {
+				if b, ok := flag.(*object.Boolean); ok && b.BoolValue() {
+					t = t.UTC()
+				}
+			}
+			return t, nil
 		}
 	}
 	return time.Time{}, &object.Error{Message: "invalid datetime instance"}
@@ -52,6 +61,7 @@ func getTimeFromInstance(instance *object.Instance) (time.Time, object.Object) {
 func createDatetimeInstance(t time.Time) *object.Instance {
 	return object.NewInstanceWithFields(DatetimeClass, map[string]object.Object{
 		"_time":        object.NewInteger(t.UnixNano()),
+		"_utc":         object.NewBoolean(t.Location() == time.UTC),
 		"__str_repr__": object.NewString(t.Format("2006-01-02 15:04:05")),
 	})
 }
@@ -62,6 +72,7 @@ func createDateInstance(t time.Time) *object.Instance {
 	t = time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
 	return object.NewInstanceWithFields(DateClass, map[string]object.Object{
 		"_time":        object.NewInteger(t.UnixNano()),
+		"_utc":         object.NewBoolean(t.Location() == time.UTC),
 		"__str_repr__": object.NewString(t.Format("2006-01-02")),
 	})
 }

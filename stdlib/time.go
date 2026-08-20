@@ -293,6 +293,12 @@ Converts a Unix timestamp to a string in the format 'Mon Jan 2 15:04:05 2006'. I
 func timeToTuple(t time.Time, utc bool) *object.List {
 	var elements []object.Object
 
+	// gmtime() must report UTC components; time.Now()/time.Unix() carry the
+	// local zone, so convert before extracting the fields.
+	if utc {
+		t = t.UTC()
+	}
+
 	// Get components
 	year, month, day := t.Date()
 	hour, minute, second := t.Clock()
