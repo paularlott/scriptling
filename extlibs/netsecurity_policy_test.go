@@ -170,3 +170,21 @@ func TestNilPolicyKeepsExistingBehavior(t *testing.T) {
 		t.Errorf("status = %v, want 200", result.Inspect())
 	}
 }
+
+// Resolver-only mode (nameservers without a policy): requests must resolve
+// through the configured servers and no address checks apply.
+func TestRequestsResolverOnlyModeUsesConfiguredDNS(t *testing.T) {
+	p := scriptling.New()
+	RegisterRequestsLibrary(p, &netsecurity.Config{
+		AllowAll:   true,
+		DNSServers: []string{"127.0.0.1:1"}, // nothing listens: lookups must fail
+	})
+
+	_, err := p.Eval("import requests\nrequests.get('http://example.test/', timeout=2)")
+	if err == nil {
+		t.Fatal("expected DNS failure via dead nameserver")
+	}
+	if msg := err.Error(); strings.Contains(msg, "network policy") {
+		t.Errorf("resolver-only mode must not policy-block, got: %v", err)
+	}
+}

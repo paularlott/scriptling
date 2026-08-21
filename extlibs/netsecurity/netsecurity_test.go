@@ -324,3 +324,49 @@ func TestLoadConfigErrors(t *testing.T) {
 		t.Error("missing file should error")
 	}
 }
+
+// AllowAll is the resolver-only mode: no address or host checks, so hosts
+// can configure shared DNS servers without imposing a policy.
+func TestAllowAllResolverOnlyMode(t *testing.T) {
+	g := mustGuard(t, &Config{AllowAll: true})
+	for _, raw := range []string{
+		"http://127.0.0.1/",
+		"http://10.0.0.1/",
+		"http://169.254.169.254/",
+		"http://[fc00::1]/",
+		"http://8.8.8.8/",
+	} {
+		if err := g.CheckURL(mustURL(t, raw)); err != nil {
+			t.Errorf("AllowAll should pass %s: %v", raw, err)
+		}
+	}
+	// Scheme validation still applies.
+	if err := g.CheckURL(mustURL(t, "ftp://example.com/")); err == nil {
+		t.Error("AllowAll must still reject unsupported schemes")
+	}
+	// Dial-time checks are disabled too: a literal dial reaches the dialer
+	// (connection refused, not a policy error).
+	_, err := g.DialContext(context.Background(), "tcp", "127.0.0.1:1")
+	if err == nil || strings.Contains(err.Error(), "network policy") {
+		t.Errorf("AllowAll dial should not be policy-blocked, got: %v", err)
+	}
+}
+
+func TestResolverAccessorAndNewResolver(t *testing.T) {
+	g := mustGuard(t, &Config{})
+	if g.Resolver() == nil {
+		t.Error("Resolver() should never be nil")
+	}
+	if r, err := NewResolver(nil); err != nil || r != net.DefaultResolver {
+		t.Errorf("NewResolver(nil) should return the system resolver, got %v, %v", r, err)
+	}
+	if _, err := NewResolver([]string{" "}); err == nil {
+		t.Error("NewResolver should reject empty server entries")
+	}
+	// AllowAll configs are never parsed from files, so LoadConfig cannot
+	// enable it; verify the field stays host-only by schema absence.
+	_, err := NewGuard(&Config{AllowAll: true, DNSServers: []string{"1.1.1.1", "bad server"}})
+	if err == nil {
+		t.Error("NewGuard should still validate DNS servers in AllowAll mode")
+	}
+}

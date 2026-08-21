@@ -39,7 +39,7 @@ func BuildLibDirs(baseDir string, extra []string) []string {
 }
 
 // LoadNetworkPolicy loads the policy file named by --network-policy. An
-// empty path means no restrictions.
+// empty path means no restrictions and the system resolver.
 func LoadNetworkPolicy(path string) (*netsecurity.Config, error) {
 	if path == "" {
 		return nil, nil

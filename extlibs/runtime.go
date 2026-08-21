@@ -327,24 +327,24 @@ var RuntimeLibraryFunctions = map[string]*object.Builtin{
 					shared = b
 				}
 			}
-		if shared {
-			// Pass args/kwargs live; the GIL serializes access. Strip the
-			// "shared" control kwarg so it is not forwarded to the handler.
-			sharedKwargs := make(map[string]object.Object, len(kwargs.Kwargs))
-			for k, v := range kwargs.Kwargs {
-				if k == "shared" {
-					continue
+			if shared {
+				// Pass args/kwargs live; the GIL serializes access. Strip the
+				// "shared" control kwarg so it is not forwarded to the handler.
+				sharedKwargs := make(map[string]object.Object, len(kwargs.Kwargs))
+				for k, v := range kwargs.Kwargs {
+					if k == "shared" {
+						continue
+					}
+					sharedKwargs[k] = v
 				}
-				sharedKwargs[k] = v
+				// Shallow-copy the args slice: the handler runs in a goroutine that
+				// outlives this call, so it must own its backing array (the caller's
+				// args buffer may be pooled and reused). Elements stay shared by
+				// reference, preserving shared-thread live semantics.
+				liveArgs := make([]object.Object, len(args)-2)
+				copy(liveArgs, args[2:])
+				return startSharedTask(ctx, handler, liveArgs, sharedKwargs, env, eval)
 			}
-			// Shallow-copy the args slice: the handler runs in a goroutine that
-			// outlives this call, so it must own its backing array (the caller's
-			// args buffer may be pooled and reused). Elements stay shared by
-			// reference, preserving shared-thread live semantics.
-			liveArgs := make([]object.Object, len(args)-2)
-			copy(liveArgs, args[2:])
-			return startSharedTask(ctx, handler, liveArgs, sharedKwargs, env, eval)
-		}
 
 			// Validate that all args/kwargs are transferable types
 			// (scalars and recursively safe containers only).

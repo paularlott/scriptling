@@ -1,8 +1,6 @@
 package setup
 
 import (
-	"time"
-
 	"github.com/paularlott/logger"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs"
@@ -179,7 +177,7 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 	reg(extlibs.MulticastLibraryName, func() { scriptlingmulticast.Register(p) })
 	reg(extlibs.UnicastLibraryName, func() { scriptlingunicast.Register(p) })
 	reg(extlibs.GossipLibraryName, func() { scriptlinggossip.Register(p, log) })
-	reg(extlibs.ResolveLibraryName, func() { scriptlingresolve.Register(p, stdlibResolver{timeout: 2 * time.Second}) })
+	reg(extlibs.ResolveLibraryName, func() { scriptlingresolve.Register(p, scriptResolver(netPolicy)) })
 	reg(extlibs.FileProvisionLibraryName, func() { provisionfile.Register(p) })
 	reg(extlibs.FetchProvisionLibraryName, func() { provisionfetch.Register(p) })
 

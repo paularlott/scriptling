@@ -85,6 +85,11 @@ type Config struct {
 	// 53/tcp) only. Resolution and validation use the same resolver, so
 	// policy decisions and connections see the same answers.
 	DNSServers []string
+
+	// AllowAll disables every address and host check, leaving only the
+	// shared DNS resolver. Hosts use it to configure nameservers without
+	// imposing a policy; it cannot be set from a policy file.
+	AllowAll bool
 }
 
 // hostRule is one compiled host-list entry: exact match or domain suffix.
@@ -106,13 +111,24 @@ type Guard struct {
 	allowed    []*net.IPNet
 	allowHosts []hostRule
 	denyHosts  []hostRule
-	dnsAddrs   []string
 	resolver   *net.Resolver
 	dialer     *net.Dialer
 	requireHTTPS,
 	allowIPLiterals,
 	allowLoopback,
-	allowPrivateIPs bool
+	allowPrivateIPs,
+	allowAll bool
+}
+
+// Resolver returns the resolver this guard dials with: the configured DNS
+// servers when set, otherwise the system resolver. Hosts can hand it to
+// other lookups (scriptling.net.resolve) so the whole system resolves
+// through the same servers.
+func (g *Guard) Resolver() *net.Resolver {
+	if g == nil {
+		return net.DefaultResolver
+	}
+	return g.resolver
 }
 
 // FailClosed returns a Guard that rejects every URL and dial with an error
@@ -135,6 +151,7 @@ func NewGuard(cfg *Config) (*Guard, error) {
 		allowIPLiterals: cfg.AllowIPLiterals,
 		allowLoopback:   cfg.AllowLoopback,
 		allowPrivateIPs: cfg.AllowPrivateIPs,
+		allowAll:        cfg.AllowAll,
 		dialer: &net.Dialer{
 			Timeout:   10 * time.Second,
 			KeepAlive: 30 * time.Second,
@@ -148,35 +165,8 @@ func NewGuard(cfg *Config) (*Guard, error) {
 	if g.allowed, err = parseCIDRs(cfg.AllowedCIDRs); err != nil {
 		return nil, fmt.Errorf("AllowedCIDRs: %w", err)
 	}
-	for _, srv := range cfg.DNSServers {
-		addr, aerr := normalizeDNSAddr(srv)
-		if aerr != nil {
-			return nil, fmt.Errorf("DNSServers: %w", aerr)
-		}
-		g.dnsAddrs = append(g.dnsAddrs, addr)
-	}
-
-	if len(g.dnsAddrs) > 0 {
-		addrs := g.dnsAddrs
-		g.resolver = &net.Resolver{
-			PreferGo: true,
-			Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
-				var lastErr error
-				for _, addr := range addrs {
-					conn, derr := (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, network, addr)
-					if derr == nil {
-						return conn, nil
-					}
-					lastErr = derr
-				}
-				if lastErr == nil {
-					lastErr = fmt.Errorf("no DNS servers configured")
-				}
-				return nil, lastErr
-			},
-		}
-	} else {
-		g.resolver = net.DefaultResolver
+	if g.resolver, err = NewResolver(cfg.DNSServers); err != nil {
+		return nil, err
 	}
 	resolver := g.resolver
 	g.lookupFn = func(ctx context.Context, host string) ([]net.IPAddr, error) {
@@ -249,11 +239,15 @@ func (g *Guard) CheckURL(u *url.URL) error {
 	switch u.Scheme {
 	case "https", "wss":
 	case "http", "ws":
-		if g.requireHTTPS {
+		if g.requireHTTPS && !g.allowAll {
 			return fmt.Errorf("network policy: %s requires https", u.Scheme)
 		}
 	default:
 		return fmt.Errorf("network policy: unsupported scheme %q", u.Scheme)
+	}
+
+	if g.allowAll {
+		return nil
 	}
 
 	host := strings.ToLower(u.Hostname())
@@ -310,10 +304,10 @@ func (g *Guard) DialContext(ctx context.Context, network, addr string) (net.Conn
 
 	ips, err := g.lookupFn(ctx, host)
 	if err != nil {
-		return nil, fmt.Errorf("network policy: DNS lookup failed for %q: %w", host, err)
+		return nil, fmt.Errorf("DNS lookup failed for %q: %w", host, err)
 	}
 	if len(ips) == 0 {
-		return nil, fmt.Errorf("network policy: no addresses resolved for %q", host)
+		return nil, fmt.Errorf("no addresses resolved for %q", host)
 	}
 
 	// Trusted (allowlisted) hosts may resolve anywhere — that is their grant.
@@ -392,6 +386,10 @@ func (t *guardTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 // explicit denies win, then explicit allows (the escape hatch for ranges the
 // built-in categories block), then the built-in categories.
 func (g *Guard) checkIP(ip net.IP) error {
+	if g.allowAll {
+		return nil
+	}
+
 	if v4 := ip.To4(); v4 != nil {
 		ip = v4 // normalize IPv4-mapped IPv6, e.g. ::ffff:10.0.0.1
 	}
@@ -480,15 +478,60 @@ func parseCIDRs(cidrs []string) ([]*net.IPNet, error) {
 	return nets, nil
 }
 
+// NewResolver returns a *net.Resolver that queries the given DNS servers
+// (plain DNS, port 53; entries like "1.1.1.1" or "8.8.8.8:53"). An empty
+// list returns the system resolver. Guards use it internally; hosts can
+// use it directly to resolve through the same servers everywhere.
+func NewResolver(servers []string) (*net.Resolver, error) {
+	if len(servers) == 0 {
+		return net.DefaultResolver, nil
+	}
+	addrs := make([]string, 0, len(servers))
+	for _, srv := range servers {
+		addr, err := normalizeDNSAddr(srv)
+		if err != nil {
+			return nil, fmt.Errorf("DNSServers: %w", err)
+		}
+		addrs = append(addrs, addr)
+	}
+	return &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			var lastErr error
+			for _, addr := range addrs {
+				conn, derr := (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, network, addr)
+				if derr == nil {
+					return conn, nil
+				}
+				lastErr = derr
+			}
+			if lastErr == nil {
+				lastErr = fmt.Errorf("no DNS servers configured")
+			}
+			return nil, lastErr
+		},
+	}, nil
+}
+
 func normalizeDNSAddr(server string) (string, error) {
 	server = strings.TrimSpace(server)
 	if server == "" {
 		return "", fmt.Errorf("empty DNS server")
 	}
-	// Already host:port (including bracketed IPv6 with port)? Keep as is.
-	if _, _, err := net.SplitHostPort(server); err == nil {
-		return server, nil
+	// Already host:port (including bracketed IPv6 with port)? Keep as is;
+	// otherwise append the default port, bracketing bare IPv6 correctly.
+	addr := server
+	if _, _, err := net.SplitHostPort(server); err != nil {
+		addr = net.JoinHostPort(server, "53")
 	}
-	// Bare host or bare IPv6: JoinHostPort brackets IPv6 correctly.
-	return net.JoinHostPort(server, "53"), nil
+	// DNS servers are addresses, not names: a typo must fail loudly rather
+	// than produce a resolver that dials a hostname.
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", fmt.Errorf("invalid DNS server %q: %w", server, err)
+	}
+	if net.ParseIP(host) == nil {
+		return "", fmt.Errorf("invalid DNS server %q: not an IP address", server)
+	}
+	return addr, nil
 }
