@@ -169,7 +169,7 @@ Leader election with configurable quorum and optional metadata filtering:
 election = cluster.create_leader_election(
     check_interval="1s",
     leader_timeout="3s",
-    quorum_percentage=60,
+    min_cluster_size=2,
     metadata_criteria={"role": "leader-eligible"},
 )
 
@@ -190,7 +190,7 @@ election.stop()
 - `check_interval` - Duration between checks (default: `"1s"`)
 - `leader_timeout` - Duration without heartbeat before leader lost (default: `"3s"`)
 - `heartbeat_msg_type` - Message type for heartbeats (default: 65, reserved range)
-- `quorum_percentage` - Percentage of nodes for quorum 1-100 (default: 60)
+- `min_cluster_size` - Minimum nodes required for quorum, a hard floor; set to the majority of the smallest cluster (default: 0)
 - `metadata_criteria` - Optional dict to limit eligible nodes
 
 **Methods:**

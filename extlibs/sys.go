@@ -8,6 +8,7 @@ import (
 	"runtime"
 
 	"github.com/paularlott/scriptling/build"
+	"github.com/paularlott/scriptling/evaluator"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -95,6 +96,12 @@ func newSysLibraryWithReader(argv []string, stdin *bufio.Reader) *object.Library
 	if stdin != nil {
 		constants["stdin"] = newStdinObject(stdin)
 	}
+
+	// stdout/stderr objects. Their writers are resolved from the calling
+	// environment at write time, so they follow output capture, custom
+	// writers and sandbox output discarding exactly like print().
+	constants["stdout"] = newStreamObject(false)
+	constants["stderr"] = newStreamObject(true)
 
 	// SysLibrary provides system-specific parameters and functions
 	lib := object.NewLibrary(SysLibraryName, map[string]*object.Builtin{
@@ -274,6 +281,224 @@ var stdinClass = &object.Class{
 
 func newStdinObject(r *bufio.Reader) *object.Instance {
 	return object.NewInstanceWithFields(stdinClass, map[string]object.Object{stdinKey: &stdinHolder{r: r}})
+}
+
+// streamHolder marks an Instance as an environment-bound output stream
+// (sys.stdout or sys.stderr) and records which of the environment's two
+// writers it resolves to.
+type streamHolder struct{ stderr bool }
+
+func (h *streamHolder) Type() object.ObjectType { return object.BUILTIN_OBJ }
+func (h *streamHolder) Inspect() string {
+	if h.stderr {
+		return "<stderr>"
+	}
+	return "<stdout>"
+}
+func (h *streamHolder) AsString() (string, object.Object) {
+	return "", &object.Error{Message: object.ErrMustBeString}
+}
+func (h *streamHolder) AsInt() (int64, object.Object) {
+	return 0, &object.Error{Message: object.ErrMustBeInteger}
+}
+func (h *streamHolder) AsFloat() (float64, object.Object) {
+	return 0, &object.Error{Message: object.ErrMustBeNumber}
+}
+func (h *streamHolder) AsBool() (bool, object.Object) { return true, nil }
+func (h *streamHolder) AsList() ([]object.Object, object.Object) {
+	return nil, &object.Error{Message: object.ErrMustBeList}
+}
+func (h *streamHolder) AsDict() (map[string]object.Object, object.Object) {
+	return nil, &object.Error{Message: object.ErrMustBeDict}
+}
+func (h *streamHolder) CoerceString() (string, object.Object) { return h.Inspect(), nil }
+func (h *streamHolder) CoerceInt() (int64, object.Object) {
+	return 0, &object.Error{Message: object.ErrMustBeInteger}
+}
+func (h *streamHolder) CoerceFloat() (float64, object.Object) {
+	return 0, &object.Error{Message: object.ErrMustBeNumber}
+}
+
+const streamKey = "__stream__"
+
+// getStreamHolder returns the stream holder stored on an Instance.
+func getStreamHolder(inst *object.Instance) (*streamHolder, bool) {
+	f, ok := inst.GetField(streamKey)
+	if !ok {
+		return nil, false
+	}
+	h, ok := f.(*streamHolder)
+	if !ok {
+		return nil, false
+	}
+	return h, true
+}
+
+// streamSelf validates the receiver of a stream method call.
+func streamSelf(args []object.Object, method string) (*object.Instance, *streamHolder, object.Object) {
+	if len(args) < 1 {
+		return nil, nil, &object.Error{Message: method + "() requires self"}
+	}
+	inst, ok := args[0].(*object.Instance)
+	if !ok {
+		return nil, nil, &object.Error{Message: method + "(): invalid self"}
+	}
+	h, ok := getStreamHolder(inst)
+	if !ok {
+		return nil, nil, &object.Error{Message: method + "(): invalid stream"}
+	}
+	return inst, h, nil
+}
+
+// streamWriter resolves the io.Writer a stream object should write to,
+// based on the environment of the calling code. This is evaluated per call
+// so the stream follows later SetOutputWriter/EnableOutputCapture changes.
+func streamWriter(ctx context.Context, h *streamHolder) io.Writer {
+	env := evaluator.GetEnvFromContext(ctx)
+	if h.stderr {
+		return env.GetErrorWriter()
+	}
+	return env.GetWriter()
+}
+
+// streamName returns the display name of a stream for error messages.
+func streamName(h *streamHolder) string {
+	if h.stderr {
+		return "stderr"
+	}
+	return "stdout"
+}
+
+// flusher is implemented by writers that buffer output.
+type flusher interface{ Flush() error }
+
+// newStreamClass builds the class backing sys.stdout and sys.stderr. The
+// methods are shared; which environment writer they target comes from the
+// instance's stream holder.
+func newStreamClass(name string) *object.Class {
+	return &object.Class{
+		Name: name,
+		Methods: map[string]object.Object{
+			"write": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					_, h, errObj := streamSelf(args, "write")
+					if errObj != nil {
+						return errObj
+					}
+					if len(args) < 2 {
+						return &object.Error{Message: "write() requires a string argument"}
+					}
+					s, err := args[1].AsString()
+					if err != nil {
+						return &object.Error{Message: streamName(h) + ".write() requires a string argument"}
+					}
+					w := streamWriter(ctx, h)
+					n, werr := io.WriteString(w, s)
+					if werr != nil {
+						return &object.Error{Message: streamName(h) + ".write() failed: " + werr.Error()}
+					}
+					return object.NewInteger(int64(n))
+				},
+				HelpText: `write(s) - Write string s to the stream; returns number of characters written`,
+			},
+			"writelines": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					_, h, errObj := streamSelf(args, "writelines")
+					if errObj != nil {
+						return errObj
+					}
+					if len(args) < 2 {
+						return &object.Error{Message: "writelines() requires a list of strings"}
+					}
+					lines, err := args[1].AsList()
+					if err != nil {
+						return err
+					}
+					w := streamWriter(ctx, h)
+					for _, line := range lines {
+						s, serr := line.AsString()
+						if serr != nil {
+							return &object.Error{Message: streamName(h) + ".writelines() requires a list of strings"}
+						}
+						if _, werr := io.WriteString(w, s); werr != nil {
+							return &object.Error{Message: streamName(h) + ".writelines() failed: " + werr.Error()}
+						}
+					}
+					return &object.Null{}
+				},
+				HelpText: `writelines(lines) - Write each string in lines to the stream (no separators added)`,
+			},
+			"flush": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					_, h, errObj := streamSelf(args, "flush")
+					if errObj != nil {
+						return errObj
+					}
+					w := streamWriter(ctx, h)
+					if f, ok := w.(flusher); ok {
+						if ferr := f.Flush(); ferr != nil {
+							return &object.Error{Message: streamName(h) + ".flush() failed: " + ferr.Error()}
+						}
+					}
+					return &object.Null{}
+				},
+				HelpText: `flush() - Flush the stream's write buffer (no-op for unbuffered streams)`,
+			},
+			"isatty": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					_, h, errObj := streamSelf(args, "isatty")
+					if errObj != nil {
+						return errObj
+					}
+					w := streamWriter(ctx, h)
+					tty := false
+					if f, ok := w.(*os.File); ok {
+						if fi, statErr := f.Stat(); statErr == nil {
+							tty = fi.Mode()&os.ModeCharDevice != 0
+						}
+					}
+					return object.NewBoolean(tty)
+				},
+				HelpText: `isatty() - Return true if the stream is a terminal`,
+			},
+			"__enter__": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if len(args) < 1 {
+						return &object.Error{Message: "__enter__() requires self"}
+					}
+					return args[0]
+				},
+			},
+			"__exit__": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if len(args) < 1 {
+						return object.NewBoolean(false)
+					}
+					if inst, ok := args[0].(*object.Instance); ok {
+						if h, ok := getStreamHolder(inst); ok {
+							if f, ok := streamWriter(ctx, h).(flusher); ok {
+								f.Flush()
+							}
+						}
+					}
+					return object.NewBoolean(false)
+				},
+			},
+		},
+	}
+}
+
+var (
+	stdoutClass = newStreamClass("stdout")
+	stderrClass = newStreamClass("stderr")
+)
+
+func newStreamObject(stderr bool) *object.Instance {
+	class := stdoutClass
+	if stderr {
+		class = stderrClass
+	}
+	return object.NewInstanceWithFields(class, map[string]object.Object{streamKey: &streamHolder{stderr: stderr}})
 }
 
 func getPlatform() string {

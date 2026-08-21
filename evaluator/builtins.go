@@ -94,13 +94,31 @@ Use list(filter(...)) to get a list.`,
 			env := GetEnvFromContext(ctx)
 			writer := env.GetWriter()
 
-			// Get file kwarg (StringIO or any object with write method)
+			// Get file kwarg: StringIO instances write to their buffer; any
+			// other instance with a write method (sys.stdout, sys.stderr,
+			// user classes) gets its write method called with the output.
+			var fileInst *object.Instance
 			if fileObj := kwargs.Get("file"); fileObj != nil {
 				if inst, ok := fileObj.(*object.Instance); ok {
 					if w, ok := stdlib.GetStringIOWriter(inst); ok {
 						writer = w
+					} else if _, ok := inst.Class.LookupMember("write"); ok {
+						fileInst = inst
 					}
 				}
+			}
+
+			// emit sends the rendered output to the selected destination.
+			// Returns an error object if a file instance's write fails.
+			emit := func(s string) object.Object {
+				if fileInst != nil {
+					if result := callDunderMethodFn(ctx, fileInst, "write", []object.Object{object.NewString(s)}, env); object.IsError(result) {
+						return result
+					}
+					return nil
+				}
+				fmt.Fprint(writer, s)
+				return nil
 			}
 
 			// Get sep kwarg (default: " ")
@@ -125,20 +143,24 @@ Use list(filter(...)) to get a list.`,
 
 			// Build output string — fast path for common single-arg case
 			if len(args) == 1 && sep == " " {
+				var out string
 				if str, err := args[0].AsString(); err == nil {
-					fmt.Fprint(writer, str+end)
+					out = str + end
 				} else if inst, ok := args[0].(*object.Instance); ok {
 					if result := callDunderMethodFn(ctx, inst, "__str__", nil, env); result != nil {
 						if s, err2 := result.AsString(); err2 == nil {
-							fmt.Fprint(writer, s+end)
+							out = s + end
 						} else {
-							fmt.Fprint(writer, result.Inspect()+end)
+							out = result.Inspect() + end
 						}
 					} else {
-						fmt.Fprint(writer, args[0].Inspect()+end)
+						out = args[0].Inspect() + end
 					}
 				} else {
-					fmt.Fprint(writer, args[0].Inspect()+end)
+					out = args[0].Inspect() + end
+				}
+				if e := emit(out); e != nil {
+					return e
 				}
 				return NULL
 			}
@@ -161,18 +183,24 @@ Use list(filter(...)) to get a list.`,
 					parts[i] = arg.Inspect()
 				}
 			}
-			fmt.Fprint(writer, strings.Join(parts, sep)+end)
+			if e := emit(strings.Join(parts, sep) + end); e != nil {
+				return e
+			}
 			return NULL
 		},
-		HelpText: `print(*args, sep=" ", end="\n") - Print values to output
+		HelpText: `print(*args, sep=" ", end="\n", file=None) - Print values to output
 
 Prints the given arguments separated by sep and followed by end.
 Default separator is a space, default ending is a newline.
 
+file selects the destination: an io.StringIO buffer, or a stream object
+with a write method such as sys.stdout or sys.stderr.
+
 Examples:
   print("hello", "world")     # Output: hello world
   print("a", "b", sep=",")    # Output: a,b
-  print("no newline", end="") # Output: no newline (no trailing newline)`,
+  print("no newline", end="") # Output: no newline (no trailing newline)
+  print("warning!", file=sys.stderr)  # Write to stderr instead of stdout`,
 	},
 	"len": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {

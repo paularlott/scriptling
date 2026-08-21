@@ -94,6 +94,11 @@ func NewSandboxLibrary(allowedPaths []string) *object.Library {
 		// By default, discard print output from sandbox scripts
 		if !captureOutput {
 			instance.SetOutputWriter(io.Discard)
+			// Also discard sys.stderr writes when the instance supports it
+			// (optional so custom SandboxInstance implementations still work)
+			if ew, ok := instance.(interface{ SetErrorWriter(io.Writer) }); ok {
+				ew.SetErrorWriter(io.Discard)
+			}
 		}
 
 		env := &sandboxEnv{

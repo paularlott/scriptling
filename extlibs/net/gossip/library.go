@@ -910,9 +910,9 @@ Returns:
 							leaderCfg.HeartbeatMessageType = gossip.MessageType(v)
 						}
 					}
-					if qp := kwargs.Get("quorum_percentage"); qp != nil {
-						if v, e := qp.AsInt(); e == nil {
-							leaderCfg.QuorumPercentage = int(v)
+					if mc := kwargs.Get("min_cluster_size"); mc != nil {
+						if v, e := mc.AsInt(); e == nil {
+							leaderCfg.MinClusterSize = int(v)
 						}
 					}
 					if raw := kwargs.Get("metadata_criteria"); raw != nil {
@@ -928,13 +928,13 @@ Returns:
 					le := leader.NewLeaderElection(c, leaderCfg)
 					return buildLeaderElectionObject(le, eval, env)
 				},
-				HelpText: `create_leader_election(check_interval="1s", leader_timeout="3s", heartbeat_msg_type=65, quorum_percentage=60, metadata_criteria=None) - Create a leader election manager
+				HelpText: `create_leader_election(check_interval="1s", leader_timeout="3s", heartbeat_msg_type=65, min_cluster_size=0, metadata_criteria=None) - Create a leader election manager
 
 Parameters:
   check_interval (string): Duration between leader checks (default: "1s")
   leader_timeout (string): Duration without heartbeat before leader is considered lost (default: "3s")
   heartbeat_msg_type (int): Message type for heartbeat messages (default: 65, reserved range)
-  quorum_percentage (int): Percentage of nodes required for quorum 1-100 (default: 60)
+  min_cluster_size (int): Minimum nodes required for quorum, a hard floor; set to the majority of the smallest cluster (default: 0)
   metadata_criteria (dict): Optional metadata criteria to limit eligible nodes
 
 Returns:

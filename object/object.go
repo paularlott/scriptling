@@ -918,6 +918,7 @@ type Environment struct {
 	nonlocals                  map[string]bool
 	importedBindings           map[string]bool
 	output                     io.Writer
+	errOutput                  io.Writer
 	input                      io.Reader
 	importCallback             func(string) error
 	availableLibrariesCallback func() []LibraryInfo
@@ -1065,6 +1066,9 @@ func NewEnclosedEnvironment(outer *Environment) *Environment {
 		if outer.output != nil {
 			env.output = outer.output
 		}
+		if outer.errOutput != nil {
+			env.errOutput = outer.errOutput
+		}
 		if outer.input != nil {
 			env.input = outer.input
 		}
@@ -1180,6 +1184,7 @@ func AcquireCallEnvironment(outer *Environment, slotIndex map[string]int, slotNa
 					env.outer = outer
 					env.root = root
 					env.output = outer.output
+					env.errOutput = outer.errOutput
 					env.input = outer.input
 					env.importCallback = outer.importCallback
 					env.availableLibrariesCallback = outer.availableLibrariesCallback
@@ -1225,6 +1230,7 @@ func ReleaseCallEnvironment(env *Environment) {
 	env.slotIndex = nil
 	env.slotNames = nil
 	env.output = nil
+	env.errOutput = nil
 	env.input = nil
 	env.importCallback = nil
 	env.availableLibrariesCallback = nil
@@ -1611,6 +1617,19 @@ func (e *Environment) EnableOutputCapture() {
 // SetOutputWriter sets a custom writer for output
 func (e *Environment) SetOutputWriter(w io.Writer) {
 	e.output = w
+}
+
+// SetErrorWriter sets a custom writer for error/diagnostic output (sys.stderr)
+func (e *Environment) SetErrorWriter(w io.Writer) {
+	e.errOutput = w
+}
+
+// GetErrorWriter returns the appropriate writer for error output (sys.stderr)
+func (e *Environment) GetErrorWriter() io.Writer {
+	if e.errOutput != nil {
+		return e.errOutput
+	}
+	return os.Stderr
 }
 
 // GetOutput returns captured output and clears the buffer

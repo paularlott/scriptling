@@ -1114,6 +1114,7 @@ func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[stri
 	// Inherit writer from main environment (for output capture)
 	writer := p.env.GetWriter()
 	libEnv.SetOutputWriter(writer)
+	libEnv.SetErrorWriter(p.env.GetErrorWriter())
 
 	// Set up import builtin for nested imports
 	libEnv.Set("import", evaluator.GetImportBuiltin())
@@ -1258,6 +1259,12 @@ func (p *Scriptling) EnableOutputCapture() {
 // SetOutputWriter sets a custom writer for output (e.g., for streaming to a websocket or logger)
 func (p *Scriptling) SetOutputWriter(w io.Writer) {
 	p.env.SetOutputWriter(w)
+}
+
+// SetErrorWriter sets a custom writer for error/diagnostic output written
+// via sys.stderr (e.g., for streaming warnings to a separate log)
+func (p *Scriptling) SetErrorWriter(w io.Writer) {
+	p.env.SetErrorWriter(w)
 }
 
 // SetInputReader sets a custom reader for input (e.g., for reading from a websocket)
