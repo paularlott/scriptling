@@ -121,8 +121,8 @@ func TestIntFastDeclinesNonIntegerOperands(t *testing.T) {
 		{"a = True\nb = False\nresult = a + b\n", "1"},
 		{"a = \"x\"\nb = \"y\"\nresult = a + b\n", "xy"},
 		{"a = \"ab\"\nb = 2\nresult = a * b\n", "abab"},
-		{"a = 1.5\nb = 1.5\nresult = a == b\n", "true"},
-		{"a = 2\nb = 2.0\nresult = a == b\n", "true"},
+		{"a = 1.5\nb = 1.5\nresult = a == b\n", "True"},
+		{"a = 2\nb = 2.0\nresult = a == b\n", "True"},
 	}
 	for _, c := range cases {
 		got := evalSrc(t, c.src)

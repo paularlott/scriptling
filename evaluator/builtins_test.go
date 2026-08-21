@@ -67,7 +67,7 @@ func TestBuiltinStr(t *testing.T) {
 		{object.NewInteger(42), "42"},
 		{object.NewFloat(3.14), "3.14"},
 		{object.NewString("hello"), "hello"},
-		{object.NewBoolean(true), "true"},
+		{object.NewBoolean(true), "True"},
 	}
 
 	for _, tt := range tests {
@@ -299,13 +299,13 @@ func TestSetOperators(t *testing.T) {
 		{name: "union", script: `set([1,2,3]) | set([2,3,4])`, expected: `{1, 2, 3, 4}`},
 		{name: "difference", script: `set([1,2,3]) - set([2,3,4])`, expected: `{1}`},
 		{name: "symmetric difference", script: `set([1,2,3]) ^ set([2,3,4])`, expected: `{1, 4}`},
-		{name: "operator matches method", script: `(set([1,2,3]) & set([2,3,4])) == set([1,2,3]).intersection(set([2,3,4]))`, expected: `true`},
+		{name: "operator matches method", script: `(set([1,2,3]) & set([2,3,4])) == set([1,2,3]).intersection(set([2,3,4]))`, expected: `True`},
 		{name: "operands not mutated", script: `a=set([1,2,3]); b=set([2,3,4]); a & b; a`, expected: `{1, 2, 3}`},
-		{name: "value equality order-independent", script: `set([1,2,3]) == set([3,2,1])`, expected: `true`},
-		{name: "value inequality", script: `set([1,2,3]) != set([1,2])`, expected: `true`},
-		{name: "empty set equality", script: `set([]) == set([])`, expected: `true`},
-		{name: "cross-type equality false", script: `set([1,2]) == [1,2]`, expected: `false`},
-		{name: "chained with equality", script: `(set([1,2,3]) & set([2,3,4])) == set([2,3])`, expected: `true`},
+		{name: "value equality order-independent", script: `set([1,2,3]) == set([3,2,1])`, expected: `True`},
+		{name: "value inequality", script: `set([1,2,3]) != set([1,2])`, expected: `True`},
+		{name: "empty set equality", script: `set([]) == set([])`, expected: `True`},
+		{name: "cross-type equality false", script: `set([1,2]) == [1,2]`, expected: `False`},
+		{name: "chained with equality", script: `(set([1,2,3]) & set([2,3,4])) == set([2,3])`, expected: `True`},
 		// empty-set edge cases
 		{name: "empty intersection", script: `set([]) & set([1])`, expected: `{}`},
 		{name: "empty union", script: `set([]) | set([1])`, expected: `{1}`},
@@ -378,13 +378,13 @@ func TestTruthyCollections(t *testing.T) {
 		script   string
 		expected string
 	}{
-		{name: "empty set falsy", script: `bool(set())`, expected: `false`},
-		{name: "nonempty set truthy", script: `bool(set([1]))`, expected: `true`},
-		{name: "empty tuple falsy", script: `bool(())`, expected: `false`},
-		{name: "nonempty tuple truthy", script: `bool((1,))`, expected: `true`},
-		{name: "empty dict_keys falsy", script: `bool({}.keys())`, expected: `false`},
-		{name: "nonempty dict_values truthy", script: `bool({1: 1}.values())`, expected: `true`},
-		{name: "empty dict_items falsy", script: `bool({}.items())`, expected: `false`},
+		{name: "empty set falsy", script: `bool(set())`, expected: `False`},
+		{name: "nonempty set truthy", script: `bool(set([1]))`, expected: `True`},
+		{name: "empty tuple falsy", script: `bool(())`, expected: `False`},
+		{name: "nonempty tuple truthy", script: `bool((1,))`, expected: `True`},
+		{name: "empty dict_keys falsy", script: `bool({}.keys())`, expected: `False`},
+		{name: "nonempty dict_values truthy", script: `bool({1: 1}.values())`, expected: `True`},
+		{name: "empty dict_items falsy", script: `bool({}.items())`, expected: `False`},
 		// short-circuit: empty set is falsy so `and` returns it without evaluating RHS
 		{name: "empty set short-circuits and", script: `set() and "RHS"`, expected: `{}`},
 		{name: "nonempty set and evaluates RHS", script: `set([1]) and "RHS"`, expected: `RHS`},

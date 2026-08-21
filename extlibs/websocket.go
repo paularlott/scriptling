@@ -193,7 +193,7 @@ var WebSocketLibrary = object.NewLibrary(WebSocketLibraryName, map[string]*objec
 								data = []byte(str.StringValue())
 							} else {
 								// Try to coerce to string
-								strVal, err := msg.CoerceString()
+								strVal, err := object.CoerceWireString(msg)
 								if err != nil {
 									return errors.NewError("message must be string or dict")
 								}

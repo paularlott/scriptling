@@ -46,8 +46,8 @@ func TestObjectInspect(t *testing.T) {
 	}{
 		{NewInteger(42), "42"},
 		{NewFloat(3.14), "3.14"},
-		{NewBoolean(true), "true"},
-		{NewBoolean(false), "false"},
+		{NewBoolean(true), "True"},
+		{NewBoolean(false), "False"},
 		{NewString("hello"), "hello"},
 		{&Null{}, "None"},
 		{&Break{}, "break"},
@@ -73,7 +73,7 @@ func TestListInspect(t *testing.T) {
 			NewBoolean(true),
 		},
 	}
-	expected := "[1, hello, true]"
+	expected := "[1, hello, True]"
 	if list.Inspect() != expected {
 		t.Errorf("list.Inspect() = %q, want %q", list.Inspect(), expected)
 	}

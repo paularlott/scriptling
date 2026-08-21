@@ -1203,7 +1203,7 @@ func stringifyToolResult(result object.Object) string {
 		}
 	}
 
-	if coerced, errObj := result.CoerceString(); errObj == nil {
+	if coerced, errObj := object.CoerceWireString(result); errObj == nil {
 		return coerced
 	}
 	return result.Inspect()

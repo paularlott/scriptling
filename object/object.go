@@ -417,7 +417,12 @@ type Boolean struct {
 func (b *Boolean) BoolValue() bool { return b.value }
 
 func (b *Boolean) Type() ObjectType { return BOOLEAN_OBJ }
-func (b *Boolean) Inspect() string  { return strconv.FormatBool(b.value) }
+func (b *Boolean) Inspect() string {
+	if b.value {
+		return "True"
+	}
+	return "False"
+}
 
 func (b *Boolean) AsString() (string, Object)          { return "", errMustBeString }
 func (b *Boolean) AsInt() (int64, Object)              { return 0, errMustBeInteger }
@@ -438,6 +443,18 @@ func (b *Boolean) CoerceFloat() (float64, Object) {
 		return 1, nil
 	}
 	return 0, nil
+}
+
+// CoerceWireString coerces obj to its machine-facing string form, for wire
+// formats and protocol payloads (query params, messages, tool responses).
+// It behaves like CoerceString except booleans render in their lowercase
+// wire form ("true"/"false") rather than the Python display form
+// ("True"/"False").
+func CoerceWireString(obj Object) (string, Object) {
+	if b, ok := obj.(*Boolean); ok {
+		return strconv.FormatBool(b.value), nil
+	}
+	return obj.CoerceString()
 }
 
 type String struct {

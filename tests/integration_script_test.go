@@ -95,8 +95,8 @@ func TestIntegrationScripts(t *testing.T) {
 			}
 
 			resultStr := result.Inspect()
-			if resultStr != "true" && resultStr != "None" {
-				t.Errorf("Script %s failed: expected true or None, got %s", file, resultStr)
+			if resultStr != "True" && resultStr != "true" && resultStr != "None" {
+				t.Errorf("Script %s failed: expected True or None, got %s", file, resultStr)
 			} else {
 				t.Logf("Script %s passed", file)
 			}

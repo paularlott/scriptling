@@ -296,7 +296,7 @@ Returns:
 				} else if str, ok := msg.(*object.String); ok {
 					data = []byte(str.StringValue())
 				} else {
-					strVal, coerceErr := msg.CoerceString()
+					strVal, coerceErr := object.CoerceWireString(msg)
 					if coerceErr != nil {
 						return errors.NewError("message must be string or dict")
 					}

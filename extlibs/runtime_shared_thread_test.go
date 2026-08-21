@@ -118,7 +118,7 @@ done[0]
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Inspect() != "true" {
+	if out.Inspect() != "True" {
 		t.Fatalf("yield did not let the shared thread run (got %s)", out.Inspect())
 	}
 }

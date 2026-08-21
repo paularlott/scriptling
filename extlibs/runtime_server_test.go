@@ -64,8 +64,8 @@ runtime.server_running()`)
 	if err != nil {
 		t.Fatalf("server_running: %v", err)
 	}
-	if out.Inspect() != "true" {
-		t.Fatalf("server_running() before shutdown = %s, want true", out.Inspect())
+	if out.Inspect() != "True" {
+		t.Fatalf("server_running() before shutdown = %s, want True", out.Inspect())
 	}
 
 	// Signal shutdown.
@@ -78,8 +78,8 @@ runtime.server_running()`)
 	if err != nil {
 		t.Fatalf("server_running: %v", err)
 	}
-	if out.Inspect() != "false" {
-		t.Fatalf("server_running() after shutdown = %s, want false", out.Inspect())
+	if out.Inspect() != "False" {
+		t.Fatalf("server_running() after shutdown = %s, want False", out.Inspect())
 	}
 }
 
@@ -171,8 +171,8 @@ runtime.server_running()`)
 	if err != nil {
 		t.Fatalf("server_running in script mode: %v", err)
 	}
-	if out.Inspect() != "false" {
-		t.Fatalf("server_running() in script mode = %s, want false", out.Inspect())
+	if out.Inspect() != "False" {
+		t.Fatalf("server_running() in script mode = %s, want False", out.Inspect())
 	}
 }
 

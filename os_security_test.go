@@ -51,8 +51,8 @@ content == "test content"
 		if err != nil {
 			t.Fatalf("Script error: %v", err)
 		}
-		if result.Inspect() != "true" {
-			t.Errorf("Expected true, got %s", result.Inspect())
+		if result.Inspect() != "True" {
+			t.Errorf("Expected True, got %s", result.Inspect())
 		}
 	})
 
@@ -85,8 +85,8 @@ os.read_file("` + newFile + `") == "new content"
 		if err != nil {
 			t.Fatalf("Script error: %v", err)
 		}
-		if result.Inspect() != "true" {
-			t.Errorf("Expected true, got %s", result.Inspect())
+		if result.Inspect() != "True" {
+			t.Errorf("Expected True, got %s", result.Inspect())
 		}
 	})
 
@@ -167,8 +167,8 @@ content == "secret data"
 		if err != nil {
 			t.Fatalf("Script error with no restrictions: %v", err)
 		}
-		if result.Inspect() != "true" {
-			t.Errorf("Expected true, got %s", result.Inspect())
+		if result.Inspect() != "True" {
+			t.Errorf("Expected True, got %s", result.Inspect())
 		}
 	})
 

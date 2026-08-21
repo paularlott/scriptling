@@ -137,7 +137,7 @@ str(zipfile.is_zipfile("` + zipPath + `")) + ":" + str(zipfile.is_zipfile("` + t
 		t.Fatal(err)
 	}
 	s, _ := result.AsString()
-	if s != "true:false" {
+	if s != "True:False" {
 		t.Errorf("is_zipfile: got %q", s)
 	}
 }

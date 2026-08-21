@@ -171,7 +171,7 @@ Example:
 
 				defaultVal := ""
 				if len(args) > 1 {
-					defaultVal, err = args[1].CoerceString()
+					defaultVal, err = object.CoerceWireString(args[1])
 					if err != nil {
 						return err
 					}
@@ -182,7 +182,7 @@ Example:
 					return object.NewString(defaultVal)
 				}
 
-				val, err := paramValue.CoerceString()
+				val, err := object.CoerceWireString(paramValue)
 				if err != nil {
 					return object.NewString(defaultVal)
 				}
@@ -519,7 +519,7 @@ Example:
 					return &object.Error{Message: "return_string() requires a text argument"}
 				}
 
-				text, err := args[0].CoerceString()
+				text, err := object.CoerceWireString(args[0])
 				if err != nil {
 					return err
 				}
@@ -588,7 +588,7 @@ Example:
 					return &object.Error{Message: "return_error() requires a message argument"}
 				}
 
-				message, err := args[0].CoerceString()
+				message, err := object.CoerceWireString(args[0])
 				if err != nil {
 					return err
 				}
@@ -678,7 +678,7 @@ func RunToolScript(ctx context.Context, sl *scriptling.Scriptling, script string
 		switch result.(type) {
 		case *object.String, *object.Integer, *object.Float, *object.Boolean:
 			// For simple types, use CoerceString to get the string representation
-			if strVal, err := result.CoerceString(); err == nil {
+			if strVal, err := object.CoerceWireString(result); err == nil {
 				response = strVal
 			}
 		case *object.Null:

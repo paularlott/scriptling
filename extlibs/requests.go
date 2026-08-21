@@ -138,7 +138,7 @@ func extractParams(dict map[string]object.Object) map[string]string {
 	params := make(map[string]string)
 	for key, value := range dict {
 		// Convert any value type to string (int, float, bool, etc.)
-		if strVal, err := value.CoerceString(); err == nil {
+		if strVal, err := object.CoerceWireString(value); err == nil {
 			params[key] = strVal
 		}
 	}

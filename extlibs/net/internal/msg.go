@@ -28,7 +28,7 @@ func MsgToBytes(msg object.Object) ([]byte, object.Object) {
 	if str, ok := msg.(*object.String); ok {
 		return []byte(str.StringValue()), nil
 	}
-	strVal, coerceErr := msg.CoerceString()
+	strVal, coerceErr := object.CoerceWireString(msg)
 	if coerceErr != nil {
 		return nil, errors.NewError("message must be string, bytes, or dict")
 	}
