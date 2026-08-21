@@ -13,12 +13,21 @@ import (
 
 	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/errors"
+	"github.com/paularlott/scriptling/extlibs/netsecurity"
 	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/scriptling/pool"
 )
 
-func RegisterRequestsLibrary(registrar interface{ RegisterLibrary(*object.Library) }) {
-	registrar.RegisterLibrary(RequestsLibrary)
+func RegisterRequestsLibrary(registrar interface{ RegisterLibrary(*object.Library) }, cfg ...*netsecurity.Config) {
+	lib := RequestsLibrary
+	if len(cfg) > 0 && cfg[0] != nil {
+		guard, gerr := netsecurity.NewGuard(cfg[0])
+		if gerr != nil {
+			guard = netsecurity.FailClosed(gerr)
+		}
+		lib = newRequestsLibrary(guard.HTTPClient())
+	}
+	registrar.RegisterLibrary(lib)
 }
 
 // Response class for HTTP responses
@@ -263,25 +272,30 @@ func extractRequestArgs(kwargs object.Kwargs, args []object.Object, hasData bool
 	return url, data, options, nil
 }
 
-var RequestsLibrary = object.NewLibrary(RequestsLibraryName, map[string]*object.Builtin{
-	// Exceptions namespace - returns dict with exception types
-	"exceptions": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			return exceptionsNamespace
+var RequestsLibrary = newRequestsLibrary(nil)
+
+// newRequestsLibrary builds the requests library. A nil client uses the
+// shared scriptling HTTP pool; a guarded client enforces a network policy.
+func newRequestsLibrary(client *http.Client) *object.Library {
+	return object.NewLibrary(RequestsLibraryName, map[string]*object.Builtin{
+		// Exceptions namespace - returns dict with exception types
+		"exceptions": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				return exceptionsNamespace
+			},
 		},
-	},
-	"get": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			rawURL, _, options, err := extractRequestArgs(kwargs, args, false)
-			if err != nil {
-				return err
-			}
-			timeout, headers, params, user, pass := parseRequestOptions(options)
-			// Build URL with query params
-			fullURL := buildURLWithParams(rawURL, params)
-			return httpRequestWithContext(ctx, "GET", fullURL, "", timeout, headers, user, pass)
-		},
-		HelpText: `get(url, **kwargs) - Send a GET request
+		"get": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				rawURL, _, options, err := extractRequestArgs(kwargs, args, false)
+				if err != nil {
+					return err
+				}
+				timeout, headers, params, user, pass := parseRequestOptions(options)
+				// Build URL with query params
+				fullURL := buildURLWithParams(rawURL, params)
+				return httpRequestWithContext(ctx, "GET", fullURL, "", timeout, headers, user, pass, client)
+			},
+			HelpText: `get(url, **kwargs) - Send a GET request
 
 Sends an HTTP GET request to the specified URL.
 
@@ -295,19 +309,19 @@ Parameters:
 
 Returns:
   Response object with status_code, text, headers, body, url, and json() method`,
-	},
-	"post": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			url, data, options, err := extractRequestArgs(kwargs, args, true)
-			if err != nil {
-				return err
-			}
-			timeout, headers, params, user, pass := parseRequestOptions(options)
-			// POST can also have query params
-			fullURL := buildURLWithParams(url, params)
-			return httpRequestWithContext(ctx, "POST", fullURL, data, timeout, headers, user, pass)
 		},
-		HelpText: `post(url, data=None, json=None, **kwargs) - Send a POST request
+		"post": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				url, data, options, err := extractRequestArgs(kwargs, args, true)
+				if err != nil {
+					return err
+				}
+				timeout, headers, params, user, pass := parseRequestOptions(options)
+				// POST can also have query params
+				fullURL := buildURLWithParams(url, params)
+				return httpRequestWithContext(ctx, "POST", fullURL, data, timeout, headers, user, pass, client)
+			},
+			HelpText: `post(url, data=None, json=None, **kwargs) - Send a POST request
 
 Sends an HTTP POST request to the specified URL with the given data.
 
@@ -324,18 +338,18 @@ Note: Use either 'data' or 'json', not both.
 
 Returns:
   Response object with status_code, text, headers, body, url, and json() method`,
-	},
-	"put": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			url, data, options, err := extractRequestArgs(kwargs, args, true)
-			if err != nil {
-				return err
-			}
-			timeout, headers, params, user, pass := parseRequestOptions(options)
-			fullURL := buildURLWithParams(url, params)
-			return httpRequestWithContext(ctx, "PUT", fullURL, data, timeout, headers, user, pass)
 		},
-		HelpText: `put(url, data=None, json=None, **kwargs) - Send a PUT request
+		"put": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				url, data, options, err := extractRequestArgs(kwargs, args, true)
+				if err != nil {
+					return err
+				}
+				timeout, headers, params, user, pass := parseRequestOptions(options)
+				fullURL := buildURLWithParams(url, params)
+				return httpRequestWithContext(ctx, "PUT", fullURL, data, timeout, headers, user, pass, client)
+			},
+			HelpText: `put(url, data=None, json=None, **kwargs) - Send a PUT request
 
 Sends an HTTP PUT request to the specified URL with the given data.
 
@@ -352,18 +366,18 @@ Note: Use either 'data' or 'json', not both.
 
 Returns:
   Response object with status_code, text, headers, body, url, and json() method`,
-	},
-	"delete": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			rawURL, _, options, err := extractRequestArgs(kwargs, args, false)
-			if err != nil {
-				return err
-			}
-			timeout, headers, params, user, pass := parseRequestOptions(options)
-			fullURL := buildURLWithParams(rawURL, params)
-			return httpRequestWithContext(ctx, "DELETE", fullURL, "", timeout, headers, user, pass)
 		},
-		HelpText: `delete(url, **kwargs) - Send a DELETE request
+		"delete": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				rawURL, _, options, err := extractRequestArgs(kwargs, args, false)
+				if err != nil {
+					return err
+				}
+				timeout, headers, params, user, pass := parseRequestOptions(options)
+				fullURL := buildURLWithParams(rawURL, params)
+				return httpRequestWithContext(ctx, "DELETE", fullURL, "", timeout, headers, user, pass, client)
+			},
+			HelpText: `delete(url, **kwargs) - Send a DELETE request
 
 Sends an HTTP DELETE request to the specified URL.
 
@@ -376,18 +390,18 @@ Parameters:
 
 Returns:
   Response object with status_code, text, headers, body, url, and json() method`,
-	},
-	"patch": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			url, data, options, err := extractRequestArgs(kwargs, args, true)
-			if err != nil {
-				return err
-			}
-			timeout, headers, params, user, pass := parseRequestOptions(options)
-			fullURL := buildURLWithParams(url, params)
-			return httpRequestWithContext(ctx, "PATCH", fullURL, data, timeout, headers, user, pass)
 		},
-		HelpText: `patch(url, data=None, json=None, **kwargs) - Send a PATCH request
+		"patch": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				url, data, options, err := extractRequestArgs(kwargs, args, true)
+				if err != nil {
+					return err
+				}
+				timeout, headers, params, user, pass := parseRequestOptions(options)
+				fullURL := buildURLWithParams(url, params)
+				return httpRequestWithContext(ctx, "PATCH", fullURL, data, timeout, headers, user, pass, client)
+			},
+			HelpText: `patch(url, data=None, json=None, **kwargs) - Send a PATCH request
 
 Sends an HTTP PATCH request to the specified URL with the given data.
 
@@ -404,62 +418,62 @@ Note: Use either 'data' or 'json', not both.
 
 Returns:
   Response object with status_code, text, headers, body, url, and json() method`,
-	},
-	"parallel": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) < 1 {
-				return errors.NewArgumentError(1, 0)
-			}
-			requestList, err := args[0].AsList()
-			if err != nil {
-				return errors.NewTypeError("LIST", args[0].Type().String())
-			}
-			if len(requestList) == 0 {
-				return &object.List{Elements: []object.Object{}}
-			}
-
-			maxParallel := int64(4)
-			if mp, mpErr := kwargs.GetInt("max_parallel", 4); mpErr == nil {
-				maxParallel = mp
-			}
-			if maxParallel < 1 {
-				maxParallel = 1
-			}
-
-			results := make([]object.Object, len(requestList))
-			sem := make(chan struct{}, maxParallel)
-			var wg sync.WaitGroup
-
-			// Workers do pure-Go HTTP, not script — detach the environment from
-			// their context so the blocking HTTP call inside executeRequest does
-			// not try to release an interpreter lock the worker doesn't hold.
-			workerCtx := context.WithValue(ctx, "scriptling-env", (*object.Environment)(nil))
-
-			// Release this goroutine's interpreter lock while the parallel batch
-			// runs, so other script goroutines can proceed meanwhile.
-			object.RunBlocking(ctx, func() {
-				for i, reqObj := range requestList {
-					reqDict, dictErr := reqObj.AsDict()
-					if dictErr != nil {
-						results[i] = errors.NewTypeError("DICT", reqObj.Type().String())
-						continue
-					}
-
-					wg.Add(1)
-					go func(idx int, rd map[string]object.Object) {
-						defer wg.Done()
-						sem <- struct{}{}
-						defer func() { <-sem }()
-
-						results[idx] = executeParallelRequest(workerCtx, rd)
-					}(i, reqDict)
+		},
+		"parallel": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if len(args) < 1 {
+					return errors.NewArgumentError(1, 0)
+				}
+				requestList, err := args[0].AsList()
+				if err != nil {
+					return errors.NewTypeError("LIST", args[0].Type().String())
+				}
+				if len(requestList) == 0 {
+					return &object.List{Elements: []object.Object{}}
 				}
 
-				wg.Wait()
-			})
-			return &object.List{Elements: results}
-		},
-		HelpText: `parallel(requests, max_parallel=4) - Execute multiple HTTP requests in parallel
+				maxParallel := int64(4)
+				if mp, mpErr := kwargs.GetInt("max_parallel", 4); mpErr == nil {
+					maxParallel = mp
+				}
+				if maxParallel < 1 {
+					maxParallel = 1
+				}
+
+				results := make([]object.Object, len(requestList))
+				sem := make(chan struct{}, maxParallel)
+				var wg sync.WaitGroup
+
+				// Workers do pure-Go HTTP, not script — detach the environment from
+				// their context so the blocking HTTP call inside executeRequest does
+				// not try to release an interpreter lock the worker doesn't hold.
+				workerCtx := context.WithValue(ctx, "scriptling-env", (*object.Environment)(nil))
+
+				// Release this goroutine's interpreter lock while the parallel batch
+				// runs, so other script goroutines can proceed meanwhile.
+				object.RunBlocking(ctx, func() {
+					for i, reqObj := range requestList {
+						reqDict, dictErr := reqObj.AsDict()
+						if dictErr != nil {
+							results[i] = errors.NewTypeError("DICT", reqObj.Type().String())
+							continue
+						}
+
+						wg.Add(1)
+						go func(idx int, rd map[string]object.Object) {
+							defer wg.Done()
+							sem <- struct{}{}
+							defer func() { <-sem }()
+
+							results[idx] = executeParallelRequest(workerCtx, rd, client)
+						}(i, reqDict)
+					}
+
+					wg.Wait()
+				})
+				return &object.List{Elements: results}
+			},
+			HelpText: `parallel(requests, max_parallel=4) - Execute multiple HTTP requests in parallel
 
 Sends multiple HTTP requests concurrently with a configurable concurrency limit.
 Results are returned in the same order as the input requests.
@@ -488,13 +502,14 @@ Example:
   for resp in results:
       if resp.status_code == 200:
           data = resp.json()`,
-	},
-}, map[string]object.Object{
-	// Exception types as constants (for except clause matching)
-	"RequestException": requestExceptionType,
-	"HTTPError":        httpErrorType,
-	"Response":         ResponseClass,
-}, "HTTP requests library")
+		},
+	}, map[string]object.Object{
+		// Exception types as constants (for except clause matching)
+		"RequestException": requestExceptionType,
+		"HTTPError":        httpErrorType,
+		"Response":         ResponseClass,
+	}, "HTTP requests library")
+}
 
 func extractHeaders(dict map[string]object.Object) map[string]string {
 	headers := make(map[string]string)
@@ -506,7 +521,7 @@ func extractHeaders(dict map[string]object.Object) map[string]string {
 	return headers
 }
 
-func httpRequestWithContext(parentCtx context.Context, method, url, body string, timeoutSecs int, headers map[string]string, user, pass string) object.Object {
+func httpRequestWithContext(parentCtx context.Context, method, url, body string, timeoutSecs int, headers map[string]string, user, pass string, client *http.Client) object.Object {
 	// Combine parent context with timeout
 	ctx, cancel := context.WithTimeout(parentCtx, time.Duration(timeoutSecs)*time.Second)
 	defer cancel()
@@ -540,7 +555,11 @@ func httpRequestWithContext(parentCtx context.Context, method, url, body string,
 	}
 
 	var resp *http.Response
-	object.RunBlocking(ctx, func() { resp, err = pool.GetHTTPClient().Do(req) })
+	reqClient := client
+	if reqClient == nil {
+		reqClient = pool.GetHTTPClient()
+	}
+	object.RunBlocking(ctx, func() { resp, err = reqClient.Do(req) })
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			return errors.NewError("http timeout after %d seconds", timeoutSecs)
@@ -565,7 +584,7 @@ func httpRequestWithContext(parentCtx context.Context, method, url, body string,
 }
 
 // executeParallelRequest executes a single request from a parallel batch spec dict.
-func executeParallelRequest(ctx context.Context, spec map[string]object.Object) object.Object {
+func executeParallelRequest(ctx context.Context, spec map[string]object.Object, client *http.Client) object.Object {
 	// Extract method
 	method := "GET"
 	if methodObj, ok := spec["method"]; ok {
@@ -639,5 +658,5 @@ func executeParallelRequest(ctx context.Context, spec map[string]object.Object) 
 		}
 	}
 
-	return httpRequestWithContext(ctx, method, urlStr, body, timeout, headers, user, pass)
+	return httpRequestWithContext(ctx, method, urlStr, body, timeout, headers, user, pass, client)
 }

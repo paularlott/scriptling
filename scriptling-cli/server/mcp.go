@@ -251,6 +251,7 @@ func (s *Server) registerPromptsFromFS(server *mcp_lib.Server, fsys fs.FS, sourc
 func (s *Server) handlerConfig() mcpcli.HandlerConfig {
 	opts := []mcpcli.HandlerOption{
 		mcpcli.WithAllowedPaths(s.config.AllowedPaths),
+		mcpcli.WithNetworkPolicy(s.config.NetworkPolicy),
 		mcpcli.WithDisabledLibs(s.config.DisabledLibs),
 		mcpcli.WithSecrets(s.config.SecretRegistry),
 		mcpcli.WithLogger(Log),

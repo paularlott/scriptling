@@ -13,6 +13,7 @@ import (
 	"github.com/paularlott/logger"
 	mcp_lib "github.com/paularlott/mcp"
 	"github.com/paularlott/scriptling"
+	"github.com/paularlott/scriptling/extlibs/netsecurity"
 	"github.com/paularlott/scriptling/extlibs/secretprovider"
 	scriptlingplugin "github.com/paularlott/scriptling/plugin"
 	"github.com/paularlott/scriptling/scriptling-cli/pack"
@@ -31,8 +32,9 @@ type ServerConfig struct {
 	Insecure        bool           // Allow self-signed HTTPS for package URLs
 	CacheDir        string         // Override default OS cache dir for remote packages
 	BearerToken     string
-	AllowedPaths    []string // Filesystem path restrictions (empty = no restrictions)
-	DisabledLibs    []string // Built-in libraries to disable (empty = all enabled)
+	AllowedPaths    []string            // Filesystem path restrictions (empty = no restrictions)
+	NetworkPolicy   *netsecurity.Config // Script outbound network policy (nil = no restrictions)
+	DisabledLibs    []string            // Built-in libraries to disable (empty = all enabled)
 	PluginDirs      []string
 	PluginManager   *scriptlingplugin.Manager
 	MCPToolsDir     string // Empty means MCP disabled

@@ -16,10 +16,10 @@ import (
 func TestServeFromDir(t *testing.T) {
 	dir := t.TempDir()
 	files := map[string]string{
-		"index.html":      "<h1>dir webroot</h1>",
-		"app.js":          "console.log(\"dir\")",
-		"sub/page.html":   "<p>sub</p>",
-		"secret.key":      "topsecret",
+		"index.html":    "<h1>dir webroot</h1>",
+		"app.js":        "console.log(\"dir\")",
+		"sub/page.html": "<p>sub</p>",
+		"secret.key":    "topsecret",
 	}
 	for name, content := range files {
 		p := filepath.Join(dir, filepath.FromSlash(name))

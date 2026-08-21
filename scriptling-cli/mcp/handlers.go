@@ -13,6 +13,7 @@ import (
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/conversion"
 	extlibsmcp "github.com/paularlott/scriptling/extlibs/mcp"
+	"github.com/paularlott/scriptling/extlibs/netsecurity"
 	"github.com/paularlott/scriptling/extlibs/secretprovider"
 	"github.com/paularlott/scriptling/object"
 	scriptlingplugin "github.com/paularlott/scriptling/plugin"
@@ -31,6 +32,7 @@ import (
 type HandlerConfig struct {
 	LibDirs        []string
 	AllowedPaths   []string                     // nil = unrestricted
+	NetworkPolicy  *netsecurity.Config          // nil = unrestricted outbound network
 	DisabledLibs   []string                     // nil = all built-ins enabled
 	SecretRegistry *secretprovider.Registry     // nil = empty registry
 	Logger         logger.Logger                // nil = null logger
@@ -73,6 +75,12 @@ func WithLogger(l logger.Logger) HandlerOption {
 // to the given paths. nil means unrestricted, an empty slice denies all.
 func WithAllowedPaths(paths []string) HandlerOption {
 	return func(c *HandlerConfig) { c.AllowedPaths = paths }
+}
+
+// WithNetworkPolicy returns an option that applies an outbound network policy
+// to the requests, wait_for and websocket libraries.
+func WithNetworkPolicy(cfg *netsecurity.Config) HandlerOption {
+	return func(c *HandlerConfig) { c.NetworkPolicy = cfg }
 }
 
 // WithDisabledLibs returns an option that disables the named built-in libraries.
@@ -134,7 +142,7 @@ func prepareScriptling(cfg HandlerConfig, extraLibDirs []string) *scriptling.Scr
 	libDirs := append(append([]string{}, cfg.LibDirs...), extraLibDirs...)
 
 	p := scriptling.New()
-	setup.Scriptling(p, libDirs, false, cfg.AllowedPaths, cfg.DisabledLibs, registry, log, cfg.DockerSock, cfg.PodmanSock)
+	setup.Scriptling(p, libDirs, false, cfg.AllowedPaths, cfg.DisabledLibs, registry, log, cfg.DockerSock, cfg.PodmanSock, cfg.NetworkPolicy)
 	setup.RegisterSys(p, cfg.Argv)
 	if cfg.PluginManager != nil {
 		scriptlingplugin.RegisterLibraries(p, cfg.PluginManager)

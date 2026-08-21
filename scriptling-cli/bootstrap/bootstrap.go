@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/paularlott/scriptling"
+	"github.com/paularlott/scriptling/extlibs/netsecurity"
 	"github.com/paularlott/scriptling/libloader"
 	"github.com/paularlott/scriptling/scriptling-cli/pack"
 )
@@ -35,6 +36,15 @@ func BuildLibDirs(baseDir string, extra []string) []string {
 		}
 	}
 	return dirs
+}
+
+// LoadNetworkPolicy loads the policy file named by --network-policy. An
+// empty path means no restrictions.
+func LoadNetworkPolicy(path string) (*netsecurity.Config, error) {
+	if path == "" {
+		return nil, nil
+	}
+	return netsecurity.LoadConfig(path)
 }
 
 // ParseAllowedPaths parses a comma-separated list of paths.

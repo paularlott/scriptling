@@ -11,13 +11,22 @@ import (
 	"time"
 
 	"github.com/paularlott/scriptling/errors"
+	"github.com/paularlott/scriptling/extlibs/netsecurity"
 	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/scriptling/pool"
 	"github.com/shirou/gopsutil/v3/process"
 )
 
-func RegisterWaitForLibrary(registrar interface{ RegisterLibrary(*object.Library) }) {
-	registrar.RegisterLibrary(WaitForLibrary)
+func RegisterWaitForLibrary(registrar interface{ RegisterLibrary(*object.Library) }, cfg ...*netsecurity.Config) {
+	lib := WaitForLibrary
+	if len(cfg) > 0 && cfg[0] != nil {
+		guard, gerr := netsecurity.NewGuard(cfg[0])
+		if gerr != nil {
+			guard = netsecurity.FailClosed(gerr)
+		}
+		lib = newWaitForLibrary(guard)
+	}
+	registrar.RegisterLibrary(lib)
 }
 
 // parseWaitOptions parses common wait options from args and kwargs
@@ -90,46 +99,52 @@ func waitForNextPoll(ctx context.Context, timer *time.Timer, pollInterval time.D
 	return ok
 }
 
-var WaitForLibrary = object.NewLibrary(WaitForLibraryName,
-	map[string]*object.Builtin{
-		"file": {
-			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if err := errors.MinArgs(args, 1); err != nil {
-					return err
-				}
+// WaitForLibrary is the wait_for library (no network policy)
+var WaitForLibrary = newWaitForLibrary(nil)
 
-				path, err := args[0].AsString()
-				if err != nil {
-					return err
-				}
+// newWaitForLibrary builds the wait_for library. A non-nil guard routes its
+// HTTP checks through the network policy.
+func newWaitForLibrary(guard *netsecurity.Guard) *object.Library {
+	return object.NewLibrary(WaitForLibraryName,
+		map[string]*object.Builtin{
+			"file": {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.MinArgs(args, 1); err != nil {
+						return err
+					}
 
-				timeout, pollRate, err := parseWaitOptions(args, kwargs.Kwargs)
-				if err != nil {
-					return err
-				}
+					path, err := args[0].AsString()
+					if err != nil {
+						return err
+					}
 
-				deadline := time.Now().Add(time.Duration(timeout) * time.Second)
-				pollInterval := time.Duration(pollRate * float64(time.Second))
-				timer := time.NewTimer(pollInterval)
-				defer stopTimer(timer)
+					timeout, pollRate, err := parseWaitOptions(args, kwargs.Kwargs)
+					if err != nil {
+						return err
+					}
 
-				for time.Now().Before(deadline) {
+					deadline := time.Now().Add(time.Duration(timeout) * time.Second)
+					pollInterval := time.Duration(pollRate * float64(time.Second))
+					timer := time.NewTimer(pollInterval)
+					defer stopTimer(timer)
+
+					for time.Now().Before(deadline) {
+						if _, err := os.Stat(path); err == nil {
+							return object.NewBoolean(true)
+						}
+
+						if !waitForNextPoll(ctx, timer, pollInterval) {
+							return object.NewBoolean(false)
+						}
+					}
+
+					// Final check
 					if _, err := os.Stat(path); err == nil {
 						return object.NewBoolean(true)
 					}
-
-					if !waitForNextPoll(ctx, timer, pollInterval) {
-						return object.NewBoolean(false)
-					}
-				}
-
-				// Final check
-				if _, err := os.Stat(path); err == nil {
-					return object.NewBoolean(true)
-				}
-				return object.NewBoolean(false)
-			},
-			HelpText: `file(path, timeout=30, poll_rate=1) - Wait for a file to exist
+					return object.NewBoolean(false)
+				},
+				HelpText: `file(path, timeout=30, poll_rate=1) - Wait for a file to exist
 
 Waits for the specified file to become available.
 
@@ -140,49 +155,49 @@ Parameters:
 
 Returns:
   bool: True if file exists, False if timeout exceeded`,
-		},
-		"dir": {
-			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if err := errors.MinArgs(args, 1); err != nil {
-					return err
-				}
+			},
+			"dir": {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.MinArgs(args, 1); err != nil {
+						return err
+					}
 
-				path, err := args[0].AsString()
-				if err != nil {
-					return err
-				}
+					path, err := args[0].AsString()
+					if err != nil {
+						return err
+					}
 
-				timeout, pollRate, err := parseWaitOptions(args, kwargs.Kwargs)
-				if err != nil {
-					return err
-				}
+					timeout, pollRate, err := parseWaitOptions(args, kwargs.Kwargs)
+					if err != nil {
+						return err
+					}
 
-				deadline := time.Now().Add(time.Duration(timeout) * time.Second)
-				pollInterval := time.Duration(pollRate * float64(time.Second))
-				timer := time.NewTimer(pollInterval)
-				defer stopTimer(timer)
+					deadline := time.Now().Add(time.Duration(timeout) * time.Second)
+					pollInterval := time.Duration(pollRate * float64(time.Second))
+					timer := time.NewTimer(pollInterval)
+					defer stopTimer(timer)
 
-				for time.Now().Before(deadline) {
+					for time.Now().Before(deadline) {
+						if info, err := os.Stat(path); err == nil {
+							if info.IsDir() {
+								return object.NewBoolean(true)
+							}
+						}
+
+						if !waitForNextPoll(ctx, timer, pollInterval) {
+							return object.NewBoolean(false)
+						}
+					}
+
+					// Final check
 					if info, err := os.Stat(path); err == nil {
 						if info.IsDir() {
 							return object.NewBoolean(true)
 						}
 					}
-
-					if !waitForNextPoll(ctx, timer, pollInterval) {
-						return object.NewBoolean(false)
-					}
-				}
-
-				// Final check
-				if info, err := os.Stat(path); err == nil {
-					if info.IsDir() {
-						return object.NewBoolean(true)
-					}
-				}
-				return object.NewBoolean(false)
-			},
-			HelpText: `dir(path, timeout=30, poll_rate=1) - Wait for a directory to exist
+					return object.NewBoolean(false)
+				},
+				HelpText: `dir(path, timeout=30, poll_rate=1) - Wait for a directory to exist
 
 Waits for the specified directory to become available.
 
@@ -193,63 +208,63 @@ Parameters:
 
 Returns:
   bool: True if directory exists, False if timeout exceeded`,
-		},
-		"port": {
-			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if err := errors.MinArgs(args, 2); err != nil {
-					return err
-				}
-
-				host, err := args[0].AsString()
-				if err != nil {
-					return err
-				}
-
-				var port int
-				switch v := args[1].(type) {
-				case *object.Integer:
-					port = int(v.IntValue())
-				case *object.String:
-					p, err := strconv.Atoi(v.StringValue())
-					if err != nil {
-						return errors.NewError("invalid port number: %s", v.StringValue())
+			},
+			"port": {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.MinArgs(args, 2); err != nil {
+						return err
 					}
-					port = p
-				default:
-					return errors.NewTypeError("INT|STRING", args[1].Type().String())
-				}
 
-				timeout, pollRate, err := parseWaitOptionsKwargsOnly(30, 1.0, kwargs.Kwargs)
-				if err != nil {
-					return err
-				}
+					host, err := args[0].AsString()
+					if err != nil {
+						return err
+					}
 
-				deadline := time.Now().Add(time.Duration(timeout) * time.Second)
-				pollInterval := time.Duration(pollRate * float64(time.Second))
-				address := net.JoinHostPort(host, strconv.Itoa(port))
-				timer := time.NewTimer(pollInterval)
-				defer stopTimer(timer)
+					var port int
+					switch v := args[1].(type) {
+					case *object.Integer:
+						port = int(v.IntValue())
+					case *object.String:
+						p, err := strconv.Atoi(v.StringValue())
+						if err != nil {
+							return errors.NewError("invalid port number: %s", v.StringValue())
+						}
+						port = p
+					default:
+						return errors.NewTypeError("INT|STRING", args[1].Type().String())
+					}
 
-				for time.Now().Before(deadline) {
-					conn, err := net.DialTimeout("tcp", address, time.Second)
-					if err == nil {
+					timeout, pollRate, err := parseWaitOptionsKwargsOnly(30, 1.0, kwargs.Kwargs)
+					if err != nil {
+						return err
+					}
+
+					deadline := time.Now().Add(time.Duration(timeout) * time.Second)
+					pollInterval := time.Duration(pollRate * float64(time.Second))
+					address := net.JoinHostPort(host, strconv.Itoa(port))
+					timer := time.NewTimer(pollInterval)
+					defer stopTimer(timer)
+
+					for time.Now().Before(deadline) {
+						conn, err := net.DialTimeout("tcp", address, time.Second)
+						if err == nil {
+							conn.Close()
+							return object.NewBoolean(true)
+						}
+
+						if !waitForNextPoll(ctx, timer, pollInterval) {
+							return object.NewBoolean(false)
+						}
+					}
+
+					// Final check
+					if conn, err := net.DialTimeout("tcp", address, time.Second); err == nil {
 						conn.Close()
 						return object.NewBoolean(true)
 					}
-
-					if !waitForNextPoll(ctx, timer, pollInterval) {
-						return object.NewBoolean(false)
-					}
-				}
-
-				// Final check
-				if conn, err := net.DialTimeout("tcp", address, time.Second); err == nil {
-					conn.Close()
-					return object.NewBoolean(true)
-				}
-				return object.NewBoolean(false)
-			},
-			HelpText: `port(host, port, timeout=30, poll_rate=1) - Wait for a TCP port to be open
+					return object.NewBoolean(false)
+				},
+				HelpText: `port(host, port, timeout=30, poll_rate=1) - Wait for a TCP port to be open
 
 Waits for the specified TCP port to accept connections.
 
@@ -261,71 +276,94 @@ Parameters:
 
 Returns:
   bool: True if port is open, False if timeout exceeded`,
-		},
-		"http": {
-			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if err := errors.MinArgs(args, 1); err != nil {
-					return err
-				}
-
-				url, err := args[0].AsString()
-				if err != nil {
-					return err
-				}
-
-				timeout := 30
-				pollRate := 1.0
-				expectedStatus := int64(200)
-
-				// Handle positional timeout
-				if len(args) > 1 {
-					if t, err := args[1].AsInt(); err == nil {
-						timeout = int(t)
-					} else {
+			},
+			"http": {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.MinArgs(args, 1); err != nil {
 						return err
 					}
-				}
 
-				// Handle kwargs
-				for k, v := range kwargs.Kwargs {
-					switch k {
-					case "timeout":
-						if t, err := v.AsInt(); err == nil {
+					url, err := args[0].AsString()
+					if err != nil {
+						return err
+					}
+
+					timeout := 30
+					pollRate := 1.0
+					expectedStatus := int64(200)
+
+					// Handle positional timeout
+					if len(args) > 1 {
+						if t, err := args[1].AsInt(); err == nil {
 							timeout = int(t)
 						} else {
 							return err
 						}
-					case "poll_rate":
-						if f, err := v.AsFloat(); err == nil {
-							pollRate = f
-						} else if i, err := v.AsInt(); err == nil {
-							pollRate = float64(i)
-						} else {
-							return errors.NewTypeError("FLOAT", v.Type().String())
-						}
-					case "status_code":
-						if s, err := v.AsInt(); err == nil {
-							expectedStatus = s
-						} else {
-							return err
+					}
+
+					// Handle kwargs
+					for k, v := range kwargs.Kwargs {
+						switch k {
+						case "timeout":
+							if t, err := v.AsInt(); err == nil {
+								timeout = int(t)
+							} else {
+								return err
+							}
+						case "poll_rate":
+							if f, err := v.AsFloat(); err == nil {
+								pollRate = f
+							} else if i, err := v.AsInt(); err == nil {
+								pollRate = float64(i)
+							} else {
+								return errors.NewTypeError("FLOAT", v.Type().String())
+							}
+						case "status_code":
+							if s, err := v.AsInt(); err == nil {
+								expectedStatus = s
+							} else {
+								return err
+							}
 						}
 					}
-				}
 
-				deadline := time.Now().Add(time.Duration(timeout) * time.Second)
-				pollInterval := time.Duration(pollRate * float64(time.Second))
-				timer := time.NewTimer(pollInterval)
-				defer stopTimer(timer)
+					deadline := time.Now().Add(time.Duration(timeout) * time.Second)
+					pollInterval := time.Duration(pollRate * float64(time.Second))
+					timer := time.NewTimer(pollInterval)
+					defer stopTimer(timer)
 
-				// Use shared pool for HTTP client
-				client := pool.GetHTTPClient()
+					// Use shared pool for HTTP client, or the policy-guarded client
+					client := pool.GetHTTPClient()
+					if guard != nil {
+						client = guard.HTTPClient()
+					}
 
-				for time.Now().Before(deadline) {
+					for time.Now().Before(deadline) {
+						req, httpErr := http.NewRequestWithContext(ctx, "GET", url, nil)
+						if httpErr != nil {
+							return errors.NewError("http request error: %s", httpErr.Error())
+						}
+
+						var resp *http.Response
+						object.RunBlocking(ctx, func() { resp, httpErr = client.Do(req) })
+						if httpErr == nil {
+							statusMatch := int64(resp.StatusCode) == expectedStatus
+							resp.Body.Close()
+							if statusMatch {
+								return object.NewBoolean(true)
+							}
+						}
+
+						if !waitForNextPoll(ctx, timer, pollInterval) {
+							return object.NewBoolean(false)
+						}
+					}
+
+					// Final check
 					req, httpErr := http.NewRequestWithContext(ctx, "GET", url, nil)
 					if httpErr != nil {
-						return errors.NewError("http request error: %s", httpErr.Error())
+						return object.NewBoolean(false)
 					}
-
 					var resp *http.Response
 					object.RunBlocking(ctx, func() { resp, httpErr = client.Do(req) })
 					if httpErr == nil {
@@ -335,29 +373,9 @@ Returns:
 							return object.NewBoolean(true)
 						}
 					}
-
-					if !waitForNextPoll(ctx, timer, pollInterval) {
-						return object.NewBoolean(false)
-					}
-				}
-
-				// Final check
-				req, httpErr := http.NewRequestWithContext(ctx, "GET", url, nil)
-				if httpErr != nil {
 					return object.NewBoolean(false)
-				}
-				var resp *http.Response
-				object.RunBlocking(ctx, func() { resp, httpErr = client.Do(req) })
-				if httpErr == nil {
-					statusMatch := int64(resp.StatusCode) == expectedStatus
-					resp.Body.Close()
-					if statusMatch {
-						return object.NewBoolean(true)
-					}
-				}
-				return object.NewBoolean(false)
-			},
-			HelpText: `http(url, timeout=30, poll_rate=1, status_code=200) - Wait for HTTP endpoint
+				},
+				HelpText: `http(url, timeout=30, poll_rate=1, status_code=200) - Wait for HTTP endpoint
 
 Waits for the specified HTTP endpoint to respond with the expected status code.
 
@@ -369,55 +387,55 @@ Parameters:
 
 Returns:
   bool: True if endpoint responds with expected status, False if timeout exceeded`,
-		},
-		"file_content": {
-			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if err := errors.MinArgs(args, 2); err != nil {
-					return err
-				}
+			},
+			"file_content": {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.MinArgs(args, 2); err != nil {
+						return err
+					}
 
-				path, err := args[0].AsString()
-				if err != nil {
-					return err
-				}
+					path, err := args[0].AsString()
+					if err != nil {
+						return err
+					}
 
-				content, err := args[1].AsString()
-				if err != nil {
-					return err
-				}
+					content, err := args[1].AsString()
+					if err != nil {
+						return err
+					}
 
-				timeout, pollRate, err := parseWaitOptionsKwargsOnly(30, 1.0, kwargs.Kwargs)
-				if err != nil {
-					return err
-				}
+					timeout, pollRate, err := parseWaitOptionsKwargsOnly(30, 1.0, kwargs.Kwargs)
+					if err != nil {
+						return err
+					}
 
-				deadline := time.Now().Add(time.Duration(timeout) * time.Second)
-				pollInterval := time.Duration(pollRate * float64(time.Second))
-				needle := []byte(content)
-				timer := time.NewTimer(pollInterval)
-				defer stopTimer(timer)
+					deadline := time.Now().Add(time.Duration(timeout) * time.Second)
+					pollInterval := time.Duration(pollRate * float64(time.Second))
+					needle := []byte(content)
+					timer := time.NewTimer(pollInterval)
+					defer stopTimer(timer)
 
-				for time.Now().Before(deadline) {
+					for time.Now().Before(deadline) {
+						if data, err := os.ReadFile(path); err == nil {
+							if bytes.Contains(data, needle) {
+								return object.NewBoolean(true)
+							}
+						}
+
+						if !waitForNextPoll(ctx, timer, pollInterval) {
+							return object.NewBoolean(false)
+						}
+					}
+
+					// Final check
 					if data, err := os.ReadFile(path); err == nil {
 						if bytes.Contains(data, needle) {
 							return object.NewBoolean(true)
 						}
 					}
-
-					if !waitForNextPoll(ctx, timer, pollInterval) {
-						return object.NewBoolean(false)
-					}
-				}
-
-				// Final check
-				if data, err := os.ReadFile(path); err == nil {
-					if bytes.Contains(data, needle) {
-						return object.NewBoolean(true)
-					}
-				}
-				return object.NewBoolean(false)
-			},
-			HelpText: `file_content(path, content, timeout=30, poll_rate=1) - Wait for file to contain content
+					return object.NewBoolean(false)
+				},
+				HelpText: `file_content(path, content, timeout=30, poll_rate=1) - Wait for file to contain content
 
 Waits for the specified file to exist and contain the given content.
 
@@ -429,45 +447,45 @@ Parameters:
 
 Returns:
   bool: True if file contains the content, False if timeout exceeded`,
-		},
-		"process_name": {
-			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if err := errors.MinArgs(args, 1); err != nil {
-					return err
-				}
+			},
+			"process_name": {
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.MinArgs(args, 1); err != nil {
+						return err
+					}
 
-				processName, err := args[0].AsString()
-				if err != nil {
-					return err
-				}
+					processName, err := args[0].AsString()
+					if err != nil {
+						return err
+					}
 
-				timeout, pollRate, err := parseWaitOptions(args, kwargs.Kwargs)
-				if err != nil {
-					return err
-				}
+					timeout, pollRate, err := parseWaitOptions(args, kwargs.Kwargs)
+					if err != nil {
+						return err
+					}
 
-				deadline := time.Now().Add(time.Duration(timeout) * time.Second)
-				pollInterval := time.Duration(pollRate * float64(time.Second))
-				timer := time.NewTimer(pollInterval)
-				defer stopTimer(timer)
+					deadline := time.Now().Add(time.Duration(timeout) * time.Second)
+					pollInterval := time.Duration(pollRate * float64(time.Second))
+					timer := time.NewTimer(pollInterval)
+					defer stopTimer(timer)
 
-				for time.Now().Before(deadline) {
+					for time.Now().Before(deadline) {
+						if processRunning(processName) {
+							return object.NewBoolean(true)
+						}
+
+						if !waitForNextPoll(ctx, timer, pollInterval) {
+							return object.NewBoolean(false)
+						}
+					}
+
+					// Final check
 					if processRunning(processName) {
 						return object.NewBoolean(true)
 					}
-
-					if !waitForNextPoll(ctx, timer, pollInterval) {
-						return object.NewBoolean(false)
-					}
-				}
-
-				// Final check
-				if processRunning(processName) {
-					return object.NewBoolean(true)
-				}
-				return object.NewBoolean(false)
-			},
-			HelpText: `process_name(name, timeout=30, poll_rate=1) - Wait for a process to be running
+					return object.NewBoolean(false)
+				},
+				HelpText: `process_name(name, timeout=30, poll_rate=1) - Wait for a process to be running
 
 Waits for a process with the specified name to be running.
 
@@ -478,11 +496,12 @@ Parameters:
 
 Returns:
   bool: True if process is running, False if timeout exceeded`,
+			},
 		},
-	},
-	nil,
-	"Wait for resources to become available",
-)
+		nil,
+		"Wait for resources to become available",
+	)
+}
 
 // processRunning checks if a process with the given name is running (cross-platform)
 func processRunning(name string) bool {

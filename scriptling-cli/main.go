@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/paularlott/scriptling/build"
 	"github.com/paularlott/scriptling/extlibs"
 	scriptlingcontainer "github.com/paularlott/scriptling/extlibs/container"
+	"github.com/paularlott/scriptling/extlibs/netsecurity"
 	"github.com/paularlott/scriptling/extlibs/secretprovider"
 	"github.com/paularlott/scriptling/object"
 	scriptlingplugin "github.com/paularlott/scriptling/plugin"
@@ -36,6 +38,17 @@ const (
 	configFile = "scriptling.toml"
 	configDir  = "scriptling"
 )
+
+// mustLoadPolicy loads the --network-policy file. An empty path means no
+// policy; a bad file aborts startup rather than running unrestricted.
+func mustLoadPolicy(cmd *cli.Command) *netsecurity.Config {
+	cfg, err := bootstrap.LoadNetworkPolicy(cmd.GetString("network-policy"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	return cfg
+}
 
 func main() {
 	env.Load()
@@ -184,6 +197,18 @@ func main() {
 				DefaultValue: "",
 				EnvVars:      []string{"SCRIPTLING_ALLOWED_PATHS"},
 				ConfigPath:   []string{"security.allowed_paths"},
+			},
+			&cli.StringFlag{
+				Name:       "network-policy",
+				Usage:      "Path to a TOML network policy file restricting script outbound network access (requests, wait_for, websocket)",
+				EnvVars:    []string{"SCRIPTLING_NETWORK_POLICY"},
+				ConfigPath: []string{"security.network_policy"},
+			},
+			&cli.BoolFlag{
+				Name:       "no-subprocess",
+				Usage:      "Do not register the subprocess library",
+				EnvVars:    []string{"SCRIPTLING_NO_SUBPROCESS"},
+				ConfigPath: []string{"security.no_subprocess"},
 			},
 			&cli.StringSliceFlag{
 				Name:       "disable-lib",
@@ -441,6 +466,9 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	disabledLibs := cmd.GetStringSlice("disable-lib")
+	if cmd.GetBool("no-subprocess") && !slices.Contains(disabledLibs, extlibs.SubprocessLibraryName) {
+		disabledLibs = append(disabledLibs, extlibs.SubprocessLibraryName)
+	}
 
 	if cmd.GetBool("list-libs") {
 		disabled := make(map[string]bool, len(disabledLibs))
@@ -477,8 +505,12 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	defer extlibs.CloseKVStore()
 
 	libDirs := bootstrap.BuildLibDirs(baseDir, cmd.GetStringSlice("libpath"))
-	setup.Factories(libDirs, allowedPaths, disabledLibs, secretRegistry, globalLogger, cmd.GetString("docker-host"), cmd.GetString("podman-host"))
-	setup.Scriptling(p, libDirs, true, allowedPaths, disabledLibs, secretRegistry, globalLogger, cmd.GetString("docker-host"), cmd.GetString("podman-host"))
+	netPolicy, err := bootstrap.LoadNetworkPolicy(cmd.GetString("network-policy"))
+	if err != nil {
+		return err
+	}
+	setup.Factories(libDirs, allowedPaths, disabledLibs, secretRegistry, globalLogger, cmd.GetString("docker-host"), cmd.GetString("podman-host"), netPolicy)
+	setup.Scriptling(p, libDirs, true, allowedPaths, disabledLibs, secretRegistry, globalLogger, cmd.GetString("docker-host"), cmd.GetString("podman-host"), netPolicy)
 	pluginManager, err := loadPluginManager(ctx, cmd.GetStringSlice("plugin-dir"))
 	if err != nil {
 		return err
@@ -586,6 +618,7 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 		CacheDir:        cmd.GetString("cache-dir"),
 		BearerToken:     cmd.GetString("bearer-token"),
 		AllowedPaths:    bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths")),
+		NetworkPolicy:   mustLoadPolicy(cmd),
 		DisabledLibs:    cmd.GetStringSlice("disable-lib"),
 		PluginDirs:      cmd.GetStringSlice("plugin-dir"),
 		PluginManager:   pluginManager,
@@ -637,6 +670,7 @@ func runJSONRPCServer(ctx context.Context, cmd *cli.Command) error {
 		Insecure:       cmd.GetBool("insecure"),
 		CacheDir:       cmd.GetString("cache-dir"),
 		AllowedPaths:   bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths")),
+		NetworkPolicy:  mustLoadPolicy(cmd),
 		DisabledLibs:   cmd.GetStringSlice("disable-lib"),
 		PluginDirs:     cmd.GetStringSlice("plugin-dir"),
 		PluginManager:  pluginManager,
@@ -679,6 +713,7 @@ func runMCPStdioServer(ctx context.Context, cmd *cli.Command) error {
 		Insecure:        cmd.GetBool("insecure"),
 		CacheDir:        cmd.GetString("cache-dir"),
 		AllowedPaths:    bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths")),
+		NetworkPolicy:   mustLoadPolicy(cmd),
 		DisabledLibs:    cmd.GetStringSlice("disable-lib"),
 		PluginDirs:      cmd.GetStringSlice("plugin-dir"),
 		PluginManager:   pluginManager,

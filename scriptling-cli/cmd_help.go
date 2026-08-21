@@ -36,7 +36,11 @@ func helpCmd() *cli.Command {
 			secretRegistry := secretprovider.NewRegistry()
 
 			p := scriptling.New()
-			setup.Scriptling(p, libDirs, false, allowedPaths, disabledLibs, secretRegistry, globalLogger, cmd.GetString("docker-host"), cmd.GetString("podman-host"))
+			netPolicy, netErr := bootstrap.LoadNetworkPolicy(cmd.GetString("network-policy"))
+			if netErr != nil {
+				return netErr
+			}
+			setup.Scriptling(p, libDirs, false, allowedPaths, disabledLibs, secretRegistry, globalLogger, cmd.GetString("docker-host"), cmd.GetString("podman-host"), netPolicy)
 
 			packages := cmd.GetStringSlice("package")
 			if len(packages) > 0 {
