@@ -9,27 +9,27 @@ require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/paularlott/cli v0.8.5
-	github.com/paularlott/gossip v0.20.0
+	github.com/paularlott/cli v0.9.0
+	github.com/paularlott/gossip v0.21.0
 	github.com/paularlott/jsonrpc v0.2.0
 	github.com/paularlott/logger v0.3.0
-	github.com/paularlott/mcp v0.23.0
+	github.com/paularlott/mcp v0.25.0
 	github.com/paularlott/snapshotkv v0.5.0
 	github.com/shirou/gopsutil/v3 v3.24.5
-	github.com/yuin/goldmark v1.8.4
-	golang.org/x/net v0.57.0
+	github.com/yuin/goldmark v1.8.5
+	golang.org/x/net v0.58.0
 	golang.org/x/sys v0.47.0
-	golang.org/x/text v0.40.0
+	golang.org/x/text v0.41.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/hashicorp/go-msgpack/v2 v2.1.5 // indirect
-	github.com/klauspost/compress v1.19.1 // indirect
+	github.com/klauspost/compress v1.19.2 // indirect
 	github.com/kr/text v0.2.0 // indirect
-	github.com/lufia/plan9stats v0.0.0-20260627054121-477a66015f15 // indirect
-	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
+	github.com/lufia/plan9stats v0.0.0-20260802145828-341c2f0c90b5 // indirect
+	github.com/power-devops/perfstat v0.0.0-20260805114148-88456608a4f6 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/shamaton/msgpack/v3 v3.2.0 // indirect
 	github.com/shoenig/go-m1cpu v0.2.2 // indirect
