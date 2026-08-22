@@ -80,7 +80,7 @@ func main() {
 				Name:        "config",
 				Aliases:     []string{"C"},
 				Usage:       "Path to configuration file",
-				DefaultText: configFile + " in ., $HOME/, $HOME/.config/" + configDir + "/, /etc/" + configDir + "/",
+				DefaultText: configFile + " in ., $HOME/, $HOME/.config/" + configDir + "/",
 				EnvVars:     []string{"SCRIPTLING_CONFIG"},
 				AssignTo:    &cfgFile,
 				Global:      true,
