@@ -523,20 +523,31 @@ func init() {
 					if !ok {
 						return errors.NewTypeError("datetime instance", args[0].Type().String())
 					}
-					right, ok := args[1].(*object.Instance)
-					if !ok {
-						return errors.NewTypeError("datetime instance", args[1].Type().String())
-					}
 					lt, err := getTimeFromInstance(left)
 					if err != nil {
 						return err
 					}
-					rt, err := getTimeFromInstance(right)
-					if err != nil {
-						return err
+					// Subtract seconds (as float or int), or another datetime to get the difference
+					var seconds float64
+					switch v := args[1].(type) {
+					case *object.Float:
+						seconds = v.FloatValue()
+					case *object.Integer:
+						seconds = float64(v.IntValue())
+					default:
+						right, ok := args[1].(*object.Instance)
+						if !ok {
+							return errors.NewTypeError("datetime instance or number", args[1].Type().String())
+						}
+						rt, err := getTimeFromInstance(right)
+						if err != nil {
+							return err
+						}
+						// Return difference in seconds as float
+						return object.NewFloat(lt.Sub(rt).Seconds())
 					}
-					// Return difference in seconds as float
-					return object.NewFloat(lt.Sub(rt).Seconds())
+					newTime := lt.Add(time.Duration(-seconds * float64(time.Second)))
+					return createDatetimeInstance(newTime)
 				},
 			},
 			"__add__": &object.Builtin{
@@ -667,21 +678,33 @@ func init() {
 					if !ok {
 						return errors.NewTypeError("date instance", args[0].Type().String())
 					}
-					right, ok := args[1].(*object.Instance)
-					if !ok {
-						return errors.NewTypeError("date instance", args[1].Type().String())
-					}
 					lt, err := getTimeFromInstance(left)
 					if err != nil {
 						return err
 					}
-					rt, err := getTimeFromInstance(right)
-					if err != nil {
-						return err
+					// Subtract days - accept integer (days) or float (seconds from timedelta),
+					// or another date to get the difference
+					var days int
+					switch v := args[1].(type) {
+					case *object.Integer:
+						days = int(v.IntValue())
+					case *object.Float:
+						// timedelta returns seconds, convert to days
+						days = int(v.FloatValue() / 86400) // 86400 seconds per day
+					default:
+						right, ok := args[1].(*object.Instance)
+						if !ok {
+							return errors.NewTypeError("date instance or number", args[1].Type().String())
+						}
+						rt, err := getTimeFromInstance(right)
+						if err != nil {
+							return err
+						}
+						// Return difference in days as integer
+						return object.NewInteger(int64(lt.Sub(rt).Hours() / 24))
 					}
-					// Return difference in days as integer
-					days := int64(lt.Sub(rt).Hours() / 24)
-					return object.NewInteger(days)
+					newTime := lt.AddDate(0, 0, -days)
+					return createDateInstance(newTime)
 				},
 			},
 			"__add__": &object.Builtin{

@@ -187,6 +187,10 @@ func TestDatetimeUTCPlus8(t *testing.T) {
 			s = datetime.datetime.strptime("2024-01-15T00:00:05", "%Y-%m-%dT%H:%M:%S")
 			result = (s + datetime.timedelta(days=-1)).isoformat()
 		`, "2024-01-14T00:00:05"},
+		{"utc strptime minus timedelta", `
+			s = datetime.datetime.strptime("2024-01-15T00:00:05", "%Y-%m-%dT%H:%M:%S")
+			result = (s - datetime.timedelta(days=1)).isoformat()
+		`, "2024-01-14T00:00:05"},
 		{"replace on utc instance stays utc", `
 			s = datetime.datetime.strptime("1970-01-01T00:30:00", "%Y-%m-%dT%H:%M:%S")
 			result = s.replace(hour=9).isoformat()
@@ -211,6 +215,28 @@ func TestDatetimeUTCPlus8(t *testing.T) {
 			b = datetime.datetime.strptime("2024-01-15T09:00:00", "%Y-%m-%dT%H:%M:%S")
 			result = a - b
 		`, 3600.0},
+		{"datetime minus seconds int", `
+			s = datetime.datetime.strptime("2024-01-15T10:00:00", "%Y-%m-%dT%H:%M:%S")
+			result = (s - 3600).isoformat()
+		`, "2024-01-15T09:00:00"},
+		{"datetime minus seconds float", `
+			s = datetime.datetime.strptime("2024-01-15T10:00:00", "%Y-%m-%dT%H:%M:%S")
+			result = (s - 3600.0).isoformat()
+		`, "2024-01-15T09:00:00"},
+		{"datetime minus timedelta", `
+			s = datetime.datetime.strptime("2024-01-15T10:00:00", "%Y-%m-%dT%H:%M:%S")
+			result = (s - datetime.timedelta(hours=1)).isoformat()
+		`, "2024-01-15T09:00:00"},
+		{"datetime augmented add seconds", `
+			s = datetime.datetime.strptime("2024-01-15T10:00:00", "%Y-%m-%dT%H:%M:%S")
+			s += 3600
+			result = s.isoformat()
+		`, "2024-01-15T11:00:00"},
+		{"datetime augmented sub seconds", `
+			s = datetime.datetime.strptime("2024-01-15T10:00:00", "%Y-%m-%dT%H:%M:%S")
+			s -= 3600
+			result = s.isoformat()
+		`, "2024-01-15T09:00:00"},
 		{"datetime comparison across zones", `
 			a = datetime.datetime.strptime("1970-01-01T00:00:00", "%Y-%m-%dT%H:%M:%S")
 			b = datetime.datetime.fromtimestamp(0)
@@ -239,6 +265,17 @@ func TestDatetimeUTCPlus8(t *testing.T) {
 		`, true},
 		{"date addition via timedelta", `
 			result = datetime.date(2024, 1, 15) + datetime.timedelta(weeks=1) == datetime.date(2024, 1, 22)
+		`, true},
+		{"date subtraction via days", `
+			result = datetime.date(2024, 1, 22) - 7 == datetime.date(2024, 1, 15)
+		`, true},
+		{"date subtraction via timedelta", `
+			result = datetime.date(2024, 1, 22) - datetime.timedelta(weeks=1) == datetime.date(2024, 1, 15)
+		`, true},
+		{"date augmented sub days", `
+			d = datetime.date(2024, 1, 22)
+			d -= 7
+			result = d == datetime.date(2024, 1, 15)
 		`, true},
 		{"date replace", `
 			result = datetime.date(2024, 1, 15).replace(year=2025, month=6).isoformat()
