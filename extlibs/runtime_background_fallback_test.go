@@ -351,6 +351,254 @@ gate.put(1)
 	}
 }
 
+// TestBackgroundDuplicateNameWhileQueued covers the server-mode shape of the
+// duplicate-name rule, which is where it actually bites: the setup script runs
+// before tasks are released, so both calls land in the queue maps. Those maps
+// are keyed by name, so the second registration used to overwrite the first —
+// two tasks queued, one silently discarded.
+func TestBackgroundDuplicateNameWhileQueued(t *testing.T) {
+	ResetRuntime()
+
+	logs := &bgTestLogger{}
+	SetBackgroundFactory(func() SandboxInstance {
+		p2 := scriptling.New()
+		RegisterRuntimeLibraryAll(p2, nil)
+		RegisterLoggingLibrary(p2, logs)
+		return p2
+	})
+
+	p := scriptling.New()
+	RegisterRuntimeLibraryAll(p, nil)
+	RegisterLoggingLibrary(p, logs)
+
+	if _, err := p.Eval(`
+import scriptling.runtime as runtime
+
+runtime.sync.Atomic("queued_runs", initial=0)
+
+def task():
+    runtime.sync.Atomic("queued_runs", initial=0).add(1)
+    return "done"
+
+first = runtime.background("queued_dup", "task")
+second = runtime.background("queued_dup", "task")
+`); err != nil {
+		t.Fatalf("script error: %v", err)
+	}
+
+	RuntimeState.RLock()
+	queued := len(RuntimeState.Backgrounds)
+	active := len(RuntimeState.ActiveTasks)
+	RuntimeState.RUnlock()
+	if queued != 1 {
+		t.Fatalf("expected 1 queued task, got %d", queued)
+	}
+	if active != 1 {
+		t.Fatalf("expected 1 active task name, got %d", active)
+	}
+
+	ReleaseBackgroundTasks()
+
+	// Both calls must hand back the same live promise. The queue maps are keyed
+	// by name, so without the name claim the second registration replaces the
+	// first and only the surviving promise is ever resolved — leaving the first
+	// caller's promise orphaned and any .get() on it blocked forever. Awaited
+	// off the main goroutine so that regression fails on the timeout below
+	// instead of hanging the suite.
+	type awaitResult struct {
+		value object.Object
+		err   error
+	}
+	awaited := make(chan awaitResult, 1)
+	go func() {
+		value, err := p.Eval(`[first.get(), second.get()]`)
+		awaited <- awaitResult{value, err}
+	}()
+	select {
+	case got := <-awaited:
+		if got.err != nil {
+			t.Fatalf("awaiting both promises failed: %v", got.err)
+		}
+		list, ok := got.value.(*object.List)
+		if !ok || len(list.Elements) != 2 {
+			t.Fatalf("expected two awaited results, got %v", got.value)
+		}
+		for i, el := range list.Elements {
+			if s, ok := el.(*object.String); !ok || s.StringValue() != "done" {
+				t.Fatalf("promise %d resolved to %v, want \"done\"", i, el)
+			}
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a promise handed to the script never resolved — both background() calls must share one promise")
+	}
+
+	RuntimeState.RLock()
+	runs, ok := RuntimeState.Atomics["queued_runs"]
+	RuntimeState.RUnlock()
+	if !ok {
+		t.Fatal("counter atomic missing")
+	}
+	if got := runs.Value(); got != 1 {
+		t.Fatalf("handler ran %d times, want 1", got)
+	}
+}
+
+// TestQueuedTaskThatCannotStartResolvesPromise pins the anti-hang guarantee.
+// A queued task is validated at release, not at registration, so a handler that
+// is missing from the environment it was queued with fails there — after the
+// setup script has already been handed the promise. That promise must resolve
+// with the error instead of leaving an awaiting script blocked forever.
+func TestQueuedTaskThatCannotStartResolvesPromise(t *testing.T) {
+	ResetRuntime()
+
+	var mu sync.Mutex
+	var reported []string
+	SetTaskErrorLogger(func(name string, err error) {
+		mu.Lock()
+		defer mu.Unlock()
+		reported = append(reported, name+": "+err.Error())
+	})
+	defer SetTaskErrorLogger(nil)
+
+	SetBackgroundFactory(func() SandboxInstance {
+		p2 := scriptling.New()
+		RegisterRuntimeLibraryAll(p2, nil)
+		return p2
+	})
+
+	p := scriptling.New()
+	RegisterRuntimeLibraryAll(p, nil)
+
+	if _, err := p.Eval(`
+import scriptling.runtime as runtime
+pending = runtime.background("ghost_queued", "no_such_function")
+`); err != nil {
+		t.Fatalf("script error: %v", err)
+	}
+
+	RuntimeState.RLock()
+	promise := RuntimeState.BackgroundPromises["ghost_queued"]
+	RuntimeState.RUnlock()
+	if promise == nil {
+		t.Fatal("expected the queued task to have a promise")
+	}
+
+	ReleaseBackgroundTasks()
+
+	resolved := make(chan error, 1)
+	go func() {
+		_, err := promise.get()
+		resolved <- err
+	}()
+	select {
+	case err := <-resolved:
+		if err == nil {
+			t.Fatal("expected the promise to resolve with an error")
+		}
+		if !strings.Contains(err.Error(), "function not found") {
+			t.Fatalf("unexpected promise error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("promise never resolved — a script awaiting this task would hang forever")
+	}
+
+	waitFor(t, "the failure to be reported", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(reported) == 1 && strings.Contains(reported[0], "ghost_queued")
+	})
+
+	// The name must not stay claimed by a task that never ran.
+	RuntimeState.RLock()
+	_, held := RuntimeState.ActiveTasks["ghost_queued"]
+	RuntimeState.RUnlock()
+	if held {
+		t.Fatal("name stayed claimed after the queued task failed to start")
+	}
+}
+
+// TestBackgroundDuplicateNameShared covers the shared=True path, which starts
+// its task on a different code path from the isolated one and so needs its own
+// check that the name is claimed and released.
+func TestBackgroundDuplicateNameShared(t *testing.T) {
+	ResetRuntime()
+
+	p := scriptling.New()
+	RegisterRuntimeLibraryAll(p, nil)
+
+	// Shared tasks run in the caller's environment, so the counter is directly
+	// visible. The gate is fed once per call so a regression fails on the count
+	// rather than deadlocking.
+	result, err := p.Eval(`
+import scriptling.runtime as runtime
+
+runs = runtime.sync.Atomic("shared_runs", initial=0)
+gate = runtime.sync.Queue("shared_gate")
+
+def task():
+    runs.add(1)
+    gate.get()
+    return "done"
+
+first = runtime.background("shared_dup", "task", shared=True)
+second = runtime.background("shared_dup", "task", shared=True)
+gate.put(1)
+gate.put(1)
+[first.get(), second.get()]
+`)
+	if err != nil {
+		t.Fatalf("script error: %v", err)
+	}
+	list, ok := result.(*object.List)
+	if !ok || len(list.Elements) != 2 {
+		t.Fatalf("expected two awaited results, got %v", result)
+	}
+
+	RuntimeState.RLock()
+	runs, runsOK := RuntimeState.Atomics["shared_runs"]
+	active := len(RuntimeState.ActiveTasks)
+	RuntimeState.RUnlock()
+	if !runsOK {
+		t.Fatal("counter atomic missing")
+	}
+	if got := runs.Value(); got != 1 {
+		t.Fatalf("shared handler ran %d times, want 1", got)
+	}
+	if active != 0 {
+		t.Fatalf("expected the shared task's name to be released, got %d active", active)
+	}
+}
+
+// TestBackgroundSharedNameFreedWhenHandlerMissing checks the shared path also
+// gives the name back when it rejects the registration.
+func TestBackgroundSharedNameFreedWhenHandlerMissing(t *testing.T) {
+	ResetRuntime()
+
+	p := scriptling.New()
+	RegisterRuntimeLibraryAll(p, nil)
+
+	result, err := p.Eval(`
+import scriptling.runtime as runtime
+runtime.background("shared_ghost", "no_such_function", shared=True)
+`)
+	if err == nil {
+		if errObj, ok := result.(*object.Error); !ok {
+			t.Fatalf("expected an error for a missing shared handler, got %v", result)
+		} else if !strings.Contains(errObj.Message, "function not found") {
+			t.Fatalf("unexpected error: %s", errObj.Message)
+		}
+	} else if !strings.Contains(err.Error(), "function not found") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	RuntimeState.RLock()
+	_, held := RuntimeState.ActiveTasks["shared_ghost"]
+	RuntimeState.RUnlock()
+	if held {
+		t.Fatal("name stayed claimed after the shared task was rejected")
+	}
+}
+
 // TestBackgroundNameReusableAfterTaskEnds checks the name is only held for as
 // long as the task lives, so a later task may reuse it.
 func TestBackgroundNameReusableAfterTaskEnds(t *testing.T) {
@@ -601,7 +849,8 @@ pr2 = runtime.background("d2", "slow", daemon=True, x=1)
 }
 
 // TestBackgroundTaskSeesModuleScalars checks the fallback (factory-free) task
-// environment also receives module-level scalar constants.
+// environment receives module-level constants of every scalar type the
+// snapshot claims to carry: int, float, str, bool and None.
 func TestBackgroundTaskSeesModuleScalars(t *testing.T) {
 	ResetRuntime()
 
@@ -613,11 +862,19 @@ import scriptling.runtime as runtime
 
 TICKS = 3
 LABEL = "tick"
+SCALE = 1.5
+ENABLED = True
+UNSET = None
 
 def task():
     out = ""
     for i in range(TICKS):
         out = out + LABEL + str(i)
+    out = out + "|" + str(SCALE)
+    if ENABLED:
+        out = out + "|enabled"
+    if UNSET == None:
+        out = out + "|unset"
     return out
 
 pr = runtime.background("scalars", "task")
@@ -626,7 +883,110 @@ pr.get()
 	if err != nil {
 		t.Fatalf("script error: %v", err)
 	}
-	if s, ok := result.(*object.String); !ok || s.StringValue() != "tick0tick1tick2" {
-		t.Fatalf("expected task to read module constants, got %v", result)
+	const want = "tick0tick1tick2|1.5|enabled|unset"
+	if s, ok := result.(*object.String); !ok || s.StringValue() != want {
+		t.Fatalf("expected task to read module constants (%q), got %v", want, result)
+	}
+}
+
+// TestBackgroundNameReusableAfterTaskFails pins that a FAILED task releases
+// its name too — a restart loop that re-registers the same name after a crash
+// must be able to.
+func TestBackgroundNameReusableAfterTaskFails(t *testing.T) {
+	ResetRuntime()
+	SetTaskErrorLogger(func(string, error) {}) // the first run fails on purpose
+	defer SetTaskErrorLogger(nil)
+
+	p := scriptling.New()
+	RegisterRuntimeLibraryAll(p, nil)
+
+	result, err := p.Eval(`
+import scriptling.runtime as runtime
+
+runtime.sync.Atomic("boom_runs", initial=0)
+
+def failer():
+    runtime.sync.Atomic("boom_runs", initial=0).add(1)
+    raise Exception("kaboom")
+
+def retry():
+    runtime.sync.Atomic("boom_runs", initial=0).add(1)
+    return "ok"
+
+try:
+    runtime.background("boom", "failer").get()
+except Exception as error:
+    pass
+runtime.background("boom", "retry").get()
+`)
+	if err != nil {
+		t.Fatalf("script error: %v", err)
+	}
+	if s, ok := result.(*object.String); !ok || s.StringValue() != "ok" {
+		t.Fatalf("expected the relaunched task to return \"ok\", got %v", result)
+	}
+
+	RuntimeState.RLock()
+	runs, _ := RuntimeState.Atomics["boom_runs"]
+	active := len(RuntimeState.ActiveTasks)
+	RuntimeState.RUnlock()
+	if runs.Value() != 2 {
+		t.Fatalf("handlers ran %d times, want 2 — the name was not reusable after failure", runs.Value())
+	}
+	if active != 0 {
+		t.Fatalf("expected no active tasks after both finished, got %d", active)
+	}
+}
+
+// TestBackgroundConcurrentDuplicateClaims has two concurrent shared tasks
+// register the same inner task name. Exactly one inner task may start,
+// whichever side wins the claim.
+func TestBackgroundConcurrentDuplicateClaims(t *testing.T) {
+	ResetRuntime()
+
+	p := scriptling.New()
+	RegisterRuntimeLibraryAll(p, nil)
+	p.RegisterLibrary(stdlib.TimeLibrary)
+
+	result, err := p.Eval(`
+import time
+import scriptling.runtime as runtime
+
+runtime.sync.Atomic("raced_runs", initial=0)
+
+def inner():
+    time.sleep(0.2)
+    runtime.sync.Atomic("raced_runs", initial=0).add(1)
+    return "once"
+
+def registrar_a():
+    return runtime.background("raced", "inner").get()
+
+def registrar_b():
+    return runtime.background("raced", "inner").get()
+
+ra = runtime.background("ra", "registrar_a", shared=True)
+rb = runtime.background("rb", "registrar_b", shared=True)
+[ra.get(), rb.get()]
+`)
+	if err != nil {
+		t.Fatalf("script error: %v", err)
+	}
+
+	list, ok := result.(*object.List)
+	if !ok || len(list.Elements) != 2 {
+		t.Fatalf("expected two awaited results, got %v", result)
+	}
+	for i, el := range list.Elements {
+		if s, ok := el.(*object.String); !ok || s.StringValue() != "once" {
+			t.Fatalf("registrar %d resolved to %v, want \"once\"", i, el)
+		}
+	}
+
+	RuntimeState.RLock()
+	runs, _ := RuntimeState.Atomics["raced_runs"]
+	RuntimeState.RUnlock()
+	if runs.Value() != 1 {
+		t.Fatalf("inner handler ran %d times, want 1 — concurrent claims launched duplicates", runs.Value())
 	}
 }
