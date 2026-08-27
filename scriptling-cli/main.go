@@ -499,7 +499,7 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	kvStoragePath := cmd.GetString("kv-storage")
-	if err := extlibs.InitKVStore(kvStoragePath); err != nil {
+	if err := extlibs.InitKVStore(kvStoragePath, globalLogger); err != nil {
 		return fmt.Errorf("failed to initialize KV store: %w", err)
 	}
 	defer extlibs.CloseKVStore()

@@ -1,14 +1,17 @@
 package extlibs
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	logslog "github.com/paularlott/logger/slog"
 	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/object"
 )
@@ -80,7 +83,7 @@ func assertListLen(t *testing.T, result object.Object, expected int) {
 // ---------------------------------------------------------------------------
 
 func TestKVDefaultMemory(t *testing.T) {
-	if err := InitKVStore(""); err != nil {
+	if err := InitKVStore("", nil); err != nil {
 		t.Fatalf("InitKVStore: %v", err)
 	}
 	defer CloseKVStore()
@@ -221,7 +224,7 @@ func TestKVDefaultPersistence(t *testing.T) {
 	path := filepath.Join(tmpDir, "default.db")
 
 	t.Run("Write", func(t *testing.T) {
-		if err := InitKVStore(path); err != nil {
+		if err := InitKVStore(path, nil); err != nil {
 			t.Fatalf("InitKVStore: %v", err)
 		}
 		store := kvStore()
@@ -235,7 +238,7 @@ func TestKVDefaultPersistence(t *testing.T) {
 	})
 
 	t.Run("Read", func(t *testing.T) {
-		if err := InitKVStore(path); err != nil {
+		if err := InitKVStore(path, nil); err != nil {
 			t.Fatalf("InitKVStore: %v", err)
 		}
 		defer CloseKVStore()
@@ -254,7 +257,7 @@ func TestKVDefaultTTLExpiry(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping TTL expiry test in short mode")
 	}
-	if err := InitKVStore(""); err != nil {
+	if err := InitKVStore("", nil); err != nil {
 		t.Fatalf("InitKVStore: %v", err)
 	}
 	defer CloseKVStore()
@@ -286,7 +289,7 @@ func TestKVDefaultTTLExpiry(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestKVNamedMemoryStore(t *testing.T) {
-	if err := InitKVStore(""); err != nil {
+	if err := InitKVStore("", nil); err != nil {
 		t.Fatalf("InitKVStore: %v", err)
 	}
 	defer CloseKVStore()
@@ -366,7 +369,7 @@ func TestKVNamedMemoryStore(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestKVNamedPersistentStore(t *testing.T) {
-	if err := InitKVStore(""); err != nil {
+	if err := InitKVStore("", nil); err != nil {
 		t.Fatalf("InitKVStore: %v", err)
 	}
 	defer CloseKVStore()
@@ -429,7 +432,7 @@ func TestKVNamedPersistentStore(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestKVDefaultConcurrent(t *testing.T) {
-	if err := InitKVStore(""); err != nil {
+	if err := InitKVStore("", nil); err != nil {
 		t.Fatalf("InitKVStore: %v", err)
 	}
 	defer CloseKVStore()
@@ -468,7 +471,7 @@ func TestKVDefaultConcurrent(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestKVNamedMemoryConcurrent(t *testing.T) {
-	if err := InitKVStore(""); err != nil {
+	if err := InitKVStore("", nil); err != nil {
 		t.Fatalf("InitKVStore: %v", err)
 	}
 	defer CloseKVStore()
@@ -510,7 +513,7 @@ func TestKVNamedMemoryConcurrent(t *testing.T) {
 // TestKVIncrConcurrent verifies that concurrent incr calls are atomic and do
 // not lose updates.
 func TestKVIncrConcurrent(t *testing.T) {
-	if err := InitKVStore(""); err != nil {
+	if err := InitKVStore("", nil); err != nil {
 		t.Fatalf("InitKVStore: %v", err)
 	}
 	defer CloseKVStore()
@@ -542,7 +545,7 @@ func TestKVIncrConcurrent(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestKVRegistryConcurrentOpenClose(t *testing.T) {
-	if err := InitKVStore(""); err != nil {
+	if err := InitKVStore("", nil); err != nil {
 		t.Fatalf("InitKVStore: %v", err)
 	}
 	defer CloseKVStore()
@@ -578,7 +581,7 @@ func TestKVRegistryConcurrentOpenClose(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestKVRegistryCleanupOnReset(t *testing.T) {
-	if err := InitKVStore(""); err != nil {
+	if err := InitKVStore("", nil); err != nil {
 		t.Fatalf("InitKVStore: %v", err)
 	}
 
@@ -605,7 +608,7 @@ func TestKVRegistryCleanupOnReset(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestKVOpenErrors(t *testing.T) {
-	if err := InitKVStore(""); err != nil {
+	if err := InitKVStore("", nil); err != nil {
 		t.Fatalf("InitKVStore: %v", err)
 	}
 	defer CloseKVStore()
@@ -690,7 +693,7 @@ func kvOpenWithSecurity(allowedPaths []string, name string) object.Object {
 }
 
 func TestKVPathSecurity(t *testing.T) {
-	if err := InitKVStore(""); err != nil {
+	if err := InitKVStore("", nil); err != nil {
 		t.Fatalf("InitKVStore: %v", err)
 	}
 	defer CloseKVStore()
@@ -797,4 +800,98 @@ func TestKVPathSecurity(t *testing.T) {
 			t.Errorf("prefix attack should be blocked, got %T", result)
 		}
 	})
+}
+
+// ---------------------------------------------------------------------------
+// Snapshot save-failure reporting
+// ---------------------------------------------------------------------------
+
+// syncBuffer is a goroutine-safe io.Writer for capturing log output.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// breakKVSnapshotsDir makes snapshot writes fail by replacing the snapshots
+// directory with a regular file.
+func breakKVSnapshotsDir(t *testing.T, dbPath string) {
+	t.Helper()
+	snapDir := filepath.Join(dbPath, "snapshots")
+	if err := os.RemoveAll(snapDir); err != nil {
+		t.Fatalf("RemoveAll: %v", err)
+	}
+	if err := os.WriteFile(snapDir, []byte("not a directory"), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+}
+
+// TestKVSaveErrorLoggedOnClose verifies that a failed final flush of the
+// default store is logged through the logger passed to InitKVStore.
+func TestKVSaveErrorLoggedOnClose(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "kv-save-err-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+	path := filepath.Join(tmpDir, "default.db")
+
+	buf := &syncBuffer{}
+	log := logslog.New(logslog.Config{Level: "error", Format: "console", Writer: buf})
+	defer func() { kvLogger = newKVDefaultLogger() }()
+
+	if err := InitKVStore(path, log); err != nil {
+		t.Fatalf("InitKVStore: %v", err)
+	}
+	store := kvStore()
+	kvCall(store, "set", object.NewString("k"), object.NewString("v"))
+
+	breakKVSnapshotsDir(t, path)
+	CloseKVStore()
+
+	out := buf.String()
+	if !strings.Contains(out, "snapshot") || !strings.Contains(out, path) {
+		t.Errorf("Expected save-failure log mentioning %q, got: %q", path, out)
+	}
+}
+
+// TestKVNamedStoreCloseReportsFlushError verifies that close() on a named
+// store surfaces a failed final flush to the script.
+func TestKVNamedStoreCloseReportsFlushError(t *testing.T) {
+	if err := InitKVStore("", nil); err != nil {
+		t.Fatalf("InitKVStore: %v", err)
+	}
+	defer CloseKVStore()
+	defer closeKVRegistry()
+
+	tmpDir, err := os.MkdirTemp("", "kv-close-err-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+	path := filepath.Join(tmpDir, "named.db")
+
+	store := kvOpen(path)
+	kvCall(store, "set", object.NewString("k"), object.NewString("v"))
+
+	breakKVSnapshotsDir(t, path)
+	result := kvCall(store, "close")
+	e, ok := result.(*object.Error)
+	if !ok {
+		t.Fatalf("Expected error from close(), got %v (%T)", result, result)
+	}
+	if !strings.Contains(e.Message, path) {
+		t.Errorf("Expected error to mention the store path %q, got: %s", path, e.Message)
+	}
 }

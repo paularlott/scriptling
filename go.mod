@@ -14,7 +14,7 @@ require (
 	github.com/paularlott/jsonrpc v0.2.0
 	github.com/paularlott/logger v0.3.0
 	github.com/paularlott/mcp v0.25.0
-	github.com/paularlott/snapshotkv v0.5.0
+	github.com/paularlott/snapshotkv v0.6.0
 	github.com/shirou/gopsutil/v3 v3.24.5
 	github.com/yuin/goldmark v1.8.5
 	golang.org/x/net v0.58.0

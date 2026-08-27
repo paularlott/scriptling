@@ -2,11 +2,14 @@ package extlibs
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/paularlott/logger"
+	logslog "github.com/paularlott/logger/slog"
 	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/extlibs/fssecurity"
@@ -15,6 +18,33 @@ import (
 )
 
 const kvMemoryPrefix = ":memory:"
+
+// kvLogger reports KV snapshot save failures. It defaults to a console
+// logger on stderr so disk-write errors are never silent; InitKVStore
+// replaces it with the host application's logger.
+var kvLogger = newKVDefaultLogger()
+
+func newKVDefaultLogger() logger.Logger {
+	return logslog.New(logslog.Config{
+		Level:  "error",
+		Format: "console",
+		Writer: os.Stderr,
+	})
+}
+
+// kvSaveErrorHook returns an OnSaveError callback that logs failed snapshot
+// writes for the store at path. Memory-only stores never save, so the hook
+// is a no-op for them.
+func kvSaveErrorHook(path string) func(error) {
+	if path == "" {
+		return func(error) {}
+	}
+	return func(err error) {
+		if kvLogger != nil {
+			kvLogger.Error("kv store: snapshot write to disk failed, data may not be persisted", "path", path, "error", err)
+		}
+	}
+}
 
 // kvRegistry is the global store registry, keyed by path/name.
 var kvRegistry = struct {
@@ -26,13 +56,20 @@ var kvRegistry = struct {
 
 // InitKVStore initializes the system-wide default KV store.
 // If path is empty, the store operates in memory-only mode.
-func InitKVStore(path string) error {
+// A non-nil log receives snapshot save-failure reports; nil keeps the
+// current logger (a stderr console logger by default).
+func InitKVStore(path string, log logger.Logger) error {
+	if log != nil {
+		kvLogger = log
+	}
+
 	if RuntimeState.KVDB != nil {
 		RuntimeState.KVDB.Close()
 	}
 
 	cfg := &snapshotkv.Config{
 		TTLCleanupInterval: time.Minute,
+		OnSaveError:        kvSaveErrorHook(path),
 	}
 
 	db, err := snapshotkv.Open(path, cfg)
@@ -81,6 +118,7 @@ func openRegisteredStore(name string) (*snapshotkv.DB, error) {
 
 	cfg := &snapshotkv.Config{
 		TTLCleanupInterval: time.Minute,
+		OnSaveError:        kvSaveErrorHook(fsPath),
 	}
 	db, err := snapshotkv.Open(fsPath, cfg)
 	if err != nil {
@@ -91,17 +129,20 @@ func openRegisteredStore(name string) (*snapshotkv.DB, error) {
 	return db, nil
 }
 
-// closeRegisteredStore immediately closes and removes a store from the registry.
-func closeRegisteredStore(name string) {
+// closeRegisteredStore immediately closes and removes a store from the
+// registry. The error from the final flush is returned (it has already been
+// logged via the store's OnSaveError hook).
+func closeRegisteredStore(name string) error {
 	kvRegistry.Lock()
 	defer kvRegistry.Unlock()
 
 	db, ok := kvRegistry.stores[name]
 	if !ok {
-		return
+		return nil
 	}
-	db.Close()
+	err := db.Close()
 	delete(kvRegistry.stores, name)
+	return err
 }
 
 // kvDBRegistry maps a kv store Builtin pointer to its underlying DB so that
@@ -319,12 +360,16 @@ func newKVStoreObject(db *snapshotkv.DB, registryName string) *object.Builtin {
 			"close": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if registryName != "" {
-						closeRegisteredStore(registryName)
+						// Flush failures are already logged via OnSaveError;
+						// surface them to the script as well.
+						if err := closeRegisteredStore(registryName); err != nil {
+							return errors.NewError("kv.close: %v", err)
+						}
 					}
 					// no-op for the default system store
 					return &object.Null{}
 				},
-				HelpText: `close() - Close this store immediately. No-op on the default store.`,
+				HelpText: `close() - Close this store, flushing pending writes to disk. No-op on the default store. Returns an error if the flush fails.`,
 			},
 		},
 		HelpText: "KV store object — call .get(), .set(), .incr(), .delete(), .exists(), .ttl(), .keys(), .clear(), .close()",
