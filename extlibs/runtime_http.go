@@ -150,10 +150,73 @@ func (c *WebSocketServerConn) ClosedChan() <-chan struct{} {
 	return c.closedCh
 }
 
+// requestFieldGetter builds a Request method that reads name from a dict field
+// on the instance, falling back to default (None when omitted). lowerLookup
+// lowercases the name before lookup, for the headers dict.
+func requestFieldGetter(field, methodName string, lowerLookup bool, help string) *object.Builtin {
+	return &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.RangeArgs(args, 2, 3); err != nil {
+				return err
+			}
+			instance, ok := args[0].(*object.Instance)
+			if !ok {
+				return errors.NewError("%s() called on non-Request object", methodName)
+			}
+
+			name, err := args[1].AsString()
+			if err != nil {
+				return err
+			}
+			if lowerLookup {
+				name = strings.ToLower(name)
+			}
+
+			var def object.Object = &object.Null{}
+			switch {
+			case len(args) > 2:
+				def = args[2]
+			case kwargs.Get("default") != nil:
+				def = kwargs.Get("default")
+			}
+
+			if dict, _ := instance.Field(field).(*object.Dict); dict != nil {
+				if pair, ok := dict.GetByString(name); ok {
+					return pair.Value
+				}
+			}
+			return def
+		},
+		HelpText: help,
+	}
+}
+
 // RequestClass is the class for Request objects passed to handlers
 var RequestClass = &object.Class{
 	Name: "Request",
 	Methods: map[string]object.Object{
+		"path_param": requestFieldGetter("path_params", "path_param", false, `path_param(name, default=None) - Get a path parameter captured from a route wildcard
+
+Route patterns like "/api/users/{id}" capture the matching request path
+segments. Returns the captured value, default, or None.
+
+Parameters:
+  name (string): Path parameter name
+  default (any, optional): Value returned when the parameter is absent`),
+		"query_param": requestFieldGetter("query", "query_param", false, `query_param(name, default=None) - Get a query parameter
+
+Returns the first value of the query parameter, default, or None.
+
+Parameters:
+  name (string): Query parameter name
+  default (any, optional): Value returned when the parameter is absent`),
+		"header": requestFieldGetter("headers", "header", true, `header(name, default=None) - Get a request header
+
+Header names are case-insensitive. Returns the header value, default, or None.
+
+Parameters:
+  name (string): Header name
+  default (any, optional): Value returned when the header is absent`),
 		"json": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if err := errors.ExactArgs(args, 1); err != nil {
@@ -182,8 +245,11 @@ Returns the parsed JSON as a dict or list, or None if body is empty.`,
 	},
 }
 
-// CreateRequestInstance creates a new Request instance with the given data
-func CreateRequestInstance(method, path, body string, headers map[string]string, query map[string]string) *object.Instance {
+// CreateRequestInstance creates a new Request instance with the given data.
+// pathParams holds values captured from route wildcards ("{id}" and
+// "{path...}") and remoteAddr the client address; both are exposed as
+// request fields (path_params, remote_addr).
+func CreateRequestInstance(method, path, body string, headers, query, pathParams map[string]string, remoteAddr string) *object.Instance {
 	headerDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
 	for k, v := range headers {
 		lk := strings.ToLower(k)
@@ -195,12 +261,19 @@ func CreateRequestInstance(method, path, body string, headers map[string]string,
 		queryDict.SetByString(k, object.NewString(v))
 	}
 
+	paramsDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
+	for k, v := range pathParams {
+		paramsDict.SetByString(k, object.NewString(v))
+	}
+
 	return object.NewInstanceWithFields(RequestClass, map[string]object.Object{
-		"method":  object.NewString(method),
-		"path":    object.NewString(path),
-		"body":    object.NewString(body),
-		"headers": headerDict,
-		"query":   queryDict,
+		"method":      object.NewString(method),
+		"path":        object.NewString(path),
+		"body":        object.NewString(body),
+		"headers":     headerDict,
+		"query":       queryDict,
+		"path_params": paramsDict,
+		"remote_addr": object.NewString(remoteAddr),
 	})
 }
 
@@ -512,6 +585,7 @@ var HTTPSubLibrary = object.NewLibrary(RuntimeHTTPLibraryName, map[string]*objec
 	"get":    httpVerbEntry("GET"),
 	"post":   httpVerbEntry("POST"),
 	"put":    httpVerbEntry("PUT"),
+	"patch":  httpVerbEntry("PATCH"),
 	"delete": httpVerbEntry("DELETE"),
 
 	"route": {

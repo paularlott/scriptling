@@ -16,7 +16,7 @@ def auth_middleware(request):
     if not protected:
         return None
 
-    token = request.headers.get("authorization", "")
+    token = request.header("Authorization", "")
     if not token.startswith("Bearer "):
         return runtime.http.json(401, {"error": "Missing authorization token"})
     if token != "Bearer secret123":
@@ -42,8 +42,8 @@ def create_user(request):
 
 def search(request):
     """Search with query parameters."""
-    query = request.query.get("q", "")
-    limit = int(request.query.get("limit", "10"))
+    query = request.query_param("q", "")
+    limit = int(request.query_param("limit", "10"))
 
     results = []
     for user in _users:
@@ -53,6 +53,15 @@ def search(request):
                 break
 
     return runtime.http.json(200, {"query": query, "results": results})
+
+
+def get_user(request):
+    """Fetch a single user by ID (path parameter from /api/users/{id})."""
+    user_id = request.path_param("id")
+    for user in _users:
+        if str(user["id"]) == user_id:
+            return runtime.http.json(200, {"user": user})
+    return runtime.http.json(404, {"error": f"user {user_id} not found"})
 
 
 def get_me(request):

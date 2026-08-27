@@ -5,6 +5,7 @@ This example demonstrates how to build an HTTP server using the `scriptling.runt
 ## What It Shows
 
 - Registering GET and POST routes
+- Path parameters in route patterns (`/api/users/{id}`) read via `request.path_param()`
 - Using handler libraries to separate route setup from request handling
 - Returning JSON responses
 - Accessing request data (headers, query params, body)
@@ -50,6 +51,9 @@ curl http://localhost:8000/health
 # API - list users (public)
 curl http://localhost:8000/api/users
 
+# API - fetch one user by path parameter (public)
+curl http://localhost:8000/api/users/2
+
 # API - search (public)
 curl "http://localhost:8000/api/search?q=alice"
 
@@ -69,6 +73,8 @@ curl http://localhost:8000/missing.html
 ## Key Points
 
 - `--web-root <dir>` serves files from the directory when no route matches the URL
+- Route patterns support `{name}` for one path segment and `{name...}` for the rest of the path; values are read with `request.path_param("name")` and arrive percent-decoded
+- A literal route wins over a wildcard at the same position, so `/api/users/me` still hits its own handler while `/api/users/2` matches `/api/users/{id}`
 - `runtime.http.not_found("handlers.not_found")` registers a custom 404 handler
 - The 404 handler is called when no route matches **and** no file is found in the web root
 - If no 404 handler is registered, the server returns a plain `404 Not Found`

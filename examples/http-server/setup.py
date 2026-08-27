@@ -6,6 +6,7 @@ runtime.http.middleware("handlers.auth_middleware")
 # Protected API routes
 runtime.http.get("/api/users", "handlers.list_users")
 runtime.http.get("/api/users/me", "handlers.get_me")
+runtime.http.get("/api/users/{id}", "handlers.get_user")
 runtime.http.post("/api/users", "handlers.create_user")
 runtime.http.get("/api/search", "handlers.search")
 

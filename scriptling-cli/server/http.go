@@ -169,22 +169,16 @@ func (s *Server) handleScriptRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Look up handler by "METHOD path"
-	key := r.Method + " " + path
-	s.mu.RLock()
-	handlerRef, ok := s.handlers[key]
-	if !ok && !strings.HasSuffix(path, "/") {
-		handlerRef, ok = s.handlers[key+"/"]
-	}
-	s.mu.RUnlock()
-
+	// The mux already matched this request to a registered pattern; that
+	// pattern is the handler map key.
+	handlerRef, ok := s.handlerForRequest(r)
 	if !ok {
 		Log.Trace("No matching route", "method", r.Method, "path", path)
 		s.serveNotFound(w, r)
 		return
 	}
 
-	reqObj := s.createRequestObject(r)
+	reqObj := s.createRequestObject(r, pathParams(r))
 
 	if s.middleware != "" {
 		Log.Trace("Running middleware", "handler", s.middleware)
@@ -344,7 +338,7 @@ func (s *Server) serveFromZip(w http.ResponseWriter, r *http.Request) {
 func (s *Server) serveNotFound(w http.ResponseWriter, r *http.Request) {
 	if s.notFoundHandler != "" {
 		Log.Trace("Handling 404 via not_found handler", "handler", s.notFoundHandler, "path", r.URL.Path)
-		reqObj := s.createRequestObject(r)
+		reqObj := s.createRequestObject(r, nil)
 		if resp := s.runHandler(r.Context(), s.notFoundHandler, reqObj); resp != nil {
 			s.writeResponse(w, resp)
 			return
@@ -354,8 +348,9 @@ func (s *Server) serveNotFound(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "Not Found", http.StatusNotFound)
 }
 
-// createRequestObject creates a Request instance from an HTTP request
-func (s *Server) createRequestObject(r *http.Request) *object.Instance {
+// createRequestObject creates a Request instance from an HTTP request.
+// pathParams holds values captured from route wildcards, already unescaped.
+func (s *Server) createRequestObject(r *http.Request, pathParams map[string]string) *object.Instance {
 	var body string
 	if r.Body != nil {
 		bodyBytes, _ := io.ReadAll(r.Body)
@@ -376,7 +371,7 @@ func (s *Server) createRequestObject(r *http.Request) *object.Instance {
 		}
 	}
 
-	return extlibs.CreateRequestInstance(r.Method, r.URL.Path, body, headers, query)
+	return extlibs.CreateRequestInstance(r.Method, r.URL.Path, body, headers, query, pathParams, r.RemoteAddr)
 }
 
 // runHandler runs a handler function and returns the response
