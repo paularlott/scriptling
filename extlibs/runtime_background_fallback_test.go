@@ -990,3 +990,40 @@ rb = runtime.background("rb", "registrar_b", shared=True)
 		t.Fatalf("inner handler ran %d times, want 1 — concurrent claims launched duplicates", runs.Value())
 	}
 }
+
+// TestReleaseTaskNameIdentityCheck pins the promise-identity guard: a stale
+// release from a task registered before a ResetRuntime (or any superseded
+// claim) must not evict the newer task holding the name.
+func TestReleaseTaskNameIdentityCheck(t *testing.T) {
+	ResetRuntime()
+
+	first, ok := claimTaskName("guarded")
+	if !ok {
+		t.Fatal("first claim failed")
+	}
+	// Simulate the registry being cleared while the first task is still
+	// running, then the name being claimed by a second task.
+	ResetRuntime()
+	second, ok := claimTaskName("guarded")
+	if !ok {
+		t.Fatal("second claim after reset failed")
+	}
+
+	// The old task finishes and releases — the new claim must survive.
+	releaseTaskName(first)
+
+	RuntimeState.RLock()
+	held := RuntimeState.ActiveTasks["guarded"]
+	RuntimeState.RUnlock()
+	if held != second {
+		t.Fatal("stale release evicted the newer claim")
+	}
+
+	releaseTaskName(second)
+	RuntimeState.RLock()
+	held = RuntimeState.ActiveTasks["guarded"]
+	RuntimeState.RUnlock()
+	if held != nil {
+		t.Fatal("own release did not free the name")
+	}
+}

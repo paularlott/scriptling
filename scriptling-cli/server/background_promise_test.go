@@ -1,11 +1,17 @@
 package server
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs"
 )
 
@@ -156,5 +162,97 @@ runtime.background("bad", "bad_task")
 	}
 	if !strings.Contains(reported[0], "bad") || !strings.Contains(reported[0], "missing_variable_name") {
 		t.Fatalf("unexpected report: %v", reported)
+	}
+}
+
+// TestBackgroundTaskNotRespawnedByRequests pins the motivating case for the
+// task-name identity rule: a module whose body registers a background task is
+// re-executed every time one of its handlers is imported to serve a request
+// (each request gets a fresh interpreter). The task must not be re-launched —
+// every request observes the one running task.
+func TestBackgroundTaskNotRespawnedByRequests(t *testing.T) {
+	extlibs.ResetRuntime()
+
+	dir := t.TempDir()
+	handlersPy := `import scriptling.runtime as runtime
+
+def tick():
+    runtime.sync.Atomic("respawn_starts", initial=0).add(1)
+    runtime.sync.Queue("respawn_gate").get()
+    return "ticked"
+
+# The module body runs on every import — per request, in a fresh interpreter.
+runtime.background("respawn_ticker", "tick")
+
+def starts(request):
+    n = runtime.sync.Atomic("respawn_starts", initial=0).get()
+    return runtime.http.json(200, {"starts": n})
+
+runtime.http.get("/starts", "handlers.starts")
+`
+	if err := os.WriteFile(filepath.Join(dir, "handlers.py"), []byte(handlersPy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "setup.py"), []byte("import handlers\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := NewServer(ServerConfig{
+		ScriptFile: filepath.Join(dir, "setup.py"),
+		LibDirs:    []string{dir},
+	})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	ts := httptest.NewServer(s.buildMux())
+	defer ts.Close()
+
+	// Wait for the released task to start exactly once.
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		extlibs.RuntimeState.RLock()
+		started, ok := extlibs.RuntimeState.Atomics["respawn_starts"]
+		extlibs.RuntimeState.RUnlock()
+		if ok && started.Value() == 1 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	extlibs.RuntimeState.RLock()
+	started, ok := extlibs.RuntimeState.Atomics["respawn_starts"]
+	extlibs.RuntimeState.RUnlock()
+	if !ok || started.Value() != 1 {
+		t.Fatalf("ticker started %d times after release, want 1", started.Value())
+	}
+
+	// Each request re-imports the module body; none may launch a second copy.
+	getStarts := func() int {
+		t.Helper()
+		resp, err := http.Get(ts.URL + "/starts")
+		if err != nil {
+			t.Fatalf("GET /starts: %v", err)
+		}
+		defer resp.Body.Close()
+		var out struct {
+			Starts int `json:"starts"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatalf("GET /starts: %v", err)
+		}
+		return out.Starts
+	}
+	for i := 0; i < 3; i++ {
+		if n := getStarts(); n != 1 {
+			t.Fatalf("after request %d the ticker had started %d times, want 1 — a request respawned the task", i+1, n)
+		}
+	}
+
+	// Let the one task finish so no goroutine stays parked on the gate.
+	feeder := scriptling.New()
+	extlibs.RegisterRuntimeLibraryAll(feeder, nil)
+	if _, err := feeder.Eval(`import scriptling.runtime as runtime
+runtime.sync.Queue("respawn_gate").put(1)
+`); err != nil {
+		t.Fatalf("feed gate: %v", err)
 	}
 }
