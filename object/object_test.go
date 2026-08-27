@@ -199,8 +199,19 @@ func TestEnvironmentCopyCallableBindingsTo(t *testing.T) {
 		t.Fatal("expected copied lambda env to point at target")
 	}
 
-	if _, ok := target.Get("value"); ok {
-		t.Fatal("expected non-callable binding to be skipped")
+	// Module-level scalars are copied (immutable value objects — handlers
+	// legitimately reference module constants).
+	copiedVal, ok := target.Get("value")
+	if !ok {
+		t.Fatal("expected scalar binding to be copied")
+	}
+	if copiedVal != sourceVal {
+		t.Fatal("expected scalar to be shared as-is (immutable value object)")
+	}
+
+	// Mutable non-callable bindings are still skipped.
+	if _, ok := target.Get("user_data"); ok {
+		t.Fatal("expected unmarked user dict to be skipped")
 	}
 
 	copiedModuleObj, ok := target.Get("module")
@@ -216,9 +227,6 @@ func TestEnvironmentCopyCallableBindingsTo(t *testing.T) {
 	}
 	if !target.IsImportedBinding("module") {
 		t.Fatal("expected copied module dict to stay marked as imported")
-	}
-	if _, ok := target.Get("user_data"); ok {
-		t.Fatal("expected unmarked user dict to be skipped")
 	}
 }
 

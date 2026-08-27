@@ -1697,22 +1697,30 @@ func (e *Environment) GetStore() map[string]Object {
 	return store
 }
 
-// CallableSnapshot holds a snapshot of callable bindings safe to pass across
-// goroutine boundaries. Use ApplySnapshot to write them into a new Environment.
+// CallableSnapshot holds a snapshot of callable and scalar bindings safe to
+// pass across goroutine boundaries. Use ApplySnapshot to write them into a new
+// Environment.
 type CallableSnapshot struct {
 	functions map[string]*Function
 	lambdas   map[string]*LambdaFunction
 	dicts     map[string]*Dict
+	scalars   map[string]Object
 }
 
-// SnapshotCallables reads callable bindings from this environment into a
-// self-contained snapshot. No references to the source Environment's maps are
-// retained, so it is safe to pass the snapshot to another goroutine.
+// SnapshotCallables reads callable and scalar bindings from this environment
+// into a self-contained snapshot. No references to the source Environment's
+// maps are retained, so it is safe to pass the snapshot to another goroutine.
+// Module-level scalars (int, float, bool, str, None) are included because
+// handler functions legitimately reference module constants; they are
+// immutable value objects, so sharing them cannot create cross-task races.
+// Mutable globals (lists, dicts, instances, classes) are deliberately excluded
+// — data must be passed via task args.
 func (e *Environment) SnapshotCallables() *CallableSnapshot {
 	s := &CallableSnapshot{
 		functions: make(map[string]*Function, len(e.store)+len(e.slotNames)),
 		lambdas:   make(map[string]*LambdaFunction, len(e.store)+len(e.slotNames)),
 		dicts:     make(map[string]*Dict, len(e.store)+len(e.slotNames)),
+		scalars:   make(map[string]Object, len(e.store)+len(e.slotNames)),
 	}
 	snapshot := func(name string, value Object) {
 		switch v := value.(type) {
@@ -1726,6 +1734,8 @@ func (e *Environment) SnapshotCallables() *CallableSnapshot {
 			if e.importedBindings != nil && e.importedBindings[name] {
 				s.dicts[name] = v
 			}
+		case *Integer, *Float, *Boolean, *String, *Null:
+			s.scalars[name] = v
 		}
 	}
 	for name, value := range e.store {
@@ -1741,7 +1751,8 @@ func (e *Environment) SnapshotCallables() *CallableSnapshot {
 
 // ApplySnapshot writes the snapshot's bindings into target, rebound to target
 // so closures resolve correctly. Dicts are deep-copied so concurrent tasks
-// don't race when mutating intermediate dicts.
+// don't race when mutating intermediate dicts. Scalars are shared as-is — they
+// are immutable value objects.
 func (s *CallableSnapshot) ApplySnapshot(target *Environment) {
 	for name, v := range s.functions {
 		target.store[name] = &Function{
@@ -1779,6 +1790,9 @@ func (s *CallableSnapshot) ApplySnapshot(target *Environment) {
 			target.importedBindings = make(map[string]bool, 2)
 		}
 		target.importedBindings[name] = true
+	}
+	for name, v := range s.scalars {
+		target.store[name] = v
 	}
 }
 

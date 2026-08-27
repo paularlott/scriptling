@@ -148,6 +148,12 @@ func (a *RuntimeAtomic) set(val int64) {
 	atomic.StoreInt64(&a.value, val)
 }
 
+// Value returns the current counter value. Exported for hosts and tests that
+// need to observe a sync.Atomic created by script code.
+func (a *RuntimeAtomic) Value() int64 {
+	return atomic.LoadInt64(&a.value)
+}
+
 // RuntimeShared is a named shared value.
 // Values stored should be treated as immutable. Use set() to replace.
 // For atomic read-modify-write, use update() with a callback.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"sync"
 
@@ -34,15 +35,28 @@ var RuntimeState = struct {
 	WebSocketConnections map[string]*WebSocketServerConn
 
 	// Background tasks
-	Backgrounds       map[string]string                   // name -> "function_name"
-	BackgroundArgs    map[string][]object.Object          // name -> args
-	BackgroundKwargs  map[string]map[string]object.Object // name -> kwargs
-	BackgroundEnvs    map[string]*object.Environment      // name -> environment
-	BackgroundEvals   map[string]evaliface.Evaluator      // name -> evaluator
-	BackgroundFactory SandboxFactory                      // Factory to create new Scriptling instances
-	BackgroundCtxs    map[string]context.Context          // name -> context
-	BackgroundReady   bool                                // If true, start tasks immediately
-	BackgroundDaemons map[string]bool                     // name -> daemon flag (queued tasks)
+	Backgrounds        map[string]string                   // name -> "function_name"
+	BackgroundArgs     map[string][]object.Object          // name -> args
+	BackgroundKwargs   map[string]map[string]object.Object // name -> kwargs
+	BackgroundEnvs     map[string]*object.Environment      // name -> environment
+	BackgroundEvals    map[string]evaliface.Evaluator      // name -> evaluator
+	BackgroundFactory  SandboxFactory                      // Factory to create new Scriptling instances
+	BackgroundCtxs     map[string]context.Context          // name -> context
+	BackgroundReady    bool                                // If true, start tasks immediately
+	BackgroundDaemons  map[string]bool                     // name -> daemon flag (queued tasks)
+	BackgroundPromises map[string]*Promise                 // name -> promise returned to the setup script (queued tasks)
+
+	// ActiveTasks holds the promise of every background task that is currently
+	// queued or running, keyed by the task name. A task name identifies one
+	// task, so background() with a name that is already active starts nothing
+	// and hands back the running task's promise. The entry is dropped when the
+	// task ends, so a name can be reused for a later task.
+	//
+	// This matters because a module body is re-executed whenever one of its
+	// functions is imported to serve a request: without this, a setup script
+	// that registers both a route handler and a background task in the same
+	// file would spawn a fresh copy of that task on every request.
+	ActiveTasks map[string]*Promise // name -> promise (queued or running)
 
 	// TaskWG tracks outstanding non-daemon background tasks. Hosts that run
 	// scripts to completion (the CLI's plain-run modes) wait on it before
@@ -93,6 +107,8 @@ var RuntimeState = struct {
 	BackgroundCtxs:       make(map[string]context.Context),
 	BackgroundReady:      false,
 	BackgroundDaemons:    make(map[string]bool),
+	BackgroundPromises:   make(map[string]*Promise),
+	ActiveTasks:          make(map[string]*Promise),
 	KVDB:                 nil,
 	WaitGroups:           make(map[string]*RuntimeWaitGroup),
 	Queues:               make(map[string]*RuntimeQueue),
@@ -152,6 +168,8 @@ func ResetRuntime() {
 	RuntimeState.BackgroundCtxs = make(map[string]context.Context)
 	RuntimeState.BackgroundReady = false
 	RuntimeState.BackgroundDaemons = make(map[string]bool)
+	RuntimeState.BackgroundPromises = make(map[string]*Promise)
+	RuntimeState.ActiveTasks = make(map[string]*Promise)
 
 	// Close KV store if open. The caller is responsible for reinitializing
 	// via InitKVStore — opening an in-memory DB here only to have it
@@ -186,18 +204,73 @@ type Promise struct {
 	done   chan struct{}
 	result object.Object
 	err    error
+	name   string // background task name, for failure reporting
 }
 
-func newPromise() *Promise {
-	return &Promise{done: make(chan struct{})}
+// newPromise creates a promise for the named background task. The name is used
+// for failure reporting and to hold the task's slot in RuntimeState.ActiveTasks.
+func newPromise(name string) *Promise {
+	return &Promise{done: make(chan struct{}), name: name}
+}
+
+// claimTaskName reserves name for a new background task. It returns a fresh
+// promise and true when the name was free, or the already-active task's promise
+// and false when a task of that name is still queued or running.
+func claimTaskName(name string) (*Promise, bool) {
+	RuntimeState.Lock()
+	defer RuntimeState.Unlock()
+	if existing, ok := RuntimeState.ActiveTasks[name]; ok && existing != nil {
+		return existing, false
+	}
+	promise := newPromise(name)
+	RuntimeState.ActiveTasks[name] = promise
+	return promise, true
+}
+
+// releaseTaskName frees a task name once its task is no longer queued or
+// running, so the name can be reused. The promise identity check keeps a
+// finishing task from evicting a later task registered under the same name.
+func releaseTaskName(promise *Promise) {
+	if promise == nil || promise.name == "" {
+		return
+	}
+	RuntimeState.Lock()
+	defer RuntimeState.Unlock()
+	if RuntimeState.ActiveTasks[promise.name] == promise {
+		delete(RuntimeState.ActiveTasks, promise.name)
+	}
+}
+
+// taskErrorLogger receives failures of background tasks. The default writes
+// one line to stderr so a failing fire-and-forget task (whose promise nobody
+// reads) can no longer die silently. Hosts can redirect or filter with
+// SetTaskErrorLogger.
+var taskErrorLogger func(name string, err error) = func(name string, err error) {
+	fmt.Fprintf(os.Stderr, "background task %q failed: %v\n", name, err)
+}
+
+// SetTaskErrorLogger replaces the handler invoked when a background task fails
+// (its promise resolves with an error). Pass nil to restore the default
+// stderr reporter. The handler must be safe to call from task goroutines.
+func SetTaskErrorLogger(fn func(name string, err error)) {
+	if fn == nil {
+		fn = func(name string, err error) {
+			fmt.Fprintf(os.Stderr, "background task %q failed: %v\n", name, err)
+		}
+	}
+	taskErrorLogger = fn
 }
 
 func (p *Promise) set(result object.Object, err error) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	p.result = result
 	p.err = err
 	close(p.done)
+	name := p.name
+	p.mu.Unlock()
+	if err != nil && name != "" {
+		taskErrorLogger(name, err)
+	}
 }
 
 func (p *Promise) get() (object.Object, error) {
@@ -358,7 +431,27 @@ var RuntimeLibraryFunctions = map[string]*object.Builtin{
 				handlerKwargs[k] = v
 			}
 			kwargs = object.NewKwargs(handlerKwargs)
+
+			// Claim the task name. If it is already queued or running, this
+			// call starts nothing and returns the existing task's promise —
+			// see RuntimeState.ActiveTasks for why re-registration happens.
+			promise, claimed := claimTaskName(name)
+			if !claimed {
+				return promiseObject(promise)
+			}
+			// From here the name is claimed, so every path that does not hand
+			// the task to a start*Task call (which then owns the release) or
+			// leave it queued must give the name back — otherwise a rejected
+			// call would poison the name for the rest of the process.
+			handedOff := false
+			defer func() {
+				if !handedOff {
+					releaseTaskName(promise)
+				}
+			}()
+
 			if shared {
+				handedOff = true
 				// Pass args/kwargs live; the GIL serializes access.
 				// Shallow-copy the args slice: the handler runs in a goroutine that
 				// outlives this call, so it must own its backing array (the caller's
@@ -366,7 +459,7 @@ var RuntimeLibraryFunctions = map[string]*object.Builtin{
 				// reference, preserving shared-thread live semantics.
 				liveArgs := make([]object.Object, len(args)-2)
 				copy(liveArgs, args[2:])
-				return startSharedTask(ctx, handler, liveArgs, kwargs.Kwargs, env, eval, daemon)
+				return startSharedTask(ctx, handler, liveArgs, kwargs.Kwargs, env, eval, daemon, promise)
 			}
 
 			// Validate that all args/kwargs are transferable types
@@ -403,6 +496,7 @@ var RuntimeLibraryFunctions = map[string]*object.Builtin{
 				RuntimeState.BackgroundEvals[name] = eval
 				RuntimeState.BackgroundCtxs[name] = ctx
 				RuntimeState.BackgroundDaemons[name] = daemon
+				RuntimeState.BackgroundPromises[name] = promise
 			}
 			RuntimeState.Unlock()
 
@@ -410,19 +504,36 @@ var RuntimeLibraryFunctions = map[string]*object.Builtin{
 			// (startBackgroundTask then derives the task environment from the
 			// caller instead of using a factory-built instance).
 			if backgroundReady || factory == nil {
-				return startBackgroundTask(handler, fnArgs, fnKwargs, env, eval, factory, ctx, daemon)
+				handedOff = true
+				return startBackgroundTask(promise, handler, fnArgs, fnKwargs, env, eval, factory, ctx, daemon)
 			}
 
-			return &object.Null{}
+			// Queued until release: hand the script the promise now so it can
+			// await the task once it starts.
+			handedOff = true
+			return promiseObject(promise)
 		},
 		HelpText: `background(name, handler, *args, **kwargs) - Start a fire-and-forget background task
 
 Starts a background task in a goroutine and returns immediately.
-Returns null on success, or an error if the handler is not found.
+Returns a promise (call .get() or .wait() to await the result), or
+an error if the handler is not found. In server mode the task is
+queued until the server starts; the promise resolves once it runs.
 
   Both handler patterns run in isolated environments with no
-  access to the calling script's data. Only sibling functions
-  are copied; data must be passed via args or runtime.sync.
+  access to the calling script's data. Sibling functions,
+  imported modules, and module-level constants (int, float,
+  bool, str) are copied; other module-level variables (lists,
+  dicts, objects, logger instances) are NOT visible — pass
+  them as arguments or via runtime.sync. A task that fails is
+  reported to stderr with its name.
+
+  The name identifies the task: calling background() with the
+  name of a task that is already queued or running starts
+  nothing and returns the running task's promise. This keeps a
+  module that registers both a request handler and a task from
+  spawning another copy each time it is re-imported to serve a
+  request. Once a task ends its name is free to reuse.
 
 Parameters:
   name (string): Unique name for the background task
@@ -569,25 +680,29 @@ func taskContext(ctx context.Context, env *object.Environment) context.Context {
 	return evaluator.SetCallDepthInContext(ctx, evaluator.NewCallDepth(evaluator.DefaultMaxCallDepth))
 }
 
-// startBackgroundTask starts a background task in a goroutine and returns a Promise.
-func startBackgroundTask(handler string, fnArgs []object.Object, fnKwargs map[string]object.Object, env *object.Environment, eval evaliface.Evaluator, factory SandboxFactory, ctx context.Context, daemon bool) object.Object {
+// startBackgroundTask runs a background task on the promise already handed to
+// the script (the queued path hands it over before the task starts, so the
+// awaited result is the started task's result). The task name is released when
+// the task ends, or here if it never starts.
+func startBackgroundTask(promise *Promise, handler string, fnArgs []object.Object, fnKwargs map[string]object.Object, env *object.Environment, eval evaliface.Evaluator, factory SandboxFactory, ctx context.Context, daemon bool) object.Object {
 	if env == nil || eval == nil {
+		releaseTaskName(promise)
 		return &object.Null{}
 	}
-
-	promise := newPromise()
 
 	// For simple (non-dotted) handlers, validate the function exists synchronously.
 	isDotted := strings.Contains(handler, ".")
 	if !isDotted {
 		fn, _ := env.Get(handler)
 		if fn == nil {
+			releaseTaskName(promise)
 			return errors.NewError("function not found: %s", handler)
 		}
 		switch fn.(type) {
 		case *object.Function, *object.LambdaFunction:
 			// ok
 		default:
+			releaseTaskName(promise)
 			return errors.NewError("handler is not a function: %s (%T)", handler, fn)
 		}
 	}
@@ -622,6 +737,9 @@ func startBackgroundTask(handler string, fnArgs []object.Object, fnKwargs map[st
 	}
 
 	go func() {
+		// Registered first so it runs last: the name stays claimed until the
+		// promise has been resolved, including on the panic path below.
+		defer releaseTaskName(promise)
 		defer func() {
 			if !daemon {
 				RuntimeState.TaskWG.Done()
@@ -797,18 +915,21 @@ func promiseObject(promise *Promise) object.Object {
 // is memory-safe despite the sharing. Unlike background(), args are passed live
 // (no transferable restriction, no cloning). A fresh context is used so the
 // goroutine acquires the lock instead of inheriting the caller's hold.
-func startSharedTask(ctx context.Context, handler string, fnArgs []object.Object, fnKwargs map[string]object.Object, env *object.Environment, eval evaliface.Evaluator, daemon bool) object.Object {
+func startSharedTask(ctx context.Context, handler string, fnArgs []object.Object, fnKwargs map[string]object.Object, env *object.Environment, eval evaliface.Evaluator, daemon bool, promise *Promise) object.Object {
 	if env == nil || eval == nil {
+		releaseTaskName(promise)
 		return &object.Null{}
 	}
 	fn, _ := env.Get(handler)
 	if fn == nil {
+		releaseTaskName(promise)
 		return errors.NewError("function not found: %s", handler)
 	}
 	switch fn.(type) {
 	case *object.Function, *object.LambdaFunction:
 		// ok
 	default:
+		releaseTaskName(promise)
 		return errors.NewError("handler is not a function: %s (%T)", handler, fn)
 	}
 
@@ -816,8 +937,9 @@ func startSharedTask(ctx context.Context, handler string, fnArgs []object.Object
 		RuntimeState.TaskWG.Add(1)
 	}
 
-	promise := newPromise()
 	go func() {
+		// Registered first so it runs last — see startBackgroundTask.
+		defer releaseTaskName(promise)
 		defer func() {
 			if !daemon {
 				RuntimeState.TaskWG.Done()
@@ -846,38 +968,36 @@ func WaitBackgroundTasks() {
 	RuntimeState.TaskWG.Wait()
 }
 
+// queuedTask is one background task captured from the queue maps, ready to be
+// started once tasks are released.
+type queuedTask struct {
+	handler string
+	args    []object.Object
+	kwargs  map[string]object.Object
+	env     *object.Environment
+	eval    evaliface.Evaluator
+	ctx     context.Context
+	daemon  bool
+	promise *Promise
+}
+
 // ReleaseBackgroundTasks sets BackgroundReady=true and starts all queued tasks
 func ReleaseBackgroundTasks() {
 	RuntimeState.Lock()
 	RuntimeState.BackgroundReady = true
 	factory := RuntimeState.BackgroundFactory
-	tasks := make(map[string]struct {
-		handler string
-		args    []object.Object
-		kwargs  map[string]object.Object
-		env     *object.Environment
-		eval    evaliface.Evaluator
-		ctx     context.Context
-		daemon  bool
-	})
-	for name := range RuntimeState.Backgrounds {
-		tasks[name] = struct {
-			handler string
-			args    []object.Object
-			kwargs  map[string]object.Object
-			env     *object.Environment
-			eval    evaliface.Evaluator
-			ctx     context.Context
-			daemon  bool
-		}{
-			handler: RuntimeState.Backgrounds[name],
+	tasks := make([]queuedTask, 0, len(RuntimeState.Backgrounds))
+	for name, handler := range RuntimeState.Backgrounds {
+		tasks = append(tasks, queuedTask{
+			handler: handler,
 			args:    RuntimeState.BackgroundArgs[name],
 			kwargs:  RuntimeState.BackgroundKwargs[name],
 			env:     RuntimeState.BackgroundEnvs[name],
 			eval:    RuntimeState.BackgroundEvals[name],
 			ctx:     RuntimeState.BackgroundCtxs[name],
 			daemon:  RuntimeState.BackgroundDaemons[name],
-		}
+			promise: RuntimeState.BackgroundPromises[name],
+		})
 	}
 	// Drain the queues so ReleaseBackgroundTasks can't re-launch them
 	RuntimeState.Backgrounds = make(map[string]string)
@@ -887,20 +1007,21 @@ func ReleaseBackgroundTasks() {
 	RuntimeState.BackgroundEvals = make(map[string]evaliface.Evaluator)
 	RuntimeState.BackgroundCtxs = make(map[string]context.Context)
 	RuntimeState.BackgroundDaemons = make(map[string]bool)
+	RuntimeState.BackgroundPromises = make(map[string]*Promise)
 	RuntimeState.Unlock()
 
-	// Start all queued tasks
-	for name, task := range tasks {
-		go func(n string, t struct {
-			handler string
-			args    []object.Object
-			kwargs  map[string]object.Object
-			env     *object.Environment
-			eval    evaliface.Evaluator
-			ctx     context.Context
-			daemon  bool
-		}) {
-			startBackgroundTask(t.handler, t.args, t.kwargs, t.env, t.eval, factory, t.ctx, t.daemon)
-		}(name, task)
+	// Start all queued tasks, reusing the promises already handed to the
+	// setup script so awaited results resolve.
+	for _, task := range tasks {
+		go func(t queuedTask) {
+			result := startBackgroundTask(t.promise, t.handler, t.args, t.kwargs, t.env, t.eval, factory, t.ctx, t.daemon)
+			// A task that cannot start (handler gone from the environment it
+			// was queued with) would otherwise leave the promise the setup
+			// script holds unresolved forever. Resolve it, which also reports
+			// the failure through the task error logger.
+			if errObj, ok := result.(*object.Error); ok {
+				t.promise.set(nil, fmt.Errorf("%s", errObj.Message))
+			}
+		}(task)
 	}
 }
