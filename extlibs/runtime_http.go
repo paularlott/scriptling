@@ -677,7 +677,7 @@ Imperative form:
 
 			return &object.Null{}
 		},
-		HelpText: `middleware(handler) - Register middleware for all routes, or use as bare decorator
+		HelpText: `middleware(handler) - Register middleware for all routes and protocol endpoints, or use as bare decorator
 
 Decorator form:
   @http.middleware
@@ -689,7 +689,13 @@ Imperative form:
 
 The middleware receives the request object and should return:
   - None to continue to the handler
-  - A response dict to short-circuit (block the request)`,
+  - A response dict to short-circuit (block the request)
+
+It runs for every HTTP route and, when the server has MCP or JSON-RPC
+enabled, for the /mcp and /json-rpc endpoints too — so one middleware can
+authenticate API clients, MCP clients, and JSON-RPC callers alike. When a
+middleware is registered it replaces static --bearer-token checking on the
+protocol endpoints.`,
 	},
 
 	"static": {

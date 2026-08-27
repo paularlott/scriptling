@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -41,16 +42,19 @@ func (s *Server) buildMux() http.Handler {
 	mux := http.NewServeMux()
 
 	if s.mcpHandler != nil {
-		mux.Handle("POST /mcp", s.mcpHandler)
-		mux.Handle("GET /mcp", s.mcpHandler)
+		mcp := s.scriptProtocolMiddleware(s.mcpHandler)
+		mux.Handle("POST /mcp", mcp)
+		mux.Handle("GET /mcp", mcp)
 	}
 	if s.config.JSONRPC {
 		if s.pluginServer != nil {
-			mux.Handle("POST /json-rpc", s.pluginServer)
-			mux.Handle("GET /json-rpc", s.pluginServer)
+			jr := s.scriptProtocolMiddleware(s.pluginServer)
+			mux.Handle("POST /json-rpc", jr)
+			mux.Handle("GET /json-rpc", jr)
 		} else {
-			mux.HandleFunc("POST /json-rpc", s.handleJSONRPCHTTP)
-			mux.HandleFunc("GET /json-rpc", s.handleJSONRPCHTTP)
+			jr := s.scriptProtocolMiddleware(http.HandlerFunc(s.handleJSONRPCHTTP))
+			mux.Handle("POST /json-rpc", jr)
+			mux.Handle("GET /json-rpc", jr)
 		}
 	}
 
@@ -85,12 +89,12 @@ func (s *Server) buildMux() http.Handler {
 	}
 
 	var handler http.Handler = mux
-	if s.config.BearerToken != "" {
-		if s.middleware == "" {
-			handler = s.bearerTokenMiddleware(mux)
-		} else {
-			handler = s.bearerTokenProtocolMiddleware(mux)
-		}
+	// With a script middleware registered, it guards every endpoint — routes
+	// via handleScriptRequest and the protocol endpoints via
+	// scriptProtocolMiddleware — so the static bearer token is not applied.
+	// Without one, a configured static token guards everything.
+	if s.config.BearerToken != "" && s.middleware == "" {
+		handler = s.bearerTokenMiddleware(mux)
 	}
 	return handler
 }
@@ -486,22 +490,42 @@ func (s *Server) writeResponse(w http.ResponseWriter, resp *object.Dict) {
 	w.Write(bodyBytes)
 }
 
-// bearerTokenMiddleware creates authentication middleware for all endpoints
-func (s *Server) bearerTokenMiddleware(next http.Handler) http.Handler {
+// scriptProtocolMiddleware runs the registered script middleware for
+// protocol endpoints (/mcp, /json-rpc) when one is registered: a returned
+// response dict blocks the request (e.g. a 401), None lets it through to the
+// protocol handler. Without a middleware it is a pass-through. The request
+// body is buffered and restored, so building the middleware's request object
+// does not consume it for the protocol handler that runs next.
+func (s *Server) scriptProtocolMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != s.bearerExpected {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		if s.middleware == "" {
+			next.ServeHTTP(w, r)
 			return
 		}
+
+		var bodyBytes []byte
+		if r.Body != nil {
+			bodyBytes, _ = io.ReadAll(r.Body)
+			r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		}
+
+		reqObj := s.createRequestObject(r, nil)
+		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+
+		Log.Trace("Running middleware", "handler", s.middleware, "path", r.URL.Path)
+		if resp := s.runHandler(r.Context(), s.middleware, reqObj); resp != nil {
+			s.writeResponse(w, resp)
+			return
+		}
+
 		next.ServeHTTP(w, r)
 	})
 }
 
-// bearerTokenProtocolMiddleware creates authentication middleware for protocol
-// endpoints when script middleware owns normal HTTP route authentication.
-func (s *Server) bearerTokenProtocolMiddleware(next http.Handler) http.Handler {
+// bearerTokenMiddleware creates authentication middleware for all endpoints
+func (s *Server) bearerTokenMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if (r.URL.Path == "/mcp" || r.URL.Path == "/json-rpc") && r.Header.Get("Authorization") != s.bearerExpected {
+		if r.Header.Get("Authorization") != s.bearerExpected {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
