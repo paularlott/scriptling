@@ -6,6 +6,7 @@ This example demonstrates how to build an HTTP server using the `scriptling.runt
 
 - Registering GET and POST routes
 - Path parameters in route patterns (`/api/users/{id}`) read via `request.path_param()`
+- Handler modules in subdirectories (`routes/status.py` imported as `import routes.status`)
 - Using handler libraries to separate route setup from request handling
 - Returning JSON responses
 - Accessing request data (headers, query params, body)
@@ -19,6 +20,7 @@ This example demonstrates how to build an HTTP server using the `scriptling.runt
 |------|---------|
 | `setup.py` | Entry point - registers routes, middleware, and 404 handler |
 | `handlers.py` | Request handler functions |
+| `routes/status.py` | Handler module in a subdirectory (referenced as `routes.status.*`) |
 | `assets/` | Static files served when no route matches |
 
 ## Running the Example
@@ -56,6 +58,9 @@ curl http://localhost:8000/api/users/2
 
 # API - search (public)
 curl "http://localhost:8000/api/search?q=alice"
+
+# API - component status from the subdirectory module (public)
+curl http://localhost:8000/api/status/api
 
 # API - create a user (requires auth)
 curl -X POST http://localhost:8000/api/users \

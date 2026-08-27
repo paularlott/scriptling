@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/paularlott/scriptling/ast"
@@ -1278,5 +1279,79 @@ func TestTupleLiteral(t *testing.T) {
 
 	if len(tuple.Elements) != 3 {
 		t.Errorf("tuple Elements length = %d, want 3", len(tuple.Elements))
+	}
+}
+
+// Valid import forms must parse without errors, including as the final line
+// with no trailing newline and across semicolons.
+func TestImportStatementValidForms(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"simple", "import os\n"},
+		{"dotted", "import os.path\n"},
+		{"alias", "import os as operating_system\n"},
+		{"multiple", "import os, sys, json\n"},
+		{"dotted with alias", "import os.path as p, sys\n"},
+		{"no trailing newline", "import os"},
+		{"semicolon separated", "import os;import sys\n"},
+		{"next statement", "import os\nx = 1\n"},
+		{"inside try block", "try:\n    import plugin.dyn\nexcept ImportError:\n    x = 1\n"},
+		{"inside if block", "if True:\n    import os\n"},
+		{"inside def body", "def f():\n    import os\n"},
+		{"inside loop", "while True:\n    import os\n"},
+		{"followed by same-indent statement", "if True:\n    import os\n    x = 1\n"},
+		{"single-line block", "if True: import os\nx = 1\n"},
+		{"inside for body", "for i in range(3):\n    import os\n"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			l := lexer.New(tt.input)
+			p := New(l)
+			p.ParseProgram()
+			checkParserErrors(t, p)
+		})
+	}
+}
+
+// Invalid module names must be a syntax error at parse time, not a confusing
+// "unknown library" or "identifier not found" at runtime: "import a-b" parses
+// the module "a" and leaves "-b" to become a following expression.
+func TestImportStatementRejectsInvalidModuleName(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"hyphenated", "import status-other\n"},
+		{"hyphenated dotted", "import my.status-other\n"},
+		{"trailing operator", "import os - 1\n"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			l := lexer.New(tt.input)
+			p := New(l)
+			p.ParseProgram()
+			errors := p.Errors()
+			if len(errors) == 0 {
+				t.Fatalf("expected a parser error for %q", tt.input)
+			}
+			if !strings.Contains(errors[0], "dotted identifiers") {
+				t.Errorf("error %q does not explain the module-name rule", errors[0])
+			}
+		})
+	}
+}
+
+// from-import already errors through expectPeek(IMPORT); make sure the new
+// guard did not disturb that path or the valid ones.
+func TestFromImportStatementHyphenModule(t *testing.T) {
+	l := lexer.New("from status-other import y\n")
+	p := New(l)
+	p.ParseProgram()
+	if len(p.Errors()) == 0 {
+		t.Fatal("expected a parser error for hyphenated from-import module")
 	}
 }

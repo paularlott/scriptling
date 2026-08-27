@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 
 	scriptling "github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs"
@@ -75,7 +74,7 @@ func (s *Server) buildPluginServer() {
 // evaluator, returning the *object.Class for registration in the plugin server.
 // The class and its method closures remain valid for the lifetime of the server.
 func (s *Server) resolveClass(classRef string) (*object.Class, error) {
-	libName, _, ok := strings.Cut(classRef, ".")
+	libName, _, ok := splitHandlerRef(classRef)
 	if !ok {
 		return nil, fmt.Errorf("class handler %q must be in \"module.ClassName\" form", classRef)
 	}
@@ -115,7 +114,7 @@ func (s *Server) runPluginServer(ctx context.Context, in io.Reader, out io.Write
 // runPluginHandler imports the handler library on a fresh evaluator and calls
 // the named function with the decoded plugin arguments and kwargs.
 func (s *Server) runPluginHandler(ctx context.Context, handlerRef string, args []object.Object, kwargs map[string]object.Object) object.Object {
-	libName, _, ok := strings.Cut(handlerRef, ".")
+	libName, _, ok := splitHandlerRef(handlerRef)
 	if !ok {
 		Log.Error("Invalid plugin handler reference", "handler", handlerRef)
 		return &object.Error{Message: "invalid plugin handler reference: " + handlerRef}

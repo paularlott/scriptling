@@ -21,6 +21,20 @@ import (
 	"github.com/paularlott/scriptling/util"
 )
 
+// registerRoute adds one route pattern to the mux. ServeMux panics on
+// patterns it considers conflicting (two wildcards with the same shape, such
+// as /items/{name}/detail and /items/{slug}/detail, or the same pattern
+// registered twice); rather than crashing the server at startup, skip the
+// route with an error log so the rest of the app still serves.
+func registerRoute(mux *http.ServeMux, pattern string, handler http.HandlerFunc) {
+	defer func() {
+		if r := recover(); r != nil {
+			Log.Error("Skipping conflicting route pattern", "pattern", pattern, "reason", fmt.Sprintf("%v", r))
+		}
+	}()
+	mux.HandleFunc(pattern, handler)
+}
+
 // buildMux assembles the full HTTP handler stack: protocol endpoints, script
 // routes, static routes, web root fallback, and auth middleware.
 func (s *Server) buildMux() http.Handler {
@@ -50,9 +64,9 @@ func (s *Server) buildMux() http.Handler {
 		// all GET requests. Append {$} so it matches exactly "/" and lets other
 		// paths fall through to the webroot fallback.
 		if strings.HasSuffix(key, " /") {
-			mux.HandleFunc(key+"{$}", s.handleScriptRequest)
+			registerRoute(mux, key+"{$}", s.handleScriptRequest)
 		} else {
-			mux.HandleFunc(key, s.handleScriptRequest)
+			registerRoute(mux, key, s.handleScriptRequest)
 		}
 	}
 
@@ -374,9 +388,22 @@ func (s *Server) createRequestObject(r *http.Request, pathParams map[string]stri
 	return extlibs.CreateRequestInstance(r.Method, r.URL.Path, body, headers, query, pathParams, r.RemoteAddr)
 }
 
+// splitHandlerRef splits a "module.function" handler reference at the last
+// dot: module names may themselves be dotted (a module in a subdirectory,
+// such as "routes.me"), while the function or class name is always a single
+// identifier. Cutting at the first dot instead would try to import "routes"
+// for a "routes.me.me" reference, which is not a module.
+func splitHandlerRef(ref string) (module, fn string, ok bool) {
+	idx := strings.LastIndex(ref, ".")
+	if idx <= 0 || idx == len(ref)-1 {
+		return "", "", false
+	}
+	return ref[:idx], ref[idx+1:], true
+}
+
 // runHandler runs a handler function and returns the response
 func (s *Server) runHandler(ctx context.Context, handlerRef string, reqObj *object.Instance) *object.Dict {
-	libName, _, ok := strings.Cut(handlerRef, ".")
+	libName, _, ok := splitHandlerRef(handlerRef)
 	if !ok {
 		Log.Error("Invalid handler reference", "handler", handlerRef)
 		return nil

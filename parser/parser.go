@@ -506,6 +506,23 @@ func (p *Parser) parseImportStatement() *ast.ImportStatement {
 		stmt.AppendAdditionalAlias(addAlias)
 	}
 
+	// Module names are dotted identifiers, so nothing else may share the
+	// import's line: "import status-other" must fail here instead of parsing
+	// "-other" as a following statement. A statement boundary in peekToken
+	// ends the import — note a DEDENT can sit in peekToken directly, because
+	// the lexer does not always emit a NEWLINE before a final DEDENT.
+	// "from X import Y" already rejects this via expectPeek(IMPORT).
+	switch p.peekToken.Type {
+	case token.EOF, token.NEWLINE, token.SEMICOLON, token.INDENT, token.DEDENT:
+		return stmt
+	}
+	if !p.skippedNewline {
+		p.errors = append(p.errors, fmt.Sprintf(
+			"line %d: expected end of line after import, got %q — module names must be dotted identifiers",
+			p.peekToken.Line, p.peekToken.Literal))
+		return nil
+	}
+
 	return stmt
 }
 

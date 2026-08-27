@@ -76,7 +76,7 @@ func (s *Server) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Request, 
 
 // runWebSocketHandler runs the scriptling WebSocket handler function
 func (s *Server) runWebSocketHandler(handlerRef string, clientObj *object.Instance, conn *extlibs.WebSocketServerConn, path, connID string) {
-	libName, _, ok := strings.Cut(handlerRef, ".")
+	libName, _, ok := splitHandlerRef(handlerRef)
 	if !ok {
 		Log.Error("Invalid WebSocket handler reference", "handler", handlerRef)
 		return

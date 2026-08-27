@@ -111,6 +111,19 @@ func NewServer(config ServerConfig) (*Server, error) {
 		// (backward compat). Mirrors the collection done inside start_server().
 		extlibs.RuntimeState.Lock()
 		alreadyStarted := extlibs.RuntimeState.ServerStarted
+		if !alreadyStarted && extlibs.RuntimeState.ServerStartCh == nil {
+			// Stale goroutine: a newer server's ResetRuntime cleared the start
+			// channel (and ServerStarted) before this one — leaked from an
+			// earlier server, e.g. a test that never signalled shutdown — could
+			// signal. Abandon; the new server drives its own lifecycle, and
+			// closing the nil channel or flipping ServerStarted would panic or
+			// hang it.
+			extlibs.RuntimeState.Unlock()
+			if runErr != nil {
+				Log.Error("Setup script error after server start", "error", runErr)
+			}
+			return
+		}
 		if !alreadyStarted {
 			extlibs.RuntimeState.ServerStarted = true
 			if extlibs.RuntimeState.ServerCollect != nil {

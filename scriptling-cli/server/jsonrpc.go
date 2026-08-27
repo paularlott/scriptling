@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
 	"github.com/paularlott/jsonrpc"
@@ -188,7 +187,7 @@ func (s *Server) handleJSONRPCHTTP(w http.ResponseWriter, r *http.Request) {
 // runJSONRPCHandler imports the handler's library into a fresh evaluator and
 // invokes the function with the decoded params. Mirrors runHandler in http.go.
 func (s *Server) runJSONRPCHandler(handlerRef string, params object.Object) object.Object {
-	libName, _, ok := strings.Cut(handlerRef, ".")
+	libName, _, ok := splitHandlerRef(handlerRef)
 	if !ok {
 		Log.Error("Invalid JSON-RPC handler reference", "handler", handlerRef)
 		return &object.Error{Message: "invalid handler reference: " + handlerRef}

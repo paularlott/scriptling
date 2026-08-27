@@ -1,5 +1,9 @@
 import scriptling.runtime as runtime
 
+# Handlers in a subdirectory module: decorators fire on import and register
+# routes resolved as "routes.status.<function>".
+import routes.status
+
 # Register middleware for authentication
 runtime.http.middleware("handlers.auth_middleware")
 
