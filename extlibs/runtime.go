@@ -3,6 +3,7 @@ package extlibs
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 
@@ -41,6 +42,15 @@ var RuntimeState = struct {
 	BackgroundFactory SandboxFactory                      // Factory to create new Scriptling instances
 	BackgroundCtxs    map[string]context.Context          // name -> context
 	BackgroundReady   bool                                // If true, start tasks immediately
+	BackgroundDaemons map[string]bool                     // name -> daemon flag (queued tasks)
+
+	// TaskWG tracks outstanding non-daemon background tasks. Hosts that run
+	// scripts to completion (the CLI's plain-run modes) wait on it before
+	// exiting so fire-and-forget tasks are not killed mid-flight. It is
+	// deliberately NOT reset by ResetRuntime: a WaitGroup's counter cannot be
+	// reset, and Done() calls from still-running tasks of an earlier run must
+	// land on the same counter or they would panic.
+	TaskWG sync.WaitGroup
 
 	// KV store
 	KVDB *snapshotkv.DB
@@ -82,6 +92,7 @@ var RuntimeState = struct {
 	BackgroundFactory:    nil,
 	BackgroundCtxs:       make(map[string]context.Context),
 	BackgroundReady:      false,
+	BackgroundDaemons:    make(map[string]bool),
 	KVDB:                 nil,
 	WaitGroups:           make(map[string]*RuntimeWaitGroup),
 	Queues:               make(map[string]*RuntimeQueue),
@@ -140,6 +151,7 @@ func ResetRuntime() {
 	RuntimeState.BackgroundFactory = nil
 	RuntimeState.BackgroundCtxs = make(map[string]context.Context)
 	RuntimeState.BackgroundReady = false
+	RuntimeState.BackgroundDaemons = make(map[string]bool)
 
 	// Close KV store if open. The caller is responsible for reinitializing
 	// via InitKVStore — opening an in-memory DB here only to have it
@@ -327,23 +339,34 @@ var RuntimeLibraryFunctions = map[string]*object.Builtin{
 					shared = b
 				}
 			}
-			if shared {
-				// Pass args/kwargs live; the GIL serializes access. Strip the
-				// "shared" control kwarg so it is not forwarded to the handler.
-				sharedKwargs := make(map[string]object.Object, len(kwargs.Kwargs))
-				for k, v := range kwargs.Kwargs {
-					if k == "shared" {
-						continue
-					}
-					sharedKwargs[k] = v
+			// daemon=True marks the task as not worth waiting for at process
+			// exit — for long-running tasks that should not hold a finishing
+			// script open. It is a control kwarg and is never forwarded to the
+			// handler.
+			daemon := false
+			if v := kwargs.Get("daemon"); v != nil {
+				if b, e := v.AsBool(); e == nil {
+					daemon = b
 				}
+			}
+			// Strip control kwargs so they are not forwarded to the handler.
+			handlerKwargs := make(map[string]object.Object, len(kwargs.Kwargs))
+			for k, v := range kwargs.Kwargs {
+				if k == "shared" || k == "daemon" {
+					continue
+				}
+				handlerKwargs[k] = v
+			}
+			kwargs = object.NewKwargs(handlerKwargs)
+			if shared {
+				// Pass args/kwargs live; the GIL serializes access.
 				// Shallow-copy the args slice: the handler runs in a goroutine that
 				// outlives this call, so it must own its backing array (the caller's
 				// args buffer may be pooled and reused). Elements stay shared by
 				// reference, preserving shared-thread live semantics.
 				liveArgs := make([]object.Object, len(args)-2)
 				copy(liveArgs, args[2:])
-				return startSharedTask(ctx, handler, liveArgs, sharedKwargs, env, eval)
+				return startSharedTask(ctx, handler, liveArgs, kwargs.Kwargs, env, eval, daemon)
 			}
 
 			// Validate that all args/kwargs are transferable types
@@ -372,19 +395,22 @@ var RuntimeLibraryFunctions = map[string]*object.Builtin{
 			RuntimeState.Lock()
 			backgroundReady := RuntimeState.BackgroundReady
 			factory := RuntimeState.BackgroundFactory
-			if !backgroundReady {
+			if !backgroundReady && factory != nil {
 				RuntimeState.Backgrounds[name] = handler
 				RuntimeState.BackgroundArgs[name] = fnArgs
 				RuntimeState.BackgroundKwargs[name] = fnKwargs
 				RuntimeState.BackgroundEnvs[name] = env
 				RuntimeState.BackgroundEvals[name] = eval
 				RuntimeState.BackgroundCtxs[name] = ctx
+				RuntimeState.BackgroundDaemons[name] = daemon
 			}
 			RuntimeState.Unlock()
 
-			// Start immediately if BackgroundReady is true
-			if backgroundReady {
-				return startBackgroundTask(handler, fnArgs, fnKwargs, env, eval, factory, ctx)
+			// Start immediately when ready, or when no factory is configured
+			// (startBackgroundTask then derives the task environment from the
+			// caller instead of using a factory-built instance).
+			if backgroundReady || factory == nil {
+				return startBackgroundTask(handler, fnArgs, fnKwargs, env, eval, factory, ctx, daemon)
 			}
 
 			return &object.Null{}
@@ -405,6 +431,10 @@ Parameters:
     "lib.func" - loads library.function in a new Scriptling instance
   *args: Positional arguments to pass to the function
   **kwargs: Keyword arguments to pass to the function
+  shared (bool): Run in the caller's environment with live shared state
+    instead of an isolated copy (default False)
+  daemon (bool): Do not wait for this task at script exit
+    (default False)
 
 Arguments must be transferable types — only simple values and
 recursively transferable containers are allowed:
@@ -422,6 +452,11 @@ Returns:
   Background tasks are fire-and-forget. For coordination between
   tasks use runtime.sync primitives (Shared, Atomic, Queue, WaitGroup).
   Access panels via console.Console().panel("name") from background tasks.
+
+  The scriptling CLI waits for outstanding background tasks before
+  exiting, so a finishing script does not kill them mid-flight and
+  their output and logging are not lost. Pass daemon=True for
+  long-running tasks that must not hold the process open.
 
 `,
 	},
@@ -535,7 +570,7 @@ func taskContext(ctx context.Context, env *object.Environment) context.Context {
 }
 
 // startBackgroundTask starts a background task in a goroutine and returns a Promise.
-func startBackgroundTask(handler string, fnArgs []object.Object, fnKwargs map[string]object.Object, env *object.Environment, eval evaliface.Evaluator, factory SandboxFactory, ctx context.Context) object.Object {
+func startBackgroundTask(handler string, fnArgs []object.Object, fnKwargs map[string]object.Object, env *object.Environment, eval evaliface.Evaluator, factory SandboxFactory, ctx context.Context, daemon bool) object.Object {
 	if env == nil || eval == nil {
 		return &object.Null{}
 	}
@@ -557,14 +592,41 @@ func startBackgroundTask(handler string, fnArgs []object.Object, fnKwargs map[st
 		}
 	}
 
+	// Non-daemon tasks are tracked so hosts that run scripts to completion
+	// (the CLI's plain-run modes) can wait for them before exiting instead of
+	// killing them mid-flight.
+	if !daemon {
+		RuntimeState.TaskWG.Add(1)
+	}
+
 	// Snapshot callable bindings before spawning the goroutine so we never
 	// read the source Environment from another goroutine.
 	var snapshot *object.CallableSnapshot
+	var globalEnv *object.Environment
 	if !isDotted {
-		snapshot = env.GetGlobal().SnapshotCallables()
+		globalEnv = env.GetGlobal()
+		snapshot = globalEnv.SnapshotCallables()
+	}
+
+	// Factory-free fallback (embedded hosts that never called
+	// SetBackgroundFactory): the task environment is derived from the caller.
+	// Everything it needs from the caller is captured here, on the caller's
+	// goroutine — the task goroutine must not read the source Environment's
+	// fields directly.
+	var parentWriter, parentErrWriter io.Writer
+	var parentImport func(string) error
+	if !isDotted && factory == nil && globalEnv != nil {
+		parentWriter = globalEnv.GetWriter()
+		parentErrWriter = globalEnv.GetErrorWriter()
+		parentImport = globalEnv.GetImportCallback()
 	}
 
 	go func() {
+		defer func() {
+			if !daemon {
+				RuntimeState.TaskWG.Done()
+			}
+		}()
 		defer func() {
 			if r := recover(); r != nil {
 				promise.set(nil, fmt.Errorf("panic: %v", r))
@@ -616,23 +678,58 @@ func startBackgroundTask(handler string, fnArgs []object.Object, fnKwargs map[st
 				promise.set(result, nil)
 			}
 		} else {
-			// Simple function name — create clean environment via factory
-			if factory == nil {
-				promise.set(nil, fmt.Errorf("no factory configured"))
-				return
-			}
-			scriptling := factory()
-			if scriptling == nil {
-				promise.set(nil, fmt.Errorf("factory returned nil"))
-				return
-			}
+			// Simple function name — run in a clean environment
+			var newEnv *object.Environment
+			if factory != nil {
+				scriptling := factory()
+				if scriptling == nil {
+					promise.set(nil, fmt.Errorf("factory returned nil"))
+					return
+				}
 
-			newEnv := object.NewEnvironment()
+				newEnv = object.NewEnvironment()
 
-			// Set up import callback so the function can import libraries
-			newEnv.SetImportCallback(func(libName string) error {
-				return scriptling.LoadLibraryIntoEnv(libName, newEnv)
-			})
+				// Set up import callback so the function can import libraries
+				newEnv.SetImportCallback(func(libName string) error {
+					return scriptling.LoadLibraryIntoEnv(libName, newEnv)
+				})
+			} else {
+				// No factory configured: derive the task environment from the
+				// caller. Sibling functions come from the snapshot (rebound,
+				// with imported library dicts deep-copied); output and error
+				// writers are inherited so task print output and logging reach
+				// the host's sinks exactly like the calling script's; imports
+				// delegate to the caller's loader — the module also becomes
+				// visible to the caller (matching Python's process-wide
+				// sys.modules) and the imported bindings are copied into the
+				// task environment.
+				newEnv = object.NewEnvironment()
+				newEnv.SetOutputWriter(parentWriter)
+				newEnv.SetErrorWriter(parentErrWriter)
+				if parentImport != nil {
+					taskEnv := newEnv
+					newEnv.SetImportCallback(func(libName string) error {
+						// The caller's loader and store belong to a different
+						// lock domain (this task env has its own root/GIL).
+						// Take the caller's interpreter lock so the delegated
+						// load and the snapshot below serialize against the
+						// caller's script code. Re-entrant acquisitions (this
+						// goroutine already holds it) return false and need no
+						// release.
+						acquired := globalEnv.EnterGIL()
+						defer func() {
+							if acquired {
+								globalEnv.ExitGIL()
+							}
+						}()
+						if err := parentImport(libName); err != nil {
+							return err
+						}
+						globalEnv.SnapshotCallables().ApplySnapshot(taskEnv)
+						return nil
+					})
+				}
+			}
 
 			// Copy only sibling functions into the clean env, rebound to
 			// newEnv so closures resolve correctly. No other globals are
@@ -700,7 +797,7 @@ func promiseObject(promise *Promise) object.Object {
 // is memory-safe despite the sharing. Unlike background(), args are passed live
 // (no transferable restriction, no cloning). A fresh context is used so the
 // goroutine acquires the lock instead of inheriting the caller's hold.
-func startSharedTask(ctx context.Context, handler string, fnArgs []object.Object, fnKwargs map[string]object.Object, env *object.Environment, eval evaliface.Evaluator) object.Object {
+func startSharedTask(ctx context.Context, handler string, fnArgs []object.Object, fnKwargs map[string]object.Object, env *object.Environment, eval evaliface.Evaluator, daemon bool) object.Object {
 	if env == nil || eval == nil {
 		return &object.Null{}
 	}
@@ -715,8 +812,17 @@ func startSharedTask(ctx context.Context, handler string, fnArgs []object.Object
 		return errors.NewError("handler is not a function: %s (%T)", handler, fn)
 	}
 
+	if !daemon {
+		RuntimeState.TaskWG.Add(1)
+	}
+
 	promise := newPromise()
 	go func() {
+		defer func() {
+			if !daemon {
+				RuntimeState.TaskWG.Done()
+			}
+		}()
 		defer func() {
 			if r := recover(); r != nil {
 				promise.set(nil, fmt.Errorf("panic: %v", r))
@@ -732,6 +838,14 @@ func startSharedTask(ctx context.Context, handler string, fnArgs []object.Object
 	return promiseObject(promise)
 }
 
+// WaitBackgroundTasks blocks until every outstanding non-daemon background
+// task has finished. Hosts that run scripts to completion (the CLI's
+// plain-run modes) call it before exiting so fire-and-forget tasks are not
+// killed mid-flight; long-running hosts (servers) do not.
+func WaitBackgroundTasks() {
+	RuntimeState.TaskWG.Wait()
+}
+
 // ReleaseBackgroundTasks sets BackgroundReady=true and starts all queued tasks
 func ReleaseBackgroundTasks() {
 	RuntimeState.Lock()
@@ -744,6 +858,7 @@ func ReleaseBackgroundTasks() {
 		env     *object.Environment
 		eval    evaliface.Evaluator
 		ctx     context.Context
+		daemon  bool
 	})
 	for name := range RuntimeState.Backgrounds {
 		tasks[name] = struct {
@@ -753,6 +868,7 @@ func ReleaseBackgroundTasks() {
 			env     *object.Environment
 			eval    evaliface.Evaluator
 			ctx     context.Context
+			daemon  bool
 		}{
 			handler: RuntimeState.Backgrounds[name],
 			args:    RuntimeState.BackgroundArgs[name],
@@ -760,6 +876,7 @@ func ReleaseBackgroundTasks() {
 			env:     RuntimeState.BackgroundEnvs[name],
 			eval:    RuntimeState.BackgroundEvals[name],
 			ctx:     RuntimeState.BackgroundCtxs[name],
+			daemon:  RuntimeState.BackgroundDaemons[name],
 		}
 	}
 	// Drain the queues so ReleaseBackgroundTasks can't re-launch them
@@ -769,6 +886,7 @@ func ReleaseBackgroundTasks() {
 	RuntimeState.BackgroundEnvs = make(map[string]*object.Environment)
 	RuntimeState.BackgroundEvals = make(map[string]evaliface.Evaluator)
 	RuntimeState.BackgroundCtxs = make(map[string]context.Context)
+	RuntimeState.BackgroundDaemons = make(map[string]bool)
 	RuntimeState.Unlock()
 
 	// Start all queued tasks
@@ -780,8 +898,9 @@ func ReleaseBackgroundTasks() {
 			env     *object.Environment
 			eval    evaliface.Evaluator
 			ctx     context.Context
+			daemon  bool
 		}) {
-			startBackgroundTask(t.handler, t.args, t.kwargs, t.env, t.eval, factory, t.ctx)
+			startBackgroundTask(t.handler, t.args, t.kwargs, t.env, t.eval, factory, t.ctx, t.daemon)
 		}(name, task)
 	}
 }

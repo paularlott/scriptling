@@ -44,5 +44,5 @@ print(f"\nNorm of {v} = {norm}")  # 5.0
 # Outer product via matmul
 x = [1.0, 2.0, 3.0]
 y = [4.0, 5.0]
-outer = math.matmul(math.transpose([x]), [y])
+outer = math.matmul(math.transpose(math.array([x])), math.array([y]))
 print(f"\nOuter product: {outer.tolist()}")

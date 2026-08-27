@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"sort"
 	"sync"
 	"time"
 
@@ -410,6 +411,18 @@ Example:
 		if goErr != nil {
 			return &object.Error{Message: goErr.Error()}
 		}
+		// Runtimes return images in arbitrary order; sort by reference
+		// (falling back to ID for untagged images) for a stable listing.
+		sort.Slice(images, func(i, j int) bool {
+			iRef, jRef := images[i].Reference, images[j].Reference
+			if iRef == "" {
+				iRef = images[i].ID
+			}
+			if jRef == "" {
+				jRef = images[j].ID
+			}
+			return iRef < jRef
+		})
 		elements := make([]object.Object, len(images))
 		for i, img := range images {
 			elements[i] = object.NewStringDict(map[string]object.Object{
@@ -423,7 +436,7 @@ Example:
 	}, `image_list() - List locally available images
 
 Returns:
-  list: List of dicts with {id, reference, digest, size}
+  list: List of dicts with {id, reference, digest, size}, sorted alphabetically by reference
     - id (str): Image ID (digest for Apple, full ID for Docker/Podman)
     - reference (str): Image reference e.g. "ubuntu:24.04"
     - digest (str): Content digest e.g. "sha256:abc123..."

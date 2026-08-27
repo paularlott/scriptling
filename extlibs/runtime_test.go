@@ -298,6 +298,11 @@ wg.done()
 
 func TestRuntimeBackground(t *testing.T) {
 	ResetRuntime()
+	SetBackgroundFactory(func() SandboxInstance {
+		p2 := scriptling.New()
+		RegisterRuntimeLibraryAll(p2, nil)
+		return p2
+	})
 	p := scriptling.New()
 	RegisterRuntimeLibraryAll(p, nil)
 

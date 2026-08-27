@@ -551,17 +551,29 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	extlibs.RegisterSysLibrary(p, argv, stdinReader)
 	extlibs.ReleaseBackgroundTasks()
 
+	// Wait for outstanding background tasks before exiting so fire-and-forget
+	// runtime.background() tasks are not killed mid-flight (their output and
+	// logging would be silently lost). Long-running modes — server, JSON-RPC,
+	// MCP — return above and never reach this point.
 	if code := cmd.GetString("code"); code != "" {
-		return evalAndCheckExit(p, code)
+		err := evalAndCheckExit(p, code)
+		extlibs.WaitBackgroundTasks()
+		return err
 	}
 	if interactive {
-		return runInteractive(p)
+		err := runInteractive(p)
+		extlibs.WaitBackgroundTasks()
+		return err
 	}
 	if file != "" {
-		return runFile(p, file)
+		err := runFile(p, file)
+		extlibs.WaitBackgroundTasks()
+		return err
 	}
 	if !isStdinEmpty() {
-		return runStdin(p)
+		err := runStdin(p)
+		extlibs.WaitBackgroundTasks()
+		return err
 	}
 	if packLoader != nil {
 		entry, found, err := packLoader.ResolveMain()
@@ -570,9 +582,13 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 		}
 		if found {
 			if entry.Script != nil {
-				return evalAndCheckExit(p, string(entry.Script))
+				err := evalAndCheckExit(p, string(entry.Script))
+				extlibs.WaitBackgroundTasks()
+				return err
 			}
-			return evalAndCheckExit(p, fmt.Sprintf("import %s\n%s.%s()", entry.Module, entry.Module, entry.Function))
+			err := evalAndCheckExit(p, fmt.Sprintf("import %s\n%s.%s()", entry.Module, entry.Module, entry.Function))
+			extlibs.WaitBackgroundTasks()
+			return err
 		}
 	}
 	cmd.ShowHelp()
