@@ -102,7 +102,7 @@ func TestRuntimeHTTPResponses(t *testing.T) {
 
 func TestRuntimeKV(t *testing.T) {
 	ResetRuntime()
-	InitKVStore("")
+	InitKVStore("", nil)
 	p := scriptling.New()
 	RegisterRuntimeLibraryAll(p, nil)
 
@@ -196,7 +196,7 @@ store.close()
 
 func TestRuntimeKVTTL(t *testing.T) {
 	ResetRuntime()
-	InitKVStore("")
+	InitKVStore("", nil)
 	p := scriptling.New()
 	RegisterRuntimeLibraryAll(p, nil)
 
@@ -332,7 +332,7 @@ runtime.background("task2", "worker.cleanup")
 
 func TestRuntimeCrossEnvironmentSync(t *testing.T) {
 	ResetRuntime()
-	InitKVStore("")
+	InitKVStore("", nil)
 
 	// Create two separate scriptling instances
 	p1 := scriptling.New()

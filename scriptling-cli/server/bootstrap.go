@@ -66,7 +66,7 @@ func NewServer(config ServerConfig) (*Server, error) {
 
 	extlibs.ResetRuntime()
 
-	if err := extlibs.InitKVStore(config.KVStoragePath); err != nil {
+	if err := extlibs.InitKVStore(config.KVStoragePath, Log); err != nil {
 		return nil, fmt.Errorf("failed to initialize KV store: %w", err)
 	}
 
