@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -18,29 +17,46 @@ import (
 	"time"
 
 	"github.com/paularlott/scriptling/plugin"
+	"github.com/paularlott/scriptling/scriptling-cli/pack"
 )
 
 // pluginFS is an fs.FS over one fetcher plugin client for one source, the
 // RPC-backed sibling of pack's dir and zip backends. Every ReadFile is a
-// fetch.read round trip guarded by the per-file disk cache; ReadDir results
-// are memoized for the file system's lifetime. Implements fs.FS,
-// fs.ReadFileFS, fs.StatFS and fs.ReadDirFS so all fs helpers (fs.ReadFile,
-// fs.Stat, fs.WalkDir, fs.Sub) work, mirroring pack's zipFS.
+// fetch.read round trip guarded by the per-file disk cache; ReadDir results are
+// reused for dirTTL so a long-lived host still sees new files appear.
+// Implements fs.FS, fs.ReadFileFS, fs.StatFS and fs.ReadDirFS so all fs helpers
+// (fs.ReadFile, fs.Stat, fs.WalkDir, fs.Sub) work, mirroring pack's zipFS.
+//
+// ctx is the host's context: cancelling it aborts in-flight fetches. fs.FS has
+// no per-call context, so it is captured once here.
 type pluginFS struct {
+	ctx      context.Context
 	client   *plugin.Client
 	source   string
 	cacheDir string
+	dirTTL   time.Duration
 
 	mu   sync.Mutex
-	dirs map[string][]fs.DirEntry // memoized fetch.list results ("." → root)
+	dirs map[string]dirCacheEntry // fetch.list results ("." → root)
 }
 
-func newPluginFS(client *plugin.Client, source, cacheDir string) *pluginFS {
+// dirCacheEntry is a directory listing with the time it was fetched.
+type dirCacheEntry struct {
+	entries []fs.DirEntry
+	fetched time.Time
+}
+
+func newPluginFS(ctx context.Context, client *plugin.Client, source, cacheDir string, dirTTL time.Duration) *pluginFS {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	return &pluginFS{
+		ctx:      ctx,
 		client:   client,
 		source:   source,
 		cacheDir: cacheDir,
-		dirs:     map[string][]fs.DirEntry{},
+		dirTTL:   dirTTL,
+		dirs:     map[string]dirCacheEntry{},
 	}
 }
 
@@ -90,41 +106,57 @@ func (p *pluginFS) Stat(name string) (fs.FileInfo, error) {
 	return &fileInfo{name: path.Base(name), size: int64(len(data))}, nil
 }
 
-// ReadDir implements fs.ReadDirFS.
+// ReadDir implements fs.ReadDirFS. Listings are reused for dirTTL; a negative
+// dirTTL disables reuse so every call is a fresh fetch.list.
 func (p *pluginFS) ReadDir(name string) ([]fs.DirEntry, error) {
 	name, err := cleanPath(name)
 	if err != nil {
 		return nil, err
 	}
-	p.mu.Lock()
-	if entries, ok := p.dirs[name]; ok {
-		p.mu.Unlock()
+	if entries, ok := p.cachedDir(name); ok {
 		return entries, nil
 	}
-	p.mu.Unlock()
 
-	entries, err := p.client.FetchList(context.Background(), p.source, name)
+	listed, err := p.client.FetchList(p.ctx, p.source, name)
 	if err != nil {
 		if errors.Is(err, plugin.ErrFetchNotFound) {
 			return nil, &fs.PathError{Op: "readdir", Path: name, Err: fs.ErrNotExist}
 		}
 		return nil, err
 	}
-	out := make([]fs.DirEntry, len(entries))
-	for i, e := range entries {
+	out := make([]fs.DirEntry, len(listed))
+	for i, e := range listed {
 		out[i] = &dirEntry{name: e.Name, dir: e.IsDir}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name() < out[j].Name() })
 
 	p.mu.Lock()
-	p.dirs[name] = out
+	p.dirs[name] = dirCacheEntry{entries: out, fetched: time.Now()}
 	p.mu.Unlock()
 	return out, nil
 }
 
+// cachedDir returns a listing that is still within dirTTL.
+func (p *pluginFS) cachedDir(name string) ([]fs.DirEntry, bool) {
+	if p.dirTTL < 0 {
+		return nil, false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	entry, ok := p.dirs[name]
+	if !ok {
+		return nil, false
+	}
+	if time.Since(entry.fetched) > p.dirTTL {
+		delete(p.dirs, name)
+		return nil, false
+	}
+	return entry.entries, true
+}
+
 // statOrRead resolves name to either its content (data != nil, isDir false),
-// a directory (data == nil, isDir true) or an error. It consults the
-// memoized directory listings first so stats and globs do not fetch content.
+// a directory (data == nil, isDir true) or an error. It consults directory
+// listings first so stats and globs do not fetch content.
 func (p *pluginFS) statOrRead(name string) (data []byte, isDir bool, err error) {
 	if name == "." {
 		return nil, true, nil
@@ -149,8 +181,8 @@ func (p *pluginFS) statOrRead(name string) (data []byte, isDir bool, err error) 
 	return content, false, nil
 }
 
-// lookupEntry reports the memoized listing entry for name's base under its
-// parent directory, populating the parent's listing if needed.
+// lookupEntry reports the listing entry for name's base under its parent
+// directory, populating the parent's listing if needed.
 func (p *pluginFS) lookupEntry(name string) (*dirEntry, bool) {
 	parent := path.Dir(name)
 	if parent == name { // "."
@@ -181,8 +213,7 @@ func (p *pluginFS) cachedReadResult(name string) ([]byte, plugin.FetchResult, er
 	cacheDir, skip := resolveCacheDir(p.cacheDir)
 	if skip {
 		// No usable cache dir: straight fetch, no validators.
-		data, res, err := fetchFile(p.client, p.source, name, "", "")
-		return data, res, err
+		return fetchFile(p.ctx, p.client, p.source, name, "", "")
 	}
 	key := fetchCacheKey(p.source, name)
 	dataFile := filepath.Join(cacheDir, key+".pfile")
@@ -190,7 +221,7 @@ func (p *pluginFS) cachedReadResult(name string) ([]byte, plugin.FetchResult, er
 
 	etag, lastMod := readCacheMeta(metaFile)
 	if _, statErr := os.Stat(dataFile); statErr == nil {
-		data, res, err := fetchFile(p.client, p.source, name, etag, lastMod)
+		data, res, err := fetchFile(p.ctx, p.client, p.source, name, etag, lastMod)
 		if err != nil {
 			return nil, res, err
 		}
@@ -207,7 +238,7 @@ func (p *pluginFS) cachedReadResult(name string) ([]byte, plugin.FetchResult, er
 		return data, res, nil
 	}
 
-	data, res, err := fetchFile(p.client, p.source, name, "", "")
+	data, res, err := fetchFile(p.ctx, p.client, p.source, name, "", "")
 	if err != nil {
 		return nil, res, err
 	}
@@ -216,8 +247,8 @@ func (p *pluginFS) cachedReadResult(name string) ([]byte, plugin.FetchResult, er
 }
 
 // =========================================================================
-// Cache layout — same directory and .meta format as pack's URL cache, with
-// .pfile data files keyed by source+path.
+// Cache layout — the same directory and .meta format as pack's URL cache,
+// with .pfile data files keyed by source+path.
 // =========================================================================
 
 // resolveCacheDir returns the cache directory to use, or skip=true when no
@@ -225,7 +256,7 @@ func (p *pluginFS) cachedReadResult(name string) ([]byte, plugin.FetchResult, er
 func resolveCacheDir(cacheDir string) (string, bool) {
 	if cacheDir == "" {
 		var err error
-		cacheDir, err = defaultCacheDir()
+		cacheDir, err = pack.DefaultCacheDir()
 		if err != nil {
 			return "", true
 		}
@@ -234,16 +265,6 @@ func resolveCacheDir(cacheDir string) (string, bool) {
 		return "", true
 	}
 	return cacheDir, false
-}
-
-// defaultCacheDir mirrors pack.DefaultCacheDir without the import cycle
-// (pack does not export it; the layout is shared by convention).
-func defaultCacheDir() (string, error) {
-	base, err := os.UserCacheDir()
-	if err != nil {
-		return "", fmt.Errorf("cannot determine cache directory: %w", err)
-	}
-	return filepath.Join(base, "scriptling", "packages"), nil
 }
 
 // fetchCacheKey returns a stable filename-safe key for a source+path pair.

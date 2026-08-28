@@ -7,8 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -58,9 +56,10 @@ func (f *srvFetcher) List(ctx context.Context, source, path string) ([]plugin.Fe
 }
 
 // TestServerSetupScriptAndLibsFromFetcherPlugin proves the server-mode flow
-// the CLI wires up: the setup script arrives as a scheme source (staged to a
-// local file like resolveScriptFile does) and every import resolves through
-// the plugin's declared package, with no --package and no local lib dirs.
+// the CLI wires up: the setup script arrives as a scheme source and is handed
+// to the server as source text — nothing is staged to disk — and every import
+// resolves through the plugin's declared package, with no --package and no
+// local lib dirs.
 func TestServerSetupScriptAndLibsFromFetcherPlugin(t *testing.T) {
 	fetcher := &srvFetcher{
 		files: map[string]string{
@@ -84,22 +83,25 @@ func TestServerSetupScriptAndLibsFromFetcherPlugin(t *testing.T) {
 	if _, err := manager.LoadURL(context.Background(), "ppsrvplugin", pluginHTTP.URL, true, false); err != nil {
 		t.Fatalf("LoadURL: %v", err)
 	}
-	if err := pluginpack.Register(manager); err != nil {
-		t.Fatalf("pluginpack.Register: %v", err)
+	bridge := pluginpack.New(pluginpack.Options{
+		Manager:  manager,
+		Context:  context.Background(),
+		CacheDir: t.TempDir(),
+	})
+	if err := bridge.Register(); err != nil {
+		t.Fatalf("Bridge.Register: %v", err)
 	}
+	defer bridge.Close()
 
-	// Stage the setup script exactly like the CLI's resolveScriptFile.
-	content, err := pluginpack.FetchScript("ppsrv://scripts/setup")
+	// Fetch the setup script exactly like the CLI's setupScript: source text,
+	// no temporary file anywhere.
+	content, err := bridge.FetchScript(context.Background(), "ppsrv://scripts/setup")
 	if err != nil {
 		t.Fatalf("FetchScript: %v", err)
 	}
-	staged := filepath.Join(t.TempDir(), "setup.py")
-	if err := os.WriteFile(staged, content, 0o644); err != nil {
-		t.Fatal(err)
-	}
 
 	// Open the declared packages exactly like the CLI's declaredLibBundles.
-	bundles, err := pluginpack.DeclaredBundles(manager, false, t.TempDir(), nil)
+	bundles, err := bridge.DeclaredBundles(nil)
 	if err != nil {
 		t.Fatalf("DeclaredBundles: %v", err)
 	}
@@ -108,9 +110,10 @@ func TestServerSetupScriptAndLibsFromFetcherPlugin(t *testing.T) {
 	}
 
 	s, err := NewServer(ServerConfig{
-		ScriptFile: staged,
-		LibBundles: bundles,
-		JSONRPC:    true,
+		ScriptSource: content,
+		ScriptName:   "ppsrv://scripts/setup",
+		LibBundles:   bundles,
+		JSONRPC:      true,
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)

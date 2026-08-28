@@ -232,3 +232,168 @@ func TestLoaderDistinguishesFetchErrorsFromMisses(t *testing.T) {
 		t.Fatalf("Load(here) = found=%v err=%v, want the healthy bundle to shield it", found, err)
 	}
 }
+
+func TestSchemeSyntaxIgnoresRegistration(t *testing.T) {
+	// SchemeSyntax is what lets callers tell "not a scheme" apart from
+	// "scheme with no plugin loaded", so it must not consult the registry.
+	cases := []struct {
+		source string
+		scheme string
+		ok     bool
+	}{
+		{"knot://libs", "knot", true},
+		{"never-registered://scripts/x", "never-registered", true},
+		{"a+b-c.d://x", "a+b-c.d", true},
+		{"knot://", "", false},
+		{"knot", "", false},
+		{"http://example.com/x.zip", "", false},
+		{"https://example.com/x.zip", "", false},
+		{"file://x", "", false},
+		{"/local/path.zip", "", false},
+		{"relative/path.zip", "", false},
+		{"1bad://libs", "", false},
+		{"knot://lib s", "", false},
+		{"knot://lib\tx", "", false},
+	}
+	for _, tc := range cases {
+		scheme, ok := SchemeSyntax(tc.source)
+		if scheme != tc.scheme || ok != tc.ok {
+			t.Errorf("SchemeSyntax(%q) = (%q, %v), want (%q, %v)", tc.source, scheme, ok, tc.scheme, tc.ok)
+		}
+	}
+}
+
+func TestUnregisterSchemeAllowsReclaim(t *testing.T) {
+	opener := func(source string, insecure bool, cacheDir string) (*Bundle, error) {
+		return nil, errors.New("not called")
+	}
+	if err := RegisterScheme("reclaim-test", opener); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	if _, ok := SchemeFor("reclaim-test://libs"); !ok {
+		t.Fatal("expected the scheme to resolve after registration")
+	}
+	if err := RegisterScheme("reclaim-test", opener); err == nil {
+		t.Fatal("expected a duplicate registration to fail")
+	}
+
+	if !UnregisterScheme("reclaim-test") {
+		t.Fatal("expected Unregister to report the scheme was registered")
+	}
+	if UnregisterScheme("reclaim-test") {
+		t.Fatal("expected a second Unregister to report nothing was registered")
+	}
+	if _, ok := SchemeFor("reclaim-test://libs"); ok {
+		t.Fatal("expected the scheme to stop resolving after Unregister")
+	}
+
+	// Reclaimable: this is what lets a host swap plugins at runtime.
+	if err := RegisterScheme("reclaim-test", opener); err != nil {
+		t.Fatalf("re-register after Unregister: %v", err)
+	}
+	UnregisterScheme("reclaim-test")
+}
+
+func TestUnknownSchemeErrorIsActionable(t *testing.T) {
+	_, err := FetchBundle("no-such-plugin-scheme://libs", false, t.TempDir())
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	msg := err.Error()
+
+	// Callers detect the cause without matching on message text.
+	if !errors.Is(err, ErrUnknownScheme) {
+		t.Errorf("expected the error to wrap ErrUnknownScheme, got: %v", err)
+	}
+	// It must name the scheme and say what to do, rather than falling through
+	// to a missing-file error.
+	if !strings.Contains(msg, "no-such-plugin-scheme") {
+		t.Errorf("expected the scheme named, got: %v", err)
+	}
+	if !strings.Contains(msg, "load the plugin that serves it") {
+		t.Errorf("expected the fix described, got: %v", err)
+	}
+	if strings.Contains(msg, "no such file") {
+		t.Errorf("expected a plugin error, not a file error: %v", err)
+	}
+	// This package is shared by the CLI and by embedding hosts, so it must not
+	// hand out CLI-specific advice. The CLI adds the flag names itself.
+	for _, cliOnly := range []string{"--plugin", "--plugin-dir", "CLI"} {
+		if strings.Contains(msg, cliOnly) {
+			t.Errorf("library error mentions %q, which is wrong advice for an embedding host: %v", cliOnly, err)
+		}
+	}
+}
+
+func TestIsolatedRegistriesAreIndependent(t *testing.T) {
+	mapFS := fstest.MapFS{
+		"manifest.toml": &fstest.MapFile{Data: []byte("name = \"isopkg\"\nversion = \"1.0.0\"\n")},
+	}
+	first := NewSchemeRegistry()
+	second := NewSchemeRegistry()
+	opener := func(source string, insecure bool, cacheDir string) (*Bundle, error) {
+		return OpenBundle(mapFS, source)
+	}
+
+	// The same scheme in two registries is fine: they are separate tables.
+	if err := first.Register("iso-test", opener); err != nil {
+		t.Fatalf("first register: %v", err)
+	}
+	if err := second.Register("iso-test", opener); err != nil {
+		t.Fatalf("second register: %v", err)
+	}
+
+	if _, err := first.FetchBundle("iso-test://libs", false, ""); err != nil {
+		t.Fatalf("first FetchBundle: %v", err)
+	}
+	// Neither leaks into the process-wide registry.
+	if _, ok := SchemeFor("iso-test://libs"); ok {
+		t.Fatal("an isolated registry must not affect the default one")
+	}
+	if _, err := FetchBundle("iso-test://libs", false, ""); err == nil {
+		t.Fatal("expected the default registry not to resolve an isolated scheme")
+	}
+
+	if got := first.Registered(); len(got) != 1 || got[0] != "iso-test" {
+		t.Fatalf("Registered() = %v, want [iso-test]", got)
+	}
+	if first.Lookup("iso-test") == nil {
+		t.Fatal("expected Lookup to return the opener")
+	}
+	if first.Lookup("absent") != nil {
+		t.Fatal("expected Lookup to return nil for an unregistered scheme")
+	}
+
+	// Built-in sources still work through an isolated registry.
+	dir := writeBundleDir(t)
+	if _, err := first.FetchBundle(dir, false, ""); err != nil {
+		t.Fatalf("directory FetchBundle through an isolated registry: %v", err)
+	}
+
+	first.Unregister("iso-test")
+	if _, err := first.FetchBundle("iso-test://libs", false, ""); err == nil {
+		t.Fatal("expected the unregistered scheme to fail")
+	}
+	// The second registry is untouched by the first's Unregister.
+	if _, err := second.FetchBundle("iso-test://libs", false, ""); err != nil {
+		t.Fatalf("second registry should be unaffected: %v", err)
+	}
+	second.Unregister("iso-test")
+}
+
+func TestRegisteredSchemesSorted(t *testing.T) {
+	r := NewSchemeRegistry()
+	opener := func(source string, insecure bool, cacheDir string) (*Bundle, error) {
+		return nil, errors.New("not called")
+	}
+	for _, s := range []string{"zeta", "alpha", "mid"} {
+		if err := r.Register(s, opener); err != nil {
+			t.Fatalf("register %s: %v", s, err)
+		}
+	}
+	got := r.Registered()
+	want := []string{"alpha", "mid", "zeta"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("Registered() = %v, want %v", got, want)
+	}
+}

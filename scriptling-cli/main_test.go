@@ -13,10 +13,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/paularlott/cli"
 	"github.com/paularlott/logger"
 	"github.com/paularlott/scriptling/lint"
 	scriptlingplugin "github.com/paularlott/scriptling/plugin"
 	"github.com/paularlott/scriptling/scriptling-cli/bootstrap"
+	"github.com/paularlott/scriptling/scriptling-cli/pack"
 	"github.com/paularlott/scriptling/scriptling-cli/pluginpack"
 )
 
@@ -153,7 +155,7 @@ exit 2
 		globalLogger = previousLogger
 	}()
 
-	manager, err := loadPluginManager(context.Background(), []string{dir}, nil)
+	manager, err := loadPluginManager(context.Background(), []string{dir}, nil, nil)
 	if err != nil {
 		t.Fatalf("loadPluginManager: %v", err)
 	}
@@ -254,48 +256,111 @@ func TestOutputLintResultReturnsExitError(t *testing.T) {
 	}
 }
 
-func TestSplitPluginSpec(t *testing.T) {
+func TestResolvePluginSpecs(t *testing.T) {
 	cases := []struct {
-		spec  string
-		path  string
-		args  []string
-		fails bool
+		name    string
+		plugins []string
+		args    []string
+		want    []pluginSpec
+		fails   string
 	}{
-		{spec: "/usr/local/bin/knot", path: "/usr/local/bin/knot"},
-		{spec: "/usr/local/bin/knot scriptling-server", path: "/usr/local/bin/knot", args: []string{"scriptling-server"}},
-		{spec: "/usr/local/bin/knot scriptling-server --alias testing", path: "/usr/local/bin/knot", args: []string{"scriptling-server", "--alias", "testing"}},
-		{spec: "'/opt/knot dir/knot' serve", path: "/opt/knot dir/knot", args: []string{"serve"}},
-		{spec: `"/opt/knot dir/knot" serve`, path: "/opt/knot dir/knot", args: []string{"serve"}},
-		{spec: `/opt/knot\ dir/knot serve`, path: "/opt/knot dir/knot", args: []string{"serve"}},
-		{spec: "'unterminated", fails: true},
-		{spec: "", fails: true},
-		{spec: "   ", fails: true},
+		{
+			name:    "path only",
+			plugins: []string{"/usr/local/bin/knot"},
+			want:    []pluginSpec{{Path: "/usr/local/bin/knot"}},
+		},
+		{
+			name:    "path with spaces needs no quoting",
+			plugins: []string{"/opt/knot dir/knot"},
+			args:    []string{"serve"},
+			want:    []pluginSpec{{Path: "/opt/knot dir/knot", Args: []string{"serve"}}},
+		},
+		{
+			name:    "bare args go to the sole plugin in order",
+			plugins: []string{"/usr/local/bin/knot"},
+			args:    []string{"scriptling-server", "--alias", "testing"},
+			want:    []pluginSpec{{Path: "/usr/local/bin/knot", Args: []string{"scriptling-server", "--alias", "testing"}}},
+		},
+		{
+			name:    "flag containing = is not mistaken for a qualifier",
+			plugins: []string{"/usr/local/bin/knot"},
+			args:    []string{"--alias=testing", "--port=8080"},
+			want:    []pluginSpec{{Path: "/usr/local/bin/knot", Args: []string{"--alias=testing", "--port=8080"}}},
+		},
+		{
+			name:    "base name qualifies with several plugins",
+			plugins: []string{"/usr/local/bin/knot", "/usr/local/bin/other"},
+			args:    []string{"knot=serve", "other=--port=8080", "knot=--alias=x"},
+			want: []pluginSpec{
+				{Path: "/usr/local/bin/knot", Args: []string{"serve", "--alias=x"}},
+				{Path: "/usr/local/bin/other", Args: []string{"--port=8080"}},
+			},
+		},
+		{
+			name:    "full path qualifies too",
+			plugins: []string{"/a/knot", "/b/knot"},
+			args:    []string{"/a/knot=first", "/b/knot=second"},
+			want: []pluginSpec{
+				{Path: "/a/knot", Args: []string{"first"}},
+				{Path: "/b/knot", Args: []string{"second"}},
+			},
+		},
+		{
+			name:    "no plugins at all",
+			plugins: nil,
+			want:    []pluginSpec{},
+		},
+		{
+			name:  "arg without any plugin",
+			args:  []string{"serve"},
+			fails: "without any --plugin",
+		},
+		{
+			name:    "ambiguous bare arg with several plugins",
+			plugins: []string{"/usr/local/bin/knot", "/usr/local/bin/other"},
+			args:    []string{"serve"},
+			fails:   "ambiguous",
+		},
+		{
+			name:    "ambiguous base name",
+			plugins: []string{"/a/knot", "/b/knot"},
+			args:    []string{"knot=serve"},
+			fails:   "ambiguous",
+		},
+		{
+			name:    "empty plugin value",
+			plugins: []string{"  "},
+			fails:   "empty --plugin value",
+		},
 	}
+
 	for _, tc := range cases {
-		path, args, err := splitPluginSpec(tc.spec)
-		if tc.fails {
-			if err == nil {
-				t.Errorf("splitPluginSpec(%q) expected an error", tc.spec)
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := resolvePluginSpecs(tc.plugins, tc.args)
+			if tc.fails != "" {
+				if err == nil {
+					t.Fatalf("expected an error containing %q, got %+v", tc.fails, got)
+				}
+				if !strings.Contains(err.Error(), tc.fails) {
+					t.Fatalf("expected an error containing %q, got: %v", tc.fails, err)
+				}
+				return
 			}
-			continue
-		}
-		if err != nil {
-			t.Errorf("splitPluginSpec(%q): %v", tc.spec, err)
-			continue
-		}
-		if path != tc.path {
-			t.Errorf("splitPluginSpec(%q) path = %q, want %q", tc.spec, path, tc.path)
-		}
-		if len(args) != len(tc.args) {
-			t.Errorf("splitPluginSpec(%q) args = %v, want %v", tc.spec, args, tc.args)
-			continue
-		}
-		for i := range args {
-			if args[i] != tc.args[i] {
-				t.Errorf("splitPluginSpec(%q) args = %v, want %v", tc.spec, args, tc.args)
-				break
+			if err != nil {
+				t.Fatalf("resolvePluginSpecs: %v", err)
 			}
-		}
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %d specs, want %d: %+v", len(got), len(tc.want), got)
+			}
+			for i := range got {
+				if got[i].Path != tc.want[i].Path {
+					t.Errorf("spec %d path = %q, want %q", i, got[i].Path, tc.want[i].Path)
+				}
+				if strings.Join(got[i].Args, "\x00") != strings.Join(tc.want[i].Args, "\x00") {
+					t.Errorf("spec %d args = %v, want %v", i, got[i].Args, tc.want[i].Args)
+				}
+			}
+		})
 	}
 }
 
@@ -323,7 +388,7 @@ func TestLoadPluginManagerExplicitPlugin(t *testing.T) {
 	helper := filepath.Join(dir, "args-plugin")
 	writeArgsPluginHelper(t, helper, argsFile)
 
-	manager, err := loadPluginManager(context.Background(), nil, []string{helper + " --alias testing"})
+	manager, err := loadPluginManager(context.Background(), nil, []string{helper}, []string{"--alias", "testing"})
 	if err != nil {
 		t.Fatalf("loadPluginManager: %v", err)
 	}
@@ -356,7 +421,7 @@ func TestLoadPluginManagerExplicitWinsOverDir(t *testing.T) {
 
 	// The same executable, loaded explicitly WITH arguments and also
 	// discoverable via --plugin-dir: the explicit entry must win.
-	manager, err := loadPluginManager(context.Background(), []string{pluginDir}, []string{helper + " --alias explicit"})
+	manager, err := loadPluginManager(context.Background(), []string{pluginDir}, []string{helper}, []string{"--alias", "explicit"})
 	if err != nil {
 		t.Fatalf("loadPluginManager: %v", err)
 	}
@@ -374,10 +439,11 @@ func TestLoadPluginManagerExplicitWinsOverDir(t *testing.T) {
 	}
 }
 
-// TestResolveScriptFileStagesSchemeSources covers the server-mode setup
-// script path: a scheme source is fetched from its plugin and staged to a
-// local file; a plain path passes through untouched.
-func TestResolveScriptFileStagesSchemeSources(t *testing.T) {
+// TestSetupScriptReturnsSourceWithoutStaging covers the server-mode setup
+// script path: a scheme source is fetched from its plugin and returned as
+// source text, with nothing written to disk; a plain path passes through
+// untouched.
+func TestSetupScriptReturnsSourceWithoutStaging(t *testing.T) {
 	dir := t.TempDir()
 	localScript := filepath.Join(dir, "local.py")
 	if err := os.WriteFile(localScript, []byte("print('local')\n"), 0o644); err != nil {
@@ -404,33 +470,120 @@ func TestResolveScriptFileStagesSchemeSources(t *testing.T) {
 	if _, err := manager.LoadURL(context.Background(), "ppmainplugin", httpSrv.URL, true, false); err != nil {
 		t.Fatalf("LoadURL: %v", err)
 	}
-	if err := pluginpack.Register(manager); err != nil {
-		t.Fatalf("pluginpack.Register: %v", err)
+	bridge := pluginpack.New(pluginpack.Options{Manager: manager, Context: context.Background(), CacheDir: t.TempDir()})
+	if err := bridge.Register(); err != nil {
+		t.Fatalf("Bridge.Register: %v", err)
+	}
+	pluginBridge = bridge
+	t.Cleanup(func() {
+		_ = bridge.Close()
+		pluginBridge = nil
+	})
+
+	// Plain paths pass through unchanged, as a path.
+	path, source, name, err := setupScript(context.Background(), localScript)
+	if err != nil {
+		t.Fatalf("setupScript(local): %v", err)
+	}
+	if path != localScript || source != nil || name != "" {
+		t.Fatalf("expected local path passthrough, got path=%q source=%q name=%q", path, source, name)
 	}
 
-	// Plain paths pass through unchanged.
-	got, err := resolveScriptFile(localScript)
+	// Count the temp files before and after: a scheme source must not add one.
+	tempBefore := countTempScripts(t)
+
+	path, source, name, err = setupScript(context.Background(), "ppmain://scripts/setup")
 	if err != nil {
-		t.Fatalf("resolveScriptFile(local): %v", err)
+		t.Fatalf("setupScript(scheme): %v", err)
 	}
-	if got != localScript {
-		t.Fatalf("expected local path passthrough, got %s", got)
+	if path != "" {
+		t.Fatalf("expected no file path for a scheme source, got %q", path)
+	}
+	if name != "ppmain://scripts/setup" {
+		t.Fatalf("expected the source to label the script, got %q", name)
+	}
+	if !strings.Contains(string(source), "runtime") {
+		t.Fatalf("unexpected script source: %q", source)
+	}
+	if got := countTempScripts(t); got != tempBefore {
+		t.Fatalf("scheme source staged %d temp file(s); expected none", got-tempBefore)
+	}
+}
+
+// countTempScripts counts staged scriptling script files left in the temp dir.
+func countTempScripts(t *testing.T) int {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(os.TempDir(), "scriptling-script-*.py"))
+	if err != nil {
+		t.Fatalf("glob temp scripts: %v", err)
+	}
+	return len(matches)
+}
+
+// TestSetupScriptWithoutPluginNamesTheScheme checks the error a user gets when
+// they ask for a scheme source without loading the plugin that serves it: it
+// must name the scheme and the flag, not report a missing file.
+func TestSetupScriptWithoutPluginNamesTheScheme(t *testing.T) {
+	previous := pluginBridge
+	pluginBridge = nil
+	t.Cleanup(func() { pluginBridge = previous })
+
+	_, _, _, err := setupScript(context.Background(), "notloaded://scripts/setup")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "notloaded") || !strings.Contains(msg, "--plugin") {
+		t.Fatalf("expected the scheme and --plugin named, got: %v", msg)
+	}
+	if strings.Contains(msg, "no such file") {
+		t.Fatalf("expected a plugin error, not a file error: %v", msg)
+	}
+}
+
+// TestUnregisteredSchemePackageErrorIsActionable is the --package half of the
+// same problem: openBundles is the CLI's own entry point, so its message must
+// name the flags even though the underlying pack error does not.
+func TestUnregisteredSchemePackageErrorIsActionable(t *testing.T) {
+	_, _, err := openBundles([]string{"notloaded://libs"}, false, t.TempDir())
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "notloaded") {
+		t.Errorf("expected the scheme named, got: %v", msg)
+	}
+	if !strings.Contains(msg, "--plugin") {
+		t.Errorf("expected the CLI to add the flag hint, got: %v", msg)
+	}
+	if strings.Contains(msg, "no such file") {
+		t.Errorf("expected a plugin error, not a file error: %v", msg)
+	}
+}
+
+// TestWithPluginFlagHintOnlyTouchesUnknownScheme checks the CLI hint is added
+// exactly where it applies and nowhere else.
+func TestWithPluginFlagHintOnlyTouchesUnknownScheme(t *testing.T) {
+	if got := withPluginFlagHint(nil); got != nil {
+		t.Errorf("expected nil to pass through, got %v", got)
 	}
 
-	// Scheme sources are fetched (always fresh) and staged locally.
-	staged, err := resolveScriptFile("ppmain://scripts/setup")
-	if err != nil {
-		t.Fatalf("resolveScriptFile(scheme): %v", err)
+	other := errors.New("disk on fire")
+	if got := withPluginFlagHint(other); got != other {
+		t.Errorf("expected an unrelated error to pass through unchanged, got %v", got)
 	}
-	if staged == localScript || !strings.HasSuffix(staged, ".py") {
-		t.Fatalf("expected a staged .py file, got %s", staged)
+
+	unknown := fmt.Errorf("failed to load package x://y: %w", pack.ErrUnknownScheme)
+	got := withPluginFlagHint(unknown)
+	if !errors.Is(got, pack.ErrUnknownScheme) {
+		t.Error("expected the hint to preserve the wrapped sentinel")
 	}
-	content, err := os.ReadFile(staged)
-	if err != nil {
-		t.Fatalf("read staged file: %v", err)
+	if !strings.Contains(got.Error(), "--plugin") {
+		t.Errorf("expected the flag hint appended, got: %v", got)
 	}
-	if !strings.Contains(string(content), "runtime.jsonrpc") && !strings.Contains(string(content), "runtime") {
-		t.Fatalf("unexpected staged content: %q", content)
+	// Added once, not per layer.
+	if n := strings.Count(got.Error(), "--plugin or --plugin-dir"); n != 1 {
+		t.Errorf("hint appears %d times, want 1: %v", n, got)
 	}
 }
 
@@ -459,4 +612,249 @@ func (f *stagingFetcher) List(ctx context.Context, source, path string) ([]scrip
 		return []scriptlingplugin.FetchEntry{{Name: "manifest.toml"}}, nil
 	}
 	return nil, fmt.Errorf("%w: %s", scriptlingplugin.ErrFetchNotFound, path)
+}
+
+// TestPluginDiscoveryWantedSkipsCheapCommands walks the real command tree and
+// asserts, for every command at every depth, whether it may start plugin
+// executables. The manager itself is always built — scriptling.plugin.load()
+// needs it even with no plugins configured — so this only gates discovery.
+//
+// It walks the tree rather than checking pluginFreeCommands directly because
+// PreRun receives the *leaf* command: `cache clear` arrives as "clear" and
+// `pack manifest` as "manifest", so a name-only check silently let nested
+// subcommands spawn plugins.
+func TestPluginDiscoveryWantedSkipsCheapCommands(t *testing.T) {
+	root := buildRootCommand()
+
+	// Every command in a plugin-free subtree must resolve to its top-level
+	// ancestor, at any depth. `cache clear` resolving to "clear" instead of
+	// "cache" is exactly the bug this guards.
+	for _, top := range root.Commands {
+		want := top.Name
+		forEachCommand(top, func(c *cli.Command) {
+			if got := topLevelCommandNameIn(root, c); got != want {
+				t.Errorf("topLevelCommandNameIn(%q) = %q, want %q", c.Name, got, want)
+			}
+		})
+	}
+
+	// The root itself has no top-level ancestor.
+	if got := topLevelCommandNameIn(root, root); got != "" {
+		t.Errorf("topLevelCommandNameIn(root) = %q, want \"\"", got)
+	}
+
+	// A command outside the tree falls back to its own name rather than
+	// silently claiming to be the root.
+	orphan := &cli.Command{Name: "orphan"}
+	if got := topLevelCommandNameIn(root, orphan); got != "orphan" {
+		t.Errorf("topLevelCommandNameIn(orphan) = %q, want \"orphan\"", got)
+	}
+
+	// The nested forms people actually type must land on a plugin-free
+	// top-level command.
+	for _, tc := range []struct{ parent, child string }{
+		{"pack", "manifest"},
+		{"pack", "docs"},
+		{"cache", "clear"},
+	} {
+		leaf := findCommand(root, tc.child)
+		if leaf == nil {
+			t.Errorf("expected the command tree to contain %s %s", tc.parent, tc.child)
+			continue
+		}
+		if got := topLevelCommandNameIn(root, leaf); got != tc.parent {
+			t.Errorf("topLevelCommandNameIn(%s) = %q, want %q", tc.child, got, tc.parent)
+		}
+		if !pluginFreeCommands[tc.parent] {
+			t.Errorf("expected %s to be plugin-free", tc.parent)
+		}
+	}
+
+	// help and the root run command both resolve --package sources, so neither
+	// may be plugin-free.
+	if pluginFreeCommands[""] {
+		t.Error("the root command must allow plugin discovery")
+	}
+	if help := findCommand(root, "help"); help == nil {
+		t.Error("expected a help command")
+	} else if pluginFreeCommands[topLevelCommandNameIn(root, help)] {
+		t.Error("help resolves --package sources, so it must allow plugin discovery")
+	}
+}
+
+// TestPluginDiscoveryThroughExecute drives the real command tree with real
+// argv and records what PreRun decided, which is the only way to catch the
+// leaf-vs-ancestor mistake: PreRun receives `clear`, not `cache`.
+func TestPluginDiscoveryThroughExecute(t *testing.T) {
+	dir := t.TempDir()
+	srcDir := filepath.Join(dir, "src")
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "manifest.toml"), []byte("name = \"crpkg\"\nversion = \"1.0.0\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(dir, "s.py")
+	if err := os.WriteFile(script, []byte("x = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{"bare run", []string{"scriptling", "-c", "pass"}, true},
+		{"help topic", []string{"scriptling", "help", "os"}, true},
+		{"lint", []string{"scriptling", "--lint", script}, false},
+		{"list-libs", []string{"scriptling", "--list-libs"}, false},
+		{"pack bare", []string{"scriptling", "pack"}, false},
+		{"pack manifest", []string{"scriptling", "pack", "manifest", srcDir}, false},
+		{"pack docs", []string{"scriptling", "pack", "docs", srcDir}, false},
+		{"cache bare", []string{"scriptling", "cache"}, false},
+		{"cache clear", []string{"scriptling", "cache", "clear"}, false},
+		{"unknown cache subcommand", []string{"scriptling", "cache", "nope"}, false},
+		{"unpack", []string{"scriptling", "unpack", filepath.Join(dir, "x.zip")}, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := buildRootCommand()
+
+			// Replace Run everywhere so nothing actually executes, and stub
+			// PreRun to record only the discovery decision.
+			var got, recorded bool
+			forEachCommand(root, func(c *cli.Command) {
+				c.Run = func(ctx context.Context, cmd *cli.Command) error { return nil }
+			})
+			root.PreRun = func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
+				got = pluginDiscoveryWanted(cmd)
+				recorded = true
+				return ctx, nil
+			}
+			root.PostRun = nil
+
+			os.Args = tc.args
+			_ = root.Execute(context.Background())
+
+			// A command that fails argument validation never reaches PreRun,
+			// which also means no plugins start — that satisfies want=false.
+			if tc.want && !recorded {
+				t.Fatalf("PreRun did not run for %v, so plugins would never load", tc.args)
+			}
+			if recorded && got != tc.want {
+				t.Errorf("pluginDiscoveryWanted for %v = %v, want %v", tc.args, got, tc.want)
+			}
+		})
+	}
+}
+
+// findCommand returns the first command with the given name in the tree.
+func findCommand(root *cli.Command, name string) *cli.Command {
+	var found *cli.Command
+	forEachCommand(root, func(c *cli.Command) {
+		if found == nil && c != root && c.Name == name {
+			found = c
+		}
+	})
+	return found
+}
+
+// forEachCommand visits cmd and every descendant.
+func forEachCommand(cmd *cli.Command, fn func(*cli.Command)) {
+	fn(cmd)
+	for _, child := range cmd.Commands {
+		forEachCommand(child, fn)
+	}
+}
+
+// TestLoadPluginManagerAlwaysReturnsAManager locks in the behaviour that
+// scriptling.plugin.load() depends on: with nothing configured the manager
+// still exists (and starts no processes), so the library can be registered.
+func TestLoadPluginManagerAlwaysReturnsAManager(t *testing.T) {
+	manager, err := loadPluginManager(context.Background(), nil, nil, nil)
+	if err != nil {
+		t.Fatalf("loadPluginManager with no plugins: %v", err)
+	}
+	if manager == nil {
+		t.Fatal("expected a manager even with no plugins configured")
+	}
+	defer manager.Close()
+	if got := manager.List(); len(got) != 0 {
+		t.Fatalf("expected no plugins loaded, got %d", len(got))
+	}
+}
+
+// TestLoadPluginManagerRejectsBadPluginArgs checks argument resolution failures
+// surface before any process is started.
+func TestLoadPluginManagerRejectsBadPluginArgs(t *testing.T) {
+	_, err := loadPluginManager(context.Background(), nil, nil, []string{"orphan-arg"})
+	if err == nil {
+		t.Fatal("expected an error for a --plugin-arg with no --plugin")
+	}
+	if !strings.Contains(err.Error(), "without any --plugin") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestPluginLoggerWiredAfterStartup guards an ordering trap in PreRun: plugins
+// must start before --package sources are opened (so fetcher schemes exist),
+// but the logger cannot be built until the app bundle is known (it decides
+// whether logs go to stderr). Plugins are therefore created with no logger, and
+// everything they log is dropped unless the logger is wired in afterwards.
+func TestPluginLoggerWiredAfterStartup(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell plugin helper is unix-only")
+	}
+
+	dir := t.TempDir()
+	helper := filepath.Join(dir, "logging-plugin")
+	// Handshake, then on every call emit a host.log notification and answer
+	// with the caller's own id so the call returns promptly.
+	script := `#!/bin/sh
+read req
+echo '{"jsonrpc":"2.0","id":1,"result":{"protocol":"1.0","transport":"json","library":{"name":"logger-plug","version":"1.0.0","description":"logs"},"capabilities":[],"schema":{"functions":[{"name":"noisy"}],"classes":[],"constants":[]}}}'
+while read req; do
+  id=$(printf '%s' "$req" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  echo '{"jsonrpc":"2.0","method":"host.log","params":{"level":"info","message":"plugin log reached the host"}}'
+  echo "{\"jsonrpc\":\"2.0\",\"id\":${id:-1},\"result\":{\"type\":\"string\",\"value\":\"ok\"}}"
+done
+`
+	if err := os.WriteFile(helper, []byte(script), 0o755); err != nil {
+		t.Fatalf("write helper: %v", err)
+	}
+
+	// Start the plugin with NO logger, exactly as PreRun does.
+	previousLogger := globalLogger
+	globalLogger = nil
+	manager, err := loadPluginManager(context.Background(), []string{dir}, nil, nil)
+	globalLogger = previousLogger
+	if err != nil {
+		t.Fatalf("loadPluginManager: %v", err)
+	}
+	defer manager.Close()
+
+	client, ok := manager.Get("plugin.logger-plug")
+	if !ok {
+		t.Fatal("expected the plugin to load")
+	}
+
+	// Now wire the logger in, which is the step PreRun must not forget.
+	logs := &cliCaptureLogger{}
+	manager.SetLogger(logs)
+
+	if _, err := client.CallFunction(context.Background(), "noisy", nil, nil); err != nil {
+		t.Fatalf("CallFunction: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, entry := range logs.snapshot() {
+			if strings.Contains(entry.msg, "plugin log reached the host") {
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("plugin log records were dropped; the host logger was never wired to the manager. got %#v", logs.snapshot())
 }

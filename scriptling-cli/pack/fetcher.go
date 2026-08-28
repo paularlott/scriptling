@@ -1,7 +1,9 @@
 package pack
 
 import (
+	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -10,51 +12,180 @@ import (
 // as knot://libs, served by a fetcher plugin — to an opener instead of the
 // built-in directory / zip / http logic. Built-in schemes cannot be
 // registered; http(s) and local paths keep their existing behavior.
+//
+// A SchemeRegistry is an independent routing table. Hosts that embed
+// scriptling can create their own, register a plugin bridge into it, and
+// Unregister on teardown so the next set of plugins can claim the same
+// schemes. The CLI (and anything calling the package-level functions) shares
+// the process-wide DefaultSchemeRegistry.
 
 // SchemeOpener opens a bundle from a source using the registered scheme. The
 // signature matches FetchBundle so openers compose with every existing caller.
+// Openers that need a context capture one at registration; see
+// pluginpack.Bridge.
 type SchemeOpener func(source string, insecure bool, cacheDir string) (*Bundle, error)
-
-var (
-	schemeMu      sync.RWMutex
-	schemeOpeners = map[string]SchemeOpener{}
-)
 
 // builtinSchemes are owned by FetchBundle itself and never routable.
 var builtinSchemes = map[string]bool{"http": true, "https": true, "file": true}
 
-// RegisterScheme routes sources with the given scheme to opener. Registering a
-// scheme twice, or a built-in (http, https, file), is an error.
-func RegisterScheme(scheme string, opener SchemeOpener) error {
+// ErrUnknownScheme reports a source that looks like <scheme>://… but whose
+// scheme has no registered opener — almost always a fetcher plugin that was
+// never loaded. Callers match on it to add context only they can supply, such
+// as the flags or configuration that load a plugin in their environment.
+var ErrUnknownScheme = errors.New("no plugin provides the source scheme")
+
+// SchemeRegistry maps custom source schemes to bundle openers. It is safe for
+// concurrent use. The zero value is not usable; call NewSchemeRegistry.
+type SchemeRegistry struct {
+	mu      sync.RWMutex
+	openers map[string]SchemeOpener
+}
+
+// NewSchemeRegistry returns an empty scheme registry.
+func NewSchemeRegistry() *SchemeRegistry {
+	return &SchemeRegistry{openers: map[string]SchemeOpener{}}
+}
+
+// defaultRegistry is the process-wide registry used by the package-level
+// functions and by FetchBundle.
+var defaultRegistry = NewSchemeRegistry()
+
+// DefaultSchemeRegistry returns the process-wide registry that FetchBundle and
+// the package-level Register/Unregister functions use.
+func DefaultSchemeRegistry() *SchemeRegistry { return defaultRegistry }
+
+// Register routes sources with the given scheme to opener. Registering a
+// scheme twice, or a built-in (http, https, file), is an error — one scheme
+// has one owner. Use Unregister to release it first.
+func (r *SchemeRegistry) Register(scheme string, opener SchemeOpener) error {
 	if builtinSchemes[scheme] || !validSchemeName(scheme) {
 		return fmt.Errorf("cannot register scheme %q", scheme)
 	}
 	if opener == nil {
 		return fmt.Errorf("cannot register scheme %q with a nil opener", scheme)
 	}
-	schemeMu.Lock()
-	defer schemeMu.Unlock()
-	if _, exists := schemeOpeners[scheme]; exists {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.openers[scheme]; exists {
 		return fmt.Errorf("scheme %q is already registered", scheme)
 	}
-	schemeOpeners[scheme] = opener
+	r.openers[scheme] = opener
 	return nil
 }
 
-// RegisteredSchemes returns the currently registered custom schemes.
-func RegisteredSchemes() []string {
-	schemeMu.RLock()
-	defer schemeMu.RUnlock()
-	schemes := make([]string, 0, len(schemeOpeners))
-	for scheme := range schemeOpeners {
+// Unregister releases a scheme so it can be claimed again, and reports whether
+// it was registered. Hosts that reload plugins call this on teardown.
+func (r *SchemeRegistry) Unregister(scheme string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, existed := r.openers[scheme]
+	delete(r.openers, scheme)
+	return existed
+}
+
+// Registered returns the registered custom schemes in sorted order.
+func (r *SchemeRegistry) Registered() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	schemes := make([]string, 0, len(r.openers))
+	for scheme := range r.openers {
 		schemes = append(schemes, scheme)
 	}
+	sort.Strings(schemes)
 	return schemes
 }
 
-// SchemeFor reports the custom scheme a source carries, if any. It returns
-// ("", false) for http(s) URLs, local paths and malformed sources.
+// Lookup returns the opener for a scheme, or nil when it is not registered.
+func (r *SchemeRegistry) Lookup(scheme string) SchemeOpener {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.openers[scheme]
+}
+
+// SchemeFor reports the custom scheme a source carries when that scheme is
+// registered here. It returns ("", false) for http(s) URLs, local paths,
+// malformed sources, and scheme-shaped sources whose scheme has no opener.
+// Use SchemeSyntax when you need to tell "not a scheme" apart from
+// "scheme with no plugin loaded".
+func (r *SchemeRegistry) SchemeFor(source string) (string, bool) {
+	scheme, ok := SchemeSyntax(source)
+	if !ok {
+		return "", false
+	}
+	if r.Lookup(scheme) == nil {
+		return "", false
+	}
+	return scheme, true
+}
+
+// FetchBundle opens source through this registry's openers, falling back to
+// the built-in directory / zip / URL handling for non-scheme sources.
+func (r *SchemeRegistry) FetchBundle(source string, insecure bool, cacheDir string) (*Bundle, error) {
+	if scheme, ok := SchemeSyntax(source); ok {
+		opener := r.Lookup(scheme)
+		if opener == nil {
+			return nil, r.unknownSchemeError(scheme, source)
+		}
+		return opener(source, insecure, cacheDir)
+	}
+	return fetchBuiltinBundle(source, insecure, cacheDir)
+}
+
+// unknownSchemeError explains that a scheme-shaped source has no opener, which
+// almost always means the plugin that serves it was not loaded.
+//
+// The message stays audience-neutral: this package is used by the CLI and by
+// embedding hosts alike, and naming CLI flags here would be wrong advice for a
+// host with its own registry. Callers that know how plugins get loaded in their
+// context match on ErrUnknownScheme and add that detail themselves.
+// The advice is deliberately the last clause, so a caller can extend it into a
+// sentence that names how plugins load in its context ("…load the plugin that
+// serves it with --plugin").
+func (r *SchemeRegistry) unknownSchemeError(scheme, source string) error {
+	const fix = "load the plugin that serves it"
+	if available := r.Registered(); len(available) > 0 {
+		return fmt.Errorf("%w %q for %s (available schemes: %s): %s",
+			ErrUnknownScheme, scheme, source, strings.Join(available, ", "), fix)
+	}
+	return fmt.Errorf("%w %q for %s: %s", ErrUnknownScheme, scheme, source, fix)
+}
+
+// =========================================================================
+// Package-level helpers over the process-wide default registry.
+// =========================================================================
+
+// RegisterScheme registers a scheme on the process-wide default registry.
+func RegisterScheme(scheme string, opener SchemeOpener) error {
+	return defaultRegistry.Register(scheme, opener)
+}
+
+// UnregisterScheme releases a scheme on the process-wide default registry and
+// reports whether it was registered.
+func UnregisterScheme(scheme string) bool {
+	return defaultRegistry.Unregister(scheme)
+}
+
+// RegisteredSchemes returns the schemes registered on the default registry.
+func RegisteredSchemes() []string {
+	return defaultRegistry.Registered()
+}
+
+// SchemeFor reports the registered custom scheme a source carries, if any,
+// on the process-wide default registry.
 func SchemeFor(source string) (string, bool) {
+	return defaultRegistry.SchemeFor(source)
+}
+
+// =========================================================================
+// Scheme syntax
+// =========================================================================
+
+// SchemeSyntax reports whether source looks like a custom <scheme>://rest
+// source, regardless of whether any opener is registered for it. It returns
+// ("", false) for http(s) URLs (owned by FetchBundle), local paths, and
+// malformed sources. Callers use it to tell a missing plugin apart from a
+// missing file.
+func SchemeSyntax(source string) (string, bool) {
 	scheme, rest, found := strings.Cut(source, "://")
 	if !found || !validSchemeName(scheme) || builtinSchemes[scheme] {
 		return "", false
@@ -62,20 +193,7 @@ func SchemeFor(source string) (string, bool) {
 	if rest == "" || strings.ContainsAny(rest, " \t") {
 		return "", false
 	}
-	schemeMu.RLock()
-	_, registered := schemeOpeners[scheme]
-	schemeMu.RUnlock()
-	if !registered {
-		return "", false
-	}
 	return scheme, true
-}
-
-// lookupSchemeOpener returns the opener for a custom-scheme source, or nil.
-func lookupSchemeOpener(scheme string) SchemeOpener {
-	schemeMu.RLock()
-	defer schemeMu.RUnlock()
-	return schemeOpeners[scheme]
 }
 
 // validSchemeName reports whether scheme is a plausible URI scheme: a letter

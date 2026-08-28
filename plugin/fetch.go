@@ -261,13 +261,38 @@ func (c *Client) FetchList(ctx context.Context, source, path string) ([]FetchEnt
 
 // mapFetchError converts a FetchNotFoundCode RPC error into an error wrapping
 // ErrFetchNotFound so hosts can treat it as a plain miss.
+//
+// Fetchers are told to wrap ErrFetchNotFound themselves, so the message
+// arriving over the wire usually already begins with the sentinel's text.
+// Re-prefixing it would read "fetch source not found: fetch source not found:
+// knot://x", so the sentinel is only prepended when it is actually missing.
 func mapFetchError(err error) error {
 	if err == nil {
 		return nil
 	}
 	var rpcErr *RPCError
 	if errors.As(err, &rpcErr) && rpcErr.Code == FetchNotFoundCode {
-		return fmt.Errorf("%w: %s", ErrFetchNotFound, rpcErr.Message)
+		msg := strings.TrimSpace(rpcErr.Message)
+		if detail, ok := trimNotFoundPrefix(msg); ok {
+			if detail == "" {
+				return ErrFetchNotFound
+			}
+			return fmt.Errorf("%w: %s", ErrFetchNotFound, detail)
+		}
+		if msg == "" {
+			return ErrFetchNotFound
+		}
+		return fmt.Errorf("%w: %s", ErrFetchNotFound, msg)
 	}
 	return err
+}
+
+// trimNotFoundPrefix strips a leading copy of ErrFetchNotFound's text (and any
+// following ": ") from msg, reporting whether it was present.
+func trimNotFoundPrefix(msg string) (string, bool) {
+	sentinel := ErrFetchNotFound.Error()
+	if !strings.HasPrefix(msg, sentinel) {
+		return msg, false
+	}
+	return strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(msg, sentinel), ":")), true
 }

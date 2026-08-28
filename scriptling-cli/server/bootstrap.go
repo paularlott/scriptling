@@ -86,7 +86,7 @@ func NewServer(config ServerConfig) (*Server, error) {
 	}
 	extlibs.RuntimeState.Unlock()
 
-	hasScript := config.ScriptFile != "" || s.packLoader != nil
+	hasScript := config.ScriptFile != "" || len(config.ScriptSource) > 0 || s.packLoader != nil
 
 	// startErrCh carries a pre-start script error (buffered so goroutine never blocks).
 	startErrCh := make(chan error, 1)
@@ -192,6 +192,19 @@ func (s *Server) runSetupScript() error {
 	p := scriptling.New()
 	s.setupScriptling(p)
 	s.applyPackLoader(p)
+
+	// In-memory source wins: a script fetched from a plugin scheme source has
+	// no file on disk, and staging one would leave a temp file behind.
+	if len(s.config.ScriptSource) > 0 {
+		name := s.config.ScriptName
+		if name == "" {
+			name = "<script>"
+		}
+		Log.Debug("Running setup script", "source", name)
+		p.SetSourceFile(name)
+		_, err := p.Eval(string(s.config.ScriptSource))
+		return err
+	}
 
 	if s.config.ScriptFile != "" {
 		Log.Debug("Running setup script", "file", s.config.ScriptFile)
