@@ -149,9 +149,9 @@ func servePlugin(t *testing.T, scheme string, fetcher plugin.Fetcher) *plugin.Ma
 
 // bridgeFor builds a registered Bridge over a manager and releases its schemes
 // when the test ends, so schemes never leak between tests.
-func bridgeFor(t *testing.T, manager *plugin.Manager, cacheDir string) *Bridge {
+func bridgeFor(t *testing.T, manager *plugin.Manager) *Bridge {
 	t.Helper()
-	bridge := New(Options{Manager: manager, CacheDir: cacheDir})
+	bridge := New(Options{Manager: manager})
 	if err := bridge.Register(); err != nil {
 		t.Fatalf("Bridge.Register: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestFetchBundleServesPackageOnDemand(t *testing.T) {
 	fetcher := newMutableFetcher("ppond://libs", testFiles, nil)
 	manager := servePlugin(t, "ppond", fetcher)
 	cacheDir := t.TempDir()
-	bridge := bridgeFor(t, manager, cacheDir)
+	bridge := bridgeFor(t, manager)
 
 	bundle, err := pack.FetchBundle("ppond://libs", false, cacheDir)
 	if err != nil {
@@ -241,7 +241,7 @@ func TestContentIsNeverWrittenToDisk(t *testing.T) {
 	fetcher := newMutableFetcher("ppnodisk://libs", testFiles, nil)
 	manager := servePlugin(t, "ppnodisk", fetcher)
 	cacheDir := t.TempDir()
-	bridgeFor(t, manager, cacheDir)
+	bridgeFor(t, manager)
 
 	bundle, err := pack.FetchBundle("ppnodisk://libs", false, cacheDir)
 	if err != nil {
@@ -277,7 +277,7 @@ func TestContentIsNotRetained(t *testing.T) {
 		"lib/data.py": "def value():\n    return 'data-v1'\n",
 	}, nil)
 	manager := servePlugin(t, "ppmem", fetcher)
-	bridgeFor(t, manager, t.TempDir())
+	bridgeFor(t, manager)
 
 	bundle, err := pack.FetchBundle("ppmem://libs", false, t.TempDir())
 	if err != nil {
@@ -314,7 +314,7 @@ func TestFetchScriptAlwaysRefetches(t *testing.T) {
 		"ppscript://run/hello": "print('script-v1')\n",
 	})
 	manager := servePlugin(t, "ppscript", fetcher)
-	bridge := bridgeFor(t, manager, t.TempDir())
+	bridge := bridgeFor(t, manager)
 
 	content, err := bridge.FetchScript(context.Background(), "ppscript://run/hello")
 	if err != nil {
@@ -350,7 +350,7 @@ func TestModuleMissIsNotAnError(t *testing.T) {
 		"lib/here.py": "x = 1\n",
 	}, nil)
 	manager := servePlugin(t, "ppmiss", fetcher)
-	bridgeFor(t, manager, t.TempDir())
+	bridgeFor(t, manager)
 
 	bundle, err := pack.FetchBundle("ppmiss://libs", false, t.TempDir())
 	if err != nil {
@@ -378,7 +378,7 @@ func TestModuleMissIsNotAnError(t *testing.T) {
 func TestRegisterRejectsSchemeConflicts(t *testing.T) {
 	fetcher := newMutableFetcher("ppconf://libs", map[string]string{}, nil)
 	manager := servePlugin(t, "ppconf", fetcher)
-	bridgeFor(t, manager, t.TempDir())
+	bridgeFor(t, manager)
 
 	// A second plugin claiming the same scheme is a hard error.
 	other := servePlugin(t, "ppconf", fetcher)
@@ -402,18 +402,18 @@ func TestCloseReleasesSchemesForReload(t *testing.T) {
 	}, nil)
 	manager := servePlugin(t, "ppreload", fetcher)
 
-	first := New(Options{Manager: manager, CacheDir: t.TempDir()})
+	first := New(Options{Manager: manager})
 	if err := first.Register(); err != nil {
 		t.Fatalf("first Register: %v", err)
 	}
-	if _, ok := pack.SchemeFor("ppreload://libs"); !ok {
+	if pack.DefaultSchemeRegistry().Lookup("ppreload") == nil {
 		t.Fatal("expected ppreload to be registered")
 	}
 
 	if err := first.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	if _, ok := pack.SchemeFor("ppreload://libs"); ok {
+	if pack.DefaultSchemeRegistry().Lookup("ppreload") != nil {
 		t.Fatal("expected Close to release the scheme")
 	}
 	// Close is idempotent.
@@ -422,7 +422,7 @@ func TestCloseReleasesSchemesForReload(t *testing.T) {
 	}
 
 	// A fresh bridge over the same plugins claims the scheme again.
-	second := New(Options{Manager: manager, CacheDir: t.TempDir()})
+	second := New(Options{Manager: manager})
 	if err := second.Register(); err != nil {
 		t.Fatalf("re-Register after Close: %v", err)
 	}
@@ -439,7 +439,7 @@ func TestIsolatedRegistryDoesNotTouchDefault(t *testing.T) {
 	manager := servePlugin(t, "ppiso", fetcher)
 
 	registry := pack.NewSchemeRegistry()
-	bridge := New(Options{Manager: manager, Registry: registry, CacheDir: t.TempDir()})
+	bridge := New(Options{Manager: manager, Registry: registry})
 	if err := bridge.Register(); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
@@ -449,7 +449,7 @@ func TestIsolatedRegistryDoesNotTouchDefault(t *testing.T) {
 	if _, err := registry.FetchBundle("ppiso://libs", false, t.TempDir()); err != nil {
 		t.Fatalf("private registry FetchBundle: %v", err)
 	}
-	if _, ok := pack.SchemeFor("ppiso://libs"); ok {
+	if pack.DefaultSchemeRegistry().Lookup("ppiso") != nil {
 		t.Fatal("an isolated registry must not register on the default one")
 	}
 	if _, err := pack.FetchBundle("ppiso://libs", false, t.TempDir()); err == nil {
@@ -495,7 +495,7 @@ func TestBundlesPerFetcherPlugin(t *testing.T) {
 		t.Fatalf("LoadURL: %v", err)
 	}
 
-	bridge := bridgeFor(t, manager, t.TempDir())
+	bridge := bridgeFor(t, manager)
 	got := bridge.Schemes()
 	if len(got) != 2 || got[0] != "ppdecl" || got[1] != "ppdecl2" {
 		t.Fatalf("expected sorted [ppdecl ppdecl2], got %v", got)
@@ -525,7 +525,7 @@ func TestBundlesPerFetcherPlugin(t *testing.T) {
 func TestAutoAttachedPackageImportsWithoutExplicitPackage(t *testing.T) {
 	fetcher := newMutableFetcher("ppauto://libs", testFiles, nil)
 	manager := servePlugin(t, "ppauto", fetcher)
-	bridge := bridgeFor(t, manager, t.TempDir())
+	bridge := bridgeFor(t, manager)
 
 	// The host flow: open every plugin's library bundle and add it to the
 	// loader before any explicit --package bundles.
@@ -567,7 +567,7 @@ func TestExplicitPackageShadowsAutoAttached(t *testing.T) {
 		"lib/which.py": "def value():\n    return 'from auto'\n",
 	}, nil)
 	autoManager := servePlugin(t, "ppshadow-auto", autoFetcher)
-	autoBridge := bridgeFor(t, autoManager, t.TempDir())
+	autoBridge := bridgeFor(t, autoManager)
 
 	// The explicit package is a local directory, exactly what --package takes.
 	explicitDir := t.TempDir()
@@ -619,7 +619,7 @@ func TestExplicitPackageShadowsAutoAttached(t *testing.T) {
 func TestBundles(t *testing.T) {
 	fetcher := newMutableFetcher("ppbundles://libs", testFiles, nil)
 	manager := servePlugin(t, "ppbundles", fetcher)
-	bridge := bridgeFor(t, manager, t.TempDir())
+	bridge := bridgeFor(t, manager)
 
 	bundles, err := bridge.Bundles()
 	if err != nil {
@@ -654,7 +654,7 @@ func (f failingFetcher) List(ctx context.Context, source, path string) ([]plugin
 func TestPluginFailureAbortsImportLoudly(t *testing.T) {
 	base := newMutableFetcher("ppfail://libs", map[string]string{}, nil)
 	manager := servePlugin(t, "ppfail", failingFetcher{inner: base})
-	bridge := bridgeFor(t, manager, t.TempDir())
+	bridge := bridgeFor(t, manager)
 
 	bundles, err := bridge.Bundles()
 	if err != nil {
@@ -692,7 +692,7 @@ func TestDirListingsRevalidate(t *testing.T) {
 	manager := servePlugin(t, "ppdirttl", fetcher)
 
 	// A negative TTL disables reuse entirely, so every listing is fresh.
-	bridge := New(Options{Manager: manager, CacheDir: t.TempDir(), DirTTL: -1})
+	bridge := New(Options{Manager: manager, DirTTL: -1})
 	if err := bridge.Register(); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
@@ -731,7 +731,7 @@ func TestDirListingsReusedWithinTTL(t *testing.T) {
 		"tools/first.py": "x = 1\n",
 	}, nil)
 	manager := servePlugin(t, "ppdirreuse", fetcher)
-	bridge := New(Options{Manager: manager, CacheDir: t.TempDir(), DirTTL: time.Hour})
+	bridge := New(Options{Manager: manager, DirTTL: time.Hour})
 	if err := bridge.Register(); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
@@ -761,7 +761,7 @@ func TestContextCancellationAbortsFetch(t *testing.T) {
 	manager := servePlugin(t, "ppcancel", fetcher)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	bridge := New(Options{Manager: manager, Context: ctx, CacheDir: t.TempDir()})
+	bridge := New(Options{Manager: manager, Context: ctx})
 	if err := bridge.Register(); err != nil {
 		t.Fatalf("Register: %v", err)
 	}

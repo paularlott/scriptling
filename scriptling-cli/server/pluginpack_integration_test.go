@@ -79,9 +79,8 @@ func TestServerSetupScriptAndLibsFromFetcherPlugin(t *testing.T) {
 		t.Fatalf("LoadURL: %v", err)
 	}
 	bridge := pluginpack.New(pluginpack.Options{
-		Manager:  manager,
-		Context:  context.Background(),
-		CacheDir: t.TempDir(),
+		Manager: manager,
+		Context: context.Background(),
 	})
 	if err := bridge.Register(); err != nil {
 		t.Fatalf("Bridge.Register: %v", err)

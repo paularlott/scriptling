@@ -469,7 +469,7 @@ func TestSetupScriptReturnsSourceWithoutStaging(t *testing.T) {
 	if _, err := manager.LoadURL(context.Background(), "ppmainplugin", httpSrv.URL, true, false); err != nil {
 		t.Fatalf("LoadURL: %v", err)
 	}
-	bridge := pluginpack.New(pluginpack.Options{Manager: manager, Context: context.Background(), CacheDir: t.TempDir()})
+	bridge := pluginpack.New(pluginpack.Options{Manager: manager, Context: context.Background()})
 	if err := bridge.Register(); err != nil {
 		t.Fatalf("Bridge.Register: %v", err)
 	}

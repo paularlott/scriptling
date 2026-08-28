@@ -125,8 +125,7 @@ func PruneCache(cacheDir string, ttl time.Duration) error {
 	}
 	cutoff := time.Now().Add(-ttl)
 	for _, e := range entries {
-		ext := filepath.Ext(e.Name())
-		if e.IsDir() || (ext != ".zip" && ext != ".pfile") {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".zip" {
 			continue
 		}
 		info, err := e.Info()
@@ -134,8 +133,8 @@ func PruneCache(cacheDir string, ttl time.Duration) error {
 			continue
 		}
 		if info.ModTime().Before(cutoff) {
-			base := strings.TrimSuffix(filepath.Join(cacheDir, e.Name()), ext)
-			_ = os.Remove(base + ext)
+			base := strings.TrimSuffix(filepath.Join(cacheDir, e.Name()), ".zip")
+			_ = os.Remove(base + ".zip")
 			_ = os.Remove(base + ".meta")
 		}
 	}

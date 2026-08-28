@@ -78,7 +78,6 @@ func run(ctx context.Context) error {
 		Manager: manager,
 		Context: ctx,
 		// Registry: pack.NewSchemeRegistry(), // use a private routing table
-		// CacheDir: "/var/cache/myapp",       // override the package cache
 	})
 	if err := bridge.Register(); err != nil {
 		return fmt.Errorf("registering fetcher schemes: %w", err)

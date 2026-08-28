@@ -3,36 +3,36 @@ package pack
 import (
 	"errors"
 	"io/fs"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
-	"time"
 )
+
+// testRegistry keeps scheme tests isolated from the process-wide default.
+var testRegistry = NewSchemeRegistry()
 
 func TestRegisterSchemeValidation(t *testing.T) {
 	opener := func(source string, insecure bool, cacheDir string) (*Bundle, error) {
 		return nil, errors.New("not called")
 	}
 	for _, scheme := range []string{"http", "https", "file", "", "1starts-with-digit", "has/slash", "has space"} {
-		if err := RegisterScheme(scheme, opener); err == nil {
+		if err := testRegistry.Register(scheme, opener); err == nil {
 			t.Errorf("expected rejection for scheme %q", scheme)
 		}
 	}
-	if err := RegisterScheme("nil-opener-test", nil); err == nil {
+	if err := testRegistry.Register("nil-opener-test", nil); err == nil {
 		t.Error("expected rejection for nil opener")
 	}
-	if err := RegisterScheme("dup-scheme-test", opener); err != nil {
+	if err := testRegistry.Register("dup-scheme-test", opener); err != nil {
 		t.Fatalf("first registration failed: %v", err)
 	}
-	if err := RegisterScheme("dup-scheme-test", opener); err == nil {
+	if err := testRegistry.Register("dup-scheme-test", opener); err == nil {
 		t.Error("expected duplicate registration to fail")
 	}
 }
 
-func TestSchemeFor(t *testing.T) {
-	if err := RegisterScheme("scheme-for-test", func(source string, insecure bool, cacheDir string) (*Bundle, error) {
+func TestSchemeSyntaxAndRouting(t *testing.T) {
+	if err := testRegistry.Register("scheme-for-test", func(source string, insecure bool, cacheDir string) (*Bundle, error) {
 		return nil, errors.New("not called")
 	}); err != nil {
 		t.Fatalf("register: %v", err)
@@ -41,24 +41,34 @@ func TestSchemeFor(t *testing.T) {
 	cases := []struct {
 		source string
 		scheme string
-		ok     bool
+		syntax bool
 	}{
 		{"scheme-for-test://libs", "scheme-for-test", true},
-		{"scheme-for-test://", "", false},         // empty rest
-		{"scheme-for-test ", "", false},           // no ://
-		{"unregistered-scheme://libs", "", false}, // not registered
-		{"http://example.com/x.zip", "", false},   // built-in
-		{"https://example.com/x.zip", "", false},  // built-in
-		{"/local/path/pkg.zip", "", false},        // local path
-		{"relative/pkg.zip", "", false},           // local path
-		{"1bad://libs", "", false},                // invalid scheme grammar
-		{"scheme-for-test://lib s", "", false},    // whitespace in rest
+		{"scheme-for-test://", "", false}, // empty rest
+		{"scheme-for-test ", "", false},   // no ://
+		{"unregistered-scheme://libs", "unregistered-scheme", true},
+		{"http://example.com/x.zip", "", false},  // built-in
+		{"https://example.com/x.zip", "", false}, // built-in
+		{"/local/path/pkg.zip", "", false},       // local path
+		{"relative/pkg.zip", "", false},          // local path
+		{"1bad://libs", "", false},               // invalid scheme grammar
+		{"scheme-for-test://lib s", "", false},   // whitespace in rest
 	}
 	for _, tc := range cases {
-		scheme, ok := SchemeFor(tc.source)
-		if scheme != tc.scheme || ok != tc.ok {
-			t.Errorf("SchemeFor(%q) = (%q, %v), want (%q, %v)", tc.source, scheme, ok, tc.scheme, tc.ok)
+		scheme, ok := SchemeSyntax(tc.source)
+		if scheme != tc.scheme || ok != tc.syntax {
+			t.Errorf("SchemeSyntax(%q) = (%q, %v), want (%q, %v)", tc.source, scheme, ok, tc.scheme, tc.syntax)
 		}
+	}
+
+	// Routing is a registry question: the opener runs for a registered
+	// scheme, and an unknown scheme-shaped source fails with the sentinel
+	// naming the scheme.
+	if _, err := testRegistry.FetchBundle("scheme-for-test://libs", false, t.TempDir()); err == nil || err.Error() != "not called" {
+		t.Errorf("expected the opener to run, got %v", err)
+	}
+	if _, err := testRegistry.FetchBundle("unregistered-scheme://libs", false, ""); !errors.Is(err, ErrUnknownScheme) {
+		t.Errorf("expected ErrUnknownScheme, got %v", err)
 	}
 }
 
@@ -68,7 +78,7 @@ func TestFetchBundleRoutesCustomScheme(t *testing.T) {
 		"lib/mod.py":    &fstest.MapFile{Data: []byte("def value():\n    return 'from scheme'\n")},
 	}
 	called := false
-	if err := RegisterScheme("fetch-route-test", func(source string, insecure bool, cacheDir string) (*Bundle, error) {
+	if err := testRegistry.Register("fetch-route-test", func(source string, insecure bool, cacheDir string) (*Bundle, error) {
 		called = true
 		if source != "fetch-route-test://libs" {
 			t.Errorf("opener received source %q", source)
@@ -78,7 +88,7 @@ func TestFetchBundleRoutesCustomScheme(t *testing.T) {
 		t.Fatalf("register: %v", err)
 	}
 
-	bundle, err := FetchBundle("fetch-route-test://libs", false, t.TempDir())
+	bundle, err := testRegistry.FetchBundle("fetch-route-test://libs", false, t.TempDir())
 	if err != nil {
 		t.Fatalf("FetchBundle: %v", err)
 	}
@@ -97,7 +107,7 @@ func TestFetchBundleRoutesCustomScheme(t *testing.T) {
 	}
 
 	// Unregistered custom schemes still fail cleanly.
-	if _, err := FetchBundle("not-registered-anywhere://libs", false, ""); err == nil {
+	if _, err := testRegistry.FetchBundle("not-registered-anywhere://libs", false, ""); err == nil {
 		t.Fatal("expected an error for an unregistered scheme source")
 	}
 
@@ -105,50 +115,6 @@ func TestFetchBundleRoutesCustomScheme(t *testing.T) {
 	dir := writeBundleDir(t)
 	if _, err := FetchBundle(dir, false, ""); err != nil {
 		t.Fatalf("directory FetchBundle: %v", err)
-	}
-}
-
-func TestPruneCacheRemovesPfilePairs(t *testing.T) {
-	cacheDir := t.TempDir()
-	old := time.Now().Add(-8 * 24 * time.Hour) // beyond the 7-day TTL
-
-	writePair := func(base string, mtime time.Time) {
-		data := filepath.Join(cacheDir, base+".pfile")
-		meta := filepath.Join(cacheDir, base+".meta")
-		if err := os.WriteFile(data, []byte("x"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(meta, []byte("v\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Chtimes(data, mtime, mtime); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	writePair("stale", old)
-	writePair("fresh", time.Now())
-	staleZip := filepath.Join(cacheDir, "old-zip.zip")
-	if err := os.WriteFile(staleZip, []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chtimes(staleZip, old, old); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := PruneCache(cacheDir, 0); err != nil {
-		t.Fatalf("PruneCache: %v", err)
-	}
-
-	for _, gone := range []string{"stale.pfile", "stale.meta", "old-zip.zip", "old-zip.meta"} {
-		if _, err := os.Stat(filepath.Join(cacheDir, gone)); !errors.Is(err, fs.ErrNotExist) {
-			t.Errorf("expected %s to be pruned", gone)
-		}
-	}
-	for _, kept := range []string{"fresh.pfile", "fresh.meta"} {
-		if _, err := os.Stat(filepath.Join(cacheDir, kept)); err != nil {
-			t.Errorf("expected %s to survive: %v", kept, err)
-		}
 	}
 }
 
@@ -267,31 +233,31 @@ func TestUnregisterSchemeAllowsReclaim(t *testing.T) {
 	opener := func(source string, insecure bool, cacheDir string) (*Bundle, error) {
 		return nil, errors.New("not called")
 	}
-	if err := RegisterScheme("reclaim-test", opener); err != nil {
+	if err := testRegistry.Register("reclaim-test", opener); err != nil {
 		t.Fatalf("register: %v", err)
 	}
-	if _, ok := SchemeFor("reclaim-test://libs"); !ok {
+	if testRegistry.Lookup("reclaim-test") == nil {
 		t.Fatal("expected the scheme to resolve after registration")
 	}
-	if err := RegisterScheme("reclaim-test", opener); err == nil {
+	if err := testRegistry.Register("reclaim-test", opener); err == nil {
 		t.Fatal("expected a duplicate registration to fail")
 	}
 
-	if !UnregisterScheme("reclaim-test") {
+	if !testRegistry.Unregister("reclaim-test") {
 		t.Fatal("expected Unregister to report the scheme was registered")
 	}
-	if UnregisterScheme("reclaim-test") {
+	if testRegistry.Unregister("reclaim-test") {
 		t.Fatal("expected a second Unregister to report nothing was registered")
 	}
-	if _, ok := SchemeFor("reclaim-test://libs"); ok {
+	if testRegistry.Lookup("reclaim-test") != nil {
 		t.Fatal("expected the scheme to stop resolving after Unregister")
 	}
 
 	// Reclaimable: this is what lets a host swap plugins at runtime.
-	if err := RegisterScheme("reclaim-test", opener); err != nil {
+	if err := testRegistry.Register("reclaim-test", opener); err != nil {
 		t.Fatalf("re-register after Unregister: %v", err)
 	}
-	UnregisterScheme("reclaim-test")
+	testRegistry.Unregister("reclaim-test")
 }
 
 func TestUnknownSchemeErrorIsActionable(t *testing.T) {
@@ -347,7 +313,7 @@ func TestIsolatedRegistriesAreIndependent(t *testing.T) {
 		t.Fatalf("first FetchBundle: %v", err)
 	}
 	// Neither leaks into the process-wide registry.
-	if _, ok := SchemeFor("iso-test://libs"); ok {
+	if DefaultSchemeRegistry().Lookup("iso-test") != nil {
 		t.Fatal("an isolated registry must not affect the default one")
 	}
 	if _, err := FetchBundle("iso-test://libs", false, ""); err == nil {

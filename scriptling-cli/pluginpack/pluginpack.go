@@ -60,15 +60,6 @@ type Options struct {
 	// process-wide pack.DefaultSchemeRegistry().
 	Registry *pack.SchemeRegistry
 
-	// CacheDir overrides the package cache directory. Content served by a
-	// plugin is never written there — it is held in memory only — so this
-	// applies solely to a declared package source that is a plain URL or zip
-	// rather than a scheme this plugin serves. Empty means the OS default.
-	CacheDir string
-
-	// Insecure is passed through when opening declared package sources.
-	Insecure bool
-
 	// DirTTL overrides how long directory listings are reused.
 	// Zero means DefaultDirTTL; negative disables listing reuse entirely.
 	DirTTL time.Duration
@@ -80,8 +71,6 @@ type Bridge struct {
 	manager  *plugin.Manager
 	ctx      context.Context
 	registry *pack.SchemeRegistry
-	cacheDir string
-	insecure bool
 	dirTTL   time.Duration
 
 	mu      sync.RWMutex
@@ -106,8 +95,6 @@ func New(opts Options) *Bridge {
 		manager:  opts.Manager,
 		ctx:      ctx,
 		registry: registry,
-		cacheDir: opts.CacheDir,
-		insecure: opts.Insecure,
 		dirTTL:   ttl,
 		clients:  map[string]*plugin.Client{},
 	}
@@ -146,10 +133,9 @@ func (b *Bridge) Register() error {
 
 // registerScheme routes the plugin's one scheme to it. Every source under the
 // scheme opens as a virtual bundle with the standard layout (modules under
-// lib/) — the plugin serves paths, never a manifest. cacheDir is ignored:
-// plugin-served content is held in memory only, never written to the package
-// cache. A plugin that wants persistence caches behind its own fetcher, where
-// the backend's freshness rules live.
+// lib/) — the plugin serves paths, never a manifest. The opener signature
+// matches FetchBundle for composition; scheme openers ignore the insecure and
+// cache-dir parameters, which only apply to the built-in zip/URL path.
 func (b *Bridge) registerScheme(client *plugin.Client) error {
 	scheme := client.Scheme()
 	opener := func(source string, insecure bool, cacheDir string) (*pack.Bundle, error) {
@@ -199,21 +185,6 @@ func (b *Bridge) Schemes() []string {
 	return schemes
 }
 
-// SchemeFor reports the scheme a source carries when this bridge serves it.
-func (b *Bridge) SchemeFor(source string) (string, bool) {
-	scheme, ok := pack.SchemeSyntax(source)
-	if !ok {
-		return "", false
-	}
-	b.mu.RLock()
-	_, served := b.clients[scheme]
-	b.mu.RUnlock()
-	if !served {
-		return "", false
-	}
-	return scheme, true
-}
-
 // Bundles opens the library bundle of every fetch-capable plugin — the
 // <scheme>://libs source each plugin attaches automatically, with the
 // standard layout. Add the result to a pack.Loader ahead of explicit
@@ -225,7 +196,7 @@ func (b *Bridge) Bundles() ([]*pack.Bundle, error) {
 	var bundles []*pack.Bundle
 	for _, scheme := range b.Schemes() {
 		source := scheme + "://libs"
-		bundle, err := b.registry.FetchBundle(source, b.insecure, b.cacheDir)
+		bundle, err := b.registry.FetchBundle(source, false, "")
 		if err != nil {
 			return nil, fmt.Errorf("failed to load package %s: %w", source, err)
 		}

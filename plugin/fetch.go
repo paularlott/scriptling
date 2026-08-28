@@ -148,19 +148,6 @@ func validScheme(scheme string) bool {
 	return true
 }
 
-// sourceScheme extracts the scheme from a source such as knot://libs,
-// returning "" when there is no <scheme>:// prefix.
-func sourceScheme(source string) string {
-	scheme, rest, found := strings.Cut(source, "://")
-	if !found || scheme == "" || !validScheme(scheme) {
-		return ""
-	}
-	if strings.ContainsAny(rest, " ") {
-		return ""
-	}
-	return scheme
-}
-
 // =========================================================================
 // Client side
 // =========================================================================

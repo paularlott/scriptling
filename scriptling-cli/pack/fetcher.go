@@ -102,22 +102,6 @@ func (r *SchemeRegistry) Lookup(scheme string) SchemeOpener {
 	return r.openers[scheme]
 }
 
-// SchemeFor reports the custom scheme a source carries when that scheme is
-// registered here. It returns ("", false) for http(s) URLs, local paths,
-// malformed sources, and scheme-shaped sources whose scheme has no opener.
-// Use SchemeSyntax when you need to tell "not a scheme" apart from
-// "scheme with no plugin loaded".
-func (r *SchemeRegistry) SchemeFor(source string) (string, bool) {
-	scheme, ok := SchemeSyntax(source)
-	if !ok {
-		return "", false
-	}
-	if r.Lookup(scheme) == nil {
-		return "", false
-	}
-	return scheme, true
-}
-
 // FetchBundle opens source through this registry's openers, falling back to
 // the built-in directory / zip / URL handling for non-scheme sources.
 func (r *SchemeRegistry) FetchBundle(source string, insecure bool, cacheDir string) (*Bundle, error) {
@@ -148,32 +132,6 @@ func (r *SchemeRegistry) unknownSchemeError(scheme, source string) error {
 			ErrUnknownScheme, scheme, source, strings.Join(available, ", "), fix)
 	}
 	return fmt.Errorf("%w %q for %s: %s", ErrUnknownScheme, scheme, source, fix)
-}
-
-// =========================================================================
-// Package-level helpers over the process-wide default registry.
-// =========================================================================
-
-// RegisterScheme registers a scheme on the process-wide default registry.
-func RegisterScheme(scheme string, opener SchemeOpener) error {
-	return defaultRegistry.Register(scheme, opener)
-}
-
-// UnregisterScheme releases a scheme on the process-wide default registry and
-// reports whether it was registered.
-func UnregisterScheme(scheme string) bool {
-	return defaultRegistry.Unregister(scheme)
-}
-
-// RegisteredSchemes returns the schemes registered on the default registry.
-func RegisteredSchemes() []string {
-	return defaultRegistry.Registered()
-}
-
-// SchemeFor reports the registered custom scheme a source carries, if any,
-// on the process-wide default registry.
-func SchemeFor(source string) (string, bool) {
-	return defaultRegistry.SchemeFor(source)
 }
 
 // =========================================================================

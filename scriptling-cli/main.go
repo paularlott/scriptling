@@ -498,10 +498,8 @@ func startPlugins(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 	bridge := pluginpack.New(pluginpack.Options{
-		Manager:  manager,
-		Context:  ctx,
-		CacheDir: cmd.GetString("cache-dir"),
-		Insecure: cmd.GetBool("insecure"),
+		Manager: manager,
+		Context: ctx,
 	})
 	if err := bridge.Register(); err != nil {
 		_ = manager.Close()
