@@ -564,11 +564,20 @@ func isFetchedScript(file string) bool {
 // openBundles opens every --package source as a bundle (local dir, local zip,
 // or remote zip URL), splitting the single allowed app bundle from library
 // bundles.
+//
+// --package does not accept plugin scheme sources (knot://libs). A fetcher
+// plugin exposes its packages by declaring them (DeclarePackage), and the host
+// attaches those automatically — so routing a scheme through --package would
+// only duplicate that, with a second way to spell the same thing. The flag
+// keeps its single meaning: a .zip, a directory, or a URL.
 func openBundles(sources []string, insecure bool, cacheDir string) (app *pack.Bundle, libs []*pack.Bundle, err error) {
 	for _, src := range sources {
+		if scheme, ok := pack.SchemeSyntax(src); ok {
+			return nil, nil, fmt.Errorf("--package does not take plugin scheme sources like %s: a plugin exposes its packages by declaring them, so loading the %q plugin attaches them automatically", src, scheme)
+		}
 		b, err := pack.FetchBundle(src, insecure, cacheDir)
 		if err != nil {
-			return nil, nil, withPluginFlagHint(fmt.Errorf("failed to load package %s: %w", src, err))
+			return nil, nil, fmt.Errorf("failed to load package %s: %w", src, err)
 		}
 		if len(b.Manifest.Serve) > 0 {
 			if app != nil {

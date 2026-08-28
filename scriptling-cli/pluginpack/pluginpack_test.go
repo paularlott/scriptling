@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -549,6 +550,12 @@ func TestAutoAttachedPackageImportsWithoutExplicitPackage(t *testing.T) {
 	}
 }
 
+// TestExplicitPackageShadowsAutoAttached: an explicit --package (a local dir or
+// zip) takes precedence over a plugin's auto-attached declared package, because
+// the CLI adds it to the loader after the declared bundles and the loader
+// searches last-added first. --package never carries a scheme source — that is
+// what the plugin's own DeclarePackage is for — so the explicit side here is an
+// ordinary local package, which is the only kind --package accepts.
 func TestExplicitPackageShadowsAutoAttached(t *testing.T) {
 	autoFetcher := newMutableFetcher("ppshadow-auto://libs", map[string]string{
 		"manifest.toml": "name = \"shadow-auto\"\nversion = \"1.0.0\"\nlibs = [\"lib\"]\n",
@@ -557,14 +564,21 @@ func TestExplicitPackageShadowsAutoAttached(t *testing.T) {
 	autoManager := servePlugin(t, "ppshadow-auto", autoFetcher)
 	autoBridge := bridgeFor(t, autoManager, t.TempDir())
 
-	explicitFetcher := newMutableFetcher("ppshadow-explicit://libs", map[string]string{
-		"manifest.toml": "name = \"shadow-explicit\"\nversion = \"1.0.0\"\nlibs = [\"lib\"]\n",
-		"lib/which.py":  "def value():\n    return 'from explicit'\n",
-	}, nil)
-	explicitManager := servePlugin(t, "ppshadow-explicit", explicitFetcher)
-	bridgeFor(t, explicitManager, t.TempDir())
+	// The explicit package is a local directory, exactly what --package takes.
+	explicitDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(explicitDir, "manifest.toml"),
+		[]byte("name = \"shadow-explicit\"\nversion = \"1.0.0\"\nlibs = [\"lib\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(explicitDir, "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(explicitDir, "lib", "which.py"),
+		[]byte("def value():\n    return 'from explicit'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
-	// Mirror the CLI ordering: auto bundles first, explicit --package bundles
+	// Mirror the CLI ordering: auto bundles first, explicit --package bundle
 	// after (the loader searches last-added first).
 	loader := pack.NewLoader()
 	autoBundles, err := autoBridge.DeclaredBundles(nil)
@@ -576,7 +590,7 @@ func TestExplicitPackageShadowsAutoAttached(t *testing.T) {
 			t.Fatalf("AddBundle: %v", err)
 		}
 	}
-	b, err := pack.FetchBundle("ppshadow-explicit://libs", false, t.TempDir())
+	b, err := pack.FetchBundle(explicitDir, false, t.TempDir())
 	if err != nil {
 		t.Fatalf("FetchBundle explicit: %v", err)
 	}

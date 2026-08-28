@@ -542,22 +542,38 @@ func TestSetupScriptWithoutPluginNamesTheScheme(t *testing.T) {
 }
 
 // TestUnregisteredSchemePackageErrorIsActionable is the --package half of the
-// same problem: openBundles is the CLI's own entry point, so its message must
-// name the flags even though the underlying pack error does not.
-func TestUnregisteredSchemePackageErrorIsActionable(t *testing.T) {
-	_, _, err := openBundles([]string{"notloaded://libs"}, false, t.TempDir())
+// same problem: --package does not take plugin scheme sources at all, and the
+// error must say why (the plugin declares its packages) rather than mention a
+// missing file.
+func TestPackageRejectsSchemeSources(t *testing.T) {
+	_, _, err := openBundles([]string{"knot://libs"}, false, t.TempDir())
 	if err == nil {
-		t.Fatal("expected an error")
+		t.Fatal("expected --package to reject a scheme source")
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, "notloaded") {
+	if !strings.Contains(msg, "knot") {
 		t.Errorf("expected the scheme named, got: %v", msg)
 	}
-	if !strings.Contains(msg, "--plugin") {
-		t.Errorf("expected the CLI to add the flag hint, got: %v", msg)
+	if !strings.Contains(msg, "declar") {
+		t.Errorf("expected the message to point at declared packages, got: %v", msg)
 	}
 	if strings.Contains(msg, "no such file") {
-		t.Errorf("expected a plugin error, not a file error: %v", msg)
+		t.Errorf("expected a clear rejection, not a file error: %v", msg)
+	}
+
+	// It is rejected before any fetch, so no plugin needs to be loaded and a
+	// nonexistent scheme is treated the same way.
+	if _, _, err := openBundles([]string{"anything://x"}, false, t.TempDir()); err == nil {
+		t.Fatal("expected any scheme source to be rejected")
+	}
+
+	// A plain .zip / dir / URL still goes through.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "manifest.toml"), []byte("name=\"p\"\nversion=\"1.0.0\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := openBundles([]string{dir}, false, t.TempDir()); err != nil {
+		t.Fatalf("a directory package must still open: %v", err)
 	}
 }
 

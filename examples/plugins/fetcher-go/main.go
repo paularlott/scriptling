@@ -1,7 +1,8 @@
 // fetcher-go is a fetcher plugin: it serves a small virtual package under the
-// demo:// scheme, on demand, straight from memory. Run it with:
+// demo:// scheme, on demand, straight from memory. It declares demo://libs, so
+// its modules import with no --package at all. Run it with:
 //
-//	scriptling --plugin /tmp/scriptling-plugins/fetcher-go --package demo://libs \
+//	scriptling --plugin /tmp/scriptling-plugins/fetcher-go \
 //	           -c 'import greet; print(greet.greeting("World"))'
 //	scriptling --plugin /tmp/scriptling-plugins/fetcher-go demo://scripts/hello
 //
