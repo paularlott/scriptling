@@ -81,6 +81,12 @@ var RuntimeState = struct {
 	ServerStarted   bool          // prevents double-close of ServerStartCh
 	ServerCollect   func()        // set by NewServer; called inside start_server() to snapshot routes atomically
 
+	// Transport records how the process is serving, for runtime.transport():
+	// "stdio" for the JSON-RPC / MCP / plugin stdio servers, "http" for the
+	// HTTP server, "" when the script is not being served at all. The CLI's
+	// serving modes set it before the setup script runs.
+	Transport string
+
 	// Plugin server registration (set via runtime.plugin, agent variant only)
 	PluginName        string
 	PluginVersion     string

@@ -235,6 +235,21 @@ Example:
 	for name, builtin := range RequestContextBuiltins() {
 		functions[name] = builtin
 	}
+	functions["transport"] = newTransportBuiltin(`transport() - How the JSON-RPC server is being served: "http", "stdio" or None
+
+Lets one setup script work in every mode: over stdio the middleware never
+runs, so anything middleware would gate per user must be handled differently
+there.
+
+  import scriptling.runtime as runtime
+
+  if runtime.jsonrpc.transport() == "stdio":
+      # No middleware over stdio: treat every caller alike.
+      ...
+
+Returns "http" when serving at POST /json-rpc (also from method handlers
+mid-request), "stdio" for the --json-rpc stdio server, and None when the
+script is not being served at all.`)
 
 	return object.NewLibrary(RuntimeJSONRPCLibraryName, functions, map[string]object.Object{
 		"JSONRPCError": JSONRPCErrorClass,

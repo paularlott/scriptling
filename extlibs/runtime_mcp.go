@@ -19,12 +19,15 @@ const (
 
 // MCPSubLibrary is the scriptling.runtime.mcp sub-library. It provides
 // decorator functions for defining MCP tools (and in future, resources and
-// prompts) from script code. Registrations are recorded per-interpreter in
-// __mcp_registry rather than the global RuntimeState.
-var MCPSubLibrary = object.NewLibrary(RuntimeMCPLibraryName, map[string]*object.Builtin{
-	"tool": {
-		Fn: mcpToolDecorator,
-		HelpText: `tool(description, params=None, keywords=None, discoverable=False) - Decorator for MCP tools
+// prompts) from script code, plus the register_request_* functions middleware
+// uses to expose entries for the life of a single request. Decorator
+// registrations are recorded per-interpreter in __mcp_registry; request
+// registrations in the per-request accumulator carried on the context.
+var MCPSubLibrary = func() *object.Library {
+	functions := map[string]*object.Builtin{
+		"tool": {
+			Fn: mcpToolDecorator,
+			HelpText: `tool(description, params=None, keywords=None, discoverable=False) - Decorator for MCP tools
 
 Decorates a function to register it as an MCP tool. The function's parameters
 become the tool's input schema; the return value becomes the tool response.
@@ -57,8 +60,30 @@ Example:
   })
   def greet(name, times=1):
       return "\n".join(f"Hello, {name}!" for _ in range(times))`,
-	},
-}, nil, "MCP tool, resource, and prompt registration via decorators")
+		},
+	}
+
+	for name, builtin := range requestRegistrationBuiltins() {
+		functions[name] = builtin
+	}
+	functions["transport"] = newTransportBuiltin(`transport() - How the MCP server is being served: "http", "stdio" or None
+
+Lets one setup script work in every mode: over stdio the middleware never
+runs, so registrations that middleware would gate per user must be made
+unconditionally instead.
+
+  import scriptling.runtime.mcp as mcp
+
+  if mcp.transport() == "stdio":
+      # No middleware over stdio: expose the extra tools to everyone.
+      ...
+
+Returns "http" when serving over HTTP (also from middleware and tool handlers
+mid-request), "stdio" for the MCP stdio server, and None when the script is
+not being served at all.`)
+
+	return object.NewLibrary(RuntimeMCPLibraryName, functions, nil, "MCP tool, resource, and prompt registration via decorators")
+}()
 
 // mcpToolDecorator implements the runtime.mcp.tool() builtin. It accepts the
 // decorator kwargs (description, params, keywords, discoverable) and returns a

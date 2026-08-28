@@ -15,10 +15,12 @@ import (
 	"path/filepath"
 	"strings"
 
+	mcplib "github.com/paularlott/mcp"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/object"
+	mcpcli "github.com/paularlott/scriptling/scriptling-cli/mcp"
 	"github.com/paularlott/scriptling/util"
 )
 
@@ -498,6 +500,10 @@ func (s *Server) writeResponse(w http.ResponseWriter, resp *object.Dict) {
 // runtime.jsonrpc.get_request()). When a script middleware is registered it
 // then runs with the request object: a returned response dict blocks the
 // request (e.g. a 401), None lets it through to the protocol handler. The
+// MCP entries the middleware registered for this request (register_request_
+// tool / _resource / _prompt) become per-request providers, so tools/list and
+// tools/call see exactly the entries that request's middleware exposed —
+// per-user tool sets with authorization re-evaluated on every message. The
 // request body is buffered and restored, so building the middleware's request
 // object does not consume it for the protocol handler that runs next.
 func (s *Server) scriptProtocolMiddleware(next http.Handler) http.Handler {
@@ -520,8 +526,69 @@ func (s *Server) scriptProtocolMiddleware(next http.Handler) http.Handler {
 			}
 		}
 
+		// Build the per-request MCP providers from what the middleware
+		// registered. A malformed registration is a build error: fail the
+		// request rather than serving a different tool set than intended.
+		if regs := extlibs.RegistrationsFrom(r.Context()); regs != nil && !regs.Empty() {
+			providers, err := s.buildRequestProviders(regs)
+			if err != nil {
+				Log.Error("Request MCP registration failed", "error", err)
+				s.writeResponse(w, object.NewStringDict(map[string]object.Object{
+					"status":  object.NewInteger(500),
+					"headers": &object.Dict{Pairs: map[string]object.DictPair{}},
+					"body":    object.NewString(fmt.Sprintf(`{"error": "%s"}`, err.Error())),
+				}))
+				return
+			}
+			if providers.tools != nil {
+				r = r.WithContext(mcplib.WithToolProviders(r.Context(), providers.tools))
+			}
+			if providers.resources != nil {
+				r = r.WithContext(mcplib.WithResourceProviders(r.Context(), providers.resources))
+			}
+			if providers.prompts != nil {
+				r = r.WithContext(mcplib.WithPromptProviders(r.Context(), providers.prompts))
+			}
+		}
+
 		next.ServeHTTP(w, r)
 	})
+}
+
+// requestProviders holds the per-request MCP providers built from middleware
+// registrations; nil members were not registered for this request.
+type requestProviders struct {
+	tools     mcplib.ToolProvider
+	resources mcplib.ResourceProvider
+	prompts   mcplib.PromptProvider
+}
+
+func (s *Server) buildRequestProviders(regs *extlibs.RequestRegistrations) (requestProviders, error) {
+	var out requestProviders
+	cfg := s.handlerConfig()
+
+	if len(regs.Tools) > 0 {
+		p, err := mcpcli.BuildRequestToolProvider(regs.Tools, cfg)
+		if err != nil {
+			return out, err
+		}
+		out.tools = p
+	}
+	if len(regs.Resources) > 0 {
+		p, err := mcpcli.BuildRequestResourceProvider(regs.Resources, cfg)
+		if err != nil {
+			return out, err
+		}
+		out.resources = p
+	}
+	if len(regs.Prompts) > 0 {
+		p, err := mcpcli.BuildRequestPromptProvider(regs.Prompts, cfg)
+		if err != nil {
+			return out, err
+		}
+		out.prompts = p
+	}
+	return out, nil
 }
 
 // bearerTokenMiddleware creates authentication middleware for all endpoints

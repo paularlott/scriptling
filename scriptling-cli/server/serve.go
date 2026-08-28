@@ -12,9 +12,20 @@ import (
 	"github.com/paularlott/scriptling/extlibs"
 )
 
+// setTransport records how the process is serving so scripts can ask via
+// runtime.mcp.transport() / runtime.jsonrpc.transport(). It must run before
+// NewServer: the setup script executes there and branches on the value (e.g.
+// registering extra tools statically over stdio, where middleware never runs).
+func setTransport(t string) {
+	extlibs.RuntimeState.Lock()
+	extlibs.RuntimeState.Transport = t
+	extlibs.RuntimeState.Unlock()
+}
+
 // RunServer is the main entry point for running the server
 func RunServer(ctx context.Context, config ServerConfig) error {
 	Log.Debug("Starting server", "address", config.Address, "tls", config.TLSGenerate || (config.TLSCert != "" && config.TLSKey != ""), "mcp_tools", config.MCPToolsDir != "", "mcp_exec", config.MCPExecTool, "web_root", config.WebRoot)
+	setTransport("http")
 	server, err := NewServer(config)
 	if err != nil {
 		return err
@@ -138,6 +149,7 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 // auto-generated proxy libraries. Otherwise the plain JSON-RPC 2.0 loop runs.
 func RunJSONRPCServer(ctx context.Context, config ServerConfig) error {
 	Log.Debug("Starting JSON-RPC stdio server")
+	setTransport("stdio")
 	server, err := NewServer(config)
 	if err != nil {
 		return err
@@ -191,6 +203,7 @@ func RunJSONRPCServer(ctx context.Context, config ServerConfig) error {
 // protocol stream stays pure.
 func RunMCPStdioServer(ctx context.Context, config ServerConfig) error {
 	Log.Debug("Starting MCP stdio server", "mcp_tools", config.MCPToolsDir != "", "mcp_exec", config.MCPExecTool)
+	setTransport("stdio")
 
 	if config.MCPToolsDir == "" && !config.MCPExecTool && !config.serveSet()["mcp"] {
 		return fmt.Errorf("MCP server requires --mcp-tools <dir> and/or --mcp-exec-script")

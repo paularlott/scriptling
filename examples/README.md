@@ -18,6 +18,10 @@ This directory contains examples and tools for working with Scriptling.
   - `direct/` - Direct MCP server connection
   - `README.md` - MCP client examples documentation
 
+- **mcp-per-user-tools/** - Per-user MCP tool sets via middleware
+  - `setup.py`, `auth.py`, `usertools.py`, `tools/` - Middleware authenticates each caller and registers the MCP tools, resources and prompts they are allowed to see
+  - `README.md` - Per-user tools documentation
+
 - **openai/** - AI library examples with OpenAI-compatible APIs
   - `shared/` - Using shared client configured in Go
   - `instance/` - Creating client from script
