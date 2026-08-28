@@ -63,17 +63,12 @@ scriptling --plugin-dir /tmp/plugins -c 'import plugin.hello; print(plugin.hello
 A fetcher serves sources under a scheme this plugin owns (this example uses
 `cdemo`). The host asks for `manifest.toml` first, then individual files as
 imports resolve — nothing is transferred that nothing imports. The host caches
-none of it, so every read reaches your handler; cache inside the plugin if your
-backend needs it. Return an etag regardless, and answer `not_modified` only when
-the caller actually supplied a matching validator.
+none of it, so every read reaches your handler; just return the bytes. A fetcher
+whose backend is slow enough to want caching does it inside the handler.
 
 ```c
-static sl_fetch_result *my_read(const char *source, const char *path,
-                                const char *etag, const char *last_modified, void *ctx) {
-    if (etag[0] != '\0' && strcmp(etag, "my-content-v1") == 0) {
-        return sl_fetch_not_modified("my-content-v1");
-    }
-    return sl_fetch_data("# content\n", 10, "my-content-v1");
+static sl_fetch_result *my_read(const char *source, const char *path, void *ctx) {
+    return sl_fetch_data("# content\n", 10);
 }
 
 static sl_fetch_entry *my_list(const char *source, const char *path,
@@ -98,10 +93,9 @@ scriptling --plugin examples/plugins/hello-c/hello-c cdemo://scripts/hello Ada
 
 Handlers:
 
-- **Read** — return `sl_fetch_data(bytes, len, etag)` for content,
-  `sl_fetch_not_modified(etag)` when the caller's cached validator matches,
-  or `sl_fetch_not_found()` for a miss (reported as JSON-RPC code `-32001`).
-  An empty `path` means the source itself is a single script file.
+- **Read** — return `sl_fetch_data(bytes, len)` for content, or
+  `sl_fetch_not_found()` for a miss (reported as JSON-RPC code `-32001`). An
+  empty `path` means the source itself is a single script file.
 - **List** — return a malloc'd array of `sl_fetch_entry` (the SDK frees the
   array, not the names) and set `*count`; `NULL` with `*count == (size_t)-1`
   reports not found.

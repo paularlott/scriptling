@@ -6,32 +6,23 @@ import (
 	"testing"
 )
 
-// countingFetcher serves one file with mutable content and records the
-// validators it was asked about. When onlyPath is set, every other path
-// (except the source itself, path "") is a miss.
+// countingFetcher serves one file with mutable content and counts the calls it
+// receives. When onlyPath is set, every other path (except the source itself,
+// path "") is a miss.
 type countingFetcher struct {
-	content   string
-	etag      string
-	lastMod   string
-	notFound  bool
-	onlyPath  string
-	reads     int
-	lists     int
-	seenEtag  string
-	seenLastM string
+	content  string
+	notFound bool
+	onlyPath string
+	reads    int
+	lists    int
 }
 
-func (f *countingFetcher) Read(ctx context.Context, source, path, etag, lastModified string) (FetchResult, error) {
+func (f *countingFetcher) Read(ctx context.Context, source, path string) (FetchResult, error) {
 	f.reads++
-	f.seenEtag = etag
-	f.seenLastM = lastModified
 	if f.notFound || (f.onlyPath != "" && path != "" && path != f.onlyPath) {
 		return FetchResult{}, fmtNotFound(source, path)
 	}
-	if etag != "" && etag == f.etag {
-		return FetchResult{NotModified: true, ETag: f.etag, LastModified: f.lastMod}, nil
-	}
-	return FetchResult{Data: []byte(f.content), ETag: f.etag, LastModified: f.lastMod}, nil
+	return FetchResult{Data: []byte(f.content)}, nil
 }
 
 func (f *countingFetcher) List(ctx context.Context, source, path string) ([]FetchEntry, error) {
@@ -58,7 +49,7 @@ func TestServerHandshakeAdvertisesFetchCapability(t *testing.T) {
 		}
 	}
 
-	fetcher := &countingFetcher{content: "x", etag: "v1"}
+	fetcher := &countingFetcher{content: "x"}
 	server.RegisterFetcher("ftest", fetcher)
 	server.DeclarePackage("ftest://libs")
 	result = sendServerRequest[handshakeResult](t, server, "scriptling.handshake", handshakeParams{})
@@ -80,7 +71,7 @@ func TestServerHandshakeAdvertisesFetchCapability(t *testing.T) {
 }
 
 func TestServerFetchReadDispatch(t *testing.T) {
-	fetcher := &countingFetcher{content: "print(1)", etag: "v1", lastMod: "Mon, 01 Jan 2026 00:00:00 GMT"}
+	fetcher := &countingFetcher{content: "print(1)"}
 	server := NewServer("fetchy", "1.0.0", "fetch test")
 	server.RegisterFetcher("ftest", fetcher)
 
@@ -91,26 +82,22 @@ func TestServerFetchReadDispatch(t *testing.T) {
 	if string(res.Data) != "print(1)" {
 		t.Fatalf("expected print(1), got %q", res.Data)
 	}
-	if res.ETag != "v1" || res.LastModified != fetcher.lastMod {
-		t.Fatalf("expected validators, got %+v", res)
-	}
 
-	// Conditional read with the matching validator answers not_modified.
+	// A second read is another fetch — there is no conditional path.
 	res = sendServerRequest[fetchReadResult](t, server, "fetch.read", fetchReadParams{
 		Source: "ftest://libs",
 		Path:   "manifest.toml",
-		ETag:   "v1",
 	})
-	if !res.NotModified || res.Data != nil {
-		t.Fatalf("expected not_modified, got %+v", res)
+	if string(res.Data) != "print(1)" {
+		t.Fatalf("expected print(1) on re-read, got %q", res.Data)
 	}
-	if fetcher.seenEtag != "v1" {
-		t.Fatalf("expected peer to receive the validator, got %q", fetcher.seenEtag)
+	if fetcher.reads != 2 {
+		t.Fatalf("expected 2 reads, got %d", fetcher.reads)
 	}
 }
 
 func TestServerFetchReadNotFound(t *testing.T) {
-	fetcher := &countingFetcher{content: "x", etag: "v1", notFound: true}
+	fetcher := &countingFetcher{content: "x", notFound: true}
 	server := NewServer("fetchy", "1.0.0", "fetch test")
 	server.RegisterFetcher("ftest", fetcher)
 
@@ -121,7 +108,7 @@ func TestServerFetchReadNotFound(t *testing.T) {
 }
 
 func TestServerFetchListDispatch(t *testing.T) {
-	fetcher := &countingFetcher{content: "x", etag: "v1"}
+	fetcher := &countingFetcher{content: "x"}
 	server := NewServer("fetchy", "1.0.0", "fetch test")
 	server.RegisterFetcher("ftest", fetcher)
 
@@ -138,7 +125,7 @@ func TestServerFetchListDispatch(t *testing.T) {
 }
 
 func TestServerFetchUnknownScheme(t *testing.T) {
-	fetcher := &countingFetcher{content: "x", etag: "v1"}
+	fetcher := &countingFetcher{content: "x"}
 	server := NewServer("fetchy", "1.0.0", "fetch test")
 	server.RegisterFetcher("ftest", fetcher)
 

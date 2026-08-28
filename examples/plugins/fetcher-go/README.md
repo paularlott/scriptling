@@ -22,16 +22,17 @@ It serves:
 - `demo://scripts/hello` — a single-file script source
 - `demo://scripts/setup` — a JSON-RPC setup script for server modes
 
-The plugin returns the sha256 of each file as its etag. The host does not cache
-what a plugin serves, so it never sends those validators back and every read
-reaches `Read` — the etag is returned anyway because it costs nothing and a host
-that does cache will use it. Nothing is written to the package cache:
+The `Read` handler just returns the bytes. The host caches nothing it fetches,
+so every read reaches the plugin and nothing is written to the package cache:
 
 ```bash
 scriptling --cache-dir /tmp/demo-cache --plugin /tmp/scriptling-plugins/fetcher-go \
            -c 'import greet'
 ls /tmp/demo-cache   # empty: plugin content is never persisted
 ```
+
+A fetcher whose backend is slow enough to want caching does it inside `Read`;
+there is no host-side cache and no conditional-read protocol to hook into.
 
 Setup scripts work in the server modes, with handler modules arriving from
 the declared package:

@@ -1012,19 +1012,11 @@ void sl_register_fetcher(sl_server *srv, const char *scheme,
     e->list_fn = list_fn;
 }
 
-sl_fetch_result *sl_fetch_data(const void *data, size_t len, const char *etag) {
+sl_fetch_result *sl_fetch_data(const void *data, size_t len) {
     sl_fetch_result *r = calloc(1, sizeof(*r));
     r->data = malloc(len ? len : 1);
     memcpy(r->data, data, len);
     r->data_len = len;
-    if (etag) r->etag = strdup(etag);
-    return r;
-}
-
-sl_fetch_result *sl_fetch_not_modified(const char *etag) {
-    sl_fetch_result *r = calloc(1, sizeof(*r));
-    r->not_modified = true;
-    if (etag) r->etag = strdup(etag);
     return r;
 }
 
@@ -1037,8 +1029,6 @@ sl_fetch_result *sl_fetch_not_found(void) {
 void sl_fetch_result_free(sl_fetch_result *r) {
     if (!r) return;
     free(r->data);
-    free(r->etag);
-    free(r->last_modified);
     free(r);
 }
 
@@ -1310,10 +1300,8 @@ static void dispatch_request(sl_server *srv, const char *method,
     }
 
     if (strcmp(method, "fetch.read") == 0) {
-        const char *source  = params ? jget_str(params, "source") : NULL;
-        const char *path    = params ? jget_str(params, "path") : NULL;
-        const char *etag    = params ? jget_str(params, "etag") : NULL;
-        const char *lastmod = params ? jget_str(params, "last_modified") : NULL;
+        const char *source = params ? jget_str(params, "source") : NULL;
+        const char *path   = params ? jget_str(params, "path") : NULL;
         if (!source) { send_error(srv, id, "missing source"); return; }
         sl_fetcher_reg *fe = find_fetcher(srv, source);
         if (!fe) {
@@ -1321,9 +1309,7 @@ static void dispatch_request(sl_server *srv, const char *method,
             send_error(srv, id, e.b); sb_free(&e);
             return;
         }
-        sl_fetch_result *res = fe->read_fn(source, path ? path : "",
-                                           etag ? etag : "", lastmod ? lastmod : "",
-                                           srv->user_ctx);
+        sl_fetch_result *res = fe->read_fn(source, path ? path : "", srv->user_ctx);
         if (!res) { send_error(srv, id, "fetch read failed"); return; }
         if (res->not_found) {
             sbuf e; sb_init(&e); sb_printf(&e, "fetch source not found: %s", source);
@@ -1332,21 +1318,9 @@ static void dispatch_request(sl_server *srv, const char *method,
             return;
         }
         sbuf s; sb_init(&s);
-        if (res->not_modified) sb_puts(&s, "{\"not_modified\":true");
-        else {
-            sb_puts(&s, "{\"data\":\"");
-            sb_base64(&s, res->data, res->data_len);
-            sb_putc(&s, '"');
-        }
-        if (res->etag) {
-            sb_puts(&s, ",\"etag\":");
-            sb_json_str(&s, res->etag, strlen(res->etag));
-        }
-        if (res->last_modified) {
-            sb_puts(&s, ",\"last_modified\":");
-            sb_json_str(&s, res->last_modified, strlen(res->last_modified));
-        }
-        sb_puts(&s, "}");
+        sb_puts(&s, "{\"data\":\"");
+        sb_base64(&s, res->data, res->data_len);
+        sb_puts(&s, "\"}");
         send_result_json(srv, id, s.b); sb_free(&s);
         sl_fetch_result_free(res);
         return;

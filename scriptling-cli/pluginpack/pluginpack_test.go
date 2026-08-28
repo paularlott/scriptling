@@ -2,8 +2,6 @@ package pluginpack
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -20,8 +18,8 @@ import (
 )
 
 // mutableFetcher serves a virtual package whose contents tests can change
-// mid-run, recording every read (and the validators the host sent) so cache
-// and staleness behavior is observable.
+// mid-run, counting reads and lists per path so on-demand and re-read behavior
+// is observable.
 type mutableFetcher struct {
 	mu      sync.Mutex
 	source  string
@@ -29,8 +27,7 @@ type mutableFetcher struct {
 	scripts map[string]string
 	reads   map[string]int
 	lists   map[string]int
-	sent    map[string]string // path → validator most recently sent by the host
-	blockCh chan struct{}     // when non-nil, Read waits on it (or ctx) before answering
+	blockCh chan struct{} // when non-nil, Read waits on it (or ctx) before answering
 }
 
 func newMutableFetcher(source string, files, scripts map[string]string) *mutableFetcher {
@@ -40,16 +37,10 @@ func newMutableFetcher(source string, files, scripts map[string]string) *mutable
 		scripts: scripts,
 		reads:   map[string]int{},
 		lists:   map[string]int{},
-		sent:    map[string]string{},
 	}
 }
 
-func (f *mutableFetcher) validator(content string) string {
-	sum := sha256.Sum256([]byte(content))
-	return "sha256:" + hex.EncodeToString(sum[:8])
-}
-
-func (f *mutableFetcher) Read(ctx context.Context, source, path, etag, lastModified string) (plugin.FetchResult, error) {
+func (f *mutableFetcher) Read(ctx context.Context, source, path string) (plugin.FetchResult, error) {
 	f.mu.Lock()
 	block := f.blockCh
 	f.mu.Unlock()
@@ -76,12 +67,7 @@ func (f *mutableFetcher) Read(ctx context.Context, source, path, etag, lastModif
 		return plugin.FetchResult{}, fmt.Errorf("%w: %s in %s", plugin.ErrFetchNotFound, path, source)
 	}
 	f.reads[key]++
-	f.sent[key] = etag
-	validator := f.validator(content)
-	if etag != "" && etag == validator {
-		return plugin.FetchResult{NotModified: true, ETag: validator}, nil
-	}
-	return plugin.FetchResult{Data: []byte(content), ETag: validator}, nil
+	return plugin.FetchResult{Data: []byte(content)}, nil
 }
 
 func (f *mutableFetcher) List(ctx context.Context, source, path string) ([]plugin.FetchEntry, error) {
@@ -135,12 +121,6 @@ func (f *mutableFetcher) listsOf(path string) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.lists[path]
-}
-
-func (f *mutableFetcher) sentValidator(path string) string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.sent[path]
 }
 
 func (f *mutableFetcher) block() {
@@ -293,10 +273,8 @@ func TestContentIsNeverWrittenToDisk(t *testing.T) {
 	}
 }
 
-// TestContentReusedInMemoryAndRevalidated covers the other half: within one
-// file system content is not retained at all: every read is a fetch, and no
-// validators are sent because there is nothing held to compare against. An edit
-// is therefore always visible on the next read.
+// TestContentIsNotRetained: content is never held, so every read is a fetch and
+// an edit is always visible on the next read.
 func TestContentIsNotRetained(t *testing.T) {
 	fetcher := newMutableFetcher("ppmem://libs", map[string]string{
 		"manifest.toml": testFiles["manifest.toml"],
@@ -318,7 +296,7 @@ func TestContentIsNotRetained(t *testing.T) {
 		return string(content)
 	}
 
-	// Every read is an unconditional fetch — no validator is ever sent.
+	// Every read is a fetch — nothing is served from a cache.
 	for i := 1; i <= 3; i++ {
 		if got := read(); !strings.Contains(got, "data-v1") {
 			t.Fatalf("read %d got %q", i, got)
@@ -326,54 +304,12 @@ func TestContentIsNotRetained(t *testing.T) {
 		if got := fetcher.readsOf("lib/data.py"); got != i {
 			t.Fatalf("reads after %d = %d, want %d", i, got, i)
 		}
-		if v := fetcher.sentValidator("lib/data.py"); v != "" {
-			t.Fatalf("read %d sent validator %q; nothing is held to validate against", i, v)
-		}
 	}
 
 	// An edit is visible immediately, with no invalidation step.
 	fetcher.set("lib/data.py", "def value():\n    return 'data-v2'\n")
 	if got := read(); !strings.Contains(got, "data-v2") {
 		t.Fatalf("expected the edit to be visible at once, got %q", got)
-	}
-}
-
-// notModifiedFetcher answers not_modified even though the host sent no
-// validator — a plugin bug the host must not turn into an empty file.
-type notModifiedFetcher struct{ inner *mutableFetcher }
-
-func (f notModifiedFetcher) Read(ctx context.Context, source, path, etag, lastModified string) (plugin.FetchResult, error) {
-	if path == "manifest.toml" {
-		return f.inner.Read(ctx, source, path, etag, lastModified)
-	}
-	return plugin.FetchResult{NotModified: true, ETag: "whatever"}, nil
-}
-
-func (f notModifiedFetcher) List(ctx context.Context, source, path string) ([]plugin.FetchEntry, error) {
-	return f.inner.List(ctx, source, path)
-}
-
-// TestUnsolicitedNotModifiedIsAnError guards the failure mode that appears once
-// the host stops sending validators: a not_modified answer carries no bytes, so
-// trusting it would silently produce an empty module.
-func TestUnsolicitedNotModifiedIsAnError(t *testing.T) {
-	base := newMutableFetcher("ppnm://libs", map[string]string{
-		"manifest.toml": testFiles["manifest.toml"],
-		"lib/data.py":   "x = 1\n",
-	}, nil)
-	manager := servePlugin(t, "ppnm", notModifiedFetcher{inner: base})
-	bridgeFor(t, manager, t.TempDir())
-
-	bundle, err := pack.FetchBundle("ppnm://libs", false, t.TempDir())
-	if err != nil {
-		t.Fatalf("FetchBundle: %v", err)
-	}
-	data, err := bundle.ReadFile("lib/data.py")
-	if err == nil {
-		t.Fatalf("expected an error, got %d bytes: %q", len(data), data)
-	}
-	if !strings.Contains(err.Error(), "not_modified") {
-		t.Fatalf("expected the protocol violation named, got: %v", err)
 	}
 }
 
@@ -691,9 +627,9 @@ type failingFetcher struct {
 	inner *mutableFetcher
 }
 
-func (f failingFetcher) Read(ctx context.Context, source, path, etag, lastModified string) (plugin.FetchResult, error) {
+func (f failingFetcher) Read(ctx context.Context, source, path string) (plugin.FetchResult, error) {
 	if path == "manifest.toml" {
-		return f.inner.Read(ctx, source, path, etag, lastModified)
+		return f.inner.Read(ctx, source, path)
 	}
 	return plugin.FetchResult{}, errors.New("knot server unreachable: connection refused")
 }

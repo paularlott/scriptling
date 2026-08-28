@@ -5,7 +5,6 @@ set -euo pipefail
 # sources. Everything the protocol needs is jq, printf and base64 — proof of
 # how small the plugin contract is.
 
-BSH_ETAG="bsh-v1"
 
 bsh_manifest='name = "bsh-libs"
 version = "1.0.0"
@@ -56,7 +55,6 @@ while IFS= read -r line; do
     fetch.read)
       source=$(printf '%s\n' "$line" | jq -r '.params.source')
       path=$(printf '%s\n' "$line" | jq -r '.params.path // ""')
-      etag=$(printf '%s\n' "$line" | jq -r '.params.etag // ""')
 
       content=""
       case "$path" in
@@ -65,13 +63,13 @@ while IFS= read -r line; do
         lib/hi.py)      content=$bsh_hi ;;
       esac
 
+      # The host caches nothing it fetches, so return content plainly with no
+      # etag. A fetcher whose backend is slow enough to cache would return an
+      # etag and answer {"not_modified":true} when the request's etag matches.
       if [ -z "$content" ]; then
         send_error "$id" -32001 "fetch source not found: $path in $source"
-      elif [ -n "$etag" ] && [ "$etag" = "$BSH_ETAG" ]; then
-        send_result "$id" '{"not_modified":true,"etag":"'$BSH_ETAG'"}'
       else
-        data=$(b64 "$content")
-        send_result "$id" '{"data":"'$data'","etag":"'$BSH_ETAG'"}'
+        send_result "$id" '{"data":"'"$(b64 "$content")"'"}'
       fi
       ;;
     fetch.list)

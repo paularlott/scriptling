@@ -592,19 +592,19 @@ type stagingFetcher struct {
 	scripts map[string]string
 }
 
-func (f *stagingFetcher) Read(ctx context.Context, source, path, etag, lastModified string) (scriptlingplugin.FetchResult, error) {
+func (f *stagingFetcher) Read(ctx context.Context, source, path string) (scriptlingplugin.FetchResult, error) {
 	if path == "" {
 		content, ok := f.scripts[source]
 		if !ok {
 			return scriptlingplugin.FetchResult{}, fmt.Errorf("%w: %s", scriptlingplugin.ErrFetchNotFound, source)
 		}
-		return scriptlingplugin.FetchResult{Data: []byte(content), ETag: "ppmain-v1"}, nil
+		return scriptlingplugin.FetchResult{Data: []byte(content)}, nil
 	}
 	content, ok := f.files[path]
 	if !ok {
 		return scriptlingplugin.FetchResult{}, fmt.Errorf("%w: %s", scriptlingplugin.ErrFetchNotFound, path)
 	}
-	return scriptlingplugin.FetchResult{Data: []byte(content), ETag: "ppmain-v1"}, nil
+	return scriptlingplugin.FetchResult{Data: []byte(content)}, nil
 }
 
 func (f *stagingFetcher) List(ctx context.Context, source, path string) ([]scriptlingplugin.FetchEntry, error) {

@@ -41,34 +41,24 @@ type FetchEntry struct {
 	IsDir bool   `json:"is_dir"`
 }
 
-// FetchResult is the outcome of a Fetcher.Read. Data is the file content, and
-// travels base64-encoded on the wire so binary assets (a webroot image, a font)
-// survive intact — a JSON string cannot carry arbitrary bytes.
+// FetchResult is the outcome of a Fetcher.Read: the file content. Data travels
+// base64-encoded on the wire so binary assets (a webroot image, a font) survive
+// intact — a JSON string cannot carry arbitrary bytes.
 //
-// ETag / LastModified are opaque validator strings. A NotModified result carries
-// no Data and answers "your validators still match"; only return it when the
-// caller actually supplied a validator, since otherwise there are no bytes for
-// the caller to fall back on.
-//
-// Conditional reads are part of the protocol, but a host is not obliged to use
-// them: scriptling's own bridge holds no content and so sends no validators,
-// leaving persistence to the plugin, which owns the backend and its freshness
-// rules. Return validators anyway — they cost nothing and a host that does
-// cache will use them.
+// There is no conditional-read machinery. The host does not cache what a plugin
+// serves, so there is nothing to revalidate: every Read returns bytes. A plugin
+// whose backend is slow caches behind its own Read, where the freshness rules
+// live; the host stays a dumb pipe.
 type FetchResult struct {
-	NotModified  bool
-	Data         []byte
-	ETag         string
-	LastModified string
+	Data []byte
 }
 
 // Fetcher serves file content for sources under a registered scheme. Read is
-// called with the full source string, a slash path relative to it (empty for a
-// source that denotes a single file, such as a script), and any validators the
-// caller holds from a previous read (empty when it holds none). List enumerates
-// one directory level.
+// called with the full source string and a slash path relative to it (empty for
+// a source that denotes a single file, such as a script). List enumerates one
+// directory level.
 type Fetcher interface {
-	Read(ctx context.Context, source, path, etag, lastModified string) (FetchResult, error)
+	Read(ctx context.Context, source, path string) (FetchResult, error)
 	List(ctx context.Context, source, path string) ([]FetchEntry, error)
 }
 
@@ -129,19 +119,14 @@ func (s *Server) callFetchRead(ctx context.Context, params any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	res, err := fetcher.Read(ctx, p.Source, p.Path, p.ETag, p.LastModified)
+	res, err := fetcher.Read(ctx, p.Source, p.Path)
 	if err != nil {
 		if errors.Is(err, ErrFetchNotFound) {
 			return nil, jsonrpc.NewError(FetchNotFoundCode, err.Error(), nil)
 		}
 		return nil, err
 	}
-	return fetchReadResult{
-		NotModified:  res.NotModified,
-		Data:         res.Data,
-		ETag:         res.ETag,
-		LastModified: res.LastModified,
-	}, nil
+	return fetchReadResult{Data: res.Data}, nil
 }
 
 func (s *Server) callFetchList(ctx context.Context, params any) (any, error) {
@@ -220,10 +205,8 @@ func (c *Client) Schemes() []string {
 
 // FetchFile reads one file from a source. path is a slash path relative to the
 // source; an empty path denotes a source that is itself a single file (a
-// script). etag / lastModified are validators from a previous FetchFile of the
-// same source+path — the peer answers NotModified instead of resending
-// unchanged bytes.
-func (c *Client) FetchFile(ctx context.Context, source, path, etag, lastModified string) (FetchResult, error) {
+// script).
+func (c *Client) FetchFile(ctx context.Context, source, path string) (FetchResult, error) {
 	if !c.SupportsFetch() {
 		return FetchResult{}, fmt.Errorf("plugin %s does not support fetch", c.metadata.Name)
 	}
@@ -234,19 +217,12 @@ func (c *Client) FetchFile(ctx context.Context, source, path, etag, lastModified
 	}
 	var result fetchReadResult
 	if err := c.call(ctx, "fetch.read", fetchReadParams{
-		Source:       source,
-		Path:         path,
-		ETag:         etag,
-		LastModified: lastModified,
+		Source: source,
+		Path:   path,
 	}, nil, &result); err != nil {
 		return FetchResult{}, mapFetchError(err)
 	}
-	return FetchResult{
-		NotModified:  result.NotModified,
-		Data:         result.Data,
-		ETag:         result.ETag,
-		LastModified: result.LastModified,
-	}, nil
+	return FetchResult{Data: result.Data}, nil
 }
 
 // FetchList enumerates one directory level of a source. A missing directory

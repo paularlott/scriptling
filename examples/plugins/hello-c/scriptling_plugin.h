@@ -136,11 +136,8 @@ typedef struct sl_fetch_result sl_fetch_result;
 
 struct sl_fetch_result {
     bool not_found;      /* source or path missing; reported as code -32001 */
-    bool not_modified;   /* caller's validators match; data is ignored */
     unsigned char *data; /* file content, malloc'd; freed by sl_fetch_result_free */
     size_t data_len;
-    char *etag;          /* malloc'd validator, or NULL */
-    char *last_modified; /* malloc'd validator, or NULL */
 };
 
 typedef struct sl_fetch_entry {
@@ -149,9 +146,9 @@ typedef struct sl_fetch_entry {
 } sl_fetch_entry;
 
 /* Read handler: return an sl_fetch_result (one of the constructors below or
- * hand-built). The SDK frees it with sl_fetch_result_free after sending. */
+ * hand-built). The SDK frees it with sl_fetch_result_free after sending.
+ * An empty path means the source itself is a single script file. */
 typedef sl_fetch_result *(*sl_fetch_read_fn)(const char *source, const char *path,
-                                             const char *etag, const char *last_modified,
                                              void *ctx);
 
 /* List handler: return a malloc'd array of entries and set *count. The SDK
@@ -171,8 +168,7 @@ void sl_register_fetcher(sl_server *srv, const char *scheme,
 void sl_declare_package(sl_server *srv, const char *source);
 
 /* Convenience constructors for read results. */
-sl_fetch_result *sl_fetch_data(const void *data, size_t len, const char *etag);
-sl_fetch_result *sl_fetch_not_modified(const char *etag);
+sl_fetch_result *sl_fetch_data(const void *data, size_t len);
 sl_fetch_result *sl_fetch_not_found(void);
 void sl_fetch_result_free(sl_fetch_result *r);
 

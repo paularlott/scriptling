@@ -6,15 +6,12 @@
 //	scriptling --plugin /tmp/scriptling-plugins/fetcher-go demo://scripts/hello
 //
 // The host only asks for the files an import actually touches — manifest.toml
-// first, then each module as it resolves. Validators are the sha256 of the
-// content, so a second run revalidates with the cached etag and the plugin
-// answers not_modified instead of resending bytes.
+// first, then each module as it resolves. It caches nothing it fetches, so the
+// example returns content plainly and bothers with no validators.
 package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"sort"
 	"strings"
@@ -39,12 +36,14 @@ var scripts = map[string]string{
 	"demo://scripts/setup": "import scriptling.runtime as runtime\n\nruntime.jsonrpc.method(\"demo.add\", \"calc.add\")\nruntime.jsonrpc.method(\"demo.hello\", \"calc.hello\")\n",
 }
 
-// memoryFetcher serves the maps above with content-hash validators.
+// memoryFetcher serves the maps above straight from memory. Read just returns
+// the bytes; the host caches nothing, so there is no validator to deal with. A
+// plugin whose backend is slow enough to want caching does it behind Read.
 type memoryFetcher struct{}
 
-func (memoryFetcher) Read(ctx context.Context, source, path, etag, lastModified string) (plugin.FetchResult, error) {
+func (memoryFetcher) Read(ctx context.Context, source, path string) (plugin.FetchResult, error) {
 	if content, ok := scripts[source]; ok && path == "" {
-		return withValidator(content, etag)
+		return plugin.FetchResult{Data: []byte(content)}, nil
 	}
 	if !strings.HasPrefix(source, "demo://libs") {
 		return plugin.FetchResult{}, fmt.Errorf("%w: %s", plugin.ErrFetchNotFound, source)
@@ -56,7 +55,7 @@ func (memoryFetcher) Read(ctx context.Context, source, path, etag, lastModified 
 	if !ok {
 		return plugin.FetchResult{}, fmt.Errorf("%w: %s in %s", plugin.ErrFetchNotFound, path, source)
 	}
-	return withValidator(content, etag)
+	return plugin.FetchResult{Data: []byte(content)}, nil
 }
 
 func (memoryFetcher) List(ctx context.Context, source, path string) ([]plugin.FetchEntry, error) {
@@ -90,17 +89,6 @@ func (memoryFetcher) List(ctx context.Context, source, path string) ([]plugin.Fe
 		return nil, fmt.Errorf("%w: %s in %s", plugin.ErrFetchNotFound, path, source)
 	}
 	return entries, nil
-}
-
-// withValidator returns the content with its sha256 as the etag, answering
-// not_modified when the host's cached validator already matches.
-func withValidator(content, etag string) (plugin.FetchResult, error) {
-	sum := sha256.Sum256([]byte(content))
-	validator := "sha256:" + hex.EncodeToString(sum[:])
-	if etag != "" && etag == validator {
-		return plugin.FetchResult{NotModified: true, ETag: validator}, nil
-	}
-	return plugin.FetchResult{Data: []byte(content), ETag: validator}, nil
 }
 
 func main() {

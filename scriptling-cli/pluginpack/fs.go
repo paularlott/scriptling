@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"io/fs"
 	"path"
@@ -171,7 +170,7 @@ func (p *pluginFS) statOrRead(name string) (data []byte, isDir bool, err error) 
 	// Unknown to any parent listing — but the fetcher may serve files its
 	// listings omit (some do for probe-heavy paths), so confirm with a read
 	// before declaring the path missing.
-	content, _, err := p.readFileResult(name)
+	content, err := p.readFile(name)
 	if err != nil {
 		return nil, false, err
 	}
@@ -199,39 +198,19 @@ func (p *pluginFS) lookupEntry(name string) (*dirEntry, bool) {
 }
 
 // readFile fetches file content from the plugin. Nothing is cached: the host
-// holds no plugin-served bytes, on disk or in memory.
+// holds no plugin-served bytes, on disk or in memory, so every read is a fetch.
 //
 // Caching content here would buy very little. Server modes build a fresh
 // interpreter per request, so a handler module is re-read on every request
-// whatever we do, and a cache that revalidates (the only kind that stays fresh)
-// still costs one round trip per read — it saves only the payload, and the files
-// are source modules measured in hundreds of bytes. The parse cache upstream is
-// keyed on the source text, so it already removes the expensive part: compiling.
-// What is left is a small, predictable RPC, and always-fresh semantics with no
-// invalidation logic to get wrong.
+// whatever we do, and the files are source modules measured in hundreds of
+// bytes. The parse cache upstream is keyed on the source text, so it already
+// removes the expensive part: compiling. What is left is a small, predictable
+// RPC, with always-fresh semantics and no invalidation logic to get wrong.
 //
 // A plugin whose backend is genuinely slow caches behind its own fetcher, where
 // the credentials and freshness rules live.
 func (p *pluginFS) readFile(name string) ([]byte, error) {
-	data, _, err := p.readFileResult(name)
-	return data, err
-}
-
-// readFileResult is readFile but also reports the fetch result, so callers can
-// see the validators the peer returned.
-func (p *pluginFS) readFileResult(name string) ([]byte, plugin.FetchResult, error) {
-	// No validators are sent, because nothing is held to compare against.
-	data, res, err := fetchFile(p.ctx, p.client, p.source, name, "", "")
-	if err != nil {
-		return nil, res, err
-	}
-	if res.NotModified {
-		// The host sent no validator, so not_modified answers nothing and would
-		// otherwise surface as an empty file. Report it instead of corrupting.
-		return nil, res, fmt.Errorf("plugin %s answered not_modified for %s in %s, but no validator was sent",
-			p.client.Metadata().Name, name, p.source)
-	}
-	return data, res, nil
+	return fetchFile(p.ctx, p.client, p.source, name)
 }
 
 // =========================================================================

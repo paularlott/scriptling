@@ -166,27 +166,16 @@ static const char *cdemo_script_bodies[] = {
     "#!/usr/bin/env scriptling\nimport greet\nimport sys\nprint(greet.greeting(sys.argv[1] if len(sys.argv) > 1 else \"World\"))\n",
 };
 
-static const char *cdemo_etag_for(const char *content) {
-    (void)content;
-    /* Static content has a fixed validator; a real fetcher would hash the
-     * bytes it serves so edits invalidate the host cache. */
-    return "cdemo-v1";
-}
-
-static sl_fetch_result *cdemo_read(const char *source, const char *path,
-                                   const char *etag, const char *last_modified, void *ctx) {
-    (void)last_modified; (void)ctx;
-    const char *validator = NULL;
+/* The host caches nothing it fetches, so this just returns the bytes. A fetcher
+ * whose backend is slow enough to want caching does it inside this handler. */
+static sl_fetch_result *cdemo_read(const char *source, const char *path, void *ctx) {
+    (void)ctx;
 
     if (path[0] == '\0') {
         /* No path: the source itself is a single script file. */
         for (size_t i = 0; i < sizeof(cdemo_scripts) / sizeof(cdemo_scripts[0]); i++) {
             if (strcmp(source, cdemo_scripts[i]) == 0) {
-                validator = cdemo_etag_for(cdemo_script_bodies[i]);
-                if (etag[0] != '\0' && strcmp(etag, validator) == 0) {
-                    return sl_fetch_not_modified(validator);
-                }
-                return sl_fetch_data(cdemo_script_bodies[i], strlen(cdemo_script_bodies[i]), validator);
+                return sl_fetch_data(cdemo_script_bodies[i], strlen(cdemo_script_bodies[i]));
             }
         }
         return sl_fetch_not_found();
@@ -197,11 +186,7 @@ static sl_fetch_result *cdemo_read(const char *source, const char *path,
     }
     for (size_t i = 0; i < sizeof(cdemo_files) / sizeof(cdemo_files[0]); i++) {
         if (strcmp(path, cdemo_files[i].path) == 0) {
-            validator = cdemo_etag_for(cdemo_files[i].content);
-            if (etag[0] != '\0' && strcmp(etag, validator) == 0) {
-                return sl_fetch_not_modified(validator);
-            }
-            return sl_fetch_data(cdemo_files[i].content, strlen(cdemo_files[i].content), validator);
+            return sl_fetch_data(cdemo_files[i].content, strlen(cdemo_files[i].content));
         }
     }
     return sl_fetch_not_found();

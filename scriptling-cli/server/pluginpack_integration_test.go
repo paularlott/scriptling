@@ -23,7 +23,7 @@ type srvFetcher struct {
 	scripts map[string]string
 }
 
-func (f *srvFetcher) Read(ctx context.Context, source, path, etag, lastModified string) (plugin.FetchResult, error) {
+func (f *srvFetcher) Read(ctx context.Context, source, path string) (plugin.FetchResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if path == "" {
@@ -31,16 +31,13 @@ func (f *srvFetcher) Read(ctx context.Context, source, path, etag, lastModified 
 		if !ok {
 			return plugin.FetchResult{}, fmt.Errorf("%w: %s", plugin.ErrFetchNotFound, source)
 		}
-		return plugin.FetchResult{Data: []byte(content), ETag: "ppsrv-v1"}, nil
+		return plugin.FetchResult{Data: []byte(content)}, nil
 	}
 	content, ok := f.files[path]
 	if !ok {
 		return plugin.FetchResult{}, fmt.Errorf("%w: %s in %s", plugin.ErrFetchNotFound, path, source)
 	}
-	if etag == "ppsrv-v1" {
-		return plugin.FetchResult{NotModified: true, ETag: "ppsrv-v1"}, nil
-	}
-	return plugin.FetchResult{Data: []byte(content), ETag: "ppsrv-v1"}, nil
+	return plugin.FetchResult{Data: []byte(content)}, nil
 }
 
 func (f *srvFetcher) List(ctx context.Context, source, path string) ([]plugin.FetchEntry, error) {

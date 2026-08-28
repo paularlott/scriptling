@@ -14,7 +14,7 @@ import (
 // fetchHelper runs a plugin server with a registered fetcher. It backs the
 // --plugin / LoadPlugin tests.
 func fetchHelper() {
-	fetcher := &countingFetcher{content: "print('served')", etag: "helper-v1", onlyPath: "manifest.toml"}
+	fetcher := &countingFetcher{content: "print('served')", onlyPath: "manifest.toml"}
 	server := NewServer("fetchhelper", "1.0.0", "fetch helper plugin")
 	server.RegisterFetcher("fh", fetcher)
 	server.DeclarePackage("fh://libs")
@@ -103,25 +103,16 @@ func TestClientFetchFileRoundTrip(t *testing.T) {
 		t.Fatalf("LoadPlugin: %v", err)
 	}
 
-	res, err := client.FetchFile(context.Background(), "fh://libs", "manifest.toml", "", "")
+	res, err := client.FetchFile(context.Background(), "fh://libs", "manifest.toml")
 	if err != nil {
 		t.Fatalf("FetchFile: %v", err)
 	}
-	if string(res.Data) != "print('served')" || res.ETag != "helper-v1" {
+	if string(res.Data) != "print('served')" {
 		t.Fatalf("unexpected result: %+v", res)
 	}
 
-	// Conditional read with the matching validator.
-	res, err = client.FetchFile(context.Background(), "fh://libs", "manifest.toml", "helper-v1", "")
-	if err != nil {
-		t.Fatalf("FetchFile conditional: %v", err)
-	}
-	if !res.NotModified {
-		t.Fatalf("expected not_modified, got %+v", res)
-	}
-
 	// Miss maps to ErrFetchNotFound.
-	_, err = client.FetchFile(context.Background(), "fh://libs", "missing.py", "", "")
+	_, err = client.FetchFile(context.Background(), "fh://libs", "missing.py")
 	if !errors.Is(err, ErrFetchNotFound) {
 		t.Fatalf("expected ErrFetchNotFound, got %v", err)
 	}
@@ -149,7 +140,7 @@ func TestClientFetchRefusedWithoutCapability(t *testing.T) {
 	if client.SupportsFetch() {
 		t.Fatal("plain plugin must not report fetch support")
 	}
-	if _, err := client.FetchFile(context.Background(), "fh://libs", "x", "", ""); err == nil {
+	if _, err := client.FetchFile(context.Background(), "fh://libs", "x"); err == nil {
 		t.Fatal("expected an error fetching from a plugin without the fetch capability")
 	}
 	if _, err := client.FetchList(context.Background(), "fh://libs", "."); err == nil {

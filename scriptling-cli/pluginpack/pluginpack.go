@@ -261,12 +261,9 @@ func (b *Bridge) FetchScript(ctx context.Context, source string) ([]byte, error)
 	if ctx == nil {
 		ctx = b.ctx
 	}
-	res, err := client.FetchFile(ctx, source, "", "", "")
+	res, err := client.FetchFile(ctx, source, "")
 	if err != nil {
 		return nil, err
-	}
-	if res.NotModified {
-		return nil, fmt.Errorf("plugin %s answered not_modified for an unconditional script fetch of %s", client.Metadata().Name, source)
 	}
 	return res.Data, nil
 }
@@ -296,13 +293,13 @@ func (b *Bridge) clientFor(source string) (*plugin.Client, error) {
 
 // fetchFile fetches one file through the client, mapping a miss to
 // fs.ErrNotExist so loader probing treats it as a plain not-found.
-func fetchFile(ctx context.Context, client *plugin.Client, source, path, etag, lastModified string) ([]byte, plugin.FetchResult, error) {
-	res, err := client.FetchFile(ctx, source, path, etag, lastModified)
+func fetchFile(ctx context.Context, client *plugin.Client, source, path string) ([]byte, error) {
+	res, err := client.FetchFile(ctx, source, path)
 	if err != nil {
 		if errors.Is(err, plugin.ErrFetchNotFound) {
-			return nil, res, &fs.PathError{Op: "readfile", Path: path, Err: fs.ErrNotExist}
+			return nil, &fs.PathError{Op: "readfile", Path: path, Err: fs.ErrNotExist}
 		}
-		return nil, res, err
+		return nil, err
 	}
-	return res.Data, res, nil
+	return res.Data, nil
 }
