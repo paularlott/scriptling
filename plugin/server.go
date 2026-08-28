@@ -21,17 +21,17 @@ import (
 )
 
 type Server struct {
-	name        string
-	version     string
-	description string
-	functions   map[string]*funcEntry
-	classes     map[string]*classEntry
-	constants   map[string]Value
-	fetchers    map[string]Fetcher
-	packages    []string
-	objects     map[string]*serverObject
-	objectsMu   sync.RWMutex
-	nextObject  atomic.Int64
+	name          string
+	version       string
+	description   string
+	functions     map[string]*funcEntry
+	classes       map[string]*classEntry
+	constants     map[string]Value
+	fetcher       Fetcher
+	fetcherScheme string
+	objects       map[string]*serverObject
+	objectsMu     sync.RWMutex
+	nextObject    atomic.Int64
 
 	jsonrpcServer *jsonrpc.Server // inbound registry for HTTP (no callback runtime)
 	srvOnce       sync.Once
@@ -77,7 +77,6 @@ func NewServer(name, version, description string) *Server {
 		functions:   make(map[string]*funcEntry),
 		classes:     make(map[string]*classEntry),
 		constants:   make(map[string]Value),
-		fetchers:    make(map[string]Fetcher),
 		objects:     make(map[string]*serverObject),
 	}
 }
@@ -262,10 +261,8 @@ func (s *Server) dispatch(ctx context.Context, method string, params any) (any, 
 	switch method {
 	case "scriptling.handshake":
 		capabilities := []string{"remote_objects"}
-		var schemes []string
-		if len(s.fetchers) > 0 {
+		if s.fetcher != nil {
 			capabilities = append(capabilities, CapabilityFetch)
-			schemes = s.fetcherSchemes()
 		}
 		return handshakeResult{
 			Protocol:  ProtocolVersion,
@@ -276,8 +273,7 @@ func (s *Server) dispatch(ctx context.Context, method string, params any) (any, 
 				Description: s.description,
 			},
 			Capabilities: capabilities,
-			Schemes:      schemes,
-			Packages:     s.packages,
+			Scheme:       s.fetcherScheme,
 			Schema:       s.schema(),
 		}, nil
 	case "environment.open", "environment.close":

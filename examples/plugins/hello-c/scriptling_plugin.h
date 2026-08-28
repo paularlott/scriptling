@@ -161,12 +161,6 @@ typedef sl_fetch_entry *(*sl_fetch_list_fn)(const char *source, const char *path
 void sl_register_fetcher(sl_server *srv, const char *scheme,
                          sl_fetch_read_fn read_fn, sl_fetch_list_fn list_fn);
 
-/* Declare a package source (e.g. "cdemo://libs") that the host attaches
- * automatically whenever this plugin is loaded, so scripts import its
- * modules without passing --package. The source must be served by one of
- * this plugin's fetchers; explicit --package sources shadow it. */
-void sl_declare_package(sl_server *srv, const char *source);
-
 /* Convenience constructors for read results. */
 sl_fetch_result *sl_fetch_data(const void *data, size_t len);
 sl_fetch_result *sl_fetch_not_found(void);

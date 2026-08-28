@@ -39,8 +39,7 @@ type Metadata struct {
 	Description  string   `json:"description"`
 	Transport    string   `json:"transport,omitempty"`
 	Capabilities []string `json:"capabilities,omitempty"`
-	Schemes      []string `json:"schemes,omitempty"`  // fetcher schemes served by this plugin
-	Packages     []string `json:"packages,omitempty"` // package sources to attach automatically
+	Scheme       string   `json:"scheme,omitempty"` // the source scheme this plugin's fetcher serves
 	Schema       Schema   `json:"schema"`
 }
 
@@ -147,8 +146,7 @@ type handshakeResult struct {
 	Transport    string      `json:"transport"`
 	Library      libraryInfo `json:"library"`
 	Capabilities []string    `json:"capabilities"`
-	Schemes      []string    `json:"schemes,omitempty"`  // fetcher schemes this plugin serves
-	Packages     []string    `json:"packages,omitempty"` // package sources to attach without --package
+	Scheme       string      `json:"scheme,omitempty"` // the source scheme this plugin's fetcher serves
 	Schema       Schema      `json:"schema"`
 }
 

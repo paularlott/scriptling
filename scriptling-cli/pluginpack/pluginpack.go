@@ -135,23 +135,26 @@ func (b *Bridge) Register() error {
 		if !ok || !client.SupportsFetch() {
 			continue
 		}
-		for _, scheme := range client.Schemes() {
-			if err := b.registerScheme(client, scheme); err != nil {
-				rollback()
-				return fmt.Errorf("plugin %s: %w", meta.Name, err)
-			}
-			claimed = append(claimed, scheme)
+		if err := b.registerScheme(client); err != nil {
+			rollback()
+			return fmt.Errorf("plugin %s: %w", meta.Name, err)
 		}
+		claimed = append(claimed, client.Scheme())
 	}
 	return nil
 }
 
-func (b *Bridge) registerScheme(client *plugin.Client, scheme string) error {
-	// cacheDir is ignored: plugin-served content is held in memory only, never
-	// written to the package cache. A plugin that wants persistence caches
-	// behind its own fetcher, where the backend's freshness rules live.
+// registerScheme routes the plugin's one scheme to it. Every source under the
+// scheme opens as a virtual bundle with the standard layout (modules under
+// lib/) — the plugin serves paths, never a manifest. cacheDir is ignored:
+// plugin-served content is held in memory only, never written to the package
+// cache. A plugin that wants persistence caches behind its own fetcher, where
+// the backend's freshness rules live.
+func (b *Bridge) registerScheme(client *plugin.Client) error {
+	scheme := client.Scheme()
 	opener := func(source string, insecure bool, cacheDir string) (*pack.Bundle, error) {
-		return pack.OpenBundle(newPluginFS(b.ctx, client, source, b.dirTTL), source)
+		fsys := newPluginFS(b.ctx, client, source, b.dirTTL)
+		return pack.VirtualBundle(declaredName(client), client.Metadata().Version, fsys, source), nil
 	}
 	if err := b.registry.Register(scheme, opener); err != nil {
 		return err
@@ -160,6 +163,11 @@ func (b *Bridge) registerScheme(client *plugin.Client, scheme string) error {
 	b.clients[scheme] = client
 	b.mu.Unlock()
 	return nil
+}
+
+// declaredName strips the plugin. namespace prefix for use as a bundle name.
+func declaredName(client *plugin.Client) string {
+	return strings.TrimPrefix(client.Metadata().Name, "plugin.")
 }
 
 // Close releases every scheme this bridge registered. It does not close the
@@ -206,43 +214,20 @@ func (b *Bridge) SchemeFor(source string) (string, bool) {
 	return scheme, true
 }
 
-// DeclaredPackages returns the package sources this bridge's fetcher plugins
-// declared for automatic attachment, deduplicated and in stable order.
-func (b *Bridge) DeclaredPackages() []string {
+// Bundles opens the library bundle of every fetch-capable plugin — the
+// <scheme>://libs source each plugin attaches automatically, with the
+// standard layout. Add the result to a pack.Loader ahead of explicit
+// --package bundles so explicit sources shadow plugin libraries.
+func (b *Bridge) Bundles() ([]*pack.Bundle, error) {
 	if b.manager == nil {
-		return nil
+		return nil, nil
 	}
-	var sources []string
-	seen := map[string]bool{}
-	for _, meta := range b.manager.List() {
-		client, ok := b.manager.Get(meta.Name)
-		if !ok || !client.SupportsFetch() {
-			continue
-		}
-		for _, source := range client.Metadata().Packages {
-			if !seen[source] {
-				seen[source] = true
-				sources = append(sources, source)
-			}
-		}
-	}
-	sort.Strings(sources) // manager listing order is not deterministic
-	return sources
-}
-
-// DeclaredBundles opens the declared package sources, skipping any source in
-// skip (typically the explicit --package sources, whose already-opened bundles
-// are used instead). Add the result to a pack.Loader ahead of explicit
-// bundles so explicit sources shadow declared ones.
-func (b *Bridge) DeclaredBundles(skip map[string]bool) ([]*pack.Bundle, error) {
 	var bundles []*pack.Bundle
-	for _, src := range b.DeclaredPackages() {
-		if skip[src] {
-			continue
-		}
-		bundle, err := b.registry.FetchBundle(src, b.insecure, b.cacheDir)
+	for _, scheme := range b.Schemes() {
+		source := scheme + "://libs"
+		bundle, err := b.registry.FetchBundle(source, b.insecure, b.cacheDir)
 		if err != nil {
-			return nil, fmt.Errorf("failed to load package %s: %w", src, err)
+			return nil, fmt.Errorf("failed to load package %s: %w", source, err)
 		}
 		bundles = append(bundles, bundle)
 	}

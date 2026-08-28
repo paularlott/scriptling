@@ -570,12 +570,6 @@ typedef struct {
     sl_value *value;
 } sl_const_entry;
 
-typedef struct {
-    char             *scheme;
-    sl_fetch_read_fn  read_fn;
-    sl_fetch_list_fn  list_fn;
-} sl_fetcher_reg;
-
 /* Pending RPC call — worker threads wait on these for callback/log responses. */
 typedef struct {
     char            *response;
@@ -591,8 +585,9 @@ struct sl_server {
     sl_func_entry *funcs;   size_t func_count, func_cap;
     sl_class     **classes; size_t class_count, class_cap;
     sl_const_entry *consts; size_t const_count, const_cap;
-    sl_fetcher_reg *fetchers; size_t fetcher_count, fetcher_cap;
-    char          **packages;  size_t package_count, package_cap;
+    char             *fetcher_scheme;
+    sl_fetch_read_fn  fetcher_read;
+    sl_fetch_list_fn  fetcher_list;
 
     /* Object store — protected by obj_rwlock. */
     sl_object   **objects;  size_t object_count, object_cap;
@@ -893,10 +888,7 @@ void sl_server_free(sl_server *srv) {
     free(srv->classes);
     for (size_t i = 0; i < srv->const_count; i++) { free(srv->consts[i].name); sl_value_free(srv->consts[i].value); }
     free(srv->consts);
-    for (size_t i = 0; i < srv->fetcher_count; i++) free(srv->fetchers[i].scheme);
-    free(srv->fetchers);
-    for (size_t i = 0; i < srv->package_count; i++) free(srv->packages[i]);
-    free(srv->packages);
+    free(srv->fetcher_scheme);
     pthread_rwlock_wrlock(&srv->obj_rwlock);
     for (size_t i = 0; i < srv->object_count; i++) {
         if (srv->objects[i]) {
@@ -1000,16 +992,20 @@ void sl_constant(sl_server *srv, const char *name, sl_value *value) {
 /*  Fetcher API                                                       */
 /* ================================================================== */
 
+/* Register this plugin's fetcher: the host routes <scheme>:// sources here,
+ * attaches the plugin's library automatically, and asks for files only as
+ * imports resolve. One plugin serves one scheme, with the standard layout
+ * (modules under lib/, scripts as bare scheme:// sources). A second
+ * registration aborts. */
 void sl_register_fetcher(sl_server *srv, const char *scheme,
                          sl_fetch_read_fn read_fn, sl_fetch_list_fn list_fn) {
-    if (srv->fetcher_count >= srv->fetcher_cap) {
-        srv->fetcher_cap = srv->fetcher_cap ? srv->fetcher_cap * 2 : 4;
-        srv->fetchers = realloc(srv->fetchers, srv->fetcher_cap * sizeof(*srv->fetchers));
+    if (srv->fetcher_read) {
+        fprintf(stderr, "scriptling plugin: fetcher already registered for %s (one scheme per plugin)\n", srv->fetcher_scheme);
+        abort();
     }
-    sl_fetcher_reg *e = &srv->fetchers[srv->fetcher_count++];
-    e->scheme = strdup(scheme);
-    e->read_fn = read_fn;
-    e->list_fn = list_fn;
+    srv->fetcher_scheme = strdup(scheme);
+    srv->fetcher_read = read_fn;
+    srv->fetcher_list = list_fn;
 }
 
 sl_fetch_result *sl_fetch_data(const void *data, size_t len) {
@@ -1032,25 +1028,12 @@ void sl_fetch_result_free(sl_fetch_result *r) {
     free(r);
 }
 
-/* find_fetcher resolves the fetcher owning source by its scheme prefix. */
-static sl_fetcher_reg *find_fetcher(sl_server *srv, const char *source) {
-    for (size_t i = 0; i < srv->fetcher_count; i++) {
-        size_t n = strlen(srv->fetchers[i].scheme);
-        if (strncmp(source, srv->fetchers[i].scheme, n) == 0 &&
-            source[n] == ':' && source[n + 1] == '/' && source[n + 2] == '/') {
-            return &srv->fetchers[i];
-        }
-    }
-    return NULL;
-}
-
-/* Declare a package source the host attaches automatically. */
-void sl_declare_package(sl_server *srv, const char *source) {
-    if (srv->package_count >= srv->package_cap) {
-        srv->package_cap = srv->package_cap ? srv->package_cap * 2 : 4;
-        srv->packages = realloc(srv->packages, srv->package_cap * sizeof(*srv->packages));
-    }
-    srv->packages[srv->package_count++] = strdup(source);
+/* fetcher_owns reports whether source sits under the plugin's one scheme. */
+static bool fetcher_owns(sl_server *srv, const char *source) {
+    if (!srv->fetcher_read) return false;
+    size_t n = strlen(srv->fetcher_scheme);
+    return strncmp(source, srv->fetcher_scheme, n) == 0 &&
+           source[n] == ':' && source[n + 1] == '/' && source[n + 2] == '/';
 }
 
 /* sb_base64 appends the base64 encoding of data to s (fetch data only ever
@@ -1090,23 +1073,11 @@ static void handle_handshake(sl_server *srv, int64_t id) {
     sb_puts(&s, ",\"version\":"); sb_json_str(&s, srv->version, strlen(srv->version));
     sb_puts(&s, ",\"description\":"); sb_json_str(&s, srv->desc, strlen(srv->desc));
     sb_puts(&s, "},\"capabilities\":[\"remote_objects\"");
-    if (srv->fetcher_count > 0) sb_puts(&s, ",\"fetch\"");
+    if (srv->fetcher_read) sb_puts(&s, ",\"fetch\"");
     sb_puts(&s, "]");
-    if (srv->fetcher_count > 0) {
-        sb_puts(&s, ",\"schemes\":[");
-        for (size_t i = 0; i < srv->fetcher_count; i++) {
-            if (i) sb_putc(&s, ',');
-            sb_json_str(&s, srv->fetchers[i].scheme, strlen(srv->fetchers[i].scheme));
-        }
-        sb_puts(&s, "]");
-    }
-    if (srv->package_count > 0) {
-        sb_puts(&s, ",\"packages\":[");
-        for (size_t i = 0; i < srv->package_count; i++) {
-            if (i) sb_putc(&s, ',');
-            sb_json_str(&s, srv->packages[i], strlen(srv->packages[i]));
-        }
-        sb_puts(&s, "]");
+    if (srv->fetcher_read) {
+        sb_puts(&s, ",\"scheme\":");
+        sb_json_str(&s, srv->fetcher_scheme, strlen(srv->fetcher_scheme));
     }
     sb_puts(&s, ",\"schema\":{");
 
@@ -1303,13 +1274,12 @@ static void dispatch_request(sl_server *srv, const char *method,
         const char *source = params ? jget_str(params, "source") : NULL;
         const char *path   = params ? jget_str(params, "path") : NULL;
         if (!source) { send_error(srv, id, "missing source"); return; }
-        sl_fetcher_reg *fe = find_fetcher(srv, source);
-        if (!fe) {
+        if (!fetcher_owns(srv, source)) {
             sbuf e; sb_init(&e); sb_printf(&e, "no fetcher registered for source %s", source);
             send_error(srv, id, e.b); sb_free(&e);
             return;
         }
-        sl_fetch_result *res = fe->read_fn(source, path ? path : "", srv->user_ctx);
+        sl_fetch_result *res = srv->fetcher_read(source, path ? path : "", srv->user_ctx);
         if (!res) { send_error(srv, id, "fetch read failed"); return; }
         if (res->not_found) {
             sbuf e; sb_init(&e); sb_printf(&e, "fetch source not found: %s", source);
@@ -1330,14 +1300,13 @@ static void dispatch_request(sl_server *srv, const char *method,
         const char *source = params ? jget_str(params, "source") : NULL;
         const char *path   = params ? jget_str(params, "path") : NULL;
         if (!source) { send_error(srv, id, "missing source"); return; }
-        sl_fetcher_reg *fe = find_fetcher(srv, source);
-        if (!fe) {
+        if (!fetcher_owns(srv, source)) {
             sbuf e; sb_init(&e); sb_printf(&e, "no fetcher registered for source %s", source);
             send_error(srv, id, e.b); sb_free(&e);
             return;
         }
         size_t count = 0;
-        sl_fetch_entry *entries = fe->list_fn(source, path ? path : "", &count, srv->user_ctx);
+        sl_fetch_entry *entries = srv->fetcher_list(source, path ? path : "", &count, srv->user_ctx);
         if (count == (size_t)-1) {
             sbuf e; sb_init(&e); sb_printf(&e, "fetch source not found: %s", source);
             send_error_code(srv, id, -32001, e.b); sb_free(&e);

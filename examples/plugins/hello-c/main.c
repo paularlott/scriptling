@@ -152,7 +152,6 @@ typedef struct {
 
 /* The virtual package served at cdemo://libs. */
 static const cdemo_file cdemo_files[] = {
-    { "manifest.toml",      "name = \"cdemo-libs\"\nversion = \"1.0.0\"\ndescription = \"Virtual package served by the C hello plugin\"\nlibs = [\"lib\"]\n" },
     { "lib/greet.py",       "def greeting(name):\n    return \"hello from cdemo://libs, \" + name\n" },
     { "lib/cdemo/__init__.py", "def prefix():\n    return \"cdemo\"\n" },
     { "docs/README.md",     "# cdemo://libs\n\nServed on demand by the C hello plugin.\n" },
@@ -278,7 +277,6 @@ int main(void) {
     sl_constant(srv, "default_name", sl_string("World"));
 
     sl_register_fetcher(srv, "cdemo", cdemo_read, cdemo_list);
-    sl_declare_package(srv, "cdemo://libs");
 
     int rc = sl_server_run(srv);
     sl_server_free(srv);

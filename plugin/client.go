@@ -849,8 +849,7 @@ func (c *Client) handshake(ctx context.Context) error {
 		Description:  result.Library.Description,
 		Transport:    result.Transport,
 		Capabilities: result.Capabilities,
-		Schemes:      result.Schemes,
-		Packages:     result.Packages,
+		Scheme:       result.Scheme,
 		Schema:       result.Schema,
 	}
 	c.handshakeDone = true

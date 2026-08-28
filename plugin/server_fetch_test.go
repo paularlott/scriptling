@@ -40,8 +40,8 @@ func fmtNotFound(source, path string) error {
 func TestServerHandshakeAdvertisesFetchCapability(t *testing.T) {
 	server := NewServer("fetchy", "1.0.0", "fetch test")
 	result := sendServerRequest[handshakeResult](t, server, "scriptling.handshake", handshakeParams{})
-	if len(result.Schemes) != 0 {
-		t.Fatalf("expected no schemes without fetchers, got %v", result.Schemes)
+	if result.Scheme != "" {
+		t.Fatalf("expected no scheme without a fetcher, got %q", result.Scheme)
 	}
 	for _, c := range result.Capabilities {
 		if c == CapabilityFetch {
@@ -51,13 +51,9 @@ func TestServerHandshakeAdvertisesFetchCapability(t *testing.T) {
 
 	fetcher := &countingFetcher{content: "x"}
 	server.RegisterFetcher("ftest", fetcher)
-	server.DeclarePackage("ftest://libs")
 	result = sendServerRequest[handshakeResult](t, server, "scriptling.handshake", handshakeParams{})
-	if len(result.Schemes) != 1 || result.Schemes[0] != "ftest" {
-		t.Fatalf("expected schemes [ftest], got %v", result.Schemes)
-	}
-	if len(result.Packages) != 1 || result.Packages[0] != "ftest://libs" {
-		t.Fatalf("expected packages [ftest://libs], got %v", result.Packages)
+	if result.Scheme != "ftest" {
+		t.Fatalf("expected scheme ftest, got %q", result.Scheme)
 	}
 	found := false
 	for _, c := range result.Capabilities {

@@ -19,7 +19,6 @@ func fetchHelper() {
 	fetcher := &countingFetcher{content: "print('served')", onlyPath: "manifest.toml"}
 	server := NewServer("fetchhelper", "1.0.0", "fetch helper plugin")
 	server.RegisterFetcher("fh", fetcher)
-	server.DeclarePackage("fh://libs")
 	_ = server.Run()
 	os.Exit(0)
 }
@@ -65,8 +64,8 @@ func TestLoadPluginRegistersUnderDeclaredName(t *testing.T) {
 	if !client.SupportsFetch() {
 		t.Fatal("expected SupportsFetch after handshake")
 	}
-	if schemes := client.Schemes(); len(schemes) != 1 || schemes[0] != "fh" {
-		t.Fatalf("expected schemes [fh], got %v", schemes)
+	if scheme := client.Scheme(); scheme != "fh" {
+		t.Fatalf("expected scheme fh, got %q", scheme)
 	}
 	if _, ok := manager.Get("plugin.fetchhelper"); !ok {
 		t.Fatal("expected client registered under declared name")
@@ -165,7 +164,7 @@ func TestDescribeExposesFetchCapabilityAndSchemes(t *testing.T) {
 	RegisterLibraries(p, manager)
 	result, err := p.Eval(`import scriptling.plugin
 meta = scriptling.plugin.describe("plugin.fetchhelper")
-"fetch" in meta["capabilities"] and "fh" in meta["schemes"] and "fh://libs" in meta["packages"]`)
+"fetch" in meta["capabilities"] and meta["scheme"] == "fh"`)
 	if err != nil {
 		t.Fatalf("eval: %v", err)
 	}

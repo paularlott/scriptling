@@ -86,6 +86,17 @@ func fetchBuiltinBundle(source string, insecure bool, cacheDir string) (*Bundle,
 	return OpenBundleZip(bytesReaderAt(data), int64(len(data)), source)
 }
 
+// VirtualBundle wraps an fs.FS as a bundle with an explicitly supplied
+// manifest — for sources with no manifest.toml of their own, such as a
+// fetcher plugin's library (the host synthesizes the standard layout).
+func VirtualBundle(name, version string, fsys fs.FS, source string) *Bundle {
+	return &Bundle{
+		Manifest: Manifest{Name: name, Version: version, Libs: []string{LibDir}},
+		fsys:     fsys,
+		source:   source,
+	}
+}
+
 // FS returns the bundle's file system.
 func (b *Bundle) FS() fs.FS { return b.fsys }
 

@@ -70,8 +70,8 @@ func run(ctx context.Context) error {
 	}
 
 	// ---------------------------------------------------------------------
-	// 2. Bridge the plugin's fetchers into the pack scheme registry. This is
-	//    what makes demo:// sources resolvable. Close releases the schemes,
+	// 2. Bridge the plugin's fetcher into the pack scheme registry. This is
+	//    what makes demo:// sources resolvable. Close releases the scheme,
 	//    so a host can reload its plugins without restarting.
 	// ---------------------------------------------------------------------
 	bridge := pluginpack.New(pluginpack.Options{
@@ -88,11 +88,10 @@ func run(ctx context.Context) error {
 	fmt.Printf("plugin schemes available: %v\n", bridge.Schemes())
 
 	// ---------------------------------------------------------------------
-	// 3. Open the packages the plugins declared for automatic attachment.
-	//    A host can also open any scheme source explicitly with
-	//    pack.FetchBundle("demo://libs", false, cacheDir).
+	// 3. Open the plugin's library bundle — the demo://libs source every
+	//    fetcher plugin attaches automatically, with the standard lib/ layout.
 	// ---------------------------------------------------------------------
-	bundles, err := bridge.DeclaredBundles(nil)
+	bundles, err := bridge.Bundles()
 	if err != nil {
 		return fmt.Errorf("opening declared packages: %w", err)
 	}

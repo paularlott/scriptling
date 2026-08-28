@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -66,48 +65,32 @@ type Fetcher interface {
 // Server side
 // =========================================================================
 
-// RegisterFetcher registers f as the fetcher for sources with the given scheme.
-// The scheme is advertised in the handshake so hosts route those sources here.
-// It must be called before Run / ServeHTTP, like the other registration
-// methods. Built-in schemes (http, https, file) are rejected.
+// RegisterFetcher registers f as this plugin's fetcher: the host routes
+// <scheme>:// sources here, attaches the plugin's library automatically, and
+// asks for files only as imports resolve. The whole fetcher contract is this
+// one call — one plugin serves one scheme, with the standard layout (modules
+// under lib/, scripts as bare scheme:// sources). It must be called before
+// Run / ServeHTTP, like the other registration methods. Built-in schemes
+// (http, https, file) are rejected, as is a second registration.
 func (s *Server) RegisterFetcher(scheme string, f Fetcher) *Server {
 	if !validScheme(scheme) {
 		panic(fmt.Sprintf("plugin: invalid fetcher scheme %q", scheme))
 	}
-	s.fetchers[scheme] = f
-	return s
-}
-
-// DeclarePackage declares a package source (knot://libs) that the host
-// attaches automatically whenever this plugin is loaded, so scripts import
-// its modules without passing --package. The source must be served by one of
-// this plugin's fetchers. Explicit --package sources shadow declared ones.
-func (s *Server) DeclarePackage(source string) *Server {
-	s.packages = append(s.packages, source)
-	return s
-}
-
-// fetcherSchemes returns the registered schemes in stable order.
-func (s *Server) fetcherSchemes() []string {
-	schemes := make([]string, 0, len(s.fetchers))
-	for scheme := range s.fetchers {
-		schemes = append(schemes, scheme)
+	if s.fetcher != nil {
+		panic(fmt.Sprintf("plugin: fetcher already registered for scheme %q (one scheme per plugin)", s.fetcherScheme))
 	}
-	sort.Strings(schemes)
-	return schemes
+	s.fetcherScheme = scheme
+	s.fetcher = f
+	return s
 }
 
-// fetcherFor resolves the fetcher that owns source by its scheme.
+// fetcherFor resolves the fetcher that owns source. The plugin has exactly
+// one scheme, so this is a prefix check.
 func (s *Server) fetcherFor(source string) (Fetcher, error) {
-	scheme := sourceScheme(source)
-	if scheme == "" {
-		return nil, fmt.Errorf("fetch source %q has no <scheme>:// prefix", source)
+	if s.fetcher == nil || !strings.HasPrefix(source, s.fetcherScheme+"://") {
+		return nil, fmt.Errorf("no fetcher registered for %q", source)
 	}
-	f, ok := s.fetchers[scheme]
-	if !ok {
-		return nil, fmt.Errorf("no fetcher registered for scheme %q", scheme)
-	}
-	return f, nil
+	return s.fetcher, nil
 }
 
 func (s *Server) callFetchRead(ctx context.Context, params any) (any, error) {
@@ -186,7 +169,7 @@ func sourceScheme(source string) string {
 // its handshake. Fetch calls are refused (without contacting the peer) when it
 // did not, so older plugins keep working unchanged.
 func (c *Client) SupportsFetch() bool {
-	if !c.handshakeDone {
+	if !c.handshakeDone || c.metadata.Scheme == "" {
 		return false
 	}
 	for _, capability := range c.metadata.Capabilities {
@@ -197,10 +180,10 @@ func (c *Client) SupportsFetch() bool {
 	return false
 }
 
-// Schemes returns the source schemes the peer's fetchers serve, as advertised
-// in its handshake.
-func (c *Client) Schemes() []string {
-	return c.metadata.Schemes
+// Scheme returns the source scheme the peer's fetcher serves, as advertised
+// in its handshake. Empty when the plugin has no fetcher.
+func (c *Client) Scheme() string {
+	return c.metadata.Scheme
 }
 
 // FetchFile reads one file from a source. path is a slash path relative to the

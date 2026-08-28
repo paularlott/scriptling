@@ -572,8 +572,8 @@ func isFetchedScript(file string) bool {
 // keeps its single meaning: a .zip, a directory, or a URL.
 func openBundles(sources []string, insecure bool, cacheDir string) (app *pack.Bundle, libs []*pack.Bundle, err error) {
 	for _, src := range sources {
-		if scheme, ok := pack.SchemeSyntax(src); ok {
-			return nil, nil, fmt.Errorf("--package does not take plugin scheme sources like %s: a plugin exposes its packages by declaring them, so loading the %q plugin attaches them automatically", src, scheme)
+		if _, ok := pack.SchemeSyntax(src); ok {
+			return nil, nil, fmt.Errorf("--package does not take plugin scheme sources like %s: a plugin's library attaches automatically with the plugin itself, so the flag is not needed", src)
 		}
 		b, err := pack.FetchBundle(src, insecure, cacheDir)
 		if err != nil {
@@ -748,7 +748,7 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	//  2. --package sources opened in PreRun (library packs and app
 	//     bundles alike);
 	//  3. the app bundle, if any, last so its modules win.
-	autoBundles, err := declaredLibBundles(cmd)
+	autoBundles, err := declaredLibBundles()
 	if err != nil {
 		return err
 	}
@@ -773,6 +773,10 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 		}
 		go pack.PruneCache(cmd.GetString("cache-dir"), 0) // async, best-effort
 		bootstrap.ApplyPackLoader(p, packLoader)
+		// One-shot runs get the same read-only package file access the server
+		// modes have, so a script can read assets (images, fonts, docs) from
+		// its --package bundles and from plugin libraries alike.
+		pack.RegisterPackageLibrary(p, packLoader)
 	}
 
 	argv := []string{file}
@@ -866,7 +870,7 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 	// Plugins were started in PreRun (before --package sources opened, so
 	// fetcher schemes could register); reuse that manager. PostRun releases
 	// them however this command exits.
-	autoBundles, err := declaredLibBundles(cmd)
+	autoBundles, err := declaredLibBundles()
 	if err != nil {
 		return err
 	}
@@ -929,7 +933,7 @@ func runJSONRPCServer(ctx context.Context, cmd *cli.Command) error {
 	// Plugins were started in PreRun (before --package sources opened, so
 	// fetcher schemes could register); reuse that manager. PostRun releases
 	// them however this command exits.
-	autoBundles, err := declaredLibBundles(cmd)
+	autoBundles, err := declaredLibBundles()
 	if err != nil {
 		return err
 	}
@@ -981,7 +985,7 @@ func runMCPStdioServer(ctx context.Context, cmd *cli.Command) error {
 	// Plugins were started in PreRun (before --package sources opened, so
 	// fetcher schemes could register); reuse that manager. PostRun releases
 	// them however this command exits.
-	autoBundles, err := declaredLibBundles(cmd)
+	autoBundles, err := declaredLibBundles()
 	if err != nil {
 		return err
 	}
@@ -1143,15 +1147,11 @@ func runFetchedScript(ctx context.Context, p *scriptling.Scriptling, source stri
 // declaredLibBundles opens the packages fetcher plugins declared for
 // automatic attachment, skipping sources passed explicitly via --package
 // (their PreRun-opened bundles are used instead).
-func declaredLibBundles(cmd *cli.Command) ([]*pack.Bundle, error) {
+func declaredLibBundles() ([]*pack.Bundle, error) {
 	if pluginBridge == nil {
 		return nil, nil
 	}
-	skip := map[string]bool{}
-	for _, src := range cmd.GetStringSlice("package") {
-		skip[src] = true
-	}
-	bundles, err := pluginBridge.DeclaredBundles(skip)
+	bundles, err := pluginBridge.Bundles()
 	return bundles, withPluginFlagHint(err)
 }
 

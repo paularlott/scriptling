@@ -22,7 +22,6 @@ import (
 
 // files is the virtual package served at demo://libs.
 var files = map[string]string{
-	"manifest.toml":           "name = \"demo-libs\"\nversion = \"1.0.0\"\ndescription = \"Virtual package served by the fetcher-go example plugin\"\nlibs = [\"lib\"]\n",
 	"lib/greet.py":            "import demo\n\ndef greeting(name):\n    return demo.prefix() + \", \" + name\n",
 	"lib/demo/__init__.py":    "def prefix():\n    return \"hello from demo://libs\"\n",
 	"lib/calc.py":             "import greet\n\ndef add(params):\n    return params[\"a\"] + params[\"b\"]\n\ndef hello(params):\n    return greet.greeting(params.get(\"name\", \"World\"))\n",
@@ -95,8 +94,6 @@ func (memoryFetcher) List(ctx context.Context, source, path string) ([]plugin.Fe
 func main() {
 	server := plugin.NewServer("demo-fetcher", "1.0.0", "Fetcher plugin serving demo:// sources from memory")
 	server.RegisterFetcher("demo", memoryFetcher{})
-	// Attach demo://libs automatically: importing greet needs no --package.
-	server.DeclarePackage("demo://libs")
 	if err := server.Run(); err != nil {
 		panic(err)
 	}

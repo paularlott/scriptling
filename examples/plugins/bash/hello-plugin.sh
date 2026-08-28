@@ -6,12 +6,6 @@ set -euo pipefail
 # how small the plugin contract is.
 
 
-bsh_manifest='name = "bsh-libs"
-version = "1.0.0"
-description = "Virtual package served by the bash example plugin"
-libs = ["lib"]
-'
-
 bsh_hi='def greeting(name):
     return "hello from bsh://libs, " + name
 '
@@ -40,7 +34,7 @@ while IFS= read -r line; do
 
   case "$method" in
     scriptling.handshake)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocol":"1.0","transport":"json","library":{"name":"hello","version":"1.0.0","description":"Bash hello plugin with a bsh:// fetcher"},"capabilities":["fetch"],"schemes":["bsh"],"packages":["bsh://libs"],"schema":{"functions":[{"name":"greet","args":["name"],"wrapper":"generated"}],"classes":[],"constants":[]}}}\n' "$id"
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocol":"1.0","transport":"json","library":{"name":"hello","version":"1.0.0","description":"Bash hello plugin with a bsh:// fetcher"},"capabilities":["fetch"],"scheme":"bsh","schema":{"functions":[{"name":"greet","args":["name"],"wrapper":"generated"}],"classes":[],"constants":[]}}}\n' "$id"
       ;;
     function.call)
       name=$(printf '%s\n' "$line" | jq -r '.params.name')
@@ -58,8 +52,7 @@ while IFS= read -r line; do
 
       content=""
       case "$path" in
-        "")             [ "$source" = "bsh://scripts/hello" ] && content=$bsh_hello_script ;;
-        manifest.toml)  content=$bsh_manifest ;;
+        "")    [ "$source" = "bsh://scripts/hello" ] && content=$bsh_hello_script ;;
         lib/hi.py)      content=$bsh_hi ;;
       esac
 
@@ -78,7 +71,7 @@ while IFS= read -r line; do
       case "$source" in
         bsh://libs)
           case "$path" in
-            ""|".")     send_result "$id" '{"entries":[{"name":"lib","is_dir":true},{"name":"manifest.toml","is_dir":false}]}' ;;
+            ""|".")     send_result "$id" '{"entries":[{"name":"lib","is_dir":true}]}' ;;
             lib)        send_result "$id" '{"entries":[{"name":"hi.py","is_dir":false}]}' ;;
             *)          send_error "$id" -32001 "fetch source not found: $path in $source" ;;
           esac

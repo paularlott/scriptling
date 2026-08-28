@@ -73,7 +73,7 @@ static sl_fetch_result *my_read(const char *source, const char *path, void *ctx)
 
 static sl_fetch_entry *my_list(const char *source, const char *path,
                                size_t *count, void *ctx) {
-    static sl_fetch_entry entries[] = { { "manifest.toml", false }, { "lib", true } };
+    static sl_fetch_entry entries[] = { { "lib", true } };
     sl_fetch_entry *out = malloc(sizeof(entries));
     memcpy(out, entries, sizeof(entries));
     *count = 2;
@@ -82,7 +82,6 @@ static sl_fetch_entry *my_list(const char *source, const char *path,
 
 /* at startup: */
 sl_register_fetcher(srv, "mylib", my_read, my_list);
-sl_declare_package(srv, "mylib://libs"); /* attach without --package */
 ```
 
 ```bash

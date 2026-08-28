@@ -44,7 +44,7 @@ func (f *srvFetcher) List(ctx context.Context, source, path string) ([]plugin.Fe
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if path == "" || path == "." {
-		return []plugin.FetchEntry{{Name: "lib", IsDir: true}, {Name: "manifest.toml"}}, nil
+		return []plugin.FetchEntry{{Name: "lib", IsDir: true}}, nil
 	}
 	if path == "lib" {
 		return []plugin.FetchEntry{{Name: "calc.py"}, {Name: "greet.py"}}, nil
@@ -60,9 +60,8 @@ func (f *srvFetcher) List(ctx context.Context, source, path string) ([]plugin.Fe
 func TestServerSetupScriptAndLibsFromFetcherPlugin(t *testing.T) {
 	fetcher := &srvFetcher{
 		files: map[string]string{
-			"manifest.toml": "name = \"ppsrv-libs\"\nversion = \"1.0.0\"\nlibs = [\"lib\"]\n",
-			"lib/greet.py":  "def greeting(name):\n    return \"hello from ppsrv://libs, \" + name\n",
-			"lib/calc.py":   "import greet\n\ndef add(params):\n    return params[\"a\"] + params[\"b\"]\n\ndef hello(params):\n    return greet.greeting(params.get(\"name\", \"World\"))\n",
+			"lib/greet.py": "def greeting(name):\n    return \"hello from ppsrv://libs, \" + name\n",
+			"lib/calc.py":  "import greet\n\ndef add(params):\n    return params[\"a\"] + params[\"b\"]\n\ndef hello(params):\n    return greet.greeting(params.get(\"name\", \"World\"))\n",
 		},
 		scripts: map[string]string{
 			"ppsrv://scripts/setup": "import scriptling.runtime as runtime\n\nruntime.jsonrpc.method(\"ppsrv.add\", \"calc.add\")\nruntime.jsonrpc.method(\"ppsrv.hello\", \"calc.hello\")\n",
@@ -71,13 +70,12 @@ func TestServerSetupScriptAndLibsFromFetcherPlugin(t *testing.T) {
 
 	pluginSrv := plugin.NewServer("ppsrv-plugin", "1.0.0", "server pluginpack test")
 	pluginSrv.RegisterFetcher("ppsrv", fetcher)
-	pluginSrv.DeclarePackage("ppsrv://libs")
 	pluginHTTP := httptest.NewServer(pluginSrv)
 	defer pluginHTTP.Close()
 
 	manager := plugin.NewManager(nil)
 	defer manager.Close()
-	if _, err := manager.LoadURL(context.Background(), "ppsrvplugin", pluginHTTP.URL, true, false); err != nil {
+	if _, err := manager.LoadURL(context.Background(), "ppsrv-plugin", pluginHTTP.URL, true, false); err != nil {
 		t.Fatalf("LoadURL: %v", err)
 	}
 	bridge := pluginpack.New(pluginpack.Options{
@@ -98,12 +96,12 @@ func TestServerSetupScriptAndLibsFromFetcherPlugin(t *testing.T) {
 	}
 
 	// Open the declared packages exactly like the CLI's declaredLibBundles.
-	bundles, err := bridge.DeclaredBundles(nil)
+	bundles, err := bridge.Bundles()
 	if err != nil {
-		t.Fatalf("DeclaredBundles: %v", err)
+		t.Fatalf("Bundles: %v", err)
 	}
-	if len(bundles) != 1 || bundles[0].Manifest.Name != "ppsrv-libs" {
-		t.Fatalf("expected one declared bundle, got %+v", bundles)
+	if len(bundles) != 1 || bundles[0].Manifest.Name != "ppsrv-plugin" {
+		t.Fatalf("expected the plugin's library bundle, got %+v", bundles)
 	}
 
 	s, err := NewServer(ServerConfig{

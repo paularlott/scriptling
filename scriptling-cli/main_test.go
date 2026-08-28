@@ -461,7 +461,6 @@ func TestSetupScriptReturnsSourceWithoutStaging(t *testing.T) {
 	}
 	pluginSrv := scriptlingplugin.NewServer("ppmain-plugin", "1.0.0", "main test plugin")
 	pluginSrv.RegisterFetcher("ppmain", fetcher)
-	pluginSrv.DeclarePackage("ppmain://libs")
 	httpSrv := httptest.NewServer(pluginSrv)
 	t.Cleanup(httpSrv.Close)
 
@@ -554,8 +553,8 @@ func TestPackageRejectsSchemeSources(t *testing.T) {
 	if !strings.Contains(msg, "knot") {
 		t.Errorf("expected the scheme named, got: %v", msg)
 	}
-	if !strings.Contains(msg, "declar") {
-		t.Errorf("expected the message to point at declared packages, got: %v", msg)
+	if !strings.Contains(msg, "automatically") {
+		t.Errorf("expected the message to say the library attaches automatically, got: %v", msg)
 	}
 	if strings.Contains(msg, "no such file") {
 		t.Errorf("expected a clear rejection, not a file error: %v", msg)
