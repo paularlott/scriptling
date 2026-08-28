@@ -162,9 +162,11 @@ type functionCallParams struct {
 
 // fetchReadParams asks a fetcher plugin for one file. Path is a slash path
 // relative to source; empty means the source itself is a single file (a
-// script). ETag / LastModified carry the validators from a previous read so
-// the peer can answer not_modified instead of resending unchanged bytes.
-// Data in fetchReadResult is transported base64 ([]byte JSON encoding).
+// script). ETag / LastModified carry the validators from a previous read, when
+// the caller holds any, so the peer can answer not_modified instead of
+// resending unchanged bytes; they are empty when the caller caches nothing.
+// Data in fetchReadResult is transported base64 ([]byte JSON encoding), which
+// is what lets binary assets travel intact.
 type fetchReadParams struct {
 	Source       string `json:"source"`
 	Path         string `json:"path,omitempty"`

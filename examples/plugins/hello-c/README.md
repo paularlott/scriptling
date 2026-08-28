@@ -62,9 +62,10 @@ scriptling --plugin-dir /tmp/plugins -c 'import plugin.hello; print(plugin.hello
 
 A fetcher serves sources under a scheme this plugin owns (this example uses
 `cdemo`). The host asks for `manifest.toml` first, then individual files as
-imports resolve — nothing is transferred that nothing imports. Files are
-cached on the host side and revalidated with the etag you return, so answer
-`not_modified` when the caller's validator still matches.
+imports resolve — nothing is transferred that nothing imports. The host caches
+none of it, so every read reaches your handler; cache inside the plugin if your
+backend needs it. Return an etag regardless, and answer `not_modified` only when
+the caller actually supplied a matching validator.
 
 ```c
 static sl_fetch_result *my_read(const char *source, const char *path,

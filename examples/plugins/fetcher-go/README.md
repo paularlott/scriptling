@@ -22,14 +22,15 @@ It serves:
 - `demo://scripts/hello` — a single-file script source
 - `demo://scripts/setup` — a JSON-RPC setup script for server modes
 
-Validators are the sha256 of each file's content, so cached files revalidate
-with a conditional fetch and the plugin answers `not_modified` instead of
-resending bytes. Inspect the cache with a private directory:
+The plugin returns the sha256 of each file as its etag. The host does not cache
+what a plugin serves, so it never sends those validators back and every read
+reaches `Read` — the etag is returned anyway because it costs nothing and a host
+that does cache will use it. Nothing is written to the package cache:
 
 ```bash
 scriptling --cache-dir /tmp/demo-cache --plugin /tmp/scriptling-plugins/fetcher-go \
            -c 'import greet'
-ls /tmp/demo-cache   # three .pfile/.meta pairs: manifest + the modules imported
+ls /tmp/demo-cache   # empty: plugin content is never persisted
 ```
 
 Setup scripts work in the server modes, with handler modules arriving from

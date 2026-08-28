@@ -256,21 +256,61 @@ func TestFetchBundleServesPackageOnDemand(t *testing.T) {
 	}
 }
 
-func TestCacheRevalidatesAndRefreshes(t *testing.T) {
-	fetcher := newMutableFetcher("ppcache://libs", map[string]string{
-		"manifest.toml": testFiles["manifest.toml"],
-		"lib/data.py":   "def value():\n    return 'data-v1'\n",
-	}, nil)
-	manager := servePlugin(t, "ppcache", fetcher)
+// TestContentIsNeverWrittenToDisk is the storage contract: the host keeps
+// plugin-served bytes in memory for the lifetime of the bundle's file system
+// and writes nothing to the package cache. Persisting what a plugin serves is
+// the plugin's business — it owns the backend, credentials and freshness rules.
+func TestContentIsNeverWrittenToDisk(t *testing.T) {
+	fetcher := newMutableFetcher("ppnodisk://libs", testFiles, nil)
+	manager := servePlugin(t, "ppnodisk", fetcher)
 	cacheDir := t.TempDir()
 	bridgeFor(t, manager, cacheDir)
 
-	readViaBundle := func() string {
-		t.Helper()
-		bundle, err := pack.FetchBundle("ppcache://libs", false, cacheDir)
-		if err != nil {
-			t.Fatalf("FetchBundle: %v", err)
+	bundle, err := pack.FetchBundle("ppnodisk://libs", false, cacheDir)
+	if err != nil {
+		t.Fatalf("FetchBundle: %v", err)
+	}
+	for _, name := range []string{"manifest.toml", "lib/hello.py", "lib/nested/__init__.py"} {
+		if _, err := bundle.ReadFile(name); err != nil {
+			t.Fatalf("ReadFile(%s): %v", name, err)
 		}
+	}
+	if _, err := fs.ReadDir(bundle.FS(), "."); err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+
+	// The cache directory must be untouched — no .pfile, no .meta, nothing.
+	entries, err := os.ReadDir(cacheDir)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("read cache dir: %v", err)
+	}
+	if len(entries) != 0 {
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Fatalf("plugin content was persisted to disk: %v", names)
+	}
+}
+
+// TestContentReusedInMemoryAndRevalidated covers the other half: within one
+// file system content is not retained at all: every read is a fetch, and no
+// validators are sent because there is nothing held to compare against. An edit
+// is therefore always visible on the next read.
+func TestContentIsNotRetained(t *testing.T) {
+	fetcher := newMutableFetcher("ppmem://libs", map[string]string{
+		"manifest.toml": testFiles["manifest.toml"],
+		"lib/data.py":   "def value():\n    return 'data-v1'\n",
+	}, nil)
+	manager := servePlugin(t, "ppmem", fetcher)
+	bridgeFor(t, manager, t.TempDir())
+
+	bundle, err := pack.FetchBundle("ppmem://libs", false, t.TempDir())
+	if err != nil {
+		t.Fatalf("FetchBundle: %v", err)
+	}
+	read := func() string {
+		t.Helper()
 		content, err := bundle.ReadFile("lib/data.py")
 		if err != nil {
 			t.Fatalf("ReadFile: %v", err)
@@ -278,51 +318,63 @@ func TestCacheRevalidatesAndRefreshes(t *testing.T) {
 		return string(content)
 	}
 
-	// First read: unconditional, cached to disk.
-	if got := readViaBundle(); !strings.Contains(got, "data-v1") {
-		t.Fatalf("first read got %q", got)
-	}
-	if got := fetcher.readsOf("lib/data.py"); got != 1 {
-		t.Fatalf("reads after first = %d, want 1", got)
-	}
-	if !cacheHasPfile(cacheDir) {
-		t.Fatal("expected a .pfile cache entry on disk")
-	}
-
-	// Second read (fresh bundle + FS, same cache): conditional — the peer
-	// receives the stored validator and answers not_modified; bytes come from
-	// the local cache.
-	if got := readViaBundle(); !strings.Contains(got, "data-v1") {
-		t.Fatalf("second read got %q", got)
-	}
-	if got := fetcher.readsOf("lib/data.py"); got != 2 {
-		t.Fatalf("reads after second = %d, want 2 (one conditional RPC)", got)
-	}
-	if v := fetcher.sentValidator("lib/data.py"); v == "" {
-		t.Fatal("expected the peer to receive the cached validator")
+	// Every read is an unconditional fetch — no validator is ever sent.
+	for i := 1; i <= 3; i++ {
+		if got := read(); !strings.Contains(got, "data-v1") {
+			t.Fatalf("read %d got %q", i, got)
+		}
+		if got := fetcher.readsOf("lib/data.py"); got != i {
+			t.Fatalf("reads after %d = %d, want %d", i, got, i)
+		}
+		if v := fetcher.sentValidator("lib/data.py"); v != "" {
+			t.Fatalf("read %d sent validator %q; nothing is held to validate against", i, v)
+		}
 	}
 
-	// Change the content: the validator differs, fresh bytes replace the cache.
+	// An edit is visible immediately, with no invalidation step.
 	fetcher.set("lib/data.py", "def value():\n    return 'data-v2'\n")
-	if got := readViaBundle(); !strings.Contains(got, "data-v2") {
-		t.Fatalf("third read got %q, want v2", got)
-	}
-	if got := fetcher.readsOf("lib/data.py"); got != 3 {
-		t.Fatalf("reads after third = %d, want 3", got)
+	if got := read(); !strings.Contains(got, "data-v2") {
+		t.Fatalf("expected the edit to be visible at once, got %q", got)
 	}
 }
 
-func cacheHasPfile(cacheDir string) bool {
-	entries, err := os.ReadDir(cacheDir)
+// notModifiedFetcher answers not_modified even though the host sent no
+// validator — a plugin bug the host must not turn into an empty file.
+type notModifiedFetcher struct{ inner *mutableFetcher }
+
+func (f notModifiedFetcher) Read(ctx context.Context, source, path, etag, lastModified string) (plugin.FetchResult, error) {
+	if path == "manifest.toml" {
+		return f.inner.Read(ctx, source, path, etag, lastModified)
+	}
+	return plugin.FetchResult{NotModified: true, ETag: "whatever"}, nil
+}
+
+func (f notModifiedFetcher) List(ctx context.Context, source, path string) ([]plugin.FetchEntry, error) {
+	return f.inner.List(ctx, source, path)
+}
+
+// TestUnsolicitedNotModifiedIsAnError guards the failure mode that appears once
+// the host stops sending validators: a not_modified answer carries no bytes, so
+// trusting it would silently produce an empty module.
+func TestUnsolicitedNotModifiedIsAnError(t *testing.T) {
+	base := newMutableFetcher("ppnm://libs", map[string]string{
+		"manifest.toml": testFiles["manifest.toml"],
+		"lib/data.py":   "x = 1\n",
+	}, nil)
+	manager := servePlugin(t, "ppnm", notModifiedFetcher{inner: base})
+	bridgeFor(t, manager, t.TempDir())
+
+	bundle, err := pack.FetchBundle("ppnm://libs", false, t.TempDir())
 	if err != nil {
-		return false
+		t.Fatalf("FetchBundle: %v", err)
 	}
-	for _, e := range entries {
-		if strings.HasSuffix(e.Name(), ".pfile") {
-			return true
-		}
+	data, err := bundle.ReadFile("lib/data.py")
+	if err == nil {
+		t.Fatalf("expected an error, got %d bytes: %q", len(data), data)
 	}
-	return false
+	if !strings.Contains(err.Error(), "not_modified") {
+		t.Fatalf("expected the protocol violation named, got: %v", err)
+	}
 }
 
 func TestFetchScriptAlwaysRefetches(t *testing.T) {

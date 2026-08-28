@@ -2,7 +2,13 @@
 // every loaded plugin that advertises the fetch capability gets its schemes
 // registered, so knot://libs as a --package value (or as a script source)
 // resolves to a bundle whose files are fetched on demand over the plugin
-// protocol, with a per-file disk cache and conditional revalidation.
+// protocol.
+//
+// The host never persists what a plugin serves. Content is held in memory for
+// the lifetime of the bundle's file system and revalidated with the plugin's
+// own validators; nothing reaches the package cache on disk. A plugin that
+// wants caching across runs does it behind its fetcher, where the backend's
+// credentials and freshness rules already live.
 //
 // Host applications that embed scriptling use the same path the CLI does:
 //
@@ -54,8 +60,10 @@ type Options struct {
 	// process-wide pack.DefaultSchemeRegistry().
 	Registry *pack.SchemeRegistry
 
-	// CacheDir overrides the package cache directory used for fetched file
-	// content. Empty means the OS default (pack.DefaultCacheDir).
+	// CacheDir overrides the package cache directory. Content served by a
+	// plugin is never written there — it is held in memory only — so this
+	// applies solely to a declared package source that is a plain URL or zip
+	// rather than a scheme this plugin serves. Empty means the OS default.
 	CacheDir string
 
 	// Insecure is passed through when opening declared package sources.
@@ -139,11 +147,11 @@ func (b *Bridge) Register() error {
 }
 
 func (b *Bridge) registerScheme(client *plugin.Client, scheme string) error {
+	// cacheDir is ignored: plugin-served content is held in memory only, never
+	// written to the package cache. A plugin that wants persistence caches
+	// behind its own fetcher, where the backend's freshness rules live.
 	opener := func(source string, insecure bool, cacheDir string) (*pack.Bundle, error) {
-		if cacheDir == "" {
-			cacheDir = b.cacheDir
-		}
-		return pack.OpenBundle(newPluginFS(b.ctx, client, source, cacheDir, b.dirTTL), source)
+		return pack.OpenBundle(newPluginFS(b.ctx, client, source, b.dirTTL), source)
 	}
 	if err := b.registry.Register(scheme, opener); err != nil {
 		return err

@@ -41,10 +41,20 @@ type FetchEntry struct {
 	IsDir bool   `json:"is_dir"`
 }
 
-// FetchResult is the outcome of a Fetcher.Read. Data is the file content; a
-// NotModified result carries no Data. ETag / LastModified are opaque validator
-// strings the host stores alongside cached bytes and sends back on later reads
-// to give the fetcher a chance to answer NotModified.
+// FetchResult is the outcome of a Fetcher.Read. Data is the file content, and
+// travels base64-encoded on the wire so binary assets (a webroot image, a font)
+// survive intact — a JSON string cannot carry arbitrary bytes.
+//
+// ETag / LastModified are opaque validator strings. A NotModified result carries
+// no Data and answers "your validators still match"; only return it when the
+// caller actually supplied a validator, since otherwise there are no bytes for
+// the caller to fall back on.
+//
+// Conditional reads are part of the protocol, but a host is not obliged to use
+// them: scriptling's own bridge holds no content and so sends no validators,
+// leaving persistence to the plugin, which owns the backend and its freshness
+// rules. Return validators anyway — they cost nothing and a host that does
+// cache will use them.
 type FetchResult struct {
 	NotModified  bool
 	Data         []byte
@@ -55,7 +65,8 @@ type FetchResult struct {
 // Fetcher serves file content for sources under a registered scheme. Read is
 // called with the full source string, a slash path relative to it (empty for a
 // source that denotes a single file, such as a script), and any validators the
-// host held from a previous read. List enumerates one directory level.
+// caller holds from a previous read (empty when it holds none). List enumerates
+// one directory level.
 type Fetcher interface {
 	Read(ctx context.Context, source, path, etag, lastModified string) (FetchResult, error)
 	List(ctx context.Context, source, path string) ([]FetchEntry, error)

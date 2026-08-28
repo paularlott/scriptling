@@ -101,9 +101,10 @@ func ClearCache(cacheDir string) error {
 // PruneCache removes cache entries that have not been accessed within ttl.
 // If cacheDir is empty, uses the OS default cache directory.
 // If ttl is 0, uses DefaultCacheTTL.
-// Cache entries are .zip/.meta pairs (whole-package downloads) and
-// .pfile/.meta pairs (per-file fetcher downloads); the data file's mod time
-// tracks last access.
+// Each cache entry is a .zip/.meta pair; the .zip mod time tracks last access.
+// Plugin-served content never appears here — it is held in memory only — so
+// there is nothing per-file to prune. Stale .pfile pairs written by an earlier
+// build are cleaned up too.
 func PruneCache(cacheDir string, ttl time.Duration) error {
 	if cacheDir == "" {
 		var err error

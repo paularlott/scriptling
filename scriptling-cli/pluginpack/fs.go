@@ -3,38 +3,36 @@ package pluginpack
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
-	"os"
 	"path"
-	"path/filepath"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/paularlott/scriptling/plugin"
-	"github.com/paularlott/scriptling/scriptling-cli/pack"
 )
 
 // pluginFS is an fs.FS over one fetcher plugin client for one source, the
-// RPC-backed sibling of pack's dir and zip backends. Every ReadFile is a
-// fetch.read round trip guarded by the per-file disk cache; ReadDir results are
-// reused for dirTTL so a long-lived host still sees new files appear.
-// Implements fs.FS, fs.ReadFileFS, fs.StatFS and fs.ReadDirFS so all fs helpers
-// (fs.ReadFile, fs.Stat, fs.WalkDir, fs.Sub) work, mirroring pack's zipFS.
+// RPC-backed sibling of pack's dir and zip backends. Implements fs.FS,
+// fs.ReadFileFS, fs.StatFS and fs.ReadDirFS so all fs helpers (fs.ReadFile,
+// fs.Stat, fs.WalkDir, fs.Sub) work, mirroring pack's zipFS.
+//
+// File content is never retained — every read is a fetch. Directory listings
+// are the one exception: they are memoized for dirTTL, because resolving a
+// single path consults its parent's listing, so a WalkDir over an app bundle
+// would otherwise re-list the same directory once per entry. Structure is
+// cheap to hold and bounded; content is not held at all.
 //
 // ctx is the host's context: cancelling it aborts in-flight fetches. fs.FS has
 // no per-call context, so it is captured once here.
 type pluginFS struct {
-	ctx      context.Context
-	client   *plugin.Client
-	source   string
-	cacheDir string
-	dirTTL   time.Duration
+	ctx    context.Context
+	client *plugin.Client
+	source string
+	dirTTL time.Duration
 
 	mu   sync.Mutex
 	dirs map[string]dirCacheEntry // fetch.list results ("." → root)
@@ -46,17 +44,16 @@ type dirCacheEntry struct {
 	fetched time.Time
 }
 
-func newPluginFS(ctx context.Context, client *plugin.Client, source, cacheDir string, dirTTL time.Duration) *pluginFS {
+func newPluginFS(ctx context.Context, client *plugin.Client, source string, dirTTL time.Duration) *pluginFS {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	return &pluginFS{
-		ctx:      ctx,
-		client:   client,
-		source:   source,
-		cacheDir: cacheDir,
-		dirTTL:   dirTTL,
-		dirs:     map[string]dirCacheEntry{},
+		ctx:    ctx,
+		client: client,
+		source: source,
+		dirTTL: dirTTL,
+		dirs:   map[string]dirCacheEntry{},
 	}
 }
 
@@ -66,7 +63,7 @@ func (p *pluginFS) ReadFile(name string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return p.cachedRead(name)
+	return p.readFile(name)
 }
 
 // Open implements fs.FS.
@@ -165,7 +162,7 @@ func (p *pluginFS) statOrRead(name string) (data []byte, isDir bool, err error) 
 		if entry.dir {
 			return nil, true, nil
 		}
-		content, err := p.cachedRead(name)
+		content, err := p.readFile(name)
 		if err != nil {
 			return nil, false, err
 		}
@@ -174,7 +171,7 @@ func (p *pluginFS) statOrRead(name string) (data []byte, isDir bool, err error) 
 	// Unknown to any parent listing — but the fetcher may serve files its
 	// listings omit (some do for probe-heavy paths), so confirm with a read
 	// before declaring the path missing.
-	content, _, err := p.cachedReadResult(name)
+	content, _, err := p.readFileResult(name)
 	if err != nil {
 		return nil, false, err
 	}
@@ -201,96 +198,40 @@ func (p *pluginFS) lookupEntry(name string) (*dirEntry, bool) {
 	return nil, false
 }
 
-// cachedRead returns file content through the conditional disk cache.
-func (p *pluginFS) cachedRead(name string) ([]byte, error) {
-	data, _, err := p.cachedReadResult(name)
+// readFile fetches file content from the plugin. Nothing is cached: the host
+// holds no plugin-served bytes, on disk or in memory.
+//
+// Caching content here would buy very little. Server modes build a fresh
+// interpreter per request, so a handler module is re-read on every request
+// whatever we do, and a cache that revalidates (the only kind that stays fresh)
+// still costs one round trip per read — it saves only the payload, and the files
+// are source modules measured in hundreds of bytes. The parse cache upstream is
+// keyed on the source text, so it already removes the expensive part: compiling.
+// What is left is a small, predictable RPC, and always-fresh semantics with no
+// invalidation logic to get wrong.
+//
+// A plugin whose backend is genuinely slow caches behind its own fetcher, where
+// the credentials and freshness rules live.
+func (p *pluginFS) readFile(name string) ([]byte, error) {
+	data, _, err := p.readFileResult(name)
 	return data, err
 }
 
-// cachedReadResult is cachedRead but also reports the validators observed
-// with the returned bytes (used by tests to assert revalidation).
-func (p *pluginFS) cachedReadResult(name string) ([]byte, plugin.FetchResult, error) {
-	cacheDir, skip := resolveCacheDir(p.cacheDir)
-	if skip {
-		// No usable cache dir: straight fetch, no validators.
-		return fetchFile(p.ctx, p.client, p.source, name, "", "")
-	}
-	key := fetchCacheKey(p.source, name)
-	dataFile := filepath.Join(cacheDir, key+".pfile")
-	metaFile := filepath.Join(cacheDir, key+".meta")
-
-	etag, lastMod := readCacheMeta(metaFile)
-	if _, statErr := os.Stat(dataFile); statErr == nil {
-		data, res, err := fetchFile(p.ctx, p.client, p.source, name, etag, lastMod)
-		if err != nil {
-			return nil, res, err
-		}
-		if res.NotModified {
-			now := time.Now()
-			_ = os.Chtimes(dataFile, now, now)
-			cached, readErr := os.ReadFile(dataFile)
-			if readErr != nil {
-				return nil, res, readErr
-			}
-			return cached, res, nil
-		}
-		writeCachePair(dataFile, metaFile, data, res)
-		return data, res, nil
-	}
-
+// readFileResult is readFile but also reports the fetch result, so callers can
+// see the validators the peer returned.
+func (p *pluginFS) readFileResult(name string) ([]byte, plugin.FetchResult, error) {
+	// No validators are sent, because nothing is held to compare against.
 	data, res, err := fetchFile(p.ctx, p.client, p.source, name, "", "")
 	if err != nil {
 		return nil, res, err
 	}
-	writeCachePair(dataFile, metaFile, data, res)
+	if res.NotModified {
+		// The host sent no validator, so not_modified answers nothing and would
+		// otherwise surface as an empty file. Report it instead of corrupting.
+		return nil, res, fmt.Errorf("plugin %s answered not_modified for %s in %s, but no validator was sent",
+			p.client.Metadata().Name, name, p.source)
+	}
 	return data, res, nil
-}
-
-// =========================================================================
-// Cache layout — the same directory and .meta format as pack's URL cache,
-// with .pfile data files keyed by source+path.
-// =========================================================================
-
-// resolveCacheDir returns the cache directory to use, or skip=true when no
-// cache directory is available (fall back to uncached fetches).
-func resolveCacheDir(cacheDir string) (string, bool) {
-	if cacheDir == "" {
-		var err error
-		cacheDir, err = pack.DefaultCacheDir()
-		if err != nil {
-			return "", true
-		}
-	}
-	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
-		return "", true
-	}
-	return cacheDir, false
-}
-
-// fetchCacheKey returns a stable filename-safe key for a source+path pair.
-func fetchCacheKey(source, path string) string {
-	h := sha256.Sum256([]byte(source + "\x00" + path))
-	return hex.EncodeToString(h[:])
-}
-
-// readCacheMeta reads the etag\nlast-modified validators from a meta file.
-func readCacheMeta(path string) (etag, lastMod string) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", ""
-	}
-	parts := strings.SplitN(string(data), "\n", 2)
-	if len(parts) == 2 {
-		return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
-	}
-	return strings.TrimSpace(string(data)), ""
-}
-
-func writeCachePair(dataFile, metaFile string, data []byte, res plugin.FetchResult) {
-	_ = os.WriteFile(dataFile, data, 0o644)
-	if res.ETag != "" || res.LastModified != "" {
-		_ = os.WriteFile(metaFile, []byte(res.ETag+"\n"+res.LastModified), 0o644)
-	}
 }
 
 // =========================================================================
