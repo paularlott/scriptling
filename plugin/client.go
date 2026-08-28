@@ -760,6 +760,11 @@ func spawnClient(ctx context.Context, path string, args []string) (*Client, erro
 	peer, err := jsonrpc.NewProcessPeer(path, args, server,
 		jsonrpc.WithStderr(os.Stderr),
 		jsonrpc.WithOnExit(client.onProcessExit),
+		// Peers are told they were spawned by scriptling so multi-role
+		// executables can divert a bare invocation to plugin mode (knot
+		// checks this instead of requiring a subcommand). Purely additive:
+		// peers that don't know it ignore it.
+		jsonrpc.WithExtraEnv(PluginPeerEnv+"=1"),
 	)
 	if err != nil {
 		return nil, err

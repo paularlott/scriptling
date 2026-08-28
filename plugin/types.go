@@ -9,6 +9,10 @@ const (
 	ProtocolVersion = "1.0"
 	// NamespacePrefix is the host-owned namespace for discovered plugin libraries.
 	NamespacePrefix = "plugin."
+	// PluginPeerEnv is the environment variable set (to "1") on every
+	// executable spawned as a plugin peer. Multi-role executables check it
+	// to divert a bare invocation into plugin mode without a subcommand.
+	PluginPeerEnv = "SCRIPTLING_PLUGIN_PEER"
 
 	valueNull     = "null"
 	valueBool     = "bool"

@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/paularlott/scriptling"
 )
@@ -170,4 +172,34 @@ meta = scriptling.plugin.describe("plugin.fetchhelper")
 	if result.Inspect() != "True" {
 		t.Fatalf("expected capabilities/schemes in describe(), got %s", result.Inspect())
 	}
+}
+
+func TestSpawnedPeerSeesPluginEnv(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell peer helper is unix-only")
+	}
+	outFile := filepath.Join(t.TempDir(), "peer-env.txt")
+	helper := filepath.Join(t.TempDir(), "env-peer")
+	script := "#!/bin/sh\nprintf '%s' \"${SCRIPTLING_PLUGIN_PEER:-unset}\" > '" + outFile + "'\nexit 0\n"
+	if err := os.WriteFile(helper, []byte(script), 0o755); err != nil {
+		t.Fatalf("write helper: %v", err)
+	}
+
+	client, err := SpawnClient(context.Background(), helper, nil)
+	if err != nil {
+		t.Fatalf("SpawnClient: %v", err)
+	}
+	defer client.Close()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if data, err := os.ReadFile(outFile); err == nil {
+			if got := strings.TrimSpace(string(data)); got != "1" {
+				t.Fatalf("peer saw SCRIPTLING_PLUGIN_PEER=%q, want 1", got)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("peer never reported its environment")
 }
