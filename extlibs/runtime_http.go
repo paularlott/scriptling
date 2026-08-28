@@ -248,7 +248,8 @@ Returns the parsed JSON as a dict or list, or None if body is empty.`,
 // CreateRequestInstance creates a new Request instance with the given data.
 // pathParams holds values captured from route wildcards ("{id}" and
 // "{path...}") and remoteAddr the client address; both are exposed as
-// request fields (path_params, remote_addr).
+// request fields (path_params, remote_addr). The context field starts as an
+// empty dict for middleware to populate — see WithRequestContext.
 func CreateRequestInstance(method, path, body string, headers, query, pathParams map[string]string, remoteAddr string) *object.Instance {
 	headerDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
 	for k, v := range headers {
@@ -274,6 +275,7 @@ func CreateRequestInstance(method, path, body string, headers, query, pathParams
 		"query":       queryDict,
 		"path_params": paramsDict,
 		"remote_addr": object.NewString(remoteAddr),
+		"context":     &object.Dict{Pairs: make(map[string]object.DictPair)},
 	})
 }
 

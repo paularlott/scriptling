@@ -90,9 +90,9 @@ func (s *Server) buildMux() http.Handler {
 
 	var handler http.Handler = mux
 	// With a script middleware registered, it guards every endpoint — routes
-	// via handleScriptRequest and the protocol endpoints via
-	// scriptProtocolMiddleware — so the static bearer token is not applied.
-	// Without one, a configured static token guards everything.
+	// and WebSocket upgrades via handleScriptRequest and the protocol
+	// endpoints via scriptProtocolMiddleware — so the static bearer token is
+	// not applied. Without one, a configured static token guards everything.
 	if s.config.BearerToken != "" && s.middleware == "" {
 		handler = s.bearerTokenMiddleware(mux)
 	}
@@ -197,17 +197,18 @@ func (s *Server) handleScriptRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	reqObj := s.createRequestObject(r, pathParams(r))
+	ctx := extlibs.WithRequestContext(r.Context(), reqObj)
 
 	if s.middleware != "" {
 		Log.Trace("Running middleware", "handler", s.middleware)
-		if resp := s.runHandler(r.Context(), s.middleware, reqObj); resp != nil {
+		if resp := s.runHandler(ctx, s.middleware, reqObj); resp != nil {
 			s.writeResponse(w, resp)
 			return
 		}
 	}
 
 	Log.Trace("Dispatching to handler", "handler", handlerRef)
-	if resp := s.runHandler(r.Context(), handlerRef, reqObj); resp != nil {
+	if resp := s.runHandler(ctx, handlerRef, reqObj); resp != nil {
 		s.writeResponse(w, resp)
 	} else {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -357,7 +358,8 @@ func (s *Server) serveNotFound(w http.ResponseWriter, r *http.Request) {
 	if s.notFoundHandler != "" {
 		Log.Trace("Handling 404 via not_found handler", "handler", s.notFoundHandler, "path", r.URL.Path)
 		reqObj := s.createRequestObject(r, nil)
-		if resp := s.runHandler(r.Context(), s.notFoundHandler, reqObj); resp != nil {
+		ctx := extlibs.WithRequestContext(r.Context(), reqObj)
+		if resp := s.runHandler(ctx, s.notFoundHandler, reqObj); resp != nil {
 			s.writeResponse(w, resp)
 			return
 		}
@@ -490,19 +492,16 @@ func (s *Server) writeResponse(w http.ResponseWriter, resp *object.Dict) {
 	w.Write(bodyBytes)
 }
 
-// scriptProtocolMiddleware runs the registered script middleware for
-// protocol endpoints (/mcp, /json-rpc) when one is registered: a returned
-// response dict blocks the request (e.g. a 401), None lets it through to the
-// protocol handler. Without a middleware it is a pass-through. The request
-// body is buffered and restored, so building the middleware's request object
-// does not consume it for the protocol handler that runs next.
+// scriptProtocolMiddleware wraps the protocol endpoints (/mcp, /json-rpc).
+// The originating HTTP request is always stashed on the request context so
+// tool and method handlers can query it (scriptling.mcp.tool.get_request(),
+// runtime.jsonrpc.get_request()). When a script middleware is registered it
+// then runs with the request object: a returned response dict blocks the
+// request (e.g. a 401), None lets it through to the protocol handler. The
+// request body is buffered and restored, so building the middleware's request
+// object does not consume it for the protocol handler that runs next.
 func (s *Server) scriptProtocolMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.middleware == "" {
-			next.ServeHTTP(w, r)
-			return
-		}
-
 		var bodyBytes []byte
 		if r.Body != nil {
 			bodyBytes, _ = io.ReadAll(r.Body)
@@ -511,11 +510,14 @@ func (s *Server) scriptProtocolMiddleware(next http.Handler) http.Handler {
 
 		reqObj := s.createRequestObject(r, nil)
 		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		r = r.WithContext(extlibs.WithRequestContext(r.Context(), reqObj))
 
-		Log.Trace("Running middleware", "handler", s.middleware, "path", r.URL.Path)
-		if resp := s.runHandler(r.Context(), s.middleware, reqObj); resp != nil {
-			s.writeResponse(w, resp)
-			return
+		if s.middleware != "" {
+			Log.Trace("Running middleware", "handler", s.middleware, "path", r.URL.Path)
+			if resp := s.runHandler(r.Context(), s.middleware, reqObj); resp != nil {
+				s.writeResponse(w, resp)
+				return
+			}
 		}
 
 		next.ServeHTTP(w, r)

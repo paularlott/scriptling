@@ -114,7 +114,7 @@ func (s *Server) invokeJSONRPCHandler(ctx context.Context, handlerRef string, ra
 		return nil, jsonrpc.InvalidParams("invalid params: " + perr.Error())
 	}
 
-	result := s.runJSONRPCHandler(handlerRef, params)
+	result := s.runJSONRPCHandler(ctx, handlerRef, params)
 
 	if ctx.Err() != nil {
 		return nil, jsonrpc.InternalError("request cancelled")
@@ -186,7 +186,9 @@ func (s *Server) handleJSONRPCHTTP(w http.ResponseWriter, r *http.Request) {
 
 // runJSONRPCHandler imports the handler's library into a fresh evaluator and
 // invokes the function with the decoded params. Mirrors runHandler in http.go.
-func (s *Server) runJSONRPCHandler(handlerRef string, params object.Object) object.Object {
+// The request context flows in, carrying cancellation and — when served over
+// HTTP — the stashed request for runtime.jsonrpc.get_request().
+func (s *Server) runJSONRPCHandler(ctx context.Context, handlerRef string, params object.Object) object.Object {
 	libName, _, ok := splitHandlerRef(handlerRef)
 	if !ok {
 		Log.Error("Invalid JSON-RPC handler reference", "handler", handlerRef)
@@ -202,7 +204,7 @@ func (s *Server) runJSONRPCHandler(handlerRef string, params object.Object) obje
 		return &object.Error{Message: fmt.Sprintf("failed to import library %s: %v", libName, err)}
 	}
 
-	result, err := p.CallFunction(handlerRef, params)
+	result, err := p.CallFunctionWithContext(ctx, handlerRef, params)
 	if err != nil {
 		Log.Error("JSON-RPC handler error", "handler", handlerRef, "error", err)
 		return &object.Error{Message: err.Error()}

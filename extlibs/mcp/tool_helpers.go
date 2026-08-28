@@ -11,6 +11,7 @@ import (
 	mcptoon "github.com/paularlott/mcp/toon"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/evaluator"
+	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -69,7 +70,7 @@ func setResponseAndExit(ctx context.Context, response string, exitCode int) obje
 // buildToolHelpersLibrary creates the scriptling.mcp.tool sub-library
 // This provides parameter access and result functions for MCP tools
 func buildToolHelpersLibrary() *object.Library {
-	return object.NewLibrary("scriptling.mcp.tool", map[string]*object.Builtin{
+	functions := map[string]*object.Builtin{
 		"get_int": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) == 0 {
@@ -607,7 +608,16 @@ Example:
   mcp.tool.return_error("Customer not found")
   mcp.tool.return_error("Invalid input: project ID is required")`,
 		},
-	}, nil, "MCP tool parameter access and result functions")
+	}
+
+	// get_request / request_context: reach the HTTP request and the
+	// middleware's context dict from tool scripts, which receive only their
+	// parameters.
+	for name, builtin := range extlibs.RequestContextBuiltins() {
+		functions[name] = builtin
+	}
+
+	return object.NewLibrary("scriptling.mcp.tool", functions, nil, "MCP tool parameter access and result functions")
 }
 
 // RegisterToolHelpers registers the scriptling.mcp.tool sub-library
