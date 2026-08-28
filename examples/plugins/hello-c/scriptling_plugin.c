@@ -570,6 +570,12 @@ typedef struct {
     sl_value *value;
 } sl_const_entry;
 
+typedef struct {
+    char             *scheme;
+    sl_fetch_read_fn  read_fn;
+    sl_fetch_list_fn  list_fn;
+} sl_fetcher_reg;
+
 /* Pending RPC call — worker threads wait on these for callback/log responses. */
 typedef struct {
     char            *response;
@@ -585,6 +591,8 @@ struct sl_server {
     sl_func_entry *funcs;   size_t func_count, func_cap;
     sl_class     **classes; size_t class_count, class_cap;
     sl_const_entry *consts; size_t const_count, const_cap;
+    sl_fetcher_reg *fetchers; size_t fetcher_count, fetcher_cap;
+    char          **packages;  size_t package_count, package_cap;
 
     /* Object store — protected by obj_rwlock. */
     sl_object   **objects;  size_t object_count, object_cap;
@@ -644,13 +652,17 @@ static char *read_line(void) {
     return buf.b;
 }
 
-static void send_error(sl_server *srv, int64_t id, const char *msg) {
+static void send_error_code(sl_server *srv, int64_t id, int code, const char *msg) {
     if (id < 0) return;
     sbuf s; sb_init(&s);
-    sb_printf(&s, "{\"jsonrpc\":\"2.0\",\"id\":%lld,\"error\":{\"code\":-32000,\"message\":", (long long)id);
+    sb_printf(&s, "{\"jsonrpc\":\"2.0\",\"id\":%lld,\"error\":{\"code\":%d,\"message\":", (long long)id, code);
     sb_json_str(&s, msg, strlen(msg));
     sb_puts(&s, "}}");
     emit_response(srv, s.b); sb_free(&s);
+}
+
+static void send_error(sl_server *srv, int64_t id, const char *msg) {
+    send_error_code(srv, id, -32000, msg);
 }
 
 static void send_result_null(sl_server *srv, int64_t id) {
@@ -881,6 +893,10 @@ void sl_server_free(sl_server *srv) {
     free(srv->classes);
     for (size_t i = 0; i < srv->const_count; i++) { free(srv->consts[i].name); sl_value_free(srv->consts[i].value); }
     free(srv->consts);
+    for (size_t i = 0; i < srv->fetcher_count; i++) free(srv->fetchers[i].scheme);
+    free(srv->fetchers);
+    for (size_t i = 0; i < srv->package_count; i++) free(srv->packages[i]);
+    free(srv->packages);
     pthread_rwlock_wrlock(&srv->obj_rwlock);
     for (size_t i = 0; i < srv->object_count; i++) {
         if (srv->objects[i]) {
@@ -980,6 +996,89 @@ void sl_constant(sl_server *srv, const char *name, sl_value *value) {
     srv->const_count++;
 }
 
+/* ================================================================== */
+/*  Fetcher API                                                       */
+/* ================================================================== */
+
+void sl_register_fetcher(sl_server *srv, const char *scheme,
+                         sl_fetch_read_fn read_fn, sl_fetch_list_fn list_fn) {
+    if (srv->fetcher_count >= srv->fetcher_cap) {
+        srv->fetcher_cap = srv->fetcher_cap ? srv->fetcher_cap * 2 : 4;
+        srv->fetchers = realloc(srv->fetchers, srv->fetcher_cap * sizeof(*srv->fetchers));
+    }
+    sl_fetcher_reg *e = &srv->fetchers[srv->fetcher_count++];
+    e->scheme = strdup(scheme);
+    e->read_fn = read_fn;
+    e->list_fn = list_fn;
+}
+
+sl_fetch_result *sl_fetch_data(const void *data, size_t len, const char *etag) {
+    sl_fetch_result *r = calloc(1, sizeof(*r));
+    r->data = malloc(len ? len : 1);
+    memcpy(r->data, data, len);
+    r->data_len = len;
+    if (etag) r->etag = strdup(etag);
+    return r;
+}
+
+sl_fetch_result *sl_fetch_not_modified(const char *etag) {
+    sl_fetch_result *r = calloc(1, sizeof(*r));
+    r->not_modified = true;
+    if (etag) r->etag = strdup(etag);
+    return r;
+}
+
+sl_fetch_result *sl_fetch_not_found(void) {
+    sl_fetch_result *r = calloc(1, sizeof(*r));
+    r->not_found = true;
+    return r;
+}
+
+void sl_fetch_result_free(sl_fetch_result *r) {
+    if (!r) return;
+    free(r->data);
+    free(r->etag);
+    free(r->last_modified);
+    free(r);
+}
+
+/* find_fetcher resolves the fetcher owning source by its scheme prefix. */
+static sl_fetcher_reg *find_fetcher(sl_server *srv, const char *source) {
+    for (size_t i = 0; i < srv->fetcher_count; i++) {
+        size_t n = strlen(srv->fetchers[i].scheme);
+        if (strncmp(source, srv->fetchers[i].scheme, n) == 0 &&
+            source[n] == ':' && source[n + 1] == '/' && source[n + 2] == '/') {
+            return &srv->fetchers[i];
+        }
+    }
+    return NULL;
+}
+
+/* Declare a package source the host attaches automatically. */
+void sl_declare_package(sl_server *srv, const char *source) {
+    if (srv->package_count >= srv->package_cap) {
+        srv->package_cap = srv->package_cap ? srv->package_cap * 2 : 4;
+        srv->packages = realloc(srv->packages, srv->package_cap * sizeof(*srv->packages));
+    }
+    srv->packages[srv->package_count++] = strdup(source);
+}
+
+/* sb_base64 appends the base64 encoding of data to s (fetch data only ever
+ * flows plugin → host, so encode is all the SDK needs). */
+static void sb_base64(sbuf *s, const unsigned char *data, size_t len) {
+    static const char table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    for (size_t i = 0; i < len; i += 3) {
+        unsigned v = (unsigned)data[i] << 16;
+        int rem = (int)(len - i);
+        if (rem > 1) v |= (unsigned)data[i + 1] << 8;
+        if (rem > 2) v |= (unsigned)data[i + 2];
+        sb_putc(s, table[(v >> 18) & 0x3f]);
+        sb_putc(s, table[(v >> 12) & 0x3f]);
+        sb_putc(s, rem > 1 ? table[(v >> 6) & 0x3f] : '=');
+        sb_putc(s, rem > 2 ? table[v & 0x3f] : '=');
+    }
+}
+
 void sl_wrapper(sl_server *srv, const char *name, const char *source) {
     for (size_t i = 0; i < srv->func_count; i++) {
         if (strcmp(srv->funcs[i].name, name) == 0) { free(srv->funcs[i].source); srv->funcs[i].source = strdup(source); return; }
@@ -1000,7 +1099,26 @@ static void handle_handshake(sl_server *srv, int64_t id) {
     sb_puts(&s, "\"library\":{\"name\":"); sb_json_str(&s, srv->name, strlen(srv->name));
     sb_puts(&s, ",\"version\":"); sb_json_str(&s, srv->version, strlen(srv->version));
     sb_puts(&s, ",\"description\":"); sb_json_str(&s, srv->desc, strlen(srv->desc));
-    sb_puts(&s, "},\"capabilities\":[\"remote_objects\"],\"schema\":{");
+    sb_puts(&s, "},\"capabilities\":[\"remote_objects\"");
+    if (srv->fetcher_count > 0) sb_puts(&s, ",\"fetch\"");
+    sb_puts(&s, "]");
+    if (srv->fetcher_count > 0) {
+        sb_puts(&s, ",\"schemes\":[");
+        for (size_t i = 0; i < srv->fetcher_count; i++) {
+            if (i) sb_putc(&s, ',');
+            sb_json_str(&s, srv->fetchers[i].scheme, strlen(srv->fetchers[i].scheme));
+        }
+        sb_puts(&s, "]");
+    }
+    if (srv->package_count > 0) {
+        sb_puts(&s, ",\"packages\":[");
+        for (size_t i = 0; i < srv->package_count; i++) {
+            if (i) sb_putc(&s, ',');
+            sb_json_str(&s, srv->packages[i], strlen(srv->packages[i]));
+        }
+        sb_puts(&s, "]");
+    }
+    sb_puts(&s, ",\"schema\":{");
 
     sb_puts(&s, "\"functions\":[");
     for (size_t i = 0; i < srv->func_count; i++) {
@@ -1188,6 +1306,80 @@ static void dispatch_request(sl_server *srv, const char *method,
         const char *obj_id_str = params ? jget_str(params, "object_id") : NULL;
         if (obj_id_str) destroy_object(srv, obj_id_str);
         send_result_null(srv, id);
+        return;
+    }
+
+    if (strcmp(method, "fetch.read") == 0) {
+        const char *source  = params ? jget_str(params, "source") : NULL;
+        const char *path    = params ? jget_str(params, "path") : NULL;
+        const char *etag    = params ? jget_str(params, "etag") : NULL;
+        const char *lastmod = params ? jget_str(params, "last_modified") : NULL;
+        if (!source) { send_error(srv, id, "missing source"); return; }
+        sl_fetcher_reg *fe = find_fetcher(srv, source);
+        if (!fe) {
+            sbuf e; sb_init(&e); sb_printf(&e, "no fetcher registered for source %s", source);
+            send_error(srv, id, e.b); sb_free(&e);
+            return;
+        }
+        sl_fetch_result *res = fe->read_fn(source, path ? path : "",
+                                           etag ? etag : "", lastmod ? lastmod : "",
+                                           srv->user_ctx);
+        if (!res) { send_error(srv, id, "fetch read failed"); return; }
+        if (res->not_found) {
+            sbuf e; sb_init(&e); sb_printf(&e, "fetch source not found: %s", source);
+            send_error_code(srv, id, -32001, e.b); sb_free(&e);
+            sl_fetch_result_free(res);
+            return;
+        }
+        sbuf s; sb_init(&s);
+        if (res->not_modified) sb_puts(&s, "{\"not_modified\":true");
+        else {
+            sb_puts(&s, "{\"data\":\"");
+            sb_base64(&s, res->data, res->data_len);
+            sb_putc(&s, '"');
+        }
+        if (res->etag) {
+            sb_puts(&s, ",\"etag\":");
+            sb_json_str(&s, res->etag, strlen(res->etag));
+        }
+        if (res->last_modified) {
+            sb_puts(&s, ",\"last_modified\":");
+            sb_json_str(&s, res->last_modified, strlen(res->last_modified));
+        }
+        sb_puts(&s, "}");
+        send_result_json(srv, id, s.b); sb_free(&s);
+        sl_fetch_result_free(res);
+        return;
+    }
+
+    if (strcmp(method, "fetch.list") == 0) {
+        const char *source = params ? jget_str(params, "source") : NULL;
+        const char *path   = params ? jget_str(params, "path") : NULL;
+        if (!source) { send_error(srv, id, "missing source"); return; }
+        sl_fetcher_reg *fe = find_fetcher(srv, source);
+        if (!fe) {
+            sbuf e; sb_init(&e); sb_printf(&e, "no fetcher registered for source %s", source);
+            send_error(srv, id, e.b); sb_free(&e);
+            return;
+        }
+        size_t count = 0;
+        sl_fetch_entry *entries = fe->list_fn(source, path ? path : "", &count, srv->user_ctx);
+        if (count == (size_t)-1) {
+            sbuf e; sb_init(&e); sb_printf(&e, "fetch source not found: %s", source);
+            send_error_code(srv, id, -32001, e.b); sb_free(&e);
+            return;
+        }
+        sbuf s; sb_init(&s);
+        sb_puts(&s, "{\"entries\":[");
+        for (size_t i = 0; i < count; i++) {
+            if (i) sb_putc(&s, ',');
+            sb_puts(&s, "{\"name\":");
+            sb_json_str(&s, entries[i].name, strlen(entries[i].name));
+            sb_printf(&s, ",\"is_dir\":%s}", entries[i].is_dir ? "true" : "false");
+        }
+        sb_puts(&s, "]}");
+        send_result_json(srv, id, s.b); sb_free(&s);
+        free(entries);
         return;
     }
 

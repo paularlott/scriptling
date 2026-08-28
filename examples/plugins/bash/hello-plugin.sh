@@ -1,13 +1,47 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Bash plugin: the classic greet surface, plus a fetcher serving bsh://
+# sources. Everything the protocol needs is jq, printf and base64 — proof of
+# how small the plugin contract is.
+
+BSH_ETAG="bsh-v1"
+
+bsh_manifest='name = "bsh-libs"
+version = "1.0.0"
+description = "Virtual package served by the bash example plugin"
+libs = ["lib"]
+'
+
+bsh_hi='def greeting(name):
+    return "hello from bsh://libs, " + name
+'
+
+bsh_hello_script='#!/usr/bin/env scriptling
+import hi
+import sys
+print(hi.greeting(sys.argv[1] if len(sys.argv) > 1 else "World"))
+'
+
+send_result() { # id, result-json
+  jq -nc --argjson id "$1" --argjson result "$2" \
+    '{"jsonrpc":"2.0","id":$id,"result":$result}'
+}
+
+send_error() { # id, code, message
+  jq -nc --argjson id "$1" --argjson code "$2" --arg msg "$3" \
+    '{"jsonrpc":"2.0","id":$id,"error":{"code":$code,"message":$msg}}'
+}
+
+b64() { printf '%s' "$1" | base64 | tr -d '\n'; }
+
 while IFS= read -r line; do
   method=$(printf '%s\n' "$line" | jq -r '.method')
   id=$(printf '%s\n' "$line" | jq -r '.id')
 
   case "$method" in
     scriptling.handshake)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocol":"1.0","transport":"json","library":{"name":"hello","version":"1.0.0","description":"Bash hello plugin"},"capabilities":[],"schema":{"functions":[{"name":"greet","args":["name"],"wrapper":"generated"}],"classes":[],"constants":[]}}}\n' "$id"
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocol":"1.0","transport":"json","library":{"name":"hello","version":"1.0.0","description":"Bash hello plugin with a bsh:// fetcher"},"capabilities":["fetch"],"schemes":["bsh"],"packages":["bsh://libs"],"schema":{"functions":[{"name":"greet","args":["name"],"wrapper":"generated"}],"classes":[],"constants":[]}}}\n' "$id"
       ;;
     function.call)
       name=$(printf '%s\n' "$line" | jq -r '.params.name')
@@ -16,17 +50,52 @@ while IFS= read -r line; do
         jq -nc --argjson id "$id" --arg text "Hello, $who" \
           '{"jsonrpc":"2.0","id":$id,"result":{"type":"string","value":$text}}'
       else
-        jq -nc --argjson id "$id" \
-          '{"jsonrpc":"2.0","id":$id,"error":{"code":-32601,"message":"unknown function"}}'
+        send_error "$id" -32601 "unknown function"
       fi
+      ;;
+    fetch.read)
+      source=$(printf '%s\n' "$line" | jq -r '.params.source')
+      path=$(printf '%s\n' "$line" | jq -r '.params.path // ""')
+      etag=$(printf '%s\n' "$line" | jq -r '.params.etag // ""')
+
+      content=""
+      case "$path" in
+        "")             [ "$source" = "bsh://scripts/hello" ] && content=$bsh_hello_script ;;
+        manifest.toml)  content=$bsh_manifest ;;
+        lib/hi.py)      content=$bsh_hi ;;
+      esac
+
+      if [ -z "$content" ]; then
+        send_error "$id" -32001 "fetch source not found: $path in $source"
+      elif [ -n "$etag" ] && [ "$etag" = "$BSH_ETAG" ]; then
+        send_result "$id" '{"not_modified":true,"etag":"'$BSH_ETAG'"}'
+      else
+        data=$(b64 "$content")
+        send_result "$id" '{"data":"'$data'","etag":"'$BSH_ETAG'"}'
+      fi
+      ;;
+    fetch.list)
+      source=$(printf '%s\n' "$line" | jq -r '.params.source')
+      path=$(printf '%s\n' "$line" | jq -r '.params.path // ""')
+      case "$source" in
+        bsh://libs)
+          case "$path" in
+            ""|".")     send_result "$id" '{"entries":[{"name":"lib","is_dir":true},{"name":"manifest.toml","is_dir":false}]}' ;;
+            lib)        send_result "$id" '{"entries":[{"name":"hi.py","is_dir":false}]}' ;;
+            *)          send_error "$id" -32001 "fetch source not found: $path in $source" ;;
+          esac
+          ;;
+        *)
+          send_error "$id" -32001 "fetch source not found: $source"
+          ;;
+      esac
       ;;
     plugin.shutdown)
       printf '{"jsonrpc":"2.0","id":%s,"result":null}\n' "$id"
       exit 0
       ;;
     *)
-      jq -nc --argjson id "$id" \
-        '{"jsonrpc":"2.0","id":$id,"error":{"code":-32601,"message":"unknown method"}}'
+      send_error "$id" -32601 "unknown method"
       ;;
   esac
 done

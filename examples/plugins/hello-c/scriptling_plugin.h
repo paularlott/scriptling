@@ -123,6 +123,59 @@ void sl_wrapper(sl_server *srv, const char *name, const char *source);
 /* Run the JSON-RPC event loop on stdin/stdout. Returns 0 on clean shutdown. */
 int sl_server_run(sl_server *srv);
 
+/* ------------------------------------------------------------------ */
+/*  Fetchers                                                          */
+/* ------------------------------------------------------------------ */
+
+/* Fetchers serve sources such as demo://libs on demand: the host asks for
+ * individual files (fetch.read) and directory listings (fetch.list) as it
+ * needs them, so nothing is transferred that nothing imports. Register with
+ * sl_register_fetcher before sl_server_run, like the other registrations. */
+
+typedef struct sl_fetch_result sl_fetch_result;
+
+struct sl_fetch_result {
+    bool not_found;      /* source or path missing; reported as code -32001 */
+    bool not_modified;   /* caller's validators match; data is ignored */
+    unsigned char *data; /* file content, malloc'd; freed by sl_fetch_result_free */
+    size_t data_len;
+    char *etag;          /* malloc'd validator, or NULL */
+    char *last_modified; /* malloc'd validator, or NULL */
+};
+
+typedef struct sl_fetch_entry {
+    const char *name; /* must remain valid until the handler returns */
+    bool is_dir;
+} sl_fetch_entry;
+
+/* Read handler: return an sl_fetch_result (one of the constructors below or
+ * hand-built). The SDK frees it with sl_fetch_result_free after sending. */
+typedef sl_fetch_result *(*sl_fetch_read_fn)(const char *source, const char *path,
+                                             const char *etag, const char *last_modified,
+                                             void *ctx);
+
+/* List handler: return a malloc'd array of entries and set *count. The SDK
+ * frees the array only — the name pointers must remain valid until the
+ * handler returns. NULL with *count == 0 is an empty directory; NULL with
+ * *count == (size_t)-1 means not found. */
+typedef sl_fetch_entry *(*sl_fetch_list_fn)(const char *source, const char *path,
+                                            size_t *count, void *ctx);
+
+void sl_register_fetcher(sl_server *srv, const char *scheme,
+                         sl_fetch_read_fn read_fn, sl_fetch_list_fn list_fn);
+
+/* Declare a package source (e.g. "cdemo://libs") that the host attaches
+ * automatically whenever this plugin is loaded, so scripts import its
+ * modules without passing --package. The source must be served by one of
+ * this plugin's fetchers; explicit --package sources shadow it. */
+void sl_declare_package(sl_server *srv, const char *source);
+
+/* Convenience constructors for read results. */
+sl_fetch_result *sl_fetch_data(const void *data, size_t len, const char *etag);
+sl_fetch_result *sl_fetch_not_modified(const char *etag);
+sl_fetch_result *sl_fetch_not_found(void);
+void sl_fetch_result_free(sl_fetch_result *r);
+
 /* Call a callback value received in arguments. Returns the result or NULL
  * on error. If non-NULL, *err_msg is set to an allocated error string on
  * failure (caller must free). */

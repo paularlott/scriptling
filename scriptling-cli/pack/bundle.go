@@ -61,9 +61,18 @@ func OpenBundleZip(r io.ReaderAt, size int64, source string) (*Bundle, error) {
 	return OpenBundle(newZipFS(zr), source)
 }
 
-// FetchBundle opens a bundle from a local directory, a local .zip, or a remote
-// .zip URL (fetched with caching; source may include a #sha256=<hex> fragment).
+// FetchBundle opens a bundle from a local directory, a local .zip, a remote
+// .zip URL (fetched with caching; source may include a #sha256=<hex> fragment),
+// or a custom <scheme>:// source routed through a registered scheme opener
+// (see RegisterScheme — typically a fetcher plugin serving files on demand).
 func FetchBundle(source string, insecure bool, cacheDir string) (*Bundle, error) {
+	if scheme, ok := SchemeFor(source); ok {
+		opener := lookupSchemeOpener(scheme)
+		if opener == nil {
+			return nil, fmt.Errorf("no opener registered for scheme %s", scheme)
+		}
+		return opener(source, insecure, cacheDir)
+	}
 	if info, err := os.Stat(source); err == nil && info.IsDir() {
 		return OpenBundleDir(source)
 	}

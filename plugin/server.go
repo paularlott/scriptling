@@ -27,6 +27,8 @@ type Server struct {
 	functions   map[string]*funcEntry
 	classes     map[string]*classEntry
 	constants   map[string]Value
+	fetchers    map[string]Fetcher
+	packages    []string
 	objects     map[string]*serverObject
 	objectsMu   sync.RWMutex
 	nextObject  atomic.Int64
@@ -75,6 +77,7 @@ func NewServer(name, version, description string) *Server {
 		functions:   make(map[string]*funcEntry),
 		classes:     make(map[string]*classEntry),
 		constants:   make(map[string]Value),
+		fetchers:    make(map[string]Fetcher),
 		objects:     make(map[string]*serverObject),
 	}
 }
@@ -207,6 +210,8 @@ var pluginMethods = []string{
 	"object.new",
 	"object.call_method",
 	"object.destroy",
+	"fetch.read",
+	"fetch.list",
 }
 
 // RunIO serves the plugin protocol over a bidirectional stream (stdio). The
@@ -256,6 +261,12 @@ func (r *serverRuntime) callCallback(ctx context.Context, params callbackCallPar
 func (s *Server) dispatch(ctx context.Context, method string, params any) (any, error) {
 	switch method {
 	case "scriptling.handshake":
+		capabilities := []string{"remote_objects"}
+		var schemes []string
+		if len(s.fetchers) > 0 {
+			capabilities = append(capabilities, CapabilityFetch)
+			schemes = s.fetcherSchemes()
+		}
 		return handshakeResult{
 			Protocol:  ProtocolVersion,
 			Transport: "json",
@@ -264,7 +275,9 @@ func (s *Server) dispatch(ctx context.Context, method string, params any) (any, 
 				Version:     s.version,
 				Description: s.description,
 			},
-			Capabilities: []string{"remote_objects"},
+			Capabilities: capabilities,
+			Schemes:      schemes,
+			Packages:     s.packages,
 			Schema:       s.schema(),
 		}, nil
 	case "environment.open", "environment.close":
@@ -297,6 +310,10 @@ func (s *Server) dispatch(ctx context.Context, method string, params any) (any, 
 			return nil, err
 		}
 		return nil, s.destroyObject(p)
+	case "fetch.read":
+		return s.callFetchRead(ctx, params)
+	case "fetch.list":
+		return s.callFetchList(ctx, params)
 	default:
 		return nil, fmt.Errorf("unknown method %s", method)
 	}

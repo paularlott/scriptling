@@ -4,16 +4,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/paularlott/logger"
 	"github.com/paularlott/scriptling/lint"
+	scriptlingplugin "github.com/paularlott/scriptling/plugin"
 	"github.com/paularlott/scriptling/scriptling-cli/bootstrap"
+	"github.com/paularlott/scriptling/scriptling-cli/pluginpack"
 )
 
 type cliLogEntry struct {
@@ -149,7 +153,7 @@ exit 2
 		globalLogger = previousLogger
 	}()
 
-	manager, err := loadPluginManager(context.Background(), []string{dir})
+	manager, err := loadPluginManager(context.Background(), []string{dir}, nil)
 	if err != nil {
 		t.Fatalf("loadPluginManager: %v", err)
 	}
@@ -248,4 +252,211 @@ func TestOutputLintResultReturnsExitError(t *testing.T) {
 	if !ok || code != 1 {
 		t.Fatalf("expected exit code 1, got code=%d ok=%v err=%v", code, ok, err)
 	}
+}
+
+func TestSplitPluginSpec(t *testing.T) {
+	cases := []struct {
+		spec  string
+		path  string
+		args  []string
+		fails bool
+	}{
+		{spec: "/usr/local/bin/knot", path: "/usr/local/bin/knot"},
+		{spec: "/usr/local/bin/knot scriptling-server", path: "/usr/local/bin/knot", args: []string{"scriptling-server"}},
+		{spec: "/usr/local/bin/knot scriptling-server --alias testing", path: "/usr/local/bin/knot", args: []string{"scriptling-server", "--alias", "testing"}},
+		{spec: "'/opt/knot dir/knot' serve", path: "/opt/knot dir/knot", args: []string{"serve"}},
+		{spec: `"/opt/knot dir/knot" serve`, path: "/opt/knot dir/knot", args: []string{"serve"}},
+		{spec: `/opt/knot\ dir/knot serve`, path: "/opt/knot dir/knot", args: []string{"serve"}},
+		{spec: "'unterminated", fails: true},
+		{spec: "", fails: true},
+		{spec: "   ", fails: true},
+	}
+	for _, tc := range cases {
+		path, args, err := splitPluginSpec(tc.spec)
+		if tc.fails {
+			if err == nil {
+				t.Errorf("splitPluginSpec(%q) expected an error", tc.spec)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("splitPluginSpec(%q): %v", tc.spec, err)
+			continue
+		}
+		if path != tc.path {
+			t.Errorf("splitPluginSpec(%q) path = %q, want %q", tc.spec, path, tc.path)
+		}
+		if len(args) != len(tc.args) {
+			t.Errorf("splitPluginSpec(%q) args = %v, want %v", tc.spec, args, tc.args)
+			continue
+		}
+		for i := range args {
+			if args[i] != tc.args[i] {
+				t.Errorf("splitPluginSpec(%q) args = %v, want %v", tc.spec, args, tc.args)
+				break
+			}
+		}
+	}
+}
+
+// writeArgsPluginHelper writes a shell plugin that records its command line
+// arguments to argsFile and then speaks a minimal plugin handshake.
+func writeArgsPluginHelper(t *testing.T, path, argsFile string) {
+	t.Helper()
+	script := `#!/bin/sh
+printf '%s\n' "$@" > '` + argsFile + `'
+read req
+echo '{"jsonrpc":"2.0","id":1,"result":{"protocol":"1.0","transport":"json","library":{"name":"args-plugin","version":"1.0.0","description":"args"},"capabilities":[],"schema":{"functions":[],"classes":[],"constants":[]}}}'
+read req
+`
+	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
+		t.Fatalf("write helper: %v", err)
+	}
+}
+
+func TestLoadPluginManagerExplicitPlugin(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell plugin helper is unix-only")
+	}
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "args.txt")
+	helper := filepath.Join(dir, "args-plugin")
+	writeArgsPluginHelper(t, helper, argsFile)
+
+	manager, err := loadPluginManager(context.Background(), nil, []string{helper + " --alias testing"})
+	if err != nil {
+		t.Fatalf("loadPluginManager: %v", err)
+	}
+	defer manager.Close()
+
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("read args file: %v", err)
+	}
+	if got := string(data); got != "--alias\ntesting\n" {
+		t.Fatalf("expected the plugin to receive [--alias testing], got %q", got)
+	}
+	if _, ok := manager.Get("plugin.args-plugin"); !ok {
+		t.Fatal("expected the plugin registered under its declared name")
+	}
+}
+
+func TestLoadPluginManagerExplicitWinsOverDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell plugin helper is unix-only")
+	}
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "args.txt")
+	pluginDir := filepath.Join(dir, "plugins")
+	if err := os.MkdirAll(pluginDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	helper := filepath.Join(pluginDir, "args-plugin")
+	writeArgsPluginHelper(t, helper, argsFile)
+
+	// The same executable, loaded explicitly WITH arguments and also
+	// discoverable via --plugin-dir: the explicit entry must win.
+	manager, err := loadPluginManager(context.Background(), []string{pluginDir}, []string{helper + " --alias explicit"})
+	if err != nil {
+		t.Fatalf("loadPluginManager: %v", err)
+	}
+	defer manager.Close()
+
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("read args file: %v", err)
+	}
+	if got := strings.TrimSpace(string(data)); got != "--alias\nexplicit" {
+		t.Fatalf("expected the explicit entry's arguments to win, got %q", got)
+	}
+	if _, ok := manager.Get("plugin.args-plugin"); !ok {
+		t.Fatal("expected the plugin registered under its declared name")
+	}
+}
+
+// TestResolveScriptFileStagesSchemeSources covers the server-mode setup
+// script path: a scheme source is fetched from its plugin and staged to a
+// local file; a plain path passes through untouched.
+func TestResolveScriptFileStagesSchemeSources(t *testing.T) {
+	dir := t.TempDir()
+	localScript := filepath.Join(dir, "local.py")
+	if err := os.WriteFile(localScript, []byte("print('local')\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// An in-process fetcher plugin registered through the real bridge.
+	fetcher := &stagingFetcher{
+		files: map[string]string{
+			"manifest.toml": "name = \"ppmain\"\nversion = \"1.0.0\"\n",
+		},
+		scripts: map[string]string{
+			"ppmain://scripts/setup": "import scriptling.runtime as runtime\n",
+		},
+	}
+	pluginSrv := scriptlingplugin.NewServer("ppmain-plugin", "1.0.0", "main test plugin")
+	pluginSrv.RegisterFetcher("ppmain", fetcher)
+	pluginSrv.DeclarePackage("ppmain://libs")
+	httpSrv := httptest.NewServer(pluginSrv)
+	t.Cleanup(httpSrv.Close)
+
+	manager := scriptlingplugin.NewManager(nil)
+	t.Cleanup(func() { _ = manager.Close() })
+	if _, err := manager.LoadURL(context.Background(), "ppmainplugin", httpSrv.URL, true, false); err != nil {
+		t.Fatalf("LoadURL: %v", err)
+	}
+	if err := pluginpack.Register(manager); err != nil {
+		t.Fatalf("pluginpack.Register: %v", err)
+	}
+
+	// Plain paths pass through unchanged.
+	got, err := resolveScriptFile(localScript)
+	if err != nil {
+		t.Fatalf("resolveScriptFile(local): %v", err)
+	}
+	if got != localScript {
+		t.Fatalf("expected local path passthrough, got %s", got)
+	}
+
+	// Scheme sources are fetched (always fresh) and staged locally.
+	staged, err := resolveScriptFile("ppmain://scripts/setup")
+	if err != nil {
+		t.Fatalf("resolveScriptFile(scheme): %v", err)
+	}
+	if staged == localScript || !strings.HasSuffix(staged, ".py") {
+		t.Fatalf("expected a staged .py file, got %s", staged)
+	}
+	content, err := os.ReadFile(staged)
+	if err != nil {
+		t.Fatalf("read staged file: %v", err)
+	}
+	if !strings.Contains(string(content), "runtime.jsonrpc") && !strings.Contains(string(content), "runtime") {
+		t.Fatalf("unexpected staged content: %q", content)
+	}
+}
+
+type stagingFetcher struct {
+	files   map[string]string
+	scripts map[string]string
+}
+
+func (f *stagingFetcher) Read(ctx context.Context, source, path, etag, lastModified string) (scriptlingplugin.FetchResult, error) {
+	if path == "" {
+		content, ok := f.scripts[source]
+		if !ok {
+			return scriptlingplugin.FetchResult{}, fmt.Errorf("%w: %s", scriptlingplugin.ErrFetchNotFound, source)
+		}
+		return scriptlingplugin.FetchResult{Data: []byte(content), ETag: "ppmain-v1"}, nil
+	}
+	content, ok := f.files[path]
+	if !ok {
+		return scriptlingplugin.FetchResult{}, fmt.Errorf("%w: %s", scriptlingplugin.ErrFetchNotFound, path)
+	}
+	return scriptlingplugin.FetchResult{Data: []byte(content), ETag: "ppmain-v1"}, nil
+}
+
+func (f *stagingFetcher) List(ctx context.Context, source, path string) ([]scriptlingplugin.FetchEntry, error) {
+	if path == "" || path == "." {
+		return []scriptlingplugin.FetchEntry{{Name: "manifest.toml"}}, nil
+	}
+	return nil, fmt.Errorf("%w: %s", scriptlingplugin.ErrFetchNotFound, path)
 }

@@ -168,6 +168,25 @@ func (m *Manager) Load(ctx context.Context) error {
 			if info.Mode()&0111 == 0 {
 				continue
 			}
+			// Skip executables already loaded explicitly (e.g. via LoadPlugin):
+			// identity is the resolved path, and the explicit instance — with
+			// its arguments — is the one that must win.
+			absPath := path
+			if abs, err := filepath.Abs(path); err == nil {
+				absPath = abs
+			}
+			m.mu.RLock()
+			alreadyLoaded := false
+			for _, existing := range m.clients {
+				if existing.Path() == path || existing.Path() == absPath {
+					alreadyLoaded = true
+					break
+				}
+			}
+			m.mu.RUnlock()
+			if alreadyLoaded {
+				continue
+			}
 			client, err := startClient(ctx, path, nil)
 			if err != nil {
 				m.addWarning("plugin %s failed to load: %v", path, err)
@@ -190,6 +209,65 @@ func (m *Manager) Load(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// LoadPlugin starts a single executable plugin, performing the plugin protocol
+// handshake, and registers it under the library name it declares — the same
+// naming rule directory discovery uses, so a plugin behaves identically
+// however it is loaded. args, if non-empty, are passed as command-line
+// arguments to the executable.
+//
+// Executable identity is the resolved absolute path: loading an executable
+// that is already registered (e.g. discovered earlier via LoadPath or an
+// explicit load ahead of a --plugin-dir scan) returns the existing client.
+func (m *Manager) LoadPlugin(ctx context.Context, path string, args []string) (*Client, error) {
+	if isHTTPURL(path) {
+		return nil, fmt.Errorf("LoadPlugin requires an executable path; use LoadURL for http(s) plugins")
+	}
+	if m.transportMode == TransportHTTP {
+		return nil, fmt.Errorf("stdio/executable plugins are not permitted in this scope (http/https only)")
+	}
+	resolvedPath, err := resolveExecutablePath(path)
+	if err != nil {
+		return nil, err
+	}
+
+	m.mu.Lock()
+	for _, existing := range m.clients {
+		if existing.Path() == resolvedPath {
+			m.mu.Unlock()
+			return existing, nil
+		}
+	}
+	m.mu.Unlock()
+
+	client, err := startClient(ctx, resolvedPath, args)
+	if err != nil {
+		return nil, err
+	}
+	m.mu.RLock()
+	client.setLogger(m.logger)
+	m.mu.RUnlock()
+	name := client.Metadata().Name
+
+	m.mu.Lock()
+	// Re-check under the write lock: a concurrent load may have won the race.
+	for _, existing := range m.clients {
+		if existing.Path() == resolvedPath {
+			m.mu.Unlock()
+			_ = client.Close()
+			return existing, nil
+		}
+	}
+	if _, exists := m.clients[name]; exists {
+		m.mu.Unlock()
+		_ = client.Close()
+		return nil, fmt.Errorf("plugin name %s already in use", name)
+	}
+	m.clients[name] = client
+	m.mu.Unlock()
+	m.installCrashHandler(name, client)
+	return client, nil
 }
 
 // LoadPath starts a single executable, or connects to an http(s) JSON-RPC
@@ -766,6 +844,8 @@ func (c *Client) handshake(ctx context.Context) error {
 		Description:  result.Library.Description,
 		Transport:    result.Transport,
 		Capabilities: result.Capabilities,
+		Schemes:      result.Schemes,
+		Packages:     result.Packages,
 		Schema:       result.Schema,
 	}
 	c.handshakeDone = true

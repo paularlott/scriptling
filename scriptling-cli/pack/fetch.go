@@ -101,7 +101,9 @@ func ClearCache(cacheDir string) error {
 // PruneCache removes cache entries that have not been accessed within ttl.
 // If cacheDir is empty, uses the OS default cache directory.
 // If ttl is 0, uses DefaultCacheTTL.
-// Each cache entry is a .zip/.meta pair; the .zip mod time tracks last access.
+// Cache entries are .zip/.meta pairs (whole-package downloads) and
+// .pfile/.meta pairs (per-file fetcher downloads); the data file's mod time
+// tracks last access.
 func PruneCache(cacheDir string, ttl time.Duration) error {
 	if cacheDir == "" {
 		var err error
@@ -122,7 +124,8 @@ func PruneCache(cacheDir string, ttl time.Duration) error {
 	}
 	cutoff := time.Now().Add(-ttl)
 	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".zip" {
+		ext := filepath.Ext(e.Name())
+		if e.IsDir() || (ext != ".zip" && ext != ".pfile") {
 			continue
 		}
 		info, err := e.Info()
@@ -130,8 +133,8 @@ func PruneCache(cacheDir string, ttl time.Duration) error {
 			continue
 		}
 		if info.ModTime().Before(cutoff) {
-			base := strings.TrimSuffix(filepath.Join(cacheDir, e.Name()), ".zip")
-			_ = os.Remove(base + ".zip")
+			base := strings.TrimSuffix(filepath.Join(cacheDir, e.Name()), ext)
+			_ = os.Remove(base + ext)
 			_ = os.Remove(base + ".meta")
 		}
 	}

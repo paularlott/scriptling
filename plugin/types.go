@@ -35,6 +35,8 @@ type Metadata struct {
 	Description  string   `json:"description"`
 	Transport    string   `json:"transport,omitempty"`
 	Capabilities []string `json:"capabilities,omitempty"`
+	Schemes      []string `json:"schemes,omitempty"`  // fetcher schemes served by this plugin
+	Packages     []string `json:"packages,omitempty"` // package sources to attach automatically
 	Schema       Schema   `json:"schema"`
 }
 
@@ -141,6 +143,8 @@ type handshakeResult struct {
 	Transport    string      `json:"transport"`
 	Library      libraryInfo `json:"library"`
 	Capabilities []string    `json:"capabilities"`
+	Schemes      []string    `json:"schemes,omitempty"`  // fetcher schemes this plugin serves
+	Packages     []string    `json:"packages,omitempty"` // package sources to attach without --package
 	Schema       Schema      `json:"schema"`
 }
 
@@ -154,6 +158,34 @@ type functionCallParams struct {
 	Name   string           `json:"name"`
 	Args   []Value          `json:"args,omitempty"`
 	Kwargs map[string]Value `json:"kwargs,omitempty"`
+}
+
+// fetchReadParams asks a fetcher plugin for one file. Path is a slash path
+// relative to source; empty means the source itself is a single file (a
+// script). ETag / LastModified carry the validators from a previous read so
+// the peer can answer not_modified instead of resending unchanged bytes.
+// Data in fetchReadResult is transported base64 ([]byte JSON encoding).
+type fetchReadParams struct {
+	Source       string `json:"source"`
+	Path         string `json:"path,omitempty"`
+	ETag         string `json:"etag,omitempty"`
+	LastModified string `json:"last_modified,omitempty"`
+}
+
+type fetchReadResult struct {
+	NotModified  bool   `json:"not_modified,omitempty"`
+	Data         []byte `json:"data,omitempty"`
+	ETag         string `json:"etag,omitempty"`
+	LastModified string `json:"last_modified,omitempty"`
+}
+
+type fetchListParams struct {
+	Source string `json:"source"`
+	Path   string `json:"path,omitempty"`
+}
+
+type fetchListResult struct {
+	Entries []FetchEntry `json:"entries"`
 }
 
 type objectNewParams struct {

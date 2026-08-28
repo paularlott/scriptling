@@ -1,7 +1,9 @@
 package pack
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"strings"
 
 	"github.com/paularlott/scriptling/libloader"
@@ -79,9 +81,17 @@ func (l *Loader) SetFallback(fallback libloader.LibraryLoader) {
 
 // Load implements libloader.LibraryLoader.
 // Searches bundles in reverse order (last = highest priority), then fallback.
+// A bundle whose storage fails (a fetcher plugin that cannot be reached, say)
+// aborts the search with that error — only a plain not-found continues past a
+// bundle, so an unreachable source is reported instead of silently skipping
+// its modules.
 func (l *Loader) Load(name string) (string, bool, error) {
 	for i := len(l.bundles) - 1; i >= 0; i-- {
-		if src, ok := loadFromBundle(l.bundles[i], name); ok {
+		src, found, err := loadFromBundle(l.bundles[i], name)
+		if err != nil {
+			return "", false, err
+		}
+		if found {
 			return src, true, nil
 		}
 	}
@@ -142,7 +152,11 @@ func (l *Loader) ResolveMain() (entry MainEntry, found bool, err error) {
 //  1. <dir>/a/b.py
 //  2. <dir>/a/b/__init__.py
 //  3. <dir>/a.b.py  (flat fallback)
-func loadFromBundle(b *Bundle, name string) (string, bool) {
+//
+// A read that fails with something other than not-found (a dead fetcher
+// plugin, a truncated zip) is returned as an error rather than treated as a
+// miss.
+func loadFromBundle(b *Bundle, name string) (string, bool, error) {
 	parts := strings.Split(name, ".")
 	joined := strings.Join(parts, "/")
 
@@ -155,10 +169,14 @@ func loadFromBundle(b *Bundle, name string) (string, bool) {
 			candidates = append(candidates, dir+"/"+name+".py")
 		}
 		for _, path := range candidates {
-			if data, err := b.ReadFile(path); err == nil {
-				return string(data), true
+			data, err := b.ReadFile(path)
+			if err == nil {
+				return string(data), true, nil
+			}
+			if !errors.Is(err, fs.ErrNotExist) {
+				return "", false, fmt.Errorf("package %s: %w", b.Source(), err)
 			}
 		}
 	}
-	return "", false
+	return "", false, nil
 }

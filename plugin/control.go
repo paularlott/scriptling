@@ -349,13 +349,28 @@ func metadataToDict(meta Metadata) *object.Dict {
 	for _, constant := range meta.Schema.Constants {
 		constants = append(constants, object.NewString(constant.Name))
 	}
+	capabilities := make([]object.Object, 0, len(meta.Capabilities))
+	for _, capability := range meta.Capabilities {
+		capabilities = append(capabilities, object.NewString(capability))
+	}
+	schemes := make([]object.Object, 0, len(meta.Schemes))
+	for _, scheme := range meta.Schemes {
+		schemes = append(schemes, object.NewString(scheme))
+	}
+	packages := make([]object.Object, 0, len(meta.Packages))
+	for _, source := range meta.Packages {
+		packages = append(packages, object.NewString(source))
+	}
 	return object.NewStringDict(map[string]object.Object{
-		"name":        object.NewString(meta.Name),
-		"version":     object.NewString(meta.Version),
-		"description": object.NewString(meta.Description),
-		"transport":   object.NewString(meta.Transport),
-		"functions":   &object.List{Elements: functions},
-		"classes":     &object.List{Elements: classes},
-		"constants":   &object.List{Elements: constants},
+		"name":         object.NewString(meta.Name),
+		"version":      object.NewString(meta.Version),
+		"description":  object.NewString(meta.Description),
+		"transport":    object.NewString(meta.Transport),
+		"capabilities": &object.List{Elements: capabilities},
+		"schemes":      &object.List{Elements: schemes},
+		"packages":     &object.List{Elements: packages},
+		"functions":    &object.List{Elements: functions},
+		"classes":      &object.List{Elements: classes},
+		"constants":    &object.List{Elements: constants},
 	})
 }

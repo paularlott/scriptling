@@ -25,8 +25,8 @@ import (
 	"github.com/paularlott/scriptling/object"
 	scriptlingplugin "github.com/paularlott/scriptling/plugin"
 	"github.com/paularlott/scriptling/scriptling-cli/bootstrap"
-
 	"github.com/paularlott/scriptling/scriptling-cli/pack"
+	"github.com/paularlott/scriptling/scriptling-cli/pluginpack"
 	"github.com/paularlott/scriptling/scriptling-cli/secretconfig"
 	"github.com/paularlott/scriptling/scriptling-cli/server"
 	"github.com/paularlott/scriptling/scriptling-cli/setup"
@@ -94,6 +94,7 @@ func main() {
 				Name:       "package",
 				Usage:      "Package (.zip) path or URL to load (can be repeated)",
 				Aliases:    []string{"p"},
+				Global:     true,
 				ConfigPath: []string{"packages"},
 			},
 			&cli.BoolFlag{
@@ -105,6 +106,7 @@ func main() {
 			&cli.StringFlag{
 				Name:       "cache-dir",
 				Usage:      "Override default OS cache directory for remote packages",
+				Global:     true,
 				EnvVars:    []string{"SCRIPTLING_CACHE_DIR"},
 				ConfigPath: []string{"cache.dir"},
 			},
@@ -126,7 +128,14 @@ func main() {
 				Usage:      "Directory containing plugin executables (can be repeated)",
 				Global:     true,
 				EnvVars:    []string{"SCRIPTLING_PLUGIN_DIR"},
-				ConfigPath: []string{"plugins", "dirs"},
+				ConfigPath: []string{"plugins.dirs"},
+			},
+			&cli.StringSliceFlag{
+				Name:       "plugin",
+				Usage:      "Plugin executable to load, optionally with arguments (can be repeated)",
+				Global:     true,
+				EnvVars:    []string{"SCRIPTLING_PLUGIN"},
+				ConfigPath: []string{"plugins.paths"},
 			},
 			&cli.StringFlag{
 				Name:         "log-level",
@@ -195,12 +204,14 @@ func main() {
 				Name:         "allowed-paths",
 				Usage:        "Comma-separated list of allowed filesystem paths (restricts os, pathlib, glob, sandbox)",
 				DefaultValue: "",
+				Global:       true,
 				EnvVars:      []string{"SCRIPTLING_ALLOWED_PATHS"},
 				ConfigPath:   []string{"security.allowed_paths"},
 			},
 			&cli.StringFlag{
 				Name:       "network-policy",
 				Usage:      "Path to a TOML network policy file restricting script outbound network access (requests, wait_for, websocket)",
+				Global:     true,
 				EnvVars:    []string{"SCRIPTLING_NETWORK_POLICY"},
 				ConfigPath: []string{"security.network_policy"},
 			},
@@ -232,6 +243,7 @@ func main() {
 				Name:         "docker-host",
 				Usage:        "Docker endpoint (Unix socket path, unix://, tcp://, or https://)",
 				DefaultValue: scriptlingcontainer.DefaultDockerSocket,
+				Global:       true,
 				EnvVars:      []string{"DOCKER_HOST"},
 				ConfigPath:   []string{"container.docker_host"},
 			},
@@ -239,6 +251,7 @@ func main() {
 				Name:         "podman-host",
 				Usage:        "Podman endpoint (Unix socket path or unix:// URI)",
 				DefaultValue: scriptlingcontainer.DefaultPodmanSocket,
+				Global:       true,
 				EnvVars:      []string{"CONTAINER_HOST"},
 				ConfigPath:   []string{"container.podman_host"},
 			},
@@ -305,6 +318,19 @@ func main() {
 				logWriter = os.Stderr
 			}
 
+			// Load plugins before --package sources open: fetcher plugins register
+			// custom source schemes (knot://…, demo://…) that the package opening
+			// below may have to resolve. Explicit --plugin entries load first, so
+			// they win over the same executable discovered via --plugin-dir.
+			manager, err := loadPluginManager(ctx, cmd.GetStringSlice("plugin-dir"), cmd.GetStringSlice("plugin"))
+			if err != nil {
+				return ctx, err
+			}
+			pluginManager = manager
+			if err := pluginpack.Register(manager); err != nil {
+				return ctx, err
+			}
+
 			// Open any --package sources up front: an app bundle (manifest with
 			// a serve list) in a stdio protocol mode also needs the pure stdout
 			// stream, and Run reuses the opened bundles.
@@ -354,6 +380,10 @@ var (
 	pendingApp  *pack.Bundle
 	pendingLibs []*pack.Bundle
 )
+
+// pluginManager holds the plugins loaded in PreRun (before --package sources
+// open, so fetcher plugins can register their source schemes). Run reuses it.
+var pluginManager *scriptlingplugin.Manager
 
 // openBundles opens every --package source as a bundle (local dir, local zip,
 // or remote zip URL), splitting the single allowed app bundle from library
@@ -493,7 +523,14 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	file := cmd.GetStringArg("file")
 	interactive := cmd.GetBool("interactive")
 
-	baseDir, err := bootstrap.BaseDir(file)
+	// A scheme source (knot://scripts/hello) has no meaningful directory;
+	// library resolution starts from the working directory instead.
+	var baseDir string
+	if _, isScheme := pack.SchemeFor(file); isScheme {
+		baseDir, err = bootstrap.BaseDir("")
+	} else {
+		baseDir, err = bootstrap.BaseDir(file)
+	}
 	if err != nil {
 		return err
 	}
@@ -511,20 +548,33 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	}
 	setup.Factories(libDirs, allowedPaths, disabledLibs, secretRegistry, globalLogger, cmd.GetString("docker-host"), cmd.GetString("podman-host"), netPolicy)
 	setup.Scriptling(p, libDirs, true, allowedPaths, disabledLibs, secretRegistry, globalLogger, cmd.GetString("docker-host"), cmd.GetString("podman-host"), netPolicy)
-	pluginManager, err := loadPluginManager(ctx, cmd.GetStringSlice("plugin-dir"))
-	if err != nil {
-		return err
-	}
+	// Plugins were loaded in PreRun (before --package sources opened, so
+	// fetcher schemes could register); reuse that manager here.
 	defer pluginManager.Close()
 	scriptlingplugin.RegisterLibraries(p, pluginManager)
 
-	// --package sources were opened in PreRun; build the library loader from
-	// the same bundles (works for library packs and app bundles alike). The app
-	// bundle is added last so its modules win.
+	// Build the library loader from three tiers, added in priority order
+	// (the loader searches last-added first, so the app bundle's modules
+	// win and explicit --package sources shadow declared ones):
+	//
+	//  1. packages fetcher plugins declared for automatic attachment —
+	//     their modules import without any --package flag;
+	//  2. --package sources opened in PreRun (library packs and app
+	//     bundles alike);
+	//  3. the app bundle, if any, last so its modules win.
+	autoBundles, err := declaredLibBundles(cmd)
+	if err != nil {
+		return err
+	}
 	var packLoader *pack.Loader
-	if pendingApp != nil || len(pendingLibs) > 0 {
+	if len(autoBundles) > 0 || pendingApp != nil || len(pendingLibs) > 0 {
 		packLoader = pack.NewLoader()
 		packLoader.SetCacheDir(cmd.GetString("cache-dir"))
+		for _, b := range autoBundles {
+			if err := packLoader.AddBundle(b); err != nil {
+				return err
+			}
+		}
 		for _, b := range pendingLibs {
 			if err := packLoader.AddBundle(b); err != nil {
 				return err
@@ -566,7 +616,12 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 	if file != "" {
-		err := runFile(p, file)
+		var err error
+		if _, isScheme := pack.SchemeFor(file); isScheme {
+			err = runFetchedScript(p, file)
+		} else {
+			err = runFile(p, file)
+		}
 		extlibs.WaitBackgroundTasks()
 		return err
 	}
@@ -610,6 +665,10 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 	if pendingApp != nil && strings.HasPrefix(file, "--") {
 		file = ""
 	}
+	file, err := resolveScriptFile(file)
+	if err != nil {
+		return err
+	}
 	baseDir, err := bootstrap.BaseDir(file)
 	if err != nil {
 		return err
@@ -618,18 +677,21 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 	if err != nil {
 		return err
 	}
-	pluginManager, err := loadPluginManager(ctx, cmd.GetStringSlice("plugin-dir"))
+	// Plugins were loaded in PreRun (before --package sources opened, so
+	// fetcher schemes could register); reuse that manager.
+	defer pluginManager.Close()
+	autoBundles, err := declaredLibBundles(cmd)
 	if err != nil {
 		return err
 	}
-	defer pluginManager.Close()
+	libBundles := append(autoBundles, pendingLibs...)
 	return server.RunServer(ctx, server.ServerConfig{
 		Address:         address,
 		ScriptFile:      file,
 		LibDirs:         bootstrap.BuildLibDirs(baseDir, cmd.GetStringSlice("libpath")),
 		Packages:        cmd.GetStringSlice("package"),
 		Bundle:          pendingApp,
-		LibBundles:      pendingLibs,
+		LibBundles:      libBundles,
 		Insecure:        cmd.GetBool("insecure"),
 		CacheDir:        cmd.GetString("cache-dir"),
 		BearerToken:     cmd.GetString("bearer-token"),
@@ -664,6 +726,10 @@ func runJSONRPCServer(ctx context.Context, cmd *cli.Command) error {
 	if pendingApp != nil && strings.HasPrefix(file, "--") {
 		file = ""
 	}
+	file, err := resolveScriptFile(file)
+	if err != nil {
+		return err
+	}
 	baseDir, err := bootstrap.BaseDir(file)
 	if err != nil {
 		return err
@@ -672,17 +738,20 @@ func runJSONRPCServer(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
-	pluginManager, err := loadPluginManager(ctx, cmd.GetStringSlice("plugin-dir"))
+	// Plugins were loaded in PreRun (before --package sources opened, so
+	// fetcher schemes could register); reuse that manager.
+	defer pluginManager.Close()
+	autoBundles, err := declaredLibBundles(cmd)
 	if err != nil {
 		return err
 	}
-	defer pluginManager.Close()
+	libBundles := append(autoBundles, pendingLibs...)
 	return server.RunJSONRPCServer(ctx, server.ServerConfig{
 		ScriptFile:     file,
 		LibDirs:        bootstrap.BuildLibDirs(baseDir, cmd.GetStringSlice("libpath")),
 		Packages:       cmd.GetStringSlice("package"),
 		Bundle:         pendingApp,
-		LibBundles:     pendingLibs,
+		LibBundles:     libBundles,
 		Insecure:       cmd.GetBool("insecure"),
 		CacheDir:       cmd.GetString("cache-dir"),
 		AllowedPaths:   bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths")),
@@ -707,6 +776,10 @@ func runMCPStdioServer(ctx context.Context, cmd *cli.Command) error {
 	if pendingApp != nil && strings.HasPrefix(file, "--") {
 		file = ""
 	}
+	file, err := resolveScriptFile(file)
+	if err != nil {
+		return err
+	}
 	baseDir, err := bootstrap.BaseDir(file)
 	if err != nil {
 		return err
@@ -715,17 +788,20 @@ func runMCPStdioServer(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
-	pluginManager, err := loadPluginManager(ctx, cmd.GetStringSlice("plugin-dir"))
+	// Plugins were loaded in PreRun (before --package sources opened, so
+	// fetcher schemes could register); reuse that manager.
+	defer pluginManager.Close()
+	autoBundles, err := declaredLibBundles(cmd)
 	if err != nil {
 		return err
 	}
-	defer pluginManager.Close()
+	libBundles := append(autoBundles, pendingLibs...)
 	return server.RunMCPStdioServer(ctx, server.ServerConfig{
 		ScriptFile:      file,
 		LibDirs:         bootstrap.BuildLibDirs(baseDir, cmd.GetStringSlice("libpath")),
 		Packages:        cmd.GetStringSlice("package"),
 		Bundle:          pendingApp,
-		LibBundles:      pendingLibs,
+		LibBundles:      libBundles,
 		Insecure:        cmd.GetBool("insecure"),
 		CacheDir:        cmd.GetString("cache-dir"),
 		AllowedPaths:    bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths")),
@@ -745,7 +821,7 @@ func runMCPStdioServer(ctx context.Context, cmd *cli.Command) error {
 	})
 }
 
-func loadPluginManager(ctx context.Context, dirs []string) (*scriptlingplugin.Manager, error) {
+func loadPluginManager(ctx context.Context, dirs []string, plugins []string) (*scriptlingplugin.Manager, error) {
 	manager := scriptlingplugin.NewManager(globalLogger, func(name string, err error) {
 		if globalLogger != nil {
 			globalLogger.Error("Plugin process exited", "plugin", name, "error", err)
@@ -753,6 +829,19 @@ func loadPluginManager(ctx context.Context, dirs []string) (*scriptlingplugin.Ma
 			fmt.Fprintf(os.Stderr, "Plugin crashed: %s: %v\n", name, err)
 		}
 	})
+	// Explicit --plugin entries load first. Plugin identity is the resolved
+	// executable path, so the same binary found later via --plugin-dir is a
+	// no-op — explicit entries (with their arguments) win. Plugins register
+	// under the name they declare in their handshake, like --plugin-dir.
+	for _, spec := range plugins {
+		path, args, err := splitPluginSpec(spec)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := manager.LoadPlugin(ctx, path, args); err != nil {
+			return nil, err
+		}
+	}
 	for _, dir := range dirs {
 		manager.AddDir(dir)
 	}
@@ -769,6 +858,58 @@ func loadPluginManager(ctx context.Context, dirs []string) (*scriptlingplugin.Ma
 	return manager, nil
 }
 
+// splitPluginSpec splits a --plugin value into an executable path and optional
+// arguments. Arguments are separated by spaces; single quotes, double quotes
+// and backslash escapes protect paths containing spaces.
+func splitPluginSpec(spec string) (string, []string, error) {
+	var (
+		parts   []string
+		cur     strings.Builder
+		quote   rune
+		escaped bool
+	)
+	flush := func() {
+		if cur.Len() > 0 {
+			parts = append(parts, cur.String())
+			cur.Reset()
+		}
+	}
+	for _, r := range spec {
+		if escaped {
+			cur.WriteRune(r)
+			escaped = false
+			continue
+		}
+		switch {
+		case r == '\\':
+			escaped = true
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			} else {
+				cur.WriteRune(r)
+			}
+		case r == '\'' || r == '"':
+			quote = r
+		case r == ' ' || r == '\t':
+			flush()
+		default:
+			cur.WriteRune(r)
+		}
+	}
+	if quote != 0 {
+		return "", nil, fmt.Errorf("unterminated quote in --plugin value: %s", spec)
+	}
+	if escaped {
+		return "", nil, fmt.Errorf("dangling escape in --plugin value: %s", spec)
+	}
+	flush()
+	if len(parts) == 0 {
+		return "", nil, fmt.Errorf("empty --plugin value")
+	}
+	return parts[0], parts[1:], nil
+}
+
 func loadSecretRegistry(path string) (*secretprovider.Registry, error) {
 	if path == "" {
 		return secretprovider.NewRegistry(), nil
@@ -783,6 +924,52 @@ func runFile(p *scriptling.Scriptling, filename string) error {
 	}
 	p.SetSourceFile(filename)
 	return evalAndCheckExit(p, string(content))
+}
+
+// runFetchedScript executes a scheme source (knot://scripts/hello) fetched
+// from its plugin. Scripts are always refetched — they run immediately, so
+// serving a stale edit would be surprising.
+func runFetchedScript(p *scriptling.Scriptling, source string) error {
+	content, err := pluginpack.FetchScript(source)
+	if err != nil {
+		return fmt.Errorf("failed to fetch script %s: %w", source, err)
+	}
+	p.SetSourceFile(source)
+	return evalAndCheckExit(p, string(content))
+}
+
+// declaredLibBundles opens the packages fetcher plugins declared for
+// automatic attachment, skipping sources passed explicitly via --package
+// (their PreRun-opened bundles are used instead).
+func declaredLibBundles(cmd *cli.Command) ([]*pack.Bundle, error) {
+	skip := map[string]bool{}
+	for _, src := range cmd.GetStringSlice("package") {
+		skip[src] = true
+	}
+	return pluginpack.DeclaredBundles(pluginManager, cmd.GetBool("insecure"), cmd.GetString("cache-dir"), skip)
+}
+
+// resolveScriptFile maps a scheme source to a local file for the server
+// modes, which take a setup-script path. The fetched copy is ephemeral; the
+// source refetches on every start.
+func resolveScriptFile(file string) (string, error) {
+	if _, isScheme := pack.SchemeFor(file); !isScheme {
+		return file, nil
+	}
+	content, err := pluginpack.FetchScript(file)
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch script %s: %w", file, err)
+	}
+	tmp, err := os.CreateTemp("", "scriptling-script-*.py")
+	if err != nil {
+		return "", fmt.Errorf("failed to stage fetched script %s: %w", file, err)
+	}
+	if _, err := tmp.Write(content); err != nil {
+		tmp.Close()
+		return "", fmt.Errorf("failed to stage fetched script %s: %w", file, err)
+	}
+	tmp.Close()
+	return tmp.Name(), nil
 }
 
 func runStdin(p *scriptling.Scriptling) error {
