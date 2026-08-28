@@ -1,14 +1,14 @@
-// fetcher-go is a fetcher plugin: it serves a small virtual package under the
-// demo:// scheme, on demand, straight from memory. It declares demo://libs, so
-// its modules import with no --package at all. Run it with:
+// fetcher-go is a fetcher plugin: the one RegisterFetcher("demo", ...) call is
+// the whole contract. It serves a virtual library (demo://libs, modules under
+// lib/) and script sources (demo://scripts/hello) from memory, on demand. Run
+// it with:
 //
 //	scriptling --plugin /tmp/scriptling-plugins/fetcher-go \
 //	           -c 'import greet; print(greet.greeting("World"))'
 //	scriptling --plugin /tmp/scriptling-plugins/fetcher-go demo://scripts/hello
 //
-// The host only asks for the files an import actually touches — manifest.toml
-// first, then each module as it resolves. It caches nothing it fetches, so the
-// example returns content plainly and bothers with no validators.
+// The host only asks for the files an import actually touches, and caches
+// nothing it fetches, so the example returns content plainly.
 package main
 
 import (
@@ -41,21 +41,18 @@ var scripts = map[string]string{
 // plugin whose backend is slow enough to want caching does it behind Read.
 type memoryFetcher struct{}
 
-func (memoryFetcher) Read(ctx context.Context, source, path string) (plugin.FetchResult, error) {
+func (memoryFetcher) Read(ctx context.Context, source, path string) ([]byte, error) {
 	if content, ok := scripts[source]; ok && path == "" {
-		return plugin.FetchResult{Data: []byte(content)}, nil
+		return []byte(content), nil
 	}
 	if !strings.HasPrefix(source, "demo://libs") {
-		return plugin.FetchResult{}, fmt.Errorf("%w: %s", plugin.ErrFetchNotFound, source)
-	}
-	if path == "" {
-		path = "manifest.toml"
+		return nil, fmt.Errorf("%w: %s", plugin.ErrFetchNotFound, source)
 	}
 	content, ok := files[path]
 	if !ok {
-		return plugin.FetchResult{}, fmt.Errorf("%w: %s in %s", plugin.ErrFetchNotFound, path, source)
+		return nil, fmt.Errorf("%w: %s in %s", plugin.ErrFetchNotFound, path, source)
 	}
-	return plugin.FetchResult{Data: []byte(content)}, nil
+	return []byte(content), nil
 }
 
 func (memoryFetcher) List(ctx context.Context, source, path string) ([]plugin.FetchEntry, error) {

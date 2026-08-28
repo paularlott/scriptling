@@ -41,7 +41,7 @@ func newMutableFetcher(source string, files, scripts map[string]string) *mutable
 	}
 }
 
-func (f *mutableFetcher) Read(ctx context.Context, source, path string) (plugin.FetchResult, error) {
+func (f *mutableFetcher) Read(ctx context.Context, source, path string) ([]byte, error) {
 	f.mu.Lock()
 	block := f.blockCh
 	f.mu.Unlock()
@@ -50,7 +50,7 @@ func (f *mutableFetcher) Read(ctx context.Context, source, path string) (plugin.
 		select {
 		case <-block:
 		case <-ctx.Done():
-			return plugin.FetchResult{}, ctx.Err()
+			return nil, ctx.Err()
 		}
 	}
 
@@ -65,10 +65,10 @@ func (f *mutableFetcher) Read(ctx context.Context, source, path string) (plugin.
 		content, ok = f.files[path]
 	}
 	if !ok {
-		return plugin.FetchResult{}, fmt.Errorf("%w: %s in %s", plugin.ErrFetchNotFound, path, source)
+		return nil, fmt.Errorf("%w: %s in %s", plugin.ErrFetchNotFound, path, source)
 	}
 	f.reads[key]++
-	return plugin.FetchResult{Data: []byte(content)}, nil
+	return []byte(content), nil
 }
 
 func (f *mutableFetcher) List(ctx context.Context, source, path string) ([]plugin.FetchEntry, error) {
@@ -639,8 +639,8 @@ type failingFetcher struct {
 	inner *mutableFetcher
 }
 
-func (f failingFetcher) Read(ctx context.Context, source, path string) (plugin.FetchResult, error) {
-	return plugin.FetchResult{}, errors.New("knot server unreachable: connection refused")
+func (f failingFetcher) Read(ctx context.Context, source, path string) ([]byte, error) {
+	return nil, errors.New("knot server unreachable: connection refused")
 }
 
 func (f failingFetcher) List(ctx context.Context, source, path string) ([]plugin.FetchEntry, error) {

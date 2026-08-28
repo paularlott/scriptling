@@ -206,9 +206,8 @@ func (b *Bridge) Bundles() ([]*pack.Bundle, error) {
 }
 
 // FetchScript reads a scheme source that is itself a single script file
-// (knot://scripts/hello). Scripts execute immediately, so they bypass the
-// cache: every call refetches. ctx bounds the fetch; pass nil to use the
-// bridge's context.
+// (knot://myscript). Scripts execute immediately, so every call refetches.
+// ctx bounds the fetch; pass nil to use the bridge's context.
 func (b *Bridge) FetchScript(ctx context.Context, source string) ([]byte, error) {
 	client, err := b.clientFor(source)
 	if err != nil {
@@ -217,11 +216,7 @@ func (b *Bridge) FetchScript(ctx context.Context, source string) ([]byte, error)
 	if ctx == nil {
 		ctx = b.ctx
 	}
-	res, err := client.FetchFile(ctx, source, "")
-	if err != nil {
-		return nil, err
-	}
-	return res.Data, nil
+	return client.FetchFile(ctx, source, "")
 }
 
 // clientFor returns the plugin serving the source's scheme.
@@ -250,12 +245,12 @@ func (b *Bridge) clientFor(source string) (*plugin.Client, error) {
 // fetchFile fetches one file through the client, mapping a miss to
 // fs.ErrNotExist so loader probing treats it as a plain not-found.
 func fetchFile(ctx context.Context, client *plugin.Client, source, path string) ([]byte, error) {
-	res, err := client.FetchFile(ctx, source, path)
+	data, err := client.FetchFile(ctx, source, path)
 	if err != nil {
 		if errors.Is(err, plugin.ErrFetchNotFound) {
 			return nil, &fs.PathError{Op: "readfile", Path: path, Err: fs.ErrNotExist}
 		}
 		return nil, err
 	}
-	return res.Data, nil
+	return data, nil
 }

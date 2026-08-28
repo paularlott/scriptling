@@ -34,7 +34,7 @@ while IFS= read -r line; do
 
   case "$method" in
     scriptling.handshake)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocol":"1.0","transport":"json","library":{"name":"hello","version":"1.0.0","description":"Bash hello plugin with a bsh:// fetcher"},"capabilities":["fetch"],"scheme":"bsh","schema":{"functions":[{"name":"greet","args":["name"],"wrapper":"generated"}],"classes":[],"constants":[]}}}\n' "$id"
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocol":"1.0","transport":"json","library":{"name":"hello","version":"1.0.0","description":"Bash hello plugin with a bsh:// fetcher"},"capabilities":[],"scheme":"bsh","schema":{"functions":[{"name":"greet","args":["name"],"wrapper":"generated"}],"classes":[],"constants":[]}}}\n' "$id"
       ;;
     function.call)
       name=$(printf '%s\n' "$line" | jq -r '.params.name')
@@ -56,9 +56,8 @@ while IFS= read -r line; do
         lib/hi.py)      content=$bsh_hi ;;
       esac
 
-      # The host caches nothing it fetches, so return content plainly with no
-      # etag. A fetcher whose backend is slow enough to cache would return an
-      # etag and answer {"not_modified":true} when the request's etag matches.
+      # The host caches nothing it fetches, so return content plainly. A
+      # fetcher whose backend is slow caches behind its own read.
       if [ -z "$content" ]; then
         send_error "$id" -32001 "fetch source not found: $path in $source"
       else

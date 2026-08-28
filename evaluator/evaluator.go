@@ -1832,33 +1832,33 @@ func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *obje
 							return applyUserFunctionN(ctx, fn, a0, a1, a2)
 						}
 					}
+					args := evalCallArgs(ctx, node.Arguments, env)
+					if len(args) == 1 && object.IsError(args[0]) {
+						return args[0]
+					}
+					res := applyUserFunction(ctx, fn, args, nil, env)
+					object.ReleaseArgs(env, args)
+					return res
+				case *object.Builtin:
+					// Use the existing fast builtin path
+					return applyBuiltinFast(ctx, node, env, fn)
+				case *object.LambdaFunction:
+					args := evalCallArgs(ctx, node.Arguments, env)
+					if len(args) == 1 && object.IsError(args[0]) {
+						return args[0]
+					}
+					res := applyLambdaFunctionWithContext(ctx, fn, args, nil, env)
+					object.ReleaseArgs(env, args)
+					return res
+				}
+				// Class or other callable - fall through to general path
 				args := evalCallArgs(ctx, node.Arguments, env)
 				if len(args) == 1 && object.IsError(args[0]) {
 					return args[0]
 				}
-				res := applyUserFunction(ctx, fn, args, nil, env)
+				res := applyFunctionWithContext(ctx, val, args, nil, env)
 				object.ReleaseArgs(env, args)
 				return res
-			case *object.Builtin:
-				// Use the existing fast builtin path
-				return applyBuiltinFast(ctx, node, env, fn)
-			case *object.LambdaFunction:
-				args := evalCallArgs(ctx, node.Arguments, env)
-				if len(args) == 1 && object.IsError(args[0]) {
-					return args[0]
-				}
-				res := applyLambdaFunctionWithContext(ctx, fn, args, nil, env)
-				object.ReleaseArgs(env, args)
-				return res
-			}
-			// Class or other callable - fall through to general path
-			args := evalCallArgs(ctx, node.Arguments, env)
-			if len(args) == 1 && object.IsError(args[0]) {
-				return args[0]
-			}
-			res := applyFunctionWithContext(ctx, val, args, nil, env)
-			object.ReleaseArgs(env, args)
-			return res
 			}
 			// Not in env - try fast builtins by name
 			if builtin, ok := builtins[name]; ok {

@@ -1072,9 +1072,7 @@ static void handle_handshake(sl_server *srv, int64_t id) {
     sb_puts(&s, "\"library\":{\"name\":"); sb_json_str(&s, srv->name, strlen(srv->name));
     sb_puts(&s, ",\"version\":"); sb_json_str(&s, srv->version, strlen(srv->version));
     sb_puts(&s, ",\"description\":"); sb_json_str(&s, srv->desc, strlen(srv->desc));
-    sb_puts(&s, "},\"capabilities\":[\"remote_objects\"");
-    if (srv->fetcher_read) sb_puts(&s, ",\"fetch\"");
-    sb_puts(&s, "]");
+    sb_puts(&s, "},\"capabilities\":[\"remote_objects\"]");
     if (srv->fetcher_read) {
         sb_puts(&s, ",\"scheme\":");
         sb_json_str(&s, srv->fetcher_scheme, strlen(srv->fetcher_scheme));

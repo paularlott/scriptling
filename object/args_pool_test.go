@@ -31,8 +31,8 @@ func TestReleaseArgsNoPanics(t *testing.T) {
 	env := NewEnvironment()
 
 	ReleaseArgs(nil, []Object{NewInteger(1)}) // nil env
-	ReleaseArgs(env, nil)                      // nil slice
-	ReleaseArgs(env, []Object{})               // empty slice
+	ReleaseArgs(env, nil)                     // nil slice
+	ReleaseArgs(env, []Object{})              // empty slice
 	if len(env.freeArgBufs) != 0 {
 		t.Errorf("empty/nil releases pooled a buffer; freeArgBufs=%d", len(env.freeArgBufs))
 	}
@@ -126,7 +126,7 @@ func TestArgsPoolGrowKeepsSmallTop(t *testing.T) {
 
 	// Request bigger than the pooled buffer: it must NOT use the too-small top,
 	// and the small buffer must remain pooled for a future small request.
-	big := AcquireArgs(env, smallCap + 2)
+	big := AcquireArgs(env, smallCap+2)
 	if cap(big) < smallCap+2 {
 		t.Errorf("big cap = %d, want >= %d", cap(big), smallCap+2)
 	}

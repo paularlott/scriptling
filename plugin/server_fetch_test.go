@@ -17,12 +17,12 @@ type countingFetcher struct {
 	lists    int
 }
 
-func (f *countingFetcher) Read(ctx context.Context, source, path string) (FetchResult, error) {
+func (f *countingFetcher) Read(ctx context.Context, source, path string) ([]byte, error) {
 	f.reads++
 	if f.notFound || (f.onlyPath != "" && path != "" && path != f.onlyPath) {
-		return FetchResult{}, fmtNotFound(source, path)
+		return nil, fmtNotFound(source, path)
 	}
-	return FetchResult{Data: []byte(f.content)}, nil
+	return []byte(f.content), nil
 }
 
 func (f *countingFetcher) List(ctx context.Context, source, path string) ([]FetchEntry, error) {
@@ -37,16 +37,11 @@ func fmtNotFound(source, path string) error {
 	return errors.Join(ErrFetchNotFound, errors.New(source+" "+path))
 }
 
-func TestServerHandshakeAdvertisesFetchCapability(t *testing.T) {
+func TestServerHandshakeAdvertisesTheScheme(t *testing.T) {
 	server := NewServer("fetchy", "1.0.0", "fetch test")
 	result := sendServerRequest[handshakeResult](t, server, "scriptling.handshake", handshakeParams{})
 	if result.Scheme != "" {
 		t.Fatalf("expected no scheme without a fetcher, got %q", result.Scheme)
-	}
-	for _, c := range result.Capabilities {
-		if c == CapabilityFetch {
-			t.Fatal("fetch capability advertised without any fetcher")
-		}
 	}
 
 	fetcher := &countingFetcher{content: "x"}
@@ -54,15 +49,6 @@ func TestServerHandshakeAdvertisesFetchCapability(t *testing.T) {
 	result = sendServerRequest[handshakeResult](t, server, "scriptling.handshake", handshakeParams{})
 	if result.Scheme != "ftest" {
 		t.Fatalf("expected scheme ftest, got %q", result.Scheme)
-	}
-	found := false
-	for _, c := range result.Capabilities {
-		if c == CapabilityFetch {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatal("expected fetch capability with a registered fetcher")
 	}
 }
 

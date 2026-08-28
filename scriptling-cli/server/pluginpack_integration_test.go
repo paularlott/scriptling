@@ -23,21 +23,21 @@ type srvFetcher struct {
 	scripts map[string]string
 }
 
-func (f *srvFetcher) Read(ctx context.Context, source, path string) (plugin.FetchResult, error) {
+func (f *srvFetcher) Read(ctx context.Context, source, path string) ([]byte, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if path == "" {
 		content, ok := f.scripts[source]
 		if !ok {
-			return plugin.FetchResult{}, fmt.Errorf("%w: %s", plugin.ErrFetchNotFound, source)
+			return nil, fmt.Errorf("%w: %s", plugin.ErrFetchNotFound, source)
 		}
-		return plugin.FetchResult{Data: []byte(content)}, nil
+		return []byte(content), nil
 	}
 	content, ok := f.files[path]
 	if !ok {
-		return plugin.FetchResult{}, fmt.Errorf("%w: %s in %s", plugin.ErrFetchNotFound, path, source)
+		return nil, fmt.Errorf("%w: %s in %s", plugin.ErrFetchNotFound, path, source)
 	}
-	return plugin.FetchResult{Data: []byte(content)}, nil
+	return []byte(content), nil
 }
 
 func (f *srvFetcher) List(ctx context.Context, source, path string) ([]plugin.FetchEntry, error) {

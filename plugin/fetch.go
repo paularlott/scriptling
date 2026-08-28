@@ -17,9 +17,6 @@ import (
 // except the bytes actually read.
 
 const (
-	// CapabilityFetch is advertised by peers that implement the fetch methods.
-	CapabilityFetch = "fetch"
-
 	// FetchNotFoundCode is the JSON-RPC error code a fetcher returns for a
 	// missing source or path, mapped back to ErrFetchNotFound on the host.
 	FetchNotFoundCode = -32001
@@ -40,24 +37,17 @@ type FetchEntry struct {
 	IsDir bool   `json:"is_dir"`
 }
 
-// FetchResult is the outcome of a Fetcher.Read: the file content. Data travels
-// base64-encoded on the wire so binary assets (a webroot image, a font) survive
-// intact — a JSON string cannot carry arbitrary bytes.
-//
-// There is no conditional-read machinery. The host does not cache what a plugin
-// serves, so there is nothing to revalidate: every Read returns bytes. A plugin
-// whose backend is slow caches behind its own Read, where the freshness rules
-// live; the host stays a dumb pipe.
-type FetchResult struct {
-	Data []byte
-}
-
 // Fetcher serves file content for sources under a registered scheme. Read is
 // called with the full source string and a slash path relative to it (empty for
-// a source that denotes a single file, such as a script). List enumerates one
+// a source that denotes a single file, such as a script) and returns the file's
+// bytes; an error wrapping ErrFetchNotFound is a miss. Data travels
+// base64-encoded on the wire so binary assets survive intact. There is no
+// conditional-read machinery — the host does not cache what a plugin serves, so
+// a plugin whose backend is slow caches behind its own Read, where the
+// freshness rules live; the host stays a dumb pipe. List enumerates one
 // directory level.
 type Fetcher interface {
-	Read(ctx context.Context, source, path string) (FetchResult, error)
+	Read(ctx context.Context, source, path string) ([]byte, error)
 	List(ctx context.Context, source, path string) ([]FetchEntry, error)
 }
 
@@ -102,14 +92,14 @@ func (s *Server) callFetchRead(ctx context.Context, params any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	res, err := fetcher.Read(ctx, p.Source, p.Path)
+	data, err := fetcher.Read(ctx, p.Source, p.Path)
 	if err != nil {
 		if errors.Is(err, ErrFetchNotFound) {
 			return nil, jsonrpc.NewError(FetchNotFoundCode, err.Error(), nil)
 		}
 		return nil, err
 	}
-	return fetchReadResult{Data: res.Data}, nil
+	return fetchReadResult{Data: data}, nil
 }
 
 func (s *Server) callFetchList(ctx context.Context, params any) (any, error) {
@@ -152,19 +142,12 @@ func validScheme(scheme string) bool {
 // Client side
 // =========================================================================
 
-// SupportsFetch reports whether this peer advertised the fetch capability in
-// its handshake. Fetch calls are refused (without contacting the peer) when it
-// did not, so older plugins keep working unchanged.
+// SupportsFetch reports whether this peer has a fetcher: a non-empty scheme
+// in the handshake says so, which is the whole advertisement. Fetch calls are
+// refused (without contacting the peer) when it does not, so plugins without
+// fetchers keep working unchanged.
 func (c *Client) SupportsFetch() bool {
-	if !c.handshakeDone || c.metadata.Scheme == "" {
-		return false
-	}
-	for _, capability := range c.metadata.Capabilities {
-		if capability == CapabilityFetch {
-			return true
-		}
-	}
-	return false
+	return c.handshakeDone && c.metadata.Scheme != ""
 }
 
 // Scheme returns the source scheme the peer's fetcher serves, as advertised
@@ -176,9 +159,9 @@ func (c *Client) Scheme() string {
 // FetchFile reads one file from a source. path is a slash path relative to the
 // source; an empty path denotes a source that is itself a single file (a
 // script).
-func (c *Client) FetchFile(ctx context.Context, source, path string) (FetchResult, error) {
+func (c *Client) FetchFile(ctx context.Context, source, path string) ([]byte, error) {
 	if !c.SupportsFetch() {
-		return FetchResult{}, fmt.Errorf("plugin %s does not support fetch", c.metadata.Name)
+		return nil, fmt.Errorf("plugin %s does not support fetch", c.metadata.Name)
 	}
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
@@ -190,9 +173,9 @@ func (c *Client) FetchFile(ctx context.Context, source, path string) (FetchResul
 		Source: source,
 		Path:   path,
 	}, nil, &result); err != nil {
-		return FetchResult{}, mapFetchError(err)
+		return nil, mapFetchError(err)
 	}
-	return FetchResult{Data: result.Data}, nil
+	return result.Data, nil
 }
 
 // FetchList enumerates one directory level of a source. A missing directory

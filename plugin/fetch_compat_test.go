@@ -109,12 +109,12 @@ func TestFetchCoexistsWithFullPluginSurface(t *testing.T) {
 	}
 
 	// A plain fetch read over the same connection.
-	res, err := client.FetchFile(ctx, "combi://libs", "lib/hello.py")
+	data, err := client.FetchFile(ctx, "combi://libs", "lib/hello.py")
 	if err != nil {
 		t.Fatalf("FetchFile: %v", err)
 	}
-	if string(res.Data) != "print('served by combi')\n" {
-		t.Fatalf("unexpected fetch content: %q", res.Data)
+	if string(data) != "print('served by combi')\n" {
+		t.Fatalf("unexpected fetch content: %q", data)
 	}
 
 	// Entries: the classic listing surface still enumerates the plugin.
@@ -126,14 +126,14 @@ func TestFetchCoexistsWithFullPluginSurface(t *testing.T) {
 // staticFetcher serves two small files.
 type staticFetcher struct{}
 
-func (staticFetcher) Read(ctx context.Context, source, path string) (FetchResult, error) {
+func (staticFetcher) Read(ctx context.Context, source, path string) ([]byte, error) {
 	switch path {
 	case "lib/hello.py":
-		return FetchResult{Data: []byte("print('served by combi')\n")}, nil
+		return []byte("print('served by combi')\n"), nil
 	case "lib/util.py":
-		return FetchResult{Data: []byte("x = 1\n")}, nil
+		return []byte("x = 1\n"), nil
 	}
-	return FetchResult{}, ErrFetchNotFound
+	return nil, ErrFetchNotFound
 }
 
 func (staticFetcher) List(ctx context.Context, source, path string) ([]FetchEntry, error) {

@@ -260,10 +260,6 @@ func (r *serverRuntime) callCallback(ctx context.Context, params callbackCallPar
 func (s *Server) dispatch(ctx context.Context, method string, params any) (any, error) {
 	switch method {
 	case "scriptling.handshake":
-		capabilities := []string{"remote_objects"}
-		if s.fetcher != nil {
-			capabilities = append(capabilities, CapabilityFetch)
-		}
 		return handshakeResult{
 			Protocol:  ProtocolVersion,
 			Transport: "json",
@@ -272,7 +268,7 @@ func (s *Server) dispatch(ctx context.Context, method string, params any) (any, 
 				Version:     s.version,
 				Description: s.description,
 			},
-			Capabilities: capabilities,
+			Capabilities: []string{"remote_objects"},
 			Scheme:       s.fetcherScheme,
 			Schema:       s.schema(),
 		}, nil

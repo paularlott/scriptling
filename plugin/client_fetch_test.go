@@ -104,12 +104,12 @@ func TestClientFetchFileRoundTrip(t *testing.T) {
 		t.Fatalf("LoadPlugin: %v", err)
 	}
 
-	res, err := client.FetchFile(context.Background(), "fh://libs", "manifest.toml")
+	data, err := client.FetchFile(context.Background(), "fh://libs", "manifest.toml")
 	if err != nil {
 		t.Fatalf("FetchFile: %v", err)
 	}
-	if string(res.Data) != "print('served')" {
-		t.Fatalf("unexpected result: %+v", res)
+	if string(data) != "print('served')" {
+		t.Fatalf("unexpected result: %q", data)
 	}
 
 	// Miss maps to ErrFetchNotFound.
@@ -164,7 +164,7 @@ func TestDescribeExposesFetchCapabilityAndSchemes(t *testing.T) {
 	RegisterLibraries(p, manager)
 	result, err := p.Eval(`import scriptling.plugin
 meta = scriptling.plugin.describe("plugin.fetchhelper")
-"fetch" in meta["capabilities"] and meta["scheme"] == "fh"`)
+meta["scheme"] == "fh"`)
 	if err != nil {
 		t.Fatalf("eval: %v", err)
 	}

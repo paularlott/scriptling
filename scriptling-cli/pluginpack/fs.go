@@ -65,41 +65,50 @@ func (p *pluginFS) ReadFile(name string) ([]byte, error) {
 	return p.readFile(name)
 }
 
-// Open implements fs.FS.
+// Open implements fs.FS. A directory is one whose listing succeeds; anything
+// else is read as a file — there is no stat round trip, we ask for the file
+// and get it.
 func (p *pluginFS) Open(name string) (fs.File, error) {
 	name, err := cleanPath(name)
 	if err != nil {
 		return nil, err
 	}
-	data, isDir, err := p.statOrRead(name)
-	if err != nil {
-		return nil, err
-	}
-	if isDir {
+	if name == "." || p.isDir(name) {
 		entries, err := p.ReadDir(name)
 		if err != nil {
 			return nil, err
 		}
 		return &dirHandle{name: name, entries: entries}, nil
 	}
+	data, err := p.readFile(name)
+	if err != nil {
+		return nil, err
+	}
 	info := &fileInfo{name: path.Base(name), size: int64(len(data))}
 	return &openFile{reader: bytes.NewReader(data), info: info}, nil
 }
 
-// Stat implements fs.StatFS.
+// Stat implements fs.StatFS. A directory is one whose listing succeeds;
+// anything else is read as a file — stat-ing means asking for it.
 func (p *pluginFS) Stat(name string) (fs.FileInfo, error) {
 	name, err := cleanPath(name)
 	if err != nil {
 		return nil, err
 	}
-	data, isDir, err := p.statOrRead(name)
+	if name == "." || p.isDir(name) {
+		return &fileInfo{name: path.Base(name), size: 0, dir: true}, nil
+	}
+	data, err := p.readFile(name)
 	if err != nil {
 		return nil, err
 	}
-	if isDir {
-		return &fileInfo{name: path.Base(name), size: 0, dir: true}, nil
-	}
 	return &fileInfo{name: path.Base(name), size: int64(len(data))}, nil
+}
+
+// isDir reports whether name lists as a directory.
+func (p *pluginFS) isDir(name string) bool {
+	_, err := p.ReadDir(name)
+	return err == nil
 }
 
 // ReadDir implements fs.ReadDirFS. Listings are reused for dirTTL; a negative
@@ -148,53 +157,6 @@ func (p *pluginFS) cachedDir(name string) ([]fs.DirEntry, bool) {
 		return nil, false
 	}
 	return entry.entries, true
-}
-
-// statOrRead resolves name to either its content (data != nil, isDir false),
-// a directory (data == nil, isDir true) or an error. It consults directory
-// listings first so stats and globs do not fetch content.
-func (p *pluginFS) statOrRead(name string) (data []byte, isDir bool, err error) {
-	if name == "." {
-		return nil, true, nil
-	}
-	if entry, ok := p.lookupEntry(name); ok {
-		if entry.dir {
-			return nil, true, nil
-		}
-		content, err := p.readFile(name)
-		if err != nil {
-			return nil, false, err
-		}
-		return content, false, nil
-	}
-	// Unknown to any parent listing — but the fetcher may serve files its
-	// listings omit (some do for probe-heavy paths), so confirm with a read
-	// before declaring the path missing.
-	content, err := p.readFile(name)
-	if err != nil {
-		return nil, false, err
-	}
-	return content, false, nil
-}
-
-// lookupEntry reports the listing entry for name's base under its parent
-// directory, populating the parent's listing if needed.
-func (p *pluginFS) lookupEntry(name string) (*dirEntry, bool) {
-	parent := path.Dir(name)
-	if parent == name { // "."
-		return nil, false
-	}
-	entries, err := p.ReadDir(parent)
-	if err != nil {
-		return nil, false
-	}
-	base := path.Base(name)
-	for _, e := range entries {
-		if entry, ok := e.(*dirEntry); ok && entry.name == base {
-			return entry, true
-		}
-	}
-	return nil, false
 }
 
 // readFile fetches file content from the plugin. Nothing is cached: the host
