@@ -20,6 +20,7 @@ import (
 
 	"github.com/paularlott/jsonrpc"
 	"github.com/paularlott/logger"
+	"github.com/paularlott/scriptling/build"
 )
 
 // TransportMode restricts which plugin transport protocols a Manager or scope
@@ -764,7 +765,7 @@ func spawnClient(ctx context.Context, path string, args []string) (*Client, erro
 		// executables can divert a bare invocation to plugin mode (knot
 		// checks this instead of requiring a subcommand). Purely additive:
 		// peers that don't know it ignore it.
-		jsonrpc.WithExtraEnv(PluginPeerEnv+"=1"),
+		jsonrpc.WithExtraEnv(PluginPeerEnv+"="+build.Version),
 	)
 	if err != nil {
 		return nil, err

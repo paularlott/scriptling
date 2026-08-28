@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/paularlott/scriptling"
+	"github.com/paularlott/scriptling/build"
 )
 
 // fetchHelper runs a plugin server with a registered fetcher. It backs the
@@ -193,8 +194,12 @@ func TestSpawnedPeerSeesPluginEnv(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		if data, err := os.ReadFile(outFile); err == nil {
-			if got := strings.TrimSpace(string(data)); got != "1" {
-				t.Fatalf("peer saw SCRIPTLING_PLUGIN_PEER=%q, want 1", got)
+			got := strings.TrimSpace(string(data))
+			if got == "" || got == "unset" {
+				t.Fatalf("peer did not see SCRIPTLING_PLUGIN_PEER (got %q)", got)
+			}
+			if got != build.Version {
+				t.Fatalf("peer saw SCRIPTLING_PLUGIN_PEER=%q, want %s (the version)", got, build.Version)
 			}
 			return
 		}
