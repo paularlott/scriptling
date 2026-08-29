@@ -485,7 +485,9 @@ func commandSubtreeContains(parent, target *cli.Command) bool {
 // startPlugins creates the plugin manager and bridges its fetchers into the
 // pack scheme registry, leaving both in the package globals for Run to reuse.
 // The manager always exists so scriptling.plugin.load works even when no
-// plugins were configured; only discovery is conditional.
+// plugins were configured; only discovery is conditional. The host security
+// policy (network + allowed paths) rides the handshake to every plugin.
+
 func startPlugins(ctx context.Context, cmd *cli.Command) error {
 	var dirs, plugins, pluginArgs []string
 	if pluginDiscoveryWanted(cmd) {
@@ -493,7 +495,12 @@ func startPlugins(ctx context.Context, cmd *cli.Command) error {
 		plugins = cmd.GetStringSlice("plugin")
 		pluginArgs = cmd.GetStringSlice("plugin-arg")
 	}
-	manager, err := loadPluginManager(ctx, dirs, plugins, pluginArgs)
+	netPolicy, err := bootstrap.LoadNetworkPolicy(cmd.GetString("network-policy"))
+	if err != nil {
+		return err
+	}
+	policy := scriptlingplugin.PolicyFromSecurity(netPolicy, bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths")))
+	manager, err := loadPluginManager(ctx, dirs, plugins, pluginArgs, policy)
 	if err != nil {
 		return err
 	}
@@ -735,7 +742,7 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	// fetcher schemes could register); reuse that manager here. PostRun
 	// releases them however this command exits. The manager always exists, so
 	// scriptling.plugin.load works even with no plugins configured.
-	scriptlingplugin.RegisterLibraries(p, pluginManager)
+	scriptlingplugin.RegisterLibraries(p, pluginManager, scriptlingplugin.PolicyFromSecurity(netPolicy, allowedPaths))
 
 	// Build the library loader from three tiers, added in priority order
 	// (the loader searches last-added first, so the app bundle's modules
@@ -1015,7 +1022,7 @@ func runMCPStdioServer(ctx context.Context, cmd *cli.Command) error {
 	})
 }
 
-func loadPluginManager(ctx context.Context, dirs []string, plugins []string, pluginArgs []string) (*scriptlingplugin.Manager, error) {
+func loadPluginManager(ctx context.Context, dirs []string, plugins []string, pluginArgs []string, policy ...*scriptlingplugin.Policy) (*scriptlingplugin.Manager, error) {
 	specs, err := resolvePluginSpecs(plugins, pluginArgs)
 	if err != nil {
 		return nil, err
@@ -1027,6 +1034,9 @@ func loadPluginManager(ctx context.Context, dirs []string, plugins []string, plu
 			fmt.Fprintf(os.Stderr, "Plugin crashed: %s: %v\n", name, err)
 		}
 	})
+	if len(policy) > 0 {
+		manager.SetPolicy(policy[0])
+	}
 	// Explicit --plugin entries load first. Plugin identity is the resolved
 	// executable path, so the same binary found later via --plugin-dir is a
 	// no-op — explicit entries (with their arguments) win. Plugins register

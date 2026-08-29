@@ -28,7 +28,7 @@ func TestHTTPClientCall(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client, err := newHTTPClient(context.Background(), srv.URL, false, false, nil)
+	client, err := newHTTPClient(context.Background(), srv.URL, false, false, nil, nil)
 	if err != nil {
 		t.Fatalf("newHTTPClient: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestHTTPClientHeaders(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client, err := newHTTPClient(context.Background(), srv.URL, false, false, nil, map[string]string{
+	client, err := newHTTPClient(context.Background(), srv.URL, false, false, nil, nil, map[string]string{
 		"Authorization":     token,
 		"X-Scriptling-Test": "yes",
 		"X-Original-Header": "original",
@@ -111,7 +111,7 @@ func TestHTTPClientBatch(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client, err := newHTTPClient(context.Background(), srv.URL, false, false, nil)
+	client, err := newHTTPClient(context.Background(), srv.URL, false, false, nil, nil)
 	if err != nil {
 		t.Fatalf("newHTTPClient: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestHTTPClientInsecureSkipTLS(t *testing.T) {
 	// cert), which the server would otherwise log as noise on every run.
 	srv.Config.ErrorLog = log.New(io.Discard, "", 0)
 
-	secureClient, err := newHTTPClient(context.Background(), srv.URL, false, false, nil)
+	secureClient, err := newHTTPClient(context.Background(), srv.URL, false, false, nil, nil)
 	if err != nil {
 		t.Fatalf("new secure HTTP client: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestHTTPClientInsecureSkipTLS(t *testing.T) {
 	}
 	secureClient.doneClose.Do(func() { close(secureClient.done) })
 
-	insecureClient, err := newHTTPClient(context.Background(), srv.URL, false, false, newSharedHTTPTransport(true))
+	insecureClient, err := newHTTPClient(context.Background(), srv.URL, false, false, newSharedHTTPTransport(true), nil)
 	if err != nil {
 		t.Fatalf("new insecure HTTP client: %v", err)
 	}
@@ -195,13 +195,13 @@ func TestHTTPClientSharedTransport(t *testing.T) {
 	shared := newSharedHTTPTransport(false)
 
 	// Both clients share the same transport — connections are pooled.
-	c1, err := newHTTPClient(context.Background(), srv.URL, false, false, shared)
+	c1, err := newHTTPClient(context.Background(), srv.URL, false, false, shared, nil)
 	if err != nil {
 		t.Fatalf("c1: %v", err)
 	}
 	defer c1.doneClose.Do(func() { close(c1.done) })
 
-	c2, err := newHTTPClient(context.Background(), srv.URL, false, false, shared)
+	c2, err := newHTTPClient(context.Background(), srv.URL, false, false, shared, nil)
 	if err != nil {
 		t.Fatalf("c2: %v", err)
 	}

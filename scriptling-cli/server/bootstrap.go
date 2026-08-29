@@ -245,9 +245,9 @@ func (s *Server) applyPackLoader(p *scriptling.Scriptling) {
 func (s *Server) setupScriptling(p *scriptling.Scriptling) {
 	setup.Scriptling(p, s.config.LibDirs, false, s.config.AllowedPaths, s.config.DisabledLibs, s.config.SecretRegistry, Log, s.config.DockerSock, s.config.PodmanSock, s.config.NetworkPolicy)
 	setup.RegisterSys(p, s.config.Argv)
-	if s.config.PluginManager != nil {
-		scriptlingplugin.RegisterLibraries(p, s.config.PluginManager)
-	}
+	// Compiled-in plugins register even with no external plugin manager;
+	// RegisterLibraries handles a nil manager.
+	scriptlingplugin.RegisterLibraries(p, s.config.PluginManager, scriptlingplugin.PolicyFromSecurity(s.config.NetworkPolicy, s.config.AllowedPaths))
 	s.applyPackLoader(p)
 	if s.packLoader != nil {
 		pack.RegisterPackageLibrary(p, s.packLoader)

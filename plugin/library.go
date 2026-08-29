@@ -16,6 +16,13 @@ type Registrar interface {
 	RegisterLibrary(*object.Library)
 }
 
+// LibraryChecker is implemented by registrars that can report whether a
+// library name is already taken; the plugin loader refuses plugins whose
+// verbatim (dotted) name collides with it.
+type LibraryChecker interface {
+	HasLibrary(name string) bool
+}
+
 type ScriptLibraryRegistrar interface {
 	RegisterScriptLibrary(name string, script string) error
 }
@@ -29,7 +36,20 @@ type LibraryUnregistrar interface {
 // context is available. Use ReleaseWithContext for request-scoped cleanup.
 const DefaultReleaseTimeout = 2 * time.Second
 
-func RegisterLibraries(registrar Registrar, manager *Manager) {
+func RegisterLibraries(registrar Registrar, manager *Manager, policy ...*Policy) {
+	var pol *Policy
+	if len(policy) > 0 {
+		pol = policy[0]
+	}
+	// Compiled-in plugins register first: scripts import them as plugin.<name>
+	// exactly like discovered plugins, and the compiled-in library wins when
+	// both are present. They register even with a nil manager so embedders
+	// without external plugins still get the built-in set.
+	compiledInNames := make(map[string]bool)
+	for _, name := range CompiledInNames() {
+		compiledInNames[name] = true
+	}
+	registerCompiledIn(registrar, pol)
 	if manager == nil {
 		return
 	}
@@ -45,6 +65,22 @@ func RegisterLibraries(registrar Registrar, manager *Manager) {
 	for _, metadata := range manager.List() {
 		client, ok := manager.Get(metadata.Name)
 		if !ok {
+			continue
+		}
+		// A discovered plugin that declares the same library name as a
+		// compiled-in plugin is skipped: the compiled-in registration above
+		// owns that namespace for this interpreter. Dotted names go further:
+		// they are the author's namespace, used verbatim, so any collision
+		// with a library the host already registered (compiled-in or
+		// built-in) is refused the same way. The client is left running —
+		// the manager may be shared, and Unregister paths may still
+		// reference it.
+		if compiledInNames[declaredLibraryName(metadata.Name)] {
+			manager.addWarning("plugin %s ignored: compiled-in plugin %s takes precedence", metadata.Name, declaredLibraryName(metadata.Name))
+			continue
+		}
+		if checker, ok := registrar.(LibraryChecker); ok && checker.HasLibrary(metadata.Name) {
+			manager.addWarning("plugin %s ignored: library name already registered", metadata.Name)
 			continue
 		}
 		registerClientLibrary(registrar, scriptRegistrar, client)
@@ -295,6 +331,35 @@ func buildProxyClass(client *Client, library string, schema ClassSchema) *object
 	return &object.Class{Name: className, Methods: methods}
 }
 
+// decodeCallResult turns a plugin call result into an object, materialising
+// remote references (a cursor handed out by query_iter) as live proxies whose
+// class comes from the plugin's declared schema.
+func decodeCallResult(client *Client, result Value) (object.Object, error) {
+	if result.Type != valueRemote {
+		return valueToObject(result)
+	}
+	if result.Remote == nil {
+		return nil, fmt.Errorf("invalid remote reference in plugin result")
+	}
+	remote := &remoteObject{
+		Client:  client,
+		Library: result.Remote.Library,
+		Class:   result.Remote.Class,
+		ID:      result.Remote.ID,
+	}
+	class := &object.Class{Name: result.Remote.Class, Methods: map[string]object.Object{}}
+	for _, classSchema := range client.Metadata().Schema.Classes {
+		if classSchema.Name == result.Remote.Class {
+			class = buildProxyClass(client, result.Remote.Library, classSchema)
+			break
+		}
+	}
+	instance := object.NewInstanceWithFields(class, make(map[string]object.Object))
+	instance.SetField(remoteFieldName, &object.ClientWrapper{TypeName: result.Remote.Class, Client: remote})
+	installRemoteFinalizer(instance, remote)
+	return instance, nil
+}
+
 func callPluginFunction(ctx context.Context, client *Client, name string, kwargs object.Kwargs, args ...object.Object) object.Object {
 	if !client.HandshakeDone() {
 		return callRawFunction(ctx, client, name, kwargs, args...)
@@ -315,7 +380,7 @@ func callPluginFunction(ctx context.Context, client *Client, name string, kwargs
 	if err != nil {
 		return pluginErr(err.Error())
 	}
-	obj, err := valueToObject(result)
+	obj, err := decodeCallResult(client, result)
 	if err != nil {
 		return pluginErr(err.Error())
 	}
@@ -534,7 +599,7 @@ func callPluginMethod(ctx context.Context, remote *remoteObject, name string, kw
 	if err != nil {
 		return pluginErr(err.Error())
 	}
-	obj, err := valueToObject(result)
+	obj, err := decodeCallResult(remote.Client, result)
 	if err != nil {
 		return pluginErr(err.Error())
 	}

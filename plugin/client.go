@@ -57,7 +57,10 @@ type Manager struct {
 	warnings     []string
 	crashHandler func(name string, err error)
 	logger       logger.Logger
-	mu           sync.RWMutex
+	// policy is handed to every plugin this manager handshakes with. Set
+	// via SetPolicy before Load; scopes inherit it through the parent chain.
+	policy *Policy
+	mu     sync.RWMutex
 }
 
 // NewManager creates an empty plugin manager. If log is not nil, plugin log
@@ -188,7 +191,7 @@ func (m *Manager) Load(ctx context.Context) error {
 			if alreadyLoaded {
 				continue
 			}
-			client, err := startClient(ctx, path, nil)
+			client, err := startClient(ctx, path, nil, m.policySnapshot())
 			if err != nil {
 				m.addWarning("plugin %s failed to load: %v", path, err)
 				continue
@@ -242,7 +245,7 @@ func (m *Manager) LoadPlugin(ctx context.Context, path string, args []string) (*
 	}
 	m.mu.Unlock()
 
-	client, err := startClient(ctx, resolvedPath, args)
+	client, err := startClient(ctx, resolvedPath, args, m.policySnapshot())
 	if err != nil {
 		return nil, err
 	}
@@ -342,9 +345,9 @@ func (m *Manager) LoadPath(ctx context.Context, name, path string, scriptling bo
 
 	var client *Client
 	if isHTTP {
-		client, err = newHTTPClient(ctx, resolvedPath, false, scriptling, m.httpTransport)
+		client, err = newHTTPClient(ctx, resolvedPath, false, scriptling, m.httpTransport, m.policySnapshot())
 	} else if scriptling {
-		client, err = startClient(ctx, resolvedPath, args)
+		client, err = startClient(ctx, resolvedPath, args, m.policySnapshot())
 	} else {
 		client, err = spawnClient(ctx, resolvedPath, args)
 	}
@@ -422,7 +425,7 @@ func (m *Manager) LoadURL(ctx context.Context, name, rawURL string, scriptling, 
 	}
 	m.mu.Unlock()
 
-	client, err := newHTTPClient(ctx, rawURL, insecureSkipTLS, scriptling, m.httpTransportFor(insecureSkipTLS), firstHeaderMap(headers))
+	client, err := newHTTPClient(ctx, rawURL, insecureSkipTLS, scriptling, m.httpTransportFor(insecureSkipTLS), m.policySnapshot(), firstHeaderMap(headers))
 	if err != nil {
 		return nil, err
 	}
@@ -603,6 +606,31 @@ func (m *Manager) SetLogger(log logger.Logger) {
 	}
 }
 
+// SetPolicy sets the security policy delivered to every plugin this manager
+// handshakes with. Call it before Load/LoadPlugin/LoadURL — the policy rides
+// the handshake, which is the first message on each connection. A nil policy
+// (the default) tells plugins the host imposes no restrictions. Scopes created
+// earlier still see the policy through the parent chain at handshake time.
+func (m *Manager) SetPolicy(policy *Policy) {
+	m.mu.Lock()
+	m.policy = policy
+	m.mu.Unlock()
+}
+
+// policySnapshot returns the effective policy for this manager, walking the
+// parent chain when this manager (a scope) has none of its own.
+func (m *Manager) policySnapshot() *Policy {
+	for mgr := m; mgr != nil; mgr = mgr.parent {
+		mgr.mu.RLock()
+		policy := mgr.policy
+		mgr.mu.RUnlock()
+		if policy != nil {
+			return policy
+		}
+	}
+	return nil
+}
+
 // Get returns a loaded plugin client by short or fully-qualified library name.
 // It checks the local map first; if not found and this is a scope with a parent,
 // it falls back to the parent (and so on up the chain). Local always wins.
@@ -640,9 +668,12 @@ func (m *Manager) installCrashHandler(name string, client *Client) {
 	})
 }
 
-// NormalizeLibraryName returns name in the host-owned plugin namespace.
+// NormalizeLibraryName returns the library name a script imports. A bare
+// name registers under the plugin namespace ("hello" -> "plugin.hello");
+// a dotted name is the author's namespace and is used verbatim
+// ("paul.hello", "scriptling.sqlite").
 func NormalizeLibraryName(name string) string {
-	if strings.HasPrefix(name, NamespacePrefix) {
+	if strings.Contains(name, ".") {
 		return name
 	}
 	return NamespacePrefix + name
@@ -658,6 +689,10 @@ type Client struct {
 	metadata Metadata
 
 	handshakeDone bool
+
+	// policy is the host security context sent with the handshake. Set once
+	// at creation by the owning Manager; nil means no restrictions.
+	policy *Policy
 
 	// Exactly one transport is set: peer for stdio plugins, rpc for HTTP.
 	peer *jsonrpc.Peer   // bidirectional stdio transport (outbound + inbound callbacks)
@@ -693,11 +728,12 @@ type callbackOwner struct {
 	ctx context.Context
 }
 
-func startClient(ctx context.Context, path string, args []string) (*Client, error) {
+func startClient(ctx context.Context, path string, args []string, policy *Policy) (*Client, error) {
 	client, err := spawnClient(ctx, path, args)
 	if err != nil {
 		return nil, err
 	}
+	client.policy = policy
 	if err := client.handshake(ctx); err != nil {
 		_ = client.Close()
 		return nil, err
@@ -708,15 +744,16 @@ func startClient(ctx context.Context, path string, args []string) (*Client, erro
 // newHTTPClient creates an HTTP plugin client. The caller is responsible for
 // passing the appropriate transport (see Manager.httpTransportFor); no TLS
 // policy decisions are made here. Pass nil to fall back to http.DefaultTransport.
-func newHTTPClient(ctx context.Context, rawURL string, insecureSkipTLS bool, handshake bool, transport *http.Transport, headers ...map[string]string) (*Client, error) {
+func newHTTPClient(ctx context.Context, rawURL string, insecureSkipTLS bool, handshake bool, transport *http.Transport, policy *Policy, headers ...map[string]string) (*Client, error) {
 	opts := []jsonrpc.HTTPOption{jsonrpc.WithHTTPClient(&http.Client{Transport: transportOrDefault(transport)})}
 	for key, value := range firstHeaderMap(headers) {
 		opts = append(opts, jsonrpc.WithHeader(key, value))
 	}
 	client := &Client{
-		path: rawURL,
-		rpc:  jsonrpc.NewClient(jsonrpc.NewHTTPTransport(rawURL, opts...)),
-		done: make(chan struct{}),
+		path:   rawURL,
+		policy: policy,
+		rpc:    jsonrpc.NewClient(jsonrpc.NewHTTPTransport(rawURL, opts...)),
+		done:   make(chan struct{}),
 	}
 	if handshake {
 		if err := client.handshake(ctx); err != nil {
@@ -777,8 +814,10 @@ func spawnClient(ctx context.Context, path string, args []string) (*Client, erro
 // LoadClient spawns an executable and performs the plugin protocol handshake.
 // The returned client has Metadata populated from the handshake result.
 // args, if non-empty, are passed as command-line arguments to the executable.
+// A standalone client carries no host security policy; managers that want one
+// delivered should load through a Manager with SetPolicy.
 func LoadClient(ctx context.Context, path string, args []string) (*Client, error) {
-	return startClient(ctx, path, args)
+	return startClient(ctx, path, args, nil)
 }
 
 // LoadClientFromIO connects to a plugin server over an existing bidirectional
@@ -832,9 +871,10 @@ func (c *Client) handshake(ctx context.Context) error {
 	if err := c.call(ctx, "scriptling.handshake", handshakeParams{
 		Protocol:     ProtocolVersion,
 		Host:         "scriptling",
-		HostVersion:  "dev",
+		HostVersion:  build.Version,
 		Transports:   []string{"json"},
 		Capabilities: []string{"remote_objects"},
+		Policy:       c.policy,
 	}, nil, &result); err != nil {
 		return err
 	}

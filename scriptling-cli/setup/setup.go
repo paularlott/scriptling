@@ -25,6 +25,7 @@ import (
 	"github.com/paularlott/scriptling/extlibs/secretprovider"
 	scriptlingsimilarity "github.com/paularlott/scriptling/extlibs/similarity"
 	"github.com/paularlott/scriptling/libloader"
+	scriptlingplugin "github.com/paularlott/scriptling/plugin"
 	"github.com/paularlott/scriptling/stdlib"
 )
 
@@ -207,12 +208,24 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 	}
 }
 
+// firstPolicy returns the first policy of a variadic list, or nil.
+func firstPolicy(netPolicy []*netsecurity.Config) *netsecurity.Config {
+	if len(netPolicy) > 0 {
+		return netPolicy[0]
+	}
+	return nil
+}
+
 // Factories configures the global sandbox and background factories.
 // Call this once at startup, before any scripts execute.
 func Factories(libdirs []string, allowedPaths []string, disabledLibs []string, secretRegistry *secretprovider.Registry, log logger.Logger, dockerSock, podmanSock string, netPolicy ...*netsecurity.Config) {
 	factory := func() extlibs.SandboxInstance {
 		p := scriptling.New()
 		Scriptling(p, libdirs, false, allowedPaths, disabledLibs, secretRegistry, log, dockerSock, podmanSock, netPolicy...)
+		// Compiled-in plugins (scriptling-full builds) must exist in every
+		// spun-up environment, not just the main one; a nil manager means
+		// no external plugins, which RegisterLibraries handles.
+		scriptlingplugin.RegisterLibraries(p, nil, scriptlingplugin.PolicyFromSecurity(firstPolicy(netPolicy), allowedPaths))
 		return p
 	}
 	extlibs.SetSandboxFactory(factory)

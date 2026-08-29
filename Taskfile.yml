@@ -5,6 +5,11 @@ vars:
   BIN_DIR: bin
   CLI_DIR: scriptling-cli
   LDFLAGS: '-ldflags="-s -w"'
+  # Build tags that compile the database plugins into the CLI. Build with a
+  # subset (e.g. just "plugin_valkey") for a CLI with only those drivers.
+  FULL_TAGS: plugin_sqlite,plugin_sql,plugin_valkey,plugin_badgerdb
+  DB_PLUGINS: sqlite sql valkey badgerdb
+  PLATFORMS: linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64
   VERSION:
     sh: go run ./tools/getversion
 
@@ -38,7 +43,11 @@ tasks:
     cmds:
       - mkdir -p {{.BIN_DIR}}
       - task: build-platforms
+      - task: build-full-platforms
+      - task: build-plugins-platforms
       - task: create-zips
+      - task: create-full-zips
+      - task: create-plugin-zips
 
   create-zips:
     desc: Create ZIP files for all platforms
@@ -49,6 +58,37 @@ tasks:
       - cd {{.BIN_DIR}} && cp scriptling-linux-arm64 scriptling && zip scriptling-linux-arm64.zip scriptling && rm scriptling
       - cd {{.BIN_DIR}} && cp scriptling-windows-amd64.exe scriptling.exe && zip scriptling-windows-amd64.zip scriptling.exe && rm scriptling.exe
       - cd {{.BIN_DIR}} && cp scriptling-windows-arm64.exe scriptling.exe && zip scriptling-windows-arm64.zip scriptling.exe && rm scriptling.exe
+
+  create-full-zips:
+    desc: Create ZIP files for scriptling-full builds
+    cmds:
+      - |
+        cd {{.BIN_DIR}}
+        for platform in {{.PLATFORMS}}; do
+          GOOS=${platform%/*} GOARCH=${platform#*/}
+          ext=""
+          if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
+          cp scriptling-full-${GOOS}-${GOARCH}${ext} scriptling-full${ext}
+          zip scriptling-full-${GOOS}-${GOARCH}.zip scriptling-full${ext}
+          rm scriptling-full${ext}
+        done
+
+  create-plugin-zips:
+    desc: Create ZIP files for the database plugin binaries
+    cmds:
+      - |
+        cd {{.BIN_DIR}}
+        for platform in {{.PLATFORMS}}; do
+          GOOS=${platform%/*} GOARCH=${platform#*/}
+          ext=""
+          if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
+          for plugin in {{.DB_PLUGINS}}; do
+            name=${plugin}
+            cp ${name}-${GOOS}-${GOARCH}${ext} ${name}${ext}
+            zip ${name}-${GOOS}-${GOARCH}.zip ${name}${ext}
+            rm ${name}${ext}
+          done
+        done
 
   build-linux-amd64:
     desc: Build for Linux AMD64
@@ -86,6 +126,44 @@ tasks:
     cmds:
       - GOOS=windows GOARCH=arm64 go build {{.LDFLAGS}} -o ../{{.BIN_DIR}}/scriptling-windows-arm64.exe .
 
+  build-full:
+    desc: Build for current platform with all database plugins compiled in
+    dir: scriptling-cli
+    cmds:
+      - go build {{.LDFLAGS}} -tags '{{.FULL_TAGS}}' -o ../{{.BIN_DIR}}/scriptling-full .
+
+  build-full-platforms:
+    desc: Build scriptling-full for all platforms (all database plugins compiled in)
+    cmds:
+      - |
+        for platform in {{.PLATFORMS}}; do
+          GOOS=${platform%/*} GOARCH=${platform#*/}
+          ext=""
+          if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
+          go build {{.LDFLAGS}} -tags '{{.FULL_TAGS}}' -o {{.BIN_DIR}}/scriptling-full-${GOOS}-${GOARCH}${ext} ./scriptling-cli
+        done
+
+  build-plugins:
+    desc: Build the database plugin binaries for the current platform
+    cmds:
+      - |
+        for plugin in {{.DB_PLUGINS}}; do
+          go build {{.LDFLAGS}} -o {{.BIN_DIR}}/${plugin} ./plugins/${plugin}/cmd
+        done
+
+  build-plugins-platforms:
+    desc: Build the database plugin binaries for all platforms
+    cmds:
+      - |
+        for platform in {{.PLATFORMS}}; do
+          export GOOS=${platform%/*} GOARCH=${platform#*/}
+          ext=""
+          if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
+          for plugin in {{.DB_PLUGINS}}; do
+            go build {{.LDFLAGS}} -o {{.BIN_DIR}}/${plugin}-${GOOS}-${GOARCH}${ext} ./plugins/${plugin}/cmd
+          done
+        done
+
   build-sample-package:
     desc: Build the sample package to examples folder
     cmds:
@@ -100,6 +178,16 @@ tasks:
     desc: Generate the Homebrew formula
     cmds:
       - go run ./scripts/homebrew-formula/ > ../homebrew-tap/Formula/scriptling.rb
+
+  homebrew-formula-full:
+    desc: Generate the Homebrew formula for scriptling-full (database plugins compiled in)
+    cmds:
+      - go run ./scripts/homebrew-formula/ -full > ../homebrew-tap/Formula/scriptling-full.rb
+
+  homebrew-formula-plugins:
+    desc: Generate the Homebrew formula for the database plugin binaries
+    cmds:
+      - go run ./scripts/homebrew-formula/ -plugins > ../homebrew-tap/Formula/scriptling-plugins.rb
 
   release:
     desc: Tag the version and create GitHub release with all platform binaries
@@ -118,3 +206,5 @@ tasks:
         gh repo set-default paularlott/scriptling
         gh release create v{{.VERSION}} -t "Release {{.VERSION}}" -n "Scriptling {{.VERSION}}" {{.BIN_DIR}}/*.zip
       - task: homebrew-formula
+      - task: homebrew-formula-full
+      - task: homebrew-formula-plugins

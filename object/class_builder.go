@@ -648,6 +648,10 @@ func (cb *ClassBuilder) callTypedReceiverMethod(fnValue reflect.Value, sig *Func
 	case 0:
 		return &Null{}
 	case 1:
+		if sig.returnIsError && !results[0].IsNil() {
+			err, _ := results[0].Interface().(error)
+			return newError("%s", err.Error())
+		}
 		return convertReturnValue(results[0])
 	case 2:
 		if sig.returnIsError && !results[1].IsNil() {
@@ -732,6 +736,10 @@ func (cb *ClassBuilder) callTypedMethod(fnValue reflect.Value, sig *FunctionSign
 	case 0:
 		return &Null{}
 	case 1:
+		if sig.returnIsError && !results[0].IsNil() {
+			err, _ := results[0].Interface().(error)
+			return newError("%s", err.Error())
+		}
 		return convertReturnValue(results[0])
 	case 2:
 		if sig.returnIsError && !results[1].IsNil() {
@@ -846,7 +854,10 @@ func analyzeClassMethodSignature(fnType reflect.Type, receiverType reflect.Type)
 		paramTypes[i] = fnType.In(i)
 	}
 
-	returnIsError := numOut == 2 && fnType.Out(1).Implements(errorType)
+	// A single error return is the error channel too: a void method that can
+	// fail (set, select, close) reports failures through it.
+	returnIsError := (numOut == 2 && fnType.Out(1).Implements(errorType)) ||
+		(numOut == 1 && fnType.Out(0).Implements(errorType))
 
 	sig := &FunctionSignature{
 		numIn:         numIn,

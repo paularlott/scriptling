@@ -10,94 +10,230 @@ import (
 	"github.com/paularlott/scriptling/build"
 )
 
-const formulaTemplate = `class Scriptling < Formula
-	desc "A powerful scripting language with Python-like syntax and Go performance"
+// formulaTemplate works for the lean and full builds: Prefix is the artifact
+// name (scriptling / scriptling-full), Class the formula class, Desc the
+// description line, BinName the executable inside the zip, and InstallAs the
+// name it installs as (full installs as `scriptling`, hence the conflict
+// with the core formula).
+const formulaTemplate = `class {{ .Class }} < Formula
+	desc "{{ .Desc }}"
 	homepage "https://github.com/paularlott/scriptling"
 	license "MIT"
 	version "{{ .Version }}"
-	if OS.mac?
+{{ if .Conflicts }}	conflicts_with "{{ .Conflicts }}", because: "both install a scriptling binary"
+{{ end }}	if OS.mac?
 		if Hardware::CPU.arm?
-			url "https://github.com/paularlott/scriptling/releases/download/v#{version}/scriptling-darwin-arm64.zip"
+			url "https://github.com/paularlott/scriptling/releases/download/v#{version}/{{ .Prefix }}-darwin-arm64.zip"
 			sha256 "{{ .Checksum.DarwinArm64 }}"
 		else
-			url "https://github.com/paularlott/scriptling/releases/download/v#{version}/scriptling-darwin-amd64.zip"
+			url "https://github.com/paularlott/scriptling/releases/download/v#{version}/{{ .Prefix }}-darwin-amd64.zip"
 			sha256 "{{ .Checksum.DarwinAmd64 }}"
 		end
 	elsif OS.linux?
 		if Hardware::CPU.arm?
-			url "https://github.com/paularlott/scriptling/releases/download/v#{version}/scriptling-linux-arm64.zip"
+			url "https://github.com/paularlott/scriptling/releases/download/v#{version}/{{ .Prefix }}-linux-arm64.zip"
 			sha256 "{{ .Checksum.LinuxArm64 }}"
 		else
-			url "https://github.com/paularlott/scriptling/releases/download/v#{version}/scriptling-linux-amd64.zip"
+			url "https://github.com/paularlott/scriptling/releases/download/v#{version}/{{ .Prefix }}-linux-amd64.zip"
 			sha256 "{{ .Checksum.LinuxAmd64 }}"
 		end
 	end
 
 	def install
-		bin.install "scriptling"
+		bin.install "{{ .BinName }}" => "{{ .InstallAs }}"
+	end
+
+	def caveats
+		<<~EOS
+{{ .Caveats }}		EOS
 	end
 end
 `
 
-func main() {
-	data := struct {
-		Version  string
-		Checksum struct {
-			DarwinArm64 string
-			DarwinAmd64 string
-			LinuxArm64  string
-			LinuxAmd64  string
-		}
-	}{
-		Checksum: struct {
-			DarwinArm64 string
-			DarwinAmd64 string
-			LinuxArm64  string
-			LinuxAmd64  string
-		}{
-			DarwinArm64: "",
-			DarwinAmd64: "",
-			LinuxArm64:  "",
-			LinuxAmd64:  "",
-		},
-		Version: build.Version,
-	}
+// pluginsTemplate installs the database plugin binaries under libexec; the
+// scriptling formula finds them via --plugin-dir / SCRIPTLING_PLUGIN_DIR.
+const pluginsTemplate = `class ScriptlingPlugins < Formula
+	desc "Database plugins for Scriptling (sqlite, sql, valkey, badger)"
+	homepage "https://github.com/paularlott/scriptling"
+	license "MIT"
+	version "{{ .Version }}"
+	if OS.mac?
+		if Hardware::CPU.arm?
+			url "https://github.com/paularlott/scriptling/releases/download/v#{version}/sqlite-darwin-arm64.zip"
+			sha256 "{{ .Sqlite.DarwinArm64 }}"
+		else
+			url "https://github.com/paularlott/scriptling/releases/download/v#{version}/sqlite-darwin-amd64.zip"
+			sha256 "{{ .Sqlite.DarwinAmd64 }}"
+		end
+	elsif OS.linux?
+		if Hardware::CPU.arm?
+			url "https://github.com/paularlott/scriptling/releases/download/v#{version}/sqlite-linux-arm64.zip"
+			sha256 "{{ .Sqlite.LinuxArm64 }}"
+		else
+			url "https://github.com/paularlott/scriptling/releases/download/v#{version}/sqlite-linux-amd64.zip"
+			sha256 "{{ .Sqlite.LinuxAmd64 }}"
+		end
+	end
 
-	// Calculate the SHA256 checksums
-	files := map[string]*string{
-		"bin/scriptling-darwin-amd64.zip": &data.Checksum.DarwinAmd64,
-		"bin/scriptling-darwin-arm64.zip": &data.Checksum.DarwinArm64,
-		"bin/scriptling-linux-amd64.zip":  &data.Checksum.LinuxAmd64,
-		"bin/scriptling-linux-arm64.zip":  &data.Checksum.LinuxArm64,
-	}
+	def install
+		# The remaining plugins are fetched from the same release; brew has no
+		# clean multi-artifact story, so each plugin zip is downloaded and its
+		# binary placed under libexec/plugins.
+		(libexec/"plugins").mkpath
+		%w[sqlite sql valkey badgerdb].each do |plugin|
+			bottle_arch = Hardware::CPU.arm? ? "arm64" : "amd64"
+			os = OS.mac? ? "darwin" : "linux"
+			zip = "#{plugin}-#{os}-#{bottle_arch}.zip"
+			bin = "#{plugin}"
+			system "curl", "-fsSL", "-o", zip,
+				"https://github.com/paularlott/scriptling/releases/download/v#{version}/#{zip}"
+			system "unzip", "-o", zip
+			(libexec/"plugins").install bin
+			rm_f [zip, bin]
+		end
+	end
 
-	for file, checksum := range files {
-		f, err := os.Open(file)
-		if err != nil {
-			fmt.Printf("Error opening file %s: %v\n", file, err)
-			return
-		}
+	def caveats
+		<<~EOS
+			The database plugin binaries are in:
+			  #{opt_libexec}/plugins
 
-		h := sha256.New()
-		if _, err := io.Copy(h, f); err != nil {
-			fmt.Printf("Error calculating checksum for file %s: %v\n", file, err)
-			f.Close()
-			return
-		}
+			Load them with either:
+			  export SCRIPTLING_PLUGIN_DIR="#{opt_libexec}/plugins"
+			or pass to each run:
+			  scriptling --plugin-dir #{opt_libexec}/plugins script.py
 
-		*checksum = fmt.Sprintf("%x", h.Sum(nil))
+			scriptling-full users do not need this formula — the plugins are
+			compiled in.
+		EOS
+	end
+end
+`
 
-		f.Close()
-	}
+type checksums struct {
+	DarwinArm64 string
+	DarwinAmd64 string
+	LinuxArm64  string
+	LinuxAmd64  string
+}
 
-	tmpl, err := template.New("formula").Parse(formulaTemplate)
+func checksumFor(path string) (string, error) {
+	f, err := os.Open(path)
 	if err != nil {
-		fmt.Println("Error creating template:", err)
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
+}
+
+func checksumSet(prefix string) (checksums, error) {
+	var set checksums
+	var err error
+	pairs := map[string]*string{
+		prefix + "-darwin-amd64.zip": &set.DarwinAmd64,
+		prefix + "-darwin-arm64.zip": &set.DarwinArm64,
+		prefix + "-linux-amd64.zip":  &set.LinuxAmd64,
+		prefix + "-linux-arm64.zip":  &set.LinuxArm64,
+	}
+	for file, target := range pairs {
+		if *target, err = checksumFor("bin/" + file); err != nil {
+			return set, err
+		}
+	}
+	return set, nil
+}
+
+func main() {
+	mode := ""
+	for _, arg := range os.Args[1:] {
+		switch arg {
+		case "-full", "-plugins":
+			mode = arg
+		}
+	}
+
+	switch mode {
+	case "-plugins":
+		data := struct {
+			Version string
+			Sqlite  checksums
+		}{Version: build.Version}
+		var err error
+		if data.Sqlite, err = checksumSet("sqlite"); err != nil {
+			fmt.Printf("Error checksumming plugin zips: %v\n", err)
+			return
+		}
+		if err := template.Must(template.New("plugins").Parse(pluginsTemplate)).Execute(os.Stdout, data); err != nil {
+			fmt.Println("Error executing template:", err)
+		}
+		return
+	case "-full":
+		data := struct {
+			Version   string
+			Prefix    string
+			Class     string
+			Desc      string
+			BinName   string
+			InstallAs string
+			Conflicts string
+			Caveats   string
+			Checksum  checksums
+		}{
+			Version:   build.Version,
+			Prefix:    "scriptling-full",
+			Class:     "ScriptlingFull",
+			Desc:      "Scriptling with the sqlite, sql, valkey and badger database plugins compiled in",
+			BinName:   "scriptling-full",
+			InstallAs: "scriptling",
+			Conflicts: "scriptling",
+			Caveats: "This formula replaces the plain `scriptling` binary with the full build\n" +
+				"(all database plugins compiled in); brew uninstall scriptling first.\n" +
+				"The scriptling-plugins formula is not needed with this build.\n\n",
+		}
+		var err error
+		if data.Checksum, err = checksumSet("scriptling-full"); err != nil {
+			fmt.Printf("Error opening file: %v\n", err)
+			return
+		}
+		if err := template.Must(template.New("formula").Parse(formulaTemplate)).Execute(os.Stdout, data); err != nil {
+			fmt.Println("Error executing template:", err)
+		}
 		return
 	}
 
-	err = tmpl.Execute(os.Stdout, data)
-	if err != nil {
+	data := struct {
+		Version   string
+		Prefix    string
+		Class     string
+		Desc      string
+		BinName   string
+		InstallAs string
+		Conflicts string
+		Caveats   string
+		Checksum  checksums
+	}{
+		Version:   build.Version,
+		Prefix:    "scriptling",
+		Class:     "Scriptling",
+		Desc:      "A powerful scripting language with Python-like syntax and Go performance",
+		BinName:   "scriptling",
+		InstallAs: "scriptling",
+		Conflicts: "scriptling-full",
+		Caveats: "For the database plugins: brew install scriptling-full (this binary plus\n" +
+			"sqlite/sql/valkey/badger compiled in), or keep this lean build and\n" +
+			"brew install scriptling-plugins, then run with\n" +
+			"SCRIPTLING_PLUGIN_DIR=\"$(brew --prefix)/opt/scriptling-plugins/libexec/plugins\".\n\n",
+	}
+	var err error
+	if data.Checksum, err = checksumSet("scriptling"); err != nil {
+		fmt.Printf("Error opening file: %v\n", err)
+		return
+	}
+	if err := template.Must(template.New("formula").Parse(formulaTemplate)).Execute(os.Stdout, data); err != nil {
 		fmt.Println("Error executing template:", err)
 	}
 }

@@ -1,0 +1,168 @@
+package sqlite
+
+import (
+	"testing"
+
+	"github.com/paularlott/scriptling"
+	"github.com/paularlott/scriptling/plugins/internal/plugintest"
+)
+
+// ormScript exercises the full script-side ORM surface: kwargs forms, the
+// query builder (including grouped criteria), where_sql, and models. The sql
+// plugin runs the same script against live MariaDB and PostgreSQL in its
+// env-gated integration tests, proving the dialect handling.
+const ormScript = `
+conn = sqlite.connect()
+
+orm = conn.get_orm()
+orm.drop_table("people")
+(orm.create_table("people")
+ .column("id", "integer", primary_key=True, autoincrement=True)
+ .column("name", "text", nullable=False)
+ .column("score", "real", default=0.0)
+ .column("active", "integer", default=1)
+ .if_not_exists()
+ .execute())
+
+# kwargs forms
+ins = orm.insert("people", {"name": "ada", "score": 9.5, "active": 1})
+if ins.last_insert_id != 1:
+    return "insert id: " + str(ins.last_insert_id)
+orm.insert("people", {"name": "grace", "score": 8.0, "active": 1})
+orm.insert("people", {"name": "linus", "score": 7.0, "active": 0})
+
+if orm.count("people", "") != 3:
+    return "count all: " + str(orm.count("people", ""))
+if orm.count("people", "score >= ?", 8.0) != 2:
+    return "count where: " + str(orm.count("people", "score >= ?", 8.0))
+
+# builder: flat conditions
+rows = orm.select("people", "name", "score").where("score", ">=", 8.0).order_by("score", desc=True).fetch()
+if len(rows) != 2 or rows[0]["name"] != "ada":
+    return "builder select: " + str(rows)
+
+# builder: (a OR b) AND (a OR c)
+rows = (orm.select("people", "name")
+        .where(orm.any_of(orm.eq("name", "ada"), orm.eq("name", "grace")))
+        .where(orm.any_of(orm.eq("active", 1), orm.ge("score", 9.0)))
+        .fetch())
+if len(rows) != 2:
+    return "grouped criteria: " + str(rows)
+
+# builder: all_of nesting, one_of, not_one_of
+rows = orm.select("people").where(orm.all_of(
+        orm.one_of("name", ["ada", "grace", "nobody"]),
+        orm.not_one_of("name", ["grace"]),
+    )).fetch()
+if len(rows) != 1 or rows[0]["name"] != "ada":
+    return "one_of/not_one_of: " + str(rows)
+
+# builder: limit/one/count
+rows = orm.select("people").order_by("id").limit(2).fetch()
+if len(rows) != 2:
+    return "limit: " + str(len(rows))
+one = orm.select("people").where("name", "=", "linus").one()
+if one == None or one["score"] != 7.0:
+    return "one: " + str(one)
+if orm.select("people").where("active", "=", 1).count() != 2:
+    return "builder count"
+
+# iterate: row-by-row without materialising
+total = 0
+names = []
+for row in orm.select("people", "name").where("score", ">=", 7.0).order_by("id").iterate():
+    names.append(row["name"])
+    total = total + 1
+if total != 3 or names[0] != "ada":
+    return "iterate: " + str(names)
+# partial consumption + explicit close
+it = orm.select("people").order_by("id").iterate()
+first = it.__next__()
+it.close()
+if first["name"] != "ada":
+    return "iterate partial"
+if orm.count("people", "") != 3:
+    return "iterate changed data?!"
+
+# where_sql escape hatch
+rows = orm.select("people").where_sql("score > ? and score < ?", 6.5, 9.0).fetch()
+if len(rows) != 2:
+    return "where_sql: " + str(rows)
+
+# update/delete refuse blanket writes
+try:
+    orm.update("people", {"score": 0.0}, "")
+    return "blanket update allowed"
+except:
+    pass
+try:
+    orm.delete("people", "")
+    return "blanket delete allowed"
+except:
+    pass
+
+upd = orm.update("people", {"score": 9.9}, "name = ?", "ada")
+if upd.rows_affected != 1:
+    return "update: " + str(upd)
+dele = orm.delete("people", "name = ?", "linus")
+if dele.rows_affected != 1:
+    return "delete: " + str(dele)
+if orm.count("people", "") != 2:
+    return "after delete: " + str(orm.count("people", ""))
+
+if "people" not in orm.tables():
+    return "tables: " + str(orm.tables())
+
+# models: a factory function builds instances from row dicts
+def make_person(id=None, name=None, score=None, active=None):
+    return {"id": id, "name": name, "score": score, "active": active}
+
+people = orm.table(make_person, "people", pk="id", columns=["id", "name", "score", "active"])
+p = people.get(1)
+if p == None or p.name != "ada" or p.score != 9.9:
+    return "model get: " + str(p)
+p.score = 8.8
+people.save(p)
+if orm.count("people", "score >= ?", 8.8) != 1:
+    return "model save"
+people.insert(make_person(name="kurt", score=6.0, active=0))
+if orm.count("people", "") != 3:
+    return "model insert"
+people.delete(people.get(1))
+if orm.count("people", "") != 2:
+    return "model delete"
+if people.count() != 2:
+    return "model count"
+rows = people.select("name").where("active", "=", 0).fetch()
+if len(rows) != 1:
+    return "model select: " + str(rows)
+
+orm.drop_table("people")
+conn.close()
+return "ok"
+`
+
+func TestInProcessORM(t *testing.T) {
+	p := scriptling.New()
+	RegisterInProcess(p, nil)
+	result, err := p.Eval("import scriptling.sqlite as sqlite\n" + ormScript)
+	if err != nil {
+		t.Fatalf("eval: %v", err)
+	}
+	if result.Inspect() != "ok" {
+		t.Fatalf("script result: %s", result.Inspect())
+	}
+}
+
+// TestExternalORM proves the script-side ORM works over the wire: the whole
+// kit executes host-side, only query/execute calls round-trip.
+func TestExternalORM(t *testing.T) {
+	bin := plugintest.BuildPlugin(t, "./cmd")
+	result, err := plugintest.External(t, bin, nil, "import scriptling.sqlite as sqlite\n"+ormScript)
+	if err != nil {
+		t.Fatalf("external eval: %v", err)
+	}
+	if result.Inspect() != "ok" {
+		t.Fatalf("script result: %s", result.Inspect())
+	}
+}

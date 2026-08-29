@@ -102,8 +102,10 @@ func analyzeFunctionSignature(fnType reflect.Type) *FunctionSignature {
 		paramTypes[i] = fnType.In(i)
 	}
 
-	// Check if second return is error
-	returnIsError := numOut == 2 && fnType.Out(1).Implements(errorType)
+	// A single error return is the error channel too: a void function that can
+	// fail reports failures through it.
+	returnIsError := (numOut == 2 && fnType.Out(1).Implements(errorType)) ||
+		(numOut == 1 && fnType.Out(0).Implements(errorType))
 
 	sig := &FunctionSignature{
 		numIn:         numIn,
@@ -479,6 +481,10 @@ func callTypedFunction(fnValue reflect.Value, sig *FunctionSignature, ctx contex
 	case 0:
 		return &Null{}
 	case 1:
+		if sig.returnIsError && !results[0].IsNil() {
+			err, _ := results[0].Interface().(error)
+			return newError("%s", err.Error())
+		}
 		return convertReturnValue(results[0])
 	case 2:
 		// Use cached error check

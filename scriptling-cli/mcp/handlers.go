@@ -144,9 +144,9 @@ func prepareScriptling(cfg HandlerConfig, extraLibDirs []string) *scriptling.Scr
 	p := scriptling.New()
 	setup.Scriptling(p, libDirs, false, cfg.AllowedPaths, cfg.DisabledLibs, registry, log, cfg.DockerSock, cfg.PodmanSock, cfg.NetworkPolicy)
 	setup.RegisterSys(p, cfg.Argv)
-	if cfg.PluginManager != nil {
-		scriptlingplugin.RegisterLibraries(p, cfg.PluginManager)
-	}
+	// Compiled-in plugins register even with no external plugin manager;
+	// RegisterLibraries handles a nil manager.
+	scriptlingplugin.RegisterLibraries(p, cfg.PluginManager, scriptlingplugin.PolicyFromSecurity(cfg.NetworkPolicy, cfg.AllowedPaths))
 	bootstrap.ApplyPackLoader(p, cfg.PackLoader)
 	if cfg.PackLoader != nil {
 		pack.RegisterPackageLibrary(p, cfg.PackLoader)

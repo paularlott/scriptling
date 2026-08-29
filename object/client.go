@@ -2,6 +2,16 @@ package object
 
 import "context"
 
+// NewReceiverInstance returns an instance of class whose typed receiver is
+// client — exactly what a ClassBuilder constructor produces. Library factory
+// functions (connect/open) use it to hand scripts an instance of a
+// typed-receiver class directly, without going through the constructor path.
+func NewReceiverInstance(class *Class, typeName string, client any) *Instance {
+	instance := NewInstance(class)
+	instance.SetField(receiverField, &ClientWrapper{TypeName: typeName, Client: client})
+	return instance
+}
+
 // ScriptCallable is implemented by Go types stored inside a ClientWrapper whose
 // instances should be callable from scriptling code (e.g. plugin callbacks).
 // When the evaluator encounters a ClientWrapper whose Client implements this
