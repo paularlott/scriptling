@@ -155,7 +155,7 @@ exit 2
 		globalLogger = previousLogger
 	}()
 
-	manager, err := loadPluginManager(context.Background(), []string{dir}, nil, nil)
+	manager, err := loadPluginManager(context.Background(), []string{dir}, nil, nil, nil, false)
 	if err != nil {
 		t.Fatalf("loadPluginManager: %v", err)
 	}
@@ -261,6 +261,7 @@ func TestResolvePluginSpecs(t *testing.T) {
 		name    string
 		plugins []string
 		args    []string
+		envs    []string
 		want    []pluginSpec
 		fails   string
 	}{
@@ -268,6 +269,32 @@ func TestResolvePluginSpecs(t *testing.T) {
 			name:    "path only",
 			plugins: []string{"/usr/local/bin/knot"},
 			want:    []pluginSpec{{Path: "/usr/local/bin/knot"}},
+		},
+		{
+			name:    "bare env goes to the sole plugin",
+			plugins: []string{"/usr/local/bin/knot"},
+			envs:    []string{"KNOT_DB=/var/lib/knot", "LOG=debug"},
+			want:    []pluginSpec{{Path: "/usr/local/bin/knot", Env: []string{"KNOT_DB=/var/lib/knot", "LOG=debug"}}},
+		},
+		{
+			name:    "qualified env names its plugin, value keeps its equals",
+			plugins: []string{"/usr/local/bin/knot", "/usr/local/bin/other"},
+			envs:    []string{"knot=KNOT_DB=/x", "other=--flag=1"},
+			want: []pluginSpec{
+				{Path: "/usr/local/bin/knot", Env: []string{"KNOT_DB=/x"}},
+				{Path: "/usr/local/bin/other", Env: []string{"--flag=1"}},
+			},
+		},
+		{
+			name:  "env without a plugin fails",
+			envs:  []string{"KNOT_DB=/x"},
+			fails: "without any --plugin",
+		},
+		{
+			name:    "bare env with several plugins is ambiguous",
+			plugins: []string{"/usr/local/bin/knot", "/usr/local/bin/other"},
+			envs:    []string{"KNOT_DB=/x"},
+			fails:   "ambiguous",
 		},
 		{
 			name:    "path with spaces needs no quoting",
@@ -336,7 +363,7 @@ func TestResolvePluginSpecs(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := resolvePluginSpecs(tc.plugins, tc.args)
+			got, err := resolvePluginSpecs(tc.plugins, tc.args, tc.envs)
 			if tc.fails != "" {
 				if err == nil {
 					t.Fatalf("expected an error containing %q, got %+v", tc.fails, got)
@@ -388,7 +415,7 @@ func TestLoadPluginManagerExplicitPlugin(t *testing.T) {
 	helper := filepath.Join(dir, "args-plugin")
 	writeArgsPluginHelper(t, helper, argsFile)
 
-	manager, err := loadPluginManager(context.Background(), nil, []string{helper}, []string{"--alias", "testing"})
+	manager, err := loadPluginManager(context.Background(), nil, []string{helper}, []string{"--alias", "testing"}, nil, false)
 	if err != nil {
 		t.Fatalf("loadPluginManager: %v", err)
 	}
@@ -421,7 +448,7 @@ func TestLoadPluginManagerExplicitWinsOverDir(t *testing.T) {
 
 	// The same executable, loaded explicitly WITH arguments and also
 	// discoverable via --plugin-dir: the explicit entry must win.
-	manager, err := loadPluginManager(context.Background(), []string{pluginDir}, []string{helper}, []string{"--alias", "explicit"})
+	manager, err := loadPluginManager(context.Background(), []string{pluginDir}, []string{helper}, []string{"--alias", "explicit"}, nil, false)
 	if err != nil {
 		t.Fatalf("loadPluginManager: %v", err)
 	}
@@ -787,7 +814,7 @@ func forEachCommand(cmd *cli.Command, fn func(*cli.Command)) {
 // scriptling.plugin.load() depends on: with nothing configured the manager
 // still exists (and starts no processes), so the library can be registered.
 func TestLoadPluginManagerAlwaysReturnsAManager(t *testing.T) {
-	manager, err := loadPluginManager(context.Background(), nil, nil, nil)
+	manager, err := loadPluginManager(context.Background(), nil, nil, nil, nil, false)
 	if err != nil {
 		t.Fatalf("loadPluginManager with no plugins: %v", err)
 	}
@@ -803,7 +830,7 @@ func TestLoadPluginManagerAlwaysReturnsAManager(t *testing.T) {
 // TestLoadPluginManagerRejectsBadPluginArgs checks argument resolution failures
 // surface before any process is started.
 func TestLoadPluginManagerRejectsBadPluginArgs(t *testing.T) {
-	_, err := loadPluginManager(context.Background(), nil, nil, []string{"orphan-arg"})
+	_, err := loadPluginManager(context.Background(), nil, nil, []string{"orphan-arg"}, nil, false)
 	if err == nil {
 		t.Fatal("expected an error for a --plugin-arg with no --plugin")
 	}
@@ -842,7 +869,7 @@ done
 	// Start the plugin with NO logger, exactly as PreRun does.
 	previousLogger := globalLogger
 	globalLogger = nil
-	manager, err := loadPluginManager(context.Background(), []string{dir}, nil, nil)
+	manager, err := loadPluginManager(context.Background(), []string{dir}, nil, nil, nil, false)
 	globalLogger = previousLogger
 	if err != nil {
 		t.Fatalf("loadPluginManager: %v", err)

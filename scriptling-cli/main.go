@@ -162,6 +162,20 @@ func buildRootCommand() *cli.Command {
 				EnvVars:    []string{"SCRIPTLING_PLUGIN_ARG"},
 				ConfigPath: []string{"plugins.args"},
 			},
+			&cli.StringSliceFlag{
+				Name:       "plugin-env",
+				Usage:      "Environment variable KEY=VALUE for the preceding --plugin (can be repeated; executables only)",
+				Global:     true,
+				EnvVars:    []string{"SCRIPTLING_PLUGIN_ENV"},
+				ConfigPath: []string{"plugins.env"},
+			},
+			&cli.BoolFlag{
+				Name:       "plugin-insecure",
+				Usage:      "Skip TLS certificate verification for https:// plugin URLs (self-signed certificates)",
+				Global:     true,
+				EnvVars:    []string{"SCRIPTLING_PLUGIN_INSECURE"},
+				ConfigPath: []string{"plugins.insecure"},
+			},
 			&cli.StringFlag{
 				Name:         "log-level",
 				Usage:        "Log level (trace|debug|info|warn|error)",
@@ -489,18 +503,21 @@ func commandSubtreeContains(parent, target *cli.Command) bool {
 // policy (network + allowed paths) rides the handshake to every plugin.
 
 func startPlugins(ctx context.Context, cmd *cli.Command) error {
-	var dirs, plugins, pluginArgs []string
+	var dirs, plugins, pluginArgs, pluginEnvs []string
+	insecure := false
 	if pluginDiscoveryWanted(cmd) {
 		dirs = cmd.GetStringSlice("plugin-dir")
 		plugins = cmd.GetStringSlice("plugin")
 		pluginArgs = cmd.GetStringSlice("plugin-arg")
+		pluginEnvs = cmd.GetStringSlice("plugin-env")
+		insecure = cmd.GetBool("plugin-insecure")
 	}
 	netPolicy, err := bootstrap.LoadNetworkPolicy(cmd.GetString("network-policy"))
 	if err != nil {
 		return err
 	}
 	policy := scriptlingplugin.PolicyFromSecurity(netPolicy, bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths")))
-	manager, err := loadPluginManager(ctx, dirs, plugins, pluginArgs, policy)
+	manager, err := loadPluginManager(ctx, dirs, plugins, pluginArgs, pluginEnvs, insecure, policy)
 	if err != nil {
 		return err
 	}
@@ -1022,14 +1039,14 @@ func runMCPStdioServer(ctx context.Context, cmd *cli.Command) error {
 	})
 }
 
-func loadPluginManager(ctx context.Context, dirs []string, plugins []string, pluginArgs []string, policy ...*scriptlingplugin.Policy) (*scriptlingplugin.Manager, error) {
-	specs, err := resolvePluginSpecs(plugins, pluginArgs)
+func loadPluginManager(ctx context.Context, dirs []string, plugins []string, pluginArgs []string, pluginEnvs []string, insecure bool, policy ...*scriptlingplugin.Policy) (*scriptlingplugin.Manager, error) {
+	specs, err := resolvePluginSpecs(plugins, pluginArgs, pluginEnvs)
 	if err != nil {
 		return nil, err
 	}
 	loadSpecs := make([]scriptlingplugin.PluginSpec, len(specs))
 	for i, spec := range specs {
-		loadSpecs[i] = scriptlingplugin.PluginSpec{Path: spec.Path, Args: spec.Args}
+		loadSpecs[i] = scriptlingplugin.PluginSpec{Path: spec.Path, Args: spec.Args, Env: spec.Env, Insecure: insecure}
 	}
 	manager := scriptlingplugin.NewManager(globalLogger, func(name string, err error) {
 		if globalLogger != nil {
@@ -1067,13 +1084,16 @@ func loadPluginManager(ctx context.Context, dirs []string, plugins []string, plu
 	return manager, nil
 }
 
-// pluginSpec is a resolved plugin: an executable path and its arguments.
+// pluginSpec is a resolved plugin: an executable path or http(s) URL, its
+// arguments and its environment entries.
 type pluginSpec struct {
 	Path string
 	Args []string
+	Env  []string
 }
 
-// resolvePluginSpecs pairs --plugin executable paths with --plugin-arg values.
+// resolvePluginSpecs pairs --plugin paths (executables or http(s) URLs) with
+// their --plugin-arg arguments and --plugin-env environment entries.
 //
 // A --plugin value is taken literally, so paths containing spaces need no
 // quoting. Arguments come from --plugin-arg, in the order given:
@@ -1089,7 +1109,12 @@ type pluginSpec struct {
 //
 // A value whose text before "=" matches no --plugin is treated as a bare
 // argument, so ordinary flags like --alias=testing pass through unqualified.
-func resolvePluginSpecs(plugins, args []string) ([]pluginSpec, error) {
+//
+// --plugin-env values follow the same binding with KEY=VALUE payloads:
+//
+//	--plugin knot --plugin-env KNOT_DB=/var/lib/knot --plugin-env LOG=debug
+//	--plugin knot --plugin http://127.0.0.1:8080 --plugin-env knot=KNOT_DB=/x
+func resolvePluginSpecs(plugins, args, envs []string) ([]pluginSpec, error) {
 	specs := make([]pluginSpec, 0, len(plugins))
 	byKey := map[string][]int{} // path and base name → indexes into specs
 	for _, path := range plugins {
@@ -1123,6 +1148,28 @@ func resolvePluginSpecs(plugins, args []string) ([]pluginSpec, error) {
 			return nil, fmt.Errorf("--plugin-arg %s is ambiguous: %d --plugin entries match %q, qualify it with the full path", arg, len(targets), key)
 		}
 		specs[targets[0]].Args = append(specs[targets[0]].Args, value)
+	}
+
+	// --plugin-env binds like --plugin-arg: KEY=VALUE payloads, qualified
+	// with <plugin>= when several plugins are loaded.
+	for _, env := range envs {
+		key, value, qualified := strings.Cut(env, "=")
+		targets, known := byKey[key]
+		if !qualified || !known {
+			if len(specs) == 0 {
+				return nil, fmt.Errorf("--plugin-env %s given without any --plugin", env)
+			}
+			if len(specs) > 1 {
+				return nil, fmt.Errorf("--plugin-env %s is ambiguous with %d --plugin entries: qualify it as <plugin>=KEY=VALUE, e.g. %s=%s",
+					env, len(specs), filepath.Base(specs[0].Path), env)
+			}
+			specs[0].Env = append(specs[0].Env, env)
+			continue
+		}
+		if len(targets) > 1 {
+			return nil, fmt.Errorf("--plugin-env %s is ambiguous: %d --plugin entries match %q, qualify it with the full path", env, len(targets), key)
+		}
+		specs[targets[0]].Env = append(specs[targets[0]].Env, value)
 	}
 	return specs, nil
 }

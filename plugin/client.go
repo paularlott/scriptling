@@ -183,11 +183,17 @@ func (m *Manager) AddDir(dir string) {
 	}
 }
 
-// PluginSpec names one executable plugin to load, with optional arguments
-// passed to the executable on its command line.
+// PluginSpec names one plugin to load: an executable path with optional
+// command-line arguments and environment entries, or an http(s) URL of a
+// remote JSON-RPC plugin server. Env entries are KEY=VALUE strings layered
+// on top of the inherited environment (existing keys are overridden); they
+// apply to executables only, an HTTP server owns its own environment.
+// Insecure skips TLS certificate verification for https URLs.
 type PluginSpec struct {
-	Path string
-	Args []string
+	Path     string
+	Args     []string
+	Env      []string
+	Insecure bool
 }
 
 // LoadPlugins starts each executable plugin, at most
@@ -232,8 +238,11 @@ type batchResult struct {
 }
 
 // startBatch starts the given plugins concurrently, capped, and returns one
-// result per spec in input order. Failures are per spec, so one bad plugin
-// never fails the batch; the caller decides whether to warn or propagate.
+// result per spec in input order. An http(s) spec connects to the remote
+// JSON-RPC plugin server; anything else resolves to an executable and is
+// spawned with its arguments and environment. Failures are per spec, so one
+// bad plugin never fails the batch; the caller decides whether to warn or
+// propagate.
 func (m *Manager) startBatch(ctx context.Context, specs []PluginSpec) []batchResult {
 	limit := m.parallelLoadLimit()
 	if limit > len(specs) {
@@ -248,12 +257,31 @@ func (m *Manager) startBatch(ctx context.Context, specs []PluginSpec) []batchRes
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			client, err := startClient(ctx, spec.Path, spec.Args, m.policySnapshot())
+			client, err := m.startOne(ctx, spec)
 			results[i] = batchResult{spec: spec, client: client, err: err}
 		}(i, spec)
 	}
 	wg.Wait()
 	return results
+}
+
+// startOne starts a single spec: handshake an http(s) plugin server, or
+// resolve and spawn an executable with its args and environment.
+func (m *Manager) startOne(ctx context.Context, spec PluginSpec) (*Client, error) {
+	if isHTTPURL(spec.Path) {
+		if m.transportMode == TransportStdio {
+			return nil, fmt.Errorf("http/https plugins are not permitted in this scope (stdio only)")
+		}
+		return newHTTPClient(ctx, spec.Path, spec.Insecure, true, m.httpTransportFor(spec.Insecure), m.policySnapshot())
+	}
+	if m.transportMode == TransportHTTP {
+		return nil, fmt.Errorf("stdio/executable plugins are not permitted in this scope (http/https only)")
+	}
+	resolvedPath, err := resolveExecutablePath(spec.Path)
+	if err != nil {
+		return nil, err
+	}
+	return startClient(ctx, resolvedPath, spec.Args, spec.Env, m.policySnapshot())
 }
 
 // registerLoaded attaches one started plugin to the manager. It returns an
@@ -395,7 +423,7 @@ func (m *Manager) LoadPlugin(ctx context.Context, path string, args []string) (*
 	}
 	m.mu.Unlock()
 
-	client, err := startClient(ctx, resolvedPath, args, m.policySnapshot())
+	client, err := startClient(ctx, resolvedPath, args, nil, m.policySnapshot())
 	if err != nil {
 		return nil, err
 	}
@@ -497,9 +525,9 @@ func (m *Manager) LoadPath(ctx context.Context, name, path string, scriptling bo
 	if isHTTP {
 		client, err = newHTTPClient(ctx, resolvedPath, false, scriptling, m.httpTransport, m.policySnapshot())
 	} else if scriptling {
-		client, err = startClient(ctx, resolvedPath, args, m.policySnapshot())
+		client, err = startClient(ctx, resolvedPath, args, nil, m.policySnapshot())
 	} else {
-		client, err = spawnClient(ctx, resolvedPath, args)
+		client, err = spawnClient(ctx, resolvedPath, args, nil)
 	}
 	if err != nil {
 		return nil, err
@@ -878,8 +906,8 @@ type callbackOwner struct {
 	ctx context.Context
 }
 
-func startClient(ctx context.Context, path string, args []string, policy *Policy) (*Client, error) {
-	client, err := spawnClient(ctx, path, args)
+func startClient(ctx context.Context, path string, args []string, extraEnv []string, policy *Policy) (*Client, error) {
+	client, err := spawnClient(ctx, path, args, extraEnv)
 	if err != nil {
 		return nil, err
 	}
@@ -934,7 +962,7 @@ func firstHeaderMap(headers []map[string]string) map[string]string {
 // handshake next); callers that want to skip the handshake may use the returned
 // client directly. args, if non-empty, are passed as command-line arguments to
 // the executable.
-func spawnClient(ctx context.Context, path string, args []string) (*Client, error) {
+func spawnClient(ctx context.Context, path string, args []string, extraEnv []string) (*Client, error) {
 	// The subprocess must outlive any single request context — the evaluation
 	// context that reaches load() may be cancelled after the builtin returns.
 	// The process lifecycle is managed by the client's Close() (via the peer's
@@ -944,16 +972,24 @@ func spawnClient(ctx context.Context, path string, args []string) (*Client, erro
 		callbackOwners: make(map[string]*callbackOwner),
 		done:           make(chan struct{}),
 	}
-	server := newPluginPeerServer(client)
-	peer, err := jsonrpc.NewProcessPeer(path, args, server,
+	processOpts := []jsonrpc.ProcessOption{
 		jsonrpc.WithStderr(os.Stderr),
 		jsonrpc.WithOnExit(client.onProcessExit),
 		// Peers are told they were spawned by scriptling so multi-role
 		// executables can divert a bare invocation to plugin mode (knot
 		// checks this instead of requiring a subcommand). Purely additive:
 		// peers that don't know it ignore it.
-		jsonrpc.WithExtraEnv(PluginPeerEnv+"="+build.Version),
-	)
+		jsonrpc.WithExtraEnv(PluginPeerEnv + "=" + build.Version),
+	}
+	// Caller-supplied environment (e.g. --plugin-env) layers on top of the
+	// inherited environment and may override existing keys.
+	for _, entry := range extraEnv {
+		if entry != "" {
+			processOpts = append(processOpts, jsonrpc.WithExtraEnv(entry))
+		}
+	}
+	server := newPluginPeerServer(client)
+	peer, err := jsonrpc.NewProcessPeer(path, args, server, processOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -967,7 +1003,7 @@ func spawnClient(ctx context.Context, path string, args []string) (*Client, erro
 // A standalone client carries no host security policy; managers that want one
 // delivered should load through a Manager with SetPolicy.
 func LoadClient(ctx context.Context, path string, args []string) (*Client, error) {
-	return startClient(ctx, path, args, nil)
+	return startClient(ctx, path, args, nil, nil)
 }
 
 // LoadClientFromIO connects to a plugin server over an existing bidirectional
@@ -1002,7 +1038,7 @@ func LoadClientFromIO(ctx context.Context, in io.ReadCloser, out io.WriteCloser)
 // The caller is responsible for any handshake exchange via Call.
 // args, if non-empty, are passed as command-line arguments to the executable.
 func SpawnClient(ctx context.Context, path string, args []string) (*Client, error) {
-	return spawnClient(ctx, path, args)
+	return spawnClient(ctx, path, args, nil)
 }
 
 // handshake performs the scriptling plugin protocol handshake and populates the
