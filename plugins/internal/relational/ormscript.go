@@ -733,9 +733,6 @@ func ConnectionScriptSource(pluginName string, spec DialectSpec) string {
     def close(self):
         return scriptling.plugin.call_method(self._plugin_remote, "close")
 
-    def tables(self):
-        return scriptling.plugin.call_method(self._plugin_remote, "tables")
-
     def get_orm(self):
         return _orm_Kit(self, ` + spec.literals() + `)
 `
