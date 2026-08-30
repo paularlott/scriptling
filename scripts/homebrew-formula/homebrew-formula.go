@@ -52,6 +52,7 @@ end
 
 // pluginsTemplate installs the database plugin binaries under libexec; the
 // scriptling formula finds them via --plugin-dir / SCRIPTLING_PLUGIN_DIR.
+// One plugins-<os>-<arch>.zip per platform carries all four binaries.
 const pluginsTemplate = `class ScriptlingPlugins < Formula
 	desc "Database plugins for Scriptling (sqlite, sql, valkey, badger)"
 	homepage "https://github.com/paularlott/scriptling"
@@ -59,38 +60,26 @@ const pluginsTemplate = `class ScriptlingPlugins < Formula
 	version "{{ .Version }}"
 	if OS.mac?
 		if Hardware::CPU.arm?
-			url "https://github.com/paularlott/scriptling/releases/download/v#{version}/sqlite-darwin-arm64.zip"
-			sha256 "{{ .Sqlite.DarwinArm64 }}"
+			url "https://github.com/paularlott/scriptling/releases/download/v#{version}/plugins-darwin-arm64.zip"
+			sha256 "{{ .Checksum.DarwinArm64 }}"
 		else
-			url "https://github.com/paularlott/scriptling/releases/download/v#{version}/sqlite-darwin-amd64.zip"
-			sha256 "{{ .Sqlite.DarwinAmd64 }}"
+			url "https://github.com/paularlott/scriptling/releases/download/v#{version}/plugins-darwin-amd64.zip"
+			sha256 "{{ .Checksum.DarwinAmd64 }}"
 		end
 	elsif OS.linux?
 		if Hardware::CPU.arm?
-			url "https://github.com/paularlott/scriptling/releases/download/v#{version}/sqlite-linux-arm64.zip"
-			sha256 "{{ .Sqlite.LinuxArm64 }}"
+			url "https://github.com/paularlott/scriptling/releases/download/v#{version}/plugins-linux-arm64.zip"
+			sha256 "{{ .Checksum.LinuxArm64 }}"
 		else
-			url "https://github.com/paularlott/scriptling/releases/download/v#{version}/sqlite-linux-amd64.zip"
-			sha256 "{{ .Sqlite.LinuxAmd64 }}"
+			url "https://github.com/paularlott/scriptling/releases/download/v#{version}/plugins-linux-amd64.zip"
+			sha256 "{{ .Checksum.LinuxAmd64 }}"
 		end
 	end
 
 	def install
-		# The remaining plugins are fetched from the same release; brew has no
-		# clean multi-artifact story, so each plugin zip is downloaded and its
-		# binary placed under libexec/plugins.
-		(libexec/"plugins").mkpath
-		%w[sqlite sql valkey badgerdb].each do |plugin|
-			bottle_arch = Hardware::CPU.arm? ? "arm64" : "amd64"
-			os = OS.mac? ? "darwin" : "linux"
-			zip = "#{plugin}-#{os}-#{bottle_arch}.zip"
-			bin = "#{plugin}"
-			system "curl", "-fsSL", "-o", zip,
-				"https://github.com/paularlott/scriptling/releases/download/v#{version}/#{zip}"
-			system "unzip", "-o", zip
-			(libexec/"plugins").install bin
-			rm_f [zip, bin]
-		end
+		# The zip holds all four plugin binaries named plainly; installing
+		# them together gives a directory --plugin-dir can point at.
+		(libexec/"plugins").install Dir["*"]
 	end
 
 	def caveats
@@ -159,11 +148,11 @@ func main() {
 	switch mode {
 	case "-plugins":
 		data := struct {
-			Version string
-			Sqlite  checksums
+			Version  string
+			Checksum checksums
 		}{Version: build.Version}
 		var err error
-		if data.Sqlite, err = checksumSet("sqlite"); err != nil {
+		if data.Checksum, err = checksumSet("plugins"); err != nil {
 			fmt.Printf("Error checksumming plugin zips: %v\n", err)
 			return
 		}

@@ -65,10 +65,10 @@ brew install paularlott/tap/scriptling-full
 
 Release zips and plugin binaries are on the
 [releases page](https://github.com/paularlott/scriptling/releases) — the
-full zip contains `scriptling-full`, and the plugin zips (`sqlite-linux-arm64.zip`
-and friends) each contain a plainly named binary (`sqlite`, `sql`,
-`valkey`, `badgerdb`). Load them by pointing `--plugin-dir` at a directory
-of your choosing, or `SCRIPTLING_PLUGIN_DIR`.
+full zip contains `scriptling-full`, and the plugins zip for your platform
+(`plugins-linux-arm64.zip` and friends) contains all four binaries named
+plainly (`sqlite`, `sql`, `valkey`, `badgerdb`). Unzip it and point
+`--plugin-dir` at the folder, or set `SCRIPTLING_PLUGIN_DIR`.
 
 ### Go Library
 

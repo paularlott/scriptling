@@ -74,7 +74,7 @@ tasks:
         done
 
   create-plugin-zips:
-    desc: Create ZIP files for the database plugin binaries
+    desc: Create one plugins ZIP per platform from the bin/plugins folders
     cmds:
       - |
         cd {{.BIN_DIR}}
@@ -82,12 +82,11 @@ tasks:
           GOOS=${platform%/*} GOARCH=${platform#*/}
           ext=""
           if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
+          files=""
           for plugin in {{.DB_PLUGINS}}; do
-            name=${plugin}
-            cp ${name}-${GOOS}-${GOARCH}${ext} ${name}${ext}
-            zip ${name}-${GOOS}-${GOARCH}.zip ${name}${ext}
-            rm ${name}${ext}
+            files="${files} ${plugin}${ext}"
           done
+          (cd plugins/${GOOS}-${GOARCH} && zip ../../plugins-${GOOS}-${GOARCH}.zip ${files})
         done
 
   build-linux-amd64:
@@ -144,23 +143,27 @@ tasks:
         done
 
   build-plugins:
-    desc: Build the database plugin binaries for the current platform
+    desc: Build the database plugin binaries for the current platform into bin/plugins
     cmds:
       - |
+        ext=""
+        if [ "$(go env GOOS)" = "windows" ]; then ext=".exe"; fi
+        mkdir -p {{.BIN_DIR}}/plugins
         for plugin in {{.DB_PLUGINS}}; do
-          go build {{.LDFLAGS}} -o {{.BIN_DIR}}/${plugin} ./plugins/${plugin}/cmd
+          go build {{.LDFLAGS}} -o {{.BIN_DIR}}/plugins/${plugin}${ext} ./plugins/${plugin}/cmd
         done
 
   build-plugins-platforms:
-    desc: Build the database plugin binaries for all platforms
+    desc: Build the database plugin binaries into per-platform folders under bin/plugins
     cmds:
       - |
         for platform in {{.PLATFORMS}}; do
           export GOOS=${platform%/*} GOARCH=${platform#*/}
           ext=""
           if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
+          mkdir -p {{.BIN_DIR}}/plugins/${GOOS}-${GOARCH}
           for plugin in {{.DB_PLUGINS}}; do
-            go build {{.LDFLAGS}} -o {{.BIN_DIR}}/${plugin}-${GOOS}-${GOARCH}${ext} ./plugins/${plugin}/cmd
+            go build {{.LDFLAGS}} -o {{.BIN_DIR}}/plugins/${GOOS}-${GOARCH}/${plugin}${ext} ./plugins/${plugin}/cmd
           done
         done
 
