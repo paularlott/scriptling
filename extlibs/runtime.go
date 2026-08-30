@@ -294,6 +294,13 @@ func getEnvFromContext(ctx context.Context) *object.Environment {
 	return object.NewEnvironment()
 }
 
+// BackgroundFactory returns the currently configured background factory,
+// or nil. Hosts that layer behaviour onto it (a server adding its package
+// loader, say) read it, wrap it, and install the wrapper.
+func BackgroundFactory() SandboxFactory {
+	return RuntimeState.BackgroundFactory
+}
+
 // SetBackgroundFactory sets the factory function for creating Scriptling instances in background tasks.
 // Deprecated: Use SetSandboxFactory instead, which sets the factory for both sandbox and background use.
 func SetBackgroundFactory(factory SandboxFactory) {

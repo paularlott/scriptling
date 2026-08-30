@@ -86,6 +86,26 @@ func NewServer(config ServerConfig) (*Server, error) {
 	}
 	extlibs.RuntimeState.Unlock()
 
+	// Background task instances come from the process-wide factory, which
+	// knows nothing about this server's packages: a task handler named as a
+	// bundle module ("mod.fn") would not resolve. Layer the pack loader onto
+	// the factory so server-mode tasks see the same modules request handlers
+	// do. Like the rest of extlibs.RuntimeState this is process-global: the
+	// last server to configure a loader wins, which matches the one-server
+	// CLI process and the existing global release of background tasks.
+	if s.packLoader != nil {
+		if base := extlibs.BackgroundFactory(); base != nil {
+			loader := s.packLoader
+			extlibs.SetBackgroundFactory(func() extlibs.SandboxInstance {
+				p := base()
+				if instance, ok := p.(*scriptling.Scriptling); ok {
+					bootstrap.ApplyPackLoader(instance, loader)
+				}
+				return p
+			})
+		}
+	}
+
 	hasScript := config.ScriptFile != "" || len(config.ScriptSource) > 0 || s.packLoader != nil
 
 	// startErrCh carries a pre-start script error (buffered so goroutine never blocks).

@@ -140,6 +140,13 @@ func (b *Bridge) registerScheme(client *plugin.Client) error {
 	scheme := client.Scheme()
 	opener := func(source string, insecure bool, cacheDir string) (*pack.Bundle, error) {
 		fsys := newPluginFS(b.ctx, client, source, b.dirTTL)
+		// A source that serves its own manifest.toml is a whole app bundle
+		// (main script, libs, serve list, MCP tools): open it as what it
+		// declares. Anything else gets the synthesized standard library
+		// layout, so plain lib sources are unchanged.
+		if _, err := fs.Stat(fsys, "manifest.toml"); err == nil {
+			return pack.OpenBundle(fsys, source)
+		}
 		return pack.VirtualBundle(declaredName(client), client.Metadata().Version, fsys, source), nil
 	}
 	if err := b.registry.Register(scheme, opener); err != nil {
