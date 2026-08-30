@@ -17,6 +17,8 @@ A minimal, sandboxed interpreter for LLM agents to execute code and interact wit
 - **Object-oriented**: Classes with single inheritance, methods, and constructors
 - **Advanced features**: functions, lambda, list comprehensions, error handling
 - **Libraries**: including json, regex, math, time, requests, subprocess (load on demand)
+- **Databases**: SQLite, MySQL/MariaDB, PostgreSQL, Valkey/Redis and BadgerDB plugins with a shared API and a script-side ORM (query builders, model gateways)
+- **Plugins**: extend with Go, C, PHP or any language speaking JSON-RPC, loaded from disk or http(s)
 - **Go integration**: Register functions, exchange variables
 - **Fast**: Lightweight interpreter, only loads what you need
 - **Sandboxed**: No filesystem or network access unless enabled via libraries
