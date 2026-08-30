@@ -176,9 +176,9 @@ func buildRootCommand() *cli.Command {
 				EnvVars:    []string{"SCRIPTLING_PLUGIN_HEADER"},
 				ConfigPath: []string{"plugins.headers"},
 			},
-			&cli.BoolFlag{
+			&cli.StringSliceFlag{
 				Name:       "plugin-insecure",
-				Usage:      "Skip TLS certificate verification for https:// plugin URLs (self-signed certificates)",
+				Usage:      "Mark this https:// --plugin URL as insecure, skipping TLS verification (self-signed certificates; repeatable)",
 				Global:     true,
 				EnvVars:    []string{"SCRIPTLING_PLUGIN_INSECURE"},
 				ConfigPath: []string{"plugins.insecure"},
@@ -510,22 +510,21 @@ func commandSubtreeContains(parent, target *cli.Command) bool {
 // policy (network + allowed paths) rides the handshake to every plugin.
 
 func startPlugins(ctx context.Context, cmd *cli.Command) error {
-	var dirs, plugins, pluginArgs, pluginEnvs, pluginHeaders []string
-	insecure := false
+	var dirs, plugins, pluginArgs, pluginEnvs, pluginHeaders, insecureURLs []string
 	if pluginDiscoveryWanted(cmd) {
 		dirs = cmd.GetStringSlice("plugin-dir")
 		plugins = cmd.GetStringSlice("plugin")
 		pluginArgs = cmd.GetStringSlice("plugin-arg")
 		pluginEnvs = cmd.GetStringSlice("plugin-env")
 		pluginHeaders = cmd.GetStringSlice("plugin-header")
-		insecure = cmd.GetBool("plugin-insecure")
+		insecureURLs = cmd.GetStringSlice("plugin-insecure")
 	}
 	netPolicy, err := bootstrap.LoadNetworkPolicy(cmd.GetString("network-policy"))
 	if err != nil {
 		return err
 	}
 	policy := scriptlingplugin.PolicyFromSecurity(netPolicy, bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths")))
-	manager, err := loadPluginManager(ctx, dirs, plugins, pluginArgs, pluginEnvs, pluginHeaders, insecure, policy)
+	manager, err := loadPluginManager(ctx, dirs, plugins, pluginArgs, pluginEnvs, pluginHeaders, insecureURLs, policy)
 	if err != nil {
 		return err
 	}
@@ -1047,8 +1046,8 @@ func runMCPStdioServer(ctx context.Context, cmd *cli.Command) error {
 	})
 }
 
-func loadPluginManager(ctx context.Context, dirs []string, plugins []string, pluginArgs []string, pluginEnvs []string, pluginHeaders []string, insecure bool, policy ...*scriptlingplugin.Policy) (*scriptlingplugin.Manager, error) {
-	specs, err := resolvePluginSpecs(plugins, pluginArgs, pluginEnvs, pluginHeaders)
+func loadPluginManager(ctx context.Context, dirs []string, plugins []string, pluginArgs []string, pluginEnvs []string, pluginHeaders []string, insecureURLs []string, policy ...*scriptlingplugin.Policy) (*scriptlingplugin.Manager, error) {
+	specs, err := resolvePluginSpecs(plugins, pluginArgs, pluginEnvs, pluginHeaders, insecureURLs)
 	if err != nil {
 		return nil, err
 	}
@@ -1059,7 +1058,7 @@ func loadPluginManager(ctx context.Context, dirs []string, plugins []string, plu
 			Args:     spec.Args,
 			Env:      spec.Env,
 			Headers:  headerMap(spec.Headers),
-			Insecure: insecure,
+			Insecure: spec.Insecure,
 		}
 	}
 	manager := scriptlingplugin.NewManager(globalLogger, func(name string, err error) {
@@ -1101,10 +1100,11 @@ func loadPluginManager(ctx context.Context, dirs []string, plugins []string, plu
 // pluginSpec is a resolved plugin: an executable path or http(s) URL, its
 // arguments and its environment entries.
 type pluginSpec struct {
-	Path    string
-	Args    []string
-	Env     []string
-	Headers []string
+	Path     string
+	Args     []string
+	Env      []string
+	Headers  []string
+	Insecure bool
 }
 
 // resolvePluginSpecs pairs --plugin paths (executables or http(s) URLs) with
@@ -1150,7 +1150,7 @@ func headerMap(entries []string) map[string]string {
 	return headers
 }
 
-func resolvePluginSpecs(plugins, args, envs, headerFlags []string) ([]pluginSpec, error) {
+func resolvePluginSpecs(plugins, args, envs, headerFlags, insecureURLs []string) ([]pluginSpec, error) {
 	specs := make([]pluginSpec, 0, len(plugins))
 	byKey := map[string][]int{} // path and base name → indexes into specs
 	for _, path := range plugins {
@@ -1229,7 +1229,28 @@ func resolvePluginSpecs(plugins, args, envs, headerFlags []string) ([]pluginSpec
 		}
 		specs[targets[0]].Headers = append(specs[targets[0]].Headers, value)
 	}
+
+	// --plugin-insecure marks specific https plugins as certificate-unverified:
+	// the value names the plugin (full URL or base name), so one self-signed
+	// endpoint never weakens verification for the others in the batch.
+	for _, url := range insecureURLs {
+		targets, known := byKey[url]
+		if !known {
+			return nil, fmt.Errorf("--plugin-insecure %s matches no --plugin entry", url)
+		}
+		if len(targets) > 1 {
+			return nil, fmt.Errorf("--plugin-insecure %s is ambiguous: %d --plugin entries match %q, qualify it with the full URL", url, len(targets), url)
+		}
+		if !isHTTPPluginPath(specs[targets[0]].Path) {
+			return nil, fmt.Errorf("--plugin-insecure %s is not an http(s) plugin URL", url)
+		}
+		specs[targets[0]].Insecure = true
+	}
 	return specs, nil
+}
+
+func isHTTPPluginPath(path string) bool {
+	return strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://")
 }
 
 func loadSecretRegistry(path string) (*secretprovider.Registry, error) {

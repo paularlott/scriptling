@@ -16,8 +16,8 @@
  * ({"type": "string", "value": "..."}) so scripts see native types.
  *
  * For https, terminate TLS in front of this server (a reverse proxy, or a
- * development certificate) and load the https:// URL; --plugin-insecure
- * accepts self-signed certificates.
+ * development certificate) and load the https:// URL, naming it with
+ * --plugin-insecure <url> when its certificate is self-signed.
  */
 
 const LIBRARY_NAME = 'phpdemo';

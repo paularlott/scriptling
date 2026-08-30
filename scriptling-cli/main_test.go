@@ -16,6 +16,7 @@ import (
 	"github.com/paularlott/cli"
 	"github.com/paularlott/logger"
 	"github.com/paularlott/scriptling/lint"
+	"github.com/paularlott/scriptling/object"
 	scriptlingplugin "github.com/paularlott/scriptling/plugin"
 	"github.com/paularlott/scriptling/scriptling-cli/bootstrap"
 	"github.com/paularlott/scriptling/scriptling-cli/pack"
@@ -155,7 +156,7 @@ exit 2
 		globalLogger = previousLogger
 	}()
 
-	manager, err := loadPluginManager(context.Background(), []string{dir}, nil, nil, nil, nil, false)
+	manager, err := loadPluginManager(context.Background(), []string{dir}, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("loadPluginManager: %v", err)
 	}
@@ -258,13 +259,14 @@ func TestOutputLintResultReturnsExitError(t *testing.T) {
 
 func TestResolvePluginSpecs(t *testing.T) {
 	cases := []struct {
-		name        string
-		plugins     []string
-		args        []string
-		envs        []string
-		headerFlags []string
-		want        []pluginSpec
-		fails       string
+		name         string
+		plugins      []string
+		args         []string
+		envs         []string
+		headerFlags  []string
+		insecureURLs []string
+		want         []pluginSpec
+		fails        string
 	}{
 		{
 			name:    "path only",
@@ -318,6 +320,33 @@ func TestResolvePluginSpecs(t *testing.T) {
 			name:        "header without a plugin fails",
 			headerFlags: []string{"Authorization=Bearer x"},
 			fails:       "without any --plugin",
+		},
+		{
+			name:         "insecure marks exactly the named URL",
+			plugins:      []string{"https://one.internal:8443", "https://two.internal:8443"},
+			insecureURLs: []string{"https://one.internal:8443"},
+			want: []pluginSpec{
+				{Path: "https://one.internal:8443", Insecure: true},
+				{Path: "https://two.internal:8443"},
+			},
+		},
+		{
+			name:         "insecure accepts the host:port base name",
+			plugins:      []string{"https://one.internal:8443"},
+			insecureURLs: []string{"one.internal:8443"},
+			want:         []pluginSpec{{Path: "https://one.internal:8443", Insecure: true}},
+		},
+		{
+			name:         "insecure matching no plugin fails",
+			plugins:      []string{"https://one.internal:8443"},
+			insecureURLs: []string{"https://other.internal:8443"},
+			fails:        "matches no --plugin",
+		},
+		{
+			name:         "insecure naming an executable fails",
+			plugins:      []string{"/usr/local/bin/knot", "https://one.internal:8443"},
+			insecureURLs: []string{"knot"},
+			fails:        "not an http(s) plugin URL",
 		},
 		{
 			name:    "path with spaces needs no quoting",
@@ -386,7 +415,7 @@ func TestResolvePluginSpecs(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := resolvePluginSpecs(tc.plugins, tc.args, tc.envs, tc.headerFlags)
+			got, err := resolvePluginSpecs(tc.plugins, tc.args, tc.envs, tc.headerFlags, tc.insecureURLs)
 			if tc.fails != "" {
 				if err == nil {
 					t.Fatalf("expected an error containing %q, got %+v", tc.fails, got)
@@ -438,7 +467,7 @@ func TestLoadPluginManagerExplicitPlugin(t *testing.T) {
 	helper := filepath.Join(dir, "args-plugin")
 	writeArgsPluginHelper(t, helper, argsFile)
 
-	manager, err := loadPluginManager(context.Background(), nil, []string{helper}, []string{"--alias", "testing"}, nil, nil, false)
+	manager, err := loadPluginManager(context.Background(), nil, []string{helper}, []string{"--alias", "testing"}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("loadPluginManager: %v", err)
 	}
@@ -471,7 +500,7 @@ func TestLoadPluginManagerExplicitWinsOverDir(t *testing.T) {
 
 	// The same executable, loaded explicitly WITH arguments and also
 	// discoverable via --plugin-dir: the explicit entry must win.
-	manager, err := loadPluginManager(context.Background(), []string{pluginDir}, []string{helper}, []string{"--alias", "explicit"}, nil, nil, false)
+	manager, err := loadPluginManager(context.Background(), []string{pluginDir}, []string{helper}, []string{"--alias", "explicit"}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("loadPluginManager: %v", err)
 	}
@@ -837,7 +866,7 @@ func forEachCommand(cmd *cli.Command, fn func(*cli.Command)) {
 // scriptling.plugin.load() depends on: with nothing configured the manager
 // still exists (and starts no processes), so the library can be registered.
 func TestLoadPluginManagerAlwaysReturnsAManager(t *testing.T) {
-	manager, err := loadPluginManager(context.Background(), nil, nil, nil, nil, nil, false)
+	manager, err := loadPluginManager(context.Background(), nil, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("loadPluginManager with no plugins: %v", err)
 	}
@@ -853,7 +882,7 @@ func TestLoadPluginManagerAlwaysReturnsAManager(t *testing.T) {
 // TestLoadPluginManagerRejectsBadPluginArgs checks argument resolution failures
 // surface before any process is started.
 func TestLoadPluginManagerRejectsBadPluginArgs(t *testing.T) {
-	_, err := loadPluginManager(context.Background(), nil, nil, []string{"orphan-arg"}, nil, nil, false)
+	_, err := loadPluginManager(context.Background(), nil, nil, []string{"orphan-arg"}, nil, nil, nil)
 	if err == nil {
 		t.Fatal("expected an error for a --plugin-arg with no --plugin")
 	}
@@ -892,7 +921,7 @@ done
 	// Start the plugin with NO logger, exactly as PreRun does.
 	previousLogger := globalLogger
 	globalLogger = nil
-	manager, err := loadPluginManager(context.Background(), []string{dir}, nil, nil, nil, nil, false)
+	manager, err := loadPluginManager(context.Background(), []string{dir}, nil, nil, nil, nil, nil)
 	globalLogger = previousLogger
 	if err != nil {
 		t.Fatalf("loadPluginManager: %v", err)
@@ -922,4 +951,52 @@ done
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("plugin log records were dropped; the host logger was never wired to the manager. got %#v", logs.snapshot())
+}
+
+// TestLoadPluginManagerInsecurePerURL proves the per-URL binding end to end:
+// the self-signed server named by --plugin-insecure loads and answers, while
+// the same kind of server without the marker keeps failing verification
+// (explicit plugins that fail are fatal, so each loads in its own manager).
+func TestLoadPluginManagerInsecurePerURL(t *testing.T) {
+	echo := object.NewFunctionBuilder()
+	echo.Function(func(v any) any { return v })
+	insecureSrv := httptest.NewTLSServer(
+		scriptlingplugin.NewServer("insecure-demo", "1.0.0", "insecure demo").RegisterFunc("echo", echo))
+	defer insecureSrv.Close()
+	secureSrv := httptest.NewTLSServer(
+		scriptlingplugin.NewServer("secure-demo", "1.0.0", "secure demo").RegisterFunc("echo", echo))
+	defer secureSrv.Close()
+
+	// Named by --plugin-insecure: verification skipped, the plugin answers.
+	manager, err := loadPluginManager(context.Background(), nil,
+		[]string{insecureSrv.URL}, nil, nil, nil, []string{insecureSrv.URL})
+	if err != nil {
+		t.Fatalf("loadPluginManager with the insecure marker: %v", err)
+	}
+	defer manager.Close()
+	client, ok := manager.Get("plugin.insecure-demo")
+	if !ok {
+		t.Fatal("the URL named by --plugin-insecure did not load")
+	}
+	result, err := client.CallFunction(context.Background(), "echo",
+		[]scriptlingplugin.Value{{Type: "string", Value: "marked-insecure"}}, nil)
+	if err != nil {
+		t.Fatalf("echo: %v", err)
+	}
+	if result.Value != "marked-insecure" {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+
+	// Not named: the self-signed certificate still fails verification.
+	if _, err := loadPluginManager(context.Background(), nil,
+		[]string{secureSrv.URL}, nil, nil, nil, nil); err == nil {
+		t.Fatal("expected the un-marked self-signed URL to fail certificate verification")
+	}
+
+	// Naming an URL that is not loaded is a resolution error, not a silent no-op.
+	if _, err := loadPluginManager(context.Background(), nil,
+		[]string{secureSrv.URL}, nil, nil, nil, []string{insecureSrv.URL}); err == nil ||
+		!strings.Contains(err.Error(), "matches no --plugin") {
+		t.Fatalf("expected a matches-no-plugin error, got: %v", err)
+	}
 }

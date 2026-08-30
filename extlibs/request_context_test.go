@@ -88,3 +88,56 @@ func dictString(t *testing.T, dict *object.Dict, key string) string {
 	}
 	return value
 }
+
+// TestRequestContextCopyDoesNotIsolateSetOrBytes characterises the KNOWN edge
+// of request_context()'s deep copy: copyValue recurses through dicts and lists
+// but passes every other object (including the mutable Set and Bytes types)
+// through by reference. So if a middleware stores a Set or Bytes in
+// request.context and a handler mutates it, the mutation is visible to the
+// other concurrent handlers of a JSON-RPC batch.
+//
+// This is not a launch blocker — the practical trigger (middleware stashing a
+// mutable set/bytes in context AND a handler mutating it AND concurrent batch
+// dispatch) is narrow, and the documented guidance is to keep request context
+// to plain data. The test exists so the boundary is explicit: if copyValue is
+// later extended to copy sets/bytes, this test should be updated to assert
+// isolation instead.
+func TestRequestContextCopyDoesNotIsolateSetOrBytes(t *testing.T) {
+	shared := object.NewSet()
+	shared.Elements["blue"] = object.NewString("blue")
+	root := object.NewStringDict(map[string]object.Object{"labels": shared})
+	req := object.NewInstanceWithFields(nil, map[string]object.Object{"context": root})
+	ctx := WithRequestContext(context.Background(), req)
+
+	call := func() *object.Dict {
+		builtin := RequestContextBuiltins()["request_context"]
+		dict, ok := builtin.Fn(ctx, object.NewKwargs(nil)).(*object.Dict)
+		if !ok {
+			t.Fatal("request_context did not return a dict")
+		}
+		return dict
+	}
+
+	first := call()
+	second := call()
+
+	firstPair, ok := first.GetByString("labels")
+	if !ok {
+		t.Fatal("labels missing from first copy")
+	}
+	firstSet, ok := firstPair.Value.(*object.Set)
+	if !ok {
+		t.Fatalf("labels is not a set: %T", firstPair.Value)
+	}
+	// Mutate the set obtained from the first copy.
+	firstSet.Elements["green"] = object.NewString("green")
+
+	secondPair, _ := second.GetByString("labels")
+	secondSet := secondPair.Value.(*object.Set)
+	// Current behaviour: the two copies share the same *Set, so the mutation
+	// is visible. Documenting this explicitly.
+	if _, leaked := secondSet.Elements["green"]; !leaked {
+		t.Fatal("set is now isolated between copies — copyValue was extended; " +
+			"update this test to assert isolation (and drop it from the known-edge list)")
+	}
+}

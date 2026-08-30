@@ -58,10 +58,11 @@ certificate for the built-in server). A certificate a CA signed loads without
 anything extra; a self-signed one needs the host to skip verification:
 
 ```bash
-scriptling --plugin https://plugins.internal:8443 --plugin-insecure app.py
+scriptling --plugin https://plugins.internal:8443 \
+           --plugin-insecure https://plugins.internal:8443 app.py
 ```
 
-`--plugin-insecure` applies to the https plugin URLs of that run.
+Verification is skipped only for the URLs the flag names.
 
 ## What the server implements
 
