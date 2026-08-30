@@ -14,6 +14,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"path"
 	"sort"
 	"strings"
 
@@ -55,36 +56,27 @@ func (memoryFetcher) Read(ctx context.Context, source, path string) ([]byte, err
 	return []byte(content), nil
 }
 
-func (memoryFetcher) List(ctx context.Context, source, path string) ([]plugin.FetchEntry, error) {
+func (memoryFetcher) Glob(ctx context.Context, source, pattern string) ([]plugin.FetchEntry, error) {
 	if !strings.HasPrefix(source, "demo://libs") {
 		return nil, fmt.Errorf("%w: %s", plugin.ErrFetchNotFound, source)
 	}
-	if path == "" {
-		path = "."
-	}
-	prefix := ""
-	if path != "." {
-		prefix = path + "/"
-	}
-	seen := map[string]bool{}
-	isDir := map[string]bool{}
+	// The tree the pattern matches against: every file plus every directory
+	// leading to one (so "<dir>" resolves as a directory entry and "<dir>/*"
+	// lists it, even when it holds nothing).
+	paths := map[string]bool{}
 	for name := range files {
-		if !strings.HasPrefix(name, prefix) {
-			continue
+		paths[name] = false
+		for dir := path.Dir(name); dir != "."; dir = path.Dir(dir) {
+			paths[dir] = true
 		}
-		rest := name[len(prefix):]
-		base, _, nested := strings.Cut(rest, "/")
-		seen[base] = true
-		isDir[base] = isDir[base] || nested
 	}
-	entries := make([]plugin.FetchEntry, 0, len(seen))
-	for base := range seen {
-		entries = append(entries, plugin.FetchEntry{Name: base, IsDir: isDir[base]})
+	entries := make([]plugin.FetchEntry, 0, len(paths))
+	for name, isDir := range paths {
+		if plugin.MatchGlob(pattern, name) {
+			entries = append(entries, plugin.FetchEntry{Name: name, IsDir: isDir})
+		}
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
-	if len(entries) == 0 {
-		return nil, fmt.Errorf("%w: %s in %s", plugin.ErrFetchNotFound, path, source)
-	}
 	return entries, nil
 }
 

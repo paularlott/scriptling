@@ -187,12 +187,12 @@ type fetchReadResult struct {
 	Data []byte `json:"data,omitempty"`
 }
 
-type fetchListParams struct {
-	Source string `json:"source"`
-	Path   string `json:"path,omitempty"`
+type fetchGlobParams struct {
+	Source  string `json:"source"`
+	Pattern string `json:"pattern,omitempty"`
 }
 
-type fetchListResult struct {
+type fetchGlobResult struct {
 	Entries []FetchEntry `json:"entries"`
 }
 

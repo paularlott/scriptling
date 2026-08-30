@@ -136,9 +136,13 @@ func (staticFetcher) Read(ctx context.Context, source, path string) ([]byte, err
 	return nil, ErrFetchNotFound
 }
 
-func (staticFetcher) List(ctx context.Context, source, path string) ([]FetchEntry, error) {
-	if path == "lib" || path == "" {
-		return []FetchEntry{{Name: "hello.py"}, {Name: "util.py"}}, nil
+func (staticFetcher) Glob(ctx context.Context, source, pattern string) ([]FetchEntry, error) {
+	tree := map[string]bool{"lib": true, "lib/hello.py": false, "lib/util.py": false}
+	entries := []FetchEntry{}
+	for name, isDir := range tree {
+		if MatchGlob(pattern, name) {
+			entries = append(entries, FetchEntry{Name: name, IsDir: isDir})
+		}
 	}
-	return nil, ErrFetchNotFound
+	return entries, nil
 }

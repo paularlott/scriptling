@@ -252,7 +252,7 @@ var pluginMethods = []string{
 	"object.call_method",
 	"object.destroy",
 	"fetch.read",
-	"fetch.list",
+	"fetch.glob",
 }
 
 // RunIO serves the plugin protocol over a bidirectional stream (stdio). The
@@ -359,8 +359,8 @@ func (s *Server) dispatch(ctx context.Context, method string, params any) (any, 
 		return nil, s.destroyObject(p)
 	case "fetch.read":
 		return s.callFetchRead(ctx, params)
-	case "fetch.list":
-		return s.callFetchList(ctx, params)
+	case "fetch.glob":
+		return s.callFetchGlob(ctx, params)
 	default:
 		return nil, fmt.Errorf("unknown method %s", method)
 	}

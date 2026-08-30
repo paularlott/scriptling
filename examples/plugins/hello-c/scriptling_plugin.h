@@ -128,20 +128,22 @@ int sl_server_run(sl_server *srv);
 /* ------------------------------------------------------------------ */
 
 /* Fetchers serve sources such as demo://libs on demand: the host asks for
- * individual files (fetch.read) and directory listings (fetch.list) as it
- * needs them, so nothing is transferred that nothing imports. Register with
+ * individual files (fetch.read) and pattern matches (fetch.glob) as it needs
+ * them, so nothing is transferred that nothing imports. Register with
  * sl_register_fetcher before sl_server_run, like the other registrations. */
 
 typedef struct sl_fetch_result sl_fetch_result;
 
 struct sl_fetch_result {
     bool not_found;      /* source or path missing; reported as code -32001 */
+    bool denied;         /* access refused; code -32002, never retried */
+    bool unavailable;    /* backend could not answer; code -32003, retried */
     unsigned char *data; /* file content, malloc'd; freed by sl_fetch_result_free */
     size_t data_len;
 };
 
 typedef struct sl_fetch_entry {
-    const char *name; /* must remain valid until the handler returns */
+    const char *name; /* full slash path relative to the source root */
     bool is_dir;
 } sl_fetch_entry;
 
@@ -151,20 +153,32 @@ typedef struct sl_fetch_entry {
 typedef sl_fetch_result *(*sl_fetch_read_fn)(const char *source, const char *path,
                                              void *ctx);
 
-/* List handler: return a malloc'd array of entries and set *count. The SDK
- * frees the array only — the name pointers must remain valid until the
- * handler returns. NULL with *count == 0 is an empty directory; NULL with
- * *count == (size_t)-1 means not found. */
-typedef sl_fetch_entry *(*sl_fetch_list_fn)(const char *source, const char *path,
+/* Glob handler: match pattern against the source's tree and return a
+ * malloc'd array of matching entries (directories included, full paths), or
+ * NULL with *count == 0 for no match. The SDK frees the array only - the
+ * name pointers must remain valid until the handler returns. NULL with
+ * *count == (size_t)-1 means not found (the source itself is missing).
+ * sl_glob_match implements the pattern language, so a handler typically
+ * walks its known paths and keeps the ones sl_glob_match accepts. */
+typedef sl_fetch_entry *(*sl_fetch_glob_fn)(const char *source, const char *pattern,
                                             size_t *count, void *ctx);
 
 void sl_register_fetcher(sl_server *srv, const char *scheme,
-                         sl_fetch_read_fn read_fn, sl_fetch_list_fn list_fn);
+                         sl_fetch_read_fn read_fn, sl_fetch_glob_fn glob_fn);
 
 /* Convenience constructors for read results. */
 sl_fetch_result *sl_fetch_data(const void *data, size_t len);
 sl_fetch_result *sl_fetch_not_found(void);
+sl_fetch_result *sl_fetch_denied(void);
+sl_fetch_result *sl_fetch_unavailable(void);
 void sl_fetch_result_free(sl_fetch_result *r);
+
+/* sl_glob_match reports whether name (a slash path relative to the source
+ * root) matches pattern in the fetch glob language: * and ? stay within one
+ * segment, [class] is a character class, a ** segment matches any number of
+ * segments (including none), and a wildcard-free pattern is an exact-path
+ * probe. */
+bool sl_glob_match(const char *pattern, const char *name);
 
 /* Call a callback value received in arguments. Returns the result or NULL
  * on error. If non-NULL, *err_msg is set to an allocated error string on

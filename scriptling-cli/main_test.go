@@ -701,11 +701,15 @@ func (f *stagingFetcher) Read(ctx context.Context, source, path string) ([]byte,
 	return []byte(content), nil
 }
 
-func (f *stagingFetcher) List(ctx context.Context, source, path string) ([]scriptlingplugin.FetchEntry, error) {
-	if path == "" || path == "." {
-		return []scriptlingplugin.FetchEntry{{Name: "manifest.toml"}}, nil
+func (f *stagingFetcher) Glob(ctx context.Context, source, pattern string) ([]scriptlingplugin.FetchEntry, error) {
+	tree := map[string]bool{"manifest.toml": false}
+	entries := []scriptlingplugin.FetchEntry{}
+	for name, isDir := range tree {
+		if scriptlingplugin.MatchGlob(pattern, name) {
+			entries = append(entries, scriptlingplugin.FetchEntry{Name: name, IsDir: isDir})
+		}
 	}
-	return nil, fmt.Errorf("%w: %s", scriptlingplugin.ErrFetchNotFound, path)
+	return entries, nil
 }
 
 // TestPluginDiscoveryWantedSkipsCheapCommands walks the real command tree and

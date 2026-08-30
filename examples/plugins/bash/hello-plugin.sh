@@ -28,6 +28,20 @@ send_error() { # id, code, message
 
 b64() { printf '%s' "$1" | base64 | tr -d '\n'; }
 
+# glob_to_ere translates a fetch glob pattern into an anchored ERE: * and ?
+# stay within one segment, a ** segment matches any number of segments
+# (including none), and [classes] pass through untouched.
+glob_to_ere() {
+  printf '%s' "$1" | sed -E \
+    -e 's/[\\.+(){}|^$]/\\&/g' \
+    -e 's#\*\*/#__SSS__#g' \
+    -e 's#\*\*#__SS__#g' \
+    -e 's/\*/[^\/]*/g' \
+    -e 's/\?/[^\/]/g' \
+    -e 's#__SSS__#(/.*)?/#g' \
+    -e 's#__SS__#(/.*)?#g'
+}
+
 while IFS= read -r line; do
   method=$(printf '%s\n' "$line" | jq -r '.method')
   id=$(printf '%s\n' "$line" | jq -r '.id')
@@ -64,16 +78,27 @@ while IFS= read -r line; do
         send_result "$id" '{"data":"'"$(b64 "$content")"'"}'
       fi
       ;;
-    fetch.list)
+    fetch.glob)
       source=$(printf '%s\n' "$line" | jq -r '.params.source')
-      path=$(printf '%s\n' "$line" | jq -r '.params.path // ""')
+      pattern=$(printf '%s\n' "$line" | jq -r '.params.pattern // ""')
       case "$source" in
         bsh://libs)
-          case "$path" in
-            ""|".")     send_result "$id" '{"entries":[{"name":"lib","is_dir":true}]}' ;;
-            lib)        send_result "$id" '{"entries":[{"name":"hi.py","is_dir":false}]}' ;;
-            *)          send_error "$id" -32001 "fetch source not found: $path in $source" ;;
-          esac
+          # Match the pattern against the served tree (full paths,
+          # directories included) by translating it to an ERE: * and ? stay
+          # within one segment, a ** segment crosses any number of segments,
+          # and [classes] pass through as ERE classes. No match is an empty
+          # result, never an error: errors mean the fetcher could not answer.
+          regex=$(glob_to_ere "$pattern")
+          entries=""
+          for entry in "lib true" "lib/hi.py false"; do
+            set -- $entry
+            if printf '%s' "$1" | grep -Eq "^${regex}$"; then
+              e=$(jq -nc --arg name "$1" --argjson dir "$2" '{name:$name, is_dir:$dir}')
+              entries="$entries$e,"
+            fi
+          done
+          entries=${entries%,}
+          send_result "$id" "{\"entries\":[$entries]}"
           ;;
         *)
           send_error "$id" -32001 "fetch source not found: $source"

@@ -7,7 +7,9 @@ import (
 	"io/fs"
 	"net/http/httptest"
 	"os"
+	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -71,37 +73,27 @@ func (f *mutableFetcher) Read(ctx context.Context, source, path string) ([]byte,
 	return []byte(content), nil
 }
 
-func (f *mutableFetcher) List(ctx context.Context, source, path string) ([]plugin.FetchEntry, error) {
+func (f *mutableFetcher) Glob(ctx context.Context, source, pattern string) ([]plugin.FetchEntry, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if source != f.source {
 		return nil, fmt.Errorf("%w: %s", plugin.ErrFetchNotFound, source)
 	}
-	if path == "" {
-		path = "."
-	}
-	f.lists[path]++
-	prefix := ""
-	if path != "." {
-		prefix = path + "/"
-	}
-	seen := map[string]bool{}
-	isDir := map[string]bool{}
+	f.lists[pattern]++
+	// The tree: every file plus every directory leading to one, so exact-path
+	// probes resolve directories (empty ones included) and "<dir>/*" lists.
+	paths := map[string]bool{}
 	for name := range f.files {
-		if !strings.HasPrefix(name, prefix) {
-			continue
+		paths[name] = false
+		for dir := path.Dir(name); dir != "."; dir = path.Dir(dir) {
+			paths[dir] = true
 		}
-		rest := name[len(prefix):]
-		base, _, nested := strings.Cut(rest, "/")
-		seen[base] = true
-		isDir[base] = isDir[base] || nested
 	}
-	if len(seen) == 0 {
-		return nil, fmt.Errorf("%w: %s in %s", plugin.ErrFetchNotFound, path, source)
-	}
-	entries := make([]plugin.FetchEntry, 0, len(seen))
-	for base := range seen {
-		entries = append(entries, plugin.FetchEntry{Name: base, IsDir: isDir[base]})
+	entries := []plugin.FetchEntry{}
+	for name, isDir := range paths {
+		if plugin.MatchGlob(pattern, name) {
+			entries = append(entries, plugin.FetchEntry{Name: name, IsDir: isDir})
+		}
 	}
 	return entries, nil
 }
@@ -643,8 +635,8 @@ func (f failingFetcher) Read(ctx context.Context, source, path string) ([]byte, 
 	return nil, errors.New("knot server unreachable: connection refused")
 }
 
-func (f failingFetcher) List(ctx context.Context, source, path string) ([]plugin.FetchEntry, error) {
-	return f.inner.List(ctx, source, path)
+func (f failingFetcher) Glob(ctx context.Context, source, pattern string) ([]plugin.FetchEntry, error) {
+	return f.inner.Glob(ctx, source, pattern)
 }
 
 // TestPluginFailureAbortsImportLoudly proves the not-found vs cannot-reach
@@ -719,8 +711,8 @@ func TestDirListingsRevalidate(t *testing.T) {
 	if len(entries) != 2 {
 		t.Fatalf("expected the new file to appear, got %d entries", len(entries))
 	}
-	if got := fetcher.listsOf("tools"); got != 2 {
-		t.Fatalf("expected 2 fetch.list calls with reuse disabled, got %d", got)
+	if got := fetcher.listsOf("tools/*"); got != 2 {
+		t.Fatalf("expected 2 fetch.glob listings with reuse disabled, got %d", got)
 	}
 }
 
@@ -746,8 +738,8 @@ func TestDirListingsReusedWithinTTL(t *testing.T) {
 			t.Fatalf("ReadDir(tools) #%d: %v", i, err)
 		}
 	}
-	if got := fetcher.listsOf("tools"); got != 1 {
-		t.Fatalf("expected 1 fetch.list within the TTL, got %d", got)
+	if got := fetcher.listsOf("tools/*"); got != 1 {
+		t.Fatalf("expected 1 fetch.glob listing within the TTL, got %d", got)
 	}
 }
 
@@ -796,5 +788,103 @@ func TestContextCancellationAbortsFetch(t *testing.T) {
 func TestBridgeRequiresManager(t *testing.T) {
 	if err := New(Options{}).Register(); err == nil {
 		t.Fatal("expected Register to require a manager")
+	}
+}
+
+// dirAwareFetcher serves an explicit tree with directories of its own,
+// including an empty one, so directory resolution can be probed without
+// files forcing the directories into existence.
+type dirAwareFetcher struct {
+	source string
+	dirs   map[string]bool
+	files  map[string]string
+	globs  map[string]int
+}
+
+func (f *dirAwareFetcher) Read(ctx context.Context, source, path string) ([]byte, error) {
+	if content, ok := f.files[path]; ok {
+		return []byte(content), nil
+	}
+	return nil, fmt.Errorf("%w: %s", plugin.ErrFetchNotFound, path)
+}
+
+func (f *dirAwareFetcher) Glob(ctx context.Context, source, pattern string) ([]plugin.FetchEntry, error) {
+	f.globs[pattern]++
+	tree := map[string]bool{}
+	for name := range f.files {
+		tree[name] = false
+		for dir := path.Dir(name); dir != "."; dir = path.Dir(dir) {
+			tree[dir] = true
+		}
+	}
+	for dir := range f.dirs {
+		tree[dir] = true
+	}
+	entries := []plugin.FetchEntry{}
+	for name, isDir := range tree {
+		if plugin.MatchGlob(pattern, name) {
+			entries = append(entries, plugin.FetchEntry{Name: name, IsDir: isDir})
+		}
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
+	return entries, nil
+}
+
+// TestPluginFSGlobOneShot proves pluginFS implements GlobFS: a whole-subtree
+// glob is one fetch.glob call, not a listing per level.
+func TestPluginFSGlobOneShot(t *testing.T) {
+	fetcher := &dirAwareFetcher{
+		source: "ppglob://libs",
+		dirs:   map[string]bool{"empty": true},
+		files: map[string]string{
+			"lib/a/one.py":   "x = 1\n",
+			"lib/a/two.py":   "y = 2\n",
+			"lib/b/three.py": "z = 3\n",
+		},
+		globs: map[string]int{},
+	}
+	manager := servePlugin(t, "ppglob", fetcher)
+	bridge := bridgeFor(t, manager)
+
+	bundles, err := bridge.Bundles()
+	if err != nil {
+		t.Fatalf("Bundles: %v", err)
+	}
+	bundle := bundles[0]
+
+	matches, err := fs.Glob(bundle.FS(), "lib/**/*.py")
+	if err != nil {
+		t.Fatalf("fs.Glob: %v", err)
+	}
+	if len(matches) != 3 {
+		t.Fatalf("expected 3 matches, got %v", matches)
+	}
+	if got := fetcher.globs["lib/**/*.py"]; got != 1 {
+		t.Fatalf("a subtree glob must be one fetch.glob call, got %d", got)
+	}
+
+	// Cosmetic spellings are accepted; traversal still is not.
+	for _, spelling := range []string{"./lib/**/*.py", "lib/./**/*.py"} {
+		matches, err := fs.Glob(bundle.FS(), spelling)
+		if err != nil {
+			t.Fatalf("fs.Glob(%q): %v", spelling, err)
+		}
+		if len(matches) != 3 {
+			t.Fatalf("fs.Glob(%q) = %v, want 3 matches", spelling, matches)
+		}
+	}
+	if _, err := fs.Glob(bundle.FS(), "../x/*.py"); err == nil {
+		t.Fatal("expected ../ traversal to be rejected")
+	}
+
+	// An empty directory resolves as a directory and lists as empty, where a
+	// listing-based scheme cannot tell empty from missing.
+	info, err := fs.Stat(bundle.FS(), "empty")
+	if err != nil || !info.IsDir() {
+		t.Fatalf("Stat(empty) = %v, %v; want a directory", info, err)
+	}
+	entries, err := fs.ReadDir(bundle.FS(), "empty")
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("ReadDir(empty) = %v, %v; want an empty listing", entries, err)
 	}
 }

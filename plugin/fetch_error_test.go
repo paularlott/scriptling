@@ -84,23 +84,30 @@ func TestMapFetchErrorPassesThroughOtherErrors(t *testing.T) {
 	}
 }
 
-func TestTrimNotFoundPrefix(t *testing.T) {
-	sentinel := ErrFetchNotFound.Error()
+func TestMapFetchErrorSentinels(t *testing.T) {
 	cases := []struct {
-		in     string
-		detail string
-		found  bool
+		code     int
+		message  string
+		sentinel error
+		text     string
 	}{
-		{sentinel + ": x", "x", true},
-		{sentinel, "", true},
-		{sentinel + ":", "", true},
-		{"other: x", "other: x", false},
-		{"", "", false},
+		{FetchNotFoundCode, ErrFetchNotFound.Error(), ErrFetchNotFound, ErrFetchNotFound.Error()},
+		{FetchNotFoundCode, ErrFetchNotFound.Error() + ": knot://x", ErrFetchNotFound, ErrFetchNotFound.Error() + ": knot://x"},
+		{FetchDeniedCode, ErrFetchDenied.Error() + ": knot://private", ErrFetchDenied, ErrFetchDenied.Error() + ": knot://private"},
+		{FetchUnavailableCode, ErrFetchUnavailable.Error(), ErrFetchUnavailable, ErrFetchUnavailable.Error()},
+		{-32099, "something else", nil, ""}, // unknown codes stay opaque
 	}
 	for _, tc := range cases {
-		detail, found := trimNotFoundPrefix(tc.in)
-		if detail != tc.detail || found != tc.found {
-			t.Errorf("trimNotFoundPrefix(%q) = (%q, %v), want (%q, %v)", tc.in, detail, found, tc.detail, tc.found)
+		err := mapFetchError(&RPCError{Code: tc.code, Message: tc.message})
+		if tc.sentinel == nil {
+			var rpcErr *RPCError
+			if !errors.As(err, &rpcErr) || rpcErr.Code != tc.code {
+				t.Errorf("code %d: expected the error to pass through, got %v", tc.code, err)
+			}
+			continue
+		}
+		if !errors.Is(err, tc.sentinel) || err.Error() != tc.text {
+			t.Errorf("code %d: got %v, want %q wrapping %v", tc.code, err, tc.text, tc.sentinel)
 		}
 	}
 }

@@ -119,9 +119,9 @@ func TestClientFetchFileRoundTrip(t *testing.T) {
 		t.Fatalf("expected ErrFetchNotFound, got %v", err)
 	}
 
-	entries, err := client.FetchList(context.Background(), "fh://libs", ".")
+	entries, err := client.FetchGlob(context.Background(), "fh://libs", "*")
 	if err != nil {
-		t.Fatalf("FetchList: %v", err)
+		t.Fatalf("FetchGlob: %v", err)
 	}
 	if len(entries) != 2 || entries[0].Name != "lib" || !entries[0].IsDir {
 		t.Fatalf("unexpected entries: %+v", entries)
@@ -145,7 +145,7 @@ func TestClientFetchRefusedWithoutCapability(t *testing.T) {
 	if _, err := client.FetchFile(context.Background(), "fh://libs", "x"); err == nil {
 		t.Fatal("expected an error fetching from a plugin without the fetch capability")
 	}
-	if _, err := client.FetchList(context.Background(), "fh://libs", "."); err == nil {
+	if _, err := client.FetchGlob(context.Background(), "fh://libs", "*"); err == nil {
 		t.Fatal("expected an error listing from a plugin without the fetch capability")
 	}
 }

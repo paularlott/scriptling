@@ -40,16 +40,20 @@ func (f *srvFetcher) Read(ctx context.Context, source, path string) ([]byte, err
 	return []byte(content), nil
 }
 
-func (f *srvFetcher) List(ctx context.Context, source, path string) ([]plugin.FetchEntry, error) {
+func (f *srvFetcher) Glob(ctx context.Context, source, pattern string) ([]plugin.FetchEntry, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if path == "" || path == "." {
-		return []plugin.FetchEntry{{Name: "lib", IsDir: true}}, nil
+	tree := map[string]bool{"lib": true}
+	for name := range f.files {
+		tree[name] = false
 	}
-	if path == "lib" {
-		return []plugin.FetchEntry{{Name: "calc.py"}, {Name: "greet.py"}}, nil
+	entries := []plugin.FetchEntry{}
+	for name, isDir := range tree {
+		if plugin.MatchGlob(pattern, name) {
+			entries = append(entries, plugin.FetchEntry{Name: name, IsDir: isDir})
+		}
 	}
-	return nil, fmt.Errorf("%w: %s in %s", plugin.ErrFetchNotFound, path, source)
+	return entries, nil
 }
 
 // TestServerSetupScriptAndLibsFromFetcherPlugin proves the server-mode flow

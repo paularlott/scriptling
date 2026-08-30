@@ -5,6 +5,7 @@
 #include <string.h>
 #include <stdarg.h>
 #include <math.h>
+#include <fnmatch.h>
 #include <pthread.h>
 #include <stdatomic.h>
 
@@ -587,7 +588,7 @@ struct sl_server {
     sl_const_entry *consts; size_t const_count, const_cap;
     char             *fetcher_scheme;
     sl_fetch_read_fn  fetcher_read;
-    sl_fetch_list_fn  fetcher_list;
+    sl_fetch_glob_fn  fetcher_glob;
 
     /* Object store — protected by obj_rwlock. */
     sl_object   **objects;  size_t object_count, object_cap;
@@ -998,14 +999,14 @@ void sl_constant(sl_server *srv, const char *name, sl_value *value) {
  * (modules under lib/, scripts as bare scheme:// sources). A second
  * registration aborts. */
 void sl_register_fetcher(sl_server *srv, const char *scheme,
-                         sl_fetch_read_fn read_fn, sl_fetch_list_fn list_fn) {
+                         sl_fetch_read_fn read_fn, sl_fetch_glob_fn glob_fn) {
     if (srv->fetcher_read) {
         fprintf(stderr, "scriptling plugin: fetcher already registered for %s (one scheme per plugin)\n", srv->fetcher_scheme);
         abort();
     }
     srv->fetcher_scheme = strdup(scheme);
     srv->fetcher_read = read_fn;
-    srv->fetcher_list = list_fn;
+    srv->fetcher_glob = glob_fn;
 }
 
 sl_fetch_result *sl_fetch_data(const void *data, size_t len) {
@@ -1020,6 +1021,65 @@ sl_fetch_result *sl_fetch_not_found(void) {
     sl_fetch_result *r = calloc(1, sizeof(*r));
     r->not_found = true;
     return r;
+}
+
+sl_fetch_result *sl_fetch_denied(void) {
+    sl_fetch_result *r = calloc(1, sizeof(*r));
+    r->denied = true;
+    return r;
+}
+
+sl_fetch_result *sl_fetch_unavailable(void) {
+    sl_fetch_result *r = calloc(1, sizeof(*r));
+    r->unavailable = true;
+    return r;
+}
+
+/* The fetch glob language, mirroring the Go plugin.MatchGlob: segments are
+ * matched with fnmatch semantics (* and ? never cross a "/"), and a "**"
+ * segment consumes any number of name segments, including none. */
+static bool glob_segments(const char **pseg, const char **nseg) {
+    const char *p = *pseg, *n = *nseg;
+    if (p[0] == '*' && p[1] == '*' && (p[2] == '\0' || p[2] == '/')) {
+        p += (p[2] == '/') ? 3 : 2; /* past "**" and its slash, if any */
+        if (*p == '\0') { *pseg = p; *nseg = ""; return true; }
+        /* Try every split of the remaining name segments. */
+        for (const char *rest = n;; ) {
+            const char *pt = p, *nt = rest;
+            if (glob_segments(&pt, &nt) && *pt == '\0' && *nt == '\0') {
+                *pseg = pt; *nseg = nt; return true;
+            }
+            const char *slash = strchr(rest, '/');
+            if (!slash) return false;
+            rest = slash + 1;
+        }
+    }
+    /* One segment: match up to the next slash with fnmatch (FNM_PATHNAME
+     * keeps * and ? inside the segment). */
+    const char *ps = strchr(p, '/');
+    const char *ns = strchr(n, '/');
+    size_t plen = ps ? (size_t)(ps - p) : strlen(p);
+    size_t nlen = ns ? (size_t)(ns - n) : strlen(n);
+    char pbuf[256], nbuf[512];
+    if (plen >= sizeof(pbuf) || nlen >= sizeof(nbuf)) return false;
+    memcpy(pbuf, p, plen); pbuf[plen] = '\0';
+    memcpy(nbuf, n, nlen); nbuf[nlen] = '\0';
+    if (fnmatch(pbuf, nbuf, FNM_PATHNAME) != 0) return false;
+    p += plen; n += nlen;
+    if (*p == '/') p++;
+    if (*n == '/') n++;
+    *pseg = p; *nseg = n;
+    return true;
+}
+
+bool sl_glob_match(const char *pattern, const char *name) {
+    if (!pattern || !name) return false;
+    const char *p = pattern, *n = name;
+    while (*p != '\0' || *n != '\0') {
+        if (*p == '\0' || *n == '\0') return false;
+        if (!glob_segments(&p, &n)) return false;
+    }
+    return true;
 }
 
 void sl_fetch_result_free(sl_fetch_result *r) {
@@ -1285,6 +1345,18 @@ static void dispatch_request(sl_server *srv, const char *method,
             sl_fetch_result_free(res);
             return;
         }
+        if (res->denied) {
+            sbuf e; sb_init(&e); sb_printf(&e, "fetch access denied: %s", source);
+            send_error_code(srv, id, -32002, e.b); sb_free(&e);
+            sl_fetch_result_free(res);
+            return;
+        }
+        if (res->unavailable) {
+            sbuf e; sb_init(&e); sb_printf(&e, "fetch backend unavailable: %s", source);
+            send_error_code(srv, id, -32003, e.b); sb_free(&e);
+            sl_fetch_result_free(res);
+            return;
+        }
         sbuf s; sb_init(&s);
         sb_puts(&s, "{\"data\":\"");
         sb_base64(&s, res->data, res->data_len);
@@ -1294,9 +1366,9 @@ static void dispatch_request(sl_server *srv, const char *method,
         return;
     }
 
-    if (strcmp(method, "fetch.list") == 0) {
-        const char *source = params ? jget_str(params, "source") : NULL;
-        const char *path   = params ? jget_str(params, "path") : NULL;
+    if (strcmp(method, "fetch.glob") == 0) {
+        const char *source  = params ? jget_str(params, "source") : NULL;
+        const char *pattern = params ? jget_str(params, "pattern") : NULL;
         if (!source) { send_error(srv, id, "missing source"); return; }
         if (!fetcher_owns(srv, source)) {
             sbuf e; sb_init(&e); sb_printf(&e, "no fetcher registered for source %s", source);
@@ -1304,7 +1376,7 @@ static void dispatch_request(sl_server *srv, const char *method,
             return;
         }
         size_t count = 0;
-        sl_fetch_entry *entries = srv->fetcher_list(source, path ? path : "", &count, srv->user_ctx);
+        sl_fetch_entry *entries = srv->fetcher_glob(source, pattern ? pattern : "", &count, srv->user_ctx);
         if (count == (size_t)-1) {
             sbuf e; sb_init(&e); sb_printf(&e, "fetch source not found: %s", source);
             send_error_code(srv, id, -32001, e.b); sb_free(&e);

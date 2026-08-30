@@ -191,60 +191,57 @@ static sl_fetch_result *cdemo_read(const char *source, const char *path, void *c
     return sl_fetch_not_found();
 }
 
-static sl_fetch_entry *cdemo_list(const char *source, const char *path, size_t *count, void *ctx) {
+static sl_fetch_entry *cdemo_glob(const char *source, const char *pattern, size_t *count, void *ctx) {
     (void)ctx;
+    *count = 0;
     if (strncmp(source, "cdemo://libs", strlen("cdemo://libs")) != 0) {
         *count = (size_t)-1;
         return NULL;
     }
-    if (path[0] == '\0') path = ".";
 
-    char prefix[256];
-    if (strcmp(path, ".") == 0) prefix[0] = '\0';
-    else snprintf(prefix, sizeof(prefix), "%s/", path);
-
-    /* Names point at static storage, which outlives the handler call. */
-    static char names[sizeof(cdemo_files) / sizeof(cdemo_files[0])][64];
-    static bool is_dirs[sizeof(cdemo_files) / sizeof(cdemo_files[0])];
-    static sl_fetch_entry entries[sizeof(cdemo_files) / sizeof(cdemo_files[0])];
+    /* The tree: every served file plus the directories leading to one, so
+     * exact-path probes resolve directories and a star pattern lists them. Names
+     * point at static storage, which outlives the handler call. */
+    enum { MAXN = 32 };
+    static char names[MAXN][64];
+    static bool is_dirs[MAXN];
+    static sl_fetch_entry entries[MAXN];
     size_t n = 0;
 
-    for (size_t i = 0; i < sizeof(cdemo_files) / sizeof(cdemo_files[0]); i++) {
+    size_t nfiles = sizeof(cdemo_files) / sizeof(cdemo_files[0]);
+    for (size_t i = 0; i < nfiles && n < MAXN; i++) {
         const char *name = cdemo_files[i].path;
-        if (prefix[0] != '\0') {
-            if (strncmp(name, prefix, strlen(prefix)) != 0) continue;
-            name += strlen(prefix);
-        }
-        const char *slash = strchr(name, '/');
-        if (slash) {
-            /* Nested path: emit the directory component once. */
-            size_t len = (size_t)(slash - name);
-            bool seen = false;
-            for (size_t j = 0; j < n; j++) {
-                if (is_dirs[j] && strlen(names[j]) == len && strncmp(names[j], name, len) == 0) {
-                    seen = true;
-                    break;
-                }
-            }
-            if (seen) continue;
-            snprintf(names[n], sizeof(names[n]), "%.*s", (int)len, name);
-            is_dirs[n] = true;
-        } else {
+        /* The file itself. */
+        if (sl_glob_match(pattern, name)) {
             snprintf(names[n], sizeof(names[n]), "%s", name);
             is_dirs[n] = false;
+            entries[n].name = names[n];
+            entries[n].is_dir = is_dirs[n];
+            n++;
         }
-        entries[n].name = names[n];
-        entries[n].is_dir = is_dirs[n];
-        n++;
+        /* Each directory prefix leading to it. */
+        char dir[64];
+        snprintf(dir, sizeof(dir), "%s", name);
+        for (char *slash = strchr(dir, '/'); slash; slash = strchr(slash + 1, '/')) {
+            *slash = '\0';
+            if (sl_glob_match(pattern, dir)) {
+                bool seen = false;
+                for (size_t j = 0; j < n; j++) {
+                    if (is_dirs[j] && strcmp(names[j], dir) == 0) { seen = true; break; }
+                }
+                if (!seen && n < MAXN) {
+                    snprintf(names[n], sizeof(names[n]), "%s", dir);
+                    is_dirs[n] = true;
+                    entries[n].name = names[n];
+                    entries[n].is_dir = true;
+                    n++;
+                }
+            }
+            *slash = '/';
+        }
     }
-
-    if (n == 0) { *count = (size_t)-1; return NULL; }
-
-    /* The SDK frees the array, not the names — hand it a heap copy. */
-    sl_fetch_entry *out = malloc(n * sizeof(*out));
-    memcpy(out, entries, n * sizeof(*out));
     *count = n;
-    return out;
+    return n ? entries : NULL;
 }
 
 /* ------------------------------------------------------------------ */
@@ -276,7 +273,7 @@ int main(void) {
 
     sl_constant(srv, "default_name", sl_string("World"));
 
-    sl_register_fetcher(srv, "cdemo", cdemo_read, cdemo_list);
+    sl_register_fetcher(srv, "cdemo", cdemo_read, cdemo_glob);
 
     int rc = sl_server_run(srv);
     sl_server_free(srv);

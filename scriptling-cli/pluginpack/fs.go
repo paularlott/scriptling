@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"path"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -33,13 +34,22 @@ type pluginFS struct {
 	source string
 	dirTTL time.Duration
 
-	mu   sync.Mutex
-	dirs map[string]dirCacheEntry // fetch.list results ("." → root)
+	mu     sync.Mutex
+	dirs   map[string]dirCacheEntry  // fetch.glob listings, keyed by directory
+	exists map[string]dirExistsEntry // exact-path probes: does this directory exist
 }
 
 // dirCacheEntry is a directory listing with the time it was fetched.
 type dirCacheEntry struct {
 	entries []fs.DirEntry
+	fetched time.Time
+}
+
+// dirExistsEntry caches an exact-path directory probe (a wildcard-free
+// fetch.glob answering the directory entry itself, so empty directories are
+// distinguishable from missing ones).
+type dirExistsEntry struct {
+	ok      bool
 	fetched time.Time
 }
 
@@ -53,6 +63,7 @@ func newPluginFS(ctx context.Context, client *plugin.Client, source string, dirT
 		source: source,
 		dirTTL: dirTTL,
 		dirs:   map[string]dirCacheEntry{},
+		exists: map[string]dirExistsEntry{},
 	}
 }
 
@@ -105,14 +116,58 @@ func (p *pluginFS) Stat(name string) (fs.FileInfo, error) {
 	return &fileInfo{name: path.Base(name), size: int64(len(data))}, nil
 }
 
-// isDir reports whether name lists as a directory.
+// isDir reports whether name is a directory of the source: an exact-path
+// fetch.glob that answers the directory entry itself (so an empty directory
+// still resolves, where a listing of nothing would not).
 func (p *pluginFS) isDir(name string) bool {
-	_, err := p.ReadDir(name)
-	return err == nil
+	if name == "." {
+		return true
+	}
+	if _, ok := p.cachedDir(name); ok {
+		return true
+	}
+	if ok, cached := p.cachedExists(name); cached {
+		return ok
+	}
+	entries, err := p.client.FetchGlob(p.ctx, p.source, name)
+	if err != nil {
+		// An error is not an answer: an unavailable backend must not cache
+		// a real directory as missing for the whole TTL. Fail the probe
+		// uncached so the next call asks again.
+		return false
+	}
+	is := false
+	for _, entry := range entries {
+		if entry.Name == name && entry.IsDir {
+			is = true
+		}
+	}
+	p.mu.Lock()
+	p.exists[name] = dirExistsEntry{ok: is, fetched: time.Now()}
+	p.mu.Unlock()
+	return is
+}
+
+// cachedExists returns a directory probe still within dirTTL.
+func (p *pluginFS) cachedExists(name string) (bool, bool) {
+	if p.dirTTL < 0 {
+		return false, false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	entry, ok := p.exists[name]
+	if !ok {
+		return false, false
+	}
+	if time.Since(entry.fetched) > p.dirTTL {
+		delete(p.exists, name)
+		return false, false
+	}
+	return entry.ok, true
 }
 
 // ReadDir implements fs.ReadDirFS. Listings are reused for dirTTL; a negative
-// dirTTL disables reuse so every call is a fresh fetch.list.
+// dirTTL disables reuse so every call is a fresh fetch.glob.
 func (p *pluginFS) ReadDir(name string) ([]fs.DirEntry, error) {
 	name, err := cleanPath(name)
 	if err != nil {
@@ -121,17 +176,34 @@ func (p *pluginFS) ReadDir(name string) ([]fs.DirEntry, error) {
 	if entries, ok := p.cachedDir(name); ok {
 		return entries, nil
 	}
+	if !p.isDir(name) {
+		return nil, &fs.PathError{Op: "readdir", Path: name, Err: fs.ErrNotExist}
+	}
 
-	listed, err := p.client.FetchList(p.ctx, p.source, name)
+	pattern := name + "/*"
+	if name == "." {
+		pattern = "*"
+	}
+	listed, err := p.client.FetchGlob(p.ctx, p.source, pattern)
 	if err != nil {
 		if errors.Is(err, plugin.ErrFetchNotFound) {
 			return nil, &fs.PathError{Op: "readdir", Path: name, Err: fs.ErrNotExist}
 		}
+		if errors.Is(err, plugin.ErrFetchDenied) {
+			return nil, &fs.PathError{Op: "readdir", Path: name, Err: fs.ErrPermission}
+		}
 		return nil, err
 	}
-	out := make([]fs.DirEntry, len(listed))
-	for i, e := range listed {
-		out[i] = &dirEntry{name: e.Name, dir: e.IsDir}
+	prefix := ""
+	if name != "." {
+		prefix = name + "/"
+	}
+	out := make([]fs.DirEntry, 0, len(listed))
+	for _, e := range listed {
+		if !strings.HasPrefix(e.Name, prefix) || strings.Contains(strings.TrimPrefix(e.Name, prefix), "/") {
+			continue // the pattern asked for one level; keep exactly that
+		}
+		out = append(out, &dirEntry{name: strings.TrimPrefix(e.Name, prefix), dir: e.IsDir})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name() < out[j].Name() })
 
@@ -157,6 +229,54 @@ func (p *pluginFS) cachedDir(name string) ([]fs.DirEntry, bool) {
 		return nil, false
 	}
 	return entry.entries, true
+}
+
+// cleanPattern normalizes the cosmetic spellings fs.ValidPath rejects (a
+// leading "./", interior "." segments) while keeping the safety property:
+// ".." anywhere stays an error. fs.Glob callers reasonably write "./lib/*".
+func cleanPattern(pattern string) (string, error) {
+	if fs.ValidPath(pattern) {
+		return pattern, nil
+	}
+	parts := strings.Split(pattern, "/")
+	cleaned := make([]string, 0, len(parts))
+	for _, part := range parts {
+		switch part {
+		case "", ".":
+			continue
+		case "..":
+			return "", &fs.PathError{Op: "glob", Path: pattern, Err: fs.ErrInvalid}
+		default:
+			cleaned = append(cleaned, part)
+		}
+	}
+	return strings.Join(cleaned, "/"), nil
+}
+
+// Glob implements fs.GlobFS: one fetch.glob round trip for any pattern,
+// instead of the per-level walk fs.Glob would otherwise perform. Matches are
+// full paths relative to the source, which is exactly what fs.Glob returns.
+func (p *pluginFS) Glob(pattern string) ([]string, error) {
+	pattern, err := cleanPattern(pattern)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := p.client.FetchGlob(p.ctx, p.source, pattern)
+	if err != nil {
+		if errors.Is(err, plugin.ErrFetchNotFound) {
+			return nil, &fs.PathError{Op: "glob", Path: pattern, Err: fs.ErrNotExist}
+		}
+		if errors.Is(err, plugin.ErrFetchDenied) {
+			return nil, &fs.PathError{Op: "glob", Path: pattern, Err: fs.ErrPermission}
+		}
+		return nil, err
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name)
+	}
+	sort.Strings(names)
+	return names, nil
 }
 
 // readFile fetches file content from the plugin. Nothing is cached: the host

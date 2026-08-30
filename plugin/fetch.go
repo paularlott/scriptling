@@ -12,26 +12,46 @@ import (
 
 // Fetchers let a plugin serve sources such as demo://libs or knot://scripts/foo
 // on demand. The host resolves the source's scheme to a plugin (via the schemes
-// the plugin advertises in its handshake), then calls fetch.read / fetch.list
-// for individual files as they are needed — nothing is transferred up front
-// except the bytes actually read.
+// the plugin advertises in its handshake), then calls fetch.read / fetch.glob
+// as files are needed — nothing is transferred up front except the bytes
+// actually read.
 
 const (
 	// FetchNotFoundCode is the JSON-RPC error code a fetcher returns for a
 	// missing source or path, mapped back to ErrFetchNotFound on the host.
 	FetchNotFoundCode = -32001
+	// FetchDeniedCode reports an access the fetcher refused: credentials,
+	// permissions. It is permanent, and the host never retries it.
+	FetchDeniedCode = -32002
+	// FetchUnavailableCode reports a backend that could not answer right now
+	// (network blip, upstream 503). The host retries these.
+	FetchUnavailableCode = -32003
 )
 
-// DefaultFetchTimeout bounds fetch.read / fetch.list calls when the caller
+// DefaultFetchTimeout bounds fetch.read / fetch.glob calls when the caller
 // provides no deadline of its own.
 const DefaultFetchTimeout = 30 * time.Second
 
-// ErrFetchNotFound reports a source or path the fetcher does not have. Fetcher
-// implementations wrap it (fmt.Errorf("%w: ...", ErrFetchNotFound)) and the
-// server transports it as error code FetchNotFoundCode.
-var ErrFetchNotFound = errors.New("fetch source not found")
+// Fetch retries: fetch operations are idempotent reads, so a transport hiccup
+// or an unavailable backend is retried a bounded number of times with a short
+// linear backoff. Permanent errors (not found, denied) are never retried.
+const (
+	FetchRetryAttempts = 3
+	FetchRetryDelay    = 150 * time.Millisecond
+)
 
-// FetchEntry is one directory entry returned by Fetcher.List.
+// Fetch error sentinels. Fetcher implementations wrap them
+// (fmt.Errorf("%w: ...", ErrFetchNotFound)) and the server transports each as
+// its error code above; the client maps the codes back, so hosts can tell a
+// plain miss from a refusal from a flaky backend.
+var (
+	ErrFetchNotFound    = errors.New("fetch source not found")
+	ErrFetchDenied      = errors.New("fetch access denied")
+	ErrFetchUnavailable = errors.New("fetch backend unavailable")
+)
+
+// FetchEntry is one match returned by Fetcher.Glob: Name is the entry's slash
+// path relative to the source root (full path, not a bare base name).
 type FetchEntry struct {
 	Name  string `json:"name"`
 	IsDir bool   `json:"is_dir"`
@@ -44,11 +64,19 @@ type FetchEntry struct {
 // base64-encoded on the wire so binary assets survive intact. There is no
 // conditional-read machinery — the host does not cache what a plugin serves, so
 // a plugin whose backend is slow caches behind its own Read, where the
-// freshness rules live; the host stays a dumb pipe. List enumerates one
-// directory level.
+// freshness rules live; the host stays a dumb pipe.
+//
+// Glob matches a pattern in the fetch glob language (see MatchGlob) against
+// the source's tree and returns every match, directories included. It answers
+// in one call what a directory-by-directory walk would need one round trip
+// per level for, which is the point: existence is a wildcard-free pattern, a
+// listing is "<dir>/*", a whole subtree is "<dir>/**". No match is an empty
+// result, never an error; errors mean the fetcher could not answer. The
+// MatchGlob and GlobDisk helpers implement the semantics for in-memory and
+// disk-backed fetchers respectively.
 type Fetcher interface {
 	Read(ctx context.Context, source, path string) ([]byte, error)
-	List(ctx context.Context, source, path string) ([]FetchEntry, error)
+	Glob(ctx context.Context, source, pattern string) ([]FetchEntry, error)
 }
 
 // =========================================================================
@@ -94,16 +122,27 @@ func (s *Server) callFetchRead(ctx context.Context, params any) (any, error) {
 	}
 	data, err := fetcher.Read(ctx, p.Source, p.Path)
 	if err != nil {
-		if errors.Is(err, ErrFetchNotFound) {
-			return nil, jsonrpc.NewError(FetchNotFoundCode, err.Error(), nil)
-		}
-		return nil, err
+		return nil, fetchError(err)
 	}
 	return fetchReadResult{Data: data}, nil
 }
 
-func (s *Server) callFetchList(ctx context.Context, params any) (any, error) {
-	var p fetchListParams
+// fetchError maps a fetcher's sentinel-wrapped error to its wire code;
+// anything else travels as a plain (opaque) error.
+func fetchError(err error) error {
+	switch {
+	case errors.Is(err, ErrFetchNotFound):
+		return jsonrpc.NewError(FetchNotFoundCode, err.Error(), nil)
+	case errors.Is(err, ErrFetchDenied):
+		return jsonrpc.NewError(FetchDeniedCode, err.Error(), nil)
+	case errors.Is(err, ErrFetchUnavailable):
+		return jsonrpc.NewError(FetchUnavailableCode, err.Error(), nil)
+	}
+	return err
+}
+
+func (s *Server) callFetchGlob(ctx context.Context, params any) (any, error) {
+	var p fetchGlobParams
 	if err := decodeParams(params, &p); err != nil {
 		return nil, err
 	}
@@ -111,14 +150,11 @@ func (s *Server) callFetchList(ctx context.Context, params any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	entries, err := fetcher.List(ctx, p.Source, p.Path)
+	entries, err := fetcher.Glob(ctx, p.Source, p.Pattern)
 	if err != nil {
-		if errors.Is(err, ErrFetchNotFound) {
-			return nil, jsonrpc.NewError(FetchNotFoundCode, err.Error(), nil)
-		}
-		return nil, err
+		return nil, fetchError(err)
 	}
-	return fetchListResult{Entries: entries}, nil
+	return fetchGlobResult{Entries: entries}, nil
 }
 
 // validScheme reports whether scheme is a plausible URI scheme: a letter
@@ -158,7 +194,8 @@ func (c *Client) Scheme() string {
 
 // FetchFile reads one file from a source. path is a slash path relative to the
 // source; an empty path denotes a source that is itself a single file (a
-// script).
+// script). Transport failures and unavailable backends are retried a bounded
+// number of times (fetch reads are idempotent); permanent errors are not.
 func (c *Client) FetchFile(ctx context.Context, source, path string) ([]byte, error) {
 	if !c.SupportsFetch() {
 		return nil, fmt.Errorf("plugin %s does not support fetch", c.metadata.Name)
@@ -169,18 +206,19 @@ func (c *Client) FetchFile(ctx context.Context, source, path string) ([]byte, er
 		defer cancel()
 	}
 	var result fetchReadResult
-	if err := c.call(ctx, "fetch.read", fetchReadParams{
-		Source: source,
-		Path:   path,
-	}, nil, &result); err != nil {
+	err := c.fetchCall(ctx, func() error {
+		return c.call(ctx, "fetch.read", fetchReadParams{Source: source, Path: path}, nil, &result)
+	})
+	if err != nil {
 		return nil, mapFetchError(err)
 	}
 	return result.Data, nil
 }
 
-// FetchList enumerates one directory level of a source. A missing directory
-// returns an error wrapping ErrFetchNotFound.
-func (c *Client) FetchList(ctx context.Context, source, path string) ([]FetchEntry, error) {
+// FetchGlob returns the entries of a source whose paths match pattern in the
+// fetch glob language (see MatchGlob). No match is an empty result; a missing
+// source is an error wrapping ErrFetchNotFound. Retried like FetchFile.
+func (c *Client) FetchGlob(ctx context.Context, source, pattern string) ([]FetchEntry, error) {
 	if !c.SupportsFetch() {
 		return nil, fmt.Errorf("plugin %s does not support fetch", c.metadata.Name)
 	}
@@ -189,50 +227,84 @@ func (c *Client) FetchList(ctx context.Context, source, path string) ([]FetchEnt
 		ctx, cancel = context.WithTimeout(ctx, DefaultFetchTimeout)
 		defer cancel()
 	}
-	var result fetchListResult
-	if err := c.call(ctx, "fetch.list", fetchListParams{
-		Source: source,
-		Path:   path,
-	}, nil, &result); err != nil {
+	var result fetchGlobResult
+	err := c.fetchCall(ctx, func() error {
+		return c.call(ctx, "fetch.glob", fetchGlobParams{Source: source, Pattern: pattern}, nil, &result)
+	})
+	if err != nil {
 		return nil, mapFetchError(err)
 	}
 	return result.Entries, nil
 }
 
-// mapFetchError converts a FetchNotFoundCode RPC error into an error wrapping
-// ErrFetchNotFound so hosts can treat it as a plain miss.
+// fetchCall runs a fetch RPC, retrying retryable failures: an unavailable
+// backend (ErrFetchUnavailable over the wire) or a transport error (anything
+// that is not a JSON-RPC error object). Permanent answers — not found, denied,
+// or any other coded error — come back immediately.
+func (c *Client) fetchCall(ctx context.Context, call func() error) error {
+	var err error
+	for attempt := 0; attempt < FetchRetryAttempts; attempt++ {
+		if attempt > 0 {
+			delay := time.Duration(attempt) * FetchRetryDelay
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return err
+			case <-timer.C:
+			}
+		}
+		err = call()
+		if err == nil || !retryableFetchError(err) {
+			return err
+		}
+	}
+	return err
+}
+
+// retryableFetchError reports whether a fetch failure is worth another
+// attempt: unavailable backends and transport-level failures yes; JSON-RPC
+// error objects carry the plugin's considered answer and are final, except
+// the unavailable code.
+func retryableFetchError(err error) bool {
+	var rpcErr *RPCError
+	if errors.As(err, &rpcErr) {
+		return rpcErr.Code == FetchUnavailableCode
+	}
+	return true
+}
+
+// mapFetchError converts the fetch error codes into errors wrapping their
+// sentinels, so hosts can treat a miss as a miss and a refusal as a refusal
+// without parsing messages.
 //
-// Fetchers are told to wrap ErrFetchNotFound themselves, so the message
-// arriving over the wire usually already begins with the sentinel's text.
-// Re-prefixing it would read "fetch source not found: fetch source not found:
-// knot://x", so the sentinel is only prepended when it is actually missing.
+// Fetchers wrap the sentinels themselves, so the message arriving over the
+// wire usually already begins with the sentinel's text. Re-prefixing it would
+// read "fetch source not found: fetch source not found: knot://x", so the
+// sentinel is only prepended when it is actually missing.
 func mapFetchError(err error) error {
 	if err == nil {
 		return nil
 	}
 	var rpcErr *RPCError
-	if errors.As(err, &rpcErr) && rpcErr.Code == FetchNotFoundCode {
-		msg := strings.TrimSpace(rpcErr.Message)
-		if detail, ok := trimNotFoundPrefix(msg); ok {
-			if detail == "" {
-				return ErrFetchNotFound
-			}
-			return fmt.Errorf("%w: %s", ErrFetchNotFound, detail)
-		}
-		if msg == "" {
-			return ErrFetchNotFound
-		}
-		return fmt.Errorf("%w: %s", ErrFetchNotFound, msg)
+	if !errors.As(err, &rpcErr) {
+		return err
 	}
-	return err
-}
-
-// trimNotFoundPrefix strips a leading copy of ErrFetchNotFound's text (and any
-// following ": ") from msg, reporting whether it was present.
-func trimNotFoundPrefix(msg string) (string, bool) {
-	sentinel := ErrFetchNotFound.Error()
-	if !strings.HasPrefix(msg, sentinel) {
-		return msg, false
+	var sentinel error
+	switch rpcErr.Code {
+	case FetchNotFoundCode:
+		sentinel = ErrFetchNotFound
+	case FetchDeniedCode:
+		sentinel = ErrFetchDenied
+	case FetchUnavailableCode:
+		sentinel = ErrFetchUnavailable
+	default:
+		return err
 	}
-	return strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(msg, sentinel), ":")), true
+	detail := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(rpcErr.Message), sentinel.Error()))
+	detail = strings.TrimSpace(strings.TrimPrefix(detail, ":"))
+	if detail == "" {
+		return sentinel
+	}
+	return fmt.Errorf("%w: %s", sentinel, detail)
 }
