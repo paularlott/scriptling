@@ -686,14 +686,16 @@ func taskContext(ctx context.Context, env *object.Environment) context.Context {
 	return evaluator.SetCallDepthInContext(ctx, evaluator.NewCallDepth(evaluator.DefaultMaxCallDepth))
 }
 
-// startBackgroundTask runs a background task on the promise already handed to
-// the script (the queued path hands it over before the task starts, so the
-// awaited result is the started task's result). The task name is released when
-// the task ends, or here if it never starts.
-func startBackgroundTask(promise *Promise, handler string, fnArgs []object.Object, fnKwargs map[string]object.Object, env *object.Environment, eval evaliface.Evaluator, factory SandboxFactory, ctx context.Context, daemon bool) object.Object {
+// prepareBackgroundTask validates the handler and captures everything the
+// task needs from the source environment, strictly on the CALLER's goroutine:
+// reading the environment from the task goroutine races any concurrent eval
+// mutating it. It returns the task body, ready to run on any goroutine, and
+// an error object when the task cannot start (the task name is already
+// released by then). run == nil with a nil error means "nothing to start".
+func prepareBackgroundTask(promise *Promise, handler string, fnArgs []object.Object, fnKwargs map[string]object.Object, env *object.Environment, eval evaliface.Evaluator, factory SandboxFactory, ctx context.Context, daemon bool) (func(), object.Object) {
 	if env == nil || eval == nil {
 		releaseTaskName(promise)
-		return &object.Null{}
+		return nil, nil
 	}
 
 	// For simple (non-dotted) handlers, validate the function exists synchronously.
@@ -702,14 +704,14 @@ func startBackgroundTask(promise *Promise, handler string, fnArgs []object.Objec
 		fn, _ := env.Get(handler)
 		if fn == nil {
 			releaseTaskName(promise)
-			return errors.NewError("function not found: %s", handler)
+			return nil, errors.NewError("function not found: %s", handler)
 		}
 		switch fn.(type) {
 		case *object.Function, *object.LambdaFunction:
 			// ok
 		default:
 			releaseTaskName(promise)
-			return errors.NewError("handler is not a function: %s (%T)", handler, fn)
+			return nil, errors.NewError("handler is not a function: %s (%T)", handler, fn)
 		}
 	}
 
@@ -742,7 +744,7 @@ func startBackgroundTask(promise *Promise, handler string, fnArgs []object.Objec
 		parentImport = globalEnv.GetImportCallback()
 	}
 
-	go func() {
+	run := func() {
 		// Registered first so it runs last: the name stays claimed until the
 		// promise has been resolved, including on the panic path below.
 		defer releaseTaskName(promise)
@@ -874,8 +876,23 @@ func startBackgroundTask(promise *Promise, handler string, fnArgs []object.Objec
 				promise.set(result, nil)
 			}
 		}
-	}()
+	}
 
+	return run, nil
+}
+
+// startBackgroundTask is the direct-spawn path (runtime.background while
+// tasks release immediately): prepare on the caller's goroutine, then hand
+// the prepared body to its own goroutine.
+func startBackgroundTask(promise *Promise, handler string, fnArgs []object.Object, fnKwargs map[string]object.Object, env *object.Environment, eval evaliface.Evaluator, factory SandboxFactory, ctx context.Context, daemon bool) object.Object {
+	run, errObj := prepareBackgroundTask(promise, handler, fnArgs, fnKwargs, env, eval, factory, ctx, daemon)
+	if errObj != nil {
+		return errObj
+	}
+	if run == nil {
+		return &object.Null{}
+	}
+	go run()
 	return promiseObject(promise)
 }
 
@@ -1017,17 +1034,25 @@ func ReleaseBackgroundTasks() {
 	RuntimeState.Unlock()
 
 	// Start all queued tasks, reusing the promises already handed to the
-	// setup script so awaited results resolve.
+	// setup script so awaited results resolve. Preparation runs on THIS
+	// goroutine: the environment reads it performs must not race an eval
+	// running concurrently with the release; only the prepared body, which
+	// touches snapshots and fresh environments, runs on the task goroutine.
 	for _, task := range tasks {
-		go func(t queuedTask) {
-			result := startBackgroundTask(t.promise, t.handler, t.args, t.kwargs, t.env, t.eval, factory, t.ctx, t.daemon)
-			// A task that cannot start (handler gone from the environment it
-			// was queued with) would otherwise leave the promise the setup
-			// script holds unresolved forever. Resolve it, which also reports
-			// the failure through the task error logger.
-			if errObj, ok := result.(*object.Error); ok {
-				t.promise.set(nil, fmt.Errorf("%s", errObj.Message))
+		run, errObj := prepareBackgroundTask(task.promise, task.handler, task.args, task.kwargs, task.env, task.eval, factory, task.ctx, task.daemon)
+		// A task that cannot start (handler gone from the environment it
+		// was queued with) would otherwise leave the promise the setup
+		// script holds unresolved forever. Resolve it, which also reports
+		// the failure through the task error logger.
+		if errObj != nil {
+			if err, ok := errObj.(*object.Error); ok {
+				task.promise.set(nil, fmt.Errorf("%s", err.Message))
 			}
-		}(task)
+			continue
+		}
+		if run == nil {
+			continue
+		}
+		go run()
 	}
 }
