@@ -99,7 +99,7 @@ func newTransportBuiltin(help string) *object.Builtin {
 }
 
 // WithRequestContext attaches req to ctx so handler-side accessors can reach
-// it. The request's context dict is replaced with a shallow copy first: a
+// it. The request's context dict is replaced with a deep copy first: a
 // JSON-RPC batch fans one request out to several concurrent handlers, and the
 // copy keeps them from sharing mutable state with each other or with anything
 // that still holds the original dict.
@@ -120,14 +120,34 @@ func RequestContextFrom(ctx context.Context) *object.Instance {
 	return req
 }
 
-// copyDict returns a shallow copy of dict: a new dict with the same key/value
-// pairs. Values themselves are shared.
+// copyDict returns a deep copy of dict, so a handler mutating a nested value
+// writes to its own copy rather than racing every other handler of the same
+// request.
 func copyDict(dict *object.Dict) *object.Dict {
-	out := &object.Dict{Pairs: make(map[string]object.DictPair, len(dict.Pairs))}
-	for k, pair := range dict.Pairs {
-		out.Pairs[k] = pair
+	return copyValue(dict).(*object.Dict)
+}
+
+// copyValue copies the mutable containers recursively: dicts and lists can be
+// written by a handler, so no two handlers may share one. Everything else is
+// immutable from scriptling's view (strings, numbers) or deliberately shared
+// (instances, which may carry resources), and passes through as-is.
+func copyValue(v object.Object) object.Object {
+	switch t := v.(type) {
+	case *object.Dict:
+		out := &object.Dict{Pairs: make(map[string]object.DictPair, len(t.Pairs))}
+		for k, pair := range t.Pairs {
+			out.Pairs[k] = object.DictPair{Key: pair.Key, Value: copyValue(pair.Value)}
+		}
+		return out
+	case *object.List:
+		elements := make([]object.Object, len(t.Elements))
+		for i, element := range t.Elements {
+			elements[i] = copyValue(element)
+		}
+		return &object.List{Elements: elements}
+	default:
+		return v
 	}
-	return out
 }
 
 // RequestContextBuiltins returns the get_request / request_context pair shared

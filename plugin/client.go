@@ -198,15 +198,31 @@ type PluginSpec struct {
 // are kept. Embedders use this (or Load) for capped parallel loading.
 func (m *Manager) LoadPlugins(ctx context.Context, specs []PluginSpec) error {
 	results := m.startBatch(ctx, specs)
-	for _, result := range results {
+	for i, result := range results {
 		if result.err != nil {
+			// startBatch started every spec, so the specs after the failure
+			// hold live clients this loop never reaches: close them, or they
+			// are orphaned subprocesses.
+			m.closeUnregistered(results[i+1:])
 			return fmt.Errorf("plugin %s failed to load: %w", result.spec.Path, result.err)
 		}
 		if err := m.registerLoaded(result); err != nil {
+			m.closeUnregistered(results[i+1:])
 			return err
 		}
 	}
 	return nil
+}
+
+// closeUnregistered releases clients that startBatch started but a failing
+// batch never registered. The failing client itself is already closed by its
+// own path (startClient on handshake failure, registerLoaded on conflict).
+func (m *Manager) closeUnregistered(results []batchResult) {
+	for _, result := range results {
+		if result.client != nil {
+			_ = result.client.Close()
+		}
+	}
 }
 
 type batchResult struct {

@@ -128,6 +128,44 @@ conn = sqlite.connect("`+outside+`")
 	}
 }
 
+// TestInProcessFileURIDSN covers file: URI DSNs: the database path named in
+// the URI is what the allowed-paths policy judges, so a legitimate URI to an
+// allowed location works and one pointing outside is refused.
+func TestInProcessFileURIDSN(t *testing.T) {
+	dir := t.TempDir()
+	inside := filepath.Join(dir, "uri.db")
+	outside := filepath.Join(dir, "outside", "uri.db")
+
+	result, err := evalInProcess(t, &plugin.Policy{AllowedPaths: []string{dir}}, `
+import scriptling.sqlite as sqlite
+conn = sqlite.connect("file:`+inside+`")
+conn.execute("create table t (v text)")
+conn.execute("insert into t (v) values (?)", "uri")
+conn.close()
+conn2 = sqlite.connect("file:`+inside+`?cache=shared")
+rows = conn2.query("select v from t")
+conn2.close()
+return rows[0]["v"]
+`)
+	if err != nil {
+		t.Fatalf("eval: %v", err)
+	}
+	if result.Inspect() != "uri" {
+		t.Fatalf("file: uri database did not persist: %s", result.Inspect())
+	}
+
+	_, err = evalInProcess(t, &plugin.Policy{AllowedPaths: []string{dir}}, `
+import scriptling.sqlite as sqlite
+conn = sqlite.connect("file:`+outside+`")
+`)
+	if err == nil {
+		t.Fatal("expected path policy to deny the file: uri outside the allowed paths")
+	}
+	if !strings.Contains(err.Error(), "allowed paths") {
+		t.Fatalf("expected allowed-paths error, got: %v", err)
+	}
+}
+
 func TestInProcessNullAndBoolRoundTrip(t *testing.T) {
 	result, err := evalInProcess(t, nil, `
 import scriptling.sqlite as sqlite

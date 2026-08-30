@@ -202,6 +202,15 @@ is "*".`)
 	cb.MethodWithHelp("close", func(self *Client) error {
 		return self.Store.Close()
 	}, "close() - Close the client and release its resources.")
+	// Safety net mirroring relational.Connection: a handler or background
+	// task that opens a client per run and goes away without close()
+	// releases the handle when the instance is collected. For badgerdb that
+	// matters doubly: the store holds an exclusive lock on its directory,
+	// and a leaked handle blocks every later open() of that path. Store
+	// Close is idempotent, so finalizer plus explicit close is safe.
+	cb.Method("__del__", func(self *Client) {
+		_ = self.Store.Close()
+	})
 	return cb
 }
 

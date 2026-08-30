@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 
 	badgerdb "github.com/dgraph-io/badger/v4"
@@ -97,6 +98,9 @@ func open(policy plugin.PolicySource, path string) (*kv.Client, error) {
 // get/set/delete operations.
 type store struct {
 	db *badgerdb.DB
+	// Close is not idempotent in badger, and the class __del__ finalizer may
+	// run after an explicit close(): close exactly once.
+	closeOnce sync.Once
 }
 
 func (s *store) Get(ctx context.Context, key string) (string, bool, error) {
@@ -527,5 +531,7 @@ func (s *store) HashSize(ctx context.Context, key string) (int64, error) {
 }
 
 func (s *store) Close() error {
-	return s.db.Close()
+	var err error
+	s.closeOnce.Do(func() { err = s.db.Close() })
+	return err
 }

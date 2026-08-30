@@ -18,6 +18,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
 	"strings"
 
 	_ "modernc.org/sqlite" // registers the "sqlite" database/sql driver
@@ -134,8 +135,25 @@ func open(policy plugin.PolicySource, path string, timeoutMilliseconds int64) (*
 	}
 
 	isMemory := path == ":memory:" || strings.HasPrefix(path, "file::memory:")
-	if !isMemory && !policy.Policy().PathAllowed(path) {
-		return nil, fmt.Errorf("path %q is not in the allowed paths", path)
+	// A file: URI names its database in the URI path (file:/tmp/app.db,
+	// file:relative.db): the policy check applies to that path, not to the
+	// URI string. Unparseable or non-local URIs fail closed.
+	checkPath := path
+	if !isMemory && strings.HasPrefix(path, "file:") {
+		uri, uriErr := url.Parse(path)
+		if uriErr != nil || uri.Host != "" {
+			return nil, fmt.Errorf("invalid file: uri %q", path)
+		}
+		checkPath = uri.Path
+		if checkPath == "" {
+			checkPath = uri.Opaque
+		}
+		if checkPath == "" {
+			return nil, fmt.Errorf("invalid file: uri %q", path)
+		}
+	}
+	if !isMemory && !policy.Policy().PathAllowed(checkPath) {
+		return nil, fmt.Errorf("path %q is not in the allowed paths", checkPath)
 	}
 
 	// busy_timeout keeps writers from failing immediately when another
