@@ -127,6 +127,19 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
     respond(['error' => ['code' => -32600, 'message' => 'the plugin protocol speaks POST']]);
 }
 
+// Optional authentication: with PHPDEMO_TOKEN set, every request must carry
+// it as a bearer token, so `--plugin-header Authorization=Bearer <token>`
+// (or any proxy adding the header) can be exercised end to end. The built-in
+// server exposes request headers as HTTP_* $_SERVER entries.
+if (getenv('PHPDEMO_TOKEN') !== false) {
+    $expected = 'Bearer ' . getenv('PHPDEMO_TOKEN');
+    if (($_SERVER['HTTP_AUTHORIZATION'] ?? '') !== $expected) {
+        http_response_code(401);
+        respond(['jsonrpc' => '2.0', 'id' => null,
+            'error' => ['code' => -32001, 'message' => 'missing or invalid bearer token']]);
+    }
+}
+
 $request = json_decode(file_get_contents('php://input') ?: '', true);
 if (!is_array($request) || !isset($request['id'], $request['method'])) {
     respond(['jsonrpc' => '2.0', 'id' => null,

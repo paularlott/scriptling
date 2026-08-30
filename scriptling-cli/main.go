@@ -169,6 +169,13 @@ func buildRootCommand() *cli.Command {
 				EnvVars:    []string{"SCRIPTLING_PLUGIN_ENV"},
 				ConfigPath: []string{"plugins.env"},
 			},
+			&cli.StringSliceFlag{
+				Name:       "plugin-header",
+				Usage:      "HTTP header KEY=VALUE for the preceding http(s) --plugin, e.g. Authorization=Bearer ... (can be repeated)",
+				Global:     true,
+				EnvVars:    []string{"SCRIPTLING_PLUGIN_HEADER"},
+				ConfigPath: []string{"plugins.headers"},
+			},
 			&cli.BoolFlag{
 				Name:       "plugin-insecure",
 				Usage:      "Skip TLS certificate verification for https:// plugin URLs (self-signed certificates)",
@@ -503,13 +510,14 @@ func commandSubtreeContains(parent, target *cli.Command) bool {
 // policy (network + allowed paths) rides the handshake to every plugin.
 
 func startPlugins(ctx context.Context, cmd *cli.Command) error {
-	var dirs, plugins, pluginArgs, pluginEnvs []string
+	var dirs, plugins, pluginArgs, pluginEnvs, pluginHeaders []string
 	insecure := false
 	if pluginDiscoveryWanted(cmd) {
 		dirs = cmd.GetStringSlice("plugin-dir")
 		plugins = cmd.GetStringSlice("plugin")
 		pluginArgs = cmd.GetStringSlice("plugin-arg")
 		pluginEnvs = cmd.GetStringSlice("plugin-env")
+		pluginHeaders = cmd.GetStringSlice("plugin-header")
 		insecure = cmd.GetBool("plugin-insecure")
 	}
 	netPolicy, err := bootstrap.LoadNetworkPolicy(cmd.GetString("network-policy"))
@@ -517,7 +525,7 @@ func startPlugins(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 	policy := scriptlingplugin.PolicyFromSecurity(netPolicy, bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths")))
-	manager, err := loadPluginManager(ctx, dirs, plugins, pluginArgs, pluginEnvs, insecure, policy)
+	manager, err := loadPluginManager(ctx, dirs, plugins, pluginArgs, pluginEnvs, pluginHeaders, insecure, policy)
 	if err != nil {
 		return err
 	}
@@ -1039,14 +1047,20 @@ func runMCPStdioServer(ctx context.Context, cmd *cli.Command) error {
 	})
 }
 
-func loadPluginManager(ctx context.Context, dirs []string, plugins []string, pluginArgs []string, pluginEnvs []string, insecure bool, policy ...*scriptlingplugin.Policy) (*scriptlingplugin.Manager, error) {
-	specs, err := resolvePluginSpecs(plugins, pluginArgs, pluginEnvs)
+func loadPluginManager(ctx context.Context, dirs []string, plugins []string, pluginArgs []string, pluginEnvs []string, pluginHeaders []string, insecure bool, policy ...*scriptlingplugin.Policy) (*scriptlingplugin.Manager, error) {
+	specs, err := resolvePluginSpecs(plugins, pluginArgs, pluginEnvs, pluginHeaders)
 	if err != nil {
 		return nil, err
 	}
 	loadSpecs := make([]scriptlingplugin.PluginSpec, len(specs))
 	for i, spec := range specs {
-		loadSpecs[i] = scriptlingplugin.PluginSpec{Path: spec.Path, Args: spec.Args, Env: spec.Env, Insecure: insecure}
+		loadSpecs[i] = scriptlingplugin.PluginSpec{
+			Path:     spec.Path,
+			Args:     spec.Args,
+			Env:      spec.Env,
+			Headers:  headerMap(spec.Headers),
+			Insecure: insecure,
+		}
 	}
 	manager := scriptlingplugin.NewManager(globalLogger, func(name string, err error) {
 		if globalLogger != nil {
@@ -1087,9 +1101,10 @@ func loadPluginManager(ctx context.Context, dirs []string, plugins []string, plu
 // pluginSpec is a resolved plugin: an executable path or http(s) URL, its
 // arguments and its environment entries.
 type pluginSpec struct {
-	Path string
-	Args []string
-	Env  []string
+	Path    string
+	Args    []string
+	Env     []string
+	Headers []string
 }
 
 // resolvePluginSpecs pairs --plugin paths (executables or http(s) URLs) with
@@ -1114,7 +1129,28 @@ type pluginSpec struct {
 //
 //	--plugin knot --plugin-env KNOT_DB=/var/lib/knot --plugin-env LOG=debug
 //	--plugin knot --plugin http://127.0.0.1:8080 --plugin-env knot=KNOT_DB=/x
-func resolvePluginSpecs(plugins, args, envs []string) ([]pluginSpec, error) {
+//
+// and --plugin-header values follow it too, for HTTP plugin authentication:
+//
+//	--plugin https://plugins.internal:8443 --plugin-header Authorization=Bearer eyJ...
+//
+// headerMap splits bound KEY=VALUE header entries into a map, cutting at the
+// first = so bearer tokens keep theirs.
+func headerMap(entries []string) map[string]string {
+	if len(entries) == 0 {
+		return nil
+	}
+	headers := make(map[string]string, len(entries))
+	for _, entry := range entries {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok && key != "" {
+			headers[key] = value
+		}
+	}
+	return headers
+}
+
+func resolvePluginSpecs(plugins, args, envs, headerFlags []string) ([]pluginSpec, error) {
 	specs := make([]pluginSpec, 0, len(plugins))
 	byKey := map[string][]int{} // path and base name → indexes into specs
 	for _, path := range plugins {
@@ -1170,6 +1206,28 @@ func resolvePluginSpecs(plugins, args, envs []string) ([]pluginSpec, error) {
 			return nil, fmt.Errorf("--plugin-env %s is ambiguous: %d --plugin entries match %q, qualify it with the full path", env, len(targets), key)
 		}
 		specs[targets[0]].Env = append(specs[targets[0]].Env, value)
+	}
+
+	// --plugin-header binds the same way, carrying KEY=VALUE headers (the
+	// value itself may contain '=', as bearer tokens do).
+	for _, header := range headerFlags {
+		key, value, qualified := strings.Cut(header, "=")
+		targets, known := byKey[key]
+		if !qualified || !known {
+			if len(specs) == 0 {
+				return nil, fmt.Errorf("--plugin-header %s given without any --plugin", header)
+			}
+			if len(specs) > 1 {
+				return nil, fmt.Errorf("--plugin-header %s is ambiguous with %d --plugin entries: qualify it as <plugin>=KEY=VALUE, e.g. %s=%s",
+					header, len(specs), filepath.Base(specs[0].Path), header)
+			}
+			specs[0].Headers = append(specs[0].Headers, header)
+			continue
+		}
+		if len(targets) > 1 {
+			return nil, fmt.Errorf("--plugin-header %s is ambiguous: %d --plugin entries match %q, qualify it with the full path", header, len(targets), key)
+		}
+		specs[targets[0]].Headers = append(specs[targets[0]].Headers, value)
 	}
 	return specs, nil
 }

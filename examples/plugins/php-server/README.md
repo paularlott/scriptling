@@ -31,6 +31,26 @@ print(info["php"], info["library"])
 '
 ```
 
+## Authentication
+
+Start the server with a token and it demands it on every request:
+
+```bash
+PHPDEMO_TOKEN=seekrit php -S 127.0.0.1:8080 index.php
+```
+
+```bash
+# refused: Error: plugin http://127.0.0.1:8080 failed to load: ... 401
+scriptling --plugin http://127.0.0.1:8080 -c 'import plugin.phpdemo'
+
+# accepted
+scriptling --plugin http://127.0.0.1:8080            --plugin-header "Authorization=Bearer seekrit"            -c 'import plugin.phpdemo as d; print(d.greet("Ada"))'
+```
+
+Username and password in the URL travel as Basic auth instead:
+`--plugin https://user:pass@host:8443`. An explicit Authorization header wins
+over URL credentials.
+
 ## https and self-signed certificates
 
 Terminate TLS in front of the server (a reverse proxy, or a development

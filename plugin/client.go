@@ -3,12 +3,14 @@ package plugin
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -188,11 +190,13 @@ func (m *Manager) AddDir(dir string) {
 // remote JSON-RPC plugin server. Env entries are KEY=VALUE strings layered
 // on top of the inherited environment (existing keys are overridden); they
 // apply to executables only, an HTTP server owns its own environment.
+// Headers ride every HTTP request (e.g. Authorization for a bearer token).
 // Insecure skips TLS certificate verification for https URLs.
 type PluginSpec struct {
 	Path     string
 	Args     []string
 	Env      []string
+	Headers  map[string]string
 	Insecure bool
 }
 
@@ -272,7 +276,7 @@ func (m *Manager) startOne(ctx context.Context, spec PluginSpec) (*Client, error
 		if m.transportMode == TransportStdio {
 			return nil, fmt.Errorf("http/https plugins are not permitted in this scope (stdio only)")
 		}
-		return newHTTPClient(ctx, spec.Path, spec.Insecure, true, m.httpTransportFor(spec.Insecure), m.policySnapshot())
+		return newHTTPClient(ctx, spec.Path, spec.Insecure, true, m.httpTransportFor(spec.Insecure), m.policySnapshot(), spec.Headers)
 	}
 	if m.transportMode == TransportHTTP {
 		return nil, fmt.Errorf("stdio/executable plugins are not permitted in this scope (http/https only)")
@@ -923,14 +927,28 @@ func startClient(ctx context.Context, path string, args []string, extraEnv []str
 // passing the appropriate transport (see Manager.httpTransportFor); no TLS
 // policy decisions are made here. Pass nil to fall back to http.DefaultTransport.
 func newHTTPClient(ctx context.Context, rawURL string, insecureSkipTLS bool, handshake bool, transport *http.Transport, policy *Policy, headers ...map[string]string) (*Client, error) {
+	// Credentials in the URL (http://user:pass@host) become the Basic auth
+	// header; an explicit Authorization header supplied by the caller wins.
+	// The transport gets the URL without the userinfo so it never leaks into
+	// the request line or Host header.
+	transportURL, basicAuth := splitURLCredentials(rawURL)
+	allHeaders := firstHeaderMap(headers)
+	if basicAuth != "" && !hasAuthorizationHeader(allHeaders) {
+		if allHeaders == nil {
+			allHeaders = map[string]string{}
+		} else {
+			allHeaders = copyHeaders(allHeaders)
+		}
+		allHeaders["Authorization"] = basicAuth
+	}
 	opts := []jsonrpc.HTTPOption{jsonrpc.WithHTTPClient(&http.Client{Transport: transportOrDefault(transport)})}
-	for key, value := range firstHeaderMap(headers) {
+	for key, value := range allHeaders {
 		opts = append(opts, jsonrpc.WithHeader(key, value))
 	}
 	client := &Client{
 		path:   rawURL,
 		policy: policy,
-		rpc:    jsonrpc.NewClient(jsonrpc.NewHTTPTransport(rawURL, opts...)),
+		rpc:    jsonrpc.NewClient(jsonrpc.NewHTTPTransport(transportURL, opts...)),
 		done:   make(chan struct{}),
 	}
 	if handshake {
@@ -947,6 +965,38 @@ func transportOrDefault(t *http.Transport) http.RoundTripper {
 		return t
 	}
 	return http.DefaultTransport
+}
+
+// splitURLCredentials extracts user:pass@ from a URL as a Basic auth header
+// value and returns the URL without the userinfo. A URL without credentials,
+// or one that does not parse, passes through unchanged with an empty header.
+func splitURLCredentials(rawURL string) (string, string) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.User == nil {
+		return rawURL, ""
+	}
+	username := parsed.User.Username()
+	password, _ := parsed.User.Password()
+	credentials := base64.StdEncoding.EncodeToString([]byte(username + ":" + password))
+	parsed.User = nil
+	return parsed.String(), "Basic " + credentials
+}
+
+func hasAuthorizationHeader(headers map[string]string) bool {
+	for key := range headers {
+		if strings.EqualFold(key, "authorization") {
+			return true
+		}
+	}
+	return false
+}
+
+func copyHeaders(headers map[string]string) map[string]string {
+	out := make(map[string]string, len(headers)+1)
+	for key, value := range headers {
+		out[key] = value
+	}
+	return out
 }
 
 func firstHeaderMap(headers []map[string]string) map[string]string {

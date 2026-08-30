@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -279,18 +281,160 @@ func writeEnvProbeHelper(t *testing.T, dir string) string {
 }
 
 func waitHTTPReady(t *testing.T, url string, timeout time.Duration) {
+	waitHTTPReadyAuth(t, url, "", timeout)
+}
+
+// waitHTTPReadyAuth polls the handshake until the server answers 200. A
+// token-protected server 401s an unauthenticated probe, so the bearer can be
+// supplied; any HTTP answer at all also counts as ready, since it proves the
+// server is listening.
+func waitHTTPReadyAuth(t *testing.T, url, bearer string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
+	reqBody := strings.NewReader(`{"jsonrpc":"2.0","id":0,"method":"scriptling.handshake","params":{}}`)
 	for time.Now().Before(deadline) {
-		resp, err := http.Post(url, "application/json",
-			strings.NewReader(`{"jsonrpc":"2.0","id":0,"method":"scriptling.handshake","params":{}}`))
+		req, err := http.NewRequest(http.MethodPost, url, reqBody)
+		if err != nil {
+			t.Fatalf("probe request: %v", err)
+		}
+		if bearer != "" {
+			req.Header.Set("Authorization", "Bearer "+bearer)
+		}
+		resp, err := http.DefaultClient.Do(req)
 		if err == nil {
 			_ = resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
+			if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusUnauthorized {
 				return
 			}
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatalf("plugin server at %s not ready within %s", url, timeout)
+}
+
+// headerRecorder wraps a plugin server and captures the Authorization header
+// and Host of the last request, so auth plumbing can be asserted.
+type headerRecorder struct {
+	http.Handler
+	mu            sync.Mutex
+	authorization string
+	host          string
+}
+
+func (r *headerRecorder) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	r.mu.Lock()
+	r.authorization = req.Header.Get("Authorization")
+	r.host = req.Host
+	r.mu.Unlock()
+	r.Handler.ServeHTTP(w, req)
+}
+
+func (r *headerRecorder) snapshot() (string, string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.authorization, r.host
+}
+
+// TestLoadPluginsHTTPAuth covers the two ways credentials reach an HTTP
+// plugin: user:pass inside the URL becomes the Basic auth header (and never
+// leaks into the Host header), and an explicit Authorization header is sent
+// verbatim, winning over URL credentials when both are present.
+func TestLoadPluginsHTTPAuth(t *testing.T) {
+	echo := object.NewFunctionBuilder()
+	echo.Function(func(v any) any { return v })
+	server := NewServer("authdemo", "1.0.0", "auth echo demo").RegisterFunc("echo", echo)
+	recorder := &headerRecorder{Handler: server}
+	srv := httptestServer(t, recorder)
+
+	withURL := func(url string, headers map[string]string) {
+		t.Helper()
+		m := NewManager(nil)
+		defer m.Close()
+		if err := m.LoadPlugins(context.Background(), []PluginSpec{{Path: url, Headers: headers}}); err != nil {
+			t.Fatalf("LoadPlugins %s: %v", url, err)
+		}
+		if _, ok := m.Get("plugin.authdemo"); !ok {
+			t.Fatal("plugin.authdemo not registered")
+		}
+	}
+
+	// Credentials in the URL: Basic auth on the wire, clean Host header.
+	withURL(strings.Replace(srv.URL, "http://", "http://ada:secret@", 1), nil)
+	auth, host := recorder.snapshot()
+	expected := "Basic " + base64.StdEncoding.EncodeToString([]byte("ada:secret"))
+	if auth != expected {
+		t.Fatalf("Authorization = %q, want %q", auth, expected)
+	}
+	if strings.Contains(host, "ada:") {
+		t.Fatalf("URL credentials leaked into the Host header: %q", host)
+	}
+
+	// An explicit header is sent verbatim.
+	withURL(srv.URL, map[string]string{"Authorization": "Bearer tok-123"})
+	auth, _ = recorder.snapshot()
+	if auth != "Bearer tok-123" {
+		t.Fatalf("Authorization = %q, want the bearer token", auth)
+	}
+
+	// Explicit Authorization wins over URL credentials.
+	withURL(strings.Replace(srv.URL, "http://", "http://ada:secret@", 1),
+		map[string]string{"Authorization": "Bearer explicit-wins"})
+	auth, _ = recorder.snapshot()
+	if auth != "Bearer explicit-wins" {
+		t.Fatalf("Authorization = %q, want the explicit header to win", auth)
+	}
+}
+
+// TestLoadPluginsPHPExampleAuth runs the PHP example with its optional bearer
+// enforcement enabled: without the header the load is refused, with the right
+// token it answers. Skipped when php is not on PATH.
+func TestLoadPluginsPHPExampleAuth(t *testing.T) {
+	php, err := exec.LookPath("php")
+	if err != nil {
+		t.Skip("php not on PATH")
+	}
+	server := filepath.Join("..", "examples", "plugins", "php-server", "index.php")
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listener: %v", err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	_ = listener.Close()
+
+	cmd := exec.Command(php, "-S", fmt.Sprintf("127.0.0.1:%d", port), server)
+	cmd.Env = append(os.Environ(), "PHPDEMO_TOKEN=seekrit", "PHPDEMO_FROM=php-auth")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start php: %v", err)
+	}
+	defer func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	}()
+	url := fmt.Sprintf("http://127.0.0.1:%d", port)
+	waitHTTPReadyAuth(t, url+"/", "seekrit", 10*time.Second)
+
+	m := NewManager(nil)
+	defer m.Close()
+	if err := m.LoadPlugins(context.Background(), []PluginSpec{{Path: url}}); err == nil {
+		t.Fatal("expected the token-protected server to refuse an unauthenticated load")
+	}
+
+	if err := m.LoadPlugins(context.Background(), []PluginSpec{
+		{Path: url, Headers: map[string]string{"Authorization": "Bearer seekrit"}},
+	}); err != nil {
+		t.Fatalf("LoadPlugins with bearer token: %v", err)
+	}
+	client, ok := m.Get("plugin.phpdemo")
+	if !ok {
+		t.Fatal("plugin.phpdemo not registered")
+	}
+	result, err := client.CallFunction(context.Background(), "greet",
+		[]Value{{Type: valueString, Value: "Ada"}}, nil)
+	if err != nil {
+		t.Fatalf("greet: %v", err)
+	}
+	if result.Type != valueString || result.Value != "Hello, Ada (from php-auth)" {
+		t.Fatalf("unexpected greet result: %#v", result)
+	}
 }

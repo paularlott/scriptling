@@ -155,7 +155,7 @@ exit 2
 		globalLogger = previousLogger
 	}()
 
-	manager, err := loadPluginManager(context.Background(), []string{dir}, nil, nil, nil, false)
+	manager, err := loadPluginManager(context.Background(), []string{dir}, nil, nil, nil, nil, false)
 	if err != nil {
 		t.Fatalf("loadPluginManager: %v", err)
 	}
@@ -258,12 +258,13 @@ func TestOutputLintResultReturnsExitError(t *testing.T) {
 
 func TestResolvePluginSpecs(t *testing.T) {
 	cases := []struct {
-		name    string
-		plugins []string
-		args    []string
-		envs    []string
-		want    []pluginSpec
-		fails   string
+		name        string
+		plugins     []string
+		args        []string
+		envs        []string
+		headerFlags []string
+		want        []pluginSpec
+		fails       string
 	}{
 		{
 			name:    "path only",
@@ -295,6 +296,28 @@ func TestResolvePluginSpecs(t *testing.T) {
 			plugins: []string{"/usr/local/bin/knot", "/usr/local/bin/other"},
 			envs:    []string{"KNOT_DB=/x"},
 			fails:   "ambiguous",
+		},
+		{
+			name:        "bare header goes to the sole plugin, token keeps its equals",
+			plugins:     []string{"https://plugins.internal:8443"},
+			headerFlags: []string{"Authorization=Bearer eyJhbGciOi.abc.def", "X-Tenant=acme"},
+			want: []pluginSpec{{Path: "https://plugins.internal:8443", Headers: []string{
+				"Authorization=Bearer eyJhbGciOi.abc.def", "X-Tenant=acme",
+			}}},
+		},
+		{
+			name:        "qualified header names its plugin",
+			plugins:     []string{"https://one.internal:8443", "https://two.internal:8443"},
+			headerFlags: []string{"one.internal:8443=Authorization=Bearer one"},
+			want: []pluginSpec{
+				{Path: "https://one.internal:8443", Headers: []string{"Authorization=Bearer one"}},
+				{Path: "https://two.internal:8443"},
+			},
+		},
+		{
+			name:        "header without a plugin fails",
+			headerFlags: []string{"Authorization=Bearer x"},
+			fails:       "without any --plugin",
 		},
 		{
 			name:    "path with spaces needs no quoting",
@@ -363,7 +386,7 @@ func TestResolvePluginSpecs(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := resolvePluginSpecs(tc.plugins, tc.args, tc.envs)
+			got, err := resolvePluginSpecs(tc.plugins, tc.args, tc.envs, tc.headerFlags)
 			if tc.fails != "" {
 				if err == nil {
 					t.Fatalf("expected an error containing %q, got %+v", tc.fails, got)
@@ -415,7 +438,7 @@ func TestLoadPluginManagerExplicitPlugin(t *testing.T) {
 	helper := filepath.Join(dir, "args-plugin")
 	writeArgsPluginHelper(t, helper, argsFile)
 
-	manager, err := loadPluginManager(context.Background(), nil, []string{helper}, []string{"--alias", "testing"}, nil, false)
+	manager, err := loadPluginManager(context.Background(), nil, []string{helper}, []string{"--alias", "testing"}, nil, nil, false)
 	if err != nil {
 		t.Fatalf("loadPluginManager: %v", err)
 	}
@@ -448,7 +471,7 @@ func TestLoadPluginManagerExplicitWinsOverDir(t *testing.T) {
 
 	// The same executable, loaded explicitly WITH arguments and also
 	// discoverable via --plugin-dir: the explicit entry must win.
-	manager, err := loadPluginManager(context.Background(), []string{pluginDir}, []string{helper}, []string{"--alias", "explicit"}, nil, false)
+	manager, err := loadPluginManager(context.Background(), []string{pluginDir}, []string{helper}, []string{"--alias", "explicit"}, nil, nil, false)
 	if err != nil {
 		t.Fatalf("loadPluginManager: %v", err)
 	}
@@ -814,7 +837,7 @@ func forEachCommand(cmd *cli.Command, fn func(*cli.Command)) {
 // scriptling.plugin.load() depends on: with nothing configured the manager
 // still exists (and starts no processes), so the library can be registered.
 func TestLoadPluginManagerAlwaysReturnsAManager(t *testing.T) {
-	manager, err := loadPluginManager(context.Background(), nil, nil, nil, nil, false)
+	manager, err := loadPluginManager(context.Background(), nil, nil, nil, nil, nil, false)
 	if err != nil {
 		t.Fatalf("loadPluginManager with no plugins: %v", err)
 	}
@@ -830,7 +853,7 @@ func TestLoadPluginManagerAlwaysReturnsAManager(t *testing.T) {
 // TestLoadPluginManagerRejectsBadPluginArgs checks argument resolution failures
 // surface before any process is started.
 func TestLoadPluginManagerRejectsBadPluginArgs(t *testing.T) {
-	_, err := loadPluginManager(context.Background(), nil, nil, []string{"orphan-arg"}, nil, false)
+	_, err := loadPluginManager(context.Background(), nil, nil, []string{"orphan-arg"}, nil, nil, false)
 	if err == nil {
 		t.Fatal("expected an error for a --plugin-arg with no --plugin")
 	}
@@ -869,7 +892,7 @@ done
 	// Start the plugin with NO logger, exactly as PreRun does.
 	previousLogger := globalLogger
 	globalLogger = nil
-	manager, err := loadPluginManager(context.Background(), []string{dir}, nil, nil, nil, false)
+	manager, err := loadPluginManager(context.Background(), []string{dir}, nil, nil, nil, nil, false)
 	globalLogger = previousLogger
 	if err != nil {
 		t.Fatalf("loadPluginManager: %v", err)
