@@ -62,8 +62,8 @@ for i in range(6):
 for pair in conns:
     name = pair[0]
     orm = pair[1].get_orm()
-    if orm.count("simul", "") != 6:
-        return name + ": row leak, count=" + str(orm.count("simul", ""))
+    if orm.select("simul").count() != 6:
+        return name + ": row leak, count=" + str(orm.select("simul").count())
     rows = (orm.select("simul", "name")
             .where(orm.any_of(orm.eq("name", name + "-0"), orm.eq("name", name + "-5")))
             .order_by("id")
@@ -86,7 +86,7 @@ for pair in conns:
 for pair in conns:
     conn = pair[1]
     orm = conn.get_orm()
-    if orm.count("simul", "score >= ?", 99.0) != 1:
+    if orm.select("simul").where("score", ">=", 99.0).count() != 1:
         return pair[0] + ": raw update effect wrong"
     orm.drop_table("simul")
     conn.close()

@@ -195,10 +195,10 @@ orm.drop_table("scriptling_people")
 orm.insert("scriptling_people", {"name": "ada", "score": 9.5})
 orm.insert("scriptling_people", {"name": "grace", "score": 8.0})
 orm.insert("scriptling_people", {"name": "linus", "score": 7.0})
-if orm.count("scriptling_people", "") != 3:
-    return "count all: " + str(orm.count("scriptling_people", ""))
-if orm.count("scriptling_people", "score >= ?", 8.0) != 2:
-    return "count where: " + str(orm.count("scriptling_people", "score >= ?", 8.0))
+if orm.select("scriptling_people").count() != 3:
+    return "count all: " + str(orm.select("scriptling_people").count())
+if orm.select("scriptling_people").where_sql("score >= ?", 8.0).count() != 2:
+    return "count where"
 rows = (orm.select("scriptling_people", "name")
         .where("score", ">=", 8.0)
         .order_by("score", desc=True)
@@ -219,17 +219,22 @@ grouped = (orm.select("scriptling_people", "name")
            .fetch())
 if len(grouped) != 2:
     return "grouped: " + str(grouped)
-upd = orm.update("scriptling_people", {"score": 9.9}, "name = ?", "ada")
+upd = orm.update("scriptling_people", {"score": 9.9}).where("name", "=", "ada").execute()
 if upd.rows_affected != 1:
     return "update: " + str(upd)
+upd = (orm.update("scriptling_people", {"score": 8.5})
+       .where(orm.one_of("name", ["grace", "nobody"]))
+       .execute())
+if upd.rows_affected != 1:
+    return "update criteria: " + str(upd)
 tables = orm.tables()
 if "scriptling_people" not in tables:
     return "tables: " + str(tables)
-dele = orm.delete("scriptling_people", "score < ?", 8.0)
+dele = orm.delete("scriptling_people").where("score", "<", 8.5).execute()
 if dele.rows_affected != 1:
     return "delete: " + str(dele)
 try:
-    orm.delete("scriptling_people", "")
+    orm.delete("scriptling_people").execute()
     return "blanket delete allowed"
 except:
     pass

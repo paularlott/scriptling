@@ -27,14 +27,14 @@ orm = conn.get_orm()
  .if_not_exists()
  .execute())
 
-# kwargs forms: dicts in, parameters bound — nothing interpolated
+# quick insert form: dict in, parameters bound — nothing interpolated
 ins = orm.insert("people", {"name": "ada", "score": 9.5})
 print("inserted id:", ins.last_insert_id)
 orm.insert("people", {"name": "grace", "score": 8.0})
 orm.insert("people", {"name": "linus", "score": 7.0, "active": 0})
 
-print("everyone:", orm.count("people", ""))
-print("high scorers:", orm.count("people", "score >= ?", 8.0))
+print("everyone:", orm.select("people").count())
+print("high scorers:", orm.select("people").where("score", ">=", 8.0).count())
 
 # builder: flat conditions AND together, terminal fetch() runs one query
 rows = (orm.select("people", "name", "score")
@@ -69,10 +69,15 @@ print("iterated high scorers:", total)
 rows = orm.select("people").where_sql("score > ? and score < ?", 6.5, 9.0).fetch()
 print("where_sql:", [row["name"] for row in rows])
 
-# update and delete refuse to run without a where clause
-upd = orm.update("people", {"score": 9.9}, "name = ?", "ada")
+# update and delete are builders too: where chains like select's, and
+# executing without a where is refused
+upd = orm.update("people", {"score": 9.9}).where("name", "=", "ada").execute()
 print("updated rows:", upd.rows_affected)
-dele = orm.delete("people", "active = ?", 0)
+upd = (orm.update("people", {"active": 1})
+       .where(orm.one_of("name", ["ada", "grace"]))
+       .execute())
+print("criteria update:", upd.rows_affected)
+dele = orm.delete("people").where("active", "=", 0).execute()
 print("deleted rows:", dele.rows_affected)
 
 print("tables:", orm.tables())
@@ -89,7 +94,7 @@ p = people.get(1)
 print("model get:", p["name"], p["score"])
 p["score"] = 8.8
 people.save(p)
-print("model save:", orm.count("people", "score >= ?", 8.8))
+print("model save:", orm.select("people").where("score", ">=", 8.8).count())
 
 people.insert(make_person(name="kurt", score=6.0, active=0))
 print("model insert:", people.count())

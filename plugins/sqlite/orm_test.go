@@ -7,10 +7,11 @@ import (
 	"github.com/paularlott/scriptling/plugins/internal/plugintest"
 )
 
-// ormScript exercises the full script-side ORM surface: kwargs forms, the
-// query builder (including grouped criteria), where_sql, and models. The sql
-// plugin runs the same script against live MariaDB and PostgreSQL in its
-// env-gated integration tests, proving the dialect handling.
+// ormScript exercises the full script-side ORM surface: the quick insert
+// form, the query builders for select/update/delete (including grouped
+// criteria), where_sql, and models. The sql plugin runs the same script
+// against live MariaDB and PostgreSQL in its env-gated integration tests,
+// proving the dialect handling.
 const ormScript = `
 conn = sqlite.connect()
 
@@ -24,17 +25,17 @@ orm.drop_table("people")
  .if_not_exists()
  .execute())
 
-# kwargs forms
+# quick insert form
 ins = orm.insert("people", {"name": "ada", "score": 9.5, "active": 1})
 if ins.last_insert_id != 1:
     return "insert id: " + str(ins.last_insert_id)
 orm.insert("people", {"name": "grace", "score": 8.0, "active": 1})
 orm.insert("people", {"name": "linus", "score": 7.0, "active": 0})
 
-if orm.count("people", "") != 3:
-    return "count all: " + str(orm.count("people", ""))
-if orm.count("people", "score >= ?", 8.0) != 2:
-    return "count where: " + str(orm.count("people", "score >= ?", 8.0))
+if orm.select("people").count() != 3:
+    return "count all: " + str(orm.select("people").count())
+if orm.select("people").where_sql("score >= ?", 8.0).count() != 2:
+    return "count where"
 
 # builder: flat conditions
 rows = orm.select("people", "name", "score").where("score", ">=", 8.0).order_by("score", desc=True).fetch()
@@ -81,7 +82,7 @@ first = it.__next__()
 it.close()
 if first["name"] != "ada":
     return "iterate partial"
-if orm.count("people", "") != 3:
+if orm.select("people").count() != 3:
     return "iterate changed data?!"
 
 # where_sql escape hatch
@@ -91,24 +92,38 @@ if len(rows) != 2:
 
 # update/delete refuse blanket writes
 try:
-    orm.update("people", {"score": 0.0}, "")
+    orm.update("people", {"score": 0.0}).execute()
     return "blanket update allowed"
 except:
     pass
 try:
-    orm.delete("people", "")
+    orm.delete("people").execute()
     return "blanket delete allowed"
 except:
     pass
 
-upd = orm.update("people", {"score": 9.9}, "name = ?", "ada")
+# update/delete builders: criteria, groups and the where_sql escape hatch
+upd = orm.update("people", {"score": 9.9}).where("name", "=", "ada").execute()
 if upd.rows_affected != 1:
     return "update: " + str(upd)
-dele = orm.delete("people", "name = ?", "linus")
+upd = (orm.update("people", {"active": 1})
+       .where(orm.any_of(orm.eq("name", "ada"), orm.eq("name", "grace")))
+       .execute())
+if upd.rows_affected != 2:
+    return "update groups: " + str(upd)
+upd = orm.update("people", {"score": 8.5}).where_sql("name = ?", "grace").execute()
+if upd.rows_affected != 1:
+    return "update where_sql: " + str(upd)
+dele = orm.delete("people").where("name", "=", "linus").execute()
 if dele.rows_affected != 1:
     return "delete: " + str(dele)
-if orm.count("people", "") != 2:
-    return "after delete: " + str(orm.count("people", ""))
+if orm.select("people").count() != 2:
+    return "after delete: " + str(orm.select("people").count())
+dele = orm.delete("people").where(orm.one_of("name", ["ada", "nobody"])).execute()
+if dele.rows_affected != 1:
+    return "delete criteria: " + str(dele)
+if orm.select("people").count() != 1:
+    return "after criteria delete"
 
 if "people" not in orm.tables():
     return "tables: " + str(orm.tables())
@@ -118,20 +133,20 @@ def make_person(id=None, name=None, score=None, active=None):
     return {"id": id, "name": name, "score": score, "active": active}
 
 people = orm.table(make_person, "people", pk="id", columns=["id", "name", "score", "active"])
-p = people.get(1)
-if p == None or p.name != "ada" or p.score != 9.9:
+p = people.get(2)
+if p == None or p.name != "grace" or p.score != 8.5:
     return "model get: " + str(p)
 p.score = 8.8
 people.save(p)
-if orm.count("people", "score >= ?", 8.8) != 1:
+if orm.select("people").where("score", ">=", 8.8).count() != 1:
     return "model save"
 people.insert(make_person(name="kurt", score=6.0, active=0))
-if orm.count("people", "") != 3:
+if orm.select("people").count() != 2:
     return "model insert"
-people.delete(people.get(1))
-if orm.count("people", "") != 2:
+people.delete(people.get(2))
+if orm.select("people").count() != 1:
     return "model delete"
-if people.count() != 2:
+if people.count() != 1:
     return "model count"
 rows = people.select("name").where("active", "=", 0).fetch()
 if len(rows) != 1:

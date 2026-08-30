@@ -46,17 +46,24 @@ const DefaultHandshakeTimeout = 15 * time.Second
 // ScopeOption configures a scoped Manager created by NewScope.
 type ScopeOption func(*Manager)
 
+// DefaultMaxParallelPluginLoads caps how many plugin processes are started
+// concurrently. Process spawn plus handshake dominates load time, so batches
+// start in parallel, but an unbounded burst of subprocesses would hurt
+// constrained hosts more than sequential loading helps them.
+const DefaultMaxParallelPluginLoads = 5
+
 type Manager struct {
 	parent                *Manager
 	transportMode         TransportMode
 	httpTransport         *http.Transport // shared pooled TLS-verified transport
 	httpInsecureTransport *http.Transport // shared pooled TLS-skip-verify transport
 
-	dirs         []string
-	clients      map[string]*Client
-	warnings     []string
-	crashHandler func(name string, err error)
-	logger       logger.Logger
+	dirs                   []string
+	clients                map[string]*Client
+	warnings               []string
+	crashHandler           func(name string, err error)
+	logger                 logger.Logger
+	maxParallelPluginLoads int
 	// policy is handed to every plugin this manager handshakes with. Set
 	// via SetPolicy before Load; scopes inherit it through the parent chain.
 	policy *Policy
@@ -68,15 +75,39 @@ type Manager struct {
 // provided, it is called when a loaded plugin process exits unexpectedly.
 func NewManager(log logger.Logger, crashHandler ...func(name string, err error)) *Manager {
 	manager := &Manager{
-		clients:               make(map[string]*Client),
-		logger:                log,
-		httpTransport:         newSharedHTTPTransport(false),
-		httpInsecureTransport: newSharedHTTPTransport(true),
+		clients:                make(map[string]*Client),
+		logger:                 log,
+		maxParallelPluginLoads: DefaultMaxParallelPluginLoads,
+		httpTransport:          newSharedHTTPTransport(false),
+		httpInsecureTransport:  newSharedHTTPTransport(true),
 	}
 	if len(crashHandler) > 0 {
 		manager.crashHandler = crashHandler[0]
 	}
 	return manager
+}
+
+// SetMaxParallelPluginLoads caps how many plugin processes are started
+// concurrently by Load and LoadPlugins. Values below 1 mean one at a time;
+// the default is DefaultMaxParallelPluginLoads. Registration order is the
+// input order whatever the cap, so name collisions resolve identically to
+// sequential loading.
+func (m *Manager) SetMaxParallelPluginLoads(n int) {
+	if n < 1 {
+		n = 1
+	}
+	m.mu.Lock()
+	m.maxParallelPluginLoads = n
+	m.mu.Unlock()
+}
+
+func (m *Manager) parallelLoadLimit() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.maxParallelPluginLoads < 1 {
+		return 1
+	}
+	return m.maxParallelPluginLoads
 }
 
 // newSharedHTTPTransport returns a pooled, HTTP/2-capable transport. When
@@ -122,11 +153,12 @@ func WithTransport(mode TransportMode) ScopeOption {
 // The scope does not inherit the parent's dirs or crash handler.
 func (m *Manager) NewScope(opts ...ScopeOption) *Manager {
 	scope := &Manager{
-		parent:                m,
-		clients:               make(map[string]*Client),
-		logger:                m.logger,
-		httpTransport:         m.httpTransport,         // shared — connections pooled with parent
-		httpInsecureTransport: m.httpInsecureTransport, // shared — connections pooled with parent
+		parent:                 m,
+		clients:                make(map[string]*Client),
+		logger:                 m.logger,
+		maxParallelPluginLoads: m.parallelLoadLimit(),
+		httpTransport:          m.httpTransport,         // shared — connections pooled with parent
+		httpInsecureTransport:  m.httpInsecureTransport, // shared — connections pooled with parent
 	}
 	for _, opt := range opts {
 		opt(scope)
@@ -151,8 +183,121 @@ func (m *Manager) AddDir(dir string) {
 	}
 }
 
+// PluginSpec names one executable plugin to load, with optional arguments
+// passed to the executable on its command line.
+type PluginSpec struct {
+	Path string
+	Args []string
+}
+
+// LoadPlugins starts each executable plugin, at most
+// SetMaxParallelPluginLoads at a time, and registers them in the order the
+// specs are given: a library name declared by two plugins resolves to the
+// first spec, exactly as sequential loading resolves it. The first failed
+// start (in spec order) is returned as an error; plugins started before it
+// are kept. Embedders use this (or Load) for capped parallel loading.
+func (m *Manager) LoadPlugins(ctx context.Context, specs []PluginSpec) error {
+	results := m.startBatch(ctx, specs)
+	for _, result := range results {
+		if result.err != nil {
+			return fmt.Errorf("plugin %s failed to load: %w", result.spec.Path, result.err)
+		}
+		if err := m.registerLoaded(result); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type batchResult struct {
+	spec   PluginSpec
+	client *Client
+	err    error
+}
+
+// startBatch starts the given plugins concurrently, capped, and returns one
+// result per spec in input order. Failures are per spec, so one bad plugin
+// never fails the batch; the caller decides whether to warn or propagate.
+func (m *Manager) startBatch(ctx context.Context, specs []PluginSpec) []batchResult {
+	limit := m.parallelLoadLimit()
+	if limit > len(specs) {
+		limit = len(specs)
+	}
+	results := make([]batchResult, len(specs))
+	sem := make(chan struct{}, limit)
+	var wg sync.WaitGroup
+	for i, spec := range specs {
+		wg.Add(1)
+		go func(i int, spec PluginSpec) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			client, err := startClient(ctx, spec.Path, spec.Args, m.policySnapshot())
+			results[i] = batchResult{spec: spec, client: client, err: err}
+		}(i, spec)
+	}
+	wg.Wait()
+	return results
+}
+
+// registerLoaded attaches one started plugin to the manager. It returns an
+// error when the declared library name is already taken (the LoadPlugin
+// contract); directory discovery warns instead, via registerBatch.
+func (m *Manager) registerLoaded(result batchResult) error {
+	client := result.client
+	m.mu.RLock()
+	client.setLogger(m.logger)
+	m.mu.RUnlock()
+	name := client.Metadata().Name
+
+	m.mu.Lock()
+	// Re-check under the write lock: a concurrent load may have won the race.
+	for _, existing := range m.clients {
+		if existing.Path() == result.spec.Path {
+			m.mu.Unlock()
+			_ = client.Close()
+			return nil
+		}
+	}
+	if _, exists := m.clients[name]; exists {
+		m.mu.Unlock()
+		_ = client.Close()
+		return fmt.Errorf("plugin name %s already in use", name)
+	}
+	m.clients[name] = client
+	m.mu.Unlock()
+	m.installCrashHandler(name, client)
+	return nil
+}
+
+// registerBatch registers started plugins in batch order, the order they
+// were collected in, so duplicate names resolve to the first path and
+// failures become warnings: one bad plugin never blocks the rest of a
+// directory.
+func (m *Manager) registerBatch(results []batchResult) {
+	for _, result := range results {
+		if result.err != nil {
+			m.addWarning("plugin %s failed to load: %v", result.spec.Path, result.err)
+			continue
+		}
+		if err := m.registerLoaded(result); err != nil {
+			if result.client != nil {
+				m.addWarning("plugin %s ignored: duplicate library %s", result.spec.Path, result.client.Metadata().Name)
+			} else {
+				m.addWarning("plugin %s ignored: %v", result.spec.Path, err)
+			}
+			continue
+		}
+	}
+}
+
 // Load eagerly starts all executable plugins in configured plugin directories.
+// The starts run concurrently, capped at SetMaxParallelPluginLoads, while
+// registration stays in directory order so naming behaves exactly as
+// sequential loading: the first executable declaring a library name wins.
 func (m *Manager) Load(ctx context.Context) error {
+	var specs []PluginSpec
+	seen := make(map[string]bool)
 	for _, dir := range m.dirs {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
@@ -191,27 +336,16 @@ func (m *Manager) Load(ctx context.Context) error {
 			if alreadyLoaded {
 				continue
 			}
-			client, err := startClient(ctx, path, nil, m.policySnapshot())
-			if err != nil {
-				m.addWarning("plugin %s failed to load: %v", path, err)
+			// The same executable can appear in several dirs; loading it once
+			// is enough.
+			if seen[absPath] {
 				continue
 			}
-			m.mu.RLock()
-			client.setLogger(m.logger)
-			m.mu.RUnlock()
-			name := client.Metadata().Name
-			m.mu.Lock()
-			if _, exists := m.clients[name]; exists {
-				m.warnings = append(m.warnings, fmt.Sprintf("plugin %s ignored: duplicate library %s", path, name))
-				m.mu.Unlock()
-				_ = client.Close()
-				continue
-			}
-			m.clients[name] = client
-			m.mu.Unlock()
-			m.installCrashHandler(name, client)
+			seen[absPath] = true
+			specs = append(specs, PluginSpec{Path: path})
 		}
 	}
+	m.registerBatch(m.startBatch(ctx, specs))
 	return nil
 }
 

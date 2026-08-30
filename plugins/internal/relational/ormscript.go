@@ -184,6 +184,39 @@ class _orm_Group:
         return ["(" + self.sep.join(parts) + ")", params]
 
 
+def _orm_criterion_from_args(args):
+    # where() accepts (column, op, value) or one criterion object; every
+    # query builder shares this reading.
+    if len(args) == 3:
+        ops = {"=": "=", "!=": "!=", "<>": "<>", "<": "<", "<=": "<=", ">": ">", ">=": ">=", "like": "like"}
+        op = str(args[1]).lower()
+        if op not in ops:
+            raise ValueError("unsupported operator: " + str(args[1]))
+        return _orm_Criterion(ops[op], args[0], [args[2]])
+    if len(args) != 1:
+        raise ValueError("where takes (column, op, value) or a criterion from orm.eq()/orm.any_of()/...")
+    return args[0]
+
+
+def _orm_where_clause(ctx, criteria, raws):
+    # Renders the collected criteria and raw fragments into
+    # [" WHERE ...", params]; empty criteria give ["", params]. The ctx
+    # counter continues from wherever the caller left it, so SET marks on an
+    # update number before its where marks on numbered dialects.
+    parts = []
+    params = []
+    for c in criteria:
+        pair = c._sql(ctx)
+        parts.append(pair[0])
+        params = params + pair[1]
+    for raw in raws:
+        parts.append(_orm_renumber(raw[0], ctx))
+        params = params + raw[1]
+    if len(parts) == 0:
+        return ["", params]
+    return [" WHERE " + " AND ".join(parts), params]
+
+
 class _orm_Query:
     def __init__(self, kit, table, columns):
         self.kit = kit
@@ -196,16 +229,7 @@ class _orm_Query:
         self.offset_n = 0
 
     def where(self, *args):
-        if len(args) == 3:
-            ops = {"=": "=", "!=": "!=", "<>": "<>", "<": "<", "<=": "<=", ">": ">", ">=": ">=", "like": "like"}
-            op = str(args[1]).lower()
-            if op not in ops:
-                raise ValueError("unsupported operator: " + str(args[1]))
-            self.criteria.append(_orm_Criterion(ops[op], args[0], [args[2]]))
-        else:
-            if len(args) != 1:
-                raise ValueError("where takes (column, op, value) or a criterion from orm.eq()/orm.any_of()/...")
-            self.criteria.append(args[0])
+        self.criteria.append(_orm_criterion_from_args(list(args)))
         return self
 
     def where_sql(self, fragment, *params):
@@ -229,17 +253,8 @@ class _orm_Query:
     def _assemble(self, what):
         ctx = self.kit._ctx()
         sql = "SELECT " + what + " FROM " + _orm_quote(self.table, ctx)
-        where_parts = []
-        params = []
-        for c in self.criteria:
-            pair = c._sql(ctx)
-            where_parts.append(pair[0])
-            params = params + pair[1]
-        for raw in self.raws:
-            where_parts.append(_orm_renumber(raw[0], ctx))
-            params = params + raw[1]
-        if len(where_parts) > 0:
-            sql = sql + " WHERE " + " AND ".join(where_parts)
+        pair = _orm_where_clause(ctx, self.criteria, self.raws)
+        sql = sql + pair[0]
         if len(self.order) > 0:
             bits = []
             for o in self.order:
@@ -252,7 +267,7 @@ class _orm_Query:
             sql = sql + " LIMIT " + str(self.limit_n)
         if self.offset_n > 0:
             sql = sql + " OFFSET " + str(self.offset_n)
-        return [sql, params]
+        return [sql, pair[1]]
 
     def fetch(self):
         if len(self.columns) == 0:
@@ -294,6 +309,73 @@ class _orm_Query:
         return rows[0]["cnt"]
 
 
+class _orm_UpdateQuery:
+    # orm.update(table, values) builder: where chains like select's, execute
+    # refuses to run without one.
+    def __init__(self, kit, table, values):
+        self.kit = kit
+        self.table = table
+        self.values = values
+        self.criteria = []
+        self.raws = []
+
+    def where(self, *args):
+        self.criteria.append(_orm_criterion_from_args(list(args)))
+        return self
+
+    def where_sql(self, fragment, *params):
+        # Escape hatch for what the builder cannot express; ? placeholders
+        # are renumbered on numbered dialects.
+        self.raws.append([fragment, list(params)])
+        return self
+
+    def execute(self):
+        cols = list(self.values.keys())
+        cols.sort()
+        if len(cols) == 0:
+            raise ValueError("update needs at least one column")
+        ctx = self.kit._ctx()
+        sets = []
+        vals = []
+        for c in cols:
+            ctx["n"] = ctx["n"] + 1
+            sets.append(_orm_quote(c, ctx) + " = " + self.kit._mark(ctx["n"]))
+            vals.append(self.values[c])
+        pair = _orm_where_clause(ctx, self.criteria, self.raws)
+        if pair[0] == "":
+            raise ValueError("update requires a where clause (update every row is not supported)")
+        sql = "UPDATE " + _orm_quote(self.table, ctx) + " SET " + ", ".join(sets) + pair[0]
+        return self.kit.conn.execute(sql, *(vals + pair[1]))
+
+
+class _orm_DeleteQuery:
+    # orm.delete(table) builder: where chains like select's, execute refuses
+    # to run without one.
+    def __init__(self, kit, table):
+        self.kit = kit
+        self.table = table
+        self.criteria = []
+        self.raws = []
+
+    def where(self, *args):
+        self.criteria.append(_orm_criterion_from_args(list(args)))
+        return self
+
+    def where_sql(self, fragment, *params):
+        # Escape hatch for what the builder cannot express; ? placeholders
+        # are renumbered on numbered dialects.
+        self.raws.append([fragment, list(params)])
+        return self
+
+    def execute(self):
+        ctx = self.kit._ctx()
+        pair = _orm_where_clause(ctx, self.criteria, self.raws)
+        if pair[0] == "":
+            raise ValueError("delete requires a where clause (delete every row is not supported)")
+        sql = "DELETE FROM " + _orm_quote(self.table, ctx) + pair[0]
+        return self.kit.conn.execute(sql, *pair[1])
+
+
 class _orm_RowIter:
     # Wraps a Cursor (Go side: next() -> dict|None) in the iteration
     # protocol so "for row in q.iterate():" streams row by row instead of
@@ -330,7 +412,7 @@ class _orm_Model:
         return _orm_Query(self.kit, self.table, list(columns))
 
     def count(self):
-        return self.kit.count(self.table)
+        return self.kit.select(self.table).count()
 
     def get(self, pk_value):
         rows = self.kit.select(self.table).where(self.pk, "=", pk_value).fetch()
@@ -352,16 +434,14 @@ class _orm_Model:
         for c in self.columns:
             if c != self.pk:
                 values[c] = getattr(obj, c)
-        ctx = self.kit._ctx()
-        return self.kit.update(self.table, values, _orm_quote(self.pk, ctx) + " = ?", pk_value)
+        return self.kit.update(self.table, values).where(self.pk, "=", pk_value).execute()
 
     def delete(self, target):
         # Accepts a primary key or an instance carrying one.
         pk_value = getattr(target, self.pk, None)
         if pk_value == None:
             pk_value = target
-        ctx = self.kit._ctx()
-        return self.kit.delete(self.table, _orm_quote(self.pk, ctx) + " = ?", pk_value)
+        return self.kit.delete(self.table).where(self.pk, "=", pk_value).execute()
 
 
 class _orm_Kit:
@@ -432,6 +512,12 @@ class _orm_Kit:
     def select(self, table, *columns):
         return _orm_Query(self, table, list(columns))
 
+    def update(self, table, values):
+        return _orm_UpdateQuery(self, table, values)
+
+    def delete(self, table):
+        return _orm_DeleteQuery(self, table)
+
     # tables
 
     def create_table(self, table):
@@ -440,8 +526,6 @@ class _orm_Kit:
     def drop_table(self, table):
         ctx = self._ctx()
         return self.conn.execute("DROP TABLE IF EXISTS " + _orm_quote(table, ctx))
-
-    # kwargs forms
 
     def insert(self, table, values, pk="id"):
         # On postgres there is no last-insert-id; RETURNING recovers one
@@ -468,39 +552,6 @@ class _orm_Kit:
                 raise ValueError("insert returning gave " + str(len(rows)) + " rows")
             return {"last_insert_id": rows[0][pk], "rows_affected": 1}
         return self.conn.execute(sql, *params)
-
-    def update(self, table, values, where, *params):
-        if where == "":
-            raise ValueError("update requires a where clause (update every row is not supported)")
-        cols = list(values.keys())
-        cols.sort()
-        if len(cols) == 0:
-            raise ValueError("update needs at least one column")
-        ctx = self._ctx()
-        sets = []
-        vals = []
-        for c in cols:
-            ctx["n"] = ctx["n"] + 1
-            sets.append(_orm_quote(c, ctx) + " = " + self._mark(ctx["n"]))
-            vals.append(values[c])
-        sql = "UPDATE " + _orm_quote(table, ctx) + " SET " + ", ".join(sets) + " WHERE " + _orm_renumber(where, ctx)
-        vals = vals + list(params)
-        return self.conn.execute(sql, *vals)
-
-    def delete(self, table, where, *params):
-        if where == "":
-            raise ValueError("delete requires a where clause (delete every row is not supported)")
-        ctx = self._ctx()
-        sql = "DELETE FROM " + _orm_quote(table, ctx) + " WHERE " + _orm_renumber(where, ctx)
-        return self.conn.execute(sql, *params)
-
-    def count(self, table, where="", *params):
-        ctx = self._ctx()
-        sql = "SELECT count(*) AS cnt FROM " + _orm_quote(table, ctx)
-        if where != "":
-            sql = sql + " WHERE " + _orm_renumber(where, ctx)
-        rows = self.conn.query(sql, *params)
-        return rows[0]["cnt"]
 
     def tables(self):
         rows = self.conn.query(self.tables_sql)
@@ -541,10 +592,14 @@ func ScriptKitEntries() []ScriptEntry {
 		{Name: "_orm_renumber", Source: sourceOf(ScriptKitSource, "def _orm_renumber")},
 		{Name: "_orm_check_type", Source: sourceOf(ScriptKitSource, "def _orm_check_type")},
 		{Name: "_orm_render_literal", Source: sourceOf(ScriptKitSource, "def _orm_render_literal")},
+		{Name: "_orm_criterion_from_args", Source: sourceOf(ScriptKitSource, "def _orm_criterion_from_args")},
+		{Name: "_orm_where_clause", Source: sourceOf(ScriptKitSource, "def _orm_where_clause")},
 		{Name: "_orm_TableBuilder", Source: sourceOf(ScriptKitSource, "class _orm_TableBuilder"), Class: true},
 		{Name: "_orm_Criterion", Source: sourceOf(ScriptKitSource, "class _orm_Criterion"), Class: true},
 		{Name: "_orm_Group", Source: sourceOf(ScriptKitSource, "class _orm_Group"), Class: true},
 		{Name: "_orm_Query", Source: sourceOf(ScriptKitSource, "class _orm_Query"), Class: true},
+		{Name: "_orm_UpdateQuery", Source: sourceOf(ScriptKitSource, "class _orm_UpdateQuery"), Class: true},
+		{Name: "_orm_DeleteQuery", Source: sourceOf(ScriptKitSource, "class _orm_DeleteQuery"), Class: true},
 		{Name: "_orm_RowIter", Source: sourceOf(ScriptKitSource, "class _orm_RowIter"), Class: true},
 		{Name: "_orm_Model", Source: sourceOf(ScriptKitSource, "class _orm_Model"), Class: true},
 		{Name: "_orm_Kit", Source: sourceOf(ScriptKitSource, "class _orm_Kit"), Class: true},

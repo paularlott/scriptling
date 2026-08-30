@@ -1027,6 +1027,10 @@ func loadPluginManager(ctx context.Context, dirs []string, plugins []string, plu
 	if err != nil {
 		return nil, err
 	}
+	loadSpecs := make([]scriptlingplugin.PluginSpec, len(specs))
+	for i, spec := range specs {
+		loadSpecs[i] = scriptlingplugin.PluginSpec{Path: spec.Path, Args: spec.Args}
+	}
 	manager := scriptlingplugin.NewManager(globalLogger, func(name string, err error) {
 		if globalLogger != nil {
 			globalLogger.Error("Plugin process exited", "plugin", name, "error", err)
@@ -1037,15 +1041,14 @@ func loadPluginManager(ctx context.Context, dirs []string, plugins []string, plu
 	if len(policy) > 0 {
 		manager.SetPolicy(policy[0])
 	}
-	// Explicit --plugin entries load first. Plugin identity is the resolved
-	// executable path, so the same binary found later via --plugin-dir is a
-	// no-op — explicit entries (with their arguments) win. Plugins register
-	// under the name they declare in their handshake, like --plugin-dir.
-	for _, spec := range specs {
-		if _, err := manager.LoadPlugin(ctx, spec.Path, spec.Args); err != nil {
-			_ = manager.Close()
-			return nil, err
-		}
+	// Explicit --plugin entries load first, in parallel (capped). Plugin
+	// identity is the resolved executable path, so the same binary found
+	// later via --plugin-dir is a no-op — explicit entries (with their
+	// arguments) win. Plugins register under the name they declare in their
+	// handshake, in --plugin order, like --plugin-dir.
+	if err := manager.LoadPlugins(ctx, loadSpecs); err != nil {
+		_ = manager.Close()
+		return nil, err
 	}
 	for _, dir := range dirs {
 		manager.AddDir(dir)
