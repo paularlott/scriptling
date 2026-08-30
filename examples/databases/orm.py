@@ -82,13 +82,13 @@ print("deleted rows:", dele.rows_affected)
 
 print("tables:", orm.tables())
 
-# models: a factory function turns row dicts into your objects; the gateway
-# carries the table, primary key and column list.
+# models: a factory function turns row dicts into your objects. No columns=
+# needed: the gateway writes every column the table has (read from the
+# schema once and cached); pass columns=[...] to manage a subset
 def make_person(id=None, name=None, score=None, active=None):
     return {"id": id, "name": name, "score": score, "active": active}
 
-people = orm.table(make_person, "people", pk="id",
-                   columns=["id", "name", "score", "active"])
+people = orm.table(make_person, "people", pk="id")
 
 p = people.get(1)
 print("model get:", p["name"], p["score"])

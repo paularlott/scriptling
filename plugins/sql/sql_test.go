@@ -238,6 +238,27 @@ try:
     return "blanket delete allowed"
 except:
     pass
+
+# models: no columns= means the gateway reads the table's columns from the
+# schema (information_schema here), once per kit, cached
+def make_person(id=None, name=None, score=None, active=None):
+    return {"id": id, "name": name, "score": score, "active": active}
+
+people = orm.table(make_person, "scriptling_people", pk="id")
+p = people.get(1)
+if p == None or p.name != "ada" or p.score < 9.85 or p.score > 9.95:
+    return "model get: " + str(p)
+p.score = 9.0
+people.save(p)
+row = orm.select("scriptling_people").where("id", "=", 1).one()
+if row["score"] != 9.0:
+    return "model save: " + str(row)
+people.insert(make_person(name="kurt", score=6.0, active=0))
+if people.count() != 3:
+    return "model insert: " + str(people.count())
+people.delete(people.get(2))
+if people.count() != 2:
+    return "model delete"
 orm.drop_table("scriptling_people")
 conn.close()
 return "ok"

@@ -128,11 +128,13 @@ if orm.select("people").count() != 1:
 if "people" not in orm.tables():
     return "tables: " + str(orm.tables())
 
-# models: a factory function builds instances from row dicts
+# models: a factory function builds instances from row dicts. Without
+# columns= the gateway writes every column the table has, read from the
+# schema once per kit and cached
 def make_person(id=None, name=None, score=None, active=None):
     return {"id": id, "name": name, "score": score, "active": active}
 
-people = orm.table(make_person, "people", pk="id", columns=["id", "name", "score", "active"])
+people = orm.table(make_person, "people", pk="id")
 p = people.get(2)
 if p == None or p.name != "grace" or p.score != 8.5:
     return "model get: " + str(p)
@@ -151,6 +153,19 @@ if people.count() != 1:
 rows = people.select("name").where("active", "=", 0).fetch()
 if len(rows) != 1:
     return "model select: " + str(rows)
+
+# columns= restricts what insert/save touch: renaming kurt must leave his
+# score alone even though the object carries a stale value
+named = orm.table(make_person, "people", pk="id", columns=["id", "name"])
+k = named.get(4)
+if k == None or k.name != "kurt":
+    return "restricted get: " + str(k)
+k.score = 0.0
+k.name = "kurtz"
+named.save(k)
+row = orm.select("people").where("id", "=", 4).one()
+if row["name"] != "kurtz" or row["score"] != 6.0:
+    return "restricted save leaked: " + str(row)
 
 orm.drop_table("people")
 conn.close()

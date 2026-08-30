@@ -403,10 +403,37 @@ class _orm_Model:
         self.table = table
         self.pk = pk
         self.columns = columns
+        # The column list for writes is the table's own columns, read from
+        # the schema once per kit and cached there (every gateway to the same
+        # table shares one lookup), unless columns= restricts it.
+        self._write_cols = None
 
-    def _need_columns(self):
-        if len(self.columns) == 0:
-            raise ValueError("model needs columns for insert/save, e.g. orm.table(User, 'users', pk='id', columns=['id', 'name'])")
+    def _write_columns(self):
+        if self._write_cols != None:
+            return self._write_cols
+        if len(self.columns) > 0:
+            self._write_cols = self.columns
+            return self._write_cols
+        cached = self.kit._schema_columns.get(self.table, None)
+        if cached == None:
+            if self.kit.columns_sql == "":
+                # SQLite's PRAGMA cannot bind the table name: quote it.
+                ctx = self.kit._ctx()
+                rows = self.kit.conn.query("PRAGMA table_info(" + _orm_quote(self.table, ctx) + ")")
+            else:
+                # Renumber the ? here: the kit's connection may be the raw
+                # plugin connection (compiled-in), which does not rewrite
+                # placeholders the way the script wrapper does.
+                ctx = self.kit._ctx()
+                rows = self.kit.conn.query(_orm_renumber(self.kit.columns_sql, ctx), self.table)
+            cached = []
+            for r in rows:
+                cached.append(r["name"])
+            if len(cached) == 0:
+                raise ValueError("table " + self.table + " has no columns (does it exist?)")
+            self.kit._schema_columns[self.table] = cached
+        self._write_cols = cached
+        return self._write_cols
 
     def select(self, *columns):
         return _orm_Query(self.kit, self.table, list(columns))
@@ -421,17 +448,22 @@ class _orm_Model:
         return self.factory(**rows[0])
 
     def insert(self, obj):
-        self._need_columns()
+        # None means unset: skip it, so the primary key auto-assigns (writing
+        # a NULL id violates the not-null key on postgres) and columns take
+        # their schema defaults rather than being overwritten with NULL.
+        cols = self._write_columns()
         values = {}
-        for c in self.columns:
-            values[c] = getattr(obj, c)
+        for c in cols:
+            v = getattr(obj, c)
+            if v != None:
+                values[c] = v
         return self.kit.insert(self.table, values, pk=self.pk)
 
     def save(self, obj):
-        self._need_columns()
+        cols = self._write_columns()
         pk_value = getattr(obj, self.pk)
         values = {}
-        for c in self.columns:
+        for c in cols:
             if c != self.pk:
                 values[c] = getattr(obj, c)
         return self.kit.update(self.table, values).where(self.pk, "=", pk_value).execute()
@@ -445,7 +477,7 @@ class _orm_Model:
 
 
 class _orm_Kit:
-    def __init__(self, conn, numbered, backtick, ilike, tables_sql):
+    def __init__(self, conn, numbered, backtick, ilike, tables_sql, columns_sql):
         # The dialect constants are baked in by the plugin that hands the
         # kit out, so nothing here asks the connection for anything beyond
         # query/execute.
@@ -454,6 +486,8 @@ class _orm_Kit:
         self.backtick = backtick
         self.ilike = ilike
         self.tables_sql = tables_sql
+        self.columns_sql = columns_sql
+        self._schema_columns = {}
 
     def _ctx(self):
         return {"n": 0, "backtick": self.backtick, "numbered": self.numbered, "ilike": self.ilike}
@@ -635,6 +669,10 @@ type DialectSpec struct {
 	Backtick  bool
 	ILike     string
 	TablesSQL string
+	// ColumnsSQL reads a table's column names (as "name", in table order)
+	// with the table name bound as one parameter. Empty means the dialect
+	// cannot parameterize it and uses SQLite's PRAGMA table_info instead.
+	ColumnsSQL string
 }
 
 // SQLiteSpec, MySQLSpec and PostgresSpec are the known dialects; a plugin
@@ -646,14 +684,16 @@ var (
 		TablesSQL: "select name from sqlite_master where type = 'table' and name not like 'sqlite_%' order by name",
 	}
 	MySQLSpec = DialectSpec{
-		Backtick:  true,
-		ILike:     "like",
-		TablesSQL: "select table_name as name from information_schema.tables where table_schema = database() and table_type = 'BASE TABLE' order by table_name",
+		Backtick:   true,
+		ILike:      "like",
+		TablesSQL:  "select table_name as name from information_schema.tables where table_schema = database() and table_type = 'BASE TABLE' order by table_name",
+		ColumnsSQL: "select column_name as name from information_schema.columns where table_schema = database() and table_name = ? order by ordinal_position",
 	}
 	PostgresSpec = DialectSpec{
-		Numbered:  true,
-		ILike:     "ilike",
-		TablesSQL: "select table_name as name from information_schema.tables where table_schema = current_schema() and table_type = 'BASE TABLE' order by table_name",
+		Numbered:   true,
+		ILike:      "ilike",
+		TablesSQL:  "select table_name as name from information_schema.tables where table_schema = current_schema() and table_type = 'BASE TABLE' order by table_name",
+		ColumnsSQL: "select column_name as name from information_schema.columns where table_schema = current_schema() and table_name = ? order by ordinal_position",
 	}
 )
 
@@ -662,7 +702,7 @@ func (d DialectSpec) literals() string {
 	if ilike == "" {
 		ilike = "like"
 	}
-	return fmt.Sprintf("%s, %s, %q, %q", scriptBool(d.Numbered), scriptBool(d.Backtick), ilike, d.TablesSQL)
+	return fmt.Sprintf("%s, %s, %q, %q, %q", scriptBool(d.Numbered), scriptBool(d.Backtick), ilike, d.TablesSQL, d.ColumnsSQL)
 }
 
 func scriptBool(b bool) string {
@@ -731,8 +771,8 @@ func ConnectionScriptSourceMultiDriver(pluginName string) string {
 
     def get_orm(self):
         if self._pg:
-            return _orm_Kit(self, True, False, "ilike", ` + fmt.Sprintf("%q", PostgresSpec.TablesSQL) + `)
-        return _orm_Kit(self, False, True, "like", ` + fmt.Sprintf("%q", MySQLSpec.TablesSQL) + `)
+            return _orm_Kit(self, True, False, "ilike", ` + fmt.Sprintf("%q, %q", PostgresSpec.TablesSQL, PostgresSpec.ColumnsSQL) + `)
+        return _orm_Kit(self, False, True, "like", ` + fmt.Sprintf("%q, %q", MySQLSpec.TablesSQL, MySQLSpec.ColumnsSQL) + `)
 `
 }
 
@@ -756,8 +796,8 @@ func ScriptModuleSource(twinName string, singleDriver bool, spec DialectSpec) st
         self._pg = self._dsn.startswith("postgres")
 `
 		getORM = `        if self._pg:
-            return _orm_Kit(self._c, True, False, "ilike", ` + fmt.Sprintf("%q", PostgresSpec.TablesSQL) + `)
-        return _orm_Kit(self._c, False, True, "like", ` + fmt.Sprintf("%q", MySQLSpec.TablesSQL) + `)`
+            return _orm_Kit(self._c, True, False, "ilike", ` + fmt.Sprintf("%q, %q", PostgresSpec.TablesSQL, PostgresSpec.ColumnsSQL) + `)
+        return _orm_Kit(self._c, False, True, "like", ` + fmt.Sprintf("%q, %q", MySQLSpec.TablesSQL, MySQLSpec.ColumnsSQL) + `)`
 		queryShim = `        if self._pg and len(args) > 0:
             args = [_orm_renumber(args[0], {"n": 0, "numbered": True})] + list(args[1:])
         return self._c.query(*args, **kwargs)`
