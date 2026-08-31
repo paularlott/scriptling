@@ -15,7 +15,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/paularlott/scriptling/ast"
 )
@@ -1012,6 +1011,41 @@ func (e *Environment) StoreEnvContext(base, derived context.Context) {
 type gilLock struct {
 	mu    sync.Mutex
 	owner atomic.Int64 // goroutine id of the current holder, 0 when free
+
+	// Context-aware waiters. Unlock broadcasts by closing notify, so a
+	// cancellable waiter wakes the moment the lock frees rather than on a
+	// polling interval. waiters is only incremented along the contended
+	// path, so the uncontended hot path pays one atomic load on unlock and
+	// nothing extra on lock.
+	waiters  atomic.Int64
+	notifyMu sync.Mutex
+	notify   chan struct{} // lazily created; closed to broadcast, then replaced
+}
+
+// broadcastUnlock wakes every registered context-aware waiter. Callers must
+// not hold mu (it runs after Unlock), so the lock orders notifyMu under mu
+// trivially.
+func (g *gilLock) broadcastUnlock() {
+	if g.waiters.Load() == 0 {
+		return
+	}
+	g.notifyMu.Lock()
+	if g.notify != nil {
+		close(g.notify)
+		g.notify = nil
+	}
+	g.notifyMu.Unlock()
+}
+
+// waitChan returns the current generation's broadcast channel, creating it if
+// the previous generation was already closed.
+func (g *gilLock) waitChan() chan struct{} {
+	g.notifyMu.Lock()
+	defer g.notifyMu.Unlock()
+	if g.notify == nil {
+		g.notify = make(chan struct{})
+	}
+	return g.notify
 }
 
 // goid returns the current goroutine's id by parsing the runtime stack header.
@@ -1180,20 +1214,37 @@ func (e *Environment) EnterGILWithContext(ctx context.Context) (acquired, entere
 		return true, true
 	}
 
-	// sync.Mutex has no context-aware blocking operation. Poll TryLock at a
-	// modest interval so cancellation bounds runtime-finalizer waits without
-	// spinning or changing the uncontended/non-cancellable hot paths.
-	ticker := time.NewTicker(time.Millisecond)
-	defer ticker.Stop()
+	// Contended: register for the next unlock broadcast. sync.Mutex has no
+	// context-aware blocking acquire, so park on the generation channel and
+	// re-try on every wake — unlock broadcasts immediately, so the wait ends
+	// the moment the lock frees or the context does, never a tick later.
+	//
+	// Cancel-vs-unlock is deliberately best-effort: when ctx.Done() and the
+	// broadcast become ready together, select may honor either. A caller can
+	// therefore acquire despite concurrent cancellation (it must still
+	// release), or abandon a lock that was just becoming free. Neither
+	// outcome leaks the lock; preferring cancellation strictly would mean
+	// re-checking ctx after a won TryLock and handing the lock back, which
+	// buys nothing for the callers of this path.
+	g.waiters.Add(1)
+	defer g.waiters.Add(-1)
 	for {
+		notify := g.waitChan()
+		// The unlock may have happened while registering: re-try before
+		// parking so the wakeup cannot be lost.
+		if g.mu.TryLock() {
+			g.owner.Store(id)
+			return true, true
+		}
 		select {
 		case <-ctx.Done():
 			return false, false
-		case <-ticker.C:
+		case <-notify:
 			if g.mu.TryLock() {
 				g.owner.Store(id)
 				return true, true
 			}
+			// Another waiter won this generation; re-register on the next.
 		}
 	}
 }
@@ -1206,6 +1257,7 @@ func (e *Environment) ExitGIL() {
 	g := e.root.gil
 	g.owner.Store(0)
 	g.mu.Unlock()
+	g.broadcastUnlock()
 }
 
 // RunUnlocked releases the interpreter lock, runs fn (typically a blocking call
@@ -1226,6 +1278,7 @@ func (e *Environment) RunUnlocked(fn func()) {
 	}
 	g.owner.Store(0)
 	g.mu.Unlock()
+	g.broadcastUnlock()
 	defer func() {
 		g.mu.Lock()
 		g.owner.Store(id)
