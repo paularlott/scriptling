@@ -1,9 +1,10 @@
 # PHP Plugin Server
 
 A Scriptling plugin written in plain PHP, served over HTTP. It exists to show
-the plugin protocol in another language: the whole contract is two JSON-RPC
-methods (`scriptling.handshake` and `function.call`) over HTTP POST, so any
-language that can read and write JSON can serve one.
+the plugin protocol in another language: the contract is a handful of
+JSON-RPC methods over HTTP POST (`scriptling.handshake`, `function.call`, and
+the `object.*` pair for classes), so any language that can read and write
+JSON can serve one.
 
 ## Run it
 
@@ -30,6 +31,30 @@ info = d.server_info()
 print(info["php"], info["library"])
 '
 ```
+
+## Classes
+
+The handshake's schema lists classes and their methods; the host turns that
+into a proxy class. Instances answer `object.new` (construct) and
+`object.call_method` (any listed method):
+
+```bash
+scriptling --plugin http://127.0.0.1:8080 -c '
+import plugin.phpdemo as d
+
+g = d.Greeter("Ada")
+print(g.greet())          # Hello, Ada (from php)
+print(g.shout())          # HELLO, ADA (FROM PHP)
+g = g.rename("Bob")       # mutation returns a fresh instance; rebind
+print(g.greet())          # Hello, Bob (from php)
+'
+```
+
+The PHP built-in server forgets everything between requests, so this example
+keeps each Greeter's state inside the object id itself (base64 JSON) and
+`rename` returns a new instance instead of mutating. A server with storage (a
+database, Redis) would keep instances there and put its key in the id; the
+protocol takes either.
 
 ## Authentication
 
@@ -68,8 +93,11 @@ Verification is skipped only for the URLs the flag names.
 
 | Method | Purpose |
 |---|---|
-| `scriptling.handshake` | answers the protocol version and declares the library: its name (imported as `plugin.phpdemo`), version, and function schema |
+| `scriptling.handshake` | answers the protocol version and declares the library: its name (imported as `plugin.phpdemo`), version, function schema and class schema |
 | `function.call` | dispatches `greet`, `echo` (any value round trip) and `server_info` |
+| `object.new` | constructs a class instance, answering with its remote reference |
+| `object.call_method` | dispatches `Greeter.greet`, `Greeter.shout` and `Greeter.rename` |
+| `object.destroy` | instances are stateless here (the id is the state), so this is a no-op |
 
 Values travel as tagged objects (`{"type": "string", "value": "..."}` for a
 string, `entries` for a dict), which is how scripts see native types across

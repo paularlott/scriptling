@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/paularlott/scriptling"
+	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/scriptling/plugin"
 	"github.com/paularlott/scriptling/scriptling-cli/pack"
 )
@@ -788,6 +789,87 @@ func TestContextCancellationAbortsFetch(t *testing.T) {
 func TestBridgeRequiresManager(t *testing.T) {
 	if err := New(Options{}).Register(); err == nil {
 		t.Fatal("expected Register to require a manager")
+	}
+}
+
+// TestFetcherServesNamespacesAndAssets proves the whole serving story from one
+// fetcher: packages nest to any depth (lib/blah/blah/__init__.py imports as
+// blah.blah), a module beside a package's __init__ is reachable
+// (blah.extra), and static files at the root or in subdirectories are read
+// from scripts through scriptling.package under the plugin's name.
+func TestFetcherServesNamespacesAndAssets(t *testing.T) {
+	fetcher := newMutableFetcher("ppns://libs", map[string]string{
+		"lib/fred/__init__.py":      "def value():\n    return 'fred'\n",
+		"lib/blah/__init__.py":      "label = 'blah'\n",
+		"lib/blah/blah/__init__.py": "def value():\n    return 'blah.blah'\n",
+		"lib/blah/extra.py":         "def value():\n    return 'blah.extra'\n",
+		"something.md":              "# root asset\n",
+		"other/something.md":        "# nested asset\n",
+	}, nil)
+	manager := servePlugin(t, "ppns", fetcher)
+	bridge := bridgeFor(t, manager)
+
+	loader := pack.NewLoader()
+	bundles, err := bridge.Bundles()
+	if err != nil {
+		t.Fatalf("Bundles: %v", err)
+	}
+	for _, b := range bundles {
+		if err := loader.AddBundle(b); err != nil {
+			t.Fatalf("AddBundle: %v", err)
+		}
+	}
+
+	p := scriptling.New()
+	loader.SetFallback(p.GetLibraryLoader())
+	p.SetLibraryLoader(loader)
+	pack.RegisterPackageLibrary(p, loader)
+
+	script := `
+import blah
+import blah.blah
+import blah.extra
+import fred
+import scriptling.package as package
+
+[
+    fred.value(),
+    blah.label,
+    blah.blah.value(),
+    blah.extra.value(),
+    package.read_file("ppns", "something.md"),
+    package.read_file("ppns", "other/something.md"),
+    package.file_exists("ppns", "other/something.md"),
+    package.glob("ppns", "**/*.md"),
+    package.names(),
+]
+`
+	result, err := p.Eval(script)
+	if err != nil {
+		t.Fatalf("eval: %v", err)
+	}
+	list, ok := result.(*object.List)
+	if !ok {
+		t.Fatalf("expected a list result, got %T", result)
+	}
+	want := []string{
+		"fred",
+		"blah",
+		"blah.blah",
+		"blah.extra",
+		"# root asset\n",
+		"# nested asset\n",
+		"True",
+		"[other/something.md, something.md]",
+		"[ppns]",
+	}
+	if len(list.Elements) != len(want) {
+		t.Fatalf("result has %d elements (%v), want %d", len(list.Elements), result.Inspect(), len(want))
+	}
+	for i, expected := range want {
+		if got := list.Elements[i].Inspect(); got != expected {
+			t.Errorf("element %d = %s, want %s", i, got, expected)
+		}
 	}
 }
 

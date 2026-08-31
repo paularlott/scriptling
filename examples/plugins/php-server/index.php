@@ -10,7 +10,9 @@
  *
  *     scriptling --plugin http://127.0.0.1:8080 -c 'import plugin.phpdemo as d; print(d.greet("Ada"))'
  *
- * The protocol is two methods. The host POSTs a JSON-RPC request and this
+ * The protocol is four methods: the handshake, function.call for functions,
+ * object.new and object.call_method for classes (plus object.destroy, which
+ * stateless servers can ignore). The host POSTs a JSON-RPC request and this
  * file answers with a JSON-RPC result; the shapes mirror
  * docs/plugins/protocol on the website. Values travel as tagged objects
  * ({"type": "string", "value": "..."}) so scripts see native types.
@@ -38,6 +40,13 @@ function value_dict(array $entries): array
     return ['type' => 'dict', 'entries' => $entries];
 }
 
+function value_remote(string $class, string $id): array
+{
+    return ['type' => 'remote', 'remote' => [
+        'library' => LIBRARY_NAME, 'class' => $class, 'id' => $id,
+    ]];
+}
+
 /** The handshake the host sends first; the library it declares is what
  *  scripts import (a bare name registers under plugin.<name>). */
 function handshake(): array
@@ -57,7 +66,15 @@ function handshake(): array
                 ['name' => 'echo'],
                 ['name' => 'server_info'],
             ],
-            'classes' => [],
+            // The host synthesizes the constructor; listed methods become
+            // callable on instances (object.call_method below).
+            'classes' => [
+                ['name' => 'Greeter', 'methods' => [
+                    ['name' => 'greet'],
+                    ['name' => 'shout'],
+                    ['name' => 'rename'],
+                ]],
+            ],
             'constants' => [],
         ],
     ];
@@ -114,6 +131,49 @@ final class RpcError extends Exception
     }
 }
 
+/** object.new: construct a class instance. The HTTP transport is
+ *  request/response and the PHP process forgets everything between requests,
+ *  so a Greeter's state travels in the object id itself (base64 JSON). A
+ *  server with storage — a database, Redis — would keep instances there and
+ *  put its key in the id instead; the protocol takes either. */
+function new_object(string $class, array $args): array
+{
+    $state = match ($class) {
+        'Greeter' => ['name' => $args[0]['value'] ?? 'world'],
+        default => throw new RpcError("unknown class {$class}", -32602),
+    };
+    // object.new answers with the bare remote reference (library, class, id);
+    // it is not wrapped in a tagged value.
+    return [
+        'library' => LIBRARY_NAME,
+        'class' => $class,
+        'id' => base64_encode(json_encode($state)),
+    ];
+}
+
+/** object.call_method: dispatch a method on an instance, decoding the state
+ *  the id carries. rename returns a fresh instance rather than mutating —
+ *  the script rebinds: g = g.rename("Bob"). */
+function call_method(string $objectId, string $method, array $args): array
+{
+    $state = json_decode(base64_decode($objectId), true) ?? [];
+    $name = $state['name'] ?? 'world';
+    $from = getenv('PHPDEMO_FROM') ?: 'php';
+
+    switch ($method) {
+        case 'greet':
+            return value_string("Hello, {$name} (from {$from})");
+        case 'shout':
+            return value_string(strtoupper("Hello, {$name} (from {$from})"));
+        case 'rename':
+            return value_remote('Greeter', base64_encode(json_encode(
+                ['name' => $args[0]['value'] ?? $name],
+            )));
+        default:
+            throw new RpcError("unknown method {$method} on Greeter", -32602);
+    }
+}
+
 function respond(array $payload): never
 {
     header('Content-Type: application/json');
@@ -160,6 +220,21 @@ try {
                 $params['args'] ?? [],
                 $params['kwargs'] ?? [],
             );
+            break;
+        case 'object.new':
+            $result = new_object($params['class'] ?? '', $params['args'] ?? []);
+            break;
+        case 'object.call_method':
+            $result = call_method(
+                $params['object_id'] ?? '',
+                $params['method'] ?? '',
+                $params['args'] ?? [],
+            );
+            break;
+        case 'object.destroy':
+            // Instances are stateless here (the id is the state), so there is
+            // nothing stored to destroy. Destroy is idempotent regardless.
+            $result = null;
             break;
         case 'environment.open':
         case 'environment.close':

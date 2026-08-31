@@ -83,3 +83,76 @@ func TestPackageLibraryReadBytesErrors(t *testing.T) {
 		t.Fatalf("non-string name: expected *Error, got %T (%v)", res, res)
 	}
 }
+
+// TestPackageLibraryGlob verifies package.glob's pattern language over a
+// nested bundle. The recursive idiom "**/*.ext" is the one docs lean on, so
+// it must match files at any depth including the package root — and "*" must
+// stay within one segment.
+func TestPackageLibraryGlob(t *testing.T) {
+	files := map[string]string{
+		"readme.md":         "# root",
+		"docs/one.md":       "# one",
+		"docs/sub/two.md":   "# two",
+		"docs/sub/three.md": "# three",
+		"lib/mod.py":        "x = 1",
+	}
+	b := bundleFromMap(t, "name=\"app\"\nversion=\"1\"\n", files)
+	l := NewLoader()
+	if err := l.AddBundle(b); err != nil {
+		t.Fatalf("AddBundle: %v", err)
+	}
+	glob := NewPackageLibrary(l).Functions()["glob"].Fn
+
+	match := func(pattern string) []string {
+		t.Helper()
+		res := glob(context.Background(), object.NewKwargs(nil),
+			object.NewString("app"), object.NewString(pattern))
+		list, ok := res.(*object.List)
+		if !ok {
+			t.Fatalf("glob(%q) returned %T (%v), want list", pattern, res, res)
+		}
+		got := make([]string, 0, len(list.Elements))
+		for _, e := range list.Elements {
+			s, ok := e.(*object.String)
+			if !ok {
+				t.Fatalf("glob(%q) element %T, want string", pattern, e)
+			}
+			got = append(got, s.StringValue())
+		}
+		return got
+	}
+
+	assertMatches := func(pattern string, want ...string) {
+		t.Helper()
+		got := match(pattern)
+		if len(got) != len(want) {
+			t.Fatalf("glob(%q) = %v, want %v", pattern, got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("glob(%q) = %v, want %v", pattern, got, want)
+			}
+		}
+	}
+
+	// Recursive: every .md anywhere, root included (zero segments for **).
+	assertMatches("**/*.md", "docs/one.md", "docs/sub/three.md", "docs/sub/two.md", "readme.md")
+	// Single segment: root .md files only, never deeper.
+	assertMatches("*.md", "readme.md")
+	// One directory level: files directly inside docs (directories are not
+	// matched; package.list lists them).
+	assertMatches("docs/*", "docs/one.md")
+	// A subtree under a prefix.
+	assertMatches("docs/**/*.md", "docs/one.md", "docs/sub/three.md", "docs/sub/two.md")
+	// Everything (the bundle's manifest.toml is part of the walked tree).
+	assertMatches("**", "docs/one.md", "docs/sub/three.md", "docs/sub/two.md", "lib/mod.py", "manifest.toml", "readme.md")
+	// No match is an empty list, not an error.
+	assertMatches("*.txt")
+
+	// Unknown package is an error object, not a silent empty list.
+	res := glob(context.Background(), object.NewKwargs(nil),
+		object.NewString("nope"), object.NewString("*.md"))
+	if _, ok := res.(*object.Error); !ok {
+		t.Fatalf("unknown package: expected *Error, got %T (%v)", res, res)
+	}
+}

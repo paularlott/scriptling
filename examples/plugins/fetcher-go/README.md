@@ -1,11 +1,16 @@
 # Fetcher Plugin (Go)
 
-`fetcher-go` is a fetcher plugin: the one `RegisterFetcher("demo", ...)` call
-is the whole contract. It serves a virtual library (`demo://libs`, modules
-under `lib/`) plus a script source (`demo://scripts/hello`) from memory, on
-demand — the host synthesizes the package layout itself and asks for each
-module only when an import actually resolves, so files nothing imports (the
-`docs/` here) are never transferred.
+`fetcher-go` is the full-example plugin. One binary serves everything a
+plugin can:
+
+- a **fetcher** — the one `RegisterFetcher("demo", ...)` call — owning the
+  `demo://` scheme: a virtual library at `demo://libs` (modules under `lib/`,
+  any depth of nesting) plus single-file script sources (`demo://scripts/...`)
+- a **function** and a **class** under `plugin.demo`, like any Go plugin
+
+The host synthesizes the package layout itself and asks for each file only
+when an import or read actually touches it, so files nothing reads (most of
+`docs/` and `data/`) are never transferred.
 
 ```bash
 go build -o /tmp/scriptling-plugins/fetcher-go ./examples/plugins/fetcher-go
@@ -15,13 +20,28 @@ scriptling --plugin /tmp/scriptling-plugins/fetcher-go -c 'import greet; print(g
 
 # run a script served by the plugin (scripts are refetched on every run)
 scriptling --plugin /tmp/scriptling-plugins/fetcher-go demo://scripts/hello Ada
+
+# the tour: namespaced modules, static assets, the function and the class
+scriptling --plugin /tmp/scriptling-plugins/fetcher-go demo://scripts/tour
 ```
 
 It serves:
 
-- `demo://libs` — the library: `lib/greet.py`, `lib/calc.py`, `lib/demo/__init__.py`, `docs/`
-- `demo://scripts/hello` — a single-file script source
+- `demo://libs` — the library: `lib/greet.py`, `lib/calc.py`, packages
+  `lib/hub/`, `lib/fred/` (one level, `import fred`) and `lib/blah/blah/`
+  (two levels, `import blah.blah`), plus static assets `docs/` and `data/`
+- `demo://scripts/hello`, `demo://scripts/tour` — single-file script sources
 - `demo://scripts/setup` — a JSON-RPC setup script for server modes
+
+Static assets are read from scripts through `scriptling.package`, using the
+plugin's name (`demo`) as the package name:
+
+```python
+import scriptling.package as package
+
+text = package.read_file("demo", "docs/getting-started.md")
+docs = package.glob("demo", "**/*.md")
+```
 
 The `Read` handler just returns the bytes. The host caches nothing it fetches,
 so every read reaches the plugin and nothing is written to the package cache:
@@ -44,4 +64,5 @@ printf '{"jsonrpc":"2.0","id":1,"method":"demo.add","params":{"a":2,"b":3}}\n' |
 ```
 
 See the website's plugin fetchers documentation for the `Fetcher` interface
-(`Read` and `List`) and the wire protocol (`fetch.read` / `fetch.list`).
+(`Read` and `Glob`) and the wire protocol (`fetch.read` / `fetch.glob`), and
+the fetcher plugin tutorial for a walkthrough of this example.

@@ -237,6 +237,53 @@ func TestLoadPluginsPHPExample(t *testing.T) {
 	if result.Type != valueDict || fmt.Sprint(result.Entries["a"].Value) != "1" {
 		t.Fatalf("unexpected echo result: %#v", result)
 	}
+
+	// The class surface: construct a Greeter, call methods on it, and follow
+	// a rename that returns a fresh instance.
+	ref, err := client.NewObject(ctx, "Greeter", []Value{{Type: valueString, Value: "Ada"}}, nil)
+	if err != nil {
+		t.Fatalf("NewObject: %v", err)
+	}
+	if ref.Class != "Greeter" || ref.Library != "phpdemo" || ref.ID == "" {
+		t.Fatalf("unexpected remote ref: %+v", ref)
+	}
+	result, err = client.CallMethod(ctx, ref.ID, "greet", nil, nil)
+	if err != nil {
+		t.Fatalf("greet method: %v", err)
+	}
+	if result.Type != valueString || result.Value != "Hello, Ada (from php-test)" {
+		t.Fatalf("unexpected greet method result: %#v", result)
+	}
+	result, err = client.CallMethod(ctx, ref.ID, "shout", nil, nil)
+	if err != nil {
+		t.Fatalf("shout method: %v", err)
+	}
+	if result.Type != valueString || result.Value != "HELLO, ADA (FROM PHP-TEST)" {
+		t.Fatalf("unexpected shout method result: %#v", result)
+	}
+	result, err = client.CallMethod(ctx, ref.ID, "rename", []Value{{Type: valueString, Value: "Bob"}}, nil)
+	if err != nil {
+		t.Fatalf("rename method: %v", err)
+	}
+	if result.Type != valueRemote || result.Remote == nil || result.Remote.ID == ref.ID {
+		t.Fatalf("expected rename to return a fresh remote ref, got: %#v", result)
+	}
+	result, err = client.CallMethod(ctx, result.Remote.ID, "greet", nil, nil)
+	if err != nil {
+		t.Fatalf("greet after rename: %v", err)
+	}
+	if result.Type != valueString || result.Value != "Hello, Bob (from php-test)" {
+		t.Fatalf("unexpected greet-after-rename result: %#v", result)
+	}
+	if err := client.DestroyObject(ctx, ref.ID); err != nil {
+		t.Fatalf("DestroyObject: %v", err)
+	}
+
+	// An unknown method is a JSON-RPC error naming the method.
+	if _, err := client.CallMethod(ctx, ref.ID, "wave", nil, nil); err == nil ||
+		!strings.Contains(err.Error(), "wave") {
+		t.Fatalf("expected unknown method to fail naming the method, got: %v", err)
+	}
 }
 
 // httptestServer serves a plugin server over plain HTTP for the test's

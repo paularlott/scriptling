@@ -8,6 +8,7 @@ import (
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
+	"github.com/paularlott/scriptling/plugin"
 )
 
 const PackageLibraryName = "scriptling.package"
@@ -266,15 +267,21 @@ Returns:
 					return errors.NewError("unknown package: %s", pkgName)
 				}
 				var matches []object.Object
-				_ = fs.WalkDir(b.FS(), ".", func(p string, d fs.DirEntry, err error) error {
-					if err != nil || d.IsDir() {
+				walkErr := fs.WalkDir(b.FS(), ".", func(p string, d fs.DirEntry, err error) error {
+					if err != nil {
+						return err
+					}
+					if d.IsDir() {
 						return nil
 					}
-					if globMatch(pattern, p) {
+					if plugin.MatchGlob(pattern, p) {
 						matches = append(matches, object.NewString(p))
 					}
 					return nil
 				})
+				if walkErr != nil {
+					return errors.NewError("cannot walk package %s: %v", pkgName, walkErr)
+				}
 				if matches == nil {
 					matches = []object.Object{}
 				}
@@ -284,7 +291,8 @@ Returns:
 
 Parameters:
   name (str): Package name from manifest.toml
-  pattern (str): Glob pattern (* and ? wildcards, ** for recursive)
+  pattern (str): Glob pattern; * and ? stay within a segment, ** crosses
+    segments (so "**/*.md" also matches a file at the package root)
 
 Returns:
   list of str: Matching file paths relative to the package root
@@ -296,28 +304,6 @@ Example:
 	}
 }
 
-// globMatch matches a glob pattern against a slash-separated path.
-// Supports * (within a segment), ? (single char), and ** (any number of
-// path segments).
-func globMatch(pattern, p string) bool {
-	if !strings.Contains(pattern, "**") {
-		matched, _ := path.Match(pattern, p)
-		return matched
-	}
-	// Handle ** patterns: split on **, match prefix and suffix.
-	parts := strings.SplitN(pattern, "**", 2)
-	prefix := strings.TrimPrefix(parts[0], "/")
-	suffix := ""
-	if len(parts) > 1 {
-		suffix = strings.TrimPrefix(parts[1], "/")
-	}
-	// If prefix is empty, match any start. If suffix is empty, match any end.
-	ok := true
-	if prefix != "" {
-		ok = strings.HasPrefix(p, prefix)
-	}
-	if ok && suffix != "" {
-		ok = strings.HasSuffix(p, suffix)
-	}
-	return ok
-}
+// The glob pattern language is plugin.MatchGlob, the same one fetch.glob
+// speaks: * and ? stay within a path segment, ** crosses any number of
+// segments (including none), so "**/*.md" matches root files too.
