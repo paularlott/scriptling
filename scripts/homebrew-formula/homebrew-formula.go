@@ -14,8 +14,8 @@ import (
 // formulaTemplate works for the lean and full builds: Prefix is the artifact
 // name (scriptling / scriptling-full), Class the formula class, Desc the
 // description line, BinName the executable inside the zip, and InstallAs the
-// name it installs as (full installs as `scriptling`, hence the conflict
-// with the core formula).
+// name it installs as. Both zips carry the binary named scriptling (the full
+// build replaces the lean one, hence the conflict with the core formula).
 const formulaTemplate = `class {{ .Class }} < Formula
 	desc "{{ .Desc }}"
 	homepage "https://github.com/paularlott/scriptling"
@@ -41,8 +41,9 @@ const formulaTemplate = `class {{ .Class }} < Formula
 	end
 
 	def install
-		bin.install "{{ .BinName }}" => "{{ .InstallAs }}"
-	end
+{{ if ne .BinName .InstallAs }}		bin.install "{{ .BinName }}" => "{{ .InstallAs }}"
+{{ else }}		bin.install "{{ .BinName }}"
+{{ end }}	end
 
 	def caveats
 		<<~EOS
@@ -189,7 +190,7 @@ func main() {
 			Prefix:    "scriptling-full",
 			Class:     "ScriptlingFull",
 			Desc:      "Scriptling with the sqlite, sql, valkey and badger database plugins compiled in",
-			BinName:   "scriptling-full",
+			BinName:   "scriptling",
 			InstallAs: "scriptling",
 			Conflicts: "scriptling",
 			Caveats: "This formula replaces the plain `scriptling` binary with the full build\n" +

@@ -63,14 +63,17 @@ tasks:
     desc: Create ZIP files for scriptling-full builds
     cmds:
       - |
+        # The binary inside every zip is named scriptling: the full build IS
+        # scriptling (same CLI, drivers compiled in), so unzipping any
+        # release artifact yields a ready-to-run scriptling.
         cd {{.BIN_DIR}}
         for platform in {{.PLATFORMS}}; do
           GOOS=${platform%/*} GOARCH=${platform#*/}
           ext=""
           if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
-          cp scriptling-full-${GOOS}-${GOARCH}${ext} scriptling-full${ext}
-          zip scriptling-full-${GOOS}-${GOARCH}.zip scriptling-full${ext}
-          rm scriptling-full${ext}
+          cp scriptling-full-${GOOS}-${GOARCH}${ext} scriptling${ext}
+          zip scriptling-full-${GOOS}-${GOARCH}.zip scriptling${ext}
+          rm scriptling${ext}
         done
 
   create-plugin-zips:

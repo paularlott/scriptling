@@ -66,8 +66,9 @@ brew install paularlott/tap/scriptling-full
 ```
 
 Release zips and plugin binaries are on the
-[releases page](https://github.com/paularlott/scriptling/releases) — the
-full zip contains `scriptling-full`, and the plugins zip for your platform
+[releases page](https://github.com/paularlott/scriptling/releases) — every
+zip (lean and full alike) contains the binary named plainly `scriptling`,
+and the plugins zip for your platform
 (`plugins-linux-arm64.zip` and friends) contains all four binaries named
 plainly (`sqlite`, `sql`, `valkey`, `badgerdb`). Unzip it and point
 `--plugin-dir` at the folder, or set `SCRIPTLING_PLUGIN_DIR`.
