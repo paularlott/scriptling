@@ -749,8 +749,12 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 				if errObj := checkRepetition(l.IntValue(), int64(len(r.Elements)), maxRepeatElements); errObj != nil {
 					return errObj
 				}
-				result := make([]object.Object, int(l.IntValue())*len(r.Elements))
-				for i := range int(l.IntValue()) {
+				count := int(l.IntValue())
+				if len(r.Elements) == 0 {
+					count = 0
+				}
+				result := make([]object.Object, count*len(r.Elements))
+				for i := range count {
 					copy(result[i*len(r.Elements):], r.Elements)
 				}
 				return &object.List{Elements: result}
@@ -763,8 +767,12 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 				if errObj := checkRepetition(l.IntValue(), int64(len(r.Elements)), maxRepeatElements); errObj != nil {
 					return errObj
 				}
-				result := make([]object.Object, int(l.IntValue())*len(r.Elements))
-				for i := range int(l.IntValue()) {
+				count := int(l.IntValue())
+				if len(r.Elements) == 0 {
+					count = 0
+				}
+				result := make([]object.Object, count*len(r.Elements))
+				for i := range count {
 					copy(result[i*len(r.Elements):], r.Elements)
 				}
 				return &object.Tuple{Elements: result}
@@ -846,8 +854,12 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 				if errObj := checkRepetition(r.IntValue(), int64(len(l.Elements)), maxRepeatElements); errObj != nil {
 					return errObj
 				}
-				result := make([]object.Object, int(r.IntValue())*len(l.Elements))
-				for i := range int(r.IntValue()) {
+				count := int(r.IntValue())
+				if len(l.Elements) == 0 {
+					count = 0
+				}
+				result := make([]object.Object, count*len(l.Elements))
+				for i := range count {
 					copy(result[i*len(l.Elements):], l.Elements)
 				}
 				return &object.Tuple{Elements: result}
@@ -882,8 +894,12 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 				if errObj := checkRepetition(r.IntValue(), int64(len(l.Elements)), maxRepeatElements); errObj != nil {
 					return errObj
 				}
-				result := make([]object.Object, int(r.IntValue())*len(l.Elements))
-				for i := range int(r.IntValue()) {
+				count := int(r.IntValue())
+				if len(l.Elements) == 0 {
+					count = 0
+				}
+				result := make([]object.Object, count*len(l.Elements))
+				for i := range count {
 					copy(result[i*len(l.Elements):], l.Elements)
 				}
 				return &object.List{Elements: result}
@@ -1416,6 +1432,11 @@ func evalStringMultiplication(str string, multiplier int64) object.Object {
 	if multiplier < 0 {
 		return object.NewString("")
 	}
+	// An empty operand stays empty whatever the multiplier: without this the
+	// repeat loop runs multiplier times over nothing, a pure CPU burn.
+	if len(str) == 0 {
+		return object.NewString("")
+	}
 	if errObj := checkRepetition(multiplier, int64(len(str)), maxRepeatBytes); errObj != nil {
 		return errObj
 	}
@@ -1464,6 +1485,9 @@ func evalBytesMultiplication(b *object.Bytes, multiplier int64) object.Object {
 	}
 	src := b.BytesValue()
 	srcLen := len(src)
+	if srcLen == 0 {
+		return object.NewBytes(nil)
+	}
 	if errObj := checkRepetition(multiplier, int64(srcLen), maxRepeatBytes); errObj != nil {
 		return errObj
 	}
@@ -3267,9 +3291,15 @@ func evalTryStatementWithContext(ctx context.Context, ts *ast.TryStatement, env 
 
 	// Always execute finally block if present
 	// Per Python semantics, return in finally overrides the result, and an
-	// exception raised in finally replaces whatever was in flight.
+	// exception raised in finally replaces whatever was in flight — unless
+	// the in-flight result is a protected exception (SystemExit,
+	// PermissionError), which nothing may replace, whichever block raised it.
 	if ts.Finally != nil {
-		result = applyFinallyResult(result, evalWithContext(ctx, ts.Finally, env))
+		if exc, ok := result.(*object.Exception); ok && (exc.IsSystemExit() || exc.IsPermissionError()) {
+			result = applyProtectedFinallyResult(result, evalWithContext(ctx, ts.Finally, env))
+		} else {
+			result = applyFinallyResult(result, evalWithContext(ctx, ts.Finally, env))
+		}
 	}
 
 	return result

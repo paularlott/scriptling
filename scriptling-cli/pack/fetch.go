@@ -265,11 +265,11 @@ func fetchURLDirect(url string, insecure bool, client *http.Client) ([]byte, err
 // indefinitely despite the byte cap. Generous enough for a maximum-size
 // package on a slow link.
 func httpClient(insecure bool) *http.Client {
-	transport := &http.Transport{}
+	// Clone the default transport so proxy-from-environment and the
+	// platform's tuning survive; a zero-value transport dropped all of it.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
 	if insecure {
-		transport = &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-		}
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec
 	}
 	return &http.Client{Transport: transport, Timeout: 10 * time.Minute}
 }

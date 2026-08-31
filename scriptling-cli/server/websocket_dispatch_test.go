@@ -290,3 +290,55 @@ while runtime.server_running():
 		}
 	})
 }
+
+// TestConflictingRoutesFailStartup pins that two wildcard-equivalent routes
+// are a configuration error: which one survived used to depend on map
+// iteration order, with the loser silently dropped.
+func TestConflictingRoutesFailStartup(t *testing.T) {
+	script := writeSetup(t, `
+import scriptling.runtime.http as http
+import scriptling.runtime as runtime
+
+@http.get("/items/{id}/detail")
+def by_id(request):
+    return {"status": 200, "body": "id"}
+
+@http.get("/items/{slug}/detail")
+def by_slug(request):
+    return {"status": 200, "body": "slug"}
+
+runtime.start_server(wait=False)
+while runtime.server_running():
+    yield_now()
+`)
+	_, err := NewServer(ServerConfig{ScriptFile: script})
+	if err == nil {
+		t.Fatal("expected conflicting routes to fail startup")
+	}
+	if !strings.Contains(err.Error(), "conflicts with another route") {
+		t.Fatalf("expected a conflict error naming the route, got: %v", err)
+	}
+
+	// Distinct routes still start cleanly.
+	ok := writeSetup(t, `
+import scriptling.runtime.http as http
+import scriptling.runtime as runtime
+
+@http.get("/items/{id}")
+def by_id(request):
+    return {"status": 200, "body": "id"}
+
+@http.get("/items/{id}/detail")
+def detail(request):
+    return {"status": 200, "body": "detail"}
+
+runtime.start_server(wait=False)
+while runtime.server_running():
+    yield_now()
+`)
+	s, err := NewServer(ServerConfig{ScriptFile: ok})
+	if err != nil {
+		t.Fatalf("distinct routes must not conflict: %v", err)
+	}
+	signalShutdown(t, s)
+}

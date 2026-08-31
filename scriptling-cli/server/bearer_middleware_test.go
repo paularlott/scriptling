@@ -2,7 +2,6 @@ package server
 
 import (
 	"bytes"
-	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -82,8 +81,9 @@ while runtime.server_running():
 }
 
 // TestRequestBodyCap pins the per-request body limit: a body past the cap is
-// refused by the outermost middleware no matter which endpoint it targets,
-// instead of being buffered whole.
+// refused with a deterministic 413 from the body-reading handler, never
+// handed through truncated. JSONRPC must be enabled or /json-rpc 404s before
+// the body is read and the test proves nothing.
 func TestRequestBodyCap(t *testing.T) {
 	script := writeSetup(t, `
 import scriptling.runtime as runtime
@@ -95,6 +95,7 @@ while runtime.server_running():
 		ScriptFile:          script,
 		MaxRequestBodyBytes: 1024,
 		BearerToken:         "seekrit",
+		JSONRPC:             true,
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
@@ -104,25 +105,37 @@ while runtime.server_running():
 	ts := httptest.NewServer(s.buildMux())
 	t.Cleanup(ts.Close)
 
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/json-rpc", nil)
-	req.Header.Set("Authorization", "Bearer seekrit")
-	req.Header.Set("Content-Type", "application/json")
+	post := func(body []byte) int {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/json-rpc", bytes.NewReader(body))
+		req.Header.Set("Authorization", "Bearer seekrit")
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("post: %v", err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	// Sanity: the endpoint answers (a parse error, not a 404), so the cap
+	// assertions below exercise the real body path.
+	if code := post([]byte(`{"jsonrpc":"2.0","id":1,"method":"nope"}`)); code == http.StatusNotFound {
+		t.Fatal("/json-rpc is not registered; the test would be vacuous")
+	}
+
+	// Oversized body: exactly 413, never a truncated payload handed to the
+	// handler as if it were the whole request.
 	chunk := make([]byte, 4096)
 	for i := range chunk {
 		chunk[i] = 'a'
 	}
-	var body []byte
-	for len(body) <= 4096 {
-		body = append(body, chunk...)
+	var big []byte
+	for len(big) <= 4096 {
+		big = append(big, chunk...)
 	}
-	req.Body = io.NopCloser(bytes.NewReader(body))
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("post oversized body: %v", err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode < 400 {
-		t.Fatalf("oversized body accepted: status %d", resp.StatusCode)
+	if code := post(big); code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized body = %d, want 413", code)
 	}
 }
 

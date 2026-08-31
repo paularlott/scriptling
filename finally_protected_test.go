@@ -41,3 +41,39 @@ f()
 		t.Fatalf("expected the SystemExit to survive, got: %v", err)
 	}
 }
+
+// TestFinallyCannotReplaceProtectedExceptionFromExcept covers the path the
+// first test misses: a protected exception raised from an except block (or
+// an else block) flows into the finally fold through the ordinary path and
+// used to be replaceable there too.
+func TestFinallyCannotReplaceProtectedExceptionFromExcept(t *testing.T) {
+	sl := New()
+	if err := sl.SetObjectVar("exit_now", object.NewSystemExit(3, "exit from except")); err != nil {
+		t.Fatalf("set var: %v", err)
+	}
+
+	_, err := sl.Eval(`
+def f():
+    try:
+        raise ValueError("original")
+    except ValueError:
+        raise exit_now
+    finally:
+        raise ValueError("replacement")
+
+try:
+    f()
+except ValueError:
+    pass
+f()
+`)
+	if err == nil {
+		t.Fatal("expected the SystemExit to propagate out")
+	}
+	if strings.Contains(err.Error(), "replacement") {
+		t.Fatalf("finally's exception replaced a SystemExit raised from except: %v", err)
+	}
+	if !strings.Contains(err.Error(), "exit from except") {
+		t.Fatalf("expected the SystemExit to survive, got: %v", err)
+	}
+}

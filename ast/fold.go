@@ -352,8 +352,13 @@ func tryFoldInfix(op Op, left, right Expression) Expression {
 		}
 	}
 
-	// String concatenation
+	// String concatenation. Left unfolded past the fold budget: folding
+	// runs at parse time before any cancellation or recovery, and chained
+	// concatenation repeatedly copies the growing result.
 	if op == OpAdd && lIsStr && rIsStr {
+		if len(lstr.Value)+len(rstr.Value) > maxFoldRepeatBytes {
+			return nil
+		}
 		return &StringLiteral{Value: lstr.Value + rstr.Value}
 	}
 

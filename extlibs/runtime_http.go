@@ -47,9 +47,19 @@ type WebSocketRouteInfo struct {
 	Handler string // "library.function" to call for each connection
 }
 
-// WebSocketServerConn wraps a server-side WebSocket connection
+// MaxWebSocketMessage bounds a single inbound frame set. Without it a
+// client can pin as much memory as it cares to send.
+const MaxWebSocketMessage = 8 << 20 // 8 MiB
+
+// WebSocketServerConn wraps a server-side WebSocket connection.
+//
+// Locking: mu guards state and writes; readMu only serializes readers. A
+// read never holds mu, so Close can always run and unblocks a waiting read
+// (conn.Close is goroutine-safe); previously the sole mutex was held across
+// ReadMessage, so a blocking read also blocked Close and writes forever.
 type WebSocketServerConn struct {
 	mu         sync.Mutex
+	readMu     sync.Mutex
 	conn       *websocket.Conn
 	id         string
 	remoteAddr string
@@ -63,6 +73,7 @@ func NewWebSocketServerConn(conn *websocket.Conn, id string) *WebSocketServerCon
 	if conn.RemoteAddr() != nil {
 		addr = conn.RemoteAddr().String()
 	}
+	conn.SetReadLimit(MaxWebSocketMessage)
 	return &WebSocketServerConn{
 		conn:       conn,
 		id:         id,
@@ -84,12 +95,17 @@ func (c *WebSocketServerConn) RemoteAddr() string {
 // ReadWithTimeout reads a message with timeout. Returns messageType, data, error.
 // On timeout, returns 0, nil, nil
 func (c *WebSocketServerConn) ReadWithTimeout(timeout time.Duration) (int, []byte, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	// Serialize readers without holding the state lock: the read may block
+	// indefinitely, and Close has to stay free to cut it short.
+	c.readMu.Lock()
+	defer c.readMu.Unlock()
 
+	c.mu.Lock()
 	if c.closed {
+		c.mu.Unlock()
 		return 0, nil, net.ErrClosed
 	}
+	c.mu.Unlock()
 
 	if timeout > 0 {
 		deadline := time.Now().Add(timeout)
@@ -107,8 +123,12 @@ func (c *WebSocketServerConn) ReadWithTimeout(timeout time.Duration) (int, []byt
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 			return 0, nil, nil
 		}
-		c.closed = true
-		close(c.closedCh)
+		c.mu.Lock()
+		if !c.closed {
+			c.closed = true
+			close(c.closedCh)
+		}
+		c.mu.Unlock()
 		return 0, nil, err
 	}
 	return msgType, data, nil

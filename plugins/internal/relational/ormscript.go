@@ -50,6 +50,7 @@ def _orm_renumber(fragment, ctx):
         return fragment
     out = ""
     in_string = False
+    in_escape_string = False
     in_ident = False
     i = 0
     n = len(fragment)
@@ -57,12 +58,20 @@ def _orm_renumber(fragment, ctx):
         ch = fragment[i]
         if in_string:
             out = out + ch
+            if in_escape_string and ch == "\\":
+                # E'...' strings: a backslash escapes the next character,
+                # including a quote.
+                if i + 1 < n:
+                    out = out + fragment[i + 1]
+                    i = i + 2
+                    continue
             if ch == "'":
                 if i + 1 < n and fragment[i + 1] == "'":
                     out = out + "'"
                     i = i + 2
                     continue
                 in_string = False
+                in_escape_string = False
             i = i + 1
             continue
         if in_ident:
@@ -73,6 +82,9 @@ def _orm_renumber(fragment, ctx):
             continue
         if ch == "'":
             in_string = True
+            # E'...' (escape string): the preceding character is the E.
+            if i > 0 and (fragment[i - 1] == "E" or fragment[i - 1] == "e"):
+                in_escape_string = True
             out = out + ch
             i = i + 1
             continue
@@ -89,13 +101,19 @@ def _orm_renumber(fragment, ctx):
             i = j
             continue
         if ch == "/" and i + 1 < n and fragment[i + 1] == "*":
+            # Block comments nest in postgres.
             j = i + 2
-            while j + 1 < n and not (fragment[j] == "*" and fragment[j + 1] == "/"):
+            depth = 1
+            while j < n and depth > 0:
+                if fragment[j] == "/" and j + 1 < n and fragment[j + 1] == "*":
+                    depth = depth + 1
+                    j = j + 2
+                    continue
+                if fragment[j] == "*" and j + 1 < n and fragment[j + 1] == "/":
+                    depth = depth - 1
+                    j = j + 2
+                    continue
                 j = j + 1
-            if j + 1 < n:
-                j = j + 2
-            else:
-                j = n
             out = out + fragment[i:j]
             i = j
             continue

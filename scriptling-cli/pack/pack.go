@@ -95,20 +95,35 @@ func Pack(srcDir, dst string, force bool) (string, []string, error) {
 		}
 	}
 	// An output living inside the source tree would include itself in the
-	// walk once the archive outlives it.
-	absDst, _ := filepath.Abs(dst)
-	absSrc, _ := filepath.Abs(srcDir)
-	if absDst == absSrc || strings.HasPrefix(absDst, absSrc+string(os.PathSeparator)) {
+	// walk once the archive outlives it. Compare canonical paths: a symlinked
+	// destination parent can route an apparently outside path back inside.
+	canonicalSrc, err := filepath.EvalSymlinks(srcDir)
+	if err != nil {
+		return "", nil, fmt.Errorf("source not readable: %w", err)
+	}
+	dstParent := filepath.Dir(dst)
+	if parentInfo, statErr := os.Stat(dstParent); statErr == nil && !parentInfo.IsDir() {
+		return "", nil, fmt.Errorf("destination parent is not a directory: %s", dstParent)
+	}
+	canonicalParent, err := filepath.EvalSymlinks(dstParent)
+	if err != nil {
+		return "", nil, fmt.Errorf("destination parent not readable: %w", err)
+	}
+	canonicalDst := filepath.Join(canonicalParent, filepath.Base(dst))
+	canonicalSrc = filepath.Clean(canonicalSrc)
+	if canonicalDst == canonicalSrc || strings.HasPrefix(canonicalDst, canonicalSrc+string(os.PathSeparator)) {
 		return "", nil, fmt.Errorf("output %s lives inside the source tree %s", dst, srcDir)
 	}
 
-	// Write to a temporary sibling and move into place, so a failure mid-pack
-	// leaves any previous artifact untouched instead of a partial zip.
-	tmp := dst + ".tmp"
-	f, err := os.Create(tmp)
+	// Write to a unique temporary sibling and move into place: a failed pack
+	// leaves any previous artifact untouched, and two packs targeting the
+	// same destination cannot clobber each other's staging file.
+	tmpF, err := os.CreateTemp(filepath.Dir(dst), filepath.Base(dst)+".*.tmp")
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to create package: %w", err)
 	}
+	tmp := tmpF.Name()
+	f := tmpF
 	complete := false
 	defer func() {
 		_ = f.Close()
@@ -139,6 +154,16 @@ func Pack(srcDir, dst string, force bool) (string, []string, error) {
 		if strings.HasPrefix(top, ".") {
 			if info.IsDir() {
 				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		// Symlinks are never followed into the archive: a link planted in
+		// the source tree pointing elsewhere would otherwise copy files
+		// from outside it into the package.
+		if info.Mode()&os.ModeSymlink != 0 {
+			if rel != ManifestFile && (includedDirs[top] || additionalFiles[rel] || rel == mainScript) {
+				warnings = append(warnings, fmt.Sprintf("skipping %s: symlink (pack real files, not links)", rel))
 			}
 			return nil
 		}

@@ -3,6 +3,7 @@ package evaluator
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/paularlott/scriptling/object"
 )
@@ -100,5 +101,32 @@ mixed
 	want := `[xyxyxy, xyxyxy, [1, 1], [1, 1], (7, 7), (7, 7), 1000000]`
 	if result.Inspect() != want {
 		t.Fatalf("bounded repetition = %s, want %s", result.Inspect(), want)
+	}
+}
+
+// TestEmptyRepetitionIsInstant pins the CPU guard: multiplying an empty
+// string, bytes or list by a huge count used to loop that many times over
+// nothing (effectively forever) even though the result is empty.
+func TestEmptyRepetitionIsInstant(t *testing.T) {
+	src := `
+huge = 4611686018427387904
+results = [len("" * huge), len(huge * ""), len(bytes() * huge), len(huge * bytes()), [] * huge, huge * [], () * huge, huge * ()]
+`
+	done := make(chan object.Object, 1)
+	go func() {
+		result, err := evalInEnv(t, src+"\nresults")
+		if err != nil {
+			t.Errorf("eval: %v", err)
+		}
+		done <- result
+	}()
+	select {
+	case r := <-done:
+		want := "[0, 0, 0, 0, [], [], (), ()]"
+		if r == nil || r.Inspect() != want {
+			t.Fatalf("empty repetition results = %v, want %s", r, want)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("empty repetition ran past five seconds: CPU burn not short-circuited")
 	}
 }

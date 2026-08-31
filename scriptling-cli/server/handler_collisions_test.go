@@ -115,9 +115,9 @@ def same(request):
 }
 
 // TestConflictingWildcardPatternsSkipped: two routes whose wildcard patterns
-// match the same requests (/items/{name}/detail vs /items/{slug}/detail) must
-// not crash the server at startup — ServeMux rejects the second registration,
-// which is skipped with an error log while every other route keeps serving.
+// match the same requests (/items/{name}/detail vs /items/{slug}/detail) are
+// a configuration error at startup: which one survived used to depend on map
+// iteration order, with the loser silently dropped mid-serve.
 func TestConflictingWildcardPatternsSkipped(t *testing.T) {
 	dir := t.TempDir()
 	for _, sub := range []string{"alpha", "beta"} {
@@ -151,35 +151,9 @@ def ok(request):
 	}
 
 	setup := writeSetup(t, "import alpha.mod\nimport beta.mod\n")
-	s, err := NewServer(ServerConfig{ScriptFile: setup, LibDirs: []string{dir}})
-	if err != nil {
-		t.Fatalf("NewServer: %v", err)
-	}
-
-	// Must not panic; one conflicting route survives, the other is skipped.
-	ts := httptest.NewServer(s.buildMux())
-	defer ts.Close()
-
-	resp, err := http.Get(ts.URL + "/items/x/detail")
-	if err != nil {
-		t.Fatalf("GET /items/x/detail: %v", err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if resp.StatusCode != 200 || (string(body) != `{"src":"alpha"}` && string(body) != `{"src":"beta"}`) {
-		t.Errorf("GET /items/x/detail = %d %s, want 200 from either conflicting route", resp.StatusCode, body)
-	}
-
-	// The modules' non-conflicting routes are unaffected.
-	for _, path := range []string{"/alpha/ok", "/beta/ok"} {
-		resp, err := http.Get(ts.URL + path)
-		if err != nil {
-			t.Fatalf("GET %s: %v", path, err)
-		}
-		resp.Body.Close()
-		if resp.StatusCode != 200 {
-			t.Errorf("GET %s = %d, want 200 (unrelated route must keep serving)", path, resp.StatusCode)
-		}
+	_, err := NewServer(ServerConfig{ScriptFile: setup, LibDirs: []string{dir}})
+	if err == nil || !strings.Contains(err.Error(), "conflicts with another route") {
+		t.Fatalf("expected the conflicting wildcard routes to fail startup, got: %v", err)
 	}
 }
 
@@ -405,23 +379,9 @@ def good(request):
 	}
 
 	setup := writeSetup(t, "import mod\n")
-	s, err := NewServer(ServerConfig{ScriptFile: setup, LibDirs: []string{dir}})
-	if err != nil {
-		t.Fatalf("NewServer: %v", err)
-	}
-
-	// buildMux must not panic on the malformed pattern.
-	ts := httptest.NewServer(s.buildMux())
-	defer ts.Close()
-
-	resp, err := http.Get(ts.URL + "/good")
-	if err != nil {
-		t.Fatalf("GET /good: %v", err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if resp.StatusCode != 200 || !strings.Contains(string(body), `"fn":"good"`) {
-		t.Errorf("GET /good = %d %s, want 200 — unaffected routes must keep serving", resp.StatusCode, body)
+	_, err := NewServer(ServerConfig{ScriptFile: setup, LibDirs: []string{dir}})
+	if err == nil {
+		t.Fatal("expected the malformed route pattern to fail startup")
 	}
 }
 

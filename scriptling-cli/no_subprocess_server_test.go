@@ -82,18 +82,22 @@ runtime.jsonrpc.method("probe", "probe.check")
 			}
 		}()
 
+		var got string
 		select {
-		case got := <-answer:
-			_ = outR.Close()
-			return got
+		case got = <-answer:
 		case <-time.After(20 * time.Second):
 			t.Fatal("jsonrpc server did not answer the probe")
-			return ""
-		case <-done:
-			_ = outR.Close()
-			got := <-answer
-			return got
 		}
+
+		// The next subtest reuses process-global plugin and runtime state:
+		// wait for this command's full cleanup before returning.
+		select {
+		case <-done:
+		case <-time.After(20 * time.Second):
+			t.Fatal("jsonrpc server did not shut down after the probe")
+		}
+		_ = outR.Close()
+		return got
 	}
 
 	t.Run("with the flag the library is gone", func(t *testing.T) {

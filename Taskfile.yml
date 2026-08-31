@@ -220,8 +220,14 @@ tasks:
 
   release:
     desc: Tag the version and create GitHub release with all platform binaries
-    deps: [build-all, homebrew-formula, homebrew-formula-full, homebrew-formula-plugins]
+    deps: [build-all]
     cmds:
+      # Formulas checksum the release zips, so they must run after a completed
+      # build (deps would run them concurrently with it) and before the tag
+      # publishes anything.
+      - task: homebrew-formula
+      - task: homebrew-formula-full
+      - task: homebrew-formula-plugins
       - |
         # Check if tag exists
         if git tag -l v{{.VERSION}} | grep -q v{{.VERSION}}; then

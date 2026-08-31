@@ -443,15 +443,15 @@ func TestIntegrationPostgresJsonbOperators(t *testing.T) {
 	script := strings.ReplaceAll(`
 conn = sql.connect("DSN")
 rows = conn.query('select (\'{"k": 1}\'::jsonb ?| array[\'k\']) as a, (\'{"k": 2}\'::jsonb ?& array[\'k\']) as b, jsonb_exists(\'{"k": 3}\'::jsonb, \'k\') as c, -- comment with ?
-$func$ a ? b $func$ as d, (\'{"k": 4}\'::jsonb @? \'$.k\') as e, $$?$$ as f from (values (1)) as t(x)')
+$func$ a ? b $func$ as d, (\'{"k": 4}\'::jsonb @? \'$.k\') as e, $$?$$ as f, /* outer ? /* nested ? */ still ? */ E\'\\?\' as g from (values (1)) as t(x)')
 conn.close()
-return [rows[0]["a"], rows[0]["b"], rows[0]["c"], rows[0]["d"] == " a ? b ", rows[0]["e"], rows[0]["f"]]
+return [rows[0]["a"], rows[0]["b"], rows[0]["c"], rows[0]["d"] == " a ? b ", rows[0]["e"], rows[0]["f"], rows[0]["g"]]
 `, "DSN", dsn)
 	result, err := evalInProcess(t, &plugin.Policy{Network: &plugin.NetworkPolicy{AllowLoopback: true, AllowPrivateIPs: true}}, "import scriptling.sql as sql\n"+script)
 	if err != nil {
 		t.Fatalf("eval: %v", err)
 	}
-	if result.Inspect() != "[True, True, True, True, True, ?]" {
+	if result.Inspect() != "[True, True, True, True, True, ?, ?]" {
 		t.Fatalf("jsonb operators broken: %s", result.Inspect())
 	}
 }

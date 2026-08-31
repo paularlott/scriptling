@@ -172,6 +172,14 @@ func NewServer(config ServerConfig) (*Server, error) {
 	default:
 	}
 
+	// Conflicting routes are a configuration error, not something to serve
+	// around: decide deterministically before anything binds. The setup
+	// goroutine is not waited for here: a still-running script (a
+	// server_running loop, say) would block the return forever.
+	if err := s.checkRouteConflicts(); err != nil {
+		return nil, err
+	}
+
 	// Build the plugin server if the setup script called runtime.plugin.serve().
 	// Must happen before buildMux so the HTTP /json-rpc handler can use it.
 	s.buildPluginServer()

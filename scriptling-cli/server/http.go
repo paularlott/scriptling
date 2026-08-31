@@ -27,11 +27,47 @@ import (
 	"github.com/paularlott/scriptling/util"
 )
 
-// registerRoute adds one route pattern to the mux. ServeMux panics on
-// patterns it considers conflicting (two wildcards with the same shape, such
-// as /items/{name}/detail and /items/{slug}/detail, or the same pattern
-// registered twice); rather than crashing the server at startup, skip the
-// route with an error log so the rest of the app still serves.
+// checkRouteConflicts registers every collected route into a throwaway mux
+// so ServeMux's own conflict rules decide deterministically at startup: two
+// wildcard-equivalent patterns (say /items/{name}/detail and
+// /items/{slug}/detail) otherwise race map iteration order in buildMux, and
+// whichever registers second was silently dropped.
+func (s *Server) checkRouteConflicts() error {
+	probe := http.NewServeMux()
+	register := func(pattern string) (err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("route %q conflicts with another route: %v", pattern, r)
+			}
+		}()
+		probe.Handle(pattern, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+		return nil
+	}
+	for key := range s.handlers {
+		pattern := key
+		if strings.HasSuffix(key, " /") {
+			pattern += "{$}"
+		}
+		if err := register(pattern); err != nil {
+			return err
+		}
+	}
+	for path := range s.wsHandlers {
+		if err := register(path); err != nil {
+			return err
+		}
+	}
+	for path := range s.staticRoutes {
+		if err := register(path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// registerRoute adds one route pattern to the mux. Conflicts are caught up
+// front by checkRouteConflicts; the recover stays as a last line of defense
+// so a late registration cannot take the process down.
 func registerRoute(mux *http.ServeMux, pattern string, handler http.HandlerFunc) {
 	defer func() {
 		if r := recover(); r != nil {

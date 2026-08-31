@@ -639,7 +639,11 @@ func releaseRemote(ctx context.Context, remote *remoteObject, instance *object.I
 		if inFlight == nil {
 			return nil // a previous attempt failed and was un-claimed; nothing running
 		}
-		<-inFlight
+		select {
+		case <-inFlight:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 		remote.releaseMu.Lock()
 		err := remote.releaseErr
 		remote.releaseMu.Unlock()

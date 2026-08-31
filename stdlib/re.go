@@ -193,7 +193,7 @@ var MatchClass = &object.Class{
 					return errors.NewError("group() takes at most 1 argument (%d given)", len(args))
 				}
 				match := args[0].(*object.Instance)
-				groups := match.Field("groups").(*object.List).Elements
+				groups := match.Field("_groups").(*object.List).Elements
 				groupNum := 0
 				if len(args) == 2 {
 					if args[1].Type() != object.INTEGER_OBJ {
@@ -215,7 +215,7 @@ var MatchClass = &object.Class{
 					return err
 				}
 				match := args[0].(*object.Instance)
-				groups := match.Field("groups").(*object.List).Elements
+				groups := match.Field("_groups").(*object.List).Elements
 				if len(groups) <= 1 {
 					return &object.Tuple{Elements: []object.Object{}}
 				}
@@ -244,7 +244,7 @@ var MatchClass = &object.Class{
 				if groupNum != 0 {
 					return errors.NewError("start() only supports group 0")
 				}
-				return match.Field("start")
+				return match.Field("_start")
 			},
 			HelpText: `start(n=0) - Return start position of nth group`,
 		},
@@ -265,7 +265,7 @@ var MatchClass = &object.Class{
 				if groupNum != 0 {
 					return errors.NewError("end() only supports group 0")
 				}
-				return match.Field("end")
+				return match.Field("_end")
 			},
 			HelpText: `end(n=0) - Return end position of nth group`,
 		},
@@ -287,8 +287,8 @@ var MatchClass = &object.Class{
 					return errors.NewError("span() only supports group 0")
 				}
 				return &object.Tuple{Elements: []object.Object{
-					match.Field("start"),
-					match.Field("end"),
+					match.Field("_start"),
+					match.Field("_end"),
 				}}
 			},
 			HelpText: `span(n=0) - Return (start, end) tuple for nth group`,
@@ -310,10 +310,13 @@ func createMatchInstance(groups []string, start, end int) *object.Instance {
 	for i, group := range groups {
 		groupObjects[i] = object.NewString(group)
 	}
+	// The fields carry underscored names: a field named "start" would shadow
+	// the start() method on the class, making m.start() an "INTEGER object is
+	// not callable" error while m.start silently returned the raw field.
 	return object.NewInstanceWithFields(MatchClass, map[string]object.Object{
-		"groups": &object.List{Elements: groupObjects},
-		"start":  object.NewInteger(int64(start)),
-		"end":    object.NewInteger(int64(end)),
+		"_groups": &object.List{Elements: groupObjects},
+		"_start":  object.NewInteger(int64(start)),
+		"_end":    object.NewInteger(int64(end)),
 	})
 }
 
