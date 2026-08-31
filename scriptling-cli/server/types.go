@@ -74,6 +74,15 @@ type ServerConfig struct {
 	// Argv holds extra CLI arguments (after --) to expose via sys.argv in
 	// every evaluator. Set from cmd.GetArgs() in the server dispatch paths.
 	Argv []string
+	// MaxRequestBodyBytes caps how many bytes a request body may carry
+	// (applies to every route). Zero means the default, DefaultMaxRequestBody.
+	MaxRequestBodyBytes int64
+
+	// WebSocketOrigins restricts which browser origins may upgrade: an
+	// origin allowlist, "*" to allow every origin, or empty for the
+	// same-origin default. Non-browser clients send no Origin header and
+	// are always allowed.
+	WebSocketOrigins []string
 }
 
 // serveSet returns the set of protocols the app bundle declares in its

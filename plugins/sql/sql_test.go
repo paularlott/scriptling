@@ -71,7 +71,10 @@ func TestMySQLConfigFromURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	cfg := mysqlConfigFromURL(parsed)
+	cfg, err := mysqlConfigFromURL(parsed)
+	if err != nil {
+		t.Fatalf("config: %v", err)
+	}
 	if cfg.Net != "tcp" || cfg.Addr != "db.example.com:3307" {
 		t.Fatalf("addr wrong: %s %s", cfg.Net, cfg.Addr)
 	}
@@ -87,7 +90,7 @@ func TestMySQLConfigFromURL(t *testing.T) {
 
 	// Defaults: no port, no credentials, no db.
 	bare, _ := url.Parse("mysql://db.local")
-	cfg = mysqlConfigFromURL(bare)
+	cfg, _ = mysqlConfigFromURL(bare)
 	if cfg.Addr != "db.local:3306" || cfg.User != "" || cfg.DBName != "" {
 		t.Fatalf("defaults wrong: %#v", cfg)
 	}
@@ -95,24 +98,26 @@ func TestMySQLConfigFromURL(t *testing.T) {
 
 // TestMySQLConfigDriverOptionsUnreachableFromURL pins the security-relevant
 // property of the query-param mapping: URL query parameters become session
-// variables (cfg.Params, sent as SET on connect), never driver options. The
-// go-sql-driver fields that would matter for a hostile-server attack —
-// AllowAllFiles (LOAD DATA LOCAL INFILE file reads) among them — are only
-// settable by ParseDSN from a DSN string, so a URL like
-// ?allowAllFiles=true produces `SET allowAllFiles = true` (an unknown system
-// variable the server rejects) and leaves the option struct untouched.
+// variables (cfg.Params, sent as SET on connect), never driver options. tls
+// is the single deliberate exception (its three registered names only, see
+// TestMySQLConfigTLSOption). The go-sql-driver fields that would matter for
+// a hostile-server attack — AllowAllFiles (LOAD DATA LOCAL INFILE file
+// reads) among them — are only settable by ParseDSN from a DSN string, so a
+// URL like ?allowAllFiles=true produces `SET allowAllFiles = true` (an
+// unknown system variable the server rejects) and leaves the option struct
+// untouched.
 func TestMySQLConfigDriverOptionsUnreachableFromURL(t *testing.T) {
-	parsed, err := url.Parse("mysql://user:pass@evil.example.com/db?allowAllFiles=true&tls=true&interpolateParams=true")
+	parsed, err := url.Parse("mysql://user:pass@evil.example.com/db?allowAllFiles=true&interpolateParams=true")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	cfg := mysqlConfigFromURL(parsed)
+	cfg, err := mysqlConfigFromURL(parsed)
+	if err != nil {
+		t.Fatalf("config: %v", err)
+	}
 
 	if cfg.AllowAllFiles {
 		t.Fatal("AllowAllFiles must not be reachable from a URL query parameter")
-	}
-	if cfg.TLSConfig != "" {
-		t.Fatalf("TLSConfig must not be reachable from a URL query parameter, got %q", cfg.TLSConfig)
 	}
 	if cfg.InterpolateParams {
 		t.Fatal("InterpolateParams must not be reachable from a URL query parameter")
@@ -359,4 +364,122 @@ func TestIntegrationMySQLOrm(t *testing.T) {
 		t.Skip("SCRIPTLING_TEST_MYSQL_DSN not set")
 	}
 	runORMIntegration(t, dsn)
+}
+
+// TestMySQLConfigTLSOption pins the one driver option reachable from a URL:
+// tls accepts exactly the driver's three registered names, and anything else
+// is refused rather than becoming a session variable.
+func TestMySQLConfigTLSOption(t *testing.T) {
+	for _, value := range []string{"true", "false", "skip-verify"} {
+		parsed, err := url.Parse("mysql://db.local/db?tls=" + value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg, cfgErr := mysqlConfigFromURL(parsed)
+		if cfgErr != nil || cfg.TLSConfig != value {
+			t.Fatalf("tls=%s: cfg %v err %v", value, cfg, cfgErr)
+		}
+		if _, ok := cfg.Params["tls"]; ok {
+			t.Fatalf("tls=%s leaked into session params", value)
+		}
+	}
+	parsed, err := url.Parse("mysql://db.local/db?tls=custom")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, cfgErr := mysqlConfigFromURL(parsed); cfgErr == nil {
+		t.Fatal("expected an unknown tls name to be refused")
+	}
+}
+
+// TestIntegrationMySQLOrmExternalIterate proves the external-mode multi-driver
+// wrapper carries query_iter: iterate() used to raise because the wrapper
+// only proxied query and execute. Runs against live MySQL when the DSN env is
+// set, through a real external plugin binary.
+func TestIntegrationMySQLOrmExternalIterate(t *testing.T) {
+	dsn := os.Getenv("SCRIPTLING_TEST_MYSQL_DSN")
+	if dsn == "" {
+		t.Skip("SCRIPTLING_TEST_MYSQL_DSN not set")
+	}
+	bin := plugintest.BuildPlugin(t, "./cmd")
+	script := "import scriptling.sql as sql\n" + `
+conn = sql.connect("` + dsn + `")
+orm = conn.get_orm()
+orm.drop_table("scriptling_ext_iter")
+(orm.create_table("scriptling_ext_iter")
+ .column("id", "integer", primary_key=True, autoincrement=True)
+ .column("v", "text")
+ .execute())
+orm.insert("scriptling_ext_iter", {"v": "a"})
+orm.insert("scriptling_ext_iter", {"v": "b"})
+total = 0
+for row in orm.select("scriptling_ext_iter").order_by("id").iterate():
+    total = total + 1
+orm.drop_table("scriptling_ext_iter")
+conn.close()
+return total
+`
+	result, err := plugintest.External(t, bin,
+		&plugin.Policy{Network: &plugin.NetworkPolicy{AllowLoopback: true, AllowPrivateIPs: true}}, script)
+	if err != nil {
+		t.Fatalf("external eval: %v", err)
+	}
+	if result.Inspect() != "2" {
+		t.Fatalf("iterated %s rows through the external plugin, want 2", result.Inspect())
+	}
+}
+
+// TestIntegrationPostgresJsonbOperators pins placeholder renumbering against
+// postgres: the jsonb operators ?|, ?& and @?, question marks in comments,
+// in quoted literals, and inside dollar-quoted strings ($$...$$ and
+// $tag$...$tag$) are not placeholders and must survive renumbering intact.
+// The bare jsonb ? operator is inherently ambiguous with a placeholder, so
+// jsonb_exists() is the spelling that works.
+func TestIntegrationPostgresJsonbOperators(t *testing.T) {
+	dsn := os.Getenv("SCRIPTLING_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("SCRIPTLING_TEST_POSTGRES_DSN not set")
+	}
+	script := strings.ReplaceAll(`
+conn = sql.connect("DSN")
+rows = conn.query('select (\'{"k": 1}\'::jsonb ?| array[\'k\']) as a, (\'{"k": 2}\'::jsonb ?& array[\'k\']) as b, jsonb_exists(\'{"k": 3}\'::jsonb, \'k\') as c, -- comment with ?
+$func$ a ? b $func$ as d, (\'{"k": 4}\'::jsonb @? \'$.k\') as e, $$?$$ as f from (values (1)) as t(x)')
+conn.close()
+return [rows[0]["a"], rows[0]["b"], rows[0]["c"], rows[0]["d"] == " a ? b ", rows[0]["e"], rows[0]["f"]]
+`, "DSN", dsn)
+	result, err := evalInProcess(t, &plugin.Policy{Network: &plugin.NetworkPolicy{AllowLoopback: true, AllowPrivateIPs: true}}, "import scriptling.sql as sql\n"+script)
+	if err != nil {
+		t.Fatalf("eval: %v", err)
+	}
+	if result.Inspect() != "[True, True, True, True, True, ?]" {
+		t.Fatalf("jsonb operators broken: %s", result.Inspect())
+	}
+}
+
+// TestIntegrationPostgresUppercaseScheme pins case-insensitive scheme
+// handling: Postgres:// used to reach pgx unnormalized (and the script-side
+// dialect check fall through to the MySQL kit).
+func TestIntegrationPostgresUppercaseScheme(t *testing.T) {
+	dsn := os.Getenv("SCRIPTLING_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("SCRIPTLING_TEST_POSTGRES_DSN not set")
+	}
+	script := strings.ReplaceAll(`
+conn = sql.connect("DSN")
+orm = conn.get_orm()
+orm.drop_table("scriptling_case")
+(orm.create_table("scriptling_case").column("id", "integer", primary_key=True, autoincrement=True).execute())
+orm.insert("scriptling_case", {})
+rows = orm.select("scriptling_case").where("id", "=", 1).fetch()
+orm.drop_table("scriptling_case")
+conn.close()
+return len(rows)
+`, "DSN", "Postgres"+strings.TrimPrefix(dsn, "postgres"))
+	result, err := evalInProcess(t, &plugin.Policy{Network: &plugin.NetworkPolicy{AllowLoopback: true, AllowPrivateIPs: true}}, "import scriptling.sql as sql\n"+script)
+	if err != nil {
+		t.Fatalf("eval: %v", err)
+	}
+	if result.Inspect() != "1" {
+		t.Fatalf("uppercase-scheme connection broken: %s", result.Inspect())
+	}
 }

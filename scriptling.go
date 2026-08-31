@@ -357,7 +357,7 @@ func (p *Scriptling) loadLibraryWithDepth(name string, depth int) error {
 		// Try from script libraries first
 		if lib, ok := p.scriptLibraries[name]; ok {
 			if lib.store == nil {
-				store, err := p.evaluateScriptLibrary(name, lib.source)
+				store, err := p.evaluateScriptLibrary(name, lib.source, nil)
 				if err != nil {
 					return err
 				}
@@ -1021,7 +1021,7 @@ func (p *Scriptling) SetLibraryLoader(loader LibraryLoader) {
 // This is useful for loading libraries into cloned environments for background tasks.
 // Returns an error if the library cannot be loaded.
 func (p *Scriptling) LoadLibraryIntoEnv(name string, env *object.Environment) error {
-	loaded, err := p.loadLibraryIntoEnv(name, env)
+	loaded, err := p.loadLibraryIntoEnv(name, env, nil)
 	if err != nil {
 		return err
 	}
@@ -1037,7 +1037,7 @@ func (p *Scriptling) LoadLibraryIntoEnv(name string, env *object.Environment) er
 					return fmt.Errorf("failed to register library %s: %w", name, regErr)
 				}
 				// Retry after loading
-				loaded, err = p.loadLibraryIntoEnv(name, env)
+				loaded, err = p.loadLibraryIntoEnv(name, env, nil)
 				if err != nil {
 					return err
 				}
@@ -1064,13 +1064,13 @@ func (p *Scriptling) SetSourceFile(name string) {
 
 // loadLibraryIntoEnv loads a script or registered library into the given environment as a dict.
 // Returns true if the library was found and loaded, false otherwise.
-func (p *Scriptling) loadLibraryIntoEnv(name string, env *object.Environment) (bool, error) {
+func (p *Scriptling) loadLibraryIntoEnv(name string, env *object.Environment, chain []string) (bool, error) {
 	var libDict *object.Dict
 
 	// Try from script libraries
 	if lib, ok := p.scriptLibraries[name]; ok {
 		if lib.store == nil {
-			store, err := p.evaluateScriptLibrary(name, lib.source)
+			store, err := p.evaluateScriptLibrary(name, lib.source, chain)
 			if err != nil {
 				return false, err
 			}
@@ -1118,7 +1118,19 @@ func (p *Scriptling) loadLibraryIntoEnv(name string, env *object.Environment) (b
 	return true, nil
 }
 
-func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[string]object.Object, error) {
+// evaluateScriptLibrary evaluates a script library's source in a fresh
+// environment. chain holds the modules currently being evaluated on this
+// import path; a name already in it is a circular import, which without the
+// check re-evaluates modules forever (a module's exported names only exist
+// once its evaluation completes, so a cycle never sees a "already imported").
+func (p *Scriptling) evaluateScriptLibrary(name string, script string, chain []string) (map[string]object.Object, error) {
+	for _, inFlight := range chain {
+		if inFlight == name {
+			return nil, fmt.Errorf("circular import: %s", strings.Join(append(append([]string{}, chain...), name), " -> "))
+		}
+	}
+	childChain := append(append([]string{}, chain...), name)
+
 	// Create a new environment for the library
 	libEnv := object.NewEnvironment()
 
@@ -1141,7 +1153,7 @@ func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[stri
 		}
 
 		for attempts := 0; attempts < 2; attempts++ {
-			loaded, err := p.loadLibraryIntoEnv(libName, libEnv)
+			loaded, err := p.loadLibraryIntoEnv(libName, libEnv, childChain)
 			if err != nil {
 				return err
 			}

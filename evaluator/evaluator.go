@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/errors"
@@ -745,6 +746,9 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 				if l.IntValue() <= 0 {
 					return &object.List{Elements: []object.Object{}}
 				}
+				if errObj := checkRepetition(l.IntValue(), int64(len(r.Elements)), maxRepeatElements); errObj != nil {
+					return errObj
+				}
 				result := make([]object.Object, int(l.IntValue())*len(r.Elements))
 				for i := range int(l.IntValue()) {
 					copy(result[i*len(r.Elements):], r.Elements)
@@ -755,6 +759,9 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 			if operator == ast.OpMul {
 				if l.IntValue() <= 0 {
 					return &object.Tuple{Elements: []object.Object{}}
+				}
+				if errObj := checkRepetition(l.IntValue(), int64(len(r.Elements)), maxRepeatElements); errObj != nil {
+					return errObj
 				}
 				result := make([]object.Object, int(l.IntValue())*len(r.Elements))
 				for i := range int(l.IntValue()) {
@@ -836,6 +843,9 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 				if r.IntValue() <= 0 {
 					return &object.Tuple{Elements: []object.Object{}}
 				}
+				if errObj := checkRepetition(r.IntValue(), int64(len(l.Elements)), maxRepeatElements); errObj != nil {
+					return errObj
+				}
 				result := make([]object.Object, int(r.IntValue())*len(l.Elements))
 				for i := range int(r.IntValue()) {
 					copy(result[i*len(l.Elements):], l.Elements)
@@ -868,6 +878,9 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 			if r, ok := right.(*object.Integer); ok {
 				if r.IntValue() <= 0 {
 					return &object.List{Elements: []object.Object{}}
+				}
+				if errObj := checkRepetition(r.IntValue(), int64(len(l.Elements)), maxRepeatElements); errObj != nil {
+					return errObj
 				}
 				result := make([]object.Object, int(r.IntValue())*len(l.Elements))
 				for i := range int(r.IntValue()) {
@@ -1377,9 +1390,34 @@ func formatPercentValue(spec string, conversion byte, val object.Object) (string
 	}
 }
 
+// Repetition result quotas: a repetition is how a script asks for a huge
+// allocation in one expression, so the result size is bounded and the refusal
+// is a clean error rather than an opaque runtime panic (or, for strings, a
+// panic that escapes evaluation) or an OOM kill.
+const (
+	maxRepeatBytes    = 1 << 30 // 1 GiB per string/bytes repetition result
+	maxRepeatElements = 1 << 27 // ~134M elements (~1 GiB of object pointers)
+)
+
+// checkRepetition validates multiplier*unitLen against limit. Returns an
+// error object to hand back from the fast paths, or nil when the repetition
+// may proceed (including the trivially-empty cases).
+func checkRepetition(multiplier, unitLen, limit int64) object.Object {
+	if multiplier <= 0 || unitLen == 0 {
+		return nil
+	}
+	if multiplier > limit/unitLen {
+		return errors.NewError("repetition result too large (over %d units)", limit)
+	}
+	return nil
+}
+
 func evalStringMultiplication(str string, multiplier int64) object.Object {
 	if multiplier < 0 {
 		return object.NewString("")
+	}
+	if errObj := checkRepetition(multiplier, int64(len(str)), maxRepeatBytes); errObj != nil {
+		return errObj
 	}
 	return object.NewString(strings.Repeat(str, int(multiplier)))
 }
@@ -1426,8 +1464,8 @@ func evalBytesMultiplication(b *object.Bytes, multiplier int64) object.Object {
 	}
 	src := b.BytesValue()
 	srcLen := len(src)
-	if srcLen > 0 && int64(srcLen) > math.MaxInt64/multiplier {
-		return errors.NewError("bytes repetition result too large")
+	if errObj := checkRepetition(multiplier, int64(srcLen), maxRepeatBytes); errObj != nil {
+		return errObj
 	}
 	out := make([]byte, 0, srcLen*int(multiplier))
 	for i := int64(0); i < multiplier; i++ {
@@ -2006,7 +2044,15 @@ func createInstance(ctx context.Context, class *object.Class, args []object.Obje
 	if del, ok := class.LookupMember("__del__"); ok {
 		delMethod := del
 		runtime.SetFinalizer(instance, func(inst *object.Instance) {
-			applyFunction(context.Background(), delMethod, []object.Object{inst}, nil, object.NewEnvironment())
+			// A finalizer runs on the runtime's own goroutine with no
+			// caller to recover for it: a panic here is fatal to the host
+			// process, so give the destructor its own boundary and a
+			// bounded context. It still has no caller cancellation to
+			// inherit and runs at the GC's whim, not the script's.
+			defer func() { _ = recover() }()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			applyFunction(ctx, delMethod, []object.Object{inst}, nil, object.NewEnvironment())
 		})
 	}
 
@@ -3149,13 +3195,10 @@ func evalTryStatementWithContext(ctx context.Context, ts *ast.TryStatement, env 
 		// PermissionError exceptions also bypass try/except — security violations
 		// must not be silently swallowed by scripts.
 		if exc, ok := result.(*object.Exception); ok && (exc.IsSystemExit() || exc.IsPermissionError()) {
-			// Execute finally block before propagating
+			// Execute finally block before propagating. The protected
+			// exception wins over whatever the finally block does.
 			if ts.Finally != nil {
-				if finallyResult := evalWithContext(ctx, ts.Finally, env); finallyResult != nil {
-					if rv, ok := finallyResult.(*object.ReturnValue); ok {
-						result = unwrapReturnValue(rv)
-					}
-				}
+				result = applyProtectedFinallyResult(result, evalWithContext(ctx, ts.Finally, env))
 			}
 			return result // always propagates
 		}
@@ -3223,15 +3266,38 @@ func evalTryStatementWithContext(ctx context.Context, ts *ast.TryStatement, env 
 	}
 
 	// Always execute finally block if present
-	// Per Python semantics, return in finally overrides the result.
+	// Per Python semantics, return in finally overrides the result, and an
+	// exception raised in finally replaces whatever was in flight.
 	if ts.Finally != nil {
-		if finallyResult := evalWithContext(ctx, ts.Finally, env); finallyResult != nil {
-			if rv, ok := finallyResult.(*object.ReturnValue); ok {
-				result = unwrapReturnValue(rv)
-			}
-		}
+		result = applyFinallyResult(result, evalWithContext(ctx, ts.Finally, env))
 	}
 
+	return result
+}
+
+// applyFinallyResult folds a finally block's outcome into the try statement's
+// pending result. A return still overrides (kept as a ReturnValue marker so a
+// later statement cannot replace it); an exception raised in finally replaces
+// the in-flight one (Python semantics); break and continue propagate rather
+// than being silently dropped. A finally that ends normally changes nothing.
+func applyFinallyResult(result, finallyResult object.Object) object.Object {
+	if finallyResult == nil {
+		return result
+	}
+	switch finallyResult.(type) {
+	case *object.ReturnValue, *object.Exception, *object.Error, *object.Break, *object.Continue:
+		return finallyResult
+	default:
+		return result
+	}
+}
+
+// applyProtectedFinallyResult runs cleanup for exceptions that must not be
+// caught or replaced: SystemExit and PermissionError. Whatever the finally
+// block does, the protected exception keeps propagating — letting a raise in
+// finally replace it would give a handler the chance to swallow an exit or a
+// security refusal.
+func applyProtectedFinallyResult(result, finallyResult object.Object) object.Object {
 	return result
 }
 

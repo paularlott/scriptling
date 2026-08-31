@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"sync"
 	"sync/atomic"
 
 	"github.com/paularlott/scriptling/evaliface"
@@ -14,11 +15,20 @@ import (
 const remoteFieldName = "__plugin_remote"
 
 type remoteObject struct {
-	Client   *Client
-	Library  string
-	Class    string
-	ID       string
-	Released bool
+	Client  *Client
+	Library string
+	Class   string
+	ID      string
+	// released is atomic: the GC finalizer goroutine and an explicit
+	// release can race. 0 live, 1 release in flight or done.
+	released int32
+
+	// releaseMu/releaseDone/releaseErr publish the in-flight release's
+	// outcome so concurrent releasers wait for it instead of reporting
+	// success while the destroy may still fail.
+	releaseMu   sync.Mutex
+	releaseDone chan struct{}
+	releaseErr  error
 }
 
 type callbackSet struct {

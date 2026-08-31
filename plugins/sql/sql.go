@@ -24,7 +24,6 @@ import (
 	"net"
 	"net/url"
 	"strings"
-	"sync"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/jackc/pgx/v5"
@@ -75,8 +74,8 @@ The server address must pass the host's network policy.`
 // Build returns the scriptling.sql library. policy is read at call time so an
 // external plugin sees the policy its handshake delivered.
 func Build(policy plugin.PolicySource) *object.Library {
-	connectionClass := relational.ConnectionClass(func(kwargs object.Kwargs, dsn string) (*relational.Conn, error) {
-		return connect(policy, dsn)
+	connectionClass := relational.ConnectionClass(func(ctx context.Context, kwargs object.Kwargs, dsn string) (*relational.Conn, error) {
+		return connect(ctx, policy, dsn)
 	}).Build()
 
 	functions := map[string]*object.Builtin{
@@ -89,7 +88,7 @@ func Build(policy plugin.PolicySource) *object.Library {
 				if err != nil {
 					return err
 				}
-				conn, connErr := connect(policy, dsn)
+				conn, connErr := connect(ctx, policy, dsn)
 				if connErr != nil {
 					return &object.Error{Message: connErr.Error()}
 				}
@@ -107,7 +106,7 @@ func Build(policy plugin.PolicySource) *object.Library {
 	return object.NewLibrary("scriptling._sql", functions, constants, Description)
 }
 
-func connect(policy plugin.PolicySource, dsn string) (*relational.Conn, error) {
+func connect(ctx context.Context, policy plugin.PolicySource, dsn string) (*relational.Conn, error) {
 	parsed, err := url.Parse(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("invalid dsn: %w", err)
@@ -117,11 +116,14 @@ func connect(policy plugin.PolicySource, dsn string) (*relational.Conn, error) {
 		return nil, err
 	}
 
+	// url.Parse lowercases the scheme; hand the drivers the re-serialized
+	// form so a Postgres:// DSN reaches pgx with the scheme it expects.
+	dsn = parsed.String()
 	switch strings.ToLower(parsed.Scheme) {
 	case "postgres", "postgresql":
-		return openPostgres(dsn, guard)
+		return openPostgres(ctx, dsn, guard)
 	case "mysql", "mariadb":
-		return openMySQL(parsed, guard)
+		return openMySQL(ctx, parsed, guard)
 	case "":
 		return nil, fmt.Errorf("dsn requires a scheme (postgres://, mysql:// or mariadb://)")
 	default:
@@ -129,15 +131,7 @@ func connect(policy plugin.PolicySource, dsn string) (*relational.Conn, error) {
 	}
 }
 
-// pgConfigCache maps a guard-free DSN to its registered connector name.
-// stdlib.RegisterConnConfig appends to a global registry with no removal,
-// so long-lived hosts opening many connections would grow it forever;
-// caching one entry per distinct DSN bounds the common no-policy case.
-// Guarded configs are never cached: the dialer closes over one specific
-// guard, and hosts may connect with the same DSN under different policies.
-var pgConfigCache sync.Map // dsn string -> registered name (string)
-
-func openPostgres(dsn string, guard *netsecurity.Guard) (*relational.Conn, error) {
+func openPostgres(ctx context.Context, dsn string, guard *netsecurity.Guard) (*relational.Conn, error) {
 	cfg, err := pgx.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("parse postgres dsn: %w", err)
@@ -145,32 +139,22 @@ func openPostgres(dsn string, guard *netsecurity.Guard) (*relational.Conn, error
 	if guard != nil {
 		cfg.DialFunc = guard.DialContext
 	}
-	// RegisterConnConfig mints a private name backed by cfg; database/sql
-	// opens through it, keeping the guarded dialer in place.
-	var registered string
-	if guard == nil {
-		if cached, ok := pgConfigCache.Load(dsn); ok {
-			registered = cached.(string)
-		} else {
-			registered = stdlib.RegisterConnConfig(cfg)
-			pgConfigCache.Store(dsn, registered)
-		}
-	} else {
-		registered = stdlib.RegisterConnConfig(cfg)
-	}
-	db, err := sql.Open("pgx", registered)
-	if err != nil {
-		return nil, fmt.Errorf("connect postgres: %w", err)
-	}
-	if err := db.Ping(); err != nil {
+	// OpenDB takes the config directly: RegisterConnConfig would mint an
+	// entry in a process-global registry that has no unregister, leaking one
+	// name per connect attempt (including failed pings).
+	db := stdlib.OpenDB(*cfg)
+	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("connect postgres: %w", err)
 	}
 	return &relational.Conn{DB: db}, nil
 }
 
-func openMySQL(parsed *url.URL, guard *netsecurity.Guard) (*relational.Conn, error) {
-	cfg := mysqlConfigFromURL(parsed)
+func openMySQL(ctx context.Context, parsed *url.URL, guard *netsecurity.Guard) (*relational.Conn, error) {
+	cfg, cfgErr := mysqlConfigFromURL(parsed)
+	if cfgErr != nil {
+		return nil, cfgErr
+	}
 	if guard != nil {
 		cfg.DialFunc = guard.DialContext
 	}
@@ -181,7 +165,7 @@ func openMySQL(parsed *url.URL, guard *netsecurity.Guard) (*relational.Conn, err
 		return nil, fmt.Errorf("connect mysql: %w", err)
 	}
 	db := sql.OpenDB(connector)
-	if err := db.Ping(); err != nil {
+	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("connect mysql: %w", err)
 	}
@@ -190,10 +174,11 @@ func openMySQL(parsed *url.URL, guard *netsecurity.Guard) (*relational.Conn, err
 
 // mysqlConfigFromURL converts a mysql:// or mariadb:// URL into the driver's
 // Config. Query parameters pass through as session variables (cfg.Params,
-// sent as SET on connect) — charset, sql_mode, time_zone and friends. Driver
-// options (allowAllFiles, tls, timeouts) are DSN-string settings and are
+// sent as SET on connect) — charset, sql_mode, time_zone and friends. tls is
+// the one driver option reachable from the URL (true, false, skip-verify);
+// the others (allowAllFiles, timeouts) are DSN-string settings and stay
 // deliberately unreachable from a URL query.
-func mysqlConfigFromURL(parsed *url.URL) *mysql.Config {
+func mysqlConfigFromURL(parsed *url.URL) (*mysql.Config, error) {
 	cfg := mysql.NewConfig()
 	cfg.Net = "tcp"
 	host := parsed.Hostname()
@@ -213,10 +198,23 @@ func mysqlConfigFromURL(parsed *url.URL) *mysql.Config {
 			cfg.Params = make(map[string]string)
 		}
 		for key, values := range parsed.Query() {
-			if len(values) > 0 {
-				cfg.Params[key] = values[0]
+			if len(values) == 0 {
+				continue
 			}
+			// tls is the one driver option worth reaching from a URL; the
+			// driver's registered names are exactly these three. Everything
+			// else stays a session variable.
+			if key == "tls" {
+				switch value := values[0]; value {
+				case "true", "false", "skip-verify":
+					cfg.TLSConfig = value
+				default:
+					return nil, fmt.Errorf("invalid mysql tls option %q (true, false or skip-verify)", value)
+				}
+				continue
+			}
+			cfg.Params[key] = values[0]
 		}
 	}
-	return cfg
+	return cfg, nil
 }

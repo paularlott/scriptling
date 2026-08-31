@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/paularlott/scriptling/conversion"
@@ -580,7 +581,7 @@ func initPluginObject(ctx context.Context, instance *object.Instance, client *Cl
 }
 
 func callPluginMethod(ctx context.Context, remote *remoteObject, name string, kwargs object.Kwargs, args ...object.Object) object.Object {
-	if remote.Released {
+	if atomic.LoadInt32(&remote.released) != 0 {
 		return pluginErr("plugin object has been released")
 	}
 	callbacks := newCallbackSet()
@@ -626,17 +627,48 @@ func ReleaseWithContext(ctx context.Context, obj object.Object) error {
 }
 
 func releaseRemote(ctx context.Context, remote *remoteObject, instance *object.Instance) error {
-	if remote.Released {
-		return nil
+	// Claim the release under the mutex together with publishing its done
+	// channel: concurrent releasers (GC finalizer, explicit release) then
+	// wait for the winner's outcome instead of returning success while the
+	// destroy may still fail.
+	done := make(chan struct{})
+	remote.releaseMu.Lock()
+	if !atomic.CompareAndSwapInt32(&remote.released, 0, 1) {
+		inFlight := remote.releaseDone
+		remote.releaseMu.Unlock()
+		if inFlight == nil {
+			return nil // a previous attempt failed and was un-claimed; nothing running
+		}
+		<-inFlight
+		remote.releaseMu.Lock()
+		err := remote.releaseErr
+		remote.releaseMu.Unlock()
+		return err
 	}
-	remote.Released = true
+	remote.releaseDone = done
+	remote.releaseMu.Unlock()
+
+	var dErr error
+	object.RunBlocking(ctx, func() { dErr = remote.Client.DestroyObject(ctx, remote.ID) })
+
+	remote.releaseMu.Lock()
+	remote.releaseErr = dErr
+	remote.releaseMu.Unlock()
+	close(done)
+
+	if dErr != nil {
+		// A failed destroy stays retryable: un-claim so a later explicit
+		// release or the finalizer tries again rather than leaking the
+		// remote object on one transient RPC failure. Destroy is
+		// idempotent, so a retry after a lost reply is safe too.
+		atomic.StoreInt32(&remote.released, 0)
+		return dErr
+	}
 	if instance != nil {
 		_ = object.ClearGCReleaseHook(instance)
 		instance.DeleteField(remoteFieldName)
 	}
-	var dErr error
-	object.RunBlocking(ctx, func() { dErr = remote.Client.DestroyObject(ctx, remote.ID) })
-	return dErr
+	return nil
 }
 
 func installRemoteFinalizer(instance *object.Instance, remote *remoteObject) {

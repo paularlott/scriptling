@@ -17,6 +17,7 @@
 package badgerdb
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -119,6 +120,9 @@ func (s *store) Get(ctx context.Context, key string) (string, bool, error) {
 	if err != nil {
 		return "", false, fmt.Errorf("get %s: %w", key, err)
 	}
+	if isHashValue(value) {
+		return "", false, fmt.Errorf("get %s: %w", key, errWrongType)
+	}
 	return string(value), true, nil
 }
 
@@ -128,6 +132,8 @@ func (s *store) Set(ctx context.Context, key, value string, ttlSeconds int64) er
 		entry = entry.WithTTL(time.Duration(ttlSeconds) * time.Second)
 	}
 	if err := s.db.Update(func(txn *badgerdb.Txn) error {
+		// SET replaces whatever the key held, hash included (Redis
+		// semantics); only reads and counter operations are type-checked.
 		return txn.SetEntry(entry)
 	}); err != nil {
 		return fmt.Errorf("set %s: %w", key, err)
@@ -244,6 +250,9 @@ func (s *store) Incr(ctx context.Context, key string, amount int64) (int64, erro
 			if err != nil {
 				return err
 			}
+			if isHashValue(raw) {
+				return errWrongType
+			}
 			current, convErr := strconv.ParseInt(string(raw), 10, 64)
 			if convErr != nil {
 				return fmt.Errorf("incr %s: value is not an integer", key)
@@ -338,6 +347,9 @@ func (s *store) MGet(ctx context.Context, keys []string) ([]*string, error) {
 			if err != nil {
 				return err
 			}
+			if isHashValue(raw) {
+				return errWrongType
+			}
 			value := string(raw)
 			values[i] = &value
 		}
@@ -354,6 +366,7 @@ func (s *store) MSet(ctx context.Context, mapping map[string]string, ttlSeconds 
 		return nil
 	}
 	err := s.db.Update(func(txn *badgerdb.Txn) error {
+		// MSET replaces like SET does, whatever the key held.
 		for key, value := range mapping {
 			entry := badgerdb.NewEntry([]byte(key), []byte(value))
 			if ttlSeconds > 0 {
@@ -375,7 +388,7 @@ func (s *store) SetNX(ctx context.Context, key, value string, ttlSeconds int64) 
 	stored := false
 	err := s.db.Update(func(txn *badgerdb.Txn) error {
 		if _, err := txn.Get([]byte(key)); err == nil {
-			return nil // exists; the write is refused
+			return nil // exists (any kind of value); the write is refused
 		} else if !errors.Is(err, badgerdb.ErrKeyNotFound) {
 			return err
 		}
@@ -395,13 +408,28 @@ func (s *store) SetNX(ctx context.Context, key, value string, ttlSeconds int64) 
 	return stored, nil
 }
 
-// A hash occupies one badger key holding its fields as a JSON object, so the
-// whole key lives or dies together exactly as it does on valkey: keys(),
-// exists, delete, expire, ttl and persist see the hash as one key with one
-// expiry covering every field, and the key vanishes with its last field.
-// Field writes rewrite the object inside one transaction, so same-key races
-// conflict-detect rather than interleave, and a remaining expiry survives the
-// rewrite like INCR's does.
+// errWrongType is the Redis-style refusal a hash command gets when the key
+// holds a plain value (and vice versa), so neither side can silently destroy
+// the other's data.
+var errWrongType = errors.New("WRONGTYPE: key holds a different kind of value")
+
+// hashValueTag prefixes the stored bytes of every hash, distinguishing a
+// stored hash from a plain string that happens to hold JSON. A plain string
+// beginning with these bytes would be misread; NUL-prefixed strings are
+// pathological enough to accept that residual corner.
+const hashValueTag = "\x00hash:"
+
+func isHashValue(raw []byte) bool {
+	return bytes.HasPrefix(raw, []byte(hashValueTag))
+}
+
+// A hash occupies one badger key holding its fields as a tagged JSON object,
+// so the whole key lives or dies together exactly as it does on valkey:
+// keys(), exists, delete, expire, ttl and persist see the hash as one key
+// with one expiry covering every field, and the key vanishes with its last
+// field. Field writes rewrite the object inside one transaction, so same-key
+// races conflict-detect rather than interleave, and a remaining expiry
+// survives the rewrite like INCR's does.
 func hashLoad(txn *badgerdb.Txn, key string) (map[string]string, uint64, error) {
 	item, err := txn.Get([]byte(key))
 	if errors.Is(err, badgerdb.ErrKeyNotFound) {
@@ -414,11 +442,12 @@ func hashLoad(txn *badgerdb.Txn, key string) (map[string]string, uint64, error) 
 	if err != nil {
 		return nil, 0, err
 	}
+	if !isHashValue(raw) {
+		return nil, 0, errWrongType
+	}
 	hash := map[string]string{}
-	if json.Unmarshal(raw, &hash) != nil {
-		// A non-object value reads as an empty hash: overwritten on the next
-		// field write, the same corner set() has with a stale key.
-		hash = map[string]string{}
+	if json.Unmarshal(raw[len(hashValueTag):], &hash) != nil {
+		return nil, 0, fmt.Errorf("hash %s: stored value is corrupt", key)
 	}
 	return hash, item.ExpiresAt(), nil
 }
@@ -431,7 +460,7 @@ func hashSave(txn *badgerdb.Txn, key string, hash map[string]string, expiresAt u
 	if err != nil {
 		return err
 	}
-	entry := badgerdb.NewEntry([]byte(key), encoded)
+	entry := badgerdb.NewEntry([]byte(key), append([]byte(hashValueTag), encoded...))
 	if expiresAt != 0 {
 		if remaining := time.Until(time.Unix(int64(expiresAt), 0)); remaining > 0 {
 			entry = entry.WithTTL(remaining)

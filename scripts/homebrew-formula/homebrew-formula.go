@@ -136,6 +136,15 @@ func checksumSet(prefix string) (checksums, error) {
 	return set, nil
 }
 
+// fail reports a generation error on stderr and exits non-zero: Taskfile
+// redirects stdout into the formula file, so an error printed to stdout (with
+// a zero exit status) would silently replace the formula with an error
+// string while release automation stays green.
+func fail(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, format+"\n", args...)
+	os.Exit(1)
+}
+
 func main() {
 	mode := ""
 	for _, arg := range os.Args[1:] {
@@ -153,11 +162,10 @@ func main() {
 		}{Version: build.Version}
 		var err error
 		if data.Checksum, err = checksumSet("plugins"); err != nil {
-			fmt.Printf("Error checksumming plugin zips: %v\n", err)
-			return
+			fail("Error checksumming plugin zips: %v", err)
 		}
 		if err := template.Must(template.New("plugins").Parse(pluginsTemplate)).Execute(os.Stdout, data); err != nil {
-			fmt.Println("Error executing template:", err)
+			fail("Error executing template: %v", err)
 		}
 		return
 	case "-full":
@@ -185,11 +193,10 @@ func main() {
 		}
 		var err error
 		if data.Checksum, err = checksumSet("scriptling-full"); err != nil {
-			fmt.Printf("Error opening file: %v\n", err)
-			return
+			fail("Error opening file: %v", err)
 		}
 		if err := template.Must(template.New("formula").Parse(formulaTemplate)).Execute(os.Stdout, data); err != nil {
-			fmt.Println("Error executing template:", err)
+			fail("Error executing template: %v", err)
 		}
 		return
 	}
@@ -219,10 +226,9 @@ func main() {
 	}
 	var err error
 	if data.Checksum, err = checksumSet("scriptling"); err != nil {
-		fmt.Printf("Error opening file: %v\n", err)
-		return
+		fail("Error opening file: %v", err)
 	}
 	if err := template.Must(template.New("formula").Parse(formulaTemplate)).Execute(os.Stdout, data); err != nil {
-		fmt.Println("Error executing template:", err)
+		fail("Error executing template: %v", err)
 	}
 }

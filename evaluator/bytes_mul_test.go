@@ -59,3 +59,46 @@ func TestBytesMultiplicationOverflow(t *testing.T) {
 		t.Errorf("expected 'too large' in error, got %q", got.Inspect())
 	}
 }
+
+// TestRepetitionQuotas pins the repetition guards: string, bytes, list and
+// tuple repetition refuse oversized results with a clean error (previously
+// the list path panicked on len arithmetic, and constant-folded string
+// repetition panicked outside the evaluator's recovery boundary), while
+// large-but-bounded repetitions still work.
+func TestRepetitionQuotas(t *testing.T) {
+	cases := []struct {
+		src string
+	}{
+		{`"ab" * 4611686018427387904`},
+		{`4611686018427387904 * "ab"`},
+		{`n = 4611686018427387904` + "\n" + `"ab" * n`},
+		{`[1, 2, 3] * 4611686018427387904`},
+		{`4611686018427387904 * [1, 2, 3]`},
+		{`(1, 2) * 4611686018427387904`},
+		{`4611686018427387904 * (1, 2)`},
+		{`"ab" * 1073741825`}, // one past the 1 GiB byte quota
+	}
+	for _, tc := range cases {
+		_, err := evalInEnv(t, tc.src)
+		if err == nil {
+			t.Errorf("%q: expected a too-large refusal", tc.src)
+			continue
+		}
+		if !strings.Contains(err.Error(), "repetition result too large") {
+			t.Errorf("%q: unexpected error: %v", tc.src, err)
+		}
+	}
+
+	// Bounded repetitions of every spelling still evaluate.
+	result, err := evalInEnv(t, `
+mixed = [3 * "xy", "xy" * 3, 2 * [1], [1] * 2, (7,) * 2, 2 * (7,), len("z" * 1000000)]
+mixed
+`)
+	if err != nil {
+		t.Fatalf("bounded repetition failed: %v", err)
+	}
+	want := `[xyxyxy, xyxyxy, [1, 1], [1, 1], (7, 7), (7, 7), 1000000]`
+	if result.Inspect() != want {
+		t.Fatalf("bounded repetition = %s, want %s", result.Inspect(), want)
+	}
+}

@@ -246,6 +246,19 @@ func buildRootCommand() *cli.Command {
 				EnvVars:      []string{"SCRIPTLING_BEARER_TOKEN"},
 				ConfigPath:   []string{"server.bearer_token"},
 			},
+			&cli.Int64Flag{
+				Name:         "max-request-body",
+				Usage:        "Maximum request body size in bytes for the HTTP server (0 = 32MiB default, negative = unlimited)",
+				DefaultValue: 0,
+				EnvVars:      []string{"SCRIPTLING_MAX_REQUEST_BODY"},
+				ConfigPath:   []string{"server.max_request_body"},
+			},
+			&cli.StringSliceFlag{
+				Name:       "websocket-origin",
+				Usage:      "Allowed browser origin for WebSocket upgrades (repeatable, \"*\" for any; default: same-origin only)",
+				EnvVars:    []string{"SCRIPTLING_WEBSOCKET_ORIGIN"},
+				ConfigPath: []string{"server.websocket_origins"},
+			},
 			&cli.StringFlag{
 				Name:         "allowed-paths",
 				Usage:        "Comma-separated list of allowed filesystem paths (restricts os, pathlib, glob, sandbox)",
@@ -657,6 +670,19 @@ func rejectBundleFlags(c bundleFlagConflicts) error {
 	return nil
 }
 
+// effectiveDisabledLibs folds the deprecated --no-subprocess flag into the
+// --disable-lib list. It must be consulted before any mode dispatch: the
+// server modes (HTTP, JSON-RPC, MCP, app bundles) build their per-request
+// interpreters from this list, and the fold used to happen only on the plain
+// script path, leaving --no-subprocess a no-op in server modes.
+func effectiveDisabledLibs(cmd *cli.Command) []string {
+	disabledLibs := cmd.GetStringSlice("disable-lib")
+	if cmd.GetBool("no-subprocess") && !slices.Contains(disabledLibs, extlibs.SubprocessLibraryName) {
+		disabledLibs = append(disabledLibs, extlibs.SubprocessLibraryName)
+	}
+	return disabledLibs
+}
+
 func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	// App bundle mode: the manifest drives what gets served; deployment flags
 	// (--server, --json-rpc, TLS, tokens) pick the transport.
@@ -709,10 +735,7 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 		return runLint(cmd)
 	}
 
-	disabledLibs := cmd.GetStringSlice("disable-lib")
-	if cmd.GetBool("no-subprocess") && !slices.Contains(disabledLibs, extlibs.SubprocessLibraryName) {
-		disabledLibs = append(disabledLibs, extlibs.SubprocessLibraryName)
-	}
+	disabledLibs := effectiveDisabledLibs(cmd)
 
 	if cmd.GetBool("list-libs") {
 		disabled := make(map[string]bool, len(disabledLibs))
@@ -905,36 +928,38 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 	}
 	libBundles := append(autoBundles, pendingLibs...)
 	return server.RunServer(ctx, server.ServerConfig{
-		Address:         address,
-		ScriptFile:      scriptPath,
-		ScriptSource:    scriptSource,
-		ScriptName:      scriptName,
-		LibDirs:         bootstrap.BuildLibDirs(baseDir, cmd.GetStringSlice("libpath")),
-		Packages:        cmd.GetStringSlice("package"),
-		Bundle:          pendingApp,
-		LibBundles:      libBundles,
-		Insecure:        cmd.GetBool("insecure"),
-		CacheDir:        cmd.GetString("cache-dir"),
-		BearerToken:     cmd.GetString("bearer-token"),
-		AllowedPaths:    bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths")),
-		NetworkPolicy:   mustLoadPolicy(cmd),
-		DisabledLibs:    cmd.GetStringSlice("disable-lib"),
-		PluginDirs:      cmd.GetStringSlice("plugin-dir"),
-		PluginManager:   pluginManager,
-		MCPToolsDir:     cmd.GetString("mcp-tools"),
-		MCPResourcesDir: cmd.GetString("mcp-resources"),
-		MCPPromptsDir:   cmd.GetString("mcp-prompts"),
-		MCPExecTool:     cmd.GetBool("mcp-exec-script"),
-		JSONRPC:         cmd.GetBool("json-rpc"),
-		KVStoragePath:   cmd.GetString("kv-storage"),
-		WebRoot:         cmd.GetString("web-root"),
-		SecretRegistry:  secretRegistry,
-		DockerSock:      cmd.GetString("docker-host"),
-		PodmanSock:      cmd.GetString("podman-host"),
-		TLSCert:         cmd.GetString("tls-cert"),
-		TLSKey:          cmd.GetString("tls-key"),
-		TLSGenerate:     cmd.GetBool("tls-generate"),
-		Argv:            argv,
+		Address:             address,
+		ScriptFile:          scriptPath,
+		ScriptSource:        scriptSource,
+		ScriptName:          scriptName,
+		LibDirs:             bootstrap.BuildLibDirs(baseDir, cmd.GetStringSlice("libpath")),
+		Packages:            cmd.GetStringSlice("package"),
+		Bundle:              pendingApp,
+		LibBundles:          libBundles,
+		Insecure:            cmd.GetBool("insecure"),
+		CacheDir:            cmd.GetString("cache-dir"),
+		BearerToken:         cmd.GetString("bearer-token"),
+		MaxRequestBodyBytes: cmd.GetInt64("max-request-body"),
+		WebSocketOrigins:    cmd.GetStringSlice("websocket-origin"),
+		AllowedPaths:        bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths")),
+		NetworkPolicy:       mustLoadPolicy(cmd),
+		DisabledLibs:        effectiveDisabledLibs(cmd),
+		PluginDirs:          cmd.GetStringSlice("plugin-dir"),
+		PluginManager:       pluginManager,
+		MCPToolsDir:         cmd.GetString("mcp-tools"),
+		MCPResourcesDir:     cmd.GetString("mcp-resources"),
+		MCPPromptsDir:       cmd.GetString("mcp-prompts"),
+		MCPExecTool:         cmd.GetBool("mcp-exec-script"),
+		JSONRPC:             cmd.GetBool("json-rpc"),
+		KVStoragePath:       cmd.GetString("kv-storage"),
+		WebRoot:             cmd.GetString("web-root"),
+		SecretRegistry:      secretRegistry,
+		DockerSock:          cmd.GetString("docker-host"),
+		PodmanSock:          cmd.GetString("podman-host"),
+		TLSCert:             cmd.GetString("tls-cert"),
+		TLSKey:              cmd.GetString("tls-key"),
+		TLSGenerate:         cmd.GetBool("tls-generate"),
+		Argv:                argv,
 	})
 }
 
@@ -979,7 +1004,7 @@ func runJSONRPCServer(ctx context.Context, cmd *cli.Command) error {
 		CacheDir:       cmd.GetString("cache-dir"),
 		AllowedPaths:   bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths")),
 		NetworkPolicy:  mustLoadPolicy(cmd),
-		DisabledLibs:   cmd.GetStringSlice("disable-lib"),
+		DisabledLibs:   effectiveDisabledLibs(cmd),
 		PluginDirs:     cmd.GetStringSlice("plugin-dir"),
 		PluginManager:  pluginManager,
 		KVStoragePath:  cmd.GetString("kv-storage"),
@@ -1031,7 +1056,7 @@ func runMCPStdioServer(ctx context.Context, cmd *cli.Command) error {
 		CacheDir:        cmd.GetString("cache-dir"),
 		AllowedPaths:    bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths")),
 		NetworkPolicy:   mustLoadPolicy(cmd),
-		DisabledLibs:    cmd.GetStringSlice("disable-lib"),
+		DisabledLibs:    effectiveDisabledLibs(cmd),
 		PluginDirs:      cmd.GetStringSlice("plugin-dir"),
 		PluginManager:   pluginManager,
 		MCPToolsDir:     cmd.GetString("mcp-tools"),

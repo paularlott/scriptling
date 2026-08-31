@@ -316,7 +316,12 @@ is instant.`)
 		if !ok {
 			return 0, fmt.Errorf("db requires a valkey client")
 		}
-		return int64(vs.db), nil
+		// select() swaps s.db under s.mu; read it the same way so a
+		// concurrent select never exposes a torn view.
+		vs.mu.Lock()
+		db := vs.db
+		vs.mu.Unlock()
+		return int64(db), nil
 	}, "db() -> int - The database index this client currently addresses.")
 	cb.MethodWithHelp("mode", func(self *kv.Client) (string, error) {
 		vs, ok := self.Store.(*store)

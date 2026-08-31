@@ -123,9 +123,23 @@ func FromGo(v interface{}) object.Object {
 	}
 }
 
+// cyclicRefPlaceholder replaces a container that references itself (directly
+// or through a chain) when converting to Go, mirroring how repr shows cyclic
+// Python lists. Without the check a self-referential list built by a script
+// recurses until the Go stack overflows, which no recover() can catch.
+const cyclicRefPlaceholder = "<cyclic reference>"
+
 // ToGo converts a scriptling Object to a Go interface{}.
 // It returns the underlying Go value for the object type.
 func ToGo(obj object.Object) interface{} {
+	return toGo(obj, make(map[object.Object]struct{}))
+}
+
+// toGo walks obj with the set of containers on the current path. A container
+// already on the path is a cycle; entries are removed again on the way out so
+// a substructure shared by two parents (a DAG, not a cycle) still converts
+// fully.
+func toGo(obj object.Object, path map[object.Object]struct{}) interface{} {
 	if obj == nil {
 		return nil
 	}
@@ -144,22 +158,37 @@ func ToGo(obj object.Object) interface{} {
 	case *object.Bytes:
 		return o.BytesValue()
 	case *object.List:
+		if _, cyclic := path[o]; cyclic {
+			return cyclicRefPlaceholder
+		}
+		path[o] = struct{}{}
 		result := make([]interface{}, len(o.Elements))
 		for i, elem := range o.Elements {
-			result[i] = ToGo(elem)
+			result[i] = toGo(elem, path)
 		}
+		delete(path, o)
 		return result
 	case *object.Tuple:
+		if _, cyclic := path[o]; cyclic {
+			return cyclicRefPlaceholder
+		}
+		path[o] = struct{}{}
 		result := make([]interface{}, len(o.Elements))
 		for i, elem := range o.Elements {
-			result[i] = ToGo(elem)
+			result[i] = toGo(elem, path)
 		}
+		delete(path, o)
 		return result
 	case *object.Dict:
+		if _, cyclic := path[o]; cyclic {
+			return cyclicRefPlaceholder
+		}
+		path[o] = struct{}{}
 		result := make(map[string]interface{})
 		for _, pair := range o.Pairs {
-			result[pair.StringKey()] = ToGo(pair.Value)
+			result[pair.StringKey()] = toGo(pair.Value, path)
 		}
+		delete(path, o)
 		return result
 	case *object.Error:
 		return o.Message

@@ -94,12 +94,28 @@ func Pack(srcDir, dst string, force bool) (string, []string, error) {
 			return "", nil, fmt.Errorf("destination already exists (use -f to overwrite): %s", dst)
 		}
 	}
+	// An output living inside the source tree would include itself in the
+	// walk once the archive outlives it.
+	absDst, _ := filepath.Abs(dst)
+	absSrc, _ := filepath.Abs(srcDir)
+	if absDst == absSrc || strings.HasPrefix(absDst, absSrc+string(os.PathSeparator)) {
+		return "", nil, fmt.Errorf("output %s lives inside the source tree %s", dst, srcDir)
+	}
 
-	f, err := os.Create(dst)
+	// Write to a temporary sibling and move into place, so a failure mid-pack
+	// leaves any previous artifact untouched instead of a partial zip.
+	tmp := dst + ".tmp"
+	f, err := os.Create(tmp)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to create package: %w", err)
 	}
-	defer f.Close()
+	complete := false
+	defer func() {
+		_ = f.Close()
+		if !complete {
+			_ = os.Remove(tmp)
+		}
+	}()
 
 	var warnings []string
 	h := sha256.New()
@@ -167,5 +183,12 @@ func Pack(srcDir, dst string, force bool) (string, []string, error) {
 	if err := zw.Close(); err != nil {
 		return "", nil, err
 	}
+	if err := f.Close(); err != nil {
+		return "", nil, err
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		return "", nil, err
+	}
+	complete = true
 	return hex.EncodeToString(h.Sum(nil)), warnings, nil
 }

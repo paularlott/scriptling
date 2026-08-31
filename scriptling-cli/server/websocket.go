@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync/atomic"
 
@@ -17,10 +18,46 @@ import (
 var websocketUpgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		// Allow all origins for now - can be configured later
+}
+
+// websocketOriginAllowed applies the server's origin policy to an upgrade
+// request. Non-browser clients send no Origin header and pass. With no
+// configured origins a browser must be same-origin (the Host must match the
+// Origin's host, port included), which closes cross-site WebSocket
+// hijacking by default; a configured list is an exact-match allowlist, and
+// "*" opts out for deployments behind a trusted proxy.
+func (s *Server) websocketOriginAllowed(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
 		return true
-	},
+	}
+	for _, allowed := range s.config.WebSocketOrigins {
+		if allowed == "*" {
+			return true
+		}
+		if strings.EqualFold(strings.TrimRight(strings.ToLower(allowed), "/"), strings.TrimRight(strings.ToLower(origin), "/")) {
+			return true
+		}
+	}
+	if len(s.config.WebSocketOrigins) > 0 {
+		return false
+	}
+	// Same-origin default: compare the Origin's host:port with the request's.
+	parsed, err := url.ParseRequestURI(origin)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(parsed.Host, r.Host)
+}
+
+// websocketUpgraderFor returns the upgrader bound to this server's origin
+// policy.
+func (s *Server) websocketUpgraderFor() *websocket.Upgrader {
+	return &websocket.Upgrader{
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+		CheckOrigin:     s.websocketOriginAllowed,
+	}
 }
 
 // websocketConnCounter generates unique IDs for WebSocket connections
@@ -44,7 +81,7 @@ func (s *Server) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Request, 
 	// returned response dict rejects the upgrade (e.g. a 401), None lets it
 	// proceed. The request is stashed on the context so the handler can read
 	// what the middleware put in request.context.
-	reqObj := s.createRequestObject(r, nil)
+	reqObj := s.createRequestObject(r, nil, nil)
 	ctx := extlibs.WithRequestContext(r.Context(), reqObj)
 	if s.middleware != "" {
 		Log.Trace("Running middleware", "handler", s.middleware, "path", path)
@@ -55,7 +92,7 @@ func (s *Server) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Request, 
 	}
 
 	// Upgrade the connection
-	conn, err := websocketUpgrader.Upgrade(w, r, nil)
+	conn, err := s.websocketUpgraderFor().Upgrade(w, r, nil)
 	if err != nil {
 		Log.Error("WebSocket upgrade failed", "path", path, "error", err)
 		return

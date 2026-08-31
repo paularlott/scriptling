@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path"
@@ -96,6 +97,14 @@ func literalPrefix(pattern string) []string {
 // served as files. Fetchers with richer backends implement Glob themselves
 // but owe their users the same containment guarantee.
 func GlobDisk(root, pattern string) ([]FetchEntry, error) {
+	// The literal prefix becomes the walk start, so a parent reference there
+	// would walk (and match) outside root. The host already rejects such
+	// patterns before any RPC; this guards direct callers of the helper.
+	for _, segment := range literalPrefix(pattern) {
+		if segment == ".." {
+			return nil, fmt.Errorf("pattern %q walks outside the served root", pattern)
+		}
+	}
 	start := root
 	for _, segment := range literalPrefix(pattern) {
 		start = filepath.Join(start, segment)

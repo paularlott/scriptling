@@ -260,15 +260,18 @@ func fetchURLDirect(url string, insecure bool, client *http.Client) ([]byte, err
 	return data, nil
 }
 
+// httpClient builds the fetcher for remote packages. The timeout bounds the
+// whole exchange — a server can otherwise stall headers or drip-feed a body
+// indefinitely despite the byte cap. Generous enough for a maximum-size
+// package on a slow link.
 func httpClient(insecure bool) *http.Client {
+	transport := &http.Transport{}
 	if insecure {
-		return &http.Client{
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-			},
+		transport = &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
 		}
 	}
-	return &http.Client{}
+	return &http.Client{Transport: transport, Timeout: 10 * time.Minute}
 }
 
 // urlCacheKey returns a stable filename-safe key for a URL.

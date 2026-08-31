@@ -214,6 +214,20 @@ people.insert(make_person(name="nullscore", score=None, active=0), columns=["nam
 row = orm.select("people").where("name", "=", "nullscore").one()
 if row == None or row["score"] != None:
     return "explicit None insert: " + str(row)
+# an object with everything unset inserts a pure-defaults row (a table
+# whose columns all carry defaults, so nothing is required)
+(orm.create_table("alldefaults")
+ .column("id", "integer", primary_key=True, autoincrement=True)
+ .column("flag", "integer", default=7)
+ .execute())
+def make_d(id=None, flag=None):
+    return {"id": id, "flag": flag}
+dgate = orm.table(make_d, "alldefaults", pk="id")
+dgate.insert(make_d())
+row = orm.select("alldefaults").where_sql("flag IS NOT NULL").one()
+if row == None or row["flag"] != 7:
+    return "all-defaults insert: " + str(row)
+orm.drop_table("alldefaults")
 
 orm.drop_table("people")
 conn.close()

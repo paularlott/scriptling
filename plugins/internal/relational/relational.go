@@ -41,6 +41,13 @@ func CursorClass() *object.ClassBuilder {
 			return &object.Null{}
 		}
 		if !self.rows.Next() {
+			// Next()==false is either a clean EOF or the driver dying
+			// mid-stream; without the Err() check a connection drop would
+			// look like a normal, short result set.
+			if err := self.rows.Err(); err != nil {
+				self.finish()
+				return &object.Error{Message: fmt.Sprintf("cursor read: %v", err)}
+			}
 			self.finish()
 			return &object.Null{}
 		}

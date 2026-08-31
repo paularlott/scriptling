@@ -2,6 +2,7 @@ package pack
 
 import (
 	"archive/zip"
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -215,5 +216,60 @@ func TestPackBuildMainScriptInSubfolder(t *testing.T) {
 	joined := strings.Join(warnings, "\n")
 	if !strings.Contains(joined, "app/") {
 		t.Errorf("expected warning about app/ dir, got: %v", warnings)
+	}
+}
+
+// TestPackOutputAtomicAndOutsideSource pins the pack output contract: a
+// failure mid-pack leaves any previous artifact untouched (no partial zip),
+// and an output path inside the source tree is refused rather than letting
+// the archive include itself.
+func TestPackOutputAtomicAndOutsideSource(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "app")
+	if err := os.MkdirAll(filepath.Join(src, "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "manifest.toml"), []byte("name=\"a\"\nversion=\"1\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "lib", "x.py"), []byte("x = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Output inside the source tree: refused outright.
+	if _, _, err := Pack(src, filepath.Join(src, "app.zip"), true); err == nil {
+		t.Fatal("expected an in-tree output to be refused")
+	}
+
+	// A valid pack succeeds and leaves no temp file behind.
+	out := filepath.Join(dir, "app.zip")
+	if _, _, err := Pack(src, out, true); err != nil {
+		t.Fatalf("pack: %v", err)
+	}
+	if _, err := os.Stat(out + ".tmp"); !os.IsNotExist(err) {
+		t.Fatalf("temp file left behind: %v", err)
+	}
+	before, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A failing pack (main script vanished) leaves the good artifact intact.
+	broken := filepath.Join(dir, "broken")
+	if err := os.MkdirAll(filepath.Join(broken, "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(broken, "manifest.toml"), []byte("name=\"b\"\nversion=\"1\"\nmain=\"gone.py\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Pack(broken, out, true); err == nil {
+		t.Fatal("expected the broken pack to fail")
+	}
+	after, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("a failed pack modified the previous artifact")
 	}
 }

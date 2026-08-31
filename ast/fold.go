@@ -305,6 +305,19 @@ func foldExpression(expr Expression) Expression {
 	return expr
 }
 
+// maxFoldRepeatBytes bounds what folding may allocate at parse time, before
+// any cancellation or recovery is in place: only small repetitions fold, and
+// larger ones are left for the evaluator, which enforces its own (larger)
+// quota and reports a clean error.
+const maxFoldRepeatBytes = 1 << 20
+
+func foldRepeatTooLarge(str string, multiplier int64) bool {
+	if multiplier <= 0 || len(str) == 0 {
+		return false
+	}
+	return multiplier > maxFoldRepeatBytes/int64(len(str))
+}
+
 func tryFoldInfix(op Op, left, right Expression) Expression {
 	lint, lIsInt := left.(*IntegerLiteral)
 	lfloat, lIsFloat := left.(*FloatLiteral)
@@ -344,17 +357,26 @@ func tryFoldInfix(op Op, left, right Expression) Expression {
 		return &StringLiteral{Value: lstr.Value + rstr.Value}
 	}
 
-	// String repetition
+	// String repetition. An oversized result is left unfolded rather than
+	// panicked on: folding runs at parse time, outside the evaluator's
+	// recovery boundary, and the evaluator's repetition quota reports the
+	// same case as a clean error when the expression executes.
 	if op == OpMul {
 		if lIsStr && rIsInt {
 			if rint.Value < 0 {
 				return &StringLiteral{Value: ""}
+			}
+			if foldRepeatTooLarge(lstr.Value, rint.Value) {
+				return nil
 			}
 			return &StringLiteral{Value: strings.Repeat(lstr.Value, int(rint.Value))}
 		}
 		if lIsInt && rIsStr {
 			if lint.Value < 0 {
 				return &StringLiteral{Value: ""}
+			}
+			if foldRepeatTooLarge(rstr.Value, lint.Value) {
+				return nil
 			}
 			return &StringLiteral{Value: strings.Repeat(rstr.Value, int(lint.Value))}
 		}

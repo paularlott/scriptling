@@ -5,15 +5,18 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"mime"
+	"net"
 	"net/http"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	mcplib "github.com/paularlott/mcp"
 	"github.com/paularlott/scriptling"
@@ -44,7 +47,7 @@ func (s *Server) buildMux() http.Handler {
 	mux := http.NewServeMux()
 
 	if s.mcpHandler != nil {
-		mcp := s.scriptProtocolMiddleware(s.mcpHandler)
+		mcp := s.scriptProtocolMiddleware(sseWriteDeadline(s.mcpHandler))
 		mux.Handle("POST /mcp", mcp)
 		mux.Handle("GET /mcp", mcp)
 	}
@@ -91,13 +94,18 @@ func (s *Server) buildMux() http.Handler {
 	}
 
 	var handler http.Handler = mux
-	// With a script middleware registered, it guards every endpoint — routes
-	// and WebSocket upgrades via handleScriptRequest and the protocol
-	// endpoints via scriptProtocolMiddleware — so the static bearer token is
-	// not applied. Without one, a configured static token guards everything.
-	if s.config.BearerToken != "" && s.middleware == "" {
-		handler = s.bearerTokenMiddleware(mux)
+	// A configured static token always wraps the whole mux, middleware or
+	// not: the script middleware guards the script-facing endpoints, but it
+	// never runs for /health, static routes, the webroot fallback or custom
+	// not-found handling, so dropping the token when middleware exists left
+	// those unauthenticated. With both configured, the token applies first
+	// and the middleware layers on top.
+	if s.config.BearerToken != "" {
+		handler = s.bearerTokenMiddleware(handler)
 	}
+	// Body caps apply outermost so no route, protocol endpoint or fallback
+	// can buffer past the limit.
+	handler = s.bodyLimitMiddleware(handler)
 	return handler
 }
 
@@ -106,6 +114,14 @@ func (s *Server) Start() error {
 	s.httpServer = &http.Server{
 		Addr:    s.config.Address,
 		Handler: s.buildMux(),
+		// Slowloris-style stalls and drip-fed bodies get cut off; the
+		// read/write budgets are generous so legitimate large uploads and
+		// slow handlers survive. Hijacked connections (WebSocket upgrades)
+		// leave the net/http lifecycle, so these do not cut them.
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       5 * time.Minute,
+		WriteTimeout:      5 * time.Minute,
+		IdleTimeout:       2 * time.Minute,
 	}
 
 	if s.config.TLSGenerate || (s.config.TLSCert != "" && s.config.TLSKey != "") {
@@ -125,25 +141,52 @@ func (s *Server) Start() error {
 		}
 	}
 
-	go func() {
-		var err error
-
-		if s.config.TLSGenerate || (s.config.TLSCert != "" && s.config.TLSKey != "") {
-			if s.config.TLSCert != "" && s.config.TLSKey != "" {
-				err = s.httpServer.ListenAndServeTLS(s.config.TLSCert, s.config.TLSKey)
-			} else {
-				err = s.httpServer.ListenAndServeTLS("", "")
-			}
-		} else {
-			err = s.httpServer.ListenAndServe()
+	// Bind synchronously so a bad address or a broken certificate fails
+	// Start itself instead of surfacing asynchronously after a nil return.
+	listener, err := net.Listen("tcp", s.config.Address)
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", s.config.Address, err)
+	}
+	useTLS := s.config.TLSGenerate || (s.config.TLSCert != "" && s.config.TLSKey != "")
+	if useTLS {
+		certFiles := []string{s.config.TLSCert, s.config.TLSKey}
+		if s.config.TLSGenerate {
+			certFiles = nil
 		}
+		cert, configErr := tlsConfigFor(s, certFiles)
+		if configErr != nil {
+			_ = listener.Close()
+			return configErr
+		}
+		listener = tls.NewListener(listener, cert)
+	}
 
-		if err != nil && err != http.ErrServerClosed {
+	go func() {
+		if err := s.httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
 			Log.Error("Server error", "error", err)
 		}
 	}()
 
 	return nil
+}
+
+// tlsConfigFor builds the TLS configuration, loading the named certificate
+// files when given (the self-signed path carries its certificate on the
+// server config already).
+func tlsConfigFor(s *Server, certFiles []string) (*tls.Config, error) {
+	if len(certFiles) == 2 && certFiles[0] != "" && certFiles[1] != "" {
+		cert, err := tls.LoadX509KeyPair(certFiles[0], certFiles[1])
+		if err != nil {
+			return nil, fmt.Errorf("load TLS keypair: %w", err)
+		}
+		cfg := tls.Config{MinVersion: tls.VersionTLS12}
+		cfg.Certificates = []tls.Certificate{cert}
+		return &cfg, nil
+	}
+	if s.httpServer.TLSConfig == nil {
+		return nil, fmt.Errorf("no TLS configuration available")
+	}
+	return s.httpServer.TLSConfig.Clone(), nil
 }
 
 // Stop gracefully stops the server
@@ -198,7 +241,12 @@ func (s *Server) handleScriptRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reqObj := s.createRequestObject(r, pathParams(r))
+	body, ok := readBody(w, r)
+	if !ok {
+		return
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	reqObj := s.createRequestObject(r, pathParams(r), body)
 	ctx := extlibs.WithRequestContext(r.Context(), reqObj)
 
 	if s.middleware != "" {
@@ -359,7 +407,7 @@ func (s *Server) serveFromZip(w http.ResponseWriter, r *http.Request) {
 func (s *Server) serveNotFound(w http.ResponseWriter, r *http.Request) {
 	if s.notFoundHandler != "" {
 		Log.Trace("Handling 404 via not_found handler", "handler", s.notFoundHandler, "path", r.URL.Path)
-		reqObj := s.createRequestObject(r, nil)
+		reqObj := s.createRequestObject(r, nil, nil)
 		ctx := extlibs.WithRequestContext(r.Context(), reqObj)
 		if resp := s.runHandler(ctx, s.notFoundHandler, reqObj); resp != nil {
 			s.writeResponse(w, resp)
@@ -372,12 +420,7 @@ func (s *Server) serveNotFound(w http.ResponseWriter, r *http.Request) {
 
 // createRequestObject creates a Request instance from an HTTP request.
 // pathParams holds values captured from route wildcards, already unescaped.
-func (s *Server) createRequestObject(r *http.Request, pathParams map[string]string) *object.Instance {
-	var body string
-	if r.Body != nil {
-		bodyBytes, _ := io.ReadAll(r.Body)
-		body = string(bodyBytes)
-	}
+func (s *Server) createRequestObject(r *http.Request, pathParams map[string]string, body []byte) *object.Instance {
 
 	headers := make(map[string]string)
 	for k, v := range r.Header {
@@ -393,7 +436,7 @@ func (s *Server) createRequestObject(r *http.Request, pathParams map[string]stri
 		}
 	}
 
-	return extlibs.CreateRequestInstance(r.Method, r.URL.Path, body, headers, query, pathParams, r.RemoteAddr)
+	return extlibs.CreateRequestInstance(r.Method, r.URL.Path, string(body), headers, query, pathParams, r.RemoteAddr)
 }
 
 // splitHandlerRef splits a "module.function" handler reference at the last
@@ -510,11 +553,14 @@ func (s *Server) scriptProtocolMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var bodyBytes []byte
 		if r.Body != nil {
-			bodyBytes, _ = io.ReadAll(r.Body)
+			var ok bool
+			if bodyBytes, ok = readBody(w, r); !ok {
+				return
+			}
 			r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 		}
 
-		reqObj := s.createRequestObject(r, nil)
+		reqObj := s.createRequestObject(r, nil, bodyBytes)
 		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 		r = r.WithContext(extlibs.WithRequestContext(r.Context(), reqObj))
 
@@ -607,5 +653,61 @@ func (s *Server) generateSelfSignedCert() (tls.Certificate, error) {
 	hosts := util.GetCertificateHosts(s.config.Address)
 	return util.GenerateSelfSignedCertificate(util.CertificateConfig{
 		Hosts: hosts,
+	})
+}
+
+// DefaultMaxRequestBody is the per-request body cap applied when
+// ServerConfig.MaxRequestBodyBytes is unset. Generous enough for large
+// JSON-RPC batches and uploads, small enough that one hostile request cannot
+// buffer unbounded memory.
+const DefaultMaxRequestBody int64 = 32 << 20 // 32 MiB
+
+// maxRequestBody resolves the effective per-request body limit; negative
+// disables the cap for embedders that stream arbitrarily large uploads.
+func (s *Server) maxRequestBody() int64 {
+	if s.config.MaxRequestBodyBytes != 0 {
+		return s.config.MaxRequestBodyBytes
+	}
+	return DefaultMaxRequestBody
+}
+
+// sseWriteDeadline clears the server's write deadline for GET requests on the
+// MCP endpoint: the GET is an SSE stream, a response with no end, and the
+// server-wide WriteTimeout would cut subscribers off mid-stream.
+func sseWriteDeadline(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// readBody reads the request body under the middleware's cap. A body past
+// the cap answers 413 and reports false: handlers must never see a truncated
+// payload as if it were the whole request.
+func readBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return nil, false
+		}
+		http.Error(w, "failed to read request body", http.StatusBadRequest)
+		return nil, false
+	}
+	return body, true
+}
+
+// bodyLimitMiddleware bounds request bodies. Handlers that read past the cap
+// see MaxBytesReader's error and answer 4xx instead of buffering whatever a
+// client cares to send.
+func (s *Server) bodyLimitMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if limit := s.maxRequestBody(); limit > 0 && r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
+		}
+		next.ServeHTTP(w, r)
 	})
 }

@@ -250,3 +250,84 @@ func TestLibraryShape(t *testing.T) {
 		t.Fatal("open function missing")
 	}
 }
+
+// TestInProcessHashWrongType pins the Redis-style type separation: hash
+// commands on plain-valued keys fail with WRONGTYPE instead of silently
+// destroying the data, and reads/counters refuse hash keys — while writes
+// (set, mset, set_if_absent) keep Redis semantics: they replace any value or
+// report false, never erroring on type. Before type tags, hash_set overwrote
+// a scalar, hash_delete on a scalar key could delete it while reporting zero,
+// and get() on a hash returned raw JSON.
+func TestInProcessHashWrongType(t *testing.T) {
+	dir := t.TempDir()
+	script := "import scriptling.badgerdb as badger\n" + `
+client = badger.open("` + filepath.Join(dir, "kv") + `")
+
+client.set("plain", "scalar value")
+client.set("looks-like-hash", "{\"field\": \"not really a hash\"}")
+
+for op in ["hash_set", "hash_get", "hash_size", "hash_all"]:
+    try:
+        if op == "hash_set":
+            client.hash_set("plain", "f", "v")
+        elif op == "hash_get":
+            client.hash_get("plain", "f")
+        elif op == "hash_size":
+            client.hash_size("plain")
+        else:
+            client.hash_all("plain")
+        return op + " accepted a scalar key"
+    except:
+        pass
+
+# a plain string that merely looks like hash JSON is still a plain string
+if client.get("looks-like-hash") != "{\"field\": \"not really a hash\"}":
+    return "scalar json string was eaten"
+
+# hash_delete on a scalar key must not delete it while reporting zero
+try:
+    removed = client.hash_delete("plain", "missing")
+    return "hash_delete accepted a scalar key"
+except:
+    pass
+if client.get("plain") != "scalar value":
+    return "hash_delete destroyed a scalar"
+
+# reads and counters refuse a hash key; writes follow Redis semantics
+client.hash_set("realhash", "f", "v")
+for op in ["get", "incr", "mget"]:
+    try:
+        if op == "get":
+            client.get("realhash")
+        elif op == "incr":
+            client.incr("realhash")
+        else:
+            client.mget("realhash")
+        return op + " accepted a hash key"
+    except:
+        pass
+# SETNX reports false against any existing key, a hash included
+if client.set_if_absent("realhash", "x") != False:
+    return "set_if_absent should refuse an existing hash"
+if client.hash_get("realhash", "f") != "v":
+    return "set_if_absent must not touch the hash"
+# SET and MSET replace whatever was there, a hash included
+client.set("realhash", "now a string")
+if client.get("realhash") != "now a string":
+    return "set should replace a hash"
+client.hash_set("realhash2", "f", "v")
+client.mset({"realhash2": "also a string"})
+if client.get("realhash2") != "also a string":
+    return "mset should replace a hash"
+
+client.close()
+return "ok"
+`
+	result, err := evalInProcess(t, nil, script)
+	if err != nil {
+		t.Fatalf("eval: %v", err)
+	}
+	if result.Inspect() != "ok" {
+		t.Fatalf("script result: %s", result.Inspect())
+	}
+}

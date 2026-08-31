@@ -400,8 +400,9 @@ func GetCompiledRegex(pattern string) (*regexp.Regexp, error) {
 		return entry.regex, nil
 	}
 
-	// Evict old entries if cache is full
-	// Evict old entries if cache is full
+	// Enforce the cap: when full, the least recently used entry goes,
+	// recency notwithstanding. Protecting recently used entries here let the
+	// cache grow past its maximum without bound under sustained use.
 	for len(globalRegexCache.entries) >= globalRegexCache.maxSize {
 		if !globalRegexCache.evictOldest() {
 			break
@@ -428,12 +429,6 @@ func (c *regexCache) evictOldest() bool {
 	}
 
 	entry := elem.Value.(*regexEntry)
-
-	// Check if entry is recent (used within last 3 seconds)
-	if time.Since(entry.lastUsed) < 3*time.Second {
-		return false // Don't evict recent entries
-	}
-
 	c.lru.Remove(elem)
 	delete(c.entries, entry.pattern)
 	return true

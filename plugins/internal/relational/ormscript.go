@@ -40,32 +40,101 @@ def _orm_mark(n, ctx):
 
 def _orm_renumber(fragment, ctx):
     # Rewrites ? placeholders in a user-supplied fragment into the dialect's
-    # markers, continuing the numbering ctx already holds. Single-quoted
-    # literals are left alone (with '' escapes).
+    # markers, continuing the numbering ctx already holds. Left alone:
+    # single-quoted literals (with '' escapes), double-quoted identifiers,
+    # -- and /* */ comments, and the postgres jsonb operators ?| and ?&. A
+    # bare ? is always a placeholder on this path, so the bare jsonb ?
+    # operator is not expressible here — jsonb_exists(data, 'k') is the
+    # function form of it.
     if not ctx["numbered"]:
         return fragment
     out = ""
     in_string = False
-    for i in range(len(fragment)):
+    in_ident = False
+    i = 0
+    n = len(fragment)
+    while i < n:
         ch = fragment[i]
         if in_string:
             out = out + ch
             if ch == "'":
-                if i + 1 < len(fragment) and fragment[i + 1] == "'":
+                if i + 1 < n and fragment[i + 1] == "'":
                     out = out + "'"
-                    # the escaped quote is consumed on the next pass
-                    fragment = fragment[:i + 1] + " " + fragment[i + 2:]
-                else:
-                    in_string = False
-        else:
-            if ch == "'":
-                in_string = True
-                out = out + ch
-            elif ch == "?":
-                ctx["n"] = ctx["n"] + 1
-                out = out + _orm_mark(ctx["n"], ctx)
+                    i = i + 2
+                    continue
+                in_string = False
+            i = i + 1
+            continue
+        if in_ident:
+            out = out + ch
+            if ch == '"':
+                in_ident = False
+            i = i + 1
+            continue
+        if ch == "'":
+            in_string = True
+            out = out + ch
+            i = i + 1
+            continue
+        if ch == '"':
+            in_ident = True
+            out = out + ch
+            i = i + 1
+            continue
+        if ch == "-" and i + 1 < n and fragment[i + 1] == "-":
+            j = i
+            while j < n and fragment[j] != "\n":
+                j = j + 1
+            out = out + fragment[i:j]
+            i = j
+            continue
+        if ch == "/" and i + 1 < n and fragment[i + 1] == "*":
+            j = i + 2
+            while j + 1 < n and not (fragment[j] == "*" and fragment[j + 1] == "/"):
+                j = j + 1
+            if j + 1 < n:
+                j = j + 2
             else:
-                out = out + ch
+                j = n
+            out = out + fragment[i:j]
+            i = j
+            continue
+        if ch == "$":
+            # Dollar-quoted string ($$...$$ or $tag$...$tag$): a $ followed
+            # by an optional tag (letters/underscore first) and another $.
+            # A digit after $ (a $1 placeholder) is not an opener.
+            j = i + 1
+            while j < n and ((fragment[j] >= "a" and fragment[j] <= "z") or (fragment[j] >= "A" and fragment[j] <= "Z") or (fragment[j] >= "0" and fragment[j] <= "9") or fragment[j] == "_"):
+                j = j + 1
+            if j < n and fragment[j] == "$" and (j == i + 1 or not (fragment[i + 1] >= "0" and fragment[i + 1] <= "9")):
+                delim = fragment[i:j + 1]
+                k = fragment.find(delim, j + 1)
+                if k == -1:
+                    k = n
+                else:
+                    k = k + len(delim)
+                out = out + fragment[i:k]
+                i = k
+                continue
+            out = out + ch
+            i = i + 1
+            continue
+        if ch == "?" and i + 1 < n and (fragment[i + 1] == "|" or fragment[i + 1] == "&"):
+            out = out + ch + fragment[i + 1]
+            i = i + 2
+            continue
+        if ch == "?" and len(out) > 0 and out[len(out) - 1] == "@":
+            # the jsonb path operator @? takes its question mark with it
+            out = out + ch
+            i = i + 1
+            continue
+        if ch == "?":
+            ctx["n"] = ctx["n"] + 1
+            out = out + _orm_mark(ctx["n"], ctx)
+            i = i + 1
+            continue
+        out = out + ch
+        i = i + 1
     return out
 
 
@@ -580,12 +649,22 @@ class _orm_Kit:
     def insert(self, table, values, pk="id"):
         # On postgres there is no last-insert-id; RETURNING recovers one
         # through the primary key so the result looks like every other
-        # backend's.
+        # backend's. An empty values dict is an all-defaults insert.
         cols = list(values.keys())
         cols.sort()
-        if len(cols) == 0:
-            raise ValueError("insert needs at least one column")
         ctx = self._ctx()
+        if len(cols) == 0:
+            if self.backtick:
+                # MySQL has no DEFAULT VALUES form.
+                return self.conn.execute("INSERT INTO " + _orm_quote(table, ctx) + " () VALUES ()")
+            sql = "INSERT INTO " + _orm_quote(table, ctx) + " DEFAULT VALUES"
+            if self.numbered:
+                sql = sql + " RETURNING " + _orm_quote(pk, ctx)
+                rows = self.conn.query(sql)
+                if len(rows) != 1:
+                    raise ValueError("insert returning gave " + str(len(rows)) + " rows")
+                return {"last_insert_id": rows[0][pk], "rows_affected": 1}
+            return self.conn.execute(sql)
         quoted = []
         marks = []
         params = []
@@ -766,13 +845,20 @@ func ConnectionScriptSourceMultiDriver(pluginName string) string {
             self._dsn = str(args[0])
         elif "dsn" in kwargs:
             self._dsn = str(kwargs["dsn"])
-        self._pg = self._dsn.startswith("postgres")
+        self._pg = self._dsn.lower().startswith("postgres")
         self._plugin_remote = scriptling.plugin._new_object("` + pluginName + `", "Connection", *args, **kwargs)
 
     def query(self, *args, **kwargs):
         if self._pg and len(args) > 0:
             args = [_orm_renumber(args[0], {"n": 0, "numbered": True})] + list(args[1:])
         return scriptling.plugin.call_method(self._plugin_remote, "query", *args, **kwargs)
+
+    def query_iter(self, *args, **kwargs):
+        # Same renumbering as query: iterate()'s SQL carries ? placeholders
+        # that postgres cannot take unrewritten.
+        if self._pg and len(args) > 0:
+            args = [_orm_renumber(args[0], {"n": 0, "numbered": True})] + list(args[1:])
+        return scriptling.plugin.call_method(self._plugin_remote, "query_iter", *args, **kwargs)
 
     def execute(self, *args, **kwargs):
         if self._pg and len(args) > 0:
@@ -806,7 +892,7 @@ func ScriptModuleSource(twinName string, singleDriver bool, spec DialectSpec) st
             self._dsn = str(args[0])
         elif "dsn" in kwargs:
             self._dsn = str(kwargs["dsn"])
-        self._pg = self._dsn.startswith("postgres")
+        self._pg = self._dsn.lower().startswith("postgres")
 `
 		getORM = `        if self._pg:
             return _orm_Kit(self._c, True, False, "ilike", ` + fmt.Sprintf("%q, %q", PostgresSpec.TablesSQL, PostgresSpec.ColumnsSQL) + `)

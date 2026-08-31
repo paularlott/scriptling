@@ -136,7 +136,7 @@ tasks:
     cmds:
       - |
         for platform in {{.PLATFORMS}}; do
-          GOOS=${platform%/*} GOARCH=${platform#*/}
+          export GOOS=${platform%/*} GOARCH=${platform#*/}
           ext=""
           if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
           go build {{.LDFLAGS}} -tags '{{.FULL_TAGS}}' -o {{.BIN_DIR}}/scriptling-full-${GOOS}-${GOARCH}${ext} ./scriptling-cli
@@ -185,21 +185,42 @@ tasks:
   homebrew-formula:
     desc: Generate the Homebrew formula
     cmds:
-      - go run ./scripts/homebrew-formula/ > ../homebrew-tap/Formula/scriptling.rb
+      - |
+        out=../homebrew-tap/Formula/scriptling.rb
+        if go run ./scripts/homebrew-formula/ > "$out.tmp"; then
+          mv "$out.tmp" "$out"
+        else
+          rm -f "$out.tmp"
+          exit 1
+        fi
 
   homebrew-formula-full:
     desc: Generate the Homebrew formula for scriptling-full (database plugins compiled in)
     cmds:
-      - go run ./scripts/homebrew-formula/ -full > ../homebrew-tap/Formula/scriptling-full.rb
+      - |
+        out=../homebrew-tap/Formula/scriptling-full.rb
+        if go run ./scripts/homebrew-formula/ -full > "$out.tmp"; then
+          mv "$out.tmp" "$out"
+        else
+          rm -f "$out.tmp"
+          exit 1
+        fi
 
   homebrew-formula-plugins:
     desc: Generate the Homebrew formula for the database plugin binaries
     cmds:
-      - go run ./scripts/homebrew-formula/ -plugins > ../homebrew-tap/Formula/scriptling-plugins.rb
+      - |
+        out=../homebrew-tap/Formula/scriptling-plugins.rb
+        if go run ./scripts/homebrew-formula/ -plugins > "$out.tmp"; then
+          mv "$out.tmp" "$out"
+        else
+          rm -f "$out.tmp"
+          exit 1
+        fi
 
   release:
     desc: Tag the version and create GitHub release with all platform binaries
-    deps: [build-all]
+    deps: [build-all, homebrew-formula, homebrew-formula-full, homebrew-formula-plugins]
     cmds:
       - |
         # Check if tag exists
