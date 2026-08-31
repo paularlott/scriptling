@@ -72,6 +72,7 @@ tasks:
           ext=""
           if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
           cp scriptling-full-${GOOS}-${GOARCH}${ext} scriptling${ext}
+          rm -f scriptling-full-${GOOS}-${GOARCH}.zip
           zip scriptling-full-${GOOS}-${GOARCH}.zip scriptling${ext}
           rm scriptling${ext}
         done
