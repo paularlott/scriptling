@@ -7,7 +7,10 @@
 //   - Flat structure: libs/knot.groups.py → import knot.groups (legacy)
 package libloader
 
-import "strings"
+import (
+	"context"
+	"strings"
+)
 
 // LibraryLoader attempts to load a library by name.
 // Implementations can load from various sources: filesystem, API, memory, etc.
@@ -21,6 +24,21 @@ type LibraryLoader interface {
 	// Description returns a human-readable description of this loader.
 	// Used for debugging and logging.
 	Description() string
+}
+
+// ContextLibraryLoader is an optional extension implemented by loaders that can
+// honor caller cancellation, deadlines, or context values while loading.
+type ContextLibraryLoader interface {
+	LoadWithContext(ctx context.Context, name string) (source string, found bool, err error)
+}
+
+// LoadWithContext invokes a loader's context-aware API when available and
+// otherwise falls back to the backwards-compatible Load method.
+func LoadWithContext(ctx context.Context, loader LibraryLoader, name string) (string, bool, error) {
+	if contextual, ok := loader.(ContextLibraryLoader); ok {
+		return contextual.LoadWithContext(ctx, name)
+	}
+	return loader.Load(name)
 }
 
 // Chain tries multiple loaders in sequence until one succeeds.
@@ -44,8 +62,13 @@ func (c *Chain) Add(loader LibraryLoader) {
 // Returns the first successful result, or (nil, false, nil) if no loader found it.
 // Returns an error immediately if any loader encounters an error.
 func (c *Chain) Load(name string) (string, bool, error) {
+	return c.LoadWithContext(context.Background(), name)
+}
+
+// LoadWithContext preserves caller context through context-aware child loaders.
+func (c *Chain) LoadWithContext(ctx context.Context, name string) (string, bool, error) {
 	for _, loader := range c.loaders {
-		source, found, err := loader.Load(name)
+		source, found, err := LoadWithContext(ctx, loader, name)
 		if err != nil {
 			return "", false, err
 		}
@@ -127,8 +150,9 @@ func (m *MemoryLoader) Remove(name string) {
 // FuncLoader is a loader that uses a function to load libraries.
 // Useful for simple custom loaders without implementing the full interface.
 type FuncLoader struct {
-	fn   func(name string) (string, bool, error)
-	desc string
+	fn        func(name string) (string, bool, error)
+	contextFn func(ctx context.Context, name string) (string, bool, error)
+	desc      string
 }
 
 // NewFuncLoader creates a loader from a function.
@@ -136,8 +160,23 @@ func NewFuncLoader(fn func(name string) (string, bool, error), description strin
 	return &FuncLoader{fn: fn, desc: description}
 }
 
-// Load calls the wrapped function.
+// NewFuncLoaderWithContext creates a loader whose function receives the
+// caller's context.
+func NewFuncLoaderWithContext(fn func(context.Context, string) (string, bool, error), description string) *FuncLoader {
+	return &FuncLoader{contextFn: fn, desc: description}
+}
+
+// Load calls the wrapped function with a background context when this loader
+// was constructed with NewFuncLoaderWithContext.
 func (f *FuncLoader) Load(name string) (string, bool, error) {
+	return f.LoadWithContext(context.Background(), name)
+}
+
+// LoadWithContext calls the context-aware function when configured.
+func (f *FuncLoader) LoadWithContext(ctx context.Context, name string) (string, bool, error) {
+	if f.contextFn != nil {
+		return f.contextFn(ctx, name)
+	}
 	return f.fn(name)
 }
 

@@ -1,6 +1,7 @@
 package pack
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -86,7 +87,17 @@ func (l *Loader) SetFallback(fallback libloader.LibraryLoader) {
 // bundle, so an unreachable source is reported instead of silently skipping
 // its modules.
 func (l *Loader) Load(name string) (string, bool, error) {
+	return l.LoadWithContext(context.Background(), name)
+}
+
+// LoadWithContext preserves caller context through context-aware fallbacks and
+// observes cancellation between bundle probes. Bundle storage uses fs.FS, whose
+// ReadFile contract has no per-call context.
+func (l *Loader) LoadWithContext(ctx context.Context, name string) (string, bool, error) {
 	for i := len(l.bundles) - 1; i >= 0; i-- {
+		if err := ctx.Err(); err != nil {
+			return "", false, err
+		}
 		src, found, err := loadFromBundle(l.bundles[i], name)
 		if err != nil {
 			return "", false, err
@@ -96,7 +107,7 @@ func (l *Loader) Load(name string) (string, bool, error) {
 		}
 	}
 	if l.fallback != nil {
-		return l.fallback.Load(name)
+		return libloader.LoadWithContext(ctx, l.fallback, name)
 	}
 	return "", false, nil
 }

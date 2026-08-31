@@ -199,7 +199,7 @@ func (s *Server) runJSONRPCHandler(ctx context.Context, handlerRef string, param
 	s.setupScriptling(p)
 	s.applyPackLoader(p)
 
-	if err := p.Import(libName); err != nil {
+	if err := p.ImportWithContext(ctx, libName); err != nil {
 		Log.Error("Failed to import library", "library", libName, "error", err)
 		return &object.Error{Message: fmt.Sprintf("failed to import library %s: %v", libName, err)}
 	}

@@ -321,9 +321,9 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		}
 		return NULL
 	case *ast.ImportStatement:
-		return evalImportStatement(node, env)
+		return evalImportStatement(ctx, node, env)
 	case *ast.FromImportStatement:
-		return evalFromImportStatement(node, env)
+		return evalFromImportStatement(ctx, node, env)
 	case *ast.AssignStatement:
 		val := evalNode(ctx, node.Value, env)
 		if object.IsError(val) || isException(val) {
@@ -2067,6 +2067,18 @@ func createInstance(ctx context.Context, class *object.Class, args []object.Obje
 	// Install GC finalizer for __del__ if the class defines one
 	if del, ok := class.LookupMember("__del__"); ok {
 		delMethod := del
+		// A script destructor owns its lexical environment/GIL domain. Builtin
+		// destructors use the construction domain. Retain only that domain in an
+		// independent call environment: retaining the full construction store can
+		// keep an otherwise unreachable instance alive through its last binding.
+		gilOwnerEnv := env
+		switch destructor := delMethod.(type) {
+		case *object.Function:
+			gilOwnerEnv = destructor.Env
+		case *object.LambdaFunction:
+			gilOwnerEnv = destructor.Env
+		}
+		finalizerEnv := object.NewEnvironmentWithGILDomain(gilOwnerEnv)
 		runtime.SetFinalizer(instance, func(inst *object.Instance) {
 			// A finalizer runs on the runtime's own goroutine with no
 			// caller to recover for it: a panic here is fatal to the host
@@ -2076,7 +2088,9 @@ func createInstance(ctx context.Context, class *object.Class, args []object.Obje
 			defer func() { _ = recover() }()
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			applyFunction(ctx, delMethod, []object.Object{inst}, nil, object.NewEnvironment())
+			ctx = WithEvaluator(ctx)
+			ctx = ContextWithCallDepth(ctx, DefaultMaxCallDepth)
+			ApplyFunctionGIL(ctx, delMethod, []object.Object{inst}, nil, finalizerEnv)
 		})
 	}
 
@@ -2246,8 +2260,17 @@ func applyUserFunction(ctx context.Context, fn *object.Function, args []object.O
 // functions — especially concurrently against a shared environment — must use
 // this rather than the unexported applyFunction, which assumes the lock is held.
 func ApplyFunctionGIL(ctx context.Context, fn object.Object, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
-	if gilEnv := enterScript(env); gilEnv != nil {
-		defer gilEnv.ExitGIL()
+	if env != nil {
+		acquired, entered := env.EnterGILWithContext(ctx)
+		if !entered {
+			if err := checkContext(ctx); err != nil {
+				return err
+			}
+			return errors.NewCancelledError()
+		}
+		if acquired {
+			defer env.ExitGIL()
+		}
 	}
 	return applyFunction(ctx, fn, args, keywords, env)
 }
@@ -2695,12 +2718,12 @@ func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.Augm
 // sliceList is in data_structures.go
 // sliceString is in data_structures.go
 
-func evalImportStatement(is *ast.ImportStatement, env *object.Environment) object.Object {
-	importCallback := env.GetImportCallback()
+func evalImportStatement(ctx context.Context, is *ast.ImportStatement, env *object.Environment) object.Object {
+	importCallback := env.GetImportCallbackWithContext()
 	if importCallback == nil {
 		return errors.NewError("%s at line %d", errors.ErrImportError, is.Token.Line)
 	}
-	err := importCallback(is.Name.Value())
+	err := importCallback(ctx, is.Name.Value())
 	if err != nil {
 		return errors.NewError("%s at line %d: %s", errors.ErrImportError, is.Token.Line, err.Error())
 	}
@@ -2717,7 +2740,7 @@ func evalImportStatement(is *ast.ImportStatement, env *object.Environment) objec
 	}
 
 	for i, name := range is.GetAdditionalNames() {
-		if err := importCallback(name.Value()); err != nil {
+		if err := importCallback(ctx, name.Value()); err != nil {
 			return errors.NewError("%s: %s", errors.ErrImportError, err.Error())
 		}
 
@@ -2771,8 +2794,8 @@ func getModuleByPath(env *object.Environment, name string) object.Object {
 	return current
 }
 
-func evalFromImportStatement(fis *ast.FromImportStatement, env *object.Environment) object.Object {
-	importCallback := env.GetImportCallback()
+func evalFromImportStatement(ctx context.Context, fis *ast.FromImportStatement, env *object.Environment) object.Object {
+	importCallback := env.GetImportCallbackWithContext()
 	if importCallback == nil {
 		return errors.NewError(errors.ErrImportError)
 	}
@@ -2825,21 +2848,21 @@ func evalFromImportStatement(fis *ast.FromImportStatement, env *object.Environme
 	// For "from .module import X" (module specified), we import the module once
 	if fis.Module == nil && fis.RelativeLevel > 0 {
 		// "from . import X, Y" - each name is a submodule to import
-		return evalFromImportMultipleSubmodules(fis, baseModuleName, env, importCallback)
+		return evalFromImportMultipleSubmodules(ctx, fis, baseModuleName, env, importCallback)
 	}
 
 	// Standard from-import: import the module and extract names
-	return evalFromImportStandard(fis, baseModuleName, env, importCallback)
+	return evalFromImportStandard(ctx, fis, baseModuleName, env, importCallback)
 }
 
 // evalFromImportMultipleSubmodules handles "from . import X, Y" where each name is a submodule
-func evalFromImportMultipleSubmodules(fis *ast.FromImportStatement, baseModule string, env *object.Environment, importCallback func(string) error) object.Object {
+func evalFromImportMultipleSubmodules(ctx context.Context, fis *ast.FromImportStatement, baseModule string, env *object.Environment, importCallback func(context.Context, string) error) object.Object {
 	for i, name := range fis.Names {
 		// Build the full module name: base + "." + name
 		fullModuleName := baseModule + "." + name.Value()
 
 		// Import the submodule
-		err := importCallback(fullModuleName)
+		err := importCallback(ctx, fullModuleName)
 		if err != nil {
 			return errors.NewError("%s: %s", errors.ErrImportError, err.Error())
 		}
@@ -2879,13 +2902,13 @@ func evalFromImportMultipleSubmodules(fis *ast.FromImportStatement, baseModule s
 }
 
 // evalFromImportStandard handles standard "from module import X, Y"
-func evalFromImportStandard(fis *ast.FromImportStatement, moduleName string, env *object.Environment, importCallback func(string) error) object.Object {
+func evalFromImportStandard(ctx context.Context, fis *ast.FromImportStatement, moduleName string, env *object.Environment, importCallback func(context.Context, string) error) object.Object {
 	// Check if module was already in the environment before importing
 	// (e.g. user did `import json` before `from json import dumps`)
 	_, wasPresent := env.Get(moduleName)
 
 	// Import the module
-	err := importCallback(moduleName)
+	err := importCallback(ctx, moduleName)
 	if err != nil {
 		return errors.NewError("%s: %s", errors.ErrImportError, err.Error())
 	}

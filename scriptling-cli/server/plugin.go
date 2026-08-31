@@ -124,7 +124,7 @@ func (s *Server) runPluginHandler(ctx context.Context, handlerRef string, args [
 	s.setupScriptling(p)
 	s.applyPackLoader(p)
 
-	if err := p.Import(libName); err != nil {
+	if err := p.ImportWithContext(ctx, libName); err != nil {
 		Log.Error("Failed to import plugin handler library", "library", libName, "error", err)
 		return &object.Error{Message: fmt.Sprintf("failed to import %s: %v", libName, err)}
 	}

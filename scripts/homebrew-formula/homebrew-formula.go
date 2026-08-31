@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"text/template"
 
 	"github.com/paularlott/scriptling/build"
@@ -128,8 +129,12 @@ func checksumSet(prefix string) (checksums, error) {
 		prefix + "-linux-amd64.zip":  &set.LinuxAmd64,
 		prefix + "-linux-arm64.zip":  &set.LinuxArm64,
 	}
+	artifactDir := os.Getenv("SCRIPTLING_FORMULA_BIN_DIR")
+	if artifactDir == "" {
+		artifactDir = "bin"
+	}
 	for file, target := range pairs {
-		if *target, err = checksumFor("bin/" + file); err != nil {
+		if *target, err = checksumFor(filepath.Join(artifactDir, file)); err != nil {
 			return set, err
 		}
 	}

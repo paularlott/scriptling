@@ -54,6 +54,10 @@ type ScopeOption func(*Manager)
 // constrained hosts more than sequential loading helps them.
 const DefaultMaxParallelPluginLoads = 5
 
+// ErrManagerClosed is returned by Manager load operations after shutdown has
+// begun. A closed Manager is terminal and cannot be used to load more plugins.
+var ErrManagerClosed = errors.New("plugin manager closed")
+
 type Manager struct {
 	parent                *Manager
 	transportMode         TransportMode
@@ -69,7 +73,18 @@ type Manager struct {
 	// policy is handed to every plugin this manager handshakes with. Set
 	// via SetPolicy before Load; scopes inherit it through the parent chain.
 	policy *Policy
-	mu     sync.RWMutex
+
+	// Lifecycle state is guarded by mu. closed is set before Close waits for
+	// activeLoads, so beginLoad cannot race a new operation into that wait.
+	// loadsDone is closed exactly while activeLoads is zero; closeDone is
+	// closed after the one shutdown owner has closed every registered client.
+	closed      bool
+	activeLoads int
+	loadsDone   chan struct{}
+	closeDone   chan struct{}
+	closeErr    error
+
+	mu sync.RWMutex
 }
 
 // NewManager creates an empty plugin manager. If log is not nil, plugin log
@@ -82,11 +97,44 @@ func NewManager(log logger.Logger, crashHandler ...func(name string, err error))
 		maxParallelPluginLoads: DefaultMaxParallelPluginLoads,
 		httpTransport:          newSharedHTTPTransport(false),
 		httpInsecureTransport:  newSharedHTTPTransport(true),
+		loadsDone:              closedSignal(),
+		closeDone:              make(chan struct{}),
 	}
 	if len(crashHandler) > 0 {
 		manager.crashHandler = crashHandler[0]
 	}
 	return manager
+}
+
+func closedSignal() chan struct{} {
+	done := make(chan struct{})
+	close(done)
+	return done
+}
+
+// beginLoad admits one public load operation while the Manager is open. The
+// increment and Close's terminal state transition share mu, so Close cannot
+// begin waiting while an unaccounted operation increments activeLoads.
+func (m *Manager) beginLoad() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return ErrManagerClosed
+	}
+	if m.activeLoads == 0 {
+		m.loadsDone = make(chan struct{})
+	}
+	m.activeLoads++
+	return nil
+}
+
+func (m *Manager) endLoad() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.activeLoads--
+	if m.activeLoads == 0 {
+		close(m.loadsDone)
+	}
 }
 
 // SetMaxParallelPluginLoads caps how many plugin processes are started
@@ -154,13 +202,18 @@ func WithTransport(mode TransportMode) ScopeOption {
 //
 // The scope does not inherit the parent's dirs or crash handler.
 func (m *Manager) NewScope(opts ...ScopeOption) *Manager {
+	m.mu.RLock()
+	log := m.logger
+	m.mu.RUnlock()
 	scope := &Manager{
 		parent:                 m,
 		clients:                make(map[string]*Client),
-		logger:                 m.logger,
+		logger:                 log,
 		maxParallelPluginLoads: m.parallelLoadLimit(),
 		httpTransport:          m.httpTransport,         // shared — connections pooled with parent
 		httpInsecureTransport:  m.httpInsecureTransport, // shared — connections pooled with parent
+		loadsDone:              closedSignal(),
+		closeDone:              make(chan struct{}),
 	}
 	for _, opt := range opts {
 		opt(scope)
@@ -181,7 +234,9 @@ func (m *Manager) httpTransportFor(insecureSkipTLS bool) *http.Transport {
 // AddDir adds a directory whose executable files should be loaded as plugins.
 func (m *Manager) AddDir(dir string) {
 	if dir != "" {
+		m.mu.Lock()
 		m.dirs = append(m.dirs, dir)
+		m.mu.Unlock()
 	}
 }
 
@@ -207,6 +262,11 @@ type PluginSpec struct {
 // start (in spec order) is returned as an error; plugins started before it
 // are kept. Embedders use this (or Load) for capped parallel loading.
 func (m *Manager) LoadPlugins(ctx context.Context, specs []PluginSpec) error {
+	if err := m.beginLoad(); err != nil {
+		return err
+	}
+	defer m.endLoad()
+
 	results := m.startBatch(ctx, specs)
 	for i, result := range results {
 		if result.err != nil {
@@ -299,6 +359,14 @@ func (m *Manager) registerLoaded(result batchResult) error {
 	name := client.Metadata().Name
 
 	m.mu.Lock()
+	// Close wins atomically over publication. The operation remains accounted
+	// for until its caller returns, and ownership of a rejected client stays
+	// here so the started process cannot escape shutdown.
+	if m.closed {
+		m.mu.Unlock()
+		_ = client.Close()
+		return ErrManagerClosed
+	}
 	// Re-check under the write lock: a concurrent load may have won the race.
 	for _, existing := range m.clients {
 		if existing.Path() == result.spec.Path {
@@ -322,13 +390,17 @@ func (m *Manager) registerLoaded(result batchResult) error {
 // were collected in, so duplicate names resolve to the first path and
 // failures become warnings: one bad plugin never blocks the rest of a
 // directory.
-func (m *Manager) registerBatch(results []batchResult) {
-	for _, result := range results {
+func (m *Manager) registerBatch(results []batchResult) error {
+	for i, result := range results {
 		if result.err != nil {
 			m.addWarning("plugin %s failed to load: %v", result.spec.Path, result.err)
 			continue
 		}
 		if err := m.registerLoaded(result); err != nil {
+			if errors.Is(err, ErrManagerClosed) {
+				m.closeUnregistered(results[i+1:])
+				return ErrManagerClosed
+			}
 			if result.client != nil {
 				m.addWarning("plugin %s ignored: duplicate library %s", result.spec.Path, result.client.Metadata().Name)
 			} else {
@@ -337,6 +409,7 @@ func (m *Manager) registerBatch(results []batchResult) {
 			continue
 		}
 	}
+	return nil
 }
 
 // Load eagerly starts all executable plugins in configured plugin directories.
@@ -344,9 +417,18 @@ func (m *Manager) registerBatch(results []batchResult) {
 // registration stays in directory order so naming behaves exactly as
 // sequential loading: the first executable declaring a library name wins.
 func (m *Manager) Load(ctx context.Context) error {
+	if err := m.beginLoad(); err != nil {
+		return err
+	}
+	defer m.endLoad()
+
+	m.mu.RLock()
+	dirs := append([]string(nil), m.dirs...)
+	m.mu.RUnlock()
+
 	var specs []PluginSpec
 	seen := make(map[string]bool)
-	for _, dir := range m.dirs {
+	for _, dir := range dirs {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			m.addWarning("plugin dir %s: %v", dir, err)
@@ -393,8 +475,7 @@ func (m *Manager) Load(ctx context.Context) error {
 			specs = append(specs, PluginSpec{Path: path})
 		}
 	}
-	m.registerBatch(m.startBatch(ctx, specs))
-	return nil
+	return m.registerBatch(m.startBatch(ctx, specs))
 }
 
 // LoadPlugin starts a single executable plugin, performing the plugin protocol
@@ -407,6 +488,11 @@ func (m *Manager) Load(ctx context.Context) error {
 // that is already registered (e.g. discovered earlier via LoadPath or an
 // explicit load ahead of a --plugin-dir scan) returns the existing client.
 func (m *Manager) LoadPlugin(ctx context.Context, path string, args []string) (*Client, error) {
+	if err := m.beginLoad(); err != nil {
+		return nil, err
+	}
+	defer m.endLoad()
+
 	if isHTTPURL(path) {
 		return nil, fmt.Errorf("LoadPlugin requires an executable path; use LoadURL for http(s) plugins")
 	}
@@ -437,6 +523,11 @@ func (m *Manager) LoadPlugin(ctx context.Context, path string, args []string) (*
 	name := client.Metadata().Name
 
 	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		_ = client.Close()
+		return nil, ErrManagerClosed
+	}
 	// Re-check under the write lock: a concurrent load may have won the race.
 	for _, existing := range m.clients {
 		if existing.Path() == resolvedPath {
@@ -471,6 +562,11 @@ func (m *Manager) LoadPlugin(ctx context.Context, path string, args []string) (*
 // name is normalised into the plugin.* namespace (e.g. "widgets" becomes
 // "plugin.widgets"); the returned client's Metadata().Name reflects that.
 func (m *Manager) LoadPath(ctx context.Context, name, path string, scriptling bool, args []string) (*Client, error) {
+	if err := m.beginLoad(); err != nil {
+		return nil, err
+	}
+	defer m.endLoad()
+
 	normalisedName := NormalizeLibraryName(name)
 	resolvedPath := path
 	isHTTP := isHTTPURL(path)
@@ -542,6 +638,11 @@ func (m *Manager) LoadPath(ctx context.Context, name, path string, scriptling bo
 	client.SetName(normalisedName)
 
 	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		_ = client.Close()
+		return nil, ErrManagerClosed
+	}
 	// Re-check under the write lock: a concurrent LoadPath may have won the race.
 	for _, existing := range m.clients {
 		if existing.Path() == resolvedPath {
@@ -569,6 +670,11 @@ func (m *Manager) LoadPath(ctx context.Context, name, path string, scriptling bo
 // insecureSkipTLS is true, HTTPS certificate verification is skipped. Optional
 // headers are sent with every HTTP request.
 func (m *Manager) LoadURL(ctx context.Context, name, rawURL string, scriptling, insecureSkipTLS bool, headers ...map[string]string) (*Client, error) {
+	if err := m.beginLoad(); err != nil {
+		return nil, err
+	}
+	defer m.endLoad()
+
 	if !isHTTPURL(rawURL) {
 		return nil, fmt.Errorf("plugin URL must use http or https")
 	}
@@ -617,6 +723,11 @@ func (m *Manager) LoadURL(ctx context.Context, name, rawURL string, scriptling, 
 	client.SetName(normalisedName)
 
 	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		_ = client.Close()
+		return nil, ErrManagerClosed
+	}
 	for _, existing := range m.clients {
 		if existing.Path() == rawURL {
 			m.mu.Unlock()
@@ -680,15 +791,41 @@ func isHTTPURL(ref string) bool {
 
 // Close shuts down all loaded plugin processes and clears the local client map.
 // For scoped managers this fully releases all locally loaded plugins without
-// touching the parent's plugins. Close is safe to call more than once.
+// touching the parent's plugins. Close is safe to call concurrently and more
+// than once; every caller waits for the same shutdown and receives its result.
 func (m *Manager) Close() error {
+	m.mu.Lock()
+	if m.closeDone == nil {
+		m.closeDone = make(chan struct{})
+	}
+	if m.loadsDone == nil {
+		m.loadsDone = closedSignal()
+	}
+	if m.closed {
+		done := m.closeDone
+		m.mu.Unlock()
+		<-done
+		m.mu.RLock()
+		err := m.closeErr
+		m.mu.RUnlock()
+		return err
+	}
+
+	// The terminal transition and load admission share mu. Once closed is set,
+	// no load can increment activeLoads or publish a client. Operations already
+	// admitted will observe closed at publication, close any client they started,
+	// and finish before loadsDone is closed.
+	m.closed = true
+	loadsDone := m.loadsDone
+	m.mu.Unlock()
+
+	<-loadsDone
+
 	m.mu.Lock()
 	clients := make([]*Client, 0, len(m.clients))
 	for _, client := range m.clients {
 		clients = append(clients, client)
 	}
-	// Clear the local map immediately so concurrent Get/List calls see an empty
-	// scope even while individual client shutdowns are still in progress.
 	m.clients = make(map[string]*Client)
 	m.mu.Unlock()
 
@@ -698,6 +835,11 @@ func (m *Manager) Close() error {
 			first = err
 		}
 	}
+
+	m.mu.Lock()
+	m.closeErr = first
+	close(m.closeDone)
+	m.mu.Unlock()
 	return first
 }
 

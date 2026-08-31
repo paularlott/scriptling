@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/paularlott/scriptling/ast"
 )
@@ -937,7 +938,7 @@ type Environment struct {
 	output                     io.Writer
 	errOutput                  io.Writer
 	input                      io.Reader
-	importCallback             func(string) error
+	importCallback             func(context.Context, string) error
 	availableLibrariesCallback func() []LibraryInfo
 	currentModule              string // Current module path for relative import resolution
 	// freeFrames is a free-list of reusable call-frame environments, populated
@@ -1068,6 +1069,18 @@ func NewEnvironment() *Environment {
 	return env
 }
 
+// NewEnvironmentWithGILDomain creates an otherwise independent environment
+// that serializes through the same interpreter lock as owner. It is useful for
+// runtime callbacks that must retain a stable lock domain without retaining
+// owner's store (which can create finalizer reachability cycles).
+func NewEnvironmentWithGILDomain(owner *Environment) *Environment {
+	env := NewEnvironment()
+	if owner != nil && owner.root != nil && owner.root.gil != nil {
+		env.gil = owner.root.gil
+	}
+	return env
+}
+
 func NewEnclosedEnvironment(outer *Environment) *Environment {
 	env := &Environment{
 		outer: outer,
@@ -1141,6 +1154,48 @@ func (e *Environment) EnterGIL() bool {
 	g.mu.Lock()
 	g.owner.Store(id)
 	return true
+}
+
+// EnterGILWithContext acquires the interpreter lock while allowing a
+// cancellable caller to abandon a contended wait. acquired reports whether the
+// caller must invoke ExitGIL; entered is false only when ctx ended before entry.
+// Contexts without cancellation use the regular blocking fast path.
+func (e *Environment) EnterGILWithContext(ctx context.Context) (acquired, entered bool) {
+	if ctx == nil || ctx.Done() == nil {
+		return e.EnterGIL(), true
+	}
+	if ctx.Err() != nil {
+		return false, false
+	}
+	if e.root == nil || e.root.gil == nil {
+		return false, true
+	}
+	g := e.root.gil
+	id := goid()
+	if g.owner.Load() == id {
+		return false, true
+	}
+	if g.mu.TryLock() {
+		g.owner.Store(id)
+		return true, true
+	}
+
+	// sync.Mutex has no context-aware blocking operation. Poll TryLock at a
+	// modest interval so cancellation bounds runtime-finalizer waits without
+	// spinning or changing the uncontended/non-cancellable hot paths.
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false, false
+		case <-ticker.C:
+			if g.mu.TryLock() {
+				g.owner.Store(id)
+				return true, true
+			}
+		}
+	}
 }
 
 // ExitGIL releases the interpreter lock previously acquired by EnterGIL.
@@ -1834,15 +1889,42 @@ func (e *Environment) ResetStore(keep map[string]bool) {
 	}
 }
 
-// SetImportCallback sets the import callback for this environment.
-// GetImportCallback walks up the scope chain, so setting on any env
-// makes it available to that env and all enclosed children.
+// SetImportCallback sets a context-free import callback for backwards
+// compatibility. New code should use SetImportCallbackWithContext so caller
+// cancellation and values are preserved through imports.
 func (e *Environment) SetImportCallback(fn func(string) error) {
+	if fn == nil {
+		e.importCallback = nil
+		return
+	}
+	e.importCallback = func(_ context.Context, name string) error {
+		return fn(name)
+	}
+}
+
+// SetImportCallbackWithContext sets the context-aware import callback for this
+// environment. GetImportCallbackWithContext walks up the scope chain, so the
+// callback is available to enclosed environments.
+func (e *Environment) SetImportCallbackWithContext(fn func(context.Context, string) error) {
 	e.importCallback = fn
 }
 
-// GetImportCallback gets the import callback from this environment or outer
+// GetImportCallback returns a context-free view of the import callback for
+// backwards compatibility. Calls made through this wrapper use a background
+// context; evaluator internals use GetImportCallbackWithContext.
 func (e *Environment) GetImportCallback() func(string) error {
+	fn := e.GetImportCallbackWithContext()
+	if fn == nil {
+		return nil
+	}
+	return func(name string) error {
+		return fn(context.Background(), name)
+	}
+}
+
+// GetImportCallbackWithContext gets the context-aware import callback from this
+// environment or an outer environment.
+func (e *Environment) GetImportCallbackWithContext() func(context.Context, string) error {
 	for env := e; env != nil; env = env.outer {
 		if env.importCallback != nil {
 			return env.importCallback

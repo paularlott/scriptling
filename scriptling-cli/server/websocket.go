@@ -22,10 +22,10 @@ var websocketUpgrader = websocket.Upgrader{
 
 // websocketOriginAllowed applies the server's origin policy to an upgrade
 // request. Non-browser clients send no Origin header and pass. With no
-// configured origins a browser must be same-origin (the Host must match the
-// Origin's host, port included), which closes cross-site WebSocket
-// hijacking by default; a configured list is an exact-match allowlist, and
-// "*" opts out for deployments behind a trusted proxy.
+// configured origins a browser must be same-origin (scheme and Host must
+// match, port included), which closes cross-site WebSocket hijacking by
+// default; a configured list is an exact-match allowlist, and "*" opts out
+// for deployments behind a trusted proxy.
 func (s *Server) websocketOriginAllowed(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
@@ -42,12 +42,17 @@ func (s *Server) websocketOriginAllowed(r *http.Request) bool {
 	if len(s.config.WebSocketOrigins) > 0 {
 		return false
 	}
-	// Same-origin default: compare the Origin's host:port with the request's.
+	// Same-origin default: compare both scheme and host:port. The request's
+	// effective scheme comes from TLS rather than proxy-controlled headers.
 	parsed, err := url.ParseRequestURI(origin)
 	if err != nil {
 		return false
 	}
-	return strings.EqualFold(parsed.Host, r.Host)
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	return strings.EqualFold(parsed.Scheme, scheme) && strings.EqualFold(parsed.Host, r.Host)
 }
 
 // websocketUpgraderFor returns the upgrader bound to this server's origin
@@ -145,7 +150,7 @@ func (s *Server) runWebSocketHandler(ctx context.Context, handlerRef string, cli
 	s.applyPackLoader(p)
 
 	// Import the library
-	if err := p.Import(libName); err != nil {
+	if err := p.ImportWithContext(ctx, libName); err != nil {
 		Log.Error("Failed to import library", "library", libName, "error", err)
 		return
 	}

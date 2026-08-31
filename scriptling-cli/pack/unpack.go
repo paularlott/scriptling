@@ -3,6 +3,7 @@ package pack
 import (
 	"archive/zip"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -61,6 +62,7 @@ func Unpack(src string, opts UnpackOptions) error {
 		return err
 	}
 
+	var actualTotal uint64
 	for _, f := range zr.File {
 		// Only extract lib/ and docs/ contents, stripping the prefix so multiple
 		// packages can be unpacked into the same destination directory.
@@ -74,11 +76,12 @@ func Unpack(src string, opts UnpackOptions) error {
 		default:
 			continue
 		}
-		f.Name = name[len(prefix):]
-		if f.Name == "" {
+		entry := *f
+		entry.Name = name[len(prefix):]
+		if entry.Name == "" {
 			continue
 		}
-		if err := extractFile(f, filepath.Join(destRoot, prefix[:len(prefix)-1]), opts.Force); err != nil {
+		if err := extractFile(&entry, filepath.Join(destRoot, prefix[:len(prefix)-1]), opts.Force, &actualTotal); err != nil {
 			return err
 		}
 	}
@@ -96,6 +99,9 @@ func checkExpansionBudget(zr *zip.Reader) error {
 	for _, f := range zr.File {
 		if f.UncompressedSize64 > maxUnpackEntryBytes {
 			return fmt.Errorf("entry %s declares %d uncompressed bytes (max %d)", f.Name, f.UncompressedSize64, maxUnpackEntryBytes)
+		}
+		if f.UncompressedSize64 > maxUnpackTotalBytes-total {
+			return fmt.Errorf("package declares more than %d uncompressed bytes in total", maxUnpackTotalBytes)
 		}
 		total += f.UncompressedSize64
 	}
@@ -164,20 +170,18 @@ const (
 	maxUnpackTotalBytes = 1 << 30   // 1 GiB across the archive
 )
 
-// extractFile writes one archive entry under destDir. Lexical traversal is
-// rejected, and so is a pre-existing symlink anywhere along the destination
-// path: MkdirAll and os.Create both follow symlinks, so a planted link (or a
-// link written by an earlier entry of a hostile archive) would redirect the
-// extraction outside destDir.
-func extractFile(f *zip.File, destDir string, force bool) error {
-	// Prevent path traversal
+// extractFile stages one archive entry under destDir before atomically
+// publishing it. Lexical traversal and pre-existing symlinks are rejected,
+// including a final-component symlink in force mode. The copy is bounded by
+// both the entry and aggregate actual-byte budgets before bytes reach disk.
+func extractFile(f *zip.File, destDir string, force bool, actualTotal *uint64) error {
+	// Prevent path traversal.
 	rel := filepath.FromSlash(f.Name)
 	if strings.Contains(rel, "..") {
 		return fmt.Errorf("invalid path in package: %s", f.Name)
 	}
 
 	dst := filepath.Join(destDir, rel)
-
 	if err := ensureNoSymlinkPrefix(destDir, rel); err != nil {
 		return err
 	}
@@ -186,36 +190,104 @@ func extractFile(f *zip.File, destDir string, force bool) error {
 		return mkdirAllNoSymlinks(dst)
 	}
 
-	if !force {
-		if info, err := os.Lstat(dst); err == nil {
-			if info.Mode()&os.ModeSymlink != 0 {
-				return fmt.Errorf("refusing to follow symlink: %s", dst)
-			}
+	if info, err := os.Lstat(dst); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refusing to follow symlink: %s", dst)
+		}
+		if !force {
 			return fmt.Errorf("file already exists (use -f to overwrite): %s", dst)
 		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
 
 	if err := mkdirAllNoSymlinks(filepath.Dir(dst)); err != nil {
 		return err
 	}
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+
+	remainingTotal := uint64(0)
+	if *actualTotal < maxUnpackTotalBytes {
+		remainingTotal = maxUnpackTotalBytes - *actualTotal
+	}
+	allowed := f.UncompressedSize64
+	limitName := "declared size"
+	if allowed > maxUnpackEntryBytes {
+		allowed = maxUnpackEntryBytes
+		limitName = "per-entry limit"
+	}
+	if allowed > remainingTotal {
+		allowed = remainingTotal
+		limitName = "aggregate limit"
+	}
+
+	tmpF, err := os.CreateTemp(filepath.Dir(dst), "."+filepath.Base(dst)+".*.tmp")
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	tmp := tmpF.Name()
+	defer func() {
+		_ = tmpF.Close()
+		_ = os.Remove(tmp)
+	}()
+	if err := tmpF.Chmod(0644); err != nil {
+		return err
+	}
 
 	rc, err := f.Open()
 	if err != nil {
 		return err
 	}
-	defer rc.Close()
+	n, copyErr := io.Copy(tmpF, io.LimitReader(rc, int64(allowed)))
+	*actualTotal += uint64(n)
+	if copyErr != nil {
+		_ = rc.Close()
+		return fmt.Errorf("failed to extract %s after %d bytes: %w", f.Name, n, copyErr)
+	}
 
-	_, err = io.Copy(out, io.LimitReader(rc, maxUnpackEntryBytes+1))
-	if err != nil {
+	// LimitReader reports EOF at the bound, so probe the ZIP stream without
+	// writing the byte. This detects dishonest headers while ensuring no byte
+	// beyond the selected limit can reach the output file.
+	var probe [1]byte
+	probeN, probeErr := rc.Read(probe[:])
+	if probeN > 0 {
+		_ = rc.Close()
+		return fmt.Errorf("entry %s actual data exceeds its %s of %d bytes", f.Name, limitName, allowed)
+	}
+	if probeErr != nil && !errors.Is(probeErr, io.EOF) {
+		_ = rc.Close()
+		return fmt.Errorf("entry %s actual data does not match its declared size after %d bytes: %w", f.Name, n, probeErr)
+	}
+	if err := rc.Close(); err != nil {
+		return fmt.Errorf("failed to close entry %s: %w", f.Name, err)
+	}
+	if uint64(n) != f.UncompressedSize64 {
+		return fmt.Errorf("entry %s copied %d actual bytes, but declares %d", f.Name, n, f.UncompressedSize64)
+	}
+	if *actualTotal > maxUnpackTotalBytes {
+		return fmt.Errorf("extracted data exceeds aggregate limit of %d bytes", maxUnpackTotalBytes)
+	}
+	if err := tmpF.Close(); err != nil {
 		return err
 	}
-	if f.UncompressedSize64 > maxUnpackEntryBytes {
-		return fmt.Errorf("entry %s expands past %d bytes", f.Name, maxUnpackEntryBytes)
+
+	// Recheck the final component immediately before publication. Publication
+	// itself replaces the leaf rather than following it if another process
+	// races this check.
+	if info, err := os.Lstat(dst); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refusing to follow symlink: %s", dst)
+		}
+		if !force {
+			return fmt.Errorf("file already exists (use -f to overwrite): %s", dst)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := publishPackage(tmp, dst, force); err != nil {
+		if !force && errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("file already exists (use -f to overwrite): %s", dst)
+		}
+		return err
 	}
 	return nil
 }

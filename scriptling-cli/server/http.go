@@ -43,6 +43,26 @@ func (s *Server) checkRouteConflicts() error {
 		probe.Handle(pattern, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 		return nil
 	}
+
+	// Match buildMux's protocol predicates and ordering so user routes cannot
+	// silently lose to enabled built-in endpoints.
+	if s.mcpEnabled() {
+		if err := register("POST /mcp"); err != nil {
+			return err
+		}
+		if err := register("GET /mcp"); err != nil {
+			return err
+		}
+	}
+	if s.config.JSONRPC {
+		if err := register("POST /json-rpc"); err != nil {
+			return err
+		}
+		if err := register("GET /json-rpc"); err != nil {
+			return err
+		}
+	}
+
 	for key := range s.handlers {
 		pattern := key
 		if strings.HasSuffix(key, " /") {
@@ -500,7 +520,7 @@ func (s *Server) runHandler(ctx context.Context, handlerRef string, reqObj *obje
 	s.setupScriptling(p)
 	s.applyPackLoader(p)
 
-	if err := p.Import(libName); err != nil {
+	if err := p.ImportWithContext(ctx, libName); err != nil {
 		Log.Error("Failed to import library", "library", libName, "error", err)
 		return nil
 	}

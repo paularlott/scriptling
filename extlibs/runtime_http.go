@@ -53,13 +53,16 @@ const MaxWebSocketMessage = 8 << 20 // 8 MiB
 
 // WebSocketServerConn wraps a server-side WebSocket connection.
 //
-// Locking: mu guards state and writes; readMu only serializes readers. A
-// read never holds mu, so Close can always run and unblocks a waiting read
-// (conn.Close is goroutine-safe); previously the sole mutex was held across
-// ReadMessage, so a blocking read also blocked Close and writes forever.
+// Locking: mu guards state, readMu serializes readers, and writeMu serializes
+// writers. Neither I/O lock is needed by Close, so closing the transport can
+// interrupt a blocked read or write while preserving Gorilla's one-reader /
+// one-writer rules.
 type WebSocketServerConn struct {
 	mu         sync.Mutex
 	readMu     sync.Mutex
+	writeMu    sync.Mutex
+	closeOnce  sync.Once
+	closeErr   error
 	conn       *websocket.Conn
 	id         string
 	remoteAddr string
@@ -123,39 +126,50 @@ func (c *WebSocketServerConn) ReadWithTimeout(timeout time.Duration) (int, []byt
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 			return 0, nil, nil
 		}
-		c.mu.Lock()
-		if !c.closed {
-			c.closed = true
-			close(c.closedCh)
-		}
-		c.mu.Unlock()
+		_ = c.Close()
 		return 0, nil, err
 	}
 	return msgType, data, nil
 }
 
+func (c *WebSocketServerConn) markClosed() {
+	c.mu.Lock()
+	if !c.closed {
+		c.closed = true
+		close(c.closedCh)
+	}
+	c.mu.Unlock()
+}
+
+func (c *WebSocketServerConn) closeTransport() error {
+	c.closeOnce.Do(func() {
+		c.closeErr = c.conn.Close()
+	})
+	return c.closeErr
+}
+
 // WriteMessage sends a message
 func (c *WebSocketServerConn) WriteMessage(msgType int, data []byte) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
 
-	if c.closed {
+	c.mu.Lock()
+	closed := c.closed
+	c.mu.Unlock()
+	if closed {
 		return net.ErrClosed
 	}
-	return c.conn.WriteMessage(msgType, data)
+	if err := c.conn.WriteMessage(msgType, data); err != nil {
+		_ = c.Close()
+		return err
+	}
+	return nil
 }
 
 // Close closes the connection
 func (c *WebSocketServerConn) Close() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.closed {
-		return nil
-	}
-	c.closed = true
-	close(c.closedCh)
-	return c.conn.Close()
+	c.markClosed()
+	return c.closeTransport()
 }
 
 // IsConnected returns whether the connection is still open

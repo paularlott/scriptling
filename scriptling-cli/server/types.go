@@ -120,31 +120,34 @@ func (h *reloadableMCPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 
 // Server represents the HTTP server
 type Server struct {
-	config               ServerConfig
-	httpServer           *http.Server
-	mcpHandler           *reloadableMCPHandler
-	pluginServer         *scriptlingplugin.Server // non-nil when plugin mode is active
-	handlers             map[string]string        // path -> "library.function"
-	wsHandlers           map[string]string        // path -> "library.function" for WebSocket
-	jsonrpcMethods       map[string]string        // JSON-RPC method name -> "library.function"
-	jsonrpcNotifications map[string]string        // JSON-RPC notification name -> "library.function"
-	jsonrpcServer        *jsonrpc.Server          // built lazily from the maps above
-	jsonrpcServerOnce    sync.Once
-	middleware           string
-	notFoundHandler      string
-	staticRoutes         map[string]string
-	webRootZip           *zip.ReadCloser // non-nil when WebRoot is a .zip file
-	mu                   sync.RWMutex
-	watcher              *fsnotify.Watcher
-	reloadMu             sync.Mutex // guards reloadMCP and reloadDebounce
-	reloadDebounce       *time.Timer
-	debounceDuration     time.Duration
-	mcpFolderEntries     mcpEntries    // folder-sourced MCP registrations (reloadable)
-	mcpBundleEntries     mcpEntries    // bundle-sourced MCP registrations (reloadable)
-	packLoader           *pack.Loader  // nil if no packages configured
-	webRootFS            fs.FS         // non-nil when serving webroot/ from the app bundle (cached sub-FS)
-	bearerExpected       string        // precomputed "Bearer <token>"
-	scriptDone           chan struct{} // closed when setup script goroutine exits
+	config                ServerConfig
+	httpServer            *http.Server
+	mcpHandler            *reloadableMCPHandler
+	pluginServer          *scriptlingplugin.Server // non-nil when plugin mode is active
+	handlers              map[string]string        // path -> "library.function"
+	wsHandlers            map[string]string        // path -> "library.function" for WebSocket
+	jsonrpcMethods        map[string]string        // JSON-RPC method name -> "library.function"
+	jsonrpcNotifications  map[string]string        // JSON-RPC notification name -> "library.function"
+	jsonrpcServer         *jsonrpc.Server          // built lazily from the maps above
+	jsonrpcServerOnce     sync.Once
+	middleware            string
+	notFoundHandler       string
+	staticRoutes          map[string]string
+	webRootZip            *zip.ReadCloser // non-nil when WebRoot is a .zip file
+	mu                    sync.RWMutex
+	watcher               *fsnotify.Watcher
+	reloadMu              sync.Mutex // guards reloadMCP and reloadDebounce
+	reloadDebounce        *time.Timer
+	debounceDuration      time.Duration
+	mcpFolderEntries      mcpEntries    // folder-sourced MCP registrations (reloadable)
+	mcpBundleEntries      mcpEntries    // bundle-sourced MCP registrations (reloadable)
+	packLoader            *pack.Loader  // nil if no packages configured
+	webRootFS             fs.FS         // non-nil when serving webroot/ from the app bundle (cached sub-FS)
+	bearerExpected        string        // precomputed "Bearer <token>"
+	scriptDone            chan struct{} // closed when setup script goroutine exits
+	serverRunningCh       chan struct{} // this server's shutdown signal, also published through RuntimeState
+	setupShutdownOnce     sync.Once     // closes serverRunningCh at most once
+	backgroundReleaseOnce sync.Once     // releases setup-queued background tasks at most once
 }
 
 // mcpEntries tracks what was registered on the MCP server from one source so

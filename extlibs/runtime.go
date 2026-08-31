@@ -693,6 +693,17 @@ func taskContext(ctx context.Context, env *object.Environment) context.Context {
 	return evaluator.SetCallDepthInContext(ctx, evaluator.NewCallDepth(evaluator.DefaultMaxCallDepth))
 }
 
+type contextLibraryEnvLoader interface {
+	LoadLibraryIntoEnvWithContext(context.Context, string, *object.Environment) error
+}
+
+func loadLibraryIntoEnvWithContext(ctx context.Context, sandbox SandboxInstance, name string, env *object.Environment) error {
+	if contextual, ok := sandbox.(contextLibraryEnvLoader); ok {
+		return contextual.LoadLibraryIntoEnvWithContext(ctx, name, env)
+	}
+	return sandbox.LoadLibraryIntoEnv(name, env)
+}
+
 // prepareBackgroundTask validates the handler and captures everything the
 // task needs from the source environment, strictly on the CALLER's goroutine:
 // reading the environment from the task goroutine races any concurrent eval
@@ -744,11 +755,11 @@ func prepareBackgroundTask(promise *Promise, handler string, fnArgs []object.Obj
 	// goroutine — the task goroutine must not read the source Environment's
 	// fields directly.
 	var parentWriter, parentErrWriter io.Writer
-	var parentImport func(string) error
+	var parentImport func(context.Context, string) error
 	if !isDotted && factory == nil && globalEnv != nil {
 		parentWriter = globalEnv.GetWriter()
 		parentErrWriter = globalEnv.GetErrorWriter()
-		parentImport = globalEnv.GetImportCallback()
+		parentImport = globalEnv.GetImportCallbackWithContext()
 	}
 
 	run := func() {
@@ -783,7 +794,7 @@ func prepareBackgroundTask(promise *Promise, handler string, fnArgs []object.Obj
 			}
 
 			newEnv := object.NewEnvironment()
-			if err := scriptling.LoadLibraryIntoEnv(libName, newEnv); err != nil {
+			if err := loadLibraryIntoEnvWithContext(ctx, scriptling, libName, newEnv); err != nil {
 				promise.set(nil, fmt.Errorf("failed to load library %s: %v", libName, err))
 				return
 			}
@@ -823,8 +834,8 @@ func prepareBackgroundTask(promise *Promise, handler string, fnArgs []object.Obj
 				newEnv = object.NewEnvironment()
 
 				// Set up import callback so the function can import libraries
-				newEnv.SetImportCallback(func(libName string) error {
-					return scriptling.LoadLibraryIntoEnv(libName, newEnv)
+				newEnv.SetImportCallbackWithContext(func(importCtx context.Context, libName string) error {
+					return loadLibraryIntoEnvWithContext(importCtx, scriptling, libName, newEnv)
 				})
 			} else {
 				// No factory configured: derive the task environment from the
@@ -841,7 +852,7 @@ func prepareBackgroundTask(promise *Promise, handler string, fnArgs []object.Obj
 				newEnv.SetErrorWriter(parentErrWriter)
 				if parentImport != nil {
 					taskEnv := newEnv
-					newEnv.SetImportCallback(func(libName string) error {
+					newEnv.SetImportCallbackWithContext(func(importCtx context.Context, libName string) error {
 						// The caller's loader and store belong to a different
 						// lock domain (this task env has its own root/GIL).
 						// Take the caller's interpreter lock so the delegated
@@ -855,7 +866,7 @@ func prepareBackgroundTask(promise *Promise, handler string, fnArgs []object.Obj
 								globalEnv.ExitGIL()
 							}
 						}()
-						if err := parentImport(libName); err != nil {
+						if err := parentImport(importCtx, libName); err != nil {
 							return err
 						}
 						globalEnv.SnapshotCallables().ApplySnapshot(taskEnv)

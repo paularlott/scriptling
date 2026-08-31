@@ -187,48 +187,68 @@ tasks:
     cmds:
       - |
         out=../homebrew-tap/Formula/scriptling.rb
-        if go run ./scripts/homebrew-formula/ > "$out.tmp"; then
-          mv "$out.tmp" "$out"
-        else
-          rm -f "$out.tmp"
-          exit 1
-        fi
+        tmp=$(mktemp "${out}.tmp.XXXXXX") || exit 1
+        trap 'rm -f "$tmp"' EXIT
+        go run ./scripts/homebrew-formula/ > "$tmp" || exit 1
+        mv "$tmp" "$out" || exit 1
+        trap - EXIT
 
   homebrew-formula-full:
     desc: Generate the Homebrew formula for scriptling-full (database plugins compiled in)
     cmds:
       - |
         out=../homebrew-tap/Formula/scriptling-full.rb
-        if go run ./scripts/homebrew-formula/ -full > "$out.tmp"; then
-          mv "$out.tmp" "$out"
-        else
-          rm -f "$out.tmp"
-          exit 1
-        fi
+        tmp=$(mktemp "${out}.tmp.XXXXXX") || exit 1
+        trap 'rm -f "$tmp"' EXIT
+        go run ./scripts/homebrew-formula/ -full > "$tmp" || exit 1
+        mv "$tmp" "$out" || exit 1
+        trap - EXIT
 
   homebrew-formula-plugins:
     desc: Generate the Homebrew formula for the database plugin binaries
     cmds:
       - |
         out=../homebrew-tap/Formula/scriptling-plugins.rb
-        if go run ./scripts/homebrew-formula/ -plugins > "$out.tmp"; then
-          mv "$out.tmp" "$out"
-        else
-          rm -f "$out.tmp"
-          exit 1
-        fi
+        tmp=$(mktemp "${out}.tmp.XXXXXX") || exit 1
+        trap 'rm -f "$tmp"' EXIT
+        go run ./scripts/homebrew-formula/ -plugins > "$tmp" || exit 1
+        mv "$tmp" "$out" || exit 1
+        trap - EXIT
 
   release:
     desc: Tag the version and create GitHub release with all platform binaries
     deps: [build-all]
     cmds:
-      # Formulas checksum the release zips, so they must run after a completed
-      # build (deps would run them concurrently with it) and before the tag
-      # publishes anything.
-      - task: homebrew-formula
-      - task: homebrew-formula-full
-      - task: homebrew-formula-plugins
       - |
+        # Stage formulas without changing the tap checkout. For a new release
+        # they checksum the completed local build; for a resumable rerun they
+        # checksum the already-published assets, which remain authoritative even
+        # if rebuilding produced byte-different ZIP metadata.
+        formula_stage=$(mktemp -d "${TMPDIR:-/tmp}/scriptling-formulas.XXXXXX") || exit 1
+        trap 'rm -rf "$formula_stage"' EXIT
+
+        gh repo set-default paularlott/scriptling
+        release_exists=0
+        formula_artifacts={{.BIN_DIR}}
+        if gh release view v{{.VERSION}} >/dev/null 2>&1; then
+          release_stage="$formula_stage/release"
+          mkdir "$release_stage" || exit 1
+          gh release download v{{.VERSION}} --pattern '*.zip' --dir "$release_stage" || exit 1
+          for local_zip in {{.BIN_DIR}}/*.zip; do
+            remote_zip="$release_stage/$(basename "$local_zip")"
+            if [ ! -f "$remote_zip" ]; then
+              echo "Existing release is missing $(basename "$local_zip")" >&2
+              exit 1
+            fi
+          done
+          release_exists=1
+          formula_artifacts="$release_stage"
+        fi
+
+        SCRIPTLING_FORMULA_BIN_DIR="$formula_artifacts" go run ./scripts/homebrew-formula/ > "$formula_stage/scriptling.rb" || exit 1
+        SCRIPTLING_FORMULA_BIN_DIR="$formula_artifacts" go run ./scripts/homebrew-formula/ -full > "$formula_stage/scriptling-full.rb" || exit 1
+        SCRIPTLING_FORMULA_BIN_DIR="$formula_artifacts" go run ./scripts/homebrew-formula/ -plugins > "$formula_stage/scriptling-plugins.rb" || exit 1
+
         # Check if tag exists
         if git tag -l v{{.VERSION}} | grep -q v{{.VERSION}}; then
           echo "Tag v{{.VERSION}} already exists, skipping tag creation"
@@ -237,9 +257,14 @@ tasks:
           git tag -a v{{.VERSION}} -m "Release {{.VERSION}}"
           git push origin v{{.VERSION}}
         fi
-        # Create release and upload zip files only
-        gh repo set-default paularlott/scriptling
-        gh release create v{{.VERSION}} -t "Release {{.VERSION}}" -n "Scriptling {{.VERSION}}" {{.BIN_DIR}}/*.zip
-      - task: homebrew-formula
-      - task: homebrew-formula-full
-      - task: homebrew-formula-plugins
+
+        # Publish the release before formulas that point at its assets. If the
+        # release already existed, the formulas above were generated directly
+        # from its downloaded assets and can safely complete a partial rerun.
+        if [ "$release_exists" -eq 0 ]; then
+          gh release create v{{.VERSION}} -t "Release {{.VERSION}}" -n "Scriptling {{.VERSION}}" {{.BIN_DIR}}/*.zip || exit 1
+        fi
+
+        mv "$formula_stage/scriptling.rb" ../homebrew-tap/Formula/scriptling.rb || exit 1
+        mv "$formula_stage/scriptling-full.rb" ../homebrew-tap/Formula/scriptling-full.rb || exit 1
+        mv "$formula_stage/scriptling-plugins.rb" ../homebrew-tap/Formula/scriptling-plugins.rb || exit 1
