@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -743,39 +744,19 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 			}
 		case *object.List:
 			if operator == ast.OpMul {
-				if l.IntValue() <= 0 {
-					return &object.List{Elements: []object.Object{}}
-				}
-				if errObj := checkRepetition(l.IntValue(), int64(len(r.Elements)), maxRepeatElements); errObj != nil {
+				elements, errObj := repeatElements(r.Elements, l.IntValue())
+				if errObj != nil {
 					return errObj
 				}
-				count := int(l.IntValue())
-				if len(r.Elements) == 0 {
-					count = 0
-				}
-				result := make([]object.Object, count*len(r.Elements))
-				for i := range count {
-					copy(result[i*len(r.Elements):], r.Elements)
-				}
-				return &object.List{Elements: result}
+				return &object.List{Elements: elements}
 			}
 		case *object.Tuple:
 			if operator == ast.OpMul {
-				if l.IntValue() <= 0 {
-					return &object.Tuple{Elements: []object.Object{}}
-				}
-				if errObj := checkRepetition(l.IntValue(), int64(len(r.Elements)), maxRepeatElements); errObj != nil {
+				elements, errObj := repeatElements(r.Elements, l.IntValue())
+				if errObj != nil {
 					return errObj
 				}
-				count := int(l.IntValue())
-				if len(r.Elements) == 0 {
-					count = 0
-				}
-				result := make([]object.Object, count*len(r.Elements))
-				for i := range count {
-					copy(result[i*len(r.Elements):], r.Elements)
-				}
-				return &object.Tuple{Elements: result}
+				return &object.Tuple{Elements: elements}
 			}
 		}
 		return evalFloatInfixExpression(operator, left, right)
@@ -848,21 +829,11 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 			return errors.NewTypeError("tuple", right.Type().String())
 		case ast.OpMul:
 			if r, ok := right.(*object.Integer); ok {
-				if r.IntValue() <= 0 {
-					return &object.Tuple{Elements: []object.Object{}}
-				}
-				if errObj := checkRepetition(r.IntValue(), int64(len(l.Elements)), maxRepeatElements); errObj != nil {
+				elements, errObj := repeatElements(l.Elements, r.IntValue())
+				if errObj != nil {
 					return errObj
 				}
-				count := int(r.IntValue())
-				if len(l.Elements) == 0 {
-					count = 0
-				}
-				result := make([]object.Object, count*len(l.Elements))
-				for i := range count {
-					copy(result[i*len(l.Elements):], l.Elements)
-				}
-				return &object.Tuple{Elements: result}
+				return &object.Tuple{Elements: elements}
 			}
 			return errors.NewTypeError("int", right.Type().String())
 		case ast.OpEq:
@@ -888,21 +859,11 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 			return &object.List{Elements: result}
 		case ast.OpMul:
 			if r, ok := right.(*object.Integer); ok {
-				if r.IntValue() <= 0 {
-					return &object.List{Elements: []object.Object{}}
-				}
-				if errObj := checkRepetition(r.IntValue(), int64(len(l.Elements)), maxRepeatElements); errObj != nil {
+				elements, errObj := repeatElements(l.Elements, r.IntValue())
+				if errObj != nil {
 					return errObj
 				}
-				count := int(r.IntValue())
-				if len(l.Elements) == 0 {
-					count = 0
-				}
-				result := make([]object.Object, count*len(l.Elements))
-				for i := range count {
-					copy(result[i*len(l.Elements):], l.Elements)
-				}
-				return &object.List{Elements: result}
+				return &object.List{Elements: elements}
 			}
 			return errors.NewTypeError("int", right.Type().String())
 		}
@@ -1428,6 +1389,21 @@ func checkRepetition(multiplier, unitLen, limit int64) object.Object {
 	return nil
 }
 
+// repeatElements returns elems repeated multiplier times, an empty slice for a
+// non-positive multiplier or empty elems, or the repetition error when the
+// result would exceed maxRepeatElements. checkRepetition bounds the element
+// count, so neither the int conversion nor slices.Repeat's internal size
+// arithmetic can overflow.
+func repeatElements(elems []object.Object, multiplier int64) ([]object.Object, object.Object) {
+	if multiplier <= 0 || len(elems) == 0 {
+		return []object.Object{}, nil
+	}
+	if errObj := checkRepetition(multiplier, int64(len(elems)), maxRepeatElements); errObj != nil {
+		return nil, errObj
+	}
+	return slices.Repeat(elems, int(multiplier)), nil
+}
+
 func evalStringMultiplication(str string, multiplier int64) object.Object {
 	if multiplier < 0 {
 		return object.NewString("")
@@ -1491,11 +1467,9 @@ func evalBytesMultiplication(b *object.Bytes, multiplier int64) object.Object {
 	if errObj := checkRepetition(multiplier, int64(srcLen), maxRepeatBytes); errObj != nil {
 		return errObj
 	}
-	out := make([]byte, 0, srcLen*int(multiplier))
-	for i := int64(0); i < multiplier; i++ {
-		out = append(out, src...)
-	}
-	return object.NewBytes(out)
+	// checkRepetition bounds the byte count, so bytes.Repeat's internal size
+	// arithmetic cannot overflow.
+	return object.NewBytes(bytes.Repeat(src, int(multiplier)))
 }
 
 // callDunderMethod calls a dunder method on an instance, returning nil if not defined.
