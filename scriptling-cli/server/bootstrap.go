@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs"
@@ -25,6 +26,7 @@ func NewServer(config ServerConfig) (*Server, error) {
 		staticRoutes:         make(map[string]string),
 		bearerExpected:       "Bearer " + config.BearerToken,
 		scriptDone:           make(chan struct{}),
+		serverRunningCh:      make(chan struct{}),
 	}
 
 	// Pre-opened bundles take precedence over legacy package sources. The app
@@ -79,14 +81,52 @@ func NewServer(config ServerConfig) (*Server, error) {
 	// registered after start_server() returns is definitively excluded.
 	extlibs.RuntimeState.Lock()
 	extlibs.RuntimeState.ServerStartCh = make(chan struct{})
-	extlibs.RuntimeState.ServerRunningCh = make(chan struct{})
+	extlibs.RuntimeState.ServerRunningCh = s.serverRunningCh
 	extlibs.RuntimeState.ServerCollect = func() {
 		s.collectRoutes()
 		s.collectJSONRPCMethods()
 	}
 	extlibs.RuntimeState.Unlock()
 
-	hasScript := config.ScriptFile != "" || s.packLoader != nil
+	// Background task instances come from the process-wide factory, which
+	// knows nothing about this server's packages: a task handler named as a
+	// bundle module ("mod.fn") would not resolve. Layer the pack loader onto
+	// the factory so server-mode tasks see the same modules request handlers
+	// do. Like the rest of extlibs.RuntimeState this is process-global: the
+	// last server to configure a loader wins, which matches the one-server
+	// CLI process and the existing global release of background tasks.
+	if s.packLoader != nil {
+		if base := extlibs.BackgroundFactory(); base != nil {
+			loader := s.packLoader
+			extlibs.SetBackgroundFactory(func() extlibs.SandboxInstance {
+				p := base()
+				if instance, ok := p.(*scriptling.Scriptling); ok {
+					bootstrap.ApplyPackLoader(instance, loader)
+				}
+				return p
+			})
+		}
+	}
+
+	hasScript := config.ScriptFile != "" || len(config.ScriptSource) > 0 || s.packLoader != nil
+
+	// From this point onward, construction owns the setup lifecycle. Any error
+	// before the Server is returned must release background work and stop a
+	// setup script blocked in server_running(); callers cannot clean up a nil
+	// Server. Watchers and an opened web-root archive are construction-owned too.
+	setupTransferred := false
+	defer func() {
+		if setupTransferred {
+			return
+		}
+		s.shutdownSetup()
+		if s.watcher != nil {
+			_ = s.watcher.Close()
+		}
+		if s.webRootZip != nil {
+			_ = s.webRootZip.Close()
+		}
+	}()
 
 	// startErrCh carries a pre-start script error (buffered so goroutine never blocks).
 	startErrCh := make(chan error, 1)
@@ -152,11 +192,19 @@ func NewServer(config ServerConfig) (*Server, error) {
 	default:
 	}
 
+	// Conflicting routes are a configuration error, not something to serve
+	// around: decide deterministically before anything binds. Signal setup
+	// shutdown and wait boundedly so a server_running loop cannot leak.
+	if err := s.checkRouteConflicts(); err != nil {
+		s.shutdownSetup()
+		return nil, err
+	}
+
 	// Build the plugin server if the setup script called runtime.plugin.serve().
 	// Must happen before buildMux so the HTTP /json-rpc handler can use it.
 	s.buildPluginServer()
 
-	if config.MCPToolsDir != "" || config.MCPExecTool || serve["mcp"] {
+	if s.mcpEnabled() {
 		if err := s.setupMCP(); err != nil {
 			return nil, fmt.Errorf("MCP setup failed: %w", err)
 		}
@@ -173,7 +221,7 @@ func NewServer(config ServerConfig) (*Server, error) {
 
 	// Routes and JSON-RPC methods were already collected inside start_server()
 	// (or the backward-compat goroutine exit). Only background tasks remain.
-	extlibs.ReleaseBackgroundTasks()
+	s.releaseBackgroundTasks()
 
 	// Open zip web root if configured
 	if strings.HasSuffix(strings.ToLower(config.WebRoot), ".zip") {
@@ -184,7 +232,47 @@ func NewServer(config ServerConfig) (*Server, error) {
 		s.webRootZip = zr
 	}
 
+	setupTransferred = true
 	return s, nil
+}
+
+const setupShutdownTimeout = 5 * time.Second
+
+// mcpEnabled is the single predicate used both before MCP setup and when
+// probing built-in route conflicts.
+func (s *Server) mcpEnabled() bool {
+	return s.config.MCPToolsDir != "" || s.config.MCPExecTool || s.config.serveSet()["mcp"]
+}
+
+func (s *Server) releaseBackgroundTasks() {
+	s.backgroundReleaseOnce.Do(extlibs.ReleaseBackgroundTasks)
+}
+
+// shutdownSetup releases setup-created work, signals server_running() to stop,
+// and waits boundedly for the setup goroutine. Signalling and release are
+// idempotent so normal lifecycle cleanup can safely share this path.
+func (s *Server) shutdownSetup() {
+	s.setupShutdownOnce.Do(func() {
+		extlibs.RuntimeState.Lock()
+		if extlibs.RuntimeState.ServerRunningCh == s.serverRunningCh {
+			close(s.serverRunningCh)
+			extlibs.RuntimeState.ServerRunningCh = nil
+		}
+		extlibs.RuntimeState.Unlock()
+
+		s.releaseBackgroundTasks()
+	})
+
+	if s.scriptDone == nil {
+		return
+	}
+	timer := time.NewTimer(setupShutdownTimeout)
+	defer timer.Stop()
+	select {
+	case <-s.scriptDone:
+	case <-timer.C:
+		Log.Warn("Setup script did not exit within shutdown timeout")
+	}
 }
 
 // runSetupScript runs the setup script once to register routes
@@ -192,6 +280,19 @@ func (s *Server) runSetupScript() error {
 	p := scriptling.New()
 	s.setupScriptling(p)
 	s.applyPackLoader(p)
+
+	// In-memory source wins: a script fetched from a plugin scheme source has
+	// no file on disk, and staging one would leave a temp file behind.
+	if len(s.config.ScriptSource) > 0 {
+		name := s.config.ScriptName
+		if name == "" {
+			name = "<script>"
+		}
+		Log.Debug("Running setup script", "source", name)
+		p.SetSourceFile(name)
+		_, err := p.Eval(string(s.config.ScriptSource))
+		return err
+	}
 
 	if s.config.ScriptFile != "" {
 		Log.Debug("Running setup script", "file", s.config.ScriptFile)
@@ -232,9 +333,9 @@ func (s *Server) applyPackLoader(p *scriptling.Scriptling) {
 func (s *Server) setupScriptling(p *scriptling.Scriptling) {
 	setup.Scriptling(p, s.config.LibDirs, false, s.config.AllowedPaths, s.config.DisabledLibs, s.config.SecretRegistry, Log, s.config.DockerSock, s.config.PodmanSock, s.config.NetworkPolicy)
 	setup.RegisterSys(p, s.config.Argv)
-	if s.config.PluginManager != nil {
-		scriptlingplugin.RegisterLibraries(p, s.config.PluginManager)
-	}
+	// Compiled-in plugins register even with no external plugin manager;
+	// RegisterLibraries handles a nil manager.
+	scriptlingplugin.RegisterLibraries(p, s.config.PluginManager, scriptlingplugin.PolicyFromSecurity(s.config.NetworkPolicy, s.config.AllowedPaths))
 	s.applyPackLoader(p)
 	if s.packLoader != nil {
 		pack.RegisterPackageLibrary(p, s.packLoader)

@@ -12,15 +12,33 @@ import (
 	"github.com/paularlott/scriptling/extlibs"
 )
 
+// setTransport records how the process is serving so scripts can ask via
+// runtime.mcp.transport() / runtime.jsonrpc.transport(). It must run before
+// NewServer: the setup script executes there and branches on the value (e.g.
+// registering extra tools statically over stdio, where middleware never runs).
+func setTransport(t string) {
+	extlibs.RuntimeState.Lock()
+	extlibs.RuntimeState.Transport = t
+	extlibs.RuntimeState.Unlock()
+}
+
 // RunServer is the main entry point for running the server
 func RunServer(ctx context.Context, config ServerConfig) error {
 	Log.Debug("Starting server", "address", config.Address, "tls", config.TLSGenerate || (config.TLSCert != "" && config.TLSKey != ""), "mcp_tools", config.MCPToolsDir != "", "mcp_exec", config.MCPExecTool, "web_root", config.WebRoot)
+	setTransport("http")
 	server, err := NewServer(config)
 	if err != nil {
 		return err
 	}
 
 	if err := server.Start(); err != nil {
+		server.shutdownSetup()
+		if server.watcher != nil {
+			_ = server.watcher.Close()
+		}
+		if server.webRootZip != nil {
+			_ = server.webRootZip.Close()
+		}
 		return err
 	}
 
@@ -98,22 +116,9 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 	}
 	server.reloadMu.Unlock()
 
-	// Signal the setup script that the server is shutting down.
-	extlibs.RuntimeState.Lock()
-	if extlibs.RuntimeState.ServerRunningCh != nil {
-		close(extlibs.RuntimeState.ServerRunningCh)
-		extlibs.RuntimeState.ServerRunningCh = nil
-	}
-	extlibs.RuntimeState.Unlock()
-
-	// Wait for the setup script goroutine to finish (with a timeout).
-	if server.scriptDone != nil {
-		select {
-		case <-server.scriptDone:
-		case <-time.After(5 * time.Second):
-			Log.Warn("Setup script did not exit within shutdown timeout")
-		}
-	}
+	// Signal the setup script that the server is shutting down and wait for it
+	// with the shared bounded lifecycle cleanup.
+	server.shutdownSetup()
 
 	// Graceful HTTP shutdown
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -138,10 +143,20 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 // auto-generated proxy libraries. Otherwise the plain JSON-RPC 2.0 loop runs.
 func RunJSONRPCServer(ctx context.Context, config ServerConfig) error {
 	Log.Debug("Starting JSON-RPC stdio server")
+	setTransport("stdio")
 	server, err := NewServer(config)
 	if err != nil {
 		return err
 	}
+	defer server.shutdownSetup()
+	defer func() {
+		if server.watcher != nil {
+			_ = server.watcher.Close()
+		}
+		if server.webRootZip != nil {
+			_ = server.webRootZip.Close()
+		}
+	}()
 
 	if server.pluginServer != nil {
 		if err := server.RunPluginServerStdio(ctx); err != nil {
@@ -153,23 +168,6 @@ func RunJSONRPCServer(ctx context.Context, config ServerConfig) error {
 		}
 		if err := server.RunJSONRPCStdio(ctx); err != nil {
 			return fmt.Errorf("json-rpc server failed: %w", err)
-		}
-	}
-
-	// Signal the setup script that the server is shutting down.
-	extlibs.RuntimeState.Lock()
-	if extlibs.RuntimeState.ServerRunningCh != nil {
-		close(extlibs.RuntimeState.ServerRunningCh)
-		extlibs.RuntimeState.ServerRunningCh = nil
-	}
-	extlibs.RuntimeState.Unlock()
-
-	// Wait for the setup script goroutine to finish.
-	if server.scriptDone != nil {
-		select {
-		case <-server.scriptDone:
-		case <-time.After(5 * time.Second):
-			Log.Warn("Setup script did not exit within shutdown timeout")
 		}
 	}
 
@@ -191,6 +189,7 @@ func RunJSONRPCServer(ctx context.Context, config ServerConfig) error {
 // protocol stream stays pure.
 func RunMCPStdioServer(ctx context.Context, config ServerConfig) error {
 	Log.Debug("Starting MCP stdio server", "mcp_tools", config.MCPToolsDir != "", "mcp_exec", config.MCPExecTool)
+	setTransport("stdio")
 
 	if config.MCPToolsDir == "" && !config.MCPExecTool && !config.serveSet()["mcp"] {
 		return fmt.Errorf("MCP server requires --mcp-tools <dir> and/or --mcp-exec-script")
@@ -200,6 +199,15 @@ func RunMCPStdioServer(ctx context.Context, config ServerConfig) error {
 	if err != nil {
 		return err
 	}
+	defer server.shutdownSetup()
+	defer func() {
+		if server.watcher != nil {
+			_ = server.watcher.Close()
+		}
+		if server.webRootZip != nil {
+			_ = server.webRootZip.Close()
+		}
+	}()
 
 	if server.mcpHandler == nil {
 		return fmt.Errorf("MCP server was not configured")
@@ -226,27 +234,6 @@ func RunMCPStdioServer(ctx context.Context, config ServerConfig) error {
 
 	Log.Info("MCP stdio server ready")
 	serveErr := mcpServer.ServeStdio(ctx)
-
-	// Signal the setup script that the server is shutting down.
-	extlibs.RuntimeState.Lock()
-	if extlibs.RuntimeState.ServerRunningCh != nil {
-		close(extlibs.RuntimeState.ServerRunningCh)
-		extlibs.RuntimeState.ServerRunningCh = nil
-	}
-	extlibs.RuntimeState.Unlock()
-
-	// Wait for the setup script goroutine to finish (with a timeout).
-	if server.scriptDone != nil {
-		select {
-		case <-server.scriptDone:
-		case <-time.After(5 * time.Second):
-			Log.Warn("Setup script did not exit within shutdown timeout")
-		}
-	}
-
-	if server.watcher != nil {
-		server.watcher.Close()
-	}
 
 	if serveErr != nil {
 		return fmt.Errorf("mcp server failed: %w", serveErr)

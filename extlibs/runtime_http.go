@@ -47,9 +47,22 @@ type WebSocketRouteInfo struct {
 	Handler string // "library.function" to call for each connection
 }
 
-// WebSocketServerConn wraps a server-side WebSocket connection
+// MaxWebSocketMessage bounds a single inbound frame set. Without it a
+// client can pin as much memory as it cares to send.
+const MaxWebSocketMessage = 8 << 20 // 8 MiB
+
+// WebSocketServerConn wraps a server-side WebSocket connection.
+//
+// Locking: mu guards state, readMu serializes readers, and writeMu serializes
+// writers. Neither I/O lock is needed by Close, so closing the transport can
+// interrupt a blocked read or write while preserving Gorilla's one-reader /
+// one-writer rules.
 type WebSocketServerConn struct {
 	mu         sync.Mutex
+	readMu     sync.Mutex
+	writeMu    sync.Mutex
+	closeOnce  sync.Once
+	closeErr   error
 	conn       *websocket.Conn
 	id         string
 	remoteAddr string
@@ -63,6 +76,7 @@ func NewWebSocketServerConn(conn *websocket.Conn, id string) *WebSocketServerCon
 	if conn.RemoteAddr() != nil {
 		addr = conn.RemoteAddr().String()
 	}
+	conn.SetReadLimit(MaxWebSocketMessage)
 	return &WebSocketServerConn{
 		conn:       conn,
 		id:         id,
@@ -84,12 +98,17 @@ func (c *WebSocketServerConn) RemoteAddr() string {
 // ReadWithTimeout reads a message with timeout. Returns messageType, data, error.
 // On timeout, returns 0, nil, nil
 func (c *WebSocketServerConn) ReadWithTimeout(timeout time.Duration) (int, []byte, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	// Serialize readers without holding the state lock: the read may block
+	// indefinitely, and Close has to stay free to cut it short.
+	c.readMu.Lock()
+	defer c.readMu.Unlock()
 
+	c.mu.Lock()
 	if c.closed {
+		c.mu.Unlock()
 		return 0, nil, net.ErrClosed
 	}
+	c.mu.Unlock()
 
 	if timeout > 0 {
 		deadline := time.Now().Add(timeout)
@@ -107,35 +126,50 @@ func (c *WebSocketServerConn) ReadWithTimeout(timeout time.Duration) (int, []byt
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 			return 0, nil, nil
 		}
-		c.closed = true
-		close(c.closedCh)
+		_ = c.Close()
 		return 0, nil, err
 	}
 	return msgType, data, nil
 }
 
+func (c *WebSocketServerConn) markClosed() {
+	c.mu.Lock()
+	if !c.closed {
+		c.closed = true
+		close(c.closedCh)
+	}
+	c.mu.Unlock()
+}
+
+func (c *WebSocketServerConn) closeTransport() error {
+	c.closeOnce.Do(func() {
+		c.closeErr = c.conn.Close()
+	})
+	return c.closeErr
+}
+
 // WriteMessage sends a message
 func (c *WebSocketServerConn) WriteMessage(msgType int, data []byte) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
 
-	if c.closed {
+	c.mu.Lock()
+	closed := c.closed
+	c.mu.Unlock()
+	if closed {
 		return net.ErrClosed
 	}
-	return c.conn.WriteMessage(msgType, data)
+	if err := c.conn.WriteMessage(msgType, data); err != nil {
+		_ = c.Close()
+		return err
+	}
+	return nil
 }
 
 // Close closes the connection
 func (c *WebSocketServerConn) Close() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.closed {
-		return nil
-	}
-	c.closed = true
-	close(c.closedCh)
-	return c.conn.Close()
+	c.markClosed()
+	return c.closeTransport()
 }
 
 // IsConnected returns whether the connection is still open
@@ -248,7 +282,8 @@ Returns the parsed JSON as a dict or list, or None if body is empty.`,
 // CreateRequestInstance creates a new Request instance with the given data.
 // pathParams holds values captured from route wildcards ("{id}" and
 // "{path...}") and remoteAddr the client address; both are exposed as
-// request fields (path_params, remote_addr).
+// request fields (path_params, remote_addr). The context field starts as an
+// empty dict for middleware to populate — see WithRequestContext.
 func CreateRequestInstance(method, path, body string, headers, query, pathParams map[string]string, remoteAddr string) *object.Instance {
 	headerDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
 	for k, v := range headers {
@@ -274,6 +309,7 @@ func CreateRequestInstance(method, path, body string, headers, query, pathParams
 		"query":       queryDict,
 		"path_params": paramsDict,
 		"remote_addr": object.NewString(remoteAddr),
+		"context":     &object.Dict{Pairs: make(map[string]object.DictPair)},
 	})
 }
 

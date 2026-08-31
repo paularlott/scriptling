@@ -1026,3 +1026,39 @@ f()
 		t.Errorf("Expected 'explicit return', got %q", response)
 	}
 }
+
+// TestToolHelpersReturnErrorEscapesJSON pins the wire format for a message a
+// script controls: quotes, backslashes and newlines in an error message must
+// still produce a JSON body an MCP client can parse, and the message must
+// round-trip exactly.
+func TestToolHelpersReturnErrorEscapesJSON(t *testing.T) {
+	sl := scriptling.New()
+	mcp.RegisterToolHelpers(sl)
+
+	message := `lookup "failed" for id=7\npath C:\\temp`
+	script := `
+from scriptling.mcp.tool import return_error
+
+return_error('` + message + `')
+`
+	if _, err := sl.Eval(script); err == nil {
+		t.Fatal("expected SystemExit(1) error")
+	}
+
+	responseObj, err := sl.GetVarAsObject(mcp.MCPResponseVarName)
+	if err != nil {
+		t.Fatalf("get __mcp_response: %v", err)
+	}
+	body := responseObj.(*object.String).StringValue()
+
+	var decoded struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(body), &decoded); err != nil {
+		t.Fatalf("return_error produced invalid JSON: %v\nbody: %s", err, body)
+	}
+	want := "lookup \"failed\" for id=7\npath C:\\temp"
+	if decoded.Error != want {
+		t.Fatalf("message did not round-trip:\n got: %q\nwant: %q", decoded.Error, want)
+	}
+}

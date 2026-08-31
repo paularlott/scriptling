@@ -21,15 +21,24 @@ import (
 )
 
 type Server struct {
-	name        string
-	version     string
-	description string
-	functions   map[string]*funcEntry
-	classes     map[string]*classEntry
-	constants   map[string]Value
-	objects     map[string]*serverObject
-	objectsMu   sync.RWMutex
-	nextObject  atomic.Int64
+	name          string
+	version       string
+	description   string
+	functions     map[string]*funcEntry
+	classes       map[string]*classEntry
+	constants     map[string]Value
+	fetcher       Fetcher
+	fetcherScheme string
+	objects       map[string]*serverObject
+	objectsMu     sync.RWMutex
+	nextObject    atomic.Int64
+
+	// policyMu guards policy, set when the host's handshake arrives. Hosts
+	// guarantee the handshake completes before the first function call, so
+	// registration code reads it lazily inside connect/open-style closures
+	// via Policy().
+	policyMu sync.RWMutex
+	policy   *Policy
 
 	jsonrpcServer *jsonrpc.Server // inbound registry for HTTP (no callback runtime)
 	srvOnce       sync.Once
@@ -144,9 +153,49 @@ func (s *Server) Run() error {
 	return s.RunIO(os.Stdin, os.Stdout)
 }
 
+// Policy returns the security policy the host delivered in its handshake, or
+// nil when the host sent none (no restrictions). Registration code reads it
+// lazily inside connect/open closures because the handshake is the first
+// message on every connection.
+func (s *Server) Policy() *Policy {
+	s.policyMu.RLock()
+	defer s.policyMu.RUnlock()
+	return s.policy
+}
+
+// RegisterLibrary ingests a pre-built *object.Library — functions, classes
+// (held as class constants), and constants — into the server. It is how a
+// single registration implementation serves both plugin modes: the same
+// library handed to RegisterLibrary here, or to a Scriptling instance's
+// RegisterLibrary for compiled-in plugins.
+func (s *Server) RegisterLibrary(lib *object.Library) *Server {
+	if lib == nil {
+		return s
+	}
+	for name, fn := range lib.Functions() {
+		if fn == nil {
+			continue
+		}
+		s.functions[name] = &funcEntry{builtin: fn}
+	}
+	for name, obj := range lib.Constants() {
+		if class, ok := obj.(*object.Class); ok {
+			s.classes[class.Name] = &classEntry{class: class}
+			continue
+		}
+		s.constants[name] = goValueToTransport(obj)
+	}
+	return s
+}
+
 // ServeHTTP serves the Scriptling plugin JSON-RPC protocol over HTTP. Mount it
 // at a path such as /json-rpc and load it with plugin.Manager.LoadURL or
 // scriptling.plugin.load(..., scriptling=True).
+//
+// The handler answers whoever reaches it: it ships no authentication of its
+// own, so whatever fronts the endpoint (auth middleware, TLS plus credentials
+// at a reverse proxy, a loopback-only bind) is the access control. Credentials
+// arrive as headers on r; see the php-server example for a token check.
 //
 // HTTP plugin transport supports normal plugin calls, object lifecycle, and
 // batches. Host callbacks and plugin.Logger(ctx) require the bidirectional
@@ -207,6 +256,8 @@ var pluginMethods = []string{
 	"object.new",
 	"object.call_method",
 	"object.destroy",
+	"fetch.read",
+	"fetch.glob",
 }
 
 // RunIO serves the plugin protocol over a bidirectional stream (stdio). The
@@ -256,6 +307,19 @@ func (r *serverRuntime) callCallback(ctx context.Context, params callbackCallPar
 func (s *Server) dispatch(ctx context.Context, method string, params any) (any, error) {
 	switch method {
 	case "scriptling.handshake":
+		// The host may carry a security policy in the handshake params.
+		// Parsing is best-effort: hosts that predate the policy block (or
+		// send no params at all) leave the policy nil, which means no
+		// restrictions.
+		var hp handshakeParams
+		if params != nil {
+			if raw, err := json.Marshal(params); err == nil {
+				_ = json.Unmarshal(raw, &hp)
+			}
+		}
+		s.policyMu.Lock()
+		s.policy = hp.Policy
+		s.policyMu.Unlock()
 		return handshakeResult{
 			Protocol:  ProtocolVersion,
 			Transport: "json",
@@ -264,7 +328,8 @@ func (s *Server) dispatch(ctx context.Context, method string, params any) (any, 
 				Version:     s.version,
 				Description: s.description,
 			},
-			Capabilities: []string{"remote_objects"},
+			Capabilities: []string{"remote_objects", "policy"},
+			Scheme:       s.fetcherScheme,
 			Schema:       s.schema(),
 		}, nil
 	case "environment.open", "environment.close":
@@ -297,6 +362,10 @@ func (s *Server) dispatch(ctx context.Context, method string, params any) (any, 
 			return nil, err
 		}
 		return nil, s.destroyObject(p)
+	case "fetch.read":
+		return s.callFetchRead(ctx, params)
+	case "fetch.glob":
+		return s.callFetchGlob(ctx, params)
 	default:
 		return nil, fmt.Errorf("unknown method %s", method)
 	}
@@ -435,6 +504,26 @@ func (s *Server) callMethod(ctx context.Context, params methodCallParams) (Value
 	result := evaluator.ApplyFunctionGIL(ctx, methodObj, callArgs, objKwargs, object.NewEnvironment())
 	if errObj, ok := result.(*object.Error); ok {
 		return Value{}, errors.New(errObj.Message)
+	}
+	// A method may hand out a fresh server-side object (query_iter returning
+	// a cursor, say). Register it and return a remote reference so the host
+	// gets a live proxy; instances that already carry a remote (host-owned
+	// proxies) pass through objectToValue as before.
+	if inst, ok := result.(*object.Instance); ok {
+		if _, isProxy := remoteFromInstance(inst); !isProxy && inst.Class != nil {
+			id := strconv.FormatInt(s.nextObject.Add(1), 10)
+			s.objectsMu.Lock()
+			s.objects[id] = &serverObject{class: inst.Class, instance: inst}
+			s.objectsMu.Unlock()
+			return Value{
+				Type: valueRemote,
+				Remote: &RemoteRef{
+					Library: s.name,
+					Class:   inst.Class.Name,
+					ID:      id,
+				},
+			}, nil
+		}
 	}
 	return objectToValue(result)
 }

@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/errors"
@@ -320,9 +321,9 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		}
 		return NULL
 	case *ast.ImportStatement:
-		return evalImportStatement(node, env)
+		return evalImportStatement(ctx, node, env)
 	case *ast.FromImportStatement:
-		return evalFromImportStatement(node, env)
+		return evalFromImportStatement(ctx, node, env)
 	case *ast.AssignStatement:
 		val := evalNode(ctx, node.Value, env)
 		if object.IsError(val) || isException(val) {
@@ -745,8 +746,15 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 				if l.IntValue() <= 0 {
 					return &object.List{Elements: []object.Object{}}
 				}
-				result := make([]object.Object, int(l.IntValue())*len(r.Elements))
-				for i := range int(l.IntValue()) {
+				if errObj := checkRepetition(l.IntValue(), int64(len(r.Elements)), maxRepeatElements); errObj != nil {
+					return errObj
+				}
+				count := int(l.IntValue())
+				if len(r.Elements) == 0 {
+					count = 0
+				}
+				result := make([]object.Object, count*len(r.Elements))
+				for i := range count {
 					copy(result[i*len(r.Elements):], r.Elements)
 				}
 				return &object.List{Elements: result}
@@ -756,8 +764,15 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 				if l.IntValue() <= 0 {
 					return &object.Tuple{Elements: []object.Object{}}
 				}
-				result := make([]object.Object, int(l.IntValue())*len(r.Elements))
-				for i := range int(l.IntValue()) {
+				if errObj := checkRepetition(l.IntValue(), int64(len(r.Elements)), maxRepeatElements); errObj != nil {
+					return errObj
+				}
+				count := int(l.IntValue())
+				if len(r.Elements) == 0 {
+					count = 0
+				}
+				result := make([]object.Object, count*len(r.Elements))
+				for i := range count {
 					copy(result[i*len(r.Elements):], r.Elements)
 				}
 				return &object.Tuple{Elements: result}
@@ -836,8 +851,15 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 				if r.IntValue() <= 0 {
 					return &object.Tuple{Elements: []object.Object{}}
 				}
-				result := make([]object.Object, int(r.IntValue())*len(l.Elements))
-				for i := range int(r.IntValue()) {
+				if errObj := checkRepetition(r.IntValue(), int64(len(l.Elements)), maxRepeatElements); errObj != nil {
+					return errObj
+				}
+				count := int(r.IntValue())
+				if len(l.Elements) == 0 {
+					count = 0
+				}
+				result := make([]object.Object, count*len(l.Elements))
+				for i := range count {
 					copy(result[i*len(l.Elements):], l.Elements)
 				}
 				return &object.Tuple{Elements: result}
@@ -869,8 +891,15 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 				if r.IntValue() <= 0 {
 					return &object.List{Elements: []object.Object{}}
 				}
-				result := make([]object.Object, int(r.IntValue())*len(l.Elements))
-				for i := range int(r.IntValue()) {
+				if errObj := checkRepetition(r.IntValue(), int64(len(l.Elements)), maxRepeatElements); errObj != nil {
+					return errObj
+				}
+				count := int(r.IntValue())
+				if len(l.Elements) == 0 {
+					count = 0
+				}
+				result := make([]object.Object, count*len(l.Elements))
+				for i := range count {
 					copy(result[i*len(l.Elements):], l.Elements)
 				}
 				return &object.List{Elements: result}
@@ -1377,9 +1406,39 @@ func formatPercentValue(spec string, conversion byte, val object.Object) (string
 	}
 }
 
+// Repetition result quotas: a repetition is how a script asks for a huge
+// allocation in one expression, so the result size is bounded and the refusal
+// is a clean error rather than an opaque runtime panic (or, for strings, a
+// panic that escapes evaluation) or an OOM kill.
+const (
+	maxRepeatBytes    = 1 << 30 // 1 GiB per string/bytes repetition result
+	maxRepeatElements = 1 << 27 // ~134M elements (~1 GiB of object pointers)
+)
+
+// checkRepetition validates multiplier*unitLen against limit. Returns an
+// error object to hand back from the fast paths, or nil when the repetition
+// may proceed (including the trivially-empty cases).
+func checkRepetition(multiplier, unitLen, limit int64) object.Object {
+	if multiplier <= 0 || unitLen == 0 {
+		return nil
+	}
+	if multiplier > limit/unitLen {
+		return errors.NewError("repetition result too large (over %d units)", limit)
+	}
+	return nil
+}
+
 func evalStringMultiplication(str string, multiplier int64) object.Object {
 	if multiplier < 0 {
 		return object.NewString("")
+	}
+	// An empty operand stays empty whatever the multiplier: without this the
+	// repeat loop runs multiplier times over nothing, a pure CPU burn.
+	if len(str) == 0 {
+		return object.NewString("")
+	}
+	if errObj := checkRepetition(multiplier, int64(len(str)), maxRepeatBytes); errObj != nil {
+		return errObj
 	}
 	return object.NewString(strings.Repeat(str, int(multiplier)))
 }
@@ -1426,8 +1485,11 @@ func evalBytesMultiplication(b *object.Bytes, multiplier int64) object.Object {
 	}
 	src := b.BytesValue()
 	srcLen := len(src)
-	if srcLen > 0 && int64(srcLen) > math.MaxInt64/multiplier {
-		return errors.NewError("bytes repetition result too large")
+	if srcLen == 0 {
+		return object.NewBytes(nil)
+	}
+	if errObj := checkRepetition(multiplier, int64(srcLen), maxRepeatBytes); errObj != nil {
+		return errObj
 	}
 	out := make([]byte, 0, srcLen*int(multiplier))
 	for i := int64(0); i < multiplier; i++ {
@@ -1832,33 +1894,33 @@ func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *obje
 							return applyUserFunctionN(ctx, fn, a0, a1, a2)
 						}
 					}
+					args := evalCallArgs(ctx, node.Arguments, env)
+					if len(args) == 1 && object.IsError(args[0]) {
+						return args[0]
+					}
+					res := applyUserFunction(ctx, fn, args, nil, env)
+					object.ReleaseArgs(env, args)
+					return res
+				case *object.Builtin:
+					// Use the existing fast builtin path
+					return applyBuiltinFast(ctx, node, env, fn)
+				case *object.LambdaFunction:
+					args := evalCallArgs(ctx, node.Arguments, env)
+					if len(args) == 1 && object.IsError(args[0]) {
+						return args[0]
+					}
+					res := applyLambdaFunctionWithContext(ctx, fn, args, nil, env)
+					object.ReleaseArgs(env, args)
+					return res
+				}
+				// Class or other callable - fall through to general path
 				args := evalCallArgs(ctx, node.Arguments, env)
 				if len(args) == 1 && object.IsError(args[0]) {
 					return args[0]
 				}
-				res := applyUserFunction(ctx, fn, args, nil, env)
+				res := applyFunctionWithContext(ctx, val, args, nil, env)
 				object.ReleaseArgs(env, args)
 				return res
-			case *object.Builtin:
-				// Use the existing fast builtin path
-				return applyBuiltinFast(ctx, node, env, fn)
-			case *object.LambdaFunction:
-				args := evalCallArgs(ctx, node.Arguments, env)
-				if len(args) == 1 && object.IsError(args[0]) {
-					return args[0]
-				}
-				res := applyLambdaFunctionWithContext(ctx, fn, args, nil, env)
-				object.ReleaseArgs(env, args)
-				return res
-			}
-			// Class or other callable - fall through to general path
-			args := evalCallArgs(ctx, node.Arguments, env)
-			if len(args) == 1 && object.IsError(args[0]) {
-				return args[0]
-			}
-			res := applyFunctionWithContext(ctx, val, args, nil, env)
-			object.ReleaseArgs(env, args)
-			return res
 			}
 			// Not in env - try fast builtins by name
 			if builtin, ok := builtins[name]; ok {
@@ -2005,8 +2067,30 @@ func createInstance(ctx context.Context, class *object.Class, args []object.Obje
 	// Install GC finalizer for __del__ if the class defines one
 	if del, ok := class.LookupMember("__del__"); ok {
 		delMethod := del
+		// A script destructor owns its lexical environment/GIL domain. Builtin
+		// destructors use the construction domain. Retain only that domain in an
+		// independent call environment: retaining the full construction store can
+		// keep an otherwise unreachable instance alive through its last binding.
+		gilOwnerEnv := env
+		switch destructor := delMethod.(type) {
+		case *object.Function:
+			gilOwnerEnv = destructor.Env
+		case *object.LambdaFunction:
+			gilOwnerEnv = destructor.Env
+		}
+		finalizerEnv := object.NewEnvironmentWithGILDomain(gilOwnerEnv)
 		runtime.SetFinalizer(instance, func(inst *object.Instance) {
-			applyFunction(context.Background(), delMethod, []object.Object{inst}, nil, object.NewEnvironment())
+			// A finalizer runs on the runtime's own goroutine with no
+			// caller to recover for it: a panic here is fatal to the host
+			// process, so give the destructor its own boundary and a
+			// bounded context. It still has no caller cancellation to
+			// inherit and runs at the GC's whim, not the script's.
+			defer func() { _ = recover() }()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			ctx = WithEvaluator(ctx)
+			ctx = ContextWithCallDepth(ctx, DefaultMaxCallDepth)
+			ApplyFunctionGIL(ctx, delMethod, []object.Object{inst}, nil, finalizerEnv)
 		})
 	}
 
@@ -2176,8 +2260,17 @@ func applyUserFunction(ctx context.Context, fn *object.Function, args []object.O
 // functions — especially concurrently against a shared environment — must use
 // this rather than the unexported applyFunction, which assumes the lock is held.
 func ApplyFunctionGIL(ctx context.Context, fn object.Object, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
-	if gilEnv := enterScript(env); gilEnv != nil {
-		defer gilEnv.ExitGIL()
+	if env != nil {
+		acquired, entered := env.EnterGILWithContext(ctx)
+		if !entered {
+			if err := checkContext(ctx); err != nil {
+				return err
+			}
+			return errors.NewCancelledError()
+		}
+		if acquired {
+			defer env.ExitGIL()
+		}
 	}
 	return applyFunction(ctx, fn, args, keywords, env)
 }
@@ -2625,12 +2718,12 @@ func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.Augm
 // sliceList is in data_structures.go
 // sliceString is in data_structures.go
 
-func evalImportStatement(is *ast.ImportStatement, env *object.Environment) object.Object {
-	importCallback := env.GetImportCallback()
+func evalImportStatement(ctx context.Context, is *ast.ImportStatement, env *object.Environment) object.Object {
+	importCallback := env.GetImportCallbackWithContext()
 	if importCallback == nil {
 		return errors.NewError("%s at line %d", errors.ErrImportError, is.Token.Line)
 	}
-	err := importCallback(is.Name.Value())
+	err := importCallback(ctx, is.Name.Value())
 	if err != nil {
 		return errors.NewError("%s at line %d: %s", errors.ErrImportError, is.Token.Line, err.Error())
 	}
@@ -2647,7 +2740,7 @@ func evalImportStatement(is *ast.ImportStatement, env *object.Environment) objec
 	}
 
 	for i, name := range is.GetAdditionalNames() {
-		if err := importCallback(name.Value()); err != nil {
+		if err := importCallback(ctx, name.Value()); err != nil {
 			return errors.NewError("%s: %s", errors.ErrImportError, err.Error())
 		}
 
@@ -2701,8 +2794,8 @@ func getModuleByPath(env *object.Environment, name string) object.Object {
 	return current
 }
 
-func evalFromImportStatement(fis *ast.FromImportStatement, env *object.Environment) object.Object {
-	importCallback := env.GetImportCallback()
+func evalFromImportStatement(ctx context.Context, fis *ast.FromImportStatement, env *object.Environment) object.Object {
+	importCallback := env.GetImportCallbackWithContext()
 	if importCallback == nil {
 		return errors.NewError(errors.ErrImportError)
 	}
@@ -2755,21 +2848,21 @@ func evalFromImportStatement(fis *ast.FromImportStatement, env *object.Environme
 	// For "from .module import X" (module specified), we import the module once
 	if fis.Module == nil && fis.RelativeLevel > 0 {
 		// "from . import X, Y" - each name is a submodule to import
-		return evalFromImportMultipleSubmodules(fis, baseModuleName, env, importCallback)
+		return evalFromImportMultipleSubmodules(ctx, fis, baseModuleName, env, importCallback)
 	}
 
 	// Standard from-import: import the module and extract names
-	return evalFromImportStandard(fis, baseModuleName, env, importCallback)
+	return evalFromImportStandard(ctx, fis, baseModuleName, env, importCallback)
 }
 
 // evalFromImportMultipleSubmodules handles "from . import X, Y" where each name is a submodule
-func evalFromImportMultipleSubmodules(fis *ast.FromImportStatement, baseModule string, env *object.Environment, importCallback func(string) error) object.Object {
+func evalFromImportMultipleSubmodules(ctx context.Context, fis *ast.FromImportStatement, baseModule string, env *object.Environment, importCallback func(context.Context, string) error) object.Object {
 	for i, name := range fis.Names {
 		// Build the full module name: base + "." + name
 		fullModuleName := baseModule + "." + name.Value()
 
 		// Import the submodule
-		err := importCallback(fullModuleName)
+		err := importCallback(ctx, fullModuleName)
 		if err != nil {
 			return errors.NewError("%s: %s", errors.ErrImportError, err.Error())
 		}
@@ -2809,13 +2902,13 @@ func evalFromImportMultipleSubmodules(fis *ast.FromImportStatement, baseModule s
 }
 
 // evalFromImportStandard handles standard "from module import X, Y"
-func evalFromImportStandard(fis *ast.FromImportStatement, moduleName string, env *object.Environment, importCallback func(string) error) object.Object {
+func evalFromImportStandard(ctx context.Context, fis *ast.FromImportStatement, moduleName string, env *object.Environment, importCallback func(context.Context, string) error) object.Object {
 	// Check if module was already in the environment before importing
 	// (e.g. user did `import json` before `from json import dumps`)
 	_, wasPresent := env.Get(moduleName)
 
 	// Import the module
-	err := importCallback(moduleName)
+	err := importCallback(ctx, moduleName)
 	if err != nil {
 		return errors.NewError("%s: %s", errors.ErrImportError, err.Error())
 	}
@@ -3149,13 +3242,10 @@ func evalTryStatementWithContext(ctx context.Context, ts *ast.TryStatement, env 
 		// PermissionError exceptions also bypass try/except — security violations
 		// must not be silently swallowed by scripts.
 		if exc, ok := result.(*object.Exception); ok && (exc.IsSystemExit() || exc.IsPermissionError()) {
-			// Execute finally block before propagating
+			// Execute finally block before propagating. The protected
+			// exception wins over whatever the finally block does.
 			if ts.Finally != nil {
-				if finallyResult := evalWithContext(ctx, ts.Finally, env); finallyResult != nil {
-					if rv, ok := finallyResult.(*object.ReturnValue); ok {
-						result = unwrapReturnValue(rv)
-					}
-				}
+				result = applyProtectedFinallyResult(result, evalWithContext(ctx, ts.Finally, env))
 			}
 			return result // always propagates
 		}
@@ -3223,15 +3313,44 @@ func evalTryStatementWithContext(ctx context.Context, ts *ast.TryStatement, env 
 	}
 
 	// Always execute finally block if present
-	// Per Python semantics, return in finally overrides the result.
+	// Per Python semantics, return in finally overrides the result, and an
+	// exception raised in finally replaces whatever was in flight — unless
+	// the in-flight result is a protected exception (SystemExit,
+	// PermissionError), which nothing may replace, whichever block raised it.
 	if ts.Finally != nil {
-		if finallyResult := evalWithContext(ctx, ts.Finally, env); finallyResult != nil {
-			if rv, ok := finallyResult.(*object.ReturnValue); ok {
-				result = unwrapReturnValue(rv)
-			}
+		if exc, ok := result.(*object.Exception); ok && (exc.IsSystemExit() || exc.IsPermissionError()) {
+			result = applyProtectedFinallyResult(result, evalWithContext(ctx, ts.Finally, env))
+		} else {
+			result = applyFinallyResult(result, evalWithContext(ctx, ts.Finally, env))
 		}
 	}
 
+	return result
+}
+
+// applyFinallyResult folds a finally block's outcome into the try statement's
+// pending result. A return still overrides (kept as a ReturnValue marker so a
+// later statement cannot replace it); an exception raised in finally replaces
+// the in-flight one (Python semantics); break and continue propagate rather
+// than being silently dropped. A finally that ends normally changes nothing.
+func applyFinallyResult(result, finallyResult object.Object) object.Object {
+	if finallyResult == nil {
+		return result
+	}
+	switch finallyResult.(type) {
+	case *object.ReturnValue, *object.Exception, *object.Error, *object.Break, *object.Continue:
+		return finallyResult
+	default:
+		return result
+	}
+}
+
+// applyProtectedFinallyResult runs cleanup for exceptions that must not be
+// caught or replaced: SystemExit and PermissionError. Whatever the finally
+// block does, the protected exception keeps propagating — letting a raise in
+// finally replace it would give a handler the chance to swallow an exit or a
+// security refusal.
+func applyProtectedFinallyResult(result, finallyResult object.Object) object.Object {
 	return result
 }
 

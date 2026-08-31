@@ -102,6 +102,9 @@ func ClearCache(cacheDir string) error {
 // If cacheDir is empty, uses the OS default cache directory.
 // If ttl is 0, uses DefaultCacheTTL.
 // Each cache entry is a .zip/.meta pair; the .zip mod time tracks last access.
+// Plugin-served content never appears here — it is held in memory only — so
+// there is nothing per-file to prune. Stale .pfile pairs written by an earlier
+// build are cleaned up too.
 func PruneCache(cacheDir string, ttl time.Duration) error {
 	if cacheDir == "" {
 		var err error
@@ -257,15 +260,18 @@ func fetchURLDirect(url string, insecure bool, client *http.Client) ([]byte, err
 	return data, nil
 }
 
+// httpClient builds the fetcher for remote packages. The timeout bounds the
+// whole exchange — a server can otherwise stall headers or drip-feed a body
+// indefinitely despite the byte cap. Generous enough for a maximum-size
+// package on a slow link.
 func httpClient(insecure bool) *http.Client {
+	// Clone the default transport so proxy-from-environment and the
+	// platform's tuning survive; a zero-value transport dropped all of it.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
 	if insecure {
-		return &http.Client{
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-			},
-		}
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec
 	}
-	return &http.Client{}
+	return &http.Client{Transport: transport, Timeout: 10 * time.Minute}
 }
 
 // urlCacheKey returns a stable filename-safe key for a URL.

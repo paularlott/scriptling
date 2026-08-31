@@ -349,13 +349,19 @@ func metadataToDict(meta Metadata) *object.Dict {
 	for _, constant := range meta.Schema.Constants {
 		constants = append(constants, object.NewString(constant.Name))
 	}
+	capabilities := make([]object.Object, 0, len(meta.Capabilities))
+	for _, capability := range meta.Capabilities {
+		capabilities = append(capabilities, object.NewString(capability))
+	}
 	return object.NewStringDict(map[string]object.Object{
-		"name":        object.NewString(meta.Name),
-		"version":     object.NewString(meta.Version),
-		"description": object.NewString(meta.Description),
-		"transport":   object.NewString(meta.Transport),
-		"functions":   &object.List{Elements: functions},
-		"classes":     &object.List{Elements: classes},
-		"constants":   &object.List{Elements: constants},
+		"name":         object.NewString(meta.Name),
+		"version":      object.NewString(meta.Version),
+		"description":  object.NewString(meta.Description),
+		"transport":    object.NewString(meta.Transport),
+		"capabilities": &object.List{Elements: capabilities},
+		"scheme":       object.NewString(meta.Scheme),
+		"functions":    &object.List{Elements: functions},
+		"classes":      &object.List{Elements: classes},
+		"constants":    &object.List{Elements: constants},
 	})
 }

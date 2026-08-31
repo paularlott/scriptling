@@ -2,7 +2,11 @@ package evaluator
 
 import (
 	"context"
+	"fmt"
+	"runtime"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/paularlott/scriptling/lexer"
 	"github.com/paularlott/scriptling/object"
@@ -325,4 +329,130 @@ func findSubstring(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// evalInEnv runs source through the package's own lexer/parser/evaluator.
+func evalInEnv(t *testing.T, src string) (object.Object, error) {
+	t.Helper()
+	l := lexer.New(src)
+	p := parser.New(l)
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	result := EvalWithContext(context.Background(), program, object.NewEnvironment())
+	if result == nil {
+		t.Fatal("nil result")
+	}
+	if isException(result) || object.IsError(result) {
+		return nil, fmt.Errorf("%s", result.Inspect())
+	}
+	return result, nil
+}
+
+// TestFinallyControlFlow pins what a finally block may do to the try
+// statement's outcome: a raise replaces the in-flight result (an exception
+// raised in finally must not be swallowed), break and continue propagate
+// instead of being dropped, and return still overrides. Before this was
+// fixed, only return was honored: `finally: raise` was discarded and the
+// function returned normally.
+func TestFinallyControlFlow(t *testing.T) {
+	// raise in finally replaces the pending return
+	_, err := evalInEnv(t, `
+def f():
+    try:
+        return 1
+    finally:
+        raise ValueError("cleanup failed")
+f()
+`)
+	if err == nil {
+		t.Fatal("expected the exception raised in finally to propagate")
+	}
+	if !strings.Contains(err.Error(), "cleanup failed") {
+		t.Fatalf("expected the finally exception to surface, got: %v", err)
+	}
+
+	// raise in finally replaces an in-flight exception too
+	_, err = evalInEnv(t, `
+try:
+    raise ValueError("original")
+finally:
+    raise ValueError("replacement")
+`)
+	if err == nil || !strings.Contains(err.Error(), "replacement") {
+		t.Fatalf("expected the finally exception to replace the original, got: %v", err)
+	}
+
+	// break in finally leaves the loop instead of being ignored
+	result, err := evalInEnv(t, `
+count = 0
+for i in range(3):
+    try:
+        count = count + 1
+    finally:
+        break
+count
+`)
+	if err != nil {
+		t.Fatalf("eval: %v", err)
+	}
+	if result.Inspect() != "1" {
+		t.Fatalf("break in finally should leave the loop after one pass, count = %s", result.Inspect())
+	}
+
+	// a finally that ends normally still changes nothing
+	result, err = evalInEnv(t, `
+def g():
+    try:
+        return 42
+    finally:
+        cleanup = 1
+g()
+`)
+	if err != nil || result.Inspect() != "42" {
+		t.Fatalf("plain finally must not disturb the result: %v %s", err, result.Inspect())
+	}
+}
+
+// TestFinallyReturnNotOverridden pins that a return inside finally stays a
+// control-flow marker: unwrapping it too early let a later statement (here,
+// the second return) replace the finally block's answer.
+func TestFinallyReturnNotOverridden(t *testing.T) {
+	result, err := evalInEnv(t, `
+def f():
+    try:
+        return 1
+    finally:
+        return 2
+    return 3
+f()
+`)
+	if err != nil {
+		t.Fatalf("eval: %v", err)
+	}
+	if result.Inspect() != "2" {
+		t.Fatalf("finally return must win over a later return, got %s", result.Inspect())
+	}
+}
+
+// TestDelFinalizerCannotCrashProcess pins the finalizer's panic boundary: a
+// __del__ that raises runs on the runtime's finalizer goroutine, where a
+// panic is fatal to the whole process. The host must survive collection.
+func TestDelFinalizerCannotCrashProcess(t *testing.T) {
+	_, err := evalInEnv(t, `
+class Boom:
+    def __del__(self):
+        raise ValueError("boom in destructor")
+Boom()
+"made"
+`)
+	if err != nil {
+		t.Fatalf("eval: %v", err)
+	}
+	for i := 0; i < 5; i++ {
+		runtime.GC()
+	}
+	time.Sleep(100 * time.Millisecond)
+	// Reaching here means the finalizer did not take the process down.
 }

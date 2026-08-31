@@ -14,3 +14,9 @@ __pycache__/
 /examples/sample-package.zip
 /.claude/settings.local.json
 /examples/plugins/hello-c/hello-c
+
+# ZCode session directory
+.zcode/
+
+# formula generator binary (go build of scripts/homebrew-formula)
+/homebrew-formula

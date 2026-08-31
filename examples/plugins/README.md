@@ -1,7 +1,8 @@
 # Plugin Examples
 
 These examples demonstrate Scriptling plugins loaded from executable files with
-`--plugin-dir`.
+`--plugin-dir`, or a single executable with `--plugin` (optionally with
+arguments).
 
 ## C Plugin
 
@@ -49,6 +50,19 @@ It exposes:
 - `plugin.hello.Counter(start).inc(amount)` — class via `RegisterClass`
 - `plugin.hello.default_name` — constant
 
+## Fetcher Plugin
+
+`fetcher-go` registers the `demo` scheme and serves a virtual package and a
+script source on demand, with per-file caching and staleness checks:
+
+```bash
+go build -o /tmp/scriptling-plugins/fetcher-go ./examples/plugins/fetcher-go
+scriptling --plugin /tmp/scriptling-plugins/fetcher-go -c 'import greet; print(greet.greeting("Ada"))'
+scriptling --plugin /tmp/scriptling-plugins/fetcher-go demo://scripts/hello Ada
+```
+
+See `fetcher-go/README.md` for details.
+
 ## HTTP Go Plugin
 
 `http-go` exposes the same Scriptling plugin protocol over HTTP. It is loaded
@@ -90,14 +104,15 @@ It exposes:
 
 ## Bash Plugin
 
-`bash/hello-plugin.sh` implements the JSON-RPC protocol directly. It requires
-`jq` and is meant as a small protocol example rather than a production plugin.
+`bash/hello-plugin.sh` implements the JSON-RPC protocol directly, including a
+`bsh://` fetcher that serves a virtual package and a script source — proof of
+how small the contract is (jq, printf and base64). It requires `jq` and is
+meant as a small protocol example rather than a production plugin.
 
 ```bash
-mkdir -p /tmp/scriptling-plugins
-cp examples/plugins/bash/hello-plugin.sh /tmp/scriptling-plugins/hello-plugin
-chmod +x /tmp/scriptling-plugins/hello-plugin
-scriptling --plugin-dir /tmp/scriptling-plugins -c 'import plugin.hello; print(plugin.hello.greet("Ada"))'
+scriptling --plugin examples/plugins/bash/hello-plugin.sh -c 'import plugin.hello; print(plugin.hello.greet("Ada"))'
+scriptling --plugin examples/plugins/bash/hello-plugin.sh -c 'import hi; print(hi.greeting("Ada"))'
+scriptling --plugin examples/plugins/bash/hello-plugin.sh bsh://scripts/hello Ada
 ```
 
 ## Callback Plugin

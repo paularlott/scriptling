@@ -2912,11 +2912,11 @@ func GetImportBuiltin() *object.Builtin {
 			}
 
 			env := GetEnvFromContext(ctx)
-			importCallback := env.GetImportCallback()
+			importCallback := env.GetImportCallbackWithContext()
 			if importCallback == nil {
 				return errors.NewError(errors.ErrImportError)
 			}
-			importErr := importCallback(libName)
+			importErr := importCallback(ctx, libName)
 			if importErr != nil {
 				return errors.NewError("%s: %s", errors.ErrImportError, importErr.Error())
 			}

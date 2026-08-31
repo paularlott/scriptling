@@ -142,6 +142,109 @@ static sl_value *counter_label_get(void *data, void *ctx) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Fetcher — serves cdemo:// sources from static content              */
+/* ------------------------------------------------------------------ */
+
+typedef struct {
+    const char *path;
+    const char *content;
+} cdemo_file;
+
+/* The virtual package served at cdemo://libs. */
+static const cdemo_file cdemo_files[] = {
+    { "lib/greet.py",       "def greeting(name):\n    return \"hello from cdemo://libs, \" + name\n" },
+    { "lib/cdemo/__init__.py", "def prefix():\n    return \"cdemo\"\n" },
+    { "docs/README.md",     "# cdemo://libs\n\nServed on demand by the C hello plugin.\n" },
+};
+
+/* The single-file script sources. */
+static const char *cdemo_scripts[] = {
+    "cdemo://scripts/hello",
+};
+static const char *cdemo_script_bodies[] = {
+    "#!/usr/bin/env scriptling\nimport greet\nimport sys\nprint(greet.greeting(sys.argv[1] if len(sys.argv) > 1 else \"World\"))\n",
+};
+
+/* The host caches nothing it fetches, so this just returns the bytes. A fetcher
+ * whose backend is slow enough to want caching does it inside this handler. */
+static sl_fetch_result *cdemo_read(const char *source, const char *path, void *ctx) {
+    (void)ctx;
+
+    if (path[0] == '\0') {
+        /* No path: the source itself is a single script file. */
+        for (size_t i = 0; i < sizeof(cdemo_scripts) / sizeof(cdemo_scripts[0]); i++) {
+            if (strcmp(source, cdemo_scripts[i]) == 0) {
+                return sl_fetch_data(cdemo_script_bodies[i], strlen(cdemo_script_bodies[i]));
+            }
+        }
+        return sl_fetch_not_found();
+    }
+
+    if (strncmp(source, "cdemo://libs", strlen("cdemo://libs")) != 0) {
+        return sl_fetch_not_found();
+    }
+    for (size_t i = 0; i < sizeof(cdemo_files) / sizeof(cdemo_files[0]); i++) {
+        if (strcmp(path, cdemo_files[i].path) == 0) {
+            return sl_fetch_data(cdemo_files[i].content, strlen(cdemo_files[i].content));
+        }
+    }
+    return sl_fetch_not_found();
+}
+
+static sl_fetch_entry *cdemo_glob(const char *source, const char *pattern, size_t *count, void *ctx) {
+    (void)ctx;
+    *count = 0;
+    if (strncmp(source, "cdemo://libs", strlen("cdemo://libs")) != 0) {
+        *count = (size_t)-1;
+        return NULL;
+    }
+
+    /* The tree: every served file plus the directories leading to one, so
+     * exact-path probes resolve directories and a star pattern lists them. Names
+     * point at static storage, which outlives the handler call. */
+    enum { MAXN = 32 };
+    static char names[MAXN][64];
+    static bool is_dirs[MAXN];
+    static sl_fetch_entry entries[MAXN];
+    size_t n = 0;
+
+    size_t nfiles = sizeof(cdemo_files) / sizeof(cdemo_files[0]);
+    for (size_t i = 0; i < nfiles && n < MAXN; i++) {
+        const char *name = cdemo_files[i].path;
+        /* The file itself. */
+        if (sl_glob_match(pattern, name)) {
+            snprintf(names[n], sizeof(names[n]), "%s", name);
+            is_dirs[n] = false;
+            entries[n].name = names[n];
+            entries[n].is_dir = is_dirs[n];
+            n++;
+        }
+        /* Each directory prefix leading to it. */
+        char dir[64];
+        snprintf(dir, sizeof(dir), "%s", name);
+        for (char *slash = strchr(dir, '/'); slash; slash = strchr(slash + 1, '/')) {
+            *slash = '\0';
+            if (sl_glob_match(pattern, dir)) {
+                bool seen = false;
+                for (size_t j = 0; j < n; j++) {
+                    if (is_dirs[j] && strcmp(names[j], dir) == 0) { seen = true; break; }
+                }
+                if (!seen && n < MAXN) {
+                    snprintf(names[n], sizeof(names[n]), "%s", dir);
+                    is_dirs[n] = true;
+                    entries[n].name = names[n];
+                    entries[n].is_dir = true;
+                    n++;
+                }
+            }
+            *slash = '/';
+        }
+    }
+    *count = n;
+    return n ? entries : NULL;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Main — register everything and run                                */
 /* ------------------------------------------------------------------ */
 
@@ -169,6 +272,8 @@ int main(void) {
     sl_register_class(srv, ctr);
 
     sl_constant(srv, "default_name", sl_string("World"));
+
+    sl_register_fetcher(srv, "cdemo", cdemo_read, cdemo_glob);
 
     int rc = sl_server_run(srv);
     sl_server_free(srv);

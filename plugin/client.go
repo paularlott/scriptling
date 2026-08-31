@@ -3,12 +3,14 @@ package plugin
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +22,7 @@ import (
 
 	"github.com/paularlott/jsonrpc"
 	"github.com/paularlott/logger"
+	"github.com/paularlott/scriptling/build"
 )
 
 // TransportMode restricts which plugin transport protocols a Manager or scope
@@ -45,18 +48,43 @@ const DefaultHandshakeTimeout = 15 * time.Second
 // ScopeOption configures a scoped Manager created by NewScope.
 type ScopeOption func(*Manager)
 
+// DefaultMaxParallelPluginLoads caps how many plugin processes are started
+// concurrently. Process spawn plus handshake dominates load time, so batches
+// start in parallel, but an unbounded burst of subprocesses would hurt
+// constrained hosts more than sequential loading helps them.
+const DefaultMaxParallelPluginLoads = 5
+
+// ErrManagerClosed is returned by Manager load operations after shutdown has
+// begun. A closed Manager is terminal and cannot be used to load more plugins.
+var ErrManagerClosed = errors.New("plugin manager closed")
+
 type Manager struct {
 	parent                *Manager
 	transportMode         TransportMode
 	httpTransport         *http.Transport // shared pooled TLS-verified transport
 	httpInsecureTransport *http.Transport // shared pooled TLS-skip-verify transport
 
-	dirs         []string
-	clients      map[string]*Client
-	warnings     []string
-	crashHandler func(name string, err error)
-	logger       logger.Logger
-	mu           sync.RWMutex
+	dirs                   []string
+	clients                map[string]*Client
+	warnings               []string
+	crashHandler           func(name string, err error)
+	logger                 logger.Logger
+	maxParallelPluginLoads int
+	// policy is handed to every plugin this manager handshakes with. Set
+	// via SetPolicy before Load; scopes inherit it through the parent chain.
+	policy *Policy
+
+	// Lifecycle state is guarded by mu. closed is set before Close waits for
+	// activeLoads, so beginLoad cannot race a new operation into that wait.
+	// loadsDone is closed exactly while activeLoads is zero; closeDone is
+	// closed after the one shutdown owner has closed every registered client.
+	closed      bool
+	activeLoads int
+	loadsDone   chan struct{}
+	closeDone   chan struct{}
+	closeErr    error
+
+	mu sync.RWMutex
 }
 
 // NewManager creates an empty plugin manager. If log is not nil, plugin log
@@ -64,15 +92,72 @@ type Manager struct {
 // provided, it is called when a loaded plugin process exits unexpectedly.
 func NewManager(log logger.Logger, crashHandler ...func(name string, err error)) *Manager {
 	manager := &Manager{
-		clients:               make(map[string]*Client),
-		logger:                log,
-		httpTransport:         newSharedHTTPTransport(false),
-		httpInsecureTransport: newSharedHTTPTransport(true),
+		clients:                make(map[string]*Client),
+		logger:                 log,
+		maxParallelPluginLoads: DefaultMaxParallelPluginLoads,
+		httpTransport:          newSharedHTTPTransport(false),
+		httpInsecureTransport:  newSharedHTTPTransport(true),
+		loadsDone:              closedSignal(),
+		closeDone:              make(chan struct{}),
 	}
 	if len(crashHandler) > 0 {
 		manager.crashHandler = crashHandler[0]
 	}
 	return manager
+}
+
+func closedSignal() chan struct{} {
+	done := make(chan struct{})
+	close(done)
+	return done
+}
+
+// beginLoad admits one public load operation while the Manager is open. The
+// increment and Close's terminal state transition share mu, so Close cannot
+// begin waiting while an unaccounted operation increments activeLoads.
+func (m *Manager) beginLoad() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return ErrManagerClosed
+	}
+	if m.activeLoads == 0 {
+		m.loadsDone = make(chan struct{})
+	}
+	m.activeLoads++
+	return nil
+}
+
+func (m *Manager) endLoad() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.activeLoads--
+	if m.activeLoads == 0 {
+		close(m.loadsDone)
+	}
+}
+
+// SetMaxParallelPluginLoads caps how many plugin processes are started
+// concurrently by Load and LoadPlugins. Values below 1 mean one at a time;
+// the default is DefaultMaxParallelPluginLoads. Registration order is the
+// input order whatever the cap, so name collisions resolve identically to
+// sequential loading.
+func (m *Manager) SetMaxParallelPluginLoads(n int) {
+	if n < 1 {
+		n = 1
+	}
+	m.mu.Lock()
+	m.maxParallelPluginLoads = n
+	m.mu.Unlock()
+}
+
+func (m *Manager) parallelLoadLimit() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.maxParallelPluginLoads < 1 {
+		return 1
+	}
+	return m.maxParallelPluginLoads
 }
 
 // newSharedHTTPTransport returns a pooled, HTTP/2-capable transport. When
@@ -117,12 +202,18 @@ func WithTransport(mode TransportMode) ScopeOption {
 //
 // The scope does not inherit the parent's dirs or crash handler.
 func (m *Manager) NewScope(opts ...ScopeOption) *Manager {
+	m.mu.RLock()
+	log := m.logger
+	m.mu.RUnlock()
 	scope := &Manager{
-		parent:                m,
-		clients:               make(map[string]*Client),
-		logger:                m.logger,
-		httpTransport:         m.httpTransport,         // shared — connections pooled with parent
-		httpInsecureTransport: m.httpInsecureTransport, // shared — connections pooled with parent
+		parent:                 m,
+		clients:                make(map[string]*Client),
+		logger:                 log,
+		maxParallelPluginLoads: m.parallelLoadLimit(),
+		httpTransport:          m.httpTransport,         // shared — connections pooled with parent
+		httpInsecureTransport:  m.httpInsecureTransport, // shared — connections pooled with parent
+		loadsDone:              closedSignal(),
+		closeDone:              make(chan struct{}),
 	}
 	for _, opt := range opts {
 		opt(scope)
@@ -143,13 +234,201 @@ func (m *Manager) httpTransportFor(insecureSkipTLS bool) *http.Transport {
 // AddDir adds a directory whose executable files should be loaded as plugins.
 func (m *Manager) AddDir(dir string) {
 	if dir != "" {
+		m.mu.Lock()
 		m.dirs = append(m.dirs, dir)
+		m.mu.Unlock()
 	}
 }
 
+// PluginSpec names one plugin to load: an executable path with optional
+// command-line arguments and environment entries, or an http(s) URL of a
+// remote JSON-RPC plugin server. Env entries are KEY=VALUE strings layered
+// on top of the inherited environment (existing keys are overridden); they
+// apply to executables only, an HTTP server owns its own environment.
+// Headers ride every HTTP request (e.g. Authorization for a bearer token).
+// Insecure skips TLS certificate verification for https URLs.
+type PluginSpec struct {
+	Path     string
+	Args     []string
+	Env      []string
+	Headers  map[string]string
+	Insecure bool
+}
+
+// LoadPlugins starts each executable plugin, at most
+// SetMaxParallelPluginLoads at a time, and registers them in the order the
+// specs are given: a library name declared by two plugins resolves to the
+// first spec, exactly as sequential loading resolves it. The first failed
+// start (in spec order) is returned as an error; plugins started before it
+// are kept. Embedders use this (or Load) for capped parallel loading.
+func (m *Manager) LoadPlugins(ctx context.Context, specs []PluginSpec) error {
+	if err := m.beginLoad(); err != nil {
+		return err
+	}
+	defer m.endLoad()
+
+	results := m.startBatch(ctx, specs)
+	for i, result := range results {
+		if result.err != nil {
+			// startBatch started every spec, so the specs after the failure
+			// hold live clients this loop never reaches: close them, or they
+			// are orphaned subprocesses.
+			m.closeUnregistered(results[i+1:])
+			return fmt.Errorf("plugin %s failed to load: %w", result.spec.Path, result.err)
+		}
+		if err := m.registerLoaded(result); err != nil {
+			m.closeUnregistered(results[i+1:])
+			return err
+		}
+	}
+	return nil
+}
+
+// closeUnregistered releases clients that startBatch started but a failing
+// batch never registered. The failing client itself is already closed by its
+// own path (startClient on handshake failure, registerLoaded on conflict).
+func (m *Manager) closeUnregistered(results []batchResult) {
+	for _, result := range results {
+		if result.client != nil {
+			_ = result.client.Close()
+		}
+	}
+}
+
+type batchResult struct {
+	spec   PluginSpec
+	client *Client
+	err    error
+}
+
+// startBatch starts the given plugins concurrently, capped, and returns one
+// result per spec in input order. An http(s) spec connects to the remote
+// JSON-RPC plugin server; anything else resolves to an executable and is
+// spawned with its arguments and environment. Failures are per spec, so one
+// bad plugin never fails the batch; the caller decides whether to warn or
+// propagate.
+func (m *Manager) startBatch(ctx context.Context, specs []PluginSpec) []batchResult {
+	limit := m.parallelLoadLimit()
+	if limit > len(specs) {
+		limit = len(specs)
+	}
+	results := make([]batchResult, len(specs))
+	sem := make(chan struct{}, limit)
+	var wg sync.WaitGroup
+	for i, spec := range specs {
+		wg.Add(1)
+		go func(i int, spec PluginSpec) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			client, err := m.startOne(ctx, spec)
+			results[i] = batchResult{spec: spec, client: client, err: err}
+		}(i, spec)
+	}
+	wg.Wait()
+	return results
+}
+
+// startOne starts a single spec: handshake an http(s) plugin server, or
+// resolve and spawn an executable with its args and environment.
+func (m *Manager) startOne(ctx context.Context, spec PluginSpec) (*Client, error) {
+	if isHTTPURL(spec.Path) {
+		if m.transportMode == TransportStdio {
+			return nil, fmt.Errorf("http/https plugins are not permitted in this scope (stdio only)")
+		}
+		return newHTTPClient(ctx, spec.Path, spec.Insecure, true, m.httpTransportFor(spec.Insecure), m.policySnapshot(), spec.Headers)
+	}
+	if m.transportMode == TransportHTTP {
+		return nil, fmt.Errorf("stdio/executable plugins are not permitted in this scope (http/https only)")
+	}
+	resolvedPath, err := resolveExecutablePath(spec.Path)
+	if err != nil {
+		return nil, err
+	}
+	return startClient(ctx, resolvedPath, spec.Args, spec.Env, m.policySnapshot())
+}
+
+// registerLoaded attaches one started plugin to the manager. It returns an
+// error when the declared library name is already taken (the LoadPlugin
+// contract); directory discovery warns instead, via registerBatch.
+func (m *Manager) registerLoaded(result batchResult) error {
+	client := result.client
+	m.mu.RLock()
+	client.setLogger(m.logger)
+	m.mu.RUnlock()
+	name := client.Metadata().Name
+
+	m.mu.Lock()
+	// Close wins atomically over publication. The operation remains accounted
+	// for until its caller returns, and ownership of a rejected client stays
+	// here so the started process cannot escape shutdown.
+	if m.closed {
+		m.mu.Unlock()
+		_ = client.Close()
+		return ErrManagerClosed
+	}
+	// Re-check under the write lock: a concurrent load may have won the race.
+	for _, existing := range m.clients {
+		if existing.Path() == result.spec.Path {
+			m.mu.Unlock()
+			_ = client.Close()
+			return nil
+		}
+	}
+	if _, exists := m.clients[name]; exists {
+		m.mu.Unlock()
+		_ = client.Close()
+		return fmt.Errorf("plugin name %s already in use", name)
+	}
+	m.clients[name] = client
+	m.mu.Unlock()
+	m.installCrashHandler(name, client)
+	return nil
+}
+
+// registerBatch registers started plugins in batch order, the order they
+// were collected in, so duplicate names resolve to the first path and
+// failures become warnings: one bad plugin never blocks the rest of a
+// directory.
+func (m *Manager) registerBatch(results []batchResult) error {
+	for i, result := range results {
+		if result.err != nil {
+			m.addWarning("plugin %s failed to load: %v", result.spec.Path, result.err)
+			continue
+		}
+		if err := m.registerLoaded(result); err != nil {
+			if errors.Is(err, ErrManagerClosed) {
+				m.closeUnregistered(results[i+1:])
+				return ErrManagerClosed
+			}
+			if result.client != nil {
+				m.addWarning("plugin %s ignored: duplicate library %s", result.spec.Path, result.client.Metadata().Name)
+			} else {
+				m.addWarning("plugin %s ignored: %v", result.spec.Path, err)
+			}
+			continue
+		}
+	}
+	return nil
+}
+
 // Load eagerly starts all executable plugins in configured plugin directories.
+// The starts run concurrently, capped at SetMaxParallelPluginLoads, while
+// registration stays in directory order so naming behaves exactly as
+// sequential loading: the first executable declaring a library name wins.
 func (m *Manager) Load(ctx context.Context) error {
-	for _, dir := range m.dirs {
+	if err := m.beginLoad(); err != nil {
+		return err
+	}
+	defer m.endLoad()
+
+	m.mu.RLock()
+	dirs := append([]string(nil), m.dirs...)
+	m.mu.RUnlock()
+
+	var specs []PluginSpec
+	seen := make(map[string]bool)
+	for _, dir := range dirs {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			m.addWarning("plugin dir %s: %v", dir, err)
@@ -168,28 +447,104 @@ func (m *Manager) Load(ctx context.Context) error {
 			if info.Mode()&0111 == 0 {
 				continue
 			}
-			client, err := startClient(ctx, path, nil)
-			if err != nil {
-				m.addWarning("plugin %s failed to load: %v", path, err)
-				continue
+			// Skip executables already loaded explicitly (e.g. via LoadPlugin):
+			// identity is the resolved path, and the explicit instance — with
+			// its arguments — is the one that must win.
+			absPath := path
+			if abs, err := filepath.Abs(path); err == nil {
+				absPath = abs
 			}
 			m.mu.RLock()
-			client.setLogger(m.logger)
+			alreadyLoaded := false
+			for _, existing := range m.clients {
+				if existing.Path() == path || existing.Path() == absPath {
+					alreadyLoaded = true
+					break
+				}
+			}
 			m.mu.RUnlock()
-			name := client.Metadata().Name
-			m.mu.Lock()
-			if _, exists := m.clients[name]; exists {
-				m.warnings = append(m.warnings, fmt.Sprintf("plugin %s ignored: duplicate library %s", path, name))
-				m.mu.Unlock()
-				_ = client.Close()
+			if alreadyLoaded {
 				continue
 			}
-			m.clients[name] = client
-			m.mu.Unlock()
-			m.installCrashHandler(name, client)
+			// The same executable can appear in several dirs; loading it once
+			// is enough.
+			if seen[absPath] {
+				continue
+			}
+			seen[absPath] = true
+			specs = append(specs, PluginSpec{Path: path})
 		}
 	}
-	return nil
+	return m.registerBatch(m.startBatch(ctx, specs))
+}
+
+// LoadPlugin starts a single executable plugin, performing the plugin protocol
+// handshake, and registers it under the library name it declares — the same
+// naming rule directory discovery uses, so a plugin behaves identically
+// however it is loaded. args, if non-empty, are passed as command-line
+// arguments to the executable.
+//
+// Executable identity is the resolved absolute path: loading an executable
+// that is already registered (e.g. discovered earlier via LoadPath or an
+// explicit load ahead of a --plugin-dir scan) returns the existing client.
+func (m *Manager) LoadPlugin(ctx context.Context, path string, args []string) (*Client, error) {
+	if err := m.beginLoad(); err != nil {
+		return nil, err
+	}
+	defer m.endLoad()
+
+	if isHTTPURL(path) {
+		return nil, fmt.Errorf("LoadPlugin requires an executable path; use LoadURL for http(s) plugins")
+	}
+	if m.transportMode == TransportHTTP {
+		return nil, fmt.Errorf("stdio/executable plugins are not permitted in this scope (http/https only)")
+	}
+	resolvedPath, err := resolveExecutablePath(path)
+	if err != nil {
+		return nil, err
+	}
+
+	m.mu.Lock()
+	for _, existing := range m.clients {
+		if existing.Path() == resolvedPath {
+			m.mu.Unlock()
+			return existing, nil
+		}
+	}
+	m.mu.Unlock()
+
+	client, err := startClient(ctx, resolvedPath, args, nil, m.policySnapshot())
+	if err != nil {
+		return nil, err
+	}
+	m.mu.RLock()
+	client.setLogger(m.logger)
+	m.mu.RUnlock()
+	name := client.Metadata().Name
+
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		_ = client.Close()
+		return nil, ErrManagerClosed
+	}
+	// Re-check under the write lock: a concurrent load may have won the race.
+	for _, existing := range m.clients {
+		if existing.Path() == resolvedPath {
+			m.mu.Unlock()
+			_ = client.Close()
+			return existing, nil
+		}
+	}
+	if _, exists := m.clients[name]; exists {
+		m.mu.Unlock()
+		_ = client.Close()
+		return nil, fmt.Errorf("plugin name %s already in use", name)
+	}
+	m.clients[name] = client
+	m.mu.Unlock()
+	m.installCrashHandler(name, client)
+	return client, nil
 }
 
 // LoadPath starts a single executable, or connects to an http(s) JSON-RPC
@@ -207,6 +562,11 @@ func (m *Manager) Load(ctx context.Context) error {
 // name is normalised into the plugin.* namespace (e.g. "widgets" becomes
 // "plugin.widgets"); the returned client's Metadata().Name reflects that.
 func (m *Manager) LoadPath(ctx context.Context, name, path string, scriptling bool, args []string) (*Client, error) {
+	if err := m.beginLoad(); err != nil {
+		return nil, err
+	}
+	defer m.endLoad()
+
 	normalisedName := NormalizeLibraryName(name)
 	resolvedPath := path
 	isHTTP := isHTTPURL(path)
@@ -263,11 +623,11 @@ func (m *Manager) LoadPath(ctx context.Context, name, path string, scriptling bo
 
 	var client *Client
 	if isHTTP {
-		client, err = newHTTPClient(ctx, resolvedPath, false, scriptling, m.httpTransport)
+		client, err = newHTTPClient(ctx, resolvedPath, false, scriptling, m.httpTransport, m.policySnapshot())
 	} else if scriptling {
-		client, err = startClient(ctx, resolvedPath, args)
+		client, err = startClient(ctx, resolvedPath, args, nil, m.policySnapshot())
 	} else {
-		client, err = spawnClient(ctx, resolvedPath, args)
+		client, err = spawnClient(ctx, resolvedPath, args, nil)
 	}
 	if err != nil {
 		return nil, err
@@ -278,6 +638,11 @@ func (m *Manager) LoadPath(ctx context.Context, name, path string, scriptling bo
 	client.SetName(normalisedName)
 
 	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		_ = client.Close()
+		return nil, ErrManagerClosed
+	}
 	// Re-check under the write lock: a concurrent LoadPath may have won the race.
 	for _, existing := range m.clients {
 		if existing.Path() == resolvedPath {
@@ -305,6 +670,11 @@ func (m *Manager) LoadPath(ctx context.Context, name, path string, scriptling bo
 // insecureSkipTLS is true, HTTPS certificate verification is skipped. Optional
 // headers are sent with every HTTP request.
 func (m *Manager) LoadURL(ctx context.Context, name, rawURL string, scriptling, insecureSkipTLS bool, headers ...map[string]string) (*Client, error) {
+	if err := m.beginLoad(); err != nil {
+		return nil, err
+	}
+	defer m.endLoad()
+
 	if !isHTTPURL(rawURL) {
 		return nil, fmt.Errorf("plugin URL must use http or https")
 	}
@@ -343,7 +713,7 @@ func (m *Manager) LoadURL(ctx context.Context, name, rawURL string, scriptling, 
 	}
 	m.mu.Unlock()
 
-	client, err := newHTTPClient(ctx, rawURL, insecureSkipTLS, scriptling, m.httpTransportFor(insecureSkipTLS), firstHeaderMap(headers))
+	client, err := newHTTPClient(ctx, rawURL, insecureSkipTLS, scriptling, m.httpTransportFor(insecureSkipTLS), m.policySnapshot(), firstHeaderMap(headers))
 	if err != nil {
 		return nil, err
 	}
@@ -353,6 +723,11 @@ func (m *Manager) LoadURL(ctx context.Context, name, rawURL string, scriptling, 
 	client.SetName(normalisedName)
 
 	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		_ = client.Close()
+		return nil, ErrManagerClosed
+	}
 	for _, existing := range m.clients {
 		if existing.Path() == rawURL {
 			m.mu.Unlock()
@@ -416,15 +791,41 @@ func isHTTPURL(ref string) bool {
 
 // Close shuts down all loaded plugin processes and clears the local client map.
 // For scoped managers this fully releases all locally loaded plugins without
-// touching the parent's plugins. Close is safe to call more than once.
+// touching the parent's plugins. Close is safe to call concurrently and more
+// than once; every caller waits for the same shutdown and receives its result.
 func (m *Manager) Close() error {
+	m.mu.Lock()
+	if m.closeDone == nil {
+		m.closeDone = make(chan struct{})
+	}
+	if m.loadsDone == nil {
+		m.loadsDone = closedSignal()
+	}
+	if m.closed {
+		done := m.closeDone
+		m.mu.Unlock()
+		<-done
+		m.mu.RLock()
+		err := m.closeErr
+		m.mu.RUnlock()
+		return err
+	}
+
+	// The terminal transition and load admission share mu. Once closed is set,
+	// no load can increment activeLoads or publish a client. Operations already
+	// admitted will observe closed at publication, close any client they started,
+	// and finish before loadsDone is closed.
+	m.closed = true
+	loadsDone := m.loadsDone
+	m.mu.Unlock()
+
+	<-loadsDone
+
 	m.mu.Lock()
 	clients := make([]*Client, 0, len(m.clients))
 	for _, client := range m.clients {
 		clients = append(clients, client)
 	}
-	// Clear the local map immediately so concurrent Get/List calls see an empty
-	// scope even while individual client shutdowns are still in progress.
 	m.clients = make(map[string]*Client)
 	m.mu.Unlock()
 
@@ -434,6 +835,11 @@ func (m *Manager) Close() error {
 			first = err
 		}
 	}
+
+	m.mu.Lock()
+	m.closeErr = first
+	close(m.closeDone)
+	m.mu.Unlock()
 	return first
 }
 
@@ -524,6 +930,31 @@ func (m *Manager) SetLogger(log logger.Logger) {
 	}
 }
 
+// SetPolicy sets the security policy delivered to every plugin this manager
+// handshakes with. Call it before Load/LoadPlugin/LoadURL — the policy rides
+// the handshake, which is the first message on each connection. A nil policy
+// (the default) tells plugins the host imposes no restrictions. Scopes created
+// earlier still see the policy through the parent chain at handshake time.
+func (m *Manager) SetPolicy(policy *Policy) {
+	m.mu.Lock()
+	m.policy = policy
+	m.mu.Unlock()
+}
+
+// policySnapshot returns the effective policy for this manager, walking the
+// parent chain when this manager (a scope) has none of its own.
+func (m *Manager) policySnapshot() *Policy {
+	for mgr := m; mgr != nil; mgr = mgr.parent {
+		mgr.mu.RLock()
+		policy := mgr.policy
+		mgr.mu.RUnlock()
+		if policy != nil {
+			return policy
+		}
+	}
+	return nil
+}
+
 // Get returns a loaded plugin client by short or fully-qualified library name.
 // It checks the local map first; if not found and this is a scope with a parent,
 // it falls back to the parent (and so on up the chain). Local always wins.
@@ -561,9 +992,12 @@ func (m *Manager) installCrashHandler(name string, client *Client) {
 	})
 }
 
-// NormalizeLibraryName returns name in the host-owned plugin namespace.
+// NormalizeLibraryName returns the library name a script imports. A bare
+// name registers under the plugin namespace ("hello" -> "plugin.hello");
+// a dotted name is the author's namespace and is used verbatim
+// ("paul.hello", "scriptling.sqlite").
 func NormalizeLibraryName(name string) string {
-	if strings.HasPrefix(name, NamespacePrefix) {
+	if strings.Contains(name, ".") {
 		return name
 	}
 	return NamespacePrefix + name
@@ -579,6 +1013,10 @@ type Client struct {
 	metadata Metadata
 
 	handshakeDone bool
+
+	// policy is the host security context sent with the handshake. Set once
+	// at creation by the owning Manager; nil means no restrictions.
+	policy *Policy
 
 	// Exactly one transport is set: peer for stdio plugins, rpc for HTTP.
 	peer *jsonrpc.Peer   // bidirectional stdio transport (outbound + inbound callbacks)
@@ -614,11 +1052,12 @@ type callbackOwner struct {
 	ctx context.Context
 }
 
-func startClient(ctx context.Context, path string, args []string) (*Client, error) {
-	client, err := spawnClient(ctx, path, args)
+func startClient(ctx context.Context, path string, args []string, extraEnv []string, policy *Policy) (*Client, error) {
+	client, err := spawnClient(ctx, path, args, extraEnv)
 	if err != nil {
 		return nil, err
 	}
+	client.policy = policy
 	if err := client.handshake(ctx); err != nil {
 		_ = client.Close()
 		return nil, err
@@ -629,15 +1068,30 @@ func startClient(ctx context.Context, path string, args []string) (*Client, erro
 // newHTTPClient creates an HTTP plugin client. The caller is responsible for
 // passing the appropriate transport (see Manager.httpTransportFor); no TLS
 // policy decisions are made here. Pass nil to fall back to http.DefaultTransport.
-func newHTTPClient(ctx context.Context, rawURL string, insecureSkipTLS bool, handshake bool, transport *http.Transport, headers ...map[string]string) (*Client, error) {
+func newHTTPClient(ctx context.Context, rawURL string, insecureSkipTLS bool, handshake bool, transport *http.Transport, policy *Policy, headers ...map[string]string) (*Client, error) {
+	// Credentials in the URL (http://user:pass@host) become the Basic auth
+	// header; an explicit Authorization header supplied by the caller wins.
+	// The transport gets the URL without the userinfo so it never leaks into
+	// the request line or Host header.
+	transportURL, basicAuth := splitURLCredentials(rawURL)
+	allHeaders := firstHeaderMap(headers)
+	if basicAuth != "" && !hasAuthorizationHeader(allHeaders) {
+		if allHeaders == nil {
+			allHeaders = map[string]string{}
+		} else {
+			allHeaders = copyHeaders(allHeaders)
+		}
+		allHeaders["Authorization"] = basicAuth
+	}
 	opts := []jsonrpc.HTTPOption{jsonrpc.WithHTTPClient(&http.Client{Transport: transportOrDefault(transport)})}
-	for key, value := range firstHeaderMap(headers) {
+	for key, value := range allHeaders {
 		opts = append(opts, jsonrpc.WithHeader(key, value))
 	}
 	client := &Client{
-		path: rawURL,
-		rpc:  jsonrpc.NewClient(jsonrpc.NewHTTPTransport(rawURL, opts...)),
-		done: make(chan struct{}),
+		path:   rawURL,
+		policy: policy,
+		rpc:    jsonrpc.NewClient(jsonrpc.NewHTTPTransport(transportURL, opts...)),
+		done:   make(chan struct{}),
 	}
 	if handshake {
 		if err := client.handshake(ctx); err != nil {
@@ -655,6 +1109,38 @@ func transportOrDefault(t *http.Transport) http.RoundTripper {
 	return http.DefaultTransport
 }
 
+// splitURLCredentials extracts user:pass@ from a URL as a Basic auth header
+// value and returns the URL without the userinfo. A URL without credentials,
+// or one that does not parse, passes through unchanged with an empty header.
+func splitURLCredentials(rawURL string) (string, string) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.User == nil {
+		return rawURL, ""
+	}
+	username := parsed.User.Username()
+	password, _ := parsed.User.Password()
+	credentials := base64.StdEncoding.EncodeToString([]byte(username + ":" + password))
+	parsed.User = nil
+	return parsed.String(), "Basic " + credentials
+}
+
+func hasAuthorizationHeader(headers map[string]string) bool {
+	for key := range headers {
+		if strings.EqualFold(key, "authorization") {
+			return true
+		}
+	}
+	return false
+}
+
+func copyHeaders(headers map[string]string) map[string]string {
+	out := make(map[string]string, len(headers)+1)
+	for key, value := range headers {
+		out[key] = value
+	}
+	return out
+}
+
 func firstHeaderMap(headers []map[string]string) map[string]string {
 	if len(headers) == 0 {
 		return nil
@@ -668,7 +1154,7 @@ func firstHeaderMap(headers []map[string]string) map[string]string {
 // handshake next); callers that want to skip the handshake may use the returned
 // client directly. args, if non-empty, are passed as command-line arguments to
 // the executable.
-func spawnClient(ctx context.Context, path string, args []string) (*Client, error) {
+func spawnClient(ctx context.Context, path string, args []string, extraEnv []string) (*Client, error) {
 	// The subprocess must outlive any single request context — the evaluation
 	// context that reaches load() may be cancelled after the builtin returns.
 	// The process lifecycle is managed by the client's Close() (via the peer's
@@ -678,11 +1164,24 @@ func spawnClient(ctx context.Context, path string, args []string) (*Client, erro
 		callbackOwners: make(map[string]*callbackOwner),
 		done:           make(chan struct{}),
 	}
-	server := newPluginPeerServer(client)
-	peer, err := jsonrpc.NewProcessPeer(path, args, server,
+	processOpts := []jsonrpc.ProcessOption{
 		jsonrpc.WithStderr(os.Stderr),
 		jsonrpc.WithOnExit(client.onProcessExit),
-	)
+		// Peers are told they were spawned by scriptling so multi-role
+		// executables can divert a bare invocation to plugin mode (knot
+		// checks this instead of requiring a subcommand). Purely additive:
+		// peers that don't know it ignore it.
+		jsonrpc.WithExtraEnv(PluginPeerEnv + "=" + build.Version),
+	}
+	// Caller-supplied environment (e.g. --plugin-env) layers on top of the
+	// inherited environment and may override existing keys.
+	for _, entry := range extraEnv {
+		if entry != "" {
+			processOpts = append(processOpts, jsonrpc.WithExtraEnv(entry))
+		}
+	}
+	server := newPluginPeerServer(client)
+	peer, err := jsonrpc.NewProcessPeer(path, args, server, processOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -693,8 +1192,10 @@ func spawnClient(ctx context.Context, path string, args []string) (*Client, erro
 // LoadClient spawns an executable and performs the plugin protocol handshake.
 // The returned client has Metadata populated from the handshake result.
 // args, if non-empty, are passed as command-line arguments to the executable.
+// A standalone client carries no host security policy; managers that want one
+// delivered should load through a Manager with SetPolicy.
 func LoadClient(ctx context.Context, path string, args []string) (*Client, error) {
-	return startClient(ctx, path, args)
+	return startClient(ctx, path, args, nil, nil)
 }
 
 // LoadClientFromIO connects to a plugin server over an existing bidirectional
@@ -729,7 +1230,7 @@ func LoadClientFromIO(ctx context.Context, in io.ReadCloser, out io.WriteCloser)
 // The caller is responsible for any handshake exchange via Call.
 // args, if non-empty, are passed as command-line arguments to the executable.
 func SpawnClient(ctx context.Context, path string, args []string) (*Client, error) {
-	return spawnClient(ctx, path, args)
+	return spawnClient(ctx, path, args, nil)
 }
 
 // handshake performs the scriptling plugin protocol handshake and populates the
@@ -748,9 +1249,10 @@ func (c *Client) handshake(ctx context.Context) error {
 	if err := c.call(ctx, "scriptling.handshake", handshakeParams{
 		Protocol:     ProtocolVersion,
 		Host:         "scriptling",
-		HostVersion:  "dev",
+		HostVersion:  build.Version,
 		Transports:   []string{"json"},
 		Capabilities: []string{"remote_objects"},
+		Policy:       c.policy,
 	}, nil, &result); err != nil {
 		return err
 	}
@@ -766,6 +1268,7 @@ func (c *Client) handshake(ctx context.Context) error {
 		Description:  result.Library.Description,
 		Transport:    result.Transport,
 		Capabilities: result.Capabilities,
+		Scheme:       result.Scheme,
 		Schema:       result.Schema,
 	}
 	c.handshakeDone = true

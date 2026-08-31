@@ -18,6 +18,13 @@ func helpCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "help",
 		Usage: "Show help for a module or function",
+		Flags: []cli.Flag{
+			&cli.BoolFlag{
+				Name:    "insecure",
+				Usage:   "Allow self-signed HTTPS certificates for package URLs",
+				Aliases: []string{"k"},
+			},
+		},
 		Arguments: []cli.Argument{
 			&cli.StringArg{
 				Name:     "topic",

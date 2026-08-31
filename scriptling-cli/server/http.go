@@ -5,28 +5,89 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"mime"
+	"net"
 	"net/http"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
+	mcplib "github.com/paularlott/mcp"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/object"
+	mcpcli "github.com/paularlott/scriptling/scriptling-cli/mcp"
 	"github.com/paularlott/scriptling/util"
 )
 
-// registerRoute adds one route pattern to the mux. ServeMux panics on
-// patterns it considers conflicting (two wildcards with the same shape, such
-// as /items/{name}/detail and /items/{slug}/detail, or the same pattern
-// registered twice); rather than crashing the server at startup, skip the
-// route with an error log so the rest of the app still serves.
+// checkRouteConflicts registers every collected route into a throwaway mux
+// so ServeMux's own conflict rules decide deterministically at startup: two
+// wildcard-equivalent patterns (say /items/{name}/detail and
+// /items/{slug}/detail) otherwise race map iteration order in buildMux, and
+// whichever registers second was silently dropped.
+func (s *Server) checkRouteConflicts() error {
+	probe := http.NewServeMux()
+	register := func(pattern string) (err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("route %q conflicts with another route: %v", pattern, r)
+			}
+		}()
+		probe.Handle(pattern, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+		return nil
+	}
+
+	// Match buildMux's protocol predicates and ordering so user routes cannot
+	// silently lose to enabled built-in endpoints.
+	if s.mcpEnabled() {
+		if err := register("POST /mcp"); err != nil {
+			return err
+		}
+		if err := register("GET /mcp"); err != nil {
+			return err
+		}
+	}
+	if s.config.JSONRPC {
+		if err := register("POST /json-rpc"); err != nil {
+			return err
+		}
+		if err := register("GET /json-rpc"); err != nil {
+			return err
+		}
+	}
+
+	for key := range s.handlers {
+		pattern := key
+		if strings.HasSuffix(key, " /") {
+			pattern += "{$}"
+		}
+		if err := register(pattern); err != nil {
+			return err
+		}
+	}
+	for path := range s.wsHandlers {
+		if err := register(path); err != nil {
+			return err
+		}
+	}
+	for path := range s.staticRoutes {
+		if err := register(path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// registerRoute adds one route pattern to the mux. Conflicts are caught up
+// front by checkRouteConflicts; the recover stays as a last line of defense
+// so a late registration cannot take the process down.
 func registerRoute(mux *http.ServeMux, pattern string, handler http.HandlerFunc) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -42,7 +103,7 @@ func (s *Server) buildMux() http.Handler {
 	mux := http.NewServeMux()
 
 	if s.mcpHandler != nil {
-		mcp := s.scriptProtocolMiddleware(s.mcpHandler)
+		mcp := s.scriptProtocolMiddleware(sseWriteDeadline(s.mcpHandler))
 		mux.Handle("POST /mcp", mcp)
 		mux.Handle("GET /mcp", mcp)
 	}
@@ -89,13 +150,18 @@ func (s *Server) buildMux() http.Handler {
 	}
 
 	var handler http.Handler = mux
-	// With a script middleware registered, it guards every endpoint — routes
-	// via handleScriptRequest and the protocol endpoints via
-	// scriptProtocolMiddleware — so the static bearer token is not applied.
-	// Without one, a configured static token guards everything.
-	if s.config.BearerToken != "" && s.middleware == "" {
-		handler = s.bearerTokenMiddleware(mux)
+	// A configured static token always wraps the whole mux, middleware or
+	// not: the script middleware guards the script-facing endpoints, but it
+	// never runs for /health, static routes, the webroot fallback or custom
+	// not-found handling, so dropping the token when middleware exists left
+	// those unauthenticated. With both configured, the token applies first
+	// and the middleware layers on top.
+	if s.config.BearerToken != "" {
+		handler = s.bearerTokenMiddleware(handler)
 	}
+	// Body caps apply outermost so no route, protocol endpoint or fallback
+	// can buffer past the limit.
+	handler = s.bodyLimitMiddleware(handler)
 	return handler
 }
 
@@ -104,6 +170,14 @@ func (s *Server) Start() error {
 	s.httpServer = &http.Server{
 		Addr:    s.config.Address,
 		Handler: s.buildMux(),
+		// Slowloris-style stalls and drip-fed bodies get cut off; the
+		// read/write budgets are generous so legitimate large uploads and
+		// slow handlers survive. Hijacked connections (WebSocket upgrades)
+		// leave the net/http lifecycle, so these do not cut them.
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       5 * time.Minute,
+		WriteTimeout:      5 * time.Minute,
+		IdleTimeout:       2 * time.Minute,
 	}
 
 	if s.config.TLSGenerate || (s.config.TLSCert != "" && s.config.TLSKey != "") {
@@ -123,25 +197,52 @@ func (s *Server) Start() error {
 		}
 	}
 
-	go func() {
-		var err error
-
-		if s.config.TLSGenerate || (s.config.TLSCert != "" && s.config.TLSKey != "") {
-			if s.config.TLSCert != "" && s.config.TLSKey != "" {
-				err = s.httpServer.ListenAndServeTLS(s.config.TLSCert, s.config.TLSKey)
-			} else {
-				err = s.httpServer.ListenAndServeTLS("", "")
-			}
-		} else {
-			err = s.httpServer.ListenAndServe()
+	// Bind synchronously so a bad address or a broken certificate fails
+	// Start itself instead of surfacing asynchronously after a nil return.
+	listener, err := net.Listen("tcp", s.config.Address)
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", s.config.Address, err)
+	}
+	useTLS := s.config.TLSGenerate || (s.config.TLSCert != "" && s.config.TLSKey != "")
+	if useTLS {
+		certFiles := []string{s.config.TLSCert, s.config.TLSKey}
+		if s.config.TLSGenerate {
+			certFiles = nil
 		}
+		cert, configErr := tlsConfigFor(s, certFiles)
+		if configErr != nil {
+			_ = listener.Close()
+			return configErr
+		}
+		listener = tls.NewListener(listener, cert)
+	}
 
-		if err != nil && err != http.ErrServerClosed {
+	go func() {
+		if err := s.httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
 			Log.Error("Server error", "error", err)
 		}
 	}()
 
 	return nil
+}
+
+// tlsConfigFor builds the TLS configuration, loading the named certificate
+// files when given (the self-signed path carries its certificate on the
+// server config already).
+func tlsConfigFor(s *Server, certFiles []string) (*tls.Config, error) {
+	if len(certFiles) == 2 && certFiles[0] != "" && certFiles[1] != "" {
+		cert, err := tls.LoadX509KeyPair(certFiles[0], certFiles[1])
+		if err != nil {
+			return nil, fmt.Errorf("load TLS keypair: %w", err)
+		}
+		cfg := tls.Config{MinVersion: tls.VersionTLS12}
+		cfg.Certificates = []tls.Certificate{cert}
+		return &cfg, nil
+	}
+	if s.httpServer.TLSConfig == nil {
+		return nil, fmt.Errorf("no TLS configuration available")
+	}
+	return s.httpServer.TLSConfig.Clone(), nil
 }
 
 // Stop gracefully stops the server
@@ -196,18 +297,24 @@ func (s *Server) handleScriptRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reqObj := s.createRequestObject(r, pathParams(r))
+	body, ok := readBody(w, r)
+	if !ok {
+		return
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	reqObj := s.createRequestObject(r, pathParams(r), body)
+	ctx := extlibs.WithRequestContext(r.Context(), reqObj)
 
 	if s.middleware != "" {
 		Log.Trace("Running middleware", "handler", s.middleware)
-		if resp := s.runHandler(r.Context(), s.middleware, reqObj); resp != nil {
+		if resp := s.runHandler(ctx, s.middleware, reqObj); resp != nil {
 			s.writeResponse(w, resp)
 			return
 		}
 	}
 
 	Log.Trace("Dispatching to handler", "handler", handlerRef)
-	if resp := s.runHandler(r.Context(), handlerRef, reqObj); resp != nil {
+	if resp := s.runHandler(ctx, handlerRef, reqObj); resp != nil {
 		s.writeResponse(w, resp)
 	} else {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -356,8 +463,9 @@ func (s *Server) serveFromZip(w http.ResponseWriter, r *http.Request) {
 func (s *Server) serveNotFound(w http.ResponseWriter, r *http.Request) {
 	if s.notFoundHandler != "" {
 		Log.Trace("Handling 404 via not_found handler", "handler", s.notFoundHandler, "path", r.URL.Path)
-		reqObj := s.createRequestObject(r, nil)
-		if resp := s.runHandler(r.Context(), s.notFoundHandler, reqObj); resp != nil {
+		reqObj := s.createRequestObject(r, nil, nil)
+		ctx := extlibs.WithRequestContext(r.Context(), reqObj)
+		if resp := s.runHandler(ctx, s.notFoundHandler, reqObj); resp != nil {
 			s.writeResponse(w, resp)
 			return
 		}
@@ -368,12 +476,7 @@ func (s *Server) serveNotFound(w http.ResponseWriter, r *http.Request) {
 
 // createRequestObject creates a Request instance from an HTTP request.
 // pathParams holds values captured from route wildcards, already unescaped.
-func (s *Server) createRequestObject(r *http.Request, pathParams map[string]string) *object.Instance {
-	var body string
-	if r.Body != nil {
-		bodyBytes, _ := io.ReadAll(r.Body)
-		body = string(bodyBytes)
-	}
+func (s *Server) createRequestObject(r *http.Request, pathParams map[string]string, body []byte) *object.Instance {
 
 	headers := make(map[string]string)
 	for k, v := range r.Header {
@@ -389,7 +492,7 @@ func (s *Server) createRequestObject(r *http.Request, pathParams map[string]stri
 		}
 	}
 
-	return extlibs.CreateRequestInstance(r.Method, r.URL.Path, body, headers, query, pathParams, r.RemoteAddr)
+	return extlibs.CreateRequestInstance(r.Method, r.URL.Path, string(body), headers, query, pathParams, r.RemoteAddr)
 }
 
 // splitHandlerRef splits a "module.function" handler reference at the last
@@ -417,7 +520,7 @@ func (s *Server) runHandler(ctx context.Context, handlerRef string, reqObj *obje
 	s.setupScriptling(p)
 	s.applyPackLoader(p)
 
-	if err := p.Import(libName); err != nil {
+	if err := p.ImportWithContext(ctx, libName); err != nil {
 		Log.Error("Failed to import library", "library", libName, "error", err)
 		return nil
 	}
@@ -428,7 +531,7 @@ func (s *Server) runHandler(ctx context.Context, handlerRef string, reqObj *obje
 		return object.NewStringDict(map[string]object.Object{
 			"status":  object.NewInteger(500),
 			"headers": &object.Dict{Pairs: map[string]object.DictPair{}},
-			"body":    object.NewString(fmt.Sprintf(`{"error": "%s"}`, err.Error())),
+			"body":    object.NewString(extlibs.ErrorJSONBody(err.Error())),
 		})
 	}
 
@@ -490,36 +593,104 @@ func (s *Server) writeResponse(w http.ResponseWriter, resp *object.Dict) {
 	w.Write(bodyBytes)
 }
 
-// scriptProtocolMiddleware runs the registered script middleware for
-// protocol endpoints (/mcp, /json-rpc) when one is registered: a returned
-// response dict blocks the request (e.g. a 401), None lets it through to the
-// protocol handler. Without a middleware it is a pass-through. The request
-// body is buffered and restored, so building the middleware's request object
-// does not consume it for the protocol handler that runs next.
+// scriptProtocolMiddleware wraps the protocol endpoints (/mcp, /json-rpc).
+// The originating HTTP request is always stashed on the request context so
+// tool and method handlers can query it (scriptling.mcp.tool.get_request(),
+// runtime.jsonrpc.get_request()). When a script middleware is registered it
+// then runs with the request object: a returned response dict blocks the
+// request (e.g. a 401), None lets it through to the protocol handler. The
+// MCP entries the middleware registered for this request (register_request_
+// tool / _resource / _prompt) become per-request providers, so tools/list and
+// tools/call see exactly the entries that request's middleware exposed —
+// per-user tool sets with authorization re-evaluated on every message. The
+// request body is buffered and restored, so building the middleware's request
+// object does not consume it for the protocol handler that runs next.
 func (s *Server) scriptProtocolMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.middleware == "" {
-			next.ServeHTTP(w, r)
-			return
-		}
-
 		var bodyBytes []byte
 		if r.Body != nil {
-			bodyBytes, _ = io.ReadAll(r.Body)
+			var ok bool
+			if bodyBytes, ok = readBody(w, r); !ok {
+				return
+			}
 			r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 		}
 
-		reqObj := s.createRequestObject(r, nil)
+		reqObj := s.createRequestObject(r, nil, bodyBytes)
 		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		r = r.WithContext(extlibs.WithRequestContext(r.Context(), reqObj))
 
-		Log.Trace("Running middleware", "handler", s.middleware, "path", r.URL.Path)
-		if resp := s.runHandler(r.Context(), s.middleware, reqObj); resp != nil {
-			s.writeResponse(w, resp)
-			return
+		if s.middleware != "" {
+			Log.Trace("Running middleware", "handler", s.middleware, "path", r.URL.Path)
+			if resp := s.runHandler(r.Context(), s.middleware, reqObj); resp != nil {
+				s.writeResponse(w, resp)
+				return
+			}
+		}
+
+		// Build the per-request MCP providers from what the middleware
+		// registered. A malformed registration is a build error: fail the
+		// request rather than serving a different tool set than intended.
+		if regs := extlibs.RegistrationsFrom(r.Context()); regs != nil && !regs.Empty() {
+			providers, err := s.buildRequestProviders(regs)
+			if err != nil {
+				Log.Error("Request MCP registration failed", "error", err)
+				s.writeResponse(w, object.NewStringDict(map[string]object.Object{
+					"status":  object.NewInteger(500),
+					"headers": &object.Dict{Pairs: map[string]object.DictPair{}},
+					"body":    object.NewString(extlibs.ErrorJSONBody(err.Error())),
+				}))
+				return
+			}
+			if providers.tools != nil {
+				r = r.WithContext(mcplib.WithToolProviders(r.Context(), providers.tools))
+			}
+			if providers.resources != nil {
+				r = r.WithContext(mcplib.WithResourceProviders(r.Context(), providers.resources))
+			}
+			if providers.prompts != nil {
+				r = r.WithContext(mcplib.WithPromptProviders(r.Context(), providers.prompts))
+			}
 		}
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// requestProviders holds the per-request MCP providers built from middleware
+// registrations; nil members were not registered for this request.
+type requestProviders struct {
+	tools     mcplib.ToolProvider
+	resources mcplib.ResourceProvider
+	prompts   mcplib.PromptProvider
+}
+
+func (s *Server) buildRequestProviders(regs *extlibs.RequestRegistrations) (requestProviders, error) {
+	var out requestProviders
+	cfg := s.handlerConfig()
+
+	if len(regs.Tools) > 0 {
+		p, err := mcpcli.BuildRequestToolProvider(regs.Tools, cfg)
+		if err != nil {
+			return out, err
+		}
+		out.tools = p
+	}
+	if len(regs.Resources) > 0 {
+		p, err := mcpcli.BuildRequestResourceProvider(regs.Resources, cfg)
+		if err != nil {
+			return out, err
+		}
+		out.resources = p
+	}
+	if len(regs.Prompts) > 0 {
+		p, err := mcpcli.BuildRequestPromptProvider(regs.Prompts, cfg)
+		if err != nil {
+			return out, err
+		}
+		out.prompts = p
+	}
+	return out, nil
 }
 
 // bearerTokenMiddleware creates authentication middleware for all endpoints
@@ -538,5 +709,61 @@ func (s *Server) generateSelfSignedCert() (tls.Certificate, error) {
 	hosts := util.GetCertificateHosts(s.config.Address)
 	return util.GenerateSelfSignedCertificate(util.CertificateConfig{
 		Hosts: hosts,
+	})
+}
+
+// DefaultMaxRequestBody is the per-request body cap applied when
+// ServerConfig.MaxRequestBodyBytes is unset. Generous enough for large
+// JSON-RPC batches and uploads, small enough that one hostile request cannot
+// buffer unbounded memory.
+const DefaultMaxRequestBody int64 = 32 << 20 // 32 MiB
+
+// maxRequestBody resolves the effective per-request body limit; negative
+// disables the cap for embedders that stream arbitrarily large uploads.
+func (s *Server) maxRequestBody() int64 {
+	if s.config.MaxRequestBodyBytes != 0 {
+		return s.config.MaxRequestBodyBytes
+	}
+	return DefaultMaxRequestBody
+}
+
+// sseWriteDeadline clears the server's write deadline for GET requests on the
+// MCP endpoint: the GET is an SSE stream, a response with no end, and the
+// server-wide WriteTimeout would cut subscribers off mid-stream.
+func sseWriteDeadline(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// readBody reads the request body under the middleware's cap. A body past
+// the cap answers 413 and reports false: handlers must never see a truncated
+// payload as if it were the whole request.
+func readBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return nil, false
+		}
+		http.Error(w, "failed to read request body", http.StatusBadRequest)
+		return nil, false
+	}
+	return body, true
+}
+
+// bodyLimitMiddleware bounds request bodies. Handlers that read past the cap
+// see MaxBytesReader's error and answer 4xx instead of buffering whatever a
+// client cares to send.
+func (s *Server) bodyLimitMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if limit := s.maxRequestBody(); limit > 0 && r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
+		}
+		next.ServeHTTP(w, r)
 	})
 }

@@ -38,11 +38,11 @@ var suppressClass = &object.Class{
 				if !ok {
 					return errors.NewError("suppress.__init__: self must be an instance")
 				}
-			// Copy args[1:] so the stored List doesn't alias the caller's buffer.
-			excTypes := make([]object.Object, len(args)-1)
-			copy(excTypes, args[1:])
-			inst.SetField(suppressKey, &object.List{Elements: excTypes})
-			return &object.Null{}
+				// Copy args[1:] so the stored List doesn't alias the caller's buffer.
+				excTypes := make([]object.Object, len(args)-1)
+				copy(excTypes, args[1:])
+				inst.SetField(suppressKey, &object.List{Elements: excTypes})
+				return &object.Null{}
 			},
 		},
 		"__enter__": &object.Builtin{

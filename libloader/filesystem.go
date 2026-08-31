@@ -1,6 +1,7 @@
 package libloader
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -82,10 +83,18 @@ func NewFilesystem(baseDir string, opts ...FilesystemOption) *FilesystemLoader {
 // Returns (source, true, nil) if found, ("", false, nil) if not found,
 // or ("", false, error) on filesystem errors.
 func (l *FilesystemLoader) Load(name string) (string, bool, error) {
+	return l.LoadWithContext(context.Background(), name)
+}
+
+// LoadWithContext checks caller cancellation between filesystem operations.
+func (l *FilesystemLoader) LoadWithContext(ctx context.Context, name string) (string, bool, error) {
 	// Convert dotted name to possible file paths
 	paths := l.resolvePaths(name)
 
 	for _, path := range paths {
+		if err := ctx.Err(); err != nil {
+			return "", false, err
+		}
 		content, found, err := l.readFile(path)
 		if err != nil {
 			return "", false, err
@@ -216,8 +225,13 @@ func NewMultiFilesystem(dirs ...string) *MultiFilesystemLoader {
 
 // Load tries each directory in order until the library is found.
 func (m *MultiFilesystemLoader) Load(name string) (string, bool, error) {
+	return m.LoadWithContext(context.Background(), name)
+}
+
+// LoadWithContext preserves caller context across each filesystem loader.
+func (m *MultiFilesystemLoader) LoadWithContext(ctx context.Context, name string) (string, bool, error) {
 	for _, loader := range m.loaders {
-		source, found, err := loader.Load(name)
+		source, found, err := loader.LoadWithContext(ctx, name)
 		if err != nil {
 			return "", false, err
 		}

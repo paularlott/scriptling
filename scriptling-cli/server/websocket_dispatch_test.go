@@ -207,3 +207,138 @@ runtime.http.get("/hello", "wsecho.hello")
 		t.Errorf("echo after failures = %q, want echo:still-there", got)
 	}
 }
+
+// TestWebSocketOriginPolicy pins the default same-origin check and the
+// allowlist: a browser upgrade from another origin is refused (cross-site
+// WebSocket hijacking), the same origin passes, an explicit allowlist entry
+// passes, and non-browser clients (no Origin header) always pass. Each case
+// gets its own server: the runtime state behind start_server is
+// process-global and does not stack.
+func TestWebSocketOriginPolicy(t *testing.T) {
+	// policy builds one server with the given origin policy and returns the
+	// raw host:port to dial. The route must live in the setup script itself:
+	// a separate module is only registered if something imports it.
+	policy := func(t *testing.T, origins []string) string {
+		t.Helper()
+		script := writeSetup(t, `
+import scriptling.runtime.http as http
+import scriptling.runtime as runtime
+
+@http.websocket("/ws")
+def echo(ws):
+    pass
+
+runtime.start_server(wait=False)
+while runtime.server_running():
+    yield_now()
+`)
+		s, err := NewServer(ServerConfig{
+			ScriptFile:       script,
+			WebSocketOrigins: origins,
+		})
+		if err != nil {
+			t.Fatalf("NewServer: %v", err)
+		}
+		ts := httptest.NewServer(s.buildMux())
+		t.Cleanup(ts.Close)
+		t.Cleanup(func() { signalShutdown(t, s) })
+		return strings.TrimPrefix(ts.URL, "http://")
+	}
+
+	dial := func(t *testing.T, host, origin string) bool {
+		t.Helper()
+		header := http.Header{}
+		if origin != "" {
+			header.Set("Origin", origin)
+		}
+		conn, _, err := websocket.DefaultDialer.Dial("ws://"+host+"/ws", header)
+		if err != nil {
+			return false
+		}
+		_ = conn.Close()
+		return true
+	}
+
+	t.Run("default allows same-origin and origin-less", func(t *testing.T) {
+		host := policy(t, nil)
+		if !dial(t, host, "http://"+host) {
+			t.Fatal("same-origin upgrade refused under the default policy")
+		}
+		if !dial(t, host, "") {
+			t.Fatal("origin-less (non-browser) upgrade refused")
+		}
+	})
+	t.Run("default refuses cross-origin", func(t *testing.T) {
+		host := policy(t, nil)
+		if dial(t, host, "http://evil.example") {
+			t.Fatal("cross-origin upgrade accepted under the default policy")
+		}
+	})
+	t.Run("allowlist gates exactly its entries", func(t *testing.T) {
+		host := policy(t, []string{"https://app.example"})
+		if !dial(t, host, "https://app.example") {
+			t.Fatal("allowlisted origin refused")
+		}
+		if dial(t, host, "https://other.example") {
+			t.Fatal("non-allowlisted origin accepted")
+		}
+	})
+	t.Run("wildcard opts out", func(t *testing.T) {
+		host := policy(t, []string{"*"})
+		if !dial(t, host, "http://anything.example") {
+			t.Fatal("wildcard policy refused an origin")
+		}
+	})
+}
+
+// TestConflictingRoutesFailStartup pins that two wildcard-equivalent routes
+// are a configuration error: which one survived used to depend on map
+// iteration order, with the loser silently dropped.
+func TestConflictingRoutesFailStartup(t *testing.T) {
+	script := writeSetup(t, `
+import scriptling.runtime.http as http
+import scriptling.runtime as runtime
+
+@http.get("/items/{id}/detail")
+def by_id(request):
+    return {"status": 200, "body": "id"}
+
+@http.get("/items/{slug}/detail")
+def by_slug(request):
+    return {"status": 200, "body": "slug"}
+
+runtime.start_server(wait=False)
+while runtime.server_running():
+    yield_now()
+`)
+	_, err := NewServer(ServerConfig{ScriptFile: script})
+	if err == nil {
+		t.Fatal("expected conflicting routes to fail startup")
+	}
+	if !strings.Contains(err.Error(), "conflicts with another route") {
+		t.Fatalf("expected a conflict error naming the route, got: %v", err)
+	}
+
+	// Distinct routes still start cleanly.
+	ok := writeSetup(t, `
+import scriptling.runtime.http as http
+import scriptling.runtime as runtime
+
+@http.get("/items/{id}")
+def by_id(request):
+    return {"status": 200, "body": "id"}
+
+@http.get("/items/{id}/detail")
+def detail(request):
+    return {"status": 200, "body": "detail"}
+
+runtime.start_server(wait=False)
+while runtime.server_running():
+    yield_now()
+`)
+	s, err := NewServer(ServerConfig{ScriptFile: ok})
+	if err != nil {
+		t.Fatalf("distinct routes must not conflict: %v", err)
+	}
+	signalShutdown(t, s)
+}

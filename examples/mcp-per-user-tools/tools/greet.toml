@@ -1,0 +1,7 @@
+description = "Greet someone by name (static: visible to every caller)"
+
+[[parameters]]
+name = "name"
+type = "string"
+description = "Who to greet"
+required = true

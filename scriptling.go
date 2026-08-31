@@ -91,6 +91,19 @@ type LibraryLoader interface {
 	Description() string
 }
 
+// ContextLibraryLoader is an optional extension for loaders that support caller
+// cancellation, deadlines, or context values.
+type ContextLibraryLoader interface {
+	LoadWithContext(ctx context.Context, name string) (source string, found bool, err error)
+}
+
+func loadLibrarySource(ctx context.Context, loader LibraryLoader, name string) (string, bool, error) {
+	if contextual, ok := loader.(ContextLibraryLoader); ok {
+		return contextual.LoadWithContext(ctx, name)
+	}
+	return loader.Load(name)
+}
+
 type Scriptling struct {
 	env                 *object.Environment
 	registeredLibraries map[string]*object.Library
@@ -113,8 +126,8 @@ func New() *Scriptling {
 	p.env.Set("__name__", object.NewString("__main__"))
 
 	// Set import callback on environment
-	p.env.SetImportCallback(func(libName string) error {
-		return p.loadLibrary(libName)
+	p.env.SetImportCallbackWithContext(func(ctx context.Context, libName string) error {
+		return p.loadLibraryWithContext(ctx, libName)
 	})
 
 	// Set available libraries callback on environment
@@ -285,10 +298,14 @@ func (p *Scriptling) needsParentMerge(name string, existingDict *object.Dict) bo
 }
 
 func (p *Scriptling) loadLibrary(name string) error {
-	return p.loadLibraryWithDepth(name, 0)
+	return p.loadLibraryWithContext(context.Background(), name)
 }
 
-func (p *Scriptling) loadLibraryWithDepth(name string, depth int) error {
+func (p *Scriptling) loadLibraryWithContext(ctx context.Context, name string) error {
+	return p.loadLibraryWithDepth(ctx, name, 0)
+}
+
+func (p *Scriptling) loadLibraryWithDepth(ctx context.Context, name string, depth int) error {
 	parts := strings.Split(name, ".")
 
 	if len(parts)-1 > maxLibraryNestingDepth {
@@ -311,7 +328,7 @@ func (p *Scriptling) loadLibraryWithDepth(name string, depth int) error {
 			parentName := strings.Join(parts[:len(parts)-1], ".")
 			if _, ok := p.env.Get(parentName); !ok {
 				// Parent doesn't exist, try to load it
-				if err := p.loadLibraryWithDepth(parentName, depth+1); err != nil {
+				if err := p.loadLibraryWithDepth(ctx, parentName, depth+1); err != nil {
 					// Parent doesn't exist as a library, that's ok - we'll create the structure
 				}
 			}
@@ -357,7 +374,7 @@ func (p *Scriptling) loadLibraryWithDepth(name string, depth int) error {
 		// Try from script libraries first
 		if lib, ok := p.scriptLibraries[name]; ok {
 			if lib.store == nil {
-				store, err := p.evaluateScriptLibrary(name, lib.source)
+				store, err := p.evaluateScriptLibrary(ctx, name, lib.source, nil)
 				if err != nil {
 					return err
 				}
@@ -379,7 +396,7 @@ func (p *Scriptling) loadLibraryWithDepth(name string, depth int) error {
 
 			// Try library loader
 			if p.libraryLoader != nil {
-				source, found, err := p.libraryLoader.Load(name)
+				source, found, err := loadLibrarySource(ctx, p.libraryLoader, name)
 				if err != nil {
 					return fmt.Errorf("loader error for %s: %w", name, err)
 				}
@@ -427,6 +444,16 @@ func (p *Scriptling) EvalWithTimeout(timeout time.Duration, input string) (objec
 // This method is safe against deep recursion (via call depth tracking) and
 // recovers from panics during script execution.
 func (p *Scriptling) EvalWithContext(ctx context.Context, input string) (result object.Object, err error) {
+	// Recover from panics across the complete parse-and-execute boundary. Parsing,
+	// folding, evaluator code, and builtins all share the same public contract.
+	defer func() {
+		if r := recover(); r != nil {
+			stackTrace := string(debug.Stack())
+			result = errors.NewPanicError(r)
+			err = fmt.Errorf("script panic: %v\n%s", r, stackTrace)
+		}
+	}()
+
 	// Call-depth tracking (stack-overflow guard) is added by
 	// evaluator.EvalWithContext when absent, placed outermost so the per-call
 	// lookup on the hot path is O(1). Callers may still supply a custom depth
@@ -437,15 +464,6 @@ func (p *Scriptling) EvalWithContext(ctx context.Context, input string) (result 
 	if err != nil {
 		return nil, err
 	}
-
-	// Recover from any panics during execution (e.g., bugs in interpreter or builtins)
-	defer func() {
-		if r := recover(); r != nil {
-			stackTrace := string(debug.Stack())
-			result = errors.NewPanicError(r)
-			err = fmt.Errorf("script panic: %v\n%s", r, stackTrace)
-		}
-	}()
 
 	// Add source file info to context for error reporting
 	if p.sourceFile != "" {
@@ -477,23 +495,18 @@ func parseProgramCached(input string) (*ast.Program, error) {
 
 func parseProgramUncached(input string) (*ast.Program, error) {
 	l := lexerPool.Get().(*lexer.Lexer)
+	defer lexerPool.Put(l)
 	l.Reset(input)
 
 	par := parserPool.Get().(*parser.Parser)
+	defer parserPool.Put(par)
 	par.Reset(l)
 
 	program := par.ParseProgram()
-	var err error
 	if parseErrs := par.Errors(); len(parseErrs) != 0 {
-		err = fmt.Errorf("parser errors: %v", parseErrs)
+		return nil, fmt.Errorf("parser errors: %v", parseErrs)
 	}
 
-	parserPool.Put(par)
-	lexerPool.Put(l)
-
-	if err != nil {
-		return nil, err
-	}
 	ast.FoldConstants(program)
 	return program, nil
 }
@@ -910,6 +923,17 @@ func (p *Scriptling) RegisterLibrary(lib *object.Library) {
 	p.registeredLibraries[lib.Name()] = lib
 }
 
+// HasLibrary reports whether a library (native or script) is registered
+// under the given name. The plugin loader uses it to refuse a plugin whose
+// declared name collides with a library the host already has.
+func (p *Scriptling) HasLibrary(name string) bool {
+	if _, ok := p.registeredLibraries[name]; ok {
+		return true
+	}
+	_, ok := p.scriptLibraries[name]
+	return ok
+}
+
 // UnregisterLibrary removes a registered Go library and any imported binding
 // from the current environment.
 func (p *Scriptling) UnregisterLibrary(name string) {
@@ -917,16 +941,22 @@ func (p *Scriptling) UnregisterLibrary(name string) {
 	unsetNestedDictPath(p.env, name)
 }
 
-// Import imports a library into the current environment, making it available for use without needing an import statement in scripts
+// Import imports a library into the current environment, making it available for use without needing an import statement in scripts.
 func (p *Scriptling) Import(names interface{}) error {
+	return p.ImportWithContext(context.Background(), names)
+}
+
+// ImportWithContext imports one or more libraries while preserving caller
+// cancellation, deadlines, and values through dynamic loading and evaluation.
+func (p *Scriptling) ImportWithContext(ctx context.Context, names interface{}) error {
 	switch v := names.(type) {
 	case string:
 		// Single library name
-		return p.loadLibrary(v)
+		return p.loadLibraryWithContext(ctx, v)
 	case []string:
 		// Go slice of strings
 		for _, name := range v {
-			if err := p.loadLibrary(name); err != nil {
+			if err := p.loadLibraryWithContext(ctx, name); err != nil {
 				return err
 			}
 		}
@@ -935,7 +965,7 @@ func (p *Scriptling) Import(names interface{}) error {
 		// Scriptling list of strings
 		for _, elem := range v.Elements {
 			if str, ok := elem.(*object.String); ok {
-				if err := p.loadLibrary(str.StringValue()); err != nil {
+				if err := p.loadLibraryWithContext(ctx, str.StringValue()); err != nil {
 					return err
 				}
 			} else {
@@ -1010,14 +1040,20 @@ func (p *Scriptling) SetLibraryLoader(loader LibraryLoader) {
 // This is useful for loading libraries into cloned environments for background tasks.
 // Returns an error if the library cannot be loaded.
 func (p *Scriptling) LoadLibraryIntoEnv(name string, env *object.Environment) error {
-	loaded, err := p.loadLibraryIntoEnv(name, env)
+	return p.LoadLibraryIntoEnvWithContext(context.Background(), name, env)
+}
+
+// LoadLibraryIntoEnvWithContext loads a library into an environment while
+// preserving caller context through nested evaluation and dynamic loading.
+func (p *Scriptling) LoadLibraryIntoEnvWithContext(ctx context.Context, name string, env *object.Environment) error {
+	loaded, err := p.loadLibraryIntoEnv(ctx, name, env, nil)
 	if err != nil {
 		return err
 	}
 	if !loaded {
 		// Try library loader
 		if p.libraryLoader != nil {
-			source, found, loadErr := p.libraryLoader.Load(name)
+			source, found, loadErr := loadLibrarySource(ctx, p.libraryLoader, name)
 			if loadErr != nil {
 				return fmt.Errorf("loader error for %s: %w", name, loadErr)
 			}
@@ -1026,7 +1062,7 @@ func (p *Scriptling) LoadLibraryIntoEnv(name string, env *object.Environment) er
 					return fmt.Errorf("failed to register library %s: %w", name, regErr)
 				}
 				// Retry after loading
-				loaded, err = p.loadLibraryIntoEnv(name, env)
+				loaded, err = p.loadLibraryIntoEnv(ctx, name, env, nil)
 				if err != nil {
 					return err
 				}
@@ -1053,13 +1089,13 @@ func (p *Scriptling) SetSourceFile(name string) {
 
 // loadLibraryIntoEnv loads a script or registered library into the given environment as a dict.
 // Returns true if the library was found and loaded, false otherwise.
-func (p *Scriptling) loadLibraryIntoEnv(name string, env *object.Environment) (bool, error) {
+func (p *Scriptling) loadLibraryIntoEnv(ctx context.Context, name string, env *object.Environment, chain []string) (bool, error) {
 	var libDict *object.Dict
 
 	// Try from script libraries
 	if lib, ok := p.scriptLibraries[name]; ok {
 		if lib.store == nil {
-			store, err := p.evaluateScriptLibrary(name, lib.source)
+			store, err := p.evaluateScriptLibrary(ctx, name, lib.source, chain)
 			if err != nil {
 				return false, err
 			}
@@ -1107,7 +1143,19 @@ func (p *Scriptling) loadLibraryIntoEnv(name string, env *object.Environment) (b
 	return true, nil
 }
 
-func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[string]object.Object, error) {
+// evaluateScriptLibrary evaluates a script library's source in a fresh
+// environment. chain holds the modules currently being evaluated on this
+// import path; a name already in it is a circular import, which without the
+// check re-evaluates modules forever (a module's exported names only exist
+// once its evaluation completes, so a cycle never sees a "already imported").
+func (p *Scriptling) evaluateScriptLibrary(ctx context.Context, name string, script string, chain []string) (map[string]object.Object, error) {
+	for _, inFlight := range chain {
+		if inFlight == name {
+			return nil, fmt.Errorf("circular import: %s", strings.Join(append(append([]string{}, chain...), name), " -> "))
+		}
+	}
+	childChain := append(append([]string{}, chain...), name)
+
 	// Create a new environment for the library
 	libEnv := object.NewEnvironment()
 
@@ -1120,7 +1168,7 @@ func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[stri
 	libEnv.Set("import", evaluator.GetImportBuiltin())
 
 	// Create a custom import callback for this library environment
-	libEnv.SetImportCallback(func(libName string) error {
+	libEnv.SetImportCallbackWithContext(func(importCtx context.Context, libName string) error {
 		// Check if library is already imported using direct lookup.
 		// We use env.Get(libName) rather than path traversal because intermediate
 		// dicts created for child libraries (e.g., scriptling.ai created as a
@@ -1130,7 +1178,7 @@ func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[stri
 		}
 
 		for attempts := 0; attempts < 2; attempts++ {
-			loaded, err := p.loadLibraryIntoEnv(libName, libEnv)
+			loaded, err := p.loadLibraryIntoEnv(importCtx, libName, libEnv, childChain)
 			if err != nil {
 				return err
 			}
@@ -1144,7 +1192,7 @@ func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[stri
 
 				// Try library loader
 				if p.libraryLoader != nil {
-					source, found, loadErr := p.libraryLoader.Load(libName)
+					source, found, loadErr := loadLibrarySource(importCtx, p.libraryLoader, libName)
 					if loadErr != nil {
 						return fmt.Errorf("loader error for %s: %w", libName, loadErr)
 					}
@@ -1193,7 +1241,7 @@ func (p *Scriptling) evaluateScriptLibrary(name string, script string) (map[stri
 	}
 
 	result := evaluator.EvalWithContext(
-		evaluator.ContextWithSourceFile(context.Background(), name),
+		evaluator.ContextWithSourceFile(ctx, name),
 		program, libEnv,
 	)
 	if err, ok := result.(*object.Error); ok {

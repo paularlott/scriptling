@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -25,8 +26,8 @@ import (
 	"github.com/paularlott/scriptling/object"
 	scriptlingplugin "github.com/paularlott/scriptling/plugin"
 	"github.com/paularlott/scriptling/scriptling-cli/bootstrap"
-
 	"github.com/paularlott/scriptling/scriptling-cli/pack"
+	"github.com/paularlott/scriptling/scriptling-cli/pluginpack"
 	"github.com/paularlott/scriptling/scriptling-cli/secretconfig"
 	"github.com/paularlott/scriptling/scriptling-cli/server"
 	"github.com/paularlott/scriptling/scriptling-cli/setup"
@@ -53,6 +54,23 @@ func mustLoadPolicy(cmd *cli.Command) *netsecurity.Config {
 func main() {
 	env.Load()
 
+	cmd := buildRootCommand()
+
+	if err := cmd.Execute(context.Background()); err != nil {
+		if code, ok := getExitCode(err); ok {
+			if err.Error() != "" {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			}
+			os.Exit(code)
+		}
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// buildRootCommand assembles the CLI command tree. It is separate from main so
+// tests can inspect and execute the same tree the binary uses.
+func buildRootCommand() *cli.Command {
 	cfgFile := configFile
 
 	cmd := &cli.Command{
@@ -94,6 +112,7 @@ func main() {
 				Name:       "package",
 				Usage:      "Package (.zip) path or URL to load (can be repeated)",
 				Aliases:    []string{"p"},
+				Global:     true,
 				ConfigPath: []string{"packages"},
 			},
 			&cli.BoolFlag{
@@ -105,6 +124,7 @@ func main() {
 			&cli.StringFlag{
 				Name:       "cache-dir",
 				Usage:      "Override default OS cache directory for remote packages",
+				Global:     true,
 				EnvVars:    []string{"SCRIPTLING_CACHE_DIR"},
 				ConfigPath: []string{"cache.dir"},
 			},
@@ -126,7 +146,42 @@ func main() {
 				Usage:      "Directory containing plugin executables (can be repeated)",
 				Global:     true,
 				EnvVars:    []string{"SCRIPTLING_PLUGIN_DIR"},
-				ConfigPath: []string{"plugins", "dirs"},
+				ConfigPath: []string{"plugins.dirs"},
+			},
+			&cli.StringSliceFlag{
+				Name:       "plugin",
+				Usage:      "Plugin executable to load (can be repeated); use --plugin-arg for its arguments",
+				Global:     true,
+				EnvVars:    []string{"SCRIPTLING_PLUGIN"},
+				ConfigPath: []string{"plugins.paths"},
+			},
+			&cli.StringSliceFlag{
+				Name:       "plugin-arg",
+				Usage:      "Argument for the preceding --plugin (can be repeated; no quoting needed)",
+				Global:     true,
+				EnvVars:    []string{"SCRIPTLING_PLUGIN_ARG"},
+				ConfigPath: []string{"plugins.args"},
+			},
+			&cli.StringSliceFlag{
+				Name:       "plugin-env",
+				Usage:      "Environment variable KEY=VALUE for the preceding --plugin (can be repeated; executables only)",
+				Global:     true,
+				EnvVars:    []string{"SCRIPTLING_PLUGIN_ENV"},
+				ConfigPath: []string{"plugins.env"},
+			},
+			&cli.StringSliceFlag{
+				Name:       "plugin-header",
+				Usage:      "HTTP header KEY=VALUE for the preceding http(s) --plugin, e.g. Authorization=Bearer ... (can be repeated)",
+				Global:     true,
+				EnvVars:    []string{"SCRIPTLING_PLUGIN_HEADER"},
+				ConfigPath: []string{"plugins.headers"},
+			},
+			&cli.StringSliceFlag{
+				Name:       "plugin-insecure",
+				Usage:      "Mark this https:// --plugin URL as insecure, skipping TLS verification (self-signed certificates; repeatable)",
+				Global:     true,
+				EnvVars:    []string{"SCRIPTLING_PLUGIN_INSECURE"},
+				ConfigPath: []string{"plugins.insecure"},
 			},
 			&cli.StringFlag{
 				Name:         "log-level",
@@ -191,16 +246,31 @@ func main() {
 				EnvVars:      []string{"SCRIPTLING_BEARER_TOKEN"},
 				ConfigPath:   []string{"server.bearer_token"},
 			},
+			&cli.Int64Flag{
+				Name:         "max-request-body",
+				Usage:        "Maximum request body size in bytes for the HTTP server (0 = 32MiB default, negative = unlimited)",
+				DefaultValue: 0,
+				EnvVars:      []string{"SCRIPTLING_MAX_REQUEST_BODY"},
+				ConfigPath:   []string{"server.max_request_body"},
+			},
+			&cli.StringSliceFlag{
+				Name:       "websocket-origin",
+				Usage:      "Allowed browser origin for WebSocket upgrades (repeatable, \"*\" for any; default: same-origin only)",
+				EnvVars:    []string{"SCRIPTLING_WEBSOCKET_ORIGIN"},
+				ConfigPath: []string{"server.websocket_origins"},
+			},
 			&cli.StringFlag{
 				Name:         "allowed-paths",
 				Usage:        "Comma-separated list of allowed filesystem paths (restricts os, pathlib, glob, sandbox)",
 				DefaultValue: "",
+				Global:       true,
 				EnvVars:      []string{"SCRIPTLING_ALLOWED_PATHS"},
 				ConfigPath:   []string{"security.allowed_paths"},
 			},
 			&cli.StringFlag{
 				Name:       "network-policy",
 				Usage:      "Path to a TOML network policy file restricting script outbound network access (requests, wait_for, websocket)",
+				Global:     true,
 				EnvVars:    []string{"SCRIPTLING_NETWORK_POLICY"},
 				ConfigPath: []string{"security.network_policy"},
 			},
@@ -232,6 +302,7 @@ func main() {
 				Name:         "docker-host",
 				Usage:        "Docker endpoint (Unix socket path, unix://, tcp://, or https://)",
 				DefaultValue: scriptlingcontainer.DefaultDockerSocket,
+				Global:       true,
 				EnvVars:      []string{"DOCKER_HOST"},
 				ConfigPath:   []string{"container.docker_host"},
 			},
@@ -239,6 +310,7 @@ func main() {
 				Name:         "podman-host",
 				Usage:        "Podman endpoint (Unix socket path or unix:// URI)",
 				DefaultValue: scriptlingcontainer.DefaultPodmanSocket,
+				Global:       true,
 				EnvVars:      []string{"CONTAINER_HOST"},
 				ConfigPath:   []string{"container.podman_host"},
 			},
@@ -305,6 +377,13 @@ func main() {
 				logWriter = os.Stderr
 			}
 
+			// Load plugins before --package sources open: fetcher plugins register
+			// custom source schemes (knot://…, demo://…) that the package opening
+			// below may have to resolve.
+			if err := startPlugins(ctx, cmd); err != nil {
+				return ctx, err
+			}
+
 			// Open any --package sources up front: an app bundle (manifest with
 			// a serve list) in a stdio protocol mode also needs the pure stdout
 			// stream, and Run reuses the opened bundles.
@@ -330,21 +409,27 @@ func main() {
 				})
 			}
 			server.Log = globalLogger
+			// The logger can only be built once the app bundle is known (it
+			// decides whether logs go to stderr), and bundles can only be opened
+			// once fetcher plugins have registered their schemes. Plugins
+			// therefore start before the logger exists, so wire it in now —
+			// otherwise everything a plugin logs is dropped.
+			if pluginManager != nil {
+				pluginManager.SetLogger(globalLogger)
+			}
 			return ctx, nil
+		},
+		// Every command path releases plugin processes and their schemes, so a
+		// subcommand that started plugins (help resolving a knot:// package,
+		// say) does not leave them running.
+		PostRun: func(ctx context.Context, cmd *cli.Command) error {
+			closePlugins()
+			return nil
 		},
 		Run: runScriptling,
 	}
 
-	if err := cmd.Execute(context.Background()); err != nil {
-		if code, ok := getExitCode(err); ok {
-			if err.Error() != "" {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			}
-			os.Exit(code)
-		}
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	return cmd
 }
 
 // pendingApp and pendingLibs hold the --package sources opened in PreRun,
@@ -355,11 +440,183 @@ var (
 	pendingLibs []*pack.Bundle
 )
 
+// pluginManager and pluginBridge hold the plugins started in PreRun (before
+// --package sources open, so fetcher plugins can register their source
+// schemes). Run reuses them. Both are nil when this invocation cannot use
+// plugins, so every access goes through the helpers below.
+var (
+	pluginManager *scriptlingplugin.Manager
+	pluginBridge  *pluginpack.Bridge
+)
+
+// pluginFreeCommands name top-level commands whose whole subtree never
+// evaluates a script and never resolves a package source, so discovering
+// plugins for them is pure cost.
+var pluginFreeCommands = map[string]bool{
+	"pack":   true,
+	"unpack": true,
+	"cache":  true,
+}
+
+// pluginDiscoveryWanted reports whether this invocation should actually start
+// the configured plugins. The manager itself is always created — it spawns
+// nothing, and scripts reach it through scriptling.plugin at runtime — but
+// scanning --plugin-dir and launching --plugin executables costs real
+// processes. Linting parses without evaluating, and the package command trees
+// never resolve a scheme source, so neither needs them.
+func pluginDiscoveryWanted(cmd *cli.Command) bool {
+	if pluginFreeCommands[topLevelCommandName(cmd)] {
+		return false
+	}
+	if cmd.GetBool("lint") || cmd.GetBool("list-libs") {
+		return false
+	}
+	return true
+}
+
+// topLevelCommandName returns the name of the top-level command the matched
+// command belongs to, or "" when the root itself matched.
+//
+// PreRun receives the leaf command, so `cache clear` arrives as "clear" and
+// `pack manifest` as "manifest". Testing those names against
+// pluginFreeCommands would miss them, which is why the top-level ancestor is
+// resolved here. The cli library does not export its command chain, so the
+// ancestor is found by searching the command tree the root owns — the same
+// pointers the library matched against.
+func topLevelCommandName(cmd *cli.Command) string {
+	return topLevelCommandNameIn(cmd.GetRootCmd(), cmd)
+}
+
+// topLevelCommandNameIn is topLevelCommandName with the root supplied, so it can
+// be exercised without executing the command.
+func topLevelCommandNameIn(root, cmd *cli.Command) string {
+	if cmd == root {
+		return ""
+	}
+	for _, top := range root.Commands {
+		if commandSubtreeContains(top, cmd) {
+			return top.Name
+		}
+	}
+	// Not reachable from the root's tree: fall back to the command's own name.
+	return cmd.Name
+}
+
+// commandSubtreeContains reports whether target is parent or one of its
+// descendants, at any depth.
+func commandSubtreeContains(parent, target *cli.Command) bool {
+	if parent == target {
+		return true
+	}
+	for _, child := range parent.Commands {
+		if commandSubtreeContains(child, target) {
+			return true
+		}
+	}
+	return false
+}
+
+// startPlugins creates the plugin manager and bridges its fetchers into the
+// pack scheme registry, leaving both in the package globals for Run to reuse.
+// The manager always exists so scriptling.plugin.load works even when no
+// plugins were configured; only discovery is conditional. The host security
+// policy (network + allowed paths) rides the handshake to every plugin.
+
+func startPlugins(ctx context.Context, cmd *cli.Command) error {
+	var dirs, plugins, pluginArgs, pluginEnvs, pluginHeaders, insecureURLs []string
+	if pluginDiscoveryWanted(cmd) {
+		dirs = cmd.GetStringSlice("plugin-dir")
+		plugins = cmd.GetStringSlice("plugin")
+		pluginArgs = cmd.GetStringSlice("plugin-arg")
+		pluginEnvs = cmd.GetStringSlice("plugin-env")
+		pluginHeaders = cmd.GetStringSlice("plugin-header")
+		insecureURLs = cmd.GetStringSlice("plugin-insecure")
+	}
+	netPolicy, err := bootstrap.LoadNetworkPolicy(cmd.GetString("network-policy"))
+	if err != nil {
+		return err
+	}
+	policy := scriptlingplugin.PolicyFromSecurity(netPolicy, bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths")))
+	manager, err := loadPluginManager(ctx, dirs, plugins, pluginArgs, pluginEnvs, pluginHeaders, insecureURLs, policy)
+	if err != nil {
+		return err
+	}
+	bridge := pluginpack.New(pluginpack.Options{
+		Manager: manager,
+		Context: ctx,
+	})
+	if err := bridge.Register(); err != nil {
+		_ = manager.Close()
+		return err
+	}
+	pluginManager = manager
+	pluginBridge = bridge
+	return nil
+}
+
+// closePlugins releases the bridge's schemes and shuts down the plugin
+// processes. Safe to call when no plugins were started, and safe to call twice.
+func closePlugins() {
+	if pluginBridge != nil {
+		_ = pluginBridge.Close()
+		pluginBridge = nil
+	}
+	if pluginManager != nil {
+		_ = pluginManager.Close()
+		pluginManager = nil
+	}
+}
+
+// fetchScriptSource reads a scheme source that is itself a script. It reports a
+// clear error when no plugin serves the scheme, rather than letting the source
+// fall through to the local-file path.
+func fetchScriptSource(ctx context.Context, source string) ([]byte, error) {
+	if pluginBridge == nil {
+		scheme, _ := pack.SchemeSyntax(source)
+		return nil, withPluginFlagHint(fmt.Errorf("%w %q for %s: load the plugin that serves it", pack.ErrUnknownScheme, scheme, source))
+	}
+	content, err := pluginBridge.FetchScript(ctx, source)
+	if err != nil {
+		return nil, withPluginFlagHint(fmt.Errorf("failed to fetch script %s: %w", source, err))
+	}
+	return content, nil
+}
+
+// withPluginFlagHint names the flags that load a plugin, for errors caused by a
+// scheme no loaded plugin serves. The pack and pluginpack packages deliberately
+// stay audience-neutral — an embedding host loads plugins its own way — so the
+// CLI-specific advice is added here, where the flags exist.
+func withPluginFlagHint(err error) error {
+	if err == nil || !errors.Is(err, pack.ErrUnknownScheme) {
+		return err
+	}
+	// The library message ends with "load the plugin that serves it", so this
+	// completes the sentence rather than adding a second parenthetical.
+	return fmt.Errorf("%w with --plugin or --plugin-dir", err)
+}
+
+// isFetchedScript reports whether file is a <scheme>:// source rather than a
+// path. Scheme syntax alone decides, so a missing plugin produces a "no plugin
+// provides that scheme" error instead of "no such file or directory".
+func isFetchedScript(file string) bool {
+	_, ok := pack.SchemeSyntax(file)
+	return ok
+}
+
 // openBundles opens every --package source as a bundle (local dir, local zip,
 // or remote zip URL), splitting the single allowed app bundle from library
 // bundles.
+//
+// --package does not accept plugin scheme sources (knot://libs). A fetcher
+// plugin exposes its packages by declaring them (DeclarePackage), and the host
+// attaches those automatically — so routing a scheme through --package would
+// only duplicate that, with a second way to spell the same thing. The flag
+// keeps its single meaning: a .zip, a directory, or a URL.
 func openBundles(sources []string, insecure bool, cacheDir string) (app *pack.Bundle, libs []*pack.Bundle, err error) {
 	for _, src := range sources {
+		if _, ok := pack.SchemeSyntax(src); ok {
+			return nil, nil, fmt.Errorf("--package does not take plugin scheme sources like %s: a plugin's library attaches automatically with the plugin itself, so the flag is not needed", src)
+		}
 		b, err := pack.FetchBundle(src, insecure, cacheDir)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to load package %s: %w", src, err)
@@ -411,6 +668,19 @@ func rejectBundleFlags(c bundleFlagConflicts) error {
 		}
 	}
 	return nil
+}
+
+// effectiveDisabledLibs folds the deprecated --no-subprocess flag into the
+// --disable-lib list. It must be consulted before any mode dispatch: the
+// server modes (HTTP, JSON-RPC, MCP, app bundles) build their per-request
+// interpreters from this list, and the fold used to happen only on the plain
+// script path, leaving --no-subprocess a no-op in server modes.
+func effectiveDisabledLibs(cmd *cli.Command) []string {
+	disabledLibs := cmd.GetStringSlice("disable-lib")
+	if cmd.GetBool("no-subprocess") && !slices.Contains(disabledLibs, extlibs.SubprocessLibraryName) {
+		disabledLibs = append(disabledLibs, extlibs.SubprocessLibraryName)
+	}
+	return disabledLibs
 }
 
 func runScriptling(ctx context.Context, cmd *cli.Command) error {
@@ -465,10 +735,7 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 		return runLint(cmd)
 	}
 
-	disabledLibs := cmd.GetStringSlice("disable-lib")
-	if cmd.GetBool("no-subprocess") && !slices.Contains(disabledLibs, extlibs.SubprocessLibraryName) {
-		disabledLibs = append(disabledLibs, extlibs.SubprocessLibraryName)
-	}
+	disabledLibs := effectiveDisabledLibs(cmd)
 
 	if cmd.GetBool("list-libs") {
 		disabled := make(map[string]bool, len(disabledLibs))
@@ -493,7 +760,14 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	file := cmd.GetStringArg("file")
 	interactive := cmd.GetBool("interactive")
 
-	baseDir, err := bootstrap.BaseDir(file)
+	// A scheme source (knot://scripts/hello) has no meaningful directory;
+	// library resolution starts from the working directory instead.
+	var baseDir string
+	if isFetchedScript(file) {
+		baseDir, err = bootstrap.BaseDir("")
+	} else {
+		baseDir, err = bootstrap.BaseDir(file)
+	}
 	if err != nil {
 		return err
 	}
@@ -511,20 +785,34 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	}
 	setup.Factories(libDirs, allowedPaths, disabledLibs, secretRegistry, globalLogger, cmd.GetString("docker-host"), cmd.GetString("podman-host"), netPolicy)
 	setup.Scriptling(p, libDirs, true, allowedPaths, disabledLibs, secretRegistry, globalLogger, cmd.GetString("docker-host"), cmd.GetString("podman-host"), netPolicy)
-	pluginManager, err := loadPluginManager(ctx, cmd.GetStringSlice("plugin-dir"))
+	// Plugins were started in PreRun (before --package sources opened, so
+	// fetcher schemes could register); reuse that manager here. PostRun
+	// releases them however this command exits. The manager always exists, so
+	// scriptling.plugin.load works even with no plugins configured.
+	scriptlingplugin.RegisterLibraries(p, pluginManager, scriptlingplugin.PolicyFromSecurity(netPolicy, allowedPaths))
+
+	// Build the library loader from three tiers, added in priority order
+	// (the loader searches last-added first, so the app bundle's modules
+	// win and explicit --package sources shadow declared ones):
+	//
+	//  1. packages fetcher plugins declared for automatic attachment —
+	//     their modules import without any --package flag;
+	//  2. --package sources opened in PreRun (library packs and app
+	//     bundles alike);
+	//  3. the app bundle, if any, last so its modules win.
+	autoBundles, err := declaredLibBundles()
 	if err != nil {
 		return err
 	}
-	defer pluginManager.Close()
-	scriptlingplugin.RegisterLibraries(p, pluginManager)
-
-	// --package sources were opened in PreRun; build the library loader from
-	// the same bundles (works for library packs and app bundles alike). The app
-	// bundle is added last so its modules win.
 	var packLoader *pack.Loader
-	if pendingApp != nil || len(pendingLibs) > 0 {
+	if len(autoBundles) > 0 || pendingApp != nil || len(pendingLibs) > 0 {
 		packLoader = pack.NewLoader()
 		packLoader.SetCacheDir(cmd.GetString("cache-dir"))
+		for _, b := range autoBundles {
+			if err := packLoader.AddBundle(b); err != nil {
+				return err
+			}
+		}
 		for _, b := range pendingLibs {
 			if err := packLoader.AddBundle(b); err != nil {
 				return err
@@ -537,6 +825,10 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 		}
 		go pack.PruneCache(cmd.GetString("cache-dir"), 0) // async, best-effort
 		bootstrap.ApplyPackLoader(p, packLoader)
+		// One-shot runs get the same read-only package file access the server
+		// modes have, so a script can read assets (images, fonts, docs) from
+		// its --package bundles and from plugin libraries alike.
+		pack.RegisterPackageLibrary(p, packLoader)
 	}
 
 	argv := []string{file}
@@ -566,7 +858,12 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 	if file != "" {
-		err := runFile(p, file)
+		var err error
+		if isFetchedScript(file) {
+			err = runFetchedScript(ctx, p, file)
+		} else {
+			err = runFile(p, file)
+		}
 		extlibs.WaitBackgroundTasks()
 		return err
 	}
@@ -610,7 +907,11 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 	if pendingApp != nil && strings.HasPrefix(file, "--") {
 		file = ""
 	}
-	baseDir, err := bootstrap.BaseDir(file)
+	scriptPath, scriptSource, scriptName, err := setupScript(ctx, file)
+	if err != nil {
+		return err
+	}
+	baseDir, err := bootstrap.BaseDir(scriptPath)
 	if err != nil {
 		return err
 	}
@@ -618,40 +919,47 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 	if err != nil {
 		return err
 	}
-	pluginManager, err := loadPluginManager(ctx, cmd.GetStringSlice("plugin-dir"))
+	// Plugins were started in PreRun (before --package sources opened, so
+	// fetcher schemes could register); reuse that manager. PostRun releases
+	// them however this command exits.
+	autoBundles, err := declaredLibBundles()
 	if err != nil {
 		return err
 	}
-	defer pluginManager.Close()
+	libBundles := append(autoBundles, pendingLibs...)
 	return server.RunServer(ctx, server.ServerConfig{
-		Address:         address,
-		ScriptFile:      file,
-		LibDirs:         bootstrap.BuildLibDirs(baseDir, cmd.GetStringSlice("libpath")),
-		Packages:        cmd.GetStringSlice("package"),
-		Bundle:          pendingApp,
-		LibBundles:      pendingLibs,
-		Insecure:        cmd.GetBool("insecure"),
-		CacheDir:        cmd.GetString("cache-dir"),
-		BearerToken:     cmd.GetString("bearer-token"),
-		AllowedPaths:    bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths")),
-		NetworkPolicy:   mustLoadPolicy(cmd),
-		DisabledLibs:    cmd.GetStringSlice("disable-lib"),
-		PluginDirs:      cmd.GetStringSlice("plugin-dir"),
-		PluginManager:   pluginManager,
-		MCPToolsDir:     cmd.GetString("mcp-tools"),
-		MCPResourcesDir: cmd.GetString("mcp-resources"),
-		MCPPromptsDir:   cmd.GetString("mcp-prompts"),
-		MCPExecTool:     cmd.GetBool("mcp-exec-script"),
-		JSONRPC:         cmd.GetBool("json-rpc"),
-		KVStoragePath:   cmd.GetString("kv-storage"),
-		WebRoot:         cmd.GetString("web-root"),
-		SecretRegistry:  secretRegistry,
-		DockerSock:      cmd.GetString("docker-host"),
-		PodmanSock:      cmd.GetString("podman-host"),
-		TLSCert:         cmd.GetString("tls-cert"),
-		TLSKey:          cmd.GetString("tls-key"),
-		TLSGenerate:     cmd.GetBool("tls-generate"),
-		Argv:            argv,
+		Address:             address,
+		ScriptFile:          scriptPath,
+		ScriptSource:        scriptSource,
+		ScriptName:          scriptName,
+		LibDirs:             bootstrap.BuildLibDirs(baseDir, cmd.GetStringSlice("libpath")),
+		Packages:            cmd.GetStringSlice("package"),
+		Bundle:              pendingApp,
+		LibBundles:          libBundles,
+		Insecure:            cmd.GetBool("insecure"),
+		CacheDir:            cmd.GetString("cache-dir"),
+		BearerToken:         cmd.GetString("bearer-token"),
+		MaxRequestBodyBytes: cmd.GetInt64("max-request-body"),
+		WebSocketOrigins:    cmd.GetStringSlice("websocket-origin"),
+		AllowedPaths:        bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths")),
+		NetworkPolicy:       mustLoadPolicy(cmd),
+		DisabledLibs:        effectiveDisabledLibs(cmd),
+		PluginDirs:          cmd.GetStringSlice("plugin-dir"),
+		PluginManager:       pluginManager,
+		MCPToolsDir:         cmd.GetString("mcp-tools"),
+		MCPResourcesDir:     cmd.GetString("mcp-resources"),
+		MCPPromptsDir:       cmd.GetString("mcp-prompts"),
+		MCPExecTool:         cmd.GetBool("mcp-exec-script"),
+		JSONRPC:             cmd.GetBool("json-rpc"),
+		KVStoragePath:       cmd.GetString("kv-storage"),
+		WebRoot:             cmd.GetString("web-root"),
+		SecretRegistry:      secretRegistry,
+		DockerSock:          cmd.GetString("docker-host"),
+		PodmanSock:          cmd.GetString("podman-host"),
+		TLSCert:             cmd.GetString("tls-cert"),
+		TLSKey:              cmd.GetString("tls-key"),
+		TLSGenerate:         cmd.GetBool("tls-generate"),
+		Argv:                argv,
 	})
 }
 
@@ -664,7 +972,11 @@ func runJSONRPCServer(ctx context.Context, cmd *cli.Command) error {
 	if pendingApp != nil && strings.HasPrefix(file, "--") {
 		file = ""
 	}
-	baseDir, err := bootstrap.BaseDir(file)
+	scriptPath, scriptSource, scriptName, err := setupScript(ctx, file)
+	if err != nil {
+		return err
+	}
+	baseDir, err := bootstrap.BaseDir(scriptPath)
 	if err != nil {
 		return err
 	}
@@ -672,22 +984,27 @@ func runJSONRPCServer(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
-	pluginManager, err := loadPluginManager(ctx, cmd.GetStringSlice("plugin-dir"))
+	// Plugins were started in PreRun (before --package sources opened, so
+	// fetcher schemes could register); reuse that manager. PostRun releases
+	// them however this command exits.
+	autoBundles, err := declaredLibBundles()
 	if err != nil {
 		return err
 	}
-	defer pluginManager.Close()
+	libBundles := append(autoBundles, pendingLibs...)
 	return server.RunJSONRPCServer(ctx, server.ServerConfig{
-		ScriptFile:     file,
+		ScriptFile:     scriptPath,
+		ScriptSource:   scriptSource,
+		ScriptName:     scriptName,
 		LibDirs:        bootstrap.BuildLibDirs(baseDir, cmd.GetStringSlice("libpath")),
 		Packages:       cmd.GetStringSlice("package"),
 		Bundle:         pendingApp,
-		LibBundles:     pendingLibs,
+		LibBundles:     libBundles,
 		Insecure:       cmd.GetBool("insecure"),
 		CacheDir:       cmd.GetString("cache-dir"),
 		AllowedPaths:   bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths")),
 		NetworkPolicy:  mustLoadPolicy(cmd),
-		DisabledLibs:   cmd.GetStringSlice("disable-lib"),
+		DisabledLibs:   effectiveDisabledLibs(cmd),
 		PluginDirs:     cmd.GetStringSlice("plugin-dir"),
 		PluginManager:  pluginManager,
 		KVStoragePath:  cmd.GetString("kv-storage"),
@@ -707,7 +1024,11 @@ func runMCPStdioServer(ctx context.Context, cmd *cli.Command) error {
 	if pendingApp != nil && strings.HasPrefix(file, "--") {
 		file = ""
 	}
-	baseDir, err := bootstrap.BaseDir(file)
+	scriptPath, scriptSource, scriptName, err := setupScript(ctx, file)
+	if err != nil {
+		return err
+	}
+	baseDir, err := bootstrap.BaseDir(scriptPath)
 	if err != nil {
 		return err
 	}
@@ -715,22 +1036,27 @@ func runMCPStdioServer(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
-	pluginManager, err := loadPluginManager(ctx, cmd.GetStringSlice("plugin-dir"))
+	// Plugins were started in PreRun (before --package sources opened, so
+	// fetcher schemes could register); reuse that manager. PostRun releases
+	// them however this command exits.
+	autoBundles, err := declaredLibBundles()
 	if err != nil {
 		return err
 	}
-	defer pluginManager.Close()
+	libBundles := append(autoBundles, pendingLibs...)
 	return server.RunMCPStdioServer(ctx, server.ServerConfig{
-		ScriptFile:      file,
+		ScriptFile:      scriptPath,
+		ScriptSource:    scriptSource,
+		ScriptName:      scriptName,
 		LibDirs:         bootstrap.BuildLibDirs(baseDir, cmd.GetStringSlice("libpath")),
 		Packages:        cmd.GetStringSlice("package"),
 		Bundle:          pendingApp,
-		LibBundles:      pendingLibs,
+		LibBundles:      libBundles,
 		Insecure:        cmd.GetBool("insecure"),
 		CacheDir:        cmd.GetString("cache-dir"),
 		AllowedPaths:    bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths")),
 		NetworkPolicy:   mustLoadPolicy(cmd),
-		DisabledLibs:    cmd.GetStringSlice("disable-lib"),
+		DisabledLibs:    effectiveDisabledLibs(cmd),
 		PluginDirs:      cmd.GetStringSlice("plugin-dir"),
 		PluginManager:   pluginManager,
 		MCPToolsDir:     cmd.GetString("mcp-tools"),
@@ -745,7 +1071,21 @@ func runMCPStdioServer(ctx context.Context, cmd *cli.Command) error {
 	})
 }
 
-func loadPluginManager(ctx context.Context, dirs []string) (*scriptlingplugin.Manager, error) {
+func loadPluginManager(ctx context.Context, dirs []string, plugins []string, pluginArgs []string, pluginEnvs []string, pluginHeaders []string, insecureURLs []string, policy ...*scriptlingplugin.Policy) (*scriptlingplugin.Manager, error) {
+	specs, err := resolvePluginSpecs(plugins, pluginArgs, pluginEnvs, pluginHeaders, insecureURLs)
+	if err != nil {
+		return nil, err
+	}
+	loadSpecs := make([]scriptlingplugin.PluginSpec, len(specs))
+	for i, spec := range specs {
+		loadSpecs[i] = scriptlingplugin.PluginSpec{
+			Path:     spec.Path,
+			Args:     spec.Args,
+			Env:      spec.Env,
+			Headers:  headerMap(spec.Headers),
+			Insecure: spec.Insecure,
+		}
+	}
 	manager := scriptlingplugin.NewManager(globalLogger, func(name string, err error) {
 		if globalLogger != nil {
 			globalLogger.Error("Plugin process exited", "plugin", name, "error", err)
@@ -753,10 +1093,23 @@ func loadPluginManager(ctx context.Context, dirs []string) (*scriptlingplugin.Ma
 			fmt.Fprintf(os.Stderr, "Plugin crashed: %s: %v\n", name, err)
 		}
 	})
+	if len(policy) > 0 {
+		manager.SetPolicy(policy[0])
+	}
+	// Explicit --plugin entries load first, in parallel (capped). Plugin
+	// identity is the resolved executable path, so the same binary found
+	// later via --plugin-dir is a no-op — explicit entries (with their
+	// arguments) win. Plugins register under the name they declare in their
+	// handshake, in --plugin order, like --plugin-dir.
+	if err := manager.LoadPlugins(ctx, loadSpecs); err != nil {
+		_ = manager.Close()
+		return nil, err
+	}
 	for _, dir := range dirs {
 		manager.AddDir(dir)
 	}
 	if err := manager.Load(ctx); err != nil {
+		_ = manager.Close()
 		return nil, err
 	}
 	for _, warning := range manager.Warnings() {
@@ -767,6 +1120,162 @@ func loadPluginManager(ctx context.Context, dirs []string) (*scriptlingplugin.Ma
 		}
 	}
 	return manager, nil
+}
+
+// pluginSpec is a resolved plugin: an executable path or http(s) URL, its
+// arguments and its environment entries.
+type pluginSpec struct {
+	Path     string
+	Args     []string
+	Env      []string
+	Headers  []string
+	Insecure bool
+}
+
+// resolvePluginSpecs pairs --plugin paths (executables or http(s) URLs) with
+// their --plugin-arg arguments and --plugin-env environment entries.
+//
+// A --plugin value is taken literally, so paths containing spaces need no
+// quoting. Arguments come from --plugin-arg, in the order given:
+//
+//	--plugin /opt/my app/knot --plugin-arg serve --plugin-arg --alias=testing
+//
+// With exactly one --plugin, bare --plugin-arg values belong to it. With
+// several, each argument must name its plugin as <plugin>=<arg>, where
+// <plugin> is the full path or the executable's base name:
+//
+//	--plugin /usr/local/bin/knot --plugin /usr/local/bin/other \
+//	  --plugin-arg knot=serve --plugin-arg other=--port=8080
+//
+// A value whose text before "=" matches no --plugin is treated as a bare
+// argument, so ordinary flags like --alias=testing pass through unqualified.
+//
+// --plugin-env values follow the same binding with KEY=VALUE payloads:
+//
+//	--plugin knot --plugin-env KNOT_DB=/var/lib/knot --plugin-env LOG=debug
+//	--plugin knot --plugin http://127.0.0.1:8080 --plugin-env knot=KNOT_DB=/x
+//
+// and --plugin-header values follow it too, for HTTP plugin authentication:
+//
+//	--plugin https://plugins.internal:8443 --plugin-header Authorization=Bearer eyJ...
+//
+// headerMap splits bound KEY=VALUE header entries into a map, cutting at the
+// first = so bearer tokens keep theirs.
+func headerMap(entries []string) map[string]string {
+	if len(entries) == 0 {
+		return nil
+	}
+	headers := make(map[string]string, len(entries))
+	for _, entry := range entries {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok && key != "" {
+			headers[key] = value
+		}
+	}
+	return headers
+}
+
+func resolvePluginSpecs(plugins, args, envs, headerFlags, insecureURLs []string) ([]pluginSpec, error) {
+	specs := make([]pluginSpec, 0, len(plugins))
+	byKey := map[string][]int{} // path and base name → indexes into specs
+	for _, path := range plugins {
+		if strings.TrimSpace(path) == "" {
+			return nil, fmt.Errorf("empty --plugin value")
+		}
+		i := len(specs)
+		specs = append(specs, pluginSpec{Path: path})
+		byKey[path] = append(byKey[path], i)
+		if base := filepath.Base(path); base != path {
+			byKey[base] = append(byKey[base], i)
+		}
+	}
+
+	for _, arg := range args {
+		key, value, qualified := strings.Cut(arg, "=")
+		targets, known := byKey[key]
+		if !qualified || !known {
+			// Not a <plugin>=<arg> qualifier: a bare argument for the sole plugin.
+			if len(specs) == 0 {
+				return nil, fmt.Errorf("--plugin-arg %s given without any --plugin", arg)
+			}
+			if len(specs) > 1 {
+				return nil, fmt.Errorf("--plugin-arg %s is ambiguous with %d --plugin entries: qualify it as <plugin>=<arg>, e.g. %s=%s",
+					arg, len(specs), filepath.Base(specs[0].Path), arg)
+			}
+			specs[0].Args = append(specs[0].Args, arg)
+			continue
+		}
+		if len(targets) > 1 {
+			return nil, fmt.Errorf("--plugin-arg %s is ambiguous: %d --plugin entries match %q, qualify it with the full path", arg, len(targets), key)
+		}
+		specs[targets[0]].Args = append(specs[targets[0]].Args, value)
+	}
+
+	// --plugin-env binds like --plugin-arg: KEY=VALUE payloads, qualified
+	// with <plugin>= when several plugins are loaded.
+	for _, env := range envs {
+		key, value, qualified := strings.Cut(env, "=")
+		targets, known := byKey[key]
+		if !qualified || !known {
+			if len(specs) == 0 {
+				return nil, fmt.Errorf("--plugin-env %s given without any --plugin", env)
+			}
+			if len(specs) > 1 {
+				return nil, fmt.Errorf("--plugin-env %s is ambiguous with %d --plugin entries: qualify it as <plugin>=KEY=VALUE, e.g. %s=%s",
+					env, len(specs), filepath.Base(specs[0].Path), env)
+			}
+			specs[0].Env = append(specs[0].Env, env)
+			continue
+		}
+		if len(targets) > 1 {
+			return nil, fmt.Errorf("--plugin-env %s is ambiguous: %d --plugin entries match %q, qualify it with the full path", env, len(targets), key)
+		}
+		specs[targets[0]].Env = append(specs[targets[0]].Env, value)
+	}
+
+	// --plugin-header binds the same way, carrying KEY=VALUE headers (the
+	// value itself may contain '=', as bearer tokens do).
+	for _, header := range headerFlags {
+		key, value, qualified := strings.Cut(header, "=")
+		targets, known := byKey[key]
+		if !qualified || !known {
+			if len(specs) == 0 {
+				return nil, fmt.Errorf("--plugin-header %s given without any --plugin", header)
+			}
+			if len(specs) > 1 {
+				return nil, fmt.Errorf("--plugin-header %s is ambiguous with %d --plugin entries: qualify it as <plugin>=KEY=VALUE, e.g. %s=%s",
+					header, len(specs), filepath.Base(specs[0].Path), header)
+			}
+			specs[0].Headers = append(specs[0].Headers, header)
+			continue
+		}
+		if len(targets) > 1 {
+			return nil, fmt.Errorf("--plugin-header %s is ambiguous: %d --plugin entries match %q, qualify it with the full path", header, len(targets), key)
+		}
+		specs[targets[0]].Headers = append(specs[targets[0]].Headers, value)
+	}
+
+	// --plugin-insecure marks specific https plugins as certificate-unverified:
+	// the value names the plugin (full URL or base name), so one self-signed
+	// endpoint never weakens verification for the others in the batch.
+	for _, url := range insecureURLs {
+		targets, known := byKey[url]
+		if !known {
+			return nil, fmt.Errorf("--plugin-insecure %s matches no --plugin entry", url)
+		}
+		if len(targets) > 1 {
+			return nil, fmt.Errorf("--plugin-insecure %s is ambiguous: %d --plugin entries match %q, qualify it with the full URL", url, len(targets), url)
+		}
+		if !isHTTPPluginPath(specs[targets[0]].Path) {
+			return nil, fmt.Errorf("--plugin-insecure %s is not an http(s) plugin URL", url)
+		}
+		specs[targets[0]].Insecure = true
+	}
+	return specs, nil
+}
+
+func isHTTPPluginPath(path string) bool {
+	return strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://")
 }
 
 func loadSecretRegistry(path string) (*secretprovider.Registry, error) {
@@ -783,6 +1292,43 @@ func runFile(p *scriptling.Scriptling, filename string) error {
 	}
 	p.SetSourceFile(filename)
 	return evalAndCheckExit(p, string(content))
+}
+
+// runFetchedScript executes a scheme source (knot://scripts/hello) fetched
+// from its plugin. Scripts are always refetched — they run immediately, so
+// serving a stale edit would be surprising.
+func runFetchedScript(ctx context.Context, p *scriptling.Scriptling, source string) error {
+	content, err := fetchScriptSource(ctx, source)
+	if err != nil {
+		return err
+	}
+	p.SetSourceFile(source)
+	return evalAndCheckExit(p, string(content))
+}
+
+// declaredLibBundles opens the packages fetcher plugins declared for
+// automatic attachment, skipping sources passed explicitly via --package
+// (their PreRun-opened bundles are used instead).
+func declaredLibBundles() ([]*pack.Bundle, error) {
+	if pluginBridge == nil {
+		return nil, nil
+	}
+	bundles, err := pluginBridge.Bundles()
+	return bundles, withPluginFlagHint(err)
+}
+
+// setupScript resolves the server modes' setup script argument. A plain path is
+// passed through as a path; a scheme source is fetched and returned as source
+// text, so nothing is ever staged to a temporary file.
+func setupScript(ctx context.Context, file string) (path string, source []byte, name string, err error) {
+	if !isFetchedScript(file) {
+		return file, nil, "", nil
+	}
+	content, err := fetchScriptSource(ctx, file)
+	if err != nil {
+		return "", nil, "", err
+	}
+	return "", content, file, nil
 }
 
 func runStdin(p *scriptling.Scriptling) error {

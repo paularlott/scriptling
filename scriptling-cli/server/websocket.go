@@ -1,8 +1,10 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync/atomic"
 
@@ -16,10 +18,51 @@ import (
 var websocketUpgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		// Allow all origins for now - can be configured later
+}
+
+// websocketOriginAllowed applies the server's origin policy to an upgrade
+// request. Non-browser clients send no Origin header and pass. With no
+// configured origins a browser must be same-origin (scheme and Host must
+// match, port included), which closes cross-site WebSocket hijacking by
+// default; a configured list is an exact-match allowlist, and "*" opts out
+// for deployments behind a trusted proxy.
+func (s *Server) websocketOriginAllowed(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
 		return true
-	},
+	}
+	for _, allowed := range s.config.WebSocketOrigins {
+		if allowed == "*" {
+			return true
+		}
+		if strings.EqualFold(strings.TrimRight(strings.ToLower(allowed), "/"), strings.TrimRight(strings.ToLower(origin), "/")) {
+			return true
+		}
+	}
+	if len(s.config.WebSocketOrigins) > 0 {
+		return false
+	}
+	// Same-origin default: compare both scheme and host:port. The request's
+	// effective scheme comes from TLS rather than proxy-controlled headers.
+	parsed, err := url.ParseRequestURI(origin)
+	if err != nil {
+		return false
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	return strings.EqualFold(parsed.Scheme, scheme) && strings.EqualFold(parsed.Host, r.Host)
+}
+
+// websocketUpgraderFor returns the upgrader bound to this server's origin
+// policy.
+func (s *Server) websocketUpgraderFor() *websocket.Upgrader {
+	return &websocket.Upgrader{
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+		CheckOrigin:     s.websocketOriginAllowed,
+	}
 }
 
 // websocketConnCounter generates unique IDs for WebSocket connections
@@ -39,8 +82,22 @@ func (s *Server) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
+	// The middleware guards WebSocket upgrades like every other endpoint: a
+	// returned response dict rejects the upgrade (e.g. a 401), None lets it
+	// proceed. The request is stashed on the context so the handler can read
+	// what the middleware put in request.context.
+	reqObj := s.createRequestObject(r, nil, nil)
+	ctx := extlibs.WithRequestContext(r.Context(), reqObj)
+	if s.middleware != "" {
+		Log.Trace("Running middleware", "handler", s.middleware, "path", path)
+		if resp := s.runHandler(ctx, s.middleware, reqObj); resp != nil {
+			s.writeResponse(w, resp)
+			return
+		}
+	}
+
 	// Upgrade the connection
-	conn, err := websocketUpgrader.Upgrade(w, r, nil)
+	conn, err := s.websocketUpgraderFor().Upgrade(w, r, nil)
 	if err != nil {
 		Log.Error("WebSocket upgrade failed", "path", path, "error", err)
 		return
@@ -62,8 +119,11 @@ func (s *Server) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Request, 
 	// Create client object for scriptling
 	clientObj := extlibs.CreateWebSocketClientInstance(wsConn)
 
-	// Run the handler
-	s.runWebSocketHandler(route.Handler, clientObj, wsConn, path, connID)
+	// Run the handler. The upgrade request's context values (the stashed
+	// request) carry over, but its cancellation does not: the handler outlives
+	// the HTTP request once the connection is hijacked.
+	handlerCtx := context.WithoutCancel(ctx)
+	s.runWebSocketHandler(handlerCtx, route.Handler, clientObj, wsConn, path, connID)
 
 	// Cleanup after handler returns
 	extlibs.RuntimeState.Lock()
@@ -75,7 +135,7 @@ func (s *Server) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Request, 
 }
 
 // runWebSocketHandler runs the scriptling WebSocket handler function
-func (s *Server) runWebSocketHandler(handlerRef string, clientObj *object.Instance, conn *extlibs.WebSocketServerConn, path, connID string) {
+func (s *Server) runWebSocketHandler(ctx context.Context, handlerRef string, clientObj *object.Instance, conn *extlibs.WebSocketServerConn, path, connID string) {
 	libName, _, ok := splitHandlerRef(handlerRef)
 	if !ok {
 		Log.Error("Invalid WebSocket handler reference", "handler", handlerRef)
@@ -90,13 +150,13 @@ func (s *Server) runWebSocketHandler(handlerRef string, clientObj *object.Instan
 	s.applyPackLoader(p)
 
 	// Import the library
-	if err := p.Import(libName); err != nil {
+	if err := p.ImportWithContext(ctx, libName); err != nil {
 		Log.Error("Failed to import library", "library", libName, "error", err)
 		return
 	}
 
 	// Call the handler function
-	_, err := p.CallFunction(handlerRef, clientObj)
+	_, err := p.CallFunctionWithContext(ctx, handlerRef, clientObj)
 	if err != nil {
 		Log.Error("WebSocket handler error", "path", path, "id", connID, "error", err)
 	} else {

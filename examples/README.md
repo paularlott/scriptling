@@ -13,10 +13,18 @@ This directory contains examples and tools for working with Scriptling.
   - `example.py` - Demonstrates background tasks, runtime.run(), sync primitives, KV store
   - `README.md` - Background tasks documentation
 
+- **databases/** - Database plugin examples (sqlite, sql, valkey, badger)
+  - `*.py` - Runnable scripts covering both API shapes; `README.md` has container commands for local test servers
+  - `README.md` - Database examples documentation
+
 - **mcp-client/** - MCP client examples
   - `with-openai/` - Using MCP tools through an OpenAI client
   - `direct/` - Direct MCP server connection
   - `README.md` - MCP client examples documentation
+
+- **mcp-per-user-tools/** - Per-user MCP tool sets via middleware
+  - `setup.py`, `auth.py`, `usertools.py`, `tools/` - Middleware authenticates each caller and registers the MCP tools, resources and prompts they are allowed to see
+  - `README.md` - Per-user tools documentation
 
 - **openai/** - AI library examples with OpenAI-compatible APIs
   - `shared/` - Using shared client configured in Go

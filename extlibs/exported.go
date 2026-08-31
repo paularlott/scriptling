@@ -3,6 +3,7 @@ package extlibs
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -466,4 +467,17 @@ func normalizeAllowed(paths []string) []string {
 		normalized = append(normalized, filepath.Clean(abs))
 	}
 	return normalized
+}
+
+// ErrorJSONBody renders {"error": <message>} as a JSON body with proper
+// escaping. Protocol endpoints report failures through it, so an error (or a
+// user message) containing quotes or control characters must not be spliced
+// into the body with Sprintf, which would emit malformed JSON.
+func ErrorJSONBody(message string) string {
+	data, err := json.Marshal(map[string]string{"error": message})
+	if err != nil {
+		// Unreachable for map[string]string; keep the body valid regardless.
+		return `{"error": "internal error"}`
+	}
+	return string(data)
 }

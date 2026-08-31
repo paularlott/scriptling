@@ -2,6 +2,7 @@ package pack
 
 import (
 	"archive/zip"
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -215,5 +216,146 @@ func TestPackBuildMainScriptInSubfolder(t *testing.T) {
 	joined := strings.Join(warnings, "\n")
 	if !strings.Contains(joined, "app/") {
 		t.Errorf("expected warning about app/ dir, got: %v", warnings)
+	}
+}
+
+// TestPackOutputAtomicAndOutsideSource pins the pack output contract: a
+// failure mid-pack leaves any previous artifact untouched (no partial zip),
+// and an output path inside the source tree is refused rather than letting
+// the archive include itself.
+func TestPackOutputAtomicAndOutsideSource(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "app")
+	if err := os.MkdirAll(filepath.Join(src, "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "manifest.toml"), []byte("name=\"a\"\nversion=\"1\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "lib", "x.py"), []byte("x = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Output inside the source tree: refused outright.
+	if _, _, err := Pack(src, filepath.Join(src, "app.zip"), true); err == nil {
+		t.Fatal("expected an in-tree output to be refused")
+	}
+
+	// A valid pack succeeds and leaves no temp file behind.
+	out := filepath.Join(dir, "app.zip")
+	if _, _, err := Pack(src, out, true); err != nil {
+		t.Fatalf("pack: %v", err)
+	}
+	if _, err := os.Stat(out + ".tmp"); !os.IsNotExist(err) {
+		t.Fatalf("temp file left behind: %v", err)
+	}
+	before, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A failing pack (main script vanished) leaves the good artifact intact.
+	broken := filepath.Join(dir, "broken")
+	if err := os.MkdirAll(filepath.Join(broken, "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(broken, "manifest.toml"), []byte("name=\"b\"\nversion=\"1\"\nmain=\"gone.py\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Pack(broken, out, true); err == nil {
+		t.Fatal("expected the broken pack to fail")
+	}
+	after, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("a failed pack modified the previous artifact")
+	}
+}
+
+// TestPackSkipsSourceSymlinks pins that a symlink inside the source tree is
+// never followed into the archive: os.Open would have copied whatever the
+// link pointed at, including files outside the tree.
+func TestPackSkipsSourceSymlinks(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "app")
+	if err := os.MkdirAll(filepath.Join(src, "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "manifest.toml"), []byte("name=\"a\"\nversion=\"1\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "lib", "real.py"), []byte("x = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(dir, "outside")
+	if err := os.WriteFile(outside, []byte("TOP SECRET"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(src, "lib", "leak.py")); err != nil {
+		t.Fatal(err)
+	}
+
+	archive := filepath.Join(dir, "app.zip")
+	_, warnings, err := Pack(src, archive, true)
+	if err != nil {
+		t.Fatalf("pack: %v", err)
+	}
+	foundLeak, foundWarning := false, false
+	for _, w := range warnings {
+		if strings.Contains(w, "leak.py") {
+			foundWarning = true
+		}
+	}
+	zr, err := zip.OpenReader(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zr.Close()
+	for _, f := range zr.File {
+		if f.Name == "lib/leak.py" {
+			foundLeak = true
+		}
+	}
+	if foundLeak {
+		t.Fatal("symlinked file was followed into the archive")
+	}
+	if !foundWarning {
+		t.Fatalf("expected a warning about the skipped symlink, got %v", warnings)
+	}
+}
+
+// TestPackUniqueTempFile pins that concurrent packs targeting one destination
+// stage in separate files instead of overwriting each other's dst+".tmp".
+func TestPackUniqueTempFile(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "app")
+	if err := os.MkdirAll(filepath.Join(src, "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "manifest.toml"), []byte("name=\"a\"\nversion=\"1\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "lib", "x.py"), []byte("x = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out := filepath.Join(dir, "app.zip")
+	// Two packs in flight; both must succeed and the archive must be valid.
+	done := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			_, _, err := Pack(src, out, true)
+			done <- err
+		}()
+	}
+	for i := 0; i < 2; i++ {
+		if err := <-done; err != nil {
+			t.Fatalf("concurrent pack: %v", err)
+		}
+	}
+	if _, err := zip.OpenReader(out); err != nil {
+		t.Fatalf("archive invalid after concurrent packs: %v", err)
 	}
 }

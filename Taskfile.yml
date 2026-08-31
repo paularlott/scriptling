@@ -5,6 +5,11 @@ vars:
   BIN_DIR: bin
   CLI_DIR: scriptling-cli
   LDFLAGS: '-ldflags="-s -w"'
+  # Build tags that compile the database plugins into the CLI. Build with a
+  # subset (e.g. just "plugin_valkey") for a CLI with only those drivers.
+  FULL_TAGS: plugin_sqlite,plugin_sql,plugin_valkey,plugin_badgerdb
+  DB_PLUGINS: sqlite sql valkey badgerdb
+  PLATFORMS: linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64
   VERSION:
     sh: go run ./tools/getversion
 
@@ -38,7 +43,11 @@ tasks:
     cmds:
       - mkdir -p {{.BIN_DIR}}
       - task: build-platforms
+      - task: build-full-platforms
+      - task: build-plugins-platforms
       - task: create-zips
+      - task: create-full-zips
+      - task: create-plugin-zips
 
   create-zips:
     desc: Create ZIP files for all platforms
@@ -49,6 +58,36 @@ tasks:
       - cd {{.BIN_DIR}} && cp scriptling-linux-arm64 scriptling && zip scriptling-linux-arm64.zip scriptling && rm scriptling
       - cd {{.BIN_DIR}} && cp scriptling-windows-amd64.exe scriptling.exe && zip scriptling-windows-amd64.zip scriptling.exe && rm scriptling.exe
       - cd {{.BIN_DIR}} && cp scriptling-windows-arm64.exe scriptling.exe && zip scriptling-windows-arm64.zip scriptling.exe && rm scriptling.exe
+
+  create-full-zips:
+    desc: Create ZIP files for scriptling-full builds
+    cmds:
+      - |
+        cd {{.BIN_DIR}}
+        for platform in {{.PLATFORMS}}; do
+          GOOS=${platform%/*} GOARCH=${platform#*/}
+          ext=""
+          if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
+          cp scriptling-full-${GOOS}-${GOARCH}${ext} scriptling-full${ext}
+          zip scriptling-full-${GOOS}-${GOARCH}.zip scriptling-full${ext}
+          rm scriptling-full${ext}
+        done
+
+  create-plugin-zips:
+    desc: Create one plugins ZIP per platform from the bin/plugins folders
+    cmds:
+      - |
+        cd {{.BIN_DIR}}
+        for platform in {{.PLATFORMS}}; do
+          GOOS=${platform%/*} GOARCH=${platform#*/}
+          ext=""
+          if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
+          files=""
+          for plugin in {{.DB_PLUGINS}}; do
+            files="${files} ${plugin}${ext}"
+          done
+          (cd plugins/${GOOS}-${GOARCH} && zip ../../plugins-${GOOS}-${GOARCH}.zip ${files})
+        done
 
   build-linux-amd64:
     desc: Build for Linux AMD64
@@ -86,6 +125,48 @@ tasks:
     cmds:
       - GOOS=windows GOARCH=arm64 go build {{.LDFLAGS}} -o ../{{.BIN_DIR}}/scriptling-windows-arm64.exe .
 
+  build-full:
+    desc: Build for current platform with all database plugins compiled in
+    dir: scriptling-cli
+    cmds:
+      - go build {{.LDFLAGS}} -tags '{{.FULL_TAGS}}' -o ../{{.BIN_DIR}}/scriptling-full .
+
+  build-full-platforms:
+    desc: Build scriptling-full for all platforms (all database plugins compiled in)
+    cmds:
+      - |
+        for platform in {{.PLATFORMS}}; do
+          export GOOS=${platform%/*} GOARCH=${platform#*/}
+          ext=""
+          if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
+          go build {{.LDFLAGS}} -tags '{{.FULL_TAGS}}' -o {{.BIN_DIR}}/scriptling-full-${GOOS}-${GOARCH}${ext} ./scriptling-cli
+        done
+
+  build-plugins:
+    desc: Build the database plugin binaries for the current platform into bin/plugins
+    cmds:
+      - |
+        ext=""
+        if [ "$(go env GOOS)" = "windows" ]; then ext=".exe"; fi
+        mkdir -p {{.BIN_DIR}}/plugins
+        for plugin in {{.DB_PLUGINS}}; do
+          go build {{.LDFLAGS}} -o {{.BIN_DIR}}/plugins/${plugin}${ext} ./plugins/${plugin}/cmd
+        done
+
+  build-plugins-platforms:
+    desc: Build the database plugin binaries into per-platform folders under bin/plugins
+    cmds:
+      - |
+        for platform in {{.PLATFORMS}}; do
+          export GOOS=${platform%/*} GOARCH=${platform#*/}
+          ext=""
+          if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
+          mkdir -p {{.BIN_DIR}}/plugins/${GOOS}-${GOARCH}
+          for plugin in {{.DB_PLUGINS}}; do
+            go build {{.LDFLAGS}} -o {{.BIN_DIR}}/plugins/${GOOS}-${GOARCH}/${plugin}${ext} ./plugins/${plugin}/cmd
+          done
+        done
+
   build-sample-package:
     desc: Build the sample package to examples folder
     cmds:
@@ -96,16 +177,78 @@ tasks:
     cmds:
       - go test ./...
 
+  test-race:
+    desc: Run tests with the race detector (catches data races the plain test target cannot)
+    cmds:
+      - go test -race ./...
+
   homebrew-formula:
     desc: Generate the Homebrew formula
     cmds:
-      - go run ./scripts/homebrew-formula/ > ../homebrew-tap/Formula/scriptling.rb
+      - |
+        out=../homebrew-tap/Formula/scriptling.rb
+        tmp=$(mktemp "${out}.tmp.XXXXXX") || exit 1
+        trap 'rm -f "$tmp"' EXIT
+        go run ./scripts/homebrew-formula/ > "$tmp" || exit 1
+        mv "$tmp" "$out" || exit 1
+        trap - EXIT
+
+  homebrew-formula-full:
+    desc: Generate the Homebrew formula for scriptling-full (database plugins compiled in)
+    cmds:
+      - |
+        out=../homebrew-tap/Formula/scriptling-full.rb
+        tmp=$(mktemp "${out}.tmp.XXXXXX") || exit 1
+        trap 'rm -f "$tmp"' EXIT
+        go run ./scripts/homebrew-formula/ -full > "$tmp" || exit 1
+        mv "$tmp" "$out" || exit 1
+        trap - EXIT
+
+  homebrew-formula-plugins:
+    desc: Generate the Homebrew formula for the database plugin binaries
+    cmds:
+      - |
+        out=../homebrew-tap/Formula/scriptling-plugins.rb
+        tmp=$(mktemp "${out}.tmp.XXXXXX") || exit 1
+        trap 'rm -f "$tmp"' EXIT
+        go run ./scripts/homebrew-formula/ -plugins > "$tmp" || exit 1
+        mv "$tmp" "$out" || exit 1
+        trap - EXIT
 
   release:
     desc: Tag the version and create GitHub release with all platform binaries
     deps: [build-all]
     cmds:
       - |
+        # Stage formulas without changing the tap checkout. For a new release
+        # they checksum the completed local build; for a resumable rerun they
+        # checksum the already-published assets, which remain authoritative even
+        # if rebuilding produced byte-different ZIP metadata.
+        formula_stage=$(mktemp -d "${TMPDIR:-/tmp}/scriptling-formulas.XXXXXX") || exit 1
+        trap 'rm -rf "$formula_stage"' EXIT
+
+        gh repo set-default paularlott/scriptling
+        release_exists=0
+        formula_artifacts={{.BIN_DIR}}
+        if gh release view v{{.VERSION}} >/dev/null 2>&1; then
+          release_stage="$formula_stage/release"
+          mkdir "$release_stage" || exit 1
+          gh release download v{{.VERSION}} --pattern '*.zip' --dir "$release_stage" || exit 1
+          for local_zip in {{.BIN_DIR}}/*.zip; do
+            remote_zip="$release_stage/$(basename "$local_zip")"
+            if [ ! -f "$remote_zip" ]; then
+              echo "Existing release is missing $(basename "$local_zip")" >&2
+              exit 1
+            fi
+          done
+          release_exists=1
+          formula_artifacts="$release_stage"
+        fi
+
+        SCRIPTLING_FORMULA_BIN_DIR="$formula_artifacts" go run ./scripts/homebrew-formula/ > "$formula_stage/scriptling.rb" || exit 1
+        SCRIPTLING_FORMULA_BIN_DIR="$formula_artifacts" go run ./scripts/homebrew-formula/ -full > "$formula_stage/scriptling-full.rb" || exit 1
+        SCRIPTLING_FORMULA_BIN_DIR="$formula_artifacts" go run ./scripts/homebrew-formula/ -plugins > "$formula_stage/scriptling-plugins.rb" || exit 1
+
         # Check if tag exists
         if git tag -l v{{.VERSION}} | grep -q v{{.VERSION}}; then
           echo "Tag v{{.VERSION}} already exists, skipping tag creation"
@@ -114,7 +257,14 @@ tasks:
           git tag -a v{{.VERSION}} -m "Release {{.VERSION}}"
           git push origin v{{.VERSION}}
         fi
-        # Create release and upload zip files only
-        gh repo set-default paularlott/scriptling
-        gh release create v{{.VERSION}} -t "Release {{.VERSION}}" -n "Scriptling {{.VERSION}}" {{.BIN_DIR}}/*.zip
-      - task: homebrew-formula
+
+        # Publish the release before formulas that point at its assets. If the
+        # release already existed, the formulas above were generated directly
+        # from its downloaded assets and can safely complete a partial rerun.
+        if [ "$release_exists" -eq 0 ]; then
+          gh release create v{{.VERSION}} -t "Release {{.VERSION}}" -n "Scriptling {{.VERSION}}" {{.BIN_DIR}}/*.zip || exit 1
+        fi
+
+        mv "$formula_stage/scriptling.rb" ../homebrew-tap/Formula/scriptling.rb || exit 1
+        mv "$formula_stage/scriptling-full.rb" ../homebrew-tap/Formula/scriptling-full.rb || exit 1
+        mv "$formula_stage/scriptling-plugins.rb" ../homebrew-tap/Formula/scriptling-plugins.rb || exit 1

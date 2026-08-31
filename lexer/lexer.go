@@ -704,7 +704,7 @@ func (l *Lexer) readFString(quote byte) string {
 	return str
 }
 
-// readTripleFString reads a triple-quoted f-string (f"""...""" or f'''...''').
+// readTripleFString reads a triple-quoted f-string (f"""...""" or f”'...”').
 // Entry: current l.ch is the opening quote (either ' or ").
 func (l *Lexer) readTripleFString(quote byte) string {
 	// Consume the three opening quotes

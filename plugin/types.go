@@ -7,8 +7,18 @@ import (
 const (
 	// ProtocolVersion is the JSON-RPC plugin protocol version supported by this host.
 	ProtocolVersion = "1.0"
-	// NamespacePrefix is the host-owned namespace for discovered plugin libraries.
+	// NamespacePrefix is where plugins declaring a bare name register: a
+	// plugin declaring "hello" becomes plugin.hello, keeping third-party
+	// code visibly namespaced and unable to collide with single-word
+	// built-in libraries. A name containing a dot is used verbatim — its
+	// author owns the namespace ("paul.hello", or "scriptling.sqlite" for
+	// first-party plugins whose imports match compiled-in builds) — and
+	// registration refuses names already taken by another library.
 	NamespacePrefix = "plugin."
+	// PluginPeerEnv is the environment variable set (to the host version) on
+	// every executable spawned as a plugin peer. Multi-role executables check
+	// it to divert a bare invocation into plugin mode without a subcommand.
+	PluginPeerEnv = "SCRIPTLING_PLUGIN_PEER"
 
 	valueNull     = "null"
 	valueBool     = "bool"
@@ -35,6 +45,7 @@ type Metadata struct {
 	Description  string   `json:"description"`
 	Transport    string   `json:"transport,omitempty"`
 	Capabilities []string `json:"capabilities,omitempty"`
+	Scheme       string   `json:"scheme,omitempty"` // the source scheme this plugin's fetcher serves
 	Schema       Schema   `json:"schema"`
 }
 
@@ -134,6 +145,12 @@ type handshakeParams struct {
 	HostVersion  string   `json:"host_version"`
 	Transports   []string `json:"transports"`
 	Capabilities []string `json:"capabilities"`
+	// Policy is the host's security context for this plugin session:
+	// filesystem path restrictions and the outbound network policy. Plugins
+	// that understand it advertise the "policy" capability and enforce it on
+	// file/network operations; older plugins ignore the field. Nil (or an
+	// omitted block) means the host imposes no restrictions.
+	Policy *Policy `json:"policy,omitempty"`
 }
 
 type handshakeResult struct {
@@ -141,6 +158,7 @@ type handshakeResult struct {
 	Transport    string      `json:"transport"`
 	Library      libraryInfo `json:"library"`
 	Capabilities []string    `json:"capabilities"`
+	Scheme       string      `json:"scheme,omitempty"` // the source scheme this plugin's fetcher serves
 	Schema       Schema      `json:"schema"`
 }
 
@@ -154,6 +172,28 @@ type functionCallParams struct {
 	Name   string           `json:"name"`
 	Args   []Value          `json:"args,omitempty"`
 	Kwargs map[string]Value `json:"kwargs,omitempty"`
+}
+
+// fetchReadParams asks a fetcher plugin for one file. Path is a slash path
+// relative to source; empty means the source itself is a single file (a
+// script). Data in fetchReadResult is transported base64 ([]byte JSON
+// encoding), which is what lets binary assets travel intact.
+type fetchReadParams struct {
+	Source string `json:"source"`
+	Path   string `json:"path,omitempty"`
+}
+
+type fetchReadResult struct {
+	Data []byte `json:"data,omitempty"`
+}
+
+type fetchGlobParams struct {
+	Source  string `json:"source"`
+	Pattern string `json:"pattern,omitempty"`
+}
+
+type fetchGlobResult struct {
+	Entries []FetchEntry `json:"entries"`
 }
 
 type objectNewParams struct {

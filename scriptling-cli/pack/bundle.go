@@ -61,9 +61,21 @@ func OpenBundleZip(r io.ReaderAt, size int64, source string) (*Bundle, error) {
 	return OpenBundle(newZipFS(zr), source)
 }
 
-// FetchBundle opens a bundle from a local directory, a local .zip, or a remote
-// .zip URL (fetched with caching; source may include a #sha256=<hex> fragment).
+// FetchBundle opens a bundle from a local directory, a local .zip, a remote
+// .zip URL (fetched with caching; source may include a #sha256=<hex> fragment),
+// or a custom <scheme>:// source routed through the process-wide default
+// scheme registry (see RegisterScheme — typically a fetcher plugin serving
+// files on demand). A scheme-shaped source whose scheme has no opener is an
+// error naming the missing plugin, not a missing-file error.
+//
+// Hosts with their own SchemeRegistry call SchemeRegistry.FetchBundle instead.
 func FetchBundle(source string, insecure bool, cacheDir string) (*Bundle, error) {
+	return defaultRegistry.FetchBundle(source, insecure, cacheDir)
+}
+
+// fetchBuiltinBundle opens the source kinds FetchBundle owns directly: a local
+// directory, a local .zip, or a remote .zip URL.
+func fetchBuiltinBundle(source string, insecure bool, cacheDir string) (*Bundle, error) {
 	if info, err := os.Stat(source); err == nil && info.IsDir() {
 		return OpenBundleDir(source)
 	}
@@ -72,6 +84,17 @@ func FetchBundle(source string, insecure bool, cacheDir string) (*Bundle, error)
 		return nil, err
 	}
 	return OpenBundleZip(bytesReaderAt(data), int64(len(data)), source)
+}
+
+// VirtualBundle wraps an fs.FS as a bundle with an explicitly supplied
+// manifest — for sources with no manifest.toml of their own, such as a
+// fetcher plugin's library (the host synthesizes the standard layout).
+func VirtualBundle(name, version string, fsys fs.FS, source string) *Bundle {
+	return &Bundle{
+		Manifest: Manifest{Name: name, Version: version, Libs: []string{LibDir}},
+		fsys:     fsys,
+		source:   source,
+	}
 }
 
 // FS returns the bundle's file system.

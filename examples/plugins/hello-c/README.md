@@ -53,9 +53,51 @@ scriptling --plugin-dir /tmp/plugins -c 'import plugin.hello; print(plugin.hello
 - **Callbacks** — call back into Scriptling from within handlers via `sl_callback_call()`
 - **Logging** — route logs through the host logger via `sl_log_info()` etc.
 - **Custom wrappers** — `sl_register_script_func()`, `sl_register_script_class()`, `sl_wrapper()`
+- **Fetchers** — serve `scheme://` package and script sources on demand via `sl_register_fetcher()`
 - Multi-threaded — each request runs in its own thread
 - Thread-safe object store with per-object locking
 - No external dependencies beyond the C standard library and pthreads
+
+## Fetchers
+
+A fetcher serves sources under a scheme this plugin owns (this example uses
+`cdemo`). The host asks for `manifest.toml` first, then individual files as
+imports resolve — nothing is transferred that nothing imports. The host caches
+none of it, so every read reaches your handler; just return the bytes. A fetcher
+whose backend is slow enough to want caching does it inside the handler.
+
+```c
+static sl_fetch_result *my_read(const char *source, const char *path, void *ctx) {
+    return sl_fetch_data("# content\n", 10);
+}
+
+static sl_fetch_entry *my_list(const char *source, const char *path,
+                               size_t *count, void *ctx) {
+    static sl_fetch_entry entries[] = { { "lib", true } };
+    sl_fetch_entry *out = malloc(sizeof(entries));
+    memcpy(out, entries, sizeof(entries));
+    *count = 2;
+    return out;
+}
+
+/* at startup: */
+sl_register_fetcher(srv, "mylib", my_read, my_list);
+```
+
+```bash
+make -C examples/plugins/hello-c
+scriptling --plugin examples/plugins/hello-c/hello-c -c 'import greet; print(greet.greeting("Ada"))'
+scriptling --plugin examples/plugins/hello-c/hello-c cdemo://scripts/hello Ada
+```
+
+Handlers:
+
+- **Read** — return `sl_fetch_data(bytes, len)` for content, or
+  `sl_fetch_not_found()` for a miss (reported as JSON-RPC code `-32001`). An
+  empty `path` means the source itself is a single script file.
+- **List** — return a malloc'd array of `sl_fetch_entry` (the SDK frees the
+  array, not the names) and set `*count`; `NULL` with `*count == (size_t)-1`
+  reports not found.
 
 ## Reference
 

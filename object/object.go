@@ -937,7 +937,7 @@ type Environment struct {
 	output                     io.Writer
 	errOutput                  io.Writer
 	input                      io.Reader
-	importCallback             func(string) error
+	importCallback             func(context.Context, string) error
 	availableLibrariesCallback func() []LibraryInfo
 	currentModule              string // Current module path for relative import resolution
 	// freeFrames is a free-list of reusable call-frame environments, populated
@@ -1011,6 +1011,41 @@ func (e *Environment) StoreEnvContext(base, derived context.Context) {
 type gilLock struct {
 	mu    sync.Mutex
 	owner atomic.Int64 // goroutine id of the current holder, 0 when free
+
+	// Context-aware waiters. Unlock broadcasts by closing notify, so a
+	// cancellable waiter wakes the moment the lock frees rather than on a
+	// polling interval. waiters is only incremented along the contended
+	// path, so the uncontended hot path pays one atomic load on unlock and
+	// nothing extra on lock.
+	waiters  atomic.Int64
+	notifyMu sync.Mutex
+	notify   chan struct{} // lazily created; closed to broadcast, then replaced
+}
+
+// broadcastUnlock wakes every registered context-aware waiter. Callers must
+// not hold mu (it runs after Unlock), so the lock orders notifyMu under mu
+// trivially.
+func (g *gilLock) broadcastUnlock() {
+	if g.waiters.Load() == 0 {
+		return
+	}
+	g.notifyMu.Lock()
+	if g.notify != nil {
+		close(g.notify)
+		g.notify = nil
+	}
+	g.notifyMu.Unlock()
+}
+
+// waitChan returns the current generation's broadcast channel, creating it if
+// the previous generation was already closed.
+func (g *gilLock) waitChan() chan struct{} {
+	g.notifyMu.Lock()
+	defer g.notifyMu.Unlock()
+	if g.notify == nil {
+		g.notify = make(chan struct{})
+	}
+	return g.notify
 }
 
 // goid returns the current goroutine's id by parsing the runtime stack header.
@@ -1065,6 +1100,18 @@ func NewEnvironment() *Environment {
 	}
 	env.root = env
 	env.gil = &gilLock{}
+	return env
+}
+
+// NewEnvironmentWithGILDomain creates an otherwise independent environment
+// that serializes through the same interpreter lock as owner. It is useful for
+// runtime callbacks that must retain a stable lock domain without retaining
+// owner's store (which can create finalizer reachability cycles).
+func NewEnvironmentWithGILDomain(owner *Environment) *Environment {
+	env := NewEnvironment()
+	if owner != nil && owner.root != nil && owner.root.gil != nil {
+		env.gil = owner.root.gil
+	}
 	return env
 }
 
@@ -1143,6 +1190,65 @@ func (e *Environment) EnterGIL() bool {
 	return true
 }
 
+// EnterGILWithContext acquires the interpreter lock while allowing a
+// cancellable caller to abandon a contended wait. acquired reports whether the
+// caller must invoke ExitGIL; entered is false only when ctx ended before entry.
+// Contexts without cancellation use the regular blocking fast path.
+func (e *Environment) EnterGILWithContext(ctx context.Context) (acquired, entered bool) {
+	if ctx == nil || ctx.Done() == nil {
+		return e.EnterGIL(), true
+	}
+	if ctx.Err() != nil {
+		return false, false
+	}
+	if e.root == nil || e.root.gil == nil {
+		return false, true
+	}
+	g := e.root.gil
+	id := goid()
+	if g.owner.Load() == id {
+		return false, true
+	}
+	if g.mu.TryLock() {
+		g.owner.Store(id)
+		return true, true
+	}
+
+	// Contended: register for the next unlock broadcast. sync.Mutex has no
+	// context-aware blocking acquire, so park on the generation channel and
+	// re-try on every wake — unlock broadcasts immediately, so the wait ends
+	// the moment the lock frees or the context does, never a tick later.
+	//
+	// Cancel-vs-unlock is deliberately best-effort: when ctx.Done() and the
+	// broadcast become ready together, select may honor either. A caller can
+	// therefore acquire despite concurrent cancellation (it must still
+	// release), or abandon a lock that was just becoming free. Neither
+	// outcome leaks the lock; preferring cancellation strictly would mean
+	// re-checking ctx after a won TryLock and handing the lock back, which
+	// buys nothing for the callers of this path.
+	g.waiters.Add(1)
+	defer g.waiters.Add(-1)
+	for {
+		notify := g.waitChan()
+		// The unlock may have happened while registering: re-try before
+		// parking so the wakeup cannot be lost.
+		if g.mu.TryLock() {
+			g.owner.Store(id)
+			return true, true
+		}
+		select {
+		case <-ctx.Done():
+			return false, false
+		case <-notify:
+			if g.mu.TryLock() {
+				g.owner.Store(id)
+				return true, true
+			}
+			// Another waiter won this generation; re-register on the next.
+		}
+	}
+}
+
 // ExitGIL releases the interpreter lock previously acquired by EnterGIL.
 func (e *Environment) ExitGIL() {
 	if e.root == nil || e.root.gil == nil {
@@ -1151,6 +1257,7 @@ func (e *Environment) ExitGIL() {
 	g := e.root.gil
 	g.owner.Store(0)
 	g.mu.Unlock()
+	g.broadcastUnlock()
 }
 
 // RunUnlocked releases the interpreter lock, runs fn (typically a blocking call
@@ -1171,6 +1278,7 @@ func (e *Environment) RunUnlocked(fn func()) {
 	}
 	g.owner.Store(0)
 	g.mu.Unlock()
+	g.broadcastUnlock()
 	defer func() {
 		g.mu.Lock()
 		g.owner.Store(id)
@@ -1834,15 +1942,42 @@ func (e *Environment) ResetStore(keep map[string]bool) {
 	}
 }
 
-// SetImportCallback sets the import callback for this environment.
-// GetImportCallback walks up the scope chain, so setting on any env
-// makes it available to that env and all enclosed children.
+// SetImportCallback sets a context-free import callback for backwards
+// compatibility. New code should use SetImportCallbackWithContext so caller
+// cancellation and values are preserved through imports.
 func (e *Environment) SetImportCallback(fn func(string) error) {
+	if fn == nil {
+		e.importCallback = nil
+		return
+	}
+	e.importCallback = func(_ context.Context, name string) error {
+		return fn(name)
+	}
+}
+
+// SetImportCallbackWithContext sets the context-aware import callback for this
+// environment. GetImportCallbackWithContext walks up the scope chain, so the
+// callback is available to enclosed environments.
+func (e *Environment) SetImportCallbackWithContext(fn func(context.Context, string) error) {
 	e.importCallback = fn
 }
 
-// GetImportCallback gets the import callback from this environment or outer
+// GetImportCallback returns a context-free view of the import callback for
+// backwards compatibility. Calls made through this wrapper use a background
+// context; evaluator internals use GetImportCallbackWithContext.
 func (e *Environment) GetImportCallback() func(string) error {
+	fn := e.GetImportCallbackWithContext()
+	if fn == nil {
+		return nil
+	}
+	return func(name string) error {
+		return fn(context.Background(), name)
+	}
+}
+
+// GetImportCallbackWithContext gets the context-aware import callback from this
+// environment or an outer environment.
+func (e *Environment) GetImportCallbackWithContext() func(context.Context, string) error {
 	for env := e; env != nil; env = env.outer {
 		if env.importCallback != nil {
 			return env.importCallback

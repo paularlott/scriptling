@@ -3,6 +3,7 @@ package evaluator
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/paularlott/scriptling/object"
 )
@@ -57,5 +58,75 @@ func TestBytesMultiplicationOverflow(t *testing.T) {
 	}
 	if !strings.Contains(got.Inspect(), "too large") {
 		t.Errorf("expected 'too large' in error, got %q", got.Inspect())
+	}
+}
+
+// TestRepetitionQuotas pins the repetition guards: string, bytes, list and
+// tuple repetition refuse oversized results with a clean error (previously
+// the list path panicked on len arithmetic, and constant-folded string
+// repetition panicked outside the evaluator's recovery boundary), while
+// large-but-bounded repetitions still work.
+func TestRepetitionQuotas(t *testing.T) {
+	cases := []struct {
+		src string
+	}{
+		{`"ab" * 4611686018427387904`},
+		{`4611686018427387904 * "ab"`},
+		{`n = 4611686018427387904` + "\n" + `"ab" * n`},
+		{`[1, 2, 3] * 4611686018427387904`},
+		{`4611686018427387904 * [1, 2, 3]`},
+		{`(1, 2) * 4611686018427387904`},
+		{`4611686018427387904 * (1, 2)`},
+		{`"ab" * 1073741825`}, // one past the 1 GiB byte quota
+	}
+	for _, tc := range cases {
+		_, err := evalInEnv(t, tc.src)
+		if err == nil {
+			t.Errorf("%q: expected a too-large refusal", tc.src)
+			continue
+		}
+		if !strings.Contains(err.Error(), "repetition result too large") {
+			t.Errorf("%q: unexpected error: %v", tc.src, err)
+		}
+	}
+
+	// Bounded repetitions of every spelling still evaluate.
+	result, err := evalInEnv(t, `
+mixed = [3 * "xy", "xy" * 3, 2 * [1], [1] * 2, (7,) * 2, 2 * (7,), len("z" * 1000000)]
+mixed
+`)
+	if err != nil {
+		t.Fatalf("bounded repetition failed: %v", err)
+	}
+	want := `[xyxyxy, xyxyxy, [1, 1], [1, 1], (7, 7), (7, 7), 1000000]`
+	if result.Inspect() != want {
+		t.Fatalf("bounded repetition = %s, want %s", result.Inspect(), want)
+	}
+}
+
+// TestEmptyRepetitionIsInstant pins the CPU guard: multiplying an empty
+// string, bytes or list by a huge count used to loop that many times over
+// nothing (effectively forever) even though the result is empty.
+func TestEmptyRepetitionIsInstant(t *testing.T) {
+	src := `
+huge = 4611686018427387904
+results = [len("" * huge), len(huge * ""), len(bytes() * huge), len(huge * bytes()), [] * huge, huge * [], () * huge, huge * ()]
+`
+	done := make(chan object.Object, 1)
+	go func() {
+		result, err := evalInEnv(t, src+"\nresults")
+		if err != nil {
+			t.Errorf("eval: %v", err)
+		}
+		done <- result
+	}()
+	select {
+	case r := <-done:
+		want := "[0, 0, 0, 0, [], [], (), ()]"
+		if r == nil || r.Inspect() != want {
+			t.Fatalf("empty repetition results = %v, want %s", r, want)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("empty repetition ran past five seconds: CPU burn not short-circuited")
 	}
 }
