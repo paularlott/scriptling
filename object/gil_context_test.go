@@ -211,21 +211,27 @@ func TestEnterGILWithContextCancelledWhileParked(t *testing.T) {
 }
 
 // TestEnterGILWithContextCancelRacesUnlock hammers the simultaneity window
-// the best-effort semantics allow: cancellation lands while the unlock
-// broadcast is in flight. Every waiter must either acquire (and release) or
+// the best-effort semantics allow: cancellation and the unlock broadcast are
+// issued from two goroutines released by a shared barrier once the waiter is
+// provably parked, so both are in flight at the same moment rather than
+// sequenced by the test. Every waiter must either acquire (and release) or
 // report not-entered — never hang, panic, or leak the lock — and the lock
-// must stay healthy across all interleavings.
+// must stay healthy across all interleavings. The outcome mix is logged as a
+// diagnostic: Go's select randomizes among ready cases, so both outcomes
+// appear across rounds, but which ones occur in any run is the scheduler's
+// business, not an assertion.
 func TestEnterGILWithContextCancelRacesUnlock(t *testing.T) {
 	env := NewEnvironment()
 	g := env.root.gil
 	const rounds = 500
+	acquiredDespiteCancel, abandoned := 0, 0
 	for i := 0; i < rounds; i++ {
 		if !env.EnterGIL() {
 			t.Fatalf("holder could not enter in round %d", i)
 		}
 
 		ctx, cancel := context.WithCancel(context.Background())
-		result := make(chan bool, 1)
+		result := make(chan bool, 1) // true = acquired despite cancellation
 		go func() {
 			acquired, entered := env.EnterGILWithContext(ctx)
 			if entered && acquired {
@@ -234,16 +240,35 @@ func TestEnterGILWithContextCancelRacesUnlock(t *testing.T) {
 			result <- entered && acquired
 		}()
 
-		// Wait until parked, then cancel and unlock with no ordering: this
-		// is the race being exercised.
+		// Gate on the waiter being parked, then fire cancel and unlock
+		// concurrently from a shared barrier.
 		for g.waiters.Load() == 0 {
 			runtime.Gosched()
 		}
-		cancel()
-		env.ExitGIL()
+		fire := make(chan struct{})
+		cancelDone := make(chan struct{})
+		unlockDone := make(chan struct{})
+		go func() {
+			<-fire
+			cancel()
+			close(cancelDone)
+		}()
+		go func() {
+			<-fire
+			env.ExitGIL()
+			close(unlockDone)
+		}()
+		close(fire)
+		<-cancelDone
+		<-unlockDone
 
 		select {
-		case <-result:
+		case got := <-result:
+			if got {
+				acquiredDespiteCancel++
+			} else {
+				abandoned++
+			}
 		case <-time.After(2 * time.Second):
 			t.Fatalf("round %d: waiter hung in the cancel/unlock race", i)
 		}
@@ -253,7 +278,10 @@ func TestEnterGILWithContextCancelRacesUnlock(t *testing.T) {
 		}
 	}
 
-	// Lock healthy after 500 interleavings.
+	t.Logf("cancel/unlock race over %d rounds: acquired-despite-cancel=%d abandoned=%d",
+		rounds, acquiredDespiteCancel, abandoned)
+
+	// Lock healthy after the interleavings, whichever way they landed.
 	if acquired, entered := env.EnterGILWithContext(context.Background()); !acquired || !entered {
 		t.Fatalf("lock unhealthy after cancel/unlock stress: %v %v", acquired, entered)
 	}
