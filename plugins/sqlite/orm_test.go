@@ -99,6 +99,13 @@ if orm.select("people").where_sql("name = ?", needle).count() != 0:
 # (the sql plugin's live runs prove this on numbered dialects too)
 if orm.select("people").where("active", "=", 1).where_sql("score > ?", 6.5).count() != 2:
     return "where_sql mixed: " + str(orm.select("people").where("active", "=", 1).where_sql("score > ?", 6.5).fetch())
+# a ? inside a quoted literal is a literal: every renumber pass must skip it
+if orm.select("people").where_sql("name != 'o''brien?' and score > ?", 0.0).count() != 3:
+    return "where_sql literal question mark"
+
+# count() is an integer, whatever the driver hands back
+if not isinstance(orm.select("people").count(), int):
+    return "count type"
 
 # update/delete refuse blanket writes
 try:
@@ -137,6 +144,15 @@ if orm.select("people").count() != 1:
 
 if "people" not in orm.tables():
     return "tables: " + str(orm.tables())
+
+# non-finite float defaults have no SQL literal: refuse them at render time
+# rather than emitting invalid DDL
+for bad in [float("inf"), float("-inf"), float("nan")]:
+    try:
+        (orm.create_table("bad_defaults").column("x", "real", default=bad).execute())
+        return "non-finite default accepted: " + str(bad)
+    except:
+        pass
 
 # models: a factory function builds instances from row dicts. Without
 # columns= the gateway writes every column the table has, read from the

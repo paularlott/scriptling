@@ -238,6 +238,9 @@ if orm.select("scriptling_people").where_sql("name = ?", "x' OR '1'='1").count()
 # numbered dialects (postgres) and ? dialects alike
 if orm.select("scriptling_people").where("score", ">", 6.5).where_sql("name != ?", "linus").count() != 2:
     return "where_sql mixed"
+# a ? inside a quoted literal is a literal: both renumber passes must skip it
+if orm.select("scriptling_people").where_sql("name != 'o''brien?' and score > ?", 0.0).count() != 3:
+    return "where_sql literal question mark"
 rows = (orm.select("scriptling_people", "name")
         .where("score", ">=", 8.0)
         .order_by("score", desc=True)

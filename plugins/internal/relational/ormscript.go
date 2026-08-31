@@ -89,7 +89,13 @@ def _orm_render_literal(value):
         return "FALSE"
     if isinstance(value, str):
         return "'" + value.replace("'", "''") + "'"
-    if isinstance(value, int) or isinstance(value, float):
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        # inf and nan are expressible as scriptling floats but have no SQL
+        # literal; render them as a clear error instead of invalid DDL.
+        if value != value or value == float("inf") or value == float("-inf"):
+            raise ValueError("unsupported default value: " + str(value))
         return str(value)
     raise ValueError("unsupported default value: " + str(value))
 
@@ -306,7 +312,9 @@ class _orm_Query:
     def count(self):
         pair = self._assemble("count(*) AS cnt")
         rows = self.kit.conn.query(pair[0], *pair[1])
-        return rows[0]["cnt"]
+        # count(*) is an integer on every supported driver; the cast keeps
+        # the contract if a driver ever hands back its count as a string.
+        return int(rows[0]["cnt"])
 
 
 class _orm_UpdateQuery:
