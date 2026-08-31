@@ -193,6 +193,28 @@ row = orm.select("people").where("id", "=", 4).one()
 if row["name"] != "kurtz" or row["score"] != 6.0:
     return "restricted save leaked: " + str(row)
 
+# per-call columns: save() writes exactly what the call lists
+k2 = people.get(4)
+k2.name = "kurt again"
+k2.score = 7.5
+people.save(k2, columns=["score"])
+row = orm.select("people").where("id", "=", 4).one()
+if row["name"] != "kurtz" or row["score"] != 7.5:
+    return "per-call save leaked: " + str(row)
+# a listed None clears the field; an unlisted one stays untouched
+k2.score = None
+k2.active = 1
+people.save(k2, columns=["score"])
+row = orm.select("people").where("id", "=", 4).one()
+if row["score"] != None or row["active"] != 0:
+    return "per-call save None: " + str(row)
+# insert() with columns is explicit: a None in the list writes NULL
+# (score's default is 0.0); unlisted columns take their defaults
+people.insert(make_person(name="nullscore", score=None, active=0), columns=["name", "score", "active"])
+row = orm.select("people").where("name", "=", "nullscore").one()
+if row == None or row["score"] != None:
+    return "explicit None insert: " + str(row)
+
 orm.drop_table("people")
 conn.close()
 return "ok"

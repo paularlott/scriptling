@@ -298,8 +298,26 @@ if row["score"] != 9.0:
 people.insert(make_person(name="kurt", score=6.0, active=0))
 if people.count() != 3:
     return "model insert: " + str(people.count())
+# per-call columns: save writes exactly what the call lists, a listed None
+# clears, and an insert list is explicit (None inserts as NULL)
+k = people.get(4)
+k.name = "kurtz"
+k.score = 7.5
+people.save(k, columns=["score"])
+row = orm.select("scriptling_people").where("id", "=", 4).one()
+if row["name"] != "kurt" or row["score"] != 7.5:
+    return "per-call save: " + str(row)
+k.score = None
+people.save(k, columns=["score"])
+row = orm.select("scriptling_people").where("id", "=", 4).one()
+if row["score"] != None:
+    return "per-call save None: " + str(row)
+people.insert(make_person(name="nullscore", score=None), columns=["name", "score"])
+row = orm.select("scriptling_people").where("name", "=", "nullscore").one()
+if row == None or row["score"] != None:
+    return "explicit None insert: " + str(row)
 people.delete(people.get(2))
-if people.count() != 2:
+if people.count() != 3:
     return "model delete"
 orm.drop_table("scriptling_people")
 conn.close()

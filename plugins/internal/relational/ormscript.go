@@ -455,20 +455,28 @@ class _orm_Model:
             return None
         return self.factory(**rows[0])
 
-    def insert(self, obj):
-        # None means unset: skip it, so the primary key auto-assigns (writing
-        # a NULL id violates the not-null key on postgres) and columns take
-        # their schema defaults rather than being overwritten with NULL.
-        cols = self._write_columns()
+    def insert(self, obj, columns=None):
+        # Without columns, None means unset: skip it, so the primary key
+        # auto-assigns (writing a NULL id violates the not-null key on
+        # postgres) and columns take their schema defaults rather than being
+        # overwritten with NULL. With columns, the list is explicit: None is
+        # written as NULL (the way to override a schema default on insert),
+        # except a None primary key, which always auto-assigns.
+        explicit = columns != None
+        cols = columns if explicit else self._write_columns()
         values = {}
         for c in cols:
             v = getattr(obj, c)
-            if v != None:
-                values[c] = v
+            if v == None and (not explicit or c == self.pk):
+                continue
+            values[c] = v
         return self.kit.insert(self.table, values, pk=self.pk)
 
-    def save(self, obj):
-        cols = self._write_columns()
+    def save(self, obj, columns=None):
+        # Every managed non-PK column by default (None clears the field), or
+        # exactly the listed columns when columns is given — the per-call
+        # subset, no second gateway needed.
+        cols = columns if columns != None else self._write_columns()
         pk_value = getattr(obj, self.pk)
         values = {}
         for c in cols:
