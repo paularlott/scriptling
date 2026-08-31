@@ -432,7 +432,7 @@ func (s *Server) runHandler(ctx context.Context, handlerRef string, reqObj *obje
 		return object.NewStringDict(map[string]object.Object{
 			"status":  object.NewInteger(500),
 			"headers": &object.Dict{Pairs: map[string]object.DictPair{}},
-			"body":    object.NewString(fmt.Sprintf(`{"error": "%s"}`, err.Error())),
+			"body":    object.NewString(extlibs.ErrorJSONBody(err.Error())),
 		})
 	}
 
@@ -536,7 +536,7 @@ func (s *Server) scriptProtocolMiddleware(next http.Handler) http.Handler {
 				s.writeResponse(w, object.NewStringDict(map[string]object.Object{
 					"status":  object.NewInteger(500),
 					"headers": &object.Dict{Pairs: map[string]object.DictPair{}},
-					"body":    object.NewString(fmt.Sprintf(`{"error": "%s"}`, err.Error())),
+					"body":    object.NewString(extlibs.ErrorJSONBody(err.Error())),
 				}))
 				return
 			}

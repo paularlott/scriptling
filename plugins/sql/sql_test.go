@@ -93,6 +93,37 @@ func TestMySQLConfigFromURL(t *testing.T) {
 	}
 }
 
+// TestMySQLConfigDriverOptionsUnreachableFromURL pins the security-relevant
+// property of the query-param mapping: URL query parameters become session
+// variables (cfg.Params, sent as SET on connect), never driver options. The
+// go-sql-driver fields that would matter for a hostile-server attack —
+// AllowAllFiles (LOAD DATA LOCAL INFILE file reads) among them — are only
+// settable by ParseDSN from a DSN string, so a URL like
+// ?allowAllFiles=true produces `SET allowAllFiles = true` (an unknown system
+// variable the server rejects) and leaves the option struct untouched.
+func TestMySQLConfigDriverOptionsUnreachableFromURL(t *testing.T) {
+	parsed, err := url.Parse("mysql://user:pass@evil.example.com/db?allowAllFiles=true&tls=true&interpolateParams=true")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	cfg := mysqlConfigFromURL(parsed)
+
+	if cfg.AllowAllFiles {
+		t.Fatal("AllowAllFiles must not be reachable from a URL query parameter")
+	}
+	if cfg.TLSConfig != "" {
+		t.Fatalf("TLSConfig must not be reachable from a URL query parameter, got %q", cfg.TLSConfig)
+	}
+	if cfg.InterpolateParams {
+		t.Fatal("InterpolateParams must not be reachable from a URL query parameter")
+	}
+	// They do arrive as session variables, where an unknown one simply fails
+	// the connect.
+	if cfg.Params["allowAllFiles"] != "true" {
+		t.Fatalf("expected the param mapped to cfg.Params, got %#v", cfg.Params)
+	}
+}
+
 func TestLibraryShape(t *testing.T) {
 	lib := Build(&plugin.StaticPolicy{})
 	if lib.Name() != "scriptling._sql" {
@@ -199,6 +230,14 @@ if orm.select("scriptling_people").count() != 3:
     return "count all: " + str(orm.select("scriptling_people").count())
 if orm.select("scriptling_people").where_sql("score >= ?", 8.0).count() != 2:
     return "count where"
+# where_sql binds params like every other value: a hostile string stays
+# data, never SQL. Spliced raw, this WHERE would be always-true.
+if orm.select("scriptling_people").where_sql("name = ?", "x' OR '1'='1").count() != 0:
+    return "where_sql leaked a param into SQL"
+# mixed builder criteria and where_sql keep placeholder order straight on
+# numbered dialects (postgres) and ? dialects alike
+if orm.select("scriptling_people").where("score", ">", 6.5).where_sql("name != ?", "linus").count() != 2:
+    return "where_sql mixed"
 rows = (orm.select("scriptling_people", "name")
         .where("score", ">=", 8.0)
         .order_by("score", desc=True)

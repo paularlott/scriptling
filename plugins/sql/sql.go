@@ -189,7 +189,10 @@ func openMySQL(parsed *url.URL, guard *netsecurity.Guard) (*relational.Conn, err
 }
 
 // mysqlConfigFromURL converts a mysql:// or mariadb:// URL into the driver's
-// Config. Query parameters (charset, tls, etc.) pass through as DSN params.
+// Config. Query parameters pass through as session variables (cfg.Params,
+// sent as SET on connect) — charset, sql_mode, time_zone and friends. Driver
+// options (allowAllFiles, tls, timeouts) are DSN-string settings and are
+// deliberately unreachable from a URL query.
 func mysqlConfigFromURL(parsed *url.URL) *mysql.Config {
 	cfg := mysql.NewConfig()
 	cfg.Net = "tcp"

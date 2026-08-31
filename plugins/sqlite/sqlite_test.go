@@ -166,6 +166,106 @@ conn = sqlite.connect("file:`+outside+`")
 	}
 }
 
+// TestInProcessMemoryURIClassification pins how the in-memory spellings are
+// classified against a deny-all path policy. :memory:, file::memory:, and a
+// file: URI carrying mode=memory all store the database in memory (the URI
+// path is only a name), so there is no file for the policy to guard; a
+// file-backed URI with no mode=memory stays a path the policy judges.
+func TestInProcessMemoryURIClassification(t *testing.T) {
+	denyAll := &plugin.Policy{AllowedPaths: []string{}}
+
+	for _, uri := range []string{
+		":memory:",
+		"file::memory:",
+		"file::memory:?cache=shared",
+		"file:any-name?mode=memory",
+		"file:/etc/passwd?mode=memory",
+		"file:app.db?mode=memory&cache=shared",
+	} {
+		_, err := evalInProcess(t, denyAll, `
+import scriptling.sqlite as sqlite
+conn = sqlite.connect("`+uri+`")
+conn.close()
+`)
+		if err != nil {
+			t.Errorf("connect(%q) should be allowed as in-memory, got: %v", uri, err)
+		}
+	}
+
+	for _, uri := range []string{
+		"app.db",
+		"file:app.db",
+		"file:/etc/passwd",
+		"file:app.db?cache=shared",
+	} {
+		_, err := evalInProcess(t, denyAll, `
+import scriptling.sqlite as sqlite
+conn = sqlite.connect("`+uri+`")
+`)
+		if err == nil {
+			t.Errorf("connect(%q) should be denied by the path policy", uri)
+		}
+	}
+}
+
+// TestInProcessSharedMemoryURIAcrossConnections proves cache=shared memory
+// databases really are shared: two connections to the same URI see each
+// other's writes, which only works when pooling is left enabled for them.
+func TestInProcessSharedMemoryURIAcrossConnections(t *testing.T) {
+	result, err := evalInProcess(t, &plugin.Policy{AllowedPaths: []string{}}, `
+import scriptling.sqlite as sqlite
+
+writer = sqlite.connect("file:sharedmem?mode=memory&cache=shared")
+writer.execute("create table t (v text)")
+writer.execute("insert into t (v) values (?)", "seen")
+
+reader = sqlite.connect("file:sharedmem?mode=memory&cache=shared")
+rows = reader.query("select v from t")
+writer.close()
+reader.close()
+return rows[0]["v"]
+`)
+	if err != nil {
+		t.Fatalf("eval: %v", err)
+	}
+	if result.Inspect() != "seen" {
+		t.Fatalf("shared memory database was not shared across connections: %s", result.Inspect())
+	}
+}
+
+// TestInProcessPrivateMemoryURIPersistsWithinConnection proves a mode=memory
+// URI without cache=shared behaves like :memory:: writes stay visible to
+// later statements on the connection (single pooled connection), and nothing
+// named after the URI path is created on disk.
+func TestInProcessPrivateMemoryURIPersistsWithinConnection(t *testing.T) {
+	// The URI path is relative, so a bug that opened a file would create it
+	// in the working directory; chdir into a scratch dir to make that
+	// observable and keep the repository clean.
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	result, err := evalInProcess(t, &plugin.Policy{AllowedPaths: []string{}}, `
+import scriptling.sqlite as sqlite
+
+conn = sqlite.connect("file:private-db?mode=memory")
+conn.execute("create table t (v text)")
+conn.execute("insert into t (v) values (?)", "kept")
+rows = conn.query("select v from t")
+conn.close()
+return rows[0]["v"]
+`)
+	if err != nil {
+		t.Fatalf("eval: %v", err)
+	}
+	if result.Inspect() != "kept" {
+		t.Fatalf("private memory database lost its writes: %s", result.Inspect())
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "private-db")); !os.IsNotExist(err) {
+		t.Fatalf("mode=memory created a file named after the URI path: %v", err)
+	}
+}
+
 func TestInProcessNullAndBoolRoundTrip(t *testing.T) {
 	result, err := evalInProcess(t, nil, `
 import scriptling.sqlite as sqlite

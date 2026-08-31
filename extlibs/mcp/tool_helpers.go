@@ -594,7 +594,7 @@ Example:
 					return err
 				}
 
-				errorJSON := fmt.Sprintf(`{"error": "%s"}`, message)
+				errorJSON := extlibs.ErrorJSONBody(message)
 				return setResponseAndExit(ctx, errorJSON, 1)
 			},
 			HelpText: `return_error(message) - Return an error from the tool and stop execution

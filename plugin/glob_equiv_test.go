@@ -62,8 +62,8 @@ func TestMatchGlobEquivalentToOracle(t *testing.T) {
 			gen(alpha, maxLen, append(prefix, s), out)
 		}
 	}
-	gen(segAlphabet, 3, nil, &patterns)  // patterns up to 3 segments
-	gen(nameAlphabet, 3, nil, &names)    // names up to 3 segments
+	gen(segAlphabet, 3, nil, &patterns) // patterns up to 3 segments
+	gen(nameAlphabet, 3, nil, &names)   // names up to 3 segments
 
 	mismatches := 0
 	for _, p := range patterns {

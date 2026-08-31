@@ -192,6 +192,11 @@ func (s *Server) RegisterLibrary(lib *object.Library) *Server {
 // at a path such as /json-rpc and load it with plugin.Manager.LoadURL or
 // scriptling.plugin.load(..., scriptling=True).
 //
+// The handler answers whoever reaches it: it ships no authentication of its
+// own, so whatever fronts the endpoint (auth middleware, TLS plus credentials
+// at a reverse proxy, a loopback-only bind) is the access control. Credentials
+// arrive as headers on r; see the php-server example for a token check.
+//
 // HTTP plugin transport supports normal plugin calls, object lifecycle, and
 // batches. Host callbacks and plugin.Logger(ctx) require the bidirectional
 // stdio transport and are not available over HTTP. Framing (POST handling,

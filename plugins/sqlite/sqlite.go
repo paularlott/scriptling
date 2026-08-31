@@ -135,21 +135,33 @@ func open(policy plugin.PolicySource, path string, timeoutMilliseconds int64) (*
 	}
 
 	isMemory := path == ":memory:" || strings.HasPrefix(path, "file::memory:")
+	sharedCache := false
 	// A file: URI names its database in the URI path (file:/tmp/app.db,
 	// file:relative.db): the policy check applies to that path, not to the
 	// URI string. Unparseable or non-local URIs fail closed.
 	checkPath := path
-	if !isMemory && strings.HasPrefix(path, "file:") {
+	if strings.HasPrefix(path, "file:") {
 		uri, uriErr := url.Parse(path)
 		if uriErr != nil || uri.Host != "" {
 			return nil, fmt.Errorf("invalid file: uri %q", path)
 		}
-		checkPath = uri.Path
-		if checkPath == "" {
-			checkPath = uri.Opaque
+		query := uri.Query()
+		// SQLite's mode=memory stores the database in memory; the URI path is
+		// only a name, so like :memory: there is no file for the policy to
+		// guard. cache=shared shares one memory database across connections;
+		// without it each pooled connection would see a private one.
+		if !isMemory && strings.EqualFold(query.Get("mode"), "memory") {
+			isMemory = true
 		}
-		if checkPath == "" {
-			return nil, fmt.Errorf("invalid file: uri %q", path)
+		sharedCache = strings.EqualFold(query.Get("cache"), "shared")
+		if !isMemory {
+			checkPath = uri.Path
+			if checkPath == "" {
+				checkPath = uri.Opaque
+			}
+			if checkPath == "" {
+				return nil, fmt.Errorf("invalid file: uri %q", path)
+			}
 		}
 	}
 	if !isMemory && !policy.Policy().PathAllowed(checkPath) {
@@ -171,8 +183,10 @@ func open(policy plugin.PolicySource, path string, timeoutMilliseconds int64) (*
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
 	// An in-memory database lives inside a single pooled connection; pooling
-	// several would give each its own private database.
-	if isMemory {
+	// several would give each its own private database. A shared-cache memory
+	// database is the exception: cache=shared is exactly the mechanism that
+	// lets connections share one, so pooling stays enabled.
+	if isMemory && !sharedCache {
 		db.SetMaxOpenConns(1)
 	}
 	if err := db.Ping(); err != nil {

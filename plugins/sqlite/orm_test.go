@@ -90,6 +90,16 @@ rows = orm.select("people").where_sql("score > ? and score < ?", 6.5, 9.0).fetch
 if len(rows) != 2:
     return "where_sql: " + str(rows)
 
+# where_sql binds params like every other value: a hostile string stays
+# data. Spliced raw, this WHERE would be always-true and match all 3 rows.
+needle = "x' OR '1'='1"
+if orm.select("people").where_sql("name = ?", needle).count() != 0:
+    return "where_sql leaked a param into SQL"
+# mixed builder criteria and where_sql keep placeholder order straight
+# (the sql plugin's live runs prove this on numbered dialects too)
+if orm.select("people").where("active", "=", 1).where_sql("score > ?", 6.5).count() != 2:
+    return "where_sql mixed: " + str(orm.select("people").where("active", "=", 1).where_sql("score > ?", 6.5).fetch())
+
 # update/delete refuse blanket writes
 try:
     orm.update("people", {"score": 0.0}).execute()

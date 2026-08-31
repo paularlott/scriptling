@@ -350,13 +350,16 @@ need no flush; they mirror their master). More destructive than flushdb:
 prefer it unless you truly mean every database.`)
 
 	cb.MethodWithHelp("set_add", func(self *kv.Client, ctx context.Context, key string, members ...string) (int64, error) {
-		return self.Store.(*store).active().Do(ctx, self.Store.(*store).active().B().Sadd().Key(key).Member(members...).Build()).ToInt64()
+		c := self.Store.(*store).active()
+		return c.Do(ctx, c.B().Sadd().Key(key).Member(members...).Build()).ToInt64()
 	}, "set_add(key, *members) -> int - Add members to a set; returns how many were new.")
 	cb.MethodWithHelp("set_remove", func(self *kv.Client, ctx context.Context, key string, members ...string) (int64, error) {
-		return self.Store.(*store).active().Do(ctx, self.Store.(*store).active().B().Srem().Key(key).Member(members...).Build()).ToInt64()
+		c := self.Store.(*store).active()
+		return c.Do(ctx, c.B().Srem().Key(key).Member(members...).Build()).ToInt64()
 	}, "set_remove(key, *members) -> int - Remove members from a set; returns how many existed.")
 	cb.MethodWithHelp("set_members", func(self *kv.Client, ctx context.Context, key string) ([]any, error) {
-		members, err := self.Store.(*store).active().Do(ctx, self.Store.(*store).active().B().Smembers().Key(key).Build()).AsStrSlice()
+		c := self.Store.(*store).active()
+		members, err := c.Do(ctx, c.B().Smembers().Key(key).Build()).AsStrSlice()
 		if err != nil {
 			return nil, fmt.Errorf("set_members %s: %w", key, err)
 		}
@@ -367,23 +370,27 @@ prefer it unless you truly mean every database.`)
 		return out, nil
 	}, "set_members(key) -> list[str] - Every member of the set, unordered.")
 	cb.MethodWithHelp("set_contains", func(self *kv.Client, ctx context.Context, key string, member string) (bool, error) {
-		reply, err := self.Store.(*store).active().Do(ctx, self.Store.(*store).active().B().Sismember().Key(key).Member(member).Build()).ToInt64()
+		c := self.Store.(*store).active()
+		reply, err := c.Do(ctx, c.B().Sismember().Key(key).Member(member).Build()).ToInt64()
 		if err != nil {
 			return false, fmt.Errorf("set_contains %s: %w", key, err)
 		}
 		return reply == 1, nil
 	}, "set_contains(key, member) -> bool - Whether member is in the set.")
 	cb.MethodWithHelp("set_size", func(self *kv.Client, ctx context.Context, key string) (int64, error) {
-		return self.Store.(*store).active().Do(ctx, self.Store.(*store).active().B().Scard().Key(key).Build()).ToInt64()
+		c := self.Store.(*store).active()
+		return c.Do(ctx, c.B().Scard().Key(key).Build()).ToInt64()
 	}, "set_size(key) -> int - Number of members in the set.")
 
 	cb.MethodWithHelp("queue_push", func(self *kv.Client, ctx context.Context, key string, values ...string) (int64, error) {
-		return self.Store.(*store).active().Do(ctx, self.Store.(*store).active().B().Rpush().Key(key).Element(values...).Build()).ToInt64()
+		c := self.Store.(*store).active()
+		return c.Do(ctx, c.B().Rpush().Key(key).Element(values...).Build()).ToInt64()
 	}, `queue_push(key, *values) -> int - Push values onto the queue's tail; returns the queue length.
 
 FIFO with queue_pop: producers push right, consumers pop left.`)
 	cb.MethodWithHelp("queue_pop", func(self *kv.Client, ctx context.Context, key string) (any, error) {
-		value, err := self.Store.(*store).active().Do(ctx, self.Store.(*store).active().B().Lpop().Key(key).Build()).ToString()
+		c := self.Store.(*store).active()
+		value, err := c.Do(ctx, c.B().Lpop().Key(key).Build()).ToString()
 		if errors.Is(err, valkey.Nil) {
 			return nil, nil
 		}
@@ -393,7 +400,8 @@ FIFO with queue_pop: producers push right, consumers pop left.`)
 		return value, nil
 	}, "queue_pop(key) -> str | null - Pop the value at the queue's head, or null when empty.")
 	cb.MethodWithHelp("queue_peek", func(self *kv.Client, ctx context.Context, key string) (any, error) {
-		value, err := self.Store.(*store).active().Do(ctx, self.Store.(*store).active().B().Lindex().Key(key).Index(0).Build()).ToString()
+		c := self.Store.(*store).active()
+		value, err := c.Do(ctx, c.B().Lindex().Key(key).Index(0).Build()).ToString()
 		if errors.Is(err, valkey.Nil) {
 			return nil, nil
 		}
@@ -406,7 +414,8 @@ FIFO with queue_pop: producers push right, consumers pop left.`)
 		if timeout < 0 {
 			return nil, fmt.Errorf("queue_wait timeout must be >= 0")
 		}
-		parts, err := self.Store.(*store).active().Do(ctx, self.Store.(*store).active().B().Blpop().Key(key).Timeout(timeout).Build()).AsStrSlice()
+		c := self.Store.(*store).active()
+		parts, err := c.Do(ctx, c.B().Blpop().Key(key).Timeout(timeout).Build()).AsStrSlice()
 		if errors.Is(err, valkey.Nil) {
 			return nil, nil
 		}
@@ -426,7 +435,8 @@ the timeout expires. A timeout of 0 behaves like queue_pop. There is no
 infinite wait on purpose: a worker loop re-issues queue_wait, which also
 keeps the script responsive to cancellation.`)
 	cb.MethodWithHelp("queue_size", func(self *kv.Client, ctx context.Context, key string) (int64, error) {
-		return self.Store.(*store).active().Do(ctx, self.Store.(*store).active().B().Llen().Key(key).Build()).ToInt64()
+		c := self.Store.(*store).active()
+		return c.Do(ctx, c.B().Llen().Key(key).Build()).ToInt64()
 	}, "queue_size(key) -> int - Number of values in the queue.")
 	cb.MethodWithHelp("queue_range", func(self *kv.Client, ctx context.Context, kwargs object.Kwargs, key string) ([]any, error) {
 		start, errObj := kwargs.GetInt("start", 0)
@@ -437,7 +447,8 @@ keeps the script responsive to cancellation.`)
 		if errObj != nil {
 			return nil, kwarg.Err(errObj)
 		}
-		values, err := self.Store.(*store).active().Do(ctx, self.Store.(*store).active().B().Lrange().Key(key).Start(start).Stop(stop).Build()).AsStrSlice()
+		c := self.Store.(*store).active()
+		values, err := c.Do(ctx, c.B().Lrange().Key(key).Start(start).Stop(stop).Build()).AsStrSlice()
 		if err != nil {
 			return nil, fmt.Errorf("queue_range %s: %w", key, err)
 		}
@@ -510,7 +521,8 @@ func (s *store) active() valkey.Client {
 }
 
 func (s *store) Get(ctx context.Context, key string) (string, bool, error) {
-	value, err := s.active().Do(ctx, s.active().B().Get().Key(key).Build()).ToString()
+	c := s.active()
+	value, err := c.Do(ctx, c.B().Get().Key(key).Build()).ToString()
 	if errors.Is(err, valkey.Nil) {
 		return "", false, nil
 	}
@@ -523,9 +535,11 @@ func (s *store) Get(ctx context.Context, key string) (string, bool, error) {
 func (s *store) Set(ctx context.Context, key, value string, ttlSeconds int64) error {
 	var err error
 	if ttlSeconds > 0 {
-		err = s.active().Do(ctx, s.active().B().Set().Key(key).Value(value).ExSeconds(ttlSeconds).Build()).Error()
+		c := s.active()
+		err = c.Do(ctx, c.B().Set().Key(key).Value(value).ExSeconds(ttlSeconds).Build()).Error()
 	} else {
-		err = s.active().Do(ctx, s.active().B().Set().Key(key).Value(value).Build()).Error()
+		c := s.active()
+		err = c.Do(ctx, c.B().Set().Key(key).Value(value).Build()).Error()
 	}
 	if err != nil {
 		return fmt.Errorf("set %s: %w", key, err)
@@ -534,7 +548,8 @@ func (s *store) Set(ctx context.Context, key, value string, ttlSeconds int64) er
 }
 
 func (s *store) Delete(ctx context.Context, keys []string) (int64, error) {
-	removed, err := s.active().Do(ctx, s.active().B().Del().Key(keys...).Build()).ToInt64()
+	c := s.active()
+	removed, err := c.Do(ctx, c.B().Del().Key(keys...).Build()).ToInt64()
 	if err != nil {
 		return 0, fmt.Errorf("delete: %w", err)
 	}
@@ -542,7 +557,8 @@ func (s *store) Delete(ctx context.Context, keys []string) (int64, error) {
 }
 
 func (s *store) Exists(ctx context.Context, keys []string) (int64, error) {
-	count, err := s.active().Do(ctx, s.active().B().Exists().Key(keys...).Build()).ToInt64()
+	c := s.active()
+	count, err := c.Do(ctx, c.B().Exists().Key(keys...).Build()).ToInt64()
 	if err != nil {
 		return 0, fmt.Errorf("exists: %w", err)
 	}
@@ -551,7 +567,8 @@ func (s *store) Exists(ctx context.Context, keys []string) (int64, error) {
 
 func (s *store) Expire(ctx context.Context, key string, ttlSeconds int64) (bool, error) {
 	// RESP2 answers EXPIRE with 0/1 rather than a bool.
-	reply, err := s.active().Do(ctx, s.active().B().Expire().Key(key).Seconds(ttlSeconds).Build()).ToInt64()
+	c := s.active()
+	reply, err := c.Do(ctx, c.B().Expire().Key(key).Seconds(ttlSeconds).Build()).ToInt64()
 	if err != nil {
 		return false, fmt.Errorf("expire %s: %w", key, err)
 	}
@@ -559,7 +576,8 @@ func (s *store) Expire(ctx context.Context, key string, ttlSeconds int64) (bool,
 }
 
 func (s *store) TTL(ctx context.Context, key string) (int64, bool, error) {
-	ttl, err := s.active().Do(ctx, s.active().B().Ttl().Key(key).Build()).ToInt64()
+	c := s.active()
+	ttl, err := c.Do(ctx, c.B().Ttl().Key(key).Build()).ToInt64()
 	if err != nil {
 		return 0, false, fmt.Errorf("ttl %s: %w", key, err)
 	}
@@ -570,7 +588,8 @@ func (s *store) TTL(ctx context.Context, key string) (int64, bool, error) {
 }
 
 func (s *store) Incr(ctx context.Context, key string, amount int64) (int64, error) {
-	value, err := s.active().Do(ctx, s.active().B().Incrby().Key(key).Increment(amount).Build()).ToInt64()
+	c := s.active()
+	value, err := c.Do(ctx, c.B().Incrby().Key(key).Increment(amount).Build()).ToInt64()
 	if err != nil {
 		return 0, fmt.Errorf("incr %s: %w", key, err)
 	}
@@ -578,7 +597,8 @@ func (s *store) Incr(ctx context.Context, key string, amount int64) (int64, erro
 }
 
 func (s *store) Keys(ctx context.Context, pattern string) ([]string, error) {
-	keys, err := s.active().Do(ctx, s.active().B().Keys().Pattern(pattern).Build()).AsStrSlice()
+	c := s.active()
+	keys, err := c.Do(ctx, c.B().Keys().Pattern(pattern).Build()).AsStrSlice()
 	if err != nil {
 		return nil, fmt.Errorf("keys %s: %w", pattern, err)
 	}
@@ -586,7 +606,8 @@ func (s *store) Keys(ctx context.Context, pattern string) ([]string, error) {
 }
 
 func (s *store) Persist(ctx context.Context, key string) (bool, error) {
-	reply, err := s.active().Do(ctx, s.active().B().Persist().Key(key).Build()).ToInt64()
+	c := s.active()
+	reply, err := c.Do(ctx, c.B().Persist().Key(key).Build()).ToInt64()
 	if err != nil {
 		return false, fmt.Errorf("persist %s: %w", key, err)
 	}
@@ -597,7 +618,8 @@ func (s *store) MGet(ctx context.Context, keys []string) ([]*string, error) {
 	if len(keys) == 0 {
 		return []*string{}, nil
 	}
-	array, err := s.active().Do(ctx, s.active().B().Mget().Key(keys...).Build()).ToArray()
+	c := s.active()
+	array, err := c.Do(ctx, c.B().Mget().Key(keys...).Build()).ToArray()
 	if err != nil {
 		return nil, fmt.Errorf("mget: %w", err)
 	}
@@ -661,7 +683,8 @@ func (s *store) SetNX(ctx context.Context, key, value string, ttlSeconds int64) 
 }
 
 func (s *store) HashSet(ctx context.Context, key, field, value string) (int64, error) {
-	added, err := s.active().Do(ctx, s.active().B().Hset().Key(key).FieldValue().FieldValue(field, value).Build()).ToInt64()
+	c := s.active()
+	added, err := c.Do(ctx, c.B().Hset().Key(key).FieldValue().FieldValue(field, value).Build()).ToInt64()
 	if err != nil {
 		return 0, fmt.Errorf("hash_set %s: %w", key, err)
 	}
@@ -669,7 +692,8 @@ func (s *store) HashSet(ctx context.Context, key, field, value string) (int64, e
 }
 
 func (s *store) HashGet(ctx context.Context, key, field string) (*string, error) {
-	value, err := s.active().Do(ctx, s.active().B().Hget().Key(key).Field(field).Build()).ToString()
+	c := s.active()
+	value, err := c.Do(ctx, c.B().Hget().Key(key).Field(field).Build()).ToString()
 	if errors.Is(err, valkey.Nil) {
 		return nil, nil
 	}
@@ -680,7 +704,8 @@ func (s *store) HashGet(ctx context.Context, key, field string) (*string, error)
 }
 
 func (s *store) HashDelete(ctx context.Context, key string, fields []string) (int64, error) {
-	removed, err := s.active().Do(ctx, s.active().B().Hdel().Key(key).Field(fields...).Build()).ToInt64()
+	c := s.active()
+	removed, err := c.Do(ctx, c.B().Hdel().Key(key).Field(fields...).Build()).ToInt64()
 	if err != nil {
 		return 0, fmt.Errorf("hash_delete %s: %w", key, err)
 	}
@@ -688,7 +713,8 @@ func (s *store) HashDelete(ctx context.Context, key string, fields []string) (in
 }
 
 func (s *store) HashAll(ctx context.Context, key string) (map[string]string, error) {
-	hash, err := s.active().Do(ctx, s.active().B().Hgetall().Key(key).Build()).AsStrMap()
+	c := s.active()
+	hash, err := c.Do(ctx, c.B().Hgetall().Key(key).Build()).AsStrMap()
 	if err != nil {
 		return nil, fmt.Errorf("hash_all %s: %w", key, err)
 	}
@@ -696,7 +722,8 @@ func (s *store) HashAll(ctx context.Context, key string) (map[string]string, err
 }
 
 func (s *store) HashSize(ctx context.Context, key string) (int64, error) {
-	size, err := s.active().Do(ctx, s.active().B().Hlen().Key(key).Build()).ToInt64()
+	c := s.active()
+	size, err := c.Do(ctx, c.B().Hlen().Key(key).Build()).ToInt64()
 	if err != nil {
 		return 0, fmt.Errorf("hash_size %s: %w", key, err)
 	}
@@ -704,7 +731,8 @@ func (s *store) HashSize(ctx context.Context, key string) (int64, error) {
 }
 
 func (s *store) Ping(ctx context.Context) error {
-	if err := s.active().Do(ctx, s.active().B().Ping().Build()).Error(); err != nil {
+	c := s.active()
+	if err := c.Do(ctx, c.B().Ping().Build()).Error(); err != nil {
 		return fmt.Errorf("ping: %w", err)
 	}
 	return nil
