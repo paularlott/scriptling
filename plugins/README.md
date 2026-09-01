@@ -6,8 +6,8 @@ Four first-party database plugins, each usable in two modes:
   (or `SCRIPTLING_PLUGIN_DIR`). Scripts import `plugin.<name>`; calls cross a
   JSON-RPC boundary to the plugin process.
 - **Compiled in** — build the CLI with the plugin's build tag and the identical
-  library is registered natively (no subprocess, full speed). `scriptling-full`
-  compiles all four in.
+  library is registered natively (no subprocess, full speed). The default
+  `scriptling` build compiles all four in.
 
 Scripts are the same in both modes — always `import scriptling.sqlite` etc.
 
@@ -100,8 +100,9 @@ optional handshake field), and third-party plugins opt in by advertising the
 ```bash
 task build-plugins              # plugin binaries for the current platform
 task build-plugins-platforms    # all platforms
-task build-full                 # CLI with all four compiled in
-task build-full-platforms       # scriptling-full for all platforms
+task build                      # CLI with all four compiled in (the default)
+task build-slim                 # CLI without the plugins compiled in
+task build-slim-platforms       # scriptling-slim for all platforms
 ```
 
 Compile in a subset with build tags, e.g. a CLI with only valkey:
@@ -119,8 +120,10 @@ test servers.
 
 ## Installing
 
-- **scriptling-full** has all four plugins compiled in
-  (`brew install paularlott/tap/scriptling-full`, or the full release zip).
+- **scriptling** has all four plugins compiled in
+  (`brew install paularlott/tap/scriptling`, or the release zip).
+- **scriptling-slim** is the same CLI without them
+  (`brew install paularlott/tap/scriptling-slim`, or the slim release zip).
 - **Any build** loads the external plugin binaries explicitly: point
   `--plugin-dir` at their directory (or export `SCRIPTLING_PLUGIN_DIR`);
   nothing is auto-discovered, so what loads is exactly what you named. The

@@ -13,7 +13,7 @@ import (
 )
 
 // evalInProcess registers the compiled-in form of the plugin and evaluates
-// script — the path a scriptling-full build takes.
+// script — the path the default scriptling build takes.
 func evalInProcess(t *testing.T, policy *plugin.Policy, script string) (object.Object, error) {
 	t.Helper()
 	p := scriptling.New()

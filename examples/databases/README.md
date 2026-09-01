@@ -23,13 +23,13 @@ The `orm.py` example covers `conn.get_orm()` — the dict-shaped table helper
 shared by the relational plugins.
 
 ```bash
-# 1. A build with the plugins compiled in (task build-full, or any subset:
+# 1. A build with the plugins compiled in (task build, or any subset:
 #    go build -tags plugin_sqlite -o scriptling ./scriptling-cli)
 scriptling sqlite.py
 scriptling badgerdb.py
 scriptling sql_mysql.py
 
-# 2. Any regular build, with the plugin binaries on the plugin path
+# 2. A slim build, with the plugin binaries on the plugin path
 scriptling --plugin-dir bin sql_postgres.py
 ```
 

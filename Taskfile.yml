@@ -5,9 +5,10 @@ vars:
   BIN_DIR: bin
   CLI_DIR: scriptling-cli
   LDFLAGS: '-ldflags="-s -w"'
-  # Build tags that compile the database plugins into the CLI. Build with a
-  # subset (e.g. just "plugin_valkey") for a CLI with only those drivers.
-  FULL_TAGS: plugin_sqlite,plugin_sql,plugin_valkey,plugin_badgerdb
+  # Build tags that compile the database plugins into the CLI — the default
+  # scriptling build. Build with a subset (e.g. just "plugin_valkey") for a
+  # CLI with only those drivers; build-slim omits them entirely.
+  PLUGIN_TAGS: plugin_sqlite,plugin_sql,plugin_valkey,plugin_badgerdb
   DB_PLUGINS: sqlite sql valkey badgerdb
   PLATFORMS: linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64
   VERSION:
@@ -20,13 +21,13 @@ tasks:
       - rm -rf {{.BIN_DIR}}
 
   build:
-    desc: Build for current platform
+    desc: Build for current platform (database plugins compiled in)
     dir: scriptling-cli
     cmds:
-      - go build {{.LDFLAGS}} -o ../{{.BIN_DIR}}/scriptling .
+      - go build {{.LDFLAGS}} -tags '{{.PLUGIN_TAGS}}' -o ../{{.BIN_DIR}}/scriptling .
 
   build-platforms:
-    desc: Build for all platforms (Linux, macOS, Windows)
+    desc: Build for all platforms (Linux, macOS, Windows; database plugins compiled in)
     deps:
       [
         build-linux-amd64,
@@ -43,10 +44,10 @@ tasks:
     cmds:
       - mkdir -p {{.BIN_DIR}}
       - task: build-platforms
-      - task: build-full-platforms
+      - task: build-slim-platforms
       - task: build-plugins-platforms
       - task: create-zips
-      - task: create-full-zips
+      - task: create-slim-zips
       - task: create-plugin-zips
 
   create-zips:
@@ -59,21 +60,21 @@ tasks:
       - cd {{.BIN_DIR}} && cp scriptling-windows-amd64.exe scriptling.exe && zip scriptling-windows-amd64.zip scriptling.exe && rm scriptling.exe
       - cd {{.BIN_DIR}} && cp scriptling-windows-arm64.exe scriptling.exe && zip scriptling-windows-arm64.zip scriptling.exe && rm scriptling.exe
 
-  create-full-zips:
-    desc: Create ZIP files for scriptling-full builds
+  create-slim-zips:
+    desc: Create ZIP files for scriptling-slim builds
     cmds:
       - |
-        # The binary inside every zip is named scriptling: the full build IS
-        # scriptling (same CLI, drivers compiled in), so unzipping any
-        # release artifact yields a ready-to-run scriptling.
+        # The binary inside every zip is named scriptling: the slim build IS
+        # scriptling (same CLI, no database drivers compiled in), so unzipping
+        # any release artifact yields a ready-to-run scriptling.
         cd {{.BIN_DIR}}
         for platform in {{.PLATFORMS}}; do
           GOOS=${platform%/*} GOARCH=${platform#*/}
           ext=""
           if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
-          cp scriptling-full-${GOOS}-${GOARCH}${ext} scriptling${ext}
-          rm -f scriptling-full-${GOOS}-${GOARCH}.zip
-          zip scriptling-full-${GOOS}-${GOARCH}.zip scriptling${ext}
+          cp scriptling-slim-${GOOS}-${GOARCH}${ext} scriptling${ext}
+          rm -f scriptling-slim-${GOOS}-${GOARCH}.zip
+          zip scriptling-slim-${GOOS}-${GOARCH}.zip scriptling${ext}
           rm scriptling${ext}
         done
 
@@ -97,53 +98,53 @@ tasks:
     desc: Build for Linux AMD64
     dir: scriptling-cli
     cmds:
-      - GOOS=linux GOARCH=amd64 go build {{.LDFLAGS}} -o ../{{.BIN_DIR}}/scriptling-linux-amd64 .
+      - GOOS=linux GOARCH=amd64 go build {{.LDFLAGS}} -tags '{{.PLUGIN_TAGS}}' -o ../{{.BIN_DIR}}/scriptling-linux-amd64 .
 
   build-linux-arm64:
     desc: Build for Linux ARM64
     dir: scriptling-cli
     cmds:
-      - GOOS=linux GOARCH=arm64 go build {{.LDFLAGS}} -o ../{{.BIN_DIR}}/scriptling-linux-arm64 .
+      - GOOS=linux GOARCH=arm64 go build {{.LDFLAGS}} -tags '{{.PLUGIN_TAGS}}' -o ../{{.BIN_DIR}}/scriptling-linux-arm64 .
 
   build-darwin-amd64:
     desc: Build for macOS AMD64
     dir: scriptling-cli
     cmds:
-      - GOOS=darwin GOARCH=amd64 go build {{.LDFLAGS}} -o ../{{.BIN_DIR}}/scriptling-darwin-amd64 .
+      - GOOS=darwin GOARCH=amd64 go build {{.LDFLAGS}} -tags '{{.PLUGIN_TAGS}}' -o ../{{.BIN_DIR}}/scriptling-darwin-amd64 .
 
   build-darwin-arm64:
     desc: Build for macOS ARM64
     dir: scriptling-cli
     cmds:
-      - GOOS=darwin GOARCH=arm64 go build {{.LDFLAGS}} -o ../{{.BIN_DIR}}/scriptling-darwin-arm64 .
+      - GOOS=darwin GOARCH=arm64 go build {{.LDFLAGS}} -tags '{{.PLUGIN_TAGS}}' -o ../{{.BIN_DIR}}/scriptling-darwin-arm64 .
 
   build-windows-amd64:
     desc: Build for Windows AMD64
     dir: scriptling-cli
     cmds:
-      - GOOS=windows GOARCH=amd64 go build {{.LDFLAGS}} -o ../{{.BIN_DIR}}/scriptling-windows-amd64.exe .
+      - GOOS=windows GOARCH=amd64 go build {{.LDFLAGS}} -tags '{{.PLUGIN_TAGS}}' -o ../{{.BIN_DIR}}/scriptling-windows-amd64.exe .
 
   build-windows-arm64:
     desc: Build for Windows ARM64
     dir: scriptling-cli
     cmds:
-      - GOOS=windows GOARCH=arm64 go build {{.LDFLAGS}} -o ../{{.BIN_DIR}}/scriptling-windows-arm64.exe .
+      - GOOS=windows GOARCH=arm64 go build {{.LDFLAGS}} -tags '{{.PLUGIN_TAGS}}' -o ../{{.BIN_DIR}}/scriptling-windows-arm64.exe .
 
-  build-full:
-    desc: Build for current platform with all database plugins compiled in
+  build-slim:
+    desc: Build for current platform without the database plugins compiled in
     dir: scriptling-cli
     cmds:
-      - go build {{.LDFLAGS}} -tags '{{.FULL_TAGS}}' -o ../{{.BIN_DIR}}/scriptling-full .
+      - go build {{.LDFLAGS}} -o ../{{.BIN_DIR}}/scriptling-slim .
 
-  build-full-platforms:
-    desc: Build scriptling-full for all platforms (all database plugins compiled in)
+  build-slim-platforms:
+    desc: Build scriptling-slim for all platforms (no database plugins compiled in)
     cmds:
       - |
         for platform in {{.PLATFORMS}}; do
           export GOOS=${platform%/*} GOARCH=${platform#*/}
           ext=""
           if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
-          go build {{.LDFLAGS}} -tags '{{.FULL_TAGS}}' -o {{.BIN_DIR}}/scriptling-full-${GOOS}-${GOARCH}${ext} ./scriptling-cli
+          go build {{.LDFLAGS}} -o {{.BIN_DIR}}/scriptling-slim-${GOOS}-${GOARCH}${ext} ./scriptling-cli
         done
 
   build-plugins:
@@ -197,14 +198,14 @@ tasks:
         mv "$tmp" "$out" || exit 1
         trap - EXIT
 
-  homebrew-formula-full:
-    desc: Generate the Homebrew formula for scriptling-full (database plugins compiled in)
+  homebrew-formula-slim:
+    desc: Generate the Homebrew formula for scriptling-slim (no database plugins compiled in)
     cmds:
       - |
-        out=../homebrew-tap/Formula/scriptling-full.rb
+        out=../homebrew-tap/Formula/scriptling-slim.rb
         tmp=$(mktemp "${out}.tmp.XXXXXX") || exit 1
         trap 'rm -f "$tmp"' EXIT
-        go run ./scripts/homebrew-formula/ -full > "$tmp" || exit 1
+        go run ./scripts/homebrew-formula/ -slim > "$tmp" || exit 1
         mv "$tmp" "$out" || exit 1
         trap - EXIT
 
@@ -250,7 +251,7 @@ tasks:
         fi
 
         SCRIPTLING_FORMULA_BIN_DIR="$formula_artifacts" go run ./scripts/homebrew-formula/ > "$formula_stage/scriptling.rb" || exit 1
-        SCRIPTLING_FORMULA_BIN_DIR="$formula_artifacts" go run ./scripts/homebrew-formula/ -full > "$formula_stage/scriptling-full.rb" || exit 1
+        SCRIPTLING_FORMULA_BIN_DIR="$formula_artifacts" go run ./scripts/homebrew-formula/ -slim > "$formula_stage/scriptling-slim.rb" || exit 1
         SCRIPTLING_FORMULA_BIN_DIR="$formula_artifacts" go run ./scripts/homebrew-formula/ -plugins > "$formula_stage/scriptling-plugins.rb" || exit 1
 
         # Check if tag exists
@@ -270,5 +271,5 @@ tasks:
         fi
 
         mv "$formula_stage/scriptling.rb" ../homebrew-tap/Formula/scriptling.rb || exit 1
-        mv "$formula_stage/scriptling-full.rb" ../homebrew-tap/Formula/scriptling-full.rb || exit 1
+        mv "$formula_stage/scriptling-slim.rb" ../homebrew-tap/Formula/scriptling-slim.rb || exit 1
         mv "$formula_stage/scriptling-plugins.rb" ../homebrew-tap/Formula/scriptling-plugins.rb || exit 1

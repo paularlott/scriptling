@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// TestServerHandlerCompiledIn proves a scriptling-full-style host — drivers
+// TestServerHandlerCompiledIn proves a default-scriptling-style host — drivers
 // compiled in, no plugin manager at all — serves database handlers: the
 // compiled-in registration happens inside RegisterLibraries, which the
 // server calls on every request environment regardless of manager.

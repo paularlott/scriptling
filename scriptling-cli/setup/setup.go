@@ -222,7 +222,7 @@ func Factories(libdirs []string, allowedPaths []string, disabledLibs []string, s
 	factory := func() extlibs.SandboxInstance {
 		p := scriptling.New()
 		Scriptling(p, libdirs, false, allowedPaths, disabledLibs, secretRegistry, log, dockerSock, podmanSock, netPolicy...)
-		// Compiled-in plugins (scriptling-full builds) must exist in every
+		// Compiled-in plugins (default scriptling builds) must exist in every
 		// spun-up environment, not just the main one; a nil manager means
 		// no external plugins, which RegisterLibraries handles.
 		scriptlingplugin.RegisterLibraries(p, nil, scriptlingplugin.PolicyFromSecurity(firstPolicy(netPolicy), allowedPaths))

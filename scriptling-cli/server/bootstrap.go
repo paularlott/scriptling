@@ -289,6 +289,9 @@ func (s *Server) runSetupScript() error {
 			name = "<script>"
 		}
 		Log.Debug("Running setup script", "source", name)
+		if err := setup.CheckScriptMetadata(p, s.packLoader, s.config.PluginManager, s.config.ScriptSource); err != nil {
+			return fmt.Errorf("setup script %s: %w", name, err)
+		}
 		p.SetSourceFile(name)
 		_, err := p.Eval(string(s.config.ScriptSource))
 		return err
@@ -299,6 +302,9 @@ func (s *Server) runSetupScript() error {
 		content, err := os.ReadFile(s.config.ScriptFile)
 		if err != nil {
 			return fmt.Errorf("failed to read setup script: %w", err)
+		}
+		if err := setup.CheckScriptMetadata(p, s.packLoader, s.config.PluginManager, content); err != nil {
+			return fmt.Errorf("setup script %s: %w", s.config.ScriptFile, err)
 		}
 		p.SetSourceFile(s.config.ScriptFile)
 		_, err = p.Eval(string(content))
@@ -311,6 +317,11 @@ func (s *Server) runSetupScript() error {
 			return err
 		}
 		if found {
+			// The entry's own metadata block is checked before the bundle's
+			// code runs, exactly like a named script file.
+			if err := setup.CheckMainEntryMetadata(p, s.packLoader, s.config.PluginManager, entry); err != nil {
+				return err
+			}
 			if entry.Script != nil {
 				Log.Debug("Running setup script from bundle", "file", entry.ScriptName)
 				p.SetSourceFile(entry.ScriptName)
