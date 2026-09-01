@@ -37,6 +37,9 @@ This directory contains examples and tools for working with Scriptling.
   - `main.go` - Go integration example
   - `README.md` - Extension documentation
 
+- **script-metadata/** - Example of checking a script's inline metadata block before running it
+  - `main.go` - Host version check, dependency resolution, and a refused missing-plugin run
+
 - **logging/** - Example of using the logging library
   - `main.go` - Go integration with logging
   - `example.py` - Scriptling logging example

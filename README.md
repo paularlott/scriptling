@@ -24,6 +24,7 @@ A minimal, sandboxed interpreter for LLM agents to execute code and interact wit
 - **Sandboxed**: No filesystem or network access unless enabled via libraries
 - **MCP support**: Model Context Protocol for LLM integration
 - **CLI tool**: Run scripts, start HTTP server with MCP support
+- **Script metadata**: Scripts declare their requirements — scriptling version, libraries, plugins — in a PEP 723-style `# /// script` block, checked before they run
 - **Extensible**: Create custom functions, libraries, and classes in Go or Scriptling
 - **Linter**: Built-in linter for syntax checks
 - **OpenAPI support**: Generate Scriptling client libraries from OpenAPI specs with o2s tool

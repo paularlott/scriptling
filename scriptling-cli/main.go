@@ -843,6 +843,12 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	extlibs.RegisterSysLibrary(p, argv, stdinReader)
 	extlibs.ReleaseBackgroundTasks()
 
+	// Requirements declared in the script's metadata block are checked before
+	// anything runs, against the environment exactly as the script will see it.
+	if err := checkScriptMetadata(ctx, cmd, p, packLoader); err != nil {
+		return err
+	}
+
 	// Wait for outstanding background tasks before exiting so fire-and-forget
 	// runtime.background() tasks are not killed mid-flight (their output and
 	// logging would be silently lost). Long-running modes — server, JSON-RPC,
@@ -878,6 +884,11 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 			return err
 		}
 		if found {
+			// The entry's own metadata block is checked before the bundle's
+			// code runs, exactly like a named script file.
+			if err := setup.CheckMainEntryMetadata(p, packLoader, pluginManager, entry); err != nil {
+				return err
+			}
 			if entry.Script != nil {
 				err := evalAndCheckExit(p, string(entry.Script))
 				extlibs.WaitBackgroundTasks()

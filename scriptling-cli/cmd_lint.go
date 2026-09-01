@@ -9,6 +9,7 @@ import (
 
 	"github.com/paularlott/cli"
 	"github.com/paularlott/scriptling/lint"
+	"github.com/paularlott/scriptling/metadata"
 )
 
 func runLint(cmd *cli.Command) error {
@@ -24,6 +25,9 @@ func runLint(cmd *cli.Command) error {
 		if err != nil {
 			return err
 		}
+		if data, err := os.ReadFile(file); err == nil {
+			lintMetadata(result, file, data)
+		}
 		return outputLintResult(result, format)
 	}
 
@@ -33,11 +37,30 @@ func runLint(cmd *cli.Command) error {
 			return fmt.Errorf("failed to read from stdin: %w", err)
 		}
 		result := lint.Lint(string(content), &lint.Options{Filename: "stdin"})
+		lintMetadata(result, "stdin", content)
 		return outputLintResult(result, format)
 	}
 
 	cmd.ShowHelp()
 	return nil
+}
+
+// lintMetadata reports a malformed script metadata block as a lint error: a
+// block that cannot be parsed would abort the run at the requirements
+// pre-flight, so lint should say so too. A block that parses is trusted;
+// whether its requirements are met is an environment question, not a
+// source question.
+func lintMetadata(result *lint.Result, filename string, source []byte) {
+	if _, _, err := metadata.Parse(source); err != nil {
+		result.Errors = append(result.Errors, lint.LintError{
+			File:     filename,
+			Line:     1,
+			Message:  err.Error(),
+			Severity: lint.SeverityError,
+			Code:     "metadata",
+		})
+		result.HasErrors = true
+	}
 }
 
 func outputLintResult(result *lint.Result, format string) error {
