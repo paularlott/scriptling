@@ -11,11 +11,12 @@ import (
 	"github.com/paularlott/scriptling/build"
 )
 
-// formulaTemplate works for the lean and full builds: Prefix is the artifact
-// name (scriptling / scriptling-full), Class the formula class, Desc the
-// description line, BinName the executable inside the zip, and InstallAs the
-// name it installs as. Both zips carry the binary named scriptling (the full
-// build replaces the lean one, hence the conflict with the core formula).
+// formulaTemplate works for the compiled-in and slim builds: Prefix is the
+// artifact name (scriptling / scriptling-slim), Class the formula class, Desc
+// the description line, BinName the executable inside the zip, and InstallAs
+// the name it installs as. Both zips carry the binary named scriptling (the
+// slim build swaps in for the compiled-in one, hence the conflict between the
+// two formulas).
 const formulaTemplate = `class {{ .Class }} < Formula
 	desc "{{ .Desc }}"
 	homepage "https://github.com/paularlott/scriptling"
@@ -94,7 +95,7 @@ const pluginsTemplate = `class ScriptlingPlugins < Formula
 			or pass to each run:
 			  scriptling --plugin-dir #{opt_libexec}/plugins script.py
 
-			scriptling-full users do not need this formula — the plugins are
+			scriptling users do not need this formula — the plugins are
 			compiled in.
 		EOS
 	end
@@ -155,7 +156,7 @@ func main() {
 	mode := ""
 	for _, arg := range os.Args[1:] {
 		switch arg {
-		case "-full", "-plugins":
+		case "-slim", "-plugins":
 			mode = arg
 		}
 	}
@@ -174,7 +175,7 @@ func main() {
 			fail("Error executing template: %v", err)
 		}
 		return
-	case "-full":
+	case "-slim":
 		data := struct {
 			Version   string
 			Prefix    string
@@ -187,18 +188,20 @@ func main() {
 			Checksum  checksums
 		}{
 			Version:   build.Version,
-			Prefix:    "scriptling-full",
-			Class:     "ScriptlingFull",
-			Desc:      "Scriptling with the sqlite, sql, valkey and badger database plugins compiled in",
+			Prefix:    "scriptling-slim",
+			Class:     "ScriptlingSlim",
+			Desc:      "Scriptling without the database plugins compiled in (use scriptling-plugins)",
 			BinName:   "scriptling",
 			InstallAs: "scriptling",
 			Conflicts: "scriptling",
-			Caveats: "This formula replaces the plain `scriptling` binary with the full build\n" +
-				"(all database plugins compiled in); brew uninstall scriptling first.\n" +
-				"The scriptling-plugins formula is not needed with this build.\n\n",
+			Caveats: "This formula installs Scriptling without the database plugins\n" +
+				"compiled in. For the database plugins: brew install scriptling\n" +
+				"(this binary plus sqlite/sql/valkey/badger compiled in), or keep\n" +
+				"this lean build and brew install scriptling-plugins, then run with\n" +
+				"SCRIPTLING_PLUGIN_DIR=\"$(brew --prefix)/opt/scriptling-plugins/libexec/plugins\".\n\n",
 		}
 		var err error
-		if data.Checksum, err = checksumSet("scriptling-full"); err != nil {
+		if data.Checksum, err = checksumSet("scriptling-slim"); err != nil {
 			fail("Error opening file: %v", err)
 		}
 		if err := template.Must(template.New("formula").Parse(formulaTemplate)).Execute(os.Stdout, data); err != nil {
@@ -221,14 +224,13 @@ func main() {
 		Version:   build.Version,
 		Prefix:    "scriptling",
 		Class:     "Scriptling",
-		Desc:      "A powerful scripting language with Python-like syntax and Go performance",
+		Desc:      "A powerful scripting language with Python-like syntax and database plugins built in",
 		BinName:   "scriptling",
 		InstallAs: "scriptling",
-		Conflicts: "scriptling-full",
-		Caveats: "For the database plugins: brew install scriptling-full (this binary plus\n" +
-			"sqlite/sql/valkey/badger compiled in), or keep this lean build and\n" +
-			"brew install scriptling-plugins, then run with\n" +
-			"SCRIPTLING_PLUGIN_DIR=\"$(brew --prefix)/opt/scriptling-plugins/libexec/plugins\".\n\n",
+		Conflicts: "scriptling-slim",
+		Caveats: "The sqlite, sql, valkey and badger database plugins are compiled in,\n" +
+			"so the scriptling-plugins formula is not needed. For a leaner\n" +
+			"binary without them: brew install scriptling-slim.\n\n",
 	}
 	var err error
 	if data.Checksum, err = checksumSet("scriptling"); err != nil {

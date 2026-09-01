@@ -47,27 +47,22 @@ While Scriptling is inspired by Python, it has some key differences:
 brew install paularlott/tap/scriptling
 ```
 
-Database support is an optional add-on; the plugin binaries live in their
-own formula:
+The sqlite, sql, valkey and badgerdb database plugins are compiled in.
+
+Prefer a leaner binary without them? `scriptling-slim` installs the same
+CLI with no database drivers — load them at runtime with the
+`scriptling-plugins` formula instead:
 
 ```bash
+brew install paularlott/tap/scriptling-slim
 brew install paularlott/tap/scriptling-plugins
 export SCRIPTLING_PLUGIN_DIR="$(brew --prefix)/opt/scriptling-plugins/libexec/plugins"
 # or pass per run: scriptling --plugin-dir "$(brew --prefix)/opt/scriptling-plugins/libexec/plugins" script.py
 ```
 
-Prefer a single binary with the drivers compiled in? `scriptling-full`
-installs the same CLI as `scriptling` with sqlite, sql, valkey and badgerdb
-built in — mutually exclusive with the core formula, and it makes the
-plugins formula unnecessary:
-
-```bash
-brew install paularlott/tap/scriptling-full
-```
-
 Release zips and plugin binaries are on the
 [releases page](https://github.com/paularlott/scriptling/releases) — every
-zip (lean and full alike) contains the binary named plainly `scriptling`,
+zip (default and slim alike) contains the binary named plainly `scriptling`,
 and the plugins zip for your platform
 (`plugins-linux-arm64.zip` and friends) contains all four binaries named
 plainly (`sqlite`, `sql`, `valkey`, `badgerdb`). Unzip it and point

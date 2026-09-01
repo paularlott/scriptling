@@ -3,4 +3,4 @@ package build
 
 // Version is the current version of Scriptling
 // This should be updated for each release
-const Version = "0.23.1"
+const Version = "0.24.0"
