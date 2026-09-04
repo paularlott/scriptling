@@ -31,10 +31,11 @@
 // "hello" (registered as "plugin.hello"), while "knot" matches only a plugin
 // declaring "knot".
 //
-// Tables under [tool.*] are reserved for tool and host configuration: they
-// are accepted and ignored so a future need cannot break existing scripts.
-// Any other unknown key is an error, so a typo fails loudly instead of
-// silently doing nothing.
+// Tables under [tool.*] are reserved for tool and host configuration:
+// scriptling ignores their contents, and Parse surfaces them as Tools so an
+// embedding host can carry its own declarations in the same block. Any other
+// unknown key is an error, so a typo fails loudly instead of silently doing
+// nothing.
 package metadata
 
 import (
@@ -82,6 +83,25 @@ type Metadata struct {
 	RequiresScriptling string
 	Dependencies       []Dependency
 	Plugins            []PluginRequirement
+
+	// Tools carries the [tool.<name>] tables, keyed by name. Scriptling
+	// ignores their contents; they exist for embedding hosts (knot declares
+	// plugin identity and registrations under [tool.knot]). Values are
+	// normalised: every table is map[string]any and every array is []any,
+	// whatever shapes the TOML decoder chose.
+	Tools map[string]any
+}
+
+// Tool returns the named [tool.<name>] table, with nested values normalised
+// the same way as Tools. It reports false when the name is absent or is not
+// a table.
+func (m Metadata) Tool(name string) (map[string]any, bool) {
+	v, ok := m.Tools[name]
+	if !ok {
+		return nil, false
+	}
+	table, ok := v.(map[string]any)
+	return table, ok
 }
 
 // Parse finds and parses the metadata block. It reports ok=false when the
@@ -151,7 +171,46 @@ func Parse(source []byte) (m Metadata, ok bool, err error) {
 			m.Plugins = append(m.Plugins, req)
 		}
 	}
+	if v, ok := raw["tool"]; ok {
+		table, ok := v.(map[string]any)
+		if !ok {
+			return Metadata{}, false, fmt.Errorf("tool must be a table of tables, e.g. [tool.knot]")
+		}
+		m.Tools = make(map[string]any, len(table))
+		for name, value := range table {
+			m.Tools[name] = normalizeTables(value)
+		}
+	}
 	return m, true, nil
+}
+
+// normalizeTables walks a decoded [tool.*] value and returns an equivalent
+// tree in which every table is map[string]any and every array is []any, so a
+// host consuming Tools never meets the two array shapes the TOML decoder
+// produces ([]any for mixed content, []map[string]any when every element is
+// a table).
+func normalizeTables(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, item := range t {
+			out[k] = normalizeTables(item)
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, item := range t {
+			out[i] = normalizeTables(item)
+		}
+		return out
+	case []map[string]any:
+		out := make([]any, len(t))
+		for i, item := range t {
+			out[i] = normalizeTables(item)
+		}
+		return out
+	}
+	return v
 }
 
 // toAnySlice normalises the two slice shapes BurntSushi can produce for a

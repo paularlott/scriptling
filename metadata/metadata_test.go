@@ -74,6 +74,78 @@ print("hello")
 			t.Errorf("Plugins[%d] = %v, want %v", i, m.Plugins[i], want)
 		}
 	}
+	if knot, ok := m.Tool("knot"); !ok || knot["anything"] != "ignored" {
+		t.Errorf("Tool(knot) = %#v, want anything=\"ignored\"", m.Tools)
+	}
+}
+
+func TestParseToolTables(t *testing.T) {
+	source := `# /// script
+# requires-scriptling = ">=0.24"
+#
+# [tool.knot]
+# version = "1.0.0"
+#
+# [tool.knot.driver]
+# runtime = "docker"
+#
+# [[tool.knot.menus]]
+# label = "Metrics"
+# url = "https://example.internal"
+#
+# [[tool.knot.menus]]
+# label = "Grafana"
+# url = "https://grafana.internal"
+# ///
+print(1)
+`
+	m, ok, err := Parse([]byte(source))
+	if err != nil || !ok {
+		t.Fatalf("Parse: ok=%v err=%v", ok, err)
+	}
+	knot, ok := m.Tool("knot")
+	if !ok {
+		t.Fatalf("Tool(knot) missing: %#v", m.Tools)
+	}
+	if knot["version"] != "1.0.0" {
+		t.Errorf("version = %#v, want 1.0.0", knot["version"])
+	}
+	driver, ok := knot["driver"].(map[string]any)
+	if !ok || driver["runtime"] != "docker" {
+		t.Errorf("driver table = %#v, want runtime=docker", knot["driver"])
+	}
+	// Arrays of tables come back as []any of map[string]any, whichever of
+	// the decoder's two array shapes it produced.
+	menus, ok := knot["menus"].([]any)
+	if !ok || len(menus) != 2 {
+		t.Fatalf("menus = %#v, want two entries as []any", knot["menus"])
+	}
+	first, ok := menus[0].(map[string]any)
+	if !ok || first["label"] != "Metrics" {
+		t.Errorf("menus[0] = %#v, want label=Metrics", menus[0])
+	}
+	if _, ok := m.Tool("absent"); ok {
+		t.Error("Tool(absent) reported found")
+	}
+}
+
+func TestParseToolMustBeATableOfTables(t *testing.T) {
+	_, ok, err := Parse([]byte("# /// script\n# tool = \"knot\"\n# ///\nprint(1)\n"))
+	if ok || err == nil {
+		t.Fatalf("Parse accepted a non-table tool key: ok=%v err=%v", ok, err)
+	}
+	if !strings.Contains(err.Error(), "tool must be a table of tables") {
+		t.Errorf("error %q does not explain the table requirement", err.Error())
+	}
+}
+
+func TestVerifyIgnoresToolTables(t *testing.T) {
+	// Tool tables carry host configuration, never requirements; Verify must
+	// not inspect them.
+	m := Metadata{Tools: map[string]any{"knot": map[string]any{"anything": 42}}}
+	if err := m.Verify(Env{HostVersion: "0.24"}); err != nil {
+		t.Errorf("Verify inspected Tools: %v", err)
+	}
 }
 
 func TestParseEmptyBlock(t *testing.T) {
