@@ -14,8 +14,10 @@ func main() {
 	server.RegisterLibrary(sqliteplugin.Build(server))
 	// The user-facing surface is script: Connection proxies to the plugin
 	// object and hands out the host-side ORM kit, so builder chains cost no
-	// round trips.
+	// round trips. Transaction wraps the remote transaction object begin()
+	// returns for the same reason.
 	server.Wrapper("Connection", relational.ConnectionScriptSource("scriptling.sqlite", relational.SQLiteSpec))
+	server.Wrapper("Transaction", relational.TransactionScriptSource("scriptling.sqlite", relational.SQLiteSpec))
 	for _, entry := range relational.ScriptKitEntries() {
 		if entry.Class {
 			server.RegisterScriptClass(entry.Name, entry.Source)

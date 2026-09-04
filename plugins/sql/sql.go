@@ -6,11 +6,14 @@
 //	conn.execute("create table t (id serial primary key, name text)")
 //	conn.execute("insert into t (name) values (?)", "ada")
 //	rows = conn.query("select * from t where name = ?", "ada")
+//	tx = conn.begin()
+//	tx.execute("insert into t (name) values (?)", "grace")
+//	tx.commit()
 //	conn.close()
 //
 // The DSN scheme picks the driver: postgres:// or postgresql:// for
 // PostgreSQL, mysql:// or mariadb:// for MySQL and MariaDB (both speak the
-// MySQL protocol). The query/execute/close surface is identical to the
+// MySQL protocol). The query/execute/begin/close surface is identical to the
 // sqlite plugin; ? placeholders are translated to $n on PostgreSQL, which
 // also accepts explicit $n. The server address must pass the host's network
 // policy. The same library serves external plugin mode (plugins/sql/cmd)
@@ -66,9 +69,9 @@ func RegisterInProcess(registrar interface {
 const connectHelp = `connect(dsn) -> Connection
 
 Connect to a relational database and return a Connection with the same
-query/execute/close surface as the sqlite plugin. The DSN scheme selects
-the driver: postgres:// (or postgresql://) for PostgreSQL, mysql:// or
-mariadb:// for MySQL and MariaDB. ? placeholders become $n on PostgreSQL.
+query/execute/begin/close surface as the sqlite plugin. The DSN scheme
+selects the driver: postgres:// (or postgresql://) for PostgreSQL, mysql://
+or mariadb:// for MySQL and MariaDB. ? placeholders become $n on PostgreSQL.
 The server address must pass the host's network policy.`
 
 // Build returns the scriptling.sql library. policy is read at call time so an
@@ -98,8 +101,9 @@ func Build(policy plugin.PolicySource) *object.Library {
 		},
 	}
 	constants := map[string]object.Object{
-		"Connection": connectionClass,
-		"Cursor":     relational.CursorClass().Build(),
+		"Connection":  connectionClass,
+		"Cursor":      relational.CursorClass().Build(),
+		"Transaction": relational.TransactionClass().Build(),
 	}
 	// The library registers under the twin name: the user-facing
 	// scriptling.sql module is script source (ScriptModule) wrapping this.

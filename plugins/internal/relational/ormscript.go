@@ -828,7 +828,8 @@ func scriptBool(b bool) string {
 // ConnectionScriptSource returns the Connection class a single-driver
 // plugin registers in external mode: a script-defined wrapper whose methods
 // proxy to the plugin object, with get_orm() returning the host-side kit
-// carrying the plugin's baked dialect.
+// carrying the plugin's baked dialect. TransactionScriptSource is its
+// transaction half.
 func ConnectionScriptSource(pluginName string, spec DialectSpec) string {
 	return `class Connection:
     def __init__(self, *args, **kwargs):
@@ -843,8 +844,40 @@ func ConnectionScriptSource(pluginName string, spec DialectSpec) string {
     def execute(self, *args, **kwargs):
         return scriptling.plugin.call_method(self._plugin_remote, "execute", *args, **kwargs)
 
+    def begin(self):
+        return Transaction(scriptling.plugin.call_method(self._plugin_remote, "begin"))
+
     def close(self):
         return scriptling.plugin.call_method(self._plugin_remote, "close")
+
+    def get_orm(self):
+        return _orm_Kit(self, ` + spec.literals() + `)
+`
+}
+
+// TransactionScriptSource is the external-mode Transaction wrapper for a
+// single-driver plugin: it proxies to the plugin-side transaction object the
+// remote begin() handed back, and get_orm() binds the host-side kit to it so
+// ORM calls join the transaction.
+func TransactionScriptSource(pluginName string, spec DialectSpec) string {
+	return `class Transaction:
+    def __init__(self, remote):
+        self._plugin_remote = remote
+
+    def query(self, *args, **kwargs):
+        return scriptling.plugin.call_method(self._plugin_remote, "query", *args, **kwargs)
+
+    def query_iter(self, *args, **kwargs):
+        return scriptling.plugin.call_method(self._plugin_remote, "query_iter", *args, **kwargs)
+
+    def execute(self, *args, **kwargs):
+        return scriptling.plugin.call_method(self._plugin_remote, "execute", *args, **kwargs)
+
+    def commit(self):
+        return scriptling.plugin.call_method(self._plugin_remote, "commit")
+
+    def rollback(self):
+        return scriptling.plugin.call_method(self._plugin_remote, "rollback")
 
     def get_orm(self):
         return _orm_Kit(self, ` + spec.literals() + `)
@@ -854,7 +887,8 @@ func ConnectionScriptSource(pluginName string, spec DialectSpec) string {
 // ConnectionScriptSourceMultiDriver is the external-mode wrapper for a
 // plugin serving several drivers (the sql plugin): the dialect is picked
 // from the DSN scheme at connect time, host-side, since the wrapper sees
-// the DSN before the plugin does.
+// the DSN before the plugin does. TransactionScriptSourceMultiDriver is its
+// transaction half.
 func ConnectionScriptSourceMultiDriver(pluginName string) string {
 	return `class Connection:
     def __init__(self, *args, **kwargs):
@@ -883,6 +917,9 @@ func ConnectionScriptSourceMultiDriver(pluginName string) string {
             args = [_orm_renumber(args[0], {"n": 0, "numbered": True})] + list(args[1:])
         return scriptling.plugin.call_method(self._plugin_remote, "execute", *args, **kwargs)
 
+    def begin(self):
+        return Transaction(scriptling.plugin.call_method(self._plugin_remote, "begin"), self._pg)
+
     def close(self):
         return scriptling.plugin.call_method(self._plugin_remote, "close")
 
@@ -893,17 +930,63 @@ func ConnectionScriptSourceMultiDriver(pluginName string) string {
 `
 }
 
+// TransactionScriptSourceMultiDriver is the external-mode Transaction
+// wrapper for the sql plugin: same renumbering as its Connection, since the
+// transaction's statements carry ? placeholders on the postgres half.
+func TransactionScriptSourceMultiDriver(pluginName string) string {
+	return `class Transaction:
+    def __init__(self, remote, pg):
+        self._plugin_remote = remote
+        self._pg = pg
+
+    def query(self, *args, **kwargs):
+        if self._pg and len(args) > 0:
+            args = [_orm_renumber(args[0], {"n": 0, "numbered": True})] + list(args[1:])
+        return scriptling.plugin.call_method(self._plugin_remote, "query", *args, **kwargs)
+
+    def query_iter(self, *args, **kwargs):
+        if self._pg and len(args) > 0:
+            args = [_orm_renumber(args[0], {"n": 0, "numbered": True})] + list(args[1:])
+        return scriptling.plugin.call_method(self._plugin_remote, "query_iter", *args, **kwargs)
+
+    def execute(self, *args, **kwargs):
+        if self._pg and len(args) > 0:
+            args = [_orm_renumber(args[0], {"n": 0, "numbered": True})] + list(args[1:])
+        return scriptling.plugin.call_method(self._plugin_remote, "execute", *args, **kwargs)
+
+    def commit(self):
+        return scriptling.plugin.call_method(self._plugin_remote, "commit")
+
+    def rollback(self):
+        return scriptling.plugin.call_method(self._plugin_remote, "rollback")
+
+    def get_orm(self):
+        if self._pg:
+            return _orm_Kit(self, True, False, "ilike", ` + fmt.Sprintf("%q, %q", PostgresSpec.TablesSQL, PostgresSpec.ColumnsSQL) + `)
+        return _orm_Kit(self, False, True, "like", ` + fmt.Sprintf("%q, %q", MySQLSpec.TablesSQL, MySQLSpec.ColumnsSQL) + `)
+`
+}
+
 // ScriptModuleSource returns the full user-facing module for compiled-in
 // registration: the native twin carries the connection; this wrapper adds
-// get_orm() and the shared kit. twinName is the native library name
+// begin(), get_orm() and the shared kit. twinName is the native library name
 // ("scriptling._sqlite"). singleDriver bakes the spec in; a multi-driver
 // plugin (sql) sniffs the DSN scheme instead.
 func ScriptModuleSource(twinName string, singleDriver bool, spec DialectSpec) string {
 	getORM := `        return _orm_Kit(self._c, ` + spec.literals() + `)`
+	txGetORM := `        return _orm_Kit(self, ` + spec.literals() + `)`
 	queryShim := `        return self._c.query(*args, **kwargs)`
 	queryIterShim := `        return self._c.query_iter(*args, **kwargs)`
 	execShim := `        return self._c.execute(*args, **kwargs)`
+	beginShim := `        return Transaction(self._c.begin())`
+	txInit := `        self._t = tx`
+	txQueryShim := `        return self._t.query(*args, **kwargs)`
+	txQueryIterShim := `        return self._t.query_iter(*args, **kwargs)`
+	txExecShim := `        return self._t.execute(*args, **kwargs)`
+	txCommitShim := `        return self._t.commit()`
+	txRollbackShim := `        return self._t.rollback()`
 	initCapture := ""
+	txCtorParam := ""
 	if singleDriver == false {
 		initCapture = `        self._dsn = ""
         if len(args) > 0:
@@ -915,6 +998,9 @@ func ScriptModuleSource(twinName string, singleDriver bool, spec DialectSpec) st
 		getORM = `        if self._pg:
             return _orm_Kit(self._c, True, False, "ilike", ` + fmt.Sprintf("%q, %q", PostgresSpec.TablesSQL, PostgresSpec.ColumnsSQL) + `)
         return _orm_Kit(self._c, False, True, "like", ` + fmt.Sprintf("%q, %q", MySQLSpec.TablesSQL, MySQLSpec.ColumnsSQL) + `)`
+		txGetORM = `        if self._pg:
+            return _orm_Kit(self, True, False, "ilike", ` + fmt.Sprintf("%q, %q", PostgresSpec.TablesSQL, PostgresSpec.ColumnsSQL) + `)
+        return _orm_Kit(self, False, True, "like", ` + fmt.Sprintf("%q, %q", MySQLSpec.TablesSQL, MySQLSpec.ColumnsSQL) + `)`
 		queryShim = `        if self._pg and len(args) > 0:
             args = [_orm_renumber(args[0], {"n": 0, "numbered": True})] + list(args[1:])
         return self._c.query(*args, **kwargs)`
@@ -924,6 +1010,19 @@ func ScriptModuleSource(twinName string, singleDriver bool, spec DialectSpec) st
 		execShim = `        if self._pg and len(args) > 0:
             args = [_orm_renumber(args[0], {"n": 0, "numbered": True})] + list(args[1:])
         return self._c.execute(*args, **kwargs)`
+		beginShim = `        return Transaction(self._c.begin(), self._pg)`
+		txCtorParam = ", pg"
+		txInit = `        self._t = tx
+        self._pg = pg`
+		txQueryShim = `        if self._pg and len(args) > 0:
+            args = [_orm_renumber(args[0], {"n": 0, "numbered": True})] + list(args[1:])
+        return self._t.query(*args, **kwargs)`
+		txQueryIterShim = `        if self._pg and len(args) > 0:
+            args = [_orm_renumber(args[0], {"n": 0, "numbered": True})] + list(args[1:])
+        return self._t.query_iter(*args, **kwargs)`
+		txExecShim = `        if self._pg and len(args) > 0:
+            args = [_orm_renumber(args[0], {"n": 0, "numbered": True})] + list(args[1:])
+        return self._t.execute(*args, **kwargs)`
 	}
 	module := `import ` + twinName + ` as _n
 
@@ -937,11 +1036,30 @@ class Connection:
 ` + queryIterShim + `
     def execute(self, *args, **kwargs):
 ` + execShim + `
+    def begin(self):
+` + beginShim + `
     def close(self):
         return self._c.close()
 
     def get_orm(self):
 ` + getORM + `
+
+
+class Transaction:
+    def __init__(self, tx` + txCtorParam + `):
+` + txInit + `
+    def query(self, *args, **kwargs):
+` + txQueryShim + `
+    def query_iter(self, *args, **kwargs):
+` + txQueryIterShim + `
+    def execute(self, *args, **kwargs):
+` + txExecShim + `
+    def commit(self):
+` + txCommitShim + `
+    def rollback(self):
+` + txRollbackShim + `
+    def get_orm(self):
+` + txGetORM + `
 
 
 def connect(path=":memory:", timeout_ms=5000):

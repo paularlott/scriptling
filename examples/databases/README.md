@@ -14,13 +14,16 @@ there are really only two surfaces to learn.
 | `valkey.py` | `scriptling.valkey` | a Valkey or Redis server |
 | `badgerdb.py` | `scriptling.badgerdb` | nothing (embedded) |
 | `orm.py` | `scriptling.sqlite` | nothing (SQLite); set `SCRIPTLING_ORM_SQLITE_PATH` to place the file |
+| `transactions.py` | either relational plugin | nothing by default (SQLite); set `SCRIPTLING_TX_BACKEND` to `mariadb`, `mysql` or `postgres` for a server |
 
 ## Running the examples
 
 The plugins are available in two modes — the scripts are identical either way:
 
 The `orm.py` example covers `conn.get_orm()` — the dict-shaped table helper
-shared by the relational plugins.
+shared by the relational plugins. The `transactions.py` example covers
+`conn.begin()` with `commit()`/`rollback()` (and the ORM inside a
+transaction) on the same shared surface.
 
 ```bash
 # 1. A build with the plugins compiled in (task build, or any subset:

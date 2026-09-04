@@ -14,8 +14,10 @@ func main() {
 	server.RegisterLibrary(sqlplugin.Build(server))
 	// The user-facing surface is script: Connection proxies to the plugin
 	// object and hands out the host-side ORM kit, so builder chains cost no
-	// round trips.
+	// round trips. Transaction wraps the remote transaction object begin()
+	// returns, renumbering ? placeholders for the postgres half.
 	server.Wrapper("Connection", relational.ConnectionScriptSourceMultiDriver("scriptling.sql"))
+	server.Wrapper("Transaction", relational.TransactionScriptSourceMultiDriver("scriptling.sql"))
 	for _, entry := range relational.ScriptKitEntries() {
 		if entry.Class {
 			server.RegisterScriptClass(entry.Name, entry.Source)

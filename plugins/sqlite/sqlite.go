@@ -6,6 +6,9 @@
 //	conn.execute("create table t (id integer primary key, name text)")
 //	conn.execute("insert into t (name) values (?)", "ada")
 //	rows = conn.query("select * from t where name = ?", "ada")
+//	tx = conn.begin()
+//	tx.execute("insert into t (name) values (?)", "grace")
+//	tx.commit()
 //	conn.close()
 //
 // The database file must fall inside the host's allowed paths (":memory:"
@@ -99,8 +102,9 @@ func Build(policy plugin.PolicySource) *object.Library {
 		},
 	}
 	constants := map[string]object.Object{
-		"Connection": connectionClass,
-		"Cursor":     relational.CursorClass().Build(),
+		"Connection":  connectionClass,
+		"Cursor":      relational.CursorClass().Build(),
+		"Transaction": relational.TransactionClass().Build(),
 	}
 	// The library registers under the twin name: the user-facing
 	// scriptling.sqlite module is script source (ScriptModule) wrapping this.
@@ -193,5 +197,8 @@ func open(policy plugin.PolicySource, path string, timeoutMilliseconds int64) (*
 		_ = db.Close()
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
-	return &relational.Conn{DB: db}, nil
+	// A private in-memory database runs on the one pooled connection, so a
+	// transaction holding it starves connection-level calls; the flag makes
+	// those fail fast instead of blocking on the exhausted pool.
+	return &relational.Conn{DB: db, SingleConn: isMemory && !sharedCache}, nil
 }
