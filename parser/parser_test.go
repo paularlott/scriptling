@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -1353,5 +1354,93 @@ func TestFromImportStatementHyphenModule(t *testing.T) {
 	p.ParseProgram()
 	if len(p.Errors()) == 0 {
 		t.Fatal("expected a parser error for hyphenated from-import module")
+	}
+}
+
+// TestMultilineConditionalExpression covers conditional expressions written
+// across lines inside brackets, where newlines are whitespace:
+//   [ {..}
+//     if cond
+//     else {..}, ]
+// Regression: the same-line-only IF guard used to kill the ternary in
+// bracket contexts, derailing the parse into a typed-nil statement.
+func TestMultilineConditionalExpression(t *testing.T) {
+	input := `items = [
+	{"x": 1}
+	if flag
+	else {"x": 2},
+	{"y": 3},
+]`
+
+	l := lexer.New(input)
+	p := New(l)
+	program := p.ParseProgram()
+	checkParserErrors(t, p)
+
+	if len(program.Statements) != 1 {
+		t.Fatalf("statements = %d, want 1 (one assignment)", len(program.Statements))
+	}
+	assign, ok := program.Statements[0].(*ast.AssignStatement)
+	if !ok {
+		t.Fatalf("statement = %T, want *ast.AssignStatement", program.Statements[0])
+	}
+	list, ok := assign.Value.(*ast.ListLiteral)
+	if !ok {
+		t.Fatalf("value = %T, want *ast.ListLiteral", assign.Value)
+	}
+	if len(list.Elements) != 2 {
+		t.Fatalf("elements = %d, want 2", len(list.Elements))
+	}
+	if _, ok := list.Elements[0].(*ast.ConditionalExpression); !ok {
+		t.Fatalf("first element = %T, want *ast.ConditionalExpression", list.Elements[0])
+	}
+}
+
+// TestStatementIfAfterNewlineNotConditional ensures the same-line guard
+// still applies at statement level: an if on a new line is a statement.
+func TestStatementIfAfterNewlineNotConditional(t *testing.T) {
+	input := `a = 1
+if a > 0:
+	b = 2`
+
+	l := lexer.New(input)
+	p := New(l)
+	program := p.ParseProgram()
+	checkParserErrors(t, p)
+
+	if len(program.Statements) != 2 {
+		t.Fatalf("statements = %d, want 2 (assign + if)", len(program.Statements))
+	}
+	if _, ok := program.Statements[1].(*ast.IfStatement); !ok {
+		t.Fatalf("second statement = %T, want *ast.IfStatement", program.Statements[1])
+	}
+}
+
+// TestBrokenIfDoesNotProduceNilStatement covers the malformed-if error
+// path: parseIfStatement returns a nil *ast.IfStatement on failure, which
+// as an ast.Statement interface is non-nil and used to reach the analyzer
+// as a typed nil (nil pointer dereference). parseStatement must normalize
+// it to a true nil so callers' nil checks work.
+func TestBrokenIfDoesNotProduceNilStatement(t *testing.T) {
+	input := `def f():
+	if True
+	else:
+		pass
+	return 1`
+
+	l := lexer.New(input)
+	p := New(l)
+	program := p.ParseProgram()
+	if len(p.Errors()) == 0 {
+		t.Fatal("malformed if should report parser errors")
+	}
+	for i, stmt := range program.Statements {
+		if stmt == nil {
+			t.Fatalf("statement %d is a nil interface", i)
+		}
+		v := reflect.ValueOf(stmt)
+		if (v.Kind() == reflect.Ptr || v.Kind() == reflect.Map) && v.IsNil() {
+			t.Fatalf("statement %d is a typed-nil %T", i, stmt)
+		}
 	}
 }

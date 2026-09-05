@@ -2,6 +2,7 @@ package parser
 
 import (
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 
@@ -259,6 +260,24 @@ func (p *Parser) ParseProgram() *ast.Program {
 }
 
 func (p *Parser) parseStatement() ast.Statement {
+	stmt := p.parseStatementInner()
+	if stmt == nil {
+		return nil
+	}
+	// Statement parsers signal failure by returning a nil concrete pointer,
+	// which as an interface is NOT nil and would slip past callers' nil
+	// checks (the analyzer then dereferences it). Normalize to a true nil.
+	v := reflect.ValueOf(stmt)
+	switch v.Kind() {
+	case reflect.Ptr, reflect.Map, reflect.Slice, reflect.Interface:
+		if v.IsNil() {
+			return nil
+		}
+	}
+	return stmt
+}
+
+func (p *Parser) parseStatementInner() ast.Statement {
 	switch p.curToken.Type {
 	case token.IMPORT:
 		return p.parseImportStatement()
@@ -711,9 +730,12 @@ func (p *Parser) parseExpression(precedence int) ast.Expression {
 			return leftExp
 		}
 
-		// Special handling for IF token: only treat as conditional expression
-		// if it appears on the same line (no newline was skipped)
-		if peekType == token.IF && p.skippedNewline {
+		// Special handling for IF token at statement level: only treat as a
+		// conditional expression if it appears on the same line, so
+		// "x = 1\nif cond:" stays a statement. Inside brackets newlines are
+		// whitespace, and "x if cond\nelse y" written across lines is a
+		// perfectly valid conditional expression.
+		if peekType == token.IF && p.skippedNewline && p.parenDepth == 0 {
 			return leftExp
 		}
 
