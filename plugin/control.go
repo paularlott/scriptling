@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 
+	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -363,5 +364,8 @@ func metadataToDict(meta Metadata) *object.Dict {
 		"functions":    &object.List{Elements: functions},
 		"classes":      &object.List{Elements: classes},
 		"constants":    &object.List{Elements: constants},
+		// Custom is the plugin's opaque host-defined manifest data (or None
+		// when it declared none); scriptling carries it verbatim.
+		"custom": conversion.FromGo(meta.Custom),
 	})
 }

@@ -91,6 +91,7 @@ var RuntimeState = struct {
 	PluginName        string
 	PluginVersion     string
 	PluginDescription string
+	PluginMetadata    map[string]any           // opaque host-defined manifest data (runtime.plugin.serve metadata=)
 	PluginFunctions   map[string]string        // function name → "library.function" handler
 	PluginConstants   map[string]object.Object // constant name → value
 	PluginClasses     map[string]string        // exposed class name → "library.ClassName" handler
@@ -199,6 +200,7 @@ func ResetRuntime() {
 	RuntimeState.PluginName = ""
 	RuntimeState.PluginVersion = ""
 	RuntimeState.PluginDescription = ""
+	RuntimeState.PluginMetadata = nil
 	RuntimeState.PluginFunctions = make(map[string]string)
 	RuntimeState.PluginConstants = make(map[string]object.Object)
 	RuntimeState.PluginClasses = make(map[string]string)

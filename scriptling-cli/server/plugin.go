@@ -26,6 +26,7 @@ func (s *Server) buildPluginServer() {
 	}
 	version := extlibs.RuntimeState.PluginVersion
 	desc := extlibs.RuntimeState.PluginDescription
+	metadata := extlibs.RuntimeState.PluginMetadata
 	handlers := make(map[string]string, len(extlibs.RuntimeState.PluginFunctions))
 	for k, v := range extlibs.RuntimeState.PluginFunctions {
 		handlers[k] = v
@@ -41,6 +42,9 @@ func (s *Server) buildPluginServer() {
 	extlibs.RuntimeState.RUnlock()
 
 	ps := scriptlingplugin.NewServer(name, version, desc)
+	if metadata != nil {
+		ps.SetMetadata(metadata)
+	}
 
 	for funcName, handlerRef := range handlers {
 		ref := handlerRef // capture for closure

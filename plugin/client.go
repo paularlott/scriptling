@@ -1270,6 +1270,7 @@ func (c *Client) handshake(ctx context.Context) error {
 		Capabilities: result.Capabilities,
 		Scheme:       result.Scheme,
 		Schema:       result.Schema,
+		Custom:       result.Library.Custom,
 	}
 	c.handshakeDone = true
 	return nil

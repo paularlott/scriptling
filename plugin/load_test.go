@@ -32,6 +32,7 @@ func scriptlingHelper() {
 	addFn.Function(func(a, b int) int { return a + b })
 
 	server := NewServer("declared", "2.3.4", "load test plugin")
+	server.SetMetadata(map[string]any{"kind": "loadtest", "count": float64(3)})
 	server.RegisterFunc("echo", echoFn)
 	server.RegisterFunc("add", addFn)
 	_ = server.Run()
@@ -211,6 +212,12 @@ func TestLoadPathScriptlingMode(t *testing.T) {
 	// Version still comes from the handshake even though name was overridden.
 	if v := client.Metadata().Version; v != "2.3.4" {
 		t.Fatalf("expected version 2.3.4 from handshake, got %q", v)
+	}
+	// Custom manifest data set via Server.SetMetadata survives the handshake
+	// verbatim (scriptling carries it, never interprets it).
+	custom := client.Metadata().Custom
+	if custom == nil || custom["kind"] != "loadtest" || custom["count"] != float64(3) {
+		t.Fatalf("expected custom manifest {kind:loadtest, count:3}, got %#v", custom)
 	}
 
 	result, err := client.CallFunction(ctx, "add", []Value{
@@ -503,6 +510,29 @@ scriptling.plugin.describe("loaded")["version"]
 		}
 		if s, ok := result.(*object.String); !ok || s.StringValue() != "2.3.4" {
 			t.Fatalf("expected 2.3.4 from handshake, got %#v", result)
+		}
+	})
+
+	t.Run("describe_exposes_custom_manifest_data", func(t *testing.T) {
+		// The helper declares metadata={"kind":"loadtest","count":3} via
+		// Server.SetMetadata; describe() surfaces it under "custom" verbatim.
+		result, err := p.Eval(`
+import scriptling.plugin
+d = scriptling.plugin.describe("loaded")["custom"]
+[d["kind"], d["count"]]
+`)
+		if err != nil {
+			t.Fatalf("Eval: %v", err)
+		}
+		list, ok := result.(*object.List)
+		if !ok || len(list.Elements) != 2 {
+			t.Fatalf("expected [kind, count], got %#v", result)
+		}
+		if s, ok := list.Elements[0].(*object.String); !ok || s.StringValue() != "loadtest" {
+			t.Fatalf("expected kind=loadtest, got %#v", list.Elements[0])
+		}
+		if n, ok := list.Elements[1].(*object.Float); !ok || n.FloatValue() != 3 {
+			t.Fatalf("expected count=3, got %#v", list.Elements[1])
 		}
 	})
 }

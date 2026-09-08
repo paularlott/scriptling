@@ -45,6 +45,25 @@ var PluginSubLibrary = object.NewLibrary(RuntimePluginLibraryName, map[string]*o
 				description = d
 			}
 
+			// Optional opaque host-defined manifest data: metadata={...}. A
+			// host reads it verbatim from the plugin handshake to learn
+			// plugin-specific declarations without running plugin code.
+			var metadata map[string]any
+			if mObj := kwargs.Get("metadata"); mObj != nil {
+				dict, ok := mObj.(*object.Dict)
+				if !ok {
+					return errors.NewError("serve: metadata must be a dict")
+				}
+				metadata = make(map[string]any, len(dict.Pairs))
+				for _, pair := range dict.Pairs {
+					key, e := pair.Key.AsString()
+					if e != nil {
+						return errors.NewError("serve: metadata keys must be strings")
+					}
+					metadata[key] = pluginMetadataValue(pair.Value)
+				}
+			}
+
 			RuntimeState.Lock()
 			if RuntimeState.ServerStarted {
 				fmt.Fprintf(os.Stderr, "warning: runtime.plugin.serve() called after start_server() — plugin identity will not be used\n")
@@ -52,6 +71,7 @@ var PluginSubLibrary = object.NewLibrary(RuntimePluginLibraryName, map[string]*o
 			RuntimeState.PluginName = name
 			RuntimeState.PluginVersion = version
 			RuntimeState.PluginDescription = description
+			RuntimeState.PluginMetadata = metadata
 			RuntimeState.Unlock()
 
 			return &object.Null{}
@@ -67,6 +87,9 @@ Parameters:
   name (str):        Library name (e.g. "myservice"). Clients import it as plugin.<name>.
   version (str):     Optional version string (e.g. "1.0.0").
   description (str): Optional human-readable description.
+  metadata (dict):   Optional opaque host-defined manifest data, carried verbatim
+                     in the plugin handshake. Scriptling never interprets it; a
+                     host reads it to learn plugin-specific declarations.
 
 Example:
   import scriptling.runtime.plugin as plugin_srv
@@ -264,5 +287,41 @@ func RegisterRuntimePluginLibrary(registrar interface{ RegisterLibrary(*object.L
 	registrar.RegisterLibrary(PluginSubLibrary)
 	if v, ok := runtimeParentLibraries.LoadAndDelete(registrar); ok {
 		v.(*object.Library).Constants()["plugin"] = PluginSubLibrary.GetDict()
+	}
+}
+
+// pluginMetadataValue converts a scriptling object in a serve(metadata=...)
+// dict into a plain Go value the plugin manifest carries verbatim. It handles
+// the JSON-shaped scalars, lists and nested dicts a manifest needs; anything
+// else falls back to its string form. The manifest is opaque to scriptling —
+// the host is the only thing that interprets it.
+func pluginMetadataValue(v object.Object) any {
+	switch t := v.(type) {
+	case *object.String:
+		return t.StringValue()
+	case *object.Integer:
+		return t.IntValue()
+	case *object.Float:
+		return t.FloatValue()
+	case *object.Boolean:
+		return t.BoolValue()
+	case *object.Null:
+		return nil
+	case *object.List:
+		out := make([]any, 0, len(t.Elements))
+		for _, e := range t.Elements {
+			out = append(out, pluginMetadataValue(e))
+		}
+		return out
+	case *object.Dict:
+		out := make(map[string]any, len(t.Pairs))
+		for _, pair := range t.Pairs {
+			if key, err := pair.Key.AsString(); err == nil {
+				out[key] = pluginMetadataValue(pair.Value)
+			}
+		}
+		return out
+	default:
+		return v.Inspect()
 	}
 }

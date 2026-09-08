@@ -24,6 +24,7 @@ type Server struct {
 	name          string
 	version       string
 	description   string
+	metadata      map[string]any
 	functions     map[string]*funcEntry
 	classes       map[string]*classEntry
 	constants     map[string]Value
@@ -86,6 +87,17 @@ func NewServer(name, version, description string) *Server {
 		constants:   make(map[string]Value),
 		objects:     make(map[string]*serverObject),
 	}
+}
+
+// SetMetadata attaches opaque, host-defined manifest data the plugin declares
+// at handshake. Scriptling carries it verbatim and never interprets it; a host
+// reads it via Client.Metadata().Custom to learn plugin-specific declarations
+// without running any plugin code. The data must be static (constant across
+// runs) so a host loading the plugin on different machines sees the same
+// manifest. Call it once at construction, before Run.
+func (s *Server) SetMetadata(metadata map[string]any) *Server {
+	s.metadata = metadata
+	return s
 }
 
 func (s *Server) RegisterFunc(name string, builder *object.FunctionBuilder) *Server {
@@ -327,6 +339,7 @@ func (s *Server) dispatch(ctx context.Context, method string, params any) (any, 
 				Name:        s.name,
 				Version:     s.version,
 				Description: s.description,
+				Custom:      s.metadata,
 			},
 			Capabilities: []string{"remote_objects", "policy"},
 			Scheme:       s.fetcherScheme,

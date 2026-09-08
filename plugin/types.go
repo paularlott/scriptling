@@ -47,6 +47,11 @@ type Metadata struct {
 	Capabilities []string `json:"capabilities,omitempty"`
 	Scheme       string   `json:"scheme,omitempty"` // the source scheme this plugin's fetcher serves
 	Schema       Schema   `json:"schema"`
+	// Custom is opaque host-defined manifest data the plugin declares at
+	// handshake (Server.SetMetadata). Scriptling carries it verbatim and never
+	// interprets it; a host reads it to learn plugin-specific declarations
+	// without running plugin code. Nil when the plugin declared none.
+	Custom map[string]any `json:"custom,omitempty"`
 }
 
 // Schema describes functions, classes, and constants exposed by a plugin.
@@ -166,6 +171,10 @@ type libraryInfo struct {
 	Name        string `json:"name"`
 	Version     string `json:"version"`
 	Description string `json:"description"`
+	// Custom is opaque host-defined manifest data (Server.SetMetadata). Sent
+	// only when the plugin declared some; older plugins omit it and older
+	// hosts ignore it, so it is fully backward-compatible.
+	Custom map[string]any `json:"custom,omitempty"`
 }
 
 type functionCallParams struct {
