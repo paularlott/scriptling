@@ -95,6 +95,13 @@ var RuntimeState = struct {
 	PluginFunctions   map[string]string        // function name → "library.function" handler
 	PluginConstants   map[string]object.Object // constant name → value
 	PluginClasses     map[string]string        // exposed class name → "library.ClassName" handler
+	// Plugin fetcher registration (runtime.plugin.register_fetcher): the
+	// scheme the peer serves sources under, plus the "library.function"
+	// handlers answering read (required) and glob (optional; empty serves
+	// no matches). Set together, before start_server.
+	PluginFetchScheme string
+	PluginFetchRead   string
+	PluginFetchGlob   string
 
 	// Cleanup functions registered by libraries
 	cleanupFuncs []func()

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -9,6 +10,7 @@ import (
 	scriptling "github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/object"
+	plugin "github.com/paularlott/scriptling/plugin"
 	scriptlingplugin "github.com/paularlott/scriptling/plugin"
 )
 
@@ -69,9 +71,94 @@ func (s *Server) buildPluginServer() {
 		Log.Info("Registered plugin class", "name", className, "handler", classRef)
 	}
 
+	// A script-declared fetcher (runtime.plugin.register_fetcher): the peer
+	// serves sources from script handlers — how a script peer carries a
+	// host's declared assets inside itself.
+	if scheme, read := extlibs.RuntimeState.PluginFetchScheme, extlibs.RuntimeState.PluginFetchRead; read != "" {
+		ps.RegisterFetcher(scheme, scriptFetcher{s: s, read: read, glob: extlibs.RuntimeState.PluginFetchGlob})
+		Log.Info("Registered plugin fetcher", "scheme", scheme, "read", read)
+	}
+
 	Log.Info("Plugin server ready", "name", name, "version", version,
 		"functions", len(handlers), "constants", len(constants), "classes", len(classes))
 	s.pluginServer = ps
+}
+
+// scriptFetcher adapts script handlers to the plugin.Fetcher interface: the
+// read ref answers (source, path) with the file's contents, the optional
+// glob ref answers (source, pattern) with a list of {name, is_dir} dicts.
+// Conventions the handlers are held to: None from read is a miss
+// (ErrFetchNotFound), a script error fails the call, and the contents may
+// be a string or bytes (bytes survive the wire's base64 intact).
+type scriptFetcher struct {
+	s    *Server
+	read string
+	glob string // optional; empty serves no glob matches
+}
+
+func (f scriptFetcher) Read(ctx context.Context, source, path string) ([]byte, error) {
+	res := f.s.runPluginHandler(ctx, f.read,
+		[]object.Object{object.NewString(source), object.NewString(path)}, nil)
+	if res == nil {
+		return nil, plugin.ErrFetchNotFound
+	}
+	if err, isErr := res.(*object.Error); isErr {
+		return nil, errors.New(err.Message)
+	}
+	if _, isNull := res.(*object.Null); isNull {
+		return nil, plugin.ErrFetchNotFound
+	}
+	switch v := res.(type) {
+	case *object.String:
+		return []byte(v.StringValue()), nil
+	case *object.Bytes:
+		return v.BytesValue(), nil
+	}
+	return nil, fmt.Errorf("fetch read %s returned %s, want string, bytes or None", f.read, res.Type())
+}
+
+func (f scriptFetcher) Glob(ctx context.Context, source, pattern string) ([]plugin.FetchEntry, error) {
+	if f.glob == "" {
+		// No glob handler: no matches is a valid answer per the contract.
+		return nil, nil
+	}
+	res := f.s.runPluginHandler(ctx, f.glob,
+		[]object.Object{object.NewString(source), object.NewString(pattern)}, nil)
+	if res == nil {
+		return nil, nil
+	}
+	if err, isErr := res.(*object.Error); isErr {
+		return nil, errors.New(err.Message)
+	}
+	if _, isNull := res.(*object.Null); isNull {
+		return nil, nil
+	}
+	list, isList := res.(*object.List)
+	if !isList {
+		return nil, fmt.Errorf("fetch glob %s returned %s, want a list", f.glob, res.Type())
+	}
+	entries := make([]plugin.FetchEntry, 0, len(list.Elements))
+	for _, el := range list.Elements {
+		dict, isDict := el.(*object.Dict)
+		if !isDict {
+			continue
+		}
+		entry := plugin.FetchEntry{}
+		if namePair, ok := dict.GetByString("name"); ok {
+			if name, err := namePair.Value.AsString(); err == nil {
+				entry.Name = name
+			}
+		}
+		if dirPair, ok := dict.GetByString("is_dir"); ok {
+			if dir, err := dirPair.Value.AsBool(); err == nil {
+				entry.IsDir = dir
+			}
+		}
+		if entry.Name != "" {
+			entries = append(entries, entry)
+		}
+	}
+	return entries, nil
 }
 
 // resolveClass imports the module and evaluates the class reference on a fresh

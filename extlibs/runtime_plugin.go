@@ -181,6 +181,79 @@ Imperative form:
   plugin.register_function("add", "handlers.add")`,
 	},
 
+	"register_fetcher": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.MinArgs(args, 2); err != nil {
+				return err
+			}
+
+			scheme, err := args[0].AsString()
+			if err != nil {
+				return err
+			}
+			read, err := args[1].AsString()
+			if err != nil {
+				return err
+			}
+			glob := ""
+			if len(args) >= 3 {
+				glob, err = args[2].AsString()
+				if err != nil {
+					return err
+				}
+			}
+
+			// Same scheme rules the host-side RegisterFetcher panics on,
+			// refused here as a script error instead: a letter-led scheme,
+			// none of the built-in source schemes.
+			if scheme == "" || scheme == "http" || scheme == "https" || scheme == "file" {
+				return errors.NewError("register_fetcher: scheme must not be empty or a built-in (http, https, file)")
+			}
+			for i, r := range scheme {
+				switch {
+				case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z':
+				case i > 0 && (r >= '0' && r <= '9' || r == '+' || r == '-' || r == '.'):
+				default:
+					return errors.NewError("register_fetcher: invalid scheme %q", scheme)
+				}
+			}
+
+			RuntimeState.Lock()
+			if RuntimeState.ServerStarted {
+				fmt.Fprintf(os.Stderr, "warning: runtime.plugin.register_fetcher called after start_server() — fetcher will not be served\n")
+			}
+			RuntimeState.PluginFetchScheme = scheme
+			RuntimeState.PluginFetchRead = read
+			RuntimeState.PluginFetchGlob = glob
+			RuntimeState.Unlock()
+
+			return &object.Null{}
+		},
+		HelpText: `register_fetcher(scheme, read_handler, glob_handler=None) - Serve sources from this plugin server
+
+Registers a fetcher so the host can ask this peer for files on demand — how a
+script peer serves a host's declared assets (an icon, a logo) from strings or
+bytes inside the script itself, the scriptling equivalent of a Go peer's
+embedded assets. The host calls the handlers with the full source string and
+a slash path relative to it.
+
+Parameters:
+  scheme (str):        The source scheme to serve, e.g. "notes" (the host asks
+                       for notes://<path>). Must not be http, https or file.
+  read_handler (str):  A "library.function" ref called as fn(source, path).
+                       Return the file's contents (string or bytes); return
+                       None for a miss (not found); any other error fails the
+                       read.
+  glob_handler (str):  Optional "library.function" ref called as fn(source,
+                       pattern); return a list of {name, is_dir} dicts.
+                       Without it the fetcher reports no glob matches.
+
+Example:
+  import scriptling.runtime.plugin as plugin_srv
+
+  plugin_srv.register_fetcher("notes", "impl.fetch_read")`,
+	},
+
 	"register_constant": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if err := errors.MinArgs(args, 2); err != nil {
