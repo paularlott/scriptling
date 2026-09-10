@@ -65,6 +65,9 @@ var ResponseClass = &object.Class{
 							return &object.Exception{
 								ExceptionType: "HTTPError",
 								Message:       fmt.Sprintf("HTTPError: %d %s Error", statusCode, kind),
+								// raise_for_status() raises on 4xx/5xx: the returned
+								// exception is propagating, not a mere value.
+								Raised: true,
 							}
 						}
 						return &object.Null{}

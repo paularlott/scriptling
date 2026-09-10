@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/paularlott/scriptling"
+	"github.com/paularlott/scriptling/extlibs/netsecurity"
 	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/scriptling/stdlib"
 )
@@ -627,5 +628,71 @@ ok
 
 	if count, _ := result.AsInt(); count != 6 {
 		t.Errorf("Expected 6 successful responses, got %d", count)
+	}
+}
+
+// TestRaiseForStatusPropagatesThroughTryExcept is the end-to-end regression for
+// the exception-propagation work: raise_for_status() on a 4xx must produce a
+// RAISED exception that unwinds through the evaluator and is caught by an
+// enclosing `except Exception`. A prior version marked it as a non-raised value
+// (Raised=false), so it silently escaped every handler.
+func TestRaiseForStatusPropagatesThroughTryExcept(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(404)
+	}))
+	defer srv.Close()
+
+	p := scriptling.New()
+	stdlib.RegisterAll(p)
+	RegisterRequestsLibrary(p, &netsecurity.Config{AllowIPLiterals: true, AllowLoopback: true})
+
+	result, err := p.Eval(`
+import requests
+outcome = "not-caught"
+try:
+    r = requests.get("` + srv.URL + `", timeout=10)
+    r.raise_for_status()
+    outcome = "no-raise"
+except Exception as e:
+    outcome = "caught:" + str(e)
+outcome
+`)
+	if err != nil {
+		t.Fatalf("Eval failed (HTTPError escaped all handlers?): %v", err)
+	}
+	got := result.Inspect()
+	if !findStr(got, "caught:") || !findStr(got, "HTTPError") {
+		t.Fatalf("outcome = %q, want it caught as an HTTPError", got)
+	}
+}
+
+// TestRaiseForStatusOkDoesNotRaise confirms a 2xx response does not produce a
+// spurious raise through the same try/except path.
+func TestRaiseForStatusOkDoesNotRaise(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	p := scriptling.New()
+	stdlib.RegisterAll(p)
+	RegisterRequestsLibrary(p, &netsecurity.Config{AllowIPLiterals: true, AllowLoopback: true})
+
+	result, err := p.Eval(`
+import requests
+outcome = "before"
+try:
+    r = requests.get("` + srv.URL + `", timeout=10)
+    r.raise_for_status()
+    outcome = "ok"
+except Exception as e:
+    outcome = "unexpected:" + str(e)
+outcome
+`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	if got := result.Inspect(); got != "ok" {
+		t.Fatalf("outcome = %q, want %q", got, "ok")
 	}
 }

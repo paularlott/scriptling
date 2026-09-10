@@ -27,6 +27,8 @@ func NewPermissionError(format string, args ...interface{}) *object.Exception {
 	return &object.Exception{
 		Message:       fmt.Sprintf(format, args...),
 		ExceptionType: object.ExceptionTypePermissionError,
+		// Security violations always unwind the stack; they are a raise.
+		Raised: true,
 	}
 }
 

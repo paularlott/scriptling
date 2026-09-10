@@ -4,8 +4,35 @@ import (
 	"context"
 
 	"github.com/paularlott/scriptling/errors"
+	"github.com/paularlott/scriptling/evaliface"
 	"github.com/paularlott/scriptling/object"
 )
+
+// isCallable reports whether obj can be called as a function/predicate.
+func isCallable(obj object.Object) bool {
+	switch obj.(type) {
+	case *object.Builtin, *object.Function, *object.LambdaFunction, *object.BoundMethod, *object.Class:
+		return true
+	default:
+		return false
+	}
+}
+
+// callCallable invokes any callable (builtin, def, lambda, bound method) with
+// the given positional args and returns its result. Errors and raised
+// exceptions are returned as-is so callers can propagate them. Used by the
+// itertools higher-order functions so they accept script-defined predicates,
+// not only builtins.
+func callCallable(ctx context.Context, fn object.Object, args ...object.Object) object.Object {
+	if builtin, ok := fn.(*object.Builtin); ok {
+		return builtin.Fn(ctx, object.NewKwargs(nil), args...)
+	}
+	eval := evaliface.FromContext(ctx)
+	if eval == nil {
+		return errors.NewError("evaluator not available in context")
+	}
+	return eval.CallObjectFunction(ctx, fn, args, nil, nil)
+}
 
 // ItertoolsLibrary provides Python-like itertools functions
 var ItertoolsLibrary = object.NewLibrary(ItertoolsLibraryName, map[string]*object.Builtin{
@@ -235,9 +262,9 @@ Example:
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
-			pred, ok := args[0].(*object.Builtin)
-			if !ok {
-				return errors.NewError("takewhile() predicate must be a builtin function")
+			pred := args[0]
+			if !isCallable(pred) {
+				return errors.NewTypeError("callable", pred.Type().String())
 			}
 			var elements []object.Object
 			switch a := args[1].(type) {
@@ -250,8 +277,8 @@ Example:
 			}
 			result := []object.Object{}
 			for _, elem := range elements {
-				res := pred.Fn(ctx, object.NewKwargs(nil), elem)
-				if object.IsError(res) {
+				res := callCallable(ctx, pred, elem)
+				if object.IsError(res) || res.Type() == object.EXCEPTION_OBJ {
 					return res
 				}
 				if !isTruthy(res) {
@@ -274,9 +301,9 @@ Example:
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
-			pred, ok := args[0].(*object.Builtin)
-			if !ok {
-				return errors.NewError("dropwhile() predicate must be a builtin function")
+			pred := args[0]
+			if !isCallable(pred) {
+				return errors.NewTypeError("callable", pred.Type().String())
 			}
 			var elements []object.Object
 			switch a := args[1].(type) {
@@ -291,8 +318,8 @@ Example:
 			dropping := true
 			for _, elem := range elements {
 				if dropping {
-					res := pred.Fn(ctx, object.NewKwargs(nil), elem)
-					if object.IsError(res) {
+					res := callCallable(ctx, pred, elem)
+					if object.IsError(res) || res.Type() == object.EXCEPTION_OBJ {
 						return res
 					}
 					if isTruthy(res) {
@@ -592,12 +619,11 @@ Example:
 				return errors.NewTypeError("iterable", args[0].Type().String())
 			}
 
-			var keyFunc *object.Builtin
+			var keyFunc object.Object
 			if len(args) == 2 {
-				var ok bool
-				keyFunc, ok = args[1].(*object.Builtin)
-				if !ok {
-					return errors.NewError("groupby() key must be a builtin function")
+				keyFunc = args[1]
+				if !isCallable(keyFunc) {
+					return errors.NewTypeError("callable", keyFunc.Type().String())
 				}
 			}
 
@@ -612,8 +638,8 @@ Example:
 			for i, elem := range elements {
 				var key object.Object
 				if keyFunc != nil {
-					key = keyFunc.Fn(ctx, object.NewKwargs(nil), elem)
-					if object.IsError(key) {
+					key = callCallable(ctx, keyFunc, elem)
+					if object.IsError(key) || key.Type() == object.EXCEPTION_OBJ {
 						return key
 					}
 				} else {
@@ -675,12 +701,11 @@ Example:
 				return &object.List{Elements: []object.Object{}}
 			}
 
-			var accumFunc *object.Builtin
+			var accumFunc object.Object
 			if len(args) == 2 {
-				var ok bool
-				accumFunc, ok = args[1].(*object.Builtin)
-				if !ok {
-					return errors.NewError("accumulate() func must be a builtin function")
+				accumFunc = args[1]
+				if !isCallable(accumFunc) {
+					return errors.NewTypeError("callable", accumFunc.Type().String())
 				}
 			}
 
@@ -689,8 +714,8 @@ Example:
 
 			for i := 1; i < len(elements); i++ {
 				if accumFunc != nil {
-					accumulator = accumFunc.Fn(ctx, object.NewKwargs(nil), accumulator, elements[i])
-					if object.IsError(accumulator) {
+					accumulator = callCallable(ctx, accumFunc, accumulator, elements[i])
+					if object.IsError(accumulator) || accumulator.Type() == object.EXCEPTION_OBJ {
 						return accumulator
 					}
 				} else {
@@ -718,9 +743,9 @@ Example:
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
-			pred, ok := args[0].(*object.Builtin)
-			if !ok {
-				return errors.NewError("filterfalse() predicate must be a builtin function")
+			pred := args[0]
+			if !isCallable(pred) {
+				return errors.NewTypeError("callable", pred.Type().String())
 			}
 			var elements []object.Object
 			switch a := args[1].(type) {
@@ -733,8 +758,8 @@ Example:
 			}
 			result := []object.Object{}
 			for _, elem := range elements {
-				res := pred.Fn(ctx, object.NewKwargs(nil), elem)
-				if object.IsError(res) {
+				res := callCallable(ctx, pred, elem)
+				if object.IsError(res) || res.Type() == object.EXCEPTION_OBJ {
 					return res
 				}
 				if !isTruthy(res) {
@@ -756,9 +781,9 @@ Example:
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
-			fn, ok := args[0].(*object.Builtin)
-			if !ok {
-				return errors.NewError("starmap() func must be a builtin function")
+			fn := args[0]
+			if !isCallable(fn) {
+				return errors.NewTypeError("callable", fn.Type().String())
 			}
 			var elements []object.Object
 			switch a := args[1].(type) {
@@ -780,8 +805,8 @@ Example:
 				default:
 					return errors.NewError("starmap() iterable must contain sequences")
 				}
-				res := fn.Fn(ctx, object.NewKwargs(nil), fnArgs...)
-				if object.IsError(res) {
+				res := callCallable(ctx, fn, fnArgs...)
+				if object.IsError(res) || res.Type() == object.EXCEPTION_OBJ {
 					return res
 				}
 				result = append(result, res)

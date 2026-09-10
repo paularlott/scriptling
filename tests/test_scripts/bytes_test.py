@@ -72,8 +72,12 @@ assert b[-2:] == bytes("lo")
 assert b[::2] == bytes("hlo")
 assert b[::-1] == bytes("olleh")
 
-# Indexing out of range returns None (matches String)
-assert b[100] is None
+# Indexing out of range raises IndexError (matches list/tuple/string/dict)
+try:
+    b[100]
+    assert False, "expected IndexError"
+except IndexError:
+    pass
 
 # ── iteration yields ints ──────────────────────────────────────────────────
 collected = []

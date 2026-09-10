@@ -861,17 +861,19 @@ func (p *Parser) parseStringLiteral() ast.Expression {
 
 func (p *Parser) parseFStringLiteral() ast.Expression {
 	fstr := &ast.FStringLiteral{Value: strings.Clone(p.curToken.Literal)}
-	var specs []string
-	fstr.Parts, fstr.Expressions, specs = p.parseFStringContent(p.curToken.Literal, false)
+	var specs, convs []string
+	fstr.Parts, fstr.Expressions, specs, convs = p.parseFStringContent(p.curToken.Literal, false)
 	fstr.SetFormatSpecs(specs)
+	fstr.SetConversions(convs)
 	return p.parseAdjacentStrings(fstr)
 }
 
 func (p *Parser) parseRawFStringLiteral() ast.Expression {
 	fstr := &ast.FStringLiteral{Value: strings.Clone(p.curToken.Literal)}
-	var specs []string
-	fstr.Parts, fstr.Expressions, specs = p.parseFStringContent(p.curToken.Literal, true)
+	var specs, convs []string
+	fstr.Parts, fstr.Expressions, specs, convs = p.parseFStringContent(p.curToken.Literal, true)
 	fstr.SetFormatSpecs(specs)
+	fstr.SetConversions(convs)
 	return p.parseAdjacentStrings(fstr)
 }
 
@@ -906,9 +908,10 @@ func (p *Parser) parseAdjacentStrings(left ast.Expression) ast.Expression {
 			right = &ast.StringLiteral{Value: strings.Clone(p.curToken.Literal)}
 		} else {
 			fstr := &ast.FStringLiteral{Value: strings.Clone(p.curToken.Literal)}
-			var specs []string
-			fstr.Parts, fstr.Expressions, specs = p.parseFStringContent(p.curToken.Literal, p.curTokenIs(token.RF_STRING))
+			var specs, convs []string
+			fstr.Parts, fstr.Expressions, specs, convs = p.parseFStringContent(p.curToken.Literal, p.curTokenIs(token.RF_STRING))
 			fstr.SetFormatSpecs(specs)
+			fstr.SetConversions(convs)
 			right = fstr
 		}
 
@@ -923,12 +926,14 @@ func (p *Parser) parseAdjacentStrings(left ast.Expression) ast.Expression {
 	return left
 }
 
-func (p *Parser) parseFStringContent(content string, raw bool) ([]string, []ast.Expression, []string) {
+func (p *Parser) parseFStringContent(content string, raw bool) ([]string, []ast.Expression, []string, []string) {
 	parts := make([]string, 0, 4)
 	expressions := make([]ast.Expression, 0, 2)
 	formatSpecs := make([]string, 0, 2)
 	var current strings.Builder
 	i := 0
+
+	conversions := make([]string, 0, 2)
 
 	for i < len(content) {
 		if content[i] == '{' && i+1 < len(content) && content[i+1] != '{' {
@@ -937,20 +942,41 @@ func (p *Parser) parseFStringContent(content string, raw bool) ([]string, []ast.
 			current.Reset()
 			i++ // skip {
 
-			// Extract expression until : or }
+			// Extract expression until !, : or }
 			var exprStr strings.Builder
 			var formatSpec strings.Builder
-			for i < len(content) && content[i] != '}' && content[i] != ':' {
+			conversion := ""
+			for i < len(content) && content[i] != '}' && content[i] != ':' && content[i] != '!' {
 				exprStr.WriteByte(content[i])
 				i++
 			}
 
-			// Check for format specifier
+			// Conversion flag: !r, !s or !a (Python f-string conversions)
+			if i < len(content) && content[i] == '!' && i+1 < len(content) {
+				c := content[i+1]
+				if c == 'r' || c == 's' || c == 'a' {
+					conversion = string(c)
+					i += 2
+				}
+			}
+
+			// Check for format specifier. Nested braces stay part of the
+			// spec (dynamic widths like {x:>{w}}); the evaluator resolves
+			// nested identifier fields at runtime.
 			if i < len(content) && content[i] == ':' {
 				i++ // skip :
-				// Extract format spec until }
-				for i < len(content) && content[i] != '}' {
-					formatSpec.WriteByte(content[i])
+				depth := 0
+				for i < len(content) {
+					c := content[i]
+					if c == '{' {
+						depth++
+					} else if c == '}' {
+						if depth == 0 {
+							break
+						}
+						depth--
+					}
+					formatSpec.WriteByte(c)
 					i++
 				}
 			}
@@ -966,6 +992,7 @@ func (p *Parser) parseFStringContent(content string, raw bool) ([]string, []ast.
 				if expr != nil {
 					expressions = append(expressions, expr)
 					formatSpecs = append(formatSpecs, formatSpec.String())
+					conversions = append(conversions, conversion)
 				}
 			}
 		} else if content[i] == '{' && i+1 < len(content) && content[i+1] == '{' {
@@ -1007,7 +1034,7 @@ func (p *Parser) parseFStringContent(content string, raw bool) ([]string, []ast.
 	}
 
 	parts = append(parts, current.String())
-	return parts, expressions, formatSpecs
+	return parts, expressions, formatSpecs, conversions
 }
 
 func parseExpressionString(input string) ast.Expression {

@@ -95,6 +95,10 @@ func IsHashable(obj Object) bool {
 	switch o := obj.(type) {
 	case *Integer, *Float, *Boolean, *String, *Bytes, *Null:
 		return true
+	case *Exception:
+		// Exceptions hash by identity (like a default Python object). Dict keys
+		// already accept them via evalHashKey; sets must agree.
+		return true
 	case *Tuple:
 		for _, e := range o.Elements {
 			if !IsHashable(e) {
@@ -1645,6 +1649,25 @@ func (e *Environment) Set(name string, val Object) Object {
 	return val
 }
 
+// EachLocal calls fn for every name bound directly in this environment (its own
+// store and slots), not in any parent scope. Used to collect class-body
+// assignments into class members after executing the body. Iteration order is
+// unspecified.
+func (e *Environment) EachLocal(fn func(name string, val Object)) {
+	for name, val := range e.store {
+		if val != nil {
+			fn(name, val)
+		}
+	}
+	for name, idx := range e.slotIndex {
+		if idx >= 0 && idx < len(e.slots) {
+			if val := e.slots[idx]; val != nil {
+				fn(name, val)
+			}
+		}
+	}
+}
+
 // Delete removes a variable from this environment (not parent scopes)
 func (e *Environment) Delete(name string) {
 	if idx, ok := e.slotIndex[name]; ok && idx >= 0 && idx < len(e.slots) {
@@ -1791,9 +1814,20 @@ func (e *Environment) GetReader() io.Reader {
 	return os.Stdin
 }
 
+// sizeHint returns a non-negative capacity hint for two combined lengths.
+// len+len can overflow int when both operands are huge (e.g. an Environment
+// store filled from untrusted input), and a wrapped negative hint panics
+// make; on overflow the hint degrades to 0 and the container grows naturally.
+func sizeHint(a, b int) int {
+	if hint := a + b; hint >= a && hint >= b {
+		return hint
+	}
+	return 0
+}
+
 // GetStore returns a copy of the environment's store (only local scope, not outer)
 func (e *Environment) GetStore() map[string]Object {
-	store := make(map[string]Object, len(e.store)+len(e.slotNames))
+	store := make(map[string]Object, sizeHint(len(e.store), len(e.slotNames)))
 	for k, v := range e.store {
 		store[k] = v
 	}
@@ -1825,10 +1859,10 @@ type CallableSnapshot struct {
 // — data must be passed via task args.
 func (e *Environment) SnapshotCallables() *CallableSnapshot {
 	s := &CallableSnapshot{
-		functions: make(map[string]*Function, len(e.store)+len(e.slotNames)),
-		lambdas:   make(map[string]*LambdaFunction, len(e.store)+len(e.slotNames)),
-		dicts:     make(map[string]*Dict, len(e.store)+len(e.slotNames)),
-		scalars:   make(map[string]Object, len(e.store)+len(e.slotNames)),
+		functions: make(map[string]*Function, sizeHint(len(e.store), len(e.slotNames))),
+		lambdas:   make(map[string]*LambdaFunction, sizeHint(len(e.store), len(e.slotNames))),
+		dicts:     make(map[string]*Dict, sizeHint(len(e.store), len(e.slotNames))),
+		scalars:   make(map[string]Object, sizeHint(len(e.store), len(e.slotNames))),
 	}
 	snapshot := func(name string, value Object) {
 		switch v := value.(type) {
@@ -2226,6 +2260,13 @@ type Exception struct {
 	Message       string
 	ExceptionType string // Exception type for identification (e.g., "SystemExit", "ValueError", etc.)
 	Code          int    // Exit code for SystemExit; ignored for other exception types
+	// Raised distinguishes an exception that is actively propagating (produced
+	// by a `raise` or by an operation that failed) from one that is merely a
+	// value (constructed via `ValueError("x")`, bound by `except ... as e`, or
+	// stored in a variable). Only a raised exception unwinds the call stack;
+	// a value exception is passed around like any other object. This mirrors
+	// Python, where constructing an exception does not raise it.
+	Raised bool
 }
 
 func (ex *Exception) Type() ObjectType { return EXCEPTION_OBJ }
@@ -2760,5 +2801,7 @@ func NewSystemExit(code int, message string) *Exception {
 		Message:       message,
 		ExceptionType: ExceptionTypeSystemExit,
 		Code:          code,
+		// SystemExit always unwinds the stack; it is a raise, never a value.
+		Raised: true,
 	}
 }

@@ -276,7 +276,7 @@ str(items)
 			input: `
 data = {"a": 1, "b": 2}
 del data["a"]
-data["a"] == None and data["b"] == 2
+"a" not in data and data["b"] == 2
 `,
 			expected: true,
 		},

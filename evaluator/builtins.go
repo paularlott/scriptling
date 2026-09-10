@@ -141,47 +141,48 @@ Use list(filter(...)) to get a list.`,
 				}
 			}
 
+			// stringify renders one argument the way print does. Instances are
+			// checked FIRST so a user __str__ is honored (Instance.AsString
+			// falls back to Inspect() without calling __str__). A raise from
+			// __str__ is returned so print propagates it instead of printing the
+			// default repr. On success it returns (text, nil).
+			stringify := func(arg object.Object) (string, object.Object) {
+				if inst, ok := arg.(*object.Instance); ok {
+					if result := callDunderMethodFn(ctx, inst, "__str__", nil, env); result != nil {
+						if object.IsError(result) || result.Type() == object.EXCEPTION_OBJ {
+							return "", result
+						}
+						if s, err2 := result.AsString(); err2 == nil {
+							return s, nil
+						}
+						return result.Inspect(), nil
+					}
+					return arg.Inspect(), nil
+				}
+				if str, err := arg.AsString(); err == nil {
+					return str, nil
+				}
+				return arg.Inspect(), nil
+			}
+
 			// Build output string — fast path for common single-arg case
 			if len(args) == 1 && sep == " " {
-				var out string
-				if str, err := args[0].AsString(); err == nil {
-					out = str + end
-				} else if inst, ok := args[0].(*object.Instance); ok {
-					if result := callDunderMethodFn(ctx, inst, "__str__", nil, env); result != nil {
-						if s, err2 := result.AsString(); err2 == nil {
-							out = s + end
-						} else {
-							out = result.Inspect() + end
-						}
-					} else {
-						out = args[0].Inspect() + end
-					}
-				} else {
-					out = args[0].Inspect() + end
+				s, raised := stringify(args[0])
+				if raised != nil {
+					return raised
 				}
-				if e := emit(out); e != nil {
+				if e := emit(s + end); e != nil {
 					return e
 				}
 				return NULL
 			}
 			parts := make([]string, len(args))
 			for i, arg := range args {
-				// Use AsString() for strings to get actual value, Inspect() for others
-				if str, err := arg.AsString(); err == nil {
-					parts[i] = str
-				} else if inst, ok := arg.(*object.Instance); ok {
-					if result := callDunderMethodFn(ctx, inst, "__str__", nil, env); result != nil {
-						if s, err2 := result.AsString(); err2 == nil {
-							parts[i] = s
-						} else {
-							parts[i] = result.Inspect()
-						}
-					} else {
-						parts[i] = arg.Inspect()
-					}
-				} else {
-					parts[i] = arg.Inspect()
+				s, raised := stringify(arg)
+				if raised != nil {
+					return raised
 				}
+				parts[i] = s
 			}
 			if e := emit(strings.Join(parts, sep) + end); e != nil {
 				return e
@@ -274,12 +275,15 @@ Returns a string representing the type of the object.`,
 			if exc, ok := args[0].(*object.Exception); ok {
 				return object.NewString(exc.Message)
 			}
-			// Call __str__ dunder method on instances
+			// Instances convert with str() semantics: __str__, falling back
+			// to __repr__ (Python's object.__str__ delegates to __repr__).
 			if inst, ok := args[0].(*object.Instance); ok {
 				env := GetEnvFromContext(ctx)
-				if result := callDunderMethodFn(ctx, inst, "__str__", nil, env); result != nil {
-					return result
+				rendered, rerr := strInstanceChecked(ctx, inst, env)
+				if rerr != nil {
+					return rerr
 				}
+				return object.NewString(rendered)
 			}
 			return object.NewString(args[0].Inspect())
 		},
@@ -383,7 +387,11 @@ Converts an integer, string, or float to a float.`,
 			}
 			// Any other iterable: list, tuple, string, set, dict, dict views, iterator.
 			var ok bool
-			elements, ok = object.IterableToSlice(args[0])
+			var rerr object.Object
+			elements, ok, rerr = iterableToSliceCheckedFn(ctx, args[0], GetEnvFromContext(ctx))
+			if rerr != nil {
+				return rerr
+			}
 			if !ok {
 				return errors.NewTypeError("iterable", args[0].Type().String())
 			}
@@ -544,14 +552,15 @@ Returns a view object of (key, value) pairs for all items in the dictionary.`,
 				}
 				start = startObj
 			}
-			// Validate iterable type
-			switch args[0].(type) {
-			case *object.List, *object.Tuple, *object.String, *object.Iterator, *object.FloatArray:
-				// Valid iterable types
-			default:
+			// Validate iterable type; instances run the iterator protocol.
+			iterArg, rerr := acceptInstanceIterableFn(ctx, args[0])
+			if rerr != nil {
+				return rerr
+			}
+			if iterArg == nil {
 				return errors.NewTypeError("iterable (LIST, TUPLE, STRING, ITERATOR, FLOAT_ARRAY)", args[0].Type().String())
 			}
-			return object.NewEnumerateIterator(args[0], start)
+			return object.NewEnumerateIterator(iterArg, start)
 		},
 		HelpText: `enumerate(iterable[, start=0]) - Return (index, value) pairs
 
@@ -564,16 +573,20 @@ Default start is 0. Use list(enumerate(...)) to get a list.`,
 				// Return empty iterator for no arguments
 				return object.NewZipIterator([]object.Object{})
 			}
-			// Validate all arguments are iterable
-			for _, arg := range args {
-				switch arg.(type) {
-				case *object.List, *object.Tuple, *object.String, *object.Iterator, *object.FloatArray:
-					// Valid iterable types
-				default:
+			// Validate all arguments are iterable; instances run the iterator
+			// protocol (lazily — only __iter__ is called here).
+			iterArgs := make([]object.Object, len(args))
+			for i, arg := range args {
+				iterArg, rerr := acceptInstanceIterableFn(ctx, arg)
+				if rerr != nil {
+					return rerr
+				}
+				if iterArg == nil {
 					return errors.NewTypeError("iterable (LIST, TUPLE, STRING, ITERATOR, FLOAT_ARRAY)", arg.Type().String())
 				}
+				iterArgs[i] = iterArg
 			}
-			return object.NewZipIterator(args)
+			return object.NewZipIterator(iterArgs)
 		},
 		HelpText: `zip(*iterables) - Aggregate elements from each iterable
 
@@ -656,12 +669,20 @@ Use list(zip(...)) to get a list.`,
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
-			iterable, ok := object.IterableToSlice(args[0])
+			iterable, ok, rerr := iterableToSliceCheckedFn(ctx, args[0], GetEnvFromContext(ctx))
+			if rerr != nil {
+				return rerr
+			}
 			if !ok {
 				return errors.NewTypeError("iterable", args[0].Type().String())
 			}
+			env := GetEnvFromContext(ctx)
 			for _, elem := range iterable {
-				if isTruthy(elem) {
+				truthy, errObj := evalTruthyFn(ctx, elem, env)
+				if errObj != nil {
+					return errObj
+				}
+				if truthy {
 					return TRUE
 				}
 			}
@@ -677,12 +698,20 @@ Returns False for an empty iterable.`,
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
-			iterable, ok := object.IterableToSlice(args[0])
+			iterable, ok, rerr := iterableToSliceCheckedFn(ctx, args[0], GetEnvFromContext(ctx))
+			if rerr != nil {
+				return rerr
+			}
 			if !ok {
 				return errors.NewTypeError("iterable", args[0].Type().String())
 			}
+			env := GetEnvFromContext(ctx)
 			for _, elem := range iterable {
-				if !isTruthy(elem) {
+				truthy, errObj := evalTruthyFn(ctx, elem, env)
+				if errObj != nil {
+					return errObj
+				}
+				if !truthy {
 					return FALSE
 				}
 			}
@@ -700,7 +729,11 @@ Returns True if all elements in the iterable are truthy (or if empty).`,
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
-			if isTruthy(args[0]) {
+			truthy, errObj := evalTruthyFn(ctx, args[0], GetEnvFromContext(ctx))
+			if errObj != nil {
+				return errObj
+			}
+			if truthy {
 				return TRUE
 			}
 			return FALSE
@@ -755,7 +788,9 @@ Works with both integers and floats.`,
 					return object.NewFloat(minVal)
 				}
 				// Any other iterable: list, tuple, string, set, dict, dict views, iterator.
-				if elements, ok := object.IterableToSlice(args[0]); ok {
+				if elements, ok, rerr := iterableToSliceCheckedFn(ctx, args[0], GetEnvFromContext(ctx)); rerr != nil {
+					return rerr
+				} else if ok {
 					if len(elements) == 0 {
 						return errors.NewError("min() arg is an empty sequence")
 					}
@@ -763,8 +798,12 @@ Works with both integers and floats.`,
 				}
 			}
 			minVal := args[0]
+			env := GetEnvFromContext(ctx)
 			for _, arg := range args[1:] {
-				cmp := compareObjects(minVal, arg)
+				cmp, raised := compareObjectsCtx(ctx, minVal, arg, env)
+				if raised != nil {
+					return raised
+				}
 				if cmp > 0 {
 					minVal = arg
 				}
@@ -797,7 +836,9 @@ With multiple arguments, returns the smallest argument.`,
 					return object.NewFloat(maxVal)
 				}
 				// Any other iterable: list, tuple, string, set, dict, dict views, iterator.
-				if elements, ok := object.IterableToSlice(args[0]); ok {
+				if elements, ok, rerr := iterableToSliceCheckedFn(ctx, args[0], GetEnvFromContext(ctx)); rerr != nil {
+					return rerr
+				} else if ok {
 					if len(elements) == 0 {
 						return errors.NewError("max() arg is an empty sequence")
 					}
@@ -805,8 +846,12 @@ With multiple arguments, returns the smallest argument.`,
 				}
 			}
 			maxVal := args[0]
+			env := GetEnvFromContext(ctx)
 			for _, arg := range args[1:] {
-				cmp := compareObjects(maxVal, arg)
+				cmp, raised := compareObjectsCtx(ctx, maxVal, arg, env)
+				if raised != nil {
+					return raised
+				}
 				if cmp < 0 {
 					maxVal = arg
 				}
@@ -1192,7 +1237,10 @@ Use list(reversed(...)) to get a list.`,
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
-			elements, ok := object.IterableToSlice(args[0])
+			elements, ok, rerr := iterableToSliceCheckedFn(ctx, args[0], GetEnvFromContext(ctx))
+			if rerr != nil {
+				return rerr
+			}
 			if !ok {
 				return errors.NewTypeError("iterable", args[0].Type().String())
 			}
@@ -1240,7 +1288,22 @@ Otherwise, returns a list containing the items of the iterable.`,
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
-			switch iter := args[0].(type) {
+			// Normalize any other iterable (class instances with __iter__,
+			// raw iterators — Python accepts e.g. a generator of pairs) into
+			// a list of elements with raise checking before the type switch.
+			arg := args[0]
+			switch arg.(type) {
+			case *object.Instance, *object.Iterator:
+				elems, ok, rerr := iterableToSliceCheckedFn(ctx, arg, GetEnvFromContext(ctx))
+				if rerr != nil {
+					return rerr
+				}
+				if !ok {
+					return errors.NewTypeError("DICT or LIST of pairs", arg.Type().String())
+				}
+				arg = &object.List{Elements: elems}
+			}
+			switch iter := arg.(type) {
 			case *object.Dict:
 				// Copy existing dict
 				for k, v := range iter.Pairs {
@@ -1264,7 +1327,7 @@ Otherwise, returns a list containing the items of the iterable.`,
 					result.Pairs[object.DictKey(pair[0])] = object.DictPair{Key: pair[0], Value: pair[1]}
 				}
 			default:
-				return errors.NewTypeError("DICT or LIST of pairs", args[0].Type().String())
+				return errors.NewTypeError("DICT or LIST of pairs", arg.Type().String())
 			}
 			return result
 		},
@@ -1286,7 +1349,10 @@ Keyword arguments are added to the dict.`,
 			if t, ok := args[0].(*object.Tuple); ok {
 				return t
 			}
-			elements, ok := object.IterableToSlice(args[0])
+			elements, ok, rerr := iterableToSliceCheckedFn(ctx, args[0], GetEnvFromContext(ctx))
+			if rerr != nil {
+				return rerr
+			}
 			if !ok {
 				return errors.NewTypeError("iterable", args[0].Type().String())
 			}
@@ -1315,7 +1381,10 @@ Otherwise, returns a tuple containing the items of the iterable.`,
 			}
 
 			// Get elements from iterable
-			elements, ok := object.IterableToSlice(args[0])
+			elements, ok, rerr := iterableToSliceCheckedFn(ctx, args[0], GetEnvFromContext(ctx))
+			if rerr != nil {
+				return rerr
+			}
 			if !ok {
 				return errors.NewTypeError("iterable", args[0].Type().String())
 			}
@@ -2020,6 +2089,55 @@ Use with: raise StopIteration()`,
 	},
 }
 
+// compareObjectsCtx compares two objects, using __lt__/__eq__ for user
+// instances (honoring custom ordering) and propagating any raise from them.
+// When the left operand defines no __lt__, the reflected right.__gt__(left) is
+// tried (Python's rich-comparison reflection). The second return is non-nil
+// exactly when a comparison dunder raised/errored. Non-instance operands fall
+// back to the pure compareObjects.
+func compareObjectsCtx(ctx context.Context, a, b object.Object, env *object.Environment) (int, object.Object) {
+	if inst, ok := a.(*object.Instance); ok {
+		if result := callDunderMethodFn(ctx, inst, "__lt__", []object.Object{b}, env); result != nil {
+			if object.IsError(result) || result.Type() == object.EXCEPTION_OBJ {
+				return 0, result
+			}
+			if bl, ok := result.(*object.Boolean); ok && bl.BoolValue() {
+				return -1, nil
+			}
+			if eqResult := callDunderMethodFn(ctx, inst, "__eq__", []object.Object{b}, env); eqResult != nil {
+				if object.IsError(eqResult) || eqResult.Type() == object.EXCEPTION_OBJ {
+					return 0, eqResult
+				}
+				if b2, ok := eqResult.(*object.Boolean); ok && b2.BoolValue() {
+					return 0, nil
+				}
+			}
+			return 1, nil
+		}
+	}
+	// Reflected comparison: b.__gt__(a) is true exactly when a < b.
+	if inst, ok := b.(*object.Instance); ok {
+		if result := callDunderMethodFn(ctx, inst, "__gt__", []object.Object{a}, env); result != nil {
+			if object.IsError(result) || result.Type() == object.EXCEPTION_OBJ {
+				return 0, result
+			}
+			if bl, ok := result.(*object.Boolean); ok && bl.BoolValue() {
+				return -1, nil
+			}
+			if eqResult := callDunderMethodFn(ctx, inst, "__eq__", []object.Object{a}, env); eqResult != nil {
+				if object.IsError(eqResult) || eqResult.Type() == object.EXCEPTION_OBJ {
+					return 0, eqResult
+				}
+				if b2, ok := eqResult.(*object.Boolean); ok && b2.BoolValue() {
+					return 0, nil
+				}
+			}
+			return 1, nil
+		}
+	}
+	return compareObjects(a, b), nil
+}
+
 func compareObjects(a, b object.Object) int {
 	switch av := a.(type) {
 	case *object.Integer:
@@ -2138,7 +2256,10 @@ func sortedFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 	// Accept any iterable (list, tuple, string, set, dict, dict views, iterator,
 	// float array). Sorting uses an index permutation and builds a fresh result
 	// slice, so the input is never mutated even when IterableToSlice aliases it.
-	elements, ok := object.IterableToSlice(args[0])
+	elements, ok, rerr := iterableToSliceCheckedFn(ctx, args[0], GetEnvFromContext(ctx))
+	if rerr != nil {
+		return rerr
+	}
 	if !ok {
 		return errors.NewTypeError("iterable", args[0].Type().String())
 	}
@@ -2189,7 +2310,7 @@ func sortedFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 				case *object.Function, *object.LambdaFunction:
 					key = applyFunctionWithContext(ctx, fn, []object.Object{elem}, nil, env)
 				}
-				if object.IsError(key) || isException(key) {
+				if object.IsError(key) || isRaised(key) {
 					return key
 				}
 				keys[i] = key
@@ -2258,25 +2379,14 @@ func sortedFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 					sortErr = errors.NewError("cannot compare %s with %s", left.Type(), right.Type())
 				}
 			case *object.Instance:
-				// Use __lt__ dunder method for instance comparison
-				if result := callDunderMethodFn(ctx, l, "__lt__", []object.Object{right}, GetEnvFromContext(ctx)); result != nil {
-					if object.IsError(result) {
-						sortErr = result
-					} else if b, ok := result.(*object.Boolean); ok && b.BoolValue() {
-						cmp = -1
-					} else {
-						if eqResult := callDunderMethodFn(ctx, l, "__eq__", []object.Object{right}, GetEnvFromContext(ctx)); eqResult != nil {
-							if b2, ok := eqResult.(*object.Boolean); ok && b2.BoolValue() {
-								cmp = 0
-							} else {
-								cmp = 1
-							}
-						} else {
-							cmp = 1
-						}
-					}
+				// Instance comparison goes through the shared comparator:
+				// __lt__ (with reflected __gt__), then __eq__. A raise from a
+				// dunder aborts the sort and propagates.
+				c, raised := compareObjectsCtx(ctx, left, right, GetEnvFromContext(ctx))
+				if raised != nil {
+					sortErr = raised
 				} else {
-					sortErr = errors.NewError("unsupported type for sorting: %s (no __lt__)", left.Type())
+					cmp = c
 				}
 			case *object.Tuple:
 				if r, ok := right.(*object.Tuple); ok {
@@ -2323,7 +2433,10 @@ func mapFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.O
 	iterables := make([][]object.Object, len(args)-1)
 	minLen := -1
 	for i, arg := range args[1:] {
-		elements, ok := object.IterableToSlice(arg)
+		elements, ok, rerr := iterableToSliceCheckedFn(ctx, arg, GetEnvFromContext(ctx))
+		if rerr != nil {
+			return rerr
+		}
 		if !ok {
 			return errors.NewTypeError("iterable (LIST, TUPLE, STRING, ITERATOR)", arg.Type().String())
 		}
@@ -2342,7 +2455,9 @@ func mapFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.O
 			callArgs[j] = iterables[j][i]
 		}
 		res := applyFunctionWithContext(ctx, fn, callArgs, nil, env)
-		if object.IsError(res) {
+		// A raised exception from the mapped function must propagate at the
+		// first raising element, not be stored as a result element.
+		if object.IsError(res) || isRaised(res) {
 			return res
 		}
 		results[i] = res
@@ -2365,7 +2480,10 @@ func filterFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 		return err
 	}
 	fn := args[0]
-	iterable, ok := object.IterableToSlice(args[1])
+	iterable, ok, rerr := iterableToSliceCheckedFn(ctx, args[1], GetEnvFromContext(ctx))
+	if rerr != nil {
+		return rerr
+	}
 	if !ok {
 		return errors.NewTypeError("iterable (LIST, TUPLE, STRING, ITERATOR)", args[1].Type().String())
 	}
@@ -2374,17 +2492,27 @@ func filterFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 	results := []object.Object{}
 	env := GetEnvFromContext(ctx)
 	for _, elem := range iterable {
-		// If function is None, use truthiness
+		// If function is None, use truthiness of the element itself.
 		if fn.Type() == object.NULL_OBJ {
-			if isTruthy(elem) {
+			truthy, errObj := evalTruthyFn(ctx, elem, env)
+			if errObj != nil {
+				return errObj
+			}
+			if truthy {
 				results = append(results, elem)
 			}
 		} else {
 			res := applyFunctionWithContext(ctx, fn, []object.Object{elem}, nil, env)
-			if object.IsError(res) {
+			// A raised exception from the predicate must propagate, not be
+			// coerced to "keep" via truthiness.
+			if object.IsError(res) || isRaised(res) {
 				return res
 			}
-			if isTruthy(res) {
+			truthy, errObj := evalTruthyFn(ctx, res, env)
+			if errObj != nil {
+				return errObj
+			}
+			if truthy {
 				results = append(results, elem)
 			}
 		}
@@ -2805,7 +2933,7 @@ func nextFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.
 		if len(args) == 2 {
 			return args[1]
 		}
-		return &object.Exception{Message: "StopIteration", ExceptionType: object.ExceptionTypeStopIteration}
+		return &object.Exception{Message: "StopIteration", ExceptionType: object.ExceptionTypeStopIteration, Raised: true}
 	}
 	return val
 }
@@ -2833,7 +2961,7 @@ func iterFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.
 		env := GetEnvFromContext(ctx)
 		if fn, ok := findDunderMethod(o, "__iter__"); ok {
 			result := applyFunctionWithContext(ctx, fn, prependSelf(o, nil), nil, env)
-			if object.IsError(result) {
+			if object.IsError(result) || result.Type() == object.EXCEPTION_OBJ {
 				return result
 			}
 			if iterInst, ok := result.(*object.Instance); ok {
@@ -2918,7 +3046,7 @@ func GetImportBuiltin() *object.Builtin {
 			}
 			importErr := importCallback(ctx, libName)
 			if importErr != nil {
-				return errors.NewError("%s: %s", errors.ErrImportError, importErr.Error())
+				return importErrorToObject(importErr, errors.ErrImportError)
 			}
 			return &object.Null{}
 		},

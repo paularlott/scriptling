@@ -302,13 +302,13 @@ func TestEvalListIndexExpression(t *testing.T) {
 	}
 
 	result = evalListIndexExpression(list, object.NewInteger(10))
-	if result.Type() != object.NULL_OBJ {
-		t.Errorf("expected NULL_OBJ for out of bounds, got %v", result.Type())
+	if exc, ok := result.(*object.Exception); !ok || exc.ExceptionType != object.ExceptionTypeIndexError {
+		t.Errorf("expected raised IndexError for out of bounds, got %v", result)
 	}
 
 	result = evalListIndexExpression(list, object.NewInteger(-10))
-	if result.Type() != object.NULL_OBJ {
-		t.Errorf("expected NULL_OBJ for out of bounds, got %v", result.Type())
+	if exc, ok := result.(*object.Exception); !ok || exc.ExceptionType != object.ExceptionTypeIndexError {
+		t.Errorf("expected raised IndexError for out of bounds, got %v", result)
 	}
 }
 
@@ -333,8 +333,8 @@ func TestEvalStringIndexExpression(t *testing.T) {
 	}
 
 	result = evalStringIndexExpression(str, object.NewInteger(10))
-	if result.Type() != object.NULL_OBJ {
-		t.Errorf("expected NULL_OBJ for out of bounds, got %v", result.Type())
+	if exc, ok := result.(*object.Exception); !ok || exc.ExceptionType != object.ExceptionTypeIndexError {
+		t.Errorf("expected raised IndexError for out of bounds, got %v", result)
 	}
 }
 
@@ -356,8 +356,8 @@ func TestEvalTupleIndexExpression(t *testing.T) {
 	}
 
 	result = evalTupleIndexExpression(tuple, object.NewInteger(10))
-	if result.Type() != object.NULL_OBJ {
-		t.Errorf("expected NULL_OBJ for out of bounds, got %v", result.Type())
+	if exc, ok := result.(*object.Exception); !ok || exc.ExceptionType != object.ExceptionTypeIndexError {
+		t.Errorf("expected raised IndexError for out of bounds, got %v", result)
 	}
 }
 

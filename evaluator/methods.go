@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/hex"
-	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -18,7 +18,7 @@ import (
 
 func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression, env *object.Environment) object.Object {
 	obj := evalNode(ctx, mce.Receiver, env)
-	if object.IsError(obj) {
+	if object.IsError(obj) || isRaised(obj) {
 		return obj
 	}
 
@@ -58,7 +58,7 @@ func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression
 	}
 
 	args := evalCallArgs(ctx, mce.Arguments, env)
-	if len(args) == 1 && object.IsError(args[0]) {
+	if isPropagatedError(args) {
 		return args[0]
 	}
 	// args is borrowed from the per-root arg-buffer free-list; release on return.
@@ -71,7 +71,7 @@ func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression
 		keywords = make(map[string]object.Object, len(mceKeywords))
 		for k, v := range mceKeywords {
 			val := evalNode(ctx, v, env)
-			if object.IsError(val) {
+			if object.IsError(val) || isRaised(val) {
 				return val
 			}
 			keywords[k] = val
@@ -81,7 +81,7 @@ func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression
 	// Handle *args unpacking (supports multiple)
 	for _, argsUnpackExpr := range mce.GetArgsUnpack() {
 		argsVal := evalNode(ctx, argsUnpackExpr, env)
-		if object.IsError(argsVal) {
+		if object.IsError(argsVal) || isRaised(argsVal) {
 			return argsVal
 		}
 		unpacked, err := unpackArgsFromIterable(argsVal)
@@ -95,7 +95,7 @@ func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression
 	mceKwargsUnpack := mce.GetKwargsUnpack()
 	if mceKwargsUnpack != nil {
 		kwargsVal := evalNode(ctx, mceKwargsUnpack, env)
-		if object.IsError(kwargsVal) {
+		if object.IsError(kwargsVal) || isRaised(kwargsVal) {
 			return kwargsVal
 		}
 		if dict, ok := kwargsVal.(*object.Dict); ok {
@@ -119,14 +119,14 @@ func evalMethodCallExpression(ctx context.Context, mce *ast.MethodCallExpression
 
 func evalFastDictGet(ctx context.Context, dict *object.Dict, arguments []ast.Expression, env *object.Environment) object.Object {
 	keyObj := evalNode(ctx, arguments[0], env)
-	if object.IsError(keyObj) {
+	if object.IsError(keyObj) || isRaised(keyObj) {
 		return keyObj
 	}
 
 	var defaultObj object.Object = NULL
 	if len(arguments) == 2 {
 		defaultObj = evalNode(ctx, arguments[1], env)
-		if object.IsError(defaultObj) {
+		if object.IsError(defaultObj) || isRaised(defaultObj) {
 			return defaultObj
 		}
 	}
@@ -138,7 +138,11 @@ func evalFastDictGet(ctx context.Context, dict *object.Dict, arguments []ast.Exp
 		return defaultObj
 	}
 
-	if pair, exists := dict.Pairs[evalHashKey(ctx, keyObj)]; exists {
+	key, rerr := evalHashKeyChecked(ctx, keyObj)
+	if rerr != nil {
+		return rerr
+	}
+	if pair, exists := dict.Pairs[key]; exists {
 		return pair.Value
 	}
 	return defaultObj
@@ -165,7 +169,7 @@ func evalFastDictCallableMethod(ctx context.Context, dict *object.Dict, method s
 	}
 
 	args := evalCallArgs(ctx, arguments, env)
-	if len(args) == 1 && object.IsError(args[0]) {
+	if isPropagatedError(args) {
 		return args[0]
 	}
 	// args is borrowed from the per-root arg-buffer free-list; release on return.
@@ -276,7 +280,7 @@ func callStringMethodWithKeywords(ctx context.Context, obj object.Object, method
 
 	// Handle tuple methods
 	if obj.Type() == object.TUPLE_OBJ {
-		return callTupleMethod(obj.(*object.Tuple), method, args)
+		return callTupleMethod(ctx, obj.(*object.Tuple), method, args, env)
 	}
 
 	// Handle FloatArray methods
@@ -531,7 +535,10 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		if len(keywords) > 0 {
 			return errors.NewError("get() does not accept keyword arguments")
 		}
-		key := evalHashKey(ctx, args[0])
+		key, rerr := evalHashKeyChecked(ctx, args[0])
+		if rerr != nil {
+			return rerr
+		}
 		if pair, ok := dict.Pairs[key]; ok {
 			return pair.Value
 		}
@@ -546,7 +553,10 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		if len(keywords) > 0 {
 			return errors.NewError("pop() does not accept keyword arguments")
 		}
-		key := evalHashKey(ctx, args[0])
+		key, rerr := evalHashKeyChecked(ctx, args[0])
+		if rerr != nil {
+			return rerr
+		}
 		if pair, ok := dict.Pairs[key]; ok {
 			delete(dict.Pairs, key)
 			return pair.Value
@@ -584,7 +594,11 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 					if len(pair) != 2 {
 						return errors.NewError("dictionary update sequence element must be [key, value] pair")
 					}
-					dict.Pairs[evalHashKey(ctx, pair[0])] = object.DictPair{Key: pair[0], Value: pair[1]}
+					hk, rerr := evalHashKeyChecked(ctx, pair[0])
+					if rerr != nil {
+						return rerr
+					}
+					dict.Pairs[hk] = object.DictPair{Key: pair[0], Value: pair[1]}
 				}
 			default:
 				return errors.NewTypeError("DICT or LIST of pairs", args[0].Type().String())
@@ -619,7 +633,10 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		if len(keywords) > 0 {
 			return errors.NewError("setdefault() does not accept keyword arguments")
 		}
-		key := evalHashKey(ctx, args[0])
+		key, rerr := evalHashKeyChecked(ctx, args[0])
+		if rerr != nil {
+			return rerr
+		}
 		if pair, ok := dict.Pairs[key]; ok {
 			return pair.Value
 		}
@@ -645,12 +662,18 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		switch iter := args[0].(type) {
 		case *object.List:
 			for _, elem := range iter.Elements {
-				key := evalHashKey(ctx, elem)
+				key, rerr := evalHashKeyChecked(ctx, elem)
+				if rerr != nil {
+					return rerr
+				}
 				newPairs[key] = object.DictPair{Key: elem, Value: defaultVal}
 			}
 		case *object.Tuple:
 			for _, elem := range iter.Elements {
-				key := evalHashKey(ctx, elem)
+				key, rerr := evalHashKeyChecked(ctx, elem)
+				if rerr != nil {
+					return rerr
+				}
 				newPairs[key] = object.DictPair{Key: elem, Value: defaultVal}
 			}
 		case *object.String:
@@ -732,7 +755,11 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 			end = len(list.Elements)
 		}
 		for i := start; i < end; i++ {
-			if objectsEqual(list.Elements[i], value) {
+			eq, rerr := evalObjectsEqualChecked(ctx, list.Elements[i], value, env)
+			if rerr != nil {
+				return rerr
+			}
+			if eq {
 				return object.NewInteger(int64(i))
 			}
 		}
@@ -744,7 +771,11 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 		value := args[0]
 		count := int64(0)
 		for _, elem := range list.Elements {
-			if objectsEqual(elem, value) {
+			eq, rerr := evalObjectsEqualChecked(ctx, elem, value, env)
+			if rerr != nil {
+				return rerr
+			}
+			if eq {
 				count++
 			}
 		}
@@ -803,7 +834,11 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 		}
 		value := args[0]
 		for i, elem := range list.Elements {
-			if objectsEqual(elem, value) {
+			eq, rerr := evalObjectsEqualChecked(ctx, elem, value, env)
+			if rerr != nil {
+				return rerr
+			}
+			if eq {
 				list.Elements = append(list.Elements[:i], list.Elements[i+1:]...)
 				return NULL
 			}
@@ -1004,13 +1039,28 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return err
 		}
 		// Accept any iterable of strings (list, tuple, set, dict, dict views,
-		// string, iterator) — matching Python's str.join.
-		elements, ok := object.IterableToSlice(args[0])
+		// string, iterator, class instances with __iter__) — matching Python's
+		// str.join. A raise from the iterator protocol propagates.
+		elements, ok, rerr := iterableToSliceChecked(ctx, args[0], env)
+		if rerr != nil {
+			return rerr
+		}
 		if !ok {
 			return errors.NewTypeError("iterable", args[0].Type().String())
 		}
 		parts := make([]string, len(elements))
 		for i, elem := range elements {
+			// Elements convert with str() semantics: instances dispatch
+			// __str__ and exceptions use their message (a raise propagates
+			// from renderFormatArg); plain strings are used as-is.
+			if inst, isInst := elem.(*object.Instance); isInst {
+				rendered, rerr := strInstanceChecked(ctx, inst, env)
+				if rerr != nil {
+					return rerr
+				}
+				parts[i] = rendered
+				continue
+			}
 			if s, err := elem.AsString(); err == nil {
 				parts[i] = s
 			} else {
@@ -1330,13 +1380,12 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		searchStr := str.StringValue()[start:end]
 		return object.NewInteger(int64(strings.Count(searchStr, substr)))
 	case "format":
-		// Simple positional formatting: "{} {}".format("hello", "world")
-		result := str.StringValue()
-		for i, arg := range args {
-			placeholder := fmt.Sprintf("{%d}", i)
-			result = strings.Replace(result, placeholder, arg.Inspect(), 1)
-			// Also support {} for positional
-			result = strings.Replace(result, "{}", arg.Inspect(), 1)
+		// Python-style formatting: {}, {0}, {name}, {{ }} escapes and
+		// optional :format specs. Positional fields draw on the arguments,
+		// named fields on the keyword arguments.
+		result, ferr := evalStringFormatMethod(ctx, str.StringValue(), args, keywords, env)
+		if ferr != nil {
+			return ferr
 		}
 		return object.NewString(result)
 	case "isdigit":
@@ -1890,7 +1939,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		return errors.NewError("%s: %s", errors.ErrIdentifierNotFound, method)
 	}
 }
-func callTupleMethod(tuple *object.Tuple, method string, args []object.Object) object.Object {
+func callTupleMethod(ctx context.Context, tuple *object.Tuple, method string, args []object.Object, env *object.Environment) object.Object {
 	switch method {
 	case "count":
 		if err := errors.ExactArgs(args, 1); err != nil {
@@ -1898,7 +1947,11 @@ func callTupleMethod(tuple *object.Tuple, method string, args []object.Object) o
 		}
 		count := int64(0)
 		for _, elem := range tuple.Elements {
-			if objectsEqual(elem, args[0]) {
+			eq, rerr := evalObjectsEqualChecked(ctx, elem, args[0], env)
+			if rerr != nil {
+				return rerr
+			}
+			if eq {
 				count++
 			}
 		}
@@ -1938,7 +1991,11 @@ func callTupleMethod(tuple *object.Tuple, method string, args []object.Object) o
 			end = len(tuple.Elements)
 		}
 		for i := start; i < end; i++ {
-			if objectsEqual(tuple.Elements[i], args[0]) {
+			eq, rerr := evalObjectsEqualChecked(ctx, tuple.Elements[i], args[0], env)
+			if rerr != nil {
+				return rerr
+			}
+			if eq {
 				return object.NewInteger(int64(i))
 			}
 		}
@@ -1982,7 +2039,10 @@ func callSetMethod(ctx context.Context, set *object.Set, method string, args []o
 		if err := errors.ExactArgs(args, 1); err != nil {
 			return err
 		}
-		key := evalHashKey(ctx, args[0])
+		key, rerr := evalHashKeyChecked(ctx, args[0])
+		if rerr != nil {
+			return rerr
+		}
 		if !set.ContainsKeyed(key) {
 			return errors.NewError("KeyError: %s", args[0].Inspect())
 		}
@@ -1992,7 +2052,11 @@ func callSetMethod(ctx context.Context, set *object.Set, method string, args []o
 		if err := errors.ExactArgs(args, 1); err != nil {
 			return err
 		}
-		delete(set.Elements, evalHashKey(ctx, args[0]))
+		key, rerr := evalHashKeyChecked(ctx, args[0])
+		if rerr != nil {
+			return rerr
+		}
+		delete(set.Elements, key)
 		return NULL
 	case "pop":
 		if err := errors.ExactArgs(args, 0); err != nil {
@@ -2069,4 +2133,188 @@ func callSetMethod(ctx context.Context, set *object.Set, method string, args []o
 		return errors.NewError("%s: set method %s not found", errors.ErrIdentifierNotFound, method)
 	}
 	return NULL
+}
+
+// evalStringFormatMethod implements str.format: substitution fields are {}
+// (auto-numbered), {0} (explicit index) or {name} (keyword argument), each
+// with an optional ":spec" format spec applied via formatWithSpec. "{{" and
+// "}}" are literal braces. Values render the way str() would: exceptions use
+// their message, instances dispatch __str__ (whose raise propagates).
+func evalStringFormatMethod(ctx context.Context, format string, args []object.Object, keywords map[string]object.Object, env *object.Environment) (string, object.Object) {
+	var b strings.Builder
+	auto := 0
+	for i := 0; i < len(format); {
+		c := format[i]
+		if c == '{' {
+			if i+1 < len(format) && format[i+1] == '{' {
+				b.WriteByte('{')
+				i += 2
+				continue
+			}
+			// Field extends to the brace closing at depth 0, so specs may
+			// contain nested fields ({x:>{w}}) without ending early.
+			depth := 0
+			end := -1
+			for j := i + 1; j < len(format); j++ {
+				switch format[j] {
+				case '{':
+					depth++
+				case '}':
+					if depth == 0 {
+						end = j - i - 1
+					} else {
+						depth--
+					}
+				}
+				if end >= 0 {
+					break
+				}
+			}
+			if end < 0 {
+				return "", errors.NewError("single '{' in format string")
+			}
+			field := format[i+1 : i+1+end]
+			i += end + 2
+
+			name := field
+			spec := ""
+			conv := ""
+			if colon := strings.IndexByte(field, ':'); colon >= 0 {
+				name, spec = field[:colon], field[colon+1:]
+			}
+			if bang := strings.IndexByte(name, '!'); bang >= 0 {
+				conv = name[bang+1:]
+				name = name[:bang]
+				if conv != "r" && conv != "s" && conv != "a" {
+					return "", errors.NewError("unknown conversion '%s'", conv)
+				}
+			}
+
+			var val object.Object
+			switch {
+			case name == "":
+				if auto >= len(args) {
+					return "", errors.NewError("not enough arguments for format string")
+				}
+				val = args[auto]
+				auto++
+			case name[0] >= '0' && name[0] <= '9':
+				idx, err := strconv.Atoi(name)
+				if err != nil || idx < 0 || idx >= len(args) {
+					return "", errors.NewError("format index %s out of range (%d arguments)", name, len(args))
+				}
+				val = args[idx]
+			default:
+				kw, ok := keywords[name]
+				if !ok {
+					return "", errors.NewError("format field '%s' has no matching keyword argument", name)
+				}
+				val = kw
+			}
+
+			// Nested spec fields ({x:>{w}}) resolve against the same
+			// argument sources as top-level fields.
+			if strings.Contains(spec, "{") {
+				expanded, serr := expandFormatSpecArgs(ctx, spec, args, keywords, env)
+				if serr != nil {
+					return "", serr
+				}
+				spec = expanded
+			}
+			rendered, rerr := renderFormatArg(ctx, val, spec, conv, env)
+			if rerr != nil {
+				return "", rerr
+			}
+			b.WriteString(rendered)
+			continue
+		}
+		if c == '}' {
+			if i+1 < len(format) && format[i+1] == '}' {
+				b.WriteByte('}')
+				i += 2
+				continue
+			}
+			return "", errors.NewError("single '}' in format string")
+		}
+		b.WriteByte(c)
+		i++
+	}
+	return b.String(), nil
+}
+
+// renderFormatArg renders one format value: an optional !r/!s/!a conversion
+// is applied first (repr or str semantics, dunder raises propagating), then
+// an optional format spec. Without a conversion, exceptions use their message
+// and instances dispatch __str__, while other types keep their typed value so
+// numeric specs (.2f, >6d) still apply.
+func renderFormatArg(ctx context.Context, val object.Object, spec string, conv string, env *object.Environment) (string, object.Object) {
+	if conv != "" {
+		rendered, rerr := renderConvertedValue(ctx, val, conv, env)
+		if rerr != nil {
+			return "", rerr
+		}
+		if spec == "" {
+			return rendered, nil
+		}
+		return formatWithSpec(object.NewString(rendered), spec), nil
+	}
+	if _, isStr := val.(*object.String); !isStr {
+		if exc, ok := val.(*object.Exception); ok {
+			val = object.NewString(exc.Message)
+		} else if inst, ok := val.(*object.Instance); ok {
+			s, rerr := strInstanceChecked(ctx, inst, env)
+			if rerr != nil {
+				return "", rerr
+			}
+			val = object.NewString(s)
+		}
+	}
+	if spec == "" {
+		return val.Inspect(), nil
+	}
+	return formatWithSpec(val, spec), nil
+}
+
+// expandFormatSpecArgs resolves nested replacement fields inside a str.format
+// spec (dynamic widths like "{x:>{w}}") against the positional and keyword
+// arguments, mirroring the top-level field resolution.
+func expandFormatSpecArgs(ctx context.Context, spec string, args []object.Object, keywords map[string]object.Object, env *object.Environment) (string, object.Object) {
+	var b strings.Builder
+	for i := 0; i < len(spec); {
+		c := spec[i]
+		if c != '{' {
+			b.WriteByte(c)
+			i++
+			continue
+		}
+		end := strings.IndexByte(spec[i:], '}')
+		if end < 0 {
+			return "", errors.NewError("unbalanced '{' in format spec")
+		}
+		name := spec[i+1 : i+end]
+		i += end + 1
+		var val object.Object
+		switch {
+		case name == "":
+			return "", errors.NewError("empty nested format field")
+		case name[0] >= '0' && name[0] <= '9':
+			idx, err := strconv.Atoi(name)
+			if err != nil || idx < 0 || idx >= len(args) {
+				return "", errors.NewError("format index %s out of range (%d arguments)", name, len(args))
+			}
+			val = args[idx]
+		default:
+			kw, ok := keywords[name]
+			if !ok {
+				return "", errors.NewError("nested format field '%s' has no matching keyword argument", name)
+			}
+			val = kw
+		}
+		rendered, rerr := renderConvertedValue(ctx, val, "s", env)
+		if rerr != nil {
+			return "", rerr
+		}
+		b.WriteString(rendered)
+	}
+	return b.String(), nil
 }

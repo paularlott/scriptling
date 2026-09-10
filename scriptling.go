@@ -1087,6 +1087,18 @@ func (p *Scriptling) SetSourceFile(name string) {
 	}
 }
 
+// moduleRaiseError carries an exception raised by a module's top-level code
+// through the Go error interface used by the import callback, so the import
+// site can re-raise the original exception (preserving its type) instead of
+// reporting a generic ImportError.
+type moduleRaiseError struct{ ex *object.Exception }
+
+func (e *moduleRaiseError) Error() string { return e.ex.Message }
+
+// RaisedException satisfies evaluator.raisedExceptionCarrier so the import
+// statement can recover and re-raise the original exception object.
+func (e *moduleRaiseError) RaisedException() *object.Exception { return e.ex }
+
 // loadLibraryIntoEnv loads a script or registered library into the given environment as a dict.
 // Returns true if the library was found and loaded, false otherwise.
 func (p *Scriptling) loadLibraryIntoEnv(ctx context.Context, name string, env *object.Environment, chain []string) (bool, error) {
@@ -1244,6 +1256,12 @@ func (p *Scriptling) evaluateScriptLibrary(ctx context.Context, name string, scr
 		evaluator.ContextWithSourceFile(ctx, name),
 		program, libEnv,
 	)
+	// A raised exception in the module's top-level code must propagate to the
+	// import site with its original type intact (Python re-raises it), not be
+	// flattened into an ImportError. Carry the Exception through a typed error.
+	if exc, ok := result.(*object.Exception); ok && exc.Raised {
+		return nil, &moduleRaiseError{ex: exc}
+	}
 	if err, ok := result.(*object.Error); ok {
 		// Include location info in the error message
 		msg := err.Message
@@ -1371,6 +1389,12 @@ func (p *Scriptling) handleResult(result object.Object, contextMsg string) (obje
 				return obj, nil // clean exit
 			}
 			return obj, fmt.Errorf("%s", obj.Message)
+		}
+		// A non-raised exception is an ordinary value (e.g. a top-level
+		// expression `ValueError("x")`, or a function that returns an
+		// exception instance). Only a genuinely raised exception is an error.
+		if !obj.Raised {
+			return obj, nil
 		}
 		// Other exceptions
 		return obj, fmt.Errorf("%s", obj.Message)

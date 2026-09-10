@@ -65,7 +65,11 @@ assert bytes("hi").decode(encoding="utf-8") == "hi"
 eb = bytes()
 assert len(eb) == 0
 assert bool(eb) is False
-assert eb[0] is None              # Scriptling convention: OOR index → None
+try:                              # OOR index raises IndexError (like list/str)
+    eb[0]
+    assert False, "expected IndexError"
+except IndexError:
+    pass
 assert eb[10:20] == bytes()       # slicing empty is empty
 assert eb.hex() == ""
 assert eb.base64() == ""

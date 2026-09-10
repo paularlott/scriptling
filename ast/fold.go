@@ -326,18 +326,20 @@ func tryFoldInfix(op Op, left, right Expression) Expression {
 	lstr, lIsStr := left.(*StringLiteral)
 	rstr, rIsStr := right.(*StringLiteral)
 	lbool, lIsBool := left.(*Boolean)
-	rbool, rIsBool := right.(*Boolean)
 
-	// Boolean logic (short-circuit)
+	// Boolean logic (short-circuit). Only fold when the LEFT operand is a
+	// constant boolean: then Python's short-circuit result is fully determined
+	// without evaluating anything else. We must NOT fold based on the right
+	// operand (e.g. `X and False`, `X or True`) — Python still evaluates the
+	// left operand (which may have side effects, including a raising __bool__)
+	// and, for a truthy/falsy left, the result is the left operand's value, not
+	// the boolean literal.
 	if op == OpAnd {
 		if lIsBool {
 			if !lbool.Value {
 				return BoolFalse // False and X -> False
 			}
 			return right // True and X -> X (already folded)
-		}
-		if rIsBool && !rbool.Value {
-			return BoolFalse // X and False -> False
 		}
 	}
 	if op == OpOr {
@@ -346,9 +348,6 @@ func tryFoldInfix(op Op, left, right Expression) Expression {
 				return BoolTrue // True or X -> True
 			}
 			return right // False or X -> X (already folded)
-		}
-		if rIsBool && rbool.Value {
-			return BoolTrue // X or True -> True
 		}
 	}
 

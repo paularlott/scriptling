@@ -10,27 +10,37 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
-// evalHashKey returns the canonical map key string for obj, calling __hash__
-// on instances that define it. Falls back to object.DictKey for all other types.
-func evalHashKey(ctx context.Context, obj object.Object) string {
+// evalHashKeyChecked is like evalHashKey but surfaces a raise/error from a
+// user-defined __hash__ instead of silently falling back to the identity hash.
+// The second return is non-nil exactly when __hash__ raised or errored.
+func evalHashKeyChecked(ctx context.Context, obj object.Object) (string, object.Object) {
 	if inst, ok := obj.(*object.Instance); ok {
 		if _, hasHash := inst.Class.Methods["__hash__"]; hasHash && hashInstanceFn != nil {
 			result := hashInstanceFn(ctx, inst)
-			if n, ok := result.(*object.Integer); ok {
-				return fmt.Sprintf("h:%d", n.IntValue())
+			if object.IsError(result) || result.Type() == object.EXCEPTION_OBJ {
+				return "", result
 			}
+			if n, ok := result.(*object.Integer); ok {
+				return fmt.Sprintf("h:%d", n.IntValue()), nil
+			}
+			// __hash__ returned a non-integer — Python raises TypeError.
+			return "", &object.Exception{Message: "__hash__ method should return an integer", ExceptionType: object.ExceptionTypeTypeError, Raised: true}
 		}
 	}
-	return object.DictKey(obj)
+	return object.DictKey(obj), nil
 }
 
 // evalSetAdd adds obj to set s, using __hash__ for instances.
 // Returns a TypeError exception if obj is not hashable.
 func evalSetAdd(ctx context.Context, s *object.Set, obj object.Object) object.Object {
 	if !object.IsHashable(obj) {
-		return &object.Exception{Message: "unhashable type: '" + obj.Type().String() + "'", ExceptionType: object.ExceptionTypeTypeError}
+		return &object.Exception{Message: "unhashable type: '" + obj.Type().String() + "'", ExceptionType: object.ExceptionTypeTypeError, Raised: true}
 	}
-	s.AddKeyed(evalHashKey(ctx, obj), obj)
+	hk, raised := evalHashKeyChecked(ctx, obj)
+	if raised != nil {
+		return raised
+	}
+	s.AddKeyed(hk, obj)
 	return nil
 }
 
@@ -42,16 +52,20 @@ func evalDictLiteralWithContext(ctx context.Context, node *ast.DictLiteral, env 
 
 	for _, pairNode := range node.Pairs {
 		key := evalNode(ctx, pairNode.Key, env)
-		if object.IsError(key) {
+		if object.IsError(key) || isRaised(key) {
 			return key
 		}
 
 		value := evalNode(ctx, pairNode.Value, env)
-		if object.IsError(value) {
+		if object.IsError(value) || isRaised(value) {
 			return value
 		}
 
-		pairs[evalHashKey(ctx, key)] = object.DictPair{Key: key, Value: value}
+		hk, raised := evalHashKeyChecked(ctx, key)
+		if raised != nil {
+			return raised
+		}
+		pairs[hk] = object.DictPair{Key: key, Value: value}
 	}
 
 	return &object.Dict{Pairs: pairs}
@@ -151,7 +165,7 @@ func evalListIndexExpression(list, index object.Object) object.Object {
 	}
 
 	if idx < 0 || idx >= length {
-		return NULL
+		return &object.Exception{Message: "list index out of range", ExceptionType: object.ExceptionTypeIndexError, Raised: true}
 	}
 
 	return listObject.Elements[idx]
@@ -170,7 +184,7 @@ func evalFloatArrayIndexExpression(faObj, index object.Object) object.Object {
 			idx += rows
 		}
 		if idx < 0 || idx >= rows {
-			return NULL
+			return &object.Exception{Message: "float_array index out of range", ExceptionType: object.ExceptionTypeIndexError, Raised: true}
 		}
 		cols := fa.Cols()
 		start := int(idx) * cols
@@ -184,7 +198,7 @@ func evalFloatArrayIndexExpression(faObj, index object.Object) object.Object {
 		idx += length
 	}
 	if idx < 0 || idx >= length {
-		return NULL
+		return &object.Exception{Message: "float_array index out of range", ExceptionType: object.ExceptionTypeIndexError, Raised: true}
 	}
 	return object.NewFloat(fa.Data[idx])
 }
@@ -300,7 +314,7 @@ func evalTupleIndexExpression(tuple, index object.Object) object.Object {
 	}
 
 	if idx < 0 || idx >= length {
-		return NULL
+		return &object.Exception{Message: "tuple index out of range", ExceptionType: object.ExceptionTypeIndexError, Raised: true}
 	}
 
 	return tupleObject.Elements[idx]
@@ -308,11 +322,14 @@ func evalTupleIndexExpression(tuple, index object.Object) object.Object {
 
 func evalDictIndexExpression(ctx context.Context, dict, index object.Object) object.Object {
 	dictObject := dict.(*object.Dict)
-	key := evalHashKey(ctx, index)
+	key, rerr := evalHashKeyChecked(ctx, index)
+	if rerr != nil {
+		return rerr
+	}
 
 	pair, ok := dictObject.Pairs[key]
 	if !ok {
-		return NULL
+		return &object.Exception{Message: index.Inspect(), ExceptionType: object.ExceptionTypeKeyError, Raised: true}
 	}
 
 	return pair.Value
@@ -342,7 +359,7 @@ func evalStringIndexExpression(str, index object.Object) object.Object {
 			idx += length
 		}
 		if idx < 0 || idx >= length {
-			return NULL
+			return &object.Exception{Message: "string index out of range", ExceptionType: object.ExceptionTypeIndexError, Raised: true}
 		}
 		return object.NewString(strObject.StringValue()[idx : idx+1])
 	}
@@ -353,7 +370,7 @@ func evalStringIndexExpression(str, index object.Object) object.Object {
 		idx += length
 	}
 	if idx < 0 || idx >= length {
-		return NULL
+		return &object.Exception{Message: "string index out of range", ExceptionType: object.ExceptionTypeIndexError, Raised: true}
 	}
 	return object.NewString(string(runes[idx]))
 }
@@ -369,9 +386,14 @@ func evalInstanceIndexExpression(ctx context.Context, instance, index object.Obj
 		}
 	}
 
-	// Fallback to string-based field access
+	// Fallback to string-based field access. A non-string index without a
+	// __getitem__ means the object is not subscriptable (Python TypeError).
 	if index.Type() != object.STRING_OBJ {
-		return errors.NewError("instance index must be string")
+		return &object.Exception{
+			Message:       fmt.Sprintf("'%s' object is not subscriptable", inst.Class.Name),
+			ExceptionType: object.ExceptionTypeTypeError,
+			Raised:        true,
+		}
 	}
 	field, err := index.AsString()
 	if err != nil {
@@ -460,7 +482,7 @@ func evalBuiltinIndexExpression(builtin, index object.Object) object.Object {
 
 func evalSliceExpressionWithContext(ctx context.Context, node *ast.SliceExpression, env *object.Environment) object.Object {
 	left := evalNode(ctx, node.Left, env)
-	if object.IsError(left) {
+	if object.IsError(left) || isRaised(left) {
 		return left
 	}
 
@@ -470,7 +492,7 @@ func evalSliceExpressionWithContext(ctx context.Context, node *ast.SliceExpressi
 
 	if node.Start != nil {
 		startObj := evalNode(ctx, node.Start, env)
-		if object.IsError(startObj) {
+		if object.IsError(startObj) || isRaised(startObj) {
 			return startObj
 		}
 		s, err := startObj.AsInt()
@@ -483,7 +505,7 @@ func evalSliceExpressionWithContext(ctx context.Context, node *ast.SliceExpressi
 
 	if node.End != nil {
 		endObj := evalNode(ctx, node.End, env)
-		if object.IsError(endObj) {
+		if object.IsError(endObj) || isRaised(endObj) {
 			return endObj
 		}
 		e, err := endObj.AsInt()
@@ -496,7 +518,7 @@ func evalSliceExpressionWithContext(ctx context.Context, node *ast.SliceExpressi
 
 	if node.GetStep() != nil {
 		stepObj := evalNode(ctx, node.GetStep(), env)
-		if object.IsError(stepObj) {
+		if object.IsError(stepObj) || isRaised(stepObj) {
 			return stepObj
 		}
 		s, err := stepObj.AsInt()
@@ -968,7 +990,7 @@ func evalStringSliceExpression(str, index object.Object) object.Object {
 
 // evalBytesIndexExpression indexes a Bytes value by an integer, returning the
 // byte value (0-255) as an Integer. Negative indices count from the end. An
-// out-of-range index returns NULL, matching the behaviour of string indexing.
+// out-of-range index raises IndexError, matching list/tuple/string indexing.
 func evalBytesIndexExpression(b, index object.Object) object.Object {
 	bObj := b.(*object.Bytes)
 	idx, err := index.AsInt()
@@ -980,7 +1002,7 @@ func evalBytesIndexExpression(b, index object.Object) object.Object {
 		idx += length
 	}
 	if idx < 0 || idx >= length {
-		return NULL
+		return &object.Exception{Message: "bytes index out of range", ExceptionType: object.ExceptionTypeIndexError, Raised: true}
 	}
 	return object.NewInteger(int64(bObj.BytesValue()[idx]))
 }

@@ -748,8 +748,10 @@ Flags:
 						resultObj = eval.CallObjectFunction(ctx, replacementFunc, []object.Object{matchObj}, nil, env)
 					}
 
-					// Check for error
-					if resultObj.Type() == object.ERROR_OBJ {
+					// A raised exception (or internal error) from the replacement
+					// callback must propagate — never be coerced to a string and
+					// spliced into the result (silent data corruption).
+					if resultObj.Type() == object.ERROR_OBJ || resultObj.Type() == object.EXCEPTION_OBJ {
 						return resultObj
 					}
 

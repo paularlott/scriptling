@@ -389,6 +389,7 @@ func (sl *StringLiteral) Line() int            { return 0 }
 
 type FStringOverflow struct {
 	FormatSpecs []string
+	Conversions []string // per-expression conversion flag: "r", "s", "a" or ""
 }
 
 type FStringLiteral struct {
@@ -416,7 +417,40 @@ func (fsl *FStringLiteral) SetFormatSpecs(specs []string) {
 	if !hasNonEmpty {
 		return
 	}
-	fsl.overflow = &FStringOverflow{FormatSpecs: specs}
+	if fsl.overflow == nil {
+		fsl.overflow = &FStringOverflow{FormatSpecs: specs}
+		return
+	}
+	fsl.overflow.FormatSpecs = specs
+}
+
+// GetConversions returns the per-expression conversion flags ("r", "s", "a"
+// or ""), aligned with Expressions.
+func (fsl *FStringLiteral) GetConversions() []string {
+	if fsl.overflow == nil {
+		return nil
+	}
+	return fsl.overflow.Conversions
+}
+
+// SetConversions stores per-expression conversion flags, creating the
+// overflow lazily so plain f-strings without specs stay allocation-free.
+func (fsl *FStringLiteral) SetConversions(convs []string) {
+	hasAny := false
+	for _, c := range convs {
+		if c != "" {
+			hasAny = true
+			break
+		}
+	}
+	if !hasAny {
+		return
+	}
+	if fsl.overflow == nil {
+		fsl.overflow = &FStringOverflow{Conversions: convs}
+		return
+	}
+	fsl.overflow.Conversions = convs
 }
 
 func (fsl *FStringLiteral) expressionNode()      {}

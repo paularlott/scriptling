@@ -15,12 +15,12 @@ var FunctoolsLibrary = object.NewLibrary(FunctoolsLibraryName, map[string]*objec
 				return errors.NewError("reduce() requires 2 or 3 arguments")
 			}
 
-			fn, ok := args[0].(*object.Function)
-			if !ok {
-				if builtin, ok := args[0].(*object.Builtin); ok {
-					return reduceWithBuiltin(ctx, builtin, args[1:])
-				}
-				return errors.NewTypeError("FUNCTION", args[0].Type().String())
+			callable := args[0]
+			switch callable.(type) {
+			case *object.Function, *object.LambdaFunction, *object.Builtin, *object.BoundMethod, *object.Class:
+				// Any callable is accepted (functions, lambdas, builtins, etc.).
+			default:
+				return errors.NewTypeError("callable", callable.Type().String())
 			}
 
 			list, ok := args[1].(*object.List)
@@ -50,11 +50,11 @@ var FunctoolsLibrary = object.NewLibrary(FunctoolsLibraryName, map[string]*objec
 			}
 
 			for i := startIdx; i < len(list.Elements); i++ {
-				result := eval.CallFunction(ctx, fn, []object.Object{accumulator, list.Elements[i]}, nil)
+				result := eval.CallObjectFunction(ctx, callable, []object.Object{accumulator, list.Elements[i]}, nil, nil)
 				if result == nil {
 					return errors.NewError("reduce function returned nil")
 				}
-				if object.IsError(result) {
+				if object.IsError(result) || result.Type() == object.EXCEPTION_OBJ {
 					return result
 				}
 				accumulator = result
@@ -149,39 +149,3 @@ Example:
   add_five(3)  # 8`,
 	},
 }, nil, "Higher-order functions and operations on callable objects")
-
-func reduceWithBuiltin(ctx context.Context, builtin *object.Builtin, args []object.Object) object.Object {
-	list, ok := args[0].(*object.List)
-	if !ok {
-		return errors.NewTypeError("LIST", args[0].Type().String())
-	}
-
-	if len(list.Elements) == 0 {
-		if len(args) == 2 {
-			return args[1]
-		}
-		return errors.NewError("reduce() of empty sequence with no initial value")
-	}
-
-	var accumulator object.Object
-	startIdx := 0
-	if len(args) == 2 {
-		accumulator = args[1]
-	} else {
-		accumulator = list.Elements[0]
-		startIdx = 1
-	}
-
-	for i := startIdx; i < len(list.Elements); i++ {
-		result := builtin.Fn(ctx, object.NewKwargs(nil), accumulator, list.Elements[i])
-		if result == nil {
-			return errors.NewError("reduce function returned nil")
-		}
-		if object.IsError(result) {
-			return result
-		}
-		accumulator = result
-	}
-
-	return accumulator
-}

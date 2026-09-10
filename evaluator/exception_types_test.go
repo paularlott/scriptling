@@ -152,13 +152,16 @@ result
 			result := EvalWithContext(context.Background(), program, env)
 
 			if tt.isError {
-				if !object.IsError(result) {
-					t.Fatalf("expected error, got %T (%+v)", result, result)
+				// An uncaught failure now surfaces either as an internal
+				// *object.Error or as the raised *object.Exception itself
+				// (type preserved). Both count as "did not complete normally".
+				if !object.IsError(result) && !isRaised(result) {
+					t.Fatalf("expected error or raised exception, got %T (%+v)", result, result)
 				}
 				return
 			}
 
-			if object.IsError(result) {
+			if object.IsError(result) || isRaised(result) {
 				t.Fatalf("unexpected error: %s", result.Inspect())
 			}
 
@@ -344,7 +347,7 @@ func evalInEnv(t *testing.T, src string) (object.Object, error) {
 	if result == nil {
 		t.Fatal("nil result")
 	}
-	if isException(result) || object.IsError(result) {
+	if isRaised(result) || object.IsError(result) {
 		return nil, fmt.Errorf("%s", result.Inspect())
 	}
 	return result, nil

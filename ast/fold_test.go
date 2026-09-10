@@ -541,26 +541,22 @@ func TestFoldBooleanLogic(t *testing.T) {
 	})
 
 	t.Run("non-bool and False", func(t *testing.T) {
+		// `X and False` must NOT fold to False when X is non-constant: Python
+		// still evaluates X (side effects), and a falsy X yields X, not False.
 		ident := &Identifier{}
 		result := foldExpr(infix(OpAnd, ident, boolLit(false)))
-		lit, ok := result.(*Boolean)
-		if !ok {
-			t.Fatalf("expected *Boolean, got %T", result)
-		}
-		if lit.Value != false {
-			t.Errorf("got %v, want false", lit.Value)
+		if _, ok := result.(*InfixExpression); !ok {
+			t.Fatalf("expected unfolded *InfixExpression, got %T", result)
 		}
 	})
 
 	t.Run("non-bool or True", func(t *testing.T) {
+		// `X or True` must NOT fold to True when X is non-constant: Python still
+		// evaluates X (side effects), and a truthy X yields X, not True.
 		ident := &Identifier{}
 		result := foldExpr(infix(OpOr, ident, boolLit(true)))
-		lit, ok := result.(*Boolean)
-		if !ok {
-			t.Fatalf("expected *Boolean, got %T", result)
-		}
-		if lit.Value != true {
-			t.Errorf("got %v, want true", lit.Value)
+		if _, ok := result.(*InfixExpression); !ok {
+			t.Fatalf("expected unfolded *InfixExpression, got %T", result)
 		}
 	})
 }
