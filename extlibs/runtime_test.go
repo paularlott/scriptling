@@ -913,7 +913,11 @@ func BenchmarkRuntimeKVSet(b *testing.B) {
 	key := object.NewString("bench_key")
 	value := object.NewString("bench_value")
 
-	store := newKVStoreObject(RuntimeState.KVDB, "")
+	db, err := openRegisteredStore(":memory:kv_bench_set")
+	if err != nil {
+		b.Fatal(err)
+	}
+	store := newKVStoreObject(db, ":memory:kv_bench_set")
 	setFn := store.Attributes["set"].(*object.Builtin)
 
 	b.ResetTimer()
@@ -931,7 +935,11 @@ func BenchmarkRuntimeKVGet(b *testing.B) {
 	key := object.NewString("bench_key")
 	value := object.NewString("bench_value")
 
-	store := newKVStoreObject(RuntimeState.KVDB, "")
+	db, err := openRegisteredStore(":memory:kv_bench_get")
+	if err != nil {
+		b.Fatal(err)
+	}
+	store := newKVStoreObject(db, ":memory:kv_bench_get")
 	setFn := store.Attributes["set"].(*object.Builtin)
 	getFn := store.Attributes["get"].(*object.Builtin)
 

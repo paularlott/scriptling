@@ -170,10 +170,19 @@ func KVStoreDB(store object.Object) *snapshotkv.DB {
 // If registryName is non-empty, close() will decrement the registry ref count.
 // If registryName is empty (system default), close() is a no-op.
 func newKVStoreObject(db *snapshotkv.DB, registryName string) *object.Builtin {
+	// A nil DB (the default store before InitKVStore, or after
+	// ResetRuntime/CloseKVStore) must surface as a catchable error on first
+	// use rather than dereferencing nil and crashing the host.
+	notOpen := func() object.Object {
+		return errors.NewError("kv store is not open; open one with scriptling.runtime.kv.open()")
+	}
 	obj := &object.Builtin{
 		Attributes: map[string]object.Object{
 			"set": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if db == nil {
+						return notOpen()
+					}
 					if objErr := errors.MinArgs(args, 2); objErr != nil {
 						return objErr
 					}
@@ -209,6 +218,9 @@ func newKVStoreObject(db *snapshotkv.DB, registryName string) *object.Builtin {
 
 			"get": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if db == nil {
+						return notOpen()
+					}
 					if objErr := errors.MinArgs(args, 1); objErr != nil {
 						return objErr
 					}
@@ -233,6 +245,9 @@ func newKVStoreObject(db *snapshotkv.DB, registryName string) *object.Builtin {
 
 			"delete": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if db == nil {
+						return notOpen()
+					}
 					if objErr := errors.MinArgs(args, 1); objErr != nil {
 						return objErr
 					}
@@ -248,6 +263,9 @@ func newKVStoreObject(db *snapshotkv.DB, registryName string) *object.Builtin {
 
 			"exists": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if db == nil {
+						return notOpen()
+					}
 					if objErr := errors.MinArgs(args, 1); objErr != nil {
 						return objErr
 					}
@@ -262,6 +280,9 @@ func newKVStoreObject(db *snapshotkv.DB, registryName string) *object.Builtin {
 
 			"ttl": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if db == nil {
+						return notOpen()
+					}
 					if objErr := errors.MinArgs(args, 1); objErr != nil {
 						return objErr
 					}
@@ -283,6 +304,9 @@ func newKVStoreObject(db *snapshotkv.DB, registryName string) *object.Builtin {
 
 			"keys": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if db == nil {
+						return notOpen()
+					}
 					pattern := "*"
 					if p := kwargs.Get("pattern"); p != nil {
 						if pat, e := p.AsString(); e == nil {
@@ -312,6 +336,9 @@ func newKVStoreObject(db *snapshotkv.DB, registryName string) *object.Builtin {
 
 			"clear": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if db == nil {
+						return notOpen()
+					}
 					for _, key := range db.FindKeysByPrefix("") {
 						db.Delete(key)
 					}
@@ -322,6 +349,9 @@ func newKVStoreObject(db *snapshotkv.DB, registryName string) *object.Builtin {
 
 			"incr": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if db == nil {
+						return notOpen()
+					}
 					if objErr := errors.MinArgs(args, 1); objErr != nil {
 						return objErr
 					}
@@ -359,6 +389,9 @@ func newKVStoreObject(db *snapshotkv.DB, registryName string) *object.Builtin {
 
 			"close": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if db == nil {
+						return notOpen()
+					}
 					if registryName != "" {
 						// Flush failures are already logged via OnSaveError;
 						// surface them to the script as well.
