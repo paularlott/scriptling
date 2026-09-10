@@ -53,12 +53,12 @@ func (s *Server) buildPluginServer() {
 		ps.RegisterBuiltin(funcName, func(callCtx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			return s.runPluginHandler(callCtx, ref, args, kwargs.Kwargs)
 		})
-		Log.Info("Registered plugin function", "name", funcName, "handler", ref)
+		Log.Debug("Registered plugin function", "name", funcName, "handler", ref)
 	}
 
 	for constName, val := range constants {
 		ps.Constant(constName, val)
-		Log.Info("Registered plugin constant", "name", constName)
+		Log.Debug("Registered plugin constant", "name", constName)
 	}
 
 	for className, classRef := range classes {
@@ -68,7 +68,7 @@ func (s *Server) buildPluginServer() {
 			continue
 		}
 		ps.RegisterBuiltinClass(className, class)
-		Log.Info("Registered plugin class", "name", className, "handler", classRef)
+		Log.Debug("Registered plugin class", "name", className, "handler", classRef)
 	}
 
 	// A script-declared fetcher (runtime.plugin.register_fetcher): the peer
@@ -76,7 +76,7 @@ func (s *Server) buildPluginServer() {
 	// host's declared assets inside itself.
 	if scheme, read := extlibs.RuntimeState.PluginFetchScheme, extlibs.RuntimeState.PluginFetchRead; read != "" {
 		ps.RegisterFetcher(scheme, scriptFetcher{s: s, read: read, glob: extlibs.RuntimeState.PluginFetchGlob})
-		Log.Info("Registered plugin fetcher", "scheme", scheme, "read", read)
+		Log.Debug("Registered plugin fetcher", "scheme", scheme, "read", read)
 	}
 
 	Log.Info("Plugin server ready", "name", name, "version", version,
