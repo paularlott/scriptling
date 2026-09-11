@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func mustURL(t *testing.T, raw string) *url.URL {
@@ -264,6 +265,7 @@ deny_hosts = ["evil.example"]
 allow_cidrs = ["10.1.0.0/16"]
 deny_cidrs = ["10.66.0.0/16"]
 dns_servers = ["1.1.1.1", "8.8.8.8:53"]
+client_timeout = "45s"
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -277,6 +279,9 @@ dns_servers = ["1.1.1.1", "8.8.8.8:53"]
 	if len(cfg.AllowHosts) != 2 || len(cfg.DenyHosts) != 1 || len(cfg.AllowedCIDRs) != 1 || len(cfg.DeniedCIDRs) != 1 || len(cfg.DNSServers) != 2 {
 		t.Errorf("lists not loaded: %+v", cfg)
 	}
+	if cfg.ClientTimeout != 45*time.Second {
+		t.Errorf("client_timeout not loaded: %+v", cfg)
+	}
 	// Compiles and enforces as expected.
 	g, err := NewGuard(cfg)
 	if err != nil {
@@ -287,6 +292,50 @@ dns_servers = ["1.1.1.1", "8.8.8.8:53"]
 	}
 	if err := g.CheckURL(mustURL(t, "http://10.1.2.3/")); err == nil {
 		t.Error("https_only should still reject plain http")
+	}
+}
+
+// TestClientTimeoutDefaultOff pins the guarded client's end-to-end cap as
+// opt-in: unset by default (long-running calls such as LLM APIs must run to
+// their own per-request timeouts) and carried onto the client when set.
+func TestClientTimeoutDefaultOff(t *testing.T) {
+	g, err := NewGuard(&Config{AllowAll: true})
+	if err != nil {
+		t.Fatalf("NewGuard: %v", err)
+	}
+	if ct := g.HTTPClient().Timeout; ct != 0 {
+		t.Errorf("default client timeout = %v, want 0 (no cap)", ct)
+	}
+
+	g, err = NewGuard(&Config{AllowAll: true, ClientTimeout: 2 * time.Minute})
+	if err != nil {
+		t.Fatalf("NewGuard: %v", err)
+	}
+	if ct := g.HTTPClient().Timeout; ct != 2*time.Minute {
+		t.Errorf("client timeout = %v, want 2m", ct)
+	}
+}
+
+// TestLoadConfigClientTimeoutValidation checks the policy-file spelling of
+// ClientTimeout: a positive Go duration string, anything else is an error —
+// an invalid policy never degrades into a different one.
+func TestLoadConfigClientTimeoutValidation(t *testing.T) {
+	dir := t.TempDir()
+
+	path := dir + "/bad.toml"
+	if err := os.WriteFile(path, []byte("client_timeout = \"soon\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(path); err == nil {
+		t.Error("client_timeout = \"soon\" should fail to load")
+	}
+
+	path = dir + "/zero.toml"
+	if err := os.WriteFile(path, []byte("client_timeout = \"0s\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(path); err == nil {
+		t.Error("client_timeout = \"0s\" should fail to load")
 	}
 }
 

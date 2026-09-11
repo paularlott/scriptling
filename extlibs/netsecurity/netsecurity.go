@@ -90,6 +90,13 @@ type Config struct {
 	// shared DNS resolver. Hosts use it to configure nameservers without
 	// imposing a policy; it cannot be set from a policy file.
 	AllowAll bool
+
+	// ClientTimeout optionally caps each HTTP request end to end — dial,
+	// TLS, redirects and reading the body — on the client HTTPClient()
+	// hands to script libraries. Zero (the default) enforces no cap:
+	// requests run as long as their own per-request timeout allows, which
+	// long-running calls such as LLM APIs need.
+	ClientTimeout time.Duration
 }
 
 // hostRule is one compiled host-list entry: exact match or domain suffix.
@@ -113,6 +120,8 @@ type Guard struct {
 	denyHosts  []hostRule
 	resolver   *net.Resolver
 	dialer     *net.Dialer
+	// clientTimeout caps HTTPClient()'s client; zero means no cap.
+	clientTimeout time.Duration
 	requireHTTPS,
 	allowIPLiterals,
 	allowLoopback,
@@ -152,6 +161,7 @@ func NewGuard(cfg *Config) (*Guard, error) {
 		allowLoopback:   cfg.AllowLoopback,
 		allowPrivateIPs: cfg.AllowPrivateIPs,
 		allowAll:        cfg.AllowAll,
+		clientTimeout:   cfg.ClientTimeout,
 		dialer: &net.Dialer{
 			Timeout:   10 * time.Second,
 			KeepAlive: 30 * time.Second,
@@ -187,6 +197,9 @@ type policyFile struct {
 	AllowCIDRs      []string `toml:"allow_cidrs"`
 	DenyCIDRs       []string `toml:"deny_cidrs"`
 	DNSServers      []string `toml:"dns_servers"`
+	// ClientTimeout caps each HTTP request end to end, e.g. "30s" or "2m".
+	// Empty leaves requests to their own per-request timeouts.
+	ClientTimeout string `toml:"client_timeout"`
 }
 
 // LoadConfig reads a TOML policy file. Every key is optional, for example:
@@ -195,6 +208,7 @@ type policyFile struct {
 //	allow_hosts = ["api.example.com", ".internal.corp"]
 //	allow_cidrs = ["10.1.0.0/16"]
 //	dns_servers = ["1.1.1.1", "8.8.8.8:53"]
+//	client_timeout = "30s"
 //
 // The file must parse and compile: an invalid policy is an error, never an
 // open policy.
@@ -207,6 +221,13 @@ func LoadConfig(path string) (*Config, error) {
 	if _, err := toml.Decode(string(data), &f); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
+	clientTimeout := time.Duration(0)
+	if f.ClientTimeout != "" {
+		clientTimeout, err = time.ParseDuration(f.ClientTimeout)
+		if err != nil || clientTimeout <= 0 {
+			return nil, fmt.Errorf("parse %s: client_timeout %q must be a positive duration like \"30s\"", path, f.ClientTimeout)
+		}
+	}
 	cfg := &Config{
 		RequireHTTPS:    f.HTTPSOnly,
 		AllowIPLiterals: f.AllowIPLiterals,
@@ -217,6 +238,7 @@ func LoadConfig(path string) (*Config, error) {
 		AllowedCIDRs:    f.AllowCIDRs,
 		DeniedCIDRs:     f.DenyCIDRs,
 		DNSServers:      f.DNSServers,
+		ClientTimeout:   clientTimeout,
 	}
 	if _, err := NewGuard(cfg); err != nil {
 		return nil, fmt.Errorf("invalid policy in %s: %w", path, err)
@@ -338,13 +360,15 @@ func (g *Guard) DialContext(ctx context.Context, network, addr string) (net.Conn
 // HTTPClient returns a guarded client for script HTTP requests. The transport
 // disables proxy environment variables: an HTTP(S)_PROXY would tunnel the
 // connection to the proxy host, bypassing the address policy for the target.
+// The client carries Config.ClientTimeout as its end-to-end cap — zero (the
+// default) leaves requests bounded only by their own per-request timeouts.
 func (g *Guard) HTTPClient() *http.Client {
 	return &http.Client{
 		Transport: &guardTransport{
 			inner: g.NewTransport(),
 			guard: g,
 		},
-		Timeout: 30 * time.Second,
+		Timeout: g.clientTimeout,
 	}
 }
 
