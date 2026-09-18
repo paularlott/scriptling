@@ -3,10 +3,13 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 
 	mcplib "github.com/paularlott/mcp"
+	"github.com/paularlott/mcp/pool"
+	"github.com/paularlott/scriptling/extlibs/netsecurity"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -27,17 +30,57 @@ func WrapClient(c *mcplib.Client) object.Object {
 	return createClientInstance(c)
 }
 
-// Register registers the mcp library with the given registrar
-// First call builds the library, subsequent calls just register it
-func Register(registrar interface{ RegisterLibrary(*object.Library) }) {
-	libraryOnce.Do(func() {
-		library = buildLibrary()
-	})
-	registrar.RegisterLibrary(library)
+// guardedPool adapts a netsecurity-guarded *http.Client to the mcp/pool.HTTPPool
+// interface expected by paularlott/mcp's client constructors.
+type guardedPool struct {
+	client *http.Client
 }
 
-// buildLibrary builds the MCP library
-func buildLibrary() *object.Library {
+func (p *guardedPool) GetHTTPClient() *http.Client { return p.client }
+
+// httpPoolFor returns an HTTPPool that routes through guard's checked
+// transport, or nil (the default, unrestricted pool) when guard is nil.
+func httpPoolFor(guard *netsecurity.Guard) pool.HTTPPool {
+	if guard == nil {
+		return nil
+	}
+	return &guardedPool{client: guard.HTTPClient()}
+}
+
+// Register registers the mcp library with the given registrar.
+// cfg is an optional outbound network policy: when provided (non-nil), every
+// HTTP-transport client created via mcp.Client() is restricted to it (an
+// invalid policy fails closed rather than falling back to unrestricted
+// access). Stdio clients launch a local subprocess and are unaffected — the
+// policy only governs network access. Omitting cfg preserves the previous,
+// unrestricted behaviour.
+//
+// First call with no cfg builds and caches the unrestricted library;
+// subsequent calls just register it. A call with cfg always builds a fresh,
+// guard-bound library.
+func Register(registrar interface{ RegisterLibrary(*object.Library) }, cfg ...*netsecurity.Config) {
+	lib := defaultLibrary()
+	if len(cfg) > 0 && cfg[0] != nil {
+		guard, gerr := netsecurity.NewGuard(cfg[0])
+		if gerr != nil {
+			guard = netsecurity.FailClosed(gerr)
+		}
+		lib = buildLibrary(guard)
+	}
+	registrar.RegisterLibrary(lib)
+}
+
+// defaultLibrary returns the cached, unrestricted library (thread-safe singleton).
+func defaultLibrary() *object.Library {
+	libraryOnce.Do(func() {
+		library = buildLibrary(nil)
+	})
+	return library
+}
+
+// buildLibrary builds the MCP library. A nil guard leaves HTTP clients
+// created by mcp.Client() unrestricted (the previous behaviour).
+func buildLibrary(guard *netsecurity.Guard) *object.Library {
 	return object.NewLibraryBuilder(MCPLibraryName, MCPLibraryDesc).
 
 		// decode_response(response) - Decode a raw MCP tool response
@@ -101,7 +144,7 @@ Example:
 					authProvider = mcplib.NewBearerTokenAuth(bearerToken)
 				}
 
-				client := mcplib.NewClient(target, authProvider, namespace)
+				client := mcplib.NewClientWithPool(target, authProvider, namespace, httpPoolFor(guard))
 				return createClientInstance(client), nil
 			}
 

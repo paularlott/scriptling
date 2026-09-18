@@ -27,7 +27,7 @@ func TestNewClientErrors(t *testing.T) {
 		},
 	}
 
-	lib := buildLibrary()
+	lib := buildLibrary(nil)
 	newClientFunc := lib.Functions()["Client"]
 
 	for _, tt := range tests {
@@ -58,7 +58,7 @@ func TestNewClientErrors(t *testing.T) {
 }
 
 func TestProviderConstants(t *testing.T) {
-	lib := buildLibrary()
+	lib := buildLibrary(nil)
 	constants := lib.Constants()
 
 	tests := []struct {

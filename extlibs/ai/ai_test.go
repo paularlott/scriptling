@@ -1595,7 +1595,7 @@ func TestWrapClient(t *testing.T) {
 
 // Test buildLibrary creates a valid library
 func TestBuildLibrary(t *testing.T) {
-	lib := buildLibrary()
+	lib := buildLibrary(nil)
 
 	if lib == nil {
 		t.Fatal("buildLibrary() returned nil")
@@ -2037,7 +2037,7 @@ func TestExtractThinking(t *testing.T) {
 }
 
 func TestEstimateTokens(t *testing.T) {
-	lib := buildLibrary()
+	lib := buildLibrary(nil)
 	fn, ok := lib.Functions()["estimate_tokens"]
 	if !ok {
 		t.Fatal("estimate_tokens function not found in library")
@@ -2900,7 +2900,7 @@ func TestPipelineRateLimitAdaptive(t *testing.T) {
 }
 
 func TestCosineSimilarity(t *testing.T) {
-	lib := buildLibrary()
+	lib := buildLibrary(nil)
 	fn, ok := lib.Functions()["cosine_similarity"]
 	if !ok {
 		t.Fatal("cosine_similarity function not found in library")

@@ -13,9 +13,11 @@ import (
 	"github.com/paularlott/mcp"
 	"github.com/paularlott/mcp/ai"
 	"github.com/paularlott/mcp/ai/openai"
+	"github.com/paularlott/mcp/pool"
 	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/evaliface"
 	"github.com/paularlott/scriptling/extlibs/ai/tools"
+	"github.com/paularlott/scriptling/extlibs/netsecurity"
 	"github.com/paularlott/scriptling/extlibs/similarity"
 	"github.com/paularlott/scriptling/object"
 )
@@ -37,17 +39,56 @@ func WrapClient(c ai.Client) object.Object {
 	return createClientInstance(c)
 }
 
-// Register registers the ai library with the given registrar
-// First call builds the library, subsequent calls just register it
-func Register(registrar interface{ RegisterLibrary(*object.Library) }) {
-	libraryOnce.Do(func() {
-		library = buildLibrary()
-	})
-	registrar.RegisterLibrary(library)
+// guardedPool adapts a netsecurity-guarded *http.Client to the mcp/pool.HTTPPool
+// interface expected by paularlott/mcp's client constructors.
+type guardedPool struct {
+	client *http.Client
 }
 
-// buildLibrary builds the AI library
-func buildLibrary() *object.Library {
+func (p *guardedPool) GetHTTPClient() *http.Client { return p.client }
+
+// httpPoolFor returns an HTTPPool that routes through guard's checked
+// transport, or nil (the default, unrestricted pool) when guard is nil.
+func httpPoolFor(guard *netsecurity.Guard) pool.HTTPPool {
+	if guard == nil {
+		return nil
+	}
+	return &guardedPool{client: guard.HTTPClient()}
+}
+
+// Register registers the ai library with the given registrar.
+// cfg is an optional outbound network policy: when provided (non-nil), every
+// client created via ai.Client() — including its remote MCP servers — is
+// restricted to it (an invalid policy fails closed rather than falling back
+// to unrestricted access). Omitting cfg preserves the previous, unrestricted
+// behaviour.
+//
+// First call with no cfg builds and caches the unrestricted library;
+// subsequent calls just register it. A call with cfg always builds a fresh,
+// guard-bound library.
+func Register(registrar interface{ RegisterLibrary(*object.Library) }, cfg ...*netsecurity.Config) {
+	lib := defaultLibrary()
+	if len(cfg) > 0 && cfg[0] != nil {
+		guard, gerr := netsecurity.NewGuard(cfg[0])
+		if gerr != nil {
+			guard = netsecurity.FailClosed(gerr)
+		}
+		lib = buildLibrary(guard)
+	}
+	registrar.RegisterLibrary(lib)
+}
+
+// defaultLibrary returns the cached, unrestricted library (thread-safe singleton).
+func defaultLibrary() *object.Library {
+	libraryOnce.Do(func() {
+		library = buildLibrary(nil)
+	})
+	return library
+}
+
+// buildLibrary builds the AI library. A nil guard leaves clients created by
+// ai.Client() unrestricted (the previous behaviour).
+func buildLibrary(guard *netsecurity.Guard) *object.Library {
 	builder := object.NewLibraryBuilder(AILibraryName, AILibraryDesc)
 
 	// Add ToolRegistry class
@@ -149,6 +190,7 @@ func buildLibrary() *object.Library {
 					config := openai.RemoteServerConfig{
 						BaseURL:   baseURLStr,
 						Namespace: namespace,
+						HTTPPool:  httpPoolFor(guard),
 					}
 
 					if tokenVal, ok := serverMap["bearer_token"]; ok && tokenVal != nil {
@@ -190,6 +232,7 @@ func buildLibrary() *object.Library {
 				APIKey:              apiKey,
 				BaseURL:             baseURL,
 				RemoteServerConfigs: remoteServerConfigs,
+				HTTPPool:            httpPoolFor(guard),
 				MaxTokens:           maxTokens,
 				Temperature:         temperature,
 				TopP:                topP,

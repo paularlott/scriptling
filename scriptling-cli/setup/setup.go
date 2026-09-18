@@ -182,7 +182,7 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 	reg(extlibs.FileProvisionLibraryName, func() { provisionfile.Register(p) })
 	reg(extlibs.FetchProvisionLibraryName, func() { provisionfetch.Register(p) })
 
-	reg(extlibs.AILibraryName, func() { ai.Register(p) })
+	reg(extlibs.AILibraryName, func() { ai.Register(p, netPolicy...) })
 	reg(aimemory.MemoryLibraryName, func() { aimemory.Register(p, log) })
 	reg(extlibs.AgentLibraryName, func() { agent.Register(p) })
 	reg(extlibs.RuntimePluginLibraryName, func() { extlibs.RegisterRuntimePluginLibrary(p) })
@@ -197,7 +197,7 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 	reg(slack.LibraryName, func() { slack.Register(p, log) })
 	reg(messagingconsole.LibraryName, func() { messagingconsole.Register(p) })
 
-	reg(extlibs.MCPLibraryName, func() { scriptlingmcp.Register(p) })
+	reg(extlibs.MCPLibraryName, func() { scriptlingmcp.Register(p, netPolicy...) })
 	reg(extlibs.ToonLibraryName, func() { scriptlingmcp.RegisterToon(p) })
 	if !disabled[extlibs.MCPLibraryName] {
 		scriptlingmcp.RegisterToolHelpers(p)
