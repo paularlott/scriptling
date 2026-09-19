@@ -15,7 +15,7 @@ require (
 	github.com/paularlott/gossip v0.22.0
 	github.com/paularlott/jsonrpc v0.2.0
 	github.com/paularlott/logger v0.3.0
-	github.com/paularlott/mcp v0.26.0
+	github.com/paularlott/mcp v0.26.1
 	github.com/paularlott/snapshotkv v0.6.0
 	github.com/shirou/gopsutil/v3 v3.24.5
 	github.com/valkey-io/valkey-go v1.0.78
@@ -63,7 +63,7 @@ require (
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/term v0.46.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
-	modernc.org/libc v1.76.0 // indirect
+	modernc.org/libc v1.77.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )
