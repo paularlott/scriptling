@@ -23,6 +23,7 @@ import (
 	"github.com/paularlott/jsonrpc"
 	"github.com/paularlott/logger"
 	"github.com/paularlott/scriptling/build"
+	"github.com/paularlott/scriptling/extlibs/fssecurity"
 )
 
 // TransportMode restricts which plugin transport protocols a Manager or scope
@@ -71,6 +72,12 @@ type Manager struct {
 	transportMode         TransportMode
 	httpTransport         http.RoundTripper // shared pooled TLS-verified transport
 	httpInsecureTransport http.RoundTripper // shared pooled TLS-skip-verify transport
+	// execPaths optionally restricts which executable paths LoadPlugin,
+	// LoadPath and directory discovery may spawn on this scope. nil (the
+	// default) means unrestricted — set via WithExecPaths on a scope meant
+	// for script-driven dynamic loading, while the boot-time parent manager
+	// that pre-loads trusted plugins stays unrestricted.
+	execPaths *fssecurity.Config
 
 	dirs                   []string
 	clients                map[string]*Client
@@ -226,10 +233,38 @@ func WithHTTPTransport(transport http.RoundTripper) ScopeOption {
 	}
 }
 
-// NewScope creates a child Manager that inherits the logger and shared HTTP
-// transports from this Manager. Plugins loaded into the scope are invisible to
-// the parent and to other scopes. When the scope is closed, only its locally
-// loaded plugins are unloaded; the parent's plugins are unaffected.
+// WithExecPaths restricts which executable paths this scope's LoadPlugin,
+// LoadPath, and directory discovery (Load) may spawn — the resolved
+// absolute path must satisfy cfg.IsPathAllowed. This is the stdio/exec
+// counterpart to WithHTTPTransport: a scope for script-driven dynamic
+// loading can permit executables, but only from paths the host chose,
+// rather than the all-or-nothing TransportStdio/TransportNone choice alone.
+//
+// Pass nil (or omit this option) for unrestricted exec loading — the
+// default, and the right choice for a boot-time parent manager that
+// pre-loads whatever the host application trusts. A non-nil cfg with an
+// empty AllowedPaths denies every executable path, matching
+// fssecurity.Config's own nil-vs-empty convention used everywhere else in
+// this codebase.
+//
+// This does not affect HTTP(S) loading at all — combine with WithTransport
+// and WithHTTPTransport for independent control over both.
+func WithExecPaths(cfg *fssecurity.Config) ScopeOption {
+	return func(m *Manager) { m.execPaths = cfg }
+}
+
+// NewScope creates a child Manager that inherits the logger, shared HTTP
+// transports, transport mode, and exec-path restriction from this Manager.
+// Plugins loaded into the scope are invisible to the parent and to other
+// scopes. When the scope is closed, only its locally loaded plugins are
+// unloaded; the parent's plugins are unaffected.
+//
+// Inheriting transportMode/execPaths matters: without it, a nested scope
+// created with no options would silently be *more* permissive than its
+// parent (TransportAll, unrestricted exec paths) regardless of how
+// restricted the parent was — the opposite of what "scoping down" should
+// mean. opts can still loosen or tighten further, same as any other
+// ScopeOption.
 //
 // Calling Get or List on the scope chains to the parent for fallback: the
 // scope sees its own plugins first and parent plugins where there is no clash.
@@ -246,6 +281,8 @@ func (m *Manager) NewScope(opts ...ScopeOption) *Manager {
 		maxParallelPluginLoads: m.parallelLoadLimit(),
 		httpTransport:          m.httpTransport,         // shared — connections pooled with parent
 		httpInsecureTransport:  m.httpInsecureTransport, // shared — connections pooled with parent
+		transportMode:          m.transportMode,          // inherited — see doc comment above
+		execPaths:              m.execPaths,               // inherited — see doc comment above
 		loadsDone:              closedSignal(),
 		closeDone:              make(chan struct{}),
 	}
@@ -380,6 +417,9 @@ func (m *Manager) startOne(ctx context.Context, spec PluginSpec) (*Client, error
 	}
 	resolvedPath, err := resolveExecutablePath(spec.Path)
 	if err != nil {
+		return nil, err
+	}
+	if err := m.checkExecPath(resolvedPath); err != nil {
 		return nil, err
 	}
 	return startClient(ctx, resolvedPath, spec.Args, spec.Env, m.policySnapshot())
@@ -543,6 +583,9 @@ func (m *Manager) LoadPlugin(ctx context.Context, path string, args []string) (*
 	if err != nil {
 		return nil, err
 	}
+	if err := m.checkExecPath(resolvedPath); err != nil {
+		return nil, err
+	}
 
 	m.mu.Lock()
 	for _, existing := range m.clients {
@@ -618,6 +661,9 @@ func (m *Manager) LoadPath(ctx context.Context, name, path string, scriptling bo
 	if !isHTTP {
 		resolvedPath, err = resolveExecutablePath(path)
 		if err != nil {
+			return nil, err
+		}
+		if err := m.checkExecPath(resolvedPath); err != nil {
 			return nil, err
 		}
 	}
@@ -814,6 +860,19 @@ func (m *Manager) Unload(name string) error {
 		return fmt.Errorf("plugin not found: %s", name)
 	}
 	return client.Close()
+}
+
+// checkExecPath enforces this scope's WithExecPaths restriction, if any,
+// against an already-resolved absolute executable path. nil execPaths (the
+// default) means unrestricted.
+func (m *Manager) checkExecPath(resolvedPath string) error {
+	if m.execPaths == nil {
+		return nil
+	}
+	if !m.execPaths.IsPathAllowed(resolvedPath) {
+		return fmt.Errorf("plugin executable %q is not in the allowed paths", resolvedPath)
+	}
+	return nil
 }
 
 func resolveExecutablePath(path string) (string, error) {
