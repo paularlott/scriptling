@@ -36,6 +36,14 @@ const (
 	TransportHTTP
 	// TransportStdio permits only stdio executables; loading HTTP URLs fails.
 	TransportStdio
+	// TransportNone permits neither: LoadPlugin, LoadPath, LoadURL, LoadPlugins
+	// and Unload all fail on a scope set to this mode. Plugins already loaded
+	// on an ancestor manager remain fully visible and callable through the
+	// scope (List, Get, and the control library's list/describe/call_function/
+	// batch_call/call_method all still work) — only the ability to change the
+	// loaded set is removed. Use this to expose admin-loaded plugins to
+	// scripts without letting scripts load or unload plugins themselves.
+	TransportNone
 )
 
 // DefaultHandshakeTimeout caps how long handshake() will wait for the plugin
@@ -61,8 +69,8 @@ var ErrManagerClosed = errors.New("plugin manager closed")
 type Manager struct {
 	parent                *Manager
 	transportMode         TransportMode
-	httpTransport         *http.Transport // shared pooled TLS-verified transport
-	httpInsecureTransport *http.Transport // shared pooled TLS-skip-verify transport
+	httpTransport         http.RoundTripper // shared pooled TLS-verified transport
+	httpInsecureTransport http.RoundTripper // shared pooled TLS-skip-verify transport
 
 	dirs                   []string
 	clients                map[string]*Client
@@ -192,6 +200,32 @@ func WithTransport(mode TransportMode) ScopeOption {
 	return func(m *Manager) { m.transportMode = mode }
 }
 
+// WithHTTPTransport overrides the transport a scope uses for every HTTP(S)
+// plugin call — the initial LoadURL handshake and every later call_function/
+// batch_call/call_method RPC alike, since both draw from the same
+// httpTransportFor lookup. Use this to route HTTP(S) plugin loading through a
+// policy-enforcing transport (e.g. one built from a network allow/deny list)
+// instead of the Manager's default pooled transport.
+//
+// Takes an http.RoundTripper rather than a concrete *http.Transport
+// deliberately: a policy guard's own client transport (such as
+// netsecurity.Guard.HTTPClient's transport) typically wraps dialing *and*
+// upfront URL validation (scheme, host allow/deny lists, IP-literal
+// handling) in a RoundTripper, not just a custom net.Dialer — passing only
+// the inner dial-level transport would silently drop that upfront
+// validation and enforce nothing beyond per-connection IP checks.
+//
+// The same transport is used regardless of a caller's insecure_skip_tls
+// request: this is a one-way ratchet, never less safe than what was asked
+// for, so a policy-enforcing transport stays enforced even if a script (or
+// an admin's LoadURL call) asks to skip TLS verification.
+func WithHTTPTransport(transport http.RoundTripper) ScopeOption {
+	return func(m *Manager) {
+		m.httpTransport = transport
+		m.httpInsecureTransport = transport
+	}
+}
+
 // NewScope creates a child Manager that inherits the logger and shared HTTP
 // transports from this Manager. Plugins loaded into the scope are invisible to
 // the parent and to other scopes. When the scope is closed, only its locally
@@ -224,7 +258,7 @@ func (m *Manager) NewScope(opts ...ScopeOption) *Manager {
 // httpTransportFor returns the appropriate shared transport for the given TLS
 // skip-verify preference. Both transports are pooled and shared with child
 // scopes so connections are reused across executions.
-func (m *Manager) httpTransportFor(insecureSkipTLS bool) *http.Transport {
+func (m *Manager) httpTransportFor(insecureSkipTLS bool) http.RoundTripper {
 	if insecureSkipTLS {
 		return m.httpInsecureTransport
 	}
@@ -332,6 +366,9 @@ func (m *Manager) startBatch(ctx context.Context, specs []PluginSpec) []batchRes
 // startOne starts a single spec: handshake an http(s) plugin server, or
 // resolve and spawn an executable with its args and environment.
 func (m *Manager) startOne(ctx context.Context, spec PluginSpec) (*Client, error) {
+	if m.transportMode == TransportNone {
+		return nil, fmt.Errorf("plugin loading is disabled in this scope")
+	}
 	if isHTTPURL(spec.Path) {
 		if m.transportMode == TransportStdio {
 			return nil, fmt.Errorf("http/https plugins are not permitted in this scope (stdio only)")
@@ -493,6 +530,9 @@ func (m *Manager) LoadPlugin(ctx context.Context, path string, args []string) (*
 	}
 	defer m.endLoad()
 
+	if m.transportMode == TransportNone {
+		return nil, fmt.Errorf("plugin loading is disabled in this scope")
+	}
 	if isHTTPURL(path) {
 		return nil, fmt.Errorf("LoadPlugin requires an executable path; use LoadURL for http(s) plugins")
 	}
@@ -566,6 +606,10 @@ func (m *Manager) LoadPath(ctx context.Context, name, path string, scriptling bo
 		return nil, err
 	}
 	defer m.endLoad()
+
+	if m.transportMode == TransportNone {
+		return nil, fmt.Errorf("plugin loading is disabled in this scope")
+	}
 
 	normalisedName := NormalizeLibraryName(name)
 	resolvedPath := path
@@ -675,6 +719,9 @@ func (m *Manager) LoadURL(ctx context.Context, name, rawURL string, scriptling, 
 	}
 	defer m.endLoad()
 
+	if m.transportMode == TransportNone {
+		return nil, fmt.Errorf("plugin loading is disabled in this scope")
+	}
 	if !isHTTPURL(rawURL) {
 		return nil, fmt.Errorf("plugin URL must use http or https")
 	}
@@ -753,6 +800,9 @@ func (m *Manager) LoadURL(ctx context.Context, name, rawURL string, scriptling, 
 // plugin discovered via Load also works but the plugin will not be restarted.
 // Returns an error if no client is registered under name (after normalisation).
 func (m *Manager) Unload(name string) error {
+	if m.transportMode == TransportNone {
+		return fmt.Errorf("plugin unloading is disabled in this scope")
+	}
 	normalized := NormalizeLibraryName(name)
 	m.mu.Lock()
 	client, ok := m.clients[normalized]
@@ -1068,7 +1118,7 @@ func startClient(ctx context.Context, path string, args []string, extraEnv []str
 // newHTTPClient creates an HTTP plugin client. The caller is responsible for
 // passing the appropriate transport (see Manager.httpTransportFor); no TLS
 // policy decisions are made here. Pass nil to fall back to http.DefaultTransport.
-func newHTTPClient(ctx context.Context, rawURL string, insecureSkipTLS bool, handshake bool, transport *http.Transport, policy *Policy, headers ...map[string]string) (*Client, error) {
+func newHTTPClient(ctx context.Context, rawURL string, insecureSkipTLS bool, handshake bool, transport http.RoundTripper, policy *Policy, headers ...map[string]string) (*Client, error) {
 	// Credentials in the URL (http://user:pass@host) become the Basic auth
 	// header; an explicit Authorization header supplied by the caller wins.
 	// The transport gets the URL without the userinfo so it never leaks into
@@ -1102,7 +1152,7 @@ func newHTTPClient(ctx context.Context, rawURL string, insecureSkipTLS bool, han
 	return client, nil
 }
 
-func transportOrDefault(t *http.Transport) http.RoundTripper {
+func transportOrDefault(t http.RoundTripper) http.RoundTripper {
 	if t != nil {
 		return t
 	}
