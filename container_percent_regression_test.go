@@ -943,6 +943,11 @@ str(a) + "," + str(b)
 	})
 
 	t.Run("dict from an instance iterator of pairs", func(t *testing.T) {
+		// Probe the mapping by key rather than str(dict): Dict.Pairs is a Go
+		// map with no insertion order, so str() renders its entries in Go's
+		// randomized map-iteration order and an exact-string assertion here
+		// fails intermittently. What this case actually pins is that dict()
+		// consumes an instance iterator of (key, value) pairs at all.
 		got := evalString(t, `
 class Pairs:
     def __init__(self):
@@ -954,10 +959,11 @@ class Pairs:
             raise StopIteration()
         self.i = self.i + 1
         return (self.i, self.i * 10)
-str(dict(Pairs()))
+d = dict(Pairs())
+str(len(d)) + "|" + str(d[1]) + "," + str(d[2])
 `)
-		if got != "{1: 10, 2: 20}" {
-			t.Fatalf("result = %q, want %q", got, "{1: 10, 2: 20}")
+		if got != "2|10,20" {
+			t.Fatalf("result = %q, want %q", got, "2|10,20")
 		}
 	})
 

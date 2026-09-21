@@ -259,6 +259,12 @@ func buildRootCommand() *cli.Command {
 				EnvVars:    []string{"SCRIPTLING_WEBSOCKET_ORIGIN"},
 				ConfigPath: []string{"server.websocket_origins"},
 			},
+			&cli.StringSliceFlag{
+				Name:       "mcp-cors-origin",
+				Usage:      "Allowed browser origin for cross-origin /mcp requests (repeatable, \"*\" for any; default: same-origin only)",
+				EnvVars:    []string{"SCRIPTLING_MCP_CORS_ORIGIN"},
+				ConfigPath: []string{"server.mcp_cors_origins"},
+			},
 			&cli.StringFlag{
 				Name:         "allowed-paths",
 				Usage:        "Comma-separated list of allowed filesystem paths (restricts os, pathlib, glob, sandbox)",
@@ -952,6 +958,7 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 		BearerToken:         cmd.GetString("bearer-token"),
 		MaxRequestBodyBytes: cmd.GetInt64("max-request-body"),
 		WebSocketOrigins:    cmd.GetStringSlice("websocket-origin"),
+		MCPCorsOrigins:      cmd.GetStringSlice("mcp-cors-origin"),
 		AllowedPaths:        bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths")),
 		NetworkPolicy:       mustLoadPolicy(cmd),
 		DisabledLibs:        effectiveDisabledLibs(cmd),

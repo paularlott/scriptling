@@ -127,6 +127,17 @@ func BuildRequestToolProvider(entries []*object.Dict, cfg HandlerConfig) (mcplib
 				meta.Discoverable = b
 			}
 		}
+		ui, err := dictGetUIToolMeta(entry, "ui")
+		if err != nil {
+			return nil, fmt.Errorf("register_request_tool %q: %w", name, err)
+		}
+		meta.UI = ui
+
+		icons, err := dictGetIcons(entry, "icons")
+		if err != nil {
+			return nil, fmt.Errorf("register_request_tool %q: %w", name, err)
+		}
+		meta.Icons = icons
 
 		tool, err := toolmetadata.BuildMCPTool(name, meta)
 		if err != nil {
@@ -247,6 +258,15 @@ func BuildRequestResourceProvider(entries []*object.Dict, cfg HandlerConfig) (mc
 		}
 		if res.uri == "" || res.name == "" || res.handler == "" {
 			return nil, fmt.Errorf("register_request_resource: uri, name and handler are required")
+		}
+		// The "ui" scheme is this project's convention for MCP Apps views
+		// (see docs/guides/mcp-apps.md); the spec MUSTs their mimeType be
+		// exactly UIAppMimeType, so it's enforced here rather than left to
+		// whatever (or nothing) the script passed as mime_type — mirroring
+		// the folder-based resource scan's identical override in
+		// resources_prompts.go.
+		if strings.HasPrefix(res.uri, "ui://") {
+			res.mimeType = mcplib.UIAppMimeType
 		}
 		if pair, ok := entry.GetByString("template"); ok {
 			if b, err := pair.Value.AsBool(); err == nil {

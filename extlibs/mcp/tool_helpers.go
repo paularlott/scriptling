@@ -20,6 +20,10 @@ const (
 	MCPParamsVarName = "__mcp_params"
 	// MCPResponseVarName is the environment variable name for MCP tool response
 	MCPResponseVarName = "__mcp_response"
+	// MCPResponseStructuredVarName marks that __mcp_response's JSON (set by
+	// tool.return_structured()) should also be surfaced as the tool result's
+	// structuredContent field, not just its text content.
+	MCPResponseStructuredVarName = "__mcp_response_structured"
 )
 
 // getParamValue retrieves a parameter value from the __mcp_params dict
@@ -64,6 +68,20 @@ func setResponseAndExit(ctx context.Context, response string, exitCode int) obje
 	env.SetGlobal(MCPResponseVarName, object.NewString(response))
 
 	// Exit with specified code
+	return object.NewSystemExit(exitCode, "")
+}
+
+// setStructuredResponseAndExit is setResponseAndExit plus the
+// MCPResponseStructuredVarName marker, so the handler that reads
+// __mcp_response back out builds a structured MCP tool result (StructuredContent
+// plus the same JSON as a text fallback) instead of a text-only one.
+func setStructuredResponseAndExit(ctx context.Context, response string, exitCode int) object.Object {
+	env := evaluator.GetEnvFromContext(ctx)
+	if env == nil {
+		return &object.Error{Message: "environment not available"}
+	}
+	env.SetGlobal(MCPResponseVarName, object.NewString(response))
+	env.SetGlobal(MCPResponseStructuredVarName, object.NewBoolean(true))
 	return object.NewSystemExit(exitCode, "")
 }
 
@@ -557,6 +575,39 @@ Stops script execution immediately - no code after this call will execute.
 
 Example:
   mcp.tool.return_object({"status": "success", "count": 42})
+  # Code here will not execute`,
+		},
+		"return_structured": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if len(args) == 0 {
+					return &object.Error{Message: "return_structured() requires a dict argument"}
+				}
+				if _, ok := args[0].(*object.Dict); !ok {
+					return &object.Error{Message: fmt.Sprintf("return_structured() requires a dict (JSON object) argument, got %s", args[0].Type())}
+				}
+
+				goObj := conversion.ToGo(args[0])
+				jsonBytes, err := json.Marshal(goObj)
+				if err != nil {
+					return &object.Error{Message: fmt.Sprintf("Failed to serialize object to JSON: %v", err)}
+				}
+
+				return setStructuredResponseAndExit(ctx, string(jsonBytes), 0)
+			},
+			HelpText: `return_structured(obj) - Return obj as the tool's structuredContent and stop execution
+
+Sets obj (a dict) as the MCP result's structuredContent field, per the MCP
+spec's structured-content convention (used by e.g. an outputSchema and by the
+MCP Apps extension). For backwards compatibility with clients that don't read
+structuredContent, the same JSON is also included as a text content block —
+you don't need to call return_object() as well.
+
+obj must be a dict (a JSON object); use return_object() for a list, string,
+or other non-object JSON value.
+Stops script execution immediately - no code after this call will execute.
+
+Example:
+  mcp.tool.return_structured({"records": [{"date": "2026-01-01", "amount": 42}]})
   # Code here will not execute`,
 		},
 		"return_toon": {

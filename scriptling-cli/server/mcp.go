@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -72,14 +70,25 @@ func (s *Server) setupMCP() error {
 func (s *Server) createMCPServer() (*mcp_lib.Server, error) {
 	server := mcp_lib.NewServer("scriptling-server", "1.0.0")
 	server.SetInstructions("Execute Scriptling tools from the tools folder.")
+	server.DeclareExtension(mcp_lib.UIAppsExtensionID, map[string]any{
+		"mimeTypes": []string{mcp_lib.UIAppMimeType},
+	})
+	// The library's own Origin check (localhost-or-no-header by default)
+	// is disabled here — mcpCorsMiddleware (http.go) is the single,
+	// authoritative decision for this route instead, and runs before
+	// HandleRequest is ever reached. It has to be: it's request-aware
+	// (its same-origin default needs r.TLS/r.Host, which a plain
+	// func(origin string) bool validator can't see) and honors
+	// MCPCorsOrigins, neither of which the library's own default knows
+	// about. Leaving the library's check enabled too would just make it
+	// reject requests mcpCorsMiddleware already approved (e.g. an
+	// operator's explicit MCPCorsOrigins wildcard, or same-origin on a
+	// non-localhost deployment).
+	server.SetOriginValidator(func(string) bool { return true })
 
 	if s.config.MCPExecTool {
 		s.registerExecTool(server)
 	}
-
-	// Resources and prompts are registered once and persist across reloads.
-	s.registerMCPResources(server)
-	s.registerMCPPrompts(server)
 
 	// Folder-sourced entries.
 	if s.config.MCPToolsDir != "" {
@@ -196,10 +205,16 @@ func (s *Server) registerResourcesFromFS(server *mcp_lib.Server, fsys fs.FS, sou
 			Log.Info("Registered MCP resource template", "uri", e.URI, "source", source)
 		} else {
 			filePath := e.FilePath
-			server.RegisterResource(
-				mcp_lib.NewResource(e.URI, e.Name, e.Description, e.MimeType),
-				mcpcli.BuildStaticResourceHandler(func() ([]byte, error) { return fs.ReadFile(fsys, filePath) }, e.URI, e.MimeType),
-			)
+			resourceBuilder := mcp_lib.NewResource(e.URI, e.Name, e.Description, e.MimeType)
+			readFn := func() ([]byte, error) { return fs.ReadFile(fsys, filePath) }
+			var handler mcp_lib.ResourceHandler
+			if e.UIMeta != nil {
+				resourceBuilder.UIMeta(*e.UIMeta)
+				handler = mcpcli.BuildStaticResourceHandlerWithMeta(readFn, e.URI, e.MimeType, e.UIMeta)
+			} else {
+				handler = mcpcli.BuildStaticResourceHandler(readFn, e.URI, e.MimeType)
+			}
+			server.RegisterResource(resourceBuilder, handler)
 			staticKeys = append(staticKeys, e.URI)
 			Log.Info("Registered MCP resource", "uri", e.URI, "source", source)
 		}
@@ -269,70 +284,6 @@ func (s *Server) handlerConfig() mcpcli.HandlerConfig {
 	return mcpcli.NewHandlerConfig(s.config.LibDirs, opts...)
 }
 
-// registerMCPResources exposes the source of each tool script as a resource
-// template, so clients can read tool source code by name.
-func (s *Server) registerMCPResources(server *mcp_lib.Server) {
-	// Bundle tool source: scriptling://script/{name} reads from the app
-	// bundle's tools/ dir.
-	if s.config.appMode() {
-		server.RegisterResourceTemplate(
-			mcp_lib.NewResourceTemplate("scriptling://script/{name}", "Tool Source", "Source code of a Scriptling tool by name", "text/plain"),
-			func(ctx context.Context, req *mcp_lib.ResourceRequest) (*mcp_lib.ResourceResponse, error) {
-				name := req.StringOr("name", "")
-				if name == "" || strings.ContainsAny(name, "/\\..") {
-					return nil, mcp_lib.NewToolErrorInvalidParams("invalid tool name")
-				}
-				if toolsFS, ok := s.config.Bundle.Sub("tools"); ok {
-					if src, err := fs.ReadFile(toolsFS, name+".py"); err == nil {
-						return mcp_lib.NewResourceResponseText(req.URI(), string(src), "text/plain"), nil
-					}
-				}
-				return nil, mcp_lib.NewToolErrorInvalidParams("tool script not found: " + name)
-			},
-		)
-		return
-	}
-
-	// Tool source template: scriptling://script/{name} -> the tool's .py source.
-	if s.config.MCPToolsDir != "" {
-		server.RegisterResourceTemplate(
-			mcp_lib.NewResourceTemplate("scriptling://script/{name}", "Tool Source", "Source code of a Scriptling tool by name", "text/plain"),
-			func(ctx context.Context, req *mcp_lib.ResourceRequest) (*mcp_lib.ResourceResponse, error) {
-				name := req.StringOr("name", "")
-				if name == "" || strings.ContainsAny(name, "/\\..") {
-					return nil, mcp_lib.NewToolErrorInvalidParams("invalid tool name")
-				}
-				scriptPath := filepath.Join(s.config.MCPToolsDir, name+".py")
-				src, err := os.ReadFile(scriptPath)
-				if err != nil {
-					return nil, mcp_lib.NewToolErrorInvalidParams("tool script not found: " + name)
-				}
-				return mcp_lib.NewResourceResponseText(req.URI(), string(src), "text/plain"), nil
-			},
-		)
-	}
-}
-
-// registerMCPPrompts exposes Scriptling prompts. A prompt renders a message the
-// model can use, e.g. to ask it to write a Scriptling script.
-func (s *Server) registerMCPPrompts(server *mcp_lib.Server) {
-	server.RegisterPrompt(
-		mcp_lib.NewPrompt("write_script", "Generate a Scriptling script for a task").
-			Argument("task", "What the script should do", true).
-			Argument("context", "Extra context or requirements", false),
-		func(ctx context.Context, req *mcp_lib.PromptRequest) (*mcp_lib.PromptResponse, error) {
-			task := req.StringOr("task", "")
-			extra := req.StringOr("context", "")
-			msg := "Write a Scriptling script (Python 3-like) that: " + task + "."
-			if extra != "" {
-				msg += "\n\nAdditional context: " + extra
-			}
-			msg += "\n\nUse tool.return_string(...) or tool.return_object(...) to return the result."
-			return mcp_lib.NewPromptResponseText(msg), nil
-		},
-	)
-}
-
 // registerExecTool registers the built-in code execution tool
 func (s *Server) registerExecTool(server *mcp_lib.Server) {
 	server.RegisterTool(
@@ -346,15 +297,16 @@ KEY SYNTAX RULES:
 - No nested classes, no multiple inheritance, no generators/yield
 
 HTTP & JSON:
-- HTTP response is an object: response.status_code, response.body, response.headers
+- HTTP response is an object: response.status_code, response.text, response.headers; response.json() parses the body as JSON
 - Use json.loads(str) and json.dumps(obj) for JSON
-- Use requests.get(url, options), requests.post(url, body, options) for HTTP
+- Use requests.get(url, options), requests.post(url, json=data) for HTTP
+- Request options (dict or kwargs): timeout, headers, params, auth
 - Default HTTP timeout is 5 seconds
 - HTTP options dict: {"timeout": 10, "headers": {"Authorization": "Bearer token"}}
 
 COMMON PATTERNS:
-- Dict iteration: for item in items(dict): key=item[0], value=item[1]
-- List append: append(list, item) modifies in-place
+- Dict iteration: for k, v in dict.items()
+- List append: my_list.append(item) modifies in-place
 - Use join() for string building in loops: result = "".join(parts)
 - Error handling: try/except/finally, raise "message" or raise ValueError("msg")
 

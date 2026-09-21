@@ -301,3 +301,83 @@ def ping(params):
 		t.Errorf("ping: response %s, want result \"pong\"", body)
 	}
 }
+
+// TestNotFoundHandlerRunsBehindMiddleware proves the not-found path passes
+// through the auth middleware before executing the not_found handler: an
+// unmatched path used to be the one request shape that ran a handler script
+// (with full server capabilities) without the middleware ever seeing it.
+// Without the header the middleware demands, the request is rejected with
+// 401 and the not_found script must not run; with it, the custom 404 is
+// served as before.
+func TestNotFoundHandlerRunsBehindMiddleware(t *testing.T) {
+	dir := t.TempDir()
+
+	handlersPy := `import scriptling.runtime.http as http
+
+@http.middleware
+def auth(request):
+    if request.header("x-token", "") != "secret":
+        return http.json(401, {"error": "unauthorized"})
+    return None
+
+@http.not_found
+def handle_404(request):
+    return http.json(404, {"error": "custom 404"})
+`
+	if err := os.WriteFile(filepath.Join(dir, "handlers.py"), []byte(handlersPy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	setupPy := `import handlers
+`
+	if err := os.WriteFile(filepath.Join(dir, "setup.py"), []byte(setupPy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := NewServer(ServerConfig{
+		ScriptFile: filepath.Join(dir, "setup.py"),
+		LibDirs:    []string{dir},
+	})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+
+	ts := httptest.NewServer(s.buildMux())
+	defer ts.Close()
+
+	get := func(path, token string) (int, map[string]any) {
+		req, err := http.NewRequest("GET", ts.URL+path, nil)
+		if err != nil {
+			t.Fatalf("build request: %v", err)
+		}
+		if token != "" {
+			req.Header.Set("X-Token", token)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		defer resp.Body.Close()
+		var parsed map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&parsed)
+		return resp.StatusCode, parsed
+	}
+
+	// Unmatched path, no token: the middleware rejects it; the not_found
+	// handler never runs (its body would say "custom 404").
+	status, body := get("/nonexistent", "")
+	if status != 401 {
+		t.Errorf("GET /nonexistent without token: status %d, want 401 (middleware)", status)
+	}
+	if body["error"] != "unauthorized" {
+		t.Errorf("GET /nonexistent without token: body %v, want the middleware's 401", body)
+	}
+
+	// Unmatched path, valid token: middleware passes, not_found handler runs.
+	status, body = get("/nonexistent", "secret")
+	if status != 404 {
+		t.Errorf("GET /nonexistent with token: status %d, want 404 (not_found handler)", status)
+	}
+	if body["error"] != "custom 404" {
+		t.Errorf("GET /nonexistent with token: body %v, want custom 404", body)
+	}
+}

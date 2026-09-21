@@ -27,11 +27,23 @@ var websocketUpgrader = websocket.Upgrader{
 // default; a configured list is an exact-match allowlist, and "*" opts out
 // for deployments behind a trusted proxy.
 func (s *Server) websocketOriginAllowed(r *http.Request) bool {
+	return browserOriginAllowed(r, s.config.WebSocketOrigins)
+}
+
+// browserOriginAllowed applies an origin allowlist policy shared by every
+// browser-facing protocol this server exposes (WebSocket upgrade, MCP CORS):
+// non-browser clients send no Origin header and always pass; an empty
+// allowed list requires same-origin (scheme and host:port, closing
+// cross-site access by default); a configured list is an exact-match
+// allowlist (trailing slash and case ignored); "*" opts out entirely for
+// deployments that want it (e.g. behind a trusted proxy, or a deliberately
+// open browser-testing tool).
+func browserOriginAllowed(r *http.Request, allowedOrigins []string) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
 		return true
 	}
-	for _, allowed := range s.config.WebSocketOrigins {
+	for _, allowed := range allowedOrigins {
 		if allowed == "*" {
 			return true
 		}
@@ -39,7 +51,7 @@ func (s *Server) websocketOriginAllowed(r *http.Request) bool {
 			return true
 		}
 	}
-	if len(s.config.WebSocketOrigins) > 0 {
+	if len(allowedOrigins) > 0 {
 		return false
 	}
 	// Same-origin default: compare both scheme and host:port. The request's

@@ -40,11 +40,13 @@ func requestRegistrationBuiltins() map[string]*object.Builtin {
 					"name":    object.NewString(name),
 					"handler": object.NewString(handler),
 				})
-				copyOptionalKwargs(entry, kwargs, "description", "params", "keywords", "discoverable")
+				copyOptionalKwargs(entry, kwargs, "description", "params", "keywords", "discoverable", "ui", "icons")
 				regs.AddTool(entry)
 				return &object.Null{}
 			},
-			HelpText: `register_request_tool(name, handler, description="", params=None, keywords=None, discoverable=False) - Register an MCP tool for this request
+			HelpText: `register_request_tool(name, handler=..., description="", params=None, keywords=None, discoverable=False, ui=None, icons=None) - Register an MCP tool for this request
+
+handler (and every parameter after name) must be passed by keyword — only name is positional.
 
 Call from middleware to expose a tool for the life of the request being
 served: tools/list shows it and tools/call runs it, but only for requests
@@ -61,6 +63,14 @@ Parameters:
     string (description) or a dict with "type", "description" and "required"
   keywords (list, optional): Keywords for tool search/discovery
   discoverable (bool, optional): Hide from tools/list, expose via search only
+  ui (dict, optional): Links this tool to a companion UI resource per the MCP
+    Apps extension. A dict with an optional "resourceUri" (str — omit it for
+    an "app"-only action tool with no view of its own) and optional
+    "visibility" (list of "model" and/or "app"; defaults to both). At least
+    one of "resourceUri" or "visibility" is required if "ui" is given at all.
+  icons (list, optional): Visual identifiers for this tool's tools/list
+    descriptor. Each element is a dict with a required "src" (str) and
+    optional "mimeType", "sizes" (list of strings), and "theme".
 
 Only meaningful while serving MCP over HTTP (in middleware); returns an error
 otherwise. Inside the handler, mcp.tool.get_string() reads arguments and
@@ -107,7 +117,9 @@ Example:
 				regs.AddResource(entry)
 				return &object.Null{}
 			},
-			HelpText: `register_request_resource(uri, handler, name, description="", mime_type="", template=False) - Register an MCP resource for this request
+			HelpText: `register_request_resource(uri, handler=..., name="", description="", mime_type="", template=False) - Register an MCP resource for this request
+
+handler (and every parameter after uri) must be passed by keyword — only uri is positional.
 
 Call from middleware to expose a resource (or, with template=True, a URI
 template like "user://docs/{path}") for the life of the request being served.
@@ -122,7 +134,8 @@ Parameters:
   name (str): Human-readable resource name
   description (str): Resource description
   mime_type (str): Content type (default "text/plain", or "application/json"
-    for dict/list results)
+    for dict/list results). Ignored for a "ui://" uri — the MCP Apps
+    extension MUSTs that exact mimeType, so it's always set for you
   template (bool, optional): Treat uri as a {var} URI template (default: False)
 
 Only meaningful while serving MCP over HTTP (in middleware); returns an error
@@ -169,7 +182,9 @@ Example:
 				regs.AddPrompt(entry)
 				return &object.Null{}
 			},
-			HelpText: `register_request_prompt(name, handler, description="", arguments=None) - Register an MCP prompt for this request
+			HelpText: `register_request_prompt(name, handler=..., description="", arguments=None) - Register an MCP prompt for this request
+
+handler (and every parameter after name) must be passed by keyword — only name is positional.
 
 Call from middleware to expose a prompt for the life of the request being
 served. prompts/list shows it; prompts/get renders it by running the handler

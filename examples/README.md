@@ -82,6 +82,20 @@ This directory contains examples and tools for working with Scriptling.
   - `*.py` - Tool implementation scripts
   - `README.md` - MCP tools documentation
 
+- **mcp-resources-prompts/** - Tools, resources and prompts served as files, no Go code
+  - `tools/`, `resources/`, `prompts/` - one file per entry, live-reloaded
+  - `README.md` - file conventions for each MCP primitive
+
+- **mcp-app-dashboard/** - An [MCP Apps](https://github.com/modelcontextprotocol/ext-apps) example: a tool linked to an interactive UI resource
+  - `tools/*.toml` + `.py` - `sales_report` / `add_sale`, `.toml`-defined with `[ui]` linkage
+  - `resources/ui/sales-dashboard/` - the dashboard UI (AlpineJS + Chart.js) and its `[ui.csp]` metadata
+  - `README.md` - what it demonstrates and how to test it against the Go host-simulator harness
+
+- **mcp-prize-wheel/** - A second MCP Apps example using the decorator style instead of `.toml`
+  - `tools/prize_wheel.py` - `spin_wheel` / `claim_prize`, both `@mcp.tool(..., ui={...})`-decorated, no `.toml` file
+  - `resources/ui/prize-wheel/` - an animated SVG prize wheel, pure vanilla JS
+  - `README.md` - what it demonstrates, differences from `mcp-app-dashboard`
+
 - **telegram-bot/** - Example Telegram bot using Scriptling
   - `main.go` - Go integration example
   - `README.md` - Telegram bot documentation
@@ -189,6 +203,9 @@ See individual example directories for more details:
 - [logging/](logging/) - Logging library example
 - [mcp-client/README.md](mcp-client/README.md) - MCP client examples
 - [mcp-tools/README.md](mcp-tools/README.md) - MCP tools examples
+- [mcp-resources-prompts/README.md](mcp-resources-prompts/README.md) - Tools, resources and prompts as files, no Go code
+- [mcp-app-dashboard/README.md](mcp-app-dashboard/README.md) - MCP Apps: a `.toml`-linked tool with an interactive UI
+- [mcp-prize-wheel/README.md](mcp-prize-wheel/README.md) - MCP Apps: the same, decorator-style, no `.toml`
 - [multi-environment/README.md](multi-environment/README.md) - Multi-environment usage
 - [openai/README.md](openai/README.md) - AI library with OpenAI-compatible APIs
 - [telegram-bot/README.md](telegram-bot/README.md) - Telegram bot example

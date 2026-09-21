@@ -228,6 +228,173 @@ def search(query):
 	}
 }
 
+func TestScanDecoratedToolsUI(t *testing.T) {
+	src := []byte(`
+import scriptling.runtime.mcp as mcp
+
+@mcp.tool("Get the sales report",
+           ui={"resourceUri": "ui://sales-dashboard/dashboard.html"})
+def sales_report():
+    return {"records": []}
+
+@mcp.tool("Add a sale",
+           ui={"resourceUri": "ui://sales-dashboard/dashboard.html", "visibility": ["app"]})
+def add_sale():
+    return {"records": []}
+`)
+
+	cfg := testHandlerConfig()
+	tools, err := ScanDecoratedTools(src, cfg)
+	if err != nil {
+		t.Fatalf("scan error: %v", err)
+	}
+	if len(tools) != 2 {
+		t.Fatalf("expected 2 tools, got %d", len(tools))
+	}
+
+	byName := map[string]*DecoratedTool{}
+	for i := range tools {
+		byName[tools[i].Name] = &tools[i]
+	}
+
+	report := byName["sales_report"]
+	if report.Meta.UI == nil || report.Meta.UI.ResourceURI != "ui://sales-dashboard/dashboard.html" {
+		t.Fatalf("sales_report UI = %+v", report.Meta.UI)
+	}
+	if len(report.Meta.UI.Visibility) != 0 {
+		t.Errorf("sales_report visibility = %v, want empty (spec default)", report.Meta.UI.Visibility)
+	}
+
+	addSale := byName["add_sale"]
+	if addSale.Meta.UI == nil || len(addSale.Meta.UI.Visibility) != 1 || addSale.Meta.UI.Visibility[0] != "app" {
+		t.Fatalf("add_sale UI = %+v", addSale.Meta.UI)
+	}
+}
+
+func TestScanDecoratedToolsIcons(t *testing.T) {
+	src := []byte(`
+import scriptling.runtime.mcp as mcp
+
+@mcp.tool("Get the weather",
+           icons=[{"src": "https://example.com/weather.png", "mimeType": "image/png", "sizes": ["48x48"]}])
+def weather():
+    return {"forecast": "sunny"}
+
+@mcp.tool("No icons here")
+def plain():
+    return None
+`)
+
+	cfg := testHandlerConfig()
+	tools, err := ScanDecoratedTools(src, cfg)
+	if err != nil {
+		t.Fatalf("scan error: %v", err)
+	}
+	if len(tools) != 2 {
+		t.Fatalf("expected 2 tools, got %d", len(tools))
+	}
+
+	byName := map[string]*DecoratedTool{}
+	for i := range tools {
+		byName[tools[i].Name] = &tools[i]
+	}
+
+	weather := byName["weather"]
+	if len(weather.Meta.Icons) != 1 {
+		t.Fatalf("weather Icons = %+v, want 1 entry", weather.Meta.Icons)
+	}
+	icon := weather.Meta.Icons[0]
+	if icon.Src != "https://example.com/weather.png" || icon.MimeType != "image/png" {
+		t.Errorf("weather icon = %+v", icon)
+	}
+	if len(icon.Sizes) != 1 || icon.Sizes[0] != "48x48" {
+		t.Errorf("weather icon sizes = %v", icon.Sizes)
+	}
+
+	plain := byName["plain"]
+	if len(plain.Meta.Icons) != 0 {
+		t.Errorf("plain Icons = %+v, want none", plain.Meta.Icons)
+	}
+}
+
+func TestScanDecoratedToolsIcons_MissingSrcIsError(t *testing.T) {
+	src := []byte(`
+import scriptling.runtime.mcp as mcp
+
+@mcp.tool("Bad", icons=[{"mimeType": "image/png"}])
+def bad():
+    return None
+`)
+
+	cfg := testHandlerConfig()
+	if _, err := ScanDecoratedTools(src, cfg); err == nil {
+		t.Fatal("expected an error for an icon missing src")
+	}
+}
+
+// TestScanDecoratedToolsUI_VisibilityOnly covers the app-only "action" tool
+// case (e.g. claim_prize in the prize-wheel example): resourceUri is optional
+// per spec, since a tool only ever called by a view that's already open has
+// no rendering purpose of its own.
+func TestScanDecoratedToolsUI_VisibilityOnly(t *testing.T) {
+	src := []byte(`
+import scriptling.runtime.mcp as mcp
+
+@mcp.tool("Claim", ui={"visibility": ["app"]})
+def claim():
+    return None
+`)
+
+	cfg := testHandlerConfig()
+	tools, err := ScanDecoratedTools(src, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(tools) != 1 || tools[0].Meta.UI == nil {
+		t.Fatalf("expected 1 tool with UI set, got %+v", tools)
+	}
+	if tools[0].Meta.UI.ResourceURI != "" {
+		t.Errorf("ResourceURI = %q, want empty", tools[0].Meta.UI.ResourceURI)
+	}
+	if len(tools[0].Meta.UI.Visibility) != 1 || tools[0].Meta.UI.Visibility[0] != "app" {
+		t.Errorf("Visibility = %v", tools[0].Meta.UI.Visibility)
+	}
+}
+
+func TestScanDecoratedToolsUI_MissingResourceURIAndVisibility(t *testing.T) {
+	src := []byte(`
+import scriptling.runtime.mcp as mcp
+
+@mcp.tool("Bad", ui={})
+def bad():
+    return None
+`)
+
+	cfg := testHandlerConfig()
+	if _, err := ScanDecoratedTools(src, cfg); err == nil {
+		t.Fatal("expected an error for ui with neither resourceUri nor visibility")
+	}
+}
+
+func TestScanDecoratedToolsNoUI_OmitsField(t *testing.T) {
+	src := []byte(`
+import scriptling.runtime.mcp as mcp
+
+@mcp.tool("Plain")
+def plain():
+    return "ok"
+`)
+
+	cfg := testHandlerConfig()
+	tools, err := ScanDecoratedTools(src, cfg)
+	if err != nil {
+		t.Fatalf("scan error: %v", err)
+	}
+	if tools[0].Meta.UI != nil {
+		t.Errorf("UI = %+v, want nil", tools[0].Meta.UI)
+	}
+}
+
 func TestScanDecoratedToolsNoDecorators(t *testing.T) {
 	// A .py file with no @mcp.tool decorators should produce zero tools.
 	src := []byte(`

@@ -365,6 +365,78 @@ func TestRequestResources(t *testing.T) {
 	}
 }
 
+// TestRequestResourceUIMimeTypeEnforced is the regression test for
+// register_request_resource: a "ui://" resource's mimeType must always be
+// exactly UIAppMimeType (the MCP Apps extension's MUST), overriding
+// whatever — including a plainly wrong one — the script itself passed as
+// mime_type. Mirrors the folder-based resource scan's identical enforcement
+// (resources_prompts.go), which register_request_resource lacked.
+func TestRequestResourceUIMimeTypeEnforced(t *testing.T) {
+	libDir := t.TempDir()
+	writeFile(t, libDir+"/authmod.py", []byte(`
+import scriptling.runtime.mcp as mcp
+
+def check(request):
+    mcp.register_request_resource("ui://widget/widget.html", handler="restools.widget",
+        name="Widget", mime_type="text/plain")
+    return None
+`))
+	writeFile(t, libDir+"/restools.py", []byte(`
+def widget(__uri):
+    return "<html></html>"
+`))
+
+	script := writeSetup(t, `
+import scriptling.runtime.http as http
+import scriptling.runtime as runtime
+
+http.middleware("authmod.check")
+runtime.start_server(wait=False)
+while runtime.server_running():
+    yield_now()
+`)
+
+	s, err := NewServer(ServerConfig{
+		ScriptFile:  script,
+		LibDirs:     []string{libDir},
+		MCPToolsDir: t.TempDir(), // empty, just enough to turn MCP support on
+	})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	t.Cleanup(func() { signalShutdown(t, s) })
+
+	ts := httptest.NewServer(s.buildMux())
+	t.Cleanup(ts.Close)
+
+	status, body := mcpPost(t, ts, `{"jsonrpc":"2.0","id":1,"method":"resources/list"}`, "")
+	if status != http.StatusOK {
+		t.Fatalf("resources/list: %d %#v", status, body)
+	}
+	result, _ := body["result"].(map[string]any)
+	resources, _ := result["resources"].([]any)
+	var listedMimeType any
+	for _, rl := range resources {
+		if res, ok := rl.(map[string]any); ok && res["uri"] == "ui://widget/widget.html" {
+			listedMimeType = res["mimeType"]
+		}
+	}
+	if listedMimeType != "text/html;profile=mcp-app" {
+		t.Fatalf("resources/list mimeType = %v, want text/html;profile=mcp-app (the script's mime_type=\"text/plain\" must be overridden)", listedMimeType)
+	}
+
+	status, body = mcpPost(t, ts, `{"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":"ui://widget/widget.html"}}`, "")
+	if status != http.StatusOK {
+		t.Fatalf("resources/read: %d %#v", status, body)
+	}
+	result, _ = body["result"].(map[string]any)
+	contents, _ := result["contents"].([]any)
+	first, _ := contents[0].(map[string]any)
+	if first["mimeType"] != "text/html;profile=mcp-app" {
+		t.Fatalf("resources/read mimeType = %v, want text/html;profile=mcp-app", first["mimeType"])
+	}
+}
+
 func TestRequestPrompt(t *testing.T) {
 	ts := writeRequestMCPServer(t)
 	auth := "Bearer alice-key"

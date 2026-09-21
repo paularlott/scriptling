@@ -97,15 +97,118 @@ func registerRoute(mux *http.ServeMux, pattern string, handler http.HandlerFunc)
 	mux.HandleFunc(pattern, handler)
 }
 
+// mcpCorsMiddleware enforces MCPCorsOrigins against the underlying
+// mcp.Server.HandleRequest — createMCPServer disables that library's own
+// Origin check entirely (SetOriginValidator, always-allow) specifically so
+// this middleware is the single, authoritative decision: it's request-aware
+// (browserOriginAllowed's same-origin fallback needs r.TLS/r.Host, which
+// the library's plain func(origin string) bool validator has no way to see)
+// where the library's own default (localhost-or-no-header) isn't.
+//
+// A denied browser request (Origin header present, not allowed) is
+// rejected outright with 403 here, before next.ServeHTTP ever runs — not
+// just left to a stripped Access-Control-Allow-Origin header and a hope
+// that the browser honors it. Relying on the browser alone doesn't stop
+// the server from having already acted on the request by the time CORS
+// would block the page's JS from reading the response (the same DNS
+// rebinding concern the MCP spec's Origin-check requirement targets).
+//
+// For an allowed browser request, this still overrides
+// Access-Control-Allow-Origin to the specific matched origin (or "*" only
+// if MCPCorsOrigins itself contains "*"), since the library's own default
+// of a bare "*" doesn't reflect what was actually allowed. Non-browser
+// requests (no Origin header — including a server-to-server caller like a
+// gateway federating this server, which is never subject to CORS in the
+// first place) pass through untouched.
+func mcpCorsMiddleware(allowedOrigins []string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		if !browserOriginAllowed(r, allowedOrigins) {
+			http.Error(w, "Origin not allowed", http.StatusForbidden)
+			return
+		}
+
+		allow := origin
+		for _, a := range allowedOrigins {
+			if a == "*" {
+				allow = "*"
+				break
+			}
+		}
+		next.ServeHTTP(&corsOriginOverrideWriter{ResponseWriter: w, allow: allow}, r)
+	})
+}
+
+// corsOriginOverrideWriter forces the Access-Control-Allow-Origin header to
+// a fixed value (or removes it, when allow == "") right before the wrapped
+// handler's first WriteHeader/Write, overriding whatever it set itself.
+// Both WriteHeader and Write are overridden (not just WriteHeader) because
+// Go's http package calls the *embedded* ResponseWriter's own WriteHeader
+// implicitly on the first Write if the handler never calls WriteHeader
+// explicitly — which would bypass an override on WriteHeader alone.
+type corsOriginOverrideWriter struct {
+	http.ResponseWriter
+	allow string
+	fixed bool
+}
+
+func (w *corsOriginOverrideWriter) fixupOnce() {
+	if w.fixed {
+		return
+	}
+	w.fixed = true
+	if w.allow == "" {
+		w.Header().Del("Access-Control-Allow-Origin")
+	} else {
+		w.Header().Set("Access-Control-Allow-Origin", w.allow)
+	}
+}
+
+func (w *corsOriginOverrideWriter) WriteHeader(status int) {
+	w.fixupOnce()
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *corsOriginOverrideWriter) Write(b []byte) (int, error) {
+	w.fixupOnce()
+	return w.ResponseWriter.Write(b)
+}
+
+// Flush passes through to the embedded ResponseWriter's own Flusher, if it
+// has one — needed because /mcp's subscriptions/listen (Modern) and its
+// Legacy notification stream both require http.Flusher and would 500/break
+// without this, since wrapping loses the concrete type a plain type
+// assertion on the embedded interface would otherwise find.
+func (w *corsOriginOverrideWriter) Flush() {
+	w.fixupOnce()
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 // buildMux assembles the full HTTP handler stack: protocol endpoints, script
 // routes, static routes, web root fallback, and auth middleware.
 func (s *Server) buildMux() http.Handler {
 	mux := http.NewServeMux()
 
 	if s.mcpHandler != nil {
-		mcp := s.scriptProtocolMiddleware(sseWriteDeadline(s.mcpHandler))
+		mcp := mcpCorsMiddleware(s.config.MCPCorsOrigins, s.scriptProtocolMiddleware(sseWriteDeadline(s.mcpHandler)))
 		mux.Handle("POST /mcp", mcp)
 		mux.Handle("GET /mcp", mcp)
+		mux.Handle("DELETE /mcp", mcp)
+		// The underlying mcp.Server.HandleRequest answers OPTIONS itself with
+		// the CORS preflight response (Access-Control-Allow-*); without this
+		// route, ServeMux's default 405 for an unregistered method on "/mcp"
+		// answers the preflight instead, and a browser-based host that's
+		// actually allowed by MCPCorsOrigins would fail before its POST is
+		// ever sent. mcpCorsMiddleware still governs what the preflight is
+		// allowed to claim.
+		mux.Handle("OPTIONS /mcp", mcp)
 	}
 	if s.config.JSONRPC {
 		if s.pluginServer != nil {
@@ -465,6 +568,22 @@ func (s *Server) serveNotFound(w http.ResponseWriter, r *http.Request) {
 		Log.Trace("Handling 404 via not_found handler", "handler", s.notFoundHandler, "path", r.URL.Path)
 		reqObj := s.createRequestObject(r, nil, nil)
 		ctx := extlibs.WithRequestContext(r.Context(), reqObj)
+		// The middleware guards the not-found path like every other
+		// endpoint that runs script. Without this, an unmatched path was the
+		// one request shape that executed a handler (with full server
+		// capabilities) without ever consulting the middleware — the thing
+		// the middleware is configured to be the single, authoritative
+		// decision for. A returned response dict rejects the request (e.g.
+		// a 401); None falls through to the not-found handler as before.
+		// Only checked when a not_found handler exists: the plain-404 branch
+		// below executes no code, so there's nothing to authorize.
+		if s.middleware != "" {
+			Log.Trace("Running middleware", "handler", s.middleware, "path", r.URL.Path)
+			if resp := s.runHandler(ctx, s.middleware, reqObj); resp != nil {
+				s.writeResponse(w, resp)
+				return
+			}
+		}
 		if resp := s.runHandler(ctx, s.notFoundHandler, reqObj); resp != nil {
 			s.writeResponse(w, resp)
 			return
@@ -693,10 +812,37 @@ func (s *Server) buildRequestProviders(regs *extlibs.RequestRegistrations) (requ
 	return out, nil
 }
 
-// bearerTokenMiddleware creates authentication middleware for all endpoints
+// bearerTokenMiddleware creates authentication middleware for all endpoints.
+//
+// A genuine CORS preflight to /mcp is exempt: browsers never attach a
+// custom Authorization header to the preflight itself — only to the real
+// follow-up request, and only once the preflight response says that header
+// is allowed — so requiring one here would 401 every cross-origin browser
+// preflight unconditionally, making MCPCorsOrigins impossible to use
+// together with a bearer token. The real request the preflight clears the
+// way for still goes through this same check normally.
+//
+// The exemption is deliberately narrow — both conditions matter:
+//   - Access-Control-Request-Method must be present, not just OPTIONS. That
+//     header is what actually marks a browser CORS preflight; a plain
+//     OPTIONS request (which any client, browser or not, can send with no
+//     preflight semantics at all) doesn't carry it. An earlier version of
+//     this check exempted every OPTIONS request outright, which let anyone
+//     skip the token entirely by sending OPTIONS instead of GET — serving
+//     protected static files and running the not-found/fallback handler.
+//   - Scoped to exactly "/mcp", the only route whose own handler
+//     (mcp.Server.HandleRequest) is actually built to answer a preflight
+//     safely: headers only, no body, no side effect. Any other route — a
+//     static file, the app bundle's webroot, the not-found/fallback
+//     script — has no such handling, so an unauthenticated
+//     preflight-shaped request reaching it would still serve/run it same
+//     as above, just requiring one extra header to trigger.
 func (s *Server) bearerTokenMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != s.bearerExpected {
+		isMCPPreflight := r.Method == http.MethodOptions &&
+			r.URL.Path == "/mcp" &&
+			r.Header.Get("Access-Control-Request-Method") != ""
+		if !isMCPPreflight && r.Header.Get("Authorization") != s.bearerExpected {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}

@@ -27,7 +27,7 @@ var MCPSubLibrary = func() *object.Library {
 	functions := map[string]*object.Builtin{
 		"tool": {
 			Fn: mcpToolDecorator,
-			HelpText: `tool(description, params=None, keywords=None, discoverable=False) - Decorator for MCP tools
+			HelpText: `tool(description, params=None, keywords=None, discoverable=False, ui=None, icons=None) - Decorator for MCP tools
 
 Decorates a function to register it as an MCP tool. The function's parameters
 become the tool's input schema; the return value becomes the tool response.
@@ -40,6 +40,17 @@ Parameters:
   keywords (list, optional): Keywords for tool search/discovery
   discoverable (bool, optional): If True, tool is hidden from tools/list and
     only available via search (default: False)
+  ui (dict, optional): Links this tool to a companion UI resource per the MCP
+    Apps extension (https://github.com/modelcontextprotocol/ext-apps). A dict
+    with an optional "resourceUri" (str, the ui:// resource — omit it for an
+    "app"-only action tool with no view of its own, such as a form submission
+    that's only ever called by a view that's already open) and optional
+    "visibility" (list of "model" and/or "app"; defaults to both). At least
+    one of "resourceUri" or "visibility" is required if "ui" is given at all.
+  icons (list, optional): Visual identifiers for this tool's tools/list
+    descriptor. Each element is a dict with a required "src" (str, an
+    https:// URL or data: URI) and optional "mimeType", "sizes" (list of
+    strings like "48x48"), and "theme" ("light" or "dark").
 
 Returns:
   A decorator function that registers the tool and returns the original function.
@@ -59,7 +70,18 @@ Example:
       "times": {"type": "int", "description": "Number of greetings"},
   })
   def greet(name, times=1):
-      return "\n".join(f"Hello, {name}!" for _ in range(times))`,
+      return "\n".join(f"Hello, {name}!" for _ in range(times))
+
+  @mcp.tool(description="Get the sales report",
+            ui={"resourceUri": "ui://sales-dashboard/dashboard.html"},
+            icons=[{"src": "https://example.com/sales.png", "mimeType": "image/png"}])
+  def sales_report():
+      return {"records": [...]}
+
+  @mcp.tool(description="Add a sale record (called by the dashboard's own form, not the model)",
+            ui={"visibility": ["app"]})
+  def add_sale(date, product, amount):
+      return {"records": [...]}`,
 		},
 	}
 
@@ -119,6 +141,22 @@ func mcpToolDecorator(ctx context.Context, kwargs object.Kwargs, args ...object.
 		}
 	}
 
+	var uiObj object.Object
+	if u := kwargs.Get("ui"); u != nil {
+		if _, ok := u.(*object.Dict); !ok {
+			return errors.NewError("mcp.tool: ui must be a dict, got %s", u.Type())
+		}
+		uiObj = u
+	}
+
+	var iconsObj object.Object
+	if ic := kwargs.Get("icons"); ic != nil {
+		if _, ok := ic.(*object.List); !ok {
+			return errors.NewError("mcp.tool: icons must be a list, got %s", ic.Type())
+		}
+		iconsObj = ic
+	}
+
 	// Return a wrapper builtin that accepts the function being decorated.
 	return &object.Builtin{
 		Fn: func(ctx context.Context, _ object.Kwargs, wrapperArgs ...object.Object) object.Object {
@@ -153,6 +191,12 @@ func mcpToolDecorator(ctx context.Context, kwargs object.Kwargs, args ...object.
 			}
 			if keywordsObj != nil {
 				entry.SetByString("keywords", keywordsObj)
+			}
+			if uiObj != nil {
+				entry.SetByString("ui", uiObj)
+			}
+			if iconsObj != nil {
+				entry.SetByString("icons", iconsObj)
 			}
 
 			// Append to __mcp_registry in the current environment.

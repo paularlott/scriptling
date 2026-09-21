@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	mcplib "github.com/paularlott/mcp"
 	"github.com/paularlott/mcp/toolmetadata"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/ast"
@@ -187,11 +188,23 @@ func decodeRegistryEntry(entry *object.Dict, src []byte, p *scriptling.Scriptlin
 		return nil, err
 	}
 
+	ui, err := dictGetUIToolMeta(entry, "ui")
+	if err != nil {
+		return nil, fmt.Errorf("tool %q: %w", name, err)
+	}
+
+	icons, err := dictGetIcons(entry, "icons")
+	if err != nil {
+		return nil, fmt.Errorf("tool %q: %w", name, err)
+	}
+
 	meta := &toolmetadata.ToolMetadata{
 		Description:  description,
 		Keywords:     keywords,
 		Discoverable: discoverable,
 		Parameters:   params,
+		UI:           ui,
+		Icons:        icons,
 	}
 
 	return &DecoratedTool{
@@ -389,4 +402,73 @@ func dictGetStringList(d *object.Dict, key string) []string {
 		}
 	}
 	return result
+}
+
+// dictGetUIToolMeta reads the optional "ui" entry of d — a dict shaped like
+// {"resourceUri": "ui://...", "visibility": ["model", "app"]} — into an
+// mcp.UIToolMeta, per the MCP Apps extension (SEP-1865). Returns (nil, nil)
+// when d has no "ui" key. Used by both the decorated (@mcp.tool) and
+// register_request_tool registration paths; the legacy .toml format has its
+// own equivalent in metadata.go (parseToolMetadata), since it decodes TOML
+// rather than a scriptling dict.
+//
+// resourceUri is optional per spec: an "app"-only action tool — one only
+// ever called by a view that's already open, such as a form submission —
+// has no rendering purpose of its own and should omit it, declaring only
+// visibility. At least one of the two must be present, or "ui" shouldn't
+// have been set at all.
+func dictGetUIToolMeta(d *object.Dict, key string) (*mcplib.UIToolMeta, error) {
+	pair, ok := d.GetByString(key)
+	if !ok {
+		return nil, nil
+	}
+	uiDict, ok := pair.Value.(*object.Dict)
+	if !ok {
+		return nil, fmt.Errorf("%q must be a dict, got %s", key, pair.Value.Type())
+	}
+	resourceURI := dictGetString(uiDict, "resourceUri")
+	visibility := dictGetStringList(uiDict, "visibility")
+	if resourceURI == "" && len(visibility) == 0 {
+		return nil, fmt.Errorf("%q requires at least one of \"resourceUri\" or \"visibility\"", key)
+	}
+	return &mcplib.UIToolMeta{
+		ResourceURI: resourceURI,
+		Visibility:  visibility,
+	}, nil
+}
+
+// dictGetIcons reads the optional "icons" entry of d — a list of dicts shaped
+// like {"src": "https://...", "mimeType": "image/png", "sizes": ["48x48"],
+// "theme": "light"} — into a slice of mcp.Icon, per the MCP icons
+// convention. Returns (nil, nil) when d has no "icons" key. Used by both the
+// decorated (@mcp.tool) and register_request_tool registration paths; the
+// legacy .toml format has its own equivalent in metadata.go
+// (parseToolMetadata), since it decodes TOML rather than a scriptling dict.
+func dictGetIcons(d *object.Dict, key string) ([]mcplib.Icon, error) {
+	pair, ok := d.GetByString(key)
+	if !ok {
+		return nil, nil
+	}
+	list, ok := pair.Value.(*object.List)
+	if !ok {
+		return nil, fmt.Errorf("%q must be a list, got %s", key, pair.Value.Type())
+	}
+	icons := make([]mcplib.Icon, 0, len(list.Elements))
+	for i, elem := range list.Elements {
+		iconDict, ok := elem.(*object.Dict)
+		if !ok {
+			return nil, fmt.Errorf("%q[%d] must be a dict, got %s", key, i, elem.Type())
+		}
+		src := dictGetString(iconDict, "src")
+		if src == "" {
+			return nil, fmt.Errorf("%q[%d] requires a non-empty \"src\"", key, i)
+		}
+		icons = append(icons, mcplib.Icon{
+			Src:      src,
+			MimeType: dictGetString(iconDict, "mimeType"),
+			Sizes:    dictGetStringList(iconDict, "sizes"),
+			Theme:    dictGetString(iconDict, "theme"),
+		})
+	}
+	return icons, nil
 }

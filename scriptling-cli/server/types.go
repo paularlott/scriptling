@@ -83,6 +83,28 @@ type ServerConfig struct {
 	// same-origin default. Non-browser clients send no Origin header and
 	// are always allowed.
 	WebSocketOrigins []string
+
+	// MCPCorsOrigins restricts which browser origins may call /mcp
+	// cross-origin: an origin allowlist, "*" to allow every origin (the old,
+	// unconditional behavior), or empty for the same-origin default. Same
+	// shape and semantics as WebSocketOrigins.
+	//
+	// The underlying mcp.Server's own Origin check is disabled entirely for
+	// this route (see createMCPServer's SetOriginValidator call in mcp.go)
+	// and its Access-Control-Allow-Origin header just reflects back whatever
+	// Origin the browser sent — a wildcard in effect, since nothing narrows
+	// it — which, combined with OPTIONS /mcp being routed to it (see
+	// buildMux) so the preflight itself succeeds, lets any web page drive
+	// tools/call, including execute_script, against an unauthenticated
+	// server by default. This field's default closes that: with no browser
+	// Origin allowlisted, the preflight's Access-Control-Allow-Origin is
+	// stripped, so a cross-origin browser page's actual request is never
+	// sent at all. Non-browser clients (server-to-server calls, e.g. a
+	// gateway like llmrouter federating this server — never subject to CORS
+	// regardless, since only browsers enforce it) are unaffected either way.
+	// Set to non-empty only for browser-based use (e.g. testing against
+	// examples/mcp-app-host-harness from a different origin).
+	MCPCorsOrigins []string
 }
 
 // serveSet returns the set of protocols the app bundle declares in its

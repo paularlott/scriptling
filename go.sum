@@ -72,8 +72,8 @@ github.com/paularlott/jsonrpc v0.2.0 h1:iR584f/oi5L7LbfH8oskAMalNoikNxzlW/ABEZUJ
 github.com/paularlott/jsonrpc v0.2.0/go.mod h1:mXoOPTPQf87HF3wR064n23dmsAQs3/EICA3Cbha3Sk4=
 github.com/paularlott/logger v0.3.0 h1:QwVUoxmlEFkfHI25y5dn56OJvK4Bpe3OvoJu4GZM7ng=
 github.com/paularlott/logger v0.3.0/go.mod h1:vjAOY1vUvYigmJxxQ0eMclryIjDS6VWNK6FprtTMce0=
-github.com/paularlott/mcp v0.26.1 h1:gw70GJKFjjiUmISNVgLG1ZEAJTcpugLlZqmmggcA2Mo=
-github.com/paularlott/mcp v0.26.1/go.mod h1:5csMUltf1r9r4L76ddPddp5iQUqZ/i9ojwJmdbkA5dE=
+github.com/paularlott/mcp v0.27.0 h1:1hR+jRRafdEKlUrgx1XowpoM1ze8Oxx3Iay+cllpDAM=
+github.com/paularlott/mcp v0.27.0/go.mod h1:5csMUltf1r9r4L76ddPddp5iQUqZ/i9ojwJmdbkA5dE=
 github.com/paularlott/snapshotkv v0.6.0 h1:bGUVANfPg7+2fsVnnnCWQvkuDrBWPg3mchGoEgel28Q=
 github.com/paularlott/snapshotkv v0.6.0/go.mod h1:TAiDx8gWhRS5cy1i8iKpxCQsWWpmQ0zA4IBEwLX58Ow=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=

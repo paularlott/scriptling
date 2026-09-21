@@ -63,6 +63,14 @@ func TestScanResourcesFS(t *testing.T) {
 		"rootlevel.md":         &fstest.MapFile{Data: []byte(`no scheme dir`)},
 		"kv/deep/{a}/{b}.py":   &fstest.MapFile{Data: []byte(`print("y")`)},
 		"config/settings.toml": &fstest.MapFile{Data: []byte(`x = 1`)},
+		// "ui" is this project's MCP Apps convention (see docs/guides/mcp-apps.md);
+		// the spec MUSTs its mimeType, so it must come out right even with no
+		// sidecar, and even when a sidecar (wrongly) tries to override it.
+		"ui/plain/view.html":  &fstest.MapFile{Data: []byte(`<html></html>`)},
+		"ui/wrong/view.html":  &fstest.MapFile{Data: []byte(`<html></html>`)},
+		"ui/wrong/_view.toml": &fstest.MapFile{Data: []byte(`mimeType = "text/html"`)},
+		"ui/tmpl/{id}.py":     &fstest.MapFile{Data: []byte(`print("view")`)},
+		"ui/tmpl/_{id}.toml":  &fstest.MapFile{Data: []byte(`mimeType = "text/html"`)},
 	}
 
 	res, err := ScanResourcesFS(fsys)
@@ -120,6 +128,26 @@ func TestScanResourcesFS(t *testing.T) {
 	// A .toml that is NOT a _-prefixed metadata sibling is served as a static resource.
 	if _, ok := byURI["config://settings.toml"]; !ok {
 		t.Error("settings.toml should be a static resource")
+	}
+
+	const wantUIMimeType = "text/html;profile=mcp-app"
+
+	// "ui" scheme, no sidecar at all: must not fall back to extension
+	// sniffing's "text/html; charset=utf-8".
+	if r, ok := byURI["ui://plain/view.html"]; !ok || r.MimeType != wantUIMimeType {
+		t.Errorf("ui://plain/view.html mimeType = %q, want %q (found=%v)", r.MimeType, wantUIMimeType, ok)
+	}
+
+	// "ui" scheme, static resource, sidecar sets a wrong mimeType: the
+	// spec's MUST wins over the sidecar.
+	if r, ok := byURI["ui://wrong/view.html"]; !ok || r.MimeType != wantUIMimeType {
+		t.Errorf("ui://wrong/view.html mimeType = %q, want %q (found=%v)", r.MimeType, wantUIMimeType, ok)
+	}
+
+	// "ui" scheme, template resource, sidecar sets a wrong mimeType: same
+	// enforcement on the template code path.
+	if r, ok := byURI["ui://tmpl/{id}"]; !ok || r.MimeType != wantUIMimeType {
+		t.Errorf("ui://tmpl/{id} mimeType = %q, want %q (found=%v)", r.MimeType, wantUIMimeType, ok)
 	}
 }
 

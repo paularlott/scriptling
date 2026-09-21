@@ -1,0 +1,9 @@
+mimeType = "text/html;profile=mcp-app"
+name = "Sales Dashboard"
+description = "Table, chart and add-sale form for the sales_report tool"
+
+[ui]
+prefersBorder = true
+
+[ui.csp]
+resourceDomains = ["https://cdn.jsdelivr.net"]

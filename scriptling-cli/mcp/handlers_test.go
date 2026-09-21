@@ -125,6 +125,40 @@ func TestBuildStaticResourceHandlerServesBinaryAsBlob(t *testing.T) {
 	}
 }
 
+func TestBuildStaticResourceHandlerWithMeta_AttachesUIMeta(t *testing.T) {
+	path := writeScript(t, filepath.Join(t.TempDir(), "dashboard.html"), []byte("<html></html>"))
+	meta := &mcplib.UIResourceMeta{
+		CSP: &mcplib.UICSP{ResourceDomains: []string{"https://cdn.jsdelivr.net"}},
+	}
+	h := BuildStaticResourceHandlerWithMeta(FileReader(path), "ui://dash", "text/html;profile=mcp-app", meta)
+	resp, err := h(context.Background(), mcplib.NewResourceRequest("ui://dash", nil))
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if len(resp.Contents) != 1 {
+		t.Fatalf("expected 1 content entry, got %d", len(resp.Contents))
+	}
+	got, ok := resp.Contents[0].Meta["ui"].(*mcplib.UIResourceMeta)
+	if !ok {
+		t.Fatalf("Meta[ui] type = %T", resp.Contents[0].Meta["ui"])
+	}
+	if got != meta {
+		t.Errorf("expected the same meta pointer to be attached")
+	}
+}
+
+func TestBuildStaticResourceHandler_NilMeta_OmitsField(t *testing.T) {
+	path := writeScript(t, filepath.Join(t.TempDir(), "plain.txt"), []byte("hello"))
+	h := BuildStaticResourceHandler(FileReader(path), "memo://plain", "text/plain")
+	resp, err := h(context.Background(), mcplib.NewResourceRequest("memo://plain", nil))
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if resp.Contents[0].Meta != nil {
+		t.Errorf("expected no Meta, got %+v", resp.Contents[0].Meta)
+	}
+}
+
 func TestBuildResourceScriptHandlerRunsScriptWithVars(t *testing.T) {
 	dir := t.TempDir()
 	script := writeScript(t, filepath.Join(dir, "tpl.py"),

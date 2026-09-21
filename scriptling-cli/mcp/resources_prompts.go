@@ -12,23 +12,86 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	mcplib "github.com/paularlott/mcp"
 )
 
 // resourceMetaTOML mirrors the optional _{stem}.toml metadata sibling of a
 // resource file.
 type resourceMetaTOML struct {
-	Name        string `toml:"name"`
-	Description string `toml:"description"`
-	MimeType    string `toml:"mimeType"`
+	Name        string              `toml:"name"`
+	Description string              `toml:"description"`
+	MimeType    string              `toml:"mimeType"`
+	UI          *resourceUIMetaTOML `toml:"ui"`
+}
+
+// resourceUIMetaTOML mirrors the optional [ui] table of a resource's
+// _{stem}.toml sidecar: MCP Apps (SEP-1865) security/rendering hints attached
+// to every resources/read response for that resource.
+type resourceUIMetaTOML struct {
+	Domain        string `toml:"domain"`
+	PrefersBorder *bool  `toml:"prefersBorder"`
+	CSP           *struct {
+		ConnectDomains  []string `toml:"connectDomains"`
+		ResourceDomains []string `toml:"resourceDomains"`
+		FrameDomains    []string `toml:"frameDomains"`
+		BaseURIDomains  []string `toml:"baseUriDomains"`
+	} `toml:"csp"`
+	Permissions *struct {
+		Camera         bool `toml:"camera"`
+		Microphone     bool `toml:"microphone"`
+		Geolocation    bool `toml:"geolocation"`
+		ClipboardWrite bool `toml:"clipboardWrite"`
+	} `toml:"permissions"`
+}
+
+// toUIResourceMeta converts the parsed TOML shape to the library's
+// mcp.UIResourceMeta, or nil if m is nil.
+func (m *resourceUIMetaTOML) toUIResourceMeta() *mcplib.UIResourceMeta {
+	if m == nil {
+		return nil
+	}
+	meta := &mcplib.UIResourceMeta{
+		Domain:        m.Domain,
+		PrefersBorder: m.PrefersBorder,
+	}
+	if m.CSP != nil {
+		meta.CSP = &mcplib.UICSP{
+			ConnectDomains:  m.CSP.ConnectDomains,
+			ResourceDomains: m.CSP.ResourceDomains,
+			FrameDomains:    m.CSP.FrameDomains,
+			BaseURIDomains:  m.CSP.BaseURIDomains,
+		}
+	}
+	if m.Permissions != nil {
+		meta.Permissions = &mcplib.UIPermissions{
+			Camera:         m.Permissions.Camera,
+			Microphone:     m.Permissions.Microphone,
+			Geolocation:    m.Permissions.Geolocation,
+			ClipboardWrite: m.Permissions.ClipboardWrite,
+		}
+	}
+	return meta
+}
+
+// decodeResourceMetaTOML decodes resource metadata TOML bytes into
+// resourceMetaTOML. The one and only decode call site: parseResourceMetadata
+// and readMetadataSibling both go through this rather than each running
+// their own toml.NewDecoder(...).Decode(&resourceMetaTOML{}), which used to
+// duplicate the same decode and could silently diverge if one of the two
+// changed without the other.
+func decodeResourceMetaTOML(data []byte) (resourceMetaTOML, error) {
+	var m resourceMetaTOML
+	_, err := toml.NewDecoder(bytes.NewReader(data)).Decode(&m)
+	return m, err
 }
 
 // parseResourceMetadata decodes resource metadata from TOML bytes.
-func parseResourceMetadata(data []byte) (name, description, mimeType string, err error) {
-	var m resourceMetaTOML
-	if _, err = toml.NewDecoder(bytes.NewReader(data)).Decode(&m); err != nil {
-		return "", "", "", err
+func parseResourceMetadata(data []byte) (name, description, mimeType string, uiMeta *mcplib.UIResourceMeta, err error) {
+	m, err := decodeResourceMetaTOML(data)
+	if err != nil {
+		return "", "", "", nil, err
 	}
-	return m.Name, m.Description, m.MimeType, nil
+	return m.Name, m.Description, m.MimeType, m.UI.toUIResourceMeta(), nil
 }
 
 // promptMetaTOML mirrors a prompt's .toml metadata file.
@@ -74,6 +137,7 @@ type scannedResource struct {
 	Name        string
 	Description string
 	MimeType    string
+	UIMeta      *mcplib.UIResourceMeta // from the sidecar's [ui] table, or nil
 	Template    bool
 	FilePath    string // path within the scanned FS (slash-separated)
 	Vars        []string
@@ -92,11 +156,11 @@ func readMetadataSibling(fsys fs.FS, rel string) (meta resourceMetaTOML, found b
 		}
 		return resourceMetaTOML{}, false, err
 	}
-	name, desc, mimeType, err := parseResourceMetadata(data)
+	meta, err = decodeResourceMetaTOML(data)
 	if err != nil {
 		return resourceMetaTOML{}, false, fmt.Errorf("failed to parse resource metadata %s: %w", sib, err)
 	}
-	return resourceMetaTOML{Name: name, Description: desc, MimeType: mimeType}, true, nil
+	return meta, true, nil
 }
 
 // ScanResourcesFS walks fsys and returns every resource (static or template)
@@ -144,6 +208,7 @@ func ScanResourcesFS(fsys fs.FS) ([]scannedResource, error) {
 			// Load optional _{stem}.toml metadata sibling. If absent, fall back
 			// to the full URI as the name with no description.
 			name, desc, mimeType := uri, "", ""
+			var uiMeta *mcplib.UIResourceMeta
 			if meta, found, err := readMetadataSibling(fsys, rel); err != nil {
 				return err
 			} else if found {
@@ -152,6 +217,15 @@ func ScanResourcesFS(fsys fs.FS) ([]scannedResource, error) {
 				}
 				desc = meta.Description
 				mimeType = meta.MimeType
+				uiMeta = meta.UI.toUIResourceMeta()
+			}
+			// The "ui" scheme is this project's convention for MCP Apps views
+			// (see docs/guides/mcp-apps.md); the spec MUSTs their mimeType be
+			// exactly UIAppMimeType, so it's enforced here rather than left to
+			// extension sniffing or an optional sidecar value that could set
+			// anything (or nothing).
+			if scheme == "ui" {
+				mimeType = mcplib.UIAppMimeType
 			}
 
 			out = append(out, scannedResource{
@@ -159,6 +233,7 @@ func ScanResourcesFS(fsys fs.FS) ([]scannedResource, error) {
 				Name:        name,
 				Description: desc,
 				MimeType:    mimeType,
+				UIMeta:      uiMeta,
 				Template:    true,
 				FilePath:    rel,
 				Vars:        extractTemplateVars(rest),
@@ -172,6 +247,7 @@ func ScanResourcesFS(fsys fs.FS) ([]scannedResource, error) {
 			name, desc := uri, ""
 			mimeType := mimeTypeForExt(ext)
 			// Load optional _{stem}.toml metadata sibling.
+			var uiMeta *mcplib.UIResourceMeta
 			if meta, found, err := readMetadataSibling(fsys, rel); err != nil {
 				return err
 			} else if found {
@@ -182,12 +258,21 @@ func ScanResourcesFS(fsys fs.FS) ([]scannedResource, error) {
 				if meta.MimeType != "" {
 					mimeType = meta.MimeType
 				}
+				uiMeta = meta.UI.toUIResourceMeta()
+			}
+			// See the analogous comment in the template case above: "ui" is
+			// this project's MCP Apps convention, and the spec MUSTs the
+			// mimeType, so it overrides both the extension-sniffed default
+			// and any sidecar value.
+			if scheme == "ui" {
+				mimeType = mcplib.UIAppMimeType
 			}
 			out = append(out, scannedResource{
 				URI:         uri,
 				Name:        name,
 				Description: desc,
 				MimeType:    mimeType,
+				UIMeta:      uiMeta,
 				FilePath:    rel,
 			})
 		}

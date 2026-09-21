@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Prize Wheel</title>
+<style>
+  :root {
+    --bg: #1a1233;
+    --panel: #241a44;
+    --fg: #f4f1ff;
+    --muted: #b3a6e0;
+    --accent: #ffcf4d;
+    --accent2: #ff6bd6;
+    --border: #3a2a66;
+    --error: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 20px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    background: radial-gradient(circle at 50% -10%, #2c1f57, var(--bg) 60%);
+    color: var(--fg);
+    /* No min-height: 100vh here — the host sizes the iframe to match our own
+       reported content height (see the auto-resize block below), and 100vh
+       would be self-referential in that scheme: it'd measure as whatever
+       height the iframe currently happens to be, never converging on the
+       actual content height. */
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; text-align: center; letter-spacing: 0.02em; }
+  .subtitle { text-align: center; color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+  .status { text-align: center; font-size: 13px; color: var(--muted); min-height: 18px; margin-bottom: 8px; }
+  .status.error { color: var(--error); }
+
+  .wheel-area { position: relative; width: 300px; margin: 0 auto; }
+  .pointer {
+    position: absolute;
+    top: -6px; left: 50%;
+    width: 0; height: 0;
+    border-left: 14px solid transparent;
+    border-right: 14px solid transparent;
+    border-top: 22px solid var(--accent);
+    transform: translateX(-50%);
+    z-index: 2;
+    filter: drop-shadow(0 2px 3px rgba(0,0,0,.4));
+  }
+  #wheel {
+    display: block;
+    filter: drop-shadow(0 6px 18px rgba(0,0,0,.5));
+    transition: transform 4.2s cubic-bezier(0.12, 0.72, 0.1, 1);
+  }
+  .hub {
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 34px; height: 34px;
+    background: var(--accent);
+    border: 3px solid var(--bg);
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 2;
+    box-shadow: 0 0 0 2px var(--border);
+  }
+
+  .controls { display: flex; justify-content: center; margin: 18px 0; }
+  button {
+    font: inherit;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    padding: 12px 28px;
+    border: none;
+    border-radius: 999px;
+    cursor: pointer;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    color: #241238;
+    box-shadow: 0 4px 14px rgba(255, 107, 214, 0.35);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+  }
+  button:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(255, 107, 214, 0.45); }
+  button:active:not(:disabled) { transform: translateY(0); }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button.secondary {
+    background: var(--panel);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    box-shadow: none;
+  }
+
+  .result {
+    text-align: center;
+    min-height: 64px;
+  }
+  .result .prize {
+    display: inline-block;
+    font-size: 18px;
+    font-weight: 700;
+    padding: 8px 18px;
+    border-radius: 12px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  .result .prize.show {
+    animation: popIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  }
+  @keyframes popIn {
+    to { opacity: 1; transform: scale(1); }
+  }
+
+  .history {
+    max-width: 320px;
+    margin: 20px auto 0;
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+  }
+  .history h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0 0 8px; text-align: center; }
+  .history ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  .history li {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 13px;
+    animation: slideIn 0.35s ease-out;
+  }
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateY(-8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .history .empty { color: var(--muted); text-align: center; font-size: 13px; list-style: none; }
+
+  #confetti {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    overflow: hidden;
+    z-index: 5;
+  }
+  .confetto {
+    position: absolute;
+    top: -10px;
+    width: 8px;
+    height: 14px;
+    opacity: 0.95;
+    animation: fall linear forwards;
+  }
+  @keyframes fall {
+    to { transform: translateY(110vh) rotate(720deg); opacity: 0.2; }
+  }
+</style>
+</head>
+<body>
+<h1>🎡 Prize Wheel</h1>
+<div class="subtitle">Ask the model to spin, or hit the button yourself</div>
+<div class="status" id="status">Connecting…</div>
+
+<div class="wheel-area">
+  <div class="pointer"></div>
+  <svg id="wheel" width="300" height="300" viewBox="0 0 300 300"></svg>
+  <div class="hub"></div>
+</div>
+
+<div class="controls">
+  <button id="spin-btn">SPIN</button>
+</div>
+
+<div class="result">
+  <div class="prize" id="prize-label"></div>
+  <div class="controls" id="claim-controls" style="display:none; margin-top: 8px;">
+    <button class="secondary" id="claim-btn">Claim Prize</button>
+  </div>
+</div>
+
+<div class="history">
+  <h2>Your Winnings</h2>
+  <ul id="history-list"><li class="empty">Nothing claimed yet.</li></ul>
+</div>
+
+<div id="confetti"></div>
+
+<script>
+// --- Minimal MCP Apps host bridge (no SDK, no framework) -------------------
+// See ../../../../mcp-app-dashboard/resources/ui/sales-dashboard/dashboard.html
+// (or the mcp-app-dashboard repo example) for the same bridge with inline
+// comments; kept identical
+// here on purpose so both examples are provably interoperable with the same
+// host implementation.
+const McpBridge = (() => {
+  let nextId = 1;
+  const pending = new Map();
+  const resultHandlers = [];
+
+  window.addEventListener('message', (event) => {
+    // Only the host that mounted us (our immediate parent frame) is a
+    // legitimate sender — anything else (another frame that somehow got a
+    // reference, or a message aimed at a different listener) is ignored.
+    if (event.source !== window.parent) return;
+    const msg = event.data;
+    if (!msg || msg.jsonrpc !== '2.0') return;
+
+    if (msg.id !== undefined && pending.has(msg.id)) {
+      const { resolve, reject } = pending.get(msg.id);
+      pending.delete(msg.id);
+      if (msg.error) reject(new Error(msg.error.message || 'Request failed'));
+      else resolve(msg.result);
+      return;
+    }
+    if (msg.method === 'ui/notifications/tool-result') {
+      resultHandlers.forEach((fn) => fn(msg.params));
+    }
+    if (msg.method === 'ui/resource-teardown') {
+      // Host-initiated request sent before destroying this view (switching
+      // conversations, deleting one, compacting) — a MUST per the MCP Apps
+      // spec, so the host gets a chance to wait for us. Nothing here holds
+      // unsaved state worth protecting (winnings are already persisted
+      // server-side via claim_prize), so an empty success result is enough.
+      window.parent.postMessage({ jsonrpc: '2.0', id: msg.id, result: {} }, '*');
+    }
+  });
+
+  function send(method, params) {
+    window.parent.postMessage({ jsonrpc: '2.0', method, params }, '*');
+  }
+  function request(method, params) {
+    const id = nextId++;
+    window.parent.postMessage({ jsonrpc: '2.0', id, method, params }, '*');
+    return new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
+  }
+  async function initialize() {
+    const result = await request('ui/initialize', {
+      protocolVersion: '2026-01-26',
+      appCapabilities: { tools: { listChanged: false } },
+      appInfo: { name: 'prize-wheel', version: '1.0.0' },
+    });
+    send('ui/notifications/initialized', {});
+    return result;
+  }
+  function onToolResult(fn) { resultHandlers.push(fn); }
+  function callTool(name, args) { return request('tools/call', { name, arguments: args }); }
+
+  return { initialize, onToolResult, callTool, notify: send };
+})();
+
+// --- Wheel rendering (pure SVG, no libraries) -------------------------------
+const WHEEL_COLORS = ['#ff6bd6', '#ffcf4d', '#5ee7c9', '#7c9cff', '#ff9f6b', '#c58bff', '#6bd6ff', '#ff6b6b'];
+const CENTER = 150;
+const RADIUS = 140;
+const svg = document.getElementById('wheel');
+
+function pointOnCircle(angleDeg, radius) {
+  const rad = (angleDeg - 90) * Math.PI / 180; // -90 so angle 0 is at the top
+  return { x: CENTER + radius * Math.cos(rad), y: CENTER + radius * Math.sin(rad) };
+}
+
+function renderWheel(prizes) {
+  const n = prizes.length;
+  const step = 360 / n;
+  const ns = 'http://www.w3.org/2000/svg';
+  svg.innerHTML = '';
+  for (let i = 0; i < n; i++) {
+    const start = i * step;
+    const end = start + step;
+    const p1 = pointOnCircle(start, RADIUS);
+    const p2 = pointOnCircle(end, RADIUS);
+    const path = document.createElementNS(ns, 'path');
+    path.setAttribute('d', `M ${CENTER} ${CENTER} L ${p1.x} ${p1.y} A ${RADIUS} ${RADIUS} 0 0 1 ${p2.x} ${p2.y} Z`);
+    path.setAttribute('fill', WHEEL_COLORS[i % WHEEL_COLORS.length]);
+    path.setAttribute('stroke', '#1a1233');
+    path.setAttribute('stroke-width', '2');
+    svg.appendChild(path);
+
+    const mid = start + step / 2;
+    const labelPos = pointOnCircle(mid, RADIUS * 0.62);
+    const text = document.createElementNS(ns, 'text');
+    text.setAttribute('x', labelPos.x);
+    text.setAttribute('y', labelPos.y);
+    text.setAttribute('fill', '#1a1233');
+    text.setAttribute('font-size', '11');
+    text.setAttribute('font-weight', '700');
+    text.setAttribute('text-anchor', 'middle');
+    text.setAttribute('transform', `rotate(${mid}, ${labelPos.x}, ${labelPos.y})`);
+    // Wrap long labels onto two lines using tspans.
+    const words = prizes[i].split(' ');
+    const mid1 = Math.ceil(words.length / 2);
+    const line1 = words.slice(0, mid1).join(' ');
+    const line2 = words.slice(mid1).join(' ');
+    const tspan1 = document.createElementNS(ns, 'tspan');
+    tspan1.setAttribute('x', labelPos.x);
+    tspan1.setAttribute('dy', line2 ? '-0.3em' : '0');
+    tspan1.textContent = line1;
+    text.appendChild(tspan1);
+    if (line2) {
+      const tspan2 = document.createElementNS(ns, 'tspan');
+      tspan2.setAttribute('x', labelPos.x);
+      tspan2.setAttribute('dy', '1.1em');
+      tspan2.textContent = line2;
+      text.appendChild(tspan2);
+    }
+    svg.appendChild(text);
+  }
+}
+
+let currentRotation = 0;
+function spinTo(index, n) {
+  const step = 360 / n;
+  // Land the middle of wedge `index` under the top pointer (angle 0), with
+  // a few extra full turns for effect. The wheel's own rotation is what
+  // moves — the pointer is fixed — so we rotate backwards by the wedge's
+  // angle plus a small random jitter within the wedge for realism.
+  const targetWithinWedge = (Math.random() - 0.5) * (step * 0.6);
+  const wedgeCenter = index * step + step / 2;
+  const extraTurns = 5 + Math.floor(Math.random() * 2);
+  // The resting angle (mod 360) must equal this, regardless of how many
+  // full turns came before. Rotation is cumulative across spins so the
+  // wheel always turns forward and never snaps back — but that means each
+  // spin must strip off the PREVIOUS spin's own resting-angle remainder
+  // before adding the new one; adding on top of it (as if currentRotation
+  // were always a whole number of turns) makes every spin after the first
+  // land off by however far the previous spin's pointer rested past 0,
+  // an error that compounds spin over spin.
+  const restingAngle = (((360 - wedgeCenter) + targetWithinWedge) % 360 + 360) % 360;
+  const priorFullTurns = Math.floor(currentRotation / 360);
+  const targetRotation = (priorFullTurns + extraTurns) * 360 + restingAngle;
+  currentRotation = targetRotation;
+  svg.style.transform = `rotate(${targetRotation}deg)`;
+}
+
+function burstConfetti() {
+  const container = document.getElementById('confetti');
+  const colors = WHEEL_COLORS;
+  for (let i = 0; i < 40; i++) {
+    const el = document.createElement('div');
+    el.className = 'confetto';
+    el.style.left = Math.random() * 100 + 'vw';
+    el.style.background = colors[Math.floor(Math.random() * colors.length)];
+    el.style.animationDuration = (2 + Math.random() * 1.5) + 's';
+    el.style.animationDelay = (Math.random() * 0.4) + 's';
+    container.appendChild(el);
+    setTimeout(() => el.remove(), 4000);
+  }
+}
+
+// --- App state ---------------------------------------------------------
+const statusEl = document.getElementById('status');
+const spinBtn = document.getElementById('spin-btn');
+const prizeLabel = document.getElementById('prize-label');
+const claimControls = document.getElementById('claim-controls');
+const claimBtn = document.getElementById('claim-btn');
+const historyList = document.getElementById('history-list');
+
+let pendingIndex = null;
+let prizes = [];
+
+function setStatus(text, isError) {
+  statusEl.textContent = text;
+  statusEl.className = 'status' + (isError ? ' error' : '');
+}
+
+function renderHistory(history) {
+  historyList.innerHTML = '';
+  if (!history || history.length === 0) {
+    historyList.innerHTML = '<li class="empty">Nothing claimed yet.</li>';
+    return;
+  }
+  for (const prize of history) {
+    const li = document.createElement('li');
+    li.textContent = prize;
+    historyList.appendChild(li);
+  }
+}
+
+function extractData(result) {
+  if (!result) return null;
+  if (result.structuredContent) return result.structuredContent;
+  const block = (result.content || []).find((c) => c.type === 'text');
+  if (!block) return null;
+  try { return JSON.parse(block.text); } catch { return null; }
+}
+
+// Drives the wheel animation and, once it settles, shows the result. Spins
+// can be triggered from two independent places (the button, and the host's
+// initial tool-result push on load — see McpBridge.onToolResult below), so a
+// spin in progress is tracked by token: if a second spin starts before the
+// first one's CSS transition finishes, the interrupted transition's
+// `transitionend` may never fire (browsers fire `transitioncancel` for it
+// instead, which nothing here listens for), leaving a stale `{once: true}`
+// listener that would otherwise fire later with the WRONG spin's data the
+// next time any transition completes. Explicitly removing the previous
+// listener and checking the token before acting closes both gaps.
+let spinToken = 0;
+let activeSpinListener = null;
+
+function startSpinAnimation(index, prize) {
+  const token = ++spinToken;
+  if (activeSpinListener) {
+    svg.removeEventListener('transitionend', activeSpinListener);
+  }
+  spinTo(index, prizes.length || 8);
+  pendingIndex = index;
+
+  const onDone = () => {
+    if (token !== spinToken) return; // superseded by a later spin
+    svg.removeEventListener('transitionend', onDone);
+    activeSpinListener = null;
+    prizeLabel.textContent = 'You won: ' + prize + '!';
+    prizeLabel.classList.add('show');
+    claimControls.style.display = 'flex';
+    setStatus('Spin finished. Claim it, or spin again.');
+    spinBtn.disabled = false;
+    if (prize.indexOf('JACKPOT') !== -1) burstConfetti();
+  };
+  activeSpinListener = onDone;
+  svg.addEventListener('transitionend', onDone, { once: true });
+}
+
+spinBtn.addEventListener('click', () => doSpin());
+
+async function doSpin() {
+  spinBtn.disabled = true;
+  claimControls.style.display = 'none';
+  prizeLabel.classList.remove('show');
+  setStatus('Spinning…');
+  try {
+    const result = await McpBridge.callTool('spin_wheel', {});
+    const data = extractData(result);
+    if (!data) throw new Error('No result from spin_wheel');
+    if (prizes.length === 0 && data.prizes) {
+      prizes = data.prizes;
+      renderWheel(prizes);
+    }
+    startSpinAnimation(data.index, data.prize);
+  } catch (err) {
+    setStatus('Error: ' + err.message, true);
+    spinBtn.disabled = false;
+  }
+}
+
+claimBtn.addEventListener('click', async () => {
+  if (pendingIndex === null) return;
+  claimBtn.disabled = true;
+  try {
+    const result = await McpBridge.callTool('claim_prize', { index: pendingIndex });
+    const data = extractData(result);
+    if (data) {
+      renderHistory(data.history);
+      if (data.prize && data.prize.indexOf('JACKPOT') !== -1) burstConfetti();
+    }
+    claimControls.style.display = 'none';
+    setStatus('Claimed! Spin again any time.');
+  } catch (err) {
+    setStatus('Error: ' + err.message, true);
+  } finally {
+    claimBtn.disabled = false;
+  }
+});
+
+// --- Boot ---------------------------------------------------------------
+renderWheel(PRIZES_FALLBACK());
+function PRIZES_FALLBACK() {
+  // Shown before the first spin_wheel result arrives, so the wheel isn't
+  // blank while waiting; spin_wheel's response replaces this with the
+  // server's authoritative list on first use.
+  return ['10 Points', 'Coffee', 'Try Again', '50 Points', 'Stickers', 'JACKPOT', 'Try Again', 'Gift Card'];
+}
+
+McpBridge.onToolResult((result) => {
+  // A host may deliver an initial tool-result if this view was opened
+  // directly from a spin_wheel call (see the extension's lifecycle: the
+  // host sends tool-input/tool-result right after ui/initialize). This is
+  // also what fires when a reloaded conversation re-mounts this same view
+  // from its originally stored result — so spin_wheel's own history field
+  // (added alongside claim_prize's) is what lets past winnings show up
+  // immediately here too, not just after a live claim in this exact mount.
+  const data = extractData(result);
+  if (!data) return;
+  if (data.prizes) { prizes = data.prizes; renderWheel(prizes); }
+  if (data.history) renderHistory(data.history);
+  if (typeof data.index === 'number') {
+    startSpinAnimation(data.index, data.prize);
+  }
+});
+
+const ready = McpBridge.initialize();
+ready.then(() => setStatus('Ready. Hit SPIN!')).catch((err) => setStatus('Error: ' + err.message, true));
+
+// Fetch the current history on load, independent of whatever snapshot came
+// with the tool call that triggered this mount (see the onToolResult
+// comment above) — this is what lets the view show a claim made elsewhere
+// in the conversation after this view's own originating call, without
+// waiting for the next spin. get_history has no side effects, so it's safe
+// to call unconditionally on every load; a failure here is silent rather
+// than surfaced as a view-wide error, since the wheel is still fully usable
+// without it.
+ready
+  .then(() => McpBridge.callTool('get_history', {}))
+  .then((result) => {
+    const data = extractData(result);
+    if (data && data.history) renderHistory(data.history);
+  })
+  .catch(() => {});
+
+// --- Auto-resize -------------------------------------------------------
+// Reports our own content height to the host so the iframe grows/shrinks
+// to fit instead of being stuck at a size unrelated to what's actually
+// inside (see the MCP Apps spec's "Container Dimensions" section and the
+// ui/notifications/size-changed notification). containerDimensions.maxHeight
+// (from ui/initialize's result, if the host declares one) caps how tall
+// we're allowed to report before scrolling internally instead of growing
+// further — applied via CSS so every measurement below already respects it.
+ready.then((result) => {
+  const dims = result && result.hostContext && result.hostContext.containerDimensions;
+  const maxHeight = dims && dims.maxHeight;
+  if (maxHeight) {
+    document.documentElement.style.maxHeight = maxHeight + 'px';
+    document.documentElement.style.overflowY = 'auto';
+  }
+  const reportSize = () => {
+    const rect = document.documentElement.getBoundingClientRect();
+    McpBridge.notify('ui/notifications/size-changed', {
+      width: Math.ceil(rect.width),
+      height: Math.ceil(rect.height),
+    });
+  };
+  // Fires once immediately on observe() with the current size, then again
+  // on every subsequent layout change (e.g. the history list growing).
+  new ResizeObserver(reportSize).observe(document.documentElement);
+});
+</script>
+</body>
+</html>

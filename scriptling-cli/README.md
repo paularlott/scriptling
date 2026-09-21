@@ -80,6 +80,7 @@ The linter exits with code 0 if no errors are found, and code 1 if any errors ex
 | `-S`, `--server` | `SCRIPTLING_SERVER` | HTTP server address (host:port) | (disabled) |
 | `--json-rpc` | `SCRIPTLING_JSONRPC` | Enable JSON-RPC 2.0 server mode: stdio by default, HTTP `/json-rpc` with `--server` | false |
 | `--mcp-tools` | `SCRIPTLING_MCP_TOOLS` | Directory containing MCP tools | (disabled) |
+| `--mcp-cors-origin` | `SCRIPTLING_MCP_CORS_ORIGIN` | Allowed browser origin for cross-origin `/mcp` requests (repeatable, `*` for any) | same-origin only |
 | `--bearer-token` | `SCRIPTLING_BEARER_TOKEN` | Bearer token for authentication | none |
 | `--allowed-paths` | `SCRIPTLING_ALLOWED_PATHS` | Comma-separated allowed filesystem paths | (no restriction) |
 | `--tls-cert` | `SCRIPTLING_TLS_CERT` | TLS certificate file | none |
@@ -479,6 +480,7 @@ tool.get_list(name, default=[])       # Get list parameter
 # Return results
 tool.return_string(text)              # Return text result
 tool.return_object(obj)               # Return object as JSON
+tool.return_structured(obj)           # Return dict as structuredContent (+ text fallback)
 tool.return_toon(obj)                 # Return object as TOON format
 tool.return_error(message)            # Return error message
 ```

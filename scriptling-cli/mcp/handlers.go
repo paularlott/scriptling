@@ -163,10 +163,44 @@ func FileReader(path string) func() ([]byte, error) {
 	return func() ([]byte, error) { return os.ReadFile(path) }
 }
 
+// isStructuredResponse reports whether the script marked its response for
+// tool.return_structured() (rather than return_string/return_object), by
+// setting extlibsmcp.MCPResponseStructuredVarName.
+func isStructuredResponse(p *scriptling.Scriptling) bool {
+	v, err := p.GetVarAsObject(extlibsmcp.MCPResponseStructuredVarName)
+	if err != nil {
+		return false
+	}
+	b, ok := v.(*object.Boolean)
+	return ok && b.BoolValue()
+}
+
+// structuredResponseFromJSON builds a structured MCP tool response (both
+// StructuredContent and, per the MCP spec's backwards-compatibility
+// guidance, a text fallback) from the JSON tool.return_structured() already
+// serialized and validated as a JSON object.
+func structuredResponseFromJSON(jsonText string) (*mcplib.ToolResponse, error) {
+	// json.Decoder.UseNumber(), not json.Unmarshal: plain json.Unmarshal into
+	// map[string]any decodes every JSON number as float64, which loses
+	// precision for integers beyond 2^53 — and this text already went
+	// through one JSON round trip to get here (the script's return value ->
+	// this JSON string), with NewToolResponseStructured about to re-marshal
+	// the decoded map for the wire, so a value that could've stayed exact
+	// end-to-end would otherwise get silently rounded on the way through.
+	// json.Number preserves the original digits and re-marshals identically.
+	dec := json.NewDecoder(strings.NewReader(jsonText))
+	dec.UseNumber()
+	var data map[string]any
+	if err := dec.Decode(&data); err != nil {
+		return nil, fmt.Errorf("failed to decode structured response: %w", err)
+	}
+	return mcplib.NewToolResponseStructured(data), nil
+}
+
 // BuildToolHandler reads the script once at registration time and returns a
 // ToolHandler that runs a fresh interpreter per invocation. The script receives
 // its parameters via mcp.tool.get_* helpers and returns its result via
-// mcp.tool.return_string / return_object / return_error.
+// mcp.tool.return_string / return_object / return_structured / return_error.
 //
 // Tool scripts resolve imports only via the configured library dirs (and pack
 // loader); pass the tools dir in cfg.LibDirs if sibling imports are needed.
@@ -195,6 +229,9 @@ func BuildToolHandlerSource(src []byte, cfg HandlerConfig) mcplib.ToolHandler {
 			if exitCode != 0 {
 				return nil, mcplib.NewToolErrorInternal(response)
 			}
+			if isStructuredResponse(p) {
+				return structuredResponseFromJSON(response)
+			}
 			return mcplib.NewToolResponseText(response), nil
 		}
 		if err != nil {
@@ -218,6 +255,7 @@ func BuildToolHandlerSource(src []byte, cfg HandlerConfig) mcplib.ToolHandler {
 //   - tool.return_error("msg") → MCP error response (isError: true)
 //   - tool.return_string("msg") → text response
 //   - tool.return_object(obj) → JSON response
+//   - tool.return_structured(obj) → structuredContent response (+ JSON text fallback)
 //   - exception → error response
 func BuildToolHandlerFunc(src []byte, funcName string, cfg HandlerConfig) mcplib.ToolHandler {
 	return func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
@@ -244,6 +282,9 @@ func BuildToolHandlerFunc(src []byte, funcName string, cfg HandlerConfig) mcplib
 				if callErr != nil {
 					// tool.return_error — return as MCP error response.
 					return nil, mcplib.NewToolErrorInternal(s.StringValue())
+				}
+				if isStructuredResponse(p) {
+					return structuredResponseFromJSON(s.StringValue())
 				}
 				// tool.return_string / return_object — return as text response.
 				return mcplib.NewToolResponseText(s.StringValue()), nil
@@ -316,23 +357,41 @@ func toolResultToResponse(result object.Object) (*mcplib.ToolResponse, error) {
 // base64 blob otherwise. read is called on every request so content is always
 // current (e.g. FileReader for disk, a bundle read for packs).
 func BuildStaticResourceHandler(read func() ([]byte, error), uri, mimeType string) mcplib.ResourceHandler {
+	return buildStaticResourceHandler(read, uri, mimeType, nil)
+}
+
+// BuildStaticResourceHandlerWithMeta is [BuildStaticResourceHandler] plus MCP
+// Apps rendering hints (_meta.ui — CSP, permissions, domain, prefersBorder)
+// attached to every resources/read response, for a ui:// resource whose
+// _{stem}.toml sidecar declares a [ui] table. meta may be nil.
+func BuildStaticResourceHandlerWithMeta(read func() ([]byte, error), uri, mimeType string, meta *mcplib.UIResourceMeta) mcplib.ResourceHandler {
+	return buildStaticResourceHandler(read, uri, mimeType, meta)
+}
+
+func buildStaticResourceHandler(read func() ([]byte, error), uri, mimeType string, meta *mcplib.UIResourceMeta) mcplib.ResourceHandler {
 	return func(ctx context.Context, req *mcplib.ResourceRequest) (*mcplib.ResourceResponse, error) {
 		data, err := read()
 		if err != nil {
 			return nil, mcplib.NewToolErrorInternal(fmt.Sprintf("failed to read resource: %v", err))
 		}
+		var resp *mcplib.ResourceResponse
 		if utf8.Valid(data) {
 			mime := mimeType
 			if mime == "" {
 				mime = "text/plain"
 			}
-			return mcplib.NewResourceResponseText(uri, string(data), mime), nil
+			resp = mcplib.NewResourceResponseText(uri, string(data), mime)
+		} else {
+			mime := mimeType
+			if mime == "" {
+				mime = "application/octet-stream"
+			}
+			resp = mcplib.NewResourceResponseBlob(uri, data, mime)
 		}
-		mime := mimeType
-		if mime == "" {
-			mime = "application/octet-stream"
+		if meta != nil {
+			resp.WithMeta(map[string]any{"ui": meta})
 		}
-		return mcplib.NewResourceResponseBlob(uri, data, mime), nil
+		return resp, nil
 	}
 }
 

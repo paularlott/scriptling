@@ -232,6 +232,98 @@ result = decorator("not a function")
 	}
 }
 
+func TestMCPToolDecoratorUI(t *testing.T) {
+	p := newTestScriptling()
+	_, err := p.Eval(`
+import scriptling.runtime.mcp as mcp
+
+@mcp.tool("Get the sales report",
+           ui={"resourceUri": "ui://sales-dashboard/dashboard.html", "visibility": ["model", "app"]})
+def sales_report():
+    return {"records": []}
+`)
+	if err != nil {
+		t.Fatalf("eval error: %v", err)
+	}
+
+	registry := getMCPRegistry(t, p)
+	if len(registry) != 1 {
+		t.Fatalf("expected 1 registration, got %d", len(registry))
+	}
+
+	uiPair, ok := registry[0].GetByString("ui")
+	if !ok {
+		t.Fatal("missing 'ui' in entry")
+	}
+	uiDict, ok := uiPair.Value.(*object.Dict)
+	if !ok {
+		t.Fatalf("'ui' type = %T, want *object.Dict", uiPair.Value)
+	}
+	assertDictString(t, uiDict, "resourceUri", "ui://sales-dashboard/dashboard.html")
+}
+
+func TestMCPToolDecoratorIcons(t *testing.T) {
+	p := newTestScriptling()
+	_, err := p.Eval(`
+import scriptling.runtime.mcp as mcp
+
+@mcp.tool("Get the weather",
+           icons=[{"src": "https://example.com/weather.png", "mimeType": "image/png"}])
+def weather():
+    return {"forecast": "sunny"}
+`)
+	if err != nil {
+		t.Fatalf("eval error: %v", err)
+	}
+
+	registry := getMCPRegistry(t, p)
+	if len(registry) != 1 {
+		t.Fatalf("expected 1 registration, got %d", len(registry))
+	}
+
+	iconsPair, ok := registry[0].GetByString("icons")
+	if !ok {
+		t.Fatal("missing 'icons' in entry")
+	}
+	iconsList, ok := iconsPair.Value.(*object.List)
+	if !ok || len(iconsList.Elements) != 1 {
+		t.Fatalf("'icons' = %#v, want a 1-element list", iconsPair.Value)
+	}
+	iconDict, ok := iconsList.Elements[0].(*object.Dict)
+	if !ok {
+		t.Fatalf("icons[0] type = %T, want *object.Dict", iconsList.Elements[0])
+	}
+	assertDictString(t, iconDict, "src", "https://example.com/weather.png")
+}
+
+func TestMCPToolDecoratorIcons_NotListIsError(t *testing.T) {
+	p := newTestScriptling()
+	_, err := p.Eval(`
+import scriptling.runtime.mcp as mcp
+
+@mcp.tool("Bad tool", icons="https://example.com/icon.png")
+def bad():
+    return None
+`)
+	if err == nil {
+		t.Fatal("expected an error when icons is not a list")
+	}
+}
+
+func TestMCPToolDecoratorUI_NotDictIsError(t *testing.T) {
+	p := newTestScriptling()
+	_, err := p.Eval(`
+import scriptling.runtime.mcp as mcp
+
+@mcp.tool("Bad tool", ui="ui://not-a-dict")
+def bad():
+    return None
+`)
+	if err == nil {
+		t.Fatal("expected an error when ui is not a dict")
+	}
+}
+
 func TestMCPToolDecoratorViaParentImport(t *testing.T) {
 	// Test that runtime.mcp.tool works via `import scriptling.runtime as runtime`
 	p := newTestScriptling()
