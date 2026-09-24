@@ -47,6 +47,21 @@ func httpPoolFor(guard *netsecurity.Guard) pool.HTTPPool {
 	return &guardedPool{client: guard.HTTPClient()}
 }
 
+// declareUIAppsSupport advertises this client's own support for the MCP
+// Apps extension (SEP-1865) to the remote server a script connects to via
+// mcp.Client(...). Without this, a spec-conformant remote server that only
+// attaches _meta.ui for clients that declared
+// capabilities.extensions[io.modelcontextprotocol/ui] has no way to know
+// this client can handle one, and silently serves a plain-text-only tool
+// instead — MCP Apps then quietly never works for that server, with no
+// error anywhere to explain why. Unconditional: the cost to a
+// non-supporting host is nil, it just ignores unknown _meta.
+func declareUIAppsSupport(client *mcplib.Client) {
+	client.DeclareExtension(mcplib.UIAppsExtensionID, map[string]any{
+		"mimeTypes": []string{mcplib.UIAppMimeType},
+	})
+}
+
 // Register registers the mcp library with the given registrar.
 // cfg is an optional outbound network policy: when provided (non-nil), every
 // HTTP-transport client created via mcp.Client() is restricted to it (an
@@ -145,6 +160,7 @@ Example:
 				}
 
 				client := mcplib.NewClientWithPool(target, authProvider, namespace, httpPoolFor(guard))
+				declareUIAppsSupport(client)
 				return createClientInstance(client), nil
 			}
 
@@ -187,6 +203,7 @@ Example:
 			if err != nil {
 				return nil, fmt.Errorf("mcp.Client: failed to start stdio server %q: %w", target, err)
 			}
+			declareUIAppsSupport(client)
 			return createClientInstance(client), nil
 		}, `Client(target, **kwargs) - Create a new MCP client (HTTP or stdio)
 
