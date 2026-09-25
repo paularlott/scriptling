@@ -240,6 +240,13 @@ func buildRootCommand() *cli.Command {
 				ConfigPath:   []string{"mcp.prompts"},
 			},
 			&cli.StringFlag{
+				Name:         "mcp-skills",
+				Usage:        "Expose MCP skills (SEP-2640) from this directory (one subdirectory per skill, each with a SKILL.md)",
+				DefaultValue: "",
+				EnvVars:      []string{"SCRIPTLING_MCP_SKILLS"},
+				ConfigPath:   []string{"mcp.skills"},
+			},
+			&cli.StringFlag{
 				Name:         "bearer-token",
 				Usage:        "Bearer token for authentication",
 				DefaultValue: "",
@@ -378,7 +385,7 @@ func buildRootCommand() *cli.Command {
 			// as the protocol stream, so logs must go to stderr to avoid
 			// corrupting responses.
 			logWriter := os.Stdout
-			mcpStdio := (cmd.GetString("mcp-tools") != "" || cmd.GetString("mcp-resources") != "" || cmd.GetString("mcp-prompts") != "" || cmd.GetBool("mcp-exec-script")) && cmd.GetString("server") == ""
+			mcpStdio := (cmd.GetString("mcp-tools") != "" || cmd.GetString("mcp-resources") != "" || cmd.GetString("mcp-prompts") != "" || cmd.GetString("mcp-skills") != "" || cmd.GetBool("mcp-exec-script")) && cmd.GetString("server") == ""
 			if cmd.GetBool("json-rpc") || mcpStdio {
 				logWriter = os.Stderr
 			}
@@ -647,6 +654,7 @@ type bundleFlagConflicts struct {
 	MCPTools     string
 	MCPResources string
 	MCPPrompts   string
+	MCPSkills    string
 	WebRoot      string
 	Code         string // -c
 	Interactive  bool
@@ -664,6 +672,7 @@ func rejectBundleFlags(c bundleFlagConflicts) error {
 		{"mcp-tools", c.MCPTools != ""},
 		{"mcp-resources", c.MCPResources != ""},
 		{"mcp-prompts", c.MCPPrompts != ""},
+		{"mcp-skills", c.MCPSkills != ""},
 		{"web-root", c.WebRoot != ""},
 		{"code", c.Code != ""},
 		{"interactive", c.Interactive},
@@ -967,6 +976,7 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 		MCPToolsDir:         cmd.GetString("mcp-tools"),
 		MCPResourcesDir:     cmd.GetString("mcp-resources"),
 		MCPPromptsDir:       cmd.GetString("mcp-prompts"),
+			MCPSkillsDir:        cmd.GetString("mcp-skills"),
 		MCPExecTool:         cmd.GetBool("mcp-exec-script"),
 		JSONRPC:             cmd.GetBool("json-rpc"),
 		KVStoragePath:       cmd.GetString("kv-storage"),
@@ -1080,6 +1090,7 @@ func runMCPStdioServer(ctx context.Context, cmd *cli.Command) error {
 		MCPToolsDir:     cmd.GetString("mcp-tools"),
 		MCPResourcesDir: cmd.GetString("mcp-resources"),
 		MCPPromptsDir:   cmd.GetString("mcp-prompts"),
+			MCPSkillsDir:    cmd.GetString("mcp-skills"),
 		MCPExecTool:     cmd.GetBool("mcp-exec-script"),
 		KVStoragePath:   cmd.GetString("kv-storage"),
 		SecretRegistry:  secretRegistry,

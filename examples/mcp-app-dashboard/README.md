@@ -30,12 +30,25 @@ tools/
 resources/
   ui/sales-dashboard/dashboard.html    the UI itself (shared with the Go example)
   ui/sales-dashboard/_dashboard.toml   mimeType + [ui.csp]
+skills/
+  dashboard-ops/SKILL.md              an MCP skill (SEP-2640) teaching an agent
+                                      how to drive the dashboard
+  dashboard-ops/references/regions.md a supporting file, served as a skill resource
 ```
 
 `resources/ui/sales-dashboard/dashboard.html` is served at
 `ui://sales-dashboard/dashboard.html` — the first path segment under
 `--mcp-resources` is always the URI scheme, and a static file keeps its
 extension in the URI (see [Resources and Prompts](https://scriptling.dev/docs/cli/mcp-server/#resources-and-prompts)).
+
+## Skills (SEP-2640)
+
+Pass `--mcp-skills ./skills` alongside the tool and resource flags to serve
+the `dashboard-ops` skill. Its files become ordinary `skill://` resources
+(`skill://dashboard-ops/SKILL.md`,
+`skill://dashboard-ops/references/regions.md`), `skills/list` enumerates it,
+and `skills/get skill://dashboard-ops/SKILL.md` returns its entry with
+per-file digests — exactly the transport shape the extension specifies.
 
 ## Storage: one KV key per sale, not a shared list
 
@@ -77,7 +90,7 @@ instead for a list, string, or other JSON value that isn't a dict.
 
 ```bash
 # Over stdio (the transport MCP hosts use for a subprocess)
-scriptling --mcp-tools ./tools --mcp-resources ./resources
+scriptling --mcp-tools ./tools --mcp-resources ./resources --mcp-skills ./skills
 
 # Or over HTTP, for the bundled host-simulator test harness
 scriptling --server :8091 --mcp-tools ./tools --mcp-resources ./resources

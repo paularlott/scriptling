@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
+	"strings"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -37,6 +39,10 @@ func (s *Server) setupMCP() error {
 	}
 	if s.config.MCPPromptsDir != "" {
 		watchDirs = append(watchDirs, s.config.MCPPromptsDir)
+	}
+
+	if s.config.MCPSkillsDir != "" {
+		watchDirs = append(watchDirs, s.config.MCPSkillsDir)
 	}
 	if len(watchDirs) > 0 {
 		watcher, err := fsnotify.NewWatcher()
@@ -112,6 +118,12 @@ func (s *Server) createMCPServer() (*mcp_lib.Server, error) {
 			return nil, err
 		}
 		s.mcpFolderEntries.prompts = names
+	}
+
+	if s.config.MCPSkillsDir != "" {
+		if err := s.registerSkillsFromFS(server, os.DirFS(s.config.MCPSkillsDir), s.config.MCPSkillsDir); err != nil {
+			return nil, err
+		}
 	}
 
 	// Bundle-sourced entries.
@@ -434,4 +446,69 @@ func (s *Server) reloadMCP() {
 	}
 
 	Log.Info("MCP reloaded successfully")
+}
+
+// registerSkillsFromFS registers one MCP skill (SEP-2640) per
+// subdirectory containing a SKILL.md (the Agent Skills format). Every file
+// in the skill directory becomes a skill resource; the SKILL.md
+// frontmatter's name must match the directory name (enforced by the
+// library's URI rules) and its description seeds the skill's frontmatter.
+// Directories without a SKILL.md are skipped. Skills are registered once
+// at startup; the watcher does not live-reload skill content.
+func (s *Server) registerSkillsFromFS(server *mcp_lib.Server, fsys fs.FS, source string) error {
+	dirs, err := fs.ReadDir(fsys, ".")
+	if err != nil {
+		return fmt.Errorf("%s: %w", source, err)
+	}
+	for _, d := range dirs {
+		if !d.IsDir() {
+			continue
+		}
+		skillMD, err := fs.ReadFile(fsys, path.Join(d.Name(), "SKILL.md"))
+		if err != nil {
+			continue // not a skill directory
+		}
+		if name := frontmatterValue(string(skillMD), "name"); name != "" && name != d.Name() {
+			return fmt.Errorf("%s: SKILL.md frontmatter name %q must match directory name %q", source, name, d.Name())
+		}
+		// The listing frontmatter is parsed verbatim from the SKILL.md by
+		// the library; Description is only the fallback for a file without
+		// a frontmatter block.
+		builder := mcp_lib.NewSkill(d.Name()).Description(frontmatterValue(string(skillMD), "description"))
+		err = fs.WalkDir(fsys, d.Name(), func(p string, entry fs.DirEntry, err error) error {
+			if err != nil || entry.IsDir() {
+				return err
+			}
+			content, err := fs.ReadFile(fsys, p)
+			if err != nil {
+				return err
+			}
+			builder.File(strings.TrimPrefix(p, d.Name()+"/"), content)
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("%s: %w", source, err)
+		}
+		server.RegisterSkill(builder)
+		Log.Info("registered MCP skill", "name", d.Name())
+	}
+	return nil
+}
+
+// frontmatterValue pulls one top-level value out of a SKILL.md's YAML
+// frontmatter block ("---\nkey: value\n---"), without a YAML dependency.
+func frontmatterValue(doc, key string) string {
+	lines := strings.Split(doc, "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+		return ""
+	}
+	for _, line := range lines[1:] {
+		if strings.TrimSpace(line) == "---" {
+			break
+		}
+		if strings.HasPrefix(line, key+":") {
+			return strings.TrimSpace(strings.TrimPrefix(line, key+":"))
+		}
+	}
+	return ""
 }

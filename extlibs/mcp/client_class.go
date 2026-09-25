@@ -71,6 +71,24 @@ Returns:
 
 Example:
   client.refresh_tools()`).
+		MethodWithHelp("skills", skillsMethod, `skills() - List available skills
+
+Lists the skills this MCP server exposes (the Skills extension,
+io.modelcontextprotocol/skills). Returns a list of dicts with uri,
+frontmatter (name, description, metadata) and resources (per-file uri,
+digest, size).
+
+  skills = client.skills()
+  for skill in skills:
+      print(skill.frontmatter.name)`).
+		MethodWithHelp("get_skill", getSkillMethod, `get_skill(uri) - Fetch a skill's entry
+
+Returns one skill's entry (frontmatter and per-file digests) by URI, from
+the server's skills/get. Read file content with read_resource on any of the
+entry's resource URIs.
+
+  entry = client.get_skill("skill://code-review/SKILL.md")
+  content = client.read_resource("skill://code-review/SKILL.md")`).
 		MethodWithHelp("tool_search", toolSearchMethod, `tool_search(query, **kwargs) - Search for tools
 
 Searches for tools using the tool_search MCP tool. This is useful when the
@@ -446,6 +464,10 @@ func convertToolsToList(tools []mcplib.MCPTool) object.Object {
 		toolDict := object.NewStringDict(map[string]object.Object{
 			"name":        object.NewString(tool.Name),
 			"description": object.NewString(tool.Description),
+			// True when the tool is an MCP Apps view (linked to a ui://
+			// resource via _meta.ui.resourceUri): calling it renders its
+			// view in a host UI rather than returning plain text.
+			"is_app": object.NewBoolean(mcplib.ToolIsApp(tool)),
 		})
 		if tool.InputSchema != nil {
 			toolDict.SetByString("inputSchema", conversion.FromGo(tool.InputSchema))
@@ -456,4 +478,62 @@ func convertToolsToList(tools []mcplib.MCPTool) object.Object {
 		toolList = append(toolList, toolDict)
 	}
 	return &object.List{Elements: toolList}
+}
+
+// skillsMethod lists the server's skills (SEP-2640 entries).
+func skillsMethod(self *object.Instance, ctx context.Context) object.Object {
+	ci, cerr := getMCPClientInstance(self)
+	if cerr != nil {
+		return cerr
+	}
+	if ci.client == nil {
+		return &object.Error{Message: "skills: no client configured"}
+	}
+	skills, err := ci.client.ListSkills(ctx)
+	if err != nil {
+		return &object.Error{Message: "failed to get skills: " + err.Error()}
+	}
+	list := make([]object.Object, 0, len(skills))
+	for _, skill := range skills {
+		list = append(list, skillEntryToDict(skill))
+	}
+	return &object.List{Elements: list}
+}
+
+// skillEntryToDict converts one skills/list entry to a scriptling dict.
+func skillEntryToDict(skill mcplib.Skill) object.Object {
+	pairs := map[string]object.Object{
+		"uri":         object.NewString(skill.URI),
+		"frontmatter": conversion.FromGo(skill.Frontmatter),
+	}
+	resources := make([]object.Object, 0, len(skill.Resources))
+	for _, r := range skill.Resources {
+		resources = append(resources, object.NewStringDict(map[string]object.Object{
+			"uri":    object.NewString(r.URI),
+			"digest": object.NewString(r.Digest),
+			"size":   object.NewInteger(r.Size),
+		}))
+	}
+	pairs["resources"] = &object.List{Elements: resources}
+	return object.NewStringDict(pairs)
+}
+
+// getSkillMethod fetches one skill's entry by URI (SKILL.md URI or the
+// skill's root). Content is read with read_resource on any listed URI.
+func getSkillMethod(self *object.Instance, ctx context.Context, uri string) object.Object {
+	ci, cerr := getMCPClientInstance(self)
+	if cerr != nil {
+		return cerr
+	}
+	if ci.client == nil {
+		return &object.Error{Message: "get_skill: no client configured"}
+	}
+	if uri == "" {
+		return &object.Error{Message: "get_skill: uri is required"}
+	}
+	skill, err := ci.client.GetSkill(ctx, uri)
+	if err != nil {
+		return &object.Error{Message: "failed to get skill: " + err.Error()}
+	}
+	return skillEntryToDict(*skill)
 }

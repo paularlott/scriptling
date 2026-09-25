@@ -54,6 +54,7 @@ type ServerConfig struct {
 	MCPToolsDir     string // Empty means MCP disabled
 	MCPResourcesDir string // Folder of resource .toml/.py pairs (empty = none)
 	MCPPromptsDir   string // Folder of prompt .toml/.py pairs (empty = none)
+	MCPSkillsDir    string // Folder of skill directories, each with a SKILL.md (empty = none)
 	MCPExecTool     bool   // Enable code execution tool
 	JSONRPC         bool   // Mount JSON-RPC over HTTP at /json-rpc
 	KVStoragePath   string // Empty means in-memory KV store
