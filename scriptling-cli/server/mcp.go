@@ -469,7 +469,10 @@ func (s *Server) registerSkillsFromFS(server *mcp_lib.Server, fsys fs.FS, source
 			continue // not a skill directory
 		}
 		if name := frontmatterValue(string(skillMD), "name"); name != "" && name != d.Name() {
-			return fmt.Errorf("%s: SKILL.md frontmatter name %q must match directory name %q", source, name, d.Name())
+			// One bad skill directory must not fail the whole server.
+			Log.Warn("Skipping skill directory: SKILL.md frontmatter name must match the directory name",
+				"source", source, "dir", d.Name(), "name", name)
+			continue
 		}
 		// The listing frontmatter is parsed verbatim from the SKILL.md by
 		// the library; Description is only the fallback for a file without
@@ -489,7 +492,10 @@ func (s *Server) registerSkillsFromFS(server *mcp_lib.Server, fsys fs.FS, source
 		if err != nil {
 			return fmt.Errorf("%s: %w", source, err)
 		}
-		server.RegisterSkill(builder)
+		if err := server.RegisterSkill(builder); err != nil {
+			Log.Warn("Skipping MCP skill", "source", source, "name", d.Name(), "error", err)
+			continue
+		}
 		Log.Info("registered MCP skill", "name", d.Name())
 	}
 	return nil
