@@ -2270,7 +2270,14 @@ type Exception struct {
 }
 
 func (ex *Exception) Type() ObjectType { return EXCEPTION_OBJ }
-func (ex *Exception) Inspect() string  { return "EXCEPTION: " + ex.Message }
+func (ex *Exception) Inspect() string {
+	// repr(e) names the exception's class ("ValueError: bad input"), like
+	// Python; the generic wrapper name only shows when no type was set.
+	if ex.ExceptionType != "" {
+		return ex.ExceptionType + ": " + ex.Message
+	}
+	return "EXCEPTION: " + ex.Message
+}
 
 func (ex *Exception) AsString() (string, Object)          { return ex.Message, nil }
 func (ex *Exception) AsInt() (int64, Object)              { return 0, errMustBeInteger }

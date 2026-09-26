@@ -503,3 +503,86 @@ t`, "KeyError"},
 	}
 }
 
+
+// TestSumWithStart: sum(iterable, start) offsets the total and can seed a
+// float result, as in Python.
+func TestSumWithStart(t *testing.T) {
+	tests := []struct {
+		name     string
+		script   string
+		expected string
+	}{
+		{"int start", `sum([1, 2], 10)`, `13`},
+		{"float start seeds float", `str(sum([1, 2], 0.5))`, `3.5`},
+		{"empty iterable with start", `sum([], 7)`, `7`},
+		{"no start unchanged", `sum([1, 2])`, `3`},
+		{"non-number start errors", `def f():
+    return sum([1], "x")
+msg = "no error"
+try:
+    f()
+except Exception as e:
+    msg = str(e)
+msg`, `sum() start must be a number, got STRING`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := testEval(tt.script)
+			if result.Inspect() != tt.expected {
+				t.Errorf("got=%s, want=%s", result.Inspect(), tt.expected)
+			}
+		})
+	}
+}
+
+// TestListSortMatchesSorted: .sort() uses the same comparator as sorted():
+// incomparable elements error instead of silently no-oping, and instances
+// sort through their __lt__ dunder.
+func TestListSortMatchesSorted(t *testing.T) {
+	tests := []struct {
+		name     string
+		script   string
+		expected string
+	}{
+		{"dicts without key error", `def f():
+    xs = [{"v": 1}, {"v": 3}]
+    xs.sort()
+msg = "no error"
+try:
+    f()
+except Exception as e:
+    msg = str(e)
+msg`, `cannot compare DICT with DICT`},
+		{"mixed types error", `def f():
+    ys = [1, "a"]
+    ys.sort()
+msg = "no error"
+try:
+    f()
+except Exception as e:
+    msg = str(e)
+msg`, `cannot compare STRING with INTEGER`},
+		{"dunder __lt__ sorts", `class P:
+    def __init__(self, p):
+        self.p = p
+    def __lt__(self, other):
+        return self.p < other.p
+ps = [P(3), P(1), P(2)]
+ps.sort()
+[x.p for x in ps]`, `[1, 2, 3]`},
+		{"reverse still works", `b = [3, 1, 2]
+b.sort(reverse=True)
+b`, `[3, 2, 1]`},
+		{"key still works", `c = [{"v": 1}, {"v": 3}, {"v": 2}]
+c.sort(key=lambda r: r["v"])
+[r["v"] for r in c]`, `[1, 2, 3]`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := testEval(tt.script)
+			if result.Inspect() != tt.expected {
+				t.Errorf("got=%s, want=%s", result.Inspect(), tt.expected)
+			}
+		})
+	}
+}

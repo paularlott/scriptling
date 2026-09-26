@@ -3,6 +3,7 @@ package stdlib
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/errors"
@@ -25,18 +26,42 @@ func jsonDumps(ctx context.Context, kwargs object.Kwargs, args ...object.Object)
 		return errors.NewError("wrong number of arguments. got=%d, want=1", len(args))
 	}
 
-	// Use kwargs helpers for optional parameters
-	indent, _ := kwargs.GetString("indent", "")
+	// indent accepts a string (used verbatim, like Python) or a number of
+	// spaces (the common json.dumps(x, indent=2) idiom). An integer of 0
+	// means newline-separated with no spaces, matching Python.
+	indent := ""
+	hasIndent := false
+	if iv := kwargs.Get("indent"); iv != nil {
+		hasIndent = true
+		switch v := iv.(type) {
+		case *object.String:
+			indent = v.StringValue()
+		case *object.Integer:
+			if v.IntValue() < 0 {
+				return errors.NewError("json.dumps: indent must not be negative")
+			}
+			indent = strings.Repeat(" ", int(v.IntValue()))
+		case *object.Float:
+			if v.FloatValue() < 0 {
+				return errors.NewError("json.dumps: indent must not be negative")
+			}
+			indent = strings.Repeat(" ", int(v.FloatValue()))
+		default:
+			return errors.NewError("json.dumps: indent must be a string or a number of spaces")
+		}
+	}
 
 	data := objectToJSON(args[0])
 	var (
 		bytes []byte
 		err   error
 	)
-	if indent == "" {
-		bytes, err = json.Marshal(data)
-	} else {
+	// hasIndent distinguishes indent=0 (newline-separated, no spaces, as in
+	// Python) from no indent argument at all (fully compact).
+	if hasIndent {
 		bytes, err = json.MarshalIndent(data, "", indent)
+	} else {
+		bytes, err = json.Marshal(data)
 	}
 	if err != nil {
 		return errors.NewError("json serialize error: %s", err.Error())
@@ -56,7 +81,9 @@ Parses a JSON string and returns the corresponding Scriptling object.`,
 		HelpText: `dumps(obj, indent="") - Serialize object to JSON string
 
 Converts a Scriptling object to its JSON string representation.
-Optional indent parameter for pretty-printing.`,
+Optional indent parameter for pretty-printing: a string used verbatim, or a
+number of spaces (indent=2 is the common idiom; indent=0 newline-separates
+with no spaces). Object keys are always emitted in sorted order.`,
 	},
 	"parse": {
 		Fn: jsonLoads,

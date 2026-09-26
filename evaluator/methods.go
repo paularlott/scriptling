@@ -902,7 +902,12 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 			for i := range indices {
 				indices[i] = i
 			}
-			// Sort indices based on element/key values
+			// Sort indices with the same comparator sorted() uses: numbers
+			// order together, strings lexicographically, tuples/lists
+			// element-wise, instances through their dunders, and anything
+			// incomparable is an error rather than a silent no-op (which is
+			// what compareObjects' 0-for-incomparable would do here).
+			var sortErr object.Object
 			sort.Slice(indices, func(i, j int) bool {
 				var left, right object.Object
 				if keys != nil {
@@ -910,12 +915,19 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 				} else {
 					left, right = list.Elements[indices[i]], list.Elements[indices[j]]
 				}
-				cmp := compareObjects(left, right)
+				cmp, cerr := compareForSort(ctx, left, right, env)
+				if cerr != nil {
+					sortErr = cerr
+					return false
+				}
 				if reverse {
 					return cmp > 0
 				}
 				return cmp < 0
 			})
+			if sortErr != nil {
+				return sortErr
+			}
 			// Reorder elements according to sorted indices
 			newElements := make([]object.Object, n)
 			for i, idx := range indices {

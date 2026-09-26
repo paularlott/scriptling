@@ -380,8 +380,25 @@ Converts an integer, string, or float to a float.`,
 
 	"sum": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil {
+			if err := errors.RangeArgs(args, 1, 2); err != nil {
 				return err
+			}
+
+			// Optional start value, as in Python: sum(prices, 0.0) seeds a
+			// float sum, sum(counts, 10) offsets the total.
+			startInt := int64(0)
+			startFloat := 0.0
+			hasFloat := false
+			if len(args) == 2 {
+				switch v := args[1].(type) {
+				case *object.Integer:
+					startInt = v.IntValue()
+				case *object.Float:
+					startFloat = v.FloatValue()
+					hasFloat = true
+				default:
+					return errors.NewError("sum() start must be a number, got %s", args[1].Type())
+				}
 			}
 
 			var elements []object.Object
@@ -404,10 +421,8 @@ Converts an integer, string, or float to a float.`,
 				return errors.NewTypeError("iterable", args[0].Type().String())
 			}
 
-			// Start with integer 0
-			var intSum int64 = 0
-			var floatSum float64 = 0
-			hasFloat := false
+			intSum := startInt
+			floatSum := startFloat
 
 			for _, elem := range elements {
 				switch v := elem.(type) {
@@ -433,9 +448,10 @@ Converts an integer, string, or float to a float.`,
 			}
 			return object.NewInteger(intSum)
 		},
-		HelpText: `sum(iterable) - Sum elements of iterable
+		HelpText: `sum(iterable, start=0) - Sum elements of iterable
 
-Returns the sum of all elements in an iterable.
+Returns the sum of all elements in an iterable, plus start (as in Python:
+sum(prices, 0.0) seeds a float result).
 Supports integers and floats, returns appropriate type.`,
 	},
 	"sorted": {
@@ -2095,6 +2111,68 @@ func boolNumber(b bool) float64 {
 	return 0
 }
 
+
+// compareForSort orders two values for sorted() and list.sort(): numbers
+// order together (booleans as 0 and 1), strings lexicographically, tuples
+// and lists element-wise, and instances through their dunder comparisons
+// (__lt__ with reflected __gt__, then __eq__) via compareObjectsCtx.
+// Incomparable values are an error, never a silent no-op.
+func compareForSort(ctx context.Context, left, right object.Object, env *object.Environment) (int, object.Object) {
+	switch l := left.(type) {
+	case *object.Integer:
+		if r, ok := right.(*object.Integer); ok {
+			if l.IntValue() < r.IntValue() {
+				return -1, nil
+			} else if l.IntValue() > r.IntValue() {
+				return 1, nil
+			}
+			return 0, nil
+		} else if r, ok := right.(*object.Float); ok {
+			return cmpFloats(float64(l.IntValue()), r.FloatValue()), nil
+		} else if r, ok := right.(*object.Boolean); ok {
+			return cmpFloats(float64(l.IntValue()), boolNumber(r.BoolValue())), nil
+		}
+	case *object.Float:
+		if r, ok := right.(*object.Float); ok {
+			return cmpFloats(l.FloatValue(), r.FloatValue()), nil
+		} else if r, ok := right.(*object.Integer); ok {
+			return cmpFloats(l.FloatValue(), float64(r.IntValue())), nil
+		} else if r, ok := right.(*object.Boolean); ok {
+			return cmpFloats(l.FloatValue(), boolNumber(r.BoolValue())), nil
+		}
+	case *object.Boolean:
+		if r, ok := right.(*object.Boolean); ok {
+			return cmpFloats(boolNumber(l.BoolValue()), boolNumber(r.BoolValue())), nil
+		} else if r, ok := right.(*object.Integer); ok {
+			return cmpFloats(boolNumber(l.BoolValue()), float64(r.IntValue())), nil
+		} else if r, ok := right.(*object.Float); ok {
+			return cmpFloats(boolNumber(l.BoolValue()), r.FloatValue()), nil
+		}
+	case *object.String:
+		if r, ok := right.(*object.String); ok {
+			if l.StringValue() < r.StringValue() {
+				return -1, nil
+			} else if l.StringValue() > r.StringValue() {
+				return 1, nil
+			}
+			return 0, nil
+		}
+	case *object.Instance:
+		// __lt__ (with reflected __gt__), then __eq__. A raise from a dunder
+		// aborts the sort and propagates.
+		return compareObjectsCtx(ctx, left, right, env)
+	case *object.Tuple:
+		if r, ok := right.(*object.Tuple); ok {
+			return compareElements(l.Elements, r.Elements), nil
+		}
+	case *object.List:
+		if r, ok := right.(*object.List); ok {
+			return compareElements(l.Elements, r.Elements), nil
+		}
+	}
+	return 0, errors.NewError("cannot compare %s with %s", left.Type(), right.Type())
+}
+
 // cmpFloats compares two numbers for the boolean/number ordering arms.
 func cmpFloats(a, b float64) int {
 	if a < b {
@@ -2307,6 +2385,7 @@ func sortedFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 		}
 
 		// Sort indices
+		sortEnv := GetEnvFromContext(ctx)
 		sort.Slice(indices, func(i, j int) bool {
 			var left, right object.Object
 			if keys != nil {
@@ -2314,91 +2393,10 @@ func sortedFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 			} else {
 				left, right = elements[indices[i]], elements[indices[j]]
 			}
-
-			var cmp int
-			switch l := left.(type) {
-			case *object.Integer:
-				if r, ok := right.(*object.Integer); ok {
-					if l.IntValue() < r.IntValue() {
-						cmp = -1
-					} else if l.IntValue() > r.IntValue() {
-						cmp = 1
-					}
-				} else if r, ok := right.(*object.Float); ok {
-					lf := float64(l.IntValue())
-					if lf < r.FloatValue() {
-						cmp = -1
-					} else if lf > r.FloatValue() {
-						cmp = 1
-					}
-				} else if r, ok := right.(*object.Boolean); ok {
-					cmp = cmpFloats(float64(l.IntValue()), boolNumber(r.BoolValue()))
-				} else {
-					sortErr = errors.NewError("cannot compare %s with %s", left.Type(), right.Type())
-				}
-			case *object.Float:
-				if r, ok := right.(*object.Float); ok {
-					if l.FloatValue() < r.FloatValue() {
-						cmp = -1
-					} else if l.FloatValue() > r.FloatValue() {
-						cmp = 1
-					}
-				} else if r, ok := right.(*object.Integer); ok {
-					rf := float64(r.IntValue())
-					if l.FloatValue() < rf {
-						cmp = -1
-					} else if l.FloatValue() > rf {
-						cmp = 1
-					}
-				} else if r, ok := right.(*object.Boolean); ok {
-					cmp = cmpFloats(l.FloatValue(), boolNumber(r.BoolValue()))
-				} else {
-					sortErr = errors.NewError("cannot compare %s with %s", left.Type(), right.Type())
-				}
-			case *object.Boolean:
-				if r, ok := right.(*object.Boolean); ok {
-					cmp = cmpFloats(boolNumber(l.BoolValue()), boolNumber(r.BoolValue()))
-				} else if r, ok := right.(*object.Integer); ok {
-					cmp = cmpFloats(boolNumber(l.BoolValue()), float64(r.IntValue()))
-				} else if r, ok := right.(*object.Float); ok {
-					cmp = cmpFloats(boolNumber(l.BoolValue()), r.FloatValue())
-				} else {
-					sortErr = errors.NewError("cannot compare %s with %s", left.Type(), right.Type())
-				}
-			case *object.String:
-				if r, ok := right.(*object.String); ok {
-					if l.StringValue() < r.StringValue() {
-						cmp = -1
-					} else if l.StringValue() > r.StringValue() {
-						cmp = 1
-					}
-				} else {
-					sortErr = errors.NewError("cannot compare %s with %s", left.Type(), right.Type())
-				}
-			case *object.Instance:
-				// Instance comparison goes through the shared comparator:
-				// __lt__ (with reflected __gt__), then __eq__. A raise from a
-				// dunder aborts the sort and propagates.
-				c, raised := compareObjectsCtx(ctx, left, right, GetEnvFromContext(ctx))
-				if raised != nil {
-					sortErr = raised
-				} else {
-					cmp = c
-				}
-			case *object.Tuple:
-				if r, ok := right.(*object.Tuple); ok {
-					cmp = compareElements(l.Elements, r.Elements)
-				} else {
-					sortErr = errors.NewError("cannot compare %s with %s", left.Type(), right.Type())
-				}
-			case *object.List:
-				if r, ok := right.(*object.List); ok {
-					cmp = compareElements(l.Elements, r.Elements)
-				} else {
-					sortErr = errors.NewError("cannot compare %s with %s", left.Type(), right.Type())
-				}
-			default:
-				sortErr = errors.NewError("unsupported type for sorting: %s", left.Type())
+			cmp, cerr := compareForSort(ctx, left, right, sortEnv)
+			if cerr != nil {
+				sortErr = cerr
+				return false
 			}
 			if reverse {
 				return cmp > 0
