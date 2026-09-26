@@ -269,7 +269,12 @@ func (l *Lexer) NextToken() token.Token {
 		}
 		l.readChar()
 	case ':':
-		tok = token.Token{Type: token.COLON, Literal: charString(l.ch), Line: l.line}
+		if l.peekChar() == '=' {
+			l.readChar()
+			tok = token.Token{Type: token.WALRUS, Literal: ":=", Line: l.line}
+		} else {
+			tok = token.Token{Type: token.COLON, Literal: charString(l.ch), Line: l.line}
+		}
 		l.readChar()
 	case ',':
 		tok = token.Token{Type: token.COMMA, Literal: charString(l.ch), Line: l.line}
@@ -278,7 +283,13 @@ func (l *Lexer) NextToken() token.Token {
 		tok = token.Token{Type: token.SEMICOLON, Literal: charString(l.ch), Line: l.line}
 		l.readChar()
 	case '.':
-		tok = token.Token{Type: token.DOT, Literal: charString(l.ch), Line: l.line}
+		if l.peekChar() == '.' && l.peekN(2) == '.' {
+			l.readChar()
+			l.readChar()
+			tok = token.Token{Type: token.ELLIPSIS, Literal: "...", Line: l.line}
+		} else {
+			tok = token.Token{Type: token.DOT, Literal: charString(l.ch), Line: l.line}
+		}
 		l.readChar()
 	case '[':
 		tok = token.Token{Type: token.LBRACKET, Literal: charString(l.ch), Line: l.line}

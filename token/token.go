@@ -62,6 +62,8 @@ const (
 	LBRACE    = "{"
 	RBRACE    = "}"
 	COLON     = ":"
+	WALRUS    = ":="
+	ELLIPSIS  = "..."
 	COMMA     = ","
 	DOT       = "."
 	SEMICOLON = ";"

@@ -14,6 +14,7 @@ var (
 	sizeOfPrefixExpression        = int(unsafe.Sizeof(PrefixExpression{}))
 	sizeOfInfixExpression         = int(unsafe.Sizeof(InfixExpression{}))
 	sizeOfConditionalExpression   = int(unsafe.Sizeof(ConditionalExpression{}))
+	sizeOfWalrusExpression        = int(unsafe.Sizeof(WalrusExpression{}))
 	sizeOfAssignStatement         = int(unsafe.Sizeof(AssignStatement{}))
 	sizeOfAugmentedAssign         = int(unsafe.Sizeof(AugmentedAssignStatement{}))
 	sizeOfMultipleAssign          = int(unsafe.Sizeof(MultipleAssignStatement{}))
@@ -443,6 +444,11 @@ func (e *estimator) walkExpression(expr Expression) {
 		e.walkExpression(n.TrueExpr)
 		e.walkExpression(n.Condition)
 		e.walkExpression(n.FalseExpr)
+	case *WalrusExpression:
+		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfWalrusExpression) {
+			return
+		}
+		e.walkExpression(n.Value)
 	case *FunctionLiteral:
 		e.walkFunctionLiteral(n)
 	case *CallExpression:

@@ -173,6 +173,9 @@ func foldExpression(expr Expression) Expression {
 		e.Condition = foldExpression(e.Condition)
 		e.FalseExpr = foldExpression(e.FalseExpr)
 
+	case *WalrusExpression:
+		e.Value = foldExpression(e.Value)
+
 	case *CallExpression:
 		e.Function = foldExpression(e.Function)
 		for i, arg := range e.Arguments {

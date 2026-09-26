@@ -594,6 +594,23 @@ func (ce *ConditionalExpression) Line() int {
 	return lineOfExpr(ce.FalseExpr)
 }
 
+// WalrusExpression is an assignment expression (name := value). It binds the
+// value to the target name with the same scoping as an assignment statement
+// and yields the value, so it can be used inline in conditions and calls.
+type WalrusExpression struct {
+	Target *Identifier
+	Value  Expression
+}
+
+func (we *WalrusExpression) expressionNode()      {}
+func (we *WalrusExpression) TokenLiteral() string { return ":=" }
+func (we *WalrusExpression) Line() int {
+	if we.Target != nil {
+		return we.Target.Line()
+	}
+	return lineOfExpr(we.Value)
+}
+
 type AssignStatement struct {
 	Token   LineInfo
 	Left    Expression

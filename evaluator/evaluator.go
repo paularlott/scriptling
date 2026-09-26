@@ -265,6 +265,8 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 			return right
 		}
 		return evalInfixExpression(ctx, node.Operator, left, right, env)
+	case *ast.WalrusExpression:
+		return evalWalrusExpressionWithContext(ctx, node, env)
 	case *ast.ReturnStatement:
 		val := object.Object(NULL)
 		if node.ReturnValue != nil {
@@ -938,6 +940,24 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 			}
 			return errors.NewTypeError("int", right.Type().String())
 		}
+	case *object.Dict:
+		// Dict merge (PEP 584): d1 | d2 builds a new dict with d2's keys
+		// winning on conflicts; both operands are left unchanged. The |= form
+		// flows through here too via the augmented-assignment base op.
+		if operator == ast.OpBitOr {
+			r, ok := right.(*object.Dict)
+			if !ok {
+				return errors.NewTypeError("dict", right.Type().String())
+			}
+			merged := &object.Dict{Pairs: make(map[string]object.DictPair, len(l.Pairs)+len(r.Pairs))}
+			for k, v := range l.Pairs {
+				merged.Pairs[k] = v
+			}
+			for k, v := range r.Pairs {
+				merged.Pairs[k] = v
+			}
+			return merged
+		}
 	case *object.Set:
 		// Set algebra operators. Both operands must be sets (matching Python);
 		// for iterable operands use the .intersection()/.union()/etc. methods.
@@ -1015,6 +1035,19 @@ func floatArraysEqual(left, right *object.FloatArray) bool {
 		}
 	}
 	return true
+}
+
+func evalWalrusExpressionWithContext(ctx context.Context, node *ast.WalrusExpression, env *object.Environment) object.Object {
+	val := evalNode(ctx, node.Value, env)
+	if object.IsError(val) || isRaised(val) {
+		return val
+	}
+	// Bind through the same path as assignment statements so slot caching,
+	// global/nonlocal directives, and store fallbacks all behave identically.
+	if err := assignToExpression(ctx, node.Target, val, env); err != nil {
+		return assignErrorToObject(err)
+	}
+	return val
 }
 
 func evalConditionalExpression(ctx context.Context, node *ast.ConditionalExpression, env *object.Environment) object.Object {
@@ -2989,6 +3022,22 @@ func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.Augm
 			if r, ok := newVal.(*object.Integer); ok {
 				if err := assignToExpression(ctx, left, object.NewInteger(cur.IntValue()+r.IntValue()), env); err != nil {
 					return assignErrorToObject(err)
+				}
+				return NULL
+			}
+		}
+	}
+
+	// Fast path: dict |= dict merges into the left dict in place (PEP 584), so
+	// other references to the same dict observe the update, matching Python.
+	if node.Operator == ast.OpBitOrEq {
+		if cur, ok := currentVal.(*object.Dict); ok {
+			if r, ok := newVal.(*object.Dict); ok {
+				if cur.Pairs == nil {
+					cur.Pairs = make(map[string]object.DictPair, len(r.Pairs))
+				}
+				for k, v := range r.Pairs {
+					cur.Pairs[k] = v
 				}
 				return NULL
 			}

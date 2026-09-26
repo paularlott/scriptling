@@ -14,20 +14,21 @@ import (
 const (
 	LOWEST_PRECEDENCE = 0
 	LOWEST            = 1
-	CONDITIONAL       = 2 // for conditional expressions (x if cond else y)
-	OR                = 3
-	BIT_OR            = 4
-	BIT_XOR           = 5
-	BIT_AND           = 6
-	AND               = 7
-	EQUALS            = 8
-	LESSGREATER       = 9
-	BIT_SHIFT         = 10
-	SUM               = 11
-	PRODUCT           = 12
-	POWER             = 13
-	PREFIX            = 14
-	CALL              = 15
+	WALRUS_EXPR       = 2 // := binds looser than everything except another :=
+	CONDITIONAL       = 3 // for conditional expressions (x if cond else y)
+	OR                = 4
+	BIT_OR            = 5
+	BIT_XOR           = 6
+	BIT_AND           = 7
+	AND               = 8
+	EQUALS            = 9
+	LESSGREATER       = 10
+	BIT_SHIFT         = 11
+	SUM               = 12
+	PRODUCT           = 13
+	POWER             = 14
+	PREFIX            = 15
+	CALL              = 16
 )
 
 func precedenceFor(tok token.TokenType) int {
@@ -38,6 +39,8 @@ func precedenceFor(tok token.TokenType) int {
 		return OR
 	case token.PIPE:
 		return BIT_OR
+	case token.WALRUS:
+		return WALRUS_EXPR
 	case token.CARET:
 		return BIT_XOR
 	case token.AMPERSAND:
@@ -110,6 +113,8 @@ func prefixParseFnFor(t token.TokenType) prefixParseFn {
 		return (*Parser).parseDictLiteral
 	case token.LAMBDA:
 		return (*Parser).parseLambda
+	case token.ELLIPSIS:
+		return (*Parser).parseEllipsis
 	default:
 		return nil
 	}
@@ -129,6 +134,8 @@ func infixParseFnFor(t token.TokenType) infixParseFn {
 		return (*Parser).parseIndexExpression
 	case token.IF:
 		return (*Parser).parseConditionalExpression
+	case token.WALRUS:
+		return (*Parser).parseWalrusExpression
 	default:
 		return nil
 	}
@@ -318,7 +325,7 @@ func (p *Parser) parseStatementInner() ast.Statement {
 	case token.AT:
 		return p.parseDecoratedStatement()
 	case token.IDENT:
-		if p.curToken.Literal == "match" && !p.peekTokenIs(token.ASSIGN) && !p.peekTokenIs(token.COMMA) && !p.isAugmentedAssign() && !p.peekTokenIs(token.LPAREN) && !p.peekTokenIs(token.DOT) && !p.peekTokenIs(token.LBRACKET) {
+		if p.curToken.Literal == "match" && !p.peekTokenIs(token.ASSIGN) && !p.peekTokenIs(token.COMMA) && !p.peekTokenIs(token.COLON) && !p.peekTokenIs(token.WALRUS) && !p.isAugmentedAssign() && !p.peekTokenIs(token.LPAREN) && !p.peekTokenIs(token.DOT) && !p.peekTokenIs(token.LBRACKET) {
 			return p.parseMatchStatement()
 		}
 		if p.peekTokenIs(token.ASSIGN) {
@@ -550,11 +557,16 @@ func (p *Parser) parseImportStatement() *ast.ImportStatement {
 func (p *Parser) parseFromImportStatement() *ast.FromImportStatement {
 	stmt := &ast.FromImportStatement{Token: p.nodeLine()}
 
-	// Check for relative imports (leading dots)
+	// Check for relative imports (leading dots). The lexer folds "..." into a
+	// single ELLIPSIS token, which counts as three dots here.
 	relativeLevel := 0
-	for p.peekTokenIs(token.DOT) {
-		p.nextToken() // consume dot
-		relativeLevel++
+	for p.peekTokenIs(token.DOT) || p.peekTokenIs(token.ELLIPSIS) {
+		p.nextToken() // consume dot(s)
+		if p.curTokenIs(token.ELLIPSIS) {
+			relativeLevel += 3
+		} else {
+			relativeLevel++
+		}
 	}
 
 	stmt.RelativeLevel = relativeLevel
@@ -689,6 +701,9 @@ func (p *Parser) parseDelStatement() *ast.DelStatement {
 
 func (p *Parser) parseExpressionStatement() ast.Statement {
 	expr := p.parseExpressionWithConditional()
+	if p.peekTokenIs(token.COLON) {
+		return p.parseAnnotatedTail(expr)
+	}
 	if p.peekTokenIs(token.ASSIGN) {
 		stmt := &ast.AssignStatement{Token: p.nodeLine(), Left: expr}
 		p.nextToken() // consume =
@@ -710,6 +725,27 @@ func (p *Parser) parseExpressionStatement() ast.Statement {
 	}
 	expr = p.parseTuplePackingTail(p.nodeLine(), expr)
 	return &ast.ExpressionStatement{Token: p.nodeLine(), Expression: expr}
+}
+
+// parseAnnotatedTail finishes an annotated assignment after the target
+// expression has been parsed (count: int = 5, self.offset: float = 0.5,
+// d["k"]: str = ""). The annotation is parsed and discarded; a bare
+// annotation with no value is a runtime no-op.
+func (p *Parser) parseAnnotatedTail(expr ast.Expression) ast.Statement {
+	p.nextToken() // consume :
+	p.nextToken() // move to the annotation expression
+	if p.parseExpression(LOWEST) == nil {
+		return nil
+	}
+	if !p.peekTokenIs(token.ASSIGN) {
+		return &ast.PassStatement{Token: p.nodeLine()}
+	}
+	stmt := &ast.AssignStatement{Token: p.nodeLine(), Left: expr}
+	p.nextToken() // consume =
+	p.nextToken() // move to value
+	first := p.parseExpressionWithConditional()
+	stmt.Value = p.parseTuplePackingTail(p.nodeLine(), first)
+	return stmt
 }
 
 func (p *Parser) parseExpression(precedence int) ast.Expression {
@@ -1052,6 +1088,32 @@ func (p *Parser) parseBoolean() ast.Expression {
 
 func (p *Parser) parseNone() ast.Expression {
 	return ast.NoneLiteral
+}
+
+// parseEllipsis maps the "..." placeholder (stub bodies, tuple[int, ...]
+// annotations) onto the None literal: annotations are never evaluated and a
+// stub body returning None matches the Python convention closely enough.
+func (p *Parser) parseEllipsis() ast.Expression {
+	return ast.NoneLiteral
+}
+
+// parseWalrusExpression parses an assignment expression (name := value) after
+// the target has been parsed as the infix left operand. Only a simple name is
+// a valid target, matching Python. The value is parsed at LOWEST so another
+// := on the right nests (right-associative) and everything tighter binds
+// inside the value.
+func (p *Parser) parseWalrusExpression(left ast.Expression) ast.Expression {
+	target, ok := left.(*ast.Identifier)
+	if !ok {
+		p.errors = append(p.errors, fmt.Sprintf("line %d: invalid target for walrus assignment (:=), expected a name", p.curToken.Line))
+		return nil
+	}
+	p.nextToken() // move to the value expression
+	value := p.parseExpression(LOWEST)
+	if value == nil {
+		return nil
+	}
+	return &ast.WalrusExpression{Target: target, Value: value}
 }
 
 func (p *Parser) parsePrefixExpression() ast.Expression {
@@ -1416,6 +1478,18 @@ func (p *Parser) parseFunctionStatement() *ast.FunctionStatement {
 	stmt.Function.Parameters = params
 	stmt.Function.SetFuncOverflow(defaults, variadic, kwargs, keywordOnlyStart)
 
+	// Optional return annotation: def f(...) -> int — parsed and discarded.
+	if p.peekTokenIs(token.MINUS) {
+		p.nextToken() // consume -
+		if !p.expectPeek(token.GT) {
+			return nil
+		}
+		p.nextToken() // move to the annotation expression
+		if p.parseExpression(LOWEST) == nil {
+			return nil
+		}
+	}
+
 	if !p.expectPeek(token.COLON) {
 		return nil
 	}
@@ -1483,6 +1557,11 @@ func (p *Parser) parseFunctionParameters() ([]*ast.Identifier, map[string]ast.Ex
 			if p.peekTokenIs(token.IDENT) {
 				p.nextToken()
 				variadic = p.ident(p.curToken.Literal)
+				if p.peekTokenIs(token.COLON) {
+					if !p.skipAnnotation() {
+						return nil, nil, nil, nil, keywordOnlyStart
+					}
+				}
 			} else if p.peekTokenIs(token.COMMA) {
 				// Bare * marks following parameters as keyword-only.
 			} else {
@@ -1495,6 +1574,11 @@ func (p *Parser) parseFunctionParameters() ([]*ast.Identifier, map[string]ast.Ex
 				return nil, nil, nil, nil, keywordOnlyStart
 			}
 			kwargs = p.ident(p.curToken.Literal)
+			if p.peekTokenIs(token.COLON) {
+				if !p.skipAnnotation() {
+					return nil, nil, nil, nil, keywordOnlyStart
+				}
+			}
 			if p.peekTokenIs(token.COMMA) {
 				p.nextToken()
 			}
@@ -1513,6 +1597,13 @@ func (p *Parser) parseFunctionParameters() ([]*ast.Identifier, map[string]ast.Ex
 			}
 			ident := p.ident(p.curToken.Literal)
 			identifiers = append(identifiers, ident)
+
+			// Optional type annotation: def f(a: int) — parsed and discarded.
+			if p.peekTokenIs(token.COLON) {
+				if !p.skipAnnotation() {
+					return nil, nil, nil, nil, keywordOnlyStart
+				}
+			}
 
 			// Check for default value
 			if p.peekTokenIs(token.ASSIGN) {
@@ -1540,6 +1631,18 @@ func (p *Parser) parseFunctionParameters() ([]*ast.Identifier, map[string]ast.Ex
 		}
 		return identifiers, defaults, variadic, kwargs, keywordOnlyStart
 	}
+}
+
+// skipAnnotation consumes a parameter annotation ("a: int"), evaluating
+// nothing. Annotations are parsed as expressions purely so any valid type
+// expression (dict[str, int], int | None, "ForwardRef") is accepted and
+// discarded, matching Python's runtime treatment of them as inert metadata.
+// The caller has verified peekTokenIs(token.COLON); on entry the current
+// token is the parameter name.
+func (p *Parser) skipAnnotation() bool {
+	p.nextToken() // consume :
+	p.nextToken() // move to the annotation expression
+	return p.parseExpression(LOWEST) != nil
 }
 
 func (p *Parser) parseForStatement() *ast.ForStatement {
@@ -2219,6 +2322,30 @@ func (p *Parser) parseIndexExpression(left ast.Expression) ast.Expression {
 	}
 
 	start := p.parseExpression(LOWEST)
+
+	// Comma-separated subscripts parse as a tuple index. Real code uses this
+	// for numpy-style a[i, j]; type annotations use it heavily
+	// (dict[str, int], tuple[int, ...]). Annotations are never evaluated, but
+	// they must parse.
+	if p.peekTokenIs(token.COMMA) {
+		elements := []ast.Expression{start}
+		for p.peekTokenIs(token.COMMA) {
+			p.nextToken() // consume comma
+			if p.peekTokenIs(token.RBRACKET) {
+				break // tolerate a trailing comma
+			}
+			p.nextToken() // move to the next subscript element
+			elem := p.parseExpression(LOWEST)
+			if elem == nil {
+				return nil
+			}
+			elements = append(elements, elem)
+		}
+		if !p.expectPeek(token.RBRACKET) {
+			return nil
+		}
+		return &ast.IndexExpression{Token: tok, Left: left, Index: &ast.TupleLiteral{Elements: elements}}
+	}
 
 	if p.peekTokenIs(token.COLON) {
 		// Slice notation: [start:end] or [start:end:step]
