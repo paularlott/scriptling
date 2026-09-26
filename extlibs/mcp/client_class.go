@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/paularlott/scriptling/conversion"
@@ -447,13 +448,19 @@ func closeMethod(self *object.Instance, ctx context.Context) object.Object {
 	return &object.Null{}
 }
 
-// createClientInstance creates a new scriptling Instance wrapping an MCP client
+// createClientInstance creates a new scriptling Instance wrapping an MCP client.
+// The instance carries the client's namespace (bare, without the trailing
+// separator) as a readable "namespace" attribute: "" when the client was
+// created without one. Agent-side bridges use it both to know the tool-name
+// prefix and to route skill URIs back to the owning server.
 func createClientInstance(client *mcplib.Client) *object.Instance {
+	namespace := strings.TrimSuffix(client.Namespace(), mcplib.DefaultNamespaceSeparator)
 	return object.NewInstanceWithFields(GetMCPClientClass(), map[string]object.Object{
 		"_client": &object.ClientWrapper{
 			TypeName: "MCPClient",
 			Client:   &ClientInstance{client: client},
 		},
+		"namespace": object.NewString(namespace),
 	})
 }
 

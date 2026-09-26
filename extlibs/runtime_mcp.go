@@ -83,6 +83,105 @@ Example:
   def add_sale(date, product, amount):
       return {"records": [...]}`,
 		},
+		"resource": {
+			Fn: mcpResourceDecorator,
+			HelpText: `resource(uri, name="", description="", mime_type="", template=False) - Decorator for MCP resources
+
+Decorates a function to register it as an MCP resource (or, with template=True,
+a URI template like "user://docs/{path}"). For a static resource the function
+takes no parameters; for a template its parameters are the URI's {var}
+variables. A string return is the content; a dict/list return is JSON encoded.
+The function runs on every resources/read, so content can change between reads.
+
+Parameters:
+  uri (str): Resource URI, or the URI template when template=True
+  name (str, optional): Human-readable resource name (defaults to the URI)
+  description (str, optional): Resource description
+  mime_type (str, optional): Content type (default "text/plain", or
+    "application/json" for dict/list results). Ignored for a "ui://" uri — the
+    MCP Apps extension MUSTs that exact mimeType, so it's always set for you
+  template (bool, optional): Treat uri as a {var} URI template (default: False)
+
+Returns:
+  A decorator function that registers the resource and returns the original function.
+
+Example:
+  import scriptling.runtime.mcp as mcp
+
+  @mcp.resource("config://app", name="App config", mime_type="application/json")
+  def app_config():
+      return {"version": "1.0", "debug": False}
+
+  @mcp.resource("user://docs/{path}", template=True, mime_type="text/markdown")
+  def user_doc(path):
+      return "# doc " + path`,
+		},
+		"prompt": {
+			Fn: mcpPromptDecorator,
+			HelpText: `prompt(description="", arguments=None) - Decorator for MCP prompts
+
+Decorates a function to register it as an MCP prompt under the function's own
+name. The function's parameters become the prompt's arguments and are passed
+on every prompts/get. A string return is a single user message; a dict with a
+"messages" list of {"role": "user"|"assistant", "content": "..."} builds a
+multi-message prompt.
+
+Parameters:
+  description (str, optional): Prompt description
+  arguments (list, optional): Argument metadata dicts with "name",
+    "description" and "required". Inferred from the function signature when
+    omitted.
+
+Returns:
+  A decorator function that registers the prompt and returns the original function.
+
+Example:
+  import scriptling.runtime.mcp as mcp
+
+  @mcp.prompt(description="Summarise a document")
+  def summarise(text):
+      return "Summarise the following:\n\n" + text
+
+  @mcp.prompt(description="Review code")
+  def review(language, code):
+      return {"messages": [
+          {"role": "user", "content": "Review this " + language + " code:"},
+          {"role": "assistant", "content": code},
+      ]}`,
+		},
+		"skill": {
+			Fn: mcpSkillDecorator,
+			HelpText: `skill(files=None) - Decorator for MCP skills
+
+Decorates a function to register it as an MCP skill (the Agent Skills format)
+under the function's own name. The function takes no parameters and returns
+the SKILL.md content, including its YAML frontmatter; the frontmatter's name
+must match the function name and its description seeds the skill's listing,
+exactly as for a SKILL.md file in the skills folder. The function runs once
+when the server starts (skills are static content; they do not reload).
+
+Parameters:
+  files (dict, optional): Supporting files mapping file name to content
+    string, served alongside SKILL.md as skill://<name>/<file>
+
+Returns:
+  A decorator function that registers the skill and returns the original function.
+
+Example:
+  import scriptling.runtime.mcp as mcp
+
+  @mcp.skill(files={"regions.md": "eu-west: Europe\n"})
+  def region-guide():
+      return """---
+  name: region-guide
+  description: How to identify a region and set it
+  ---
+
+  # Region guide
+
+  Read regions.md for the list of regions.
+  """`,
+		},
 	}
 
 	for name, builtin := range requestRegistrationBuiltins() {
@@ -181,6 +280,7 @@ func mcpToolDecorator(ctx context.Context, kwargs object.Kwargs, args ...object.
 
 			// Build the registration entry dict.
 			entry := object.NewStringDict(map[string]object.Object{
+				"type":         object.NewString("tool"),
 				"name":         object.NewString(funcName),
 				"description":  object.NewString(description),
 				"discoverable": object.NewBoolean(discoverable),
@@ -221,6 +321,190 @@ func mcpToolDecorator(ctx context.Context, kwargs object.Kwargs, args ...object.
 
 			// Return the function unchanged so it remains callable.
 			return fn
+		},
+	}
+}
+
+// decoratedFunction extracts the function being decorated and its name from
+// the wrapper call arguments, shared by every registration decorator.
+func decoratedFunction(fn string, wrapperArgs []object.Object) (*object.Function, object.Object) {
+	if len(wrapperArgs) == 0 {
+		return nil, errors.NewError("%s decorator requires a function", fn)
+	}
+	f, ok := wrapperArgs[0].(*object.Function)
+	if !ok {
+		return nil, errors.NewError("%s: decorated value must be a function, got %s", fn, wrapperArgs[0].Type())
+	}
+	if f.Name == "" {
+		return nil, errors.NewError("%s: decorated function has no name", fn)
+	}
+	return f, nil
+}
+
+// appendRegistryEntry appends a registration entry dict to __mcp_registry in
+// the current environment, creating the list on first use.
+func appendRegistryEntry(fn string, ctx context.Context, entry *object.Dict) object.Object {
+	env := evaluator.GetEnvFromContext(ctx)
+	if env == nil {
+		return errors.NewError("%s: no environment available", fn)
+	}
+
+	registryObj, ok := env.Get(MCPRegistryVar)
+	if !ok {
+		registryObj = &object.List{Elements: []object.Object{}}
+		env.Set(MCPRegistryVar, registryObj)
+	}
+
+	registry, ok := registryObj.(*object.List)
+	if !ok {
+		return errors.NewError("%s: %s is not a list", fn, MCPRegistryVar)
+	}
+
+	registry.Elements = append(registry.Elements, entry)
+	return nil
+}
+
+// mcpResourceDecorator implements the runtime.mcp.resource() builtin. The
+// first positional arg is the URI; the rest of the shape matches
+// register_request_resource.
+func mcpResourceDecorator(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+	if err := errors.MinArgs(args, 1); err != nil {
+		return err
+	}
+	uri, err := args[0].AsString()
+	if err != nil || uri == "" {
+		return errors.NewError("mcp.resource: uri must be a non-empty string")
+	}
+
+	name := uri
+	if n := kwargs.Get("name"); n != nil {
+		if s, e := n.AsString(); e == nil && s != "" {
+			name = s
+		}
+	}
+	description := ""
+	if d := kwargs.Get("description"); d != nil {
+		if s, e := d.AsString(); e == nil {
+			description = s
+		}
+	}
+	mimeType := ""
+	if m := kwargs.Get("mime_type"); m != nil {
+		if s, e := m.AsString(); e == nil {
+			mimeType = s
+		}
+	}
+	template := false
+	if t := kwargs.Get("template"); t != nil {
+		if b, e := t.AsBool(); e == nil {
+			template = b
+		}
+	}
+
+	return &object.Builtin{
+		Fn: func(ctx context.Context, _ object.Kwargs, wrapperArgs ...object.Object) object.Object {
+			f, errObj := decoratedFunction("mcp.resource", wrapperArgs)
+			if errObj != nil {
+				return errObj
+			}
+
+			entry := object.NewStringDict(map[string]object.Object{
+				"type":        object.NewString("resource"),
+				"uri":         object.NewString(uri),
+				"name":        object.NewString(name),
+				"description": object.NewString(description),
+				"mime_type":   object.NewString(mimeType),
+				"template":    object.NewBoolean(template),
+				"func":        object.NewString(f.Name),
+			})
+
+			if errObj := appendRegistryEntry("mcp.resource", ctx, entry); errObj != nil {
+				return errObj
+			}
+			return wrapperArgs[0]
+		},
+	}
+}
+
+// mcpPromptDecorator implements the runtime.mcp.prompt() builtin. The prompt
+// is named after the decorated function.
+func mcpPromptDecorator(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+	description := ""
+	if len(args) > 0 {
+		if s, e := args[0].AsString(); e == nil {
+			description = s
+		}
+	}
+	if d := kwargs.Get("description"); d != nil {
+		if s, e := d.AsString(); e == nil {
+			description = s
+		}
+	}
+	var argumentsObj object.Object
+	if a := kwargs.Get("arguments"); a != nil {
+		if _, ok := a.(*object.List); !ok {
+			return errors.NewError("mcp.prompt: arguments must be a list, got %s", a.Type())
+		}
+		argumentsObj = a
+	}
+
+	return &object.Builtin{
+		Fn: func(ctx context.Context, _ object.Kwargs, wrapperArgs ...object.Object) object.Object {
+			f, errObj := decoratedFunction("mcp.prompt", wrapperArgs)
+			if errObj != nil {
+				return errObj
+			}
+
+			entry := object.NewStringDict(map[string]object.Object{
+				"type":        object.NewString("prompt"),
+				"name":        object.NewString(f.Name),
+				"description": object.NewString(description),
+				"func":        object.NewString(f.Name),
+			})
+			if argumentsObj != nil {
+				entry.SetByString("arguments", argumentsObj)
+			}
+
+			if errObj := appendRegistryEntry("mcp.prompt", ctx, entry); errObj != nil {
+				return errObj
+			}
+			return wrapperArgs[0]
+		},
+	}
+}
+
+// mcpSkillDecorator implements the runtime.mcp.skill() builtin. The skill is
+// named after the decorated function, which returns the SKILL.md content
+// (frontmatter included) when the server scans the file.
+func mcpSkillDecorator(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+	var filesObj object.Object
+	if f := kwargs.Get("files"); f != nil {
+		if _, ok := f.(*object.Dict); !ok {
+			return errors.NewError("mcp.skill: files must be a dict, got %s", f.Type())
+		}
+		filesObj = f
+	}
+
+	return &object.Builtin{
+		Fn: func(ctx context.Context, _ object.Kwargs, wrapperArgs ...object.Object) object.Object {
+			f, errObj := decoratedFunction("mcp.skill", wrapperArgs)
+			if errObj != nil {
+				return errObj
+			}
+
+			entry := object.NewStringDict(map[string]object.Object{
+				"type": object.NewString("skill"),
+				"name": object.NewString(f.Name),
+				"func": object.NewString(f.Name),
+			})
+			if filesObj != nil {
+				entry.SetByString("files", filesObj)
+			}
+
+			if errObj := appendRegistryEntry("mcp.skill", ctx, entry); errObj != nil {
+				return errObj
+			}
+			return wrapperArgs[0]
 		},
 	}
 }

@@ -10,6 +10,7 @@ import (
 	mcplib "github.com/paularlott/mcp"
 	"github.com/paularlott/mcp/toolmetadata"
 	"github.com/paularlott/scriptling"
+	extlibsmcp "github.com/paularlott/scriptling/extlibs/mcp"
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/object"
@@ -159,6 +160,12 @@ func ScanDecoratedTools(src []byte, cfg HandlerConfig) ([]DecoratedTool, error) 
 		entry, ok := elem.(*object.Dict)
 		if !ok {
 			return nil, fmt.Errorf("registry entry %d is not a dict", i)
+		}
+
+		// A file may register resources, prompts and skills too; this scan
+		// only reports tools (ScanDecoratedRegistrations reports everything).
+		if kind := dictGetString(entry, "type"); kind != "" && kind != "tool" {
+			continue
 		}
 
 		tool, err := decodeRegistryEntry(entry, src, p)
@@ -471,4 +478,429 @@ func dictGetIcons(d *object.Dict, key string) ([]mcplib.Icon, error) {
 		})
 	}
 	return icons, nil
+}
+
+// DecoratedResource is a resource registered via @mcp.resource() in a .py file.
+type DecoratedResource struct {
+	URI         string
+	Name        string
+	Description string
+	MimeType    string
+	Template    bool
+	FuncName    string
+	Source      []byte
+}
+
+// DecoratedPrompt is a prompt registered via @mcp.prompt() in a .py file.
+type DecoratedPrompt struct {
+	Name        string
+	Description string
+	Arguments   []PromptArgument
+	FuncName    string
+	Source      []byte
+}
+
+// DecoratedSkill is a skill registered via @mcp.skill() in a .py file. Files
+// always includes SKILL.md, produced by calling the function at scan time:
+// skill content is static thereafter (matching the skills folder, which also
+// only registers at startup).
+type DecoratedSkill struct {
+	Name   string
+	Files  map[string][]byte
+	Source []byte
+}
+
+// DecoratedRegistrations is everything the decorators in one .py file (or a
+// whole folder) registered.
+type DecoratedRegistrations struct {
+	Tools     []ScannedToolEntry
+	Resources []DecoratedResource
+	Prompts   []DecoratedPrompt
+	Skills    []DecoratedSkill
+}
+
+// ScanRegistrationsFSDual scans fsys the same way ScanToolsFSDual does, but
+// returns every decorated registration kind, not just tools. Legacy .toml+.py
+// pairs land in Tools as before; resources, prompts and skills only come from
+// decorators.
+func ScanRegistrationsFSDual(fsys fs.FS, cfg HandlerConfig) (*DecoratedRegistrations, error) {
+	entries, err := fs.ReadDir(fsys, ".")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read tools folder: %w", err)
+	}
+
+	// Build a set of stems that have a .toml (these are legacy tools).
+	tomlStems := map[string]bool{}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".toml") || strings.HasPrefix(e.Name(), "_") {
+			continue
+		}
+		tomlStems[strings.TrimSuffix(e.Name(), ".toml")] = true
+	}
+
+	out := &DecoratedRegistrations{}
+
+	// Pass 1: Legacy tools (.toml + .py pairs).
+	for stem := range tomlStems {
+		tomlData, err := fs.ReadFile(fsys, stem+".toml")
+		if err != nil {
+			return nil, fmt.Errorf("failed to read %s.toml: %w", stem, err)
+		}
+		meta, err := parseToolMetadata(tomlData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse %s.toml: %w", stem, err)
+		}
+
+		var src []byte
+		if pyData, readErr := fs.ReadFile(fsys, stem+".py"); readErr == nil {
+			src = pyData
+		}
+
+		out.Tools = append(out.Tools, ScannedToolEntry{
+			Name:   stem,
+			Meta:   meta,
+			Source: src,
+			Legacy: true,
+		})
+	}
+
+	// Pass 2: Decorated registrations (.py without sibling .toml).
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".py") || strings.HasPrefix(e.Name(), "_") {
+			continue
+		}
+		stem := strings.TrimSuffix(e.Name(), ".py")
+		if tomlStems[stem] {
+			continue // legacy tool — handled above
+		}
+
+		src, err := fs.ReadFile(fsys, e.Name())
+		if err != nil {
+			return nil, fmt.Errorf("failed to read %s: %w", e.Name(), err)
+		}
+
+		regs, scanErr := ScanDecoratedRegistrations(src, cfg)
+		if scanErr != nil {
+			return nil, fmt.Errorf("failed to scan decorated registrations in %s: %w", e.Name(), scanErr)
+		}
+
+		out.Tools = append(out.Tools, regs.Tools...)
+		out.Resources = append(out.Resources, regs.Resources...)
+		out.Prompts = append(out.Prompts, regs.Prompts...)
+		out.Skills = append(out.Skills, regs.Skills...)
+	}
+
+	return out, nil
+}
+
+// ScanDecoratedRegistrations evaluates a .py source in a fresh interpreter
+// with runtime.mcp registered, then splits __mcp_registry by entry type:
+// tool entries decode as before, resource/prompt/skill entries decode into
+// their own shapes. Skill functions are called here to capture their static
+// content.
+func ScanDecoratedRegistrations(src []byte, cfg HandlerConfig) (*DecoratedRegistrations, error) {
+	p := prepareScriptling(cfg, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	_, err := p.EvalWithContext(ctx, string(src))
+	if err != nil {
+		return nil, fmt.Errorf("eval failed: %w", err)
+	}
+
+	registryObj, getErr := p.GetVarAsObject(extlibs.MCPRegistryVar)
+	if getErr != nil {
+		// No registry means no decorated registrations — not an error.
+		return &DecoratedRegistrations{}, nil
+	}
+
+	registryList, ok := registryObj.(*object.List)
+	if !ok {
+		return nil, fmt.Errorf("%s is not a list", extlibs.MCPRegistryVar)
+	}
+
+	out := &DecoratedRegistrations{}
+	for i, elem := range registryList.Elements {
+		entry, ok := elem.(*object.Dict)
+		if !ok {
+			return nil, fmt.Errorf("registry entry %d is not a dict", i)
+		}
+
+		kind := dictGetString(entry, "type")
+		switch kind {
+		case "", "tool":
+			tool, derr := decodeRegistryEntry(entry, src, p)
+			if derr != nil {
+				return nil, fmt.Errorf("registry entry %d: %w", i, derr)
+			}
+			out.Tools = append(out.Tools, ScannedToolEntry{
+				Name:     tool.Name,
+				Meta:     tool.Meta,
+				Source:   src,
+				FuncName: tool.FuncName,
+				Legacy:   false,
+			})
+
+		case "resource":
+			res, derr := decodeResourceEntry(entry, src, p)
+			if derr != nil {
+				return nil, fmt.Errorf("registry entry %d: %w", i, derr)
+			}
+			out.Resources = append(out.Resources, *res)
+
+		case "prompt":
+			prm, derr := decodePromptEntry(entry, src, p)
+			if derr != nil {
+				return nil, fmt.Errorf("registry entry %d: %w", i, derr)
+			}
+			out.Prompts = append(out.Prompts, *prm)
+
+		case "skill":
+			skill, derr := decodeSkillEntry(entry, src, p, ctx)
+			if derr != nil {
+				return nil, fmt.Errorf("registry entry %d: %w", i, derr)
+			}
+			out.Skills = append(out.Skills, *skill)
+
+		default:
+			return nil, fmt.Errorf("registry entry %d: unknown type %q", i, kind)
+		}
+	}
+
+	return out, nil
+}
+
+// decodeResourceEntry converts one resource registration dict, cross-checking
+// the function signature against the URI the way the tool scanner checks
+// params: a template variable that is not a parameter (or a required
+// parameter that is not a template variable) would fail every read, so it
+// fails the scan instead.
+func decodeResourceEntry(entry *object.Dict, src []byte, p *scriptling.Scriptling) (*DecoratedResource, error) {
+	uri := dictGetString(entry, "uri")
+	if uri == "" {
+		return nil, fmt.Errorf("missing or empty 'uri'")
+	}
+	funcName := dictGetString(entry, "func")
+	if funcName == "" {
+		return nil, fmt.Errorf("resource %q: missing 'func'", uri)
+	}
+	name := dictGetString(entry, "name")
+	if name == "" {
+		name = uri
+	}
+	template := dictGetBool(entry, "template")
+
+	if err := crossCheckResourceSignature(uri, funcName, template, p); err != nil {
+		return nil, fmt.Errorf("resource %q: %w", uri, err)
+	}
+
+	return &DecoratedResource{
+		URI:         uri,
+		Name:        name,
+		Description: dictGetString(entry, "description"),
+		MimeType:    dictGetString(entry, "mime_type"),
+		Template:    template,
+		FuncName:    funcName,
+		Source:      src,
+	}, nil
+}
+
+// crossCheckResourceSignature validates a decorated resource function's
+// parameters against its URI. For a template, every {var} must be a function
+// parameter and every parameter without a default must be a {var}. For a
+// static resource every parameter must have a default (nothing is passed).
+func crossCheckResourceSignature(uri, funcName string, template bool, p *scriptling.Scriptling) error {
+	sigParams, err := functionSignature(p, funcName)
+	if err != nil {
+		return err
+	}
+
+	if !template {
+		for _, sp := range sigParams {
+			if !sp.hasDefault {
+				return fmt.Errorf("%s takes required parameter %q but a static resource is read with no arguments; give it a default or use template=True", funcName, sp.name)
+			}
+		}
+		return nil
+	}
+
+	path := uri
+	if idx := strings.Index(uri, "://"); idx >= 0 {
+		path = uri[idx+3:]
+	}
+	vars := extractTemplateVars(strings.Split(path, "/"))
+	isVar := map[string]bool{}
+	for _, v := range vars {
+		isVar[v] = true
+		if !sigParams.has(v) {
+			return fmt.Errorf("template variable %q does not match any parameter of function %q", v, funcName)
+		}
+	}
+	for _, sp := range sigParams {
+		if !sp.hasDefault && !isVar[sp.name] {
+			return fmt.Errorf("parameter %q of function %s is required but not a template variable of %q", sp.name, funcName, uri)
+		}
+	}
+	return nil
+}
+
+// sigParam is one parameter of a scanned function signature.
+type sigParam struct {
+	name       string
+	hasDefault bool
+}
+
+// sigParams is a name-keyed view over a signature.
+type sigParams []sigParam
+
+func (s sigParams) has(name string) bool {
+	for _, sp := range s {
+		if sp.name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// functionSignature looks up a function by name and returns its parameters
+// with whether each has a default.
+func functionSignature(p *scriptling.Scriptling, funcName string) (sigParams, error) {
+	fnObj, err := p.GetVarAsObject(funcName)
+	if err != nil {
+		return nil, fmt.Errorf("function %q not found in environment", funcName)
+	}
+	fn, ok := fnObj.(*object.Function)
+	if !ok {
+		return nil, fmt.Errorf("%q is not a function (got %s)", funcName, fnObj.Type())
+	}
+	var out sigParams
+	for _, param := range fn.Parameters {
+		name := param.Value()
+		_, hasDefault := fn.DefaultValues[name]
+		out = append(out, sigParam{name: name, hasDefault: hasDefault})
+	}
+	return out, nil
+}
+
+// decodePromptEntry converts one prompt registration dict. When no arguments
+// metadata was given, the arguments are inferred from the function signature
+// (a parameter without a default is required).
+func decodePromptEntry(entry *object.Dict, src []byte, p *scriptling.Scriptling) (*DecoratedPrompt, error) {
+	name := dictGetString(entry, "name")
+	if name == "" {
+		return nil, fmt.Errorf("missing or empty 'name'")
+	}
+
+	var args []PromptArgument
+	if pair, ok := entry.GetByString("arguments"); ok {
+		sig, err := functionSignature(p, name)
+		if err != nil {
+			return nil, err
+		}
+		list, ok := pair.Value.(*object.List)
+		if !ok {
+			return nil, fmt.Errorf("prompt %q: arguments must be a list", name)
+		}
+		for i, elem := range list.Elements {
+			d, ok := elem.(*object.Dict)
+			if !ok {
+				return nil, fmt.Errorf("prompt %q: arguments[%d] must be a dict", name, i)
+			}
+			argName := dictGetString(d, "name")
+			if argName == "" {
+				return nil, fmt.Errorf("prompt %q: arguments[%d] missing 'name'", name, i)
+			}
+			required := false
+			if pair, ok := d.GetByString("required"); ok {
+				if b, e := pair.Value.AsBool(); e == nil {
+					required = b
+				}
+			}
+			if !sig.has(argName) {
+				return nil, fmt.Errorf("argument %q does not match any parameter of function %q", argName, name)
+			}
+			args = append(args, PromptArgument{
+				Name:        argName,
+				Description: dictGetString(d, "description"),
+				Required:    required,
+			})
+		}
+	} else {
+		// Infer from the function signature.
+		sig, err := functionSignature(p, name)
+		if err != nil {
+			return nil, err
+		}
+		for _, sp := range sig {
+			args = append(args, PromptArgument{Name: sp.name, Required: !sp.hasDefault})
+		}
+	}
+
+	return &DecoratedPrompt{
+		Name:        name,
+		Description: dictGetString(entry, "description"),
+		Arguments:   args,
+		FuncName:    dictGetString(entry, "func"),
+		Source:      src,
+	}, nil
+}
+
+// decodeSkillEntry converts one skill registration dict by calling the
+// decorated function: its string return is the SKILL.md content, and the
+// decorator's files dict supplies the supporting files.
+func decodeSkillEntry(entry *object.Dict, src []byte, p *scriptling.Scriptling, ctx context.Context) (*DecoratedSkill, error) {
+	name := dictGetString(entry, "name")
+	if name == "" {
+		return nil, fmt.Errorf("missing or empty 'name'")
+	}
+	funcName := dictGetString(entry, "func")
+	if funcName == "" {
+		funcName = name
+	}
+
+	result, callErr := p.CallFunctionWithContext(ctx, funcName, scriptling.Kwargs(nil))
+
+	// A plain string return is the SKILL.md; mcp.tool.return_string sets
+	// __mcp_response instead (raising SystemExit), so honour it too.
+	skillMD := ""
+	if respObj, getErr := p.GetVarAsObject(extlibsmcp.MCPResponseVarName); getErr == nil {
+		if s, ok := respObj.(*object.String); ok {
+			skillMD = s.StringValue()
+		}
+	}
+	if skillMD == "" && callErr == nil {
+		if s, ok := result.(*object.String); ok {
+			skillMD = s.StringValue()
+		} else if result != nil {
+			return nil, fmt.Errorf("skill %q: %s must return the SKILL.md content as a string, got %s", name, funcName, result.Type())
+		}
+	}
+	if callErr != nil {
+		return nil, fmt.Errorf("skill %q: running %q failed: %w", name, funcName, callErr)
+	}
+	if strings.TrimSpace(skillMD) == "" {
+		return nil, fmt.Errorf("skill %q: %s returned empty SKILL.md content", name, funcName)
+	}
+
+	files := map[string][]byte{"SKILL.md": []byte(skillMD)}
+	if pair, ok := entry.GetByString("files"); ok {
+		filesDict, ok := pair.Value.(*object.Dict)
+		if !ok {
+			return nil, fmt.Errorf("skill %q: files must be a dict", name)
+		}
+		for _, fp := range filesDict.Pairs {
+			fileName, _ := fp.Key.AsString()
+			content, e := fp.Value.AsString()
+			if e != nil || fileName == "" {
+				return nil, fmt.Errorf("skill %q: files keys and values must be strings", name)
+			}
+			if fileName == "SKILL.md" {
+				return nil, fmt.Errorf("skill %q: files must not contain SKILL.md (returned by %s)", name, funcName)
+			}
+			files[fileName] = []byte(content)
+		}
+	}
+
+	return &DecoratedSkill{Name: name, Files: files, Source: src}, nil
 }

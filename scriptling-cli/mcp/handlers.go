@@ -545,3 +545,134 @@ func promptContentFromAny(v any) mcplib.PromptMessageContent {
 		return mcplib.PromptMessageContent{Type: "text", Text: fmt.Sprintf("%v", v)}
 	}
 }
+
+// BuildResourceFuncHandler returns a ResourceHandler for a function
+// registered via @mcp.resource(). The function runs on every resources/read
+// (in a fresh interpreter, like every script handler): a string return is the
+// text content, a dict/list return is JSON encoded. mimeType is the
+// decorator-supplied default; the effective type is application/json for
+// dict/list results and UIAppMimeType for ui:// resources.
+func BuildResourceFuncHandler(src []byte, funcName, uri, mimeType string, cfg HandlerConfig) mcplib.ResourceHandler {
+	forced := mimeType
+	if strings.HasPrefix(uri, "ui://") {
+		forced = mcplib.UIAppMimeType
+	}
+	return func(ctx context.Context, req *mcplib.ResourceRequest) (*mcplib.ResourceResponse, error) {
+		p := prepareScriptling(cfg, nil)
+		if _, evalErr := p.EvalWithContext(ctx, string(src)); evalErr != nil {
+			return nil, fmt.Errorf("failed to load resource source: %w", evalErr)
+		}
+
+		// Only the URI template variables are passed: the decorated
+		// function's signature is the contract, so unlike the
+		// module.function handlers there is no __uri parameter unless the
+		// author declares one (as a template var named __uri).
+		params := map[string]any{}
+		for k, v := range req.Vars() {
+			params[k] = v
+		}
+		result, callErr := p.CallFunctionWithContext(ctx, funcName, scriptling.Kwargs(params))
+
+		// A plain return value is the content; mcp.tool.return_string /
+		// return_object set __mcp_response instead (raising SystemExit), so
+		// honour it the same way the tool handlers do.
+		if respObj, getErr := p.GetVarAsObject(extlibsmcp.MCPResponseVarName); getErr == nil {
+			if s, ok := respObj.(*object.String); ok && s.StringValue() != "" {
+				if callErr != nil {
+					return nil, mcplib.NewToolErrorInternal(s.StringValue())
+				}
+				return mcplib.NewResourceResponseText(req.URI(), s.StringValue(), forced), nil
+			}
+		}
+
+		if callErr != nil {
+			return nil, mcplib.NewToolErrorInternal(callErr.Error())
+		}
+
+		switch v := result.(type) {
+		case *object.String:
+			return mcplib.NewResourceResponseText(req.URI(), v.StringValue(), forced), nil
+		case *object.Dict, *object.List:
+			goVal := conversion.ToGo(result)
+			jsonBytes, err := json.Marshal(goVal)
+			if err != nil {
+				return nil, mcplib.NewToolErrorInternal(fmt.Sprintf("failed to encode resource as JSON: %v", err))
+			}
+			return mcplib.NewResourceResponseText(req.URI(), string(jsonBytes), "application/json"), nil
+		case *object.Error:
+			return nil, mcplib.NewToolErrorInternal(v.Message)
+		case *object.Exception:
+			msg := v.Message
+			if msg == "" {
+				msg = "resource function raised an exception"
+			}
+			return nil, mcplib.NewToolErrorInternal(msg)
+		default:
+			s, err := result.CoerceString()
+			if err != nil {
+				return nil, mcplib.NewToolErrorInternal("resource function must return a string, dict or list")
+			}
+			return mcplib.NewResourceResponseText(req.URI(), s, forced), nil
+		}
+	}
+}
+
+// BuildPromptFuncHandler returns a PromptHandler for a function registered
+// via @mcp.prompt(). The function is called with the prompt arguments as
+// keyword parameters on every prompts/get; its return maps like the
+// script-based prompt handlers: a string is a single user message, a
+// dict/list is JSON decoded into messages.
+func BuildPromptFuncHandler(src []byte, funcName string, cfg HandlerConfig) mcplib.PromptHandler {
+	return func(ctx context.Context, req *mcplib.PromptRequest) (*mcplib.PromptResponse, error) {
+		p := prepareScriptling(cfg, nil)
+		if _, evalErr := p.EvalWithContext(ctx, string(src)); evalErr != nil {
+			return nil, fmt.Errorf("failed to load prompt source: %w", evalErr)
+		}
+
+		params := map[string]any{}
+		for k, v := range req.Args() {
+			params[k] = v
+		}
+		result, callErr := p.CallFunctionWithContext(ctx, funcName, scriptling.Kwargs(params))
+
+		// mcp.tool.return_* support, matching the resource handler.
+		if respObj, getErr := p.GetVarAsObject(extlibsmcp.MCPResponseVarName); getErr == nil {
+			if s, ok := respObj.(*object.String); ok && s.StringValue() != "" {
+				if callErr != nil {
+					return nil, fmt.Errorf("prompt function failed: %s", s.StringValue())
+				}
+				return DecodePromptScriptResponse(s.StringValue()), nil
+			}
+		}
+
+		if callErr != nil {
+			return nil, fmt.Errorf("prompt function failed: %w", callErr)
+		}
+
+		switch v := result.(type) {
+		case *object.String:
+			return DecodePromptScriptResponse(v.StringValue()), nil
+		case *object.Dict, *object.List:
+			goVal := conversion.ToGo(result)
+			jsonBytes, err := json.Marshal(goVal)
+			if err != nil {
+				return nil, fmt.Errorf("failed to encode prompt response as JSON: %v", err)
+			}
+			return DecodePromptScriptResponse(string(jsonBytes)), nil
+		case *object.Error:
+			return nil, fmt.Errorf("prompt function failed: %s", v.Message)
+		case *object.Exception:
+			msg := v.Message
+			if msg == "" {
+				msg = "prompt function raised an exception"
+			}
+			return nil, fmt.Errorf("prompt function failed: %s", msg)
+		default:
+			s, err := result.CoerceString()
+			if err != nil {
+				return nil, fmt.Errorf("prompt function must return a string, dict or list")
+			}
+			return DecodePromptScriptResponse(s), nil
+		}
+	}
+}

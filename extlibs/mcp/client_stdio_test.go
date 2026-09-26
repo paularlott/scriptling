@@ -81,3 +81,22 @@ mcp.Client("/nonexistent/scriptling-mcp-binary-xyz", args=["--mcp-exec-script"])
 		t.Fatal("expected an error launching a non-existent stdio server")
 	}
 }
+
+// The client instance exposes its namespace (bare, no trailing separator) as
+// a readable attribute; agent-side bridges use it to route namespaced tool
+// names and skill URIs back to the owning server.
+func TestClientNamespaceAttribute(t *testing.T) {
+	p := newMCPScriptling(t)
+	result, err := p.Eval(`import scriptling.mcp as mcp
+named = mcp.Client("https://example.com/mcp", namespace="shop")
+plain = mcp.Client("https://example.com/mcp")
+named.namespace + "|" + plain.namespace
+`)
+	if err != nil {
+		t.Fatalf("script failed: %v", err)
+	}
+	got, _ := result.AsString()
+	if got != "shop|" {
+		t.Fatalf("namespace attribute = %q, want %q", got, "shop|")
+	}
+}

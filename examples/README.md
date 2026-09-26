@@ -82,6 +82,16 @@ This directory contains examples and tools for working with Scriptling.
   - `*.py` - Tool implementation scripts
   - `README.md` - MCP tools documentation
 
+- **mcp-decorated/** - Every MCP entry kind registered from one decorated `.py` file
+  - `tools/shop.py` - `@mcp.tool`, `@mcp.resource` (static + template), `@mcp.prompt` and `@mcp.skill` together
+  - `client.py` - lists and exercises them all over stdio
+  - `README.md` - what it demonstrates
+
+- **mcp-app-package/** - A complete MCP app packaged as one zip: app view, plain tools, prompt and skill
+  - `manifest.toml` + `setup.py` - `serve = ["mcp"]`, convention directories for the rest
+  - `client.py` - verification client run against the built package
+  - `README.md` - build, run and prove
+
 - **mcp-resources-prompts/** - Tools, resources and prompts served as files, no Go code
   - `tools/`, `resources/`, `prompts/` - one file per entry, live-reloaded
   - `README.md` - file conventions for each MCP primitive
@@ -203,6 +213,8 @@ See individual example directories for more details:
 - [logging/](logging/) - Logging library example
 - [mcp-client/README.md](mcp-client/README.md) - MCP client examples
 - [mcp-tools/README.md](mcp-tools/README.md) - MCP tools examples
+- [mcp-decorated/README.md](mcp-decorated/README.md) - Tool, resource, prompt and skill all registered with decorators from one `.py` file
+- [mcp-app-package/README.md](mcp-app-package/README.md) - A complete MCP app (app view, tools, prompt, skill) packaged and verified from the zip
 - [mcp-resources-prompts/README.md](mcp-resources-prompts/README.md) - Tools, resources and prompts as files, no Go code
 - [mcp-app-dashboard/README.md](mcp-app-dashboard/README.md) - MCP Apps: a `.toml`-linked tool with an interactive UI
 - [mcp-prize-wheel/README.md](mcp-prize-wheel/README.md) - MCP Apps: the same, decorator-style, no `.toml`

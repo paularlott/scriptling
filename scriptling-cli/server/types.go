@@ -180,6 +180,7 @@ type mcpEntries struct {
 	staticResources   []string // static resource URIs
 	templateResources []string // resource template URI templates
 	prompts           []string // prompt names
+	skills            []string // skill names
 }
 
 // unregisterAll removes every tracked entry from the MCP server.
@@ -195,5 +196,8 @@ func (e mcpEntries) unregisterAll(server *mcp_lib.Server) {
 	}
 	for _, name := range e.prompts {
 		server.UnregisterPrompt(name)
+	}
+	for _, name := range e.skills {
+		server.UnregisterSkill(name)
 	}
 }

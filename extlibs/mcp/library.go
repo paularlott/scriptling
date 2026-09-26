@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	mcplib "github.com/paularlott/mcp"
 	"github.com/paularlott/mcp/pool"
@@ -45,6 +46,40 @@ func httpPoolFor(guard *netsecurity.Guard) pool.HTTPPool {
 		return nil
 	}
 	return &guardedPool{client: guard.HTTPClient()}
+}
+
+// defaultClientTimeout is the per-request HTTP timeout for clients created
+// via mcp.Client(). The library pool's own default (5 minutes) is sized for
+// Go hosts federating slow LLM-backed tools; scripts get a tighter default
+// and can opt up per server with the timeout kwarg (seconds) when they know
+// a server's tools are slow.
+const defaultClientTimeout = 30 * time.Second
+
+// clientPool adapts an *http.Client to the library's HTTPPool interface.
+type clientPool struct {
+	client *http.Client
+}
+
+func (p *clientPool) GetHTTPClient() *http.Client { return p.client }
+
+// poolWithTimeout returns an HTTPPool whose client applies the given
+// per-request HTTP timeout. The underlying pooled (or policy-guarded) client
+// is shallow-copied so the shared transport and its connection pool survive
+// while the copy gains the timeout; the library pool's own Timeout config
+// field is deliberately inert (its client never sets one, to keep streaming
+// responses alive), so this is the only path that actually applies one.
+//
+// The timeout covers the whole request including reading the response body,
+// so a server that streams a response for longer than the timeout is cut
+// off: raise the timeout for servers whose tools are known to be slow.
+func poolWithTimeout(guard *netsecurity.Guard, d time.Duration) pool.HTTPPool {
+	base := pool.GetPool().GetHTTPClient()
+	if guard != nil {
+		base = guard.HTTPClient()
+	}
+	hc := *base
+	hc.Timeout = d
+	return &clientPool{client: &hc}
 }
 
 // declareUIAppsSupport advertises this client's own support for the MCP
@@ -159,7 +194,22 @@ Example:
 					authProvider = mcplib.NewBearerTokenAuth(bearerToken)
 				}
 
-				client := mcplib.NewClientWithPool(target, authProvider, namespace, httpPoolFor(guard))
+				timeout := defaultClientTimeout
+				if kwargs.Has("timeout") {
+					tv := kwargs.Get("timeout")
+					switch tv.(type) {
+					case *object.Integer, *object.Float:
+					default:
+						return nil, fmt.Errorf("mcp.Client: 'timeout' must be a positive number of seconds")
+					}
+					secs, terr := tv.CoerceFloat()
+					if terr != nil || secs <= 0 {
+						return nil, fmt.Errorf("mcp.Client: 'timeout' must be a positive number of seconds")
+					}
+					timeout = time.Duration(secs * float64(time.Second))
+				}
+
+				client := mcplib.NewClientWithPool(target, authProvider, namespace, poolWithTimeout(guard, timeout))
 				declareUIAppsSupport(client)
 				return createClientInstance(client), nil
 			}
@@ -167,6 +217,9 @@ Example:
 			// stdio server: target is the command to launch.
 			if kwargs.Has("bearer_token") {
 				return nil, fmt.Errorf("mcp.Client: 'bearer_token' is only valid for HTTP servers, not command %q", target)
+			}
+			if kwargs.Has("timeout") {
+				return nil, fmt.Errorf("mcp.Client: 'timeout' is only valid for HTTP servers, not command %q", target)
 			}
 
 			var args []string
@@ -215,6 +268,9 @@ Parameters:
   target (str): HTTP(S) URL of the server, or path/command of a stdio server
   namespace (str, optional): Namespace prefixed to tool names (e.g. "t1" exposes "search" as "t1__search")
   bearer_token (str, optional): Bearer token for authentication (HTTP only)
+  timeout (number, optional): Per-request HTTP timeout in seconds, default 30.
+                 Raise it for servers whose tools are known to be slow
+                 (e.g. LLM-backed tools taking minutes). HTTP only.
   args (list, optional): Command-line arguments for the stdio server (stdio only)
   env (list, optional): Extra KEY=value environment variables for the stdio subprocess (stdio only); merged on top of the inherited environment
 

@@ -98,74 +98,103 @@ func (s *Server) createMCPServer() (*mcp_lib.Server, error) {
 
 	// Folder-sourced entries.
 	if s.config.MCPToolsDir != "" {
-		names, err := s.registerToolsFromFS(server, os.DirFS(s.config.MCPToolsDir), s.config.MCPToolsDir)
+		regs, err := s.registerToolsFromFS(server, os.DirFS(s.config.MCPToolsDir), s.config.MCPToolsDir)
 		if err != nil {
 			return nil, err
 		}
-		s.mcpFolderEntries.tools = names
+		s.mcpFolderEntries.tools = regs.tools
+		s.mcpFolderEntries.staticResources = regs.staticResources
+		s.mcpFolderEntries.templateResources = regs.templateResources
+		s.mcpFolderEntries.prompts = regs.prompts
+		s.mcpFolderEntries.skills = regs.skills
 	}
 	if s.config.MCPResourcesDir != "" {
 		static, template, err := s.registerResourcesFromFS(server, os.DirFS(s.config.MCPResourcesDir), s.config.MCPResourcesDir)
 		if err != nil {
 			return nil, err
 		}
-		s.mcpFolderEntries.staticResources = static
-		s.mcpFolderEntries.templateResources = template
+		s.mcpFolderEntries.staticResources = append(s.mcpFolderEntries.staticResources, static...)
+		s.mcpFolderEntries.templateResources = append(s.mcpFolderEntries.templateResources, template...)
 	}
 	if s.config.MCPPromptsDir != "" {
 		names, err := s.registerPromptsFromFS(server, os.DirFS(s.config.MCPPromptsDir), s.config.MCPPromptsDir)
 		if err != nil {
 			return nil, err
 		}
-		s.mcpFolderEntries.prompts = names
+		s.mcpFolderEntries.prompts = append(s.mcpFolderEntries.prompts, names...)
 	}
 
 	if s.config.MCPSkillsDir != "" {
-		if err := s.registerSkillsFromFS(server, os.DirFS(s.config.MCPSkillsDir), s.config.MCPSkillsDir); err != nil {
+		names, err := s.registerSkillsFromFS(server, os.DirFS(s.config.MCPSkillsDir), s.config.MCPSkillsDir)
+		if err != nil {
 			return nil, err
 		}
+		s.mcpFolderEntries.skills = append(s.mcpFolderEntries.skills, names...)
 	}
 
 	// Bundle-sourced entries.
 	if s.config.appMode() {
 		b := s.config.Bundle
 		if toolsFS, ok := b.Sub("tools"); ok {
-			names, err := s.registerToolsFromFS(server, toolsFS, b.Source())
+			regs, err := s.registerToolsFromFS(server, toolsFS, b.Source())
 			if err != nil {
 				return nil, err
 			}
-			s.mcpBundleEntries.tools = names
+			s.mcpBundleEntries.tools = regs.tools
+			s.mcpBundleEntries.staticResources = regs.staticResources
+			s.mcpBundleEntries.templateResources = regs.templateResources
+			s.mcpBundleEntries.prompts = regs.prompts
+			s.mcpBundleEntries.skills = regs.skills
 		}
 		if resFS, ok := b.Sub("resources"); ok {
 			static, template, err := s.registerResourcesFromFS(server, resFS, b.Source())
 			if err != nil {
 				return nil, err
 			}
-			s.mcpBundleEntries.staticResources = static
-			s.mcpBundleEntries.templateResources = template
+			s.mcpBundleEntries.staticResources = append(s.mcpBundleEntries.staticResources, static...)
+			s.mcpBundleEntries.templateResources = append(s.mcpBundleEntries.templateResources, template...)
 		}
 		if promptFS, ok := b.Sub("prompts"); ok {
 			names, err := s.registerPromptsFromFS(server, promptFS, b.Source())
 			if err != nil {
 				return nil, err
 			}
-			s.mcpBundleEntries.prompts = names
+			s.mcpBundleEntries.prompts = append(s.mcpBundleEntries.prompts, names...)
+		}
+		if skillsFS, ok := b.Sub("skills"); ok {
+			names, err := s.registerSkillsFromFS(server, skillsFS, b.Source())
+			if err != nil {
+				return nil, err
+			}
+			s.mcpBundleEntries.skills = append(s.mcpBundleEntries.skills, names...)
 		}
 	}
 
 	return server, nil
 }
 
+// fsRegistrations is what one registration source (the tools folder, or a
+// bundle's tools subtree) contributed to the MCP server, for reload tracking.
+type fsRegistrations struct {
+	tools             []string // tool names
+	staticResources   []string // static resource URIs
+	templateResources []string // resource template URI templates
+	prompts           []string // prompt names
+	skills            []string // skill names
+}
+
 // registerToolsFromFS scans fsys for tools (both legacy and decorated formats)
-// and registers them on the MCP server. source is a label for logging.
-func (s *Server) registerToolsFromFS(server *mcp_lib.Server, fsys fs.FS, source string) ([]string, error) {
+// and registers them on the MCP server, along with every @mcp.resource(),
+// @mcp.prompt() and @mcp.skill() registration found in the same decorated .py
+// files. source is a label for logging.
+func (s *Server) registerToolsFromFS(server *mcp_lib.Server, fsys fs.FS, source string) (*fsRegistrations, error) {
 	cfg := s.handlerConfig()
-	entries, err := mcpcli.ScanToolsFSDual(fsys, cfg)
+	entries, err := mcpcli.ScanRegistrationsFSDual(fsys, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", source, err)
 	}
-	var names []string
-	for _, entry := range entries {
+	out := &fsRegistrations{}
+	for _, entry := range entries.Tools {
 		tool, buildErr := toolmetadata.BuildMCPTool(entry.Name, entry.Meta)
 		if buildErr != nil {
 			return nil, fmt.Errorf("failed to build tool %s: %w", entry.Name, buildErr)
@@ -181,7 +210,7 @@ func (s *Server) registerToolsFromFS(server *mcp_lib.Server, fsys fs.FS, source 
 			handler = mcpcli.BuildToolHandlerFunc(entry.Source, entry.FuncName, cfg)
 		}
 		server.RegisterTool(tool, handler)
-		names = append(names, entry.Name)
+		out.tools = append(out.tools, entry.Name)
 		mode := "native"
 		if entry.Meta.Discoverable {
 			mode = "discoverable"
@@ -192,7 +221,67 @@ func (s *Server) registerToolsFromFS(server *mcp_lib.Server, fsys fs.FS, source 
 		}
 		Log.Info("Registered MCP tool", "name", entry.Name, "params", len(entry.Meta.Parameters), "mode", mode, "format", format, "source", source)
 	}
-	return names, nil
+
+	for _, e := range entries.Resources {
+		handler := mcpcli.BuildResourceFuncHandler(e.Source, e.FuncName, e.URI, e.MimeType, cfg)
+		if e.Template {
+			server.RegisterResourceTemplate(
+				mcp_lib.NewResourceTemplate(e.URI, e.Name, e.Description, resourceEffectiveMIME(e.URI, e.MimeType)),
+				handler,
+			)
+			out.templateResources = append(out.templateResources, e.URI)
+			Log.Info("Registered MCP resource template", "uri", e.URI, "source", source)
+		} else {
+			server.RegisterResource(
+				mcp_lib.NewResource(e.URI, e.Name, e.Description, resourceEffectiveMIME(e.URI, e.MimeType)),
+				handler,
+			)
+			out.staticResources = append(out.staticResources, e.URI)
+			Log.Info("Registered MCP resource", "uri", e.URI, "source", source)
+		}
+	}
+
+	for _, e := range entries.Prompts {
+		builder := mcp_lib.NewPrompt(e.Name, e.Description)
+		for _, arg := range e.Arguments {
+			builder.Argument(arg.Name, arg.Description, arg.Required)
+		}
+		server.RegisterPrompt(builder, mcpcli.BuildPromptFuncHandler(e.Source, e.FuncName, cfg))
+		out.prompts = append(out.prompts, e.Name)
+		Log.Info("Registered MCP prompt", "prompt", e.Name, "mode", "decorated", "args", len(e.Arguments), "source", source)
+	}
+
+	for _, e := range entries.Skills {
+		builder := mcp_lib.NewSkill(e.Name)
+		for fileName, content := range e.Files {
+			// File returns the builder for chaining; content problems
+			// surface at RegisterSkill below.
+			builder.File(fileName, content)
+		}
+		if err := server.RegisterSkill(builder); err != nil {
+			// One bad skill must not fail the whole server, matching the
+			// skills folder's rule.
+			Log.Warn("Skipping MCP skill", "name", e.Name, "error", err, "source", source)
+			continue
+		}
+		out.skills = append(out.skills, e.Name)
+		Log.Info("registered MCP skill", "name", e.Name, "source", source)
+	}
+
+	return out, nil
+}
+
+// resourceEffectiveMIME resolves a decorated resource's content type: the
+// MCP Apps extension MUSTs the mimeType of ui:// resources, everything else
+// keeps the decorator's value (or text/plain when unset).
+func resourceEffectiveMIME(uri, mimeType string) string {
+	if strings.HasPrefix(uri, "ui://") {
+		return mcp_lib.UIAppMimeType
+	}
+	if mimeType == "" {
+		return "text/plain"
+	}
+	return mimeType
 }
 
 // registerResourcesFromFS scans fsys for MCP resources (static and templates)
@@ -380,11 +469,15 @@ func (s *Server) reloadMCP() {
 	s.mcpFolderEntries.unregisterAll(server)
 
 	if s.config.MCPToolsDir != "" {
-		toolNames, err := s.registerToolsFromFS(server, os.DirFS(s.config.MCPToolsDir), s.config.MCPToolsDir)
+		regs, err := s.registerToolsFromFS(server, os.DirFS(s.config.MCPToolsDir), s.config.MCPToolsDir)
 		if err != nil {
 			Log.Error("Failed to reload MCP tools", "error", err)
 		} else {
-			s.mcpFolderEntries.tools = toolNames
+			s.mcpFolderEntries.tools = regs.tools
+			s.mcpFolderEntries.staticResources = regs.staticResources
+			s.mcpFolderEntries.templateResources = regs.templateResources
+			s.mcpFolderEntries.prompts = regs.prompts
+			s.mcpFolderEntries.skills = regs.skills
 		}
 	}
 	server.NotifyToolsChanged()
@@ -394,8 +487,8 @@ func (s *Server) reloadMCP() {
 		if err != nil {
 			Log.Error("Failed to reload MCP resources", "error", err)
 		} else {
-			s.mcpFolderEntries.staticResources = staticKeys
-			s.mcpFolderEntries.templateResources = templateKeys
+			s.mcpFolderEntries.staticResources = append(s.mcpFolderEntries.staticResources, staticKeys...)
+			s.mcpFolderEntries.templateResources = append(s.mcpFolderEntries.templateResources, templateKeys...)
 		}
 	}
 	server.NotifyResourcesChanged()
@@ -405,10 +498,22 @@ func (s *Server) reloadMCP() {
 		if err != nil {
 			Log.Error("Failed to reload MCP prompts", "error", err)
 		} else {
-			s.mcpFolderEntries.prompts = promptNames
+			s.mcpFolderEntries.prompts = append(s.mcpFolderEntries.prompts, promptNames...)
 		}
 	}
 	server.NotifyPromptsChanged()
+
+	// Skills have no listChanged notification in the extension (SEP-2640), so
+	// a reload refreshes them silently; clients pick changes up on their next
+	// skills/list.
+	if s.config.MCPSkillsDir != "" {
+		names, err := s.registerSkillsFromFS(server, os.DirFS(s.config.MCPSkillsDir), s.config.MCPSkillsDir)
+		if err != nil {
+			Log.Error("Failed to reload MCP skills", "error", err)
+		} else {
+			s.mcpFolderEntries.skills = append(s.mcpFolderEntries.skills, names...)
+		}
+	}
 
 	// Bundle-sourced entries: re-scan (dir-backed bundles pick up changes;
 	// zip-backed bundles re-register identical content).
@@ -416,11 +521,15 @@ func (s *Server) reloadMCP() {
 		s.mcpBundleEntries.unregisterAll(server)
 		b := s.config.Bundle
 		if toolsFS, ok := b.Sub("tools"); ok {
-			names, err := s.registerToolsFromFS(server, toolsFS, b.Source())
+			regs, err := s.registerToolsFromFS(server, toolsFS, b.Source())
 			if err != nil {
 				Log.Error("Failed to reload bundle MCP tools", "error", err)
 			} else {
-				s.mcpBundleEntries.tools = names
+				s.mcpBundleEntries.tools = regs.tools
+				s.mcpBundleEntries.staticResources = regs.staticResources
+				s.mcpBundleEntries.templateResources = regs.templateResources
+				s.mcpBundleEntries.prompts = regs.prompts
+				s.mcpBundleEntries.skills = regs.skills
 			}
 		}
 		if resFS, ok := b.Sub("resources"); ok {
@@ -428,8 +537,8 @@ func (s *Server) reloadMCP() {
 			if err != nil {
 				Log.Error("Failed to reload bundle MCP resources", "error", err)
 			} else {
-				s.mcpBundleEntries.staticResources = static
-				s.mcpBundleEntries.templateResources = template
+				s.mcpBundleEntries.staticResources = append(s.mcpBundleEntries.staticResources, static...)
+				s.mcpBundleEntries.templateResources = append(s.mcpBundleEntries.templateResources, template...)
 			}
 		}
 		if promptFS, ok := b.Sub("prompts"); ok {
@@ -437,7 +546,15 @@ func (s *Server) reloadMCP() {
 			if err != nil {
 				Log.Error("Failed to reload bundle MCP prompts", "error", err)
 			} else {
-				s.mcpBundleEntries.prompts = names
+				s.mcpBundleEntries.prompts = append(s.mcpBundleEntries.prompts, names...)
+			}
+		}
+		if skillsFS, ok := b.Sub("skills"); ok {
+			names, err := s.registerSkillsFromFS(server, skillsFS, b.Source())
+			if err != nil {
+				Log.Error("Failed to reload bundle MCP skills", "error", err)
+			} else {
+				s.mcpBundleEntries.skills = append(s.mcpBundleEntries.skills, names...)
 			}
 		}
 		server.NotifyToolsChanged()
@@ -455,11 +572,12 @@ func (s *Server) reloadMCP() {
 // library's URI rules) and its description seeds the skill's frontmatter.
 // Directories without a SKILL.md are skipped. Skills are registered once
 // at startup; the watcher does not live-reload skill content.
-func (s *Server) registerSkillsFromFS(server *mcp_lib.Server, fsys fs.FS, source string) error {
+func (s *Server) registerSkillsFromFS(server *mcp_lib.Server, fsys fs.FS, source string) ([]string, error) {
 	dirs, err := fs.ReadDir(fsys, ".")
 	if err != nil {
-		return fmt.Errorf("%s: %w", source, err)
+		return nil, fmt.Errorf("%s: %w", source, err)
 	}
+	var names []string
 	for _, d := range dirs {
 		if !d.IsDir() {
 			continue
@@ -490,15 +608,16 @@ func (s *Server) registerSkillsFromFS(server *mcp_lib.Server, fsys fs.FS, source
 			return nil
 		})
 		if err != nil {
-			return fmt.Errorf("%s: %w", source, err)
+			return nil, fmt.Errorf("%s: %w", source, err)
 		}
 		if err := server.RegisterSkill(builder); err != nil {
 			Log.Warn("Skipping MCP skill", "source", source, "name", d.Name(), "error", err)
 			continue
 		}
+		names = append(names, d.Name())
 		Log.Info("registered MCP skill", "name", d.Name())
 	}
-	return nil
+	return names, nil
 }
 
 // frontmatterValue pulls one top-level value out of a SKILL.md's YAML

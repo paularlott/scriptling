@@ -30,8 +30,57 @@ Guidelines:
 - Do not mention the memory tools to the user unless asked — use them silently.
 """
 
+_MCP_SKILLS_INSTRUCTIONS = """
+
+## Skills
+
+Skills from the connected MCP servers are listed below. To use a skill, call the get_skill tool with the skill's URI, read the instructions it returns and follow them.
+"""
+
+# _make_mcp_tool_handler returns a handler that forwards a tool call to an MCP
+# server. A factory (rather than a lambda in the loop) binds server and tool
+# name at creation time; default arguments and closures over loop variables
+# are evaluated at call time, so they would late-bind to the last iteration.
+def _make_mcp_tool_handler(server, name):
+    def handler(args):
+        return server.call_tool(name, args)
+    return handler
+
+# _make_get_skill_handler returns the handler for the get_skill tool. It routes
+# a namespaced skill URI (skill://<namespace>/...) to the owning server by its
+# first path segment, strips the namespace, and reads the original URI from
+# that server. Errors come back as tool-result strings so the model can react
+# instead of the loop aborting.
+def _make_get_skill_handler(servers):
+    def handler(args):
+        uri = args.get("uri", "")
+        if uri.startswith("skill://"):
+            parts = uri[len("skill://"):].split("/", 1)
+            if len(parts) == 2 and parts[0] in servers:
+                try:
+                    return _mcp_resource_text(servers[parts[0]].read_resource("skill://" + parts[1]))
+                except Exception as e:
+                    return "Error reading skill: " + str(e)
+        return "Error: unknown skill URI, use one of the skill URIs listed in the system prompt"
+    return handler
+
+def _mcp_resource_text(content):
+    if isinstance(content, list):
+        texts = []
+        for item in content:
+            text = item.get("text", "") if isinstance(item, dict) else str(item)
+            if text:
+                texts.append(str(text))
+        return "\n".join(texts)
+    if isinstance(content, dict):
+        text = content.get("text", "")
+        if text:
+            return str(text)
+        return str(content)
+    return str(content)
+
 class Agent:
-    def __init__(self, client, tools=None, system_prompt="", model="", memory=None, max_tokens=32000, compaction_threshold=80, request_timeout=300, extra_body=None):
+    def __init__(self, client, tools=None, system_prompt="", model="", memory=None, max_tokens=32000, compaction_threshold=80, request_timeout=300, extra_body=None, mcp_servers=None):
         self.client = client
         self.system_prompt = system_prompt
         self.model = model
@@ -41,6 +90,67 @@ class Agent:
         self.compaction_threshold = compaction_threshold
         self.request_timeout = request_timeout
         self.extra_body = extra_body
+        self.mcp_servers = mcp_servers if mcp_servers is not None else []
+
+        # Wire MCP servers into the tool registry and system prompt: every
+        # remote tool is registered under its namespaced name (the client's
+        # namespace plus the tool name), and each server's skills are listed
+        # in the system prompt with namespace-qualified URIs served by a
+        # get_skill tool. Servers must each have a distinct namespace: it is
+        # both the tool-name prefix and the key get_skill routes by.
+        if len(self.mcp_servers) > 0:
+            if tools is None:
+                tools = ai.ToolRegistry()
+
+            skill_servers = {}
+            seen_namespaces = {}
+            skill_lines = []
+            for server in self.mcp_servers:
+                namespace = getattr(server, "namespace") if hasattr(server, "namespace") else ""
+                if not namespace:
+                    raise ValueError("mcp_servers: every MCP client must be created with a namespace, e.g. mcp.Client(url, namespace=\"shop\")")
+                if namespace in seen_namespaces:
+                    raise ValueError("mcp_servers: duplicate namespace \"" + namespace + "\"; give each MCP server its own namespace")
+                seen_namespaces[namespace] = True
+                skill_servers[namespace] = server
+
+                for tool in server.tools():
+                    schema = tool.get("inputSchema")
+                    if schema is None:
+                        schema = {"type": "object", "properties": {}}
+                    tools.add_schema(tool.name, tool.get("description", ""), schema, _make_mcp_tool_handler(server, tool.name))
+
+                # A server without the Skills extension simply contributes no
+                # skills; its tools still work.
+                try:
+                    skills = server.skills()
+                except:
+                    skills = []
+                for skill in skills:
+                    fm = skill.get("frontmatter")
+                    if fm is None:
+                        fm = {}
+                    skill_name = fm.get("name", "")
+                    if not skill_name or not skill.uri.startswith("skill://"):
+                        continue
+                    skill_lines.append("- " + namespace + "/" + skill_name + ": " + fm.get("description", "") + " (skill://" + namespace + "/" + skill.uri[len("skill://"):] + ")")
+
+            if len(skill_lines) > 0:
+                # Register get_skill only when the name is free: a caller
+                # that registered their own get_skill keeps it.
+                has_get_skill = True
+                try:
+                    tools.get_handler("get_skill")
+                except:
+                    has_get_skill = False
+                if not has_get_skill:
+                    tools.add(
+                        "get_skill",
+                        "Fetch an MCP skill's instructions by its skill:// URI, as listed in the system prompt",
+                        {"uri": "string"},
+                        _make_get_skill_handler(skill_servers)
+                    )
+                self.system_prompt = self.system_prompt + _MCP_SKILLS_INSTRUCTIONS + "\n".join(skill_lines)
 
         # Wire memory tools and augment system prompt if a memory object was provided
         if memory is not None:
@@ -65,8 +175,11 @@ class Agent:
                 lambda args: memory.forget(args["id"])
             )
 
-            # Append memory instructions to system prompt
-            self.system_prompt = system_prompt + _MEMORY_INSTRUCTIONS
+            # Append memory instructions to the system prompt. Append to
+            # self.system_prompt (which may already carry the MCP skills
+            # section), never rebuild from the raw parameter, or earlier
+            # sections would be dropped.
+            self.system_prompt = self.system_prompt + _MEMORY_INSTRUCTIONS
 
             # Pre-load preferences into system prompt so the LLM has immediate context
             preferences = memory.recall("", limit=50, type="preference")

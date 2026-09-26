@@ -1,0 +1,8 @@
+description = "Look up the price of a product by SKU"
+keywords = ["price", "product", "sku", "shop"]
+
+[[parameters]]
+name = "sku"
+type = "string"
+description = "Product SKU to look up"
+required = true

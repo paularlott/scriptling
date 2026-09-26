@@ -1,0 +1,11 @@
+description = "Ask for insights about a sales period"
+
+[[arguments]]
+name = "period"
+description = "Period to analyse, e.g. 2026-09"
+required = true
+
+[[arguments]]
+name = "region"
+description = "Region code (see the dashboard-ops skill); default all"
+required = false

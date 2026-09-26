@@ -1,0 +1,5 @@
+name = "sales-dashboard-app"
+version = "1.0.0"
+description = "Sales dashboard MCP app: an app view tool, plain tools, a prompt and a skill, packaged as one artifact"
+main = "setup.py"
+serve = ["mcp"]

@@ -1,0 +1,26 @@
+description = "Add a sale record (called by the dashboard's own form, not the model)"
+
+[[parameters]]
+name = "date"
+type = "string"
+description = "Sale date, YYYY-MM-DD"
+required = true
+
+[[parameters]]
+name = "product"
+type = "string"
+description = "Product name"
+required = true
+
+[[parameters]]
+name = "amount"
+type = "number"
+description = "Sale amount"
+required = true
+
+# No resourceUri: the dashboard view is already open by the time this gets
+# called (it's the dashboard's own "Add Sale" form calling back), so there's
+# no view of its own for this tool to render — resourceUri is optional per
+# spec for an app-only action tool like this one.
+[ui]
+visibility = ["app"]

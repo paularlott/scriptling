@@ -394,3 +394,151 @@ def half(n):
 		t.Errorf("half(10) = %q, want '5'", result.Content[0].Text)
 	}
 }
+
+// TestAppBundleSkillsResourcesPrompts verifies an app bundle carrying a
+// skills folder alongside its tools: Pack includes the skills dir, and the
+// server registers the skill (and a prompt) from the packaged zip so a
+// client can list and read both.
+func TestAppBundleSkillsResourcesPrompts(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"manifest.toml": `name = "skillapp"
+version = "1.0.0"
+main = "setup.py"
+serve = ["mcp"]
+`,
+		"setup.py": `# MCP only
+`,
+		"tools/doubler.py": `import scriptling.runtime.mcp as mcp
+
+@mcp.tool("Double a number", params={"n": "Number"})
+def doubler(n):
+    return str(int(n) * 2)
+
+@mcp.resource("config://from-bundle", name="Bundle config", mime_type="application/json")
+def bundle_config():
+    return {"origin": "bundle"}
+
+@mcp.prompt(description="Cheer helper")
+def cheer_hint(who):
+    return "Go " + who + "!"
+`,
+		"prompts/cheer.toml": `description = "Cheer for a team"
+
+[[arguments]]
+name = "team"
+description = "Who to cheer for"
+required = true
+`,
+		"prompts/cheer.py": `import scriptling.mcp.tool as tool
+tool.return_string("Go " + tool.get_string("team") + "!")
+`,
+		"skills/team-spirit/SKILL.md": "---\nname: team-spirit\ndescription: How to cheer effectively\n---\n\n# Team spirit\nCheer loudly.",
+		"skills/team-spirit/chants.md": "Go team!\nWin team!\n",
+	}
+	for name, content := range files {
+		p := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Pack it, then run from the zip: dev-equals-prod means the zip is the
+	// thing that ships, so prove the skills dir survives packaging.
+	zipPath := filepath.Join(t.TempDir(), "skillapp.zip")
+	if _, _, err := pack.Pack(dir, zipPath, false); err != nil {
+		t.Fatalf("Pack: %v", err)
+	}
+ zf, err := os.Open(zipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zf.Close()
+	st, err := zf.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := pack.OpenBundleZip(zf, st.Size(), zipPath)
+	if err != nil {
+		t.Fatalf("OpenBundleZip: %v", err)
+	}
+	s, err := NewServer(ServerConfig{Bundle: b})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	mcpServer := s.mcpHandler.server.Load()
+	if mcpServer == nil {
+		t.Fatal("MCP server not initialized")
+	}
+	client, cleanup := pipeClientServer(t, mcpServer)
+	defer cleanup()
+	ctx := context.Background()
+
+	// Tool from the package
+	result, err := client.CallTool(ctx, "doubler", map[string]any{"n": 4})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if len(result.Content) != 1 || result.Content[0].Text != "8" {
+		t.Fatalf("doubler(4) = %+v, want '8'", result.Content)
+	}
+
+	// Decorated resource and prompt from the same bundle's tools dir
+	cfgRes, err := client.ReadResource(ctx, "config://from-bundle")
+	if err != nil {
+		t.Fatalf("ReadResource decorated-in-bundle: %v", err)
+	}
+	if !strings.Contains(cfgRes.Contents[0].Text, `"origin":"bundle"`) || cfgRes.Contents[0].MimeType != "application/json" {
+		t.Fatalf("decorated resource in bundle: %+v", cfgRes.Contents)
+	}
+	hint, err := client.GetPrompt(ctx, "cheer_hint", map[string]string{"who": "packaging"})
+	if err != nil {
+		t.Fatalf("GetPrompt decorated-in-bundle: %v", err)
+	}
+	if len(hint.Messages) != 1 || hint.Messages[0].Content.Text != "Go packaging!" {
+		t.Fatalf("decorated prompt in bundle: %+v", hint.Messages)
+	}
+
+	// Prompt with a required argument from the package
+	pr, err := client.GetPrompt(ctx, "cheer", map[string]string{"team": "Scriptling"})
+	if err != nil {
+		t.Fatalf("GetPrompt: %v", err)
+	}
+	if len(pr.Messages) != 1 || pr.Messages[0].Content.Text != "Go Scriptling!" {
+		t.Fatalf("cheer messages: %+v", pr.Messages)
+	}
+	if _, err := client.GetPrompt(ctx, "cheer", map[string]string{}); err == nil || !strings.Contains(err.Error(), "missing required argument") {
+		t.Fatalf("missing required argument must be -32602, got: %v", err)
+	}
+
+	// Skill from the package, with its supporting file
+	skills, err := client.ListSkills(ctx)
+	if err != nil {
+		t.Fatalf("ListSkills: %v", err)
+	}
+	found := false
+	for _, sk := range skills {
+		if sk.URI == "skill://team-spirit/SKILL.md" {
+			found = true
+			if sk.Frontmatter["name"] != "team-spirit" {
+				t.Errorf("frontmatter: %+v", sk.Frontmatter)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("team-spirit not listed: %+v", skills)
+	}
+	content, err := client.ReadResource(ctx, "skill://team-spirit/chants.md")
+	if err != nil {
+		t.Fatalf("ReadResource supporting file: %v", err)
+	}
+	if !strings.Contains(content.Contents[0].Text, "Go team!") {
+		t.Fatalf("chants.md content: %q", content.Contents[0].Text)
+	}
+	if len(s.mcpBundleEntries.skills) != 1 || s.mcpBundleEntries.skills[0] != "team-spirit" {
+		t.Fatalf("bundle skills tracking: %v", s.mcpBundleEntries.skills)
+	}
+}

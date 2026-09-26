@@ -66,6 +66,28 @@ Parameters:
 
 Example:
   registry.add("read_file", "Read a file", {"path": "string", "limit": "int?"}, read_func)`).
+		MethodWithHelp("add_schema", registryAddSchemaMethod, `add_schema(name, description, schema, handler) - Add a tool with a full JSON Schema
+
+Like add(), but the parameters are given as a complete JSON Schema dict, emitted
+verbatim in the built tool definition. Use this when the parameter shape is
+richer than flat name -> type mappings can express (nested objects, enums,
+per-parameter descriptions), e.g. a schema that arrived from a remote MCP
+server. The schema should describe an object ("type": "object" with
+"properties"). Unlike add(), a duplicate name is an error rather than silently
+overwriting the previous handler.
+
+Parameters:
+  name (str): Tool name
+  description (str): Tool description
+  schema (dict): JSON Schema for the tool's parameters
+  handler (callable): Function to execute when tool is called
+
+Example:
+  registry.add_schema("shop__search", "Search products", {
+      "type": "object",
+      "properties": {"query": {"type": "string", "description": "Search terms"}},
+      "required": ["query"]
+  }, lambda args: do_search(args["query"]))`).
 		MethodWithHelp("build", registryBuildMethod, `build() - Build OpenAI-compatible tool schemas
 
 Returns:
@@ -105,6 +127,9 @@ type toolDef struct {
 	name        string
 	description string
 	params      map[string]string
+	// schema is a full JSON Schema supplied via add_schema. When set it is
+	// emitted verbatim as the tool's parameters, and params is ignored.
+	schema map[string]any
 }
 
 func registryConstructor(self *object.Instance, ctx context.Context) object.Object {
@@ -185,27 +210,38 @@ func registryBuildMethod(self *object.Instance, ctx context.Context) object.Obje
 
 	result := make([]any, 0, len(data.tools))
 	for _, tool := range data.tools {
-		properties := make(map[string]any)
-		required := []string{}
+		// add_schema tools carry their schema verbatim; add() tools build it
+		// from the flat name -> type map.
+		parameters := tool.schema
+		if parameters == nil {
+			properties := make(map[string]any)
+			required := []string{}
 
-		for paramName, paramType := range tool.params {
-			isOptional := strings.HasSuffix(paramType, "?")
-			baseType := strings.TrimSuffix(paramType, "?")
+			for paramName, paramType := range tool.params {
+				isOptional := strings.HasSuffix(paramType, "?")
+				baseType := strings.TrimSuffix(paramType, "?")
 
-			// Map aliases to canonical JSON Schema types. Unknown types are
-			// rejected at add() time, so anything missing here indicates a
-			// programmer error rather than user input.
-			jsonType, ok := typeAliases[baseType]
-			if !ok {
-				return &object.Error{Message: fmt.Sprintf(
-					"Registry.build: unknown type %q for parameter %q in tool %q",
-					paramType, paramName, tool.name)}
+				// Map aliases to canonical JSON Schema types. Unknown types are
+				// rejected at add() time, so anything missing here indicates a
+				// programmer error rather than user input.
+				jsonType, ok := typeAliases[baseType]
+				if !ok {
+					return &object.Error{Message: fmt.Sprintf(
+						"Registry.build: unknown type %q for parameter %q in tool %q",
+						paramType, paramName, tool.name)}
+				}
+
+				properties[paramName] = map[string]any{"type": jsonType}
+
+				if !isOptional {
+					required = append(required, paramName)
+				}
 			}
 
-			properties[paramName] = map[string]any{"type": jsonType}
-
-			if !isOptional {
-				required = append(required, paramName)
+			parameters = map[string]any{
+				"type":       "object",
+				"properties": properties,
+				"required":   required,
 			}
 		}
 
@@ -214,16 +250,40 @@ func registryBuildMethod(self *object.Instance, ctx context.Context) object.Obje
 			"function": map[string]any{
 				"name":        tool.name,
 				"description": tool.description,
-				"parameters": map[string]any{
-					"type":       "object",
-					"properties": properties,
-					"required":   required,
-				},
+				"parameters":  parameters,
 			},
 		})
 	}
 
 	return conversion.FromGo(result)
+}
+
+func registryAddSchemaMethod(self *object.Instance, ctx context.Context, name string, description string, schema *object.Dict, handler object.Object) object.Object {
+	data, err := getRegistryData(self)
+	if err != nil {
+		return err
+	}
+
+	if _, exists := data.handlers[name]; exists {
+		return &object.Error{Message: fmt.Sprintf("Registry.add_schema: a tool named %q is already registered", name)}
+	}
+
+	// Deep-convert so nested properties (maps, lists) become plain Go values
+	// build() can embed directly.
+	converted := conversion.ToGo(schema)
+	goSchema, ok := converted.(map[string]any)
+	if !ok {
+		return &object.Error{Message: "Registry.add_schema: schema must be a dict"}
+	}
+
+	data.tools = append(data.tools, toolDef{
+		name:        name,
+		description: description,
+		schema:      goSchema,
+	})
+	data.handlers[name] = handler
+
+	return &object.Null{}
 }
 
 func registryGetHandlerMethod(self *object.Instance, ctx context.Context, name string) object.Object {

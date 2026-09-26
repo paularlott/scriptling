@@ -241,3 +241,103 @@ assert len(schemas) == 0, "no tools should be registered when add() fails"
 		t.Fatalf("Expected 'OK', got: %v (err: %v)", result, err)
 	}
 }
+
+// TestToolsAddSchema verifies add_schema: the full JSON Schema is emitted
+// verbatim (nested properties survive), the handler dispatches like any other
+// tool, and a duplicate name is an error.
+func TestToolsAddSchema(t *testing.T) {
+	script := `
+import scriptling.ai as ai
+
+registry = ai.ToolRegistry()
+
+def search(args):
+    return "results for " + args["query"]
+
+registry.add_schema("shop__search", "Search products", {
+    "type": "object",
+    "properties": {
+        "query": {"type": "string", "description": "Search terms"},
+        "filters": {
+            "type": "object",
+            "properties": {"tag": {"type": "string", "enum": ["new", "sale"]}},
+        },
+    },
+    "required": ["query"],
+}, search)
+
+# A flat add() tool can coexist with add_schema tools.
+registry.add("local", "Local tool", {}, lambda args: "local result")
+
+schemas = registry.build()
+assert len(schemas) == 2
+
+params = schemas[0]["function"]["parameters"]
+assert params["type"] == "object"
+assert params["required"] == ["query"]
+assert params["properties"]["query"]["description"] == "Search terms"
+assert params["properties"]["filters"]["properties"]["tag"]["enum"] == ["new", "sale"]
+
+handler = registry.get_handler("shop__search")
+assert handler({"query": "mug"}) == "results for mug"
+assert registry.get_handler("local")({}) == "local result"
+
+err = None
+try:
+    registry.add_schema("shop__search", "Duplicate", {"type": "object"}, lambda args: None)
+except Exception as e:
+    err = str(e)
+assert err is not None, "duplicate add_schema must error"
+assert "shop__search" in err, "error should name the duplicate, got: " + str(err)
+
+# The failed duplicate must not have been stored.
+assert len(registry.build()) == 2
+
+"OK"
+`
+
+	p := scriptlib.New()
+	stdlib.RegisterAll(p)
+	ai.Register(p)
+
+	result, err := p.Eval(script)
+	if err != nil {
+		t.Fatalf("Script failed: %v", err)
+	}
+
+	if str, err := result.AsString(); err != nil || str != "OK" {
+		t.Fatalf("Expected 'OK', got: %v (err: %v)", result, err)
+	}
+}
+
+// TestToolsAddSchemaNonDict verifies a non-dict schema is rejected at
+// registration time with a clear error.
+func TestToolsAddSchemaNonDict(t *testing.T) {
+	script := `
+import scriptling.ai as ai
+
+registry = ai.ToolRegistry()
+err = None
+try:
+    registry.add_schema("bad", "Bad", ["not", "a", "dict"], lambda args: None)
+except Exception as e:
+    err = str(e)
+assert err is not None, "non-dict schema must error"
+assert "dict" in err.lower(), "error should mention dict, got: " + str(err)
+assert len(registry.build()) == 0, "failed add must not store the tool"
+
+"OK"
+`
+
+	p := scriptlib.New()
+	stdlib.RegisterAll(p)
+	ai.Register(p)
+
+	result, err := p.Eval(script)
+	if err != nil {
+		t.Fatalf("Script failed: %v", err)
+	}
+	if str, err := result.AsString(); err != nil || str != "OK" {
+		t.Fatalf("Expected 'OK', got: %v (err: %v)", result, err)
+	}
+}

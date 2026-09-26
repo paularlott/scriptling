@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Sales Dashboard</title>
+<!-- The @alpinejs/csp build avoids Function()-based expression evaluation, so
+     it runs under a CSP with no 'unsafe-eval' — the MCP Apps extension's
+     restrictive-default CSP (and this resource's declared CSP) both omit it.
+     x-data must reference a component registered with Alpine.data() by name
+     under this build; see the alpine:init listener below. -->
+<script src="https://cdn.jsdelivr.net/npm/@alpinejs/csp@3.x.x/dist/cdn.min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.x/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #1a1a1a;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --accent: #2563eb;
+    --accent-fg: #ffffff;
+    --error: #b91c1c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 16px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+  }
+  h1 { font-size: 18px; margin: 0 0 12px; }
+  .status { font-size: 13px; color: var(--muted); min-height: 18px; margin-bottom: 8px; }
+  .status.error { color: var(--error); }
+  .layout { display: flex; gap: 20px; flex-wrap: wrap; }
+  .panel { flex: 1 1 320px; min-width: 280px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; }
+  td.amount, th.amount { text-align: right; }
+  form { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; margin-top: 12px; }
+  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 2px; }
+  input, select {
+    font: inherit;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--fg);
+  }
+  button {
+    font: inherit;
+    padding: 7px 14px;
+    border: none;
+    border-radius: 6px;
+    background: var(--accent);
+    color: var(--accent-fg);
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.6; cursor: default; }
+  canvas { max-width: 100%; }
+</style>
+</head>
+<body>
+<div x-data="salesApp" x-init="init()">
+  <h1>Sales Dashboard</h1>
+  <div class="status" :class="{error: statusIsError}" x-text="status"></div>
+
+  <div class="layout">
+    <div class="panel">
+      <table>
+        <thead>
+          <tr><th>Date</th><th>Product</th><th class="amount">Amount</th></tr>
+        </thead>
+        <tbody>
+          <template x-for="(r, i) in records" :key="i">
+            <tr>
+              <td x-text="r.date"></td>
+              <td x-text="r.product"></td>
+              <td class="amount" x-text="formatAmount(r.amount)"></td>
+            </tr>
+          </template>
+          <tr x-show="records.length === 0">
+            <td colspan="3" style="color: var(--muted)">No sales yet.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <form @submit.prevent="addSale()">
+        <div>
+          <label for="f-date">Date</label>
+          <input id="f-date" type="date" x-model="newSale.date" required>
+        </div>
+        <div>
+          <label for="f-product">Product</label>
+          <input id="f-product" type="text" x-model="newSale.product" placeholder="Widget" required>
+        </div>
+        <div>
+          <label for="f-amount">Amount</label>
+          <input id="f-amount" type="number" step="0.01" min="0" x-model.number="newSale.amount" required>
+        </div>
+        <button type="submit" :disabled="submitting" x-text="submitLabel()"></button>
+      </form>
+    </div>
+
+    <div class="panel">
+      <canvas id="chart" height="220"></canvas>
+    </div>
+  </div>
+</div>
+
+<script>
+// --- Minimal MCP Apps host bridge (no SDK) -------------------------------
+// Implements the View side of https://github.com/modelcontextprotocol/ext-apps:
+// a ui/initialize handshake, ui/notifications/tool-result to receive data,
+// and tools/call for the view to invoke tools itself (add_sale is an
+// "app"-only tool, so it never appears in the model's tool list).
+const McpBridge = (() => {
+  let nextId = 1;
+  const pending = new Map();
+  const resultHandlers = [];
+
+  window.addEventListener('message', (event) => {
+    // Only the host that mounted us (our immediate parent frame) is a
+    // legitimate sender — anything else (another frame that somehow got a
+    // reference, or a message aimed at a different listener) is ignored.
+    if (event.source !== window.parent) return;
+    const msg = event.data;
+    if (!msg || msg.jsonrpc !== '2.0') return;
+
+    if (msg.id !== undefined && pending.has(msg.id)) {
+      const { resolve, reject } = pending.get(msg.id);
+      pending.delete(msg.id);
+      if (msg.error) reject(new Error(msg.error.message || 'Request failed'));
+      else resolve(msg.result);
+      return;
+    }
+
+    if (msg.method === 'ui/notifications/tool-result') {
+      resultHandlers.forEach((fn) => fn(msg.params));
+    }
+    if (msg.method === 'ui/resource-teardown') {
+      // Host-initiated request sent before destroying this view (switching
+      // conversations, deleting one, compacting) — a MUST per the MCP Apps
+      // spec, so the host gets a chance to wait for us. Nothing here holds
+      // unsaved state worth protecting (sales are already persisted
+      // server-side via add_sale), so an empty success result is enough.
+      window.parent.postMessage({ jsonrpc: '2.0', id: msg.id, result: {} }, '*');
+    }
+  });
+
+  function send(method, params) {
+    window.parent.postMessage({ jsonrpc: '2.0', method, params }, '*');
+  }
+
+  function request(method, params) {
+    const id = nextId++;
+    send0({ jsonrpc: '2.0', id, method, params });
+    return new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
+  }
+
+  function send0(payload) {
+    window.parent.postMessage(payload, '*');
+  }
+
+  async function initialize() {
+    const result = await request('ui/initialize', {
+      protocolVersion: '2026-01-26',
+      appCapabilities: { tools: { listChanged: false } },
+      appInfo: { name: 'sales-dashboard', version: '1.0.0' },
+    });
+    send('ui/notifications/initialized', {});
+    return result;
+  }
+
+  function onToolResult(fn) {
+    resultHandlers.push(fn);
+  }
+
+  function callTool(name, args) {
+    return request('tools/call', { name, arguments: args });
+  }
+
+  return { initialize, onToolResult, callTool, notify: send };
+})();
+
+document.addEventListener('alpine:init', () => {
+  // Kept outside the reactive x-data object on purpose: Alpine wraps
+  // component state in a reactive Proxy, and a Chart.js instance's internal
+  // circular references and getters don't survive being deep-proxied — a
+  // second render (chart.update()) fails with a cryptic
+  // "Cannot set properties of undefined" deep inside Chart.js.
+  let chartInstance = null;
+
+  Alpine.data('salesApp', () => ({
+    records: [],
+    status: 'Connecting to host…',
+    statusIsError: false,
+    submitting: false,
+    newSale: { date: '', product: '', amount: null },
+
+    init() {
+      McpBridge.onToolResult((result) => this.applyToolResult(result, 'Loaded.'));
+      McpBridge.initialize()
+        .then((result) => {
+          this.status = 'Waiting for data…';
+          this.setupAutoResize(result);
+        })
+        .catch((err) => this.fail(err));
+    },
+
+    // Reports our own content height to the host so the iframe grows/shrinks
+    // to fit instead of being stuck at a size unrelated to what's actually
+    // inside (see the MCP Apps spec's "Container Dimensions" section and the
+    // ui/notifications/size-changed notification). containerDimensions.
+    // maxHeight (from ui/initialize's result, if the host declares one) caps
+    // how tall we're allowed to report before scrolling internally instead
+    // of growing further — applied via CSS so every measurement below
+    // already respects it.
+    setupAutoResize(initResult) {
+      const dims = initResult && initResult.hostContext && initResult.hostContext.containerDimensions;
+      const maxHeight = dims && dims.maxHeight;
+      if (maxHeight) {
+        document.documentElement.style.maxHeight = maxHeight + 'px';
+        document.documentElement.style.overflowY = 'auto';
+      }
+      const reportSize = () => {
+        const rect = document.documentElement.getBoundingClientRect();
+        McpBridge.notify('ui/notifications/size-changed', {
+          width: Math.ceil(rect.width),
+          height: Math.ceil(rect.height),
+        });
+      };
+      // Fires once immediately on observe() with the current size, then
+      // again on every subsequent layout change (e.g. adding a sale row).
+      new ResizeObserver(reportSize).observe(document.documentElement);
+    },
+
+    applyToolResult(result, okStatus) {
+      if (result && result.isError) {
+        this.fail(new Error(this.firstText(result) || 'Tool returned an error'));
+        return;
+      }
+      const data = this.extractData(result);
+      if (data && Array.isArray(data.records)) {
+        this.records = data.records;
+        this.statusIsError = false;
+        this.status = okStatus;
+        this.renderChart();
+      }
+    },
+
+    // Prefer the modern structuredContent field; fall back to parsing the
+    // first text block as JSON for servers that encode structured results
+    // that way instead (e.g. Scriptling's tool.return_object()).
+    extractData(result) {
+      if (!result) return null;
+      if (result.structuredContent) return result.structuredContent;
+      const text = this.firstText(result);
+      if (!text) return null;
+      try {
+        return JSON.parse(text);
+      } catch {
+        return null;
+      }
+    },
+
+    firstText(result) {
+      const block = (result.content || []).find((c) => c.type === 'text');
+      return block && block.text;
+    },
+
+    fail(err) {
+      this.statusIsError = true;
+      this.status = 'Error: ' + (err && err.message ? err.message : String(err));
+    },
+
+    formatAmount(n) {
+      return Number(n).toLocaleString(undefined, { style: 'currency', currency: 'USD' });
+    },
+
+    submitLabel() {
+      return this.submitting ? 'Adding…' : 'Add Sale';
+    },
+
+    async addSale() {
+      if (!this.newSale.date || !this.newSale.product || !this.newSale.amount) return;
+      this.submitting = true;
+      try {
+        const result = await McpBridge.callTool('add_sale', { ...this.newSale });
+        this.applyToolResult(result, 'Sale added.');
+        // Mutate the existing object rather than assigning a new one: the
+        // CSP-safe Alpine build binds x-model to this object by reference, so
+        // replacing it would orphan the form fields' bindings.
+        this.newSale.date = '';
+        this.newSale.product = '';
+        this.newSale.amount = null;
+      } catch (err) {
+        this.fail(err);
+      } finally {
+        this.submitting = false;
+      }
+    },
+
+    renderChart() {
+      const totals = {};
+      for (const r of this.records) {
+        totals[r.product] = (totals[r.product] || 0) + Number(r.amount);
+      }
+      const labels = Object.keys(totals);
+      const data = Object.values(totals);
+
+      if (chartInstance) {
+        chartInstance.data.labels = labels;
+        chartInstance.data.datasets[0].data = data;
+        chartInstance.update();
+        return;
+      }
+      chartInstance = new Chart(document.getElementById('chart'), {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [{ label: 'Total sales by product', data, backgroundColor: '#2563eb' }],
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: { y: { beginAtZero: true } },
+        },
+      });
+    },
+  }));
+});
+</script>
+</body>
+</html>

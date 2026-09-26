@@ -13,8 +13,8 @@ import (
 )
 
 // conventionDirs are the fixed top-level dirs included in a bundle when
-// present: MCP tools/resources/prompts, static web assets, and docs.
-var conventionDirs = []string{"tools", "resources", "prompts", "webroot", DocsDir}
+// present: MCP tools/resources/prompts/skills, static web assets, and docs.
+var conventionDirs = []string{"tools", "resources", "prompts", "skills", "webroot", DocsDir}
 
 // Pack creates a package from srcDir, writing to dst. Use force to overwrite
 // an existing dst. Returns the SHA-256 hex hash of the written package and a
@@ -22,7 +22,7 @@ var conventionDirs = []string{"tools", "resources", "prompts", "webroot", DocsDi
 //
 // Inclusion is manifest-driven: manifest.toml, every dir in libs, the main
 // script file (when main names a .py file), and the convention dirs
-// (tools/, resources/, prompts/, webroot/, docs/) when present. Dotfiles are
+// (tools/, resources/, prompts/, skills/, webroot/, docs/) when present. Dotfiles are
 // skipped silently; anything else at the top level produces a warning.
 //
 // A libs dir listed in the manifest but missing, or a main script file that

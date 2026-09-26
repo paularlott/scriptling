@@ -1,0 +1,8 @@
+description = "Name of the product with the highest single sale above a threshold"
+keywords = ["sales", "product", "top"]
+
+[[parameters]]
+name = "min_amount"
+type = "number"
+description = "Only consider sales at or above this amount"
+required = false
