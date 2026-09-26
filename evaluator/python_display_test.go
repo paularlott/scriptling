@@ -239,3 +239,163 @@ str(bb)`); got.Inspect() != "1" {
 		t.Errorf("identifier starting with b broken: got %s", got.Inspect())
 	}
 }
+
+func TestDelMultipleTargets(t *testing.T) {
+	input := `a = 1
+b = {"k": 2}
+l = [1, 2, 3]
+del a, b["k"], l[0]
+result = "ok"
+try:
+	x = a
+	result = "a still there"
+except NameError:
+	pass
+result + "|" + str(b) + "|" + str(l)`
+	result, ok := testEval(input).(*object.String)
+	if !ok {
+		t.Fatalf("object is not String. got=%T (%+v)", testEval(input), testEval(input))
+	}
+	if result.StringValue() != "ok|{}|[2, 3]" {
+		t.Errorf("expected ok|{}|[2, 3], got %s", result.StringValue())
+	}
+}
+
+func TestNumericUnderscores(t *testing.T) {
+	intTests := []struct {
+		input    string
+		expected int64
+	}{
+		{"1_000", 1000},
+		{"1_000_000", 1000000},
+		{"0xff", 255},
+		{"0b1010", 10},
+		{`int("1_000")`, 1000},
+		{`int(float("1_0.5") * 2)`, 21},
+		{"len(range(1_0))", 10},
+	}
+	for _, tt := range intTests {
+		testIntegerObject(t, testEval(tt.input), tt.expected)
+	}
+	if got := testEval("1_000.5"); got.Inspect() != "1000.5" {
+		t.Errorf("float underscore literal: got %s", got.Inspect())
+	}
+}
+
+func TestLenRange(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected int64
+	}{
+		{"len(range(5))", 5},
+		{"len(range(0))", 0},
+		{"len(range(1, 10, 3))", 3},
+		{"len(range(10, 0, -2))", 5},
+		{"len(range(5, 5))", 0},
+	}
+	for _, tt := range tests {
+		testIntegerObject(t, testEval(tt.input), tt.expected)
+	}
+	result := testEval(`len(map(str, [1, 2]))`)
+	if !object.IsError(result) && !isRaisedTest(result) {
+		t.Errorf("len of a non-range iterator should error, got %s", result.Inspect())
+	}
+}
+
+func isRaisedTest(obj object.Object) bool {
+	_, ok := obj.(*object.Exception)
+	return ok
+}
+
+func TestSplitlinesKeependsKwarg(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{`str("a\nb".splitlines(keepends=True))`, "[a\n, b]"},
+		{`str("a\nb".splitlines(True))`, "[a\n, b]"},
+		{`str("a\nb".splitlines())`, "[a, b]"},
+		{`str("a\r\nb\rc".splitlines(keepends=True))`, "[a\r\n, b\r, c]"},
+	}
+	for _, tt := range tests {
+		result, ok := testEval(tt.input).(*object.String)
+		if !ok {
+			t.Fatalf("%s: object is not String. got=%T (%+v)", tt.input, testEval(tt.input), testEval(tt.input))
+		}
+		if result.StringValue() != tt.expected {
+			t.Errorf("%s: expected %q, got %q", tt.input, tt.expected, result.StringValue())
+		}
+	}
+}
+
+func TestPercentStringSpecs(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{`"[%10s]" % "ab"`, "[        ab]"},
+		{`"[%-10s]|" % "ab"`, "[ab        ]|"},
+		{`"%.3s" % "abcdef"`, "abc"},
+		{`"[%5s]" % 42`, "[   42]"},
+		{`"[%05d]" % 42`, "[00042]"},
+		{`"[%+d]" % 42`, "[+42]"},
+	}
+	for _, tt := range tests {
+		result, ok := testEval(tt.input).(*object.String)
+		if !ok {
+			t.Fatalf("%s: object is not String. got=%T (%+v)", tt.input, testEval(tt.input), testEval(tt.input))
+		}
+		if result.StringValue() != tt.expected {
+			t.Errorf("%s: expected %q, got %q", tt.input, tt.expected, result.StringValue())
+		}
+	}
+}
+
+func TestFStringDebugSpecifier(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"x = 7\nf\"{x=}\"", "x=7"},
+		{"x = 7\nf\"{x = }\"", "x = 7"},
+		{"x = 7\nf\"{x  =}\"", "x  =7"},
+		{"x = 7\nf\"{x=:>10}\"", "x=         7"},
+		{"f\"{3+4=}\"", "3+4=7"},
+		{"s = \"hi\"\nf\"{s=}\"", "s='hi'"},
+		{"x = 7\nf\"{x==7=}\"", "x==7=True"},
+	}
+	for _, tt := range tests {
+		result, ok := testEval(tt.input).(*object.String)
+		if !ok {
+			t.Fatalf("%s: object is not String. got=%T (%+v)", tt.input, testEval(tt.input), testEval(tt.input))
+		}
+		if result.StringValue() != tt.expected {
+			t.Errorf("%s: expected %q, got %q", tt.input, tt.expected, result.StringValue())
+		}
+	}
+}
+
+func TestPythonReprStrings(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{`repr("hi")`, `'hi'`},
+		{`repr("it's")`, `"it's"`},
+		{`repr("say \"x\"")`, `'say "x"'`},
+		{`repr("a\nb")`, `'a\nb'`},
+		{`"%r" % "hi"`, `'hi'`},
+		{`"[%-8r]" % "hi"`, `['hi'    ]`},
+		{"s = \"v\"\nf\"{s!r}\"", `'v'`},
+		{`repr(42)`, "42"},
+	}
+	for _, tt := range tests {
+		result, ok := testEval(tt.input).(*object.String)
+		if !ok {
+			t.Fatalf("%s: object is not String. got=%T (%+v)", tt.input, testEval(tt.input), testEval(tt.input))
+		}
+		if result.StringValue() != tt.expected {
+			t.Errorf("%s: expected %q, got %q", tt.input, tt.expected, result.StringValue())
+		}
+	}
+}

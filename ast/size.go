@@ -306,6 +306,9 @@ func (e *estimator) walkStatement(stmt Statement) {
 		}
 		e.addToken(n.Token)
 		e.walkExpression(n.Target)
+		for _, target := range n.ExtraTargets {
+			e.walkExpression(target)
+		}
 	case *ImportStatement:
 		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfImportStatement) {
 			return

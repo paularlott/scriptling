@@ -1715,6 +1715,14 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 				return errors.ParameterError("keepends", errObj)
 			}
 			keepends = b
+		} else if keywords != nil {
+			if kw := keywords["keepends"]; kw != nil {
+				b, errObj := kw.AsBool()
+				if errObj != nil {
+					return errors.ParameterError("keepends", errObj)
+				}
+				keepends = b
+			}
 		}
 		lines := []object.Object{}
 		text := str.StringValue()

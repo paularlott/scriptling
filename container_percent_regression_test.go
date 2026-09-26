@@ -1022,8 +1022,8 @@ func TestFormatConversionFlags(t *testing.T) {
 		src  string
 		want string
 	}{
-		{"f-string !r quotes strings", "\nx = \"s\"\nf\"{x!r}\"", "\"s\""},
-		{"format !r quotes strings", "\nx = \"s\"\n\"{x!r}\".format(x=x)", "\"s\""},
+		{"f-string !r quotes strings", "\nx = \"s\"\nf\"{x!r}\"", "'s'"},
+		{"format !r quotes strings", "\nx = \"s\"\n\"{x!r}\".format(x=x)", "'s'"},
 		{"!r on int unchanged", "\nf\"{42!r}\"", "42"},
 		{"!r uses __repr__", `
 class B:

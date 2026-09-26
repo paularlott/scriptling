@@ -398,6 +398,7 @@ func (sl *StringLiteral) Line() int            { return 0 }
 type FStringOverflow struct {
 	FormatSpecs []string
 	Conversions []string // per-expression conversion flag: "r", "s", "a" or ""
+	DebugTexts  []string // per-expression "=" debug prefix (f"{x=}"), or ""
 }
 
 type FStringLiteral struct {
@@ -459,6 +460,35 @@ func (fsl *FStringLiteral) SetConversions(convs []string) {
 		return
 	}
 	fsl.overflow.Conversions = convs
+}
+
+// GetDebugTexts returns the per-expression "=" debug prefixes, aligned with
+// Expressions (empty when the field has no = suffix).
+func (fsl *FStringLiteral) GetDebugTexts() []string {
+	if fsl.overflow == nil {
+		return nil
+	}
+	return fsl.overflow.DebugTexts
+}
+
+// SetDebugTexts stores per-expression debug prefixes, creating the overflow
+// lazily like the other f-string extras.
+func (fsl *FStringLiteral) SetDebugTexts(texts []string) {
+	hasAny := false
+	for _, t := range texts {
+		if t != "" {
+			hasAny = true
+			break
+		}
+	}
+	if !hasAny {
+		return
+	}
+	if fsl.overflow == nil {
+		fsl.overflow = &FStringOverflow{DebugTexts: texts}
+		return
+	}
+	fsl.overflow.DebugTexts = texts
 }
 
 func (fsl *FStringLiteral) expressionNode()      {}
@@ -1049,6 +1079,8 @@ func (ps *PassStatement) Line() int            { return int(ps.Token.Line) }
 type DelStatement struct {
 	Token  LineInfo
 	Target Expression
+	// ExtraTargets holds additional targets for "del a, b, c".
+	ExtraTargets []Expression
 }
 
 func (ds *DelStatement) statementNode()       {}

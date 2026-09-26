@@ -697,6 +697,20 @@ func (p *Parser) parseDelStatement() *ast.DelStatement {
 
 	p.nextToken()
 	stmt.Target = p.parseExpression(LOWEST)
+	if stmt.Target == nil {
+		return nil
+	}
+
+	// Multiple targets: del a, b, c
+	for p.peekTokenIs(token.COMMA) {
+		p.nextToken() // consume comma
+		p.nextToken() // move to the next target
+		target := p.parseExpression(LOWEST)
+		if target == nil {
+			return nil
+		}
+		stmt.ExtraTargets = append(stmt.ExtraTargets, target)
+	}
 
 	return stmt
 }
@@ -852,7 +866,10 @@ func (p *Parser) parseIntegerLiteral() ast.Expression {
 		lit.Value = value
 		return lit
 	}
-	value, err := strconv.ParseInt(p.curToken.Literal, 0, 64)
+	// Python-style digit separators: 1_000_000 (only between digits, which
+	// the lexer enforces).
+	literal := strings.ReplaceAll(p.curToken.Literal, "_", "")
+	value, err := strconv.ParseInt(literal, 0, 64)
 	if err != nil {
 		msg := fmt.Sprintf("line %d: could not parse %q as integer", p.curToken.Line, p.curToken.Literal)
 		p.errors = append(p.errors, msg)
@@ -883,7 +900,7 @@ func parseFastIntegerLiteral(s string) (int64, bool) {
 
 func (p *Parser) parseFloatLiteral() ast.Expression {
 	lit := &ast.FloatLiteral{}
-	value, err := strconv.ParseFloat(p.curToken.Literal, 64)
+	value, err := strconv.ParseFloat(strings.ReplaceAll(p.curToken.Literal, "_", ""), 64)
 	if err != nil {
 		msg := fmt.Sprintf("line %d: could not parse %q as float", p.curToken.Line, p.curToken.Literal)
 		p.errors = append(p.errors, msg)
@@ -904,19 +921,21 @@ func (p *Parser) parseBytesLiteral() ast.Expression {
 
 func (p *Parser) parseFStringLiteral() ast.Expression {
 	fstr := &ast.FStringLiteral{Value: strings.Clone(p.curToken.Literal)}
-	var specs, convs []string
-	fstr.Parts, fstr.Expressions, specs, convs = p.parseFStringContent(p.curToken.Literal, false)
+	var specs, convs, debugs []string
+	fstr.Parts, fstr.Expressions, specs, convs, debugs = p.parseFStringContent(p.curToken.Literal, false)
 	fstr.SetFormatSpecs(specs)
 	fstr.SetConversions(convs)
+	fstr.SetDebugTexts(debugs)
 	return p.parseAdjacentStrings(fstr)
 }
 
 func (p *Parser) parseRawFStringLiteral() ast.Expression {
 	fstr := &ast.FStringLiteral{Value: strings.Clone(p.curToken.Literal)}
-	var specs, convs []string
-	fstr.Parts, fstr.Expressions, specs, convs = p.parseFStringContent(p.curToken.Literal, true)
+	var specs, convs, debugs []string
+	fstr.Parts, fstr.Expressions, specs, convs, debugs = p.parseFStringContent(p.curToken.Literal, true)
 	fstr.SetFormatSpecs(specs)
 	fstr.SetConversions(convs)
+	fstr.SetDebugTexts(debugs)
 	return p.parseAdjacentStrings(fstr)
 }
 
@@ -951,10 +970,11 @@ func (p *Parser) parseAdjacentStrings(left ast.Expression) ast.Expression {
 			right = &ast.StringLiteral{Value: strings.Clone(p.curToken.Literal)}
 		} else {
 			fstr := &ast.FStringLiteral{Value: strings.Clone(p.curToken.Literal)}
-			var specs, convs []string
-			fstr.Parts, fstr.Expressions, specs, convs = p.parseFStringContent(p.curToken.Literal, p.curTokenIs(token.RF_STRING))
+			var specs, convs, debugs []string
+			fstr.Parts, fstr.Expressions, specs, convs, debugs = p.parseFStringContent(p.curToken.Literal, p.curTokenIs(token.RF_STRING))
 			fstr.SetFormatSpecs(specs)
 			fstr.SetConversions(convs)
+			fstr.SetDebugTexts(debugs)
 			right = fstr
 		}
 
@@ -969,7 +989,7 @@ func (p *Parser) parseAdjacentStrings(left ast.Expression) ast.Expression {
 	return left
 }
 
-func (p *Parser) parseFStringContent(content string, raw bool) ([]string, []ast.Expression, []string, []string) {
+func (p *Parser) parseFStringContent(content string, raw bool) ([]string, []ast.Expression, []string, []string, []string) {
 	parts := make([]string, 0, 4)
 	expressions := make([]ast.Expression, 0, 2)
 	formatSpecs := make([]string, 0, 2)
@@ -977,6 +997,7 @@ func (p *Parser) parseFStringContent(content string, raw bool) ([]string, []ast.
 	i := 0
 
 	conversions := make([]string, 0, 2)
+	debugTexts := make([]string, 0, 2)
 
 	for i < len(content) {
 		if content[i] == '{' && i+1 < len(content) && content[i+1] != '{' {
@@ -1030,12 +1051,21 @@ func (p *Parser) parseFStringContent(content string, raw bool) ([]string, []ast.
 
 			// Parse the expression
 			exprText := exprStr.String()
+			debugText := ""
+			if isFStringDebugSuffix(exprText) {
+				// f"{x=}" debug form (Python 3.8): the source text through
+				// the '=' (inner and trailing whitespace included) is echoed
+				// verbatim before the value.
+				debugText = exprText
+				exprText = strings.TrimRight(strings.TrimSuffix(strings.TrimRight(exprText, " "), "="), " ")
+			}
 			if exprText != "" {
 				expr := parseExpressionString(exprText)
 				if expr != nil {
 					expressions = append(expressions, expr)
 					formatSpecs = append(formatSpecs, formatSpec.String())
 					conversions = append(conversions, conversion)
+					debugTexts = append(debugTexts, debugText)
 				}
 			}
 		} else if content[i] == '{' && i+1 < len(content) && content[i+1] == '{' {
@@ -1077,7 +1107,26 @@ func (p *Parser) parseFStringContent(content string, raw bool) ([]string, []ast.
 	}
 
 	parts = append(parts, current.String())
-	return parts, expressions, formatSpecs, conversions
+	return parts, expressions, formatSpecs, conversions, debugTexts
+}
+
+// isFStringDebugSuffix reports whether the collected f-string expression
+// text ends with the "=" debug marker: a trailing '=' that is not part of
+// ==, <=, >=, != or :=.
+func isFStringDebugSuffix(text string) bool {
+	// Trailing whitespace after the '=' is allowed (f"{x = }").
+	if !strings.HasSuffix(strings.TrimRight(text, " "), "=") {
+		return false
+	}
+	switch {
+	case strings.HasSuffix(text, "=="),
+		strings.HasSuffix(text, "<="),
+		strings.HasSuffix(text, ">="),
+		strings.HasSuffix(text, "!="),
+		strings.HasSuffix(text, ":="):
+		return false
+	}
+	return true
 }
 
 func parseExpressionString(input string) ast.Expression {

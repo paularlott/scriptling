@@ -232,6 +232,11 @@ Examples:
 				return object.NewInteger(int64(len(arg.Dict.Pairs)))
 			case *object.Set:
 				return object.NewInteger(int64(len(arg.Elements)))
+			case *object.Iterator:
+				if n, ok := arg.Len(); ok {
+					return object.NewInteger(n)
+				}
+				return errors.NewTypeError("STRING, LIST, DICT, TUPLE, SET, BYTES, or VIEW", arg.Type().String())
 			case *object.FloatArray:
 				if arg.Is2D() {
 					return object.NewInteger(int64(arg.Rows()))
@@ -325,7 +330,7 @@ For exceptions, returns just the exception message.`,
 				}
 				return object.NewInteger(int64(arg.FloatValue()))
 			case *object.String:
-				s := strings.TrimSpace(arg.StringValue())
+				s := strings.ReplaceAll(strings.TrimSpace(arg.StringValue()), "_", "")
 				if len(args) == 2 {
 					switch {
 					case base == 16 && (strings.HasPrefix(s, "0x") || strings.HasPrefix(s, "0X")):
@@ -364,7 +369,7 @@ Examples: int("ff", 16) == 255, int("0b1010", 2) == 10, int("77", 8) == 63`,
 				return object.NewFloat(float64(arg.IntValue()))
 			case *object.String:
 				var val float64
-				_, err := fmt.Sscanf(arg.StringValue(), "%f", &val)
+				_, err := fmt.Sscanf(strings.ReplaceAll(arg.StringValue(), "_", ""), "%f", &val)
 				if err != nil {
 					return errors.NewError("cannot convert %s to float", arg.StringValue())
 				}
@@ -1396,8 +1401,7 @@ Otherwise, returns a set containing unique items from the iterable.`,
 			}
 			switch obj := args[0].(type) {
 			case *object.String:
-				// Add quotes around strings
-				return object.NewString(fmt.Sprintf("'%s'", obj.StringValue()))
+				return object.NewString(pyReprString(obj.StringValue()))
 			case *object.Instance:
 				// Call __repr__ first, then __str__, then fallback
 				env := GetEnvFromContext(ctx)
@@ -2132,6 +2136,42 @@ func boolNumber(b bool) float64 {
 		return 1
 	}
 	return 0
+}
+
+// pyReprString renders a string the way Python's repr does: single quotes by
+// default, switching to double quotes when the string contains a single
+// quote and no double quote, with backslash, newline, carriage return and
+// tab escaped.
+func pyReprString(v string) string {
+	quote := byte('\'')
+	hasSingle := strings.ContainsAny(v, "'")
+	hasDouble := strings.ContainsAny(v, "\"")
+	if hasSingle && !hasDouble {
+		quote = '"'
+	}
+	var out strings.Builder
+	out.Grow(len(v) + 2)
+	out.WriteByte(quote)
+	for i := 0; i < len(v); i++ {
+		c := v[i]
+		switch {
+		case c == '\\':
+			out.WriteString("\\\\")
+		case c == '\n':
+			out.WriteString("\\n")
+		case c == '\r':
+			out.WriteString("\\r")
+		case c == '\t':
+			out.WriteString("\\t")
+		case c == quote:
+			out.WriteByte('\\')
+			out.WriteByte(c)
+		default:
+			out.WriteByte(c)
+		}
+	}
+	out.WriteByte(quote)
+	return out.String()
 }
 
 // roundHalfEven rounds to the nearest integer with exact .5 ties going to

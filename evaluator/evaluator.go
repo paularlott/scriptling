@@ -324,6 +324,11 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		if err := deleteFromExpression(ctx, node.Target, env); err != nil {
 			return assignErrorToObject(err)
 		}
+		for _, target := range node.ExtraTargets {
+			if err := deleteFromExpression(ctx, target, env); err != nil {
+				return assignErrorToObject(err)
+			}
+		}
 		return NULL
 	case *ast.ImportStatement:
 		return evalImportStatement(ctx, node, env)
@@ -1421,6 +1426,25 @@ func evalStringPercentFormat(ctx context.Context, format string, right object.Ob
 	return object.NewString(result.String())
 }
 
+// applyStringSpec applies a % format's width/precision/flags to a string
+// body (for %s and %r): zero-padding is not a string conversion in Python, so
+// the 0 flag is dropped; width pads with spaces, '-' left-justifies, and
+// precision truncates.
+func applyStringSpec(spec string, body string) string {
+	goSpec := spec[:len(spec)-1]
+	// Drop only a flag '0' (zero-padding), not the '0' digits of the width:
+	// flags sit between '%' and the width.
+	if i := 1; i < len(goSpec) {
+		for i < len(goSpec) && (goSpec[i] == '-' || goSpec[i] == '+' || goSpec[i] == ' ' || goSpec[i] == '#' || goSpec[i] == '0') {
+			i++
+		}
+		flags := goSpec[1:i]
+		flags = strings.ReplaceAll(flags, "0", "")
+		goSpec = "%" + flags + goSpec[i:]
+	}
+	return fmt.Sprintf(goSpec+"s", body)
+}
+
 // formatPercentValue formats a single value according to a Python % format specifier.
 func formatPercentValue(ctx context.Context, spec string, conversion byte, val object.Object, env *object.Environment) (string, object.Object) {
 	switch conversion {
@@ -1439,7 +1463,7 @@ func formatPercentValue(ctx context.Context, spec string, conversion byte, val o
 				return s.StringValue(), nil
 			}
 		}
-		return val.Inspect(), nil
+		return applyStringSpec(spec, val.Inspect()), nil
 	case 'r':
 		// %r converts with repr(): instances dispatch __repr__ then __str__
 		// (a raise propagates); other types keep the default representation.
@@ -1457,11 +1481,16 @@ func formatPercentValue(ctx context.Context, spec string, conversion byte, val o
 					return "", result
 				}
 				if s, ok := result.(*object.String); ok {
-					return s.StringValue(), nil
+					return applyStringSpec(spec, s.StringValue()), nil
 				}
 			}
 		}
-		return fmt.Sprintf("%#v", val.Inspect()), nil
+		// Strings quote under repr, matching the repr() builtin and
+		// f-string !r.
+		if sv, ok := val.(*object.String); ok {
+			return applyStringSpec(spec, pyReprString(sv.StringValue())), nil
+		}
+		return applyStringSpec(spec, val.Inspect()), nil
 	case 'd', 'i':
 		var intVal int64
 		switch v := val.(type) {
@@ -2874,7 +2903,7 @@ func renderConvertedValue(ctx context.Context, val object.Object, conv string, e
 		// Strings quote under repr (the same quoting style as the repr()
 		// builtin).
 		if s, ok := val.(*object.String); ok {
-			return fmt.Sprintf("%#v", s.StringValue()), nil
+			return pyReprString(s.StringValue()), nil
 		}
 		return val.Inspect(), nil
 	default: // "s" or none: str semantics
@@ -5919,6 +5948,7 @@ func evalFStringLiteral(ctx context.Context, fstr *ast.FStringLiteral, env *obje
 
 	conversions := fstr.GetConversions()
 	specs := fstr.GetFormatSpecs()
+	debugTexts := fstr.GetDebugTexts()
 	for i, part := range fstr.Parts {
 		builder.WriteString(part)
 		if i < len(fstr.Expressions) {
@@ -5934,6 +5964,10 @@ func evalFStringLiteral(ctx context.Context, fstr *ast.FStringLiteral, env *obje
 			if conversions != nil && i < len(conversions) {
 				conv = conversions[i]
 			}
+			debugText := ""
+			if debugTexts != nil && i < len(debugTexts) {
+				debugText = debugTexts[i]
+			}
 			// Nested spec fields ({x:>{w}}) resolve against the enclosing
 			// scope before formatting.
 			if strings.Contains(spec, "{") {
@@ -5942,6 +5976,17 @@ func evalFStringLiteral(ctx context.Context, fstr *ast.FStringLiteral, env *obje
 					return serr
 				}
 				spec = expanded
+			}
+			if debugText != "" && conv == "" {
+				// f"{x=}" debug: repr-style rendering by default, spec still
+				// applies to the value, and the prefix is prepended verbatim.
+				rendered, rerr := renderConvertedValue(ctx, exprResult, "r", env)
+				if rerr != nil {
+					return rerr
+				}
+				builder.WriteString(debugText)
+				builder.WriteString(formatWithSpec(object.NewString(rendered), spec))
+				continue
 			}
 			var formatted string
 			if conv != "" {

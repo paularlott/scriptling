@@ -4,6 +4,18 @@ package object
 type Iterator struct {
 	next     func() (Object, bool) // Returns (value, hasNext)
 	consumed bool                  // Track if iterator has been exhausted
+	// length is the element count when statically known (range); -1
+	// otherwise. len() reports it, matching Python where only range among
+	// the lazy iterators has a length.
+	length int64
+}
+
+// Len returns the iterator's length when statically known (range iterators).
+func (it *Iterator) Len() (int64, bool) {
+	if it.length >= 0 && !it.consumed {
+		return it.length, true
+	}
+	return 0, false
 }
 
 // IterableToSlice converts any iterable object (List, Tuple, String, Iterator, Set) to a slice of Objects.
@@ -123,16 +135,27 @@ func (it *Iterator) Next() (Object, bool) {
 // This allows creating iterators that can call functions with proper context
 func NewIterator(nextFn func() (Object, bool)) *Iterator {
 	return &Iterator{
-		next: nextFn,
+		next:   nextFn,
+		length: -1,
 	}
 }
 
-// RangeIterator creates an iterator for range(start, stop, step)
+// RangeIterator creates an iterator for range(start, stop, step). Range is
+// the one lazy iterator with a known length (Python defines len() for it and
+// nothing else lazy), so the count is computed up front.
 func NewRangeIterator(start, stop, step int64) *Iterator {
 	current := start
 
+	length := int64(0)
+	if step > 0 && stop > start {
+		length = (stop - start + step - 1) / step
+	} else if step < 0 && stop < start {
+		length = (start - stop - step - 1) / -step
+	}
+
 	return &Iterator{
-		next: func() (Object, bool) {
+		length: length,
+		next:   func() (Object, bool) {
 			if step > 0 {
 				if current >= stop {
 					return nil, false

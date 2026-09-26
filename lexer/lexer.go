@@ -513,7 +513,7 @@ func (l *Lexer) readNumber() (string, bool) {
 	if l.ch == '0' && (l.peekChar() == 'x' || l.peekChar() == 'X') {
 		l.readChar() // consume '0'
 		l.readChar() // consume 'x' or 'X'
-		for isHexDigit(l.ch) {
+		for isHexDigit(l.ch) || (l.ch == '_' && isHexDigit(l.peekChar())) {
 			l.readChar()
 		}
 		return l.input[position:l.position], false
@@ -523,7 +523,7 @@ func (l *Lexer) readNumber() (string, bool) {
 	if l.ch == '0' && (l.peekChar() == 'b' || l.peekChar() == 'B') {
 		l.readChar() // consume '0'
 		l.readChar() // consume 'b' or 'B'
-		for l.ch == '0' || l.ch == '1' {
+		for l.ch == '0' || l.ch == '1' || (l.ch == '_' && (l.peekChar() == '0' || l.peekChar() == '1')) {
 			l.readChar()
 		}
 		return l.input[position:l.position], false
@@ -533,19 +533,19 @@ func (l *Lexer) readNumber() (string, bool) {
 	if l.ch == '0' && (l.peekChar() == 'o' || l.peekChar() == 'O') {
 		l.readChar() // consume '0'
 		l.readChar() // consume 'o' or 'O'
-		for l.ch >= '0' && l.ch <= '7' {
+		for (l.ch >= '0' && l.ch <= '7') || (l.ch == '_' && l.peekChar() >= '0' && l.peekChar() <= '7') {
 			l.readChar()
 		}
 		return l.input[position:l.position], false
 	}
 
-	for isDigit(l.ch) {
+	for isDigit(l.ch) || (l.ch == '_' && isDigit(l.peekChar())) {
 		l.readChar()
 	}
 	if l.ch == '.' && isDigit(l.peekChar()) {
 		isFloat = true
 		l.readChar()
-		for isDigit(l.ch) {
+		for isDigit(l.ch) || (l.ch == '_' && isDigit(l.peekChar())) {
 			l.readChar()
 		}
 	}
@@ -557,7 +557,7 @@ func (l *Lexer) readNumber() (string, bool) {
 		if l.ch == '+' || l.ch == '-' {
 			l.readChar() // consume sign
 		}
-		for isDigit(l.ch) {
+		for isDigit(l.ch) || (l.ch == '_' && isDigit(l.peekChar())) {
 			l.readChar()
 		}
 	}
