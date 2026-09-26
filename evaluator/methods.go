@@ -2224,6 +2224,33 @@ func callSetMethod(ctx context.Context, set *object.Set, method string, args []o
 			return err
 		}
 		return set.Copy()
+	case "update", "intersection_update", "difference_update", "symmetric_difference_update":
+		// In-place variants accepting any number of arguments; non-set
+		// iterables are materialized first (Python accepts any iterable).
+		if len(args) == 0 {
+			return errors.NewError("%s() takes at least 1 argument (0 given)", method)
+		}
+		sets := make([]*object.Set, 0, len(args))
+		for _, arg := range args {
+			other, errObj := iterableToSet(ctx, arg, env)
+			if errObj != nil {
+				return errObj
+			}
+			sets = append(sets, other)
+		}
+		for _, other := range sets {
+			switch method {
+			case "update":
+				set.InPlaceUnion(other)
+			case "intersection_update":
+				set.InPlaceIntersection(other)
+			case "difference_update":
+				set.InPlaceDifference(other)
+			case "symmetric_difference_update":
+				set.InPlaceSymmetricDifference(other)
+			}
+		}
+		return NULL
 	case "union":
 		if err := errors.ExactArgs(args, 1); err != nil {
 			return err

@@ -537,3 +537,124 @@ func errorOrExceptionMessage(obj object.Object) string {
 	}
 	return obj.Inspect()
 }
+
+func TestMultiIfComprehension(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{`str([x for x in range(10) if x > 2 if x < 5])`, "[3, 4]"},
+		{`str([x for x in range(20) if x % 2 == 0 if x % 3 == 0 if x > 0])`, "[6, 12, 18]"},
+		{`str([(x, y) for x in range(3) if x > 0 for y in range(3) if y > x])`, "[(1, 2)]"},
+		{`str([x for x in range(4) if x > 5])`, "[]"},
+		{`str({x for x in range(6) if x % 2 == 0 if x > 1})`, "{2, 4}"},
+	}
+	for _, tt := range tests {
+		result, ok := testEval(tt.input).(*object.String)
+		if !ok {
+			t.Fatalf("%s: object is not String. got=%T (%+v)", tt.input, testEval(tt.input), testEval(tt.input))
+		}
+		if result.StringValue() != tt.expected {
+			t.Errorf("%s: expected %s, got %s", tt.input, tt.expected, result.StringValue())
+		}
+	}
+}
+
+func TestNamedPercentFormat(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{`"%(name)s=%(n)d" % {"name": "x", "n": 5}`, "x=5"},
+		{`"%(a).2f / %(b).2f" % {"a": 1.5, "b": 2.25, "extra": 9}`, "1.50 / 2.25"},
+		{`"%(key)-6s|" % {"key": "ab"}`, "ab    |"},
+		{`"%(v)05d" % {"v": 42}`, "00042"},
+		{`"%(x)r" % {"x": "hi"}`, `'hi'`},
+	}
+	for _, tt := range tests {
+		result, ok := testEval(tt.input).(*object.String)
+		if !ok {
+			t.Fatalf("%s: object is not String. got=%T (%+v)", tt.input, testEval(tt.input), testEval(tt.input))
+		}
+		if result.StringValue() != tt.expected {
+			t.Errorf("%s: expected %q, got %q", tt.input, tt.expected, result.StringValue())
+		}
+	}
+
+	errTests := []struct {
+		input string
+		exc   string
+	}{
+		{`"%(missing)s" % {"a": 1}`, "KeyError"},
+		{`"%(a)s" % 5`, "TypeError"},
+	}
+	for _, tt := range errTests {
+		if excType := errorOrExceptionType(testEval(tt.input)); excType != tt.exc {
+			t.Errorf("%s: expected %s, got %s", tt.input, tt.exc, excType)
+		}
+	}
+}
+
+func TestSetUpdateMethods(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{`s = {1}
+s.update([2, 3])
+str(sorted(s))`, "[1, 2, 3]"},
+		{`s = {1, 2, 3, 4}
+s.intersection_update([2, 3, 9])
+str(sorted(s))`, "[2, 3]"},
+		{`s = {1, 2, 3}
+s.difference_update({2})
+str(sorted(s))`, "[1, 3]"},
+		{`s = {1, 2}
+s.symmetric_difference_update([2, 3])
+str(sorted(s))`, "[1, 3]"},
+		{`s = {1}
+s.update([2], {3}, [4])
+str(sorted(s))`, "[1, 2, 3, 4]"},
+		{`x = {1, 2}
+alias = x
+x.update([5])
+str(sorted(alias))`, "[1, 2, 5]"},
+	}
+	for _, tt := range tests {
+		result, ok := testEval(tt.input).(*object.String)
+		if !ok {
+			t.Fatalf("%s: object is not String. got=%T (%+v)", tt.input, testEval(tt.input), testEval(tt.input))
+		}
+		if result.StringValue() != tt.expected {
+			t.Errorf("%s: expected %s, got %s", tt.input, tt.expected, result.StringValue())
+		}
+	}
+}
+
+func TestDictFromkeys(t *testing.T) {
+	s := testEval(`d = dict.fromkeys(["a", "b"], 0)
+str(d["a"]) + str(d["b"]) + "|" + str(dict.fromkeys("ab")["a"]) + "|" + str(len(dict.fromkeys([3, 1, 3, 2])))`)
+	result, ok := s.(*object.String)
+	if !ok {
+		t.Fatalf("object is not String. got=%T (%+v)", s, s)
+	}
+	if result.StringValue() != "00|None|3" {
+		t.Errorf("expected 00|None|3, got %s", result.StringValue())
+	}
+}
+
+func TestClassDunderName(t *testing.T) {
+	input := `class Util:
+	@classmethod
+	def whoami(cls):
+		return cls.__name__
+
+Util.whoami() + "|" + Util.__name__`
+	result, ok := testEval(input).(*object.String)
+	if !ok {
+		t.Fatalf("object is not String. got=%T (%+v)", testEval(input), testEval(input))
+	}
+	if result.StringValue() != "Util|Util" {
+		t.Errorf("expected Util|Util, got %s", result.StringValue())
+	}
+}

@@ -32,6 +32,29 @@ func evalHashKeyChecked(ctx context.Context, obj object.Object) (string, object.
 
 // evalSetAdd adds obj to set s, using __hash__ for instances.
 // Returns a TypeError exception if obj is not hashable.
+// iterableToSet materializes any iterable into a set, applying the same
+// hashability checks as set literals. Used by the in-place set methods,
+// which accept arbitrary iterables like Python's.
+func iterableToSet(ctx context.Context, obj object.Object, env *object.Environment) (*object.Set, object.Object) {
+	if asSet, ok := obj.(*object.Set); ok {
+		return asSet, nil
+	}
+	elements, ok, rerr := iterableToSliceChecked(ctx, obj, env)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if !ok {
+		return nil, errors.NewTypeError("set or iterable", obj.Type().String())
+	}
+	result := object.NewSet()
+	for _, elem := range elements {
+		if err := evalSetAdd(ctx, result, elem); err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
+}
+
 func evalSetAdd(ctx context.Context, s *object.Set, obj object.Object) object.Object {
 	if !object.IsHashable(obj) {
 		return &object.Exception{Message: "unhashable type: '" + obj.Type().String() + "'", ExceptionType: object.ExceptionTypeTypeError, Raised: true}
@@ -438,6 +461,9 @@ func evalClassIndexExpression(class, index object.Object) object.Object {
 		return err
 	}
 	cl := class.(*object.Class)
+	if field == "__name__" {
+		return object.NewString(cl.Name)
+	}
 	if fn, ok := cl.LookupMember(field); ok {
 		if sm, ok := fn.(*object.StaticMethod); ok {
 			return sm.Fn

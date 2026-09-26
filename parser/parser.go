@@ -1795,6 +1795,27 @@ func (p *Parser) parseGeneratorExpressionInCall(expr ast.Expression, end token.T
 }
 
 // parseAdditionalClauses parses zero or more additional `for var in iter [if cond]` clauses
+// parseComprehensionCondition parses the condition of a comprehension
+// clause: one or more `if` expressions chained with `and` (Python allows
+// multiple if clauses; `if a if b` means `if a and b`).
+func (p *Parser) parseComprehensionCondition() ast.Expression {
+	var cond ast.Expression
+	for p.peekTokenIs(token.IF) {
+		p.nextToken() // consume IF
+		p.nextToken() // move to the condition expression
+		next := p.parseExpression(CONDITIONAL)
+		if next == nil {
+			return nil
+		}
+		if cond == nil {
+			cond = next
+		} else {
+			cond = &ast.InfixExpression{Operator: ast.OpAnd, Left: cond, Right: next}
+		}
+	}
+	return cond
+}
+
 func (p *Parser) parseAdditionalClauses() []ast.ComprehensionClause {
 	var clauses []ast.ComprehensionClause
 	for p.peekTokenIs(token.FOR) {
@@ -1812,12 +1833,7 @@ func (p *Parser) parseAdditionalClauses() []ast.ComprehensionClause {
 		}
 		p.nextToken()
 		iter := p.parseExpression(CONDITIONAL)
-		var cond ast.Expression
-		if p.peekTokenIs(token.IF) {
-			p.nextToken()
-			p.nextToken()
-			cond = p.parseExpression(CONDITIONAL)
-		}
+		cond := p.parseComprehensionCondition()
 		clauses = append(clauses, ast.ComprehensionClause{Variables: vars, Iterable: iter, Condition: cond})
 	}
 	return clauses
@@ -1848,11 +1864,7 @@ func (p *Parser) parseComprehensionCore(expr ast.Expression, endToken token.Toke
 	p.nextToken()
 	comp.Iterable = p.parseExpression(CONDITIONAL)
 
-	if p.peekTokenIs(token.IF) {
-		p.nextToken()
-		p.nextToken()
-		comp.Condition = p.parseExpression(CONDITIONAL)
-	}
+	comp.Condition = p.parseComprehensionCondition()
 
 	comp.AdditionalClauses = p.parseAdditionalClauses()
 
@@ -2063,11 +2075,7 @@ func (p *Parser) parseDictComprehension(_ ast.LineInfo, keyExpr, valueExpr ast.E
 	p.nextToken()
 	comp.Iterable = p.parseExpression(CONDITIONAL)
 
-	if p.peekTokenIs(token.IF) {
-		p.nextToken()
-		p.nextToken()
-		comp.Condition = p.parseExpression(CONDITIONAL)
-	}
+	comp.Condition = p.parseComprehensionCondition()
 
 	comp.AdditionalClauses = p.parseAdditionalClauses()
 
@@ -2101,11 +2109,7 @@ func (p *Parser) parseSetComprehension(_ ast.LineInfo, expr ast.Expression) ast.
 	p.nextToken()
 	comp.Iterable = p.parseExpression(CONDITIONAL)
 
-	if p.peekTokenIs(token.IF) {
-		p.nextToken()
-		p.nextToken()
-		comp.Condition = p.parseExpression(CONDITIONAL)
-	}
+	comp.Condition = p.parseComprehensionCondition()
 
 	comp.AdditionalClauses = p.parseAdditionalClauses()
 

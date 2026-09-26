@@ -1264,6 +1264,40 @@ Otherwise, returns a list containing the items of the iterable.`,
 	Returns None.`,
 	},
 	"dict": {
+		Attributes: map[string]object.Object{
+			// dict.fromkeys(iterable[, value]) — the type-level constructor
+			// for default mappings and dedup patterns.
+			"fromkeys": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if len(args) < 1 || len(args) > 2 {
+						return errors.NewError("fromkeys() takes 1-2 arguments (%d given)", len(args))
+					}
+					var value object.Object = NULL
+					if len(args) == 2 {
+						value = args[1]
+					}
+					keys, ok, rerr := iterableToSliceCheckedFn(ctx, args[0], GetEnvFromContext(ctx))
+					if rerr != nil {
+						return rerr
+					}
+					if !ok {
+						return errors.NewTypeError("iterable", args[0].Type().String())
+					}
+					result := &object.Dict{Pairs: make(map[string]object.DictPair, len(keys))}
+					for _, key := range keys {
+						hk, rerr := evalHashKeyChecked(ctx, key)
+						if rerr != nil {
+							return rerr
+						}
+						result.Pairs[hk] = object.DictPair{Key: key, Value: value}
+					}
+					return result
+				},
+				HelpText: `fromkeys(iterable[, value]) - Create a dict with keys from iterable
+
+Values default to None. Called as dict.fromkeys(...)`,
+			},
+		},
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			result := &object.Dict{Pairs: make(map[string]object.DictPair)}
 			// Handle kwargs

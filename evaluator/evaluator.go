@@ -1404,6 +1404,7 @@ func evalStringPercentFormat(ctx context.Context, format string, right object.Ob
 
 	var result strings.Builder
 	valueIdx := 0
+	usedNamedKey := false
 	i := 0
 
 	for i < len(format) {
@@ -1419,8 +1420,27 @@ func evalStringPercentFormat(ctx context.Context, format string, right object.Ob
 				continue
 			}
 
-			// Parse format specifier: %[flags][width][.precision]type
+			// Parse format specifier: %[(key)][flags][width][.precision]type
 			specStart := i - 1
+
+			// Named form: %(key)s reads the value from a dict right-hand
+			// side (the logging/template idiom).
+			key := ""
+			hasKey := false
+			if format[i] == '(' {
+				end := strings.IndexByte(format[i:], ')')
+				if end < 0 {
+					return errors.NewError("incomplete format key in format string")
+				}
+				key = format[i+1 : i+end]
+				hasKey = true
+				i += end + 1
+				if i >= len(format) {
+					return errors.NewError("incomplete format string")
+				}
+				// The spec handed to the formatter excludes the key.
+				specStart = i
+			}
 
 			// Flags
 			for i < len(format) && (format[i] == '-' || format[i] == '+' || format[i] == ' ' || format[i] == '#' || format[i] == '0') {
@@ -1442,15 +1462,42 @@ func evalStringPercentFormat(ctx context.Context, format string, right object.Ob
 				return errors.NewError("incomplete format string")
 			}
 
+			// Without a key, specStart sits on the '%' itself; with a named
+			// key it was advanced past the key and needs the '%' back.
 			spec := format[specStart : i+1]
+			if hasKey {
+				spec = "%" + spec
+			}
 			conversion := format[i]
 			i++
 
-			if valueIdx >= len(values) {
-				return errors.NewError("not enough arguments for format string")
+			var val object.Object
+			if hasKey {
+				dict, ok := right.(*object.Dict)
+				if !ok {
+					return &object.Exception{
+						Message:       "format requires a mapping",
+						ExceptionType: object.ExceptionTypeTypeError,
+						Raised:        true,
+					}
+				}
+				pair, found := dict.GetByString(key)
+				if !found {
+					return &object.Exception{
+						Message:       pyReprString(key),
+						ExceptionType: object.ExceptionTypeKeyError,
+						Raised:        true,
+					}
+				}
+				val = pair.Value
+				usedNamedKey = true
+			} else {
+				if valueIdx >= len(values) {
+					return errors.NewError("not enough arguments for format string")
+				}
+				val = values[valueIdx]
+				valueIdx++
 			}
-			val := values[valueIdx]
-			valueIdx++
 
 			formatted, err := formatPercentValue(ctx, spec, conversion, val, env)
 			if err != nil {
@@ -1463,7 +1510,7 @@ func evalStringPercentFormat(ctx context.Context, format string, right object.Ob
 		}
 	}
 
-	if valueIdx < len(values) {
+	if valueIdx < len(values) && !usedNamedKey {
 		return errors.NewError("not all arguments converted during string formatting")
 	}
 
