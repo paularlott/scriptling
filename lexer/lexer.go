@@ -348,6 +348,16 @@ func (l *Lexer) NextToken() token.Token {
 			tok.Type = token.STRING
 			tok.Literal = l.readString(quote)
 		}
+	case 'b', 'B':
+		if l.peekChar() == '"' || l.peekChar() == '\'' {
+			l.readChar() // consume 'b', l.ch == quote
+			tok.Type = token.BYTES
+			tok.Literal = l.readString(l.ch)
+			return tok
+		}
+		tok.Literal = l.readIdentifier()
+		tok.Type = token.LookupIdent(tok.Literal)
+		return tok
 	case 'f', 'F':
 		if l.peekChar() == '"' || l.peekChar() == '\'' {
 			quote := l.peekChar()

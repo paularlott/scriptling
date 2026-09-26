@@ -59,3 +59,32 @@ func TestJSONDumpsIndent(t *testing.T) {
 		t.Fatalf("negative indent: got %s (%s)", errResult.Type(), errResult.Inspect())
 	}
 }
+
+// TestJSONDumpsFloats: floats serialize with Python's spellings ("2.0",
+// "1e+20"), not Go encoding/json's ("2", full digits).
+func TestJSONDumpsFloats(t *testing.T) {
+	dumps := JSONLibrary.Functions()["dumps"]
+	ctx := context.Background()
+
+	dump := func(v object.Object) string {
+		result := dumps.Fn(ctx, object.NewKwargs(nil), v)
+		s, ok := result.(*object.String)
+		if !ok {
+			t.Fatalf("dumps returned %s: %s", result.Type(), result.Inspect())
+		}
+		return s.StringValue()
+	}
+
+	dict := func(pairs ...any) object.Object {
+		m := map[string]object.Object{}
+		for i := 0; i < len(pairs); i += 2 {
+			m[pairs[i].(string)] = conversion.FromGo(pairs[i+1])
+		}
+		return object.NewStringDict(m)
+	}
+
+	want := `{"a":2.0,"b":1e+20,"c":0.1,"d":[1.5,2]}`
+	if got := dump(dict("a", 2.0, "b", 1e20, "c", 0.1, "d", []any{1.5, 2})); got != want {
+		t.Errorf("expected %s, got %s", want, got)
+	}
+}

@@ -375,6 +375,14 @@ type StringLiteral struct {
 	boxed atomic.Value
 }
 
+type BytesLiteral struct {
+	Value []byte
+}
+
+func (bl *BytesLiteral) expressionNode()      {}
+func (bl *BytesLiteral) TokenLiteral() string { return "b\"\"" }
+func (bl *BytesLiteral) Line() int            { return 0 }
+
 // Boxed returns the cached runtime value for this literal, or nil if unset.
 func (sl *StringLiteral) Boxed() any { return sl.boxed.Load() }
 

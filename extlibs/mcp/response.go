@@ -1,7 +1,6 @@
 package mcp
 
 import (
-	"encoding/json"
 
 	"github.com/paularlott/scriptling/conversion"
 
@@ -80,10 +79,11 @@ func DecodeToolContent(content mcp.ToolContent) object.Object {
 
 // decodeTextContent decodes text content, parsing JSON if valid.
 func decodeTextContent(text string) object.Object {
-	// Try to parse as JSON
-	var jsonValue interface{}
-	if err := json.Unmarshal([]byte(text), &jsonValue); err == nil {
-		return conversion.FromGo(jsonValue)
+	// Try to parse as JSON, keeping Python's number typing: whole numbers
+	// stay integers (MustParseJSON) instead of the all-float64 decoding of
+	// encoding/json, so {"items": 3} reads back as 3, not 3.0.
+	if parsed, err := conversion.ParseJSON(text); err == nil {
+		return parsed
 	}
 	// Return as plain string
 	return object.NewString(text)

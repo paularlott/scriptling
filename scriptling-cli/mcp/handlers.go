@@ -204,6 +204,33 @@ func structuredResponseFromJSON(jsonText string) (*mcplib.ToolResponse, error) {
 //
 // Tool scripts resolve imports only via the configured library dirs (and pack
 // loader); pass the tools dir in cfg.LibDirs if sibling imports are needed.
+// pythonStyleJSONNumbers converts JSON-decoded values in place the way
+// Python's json module presents them: whole numbers become integers, the
+// rest stay floats, recursively through maps and slices. Go's encoding/json
+// decodes every number as float64, so tool arguments like {"n": 21} would
+// otherwise reach script functions as floats (n * 2 == 42.0).
+func pythonStyleJSONNumbers(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		for k, elem := range t {
+			t[k] = pythonStyleJSONNumbers(elem)
+		}
+		return t
+	case []any:
+		for i, elem := range t {
+			t[i] = pythonStyleJSONNumbers(elem)
+		}
+		return t
+	case float64:
+		if t == float64(int64(t)) {
+			return int64(t)
+		}
+		return t
+	default:
+		return v
+	}
+}
+
 func BuildToolHandler(scriptPath string, cfg HandlerConfig) (mcplib.ToolHandler, error) {
 	script, err := os.ReadFile(scriptPath)
 	if err != nil {
@@ -218,6 +245,9 @@ func BuildToolHandlerSource(src []byte, cfg HandlerConfig) mcplib.ToolHandler {
 	return func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
 		p := prepareScriptling(cfg, nil)
 		params := req.Args()
+		for k, v := range params {
+			params[k] = pythonStyleJSONNumbers(v)
+		}
 
 		response, exitCode, err := extlibsmcp.RunToolScript(ctx, p, string(src), params)
 
@@ -269,6 +299,9 @@ func BuildToolHandlerFunc(src []byte, funcName string, cfg HandlerConfig) mcplib
 
 		// Build kwargs from the MCP request params.
 		params := req.Args()
+		for k, v := range params {
+			params[k] = pythonStyleJSONNumbers(v)
+		}
 		kwargs := scriptling.Kwargs(params)
 
 		// Call the tool function.
@@ -415,7 +448,7 @@ func BuildResourceScriptHandlerSource(src []byte, mimeType string, cfg HandlerCo
 
 		params := map[string]any{"__uri": req.URI()}
 		for k, v := range req.Vars() {
-			params[k] = v
+			params[k] = pythonStyleJSONNumbers(v)
 		}
 		response, exitCode, err := extlibsmcp.RunToolScript(ctx, p, string(src), params)
 		if response != "" {
@@ -463,7 +496,7 @@ func BuildPromptScriptHandlerSource(src []byte, cfg HandlerConfig) mcplib.Prompt
 
 		params := map[string]any{}
 		for k, v := range req.Args() {
-			params[k] = v
+			params[k] = pythonStyleJSONNumbers(v)
 		}
 		response, exitCode, err := extlibsmcp.RunToolScript(ctx, p, string(src), params)
 		if exitCode != 0 && err != nil {
@@ -569,7 +602,7 @@ func BuildResourceFuncHandler(src []byte, funcName, uri, mimeType string, cfg Ha
 		// author declares one (as a template var named __uri).
 		params := map[string]any{}
 		for k, v := range req.Vars() {
-			params[k] = v
+			params[k] = pythonStyleJSONNumbers(v)
 		}
 		result, callErr := p.CallFunctionWithContext(ctx, funcName, scriptling.Kwargs(params))
 
@@ -631,7 +664,7 @@ func BuildPromptFuncHandler(src []byte, funcName string, cfg HandlerConfig) mcpl
 
 		params := map[string]any{}
 		for k, v := range req.Args() {
-			params[k] = v
+			params[k] = pythonStyleJSONNumbers(v)
 		}
 		result, callErr := p.CallFunctionWithContext(ctx, funcName, scriptling.Kwargs(params))
 

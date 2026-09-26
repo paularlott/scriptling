@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/errors"
@@ -1033,9 +1034,50 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			elements[i] = object.NewString(part)
 		}
 		return &object.List{Elements: elements}
-	case "replace":
-		if err := errors.ExactArgs(args, 2); err != nil {
+	case "rsplit":
+		if err := errors.MaxArgs(args, 2); err != nil {
 			return err
+		}
+		// rsplit works from the right; maxsplit limits splits counted from
+		// the end, so the leftmost element keeps the un-split remainder.
+		if len(args) == 0 || args[0].Type() == object.NULL_OBJ {
+			maxsplit := int64(-1)
+			if len(args) == 2 {
+				n, err := args[1].AsInt()
+				if err != nil {
+					return errors.ParameterError("maxsplit", err)
+				}
+				maxsplit = n
+			}
+			parts := rsplitFields(str.StringValue(), maxsplit)
+			elements := make([]object.Object, len(parts))
+			for i, part := range parts {
+				elements[i] = object.NewString(part)
+			}
+			return &object.List{Elements: elements}
+		}
+		sep, errObj := args[0].AsString()
+		if errObj != nil {
+			return errors.ParameterError("sep", errObj)
+		}
+		var parts []string
+		if len(args) == 1 {
+			parts = strings.Split(str.StringValue(), sep)
+		} else {
+			maxsplit, err := args[1].AsInt()
+			if err != nil {
+				return errors.ParameterError("maxsplit", err)
+			}
+			parts = rsplitSep(str.StringValue(), sep, maxsplit)
+		}
+		elements := make([]object.Object, len(parts))
+		for i, part := range parts {
+			elements[i] = object.NewString(part)
+		}
+		return &object.List{Elements: elements}
+	case "replace":
+		if len(args) < 2 || len(args) > 3 {
+			return errors.NewError("replace() takes 2-3 arguments (%d given)", len(args))
 		}
 		old, err := args[0].AsString()
 		if err != nil {
@@ -1044,6 +1086,13 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		newVal, err := args[1].AsString()
 		if err != nil {
 			return err
+		}
+		if len(args) == 3 {
+			count, err := args[2].AsInt()
+			if err != nil {
+				return errors.ParameterError("count", err)
+			}
+			return object.NewString(strings.Replace(str.StringValue(), old, newVal, int(count)))
 		}
 		return object.NewString(strings.ReplaceAll(str.StringValue(), old, newVal))
 	case "join":
@@ -1137,24 +1186,76 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return object.NewString(strings.TrimRight(str.StringValue(), chars))
 		}
 		return object.NewString(strings.TrimRight(str.StringValue(), " \t\n\r\v\f"))
-	case "startswith":
-		if err := errors.ExactArgs(args, 1); err != nil {
-			return err
+	case "startswith", "endswith":
+		if len(args) < 1 || len(args) > 3 {
+			return errors.NewError("%s() takes 1-3 arguments (%d given)", method, len(args))
 		}
-		prefix, errObj := args[0].AsString()
-		if errObj != nil {
-			return errors.ParameterError("prefix", errObj)
+		s := str.StringValue()
+		if len(args) > 1 {
+			start, err := args[1].AsInt()
+			if err != nil {
+				return errors.ParameterError("start", err)
+			}
+			if start < 0 {
+				start = 0
+			}
+			if start > int64(len(s)) {
+				start = int64(len(s))
+			}
+			s = s[start:]
 		}
-		return nativeBoolToBooleanObject(strings.HasPrefix(str.StringValue(), prefix))
-	case "endswith":
-		if err := errors.ExactArgs(args, 1); err != nil {
-			return err
+		if len(args) > 2 {
+			end, err := args[2].AsInt()
+			if err != nil {
+				return errors.ParameterError("end", err)
+			}
+			// end is relative to the original string, matching Python.
+			orig := str.StringValue()
+			if end < 0 {
+				end += int64(len(orig))
+				if end < 0 {
+					end = 0
+				}
+			}
+			if end > int64(len(orig)) {
+				end = int64(len(orig))
+			}
+			if end < int64(len(orig)-len(s)) {
+				end = int64(len(orig) - len(s))
+			}
+			s = s[:end-int64(len(orig)-len(s))]
 		}
-		suffix, errObj := args[0].AsString()
-		if errObj != nil {
-			return errors.ParameterError("suffix", errObj)
+		atStart := method == "startswith"
+		check := func(prefix string) bool {
+			if atStart {
+				return strings.HasPrefix(s, prefix)
+			}
+			return strings.HasSuffix(s, prefix)
 		}
-		return nativeBoolToBooleanObject(strings.HasSuffix(str.StringValue(), suffix))
+		switch prefixes := args[0].(type) {
+		case *object.String:
+			return nativeBoolToBooleanObject(check(prefixes.StringValue()))
+		case *object.Tuple:
+			for _, e := range prefixes.Elements {
+				prefix, errObj := e.AsString()
+				if errObj != nil {
+					return errors.ParameterError(method[:len(method)-3], errObj)
+				}
+				if check(prefix) {
+					return TRUE
+				}
+			}
+			return FALSE
+		default:
+			name := "prefix"
+			if !atStart {
+				name = "suffix"
+			}
+			if prefix, errObj := args[0].AsString(); errObj == nil {
+				return nativeBoolToBooleanObject(check(prefix))
+			}
+			return errors.ParameterError(name, errors.NewError("must be str or tuple"))
+		}
 	case "find":
 		if len(args) < 1 || len(args) > 3 {
 			return errors.NewError("find() takes 1-3 arguments (%d given)", len(args))
@@ -2329,4 +2430,55 @@ func expandFormatSpecArgs(ctx context.Context, spec string, args []object.Object
 		b.WriteString(rendered)
 	}
 	return b.String(), nil
+}
+
+// rsplitSep splits s on sep from the right, performing at most maxsplit
+// splits (negative: no limit), like Python's str.rsplit(sep, maxsplit).
+func rsplitSep(s, sep string, maxsplit int64) []string {
+	if maxsplit < 0 {
+		return strings.Split(s, sep)
+	}
+	parts := strings.Split(s, sep)
+	if int64(len(parts)) <= maxsplit+1 {
+		return parts
+	}
+	keep := int64(len(parts)) - maxsplit
+	out := make([]string, 0, maxsplit+1)
+	out = append(out, strings.Join(parts[:keep], sep))
+	return append(out, parts[keep:]...)
+}
+
+// rsplitFields splits s on whitespace runs from the right with at most
+// maxsplit splits (negative: no limit), like Python's str.rsplit(None, n):
+// the leftmost element keeps its interior and leading whitespace, and only
+// the separator run consumed by a split (or trailing whitespace at the end
+// of the string) is removed.
+func rsplitFields(s string, maxsplit int64) []string {
+	if maxsplit < 0 {
+		return strings.Fields(s)
+	}
+	var fields []string
+	end := len(s)
+	for maxsplit > 0 {
+		trimmed := strings.TrimRightFunc(s[:end], unicode.IsSpace)
+		if trimmed == "" {
+			break
+		}
+		// Scan back over the last field to find its start.
+		start := len(trimmed)
+		for start > 0 {
+			r, size := utf8.DecodeLastRuneInString(trimmed[:start])
+			if unicode.IsSpace(r) {
+				break
+			}
+			start -= size
+		}
+		fields = append([]string{trimmed[start:]}, fields...)
+		end = start
+		maxsplit--
+	}
+	if head := strings.TrimRightFunc(s[:end], unicode.IsSpace); head != "" {
+		fields = append([]string{head}, fields...)
+	}
+	return fields
 }

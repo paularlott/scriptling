@@ -292,6 +292,8 @@ func evalNode(ctx context.Context, node ast.Node, env *object.Environment) objec
 		return evalProgram(ctx, node, env)
 	case *ast.FloatLiteral:
 		return object.NewFloat(node.Value)
+	case *ast.BytesLiteral:
+		return object.NewBytes(node.Value)
 	case *ast.StringLiteral:
 		return evalStringLiteral(node)
 	case *ast.FStringLiteral:
@@ -4529,6 +4531,123 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 	}
 }
 
+// assignToSliceExpression implements slice assignment: l[start:end] =
+// values splices the list (length may change), and stepped slices replace
+// element-by-element with a length match required, as in Python.
+func assignToSliceExpression(ctx context.Context, target *ast.SliceExpression, value object.Object, env *object.Environment) error {
+	obj := evalWithContext(ctx, target.Left, env)
+	if object.IsError(obj) {
+		return fmt.Errorf("assignment error")
+	}
+	if isRaised(obj) {
+		return &assignmentExceptionError{ex: obj.(*object.Exception)}
+	}
+
+	sliceObj, errObj := evalSliceObjectWithContext(ctx, target, env)
+	if errObj != nil {
+		if exc, ok := errObj.(*object.Exception); ok {
+			return &assignmentExceptionError{ex: exc}
+		}
+		if evalErr, ok := errObj.(*object.Error); ok {
+			return fmt.Errorf("%s", evalErr.Message)
+		}
+		return fmt.Errorf("assignment error")
+	}
+
+	var values []object.Object
+	switch v := value.(type) {
+	case *object.List:
+		values = v.Elements
+	case *object.Tuple:
+		values = v.Elements
+	default:
+		return raisedAssignmentError(object.ExceptionTypeTypeError, "can only assign an iterable")
+	}
+
+	switch o := obj.(type) {
+	case *object.List:
+		var step int64 = 1
+		hasStep := sliceObj.Step != nil
+		if hasStep {
+			step = sliceObj.Step.IntValue()
+			if step == 0 {
+				return raisedAssignmentError(object.ExceptionTypeValueError, "slice step cannot be zero")
+			}
+		}
+		length := int64(len(o.Elements))
+		if step == 1 {
+			start, end := resolveListSliceBounds(length, sliceObj)
+			merged := make([]object.Object, 0, length-int64(end-start)+int64(len(values)))
+			merged = append(merged, o.Elements[:start]...)
+			merged = append(merged, values...)
+			merged = append(merged, o.Elements[end:]...)
+			o.Elements = merged
+			return nil
+		}
+		var rawStart, rawEnd int64
+		if sliceObj.Start != nil {
+			rawStart = sliceObj.Start.IntValue()
+		}
+		if sliceObj.End != nil {
+			rawEnd = sliceObj.End.IntValue()
+		}
+		positions := sliceDeleteIndices(length, rawStart, rawEnd, step, sliceObj.Start != nil, sliceObj.End != nil, hasStep)
+		if int64(len(values)) != int64(len(positions)) {
+			return raisedAssignmentError(object.ExceptionTypeValueError,
+				fmt.Sprintf("attempt to assign sequence of size %d to extended slice of size %d", len(values), len(positions)))
+		}
+		for i, pos := range positions {
+			o.Elements[pos] = values[i]
+		}
+		return nil
+	case *object.Instance:
+		if setitem, ok := o.Class.Methods["__setitem__"]; ok {
+			result := applyFunctionWithContext(ctx, setitem, []object.Object{obj, sliceObj, value}, nil, nil)
+			if object.IsError(result) {
+				return fmt.Errorf("%s", result.(*object.Error).Message)
+			}
+			if isRaised(result) {
+				return &assignmentExceptionError{ex: result.(*object.Exception)}
+			}
+			return nil
+		}
+		return fmt.Errorf("cannot assign to slice")
+	default:
+		return fmt.Errorf("cannot assign to slice")
+	}
+}
+
+// resolveListSliceBounds clamps a step-1 slice's start/end against the list
+// length the way Python does (used by slice assignment).
+func resolveListSliceBounds(length int64, sliceObj *object.Slice) (int64, int64) {
+	start, end := int64(0), length
+	if sliceObj.Start != nil {
+		start = sliceObj.Start.IntValue()
+		if start < 0 {
+			start += length
+			if start < 0 {
+				start = 0
+			}
+		}
+	}
+	if sliceObj.End != nil {
+		end = sliceObj.End.IntValue()
+		if end < 0 {
+			end += length
+			if end < 0 {
+				end = 0
+			}
+		}
+	}
+	if end > length {
+		end = length
+	}
+	if start > end {
+		start = end
+	}
+	return start, end
+}
+
 func assignToExpression(ctx context.Context, expr ast.Expression, value object.Object, env *object.Environment) error {
 	switch left := expr.(type) {
 	case *ast.Identifier:
@@ -4691,6 +4810,8 @@ func assignToExpression(ctx context.Context, expr ast.Expression, value object.O
 			return nil
 		}
 		return fmt.Errorf("cannot assign to index")
+	case *ast.SliceExpression:
+		return assignToSliceExpression(ctx, left, value, env)
 	default:
 		return fmt.Errorf("cannot assign to expression")
 	}
@@ -5861,10 +5982,7 @@ func formatWithSpec(obj object.Object, spec string) string {
 		case *object.Integer:
 			return strconv.FormatInt(v.IntValue(), 10)
 		case *object.Float:
-			if v.FloatValue() == float64(int64(v.FloatValue())) {
-				return strconv.FormatFloat(v.FloatValue(), 'f', 1, 64)
-			}
-			return strconv.FormatFloat(v.FloatValue(), 'g', -1, 64)
+			return object.FloatStr(v.FloatValue())
 		}
 		return obj.Inspect()
 	}
@@ -5952,7 +6070,7 @@ func formatWithSpec(obj object.Object, spec string) string {
 				if precision >= 0 {
 					formatted = strconv.FormatFloat(floatVal, 'f', precision, 64)
 				} else {
-					formatted = strconv.FormatFloat(floatVal, 'g', -1, 64)
+					formatted = object.FloatStr(floatVal)
 				}
 				formatted = applySign(formatted, floatVal >= 0, sign)
 			} else {
@@ -6086,7 +6204,20 @@ func formatWithSpec(obj object.Object, spec string) string {
 
 	// Apply thousands grouping
 	if grouping && (typeChar == 'd' || typeChar == 0) {
-		if intVal, err := obj.AsInt(); err == nil {
+		if obj.Type() == object.FLOAT_OBJ {
+			// Group the integer part and keep the fraction, like Python's
+			// format(x, ",").
+			if floatVal, ok := numericFloatValue(obj); ok {
+				commaStr := formatWithCommas(int64(floatVal))
+				frac := ""
+				digits := object.FloatStr(math.Abs(floatVal))
+				if idx := strings.IndexByte(digits, '.'); idx >= 0 {
+					frac = digits[idx:]
+				}
+				commaStr = applySign(commaStr+frac, floatVal >= 0, sign)
+				formatted = commaStr
+			}
+		} else if intVal, err := obj.AsInt(); err == nil {
 			commaStr := formatWithCommas(intVal)
 			commaStr = applySign(commaStr, intVal >= 0, sign)
 			formatted = commaStr

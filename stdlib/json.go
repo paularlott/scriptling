@@ -1,6 +1,7 @@
 package stdlib
 
 import (
+	"math"
 	"context"
 	"encoding/json"
 	"strings"
@@ -100,12 +101,30 @@ Optional indent parameter for pretty-printing.`,
 	},
 }, nil, "JSON encoding and decoding library")
 
+// pyFloat marshals with Python's json module float spellings: repr-style
+// numbers ("2.0", "1e+20") and Infinity/-Infinity/NaN for non-finites, which
+// encoding/json would reject (it prints "2" and cannot represent inf at all).
+type pyFloat float64
+
+func (p pyFloat) MarshalJSON() ([]byte, error) {
+	f := float64(p)
+	switch {
+	case math.IsInf(f, 1):
+		return []byte("Infinity"), nil
+	case math.IsInf(f, -1):
+		return []byte("-Infinity"), nil
+	case math.IsNaN(f):
+		return []byte("NaN"), nil
+	}
+	return []byte(object.FloatStr(f)), nil
+}
+
 func objectToJSON(obj object.Object) interface{} {
 	switch obj := obj.(type) {
 	case *object.Integer:
 		return obj.IntValue()
 	case *object.Float:
-		return obj.FloatValue()
+		return pyFloat(obj.FloatValue())
 	case *object.String:
 		return obj.StringValue()
 	case *object.Boolean:

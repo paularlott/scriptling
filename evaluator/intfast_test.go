@@ -115,7 +115,7 @@ func TestIntFastDeclinesNonIntegerOperands(t *testing.T) {
 	cases := []struct{ src, want string }{
 		{"a = 1.5\nb = 2\nresult = a + b\n", "3.5"},
 		{"a = 2\nb = 1.5\nresult = a + b\n", "3.5"},
-		{"a = 2\nb = 0.5\nresult = a * b\n", "1"},
+		{"a = 2\nb = 0.5\nresult = a * b\n", "1.0"},
 		{"a = True\nb = 2\nresult = a + b\n", "3"},
 		{"a = 2\nb = True\nresult = a + b\n", "3"},
 		{"a = True\nb = False\nresult = a + b\n", "1"},

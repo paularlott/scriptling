@@ -381,7 +381,7 @@ type Float struct {
 func (f *Float) FloatValue() float64 { return f.value }
 
 func (f *Float) Type() ObjectType { return FLOAT_OBJ }
-func (f *Float) Inspect() string  { return strconv.FormatFloat(f.value, 'g', -1, 64) }
+func (f *Float) Inspect() string  { return FloatStr(f.value) }
 
 func (f *Float) AsString() (string, Object)          { return "", errMustBeString }
 func (f *Float) AsInt() (int64, Object)              { return int64(f.value), nil }

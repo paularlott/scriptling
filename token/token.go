@@ -16,6 +16,7 @@ const (
 	INT       = "INT"
 	FLOAT     = "FLOAT"
 	STRING    = "STRING"
+	BYTES     = "BYTES"
 	F_STRING  = "F_STRING"
 	RF_STRING = "RF_STRING"
 

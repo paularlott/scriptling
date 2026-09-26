@@ -95,6 +95,8 @@ func prefixParseFnFor(t token.TokenType) prefixParseFn {
 		return (*Parser).parseFloatLiteral
 	case token.STRING:
 		return (*Parser).parseStringLiteral
+	case token.BYTES:
+		return (*Parser).parseBytesLiteral
 	case token.F_STRING:
 		return (*Parser).parseFStringLiteral
 	case token.RF_STRING:
@@ -893,6 +895,11 @@ func (p *Parser) parseFloatLiteral() ast.Expression {
 
 func (p *Parser) parseStringLiteral() ast.Expression {
 	return p.parseAdjacentStrings(&ast.StringLiteral{Value: strings.Clone(p.curToken.Literal)})
+}
+
+// parseBytesLiteral turns a b"..." literal into a constant Bytes object.
+func (p *Parser) parseBytesLiteral() ast.Expression {
+	return &ast.BytesLiteral{Value: []byte(p.curToken.Literal)}
 }
 
 func (p *Parser) parseFStringLiteral() ast.Expression {

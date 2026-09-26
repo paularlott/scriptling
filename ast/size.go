@@ -8,6 +8,7 @@ var (
 	sizeOfIntegerLiteral          = int(unsafe.Sizeof(IntegerLiteral{}))
 	sizeOfFloatLiteral            = int(unsafe.Sizeof(FloatLiteral{}))
 	sizeOfStringLiteral           = int(unsafe.Sizeof(StringLiteral{}))
+	sizeOfBytesLiteral            = int(unsafe.Sizeof(BytesLiteral{}))
 	sizeOfFStringLiteral          = int(unsafe.Sizeof(FStringLiteral{}))
 	sizeOfBoolean                 = int(unsafe.Sizeof(Boolean{}))
 	sizeOfNone                    = int(unsafe.Sizeof(None{}))
@@ -402,6 +403,10 @@ func (e *estimator) walkExpression(expr Expression) {
 	case *FloatLiteral:
 		if n != nil {
 			e.mark(uintptr(unsafe.Pointer(n)), sizeOfFloatLiteral)
+		}
+	case *BytesLiteral:
+		if n != nil {
+			e.mark(uintptr(unsafe.Pointer(n)), sizeOfBytesLiteral)
 		}
 	case *StringLiteral:
 		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfStringLiteral) {
