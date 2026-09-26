@@ -1503,6 +1503,14 @@ func (p *Parser) parseFunctionParameters() ([]*ast.Identifier, map[string]ast.Ex
 			}
 			return identifiers, defaults, variadic, kwargs, keywordOnlyStart
 		} else {
+			if p.curTokenIs(token.SLASH) {
+				// Positional-only parameter syntax (def f(a, /, b)) is not
+				// supported; without this check the "/" silently becomes a
+				// parameter named "/" and every call fails with a confusing
+				// argument-count error.
+				p.errors = append(p.errors, "positional-only parameters ('/') are not supported")
+				return nil, nil, nil, nil, keywordOnlyStart
+			}
 			ident := p.ident(p.curToken.Literal)
 			identifiers = append(identifiers, ident)
 

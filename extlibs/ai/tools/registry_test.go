@@ -341,3 +341,38 @@ assert len(registry.build()) == 0, "failed add must not store the tool"
 		t.Fatalf("Expected 'OK', got: %v (err: %v)", result, err)
 	}
 }
+
+// TestToolsAddDuplicateReplacesInPlace verifies add() with a duplicate name
+// replaces the registration (one schema entry, last handler wins) instead of
+// appending a second identical schema.
+func TestToolsAddDuplicateReplacesInPlace(t *testing.T) {
+	script := `
+import scriptling.ai as ai
+
+registry = ai.ToolRegistry()
+registry.add("t", "first", {}, lambda args: "one")
+registry.add("t", "second", {"x": "int?"}, lambda args: "two")
+
+schemas = registry.build()
+assert len(schemas) == 1, "duplicate add must not append a schema: " + str(len(schemas))
+assert schemas[0]["function"]["description"] == "second"
+assert schemas[0]["function"]["parameters"]["properties"]["x"]["type"] == "integer"
+
+handler = registry.get_handler("t")
+assert handler({}) == "two", "last handler must win"
+
+"OK"
+`
+
+	p := scriptlib.New()
+	stdlib.RegisterAll(p)
+	ai.Register(p)
+
+	result, err := p.Eval(script)
+	if err != nil {
+		t.Fatalf("Script failed: %v", err)
+	}
+	if str, err := result.AsString(); err != nil || str != "OK" {
+		t.Fatalf("Expected 'OK', got: %v (err: %v)", result, err)
+	}
+}

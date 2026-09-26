@@ -1444,3 +1444,21 @@ func TestBrokenIfDoesNotProduceNilStatement(t *testing.T) {
 		}
 	}
 }
+
+// TestParsePositionalOnlyRejected: the positional-only separator '/' must be
+// a clear parse error, not a silently accepted parameter named "/" (which
+// made every call fail with a confusing argument-count error).
+func TestParsePositionalOnlyRejected(t *testing.T) {
+	l := lexer.New(`def f(a, /, b):
+    return a + b
+f(1, 2)`)
+	p := New(l)
+	p.ParseProgram()
+	errs := p.Errors()
+	if len(errs) == 0 {
+		t.Fatal("positional-only syntax should report parser errors")
+	}
+	if !strings.Contains(errs[0], "positional-only parameters") {
+		t.Fatalf("first error should name the unsupported syntax, got: %v", errs[0])
+	}
+}

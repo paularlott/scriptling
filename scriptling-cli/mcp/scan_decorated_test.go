@@ -10,9 +10,9 @@ func TestScanDecoratedToolsSingle(t *testing.T) {
 	src := []byte(`
 import scriptling.runtime.mcp as mcp
 
-@mcp.tool("Calculate an expression", params={"expr": "Math expression to evaluate"})
+@mcp.tool("Double a number", params={"expr": "Number to double"})
 def calc(expr):
-    return str(eval(expr))
+    return str(expr * 2)
 `)
 
 	cfg := testHandlerConfig()
@@ -31,7 +31,7 @@ def calc(expr):
 	if tool.FuncName != "calc" {
 		t.Errorf("funcName: expected 'calc', got %q", tool.FuncName)
 	}
-	if tool.Meta.Description != "Calculate an expression" {
+	if tool.Meta.Description != "Double a number" {
 		t.Errorf("description: got %q", tool.Meta.Description)
 	}
 	if len(tool.Meta.Parameters) != 1 {
@@ -45,7 +45,7 @@ def calc(expr):
 	if p.Type != "string" {
 		t.Errorf("param type: expected 'string', got %q", p.Type)
 	}
-	if p.Description != "Math expression to evaluate" {
+	if p.Description != "Number to double" {
 		t.Errorf("param description: got %q", p.Description)
 	}
 	if !p.Required {

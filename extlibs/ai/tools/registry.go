@@ -192,11 +192,27 @@ func registryAddMethod(self *object.Instance, ctx context.Context, name string, 
 		}
 	}
 
-	data.tools = append(data.tools, toolDef{
+	// A duplicate name replaces the existing registration in place rather
+	// than appending a second schema entry (which the model would see as two
+	// identical tools) while silently swapping the handler. Re-registration
+	// is legitimate — e.g. two agents sharing one registry both wiring their
+	// memory tools — so it must not error the way add_schema does.
+	newDef := toolDef{
 		name:        name,
 		description: description,
 		params:      params,
-	})
+	}
+	replaced := false
+	for i := range data.tools {
+		if data.tools[i].name == name {
+			data.tools[i] = newDef
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		data.tools = append(data.tools, newDef)
+	}
 	data.handlers[name] = handler
 
 	return &object.Null{}

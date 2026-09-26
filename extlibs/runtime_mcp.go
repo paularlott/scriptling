@@ -59,11 +59,11 @@ Example:
   import scriptling.runtime.mcp as mcp
 
   @mcp.tool(
-      description="Calculate a mathematical expression",
-      params={"expr": "Expression to evaluate (e.g. 2+3*4)"},
+      description="Double a number",
+      params={"n": {"type": "int", "description": "Number to double"}},
   )
-  def calc(expr):
-      return f"{expr} = {eval(expr)}"
+  def calc(n):
+      return f"{n} * 2 = {n * 2}"
 
   @mcp.tool(description="Greet someone", params={
       "name": "Name of the person",
