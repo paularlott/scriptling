@@ -228,7 +228,7 @@ p.get()
 	} else {
 		t.Fatalf("expected the task to fail on the missing mutable global, got %v", result)
 	}
-	if !strings.Contains(msg, "identifier not found: caller_items") {
+	if !strings.Contains(msg, "caller_items") {
 		t.Errorf("expected error about identifier items, got: %s", msg)
 	}
 }

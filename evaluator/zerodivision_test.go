@@ -172,7 +172,7 @@ func TestErrorExceptionTypeClassification(t *testing.T) {
 			ExceptionType: object.ExceptionTypeZeroDivisionError,
 		}, object.ExceptionTypeZeroDivisionError},
 		{"inferred type error", &object.Error{Message: "type error: expected int, got str"}, object.ExceptionTypeTypeError},
-		{"inferred name error", &object.Error{Message: "identifier not found: foo"}, object.ExceptionTypeNameError},
+		{"inferred name error", &object.Error{Message: "name 'foo' is not defined"}, object.ExceptionTypeNameError},
 		{"inferred import error", &object.Error{Message: "import error: no such module"}, object.ExceptionTypeImportError},
 		{"unclassified falls back to Exception", &object.Error{Message: "something went wrong"}, object.ExceptionTypeException},
 	}

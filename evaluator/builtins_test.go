@@ -328,7 +328,7 @@ try:
     f()
 except Exception as e:
     msg = str(e)
-msg`, expected: `cannot compare STRING with BOOLEAN`},
+msg`, expected: `'<' not supported between instances of 'str' and 'bool'`},
 	}
 
 	for _, tt := range tests {
@@ -552,7 +552,7 @@ try:
     f()
 except Exception as e:
     msg = str(e)
-msg`, `cannot compare DICT with DICT`},
+msg`, `'<' not supported between instances of 'dict' and 'dict'`},
 		{"mixed types error", `def f():
     ys = [1, "a"]
     ys.sort()
@@ -561,7 +561,7 @@ try:
     f()
 except Exception as e:
     msg = str(e)
-msg`, `cannot compare STRING with INTEGER`},
+msg`, `'<' not supported between instances of 'str' and 'int'`},
 		{"dunder __lt__ sorts", `class P:
     def __init__(self, p):
         self.p = p

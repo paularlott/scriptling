@@ -1151,3 +1151,57 @@ func TestFloatArrayToList2D(t *testing.T) {
 		t.Errorf("row1 = %v, want [3, 4]", row1)
 	}
 }
+
+// TestMathIsclose: rel_tol/abs_tol semantics including NaN and infinities.
+func TestMathIsclose(t *testing.T) {
+	isclose := MathLibrary.Functions()["isclose"]
+	if isclose == nil {
+		t.Fatal("isclose not registered")
+	}
+	ctx := context.Background()
+	call := func(kwargs object.Kwargs, args ...object.Object) bool {
+		result := isclose.Fn(ctx, kwargs, args...)
+		b, ok := result.(*object.Boolean)
+		if !ok {
+			t.Fatalf("isclose returned %s: %s", result.Type(), result.Inspect())
+		}
+		return b.BoolValue()
+	}
+	kwargs := object.NewKwargs(nil)
+
+	cases := []struct {
+		a, b         object.Object
+		expectedTrue bool
+	}{
+		{object.NewFloat(0.1 + 0.2), object.NewFloat(0.3), true},
+		{object.NewFloat(1.0), object.NewFloat(1.5), false},
+		{object.NewFloat(1.0), object.NewFloat(1.0000000001), true},
+		{object.NewInteger(10), object.NewInteger(10), true},
+	}
+	for _, c := range cases {
+		if got := call(kwargs, c.a, c.b); got != c.expectedTrue {
+			t.Errorf("isclose(%s, %s): expected %v", c.a.Inspect(), c.b.Inspect(), c.expectedTrue)
+		}
+	}
+
+	// NaN never compares close, inf equals only itself.
+	if call(kwargs, object.NewFloat(math.NaN()), object.NewFloat(math.NaN())) {
+		t.Error("NaN should not be close to NaN")
+	}
+	if !call(kwargs, object.NewFloat(math.Inf(1)), object.NewFloat(math.Inf(1))) {
+		t.Error("inf should be close to inf")
+	}
+	if call(kwargs, object.NewFloat(math.Inf(1)), object.NewFloat(1.0)) {
+		t.Error("inf should not be close to 1.0")
+	}
+
+	// Tolerance kwargs.
+	kw := object.NewKwargs(map[string]object.Object{"rel_tol": object.NewFloat(0.6)})
+	if !call(kw, object.NewFloat(1.0), object.NewFloat(1.5)) {
+		t.Error("rel_tol=0.6 should accept 1.0 vs 1.5")
+	}
+	kw2 := object.NewKwargs(map[string]object.Object{"abs_tol": object.NewFloat(0.2)})
+	if !call(kw2, object.NewFloat(0.0), object.NewFloat(0.1)) {
+		t.Error("abs_tol=0.2 should accept 0.0 vs 0.1")
+	}
+}

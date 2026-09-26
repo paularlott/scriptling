@@ -284,6 +284,59 @@ Returns a float in radians.`,
 x and y can be integers or floats.
 y must not be zero. Returns a float.`,
 	},
+	"isclose": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
+			}
+			a, err := args[0].AsFloat()
+			if err != nil {
+				return errors.NewTypeError("NUMBER", args[0].Type().String())
+			}
+			b, err := args[1].AsFloat()
+			if err != nil {
+				return errors.NewTypeError("NUMBER", args[1].Type().String())
+			}
+			// Python defaults: rel_tol=1e-09, abs_tol=0.0. NaN never
+			// compares close; infinities compare equal only to themselves.
+			relTol := 1e-09
+			if v := kwargs.Get("rel_tol"); v != nil {
+				relTol, err = v.AsFloat()
+				if err != nil {
+					return errors.ParameterError("rel_tol", err)
+				}
+			}
+			absTol := 0.0
+			if v := kwargs.Get("abs_tol"); v != nil {
+				absTol, err = v.AsFloat()
+				if err != nil {
+					return errors.ParameterError("abs_tol", err)
+				}
+			}
+			if relTol < 0 || absTol < 0 {
+				return errors.NewError("tolerances must be non-negative")
+			}
+			if math.IsNaN(a) || math.IsNaN(b) {
+				return object.NewBoolean(false)
+			}
+			if a == b {
+				return object.NewBoolean(true)
+			}
+			if math.IsInf(a, 0) || math.IsInf(b, 0) {
+				return object.NewBoolean(false)
+			}
+			diff := math.Abs(a - b)
+			close := diff <= math.Max(relTol*math.Max(math.Abs(a), math.Abs(b)), absTol)
+			if close {
+				return object.NewBoolean(true)
+			}
+			return object.NewBoolean(false)
+		},
+		HelpText: `isclose(a, b, rel_tol=1e-09, abs_tol=0.0) - Compare floats for near-equality
+
+Returns True if a and b are approximately equal within the relative and
+absolute tolerances, matching Python's math.isclose.`,
+	},
 	"gcd": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if err := errors.ExactArgs(args, 2); err != nil {

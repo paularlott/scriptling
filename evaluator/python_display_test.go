@@ -399,3 +399,141 @@ func TestPythonReprStrings(t *testing.T) {
 		}
 	}
 }
+
+func TestCallableInstances(t *testing.T) {
+	input := `class Adder:
+	def __init__(self, n):
+		self.n = n
+	def __call__(self, x):
+		return x + self.n
+
+a = Adder(5)
+a(10) + a(1)`
+	testIntegerObject(t, testEval(input), 21)
+
+	errCase := `class NoCall:
+	pass
+try:
+	NoCall()()
+	ok = "no error"
+except TypeError as e:
+	ok = str(e)
+ok`
+	result := testEval(errCase)
+	s, ok := result.(*object.String)
+	if !ok {
+		t.Fatalf("object is not String. got=%T (%+v)", result, result)
+	}
+	if s.StringValue() != "'NoCall' object is not callable" {
+		t.Errorf("expected not-callable TypeError, got %s", s.StringValue())
+	}
+}
+
+func TestEncodeReturnsBytes(t *testing.T) {
+	s := testEval(`b = "héllo".encode()
+type(b) + "|" + str(len(b)) + "|" + b.decode() + "|" + str("hi".encode())`)
+	result, ok := s.(*object.String)
+	if !ok {
+		t.Fatalf("object is not String. got=%T (%+v)", s, s)
+	}
+	if result.StringValue() != "BYTES|6|héllo|b'hi'" {
+		t.Errorf("expected BYTES|6|héllo|b'hi', got %s", result.StringValue())
+	}
+
+	asciiErr := `try:
+	"héllo".encode("ascii")
+	ok = "no error"
+except ValueError as e:
+	ok = "caught"
+ok`
+	if got := testEval(asciiErr).Inspect(); got != "caught" {
+		t.Errorf("ascii encode failure should be a catchable ValueError, got %s", got)
+	}
+}
+
+func TestSequenceOrdering(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected bool
+	}{
+		{`[1] < [2]`, true},
+		{`[1, 2] <= [1, 2]`, true},
+		{`[1, 2] < [1, 3]`, true},
+		{`[1, 2] < [1, 2, 0]`, true},
+		{`[2] > [1]`, true},
+		{`(1,) > (0,)`, true},
+		{`(1, 2) >= (1, 3)`, false},
+		{`() < (1,)`, true},
+		{`["a"] < ["b"]`, true},
+		{`[1] == [1]`, true},
+	}
+	for _, tt := range tests {
+		result, ok := testEval(tt.input).(*object.Boolean)
+		if !ok {
+			t.Fatalf("%s: object is not Boolean. got=%T (%+v)", tt.input, testEval(tt.input), testEval(tt.input))
+		}
+		if result.BoolValue() != tt.expected {
+			t.Errorf("%s: expected %v, got %v", tt.input, tt.expected, result.BoolValue())
+		}
+	}
+
+	errTests := []struct {
+		input string
+		exc   string
+	}{
+		{`[1] < ["a"]`, "TypeError"},
+		{`[1] < (2,)`, "TypeError"},
+	}
+	for _, tt := range errTests {
+		result := testEval(tt.input)
+		if excType := errorOrExceptionType(result); excType != tt.exc {
+			t.Fatalf("%s: expected %s, got %s (%+v)", tt.input, tt.exc, excType, result)
+		}
+	}
+}
+
+func TestPythonShapedErrorMessages(t *testing.T) {
+	tests := []struct {
+		input string
+		exc   string
+		msg   string
+	}{
+		{`1 + "x"`, "TypeError", "unsupported operand type(s) for +: 'int' and 'str'"},
+		{`"a" - 1`, "TypeError", "unsupported operand type(s) for -: 'str' and 'int'"},
+		{`undefined_var`, "NameError", "name 'undefined_var' is not defined"},
+		{`{}["missing"]`, "KeyError", `'missing'`},
+		{`{}[42]`, "KeyError", "42"},
+	}
+	for _, tt := range tests {
+		result := testEval(tt.input)
+		if excType := errorOrExceptionType(result); excType != tt.exc {
+			t.Fatalf("%s: expected %s, got %s (%+v)", tt.input, tt.exc, excType, result)
+		}
+		if msg := errorOrExceptionMessage(result); msg != tt.msg {
+			t.Errorf("%s: expected message %q, got %q", tt.input, tt.msg, msg)
+		}
+	}
+}
+
+// errorOrExceptionType reads the exception class off either shape the
+// evaluator returns outside a try block (Error carries ExceptionType for the
+// try machinery to convert).
+func errorOrExceptionType(obj object.Object) string {
+	switch v := obj.(type) {
+	case *object.Exception:
+		return v.ExceptionType
+	case *object.Error:
+		return v.ExceptionType
+	}
+	return ""
+}
+
+func errorOrExceptionMessage(obj object.Object) string {
+	switch v := obj.(type) {
+	case *object.Exception:
+		return v.Message
+	case *object.Error:
+		return v.Message
+	}
+	return obj.Inspect()
+}

@@ -2243,14 +2243,18 @@ func compareForSort(ctx context.Context, left, right object.Object, env *object.
 		return compareObjectsCtx(ctx, left, right, env)
 	case *object.Tuple:
 		if r, ok := right.(*object.Tuple); ok {
-			return compareElements(l.Elements, r.Elements), nil
+			return compareElements(ctx, l.Elements, r.Elements, env)
 		}
 	case *object.List:
 		if r, ok := right.(*object.List); ok {
-			return compareElements(l.Elements, r.Elements), nil
+			return compareElements(ctx, l.Elements, r.Elements, env)
 		}
 	}
-	return 0, errors.NewError("cannot compare %s with %s", left.Type(), right.Type())
+	return 0, &object.Exception{
+		Message:       fmt.Sprintf("'<' not supported between instances of '%s' and '%s'", getTypeName(left), getTypeName(right)),
+		ExceptionType: object.ExceptionTypeTypeError,
+		Raised:        true,
+	}
 }
 
 // cmpFloats compares two numbers for the boolean/number ordering arms.
@@ -2327,11 +2331,11 @@ func compareObjects(a, b object.Object) int {
 		}
 	case *object.Tuple:
 		if bv, ok := b.(*object.Tuple); ok {
-			return compareElements(av.Elements, bv.Elements)
+			return compareElementsLenient(av.Elements, bv.Elements)
 		}
 	case *object.List:
 		if bv, ok := b.(*object.List); ok {
-			return compareElements(av.Elements, bv.Elements)
+			return compareElementsLenient(av.Elements, bv.Elements)
 		}
 	}
 	// For incomparable types, return 0 (no swap)
@@ -2340,7 +2344,11 @@ func compareObjects(a, b object.Object) int {
 
 // compareElements compares two element slices lexicographically, mirroring
 // Python's tuple/list ordering. Used by compareObjects for Tuple and List.
-func compareElements(a, b []object.Object) int {
+
+// compareElementsLenient is the error-blind element comparison used inside
+// legacy compareObjects; sorting and ordering operators use the strict
+// compareElements, which raises on incomparable elements like Python.
+func compareElementsLenient(a, b []object.Object) int {
 	n := len(a)
 	if len(b) < n {
 		n = len(b)
@@ -2357,6 +2365,29 @@ func compareElements(a, b []object.Object) int {
 		return 1
 	}
 	return 0
+}
+
+func compareElements(ctx context.Context, a, b []object.Object, env *object.Environment) (int, object.Object) {
+	n := len(a)
+	if len(b) < n {
+		n = len(b)
+	}
+	for i := 0; i < n; i++ {
+		c, errObj := compareForSort(ctx, a[i], b[i], env)
+		if errObj != nil {
+			return 0, errObj
+		}
+		if c != 0 {
+			return c, nil
+		}
+	}
+	if len(a) < len(b) {
+		return -1, nil
+	}
+	if len(a) > len(b) {
+		return 1, nil
+	}
+	return 0, nil
 }
 
 // Initialize the complex builtin functions

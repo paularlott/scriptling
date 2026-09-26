@@ -90,9 +90,12 @@ func NewArgumentError(got, want int) *object.Error {
 	return &object.Error{Message: fmt.Sprintf("%s: got %d arguments, want %d", ErrArgumentError, got, want)}
 }
 
-// NewIdentifierError creates an identifier not found error
+// NewIdentifierError creates a name-not-defined error, Python-shaped so
+// models recognize it ("name 'x' is not defined").
 func NewIdentifierError(name string) *object.Error {
-	return &object.Error{Message: fmt.Sprintf("%s: %s", ErrIdentifierNotFound, name)}
+	err := &object.Error{Message: fmt.Sprintf("name '%s' is not defined", name)}
+	err.ExceptionType = object.ExceptionTypeNameError
+	return err
 }
 
 // ParameterError wraps an error with a parameter name for context

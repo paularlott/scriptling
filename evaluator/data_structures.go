@@ -329,7 +329,11 @@ func evalDictIndexExpression(ctx context.Context, dict, index object.Object) obj
 
 	pair, ok := dictObject.Pairs[key]
 	if !ok {
-		return &object.Exception{Message: index.Inspect(), ExceptionType: object.ExceptionTypeKeyError, Raised: true}
+		keyMsg := index.Inspect()
+		if ks, ok := index.(*object.String); ok {
+			keyMsg = pyReprString(ks.StringValue())
+		}
+		return &object.Exception{Message: keyMsg, ExceptionType: object.ExceptionTypeKeyError, Raised: true}
 	}
 
 	return pair.Value

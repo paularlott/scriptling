@@ -1837,13 +1837,35 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if len(args) > 1 {
 			return errors.NewError("encode() takes at most 1 argument (%d given)", len(args))
 		}
-		// In Scriptling, encode just returns a list of byte values
-		// as we don't have a bytes type
-		bytes := []object.Object{}
-		for _, b := range []byte(str.StringValue()) {
-			bytes = append(bytes, object.NewInteger(int64(b)))
+		encoding := "utf-8"
+		if len(args) == 1 {
+			enc, errObj := args[0].AsString()
+			if errObj != nil {
+				return errors.ParameterError("encoding", errObj)
+			}
+			encoding = enc
 		}
-		return &object.List{Elements: bytes}
+		switch encoding {
+		case "utf-8", "utf8":
+			return object.NewBytesFromString(str.StringValue())
+		case "ascii":
+			for _, r := range str.StringValue() {
+				if r > 127 {
+					return &object.Exception{
+						Message:       "'ascii' codec can't encode character '" + string(r) + "': ordinal not in range(128)",
+						ExceptionType: object.ExceptionTypeValueError,
+						Raised:        true,
+					}
+				}
+			}
+			return object.NewBytesFromString(str.StringValue())
+		default:
+			return &object.Exception{
+				Message:       "unknown encoding: " + encoding,
+				ExceptionType: object.ExceptionTypeValueError,
+				Raised:        true,
+			}
+		}
 	case "expandtabs":
 		tabsize := 8
 		if len(args) > 1 {

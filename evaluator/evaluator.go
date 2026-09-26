@@ -899,6 +899,15 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 		}
 	case *object.Tuple:
 		switch operator {
+		case ast.OpLt, ast.OpGt, ast.OpLte, ast.OpGte:
+			// Python ordering for tuples: element-wise, tuples only.
+			if r, ok := right.(*object.Tuple); ok {
+				cmp, errObj := compareForSort(ctx, l, r, env)
+				if errObj != nil {
+					return errObj
+				}
+				return orderResult(operator, cmp)
+			}
 		case ast.OpAdd:
 			if r, ok := right.(*object.Tuple); ok {
 				result := make([]object.Object, len(l.Elements)+len(r.Elements))
@@ -923,6 +932,16 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 		}
 	case *object.List:
 		switch operator {
+		case ast.OpLt, ast.OpGt, ast.OpLte, ast.OpGte:
+			// Python ordering for sequences: element-wise, lists only
+			// compare with lists (mixed list/tuple is a TypeError).
+			if r, ok := right.(*object.List); ok {
+				cmp, errObj := compareForSort(ctx, l, r, env)
+				if errObj != nil {
+					return errObj
+				}
+				return orderResult(operator, cmp)
+			}
 		case ast.OpAdd:
 			var rightElems []object.Object
 			switch r := right.(type) {
@@ -1020,7 +1039,7 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 		}
 		return nativeBoolToBooleanObject(!objectsDeepEqual(left, right))
 	default:
-		return errors.NewError("%s: type mismatch", errors.ErrTypeError)
+		return newUnsupportedOperandError(operator, left, right)
 	}
 }
 
@@ -1042,6 +1061,31 @@ func floatArraysEqual(left, right *object.FloatArray) bool {
 		}
 	}
 	return true
+}
+
+// orderResult maps a three-way comparison to the boolean result of an
+// ordering operator (<, <=, >, >=), Python-style.
+func orderResult(operator ast.Op, cmp int) object.Object {
+	switch operator {
+	case ast.OpLt:
+		return nativeBoolToBooleanObject(cmp < 0)
+	case ast.OpGt:
+		return nativeBoolToBooleanObject(cmp > 0)
+	case ast.OpLte:
+		return nativeBoolToBooleanObject(cmp <= 0)
+	case ast.OpGte:
+		return nativeBoolToBooleanObject(cmp >= 0)
+	}
+	return errors.NewError("%s: type mismatch", errors.ErrTypeError)
+}
+
+// newUnsupportedOperandError builds Python's arithmetic TypeError
+// ("unsupported operand type(s) for +: 'int' and 'str'") as a typed Error so
+// it keeps line/library stamping and converts to a catchable exception.
+func newUnsupportedOperandError(operator ast.Op, left, right object.Object) object.Object {
+	err := errors.NewError("unsupported operand type(s) for %s: '%s' and '%s'", operator.String(), getTypeName(left), getTypeName(right))
+	err.ExceptionType = object.ExceptionTypeTypeError
+	return err
 }
 
 func evalWalrusExpressionWithContext(ctx context.Context, node *ast.WalrusExpression, env *object.Environment) object.Object {
@@ -1163,7 +1207,7 @@ func evalIntegerInfixExpression(operator ast.Op, leftVal, rightVal int64) object
 func evalFloatInfixExpression(operator ast.Op, left, right object.Object) object.Object {
 	leftVal, ok := numericFloatValue(left)
 	if !ok {
-		return errors.NewTypeError("NUMBER", left.Type().String())
+		return newUnsupportedOperandError(operator, left, right)
 	}
 	rightVal, ok := numericFloatValue(right)
 	if !ok {
@@ -1173,7 +1217,7 @@ func evalFloatInfixExpression(operator ast.Op, left, right object.Object) object
 		case ast.OpNeq:
 			return TRUE
 		}
-		return errors.NewTypeError("NUMBER", right.Type().String())
+		return newUnsupportedOperandError(operator, left, right)
 	}
 	return evalFloatInfixValues(operator, leftVal, rightVal)
 }
@@ -2527,6 +2571,17 @@ func applyFunction(ctx context.Context, fn object.Object, args []object.Object, 
 		return fn.Fn(ctxWithEnv, object.NewKwargs(keywords), args...)
 	case *object.Class:
 		return createInstance(ctx, fn, args, keywords, env)
+	case *object.Instance:
+		// Callable instances: obj(...) dispatches __call__ (Python
+		// functors, strategies, partial application).
+		if call, ok := fn.Class.Methods["__call__"]; ok {
+			return applyFunctionWithContext(ctx, call, append([]object.Object{fn}, args...), keywords, env)
+		}
+		return &object.Exception{
+			Message:       fmt.Sprintf("'%s' object is not callable", fn.Class.Name),
+			ExceptionType: object.ExceptionTypeTypeError,
+			Raised:        true,
+		}
 	case *object.ClientWrapper:
 		if callable, ok := fn.Client.(object.ScriptCallable); ok {
 			return callable.ScriptCall(ctx, args, keywords)

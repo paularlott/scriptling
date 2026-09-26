@@ -56,13 +56,13 @@ func TestNewArgumentError(t *testing.T) {
 
 func TestNewIdentifierError(t *testing.T) {
 	err := NewIdentifierError("x")
-	expected := "identifier not found: x"
+	expected := "name 'x' is not defined"
 	if err.Message != expected {
 		t.Errorf("NewIdentifierError() message = %q, want %q", err.Message, expected)
 	}
 
 	err2 := NewIdentifierError("myFunction")
-	expected2 := "identifier not found: myFunction"
+	expected2 := "name 'myFunction' is not defined"
 	if err2.Message != expected2 {
 		t.Errorf("NewIdentifierError() message = %q, want %q", err2.Message, expected2)
 	}
