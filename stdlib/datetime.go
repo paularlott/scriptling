@@ -1,6 +1,8 @@
 package stdlib
 
 import (
+	"fmt"
+	"math"
 	"context"
 	"strings"
 	"time"
@@ -59,10 +61,20 @@ func getTimeFromInstance(instance *object.Instance) (time.Time, object.Object) {
 
 // Helper to create a datetime instance (stores time as Unix nanoseconds)
 func createDatetimeInstance(t time.Time) *object.Instance {
+	// year/month/day/... are attributes in Python, not methods: they are
+	// set as fields (which resolve before class methods) so dt.year reads
+	// as an integer like Python, and dt.year() is "not callable" like Python.
 	return object.NewInstanceWithFields(DatetimeClass, map[string]object.Object{
 		"_time":        object.NewInteger(t.UnixNano()),
 		"_utc":         object.NewBoolean(t.Location() == time.UTC),
 		"__str_repr__": object.NewString(t.Format("2006-01-02 15:04:05")),
+		"year":         object.NewInteger(int64(t.Year())),
+		"month":        object.NewInteger(int64(t.Month())),
+		"day":          object.NewInteger(int64(t.Day())),
+		"hour":         object.NewInteger(int64(t.Hour())),
+		"minute":       object.NewInteger(int64(t.Minute())),
+		"second":       object.NewInteger(int64(t.Second())),
+		"microsecond":  object.NewInteger(int64(t.Nanosecond() / 1000)),
 	})
 }
 
@@ -74,6 +86,9 @@ func createDateInstance(t time.Time) *object.Instance {
 		"_time":        object.NewInteger(t.UnixNano()),
 		"_utc":         object.NewBoolean(t.Location() == time.UTC),
 		"__str_repr__": object.NewString(t.Format("2006-01-02")),
+		"year":         object.NewInteger(int64(t.Year())),
+		"month":        object.NewInteger(int64(t.Month())),
+		"day":          object.NewInteger(int64(t.Day())),
 	})
 }
 
@@ -539,6 +554,11 @@ func init() {
 						if !ok {
 							return errors.NewTypeError("datetime instance or number", args[1].Type().String())
 						}
+						// timedelta instances carry their _total seconds.
+						if td, ok := right.Field("_total").(*object.Float); ok {
+							seconds = td.FloatValue()
+							break
+						}
 						rt, err := getTimeFromInstance(right)
 						if err != nil {
 							return err
@@ -570,8 +590,14 @@ func init() {
 						seconds = v.FloatValue()
 					case *object.Integer:
 						seconds = float64(v.IntValue())
+					case *object.Instance:
+						if td, ok := v.Field("_total").(*object.Float); ok {
+							seconds = td.FloatValue()
+						} else {
+							return errors.NewTypeError("number or timedelta", args[1].Type().String())
+						}
 					default:
-						return errors.NewTypeError("number", args[1].Type().String())
+						return errors.NewTypeError("number or timedelta", args[1].Type().String())
 					}
 					newTime := lt.Add(time.Duration(seconds * float64(time.Second)))
 					return createDatetimeInstance(newTime)
@@ -691,17 +717,20 @@ func init() {
 					case *object.Float:
 						// timedelta returns seconds, convert to days
 						days = int(v.FloatValue() / 86400) // 86400 seconds per day
-					default:
-						right, ok := args[1].(*object.Instance)
-						if !ok {
-							return errors.NewTypeError("date instance or number", args[1].Type().String())
+					case *object.Instance:
+						if td, ok := v.Field("_total").(*object.Float); ok {
+							days = int(td.FloatValue() / 86400)
+							break
 						}
-						rt, err := getTimeFromInstance(right)
+						// Not a timedelta: a date-to-date subtraction.
+						rt, err := getTimeFromInstance(v)
 						if err != nil {
 							return err
 						}
 						// Return difference in days as integer
 						return object.NewInteger(int64(lt.Sub(rt).Hours() / 24))
+					default:
+						return errors.NewTypeError("date instance or number", args[1].Type().String())
 					}
 					newTime := lt.AddDate(0, 0, -days)
 					return createDateInstance(newTime)
@@ -728,6 +757,12 @@ func init() {
 					case *object.Float:
 						// timedelta returns seconds, convert to days
 						days = int(v.FloatValue() / 86400) // 86400 seconds per day
+					case *object.Instance:
+						if td, ok := v.Field("_total").(*object.Float); ok {
+							days = int(td.FloatValue() / 86400)
+						} else {
+							return errors.NewTypeError("date instance or number", args[1].Type().String())
+						}
 					default:
 						return errors.NewTypeError("integer or float", args[1].Type().String())
 					}
@@ -822,6 +857,32 @@ var datetimeConstructorBuiltin = &object.Builtin{
 
 Creates a datetime instance for the specified date and time.`,
 	Attributes: map[string]object.Object{
+		"fromisoformat": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.ExactArgs(args, 1); err != nil {
+					return err
+				}
+				text, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
+				for _, layout := range []string{
+					"2006-01-02T15:04:05.999999999",
+					"2006-01-02T15:04:05",
+					"2006-01-02T15:04",
+					"2006-01-02 15:04:05.999999999",
+					"2006-01-02 15:04:05",
+					"2006-01-02 15:04",
+					"2006-01-02",
+				} {
+					if t, parseErr := time.Parse(layout, text); parseErr == nil {
+						return createDatetimeInstance(t)
+					}
+				}
+				return &object.Exception{Message: "Invalid isoformat string: '" + text + "'", ExceptionType: object.ExceptionTypeValueError, Raised: true}
+			},
+			HelpText: "fromisoformat(date_string) - Parse an ISO 8601 datetime string",
+		},
 		"now": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				return createDatetimeInstance(time.Now())
@@ -937,6 +998,23 @@ var dateConstructorBuiltin = &object.Builtin{
 
 Creates a date instance for the specified date.`,
 	Attributes: map[string]object.Object{
+		"fromisoformat": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.ExactArgs(args, 1); err != nil {
+					return err
+				}
+				text, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
+				t, parseErr := time.Parse("2006-01-02", text)
+				if parseErr != nil {
+					return &object.Exception{Message: "Invalid isoformat string: '" + text + "'", ExceptionType: object.ExceptionTypeValueError, Raised: true}
+				}
+				return createDateInstance(t)
+			},
+			HelpText: "fromisoformat(date_string) - Parse an ISO 8601 date string",
+		},
 		"today": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				now := time.Now()
@@ -1000,11 +1078,96 @@ var timedeltaBuiltinNew = &object.Builtin{
 			milliseconds/1000 +
 			microseconds/1000000
 
-		return object.NewFloat(totalSeconds)
+		return createTimedeltaInstance(totalSeconds)
 	},
 	HelpText: `timedelta(days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0, hours=0, weeks=0)
 
-Creates a timedelta representing a duration. Returns the total duration in seconds.`,
+Creates a timedelta representing a duration, with str(), total_seconds(),
+and days/seconds/microseconds like Python.`,
+}
+
+// createTimedeltaInstance wraps a duration in seconds as a Timedelta object
+// whose fields mirror Python's normalization (days, seconds in [0, 86400),
+// microseconds in [0, 1e6)) and whose str() matches CPython.
+func createTimedeltaInstance(totalSeconds float64) *object.Instance {
+	// Python normalizes to whole days plus a non-negative remainder:
+	// timedelta(seconds=-5) is days=-1, seconds=86395, printing
+	// "-1 day, 23:59:55". Hours are not zero-padded.
+	micros := int64(math.Round(totalSeconds * 1e6))
+	days := micros / (24 * 3600 * 1000000)
+	rem := micros % (24 * 3600 * 1000000)
+	if rem < 0 {
+		rem += 24 * 3600 * 1000000
+		days--
+	}
+	secs := rem / 1000000
+	us := rem % 1000000
+
+	sign := ""
+	absDays := days
+	if micros < 0 {
+		sign = "-"
+		absDays = -days
+	}
+	out := ""
+	if absDays != 0 {
+		if absDays == 1 {
+			out += "1 day, "
+		} else {
+			out += fmt.Sprintf("%d days, ", absDays)
+		}
+	}
+	timePart := fmt.Sprintf("%d:%02d:%02d", secs/3600, (secs%3600)/60, secs%60)
+	if us != 0 {
+		timePart += fmt.Sprintf(".%06d", us)
+	}
+	return object.NewInstanceWithFields(TimedeltaClass, map[string]object.Object{
+		"_total":       object.NewFloat(totalSeconds),
+		"__str_repr__": object.NewString(sign + out + timePart),
+		"days":         object.NewInteger(days),
+		"seconds":      object.NewInteger(secs),
+		"microseconds": object.NewInteger(us),
+	})
+}
+
+// TimedeltaClass is the class behind datetime.timedelta values.
+var TimedeltaClass = &object.Class{
+	Name: "timedelta",
+	Methods: map[string]object.Object{
+		"total_seconds": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.MinArgs(args, 1); err != nil {
+					return err
+				}
+				inst, ok := args[0].(*object.Instance)
+				if !ok {
+					return errors.NewTypeError("timedelta instance", args[0].Type().String())
+				}
+				total, ok := inst.Field("_total").(*object.Float)
+				if !ok {
+					return errors.NewTypeError("timedelta instance", args[0].Type().String())
+				}
+				return object.NewFloat(total.FloatValue())
+			},
+			HelpText: "total_seconds() - Return the total duration in seconds",
+		},
+		"__str__": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.MinArgs(args, 1); err != nil {
+					return err
+				}
+				inst, ok := args[0].(*object.Instance)
+				if !ok {
+					return errors.NewTypeError("timedelta instance", args[0].Type().String())
+				}
+				if repr, ok := inst.Field("__str_repr__").(*object.String); ok {
+					return repr
+				}
+				return object.NewString("")
+			},
+			HelpText: "__str__() - Return the Python-style duration string",
+		},
+	},
 }
 
 // DatetimeLibrary is the main datetime module

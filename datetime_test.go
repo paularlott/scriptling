@@ -130,7 +130,7 @@ func TestDatetimeUTCPlus8(t *testing.T) {
 			result = datetime.datetime.fromtimestamp(0).strftime("%Y-%m-%dT%H:%M:%S")
 		`, "1970-01-01T08:00:00"},
 		{"fromtimestamp hour is local", `
-			result = datetime.datetime.fromtimestamp(0).hour()
+			result = datetime.datetime.fromtimestamp(0).hour
 		`, int64(8)},
 
 		// naive constructor interprets fields as local
@@ -149,13 +149,13 @@ func TestDatetimeUTCPlus8(t *testing.T) {
 		{"utcnow renders UTC components", `
 			u = datetime.datetime.utcnow()
 			g = time.gmtime(u.timestamp())
-			result = u.year()==g[0] and u.month()==g[1] and u.day()==g[2] and u.hour()==g[3] and u.minute()==g[4] and u.second()==g[5]
+			result = u.year==g[0] and u.month==g[1] and u.day==g[2] and u.hour==g[3] and u.minute==g[4] and u.second==g[5]
 		`, true},
 		// now must render local components
 		{"now renders local components", `
 			n = datetime.datetime.now()
 			l = time.localtime(n.timestamp())
-			result = n.year()==l[0] and n.month()==l[1] and n.day()==l[2] and n.hour()==l[3] and n.minute()==l[4] and n.second()==l[5]
+			result = n.year==l[0] and n.month==l[1] and n.day==l[2] and n.hour==l[3] and n.minute==l[4] and n.second==l[5]
 		`, true},
 		// now and utcnow describe the same instant
 		{"now and utcnow same instant", `
@@ -175,7 +175,7 @@ func TestDatetimeUTCPlus8(t *testing.T) {
 		`, 1800.0},
 		{"strptime field accessors", `
 			s = datetime.datetime.strptime("1970-01-01T00:30:00", "%Y-%m-%dT%H:%M:%S")
-			result = s.year() == 1970 and s.hour() == 0 and s.minute() == 30
+			result = s.year == 1970 and s.hour == 0 and s.minute == 30
 		`, true},
 		{"strptime weekday", `
 			s = datetime.datetime.strptime("2024-01-15T00:00:00", "%Y-%m-%dT%H:%M:%S")
@@ -206,7 +206,7 @@ func TestDatetimeUTCPlus8(t *testing.T) {
 		{"utcnow replace renders utc", `
 			u = datetime.datetime.utcnow().replace(hour=7, minute=0, second=0, microsecond=0)
 			g = time.gmtime(u.timestamp())
-			result = u.hour() == 7 and g[3] == u.hour() and g[2] == u.day()
+			result = u.hour == 7 and g[3] == u.hour and g[2] == u.day
 		`, true},
 
 		// comparisons and subtraction are instant based
@@ -292,16 +292,16 @@ func TestDatetimeUTCPlus8(t *testing.T) {
 
 		// timedelta totals
 		{"timedelta composite", `
-			result = datetime.timedelta(days=1, hours=2, minutes=30)
+			result = datetime.timedelta(days=1, hours=2, minutes=30).total_seconds()
 		`, 95400.0},
 		{"timedelta weeks", `
-			result = datetime.timedelta(weeks=1)
+			result = datetime.timedelta(weeks=1).total_seconds()
 		`, 604800.0},
 		{"timedelta negative", `
-			result = datetime.timedelta(days=-1)
+			result = datetime.timedelta(days=-1).total_seconds()
 		`, -86400.0},
 		{"timedelta microseconds", `
-			result = datetime.timedelta(microseconds=500000)
+			result = datetime.timedelta(microseconds=500000).total_seconds()
 		`, 0.5},
 	})
 }
@@ -335,12 +335,12 @@ func TestDatetimeUTCMinus5(t *testing.T) {
 		{"utcnow renders UTC components", `
 			u = datetime.datetime.utcnow()
 			g = time.gmtime(u.timestamp())
-			result = u.year()==g[0] and u.month()==g[1] and u.day()==g[2] and u.hour()==g[3] and u.minute()==g[4] and u.second()==g[5]
+			result = u.year==g[0] and u.month==g[1] and u.day==g[2] and u.hour==g[3] and u.minute==g[4] and u.second==g[5]
 		`, true},
 		{"now renders local components", `
 			n = datetime.datetime.now()
 			l = time.localtime(n.timestamp())
-			result = n.year()==l[0] and n.month()==l[1] and n.day()==l[2] and n.hour()==l[3] and n.minute()==l[4] and n.second()==l[5]
+			result = n.year==l[0] and n.month==l[1] and n.day==l[2] and n.hour==l[3] and n.minute==l[4] and n.second==l[5]
 		`, true},
 	})
 }
@@ -366,7 +366,7 @@ func TestDatetimeLocalUTC(t *testing.T) {
 		{"utcnow renders UTC components", `
 			u = datetime.datetime.utcnow()
 			g = time.gmtime(u.timestamp())
-			result = u.hour() == g[3] and u.minute() == g[4]
+			result = u.hour == g[3] and u.minute == g[4]
 		`, true},
 	})
 }
@@ -386,12 +386,12 @@ func TestDatetimeHostTimezone(t *testing.T) {
 		{"utcnow matches gmtime of same instant", `
 			u = datetime.datetime.utcnow()
 			g = time.gmtime(u.timestamp())
-			result = u.year()==g[0] and u.month()==g[1] and u.day()==g[2] and u.hour()==g[3] and u.minute()==g[4] and u.second()==g[5]
+			result = u.year==g[0] and u.month==g[1] and u.day==g[2] and u.hour==g[3] and u.minute==g[4] and u.second==g[5]
 		`, true},
 		{"now matches localtime of same instant", `
 			n = datetime.datetime.now()
 			l = time.localtime(n.timestamp())
-			result = n.year()==l[0] and n.month()==l[1] and n.day()==l[2] and n.hour()==l[3] and n.minute()==l[4] and n.second()==l[5]
+			result = n.year==l[0] and n.month==l[1] and n.day==l[2] and n.hour==l[3] and n.minute==l[4] and n.second==l[5]
 		`, true},
 		{"strptime round trip", `
 			result = datetime.datetime.strptime("2024-01-15T23:51:33", "%Y-%m-%dT%H:%M:%S").strftime("%Y-%m-%dT%H:%M:%S")
@@ -399,7 +399,27 @@ func TestDatetimeHostTimezone(t *testing.T) {
 		{"utcnow replace renders utc", `
 			u = datetime.datetime.utcnow().replace(hour=7, minute=0, second=0, microsecond=0)
 			g = time.gmtime(u.timestamp())
-			result = u.hour() == 7 and g[3] == u.hour() and g[2] == u.day()
+			result = u.hour == 7 and g[3] == u.hour and g[2] == u.day
 		`, true},
+	})
+}
+
+func TestTimedeltaObject(t *testing.T) {
+	runDatetimeCases(t, []struct {
+		name   string
+		script string
+		want   interface{}
+	}{
+		{"timedelta str days hours", `result = str(datetime.timedelta(days=1, hours=2))`, "1 day, 2:00:00"},
+		{"timedelta str hours minutes", `result = str(datetime.timedelta(hours=2, minutes=30))`, "2:30:00"},
+		{"timedelta str negative seconds", `result = str(datetime.timedelta(seconds=-5))`, "-1 day, 23:59:55"},
+		{"timedelta str negative days hours", `result = str(datetime.timedelta(days=-1, hours=-2))`, "-2 days, 22:00:00"},
+		{"timedelta str microseconds", `result = str(datetime.timedelta(microseconds=7))`, "0:00:00.000007"},
+		{"timedelta str weeks", `result = str(datetime.timedelta(weeks=2))`, "14 days, 0:00:00"},
+		{"timedelta fields", `result = str(datetime.timedelta(seconds=-5).days) + "|" + str(datetime.timedelta(seconds=-5).seconds)`, "-1|86395"},
+		{"timedelta total seconds", `result = datetime.timedelta(seconds=-5).total_seconds()`, -5.0},
+		{"fromisoformat date", `result = datetime.date.fromisoformat("2026-09-27").isoformat()`, "2026-09-27"},
+		{"fromisoformat datetime year", `result = datetime.datetime.fromisoformat("2026-09-27T14:30:00").year`, int64(2026)},
+		{"strptime year attribute", `result = datetime.datetime.strptime("2026-09-27", "%Y-%m-%d").year`, int64(2026)},
 	})
 }

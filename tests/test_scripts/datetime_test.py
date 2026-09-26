@@ -20,8 +20,9 @@ two_hours = datetime.timedelta(hours=2)
 one_week = datetime.timedelta(weeks=1)
 combined = datetime.timedelta(days=1, hours=2, minutes=30)
 
-# Verify the calculations (all return seconds)
-assert one_day == 86400
-assert two_hours == 7200
-assert one_week == 604800
-assert combined == 95400
+# Verify the calculations (total_seconds, like Python)
+assert one_day.total_seconds() == 86400
+assert two_hours.total_seconds() == 7200
+assert one_week.total_seconds() == 604800
+assert combined.total_seconds() == 95400
+assert str(combined) == "1 day, 2:30:00"

@@ -51,6 +51,10 @@ var ItertoolsLibrary = object.NewLibrary(ItertoolsLibraryName, map[string]*objec
 						result = append(result, object.NewString(string(ch)))
 					}
 				default:
+					if elems, ok := object.IterableToSlice(arg); ok {
+						result = append(result, elems...)
+						break
+					}
 					return errors.NewTypeError("iterable", arg.Type().String())
 				}
 			}
@@ -98,8 +102,11 @@ Example:
 	},
 	"cycle": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			// cycle(iterable, n) - Cycle through iterable n times
-			if err := errors.ExactArgs(args, 2); err != nil {
+			// cycle(iterable) matches Python: a lazily infinite cycling
+			// iterator (list() of it never terminates, exactly like Python).
+			// The legacy finite form cycle(iterable, n) still works and
+			// returns the materialized list.
+			if err := errors.RangeArgs(args, 1, 2); err != nil {
 				return err
 			}
 			var elements []object.Object
@@ -113,28 +120,41 @@ Example:
 					elements = append(elements, object.NewString(string(ch)))
 				}
 			default:
+				if elems, ok := object.IterableToSlice(args[0]); ok {
+					elements = elems
+					break
+				}
 				return errors.NewTypeError("iterable", args[0].Type().String())
 			}
-			n, ok := args[1].(*object.Integer)
-			if !ok {
-				return errors.NewTypeError("INTEGER", args[1].Type().String())
+			if len(args) == 2 {
+				n, ok := args[1].(*object.Integer)
+				if !ok {
+					return errors.NewTypeError("INTEGER", args[1].Type().String())
+				}
+				if len(elements) == 0 || n.IntValue() <= 0 {
+					return &object.List{Elements: []object.Object{}}
+				}
+				result := make([]object.Object, 0, len(elements)*int(n.IntValue()))
+				for i := int64(0); i < n.IntValue(); i++ {
+					result = append(result, elements...)
+				}
+				return &object.List{Elements: result}
 			}
-			if len(elements) == 0 || n.IntValue() <= 0 {
-				return &object.List{Elements: []object.Object{}}
+			if len(elements) == 0 {
+				return &object.Exception{Message: "cycle() of empty iterable", ExceptionType: object.ExceptionTypeRuntimeError, Raised: true}
 			}
-			result := make([]object.Object, 0, len(elements)*int(n.IntValue()))
-			for i := int64(0); i < n.IntValue(); i++ {
-				result = append(result, elements...)
-			}
-			return &object.List{Elements: result}
+			i := 0
+			return object.NewIterator(func() (object.Object, bool) {
+				elem := elements[i%len(elements)]
+				i++
+				return elem, true
+			})
 		},
-		HelpText: `cycle(iterable, n) - Cycle through iterable n times
+		HelpText: `cycle(iterable) - Cycle through iterable endlessly
 
-Returns a list with elements of iterable repeated n times.
-Note: Unlike Python's infinite cycle, this requires specifying the count.
-
-Example:
-  itertools.cycle([1, 2, 3], 2) -> [1, 2, 3, 1, 2, 3]`,
+Returns an infinite iterator, like Python's itertools.cycle; consume it with
+next() or itertools.islice. The legacy form cycle(iterable, n) returns the
+materialized list of n repetitions.`,
 	},
 	"count": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -188,47 +208,46 @@ Example:
 			if err := errors.RangeArgs(args, 2, 4); err != nil {
 				return err
 			}
-			var elements []object.Object
-			switch a := args[0].(type) {
-			case *object.List:
-				elements = a.Elements
-			case *object.Tuple:
-				elements = a.Elements
-			case *object.String:
-				for _, ch := range a.StringValue() {
-					elements = append(elements, object.NewString(string(ch)))
+			// Iterator inputs stay lazy: islice over an infinite iterator
+			// (itertools.cycle) must not materialize it.
+			if iter, isIter := args[0].(*object.Iterator); isIter {
+				var start, stop, step int64 = 0, 0, 1
+				if err := parseIsliceBounds(args, &start, &stop, &step); err != nil {
+					return err
 				}
-			default:
+				if step <= 0 {
+					return errors.NewError("step must be positive")
+				}
+				skipped := int64(0)
+				taken := int64(0)
+				return object.NewIterator(func() (object.Object, bool) {
+					for {
+						if taken >= stop-start {
+							return nil, false
+						}
+						val, ok := iter.Next()
+						if !ok {
+							return nil, false
+						}
+						pos := skipped
+						skipped++
+						if pos < start || (pos-start)%step != 0 {
+							continue
+						}
+						taken++
+						return val, true
+					}
+				})
+			}
+
+			elements, ok := object.IterableToSlice(args[0])
+			if !ok {
 				return errors.NewTypeError("iterable", args[0].Type().String())
 			}
 
 			var start, stop, step int64 = 0, 0, 1
-			if len(args) == 2 {
-				// islice(iterable, stop)
-				if s, ok := args[1].(*object.Integer); ok {
-					stop = s.IntValue()
-				} else {
-					return errors.NewTypeError("INTEGER", args[1].Type().String())
-				}
-			} else {
-				// islice(iterable, start, stop[, step])
-				if s, ok := args[1].(*object.Integer); ok {
-					start = s.IntValue()
-				} else {
-					return errors.NewTypeError("INTEGER", args[1].Type().String())
-				}
-				if s, ok := args[2].(*object.Integer); ok {
-					stop = s.IntValue()
-				} else {
-					return errors.NewTypeError("INTEGER", args[2].Type().String())
-				}
-				if len(args) == 4 {
-					if s, ok := args[3].(*object.Integer); ok {
-						step = s.IntValue()
-					} else {
-						return errors.NewTypeError("INTEGER", args[3].Type().String())
-					}
-				}
+			if err := parseIsliceBounds(args, &start, &stop, &step); err != nil {
+				return err
 			}
 
 			if step <= 0 {
@@ -273,6 +292,10 @@ Example:
 			case *object.Tuple:
 				elements = a.Elements
 			default:
+				if elems, ok := object.IterableToSlice(args[1]); ok {
+					elements = elems
+					break
+				}
 				return errors.NewTypeError("iterable", args[1].Type().String())
 			}
 			result := []object.Object{}
@@ -312,6 +335,10 @@ Example:
 			case *object.Tuple:
 				elements = a.Elements
 			default:
+				if elems, ok := object.IterableToSlice(args[1]); ok {
+					elements = elems
+					break
+				}
 				return errors.NewTypeError("iterable", args[1].Type().String())
 			}
 			result := []object.Object{}
@@ -369,6 +396,10 @@ Example:
 					}
 					iterables[i] = chars
 				default:
+					if elems, ok := object.IterableToSlice(arg); ok {
+						iterables[i] = elems
+						break
+					}
 					return errors.NewTypeError("iterable", arg.Type().String())
 				}
 				if len(iterables[i]) > maxLen {
@@ -405,23 +436,43 @@ Example:
 				return &object.List{Elements: []object.Object{&object.Tuple{Elements: []object.Object{}}}}
 			}
 
-			// Convert all arguments to slices
-			iterables := make([][]object.Object, len(args))
-			for i, arg := range args {
+			// product(*iterables, repeat=N) repeats the iterables N times,
+			// like Python.
+			repeatN := int64(1)
+			if v := kwargs.Get("repeat"); v != nil {
+				if n, err := v.AsInt(); err == nil {
+					repeatN = n
+				} else {
+					return errors.ParameterError("repeat", err)
+				}
+			}
+			// Materialize each argument once: iterator arguments are
+			// consumed by the first pass, so repeating must reuse the
+			// collected elements rather than re-iterate.
+			collected := make([][]object.Object, 0, len(args))
+			for _, arg := range args {
 				switch a := arg.(type) {
 				case *object.List:
-					iterables[i] = a.Elements
+					collected = append(collected, a.Elements)
 				case *object.Tuple:
-					iterables[i] = a.Elements
+					collected = append(collected, a.Elements)
 				case *object.String:
 					chars := []object.Object{}
 					for _, ch := range a.StringValue() {
 						chars = append(chars, object.NewString(string(ch)))
 					}
-					iterables[i] = chars
+					collected = append(collected, chars)
 				default:
+					if elems, ok := object.IterableToSlice(arg); ok {
+						collected = append(collected, elems)
+						break
+					}
 					return errors.NewTypeError("iterable", arg.Type().String())
 				}
+			}
+			iterables := make([][]object.Object, 0, int(repeatN)*len(collected))
+			for rep := int64(0); rep < repeatN; rep++ {
+				iterables = append(iterables, collected...)
 			}
 
 			// Check for empty iterables
@@ -484,6 +535,10 @@ Example:
 					elements = append(elements, object.NewString(string(ch)))
 				}
 			default:
+				if elems, ok := object.IterableToSlice(args[0]); ok {
+					elements = elems
+					break
+				}
 				return errors.NewTypeError("iterable", args[0].Type().String())
 			}
 
@@ -531,6 +586,10 @@ Example:
 					elements = append(elements, object.NewString(string(ch)))
 				}
 			default:
+				if elems, ok := object.IterableToSlice(args[0]); ok {
+					elements = elems
+					break
+				}
 				return errors.NewTypeError("iterable", args[0].Type().String())
 			}
 
@@ -574,6 +633,10 @@ Example:
 					elements = append(elements, object.NewString(string(ch)))
 				}
 			default:
+				if elems, ok := object.IterableToSlice(args[0]); ok {
+					elements = elems
+					break
+				}
 				return errors.NewTypeError("iterable", args[0].Type().String())
 			}
 
@@ -616,6 +679,10 @@ Example:
 			case *object.Tuple:
 				elements = a.Elements
 			default:
+				if elems, ok := object.IterableToSlice(args[0]); ok {
+					elements = elems
+					break
+				}
 				return errors.NewTypeError("iterable", args[0].Type().String())
 			}
 
@@ -694,6 +761,10 @@ Example:
 			case *object.Tuple:
 				elements = a.Elements
 			default:
+				if elems, ok := object.IterableToSlice(args[0]); ok {
+					elements = elems
+					break
+				}
 				return errors.NewTypeError("iterable", args[0].Type().String())
 			}
 
@@ -754,6 +825,10 @@ Example:
 			case *object.Tuple:
 				elements = a.Elements
 			default:
+				if elems, ok := object.IterableToSlice(args[1]); ok {
+					elements = elems
+					break
+				}
 				return errors.NewTypeError("iterable", args[1].Type().String())
 			}
 			result := []object.Object{}
@@ -792,6 +867,10 @@ Example:
 			case *object.Tuple:
 				elements = a.Elements
 			default:
+				if elems, ok := object.IterableToSlice(args[1]); ok {
+					elements = elems
+					break
+				}
 				return errors.NewTypeError("iterable", args[1].Type().String())
 			}
 			result := []object.Object{}
@@ -826,22 +905,12 @@ Example:
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
-			var data []object.Object
-			switch a := args[0].(type) {
-			case *object.List:
-				data = a.Elements
-			case *object.Tuple:
-				data = a.Elements
-			default:
+			data, dataOK := object.IterableToSlice(args[0])
+			if !dataOK {
 				return errors.NewTypeError("iterable", args[0].Type().String())
 			}
-			var selectors []object.Object
-			switch a := args[1].(type) {
-			case *object.List:
-				selectors = a.Elements
-			case *object.Tuple:
-				selectors = a.Elements
-			default:
+			selectors, selOK := object.IterableToSlice(args[1])
+			if !selOK {
 				return errors.NewTypeError("iterable", args[1].Type().String())
 			}
 
@@ -882,6 +951,10 @@ Example:
 					elements = append(elements, object.NewString(string(ch)))
 				}
 			default:
+				if elems, ok := object.IterableToSlice(args[0]); ok {
+					elements = elems
+					break
+				}
 				return errors.NewTypeError("iterable", args[0].Type().String())
 			}
 
@@ -920,6 +993,10 @@ Example:
 					elements = append(elements, object.NewString(string(ch)))
 				}
 			default:
+				if elems, ok := object.IterableToSlice(args[0]); ok {
+					elements = elems
+					break
+				}
 				return errors.NewTypeError("iterable", args[0].Type().String())
 			}
 
@@ -1082,4 +1159,35 @@ func isTruthy(obj object.Object) bool {
 	default:
 		return true
 	}
+}
+
+// parseIsliceBounds reads islice(iterable, stop) or islice(iterable,
+// start, stop[, step]) bounds.
+func parseIsliceBounds(args []object.Object, start, stop, step *int64) object.Object {
+	if len(args) == 2 {
+		if s, ok := args[1].(*object.Integer); ok {
+			*stop = s.IntValue()
+		} else {
+			return errors.NewTypeError("INTEGER", args[1].Type().String())
+		}
+		return nil
+	}
+	if s, ok := args[1].(*object.Integer); ok {
+		*start = s.IntValue()
+	} else {
+		return errors.NewTypeError("INTEGER", args[1].Type().String())
+	}
+	if s, ok := args[2].(*object.Integer); ok {
+		*stop = s.IntValue()
+	} else {
+		return errors.NewTypeError("INTEGER", args[2].Type().String())
+	}
+	if len(args) == 4 {
+		if s, ok := args[3].(*object.Integer); ok {
+			*step = s.IntValue()
+		} else {
+			return errors.NewTypeError("INTEGER", args[3].Type().String())
+		}
+	}
+	return nil
 }

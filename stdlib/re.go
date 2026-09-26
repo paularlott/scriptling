@@ -48,7 +48,7 @@ var RegexClass = &object.Class{
 					return &object.Null{}
 				}
 
-				return createMatchInstance(groupsFromIndices(text, match), match[0], match[1])
+				return createMatchInstance(groupsFromIndices(text, match), match[0], match[1], re.SubexpNames())
 			},
 			HelpText: `match(string) - Match pattern at start of string
 
@@ -76,7 +76,7 @@ Returns a Match object if the pattern matches at the beginning, or None if no ma
 					return &object.Null{}
 				}
 
-				return createMatchInstance(groupsFromIndices(text, match), match[0], match[1])
+				return createMatchInstance(groupsFromIndices(text, match), match[0], match[1], re.SubexpNames())
 			},
 			HelpText: `search(string) - Search for pattern anywhere in string
 
@@ -172,7 +172,7 @@ If there are no capturing groups, returns a list of strings for the full matches
 							groups = append(groups, "")
 						}
 					}
-					elements[i] = createMatchInstance(groups, match[0], match[1])
+					elements[i] = createMatchInstance(groups, match[0], match[1], re.SubexpNames())
 				}
 				return &object.List{Elements: elements}
 			},
@@ -194,20 +194,51 @@ var MatchClass = &object.Class{
 				}
 				match := args[0].(*object.Instance)
 				groups := match.Field("_groups").(*object.List).Elements
+				names := match.Field("_group_names").(*object.List).Elements
 				groupNum := 0
 				if len(args) == 2 {
+					if args[1].Type() == object.STRING_OBJ {
+						// Named group access: (?P<name>...) captures.
+						name, _ := args[1].AsString()
+						for i, n := range names {
+							if ns, ok := n.(*object.String); ok && ns.StringValue() == name {
+								return groups[i]
+							}
+						}
+						return &object.Exception{Message: "no such group", ExceptionType: object.ExceptionTypeIndexError, Raised: true}
+					}
 					if args[1].Type() != object.INTEGER_OBJ {
-						return errors.NewTypeError("INTEGER", args[1].Type().String())
+						return errors.NewTypeError("INTEGER or STRING", args[1].Type().String())
 					}
 					val, _ := args[1].AsInt()
 					groupNum = int(val)
 				}
 				if groupNum < 0 || groupNum >= len(groups) {
-					return errors.NewError("no such group: %d", groupNum)
+					return &object.Exception{Message: "no such group", ExceptionType: object.ExceptionTypeIndexError, Raised: true}
 				}
 				return groups[groupNum]
 			},
-			HelpText: `group(n=0) - Return the nth matched group (0 = full match)`,
+			HelpText: `group([n]) - Return the nth matched group (0 = full match), or the group captured under a (?P<name>...) name`,
+		},
+		"groupdict": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.ExactArgs(args, 1); err != nil {
+					return err
+				}
+				match := args[0].(*object.Instance)
+				groups := match.Field("_groups").(*object.List).Elements
+				names := match.Field("_group_names").(*object.List).Elements
+				result := &object.Dict{Pairs: make(map[string]object.DictPair)}
+				for i, n := range names {
+					ns, ok := n.(*object.String)
+					if !ok || ns.StringValue() == "" || i >= len(groups) {
+						continue
+					}
+					result.SetByString(ns.StringValue(), groups[i])
+				}
+				return result
+			},
+			HelpText: `groupdict() - Return a dict of named groups to their matched text`,
 		},
 		"groups": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -305,18 +336,27 @@ func createRegexInstance(pattern string, flags int64) *object.Instance {
 }
 
 // Helper function to create a Match instance
-func createMatchInstance(groups []string, start, end int) *object.Instance {
+func createMatchInstance(groups []string, start, end int, groupNames []string) *object.Instance {
 	groupObjects := make([]object.Object, len(groups))
 	for i, group := range groups {
 		groupObjects[i] = object.NewString(group)
+	}
+	nameObjects := make([]object.Object, len(groups))
+	for i := range nameObjects {
+		name := ""
+		if i < len(groupNames) {
+			name = groupNames[i]
+		}
+		nameObjects[i] = object.NewString(name)
 	}
 	// The fields carry underscored names: a field named "start" would shadow
 	// the start() method on the class, making m.start() an "INTEGER object is
 	// not callable" error while m.start silently returned the raw field.
 	return object.NewInstanceWithFields(MatchClass, map[string]object.Object{
-		"_groups": &object.List{Elements: groupObjects},
-		"_start":  object.NewInteger(int64(start)),
-		"_end":    object.NewInteger(int64(end)),
+		"_groups":      &object.List{Elements: groupObjects},
+		"_group_names": &object.List{Elements: nameObjects},
+		"_start":       object.NewInteger(int64(start)),
+		"_end":         object.NewInteger(int64(end)),
 	})
 }
 
@@ -488,7 +528,7 @@ var ReLibrary = object.NewLibrary(ReLibraryName, map[string]*object.Builtin{
 				}
 			}
 
-			return createMatchInstance(groups, match[0], match[1])
+			return createMatchInstance(groups, match[0], match[1], re.SubexpNames())
 		},
 		HelpText: `match(pattern, string, flags=0) - Match pattern at start of string
 
@@ -544,7 +584,7 @@ Flags:
 				}
 			}
 
-			return createMatchInstance(groups, match[0], match[1])
+			return createMatchInstance(groups, match[0], match[1], re.SubexpNames())
 		},
 		HelpText: `search(pattern, string, flags=0) - Search for pattern anywhere in string
 
@@ -640,7 +680,7 @@ Flags:
 			allMatches := re.FindAllStringSubmatchIndex(text, -1)
 			elements := make([]object.Object, len(allMatches))
 			for i, match := range allMatches {
-				elements[i] = createMatchInstance(groupsFromIndices(text, match), match[0], match[1])
+				elements[i] = createMatchInstance(groupsFromIndices(text, match), match[0], match[1], re.SubexpNames())
 			}
 			return &object.List{Elements: elements}
 		},
@@ -729,7 +769,7 @@ Flags:
 					// Add text before match
 					resultBuilder = append(resultBuilder, text[lastEnd:match[0]]...)
 
-					matchObj := createMatchInstance(groupsFromIndices(text, match), match[0], match[1])
+					matchObj := createMatchInstance(groupsFromIndices(text, match), match[0], match[1], re.SubexpNames())
 
 					// Call the replacement function
 					var resultObj object.Object
@@ -940,7 +980,7 @@ Returns a string with all special regex characters escaped.`,
 				}
 			}
 
-			return createMatchInstance(groups, match[0], match[1])
+			return createMatchInstance(groups, match[0], match[1], re.SubexpNames())
 		},
 		HelpText: `fullmatch(pattern, string, flags=0) - Match entire string
 
