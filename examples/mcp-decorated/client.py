@@ -4,12 +4,15 @@
 # Run from the scriptling repo root:
 #   scriptling examples/mcp-decorated/client.py
 #
-# (assumes `scriptling` is on your PATH)
+# (launches its own interpreter via sys.executable)
 
+import sys
 import scriptling.mcp as mcp
 
+# sys.executable: launch this script's own interpreter, not whatever
+# "scriptling" resolves to on PATH.
 client = mcp.Client(
-    "scriptling",
+    sys.executable,
     args=["--mcp-tools", "examples/mcp-decorated/tools"],
     namespace="shop",
 )

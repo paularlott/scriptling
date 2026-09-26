@@ -6,7 +6,7 @@ import scriptling.ai.agent.interact as interact
 import scriptling.console as console
 
 BASE_URL = "http://127.0.0.1:11434/v1"
-MODEL = "gemma4:e4b"
+MODEL = "ornith-1.5:9b"
 
 
 def echo_tool(args):

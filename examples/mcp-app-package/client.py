@@ -10,11 +10,14 @@
 # SALES_APP_PACKAGE overrides the package path (default ./sales-app.zip).
 
 import os
+import sys
 import scriptling.mcp as mcp
 
 package = os.getenv("SALES_APP_PACKAGE", "sales-app.zip")
 
-client = mcp.Client("scriptling", args=["--package", package], namespace="app")
+# sys.executable: serve the package from this script's own interpreter,
+# never depending on which scriptling is on PATH.
+client = mcp.Client(sys.executable, args=["--package", package], namespace="app")
 
 print("== tools ==")
 app_tool = None

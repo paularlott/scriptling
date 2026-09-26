@@ -12,18 +12,19 @@
 # subprocess.
 #
 # Run from the scriptling repo root with an OpenAI-compatible endpoint:
-#   OPENAI_BASE_URL=http://127.0.0.1:11434/v1 OPENAI_MODEL=gemma4:e4b \
+#   OPENAI_BASE_URL=http://127.0.0.1:11434/v1 OPENAI_MODEL=ornith-1.5:9b \
 #     scriptling examples/agent-mcp/example.py
 #
-# (assumes `scriptling` is on your PATH)
+# (the server subprocess is this script's own interpreter, via sys.executable)
 
 import os
+import sys
 import scriptling.ai as ai
 import scriptling.ai.agent as agent
 import scriptling.mcp as mcp
 
 base_url = os.getenv("OPENAI_BASE_URL", "http://127.0.0.1:11434/v1")
-model = os.getenv("OPENAI_MODEL", "gemma4:e4b")
+model = os.getenv("OPENAI_MODEL", "ornith-1.5:9b")
 
 # A local tool living next to the remote ones.
 def local_note(args):
@@ -35,8 +36,10 @@ tools.add("local_note", "Note something for later in this conversation", {"text"
 # The MCP server: launched as a stdio subprocess serving this example's
 # tools and skills. The namespace is required: it prefixes the server's tool
 # names and routes skill URIs back to this server.
+# sys.executable relaunches this script's own interpreter as the stdio
+# server, so the example never depends on which scriptling is on PATH.
 shop = mcp.Client(
-    "scriptling",
+    sys.executable,
     args=["--mcp-tools", "examples/agent-mcp/tools", "--mcp-skills", "examples/agent-mcp/skills"],
     namespace="shop",
 )

@@ -15,7 +15,7 @@ print()
 print("Running chat completion with mistralai/ministral-3-3b...")
 
 response = ai_client.completion(
-    "gemma4:e4b",
+    "ornith-1.5:9b",
     [{"role": "user", "content": "What is 2 + 2? Answer with just the number."}]
 )
 

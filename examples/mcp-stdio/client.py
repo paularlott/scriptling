@@ -10,12 +10,15 @@
 # Run with:
 #   scriptling examples/mcp-stdio/client.py
 #
-# (assumes `scriptling` is on your PATH)
+# (launches its own interpreter via sys.executable)
 
+import sys
 import scriptling.mcp as mcp
 
-# Launch the stdio server subprocess. Tool names are prefixed with the namespace.
-client = mcp.Client("scriptling", args=["--mcp-exec-script"], namespace="local")
+# Launch this script's own interpreter as the stdio server subprocess (never
+# depends on which scriptling is on PATH). Tool names are prefixed with the
+# namespace.
+client = mcp.Client(sys.executable, args=["--mcp-exec-script"], namespace="local")
 
 print("Tools:")
 for tool in client.tools():

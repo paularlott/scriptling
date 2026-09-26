@@ -92,6 +92,13 @@ func newSysLibraryWithReader(argv []string, stdin *bufio.Reader) *object.Library
 		"argv": &object.List{Elements: argvElements},
 	}
 
+	// executable: the path of the running interpreter, so scripts (and the
+	// MCP examples) can relaunch their own binary instead of relying on
+	// whatever "scriptling" resolves to on PATH.
+	if exePath, err := os.Executable(); err == nil {
+		constants["executable"] = object.NewString(exePath)
+	}
+
 	// stdin object
 	if stdin != nil {
 		constants["stdin"] = newStdinObject(stdin)

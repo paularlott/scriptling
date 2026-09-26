@@ -177,7 +177,7 @@ models = models_response.data
 print()
 print("Running chat completion...")
 response = client.completion(
-    "gemma4:e4b",
+    "ornith-1.5:9b",
     [{"role": "user", "content": "What is 2 + 2?"}]
 )
 ```
@@ -193,7 +193,7 @@ client = ai.Client("http://127.0.0.1:1234/v1")
 
 # Create a streaming completion
 stream = client.completion_stream(
-    "gemma4:e4b",
+    "ornith-1.5:9b",
     [{"role": "user", "content": "Write a short haiku about coding in Python."}]
 )
 
@@ -223,7 +223,7 @@ tools.add("echo_tool", "Echo a message back to the assistant", {"message": "stri
 schemas = tools.build()
 
 response = client.completion(
-    "gemma4:e4b",
+    "ornith-1.5:9b",
     [{"role": "user", "content": "Call the echo_tool with message 'hello from tool test'."}],
     tools=schemas
 )
@@ -235,7 +235,7 @@ Demonstrates streaming a tool-enabled turn:
 
 ```python
 stream = client.completion_stream(
-    "gemma4:e4b",
+    "ornith-1.5:9b",
     [{"role": "user", "content": "Call the echo_tool with message 'hello from streaming tool test'."}],
     tools=schemas
 )

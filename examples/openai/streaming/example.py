@@ -8,13 +8,13 @@ print("Creating OpenAI client...")
 client = ai.Client("http://127.0.0.1:11434/v1")
 
 print()
-print("Streaming chat completion with gemma4:e4b...")
+print("Streaming chat completion with ornith-1.5:9b...")
 print("Response (streaming):")
 print("-" * 60)
 
 # Create a streaming completion
 stream = client.completion_stream(
-    "gemma4:e4b",
+    "ornith-1.5:9b",
     [{"role": "user", "content": "Write a short haiku about coding in Python. Be creative."}]
 )
 

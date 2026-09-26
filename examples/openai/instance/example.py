@@ -16,10 +16,10 @@ for model in models:
     print(f"  - {model.id}")
 
 print()
-print("Running chat completion with gemma4:e4b...")
+print("Running chat completion with ornith-1.5:9b...")
 
 response = client.completion(
-    "gemma4:e4b",
+    "ornith-1.5:9b",
     [{"role": "user", "content": "What is 2 + 2? Answer with just the number."}]
 )
 
