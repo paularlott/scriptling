@@ -43,33 +43,32 @@ assert len(d) == 3
 assert d[0] == 1
 assert d[2] == 3
 
-# Test deque_appendleft
+# Test deque methods (Python-style)
 d = collections.deque([1, 2, 3])
-collections.deque_appendleft(d, 0)
+d.appendleft(0)
 assert d[0] == 0
 assert len(d) == 4
 
-# Test deque_popleft
 d = collections.deque([1, 2, 3])
-x = collections.deque_popleft(d)
+x = d.popleft()
 assert x == 1
 assert len(d) == 2
 assert d[0] == 2
 
-# Test deque_rotate
 d = collections.deque([1, 2, 3, 4])
-collections.deque_rotate(d, 1)
+d.rotate(1)
 assert d[0] == 4
 assert d[1] == 1
 
 d = collections.deque([1, 2, 3, 4])
-collections.deque_rotate(d, -1)
+d.rotate(-1)
 assert d[0] == 2
 assert d[3] == 1
 
-# Test namedtuple
+# Test namedtuple (repr matches Python)
 Point = collections.namedtuple("Point", ["x", "y"])
 p = Point(1, 2)
+assert str(p) == "Point(x=1, y=2)", f"namedtuple repr: {p}"
 assert p["x"] == 1
 assert p["y"] == 2
 # Test direct attribute access

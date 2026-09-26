@@ -152,6 +152,18 @@ Example:
 			if n%2 == 0 {
 				return object.NewFloat((sorted[n/2-1] + sorted[n/2]) / 2)
 			}
+			// Odd count: Python returns the middle element itself, keeping
+			// int inputs ints (statistics.median([1, 3, 2]) is 2, not 2.0).
+			if list, ok := args[0].(*object.List); ok {
+				ordered := make([]object.Object, len(list.Elements))
+				copy(ordered, list.Elements)
+				sort.SliceStable(ordered, func(i, j int) bool {
+					return numericOf(ordered[i]) < numericOf(ordered[j])
+				})
+				if mid, ok := ordered[n/2].(*object.Integer); ok {
+					return mid
+				}
+			}
 			return object.NewFloat(sorted[n/2])
 		},
 		HelpText: `median(data) - Return the median (middle value) of data
@@ -364,4 +376,15 @@ func populationVariance(values []float64) float64 {
 		sumSq += diff * diff
 	}
 	return sumSq / float64(n) // Population variance uses n
+}
+
+// numericOf reads a number-typed element's float value for ordering.
+func numericOf(v object.Object) float64 {
+	switch t := v.(type) {
+	case *object.Integer:
+		return float64(t.IntValue())
+	case *object.Float:
+		return t.FloatValue()
+	}
+	return 0
 }

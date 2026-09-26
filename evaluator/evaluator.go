@@ -1786,6 +1786,8 @@ var operatorToDunderMethod = map[ast.Op]string{
 	ast.OpDiv:      "__truediv__",
 	ast.OpFloorDiv: "__floordiv__",
 	ast.OpMod:      "__mod__",
+	ast.OpBitOr:    "__or__",
+	ast.OpBitAnd:   "__and__",
 }
 
 // mirroredComparisonDunder maps a comparison operator to the dunder that

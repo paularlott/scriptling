@@ -722,16 +722,23 @@ Flags:
 				return errors.NewTypeError("STRING or FUNCTION", args[1].Type().String())
 			}
 
-			// count parameter (optional, position 3)
-			count := -1 // -1 means replace all
+			// count parameter (optional, position 3 or count= kwarg);
+			// 0 or omitted means replace all, as in Python.
+			count := -1
+			countObj := object.Object(nil)
 			if len(args) > 3 {
-				if args[3].Type() != object.INTEGER_OBJ {
+				countObj = args[3]
+			} else if v := kwargs.Get("count"); v != nil {
+				countObj = v
+			}
+			if countObj != nil {
+				if countObj.Type() != object.INTEGER_OBJ {
 					return errors.NewError("count must be an integer")
 				}
-				val, _ := args[3].AsInt()
+				val, _ := countObj.AsInt()
 				count = int(val)
 				if count == 0 {
-					count = -1 // 0 means replace all (Python semantics), same as omitting it
+					count = -1
 				}
 			}
 
@@ -811,14 +818,14 @@ Flags:
 				resultBuilder = append(resultBuilder, text[lastEnd:]...)
 				result = string(resultBuilder)
 			} else if count < 0 {
-				result = re.ReplaceAllString(text, replacementStr)
+				result = re.ReplaceAllString(text, pythonReplToGo(replacementStr))
 			} else {
 				// Replace only 'count' occurrences
 				replaced := 0
 				result = re.ReplaceAllStringFunc(text, func(match string) string {
 					if replaced < count {
 						replaced++
-						return re.ReplaceAllString(match, replacementStr)
+						return re.ReplaceAllString(match, pythonReplToGo(replacementStr))
 					}
 					return match
 				})
@@ -837,6 +844,45 @@ Flags:
   re.MULTILINE or re.M  - ^ and $ match at line boundaries
   re.DOTALL or re.S     - . matches newlines`,
 	},
+	"subn": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			// subn(pattern, repl, string[, count[, flags]]) returns
+			// (new_string, number_of_substitutions), like Python.
+			result := reSubBuiltin.Fn(ctx, object.NewKwargs(nil), args...)
+			if object.IsError(result) || result.Type() == object.EXCEPTION_OBJ {
+				return result
+			}
+			newText, _ := result.(*object.String)
+
+			pattern, _ := args[0].AsString()
+			text, _ := args[2].AsString()
+			count := int64(-1)
+			countObj := object.Object(nil)
+			if len(args) > 3 {
+				countObj = args[3]
+			} else if v := kwargs.Get("count"); v != nil {
+				countObj = v
+			}
+			if countObj != nil {
+				if v, err := countObj.AsInt(); err == nil {
+					count = v
+				}
+			}
+			if flags, err := getFlags(args, 4); err == nil {
+				pattern = applyFlags(pattern, flags)
+			}
+			re, err := GetCompiledRegex(pattern)
+			if err != nil {
+				return errors.NewError("regex compile error: %s", err.Error())
+			}
+			all := re.FindAllStringIndex(text, int(count))
+			return &object.Tuple{Elements: []object.Object{newText, object.NewInteger(int64(len(all)))}}
+		},
+		HelpText: `subn(pattern, repl, string, count=0) - Replace matches, returning (new_string, n)
+
+Like sub(), but returns a tuple of the modified string and the number of
+substitutions made.`,
+	},
 	"split": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 2 || len(args) > 4 {
@@ -848,16 +894,23 @@ Flags:
 			pattern, _ := args[0].AsString()
 			text, _ := args[1].AsString()
 
-			// maxsplit parameter (optional, position 2)
-			maxsplit := -1 // -1 means no limit
+			// maxsplit parameter (optional, position 2 or maxsplit= kwarg);
+			// 0 or omitted means no limit, as in Python.
+			maxsplit := -1
+			maxObj := object.Object(nil)
 			if len(args) > 2 {
-				if args[2].Type() != object.INTEGER_OBJ {
+				maxObj = args[2]
+			} else if v := kwargs.Get("maxsplit"); v != nil {
+				maxObj = v
+			}
+			if maxObj != nil {
+				if maxObj.Type() != object.INTEGER_OBJ {
 					return errors.NewError("maxsplit must be an integer")
 				}
-				val, _ := args[2].AsInt()
+				val, _ := maxObj.AsInt()
 				maxsplit = int(val)
 				if maxsplit == 0 {
-					maxsplit = -1 // 0 means no limit in Python
+					maxsplit = -1
 				}
 			}
 
@@ -873,7 +926,13 @@ Flags:
 				return errors.NewError("regex compile error: %s", err.Error())
 			}
 
-			parts := re.Split(text, maxsplit)
+			// Go's Split n is a result count; Python's maxsplit counts the
+			// splits themselves, so maxsplit m yields m+1 parts.
+			splitN := maxsplit
+			if maxsplit > 0 {
+				splitN = maxsplit + 1
+			}
+			parts := re.Split(text, splitN)
 			elements := make([]object.Object, len(parts))
 			for i, part := range parts {
 				elements[i] = object.NewString(part)
@@ -1000,3 +1059,51 @@ Flags:
 	"DOTALL":     object.NewInteger(RE_DOTALL),
 	"S":          object.NewInteger(RE_DOTALL),
 }, "Regular expression library")
+
+
+// pythonReplToGo converts Python replacement-string backreferences to Go's
+// regexp replacement syntax: \1..\99 become $1..$99 and \g<name> becomes
+// ${name}; a literal \\ stays a literal backslash.
+func pythonReplToGo(repl string) string {
+	var out strings.Builder
+	for i := 0; i < len(repl); i++ {
+		c := repl[i]
+		if c != '\\' || i+1 >= len(repl) {
+			out.WriteByte(c)
+			continue
+		}
+		next := repl[i+1]
+		switch {
+		case next == '\\':
+			out.WriteString("\\\\")
+			i++
+		case next >= '0' && next <= '9':
+			j := i + 1
+			for j < len(repl) && repl[j] >= '0' && repl[j] <= '9' && j-i < 3 {
+				j++
+			}
+			out.WriteByte('$')
+			out.WriteString(repl[i+1 : j])
+			i = j - 1
+		case next == 'g' && i+2 < len(repl) && repl[i+2] == '<':
+			end := strings.IndexByte(repl[i+2:], '>')
+			if end > 0 {
+				out.WriteString("${" + repl[i+3:i+2+end] + "}")
+				i = i + 2 + end
+			} else {
+				out.WriteByte(c)
+			}
+		default:
+			out.WriteByte(c)
+		}
+	}
+	return out.String()
+}
+
+// reSubBuiltin is wired in init() so subn can reuse sub's implementation
+// without an initialization cycle in the ReLibrary map literal.
+var reSubBuiltin *object.Builtin
+
+func init() {
+	reSubBuiltin = ReLibrary.Functions()["sub"]
+}

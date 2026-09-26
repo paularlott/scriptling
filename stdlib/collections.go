@@ -11,6 +11,77 @@ import (
 )
 
 // Counter class for counting elements
+
+// counterCounts extracts the key->count map from a Counter instance,
+// ignoring non-integer fields.
+func counterCounts(inst *object.Instance) map[string]int64 {
+	counts := make(map[string]int64)
+	inst.RangeFields(func(key string, v object.Object) bool {
+		if n, ok := v.(*object.Integer); ok {
+			counts[key] = n.IntValue()
+		}
+		return true
+	})
+	return counts
+}
+
+// newCounterFromCounts builds a Counter instance from a count map, dropping
+// non-positive entries like Python's Counter arithmetic does.
+func newCounterFromCounts(counts map[string]int64) *object.Instance {
+	inst := object.NewInstanceWithFields(counterClassRef, make(map[string]object.Object))
+	for key, n := range counts {
+		if n > 0 {
+			inst.SetField(key, object.NewInteger(n))
+		}
+	}
+	return inst
+}
+
+// counterArithmetic implements +, -, | and & over two Counters.
+func counterArithmetic(op byte, a, b *object.Instance) *object.Instance {
+	ac, bc := counterCounts(a), counterCounts(b)
+	out := make(map[string]int64)
+	switch op {
+	case '+':
+		for k, v := range ac {
+			out[k] += v
+		}
+		for k, v := range bc {
+			out[k] += v
+		}
+	case '-':
+		for k, v := range ac {
+			out[k] = v - bc[k]
+		}
+	case '|':
+		// Union: max per key across both.
+		for k, v := range ac {
+			if w, ok := bc[k]; ok {
+				if w > v {
+					v = w
+				}
+			}
+			out[k] = v
+		}
+		for k, v := range bc {
+			if _, ok := ac[k]; !ok {
+				out[k] = v
+			}
+		}
+	case '&':
+		// Intersection: min per key over common keys.
+		for k, v := range ac {
+			if w, ok := bc[k]; ok {
+				if w < v {
+					v = w
+				}
+				out[k] = v
+			}
+		}
+	}
+	return newCounterFromCounts(out)
+}
+
 var CounterClass = &object.Class{
 	Name: "Counter",
 	Methods: map[string]object.Object{
@@ -69,6 +140,38 @@ var CounterClass = &object.Class{
 				return &object.Null{}
 			},
 		},
+		"__add__": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if a, b, err := twoCounters(args); err != nil {
+				return err
+			} else if a != nil {
+				return counterArithFn('+', a, b)
+			}
+			return nil
+		}},
+		"__sub__": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if a, b, err := twoCounters(args); err != nil {
+				return err
+			} else if a != nil {
+				return counterArithFn('-', a, b)
+			}
+			return nil
+		}},
+		"__or__": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if a, b, err := twoCounters(args); err != nil {
+				return err
+			} else if a != nil {
+				return counterArithFn('|', a, b)
+			}
+			return nil
+		}},
+		"__and__": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if a, b, err := twoCounters(args); err != nil {
+				return err
+			} else if a != nil {
+				return counterArithFn('&', a, b)
+			}
+			return nil
+		}},
 		"__getitem__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				// __getitem__(self, key) - Get count for key
@@ -482,163 +585,37 @@ Example:
 				}
 			}
 
-			// Handle maxlen
+			// Handle maxlen (positional or kwarg; None means unbounded)
 			maxlen := int64(-1)
+			mlObj := object.Object(nil)
 			if len(args) >= 2 {
-				if ml, ok := args[1].(*object.Integer); ok {
+				mlObj = args[1]
+			} else if v := kwargs.Get("maxlen"); v != nil {
+				mlObj = v
+			}
+			if mlObj != nil {
+				if ml, ok := mlObj.(*object.Integer); ok {
 					maxlen = ml.IntValue()
 					if maxlen >= 0 && int64(len(elements)) > maxlen {
 						// Trim from left
 						elements = elements[len(elements)-int(maxlen):]
 					}
-				} else if args[1].Type() != object.NULL_OBJ {
-					return errors.NewTypeError("INTEGER or None", args[1].Type().String())
+				} else if mlObj.Type() != object.NULL_OBJ {
+					return errors.NewTypeError("INTEGER or None", mlObj.Type().String())
 				}
 			}
 
-			// Store maxlen as metadata
-			dequeList := &object.List{Elements: elements}
-			// We'll store maxlen in a wrapper. For simplicity, return the list.
-			// Users should use deque_* functions for operations
-			return dequeList
+			return createDequeInstance(elements, maxlen)
 		},
 		HelpText: `deque([iterable[, maxlen]]) - Double-ended queue
 
-Creates a double-ended queue (deque) from an iterable.
-Use collections.deque_* functions for deque-specific operations.
+Creates a double-ended queue with appendleft/popleft/rotate and friends,
+like Python's collections.deque. maxlen (or None) bounds the length,
+dropping from the opposite end on overflow.
 
 Example:
   d = collections.deque([1, 2, 3])
   collections.deque_appendleft(d, 0)  # [0, 1, 2, 3]`,
-	},
-	"deque_appendleft": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			// deque_appendleft(deque, elem) - Add element to left
-			if err := errors.ExactArgs(args, 2); err != nil {
-				return err
-			}
-			deque, ok := args[0].(*object.List)
-			if !ok {
-				return errors.NewTypeError("LIST (deque)", args[0].Type().String())
-			}
-			newElements := make([]object.Object, len(deque.Elements)+1)
-			newElements[0] = args[1]
-			copy(newElements[1:], deque.Elements)
-			deque.Elements = newElements
-			return &object.Null{}
-		},
-		HelpText: `deque_appendleft(deque, elem) - Add element to left side
-
-Adds an element to the left side of the deque.
-
-Example:
-  d = collections.deque([1, 2, 3])
-  collections.deque_appendleft(d, 0)  # d is now [0, 1, 2, 3]`,
-	},
-	"deque_popleft": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			// deque_popleft(deque) - Remove and return element from left
-			if err := errors.ExactArgs(args, 1); err != nil {
-				return err
-			}
-			deque, ok := args[0].(*object.List)
-			if !ok {
-				return errors.NewTypeError("LIST (deque)", args[0].Type().String())
-			}
-			if len(deque.Elements) == 0 {
-				return errors.NewError("popleft from empty deque")
-			}
-			elem := deque.Elements[0]
-			deque.Elements = deque.Elements[1:]
-			return elem
-		},
-		HelpText: `deque_popleft(deque) - Remove and return element from left
-
-Removes and returns the leftmost element.
-
-Example:
-  d = collections.deque([1, 2, 3])
-  x = collections.deque_popleft(d)  # x=1, d=[2, 3]`,
-	},
-	"deque_extendleft": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			// deque_extendleft(deque, iterable) - Extend left with iterable (reversed)
-			if err := errors.ExactArgs(args, 2); err != nil {
-				return err
-			}
-			deque, ok := args[0].(*object.List)
-			if !ok {
-				return errors.NewTypeError("LIST (deque)", args[0].Type().String())
-			}
-			var elements []object.Object
-			switch arg := args[1].(type) {
-			case *object.List:
-				elements = arg.Elements
-			case *object.Tuple:
-				elements = arg.Elements
-			default:
-				return errors.NewTypeError("iterable", args[1].Type().String())
-			}
-			// Extend left (reversed order)
-			newElements := make([]object.Object, len(elements)+len(deque.Elements))
-			for i, elem := range elements {
-				newElements[len(elements)-1-i] = elem
-			}
-			copy(newElements[len(elements):], deque.Elements)
-			deque.Elements = newElements
-			return &object.Null{}
-		},
-		HelpText: `deque_extendleft(deque, iterable) - Extend left with iterable
-
-Extends the left side with elements from iterable (in reverse order).
-
-Example:
-  d = collections.deque([1, 2, 3])
-  collections.deque_extendleft(d, [4, 5])  # d is now [5, 4, 1, 2, 3]`,
-	},
-	"deque_rotate": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			// deque_rotate(deque, n) - Rotate deque n steps
-			if err := errors.ExactArgs(args, 2); err != nil {
-				return err
-			}
-			deque, ok := args[0].(*object.List)
-			if !ok {
-				return errors.NewTypeError("LIST (deque)", args[0].Type().String())
-			}
-			n, ok := args[1].(*object.Integer)
-			if !ok {
-				return errors.NewTypeError("INTEGER", args[1].Type().String())
-			}
-			if len(deque.Elements) == 0 {
-				return &object.Null{}
-			}
-
-			// Normalize rotation
-			steps := int(n.IntValue()) % len(deque.Elements)
-			if steps < 0 {
-				steps += len(deque.Elements)
-			}
-			if steps == 0 {
-				return &object.Null{}
-			}
-
-			// Rotate right by steps
-			newElements := make([]object.Object, len(deque.Elements))
-			splitPoint := len(deque.Elements) - steps
-			copy(newElements, deque.Elements[splitPoint:])
-			copy(newElements[steps:], deque.Elements[:splitPoint])
-			deque.Elements = newElements
-			return &object.Null{}
-		},
-		HelpText: `deque_rotate(deque, n) - Rotate deque n steps
-
-Rotates the deque n steps to the right. If n is negative, rotates left.
-
-Example:
-  d = collections.deque([1, 2, 3, 4])
-  collections.deque_rotate(d, 1)  # d is now [4, 1, 2, 3]
-  collections.deque_rotate(d, -1) # d is now [1, 2, 3, 4]`,
 	},
 	"namedtuple": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -705,6 +682,13 @@ Example:
 						fieldNameObjs[i] = object.NewString(name)
 					}
 					nt.SetField("__fields__", &object.Tuple{Elements: fieldNameObjs})
+					// Precompute the display form (the __str_repr__ idiom
+					// datetime uses) so print() shows P(x=1, y='hi').
+					parts := make([]string, 0, len(fieldNames))
+					for i, name := range fieldNames {
+						parts = append(parts, name+"="+reprValue(args[i+1]))
+					}
+					nt.SetField("__str_repr__", object.NewString(typename.StringValue()+"("+strings.Join(parts, ", ")+")"))
 					return &object.Null{}
 				},
 			}
@@ -727,6 +711,20 @@ Example:
 					return &object.Null{}
 				},
 				HelpText: `__getitem__(key) - Get field value (supports nt[key] syntax)`,
+			}
+
+			// __repr__ renders Python's "Typename(field=value, ...)".
+			methods["__repr__"] = &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					nt := args[0].(*object.Instance)
+					parts := make([]string, 0, len(fieldNames))
+					for _, name := range fieldNames {
+						if v, exists := nt.GetField(name); exists {
+							parts = append(parts, name+"="+reprValue(v))
+						}
+					}
+					return object.NewString(typename.StringValue() + "(" + strings.Join(parts, ", ") + ")")
+				},
 			}
 
 			ntClass := &object.Class{
@@ -788,3 +786,272 @@ Example:
 	"DefaultDict": DefaultDictClass,
 	"defaultdict": DefaultDictClass,
 }, "Python-compatible collections library for specialized container datatypes")
+
+// createDequeInstance wraps elements in a Deque object with Python's deque
+// methods; maxlen (nil/-1 for none) drops from the opposite end on overflow.
+func createDequeInstance(elements []object.Object, maxlen int64) *object.Instance {
+	if elements == nil {
+		elements = []object.Object{}
+	}
+	var maxObj object.Object = &object.Null{}
+	if maxlen >= 0 {
+		maxObj = object.NewInteger(maxlen)
+	}
+	return object.NewInstanceWithFields(DequeClass, map[string]object.Object{
+		"_elements": &object.List{Elements: elements},
+		"maxlen":    maxObj,
+	})
+}
+
+func dequeElems(inst *object.Instance) []object.Object {
+	return inst.Field("_elements").(*object.List).Elements
+}
+
+func setDequeElems(inst *object.Instance, elems []object.Object) {
+	inst.SetField("_elements", &object.List{Elements: elems})
+}
+
+// dequeClamp enforces maxlen after a right-side append: overflow drops from
+// the left. Returns the value to discard (already gone from elems).
+func dequeClamp(inst *object.Instance, elems []object.Object, fromRight bool) []object.Object {
+	ml, ok := inst.Field("maxlen").(*object.Integer)
+	if !ok || ml.IntValue() < 0 {
+		return elems
+	}
+	for int64(len(elems)) > ml.IntValue() {
+		if fromRight {
+			elems = elems[:len(elems)-1]
+		} else {
+			elems = elems[1:]
+		}
+	}
+	return elems
+}
+
+// DequeClass is collections.deque: a double-ended queue.
+var DequeClass = &object.Class{
+	Name: "deque",
+	Methods: map[string]object.Object{
+		"append": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
+			}
+			inst := args[0].(*object.Instance)
+			elems := append(dequeElems(inst), args[1])
+			setDequeElems(inst, dequeClamp(inst, elems, true))
+			return &object.Null{}
+		}},
+		"appendleft": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
+			}
+			inst := args[0].(*object.Instance)
+			elems := append([]object.Object{args[1]}, dequeElems(inst)...)
+			setDequeElems(inst, dequeClamp(inst, elems, false))
+			return &object.Null{}
+		}},
+		"pop": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
+			inst := args[0].(*object.Instance)
+			elems := dequeElems(inst)
+			if len(elems) == 0 {
+				return &object.Exception{Message: "pop from an empty deque", ExceptionType: object.ExceptionTypeIndexError, Raised: true}
+			}
+			v := elems[len(elems)-1]
+			setDequeElems(inst, elems[:len(elems)-1])
+			return v
+		}},
+		"popleft": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
+			inst := args[0].(*object.Instance)
+			elems := dequeElems(inst)
+			if len(elems) == 0 {
+				return &object.Exception{Message: "pop from an empty deque", ExceptionType: object.ExceptionTypeIndexError, Raised: true}
+			}
+			v := elems[0]
+			setDequeElems(inst, elems[1:])
+			return v
+		}},
+		"extend": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
+			}
+			inst := args[0].(*object.Instance)
+			add, ok := object.IterableToSlice(args[1])
+			if !ok {
+				return errors.NewTypeError("iterable", args[1].Type().String())
+			}
+			elems := append(dequeElems(inst), add...)
+			setDequeElems(inst, dequeClamp(inst, elems, true))
+			return &object.Null{}
+		}},
+		"extendleft": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
+			}
+			inst := args[0].(*object.Instance)
+			add, ok := object.IterableToSlice(args[1])
+			if !ok {
+				return errors.NewTypeError("iterable", args[1].Type().String())
+			}
+			// Python's extendleft appends each item to the left, so the
+			// iterable's order reverses.
+			elems := dequeElems(inst)
+			for _, v := range add {
+				elems = append([]object.Object{v}, elems...)
+			}
+			setDequeElems(inst, dequeClamp(inst, elems, false))
+			return &object.Null{}
+		}},
+		"rotate": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if len(args) < 1 || len(args) > 2 {
+				return errors.NewError("rotate() takes 0-1 arguments (%d given)", len(args)-1)
+			}
+			inst := args[0].(*object.Instance)
+			n := int64(1)
+			if len(args) == 2 {
+				v, err := args[1].AsInt()
+				if err != nil {
+					return errors.ParameterError("n", err)
+				}
+				n = v
+			}
+			elems := dequeElems(inst)
+			length := int64(len(elems))
+			if length == 0 {
+				return &object.Null{}
+			}
+			n = ((n % length) + length) % length
+			rotated := append(append([]object.Object{}, elems[length-n:]...), elems[:length-n]...)
+			setDequeElems(inst, rotated)
+			return &object.Null{}
+		}},
+		"clear": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
+			setDequeElems(args[0].(*object.Instance), []object.Object{})
+			return &object.Null{}
+		}},
+		"copy": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
+			inst := args[0].(*object.Instance)
+			elems := append([]object.Object{}, dequeElems(inst)...)
+			ml := int64(-1)
+			if m, ok := inst.Field("maxlen").(*object.Integer); ok {
+				ml = m.IntValue()
+			}
+			return newDeque(elems, ml)
+		}},
+		"count": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
+			}
+			n := int64(0)
+			for _, v := range dequeElems(args[0].(*object.Instance)) {
+				if objectsEqual(v, args[1]) {
+					n++
+				}
+			}
+			return object.NewInteger(n)
+		}},
+		"__len__": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			return object.NewInteger(int64(len(dequeElems(args[0].(*object.Instance)))))
+		}},
+		"__iter__": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			elems := append([]object.Object{}, dequeElems(args[0].(*object.Instance))...)
+			i := 0
+			return object.NewIterator(func() (object.Object, bool) {
+				if i >= len(elems) {
+					return nil, false
+				}
+				v := elems[i]
+				i++
+				return v, true
+			})
+		}},
+		"__getitem__": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
+			}
+			elems := dequeElems(args[0].(*object.Instance))
+			idx, err := args[1].AsInt()
+			if err != nil {
+				return errors.ParameterError("index", err)
+			}
+			if idx < 0 {
+				idx += int64(len(elems))
+			}
+			if idx < 0 || idx >= int64(len(elems)) {
+				return &object.Exception{Message: "deque index out of range", ExceptionType: object.ExceptionTypeIndexError, Raised: true}
+			}
+			return elems[idx]
+		}},
+		"__bool__": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			return object.NewBoolean(len(dequeElems(args[0].(*object.Instance))) > 0)
+		}},
+		"__str__": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			inst := args[0].(*object.Instance)
+			parts := make([]string, 0, 8)
+			for _, v := range dequeElems(inst) {
+				parts = append(parts, v.Inspect())
+			}
+			out := "deque([" + strings.Join(parts, ", ") + "]"
+			if m, ok := inst.Field("maxlen").(*object.Integer); ok {
+				out += ", maxlen=" + m.Inspect()
+			}
+			return object.NewString(out + ")")
+		}},
+	},
+}
+
+// newDeque is wired in init() to break the DequeClass initialization cycle.
+var newDeque func(elements []object.Object, maxlen int64) *object.Instance
+
+var counterClassRef *object.Class
+
+func init() {
+	newDeque = createDequeInstance
+	counterArithFn = counterArithmetic
+	counterClassRef = CounterClass
+}
+
+// counterArithFn is wired in init() to break the CounterClass
+// initialization cycle (the dunder closures reference the arithmetic).
+var counterArithFn func(op byte, a, b *object.Instance) *object.Instance
+
+// twoCounters validates the (self, other) arguments of a Counter dunder:
+// other must also be a Counter instance.
+func twoCounters(args []object.Object) (*object.Instance, *object.Instance, object.Object) {
+	if len(args) != 2 {
+		return nil, nil, errors.NewError("expected 2 arguments (%d given)", len(args))
+	}
+	a, ok := args[0].(*object.Instance)
+	if !ok || a.Class != counterClassRef {
+		return nil, nil, errors.NewTypeError("Counter", args[0].Type().String())
+	}
+	b, ok := args[1].(*object.Instance)
+	if !ok || b.Class != counterClassRef {
+		return nil, nil, errors.NewTypeError("Counter", args[1].Type().String())
+	}
+	return a, b, nil
+}
+
+// reprValue renders a value for a namedtuple repr: strings use Python
+// quoting, everything else uses its Inspect.
+func reprValue(v object.Object) string {
+	if s, ok := v.(*object.String); ok {
+		q := "'"
+		if strings.Contains(s.StringValue(), "'") && !strings.Contains(s.StringValue(), "\"") {
+			q = "\""
+		}
+		return q + s.StringValue() + q
+	}
+	return v.Inspect()
+}

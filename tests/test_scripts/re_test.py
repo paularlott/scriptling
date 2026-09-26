@@ -27,9 +27,22 @@ assert result == "aXbXc3"
 parts = re.split("[,;]", "a,b;c")
 assert len(parts) == 3
 
-# Test re.split with maxsplit
+# Test re.split with maxsplit (2 splits -> 3 parts, like Python)
 parts = re.split("[,;]", "a,b;c;d", 2)
-assert len(parts) == 2
+assert len(parts) == 3
+assert parts[2] == "c;d"
+parts = re.split("[,;]", "a,b;c;d", maxsplit=1)
+assert parts == ["a", "b;c;d"]
+
+# Test re.sub count as a keyword
+assert re.sub("[0-9]+", "X", "a1b2c3", count=2) == "aXbXc3"
+
+# Test re.subn
+result = re.subn("[0-9]+", "X", "a1b2c3")
+assert result[0] == "aXbXcX" and result[1] == 3, f"subn: {result}"
+
+# Test backreferences in replacements
+assert re.sub(r"(\w+)", r"<\1>", "ab cd", count=1) == "<ab> cd"
 
 # Test re.fullmatch matches entire string
 assert re.fullmatch("[0-9]+", "123")

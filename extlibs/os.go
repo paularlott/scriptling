@@ -61,13 +61,27 @@ func NewOSLibrary(config fssecurity.Config) (*object.Library, *object.Library) {
 
 	instance := &osLibraryInstance{config: config}
 
-	osLib := instance.createOSLibrary()
 	osPathLib := instance.createOSPathLibrary()
+	osLib := instance.createOSLibrary(osPathLib)
 
 	return osLib, osPathLib
 }
 
-func (o *osLibraryInstance) createOSLibrary() *object.Library {
+// pathModuleDict builds the module-namespace dict for os.path: imports bind
+// libraries as dicts of their functions and constants, so the os.path
+// attribute must match that shape for os.path.exists(...) to resolve.
+func pathModuleDict(osPathLib *object.Library) *object.Dict {
+	d := &object.Dict{Pairs: make(map[string]object.DictPair)}
+	for name, fn := range osPathLib.Functions() {
+		d.SetByString(name, fn)
+	}
+	for name, c := range osPathLib.Constants() {
+		d.SetByString(name, c)
+	}
+	return d
+}
+
+func (o *osLibraryInstance) createOSLibrary(osPathLib *object.Library) *object.Library {
 	// Build environ dict - this happens when the library is registered/imported
 	// Environment variables are captured at that time
 	environDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
@@ -461,6 +475,9 @@ Renames the file or directory from old to new.`,
 		"name":     object.NewString(getOSName()),
 		"platform": object.NewString(runtime.GOOS),
 		"environ":  environDict,
+		// os.path resolves as an attribute of os, like Python's os.path,
+		// while remaining importable on its own (import os.path).
+		"path": pathModuleDict(osPathLib),
 	}, "Operating system interface")
 }
 

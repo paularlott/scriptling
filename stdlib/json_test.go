@@ -88,3 +88,17 @@ func TestJSONDumpsFloats(t *testing.T) {
 		t.Errorf("expected %s, got %s", want, got)
 	}
 }
+
+// TestJSONDecodeErrorIsValueError: bad JSON raises a ValueError-typed error
+// so except ValueError catches it (Python's JSONDecodeError subclasses it).
+func TestJSONDecodeErrorIsValueError(t *testing.T) {
+	loads := JSONLibrary.Functions()["loads"]
+	result := loads.Fn(context.Background(), object.NewKwargs(nil), object.NewString("{bad"))
+	err, ok := result.(*object.Error)
+	if !ok {
+		t.Fatalf("loads returned %s: %s", result.Type(), result.Inspect())
+	}
+	if err.ExceptionType != object.ExceptionTypeValueError {
+		t.Errorf("expected ValueError classification, got %q", err.ExceptionType)
+	}
+}

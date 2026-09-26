@@ -174,3 +174,10 @@ assert os.path.splitext(".hidden") == ("", ".hidden")
 
 print("All comprehensive OS tests passed!")
 assert passed
+
+# os.path as an attribute of os (Python's os.path), not just via import os.path
+import os
+assert os.path.exists("/tmp"), "os.path.exists should work via attribute access"
+assert not os.path.exists("/definitely/not/here/path")
+assert not os.path.isfile("/definitely/not/here/path")
+assert os.path.join("x", "y") == "x/y", f"os.path.join via attribute: {os.path.join('x', 'y')}"
